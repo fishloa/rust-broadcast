@@ -45,6 +45,10 @@ const SKIP: &[&str] = &[
     // lossy — the typed variant *is* the label.
     "CodecConfig",
     "DemuxEvent",
+    // `rtp_stream::RtpLossEvent` (issue #779): a data-carrying ADT, same
+    // shape as `DemuxEvent` above — each variant wraps distinct structured
+    // fields (track/ssrc/sequence numbers), not a flat spec-defined code.
+    "RtpLossEvent",
     // `LlHlsSegmenter`'s `Stage::Out` (media plane step 2e-2): a dispatch
     // enum wrapping two full structured payloads (`PartInfo`/`SegmentInfo`),
     // same shape as `DemuxEvent` above — not a spec-defined flat code.

@@ -29,6 +29,12 @@
 //!
 //! See `transmux/docs/rtp/rtp-payload-formats.md` for the full transcription.
 //!
+//! This module is stateless (one `&[u8]` in, one `Vec`/struct out) and does
+//! **not** validate sequence-number continuity — [`crate::rtp_stream`]'s
+//! stateful [`crate::rtp_stream::RtpStreamDepacketiser`] does that (loss/
+//! reorder detection, issue #779); see its module docs and
+//! `transmux/docs/rtp/rtp-sequence-validation.md`.
+//!
 //! `no_std` + `alloc`.
 
 use alloc::format;
@@ -1032,18 +1038,27 @@ fn depacketise_audio(packets: &[Vec<u8>]) -> Result<Vec<ReassembledAu>> {
 /// A parsed RTP fixed header (RFC 3550 §5.1) — the fields the spoke needs.
 /// Delegates the wire decode to [`rtp_packet::RtpPacket`]; transmux only ever
 /// depacketises the simple `P=0 X=0 CC=0` case it itself emits, so only
-/// `marker`/`timestamp`/`payload` are read at call sites below (the rest are
-/// carried through for the unit test at the bottom of this file) — see #646.
+/// `marker`/`sequence`/`timestamp`/`ssrc`/`payload` are read at call sites
+/// (`payload_type` is carried through only for the unit test at the bottom of
+/// this file) — see #646. `sequence`/`ssrc` were dead until issue #779 gave
+/// [`crate::rtp_stream::RtpStreamDepacketiser`] a reason to read them (loss
+/// and reorder detection).
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct RtpHeader<'a> {
     pub(crate) marker: bool,
     #[allow(dead_code)]
     payload_type: u8,
-    #[allow(dead_code)]
-    sequence: u16,
+    /// 16-bit sequence number (RFC 3550 §5.1), incrementing by one per
+    /// packet and wrapping mod 65536 — read by
+    /// [`crate::rtp_stream::RtpStreamDepacketiser`] for loss/reorder
+    /// detection (issue #779).
+    pub(crate) sequence: u16,
     pub(crate) timestamp: u32,
-    #[allow(dead_code)]
-    ssrc: u32,
+    /// Synchronization source identifier (RFC 3550 §5.1) — read by
+    /// [`crate::rtp_stream::RtpStreamDepacketiser`] to detect a stream
+    /// restart (a new SSRC is a new source, not a sequence gap; RFC 3550
+    /// §8.2).
+    pub(crate) ssrc: u32,
     /// The payload after the fixed header, CSRC list, and header extension
     /// (if a non-conforming sender added either — `rtp_packet` correctly
     /// skips them; the hand-rolled decode this replaces always assumed

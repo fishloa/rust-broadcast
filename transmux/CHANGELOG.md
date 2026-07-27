@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **RTP depacketisation now detects loss/reorder instead of silently
+  corrupting reassembly** (issue #779): `RtpHeader.sequence` was parsed but
+  never read at any non-test call site, so `RtpStreamDepacketiser` decided
+  access-unit boundaries purely from the RTP timestamp and marker bit — a
+  dropped FU-A fragment was silently concatenated with its neighbours into a
+  malformed access unit. Each track now tracks its expected 16-bit sequence
+  number (RFC 3550 §5.1/§A.1, compared with wrapping arithmetic, never `>`):
+  an in-order or legally-duplicate packet is unaffected; a reordered packet
+  is held in a bounded buffer (`RtpStreamTrack::with_reorder_depth`, default
+  `DEFAULT_REORDER_DEPTH`) and replayed once the gap fills, reassembling
+  byte-identically to the in-order capture; a genuine gap drops the access
+  unit under construction rather than reassembling it from a run missing a
+  fragment, and records the new `RtpLossEvent::SequenceGap`
+  (drained via `RtpStreamDepacketiser::poll_loss_event`) — a clean capture
+  raises zero loss events end to end. The reorder buffer is a hard bound
+  (never a fifth unbounded-allocation vector). See
+  `transmux/docs/rtp/rtp-sequence-validation.md` for the RFC 3550 §A.1
+  transcription this is adapted from, and `rtp_stream`'s module docs for why
+  the signal surfaces locally rather than in `ir::DemuxEvent`.
+
 ## [0.20.0] - 2026-07-26
 
 **Publish order:** `broadcast-common` 8.7.0 → `transmux` 0.20.0 → `media-doctor` → (steps 4/5: `ll-hls-runtime`, `multimux`, `multimux-cli`).
