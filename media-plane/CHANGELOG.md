@@ -307,3 +307,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     rewritten: they asserted a panic that can no longer occur, and a rewritten
     version would only be asserting that `NonZeroUsize::new(0)` returns `None`
     (a `core` property, not this crate's).
+- `Retention`, `SegmentSink`, `RetentionDriver`, `SegmentLocation`, `SinkOutcome`
+  (plan step 3e, `std`-only, new `retention` module): the hot/cold archive
+  policy layered on top of the segment log — the last functional piece of the
+  plane (step 3f is acceptance furniture only).
+  - **`SegmentSink` is sans-IO**: `offer(&SegmentEntry) -> SinkOutcome` touches
+    no filesystem, socket, or executor; a real disk/object-store adapter (Step
+    5) does its actual I/O entirely behind that synchronous boundary.
+  - **`Retention::Tiered { on_overrun, cold_window }` reuses `ArchiveOverrun`
+    verbatim**, not a parallel enum: `RetentionDriver` is built directly on
+    `Trunk::pin_segments(on_overrun)`, so the same three-way Gap/StallIngest/
+    Terminate trade 3b-ii already proved governs this layer too. Only
+    `cold_window` (a `Duration`, not a `NonZeroUsize` — it bounds an eviction
+    deadline, not a ring's structural capacity) is genuinely new state; the
+    plan sketch's `hot`/`cold` fields are `ArchiveOverrun` (reused) and
+    `SegmentSink` (supplied separately, at `RetentionDriver::new`, since a
+    sink is a caller-supplied handle, not `Copy` policy data) respectively.
+  - **A failing or slow sink cannot stall ingest**: `TrunkWriter::publish_segment`
+    has no reference to `SegmentSink` at all — a structural guarantee, not a
+    race defended against — and `RetentionDriver::drive` holds at most one
+    `SegmentEntry` awaiting hand-off (`RetentionDriver::pending_len` is always
+    `0` or `1`), never polling its pinning cursor for the next segment while
+    one is stuck on `SinkOutcome::Busy`. No second bounded queue was added for
+    this: everything still queued behind a stuck hand-off stays inside the
+    trunk's segment log, already bounded by `segment_capacity` and already
+    governed by `on_overrun`.
+  - **Cold segments stay addressable — "cold, ask the sink"** (issue #746,
+    DVR/catch-up): `RetentionDriver::locate(sequence_number, now)` resolves to
+    `SegmentLocation::Hot` (still, or not yet, on the trunk's ordinary hot-ring
+    path), `SegmentLocation::Cold` (handed off and still inside `cold_window`
+    — this crate does not hold the bytes; the caller resolves them through its
+    own sink), or `SegmentLocation::Evicted` (gapped before hand-off, or aged
+    out of the cold window). Reuses `Trunk::last_closed_segment` for "has this
+    sequence number even been produced yet" rather than tracking a second,
+    parallel high-water mark.
+  - The cold-tier ledger is bounded by `cold_window` itself (purged on every
+    `drive`/`locate` call), the temporal analogue of `segment_capacity`'s
+    count-based bound on the hot ring — not a second, independently-tuned
+    count knob.
