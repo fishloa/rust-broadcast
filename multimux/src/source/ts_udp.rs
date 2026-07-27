@@ -188,13 +188,59 @@ impl TsUdpSession {
         self.demux.feed(&self.buf[..n]);
         let mut out = Vec::new();
         while let Some(event) = self.demux.poll_event() {
-            if let DemuxEvent::Sample {
-                track_id, sample, ..
-            } = event
-            {
-                if self.known_track_ids.contains(&track_id) {
-                    out.push((track_id, sample));
+            match event {
+                DemuxEvent::Sample {
+                    track_id, sample, ..
+                } => {
+                    if self.known_track_ids.contains(&track_id) {
+                        out.push((track_id, sample));
+                    }
                 }
+                DemuxEvent::TrackRemoved { track_id, .. } => {
+                    // A mid-stream PMT version bump dropped a previously-live
+                    // PID (issue #774). Drop it from the known set so no
+                    // stale sample is ever forwarded for it (defense in depth
+                    // — `DemuxEvent`'s removal semantics already guarantee no
+                    // `Sample` for this `track_id` follows), and surface the
+                    // change instead of silently swallowing it: the running
+                    // pipeline/segmenter was built once from connect-time
+                    // `track_specs()` and has no way to learn a track vanished.
+                    tracing::warn!(
+                        track_id,
+                        "ts/udp: track removed mid-stream (PMT no longer lists it); \
+                         no further samples will be surfaced for it"
+                    );
+                    self.known_track_ids.remove(&track_id);
+                }
+                DemuxEvent::TrackUpdated(spec) => {
+                    tracing::debug!(
+                        track_id = spec.track_id,
+                        "ts/udp: track metadata updated mid-stream (es_info_descriptors/\
+                         stream_type); the running pipeline was built from the connect-time \
+                         TrackSpec and does not pick this up"
+                    );
+                }
+                DemuxEvent::TrackAdded(spec) => {
+                    // A PID declared only after `connect()`'s PMT wait
+                    // resolved. The pipeline was built from that connect-time
+                    // track set (`SampleSource::track_specs` is a one-shot
+                    // snapshot, `pipeline::run_pipeline` calls it exactly
+                    // once) — there is no API on this session to add a track
+                    // to an already-running segmenter, so this is reported
+                    // rather than silently dropped or half-wired in.
+                    tracing::warn!(
+                        track_id = spec.track_id,
+                        "ts/udp: new track declared mid-stream; the running pipeline was built \
+                         from the connect-time track set and cannot pick it up without a reconnect"
+                    );
+                }
+                DemuxEvent::TrackAbandoned { reason, .. } => {
+                    tracing::warn!(
+                        ?reason,
+                        "ts/udp: a probing track was abandoned before it resolved"
+                    );
+                }
+                _ => {}
             }
         }
         Ok(Some(out))
