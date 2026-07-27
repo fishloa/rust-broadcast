@@ -1,0 +1,22 @@
+[package]
+name         = "media-plane"
+version      = "0.1.0"
+edition      = "2024"
+license      = "MIT OR Apache-2.0"
+repository   = "https://github.com/fishloa/rust-broadcast"
+rust-version = "1.86"
+description  = "Media-plane integration layer: byte-stage abstraction over broadcast_common::Stage, the pre-demux stage of the ingress -> byte stages -> demux -> IR transforms -> Trunk -> egress pipeline. no_std + alloc."
+keywords     = ["streaming", "ingest", "no-std", "media"]
+categories   = ["multimedia", "no-std"]
+readme       = "README.md"
+
+[dependencies]
+broadcast-common = { path = "../broadcast-common", version = "8.7", default-features = false }
+bytes            = { version = "1", default-features = false }
+
+[features]
+default = ["std"]
+std     = ["broadcast-common/std"]
+
+[package.metadata.docs.rs]
+all-features = true
