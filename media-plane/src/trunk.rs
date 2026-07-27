@@ -2578,4 +2578,213 @@ mod tests {
         assert_eq!(ids, vec![6, 7, 8]);
         assert!(cursor.poll().is_none());
     }
+
+    // --- E8. `epoch_ms_to_media` really is the inverse of ------------------
+    // --- `TimeAnchor::media_to_epoch_ms` -----------------------------------
+
+    /// A wall-clock anchor with room on *both* sides of `pts_90k`, so a sign
+    /// error in the (signed) delta shows up rather than being clipped away:
+    /// 10 s of media already elapsed, mapped to a realistic epoch instant.
+    fn round_trip_anchor() -> TimeAnchor {
+        TimeAnchor {
+            pts_90k: 900_000,                // 10 s at 90 kHz
+            utc_epoch_ms: 1_700_000_000_000, // ~2023-11-14T22:13:20Z
+        }
+    }
+
+    /// Ticks of the 90 kHz media clock per millisecond of the epoch clock.
+    ///
+    /// Derived, not asserted: the media clock is [`PTS_HZ`] ticks/second and
+    /// `utc_epoch_ms` counts milliseconds, i.e. thousandths of a second, so
+    /// one millisecond spans `PTS_HZ / 1000` ticks.
+    const TICKS_PER_EPOCH_MS: u64 = PTS_HZ / 1000;
+
+    /// The exact worst-case `media -> epoch_ms -> media` error, in ticks.
+    ///
+    /// **Derivation (not a tuned constant).**
+    /// [`TimeAnchor::media_to_epoch_ms`] computes
+    /// `delta_ticks * 1000 / PTS_HZ`, i.e. `delta_ticks / TICKS_PER_EPOCH_MS`,
+    /// in integer arithmetic — Rust integer division truncates toward zero,
+    /// so it discards a remainder `r` with `|r| <= TICKS_PER_EPOCH_MS - 1`.
+    /// `epoch_ms_to_media` then multiplies the surviving whole milliseconds
+    /// back up by `TICKS_PER_EPOCH_MS`, reconstructing `delta_ticks - r`
+    /// exactly. The round-trip error is therefore *precisely* that discarded
+    /// remainder: at most `TICKS_PER_EPOCH_MS - 1` == 89 ticks, i.e. strictly
+    /// less than one millisecond. `media_round_trip_is_lossy_by_at_most_one_
+    /// millisecond` additionally asserts this bound is **tight** (some input
+    /// attains exactly 89), so it cannot silently be loosened into a
+    /// tolerance that hides a real error.
+    const MEDIA_ROUND_TRIP_MAX_TICKS: u64 = TICKS_PER_EPOCH_MS - 1;
+
+    /// The `epoch_ms -> media -> epoch_ms` direction is **exact** — the media
+    /// clock is finer-grained than the millisecond clock (90 ticks per ms),
+    /// so no information is lost going to ticks and back. Asserted with
+    /// equality, no tolerance.
+    ///
+    /// MUTATION VERIFIED: flipping the sign of the delta in
+    /// `epoch_ms_to_media` (`i128::from(anchor.utc_epoch_ms) -
+    /// i128::from(utc_epoch_ms)` in place of the correct
+    /// `i128::from(utc_epoch_ms) - i128::from(anchor.utc_epoch_ms)`) makes
+    /// this test fail on the first non-zero offset: for `+1` ms the
+    /// round-tripped epoch comes back as `1699999999999` instead of
+    /// `1700000000001`. **Second mutation, also verified:** changing the
+    /// scale conversion from `* PTS_HZ / 1000` to `* PTS_HZ * 1000` fails the
+    /// same assertion with `1700001000000` instead of `1700000000001`. So
+    /// both the *sign* and the *magnitude* of the inverse are pinned, not
+    /// just its shape. Recompiled and re-run to confirm each failure, then
+    /// reverted.
+    #[test]
+    fn epoch_ms_round_trip_through_media_time_is_exact() {
+        let anchor = round_trip_anchor();
+
+        // Offsets in ms from the anchor's own epoch instant. Zero, both
+        // signs at ±1 ms and ±1 s, a full day forward, a backward offset
+        // that lands well clear of the clamp, and one large enough that
+        // `delta_ms * PTS_HZ` (2e14 * 9e4 = 1.8e19) exceeds `i64::MAX`
+        // (~9.2e18) — the case that exercises the `i128` widening.
+        for offset_ms in [
+            0i64,
+            1,
+            -1,
+            1_000,
+            -1_000,
+            86_400_000,
+            -9_000,
+            200_000_000_000_000,
+        ] {
+            let epoch_ms = anchor.utc_epoch_ms + offset_ms;
+            let media = epoch_ms_to_media(&anchor, epoch_ms);
+            let back = anchor.media_to_epoch_ms(media);
+            assert_eq!(
+                back, epoch_ms,
+                "epoch_ms -> media -> epoch_ms must be EXACT at offset {offset_ms} ms \
+                 (media = {media:?})"
+            );
+        }
+    }
+
+    /// The `media -> epoch_ms -> media` direction is **lossy**, by a bounded
+    /// and derived amount: the media clock is 90× finer than the millisecond
+    /// clock, so sub-millisecond tick precision cannot survive the trip. See
+    /// [`MEDIA_ROUND_TRIP_MAX_TICKS`] for the derivation. This test also
+    /// pins the bound as *tight*, so it is a real property and not a loose
+    /// tolerance hiding an error.
+    ///
+    /// MUTATION VERIFIED: flipping the sign of the delta in
+    /// `epoch_ms_to_media` (as in
+    /// `epoch_ms_round_trip_through_media_time_is_exact`'s note) makes this
+    /// test fail at the first offset that is a whole number of milliseconds
+    /// away from the anchor: at media offset `+90` ticks the value comes
+    /// back as `899_910` instead of `900_090`, a diff of `180` ticks, so the
+    /// `diff <= MEDIA_ROUND_TRIP_MAX_TICKS` (89) assertion fails.
+    /// **Second mutation, also verified:** the `* PTS_HZ * 1000` scale error
+    /// fails the same assertion with a diff of `89_999_910` ticks. Recompiled
+    /// and re-run to confirm each failure, then reverted.
+    #[test]
+    fn media_round_trip_is_lossy_by_at_most_one_millisecond() {
+        let anchor = round_trip_anchor();
+        let mut worst = 0u64;
+
+        // Tick offsets from the anchor's own `pts_90k`. Both signs, values
+        // that are and are not whole multiples of TICKS_PER_EPOCH_MS (so the
+        // truncated remainder is genuinely exercised), the exact worst-case
+        // remainder on each side (±89), and a large offset well past the
+        // i64/i128 boundary region.
+        for offset_ticks in [
+            0i64,
+            1,
+            -1,
+            89,
+            -89,
+            90,
+            -90,
+            91,
+            -91,
+            18_000_000_000_000_037,
+        ] {
+            let media = MediaTime((anchor.pts_90k as i64 + offset_ticks) as u64);
+            let epoch_ms = anchor.media_to_epoch_ms(media);
+            let back = epoch_ms_to_media(&anchor, epoch_ms);
+            let diff = media.0.abs_diff(back.0);
+            assert!(
+                diff <= MEDIA_ROUND_TRIP_MAX_TICKS,
+                "media -> epoch_ms -> media lost {diff} ticks at offset \
+                 {offset_ticks} (bound is {MEDIA_ROUND_TRIP_MAX_TICKS}, i.e. \
+                 < 1 ms): {media:?} -> {epoch_ms} -> {back:?}"
+            );
+            worst = worst.max(diff);
+        }
+
+        // The bound is TIGHT: the ±89-tick cases attain it exactly. Without
+        // this, `MEDIA_ROUND_TRIP_MAX_TICKS` could be quietly raised to
+        // paper over a genuine arithmetic error and the test above would
+        // still pass.
+        assert_eq!(
+            worst, MEDIA_ROUND_TRIP_MAX_TICKS,
+            "the derived bound must be attained, not merely respected — \
+             otherwise it is a loose tolerance, not a property"
+        );
+    }
+
+    /// `epoch_ms_to_media`'s `clamp(0, u64::MAX)` for an epoch instant far
+    /// enough *before* the anchor that the implied media time would be
+    /// negative.
+    ///
+    /// **This documents clamping as SAFE, not CORRECT** — they are different
+    /// claims and this test asserts the weaker, true one. A negative media
+    /// time is simply not representable in `MediaTime(u64)`, so no return
+    /// value here can be right: clamping to `0` reports "at the very start
+    /// of this trunk's timeline", which is *not* the instant asked for, and
+    /// the round trip provably does not recover the input (asserted below).
+    /// What the clamp does buy is that the failure is bounded and obvious
+    /// rather than catastrophic: an unchecked `as u64` cast of a negative
+    /// value would wrap to something near `u64::MAX` — an event appearing
+    /// scheduled ~6.5 million years in the future, which is exactly the
+    /// silent wrong-instant class B1 is about. Clamping keeps a
+    /// pre-origin event in the past (where a scheduler treats it as already
+    /// elapsed) instead of the unreachable future.
+    ///
+    /// If pre-origin scheduled events turn out to be real rather than
+    /// pathological, the *honest* fix is not a different clamp value — it is
+    /// to leave the entry `EventAnchor::Utc` (unresolved), exactly as an
+    /// event with no anchor at all stays unresolved. That would be an
+    /// additive change to `try_resolve`/`set_time_anchor`, not a change to
+    /// this helper's contract.
+    #[test]
+    fn epoch_before_the_timeline_origin_clamps_to_zero_which_is_safe_not_correct() {
+        let anchor = round_trip_anchor();
+
+        // 20 s before the anchor's epoch, but only 10 s of media has
+        // elapsed at the anchor — so the implied media time is -10 s.
+        let epoch_ms = anchor.utc_epoch_ms - 20_000;
+        let media = epoch_ms_to_media(&anchor, epoch_ms);
+
+        assert_eq!(
+            media,
+            MediaTime(0),
+            "a pre-origin epoch must clamp to the start of the timeline"
+        );
+
+        // Bounded-and-obvious, not catastrophic: emphatically NOT a wrapped
+        // near-`u64::MAX` value masquerading as the far future.
+        assert!(
+            media.0 < u64::from(u32::MAX),
+            "must not have wrapped into the far future: {media:?}"
+        );
+
+        // And it is genuinely NOT correct: the round trip does not recover
+        // the input, because the requested instant is unrepresentable.
+        let back = anchor.media_to_epoch_ms(media);
+        assert_ne!(
+            back, epoch_ms,
+            "clamping is lossy by construction — this asserts the honest \
+             claim (safe) rather than the false one (correct)"
+        );
+        assert_eq!(
+            back,
+            anchor.utc_epoch_ms - 10_000,
+            "clamped media time 0 maps back to the timeline origin (10 s \
+             before the anchor), not to the requested instant"
+        );
+    }
 }
