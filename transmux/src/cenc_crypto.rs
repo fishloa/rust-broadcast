@@ -162,6 +162,30 @@ fn validate_subsample_map(subsamples: &[SubSampleEntry], data_len: usize) -> Res
     Ok(())
 }
 
+/// Valid CENC IV lengths, on either the encrypt or decrypt path — ISO/IEC
+/// 23001-7 §9.2 (`cenc` per-sample IV)/§12.2 (`cbcs` per-sample or constant
+/// IV) permit exactly 8 or 16 bytes, no other length. Both are left-justified
+/// and zero-padded to a 16-byte block before use (see [`apply_ctr`] /
+/// [`resolve_cbcs_iv`]), so two different *invalid* lengths that happen to
+/// zero-pad to the same block (e.g. a 12-byte and an empty IV both padding
+/// toward all but their non-zero prefix) could otherwise collide — tightened
+/// to exactly this pair rather than "anything up to 16 bytes" so that cannot
+/// happen. Shared by the encrypt and decrypt paths so both enforce the same
+/// bound; the decrypt path applies this to untrusted wire input.
+const VALID_IV_LENS: [usize; 2] = [8, 16];
+
+/// Reject an IV length that is not exactly 8 or 16 bytes.
+fn check_iv_len(len: usize) -> Result<()> {
+    if !VALID_IV_LENS.contains(&len) {
+        return Err(Error::InvalidValue {
+            field: "CENC IV length",
+            value: len as u64,
+            reason: "ISO/IEC 23001-7 §9.2/§12.2 permit only 8 or 16 bytes",
+        });
+    }
+    Ok(())
+}
+
 /// AES-128 in big-endian counter mode (CENC `cenc` cipher, ISO/IEC 23001-7
 /// §10.1). Symmetric: the same keystream apply-in-place both encrypts and
 /// decrypts.
@@ -227,11 +251,7 @@ pub(crate) fn apply_ctr(
              tenc.default_constant_IV (default_per_sample_iv_size == 0) is cbcs-only",
         ));
     }
-    if iv.len() > KEY_LEN {
-        return Err(Error::InvalidInput(
-            "CENC per-sample IV longer than 16 bytes",
-        ));
-    }
+    check_iv_len(iv.len())?;
     // Validate the whole subsample map before touching a byte, so a malformed
     // map cannot leave a half-keystreamed sample behind (see
     // `rewrite_in_place`'s contract and `validate_subsample_map`).
@@ -285,9 +305,7 @@ fn resolve_cbcs_iv(
             "cbcs sample has no per-sample IV and tenc carries no default_constant_IV",
         ));
     };
-    if src.len() > KEY_LEN {
-        return Err(Error::InvalidInput("CBCS IV longer than 16 bytes"));
-    }
+    check_iv_len(src.len())?;
     let mut iv = [0u8; KEY_LEN];
     iv[..src.len()].copy_from_slice(src);
     Ok(iv)
@@ -569,6 +587,76 @@ mod tests {
         let err = apply_ctr(&[], &KEY, &[], &mut data).unwrap_err();
         assert!(matches!(err, Error::InvalidInput(_)));
         assert_eq!(data, untouched, "a rejected call must not cipher anything");
+    }
+
+    /// F3: `apply_ctr` must reject any IV length other than 8 or 16 bytes —
+    /// not just empty or `> 16` (ISO/IEC 23001-7 §9.2 permits no other
+    /// length). A 12-byte IV used to be silently zero-padded to a 16-byte
+    /// counter block indistinguishable from a genuine (differently-valued)
+    /// 8- or 16-byte IV that happened to share the same non-zero bytes.
+    #[test]
+    fn ctr_rejects_non_8_or_16_byte_iv() {
+        for len in [1usize, 7, 9, 12, 15, 17, 20] {
+            let iv = alloc::vec![0x42u8; len];
+            let mut data: Vec<u8> = (0u8..64).collect();
+            let untouched = data.clone();
+            let err = apply_ctr(&iv, &KEY, &[], &mut data).unwrap_err();
+            assert!(
+                matches!(err, Error::InvalidValue { .. }),
+                "len {len}: expected InvalidValue, got {err:?}"
+            );
+            assert_eq!(
+                data, untouched,
+                "len {len}: a rejected call must not cipher anything"
+            );
+        }
+    }
+
+    /// F3: `cbcs_sample`/`resolve_cbcs_iv` must reject the same non-8/16-byte
+    /// lengths, whether the IV comes from a per-sample `senc` entry or from
+    /// `tenc.default_constant_IV` — both are validated by the same shared
+    /// `check_iv_len`.
+    #[test]
+    fn cbcs_rejects_non_8_or_16_byte_iv() {
+        let tenc = TrackEncryptionBox {
+            version: 1,
+            default_crypt_byte_block: 1,
+            default_skip_byte_block: 9,
+            default_is_protected: 1,
+            default_per_sample_iv_size: 12,
+            default_kid: [0u8; KEY_LEN],
+            default_constant_iv: None,
+        };
+        let entry = SampleEncryptionEntry {
+            initialization_vector: alloc::vec![0x42u8; 12],
+            subsamples: Vec::new(),
+        };
+        let mut data: Vec<u8> = (0u8..64).collect();
+        let err = cbcs_sample(&tenc, &entry, &KEY, &mut data, CbcsOp::Decrypt).unwrap_err();
+        assert!(matches!(err, Error::InvalidValue { .. }), "got {err:?}");
+
+        // Same rejection when the 12-byte IV instead comes from
+        // `tenc.default_constant_IV` (empty per-sample IV, constant-IV
+        // fallback).
+        let tenc_constant = TrackEncryptionBox {
+            default_per_sample_iv_size: 0,
+            default_constant_iv: Some(alloc::vec![0x42u8; 12]),
+            ..tenc
+        };
+        let entry_empty = SampleEncryptionEntry {
+            initialization_vector: Vec::new(),
+            subsamples: Vec::new(),
+        };
+        let mut data2: Vec<u8> = (0u8..64).collect();
+        let err = cbcs_sample(
+            &tenc_constant,
+            &entry_empty,
+            &KEY,
+            &mut data2,
+            CbcsOp::Decrypt,
+        )
+        .unwrap_err();
+        assert!(matches!(err, Error::InvalidValue { .. }), "got {err:?}");
     }
 
     /// A subsample map covering only part of the sample must error — ISO/IEC

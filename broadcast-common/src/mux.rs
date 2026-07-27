@@ -90,6 +90,13 @@ pub trait Decrypt {
 ///
 /// The inverse of [`Decrypt`]. `Self::Config` describes the protection scheme
 /// to apply (e.g. `cenc`/`cbcs` scheme + key IDs + IV material).
+///
+/// Takes `&mut self`, not `&self`: an implementer whose scheme requires
+/// per-sample IV uniqueness *per key, for all time* (e.g. AES-CTR) generally
+/// cannot make that guarantee across separate calls from a stateless value —
+/// it needs to carry running state (such as a continuing IV counter) forward
+/// from one call to the next. `&mut self` lets an implementer own that state;
+/// one that needs none is free to ignore the mutability.
 pub trait Encrypt {
     /// The in-memory media representation operated on in place.
     type Media;
@@ -99,7 +106,7 @@ pub trait Encrypt {
     type Error;
 
     /// Encrypt the samples in `media` in place per `cfg`.
-    fn encrypt(&self, media: &mut Self::Media, cfg: &Self::Config) -> Result<(), Self::Error>;
+    fn encrypt(&mut self, media: &mut Self::Media, cfg: &Self::Config) -> Result<(), Self::Error>;
 }
 
 #[cfg(test)]
@@ -155,7 +162,11 @@ mod tests {
         type Media = Media;
         type Config = u8;
         type Error = ();
-        fn encrypt(&self, media: &mut Self::Media, cfg: &Self::Config) -> Result<(), Self::Error> {
+        fn encrypt(
+            &mut self,
+            media: &mut Self::Media,
+            cfg: &Self::Config,
+        ) -> Result<(), Self::Error> {
             for t in &mut media.tracks {
                 for b in t {
                     *b ^= *cfg;

@@ -88,7 +88,7 @@ use crate::cenc::{SampleEncryptionEntry, TrackEncryptionBox};
 use crate::cenc_crypto::{self, CbcsOp};
 use crate::error::{Error, Result};
 use crate::media::Media;
-use crate::movie_fragment::{MovieFragmentBox, TrackFragmentHeaderBox};
+use crate::movie_fragment::{MovieFragmentBox, TrackFragmentHeaderBox, TrackFragmentRunBox};
 
 /// Size of a KID / content key / AES-128 key **or block**, in bytes (AES-128's
 /// key length and block length coincide).
@@ -454,8 +454,22 @@ fn parse_senc_box(senc: &[u8], per_sample_iv_size: u8) -> Result<crate::cenc::Sa
 /// [`find_sinf_in_stsd`] locates `sinf` among an `stsd` entry's children.
 ///
 /// A `traf` with no matching protected track (e.g. an unencrypted audio
-/// track) or no `senc` at all (should not happen for a genuinely protected
-/// track, but tolerated rather than treated as fatal) is skipped.
+/// track) is skipped. A `traf` with no `senc` at all is only ever legitimate
+/// for a **constant-IV, whole-sample-protected** track
+/// (`tenc.default_per_sample_iv_size == 0`) — the one shape
+/// [`crate::movie_fragment::protect_media_segment`] (via its private
+/// `build_cenc_fragment_boxes`) deliberately omits `senc`/`saiz`/`saio` for,
+/// since every sample of such a track decrypts from `tenc.default_constant_IV`
+/// alone and there is nothing per-sample for `senc` to carry (ISO/IEC
+/// 23001-7 §12.2/§12.3). That shape needs placeholder entries synthesized
+/// here (one empty IV/subsample-map pair per `trun` sample) so
+/// [`Decrypt::decrypt`]'s per-track sample-count pairing still lines up —
+/// otherwise a legitimately senc-less fragment would fail with the generic
+/// "sample count mismatch" error despite being fully decryptable. For any
+/// other track (`default_per_sample_iv_size != 0`), a missing `senc` should
+/// not happen for a genuinely protected track; it is tolerated here rather
+/// than treated as fatal, and the same sample-count check downstream will
+/// still catch it.
 fn harvest_fragment_senc(file: &[u8], tracks: &mut [TrackCrypto]) -> Result<()> {
     for moof in iter_top_boxes(file, b"moof") {
         for traf in iter_child_boxes(moof, b"traf") {
@@ -479,14 +493,52 @@ fn harvest_fragment_senc(file: &[u8], tracks: &mut [TrackCrypto]) -> Result<()> 
                 // unencrypted audio track alongside a protected video track).
                 continue;
             };
-            let Some(senc) = find_box(traf, b"senc") else {
-                continue;
-            };
-            let senc_parsed = parse_senc_box(senc, crypto.tenc.default_per_sample_iv_size)?;
-            crypto.samples.extend(senc_parsed.entries);
+            match find_box(traf, b"senc") {
+                Some(senc) => {
+                    let senc_parsed = parse_senc_box(senc, crypto.tenc.default_per_sample_iv_size)?;
+                    crypto.samples.extend(senc_parsed.entries);
+                }
+                None if crypto.tenc.default_per_sample_iv_size == 0 => {
+                    let sample_count = traf_trun_sample_count(traf)?;
+                    crypto.samples.extend(
+                        core::iter::repeat_with(|| SampleEncryptionEntry {
+                            initialization_vector: Vec::new(),
+                            subsamples: Vec::new(),
+                        })
+                        .take(sample_count),
+                    );
+                }
+                None => {
+                    // Should not happen for a genuinely protected,
+                    // per-sample-IV track; the sample-count mismatch check in
+                    // `Decrypt::decrypt` will catch it.
+                }
+            }
         }
     }
     Ok(())
+}
+
+/// Sum every `trun`'s sample count inside one `traf` (ISO/IEC 14496-12:2015
+/// §8.8.8) — used only to synthesize placeholder `senc` entries for a
+/// legitimately senc-less constant-IV/whole-sample fragment (see
+/// [`harvest_fragment_senc`]).
+fn traf_trun_sample_count(traf: &[u8]) -> Result<usize> {
+    let mut total = 0usize;
+    for trun in
+        iter_boxes(&traf[BOX_HEADER_MIN_SIZE.min(traf.len())..]).filter(|b| &b[4..8] == b"trun")
+    {
+        if trun.len() < BOX_HEADER_MIN_SIZE {
+            return Err(Error::BufferTooShort {
+                need: BOX_HEADER_MIN_SIZE,
+                have: trun.len(),
+                what: "trun header",
+            });
+        }
+        let parsed = TrackFragmentRunBox::parse_body(&trun[BOX_HEADER_MIN_SIZE..])?;
+        total += parsed.samples.len();
+    }
+    Ok(total)
 }
 
 /// Find the `sinf` box nested inside the (first) `encv`/`enca` sample entry of

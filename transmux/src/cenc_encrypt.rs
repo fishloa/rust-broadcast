@@ -11,6 +11,20 @@
 //! [`crate::cenc_decrypt::CencDecryptor::from_fmp4`] recovers from an
 //! already-protected file (the two are duals).
 //!
+//! # IV uniqueness is per *key*, for all time
+//!
+//! AES-CTR (`cenc`) requires every sample ciphered under one content key to
+//! use a distinct IV — not just within one [`Encrypt::encrypt`] call, but
+//! across *every* call ever made with that key (ISO/IEC 23001-7 §9.2). A
+//! [`CencEncryptor`] is therefore a **stateful** value bound to one content
+//! key ([`CencEncryptor::new`]): [`IvGen::Counter`]'s running index lives on
+//! the encryptor instance, not in [`EncryptConfig`], so calling `encrypt`
+//! twice on the *same* instance continues the counter instead of restarting
+//! it — reuse *one* instance across every call sharing a key (video-only +
+//! audio-only splits of one asset, successive live segments, …). See
+//! [`CencEncryptor`]'s own docs for the caller obligation this does and does
+//! not enforce.
+//!
 //! # Subsample map
 //!
 //! For an AVC/HEVC/VVC (NAL-carried) track under [`SubsamplePolicy::Video`],
@@ -76,7 +90,7 @@ const VALID_EXPLICIT_IV_LENS: [usize; 2] = [8, 16];
 
 /// How to derive each sample's initialization vector.
 ///
-/// # IV uniqueness is per *key*, not per track
+/// # IV uniqueness is per *key*, not per track — and not per call
 ///
 /// ISO/IEC 23001-7 §9.2 requires each sample's IV to be unique for the
 /// **content key** it is used with. One [`EncryptConfig`] carries one key and
@@ -84,24 +98,27 @@ const VALID_EXPLICIT_IV_LENS: [usize; 2] = [8, 16];
 /// is **not** sufficient: under `cenc` (AES-CTR) two samples sharing a key and
 /// a counter block produce ciphertexts whose XOR is the XOR of their
 /// plaintexts — a two-time pad that discloses both without the key. Every
-/// variant below is therefore indexed/counted across the **whole `Media`**, and
+/// variant below is therefore indexed/counted across the **whole `Media`** of
+/// one [`Encrypt::encrypt`] call — and, for [`IvGen::Counter`], across every
+/// call ever made on the same [`CencEncryptor`] instance (see that type's
+/// docs): uniqueness does not reset just because a second call started.
 /// [`CencEncryptor::encrypt`] additionally rejects any duplicate per-sample IV
-/// it is about to use.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// it is about to use, *before* ciphering a single byte.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 #[non_exhaustive]
 pub enum IvGen {
-    /// Per-sample 8-byte IV = big-endian `base + sample_index`, where
+    /// Per-sample 8-byte IV = big-endian `next_counter + sample_index`, where
     /// `sample_index` runs **continuously across every track** of the
-    /// [`Media`] in (track, sample) order — it does *not* restart at `base`
-    /// for each track (see this enum's docs: that would reuse one AES-CTR
-    /// keystream between, say, video sample *i* and audio sample *i*). The
-    /// cipher core zero-pads the 8 bytes to a 16-byte counter block. The
-    /// default.
-    Counter {
-        /// The first sample's IV value; each following sample — in any track —
-        /// increments by 1.
-        base: u64,
-    },
+    /// [`Media`] in (track, sample) order — it does *not* restart per track
+    /// (see this enum's docs: that would reuse one AES-CTR keystream between,
+    /// say, video sample *i* and audio sample *i*) — and `next_counter` is
+    /// the encrypting [`CencEncryptor`] instance's own running index, which it
+    /// advances after every successful call rather than resetting to a
+    /// caller-supplied `base` (see that type's docs for why the counter lives
+    /// there and not here). The cipher core zero-pads the 8 bytes to a
+    /// 16-byte counter block. The default.
+    #[default]
+    Counter,
     /// Caller-supplied per-sample IVs, one per sample of the **whole
     /// `Media`**: exactly `media.tracks.iter().map(|t| t.samples.len()).sum()`
     /// entries, consumed in (track, sample) order (track 0's samples first,
@@ -136,12 +153,6 @@ pub enum IvGen {
     Constant([u8; KEY_LEN]),
 }
 
-impl Default for IvGen {
-    fn default() -> Self {
-        IvGen::Counter { base: 0 }
-    }
-}
-
 /// How the protected byte ranges (subsample map) of each sample are chosen.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
@@ -155,6 +166,12 @@ pub enum SubsamplePolicy {
 }
 
 /// Configuration for [`CencEncryptor::encrypt`].
+///
+/// Does **not** carry the content key: the key lives on the [`CencEncryptor`]
+/// instance itself ([`CencEncryptor::new`]), since one encryptor is bound to
+/// one key for its whole lifetime (see that type's docs) — a per-call `key`
+/// field here would let a caller silently pair one running [`IvGen::Counter`]
+/// with a *different* key from call to call, which is exactly backwards.
 #[derive(Debug, Clone)]
 pub struct EncryptConfig {
     /// The protection scheme to apply (`cenc` AES-CTR or `cbcs` AES-CBC
@@ -162,10 +179,7 @@ pub struct EncryptConfig {
     pub scheme: CencScheme,
     /// The 16-byte Key ID recorded in `tenc.default_KID`.
     pub kid: [u8; KEY_LEN],
-    /// The 16-byte AES-128 content key used to protect every sample.
-    pub key: [u8; KEY_LEN],
-    /// How each sample's IV is derived. Defaults to [`IvGen::Counter`] with
-    /// `base: 0`.
+    /// How each sample's IV is derived. Defaults to [`IvGen::Counter`].
     pub iv: IvGen,
     /// `cbcs` pattern (`crypt_byte_block`, `skip_byte_block`); defaults to
     /// `1:9` when `None`. Ignored for `cenc`.
@@ -176,8 +190,80 @@ pub struct EncryptConfig {
 
 /// Applies CENC/CBCS sample protection to a [`Media`], implementing
 /// [`Encrypt`] — the inverse of [`crate::cenc_decrypt::CencDecryptor`].
-#[derive(Debug, Clone, Copy, Default)]
-pub struct CencEncryptor;
+///
+/// # Bound to one key, for the life of the instance
+///
+/// AES-CTR IV uniqueness is a property of the **key**, not of any one
+/// `encrypt` call (see the module docs and [`IvGen`]'s). A `CencEncryptor` is
+/// therefore constructed with its content key ([`CencEncryptor::new`]) and
+/// carries the running [`IvGen::Counter`] index as its own state, advancing
+/// it after every successful `encrypt` rather than restarting at a
+/// caller-supplied base each time — reuse *one* instance across every call
+/// that shares a key (e.g. a video-only pass then an audio-only pass over the
+/// same asset, or successive segments of one live key period).
+///
+/// This closes the two-time-pad this type previously permitted when used as
+/// a stateless, `Default`-constructed unit value (fixed in 0.20.0): calling
+/// `CencEncryptor::new(key).encrypt(...)` a second time for a *different*
+/// call that shares `key` used to restart the counter at the config's `base`,
+/// silently reproducing the exact keystream-reuse defect this type exists to
+/// prevent within one call.
+///
+/// **What this does not (and structurally cannot) enforce**: constructing
+/// *two* separate `CencEncryptor::new(key)` instances with the *same* `key`
+/// still collides — each starts its own counter at 0 — because the type has
+/// no way to know another instance ever used `key` before. Reusing one
+/// instance's counter, never re-deriving a "fresh" one for a key already in
+/// use, is the caller's obligation; [`CencEncryptor::resume`] exists for the
+/// one legitimate case that looks like a fresh instance (recovering
+/// in-process state across e.g. a process restart, from a persisted
+/// `next_counter()`).
+#[derive(Debug)]
+pub struct CencEncryptor {
+    /// The AES-128 content key every `encrypt` call on this instance uses.
+    key: [u8; KEY_LEN],
+    /// The next [`IvGen::Counter`] value this instance will hand out — the
+    /// running index described above. Unused (and unadvanced) by
+    /// [`IvGen::Explicit`]/[`IvGen::Constant`] calls.
+    next_counter: u64,
+}
+
+impl CencEncryptor {
+    /// Construct a fresh encryptor bound to `key`, with its
+    /// [`IvGen::Counter`] index starting at `0`.
+    ///
+    /// Reuse the returned value across every `encrypt` call that shares
+    /// `key` — see this type's docs for why constructing a second
+    /// `CencEncryptor::new(key)` with the same `key` reintroduces the
+    /// two-time pad this type exists to prevent.
+    pub fn new(key: [u8; KEY_LEN]) -> Self {
+        Self {
+            key,
+            next_counter: 0,
+        }
+    }
+
+    /// Construct an encryptor bound to `key`, resuming its [`IvGen::Counter`]
+    /// index at `next_counter` instead of `0`.
+    ///
+    /// For recovering an in-process encryptor's state across a boundary that
+    /// doesn't preserve the Rust value itself (e.g. a process restart in a
+    /// live-streaming pipeline) from a previously observed
+    /// [`CencEncryptor::next_counter`] — **not** a substitute for reusing one
+    /// instance in the common case, and not a safe way to "pick up" someone
+    /// else's counter unless `next_counter` is known to be past every IV that
+    /// instance ever produced for `key`.
+    pub fn resume(key: [u8; KEY_LEN], next_counter: u64) -> Self {
+        Self { key, next_counter }
+    }
+
+    /// The next [`IvGen::Counter`] value this instance will hand out.
+    /// Snapshot this (alongside the key, out of band) to reconstruct
+    /// equivalent state later via [`CencEncryptor::resume`].
+    pub fn next_counter(&self) -> u64 {
+        self.next_counter
+    }
+}
 
 impl Encrypt for CencEncryptor {
     type Media = Media;
@@ -187,22 +273,43 @@ impl Encrypt for CencEncryptor {
     /// Encrypt every track's samples in `media` in place per `cfg`, recording
     /// the resulting crypto metadata onto each [`crate::media::Track::encryption`].
     ///
-    /// A single [`EncryptConfig`] (scheme/KID/key) is applied uniformly to
-    /// every track in `media`. Because that one content key covers every
-    /// track, the per-sample IV must be unique across the **whole `Media`**
-    /// (ISO/IEC 23001-7 §9.2) — see [`IvGen`]. This method enforces that three
-    /// ways, all *before* any cipher work touches a sample:
+    /// `cfg` (scheme/KID/IV mode/pattern/subsample policy) is applied
+    /// uniformly to every track in `media`, ciphered with `self`'s bound
+    /// content key. Because that one key covers every track — and, for
+    /// [`IvGen::Counter`], every call ever made on `self` (see
+    /// [`CencEncryptor`]'s docs) — the per-sample IV must be unique across
+    /// all of it (ISO/IEC 23001-7 §9.2). This method enforces that in two
+    /// phases, fully separated so the second can never run against stale or
+    /// drifted data:
     ///
-    /// 1. [`IvGen::Counter`]'s sample index runs continuously across tracks.
-    /// 2. [`IvGen::Explicit`] must supply exactly one IV per sample of the
-    ///    whole `Media`, and no two may be equal.
-    /// 3. [`IvGen::Constant`] is rejected under [`CencScheme::Cenc`] outright
-    ///    (a constant AES-CTR counter is a keystream repeat by construction).
+    /// 1. **Plan, then validate — before ciphering anything.** An internal
+    ///    validation pass checks [`IvGen::Explicit`]'s count/length and
+    ///    [`IvGen::Counter`]'s overflow bound; an internal planning pass then
+    ///    resolves the *exact* IV every sample of `media` will use (in
+    ///    (track, sample) order, continuously across tracks); a final
+    ///    internal check rejects that plan outright if it contains any
+    ///    duplicate. Only a plan that passes is ever handed to the cipher —
+    ///    the same values, not a value recomputed afterwards that could
+    ///    drift from what was checked.
+    /// 2. **Cipher from the validated plan.** The main loop consumes
+    ///    `plan[track][sample]` directly to build each
+    ///    [`crate::cenc::SampleEncryptionEntry`] and to seed the cipher core —
+    ///    it never calls IV resolution again, so there is no path by which
+    ///    the recorded IV can differ from the one the uniqueness check saw.
     ///
-    /// A final backstop then re-checks every *recorded* per-sample IV for
-    /// duplicates once the pass completes, so no future change to the index
-    /// bookkeeping can silently reintroduce keystream reuse.
-    fn encrypt(&self, media: &mut Media, cfg: &EncryptConfig) -> Result<()> {
+    /// A configuration this rejects — at either phase — leaves `media`
+    /// byte-identical to its input: no track's samples are touched, and no
+    /// `Track::encryption` is populated, until the *whole* plan is proven
+    /// duplicate-free. This is the fix for the original backstop's timing
+    /// bug: a check with the same purpose used to run only after every track
+    /// had already been keystreamed in place, so a reintroduced per-track
+    /// index reset (the original vulnerability) rejected the config but left
+    /// `media` two-time-padded with no rollback.
+    ///
+    /// [`IvGen::Constant`] is rejected outright under [`CencScheme::Cenc`] (a
+    /// constant AES-CTR counter is a keystream repeat by construction), also
+    /// before anything else is validated or touched.
+    fn encrypt(&mut self, media: &mut Media, cfg: &EncryptConfig) -> Result<()> {
         if cfg.scheme == CencScheme::Cenc && matches!(cfg.iv, IvGen::Constant(_)) {
             return Err(Error::InvalidInput(
                 "IvGen::Constant is cbcs-only: a constant IV under cenc (AES-CTR) derives one \
@@ -234,31 +341,33 @@ impl Encrypt for CencEncryptor {
             default_constant_iv,
         };
 
-        // IV uniqueness spans the whole `Media`, so every count/length/dedup
-        // check is done against the total sample count across all tracks —
-        // and done here, before the first sample is ciphered, so a rejected
+        // IV uniqueness spans the whole `Media` (and, for `Counter`, every
+        // prior call on `self`), so every count/length/overflow check is
+        // done up front, before the first sample is ciphered — a rejected
         // config leaves `media` untouched rather than half-encrypted.
         let total_samples: usize = media.tracks.iter().map(|t| t.samples.len()).sum();
-        validate_iv_gen(&cfg.iv, total_samples)?;
+        self.validate_iv_gen(&cfg.iv, total_samples)?;
 
-        // Sample index for [`IvGen`], running continuously across every track
-        // (NOT reset per track — that is exactly the keystream-reuse defect
-        // this counter's scope guards against).
-        let mut media_sample_idx = 0usize;
-        for track in &mut media.tracks {
+        // F1 fix: resolve the *entire* planned (track, sample) -> IV mapping
+        // first, and validate that plan for duplicates before a single
+        // sample is touched. The main loop below then consumes this exact
+        // plan (never re-resolving), so what was validated and what gets
+        // recorded/ciphered can never drift apart.
+        let plan = self.plan_sample_ivs(media, &cfg.iv)?;
+        assert_ivs_unique(&plan)?;
+
+        for (track, track_ivs) in media.tracks.iter_mut().zip(plan.iter()) {
             let nal_codec = nal_codec_for(&track.spec.config);
             let sample_count = track.samples.len();
             let mut entries = Vec::with_capacity(sample_count);
 
-            for sample in track.samples.iter_mut() {
-                let iv = resolve_iv(&cfg.iv, media_sample_idx)?;
-                media_sample_idx += 1;
+            for (sample, iv) in track.samples.iter_mut().zip(track_ivs.iter()) {
                 let subsamples = match (cfg.subsample, nal_codec) {
                     (SubsamplePolicy::Video, Some(codec)) => nal_subsamples(codec, &sample.data)?,
                     _ => Vec::new(),
                 };
                 let entry = SampleEncryptionEntry {
-                    initialization_vector: iv,
+                    initialization_vector: iv.clone(),
                     subsamples,
                 };
 
@@ -266,13 +375,13 @@ impl Encrypt for CencEncryptor {
                     CencScheme::Cenc => cenc_crypto::rewrite_in_place(&mut sample.data, |buf| {
                         cenc_crypto::apply_ctr(
                             &entry.initialization_vector,
-                            &cfg.key,
+                            &self.key,
                             &entry.subsamples,
                             buf,
                         )
                     })?,
                     CencScheme::Cbcs => cenc_crypto::rewrite_in_place(&mut sample.data, |buf| {
-                        cenc_crypto::cbcs_sample(&tenc, &entry, &cfg.key, buf, CbcsOp::Encrypt)
+                        cenc_crypto::cbcs_sample(&tenc, &entry, &self.key, buf, CbcsOp::Encrypt)
                     })?,
                 };
 
@@ -285,94 +394,169 @@ impl Encrypt for CencEncryptor {
                 samples: entries,
             });
         }
-        assert_recorded_ivs_unique(media)?;
+
+        // Only `IvGen::Counter` consumes `self`'s running index; a
+        // successful call using it must never hand out any of these IVs
+        // again, from any future call on `self` (see this type's docs) — the
+        // overflow this could hit was already proven impossible by
+        // `validate_iv_gen` above, using the same starting point.
+        if matches!(cfg.iv, IvGen::Counter) {
+            self.next_counter += total_samples as u64;
+        }
         Ok(())
     }
 }
 
-/// Validate an [`IvGen`] against the total sample count of the whole
-/// [`Media`], before any sample is ciphered.
-///
-/// Checks (a) that [`IvGen::Explicit`] carries exactly one IV per sample of
-/// the *whole* `Media` — not per track (ISO/IEC 23001-7 §9.2: uniqueness is
-/// per key, and one key covers every track), (b) that each IV it will hand the
-/// cipher is a valid length, and (c) that no two IVs are equal. Doing this
-/// up-front keeps `encrypt` atomic for the whole class of IV
-/// misconfiguration: a rejected config never leaves a partially-encrypted
-/// `Media` behind.
-///
-/// [`IvGen::Counter`] needs no set: `base + idx` with a `checked_add` guard is
-/// strictly increasing, hence collision-free by construction.
-/// [`IvGen::Constant`] carries no per-sample IV at all (it lives once in
-/// `tenc.default_constant_IV`), and is `cbcs`-only — where the CBC chain, not
-/// a keystream, depends on it (see [`IvGen::Constant`]).
-fn validate_iv_gen(iv_gen: &IvGen, total_samples: usize) -> Result<()> {
-    match iv_gen {
-        IvGen::Counter { base } => {
-            // Surface the overflow up-front rather than mid-pass.
-            let last = total_samples.saturating_sub(1) as u64;
-            base.checked_add(last).ok_or(Error::InvalidInput(
-                "CENC IV counter overflow (base + sample_index)",
-            ))?;
-            Ok(())
-        }
-        IvGen::Explicit(ivs) => {
-            if ivs.len() != total_samples {
-                return Err(Error::InvalidInput(
-                    "IvGen::Explicit must supply exactly one IV per sample of the whole Media \
-                     (the sum of every track's sample count), consumed in (track, sample) order — \
-                     one content key covers every track, so IV uniqueness is per key, not per track",
-                ));
+impl CencEncryptor {
+    /// Validate an [`IvGen`] against the total sample count of the whole
+    /// [`Media`], before any sample is ciphered or planned.
+    ///
+    /// Checks (a) that [`IvGen::Explicit`] carries exactly one IV per sample
+    /// of the *whole* `Media` — not per track (ISO/IEC 23001-7 §9.2:
+    /// uniqueness is per key, and one key covers every track), (b) that each
+    /// IV it will hand the cipher is a valid length, and (c) that no two IVs
+    /// are equal, and — for [`IvGen::Counter`] — that continuing `self`'s
+    /// running index across `total_samples` more samples cannot overflow.
+    /// Doing this up-front keeps `encrypt` atomic for the whole class of IV
+    /// misconfiguration: a rejected config never leaves a partially-encrypted
+    /// `Media` behind.
+    ///
+    /// [`IvGen::Counter`] needs no duplicate set here: `next_counter + idx`
+    /// with a `checked_add` guard is strictly increasing, hence
+    /// collision-free by construction within this call — [`assert_ivs_unique`]
+    /// is the backstop that catches a future regression in that construction
+    /// (e.g. a reintroduced per-track reset) rather than trusting the math
+    /// alone. [`IvGen::Constant`] carries no per-sample IV at all (it lives
+    /// once in `tenc.default_constant_IV`), and is `cbcs`-only — where the CBC
+    /// chain, not a keystream, depends on it (see [`IvGen::Constant`]).
+    fn validate_iv_gen(&self, iv_gen: &IvGen, total_samples: usize) -> Result<()> {
+        match iv_gen {
+            IvGen::Counter => {
+                // Surface the overflow up-front rather than mid-pass.
+                let last = total_samples.saturating_sub(1) as u64;
+                self.next_counter
+                    .checked_add(last)
+                    .ok_or(Error::InvalidInput(
+                        "CENC IV counter overflow (next_counter + sample_index)",
+                    ))?;
+                Ok(())
             }
-            let mut seen: BTreeSet<&[u8]> = BTreeSet::new();
-            for iv in ivs {
+            IvGen::Explicit(ivs) => {
+                if ivs.len() != total_samples {
+                    return Err(Error::InvalidInput(
+                        "IvGen::Explicit must supply exactly one IV per sample of the whole Media \
+                         (the sum of every track's sample count), consumed in (track, sample) order — \
+                         one content key covers every track, so IV uniqueness is per key, not per track",
+                    ));
+                }
+                let mut seen: BTreeSet<&[u8]> = BTreeSet::new();
+                for iv in ivs {
+                    if !VALID_EXPLICIT_IV_LENS.contains(&iv.len()) {
+                        return Err(Error::InvalidInput(
+                            "CENC per-sample IV must be 8 or 16 bytes",
+                        ));
+                    }
+                    if !seen.insert(iv.as_slice()) {
+                        return Err(Error::InvalidInput(
+                            "duplicate IvGen::Explicit per-sample IV: an IV must be unique per \
+                             content key (ISO/IEC 23001-7 §9.2) — reusing one under cenc (AES-CTR) \
+                             reuses its keystream (two-time pad)",
+                        ));
+                    }
+                }
+                Ok(())
+            }
+            IvGen::Constant(_) => Ok(()),
+        }
+    }
+
+    /// Resolve the **entire** planned per-sample IV sequence for `media`
+    /// under `iv_gen`, in (track, sample) order, continuously across tracks —
+    /// the exact values [`Encrypt::encrypt`] will go on to record and cipher
+    /// with, computed *before* it ciphers anything.
+    ///
+    /// This is the data [`assert_ivs_unique`] validates and the main cipher
+    /// loop consumes directly (never re-resolved), so there is no window in
+    /// which what was checked for uniqueness can differ from what gets used.
+    fn plan_sample_ivs(&self, media: &Media, iv_gen: &IvGen) -> Result<Vec<Vec<Vec<u8>>>> {
+        let mut media_sample_idx = 0usize;
+        let mut plan = Vec::with_capacity(media.tracks.len());
+        for track in &media.tracks {
+            let mut track_ivs = Vec::with_capacity(track.samples.len());
+            for _ in &track.samples {
+                track_ivs.push(self.resolve_iv(iv_gen, media_sample_idx)?);
+                media_sample_idx += 1;
+            }
+            plan.push(track_ivs);
+        }
+        Ok(plan)
+    }
+
+    /// Resolve the per-sample `senc` IV for `idx` — the sample's index within
+    /// the **whole [`Media`]** (see [`IvGen`]), not within its track — from
+    /// the configured [`IvGen`].
+    ///
+    /// Assumes [`Self::validate_iv_gen`] has already checked the list length,
+    /// IV lengths, and overflow bound for this `Media`; the length/overflow
+    /// guards here are kept as a belt-and-braces second line, never the only
+    /// one. [`IvGen::Constant`] resolves to an *empty* IV — its 16-byte seed
+    /// lives only in `tenc.default_constant_IV` (see [`tenc_iv_fields`]),
+    /// never per-sample.
+    fn resolve_iv(&self, iv_gen: &IvGen, idx: usize) -> Result<Vec<u8>> {
+        match iv_gen {
+            IvGen::Counter => {
+                let v = self
+                    .next_counter
+                    .checked_add(idx as u64)
+                    .ok_or(Error::InvalidInput(
+                        "CENC IV counter overflow (next_counter + sample_index)",
+                    ))?;
+                Ok(v.to_be_bytes().to_vec())
+            }
+            IvGen::Explicit(ivs) => {
+                let iv = ivs.get(idx).ok_or(Error::InvalidInput(
+                    "IvGen::Explicit must supply exactly one IV per sample of the whole Media",
+                ))?;
                 if !VALID_EXPLICIT_IV_LENS.contains(&iv.len()) {
                     return Err(Error::InvalidInput(
                         "CENC per-sample IV must be 8 or 16 bytes",
                     ));
                 }
-                if !seen.insert(iv.as_slice()) {
-                    return Err(Error::InvalidInput(
-                        "duplicate IvGen::Explicit per-sample IV: an IV must be unique per \
-                         content key (ISO/IEC 23001-7 §9.2) — reusing one under cenc (AES-CTR) \
-                         reuses its keystream (two-time pad)",
-                    ));
-                }
+                Ok(iv.clone())
             }
-            Ok(())
+            IvGen::Constant(_) => Ok(Vec::new()),
         }
-        IvGen::Constant(_) => Ok(()),
     }
 }
 
-/// Backstop: every per-sample IV *actually recorded* onto the tracks must be
-/// distinct across the whole [`Media`].
+/// Reject any duplicate per-sample IV anywhere in a **planned** IV sequence
+/// (see [`CencEncryptor::plan_sample_ivs`]) — called *before* a single sample
+/// is ciphered.
 ///
-/// [`validate_iv_gen`] already rejects the reachable misconfigurations, so this
-/// can only fire if the generation bookkeeping itself is wrong (e.g. a
-/// per-track index reset — the original defect). It is deliberately a check on
-/// the *output* rather than the input: that makes the whole class of
-/// keystream-reuse bug impossible to reintroduce silently, instead of fixing
-/// the one instance. Cost is one `BTreeSet` of borrowed slices (no IV is
-/// cloned).
+/// [`CencEncryptor::validate_iv_gen`] already rejects the reachable
+/// misconfigurations, so this can only fire if the plan-generation bookkeeping
+/// itself is wrong (e.g. a per-track index reset — the original defect). It is
+/// deliberately a check on the planned *output* rather than trusting the
+/// generator's math: that makes the whole class of keystream-reuse bug
+/// impossible to reintroduce silently, instead of fixing one instance of it —
+/// and, because the plan is the same data the cipher loop then consumes
+/// unmodified, a rejection here happens strictly before `media` is touched.
+/// Cost is one `BTreeSet` of borrowed slices (no IV is cloned).
 ///
 /// [`IvGen::Constant`]'s empty per-sample IVs are skipped: there is no
 /// per-sample IV on the wire at all (it lives once in
 /// `tenc.default_constant_IV`), and that variant is `cbcs`-only.
-fn assert_recorded_ivs_unique(media: &Media) -> Result<()> {
+fn assert_ivs_unique(plan: &[Vec<Vec<u8>>]) -> Result<()> {
     let mut seen: BTreeSet<&[u8]> = BTreeSet::new();
-    for track in &media.tracks {
-        let Some(enc) = track.encryption.as_ref() else {
-            continue;
-        };
-        for entry in &enc.samples {
-            if entry.initialization_vector.is_empty() {
+    for track_ivs in plan {
+        for iv in track_ivs {
+            if iv.is_empty() {
                 continue;
             }
-            if !seen.insert(entry.initialization_vector.as_slice()) {
+            if !seen.insert(iv.as_slice()) {
                 return Err(Error::InvalidInput(
-                    "duplicate CENC per-sample IV recorded across the Media's tracks: an IV must \
-                     be unique per content key (ISO/IEC 23001-7 §9.2), and one EncryptConfig key \
+                    "duplicate CENC per-sample IV planned across the Media's tracks: an IV must \
+                     be unique per content key (ISO/IEC 23001-7 §9.2), and one CencEncryptor key \
                      covers every track — reuse under cenc (AES-CTR) is a two-time pad",
                 ));
             }
@@ -428,45 +612,14 @@ fn nal_subsamples(codec: NalCodec, data: &[u8]) -> Result<Vec<SubSampleEntry>> {
     Ok(out)
 }
 
-/// Resolve the per-sample `senc` IV for `idx` — the sample's index within the
-/// **whole [`Media`]** (see [`IvGen`]), not within its track — from the
-/// configured [`IvGen`].
-///
-/// Assumes [`validate_iv_gen`] has already checked the list length, IV
-/// lengths, and uniqueness for this `Media`; the length/overflow guards here
-/// are kept as a belt-and-braces second line, never the only one.
-/// [`IvGen::Constant`] resolves to an *empty* IV — its 16-byte seed lives only
-/// in `tenc.default_constant_IV` (see [`tenc_iv_fields`]), never per-sample.
-fn resolve_iv(iv_gen: &IvGen, idx: usize) -> Result<Vec<u8>> {
-    match iv_gen {
-        IvGen::Counter { base } => {
-            let v = base.checked_add(idx as u64).ok_or(Error::InvalidInput(
-                "CENC IV counter overflow (base + sample_index)",
-            ))?;
-            Ok(v.to_be_bytes().to_vec())
-        }
-        IvGen::Explicit(ivs) => {
-            let iv = ivs.get(idx).ok_or(Error::InvalidInput(
-                "IvGen::Explicit must supply exactly one IV per sample of the whole Media",
-            ))?;
-            if !VALID_EXPLICIT_IV_LENS.contains(&iv.len()) {
-                return Err(Error::InvalidInput(
-                    "CENC per-sample IV must be 8 or 16 bytes",
-                ));
-            }
-            Ok(iv.clone())
-        }
-        IvGen::Constant(_) => Ok(Vec::new()),
-    }
-}
-
 /// Derive `tenc`'s `(default_per_sample_iv_size, default_constant_IV)` pair
 /// from the chosen [`IvGen`] (ISO/IEC 23001-7 §12.2):
 ///
 /// - [`IvGen::Constant`]: `default_per_sample_iv_size = 0`, `default_constant_IV
 ///   = Some(iv)` — the mandatory pairing when no per-sample IV is carried.
 /// - [`IvGen::Counter`]: `default_per_sample_iv_size = 8` (every counter IV is
-///   an 8-byte big-endian value — see [`resolve_iv`]), no constant IV.
+///   an 8-byte big-endian value — see [`CencEncryptor::resolve_iv`]), no
+///   constant IV.
 /// - [`IvGen::Explicit`]: `default_per_sample_iv_size` is the shared length of
 ///   every supplied IV (checked uniform here, since the wire format has only
 ///   one track-wide size — a per-sample length mismatch would otherwise
@@ -475,12 +628,13 @@ fn resolve_iv(iv_gen: &IvGen, idx: usize) -> Result<Vec<u8>> {
 ///   exactly 8 or 16 bytes — an empty (or any other length) IV would build an
 ///   all-zero or malformed AES-CTR/CBC counter (a two-time-pad, in the
 ///   all-zero case). An empty list falls back to the 8-byte default (there is
-///   no sample to measure; [`validate_iv_gen`] will itself reject the count
-///   mismatch against the `Media`'s real total sample count).
+///   no sample to measure; [`CencEncryptor::validate_iv_gen`] will itself
+///   reject the count mismatch against the `Media`'s real total sample
+///   count).
 fn tenc_iv_fields(iv_gen: &IvGen) -> Result<(u8, Option<Vec<u8>>)> {
     match iv_gen {
         IvGen::Constant(iv) => Ok((0, Some(iv.to_vec()))),
-        IvGen::Counter { .. } => Ok((PER_SAMPLE_IV_SIZE, None)),
+        IvGen::Counter => Ok((PER_SAMPLE_IV_SIZE, None)),
         IvGen::Explicit(ivs) => {
             let len = match ivs.first() {
                 Some(first) => {
@@ -611,12 +765,13 @@ mod tests {
         let cfg = EncryptConfig {
             scheme: CencScheme::Cenc,
             kid: KID,
-            key: KEY,
-            iv: IvGen::Counter { base: 7 },
+            iv: IvGen::Counter,
             pattern: None,
             subsample: SubsamplePolicy::Video,
         };
-        CencEncryptor.encrypt(&mut media, &cfg).expect("encrypt");
+        CencEncryptor::resume(KEY, 7)
+            .encrypt(&mut media, &cfg)
+            .expect("encrypt");
 
         let track = &mut media.tracks[0];
         let enc = track.encryption.clone().expect("track.encryption Some");
@@ -653,12 +808,13 @@ mod tests {
         let cfg = EncryptConfig {
             scheme: CencScheme::Cbcs,
             kid: KID,
-            key: KEY,
-            iv: IvGen::Counter { base: 0 },
+            iv: IvGen::Counter,
             pattern: Some((1, 9)),
             subsample: SubsamplePolicy::Video,
         };
-        CencEncryptor.encrypt(&mut media, &cfg).expect("encrypt");
+        CencEncryptor::new(KEY)
+            .encrypt(&mut media, &cfg)
+            .expect("encrypt");
 
         let track = &mut media.tracks[0];
         let enc = track.encryption.clone().expect("track.encryption Some");
@@ -692,12 +848,13 @@ mod tests {
         let cfg = EncryptConfig {
             scheme: CencScheme::Cenc,
             kid: KID,
-            key: KEY,
             iv: IvGen::default(),
             pattern: None,
             subsample: SubsamplePolicy::WholeSample,
         };
-        CencEncryptor.encrypt(&mut media, &cfg).expect("encrypt");
+        CencEncryptor::new(KEY)
+            .encrypt(&mut media, &cfg)
+            .expect("encrypt");
         let enc = media.tracks[0].encryption.as_ref().expect("Some");
         assert!(
             enc.samples.iter().all(|e| e.subsamples.is_empty()),
@@ -713,12 +870,13 @@ mod tests {
         let cfg = EncryptConfig {
             scheme: CencScheme::Cenc,
             kid: KID,
-            key: KEY,
             iv: IvGen::Explicit(alloc::vec![alloc::vec![0u8; 8]; n - 1]),
             pattern: None,
             subsample: SubsamplePolicy::WholeSample,
         };
-        let err = CencEncryptor.encrypt(&mut media, &cfg).unwrap_err();
+        let err = CencEncryptor::new(KEY)
+            .encrypt(&mut media, &cfg)
+            .unwrap_err();
         assert!(matches!(err, Error::InvalidInput(_)));
     }
 
@@ -729,12 +887,13 @@ mod tests {
         let cfg = EncryptConfig {
             scheme: CencScheme::Cenc,
             kid: KID,
-            key: KEY,
             iv: IvGen::Explicit(alloc::vec![alloc::vec![0u8; 17]; n]),
             pattern: None,
             subsample: SubsamplePolicy::WholeSample,
         };
-        let err = CencEncryptor.encrypt(&mut media, &cfg).unwrap_err();
+        let err = CencEncryptor::new(KEY)
+            .encrypt(&mut media, &cfg)
+            .unwrap_err();
         assert!(matches!(err, Error::InvalidInput(_)));
     }
 
@@ -749,12 +908,13 @@ mod tests {
         let cfg = EncryptConfig {
             scheme: CencScheme::Cenc,
             kid: KID,
-            key: KEY,
             iv: IvGen::Explicit(alloc::vec![alloc::vec![]; n]),
             pattern: None,
             subsample: SubsamplePolicy::WholeSample,
         };
-        let err = CencEncryptor.encrypt(&mut media, &cfg).unwrap_err();
+        let err = CencEncryptor::new(KEY)
+            .encrypt(&mut media, &cfg)
+            .unwrap_err();
         assert!(matches!(err, Error::InvalidInput(_)));
     }
 
@@ -768,12 +928,13 @@ mod tests {
         let cfg = EncryptConfig {
             scheme: CencScheme::Cenc,
             kid: KID,
-            key: KEY,
             iv: IvGen::Explicit(alloc::vec![alloc::vec![0u8; 12]; n]),
             pattern: None,
             subsample: SubsamplePolicy::WholeSample,
         };
-        let err = CencEncryptor.encrypt(&mut media, &cfg).unwrap_err();
+        let err = CencEncryptor::new(KEY)
+            .encrypt(&mut media, &cfg)
+            .unwrap_err();
         assert!(matches!(err, Error::InvalidInput(_)));
     }
 
@@ -788,12 +949,11 @@ mod tests {
             let cfg = EncryptConfig {
                 scheme: CencScheme::Cenc,
                 kid: KID,
-                key: KEY,
                 iv: IvGen::Explicit(distinct_ivs(n, len)),
                 pattern: None,
                 subsample: SubsamplePolicy::WholeSample,
             };
-            CencEncryptor
+            CencEncryptor::new(KEY)
                 .encrypt(&mut media, &cfg)
                 .unwrap_or_else(|e| panic!("{len}-byte explicit IV must be accepted: {e:?}"));
             let enc = media.tracks[0].encryption.as_ref().expect("Some");
@@ -814,12 +974,13 @@ mod tests {
         let cfg = EncryptConfig {
             scheme: CencScheme::Cbcs,
             kid: KID,
-            key: KEY,
-            iv: IvGen::Counter { base: 0 },
+            iv: IvGen::Counter,
             pattern: Some((0, 9)),
             subsample: SubsamplePolicy::Video,
         };
-        let err = CencEncryptor.encrypt(&mut media, &cfg).unwrap_err();
+        let err = CencEncryptor::new(KEY)
+            .encrypt(&mut media, &cfg)
+            .unwrap_err();
         assert!(matches!(err, Error::InvalidInput(_)));
     }
 
@@ -833,12 +994,13 @@ mod tests {
         let cfg = EncryptConfig {
             scheme: CencScheme::Cbcs,
             kid: KID,
-            key: KEY,
-            iv: IvGen::Counter { base: 0 },
+            iv: IvGen::Counter,
             pattern: Some((17, 9)),
             subsample: SubsamplePolicy::Video,
         };
-        let err = CencEncryptor.encrypt(&mut media, &cfg).unwrap_err();
+        let err = CencEncryptor::new(KEY)
+            .encrypt(&mut media, &cfg)
+            .unwrap_err();
         assert!(matches!(err, Error::InvalidInput(_)));
     }
 
@@ -860,8 +1022,7 @@ mod tests {
             let cfg = EncryptConfig {
                 scheme,
                 kid: KID,
-                key: KEY,
-                iv: IvGen::Counter { base: 3 },
+                iv: IvGen::Counter,
                 pattern: if scheme == CencScheme::Cbcs {
                     Some((1, 9))
                 } else {
@@ -869,7 +1030,7 @@ mod tests {
                 },
                 subsample: SubsamplePolicy::Video,
             };
-            CencEncryptor
+            CencEncryptor::resume(KEY, 3)
                 .encrypt(&mut media, &cfg)
                 .unwrap_or_else(|e| panic!("{}: encrypt: {e:?}", scheme.name()));
             assert_ne!(
@@ -919,12 +1080,13 @@ mod tests {
         let cfg = EncryptConfig {
             scheme: CencScheme::Cenc,
             kid: KID,
-            key: KEY,
-            iv: IvGen::Counter { base: BASE },
+            iv: IvGen::Counter,
             pattern: None,
             subsample: SubsamplePolicy::WholeSample,
         };
-        CencEncryptor.encrypt(&mut media, &cfg).expect("encrypt");
+        CencEncryptor::resume(KEY, BASE)
+            .encrypt(&mut media, &cfg)
+            .expect("encrypt");
 
         let ivs: Vec<Vec<u8>> = media
             .tracks
@@ -962,12 +1124,13 @@ mod tests {
         let cfg = EncryptConfig {
             scheme: CencScheme::Cenc,
             kid: KID,
-            key: KEY,
             iv: IvGen::Constant([0x5Au8; KEY_LEN]),
             pattern: None,
             subsample: SubsamplePolicy::WholeSample,
         };
-        let err = CencEncryptor.encrypt(&mut media, &cfg).unwrap_err();
+        let err = CencEncryptor::new(KEY)
+            .encrypt(&mut media, &cfg)
+            .unwrap_err();
         assert!(matches!(err, Error::InvalidInput(_)));
         assert_eq!(snapshot_all(&media), original, "no sample may be ciphered");
         assert!(media.tracks.iter().all(|t| t.encryption.is_none()));
@@ -984,48 +1147,175 @@ mod tests {
         let cfg = EncryptConfig {
             scheme: CencScheme::Cenc,
             kid: KID,
-            key: KEY,
             // The old per-track meaning: one IV per sample of track 0 only.
             iv: IvGen::Explicit(distinct_ivs(first_track_len, 8)),
             pattern: None,
             subsample: SubsamplePolicy::WholeSample,
         };
-        let err = CencEncryptor.encrypt(&mut media, &cfg).unwrap_err();
+        let err = CencEncryptor::new(KEY)
+            .encrypt(&mut media, &cfg)
+            .unwrap_err();
         assert!(matches!(err, Error::InvalidInput(_)));
         assert_eq!(snapshot_all(&media), original, "no sample may be ciphered");
         assert!(media.tracks.iter().all(|t| t.encryption.is_none()));
     }
 
-    /// The output-side backstop bites: a `Media` whose recorded per-sample IVs
-    /// repeat across tracks is rejected. Built by hand (the only way to reach
-    /// it now that generation is correct) to prove the guard is real rather
-    /// than dead code — it is what makes a future reintroduction of the
-    /// per-track index reset fail loudly instead of silently.
+    /// The pre-cipher plan-uniqueness backstop bites: a **planned** IV
+    /// sequence (see [`CencEncryptor::plan_sample_ivs`]) that repeats an IV
+    /// across tracks is rejected by [`assert_ivs_unique`] — the exact shape a
+    /// reintroduced per-track index reset (the original defect) would
+    /// produce. Built by hand (the only way to reach it now that generation
+    /// is correct) to prove the guard is real rather than dead code; it is
+    /// what makes a future reintroduction of that defect fail loudly, and —
+    /// because it runs on the plan *before* any cipher work — fail before
+    /// `media` is ever touched (see
+    /// [`planned_ivs_are_validated_before_any_sample_is_touched`] for the
+    /// end-to-end proof of that ordering).
     #[test]
-    fn recorded_duplicate_ivs_are_rejected_by_the_backstop() {
+    fn planned_duplicate_ivs_are_rejected_before_ciphering() {
+        // Two tracks; track 1's plan replays track 0's first IV instead of
+        // continuing from where track 0 left off — exactly what a per-track
+        // counter reset produces.
+        let dup = alloc::vec![0u8, 0, 0, 0, 0, 0, 0, 1];
+        let plan: Vec<Vec<Vec<u8>>> = alloc::vec![
+            alloc::vec![dup.clone(), alloc::vec![0u8, 0, 0, 0, 0, 0, 0, 2]],
+            alloc::vec![dup],
+        ];
+        let err = assert_ivs_unique(&plan).unwrap_err();
+        assert!(matches!(err, Error::InvalidInput(_)));
+
+        // A correctly-generated (strictly increasing, Media-wide) plan must
+        // pass unchanged.
+        let good_plan: Vec<Vec<Vec<u8>>> = alloc::vec![
+            alloc::vec![
+                alloc::vec![0u8, 0, 0, 0, 0, 0, 0, 0],
+                alloc::vec![0u8, 0, 0, 0, 0, 0, 0, 1],
+            ],
+            alloc::vec![alloc::vec![0u8, 0, 0, 0, 0, 0, 0, 2]],
+        ];
+        assert!(
+            assert_ivs_unique(&good_plan).is_ok(),
+            "a correctly Media-wide-continuous plan must pass the backstop"
+        );
+    }
+
+    /// **F1 regression, end to end**: a `Media` whose `encrypt()` call is
+    /// rejected (a wrong `IvGen::Explicit` count, one of the plan-validation
+    /// failure modes) leaves every sample byte-identical to the input — no
+    /// track partially keystreamed. This exercises the real
+    /// [`Encrypt::encrypt`] entry point (not [`assert_ivs_unique`] in
+    /// isolation, which [`planned_duplicate_ivs_are_rejected_before_ciphering`]
+    /// covers), so it pins the property the whole plan-then-cipher restructure
+    /// exists for: planning and validating happen entirely before the cipher
+    /// loop, so a rejected plan can never leave a half-encrypted `Media`
+    /// behind. See also [`rejected_explicit_iv_list_leaves_media_untouched`]
+    /// and [`constant_iv_under_cenc_errors_and_leaves_media_untouched`] above,
+    /// which pin the same property for the other two rejection paths
+    /// ([`IvGen::Explicit`]'s per-track-sized list and [`IvGen::Constant`]
+    /// under `cenc`).
+    #[test]
+    fn planned_ivs_are_validated_before_any_sample_is_touched() {
         let mut media = multi_track_media();
+        let original = snapshot_all(&media);
+        let n = media.tracks[0].samples.len();
+        assert!(n > 1, "fixture must have more than one sample to bite");
         let cfg = EncryptConfig {
             scheme: CencScheme::Cenc,
             kid: KID,
-            key: KEY,
-            iv: IvGen::Counter { base: 0 },
+            iv: IvGen::Explicit(distinct_ivs(n - 1, 8)), // wrong total count
             pattern: None,
             subsample: SubsamplePolicy::WholeSample,
         };
-        CencEncryptor.encrypt(&mut media, &cfg).expect("encrypt");
+        let err = CencEncryptor::new(KEY)
+            .encrypt(&mut media, &cfg)
+            .unwrap_err();
+        assert!(matches!(err, Error::InvalidInput(_)));
+        assert_eq!(
+            snapshot_all(&media),
+            original,
+            "a rejected plan must leave every track's samples byte-identical"
+        );
+        assert!(media.tracks.iter().all(|t| t.encryption.is_none()));
+    }
+
+    /// **F2 regression test.** Two successive `encrypt()` calls on the SAME
+    /// [`CencEncryptor`] instance (hence the same content key) — the shape a
+    /// video-only + audio-only split of one asset, or successive live
+    /// segments under one key period, actually produces — must never repeat
+    /// a per-sample IV. Before this fix, [`IvGen::Counter`]'s `base` lived in
+    /// `EncryptConfig` and was always whatever the caller passed (`0` via
+    /// [`IvGen::default`]), so two calls sharing a key and using the default
+    /// reproduced the exact two-time pad this type exists to prevent within
+    /// one call. Now the running counter lives on the [`CencEncryptor`]
+    /// instance and advances after each call, so reusing the instance
+    /// continues instead of restarting.
+    #[test]
+    fn successive_encrypt_calls_on_one_instance_produce_disjoint_ivs() {
+        let cfg = EncryptConfig {
+            scheme: CencScheme::Cenc,
+            kid: KID,
+            iv: IvGen::Counter,
+            pattern: None,
+            subsample: SubsamplePolicy::WholeSample,
+        };
+
+        let mut enc = CencEncryptor::new(KEY);
+
+        let mut media_a = clear_media();
+        enc.encrypt(&mut media_a, &cfg).expect("first encrypt");
+        let ivs_a: alloc::collections::BTreeSet<Vec<u8>> = media_a.tracks[0]
+            .encryption
+            .as_ref()
+            .expect("Some")
+            .samples
+            .iter()
+            .map(|e| e.initialization_vector.clone())
+            .collect();
+
+        let mut media_b = clear_media();
+        enc.encrypt(&mut media_b, &cfg)
+            .expect("second encrypt, same instance/key");
+        let ivs_b: alloc::collections::BTreeSet<Vec<u8>> = media_b.tracks[0]
+            .encryption
+            .as_ref()
+            .expect("Some")
+            .samples
+            .iter()
+            .map(|e| e.initialization_vector.clone())
+            .collect();
+
         assert!(
-            assert_recorded_ivs_unique(&media).is_ok(),
-            "correctly-generated IVs must pass the backstop"
+            ivs_a.is_disjoint(&ivs_b),
+            "two encrypt() calls sharing one CencEncryptor (hence one key) must never reuse an \
+             IV — a shared IV under one key is a two-time pad (ISO/IEC 23001-7 §9.2)"
         );
 
-        // Replay track 0's first IV into track 1 — exactly the shape a
-        // per-track counter reset produces.
-        let dup = media.tracks[0].encryption.as_ref().expect("Some").samples[0]
-            .initialization_vector
-            .clone();
-        media.tracks[1].encryption.as_mut().expect("Some").samples[0].initialization_vector = dup;
-        let err = assert_recorded_ivs_unique(&media).unwrap_err();
-        assert!(matches!(err, Error::InvalidInput(_)));
+        // The documented residual: a FRESH `CencEncryptor::new(KEY)` (the
+        // pre-fix shape every call used to be, via `IvGen::default()`
+        // restarting at `base: 0`) reproduces media_a's exact IV set —
+        // proving the fix is "reuse one instance per key", not some property
+        // of the fixture, and that constructing a second fresh instance for
+        // a key already in use is a caller error this type documents but
+        // cannot detect.
+        let mut media_c = clear_media();
+        CencEncryptor::new(KEY)
+            .encrypt(&mut media_c, &cfg)
+            .expect("fresh instance, third encrypt");
+        let ivs_c: alloc::collections::BTreeSet<Vec<u8>> = media_c.tracks[0]
+            .encryption
+            .as_ref()
+            .expect("Some")
+            .samples
+            .iter()
+            .map(|e| e.initialization_vector.clone())
+            .collect();
+        assert_eq!(
+            ivs_a, ivs_c,
+            "a fresh CencEncryptor::new(KEY) must reproduce media_a's exact IV set: \
+             CencEncryptor::new always starts the counter at 0, so reusing the SAME key across \
+             SEPARATE fresh instances is the one collision this type cannot structurally prevent \
+             — documented as the caller's obligation"
+        );
     }
 
     /// **The provably-taken fast path (media plane step 2b, G12)**: every

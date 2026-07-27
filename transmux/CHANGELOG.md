@@ -465,7 +465,14 @@ re-encrypted with colliding IVs; take the 0.20.0 IV semantics below.
   per *key*; "unique per track" is not sufficient when one key covers every
   track. Measured on the two-track `fixtures/ts/h264_aac.ts`: 75 of 206
   per-sample IVs collided. Every pre-existing test narrowed its fixture to a
-  single track, which is why a green suite shipped it.
+  single track, which is why a green suite shipped it. An adversarial review
+  of the first fix (below) found it incomplete in two further ways, both
+  closed in this same 0.20.0 (never separately released): the duplicate-IV
+  backstop ran *after* every track had already been keystreamed in place
+  (fixed by validating the full planned IV sequence before ciphering a single
+  byte), and IV uniqueness was only ever guaranteed *within* one `encrypt`
+  call, not across separate calls sharing a key (fixed by moving the running
+  counter onto the encryptor instance). See the two follow-up entries below.
   - `IvGen::Counter { base }`'s sample index now runs continuously across the
     whole `Media` in (track, sample) order, and never resets per track.
   - **BREAKING** — `IvGen::Explicit(ivs)` now requires exactly
@@ -474,14 +481,70 @@ re-encrypted with colliding IVs; take the 0.20.0 IV semantics below.
     count, so one list was replayed verbatim for every track — the same defect
     by a different route. A caller passing a per-track-sized list now gets
     `Error::InvalidInput` instead of silent keystream reuse.
-  - `IvGen::Explicit` also rejects a list containing any **duplicate** IV, and
-    `encrypt` re-checks every *recorded* per-sample IV for duplicates across
-    the whole `Media` before returning. The second check is a deliberate
-    backstop: it makes the entire keystream-reuse class fail loudly rather than
-    fixing one instance of it.
-  - All IV validation now happens before the first sample is ciphered, so a
-    rejected configuration leaves the `Media` untouched instead of
-    half-encrypted.
+  - `IvGen::Explicit` also rejects a list containing any **duplicate** IV.
+  - All IV validation — including the whole-`Media` duplicate check — now
+    happens before the first sample is ciphered, so a rejected configuration
+    leaves the `Media` untouched instead of half-encrypted (see the follow-up
+    entry immediately below for why this is now actually true, not just
+    documented as true).
+- **CRITICAL — BREAKING (adversarial-review follow-up, F1): the duplicate-IV
+  backstop ran after ciphering, not before.** The check above that rejects a
+  duplicate per-sample IV used to run against every track's *already-recorded*
+  `Track::encryption` — i.e. **after** `encrypt`'s per-track cipher loop had
+  already overwritten every sample via a real AES-CTR/CBC pass. Its whole
+  purpose is catching a *reintroduced* per-track-reset bug (the defect above),
+  so on the one path it exists to guard, `encrypt` returned `Err` while `media`
+  was left irreversibly two-time-padded with the plaintext already gone and no
+  rollback — exactly contradicting the CHANGELOG claim above ("a rejected
+  configuration leaves the Media untouched"), which was therefore false for
+  this one path. `CencEncryptor::encrypt` now resolves the **entire** planned
+  (track, sample) → IV mapping up front (`plan_sample_ivs`) and validates the
+  whole plan for duplicates (`assert_ivs_unique`) *before* any cipher work
+  runs; the cipher loop then consumes that exact, already-validated plan
+  (never re-resolving), so there is no window in which what was checked can
+  drift from what gets recorded. Verified by reintroducing the historical
+  per-track reset into `plan_sample_ivs` (Edit-then-revert): `encrypt` returns
+  `Err` and every sample's bytes remain byte-identical to the input.
+- **CRITICAL — BREAKING (adversarial-review follow-up, F2): IV uniqueness was
+  only guaranteed within one `encrypt` call, not per key for all time.**
+  AES-CTR requires IV uniqueness per **key**, for the life of that key — not
+  merely within a single `encrypt` invocation. `IvGen::Counter { base: 0 }`
+  (the `Default`) restarted its counter at `0` on every call, so two
+  invocations sharing a key — a video-only + audio-only split of one asset, or
+  successive live segments encrypted under one key period — reproduced the
+  exact two-time pad the first fix closed *within* one call. `CencEncryptor`
+  is now a **stateful** value constructed with its content key
+  (`CencEncryptor::new(key)` / `CencEncryptor::resume(key, next_counter)`),
+  owning the running `IvGen::Counter` index itself and advancing it after
+  every successful call rather than resetting it — reusing *one* instance
+  across every call that shares a key continues the counter instead of
+  restarting it. Consequences:
+  - **BREAKING** — `Encrypt::encrypt` (the `broadcast-common` hub trait) now
+    takes `&mut self`, not `&self` — the only production implementor
+    (`CencEncryptor`) needs mutable state to own the counter; the only other
+    implementor workspace-wide is a trait-usability test fixture inside
+    `broadcast-common`'s own test module, updated identically.
+  - **BREAKING** — `EncryptConfig` no longer carries a `key` field (the key
+    now lives on the `CencEncryptor` instance, so a per-call key could never
+    silently pair one running counter with a different key). `IvGen::Counter`
+    is now a unit variant (no `base` field); construct a resumed encryptor
+    with `CencEncryptor::resume(key, base)` for the equivalent effect.
+  - Verified: two successive `encrypt` calls on one `CencEncryptor` instance
+    that would previously collide now produce fully disjoint IV sets.
+    Constructing a second, *separate* `CencEncryptor::new(key)` with the same
+    key still collides (each starts its counter at `0`) — this is
+    structurally undetectable from inside the type (it has no way to know
+    another instance ever used `key` before) and is documented on
+    `CencEncryptor` as the caller's remaining obligation: reuse one instance
+    per key, never construct a fresh one for a key already in use.
+- **Minor — cipher-core IV lengths tightened to exactly 8 or 16 bytes.**
+  `cenc_crypto`'s shared `apply_ctr`/`resolve_cbcs_iv` (used by both the
+  encrypt and decrypt paths, so this also hardens decryption of untrusted
+  files) accepted any length `1..=16`, silently zero-padding it to a 16-byte
+  counter/CBC-seed block — so two differently-invalid-length IVs whose
+  non-zero bytes happened to coincide could zero-pad to the *same* block.
+  Only 8 and 16 bytes are valid on the wire (ISO/IEC 23001-7 §9.2/§12.2); any
+  other length is now `Error::InvalidValue`.
 - **CRITICAL — BREAKING: `IvGen::Constant` + `CencScheme::Cenc` produced
   unreadable output encrypted under an all-zero counter.** The `cenc` cipher is
   never handed the track's `tenc`, so `IvGen::Constant`'s 16-byte seed (which
@@ -534,6 +597,37 @@ re-encrypted with colliding IVs; take the 0.20.0 IV semantics below.
   `CencEncryptor`'s subsample-map construction on caller-supplied sample data.
 - Added a `transmux_cenc_boxes` fuzz target covering the `senc`/`saiz`/`saio`
   parsers (untrusted third-party media; 7.1 M executions clean).
+- **(F4) `CencDecryptor` can now decrypt a legitimately `senc`-less fragment.**
+  A constant-IV, whole-sample-protected `cbcs` fragment carries none of
+  `senc`/`saiz`/`saio` at all (nothing for them to carry — see
+  `movie_fragment.rs`'s `build_cenc_fragment_boxes`, issue R3); the decrypt
+  side's per-fragment harvesting only ever populated a track's per-sample
+  entries *from* a `senc` box, so this shape's `crypto.samples` silently
+  stayed empty and `Decrypt::decrypt` always rejected it with a generic
+  "sample count mismatch", despite `tenc.default_constant_IV` alone being
+  everything a conformant decryptor needs. `harvest_fragment_senc` now
+  synthesizes the placeholder per-sample entries this shape needs (one empty
+  IV/subsample-map pair per `trun` sample) when `senc` is legitimately absent
+  (`default_per_sample_iv_size == 0`); a genuinely missing `senc` on a
+  per-sample-IV track is unaffected (still tolerated, still caught downstream
+  by the same count check). Found and fixed while adding end-to-end coverage
+  for this branch, which had previously been exercised only by this crate's
+  own parser, never a real decryptor.
+  - That same new coverage found a real, verified interop limitation in
+    Bento4's `mp4decrypt` (1.6.0.0): given this exact, ISO/IEC-23001-7-legitimate
+    `senc`-less shape, `mp4decrypt` does not decrypt it at all — the output
+    `mdat` comes back byte-for-byte unchanged (still ciphertext), no error
+    reported. This is not a defect in this crate's cipher math (independently
+    re-verified outside this crate: the real ciphertext, AES-128-CBC-decrypted
+    with the real key and `tenc.default_constant_IV`, reproduces the true
+    plaintext exactly) or in the `saio` anchor (there is no `senc`/`saio` in
+    this shape to be wrong about) — it appears `mp4decrypt` requires *some*
+    per-sample aux-info structure present in the `traf` before it will attempt
+    to decrypt a track, regardless of `tenc`. Documented on the new
+    `tests/cenc_encrypt_e2e.rs` test rather than silently masked; the crate's
+    own (now-fixed) self round-trip remains that test's hard gate. Tracked as
+    a known third-party limitation, not a defect introduced or fixable by this
+    story.
 
 ## [0.19.0] - 2026-07-26
 

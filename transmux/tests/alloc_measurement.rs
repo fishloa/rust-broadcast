@@ -122,24 +122,35 @@ const KEY: [u8; 16] = [
     0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F, 0x10,
 ];
 
-/// Re-measured 2026-07-27 against `fixtures/ts/h264/main.ts` (post-refactor,
-/// `Sample.data: Bytes`), via `cargo test -p transmux --all-features --locked
-/// --test alloc_measurement -- --nocapture`, run twice with identical results
-/// both times (thread-local counters, see module doc). If a legitimate change
-/// moves these, re-run the gate, update the consts + this comment's date, and
-/// paste the new numbers into the PR/report — don't just widen the tolerance.
+/// Re-measured 2026-07-27 (second time same day — see below) against
+/// `fixtures/ts/h264/main.ts` (post-refactor, `Sample.data: Bytes`), via
+/// `cargo test -p transmux --all-features --locked --test alloc_measurement
+/// -- --nocapture`, run twice with identical results both times (thread-local
+/// counters, see module doc). If a legitimate change moves these, re-run the
+/// gate, update the consts + this comment's date, and paste the new numbers
+/// into the PR/report — don't just widen the tolerance.
 ///
-/// This moved up from the 2026-07-26 measurement (48 / 2216 / 31) the very
-/// next commit on this branch (76b9325d, "CENC IV uniqueness across tracks"):
-/// fixing the AES-CTR keystream-reuse bug made `IvGen::Counter`'s sample
-/// index run across the whole `Media` instead of resetting per track, plus
-/// added a post-generation duplicate-IV backstop — genuinely more work per
-/// `encrypt()` call, not a regression. Tightening these to `assert_eq!` (this
-/// story, T2) is what caught the drift: the previous "<= 2x" tolerance band
-/// silently absorbed it.
-const CENC_MEASURED_ALLOCS: usize = 51;
-const CENC_MEASURED_ALLOC_BYTES: usize = 2_888;
-const CENC_MEASURED_DEALLOCS: usize = 34;
+/// This moved up again from the same-day measurement (51 / 2_888 / 34) after
+/// the adversarial-review follow-up fix (F1: validate the *planned*
+/// (track, sample) -> IV mapping in full, up front, before ciphering a single
+/// byte, then cipher from that exact plan — see `cenc_encrypt.rs`'s
+/// `CencEncryptor::plan_sample_ivs`/`assert_ivs_unique`) replaced the old
+/// post-cipher-only backstop: computing the whole plan up front (one
+/// `Vec<Vec<Vec<u8>>>`) before the cipher loop, rather than resolving each IV
+/// inline as the loop went, is genuinely more allocation, not a regression —
+/// it is what makes a rejected config leave `media` byte-identical instead of
+/// checking that too late. It previously moved up from the 2026-07-26
+/// measurement (48 / 2216 / 31) the very next commit on this branch
+/// (76b9325d, "CENC IV uniqueness across tracks"): fixing the AES-CTR
+/// keystream-reuse bug made `IvGen::Counter`'s sample index run across the
+/// whole `Media` instead of resetting per track, plus added a
+/// post-generation duplicate-IV backstop — genuinely more work per
+/// `encrypt()` call, not a regression. Tightening these to `assert_eq!` (the
+/// original T2 story) is what caught both drifts: the previous "<= 2x"
+/// tolerance band would have silently absorbed them.
+const CENC_MEASURED_ALLOCS: usize = 68;
+const CENC_MEASURED_ALLOC_BYTES: usize = 3_392;
+const CENC_MEASURED_DEALLOCS: usize = 51;
 // NOTE: the three pinned metrics (allocs/alloc_bytes/deallocs) are asserted
 // with `assert_eq!` below, not a tolerance band. A tolerance multiple (e.g.
 // "within 2x") is wide enough that short-circuiting `CencEncryptor::encrypt`
@@ -174,14 +185,15 @@ fn cenc_encrypt_allocation_count_over_real_fixture() {
     let cfg = EncryptConfig {
         scheme: CencScheme::Cenc,
         kid: KID,
-        key: KEY,
-        iv: IvGen::Counter { base: 0 },
+        iv: IvGen::Counter,
         pattern: None,
         subsample: SubsamplePolicy::Video,
     };
 
     reset_counters();
-    CencEncryptor.encrypt(&mut media, &cfg).expect("encrypt");
+    CencEncryptor::new(KEY)
+        .encrypt(&mut media, &cfg)
+        .expect("encrypt");
     let (allocs, alloc_bytes, deallocs) = snapshot_counters();
 
     eprintln!(
@@ -225,12 +237,14 @@ fn cenc_encrypt_allocation_count_over_real_fixture() {
     );
 }
 
-/// Re-measured 2026-07-27 against `fixtures/ts/h264/main.ts` (post-refactor,
-/// `Sample.data: Bytes`) the same way as the `cenc` consts above — same
-/// 76b9325d IV-uniqueness-fix rationale for the move from 48/2216/31.
-const CBCS_MEASURED_ALLOCS: usize = 51;
-const CBCS_MEASURED_ALLOC_BYTES: usize = 2_888;
-const CBCS_MEASURED_DEALLOCS: usize = 34;
+/// Re-measured 2026-07-27 (second time same day) against
+/// `fixtures/ts/h264/main.ts` (post-refactor, `Sample.data: Bytes`) the same
+/// way as the `cenc` consts above — same plan-then-cipher (F1) rationale for
+/// the move from 51/2_888/34, which itself had moved from 48/2216/31 for the
+/// 76b9325d IV-uniqueness fix.
+const CBCS_MEASURED_ALLOCS: usize = 68;
+const CBCS_MEASURED_ALLOC_BYTES: usize = 3_392;
+const CBCS_MEASURED_DEALLOCS: usize = 51;
 
 /// Same measurement for `cbcs` (AES-CBC pattern) — a different code path
 /// through `cenc_crypto::cbcs_sample` with its own subsample walk.
@@ -245,14 +259,15 @@ fn cbcs_encrypt_allocation_count_over_real_fixture() {
     let cfg = EncryptConfig {
         scheme: CencScheme::Cbcs,
         kid: KID,
-        key: KEY,
-        iv: IvGen::Counter { base: 0 },
+        iv: IvGen::Counter,
         pattern: Some((1, 9)),
         subsample: SubsamplePolicy::Video,
     };
 
     reset_counters();
-    CencEncryptor.encrypt(&mut media, &cfg).expect("encrypt");
+    CencEncryptor::new(KEY)
+        .encrypt(&mut media, &cfg)
+        .expect("encrypt");
     let (allocs, alloc_bytes, deallocs) = snapshot_counters();
 
     eprintln!(
