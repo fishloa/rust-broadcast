@@ -17,8 +17,8 @@ all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
 
 [dependencies]
-broadcast-common = { path = "../broadcast-common", version = "8", default-features = false }
-dvb-si     = { path = "../dvb-si", version = "8", default-features = false }
+broadcast-common = { path = "../broadcast-common", version = "9", default-features = false }
+dvb-si     = { path = "../dvb-si", version = "9", default-features = false }
 thiserror  = { version = "2", default-features = false }
 serde      = { version = "1", optional = true, features = ["derive"] }
 

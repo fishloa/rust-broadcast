@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [0.3.1] - 2026-07-27
 ### Changed
 - Internal, test-only: dropped a redundant `&` in a `fixture_roundtrip`
   `eprintln!` argument to satisfy `clippy::needless_borrows_for_generic_args`
