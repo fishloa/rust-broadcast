@@ -124,3 +124,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Reuses `timed_metadata::Timeline`'s 33-bit PTS wrap-unroll rather than
   hand-rolling it; `timed-metadata` becomes a real (non-dev) dependency of
   `media-plane`.
+- `Dialer`, `Listener`, `IngestSession`, `run_dial`/`run_listen` (plan step
+  3c, `std`-only, new `ingress` module): the ingress traits and the generic
+  drivers that pump them into a `Trunk`, so no protocol reimplements its own
+  feed/poll/dispatch loop (every one of `multimux`'s nine sources hand-rolls
+  this today). `IngestSession` is a blanket `Stage<In<'a> = &'a [u8], Out =
+  SessionEvent>` specialisation, matching `ByteStage`'s precedent, plus a
+  `poll_transmit` hook (`None`-returning default) for the handful of sources
+  that need to send bytes back (RTSP RTCP/keepalive). `Dialer::dial` and
+  `Listener::poll_accept` are a synchronous boundary, not sans-IO — see the
+  `ingress` module docs for why a byte-level handshake trait was considered
+  and rejected here.
+  - **B5 (the program dimension)**: `SessionEvent::NewProgram` may be
+    announced at any point in a session's lifetime, not only at the start.
+    `IngestDriver`/`ListenDriver` mint a fresh `Trunk` per `ProgramId` the
+    instant it is announced — including a second program on an already-live
+    connection — closing the gap `multimux::source::ts_udp::TsUdpSession`
+    has today (a post-connect `DemuxEvent::TrackAdded` is only logged and
+    dropped).
+  - **EOF vs failure**: `HealthState<E>` (`Live`/`Ended`/`Failed(E)`) fixes
+    the bug that made `ll_hls_runtime::server::store::HealthState::Failed`
+    unproducible — `multimux::origin::supervisor::supervise` today folds a
+    clean `run_pipeline` EOF and a real error into the same `Reconnecting`
+    transition. `IngestSession::finish` returning `Ok(())` drives `Ended`;
+    `feed`/`finish` returning `Err` drives `Failed`, carrying the concrete
+    error rather than a formatted string.
+  - **`max_sessions` is a hard bound, enforced by `ListenDriver`**, not by
+    each `Listener` implementation: once `max_sessions` sessions are
+    admitted, every further accepted connection is dropped immediately,
+    before being fed a single byte — never queued, never buffered.
+  - **Reconnect is bounded and caller-chosen**: `ReconnectPolicy` bounds how
+    many times `DialSupervisor` retries `Dialer::dial`; it never sleeps or
+    decides backoff duration itself (`DialAttempt::Exhausted` is an `O(1)`
+    no-op once `max_attempts` is spent — a permanently-failing dialer cannot
+    spin or grow).
