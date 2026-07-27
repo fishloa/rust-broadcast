@@ -92,6 +92,25 @@ fn ordering_guard_subtitle_track_present_after_demux() {
         !subtitle.samples.is_empty(),
         "the subtitle track must carry its (opaque TTML) samples too"
     );
+    // T6 (test-integrity audit): non-empty alone lets a wrong `mdat` sample
+    // range (any garbage bytes of the right length) pass. Check the sample
+    // bytes are actually real TTML content, not merely present: this crate
+    // never decodes subtitle payloads (they stay opaque, per the crate's
+    // "parses codec config headers only" scope), but the fixture's
+    // subtitle sample is a real ffmpeg TTML document, so its bytes must be
+    // valid UTF-8 XML carrying the `<tt>` root element (RFC (W3C) TTML1 §5.3)
+    // with the TTML namespace declaration — content a wrong byte range would
+    // not coincidentally reproduce.
+    for (i, s) in subtitle.samples.iter().enumerate() {
+        let text = std::str::from_utf8(&s.data)
+            .unwrap_or_else(|e| panic!("subtitle sample {i} must be valid UTF-8 TTML: {e}"));
+        assert!(
+            text.contains("<tt") && text.contains("http://www.w3.org/ns/ttml"),
+            "subtitle sample {i} must contain real TTML markup (the <tt> root \
+             element + its namespace), not just be non-empty bytes — this is \
+             what catches a wrong mdat sample range; got {text:?}"
+        );
+    }
 }
 
 // ── B1: a subtitle-bearing CMAF asset repackages successfully end-to-end ───
