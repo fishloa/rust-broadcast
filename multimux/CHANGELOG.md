@@ -2,6 +2,46 @@
 
 ## [Unreleased]
 
+### Changed (BREAKING, in progress — plan step 5a)
+- **Ported `rtsp`, `rtp_udp`, and `ts_udp` onto `media_plane::ingress`'s
+  `Dialer`/`IngestSession`/`IngestDriver`** (plan step 5, "port the 9 ingest
+  sources" — `docs/superpowers/plans/2026-07-26-media-plane-implementation.md`):
+  - `RtspSource`/`RtspSession` → `RtspRoute`/`RtspDialer`/`RtspIngestSession`
+    + `run_rtsp`. `RtspDialer::dial` performs **no I/O** — it wraps
+    `rtsp_runtime::client::ClientSession` (already sans-IO) directly, so the
+    whole DESCRIBE→SETUP(×N)→PLAY handshake completes through the ordinary
+    `poll_transmit`/`feed` pump, confirming `media_plane::ingress`'s central
+    design bet for a protocol with a pre-existing sans-IO engine. `rtsps://`
+    (TLS) is not yet wired into `run_rtsp`'s driver loop (scope cut, not a
+    design gap — see the module doc).
+  - `TsUdpSource`/`TsUdpSession` → `TsUdpRoute`/`TsUdpDialer`/`TsUdpIngestSession`
+    + `run_ts_udp`. Fixes issue #774's silent-drop of a `DemuxEvent::TrackAdded`
+    declared after the initial PMT resolution: it now mints a **new**
+    `ProgramId` (media-plane finding B5) instead of being logged and
+    dropped.
+  - `RtpUdpSource`/`RtpUdpSession` → `RtpUdpRoute`/`RtpUdpDialer`/`RtpUdpIngestSession`
+    + `run_rtp_udp`.
+  - All three publish raw samples straight into a `media_plane::Trunk` via
+    `IngestDriver`, replacing their own hand-rolled demux-drain loops.
+  - **Not yet wired into `origin::serve_with_registry`/`origin::supervisor::supervise`**:
+    that loop is built on `MediaStore`/`HealthState`, which plan step 4
+    deleted from `ll-hls-runtime` (the crate does not currently build — see
+    the 4 `ll_hls_runtime::server::{HealthState,MediaStore,PlaylistOutcome,
+    ResourceOutcome,media_playlist_m3u8}` import errors, all pre-existing
+    and unrelated to this change) — rewiring these three routes needs step
+    5b's `Trunk`-backed replacement, not just a source rename; the affected
+    `InputSpec` match arms are stubbed with a clear "not yet wired" log line
+    rather than left silently referencing removed types.
+  - **Not ported in this pass** (step 5a scope; tracked for follow-up):
+    `ts_http`, `srt` (caller + listener), `rtmp` (listener), `hls_pull`,
+    `dash_pull`, `smooth_pull` — still on the pre-5a `SampleSource`/
+    `run_pipeline`/`SourceConnector` path, which remains in place
+    (`crate::pipeline`/`crate::origin::supervisor`) for exactly these six.
+  - `crate::pipeline::SampleSource`/`run_pipeline` and
+    `crate::origin::supervisor::SourceConnector` are **not** deleted this
+    pass (still load-bearing for the six not-yet-ported sources); only the
+    three ported sources' `impl`s were removed from them.
+
 ### Fixed
 - **Cleared this crate's share of the latest-stable clippy canary** (issue
   #770 — the non-blocking `clippy (latest stable)` CI job, which had been

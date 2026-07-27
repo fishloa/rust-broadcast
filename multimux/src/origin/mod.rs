@@ -648,58 +648,30 @@ pub async fn serve_with_registry(
         let name = route.name.clone();
         let shutdown_rx = shutdown_rx.clone();
         let handle = match &route.input {
-            crate::config::InputSpec::Rtsp { url, auth } => {
-                let connector = crate::source::rtsp::RtspSource::new(name.clone(), url.clone())
-                    .with_auth(auth.as_ref().map(crate::config::AuthSpec::to_credentials));
-                tokio::spawn(supervise(
-                    connector,
-                    store,
-                    target_duration_secs,
-                    part_target_ms,
-                    Backoff::production_default(),
-                    name.clone(),
-                    shutdown_rx,
-                ))
-            }
-            crate::config::InputSpec::Rtp {
-                addr,
-                sdp,
-                multicast_group,
-            } => {
-                let connector = crate::source::rtp_udp::RtpUdpSource::new(
-                    name.clone(),
-                    addr.clone(),
-                    sdp.clone(),
-                    multicast_group.clone(),
-                );
-                tokio::spawn(supervise(
-                    connector,
-                    store,
-                    target_duration_secs,
-                    part_target_ms,
-                    Backoff::production_default(),
-                    name.clone(),
-                    shutdown_rx,
-                ))
-            }
-            crate::config::InputSpec::TsUdp {
-                addr,
-                multicast_group,
-            } => {
-                let connector = crate::source::ts_udp::TsUdpSource::new(
-                    name.clone(),
-                    addr.clone(),
-                    multicast_group.clone(),
-                );
-                tokio::spawn(supervise(
-                    connector,
-                    store,
-                    target_duration_secs,
-                    part_target_ms,
-                    Backoff::production_default(),
-                    name.clone(),
-                    shutdown_rx,
-                ))
+            // `rtsp`/`rtp`/`ts_udp` were ported onto
+            // `media_plane::ingress::{Dialer, IngestSession}` at plan step
+            // 5a (see `crate::source::{rtsp, rtp_udp, ts_udp}`'s
+            // `run_rtsp`/`run_rtp_udp`/`run_ts_udp`, each driving
+            // `media_plane::ingress::IngestDriver` into a `media_plane::Trunk`
+            // directly) and no longer implement `SourceConnector`/
+            // `SampleSource`. Wiring these three routes back into this
+            // `MediaStore`-per-route loop is step 5b's job (it needs a
+            // `Trunk`-backed replacement for `MediaStore`/`HealthState`
+            // here, not just a source rename) — left as a stub so the crate
+            // names a clear boundary rather than silently regressing these
+            // three routes to "compiles but does nothing" without comment.
+            crate::config::InputSpec::Rtsp { .. }
+            | crate::config::InputSpec::Rtp { .. }
+            | crate::config::InputSpec::TsUdp { .. } => {
+                let name = name.clone();
+                tokio::spawn(async move {
+                    tracing::error!(
+                        route = %name,
+                        "this route's input kind was ported onto the media-plane ingress \
+                         traits at step 5a but is not yet wired into this MediaStore-backed \
+                         supervisor loop (step 5b); the route is disabled until that lands"
+                    );
+                })
             }
             crate::config::InputSpec::TsHttp { url, auth } => {
                 let connector =
