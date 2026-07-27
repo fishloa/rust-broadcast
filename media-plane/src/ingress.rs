@@ -116,6 +116,76 @@
 //! bound is structural (checked in one generic place) rather than a
 //! per-protocol discipline.
 //!
+//! # `max_programs`: the fifth unbounded-allocation vector, and why it needs
+//! its own bound rather than reusing `max_sessions` or a `Trunk` capacity
+//!
+//! [`SessionEvent::NewProgram`] (above) mints a **fresh [`Trunk`]** — five
+//! bounded rings — per distinct [`ProgramId`] a session reports, with
+//! nothing capping how many distinct ids one session may report. Every
+//! individual ring is bounded ([`TrunkConfig`]'s five [`NonZeroUsize`]
+//! capacities), which is exactly what makes this easy to miss: the unbounded
+//! quantity is the *number of `Trunk`s*, not anything inside one, so no
+//! per-ring capacity — however carefully chosen — helps at all. A malformed
+//! or hostile multiplex announcing thousands of `program_number`s allocates
+//! thousands of trunks. This is the fifth vector of this class this project
+//! has shipped, all in code consuming remote input; the other two knobs
+//! already documented in this module do not cover it:
+//!
+//! - **Not `max_sessions`.** That bounds concurrent *connections*; this is a
+//!   count of *programs announced within one already-admitted connection* —
+//!   a different axis entirely, and B5's whole premise is that one session
+//!   can legitimately report many programs.
+//! - **Not a `TrunkConfig` capacity.** Those bound *entries within one
+//!   program's rings*; none of them says anything about how many programs
+//!   may exist.
+//!
+//! So [`IngestDriver`] (and [`ListenDriver`], which embeds one per admitted
+//! session) takes its own `max_programs: NonZeroUsize` — [`NonZeroUsize`] for
+//! the same reason [`TrunkConfig`]'s five capacities are: zero is
+//! unrepresentable rather than merely rejected, so there is no fallible
+//! constructor to remember to call. It is enforced in exactly one place,
+//! [`IngestDriver`]'s internal `drain()`, mirroring `max_sessions`'
+//! placement: a `NewProgram` is checked against the bound **inside the
+//! driver that owns the `programs`/`writers` maps**, not by any convention an
+//! `IngestSession` implementor could forget — indeed an `IngestSession` has
+//! no visibility into those maps at all, so there is nothing for it to
+//! bypass even in principle.
+//!
+//! **The (N+1)th program is refused, not fatal — the admitted programs keep
+//! flowing.** The alternative (failing the whole session once its program
+//! count exceeds the bound) was rejected: a 200-program hostile or malformed
+//! multiplex would then take down ingest for the 8 programs a real caller
+//! asked for, which is a worse outcome than simply not admitting the extra
+//! 192. Concretely: a `NewProgram` past the bound gets no [`Trunk`] — no
+//! [`Trunk::new`] call happens for it at all, not merely an unstored one —
+//! and any later `Sample` for it is dropped by the *already-existing,
+//! already-tested* "sample for an unannounced program" path (see
+//! [`SessionEvent::Sample`]'s docs), because a refused program never gets a
+//! `writers` entry either. No new drop path was invented; refusal reuses the
+//! one this module already had to have.
+//!
+//! **Refusal is reported, not silent** — this project's own #781 postmortem
+//! (a silently dropped item that stayed invisible for a long time) is the
+//! reason a bare `if len >= max { return; }` is not acceptable here.
+//! [`IngestDriver::refused_program_count`] is a monotonically increasing
+//! counter, incremented once per refused `NewProgram`, queryable at any time
+//! — the same shape as [`DialSupervisor::attempts`]/[`DialAttempt::Exhausted`]
+//! (a bounded count of "how many times has this happened", not a stored list
+//! of each occurrence). A list of every refused [`ProgramId`] was considered
+//! and rejected: retaining one entry per refusal is the *exact same*
+//! unbounded-growth shape this fix exists to close, just moved from `Trunk`s
+//! to a `Vec<ProgramId>` — a counter is `O(1)` in memory regardless of how
+//! many programs a flood announces, which the accompanying flood test
+//! proves directly.
+//!
+//! **Default: [`DEFAULT_MAX_PROGRAMS`].** A real DVB MPTS typically carries a
+//! single-digit to low-tens program count; ATSC and cable multiplexes can run
+//! somewhat higher (a handful of dozens is a realistic outer bound for a
+//! legitimate stream). [`DEFAULT_MAX_PROGRAMS`]`= 64` sits comfortably above
+//! any legitimate multiplex this project's fixtures or docs describe, while
+//! still capping a hostile "thousands of programs" stream to 64 trunks (320
+//! rings) rather than an unbounded count.
+//!
 //! # Establishment is ordinary driving — `dial()` performs no I/O
 //!
 //! **[`Dialer::dial`] does not connect anything.** It *constructs* a session
@@ -239,6 +309,7 @@
 //! per call, however many times it is polled.
 
 use std::collections::HashMap;
+use std::num::NonZeroUsize;
 use std::sync::Arc;
 
 use broadcast_common::{Stage, Timestamp};
@@ -255,6 +326,15 @@ use crate::trunk::{RetentionClass, Trunk, TrunkConfig, TrunkWriter};
 /// its own [`Trunk`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct ProgramId(pub u32);
+
+/// Suggested [`IngestDriver`]/[`ListenDriver`] `max_programs` bound — see
+/// [the module docs](self#max_programs-the-fifth-unbounded-allocation-vector-and-why-it-needs-its-own-bound-rather-than-reusing-max_sessions-or-a-trunk-capacity)
+/// for the justification. Not applied automatically (there is no default
+/// constructor for `max_programs`, matching [`TrunkConfig::new`]'s and
+/// [`HandshakePolicy::establish_by`]'s own all-explicit-arguments shape) —
+/// a caller wraps it in a [`NonZeroUsize`] and passes it like any other
+/// driver parameter.
+pub const DEFAULT_MAX_PROGRAMS: usize = 64;
 
 /// What an [`IngestSession`]'s [`Stage::poll`] hands back to a driver.
 ///
@@ -521,8 +601,15 @@ pub struct IngestDriver<S: IngestSession> {
     session: S,
     trunk_config: TrunkConfig,
     handshake: HandshakePolicy,
+    max_programs: NonZeroUsize,
     programs: HashMap<ProgramId, Arc<Trunk>>,
     writers: HashMap<ProgramId, TrunkWriter>,
+    /// Count of `NewProgram` events refused because `max_programs` was
+    /// already reached — see
+    /// [the module docs](self#max_programs-the-fifth-unbounded-allocation-vector-and-why-it-needs-its-own-bound-rather-than-reusing-max_sessions-or-a-trunk-capacity).
+    /// A counter, not a stored list, so this field is itself `O(1)` no
+    /// matter how large a flood of refused programs is.
+    refused_programs: u64,
     health: HealthState<S::Error>,
 }
 
@@ -531,16 +618,46 @@ impl<S: IngestSession> IngestDriver<S> {
     /// to be pumped: it starts in [`HealthState::Establishing`] and reaches
     /// [`HealthState::Live`] when it emits [`SessionEvent::Established`],
     /// bounded by `handshake`. Every program it later announces gets a fresh
-    /// [`Trunk`] built from `trunk_config`.
-    pub fn new(session: S, trunk_config: TrunkConfig, handshake: HandshakePolicy) -> Self {
+    /// [`Trunk`] built from `trunk_config`, up to `max_programs` distinct
+    /// [`ProgramId`]s — see
+    /// [the module docs](self#max_programs-the-fifth-unbounded-allocation-vector-and-why-it-needs-its-own-bound-rather-than-reusing-max_sessions-or-a-trunk-capacity)
+    /// for what happens past that bound.
+    pub fn new(
+        session: S,
+        trunk_config: TrunkConfig,
+        handshake: HandshakePolicy,
+        max_programs: NonZeroUsize,
+    ) -> Self {
         IngestDriver {
             session,
             trunk_config,
             handshake,
+            max_programs,
             programs: HashMap::new(),
             writers: HashMap::new(),
+            refused_programs: 0,
             health: HealthState::Establishing,
         }
+    }
+
+    /// The bound this driver enforces on distinct admitted programs.
+    pub fn max_programs(&self) -> NonZeroUsize {
+        self.max_programs
+    }
+
+    /// Currently-admitted distinct program count. Never exceeds
+    /// [`Self::max_programs`], however many `NewProgram` events this session
+    /// reports.
+    pub fn program_count(&self) -> usize {
+        self.programs.len()
+    }
+
+    /// How many `NewProgram` events this driver has refused because
+    /// [`Self::max_programs`] was already reached — see
+    /// [the module docs](self#max_programs-the-fifth-unbounded-allocation-vector-and-why-it-needs-its-own-bound-rather-than-reusing-max_sessions-or-a-trunk-capacity).
+    /// Monotonically increasing; never resets.
+    pub fn refused_program_count(&self) -> u64 {
+        self.refused_programs
     }
 
     /// Feed more bytes read from this session's connection — a handshake
@@ -646,7 +763,9 @@ impl<S: IngestSession> IngestDriver<S> {
     /// Drain every ready [`SessionEvent`], dispatching each into its
     /// program's `Trunk`. A `Sample` for a program never announced via
     /// `NewProgram` is dropped (documented `IngestSession` contract
-    /// violation, not a panic — see [`SessionEvent::Sample`]'s docs).
+    /// violation, not a panic — see [`SessionEvent::Sample`]'s docs); a
+    /// `NewProgram` past `max_programs` is refused the exact same way — see
+    /// [the module docs](self#max_programs-the-fifth-unbounded-allocation-vector-and-why-it-needs-its-own-bound-rather-than-reusing-max_sessions-or-a-trunk-capacity).
     fn drain(&mut self) {
         while let Some(event) = self.session.poll() {
             match event {
@@ -660,6 +779,21 @@ impl<S: IngestSession> IngestDriver<S> {
                     }
                 }
                 SessionEvent::NewProgram { program, .. } => {
+                    // A repeat announcement of an already-admitted program
+                    // does not grow `self.programs`, so it is never refused
+                    // here regardless of how full the bound is — only a
+                    // genuinely new `ProgramId` can hit the cap.
+                    if !self.programs.contains_key(&program)
+                        && self.programs.len() >= self.max_programs.get()
+                    {
+                        // Refused: no `Trunk::new` call happens at all (not
+                        // merely an unstored one), and no `writers` entry is
+                        // created, so this program's later `Sample`s fall
+                        // through the existing "unannounced program" drop
+                        // path below rather than needing a second one.
+                        self.refused_programs += 1;
+                        continue;
+                    }
                     let trunk = Trunk::new(self.trunk_config);
                     let writer = trunk
                         .writer()
@@ -692,9 +826,15 @@ pub fn run_dial<D: Dialer>(
     dialer: &mut D,
     trunk_config: TrunkConfig,
     handshake: HandshakePolicy,
+    max_programs: NonZeroUsize,
 ) -> Result<IngestDriver<D::Session>, D::Error> {
     let session = dialer.dial()?;
-    Ok(IngestDriver::new(session, trunk_config, handshake))
+    Ok(IngestDriver::new(
+        session,
+        trunk_config,
+        handshake,
+        max_programs,
+    ))
 }
 
 /// Bounded retry policy for [`DialSupervisor`] — how many times
@@ -792,6 +932,7 @@ impl<D: Dialer> DialSupervisor<D> {
         &mut self,
         trunk_config: TrunkConfig,
         handshake: HandshakePolicy,
+        max_programs: NonZeroUsize,
     ) -> DialAttempt<D::Session, D::Error> {
         if self.exhausted {
             return DialAttempt::Exhausted;
@@ -800,7 +941,12 @@ impl<D: Dialer> DialSupervisor<D> {
         match self.dialer.dial() {
             Ok(session) => {
                 self.attempts = 0;
-                DialAttempt::Connected(IngestDriver::new(session, trunk_config, handshake))
+                DialAttempt::Connected(IngestDriver::new(
+                    session,
+                    trunk_config,
+                    handshake,
+                    max_programs,
+                ))
             }
             Err(e) => {
                 if self.attempts >= self.policy.max_attempts {
@@ -841,6 +987,7 @@ pub struct ListenDriver<L: Listener> {
     listener: L,
     trunk_config: TrunkConfig,
     handshake: HandshakePolicy,
+    max_programs: NonZeroUsize,
     sessions: HashMap<SessionId, IngestDriver<L::Session>>,
     next_id: u64,
 }
@@ -850,15 +997,39 @@ impl<L: Listener> ListenDriver<L> {
     /// [`HealthState::Establishing`] bounded by `handshake` — which is what
     /// stops a flood of half-open inbound connections from squatting the
     /// `max_sessions` bound indefinitely — and every program any of them
-    /// announces gets a `Trunk` built from `trunk_config`.
-    pub fn new(listener: L, trunk_config: TrunkConfig, handshake: HandshakePolicy) -> Self {
+    /// announces gets a `Trunk` built from `trunk_config`, up to
+    /// `max_programs` distinct programs per session — see
+    /// [the module docs](self#max_programs-the-fifth-unbounded-allocation-vector-and-why-it-needs-its-own-bound-rather-than-reusing-max_sessions-or-a-trunk-capacity).
+    pub fn new(
+        listener: L,
+        trunk_config: TrunkConfig,
+        handshake: HandshakePolicy,
+        max_programs: NonZeroUsize,
+    ) -> Self {
         ListenDriver {
             listener,
             trunk_config,
             handshake,
+            max_programs,
             sessions: HashMap::new(),
             next_id: 0,
         }
+    }
+
+    /// The per-session program bound this driver enforces — see
+    /// [`IngestDriver::max_programs`].
+    pub fn max_programs(&self) -> NonZeroUsize {
+        self.max_programs
+    }
+
+    /// How many `NewProgram` events session `id` has refused because
+    /// `max_programs` was already reached — see
+    /// [`IngestDriver::refused_program_count`]. `None` for an unknown or
+    /// already-reaped `id`.
+    pub fn refused_program_count(&self, id: SessionId) -> Option<u64> {
+        self.sessions
+            .get(&id)
+            .map(IngestDriver::refused_program_count)
     }
 
     /// Currently-admitted (not yet terminated) session count. Never exceeds
@@ -891,7 +1062,12 @@ impl<L: Listener> ListenDriver<L> {
                     self.next_id += 1;
                     self.sessions.insert(
                         id,
-                        IngestDriver::new(session, self.trunk_config, self.handshake),
+                        IngestDriver::new(
+                            session,
+                            self.trunk_config,
+                            self.handshake,
+                            self.max_programs,
+                        ),
                     );
                     AcceptOutcome::Admitted(id)
                 }
@@ -972,8 +1148,9 @@ pub fn run_listen<L: Listener>(
     listener: L,
     trunk_config: TrunkConfig,
     handshake: HandshakePolicy,
+    max_programs: NonZeroUsize,
 ) -> ListenDriver<L> {
-    ListenDriver::new(listener, trunk_config, handshake)
+    ListenDriver::new(listener, trunk_config, handshake, max_programs)
 }
 
 #[cfg(test)]
@@ -1000,6 +1177,14 @@ mod tests {
     /// it set their own tight deadline explicitly.
     fn handshake() -> HandshakePolicy {
         HandshakePolicy::establish_by(Timestamp::from_nanos(u64::MAX))
+    }
+
+    /// An ambient `max_programs` bound for tests that are not about the
+    /// program cap itself — large enough that no test relying on this
+    /// helper ever hits it. The tests that *are* about the cap pass their
+    /// own small `nz(N)` explicitly.
+    fn max_programs() -> std::num::NonZeroUsize {
+        nz(1024)
     }
 
     fn sample(byte: u8) -> Sample {
@@ -1138,8 +1323,8 @@ mod tests {
             fail_with: FakeError("unused"),
         };
 
-        let mut driver =
-            run_dial(&mut dialer, trunk_config(), handshake()).expect("fake dial succeeds");
+        let mut driver = run_dial(&mut dialer, trunk_config(), handshake(), max_programs())
+            .expect("fake dial succeeds");
         let trunk_before = driver.trunk(ProgramId(1)).cloned();
         assert!(
             trunk_before.is_none(),
@@ -1170,7 +1355,7 @@ mod tests {
     #[test]
     fn clean_finish_yields_ended_not_failed() {
         let session = ScriptedSession::new(vec![]);
-        let mut driver = IngestDriver::new(session, trunk_config(), handshake());
+        let mut driver = IngestDriver::new(session, trunk_config(), handshake(), max_programs());
         assert!(
             matches!(driver.health(), HealthState::Establishing),
             "a freshly dialled session has not established yet"
@@ -1191,7 +1376,7 @@ mod tests {
     #[test]
     fn erroring_feed_yields_failed_not_ended() {
         let session = ScriptedSession::new(vec![FeedOutcome::Err(FakeError("bad continuity"))]);
-        let mut driver = IngestDriver::new(session, trunk_config(), handshake());
+        let mut driver = IngestDriver::new(session, trunk_config(), handshake(), max_programs());
 
         driver.feed(b"garbage", Timestamp::ZERO);
 
@@ -1204,7 +1389,7 @@ mod tests {
     #[test]
     fn erroring_finish_yields_failed_not_ended() {
         let session = ScriptedSession::new(vec![]).failing_finish(FakeError("truncated tail"));
-        let mut driver = IngestDriver::new(session, trunk_config(), handshake());
+        let mut driver = IngestDriver::new(session, trunk_config(), handshake(), max_programs());
 
         driver.finish();
 
@@ -1217,7 +1402,7 @@ mod tests {
     #[test]
     fn terminated_driver_ignores_further_feed_and_finish() {
         let session = ScriptedSession::new(vec![FeedOutcome::Err(FakeError("boom"))]);
-        let mut driver = IngestDriver::new(session, trunk_config(), handshake());
+        let mut driver = IngestDriver::new(session, trunk_config(), handshake(), max_programs());
         driver.feed(b"x", Timestamp::ZERO);
         assert!(matches!(driver.health(), HealthState::Failed(_)));
 
@@ -1267,7 +1452,8 @@ mod tests {
             sessions: VecDeque::from(vec![session]),
             fail_with: FakeError("unused"),
         };
-        let mut driver = run_dial(&mut dialer, trunk_config(), handshake()).unwrap();
+        let mut driver =
+            run_dial(&mut dialer, trunk_config(), handshake(), max_programs()).unwrap();
 
         driver.feed(b"1", Timestamp::from_nanos(0));
         assert!(driver.trunk(ProgramId(1)).is_some());
@@ -1304,6 +1490,174 @@ mod tests {
         assert_eq!(trunk2.timed_len(), 1);
     }
 
+    // --- max_programs: the fifth unbounded-allocation vector, bounded ------
+
+    #[test]
+    fn programs_up_to_max_get_a_trunk_each_the_next_one_is_refused_and_reported() {
+        let cap = 2;
+        let session = ScriptedSession::new(vec![FeedOutcome::Events(vec![
+            SessionEvent::NewProgram {
+                program: ProgramId(1),
+                tracks: vec![opaque_track(1)],
+            },
+            SessionEvent::NewProgram {
+                program: ProgramId(2),
+                tracks: vec![opaque_track(2)],
+            },
+            // The (cap+1)th distinct program in the same drain() call.
+            SessionEvent::NewProgram {
+                program: ProgramId(3),
+                tracks: vec![opaque_track(3)],
+            },
+        ])]);
+        let mut driver = IngestDriver::new(session, trunk_config(), handshake(), nz(cap));
+
+        driver.feed(b"pat", Timestamp::ZERO);
+
+        assert!(driver.trunk(ProgramId(1)).is_some(), "program 1 admitted");
+        assert!(driver.trunk(ProgramId(2)).is_some(), "program 2 admitted");
+        assert!(
+            driver.trunk(ProgramId(3)).is_none(),
+            "the (cap+1)th program must be refused a Trunk"
+        );
+        assert_eq!(
+            driver.program_count(),
+            cap,
+            "admitted program count must sit exactly at the cap, not above it"
+        );
+        // MUTATION-CHECKED: dropping the `refused_programs += 1` (or the
+        // whole cap check) in `drain()`'s `NewProgram` arm makes this fail —
+        // reported, not a silent drop.
+        assert_eq!(
+            driver.refused_program_count(),
+            1,
+            "the refusal must be reported via a queryable counter, never silent"
+        );
+    }
+
+    #[test]
+    fn repeat_announcement_of_an_already_admitted_program_is_never_refused() {
+        // A program re-announcing itself (e.g. a PMT version bump reiterating
+        // the same program_number) must not be treated as a new admission and
+        // so must never count against the cap or be refused.
+        let cap = 1;
+        let session = ScriptedSession::new(vec![FeedOutcome::Events(vec![
+            SessionEvent::NewProgram {
+                program: ProgramId(1),
+                tracks: vec![opaque_track(1)],
+            },
+            SessionEvent::NewProgram {
+                program: ProgramId(1),
+                tracks: vec![opaque_track(1)],
+            },
+        ])]);
+        let mut driver = IngestDriver::new(session, trunk_config(), handshake(), nz(cap));
+
+        driver.feed(b"pat", Timestamp::ZERO);
+
+        assert_eq!(driver.program_count(), 1);
+        assert_eq!(
+            driver.refused_program_count(),
+            0,
+            "re-announcing an already-admitted program must not be refused"
+        );
+    }
+
+    #[test]
+    fn refusal_does_not_disturb_already_admitted_programs_their_samples_keep_flowing() {
+        let cap = 1;
+        let session = ScriptedSession::new(vec![
+            FeedOutcome::Events(vec![SessionEvent::NewProgram {
+                program: ProgramId(1),
+                tracks: vec![opaque_track(1)],
+            }]),
+            // In the SAME drain() call: program 2 is refused, and a sample
+            // for the already-admitted program 1 is published — proving the
+            // refusal of one program does not interrupt delivery for another
+            // already flowing, which is the whole justification for
+            // "refuse the extra program" over "fail the session".
+            FeedOutcome::Events(vec![
+                SessionEvent::NewProgram {
+                    program: ProgramId(2),
+                    tracks: vec![opaque_track(2)],
+                },
+                SessionEvent::Sample {
+                    program: ProgramId(1),
+                    track_id: 1,
+                    retention: RetentionClass::Timed,
+                    sample: sample(0x01),
+                },
+            ]),
+        ]);
+        let mut driver = IngestDriver::new(session, trunk_config(), handshake(), nz(cap));
+
+        driver.feed(b"1", Timestamp::from_nanos(0));
+        let trunk1 = driver.trunk(ProgramId(1)).cloned().unwrap();
+        let mut cursor = trunk1.subscribe();
+
+        driver.feed(b"2", Timestamp::from_nanos(1));
+
+        assert!(
+            driver.trunk(ProgramId(2)).is_none(),
+            "program 2 must be refused, not given a Trunk"
+        );
+        assert_eq!(driver.refused_program_count(), 1);
+        // MUTATION-CHECKED: if refusing program 2 were implemented by
+        // failing the whole session (e.g. setting `self.health =
+        // HealthState::Failed(..)`) instead of just skipping the one
+        // `NewProgram`, this poll would come back empty because `feed`
+        // would have stopped draining before the Sample event — this is
+        // the assertion that would catch that.
+        match cursor
+            .poll()
+            .expect("program 1's sample must still land despite program 2 being refused")
+        {
+            crate::SampleCursorItem::Timed { track_id, sample } => {
+                assert_eq!(track_id, 1);
+                assert_eq!(sample.data.as_ref(), &[0x01; 4]);
+            }
+            other => panic!("expected Timed, got {other:?}"),
+        }
+        assert!(
+            matches!(driver.health(), HealthState::Live),
+            "refusing an extra program must not fail the session: {:?}",
+            driver.health()
+        );
+    }
+
+    #[test]
+    fn newprogram_flood_is_bounded_admits_exactly_max_programs_and_allocates_no_more_trunks() {
+        let cap = 3;
+        let mut events = Vec::with_capacity(10_000);
+        for i in 0..10_000u32 {
+            events.push(SessionEvent::NewProgram {
+                program: ProgramId(i),
+                tracks: vec![opaque_track(i)],
+            });
+        }
+        let session = ScriptedSession::new(vec![FeedOutcome::Events(events)]);
+        let mut driver = IngestDriver::new(session, trunk_config(), handshake(), nz(cap));
+
+        driver.feed(b"flood", Timestamp::ZERO);
+
+        // The count, not merely the outcome: exactly `cap` Trunks exist no
+        // matter how many thousands of distinct ProgramIds were announced —
+        // this is the assertion a `Vec<ProgramId>`-of-refusals regression
+        // (unbounded in the same way the bug itself was) would still pass,
+        // which is why it is checked here rather than only "some program
+        // beyond the cap has no Trunk".
+        assert_eq!(
+            driver.program_count(),
+            cap,
+            "a 10,000-program flood must admit exactly max_programs Trunks, never more"
+        );
+        assert_eq!(
+            driver.refused_program_count(),
+            10_000 - cap as u64,
+            "every program past the cap must be counted as refused"
+        );
+    }
+
     // --- run_listen: max_sessions is a hard bound --------------------------
 
     /// A [`Listener`] that always has a fresh session ready to accept —
@@ -1332,6 +1686,7 @@ mod tests {
             FloodingListener { max_sessions },
             trunk_config(),
             handshake(),
+            max_programs(),
         );
 
         for _ in 0..max_sessions {
@@ -1359,6 +1714,7 @@ mod tests {
             FloodingListener { max_sessions: 1 },
             trunk_config(),
             handshake(),
+            max_programs(),
         );
         let AcceptOutcome::Admitted(id) = driver.poll_accept() else {
             panic!("expected admission");
@@ -1393,17 +1749,17 @@ mod tests {
         let mut supervisor = DialSupervisor::new(dialer, ReconnectPolicy::new(3));
 
         assert!(matches!(
-            supervisor.try_dial(trunk_config(), handshake()),
+            supervisor.try_dial(trunk_config(), handshake(), max_programs()),
             DialAttempt::Retry(_)
         ));
         assert_eq!(supervisor.attempts(), 1);
         assert!(matches!(
-            supervisor.try_dial(trunk_config(), handshake()),
+            supervisor.try_dial(trunk_config(), handshake(), max_programs()),
             DialAttempt::Retry(_)
         ));
         assert_eq!(supervisor.attempts(), 2);
         assert!(matches!(
-            supervisor.try_dial(trunk_config(), handshake()),
+            supervisor.try_dial(trunk_config(), handshake(), max_programs()),
             DialAttempt::GaveUp(_)
         ));
         assert_eq!(supervisor.attempts(), 3);
@@ -1414,7 +1770,7 @@ mod tests {
         // not spin back into Retry/GaveUp.
         for _ in 0..10_000 {
             assert!(matches!(
-                supervisor.try_dial(trunk_config(), handshake()),
+                supervisor.try_dial(trunk_config(), handshake(), max_programs()),
                 DialAttempt::Exhausted
             ));
             assert_eq!(
@@ -1436,7 +1792,7 @@ mod tests {
 
         // First attempt succeeds immediately (the scripted dialer's one
         // queued session comes out on the very first `dial()` call).
-        match supervisor.try_dial(trunk_config(), handshake()) {
+        match supervisor.try_dial(trunk_config(), handshake(), max_programs()) {
             DialAttempt::Connected(_) => {}
             DialAttempt::Retry(_) => panic!("expected Connected, got Retry"),
             DialAttempt::GaveUp(_) => panic!("expected Connected, got GaveUp"),
@@ -1566,8 +1922,8 @@ mod tests {
     #[test]
     fn multi_round_trip_handshake_completes_through_feed_and_poll_transmit_only() {
         let mut dialer = HandshakeDialer;
-        let mut driver =
-            run_dial(&mut dialer, trunk_config(), handshake()).expect("dial constructs a session");
+        let mut driver = run_dial(&mut dialer, trunk_config(), handshake(), max_programs())
+            .expect("dial constructs a session");
 
         // `dial()` did no I/O and did not establish anything.
         assert!(
@@ -1696,6 +2052,7 @@ mod tests {
             StallingListener { max_sessions: 1 },
             trunk_config(),
             HandshakePolicy::establish_by(DEADLINE),
+            max_programs(),
         );
 
         let AcceptOutcome::Admitted(id) = driver.poll_accept() else {
@@ -1751,6 +2108,7 @@ mod tests {
             session,
             trunk_config(),
             HandshakePolicy::establish_by(DEADLINE),
+            max_programs(),
         );
         driver.feed(b"reply", DEADLINE);
         assert!(
@@ -1769,6 +2127,7 @@ mod tests {
             &mut dialer,
             trunk_config(),
             HandshakePolicy::establish_by(DEADLINE),
+            max_programs(),
         )
         .unwrap();
 
