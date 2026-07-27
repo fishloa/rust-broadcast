@@ -1,0 +1,17 @@
+# ffprobe -show_packets oracle for fixtures/mp4/frag/h264_high.frag.mp4 (demux_timing_invariant.rs, T3)
+# columns: codec_type,stream_index,pts,dts,duration,size,keyframe(K=1)
+video,0,7200,0,3600,5109,1
+video,0,21600,3600,3600,2384,0
+video,0,14400,7200,3600,1414,0
+video,0,10800,10800,3600,998,0
+video,0,18000,14400,3600,991,0
+video,0,36000,18000,3600,2077,0
+video,0,28800,21600,3600,1276,0
+video,0,25200,25200,3600,970,0
+video,0,32400,28800,3600,960,0
+video,0,50400,32400,3600,1769,0
+video,0,43200,36000,3600,1271,0
+video,0,39600,39600,3600,863,0
+video,0,46800,43200,3600,980,0
+video,0,57600,46800,3600,1280,0
+video,0,54000,50400,3600,994,0

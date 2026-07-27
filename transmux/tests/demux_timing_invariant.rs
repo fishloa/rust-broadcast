@@ -27,6 +27,23 @@
 //! Every fixture below is a real capture/encode already committed to the
 //! workspace (never fabricated bytes) — the same ones `tests/absolute_timing.rs`
 //! and each demuxer's own dedicated test file already use.
+//!
+//! ## Why invariant #2 alone cannot catch a scaling bug (T2 test-integrity audit)
+//!
+//! Every demuxer in this crate derives a timed sample's absolute `dts` by
+//! summing `duration`s from a single anchor (`dts[i] = anchor +
+//! sum(duration[0..i])`) — so `sum(duration) == dts_last - dts_first +
+//! duration_last` is true **by construction** for any demuxer that computes
+//! `dts` that way, correct or not: halving every parsed duration halves the
+//! derived `dts` step in lockstep, and the equation still balances. A
+//! mutation that mis-scales `trun.sample_duration` (verified: halving every
+//! fMP4 duration in `media.rs`, previously line 243) leaves every assertion
+//! in `assert_timing_invariant` green. `fmp4_demux_timing_invariant_holds`
+//! therefore also checks `Fmp4Demux`'s output against an **external**
+//! oracle — `ffprobe`'s own independent parse of the same file, committed as
+//! `fixtures/mp4/frag/demux-oracle/h264_high.frag.packets.csv` — which does
+//! not go anywhere near this crate's summing code and so cannot move in
+//! lockstep with a scaling bug in it.
 
 use broadcast_common::{Package, Unpackage};
 
@@ -111,12 +128,80 @@ fn ts_demux_timing_invariant_holds() {
 
 // ── 2. Fmp4Demux ─────────────────────────────────────────────────────────
 
+/// One `ffprobe -show_packets` oracle row, in decode order, in the stream's
+/// own `time_base` ticks (90 kHz for `h264_high.frag.mp4`'s video stream —
+/// verified via `ffprobe -show_entries stream=time_base`, which matches this
+/// fixture's `mdhd`/`mvhd` timescale, so oracle ticks compare directly
+/// against the IR's ticks with no unit conversion).
+struct OracleRow {
+    dts: i64,
+    duration: u32,
+}
+
+/// Parse the committed `ffprobe` CSV oracle for `h264_high.frag.mp4`
+/// (columns: `codec_type,stream_index,pts,dts,duration,size,keyframe`),
+/// generated independently of this crate by
+/// `ffprobe -select_streams v:0 -show_entries packet=pts,dts,duration,size,flags`.
+fn load_fmp4_oracle() -> Vec<OracleRow> {
+    let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../fixtures/mp4/frag/demux-oracle/h264_high.frag.packets.csv");
+    let text = std::fs::read_to_string(&path)
+        .unwrap_or_else(|e| panic!("read oracle {}: {e}", path.display()));
+    let mut rows: Vec<OracleRow> = text
+        .lines()
+        .filter(|l| !l.trim().is_empty() && !l.starts_with('#'))
+        .map(|l| {
+            let cols: Vec<&str> = l.split(',').collect();
+            OracleRow {
+                dts: cols[3].parse().expect("oracle dts"),
+                duration: cols[4].parse().expect("oracle duration"),
+            }
+        })
+        .collect();
+    rows.sort_by_key(|r| r.dts);
+    rows
+}
+
 #[test]
 fn fmp4_demux_timing_invariant_holds() {
     let file = workspace_fixture("mp4/frag/h264_high.frag.mp4");
     let media = Fmp4Demux::new().unpackage(&file).expect("fMP4 demux");
     let checked = assert_timing_invariant(&media, "Fmp4Demux");
     assert!(checked >= 1, "expected at least one timed track checked");
+
+    // Independent-oracle check (see the module doc): compare every sample's
+    // actual dts/duration against ffprobe's own parse of the same file, not
+    // a value re-derived from this crate's own summing logic.
+    let oracle = load_fmp4_oracle();
+    let video = media
+        .tracks
+        .iter()
+        .find(|t| !t.samples.is_empty())
+        .expect("at least one non-empty track");
+    assert_eq!(
+        video.samples.len(),
+        oracle.len(),
+        "Fmp4Demux: sample count ({}) must match the ffprobe oracle's packet count ({})",
+        video.samples.len(),
+        oracle.len()
+    );
+    for (i, (s, o)) in video.samples.iter().zip(oracle.iter()).enumerate() {
+        let dts = s.dts.unwrap_or_else(|| panic!("Fmp4Demux: sample {i} has no dts"));
+        assert_eq!(
+            dts, o.dts,
+            "Fmp4Demux: sample {i} dts ({dts}) must match the ffprobe oracle's dts ({})",
+            o.dts
+        );
+        let duration = s
+            .duration
+            .unwrap_or_else(|| panic!("Fmp4Demux: sample {i} has no duration"));
+        assert_eq!(
+            duration, o.duration,
+            "Fmp4Demux: sample {i} duration ({duration}) must match the ffprobe oracle's \
+             duration ({}) — this is what catches a scaling bug invariant #2 alone cannot",
+            o.duration
+        );
+    }
 }
 
 // ── 3. ProgressiveDemux ──────────────────────────────────────────────────
@@ -125,6 +210,7 @@ fn fmp4_demux_timing_invariant_holds() {
 fn progressive_demux_timing_invariant_holds() {
     let file = workspace_fixture("transmux/h264_aac_prog.mp4");
     let media = ProgressiveDemux::new(1024 * 1024)
+        .expect("non-zero cap must construct")
         .unpackage(&file)
         .expect("progressive MP4 demux");
     let checked = assert_timing_invariant(&media, "ProgressiveDemux");
