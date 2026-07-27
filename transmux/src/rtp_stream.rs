@@ -54,7 +54,7 @@
 //! # Loss and reorder detection (issue #779)
 //!
 //! RTP runs over UDP: loss, reordering, and duplication are all normal, not
-//! exceptional. Before this, [`push`](Self::push) decided access-unit
+//! exceptional. Before this, [`push`](RtpStreamDepacketiser::push) decided access-unit
 //! boundaries purely from the RTP timestamp and the marker bit, and never
 //! looked at the sequence number at all — a dropped FU-A fragment was
 //! concatenated with its neighbours into a malformed access unit and handed
@@ -62,7 +62,7 @@
 //!
 //! Each track now keeps RFC 3550 §5.1 sequence-number state, compared with
 //! **wrapping** arithmetic (never `>` — the field is 16 bits and wraps every
-//! 65536 packets, exactly like this module's own [`unwrap_ts`] for the
+//! 65536 packets, exactly like this module's own `unwrap_ts` for the
 //! 32-bit timestamp). RFC 3550 §A.1's `update_seq` is the standard's
 //! validity-check algorithm; the discipline it embodies (wrapping
 //! comparison, SSRC-scoped state, treating a new SSRC as a new source) is
@@ -83,9 +83,9 @@
 //!   above is one of the fixes), so the reorder buffer never grows past its
 //!   configured depth (momentarily `depth + 1` while a just-arrived packet
 //!   is considered for the "closest to the hole" resume choice, then
-//!   immediately collapsed back down — see [`SeqState::force_resolve`]).
+//!   immediately collapsed back down — see `SeqState::force_resolve`).
 //! - **Gap** (the buffer's window is exhausted, or end of stream forces a
-//!   decision — [`Self::flush`]): the access unit under construction, if
+//!   decision — [`RtpStreamDepacketiser::flush`]): the access unit under construction, if
 //!   any, is dropped rather than reassembled from a run missing a fragment;
 //!   [`RtpLossEvent::SequenceGap`] is recorded.
 //! - **Duplicate** (already delivered, or already sitting in the reorder
@@ -104,7 +104,7 @@
 //! that already exists three times over, in the wrong layer.
 //!
 //! None of that applies here, and the signal surfaces locally instead — a
-//! new [`RtpLossEvent`], polled via [`Self::poll_loss_event`], scoped to
+//! new [`RtpLossEvent`], polled via [`RtpStreamDepacketiser::poll_loss_event`], scoped to
 //! this module rather than folded into `DemuxEvent` (whose own doc comment
 //! already draws its boundary at "the demux family's own vocabulary" —
 //! `StreamingTsDemux` + `StreamingFlvDemux` — and this depacketiser is a
@@ -164,14 +164,14 @@ const MAX_AU_BUFFER_BYTES: usize = 4 * 1024 * 1024;
 
 /// Default depth (in packets) of the bounded out-of-order reorder buffer
 /// (see the module docs' "Loss and reorder detection" section and
-/// [`SeqState`]), used unless a track is built with
+/// `SeqState`), used unless a track is built with
 /// [`RtpStreamTrack::with_reorder_depth`].
 ///
 /// Chosen generously above the reorder distances a real RTSP/RTP session on
 /// a managed network produces (typically a handful of packet positions at
 /// most) while keeping the worst case tiny: `DEFAULT_REORDER_DEPTH + 1`
 /// packets at the network MTU (a few KB) sit in the buffer at any instant,
-/// nowhere near [`MAX_AU_BUFFER_BYTES`]. This is deliberate — this project
+/// nowhere near `MAX_AU_BUFFER_BYTES`. This is deliberate — this project
 /// has already shipped four unbounded-allocation DoS vectors from RTP/TS
 /// input (audit-ingest #4; `MAX_AU_BUFFER_BYTES` above is one of the fixes),
 /// and RTP is untrusted remote input over UDP, so a fifth was not an option.
@@ -690,7 +690,9 @@ impl RtpStreamDepacketiser {
             return Ok(Vec::new());
         };
 
-        let adm = st.seq.admit(st.reorder_depth, hdr.ssrc, hdr.sequence, rtp_packet);
+        let adm = st
+            .seq
+            .admit(st.reorder_depth, hdr.ssrc, hdr.sequence, rtp_packet);
         let mut out = Vec::new();
         if let Some((expected, got)) = adm.gap {
             // The AU under construction, if any, is now known-incomplete:
@@ -792,7 +794,7 @@ impl RtpStreamDepacketiser {
     /// First forces a decision on anything still sitting in the reorder
     /// buffer awaiting a hole that never filled — end of stream is exactly
     /// as final as the buffer's bound being reached mid-stream (see
-    /// [`SeqState::force_resolve`]); without this, a fragment run missing
+    /// `SeqState::force_resolve`); without this, a fragment run missing
     /// its still-buffered continuation would sit invisibly in the reorder
     /// buffer forever while `cur_pkts` (missing that fragment) got wrongly
     /// flushed below as if it were complete.
@@ -1130,6 +1132,7 @@ mod tests {
         // bounding proves the cap, not exhausting real memory.
         const FRAGMENT_FILLER: usize = 2048;
         let mut hit_cap = false;
+        let mut resume_seq: u16 = 0;
         for i in 0..4096u16 {
             match d.push(
                 1,
@@ -1145,6 +1148,14 @@ mod tests {
                         "unexpected error variant: {e:?}"
                     );
                     hit_cap = true;
+                    // The sequence gate (issue #779) already accepted packet
+                    // `i` as in-order before `push_one` hit the byte cap, so
+                    // `i + 1` is the real next-expected sequence number —
+                    // resuming from a low/reused one (as this test did
+                    // pre-#779, back when sequence numbers were ignored)
+                    // would now look like a very late duplicate and be
+                    // discarded, not a fresh start.
+                    resume_seq = i.wrapping_add(1);
                     break;
                 }
             }
@@ -1160,11 +1171,23 @@ mod tests {
         // nothing had gone wrong — the overflow reset internal state cleanly.
         let idr = [0x65u8, 0xAA];
         let non = [0x41u8, 0xBB];
-        assert!(d.push(1, &vpkt(1, 4000, true, &idr)).unwrap().is_empty());
-        let s = d.push(1, &vpkt(2, 7000, true, &non)).unwrap();
+        assert!(
+            d.push(1, &vpkt(resume_seq, 4000, true, &idr))
+                .unwrap()
+                .is_empty()
+        );
+        let s = d
+            .push(1, &vpkt(resume_seq.wrapping_add(1), 7000, true, &non))
+            .unwrap();
         assert_eq!(s.len(), 1);
         assert_eq!(s[0].duration, Some(3000));
         assert!(s[0].flags.is_sync);
+        assert!(
+            d.poll_loss_event().is_none(),
+            "no loss event expected: the byte-cap overflow is its own \
+             recorded corrective action, and the sequence numbers this \
+             resync uses are contiguous with the ones already accepted"
+        );
     }
 
     #[test]

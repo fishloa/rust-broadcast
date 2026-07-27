@@ -301,7 +301,7 @@ pub use rtp_sdp::{
     aac_config_from_asc_bytes, aac_config_from_asc_hex, aac_config_from_fmtp, avc_config_from_fmtp,
     avc_config_from_sprop, avc_config_from_sps_pps, fmtp_param, rtpmap_clock_rate,
 };
-pub use rtp_stream::{RtpStreamDepacketiser, RtpStreamTrack};
+pub use rtp_stream::{DEFAULT_REORDER_DEPTH, RtpLossEvent, RtpStreamDepacketiser, RtpStreamTrack};
 #[cfg(feature = "sample-aes")]
 pub use sample_aes::{
     ExtXKey, HlsEncryptionMethod, aac_decrypt_frame, aac_encrypt_frame, ac3_decrypt_frame,
