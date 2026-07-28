@@ -213,6 +213,14 @@ pub async fn supervise<C: SourceConnector>(
                 tracing::info!("connected, ingest live");
                 route_handle.set_health(HealthState::Live);
                 record_route_up(&name, HealthState::Live);
+                // Issue #805 task 3: publish this route's own owned `Trunk`
+                // into its registry under `SPTS_PROGRAM_ID`, so egress can
+                // resolve this (old-architecture: RTMP/`Custom`) route
+                // through `RouteHandle::resolve_program` exactly like every
+                // driver-backed route, with no fallback branch needed at any
+                // egress call site — see `RouteHandle::publish_owned_trunk`'s
+                // own doc.
+                route_handle.publish_owned_trunk();
                 backoff.reset();
                 if let Err(e) = run_pipeline(
                     route_handle.clone(),
@@ -246,6 +254,112 @@ pub async fn supervise<C: SourceConnector>(
         tracing::warn!(
             delay_ms = delay.as_millis() as u64,
             attempt,
+            "reconnecting after backoff"
+        );
+        tokio::select! {
+            () = tokio::time::sleep(delay) => {}
+            _ = shutdown.changed() => {
+                break;
+            }
+        }
+    }
+}
+
+/// Drives one route's ingest through a `media_plane`
+/// `Dialer`/`IngestSession`/`IngestDriver` — the driver-backed sibling of
+/// [`supervise`] (issue #805 task 2), for the eight input kinds ported onto
+/// `media_plane::ingress` (rtsp/rtp/ts_udp/ts_http/srt/hls_pull/dash_pull/
+/// smooth_pull) that cannot implement [`SourceConnector`] (see
+/// `crate::source`'s own module doc for why they were ported off it).
+///
+/// `attempt` is one full dial-through-disconnect cycle for this route's input
+/// kind — a caller-supplied closure that closes over its own `*Route` config,
+/// `media_plane::trunk::TrunkConfig`, and `media_plane::ingress::HandshakePolicy`,
+/// and calls the matching `crate::source::*::run_*` entry point. Every such
+/// entry point already calls `crate::source::report_driver_progress` from
+/// inside its own drive loop: that is what flips `route_handle` to
+/// [`HealthState::Live`] the moment the driver's session establishes, and
+/// publishes each newly-announced program's `Trunk` into `route_handle`'s
+/// registry (`RouteHandle::publish_program`) — the ingest-side half of
+/// issue #805's registry reconciliation.
+///
+/// Reuses exactly [`supervise`]'s operational shape: [`Backoff`] between
+/// attempts (reset only once an attempt actually reached
+/// [`HealthState::Live`] — mirrors `supervise`'s reset right after a
+/// successful `connect()`), `record_route_up`/`record_reconnect` on every
+/// transition, and a shutdown [`watch::Receiver<bool>`] checked before each
+/// attempt and around the backoff sleep so it cancels promptly.
+///
+/// # Why this reads `route_handle.health()` back, rather than being told
+///
+/// Unlike `supervise` (which observes "connected" as a distinct step,
+/// *before* running the pipeline, via its own `connector.connect()` split), a
+/// driver-backed `run_*` fuses dial and drive into one call — there is no
+/// externally-observable midpoint for this loop to hook `Live` onto other
+/// than `route_handle`'s own health, which `attempt`'s inner
+/// `report_driver_progress` call already sets. So this loop resets
+/// `route_handle` to [`HealthState::Connecting`] before every attempt (so a
+/// stale `Live` left over from a *previous* attempt can never be mistaken for
+/// this one succeeding), then reads `route_handle.health()` back once
+/// `attempt` returns to decide whether this attempt reached `Live` at all.
+#[tracing::instrument(
+    name = "route",
+    skip(attempt, route_handle, backoff, name, shutdown),
+    fields(route = %name)
+)]
+pub async fn supervise_driver<F, Fut>(
+    mut attempt: F,
+    route_handle: Arc<RouteHandle>,
+    mut backoff: Backoff,
+    name: String,
+    mut shutdown: watch::Receiver<bool>,
+) where
+    F: FnMut(Arc<RouteHandle>) -> Fut + Send + 'static,
+    Fut: Future<Output = crate::Result<()>> + Send,
+{
+    tracing::info!("connecting");
+    route_handle.set_health(HealthState::Connecting);
+    record_route_up(&name, HealthState::Connecting);
+    let mut attempt_no: u64 = 0;
+
+    loop {
+        if *shutdown.borrow() {
+            break;
+        }
+        route_handle.set_health(HealthState::Connecting);
+
+        let result = attempt(route_handle.clone()).await;
+        let reached_live = route_handle.health() == HealthState::Live;
+
+        match result {
+            Ok(()) if reached_live => tracing::info!("ingest ended after being live"),
+            Ok(()) => {
+                attempt_no += 1;
+                tracing::warn!(attempt = attempt_no, "ended before ever becoming live");
+            }
+            Err(e) if reached_live => tracing::warn!(error = %e, "pipeline stopped"),
+            Err(e) => {
+                attempt_no += 1;
+                tracing::warn!(error = %e, attempt = attempt_no, "failed to connect");
+            }
+        }
+
+        if reached_live {
+            attempt_no = 0;
+            backoff.reset();
+        }
+        route_handle.set_health(HealthState::Reconnecting);
+        record_route_up(&name, HealthState::Reconnecting);
+        record_reconnect(&name);
+
+        if *shutdown.borrow() {
+            break;
+        }
+
+        let delay = backoff.next();
+        tracing::warn!(
+            delay_ms = delay.as_millis() as u64,
+            attempt = attempt_no,
             "reconnecting after backoff"
         );
         tokio::select! {
@@ -467,6 +581,69 @@ mod tests {
         assert!(
             connect_count.load(Ordering::SeqCst) >= 2,
             "connector must have been retried after the first failure"
+        );
+
+        shutdown_tx.send(true).unwrap();
+        tokio::time::timeout(Duration::from_secs(1), handle)
+            .await
+            .expect("supervise returns promptly on shutdown")
+            .expect("supervise task did not panic");
+    }
+
+    /// Biting test (issue #805 task 3): once `supervise` reaches `Live` for
+    /// an old-architecture (`SourceConnector`-fed: RTMP/`Custom`) route, that
+    /// route must be resolvable through the *same* registry-based path every
+    /// migrated egress call site now reads
+    /// (`crate::http::resolve_route_trunk`), not only through the still-owned
+    /// `RouteHandle` fields (`init_bytes`/`window_segments`) other tests here
+    /// already check — guards the RTMP/`Custom` transition through issue
+    /// #805's registry reconciliation.
+    ///
+    /// MUTATION VERIFIED: commenting out `supervise`'s
+    /// `route_handle.publish_owned_trunk();` call makes this test fail:
+    /// `assert!(resolved.is_ok(), ...)` fails because
+    /// `crate::http::resolve_route_trunk` returns `Err` (mapping
+    /// `ProgramResolution::NotYetAnnounced` to a `503`) even though `route`
+    /// is genuinely `Live` and already serving real media through its owned
+    /// `Trunk` — exactly the "route works but is invisible to the registry"
+    /// regression task 3 exists to prevent. Recompiled and re-run to confirm
+    /// the failure, then reverted.
+    #[tokio::test]
+    async fn live_route_resolves_through_the_registry_not_just_its_owned_trunk() {
+        let route = Arc::new(RouteHandle::new(1.0, 500, 8));
+        // Paced (not instantaneous) so the check below has a real wall-clock
+        // window to observe `Live` -- see `PacedSource`'s own doc for why an
+        // instant source can't be observed this way.
+        let connector = PacedFlakyConnector {
+            fail_times: 0,
+            connect_count: Arc::new(AtomicUsize::new(0)),
+            specs: vec![video_track_spec()],
+            batches: sample_batches(50),
+            delay: Duration::from_millis(2),
+        };
+        let (shutdown_tx, shutdown_rx) = watch::channel(false);
+
+        let handle = tokio::spawn(supervise(
+            connector,
+            route.clone(),
+            1.0,
+            500,
+            tiny_backoff(),
+            "test-route".to_string(),
+            shutdown_rx,
+        ));
+
+        let reached_live = wait_until(Duration::from_secs(2), || {
+            route.health() == HealthState::Live && route.init_bytes().is_some()
+        })
+        .await;
+        assert!(reached_live, "route must reach Live with real media landed");
+
+        let resolved = crate::http::resolve_route_trunk(&route);
+        assert!(
+            resolved.is_ok(),
+            "a Live RTMP/Custom-style route must resolve through the registry \
+             (crate::http::resolve_route_trunk), not answer NotYetAnnounced/NotFound"
         );
 
         shutdown_tx.send(true).unwrap();

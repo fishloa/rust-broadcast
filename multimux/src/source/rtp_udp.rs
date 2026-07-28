@@ -284,10 +284,15 @@ pub async fn recv_and_feed(
 /// [`RtpUdpIngestSession`] through [`media_plane::ingress::IngestDriver`]
 /// until a read stall — the new drive loop, replacing the pre-5a
 /// `RtpUdpSource::connect`/`RtpUdpSession::next_samples` pair.
+///
+/// `route_handle` is the driver-backed registry side of issue #805 task 2 —
+/// see `rtsp::run_rtsp`'s own doc for what
+/// `crate::source::report_driver_progress` does with it each iteration.
 pub async fn run_rtp_udp(
     route: &RtpUdpRoute,
     trunk_config: media_plane::trunk::TrunkConfig,
     handshake: media_plane::ingress::HandshakePolicy,
+    route_handle: &std::sync::Arc<crate::route::RouteHandle>,
 ) -> MultimuxError {
     let socket = match bind(route).await {
         Ok(s) => s,
@@ -309,11 +314,13 @@ pub async fn run_rtp_udp(
     let mut buf = vec![0u8; MAX_UDP_DATAGRAM];
     let read_timeout = route.timeouts.read;
     let start = std::time::Instant::now();
+    let mut published = std::collections::HashSet::new();
     loop {
         let now = Timestamp::from_instant(start, std::time::Instant::now());
         if let Err(e) = recv_and_feed(&socket, &mut buf, &mut driver, read_timeout, now).await {
             return e;
         }
+        crate::source::report_driver_progress(&driver, route_handle, &mut published);
     }
 }
 

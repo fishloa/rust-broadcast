@@ -154,6 +154,300 @@ impl From<&crate::config::Config> for IngestTimeouts {
     }
 }
 
+// --- issue #805 task 2: driver-backed ingest <-> RouteHandle registry glue ---
+//
+// Shared by every `run_*` entry point in this module (`rtsp::run_rtsp`,
+// `rtp_udp::run_rtp_udp`, `ts_udp::run_ts_udp`, `ts_http::run_ts_http`,
+// `srt::drive_socket`, `hls_pull::run_hls_pull`, `dash_pull::run_dash_pull`,
+// `smooth_pull::run_smooth_pull`) so none of them re-implements the "flip the
+// route Live the first time the driver establishes" / "publish each
+// newly-announced program" bookkeeping independently.
+
+fn source_nz(n: usize) -> std::num::NonZeroUsize {
+    std::num::NonZeroUsize::new(n).expect("source::mod.rs capacity constants are all non-zero")
+}
+
+/// Ring capacities for a driver-minted per-program `Trunk`
+/// ([`driver_trunk_config`]) — chosen to match [`crate::route::RouteHandle`]'s
+/// own defaults (that struct's own, private, `DEFAULT_*_CAPACITY` constants)
+/// so a driver-backed route's `Trunk` behaves comparably to the legacy
+/// segmenter-fed one, even though nothing here shares the constants directly
+/// (a driver-minted `Trunk` is a distinct instance per program, never
+/// `RouteHandle`'s own).
+const DRIVER_TIMED_CAPACITY: usize = 64;
+const DRIVER_SPARSE_CAPACITY: usize = 16;
+const DRIVER_EVENT_CAPACITY: usize = 64;
+const DRIVER_PART_CAPACITY: usize = 64;
+
+/// Builds the [`media_plane::trunk::TrunkConfig`] every driver-backed `run_*`
+/// entry point passes to its `IngestDriver::new` — see [`DRIVER_TIMED_CAPACITY`]
+/// et al. for the chosen ring sizes. `window_segments` (the segment log's
+/// capacity) is the one caller-supplied knob, mirroring
+/// [`crate::config::Config::window_segments`]/[`crate::route::RouteHandle::new`]'s
+/// own "advertised window == retained window" depth.
+pub(crate) fn driver_trunk_config(window_segments: usize) -> media_plane::trunk::TrunkConfig {
+    let window_segments =
+        std::num::NonZeroUsize::new(window_segments).unwrap_or(std::num::NonZeroUsize::MIN);
+    media_plane::trunk::TrunkConfig::new(
+        source_nz(DRIVER_TIMED_CAPACITY),
+        source_nz(DRIVER_SPARSE_CAPACITY),
+        window_segments,
+        source_nz(DRIVER_EVENT_CAPACITY),
+        source_nz(DRIVER_PART_CAPACITY),
+    )
+}
+
+/// Builds a production [`media_plane::ingress::HandshakePolicy`] bounding a
+/// fresh session's handshake by `timeout`, expressed as nanoseconds-since-zero
+/// rather than a real wall-clock [`broadcast_common::Timestamp`].
+///
+/// Every driver-backed `run_*` entry point measures its own
+/// `Stage::feed`/`Stage::on_deadline` `now` from an internal `Instant` it
+/// captures at entry (e.g. `rtsp::run_rtsp`'s own `start`) — an instant this
+/// caller cannot observe in advance, since it doesn't exist until `run_*` is
+/// actually called. Expressing the deadline as "nanoseconds since a start
+/// near zero" (matching this crate's own test fixtures, e.g.
+/// `ts_program::test_support::handshake`) rather than a predicted absolute
+/// instant sidesteps that: both clocks start within microseconds of each
+/// other in practice (this function runs immediately before the `run_*` call
+/// it bounds), which is immaterial against a multi-second `timeout`.
+pub(crate) fn handshake_policy(timeout: Duration) -> media_plane::ingress::HandshakePolicy {
+    let nanos = u64::try_from(timeout.as_nanos()).unwrap_or(u64::MAX);
+    media_plane::ingress::HandshakePolicy::establish_by(broadcast_common::Timestamp::from_nanos(
+        nanos,
+    ))
+}
+
+/// After draining a driver-backed session (`IngestDriver::feed`/
+/// `on_deadline`), every `run_*` entry point calls this once per iteration to
+/// keep `route_handle` in sync with what the driver has actually observed
+/// (issue #805 task 2):
+///
+/// - The first time `driver.health()` reaches
+///   [`media_plane::ingress::HealthState::Live`], flips `route_handle` to
+///   [`crate::route::HealthState::Live`] — the driver-backed equivalent of
+///   `origin::supervisor::supervise`'s own `set_health(Live)` right after a
+///   `SourceConnector::connect()` success. Guarded on `route_handle.health()`
+///   rather than a separate flag, since `route_handle`'s own health *is* the
+///   single source of truth `crate::origin::supervisor::supervise_driver`
+///   reads back after this attempt ends (see that function's own doc).
+/// - Every [`media_plane::ingress::ProgramId`] `driver` has announced (via
+///   `SessionEvent::NewProgram`) that this run hasn't already published gets
+///   published into `route_handle`'s registry
+///   ([`crate::route::RouteHandle::publish_program`]).
+pub(crate) fn report_driver_progress<S: media_plane::ingress::IngestSession>(
+    driver: &media_plane::ingress::IngestDriver<S>,
+    route_handle: &crate::route::RouteHandle,
+    published: &mut std::collections::HashSet<media_plane::ingress::ProgramId>,
+) {
+    if matches!(driver.health(), media_plane::ingress::HealthState::Live)
+        && route_handle.health() != crate::route::HealthState::Live
+    {
+        route_handle.set_health(crate::route::HealthState::Live);
+    }
+    for program in driver.programs() {
+        if published.insert(program) {
+            if let Some(trunk) = driver.trunk(program) {
+                route_handle.publish_program(program, std::sync::Arc::clone(trunk));
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod driver_progress_tests {
+    //! Coverage for [`report_driver_progress`] — the shared ingest-side
+    //! registry/health bookkeeping every driver-backed `run_*` entry point
+    //! calls (issue #805 task 2). Uses `media_plane::ingress`'s own
+    //! `ScriptedSession`-style construction indirectly via a minimal fake
+    //! `IngestSession`, so this is a fast, deterministic unit test rather
+    //! than a real-socket loopback one.
+
+    use super::*;
+    use broadcast_common::{Demand, Stage, Timestamp};
+    use media_plane::ingress::{
+        Dialer, HandshakePolicy, IngestDriver, IngestSession, ProgramId, SessionEvent,
+    };
+    use media_plane::trunk::TrunkConfig;
+    use std::collections::HashSet;
+
+    fn nz(n: usize) -> std::num::NonZeroUsize {
+        std::num::NonZeroUsize::new(n).unwrap()
+    }
+
+    fn trunk_config() -> TrunkConfig {
+        TrunkConfig::new(nz(4), nz(4), nz(4), nz(4), nz(4))
+    }
+
+    /// A session that queues `Established` at construction, then a single
+    /// `NewProgram { program: ProgramId(0), tracks: vec![] }` on its
+    /// *second* `feed` call (not its first, which only drains `Established`)
+    /// — enough to drive `report_driver_progress` through both of its jobs
+    /// (health flip, then program publish) as two separate, observable
+    /// steps, without a real transport.
+    struct FakeSession {
+        pending: std::collections::VecDeque<SessionEvent>,
+        feed_count: u32,
+    }
+
+    impl Stage for FakeSession {
+        type In<'a> = &'a [u8];
+        type Out = SessionEvent;
+        type Error = std::convert::Infallible;
+
+        fn demand(&self) -> Demand {
+            Demand::new(4096)
+        }
+
+        fn feed(&mut self, _input: &[u8], _now: Timestamp) -> Result<(), Self::Error> {
+            self.feed_count += 1;
+            if self.feed_count == 2 {
+                self.pending.push_back(SessionEvent::NewProgram {
+                    program: ProgramId(0),
+                    tracks: Vec::new(),
+                });
+            }
+            Ok(())
+        }
+
+        fn poll(&mut self) -> Option<SessionEvent> {
+            self.pending.pop_front()
+        }
+
+        fn next_deadline(&self) -> Option<Timestamp> {
+            None
+        }
+
+        fn on_deadline(&mut self, _now: Timestamp) {}
+
+        fn finish(&mut self) -> Result<(), Self::Error> {
+            Ok(())
+        }
+    }
+
+    impl IngestSession for FakeSession {
+        type Request = bytes::Bytes;
+    }
+
+    struct FakeDialer;
+
+    impl Dialer for FakeDialer {
+        type Session = FakeSession;
+        type Error = std::convert::Infallible;
+
+        fn dial(&mut self) -> Result<FakeSession, std::convert::Infallible> {
+            let mut pending = std::collections::VecDeque::new();
+            pending.push_back(SessionEvent::Established);
+            Ok(FakeSession {
+                pending,
+                feed_count: 0,
+            })
+        }
+    }
+
+    fn driver() -> IngestDriver<FakeSession> {
+        let mut dialer = FakeDialer;
+        let session = dialer.dial().unwrap();
+        IngestDriver::new(
+            session,
+            trunk_config(),
+            HandshakePolicy::establish_by(Timestamp::from_nanos(u64::MAX)),
+            nz(4),
+        )
+    }
+
+    /// MUTATION VERIFIED: changing the health-flip guard from
+    /// `route_handle.health() != crate::route::HealthState::Live` to `true`
+    /// (always overwrite) still passes this specific assertion (both reach
+    /// `Live`), but changing `matches!(driver.health(), ...HealthState::Live)`
+    /// to unconditionally `false` (i.e. never flip on Live) makes this test
+    /// fail: `assert_eq!(route.health(), crate::route::HealthState::Live)`
+    /// fails, comparing actual `HealthState::Connecting` against expected
+    /// `HealthState::Live` — the route never leaves its constructed default.
+    /// Recompiled and re-run to confirm the failure, then reverted.
+    #[test]
+    fn first_live_flips_route_health_to_live() {
+        let mut driver = driver();
+        let route = crate::route::RouteHandle::new(4.0, 500, 4);
+        let mut published = HashSet::new();
+
+        // Establish: driver becomes Live once it drains SessionEvent::Established.
+        driver.feed(&[], Timestamp::from_nanos(1));
+        report_driver_progress(&driver, &route, &mut published);
+
+        assert_eq!(
+            route.health(),
+            crate::route::HealthState::Live,
+            "route must flip to Live the moment the driver itself reaches Live"
+        );
+    }
+
+    /// MUTATION VERIFIED: changing `published.insert(program)` to always
+    /// evaluate to `true` regardless of prior membership (i.e. dropping the
+    /// dedup and calling `route_handle.publish_program` unconditionally every
+    /// call) does not break this test's assertions (both are still
+    /// `Found`+identical `Arc`), but changing the loop's body to skip calling
+    /// `route_handle.publish_program` entirely (i.e. deleting the `if let
+    /// Some(trunk) = driver.trunk(program) { ... }` publish) makes this test
+    /// fail: `resolve_program` returns `NotYetAnnounced` (registry never
+    /// populated), so `match ... { Found(_) => ..., other => panic!(...) }`
+    /// panics naming the actual variant, not `Found`. Recompiled and re-run
+    /// to confirm the failure, then reverted.
+    #[test]
+    fn new_program_is_published_into_the_registry() {
+        let mut driver = driver();
+        let route = crate::route::RouteHandle::new(4.0, 500, 4);
+        let mut published = HashSet::new();
+
+        driver.feed(&[], Timestamp::from_nanos(1)); // Established
+        report_driver_progress(&driver, &route, &mut published);
+        driver.feed(&[], Timestamp::from_nanos(2)); // NewProgram(0)
+        report_driver_progress(&driver, &route, &mut published);
+
+        let expected = driver.trunk(ProgramId(0)).expect("driver minted a Trunk");
+        match route.resolve_program(crate::route::SPTS_PROGRAM_ID) {
+            crate::route::ProgramResolution::Found(resolved) => {
+                assert_eq!(
+                    std::sync::Arc::as_ptr(&resolved),
+                    std::sync::Arc::as_ptr(expected),
+                    "published Trunk must be the exact Arc the driver minted"
+                );
+            }
+            _ => panic!("expected ProgramResolution::Found, got a variant that is not Found"),
+        }
+    }
+
+    /// MUTATION VERIFIED: replacing the `for program in driver.programs()`
+    /// loop body's dedup check (`if published.insert(program)`) with an
+    /// unconditional `true` still republishes correctly, but replacing the
+    /// whole loop with a no-op (never calling `driver.programs()` at all)
+    /// makes this test fail identically to the previous one — `resolve_program`
+    /// never sees an entry, so the `match` panics on the actual
+    /// (`NotYetAnnounced`) variant instead of matching `Found`. This test
+    /// additionally proves a *second* call with an already-published set does
+    /// not clear or corrupt the registry (calling `report_driver_progress`
+    /// twice in a row is exactly what a real per-iteration `run_*` loop does).
+    /// Recompiled and re-run to confirm the failure, then reverted.
+    #[test]
+    fn repeated_calls_with_no_new_programs_are_idempotent() {
+        let mut driver = driver();
+        let route = crate::route::RouteHandle::new(4.0, 500, 4);
+        let mut published = HashSet::new();
+
+        driver.feed(&[], Timestamp::from_nanos(1));
+        report_driver_progress(&driver, &route, &mut published);
+        driver.feed(&[], Timestamp::from_nanos(2));
+        report_driver_progress(&driver, &route, &mut published);
+        // No new SessionEvents fed; calling again must be a harmless no-op.
+        report_driver_progress(&driver, &route, &mut published);
+
+        match route.resolve_program(crate::route::SPTS_PROGRAM_ID) {
+            crate::route::ProgramResolution::Found(_) => {}
+            _ => panic!("expected ProgramResolution::Found"),
+        }
+    }
+}
+
 /// Per-track init derived from an SDP (RTSP's DESCRIBE body, or the
 /// out-of-band SDP configured for [`rtp_udp::RtpUdpRoute`]).
 #[derive(Debug, Clone)]

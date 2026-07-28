@@ -33,6 +33,52 @@
   - One correction went beyond relinking: `serve_with_registry`'s docs claimed
     every `InputSpec` variant dispatches through `supervisor::supervise`. Only
     `Rtmp` and `Custom` do. The prose now says so (see issue #805).
+### Changed (issue #805 task 2/6 — wire the eight `media_plane`-ported inputs)
+- **All nine ingest input kinds now genuinely ingest and serve, via
+  `RouteHandle`'s program registry** (task 1 added the registry additively;
+  this wires both sides of it). `rtsp`/`rtp`/`ts_udp`/`ts_http`/`srt`/
+  `hls_pull`/`dash_pull`/`smooth_pull` were ported onto
+  `media_plane::ingress::{Dialer, IngestSession, IngestDriver}` at plan step
+  5a but left unreachable from `origin::serve_with_registry` — a combined
+  match arm logged an error and spawned a no-op. That stub is deleted.
+  - New `origin::supervisor::supervise_driver`: the driver-backed sibling of
+    `supervise`, reusing its exact operational shape (`Backoff` between
+    attempts, `RouteHandle::health` transitions, `record_route_up`/
+    `record_reconnect`, a cancellable shutdown `watch::Receiver<bool>`) for
+    the eight input kinds whose `run_*` entry point fuses dial+drive into one
+    call rather than exposing a separate `SourceConnector::connect()` step.
+  - New `crate::source::report_driver_progress`, called by every
+    `run_rtsp`/`run_rtp_udp`/`run_ts_udp`/`run_ts_http`/`srt::drive_socket`/
+    `run_hls_pull`/`run_dash_pull`/`run_smooth_pull` from inside its own drive
+    loop: flips the route to `Live` the moment its `IngestDriver` establishes,
+    and publishes each newly-announced program's driver-minted `Trunk` into
+    the route's registry (`RouteHandle::publish_program`). All eight `run_*`/
+    `drive_socket` entry points gained a `route_handle: &Arc<RouteHandle>`
+    parameter for this (source-breaking for direct callers of those `pub`
+    functions).
+  - `origin::serve_with_registry`'s per-route ingest wiring moved into a new
+    `spawn_ingest` helper, one arm per `InputSpec` variant, so it is
+    individually testable without a real HTTP server.
+- **Egress now resolves every route through the registry, uniformly** —
+  migrated the five `RouteHandle::trunk()` call sites
+  (`output::llhls::media_playlist`, `output::dash::manifest`,
+  `output::ll_dash::manifest`, `origin::resource::dynamic_file`/`fetch_part`)
+  onto a new shared `crate::http::resolve_route_trunk`, which resolves
+  `RouteHandle::SPTS_PROGRAM_ID` (the single-program-route default; MPTS
+  resolution is task 6) and maps the three-way
+  `RouteHandle::ProgramResolution`: `Found` resolves and serves;
+  `NotYetAnnounced` (connected, but no program has appeared yet) is a `503`
+  "not ready", **not** a `404`; `NotFound` is a genuine `404`. The now-unused
+  `RouteHandle::trunk()` accessor was deleted (the owned `Trunk` **field**
+  stays — task 5 removes it).
+  - So RTMP/`Custom` (the old `SourceConnector`-fed path) keep serving through
+    this same migration with no fallback branch in egress:
+    `origin::supervisor::supervise` now calls a new, `pub`
+    `RouteHandle::publish_owned_trunk()` right after reaching `Live`,
+    publishing its own owned `Trunk` into the registry under
+    `SPTS_PROGRAM_ID`. `pub` (not `pub(crate)`) because this crate's own
+    `tests/*.rs`/examples that drive `crate::pipeline::run_pipeline` directly
+    (bypassing `supervise`) call it explicitly to stay resolvable.
 
 ### Changed (BREAKING, in progress — plan step 5b)
 - **Ported the three outputs (LL-HLS, DASH, LL-DASH) and the shared

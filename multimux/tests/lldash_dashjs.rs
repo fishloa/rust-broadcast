@@ -168,6 +168,12 @@ async fn start_ll_dash_origin(
     // #663 P4.2) -- set it up front, before the producer's own real-time
     // pacing, so the manifest is servable the instant the player asks.
     store.set_track_specs(vec![spec]);
+    // Issue #805 task 3: egress resolves through the program registry now,
+    // not the owned `Trunk` directly -- publish it explicitly, exactly as
+    // `origin::supervisor::supervise` would for a real RTMP/`Custom` route
+    // reaching `Live` (this test feeds `store` directly, bypassing
+    // `supervise`).
+    store.publish_owned_trunk();
 
     let mut streams = HashMap::new();
     streams.insert(

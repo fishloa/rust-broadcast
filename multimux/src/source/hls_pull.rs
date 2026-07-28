@@ -377,10 +377,15 @@ where
 /// requests (see the module doc); each individual fetch is itself bounded by
 /// [`IngestTimeouts::read`], and the handshake (until the first init segment
 /// resolves) by `handshake`.
+///
+/// `route_handle` is the driver-backed registry side of issue #805 task 2 —
+/// see `crate::source::rtsp::run_rtsp`'s own doc for what
+/// `crate::source::report_driver_progress` does with it each iteration.
 pub async fn run_hls_pull(
     route: &HlsPullRoute,
     trunk_config: TrunkConfig,
     handshake: HandshakePolicy,
+    route_handle: &std::sync::Arc<crate::route::RouteHandle>,
 ) -> Result<()> {
     let (http, clean_url, credentials) = build_client(route)?;
     let mut dialer = HlsPullDialer {
@@ -398,6 +403,7 @@ pub async fn run_hls_pull(
     let mut backlog: VecDeque<Action> = VecDeque::new();
     let mut inflight: JoinSet<(HlsFetchId, Result<Vec<u8>>)> = JoinSet::new();
     let start = std::time::Instant::now();
+    let mut published = std::collections::HashSet::new();
 
     loop {
         while let Some(action) = driver.poll_transmit() {
@@ -485,6 +491,7 @@ pub async fn run_hls_pull(
         match joined {
             Some(Ok((fetch_id, Ok(bytes)))) => {
                 driver.feed((fetch_id, bytes.as_slice()), now);
+                crate::source::report_driver_progress(&driver, route_handle, &mut published);
             }
             Some(Ok((_fetch_id, Err(e)))) => return Err(e),
             Some(Err(join_err)) => {
@@ -932,9 +939,10 @@ mod tests {
     async fn run_hls_pull_completes_cleanly_on_a_static_playlist() {
         let (url, server) = start_cmaf_fixture_server(None).await;
         let route = HlsPullRoute::new("pulled-cam", url);
+        let route_handle = std::sync::Arc::new(crate::route::RouteHandle::new(4.0, 500, 4));
         let result = tokio::time::timeout(
             Duration::from_secs(10),
-            run_hls_pull(&route, trunk_config(), handshake()),
+            run_hls_pull(&route, trunk_config(), handshake(), &route_handle),
         )
         .await
         .expect("run_hls_pull must not hang against a static playlist");
@@ -1050,7 +1058,8 @@ mod tests {
     const BEARER_TOKEN: &str = "hls-pull-bearer-token";
 
     async fn drain_via_run_hls_pull(route: HlsPullRoute) -> Result<()> {
-        run_hls_pull(&route, trunk_config(), handshake()).await
+        let route_handle = std::sync::Arc::new(crate::route::RouteHandle::new(4.0, 500, 4));
+        run_hls_pull(&route, trunk_config(), handshake(), &route_handle).await
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -1154,9 +1163,10 @@ mod tests {
                 connect: IngestTimeouts::default().connect,
                 read: Duration::from_millis(150),
             });
+        let route_handle = std::sync::Arc::new(crate::route::RouteHandle::new(4.0, 500, 4));
         let result = tokio::time::timeout(
             Duration::from_secs(5),
-            run_hls_pull(&route, trunk_config(), handshake()),
+            run_hls_pull(&route, trunk_config(), handshake(), &route_handle),
         )
         .await
         .expect("run_hls_pull must return via IngestTimeouts::read, not hang");

@@ -236,10 +236,15 @@ pub async fn recv_and_feed(
 /// Returns `Ok(())` on a clean end-of-body (the driver is left
 /// [`media_plane::ingress::HealthState::Ended`]) and `Err` on a genuine
 /// failure — the distinction the route supervisor should act on differently.
+///
+/// `route_handle` is the driver-backed registry side of issue #805 task 2 —
+/// see `crate::source::rtsp::run_rtsp`'s own doc for what
+/// `crate::source::report_driver_progress` does with it each iteration.
 pub async fn run_ts_http(
     route: &TsHttpRoute,
     trunk_config: TrunkConfig,
     handshake: HandshakePolicy,
+    route_handle: &std::sync::Arc<crate::route::RouteHandle>,
 ) -> Result<()> {
     let mut stream = open_stream(route).await?;
     let mut dialer = TsHttpDialer;
@@ -254,9 +259,12 @@ pub async fn run_ts_http(
     );
     let read_timeout = route.timeouts.read;
     let start = std::time::Instant::now();
+    let mut published = std::collections::HashSet::new();
     loop {
         let now = Timestamp::from_instant(start, std::time::Instant::now());
-        match recv_and_feed(&mut stream, &mut driver, read_timeout, now).await? {
+        let status = recv_and_feed(&mut stream, &mut driver, read_timeout, now).await?;
+        crate::source::report_driver_progress(&driver, route_handle, &mut published);
+        match status {
             StreamStatus::Fed => {}
             StreamStatus::Ended => {
                 driver.finish();
@@ -464,9 +472,10 @@ mod tests {
                 read: Duration::from_millis(100),
             },
         );
+        let route_handle = std::sync::Arc::new(crate::route::RouteHandle::new(4.0, 500, 4));
         let result = tokio::time::timeout(
             Duration::from_secs(5),
-            run_ts_http(&route, trunk_config(), handshake()),
+            run_ts_http(&route, trunk_config(), handshake(), &route_handle),
         )
         .await
         .expect(

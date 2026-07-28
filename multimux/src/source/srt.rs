@@ -330,11 +330,17 @@ pub async fn recv_and_feed(
 /// Returns `Ok(())` on a clean peer shutdown (the driver is left
 /// [`media_plane::ingress::HealthState::Ended`]) and `Err` on a genuine
 /// failure.
+///
+/// `route_handle` is the driver-backed registry side of issue #805 task 2 —
+/// see `crate::source::rtsp::run_rtsp`'s own doc for what
+/// `crate::source::report_driver_progress` does with it each iteration
+/// (called alongside, not instead of, `on_driver`).
 pub async fn drive_socket(
     mut sock: SrtSocket,
     read_timeout: Duration,
     trunk_config: TrunkConfig,
     handshake: HandshakePolicy,
+    route_handle: &std::sync::Arc<crate::route::RouteHandle>,
     on_driver: impl FnOnce(&IngestDriver<TsIngestSession>),
 ) -> Result<()> {
     let mut dialer = SrtDialer;
@@ -349,9 +355,11 @@ pub async fn drive_socket(
     );
     let start = std::time::Instant::now();
     let mut handoff = Some(on_driver);
+    let mut published = std::collections::HashSet::new();
     loop {
         let now = Timestamp::from_instant(start, std::time::Instant::now());
         let status = recv_and_feed(&mut sock, &mut driver, read_timeout, now).await?;
+        crate::source::report_driver_progress(&driver, route_handle, &mut published);
         if let Some(f) = handoff.take() {
             f(&driver);
         }
@@ -369,9 +377,18 @@ pub async fn run_srt_caller(
     route: &SrtRoute,
     trunk_config: TrunkConfig,
     handshake: HandshakePolicy,
+    route_handle: &std::sync::Arc<crate::route::RouteHandle>,
 ) -> Result<()> {
     let sock = connect_caller(route).await?;
-    drive_socket(sock, route.timeouts.read, trunk_config, handshake, |_| {}).await
+    drive_socket(
+        sock,
+        route.timeouts.read,
+        trunk_config,
+        handshake,
+        route_handle,
+        |_| {},
+    )
+    .await
 }
 
 /// Listener mode: accept **exactly one** inbound Caller and drive it, then
@@ -382,9 +399,18 @@ pub async fn run_srt_listener_once(
     route: &SrtRoute,
     trunk_config: TrunkConfig,
     handshake: HandshakePolicy,
+    route_handle: &std::sync::Arc<crate::route::RouteHandle>,
 ) -> Result<()> {
     let sock = accept_listener(route).await?;
-    drive_socket(sock, route.timeouts.read, trunk_config, handshake, |_| {}).await
+    drive_socket(
+        sock,
+        route.timeouts.read,
+        trunk_config,
+        handshake,
+        route_handle,
+        |_| {},
+    )
+    .await
 }
 
 #[cfg(test)]
@@ -467,6 +493,7 @@ mod tests {
             .await
             .expect("accept must not hang")
             .expect("accept");
+        let route_handle = Arc::new(crate::route::RouteHandle::new(4.0, 500, 4));
         // Drive to completion: the client stops sending, so the 300 ms read
         // timeout ends the loop with an `Err` — expected here, and the
         // samples have already landed by then.
@@ -477,6 +504,7 @@ mod tests {
                 Duration::from_millis(300),
                 trunk_config(),
                 handshake(),
+                &route_handle,
                 move |driver| {
                     if let Some(t) = driver.trunk(ProgramId(0)) {
                         *cursor_for_cb.lock().unwrap() = Some(t.subscribe());
@@ -530,6 +558,7 @@ mod tests {
 
         let cursor: Arc<StdMutex<Option<SampleCursor>>> = Arc::new(StdMutex::new(None));
         let cursor_for_cb = Arc::clone(&cursor);
+        let route_handle = Arc::new(crate::route::RouteHandle::new(4.0, 500, 4));
         let _ = tokio::time::timeout(
             Duration::from_secs(10),
             drive_socket(
@@ -537,6 +566,7 @@ mod tests {
                 Duration::from_millis(300),
                 trunk_config(),
                 handshake(),
+                &route_handle,
                 move |driver| {
                     if let Some(t) = driver.trunk(ProgramId(0)) {
                         *cursor_for_cb.lock().unwrap() = Some(t.subscribe());
@@ -586,9 +616,10 @@ mod tests {
                 read: READ_TIMEOUT,
             },
         );
+        let route_handle = Arc::new(crate::route::RouteHandle::new(4.0, 500, 4));
         let outcome = tokio::time::timeout(
             Duration::from_secs(10),
-            run_srt_caller(&route, trunk_config(), handshake()),
+            run_srt_caller(&route, trunk_config(), handshake(), &route_handle),
         )
         .await
         .expect("run_srt_caller must return via IngestTimeouts::read, not hang");
