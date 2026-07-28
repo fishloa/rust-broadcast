@@ -1,15 +1,25 @@
 //! multimux — a multi-input, multi-output just-in-time repackaging HTTP
 //! origin.
 //!
-//! Pull/receive live media from any of several ingest transports —
+//! Pull or receive live media over any of nine ingest transports —
 //! [`config::InputSpec`]: RTSP pull, raw RTP/UDP, MPEG-TS/UDP, MPEG-TS/HTTP,
-//! or HLS-pull — and serve each ingested stream as any combination of
-//! [`output::OutputKind`]: Low-Latency HLS, DASH, or LL-DASH, from one
-//! in-process tokio + axum HTTP origin. One ingest, many outputs, no
-//! per-output re-mux. Built on `rtsp-runtime` (RTSP), `ll-hls-runtime`
-//! (LL-HLS client/server engine + HLS-pull), `broadcast-auth` (client and
-//! server auth), and `transmux` (RTP/TS depayload + CMAF segmentation +
-//! DASH packaging). Muxing only — samples are never transcoded.
+//! SRT, HLS pull, DASH pull, Smooth pull, and RTMP push — and serve each
+//! ingested stream as any combination of [`output::OutputKind`]: Low-Latency
+//! HLS, DASH, or LL-DASH, from one in-process tokio + axum HTTP origin. One
+//! ingest, many outputs, no per-output re-mux. Muxing only — samples are
+//! never transcoded.
+//!
+//! Every input runs on **one** ingest architecture: `media-plane`'s ingress
+//! contracts (`Dialer` for the eight that dial out, `Listener` for RTMP's
+//! push accept) driven by its `IngestDriver`/`ListenDriver`, publishing
+//! samples into a per-program `Trunk` that egress serves from. Issue #805
+//! converged the last holdout onto this, so there is no second path a sample
+//! can take from socket to segment.
+//!
+//! Also built on `rtsp-runtime` (RTSP), `rtmp-runtime` (RTMP), `srt-runtime`
+//! (SRT), `ll-hls-runtime` (LL-HLS client/server engine + HLS pull),
+//! `broadcast-auth` (client and server auth), and `transmux` (RTP/TS
+//! depayload + CMAF segmentation + DASH packaging).
 //!
 //! Third-party crates can add a new input/output/output-auth scheme without
 //! editing this crate at all — see [`registry`] (issue #663 external scheme
