@@ -1724,6 +1724,7 @@ dependencies = [
  "reqwest",
  "rtmp-runtime",
  "rtsp-runtime",
+ "rustls",
  "sdp-types",
  "serde",
  "serde_json",

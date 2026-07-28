@@ -54,6 +54,45 @@
   `tests/dispatch_ingest.rs`'s `Custom`-dispatch coverage are rewritten onto
   this facade.
 
+### Fixed (issue #804)
+- **`rtsps://` (RTSP over TLS) ingest works again.** The step-5a port left
+  `source::rtsp::run_rtsp` wiring only a plain `TcpStream`, and refusing an
+  `rtsps://` URL outright with an error quoting an internal task number — a
+  user-visible capability regression against 0.4, on a scheme that is common
+  on IP cameras. `run_rtsp` now branches on the URL scheme
+  (`RtspDialer::is_tls`, already present and tested) and, for `rtsps://`,
+  TCP-connects then performs a real `tokio_rustls` handshake before any RTSP
+  is exchanged — trusting the public-CA `webpki-roots` bundle via
+  `rtsp_runtime::io::default_tls_client_config`, the same config
+  `rtsp_runtime::io::AsyncRtspClient::connect_tls_with` uses. Both transports
+  are erased to a boxed `AsyncRead`/`AsyncWrite` pair, so the sans-IO
+  `poll_transmit`/`feed` drive loop is written once and never has to know
+  which one it got. Gated behind this crate's existing default-on `tls`
+  feature; with `--no-default-features`, an `rtsps://` route fails fast with
+  an error naming the missing feature.
+  - The interim refusal did at least **fail safe** — it never opened a
+    plaintext socket to a TLS port — and that property is preserved and now
+    *asserted* rather than assumed: a new test points a real `rtsps://` route
+    at a deliberately-plain loopback listener and checks the bytes the
+    listener actually received begin with a TLS handshake record (`0x16`,
+    major version `0x03`), never the ASCII first byte of an RTSP request
+    line.
+  - **SNI derivation restored.** `sni_server_name` (dropped in the 5a port,
+    and *not* relocated — `AsyncRtspClient::connect_tls_with` takes a
+    caller-supplied `server_name` and does no bracket-stripping of its own)
+    strips brackets from IPv6 literals, since rustls'
+    `ServerName::try_from` rejects them: `[2001:db8::1]` -> `2001:db8::1`,
+    with hostnames and IPv4 literals passed through unchanged. Without it,
+    an `rtsps://` camera addressed by IPv6 literal would fail — and *only*
+    that case, which ordinary testing misses. Also exposed as
+    `RtspDialer::sni_server_name`.
+  - A real TLS handshake is exercised in-tree: a new loopback test runs a
+    genuine `tokio_rustls` server (self-signed `CN=localhost` fixture cert,
+    shared byte-for-byte with `rtsp-runtime`'s own TLS loopback test) and
+    drives a full DESCRIBE -> SETUP -> PLAY -> interleaved-RTP-depayload
+    exchange over the encrypted socket, asserting a real depayloaded sample
+    lands in the `Trunk`.
+
 ### Fixed (issue #809)
 - **`multimux_parts_produced_total`/`multimux_segments_produced_total` have
   an emitter again.** These two counters had no emitter at all since the

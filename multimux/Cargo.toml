@@ -63,6 +63,12 @@ tracing           = "0.1"
 metrics           = "0.24"
 metrics-exporter-prometheus = { version = "0.18", default-features = false }
 tokio-rustls      = { version = "0.26", optional = true }
+# `rustls::pki_types::ServerName` for SNI, plus the loopback TLS test server
+# (`source::rtsp`'s `rtsps://` connect, issue #804) — pinned to the same
+# "0.23" line as `rtsp-runtime`'s own optional `rustls` dep, already resolved
+# at that version transitively (via `reqwest`/`hyper-rustls`), so this adds no
+# new version to the lock.
+rustls            = { version = "0.23", optional = true }
 # TS-over-HTTP ingest (`source::ts_http`, issue #663 P3c): a streaming GET
 # fed straight into `StreamingTsDemux`. `rustls-tls` for consistency with the
 # rest of the workspace's TLS backend (rustls/aws-lc-rs); `stream` for
@@ -79,7 +85,7 @@ futures-util      = { version = "0.3", default-features = false, features = ["st
 # only to name the connected stream's concrete type
 # (`tokio_rustls::client::TlsStream<TcpStream>`).
 default     = ["tls"]
-tls         = ["rtsp-runtime/tls", "dep:tokio-rustls"]
+tls         = ["rtsp-runtime/tls", "dep:tokio-rustls", "dep:rustls"]
 
 [[example]]
 name = "serve_rtsp"
