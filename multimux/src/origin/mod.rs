@@ -2464,4 +2464,237 @@ mod tests {
         send_task.abort();
         handle.abort();
     }
+
+    /// A minimal, `sdp-types`-parseable single-media SDP (mirrors
+    /// `multimux/tests/rtsp_ingest.rs`'s own `sdp_body`) — just enough for
+    /// [`crate::config::InputSpec::Rtp`]'s `sdp` field to be genuinely valid,
+    /// so that variant's dispatch reaches its real "bind the UDP socket and
+    /// wait for datagrams" path rather than failing earlier on SDP parsing.
+    fn minimal_rtp_sdp() -> String {
+        "v=0\r\n\
+         o=- 0 0 IN IP4 127.0.0.1\r\n\
+         s=-\r\n\
+         t=0 0\r\n\
+         m=video 0 RTP/AVP 96\r\n\
+         a=rtpmap:96 H264/90000\r\n\
+         a=control:streamid=0\r\n"
+            .to_string()
+    }
+
+    /// Compile-time exhaustiveness net (issue #805 task 3): a **separate**
+    /// exhaustive match from `spawn_ingest`'s own — that one only proves
+    /// *production* wiring keeps pace with a newly-added `InputSpec` variant
+    /// (it would fail to compile on its own); this one proves this
+    /// **regression test's enumeration** does too. `InputSpec` is
+    /// `#[non_exhaustive]`, so an external crate's `match` would be forced to
+    /// carry a `_ =>` arm that silently swallows a new variant — this only
+    /// works as a real compile-time net because this test lives in-crate
+    /// (`multimux/src/origin/mod.rs`), not in `multimux/tests/*.rs`. Every
+    /// arm returns the same value; the only thing under test is the *shape*
+    /// of the match itself.
+    fn every_input_spec_variant_is_named_here(spec: &crate::config::InputSpec) -> bool {
+        match spec {
+            crate::config::InputSpec::Rtsp { .. } => true,
+            crate::config::InputSpec::Rtp { .. } => true,
+            crate::config::InputSpec::TsUdp { .. } => true,
+            crate::config::InputSpec::TsHttp { .. } => true,
+            crate::config::InputSpec::Srt { .. } => true,
+            crate::config::InputSpec::HlsPull { .. } => true,
+            crate::config::InputSpec::DashPull { .. } => true,
+            crate::config::InputSpec::SmoothPull { .. } => true,
+            crate::config::InputSpec::Rtmp { .. } => true,
+            crate::config::InputSpec::Custom { .. } => true,
+        }
+    }
+
+    /// Issue #805 task 3's own regression net: **every** non-`Custom`
+    /// [`crate::config::InputSpec`] variant — not just `TsUdp` (task 2's own
+    /// bite, above) — must dispatch to a route that genuinely attempts
+    /// ingest, not the pre-#805 combined stub arm that logged an error and
+    /// spawned a no-op future for eight of nine variants while every gate
+    /// (build/clippy/doc/5674 tests) stayed green.
+    ///
+    /// Every variant here is pointed at a deliberately dead/unreachable
+    /// endpoint (a refused TCP connect, a UDP port nothing ever sends to, an
+    /// SRT caller dialing nobody, or — for `Rtmp` — a listen port this test
+    /// has already bound out from under it) so no real server is needed
+    /// anywhere. A genuinely-wired route's supervisor (`supervise`/
+    /// `supervise_driver`) completes one full attempt-and-fail cycle and
+    /// transitions [`RouteHandle::health`] `Connecting` -> `Reconnecting`;
+    /// the old combined stub arm never touched `route_handle` at all, so a
+    /// regressed variant would still read `Connecting` at the hang guard.
+    ///
+    /// `Custom` is deliberately excluded from the dead-endpoint loop below —
+    /// it resolves through [`SchemeRegistry`], not a built-in `run_*` entry
+    /// point, and is already covered by
+    /// `registered_custom_input_factory_runs_against_a_real_input_ctx` and
+    /// the `serve_with_registry_unregistered_custom_*_errors_not_panics`
+    /// tests above — but it is still named in
+    /// [`every_input_spec_variant_is_named_here`]'s match, so the compile-time
+    /// net covers the whole enum, not just the nine `run_*`-backed variants.
+    ///
+    /// MUTATION VERIFIED: replacing `spawn_ingest`'s `InputSpec::TsUdp` arm
+    /// with the pre-#805 combined stub (`InputSpec::TsUdp { .. } =>
+    /// tokio::spawn(async move { tracing::error!("ingest kind not yet
+    /// wired"); })`) makes this test fail on the `TsUdp` iteration
+    /// specifically: the 10 s hang-guard `reached_reconnecting` poll loop
+    /// times out (`is_ok()` is `false`, since the stub never calls
+    /// `route_handle.set_health` at all) and the very next
+    /// `assert!(reached_reconnecting, ...)` — not the later `assert_eq!`,
+    /// which the panic short-circuits before ever reaching — fires with:
+    /// `variant TsUdp { addr: "127.0.0.1:58600", multicast_group: None }
+    /// never left HealthState::Connecting within the hang guard (still
+    /// Connecting) -- looks like a stubbed dispatch arm`. Rebuilt and re-ran
+    /// to confirm this exact message, then reverted (confirmed green again
+    /// afterwards).
+    #[tokio::test]
+    async fn every_input_spec_variant_dispatches_to_real_ingest_not_a_stub() {
+        // Shrunk so the UDP-bind-but-no-data-arrives path (Rtp/TsUdp) and the
+        // SRT-caller-dialing-nobody path resolve in well under a second
+        // instead of waiting the production 30 s/10 s defaults.
+        let config = crate::config::Config {
+            ingest_connect_timeout_secs: 0.2,
+            ingest_read_timeout_secs: 0.2,
+            ..crate::config::Config::default()
+        };
+
+        // A TCP port nothing listens on: every HTTP/RTSP-based puller gets a
+        // connection refused practically instantly.
+        let refused = std::net::TcpListener::bind("127.0.0.1:0").expect("reserve tcp port");
+        let refused_addr = refused.local_addr().expect("local addr");
+        drop(refused);
+
+        let reserve_udp = || {
+            let s = std::net::UdpSocket::bind("127.0.0.1:0").expect("reserve udp port");
+            let addr = s.local_addr().expect("local addr");
+            drop(s);
+            addr
+        };
+        let quiet_rtp_addr = reserve_udp();
+        let quiet_ts_udp_addr = reserve_udp();
+        let quiet_srt_addr = reserve_udp();
+
+        // Steal an RTMP listen port so `AsyncRtmpServer::bind` itself fails
+        // on every attempt -- no client connection needed at all, since
+        // `RtmpSource::connect`'s own `server.accept().await` (unlike every
+        // other variant here) has no timeout of its own and would otherwise
+        // hang forever waiting for a publisher that never arrives.
+        let rtmp_thief =
+            std::net::TcpListener::bind("127.0.0.1:0").expect("steal an rtmp listen port");
+        let rtmp_addr = rtmp_thief.local_addr().expect("local addr");
+
+        let variants: Vec<crate::config::InputSpec> = vec![
+            crate::config::InputSpec::Rtsp {
+                url: format!("rtsp://{refused_addr}/x"),
+                auth: None,
+            },
+            crate::config::InputSpec::Rtp {
+                addr: quiet_rtp_addr.to_string(),
+                sdp: minimal_rtp_sdp(),
+                multicast_group: None,
+            },
+            crate::config::InputSpec::TsUdp {
+                addr: quiet_ts_udp_addr.to_string(),
+                multicast_group: None,
+            },
+            crate::config::InputSpec::TsHttp {
+                url: format!("http://{refused_addr}/x"),
+                auth: None,
+            },
+            crate::config::InputSpec::Srt {
+                listen: None,
+                remote: Some(quiet_srt_addr.to_string()),
+                stream_id: None,
+                latency_ms: None,
+            },
+            crate::config::InputSpec::HlsPull {
+                url: format!("http://{refused_addr}/x"),
+                auth: None,
+            },
+            crate::config::InputSpec::DashPull {
+                url: format!("http://{refused_addr}/x"),
+                auth: None,
+            },
+            crate::config::InputSpec::SmoothPull {
+                url: format!("http://{refused_addr}/x"),
+                auth: None,
+            },
+            crate::config::InputSpec::Rtmp {
+                listen: rtmp_addr.to_string(),
+                app: None,
+                stream_key: None,
+            },
+        ];
+        assert_eq!(
+            variants.len(),
+            9,
+            "every non-Custom InputSpec kind must be represented exactly once"
+        );
+
+        let (_shutdown_tx, shutdown_rx) = watch::channel(false);
+        let registry = SchemeRegistry::new();
+
+        for spec in variants {
+            assert!(
+                every_input_spec_variant_is_named_here(&spec),
+                "compile-time net: every match arm returns true"
+            );
+
+            let route = crate::config::Route {
+                name: "cam".into(),
+                input: spec.clone(),
+                outputs: vec![crate::output::OutputKind::LlHls],
+            };
+            let store = Arc::new(RouteHandle::new(
+                config.target_duration_secs,
+                config.part_target_ms,
+                config.window_segments,
+            ));
+
+            let handle = spawn_ingest(
+                &route,
+                store.clone(),
+                &config,
+                &registry,
+                shutdown_rx.clone(),
+            )
+            .unwrap_or_else(|e| panic!("spawn_ingest must accept {spec:?}, got {e}"));
+
+            // No `.await` has happened on this task yet since `store` was
+            // constructed, so the spawned supervisor task has not had a
+            // chance to run a single instruction -- this is a deterministic
+            // check of `RouteHandle::new`'s own initial value, not a race.
+            assert_eq!(
+                store.health(),
+                HealthState::Connecting,
+                "variant {spec:?} must start Connecting"
+            );
+
+            let reached_reconnecting = tokio::time::timeout(Duration::from_secs(10), async {
+                loop {
+                    if store.health() == HealthState::Reconnecting {
+                        break;
+                    }
+                    tokio::time::sleep(Duration::from_millis(10)).await;
+                }
+            })
+            .await
+            .is_ok();
+            assert!(
+                reached_reconnecting,
+                "variant {spec:?} never left HealthState::Connecting within the hang guard \
+                 (still {:?}) -- looks like a stubbed dispatch arm",
+                store.health()
+            );
+            assert_eq!(
+                store.health(),
+                HealthState::Reconnecting,
+                "variant {spec:?} must be Reconnecting after its first failed attempt"
+            );
+
+            handle.abort();
+        }
+
+        drop(rtmp_thief);
+    }
 }
