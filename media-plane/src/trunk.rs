@@ -1371,7 +1371,7 @@ impl Trunk {
     /// fan-out beyond this one cursor is a refcount bump the relay performs
     /// itself, not something this type needs to do for you.
     pub fn subscribe(self: &Arc<Self>) -> SampleCursor {
-        let state = self.state.lock().unwrap();
+        let state = self.state.lock().expect("Trunk state lock poisoned");
         SampleCursor {
             trunk: Arc::clone(self),
             timed_consumed: state.timed.published,
@@ -1426,7 +1426,7 @@ impl Trunk {
     /// protocol. Supported reader count is **single-digit by design**; do
     /// not call this once per connection.
     pub fn subscribe_from_backlog(self: &Arc<Self>) -> SampleCursor {
-        let state = self.state.lock().unwrap();
+        let state = self.state.lock().expect("Trunk state lock poisoned");
         SampleCursor {
             trunk: Arc::clone(self),
             timed_consumed: state.timed.base,
@@ -1437,13 +1437,23 @@ impl Trunk {
     /// Diagnostic: entries currently resident in the `Timed` ring. Never
     /// exceeds [`TrunkConfig::timed_capacity`].
     pub fn timed_len(&self) -> usize {
-        self.state.lock().unwrap().timed.entries.len()
+        self.state
+            .lock()
+            .expect("Trunk state lock poisoned")
+            .timed
+            .entries
+            .len()
     }
 
     /// Diagnostic: entries currently resident in the `Sparse` ring. Never
     /// exceeds [`TrunkConfig::sparse_capacity`].
     pub fn sparse_len(&self) -> usize {
-        self.state.lock().unwrap().sparse.entries.len()
+        self.state
+            .lock()
+            .expect("Trunk state lock poisoned")
+            .sparse
+            .entries
+            .len()
     }
 
     /// Subscribe a new **non-pinning** [`SegmentCursor`], starting from
@@ -1461,7 +1471,7 @@ impl Trunk {
     /// catch-up within the live window) — use [`Trunk::pin_segments`]
     /// instead for a consumer that must not miss a segment (DVR/archive).
     pub fn subscribe_segments(self: &Arc<Self>) -> SegmentCursor {
-        let state = self.state.lock().unwrap();
+        let state = self.state.lock().expect("Trunk state lock poisoned");
         SegmentCursor {
             trunk: Arc::clone(self),
             consumed: state.segments.published,
@@ -1490,7 +1500,7 @@ impl Trunk {
     /// applies; a pinning cursor is exactly as expensive per publish as any
     /// other.
     pub fn pin_segments(self: &Arc<Self>, on_overrun: ArchiveOverrun) -> SegmentCursor {
-        let mut state = self.state.lock().unwrap();
+        let mut state = self.state.lock().expect("Trunk state lock poisoned");
         let pin_id = state.segments.next_pin_id;
         state.segments.next_pin_id += 1;
         let consumed = state.segments.published;
@@ -1516,7 +1526,12 @@ impl Trunk {
     /// [The DVR contradiction](self#the-dvr-contradiction-losslessness-from-retention-not-back-pressure)'s
     /// "pinning is bounded" claim means.
     pub fn segment_len(&self) -> usize {
-        self.state.lock().unwrap().segments.entries.len()
+        self.state
+            .lock()
+            .expect("Trunk state lock poisoned")
+            .segments
+            .entries
+            .len()
     }
 
     /// Subscribe a new [`EventCursor`] over the event log, starting from
@@ -1535,7 +1550,7 @@ impl Trunk {
     /// position. See
     /// [The event log](self#the-event-log-90-khz-absolute-and-the-b1-crux).
     pub fn subscribe_events(self: &Arc<Self>) -> EventCursor {
-        let state = self.state.lock().unwrap();
+        let state = self.state.lock().expect("Trunk state lock poisoned");
         EventCursor {
             trunk: Arc::clone(self),
             consumed: state.events.published,
@@ -1549,7 +1564,7 @@ impl Trunk {
     /// fabricating one to satisfy this query would be exactly B1 — see
     /// [The event log](self#the-event-log-90-khz-absolute-and-the-b1-crux).
     pub fn events_between(&self, from: MediaTime, to: MediaTime) -> Vec<EventEntry> {
-        let state = self.state.lock().unwrap();
+        let state = self.state.lock().expect("Trunk state lock poisoned");
         state
             .events
             .entries
@@ -1569,7 +1584,7 @@ impl Trunk {
     /// [`EventAnchor::Segment`] entry targeting it is not returned either,
     /// for the same B1 reason [`Trunk::events_between`] documents.
     pub fn events_in_segment(&self, segment_number: u32) -> Vec<EventEntry> {
-        let state = self.state.lock().unwrap();
+        let state = self.state.lock().expect("Trunk state lock poisoned");
         let log = &state.events;
         let Some(&(_, start)) = log
             .segment_starts
@@ -1596,7 +1611,12 @@ impl Trunk {
     /// Diagnostic: entries currently resident in the event log. Never
     /// exceeds [`TrunkConfig::event_capacity`].
     pub fn event_len(&self) -> usize {
-        self.state.lock().unwrap().events.entries.len()
+        self.state
+            .lock()
+            .expect("Trunk state lock poisoned")
+            .events
+            .entries
+            .len()
     }
 
     /// A live part's bytes by `(segment_number, part_index)` — the direct,
@@ -1610,7 +1630,7 @@ impl Trunk {
     /// evicted by [`TrunkConfig::part_capacity`]'s ordinary bound —
     /// including after its parent segment has closed.
     pub fn part_bytes(&self, segment_number: u32, part_index: u32) -> Option<Bytes> {
-        let state = self.state.lock().unwrap();
+        let state = self.state.lock().expect("Trunk state lock poisoned");
         state
             .parts
             .entries
@@ -1625,7 +1645,7 @@ impl Trunk {
     /// far" (RFC 8216bis's `_HLS_part` blocking-reload condition) without a
     /// cursor.
     pub fn parts_in_segment(&self, segment_number: u32) -> Vec<PartEntry> {
-        let state = self.state.lock().unwrap();
+        let state = self.state.lock().expect("Trunk state lock poisoned");
         state
             .parts
             .entries
@@ -1638,7 +1658,12 @@ impl Trunk {
     /// Diagnostic: entries currently resident in the live-part log. Never
     /// exceeds [`TrunkConfig::part_capacity`].
     pub fn part_len(&self) -> usize {
-        self.state.lock().unwrap().parts.entries.len()
+        self.state
+            .lock()
+            .expect("Trunk state lock poisoned")
+            .parts
+            .entries
+            .len()
     }
 
     /// Diagnostic: currently-outstanding [`ProgressListener`] registrations
@@ -1660,7 +1685,7 @@ impl Trunk {
     pub fn last_closed_segment(&self) -> Option<u32> {
         self.state
             .lock()
-            .unwrap()
+            .expect("Trunk state lock poisoned")
             .segments
             .entries
             .back()
@@ -1674,7 +1699,7 @@ impl Trunk {
     /// clone (a refcount bump), never a `Vec` copy, however many tracks the
     /// program carries.
     pub fn tracks(&self) -> Arc<[TrackSpec]> {
-        Arc::clone(&self.state.lock().unwrap().tracks)
+        Arc::clone(&self.state.lock().expect("Trunk state lock poisoned").tracks)
     }
 
     /// Bumped by exactly one on every [`TrunkWriter::set_tracks`] call
@@ -1685,7 +1710,10 @@ impl Trunk {
     /// of how many tracks a program carries. `0` until the first
     /// `set_tracks` call.
     pub fn track_generation(&self) -> u64 {
-        self.state.lock().unwrap().track_generation
+        self.state
+            .lock()
+            .expect("Trunk state lock poisoned")
+            .track_generation
     }
 
     /// Register for the next part/segment-close notification — see
@@ -1823,7 +1851,7 @@ pub struct TrunkWriter {
 impl TrunkWriter {
     /// Publish one sample for `track_id` under `retention`.
     pub fn publish(&self, track_id: u32, retention: RetentionClass, sample: Sample) {
-        let mut state = self.trunk.state.lock().unwrap();
+        let mut state = self.trunk.state.lock().expect("Trunk state lock poisoned");
         match retention {
             RetentionClass::Timed => state.timed.push(track_id, sample),
             RetentionClass::Sparse => state.sparse.push(track_id, sample),
@@ -1839,7 +1867,7 @@ impl TrunkWriter {
     /// supplies what was missing. See
     /// [The event log](self#the-event-log-90-khz-absolute-and-the-b1-crux).
     pub fn publish_event(&self, event: TimedEvent, anchor: EventAnchor) {
-        let mut state = self.trunk.state.lock().unwrap();
+        let mut state = self.trunk.state.lock().expect("Trunk state lock poisoned");
         state.events.push(event, anchor);
     }
 
@@ -1867,7 +1895,7 @@ impl TrunkWriter {
     /// track-set change is folded into that same broad wake rather than a
     /// new channel.
     pub fn set_tracks(&self, tracks: Vec<TrackSpec>) {
-        let mut state = self.trunk.state.lock().unwrap();
+        let mut state = self.trunk.state.lock().expect("Trunk state lock poisoned");
         state.tracks = Arc::from(tracks);
         state.track_generation += 1;
         drop(state);
@@ -1917,7 +1945,7 @@ impl SegmentWriter {
     /// `StallIngest` path — a waiter is woken only after the entry has
     /// actually landed, never merely because a pin released.
     pub fn publish_segment(&self, entry: SegmentEntry) {
-        let mut state = self.trunk.state.lock().unwrap();
+        let mut state = self.trunk.state.lock().expect("Trunk state lock poisoned");
         loop {
             if state.segments.entries.len() < state.segments.capacity {
                 // Room to push without evicting anything: no pin can be at
@@ -1947,7 +1975,11 @@ impl SegmentWriter {
             if !must_wait {
                 break;
             }
-            state = self.trunk.segment_pin_released.wait(state).unwrap();
+            state = self
+                .trunk
+                .segment_pin_released
+                .wait(state)
+                .expect("Trunk segment_pin_released condvar poisoned");
             // Loop back around: re-check capacity/oldest/pins after waking —
             // the pin that was blocking may have advanced, been dropped, or
             // (if a *different* pin also needed this entry) still be
@@ -1968,7 +2000,7 @@ impl SegmentWriter {
     /// Wakes any [`Trunk::listen`] registration once this part has actually
     /// landed (RFC 8216bis blocking-reload's part-availability condition).
     pub fn publish_part(&self, entry: PartEntry) {
-        let mut state = self.trunk.state.lock().unwrap();
+        let mut state = self.trunk.state.lock().expect("Trunk state lock poisoned");
         state.parts.push(entry);
         drop(state);
         self.trunk.progress.notify(usize::MAX);
@@ -1987,7 +2019,7 @@ impl SegmentWriter {
     /// create a second appender for [`TrunkWriter::publish_event`]'s ring;
     /// see [One writer per ring group](self#one-writer-per-ring-group-not-one-writer-per-trunk).
     pub fn note_segment_start(&self, segment_number: u32, start: MediaTime) {
-        let mut state = self.trunk.state.lock().unwrap();
+        let mut state = self.trunk.state.lock().expect("Trunk state lock poisoned");
         state.events.note_segment_start(segment_number, start);
     }
 
@@ -2000,7 +2032,7 @@ impl SegmentWriter {
     /// for why, and the same in-place-resolution reasoning: this is not an
     /// append to the event ring either.
     pub fn set_time_anchor(&self, anchor: TimeAnchor) {
-        let mut state = self.trunk.state.lock().unwrap();
+        let mut state = self.trunk.state.lock().expect("Trunk state lock poisoned");
         state.events.set_time_anchor(anchor);
     }
 }
@@ -2086,7 +2118,7 @@ impl SampleCursor {
     /// [`TrunkWriter::publish`] produced them, with no duplication and no
     /// unreported loss.
     pub fn poll(&mut self) -> Option<SampleCursorItem> {
-        let state = self.trunk.state.lock().unwrap();
+        let state = self.trunk.state.lock().expect("Trunk state lock poisoned");
 
         if self.timed_consumed < state.timed.base {
             let skipped = state.timed.base - self.timed_consumed;
@@ -2199,7 +2231,7 @@ impl SegmentCursor {
         let Some(pin_id) = self.pin_id else {
             // Non-pinning: local `consumed`, exactly `SampleCursor::poll`'s
             // shape, against the one segment log instead of two class rings.
-            let state = self.trunk.state.lock().unwrap();
+            let state = self.trunk.state.lock().expect("Trunk state lock poisoned");
             if self.consumed < state.segments.base {
                 let skipped = state.segments.base - self.consumed;
                 self.consumed = state.segments.base;
@@ -2217,7 +2249,7 @@ impl SegmentCursor {
         // Pinning: progress lives in the shared `PinState`, because
         // `SegmentWriter::publish_segment` has to consult it before evicting,
         // not merely react to it afterward.
-        let mut state = self.trunk.state.lock().unwrap();
+        let mut state = self.trunk.state.lock().expect("Trunk state lock poisoned");
         let Some(pin) = state.segments.pins.get(&pin_id) else {
             // Already removed (defensive: `Drop`/prior `Terminated` report
             // should make this unreachable in practice) — treat as done.
@@ -2233,7 +2265,12 @@ impl SegmentCursor {
         let consumed = pin.consumed;
         if consumed < state.segments.base {
             let skipped = state.segments.base - consumed;
-            state.segments.pins.get_mut(&pin_id).unwrap().consumed = state.segments.base;
+            state
+                .segments
+                .pins
+                .get_mut(&pin_id)
+                .expect("pin_id was resolved from this same locked state, so its entry exists")
+                .consumed = state.segments.base;
             drop(state);
             // A pin advancing can free a `StallIngest` writer waiting on
             // exactly this pin.
@@ -2243,7 +2280,12 @@ impl SegmentCursor {
         let idx = (consumed - state.segments.base) as usize;
         if let Some(entry) = state.segments.entries.get(idx) {
             let item = entry.clone();
-            state.segments.pins.get_mut(&pin_id).unwrap().consumed += 1;
+            state
+                .segments
+                .pins
+                .get_mut(&pin_id)
+                .expect("pin_id was resolved from this same locked state, so its entry exists")
+                .consumed += 1;
             drop(state);
             self.trunk.segment_pin_released.notify_all();
             return Some(SegmentCursorItem::Segment(item));
@@ -2260,7 +2302,7 @@ impl Drop for SegmentCursor {
     /// case where the consumer disappeared instead of choosing a policy.
     fn drop(&mut self) {
         if let Some(pin_id) = self.pin_id.take() {
-            let mut state = self.trunk.state.lock().unwrap();
+            let mut state = self.trunk.state.lock().expect("Trunk state lock poisoned");
             state.segments.pins.remove(&pin_id);
             drop(state);
             self.trunk.segment_pin_released.notify_all();
@@ -2306,7 +2348,7 @@ impl EventCursor {
     /// further data — the same cannot-be-skipped-past precedent as
     /// [`SampleCursor::poll`]/[`SegmentCursor::poll`].
     pub fn poll(&mut self) -> Option<EventCursorItem> {
-        let state = self.trunk.state.lock().unwrap();
+        let state = self.trunk.state.lock().expect("Trunk state lock poisoned");
         let log = &state.events;
         if self.consumed < log.base {
             let skipped = log.base - self.consumed;
