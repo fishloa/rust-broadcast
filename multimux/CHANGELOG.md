@@ -2,6 +2,38 @@
 
 ## [Unreleased]
 
+### Added (in progress — issue #805, task 1 of 6)
+- **`RouteHandle` gained a `ProgramId -> Arc<Trunk>` registry**, the first step
+  of converging multimux's two ingest architectures onto one. `publish_program`
+  is the ingest-side write; `resolve_program` returns a typed three-case
+  `ProgramResolution` — `Found(Arc<Trunk>)`, `NotYetAnnounced`, `NotFound`.
+  Held in an `RwLock<HashMap<..>>` because resolution is the hottest read path
+  once egress is wired to it (every served request, every viewer) while
+  publication is rare and bounded by `IngestDriver`'s `max_programs`.
+  - The three cases are deliberately **not** an `Option`: "this route is
+    connected but no program has appeared yet" is a wait, whereas "no such
+    program" is a 404, and collapsing them would make a still-connecting
+    route indistinguishable from a typo in a request path.
+  - The registry carries no single-program assumption, so MPTS support (one
+    route, N programs, one handle) is an addition rather than a reshaping.
+  - Additive only: `RouteHandle` still owns its legacy `trunk` field and
+    egress still reads it, so nothing changes behaviourally yet.
+
+### Fixed
+- **The workspace doc gate is green again (26 `error:` lines → 0).** The 5a/5b
+  port renamed and deleted types without updating the prose that referenced
+  them, leaving dead intra-doc links across twelve files: `RtspSource` (split
+  into `RtspDialer` + `RtspIngestSession`), `RtpUdpSource`/`TsUdpSource`/
+  `TsHttpSource`/`SrtSource` (renamed to their `*Route` config types), and
+  `crate::store::MediaStore`/`HealthState` (that module was deleted outright;
+  `HealthState` now lives at `crate::route::HealthState`). Public docs also
+  linked to private items (`crate::http::resolve_blocking`,
+  `into_response`, `select_representable_track`), which are now plain
+  backticked code rather than links — no API was widened to satisfy rustdoc.
+  - One correction went beyond relinking: `serve_with_registry`'s docs claimed
+    every `InputSpec` variant dispatches through `supervisor::supervise`. Only
+    `Rtmp` and `Custom` do. The prose now says so (see issue #805).
+
 ### Changed (BREAKING, in progress — plan step 5b)
 - **Ported the three outputs (LL-HLS, DASH, LL-DASH) and the shared
   init/segment/part resource route onto `media_plane::egress::ServedEgress`

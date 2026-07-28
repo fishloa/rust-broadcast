@@ -443,6 +443,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     track into an egress manifest (LL-HLS/DASH rendering) is a separate,
     deliberate decision left to its own issue.
 ### Fixed
+- **A repeat `SessionEvent::NewProgram` no longer strands existing
+  subscribers or discards the DVR window.** `IngestDriver::drain()`'s
+  `NewProgram` arm called `Trunk::new` unconditionally, so re-announcing an
+  already-admitted program replaced that program's entry in the driver's map.
+  Because `Trunk` is a cloneable `Arc` handle, nothing errored: every cursor
+  already issued to consumers kept reading the **orphaned** `Trunk` the writer
+  no longer targets, so the stream silently stopped — far harder to diagnose
+  in production than a crash — and whatever the old `Trunk` still buffered
+  (samples, segments, parts, and therefore the DVR window) went with it. A
+  re-announcement is a restatement of a program's tracks, not a new program,
+  so it now defers to the same in-place update path `TracksChanged` uses.
+  Covered by a test that asserts continuity from the *subscriber's* side (a
+  cursor subscribed before the re-announcement must still receive samples
+  published after it) — a track-set assertion alone would not catch it.
 - **`max_programs`: bound the number of `Trunk`s `IngestDriver`/`ListenDriver`
   will mint per session** — the fifth unbounded-allocation vector shipped
   from this codebase. `SessionEvent::NewProgram` previously minted a fresh
