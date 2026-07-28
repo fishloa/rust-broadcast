@@ -78,7 +78,7 @@ use crate::error::{MultimuxError, Result};
 use crate::source::http_auth::{
     authenticated_get, credentials_from_url, resolve_credentials, strip_userinfo,
 };
-use crate::source::{IngestTimeouts, MAX_INFLIGHT_FETCHES, Source};
+use crate::source::{IngestTimeouts, Source, may_spawn_fetch};
 
 /// The synthesized per-stream init segment's `mvhd` timescale — arbitrary
 /// (ISO/IEC 14496-12 §8.2.2). Reuses [`transmux::VIDEO_CLOCK_RATE`] purely so
@@ -916,7 +916,7 @@ pub async fn run_smooth_pull(
             backlog.push_back(action);
         }
 
-        while inflight.len() < MAX_INFLIGHT_FETCHES {
+        while may_spawn_fetch(inflight.len()) {
             let Some(action) = backlog.pop_front() else {
                 break;
             };

@@ -104,7 +104,7 @@ use crate::error::{MultimuxError, Result};
 use crate::source::http_auth::{
     authenticated_get, credentials_from_url, resolve_credentials, strip_userinfo,
 };
-use crate::source::{IngestTimeouts, MAX_INFLIGHT_FETCHES, Source};
+use crate::source::{IngestTimeouts, Source, may_spawn_fetch};
 
 /// Default wait between exhausting a dynamic MPD's plan and its next refresh
 /// attempt when `MPD@minimumUpdatePeriod` is absent — unchanged from the
@@ -894,7 +894,7 @@ pub async fn run_dash_pull(
             backlog.push_back(action);
         }
 
-        while inflight.len() < MAX_INFLIGHT_FETCHES {
+        while may_spawn_fetch(inflight.len()) {
             let Some(action) = backlog.pop_front() else {
                 break;
             };

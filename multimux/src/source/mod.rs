@@ -55,6 +55,43 @@ pub const MAX_TS_READ: usize = 65_536;
 /// producing more requests, only how many the IO side acts on concurrently.
 pub const MAX_INFLIGHT_FETCHES: usize = 8;
 
+/// `true` while a pull source's drive loop may launch one more concurrent
+/// fetch — i.e. `inflight` is still below [`MAX_INFLIGHT_FETCHES`].
+///
+/// A named predicate rather than an inline `<` in each of the three loops so
+/// the bound is one testable decision instead of three copies of a comparison
+/// (the shape that lets one of them silently drift). Every
+/// `source::{hls_pull, dash_pull, smooth_pull}` loop gates its
+/// `JoinSet::spawn` on this.
+pub fn may_spawn_fetch(inflight: usize) -> bool {
+    inflight < MAX_INFLIGHT_FETCHES
+}
+
+#[cfg(test)]
+mod inflight_tests {
+    use super::{MAX_INFLIGHT_FETCHES, may_spawn_fetch};
+
+    /// The in-flight cap actually caps. Bites on the two mutations that
+    /// matter: dropping the gate (making this always `true`) and inverting
+    /// the comparison.
+    #[test]
+    fn may_spawn_fetch_stops_exactly_at_the_cap() {
+        assert!(may_spawn_fetch(0), "an idle loop must be able to spawn");
+        assert!(
+            may_spawn_fetch(MAX_INFLIGHT_FETCHES - 1),
+            "one slot short of the cap must still spawn"
+        );
+        assert!(
+            !may_spawn_fetch(MAX_INFLIGHT_FETCHES),
+            "at the cap, no further fetch may be launched"
+        );
+        assert!(
+            !may_spawn_fetch(MAX_INFLIGHT_FETCHES + 1),
+            "past the cap (a caller that over-spawned) must not spawn more"
+        );
+    }
+}
+
 use transmux::pipeline::CodecConfig;
 use transmux::rtp::RtpMediaKind;
 

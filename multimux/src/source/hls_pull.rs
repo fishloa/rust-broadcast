@@ -81,7 +81,7 @@ use crate::error::{MultimuxError, Result};
 use crate::source::http_auth::{
     authenticated_get, credentials_from_url, resolve_credentials, strip_userinfo,
 };
-use crate::source::{IngestTimeouts, MAX_INFLIGHT_FETCHES, Source};
+use crate::source::{IngestTimeouts, Source, may_spawn_fetch};
 
 /// How long a `run_*_pull` drive loop parks when its session has, momentarily,
 /// neither an outbound request queued nor a fetch in flight — and has not
@@ -372,7 +372,8 @@ where
 /// new drive loop, replacing the pre-5a `HlsPullSource::connect`/
 /// `HlsPullSession::next_samples` pair (and their `TokioClient` wrapper).
 ///
-/// Bounded fan-out: never more than [`MAX_INFLIGHT_FETCHES`] concurrent
+/// Bounded fan-out: never more than
+/// [`crate::source::MAX_INFLIGHT_FETCHES`] concurrent
 /// requests (see the module doc); each individual fetch is itself bounded by
 /// [`IngestTimeouts::read`], and the handshake (until the first init segment
 /// resolves) by `handshake`.
@@ -403,7 +404,7 @@ pub async fn run_hls_pull(
             backlog.push_back(action);
         }
 
-        while inflight.len() < MAX_INFLIGHT_FETCHES {
+        while may_spawn_fetch(inflight.len()) {
             let Some(action) = backlog.pop_front() else {
                 break;
             };
@@ -1165,16 +1166,13 @@ mod tests {
         );
     }
 
-    /// Bounds concurrent fetches: a structural property of `run_hls_pull`'s
-    /// `while inflight.len() < MAX_INFLIGHT_FETCHES` gate (evaluated before
-    /// every `JoinSet::spawn`), not something a black-box loopback test can
-    /// observe without instrumenting the fixture server's concurrent-
-    /// connection count — the small fixtures above never reveal more than a
-    /// handful of resources at once, so removing the gate would still pass
-    /// every other test in this module. Recorded here rather than silently
-    /// assumed.
-    #[test]
-    fn max_inflight_fetches_gate_is_structural() {
-        assert!(MAX_INFLIGHT_FETCHES > 0);
-    }
+    // Bounds concurrent fetches: the cap itself is unit-tested at its own
+    // definition (`crate::source::inflight_tests`), which is where the
+    // decision now lives -- these loops only call
+    // `crate::source::may_spawn_fetch`. What is *not* black-box observable
+    // here is that a loop actually consults it: the committed fixtures never
+    // reveal more than a handful of resources at once, so removing the gate
+    // would still pass every other test in this module. Observing the cap
+    // end-to-end would need the fixture server to count concurrent
+    // connections. Recorded rather than left implicit.
 }
