@@ -993,6 +993,23 @@ impl<S: IngestSession> IngestDriver<S> {
                         self.refused_programs += 1;
                         continue;
                     }
+                    // A REPEAT announcement updates the existing `Trunk` in
+                    // place; it must never mint a replacement. Re-minting
+                    // would swap a fresh, empty `Trunk` into `self.programs`
+                    // while every already-issued cursor kept reading the
+                    // orphaned one that no longer receives writes — existing
+                    // subscribers would see a permanently stalled stream, and
+                    // whatever the old `Trunk` still held (samples, segments,
+                    // parts, and so the DVR window) would be silently dropped.
+                    //
+                    // Treating the repeat as a track-set update is exactly
+                    // what `TracksChanged` does, so this defers to the same
+                    // path rather than duplicating it: a re-announcement is a
+                    // restatement of the program's tracks, not a new program.
+                    if let Some(writer) = self.writers.get(&program) {
+                        writer.set_tracks(tracks);
+                        continue;
+                    }
                     let trunk = Trunk::new(self.trunk_config);
                     let writer = trunk
                         .writer()
@@ -1745,6 +1762,90 @@ mod tests {
             1,
             "samples and no-op feeds must never bump track_generation"
         );
+    }
+
+    /// A REPEAT `NewProgram` for an already-admitted program must update the
+    /// existing `Trunk` in place, never mint a replacement.
+    ///
+    /// This asserts continuity from the *subscriber's* side, which is the
+    /// property that actually matters and the one a track-set assertion
+    /// alone would miss: `Trunk` is a cloneable handle over shared state, so
+    /// re-minting swaps a fresh empty `Trunk` into `programs` while every
+    /// already-issued cursor keeps reading the orphaned one that no longer
+    /// receives writes. The stream does not error — it silently stops, which
+    /// is far harder to diagnose in production than a crash, and whatever
+    /// the old `Trunk` still buffered (and so the DVR window) goes with it.
+    ///
+    /// MUTATION VERIFIED: removing the `if let Some(writer) =
+    /// self.writers.get(&program) { .. continue }` early-return from
+    /// `drain()`'s `NewProgram` arm (restoring the unconditional
+    /// `Trunk::new`) makes the post-re-announcement `cursor.poll()` return
+    /// `None` — "a cursor subscribed before the re-announcement must still
+    /// receive samples published after it" fails. Recompiled and re-run to
+    /// confirm the failure, then reverted.
+    #[test]
+    fn repeat_new_program_updates_in_place_and_does_not_strand_subscribers() {
+        let session = ScriptedSession::new(vec![
+            FeedOutcome::Events(vec![SessionEvent::NewProgram {
+                program: ProgramId(1),
+                tracks: vec![opaque_track(7)],
+            }]),
+            // The same program announced again, with a grown track set --
+            // what a session that re-states its program on a PMT change
+            // emits, rather than using `TracksChanged`.
+            FeedOutcome::Events(vec![SessionEvent::NewProgram {
+                program: ProgramId(1),
+                tracks: vec![opaque_track(7), opaque_track(8)],
+            }]),
+            FeedOutcome::Events(vec![SessionEvent::Sample {
+                program: ProgramId(1),
+                track_id: 7,
+                retention: RetentionClass::Timed,
+                sample: sample(0xCD),
+            }]),
+        ]);
+        let mut dialer = ScriptedDialer {
+            sessions: VecDeque::from(vec![session]),
+            fail_with: FakeError("unused"),
+        };
+        let mut driver = run_dial(&mut dialer, trunk_config(), handshake(), max_programs())
+            .expect("fake dial succeeds");
+
+        driver.feed(b"pat", Timestamp::ZERO);
+        let trunk = driver
+            .trunk(ProgramId(1))
+            .cloned()
+            .expect("NewProgram announced a Trunk for program 1");
+        let mut cursor = trunk.subscribe();
+
+        driver.feed(b"pat-again", Timestamp::from_nanos(1));
+
+        // The re-announcement is an update, not a new program.
+        assert_eq!(
+            driver.program_count(),
+            1,
+            "a repeat announcement must not add a program"
+        );
+        let track_ids: Vec<u32> = trunk.tracks().iter().map(|t| t.track_id).collect();
+        assert_eq!(
+            track_ids,
+            vec![7, 8],
+            "the re-announcement's track set must land on the SAME Trunk the \
+             subscriber already holds"
+        );
+
+        driver.feed(b"pes", Timestamp::from_nanos(2));
+
+        let item = cursor
+            .poll()
+            .expect("a cursor subscribed before the re-announcement must still receive samples");
+        match item {
+            crate::SampleCursorItem::Timed { track_id, sample } => {
+                assert_eq!(track_id, 7);
+                assert_eq!(sample.data.as_ref(), &[0xCD; 4]);
+            }
+            other => panic!("expected Timed, got {other:?}"),
+        }
     }
 
     // --- EOF vs failure: the test that makes HealthState::Failed real -----
