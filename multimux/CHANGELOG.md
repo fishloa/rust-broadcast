@@ -2,6 +2,79 @@
 
 ## [Unreleased]
 
+### Changed (BREAKING, in progress — plan step 5a, round 3)
+- **Ported `hls_pull`, `dash_pull` and `smooth_pull` onto the plane's ingress
+  traits**, on the back of `media-plane`'s round-3 `IngestSession` change
+  (relaxed `Stage::In` + associated `Request` — see that crate's CHANGELOG
+  for the trait diff and the reasoning). Round 2 deliberately did **not**
+  port these three because contorting them into the then-current trait would
+  have produced a session whose `Stage::feed` is never called; the trait now
+  expresses what they actually do, so the port is honest rather than a
+  workaround.
+  - `HlsPullSource`/`HlsPullSession` → `HlsPullRoute`/`HlsPullDialer`/
+    `HlsIngestSession` + `run_hls_pull`. **Now wraps the sans-IO
+    `ll_hls_runtime::client::LlHlsClient` directly, not `TokioClient`.**
+    `TokioClient` owns its own `reqwest` fetch loop internally, so there was
+    nothing for `feed`/`poll_transmit` to drive; `LlHlsClient` is the sans-IO
+    core `TokioClient` itself wraps. This module is now the *other* adapter
+    over the same engine — all LL-HLS logic (reload scheduling, part/segment
+    dedup, fMP4 and issue-#760 classic-TS demux) still lives entirely in
+    `ll-hls-runtime`. `Request = ll_hls_runtime::client::Action`;
+    `In<'a> = (HlsFetchId, &'a [u8])`, where `HlsFetchId::{Playlist,
+    Resource(ResourceId)}` is this module's own correlation identity.
+  - `DashPullSource`/`DashPullSession` → `DashPullRoute`/`DashPullDialer`/
+    `DashIngestSession` + `run_dash_pull`. `Request = DashAction`;
+    `In<'a> = (DashResourceId, &'a [u8])`.
+  - `SmoothPullSource`/`SmoothPullSession` → `SmoothPullRoute`/
+    `SmoothPullDialer`/`SmoothIngestSession` + `run_smooth_pull`.
+    `Request = SmoothAction`; `In<'a> = (SmoothResourceId, &'a [u8])`.
+  - **`dash_pull`'s in-read-path sleep is gone.** `maybe_refresh_mpd` buried
+    a wall-clock `Instant::elapsed` + `tokio::time::sleep` inside what was
+    nominally a "compute the next samples" step — a sans-IO session that
+    sleeps internally is not sans-IO. The live-MPD refresh now goes through
+    `Stage::next_deadline`/`on_deadline` (an absolute `Timestamp` on the
+    driver's clock, exactly like `HandshakePolicy::establish_by`), and
+    `run_dash_pull`'s own loop is the only place a clock is read or a sleep
+    awaited. `smooth_pull`'s identical `maybe_refresh_manifest` sleep got the
+    same treatment.
+  - **`dash_pull`'s three pieces of per-Representation state, judged
+    individually** (round-2 flagged them as possible `Trunk` duplication;
+    all three are kept, with reasons recorded in the module doc):
+    - `RepState::init_bytes` — **kept.** Genuinely per-source parsing state:
+      the `Trunk` stores decoded `Sample`s, never raw container bytes, so
+      there is nothing to duplicate. Re-concatenating the cached init onto
+      every `moof`+`mdat` media segment is a structural requirement of DASH's
+      own wire format (`Fmp4Demux::unpackage` needs the `moov` in the same
+      buffer), not a cache of plane state.
+    - `RepState::plan` — **kept.** Fetch *scheduling* state (what to request
+      next), a concept the `Trunk` does not have at all — it only ever sees
+      samples after they arrive.
+    - `RepState::last_number` — **kept.** The high-water mark that stops a
+      live-MPD refresh re-enqueueing an already-planned segment number;
+      again a fact about *pending fetches*, recorded nowhere else in the
+      pipeline.
+  - **In-flight fetches are bounded.** New `source::MAX_INFLIGHT_FETCHES`
+    (8): a pull session can hand back many `poll_transmit` requests in one
+    drain (an LL-HLS playlist reload revealing a dozen available parts at
+    once; a manifest refresh extending several Representations' plans
+    simultaneously) with nothing in the session capping how many the driver
+    launches concurrently. Each `run_*_pull` loop gates every `JoinSet::spawn`
+    on that cap and queues the rest — this project has already shipped five
+    unbounded-allocation vectors in remote-input-driven code, and an uncapped
+    fan-out of open sockets per route is the same class of bug.
+    `dash_pull`/`smooth_pull` additionally keep at most one fetch per
+    Representation/StreamIndex outstanding (`in_flight`), preserving the
+    pre-port per-round pacing.
+  - `origin::serve_with_registry`'s `HlsPull`/`DashPull`/`SmoothPull` arms
+    join the existing step-5a stub arm (an explicit `tracing::error!`)
+    alongside `Rtsp`/`Rtp`/`TsUdp`/`TsHttp`/`Srt`, and their
+    `SourceConnector`/`SampleSource` impls are removed. `rtmp` is now the
+    only source still on the pre-5a `run_pipeline` path, which is therefore
+    still load-bearing for exactly one input kind.
+- New `MultimuxError::LlHls` variant wrapping `ll_hls_runtime::client::Error`
+  (a malformed playlist, a demux failure, or a resource fed for an id the
+  client never requested).
+
 ### Changed (BREAKING, in progress — plan step 5a, round 2)
 - **Ported `ts_http` and `srt` onto the plane's ingress traits**, and
   **extracted the shared `source::ts_program::TsIngestSession`** — one copy

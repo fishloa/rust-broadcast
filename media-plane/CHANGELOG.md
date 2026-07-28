@@ -7,6 +7,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed (BREAKING — plan step 5a, round 3)
+- **`IngestSession` no longer pins `Stage::In` to `&'a [u8]`, and gains an
+  associated `Request` type.** The supertrait bound relaxes from
+  `for<'a> Stage<In<'a> = &'a [u8], Out = SessionEvent> + Send` to
+  `for<'a> Stage<Out = SessionEvent> + Send`, and `poll_transmit` now returns
+  `Option<Self::Request>` rather than `Option<Bytes>`. `IngestDriver::feed`
+  becomes generic over `S::In<'_>`; `IngestDriver::poll_transmit` returns
+  `Option<S::Request>`. `ListenDriver::feed` deliberately keeps its `&[u8]`
+  input (behind a `where L::Session: for<'a> Stage<In<'a> = &'a [u8]>`
+  bound): every `Listener` implementor is a push accept over a byte-stream
+  transport, never a pull source (which dials out via `Dialer`).
+  - **Migration** (every implementor, one line): a byte-stream source adds
+    `type Request = bytes::Bytes;` — no behaviour change. A pull source
+    (`multimux::source::{hls_pull, dash_pull, smooth_pull}`) states its own
+    honest shape instead, e.g. `type In<'a> = (HlsFetchId, &'a [u8]);
+    type Request = ll_hls_runtime::client::Action;`.
+  - **Why `Request` is opaque to the plane, and why an `Inbound` enum was
+    rejected**: recorded in full in `ingress`'s module docs under
+    *"Pull sources need a typed request/response identity (round 3)"*,
+    replacing round 2's *"Known seam"* section. The short version: a
+    per-source escape-hatch method would leave `Stage::feed` never called on
+    a pull session while the trait bound still advertises it as the way in —
+    **a type that lies about the contract it implements**; and a fixed
+    `Inbound { Bytes, Response { id, .. } }` enum would force every stream
+    source to match a variant that cannot occur for it *and* bake pull
+    vocabulary (`ResourceId`/`Action`) into `media-plane`, which is exactly
+    the protocol knowledge this crate exists to stay free of.
+- **`IngestDriver::session()`** (new): read-only access to the driven
+  session, for state a driver loop must observe that `SessionEvent`/
+  `HealthState` cannot carry. Concretely: a pull source knows it has reached
+  true end-of-stream from its own protocol bookkeeping (an `#EXT-X-ENDLIST`
+  with every named fetch accounted for; a static MPD/manifest with every
+  plan exhausted), whereas a byte-stream transport's "ended" signal is
+  external and already known to the driver loop. `SessionEvent` gains no
+  `Ended` variant for this, per its own "no variant without a correct
+  producer" discipline.
+
 ### Added
 - New crate: `media-plane`, the media-plane integration layer (plan step 3a-i).
 - `ByteStage`: the pre-demux byte-to-byte stage contract, defined as
