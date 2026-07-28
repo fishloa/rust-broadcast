@@ -893,8 +893,7 @@ pub async fn run_dash_pull(
     let mut backlog: VecDeque<DashAction> = VecDeque::new();
     let mut inflight: JoinSet<JoinedFetch> = JoinSet::new();
     let start = std::time::Instant::now();
-    let mut published = std::collections::HashSet::new();
-    let mut segmenters = std::collections::HashMap::new();
+    let mut progress = crate::source::DriverProgress::new();
 
     loop {
         while let Some(action) = driver.poll_transmit() {
@@ -957,11 +956,7 @@ pub async fn run_dash_pull(
         if inflight.is_empty() {
             if driver.session().ended() {
                 driver.finish();
-                crate::source::segment::drive_program_segmenters(
-                    &driver,
-                    route_handle,
-                    &mut segmenters,
-                );
+                crate::source::advance_route(&driver, route_handle, &mut progress);
                 return terminal_result(driver, "dash-pull");
             }
             match driver.next_deadline() {
@@ -972,12 +967,7 @@ pub async fn run_dash_pull(
                     }
                     let now = Timestamp::from_instant(start, std::time::Instant::now());
                     driver.on_deadline(now);
-                    crate::source::report_driver_progress(&driver, route_handle, &mut published);
-                    crate::source::segment::drive_program_segmenters(
-                        &driver,
-                        route_handle,
-                        &mut segmenters,
-                    );
+                    crate::source::advance_route(&driver, route_handle, &mut progress);
                 }
                 // No scheduled work and nothing in flight: park briefly
                 // rather than spinning — see `IDLE_POLL_INTERVAL`.
@@ -995,12 +985,7 @@ pub async fn run_dash_pull(
                 ..
             })) => {
                 driver.feed((id, bytes.as_slice()), now);
-                crate::source::report_driver_progress(&driver, route_handle, &mut published);
-                crate::source::segment::drive_program_segmenters(
-                    &driver,
-                    route_handle,
-                    &mut segmenters,
-                );
+                crate::source::advance_route(&driver, route_handle, &mut progress);
             }
             Some(Ok(JoinedFetch {
                 id: DashResourceId::Segment(rep, _),
@@ -1049,21 +1034,13 @@ pub async fn run_dash_pull(
             // playlist/manifest/resource) — see `terminal_result`. Health is
             // already terminal here, so this call's internal terminal-health
             // check flushes every program's trailing partial segment.
-            crate::source::segment::drive_program_segmenters(
-                &driver,
-                route_handle,
-                &mut segmenters,
-            );
+            crate::source::advance_route(&driver, route_handle, &mut progress);
             return terminal_result(driver, "dash-pull");
         }
 
         if driver.session().ended() {
             driver.finish();
-            crate::source::segment::drive_program_segmenters(
-                &driver,
-                route_handle,
-                &mut segmenters,
-            );
+            crate::source::advance_route(&driver, route_handle, &mut progress);
             return terminal_result(driver, "dash-pull");
         }
     }

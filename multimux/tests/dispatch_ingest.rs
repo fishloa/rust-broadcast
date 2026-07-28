@@ -425,7 +425,7 @@ async fn rtmp_dispatch_serves_real_media_end_to_end() {
 
 mod custom_dispatch_driver_backed {
     use super::*;
-    use std::collections::{HashMap as StdHashMap, HashSet, VecDeque};
+    use std::collections::VecDeque;
     use std::convert::Infallible;
     use std::num::NonZeroUsize;
 
@@ -436,8 +436,7 @@ mod custom_dispatch_driver_backed {
     use media_plane::trunk::{RetentionClass, TrunkConfig};
     use multimux::registry::{InputCtx, InputFactory};
     use multimux::route::RouteHandle;
-    use multimux::source::report_driver_progress;
-    use multimux::source::segment::{ProgramSegmenter, drive_program_segmenters};
+    use multimux::source::{DriverProgress, advance_route};
     use multimux::{Backoff, supervise_driver};
     use transmux::TsDemux;
     use transmux::pipeline::{CodecConfig, Sample, TrackSpec};
@@ -556,11 +555,10 @@ mod custom_dispatch_driver_backed {
 
     /// One dial-through-disconnect attempt -- the `supervise_driver`
     /// `attempt` closure. Mirrors every in-tree `run_*`: dial, wrap in an
-    /// `IngestDriver`, feed, and after every feed call
-    /// [`report_driver_progress`] (publish the registry + flip health) then
-    /// [`drive_program_segmenters`] (turn samples into servable
-    /// segments/parts) -- exactly the two calls `examples/custom_scheme.rs`
-    /// documents as the whole extension contract.
+    /// `IngestDriver`, feed, and after every feed call [`advance_route`] --
+    /// the one facade call `examples/custom_scheme.rs` documents as the whole
+    /// extension contract (registry publish + health flip, then turning
+    /// samples into servable segments/parts).
     async fn run_real_ts(
         route_handle: Arc<RouteHandle>,
         spec: TrackSpec,
@@ -578,23 +576,20 @@ mod custom_dispatch_driver_backed {
             handshake,
             media_plane::DEFAULT_MAX_PROGRAMS,
         );
-        let mut published: HashSet<ProgramId> = HashSet::new();
-        let mut segmenters: StdHashMap<ProgramId, ProgramSegmenter> = StdHashMap::new();
+        let mut progress = DriverProgress::new();
 
         // One feed: announces NewProgram AND queues every real sample --
         // mints the driver-side Trunk and publishes its samples in the same
-        // batch. The ProgramSegmenter this call's own drive_program_segmenters
+        // batch. The ProgramSegmenter `advance_route`'s own segmenting step
         // builds is subscribed via `subscribe_from_backlog` (issue #808),
         // which replays whatever backlog is already resident in the ring
         // rather than starting from "now" -- so this single feed's samples
         // are not lost.
         driver.feed(&[], Timestamp::from_nanos(0));
-        report_driver_progress(&driver, &route_handle, &mut published);
-        drive_program_segmenters(&driver, &route_handle, &mut segmenters);
+        advance_route(&driver, &route_handle, &mut progress);
 
         driver.finish();
-        report_driver_progress(&driver, &route_handle, &mut published);
-        drive_program_segmenters(&driver, &route_handle, &mut segmenters);
+        advance_route(&driver, &route_handle, &mut progress);
 
         Ok(())
     }
@@ -607,21 +602,22 @@ mod custom_dispatch_driver_backed {
     /// own small `Dialer`/`IngestSession` fed the real `h264_aac.ts`
     /// fixture, exactly as a real embedding application's factory would
     /// spawn its own transport-fed driver loop (see
-    /// `examples/custom_scheme.rs`). If [`report_driver_progress`] were ever
-    /// skipped, every request below would hang on
-    /// `ProgramResolution::NotYetAnnounced` instead of erroring, and
-    /// `poll_until_extinf` would time out; if
-    /// [`drive_program_segmenters`] were skipped, the route would resolve
-    /// (health `Live`) but never carry a single `#EXTINF:` line, since
-    /// nothing would ever turn the ingested samples into closed segments.
+    /// `examples/custom_scheme.rs`). If [`advance_route`]'s internal
+    /// registry-publish step were ever skipped, every request below would
+    /// hang on `ProgramResolution::NotYetAnnounced` instead of erroring, and
+    /// `poll_until_extinf` would time out; if its segmenting step were
+    /// skipped, the route would resolve (health `Live`) but never carry a
+    /// single `#EXTINF:` line, since nothing would ever turn the ingested
+    /// samples into closed segments.
     ///
-    /// MUTATION VERIFIED: commenting out both of this test's own
-    /// `report_driver_progress(&driver, &route_handle, &mut published);`
-    /// calls inside `run_real_ts` (i.e. simulating a `Custom` factory author
-    /// who forgets the registry-publish half of the extension contract
-    /// entirely) makes this test fail: `poll_until_extinf`'s 20 s hang guard
-    /// elapses and its own `panic!("no #EXTINF: line appeared ... dispatched
-    /// ingest never produced a closed segment")` fires at
+    /// MUTATION VERIFIED: commenting out `advance_route`'s
+    /// `report_driver_progress(driver, route_handle, &mut state.published);`
+    /// line in `multimux/src/source/mod.rs` (i.e. simulating a bug in the one
+    /// facade every `Custom` factory author now relies on, rather than
+    /// hand-assembling the two steps itself) makes this test fail:
+    /// `poll_until_extinf`'s 20 s hang guard elapses and its own
+    /// `panic!("no #EXTINF: line appeared ... dispatched ingest never
+    /// produced a closed segment")` fires at
     /// `multimux/tests/dispatch_ingest.rs:157:13` -- the session demuxes and
     /// segments the real fixture correctly (nothing else changed), but every
     /// HTTP request resolves `ProgramResolution::NotYetAnnounced` forever

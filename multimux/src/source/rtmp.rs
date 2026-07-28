@@ -124,7 +124,7 @@
 //!   preserved, only the "reads don't hang forever" property), freeing its
 //!   `max_sessions` slot for the next publisher.
 
-use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
+use std::collections::{BTreeSet, HashMap, VecDeque};
 use std::convert::Infallible;
 use std::future::Future;
 use std::pin::Pin;
@@ -148,19 +148,13 @@ use media_plane::trunk::{RetentionClass, TrunkConfig};
 
 use crate::error::{MultimuxError, Result};
 use crate::route::RouteHandle;
-use crate::source::segment::ProgramSegmenter;
-use crate::source::{IngestTimeouts, Source};
+use crate::source::{DriverProgress, IngestTimeouts, Source};
 
-/// Per-session `report_driver_progress` bookkeeping — one `HashSet` per
-/// admitted [`SessionId`], mirroring every other driver-backed source's own
-/// (single-session) `published: HashSet<ProgramId>`, just keyed one level
-/// deeper since [`run_rtmp`] drives many sessions at once.
-type PublishedBySession = HashMap<SessionId, HashSet<ProgramId>>;
-
-/// Per-session [`ProgramSegmenter`] bookkeeping — the same one-level-deeper
-/// mirror of every other driver-backed source's own `HashMap<ProgramId,
-/// ProgramSegmenter>` as [`PublishedBySession`].
-type SegmentersBySession = HashMap<SessionId, HashMap<ProgramId, ProgramSegmenter>>;
+/// Per-session [`DriverProgress`] bookkeeping — one entry per admitted
+/// [`SessionId`], mirroring every other driver-backed source's own
+/// (single-session) `progress: DriverProgress`, just keyed one level deeper
+/// since [`run_rtmp`] drives many sessions at once.
+type ProgressBySession = HashMap<SessionId, DriverProgress>;
 
 /// One [`read_one`] call, boxed so [`run_rtmp`] can hold many of them (one
 /// per admitted session) in a single [`FuturesUnordered`].
@@ -576,10 +570,11 @@ fn read_one(
     })
 }
 
-/// Publishes session `id`'s progress (registry + segmenters) and, if that
-/// left it terminal, reaps it — the per-session equivalent of every other
-/// driver-backed source's single-`IngestDriver` "feed, report, check
-/// `is_running`" sequence, reassembled from
+/// Publishes session `id`'s progress (registry + segmenters, via the
+/// [`crate::source::advance_route`] facade) and, if that left it terminal,
+/// reaps it — the per-session equivalent of every other driver-backed
+/// source's single-`IngestDriver` "feed, advance, check `is_running`"
+/// sequence, reassembled from
 /// [`ListenDriver::driver`]/[`ListenDriver::reap_if_terminal`] because
 /// [`ListenDriver::feed`]'s `&[u8]`-pinned convenience wrapper doesn't fit
 /// [`RtmpIngestSession`]'s `Stage::In` (see the module doc).
@@ -587,21 +582,14 @@ fn report_and_maybe_reap(
     driver: &mut ListenDriver<RtmpListener>,
     id: SessionId,
     route_handle: &Arc<RouteHandle>,
-    published: &mut PublishedBySession,
-    segmenters: &mut SegmentersBySession,
+    progress: &mut ProgressBySession,
 ) -> bool {
     if let Some(d) = driver.driver(id) {
-        crate::source::report_driver_progress(d, route_handle, published.entry(id).or_default());
-        crate::source::segment::drive_program_segmenters(
-            d,
-            route_handle,
-            segmenters.entry(id).or_default(),
-        );
+        crate::source::advance_route(d, route_handle, progress.entry(id).or_default());
     }
     let reaped = driver.reap_if_terminal(id).is_some();
     if reaped {
-        published.remove(&id);
-        segmenters.remove(&id);
+        progress.remove(&id);
     }
     reaped
 }
@@ -646,8 +634,7 @@ pub async fn run_rtmp(
     let start = Instant::now();
     let read_timeout = route.timeouts.read;
 
-    let mut published: PublishedBySession = HashMap::new();
-    let mut segmenters: SegmentersBySession = HashMap::new();
+    let mut progress: ProgressBySession = HashMap::new();
     let mut reads: FuturesUnordered<BoxedRead> = FuturesUnordered::new();
 
     loop {
@@ -666,8 +653,7 @@ pub async fn run_rtmp(
                                 .expect("just admitted by poll_accept")
                                 .session()
                                 .conn_handle();
-                            published.insert(id, HashSet::new());
-                            segmenters.insert(id, HashMap::new());
+                            progress.insert(id, DriverProgress::new());
                             reads.push(read_one(id, conn, read_timeout));
                         }
                         // `AcceptOutcome` is `#[non_exhaustive]`: a future
@@ -687,7 +673,7 @@ pub async fn run_rtmp(
                             d.feed(&events[..], now);
                         }
                         let reaped =
-                            report_and_maybe_reap(&mut driver, id, route_handle, &mut published, &mut segmenters);
+                            report_and_maybe_reap(&mut driver, id, route_handle, &mut progress);
                         if !reaped {
                             if let Some(d) = driver.driver(id) {
                                 let conn = d.session().conn_handle();
@@ -699,21 +685,21 @@ pub async fn run_rtmp(
                         if let Some(d) = driver.driver_mut(id) {
                             d.finish();
                         }
-                        report_and_maybe_reap(&mut driver, id, route_handle, &mut published, &mut segmenters);
+                        report_and_maybe_reap(&mut driver, id, route_handle, &mut progress);
                     }
                     ReadOutcome::TransportError(reason) => {
                         tracing::warn!(error = %reason, "rtmp: session read failed");
                         if let Some(d) = driver.driver_mut(id) {
                             d.finish();
                         }
-                        report_and_maybe_reap(&mut driver, id, route_handle, &mut published, &mut segmenters);
+                        report_and_maybe_reap(&mut driver, id, route_handle, &mut progress);
                     }
                     ReadOutcome::TimedOut => {
                         tracing::warn!("rtmp: session idle past read timeout");
                         if let Some(d) = driver.driver_mut(id) {
                             d.finish();
                         }
-                        report_and_maybe_reap(&mut driver, id, route_handle, &mut published, &mut segmenters);
+                        report_and_maybe_reap(&mut driver, id, route_handle, &mut progress);
                     }
                 }
             }
@@ -833,7 +819,7 @@ mod tests {
     /// both tracks (both sequence headers land in the same initial
     /// `next_events()` batch as several samples), so with the buffering
     /// removed, `established` never flips (no `NewProgram`/`Established`
-    /// ever fires) and `resolve_route_trunk` never succeeds within the 10 s
+    /// ever fires) and `resolve_route_program` never succeeds within the 10 s
     /// hang guard. Rebuilt with the mutation in place, ran `cargo test -p
     /// multimux --lib source::rtmp::tests::loopback_rtmp_publish_lands_media_in_the_trunk`,
     /// confirmed that exact panic, then reverted.
@@ -860,8 +846,8 @@ mod tests {
         // test.
         let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
         let landed = loop {
-            if let Ok(resolved) = crate::http::resolve_route_trunk(&route_handle) {
-                if resolved.tracks().len() == 2 {
+            if let Ok(resolved) = crate::http::resolve_route_program(&route_handle) {
+                if resolved.trunk().tracks().len() == 2 {
                     break true;
                 }
             }
@@ -875,8 +861,8 @@ mod tests {
             "RTMP publish must resolve both tracks into a registry-resolvable Trunk"
         );
 
-        let resolved = crate::http::resolve_route_trunk(&route_handle).expect("resolved");
-        let specs = resolved.tracks();
+        let resolved = crate::http::resolve_route_program(&route_handle).expect("resolved");
+        let specs = resolved.trunk().tracks();
         assert!(
             specs
                 .iter()
@@ -964,8 +950,8 @@ mod tests {
 
         let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
         let landed = loop {
-            if let Ok(resolved) = crate::http::resolve_route_trunk(&route_handle) {
-                if resolved.tracks().len() == 2 {
+            if let Ok(resolved) = crate::http::resolve_route_program(&route_handle) {
+                if resolved.trunk().tracks().len() == 2 {
                     break true;
                 }
             }
@@ -1004,7 +990,7 @@ mod tests {
     /// only ever carries the first track's sequence header (by construction,
     /// split at `first_track_offset`), so with the pre-establishment buffer
     /// removed, no `Sample` from either chunk ever contributes to
-    /// establishing the session and `resolve_route_trunk` never returns
+    /// establishing the session and `resolve_route_program` never returns
     /// `Ok`. Rebuilt with the mutation in place, ran `cargo test -p multimux
     /// --lib source::rtmp::tests::first_sample_observed_during_establishment_is_not_dropped`,
     /// confirmed that exact panic, then reverted.
@@ -1084,8 +1070,8 @@ mod tests {
 
         let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
         let landed = loop {
-            if let Ok(resolved) = crate::http::resolve_route_trunk(&route_handle) {
-                if resolved.tracks().len() == 2 {
+            if let Ok(resolved) = crate::http::resolve_route_program(&route_handle) {
+                if resolved.trunk().tracks().len() == 2 {
                     break true;
                 }
             }
@@ -1172,8 +1158,8 @@ mod tests {
 
         let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
         let landed = loop {
-            if let Ok(resolved) = crate::http::resolve_route_trunk(&route_handle) {
-                if resolved.tracks().len() == 2 {
+            if let Ok(resolved) = crate::http::resolve_route_program(&route_handle) {
+                if resolved.trunk().tracks().len() == 2 {
                     break true;
                 }
             }

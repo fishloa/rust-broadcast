@@ -158,17 +158,19 @@ pub(crate) async fn media_playlist(
     State(state): State<LlHlsState>,
     Query(q): Query<BlockingReloadQuery>,
 ) -> Response {
-    let trunk = match http::resolve_route_trunk(&state.route) {
-        Ok(trunk) => trunk,
+    let serving = match http::resolve_route_program(&state.route) {
+        Ok(serving) => serving,
         Err(resp) => return resp,
     };
+    let trunk = serving.trunk();
+    let ll_hls = serving.ll_hls();
     let request = LlHlsRequest::Playlist {
         track_id: DEFAULT_TRACK_ID,
         query: q.into(),
     };
     let resp = http::resolve_blocking(
         &trunk,
-        state.route.ll_hls().as_ref(),
+        ll_hls.as_ref(),
         request,
         BLOCKING_RELOAD_TIMEOUT,
         BlockingRequestGuard::new,
@@ -209,19 +211,20 @@ mod tests {
     }
 
     /// A populated route: a closed segment 1, plus two live parts of
-    /// in-progress segment 2 -- so the live edge is `(2, 2)`. Publishes its
-    /// own `Trunk` into the registry (`publish_owned_trunk`) so
-    /// `media_playlist`'s migrated `resolve_program` lookup (issue #805 task
-    /// 3) sees `Found`, exactly as a real driver-backed route's
+    /// in-progress segment 2 -- so the live edge is `(2, 2)`. Publishes
+    /// `SPTS_PROGRAM_ID` into the registry first (`publish_new_program`) so
+    /// `media_playlist`'s `resolve_route_program` lookup (issue #805 tasks
+    /// 3/6) sees `Found`, exactly as a real driver-backed route's
     /// `crate::source::report_driver_progress` call does by the time it
-    /// serves anything.
+    /// serves anything -- and so there is a `ProgramServing` bundle for
+    /// `set_init`/`add_segment`/`add_part` to write into at all.
     fn make_route() -> Arc<RouteHandle> {
         let route = Arc::new(RouteHandle::new(4.0, 500, 4));
-        route.set_init(vec![0xAA; 8]);
-        route.add_segment(seg(1));
-        route.add_part(part(2, 0));
-        route.add_part(part(2, 1));
-        route.publish_owned_trunk();
+        route.publish_new_program(crate::route::SPTS_PROGRAM_ID);
+        route.set_init(crate::route::SPTS_PROGRAM_ID, vec![0xAA; 8]);
+        route.add_segment(crate::route::SPTS_PROGRAM_ID, seg(1));
+        route.add_part(crate::route::SPTS_PROGRAM_ID, part(2, 0));
+        route.add_part(crate::route::SPTS_PROGRAM_ID, part(2, 1));
         route
     }
 
@@ -319,7 +322,7 @@ mod tests {
         let route_for_task = route.clone();
         tokio::spawn(async move {
             tokio::time::sleep(Duration::from_millis(80)).await;
-            route_for_task.add_segment(seg(2)); // closes segment 2
+            route_for_task.add_segment(crate::route::SPTS_PROGRAM_ID, seg(2)); // closes segment 2
         });
 
         let started = std::time::Instant::now();
@@ -378,7 +381,7 @@ mod tests {
         let route_for_task = route.clone();
         tokio::spawn(async move {
             tokio::time::sleep(Duration::from_millis(50)).await;
-            route_for_task.add_part(part(2, 2));
+            route_for_task.add_part(crate::route::SPTS_PROGRAM_ID, part(2, 2));
         });
         let resp = media_playlist(
             State(state(route)),
@@ -408,9 +411,9 @@ mod tests {
     }
 
     /// MUTATION VERIFIED (issue #805 task 4): a route with no program
-    /// announced yet (never called `publish_owned_trunk`/`publish_program`)
+    /// announced yet (never called `publish_new_program`/`publish_program`)
     /// must answer `503 Service Unavailable` — a wait/not-ready signal — not
-    /// `404 Not Found`. Changing `http::resolve_route_trunk`'s
+    /// `404 Not Found`. Changing `http::resolve_route_program`'s
     /// `ProgramResolution::NotYetAnnounced` arm to `Err(StatusCode::NOT_FOUND.into_response())`
     /// makes this test fail: `assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE)`
     /// fails, comparing actual `404 Not Found` against expected
@@ -420,7 +423,7 @@ mod tests {
     /// reverted.
     #[tokio::test]
     async fn media_playlist_not_yet_announced_is_503_not_404() {
-        // A bare route: never `publish_owned_trunk`/`publish_program`d, so
+        // A bare route: never `publish_new_program`/`publish_program`d, so
         // its registry is empty -- exactly the window between a driver-backed
         // route connecting and its first `SessionEvent::NewProgram`.
         let route = Arc::new(RouteHandle::new(4.0, 500, 4));

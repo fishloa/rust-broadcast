@@ -125,10 +125,11 @@ impl Output for LlDashOutput {
 /// representable track (mirrors `crate::output::dash`'s `manifest.mpd`
 /// handler and its issue #776 fix).
 async fn manifest(State(route): State<Arc<RouteHandle>>) -> Response {
-    let trunk = match http::resolve_route_trunk(&route) {
-        Ok(trunk) => trunk,
+    let serving = match http::resolve_route_program(&route) {
+        Ok(serving) => serving,
         Err(resp) => return resp,
     };
+    let trunk = serving.trunk();
     let origin = LlDashOrigin { route };
     let resp = http::resolve_blocking(&trunk, &origin, (), BLOCKING_RELOAD_TIMEOUT, || ()).await;
     http::into_response(resp, StatusCode::SERVICE_UNAVAILABLE, |body| {
@@ -171,7 +172,7 @@ impl ServedEgress for LlDashOrigin {
 /// segment target (nonsensical config — `LlDashPackager::new` rejects a
 /// chunk duration longer than the segment it chunks).
 fn render_ll_dash_mpd(route: &RouteHandle) -> Option<String> {
-    let specs = route.track_specs();
+    let specs = route.track_specs(crate::route::SPTS_PROGRAM_ID);
     // Single-rendition model (see `crate::output::dash`'s module docs):
     // describe exactly one Representation, `@id` forced to DEFAULT_TRACK_ID.
     let mut spec = select_representable_track(&specs)?;
@@ -181,7 +182,7 @@ fn render_ll_dash_mpd(route: &RouteHandle) -> Option<String> {
     // `$Number$` addresses whole segments (see module docs) -- startNumber
     // tracks the window's oldest retained segment, exactly like
     // `crate::output::dash::render_mpd`.
-    let window = route.window_segments();
+    let window = route.window_segments(crate::route::SPTS_PROGRAM_ID);
     let start_number = window
         .first()
         .map(|s| u64::from(s.segment_seq))
@@ -280,7 +281,8 @@ mod tests {
     #[test]
     fn render_ll_dash_mpd_valid_before_any_segment_closes() {
         let route = RouteHandle::new(4.0, 500, 4);
-        route.set_track_specs(vec![video_spec(7)]);
+        route.publish_new_program(crate::route::SPTS_PROGRAM_ID);
+        route.set_track_specs(crate::route::SPTS_PROGRAM_ID, vec![video_spec(7)]);
         let mpd = render_ll_dash_mpd(&route).expect("must render even with an empty window");
         assert!(mpd.contains("<MPD"));
         assert!(mpd.contains("type=\"dynamic\""));
@@ -289,8 +291,9 @@ mod tests {
     #[test]
     fn render_ll_dash_mpd_carries_required_ll_dash_elements() {
         let route = RouteHandle::new(4.0, 500, 4);
-        route.set_track_specs(vec![video_spec(1)]);
-        route.add_part(part(1, 0));
+        route.publish_new_program(crate::route::SPTS_PROGRAM_ID);
+        route.set_track_specs(crate::route::SPTS_PROGRAM_ID, vec![video_spec(1)]);
+        route.add_part(crate::route::SPTS_PROGRAM_ID, part(1, 0));
         let mpd = render_ll_dash_mpd(&route).unwrap();
 
         assert!(
@@ -318,8 +321,9 @@ mod tests {
     #[test]
     fn render_ll_dash_mpd_addresses_whole_segments_not_parts() {
         let route = RouteHandle::new(4.0, 500, 4);
-        route.set_track_specs(vec![video_spec(1)]);
-        route.add_part(part(5, 0));
+        route.publish_new_program(crate::route::SPTS_PROGRAM_ID);
+        route.set_track_specs(crate::route::SPTS_PROGRAM_ID, vec![video_spec(1)]);
+        route.add_part(crate::route::SPTS_PROGRAM_ID, part(5, 0));
         let mpd = render_ll_dash_mpd(&route).unwrap();
 
         assert!(
@@ -336,10 +340,11 @@ mod tests {
     #[test]
     fn render_ll_dash_mpd_start_number_tracks_window() {
         let route = RouteHandle::new(4.0, 500, 2);
-        route.set_track_specs(vec![video_spec(1)]);
-        route.add_segment(seg(1, 4.0));
-        route.add_segment(seg(2, 4.0));
-        route.add_segment(seg(3, 4.0)); // evicts seq 1 (window_segments == 2)
+        route.publish_new_program(crate::route::SPTS_PROGRAM_ID);
+        route.set_track_specs(crate::route::SPTS_PROGRAM_ID, vec![video_spec(1)]);
+        route.add_segment(crate::route::SPTS_PROGRAM_ID, seg(1, 4.0));
+        route.add_segment(crate::route::SPTS_PROGRAM_ID, seg(2, 4.0));
+        route.add_segment(crate::route::SPTS_PROGRAM_ID, seg(3, 4.0)); // evicts seq 1 (window_segments == 2)
 
         let mpd = render_ll_dash_mpd(&route).unwrap();
         assert!(
@@ -353,8 +358,9 @@ mod tests {
         // Unlike the old parts-only design, whole closed segments stay in
         // the window -- a real DVR window can be advertised.
         let route = RouteHandle::new(2.0, 500, 4);
-        route.set_track_specs(vec![video_spec(1)]);
-        route.add_segment(seg(1, 2.0));
+        route.publish_new_program(crate::route::SPTS_PROGRAM_ID);
+        route.set_track_specs(crate::route::SPTS_PROGRAM_ID, vec![video_spec(1)]);
+        route.add_segment(crate::route::SPTS_PROGRAM_ID, seg(1, 2.0));
         let mpd = render_ll_dash_mpd(&route).unwrap();
         assert!(mpd.contains("timeShiftBufferDepth=\"PT2S\""), "{mpd}");
     }
@@ -362,8 +368,9 @@ mod tests {
     #[test]
     fn render_ll_dash_mpd_forces_representation_id_to_default_track() {
         let route = RouteHandle::new(4.0, 500, 4);
-        route.set_track_specs(vec![video_spec(7)]);
-        route.add_part(part(1, 0));
+        route.publish_new_program(crate::route::SPTS_PROGRAM_ID);
+        route.set_track_specs(crate::route::SPTS_PROGRAM_ID, vec![video_spec(7)]);
+        route.add_part(crate::route::SPTS_PROGRAM_ID, part(1, 0));
         let mpd = render_ll_dash_mpd(&route).unwrap();
         assert!(
             mpd.contains(&format!("id=\"{DEFAULT_TRACK_ID}\"")),
@@ -373,13 +380,13 @@ mod tests {
         assert!(!mpd.contains("id=\"7\""), "source track_id leaked: {mpd}");
     }
 
-    /// Publishes its own program first (`publish_owned_trunk`) — see
+    /// Publishes its own program first (`publish_new_program`) — see
     /// `output::dash`'s identical test for why (isolates issue #776's "no
     /// representable track" 503 from issue #805's "not yet announced" 503).
     #[tokio::test]
     async fn manifest_handler_503_before_track_specs_known() {
         let route = Arc::new(RouteHandle::new(4.0, 500, 4));
-        route.publish_owned_trunk();
+        route.publish_new_program(crate::route::SPTS_PROGRAM_ID);
         let resp = manifest(State(route)).await;
         assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
     }
@@ -387,9 +394,9 @@ mod tests {
     #[tokio::test]
     async fn manifest_handler_200_with_dash_content_type() {
         let route = Arc::new(RouteHandle::new(4.0, 500, 4));
-        route.set_track_specs(vec![video_spec(1)]);
-        route.add_part(part(1, 0));
-        route.publish_owned_trunk();
+        route.publish_new_program(crate::route::SPTS_PROGRAM_ID);
+        route.set_track_specs(crate::route::SPTS_PROGRAM_ID, vec![video_spec(1)]);
+        route.add_part(crate::route::SPTS_PROGRAM_ID, part(1, 0));
         let resp = manifest(State(route)).await;
         assert_eq!(resp.status(), StatusCode::OK);
         assert_eq!(

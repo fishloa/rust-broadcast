@@ -21,15 +21,21 @@
 //! [`multimux::supervise_driver`] retries with backoff, exactly mirroring
 //! what `multimux::source::ts_udp::run_ts_udp` (etc.) does internally.
 //!
-//! Two calls inside [`run_demo`] are the whole extension contract:
-//! [`multimux::source::report_driver_progress`] publishes each newly
-//! announced program's driver-minted `Trunk` into the route's registry (the
-//! *only* way an external factory can make its ingest resolvable — the
-//! registry itself is crate-private), and
-//! [`multimux::source::segment::drive_program_segmenters`] turns the raw
-//! samples that lands into real, LL-HLS-servable init/segment/part bytes.
-//! Skip either and the route either never resolves (a permanent
-//! `NotYetAnnounced`/`503`) or ingests silently with nothing ever servable.
+//! **One call** inside [`run_demo`] is the whole extension contract:
+//! [`multimux::source::advance_route`] publishes each newly announced
+//! program's driver-minted `Trunk` into the route's registry (the *only* way
+//! an external factory can make its ingest resolvable — the registry itself
+//! is crate-private) *and* turns the raw samples that land into real,
+//! LL-HLS-servable init/segment/part bytes, over one opaque
+//! [`multimux::source::DriverProgress`] state value the caller declares once
+//! per connection attempt and threads through every call. Earlier revisions
+//! of this crate exposed the two steps (`report_driver_progress` +
+//! `segment::drive_program_segmenters`) separately, which meant a plugin
+//! author had to call both, in the right order, every iteration; skipping
+//! either (or getting the order wrong) meant the route either never resolved
+//! (a permanent `NotYetAnnounced`/`503`) or ingested silently with nothing
+//! ever servable. `advance_route` makes that impossible: there is exactly one
+//! call to make.
 //!
 //! This example actually drives the registered factory end to end (not just
 //! registry lookup + config parsing): it builds a bare [`multimux::RouteHandle`]
@@ -53,7 +59,7 @@
 //! cargo run --example custom_scheme
 //! ```
 
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::VecDeque;
 use std::convert::Infallible;
 use std::num::NonZeroUsize;
 use std::sync::Arc;
@@ -66,8 +72,7 @@ use media_plane::ingress::{
 use media_plane::trunk::{RetentionClass, TrunkConfig};
 use multimux::config::{Config, InputSpec};
 use multimux::registry::InputCtx;
-use multimux::source::report_driver_progress;
-use multimux::source::segment::{ProgramSegmenter, drive_program_segmenters};
+use multimux::source::{DriverProgress, advance_route};
 use multimux::{Backoff, RouteHandle, SchemeRegistry, supervise_driver};
 use transmux::avc_config_from_sprop;
 use transmux::pipeline::{CodecConfig, Sample, TrackSpec};
@@ -212,10 +217,10 @@ fn nz(n: usize) -> NonZeroUsize {
 /// [`multimux::supervise_driver`] retries with backoff. Mirrors every
 /// in-tree `run_*` (e.g. `multimux::source::ts_udp::run_ts_udp`) exactly:
 /// dial, wrap in an [`IngestDriver`], feed, and after every feed call
-/// [`report_driver_progress`] (publish the registry + flip health) then
-/// [`drive_program_segmenters`] (turn samples into servable segments/parts).
-/// `DemoSession` announces its program and queues all of its samples in one
-/// `feed` call (see its own doc), so this attempt drives exactly two feeds
+/// [`advance_route`] (the one facade call: publish the registry + flip
+/// health, then turn samples into servable segments/parts). `DemoSession`
+/// announces its program and queues all of its samples in one `feed` call
+/// (see its own doc), so this attempt drives exactly two feeds
 /// (announce+sample, then one after `finish()` to flush the trailing
 /// partial segment) and returns `Ok(())` — a real transport's attempt would
 /// instead loop forever, awaiting the next read, and only return on a
@@ -238,25 +243,22 @@ async fn run_demo(route_handle: Arc<RouteHandle>) -> multimux::Result<()> {
         media_plane::DEFAULT_MAX_PROGRAMS,
     );
 
-    let mut published: HashSet<ProgramId> = HashSet::new();
-    let mut segmenters: HashMap<ProgramId, ProgramSegmenter> = HashMap::new();
+    let mut progress = DriverProgress::new();
 
     // One feed: announces NewProgram AND queues every sample — mints the
-    // driver-side Trunk and publishes its samples in the same batch. The
-    // ProgramSegmenter this call's own drive_program_segmenters builds is
-    // subscribed via `subscribe_from_backlog` (issue #808), which replays
-    // whatever backlog is already resident in the ring rather than starting
-    // from "now" — so this single feed's samples are not lost.
+    // driver-side Trunk and publishes its samples in the same batch.
+    // `advance_route`'s own segmenting step subscribes via
+    // `subscribe_from_backlog` (issue #808), which replays whatever backlog
+    // is already resident in the ring rather than starting from "now" — so
+    // this single feed's samples are not lost.
     driver.feed(&[], Timestamp::from_nanos(0));
-    report_driver_progress(&driver, &route_handle, &mut published);
-    drive_program_segmenters(&driver, &route_handle, &mut segmenters);
+    advance_route(&driver, &route_handle, &mut progress);
 
     // Nothing more to send: end the session cleanly and flush the trailing
     // buffered partial segment, exactly as a real scheme does on a clean
     // disconnect.
     driver.finish();
-    report_driver_progress(&driver, &route_handle, &mut published);
-    drive_program_segmenters(&driver, &route_handle, &mut segmenters);
+    advance_route(&driver, &route_handle, &mut progress);
 
     Ok(())
 }
@@ -339,7 +341,9 @@ async fn main() {
     // segmenter's cursor and turned into a real, servable segment.
     let landed = tokio::time::timeout(Duration::from_secs(5), async {
         loop {
-            if store.init_bytes().is_some() && !store.window_segments().is_empty() {
+            if store.init_bytes(ProgramId(0)).is_some()
+                && !store.window_segments(ProgramId(0)).is_empty()
+            {
                 break;
             }
             tokio::time::sleep(Duration::from_millis(5)).await;

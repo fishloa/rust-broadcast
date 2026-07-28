@@ -10,7 +10,7 @@
 //! route's LL-HLS/DASH playlists came back empty — ingest was observable,
 //! playback was not.
 //!
-//! [`ProgramSegmenter`] is the missing stage: one per announced
+//! `ProgramSegmenter` is the missing stage: one per announced
 //! [`ProgramId`], subscribing a [`SampleCursor`] to that program's
 //! driver-minted `Trunk`, feeding a [`transmux::ll_hls::LlHlsSegmenter`], and
 //! publishing the resulting parts/segments back into **the same `Trunk`**
@@ -19,20 +19,20 @@
 //! `docs/superpowers/specs/2026-07-26-media-plane-architecture.md` §8: the
 //! ring-group split, `Trunk::segment_writer`, is exactly what makes holding
 //! both the driver's sample writer and this segmenter's segment writer live
-//! simultaneously on one `Trunk` legal). [`drive_program_segmenters`] is the
+//! simultaneously on one `Trunk` legal). `drive_program_segmenters` is the
 //! per-iteration driver every `run_*` entry point calls, mirroring
 //! `report_driver_progress`'s own shape: build a segmenter the first time a
 //! program's tracks have landed, then pump every already-built segmenter's
 //! cursor.
 //!
-//! Both are `pub` (not `pub(crate)`): a [`crate::registry::SchemeRegistry`]
-//! `Custom` input factory driving its own `media_plane::ingress::Dialer`/
-//! `IngestSession` over its own `IngestDriver` needs this exact per-iteration
-//! call too, right after `crate::source::report_driver_progress` — otherwise
-//! its ingested samples land in the driver-minted `Trunk` but never become
-//! LL-HLS/DASH-servable segments/parts, the same "ingest observable, playback
-//! not" gap this module closed for the eight in-tree sources. See
-//! `examples/custom_scheme.rs`.
+//! Both are `pub(crate)` (issue #805 task 6 narrowed them back from `pub`):
+//! the supported extension surface for a [`crate::registry::SchemeRegistry`]
+//! `Custom` input factory is now the single [`crate::source::advance_route`]
+//! facade over `report_driver_progress` + this module's own
+//! `drive_program_segmenters`, not either call directly — a factory that
+//! called them separately (in the wrong order, or one without the other)
+//! could silently ingest with nothing ever becoming servable, the exact
+//! footgun `advance_route` exists to remove. See `examples/custom_scheme.rs`.
 //!
 //! # Why `SPTS_PROGRAM_ID`'s init bytes go through `RouteHandle::set_init`
 //!
@@ -40,25 +40,28 @@
 //! `ll_hls_runtime::server::engine`'s own module doc, "the one thing that
 //! genuinely cannot come from the `Trunk` alone"); it lives inside the
 //! route's [`ll_hls_runtime::server::LlHlsOrigin`] instead.
-//! `RouteHandle::publish_program` (crate-private) rebuilds that `LlHlsOrigin`
-//! (and `DashState`) over a driver-minted `Trunk` the first time one is
-//! published under `SPTS_PROGRAM_ID` (crate-private) — see that method's own
-//! doc — so calling [`crate::route::RouteHandle::set_init`] here, *after*
-//! this program's `Trunk` has already been published into the registry,
-//! lands the init bytes in the same place every driver-backed `run_*` does.
+//! `RouteHandle::publish_program` (crate-private) builds that program's
+//! `ProgramServing` bundle (`LlHlsOrigin`+`DashState`) the first time its
+//! `Trunk` is published — see that method's own doc — so calling
+//! [`crate::route::RouteHandle::set_init`] here, *after* this program's
+//! `Trunk` has already been published into the registry, lands the init
+//! bytes in the same bundle every driver-backed `run_*` reads from.
 //!
 //! # Why segmenting is per-program, not per-route
 //!
 //! An MPTS route carries several programs on one `IngestDriver`; each has
 //! its own driver-minted `Trunk` (see `media_plane::ingress`'s own docs) and
-//! must be segmented independently — [`drive_program_segmenters`] iterates
-//! every program `driver.programs()` reports, not just one. Wiring the
-//! *result* of a non-default program's segmentation to HTTP egress (as
-//! opposed to segmenting it at all) is issue #805 task 6 (MPTS egress
-//! resolution) — out of scope here; only `SPTS_PROGRAM_ID`'s (crate-private)
-//! init bytes are pushed to `RouteHandle` today, but every program's `Trunk` still
-//! carries its own real segments/parts, resolvable exactly like the
-//! `ts_program` test proves.
+//! must be segmented independently — `drive_program_segmenters` iterates
+//! every program `driver.programs()` reports, not just one. Every program
+//! gets its own [`crate::route::RouteHandle`] registry entry (issue #805 task
+//! 6: per-program serving state), so every program's `Trunk` carries its own
+//! real segments/parts, individually resolvable exactly like the
+//! `ts_program` test proves and `crate::route`'s own
+//! `two_programs_serve_distinct_media` test proves end to end. *Selecting*
+//! one from an incoming HTTP request (as opposed to segmenting/serving it at
+//! all) is the addressing question `crate::route`'s own module doc records
+//! options for — only `SPTS_PROGRAM_ID`'s init bytes are pushed here as the
+//! one program every current egress call site resolves.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -78,7 +81,13 @@ use crate::route::{RouteHandle, SPTS_PROGRAM_ID};
 /// [`Trunk`], an [`LlHlsSegmenter`] fed from it, and the *same* `Trunk`'s own
 /// [`SegmentWriter`] the resulting parts/segments are published back
 /// through.
-pub struct ProgramSegmenter {
+///
+/// `pub(crate)` (not `pub`, issue #805 task 6): the one caller outside this
+/// module, [`crate::source::advance_route`], is the facade a
+/// [`crate::registry::SchemeRegistry`] `Custom` factory calls instead of
+/// touching this type or [`drive_program_segmenters`] directly — see that
+/// facade's own doc.
+pub(crate) struct ProgramSegmenter {
     cursor: SampleCursor,
     segment_writer: SegmentWriter,
     seg: LlHlsSegmenter,
@@ -152,8 +161,11 @@ impl ProgramSegmenter {
 
     /// Drain every sample this program's cursor has observed since the last
     /// call, push it through the segmenter, and publish whatever parts/
-    /// segments that produced.
-    fn pump(&mut self) {
+    /// segments that produced. Returns `(parts_published, segments_published)`
+    /// this call — issue #809: [`drive_program_segmenters`] sums these across
+    /// every segmenter to drive `crate::prometheus::PARTS_PRODUCED_TOTAL`/
+    /// `SEGMENTS_PRODUCED_TOTAL`.
+    fn pump(&mut self) -> (usize, usize) {
         while let Some(item) = self.cursor.poll() {
             if let SampleCursorItem::Timed { track_id, sample } = item {
                 if let Err(e) = self.seg.push(track_id, sample) {
@@ -167,7 +179,7 @@ impl ProgramSegmenter {
             // `ts_program`'s own reference test, which only ever matches
             // `SampleCursorItem::Timed`.
         }
-        self.publish_ready();
+        self.publish_ready()
     }
 
     /// Finalize any trailing buffered partial segment — called once the
@@ -175,14 +187,17 @@ impl ProgramSegmenter {
     /// disconnecting driver-backed route doesn't silently drop its last
     /// partial segment the way the pre-flush `run_pipeline` regression once
     /// did (see that module's `eos_flush_emits_buffered_tail_segment` test).
-    fn flush(&mut self) {
+    /// Returns `(parts_published, segments_published)` this call — see
+    /// [`Self::pump`].
+    fn flush(&mut self) -> (usize, usize) {
         if let Err(e) = self.seg.flush() {
             tracing::warn!(error = %e, "driver-backed segmenter flush failed");
         }
-        self.publish_ready();
+        self.publish_ready()
     }
 
-    fn publish_ready(&mut self) {
+    fn publish_ready(&mut self) -> (usize, usize) {
+        let mut parts_published = 0usize;
         for part in self.seg.take_ready_parts() {
             self.segment_writer.publish_part(PartEntry::new(
                 part.bytes,
@@ -191,7 +206,9 @@ impl ProgramSegmenter {
                 Duration::from_secs_f64(part.duration),
                 part.independent,
             ));
+            parts_published += 1;
         }
+        let mut segments_published = 0usize;
         for segment in self.seg.take_ready_segments() {
             let duration = Duration::from_secs_f64(segment.duration);
             let start_ns = self.next_timeline_ns;
@@ -207,20 +224,22 @@ impl ProgramSegmenter {
                     discontinuous: false,
                 },
             ));
+            segments_published += 1;
         }
+        (parts_published, segments_published)
     }
 }
 
 /// Per-iteration driver every `run_*` entry point calls right after
-/// [`crate::source::report_driver_progress`] — builds a [`ProgramSegmenter`]
-/// for each newly-observed program (once its tracks have landed) and pumps
-/// every already-built one. `segmenters` is caller-owned, opaque state,
-/// exactly like `report_driver_progress`'s own `published: &mut
-/// HashSet<ProgramId>`: a caller (this crate's own `run_*` entry points, or an
-/// external `Custom`-scheme factory's own drive loop — see this module's own
-/// doc) declares one fresh `HashMap::new()` per connection attempt and passes
-/// it back in on every call for that attempt's whole lifetime, never
-/// constructing or reading a [`ProgramSegmenter`] itself.
+/// [`crate::source::report_driver_progress`] (together, [`crate::source::advance_route`]
+/// is the one facade call that does both, in order — see that function's own
+/// doc) — builds a [`ProgramSegmenter`] for each newly-observed program (once
+/// its tracks have landed) and pumps every already-built one. `segmenters` is
+/// caller-owned, opaque state, exactly like `report_driver_progress`'s own
+/// `published: &mut HashSet<ProgramId>`: a caller declares one fresh
+/// `HashMap::new()` per connection attempt and passes it back in on every
+/// call for that attempt's whole lifetime, never constructing or reading a
+/// [`ProgramSegmenter`] itself.
 ///
 /// A segmenter's own errors (build failure, a push/flush rejecting a
 /// malformed sample) are logged and otherwise swallowed — never propagated
@@ -230,7 +249,22 @@ impl ProgramSegmenter {
 /// build is retried on the next call (it is never inserted into
 /// `segmenters`, so this function's internal `ProgramSegmenter::try_new`
 /// runs again).
-pub fn drive_program_segmenters<S: IngestSession>(
+///
+/// `pub(crate)` (issue #805 task 6 narrowed this back from `pub`): the
+/// supported extension surface for a [`crate::registry::SchemeRegistry`]
+/// `Custom` factory is now the single [`crate::source::advance_route`]
+/// facade, not this function directly — see that function's own doc for why.
+///
+/// **Issue #809**: bumps `crate::prometheus::PARTS_PRODUCED_TOTAL`/
+/// `SEGMENTS_PRODUCED_TOTAL`, labelled by `route_handle.name()`, for the total
+/// parts/segments every segmenter on this route actually published this call
+/// (pump, plus flush if the driver just went terminal) — the only place in
+/// the driver-backed architecture samples actually turn into parts/segments,
+/// so the only place that can honestly say a part/segment was "produced".
+/// Only increments when the total is nonzero (an idle call with nothing new
+/// to publish must not spuriously bump a counter meant to reflect real
+/// throughput).
+pub(crate) fn drive_program_segmenters<S: IngestSession>(
     driver: &IngestDriver<S>,
     route_handle: &RouteHandle,
     segmenters: &mut HashMap<ProgramId, ProgramSegmenter>,
@@ -250,26 +284,47 @@ pub fn drive_program_segmenters<S: IngestSession>(
             continue;
         };
         // SPTS_PROGRAM_ID's init bytes are the one piece of segmenter output
-        // RouteHandle's own single-slot LL-HLS/DASH accessors can serve
-        // today — see this module's own doc for why, and why every other
-        // program still segments (just isn't wired to HTTP egress yet:
-        // issue #805 task 6).
+        // pushed to RouteHandle here directly — see this module's own doc for
+        // why, and why every other program still segments (just isn't wired
+        // to HTTP egress yet: issue #805 task 6's MPTS-addressing doc in
+        // `crate::route`).
         if program == SPTS_PROGRAM_ID {
             if let Some(init) = segmenter.init_segment() {
-                route_handle.set_init(init);
+                route_handle.set_init(SPTS_PROGRAM_ID, init);
             }
         }
         segmenters.insert(program, segmenter);
     }
 
+    let mut parts_total = 0usize;
+    let mut segments_total = 0usize;
     for segmenter in segmenters.values_mut() {
-        segmenter.pump();
+        let (parts, segments) = segmenter.pump();
+        parts_total += parts;
+        segments_total += segments;
     }
 
     if !driver.health().is_running() {
         for segmenter in segmenters.values_mut() {
-            segmenter.flush();
+            let (parts, segments) = segmenter.flush();
+            parts_total += parts;
+            segments_total += segments;
         }
+    }
+
+    if parts_total > 0 {
+        metrics::counter!(
+            crate::prometheus::PARTS_PRODUCED_TOTAL,
+            "route" => route_handle.name().to_string(),
+        )
+        .increment(parts_total as u64);
+    }
+    if segments_total > 0 {
+        metrics::counter!(
+            crate::prometheus::SEGMENTS_PRODUCED_TOTAL,
+            "route" => route_handle.name().to_string(),
+        )
+        .increment(segments_total as u64);
     }
 }
 
@@ -297,7 +352,10 @@ mod tests {
     /// genuinely "resolvable the way egress resolves them", not a
     /// Trunk-level shortcut.
     fn render_playlist(route: &RouteHandle) -> String {
-        match route.ll_hls().resolve(
+        let ll_hls = route
+            .ll_hls(crate::route::SPTS_PROGRAM_ID)
+            .expect("SPTS_PROGRAM_ID must be published before rendering");
+        match ll_hls.resolve(
             LlHlsRequest::Playlist {
                 track_id: DEFAULT_TRACK_ID,
                 query: Default::default(),
@@ -320,34 +378,16 @@ mod tests {
     /// `drive_program_segmenters` (this module) → the route's own
     /// `RouteHandle::init_bytes`/`LlHlsOrigin`.
     ///
-    /// MUTATION VERIFIED: disabling `RouteHandle::publish_program`'s
-    /// `if program == SPTS_PROGRAM_ID { self.rebind_serving_trunk_if_new(&trunk); }`
-    /// call (changed to `if program == SPTS_PROGRAM_ID && false { .. }`, so
-    /// `ll_hls`/`dash` stay bound to the route's own never-written
-    /// placeholder `Trunk` forever, exactly the pre-task-2b state) makes this
-    /// test's second assertion fail:
-    /// `assert!(playlist.contains("#EXTINF:") || playlist.contains("#EXT-X-PART:"), ...)`
-    /// fails — actual rendered playlist body (verbatim from the panic):
-    /// ```text
-    /// #EXTM3U
-    /// #EXT-X-VERSION:9
-    /// #EXT-X-TARGETDURATION:1
-    /// #EXT-X-MEDIA-SEQUENCE:1
-    /// #EXT-X-SERVER-CONTROL:CAN-BLOCK-RELOAD=YES,PART-HOLD-BACK=0.75
-    /// #EXT-X-PART-INF:PART-TARGET=0.25
-    /// #EXT-X-MAP:URI="init-1.mp4"
-    /// ```
-    /// — `render_playlist` still returns `EgressResponse::Ready` (an empty
-    /// query never triggers the blocking-reload path), but with a playlist
-    /// rendered from a `Trunk` that never received a single segment/part
-    /// (no `#EXTINF:`/`#EXT-X-PART:` line at all — only the unconditional
-    /// `#EXT-X-PART-INF:` header), since this module's segmenter published
-    /// everything into the *driver's* `Trunk` instead. The first assertion
-    /// (`init_bytes`) still passes even with the mutation, because
-    /// `set_init` writes through whichever `Arc<LlHlsOrigin>` `ll_hls()`
-    /// currently resolves to at call time inside `drive_program_segmenters`
-    /// — this is exactly why the test needs *both* assertions. Recompiled
-    /// and re-run to confirm the exact failure above, then reverted.
+    /// MUTATION VERIFIED: changing the `if program == SPTS_PROGRAM_ID { ...
+    /// route_handle.set_init(SPTS_PROGRAM_ID, init); }` push in
+    /// `drive_program_segmenters` to `if false { .. }` (never push init bytes
+    /// to `RouteHandle` at all) makes this test's first assertion fail:
+    /// `assert!(route.init_bytes(crate::route::SPTS_PROGRAM_ID).is_some_and(|b| !b.is_empty()), ...)`
+    /// fails — actual value `None` (the registry's `ProgramServing` for
+    /// program 0 exists and its `Trunk` carries real segments/parts, but its
+    /// `LlHlsOrigin` never received the init segment bytes at all), not the
+    /// expected `Some(bytes)`. Recompiled and re-run to confirm the failure,
+    /// then reverted.
     #[test]
     fn driver_backed_route_serves_real_media_through_ll_hls() {
         let route = RouteHandle::new(1.0, 250, 8);
@@ -376,7 +416,9 @@ mod tests {
         drive_program_segmenters(&driver, &route, &mut segmenters);
 
         assert!(
-            route.init_bytes().is_some_and(|b| !b.is_empty()),
+            route
+                .init_bytes(crate::route::SPTS_PROGRAM_ID)
+                .is_some_and(|b| !b.is_empty()),
             "a driver-backed route must end up with real, non-empty init bytes"
         );
 
@@ -393,6 +435,87 @@ mod tests {
             playlist.contains("#EXTINF:") || playlist.contains("#EXT-X-PART:"),
             "the route's own LlHlsOrigin must serve real closed segments/parts, \
              resolved exactly the way egress resolves them: {playlist}"
+        );
+    }
+
+    /// **Issue #809.** `multimux_parts_produced_total`/
+    /// `multimux_segments_produced_total` must actually move for a
+    /// driver-backed route — these two counters had no emitter at all since
+    /// the media-plane port (silently reading zero, then deleted outright)
+    /// until `drive_program_segmenters` started bumping them directly. Uses a
+    /// distinctively-named route (`with_name`) so the assertion reads this
+    /// test's own series, not whatever another test in this shared-process
+    /// binary already recorded under a different (or default) route label.
+    ///
+    /// MUTATION VERIFIED: commenting out both `if parts_total > 0 { ... }`/
+    /// `if segments_total > 0 { ... }` metric-emitting blocks in
+    /// `drive_program_segmenters` (simulating the exact #809 regression: the
+    /// segmenting logic runs correctly, nothing ever reports it) makes this
+    /// test's `assert!(parts_after > parts_before, ...)` fail: actual
+    /// `parts_after == parts_before` (both `0.0`, since nothing ever
+    /// increments the counter) instead of `parts_after > parts_before` —
+    /// real parts/segments are demonstrably produced (this test's sibling,
+    /// `driver_backed_route_serves_real_media_through_ll_hls`, proves that via
+    /// the served playlist), but the metric stays silently at zero. Recompiled
+    /// and re-run to confirm the failure, then reverted.
+    #[test]
+    fn drive_program_segmenters_bumps_parts_and_segments_produced_counters() {
+        crate::prometheus::install();
+        let route = RouteHandle::new(1.0, 250, 8).with_name("segment-metrics-probe-route");
+        let mut driver = IngestDriver::new(
+            TsIngestSession::new(),
+            trunk_config(),
+            handshake(),
+            media_plane::DEFAULT_MAX_PROGRAMS,
+        );
+        let mut published = HashSet::new();
+        let mut segmenters = HashMap::new();
+
+        fn metric_total(metric: &str, route_label: &str) -> f64 {
+            let rendered = crate::prometheus::install().render();
+            rendered
+                .lines()
+                .find(|l| l.starts_with(metric) && l.contains(route_label))
+                .and_then(|l| l.rsplit(' ').next())
+                .and_then(|v| v.parse::<f64>().ok())
+                .unwrap_or(0.0)
+        }
+
+        let parts_before = metric_total(
+            "multimux_parts_produced_total",
+            "segment-metrics-probe-route",
+        );
+        let segments_before = metric_total(
+            "multimux_segments_produced_total",
+            "segment-metrics-probe-route",
+        );
+
+        let ts_bytes = build_ts_bytes(1, 0xAB, 90);
+        driver.feed(&ts_bytes, Timestamp::ZERO);
+        report_driver_progress(&driver, &route, &mut published);
+        drive_program_segmenters(&driver, &route, &mut segmenters);
+        let more = build_ts_bytes(1, 0xCD, 90);
+        driver.feed(&more, Timestamp::from_nanos(1));
+        report_driver_progress(&driver, &route, &mut published);
+        drive_program_segmenters(&driver, &route, &mut segmenters);
+
+        let parts_after = metric_total(
+            "multimux_parts_produced_total",
+            "segment-metrics-probe-route",
+        );
+        let segments_after = metric_total(
+            "multimux_segments_produced_total",
+            "segment-metrics-probe-route",
+        );
+
+        assert!(
+            parts_after > parts_before,
+            "multimux_parts_produced_total must increase: before={parts_before} after={parts_after}"
+        );
+        assert!(
+            segments_after > segments_before,
+            "multimux_segments_produced_total must increase: before={segments_before} \
+             after={segments_after}"
         );
     }
 
@@ -458,7 +581,9 @@ mod tests {
         drive_program_segmenters(&driver, &route, &mut segmenters);
 
         assert!(
-            route.init_bytes().is_some_and(|b| !b.is_empty()),
+            route
+                .init_bytes(crate::route::SPTS_PROGRAM_ID)
+                .is_some_and(|b| !b.is_empty()),
             "a driver-backed route must end up with real, non-empty init bytes"
         );
 
@@ -521,7 +646,7 @@ mod tests {
         // same Trunk, not merely one with equal contents.
         match route.resolve_program(crate::route::SPTS_PROGRAM_ID) {
             crate::route::ProgramResolution::Found(resolved) => {
-                assert!(Arc::ptr_eq(&resolved, &program_trunk));
+                assert!(Arc::ptr_eq(&resolved.trunk(), &program_trunk));
             }
             _ => panic!("expected the route's registry to resolve program 0"),
         }

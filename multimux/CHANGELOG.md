@@ -2,6 +2,95 @@
 
 ## [Unreleased]
 
+### Added (issue #805 task 6: per-program serving state, MPTS-ready)
+- **`RouteHandle` gains per-program serving state.** A new crate-private
+  `ProgramServing` bundle groups one program's `Trunk`, its
+  `LlHlsOrigin`, and its `DashState` together, keyed by `ProgramId` in
+  `RouteHandle`'s registry — replacing the single owned `Trunk`/`ll_hls`/
+  `dash` triple `RouteHandle::new` used to build eagerly. A `ProgramServing`
+  bundle is created the instant (and only the instant)
+  `RouteHandle::publish_program` is called for that program, mirroring
+  `media_plane::IngestDriver` minting a `Trunk` the instant it observes
+  `SessionEvent::NewProgram`. Proven end to end by a new test
+  (`route::program_registry_tests::two_programs_serve_distinct_media`): two
+  programs on one route now serve genuinely distinct init bytes and segments.
+- **`RouteHandle::publish_new_program(program) -> Arc<Trunk>`** (new, `pub`):
+  mints a `Trunk` sized like the route's own configured ring capacities and
+  publishes it under `program` in one step — the test/plugin-facing
+  replacement for the deleted `publish_owned_trunk`, and the only way to get
+  a `Trunk` handle back from a `RouteHandle` (it is always already
+  registered).
+- **`RouteHandle::name()`/`with_name()`** (new, `pub`): a route's own name,
+  defaulting to `"unknown"`. `crate::origin::serve_with_registry`'s one
+  production route-construction call site now chains `.with_name(route.name)`
+  so `crate::source::segment::drive_program_segmenters` (issue #809, below)
+  can label its metrics without threading a name parameter through every
+  `run_*` call site.
+- **`crate::source::{DriverProgress, advance_route}`** (new, `pub`): the one
+  facade a driver-backed drive loop (in-tree `run_*`, or an external
+  `SchemeRegistry` `Custom` factory) now calls once per iteration, replacing
+  the caller-assembled pair `report_driver_progress` +
+  `segment::drive_program_segmenters` those two functions used to require
+  (both narrowed back to `pub(crate)` — see Changed, below). `DriverProgress`
+  is the one opaque per-attempt state value a caller declares and threads
+  through; `advance_route` performs both steps, in order, every time — a
+  wrong order or a skipped step (the exact footgun the old two-call API
+  invited) is no longer possible. `examples/custom_scheme.rs` and
+  `tests/dispatch_ingest.rs`'s `Custom`-dispatch coverage are rewritten onto
+  this facade.
+
+### Fixed (issue #809)
+- **`multimux_parts_produced_total`/`multimux_segments_produced_total` have
+  an emitter again.** These two counters had no emitter at all since the
+  media-plane port — they read zero while media flowed perfectly (worse than
+  absent) before being deleted outright pending this fix (see the entry
+  below). `crate::source::segment::drive_program_segmenters` — the one place
+  in the driver-backed architecture that actually turns samples into
+  parts/segments — now bumps both, labelled by the new `RouteHandle::name()`
+  (see Added, above) rather than threading a route-name parameter through
+  nine `run_*` call sites. A new test
+  (`source::segment::tests::drive_program_segmenters_bumps_parts_and_segments_produced_counters`)
+  asserts both counters actually increment for a driver-backed route.
+  Swept the rest of `crate::prometheus` for the same failure mode: `ROUTE_UP`/
+  `SOURCE_RECONNECTS_TOTAL` (`origin::supervisor`), `ACTIVE_BLOCKING_REQUESTS`
+  (`origin::resource`/`output::llhls`), and `HTTP_REQUESTS_TOTAL`/
+  `HTTP_REQUEST_DURATION_SECONDS`/`BYTES_SERVED_TOTAL` (`origin`'s HTTP
+  middleware) all still have live emitters — no other casualty found.
+
+### Removed (BREAKING — issue #805 task 6: the placeholder `Trunk` is gone)
+- **`RouteHandle`'s owned placeholder `Trunk` field and `publish_owned_trunk`
+  are deleted.** `RouteHandle::new` no longer builds any `Trunk`/`LlHlsOrigin`/
+  `DashState` at all; every program's serving state lives only in the new
+  per-program registry (see Added, above), created only by
+  `publish_program`/`publish_new_program`. This makes the **publish-or-hang
+  footgun structurally impossible** rather than merely documented against: a
+  producer can no longer write into a `Trunk` that egress cannot resolve,
+  because there is no `Trunk` to write into until it is published. Callers
+  that used to build a route, write via `set_init`/`add_part`/`add_segment`,
+  then call `publish_owned_trunk()` now call `publish_new_program(program)`
+  **first** (it both mints and publishes), then write.
+- **`RouteHandle::set_init`/`init_bytes`/`set_track_specs`/`track_specs`/
+  `add_part`/`add_segment`/`window_segments` all take a new leading
+  `ProgramId` parameter.** These used to operate on the single owned `Trunk`;
+  they now resolve (or, for the writers, silently no-op with a logged
+  warning if unpublished) the named program's `ProgramServing` bundle. Every
+  in-tree egress call site resolves `crate::route::SPTS_PROGRAM_ID` (the
+  SPTS default, unchanged behaviour for every existing route) via the new
+  `crate::http::resolve_route_program` (renamed from `resolve_route_trunk`,
+  which returned just the `Trunk`; the renamed function returns the whole
+  `ProgramServing` bundle so a caller never risks pairing one program's
+  `Trunk` with a different program's `LlHlsOrigin`).
+- **MPTS addressing is documented, not implemented** (as scoped): with
+  per-program serving state in place, a route can genuinely serve several
+  programs, but there is still no way for an HTTP request to *select* a
+  non-default one. `RouteHandle`'s own module doc records three options (URL
+  path segment, query parameter, config-declared per-program route) and
+  recommends the query parameter as the additive "MVP" choice, plus a known
+  gap: `ProgramResolution::NotYetAnnounced` vs. `NotFound` is derived from
+  "the registry is empty", which cannot yet distinguish "this MPTS program
+  hasn't been minted yet" from "this program will never exist" for a
+  route where at least one *other* program has already landed.
+
 ### Fixed (issue #808)
 - **Samples published in the SAME `feed` call as `NewProgram` are no longer
   silently dropped.** `ProgramSegmenter::try_new` now subscribes with
@@ -34,12 +123,11 @@
     it: both existed solely to gate `pipeline::MockSource`.
 - **`RouteHandle`'s owned `Trunk` field now has no production writer.** It
   stays (removing it forces `ll_hls`/`dash` to be built per-program instead of
-  once in `RouteHandle::new` — exactly issue #805 task 6, MPTS egress
-  resolution, which this task does not implement) but is now a
-  pre-first-program **placeholder**, driven only by this crate's own
-  `tests/*.rs` (via `set_init`/`add_part`/`add_segment` +
-  `publish_owned_trunk`, which stays `pub` for exactly that reason). See
-  `RouteHandle`'s own doc.
+  once in `RouteHandle::new`) but is now a pre-first-program **placeholder**,
+  driven only by this crate's own `tests/*.rs` (via `set_init`/`add_part`/
+  `add_segment` + `publish_owned_trunk`, which stays `pub` for exactly that
+  reason). See `RouteHandle`'s own doc. **Superseded by issue #805 task 6,
+  below: the placeholder and `publish_owned_trunk` are deleted outright.**
 - **`crate::prometheus::{SEGMENTS_PRODUCED_TOTAL, PARTS_PRODUCED_TOTAL}`
   removed** (the two counters became dead code — the deleted `run_pipeline`
   was their only caller; no driver-backed `run_*` path ever bumped them, since
@@ -62,6 +150,8 @@
   its samples into LL-HLS-servable segments/parts — without this, the
   extension point documented in `crate::registry`/`examples/custom_scheme.rs`
   would be unusable for anything beyond a trivial connect-only stub.
+  **Superseded by issue #805 task 6, above: narrowed back to `pub(crate)`
+  behind the single `crate::source::advance_route` facade.**
 - **`examples/custom_scheme.rs` rewritten** to demonstrate the supported
   plugin shape: a small `Dialer`/`IngestSession` pair (`DemoDialer`/
   `DemoSession`, synthetic single-track AVC media) driven by

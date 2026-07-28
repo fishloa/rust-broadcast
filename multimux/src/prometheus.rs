@@ -23,6 +23,15 @@
 //!   `route`, `path` (and `status` for the requests counter): recorded by
 //!   `origin`'s HTTP middleware for every request the origin serves, root
 //!   endpoints (`/metrics`, `/healthz`, `/readyz`) included.
+//! - `multimux_parts_produced_total` / `multimux_segments_produced_total`
+//!   (`PARTS_PRODUCED_TOTAL` / `SEGMENTS_PRODUCED_TOTAL`) — counters, labels
+//!   `route`: bumped in `crate::source::segment::drive_program_segmenters`,
+//!   the one place in the driver-backed architecture that actually turns raw
+//!   samples into parts/segments, labelled by `RouteHandle::name()` (issue
+//!   #809 — these two counters had no emitter at all since the media-plane
+//!   port; see that issue and this crate's CHANGELOG for the history: they
+//!   silently read zero for a while, which is worse than being entirely
+//!   absent, before being deleted outright pending this fix).
 //!
 //! Cardinality is bounded on purpose: `route` is either a configured stream
 //! name or the fixed token `"unknown"`, and `path` is one of a small fixed
@@ -59,6 +68,16 @@ pub(crate) const HTTP_REQUEST_DURATION_SECONDS: &str = "multimux_http_request_du
 
 /// Counter: total response bytes served. Labels: `route`, `path`.
 pub(crate) const BYTES_SERVED_TOTAL: &str = "multimux_bytes_served_total";
+
+/// Counter: total LL-HLS parts published into a route's `Trunk` by
+/// `crate::source::segment::drive_program_segmenters`. Labels: `route`
+/// (issue #809).
+pub(crate) const PARTS_PRODUCED_TOTAL: &str = "multimux_parts_produced_total";
+
+/// Counter: total segments published into a route's `Trunk` by
+/// `crate::source::segment::drive_program_segmenters`. Labels: `route`
+/// (issue #809).
+pub(crate) const SEGMENTS_PRODUCED_TOTAL: &str = "multimux_segments_produced_total";
 
 static HANDLE: OnceLock<PrometheusHandle> = OnceLock::new();
 

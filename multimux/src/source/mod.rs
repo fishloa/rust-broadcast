@@ -13,13 +13,16 @@
 //! factory, since issue #805 task 5 deleted the old
 //! `SourceConnector`/`supervise`/`pipeline` path — is driven over
 //! `media_plane::ingress` (`Dialer`/`Listener` + `IngestSession`) by
-//! [`crate::origin::supervisor::supervise_driver`]. [`report_driver_progress`]
-//! and [`segment::drive_program_segmenters`] are the two per-iteration helpers
-//! every driver-backed `run_*` in this module calls (and that a
-//! `SchemeRegistry`-registered `Custom` factory's own driver loop must call
-//! too — see `examples/custom_scheme.rs`); both are `pub` for exactly that
-//! reason, not just for this crate's own in-tree sources. `http_auth` is
-//! shared auth glue for the HTTP-based sources (issue #663 P3c).
+//! [`crate::origin::supervisor::supervise_driver`]. [`advance_route`] is the
+//! one per-iteration call every driver-backed `run_*` in this module makes
+//! (and that a `SchemeRegistry`-registered `Custom` factory's own driver loop
+//! must make too — see `examples/custom_scheme.rs`); it is `pub` for exactly
+//! that reason, not just for this crate's own in-tree sources.
+//! `report_driver_progress`/`segment::drive_program_segmenters` are the two
+//! steps it bundles — both `pub(crate)` (issue #805 task 6 narrowed them back
+//! from `pub`; see [`advance_route`]'s own doc for why one call replaced two).
+//! `http_auth` is shared auth glue for the HTTP-based sources (issue #663
+//! P3c).
 
 pub mod dash_pull;
 pub mod hls_pull;
@@ -246,19 +249,17 @@ pub(crate) fn handshake_policy(timeout: Duration) -> media_plane::ingress::Hands
 ///   published into `route_handle`'s registry
 ///   (`RouteHandle::publish_program`, crate-private).
 ///
-/// # `pub`, not `pub(crate)`
+/// # `pub(crate)`, not `pub` (issue #805 task 6 narrowed this back)
 ///
-/// This is the *only* way a program a driver mints ever becomes resolvable
-/// through `RouteHandle`'s registry — `RouteHandle::publish_program` and
-/// `resolve_program` are deliberately crate-private (issue #805's registry is
-/// an internal reconciliation mechanism, not something an external caller
-/// should poke directly), so an external [`crate::registry::SchemeRegistry`]
-/// `Custom` input factory driving its **own** `media_plane::ingress::Dialer`/
-/// `IngestSession` over its own `IngestDriver` (see `examples/custom_scheme.rs`)
-/// has no other way to make its programs visible to egress. Every in-tree
-/// `run_*` in this module already calls this; a third-party factory's own
-/// drive loop must call it too, once per iteration, exactly the same way.
-pub fn report_driver_progress<S: media_plane::ingress::IngestSession>(
+/// This used to be `pub` so a [`crate::registry::SchemeRegistry`] `Custom`
+/// factory driving its own `Dialer`/`IngestSession` could call it directly.
+/// That left a plugin author hand-assembling `report_driver_progress` +
+/// [`segment::drive_program_segmenters`] themselves, in the right order,
+/// every iteration — a wrong order, or calling one without the other, could
+/// silently ingest with nothing ever becoming servable. [`advance_route`] is
+/// now the one supported call for that; this function (and
+/// `drive_program_segmenters`) are its private implementation.
+pub(crate) fn report_driver_progress<S: media_plane::ingress::IngestSession>(
     driver: &media_plane::ingress::IngestDriver<S>,
     route_handle: &crate::route::RouteHandle,
     published: &mut std::collections::HashSet<media_plane::ingress::ProgramId>,
@@ -275,6 +276,56 @@ pub fn report_driver_progress<S: media_plane::ingress::IngestSession>(
             }
         }
     }
+}
+
+/// Opaque per-attempt state [`advance_route`] threads across every call for
+/// one connection attempt: the dedup set `report_driver_progress` needs, plus
+/// the `segment::ProgramSegmenter` map `segment::drive_program_segmenters`
+/// needs. A caller (every in-tree `run_*`, or an external
+/// [`crate::registry::SchemeRegistry`] `Custom` factory's own drive loop —
+/// see `examples/custom_scheme.rs`) declares one fresh [`DriverProgress::new`]
+/// per connection attempt and passes it, by `&mut` reference, to
+/// [`advance_route`] on every iteration for that attempt's whole lifetime —
+/// never constructing or reading either of its fields directly (both are
+/// private; this type exists precisely so a caller never has to know their
+/// shape).
+#[derive(Default)]
+pub struct DriverProgress {
+    published: std::collections::HashSet<media_plane::ingress::ProgramId>,
+    segmenters:
+        std::collections::HashMap<media_plane::ingress::ProgramId, segment::ProgramSegmenter>,
+}
+
+impl DriverProgress {
+    /// Fresh, empty state for a new connection attempt.
+    pub fn new() -> Self {
+        DriverProgress::default()
+    }
+}
+
+/// **The one facade call** a driver-backed drive loop makes once per
+/// iteration, after every [`media_plane::ingress::IngestDriver::feed`]/
+/// `on_deadline`/`finish` — replaces what used to be a caller-assembled pair,
+/// `report_driver_progress` then `segment::drive_program_segmenters`,
+/// over two separately-declared collections (`published`/`segmenters`) a
+/// caller had to know to build, order correctly, and pass consistently.
+///
+/// Both steps still exist (as `pub(crate)` internals of this crate — see
+/// their own docs) because they are genuinely two different jobs (registry
+/// publish + health flip; sample-to-segment/part turning), but a caller
+/// outside this crate has exactly one thing to call, over exactly one opaque
+/// state value ([`DriverProgress`]), so the order can never be gotten wrong
+/// and neither step can be silently skipped. See `examples/custom_scheme.rs`
+/// for the supported shape this replaces (that example used to call
+/// `report_driver_progress`/`drive_program_segmenters` directly; it now calls
+/// only this).
+pub fn advance_route<S: media_plane::ingress::IngestSession>(
+    driver: &media_plane::ingress::IngestDriver<S>,
+    route_handle: &crate::route::RouteHandle,
+    state: &mut DriverProgress,
+) {
+    report_driver_progress(driver, route_handle, &mut state.published);
+    segment::drive_program_segmenters(driver, route_handle, &mut state.segmenters);
 }
 
 #[cfg(test)]
@@ -431,7 +482,7 @@ mod driver_progress_tests {
         match route.resolve_program(crate::route::SPTS_PROGRAM_ID) {
             crate::route::ProgramResolution::Found(resolved) => {
                 assert_eq!(
-                    std::sync::Arc::as_ptr(&resolved),
+                    std::sync::Arc::as_ptr(&resolved.trunk()),
                     std::sync::Arc::as_ptr(expected),
                     "published Trunk must be the exact Arc the driver minted"
                 );
@@ -468,6 +519,67 @@ mod driver_progress_tests {
             crate::route::ProgramResolution::Found(_) => {}
             _ => panic!("expected ProgramResolution::Found"),
         }
+    }
+}
+
+#[cfg(test)]
+mod advance_route_tests {
+    //! Coverage for [`advance_route`] — the one facade call replacing a
+    //! caller-assembled `report_driver_progress` + `segment::drive_program_segmenters`
+    //! pair (issue #805 task 6). Drives a real muxed TS stream through it,
+    //! exactly mirroring `segment`'s own
+    //! `driver_backed_route_serves_real_media_through_ll_hls` test, to prove
+    //! the facade performs *both* steps (registry publish AND
+    //! sample-to-segment turning), not just one.
+
+    use super::*;
+    use crate::route::{ProgramResolution, RouteHandle, SPTS_PROGRAM_ID};
+    use crate::source::ts_program::TsIngestSession;
+    use crate::source::ts_program::test_support::{build_ts_bytes, handshake, trunk_config};
+    use broadcast_common::Timestamp;
+    use media_plane::ingress::IngestDriver;
+
+    /// MUTATION VERIFIED: changing `advance_route`'s body to call only
+    /// `report_driver_progress` (dropping the
+    /// `segment::drive_program_segmenters` line entirely) makes this test's
+    /// `assert!(route.init_bytes(SPTS_PROGRAM_ID).is_some_and(|b| !b.is_empty()), ...)`
+    /// fail: actual value `None` — the program is `Found` in the registry
+    /// (the first assertion below still passes), but nothing ever turned its
+    /// raw samples into a segmenter/init segment, exactly the "ingest
+    /// observable, playback not" gap this facade exists to make impossible to
+    /// half-wire. Recompiled and re-run to confirm the failure, then
+    /// reverted.
+    #[test]
+    fn advance_route_both_publishes_and_segments() {
+        let route = RouteHandle::new(1.0, 250, 8);
+        let mut driver = IngestDriver::new(
+            TsIngestSession::new(),
+            trunk_config(),
+            handshake(),
+            media_plane::DEFAULT_MAX_PROGRAMS,
+        );
+        let mut progress = DriverProgress::new();
+
+        let ts_bytes = build_ts_bytes(1, 0xAB, 90);
+        driver.feed(&ts_bytes, Timestamp::ZERO);
+        advance_route(&driver, &route, &mut progress);
+        let more = build_ts_bytes(1, 0xCD, 90);
+        driver.feed(&more, Timestamp::from_nanos(1));
+        advance_route(&driver, &route, &mut progress);
+
+        assert!(
+            matches!(
+                route.resolve_program(SPTS_PROGRAM_ID),
+                ProgramResolution::Found(_)
+            ),
+            "advance_route must publish the program into the registry"
+        );
+        assert!(
+            route
+                .init_bytes(SPTS_PROGRAM_ID)
+                .is_some_and(|b| !b.is_empty()),
+            "advance_route must also turn samples into a real, servable init segment"
+        );
     }
 }
 

@@ -169,15 +169,13 @@ pub async fn run_ts_udp(
     let mut buf = vec![0u8; MAX_TS_READ];
     let read_timeout = route.timeouts.read;
     let start = std::time::Instant::now();
-    let mut published = std::collections::HashSet::new();
-    let mut segmenters = std::collections::HashMap::new();
+    let mut progress = crate::source::DriverProgress::new();
     loop {
         let now = Timestamp::from_instant(start, std::time::Instant::now());
         if let Err(e) = recv_and_feed(&socket, &mut buf, &mut driver, read_timeout, now).await {
             return e;
         }
-        crate::source::report_driver_progress(&driver, route_handle, &mut published);
-        crate::source::segment::drive_program_segmenters(&driver, route_handle, &mut segmenters);
+        crate::source::advance_route(&driver, route_handle, &mut progress);
     }
 }
 

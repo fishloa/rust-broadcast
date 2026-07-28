@@ -24,33 +24,38 @@ use broadcast_common::Timestamp;
 use media_plane::Trunk;
 use media_plane::egress::{AwaitPolicy, EgressResponse, ServedEgress};
 
+use crate::route::ProgramServing;
+
 /// Upper bound on how long [`resolve_blocking`] parks a caller waiting for a
 /// [`ServedEgress::resolve`] to stop answering [`EgressResponse::Await`] — no
 /// call site may wait longer than this.
 pub(crate) const BLOCKING_RELOAD_TIMEOUT: Duration = Duration::from_secs(5);
 
-/// Resolves `route`'s single-program-route `Trunk`
+/// Resolves `route`'s single-program-route [`ProgramServing`] bundle
 /// ([`crate::route::SPTS_PROGRAM_ID`]) against its registry, handling the
 /// three-way [`crate::route::ProgramResolution`] the same way at every
-/// migrated egress call site (issue #805 tasks 3/4): `Found` hands back the
-/// `Trunk` to resolve against; `NotYetAnnounced` (the route is connected but
-/// no program has appeared yet — ingest may still be dialing/handshaking) is
-/// a `503 Service Unavailable` "not ready", **not** a `404` — collapsing the
-/// two would make an ordinary route mid-connect indistinguishable from a
-/// client hitting a route that will never exist, exactly the failure mode
-/// [`crate::route::ProgramResolution`]'s own doc exists to prevent;
-/// `NotFound` (a genuinely different, permanent absence) is a real `404`.
+/// migrated egress call site (issue #805 tasks 3/4/6): `Found` hands back the
+/// whole bundle (`Trunk` + `LlHlsOrigin` + `DashState`, resolved together from
+/// one registry read, so a caller never risks reading one program's `Trunk`
+/// against a different program's `LlHlsOrigin`); `NotYetAnnounced` (the route
+/// is connected but no program has appeared yet — ingest may still be
+/// dialing/handshaking) is a `503 Service Unavailable` "not ready", **not** a
+/// `404` — collapsing the two would make an ordinary route mid-connect
+/// indistinguishable from a client hitting a route that will never exist,
+/// exactly the failure mode [`crate::route::ProgramResolution`]'s own doc
+/// exists to prevent; `NotFound` (a genuinely different, permanent absence)
+/// is a real `404`.
 ///
 /// Every caller (`crate::output::llhls::media_playlist`,
 /// `crate::output::dash::manifest`, `crate::output::ll_dash::manifest`,
 /// `crate::origin::resource::dynamic_file`/`fetch_part`) matches this
 /// `Result` once, up front, before touching `resolve_blocking`/`ll_hls()` at
 /// all — so neither of those needs its own "no program yet" branch.
-pub(crate) fn resolve_route_trunk(
+pub(crate) fn resolve_route_program(
     route: &crate::route::RouteHandle,
-) -> core::result::Result<Arc<Trunk>, Response> {
+) -> core::result::Result<Arc<ProgramServing>, Response> {
     match route.resolve_program(crate::route::SPTS_PROGRAM_ID) {
-        crate::route::ProgramResolution::Found(trunk) => Ok(trunk),
+        crate::route::ProgramResolution::Found(serving) => Ok(serving),
         crate::route::ProgramResolution::NotYetAnnounced => {
             Err(StatusCode::SERVICE_UNAVAILABLE.into_response())
         }

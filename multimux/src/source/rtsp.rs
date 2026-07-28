@@ -614,8 +614,7 @@ pub async fn run_rtsp(
     let start = std::time::Instant::now();
     let mut buf = vec![0u8; 64 * 1024];
     let read_timeout = route.timeouts.read;
-    let mut published = std::collections::HashSet::new();
-    let mut segmenters = std::collections::HashMap::new();
+    let mut progress = crate::source::DriverProgress::new();
 
     loop {
         while let Some(bytes) = driver.poll_transmit() {
@@ -649,14 +648,13 @@ pub async fn run_rtsp(
         };
         let now = Timestamp::from_instant(start, std::time::Instant::now());
         driver.feed(&buf[..n], now);
-        crate::source::report_driver_progress(&driver, route_handle, &mut published);
-        crate::source::segment::drive_program_segmenters(&driver, route_handle, &mut segmenters);
+        crate::source::advance_route(&driver, route_handle, &mut progress);
     }
     // Health is already terminal on every path that broke out of the loop
     // above (handshake timeout, clean socket EOF via `driver.finish()`) —
     // this call's internal terminal-health check flushes every program's
     // trailing buffered partial segment.
-    crate::source::segment::drive_program_segmenters(&driver, route_handle, &mut segmenters);
+    crate::source::advance_route(&driver, route_handle, &mut progress);
     MultimuxError::Connect {
         reason: format!("rtsp: session ended: {:?}", driver.health()),
     }

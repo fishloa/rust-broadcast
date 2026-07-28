@@ -30,10 +30,10 @@
 //! `attempt` closure, not a boxed trait object): instead, the factory closure
 //! builds its own concrete `Dialer`/`IngestSession` pair, wraps one
 //! dial-through-disconnect cycle in an `attempt` closure that calls
-//! [`crate::source::report_driver_progress`] (to publish each newly-announced
-//! program into `ctx.store`'s registry) and
-//! [`crate::source::segment::drive_program_segmenters`] (to turn the ingested
-//! samples into LL-HLS-servable segments/parts) once per iteration, spawns
+//! [`crate::source::advance_route`] (the one facade call: publishes each
+//! newly-announced program into `ctx.store`'s registry *and* turns the
+//! ingested samples into LL-HLS-servable segments/parts) once per iteration
+//! over a caller-owned `crate::source::DriverProgress`, spawns
 //! [`crate::origin::supervisor::supervise_driver`] over that closure, and
 //! returns the resulting [`tokio::task::JoinHandle`] — this erases the
 //! session type at the closure boundary instead of at the trait boundary.
@@ -59,9 +59,8 @@ pub struct InputCtx {
     /// The route's `InputSpec::Custom::params`, opaque to multimux.
     pub params: serde_json::Value,
     /// This route's shared state — the factory's own driver loop feeds it via
-    /// [`crate::source::report_driver_progress`]/
-    /// [`crate::source::segment::drive_program_segmenters`], the same
-    /// `RouteHandle` the origin serves reads from.
+    /// [`crate::source::advance_route`], the same `RouteHandle` the origin
+    /// serves reads from.
     pub store: Arc<crate::route::RouteHandle>,
     /// `crate::config::Config::target_duration_secs`, forwarded unchanged —
     /// pass straight through to the factory's own segmenter/segmenting loop.

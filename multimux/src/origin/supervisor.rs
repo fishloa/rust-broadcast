@@ -137,14 +137,12 @@ fn record_reconnect(name: &str) {
 /// `media_plane::trunk::TrunkConfig`, and `media_plane::ingress::HandshakePolicy`,
 /// and calls the matching `crate::source::*::run_*` entry point (or, for a
 /// `Custom` factory's own driver loop, the equivalent hand-written attempt —
-/// see [`crate::source::report_driver_progress`]/
-/// [`crate::source::segment::drive_program_segmenters`]). Every in-tree
-/// entry point already calls `report_driver_progress` from inside its own
-/// drive loop: that is what flips `route_handle` to [`HealthState::Live`] the
-/// moment the driver's session establishes, and publishes each
-/// newly-announced program's `Trunk` into `route_handle`'s registry
-/// (`RouteHandle::publish_program`) — the ingest-side half of issue #805's
-/// registry reconciliation.
+/// see [`crate::source::advance_route`]). Every in-tree entry point already
+/// calls `advance_route` from inside its own drive loop: that is what flips
+/// `route_handle` to [`HealthState::Live`] the moment the driver's session
+/// establishes, and publishes each newly-announced program's `Trunk` into
+/// `route_handle`'s registry (`RouteHandle::publish_program`) — the
+/// ingest-side half of issue #805's registry reconciliation.
 ///
 /// [`Backoff`] runs between attempts, reset only once an attempt actually
 /// reached [`HealthState::Live`]; `record_route_up`/`record_reconnect` fire on

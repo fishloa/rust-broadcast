@@ -101,10 +101,11 @@ impl Output for DashOutput {
 /// codec string, not merely "no segment has closed yet", which still
 /// renders a valid, if near-empty, MPD).
 async fn manifest(State(route): State<Arc<RouteHandle>>) -> Response {
-    let trunk = match http::resolve_route_trunk(&route) {
-        Ok(trunk) => trunk,
+    let serving = match http::resolve_route_program(&route) {
+        Ok(serving) => serving,
         Err(resp) => return resp,
     };
+    let trunk = serving.trunk();
     let origin = DashOrigin { route };
     let resp = http::resolve_blocking(&trunk, &origin, (), BLOCKING_RELOAD_TIMEOUT, || ()).await;
     http::into_response(resp, StatusCode::SERVICE_UNAVAILABLE, |body| {
@@ -203,14 +204,14 @@ fn track_is_representable(spec: &TrackSpec) -> bool {
 /// [`RouteHandle::track_specs`] is [`select_representable_track`]-selectable
 /// (nothing recorded yet, or every recorded track is opaque — issue #776).
 fn render_mpd(route: &RouteHandle) -> Option<String> {
-    let specs = route.track_specs();
+    let specs = route.track_specs(crate::route::SPTS_PROGRAM_ID);
     // `@id` forced to DEFAULT_TRACK_ID (see module docs' "Single-rendition
     // model") regardless of which track this route's own PMT numbered it.
     let mut spec = select_representable_track(&specs)?;
     spec.track_id = DEFAULT_TRACK_ID;
     let timescale = spec.timescale.max(1);
 
-    let window = route.window_segments();
+    let window = route.window_segments(crate::route::SPTS_PROGRAM_ID);
     let start_number = window
         .first()
         .map(|s| u64::from(s.segment_seq))
@@ -376,7 +377,8 @@ mod tests {
         // closed yet) -- must still render a syntactically valid MPD (a
         // degenerate SegmentTemplate@duration=0), not None/panic.
         let route = RouteHandle::new(4.0, 500, 4);
-        route.set_track_specs(vec![video_spec(7)]);
+        route.publish_new_program(crate::route::SPTS_PROGRAM_ID);
+        route.set_track_specs(crate::route::SPTS_PROGRAM_ID, vec![video_spec(7)]);
         let mpd = render_mpd(&route).expect("must render even with an empty window");
         assert!(mpd.contains("<MPD"));
         assert!(mpd.contains("type=\"dynamic\""));
@@ -389,8 +391,9 @@ mod tests {
         // $RepresentationID$ substitution matches the shared resource
         // route's init-1.mp4/seg-1-<N>.m4s filenames.
         let route = RouteHandle::new(4.0, 500, 4);
-        route.set_track_specs(vec![video_spec(7)]);
-        route.add_segment(seg(1, 4.0));
+        route.publish_new_program(crate::route::SPTS_PROGRAM_ID);
+        route.set_track_specs(crate::route::SPTS_PROGRAM_ID, vec![video_spec(7)]);
+        route.add_segment(crate::route::SPTS_PROGRAM_ID, seg(1, 4.0));
         let mpd = render_mpd(&route).unwrap();
         assert!(
             mpd.contains(&format!("id=\"{DEFAULT_TRACK_ID}\"")),
@@ -406,10 +409,11 @@ mod tests {
     #[test]
     fn render_mpd_number_addressing_and_start_number_track_window() {
         let route = RouteHandle::new(4.0, 500, 2);
-        route.set_track_specs(vec![video_spec(1)]);
-        route.add_segment(seg(1, 4.0));
-        route.add_segment(seg(2, 4.0));
-        route.add_segment(seg(3, 4.0)); // evicts seq 1 (window_segments == 2)
+        route.publish_new_program(crate::route::SPTS_PROGRAM_ID);
+        route.set_track_specs(crate::route::SPTS_PROGRAM_ID, vec![video_spec(1)]);
+        route.add_segment(crate::route::SPTS_PROGRAM_ID, seg(1, 4.0));
+        route.add_segment(crate::route::SPTS_PROGRAM_ID, seg(2, 4.0));
+        route.add_segment(crate::route::SPTS_PROGRAM_ID, seg(3, 4.0)); // evicts seq 1 (window_segments == 2)
 
         let mpd = render_mpd(&route).unwrap();
         assert!(
@@ -433,8 +437,9 @@ mod tests {
     #[test]
     fn render_mpd_carries_live_attributes() {
         let route = RouteHandle::new(2.0, 500, 4);
-        route.set_track_specs(vec![video_spec(1)]);
-        route.add_segment(seg(1, 2.0));
+        route.publish_new_program(crate::route::SPTS_PROGRAM_ID);
+        route.set_track_specs(crate::route::SPTS_PROGRAM_ID, vec![video_spec(1)]);
+        route.add_segment(crate::route::SPTS_PROGRAM_ID, seg(1, 2.0));
         let mpd = render_mpd(&route).unwrap();
         assert!(mpd.contains("availabilityStartTime="), "{mpd}");
         assert!(mpd.contains("minimumUpdatePeriod=\"PT2S\""), "{mpd}");
@@ -461,8 +466,12 @@ mod tests {
     #[test]
     fn render_mpd_skips_leading_opaque_track_instead_of_503ing() {
         let route = RouteHandle::new(4.0, 500, 4);
-        route.set_track_specs(vec![teletext_spec(1), video_spec(2)]);
-        route.add_segment(seg(1, 4.0));
+        route.publish_new_program(crate::route::SPTS_PROGRAM_ID);
+        route.set_track_specs(
+            crate::route::SPTS_PROGRAM_ID,
+            vec![teletext_spec(1), video_spec(2)],
+        );
+        route.add_segment(crate::route::SPTS_PROGRAM_ID, seg(1, 4.0));
         let mpd = render_mpd(&route)
             .expect("a representable track behind an opaque one must still render");
         assert!(
@@ -474,24 +483,28 @@ mod tests {
     #[test]
     fn render_mpd_none_when_every_track_is_opaque() {
         let route = RouteHandle::new(4.0, 500, 4);
-        route.set_track_specs(vec![teletext_spec(1), teletext_spec(2)]);
+        route.publish_new_program(crate::route::SPTS_PROGRAM_ID);
+        route.set_track_specs(
+            crate::route::SPTS_PROGRAM_ID,
+            vec![teletext_spec(1), teletext_spec(2)],
+        );
         assert!(
             render_mpd(&route).is_none(),
             "a track set with no representable track is still a genuine 503"
         );
     }
 
-    /// Publishes its own program first (`publish_owned_trunk`) so this
+    /// Publishes its own program first (`publish_new_program`) so this
     /// isolates the "no representable track yet" 503 (issue #776) from the
     /// registry-level "not yet announced" 503 (issue #805 task 4) — both
     /// currently render the same status here, but only publishing first
     /// proves this test is actually exercising `render_mpd`'s `None` path,
-    /// not short-circuiting on `http::resolve_route_trunk` before ever
+    /// not short-circuiting on `http::resolve_route_program` before ever
     /// reaching it.
     #[tokio::test]
     async fn manifest_handler_503_before_track_specs_known() {
         let route = Arc::new(RouteHandle::new(4.0, 500, 4));
-        route.publish_owned_trunk();
+        route.publish_new_program(crate::route::SPTS_PROGRAM_ID);
         let resp = manifest(State(route)).await;
         assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
     }
@@ -499,9 +512,9 @@ mod tests {
     #[tokio::test]
     async fn manifest_handler_200_with_dash_content_type() {
         let route = Arc::new(RouteHandle::new(4.0, 500, 4));
-        route.set_track_specs(vec![video_spec(1)]);
-        route.add_segment(seg(1, 4.0));
-        route.publish_owned_trunk();
+        route.publish_new_program(crate::route::SPTS_PROGRAM_ID);
+        route.set_track_specs(crate::route::SPTS_PROGRAM_ID, vec![video_spec(1)]);
+        route.add_segment(crate::route::SPTS_PROGRAM_ID, seg(1, 4.0));
         let resp = manifest(State(route)).await;
         assert_eq!(resp.status(), StatusCode::OK);
         assert_eq!(
@@ -513,7 +526,7 @@ mod tests {
     /// MUTATION VERIFIED (issue #805 task 4): a route with no program
     /// announced yet must answer `503`, not `404` — see
     /// `output::llhls`'s identical test for the mutation this guards
-    /// (`http::resolve_route_trunk`'s `NotYetAnnounced` arm).
+    /// (`http::resolve_route_program`'s `NotYetAnnounced` arm).
     #[tokio::test]
     async fn manifest_not_yet_announced_is_503_not_404() {
         let route = Arc::new(RouteHandle::new(4.0, 500, 4));

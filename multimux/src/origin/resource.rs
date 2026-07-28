@@ -45,7 +45,7 @@ use futures_util::stream;
 use ll_hls_runtime::server::LlHlsRequest;
 
 use crate::http::{self, BLOCKING_RELOAD_TIMEOUT};
-use crate::route::RouteHandle;
+use crate::route::{ProgramServing, RouteHandle};
 
 pub(crate) const MP4_CONTENT_TYPE: &str = "video/mp4";
 
@@ -123,13 +123,15 @@ pub(crate) async fn cors_preflight() -> StatusCode {
 /// only drives the wait ([`http::resolve_blocking`]) and maps the outcome to
 /// an HTTP response ([`http::into_response`]).
 async fn dynamic_file(State(route): State<Arc<RouteHandle>>, Path(file): Path<String>) -> Response {
-    let trunk = match http::resolve_route_trunk(&route) {
-        Ok(trunk) => trunk,
+    let serving = match http::resolve_route_program(&route) {
+        Ok(serving) => serving,
         Err(resp) => return resp,
     };
+    let trunk = serving.trunk();
+    let ll_hls = serving.ll_hls();
     let resp = http::resolve_blocking(
         &trunk,
-        route.ll_hls().as_ref(),
+        ll_hls.as_ref(),
         LlHlsRequest::Resource { name: file.clone() },
         BLOCKING_RELOAD_TIMEOUT,
         BlockingRequestGuard::new,
@@ -143,7 +145,7 @@ async fn dynamic_file(State(route): State<Arc<RouteHandle>>, Path(file): Path<St
         // its segment is still in progress -- try that before giving up.
         resp if resp.status() == StatusCode::NOT_FOUND => {
             if let Some((track, seq)) = parse_segment_filename(&file) {
-                if let Some(resp) = stream_in_progress_segment(route, track, seq).await {
+                if let Some(resp) = stream_in_progress_segment(serving, track, seq).await {
                     return resp;
                 }
             }
@@ -196,23 +198,23 @@ fn parse_segment_filename(file: &str) -> Option<(&str, u32)> {
 /// ends normally (the response completes; axum/hyper terminate the
 /// chunked-transfer encoding on drop).
 async fn stream_in_progress_segment(
-    route: Arc<RouteHandle>,
+    serving: Arc<ProgramServing>,
     track: &str,
     seq: u32,
 ) -> Option<Response> {
     // Abuse/malformed-request bound (see `SEGMENT_ABUSE_FUTURE_BOUND`) --
     // checked before ever registering a blocking wait.
-    let (in_progress_seg_seq, _) = route.latest_progress();
+    let (in_progress_seg_seq, _) = serving.latest_progress();
     if seq > in_progress_seg_seq.saturating_add(SEGMENT_ABUSE_FUTURE_BOUND) {
         return None;
     }
 
     let track = track.to_string();
-    let first = fetch_part(&route, &track, seq, 0).await;
+    let first = fetch_part(&serving, &track, seq, 0).await;
     let first_bytes = first?;
 
     let cursor = PartCursor {
-        route,
+        serving,
         track,
         seq,
         next_index: 1,
@@ -222,7 +224,14 @@ async fn stream_in_progress_segment(
         if let Some(bytes) = cursor.pending_first.take() {
             return Some((Ok::<_, std::io::Error>(bytes), cursor));
         }
-        match fetch_part(&cursor.route, &cursor.track, cursor.seq, cursor.next_index).await {
+        match fetch_part(
+            &cursor.serving,
+            &cursor.track,
+            cursor.seq,
+            cursor.next_index,
+        )
+        .await
+        {
             Some(bytes) => {
                 cursor.next_index += 1;
                 Some((Ok(bytes), cursor))
@@ -243,23 +252,17 @@ async fn stream_in_progress_segment(
 /// not yet produced — `None` once it can no longer appear (its segment
 /// closed without it).
 async fn fetch_part(
-    route: &Arc<RouteHandle>,
+    serving: &Arc<ProgramServing>,
     track: &str,
     seq: u32,
     idx: u32,
 ) -> Option<bytes::Bytes> {
-    // `resolve_route_trunk`'s two non-`Found` cases both mean "nothing to
-    // serve" here (this helper only ever returns `Option`, never an HTTP
-    // status) — `dynamic_file` (the only production caller) already bailed
-    // out at the top on either case before ever reaching
-    // `stream_in_progress_segment`/this function, so a `None` here in
-    // practice only fires from this function's own test callers exercising
-    // it directly against an unpublished route.
-    let trunk = http::resolve_route_trunk(route).ok()?;
+    let trunk = serving.trunk();
+    let ll_hls = serving.ll_hls();
     let name = format!("part-{track}-{seq}.{idx}.m4s");
     let resp = http::resolve_blocking(
         &trunk,
-        route.ll_hls().as_ref(),
+        ll_hls.as_ref(),
         LlHlsRequest::Resource { name },
         BLOCKING_RELOAD_TIMEOUT,
         BlockingRequestGuard::new,
@@ -276,7 +279,7 @@ async fn fetch_part(
 
 /// Streaming state for [`stream_in_progress_segment`]'s `futures_util::stream::unfold`.
 struct PartCursor {
-    route: Arc<RouteHandle>,
+    serving: Arc<ProgramServing>,
     track: String,
     seq: u32,
     /// The 0-based index of the next part to fetch once `pending_first` is
@@ -315,16 +318,17 @@ mod tests {
 
     /// A populated route: a closed segment 1, plus two live parts of
     /// in-progress segment 2 -- so `latest_progress()` treats it as `(2, 2)`.
-    /// Publishes its own `Trunk` into the registry (`publish_owned_trunk`,
-    /// issue #805 task 3) so `dynamic_file`/`fetch_part`'s migrated
-    /// `resolve_program` lookup sees `Found`.
+    /// Publishes `SPTS_PROGRAM_ID` into the registry first
+    /// (`publish_new_program`, issue #805 tasks 3/6) so
+    /// `dynamic_file`/`fetch_part`'s `resolve_route_program` lookup sees
+    /// `Found`, and so there is a `ProgramServing` bundle to write into.
     fn make_route() -> Arc<RouteHandle> {
         let route = Arc::new(RouteHandle::new(4.0, 500, 4));
-        route.set_init(vec![0xAA; 8]);
-        route.add_segment(seg(1));
-        route.add_part(part(2, 0));
-        route.add_part(part(2, 1));
-        route.publish_owned_trunk();
+        route.publish_new_program(crate::route::SPTS_PROGRAM_ID);
+        route.set_init(crate::route::SPTS_PROGRAM_ID, vec![0xAA; 8]);
+        route.add_segment(crate::route::SPTS_PROGRAM_ID, seg(1));
+        route.add_part(crate::route::SPTS_PROGRAM_ID, part(2, 0));
+        route.add_part(crate::route::SPTS_PROGRAM_ID, part(2, 1));
         route
     }
 
@@ -372,7 +376,7 @@ mod tests {
         let route_for_task = route.clone();
         tokio::spawn(async move {
             tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-            route_for_task.add_part(part(2, 2));
+            route_for_task.add_part(crate::route::SPTS_PROGRAM_ID, part(2, 2));
         });
         let resp = dynamic_file(State(route), Path("part-1-2.2.m4s".to_string())).await;
         assert_eq!(
@@ -392,7 +396,7 @@ mod tests {
         let route_for_task = route.clone();
         tokio::spawn(async move {
             tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-            route_for_task.add_segment(seg(2)); // closes segment 2
+            route_for_task.add_segment(crate::route::SPTS_PROGRAM_ID, seg(2)); // closes segment 2
         });
         let started = std::time::Instant::now();
         let resp = dynamic_file(State(route), Path("part-1-2.9.m4s".to_string())).await;
@@ -414,7 +418,7 @@ mod tests {
         // property at the `ServedEgress` layer; this test proves the axum
         // adapter preserves it end to end).
         let route = make_route();
-        route.add_segment(seg(2)); // close segment 2
+        route.add_segment(crate::route::SPTS_PROGRAM_ID, seg(2)); // close segment 2
         let resp = dynamic_file(State(route), Path("part-1-2.1.m4s".to_string())).await;
         assert_eq!(
             resp.status(),
@@ -453,16 +457,16 @@ mod tests {
         // handler eagerly required the whole segment up front, this request
         // would have nothing to serve yet and would 404/block differently.
         let route = Arc::new(RouteHandle::new(4.0, 500, 4));
-        route.set_init(vec![0xAA; 8]);
-        route.add_part(part(2, 0));
-        route.publish_owned_trunk();
+        route.publish_new_program(crate::route::SPTS_PROGRAM_ID);
+        route.set_init(crate::route::SPTS_PROGRAM_ID, vec![0xAA; 8]);
+        route.add_part(crate::route::SPTS_PROGRAM_ID, part(2, 0));
 
         let route_for_task = route.clone();
         tokio::spawn(async move {
             tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-            route_for_task.add_part(part(2, 1));
+            route_for_task.add_part(crate::route::SPTS_PROGRAM_ID, part(2, 1));
             tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-            route_for_task.add_segment(seg(2));
+            route_for_task.add_segment(crate::route::SPTS_PROGRAM_ID, seg(2));
         });
 
         let resp = dynamic_file(State(route), Path("seg-1-2.m4s".to_string())).await;
@@ -489,13 +493,16 @@ mod tests {
         let route_for_start = route.clone();
         tokio::spawn(async move {
             tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-            route_for_start.add_part(PartInfo {
-                bytes: vec![0x77; 4],
-                duration: 0.5,
-                independent: true,
-                segment_seq: 3,
-                part_index: 0,
-            });
+            route_for_start.add_part(
+                crate::route::SPTS_PROGRAM_ID,
+                PartInfo {
+                    bytes: vec![0x77; 4],
+                    duration: 0.5,
+                    independent: true,
+                    segment_seq: 3,
+                    part_index: 0,
+                },
+            );
         });
 
         let started = std::time::Instant::now();
@@ -511,7 +518,7 @@ mod tests {
         );
         // Only one part exists so far; the response completes once segment 3
         // eventually closes. Close it now so the body finishes.
-        route.add_segment(seg(3));
+        route.add_segment(crate::route::SPTS_PROGRAM_ID, seg(3));
         assert_eq!(body_bytes(resp).await, vec![0x77; 4]);
     }
 
@@ -547,9 +554,9 @@ mod tests {
 
     /// MUTATION VERIFIED (issue #805 task 4): a route with no program
     /// announced yet (a bare `RouteHandle::new`, never
-    /// `publish_owned_trunk`/`publish_program`d) must answer `503`, not
+    /// `publish_new_program`/`publish_program`d) must answer `503`, not
     /// `404` -- see `output::llhls`'s identical test for the mutation this
-    /// guards (`http::resolve_route_trunk`'s `NotYetAnnounced` arm).
+    /// guards (`http::resolve_route_program`'s `NotYetAnnounced` arm).
     #[tokio::test]
     async fn dynamic_file_not_yet_announced_is_503_not_404() {
         let route = Arc::new(RouteHandle::new(4.0, 500, 4));
