@@ -20,6 +20,23 @@
     egress still reads it, so nothing changes behaviourally yet.
 
 ### Fixed
+- **`pipeline::run_pipeline` published nothing, so every consumer of it hung.**
+  Once egress resolved exclusively through the route's program registry
+  (task 2), a producer that writes `RouteHandle`'s own `Trunk` without
+  indexing it there is served to nobody — and because a request then blocks on
+  `ProgramResolution::NotYetAnnounced` waiting for a program that is already
+  present, the symptom is an **infinite hang, not a 404**. `run_pipeline` is a
+  public entry point and never published. It now calls
+  `RouteHandle::publish_owned_trunk()`, matching `origin::supervisor::supervise`.
+  - Caught by `ll-hls-runtime`, which dev-depends on this crate and drives
+    `RouteHandle` + `LlHlsOutput` directly: its `glass_to_glass` test tripped a
+    25 s hang guard and `golden_gate` a 20 s one, both reproducibly, both green
+    before task 1/2 landed. An external consumer found this, not our own suite.
+  - `RouteHandle::new`'s docs now state the contract and that the failure mode
+    is a hang. `new()` deliberately does **not** auto-publish: a bare,
+    unpublished route is the genuine driver-route connecting window that the
+    four `NotYetAnnounced` → 503 tests assert, and the owned field carrying
+    this hazard goes away once every route is driver-backed.
 - **The workspace doc gate is green again (26 `error:` lines → 0).** The 5a/5b
   port renamed and deleted types without updating the prose that referenced
   them, leaving dead intra-doc links across twelve files: `RtspSource` (split
