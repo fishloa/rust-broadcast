@@ -2,7 +2,7 @@
 //! #663 P4) — renders `manifest.mpd` from the shared [`crate::route::RouteHandle`]'s
 //! `Trunk`-drained window via `transmux::dash::DashPackager`, resolved
 //! through the same one adapter every other output uses
-//! ([`crate::http::resolve_blocking`]/[`crate::http::into_response`]).
+//! (`crate::http::resolve_blocking`/`crate::http::into_response`).
 //! Init/segment byte ranges are the origin's *shared* resource route
 //! (`crate::origin::resource`) — the exact same bytes [`crate::output::llhls`]
 //! serves; this module only renders the manifest (see `crate::output`
@@ -41,7 +41,7 @@
 //! string — so `DashPackager::package` rejected the built [`Media`] and the
 //! whole DASH route returned a **permanent** `503`, even though a perfectly
 //! representable video/audio track sat right behind it in the PMT's track
-//! list. [`select_representable_track`] fixes this: it selects the first
+//! list. `select_representable_track` fixes this: it selects the first
 //! track (preferring a video-shaped codec, then any other, e.g. audio) that
 //! actually produces a derivable codec string — proven by trial-packaging it
 //! through the real [`DashPackager`] rather than re-deriving "is this codec

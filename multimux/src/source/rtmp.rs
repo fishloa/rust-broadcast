@@ -29,9 +29,9 @@
 //! first, before reading more — no media dropped. Only a *genuinely*
 //! later-appearing track (one whose sequence header arrives after the
 //! first media sample — non-conformant, but defended against anyway) is
-//! ignored post-connect, mirroring
-//! [`crate::source::ts_http::TsHttpSession::next_samples`]'s "unrouted
-//! track -> ignored" policy for a post-connect PMT version bump.
+//! ignored post-connect, mirroring the shared TS ingest session's
+//! (`crate::source::ts_program::ProgramTracker`) "unrouted track -> ignored"
+//! policy for a post-connect PMT version bump.
 //!
 //! Both `connect()`'s track-resolution wait and `next_samples()`'s live
 //! reads are bounded by an [`IngestTimeouts`] (`with_timeouts`, mirroring
@@ -69,7 +69,7 @@ pub struct RtmpSource {
 }
 
 /// Manual `Debug` (rather than `#[derive(Debug)]`), mirroring
-/// [`crate::source::ts_http::TsHttpSource`]'s: `stream_key` is redacted even
+/// [`crate::source::ts_http::TsHttpRoute`]'s: `stream_key` is redacted even
 /// though it's a shared secret rather than a password, for the same reason
 /// — it should never turn up verbatim in a log line.
 impl std::fmt::Debug for RtmpSource {

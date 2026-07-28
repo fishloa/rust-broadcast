@@ -4,7 +4,7 @@
 //! macros (`metrics::counter!`/`gauge!`/`histogram!`):
 //!
 //! - `multimux_route_up` (`ROUTE_UP`) — gauge, labels `route`: 1.0 while
-//!   that route's [`crate::store::HealthState`] is `Live`, else 0.0. Set in
+//!   that route's [`crate::route::HealthState`] is `Live`, else 0.0. Set in
 //!   `origin::supervisor::supervise` alongside every `MediaStore::set_health`
 //!   call (the supervisor is the one place that both knows the route name and
 //!   drives health transitions).

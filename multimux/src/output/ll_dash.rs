@@ -7,7 +7,7 @@
 //! `@availabilityTimeOffset`/`availabilityTimeComplete="false"` signalling
 //! that a segment's bytes start flowing before it nominally completes.
 //! Resolved through the same one adapter every other output uses
-//! ([`crate::http::resolve_blocking`]/[`crate::http::into_response`]).
+//! (`crate::http::resolve_blocking`/`crate::http::into_response`).
 //!
 //! # Distinct manifest name (not a mode flag on `manifest.mpd`)
 //!

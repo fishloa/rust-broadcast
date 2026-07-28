@@ -22,7 +22,7 @@
 //! Before this port, a PID declared only *after* `connect()`'s PMT wait
 //! resolved was logged and silently dropped (issue #774) — cited directly in
 //! `media_plane::ingress`'s own module docs as "the gap `NewProgram`
-//! generalises". [`ProgramTracker`] closes it: the *first*
+//! generalises". `ProgramTracker` closes it: the *first*
 //! [`transmux::DemuxEvent::TracksResolved`] mints `ProgramId(0)` from every
 //! track collected up to that point, and **any**
 //! [`transmux::DemuxEvent::TrackAdded`] arriving after that mints a **new**
@@ -157,7 +157,7 @@ impl ProgramTracker {
 }
 
 /// The shared MPEG-2 TS [`IngestSession`]: no socket, no I/O — just a
-/// [`StreamingTsDemux`] plus a [`ProgramTracker`]. Each transport module
+/// [`StreamingTsDemux`] plus a `ProgramTracker`. Each transport module
 /// (`ts_udp`/`ts_http`/`srt`) owns the real socket/stream and feeds this.
 pub struct TsIngestSession {
     demux: StreamingTsDemux,

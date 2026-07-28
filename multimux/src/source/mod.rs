@@ -155,7 +155,7 @@ impl From<&crate::config::Config> for IngestTimeouts {
 }
 
 /// Per-track init derived from an SDP (RTSP's DESCRIBE body, or the
-/// out-of-band SDP configured for [`rtp_udp::RtpUdpSource`]).
+/// out-of-band SDP configured for [`rtp_udp::RtpUdpRoute`]).
 #[derive(Debug, Clone)]
 pub struct TrackInit {
     /// 1-based track id used across the segmenter + playlist URIs.
@@ -167,10 +167,10 @@ pub struct TrackInit {
     /// RTP clock rate (Hz) = IR timescale.
     pub clock_rate: u32,
     /// Per-media `a=control` URL suffix for SETUP (RTSP only; unused by
-    /// [`rtp_udp::RtpUdpSource`], which has no control plane).
+    /// [`rtp_udp::RtpUdpRoute`], which has no control plane).
     pub control: Option<String>,
     /// Interleaved RTP channel assigned to this media (RTCP = channel + 1).
-    /// RTSP-only framing; unused by [`rtp_udp::RtpUdpSource`].
+    /// RTSP-only framing; unused by [`rtp_udp::RtpUdpRoute`].
     pub channel: u8,
     /// The media's declared RTP payload type (`m=<kind> <port> <proto>
     /// <fmt>`, RFC 4566 §5.14) — the only signal a raw RTP/UDP source has to

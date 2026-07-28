@@ -575,28 +575,34 @@ pub async fn serve(config: crate::config::Config) -> crate::Result<()> {
     serve_with_registry(config, SchemeRegistry::new()).await
 }
 
-/// Run the multimux origin: one [`RouteHandle`] + one supervised ingest task
-/// per `config.routes` entry, then bind `config.bind` and serve them all
-/// under [`router`]. Each route is served by the [`Output`]s named in its
+/// Run the multimux origin: one [`RouteHandle`] + one ingest task per
+/// `config.routes` entry, then bind `config.bind` and serve them all under
+/// [`router`]. Each route is served by the [`Output`]s named in its
 /// [`crate::config::Route::outputs`] (LL-HLS by default — see
 /// [`crate::output::OutputKind`]).
 ///
-/// Each route's task is driven by [`supervisor::supervise`]: depending on
-/// that route's [`crate::config::InputSpec`], it connects
-/// [`crate::source::rtsp::RtspSource`], [`crate::source::rtp_udp::RtpUdpSource`],
-/// [`crate::source::ts_udp::TsUdpSource`], [`crate::source::ts_http::TsHttpSource`],
-/// [`crate::source::hls_pull::HlsPullRoute`], [`crate::source::dash_pull::DashPullRoute`],
-/// [`crate::source::smooth_pull::SmoothPullRoute`], [`crate::source::rtmp::RtmpSource`],
-/// or [`crate::source::srt::SrtSource`]
-/// — one `match` arm per variant,
-/// each instantiating the generic `supervise::<ThatConnector>` (the
-/// connectors have different `Source` associated types, so this dispatch
-/// stays monomorphised rather than boxed) — runs it through
-/// [`crate::pipeline::run_pipeline`], and on either a connect failure, a
-/// pipeline error, or source end-of-stream, reconnects with capped backoff
-/// instead of dying — a bad/flaky source degrades that route's
+/// Only [`crate::config::InputSpec::Rtmp`] and [`crate::config::InputSpec::Custom`]
+/// currently drive a route through [`supervisor::supervise`]: it connects the
+/// matching [`supervisor::SourceConnector`] ([`crate::source::rtmp::RtmpSource`]
+/// for `Rtmp`, or whatever `registry` resolves the `Custom` `type_tag` to),
+/// runs it through [`crate::pipeline::run_pipeline`], and on either a connect
+/// failure, a pipeline error, or source end-of-stream, reconnects with capped
+/// backoff instead of dying — a bad/flaky source degrades that route's
 /// [`crate::route::RouteHandle::health`] rather than freezing it forever, and
 /// never brings the server (or any other route) down.
+///
+/// The remaining [`crate::config::InputSpec`] variants —
+/// [`crate::source::rtsp`], [`crate::source::rtp_udp`], [`crate::source::ts_udp`],
+/// [`crate::source::ts_http`], [`crate::source::srt`], [`crate::source::hls_pull`],
+/// [`crate::source::dash_pull`], [`crate::source::smooth_pull`] — were ported
+/// (step 5a) onto `media_plane::ingress::{Dialer, IngestSession}` (each
+/// module's own `run_*` entry point drives a `media_plane::ingress::IngestDriver`
+/// into a `Trunk` it constructs internally) and no longer implement
+/// [`supervisor::SourceConnector`]. Wiring that internally-constructed `Trunk`
+/// back into this loop's own [`RouteHandle`] is a later step (see this
+/// function's own match arm for those variants), so a route configured with
+/// one of them currently logs an error and stays disabled rather than serving
+/// media.
 ///
 /// [`crate::config::InputSpec::Custom`]/[`crate::output::OutputKind::Custom`]/
 /// [`crate::config::OutputAuthSpec::Custom`] (issue #663 external scheme

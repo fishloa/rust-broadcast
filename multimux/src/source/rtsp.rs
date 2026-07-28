@@ -1,6 +1,6 @@
 //! RTSP ingest source (ported onto the media-plane ingress traits at plan
 //! step 5a) — DESCRIBE/SETUP/PLAY over interleaved TCP, depayloaded into
-//! timed [`Sample`]s.
+//! timed [`transmux::Sample`]s.
 //!
 //! # The sans-IO reshape, for real RTSP — this module is the test of it
 //!

@@ -273,8 +273,8 @@ impl RouteHandle {
 
     /// Publish one finished segment (`transmux::ll_hls::LlHlsSegmenter::take_ready_segments`)
     /// into the `Trunk`'s segment log. `timeline_position` is derived from a
-    /// running total of every prior segment's duration — see
-    /// [`Self::next_timeline_ns`].
+    /// running total of every prior segment's duration — see this route's
+    /// `next_timeline_ns` field, below.
     pub fn add_segment(&self, info: transmux::ll_hls::SegmentInfo) {
         let duration = Duration::from_secs_f64(info.duration);
         let start_ns = self.next_timeline_ns.fetch_add(

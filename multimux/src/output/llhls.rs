@@ -2,7 +2,7 @@
 //! thin tokio+axum adapter over the sans-IO LL-HLS origin engine
 //! ([`ll_hls_runtime::server::LlHlsOrigin`], plan step 4): axum routes for
 //! the master/media playlists, resolved through the **one** shared adapter
-//! ([`crate::http::resolve_blocking`]/[`crate::http::into_response`]) —
+//! (`crate::http::resolve_blocking`/`crate::http::into_response`) —
 //! including the actual bounded `.await` on an
 //! [`media_plane::egress::EgressResponse::Await`], which the sans-IO engine
 //! can't do itself. The init/segment/part byte ranges these playlists
@@ -17,7 +17,7 @@
 //! query parameters (`_HLS_msn`/`_HLS_part`) are the Blocking Playlist Reload
 //! mechanism of RFC 8216bis §6.2.5.2 — the client asks the origin to hold the
 //! response open until the requested Media Sequence Number/part is
-//! available, bounded by [`crate::http::BLOCKING_RELOAD_TIMEOUT`] so the
+//! available, bounded by `crate::http::BLOCKING_RELOAD_TIMEOUT` so the
 //! origin never hangs indefinitely.
 
 use std::sync::Arc;
