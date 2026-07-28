@@ -15,8 +15,8 @@ of the ll-hls-runtime unification). The crate holds two halves:
   playlists and resolving blocking-reload/part-availability requests
   (never blocking, never touching a clock) directly from a shared
   `media_plane::Trunk` — not a push-fed rolling-window store of its own.
-  An async adapter (`multimux`, being ported in Step 5) drives this engine
-  the same way any HTTP framework can adapt it.
+  An async adapter (`multimux`, over tokio + axum) drives this engine the same
+  way any HTTP framework can adapt it.
 
 `client::LlHlsClient` is a driveable, caller-driven state machine in the same
 sans-IO shape as [`srt-runtime`](../srt-runtime) (issue #565): the core never
@@ -126,10 +126,11 @@ framework can adapt it:
   cache-control policy a resolved `EgressResponse::Ready` carries, for an
   adapter to apply as HTTP `Cache-Control`.
 
-`multimux` was the reference adapter through 0.1.x; it is being ported to
-`LlHlsOrigin`/`ServedEgress` in Step 5 (deleting its own push-fed
-`MediaStore` re-export) and does not build against this crate's `server`
-module in the interim — see the 0.2.0 CHANGELOG entry.
+`multimux` is the reference adapter, and as of its 0.5.0 it serves every route
+through `LlHlsOrigin`/`ServedEgress` over a `media_plane::Trunk` — one
+`LlHlsOrigin` per program, resolved per request. The push-fed `MediaStore`
+re-export it carried through 0.1.x is deleted: the `Trunk` is the single copy
+of the data, never a second cache of it.
 
 ## What's *not* here — explicit follow-ups
 

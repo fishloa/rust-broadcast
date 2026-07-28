@@ -26,8 +26,16 @@ Each route names one ingest transport (`InputSpec`):
 | `ts_udp` | MPEG-2 TS over UDP (uni/multicast) | track set comes from the in-band PMT — no SDP needed |
 | `ts_http` | MPEG-2 TS over a streaming HTTP GET (chunked/progressive) | optional `auth` |
 | `hls_pull` | Pull a remote (LL-)HLS Media Playlist, via `ll-hls-runtime`'s client | optional `auth` |
+| `srt` | MPEG-2 TS over SRT, caller (dial out) or listener (bind + accept), via `srt-runtime` | track set from the in-band PMT; payload encryption out of scope |
+| `dash_pull` | Pull a remote DASH MPD and its segments | optional `auth` |
+| `smooth_pull` | Pull a remote Smooth Streaming manifest and its fragments | optional `auth` |
+| `rtmp` | **Push** ingest: binds a listen port and accepts RTMP publishers (FLV), via `rtmp-runtime` | `app`/`stream_key` filters; concurrent publishers |
 
-`rtsp`/`ts_http`/`hls_pull` each accept an optional `auth` — either
+`rtsp` accepts `rtsps://` for RTSP over TLS. `rtmp` is the only *push* input —
+nothing is dialled out to; it binds and accepts, and one stalled publisher does
+not block another.
+
+`rtsp`/`ts_http`/`hls_pull`/`dash_pull`/`smooth_pull` each accept an optional `auth` — either
 `{ "username": "...", "password": "..." }` (answered as Basic or Digest,
 whichever the upstream's own challenge asks for) or `{ "bearer_token":
 "..." }` (RFC 6750; the only way to supply a bearer token, since it has no
