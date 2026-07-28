@@ -668,13 +668,16 @@ mod tests {
             if name == "init.mp4" {
                 return state.init.into_response();
             }
+            // Nested `if let`, not a let-chain: let-chains are unstable at
+            // this workspace's MSRV 1.86 (rust-lang/rust#53667).
             if let Some(idx) = name
                 .strip_prefix("seg")
                 .and_then(|s| s.strip_suffix(".m4s"))
                 .and_then(|s| s.parse::<usize>().ok())
-                && let Some(bytes) = state.segments.get(idx)
             {
-                return bytes.clone().into_response();
+                if let Some(bytes) = state.segments.get(idx) {
+                    return bytes.clone().into_response();
+                }
             }
             axum::http::StatusCode::NOT_FOUND.into_response()
         }
