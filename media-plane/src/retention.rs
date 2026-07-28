@@ -734,7 +734,34 @@ mod tests {
             .recv_timeout(Duration::from_secs(60))
             .expect("publish_segment must unblock once the driver drains its pin");
         handle.join().unwrap();
-        assert_eq!(driver.sink.taken, vec![1]);
+
+        // `taken` is asserted as a PREFIX here, not for exact equality.
+        //
+        // The single `drive` above both released the pin and polled the
+        // cursor. The unblocked writer publishes seq 2 concurrently with that
+        // poll, so whether this one `drive` also picks up seq 2 is decided by
+        // thread scheduling: `[1]` and `[1, 2]` are BOTH correct outcomes.
+        // Asserting `== vec![1]` made this test fail intermittently (four
+        // observed failures) for a scheduling interleaving that is not a
+        // defect — and it was misdiagnosed as a timing-bound problem first,
+        // which a generous timeout could never have fixed.
+        assert_eq!(
+            driver.sink.taken.first().copied(),
+            Some(1),
+            "seq 1 must reach the sink first — it is what the driver drained \
+             to release the pin"
+        );
+
+        // Draining to quiescence makes the end state deterministic, and
+        // asserts something the old exact-equality never did: that seq 2
+        // genuinely made it through after the stall, rather than being lost
+        // when the writer unblocked.
+        driver.drive(Timestamp::from_nanos(1));
+        assert_eq!(
+            driver.sink.taken,
+            vec![1, 2],
+            "both segments must reach the sink in order once the stall clears"
+        );
     }
 
     /// `ArchiveOverrun::Terminate`: the driver's pin is torn down instead of
