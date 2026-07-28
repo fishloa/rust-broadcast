@@ -141,6 +141,48 @@
   `Trunk` (as decided above) would never be visible to `route.ll_hls()`,
   which stayed bound to the route's own never-written placeholder forever.
 
+### Added (issue #805 task 3/6 — the dispatch-path regression net)
+- **Closed the hole that let eight of nine `InputSpec` variants dispatch to a
+  no-op stub for a long time while build/clippy/doc and thousands of tests
+  all stayed green** (see `docs/superpowers/specs/2026-07-26-media-plane-architecture.md`
+  §8's own account): no test in the suite entered through
+  `serve_with_registry`/`spawn_ingest` itself — every source was well-tested
+  in isolation (`RtspDialer`/`RtspIngestSession` directly, a hand-built
+  `RouteHandle`), but the dispatch that routes to them was tested by nothing.
+  - **Layer 1 (exhaustive, cheap):** new
+    `origin::tests::every_input_spec_variant_dispatches_to_real_ingest_not_a_stub`
+    points every non-`Custom` `InputSpec` variant at a deliberately dead/
+    unreachable endpoint (a refused TCP connect, a quiet UDP port, an SRT
+    caller dialing nobody, or — for `Rtmp` — a listen port the test has
+    already stolen) and asserts `RouteHandle::health` transitions
+    `Connecting` -> `Reconnecting`; a stubbed arm would never touch
+    `route_handle` at all, so it would still read `Connecting` at the hang
+    guard. Exhaustive over the enum via a **compile-time** net: a second,
+    independent exhaustive `match` over `InputSpec` (no `_ =>` arm) fails to
+    compile the moment a new variant is added without also updating this
+    test — stronger than any runtime assertion, and only possible because
+    the test lives in-crate (`InputSpec` is `#[non_exhaustive]`, so an
+    external `multimux/tests/*.rs` match would be forced to carry a
+    wildcard arm that silently swallows a new variant).
+  - **Layer 2 (deep, representative):** new `multimux/tests/dispatch_ingest.rs`
+    drives real fixture bytes (`fixtures/ts/h264_aac.ts`, a real ffmpeg
+    capture — never synthesised bytes) through `serve_with_registry` for
+    `InputSpec::TsUdp` (a real UDP socket) and `InputSpec::TsHttp` (a small
+    loopback HTTP server), and asserts a real HTTP `GET` of the resulting
+    LL-HLS media playlist carries an actual `#EXTINF:` line (not merely the
+    `#EXT-X-PART-INF`/`#EXT-X-MAP` headers a zero-segment route still emits)
+    plus non-empty init/segment bytes.
+  - **`pipeline::run_pipeline` coverage:** the same file's
+    `custom_dispatch_drives_run_pipeline_and_serves_real_media` drives
+    `run_pipeline` through the exact `InputSpec::Custom` ->
+    `SchemeRegistry` -> `InputCtx` -> factory path a real embedding
+    application uses, catching a regression of `run_pipeline`'s
+    `publish_owned_trunk()` call (see the "Fixed" entry above) the same way
+    a real deployment would notice it — every request hanging, not erroring.
+  - Every new test is mutation-verified: the exact production stub/removed
+    call was restored, the specific assertion/panic confirmed, then
+    reverted — see each test's own `MUTATION VERIFIED` doc comment.
+
 ### Changed (BREAKING, in progress — plan step 5b)
 - **Ported the three outputs (LL-HLS, DASH, LL-DASH) and the shared
   init/segment/part resource route onto `media_plane::egress::ServedEgress`
