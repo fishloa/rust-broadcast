@@ -1779,10 +1779,16 @@ mod tests {
     /// MUTATION VERIFIED: removing the `if let Some(writer) =
     /// self.writers.get(&program) { .. continue }` early-return from
     /// `drain()`'s `NewProgram` arm (restoring the unconditional
-    /// `Trunk::new`) makes the post-re-announcement `cursor.poll()` return
-    /// `None` — "a cursor subscribed before the re-announcement must still
-    /// receive samples published after it" fails. Recompiled and re-run to
-    /// confirm the failure, then reverted.
+    /// `Trunk::new`) fails this test on the track-set assertion first —
+    /// `left: [7], right: [7, 8]`, the re-announcement's tracks having
+    /// landed on a replacement `Trunk` the subscriber cannot see.
+    ///
+    /// Both assertions were confirmed to bite independently: re-running the
+    /// mutation with the track-set assertion suppressed then fails on
+    /// `cursor.poll()` returning `None` ("a cursor subscribed before the
+    /// re-announcement must still receive samples"), which is the direct
+    /// proof of subscriber stranding rather than an inference from the
+    /// track set. Recompiled and re-run for each, then reverted.
     #[test]
     fn repeat_new_program_updates_in_place_and_does_not_strand_subscribers() {
         let session = ScriptedSession::new(vec![
