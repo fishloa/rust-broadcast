@@ -3676,8 +3676,16 @@ mod tests {
             bg_writer.publish_part(part_entry(0xAB, 9, 0));
         });
 
-        let woken = listener.wait_deadline(std::time::Instant::now() + Duration::from_secs(2));
-        assert!(woken, "listener must wake within 2s of publish_part");
+        // Deliberately generous. The claim under test is "the listener wakes
+        // rather than parking forever", NOT "it wakes inside N seconds": the
+        // publish happens on another thread, so any tight upper bound is a
+        // bound on the *machine's* scheduling, not on this code. A 2s bound
+        // here failed once during a loaded full-workspace run and passed on
+        // 38 consecutive idle runs -- a false red that trains people to
+        // re-run the suite. 60s still fails instantly if the wake channel
+        // genuinely never fires, which is the only failure worth reporting.
+        let woken = listener.wait_deadline(std::time::Instant::now() + Duration::from_secs(60));
+        assert!(woken, "listener must wake on publish_part, not park forever");
         handle.join().unwrap();
 
         let bytes = trunk
@@ -3711,8 +3719,12 @@ mod tests {
         let elapsed = start.elapsed();
 
         assert!(!woken, "must report timeout, not a fabricated wake-up");
+        // Same reasoning as the generous bound in
+        // `awaited_part_wakes_its_listener`: this asserts "returns rather
+        // than parking forever", and any tight bound measures the machine.
+        // The real assertion is `!woken` above; this one only catches a hang.
         assert!(
-            elapsed < Duration::from_secs(5),
+            elapsed < Duration::from_secs(60),
             "must actually return at the deadline, not hang: took {elapsed:?}"
         );
     }

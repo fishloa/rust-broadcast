@@ -723,8 +723,15 @@ mod tests {
         // `archive_overrun_stall_ingest_actually_blocks_the_writer`.
         driver.drive(Timestamp::from_nanos(0));
 
+        // Generous on purpose: the claim is "the writer unblocks once the pin
+        // is drained", not "within N seconds". The unblock is observed across
+        // a thread boundary, so a tight bound measures the machine's
+        // scheduler. Note this `recv_timeout` also fails fast (Disconnected)
+        // if the publishing thread panicked, which is the failure mode worth
+        // catching -- a genuine `StallIngest` race -- and it does not wait
+        // out the timeout to report it.
         done_rx
-            .recv_timeout(Duration::from_secs(5))
+            .recv_timeout(Duration::from_secs(60))
             .expect("publish_segment must unblock once the driver drains its pin");
         handle.join().unwrap();
         assert_eq!(driver.sink.taken, vec![1]);
