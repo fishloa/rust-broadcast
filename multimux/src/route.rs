@@ -57,6 +57,23 @@ fn nz(n: usize) -> NonZeroUsize {
     NonZeroUsize::new(n).expect("route.rs capacity constants are all non-zero")
 }
 
+/// The [`ProgramId`] every single-program-route (SPTS) publishes its `Trunk`
+/// under in [`RouteHandle`]'s registry (issue #805 task 2) — the old
+/// `SourceConnector`-fed routes (RTMP/`Custom`, via
+/// [`RouteHandle::publish_owned_trunk`]) and every driver-backed route (the
+/// eight `media_plane`-ported input kinds, via
+/// `crate::source::report_driver_progress`) both publish here, so egress
+/// resolves every route uniformly through [`RouteHandle::resolve_program`]
+/// regardless of which architecture fed it.
+///
+/// A single named constant rather than a bare `ProgramId(0)` scattered across
+/// call sites: this is the SPTS default. Resolving a request to a
+/// *non-default* program (MPTS: N programs on one route) is issue #805 task
+/// 6 — when it lands, this constant becomes just the fallback a request with
+/// no explicit program selector resolves to, not something every call site
+/// independently hardcodes.
+pub(crate) const SPTS_PROGRAM_ID: ProgramId = ProgramId(0);
+
 /// This route's ingest health — distinct from
 /// [`media_plane::ingress::HealthState`] (generic over one session's own
 /// connector error type); this is the homogeneous "is *this route*
@@ -120,8 +137,12 @@ broadcast_common::impl_spec_display!(HealthState);
 /// `multimux` has no `tests/label_coverage.rs` drift-guard of its own yet
 /// (unlike every sibling crate) to enforce or record that exemption
 /// mechanically — see this task's own report.
+///
+/// Read by every migrated egress call site (`crate::output::llhls`/`dash`/
+/// `ll_dash`, `crate::origin::resource`, issue #805 task 2): `Found` resolves
+/// and serves; `NotYetAnnounced` is a wait/`503`-style "not ready"; `NotFound`
+/// is a genuine `404` — see each call site for how it maps these.
 #[non_exhaustive]
-#[allow(dead_code)] // `Found`'s payload is read once an egress caller lands (issue #805)
 pub(crate) enum ProgramResolution {
     /// `program` is registered; here is its `Trunk`.
     Found(Arc<Trunk>),
@@ -236,9 +257,15 @@ pub struct RouteHandle {
     /// lifetimes reconcile without forcing either one to change when the
     /// other becomes ready: [`RouteHandle::publish_program`] is the ingest
     /// side's write, [`RouteHandle::resolve_program`] is the egress side's
-    /// read. Additive only, for now — the still-owned `trunk` field above is
-    /// untouched, and nothing yet calls either new method (a later task
-    /// wires ingest publish + migrates the five `trunk()` call sites).
+    /// read — both wired up (issue #805 task 2/3): every ingest path
+    /// publishes into this map (the driver-backed supervisor for the eight
+    /// `media_plane`-ported input kinds, [`RouteHandle::publish_owned_trunk`]
+    /// for the old `SourceConnector`-fed RTMP/`Custom` path), and every
+    /// egress call site resolves through it. The still-owned `trunk` field
+    /// above is untouched (task 5 removes it) — RTMP/`Custom` still write
+    /// segments/parts through it via [`Self::add_segment`]/[`Self::add_part`];
+    /// [`Self::publish_owned_trunk`] publishes that exact `Arc` into this map
+    /// too, so egress reads the identical data either way.
     ///
     /// A `HashMap`, not a single slot: MPTS carries an unbounded (bounded
     /// only by `media_plane::IngestDriver::max_programs`) number of programs
@@ -307,18 +334,15 @@ impl RouteHandle {
         }
     }
 
-    /// The shared `Trunk` — used by the axum adapter (`crate::http`) to
-    /// register a bounded wake-up ([`Trunk::listen`]) while a request is
-    /// genuinely blocked.
-    pub(crate) fn trunk(&self) -> &Arc<Trunk> {
-        &self.trunk
-    }
-
     /// Publish `program`'s `Trunk` into this route's registry — the ingest
-    /// side's write, called once `media_plane::IngestDriver` (or
-    /// `ListenDriver`) reports `media_plane::SessionEvent::NewProgram` and
-    /// mints a `Trunk` for it (a later task wires an actual caller; see
-    /// `crate::origin::serve_with_registry`'s currently-stubbed match arm).
+    /// side's write. Two callers (issue #805 task 2): the driver-backed
+    /// supervisor (`crate::source::report_driver_progress`) calls this once
+    /// `media_plane::IngestDriver` reports `media_plane::SessionEvent::NewProgram`
+    /// and mints a `Trunk` for it; the old `SourceConnector`-fed path
+    /// (`crate::origin::supervisor::supervise`, via
+    /// [`Self::publish_owned_trunk`]) calls this with this same handle's own
+    /// owned `Trunk` under [`SPTS_PROGRAM_ID`], so RTMP/`Custom` routes are
+    /// resolvable through the same registry every other input kind uses.
     ///
     /// Overwrites any prior entry for the same `ProgramId` outright — the
     /// same "last write wins" semantics `HashMap::insert` always has.
@@ -326,7 +350,6 @@ impl RouteHandle {
     /// life of a session (a repeat `NewProgram` for an already-known program
     /// does not mint a second `Trunk`), so in practice this is called once
     /// per program, not repeatedly with different `Trunk`s for the same key.
-    #[allow(dead_code)] // wired to an ingest caller in a later task (issue #805)
     pub(crate) fn publish_program(&self, program: ProgramId, trunk: Arc<Trunk>) {
         self.programs
             .write()
@@ -334,13 +357,33 @@ impl RouteHandle {
             .insert(program, trunk);
     }
 
+    /// Publishes this handle's own owned `Trunk` (the one
+    /// [`Self::add_segment`]/[`Self::add_part`] write through) into the
+    /// registry under `SPTS_PROGRAM_ID` — the old-architecture
+    /// (`SourceConnector`-fed: RTMP/`Custom`) equivalent of a driver's
+    /// `NewProgram`, so egress can resolve *every* route through
+    /// `Self::resolve_program` uniformly, never needing to know which
+    /// architecture fed it (issue #805 task 3). Called by
+    /// `crate::origin::supervisor::supervise` right after it reaches
+    /// [`HealthState::Live`].
+    ///
+    /// `pub`, not `pub(crate)`: this crate's own `tests/*.rs` integration
+    /// tests build a `RouteHandle` and feed it via
+    /// `crate::pipeline::run_pipeline` directly (bypassing `supervise`
+    /// entirely, exactly like the old, pre-registry architecture always
+    /// worked) — they call this explicitly to make that route resolvable
+    /// through the same registry every other egress path now reads.
+    pub fn publish_owned_trunk(&self) {
+        self.publish_program(SPTS_PROGRAM_ID, Arc::clone(&self.trunk));
+    }
+
     /// Resolve `program` against this route's registry — the egress side's
     /// read (see [`ProgramResolution`] for why this returns a three-way enum
     /// rather than `Option<Arc<Trunk>>`, and this struct's `programs` field
-    /// doc for why the lock is a `RwLock`). Not yet called by any egress
-    /// path — a later task migrates `crate::output`/`crate::origin::resource`
-    /// off the still-owned `trunk()` accessor onto this method.
-    #[allow(dead_code)] // wired to an egress caller in a later task (issue #805)
+    /// doc for why the lock is a `RwLock`). Every migrated egress call site
+    /// (`crate::output::llhls`/`dash`/`ll_dash`, `crate::origin::resource`)
+    /// resolves `SPTS_PROGRAM_ID` through this rather than reading this
+    /// handle's own owned `Trunk` field directly (issue #805 task 3).
     pub(crate) fn resolve_program(&self, program: ProgramId) -> ProgramResolution {
         let programs = self
             .programs

@@ -870,10 +870,15 @@ where
 /// the pre-port module). A live-edge `404` that this loop tolerates (a
 /// dynamic MPD's not-yet-available segment) is retried by this loop directly,
 /// after a fixed short delay, without ever calling into the session.
+///
+/// `route_handle` is the driver-backed registry side of issue #805 task 2 —
+/// see `crate::source::rtsp::run_rtsp`'s own doc for what
+/// `crate::source::report_driver_progress` does with it each iteration.
 pub async fn run_dash_pull(
     route: &DashPullRoute,
     trunk_config: TrunkConfig,
     handshake: HandshakePolicy,
+    route_handle: &std::sync::Arc<crate::route::RouteHandle>,
 ) -> Result<()> {
     let (http, clean_url, credentials) = build_client(route)?;
     let mut dialer = DashPullDialer { mpd_url: clean_url };
@@ -888,6 +893,7 @@ pub async fn run_dash_pull(
     let mut backlog: VecDeque<DashAction> = VecDeque::new();
     let mut inflight: JoinSet<JoinedFetch> = JoinSet::new();
     let start = std::time::Instant::now();
+    let mut published = std::collections::HashSet::new();
 
     loop {
         while let Some(action) = driver.poll_transmit() {
@@ -960,6 +966,7 @@ pub async fn run_dash_pull(
                     }
                     let now = Timestamp::from_instant(start, std::time::Instant::now());
                     driver.on_deadline(now);
+                    crate::source::report_driver_progress(&driver, route_handle, &mut published);
                 }
                 // No scheduled work and nothing in flight: park briefly
                 // rather than spinning — see `IDLE_POLL_INTERVAL`.
@@ -977,6 +984,7 @@ pub async fn run_dash_pull(
                 ..
             })) => {
                 driver.feed((id, bytes.as_slice()), now);
+                crate::source::report_driver_progress(&driver, route_handle, &mut published);
             }
             Some(Ok(JoinedFetch {
                 id: DashResourceId::Segment(rep, _),
@@ -1419,9 +1427,10 @@ mod tests {
     async fn run_dash_pull_completes_cleanly_on_a_static_mpd() {
         let (url, server) = start_fixture_server(None, None).await;
         let route = DashPullRoute::new("dash-cam", url);
+        let route_handle = std::sync::Arc::new(crate::route::RouteHandle::new(4.0, 500, 4));
         let result = tokio::time::timeout(
             Duration::from_secs(15),
-            run_dash_pull(&route, trunk_config(), handshake()),
+            run_dash_pull(&route, trunk_config(), handshake(), &route_handle),
         )
         .await
         .expect("run_dash_pull must not hang against a static MPD");
@@ -1435,9 +1444,10 @@ mod tests {
         let (base_url, server) = start_fixture_server(None, None).await;
         let bad_url = base_url.replace("manifest.mpd", "does-not-exist.mpd");
         let route = DashPullRoute::new("dash-missing", bad_url);
+        let route_handle = std::sync::Arc::new(crate::route::RouteHandle::new(4.0, 500, 4));
         let result = tokio::time::timeout(
             Duration::from_secs(10),
-            run_dash_pull(&route, trunk_config(), handshake()),
+            run_dash_pull(&route, trunk_config(), handshake(), &route_handle),
         )
         .await
         .expect("must not hang");
@@ -1455,9 +1465,10 @@ mod tests {
             connect: Duration::from_secs(5),
             read: Duration::from_millis(150),
         });
+        let route_handle = std::sync::Arc::new(crate::route::RouteHandle::new(4.0, 500, 4));
         let result = tokio::time::timeout(
             Duration::from_secs(10),
-            run_dash_pull(&route, trunk_config(), handshake()),
+            run_dash_pull(&route, trunk_config(), handshake(), &route_handle),
         )
         .await
         .expect(
@@ -1489,9 +1500,10 @@ mod tests {
         .await;
         let credentialed = url.replacen("http://", &format!("http://{AUTH_USER}:{AUTH_PASS}@"), 1);
         let route = DashPullRoute::new("dash-basic", credentialed);
+        let route_handle = std::sync::Arc::new(crate::route::RouteHandle::new(4.0, 500, 4));
         let result = tokio::time::timeout(
             Duration::from_secs(15),
-            run_dash_pull(&route, trunk_config(), handshake()),
+            run_dash_pull(&route, trunk_config(), handshake(), &route_handle),
         )
         .await
         .expect("must not hang");

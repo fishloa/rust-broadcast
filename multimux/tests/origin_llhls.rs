@@ -119,6 +119,12 @@ async fn end_to_end_pipeline_serves_valid_llhls() {
     run_pipeline(store.clone(), 1.0, 500, source, "cam")
         .await
         .expect("pipeline runs to completion");
+    // Issue #805 task 3: egress now resolves through `RouteHandle`'s program
+    // registry, not its owned `Trunk` directly -- publish it explicitly,
+    // exactly as `origin::supervisor::supervise` would for a real RTMP/
+    // `Custom` route reaching `Live` (this test drives `run_pipeline`
+    // directly, bypassing `supervise`).
+    store.publish_owned_trunk();
 
     let mut streams = HashMap::new();
     streams.insert(
@@ -208,6 +214,7 @@ async fn blocking_reload_resolves_when_part_arrives() {
     let store = Arc::new(RouteHandle::new(4.0, 500, 8));
     store.set_init(vec![0xAA; 8]);
     store.add_part(part(1, 0));
+    store.publish_owned_trunk();
 
     let mut streams = HashMap::new();
     streams.insert(

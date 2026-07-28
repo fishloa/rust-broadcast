@@ -142,10 +142,15 @@ pub async fn recv_and_feed(
 /// replacing the pre-5a `TsUdpSource`/`TsUdpSession` pair. Returns the error
 /// that ended the loop (always a read-side error — see [`recv_and_feed`]);
 /// the caller (the route supervisor) reconnects on it.
+///
+/// `route_handle` is the driver-backed registry side of issue #805 task 2 —
+/// see `rtsp::run_rtsp`'s own doc for what
+/// `crate::source::report_driver_progress` does with it each iteration.
 pub async fn run_ts_udp(
     route: &TsUdpRoute,
     trunk_config: media_plane::trunk::TrunkConfig,
     handshake: media_plane::ingress::HandshakePolicy,
+    route_handle: &std::sync::Arc<crate::route::RouteHandle>,
 ) -> MultimuxError {
     let socket = match bind(route).await {
         Ok(s) => s,
@@ -164,11 +169,13 @@ pub async fn run_ts_udp(
     let mut buf = vec![0u8; MAX_TS_READ];
     let read_timeout = route.timeouts.read;
     let start = std::time::Instant::now();
+    let mut published = std::collections::HashSet::new();
     loop {
         let now = Timestamp::from_instant(start, std::time::Instant::now());
         if let Err(e) = recv_and_feed(&socket, &mut buf, &mut driver, read_timeout, now).await {
             return e;
         }
+        crate::source::report_driver_progress(&driver, route_handle, &mut published);
     }
 }
 

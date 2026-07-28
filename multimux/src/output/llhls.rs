@@ -158,12 +158,16 @@ pub(crate) async fn media_playlist(
     State(state): State<LlHlsState>,
     Query(q): Query<BlockingReloadQuery>,
 ) -> Response {
+    let trunk = match http::resolve_route_trunk(&state.route) {
+        Ok(trunk) => trunk,
+        Err(resp) => return resp,
+    };
     let request = LlHlsRequest::Playlist {
         track_id: DEFAULT_TRACK_ID,
         query: q.into(),
     };
     let resp = http::resolve_blocking(
-        state.route.trunk(),
+        &trunk,
         state.route.ll_hls().as_ref(),
         request,
         BLOCKING_RELOAD_TIMEOUT,
@@ -205,13 +209,18 @@ mod tests {
     }
 
     /// A populated route: a closed segment 1, plus two live parts of
-    /// in-progress segment 2 -- so the live edge is `(2, 2)`.
+    /// in-progress segment 2 -- so the live edge is `(2, 2)`. Publishes its
+    /// own `Trunk` into the registry (`publish_owned_trunk`) so
+    /// `media_playlist`'s migrated `resolve_program` lookup (issue #805 task
+    /// 3) sees `Found`, exactly as `origin::supervisor::supervise` would have
+    /// done for a real RTMP/`Custom` route by the time it serves anything.
     fn make_route() -> Arc<RouteHandle> {
         let route = Arc::new(RouteHandle::new(4.0, 500, 4));
         route.set_init(vec![0xAA; 8]);
         route.add_segment(seg(1));
         route.add_part(part(2, 0));
         route.add_part(part(2, 1));
+        route.publish_owned_trunk();
         route
     }
 
@@ -395,6 +404,31 @@ mod tests {
         )
         .await;
         assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    }
+
+    /// MUTATION VERIFIED (issue #805 task 4): a route with no program
+    /// announced yet (never called `publish_owned_trunk`/`publish_program`)
+    /// must answer `503 Service Unavailable` — a wait/not-ready signal — not
+    /// `404 Not Found`. Changing `http::resolve_route_trunk`'s
+    /// `ProgramResolution::NotYetAnnounced` arm to `Err(StatusCode::NOT_FOUND.into_response())`
+    /// makes this test fail: `assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE)`
+    /// fails, comparing actual `404 Not Found` against expected
+    /// `503 Service Unavailable` — collapsing "not yet announced" into "gone"
+    /// would make a route mid-connect indistinguishable from one that will
+    /// never exist. Recompiled and re-run to confirm the failure, then
+    /// reverted.
+    #[tokio::test]
+    async fn media_playlist_not_yet_announced_is_503_not_404() {
+        // A bare route: never `publish_owned_trunk`/`publish_program`d, so
+        // its registry is empty -- exactly the window between a driver-backed
+        // route connecting and its first `SessionEvent::NewProgram`.
+        let route = Arc::new(RouteHandle::new(4.0, 500, 4));
+        let resp = media_playlist(State(state(route)), Query(BlockingReloadQuery::default())).await;
+        assert_eq!(
+            resp.status(),
+            StatusCode::SERVICE_UNAVAILABLE,
+            "a route with no program announced yet must be 503 (not ready), not 404 (gone)"
+        );
     }
 
     /// `manifest_routes`' own `OPTIONS` preflight (the `Access-Control-*`

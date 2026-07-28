@@ -101,15 +101,12 @@ impl Output for DashOutput {
 /// codec string, not merely "no segment has closed yet", which still
 /// renders a valid, if near-empty, MPD).
 async fn manifest(State(route): State<Arc<RouteHandle>>) -> Response {
+    let trunk = match http::resolve_route_trunk(&route) {
+        Ok(trunk) => trunk,
+        Err(resp) => return resp,
+    };
     let origin = DashOrigin { route };
-    let resp = http::resolve_blocking(
-        origin.route.trunk(),
-        &origin,
-        (),
-        BLOCKING_RELOAD_TIMEOUT,
-        || (),
-    )
-    .await;
+    let resp = http::resolve_blocking(&trunk, &origin, (), BLOCKING_RELOAD_TIMEOUT, || ()).await;
     http::into_response(resp, StatusCode::SERVICE_UNAVAILABLE, |body| {
         ([(header::CONTENT_TYPE, DASH_MANIFEST_CONTENT_TYPE)], body).into_response()
     })
@@ -484,9 +481,17 @@ mod tests {
         );
     }
 
+    /// Publishes its own program first (`publish_owned_trunk`) so this
+    /// isolates the "no representable track yet" 503 (issue #776) from the
+    /// registry-level "not yet announced" 503 (issue #805 task 4) — both
+    /// currently render the same status here, but only publishing first
+    /// proves this test is actually exercising `render_mpd`'s `None` path,
+    /// not short-circuiting on `http::resolve_route_trunk` before ever
+    /// reaching it.
     #[tokio::test]
     async fn manifest_handler_503_before_track_specs_known() {
         let route = Arc::new(RouteHandle::new(4.0, 500, 4));
+        route.publish_owned_trunk();
         let resp = manifest(State(route)).await;
         assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
     }
@@ -496,11 +501,27 @@ mod tests {
         let route = Arc::new(RouteHandle::new(4.0, 500, 4));
         route.set_track_specs(vec![video_spec(1)]);
         route.add_segment(seg(1, 4.0));
+        route.publish_owned_trunk();
         let resp = manifest(State(route)).await;
         assert_eq!(resp.status(), StatusCode::OK);
         assert_eq!(
             resp.headers().get(header::CONTENT_TYPE).unwrap(),
             DASH_MANIFEST_CONTENT_TYPE
+        );
+    }
+
+    /// MUTATION VERIFIED (issue #805 task 4): a route with no program
+    /// announced yet must answer `503`, not `404` — see
+    /// `output::llhls`'s identical test for the mutation this guards
+    /// (`http::resolve_route_trunk`'s `NotYetAnnounced` arm).
+    #[tokio::test]
+    async fn manifest_not_yet_announced_is_503_not_404() {
+        let route = Arc::new(RouteHandle::new(4.0, 500, 4));
+        let resp = manifest(State(route)).await;
+        assert_eq!(
+            resp.status(),
+            StatusCode::SERVICE_UNAVAILABLE,
+            "a route with no program announced yet must be 503 (not ready), not 404 (gone)"
         );
     }
 }

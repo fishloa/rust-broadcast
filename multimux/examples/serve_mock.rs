@@ -98,6 +98,12 @@ async fn main() {
     )
     .await
     .expect("mock pipeline runs to completion");
+    // Issue #805 task 3: egress resolves through the program registry now,
+    // not the owned `Trunk` directly -- publish it explicitly, exactly as
+    // `origin::supervisor::supervise` would for a real RTMP/`Custom` route
+    // reaching `Live` (this example feeds `store` directly via
+    // `run_pipeline`, bypassing `supervise`).
+    store.publish_owned_trunk();
 
     let mut streams = HashMap::new();
     streams.insert(

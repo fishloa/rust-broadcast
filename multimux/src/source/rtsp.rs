@@ -561,10 +561,17 @@ fn scheme_is_tls(url: &Url) -> Result<bool> {
 /// drive loop, replacing the pre-5a `RtspSource::connect`/`RtspSession::next_samples`
 /// pair. **Plain `rtsp://` only** in this port (see the module doc's "what
 /// did not carry over").
+///
+/// `route_handle` is the driver-backed registry side of issue #805 task 2:
+/// after every [`IngestDriver::feed`], `crate::source::report_driver_progress`
+/// flips `route_handle` to [`crate::route::HealthState::Live`] the first time
+/// this session establishes, and publishes each newly-announced program's
+/// `Trunk` into `route_handle`'s registry.
 pub async fn run_rtsp(
     route: &RtspRoute,
     trunk_config: TrunkConfig,
     handshake: HandshakePolicy,
+    route_handle: &std::sync::Arc<crate::route::RouteHandle>,
 ) -> MultimuxError {
     let mut dialer = RtspDialer::new(route.url.clone(), route.auth.clone());
     if matches!(dialer.is_tls(), Ok(true)) {
@@ -607,6 +614,7 @@ pub async fn run_rtsp(
     let start = std::time::Instant::now();
     let mut buf = vec![0u8; 64 * 1024];
     let read_timeout = route.timeouts.read;
+    let mut published = std::collections::HashSet::new();
 
     loop {
         while let Some(bytes) = driver.poll_transmit() {
@@ -640,6 +648,7 @@ pub async fn run_rtsp(
         };
         let now = Timestamp::from_instant(start, std::time::Instant::now());
         driver.feed(&buf[..n], now);
+        crate::source::report_driver_progress(&driver, route_handle, &mut published);
     }
     MultimuxError::Connect {
         reason: format!("rtsp: session ended: {:?}", driver.health()),

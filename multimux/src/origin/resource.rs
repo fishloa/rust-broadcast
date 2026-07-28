@@ -123,8 +123,12 @@ pub(crate) async fn cors_preflight() -> StatusCode {
 /// only drives the wait ([`http::resolve_blocking`]) and maps the outcome to
 /// an HTTP response ([`http::into_response`]).
 async fn dynamic_file(State(route): State<Arc<RouteHandle>>, Path(file): Path<String>) -> Response {
+    let trunk = match http::resolve_route_trunk(&route) {
+        Ok(trunk) => trunk,
+        Err(resp) => return resp,
+    };
     let resp = http::resolve_blocking(
-        route.trunk(),
+        &trunk,
         route.ll_hls().as_ref(),
         LlHlsRequest::Resource { name: file.clone() },
         BLOCKING_RELOAD_TIMEOUT,
@@ -244,9 +248,17 @@ async fn fetch_part(
     seq: u32,
     idx: u32,
 ) -> Option<bytes::Bytes> {
+    // `resolve_route_trunk`'s two non-`Found` cases both mean "nothing to
+    // serve" here (this helper only ever returns `Option`, never an HTTP
+    // status) — `dynamic_file` (the only production caller) already bailed
+    // out at the top on either case before ever reaching
+    // `stream_in_progress_segment`/this function, so a `None` here in
+    // practice only fires from this function's own test callers exercising
+    // it directly against an unpublished route.
+    let trunk = http::resolve_route_trunk(route).ok()?;
     let name = format!("part-{track}-{seq}.{idx}.m4s");
     let resp = http::resolve_blocking(
-        route.trunk(),
+        &trunk,
         route.ll_hls().as_ref(),
         LlHlsRequest::Resource { name },
         BLOCKING_RELOAD_TIMEOUT,
@@ -303,12 +315,16 @@ mod tests {
 
     /// A populated route: a closed segment 1, plus two live parts of
     /// in-progress segment 2 -- so `latest_progress()` treats it as `(2, 2)`.
+    /// Publishes its own `Trunk` into the registry (`publish_owned_trunk`,
+    /// issue #805 task 3) so `dynamic_file`/`fetch_part`'s migrated
+    /// `resolve_program` lookup sees `Found`.
     fn make_route() -> Arc<RouteHandle> {
         let route = Arc::new(RouteHandle::new(4.0, 500, 4));
         route.set_init(vec![0xAA; 8]);
         route.add_segment(seg(1));
         route.add_part(part(2, 0));
         route.add_part(part(2, 1));
+        route.publish_owned_trunk();
         route
     }
 
@@ -439,6 +455,7 @@ mod tests {
         let route = Arc::new(RouteHandle::new(4.0, 500, 4));
         route.set_init(vec![0xAA; 8]);
         route.add_part(part(2, 0));
+        route.publish_owned_trunk();
 
         let route_for_task = route.clone();
         tokio::spawn(async move {
@@ -526,5 +543,21 @@ mod tests {
         let resp = dynamic_file(State(route), Path("seg-1-1.m4s".to_string())).await;
         assert_eq!(resp.status(), StatusCode::OK);
         assert_eq!(body_bytes(resp).await, vec![0x21; 8]);
+    }
+
+    /// MUTATION VERIFIED (issue #805 task 4): a route with no program
+    /// announced yet (a bare `RouteHandle::new`, never
+    /// `publish_owned_trunk`/`publish_program`d) must answer `503`, not
+    /// `404` -- see `output::llhls`'s identical test for the mutation this
+    /// guards (`http::resolve_route_trunk`'s `NotYetAnnounced` arm).
+    #[tokio::test]
+    async fn dynamic_file_not_yet_announced_is_503_not_404() {
+        let route = Arc::new(RouteHandle::new(4.0, 500, 4));
+        let resp = dynamic_file(State(route), Path("init-1.mp4".to_string())).await;
+        assert_eq!(
+            resp.status(),
+            StatusCode::SERVICE_UNAVAILABLE,
+            "a route with no program announced yet must be 503 (not ready), not 404 (gone)"
+        );
     }
 }
