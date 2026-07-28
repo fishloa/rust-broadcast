@@ -236,8 +236,23 @@ impl DashState {
 pub struct RouteHandle {
     trunk: Arc<Trunk>,
     segment_writer: SegmentWriter,
-    ll_hls: Arc<LlHlsOrigin>,
-    dash: Arc<DashState>,
+    ll_hls: RwLock<Arc<LlHlsOrigin>>,
+    dash: RwLock<Arc<DashState>>,
+    /// Whichever `Trunk` `ll_hls`/`dash` are *currently* bound to — starts as
+    /// `trunk` (this handle's own placeholder) and is rebuilt in place, at
+    /// most once, the first time [`Self::publish_program`] is called for
+    /// [`SPTS_PROGRAM_ID`] with a genuinely different `Arc<Trunk>` (issue
+    /// #805 task 2b: a driver-minted `Trunk`, segmented by
+    /// `crate::source::segment::ProgramSegmenter` directly via that
+    /// `Trunk`'s own `segment_writer()` — never a second `Trunk`). Read by
+    /// [`Self::latest_progress`] so the abuse-bound check in
+    /// `crate::origin::resource` also tracks whichever `Trunk` is actually
+    /// being served, not always the legacy placeholder.
+    ///
+    /// A `RwLock`, not a `Mutex`, for the same reason [`Self::programs`] is
+    /// one: read (by every request path) far outweighs write (once, at most,
+    /// per route).
+    active_trunk: RwLock<Arc<Trunk>>,
     health: Mutex<HealthState>,
     /// Cumulative nanoseconds of segment duration published so far — the
     /// only honest source for [`media_plane::trunk::SegmentEntry::timeline_position`]
@@ -246,6 +261,10 @@ pub struct RouteHandle {
     next_timeline_ns: AtomicU64,
     target_duration_secs: f64,
     part_target_ms: u32,
+    /// Stored so [`Self::rebind_serving_trunk_if_new`] can rebuild
+    /// `ll_hls`/`dash` with the same advertised-window depth
+    /// [`Self::new`] was given.
+    window_segments_cap: NonZeroUsize,
     created_at: SystemTime,
     /// Egress-resolvable `ProgramId -> Arc<Trunk>` registry — the additive
     /// step (issue #805 task 1) toward this crate's converged architecture:
@@ -303,15 +322,16 @@ impl RouteHandle {
     ///
     /// # A producer writing the owned `Trunk` must publish it
     ///
-    /// Egress resolves everything it serves through [`Self::resolve_program`]
-    /// (issue #805). A freshly built route's registry is **empty**, so if you
-    /// drive this handle's own `Trunk` directly — rather than through
-    /// [`crate::origin::supervisor`] or [`crate::pipeline::run_pipeline`],
-    /// which both do it for you — you must call [`Self::publish_owned_trunk`]
-    /// yourself. Omitting it does not error: requests block on
-    /// [`ProgramResolution::NotYetAnnounced`] waiting for a program that is
-    /// already present, so the symptom is a hang, not a 404. Both in-tree
-    /// producers were caught by exactly this during #805 task 2.
+    /// Egress resolves everything it serves through `Self::resolve_program`
+    /// (issue #805; crate-private, so not an intra-doc link here). A freshly
+    /// built route's registry is **empty**, so if you drive this handle's own
+    /// `Trunk` directly — rather than through [`crate::origin::supervisor`]
+    /// or [`crate::pipeline::run_pipeline`], which both do it for you — you
+    /// must call [`Self::publish_owned_trunk`] yourself. Omitting it does not
+    /// error: requests block on `ProgramResolution::NotYetAnnounced`
+    /// (likewise crate-private) waiting for a program that is already
+    /// present, so the symptom is a hang, not a 404. Both in-tree producers
+    /// were caught by exactly this during #805 task 2.
     ///
     /// The owned-`Trunk`-plus-explicit-publish arrangement is transitional
     /// and goes away with the legacy field, once every route is driver-backed
@@ -337,14 +357,16 @@ impl RouteHandle {
         ));
         let dash = Arc::new(DashState::new(&trunk, window_segments));
         RouteHandle {
+            active_trunk: RwLock::new(Arc::clone(&trunk)),
             trunk,
             segment_writer,
-            ll_hls,
-            dash,
+            ll_hls: RwLock::new(ll_hls),
+            dash: RwLock::new(dash),
             health: Mutex::new(HealthState::Connecting),
             next_timeline_ns: AtomicU64::new(0),
             target_duration_secs,
             part_target_ms,
+            window_segments_cap: window_segments,
             created_at: SystemTime::now(),
             programs: RwLock::new(HashMap::new()),
         }
@@ -367,10 +389,65 @@ impl RouteHandle {
     /// does not mint a second `Trunk`), so in practice this is called once
     /// per program, not repeatedly with different `Trunk`s for the same key.
     pub(crate) fn publish_program(&self, program: ProgramId, trunk: Arc<Trunk>) {
+        // Issue #805 task 2b: `SPTS_PROGRAM_ID` is the one program this
+        // handle's *singular* `ll_hls()`/`dash()`/`latest_progress()` serve.
+        // For a driver-backed route, the `Trunk` published here the first
+        // time is a fresh, driver-minted one — `crate::source::segment`
+        // segments samples into it directly (its own `segment_writer()`),
+        // so `ll_hls`/`dash` must be rebuilt over *that* `Trunk`, not stay
+        // bound to this handle's own placeholder (which never receives
+        // another write once a driver-backed route publishes). Deliberately
+        // run *before* the registry insert below so a request that observes
+        // the new registry entry can never also observe the stale
+        // `ll_hls`/`dash` pairing.
+        if program == SPTS_PROGRAM_ID {
+            self.rebind_serving_trunk_if_new(&trunk);
+        }
         self.programs
             .write()
             .expect("RouteHandle::programs lock poisoned")
             .insert(program, trunk);
+    }
+
+    /// Rebuild `ll_hls`/`dash`/`active_trunk` over `trunk` — but only if
+    /// `trunk` is a genuinely different `Arc` from the one they are
+    /// currently bound to. A same-`Arc` call (the legacy RTMP/`Custom` path:
+    /// [`Self::publish_owned_trunk`] always passes this handle's own
+    /// `self.trunk`, which `ll_hls`/`dash` were already built from in
+    /// [`Self::new`]) must be a strict no-op — rebuilding unconditionally
+    /// would silently discard any init bytes/segments/parts already written
+    /// through [`Self::set_init`]/[`Self::add_segment`]/[`Self::add_part`]
+    /// before this call (exactly what `crate::pipeline::run_pipeline` and
+    /// this crate's own tests do: publish happens *after* those writes for
+    /// RTMP's `origin::supervisor::supervise`, but tests build a route,
+    /// write to it, then publish).
+    fn rebind_serving_trunk_if_new(&self, trunk: &Arc<Trunk>) {
+        let already_bound = {
+            let active = self
+                .active_trunk
+                .read()
+                .expect("RouteHandle::active_trunk lock poisoned");
+            Arc::ptr_eq(&active, trunk)
+        };
+        if already_bound {
+            return;
+        }
+        let ll_hls = Arc::new(LlHlsOrigin::new(
+            Arc::clone(trunk),
+            self.target_duration_secs,
+            self.part_target_ms,
+            self.window_segments_cap,
+        ));
+        let dash = Arc::new(DashState::new(trunk, self.window_segments_cap));
+        *self
+            .ll_hls
+            .write()
+            .expect("RouteHandle::ll_hls lock poisoned") = ll_hls;
+        *self.dash.write().expect("RouteHandle::dash lock poisoned") = dash;
+        *self
+            .active_trunk
+            .write()
+            .expect("RouteHandle::active_trunk lock poisoned") = Arc::clone(trunk);
     }
 
     /// Publishes this handle's own owned `Trunk` (the one
@@ -413,31 +490,52 @@ impl RouteHandle {
     }
 
     /// The sans-IO LL-HLS origin every output's init/segment/part bytes (and
-    /// LL-HLS's own playlist) resolve through.
-    pub(crate) fn ll_hls(&self) -> &Arc<LlHlsOrigin> {
-        &self.ll_hls
+    /// LL-HLS's own playlist) resolve through. An owned `Arc` (not a
+    /// borrowed reference): [`Self::rebind_serving_trunk_if_new`] can swap
+    /// this route's `ll_hls` out from under an in-flight reader, so a caller
+    /// must hold its own clone rather than a reference tied to this
+    /// method's (momentary) read-lock guard.
+    pub(crate) fn ll_hls(&self) -> Arc<LlHlsOrigin> {
+        Arc::clone(
+            &self
+                .ll_hls
+                .read()
+                .expect("RouteHandle::ll_hls lock poisoned"),
+        )
     }
 
     /// Store the fMP4 init segment bytes — forwards to [`LlHlsOrigin::set_init`].
     pub fn set_init(&self, bytes: impl Into<Bytes>) {
-        self.ll_hls.set_init(bytes);
+        self.ll_hls
+            .read()
+            .expect("RouteHandle::ll_hls lock poisoned")
+            .set_init(bytes);
     }
 
     /// The fMP4 init segment bytes, if set.
     pub fn init_bytes(&self) -> Option<Bytes> {
-        self.ll_hls.init_bytes()
+        self.ll_hls
+            .read()
+            .expect("RouteHandle::ll_hls lock poisoned")
+            .init_bytes()
     }
 
     /// Record this route's track specs (issue #663 P4: DASH's `codecs`
     /// string derivation) — the one piece of codec metadata no `Trunk` ring
     /// holds.
     pub fn set_track_specs(&self, specs: Vec<TrackSpec>) {
-        self.dash.set_track_specs(specs);
+        self.dash
+            .read()
+            .expect("RouteHandle::dash lock poisoned")
+            .set_track_specs(specs);
     }
 
     /// This route's recorded track specs, if any.
     pub fn track_specs(&self) -> Vec<TrackSpec> {
-        self.dash.track_specs()
+        self.dash
+            .read()
+            .expect("RouteHandle::dash lock poisoned")
+            .track_specs()
     }
 
     /// Publish one live part (`transmux::ll_hls::LlHlsSegmenter::take_ready_parts`)
@@ -476,7 +574,10 @@ impl RouteHandle {
     /// The currently-resident closed-segment window, oldest first — the
     /// `Trunk`-drained replacement for `MediaStore::window_segments`.
     pub fn window_segments(&self) -> Vec<DashWindowSegment> {
-        self.dash.window_segments()
+        self.dash
+            .read()
+            .expect("RouteHandle::dash lock poisoned")
+            .window_segments()
     }
 
     /// Configured target full-segment duration, seconds.
@@ -514,9 +615,15 @@ impl RouteHandle {
     /// `crate::origin::resource`'s chunked-transfer whole-segment route
     /// (issue #721) needs.
     pub(crate) fn latest_progress(&self) -> (u32, usize) {
-        let last_closed = self.trunk.last_closed_segment().unwrap_or(0);
+        let trunk = Arc::clone(
+            &self
+                .active_trunk
+                .read()
+                .expect("RouteHandle::active_trunk lock poisoned"),
+        );
+        let last_closed = trunk.last_closed_segment().unwrap_or(0);
         let candidate = last_closed + 1;
-        let parts = self.trunk.parts_in_segment(candidate);
+        let parts = trunk.parts_in_segment(candidate);
         if parts.is_empty() {
             (last_closed, 0)
         } else {

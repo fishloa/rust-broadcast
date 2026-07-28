@@ -356,15 +356,24 @@ pub async fn drive_socket(
     let start = std::time::Instant::now();
     let mut handoff = Some(on_driver);
     let mut published = std::collections::HashSet::new();
+    let mut segmenters = std::collections::HashMap::new();
     loop {
         let now = Timestamp::from_instant(start, std::time::Instant::now());
         let status = recv_and_feed(&mut sock, &mut driver, read_timeout, now).await?;
         crate::source::report_driver_progress(&driver, route_handle, &mut published);
+        crate::source::segment::drive_program_segmenters(&driver, route_handle, &mut segmenters);
         if let Some(f) = handoff.take() {
             f(&driver);
         }
         if status == StreamStatus::Ended {
             driver.finish();
+            // Flush every program's trailing buffered partial segment now
+            // that the driver is terminal -- see `segment`'s own doc.
+            crate::source::segment::drive_program_segmenters(
+                &driver,
+                route_handle,
+                &mut segmenters,
+            );
             return Ok(());
         }
     }

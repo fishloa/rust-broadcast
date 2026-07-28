@@ -19,6 +19,7 @@ pub mod rtmp;
 pub mod rtp_udp;
 pub mod rtsp;
 pub mod sdp;
+pub(crate) mod segment;
 pub mod smooth_pull;
 pub mod srt;
 pub mod ts_http;

@@ -80,6 +80,50 @@
     `tests/*.rs`/examples that drive `crate::pipeline::run_pipeline` directly
     (bypassing `supervise`) call it explicitly to stay resolvable.
 
+### Added (issue #805 task 2b/6 — close the segmenter gap)
+- **The eight driver-backed inputs now actually produce segments/parts, not
+  just samples.** Task 2 wired ingest (each publishes its driver-minted
+  `Trunk` into `RouteHandle`'s registry) and made egress resolve through that
+  registry, but nothing turned the raw samples the driver publishes into
+  segments/parts — a driver-backed route's LL-HLS/DASH playlists came back
+  empty. New `crate::source::segment::ProgramSegmenter` +
+  `drive_program_segmenters` close it: one `ProgramSegmenter` per announced
+  `ProgramId`, subscribing a `SampleCursor` to that program's driver-minted
+  `Trunk`, feeding a `transmux::ll_hls::LlHlsSegmenter`, and publishing the
+  resulting parts/segments back into **the same `Trunk`** via its own
+  `Trunk::segment_writer()` — never a second `Trunk`, never copying samples
+  between trunks (the decision recorded in
+  `docs/superpowers/specs/2026-07-26-media-plane-architecture.md` §8).
+  Segmenting is per-program, so an MPTS route (several programs on one
+  `IngestDriver`) segments each independently; only `SPTS_PROGRAM_ID`'s init
+  bytes are wired to `RouteHandle`'s single-slot LL-HLS/DASH accessors today
+  (MPTS egress resolution is task 6). All eight `run_*`/`drive_socket` entry
+  points call `drive_program_segmenters` right alongside
+  `report_driver_progress`, and again after `driver.finish()` where the loop
+  shape made that easy (`ts_http`/`srt`/`hls_pull`/`dash_pull`/`smooth_pull`/
+  `rtsp`), so a cleanly-ending session flushes its trailing partial segment
+  instead of dropping it.
+  - Killed the two remaining `MOVIE_TIMESCALE = 90_000` magic-number
+    hardcodes (`source::ts_program`'s and `source::hls_pull`'s test fixtures)
+    and `pipeline::run_pipeline`'s own copy, in favour of
+    `transmux::VIDEO_CLOCK_RATE` — matching `source::smooth_pull`'s existing
+    convention.
+- **`RouteHandle` rebinds its `ll_hls`/`dash` to a driver-minted `Trunk`.**
+  `LlHlsOrigin`/`DashState` are bound to one `Trunk` at construction, and
+  `RouteHandle::new` builds them from its own placeholder `Trunk` before any
+  program is known. `ll_hls`/`dash` are now `RwLock<Arc<..>>`, and
+  `publish_program` — for `SPTS_PROGRAM_ID` only — rebuilds them over
+  whichever `Trunk` was just published, but **only** if it is a genuinely
+  different `Arc` from the one they are currently bound to (`Arc::ptr_eq`
+  guard): a same-`Arc` republish (the legacy RTMP/`Custom` path always
+  publishes this handle's own `trunk`, already what `ll_hls`/`dash` were
+  built from) is a strict no-op, so it never discards init bytes/segments/
+  parts a caller already wrote before publishing. New `active_trunk` field
+  tracks which `Trunk` is authoritative for `latest_progress()`'s abuse-bound
+  check. Without this, `ProgramSegmenter` publishing into the driver's own
+  `Trunk` (as decided above) would never be visible to `route.ll_hls()`,
+  which stayed bound to the route's own never-written placeholder forever.
+
 ### Changed (BREAKING, in progress — plan step 5b)
 - **Ported the three outputs (LL-HLS, DASH, LL-DASH) and the shared
   init/segment/part resource route onto `media_plane::egress::ServedEgress`

@@ -260,14 +260,25 @@ pub async fn run_ts_http(
     let read_timeout = route.timeouts.read;
     let start = std::time::Instant::now();
     let mut published = std::collections::HashSet::new();
+    let mut segmenters = std::collections::HashMap::new();
     loop {
         let now = Timestamp::from_instant(start, std::time::Instant::now());
         let status = recv_and_feed(&mut stream, &mut driver, read_timeout, now).await?;
         crate::source::report_driver_progress(&driver, route_handle, &mut published);
+        crate::source::segment::drive_program_segmenters(&driver, route_handle, &mut segmenters);
         match status {
             StreamStatus::Fed => {}
             StreamStatus::Ended => {
                 driver.finish();
+                // Flush every program's trailing buffered partial segment
+                // now that the driver is terminal -- see `segment`'s own
+                // doc for why this is the flush hook (`report_driver_progress`
+                // above ran while the driver was still `Live`).
+                crate::source::segment::drive_program_segmenters(
+                    &driver,
+                    route_handle,
+                    &mut segmenters,
+                );
                 return Ok(());
             }
         }

@@ -404,6 +404,7 @@ pub async fn run_hls_pull(
     let mut inflight: JoinSet<(HlsFetchId, Result<Vec<u8>>)> = JoinSet::new();
     let start = std::time::Instant::now();
     let mut published = std::collections::HashSet::new();
+    let mut segmenters = std::collections::HashMap::new();
 
     loop {
         while let Some(action) = driver.poll_transmit() {
@@ -477,6 +478,11 @@ pub async fn run_hls_pull(
         if inflight.is_empty() {
             if driver.session().ended() {
                 driver.finish();
+                crate::source::segment::drive_program_segmenters(
+                    &driver,
+                    route_handle,
+                    &mut segmenters,
+                );
                 return terminal_result(driver, "hls-pull");
             }
             // Nothing in flight and nothing queued: the client has genuinely
@@ -492,6 +498,11 @@ pub async fn run_hls_pull(
             Some(Ok((fetch_id, Ok(bytes)))) => {
                 driver.feed((fetch_id, bytes.as_slice()), now);
                 crate::source::report_driver_progress(&driver, route_handle, &mut published);
+                crate::source::segment::drive_program_segmenters(
+                    &driver,
+                    route_handle,
+                    &mut segmenters,
+                );
             }
             Some(Ok((_fetch_id, Err(e)))) => return Err(e),
             Some(Err(join_err)) => {
@@ -504,12 +515,24 @@ pub async fn run_hls_pull(
 
         if !driver.health().is_running() {
             // The feed above drove the session terminal (a rejected
-            // playlist/manifest/resource) — see `terminal_result`.
+            // playlist/manifest/resource) — see `terminal_result`. Health is
+            // already terminal here, so this call's internal terminal-health
+            // check flushes every program's trailing partial segment.
+            crate::source::segment::drive_program_segmenters(
+                &driver,
+                route_handle,
+                &mut segmenters,
+            );
             return terminal_result(driver, "hls-pull");
         }
 
         if driver.session().ended() {
             driver.finish();
+            crate::source::segment::drive_program_segmenters(
+                &driver,
+                route_handle,
+                &mut segmenters,
+            );
             return terminal_result(driver, "hls-pull");
         }
     }
@@ -553,7 +576,6 @@ mod tests {
     }
 
     const TRACK_ID: u32 = 1;
-    const MOVIE_TIMESCALE: u32 = 90_000;
     const VIDEO_TIMESCALE: u32 = 90_000;
     const FRAME_DUR: u32 = VIDEO_TIMESCALE / 30;
     const TARGET_DURATION_SECS: f64 = 1.0;
@@ -599,7 +621,7 @@ mod tests {
     fn build_cmaf_fixture() -> (String, Vec<u8>, Vec<Vec<u8>>) {
         let mut seg = LlHlsSegmenter::with_part_target(
             vec![video_track_spec()],
-            MOVIE_TIMESCALE,
+            transmux::VIDEO_CLOCK_RATE,
             TARGET_DURATION_SECS,
             250,
         )

@@ -14,11 +14,6 @@ use transmux::pipeline::{Sample, TrackSpec};
 use crate::Result;
 use crate::route::RouteHandle;
 
-/// CMAF movie timescale used for every route's fragmented `moov`/`moof`
-/// (matches [`transmux::pipeline::build_init_segment`]'s convention of a
-/// video-rate movie timescale; 90 kHz is the standard MPEG-2/CMAF video clock).
-const MOVIE_TIMESCALE: u32 = 90_000;
-
 /// A pull source of depayloaded, timed samples for one or more tracks — the
 /// pipeline's input side.
 ///
@@ -103,7 +98,7 @@ pub async fn run_pipeline<S: SampleSource>(
     route_handle.set_track_specs(specs.clone());
     let mut seg = LlHlsSegmenter::with_part_target(
         specs,
-        MOVIE_TIMESCALE,
+        transmux::VIDEO_CLOCK_RATE,
         target_duration_secs,
         part_target_ms,
     )?;

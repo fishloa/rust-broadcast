@@ -380,7 +380,7 @@ mod tests {
 
     /// **The segmenter gap, closed.** Step 5a round 1 reported that no
     /// producer could obtain a second `Trunk` write handle, so the
-    /// `LlHlsSegmenter`/`MOVIE_TIMESCALE` path the pre-5a `run_pipeline`
+    /// `LlHlsSegmenter`/movie-timescale path the pre-5a `run_pipeline`
     /// owned was structurally impossible to express: `Trunk::writer()` was
     /// single-take for the *whole* `Trunk`, and `IngestDriver` claims it
     /// per-program to publish samples.
@@ -398,11 +398,13 @@ mod tests {
     /// the `expect` below would fail — which is what makes this a real
     /// check rather than a restatement.
     ///
-    /// This is deliberately a *test*, not production wiring: which component
-    /// owns the segmenter (and where `MOVIE_TIMESCALE`/target-duration
-    /// per-route policy is configured) is step 5b's call, since it is the
-    /// egress side that consumes segments. What this pins down is that the
-    /// plane no longer *prevents* it.
+    /// This is deliberately a *test*, not production wiring: production
+    /// wiring is `crate::source::segment::ProgramSegmenter`/
+    /// `drive_program_segmenters` (issue #805 task 2b), which every
+    /// driver-backed `run_*` entry point calls; it uses
+    /// `transmux::VIDEO_CLOCK_RATE` for the same movie timescale this test
+    /// hardcodes, and takes `target_duration_secs`/`part_target_ms` off the
+    /// route exactly as this test's literal `1.0, 250` stand in for here.
     #[test]
     fn a_segmenter_can_hold_a_segment_writer_while_ingest_holds_the_sample_writer() {
         use super::test_support::{build_ts_bytes, handshake, track_spec, trunk_config};
@@ -412,12 +414,6 @@ mod tests {
         use std::time::Duration as StdDuration;
         use transmux::ll_hls::LlHlsSegmenter;
         use transmux::segmenter::SegmentMeta;
-
-        /// The CMAF movie timescale the pre-5a `pipeline::run_pipeline`
-        /// hardcoded. Still a constant here (this is a test), but it is now
-        /// a *parameter of the segmenter component*, which is what makes it
-        /// per-route-configurable at all.
-        const MOVIE_TIMESCALE: u32 = 90_000;
 
         let mut driver = IngestDriver::new(
             TsIngestSession::new(),
@@ -458,9 +454,13 @@ mod tests {
         // segments/parts. One cursor, per `Trunk::subscribe`'s
         // single-digit-readers-by-design contract.
         let mut cursor = trunk.subscribe();
-        let mut seg =
-            LlHlsSegmenter::with_part_target(vec![track_spec(1)], MOVIE_TIMESCALE, 1.0, 250)
-                .expect("segmenter builds from the resolved track spec");
+        let mut seg = LlHlsSegmenter::with_part_target(
+            vec![track_spec(1)],
+            transmux::VIDEO_CLOCK_RATE,
+            1.0,
+            250,
+        )
+        .expect("segmenter builds from the resolved track spec");
 
         // Drive more media through so the cursor (which starts from *now*)
         // actually observes samples.

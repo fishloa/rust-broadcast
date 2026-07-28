@@ -913,6 +913,7 @@ pub async fn run_smooth_pull(
     let mut inflight: JoinSet<JoinedFetch> = JoinSet::new();
     let start = std::time::Instant::now();
     let mut published = std::collections::HashSet::new();
+    let mut segmenters = std::collections::HashMap::new();
 
     loop {
         while let Some(action) = driver.poll_transmit() {
@@ -975,6 +976,11 @@ pub async fn run_smooth_pull(
         if inflight.is_empty() {
             if driver.session().ended() {
                 driver.finish();
+                crate::source::segment::drive_program_segmenters(
+                    &driver,
+                    route_handle,
+                    &mut segmenters,
+                );
                 return terminal_result(driver, "smooth-pull");
             }
             match driver.next_deadline() {
@@ -986,6 +992,11 @@ pub async fn run_smooth_pull(
                     let now = Timestamp::from_instant(start, std::time::Instant::now());
                     driver.on_deadline(now);
                     crate::source::report_driver_progress(&driver, route_handle, &mut published);
+                    crate::source::segment::drive_program_segmenters(
+                        &driver,
+                        route_handle,
+                        &mut segmenters,
+                    );
                 }
                 // See `dash_pull`'s identical arm.
                 None => tokio::time::sleep(IDLE_POLL_INTERVAL).await,
@@ -1003,6 +1014,11 @@ pub async fn run_smooth_pull(
             })) => {
                 driver.feed((id, bytes.as_slice()), now);
                 crate::source::report_driver_progress(&driver, route_handle, &mut published);
+                crate::source::segment::drive_program_segmenters(
+                    &driver,
+                    route_handle,
+                    &mut segmenters,
+                );
             }
             Some(Ok(JoinedFetch {
                 id: SmoothResourceId::Fragment(stream, _),
@@ -1045,12 +1061,24 @@ pub async fn run_smooth_pull(
 
         if !driver.health().is_running() {
             // The feed above drove the session terminal (a rejected
-            // playlist/manifest/resource) — see `terminal_result`.
+            // playlist/manifest/resource) — see `terminal_result`. Health is
+            // already terminal here, so this call's internal terminal-health
+            // check flushes every program's trailing partial segment.
+            crate::source::segment::drive_program_segmenters(
+                &driver,
+                route_handle,
+                &mut segmenters,
+            );
             return terminal_result(driver, "smooth-pull");
         }
 
         if driver.session().ended() {
             driver.finish();
+            crate::source::segment::drive_program_segmenters(
+                &driver,
+                route_handle,
+                &mut segmenters,
+            );
             return terminal_result(driver, "smooth-pull");
         }
     }
