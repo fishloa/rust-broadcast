@@ -693,6 +693,13 @@ mod tests {
     }
 
     #[test]
+    fn routes_second_media_even_channel() {
+        let tracks = vec![video_track(0), video_track(2)];
+        assert_eq!(route_channel(2, &tracks), Some(1));
+        assert_eq!(route_channel(3, &tracks), None);
+    }
+
+    #[test]
     fn resolve_control_falls_back_to_base_on_aggregate_or_missing() {
         let base = Url::parse("rtsp://cam/base").unwrap();
         assert_eq!(resolve_control(&base, None).unwrap(), base.to_string());
@@ -709,9 +716,82 @@ mod tests {
     }
 
     #[test]
+    fn connect_addr_parses_explicit_port() {
+        let base = Url::parse("rtsp://cam.local:8554/stream").unwrap();
+        assert_eq!(connect_addr(&base).unwrap(), "cam.local:8554");
+    }
+
+    #[test]
+    fn connect_addr_handles_ipv6_userinfo_port() {
+        let base = Url::parse("rtsp://user:pass@[2001:db8::1]:8554/stream").unwrap();
+        assert_eq!(connect_addr(&base).unwrap(), "[2001:db8::1]:8554");
+    }
+
+    #[test]
+    fn connect_addr_defaults_rtsps_port_322() {
+        let base = Url::parse("rtsps://cam.local/stream").unwrap();
+        assert_eq!(
+            connect_addr(&base).unwrap(),
+            format!("cam.local:{RTSPS_DEFAULT_PORT}")
+        );
+        assert_eq!(connect_addr(&base).unwrap(), "cam.local:322");
+    }
+
+    #[test]
     fn connect_addr_rejects_non_rtsp_scheme() {
         let base = Url::parse("http://cam.local/stream").unwrap();
         assert!(connect_addr(&base).is_err());
+    }
+
+    #[test]
+    fn scheme_is_tls_false_for_rtsp() {
+        let base = Url::parse("rtsp://cam.local/stream").unwrap();
+        assert!(!scheme_is_tls(&base).unwrap());
+    }
+
+    #[test]
+    fn scheme_is_tls_true_for_rtsps() {
+        let base = Url::parse("rtsps://cam.local/stream").unwrap();
+        assert!(scheme_is_tls(&base).unwrap());
+    }
+
+    #[test]
+    fn scheme_is_tls_rejects_other_scheme() {
+        let base = Url::parse("http://cam.local/stream").unwrap();
+        assert!(scheme_is_tls(&base).is_err());
+    }
+
+    #[test]
+    fn interleaved_channel_accepts_tcp_with_channels() {
+        use rtsp_runtime::transport::LowerTransport;
+        let spec = TransportSpec {
+            lower_transport: Some(LowerTransport::Tcp),
+            interleaved: Some((0, 1)),
+            ..Default::default()
+        };
+        assert_eq!(interleaved_channel(&spec), Some(0));
+    }
+
+    #[test]
+    fn interleaved_channel_rejects_udp() {
+        use rtsp_runtime::transport::LowerTransport;
+        let spec = TransportSpec {
+            lower_transport: Some(LowerTransport::Udp),
+            interleaved: Some((0, 1)),
+            ..Default::default()
+        };
+        assert_eq!(interleaved_channel(&spec), None);
+    }
+
+    #[test]
+    fn interleaved_channel_rejects_missing_interleaved() {
+        use rtsp_runtime::transport::LowerTransport;
+        let spec = TransportSpec {
+            lower_transport: Some(LowerTransport::Tcp),
+            interleaved: None,
+            ..Default::default()
+        };
+        assert_eq!(interleaved_channel(&spec), None);
     }
 
     #[test]
@@ -723,6 +803,29 @@ mod tests {
             "debug leaked password: {debug}"
         );
         assert!(debug.contains("***@host"), "debug: {debug}");
+    }
+
+    /// Biting test: the connect-time error path for a URL that fails
+    /// `Url::parse` must not leak the raw credentialed string — this drives
+    /// `RtspDialer::connect_addr`'s very first fallible step (before any real
+    /// I/O) with a URL malformed enough to fail parsing while still carrying
+    /// `user:pass@`. Ported from the pre-5a `RtspSource::connect` version of
+    /// this test: the redaction happens in `RtspDialer::connect_addr`/`dial`
+    /// now, but it is exactly the same security-relevant property (raw
+    /// credentials must never appear in an error string) on the same "bad
+    /// URL" input, so it stays a plain sync `#[test]` rather than needing
+    /// `#[tokio::test]` — `connect_addr` performs no I/O at all.
+    #[test]
+    fn connect_bad_url_error_redacts_credentials() {
+        // A userinfo-bearing URL with an invalid (space-containing, thus
+        // unparsable) host — fails `Url::parse` before any network I/O.
+        let dialer = RtspDialer::new("rtsp://user:secretpass@bad host/s", None);
+        let msg = match dialer.connect_addr() {
+            Ok(_) => panic!("bad host must fail to parse"),
+            Err(e) => e.to_string(),
+        };
+        assert!(!msg.contains("user"), "error leaked username: {msg}");
+        assert!(!msg.contains("secretpass"), "error leaked password: {msg}");
     }
 
     // --- The central test: real RTSP DESCRIBE/SETUP/PLAY, entirely through
