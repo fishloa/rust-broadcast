@@ -826,6 +826,32 @@ impl<S: IngestSession> IngestDriver<S> {
         &self.health
     }
 
+    /// Consume this driver, yielding its final [`HealthState`] **by value** —
+    /// so a caller that is tearing the route down can move the concrete
+    /// `S::Error` out of [`HealthState::Failed`] and return it.
+    ///
+    /// [`Self::health`] only lends a `&HealthState`, which is right for
+    /// polling but cannot hand back the error: a session error type is not
+    /// required to be [`Clone`] (`multimux::MultimuxError` is not), so a
+    /// borrowing accessor forces a caller to degrade the typed error into a
+    /// formatted string — exactly the loss this module's docs call out as
+    /// the bug `HealthState<E>` exists to fix. Without this, an
+    /// [`IngestSession`] whose `feed` returns `Err` is *unreportable* by its
+    /// own driver loop: `feed` records the error in `health` and returns
+    /// `()`, so a loop that only ever calls `feed` sees no failure at all and
+    /// spins forever. (That is not hypothetical — it is exactly how
+    /// `multimux::source::smooth_pull`'s PlayReady-detection error escaped
+    /// its drive loop until this method existed.)
+    ///
+    /// Consuming (rather than a `&mut` "take the error out") is deliberate:
+    /// every terminal state is final, so there is no valid use for a driver
+    /// whose failure has been moved out from under it. Any [`Trunk`] this
+    /// driver minted stays alive independently — they are [`Arc`]s a caller
+    /// will already have cloned out via [`Self::trunk`].
+    pub fn into_health(self) -> HealthState<S::Error> {
+        self.health
+    }
+
     /// Terminate a still-`Establishing` session whose deadline has passed.
     ///
     /// Called *after* the session has been fed/drained, never before, so a

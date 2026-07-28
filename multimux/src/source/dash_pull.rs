@@ -828,6 +828,34 @@ fn build_client(route: &DashPullRoute) -> Result<(HttpClient, Url, Option<Creden
     Ok((http, clean_url, credentials))
 }
 
+/// Turns a driver that has reached a terminal [`HealthState`] into this
+/// crate's own `Result`, moving the concrete session error out via
+/// [`media_plane::ingress::IngestDriver::into_health`].
+///
+/// **This is why a pull drive loop must check `health()` after every feed at
+/// all**: `IngestDriver::feed` records a session error in `health` and
+/// returns `()`, so a loop that only ever calls `feed` never observes it. A
+/// `smooth_pull` session rejecting a PlayReady-protected manifest, or an
+/// `hls_pull` session rejecting a malformed playlist, would otherwise leave
+/// the loop spinning against a session that can never make progress.
+fn terminal_result<S>(driver: media_plane::ingress::IngestDriver<S>, what: &str) -> Result<()>
+where
+    S: media_plane::ingress::IngestSession<Error = MultimuxError>,
+{
+    match driver.into_health() {
+        media_plane::ingress::HealthState::Failed(e) => Err(e),
+        media_plane::ingress::HealthState::HandshakeTimedOut { deadline } => {
+            Err(MultimuxError::Connect {
+                reason: format!("{what}: handshake deadline {deadline:?} passed"),
+            })
+        }
+        // `Ended` is a clean finish; the two running states are unreachable
+        // here (callers only call this once `health().is_running()` is false)
+        // but map to `Ok` rather than panicking on a future variant.
+        _ => Ok(()),
+    }
+}
+
 /// Drives `route` to completion: dial (no I/O), then pump `poll_transmit` →
 /// fetch → `feed` until a static MPD's every Representation is exhausted, or
 /// a hard fetch failure occurs. A dynamic MPD never ends on its own (matches
@@ -914,7 +942,7 @@ pub async fn run_dash_pull(
         if inflight.is_empty() {
             if driver.session().ended() {
                 driver.finish();
-                return Ok(());
+                return terminal_result(driver, "dash-pull");
             }
             match driver.next_deadline() {
                 Some(deadline) => {
@@ -984,9 +1012,15 @@ pub async fn run_dash_pull(
             None => unreachable!("checked inflight.is_empty() above"),
         }
 
+        if !driver.health().is_running() {
+            // The feed above drove the session terminal (a rejected
+            // playlist/manifest/resource) — see `terminal_result`.
+            return terminal_result(driver, "dash-pull");
+        }
+
         if driver.session().ended() {
             driver.finish();
-            return Ok(());
+            return terminal_result(driver, "dash-pull");
         }
     }
 }

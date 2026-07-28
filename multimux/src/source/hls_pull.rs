@@ -334,6 +334,34 @@ fn build_client(route: &HlsPullRoute) -> Result<(HttpClient, Url, Option<Credent
     Ok((http, clean_url, credentials))
 }
 
+/// Turns a driver that has reached a terminal [`HealthState`] into this
+/// crate's own `Result`, moving the concrete session error out via
+/// [`media_plane::ingress::IngestDriver::into_health`].
+///
+/// **This is why a pull drive loop must check `health()` after every feed at
+/// all**: `IngestDriver::feed` records a session error in `health` and
+/// returns `()`, so a loop that only ever calls `feed` never observes it. A
+/// `smooth_pull` session rejecting a PlayReady-protected manifest, or an
+/// `hls_pull` session rejecting a malformed playlist, would otherwise leave
+/// the loop spinning against a session that can never make progress.
+fn terminal_result<S>(driver: media_plane::ingress::IngestDriver<S>, what: &str) -> Result<()>
+where
+    S: media_plane::ingress::IngestSession<Error = MultimuxError>,
+{
+    match driver.into_health() {
+        media_plane::ingress::HealthState::Failed(e) => Err(e),
+        media_plane::ingress::HealthState::HandshakeTimedOut { deadline } => {
+            Err(MultimuxError::Connect {
+                reason: format!("{what}: handshake deadline {deadline:?} passed"),
+            })
+        }
+        // `Ended` is a clean finish; the two running states are unreachable
+        // here (callers only call this once `health().is_running()` is false)
+        // but map to `Ok` rather than panicking on a future variant.
+        _ => Ok(()),
+    }
+}
+
 /// Drives `route` to completion: dial (no I/O), then pump
 /// [`media_plane::ingress::IngestDriver::poll_transmit`] → fetch → [`media_plane::ingress::IngestDriver::feed`] until the
 /// origin's playlist reports end-of-stream or a fetch fails outright — the
@@ -434,7 +462,7 @@ pub async fn run_hls_pull(
         if inflight.is_empty() {
             if driver.session().ended() {
                 driver.finish();
-                return Ok(());
+                return terminal_result(driver, "hls-pull");
             }
             // Nothing in flight and nothing queued: the client has genuinely
             // nothing to do right now. Park briefly rather than spinning —
@@ -458,9 +486,15 @@ pub async fn run_hls_pull(
             None => unreachable!("checked inflight.is_empty() above"),
         }
 
+        if !driver.health().is_running() {
+            // The feed above drove the session terminal (a rejected
+            // playlist/manifest/resource) — see `terminal_result`.
+            return terminal_result(driver, "hls-pull");
+        }
+
         if driver.session().ended() {
             driver.finish();
-            return Ok(());
+            return terminal_result(driver, "hls-pull");
         }
     }
 }
@@ -471,6 +505,7 @@ mod tests {
     use crate::testutil::MockAuthScheme;
     use media_plane::ingress::HealthState;
     use media_plane::trunk::{SampleCursor, SampleCursorItem, TrunkConfig};
+    use std::collections::HashMap;
     use std::num::NonZeroUsize;
     use transmux::hls::{MediaPlaylist, MediaSegment};
     use transmux::ll_hls::LlHlsSegmenter;
@@ -665,20 +700,79 @@ mod tests {
         (format!("http://{addr}/media.m3u8"), server)
     }
 
-    /// Biting loopback test: a real axum server serves a real
-    /// `LlHlsSegmenter`-built CMAF fixture; drives the ordinary
-    /// dial/poll_transmit/feed pump directly and asserts every real sample
-    /// lands in the `Trunk` with the right `TrackSpec`.
+    /// Drives the raw [`HlsIngestSession`] over real HTTP (dial →
+    /// `poll_transmit` → fetch → `feed`), returning the `TrackSpec`s it
+    /// announced and a per-`track_id` count of the `SessionEvent::Sample`s it
+    /// produced.
     ///
-    /// MUTATION-CHECKED: replacing `driver.feed((fetch_id, bytes.as_slice()),
-    /// now)` with a no-op makes `total` stay `0` — this test's non-zero,
-    /// exact-match assertion is what catches that.
-    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn loopback_hls_pull_lands_real_samples_in_trunk() {
-        let (url, server) = start_cmaf_fixture_server(None).await;
-        let route = HlsPullRoute::new("pulled-cam", url);
+    /// **Why the session and not an `IngestDriver`+`SampleCursor` for the
+    /// exact count**: `Trunk::subscribe()` starts from *now* and sees no
+    /// backlog, and `LlHlsClient` legitimately flushes a whole batch of
+    /// buffered part/segment resources the instant the init segment arrives —
+    /// i.e. `NewProgram` (which is what mints the `Trunk`) and that batch's
+    /// `Sample`s are drained by the *same* `IngestDriver::feed` call, so no
+    /// cursor can exist in time to observe them. Counting `SessionEvent`s
+    /// observes the identical property (real CMAF over real HTTP → real
+    /// decoded samples, correctly attributed) without racing the subscription.
+    /// `Trunk` arrival is asserted separately, by
+    /// [`assert_samples_reach_the_trunk`].
+    async fn drive_session_and_count(
+        route: &HlsPullRoute,
+    ) -> Result<(Vec<TrackSpec>, HashMap<u32, usize>)> {
+        let (http, clean_url, credentials) = build_client(route)?;
+        let mut session = HlsIngestSession::new(clean_url.to_string());
+        let mut backlog: VecDeque<Action> = VecDeque::new();
+        let mut specs: Vec<TrackSpec> = Vec::new();
+        let mut per_track: HashMap<u32, usize> = HashMap::new();
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(15);
 
-        let (http, clean_url, credentials) = build_client(&route).expect("build client");
+        loop {
+            while let Some(a) = session.poll_transmit() {
+                backlog.push_back(a);
+            }
+            while let Some(event) = session.poll() {
+                match event {
+                    SessionEvent::NewProgram { tracks, .. } => specs = tracks,
+                    SessionEvent::Sample { track_id, .. } => {
+                        *per_track.entry(track_id).or_insert(0) += 1;
+                    }
+                    _ => {}
+                }
+            }
+            let Some(action) = backlog.pop_front() else {
+                if session.ended() || tokio::time::Instant::now() >= deadline {
+                    break;
+                }
+                tokio::time::sleep(IDLE_POLL_INTERVAL).await;
+                continue;
+            };
+            let now = Timestamp::from_nanos(0);
+            match action {
+                Action::WaitMs(ms) => tokio::time::sleep(Duration::from_millis(ms)).await,
+                Action::FetchPlaylist { .. } => {
+                    let url = action.playlist_request_url().expect("playlist URL");
+                    let bytes = fetch_bytes(&http, &url, credentials.as_ref()).await?;
+                    session.feed((HlsFetchId::Playlist, bytes.as_slice()), now)?;
+                }
+                Action::FetchResource { id, url, .. } => {
+                    let bytes = fetch_bytes(&http, &url, credentials.as_ref()).await?;
+                    session.feed((HlsFetchId::Resource(id), bytes.as_slice()), now)?;
+                }
+                _ => {}
+            }
+        }
+        Ok((specs, per_track))
+    }
+
+    /// The `Trunk`-side counterpart to [`drive_session_and_count`]: drives the
+    /// same route through a real [`media_plane::ingress::IngestDriver`] and
+    /// asserts real samples actually land on a real [`SampleCursor`] — the
+    /// half a session-level count cannot prove. Deliberately a `> 0`
+    /// assertion, not an exact one: the cursor can only see what is published
+    /// *after* it subscribes, and the first batch is published in the same
+    /// `feed` that mints the `Trunk` (see [`drive_session_and_count`]'s doc).
+    async fn assert_samples_reach_the_trunk(route: &HlsPullRoute) {
+        let (http, clean_url, credentials) = build_client(route).expect("build client");
         let mut dialer = HlsPullDialer {
             playlist_url: clean_url.to_string(),
         };
@@ -689,19 +783,23 @@ mod tests {
             media_plane::DEFAULT_MAX_PROGRAMS,
         )
         .expect("dial is infallible");
-        assert!(matches!(driver.health(), HealthState::Establishing));
+        assert!(
+            matches!(driver.health(), HealthState::Establishing),
+            "dial() must not establish the session: {:?}",
+            driver.health()
+        );
 
         let mut backlog: VecDeque<Action> = VecDeque::new();
         let mut cursor: Option<SampleCursor> = None;
         let start = std::time::Instant::now();
         let mut total = 0usize;
-        let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
-        while total < FRAME_COUNT as usize && tokio::time::Instant::now() < deadline {
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(15);
+        loop {
             while let Some(a) = driver.poll_transmit() {
                 backlog.push_back(a);
             }
             let Some(action) = backlog.pop_front() else {
-                if driver.session().ended() {
+                if driver.session().ended() || tokio::time::Instant::now() >= deadline {
                     break;
                 }
                 tokio::time::sleep(IDLE_POLL_INTERVAL).await;
@@ -711,24 +809,16 @@ mod tests {
             match action {
                 Action::WaitMs(ms) => tokio::time::sleep(Duration::from_millis(ms)).await,
                 Action::FetchPlaylist { .. } => {
-                    let url = action.playlist_request_url().unwrap();
-                    let bytes = tokio::time::timeout(
-                        Duration::from_secs(5),
-                        fetch_bytes(&http, &url, credentials.as_ref()),
-                    )
-                    .await
-                    .expect("fetch timed out")
-                    .expect("fetch");
+                    let url = action.playlist_request_url().expect("playlist URL");
+                    let bytes = fetch_bytes(&http, &url, credentials.as_ref())
+                        .await
+                        .expect("fetch");
                     driver.feed((HlsFetchId::Playlist, bytes.as_slice()), now);
                 }
                 Action::FetchResource { id, url, .. } => {
-                    let bytes = tokio::time::timeout(
-                        Duration::from_secs(5),
-                        fetch_bytes(&http, &url, credentials.as_ref()),
-                    )
-                    .await
-                    .expect("fetch timed out")
-                    .expect("fetch");
+                    let bytes = fetch_bytes(&http, &url, credentials.as_ref())
+                        .await
+                        .expect("fetch");
                     driver.feed((HlsFetchId::Resource(id), bytes.as_slice()), now);
                 }
                 _ => {}
@@ -739,17 +829,57 @@ mod tests {
             if let Some(c) = cursor.as_mut() {
                 total += drain(c);
             }
-            if driver.session().ended() {
-                driver.finish();
-                break;
-            }
         }
 
+        assert!(
+            matches!(driver.health(), HealthState::Live),
+            "the session must have established: {:?}",
+            driver.health()
+        );
+        assert!(
+            total > 0,
+            "real samples must reach the Trunk through IngestDriver, got {total}"
+        );
+    }
+
+    /// Biting loopback test: a real axum server serves a real
+    /// `LlHlsSegmenter`-built CMAF fixture over real HTTP; asserts the
+    /// session recovers the right `TrackSpec` and produces **exactly** the
+    /// fixture's own sample count, and (separately) that those samples really
+    /// do land in a `Trunk` through a real `IngestDriver`.
+    ///
+    /// MUTATION-CHECKED: replacing the `session.feed(...)` call in
+    /// `drive_session_and_count` with a no-op makes `per_track` empty and
+    /// fails the exact-count assertion; replacing `driver.feed(...)` in
+    /// `assert_samples_reach_the_trunk` with a no-op fails its `total > 0`.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn loopback_hls_pull_lands_real_samples_in_trunk() {
+        let (url, server) = start_cmaf_fixture_server(None).await;
+        let route = HlsPullRoute::new("pulled-cam", url);
+
+        let (specs, per_track) = tokio::time::timeout(
+            Duration::from_secs(20),
+            drive_session_and_count(&route),
+        )
+        .await
+        .expect("drive timed out")
+        .expect("drive");
+
+        assert_eq!(specs.len(), 1, "one video track recovered: {specs:?}");
+        assert_eq!(specs[0].track_id, TRACK_ID);
+        assert_eq!(specs[0].timescale, VIDEO_TIMESCALE);
+        assert!(
+            matches!(specs[0].config, CodecConfig::Avc { .. }),
+            "codec config must round-trip as AVC: {:?}",
+            specs[0].config
+        );
         assert_eq!(
-            total, FRAME_COUNT as usize,
+            per_track.get(&TRACK_ID).copied().unwrap_or(0),
+            FRAME_COUNT as usize,
             "must pull every real sample from the CMAF fixture, no gaps/duplicates"
         );
-        assert!(matches!(driver.health(), HealthState::Live));
+
+        assert_samples_reach_the_trunk(&route).await;
         server.abort();
     }
 
@@ -841,70 +971,34 @@ mod tests {
         });
 
         let route = HlsPullRoute::new("pulled-ts-hls", format!("http://{addr}/media.m3u8"));
-        let (http, clean_url, credentials) = build_client(&route).expect("build client");
-        let mut dialer = HlsPullDialer {
-            playlist_url: clean_url.to_string(),
-        };
-        let mut driver = run_dial(
-            &mut dialer,
-            trunk_config(),
-            handshake(),
-            media_plane::DEFAULT_MAX_PROGRAMS,
+
+        let (specs, per_track) = tokio::time::timeout(
+            Duration::from_secs(20),
+            drive_session_and_count(&route),
         )
-        .expect("dial is infallible");
+        .await
+        .expect("drive timed out")
+        .expect("drive");
 
-        let mut backlog: VecDeque<Action> = VecDeque::new();
-        let mut cursor: Option<SampleCursor> = None;
-        let start = std::time::Instant::now();
-        let mut total = 0usize;
-        let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
-        while total < want_total_samples && tokio::time::Instant::now() < deadline {
-            while let Some(a) = driver.poll_transmit() {
-                backlog.push_back(a);
-            }
-            let Some(action) = backlog.pop_front() else {
-                if driver.session().ended() {
-                    break;
-                }
-                tokio::time::sleep(IDLE_POLL_INTERVAL).await;
-                continue;
-            };
-            let now = Timestamp::from_instant(start, std::time::Instant::now());
-            match action {
-                Action::WaitMs(ms) => tokio::time::sleep(Duration::from_millis(ms)).await,
-                Action::FetchPlaylist { .. } => {
-                    let url = action.playlist_request_url().unwrap();
-                    let bytes = fetch_bytes(&http, &url, credentials.as_ref())
-                        .await
-                        .expect("fetch");
-                    driver.feed((HlsFetchId::Playlist, bytes.as_slice()), now);
-                }
-                Action::FetchResource { id, url, .. } => {
-                    let bytes = fetch_bytes(&http, &url, credentials.as_ref())
-                        .await
-                        .expect("fetch");
-                    driver.feed((HlsFetchId::Resource(id), bytes.as_slice()), now);
-                }
-                _ => {}
-            }
-            for program in driver.programs().collect::<Vec<_>>() {
-                if cursor.is_none() {
-                    cursor = driver.trunk(program).map(|t| t.subscribe());
-                }
-            }
-            if let Some(c) = cursor.as_mut() {
-                total += drain(c);
-            }
-            if driver.session().ended() {
-                driver.finish();
-                break;
-            }
-        }
-
+        assert!(
+            specs
+                .iter()
+                .any(|s| matches!(s.config, CodecConfig::Avc { .. })),
+            "must recover the fixture's AVC video track from the synthesized Init: {specs:?}"
+        );
+        assert!(
+            specs
+                .iter()
+                .any(|s| matches!(s.config, CodecConfig::Aac { .. })),
+            "must recover the fixture's AAC audio track from the synthesized Init: {specs:?}"
+        );
+        let got_total: usize = per_track.values().sum();
         assert_eq!(
-            total, want_total_samples,
+            got_total, want_total_samples,
             "must pull every real sample from the real TS-HLS origin, no gaps/duplicates"
         );
+
+        assert_samples_reach_the_trunk(&route).await;
         server.abort();
     }
 

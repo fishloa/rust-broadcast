@@ -832,6 +832,34 @@ fn spawn_fetch(
     });
 }
 
+/// Turns a driver that has reached a terminal [`HealthState`] into this
+/// crate's own `Result`, moving the concrete session error out via
+/// [`media_plane::ingress::IngestDriver::into_health`].
+///
+/// **This is why a pull drive loop must check `health()` after every feed at
+/// all**: `IngestDriver::feed` records a session error in `health` and
+/// returns `()`, so a loop that only ever calls `feed` never observes it. A
+/// `smooth_pull` session rejecting a PlayReady-protected manifest, or an
+/// `hls_pull` session rejecting a malformed playlist, would otherwise leave
+/// the loop spinning against a session that can never make progress.
+fn terminal_result<S>(driver: media_plane::ingress::IngestDriver<S>, what: &str) -> Result<()>
+where
+    S: media_plane::ingress::IngestSession<Error = MultimuxError>,
+{
+    match driver.into_health() {
+        media_plane::ingress::HealthState::Failed(e) => Err(e),
+        media_plane::ingress::HealthState::HandshakeTimedOut { deadline } => {
+            Err(MultimuxError::Connect {
+                reason: format!("{what}: handshake deadline {deadline:?} passed"),
+            })
+        }
+        // `Ended` is a clean finish; the two running states are unreachable
+        // here (callers only call this once `health().is_running()` is false)
+        // but map to `Ok` rather than panicking on a future variant.
+        _ => Ok(()),
+    }
+}
+
 /// Drives `route` to completion — see `dash_pull::run_dash_pull`'s doc for
 /// the shared shape (dial → poll_transmit → fetch → feed, bounded fan-out,
 /// no session-internal clock/sleep).
@@ -917,7 +945,7 @@ pub async fn run_smooth_pull(
         if inflight.is_empty() {
             if driver.session().ended() {
                 driver.finish();
-                return Ok(());
+                return terminal_result(driver, "smooth-pull");
             }
             match driver.next_deadline() {
                 Some(deadline) => {
@@ -983,9 +1011,15 @@ pub async fn run_smooth_pull(
             None => unreachable!("checked inflight.is_empty() above"),
         }
 
+        if !driver.health().is_running() {
+            // The feed above drove the session terminal (a rejected
+            // playlist/manifest/resource) — see `terminal_result`.
+            return terminal_result(driver, "smooth-pull");
+        }
+
         if driver.session().ended() {
             driver.finish();
-            return Ok(());
+            return terminal_result(driver, "smooth-pull");
         }
     }
 }
@@ -1198,40 +1232,170 @@ mod tests {
         total
     }
 
+    /// Drives the raw [`SmoothIngestSession`] over real HTTP, returning the
+    /// `TrackSpec`s it announced and a per-`track_id` `SessionEvent::Sample`
+    /// count.
+    ///
+    /// Counts `SessionEvent`s rather than `SampleCursor` items for the same
+    /// reason `hls_pull`'s equivalent helper does: `Trunk::subscribe()` starts
+    /// from *now*, and this session emits `NewProgram` **and** every stream's
+    /// already-fetched first fragment's samples inside the same
+    /// `finish_awaiting_first_fragments` — i.e. the same `feed` — so no cursor
+    /// can exist in time to see that first batch. `Trunk` arrival is asserted
+    /// separately, below.
+    async fn drive_session_and_count(
+        route: &SmoothPullRoute,
+    ) -> Result<(Vec<TrackSpec>, HashMap<u32, usize>)> {
+        let (http, clean_url, credentials) = build_client(route)?;
+        let mut session = SmoothIngestSession::new(clean_url);
+        let mut backlog: VecDeque<SmoothAction> = VecDeque::new();
+        let mut specs: Vec<TrackSpec> = Vec::new();
+        let mut per_track: HashMap<u32, usize> = HashMap::new();
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(15);
+
+        loop {
+            while let Some(a) = session.poll_transmit() {
+                backlog.push_back(a);
+            }
+            while let Some(event) = session.poll() {
+                match event {
+                    SessionEvent::NewProgram { tracks, .. } => specs = tracks,
+                    SessionEvent::Sample { track_id, .. } => {
+                        *per_track.entry(track_id).or_insert(0) += 1;
+                    }
+                    _ => {}
+                }
+            }
+            let Some(action) = backlog.pop_front() else {
+                if session.ended() || tokio::time::Instant::now() >= deadline {
+                    break;
+                }
+                tokio::time::sleep(IDLE_POLL_INTERVAL).await;
+                continue;
+            };
+            let now = Timestamp::from_nanos(0);
+            match action {
+                SmoothAction::FetchManifest { url } => {
+                    if let FetchOutcome::Bytes(b) =
+                        fetch_one(&http, &url, credentials.as_ref(), "manifest", false).await?
+                    {
+                        session.feed((SmoothResourceId::Manifest, b.as_slice()), now)?;
+                    }
+                }
+                SmoothAction::FetchFirstFragment { stream, url } => {
+                    if let FetchOutcome::Bytes(b) =
+                        fetch_one(&http, &url, credentials.as_ref(), "first fragment", false)
+                            .await?
+                    {
+                        session
+                            .feed((SmoothResourceId::FirstFragment(stream), b.as_slice()), now)?;
+                    }
+                }
+                SmoothAction::FetchFragment {
+                    stream,
+                    t,
+                    url,
+                    tolerate_404,
+                    ..
+                } => {
+                    if let FetchOutcome::Bytes(b) =
+                        fetch_one(&http, &url, credentials.as_ref(), "fragment", tolerate_404)
+                            .await?
+                    {
+                        session.feed((SmoothResourceId::Fragment(stream, t), b.as_slice()), now)?;
+                    }
+                }
+            }
+        }
+        Ok((specs, per_track))
+    }
+
     /// Biting loopback test: a real axum server serves a runtime-generated
-    /// Smooth manifest + fragments; asserts driving `run_smooth_pull` lands
-    /// exactly the independently-demuxed oracle's total sample count in the
-    /// `Trunk` (both AVC and AAC) — the #758-lesson "audio silently dropped"
-    /// class of bug this guards against.
+    /// Smooth manifest + fragments; asserts the session resolves BOTH the AVC
+    /// and AAC `TrackSpec`s (from `CodecPrivateData` alone — no init segment
+    /// ever crossed the wire) with unique remapped track ids, and produces
+    /// **exactly** the independently-demuxed oracle's per-track sample counts
+    /// — the #758-lesson "audio silently dropped" class of bug this guards
+    /// against.
     ///
     /// MUTATION-CHECKED: dropping the `Fmp4Demux::unpackage`/emit in
     /// `emit_fragment_samples`, or never advancing `StreamState::plan` in
-    /// `pump_fragment_fetches`, makes `got_total` stay `0`/loop forever.
+    /// `pump_fragment_fetches`, makes the counts stay `0`; collapsing the
+    /// local->global remap makes `per_track.len()` go 2 -> 1.
     #[tokio::test]
     async fn loopback_smooth_pull_resolves_both_tracks_and_matches_oracle_sample_count() {
         let (url, server, media) = start_fixture_server(None).await;
         let (_media2, out) = build_smooth_output();
 
-        let video_id = video_track_id(&media);
-        let audio_id = audio_track_id(&media);
-        let want_total = oracle_sample_count(&media, &out, video_id, transmux::VIDEO_CLOCK_RATE)
-            + oracle_sample_count(
-                &media,
-                &out,
-                audio_id,
-                SmoothManifest::parse(&out.manifest)
-                    .unwrap()
-                    .streams
-                    .iter()
-                    .find(|s| s.stream_type == StreamType::Audio)
-                    .unwrap()
-                    .qualities[0]
-                    .sampling_rate
-                    .unwrap(),
-            );
-        assert!(want_total > 0, "sanity: fixture must carry real samples");
+        let manifest = SmoothManifest::parse(&out.manifest).expect("parse manifest");
+        let audio_timescale = manifest
+            .streams
+            .iter()
+            .find(|s| s.stream_type == StreamType::Audio)
+            .expect("audio StreamIndex")
+            .qualities[0]
+            .sampling_rate
+            .expect("audio SamplingRate");
+        let want_video =
+            oracle_sample_count(&media, &out, video_track_id(&media), transmux::VIDEO_CLOCK_RATE);
+        let want_audio =
+            oracle_sample_count(&media, &out, audio_track_id(&media), audio_timescale);
+        assert!(
+            want_video > 0 && want_audio > 0,
+            "sanity: fixture must carry real samples for both streams"
+        );
 
         let route = SmoothPullRoute::new("smooth-cam", url);
+        let (specs, per_track) =
+            tokio::time::timeout(Duration::from_secs(20), drive_session_and_count(&route))
+                .await
+                .expect("drive timed out")
+                .expect("drive");
+
+        assert_eq!(specs.len(), 2, "one video + one audio track: {specs:?}");
+        let mut ids: Vec<u32> = specs.iter().map(|s| s.track_id).collect();
+        ids.sort_unstable();
+        ids.dedup();
+        assert_eq!(ids.len(), 2, "track ids must be unique global ids");
+
+        let video_global = specs
+            .iter()
+            .find(|s| matches!(s.config, CodecConfig::Avc { .. }))
+            .expect("an AVC track")
+            .track_id;
+        let audio_global = specs
+            .iter()
+            .find(|s| matches!(s.config, CodecConfig::Aac { .. }))
+            .expect("an AAC track")
+            .track_id;
+        assert_eq!(
+            per_track.len(),
+            2,
+            "samples must land on exactly 2 distinct track ids: {per_track:?}"
+        );
+        assert_eq!(
+            per_track.get(&video_global).copied().unwrap_or(0),
+            want_video,
+            "video sample count must match the independent oracle exactly"
+        );
+        assert_eq!(
+            per_track.get(&audio_global).copied().unwrap_or(0),
+            want_audio,
+            "audio sample count must match the independent oracle exactly"
+        );
+
+        server.abort();
+    }
+
+    /// The `Trunk`-side counterpart to [`drive_session_and_count`]: drives the
+    /// same route through a real [`media_plane::ingress::IngestDriver`] and
+    /// asserts real samples land on a real [`SampleCursor`]. `> 0`, not an
+    /// exact count, for the reason that helper's doc gives.
+    #[tokio::test]
+    async fn samples_reach_the_trunk_through_the_ingest_driver() {
+        let (url, server, _media) = start_fixture_server(None).await;
+        let route = SmoothPullRoute::new("smooth-cam", url);
+
         let (http, clean_url, credentials) = build_client(&route).expect("build client");
         let mut dialer = SmoothPullDialer {
             manifest_url: clean_url,
@@ -1248,12 +1412,12 @@ mod tests {
         let mut cursor: Option<SampleCursor> = None;
         let mut total = 0usize;
         let deadline = tokio::time::Instant::now() + Duration::from_secs(15);
-        while total < want_total && tokio::time::Instant::now() < deadline {
+        loop {
             while let Some(a) = driver.poll_transmit() {
                 backlog.push_back(a);
             }
             let Some(action) = backlog.pop_front() else {
-                if driver.session().ended() {
+                if driver.session().ended() || tokio::time::Instant::now() >= deadline {
                     break;
                 }
                 tokio::time::sleep(IDLE_POLL_INTERVAL).await;
@@ -1303,10 +1467,9 @@ mod tests {
             }
         }
 
-        assert_eq!(
-            total, want_total,
-            "must pull every real sample from both Smooth streams into the Trunk, no \
-             gaps/duplicates"
+        assert!(
+            total > 0,
+            "real samples must reach the Trunk through IngestDriver, got {total}"
         );
         server.abort();
     }
