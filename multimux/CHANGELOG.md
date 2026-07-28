@@ -2,6 +2,21 @@
 
 ## [0.5.0] - 2026-07-28
 
+### Changed (BREAKING — pre-publish hardening)
+- **Five publicly reachable enums in `crate::source` are now
+  `#[non_exhaustive]`**: `DashResourceId`, `DashAction` (`source::dash_pull`),
+  `HlsFetchId` (`source::hls_pull`), `SmoothResourceId`, `SmoothAction`
+  (`source::smooth_pull`). Each answers "which resource am I fetching" or
+  "which action next" for a pull protocol, so each is exactly the kind of enum
+  that gains a variant as a protocol's surface is covered more fully — and
+  adding a variant to a published exhaustive enum is a breaking change.
+  Bundled into 0.5.0, which is already breaking, so it costs downstream
+  matchers nothing beyond the wildcard arm they need for this release anyway;
+  deferring it would have required a further breaking bump later purely to
+  attach an attribute.
+  - `media-plane` was audited the same way and needed nothing: every public
+    enum there already carries it.
+
 ### Added (issue #805 task 6: per-program serving state, MPTS-ready)
 - **`RouteHandle` gains per-program serving state.** A new crate-private
   `ProgramServing` bundle groups one program's `Trunk`, its

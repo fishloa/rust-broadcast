@@ -185,6 +185,7 @@ pub struct RepIndex(pub usize);
 
 /// This session's own request/response identity — see the module doc.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum DashResourceId {
     /// The MPD itself — initial fetch, or a live-MPD refresh.
     Mpd,
@@ -196,6 +197,7 @@ pub enum DashResourceId {
 
 /// One unit of IO [`run_dash_pull`] must perform.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub enum DashAction {
     /// Fetch (or re-fetch, for a live refresh) the MPD.
     FetchMpd { url: String },

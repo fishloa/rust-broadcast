@@ -153,6 +153,7 @@ impl Source for HlsPullRoute {
 /// This session's own request/response identity — see the module doc's
 /// "Correlating a fetch response".
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum HlsFetchId {
     /// A Media Playlist fetch — routes to `LlHlsClient::on_playlist`.
     Playlist,
