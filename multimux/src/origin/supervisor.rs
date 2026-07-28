@@ -55,37 +55,16 @@ pub trait SourceConnector: Send + Sync + 'static {
     fn connect(&self) -> impl Future<Output = crate::Result<Self::Source>> + Send;
 }
 
-// `rtsp`, `rtp_udp`, `ts_udp`, `ts_http`, `srt` no longer have a `SourceConnector` impl — see
-// `crate::pipeline`'s equivalent note. Their new production entry points are
-// `crate::source::{rtsp::run_rtsp, rtp_udp::run_rtp_udp, ts_udp::run_ts_udp}`,
-// which drive `media_plane::ingress::IngestDriver` directly and are not yet
-// wired into this supervisor loop (step 5b: needs a `Trunk`-backed
-// replacement for `MediaStore`/`HealthState` here, not just a `Source`
-// rename).
-
-impl SourceConnector for crate::source::hls_pull::HlsPullSource {
-    type Source = crate::source::hls_pull::HlsPullSession;
-
-    async fn connect(&self) -> crate::Result<Self::Source> {
-        crate::source::hls_pull::HlsPullSource::connect(self).await
-    }
-}
-
-impl SourceConnector for crate::source::dash_pull::DashPullSource {
-    type Source = crate::source::dash_pull::DashPullSession;
-
-    async fn connect(&self) -> crate::Result<Self::Source> {
-        crate::source::dash_pull::DashPullSource::connect(self).await
-    }
-}
-
-impl SourceConnector for crate::source::smooth_pull::SmoothPullSource {
-    type Source = crate::source::smooth_pull::SmoothPullSession;
-
-    async fn connect(&self) -> crate::Result<Self::Source> {
-        crate::source::smooth_pull::SmoothPullSource::connect(self).await
-    }
-}
+// `rtsp`, `rtp_udp`, `ts_udp`, `ts_http`, `srt` (step 5a round 2) and
+// `hls_pull`, `dash_pull`, `smooth_pull` (step 5a round 3) no longer have a
+// `SourceConnector` impl — see `crate::pipeline`'s equivalent note. Their new
+// production entry points are `crate::source::{rtsp::run_rtsp,
+// rtp_udp::run_rtp_udp, ts_udp::run_ts_udp, ts_http::run_ts_http,
+// srt::run_srt_caller, hls_pull::run_hls_pull, dash_pull::run_dash_pull,
+// smooth_pull::run_smooth_pull}`, which drive
+// `media_plane::ingress::IngestDriver` directly and are not yet wired into
+// this supervisor loop (step 5b: needs a `Trunk`-backed replacement for
+// `MediaStore`/`HealthState` here, not just a `Source` rename).
 
 impl SourceConnector for crate::source::rtmp::RtmpSource {
     type Source = crate::source::rtmp::RtmpSession;
@@ -194,7 +173,7 @@ fn record_reconnect(name: &str) {
 ///
 /// `name` is used only in log lines (never the source URL/credentials —
 /// callers must pass a connector that never surfaces those, which
-/// [`crate::source::hls_pull::HlsPullSource`] already ensures by stripping userinfo
+/// [`crate::source::hls_pull::HlsPullRoute`] already ensures by stripping userinfo
 /// before it ever reaches an error message).
 ///
 /// This never gives up permanently: a source going away (camera reboot,

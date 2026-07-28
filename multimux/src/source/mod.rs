@@ -1,9 +1,9 @@
 //! Ingest sources feeding the segmentation pipeline. `RtspSource` (RTSP
 //! pull), `RtpUdpSource` (raw RTP over UDP, uni/multicast), `TsUdpSource`
 //! (MPEG-2 TS over UDP, uni/multicast), `ts_http::TsHttpSource` (MPEG-2 TS
-//! over HTTP), `hls_pull::HlsPullSource` (pull a remote (LL-)HLS origin),
-//! `dash_pull::DashPullSource` (pull a remote MPEG-DASH origin, issue #758),
-//! `smooth_pull::SmoothPullSource` (pull a remote Microsoft Smooth Streaming
+//! over HTTP), `hls_pull::HlsPullRoute` (pull a remote (LL-)HLS origin),
+//! `dash_pull::DashPullRoute` (pull a remote MPEG-DASH origin, issue #758),
+//! `smooth_pull::SmoothPullRoute` (pull a remote Microsoft Smooth Streaming
 //! origin, issue #759), `rtmp::RtmpSource` (RTMP push ingest, issue #738 — a
 //! *push* source; every non-SRT source above dials out), and `srt::SrtSource`
 //! (SRT-carried MPEG-2 TS ingest, issue #739 — listener *or* caller mode) all

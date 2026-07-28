@@ -585,8 +585,8 @@ pub async fn serve(config: crate::config::Config) -> crate::Result<()> {
 /// that route's [`crate::config::InputSpec`], it connects
 /// [`crate::source::rtsp::RtspSource`], [`crate::source::rtp_udp::RtpUdpSource`],
 /// [`crate::source::ts_udp::TsUdpSource`], [`crate::source::ts_http::TsHttpSource`],
-/// [`crate::source::hls_pull::HlsPullSource`], [`crate::source::dash_pull::DashPullSource`],
-/// [`crate::source::smooth_pull::SmoothPullSource`], [`crate::source::rtmp::RtmpSource`],
+/// [`crate::source::hls_pull::HlsPullRoute`], [`crate::source::dash_pull::DashPullRoute`],
+/// [`crate::source::smooth_pull::SmoothPullRoute`], [`crate::source::rtmp::RtmpSource`],
 /// or [`crate::source::srt::SrtSource`]
 /// — one `match` arm per variant,
 /// each instantiating the generic `supervise::<ThatConnector>` (the
@@ -648,22 +648,26 @@ pub async fn serve_with_registry(
         let name = route.name.clone();
         let shutdown_rx = shutdown_rx.clone();
         let handle = match &route.input {
-            // `rtsp`/`rtp`/`ts_udp`/`ts_http`/`srt` were ported onto
-            // `media_plane::ingress::{Dialer, IngestSession}` at plan step
-            // 5a (see each module's `run_*` entry point, all driving
+            // `rtsp`/`rtp`/`ts_udp`/`ts_http`/`srt` (step 5a round 2) and
+            // `hls_pull`/`dash_pull`/`smooth_pull` (step 5a round 3) were
+            // ported onto `media_plane::ingress::{Dialer, IngestSession}`
+            // (see each module's `run_*` entry point, all driving
             // `media_plane::ingress::IngestDriver` into a `media_plane::Trunk`
             // directly) and no longer implement `SourceConnector`/
-            // `SampleSource`. Wiring these three routes back into this
+            // `SampleSource`. Wiring these routes back into this
             // `MediaStore`-per-route loop is step 5b's job (it needs a
             // `Trunk`-backed replacement for `MediaStore`/`HealthState`
             // here, not just a source rename) — left as a stub so the crate
             // names a clear boundary rather than silently regressing these
-            // these routes to "compiles but does nothing" without comment.
+            // routes to "compiles but does nothing" without comment.
             crate::config::InputSpec::Rtsp { .. }
             | crate::config::InputSpec::Rtp { .. }
             | crate::config::InputSpec::TsUdp { .. }
             | crate::config::InputSpec::TsHttp { .. }
-            | crate::config::InputSpec::Srt { .. } => {
+            | crate::config::InputSpec::Srt { .. }
+            | crate::config::InputSpec::HlsPull { .. }
+            | crate::config::InputSpec::DashPull { .. }
+            | crate::config::InputSpec::SmoothPull { .. } => {
                 let name = name.clone();
                 tokio::spawn(async move {
                     tracing::error!(
@@ -673,48 +677,6 @@ pub async fn serve_with_registry(
                          supervisor loop (step 5b); the route is disabled until that lands"
                     );
                 })
-            }
-            crate::config::InputSpec::HlsPull { url, auth } => {
-                let connector =
-                    crate::source::hls_pull::HlsPullSource::new(name.clone(), url.clone())
-                        .with_auth(auth.as_ref().map(crate::config::AuthSpec::to_credentials));
-                tokio::spawn(supervise(
-                    connector,
-                    store,
-                    target_duration_secs,
-                    part_target_ms,
-                    Backoff::production_default(),
-                    name.clone(),
-                    shutdown_rx,
-                ))
-            }
-            crate::config::InputSpec::DashPull { url, auth } => {
-                let connector =
-                    crate::source::dash_pull::DashPullSource::new(name.clone(), url.clone())
-                        .with_auth(auth.as_ref().map(crate::config::AuthSpec::to_credentials));
-                tokio::spawn(supervise(
-                    connector,
-                    store,
-                    target_duration_secs,
-                    part_target_ms,
-                    Backoff::production_default(),
-                    name.clone(),
-                    shutdown_rx,
-                ))
-            }
-            crate::config::InputSpec::SmoothPull { url, auth } => {
-                let connector =
-                    crate::source::smooth_pull::SmoothPullSource::new(name.clone(), url.clone())
-                        .with_auth(auth.as_ref().map(crate::config::AuthSpec::to_credentials));
-                tokio::spawn(supervise(
-                    connector,
-                    store,
-                    target_duration_secs,
-                    part_target_ms,
-                    Backoff::production_default(),
-                    name.clone(),
-                    shutdown_rx,
-                ))
             }
             crate::config::InputSpec::Rtmp {
                 listen,

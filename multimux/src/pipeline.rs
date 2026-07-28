@@ -37,44 +37,17 @@ pub trait SampleSource {
     async fn next_samples(&mut self) -> Result<Option<Vec<(u32, Sample)>>>;
 }
 
-// `rtsp`, `rtp_udp`, `ts_udp`, `ts_http`, `srt` no longer implement `SampleSource` — they were
-// ported onto `media_plane::ingress::{Dialer, IngestSession}` at plan step
-// 5a (see their own modules' `run_rtsp`/`run_rtp_udp`/`run_ts_udp`), which
-// publish straight into a `media_plane::Trunk` rather than through this
-// trait. `crate::origin::supervisor`/`crate::origin::mod::serve_with_registry`
-// still reference the old `SourceConnector`/`run_pipeline` shape for these
-// three (and for every not-yet-ported source below) pending step 5b's
-// `MediaStore` replacement — see this crate's CHANGELOG.
-
-impl SampleSource for crate::source::hls_pull::HlsPullSession {
-    fn track_specs(&self) -> Vec<TrackSpec> {
-        crate::source::hls_pull::HlsPullSession::track_specs(self)
-    }
-
-    async fn next_samples(&mut self) -> Result<Option<Vec<(u32, Sample)>>> {
-        crate::source::hls_pull::HlsPullSession::next_samples(self).await
-    }
-}
-
-impl SampleSource for crate::source::dash_pull::DashPullSession {
-    fn track_specs(&self) -> Vec<TrackSpec> {
-        crate::source::dash_pull::DashPullSession::track_specs(self)
-    }
-
-    async fn next_samples(&mut self) -> Result<Option<Vec<(u32, Sample)>>> {
-        crate::source::dash_pull::DashPullSession::next_samples(self).await
-    }
-}
-
-impl SampleSource for crate::source::smooth_pull::SmoothPullSession {
-    fn track_specs(&self) -> Vec<TrackSpec> {
-        crate::source::smooth_pull::SmoothPullSession::track_specs(self)
-    }
-
-    async fn next_samples(&mut self) -> Result<Option<Vec<(u32, Sample)>>> {
-        crate::source::smooth_pull::SmoothPullSession::next_samples(self).await
-    }
-}
+// `rtsp`, `rtp_udp`, `ts_udp`, `ts_http`, `srt` (step 5a round 2) and
+// `hls_pull`, `dash_pull`, `smooth_pull` (step 5a round 3) no longer
+// implement `SampleSource` — they were ported onto
+// `media_plane::ingress::{Dialer, IngestSession}` (see their own modules'
+// `run_rtsp`/`run_rtp_udp`/`run_ts_udp`/`run_ts_http`/`run_srt_caller`/
+// `run_hls_pull`/`run_dash_pull`/`run_smooth_pull`), which publish straight
+// into a `media_plane::Trunk` rather than through this trait.
+// `crate::origin::supervisor`/`crate::origin::serve_with_registry` still
+// reference the old `SourceConnector`/`run_pipeline` shape for `rtmp` (the
+// one source not yet ported) pending step 5b's `MediaStore` replacement —
+// see this crate's CHANGELOG.
 
 impl SampleSource for crate::source::rtmp::RtmpSession {
     fn track_specs(&self) -> Vec<TrackSpec> {
