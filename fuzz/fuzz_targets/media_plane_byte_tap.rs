@@ -41,6 +41,10 @@ fuzz_target!(|data: &[u8]| {
                 Some(TapItem::Data(_, _)) => observed += 1,
                 Some(TapItem::Lagged { skipped }) => observed += skipped,
                 None => {}
+                // `TapItem` is `#[non_exhaustive]`: a future loss class must
+                // not silently break this target's observed==recorded
+                // accounting by being counted as nothing.
+                Some(other) => panic!("unhandled TapItem variant: {other:?}"),
             }
         }
     }
@@ -50,6 +54,7 @@ fuzz_target!(|data: &[u8]| {
         match item {
             TapItem::Data(_, _) => observed += 1,
             TapItem::Lagged { skipped } => observed += skipped,
+            other => panic!("unhandled TapItem variant: {other:?}"),
         }
     }
     assert_eq!(
