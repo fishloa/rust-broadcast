@@ -16,7 +16,7 @@
 //! `poll() -> Option<Action>` out, `on_playlist`/`on_resource` in — which is
 //! exactly the [`IngestSession::Request`]/`Stage::In` shape round 3 added.
 //! This module is now the *other* adapter over the same sans-IO engine,
-//! parallel to `TokioClient`, driven by [`IngestDriver`] instead of a bespoke
+//! parallel to `TokioClient`, driven by [`media_plane::ingress::IngestDriver`] instead of a bespoke
 //! `connect`/`next_samples` pair — so the actual LL-HLS logic (reload
 //! scheduling, part/segment dedup, fMP4/classic-TS demux) is still owned
 //! entirely by `ll-hls-runtime`, never duplicated here.
@@ -29,14 +29,14 @@
 //! (the first `Output::Init`, exactly like the pre-5a `wait_for_init`, just
 //! reached by feeding responses through the ordinary pump instead of an
 //! `async fn` polling loop before the session is ever returned). Until then
-//! [`IngestDriver::health`] reports `Establishing`, bounded by the same
+//! [`media_plane::ingress::IngestDriver::health`] reports `Establishing`, bounded by the same
 //! [`HandshakePolicy`] every other ported source uses — no bespoke
 //! `IngestTimeouts::connect` wrapper is needed any more.
 //!
 //! # Correlating a fetch response: `HlsFetchId`
 //!
 //! `LlHlsClient::on_playlist` and `on_resource` are two different methods,
-//! but [`IngestSession::In`] is one type. [`HlsFetchId`] is this session's own
+//! but a `Stage::In` is one type. [`HlsFetchId`] is this session's own
 //! (opaque to `media-plane`) request/response identity — `Playlist` for the
 //! one method, `Resource(id)` wrapping [`ResourceId`] for the other — chosen
 //! entirely by this module; the plane never sees it.
@@ -163,8 +163,8 @@ pub struct HlsIngestSession {
     program_announced: bool,
     /// `Output::EndOfStream` reached: the origin's `#EXT-X-ENDLIST` was seen
     /// and every fetch it named is accounted for. Read by [`run_hls_pull`]
-    /// via [`IngestDriver::session`] to decide when to call
-    /// [`IngestDriver::finish`] — see that method's docs for why this can't
+    /// via [`media_plane::ingress::IngestDriver::session`] to decide when to call
+    /// [`media_plane::ingress::IngestDriver::finish`] — see that method's docs for why this can't
     /// be a [`SessionEvent`] instead.
     ended: bool,
 }
@@ -327,7 +327,7 @@ fn build_client(route: &HlsPullRoute) -> Result<(HttpClient, Url, Option<Credent
 }
 
 /// Drives `route` to completion: dial (no I/O), then pump
-/// [`IngestDriver::poll_transmit`] → fetch → [`IngestDriver::feed`] until the
+/// [`media_plane::ingress::IngestDriver::poll_transmit`] → fetch → [`media_plane::ingress::IngestDriver::feed`] until the
 /// origin's playlist reports end-of-stream or a fetch fails outright — the
 /// new drive loop, replacing the pre-5a `HlsPullSource::connect`/
 /// `HlsPullSession::next_samples` pair (and their `TokioClient` wrapper).

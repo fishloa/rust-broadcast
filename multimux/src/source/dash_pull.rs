@@ -15,10 +15,10 @@
 //! The pre-port `DashPullSession::maybe_refresh_mpd` buried a wall-clock
 //! `Instant::elapsed` + `tokio::time::sleep` inside what was nominally a
 //! "compute the next samples" step — a sans-IO session that sleeps
-//! internally is not sans-IO. [`DashIngestSession::next_deadline`] now
+//! internally is not sans-IO. `Stage::next_deadline` now
 //! *reports* when a live-MPD refresh is due (as an absolute [`Timestamp`] on
 //! the driver's own clock, exactly like [`HandshakePolicy::establish_by`]),
-//! and [`DashIngestSession::on_deadline`] — called by [`run_dash_pull`] once
+//! and `Stage::on_deadline` — called by [`run_dash_pull`] once
 //! that time has passed — is what turns it into a real
 //! `DashAction::FetchMpd` request. The session never reads a clock or sleeps;
 //! [`run_dash_pull`]'s own loop is the only place time is observed or waited
@@ -61,9 +61,8 @@
 //! Each Representation's init segment is an independent CMAF file, so its
 //! `moov` typically assigns the same local track_id (`1`) regardless of
 //! which Representation it is. Global ids are assigned once every
-//! Representation's init has resolved (not as each arrives — see
-//! [`DashIngestSession::finish_awaiting_inits`]), walking Representations in
-//! their fixed MPD order, so the assignment is deterministic regardless of
+//! Representation's init has resolved (not as each arrives), walking
+//! Representations in their fixed MPD order, so the assignment is deterministic regardless of
 //! which Representation's init happens to complete its fetch first (they are
 //! now fetched concurrently, unlike the pre-port sequential `do_connect`).
 //!
@@ -395,13 +394,11 @@ impl DashIngestSession {
             });
         }
         self.phase = Phase::AwaitingInits(reps);
-        self.pending_events.push_back(SessionEvent::Established);
-        // NewProgram is queued once every rep's init has arrived — see
-        // `finish_awaiting_inits`; nothing more to do here.
-        // (Established is queued now: the *connection* is up the moment the
-        // MPD parses, matching the byte-stream sources' "no media-level
-        // handshake to negotiate" precedent -- see `ts_program`'s doc.)
-        self.pending_events.pop_back(); // placeholder removed below
+        // `Established` is queued the moment the MPD parses: the *connection*
+        // is up, and there is no media-level handshake left to negotiate --
+        // the byte-stream sources' precedent (see `ts_program`'s module doc).
+        // `NewProgram` waits until every Representation's init has arrived,
+        // because only then are the global track ids assignable.
         self.pending_events.push_back(SessionEvent::Established);
         Ok(())
     }
@@ -796,9 +793,9 @@ fn build_client(route: &DashPullRoute) -> Result<(HttpClient, Url, Option<Creden
 /// Drives `route` to completion: dial (no I/O), then pump `poll_transmit` →
 /// fetch → `feed` until a static MPD's every Representation is exhausted, or
 /// a hard fetch failure occurs. A dynamic MPD never ends on its own (matches
-/// the pre-port module). A tolerated `404` (see [`FetchOutcome::NotReady`])
-/// is retried by this loop directly, after [`SEGMENT_RETRY_DELAY`], without
-/// ever calling into the session.
+/// the pre-port module). A live-edge `404` that this loop tolerates (a
+/// dynamic MPD's not-yet-available segment) is retried by this loop directly,
+/// after a fixed short delay, without ever calling into the session.
 pub async fn run_dash_pull(
     route: &DashPullRoute,
     trunk_config: TrunkConfig,

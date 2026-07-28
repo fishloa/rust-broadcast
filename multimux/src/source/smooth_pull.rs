@@ -22,22 +22,20 @@
 //! init segment's `moov` for [`Fmp4Demux::unpackage`] to absorb its samples
 //! at all. [`SmoothIngestSession`] resolves this exactly as the pre-port
 //! module did: fetch each stream's *first* fragment and peek its
-//! `moof`/`tfhd@track_ID` directly ([`discover_moof_track_id`], no `moov`
-//! needed), then build that stream's synthesized init segment with the same
-//! track id. Unlike the pre-port module, that first fragment's samples are
-//! demuxed and emitted immediately once every stream's first fragment has
-//! resolved (see [`SmoothIngestSession::finish_awaiting_first_fragments`]),
-//! rather than being cached and replayed on the caller's first poll — a
+//! `moof`/`tfhd@track_ID` directly (no `moov` needed), then build that
+//! stream's synthesized init segment with the same track id. Unlike the
+//! pre-port module, that first fragment's samples are demuxed and emitted
+//! immediately once every stream's first fragment has resolved, rather than
+//! being cached and replayed on the caller's first poll — a
 //! simplification the sans-IO restructure enables, not a duplicate of
 //! anything the `Trunk` holds (see the module's DASH counterpart for that
 //! judgement, repeated verbatim here).
 //!
 //! # Round 3: the in-read-path sleep is gone
 //!
-//! Exactly like `dash_pull`'s own round-3 fix: [`SmoothIngestSession::next_deadline`]/
-//! [`SmoothIngestSession::on_deadline`] report/act on when a live-manifest
-//! refresh is due; [`run_smooth_pull`] is the only place a clock is read or a
-//! sleep awaited.
+//! Exactly like `dash_pull`'s own round-3 fix: `Stage::next_deadline`/
+//! `Stage::on_deadline` report/act on when a live-manifest refresh is due;
+//! [`run_smooth_pull`] is the only place a clock is read or a sleep awaited.
 //!
 //! # Video sample-duration clock (v1-scope convention)
 //!

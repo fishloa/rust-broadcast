@@ -747,7 +747,7 @@ impl<S: IngestSession> IngestDriver<S> {
     /// Feed more input read from this session's connection — a handshake
     /// response while [`HealthState::Establishing`], media once
     /// [`HealthState::Live`]; the same call either way. Generic over
-    /// [`IngestSession::In`] (round 3: no longer pinned to `&[u8]`) so a pull
+    /// `Stage::In` (round 3: no longer pinned to `&[u8]`) so a pull
     /// source can feed its own `(id, bytes)` response shape through the same
     /// method a byte-stream source feeds raw bytes through — see
     /// [the module docs](self#pull-sources-need-a-typed-requestresponse-identity-round-3).
@@ -1191,7 +1191,7 @@ impl<L: Listener> ListenDriver<L> {
     /// `Live`) after this call.
     ///
     /// Pinned to `&[u8]` (unlike [`IngestDriver::feed`], generic over
-    /// [`IngestSession::In`] since round 3): every [`Listener`] implementor
+    /// `Stage::In` since round 3): every [`Listener`] implementor
     /// today is a push accept over a byte-stream transport (RTMP/SRT
     /// listener), never a pull source (a pull source dials out via
     /// [`Dialer`], it does not accept — see `multimux::source::srt`'s "Why
