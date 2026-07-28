@@ -337,6 +337,8 @@ impl Stage for RtspIngestSession {
 }
 
 impl IngestSession for RtspIngestSession {
+    type Request = Bytes;
+
     fn poll_transmit(&mut self) -> Option<Bytes> {
         self.outbound.pop_front()
     }

@@ -212,7 +212,9 @@ impl Stage for RtpUdpIngestSession {
     }
 }
 
-impl IngestSession for RtpUdpIngestSession {}
+impl IngestSession for RtpUdpIngestSession {
+    type Request = bytes::Bytes;
+}
 
 /// Extracts the RTP payload-type field (RFC 3550 §5.1, header byte 1 bits
 /// `[6:0]`) from a wire packet, or `None` if it's too short to even carry a

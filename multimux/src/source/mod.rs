@@ -35,6 +35,26 @@ use std::time::Duration;
 /// over IPv4), so a single `recv` always captures a whole datagram.
 pub const MAX_TS_READ: usize = 65_536;
 
+/// Hard cap on concurrently in-flight HTTP fetches a pull source
+/// (`hls_pull`/`dash_pull`/`smooth_pull`, plan step 5a round 3) keeps open at
+/// once.
+///
+/// A pull source's sans-IO session can hand back many `poll_transmit`
+/// requests in one drain — an LL-HLS playlist reload can reveal a dozen
+/// already-available parts at once; a DASH/Smooth manifest refresh can extend
+/// several Representations'/StreamIndexes' plans simultaneously — with
+/// nothing in the session itself limiting how many the driver launches as
+/// concurrent requests. This project has already shipped five
+/// unbounded-allocation vectors in code driven by remote input (see
+/// `media_plane::ingress`'s own `max_programs`/`max_sessions` docs); an
+/// uncapped fan-out of concurrent fetches against a single origin is exactly
+/// that class of bug (a hostile or malformed playlist/manifest could turn one
+/// route into an unbounded number of open sockets), so each pull source's own
+/// tokio drive loop launches at most this many fetches at once, queuing the
+/// rest until a slot frees up — never blocking the sans-IO session from
+/// producing more requests, only how many the IO side acts on concurrently.
+pub const MAX_INFLIGHT_FETCHES: usize = 8;
+
 use transmux::pipeline::CodecConfig;
 use transmux::rtp::RtpMediaKind;
 

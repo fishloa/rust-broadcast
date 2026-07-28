@@ -109,7 +109,9 @@ impl TsIngestSession {
 
 /// Takes the default `poll_transmit` (nothing to send -- this is a replayed
 /// capture, not a live handshake).
-impl IngestSession for TsIngestSession {}
+impl IngestSession for TsIngestSession {
+    type Request = bytes::Bytes;
+}
 
 fn nz(n: usize) -> NonZeroUsize {
     NonZeroUsize::new(n).expect("literal capacity is non-zero")

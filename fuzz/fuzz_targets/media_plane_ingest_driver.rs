@@ -86,7 +86,9 @@ impl Stage for FuzzSession {
 }
 
 /// Takes the default `poll_transmit` (nothing to send).
-impl IngestSession for FuzzSession {}
+impl IngestSession for FuzzSession {
+    type Request = Bytes;
+}
 
 fn nz(n: usize) -> NonZeroUsize {
     NonZeroUsize::new(n).unwrap()

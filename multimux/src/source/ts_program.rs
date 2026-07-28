@@ -218,8 +218,12 @@ impl Stage for TsIngestSession {
 }
 
 /// Nothing to send back on any of the three TS transports — takes the
-/// default `poll_transmit`.
-impl IngestSession for TsIngestSession {}
+/// default `poll_transmit`. `Request = Bytes` (media-plane round 3: every
+/// `IngestSession` now names its own request type; a byte-stream source
+/// always names `Bytes`, whether or not it ever actually sends one).
+impl IngestSession for TsIngestSession {
+    type Request = bytes::Bytes;
+}
 
 /// Shared test fixtures for the three TS transports — a real `TsMux`-muxed
 /// byte stream plus the `TrunkConfig`/`HandshakePolicy` each transport's

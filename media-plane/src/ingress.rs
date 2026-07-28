@@ -17,23 +17,34 @@
 //!
 //! # `IngestSession` is a `Stage`, matching `ByteStage`'s precedent
 //!
-//! Exactly like [`crate::ByteStage`], `IngestSession` is not a new drive
-//! trait — it is a blanket specialisation of [`broadcast_common::Stage`]
-//! whose input is a borrowed byte slice and whose output is [`SessionEvent`]:
+//! Like [`crate::ByteStage`], `IngestSession` builds on
+//! [`broadcast_common::Stage`] — but, unlike `ByteStage`, it is not a bare
+//! blanket alias over it. Only the output is pinned:
 //!
 //! ```text
-//! pub trait IngestSession: for<'a> Stage<In<'a> = &'a [u8], Out = SessionEvent> + Send { .. }
+//! pub trait IngestSession: for<'a> Stage<Out = SessionEvent> + Send {
+//!     type Request: Send;
+//!     fn poll_transmit(&mut self) -> Option<Self::Request> { None }
+//! }
 //! ```
 //!
-//! This buys the same three things `ByteStage` documents: one drive model
-//! for the whole plane, `finish()` for a clean end-of-input flush, and
-//! `demand()` for back-pressure — plus it means [`run_dial`]/[`run_listen`]
-//! (below) can drive an `IngestSession` with the exact same "feed, drain
-//! `poll()`, repeat" loop [`crate::byte_stage`]'s own tests already validate
-//! against a real `Stage`. The one addition over the bare blanket ([`ByteStage`]
-//! adds nothing) is [`IngestSession::poll_transmit`], with a `None`-returning
-//! default so the blanket impl still applies to every `Stage` for free — see
-//! [Why `poll_transmit` exists](#why-poll_transmit-exists-and-most-sources-will-never-override-it) below.
+//! `Stage::In<'a>` is deliberately **not** pinned to `&'a [u8]` (round 3;
+//! it was through round 2) — see
+//! [Pull sources need a typed request/response identity](#pull-sources-need-a-typed-requestresponse-identity-round-3)
+//! below for why. This still buys the same things `ByteStage` documents for
+//! the byte-stream sources that make up most of the plane: one drive model,
+//! `finish()` for a clean end-of-input flush, and `demand()` for
+//! back-pressure — [`run_dial`]/[`run_listen`] drive any `IngestSession` with
+//! the same "feed, drain `poll()`, repeat" loop
+//! [`crate::byte_stage`]'s own tests already validate against a real `Stage`,
+//! whatever `In<'a>` an implementor chooses. The two things every
+//! `IngestSession` adds over a bare `Stage` are
+//! [`poll_transmit`](Self::poll_transmit) (with a `None`-returning default —
+//! see
+//! [Why `poll_transmit` exists](#why-poll_transmit-exists-and-most-sources-will-never-override-it)
+//! below) and [`Request`](Self::Request) (with **no** default — every
+//! implementor names its own request type explicitly; see the pull-sources
+//! section below for why it has none).
 //!
 //! [`ByteStage`]: crate::ByteStage
 //!
@@ -268,30 +279,60 @@
 //! the session knows how much partial handshake state it is legitimately
 //! holding.
 //!
-//! # Known seam: pull sources (HLS/DASH/Smooth) are request-driven, not
-//! stream-driven
+//! # Pull sources need a typed request/response identity (round 3)
 //!
-//! Recorded, not solved — it is a Step 5 decision and belongs in front of a
-//! human. `multimux`'s `hls_pull`/`dash_pull`/`smooth_pull` sources are not
-//! continuous byte streams: they fetch a playlist/manifest on a reload timer,
-//! compute segment URLs, and GET whole objects. Two observations:
+//! Round 2 recorded this as a seam and stopped, deliberately, with no caller
+//! yet to design against. Round 3 has the caller —
+//! `multimux::source::{hls_pull, dash_pull, smooth_pull}` — and resolves it.
 //!
-//! - **`feed(&[u8])` itself is *not* the problem.** `Stage`'s contract says
-//!   nothing about chunk size and explicitly decouples `poll` from `feed`, so
-//!   handing one whole downloaded segment body to `feed` is entirely within
-//!   contract — no different from a 1316-byte UDP datagram except in size.
-//! - **`poll_transmit() -> Option<Bytes>` *is* the real gap.** It expresses
-//!   "send these bytes on the connection you already have", which is right for
-//!   RTSP/RTMP/SRT but cannot express "issue a GET for *this URL*". A pull
-//!   source's scheduling need is otherwise already covered by the machinery
-//!   above: [`Stage::next_deadline`]/[`Stage::on_deadline`] *is* a playlist
-//!   reload timer, and the establishment pump *is* a request/response loop.
+//! The seam was correctly diagnosed back then: **`feed` was never the
+//! problem.** `Stage`'s contract says nothing about chunk size and explicitly
+//! decouples `poll` from `feed`, so handing one whole downloaded segment body
+//! to `feed` is entirely within contract — no different from a 1316-byte UDP
+//! datagram except in size. **`poll_transmit() -> Option<Bytes>` was the real
+//! gap**: it expresses "send these bytes on the connection you already have",
+//! right for RTSP/RTMP/SRT, but it cannot express "issue a GET for *this
+//! URL*", and there is no way to route an arriving response back to the
+//! request it answers when several are outstanding at once and they can
+//! complete out of order.
 //!
-//! So the missing piece looks like a request-*addressing* type (a
-//! `Transmit`-style enum carrying either raw bytes or a URL + method), not a
-//! second drive model or a pull-shaped sibling trait. Adding one now would be
-//! speculative — no caller exists until Step 5 ports those three sources —
-//! so this module states the seam and stops.
+//! Two shapes were considered for closing it:
+//!
+//! 1. **A per-source pull method**, sitting next to `feed` rather than
+//!    replacing it (e.g. `IngestSession::feed_response(id, bytes)`).
+//!    Rejected: it would make `feed(&[u8])` itself unreachable for a pull
+//!    session (nothing ever calls it — every real input arrives through the
+//!    new method instead) while `IngestSession: Stage<In<'a> = &'a [u8]>`
+//!    still advertises that `feed` as the way in. **A session whose `feed`
+//!    is never called, with every real input arriving out-of-band, is a type
+//!    that lies about the contract it implements.** That is not a style
+//!    objection — it means the trait bound stops meaning what it says for
+//!    exactly the implementors that need the escape hatch, which defeats the
+//!    point of having one drive contract for the whole plane.
+//! 2. **An `Inbound` enum** (`enum Inbound<'a> { Bytes(&'a [u8]), Response {
+//!    id: ResourceId, bytes: &'a [u8] } }`) as the one fixed `In<'a>` every
+//!    `IngestSession` uses. Rejected too: it forces every stream source
+//!    (RTSP/RTMP/SRT/TS-*) to match a `Response` variant that can never occur
+//!    for it, and it bakes pull vocabulary (`ResourceId`) into `media-plane`
+//!    itself — this crate would then need to know what a *resource* is, which
+//!    is exactly the kind of protocol knowledge the plane exists to stay free
+//!    of (`ResourceId`/`Action` belong to `ll-hls-runtime`, and the analogous
+//!    DASH/Smooth identities belong to `multimux`, not here).
+//!
+//! What round 3 actually did: relax `Stage::In<'a>`'s pin (it is no longer
+//! `&'a [u8]`, only `Out = SessionEvent` is pinned) and add
+//! [`IngestSession::Request`], an opaque associated type with **no default**.
+//! A byte-stream source states `type In<'a> = &'a [u8]; type Request =
+//! Bytes;` — one extra line, no behaviour change (see
+//! `multimux::source::ts_program::TsIngestSession`). A pull source states its
+//! own honest shape instead — e.g. `type In<'a> = (HlsResourceId, &'a [u8]);
+//! type Request = ll_hls_runtime::client::Action;` — and correlates an
+//! arriving response to the request that caused it via whatever identity type
+//! it chose, entirely inside its own `feed`. The plane never sees a
+//! `ResourceId` or an `Action`; it only ever sees "some `S::In<'_>` went in,
+//! some `Option<S::Request>` came out", which is the same shape `feed`/
+//! `poll_transmit` always had, just no longer forced to agree on `&[u8]`
+//! across every implementor.
 //!
 //! # Reconnect: caller-chosen backoff, never a hardcoded sleep
 //!
@@ -313,6 +354,10 @@ use std::num::NonZeroUsize;
 use std::sync::Arc;
 
 use broadcast_common::{Stage, Timestamp};
+// Only the test-only `Bytes`-`Request` sessions below reference this type
+// directly now: since round 3, `IngestSession::Request` is generic, so
+// production code in this module no longer names `Bytes` itself.
+#[cfg(test)]
 use bytes::Bytes;
 use transmux::{Sample, TrackSpec};
 
@@ -420,37 +465,66 @@ pub enum SessionEvent {
 }
 
 /// The sans-IO ingress drive contract: a specialisation of [`Stage`] whose
-/// input is a borrowed byte slice and whose output is [`SessionEvent`] — see
+/// output is [`SessionEvent`] — see
 /// [the module docs](self#ingestsession-is-a-stage-matching-bytestages-precedent).
+/// `Stage::In<'a>` is **not** pinned here (round 3 relaxed it from `&'a
+/// [u8]`) — see
+/// [Pull sources need a typed request/response identity](self#pull-sources-need-a-typed-requestresponse-identity-round-3)
+/// for why: a byte-stream source still states `type In<'a> = &'a [u8]`, but a
+/// pull source (HLS/DASH/Smooth) states its own request/response identity
+/// instead.
 ///
 /// # Why this is explicitly implemented, unlike [`crate::ByteStage`]
 ///
 /// `ByteStage` gets a blanket `impl<T> ByteStage for T where T: Stage<…>`
 /// because it adds **nothing** to `Stage` — it is a pure alias, so a blanket
 /// impl costs nothing and saves every implementor a line. `IngestSession`
-/// adds [`poll_transmit`](Self::poll_transmit), which has a default. A blanket
-/// impl here would make that default **impossible to override** (the blanket
-/// would already be the one impl for every type, and a second manual impl
-/// would collide), quietly breaking the handshake mechanism it exists for.
-/// So implementors write one extra line — `impl IngestSession for MySession {}`
-/// to accept the default, or a real body to send bytes. This asymmetry is
-/// deliberate and is the reason it is documented rather than "fixed".
-pub trait IngestSession: for<'a> Stage<In<'a> = &'a [u8], Out = SessionEvent> + Send {
-    /// Outbound bytes this session wants written to its peer.
+/// adds [`poll_transmit`](Self::poll_transmit) (which has a default) and
+/// [`Request`](Self::Request) (which, being an associated type, cannot have
+/// one). A blanket impl here would make `poll_transmit`'s default
+/// **impossible to override** (the blanket would already be the one impl for
+/// every type, and a second manual impl would collide), quietly breaking the
+/// handshake mechanism it exists for — and could not exist at all once
+/// `Request` has no default value to blanket-supply. So implementors write at
+/// least one extra line — `type Request = Bytes;` for every byte-stream
+/// source, plus a real `poll_transmit` body for the two or three that send
+/// back. This asymmetry with `ByteStage` is deliberate and is the reason it
+/// is documented rather than "fixed".
+pub trait IngestSession: for<'a> Stage<Out = SessionEvent> + Send {
+    /// What [`poll_transmit`](Self::poll_transmit) hands back — opaque to the
+    /// plane, deliberately: see
+    /// [the module docs](self#pull-sources-need-a-typed-requestresponse-identity-round-3)
+    /// for why this is not a fixed enum. A byte-stream source (RTSP/RTMP/SRT/
+    /// TS-*) sets this to [`Bytes`]; a pull source sets it to its own
+    /// protocol's action type (e.g. `ll_hls_runtime::client::Action`).
     ///
-    /// Two uses, one mechanism: the **handshake** requests that establish the
-    /// session (an RTSP `DESCRIBE`, then `SETUP`, then `PLAY` — see
+    /// No default: unlike `poll_transmit`, there is no value every
+    /// implementor could reasonably start from, so every `IngestSession`
+    /// names its own type explicitly, one line, even the sessions that never
+    /// override `poll_transmit`'s body.
+    type Request: Send;
+
+    /// The next outbound request this session wants performed — bytes
+    /// written to an already-open connection, or (for a pull source) a
+    /// fetch/wait action for the driver to carry out.
+    ///
+    /// Two uses of the byte-stream case, one mechanism: the **handshake**
+    /// requests that establish the session (an RTSP `DESCRIBE`, then `SETUP`,
+    /// then `PLAY` — see
     /// [Establishment is ordinary driving](self#establishment-is-ordinary-driving--dial-performs-no-io)),
     /// and in-session traffic afterwards (RTCP receiver reports, an RTSP
     /// keepalive `OPTIONS`, an SRT ACK). This is exactly what
     /// `rtsp_runtime::client::ClientSession`'s request builders return, only
-    /// pulled rather than returned.
+    /// pulled rather than returned. A pull source's own [`Request`](Self::Request)
+    /// plays the identical role in its own protocol — see e.g.
+    /// `ll_hls_runtime::client::Action`, returned unchanged through this
+    /// method by an HLS-pull `IngestSession`.
     ///
     /// A driver drains this in a loop after every
     /// [`Stage::feed`]/[`Stage::on_deadline`] (and once immediately after
     /// [`Dialer::dial`], to send the first handshake request), exactly like
     /// [`Stage::poll`]. A session with nothing to send never overrides it.
-    fn poll_transmit(&mut self) -> Option<Bytes> {
+    fn poll_transmit(&mut self) -> Option<Self::Request> {
         None
     }
 }
@@ -670,11 +744,16 @@ impl<S: IngestSession> IngestDriver<S> {
         self.refused_programs
     }
 
-    /// Feed more bytes read from this session's connection — a handshake
+    /// Feed more input read from this session's connection — a handshake
     /// response while [`HealthState::Establishing`], media once
-    /// [`HealthState::Live`]; the same call either way. A no-op once the
-    /// session has reached a terminal state — it is never fed again.
-    pub fn feed(&mut self, input: &[u8], now: Timestamp) {
+    /// [`HealthState::Live`]; the same call either way. Generic over
+    /// [`IngestSession::In`] (round 3: no longer pinned to `&[u8]`) so a pull
+    /// source can feed its own `(id, bytes)` response shape through the same
+    /// method a byte-stream source feeds raw bytes through — see
+    /// [the module docs](self#pull-sources-need-a-typed-requestresponse-identity-round-3).
+    /// A no-op once the session has reached a terminal state — it is never
+    /// fed again.
+    pub fn feed<'a>(&mut self, input: S::In<'a>, now: Timestamp) {
         if !self.health.is_running() {
             return;
         }
@@ -720,9 +799,10 @@ impl<S: IngestSession> IngestDriver<S> {
         }
     }
 
-    /// Drain outbound bytes the session wants sent to its peer — handshake
-    /// requests included. See [`IngestSession::poll_transmit`].
-    pub fn poll_transmit(&mut self) -> Option<Bytes> {
+    /// Drain the next outbound request the session wants performed —
+    /// handshake requests included, and (for a pull source) a fetch/wait
+    /// action. See [`IngestSession::poll_transmit`]/[`IngestSession::Request`].
+    pub fn poll_transmit(&mut self) -> Option<S::Request> {
         self.session.poll_transmit()
     }
 
@@ -768,6 +848,23 @@ impl<S: IngestSession> IngestDriver<S> {
     /// Every program this session has announced so far.
     pub fn programs(&self) -> impl Iterator<Item = ProgramId> + '_ {
         self.programs.keys().copied()
+    }
+
+    /// Read-only access to the underlying session — for state a driver loop
+    /// needs to observe beyond what [`SessionEvent`]/[`HealthState`] already
+    /// expose. Concretely: a pull source (HLS/DASH/Smooth) knows it has
+    /// reached true end-of-stream (the origin's playlist/manifest said so
+    /// *and* every outstanding fetch it named is accounted for) entirely from
+    /// its own protocol bookkeeping — unlike a byte-stream transport, whose
+    /// "ended" signal is external (the HTTP body closed, the socket peer
+    /// disconnected) and therefore already known to the driver loop without
+    /// reaching in here at all. `SessionEvent` deliberately has no `Ended`
+    /// variant to carry that (see its own doc's "no field/variant without a
+    /// correct producer" discipline), so a pull source's own inherent
+    /// accessor (e.g. `HlsIngestSession::ended`) is what a driver loop reads
+    /// to decide when to call [`Self::finish`].
+    pub fn session(&self) -> &S {
+        &self.session
     }
 
     /// Drain every ready [`SessionEvent`], dispatching each into its
@@ -1092,12 +1189,23 @@ impl<L: Listener> ListenDriver<L> {
     /// (its slot is free for a future [`Self::poll_accept`]); returns `None`
     /// for an unknown `id` or a session still running (`Establishing` or
     /// `Live`) after this call.
+    ///
+    /// Pinned to `&[u8]` (unlike [`IngestDriver::feed`], generic over
+    /// [`IngestSession::In`] since round 3): every [`Listener`] implementor
+    /// today is a push accept over a byte-stream transport (RTMP/SRT
+    /// listener), never a pull source (a pull source dials out via
+    /// [`Dialer`], it does not accept — see `multimux::source::srt`'s "Why
+    /// listener mode is not a `Listener` yet"), so there is no caller needing
+    /// anything else here yet.
     pub fn feed(
         &mut self,
         id: SessionId,
         input: &[u8],
         now: Timestamp,
-    ) -> Option<HealthState<<L::Session as Stage>::Error>> {
+    ) -> Option<HealthState<<L::Session as Stage>::Error>>
+    where
+        L::Session: for<'a> Stage<In<'a> = &'a [u8]>,
+    {
         self.drive(id, |d| d.feed(input, now))
     }
 
@@ -1292,7 +1400,9 @@ mod tests {
     }
 
     /// Nothing to send: takes `poll_transmit`'s default.
-    impl IngestSession for ScriptedSession {}
+    impl IngestSession for ScriptedSession {
+        type Request = Bytes;
+    }
 
     /// A fake [`Dialer`] yielding one pre-built session then erroring on
     /// every call after (or always erroring, for the reconnect test).
@@ -1911,6 +2021,8 @@ mod tests {
     /// The handshake's outbound side: this is the *only* way a request leaves
     /// the session — it has no socket to write to.
     impl IngestSession for HandshakeSession {
+        type Request = Bytes;
+
         fn poll_transmit(&mut self) -> Option<Bytes> {
             self.outbound.pop_front()
         }
@@ -2028,6 +2140,8 @@ mod tests {
     }
 
     impl IngestSession for StallingSession {
+        type Request = Bytes;
+
         fn poll_transmit(&mut self) -> Option<Bytes> {
             self.outbound.pop_front()
         }
