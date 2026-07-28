@@ -112,8 +112,11 @@
 //! [`Retention`] is the hot/cold archive policy layered on top of the
 //! segment log — [`Retention::HotOnly`] (the segment log alone) or
 //! [`Retention::Tiered`], where a [`RetentionDriver`] drains a pinning
-//! segment cursor into a caller-supplied, sans-IO [`SegmentSink`] (the
-//! actual disk/object-store adapter is Step 5 territory). See the
+//! segment cursor into a caller-supplied, sans-IO [`SegmentSink`]. The
+//! concrete disk/object-store adapter behind that sink is deliberately **not**
+//! this crate's job — staying sans-IO is what lets the retention engine be
+//! driven and tested without touching a filesystem, so the caller supplies
+//! the IO. See the
 //! [`retention`] module docs for why this reuses [`ArchiveOverrun`] verbatim
 //! rather than inventing a parallel policy, why the pending hand-off queue
 //! is bounded to exactly one in-flight segment, and the "cold, ask the
