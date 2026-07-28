@@ -338,3 +338,67 @@ a datagram plane, like `st2110`.
   raising the supported reader count.
 - **`st377-1` uses `Package`/`Track`/`Sequence` MXF vocabulary** — naming collision with the IR,
   worth one disambiguating sentence.
+
+---
+
+## 8. Reconciling `RouteHandle` with driver-minted `Trunk`s (decided 2026-07-28, issue #805)
+
+### The problem this resolves
+
+Migration (§6) left `multimux` with two ingest architectures rather than one. Eight sources
+(rtsp, rtp, ts_udp, ts_http, srt, hls_pull, dash_pull, smooth_pull) were ported onto
+`Dialer`/`IngestSession` and never wired to a consumer: `serve_with_registry` carried a single
+combined match arm for all eight that logged an error and spawned a no-op. Only `Rtmp` and
+`Custom` reached the old `SourceConnector`-based `supervise`, so the origin ingested exactly
+one protocol. The crate built clean, clippy was clean, and every test passed — each stub was a
+well-typed `tokio::spawn` of a logging future, and nothing in the gate suite asserted that a
+route actually ingests.
+
+The blocking design question is a **lifetime mismatch**: `IngestDriver` mints a `Trunk` per
+program when it sees `SessionEvent::NewProgram`, but a `RouteHandle` is constructed up front,
+before any program is known. Two owners, two creation times, one stream.
+
+### Options considered
+
+- **Shared `Trunk`** — the driver publishes straight into the handle's `Trunk`. Cheapest, but
+  requires the handle to exist before the program is known, and cannot express MPTS (one
+  route, N programs, one handle).
+- **Bridging cursor** — the route subscribes a cursor per driver-minted `Trunk` and
+  republishes. Handles MPTS, but writer cost is O(N) in cursor count (measured: 956 ns at one
+  reader, 9.98 µs at sixteen) and it doubles buffering.
+- **Handle observes the driver's map (CHOSEN)** — `RouteHandle` stops owning a `Trunk` and
+  becomes an egress view over a `ProgramId -> Arc<Trunk>` registry the ingest side publishes
+  into. No copy, no bridge, and MPTS falls out of the data structure rather than being
+  retrofitted onto it.
+
+### Why the third, and why not the cheap one
+
+The faster bridge-into-the-existing-`Trunk` option was explicitly rejected. It would have
+shipped sooner while entrenching the dual architecture — and the dual architecture *is* the
+defect, not an implementation detail of it. Convergence means `SourceConnector` and the old
+`supervise` are deleted and RTMP moves onto the same traits as everything else, so there is
+exactly one path a sample can take from socket to segment.
+
+### Consequences
+
+Egress must handle "no program announced yet" as a distinct state from "no such program" —
+the first is a wait (`EgressResponse::Await`, which egress already models for blocking
+playlist reload), the second a 404. Collapsing them into `Option<Arc<Trunk>>` would make a
+still-connecting route indistinguishable from a typo in a request path, so the resolution
+result is a typed three-case enum.
+
+The registry must not encode a single-program assumption anywhere, even while only
+single-program routes are implemented, or MPTS support becomes a reshaping rather than an
+addition.
+
+### Sequencing
+
+Ordered so the tree stays green and RTMP — the only working input — is never the thing under
+reconstruction:
+
+1. `RouteHandle` gains the registry additively; the owned `Trunk` stays.
+2. A driver-backed supervisor wires the eight dead arms. Inputs go 1/9 → 9/9.
+3. End-to-end per-input ingest tests, closing the hole that let the stubs pass the gates.
+4. RTMP ports onto `Dialer`/`IngestSession`, protected by step 3's tests.
+5. `SourceConnector`, the old `supervise`, and the handle's owned `Trunk` are deleted.
+6. MPTS egress resolution.
