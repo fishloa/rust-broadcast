@@ -798,7 +798,37 @@ mod tests {
             while let Some(a) = driver.poll_transmit() {
                 backlog.push_back(a);
             }
-            let Some(action) = backlog.pop_front() else {
+            // Deliver the init resource FIRST, ahead of any part/segment.
+            //
+            // `LlHlsClient::on_playlist` queues its `FetchResource` actions
+            // segments-first, map-last, and buffers every part/segment that
+            // arrives before the init — replaying the whole batch the instant
+            // the init lands. Delivered in queue order against a fully-known
+            // static playlist, that means *every* sample is emitted by the one
+            // `feed` that also emits `NewProgram`, so the `Trunk` this test
+            // wants to observe is created and filled in the same call and no
+            // cursor can exist in time to see any of it. Reordering is not a
+            // test cheat: `on_resource`'s own docs state fetches may complete
+            // in any order (a real concurrent IO loop routinely finishes the
+            // small init before a large segment), and it is the only ordering
+            // under which a subscriber can observe this fixture at all.
+            let idx = if cursor.is_none() {
+                backlog
+                    .iter()
+                    .position(|a| {
+                        matches!(
+                            a,
+                            Action::FetchResource {
+                                id: ResourceId::Init,
+                                ..
+                            }
+                        )
+                    })
+                    .unwrap_or(0)
+            } else {
+                0
+            };
+            let Some(action) = backlog.remove(idx) else {
                 if driver.session().ended() || tokio::time::Instant::now() >= deadline {
                     break;
                 }

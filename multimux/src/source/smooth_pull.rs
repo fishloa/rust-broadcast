@@ -68,7 +68,7 @@ use tokio::task::JoinSet;
 use transmux::box_types::parse_box;
 use transmux::media::Fmp4Demux;
 use transmux::movie_fragment::MovieFragmentBox;
-use transmux::pipeline::{Sample, TrackSpec, build_init_segment};
+use transmux::pipeline::build_init_segment;
 use transmux::smooth_parse::{
     SmoothManifest, StreamIndex, StreamType, track_spec_from_quality_level,
 };
@@ -207,7 +207,6 @@ struct PendingStream {
 /// One selected stream's live state.
 struct StreamState {
     stream: StreamIndex,
-    stream_type: StreamType,
     bitrate: u64,
     init_bytes: Vec<u8>,
     local_track_id: u32,
@@ -464,7 +463,6 @@ impl SmoothIngestSession {
             first_emits.push((global_id, first_bytes));
             streams.push(StreamState {
                 stream: p.stream,
-                stream_type: p.stream_type,
                 bitrate: p.bitrate,
                 init_bytes,
                 local_track_id,
@@ -1038,7 +1036,7 @@ mod tests {
     use std::collections::HashMap;
     use std::num::NonZeroUsize;
     use std::sync::Arc;
-    use transmux::pipeline::CodecConfig;
+    use transmux::pipeline::{CodecConfig, TrackSpec};
     use transmux::{Media, SmoothOutput, SmoothPackager, TsDemux};
 
     fn nz(n: usize) -> NonZeroUsize {

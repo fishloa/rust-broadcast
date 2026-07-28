@@ -1292,6 +1292,117 @@ mod tests {
         server.abort();
     }
 
+    /// The `Trunk`-side counterpart to [`drive_and_collect`]: drives the same
+    /// route through a real [`media_plane::ingress::IngestDriver`] and asserts
+    /// real samples land on a real [`SampleCursor`].
+    ///
+    /// Unlike `hls_pull`/`smooth_pull`, this one *can* be exact: DASH's
+    /// `NewProgram` is emitted by `finish_awaiting_inits`, which publishes no
+    /// samples of its own (every sample arrives on a later `FetchSegment`
+    /// feed), so a cursor subscribed the moment the `Trunk` appears sees the
+    /// whole stream. Asserted against the same independent oracle as
+    /// [`loopback_dash_pull_yields_real_avc_and_aac_samples`].
+    ///
+    /// MUTATION-CHECKED: removing `writer.publish(..)`'s effect by dropping
+    /// the `Fmp4Demux` feed in `on_segment` makes this stay `0`.
+    #[tokio::test]
+    async fn samples_reach_the_trunk_through_the_ingest_driver() {
+        let (url, server) = start_fixture_server(None, None).await;
+        let route = DashPullRoute::new("dash-trunk", url);
+
+        let want_total = oracle_sample_count(
+            "init-stream0.m4s",
+            &[
+                "chunk-stream0-00001.m4s",
+                "chunk-stream0-00002.m4s",
+                "chunk-stream0-00003.m4s",
+            ],
+        ) + oracle_sample_count(
+            "init-stream1.m4s",
+            &[
+                "chunk-stream1-00001.m4s",
+                "chunk-stream1-00002.m4s",
+                "chunk-stream1-00003.m4s",
+                "chunk-stream1-00004.m4s",
+            ],
+        );
+
+        let (http, clean_url, credentials) = build_client(&route).expect("build client");
+        let mut dialer = DashPullDialer { mpd_url: clean_url };
+        let mut driver = run_dial(
+            &mut dialer,
+            trunk_config(),
+            handshake(),
+            media_plane::DEFAULT_MAX_PROGRAMS,
+        )
+        .expect("dial");
+
+        let mut backlog: VecDeque<DashAction> = VecDeque::new();
+        let mut cursor: Option<SampleCursor> = None;
+        let mut total = 0usize;
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(15);
+        loop {
+            while let Some(a) = driver.poll_transmit() {
+                backlog.push_back(a);
+            }
+            let Some(action) = backlog.pop_front() else {
+                if driver.session().ended() || tokio::time::Instant::now() >= deadline {
+                    break;
+                }
+                tokio::time::sleep(IDLE_POLL_INTERVAL).await;
+                continue;
+            };
+            let now = Timestamp::from_nanos(0);
+            match action {
+                DashAction::FetchMpd { url } => {
+                    if let FetchOutcome::Bytes(b) =
+                        fetch_one(&http, &url, credentials.as_ref(), "mpd", false)
+                            .await
+                            .expect("fetch")
+                    {
+                        driver.feed((DashResourceId::Mpd, b.as_slice()), now);
+                    }
+                }
+                DashAction::FetchInit { rep, url } => {
+                    if let FetchOutcome::Bytes(b) =
+                        fetch_one(&http, &url, credentials.as_ref(), "init", false)
+                            .await
+                            .expect("fetch")
+                    {
+                        driver.feed((DashResourceId::Init(rep), b.as_slice()), now);
+                    }
+                }
+                DashAction::FetchSegment {
+                    rep,
+                    number,
+                    url,
+                    tolerate_404,
+                    ..
+                } => {
+                    if let FetchOutcome::Bytes(b) =
+                        fetch_one(&http, &url, credentials.as_ref(), "segment", tolerate_404)
+                            .await
+                            .expect("fetch")
+                    {
+                        driver.feed((DashResourceId::Segment(rep, number), b.as_slice()), now);
+                    }
+                }
+            }
+            if cursor.is_none() {
+                cursor = driver.trunk(ProgramId(0)).map(|t| t.subscribe());
+            }
+            if let Some(c) = cursor.as_mut() {
+                total += drain(c);
+            }
+        }
+
+        assert_eq!(
+            total, want_total,
+            "every real sample must reach the Trunk through IngestDriver"
+        );
+        server.abort();
+    }
+
     /// The full `run_dash_pull` drive loop against the same fixture: a static
     /// MPD must end cleanly once every Representation's plan is exhausted.
     #[tokio::test]
