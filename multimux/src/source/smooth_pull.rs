@@ -166,6 +166,7 @@ pub struct StreamIdx(pub usize);
 
 /// This session's own request/response identity.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum SmoothResourceId {
     Manifest,
     FirstFragment(StreamIdx),
@@ -174,6 +175,7 @@ pub enum SmoothResourceId {
 
 /// One unit of IO [`run_smooth_pull`] must perform.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub enum SmoothAction {
     FetchManifest {
         url: String,

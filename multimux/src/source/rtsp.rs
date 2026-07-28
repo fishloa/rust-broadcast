@@ -34,12 +34,20 @@
 //!   `media_plane::ingress`'s own docs name for wiring one in later
 //!   (a periodic `OPTIONS`, driven off [`Stage::on_deadline`]) — not done
 //!   here, since nothing pre-5a did it either.
-//! - **`rtsps://` (TLS) in [`run_rtsp`].** The session/`Stage` logic is
-//!   completely transport-agnostic (it only ever sees bytes), but the
-//!   driver loop below only wires a plain `TcpStream` for this story's time
-//!   budget; wiring `tokio_rustls` back in is a small, mechanical addition
-//!   to `run_rtsp` alone (the pre-5a `RtspClient` enum's `Plain`/`Tls` split
-//!   is the template), not a design gap.
+//! # `rtsps://` (TLS)
+//!
+//! The session/`Stage` logic above is completely transport-agnostic (it only
+//! ever sees bytes), so [`run_rtsp`] wires TLS in at the socket layer alone:
+//! for an `rtsps://` route it TCP-connects then performs a `tokio_rustls`
+//! handshake (trusting the public-CA `webpki-roots` bundle via
+//! `rtsp_runtime::io::default_tls_client_config`, exactly like
+//! [`rtsp_runtime::io::AsyncRtspClient::connect_tls_with`] does for
+//! `rtsp-runtime`'s own client), producing the same `AsyncRead + AsyncWrite`
+//! duplex stream a plain `rtsp://` connect would — the sans-IO driver loop
+//! never has to know which one it got. Gated behind this crate's `tls`
+//! feature (default-on); with it disabled, an `rtsps://` route fails fast
+//! with a clear runtime error naming the missing feature, never falling back
+//! to an unencrypted socket (issue #804).
 
 use std::collections::VecDeque;
 
@@ -48,7 +56,7 @@ use rtsp_runtime::auth::Credentials;
 use rtsp_runtime::client::{ClientEvent, ClientSession};
 use rtsp_runtime::transport::{Transport, TransportSpec};
 use rtsp_runtime::{Method, StatusCode};
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::net::TcpStream;
 use url::Url;
 
@@ -384,6 +392,22 @@ impl RtspDialer {
         })?;
         scheme_is_tls(&strip_userinfo(&base)?)
     }
+
+    /// The SNI server name `run_rtsp` presents during an `rtsps://` TLS
+    /// handshake: this URL's host with IPv6 brackets stripped
+    /// (`[2001:db8::1]` -> `2001:db8::1`, which is what rustls'
+    /// `ServerName::try_from` accepts), hostnames and IPv4 literals
+    /// unchanged. Userinfo is stripped first, like its `connect_addr`/
+    /// `is_tls` siblings.
+    pub fn sni_server_name(&self) -> Result<String> {
+        let base = Url::parse(&self.url).map_err(|e| MultimuxError::Connect {
+            reason: format!(
+                "bad rtsp(s) URL {}: {e}",
+                crate::redact::redact_url(&self.url)
+            ),
+        })?;
+        sni_server_name(&strip_userinfo(&base)?)
+    }
 }
 
 impl Dialer for RtspDialer {
@@ -556,11 +580,110 @@ fn scheme_is_tls(url: &Url) -> Result<bool> {
     }
 }
 
-/// Binds a TCP connection to `route` and drives an [`RtspIngestSession`]
-/// through [`IngestDriver`] until the connection closes or fails — the new
-/// drive loop, replacing the pre-5a `RtspSource::connect`/`RtspSession::next_samples`
-/// pair. **Plain `rtsp://` only** in this port (see the module doc's "what
-/// did not carry over").
+/// Derives the SNI server name for an `rtsps://` TLS handshake from a base
+/// `rtsp(s)://` URL, stripping brackets from IPv6 literals. `Url::host_str()`
+/// returns IPv6 addresses in bracketed form (per RFC 3986 authority syntax,
+/// e.g. `"[2001:db8::1]"`), but rustls `ServerName::try_from()` rejects the
+/// brackets. This function extracts the host and strips a leading `[` and
+/// trailing `]` if present, leaving hostnames and IPv4 addresses unchanged.
+fn sni_server_name(url: &Url) -> Result<String> {
+    // Safe to `Display` `url` directly: every caller passes the already
+    // userinfo-stripped URL (see `RtspDialer::sni_server_name`).
+    let host = url.host_str().ok_or_else(|| MultimuxError::Connect {
+        reason: format!("rtsp(s) URL has no host: {url}"),
+    })?;
+    let sni = host
+        .strip_prefix('[')
+        .and_then(|h| h.strip_suffix(']'))
+        .unwrap_or(host);
+    Ok(sni.to_string())
+}
+
+/// A connected transport's read/write halves, boxed so [`run_rtsp`]'s drive
+/// loop can be written once and fed either a plain [`TcpStream`]'s halves or
+/// a TLS stream's — see the module doc's "`rtsps://` (TLS)" section.
+type BoxedRead = Box<dyn AsyncRead + Send + Unpin>;
+type BoxedWrite = Box<dyn AsyncWrite + Send + Unpin>;
+
+/// Connects a plain `rtsp://` (TCP) transport to `addr`.
+async fn connect_plain(addr: &str) -> Result<(BoxedRead, BoxedWrite)> {
+    let stream = TcpStream::connect(addr)
+        .await
+        .map_err(|e| MultimuxError::Connect {
+            reason: format!("rtsp connect {addr}: {e}"),
+        })?;
+    let (rd, wr) = stream.into_split();
+    Ok((Box::new(rd), Box::new(wr)))
+}
+
+/// Connects an `rtsps://` (RTSP-over-TLS) transport to `addr`, verifying the
+/// server against `config` and presenting `server_name` for SNI/certificate
+/// validation — the same TCP-connect-then-`tokio_rustls`-handshake sequence
+/// [`rtsp_runtime::io::AsyncRtspClient::connect_tls_with`] performs, minus
+/// the `AsyncRtspClient` wrapper this crate's sans-IO driver loop (see the
+/// module doc) has no use for: `run_rtsp` only ever needs the connected
+/// duplex stream, split for its own `poll_transmit`/`feed` pump. Split via
+/// `tokio::io::split` (a `TlsStream` has no `into_split`, unlike
+/// [`TcpStream`]).
+#[cfg(feature = "tls")]
+async fn connect_tls_with_config(
+    addr: &str,
+    server_name: &str,
+    config: rustls::ClientConfig,
+) -> Result<(BoxedRead, BoxedWrite)> {
+    let tcp = TcpStream::connect(addr)
+        .await
+        .map_err(|e| MultimuxError::Connect {
+            reason: format!("rtsp connect {addr}: {e}"),
+        })?;
+    let connector = tokio_rustls::TlsConnector::from(std::sync::Arc::new(config));
+    let dns = rustls::pki_types::ServerName::try_from(server_name.to_string()).map_err(|e| {
+        MultimuxError::Connect {
+            reason: format!("invalid TLS server name {server_name:?}: {e}"),
+        }
+    })?;
+    let stream = connector
+        .connect(dns, tcp)
+        .await
+        .map_err(|e| MultimuxError::Connect {
+            reason: format!("rtsp TLS handshake {addr}: {e}"),
+        })?;
+    let (rd, wr) = tokio::io::split(stream);
+    Ok((Box::new(rd), Box::new(wr)))
+}
+
+/// Connects an `rtsps://` transport to `addr`, trusting the public-CA
+/// `webpki-roots` bundle ([`rtsp_runtime::io::default_tls_client_config`]) —
+/// the config every real (non-test) caller uses; see
+/// [`connect_tls_with_config`] for a caller-supplied trust store (this
+/// module's own TLS loopback tests use one trusting a self-signed fixture
+/// cert, since no public CA ever signs a `127.0.0.1` loopback cert).
+#[cfg(feature = "tls")]
+async fn connect_tls(addr: &str, server_name: &str) -> Result<(BoxedRead, BoxedWrite)> {
+    connect_tls_with_config(
+        addr,
+        server_name,
+        rtsp_runtime::io::default_tls_client_config(),
+    )
+    .await
+}
+
+/// Without this crate's `tls` feature, an `rtsps://` route fails fast with a
+/// clear runtime error naming the missing feature — it never falls back to
+/// an unencrypted socket (issue #804).
+#[cfg(not(feature = "tls"))]
+async fn connect_tls(addr: &str, _server_name: &str) -> Result<(BoxedRead, BoxedWrite)> {
+    Err(MultimuxError::Connect {
+        reason: format!(
+            "rtsps:// (TLS) requires multimux's `tls` feature; cannot connect to {addr}"
+        ),
+    })
+}
+
+/// Binds a connection (TCP for `rtsp://`, TLS-over-TCP for `rtsps://`) to
+/// `route` and drives an [`RtspIngestSession`] through [`IngestDriver`] until
+/// the connection closes or fails — the new drive loop, replacing the pre-5a
+/// `RtspSource::connect`/`RtspSession::next_samples` pair.
 ///
 /// `route_handle` is the driver-backed registry side of issue #805 task 2:
 /// after every [`IngestDriver::feed`], `crate::source::report_driver_progress`
@@ -574,24 +697,27 @@ pub async fn run_rtsp(
     route_handle: &std::sync::Arc<crate::route::RouteHandle>,
 ) -> MultimuxError {
     let mut dialer = RtspDialer::new(route.url.clone(), route.auth.clone());
-    if matches!(dialer.is_tls(), Ok(true)) {
-        return MultimuxError::Connect {
-            reason: "rtsps:// (TLS) is not wired into run_rtsp in this port (step 5a scope cut)"
-                .into(),
-        };
-    }
     let addr = match dialer.connect_addr() {
         Ok(a) => a,
         Err(e) => return e,
     };
+    let is_tls = match dialer.is_tls() {
+        Ok(b) => b,
+        Err(e) => return e,
+    };
     let connect_timeout = route.timeouts.connect;
-    let stream = match tokio::time::timeout(connect_timeout, TcpStream::connect(&addr)).await {
-        Ok(Ok(s)) => s,
-        Ok(Err(e)) => {
-            return MultimuxError::Connect {
-                reason: format!("rtsp connect {addr}: {e}"),
-            };
-        }
+    let connected = if is_tls {
+        let server_name = match dialer.sni_server_name() {
+            Ok(s) => s,
+            Err(e) => return e,
+        };
+        tokio::time::timeout(connect_timeout, connect_tls(&addr, &server_name)).await
+    } else {
+        tokio::time::timeout(connect_timeout, connect_plain(&addr)).await
+    };
+    let (mut rd, mut wr) = match connected {
+        Ok(Ok(streams)) => streams,
+        Ok(Err(e)) => return e,
         Err(_) => {
             return MultimuxError::Connect {
                 reason: format!("rtsp connect {addr}: no response within {connect_timeout:?}"),
@@ -610,7 +736,6 @@ pub async fn run_rtsp(
         // carry a single programme today; the default ceiling covers an MPTS.
         media_plane::DEFAULT_MAX_PROGRAMS,
     );
-    let (mut rd, mut wr) = stream.into_split();
     let start = std::time::Instant::now();
     let mut buf = vec![0u8; 64 * 1024];
     let read_timeout = route.timeouts.read;
@@ -773,6 +898,56 @@ mod tests {
     fn scheme_is_tls_rejects_other_scheme() {
         let base = Url::parse("http://cam.local/stream").unwrap();
         assert!(scheme_is_tls(&base).is_err());
+    }
+
+    /// MUTATION VERIFIED: changing the `strip_prefix('[')`/`strip_suffix(']')`
+    /// pair to only `strip_prefix('[')` (i.e. leaving the trailing `]`) makes
+    /// this fail with `assertion `left == right` failed / left:
+    /// "2001:db8::1]" / right: "2001:db8::1"` — the exact IPv6-bracket case
+    /// this function exists for (see its own doc: rustls `ServerName::try_from`
+    /// rejects the brackets).
+    #[test]
+    fn sni_server_name_strips_ipv6_brackets() {
+        let url = Url::parse("rtsps://[2001:db8::1]:8554/stream").unwrap();
+        assert_eq!(sni_server_name(&url).unwrap(), "2001:db8::1");
+    }
+
+    /// MUTATION VERIFIED: replacing the function body with
+    /// `Ok(format!("[{host}]"))` (always bracketing) makes this fail with
+    /// `assertion `left == right` failed / left: "[cam.local]" / right:
+    /// "cam.local"` — a plain hostname must pass through unchanged.
+    #[test]
+    fn sni_server_name_hostname_unchanged() {
+        let url = Url::parse("rtsps://cam.local/stream").unwrap();
+        assert_eq!(sni_server_name(&url).unwrap(), "cam.local");
+    }
+
+    /// MUTATION VERIFIED: same mutation as above (always bracketing) makes
+    /// this fail with `assertion `left == right` failed / left:
+    /// "[192.0.2.4]" / right: "192.0.2.4"` — an IPv4 literal must also pass
+    /// through unchanged (only the bracketed-IPv6 form is stripped).
+    #[test]
+    fn sni_server_name_ipv4_unchanged() {
+        let url = Url::parse("rtsps://192.0.2.4:8554/stream").unwrap();
+        assert_eq!(sni_server_name(&url).unwrap(), "192.0.2.4");
+    }
+
+    /// The `RtspDialer::sni_server_name` method wrapper strips userinfo like
+    /// its `connect_addr`/`is_tls` siblings — proven by the fact userinfo
+    /// (`user:pass@`) does not appear in, and does not break, the derived
+    /// name.
+    ///
+    /// MUTATION VERIFIED: replacing the method body with
+    /// `Ok(base.host_str().unwrap_or_default().to_string())` (returning the
+    /// raw host, skipping the free-function `sni_server_name` call this
+    /// method exists to delegate to) makes this fail with `assertion `left
+    /// == right` failed / left: "[2001:db8::1]" / right: "2001:db8::1"` —
+    /// proving the method really does route through the bracket-stripping
+    /// logic, not just re-derive the host itself.
+    #[test]
+    fn rtsp_dialer_sni_server_name_strips_userinfo_and_brackets() {
+        let dialer = RtspDialer::new("rtsps://user:pass@[2001:db8::1]:8554/stream", None);
+        assert_eq!(dialer.sni_server_name().unwrap(), "2001:db8::1");
     }
 
     #[test]
@@ -1065,5 +1240,364 @@ mod tests {
             "a non-success DESCRIBE must fail the session: {:?}",
             driver.health()
         );
+    }
+
+    // --- issue #804: rtsps:// (TLS) wiring ---------------------------------
+
+    /// Fail-safe property: an `rtsps://` route must never fall back to an
+    /// unencrypted socket, even though establishing TLS against this
+    /// deliberately-plain listener will fail. Points a real `rtsps://` route
+    /// at a plain (non-TLS) loopback listener, through the real
+    /// [`run_rtsp`] entry point (not a lower-level helper), and asserts on
+    /// what the listener actually received, rather than trusting the code
+    /// path: a genuine `rustls` `ClientHello` is opaque binary starting with
+    /// TLS record type `0x16`, never the ASCII text of an RTSP request line —
+    /// confirmed against the actual bytes captured below, not merely a
+    /// keyword search.
+    ///
+    /// MUTATION VERIFIED: changing `run_rtsp`'s dispatch (`if is_tls {
+    /// connect_tls(...) } else { connect_plain(...) }`) to call
+    /// `connect_plain(&addr)` unconditionally (reintroducing a scheme-blind
+    /// fallback) makes this fail at `assert_eq!(received[0], 0x16, ...)` with
+    /// `left: 0x44, right: 0x16` — `0x44` is ASCII `'D'`, the first byte of
+    /// the plaintext `DESCRIBE ...` request line the listener then receives
+    /// instead of a TLS `ClientHello`.
+    #[tokio::test]
+    async fn rtsps_route_never_falls_back_to_plain_socket() {
+        const TLS_HANDSHAKE_RECORD_TYPE: u8 = 0x16;
+        const TLS_MAJOR_VERSION: u8 = 0x03;
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind loopback");
+        let addr = listener.local_addr().expect("local addr");
+
+        let server = tokio::spawn(async move {
+            let (mut sock, _) = listener.accept().await.expect("accept");
+            let mut buf = [0u8; 256];
+            // Best-effort read: whatever the client sent (if anything)
+            // before giving up. A plain listener can never complete a real
+            // TLS handshake, so the client is expected to fail — this read
+            // just captures what it wrote first, if anything.
+            let n = tokio::time::timeout(std::time::Duration::from_secs(3), sock.read(&mut buf))
+                .await
+                .unwrap_or(Ok(0))
+                .unwrap_or(0);
+            buf[..n].to_vec()
+        });
+
+        // A short connect timeout on this *route instance* (via the existing
+        // public `with_timeouts` builder) so the test doesn't wait out the
+        // production `DEFAULT_CONNECT_TIMEOUT` default — this changes no
+        // production timeout, only this one test route's own value.
+        let route = RtspRoute::new("fail-safe", format!("rtsps://{addr}/stream")).with_timeouts(
+            crate::source::IngestTimeouts {
+                connect: std::time::Duration::from_millis(500),
+                read: std::time::Duration::from_millis(500),
+            },
+        );
+        let route_handle = std::sync::Arc::new(crate::route::RouteHandle::new(1.0, 250, 8));
+
+        // Hang guard (issue #807): bounds the whole call so a wiring bug
+        // fails in seconds, not forever — not an assertion on how fast the
+        // connect resolves.
+        let result = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            run_rtsp(&route, trunk_config(), handshake(), &route_handle),
+        )
+        .await
+        .expect("run_rtsp must not hang against a non-TLS listener");
+        assert!(
+            matches!(result, MultimuxError::Connect { .. }),
+            "an rtsps:// connect against a plaintext listener must fail cleanly: {result:?}"
+        );
+
+        let received = server.await.expect("server task");
+        assert!(
+            received.len() >= 2,
+            "the client must have sent real TLS handshake bytes before giving up: {received:?}"
+        );
+        assert_eq!(
+            received[0], TLS_HANDSHAKE_RECORD_TYPE,
+            "the first byte on the wire must be a TLS handshake record (0x16) — a genuine \
+             ClientHello — never the ASCII first byte of a plaintext RTSP request line: \
+             {received:?}"
+        );
+        assert_eq!(
+            received[1], TLS_MAJOR_VERSION,
+            "the TLS record's major version byte must be 0x03 (TLS 1.x): {received:?}"
+        );
+    }
+
+    #[cfg(feature = "tls")]
+    mod tls_tests {
+        //! A genuine `tokio_rustls` loopback TLS server + client, proving
+        //! [`super::connect_tls_with_config`] (the exact helper `run_rtsp`'s
+        //! `rtsps://` path calls, via [`super::connect_tls`]) performs a real
+        //! TLS handshake and carries a real DESCRIBE/SETUP/PLAY/depayload
+        //! exchange — the TLS analogue of this file's plain-`rtsp://`
+        //! centrepiece test
+        //! (`multi_round_trip_rtsp_handshake_completes_through_feed_and_poll_transmit_only`),
+        //! and mirroring `multimux/tests/rtsp_ingest.rs`'s real-socket
+        //! loopback pattern.
+        //!
+        //! Uses a caller-supplied trust config (rather than
+        //! `default_tls_client_config`'s public-CA `webpki-roots` bundle)
+        //! because no public CA ever signs a `127.0.0.1` loopback
+        //! certificate — this is exactly the flexibility
+        //! `connect_tls_with_config` exists to provide underneath the
+        //! fixed-trust-store `connect_tls` wrapper `run_rtsp` actually calls.
+
+        use super::*;
+        use std::sync::Arc;
+        use std::time::Duration;
+        use tokio::net::TcpListener;
+
+        /// Self-signed `CN=localhost` cert/key fixture, shared byte-for-byte
+        /// with `rtsp-runtime/tests/fixtures/localhost-{cert,key}.der` (see
+        /// `multimux/tests/fixtures/PROVENANCE.md`) — the same pair
+        /// `rtsp-runtime`'s own `tests/io_loopback.rs::tls_full_session_over_loopback`
+        /// uses to run a real TLS handshake over `127.0.0.1` loopback.
+        const CERT_DER: &[u8] = include_bytes!("../../tests/fixtures/localhost-cert.der");
+        const KEY_DER: &[u8] = include_bytes!("../../tests/fixtures/localhost-key.der");
+
+        /// A hang guard, not a speed assertion (issue #807): every
+        /// real-socket step below is wrapped in this so a wiring bug fails
+        /// in seconds instead of hanging CI forever.
+        const HANG_GUARD: Duration = Duration::from_secs(10);
+
+        fn tls_provider() -> Arc<rustls::crypto::CryptoProvider> {
+            // Explicit provider, not the process-global default: another
+            // crate in the same build (e.g. `reqwest`'s `aws-lc-rs`) can
+            // already have installed one, and the plain `::builder()` then
+            // has no unambiguous default and panics — mirrors
+            // `rtsp_runtime::io::default_tls_client_config`'s own doc.
+            Arc::new(rustls::crypto::aws_lc_rs::default_provider())
+        }
+
+        fn server_config() -> rustls::ServerConfig {
+            use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
+            let certs = vec![CertificateDer::from(CERT_DER.to_vec())];
+            let key = PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(KEY_DER.to_vec()));
+            rustls::ServerConfig::builder_with_provider(tls_provider())
+                .with_safe_default_protocol_versions()
+                .expect("aws-lc-rs provider supports the safe default protocol versions")
+                .with_no_client_auth()
+                .with_single_cert(certs, key)
+                .expect("server config")
+        }
+
+        /// A client trust store containing *only* the fixture's self-signed
+        /// cert — the loopback-test analogue of `default_tls_client_config`'s
+        /// public-CA bundle.
+        fn client_config_trusting_fixture() -> rustls::ClientConfig {
+            use rustls::pki_types::CertificateDer;
+            let mut roots = rustls::RootCertStore::empty();
+            roots
+                .add(CertificateDer::from(CERT_DER.to_vec()))
+                .expect("add self-signed root");
+            rustls::ClientConfig::builder_with_provider(tls_provider())
+                .with_safe_default_protocol_versions()
+                .expect("aws-lc-rs provider supports the safe default protocol versions")
+                .with_root_certificates(roots)
+                .with_no_client_auth()
+        }
+
+        /// Reads off `sock` until one complete RTSP request (headers only)
+        /// is buffered — a synchronization boundary only; this test never
+        /// needs to parse the request's contents (the responses below use
+        /// fixed `CSeq`s, matching a fresh `ClientSession`'s own monotonic
+        /// counter, exactly like this file's centrepiece hand-fed test).
+        async fn read_request_boundary<S: AsyncRead + Unpin>(sock: &mut S) {
+            let mut buf = Vec::new();
+            let mut chunk = [0u8; 1024];
+            loop {
+                if buf.windows(4).any(|w| w == b"\r\n\r\n") {
+                    return;
+                }
+                let n = sock.read(&mut chunk).await.expect("read request bytes");
+                assert!(n > 0, "peer closed before a full request arrived");
+                buf.extend_from_slice(&chunk[..n]);
+            }
+        }
+
+        async fn write_response<S: AsyncWrite + Unpin>(sock: &mut S, bytes: &[u8]) {
+            sock.write_all(bytes).await.expect("write response");
+            sock.flush().await.expect("flush response");
+        }
+
+        /// Builds a minimal RFC 3550 §5.1 RTP packet carrying one NAL unit
+        /// verbatim (RFC 6184 §5.1) — same shape as this file's centrepiece
+        /// test's inline packets and `multimux/tests/rtsp_ingest.rs`'s
+        /// `rtp_packet` helper.
+        fn rtp_packet(seq: u16, timestamp: u32, marker: bool, nal: &[u8]) -> Vec<u8> {
+            const PT_H264_DYNAMIC: u8 = 96;
+            const SSRC: u32 = 0xCAFE_BABE;
+            let mut pkt = Vec::with_capacity(12 + nal.len());
+            pkt.push(0x80); // V=2, P=0, X=0, CC=0
+            pkt.push(if marker {
+                0x80 | PT_H264_DYNAMIC
+            } else {
+                PT_H264_DYNAMIC
+            });
+            pkt.extend_from_slice(&seq.to_be_bytes());
+            pkt.extend_from_slice(&timestamp.to_be_bytes());
+            pkt.extend_from_slice(&SSRC.to_be_bytes());
+            pkt.extend_from_slice(nal);
+            pkt
+        }
+
+        /// Real self-signed-cert loopback TLS server: DESCRIBE (SDP) ->
+        /// SETUP (interleaved channel 0-1) -> PLAY -> three interleaved RTP
+        /// access units — mirrors `multimux/tests/rtsp_ingest.rs`'s
+        /// `serve_one_session`, just over `tokio_rustls` instead of plain
+        /// TCP.
+        async fn serve_one_tls_session(tcp: TcpStream) {
+            let acceptor = tokio_rustls::TlsAcceptor::from(Arc::new(server_config()));
+            let mut tls = acceptor.accept(tcp).await.expect("TLS handshake (server)");
+
+            read_request_boundary(&mut tls).await;
+            let sdp = sdp_body();
+            let describe_resp = format!(
+                "RTSP/1.0 200 OK\r\nCSeq: 1\r\nContent-Type: application/sdp\r\nContent-Length: {}\r\n\r\n{sdp}",
+                sdp.len()
+            );
+            write_response(&mut tls, describe_resp.as_bytes()).await;
+
+            read_request_boundary(&mut tls).await;
+            let setup_resp = "RTSP/1.0 200 OK\r\nCSeq: 2\r\nSession: TLSTEST\r\n\
+                               Transport: RTP/AVP/TCP;interleaved=0-1\r\n\r\n";
+            write_response(&mut tls, setup_resp.as_bytes()).await;
+
+            read_request_boundary(&mut tls).await;
+            let play_resp = "RTSP/1.0 200 OK\r\nCSeq: 3\r\nSession: TLSTEST\r\n\r\n";
+            write_response(&mut tls, play_resp.as_bytes()).await;
+
+            // AU0 @1000 (IDR), AU1 @4000, AU2 @7000: the depacketiser only
+            // knows a sample's duration once the *next* AU's timestamp
+            // arrives, so 3 AUs yield exactly 1 completed (IDR) sample —
+            // exactly enough for this test's assertion.
+            let idr = [0x65u8, 0xAA, 0xBB];
+            let non1 = [0x41u8, 0xAA, 0xBB];
+            let non2 = [0x41u8, 0xCC, 0xDD];
+            let aus: [(u32, &[u8]); 3] = [(1000, &idr), (4000, &non1), (7000, &non2)];
+            for (i, (ts, nal)) in aus.into_iter().enumerate() {
+                let pkt = rtp_packet(1 + i as u16, ts, true, nal);
+                let frame = rtsp_runtime::interleaved::InterleavedFrame::new(0, pkt)
+                    .to_bytes()
+                    .expect("serialize interleaved frame");
+                write_response(&mut tls, &frame).await;
+            }
+            // Keep the TLS connection open until the client has drained
+            // every frame — cleanup, not a synchronization sleep (the
+            // client's own assertions, bounded by `HANG_GUARD`, are what
+            // actually gate the test).
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+
+        /// The TLS analogue of this module's plain-`rtsp://` centrepiece
+        /// test: a genuine `tokio_rustls` handshake against a real
+        /// self-signed-cert loopback server, then a real DESCRIBE -> SETUP
+        /// -> PLAY -> depayload exchange over the encrypted socket, using
+        /// the exact `connect_tls_with_config` helper `run_rtsp`'s
+        /// `rtsps://` path calls (via `connect_tls`) — proving TLS is
+        /// genuinely negotiated (a plaintext byte stream could never
+        /// complete this handshake against a TLS-only server) and that real
+        /// media streams over it, not merely that the URL is accepted.
+        ///
+        /// MUTATION VERIFIED: replacing this test's `connect_tls_with_config`
+        /// call with `connect_plain(&addr.to_string())` (skipping the TLS
+        /// handshake entirely) does *not* fail at the client's own
+        /// `.expect("client TLS handshake")` — a bare TCP connect succeeds
+        /// fine, since `connect_plain` never attempts TLS. The failure
+        /// surfaces one step later, exactly where a real "no TLS" bug would
+        /// actually be caught: `serve_one_tls_session`'s `TlsAcceptor::accept`
+        /// panics trying to parse the client's plaintext DESCRIBE bytes as a
+        /// TLS record (`Custom { kind: InvalidData, error:
+        /// InvalidMessage(InvalidContentType) }`), the server task's
+        /// connection drops, and the test's own read loop then fails at
+        /// `assert!(n > 0, "peer closed before a sample arrived")`.
+        #[tokio::test]
+        async fn rtsps_dialer_negotiates_real_tls_and_streams() {
+            let listener = TcpListener::bind("127.0.0.1:0")
+                .await
+                .expect("bind loopback");
+            let addr = listener.local_addr().expect("local addr");
+
+            let server = tokio::spawn(async move {
+                let (tcp, _) = listener.accept().await.expect("accept");
+                serve_one_tls_session(tcp).await;
+            });
+
+            let mut dialer = RtspDialer::new(format!("rtsps://{addr}/stream"), None);
+            let session = dialer
+                .dial()
+                .expect("dial: local construction only, no I/O");
+            let mut driver = IngestDriver::new(
+                session,
+                trunk_config(),
+                handshake(),
+                media_plane::DEFAULT_MAX_PROGRAMS,
+            );
+
+            let (mut rd, mut wr) = tokio::time::timeout(
+                HANG_GUARD,
+                connect_tls_with_config(
+                    &addr.to_string(),
+                    "localhost",
+                    client_config_trusting_fixture(),
+                ),
+            )
+            .await
+            .expect("client TLS connect must not hang")
+            .expect("client TLS handshake");
+
+            let start = std::time::Instant::now();
+            let mut buf = vec![0u8; 64 * 1024];
+            let mut cursor = None;
+            let mut sample_track: Option<(u32, bool)> = None;
+
+            for _ in 0..32 {
+                while let Some(bytes) = driver.poll_transmit() {
+                    wr.write_all(&bytes).await.expect("write request over TLS");
+                }
+                if cursor.is_none() {
+                    if let Some(trunk) = driver.trunk(ProgramId(0)) {
+                        cursor = Some(trunk.subscribe());
+                    }
+                }
+                if let Some(c) = cursor.as_mut() {
+                    while let Some(item) = c.poll() {
+                        if let media_plane::trunk::SampleCursorItem::Timed { track_id, sample } =
+                            item
+                        {
+                            sample_track = Some((track_id, sample.flags.is_sync));
+                        }
+                    }
+                }
+                if sample_track.is_some() {
+                    break;
+                }
+                let n = tokio::time::timeout(HANG_GUARD, rd.read(&mut buf))
+                    .await
+                    .expect("read over TLS must not hang")
+                    .expect("read over TLS");
+                assert!(n > 0, "peer closed before a sample arrived");
+                let now = Timestamp::from_instant(start, std::time::Instant::now());
+                driver.feed(&buf[..n], now);
+            }
+
+            assert!(
+                matches!(driver.health(), HealthState::Live),
+                "DESCRIBE/SETUP/PLAY must complete over the TLS transport: {:?}",
+                driver.health()
+            );
+            let (track_id, is_sync) =
+                sample_track.expect("a depayloaded sample must reach the Trunk over TLS");
+            assert_eq!(track_id, 1, "the sole video track routes to track id 1");
+            assert!(is_sync, "the first access unit was the IDR");
+
+            server.await.expect("server task");
+        }
     }
 }
