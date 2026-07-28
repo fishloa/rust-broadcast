@@ -1,14 +1,21 @@
-#![cfg(feature = "testsupport")]
-//! Deterministic end-to-end integration gate for the LL-HLS origin (#663):
-//! `MockSource` -> [`run_pipeline`] -> [`RouteHandle`] -> the axum
+//! Deterministic end-to-end integration gate for the LL-HLS origin (#663): a
+//! real [`LlHlsSegmenter`] feeding [`RouteHandle`] directly -> the axum
 //! [`router`], driven with `tower::ServiceExt::oneshot` (no real TCP socket,
-//! no timing-dependent assertions) so the whole demux-free pipeline-to-HTTP
-//! path is exercised without flakiness.
+//! no timing-dependent assertions) so the whole segmenter-to-HTTP path is
+//! exercised without flakiness.
 //!
 //! Test 1 proves the served bytes are actually valid fMP4/CMAF (via
 //! `transmux::validate`), not just "some bytes came back". Test 2 proves the
 //! blocking-reload path (RFC 8216bis §6.2.5.2) really wakes on new data,
 //! rather than serving a stale playlist or hanging to its timeout.
+//!
+//! Issue #805 task 5 deleted `crate::pipeline::run_pipeline`/`MockSource`
+//! (the old `SourceConnector`-fed path's test scaffolding); test 1 below
+//! drives the same real `LlHlsSegmenter` that module used to wrap, directly —
+//! mirroring `tests/lldash_dashjs.rs`'s own `run_live_producer` — since
+//! `RouteHandle`'s owned `Trunk` is a test-only placeholder now (see
+//! `RouteHandle`'s own doc), and this test exists precisely to drive it
+//! directly and publish it.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -20,23 +27,27 @@ use tower::ServiceExt;
 use multimux::origin::{AppState, router};
 use multimux::output::Output;
 use multimux::output::llhls::LlHlsOutput;
-use multimux::pipeline::{MockSource, run_pipeline};
 use multimux::route::RouteHandle;
 use transmux::avc_config_from_sprop;
-use transmux::ll_hls::PartInfo;
+use transmux::ll_hls::{LlHlsSegmenter, PartInfo};
 use transmux::pipeline::{CodecConfig, Sample, TrackSpec};
 use transmux::validate::{Severity, validate_init_segment, validate_media_segment};
 
 /// A real-ish sprop-parameter-sets pair (SPS+PPS) — same one used by
-/// `multimux::pipeline`'s and `multimux::source::rtsp`'s own tests — decoded
-/// into an `avcC` config so the init segment carries a genuine AVC
-/// configuration record rather than a fabricated one.
+/// `multimux::source::rtsp`'s own tests — decoded into an `avcC` config so
+/// the init segment carries a genuine AVC configuration record rather than a
+/// fabricated one.
 const SPROP: &str = "Z0IAKeKQFAe2AtwEBAaQeJEV,aM48gA==";
 
-/// 90 kHz video timescale (the CMAF movie timescale `run_pipeline` builds
-/// with) — 1/30 s per access unit at 30 fps.
+/// 90 kHz video timescale (the CMAF movie timescale [`feed_via_segmenter`]
+/// builds with) — 1/30 s per access unit at 30 fps.
 const VIDEO_TIMESCALE: u32 = 90_000;
 const FRAME_DUR: u32 = VIDEO_TIMESCALE / 30;
+/// Target full-segment duration, seconds — matches the pre-#805-task-5
+/// `run_pipeline`-driven version of this test.
+const TARGET_DURATION_SECS: f64 = 1.0;
+/// LL-HLS part target, milliseconds — matches the pre-#805-task-5 version.
+const PART_TARGET_MS: u32 = 500;
 
 fn video_track_spec() -> TrackSpec {
     let config = avc_config_from_sprop(SPROP).expect("valid sprop");
@@ -92,9 +103,59 @@ fn get(uri: &str) -> Request<Body> {
         .expect("well-formed GET request")
 }
 
+/// Drives `batches` through a real [`LlHlsSegmenter`] into `store` — the
+/// direct replacement for the deleted `crate::pipeline::run_pipeline`
+/// (issue #805 task 5): same segmenter, same track specs, same
+/// `set_init`/`add_part`/`add_segment` calls, just inlined here rather than
+/// wrapped behind a `SampleSource`/`MockSource` indirection this crate no
+/// longer has. Flushes any trailing buffered partial segment at the end,
+/// exactly like the deleted `run_pipeline` did.
+///
+/// MUTATION VERIFIED: commenting out the `store.set_init(...)` call below
+/// makes `end_to_end_pipeline_serves_valid_llhls` fail:
+/// `assert_eq!(resp.status(), StatusCode::OK)` (the init-segment `GET`) fails
+/// at `multimux/tests/origin_llhls.rs:209`, comparing actual `404` against
+/// expected `200` — with no init bytes ever set, the route's `init-1.mp4`
+/// route has nothing to serve. Rebuilt and re-ran to confirm this exact
+/// failure, then reverted.
+fn feed_via_segmenter(
+    store: &RouteHandle,
+    specs: Vec<TrackSpec>,
+    batches: Vec<Vec<(u32, Sample)>>,
+) {
+    let mut seg = LlHlsSegmenter::with_part_target(
+        specs,
+        transmux::VIDEO_CLOCK_RATE,
+        TARGET_DURATION_SECS,
+        PART_TARGET_MS,
+    )
+    .expect("segmenter builds");
+    store.set_init(seg.init_segment().expect("init segment builds"));
+
+    for batch in batches {
+        for (track_id, sample) in batch {
+            seg.push(track_id, sample).expect("push succeeds");
+        }
+        for part in seg.take_ready_parts() {
+            store.add_part(part);
+        }
+        for segment in seg.take_ready_segments() {
+            store.add_segment(segment);
+        }
+    }
+
+    seg.flush().expect("flush succeeds");
+    for part in seg.take_ready_parts() {
+        store.add_part(part);
+    }
+    for segment in seg.take_ready_segments() {
+        store.add_segment(segment);
+    }
+}
+
 #[tokio::test]
 async fn end_to_end_pipeline_serves_valid_llhls() {
-    let store = Arc::new(RouteHandle::new(1.0, 500, 8));
+    let store = Arc::new(RouteHandle::new(TARGET_DURATION_SECS, PART_TARGET_MS, 8));
     let specs = vec![video_track_spec()];
 
     // 120 frames @ 30 fps = 4 s of video, with sync samples every 30 frames
@@ -115,15 +176,11 @@ async fn end_to_end_pipeline_serves_valid_llhls() {
         batches.push(vec![(1u32, sample)]);
     }
 
-    let source = MockSource::new(specs, batches);
-    run_pipeline(store.clone(), 1.0, 500, source, "cam")
-        .await
-        .expect("pipeline runs to completion");
-    // Issue #805 task 3: egress now resolves through `RouteHandle`'s program
-    // registry, not its owned `Trunk` directly -- publish it explicitly,
-    // exactly as `origin::supervisor::supervise` would for a real RTMP/
-    // `Custom` route reaching `Live` (this test drives `run_pipeline`
-    // directly, bypassing `supervise`).
+    feed_via_segmenter(&store, specs, batches);
+    // Issue #805 task 5: `RouteHandle`'s owned `Trunk` is a test-only
+    // placeholder now — a test driving it directly must publish it itself
+    // (see `RouteHandle::new`'s own doc), exactly like
+    // `tests/lldash_dashjs.rs`'s `start_ll_dash_origin` already does.
     store.publish_owned_trunk();
 
     let mut streams = HashMap::new();

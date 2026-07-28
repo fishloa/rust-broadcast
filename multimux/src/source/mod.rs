@@ -8,11 +8,18 @@
 //! *push* source implementing `media_plane::ingress::Listener` since issue
 //! #805 task 4; every other source above dials out), and `srt::SrtRoute`
 //! (SRT-carried MPEG-2 TS ingest, issue #739 — listener *or* caller mode) all
-//! implement the `Source` marker trait; every one has been ported onto
-//! `media_plane::ingress` (`Dialer`/`Listener` + `IngestSession`) rather than
-//! the older `pipeline::SampleSource` contract, except `InputSpec::Custom`
-//! (see `crate::pipeline`'s own doc). `http_auth` is shared auth glue for the
-//! HTTP-based sources (issue #663 P3c).
+//! implement the `Source` marker trait; every one — including
+//! `InputSpec::Custom`, via a [`crate::registry::SchemeRegistry`]-provided
+//! factory, since issue #805 task 5 deleted the old
+//! `SourceConnector`/`supervise`/`pipeline` path — is driven over
+//! `media_plane::ingress` (`Dialer`/`Listener` + `IngestSession`) by
+//! [`crate::origin::supervisor::supervise_driver`]. [`report_driver_progress`]
+//! and [`segment::drive_program_segmenters`] are the two per-iteration helpers
+//! every driver-backed `run_*` in this module calls (and that a
+//! `SchemeRegistry`-registered `Custom` factory's own driver loop must call
+//! too — see `examples/custom_scheme.rs`); both are `pub` for exactly that
+//! reason, not just for this crate's own in-tree sources. `http_auth` is
+//! shared auth glue for the HTTP-based sources (issue #663 P3c).
 
 pub mod dash_pull;
 pub mod hls_pull;
@@ -21,7 +28,7 @@ pub mod rtmp;
 pub mod rtp_udp;
 pub mod rtsp;
 pub mod sdp;
-pub(crate) mod segment;
+pub mod segment;
 pub mod smooth_pull;
 pub mod srt;
 pub mod ts_http;
@@ -103,8 +110,8 @@ use transmux::rtp::RtpMediaKind;
 /// RTSP DESCRIBE/SETUP/PLAY, or waiting for the first PMT/init segment) —
 /// issue #663 P5 (audit-ingest #3): a stalled/half-open server (accepts the
 /// TCP connection but never replies) must not hang `connect()` forever,
-/// starving [`crate::origin::supervisor::supervise`]'s backoff of a chance
-/// to retry.
+/// starving [`crate::origin::supervisor::supervise_driver`]'s backoff of a
+/// chance to retry.
 pub const DEFAULT_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Default bound on how long a source's per-read step (one RTSP interleaved
@@ -128,9 +135,9 @@ pub const DEFAULT_READ_TIMEOUT: Duration = Duration::from_secs(30);
 /// [`Self::connect`]; its `next_samples()`/read loop wraps each individual
 /// read in [`Self::read`]. Either expiring surfaces as a
 /// [`crate::error::MultimuxError`], which
-/// [`crate::origin::supervisor::supervise`] treats exactly like any other
-/// ingest error — log, mark the route reconnecting, retry with backoff —
-/// never a silent hang.
+/// [`crate::origin::supervisor::supervise_driver`] treats exactly like any
+/// other ingest error — log, mark the route reconnecting, retry with
+/// backoff — never a silent hang.
 #[derive(Debug, Clone, Copy)]
 pub struct IngestTimeouts {
     /// Bound on the whole connect handshake.
@@ -229,16 +236,29 @@ pub(crate) fn handshake_policy(timeout: Duration) -> media_plane::ingress::Hands
 /// - The first time `driver.health()` reaches
 ///   [`media_plane::ingress::HealthState::Live`], flips `route_handle` to
 ///   [`crate::route::HealthState::Live`] — the driver-backed equivalent of
-///   `origin::supervisor::supervise`'s own `set_health(Live)` right after a
-///   `SourceConnector::connect()` success. Guarded on `route_handle.health()`
-///   rather than a separate flag, since `route_handle`'s own health *is* the
-///   single source of truth `crate::origin::supervisor::supervise_driver`
-///   reads back after this attempt ends (see that function's own doc).
+///   `origin::supervisor::supervise_driver`'s own health flip right after an
+///   attempt reaches `Live`. Guarded on `route_handle.health()` rather than a
+///   separate flag, since `route_handle`'s own health *is* the single source
+///   of truth `crate::origin::supervisor::supervise_driver` reads back after
+///   this attempt ends (see that function's own doc).
 /// - Every [`media_plane::ingress::ProgramId`] `driver` has announced (via
 ///   `SessionEvent::NewProgram`) that this run hasn't already published gets
 ///   published into `route_handle`'s registry
-///   ([`crate::route::RouteHandle::publish_program`]).
-pub(crate) fn report_driver_progress<S: media_plane::ingress::IngestSession>(
+///   (`RouteHandle::publish_program`, crate-private).
+///
+/// # `pub`, not `pub(crate)`
+///
+/// This is the *only* way a program a driver mints ever becomes resolvable
+/// through `RouteHandle`'s registry — `RouteHandle::publish_program` and
+/// `resolve_program` are deliberately crate-private (issue #805's registry is
+/// an internal reconciliation mechanism, not something an external caller
+/// should poke directly), so an external [`crate::registry::SchemeRegistry`]
+/// `Custom` input factory driving its **own** `media_plane::ingress::Dialer`/
+/// `IngestSession` over its own `IngestDriver` (see `examples/custom_scheme.rs`)
+/// has no other way to make its programs visible to egress. Every in-tree
+/// `run_*` in this module already calls this; a third-party factory's own
+/// drive loop must call it too, once per iteration, exactly the same way.
+pub fn report_driver_progress<S: media_plane::ingress::IngestSession>(
     driver: &media_plane::ingress::IngestDriver<S>,
     route_handle: &crate::route::RouteHandle,
     published: &mut std::collections::HashSet<media_plane::ingress::ProgramId>,

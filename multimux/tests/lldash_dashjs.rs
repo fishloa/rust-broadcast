@@ -169,10 +169,9 @@ async fn start_ll_dash_origin(
     // pacing, so the manifest is servable the instant the player asks.
     store.set_track_specs(vec![spec]);
     // Issue #805 task 3: egress resolves through the program registry now,
-    // not the owned `Trunk` directly -- publish it explicitly, exactly as
-    // `origin::supervisor::supervise` would for a real RTMP/`Custom` route
-    // reaching `Live` (this test feeds `store` directly, bypassing
-    // `supervise`).
+    // not the owned `Trunk` directly -- publish it explicitly (issue #805
+    // task 5: `RouteHandle`'s owned `Trunk` is a test-only placeholder now,
+    // so this is exactly the kind of direct-feed test that must call this).
     store.publish_owned_trunk();
 
     let mut streams = HashMap::new();

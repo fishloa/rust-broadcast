@@ -2,6 +2,87 @@
 
 ## [Unreleased]
 
+### Removed (BREAKING — issue #805 task 5/6: convergence)
+- **`SourceConnector`, `supervise`, and the whole `pipeline` module are
+  deleted.** Every input kind now dials/listens over
+  `media_plane::ingress`'s `Dialer`/`Listener` + `IngestSession` traits, driven
+  by `supervisor::supervise_driver` — RTMP (task 4) was the last holdout, and
+  once it moved, `SourceConnector`/`supervise` (and the `pipeline::SampleSource`/
+  `run_pipeline`/`MockSource` trio it drove) had no remaining caller.
+  - `pub use origin::supervisor::{Backoff, SourceConnector, supervise};` is now
+    `pub use origin::supervisor::{Backoff, supervise_driver};` — a downstream
+    crate implementing `SourceConnector` or calling `supervise`/
+    `multimux::pipeline::*` directly no longer compiles against this crate;
+    port onto `supervise_driver` over your own `Dialer`/`IngestSession` (see
+    `examples/custom_scheme.rs`, rewritten to demonstrate exactly this).
+  - The `testsupport` feature and the `serve_mock` example are removed with
+    it: both existed solely to gate `pipeline::MockSource`.
+- **`RouteHandle`'s owned `Trunk` field now has no production writer.** It
+  stays (removing it forces `ll_hls`/`dash` to be built per-program instead of
+  once in `RouteHandle::new` — exactly issue #805 task 6, MPTS egress
+  resolution, which this task does not implement) but is now a
+  pre-first-program **placeholder**, driven only by this crate's own
+  `tests/*.rs` (via `set_init`/`add_part`/`add_segment` +
+  `publish_owned_trunk`, which stays `pub` for exactly that reason). See
+  `RouteHandle`'s own doc.
+- **`crate::prometheus::{SEGMENTS_PRODUCED_TOTAL, PARTS_PRODUCED_TOTAL}`
+  removed** (the two counters became dead code — the deleted `run_pipeline`
+  was their only caller; no driver-backed `run_*` path ever bumped them, since
+  `crate::source::segment::ProgramSegmenter` has no route name to label them
+  with). Restoring `multimux_segments_produced_total`/
+  `multimux_parts_produced_total` for the driver-backed architecture is a
+  separate, unscoped follow-up (threading a route name through
+  `drive_program_segmenters`/`ProgramSegmenter`, touching every `run_*` call
+  site) — flagged here rather than silently dropped or hastily wired up
+  underneath this task.
+
+### Changed (issue #805 task 5/6: the plugin extension point)
+- **`crate::source::report_driver_progress` and
+  `crate::source::segment::{ProgramSegmenter, drive_program_segmenters}` are
+  now `pub`** (were `pub(crate)`). These are the two per-iteration calls every
+  in-tree driver-backed `run_*` makes; with `SourceConnector`/`supervise`
+  gone, they are also the *only* way an external `SchemeRegistry`-registered
+  `Custom` input factory driving its own `Dialer`/`IngestSession` can publish
+  its ingest into `RouteHandle`'s (crate-private) program registry and turn
+  its samples into LL-HLS-servable segments/parts — without this, the
+  extension point documented in `crate::registry`/`examples/custom_scheme.rs`
+  would be unusable for anything beyond a trivial connect-only stub.
+- **`examples/custom_scheme.rs` rewritten** to demonstrate the supported
+  plugin shape: a small `Dialer`/`IngestSession` pair (`DemoDialer`/
+  `DemoSession`, synthetic single-track AVC media) driven by
+  `supervise_driver`, publishing through `report_driver_progress` +
+  `drive_program_segmenters` exactly like a built-in source. The example now
+  actually invokes the registered factory and waits for real init bytes to
+  land, rather than only checking registry lookup + config parsing. The
+  `"silence"`-tagged scheme is renamed `"demo"` (`examples/custom-scheme.json`
+  updated to match) since it now carries real synthetic media, not silence.
+- **`examples/serve_mock.rs` deleted** rather than rewritten: its
+  demonstration value (drive a synthetic ingest end to end, serve it over a
+  real HTTP origin, no camera/ffmpeg needed) is now covered by
+  `examples/custom_scheme.rs` (same Dialer/IngestSession/supervise_driver/
+  segmenting mechanics) together with `tests/dispatch_ingest.rs`'s real
+  end-to-end HTTP tests (`ts_udp`/`ts_http`/`rtmp` dispatch tests already
+  serve real — not synthetic — fixture-derived media over real HTTP).
+- **`tests/dispatch_ingest.rs`'s `InputSpec::Custom` coverage retargeted onto
+  the new plugin shape**: `custom_dispatch_drives_a_driver_backed_source_and_serves_real_media`
+  replaces `custom_dispatch_drives_run_pipeline_and_serves_real_media`,
+  registering a `Custom` factory that spawns `supervise_driver` over a small
+  `IngestSession` fed the real (demuxed, not synthetic) `h264_aac.ts` fixture
+  — the dispatch path (`InputSpec::Custom` -> `SchemeRegistry` -> `InputCtx`
+  -> factory -> real HTTP `#EXTINF:`) is still fully covered, just through
+  the surviving architecture.
+- **`tests/origin_llhls.rs`'s first test retargeted** onto a real
+  `LlHlsSegmenter` fed directly (mirroring `tests/lldash_dashjs.rs`'s own
+  `run_live_producer`) in place of the deleted `run_pipeline`/`MockSource`;
+  the file's `#![cfg(feature = "testsupport")]` gate is removed (nothing in
+  it needs `MockSource` any more).
+- **`multimux::origin::supervisor::supervise_driver` gains direct unit
+  test coverage** (`origin::supervisor::tests`): a fake `attempt` closure
+  (replacing the deleted `SourceConnector`-based `FlakyConnector`/
+  `PacedFlakyConnector` mocks) proves reconnect-after-failure,
+  reconnect-after-live-attempt-ends, and shutdown-cancels-mid-backoff —
+  properties `supervise`'s own tests used to prove for the now-deleted loop.
+
 ### Added (in progress — issue #805, task 1 of 6)
 - **`RouteHandle` gained a `ProgramId -> Arc<Trunk>` registry**, the first step
   of converging multimux's two ingest architectures onto one. `publish_program`

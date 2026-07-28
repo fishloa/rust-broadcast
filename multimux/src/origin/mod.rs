@@ -582,19 +582,14 @@ pub async fn serve(config: crate::config::Config) -> crate::Result<()> {
 /// [`crate::output::OutputKind`]).
 ///
 /// Every configured [`crate::config::InputSpec`] variant now drives a route
-/// (issue #805 task 2 — see `spawn_ingest`, which this function's per-route
-/// loop calls): [`crate::config::InputSpec::Custom`] through
-/// [`supervisor::supervise`] (a [`supervisor::SourceConnector`] +
-/// [`crate::pipeline::run_pipeline`], publishing this route's own `Trunk`
-/// into its registry once live — see
-/// [`crate::route::RouteHandle::publish_owned_trunk`]), and every other kind
-/// — rtsp/rtp/ts_udp/ts_http/srt/hls_pull/dash_pull/smooth_pull, plus
-/// [`crate::config::InputSpec::Rtmp`] as of issue #805 task 4 — through
-/// [`supervisor::supervise_driver`] (a `media_plane::ingress::IngestDriver`-
-/// (or, for RTMP's push/`Listener` shape, `ListenDriver`-) driven
-/// `crate::source::*::run_*` entry point, publishing each announced
-/// program's driver-minted `Trunk` into the same registry via
-/// `crate::source::report_driver_progress`). On either path, a connect
+/// (issue #805 tasks 2/4/5 — see `spawn_ingest`, which this function's
+/// per-route loop calls) through [`supervisor::supervise_driver`] (a
+/// `media_plane::ingress::IngestDriver`- (or, for a push/`Listener`-shaped
+/// source like RTMP, `ListenDriver`-) driven `crate::source::*::run_*` entry
+/// point — or, for [`crate::config::InputSpec::Custom`], the equivalent
+/// driver loop a registered [`crate::registry::InputFactory`] builds itself),
+/// publishing each announced program's driver-minted `Trunk` into the route's
+/// registry via [`crate::source::report_driver_progress`]. A connect
 /// failure, protocol error, or clean end-of-stream reconnects with capped
 /// backoff instead of dying — a bad/flaky source degrades that route's
 /// [`crate::route::RouteHandle::health`] rather than freezing it forever,
@@ -724,12 +719,12 @@ pub async fn serve_with_registry(
 /// spinning up the whole HTTP server (see this module's own tests for the
 /// `media_plane`-ported input kinds).
 ///
-/// [`crate::config::InputSpec::Custom`] drives [`supervisor::supervise`]
-/// (unchanged, pre-#805 behaviour); every other variant — including
-/// [`crate::config::InputSpec::Rtmp`] as of issue #805 task 4 — drives
-/// [`supervisor::supervise_driver`] with the matching `crate::source::*::run_*`
-/// entry point — see [`serve_with_registry`]'s own doc for the full
-/// architecture split.
+/// Every built-in variant drives [`supervisor::supervise_driver`] with the
+/// matching `crate::source::*::run_*` entry point;
+/// [`crate::config::InputSpec::Custom`] resolves its `type_tag` through
+/// `registry` and calls the registered [`crate::registry::InputFactory`] instead,
+/// which builds and spawns the equivalent `supervise_driver`-wrapped loop
+/// itself — see [`serve_with_registry`]'s own doc for the full picture.
 fn spawn_ingest(
     route: &crate::config::Route,
     store: Arc<RouteHandle>,
@@ -1092,8 +1087,9 @@ mod tests {
         // Issue #805 task 3: the migrated egress call sites (`dynamic_file`
         // et al.) now resolve through the registry, not `RouteHandle::trunk`
         // directly -- publish this bare-constructed test route's own Trunk
-        // so it is `Found`, exactly as `origin::supervisor::supervise` would
-        // have done for a real RTMP/`Custom` route reaching `Live`.
+        // so it is `Found`, exactly as a real driver-backed route's
+        // `crate::source::report_driver_progress` call would for its own
+        // driver-minted Trunk once live.
         store.publish_owned_trunk();
         let mut streams = HashMap::new();
         streams.insert(
@@ -2534,9 +2530,9 @@ mod tests {
     /// endpoint (a refused TCP connect, a UDP port nothing ever sends to, an
     /// SRT caller dialing nobody, or — for `Rtmp` — a listen port this test
     /// has already bound out from under it) so no real server is needed
-    /// anywhere. A genuinely-wired route's supervisor (`supervise`/
-    /// `supervise_driver`) completes one full attempt-and-fail cycle and
-    /// transitions [`RouteHandle::health`] `Connecting` -> `Reconnecting`;
+    /// anywhere. A genuinely-wired route's supervisor (`supervise_driver`)
+    /// completes one full attempt-and-fail cycle and transitions
+    /// [`RouteHandle::health`] `Connecting` -> `Reconnecting`;
     /// the old combined stub arm never touched `route_handle` at all, so a
     /// regressed variant would still read `Connecting` at the hang guard.
     ///

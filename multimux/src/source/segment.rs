@@ -25,19 +25,27 @@
 //! program's tracks have landed, then pump every already-built segmenter's
 //! cursor.
 //!
+//! Both are `pub` (not `pub(crate)`): a [`crate::registry::SchemeRegistry`]
+//! `Custom` input factory driving its own `media_plane::ingress::Dialer`/
+//! `IngestSession` over its own `IngestDriver` needs this exact per-iteration
+//! call too, right after `crate::source::report_driver_progress` — otherwise
+//! its ingested samples land in the driver-minted `Trunk` but never become
+//! LL-HLS/DASH-servable segments/parts, the same "ingest observable, playback
+//! not" gap this module closed for the eight in-tree sources. See
+//! `examples/custom_scheme.rs`.
+//!
 //! # Why `SPTS_PROGRAM_ID`'s init bytes go through `RouteHandle::set_init`
 //!
 //! The fMP4 init segment has no home in a `Trunk` (no ring holds it — see
 //! `ll_hls_runtime::server::engine`'s own module doc, "the one thing that
 //! genuinely cannot come from the `Trunk` alone"); it lives inside the
 //! route's [`ll_hls_runtime::server::LlHlsOrigin`] instead.
-//! [`crate::route::RouteHandle::publish_program`] rebuilds that `LlHlsOrigin`
+//! `RouteHandle::publish_program` (crate-private) rebuilds that `LlHlsOrigin`
 //! (and `DashState`) over a driver-minted `Trunk` the first time one is
-//! published under [`crate::route::SPTS_PROGRAM_ID`] — see that method's own
+//! published under `SPTS_PROGRAM_ID` (crate-private) — see that method's own
 //! doc — so calling [`crate::route::RouteHandle::set_init`] here, *after*
 //! this program's `Trunk` has already been published into the registry,
-//! lands the init bytes in the same place `crate::pipeline::run_pipeline`
-//! (the RTMP/legacy path) always has.
+//! lands the init bytes in the same place every driver-backed `run_*` does.
 //!
 //! # Why segmenting is per-program, not per-route
 //!
@@ -47,8 +55,8 @@
 //! every program `driver.programs()` reports, not just one. Wiring the
 //! *result* of a non-default program's segmentation to HTTP egress (as
 //! opposed to segmenting it at all) is issue #805 task 6 (MPTS egress
-//! resolution) — out of scope here; only [`SPTS_PROGRAM_ID`]'s init bytes
-//! are pushed to `RouteHandle` today, but every program's `Trunk` still
+//! resolution) — out of scope here; only `SPTS_PROGRAM_ID`'s (crate-private)
+//! init bytes are pushed to `RouteHandle` today, but every program's `Trunk` still
 //! carries its own real segments/parts, resolvable exactly like the
 //! `ts_program` test proves.
 
@@ -70,7 +78,7 @@ use crate::route::{RouteHandle, SPTS_PROGRAM_ID};
 /// [`Trunk`], an [`LlHlsSegmenter`] fed from it, and the *same* `Trunk`'s own
 /// [`SegmentWriter`] the resulting parts/segments are published back
 /// through.
-pub(crate) struct ProgramSegmenter {
+pub struct ProgramSegmenter {
     cursor: SampleCursor,
     segment_writer: SegmentWriter,
     seg: LlHlsSegmenter,
@@ -192,12 +200,15 @@ impl ProgramSegmenter {
 }
 
 /// Per-iteration driver every `run_*` entry point calls right after
-/// `crate::source::report_driver_progress` — builds a [`ProgramSegmenter`]
+/// [`crate::source::report_driver_progress`] — builds a [`ProgramSegmenter`]
 /// for each newly-observed program (once its tracks have landed) and pumps
-/// every already-built one. `segmenters` is caller-owned state, exactly like
-/// `report_driver_progress`'s own `published: &mut HashSet<ProgramId>`: one
-/// fresh `HashMap::new()` per connection attempt, living for that attempt's
-/// whole drive loop.
+/// every already-built one. `segmenters` is caller-owned, opaque state,
+/// exactly like `report_driver_progress`'s own `published: &mut
+/// HashSet<ProgramId>`: a caller (this crate's own `run_*` entry points, or an
+/// external `Custom`-scheme factory's own drive loop — see this module's own
+/// doc) declares one fresh `HashMap::new()` per connection attempt and passes
+/// it back in on every call for that attempt's whole lifetime, never
+/// constructing or reading a [`ProgramSegmenter`] itself.
 ///
 /// A segmenter's own errors (build failure, a push/flush rejecting a
 /// malformed sample) are logged and otherwise swallowed — never propagated
@@ -205,8 +216,9 @@ impl ProgramSegmenter {
 /// tear down a working ingest connection; the connection itself (and every
 /// other program on it) keeps running. A program whose segmenter failed to
 /// build is retried on the next call (it is never inserted into
-/// `segmenters`, so [`try_new`](ProgramSegmenter::try_new) runs again).
-pub(crate) fn drive_program_segmenters<S: IngestSession>(
+/// `segmenters`, so this function's internal `ProgramSegmenter::try_new`
+/// runs again).
+pub fn drive_program_segmenters<S: IngestSession>(
     driver: &IngestDriver<S>,
     route_handle: &RouteHandle,
     segmenters: &mut HashMap<ProgramId, ProgramSegmenter>,

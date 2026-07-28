@@ -5,17 +5,13 @@
 //!
 //! - `multimux_route_up` (`ROUTE_UP`) — gauge, labels `route`: 1.0 while
 //!   that route's [`crate::route::HealthState`] is `Live`, else 0.0. Set in
-//!   `origin::supervisor::supervise` alongside every `MediaStore::set_health`
-//!   call (the supervisor is the one place that both knows the route name and
-//!   drives health transitions).
+//!   `origin::supervisor::supervise_driver` alongside every
+//!   `RouteHandle::set_health` call (the supervisor is the one place that
+//!   both knows the route name and drives health transitions).
 //! - `multimux_source_reconnects_total` (`SOURCE_RECONNECTS_TOTAL`) —
 //!   counter, labels `route`: bumped once each time a route's supervisor loop
-//!   re-enters `Reconnecting` (a lost connection or ended pipeline about to be
+//!   re-enters `Reconnecting` (a lost connection or ended attempt about to be
 //!   retried).
-//! - `multimux_segments_produced_total` / `multimux_parts_produced_total`
-//!   (`SEGMENTS_PRODUCED_TOTAL` / `PARTS_PRODUCED_TOTAL`) — counters,
-//!   labels `route`: bumped in `pipeline::run_pipeline` every time a
-//!   completed segment/part is published into the route's `MediaStore`.
 //! - `multimux_active_blocking_requests` (`ACTIVE_BLOCKING_REQUESTS`) —
 //!   gauge (no route label — the LL-HLS output's blocking-wait helpers don't
 //!   currently know their own route name; see `output::llhls`): count of
@@ -49,14 +45,6 @@ pub(crate) const ROUTE_UP: &str = "multimux_route_up";
 /// Counter: incremented once each time a route's supervisor loop re-enters
 /// `Reconnecting`. Labels: `route`.
 pub(crate) const SOURCE_RECONNECTS_TOTAL: &str = "multimux_source_reconnects_total";
-
-/// Counter: incremented once per full segment the pipeline publishes into a
-/// route's store. Labels: `route`.
-pub(crate) const SEGMENTS_PRODUCED_TOTAL: &str = "multimux_segments_produced_total";
-
-/// Counter: incremented once per part the pipeline publishes into a route's
-/// store. Labels: `route`.
-pub(crate) const PARTS_PRODUCED_TOTAL: &str = "multimux_parts_produced_total";
 
 /// Gauge: count of LL-HLS blocking requests (media-playlist blocking reload,
 /// or a preload-hinted part fetch) currently parked awaiting new data,

@@ -80,11 +80,6 @@ futures-util      = { version = "0.3", default-features = false, features = ["st
 # (`tokio_rustls::client::TlsStream<TcpStream>`).
 default     = ["tls"]
 tls         = ["rtsp-runtime/tls", "dep:tokio-rustls"]
-testsupport = []
-
-[[example]]
-name              = "serve_mock"
-required-features = ["testsupport"]
 
 [[example]]
 name = "serve_rtsp"

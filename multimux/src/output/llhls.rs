@@ -212,8 +212,9 @@ mod tests {
     /// in-progress segment 2 -- so the live edge is `(2, 2)`. Publishes its
     /// own `Trunk` into the registry (`publish_owned_trunk`) so
     /// `media_playlist`'s migrated `resolve_program` lookup (issue #805 task
-    /// 3) sees `Found`, exactly as `origin::supervisor::supervise` would have
-    /// done for a real RTMP/`Custom` route by the time it serves anything.
+    /// 3) sees `Found`, exactly as a real driver-backed route's
+    /// `crate::source::report_driver_progress` call does by the time it
+    /// serves anything.
     fn make_route() -> Arc<RouteHandle> {
         let route = Arc::new(RouteHandle::new(4.0, 500, 4));
         route.set_init(vec![0xAA; 8]);

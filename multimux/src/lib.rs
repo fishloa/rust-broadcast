@@ -20,7 +20,6 @@ pub mod error;
 mod http;
 pub mod origin;
 pub mod output;
-pub mod pipeline;
 pub mod prometheus;
 mod redact;
 pub mod registry;
@@ -40,7 +39,13 @@ pub use error::{MultimuxError, Result};
 pub use broadcast_auth;
 pub use origin::serve;
 pub use origin::serve_with_registry;
-pub use origin::supervisor::{Backoff, SourceConnector, supervise};
+/// [`supervisor::supervise_driver`](origin::supervisor::supervise_driver) is
+/// the one supported way to drive a [`registry::InputFactory`]'s ingest task
+/// (issue #805 task 5 deleted the old `SourceConnector`/`supervise` pair, the
+/// last user of which was a `Custom`-scheme factory) — see
+/// `examples/custom_scheme.rs` for a complete external input scheme built on
+/// it over a small `media_plane::ingress::Dialer`/`IngestSession` of its own.
+pub use origin::supervisor::{Backoff, supervise_driver};
 pub use output::Output;
 pub use registry::{
     AuthCtx, AuthFactory, InputCtx, InputFactory, OutputCtx, OutputFactory, SchemeRegistry,

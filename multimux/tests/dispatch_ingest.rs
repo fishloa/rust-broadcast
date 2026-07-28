@@ -37,22 +37,31 @@
 //! ffmpeg-captured publish, since it needs the RTMP handshake/`publish`
 //! dance rather than a bare byte stream.
 //!
-//! # `run_pipeline` coverage
+//! # `InputSpec::Custom` driver-backed coverage (issue #805 task 5)
 //!
-//! `crate::pipeline::run_pipeline` (the `Custom` path, `Rtmp` having left it
-//! at issue #805 task 4) was itself silently broken for a time: it never
-//! published its `Trunk` into
-//! `RouteHandle`'s program registry, so every consumer would hang on
+//! Before task 5, the `Custom` path drove `crate::pipeline::run_pipeline` (a
+//! `SampleSource`-fed segmenter loop) which was itself silently broken for a
+//! time: it never published its `Trunk` into `RouteHandle`'s program
+//! registry, so every consumer would hang on
 //! `ProgramResolution::NotYetAnnounced` (see `RouteHandle::new`'s own doc,
 //! "A producer writing the owned `Trunk` must publish it") -- fixed on this
 //! branch (`fix(multimux): a producer writing the owned Trunk must publish
-//! it, or egress hangs`) before this file existed.
-//! `custom_dispatch_drives_run_pipeline_and_serves_real_media` below drives
-//! `run_pipeline` through the *exact* dispatch path a real `Custom` route
-//! uses (`InputSpec::Custom` -> `SchemeRegistry` -> `InputCtx` -> a factory
-//! that spawns `run_pipeline`), so a regression of that publish call is
-//! caught here too, not just by `pipeline.rs`'s own unit test (which never
-//! goes through `serve_with_registry`/a real HTTP response).
+//! it, or egress hangs`) before this file existed. Task 5 deleted
+//! `run_pipeline`/`SampleSource`/`MockSource` outright (the `Custom` path was
+//! their last caller once RTMP left at task 4): a `Custom` factory now spawns
+//! `multimux::supervise_driver` over its own `media_plane::ingress::Dialer`/
+//! `IngestSession`, exactly like every built-in source (see
+//! `examples/custom_scheme.rs`).
+//! `custom_dispatch_drives_a_driver_backed_source_and_serves_real_media`
+//! below covers that shape through the *exact* dispatch path a real `Custom`
+//! route uses (`InputSpec::Custom` -> `SchemeRegistry` -> `InputCtx` -> a
+//! factory that spawns `supervise_driver`), replaying the real
+//! `h264_aac.ts` fixture (demuxed, not synthetic) through a small
+//! `IngestSession` of its own -- so a regression of
+//! `crate::source::report_driver_progress`'s registry-publish call (or
+//! `crate::source::segment::drive_program_segmenters`'s segmenting) is
+//! caught here too for the `Custom` dispatch path specifically, not just by
+//! every built-in source's own loopback tests.
 
 use std::net::SocketAddr;
 use std::path::PathBuf;
@@ -412,96 +421,245 @@ async fn rtmp_dispatch_serves_real_media_end_to_end() {
     server.abort();
 }
 
-// --- `run_pipeline` coverage (issue #805 task 3's "also cover
-// `pipeline::run_pipeline`") -- gated on `testsupport` since it needs
-// `multimux::pipeline::MockSource` ---
+// --- `InputSpec::Custom` driver-backed coverage (issue #805 task 5) ---
 
-#[cfg(feature = "testsupport")]
-mod run_pipeline_coverage {
+mod custom_dispatch_driver_backed {
     use super::*;
-    use multimux::pipeline::{MockSource, run_pipeline};
+    use std::collections::{HashMap as StdHashMap, HashSet, VecDeque};
+    use std::convert::Infallible;
+    use std::num::NonZeroUsize;
+
+    use broadcast_common::{Demand, Stage, Timestamp};
+    use media_plane::ingress::{
+        Dialer, HandshakePolicy, IngestDriver, IngestSession, ProgramId, SessionEvent,
+    };
+    use media_plane::trunk::{RetentionClass, TrunkConfig};
     use multimux::registry::{InputCtx, InputFactory};
-    use transmux::avc_config_from_sprop;
+    use multimux::route::RouteHandle;
+    use multimux::source::report_driver_progress;
+    use multimux::source::segment::{ProgramSegmenter, drive_program_segmenters};
+    use multimux::{Backoff, supervise_driver};
+    use transmux::TsDemux;
     use transmux::pipeline::{CodecConfig, Sample, TrackSpec};
 
-    const SPROP: &str = "Z0IAKeKQFAe2AtwEBAaQeJEV,aM48gA==";
-    const VIDEO_TIMESCALE: u32 = 90_000;
-    const FRAME_DUR: u32 = VIDEO_TIMESCALE / 30;
-
-    fn video_track_spec() -> TrackSpec {
-        let config = avc_config_from_sprop(SPROP).expect("valid sprop");
-        TrackSpec::new(
-            1,
-            VIDEO_TIMESCALE,
-            CodecConfig::Avc {
-                config,
-                width: 0,
-                height: 0,
-            },
-        )
+    fn nz(n: usize) -> NonZeroUsize {
+        NonZeroUsize::new(n).expect("non-zero capacity")
     }
 
-    /// 90 frames @ 30 fps = 3 s, sync every 30 frames -- comfortably over
-    /// `base_config`'s 0.5 s target duration, so at least one real segment
-    /// closes (mirrors `multimux::pipeline`'s own
-    /// `drives_source_through_segmenter_into_store` unit test's batch
-    /// shape).
-    fn batches() -> Vec<Vec<(u32, Sample)>> {
-        (0..90u32)
-            .map(|i| {
-                let is_sync = i % 30 == 0;
-                let data = vec![0xAAu8.wrapping_add((i % 251) as u8); 64];
-                let sample = Sample::new(
-                    data,
-                    Some(i64::from(i) * i64::from(FRAME_DUR)),
-                    Some(i64::from(i) * i64::from(FRAME_DUR)),
-                    Some(FRAME_DUR),
-                    is_sync,
-                );
-                vec![(1u32, sample)]
-            })
-            .collect()
+    /// Demux the real `h264_aac.ts` fixture's AVC video track into a
+    /// `TrackSpec` + its real, decoded `Sample`s -- mirrors
+    /// `tests/lldash_dashjs.rs`'s own `real_video_track_and_samples`: real
+    /// bytes in, not `ts_program::test_support::build_ts_bytes`'s
+    /// hand-faked NAL payload.
+    fn real_video_track_and_samples() -> (TrackSpec, Vec<Sample>) {
+        let ts = std::fs::read(fixture_path()).expect("h264_aac.ts fixture must exist");
+        let media = TsDemux::new().demux(&ts).expect("demux h264_aac.ts");
+        let video = media
+            .tracks
+            .into_iter()
+            .find(|t| matches!(t.spec.config, CodecConfig::Avc { .. }))
+            .expect("h264_aac.ts must carry an AVC video track");
+        (video.spec, video.samples)
     }
 
-    /// Drives `pipeline::run_pipeline` through the **exact** dispatch path a
-    /// real `InputSpec::Custom` route uses: `serve_with_registry` resolves
-    /// `Custom`'s `type_tag` through a `SchemeRegistry`, builds an
-    /// `InputCtx`, and calls the registered factory -- this factory spawns
-    /// `run_pipeline` fed by a `MockSource`, exactly as a real embedding
-    /// application's factory would spawn its own connector-fed
-    /// `run_pipeline`/`supervise`. If `run_pipeline` ever again forgets to
-    /// call `RouteHandle::publish_owned_trunk`, every request below hangs on
-    /// `ProgramResolution::NotYetAnnounced` instead of erroring, and
-    /// `poll_until_extinf` times out.
+    /// A small `IngestSession` carrying real, pre-demuxed samples -- exactly
+    /// the "small `Dialer`/`IngestSession` of its own" shape
+    /// `examples/custom_scheme.rs` documents, just fed real fixture-derived
+    /// media instead of synthetic frames.
     ///
-    /// MUTATION VERIFIED: removing `run_pipeline`'s
-    /// `route_handle.publish_owned_trunk();` call (in
-    /// `multimux/src/pipeline.rs`) makes this test fail:
-    /// `poll_until_extinf`'s 20 s hang guard elapses and its own
-    /// `panic!("no #EXTINF: line appeared ... dispatched ingest never
-    /// produced a closed segment")` fires -- the route ingests and segments
-    /// correctly (nothing else changed), but every HTTP request resolves
-    /// `ProgramResolution::NotYetAnnounced` forever since nothing ever
-    /// published `SPTS_PROGRAM_ID` into the registry, so the LL-HLS engine
-    /// never even gets a `Trunk` to render from. Rebuilt and re-ran to
-    /// confirm this exact panic, then reverted.
+    /// Its **first** `feed` call only announces the one program (the real
+    /// track); its **second** queues every one of its real samples. This is
+    /// deliberately two calls, not one: `Trunk::subscribe`'s "starting from
+    /// now" contract means a `ProgramSegmenter`'s cursor (subscribed by
+    /// `drive_program_segmenters` only once `NewProgram` has landed) would
+    /// never observe samples written in the *same* `feed` call that also
+    /// announced the program -- exactly the ordering
+    /// `multimux::source::ts_udp`'s own loopback test's doc comment ("Second
+    /// feed: real media the segmenter's cursor ... actually observes") warns
+    /// about. A genuine external transport would instead depayload/demux
+    /// across many `feed` calls as bytes arrive, but the `IngestSession`
+    /// contract (announce, then sample, each a call `run_real_ts` drains
+    /// between) is identical.
+    struct RealTsSession {
+        pending: VecDeque<SessionEvent>,
+        announced: bool,
+        samples_sent: bool,
+        spec: TrackSpec,
+        samples: Vec<Sample>,
+    }
+
+    impl Stage for RealTsSession {
+        type In<'a> = &'a [u8];
+        type Out = SessionEvent;
+        type Error = Infallible;
+
+        fn demand(&self) -> Demand {
+            Demand::new(1)
+        }
+
+        fn feed(&mut self, _input: &[u8], _now: Timestamp) -> Result<(), Infallible> {
+            if !self.announced {
+                self.announced = true;
+                self.pending.push_back(SessionEvent::NewProgram {
+                    program: ProgramId(0),
+                    tracks: vec![self.spec.clone()],
+                });
+            } else if !self.samples_sent {
+                self.samples_sent = true;
+                let track_id = self.spec.track_id;
+                for sample in self.samples.drain(..) {
+                    self.pending.push_back(SessionEvent::Sample {
+                        program: ProgramId(0),
+                        track_id,
+                        retention: RetentionClass::Timed,
+                        sample,
+                    });
+                }
+            }
+            Ok(())
+        }
+
+        fn poll(&mut self) -> Option<SessionEvent> {
+            self.pending.pop_front()
+        }
+
+        fn next_deadline(&self) -> Option<Timestamp> {
+            None
+        }
+
+        fn on_deadline(&mut self, _now: Timestamp) {}
+
+        fn finish(&mut self) -> Result<(), Infallible> {
+            Ok(())
+        }
+    }
+
+    impl IngestSession for RealTsSession {
+        type Request = Infallible;
+    }
+
+    /// Constructs a [`RealTsSession`] carrying `spec`/`samples` -- performs
+    /// no I/O, exactly like every other `Dialer::dial` in this crate.
+    struct RealTsDialer {
+        spec: TrackSpec,
+        samples: Vec<Sample>,
+    }
+
+    impl Dialer for RealTsDialer {
+        type Session = RealTsSession;
+        type Error = Infallible;
+
+        fn dial(&mut self) -> Result<RealTsSession, Infallible> {
+            let mut pending = VecDeque::new();
+            pending.push_back(SessionEvent::Established);
+            Ok(RealTsSession {
+                pending,
+                announced: false,
+                samples_sent: false,
+                spec: self.spec.clone(),
+                samples: self.samples.clone(),
+            })
+        }
+    }
+
+    /// One dial-through-disconnect attempt -- the `supervise_driver`
+    /// `attempt` closure. Mirrors every in-tree `run_*`: dial, wrap in an
+    /// `IngestDriver`, feed, and after every feed call
+    /// [`report_driver_progress`] (publish the registry + flip health) then
+    /// [`drive_program_segmenters`] (turn samples into servable
+    /// segments/parts) -- exactly the two calls `examples/custom_scheme.rs`
+    /// documents as the whole extension contract.
+    async fn run_real_ts(
+        route_handle: Arc<RouteHandle>,
+        spec: TrackSpec,
+        samples: Vec<Sample>,
+    ) -> multimux::Result<()> {
+        let mut dialer = RealTsDialer { spec, samples };
+        let session = dialer
+            .dial()
+            .unwrap_or_else(|never: Infallible| match never {});
+        let trunk_config = TrunkConfig::new(nz(64), nz(16), nz(8), nz(64), nz(64));
+        let handshake = HandshakePolicy::establish_by(Timestamp::from_nanos(u64::MAX));
+        let mut driver: IngestDriver<RealTsSession> = IngestDriver::new(
+            session,
+            trunk_config,
+            handshake,
+            media_plane::DEFAULT_MAX_PROGRAMS,
+        );
+        let mut published: HashSet<ProgramId> = HashSet::new();
+        let mut segmenters: StdHashMap<ProgramId, ProgramSegmenter> = StdHashMap::new();
+
+        // First feed: announces NewProgram only -- mints the driver-side
+        // Trunk and (via drive_program_segmenters, below) subscribes this
+        // program's ProgramSegmenter cursor *before* any sample exists.
+        driver.feed(&[], Timestamp::from_nanos(0));
+        report_driver_progress(&driver, &route_handle, &mut published);
+        drive_program_segmenters(&driver, &route_handle, &mut segmenters);
+
+        // Second feed: the real samples the now-subscribed cursor actually
+        // observes -- see RealTsSession's own doc for why this must be a
+        // separate call from the announcement above.
+        driver.feed(&[], Timestamp::from_nanos(1));
+        report_driver_progress(&driver, &route_handle, &mut published);
+        drive_program_segmenters(&driver, &route_handle, &mut segmenters);
+
+        driver.finish();
+        report_driver_progress(&driver, &route_handle, &mut published);
+        drive_program_segmenters(&driver, &route_handle, &mut segmenters);
+
+        Ok(())
+    }
+
+    /// Drives a driver-backed `Custom` factory through the **exact**
+    /// dispatch path a real `InputSpec::Custom` route uses:
+    /// `serve_with_registry` resolves `Custom`'s `type_tag` through a
+    /// `SchemeRegistry`, builds an `InputCtx`, and calls the registered
+    /// factory -- this factory spawns `multimux::supervise_driver` over its
+    /// own small `Dialer`/`IngestSession` fed the real `h264_aac.ts`
+    /// fixture, exactly as a real embedding application's factory would
+    /// spawn its own transport-fed driver loop (see
+    /// `examples/custom_scheme.rs`). If [`report_driver_progress`] were ever
+    /// skipped, every request below would hang on
+    /// `ProgramResolution::NotYetAnnounced` instead of erroring, and
+    /// `poll_until_extinf` would time out; if
+    /// [`drive_program_segmenters`] were skipped, the route would resolve
+    /// (health `Live`) but never carry a single `#EXTINF:` line, since
+    /// nothing would ever turn the ingested samples into closed segments.
+    ///
+    /// MUTATION VERIFIED: commenting out all three of this test's own
+    /// `report_driver_progress(&driver, &route_handle, &mut published);`
+    /// calls inside `run_real_ts` (i.e. simulating a `Custom` factory author
+    /// who forgets the registry-publish half of the extension contract
+    /// entirely) makes this test fail: `poll_until_extinf`'s 20 s hang guard
+    /// elapses and its own `panic!("no #EXTINF: line appeared ... dispatched
+    /// ingest never produced a closed segment")` fires at
+    /// `multimux/tests/dispatch_ingest.rs:157:13` -- the session demuxes and
+    /// segments the real fixture correctly (nothing else changed), but every
+    /// HTTP request resolves `ProgramResolution::NotYetAnnounced` forever
+    /// since nothing ever published `SPTS_PROGRAM_ID` into the registry, so
+    /// the LL-HLS engine never even gets a `Trunk` to render from. Rebuilt
+    /// and re-ran to confirm this exact panic, then reverted.
     #[tokio::test]
-    async fn custom_dispatch_drives_run_pipeline_and_serves_real_media() {
+    async fn custom_dispatch_drives_a_driver_backed_source_and_serves_real_media() {
+        let (spec, samples) = real_video_track_and_samples();
+        assert!(
+            !samples.is_empty(),
+            "h264_aac.ts must demux to at least one video sample"
+        );
+
         let mut registry = SchemeRegistry::new();
         registry.register_input(
-            "mock-pipeline",
-            Arc::new(|ctx: InputCtx| {
-                Ok(tokio::spawn(async move {
-                    let source = MockSource::new(vec![video_track_spec()], batches());
-                    let _ = run_pipeline(
-                        ctx.store,
-                        ctx.target_duration_secs,
-                        ctx.part_target_ms,
-                        source,
-                        &ctx.name,
-                    )
-                    .await;
-                }))
+            "mock-driver-backed",
+            Arc::new(move |ctx: InputCtx| {
+                let spec = spec.clone();
+                let samples = samples.clone();
+                Ok(tokio::spawn(supervise_driver(
+                    move |route_handle| run_real_ts(route_handle, spec.clone(), samples.clone()),
+                    ctx.store,
+                    Backoff::production_default(),
+                    ctx.name,
+                    ctx.shutdown_rx,
+                )))
             }) as InputFactory,
         );
 
@@ -509,7 +667,7 @@ mod run_pipeline_coverage {
         let config = base_config(
             bind_addr,
             InputSpec::Custom {
-                type_tag: "mock-pipeline".to_string(),
+                type_tag: "mock-driver-backed".to_string(),
                 params: serde_json::Value::Null,
             },
         );
