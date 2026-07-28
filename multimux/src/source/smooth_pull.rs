@@ -436,12 +436,11 @@ impl SmoothIngestSession {
         else {
             unreachable!("caller only invokes this from Phase::AwaitingFirstFragments");
         };
-        let mut next_track_id: u32 = 1;
         let mut specs = Vec::new();
         let mut streams = Vec::new();
         let mut first_emits: Vec<(u32, Vec<u8>)> = Vec::new();
 
-        for p in pending {
+        for (global_id, p) in (1_u32..).zip(pending) {
             let first_bytes = p.first_bytes.expect("checked all-Some by the caller");
             let local_track_id = discover_moof_track_id(&first_bytes)?;
             let effective_timescale: u32 = match p.stream_type {
@@ -470,8 +469,6 @@ impl SmoothIngestSession {
             let init_bytes =
                 build_init_segment(std::slice::from_ref(&local_spec), SYNTHETIC_MOVIE_TIMESCALE)?;
 
-            let global_id = next_track_id;
-            next_track_id += 1;
             let mut global_spec = local_spec.clone();
             global_spec.track_id = global_id;
             specs.push(global_spec);
