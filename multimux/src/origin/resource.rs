@@ -125,7 +125,7 @@ pub(crate) async fn cors_preflight() -> StatusCode {
 async fn dynamic_file(State(route): State<Arc<RouteHandle>>, Path(file): Path<String>) -> Response {
     let serving = match http::resolve_route_program(&route) {
         Ok(serving) => serving,
-        Err(resp) => return resp,
+        Err(resp) => return *resp,
     };
     let trunk = serving.trunk();
     let ll_hls = serving.ll_hls();

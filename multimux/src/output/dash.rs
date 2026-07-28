@@ -103,7 +103,7 @@ impl Output for DashOutput {
 async fn manifest(State(route): State<Arc<RouteHandle>>) -> Response {
     let serving = match http::resolve_route_program(&route) {
         Ok(serving) => serving,
-        Err(resp) => return resp,
+        Err(resp) => return *resp,
     };
     let trunk = serving.trunk();
     let origin = DashOrigin { route };

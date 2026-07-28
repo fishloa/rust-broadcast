@@ -160,7 +160,7 @@ pub(crate) async fn media_playlist(
 ) -> Response {
     let serving = match http::resolve_route_program(&state.route) {
         Ok(serving) => serving,
-        Err(resp) => return resp,
+        Err(resp) => return *resp,
     };
     let trunk = serving.trunk();
     let ll_hls = serving.ll_hls();

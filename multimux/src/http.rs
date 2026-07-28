@@ -53,13 +53,21 @@ pub(crate) const BLOCKING_RELOAD_TIMEOUT: Duration = Duration::from_secs(5);
 /// all — so neither of those needs its own "no program yet" branch.
 pub(crate) fn resolve_route_program(
     route: &crate::route::RouteHandle,
-) -> core::result::Result<Arc<ProgramServing>, Response> {
+) -> core::result::Result<Arc<ProgramServing>, Box<Response>> {
+    // `Box<Response>`, not a bare `Response`: an `axum::Response` is >=128
+    // bytes, so returning it unboxed makes every `Result` in this signature
+    // that large on the success path too (clippy::result_large_err, which
+    // the newer-stable canary enforces). The error path here is the rare one
+    // -- a route mid-connect or a bad program id -- so one allocation there
+    // is strictly better than widening the common case.
     match route.resolve_program(crate::route::SPTS_PROGRAM_ID) {
         crate::route::ProgramResolution::Found(serving) => Ok(serving),
         crate::route::ProgramResolution::NotYetAnnounced => {
-            Err(StatusCode::SERVICE_UNAVAILABLE.into_response())
+            Err(Box::new(StatusCode::SERVICE_UNAVAILABLE.into_response()))
         }
-        crate::route::ProgramResolution::NotFound => Err(StatusCode::NOT_FOUND.into_response()),
+        crate::route::ProgramResolution::NotFound => {
+            Err(Box::new(StatusCode::NOT_FOUND.into_response()))
+        }
     }
 }
 
