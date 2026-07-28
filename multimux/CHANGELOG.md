@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [0.5.0] - 2026-07-28
 
 ### Added (issue #805 task 6: per-program serving state, MPTS-ready)
 - **`RouteHandle` gains per-program serving state.** A new crate-private

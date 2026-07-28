@@ -5,7 +5,7 @@ All notable changes to `transmux` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.20.0] - 2026-07-28
 
 ### Fixed
 
@@ -29,7 +29,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   transcription this is adapted from, and `rtp_stream`'s module docs for why
   the signal surfaces locally rather than in `ir::DemuxEvent`.
 
-## [0.20.0] - 2026-07-26
 
 **Publish order:** `broadcast-common` 8.7.0 → `transmux` 0.20.0 → `media-doctor` → (steps 4/5: `ll-hls-runtime`, `multimux`, `multimux-cli`).
 
@@ -42,151 +41,6 @@ step-2 range then found 11 blocking defects; the five worst are fixed here
 (folded into this still-open release rather than shipped separately),
 alongside two CENC confidentiality vulnerabilities disclosed under Security
 below.
-
-### Added
-
-- **`CodecConfig::Subtitle { format: SubtitleFormat }`** (media plane step 2d):
-  `Fmp4Demux` now demuxes `stpp` (TTML/IMSC, ISO/IEC 14496-30 §7.2) and `wvtt`
-  (WebVTT, §9.2) ISOBMFF sample entries into this variant instead of silently
-  dropping the track — samples stay opaque (never cue-parsed).
-  `SubtitleFormat` (`#[non_exhaustive]`, `name()`/`Display` per the #204
-  convention) also carries `DvbBitmap`/`Teletext` tokens for the PES-carried
-  broadcast subtitle formats (still `CodecConfig::Data` on the TS demux path
-  today). There is no re-mux path yet for a `Subtitle` track — `build_trak`
-  rejects it with `Error::UnsupportedCodec` (`TODO(#753)`).
-- The `ac-4` ISOBMFF sample entry now demuxes to the existing
-  `CodecConfig::Ac4` (the mux direction already worked; only the demux arm was
-  missing) — a full mux ↔ demux round trip.
-- **Shared segmentation primitives in `transmux::segmenter`**, now public
-  because all four segmenters use them and their behaviour is observable:
-  `MediaClock` (per-track elapsed-media accounting: `duration` when it is a
-  real, non-zero span, else the absolute `dts` delta), `choose_anchor` /
-  `is_anchor_capable` (first video track of any codec, else the first track
-  whose clock can advance; a section-only track set is an error), and
-  `MAX_PENDING_SAMPLES_PER_TRACK` (the un-cut buffer bound). Previously each
-  module carried its own copy, so the four could — and did — drift apart.
-- **`DemuxEvent::TrackUpdated`/`TrackRemoved`/`TrackAbandoned`, PMT version
-  diffing** (issue #774, unblocks rust-skyfire#96): `StreamingTsDemux` now
-  diffs a PMT's `version_number`/`current_next_indicator` (ISO/IEC 13818-1
-  §2.4.4.8) instead of only ever inserting newly-seen PIDs.
-  - A version change that no longer lists a previously-declared PID emits
-    `TrackRemoved { track_id, provenance }` (only for a PID that had already
-    reached `Live` — a real `track_id` a consumer has seen).
-  - A version change that alters an existing PID's `es_info_descriptors` or
-    reclassifies its `stream_type` emits `TrackUpdated(TrackSpec)` (codec
-    config recovery itself stays single-shot and permanent).
-  - A track whose codec config never becomes recoverable by end of input, or
-    whose probe/parked backlog exceeds its byte budget, emits
-    `TrackAbandoned { track_id: Option<u32>, reason: AbandonReason,
-    provenance }` (`AbandonReason::ConfigUnrecoverable` /
-    `AbandonReason::BudgetExceeded`).
-  - A carousel-repeated identical-version PMT section (several times a second
-    on a real broadcast) is parsed but never re-diffed — no spurious events on
-    an unchanged track set.
-
-### Changed
-
-- **BREAKING — two silent drops are now typed errors** (media plane step 2d,
-  landed only after the coverage above, so `stpp`/`wvtt`/`ac-4` — which used
-  to hit these paths — no longer do):
-  - `Fmp4Demux` no longer silently skips a track whose sample entry it cannot
-    reconstruct into a `CodecConfig`; it now returns
-    `Error::UnsupportedSampleEntry { fourcc }`, naming the offending sample
-    entry.
-  - `CmafMux` no longer silently filters `CodecConfig::Data` tracks out of the
-    init/media segments; it now returns
-    `Error::UnmuxableDataTrack { track_id, stream_type }`. A caller that wants
-    the old best-effort behaviour must pre-filter explicitly, e.g.
-    `media.select_tracks_by(|t| !matches!(t.spec.config, CodecConfig::Data { .. }))`.
-- **BREAKING — `Sample` timing is now absolute and optional** (media plane step
-  2c, `docs/superpowers/specs/2026-07-26-media-plane-architecture.md` §4).
-  `Sample` is now `{ data, dts: Option<i64>, pts: Option<i64>, duration:
-  Option<u32>, flags: SampleFlags, provenance: Option<Provenance> }`:
-  - `dts`/`pts` are **absolute** tick values in the track's own media timescale
-    (`TrackSpec::timescale`), replacing the previous model in which a sample's
-    time was the running sum of preceding `duration`s anchored on
-    `Track::start_decode_time` — an anchor that FLV, WebM, MPEG Program Stream,
-    RTMP and RTP all left at `0`. The IR can now address a splice point, rebase
-    across sources, and express a send deadline.
-  - 33-bit (MPEG-2 Systems, ISO/IEC 13818-1 §2.4.3.7) and 32-bit (RTP,
-    RFC 3550 §5.1) rollover is unwrapped **once, at the demux edge**, and never
-    re-derived downstream.
-  - `Option`, not mandatory: section-carried tracks (SCTE-35 `stream_type`
-    `0x86`, DSM-CC, private sections) genuinely have no timestamp, so they keep
-    `dts`/`pts`/`duration` of `None` rather than a fabricated value.
-  - `composition_offset` is no longer a stored field — it is implied by the
-    pair, via the new `Sample::composition_offset()` (`pts - dts`), and still
-    round-trips fMP4 `ctts` byte-identically.
-  - `is_sync` moved into the `#[non_exhaustive]` `SampleFlags` struct
-    (`sample.flags.is_sync`; `SampleFlags::SYNC` / `NON_SYNC` / `new`).
-  - `Sample::new`/`from_annexb` take `(data, dts, pts, duration, is_sync)` and
-    `from_raw` takes `(data, dts, pts, duration)`.
-- **BREAKING — `SourceTiming` deleted.** It was write-only (the crate's own docs
-  admitted "all mux paths in this crate ignore this field"). The source
-  container's raw, pre-unwrap wire stamps survive as the debug-only
-  `Provenance { wire_dts, wire_pts }` side-field (`Sample::with_provenance`), so
-  no information is lost — the crate just stops presenting a debug field as a
-  timing model.
-- **BREAKING — `rebase::unroll_33bit_wraps` and `rebase::MPEG_TS_WRAP` removed.**
-  Wrap-unrolling now happens once at the demux edge, so re-folding the IR
-  timeline back into 33 bits in order to unwrap it again was exactly the
-  anti-pattern this step removes. `rebase_to_zero` / `apply_offset` /
-  `insert_discontinuity_gap` now shift every sample's absolute `dts`/`pts` in
-  lockstep with `Track::start_decode_time` (and never fabricate a timestamp for
-  a `None`-timed sample).
-- **BREAKING — `DemuxEvent` reshaped a second time within this release**
-  (found by the aggregate review below; applied here rather than deferred to a
-  later major bump):
-  - `TrackAdded(Track)` → `TrackAdded(TrackSpec)` — drops the always-empty
-    `samples` and never-set `encryption` fields that came along with the full
-    `Track`; every existing consumer already only read `track.spec`.
-  - `Discontinuity { track, provenance }` → `Discontinuity { track, kind:
-    DiscontinuityKind, provenance }`, and the variant is now `#[non_exhaustive]`
-    with a `DemuxEvent::discontinuity(...)` constructor. `DiscontinuityKind` is
-    `Signalled` (an MPEG-2 TS adaptation-field `discontinuity_indicator`),
-    `TimelineReanchored` (a live audio track's frame-exact anchor drifted from
-    the wire PES clock), or `BudgetExceeded { bytes }` (a per-PID buffer cap
-    dropped in-flight data). `abandon_backlog`'s probe/parked-backlog budget
-    cap now emits `TrackAbandoned` instead of a `Discontinuity` — it was
-    mis-typed before (a budget overflow abandons the track; nothing survives
-    to "continue" from).
-  - `TracksResolved` → `TracksResolved { generation: u32 }` — fixes a live bug
-    where the de-dup key was the known-PID *count*: a removal immediately
-    followed by an addition could return the count to a previously-seen
-    value, silently suppressing the re-fire a consumer needs. `generation` is
-    a monotonic counter bumped once per applied PMT diff (add/update/remove).
-  - `ClockReference` is now `#[non_exhaustive]` too, with a matching
-    `DemuxEvent::clock_reference(...)` constructor — both non-exhaustive
-    variants can grow a field later (e.g. a wall-clock/UTC anchor) without a
-    further breaking change.
-  - Documented `DemuxEvent`'s event-order guarantee (observation order per
-    emission class, not wire order across classes) and its removal semantics
-    (no `Sample` for a removed `track_id` ever follows its `TrackRemoved`;
-    removal tracks only the PMT-declared set, never a silence timeout).
-- **BREAKING — the rest of the IR surface is `#[non_exhaustive]` too**, applied
-  in this same release rather than costing a major bump later (`Media`/`Track`
-  were already done): the `DemuxEvent::Sample`,
-  `TrackRemoved`, `TrackAbandoned` and `TracksResolved` **variants**, and the
-  `Provenance`, `PcrSample`, `SkippedTrack`, `TrackEncryption` and
-  `FragmentTrackData` structs. `TracksResolved` took a field this release,
-  which is exactly the case this prevents recurring. Every affected type gained
-  a constructor so none became unconstructible from outside the crate:
-  `DemuxEvent::{sample, track_removed, track_abandoned, tracks_resolved}`,
-  `Provenance::new`, `PcrSample::new`, `SkippedTrack::new`,
-  `TrackEncryption::new`, `FragmentTrackData::new`. Pattern matches on the four
-  variants need a trailing `..`. `EventProvenance` stays `Copy + Eq + Default`.
-- **BREAKING — `HlsPackager` omits a timestamp-less track instead of emitting
-  `#EXTINF:0.000`.** A section-carried track (SCTE-35 `stream_type` `0x86`,
-  DSM-CC, private sections) has `duration: None` on every sample, deliberately
-  and never fabricated; summing `unwrap_or(0)` over it rendered a zero
-  `EXTINF`, which RFC 8216 §4.3.2.1 defines as a real playback duration a
-  player would honour. An HLS media playlist is a timeline of playable
-  segments and such a track is not one, so it is left out (its content reaches
-  an output through the paths built for it — an inband `emsg`, an
-  `EXT-X-DATERANGE`). A `Media` whose tracks are *all* timestamp-less is now a
-  named `Error::InvalidInput` rather than an empty playlist.
-
-### Fixed
 
 - **`splice::concat`/`splice_insert` now rebase the spliced-in content's
   `dts`/`pts` onto the join (issue #782).** Both used to place a second
@@ -506,6 +360,149 @@ below.
   fixed in the same change (see those crates' changelogs). The full
   `cargo +stable clippy --workspace --all-features --all-targets -- -D warnings`
   now exits 0.
+
+### Added
+
+- **`CodecConfig::Subtitle { format: SubtitleFormat }`** (media plane step 2d):
+  `Fmp4Demux` now demuxes `stpp` (TTML/IMSC, ISO/IEC 14496-30 §7.2) and `wvtt`
+  (WebVTT, §9.2) ISOBMFF sample entries into this variant instead of silently
+  dropping the track — samples stay opaque (never cue-parsed).
+  `SubtitleFormat` (`#[non_exhaustive]`, `name()`/`Display` per the #204
+  convention) also carries `DvbBitmap`/`Teletext` tokens for the PES-carried
+  broadcast subtitle formats (still `CodecConfig::Data` on the TS demux path
+  today). There is no re-mux path yet for a `Subtitle` track — `build_trak`
+  rejects it with `Error::UnsupportedCodec` (`TODO(#753)`).
+- The `ac-4` ISOBMFF sample entry now demuxes to the existing
+  `CodecConfig::Ac4` (the mux direction already worked; only the demux arm was
+  missing) — a full mux ↔ demux round trip.
+- **Shared segmentation primitives in `transmux::segmenter`**, now public
+  because all four segmenters use them and their behaviour is observable:
+  `MediaClock` (per-track elapsed-media accounting: `duration` when it is a
+  real, non-zero span, else the absolute `dts` delta), `choose_anchor` /
+  `is_anchor_capable` (first video track of any codec, else the first track
+  whose clock can advance; a section-only track set is an error), and
+  `MAX_PENDING_SAMPLES_PER_TRACK` (the un-cut buffer bound). Previously each
+  module carried its own copy, so the four could — and did — drift apart.
+- **`DemuxEvent::TrackUpdated`/`TrackRemoved`/`TrackAbandoned`, PMT version
+  diffing** (issue #774, unblocks rust-skyfire#96): `StreamingTsDemux` now
+  diffs a PMT's `version_number`/`current_next_indicator` (ISO/IEC 13818-1
+  §2.4.4.8) instead of only ever inserting newly-seen PIDs.
+  - A version change that no longer lists a previously-declared PID emits
+    `TrackRemoved { track_id, provenance }` (only for a PID that had already
+    reached `Live` — a real `track_id` a consumer has seen).
+  - A version change that alters an existing PID's `es_info_descriptors` or
+    reclassifies its `stream_type` emits `TrackUpdated(TrackSpec)` (codec
+    config recovery itself stays single-shot and permanent).
+  - A track whose codec config never becomes recoverable by end of input, or
+    whose probe/parked backlog exceeds its byte budget, emits
+    `TrackAbandoned { track_id: Option<u32>, reason: AbandonReason,
+    provenance }` (`AbandonReason::ConfigUnrecoverable` /
+    `AbandonReason::BudgetExceeded`).
+  - A carousel-repeated identical-version PMT section (several times a second
+    on a real broadcast) is parsed but never re-diffed — no spurious events on
+    an unchanged track set.
+
+### Changed
+
+- **BREAKING — two silent drops are now typed errors** (media plane step 2d,
+  landed only after the coverage above, so `stpp`/`wvtt`/`ac-4` — which used
+  to hit these paths — no longer do):
+  - `Fmp4Demux` no longer silently skips a track whose sample entry it cannot
+    reconstruct into a `CodecConfig`; it now returns
+    `Error::UnsupportedSampleEntry { fourcc }`, naming the offending sample
+    entry.
+  - `CmafMux` no longer silently filters `CodecConfig::Data` tracks out of the
+    init/media segments; it now returns
+    `Error::UnmuxableDataTrack { track_id, stream_type }`. A caller that wants
+    the old best-effort behaviour must pre-filter explicitly, e.g.
+    `media.select_tracks_by(|t| !matches!(t.spec.config, CodecConfig::Data { .. }))`.
+- **BREAKING — `Sample` timing is now absolute and optional** (media plane step
+  2c, `docs/superpowers/specs/2026-07-26-media-plane-architecture.md` §4).
+  `Sample` is now `{ data, dts: Option<i64>, pts: Option<i64>, duration:
+  Option<u32>, flags: SampleFlags, provenance: Option<Provenance> }`:
+  - `dts`/`pts` are **absolute** tick values in the track's own media timescale
+    (`TrackSpec::timescale`), replacing the previous model in which a sample's
+    time was the running sum of preceding `duration`s anchored on
+    `Track::start_decode_time` — an anchor that FLV, WebM, MPEG Program Stream,
+    RTMP and RTP all left at `0`. The IR can now address a splice point, rebase
+    across sources, and express a send deadline.
+  - 33-bit (MPEG-2 Systems, ISO/IEC 13818-1 §2.4.3.7) and 32-bit (RTP,
+    RFC 3550 §5.1) rollover is unwrapped **once, at the demux edge**, and never
+    re-derived downstream.
+  - `Option`, not mandatory: section-carried tracks (SCTE-35 `stream_type`
+    `0x86`, DSM-CC, private sections) genuinely have no timestamp, so they keep
+    `dts`/`pts`/`duration` of `None` rather than a fabricated value.
+  - `composition_offset` is no longer a stored field — it is implied by the
+    pair, via the new `Sample::composition_offset()` (`pts - dts`), and still
+    round-trips fMP4 `ctts` byte-identically.
+  - `is_sync` moved into the `#[non_exhaustive]` `SampleFlags` struct
+    (`sample.flags.is_sync`; `SampleFlags::SYNC` / `NON_SYNC` / `new`).
+  - `Sample::new`/`from_annexb` take `(data, dts, pts, duration, is_sync)` and
+    `from_raw` takes `(data, dts, pts, duration)`.
+- **BREAKING — `SourceTiming` deleted.** It was write-only (the crate's own docs
+  admitted "all mux paths in this crate ignore this field"). The source
+  container's raw, pre-unwrap wire stamps survive as the debug-only
+  `Provenance { wire_dts, wire_pts }` side-field (`Sample::with_provenance`), so
+  no information is lost — the crate just stops presenting a debug field as a
+  timing model.
+- **BREAKING — `rebase::unroll_33bit_wraps` and `rebase::MPEG_TS_WRAP` removed.**
+  Wrap-unrolling now happens once at the demux edge, so re-folding the IR
+  timeline back into 33 bits in order to unwrap it again was exactly the
+  anti-pattern this step removes. `rebase_to_zero` / `apply_offset` /
+  `insert_discontinuity_gap` now shift every sample's absolute `dts`/`pts` in
+  lockstep with `Track::start_decode_time` (and never fabricate a timestamp for
+  a `None`-timed sample).
+- **BREAKING — `DemuxEvent` reshaped a second time within this release**
+  (found by the aggregate review below; applied here rather than deferred to a
+  later major bump):
+  - `TrackAdded(Track)` → `TrackAdded(TrackSpec)` — drops the always-empty
+    `samples` and never-set `encryption` fields that came along with the full
+    `Track`; every existing consumer already only read `track.spec`.
+  - `Discontinuity { track, provenance }` → `Discontinuity { track, kind:
+    DiscontinuityKind, provenance }`, and the variant is now `#[non_exhaustive]`
+    with a `DemuxEvent::discontinuity(...)` constructor. `DiscontinuityKind` is
+    `Signalled` (an MPEG-2 TS adaptation-field `discontinuity_indicator`),
+    `TimelineReanchored` (a live audio track's frame-exact anchor drifted from
+    the wire PES clock), or `BudgetExceeded { bytes }` (a per-PID buffer cap
+    dropped in-flight data). `abandon_backlog`'s probe/parked-backlog budget
+    cap now emits `TrackAbandoned` instead of a `Discontinuity` — it was
+    mis-typed before (a budget overflow abandons the track; nothing survives
+    to "continue" from).
+  - `TracksResolved` → `TracksResolved { generation: u32 }` — fixes a live bug
+    where the de-dup key was the known-PID *count*: a removal immediately
+    followed by an addition could return the count to a previously-seen
+    value, silently suppressing the re-fire a consumer needs. `generation` is
+    a monotonic counter bumped once per applied PMT diff (add/update/remove).
+  - `ClockReference` is now `#[non_exhaustive]` too, with a matching
+    `DemuxEvent::clock_reference(...)` constructor — both non-exhaustive
+    variants can grow a field later (e.g. a wall-clock/UTC anchor) without a
+    further breaking change.
+  - Documented `DemuxEvent`'s event-order guarantee (observation order per
+    emission class, not wire order across classes) and its removal semantics
+    (no `Sample` for a removed `track_id` ever follows its `TrackRemoved`;
+    removal tracks only the PMT-declared set, never a silence timeout).
+- **BREAKING — the rest of the IR surface is `#[non_exhaustive]` too**, applied
+  in this same release rather than costing a major bump later (`Media`/`Track`
+  were already done): the `DemuxEvent::Sample`,
+  `TrackRemoved`, `TrackAbandoned` and `TracksResolved` **variants**, and the
+  `Provenance`, `PcrSample`, `SkippedTrack`, `TrackEncryption` and
+  `FragmentTrackData` structs. `TracksResolved` took a field this release,
+  which is exactly the case this prevents recurring. Every affected type gained
+  a constructor so none became unconstructible from outside the crate:
+  `DemuxEvent::{sample, track_removed, track_abandoned, tracks_resolved}`,
+  `Provenance::new`, `PcrSample::new`, `SkippedTrack::new`,
+  `TrackEncryption::new`, `FragmentTrackData::new`. Pattern matches on the four
+  variants need a trailing `..`. `EventProvenance` stays `Copy + Eq + Default`.
+- **BREAKING — `HlsPackager` omits a timestamp-less track instead of emitting
+  `#EXTINF:0.000`.** A section-carried track (SCTE-35 `stream_type` `0x86`,
+  DSM-CC, private sections) has `duration: None` on every sample, deliberately
+  and never fabricated; summing `unwrap_or(0)` over it rendered a zero
+  `EXTINF`, which RFC 8216 §4.3.2.1 defines as a real playback duration a
+  player would honour. An HLS media playlist is a timeline of playable
+  segments and such a track is not one, so it is left out (its content reaches
+  an output through the paths built for it — an inband `emsg`, an
+  `EXT-X-DATERANGE`). A `Media` whose tracks are *all* timestamp-less is now a
+  named `Error::InvalidInput` rather than an empty playlist.
 
 ### Security
 
