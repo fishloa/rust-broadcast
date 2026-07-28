@@ -2,7 +2,7 @@
 
 All notable changes to `multimux-cli` will be documented in this file.
 
-## [Unreleased]
+## [0.3.0] - 2026-07-28
 
 ## [0.2.1] - 2026-07-26
 

@@ -4,7 +4,7 @@ All notable changes to `ll-hls-runtime` are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project adheres
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.2.0] - 2026-07-28
 
 ### Fixed
 - `server::engine`'s own test helpers and the `client_stepping`/
@@ -15,7 +15,13 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `cargo test --workspace`/`--all-targets` across the whole workspace since
   then). No behaviour change to any shipped API — test/example-only.
 
-## [0.2.0] - 2026-07-27
+
+- **Cleared this crate's share of the latest-stable clippy canary** (issue
+  #770 — the non-blocking `clippy (latest stable)` CI job, which had been
+  failing on `main` unnoticed across many merges): the `golden_gate`
+  integration test builds its single-track init segment with
+  `std::slice::from_ref(&spec)` instead of `&[spec.clone()]`
+  (`clippy::cloned_ref_to_slice_refs`). Test-only, behaviour-preserving.
 
 ### Changed
 - **BREAKING: `server::MediaStore`/`HealthState`/`SegmentWindowEntry`/
@@ -58,14 +64,6 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   golden_gate.rs`/`tests/glass_to_glass.rs` (both `tokio`-feature-gated,
   both depending on `multimux` as a dev-dependency) do not build until
   Step 5 lands.
-
-### Fixed
-- **Cleared this crate's share of the latest-stable clippy canary** (issue
-  #770 — the non-blocking `clippy (latest stable)` CI job, which had been
-  failing on `main` unnoticed across many merges): the `golden_gate`
-  integration test builds its single-track init segment with
-  `std::slice::from_ref(&spec)` instead of `&[spec.clone()]`
-  (`clippy::cloned_ref_to_slice_refs`). Test-only, behaviour-preserving.
 
 ## [0.1.1] - 2026-07-26
 
