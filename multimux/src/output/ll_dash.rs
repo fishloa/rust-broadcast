@@ -6,6 +6,8 @@
 //! filenames [`crate::output::dash`]'s `manifest.mpd` already uses) with
 //! `@availabilityTimeOffset`/`availabilityTimeComplete="false"` signalling
 //! that a segment's bytes start flowing before it nominally completes.
+//! Resolved through the same one adapter every other output uses
+//! ([`crate::http::resolve_blocking`]/[`crate::http::into_response`]).
 //!
 //! # Distinct manifest name (not a mode flag on `manifest.mpd`)
 //!
@@ -23,15 +25,15 @@
 //! from serving that one URI **before** the segment is complete: the origin
 //! opens an HTTP response as soon as the segment's first bytes exist and
 //! keeps it open (HTTP chunked transfer-encoding), writing more bytes as the
-//! shared [`crate::store::MediaStore`]'s live parts arrive, until the segment
-//! closes. `crate::origin::resource`'s shared dynamic-file route implements
-//! this (see its private `stream_in_progress_segment`): a `seg-{track}-{seq}.m4s`
+//! shared route's live parts arrive, until the segment closes.
+//! `crate::origin::resource`'s shared dynamic-file route implements this
+//! (see its private `stream_in_progress_segment`): a `seg-{track}-{seq}.m4s`
 //! request that doesn't yet resolve to a *closed* segment is retried against
-//! the store's `part-{track}-{seq}.{idx}.m4s` entries — the exact same
+//! the route's `part-{track}-{seq}.{idx}.m4s` entries — the exact same
 //! partial-segment bytes [`crate::output::llhls`] already serves for
 //! LL-HLS — concatenated in order as a streamed body, rather than 404ing.
 //! Once the segment closes, later requests for the same URI resolve
-//! immediately from the store's whole-segment bytes with a normal
+//! immediately from the route's whole-segment bytes with a normal
 //! `Content-Length` (the ordinary, non-streaming path every other output
 //! already uses).
 //!
@@ -61,7 +63,7 @@
 //!
 //! # DVR window
 //!
-//! Because whole (closed) segments stay in the shared store's rolling
+//! Because whole (closed) segments stay in the shared route's rolling
 //! window exactly like [`crate::output::dash`]'s regular MPD, this design can
 //! (and does) advertise a real `timeShiftBufferDepth` — unlike the old
 //! parts-only design, which covered only the live edge.
@@ -75,19 +77,21 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use broadcast_common::Package;
 use ll_hls_runtime::server::DEFAULT_TRACK_ID;
+use media_plane::egress::{AwaitPolicy, CachePolicy, EgressResponse, ServedEgress};
 use transmux::{Addressing, LlDashPackager, Media, Track, TrackSegments};
 
+use crate::http::{self, BLOCKING_RELOAD_TIMEOUT};
 use crate::origin::resource::cors_preflight;
-use crate::output::dash::{DASH_MANIFEST_CONTENT_TYPE, format_iso8601};
+use crate::output::dash::{DASH_MANIFEST_CONTENT_TYPE, format_iso8601, select_representable_track};
 use crate::output::{Output, OutputKind};
-use crate::store::MediaStore;
+use crate::route::RouteHandle;
 
 /// Filename this output serves its manifest at (`/{stream}/manifest-ll.mpd`)
 /// — distinct from [`crate::output::dash`]'s `manifest.mpd` so a route can
 /// enable both simultaneously (see the module docs).
 pub const LL_DASH_MANIFEST_NAME: &str = "manifest-ll.mpd";
 
-/// Heuristic target end-to-end latency, in units of [`MediaStore::part_target_ms`]
+/// Heuristic target end-to-end latency, in units of the route's part target
 /// (`ServiceDescription/Latency@target`, ISO/IEC 23009-1 §5.13.2) — DASH-IF LL
 /// IOP guidance targets a few chunk/part durations of glass-to-glass latency
 /// to absorb normal jitter; not a literal spec-mandated constant, just a
@@ -107,58 +111,89 @@ impl Output for LlDashOutput {
 
     /// Routes (relative — mounted by the origin under `/{stream}/`):
     /// - `GET /manifest-ll.mpd` — the live LL-DASH MPD.
-    fn manifest_routes(&self, store: Arc<MediaStore>) -> Router {
+    fn manifest_routes(&self, route: Arc<RouteHandle>) -> Router {
         Router::new()
             .route(
                 &format!("/{LL_DASH_MANIFEST_NAME}"),
                 get(manifest).options(cors_preflight),
             )
-            .with_state(store)
+            .with_state(route)
     }
 }
 
-/// `GET /manifest-ll.mpd` — `503 Service Unavailable` until the route has
-/// recorded its track specs, mirroring `crate::output::dash`'s `manifest.mpd`
-/// handler.
-async fn manifest(State(store): State<Arc<MediaStore>>) -> Response {
-    match render_ll_dash_mpd(&store) {
-        Some(body) => ([(header::CONTENT_TYPE, DASH_MANIFEST_CONTENT_TYPE)], body).into_response(),
-        None => StatusCode::SERVICE_UNAVAILABLE.into_response(),
+/// `GET /manifest-ll.mpd` — `503 Service Unavailable` until the route has a
+/// representable track (mirrors `crate::output::dash`'s `manifest.mpd`
+/// handler and its issue #776 fix).
+async fn manifest(State(route): State<Arc<RouteHandle>>) -> Response {
+    let origin = LlDashOrigin { route };
+    let resp = http::resolve_blocking(
+        origin.route.trunk(),
+        &origin,
+        (),
+        BLOCKING_RELOAD_TIMEOUT,
+        || (),
+    )
+    .await;
+    http::into_response(resp, StatusCode::SERVICE_UNAVAILABLE, |body| {
+        ([(header::CONTENT_TYPE, DASH_MANIFEST_CONTENT_TYPE)], body).into_response()
+    })
+}
+
+/// The LL-DASH manifest [`ServedEgress`] — same stateless-render shape as
+/// `crate::output::dash`'s `DashOrigin`; see that type's own doc for why
+/// this never answers [`EgressResponse::Await`].
+struct LlDashOrigin {
+    route: Arc<RouteHandle>,
+}
+
+impl ServedEgress for LlDashOrigin {
+    type Request = ();
+    type Body = String;
+
+    fn resolve(
+        &self,
+        _request: (),
+        _now: broadcast_common::Timestamp,
+        _await_policy: AwaitPolicy,
+    ) -> EgressResponse<String> {
+        match render_ll_dash_mpd(&self.route) {
+            Some(body) => EgressResponse::Ready {
+                body,
+                cache: CachePolicy::NoCache,
+            },
+            None => EgressResponse::NotFound,
+        }
     }
 }
 
-/// Render the live LL-DASH MPD for `store`'s current window +
+/// Render the live LL-DASH MPD for `route`'s current window +
 /// in-progress segment, via [`transmux::LlDashPackager`]. `None` if no track
-/// specs have been recorded yet (mirrors `crate::output::dash::render_mpd`),
-/// if the packager rejects the built [`Media`] (e.g. an opaque
-/// [`transmux::CodecConfig::Data`] track with no derivable RFC 6381 codec
-/// string), or if the store's configured part target exceeds its segment
-/// target (nonsensical config — `LlDashPackager::new` rejects a chunk
-/// duration longer than the segment it chunks).
-fn render_ll_dash_mpd(store: &MediaStore) -> Option<String> {
-    let mut specs = store.track_specs();
-    if specs.is_empty() {
-        return None;
-    }
+/// is representable (mirrors `crate::output::dash::render_mpd`'s issue #776
+/// fix via [`select_representable_track`]), if the packager rejects the
+/// built [`Media`], or if the route's configured part target exceeds its
+/// segment target (nonsensical config — `LlDashPackager::new` rejects a
+/// chunk duration longer than the segment it chunks).
+fn render_ll_dash_mpd(route: &RouteHandle) -> Option<String> {
+    let specs = route.track_specs();
     // Single-rendition model (see `crate::output::dash`'s module docs):
     // describe exactly one Representation, `@id` forced to DEFAULT_TRACK_ID.
-    let mut spec = specs.remove(0);
+    let mut spec = select_representable_track(&specs)?;
     spec.track_id = DEFAULT_TRACK_ID;
     let timescale = spec.timescale.max(1);
 
     // `$Number$` addresses whole segments (see module docs) -- startNumber
     // tracks the window's oldest retained segment, exactly like
     // `crate::output::dash::render_mpd`.
-    let window = store.window_segments();
+    let window = route.window_segments();
     let start_number = window
         .first()
         .map(|s| u64::from(s.segment_seq))
         .unwrap_or(1);
 
-    let target_duration_secs = store.target_duration_secs();
+    let target_duration_secs = route.target_duration_secs();
     let nominal_duration_ticks =
         ((target_duration_secs * f64::from(timescale)).round() as u64).max(1);
-    let part_target_ms = store.part_target_ms().max(1);
+    let part_target_ms = route.part_target_ms().max(1);
     let chunk_duration_secs = f64::from(part_target_ms) / 1000.0;
     let latency_target_ms =
         u32::try_from(u64::from(part_target_ms) * LATENCY_TARGET_PART_MULTIPLE).unwrap_or(u32::MAX);
@@ -169,7 +204,7 @@ fn render_ll_dash_mpd(store: &MediaStore) -> Option<String> {
         target_duration_secs,
         chunk_duration_secs,
         latency_target_ms,
-        format_iso8601(store.created_at()),
+        format_iso8601(route.created_at()),
     )
     .ok()?;
     packager.base.addressing = Addressing::Number;
@@ -187,7 +222,7 @@ fn render_ll_dash_mpd(store: &MediaStore) -> Option<String> {
     // appear.
     packager.base.minimum_update_period = Some(format!("PT{chunk_duration_secs}S"));
     // Unlike the old parts-only design (module docs), whole closed segments
-    // stay in the store's rolling window, so a real DVR window can be
+    // stay in the route's rolling window, so a real DVR window can be
     // advertised -- same computation as `crate::output::dash::render_mpd`.
     let time_shift_buffer_depth_secs = target_duration_secs * (window.len().max(1) as f64);
     packager.base.time_shift_buffer_depth = Some(format!("PT{time_shift_buffer_depth_secs}S"));
@@ -204,7 +239,7 @@ mod tests {
     use super::*;
     use transmux::CodecConfig;
     use transmux::TrackSpec;
-    use transmux::ll_hls::{PartInfo, SegmentInfo};
+    use transmux::ll_hls::PartInfo;
 
     fn video_spec(track_id: u32) -> TrackSpec {
         TrackSpec::new(
@@ -227,8 +262,8 @@ mod tests {
         }
     }
 
-    fn seg(seq: u32, duration: f64) -> SegmentInfo {
-        SegmentInfo {
+    fn seg(seq: u32, duration: f64) -> transmux::ll_hls::SegmentInfo {
+        transmux::ll_hls::SegmentInfo {
             bytes: vec![seq as u8; 8],
             duration,
             segment_seq: seq,
@@ -238,28 +273,28 @@ mod tests {
 
     #[test]
     fn render_ll_dash_mpd_none_without_track_specs() {
-        let store = MediaStore::new(4.0, 500, 4);
+        let route = RouteHandle::new(4.0, 500, 4);
         assert!(
-            render_ll_dash_mpd(&store).is_none(),
+            render_ll_dash_mpd(&route).is_none(),
             "no track specs recorded yet -> nothing to describe"
         );
     }
 
     #[test]
     fn render_ll_dash_mpd_valid_before_any_segment_closes() {
-        let store = MediaStore::new(4.0, 500, 4);
-        store.set_track_specs(vec![video_spec(7)]);
-        let mpd = render_ll_dash_mpd(&store).expect("must render even with an empty window");
+        let route = RouteHandle::new(4.0, 500, 4);
+        route.set_track_specs(vec![video_spec(7)]);
+        let mpd = render_ll_dash_mpd(&route).expect("must render even with an empty window");
         assert!(mpd.contains("<MPD"));
         assert!(mpd.contains("type=\"dynamic\""));
     }
 
     #[test]
     fn render_ll_dash_mpd_carries_required_ll_dash_elements() {
-        let store = MediaStore::new(4.0, 500, 4);
-        store.set_track_specs(vec![video_spec(1)]);
-        store.add_part(part(1, 0));
-        let mpd = render_ll_dash_mpd(&store).unwrap();
+        let route = RouteHandle::new(4.0, 500, 4);
+        route.set_track_specs(vec![video_spec(1)]);
+        route.add_part(part(1, 0));
+        let mpd = render_ll_dash_mpd(&route).unwrap();
 
         assert!(
             mpd.contains("availabilityTimeComplete=\"false\""),
@@ -285,10 +320,10 @@ mod tests {
 
     #[test]
     fn render_ll_dash_mpd_addresses_whole_segments_not_parts() {
-        let store = MediaStore::new(4.0, 500, 4);
-        store.set_track_specs(vec![video_spec(1)]);
-        store.add_part(part(5, 0));
-        let mpd = render_ll_dash_mpd(&store).unwrap();
+        let route = RouteHandle::new(4.0, 500, 4);
+        route.set_track_specs(vec![video_spec(1)]);
+        route.add_part(part(5, 0));
+        let mpd = render_ll_dash_mpd(&route).unwrap();
 
         assert!(
             mpd.contains("seg-$RepresentationID$-$Number$.m4s"),
@@ -303,13 +338,13 @@ mod tests {
 
     #[test]
     fn render_ll_dash_mpd_start_number_tracks_window() {
-        let store = MediaStore::new(4.0, 500, 2);
-        store.set_track_specs(vec![video_spec(1)]);
-        store.add_segment(seg(1, 4.0));
-        store.add_segment(seg(2, 4.0));
-        store.add_segment(seg(3, 4.0)); // evicts seq 1 (window_segments == 2)
+        let route = RouteHandle::new(4.0, 500, 2);
+        route.set_track_specs(vec![video_spec(1)]);
+        route.add_segment(seg(1, 4.0));
+        route.add_segment(seg(2, 4.0));
+        route.add_segment(seg(3, 4.0)); // evicts seq 1 (window_segments == 2)
 
-        let mpd = render_ll_dash_mpd(&store).unwrap();
+        let mpd = render_ll_dash_mpd(&route).unwrap();
         assert!(
             mpd.contains("startNumber=\"2\""),
             "startNumber must track the window's oldest retained segment_seq (2): {mpd}"
@@ -320,19 +355,19 @@ mod tests {
     fn render_ll_dash_mpd_carries_time_shift_buffer_depth() {
         // Unlike the old parts-only design, whole closed segments stay in
         // the window -- a real DVR window can be advertised.
-        let store = MediaStore::new(2.0, 500, 4);
-        store.set_track_specs(vec![video_spec(1)]);
-        store.add_segment(seg(1, 2.0));
-        let mpd = render_ll_dash_mpd(&store).unwrap();
+        let route = RouteHandle::new(2.0, 500, 4);
+        route.set_track_specs(vec![video_spec(1)]);
+        route.add_segment(seg(1, 2.0));
+        let mpd = render_ll_dash_mpd(&route).unwrap();
         assert!(mpd.contains("timeShiftBufferDepth=\"PT2S\""), "{mpd}");
     }
 
     #[test]
     fn render_ll_dash_mpd_forces_representation_id_to_default_track() {
-        let store = MediaStore::new(4.0, 500, 4);
-        store.set_track_specs(vec![video_spec(7)]);
-        store.add_part(part(1, 0));
-        let mpd = render_ll_dash_mpd(&store).unwrap();
+        let route = RouteHandle::new(4.0, 500, 4);
+        route.set_track_specs(vec![video_spec(7)]);
+        route.add_part(part(1, 0));
+        let mpd = render_ll_dash_mpd(&route).unwrap();
         assert!(
             mpd.contains(&format!("id=\"{DEFAULT_TRACK_ID}\"")),
             "Representation @id must be the DEFAULT_TRACK_ID, not the source's own \
@@ -343,17 +378,17 @@ mod tests {
 
     #[tokio::test]
     async fn manifest_handler_503_before_track_specs_known() {
-        let store = Arc::new(MediaStore::new(4.0, 500, 4));
-        let resp = manifest(State(store)).await;
+        let route = Arc::new(RouteHandle::new(4.0, 500, 4));
+        let resp = manifest(State(route)).await;
         assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
     }
 
     #[tokio::test]
     async fn manifest_handler_200_with_dash_content_type() {
-        let store = Arc::new(MediaStore::new(4.0, 500, 4));
-        store.set_track_specs(vec![video_spec(1)]);
-        store.add_part(part(1, 0));
-        let resp = manifest(State(store)).await;
+        let route = Arc::new(RouteHandle::new(4.0, 500, 4));
+        route.set_track_specs(vec![video_spec(1)]);
+        route.add_part(part(1, 0));
+        let resp = manifest(State(route)).await;
         assert_eq!(resp.status(), StatusCode::OK);
         assert_eq!(
             resp.headers().get(header::CONTENT_TYPE).unwrap(),

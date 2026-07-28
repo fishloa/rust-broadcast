@@ -1,6 +1,7 @@
 //! Per-route pipeline: pull samples from a [`SampleSource`], feed a
-//! [`transmux::ll_hls::LlHlsSegmenter`], and publish the init/parts/segments it
-//! produces into a [`crate::store::MediaStore`].
+//! [`transmux::ll_hls::LlHlsSegmenter`], and publish the init/parts/segments
+//! it produces into a [`crate::route::RouteHandle`] (which forwards them into
+//! its `Trunk` — see that type's own docs).
 //!
 //! One `run_pipeline` future is spawned per configured route; it runs until the
 //! source reports end-of-stream (`Ok(None)`) or a hard error.
@@ -11,7 +12,7 @@ use transmux::ll_hls::LlHlsSegmenter;
 use transmux::pipeline::{Sample, TrackSpec};
 
 use crate::Result;
-use crate::store::MediaStore;
+use crate::route::RouteHandle;
 
 /// CMAF movie timescale used for every route's fragmented `moov`/`moof`
 /// (matches [`transmux::pipeline::build_init_segment`]'s convention of a
@@ -46,8 +47,8 @@ pub trait SampleSource {
 // into a `media_plane::Trunk` rather than through this trait.
 // `crate::origin::supervisor`/`crate::origin::serve_with_registry` still
 // reference the old `SourceConnector`/`run_pipeline` shape for `rtmp` (the
-// one source not yet ported) pending step 5b's `MediaStore` replacement —
-// see this crate's CHANGELOG.
+// one source not yet ported onto `IngestDriver`) — see this crate's
+// CHANGELOG.
 
 impl SampleSource for crate::source::rtmp::RtmpSession {
     fn track_specs(&self) -> Vec<TrackSpec> {
@@ -60,12 +61,13 @@ impl SampleSource for crate::source::rtmp::RtmpSession {
 }
 
 /// Drive `source` into an [`LlHlsSegmenter`], publishing every init segment,
-/// ready part, and ready segment into `store`, until the source reports
-/// end-of-stream.
+/// ready part, and ready segment into `route_handle`, until the source
+/// reports end-of-stream.
 ///
 /// `route` is used only to label the `multimux_parts_produced_total`/
 /// `multimux_segments_produced_total` counters (`crate::prometheus`) bumped
-/// as parts/segments land in `store` — it carries no other behaviour.
+/// as parts/segments land in `route_handle` — it carries no other
+/// behaviour.
 ///
 /// # Errors
 /// Propagates a source read error or a segmenter build failure.
@@ -77,7 +79,7 @@ impl SampleSource for crate::source::rtmp::RtmpSession {
 /// `run_pipeline` could hide Send-ness from `tokio::spawn` and would then require
 /// an explicit `+ Send` bound on the inner type.
 pub async fn run_pipeline<S: SampleSource>(
-    store: Arc<MediaStore>,
+    route_handle: Arc<RouteHandle>,
     target_duration_secs: f64,
     part_target_ms: u32,
     mut source: S,
@@ -86,28 +88,28 @@ pub async fn run_pipeline<S: SampleSource>(
     let specs = source.track_specs();
     // Recorded so a DASH `Output` (issue #663 P4, `crate::output::dash`) can
     // build a real RFC 6381 `codecs` string for its `Representation` — the
-    // one thing this store needs beyond the bytes+timing LL-HLS's playlist
+    // one thing this route needs beyond the bytes+timing LL-HLS's playlist
     // rendering already covers.
-    store.set_track_specs(specs.clone());
+    route_handle.set_track_specs(specs.clone());
     let mut seg = LlHlsSegmenter::with_part_target(
         specs,
         MOVIE_TIMESCALE,
         target_duration_secs,
         part_target_ms,
     )?;
-    store.set_init(seg.init_segment()?);
+    route_handle.set_init(seg.init_segment()?);
 
     while let Some(batch) = source.next_samples().await? {
         for (track_id, sample) in batch {
             seg.push(track_id, sample)?;
         }
         for part in seg.take_ready_parts() {
-            store.add_part(part);
+            route_handle.add_part(part);
             metrics::counter!(crate::prometheus::PARTS_PRODUCED_TOTAL, "route" => route.to_string())
                 .increment(1);
         }
         for segment in seg.take_ready_segments() {
-            store.add_segment(segment);
+            route_handle.add_segment(segment);
             metrics::counter!(crate::prometheus::SEGMENTS_PRODUCED_TOTAL, "route" => route.to_string())
                 .increment(1);
         }
@@ -115,12 +117,12 @@ pub async fn run_pipeline<S: SampleSource>(
 
     seg.flush()?;
     for part in seg.take_ready_parts() {
-        store.add_part(part);
+        route_handle.add_part(part);
         metrics::counter!(crate::prometheus::PARTS_PRODUCED_TOTAL, "route" => route.to_string())
             .increment(1);
     }
     for segment in seg.take_ready_segments() {
-        store.add_segment(segment);
+        route_handle.add_segment(segment);
         metrics::counter!(crate::prometheus::SEGMENTS_PRODUCED_TOTAL, "route" => route.to_string())
             .increment(1);
     }
@@ -170,7 +172,9 @@ impl SampleSource for MockSource {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::store::MediaStore;
+    use broadcast_common::Timestamp;
+    use ll_hls_runtime::server::{DEFAULT_TRACK_ID, LlHlsBody, LlHlsRequest};
+    use media_plane::egress::{AwaitPolicy, EgressResponse, ServedEgress};
     use transmux::avc_config_from_sprop;
     use transmux::pipeline::CodecConfig;
 
@@ -195,9 +199,30 @@ mod tests {
         )
     }
 
+    /// Render `route`'s current LL-HLS media playlist synchronously — the
+    /// direct `ServedEgress::resolve` call these tests need in place of the
+    /// deleted `crate::output::llhls::media_playlist_m3u8` re-export (Step 4
+    /// moved playlist rendering behind `LlHlsOrigin`/`ServedEgress`).
+    fn render_playlist(route: &RouteHandle) -> String {
+        match route.ll_hls().resolve(
+            LlHlsRequest::Playlist {
+                track_id: DEFAULT_TRACK_ID,
+                query: Default::default(),
+            },
+            Timestamp::from_nanos(0),
+            AwaitPolicy::new(Timestamp::from_nanos(0)),
+        ) {
+            EgressResponse::Ready {
+                body: LlHlsBody::Playlist(m),
+                ..
+            } => m,
+            other => panic!("expected Ready(Playlist), got {other:?}"),
+        }
+    }
+
     #[tokio::test]
     async fn drives_source_through_segmenter_into_store() {
-        let store = Arc::new(MediaStore::new(1.0, 500, 8));
+        let route = Arc::new(RouteHandle::new(1.0, 500, 8));
         let specs = vec![video_track_spec()];
 
         // 90 samples @ 3000 ticks/30fps = 3 s of video, comfortably over the
@@ -218,12 +243,12 @@ mod tests {
         }
 
         let source = MockSource::new(specs, batches);
-        run_pipeline(store.clone(), 1.0, 500, source, "test-route")
+        run_pipeline(route.clone(), 1.0, 500, source, "test-route")
             .await
             .expect("pipeline runs to completion");
 
-        assert!(store.init_bytes().is_some(), "init segment stored");
-        let playlist = crate::output::llhls::media_playlist_m3u8(&store, 1);
+        assert!(route.init_bytes().is_some(), "init segment stored");
+        let playlist = render_playlist(&route);
         assert!(
             playlist.contains("seg-") || playlist.contains("#EXT-X-PART"),
             "playlist has landed media: {playlist}"
@@ -232,20 +257,20 @@ mod tests {
 
     #[tokio::test]
     async fn empty_batches_are_a_no_op() {
-        let store = Arc::new(MediaStore::new(1.0, 500, 8));
+        let route = Arc::new(RouteHandle::new(1.0, 500, 8));
         let specs = vec![video_track_spec()];
         let source = MockSource::new(specs, vec![Vec::new(), Vec::new()]);
-        run_pipeline(store.clone(), 1.0, 500, source, "test-route")
+        run_pipeline(route.clone(), 1.0, 500, source, "test-route")
             .await
             .expect("pipeline tolerates empty batches");
-        assert!(store.init_bytes().is_some());
+        assert!(route.init_bytes().is_some());
     }
 
     #[tokio::test]
     async fn eos_flush_emits_buffered_tail_segment() {
         // Regression test for the EOS flush path: ensure that samples buffered
         // after the last auto-closed segment are actually emitted via seg.flush().
-        let store = Arc::new(MediaStore::new(1.0, 500, 8));
+        let route = Arc::new(RouteHandle::new(1.0, 500, 8));
         let specs = vec![video_track_spec()];
 
         // 60 frames @ 30fps = 2s total:
@@ -271,12 +296,12 @@ mod tests {
         }
 
         let source = MockSource::new(specs, batches);
-        run_pipeline(store.clone(), 1.0, 500, source, "test-route")
+        run_pipeline(route.clone(), 1.0, 500, source, "test-route")
             .await
             .expect("pipeline runs to completion");
 
-        assert!(store.init_bytes().is_some(), "init segment stored");
-        let playlist = crate::output::llhls::media_playlist_m3u8(&store, 1);
+        assert!(route.init_bytes().is_some(), "init segment stored");
+        let playlist = render_playlist(&route);
 
         // Assertion bites the flush path: playlist MUST contain seg-1-2.
         // This proves the buffered tail after frame 45 was flushed and emitted as

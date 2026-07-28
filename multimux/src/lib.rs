@@ -17,14 +17,15 @@
 
 pub mod config;
 pub mod error;
+mod http;
 pub mod origin;
 pub mod output;
 pub mod pipeline;
 pub mod prometheus;
 mod redact;
 pub mod registry;
+pub mod route;
 pub mod source;
-pub mod store;
 #[cfg(test)]
 pub(crate) mod testutil;
 
@@ -44,5 +45,5 @@ pub use output::Output;
 pub use registry::{
     AuthCtx, AuthFactory, InputCtx, InputFactory, OutputCtx, OutputFactory, SchemeRegistry,
 };
+pub use route::{HealthState, RouteHandle};
 pub use source::Source;
-pub use store::MediaStore;

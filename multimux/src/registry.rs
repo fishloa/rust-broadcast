@@ -48,10 +48,10 @@ pub struct InputCtx {
     pub name: String,
     /// The route's `InputSpec::Custom::params`, opaque to multimux.
     pub params: serde_json::Value,
-    /// This route's shared store — the factory's connector feeds
-    /// `run_pipeline` (via `supervise`) into this same store the origin
-    /// serves reads from.
-    pub store: Arc<crate::store::MediaStore>,
+    /// This route's shared state — the factory's connector feeds
+    /// `run_pipeline` (via `supervise`) into this same `RouteHandle` the
+    /// origin serves reads from.
+    pub store: Arc<crate::route::RouteHandle>,
     /// `crate::config::Config::target_duration_secs`, forwarded unchanged —
     /// pass straight through to `supervise`.
     pub target_duration_secs: f64,

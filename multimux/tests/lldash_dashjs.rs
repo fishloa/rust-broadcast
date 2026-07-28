@@ -22,7 +22,7 @@
 //! producer shape as `ll-hls-runtime/tests/golden_gate.rs`
 //! (`fixtures/ts/h264_aac.ts`, 320x240 Main-profile H.264 @ 25 fps, 3.0 s /
 //! 75 frames, demuxed via `TsDemux`) fed through the same real
-//! `transmux::ll_hls::LlHlsSegmenter` that feeds the shared `MediaStore` in
+//! `transmux::ll_hls::LlHlsSegmenter` that feeds the shared `RouteHandle` in
 //! production -- so a real browser must genuinely decode real video, not an
 //! opaque placeholder.
 //!
@@ -47,7 +47,7 @@ use std::time::Duration;
 use multimux::origin::{AppState, router};
 use multimux::output::Output as MmOutput;
 use multimux::output::ll_dash::LlDashOutput;
-use multimux::store::MediaStore;
+use multimux::route::RouteHandle;
 use transmux::ll_hls::LlHlsSegmenter;
 use transmux::{CodecConfig, Sample, TrackSpec, TsDemux};
 
@@ -121,7 +121,7 @@ fn real_video_track_and_samples() -> (TrackSpec, Vec<Sample>) {
 /// this feeds is the same one `crate::output::ll_dash`/
 /// `crate::origin::resource`'s chunked-transfer path reads from in
 /// production.
-async fn run_live_producer(store: Arc<MediaStore>, spec: TrackSpec, samples: Vec<Sample>) {
+async fn run_live_producer(store: Arc<RouteHandle>, spec: TrackSpec, samples: Vec<Sample>) {
     let track_id = spec.track_id;
     let movie_timescale = spec.timescale;
     let mut seg = LlHlsSegmenter::with_part_target(
@@ -158,8 +158,8 @@ async fn run_live_producer(store: Arc<MediaStore>, spec: TrackSpec, samples: Vec
 /// `manifest-ll.mpd` is the one URL this test's player fetches.
 async fn start_ll_dash_origin(
     spec: TrackSpec,
-) -> (Arc<MediaStore>, String, tokio::task::JoinHandle<()>) {
-    let store = Arc::new(MediaStore::new(
+) -> (Arc<RouteHandle>, String, tokio::task::JoinHandle<()>) {
+    let store = Arc::new(RouteHandle::new(
         TARGET_DURATION_SECS,
         PART_TARGET_MS,
         WINDOW_SEGMENTS,

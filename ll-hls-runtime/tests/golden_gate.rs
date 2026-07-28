@@ -21,7 +21,7 @@
 //! workspace's real captured fixture (`fixtures/ts/h264_aac.ts` — Main
 //! profile, 320x240, 25 fps, 75 real video frames, ISO/IEC 13818-1; see
 //! `fixtures/ts/CODEC-ORACLE.md`) via `TsDemux` and feeds those real samples
-//! through the exact same `LlHlsSegmenter` -> `MediaStore` -> `LlHlsOutput`
+//! through the exact same `LlHlsSegmenter` -> `RouteHandle` -> `LlHlsOutput`
 //! origin stack `glass_to_glass.rs` uses, live-paced at the fixture's own
 //! frame rate. Audio is left out: `multimux::output::llhls::LlHlsOutput`
 //! renders a single fixed track (`DEFAULT_TRACK_ID`), exactly as
@@ -54,7 +54,7 @@ use ll_hls_runtime::server::DEFAULT_TRACK_ID;
 use multimux::origin::{AppState, router};
 use multimux::output::Output as MmOutput;
 use multimux::output::llhls::LlHlsOutput;
-use multimux::store::MediaStore;
+use multimux::route::RouteHandle;
 use transmux::hls::{MapTag, MediaPlaylist, MediaSegment};
 use transmux::ll_hls::LlHlsSegmenter;
 use transmux::{CodecConfig, FragmentTrackData, Sample, TrackSpec, TsDemux};
@@ -221,7 +221,7 @@ const WINDOW_SEGMENTS: usize = 8;
 /// frame rate (25 fps, `fixtures/ts/CODEC-ORACLE.md`) — a live-shaped
 /// producer, not a batch dump, exactly as `glass_to_glass.rs`'s own
 /// `run_live_producer`.
-async fn run_live_producer(store: Arc<MediaStore>, spec: TrackSpec, samples: Vec<Sample>) {
+async fn run_live_producer(store: Arc<RouteHandle>, spec: TrackSpec, samples: Vec<Sample>) {
     let track_id = spec.track_id;
     let movie_timescale = spec.timescale;
     let mut seg = LlHlsSegmenter::with_part_target(
@@ -258,8 +258,8 @@ async fn run_live_producer(store: Arc<MediaStore>, spec: TrackSpec, samples: Vec
 /// serving one stream named `live`.
 async fn start_ll_origin(
     spec: TrackSpec,
-) -> (Arc<MediaStore>, String, tokio::task::JoinHandle<()>) {
-    let store = Arc::new(MediaStore::new(
+) -> (Arc<RouteHandle>, String, tokio::task::JoinHandle<()>) {
+    let store = Arc::new(RouteHandle::new(
         TARGET_DURATION_SECS,
         PART_TARGET_MS,
         WINDOW_SEGMENTS,

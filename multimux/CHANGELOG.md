@@ -2,6 +2,82 @@
 
 ## [Unreleased]
 
+### Changed (BREAKING, in progress — plan step 5b)
+- **Ported the three outputs (LL-HLS, DASH, LL-DASH) and the shared
+  init/segment/part resource route onto `media_plane::egress::ServedEgress`
+  behind one axum adapter**, and **deleted `crate::store` (`MediaStore`,
+  `HealthState`)** — the module was a re-export of `ll_hls_runtime::server`
+  types Step 4 replaced with the sans-IO `LlHlsOrigin`/`Trunk` design, and
+  multimux has not compiled since. This unblocks the whole workspace: it has
+  not built since Step 4 deleted `MediaStore`.
+  - New `crate::route::RouteHandle` replaces `MediaStore` as the shared
+    per-stream state: a `media_plane::Trunk`, the `LlHlsOrigin` over it
+    (serves every output's init/segment/part bytes and LL-HLS's own
+    playlist), a small `Trunk`-drained `DashState` (track specs + created-at
+    + closed-segment window — the only things no `Trunk` ring holds), and a
+    new `crate::route::HealthState` (route up/down; distinct from
+    `media_plane::ingress::HealthState`, which is generic over one ingest
+    session's own connector error type and cannot give one route's
+    homogeneous live/down status). Same public method surface as the deleted
+    `MediaStore` (`set_init`/`init_bytes`/`set_track_specs`/`track_specs`/
+    `add_part`/`add_segment`/`window_segments`/`health`/`set_health`) so
+    `crate::pipeline::run_pipeline`/`crate::origin::supervisor::supervise`
+    needed only a type-rename, not a rewrite.
+  - New `crate::http` module: the **one** axum adapter every route goes
+    through — `resolve_blocking` (the caller-driven blocking-reload wait
+    loop `ll_hls_runtime::server`'s own module doc sketches, generalised to
+    any `ServedEgress`) and `into_response` (`EgressResponse` -> HTTP
+    response, `Await`/`NotFound`/`BadRequest` mapped once, not per output).
+    `crate::output::dash`/`crate::output::ll_dash` now implement
+    `ServedEgress` too (`Request = ()`, `Body = String`) purely so their
+    manifest routes go through the same adapter as LL-HLS, even though
+    neither ever answers `Await`.
+  - `crate::origin::resource`'s shared `/:file` route now resolves through
+    `LlHlsOrigin::resolve` (`LlHlsRequest::Resource`) instead of the deleted
+    `MediaStore::resolve_resource`; the issue #721 chunked-transfer
+    in-progress-segment path is unchanged in shape, re-fetching parts via
+    the same adapter.
+  - **Fix #776**: `render_mpd`/`render_ll_dash_mpd` took `specs.remove(0)`
+    unconditionally, so a track set whose first elementary stream is an
+    opaque `CodecConfig::Data`/`Subtitle` track (teletext, DSM-CC, SCTE-35 —
+    routine in a real DVB multiplex) made `DashPackager`/`LlDashPackager`
+    reject the `Media` and the whole DASH/LL-DASH route return a
+    **permanent 503**. New `crate::output::dash::select_representable_track`
+    selects the first track (preferring a video-shaped codec, then any
+    other) that actually trial-packages successfully through the real
+    `DashPackager` — reusing its codec-support decision rather than
+    re-deriving it — so a representable track behind an opaque one is no
+    longer starved. Only a track set with genuinely no representable track
+    is still a 503.
+  - The two RFC 8216bis behaviours that shipped as multimux 0.2.1 (a
+    preload-hinted part blocks until produced rather than 404ing) and 0.2.2
+    (a just-closed segment's final part still serves) now fall out of the
+    `Trunk`'s live-part log for free (segment close deliberately never
+    evicts parts — see `media-plane`'s own module doc) — both are asserted
+    directly in `crate::origin::resource`'s own tests, not merely assumed to
+    still hold.
+  - Fixed two pre-existing, unrelated defects the first successful
+    `cargo test --workspace`/`cargo clippy --workspace --all-targets` since
+    Step 4 surfaced (not caused by this port): `ll-hls-runtime`'s own
+    `LlHlsOrigin` test helpers and two of its examples
+    (`client_stepping`/`origin_playlist`) called `Trunk::writer()` (the
+    samples+events writer) instead of `Trunk::segment_writer()` for
+    segment/part publishing — a stale call from before Step 4's
+    `SegmentWriter` split that never compiled since; and multimux's
+    `AuthSpec::to_credentials` had gone dead (its only call site was the
+    per-route ingest wiring Step 5a rounds 2/3 replaced with a
+    `tracing::error!` stub for every non-`rtmp` input), now `#[allow(dead_code)]`
+    with its reason recorded rather than deleted, since the (tested) logic
+    is still exactly what that wiring will need once it lands.
+  - **Not fixed, reported**: `multimux/tests/rtsp_ingest.rs` has not
+    compiled since Step 5a round 2 ported `crate::source::rtsp` off
+    `RtspSource`/`SourceConnector` onto `run_rtsp`/`IngestDriver` — the test
+    file was never updated and still imports the deleted `RtspSource` (and
+    references a `Sample::flags` field the media-plane step 2c PTS/DTS
+    refactor also removed independently). Out of this step's scope (RTSP
+    ingest wiring is a later step's job, not the output port); every other
+    target in the workspace builds and passes.
+
 ### Changed (BREAKING, in progress — plan step 5a, round 3)
 - **Ported `hls_pull`, `dash_pull` and `smooth_pull` onto the plane's ingress
   traits**, on the back of `media-plane`'s round-3 `IngestSession` change

@@ -37,7 +37,9 @@ fn nz(n: usize) -> NonZeroUsize {
 /// the next request.
 fn canned_playlist() -> String {
     let trunk = Trunk::new(TrunkConfig::new(nz(16), nz(4), nz(8), nz(4), nz(16)));
-    let writer = trunk.writer().expect("first (and only) writer");
+    let writer = trunk
+        .segment_writer()
+        .expect("first (and only) segment writer");
     let origin = LlHlsOrigin::new(std::sync::Arc::clone(&trunk), 1.0, 500, nz(4));
     origin.set_init(vec![0xAA; 32]);
 

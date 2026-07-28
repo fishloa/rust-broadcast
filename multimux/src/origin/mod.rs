@@ -1,6 +1,6 @@
 //! HTTP origin server for stream delivery.
 //!
-//! Wires a per-stream [`crate::store::MediaStore`] to the axum sub-routers of
+//! Wires a per-stream [`crate::route::RouteHandle`] to the axum sub-routers of
 //! each stream's configured [`crate::output::Output`]s (LL-HLS, DASH — issue
 //! #663 P4), mounting under `/{stream}/`:
 //! - the **shared resource route** (`resource`) — `init-*.mp4`/`seg-*.m4s`/
@@ -63,7 +63,7 @@ use tower_http::timeout::TimeoutLayer;
 
 use crate::output::Output;
 use crate::registry::{AuthCtx, InputCtx, OutputCtx, SchemeRegistry};
-use crate::store::{HealthState, MediaStore};
+use crate::route::{HealthState, RouteHandle};
 use supervisor::{Backoff, supervise};
 
 /// Realm advertised by the shared output-auth `Verifier`'s Basic/Digest
@@ -153,9 +153,9 @@ impl From<&crate::config::Config> for HttpLimits {
 const SUPERVISOR_SHUTDOWN_GRACE: Duration = Duration::from_secs(5);
 
 /// One stream's shared store plus the `Output`s configured to serve it.
-pub type StreamRoute = (Arc<MediaStore>, Vec<Arc<dyn Output>>);
+pub type StreamRoute = (Arc<RouteHandle>, Vec<Arc<dyn Output>>);
 
-/// Shared HTTP origin state: one [`MediaStore`] plus its configured
+/// Shared HTTP origin state: one [`RouteHandle`] plus its configured
 /// [`Output`]s per served stream name, keyed by the stream name used in the
 /// URL path (`/:stream/...`), plus the process-wide Prometheus metrics handle
 /// rendered by `GET /metrics`.
@@ -219,7 +219,7 @@ impl AppState {
 /// - For each stream, the shared resource route (`resource::router`) is
 ///   merged with every configured `Output`'s manifest routes
 ///   ([`Output::manifest_routes`]) — all sharing that stream's one
-///   [`MediaStore`] — into **one** router, wrapped in
+///   [`RouteHandle`] — into **one** router, wrapped in
 ///   `add_response_headers`, then `nest`ed under `/{stream}/` **once**
 ///   (merging first, rather than nesting each output separately, is what
 ///   avoids axum's duplicate-nest panic — see this module's docs). A request
@@ -575,7 +575,7 @@ pub async fn serve(config: crate::config::Config) -> crate::Result<()> {
     serve_with_registry(config, SchemeRegistry::new()).await
 }
 
-/// Run the multimux origin: one [`MediaStore`] + one supervised ingest task
+/// Run the multimux origin: one [`RouteHandle`] + one supervised ingest task
 /// per `config.routes` entry, then bind `config.bind` and serve them all
 /// under [`router`]. Each route is served by the [`Output`]s named in its
 /// [`crate::config::Route::outputs`] (LL-HLS by default — see
@@ -595,7 +595,7 @@ pub async fn serve(config: crate::config::Config) -> crate::Result<()> {
 /// [`crate::pipeline::run_pipeline`], and on either a connect failure, a
 /// pipeline error, or source end-of-stream, reconnects with capped backoff
 /// instead of dying — a bad/flaky source degrades that route's
-/// [`crate::store::MediaStore::health`] rather than freezing it forever, and
+/// [`crate::route::RouteHandle::health`] rather than freezing it forever, and
 /// never brings the server (or any other route) down.
 ///
 /// [`crate::config::InputSpec::Custom`]/[`crate::output::OutputKind::Custom`]/
@@ -633,7 +633,7 @@ pub async fn serve_with_registry(
     let mut supervisor_handles: Vec<(String, tokio::task::JoinHandle<()>)> = Vec::new();
 
     for route in &config.routes {
-        let store = Arc::new(MediaStore::new(
+        let store = Arc::new(RouteHandle::new(
             target_duration_secs,
             part_target_ms,
             config.window_segments,
@@ -653,13 +653,19 @@ pub async fn serve_with_registry(
             // ported onto `media_plane::ingress::{Dialer, IngestSession}`
             // (see each module's `run_*` entry point, all driving
             // `media_plane::ingress::IngestDriver` into a `media_plane::Trunk`
-            // directly) and no longer implement `SourceConnector`/
-            // `SampleSource`. Wiring these routes back into this
-            // `MediaStore`-per-route loop is step 5b's job (it needs a
-            // `Trunk`-backed replacement for `MediaStore`/`HealthState`
-            // here, not just a source rename) — left as a stub so the crate
-            // names a clear boundary rather than silently regressing these
-            // routes to "compiles but does nothing" without comment.
+            // it constructs *internally*) and no longer implement
+            // `SourceConnector`/`SampleSource`. Step 5b ported this loop's
+            // *output* side onto a `Trunk`-backed `RouteHandle` (this
+            // module/`crate::route`), but wiring one of these `run_*` entry
+            // points' own internally-constructed `Trunk` to the *same*
+            // `Trunk` a route's `RouteHandle` (and therefore its
+            // `LlHlsOrigin`/DASH rendering) reads from is a real design
+            // decision — one `Trunk` shared both ways, or a bridging
+            // cursor — left to a later step (per-route ingest policy is
+            // scoped there), not a source rename this step can absorb in
+            // passing. Left as a stub so the crate names a clear boundary
+            // rather than silently regressing these routes to "compiles but
+            // does nothing" without comment.
             crate::config::InputSpec::Rtsp { .. }
             | crate::config::InputSpec::Rtp { .. }
             | crate::config::InputSpec::TsUdp { .. }
@@ -673,8 +679,8 @@ pub async fn serve_with_registry(
                     tracing::error!(
                         route = %name,
                         "this route's input kind was ported onto the media-plane ingress \
-                         traits at step 5a but is not yet wired into this MediaStore-backed \
-                         supervisor loop (step 5b); the route is disabled until that lands"
+                         traits but is not yet wired into this RouteHandle-backed \
+                         supervisor loop; the route is disabled until that lands"
                     );
                 })
             }
@@ -811,11 +817,11 @@ async fn shutdown_signal() {
 mod tests {
     use super::*;
     use crate::output::llhls::LlHlsOutput;
-    use crate::store::MediaStore;
+    use crate::route::RouteHandle;
     use tower::ServiceExt;
 
     fn make_state() -> Arc<AppState> {
-        let store = Arc::new(MediaStore::new(4.0, 500, 4));
+        let store = Arc::new(RouteHandle::new(4.0, 500, 4));
         store.set_init(vec![0xAA; 4]);
         let mut streams = HashMap::new();
         streams.insert(
@@ -950,12 +956,12 @@ mod tests {
         assert_eq!(resp.status(), axum::http::StatusCode::SERVICE_UNAVAILABLE);
     }
 
-    /// Biting test 3b: `GET /readyz` must 200 once a route's `MediaStore` is
+    /// Biting test 3b: `GET /readyz` must 200 once a route's `RouteHandle` is
     /// `Live` — the counterpart to 3a, proving `/readyz` actually reads
     /// `HealthState` rather than being hardcoded to one status.
     #[tokio::test]
     async fn readyz_200_when_a_route_is_live() {
-        let store = Arc::new(MediaStore::new(4.0, 500, 4));
+        let store = Arc::new(RouteHandle::new(4.0, 500, 4));
         store.set_init(vec![0xAA; 4]);
         store.set_health(HealthState::Live);
         let mut streams = HashMap::new();
@@ -995,7 +1001,7 @@ mod tests {
     /// this assertion.
     #[tokio::test]
     async fn http_requests_total_counter_increases_on_requests() {
-        let store = Arc::new(MediaStore::new(4.0, 500, 4));
+        let store = Arc::new(RouteHandle::new(4.0, 500, 4));
         store.set_init(vec![0xAA; 4]);
         let mut streams = HashMap::new();
         streams.insert(
@@ -1101,11 +1107,11 @@ mod tests {
     /// `SegmentTemplate` (once its `$RepresentationID$`/`$Number$` tokens are
     /// substituted exactly like a real DASH client would) names the *same*
     /// `seg-*.m4s` file the LL-HLS playlist already references — proving
-    /// ingest-once/many-outputs from one shared `MediaStore`, not a
+    /// ingest-once/many-outputs from one shared `RouteHandle`, not a
     /// per-output re-mux.
     #[tokio::test]
     async fn both_outputs_serve_from_shared_segments_and_mpd_resolves() {
-        let store = Arc::new(MediaStore::new(4.0, 500, 4));
+        let store = Arc::new(RouteHandle::new(4.0, 500, 4));
         store.set_init(vec![0xAA; 4]);
         store.set_track_specs(vec![transmux::TrackSpec::new(
             9,
@@ -1198,7 +1204,7 @@ mod tests {
     /// genuinely per-output, not a hardcoded LL-HLS+DASH pair.
     #[tokio::test]
     async fn dash_only_route_has_no_llhls_routes() {
-        let store = Arc::new(MediaStore::new(4.0, 500, 4));
+        let store = Arc::new(RouteHandle::new(4.0, 500, 4));
         store.set_track_specs(vec![transmux::TrackSpec::new(
             1,
             90_000,
@@ -1239,7 +1245,7 @@ mod tests {
     /// once the segment closes.
     #[tokio::test]
     async fn ll_dash_output_signals_and_resolves_alongside_dash_and_llhls() {
-        let store = Arc::new(MediaStore::new(4.0, 500, 4));
+        let store = Arc::new(RouteHandle::new(4.0, 500, 4));
         store.set_init(vec![0xAA; 4]);
         store.set_track_specs(vec![transmux::TrackSpec::new(
             9,
@@ -1380,7 +1386,7 @@ mod tests {
     /// (which only ever checked `.m3u8`) actually covers DASH too.
     #[tokio::test]
     async fn manifest_and_resource_responses_carry_expected_cache_control_and_cors() {
-        let store = Arc::new(MediaStore::new(4.0, 500, 4));
+        let store = Arc::new(RouteHandle::new(4.0, 500, 4));
         store.set_init(vec![0xAA; 4]);
         store.set_track_specs(vec![transmux::TrackSpec::new(
             1,
@@ -1513,7 +1519,7 @@ mod tests {
     /// still bind when configured tighter.
     #[tokio::test]
     async fn global_timeout_layer_cuts_off_a_slow_blocking_request() {
-        let store = Arc::new(MediaStore::new(4.0, 500, 4));
+        let store = Arc::new(RouteHandle::new(4.0, 500, 4));
         store.set_init(vec![0xAA; 4]);
         store.add_segment(transmux::ll_hls::SegmentInfo {
             bytes: vec![0x20; 8],
@@ -1556,7 +1562,7 @@ mod tests {
     /// [`HttpLimits`] via [`AppState::with_limits`], which [`make_state`]
     /// itself doesn't expose).
     fn make_state_streams() -> HashMap<String, StreamRoute> {
-        let store = Arc::new(MediaStore::new(4.0, 500, 4));
+        let store = Arc::new(RouteHandle::new(4.0, 500, 4));
         store.set_init(vec![0xAA; 4]);
         let mut streams = HashMap::new();
         streams.insert(
@@ -2084,7 +2090,7 @@ mod tests {
             }),
         );
 
-        let store = Arc::new(MediaStore::new(4.0, 500, 4));
+        let store = Arc::new(RouteHandle::new(4.0, 500, 4));
         let (_shutdown_tx, shutdown_rx) = watch::channel(false);
         let factory = registry.input("silence").expect("factory registered above");
         let handle = factory(crate::registry::InputCtx {

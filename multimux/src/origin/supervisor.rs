@@ -7,7 +7,7 @@
 //! connect once, run the pipeline once, and on any failure just `eprintln!`
 //! and let the task die for good — after which the HTTP origin kept serving
 //! the frozen last playlist as `200 OK` forever. `supervise` replaces that
-//! one-shot task with a loop, and keeps [`MediaStore::health`] in sync so a
+//! one-shot task with a loop, and keeps [`RouteHandle::health`] in sync so a
 //! client/output can (eventually) see that a route stopped producing new
 //! media rather than silently going stale.
 //!
@@ -30,7 +30,7 @@ use std::time::Duration;
 use tokio::sync::watch;
 
 use crate::pipeline::{SampleSource, run_pipeline};
-use crate::store::{HealthState, MediaStore};
+use crate::route::{HealthState, RouteHandle};
 
 /// Production default backoff: starts at 500 ms, doubles, caps at 30 s.
 const DEFAULT_BACKOFF_MIN: Duration = Duration::from_millis(500);
@@ -63,8 +63,9 @@ pub trait SourceConnector: Send + Sync + 'static {
 // srt::run_srt_caller, hls_pull::run_hls_pull, dash_pull::run_dash_pull,
 // smooth_pull::run_smooth_pull}`, which drive
 // `media_plane::ingress::IngestDriver` directly and are not yet wired into
-// this supervisor loop (step 5b: needs a `Trunk`-backed replacement for
-// `MediaStore`/`HealthState` here, not just a `Source` rename).
+// this supervisor loop (their `IngestDriver`/`Trunk` wiring back into a
+// route's own `RouteHandle` is a later step's job, not just a `Source`
+// rename).
 
 impl SourceConnector for crate::source::rtmp::RtmpSource {
     type Source = crate::source::rtmp::RtmpSession;
@@ -132,9 +133,10 @@ impl Backoff {
 
 /// Mirrors `state` into the [`crate::prometheus::ROUTE_UP`] gauge for `name`:
 /// 1.0 while `state` is [`HealthState::Live`], 0.0 otherwise. Called
-/// alongside every `store.set_health(..)` in [`supervise`] — this is the one
-/// place that has both the route's name (for the label) and every health
-/// transition, since [`MediaStore`] itself doesn't carry its own route name.
+/// alongside every `route_handle.set_health(..)` in [`supervise`] — this is
+/// the one place that has both the route's name (for the label) and every
+/// health transition, since [`RouteHandle`] itself doesn't carry its own
+/// route name.
 fn record_route_up(name: &str, state: HealthState) {
     let up = if matches!(state, HealthState::Live) {
         1.0
@@ -183,12 +185,12 @@ fn record_reconnect(name: &str) {
 /// loop here does not currently produce it.
 #[tracing::instrument(
     name = "route",
-    skip(connector, store, target_duration_secs, part_target_ms, backoff, name, shutdown),
+    skip(connector, route_handle, target_duration_secs, part_target_ms, backoff, name, shutdown),
     fields(route = %name)
 )]
 pub async fn supervise<C: SourceConnector>(
     connector: C,
-    store: Arc<MediaStore>,
+    route_handle: Arc<RouteHandle>,
     target_duration_secs: f64,
     part_target_ms: u32,
     mut backoff: Backoff,
@@ -196,7 +198,7 @@ pub async fn supervise<C: SourceConnector>(
     mut shutdown: watch::Receiver<bool>,
 ) {
     tracing::info!("connecting");
-    store.set_health(HealthState::Connecting);
+    route_handle.set_health(HealthState::Connecting);
     record_route_up(&name, HealthState::Connecting);
     let mut attempt: u64 = 0;
 
@@ -209,11 +211,11 @@ pub async fn supervise<C: SourceConnector>(
             Ok(source) => {
                 attempt = 0;
                 tracing::info!("connected, ingest live");
-                store.set_health(HealthState::Live);
+                route_handle.set_health(HealthState::Live);
                 record_route_up(&name, HealthState::Live);
                 backoff.reset();
                 if let Err(e) = run_pipeline(
-                    store.clone(),
+                    route_handle.clone(),
                     target_duration_secs,
                     part_target_ms,
                     source,
@@ -223,14 +225,14 @@ pub async fn supervise<C: SourceConnector>(
                 {
                     tracing::warn!(error = %e, "pipeline stopped");
                 }
-                store.set_health(HealthState::Reconnecting);
+                route_handle.set_health(HealthState::Reconnecting);
                 record_route_up(&name, HealthState::Reconnecting);
                 record_reconnect(&name);
             }
             Err(e) => {
                 attempt += 1;
                 tracing::warn!(error = %e, attempt, "failed to connect");
-                store.set_health(HealthState::Reconnecting);
+                route_handle.set_health(HealthState::Reconnecting);
                 record_route_up(&name, HealthState::Reconnecting);
                 record_reconnect(&name);
             }
@@ -430,7 +432,7 @@ mod tests {
     /// the first failure and health would never leave `Reconnecting`.
     #[tokio::test]
     async fn reconnects_after_connect_failure_and_reaches_live() {
-        let store = Arc::new(MediaStore::new(1.0, 500, 8));
+        let route = Arc::new(RouteHandle::new(1.0, 500, 8));
         let connect_count = Arc::new(AtomicUsize::new(0));
         // Paced (not instantaneous) so the observer below has a real
         // wall-clock window in which to catch `Live` — see `PacedSource`'s
@@ -446,7 +448,7 @@ mod tests {
 
         let handle = tokio::spawn(supervise(
             connector,
-            store.clone(),
+            route.clone(),
             1.0,
             500,
             tiny_backoff(),
@@ -455,7 +457,7 @@ mod tests {
         ));
 
         let reached_live = wait_until(Duration::from_secs(2), || {
-            store.health() == HealthState::Live && store.init_bytes().is_some()
+            route.health() == HealthState::Live && route.init_bytes().is_some()
         })
         .await;
         assert!(
@@ -482,7 +484,7 @@ mod tests {
     /// stay at 1 forever.
     #[tokio::test]
     async fn reconnects_after_source_eof() {
-        let store = Arc::new(MediaStore::new(1.0, 500, 8));
+        let route = Arc::new(RouteHandle::new(1.0, 500, 8));
         let connect_count = Arc::new(AtomicUsize::new(0));
         let connector = FlakyConnector {
             fail_times: 0,
@@ -496,7 +498,7 @@ mod tests {
 
         let handle = tokio::spawn(supervise(
             connector,
-            store.clone(),
+            route.clone(),
             1.0,
             500,
             tiny_backoff(),
@@ -526,7 +528,7 @@ mod tests {
     /// `tokio::time::sleep` the loop blindly awaits to completion.
     #[tokio::test]
     async fn shutdown_stops_the_loop_promptly() {
-        let store = Arc::new(MediaStore::new(1.0, 500, 8));
+        let route = Arc::new(RouteHandle::new(1.0, 500, 8));
         let connect_count = Arc::new(AtomicUsize::new(0));
         // Always fails, so the loop is guaranteed to be sitting in the
         // backoff sleep (not mid-pipeline) shortly after start.
@@ -544,7 +546,7 @@ mod tests {
 
         let handle = tokio::spawn(supervise(
             connector,
-            store,
+            route,
             1.0,
             500,
             backoff,

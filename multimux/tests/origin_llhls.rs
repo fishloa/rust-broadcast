@@ -1,6 +1,6 @@
 #![cfg(feature = "testsupport")]
 //! Deterministic end-to-end integration gate for the LL-HLS origin (#663):
-//! `MockSource` -> [`run_pipeline`] -> [`MediaStore`] -> the axum
+//! `MockSource` -> [`run_pipeline`] -> [`RouteHandle`] -> the axum
 //! [`router`], driven with `tower::ServiceExt::oneshot` (no real TCP socket,
 //! no timing-dependent assertions) so the whole demux-free pipeline-to-HTTP
 //! path is exercised without flakiness.
@@ -21,7 +21,7 @@ use multimux::origin::{AppState, router};
 use multimux::output::Output;
 use multimux::output::llhls::LlHlsOutput;
 use multimux::pipeline::{MockSource, run_pipeline};
-use multimux::store::MediaStore;
+use multimux::route::RouteHandle;
 use transmux::avc_config_from_sprop;
 use transmux::ll_hls::PartInfo;
 use transmux::pipeline::{CodecConfig, Sample, TrackSpec};
@@ -94,7 +94,7 @@ fn get(uri: &str) -> Request<Body> {
 
 #[tokio::test]
 async fn end_to_end_pipeline_serves_valid_llhls() {
-    let store = Arc::new(MediaStore::new(1.0, 500, 8));
+    let store = Arc::new(RouteHandle::new(1.0, 500, 8));
     let specs = vec![video_track_spec()];
 
     // 120 frames @ 30 fps = 4 s of video, with sync samples every 30 frames
@@ -205,7 +205,7 @@ fn part(seq: u32, idx: u32) -> PartInfo {
 /// (5 s) rather than resolving as soon as the part lands.
 #[tokio::test]
 async fn blocking_reload_resolves_when_part_arrives() {
-    let store = Arc::new(MediaStore::new(4.0, 500, 8));
+    let store = Arc::new(RouteHandle::new(4.0, 500, 8));
     store.set_init(vec![0xAA; 8]);
     store.add_part(part(1, 0));
 

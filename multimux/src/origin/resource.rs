@@ -1,11 +1,12 @@
 //! The shared origin-level resource route: `init-*.mp4` / `seg-*.m4s` /
 //! `part-*.m4s` byte serving, mounted **once per stream** by
 //! [`crate::origin::router`] rather than per-`Output` — LL-HLS and DASH are
-//! both fMP4/CMAF and reference the exact same
-//! [`crate::store::MediaStore`]-produced bytes, so serving them per-output
-//! would duplicate the route (and previously caused an axum panic: two
-//! `Output`s both mounting a `/:file` catch-all under the same `/{stream}`
-//! nest — issue #663 P4's "multi-output nest collision" fix).
+//! both fMP4/CMAF and reference the exact same bytes (resolved through the
+//! route's shared [`ll_hls_runtime::server::LlHlsOrigin`], the `ServedEgress`
+//! every output's bytes resolve through — see [`crate::http`]), so serving
+//! them per-output would duplicate the route (and previously caused an axum
+//! panic: two `Output`s both mounting a `/:file` catch-all under the same
+//! `/{stream}` nest — issue #663 P4's "multi-output nest collision" fix).
 //!
 //! Each [`crate::output::Output`] contributes only its manifest route(s)
 //! (`master.m3u8`/`media.m3u8` for LL-HLS, `manifest.mpd` for DASH); this
@@ -20,20 +21,19 @@
 //! `seg-*.m4s` request that doesn't (yet) resolve to a closed segment falls
 //! through to [`stream_in_progress_segment`], which re-fetches that
 //! segment's `part-{track}-{seq}.{idx}.m4s` entries in order — the exact
-//! bytes [`ResourceOutcome`]'s existing blocking-wait machinery already
-//! produces for LL-HLS's own preload-hint requests — and streams them as one
-//! HTTP chunked-transfer-encoded response body, ending once a part index
-//! resolves [`ResourceOutcome::NotFound`] (which only happens once the
-//! segment has actually closed without that part, i.e. exactly the segment's
-//! end). A genuinely future segment (nothing produced yet) blocks the same
-//! bounded [`BLOCKING_RELOAD_TIMEOUT`] on its first part before giving up
-//! (404), mirroring the plain closed-segment/part lookups below. LL-HLS
-//! itself never triggers this path: its playlist never advertises an
-//! in-progress segment's whole-segment URI (RFC 8216bis §4.4.4.9), so a
-//! well-behaved client never requests one.
+//! bytes the route's `LlHlsOrigin` already produces for LL-HLS's own
+//! preload-hint requests — and streams them as one HTTP
+//! chunked-transfer-encoded response body, ending once a part index resolves
+//! [`media_plane::egress::EgressResponse::NotFound`] (which only happens once
+//! the segment has actually closed without that part, i.e. exactly the
+//! segment's end). A genuinely future segment (nothing produced yet) blocks
+//! the same bounded [`crate::http::BLOCKING_RELOAD_TIMEOUT`] on its first
+//! part before giving up (404), mirroring the plain closed-segment/part
+//! lookups below. LL-HLS itself never triggers this path: its playlist never
+//! advertises an in-progress segment's whole-segment URI (RFC 8216bis
+//! §4.4.4.9), so a well-behaved client never requests one.
 
 use std::sync::Arc;
-use std::time::Duration;
 
 use axum::Router;
 use axum::body::Body;
@@ -42,18 +42,10 @@ use axum::http::{HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use futures_util::stream;
-use ll_hls_runtime::server::ResourceOutcome;
+use ll_hls_runtime::server::LlHlsRequest;
 
-use crate::store::MediaStore;
-
-/// Upper bound on how long a blocking dynamic-file request (a preload-hinted
-/// part not yet produced) waits before falling back to `404`. Mirrors
-/// `output::llhls`'s own playlist-blocking timeout (RFC 8216bis §6.2.5.2
-/// requires the origin to eventually respond either way) — kept as a
-/// separate constant here (rather than shared with the playlist one) since
-/// the two waits are conceptually independent, even though they currently
-/// have the same value.
-pub(crate) const BLOCKING_RELOAD_TIMEOUT: Duration = Duration::from_secs(5);
+use crate::http::{self, BLOCKING_RELOAD_TIMEOUT};
+use crate::route::RouteHandle;
 
 pub(crate) const MP4_CONTENT_TYPE: &str = "video/mp4";
 
@@ -69,8 +61,8 @@ pub(crate) const MP4_CONTENT_TYPE: &str = "video/mp4";
 const SEGMENT_ABUSE_FUTURE_BOUND: u32 = 4;
 
 /// RAII guard bumping/dropping [`crate::prometheus::ACTIVE_BLOCKING_REQUESTS`]
-/// for the lifetime of a blocking wait ([`resource_blocking`], and
-/// `output::llhls`'s own playlist-blocking wait) — incremented on
+/// for the lifetime of a genuine blocking wait ([`crate::http::resolve_blocking`]'s
+/// `on_enter_wait`, both here and in `output::llhls`) — incremented on
 /// construction, decremented on drop, so the gauge stays accurate even if the
 /// awaited future is itself dropped (e.g. the client disconnects mid-wait),
 /// not just on a normal return.
@@ -91,18 +83,19 @@ impl Drop for BlockingRequestGuard {
 
 /// Build the shared resource router for one stream: `GET /:file`, serving
 /// `init-{track}.mp4` / `seg-{track}-{seq}.m4s` / `part-{track}-{seq}.{idx}.m4s`
-/// from `store`. Mounted once per stream by [`crate::origin::router`],
-/// merged alongside every configured `Output`'s manifest routes before the
-/// whole per-stream router is `.nest`ed — see this module's docs.
+/// via `route`'s `LlHlsOrigin`. Mounted once per stream by
+/// [`crate::origin::router`], merged alongside every configured `Output`'s
+/// manifest routes before the whole per-stream router is `.nest`ed — see
+/// this module's docs.
 ///
 /// `Cache-Control`/CORS headers are applied by the origin's shared
 /// `add_response_headers` middleware (wrapping the *merged* per-stream
 /// router, not this one alone), so every output's responses get the same
 /// policy uniformly.
-pub(crate) fn router(store: Arc<MediaStore>) -> Router {
+pub(crate) fn router(route: Arc<RouteHandle>) -> Router {
     Router::new()
         .route("/:file", get(dynamic_file).options(cors_preflight))
-        .with_state(store)
+        .with_state(route)
 }
 
 /// `OPTIONS` preflight handler shared by every route this origin serves
@@ -116,37 +109,9 @@ pub(crate) async fn cors_preflight() -> StatusCode {
     StatusCode::NO_CONTENT
 }
 
-/// Resolve `store`'s dynamic resource `name`, waiting (bounded by
-/// [`BLOCKING_RELOAD_TIMEOUT`]) on a [`ResourceOutcome::WouldBlock`] (a
-/// preload-hinted part not yet produced) rather than 404ing immediately.
-/// Same caller-driven wait-loop shape as `output::llhls`'s playlist-blocking
-/// wait. On timeout, falls back to [`ResourceOutcome::NotFound`] (a `404`) —
-/// there is no "current" resource to serve instead.
-async fn resource_blocking(store: &MediaStore, name: &str) -> ResourceOutcome {
-    match store.resolve_resource(name) {
-        ResourceOutcome::WouldBlock => {}
-        terminal => return terminal,
-    }
-    let _guard = BlockingRequestGuard::new();
-    let wait = async {
-        loop {
-            let listener = store.listen();
-            match store.resolve_resource(name) {
-                ResourceOutcome::WouldBlock => {}
-                terminal => return terminal,
-            }
-            listener.await;
-        }
-    };
-    tokio::time::timeout(BLOCKING_RELOAD_TIMEOUT, wait)
-        .await
-        .unwrap_or(ResourceOutcome::NotFound)
-}
-
 /// `GET /:file` — catch-all for the dynamic init/segment/part filenames
-/// `ll_hls_runtime::server::media_playlist_m3u8` emits (and the same
-/// filenames a DASH `SegmentTemplate` references — see
-/// `crate::output::dash`).
+/// `route`'s `LlHlsOrigin` names (and the same filenames a DASH
+/// `SegmentTemplate` references — see `crate::output::dash`).
 ///
 /// A single catch-all (rather than three routes with per-filename literals)
 /// because axum 0.7's `matchit`-based router cannot mix multiple params with
@@ -154,31 +119,44 @@ async fn resource_blocking(store: &MediaStore, name: &str) -> ResourceOutcome {
 /// param per segment is supported, capturing the whole segment. Parsing
 /// `file` into a segment/part/init lookup — including the "block until a
 /// preload-hinted part is produced" behaviour (RFC 8216bis §6.2.2, §6.3.1) —
-/// is [`ll_hls_runtime::server::MediaStore::resolve_resource`]'s job; this
-/// handler only drives the wait ([`resource_blocking`]) and maps the outcome
-/// to an HTTP response.
-async fn dynamic_file(State(store): State<Arc<MediaStore>>, Path(file): Path<String>) -> Response {
-    match resource_blocking(&store, &file).await {
-        ResourceOutcome::Ready { bytes, .. } => {
-            ([(header::CONTENT_TYPE, MP4_CONTENT_TYPE)], bytes).into_response()
-        }
-        ResourceOutcome::NotFound => {
-            // Not a closed segment (yet) -- if this is a whole-segment
-            // filename, try the chunked-transfer in-progress/future-segment
-            // path (issue #721) before giving up. Every other filename shape
-            // (init/part) has nothing more to try.
+/// is [`ll_hls_runtime::server::LlHlsOrigin::resolve`]'s job; this handler
+/// only drives the wait ([`http::resolve_blocking`]) and maps the outcome to
+/// an HTTP response ([`http::into_response`]).
+async fn dynamic_file(State(route): State<Arc<RouteHandle>>, Path(file): Path<String>) -> Response {
+    let resp = http::resolve_blocking(
+        route.trunk(),
+        route.ll_hls().as_ref(),
+        LlHlsRequest::Resource { name: file.clone() },
+        BLOCKING_RELOAD_TIMEOUT,
+        BlockingRequestGuard::new,
+    )
+    .await;
+    match http::into_response(resp, StatusCode::NOT_FOUND, |body| {
+        resource_body_response(body)
+    }) {
+        // A resource that resolved NotFound might still be a whole-segment
+        // filename the chunked-transfer path (issue #721) can serve while
+        // its segment is still in progress -- try that before giving up.
+        resp if resp.status() == StatusCode::NOT_FOUND => {
             if let Some((track, seq)) = parse_segment_filename(&file) {
-                if let Some(resp) = stream_in_progress_segment(store, track, seq).await {
+                if let Some(resp) = stream_in_progress_segment(route, track, seq).await {
                     return resp;
                 }
             }
             StatusCode::NOT_FOUND.into_response()
         }
-        ResourceOutcome::WouldBlock => StatusCode::NOT_FOUND.into_response(),
-        // `ResourceOutcome` is `#[non_exhaustive]` — treat any future
-        // variant this handler doesn't yet know how to serve as a 404
-        // rather than panicking or fabricating a body.
-        _ => StatusCode::NOT_FOUND.into_response(),
+        resp => resp,
+    }
+}
+
+fn resource_body_response(body: ll_hls_runtime::server::LlHlsBody) -> Response {
+    match body {
+        ll_hls_runtime::server::LlHlsBody::Resource(bytes) => {
+            ([(header::CONTENT_TYPE, MP4_CONTENT_TYPE)], bytes).into_response()
+        }
+        // A resource request never resolves to a rendered playlist body --
+        // defensive, not reachable via `dynamic_file`'s own `LlHlsRequest::Resource`.
+        ll_hls_runtime::server::LlHlsBody::Playlist(_) => StatusCode::NOT_FOUND.into_response(),
     }
 }
 
@@ -187,9 +165,9 @@ async fn dynamic_file(State(store): State<Arc<MediaStore>>, Path(file): Path<Str
 /// `seg-`/`part-` filename parsing, but keeps `track` as a borrowed `&str`
 /// (rather than discarding it once validated) so [`stream_in_progress_segment`]
 /// can reuse it verbatim to build this segment's `part-{track}-{seq}.{idx}.m4s`
-/// filenames -- `{track}` is otherwise unused (the store holds a single
+/// filenames -- `{track}` is otherwise unused (the origin holds a single
 /// track's data regardless of the number a client's `$RepresentationID$`
-/// substitution produces, exactly like `resolve_resource` itself).
+/// substitution produces, exactly like `LlHlsOrigin::resolve` itself).
 fn parse_segment_filename(file: &str) -> Option<(&str, u32)> {
     let rest = file.strip_prefix("seg-")?.strip_suffix(".m4s")?;
     let (track, seq) = rest.split_once('-')?;
@@ -208,32 +186,29 @@ fn parse_segment_filename(file: &str) -> Option<(&str, u32)> {
 /// plain closed-segment lookup's own bound. Once the first part is ready,
 /// `Some` commits to a `200 OK` streamed response that keeps pulling
 /// subsequent parts (each wait bounded the same way) until a part index
-/// resolves [`ResourceOutcome::NotFound`] — which only happens once the
-/// segment has actually closed (or been evicted) without that part, i.e.
-/// exactly the segment's end — at which point the stream ends normally
-/// (the response completes; axum/hyper terminate the chunked-transfer
-/// encoding on drop).
+/// resolves [`media_plane::egress::EgressResponse::NotFound`] — which only
+/// happens once the segment has actually closed (or been evicted) without
+/// that part, i.e. exactly the segment's end — at which point the stream
+/// ends normally (the response completes; axum/hyper terminate the
+/// chunked-transfer encoding on drop).
 async fn stream_in_progress_segment(
-    store: Arc<MediaStore>,
+    route: Arc<RouteHandle>,
     track: &str,
     seq: u32,
 ) -> Option<Response> {
     // Abuse/malformed-request bound (see `SEGMENT_ABUSE_FUTURE_BOUND`) --
     // checked before ever registering a blocking wait.
-    let (in_progress_seg_seq, _) = store.latest_progress();
+    let (in_progress_seg_seq, _) = route.latest_progress();
     if seq > in_progress_seg_seq.saturating_add(SEGMENT_ABUSE_FUTURE_BOUND) {
         return None;
     }
 
     let track = track.to_string();
-    let first = resource_blocking(&store, &format!("part-{track}-{seq}.0.m4s")).await;
-    let first_bytes = match first {
-        ResourceOutcome::Ready { bytes, .. } => bytes,
-        _ => return None,
-    };
+    let first = fetch_part(&route, &track, seq, 0).await;
+    let first_bytes = first?;
 
     let cursor = PartCursor {
-        store,
+        route,
         track,
         seq,
         next_index: 1,
@@ -243,19 +218,12 @@ async fn stream_in_progress_segment(
         if let Some(bytes) = cursor.pending_first.take() {
             return Some((Ok::<_, std::io::Error>(bytes), cursor));
         }
-        let name = format!(
-            "part-{}-{}.{}.m4s",
-            cursor.track, cursor.seq, cursor.next_index
-        );
-        match resource_blocking(&cursor.store, &name).await {
-            ResourceOutcome::Ready { bytes, .. } => {
+        match fetch_part(&cursor.route, &cursor.track, cursor.seq, cursor.next_index).await {
+            Some(bytes) => {
                 cursor.next_index += 1;
                 Some((Ok(bytes), cursor))
             }
-            // WouldBlock cannot escape `resource_blocking` (it only returns
-            // a terminal outcome), and any other/future variant has no
-            // bytes to add -- end the stream rather than loop or panic.
-            _ => None,
+            None => None,
         }
     });
 
@@ -267,9 +235,36 @@ async fn stream_in_progress_segment(
     Some(response)
 }
 
+/// Fetch one part's bytes, blocking (bounded) if it is a preload-hinted part
+/// not yet produced — `None` once it can no longer appear (its segment
+/// closed without it).
+async fn fetch_part(
+    route: &Arc<RouteHandle>,
+    track: &str,
+    seq: u32,
+    idx: u32,
+) -> Option<bytes::Bytes> {
+    let name = format!("part-{track}-{seq}.{idx}.m4s");
+    let resp = http::resolve_blocking(
+        route.trunk(),
+        route.ll_hls().as_ref(),
+        LlHlsRequest::Resource { name },
+        BLOCKING_RELOAD_TIMEOUT,
+        BlockingRequestGuard::new,
+    )
+    .await;
+    match resp {
+        media_plane::egress::EgressResponse::Ready {
+            body: ll_hls_runtime::server::LlHlsBody::Resource(bytes),
+            ..
+        } => Some(bytes),
+        _ => None,
+    }
+}
+
 /// Streaming state for [`stream_in_progress_segment`]'s `futures_util::stream::unfold`.
 struct PartCursor {
-    store: Arc<MediaStore>,
+    route: Arc<RouteHandle>,
     track: String,
     seq: u32,
     /// The 0-based index of the next part to fetch once `pending_first` is
@@ -278,12 +273,13 @@ struct PartCursor {
     /// Part 0's bytes, already fetched by the caller to decide whether to
     /// commit to a streamed response at all -- yielded first so it isn't
     /// fetched twice.
-    pending_first: Option<Vec<u8>>,
+    pending_first: Option<bytes::Bytes>,
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::route::RouteHandle;
     use transmux::ll_hls::{PartInfo, SegmentInfo};
 
     fn part(seq: u32, idx: u32) -> PartInfo {
@@ -305,16 +301,15 @@ mod tests {
         }
     }
 
-    /// A populated store: a closed segment 1, plus two live parts of
-    /// in-progress segment 2 -- so `latest_progress()` treats the store as
-    /// `(2, 2)`.
-    fn make_store() -> Arc<MediaStore> {
-        let store = Arc::new(MediaStore::new(4.0, 500, 4));
-        store.set_init(vec![0xAA; 8]);
-        store.add_segment(seg(1));
-        store.add_part(part(2, 0));
-        store.add_part(part(2, 1));
-        store
+    /// A populated route: a closed segment 1, plus two live parts of
+    /// in-progress segment 2 -- so `latest_progress()` treats it as `(2, 2)`.
+    fn make_route() -> Arc<RouteHandle> {
+        let route = Arc::new(RouteHandle::new(4.0, 500, 4));
+        route.set_init(vec![0xAA; 8]);
+        route.add_segment(seg(1));
+        route.add_part(part(2, 0));
+        route.add_part(part(2, 1));
+        route
     }
 
     async fn body_bytes(resp: Response) -> Vec<u8> {
@@ -326,27 +321,27 @@ mod tests {
 
     #[tokio::test]
     async fn dynamic_file_init_present() {
-        let store = make_store();
-        let resp = dynamic_file(State(store), Path("init-1.mp4".to_string())).await;
+        let route = make_route();
+        let resp = dynamic_file(State(route), Path("init-1.mp4".to_string())).await;
         assert_eq!(resp.status(), StatusCode::OK);
         assert_eq!(body_bytes(resp).await, vec![0xAA; 8]);
     }
 
     #[tokio::test]
     async fn dynamic_file_segment_present_and_absent() {
-        let store = make_store();
-        let ok = dynamic_file(State(store.clone()), Path("seg-1-1.m4s".to_string())).await;
+        let route = make_route();
+        let ok = dynamic_file(State(route.clone()), Path("seg-1-1.m4s".to_string())).await;
         assert_eq!(ok.status(), StatusCode::OK);
         assert_eq!(body_bytes(ok).await, vec![0x21; 8]);
 
-        let missing = dynamic_file(State(store), Path("seg-1-99.m4s".to_string())).await;
+        let missing = dynamic_file(State(route), Path("seg-1-99.m4s".to_string())).await;
         assert_eq!(missing.status(), StatusCode::NOT_FOUND);
     }
 
     #[tokio::test]
     async fn dynamic_file_part_present() {
-        let store = make_store();
-        let resp = dynamic_file(State(store), Path("part-1-2.0.m4s".to_string())).await;
+        let route = make_route();
+        let resp = dynamic_file(State(route), Path("part-1-2.0.m4s".to_string())).await;
         assert_eq!(resp.status(), StatusCode::OK);
         assert_eq!(body_bytes(resp).await, vec![0x10; 4]);
     }
@@ -357,13 +352,13 @@ mod tests {
         // (which currently has parts .0 and .1). The request must BLOCK until
         // the part is produced, not 404 immediately. Produce it after a short
         // delay from another task, then assert the handler returned its bytes.
-        let store = make_store();
-        let store_for_task = store.clone();
+        let route = make_route();
+        let route_for_task = route.clone();
         tokio::spawn(async move {
-            tokio::time::sleep(Duration::from_millis(50)).await;
-            store_for_task.add_part(part(2, 2));
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            route_for_task.add_part(part(2, 2));
         });
-        let resp = dynamic_file(State(store), Path("part-1-2.2.m4s".to_string())).await;
+        let resp = dynamic_file(State(route), Path("part-1-2.2.m4s".to_string())).await;
         assert_eq!(
             resp.status(),
             StatusCode::OK,
@@ -377,14 +372,14 @@ mod tests {
         // part-1-2.9 will never be produced. When segment 2 closes (advancing
         // the in-progress segment), the handler must 404 promptly — not hang
         // until the blocking timeout.
-        let store = make_store();
-        let store_for_task = store.clone();
+        let route = make_route();
+        let route_for_task = route.clone();
         tokio::spawn(async move {
-            tokio::time::sleep(Duration::from_millis(50)).await;
-            store_for_task.add_segment(seg(2)); // closes segment 2
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            route_for_task.add_segment(seg(2)); // closes segment 2
         });
         let started = std::time::Instant::now();
-        let resp = dynamic_file(State(store), Path("part-1-2.9.m4s".to_string())).await;
+        let resp = dynamic_file(State(route), Path("part-1-2.9.m4s".to_string())).await;
         assert_eq!(resp.status(), StatusCode::NOT_FOUND);
         assert!(
             started.elapsed() < BLOCKING_RELOAD_TIMEOUT,
@@ -393,13 +388,18 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn dynamic_file_part_served_from_recent_after_close() {
+    async fn dynamic_file_part_served_after_close() {
         // Segment 2 has live parts .0 and .1; close it. Its final part must
-        // still be served (from recent_parts) — the in-flight preload-hint
-        // request that races the segment close must not 404.
-        let store = make_store();
-        store.add_segment(seg(2)); // close segment 2, moving its parts to recent_parts
-        let resp = dynamic_file(State(store), Path("part-1-2.1.m4s".to_string())).await;
+        // still be served -- the in-flight preload-hint request that races
+        // the segment close must not 404. Both behaviours below shipped as
+        // multimux 0.2.1/0.2.2 bug fixes and are now asserted directly
+        // against the live camera's own regression shape (see
+        // `ll-hls-runtime/src/server/engine.rs`'s own tests for the same
+        // property at the `ServedEgress` layer; this test proves the axum
+        // adapter preserves it end to end).
+        let route = make_route();
+        route.add_segment(seg(2)); // close segment 2
+        let resp = dynamic_file(State(route), Path("part-1-2.1.m4s".to_string())).await;
         assert_eq!(
             resp.status(),
             StatusCode::OK,
@@ -409,20 +409,19 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn dynamic_file_part_of_old_segment_404() {
-        // Segment 1 closed in make_store() with no parts recorded and is old
-        // enough to be past the recent-parts retention window, so a request for
-        // one of its parts 404s without blocking (it will never be produced and
-        // isn't individually addressable anymore).
-        let store = make_store();
-        let resp = dynamic_file(State(store), Path("part-1-1.0.m4s".to_string())).await;
+    async fn dynamic_file_part_of_old_closed_segment_404() {
+        // Segment 1 closed in make_route() with no parts recorded, so a
+        // request for one of its parts 404s without blocking (it will never
+        // be produced and isn't individually addressable anymore).
+        let route = make_route();
+        let resp = dynamic_file(State(route), Path("part-1-1.0.m4s".to_string())).await;
         assert_eq!(resp.status(), StatusCode::NOT_FOUND);
     }
 
     #[tokio::test]
     async fn dynamic_file_unmatched_filename_404() {
-        let store = make_store();
-        let resp = dynamic_file(State(store), Path("not-a-thing.txt".to_string())).await;
+        let route = make_route();
+        let resp = dynamic_file(State(route), Path("not-a-thing.txt".to_string())).await;
         assert_eq!(resp.status(), StatusCode::NOT_FOUND);
     }
 
@@ -437,19 +436,19 @@ mod tests {
         // streaming, not "wait for everything, then answer once": if the
         // handler eagerly required the whole segment up front, this request
         // would have nothing to serve yet and would 404/block differently.
-        let store = Arc::new(MediaStore::new(4.0, 500, 4));
-        store.set_init(vec![0xAA; 8]);
-        store.add_part(part(2, 0));
+        let route = Arc::new(RouteHandle::new(4.0, 500, 4));
+        route.set_init(vec![0xAA; 8]);
+        route.add_part(part(2, 0));
 
-        let store_for_task = store.clone();
+        let route_for_task = route.clone();
         tokio::spawn(async move {
-            tokio::time::sleep(Duration::from_millis(50)).await;
-            store_for_task.add_part(part(2, 1));
-            tokio::time::sleep(Duration::from_millis(50)).await;
-            store_for_task.add_segment(seg(2));
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            route_for_task.add_part(part(2, 1));
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            route_for_task.add_segment(seg(2));
         });
 
-        let resp = dynamic_file(State(store), Path("seg-1-2.m4s".to_string())).await;
+        let resp = dynamic_file(State(route), Path("seg-1-2.m4s".to_string())).await;
         assert_eq!(
             resp.status(),
             StatusCode::OK,
@@ -469,11 +468,11 @@ mod tests {
         // is the very next segment -- within SEGMENT_ABUSE_FUTURE_BOUND).
         // The request must block (not immediately 404) until the segment's
         // first part lands, then stream from it.
-        let store = make_store();
-        let store_for_start = store.clone();
+        let route = make_route();
+        let route_for_start = route.clone();
         tokio::spawn(async move {
-            tokio::time::sleep(Duration::from_millis(50)).await;
-            store_for_start.add_part(PartInfo {
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            route_for_start.add_part(PartInfo {
                 bytes: vec![0x77; 4],
                 duration: 0.5,
                 independent: true,
@@ -483,7 +482,7 @@ mod tests {
         });
 
         let started = std::time::Instant::now();
-        let resp = dynamic_file(State(store.clone()), Path("seg-1-3.m4s".to_string())).await;
+        let resp = dynamic_file(State(route.clone()), Path("seg-1-3.m4s".to_string())).await;
         assert_eq!(
             resp.status(),
             StatusCode::OK,
@@ -495,7 +494,7 @@ mod tests {
         );
         // Only one part exists so far; the response completes once segment 3
         // eventually closes. Close it now so the body finishes.
-        store.add_segment(seg(3));
+        route.add_segment(seg(3));
         assert_eq!(body_bytes(resp).await, vec![0x77; 4]);
     }
 
@@ -505,12 +504,12 @@ mod tests {
         // SEGMENT_ABUSE_FUTURE_BOUND ahead of the live edge -- must reject
         // immediately (no blocking wait at all), unlike a legitimate
         // near-future segment.
-        let store = make_store();
+        let route = make_route();
         let started = std::time::Instant::now();
-        let resp = dynamic_file(State(store), Path("seg-1-99.m4s".to_string())).await;
+        let resp = dynamic_file(State(route), Path("seg-1-99.m4s".to_string())).await;
         assert_eq!(resp.status(), StatusCode::NOT_FOUND);
         assert!(
-            started.elapsed() < Duration::from_millis(500),
+            started.elapsed() < std::time::Duration::from_millis(500),
             "an abusive far-future segment number must 404 promptly, not block: {:?}",
             started.elapsed()
         );
@@ -519,12 +518,12 @@ mod tests {
     #[tokio::test]
     async fn dynamic_file_closed_segment_still_served_whole_not_streamed() {
         // Regression: a segment that is ALREADY closed must still take the
-        // plain, non-streaming fast path (`resolve_resource`'s whole bytes,
-        // never falling through to `stream_in_progress_segment`) -- proven
-        // by the exact byte match ([0x21; 8] is `seg`'s literal whole-segment
-        // fixture bytes, not a concatenation of any parts).
-        let store = make_store();
-        let resp = dynamic_file(State(store), Path("seg-1-1.m4s".to_string())).await;
+        // plain, non-streaming fast path (whole bytes, never falling through
+        // to `stream_in_progress_segment`) -- proven by the exact byte match
+        // ([0x21; 8] is `seg`'s literal whole-segment fixture bytes, not a
+        // concatenation of any parts).
+        let route = make_route();
+        let resp = dynamic_file(State(route), Path("seg-1-1.m4s".to_string())).await;
         assert_eq!(resp.status(), StatusCode::OK);
         assert_eq!(body_bytes(resp).await, vec![0x21; 8]);
     }

@@ -367,7 +367,7 @@ fn drain_known_samples(
 mod tests {
     use super::*;
     use crate::origin::supervisor::{Backoff, supervise};
-    use crate::store::MediaStore;
+    use crate::route::RouteHandle;
     use rtmp_runtime::server::ServerSession;
     use std::time::Duration;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -429,9 +429,9 @@ mod tests {
     /// Loopback biting test (issue #738 Task 11b): a real TCP client plays
     /// back the captured ffmpeg publish against a real `RtmpSource` bound to
     /// an ephemeral loopback port, driven through the real
-    /// `supervise`/`run_pipeline` machinery into a real `MediaStore` —
+    /// `supervise`/`run_pipeline` machinery into a real `RouteHandle` —
     /// proving the whole chain (`AsyncRtmpServer` accept ->
-    /// `StreamingFlvDemux` -> `LlHlsSegmenter` -> `MediaStore`) actually
+    /// `StreamingFlvDemux` -> `LlHlsSegmenter` -> `RouteHandle`) actually
     /// moves real H.264/AAC samples, not just that `connect()` resolves
     /// specs. Mutation check: if `RtmpSource`/`RtmpSession` dropped every
     /// `Media` event (or never fed the demux), the store would stay empty
@@ -485,7 +485,7 @@ mod tests {
             }
         });
 
-        let store = Arc::new(MediaStore::new(1.0, 500, 8));
+        let store = Arc::new(RouteHandle::new(1.0, 500, 8));
         let (shutdown_tx, shutdown_rx) = watch::channel(false);
         let backoff = Backoff::new(Duration::from_millis(1), Duration::from_millis(20), 2.0);
         let handle = tokio::spawn(supervise(

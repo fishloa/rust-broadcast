@@ -29,7 +29,7 @@
 //!   via `parts_in_segment`), needing no field of its own. See that method's
 //!   doc for the derivation and why it is exact, not a heuristic.
 //! - **A just-closed segment's final part still resolving** — falls out of
-//!   [`Trunk::part_bytes`] for free: [`TrunkWriter::publish_segment`]
+//!   [`Trunk::part_bytes`] for free: [`media_plane::trunk::SegmentWriter::publish_segment`]
 //!   deliberately never touches the live-part log (see `trunk`'s own module
 //!   doc, "The live-part log"), so this crate no longer needs `MediaStore`'s
 //!   separate `recent_parts` buffer at all — that buffer existed *only* to
@@ -589,16 +589,16 @@ mod tests {
 
     /// A fresh `Trunk` sized generously for these tests, plus the one
     /// `LlHlsOrigin` under test.
-    fn make_origin() -> (Arc<Trunk>, LlHlsOrigin, media_plane::trunk::TrunkWriter) {
+    fn make_origin() -> (Arc<Trunk>, LlHlsOrigin, media_plane::trunk::SegmentWriter) {
         let trunk = Trunk::new(TrunkConfig::new(nz(64), nz(8), nz(8), nz(8), nz(64)));
-        let writer = trunk.writer().expect("first writer");
+        let writer = trunk.segment_writer().expect("first segment writer");
         let origin = LlHlsOrigin::new(Arc::clone(&trunk), 4.0, 500, nz(4));
         origin.set_init(vec![0xAAu8; 8]);
         (trunk, origin, writer)
     }
 
     fn seg(
-        writer: &media_plane::trunk::TrunkWriter,
+        writer: &media_plane::trunk::SegmentWriter,
         seq: u32,
         duration_secs: f64,
         discontinuous: bool,
@@ -612,7 +612,7 @@ mod tests {
         ));
     }
 
-    fn part(writer: &media_plane::trunk::TrunkWriter, seg_no: u32, idx: u32, independent: bool) {
+    fn part(writer: &media_plane::trunk::SegmentWriter, seg_no: u32, idx: u32, independent: bool) {
         writer.publish_part(PartEntry::new(
             Bytes::from(vec![idx as u8; 4]),
             seg_no,
@@ -821,7 +821,7 @@ mod tests {
     // --- 3. a just-closed segment's final part still serves ---------------
 
     /// MUTATION VERIFIED: this behaviour depends entirely on
-    /// `TrunkWriter::publish_segment` (`media-plane/src/trunk.rs`) never
+    /// `media_plane::trunk::SegmentWriter::publish_segment` (`media-plane/src/trunk.rs`) never
     /// touching the live-part log. Simulating the old `MediaStore` bug here
     /// by having `resolve_resource` check `last_closed_segment() >= seq`
     /// ("this segment already closed -> NotFound") **before** checking

@@ -4,7 +4,7 @@
 //! Builds enough synthetic H.264-shaped samples to close a few full
 //! segments, drives them through the real [`transmux::ll_hls::LlHlsSegmenter`]
 //! (via [`multimux::pipeline::run_pipeline`]) into a
-//! [`multimux::store::MediaStore`], then serves that store's single "cam"
+//! [`multimux::route::RouteHandle`], then serves that store's single "cam"
 //! route under the real axum [`multimux::origin::router`] — both
 //! [`multimux::output::llhls::LlHlsOutput`] and
 //! [`multimux::output::dash::DashOutput`] (issue #663 P4: one ingest, LL-HLS
@@ -29,7 +29,7 @@ use multimux::output::Output;
 use multimux::output::dash::DashOutput;
 use multimux::output::llhls::LlHlsOutput;
 use multimux::pipeline::{MockSource, run_pipeline};
-use multimux::store::MediaStore;
+use multimux::route::RouteHandle;
 use transmux::avc_config_from_sprop;
 use transmux::pipeline::{CodecConfig, Sample, TrackSpec};
 
@@ -83,7 +83,7 @@ async fn main() {
         batches.push(vec![(1u32, sample)]);
     }
 
-    let store = Arc::new(MediaStore::new(
+    let store = Arc::new(RouteHandle::new(
         TARGET_DURATION_SECS,
         PART_TARGET_MS,
         WINDOW_SEGMENTS,

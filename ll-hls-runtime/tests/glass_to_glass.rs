@@ -7,7 +7,7 @@
 //! # Which origin
 //!
 //! The LL-HLS half of this file reuses `multimux`'s real, production
-//! `MediaStore` + `LlHlsOutput` + `origin::router` (the same axum origin
+//! `RouteHandle` + `LlHlsOutput` + `origin::router` (the same axum origin
 //! shipped in `multimux`, added as a dev-dependency here) — not a test
 //! double — driven by a hand-written, real-time-paced producer loop (a
 //! `transmux::ll_hls::LlHlsSegmenter` fed one sample every ~33ms, mirroring
@@ -45,7 +45,7 @@ use ll_hls_runtime::client::tokio_client::TokioClient;
 use multimux::origin::{AppState, router};
 use multimux::output::Output as MmOutput;
 use multimux::output::llhls::LlHlsOutput;
-use multimux::store::MediaStore;
+use multimux::route::RouteHandle;
 use transmux::hls::{MapTag, MediaPlaylist, MediaSegment};
 use transmux::ll_hls::LlHlsSegmenter;
 use transmux::{
@@ -133,7 +133,7 @@ fn glass_to_glass(sample: &Sample) -> Duration {
 /// Feed [`FRAME_COUNT`] samples into `store` via a real
 /// `transmux::ll_hls::LlHlsSegmenter`, real-time-paced at [`FPS`] frames/sec
 /// — a live-shaped producer, not a batch dump.
-async fn run_live_producer(store: Arc<MediaStore>) {
+async fn run_live_producer(store: Arc<RouteHandle>) {
     let mut seg = LlHlsSegmenter::with_part_target(
         vec![video_track()],
         MOVIE_TIMESCALE,
@@ -167,8 +167,8 @@ async fn run_live_producer(store: Arc<MediaStore>) {
 
 /// Start the real `multimux` LL-HLS origin on an ephemeral loopback port,
 /// serving one stream named `live`.
-async fn start_ll_origin() -> (Arc<MediaStore>, String, tokio::task::JoinHandle<()>) {
-    let store = Arc::new(MediaStore::new(
+async fn start_ll_origin() -> (Arc<RouteHandle>, String, tokio::task::JoinHandle<()>) {
+    let store = Arc::new(RouteHandle::new(
         TARGET_DURATION_SECS,
         PART_TARGET_MS,
         WINDOW_SEGMENTS,

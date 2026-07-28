@@ -6,6 +6,15 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+- `server::engine`'s own test helpers and the `client_stepping`/
+  `origin_playlist` examples called `Trunk::writer()` (the samples+events
+  writer) instead of `Trunk::segment_writer()` to publish segments/parts — a
+  stale call from before the `SegmentWriter` split that never actually
+  compiled since (found via multimux plan step 5b's first successful
+  `cargo test --workspace`/`--all-targets` across the whole workspace since
+  then). No behaviour change to any shipped API — test/example-only.
+
 ## [0.2.0] - 2026-07-27
 
 ### Changed
