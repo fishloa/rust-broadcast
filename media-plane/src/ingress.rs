@@ -88,10 +88,13 @@
 //! one-shot `track_specs()` snapshot is already only handled by logging a
 //! warning and dropping it (see that function's `DemuxEvent::TrackAdded`
 //! arm) — there is no live wiring for "new track" today, let alone "new
-//! program". `SessionEvent::NewProgram` is what closes that gap generically:
-//! whether a program is split upstream (known before the session starts) or
-//! discovered while demuxing an MPTS in one session, the driver's reaction is
-//! identical — mint a `Trunk`, keep going.
+//! program". `SessionEvent::NewProgram` is what closes the "new program"
+//! half of that gap generically: whether a program is split upstream (known
+//! before the session starts) or discovered while demuxing an MPTS in one
+//! session, the driver's reaction is identical — mint a `Trunk`, keep going.
+//! [`SessionEvent::TracksChanged`] (issue #781) closes the other half — the
+//! `ts_udp` warn-and-drop case cited above is exactly what an `IngestSession`
+//! now has a real event to emit instead of logging and discarding.
 //!
 //! # Supervision: EOF is not an error (the `HealthState` fix)
 //!
@@ -394,11 +397,11 @@ pub const DEFAULT_MAX_PROGRAMS: NonZeroUsize = match NonZeroUsize::new(64) {
 /// What an [`IngestSession`]'s [`Stage::poll`] hands back to a driver.
 ///
 /// `#[non_exhaustive]`: a later step (egress track-set negotiation, §1.3's
-/// upstream program-split) may need a `ProgramEnded`/`TrackSetChanged`
-/// variant; this step only builds the three events a driver needs to tell
-/// handshaking from live and to route samples into the right [`Trunk`], and
-/// does not add a variant it has no correct producer for yet (this crate's
-/// own precedent — [`crate::byte_merge`]'s `Hitless2022_7` note).
+/// upstream program-split) may still need a `ProgramEnded` variant —
+/// [`SessionEvent::TracksChanged`] (issue #781) closed the mid-stream
+/// track-set half of this gap, but this step does not add a variant it has
+/// no correct producer for yet (this crate's own precedent —
+/// [`crate::byte_merge`]'s `Hitless2022_7` note).
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub enum SessionEvent {
@@ -461,6 +464,69 @@ pub enum SessionEvent {
         retention: RetentionClass,
         /// The decoded sample itself.
         sample: Sample,
+    },
+    /// `program`'s track set changed mid-stream (issue #781) — e.g.
+    /// transmux's PMT version diffing detects a broadcaster adding an audio
+    /// language. Must have been announced via a prior `NewProgram` with this
+    /// `program`, exactly like [`SessionEvent::Sample`] — a `TracksChanged`
+    /// for an unannounced program is the identical contract violation, and a
+    /// driver drops it the identical way (see [`IngestDriver`]'s docs); it
+    /// never mints a `Trunk` on its own.
+    ///
+    /// # Why `tracks` is the complete replacement set, not a delta
+    ///
+    /// A PMT carries the **whole** elementary-stream list on every version
+    /// bump, not just what changed — there is no "here is the one track
+    /// that was added" signal at that layer, only "here is the program's
+    /// full track list, as of now". Carrying the complete set here mirrors
+    /// that fact rather than fighting it, and buys two things a delta
+    /// encoding cannot:
+    ///
+    /// - **Idempotence.** Re-delivering the same `TracksChanged` twice (a
+    ///   retried demux pass, a duplicate event) leaves the trunk's track set
+    ///   unchanged in content — replacing a set with an identical set is a
+    ///   no-op in substance, whereas replaying an "add track" delta twice
+    ///   would double-add it.
+    /// - **Immunity to delta-ordering bugs.** A dropped or reordered
+    ///   `TrackAdded`/`TrackRemoved` pair (exactly the demux-layer events
+    ///   `transmux` already emits — see below) can never leave a consumer's
+    ///   view of the track set permanently wrong: the next `TracksChanged`
+    ///   is a fresh, authoritative snapshot, not an increment on top of
+    ///   whatever state happened to accumulate.
+    ///
+    /// A consumer that cares *which* track appeared or vanished diffs this
+    /// snapshot against the previous one it already holds (or against
+    /// [`crate::Trunk::tracks`], which this event's application updates) —
+    /// that comparison is the consumer's to make, not this event's to
+    /// pre-compute.
+    ///
+    /// # Why this layer does not mirror `transmux::DemuxEvent`'s three events
+    ///
+    /// `transmux` already emits `DemuxEvent::TrackAdded`/`TrackRemoved`/
+    /// `TrackUpdated` at the demux layer — finer-grained, delta-shaped
+    /// events aimed at a caller that wants to react to *what changed*. This
+    /// layer deliberately does not mirror that shape: `IngestSession`
+    /// implementors translate whatever demux-layer deltas they see into one
+    /// full snapshot per change, for the same reason [`SessionEvent::NewProgram`]
+    /// carries a full `tracks: Vec<TrackSpec>` rather than a "here is track
+    /// N" event per track — see [the module docs](self#the-program-dimension-b5-sessionevent-newprogram-at-any-time).
+    ///
+    /// # Scope: ingress→`Trunk` plumbing only
+    ///
+    /// This variant and [`IngestDriver`]'s handling of it stop at storing
+    /// the new set on the program's `Trunk` (see
+    /// [`crate::TrunkWriter::set_tracks`]). Deciding whether/when to admit a
+    /// newly-appeared track into an egress manifest (LL-HLS/DASH rendering)
+    /// is a separate, deliberate decision belonging to its own issue — not
+    /// something a track-set snapshot arriving at the `Trunk` should trigger
+    /// implicitly.
+    TracksChanged {
+        /// Which program's track set changed — must match a program already
+        /// announced via [`SessionEvent::NewProgram`].
+        program: ProgramId,
+        /// The complete replacement track set — see this variant's own doc
+        /// for why this is a full snapshot rather than a delta.
+        tracks: Vec<TrackSpec>,
     },
 }
 
@@ -911,7 +977,7 @@ impl<S: IngestSession> IngestDriver<S> {
                         self.health = HealthState::Live;
                     }
                 }
-                SessionEvent::NewProgram { program, .. } => {
+                SessionEvent::NewProgram { program, tracks } => {
                     // A repeat announcement of an already-admitted program
                     // does not grow `self.programs`, so it is never refused
                     // here regardless of how full the bound is — only a
@@ -931,6 +997,11 @@ impl<S: IngestSession> IngestDriver<S> {
                     let writer = trunk
                         .writer()
                         .expect("a freshly constructed Trunk always has an unclaimed writer");
+                    // Seed the freshly-minted Trunk's track set from this
+                    // event's `tracks` (issue #781) — previously discarded
+                    // entirely (the `..` this match arm used to bind with),
+                    // leaving every Trunk's track set permanently empty.
+                    writer.set_tracks(tracks);
                     self.programs.insert(program, trunk);
                     self.writers.insert(program, writer);
                 }
@@ -942,6 +1013,15 @@ impl<S: IngestSession> IngestDriver<S> {
                 } => {
                     if let Some(writer) = self.writers.get(&program) {
                         writer.publish(track_id, retention, sample);
+                    }
+                }
+                SessionEvent::TracksChanged { program, tracks } => {
+                    // Same "unannounced program is a dropped contract
+                    // violation, not a panic" contract as `Sample` above —
+                    // reuses the exact same `writers` lookup, not a second
+                    // drop path.
+                    if let Some(writer) = self.writers.get(&program) {
+                        writer.set_tracks(tracks);
                     }
                 }
             }
@@ -1494,6 +1574,177 @@ mod tests {
             }
             other => panic!("expected Timed, got {other:?}"),
         }
+    }
+
+    // --- Track-set plumbing (issue #781): NewProgram seeds, TracksChanged --
+    // --- replaces, unannounced TracksChanged drops -------------------------
+
+    /// The discarded-track-list fix, made to fail against the pre-fix code:
+    /// before `drain()`'s `NewProgram` arm called `writer.set_tracks(tracks)`,
+    /// `tracks` was bound with `..` and never touched a `Trunk` at all, so
+    /// every `Trunk::tracks()` stayed permanently empty.
+    ///
+    /// MUTATION VERIFIED: reverting `drain()`'s `NewProgram` arm to bind
+    /// `SessionEvent::NewProgram { program, .. }` (dropping `tracks`, as it
+    /// was before this change) and removing the `writer.set_tracks(tracks)`
+    /// call makes the `assert_eq!` below fail — `track_ids` reads back `[]`
+    /// instead of `[3, 9]`. Recompiled and re-run to confirm the failure,
+    /// then reverted.
+    #[test]
+    fn new_program_seeds_the_trunk_with_exactly_the_announced_tracks() {
+        let session =
+            ScriptedSession::new(vec![FeedOutcome::Events(vec![SessionEvent::NewProgram {
+                program: ProgramId(1),
+                tracks: vec![opaque_track(3), opaque_track(9)],
+            }])]);
+        let mut dialer = ScriptedDialer {
+            sessions: VecDeque::from(vec![session]),
+            fail_with: FakeError("unused"),
+        };
+        let mut driver = run_dial(&mut dialer, trunk_config(), handshake(), max_programs())
+            .expect("fake dial succeeds");
+
+        driver.feed(b"pat", Timestamp::ZERO);
+
+        let trunk = driver
+            .trunk(ProgramId(1))
+            .cloned()
+            .expect("NewProgram announced a Trunk for program 1");
+        let track_ids: Vec<u32> = trunk.tracks().iter().map(|t| t.track_id).collect();
+        assert_eq!(
+            track_ids,
+            vec![3, 9],
+            "the Trunk must expose exactly the tracks NewProgram carried"
+        );
+    }
+
+    /// `TracksChanged` replaces the previously-seeded set wholesale and
+    /// bumps `track_generation` — NewProgram's own seeding call counts as
+    /// the first `set_tracks`, so generation reads `1` right after
+    /// admission and `2` after the `TracksChanged`.
+    ///
+    /// MUTATION VERIFIED: changing `drain()`'s `TracksChanged` arm from
+    /// `writer.set_tracks(tracks)` to `writer.publish_event(..)`-style no-op
+    /// (concretely: commenting out the `writer.set_tracks(tracks);` call,
+    /// leaving the event silently absorbed) makes both assertions below
+    /// fail — `track_ids` still reads back `[1]` instead of `[1, 2]`, and
+    /// `track_generation()` stays at `1` instead of advancing to `2`.
+    /// Recompiled and re-run to confirm the failure, then reverted.
+    #[test]
+    fn tracks_changed_replaces_the_set_and_bumps_generation() {
+        let session = ScriptedSession::new(vec![
+            FeedOutcome::Events(vec![SessionEvent::NewProgram {
+                program: ProgramId(1),
+                tracks: vec![opaque_track(1)],
+            }]),
+            FeedOutcome::Events(vec![SessionEvent::TracksChanged {
+                program: ProgramId(1),
+                tracks: vec![opaque_track(1), opaque_track(2)],
+            }]),
+        ]);
+        let mut dialer = ScriptedDialer {
+            sessions: VecDeque::from(vec![session]),
+            fail_with: FakeError("unused"),
+        };
+        let mut driver = run_dial(&mut dialer, trunk_config(), handshake(), max_programs())
+            .expect("fake dial succeeds");
+
+        driver.feed(b"pat", Timestamp::from_nanos(0));
+        let trunk = driver.trunk(ProgramId(1)).cloned().unwrap();
+        assert_eq!(
+            trunk.track_generation(),
+            1,
+            "NewProgram's seed counts as the first set_tracks call"
+        );
+
+        driver.feed(b"pmt-bump", Timestamp::from_nanos(1));
+        let track_ids: Vec<u32> = trunk.tracks().iter().map(|t| t.track_id).collect();
+        assert_eq!(
+            track_ids,
+            vec![1, 2],
+            "TracksChanged must replace the set with the new complete snapshot"
+        );
+        assert_eq!(
+            trunk.track_generation(),
+            2,
+            "TracksChanged must bump the generation exactly once"
+        );
+    }
+
+    /// A `TracksChanged` for a program never announced via `NewProgram` is a
+    /// contract violation, handled exactly like an unannounced `Sample`:
+    /// dropped, not panicking, and never minting a `Trunk` on its own.
+    ///
+    /// MUTATION VERIFIED: changing `drain()`'s `TracksChanged` arm from
+    /// `if let Some(writer) = self.writers.get(&program) { .. }` to
+    /// unconditionally minting a fresh `Trunk`/`writer` for `program`
+    /// (mirroring what `NewProgram` does) makes the `assert!` below fail —
+    /// `driver.trunk(ProgramId(1))` comes back `Some(..)` instead of `None`.
+    /// Recompiled and re-run to confirm the failure, then reverted.
+    #[test]
+    fn tracks_changed_for_an_unannounced_program_is_dropped_not_panicking_and_mints_nothing() {
+        let session = ScriptedSession::new(vec![FeedOutcome::Events(vec![
+            SessionEvent::TracksChanged {
+                program: ProgramId(1),
+                tracks: vec![opaque_track(1)],
+            },
+        ])]);
+        let mut driver = IngestDriver::new(session, trunk_config(), handshake(), max_programs());
+
+        // Must not panic.
+        driver.feed(b"stray", Timestamp::ZERO);
+
+        assert!(
+            driver.trunk(ProgramId(1)).is_none(),
+            "TracksChanged must never mint a Trunk on its own"
+        );
+        assert_eq!(
+            driver.program_count(),
+            0,
+            "an unannounced program must not be admitted by TracksChanged"
+        );
+    }
+
+    /// `track_generation` is stable across everything that is *not* a
+    /// `NewProgram` seed or a `TracksChanged` — ordinary samples and no-op
+    /// feed calls must never bump it, so a consumer polling the generation
+    /// as a cheap "did the track set change" check sees no false positives.
+    ///
+    /// MUTATION VERIFIED: adding a `writer.set_tracks(Vec::new())` call to
+    /// `drain()`'s `Sample` arm (simulating "generation accidentally bumped
+    /// by unrelated activity") makes the final `assert_eq!` below fail —
+    /// `track_generation()` reads back `2` instead of `1` after the sample
+    /// is published. Recompiled and re-run to confirm the failure, then
+    /// reverted.
+    #[test]
+    fn track_generation_is_stable_when_nothing_changes() {
+        let session = ScriptedSession::new(vec![
+            FeedOutcome::Events(vec![SessionEvent::NewProgram {
+                program: ProgramId(1),
+                tracks: vec![opaque_track(1)],
+            }]),
+            FeedOutcome::Events(vec![SessionEvent::Sample {
+                program: ProgramId(1),
+                track_id: 1,
+                retention: RetentionClass::Timed,
+                sample: sample(0xAB),
+            }]),
+            FeedOutcome::Events(vec![]),
+        ]);
+        let mut driver = IngestDriver::new(session, trunk_config(), handshake(), max_programs());
+
+        driver.feed(b"1", Timestamp::from_nanos(0));
+        let trunk = driver.trunk(ProgramId(1)).cloned().unwrap();
+        assert_eq!(trunk.track_generation(), 1);
+
+        driver.feed(b"2", Timestamp::from_nanos(1));
+        driver.feed(b"3", Timestamp::from_nanos(2));
+
+        assert_eq!(
+            trunk.track_generation(),
+            1,
+            "samples and no-op feeds must never bump track_generation"
+        );
     }
 
     // --- EOF vs failure: the test that makes HealthState::Failed real -----

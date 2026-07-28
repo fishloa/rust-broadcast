@@ -571,7 +571,7 @@ use broadcast_common::stage::Timestamp;
 use bytes::Bytes;
 use event_listener::{Event, EventListener, Listener};
 use timed_metadata::{MediaTime, PTS_HZ, TimeAnchor, TimedEvent};
-use transmux::{Sample, SegmentMeta};
+use transmux::{Sample, SegmentMeta, TrackSpec};
 
 /// Which retention discipline a published entry follows once inside the
 /// [`Trunk`]'s sample ring.
@@ -1208,6 +1208,16 @@ struct TrunkState {
     segments: SegmentLog,
     events: EventLog,
     parts: PartLog,
+    /// The program's current complete track set — see
+    /// [`TrunkWriter::set_tracks`] for why this is always a full replacement
+    /// snapshot, never a delta. `Arc<[TrackSpec]>` rather than a bare `Vec`
+    /// so [`Trunk::tracks`] hands back a clone of the *reference*, not the
+    /// whole set, to every caller — cheap even for a many-track program.
+    tracks: Arc<[TrackSpec]>,
+    /// Bumped by exactly one on every [`TrunkWriter::set_tracks`] call — see
+    /// [`Trunk::track_generation`] for why a consumer compares this instead
+    /// of the track [`Vec`] itself.
+    track_generation: u64,
 }
 
 /// The sample ring: bounded, dual-retention-class, single-writer,
@@ -1243,9 +1253,12 @@ pub struct Trunk {
     /// your condition" notification — see
     /// [The reader-wake primitive](self#the-reader-wake-primitive-listen-not-one-registration-per-remote-peer).
     /// Bumped by exactly [`SegmentWriter::publish_part`]/
-    /// [`SegmentWriter::publish_segment`] (never by a sample/event publish —
-    /// nothing today waits on those through this channel, and adding scope
-    /// later is additive, not this step's job to speculate).
+    /// [`SegmentWriter::publish_segment`] and, since the ingress track-set
+    /// plumbing (issue #781), [`TrunkWriter::set_tracks`] — never by a
+    /// sample/event publish (nothing today waits on those through this
+    /// channel). Track-set changes are rare compared to samples/parts, so
+    /// folding them into this same broad wake is additive scope, not a new
+    /// channel to reason about.
     progress: Event,
     /// Count of currently-registered, not-yet-dropped [`ProgressListener`]s —
     /// what bounds [`Trunk::listen`] against `part_waiter_cap`. A plain
@@ -1277,6 +1290,8 @@ impl Trunk {
                 segments: SegmentLog::new(config.segment_capacity.get()),
                 events: EventLog::new(config.event_capacity.get()),
                 parts: PartLog::new(config.part_capacity.get()),
+                tracks: Arc::from(Vec::new()),
+                track_generation: 0,
             }),
             segment_pin_released: Condvar::new(),
             writer_taken: AtomicBool::new(false),
@@ -1595,6 +1610,27 @@ impl Trunk {
             .map(|e| e.sequence_number)
     }
 
+    /// This program's current complete track set — see
+    /// [`TrunkWriter::set_tracks`] for how it is set/replaced. Empty until
+    /// the first `set_tracks` call (a freshly-minted `Trunk` announces no
+    /// tracks yet). Stored as `Arc<[TrackSpec]>`, so this is a cheap `Arc`
+    /// clone (a refcount bump), never a `Vec` copy, however many tracks the
+    /// program carries.
+    pub fn tracks(&self) -> Arc<[TrackSpec]> {
+        Arc::clone(&self.state.lock().unwrap().tracks)
+    }
+
+    /// Bumped by exactly one on every [`TrunkWriter::set_tracks`] call
+    /// (including one that happens to set an identical set to what was
+    /// already there — this counts *calls*, not distinct sets). Lets a
+    /// consumer detect "the track set may have changed" by comparing two
+    /// `u64`s rather than diffing two `Vec<TrackSpec>`s — cheap regardless
+    /// of how many tracks a program carries. `0` until the first
+    /// `set_tracks` call.
+    pub fn track_generation(&self) -> u64 {
+        self.state.lock().unwrap().track_generation
+    }
+
     /// Register for the next part/segment-close notification — see
     /// [The reader-wake primitive](self#the-reader-wake-primitive-listen-not-one-registration-per-remote-peer).
     ///
@@ -1748,6 +1784,37 @@ impl TrunkWriter {
     pub fn publish_event(&self, event: TimedEvent, anchor: EventAnchor) {
         let mut state = self.trunk.state.lock().unwrap();
         state.events.push(event, anchor);
+    }
+
+    /// Replace this program's track set wholesale — the write side of
+    /// [`Trunk::tracks`]/[`Trunk::track_generation`], and the method
+    /// [`crate::ingress::IngestDriver`] calls to seed a freshly-minted
+    /// `Trunk` from `SessionEvent::NewProgram`'s `tracks` and to apply a
+    /// later `SessionEvent::TracksChanged`.
+    ///
+    /// `tracks` is taken as the **complete replacement set**, matching
+    /// `SessionEvent::TracksChanged`'s own doc: a PMT (or any container's
+    /// track-declaration mechanism) carries the whole elementary-stream
+    /// list, so this call is idempotent (calling it twice with the same set
+    /// leaves the trunk's tracks unchanged in content, only `track_generation`
+    /// advances) and immune to delta-ordering bugs — there is no "add
+    /// track"/"remove track" pair to apply out of order. A caller that wants
+    /// to know *which* track changed diffs the previous [`Trunk::tracks`]
+    /// snapshot against this one itself.
+    ///
+    /// Bumps [`Trunk::track_generation`] by exactly one and wakes any
+    /// [`Trunk::listen`] registration, the same
+    /// [`event_listener::Event::notify`] fan-out
+    /// [`SegmentWriter::publish_segment`]/[`SegmentWriter::publish_part`]
+    /// already use — see [`Trunk`]'s `progress` field doc for why a
+    /// track-set change is folded into that same broad wake rather than a
+    /// new channel.
+    pub fn set_tracks(&self, tracks: Vec<TrackSpec>) {
+        let mut state = self.trunk.state.lock().unwrap();
+        state.tracks = Arc::from(tracks);
+        state.track_generation += 1;
+        drop(state);
+        self.trunk.progress.notify(usize::MAX);
     }
 }
 
@@ -2203,6 +2270,23 @@ mod tests {
     use super::*;
     use std::sync::mpsc;
     use std::thread;
+    use transmux::pipeline::{CodecConfig, DataCarriage};
+
+    /// An opaque `TrackSpec` for track-set tests — mirrors `ingress`'s own
+    /// identically-named test helper (same shape, so a track built here and
+    /// one built there compare equal field-for-field for any given
+    /// `track_id`).
+    fn opaque_track(track_id: u32) -> TrackSpec {
+        TrackSpec::new(
+            track_id,
+            90_000,
+            CodecConfig::Data {
+                stream_type: 0x06,
+                descriptors: Vec::new(),
+                carriage: DataCarriage::Pes,
+            },
+        )
+    }
 
     /// `NonZeroUsize` from a literal capacity, for readability at the ~30
     /// `TrunkConfig::new` call sites below. Panicking on `0` here is correct
@@ -3685,7 +3769,10 @@ mod tests {
         // re-run the suite. 60s still fails instantly if the wake channel
         // genuinely never fires, which is the only failure worth reporting.
         let woken = listener.wait_deadline(std::time::Instant::now() + Duration::from_secs(60));
-        assert!(woken, "listener must wake on publish_part, not park forever");
+        assert!(
+            woken,
+            "listener must wake on publish_part, not park forever"
+        );
         handle.join().unwrap();
 
         let bytes = trunk
@@ -3874,5 +3961,136 @@ mod tests {
              it — NOT because its segment closed, but because the ring's own \
              bound was exceeded, exactly like every other ring in this module"
         );
+    }
+
+    // === Issue #781: track-set snapshot + generation counter ==============
+
+    /// A freshly-minted `Trunk` announces no tracks yet — `set_tracks` has
+    /// never been called, so there is nothing to seed `tracks()`/
+    /// `track_generation()` from other than the empty defaults `Trunk::new`
+    /// establishes.
+    ///
+    /// MUTATION VERIFIED: changing `Trunk::new`'s `track_generation: 0` to
+    /// `track_generation: 1` makes the second `assert_eq!` below fail — it
+    /// reads back `1` instead of `0`. Recompiled and re-run to confirm the
+    /// failure, then reverted.
+    #[test]
+    fn fresh_trunk_has_no_tracks_and_generation_zero() {
+        let trunk = Trunk::new(TrunkConfig::new(nz(4), nz(4), nz(4), nz(8), nz(8)));
+        assert_eq!(trunk.tracks().len(), 0, "nothing has ever set a track set");
+        assert_eq!(trunk.track_generation(), 0);
+    }
+
+    /// `set_tracks` is a **whole-set replacement**, not a merge/append, and
+    /// bumps the generation by exactly one per call.
+    ///
+    /// MUTATION VERIFIED: changing `TrunkWriter::set_tracks`'s body to merge
+    /// the old set with the new one (`let mut merged = state.tracks.to_vec();
+    /// merged.extend(tracks); state.tracks = Arc::from(merged);`) instead of
+    /// replacing outright makes the second `assert_eq!` below fail —
+    /// `trunk.tracks()`'s track ids read back `[1, 7, 9]` (the old track 1
+    /// still present) instead of `[7, 9]`. Recompiled and re-run to confirm
+    /// the failure, then reverted.
+    #[test]
+    fn set_tracks_replaces_the_whole_set_and_bumps_generation_by_one_per_call() {
+        let trunk = Trunk::new(TrunkConfig::new(nz(4), nz(4), nz(4), nz(8), nz(8)));
+        let writer = trunk.writer().unwrap();
+
+        writer.set_tracks(vec![opaque_track(1)]);
+        assert_eq!(
+            trunk
+                .tracks()
+                .iter()
+                .map(|t| t.track_id)
+                .collect::<Vec<_>>(),
+            vec![1]
+        );
+        assert_eq!(trunk.track_generation(), 1);
+
+        // A completely different, larger set: if this were a merge/append
+        // rather than a replacement, the old track_id 1 would still be
+        // present alongside the two new ones.
+        writer.set_tracks(vec![opaque_track(7), opaque_track(9)]);
+        assert_eq!(
+            trunk
+                .tracks()
+                .iter()
+                .map(|t| t.track_id)
+                .collect::<Vec<_>>(),
+            vec![7, 9],
+            "set_tracks must replace the set wholesale, not append to it"
+        );
+        assert_eq!(
+            trunk.track_generation(),
+            2,
+            "generation must advance by exactly one per set_tracks call"
+        );
+    }
+
+    /// `track_generation` is stable across everything that is *not*
+    /// `set_tracks` — publishing samples/events/segments/parts must never
+    /// bump it, so a consumer polling the generation as a cheap "did the
+    /// track set change" check cannot see false positives.
+    ///
+    /// MUTATION VERIFIED: adding `state.track_generation += 1;` to
+    /// `TrunkWriter::publish` (simulating "generation accidentally bumped by
+    /// unrelated activity") makes the final `assert_eq!` below fail — the
+    /// generation reads back `11` (bumped once per one of the 10 published
+    /// samples, on top of the `1` from `set_tracks`) instead of staying at
+    /// `1`. Recompiled and re-run to confirm the failure, then reverted.
+    #[test]
+    fn generation_is_stable_across_unrelated_activity() {
+        let trunk = Trunk::new(TrunkConfig::new(nz(4), nz(4), nz(4), nz(8), nz(8)));
+        let writer = trunk.writer().unwrap();
+
+        writer.set_tracks(vec![opaque_track(1)]);
+        assert_eq!(trunk.track_generation(), 1);
+
+        for i in 0u8..10 {
+            writer.publish(1, RetentionClass::Timed, sample(i, 4));
+        }
+        writer.publish_event(basic_event(1), EventAnchor::Media(MediaTime(0)));
+
+        assert_eq!(
+            trunk.track_generation(),
+            1,
+            "publishing samples/events must never bump track_generation"
+        );
+    }
+
+    /// `set_tracks` wakes a registered [`Trunk::listen`] listener, the same
+    /// broad `progress` channel [`SegmentWriter::publish_part`]/
+    /// [`SegmentWriter::publish_segment`] already wake — see
+    /// [`waiter_is_woken_when_the_awaited_part_lands_and_resolves_to_it`] for
+    /// the identical pattern this test mirrors.
+    ///
+    /// MUTATION VERIFIED: removing `self.trunk.progress.notify(usize::MAX);`
+    /// from `TrunkWriter::set_tracks` makes `listener.wait_deadline(..)`
+    /// time out (`false`) instead of waking (`true`) within the 60s bound
+    /// used below. Recompiled and re-run to confirm the failure, then
+    /// reverted.
+    #[test]
+    fn set_tracks_wakes_a_registered_listener() {
+        let trunk = Trunk::new(TrunkConfig::new(nz(4), nz(4), nz(4), nz(8), nz(8)));
+        let writer = Arc::new(trunk.writer().unwrap());
+
+        // Register BEFORE the change — the documented no-missed-wakeup
+        // ordering every other `listen()` test in this module follows.
+        let listener = trunk.listen().expect("first registration must succeed");
+
+        let bg_writer = Arc::clone(&writer);
+        let handle = thread::spawn(move || {
+            thread::sleep(Duration::from_millis(50));
+            bg_writer.set_tracks(vec![opaque_track(1)]);
+        });
+
+        // Same generous, machine-independent bound as this module's other
+        // wake tests — see their comments for why 60s asserts only "it woke
+        // at all", not "it woke fast".
+        let woken = listener.wait_deadline(std::time::Instant::now() + Duration::from_secs(60));
+        assert!(woken, "listener must wake on set_tracks, not park forever");
+        handle.join().unwrap();
+
+        assert_eq!(trunk.track_generation(), 1);
     }
 }

@@ -411,6 +411,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     ingress/egress/retention were "later steps... deliberately absent"), and
     to state plainly that only the byte layer is `no_std` + `alloc` — `Trunk`
     and everything built on it require `std`.
+- **`SessionEvent::TracksChanged` — mid-stream track-set changes now reach
+  the `Trunk` (issue #781, closing the ingress→`Trunk` half).** A new
+  `#[non_exhaustive]`-preserving variant, `TracksChanged { program:
+  ProgramId, tracks: Vec<TrackSpec> }`: `tracks` is the **complete
+  replacement set**, not a delta (a PMT carries the whole elementary-stream
+  list on every version bump, so a full snapshot is idempotent and immune to
+  delta-ordering bugs — a consumer diffs against the previous
+  `Trunk::tracks()` snapshot itself if it needs to know which track
+  appeared). `transmux::DemuxEvent::TrackAdded`/`TrackRemoved`/`TrackUpdated`
+  already own the finer-grained, demux-layer shape; this layer deliberately
+  does not mirror them.
+  - `Trunk` gains a current track set (`Trunk::tracks() -> Arc<[TrackSpec]>`,
+    a cheap `Arc` clone) and a monotonic `Trunk::track_generation() -> u64`,
+    bumped by exactly one on every write, so a consumer can detect "the track
+    set may have changed" by comparing two `u64`s instead of diffing two
+    `Vec<TrackSpec>`s.
+  - `TrunkWriter::set_tracks(Vec<TrackSpec>)` (new): the write side —
+    replaces the set wholesale, bumps `track_generation`, and wakes any
+    `Trunk::listen()` registration through the same broad `progress` channel
+    `SegmentWriter::publish_part`/`publish_segment` already use.
+  - `IngestDriver`'s internal `drain()` now seeds a freshly-minted `Trunk`'s
+    track set from `NewProgram`'s own `tracks` field (**previously
+    discarded** — the match arm bound it with `..` and a `Trunk`'s track set
+    stayed permanently empty) and applies a later `TracksChanged` to the
+    already-admitted `Trunk` for that program. A `TracksChanged` for an
+    unannounced program is a dropped contract violation, not a panic —
+    exactly `SessionEvent::Sample`'s existing "unannounced program" path,
+    reused rather than duplicated.
+  - Strictly ingress→`Trunk` plumbing: whether/when to admit a newly-appeared
+    track into an egress manifest (LL-HLS/DASH rendering) is a separate,
+    deliberate decision left to its own issue.
 ### Fixed
 - **`max_programs`: bound the number of `Trunk`s `IngestDriver`/`ListenDriver`
   will mint per session** — the fifth unbounded-allocation vector shipped
