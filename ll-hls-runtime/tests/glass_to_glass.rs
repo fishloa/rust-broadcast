@@ -173,6 +173,13 @@ async fn start_ll_origin() -> (Arc<RouteHandle>, String, tokio::task::JoinHandle
         PART_TARGET_MS,
         WINDOW_SEGMENTS,
     ));
+    // `multimux` egress resolves what it serves through the route's program
+    // registry (issue #805). This test drives the handle's own `Trunk`
+    // directly rather than through a supervisor, so it has to index that
+    // `Trunk` itself — otherwise every playlist request blocks waiting for a
+    // program that is already there, and this test fails on its 25s hang
+    // guard rather than on anything it means to assert.
+    store.publish_owned_trunk();
     let mut streams = HashMap::new();
     streams.insert(
         "live".to_string(),

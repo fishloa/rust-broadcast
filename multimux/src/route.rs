@@ -300,6 +300,22 @@ impl RouteHandle {
     /// segment-log capacity, matching the deleted `MediaStore`'s "advertised
     /// window == retained window" depth), the `LlHlsOrigin` over it, and this
     /// route's `DashState`.
+    ///
+    /// # A producer writing the owned `Trunk` must publish it
+    ///
+    /// Egress resolves everything it serves through [`Self::resolve_program`]
+    /// (issue #805). A freshly built route's registry is **empty**, so if you
+    /// drive this handle's own `Trunk` directly — rather than through
+    /// [`crate::origin::supervisor`] or [`crate::pipeline::run_pipeline`],
+    /// which both do it for you — you must call [`Self::publish_owned_trunk`]
+    /// yourself. Omitting it does not error: requests block on
+    /// [`ProgramResolution::NotYetAnnounced`] waiting for a program that is
+    /// already present, so the symptom is a hang, not a 404. Both in-tree
+    /// producers were caught by exactly this during #805 task 2.
+    ///
+    /// The owned-`Trunk`-plus-explicit-publish arrangement is transitional
+    /// and goes away with the legacy field, once every route is driver-backed
+    /// and the driver is the only thing that publishes.
     pub fn new(target_duration_secs: f64, part_target_ms: u32, window_segments: usize) -> Self {
         let window_segments = NonZeroUsize::new(window_segments).unwrap_or(NonZeroUsize::MIN);
         let trunk_config = TrunkConfig::new(

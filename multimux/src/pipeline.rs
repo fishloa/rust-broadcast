@@ -85,6 +85,16 @@ pub async fn run_pipeline<S: SampleSource>(
     mut source: S,
     route: &str,
 ) -> Result<()> {
+    // Egress resolves everything it serves through the route's program
+    // registry (issue #805), so a producer that writes into the handle's own
+    // `Trunk` must index that `Trunk` there or every request for this route
+    // blocks forever waiting for a program that is already present. This is
+    // the same call `origin::supervisor::supervise` makes for RTMP; without
+    // it, `run_pipeline` ingests correctly and serves nothing.
+    //
+    // The whole owned-`Trunk`-plus-explicit-publish arrangement is
+    // transitional and disappears when the legacy field does.
+    route_handle.publish_owned_trunk();
     let specs = source.track_specs();
     // Recorded so a DASH `Output` (issue #663 P4, `crate::output::dash`) can
     // build a real RFC 6381 `codecs` string for its `Representation` — the
