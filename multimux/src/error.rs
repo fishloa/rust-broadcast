@@ -80,7 +80,7 @@ pub enum MultimuxError {
 
     /// Ingest-side framing of samples out of the wire container failed:
     /// either RTP depayloading into access units, or an ingest container
-    /// demux (e.g. the FLV tag stream a `rtmp::RtmpSource` publisher
+    /// demux (e.g. the FLV tag stream a `rtmp::RtmpRoute` publisher
     /// carries — `transmux::flv::FlvError`) — distinct from a *downstream*
     /// `transmux` segmentation/mux error (see [`Self::Transmux`]), which
     /// this crate never produces on the ingest path.

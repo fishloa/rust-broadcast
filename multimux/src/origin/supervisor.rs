@@ -55,25 +55,17 @@ pub trait SourceConnector: Send + Sync + 'static {
     fn connect(&self) -> impl Future<Output = crate::Result<Self::Source>> + Send;
 }
 
-// `rtsp`, `rtp_udp`, `ts_udp`, `ts_http`, `srt` (step 5a round 2) and
-// `hls_pull`, `dash_pull`, `smooth_pull` (step 5a round 3) no longer have a
-// `SourceConnector` impl — see `crate::pipeline`'s equivalent note. Their new
-// production entry points are `crate::source::{rtsp::run_rtsp,
-// rtp_udp::run_rtp_udp, ts_udp::run_ts_udp, ts_http::run_ts_http,
-// srt::run_srt_caller, hls_pull::run_hls_pull, dash_pull::run_dash_pull,
-// smooth_pull::run_smooth_pull}`, which drive
-// `media_plane::ingress::IngestDriver` directly and are not yet wired into
-// this supervisor loop (their `IngestDriver`/`Trunk` wiring back into a
-// route's own `RouteHandle` is a later step's job, not just a `Source`
-// rename).
-
-impl SourceConnector for crate::source::rtmp::RtmpSource {
-    type Source = crate::source::rtmp::RtmpSession;
-
-    async fn connect(&self) -> crate::Result<Self::Source> {
-        crate::source::rtmp::RtmpSource::connect(self).await
-    }
-}
+// `rtsp`, `rtp_udp`, `ts_udp`, `ts_http`, `srt` (step 5a round 2), `hls_pull`,
+// `dash_pull`, `smooth_pull` (step 5a round 3), and `rtmp` (issue #805 task
+// 4 — the last of the nine) no longer have a `SourceConnector` impl — see
+// `crate::pipeline`'s equivalent note. Their production entry points are
+// `crate::source::{rtsp::run_rtsp, rtp_udp::run_rtp_udp, ts_udp::run_ts_udp,
+// ts_http::run_ts_http, srt::run_srt_caller, hls_pull::run_hls_pull,
+// dash_pull::run_dash_pull, smooth_pull::run_smooth_pull, rtmp::run_rtmp}`,
+// which drive `media_plane::ingress::{IngestDriver, ListenDriver}` and are
+// wired into `crate::origin::supervise_driver` (see that function's own
+// doc). Only `InputSpec::Custom` still reaches `SourceConnector`/`supervise`
+// today (task 5 removes both, once every built-in kind has left).
 
 /// Capped exponential backoff: [`Backoff::next`] returns the current delay
 /// then grows it by `factor` (capped at `max`); [`Backoff::reset`] restores

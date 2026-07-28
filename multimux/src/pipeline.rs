@@ -33,27 +33,17 @@ pub trait SampleSource {
     async fn next_samples(&mut self) -> Result<Option<Vec<(u32, Sample)>>>;
 }
 
-// `rtsp`, `rtp_udp`, `ts_udp`, `ts_http`, `srt` (step 5a round 2) and
-// `hls_pull`, `dash_pull`, `smooth_pull` (step 5a round 3) no longer
-// implement `SampleSource` — they were ported onto
-// `media_plane::ingress::{Dialer, IngestSession}` (see their own modules'
-// `run_rtsp`/`run_rtp_udp`/`run_ts_udp`/`run_ts_http`/`run_srt_caller`/
-// `run_hls_pull`/`run_dash_pull`/`run_smooth_pull`), which publish straight
-// into a `media_plane::Trunk` rather than through this trait.
-// `crate::origin::supervisor`/`crate::origin::serve_with_registry` still
-// reference the old `SourceConnector`/`run_pipeline` shape for `rtmp` (the
-// one source not yet ported onto `IngestDriver`) — see this crate's
-// CHANGELOG.
-
-impl SampleSource for crate::source::rtmp::RtmpSession {
-    fn track_specs(&self) -> Vec<TrackSpec> {
-        crate::source::rtmp::RtmpSession::track_specs(self)
-    }
-
-    async fn next_samples(&mut self) -> Result<Option<Vec<(u32, Sample)>>> {
-        crate::source::rtmp::RtmpSession::next_samples(self).await
-    }
-}
+// `rtsp`, `rtp_udp`, `ts_udp`, `ts_http`, `srt` (step 5a round 2), `hls_pull`,
+// `dash_pull`, `smooth_pull` (step 5a round 3), and `rtmp` (issue #805 task
+// 4 — the last of the nine) no longer implement `SampleSource` — they were
+// ported onto `media_plane::ingress::{Dialer, Listener, IngestSession}` (see
+// their own modules' `run_rtsp`/`run_rtp_udp`/`run_ts_udp`/`run_ts_http`/
+// `run_srt_caller`/`run_hls_pull`/`run_dash_pull`/`run_smooth_pull`/
+// `run_rtmp`), which publish straight into a `media_plane::Trunk` rather
+// than through this trait. `crate::origin::supervisor`/
+// `crate::origin::serve_with_registry` still reference the old
+// `SourceConnector`/`run_pipeline` shape for `InputSpec::Custom` — see this
+// crate's CHANGELOG.
 
 /// Drive `source` into an [`LlHlsSegmenter`], publishing every init segment,
 /// ready part, and ready segment into `route_handle`, until the source

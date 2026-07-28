@@ -28,16 +28,20 @@
 //! camera/HTTP origin would -- not `ts_program::test_support::build_ts_bytes`
 //! (a muxed-but-hand-faked NAL payload used by this crate's own unit tests).
 //!
-//! # Two of the eight driver-backed kinds
+//! # Driver-backed kinds
 //!
 //! `TsUdp` (a UDP socket) and `TsHttp` (a small loopback HTTP server) are the
-//! cheapest of the eight to drive with a real fixture -- no RTSP/SRT
+//! cheapest of the nine to drive with a real fixture -- no RTSP/SRT
 //! handshake, no out-of-band SDP, no HLS/DASH/Smooth manifest to author.
+//! `Rtmp` (issue #805 task 4) is covered separately below with its own real
+//! ffmpeg-captured publish, since it needs the RTMP handshake/`publish`
+//! dance rather than a bare byte stream.
 //!
 //! # `run_pipeline` coverage
 //!
-//! `crate::pipeline::run_pipeline` (the `Rtmp`/`Custom` path) was itself
-//! silently broken for a time: it never published its `Trunk` into
+//! `crate::pipeline::run_pipeline` (the `Custom` path, `Rtmp` having left it
+//! at issue #805 task 4) was itself silently broken for a time: it never
+//! published its `Trunk` into
 //! `RouteHandle`'s program registry, so every consumer would hang on
 //! `ProgramResolution::NotYetAnnounced` (see `RouteHandle::new`'s own doc,
 //! "A producer writing the owned `Trunk` must publish it") -- fixed on this
@@ -65,6 +69,15 @@ fn fixture_path() -> PathBuf {
     PathBuf::from(concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/../fixtures/ts/h264_aac.ts"
+    ))
+}
+
+/// The real ffmpeg-captured RTMP publish (`app=live`, `stream_key=testkey`,
+/// H.264+AAC) -- see `tests/fixtures/PROVENANCE.md`.
+fn rtmp_fixture_path() -> PathBuf {
+    PathBuf::from(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/rtmp-obs-publish.bin"
     ))
 }
 
@@ -311,6 +324,92 @@ async fn ts_http_dispatch_serves_real_media_end_to_end() {
 
     server.abort();
     ts_server.abort();
+}
+
+/// Real fixture bytes in through `InputSpec::Rtmp` (issue #805 task 4 -- a
+/// real TCP client playing back the captured ffmpeg publish against the
+/// listen socket `serve_with_registry` binds), real media out over a real
+/// HTTP `GET` of the resulting LL-HLS media playlist/init/segment -- the
+/// same property as `ts_udp_dispatch_serves_real_media_end_to_end`, for the
+/// one push-based (`Listener`-backed) input kind.
+///
+/// MUTATION VERIFIED: stubbing `spawn_ingest`'s `InputSpec::Rtmp` arm (in
+/// `multimux/src/origin/mod.rs`) to the same dead-arm shape the `ts_udp`/
+/// `ts_http` siblings' own mutation-verify uses (`tokio::spawn(async move {
+/// tracing::error!(..); })`, never binding a listen socket) makes this test
+/// fail exactly the same way: `poll_until_extinf`'s `panic!("no #EXTINF:
+/// line appeared in http://127.0.0.1:<port>/cam/media.m3u8 within the hang
+/// guard -- dispatched ingest never produced a closed segment")` fires after
+/// its full 20 s hang guard elapses (confirmed: rebuilt with the stub in
+/// place, ran `cargo test -p multimux --test dispatch_ingest
+/// rtmp_dispatch_serves_real_media_end_to_end`, saw that exact panic at
+/// `multimux/tests/dispatch_ingest.rs:141`, then reverted). This test proves
+/// the *dispatch wiring* (`InputSpec::Rtmp` -> `run_rtmp` -> a real HTTP
+/// response); `multimux/src/source/rtmp.rs`'s own tests separately
+/// mutation-verify the concurrency fix and the first-sample-not-dropped
+/// invariant *inside* `run_rtmp`/`RtmpIngestSession`, which this dispatch
+/// test does not re-derive (RTMP already served media before issue #805
+/// task 4 too -- this test's contribution is pinning the dispatch arm, not
+/// distinguishing old from new architecture).
+#[tokio::test]
+async fn rtmp_dispatch_serves_real_media_end_to_end() {
+    use tokio::io::AsyncReadExt;
+    use tokio::io::AsyncWriteExt;
+    use tokio::net::TcpStream;
+
+    let bind_addr = reserve_tcp_addr();
+    let rtmp_addr = reserve_tcp_addr();
+    let config = base_config(
+        bind_addr,
+        InputSpec::Rtmp {
+            listen: rtmp_addr.to_string(),
+            app: None,
+            stream_key: None,
+        },
+    );
+    let server = tokio::spawn(serve_with_registry(config, SchemeRegistry::new()));
+
+    let fixture = std::fs::read(rtmp_fixture_path()).expect("rtmp fixture must exist");
+    let publisher = tokio::spawn(async move {
+        let mut stream = None;
+        for _ in 0..200 {
+            match TcpStream::connect(rtmp_addr).await {
+                Ok(s) => {
+                    stream = Some(s);
+                    break;
+                }
+                Err(_) => tokio::time::sleep(Duration::from_millis(10)).await,
+            }
+        }
+        let mut stream = stream.expect("connect to the RTMP listener");
+        stream
+            .write_all(&fixture)
+            .await
+            .expect("write rtmp publish bytes");
+        let mut sink = [0u8; 8192];
+        loop {
+            match stream.read(&mut sink).await {
+                Ok(0) | Err(_) => break,
+                Ok(_) => {}
+            }
+        }
+    });
+
+    let client = reqwest::Client::new();
+    let playlist_url = format!("http://{bind_addr}/cam/media.m3u8");
+    let playlist = poll_until_extinf(&client, &playlist_url).await;
+
+    assert!(
+        playlist.contains("#EXTINF:"),
+        "media playlist must carry a real closed-segment #EXTINF line: {playlist}"
+    );
+
+    let _init_bytes = get_non_empty(&client, &format!("http://{bind_addr}/cam/init-1.mp4")).await;
+    let seg_uri = first_segment_uri(&playlist).to_string();
+    let _seg_bytes = get_non_empty(&client, &format!("http://{bind_addr}/cam/{seg_uri}")).await;
+
+    publisher.abort();
+    server.abort();
 }
 
 // --- `run_pipeline` coverage (issue #805 task 3's "also cover

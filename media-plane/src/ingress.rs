@@ -1363,6 +1363,69 @@ impl<L: Listener> ListenDriver<L> {
         self.sessions.get(&id).and_then(|d| d.trunk(program))
     }
 
+    /// Read-only access to session `id`'s underlying [`IngestDriver`], if
+    /// still admitted.
+    ///
+    /// # Why this (and [`Self::driver_mut`]/[`Self::reap_if_terminal`]) exist
+    ///
+    /// [`Self::feed`] is pinned to `&[u8]` because it bundles three steps —
+    /// feed, then check `is_running()`, then remove if not — into one call,
+    /// which only works when the caller has nothing it needs to observe
+    /// *between* "the session just went terminal" and "the session is gone".
+    /// RTMP (issue #805 task 4) is exactly a caller that does: its
+    /// `Listener::Session` is fed already-parsed-and-replied-to
+    /// `rtmp_runtime::server::ServerEvent`s (`Stage::In<'a> = &'a
+    /// [ServerEvent]`, not `&'a [u8]` — see `multimux::source::rtmp`'s module
+    /// doc for why `RtmpConnection` makes that the honest shape), so
+    /// [`Self::feed`]'s bound does not apply; and every driver-backed `run_*`
+    /// entry point (`crate::source::report_driver_progress`,
+    /// `crate::source::segment::drive_program_segmenters` in the `multimux`
+    /// crate) needs to publish this session's newly-announced programs and
+    /// flush its segmenter *before* a just-terminated session is reaped,
+    /// exactly like the single-`IngestDriver` drive loops
+    /// (`multimux::source::rtsp::run_rtsp` et al.) already do against an
+    /// `IngestDriver` they own outright.
+    ///
+    /// These three methods let a driving loop reassemble that same
+    /// feed → observe → reap sequence for a session admitted by a
+    /// [`ListenDriver`], for any `Stage::In` shape: `driver_mut(id)` to feed
+    /// (via [`IngestDriver::feed`], generic since round 3) or finish, `driver(id)`
+    /// to read back `programs()`/`trunk()`/`health()`/[`IngestDriver::session`]
+    /// afterward, then `reap_if_terminal(id)` to perform the exact removal
+    /// [`Self::feed`] would have, once the caller is done observing.
+    pub fn driver(&self, id: SessionId) -> Option<&IngestDriver<L::Session>> {
+        self.sessions.get(&id)
+    }
+
+    /// Mutable access to session `id`'s underlying [`IngestDriver`], if still
+    /// admitted — see [`Self::driver`] for why this exists. Does **not**
+    /// reap a session that becomes terminal as a result of a call made
+    /// through this reference; call [`Self::reap_if_terminal`] afterward.
+    pub fn driver_mut(&mut self, id: SessionId) -> Option<&mut IngestDriver<L::Session>> {
+        self.sessions.get_mut(&id)
+    }
+
+    /// If session `id` is admitted and has reached a terminal
+    /// [`HealthState`] (`is_running() == false`), removes it and returns that
+    /// final state — exactly the same removal step [`Self::feed`] performs
+    /// internally, exposed standalone for a caller using [`Self::driver_mut`]
+    /// instead of
+    /// [`Self::feed`]/[`Self::on_deadline`]/[`Self::finish`] (see
+    /// [`Self::driver`]'s doc). `None` for an unknown `id` or one still
+    /// running — a no-op either way, so calling this speculatively every
+    /// iteration is always safe.
+    pub fn reap_if_terminal(
+        &mut self,
+        id: SessionId,
+    ) -> Option<HealthState<<L::Session as Stage>::Error>> {
+        let driver = self.sessions.get(&id)?;
+        if driver.health().is_running() {
+            None
+        } else {
+            self.sessions.remove(&id).map(|d| d.health)
+        }
+    }
+
     /// Runs `op` against session `id`'s driver, then — if that call left it in
     /// a terminal state ([`HealthState::is_running`] `== false`) — removes it
     /// and returns that final state. This is the one place a session leaves
@@ -2240,6 +2303,81 @@ mod tests {
 
         // The freed slot admits a new connection.
         assert!(matches!(driver.poll_accept(), AcceptOutcome::Admitted(_)));
+    }
+
+    /// `driver`/`driver_mut`/`reap_if_terminal` (issue #805 task 4) must let a
+    /// caller reassemble exactly what `Self::feed`/`Self::finish` do in one
+    /// call, but with the observe step exposed *between* the state change and
+    /// the reap — the whole reason these exist (see `Self::driver`'s doc: a
+    /// `Listener::Session` whose `Stage::In` isn't `&[u8]`, e.g.
+    /// `multimux::source::rtmp`'s `RtmpIngestSession`, cannot use
+    /// `Self::feed` at all).
+    ///
+    /// MUTATION-CHECKED: dropping the `driver_mut(id).finish()` call (so the
+    /// session is never actually finished) would leave `driver(id)`'s health
+    /// at `Live`, failing the `Ended` assertion below; dropping the
+    /// `reap_if_terminal` call would leave `session_count()` at 1 and
+    /// `driver(id)` still `Some(_)`, failing the assertions after it.
+    #[test]
+    fn driver_mut_and_reap_if_terminal_mirror_feed_semantics() {
+        let mut driver = run_listen(
+            FloodingListener { max_sessions: 1 },
+            trunk_config(),
+            handshake(),
+            max_programs(),
+        );
+        let AcceptOutcome::Admitted(id) = driver.poll_accept() else {
+            panic!("expected admission");
+        };
+        assert!(
+            matches!(
+                driver.driver(id).map(IngestDriver::health),
+                Some(HealthState::Establishing)
+            ),
+            "a freshly admitted session must be Establishing, observable via driver()"
+        );
+
+        // `driver_mut` feeds through the exact same `IngestDriver::feed`
+        // `Self::feed` calls internally, but does NOT reap on termination.
+        driver
+            .driver_mut(id)
+            .expect("session just admitted")
+            .feed(b"reply", Timestamp::from_nanos(1));
+        assert!(
+            matches!(
+                driver.driver(id).map(IngestDriver::health),
+                Some(HealthState::Live)
+            ),
+            "driver_mut's feed must reach the session exactly like Self::feed would"
+        );
+        assert_eq!(driver.session_count(), 1, "not reaped: still Live");
+
+        // Finishing must be observable via `driver()` BEFORE `reap_if_terminal`
+        // removes it -- the exact ordering a driving loop that must
+        // publish/flush before reaping depends on.
+        driver.driver_mut(id).expect("still admitted").finish();
+        assert!(
+            matches!(
+                driver.driver(id).map(IngestDriver::health),
+                Some(HealthState::Ended)
+            ),
+            "finish() through driver_mut must be observable via driver() before reaping"
+        );
+        assert_eq!(driver.session_count(), 1, "not yet reaped");
+
+        let health = driver
+            .reap_if_terminal(id)
+            .expect("a terminal session must be reaped");
+        assert!(matches!(health, HealthState::Ended));
+        assert_eq!(
+            driver.session_count(),
+            0,
+            "reap_if_terminal must free the slot"
+        );
+        assert!(driver.driver(id).is_none());
+
+        // A second call on an already-reaped id is a no-op, not a panic.
+        assert!(driver.reap_if_terminal(id).is_none());
     }
 
     // --- Reconnect: bounded, caller-configurable, never spins --------------

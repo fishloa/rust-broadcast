@@ -4,13 +4,15 @@
 //! over HTTP), `hls_pull::HlsPullRoute` (pull a remote (LL-)HLS origin),
 //! `dash_pull::DashPullRoute` (pull a remote MPEG-DASH origin, issue #758),
 //! `smooth_pull::SmoothPullRoute` (pull a remote Microsoft Smooth Streaming
-//! origin, issue #759), `rtmp::RtmpSource` (RTMP push ingest, issue #738 — a
-//! *push* source; every non-SRT source above dials out), and `srt::SrtSource`
+//! origin, issue #759), `rtmp::RtmpRoute` (RTMP push ingest, issue #738 — a
+//! *push* source implementing `media_plane::ingress::Listener` since issue
+//! #805 task 4; every other source above dials out), and `srt::SrtRoute`
 //! (SRT-carried MPEG-2 TS ingest, issue #739 — listener *or* caller mode) all
-//! implement the `Source` marker trait plus the `pipeline::SampleSource`
-//! contract (see `crate::pipeline`), keeping ingest swappable (and letting
-//! tests drive a mock). `http_auth` is shared auth glue for the HTTP-based
-//! sources (issue #663 P3c).
+//! implement the `Source` marker trait; every one has been ported onto
+//! `media_plane::ingress` (`Dialer`/`Listener` + `IngestSession`) rather than
+//! the older `pipeline::SampleSource` contract, except `InputSpec::Custom`
+//! (see `crate::pipeline`'s own doc). `http_auth` is shared auth glue for the
+//! HTTP-based sources (issue #663 P3c).
 
 pub mod dash_pull;
 pub mod hls_pull;

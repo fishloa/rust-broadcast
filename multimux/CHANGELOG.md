@@ -183,6 +183,60 @@
     call was restored, the specific assertion/panic confirmed, then
     reverted — see each test's own `MUTATION VERIFIED` doc comment.
 
+### Added (issue #805 task 4/6 — RTMP onto `media_plane::ingress::Listener`)
+- **RTMP is off the old `SourceConnector`/`supervise` path** — the last of
+  the nine input kinds to move onto `media_plane::ingress`, closing the
+  "eight ported, one held back" gap tasks 2/2b/3 deliberately left open (see
+  `docs/superpowers/specs/2026-07-26-media-plane-architecture.md` §8's
+  sequencing note: RTMP was kept on the working old path until every other
+  kind, and the registry reconciliation it depends on, was proven).
+  - New `media_plane::ingress::ListenDriver::driver`/`driver_mut`/
+    `reap_if_terminal` (in `media-plane`, additive): RTMP's `Listener::Session`
+    is fed already-parsed-and-replied-to `rtmp_runtime::server::ServerEvent`s
+    (`Stage::In<'a> = &'a [ServerEvent]`, not `&'a [u8]` — see
+    `source::rtmp`'s module doc for why `AsyncRtmpServer`/`RtmpConnection`
+    make that the honest shape), so `ListenDriver::feed`'s `&[u8]`-pinned
+    convenience wrapper doesn't fit. These three accessors let a driving loop
+    reassemble the same feed -> observe -> reap sequence for any `Stage::In`
+    shape.
+  - `source::rtmp::RtmpRoute` (replaces `RtmpSource`) implements
+    `media_plane::ingress::Listener`: `AsyncRtmpServer::accept()` (blocking-
+    async, no `try_accept`) is bridged into `Listener::poll_accept`'s
+    non-blocking contract by an accept-pump task, spawned once alongside the
+    bind-once listen socket, that loops `accept().await` and sends each
+    `RtmpConnection` into a bounded `mpsc` channel; `poll_accept` drains it
+    with `try_recv()`.
+  - New `source::rtmp::run_rtmp`: a `ListenDriver`-backed loop that admits and
+    drives up to `max_sessions` publishers **concurrently** (`FuturesUnordered`
+    over one read task per admitted session), fixing a real, previously-only-
+    mitigated defect — `supervise` awaited `RtmpSource::connect()`
+    *sequentially* against the bind-once listener, so a publisher that
+    completed the handshake and then went idle wedged the entire route, never
+    accepting another publisher (#738 T11b review, Critical). One stalled
+    publisher no longer blocks another (see `second_publisher_is_served_while_first_is_stalled_at_handshake`).
+  - Preserved exactly: bind-once/reuse-forever (via `tokio::sync::OnceCell`,
+    shared across every `run_rtmp` attempt), `Established` gating on the
+    first `DemuxEvent::Sample` rather than the first `TrackAdded` (FLV has no
+    `TracksResolved`; leans on `transmux::flv_stream`'s Annex E ordering
+    assumption, exactly as `SessionEvent::Established`'s own doc prescribes
+    for RTMP), the first sample never being dropped (buffered, then
+    re-emitted immediately after the `NewProgram`/`Established` pair), and
+    `IngestTimeouts` still bounding every read.
+  - RTMP publishes under `SPTS_PROGRAM_ID` (`ProgramId(0)`) like every other
+    single-program driver-backed source; MPTS is task 6, out of scope here.
+  - Why RTMP *can* implement `Listener` where SRT's listener mode explicitly
+    cannot (see `source::srt`'s "Why listener mode is not a `Listener` yet"):
+    `AsyncRtmpServer::accept` takes `&self` (shareable via `Arc`, no `Mutex`
+    needed) and each accepted connection owns its own `TcpStream` — SRT's
+    blockers (a `&mut self` accept, one shared `UdpSocket` across the
+    listener and every connection) are specific to `srt-runtime`'s current
+    API, not a general objection to a push source using `Listener`.
+  - `crate::pipeline`'s `SampleSource for RtmpSession` impl and
+    `crate::origin::supervisor`'s `SourceConnector for RtmpSource` impl are
+    deleted (RTMP no longer implements either). `SourceConnector`/`supervise`/
+    `run_pipeline` themselves are unchanged — `InputSpec::Custom` still uses
+    them (task 5 removes them, once `Custom` is the only remaining user).
+
 ### Changed (BREAKING, in progress — plan step 5b)
 - **Ported the three outputs (LL-HLS, DASH, LL-DASH) and the shared
   init/segment/part resource route onto `media_plane::egress::ServedEgress`

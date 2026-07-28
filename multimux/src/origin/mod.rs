@@ -64,7 +64,7 @@ use tower_http::timeout::TimeoutLayer;
 use crate::output::Output;
 use crate::registry::{AuthCtx, InputCtx, OutputCtx, SchemeRegistry};
 use crate::route::{HealthState, RouteHandle};
-use supervisor::{Backoff, supervise};
+use supervisor::Backoff;
 
 /// Realm advertised by the shared output-auth `Verifier`'s Basic/Digest
 /// challenge (`crate::config::OutputAuthSpec`) — fixed rather than
@@ -583,21 +583,22 @@ pub async fn serve(config: crate::config::Config) -> crate::Result<()> {
 ///
 /// Every configured [`crate::config::InputSpec`] variant now drives a route
 /// (issue #805 task 2 — see `spawn_ingest`, which this function's per-route
-/// loop calls): [`crate::config::InputSpec::Rtmp`]/`Custom` through
+/// loop calls): [`crate::config::InputSpec::Custom`] through
 /// [`supervisor::supervise`] (a [`supervisor::SourceConnector`] +
 /// [`crate::pipeline::run_pipeline`], publishing this route's own `Trunk`
 /// into its registry once live — see
-/// [`crate::route::RouteHandle::publish_owned_trunk`]), and the eight
-/// `media_plane`-ported kinds (rtsp/rtp/ts_udp/ts_http/srt/hls_pull/
-/// dash_pull/smooth_pull) through [`supervisor::supervise_driver`] (a
-/// `media_plane::ingress::IngestDriver`-driven `crate::source::*::run_*`
-/// entry point, publishing each announced program's driver-minted `Trunk`
-/// into the same registry via `crate::source::report_driver_progress`). On
-/// either path, a connect failure, protocol error, or clean end-of-stream
-/// reconnects with capped backoff instead of dying — a bad/flaky source
-/// degrades that route's [`crate::route::RouteHandle::health`] rather than
-/// freezing it forever, and never brings the server (or any other route)
-/// down.
+/// [`crate::route::RouteHandle::publish_owned_trunk`]), and every other kind
+/// — rtsp/rtp/ts_udp/ts_http/srt/hls_pull/dash_pull/smooth_pull, plus
+/// [`crate::config::InputSpec::Rtmp`] as of issue #805 task 4 — through
+/// [`supervisor::supervise_driver`] (a `media_plane::ingress::IngestDriver`-
+/// (or, for RTMP's push/`Listener` shape, `ListenDriver`-) driven
+/// `crate::source::*::run_*` entry point, publishing each announced
+/// program's driver-minted `Trunk` into the same registry via
+/// `crate::source::report_driver_progress`). On either path, a connect
+/// failure, protocol error, or clean end-of-stream reconnects with capped
+/// backoff instead of dying — a bad/flaky source degrades that route's
+/// [`crate::route::RouteHandle::health`] rather than freezing it forever,
+/// and never brings the server (or any other route) down.
 ///
 /// [`crate::config::InputSpec::Custom`]/[`crate::output::OutputKind::Custom`]/
 /// [`crate::config::OutputAuthSpec::Custom`] (issue #663 external scheme
@@ -721,13 +722,14 @@ pub async fn serve_with_registry(
 /// [`serve_with_registry`]'s per-route loop (issue #805 task 2) so the
 /// per-`InputSpec` wiring is callable, and individually testable, without
 /// spinning up the whole HTTP server (see this module's own tests for the
-/// eight `media_plane`-ported input kinds).
+/// `media_plane`-ported input kinds).
 ///
-/// [`crate::config::InputSpec::Rtmp`]/`Custom` drive
-/// [`supervisor::supervise`] (unchanged, pre-#805 behaviour); every other
-/// variant drives [`supervisor::supervise_driver`] with the matching
-/// `crate::source::*::run_*` entry point — see [`serve_with_registry`]'s own
-/// doc for the full architecture split.
+/// [`crate::config::InputSpec::Custom`] drives [`supervisor::supervise`]
+/// (unchanged, pre-#805 behaviour); every other variant — including
+/// [`crate::config::InputSpec::Rtmp`] as of issue #805 task 4 — drives
+/// [`supervisor::supervise_driver`] with the matching `crate::source::*::run_*`
+/// entry point — see [`serve_with_registry`]'s own doc for the full
+/// architecture split.
 fn spawn_ingest(
     route: &crate::config::Route,
     store: Arc<RouteHandle>,
@@ -1004,14 +1006,28 @@ fn spawn_ingest(
             app,
             stream_key,
         } => {
-            let connector = crate::source::rtmp::RtmpSource::new(name.clone(), listen.clone())
-                .with_app(app.clone())
-                .with_stream_key(stream_key.clone());
-            tokio::spawn(supervise(
-                connector,
+            let route_cfg = Arc::new(
+                crate::source::rtmp::RtmpRoute::new(name.clone(), listen.clone())
+                    .with_app(app.clone())
+                    .with_stream_key(stream_key.clone())
+                    .with_timeouts(timeouts),
+            );
+            tokio::spawn(supervisor::supervise_driver(
+                move |route_handle| {
+                    let route_cfg = Arc::clone(&route_cfg);
+                    async move {
+                        let trunk_config = crate::source::driver_trunk_config(window_segments);
+                        let handshake = crate::source::handshake_policy(timeouts.connect);
+                        Err(crate::source::rtmp::run_rtmp(
+                            &route_cfg,
+                            trunk_config,
+                            handshake,
+                            &route_handle,
+                        )
+                        .await)
+                    }
+                },
                 store,
-                target_duration_secs,
-                part_target_ms,
                 Backoff::production_default(),
                 name.clone(),
                 shutdown_rx,
@@ -2576,9 +2592,9 @@ mod tests {
 
         // Steal an RTMP listen port so `AsyncRtmpServer::bind` itself fails
         // on every attempt -- no client connection needed at all, since
-        // `RtmpSource::connect`'s own `server.accept().await` (unlike every
-        // other variant here) has no timeout of its own and would otherwise
-        // hang forever waiting for a publisher that never arrives.
+        // `RtmpRoute`'s accept-pump task (unlike every other variant here)
+        // has no timeout of its own on `server.accept().await` and would
+        // otherwise hang forever waiting for a publisher that never arrives.
         let rtmp_thief =
             std::net::TcpListener::bind("127.0.0.1:0").expect("steal an rtmp listen port");
         let rtmp_addr = rtmp_thief.local_addr().expect("local addr");
