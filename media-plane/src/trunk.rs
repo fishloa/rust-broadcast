@@ -1349,9 +1349,11 @@ impl Trunk {
 
     /// Subscribe a new [`SampleCursor`], starting from *now* — the next
     /// entry [`TrunkWriter::publish`] produces after this call, not any
-    /// backlog already in either ring. (A later step may add a seek-to-past
-    /// variant once the segment log gives "a past point" a real meaning;
-    /// this step does not need one.)
+    /// backlog already in either ring. See [`Trunk::subscribe_from_backlog`]
+    /// for the seek-to-past variant this method's own docs used to
+    /// anticipate (a consumer built *after* samples it needs already landed
+    /// in the ring — e.g. a segmenter reacting to the same batch that
+    /// announced its program — wants that one instead).
     ///
     /// # This call *is* fan-out — read this before calling it per connection
     ///
@@ -1374,6 +1376,61 @@ impl Trunk {
             trunk: Arc::clone(self),
             timed_consumed: state.timed.published,
             sparse_consumed: state.sparse.published,
+        }
+    }
+
+    /// Subscribe a new [`SampleCursor`], starting from the **oldest entry
+    /// each ring currently retains** instead of [`Trunk::subscribe`]'s
+    /// "now" — i.e. this cursor's first `poll` replays whatever backlog is
+    /// still resident in the `Timed` ring and the `Sparse` ring, each
+    /// independently, before catching up to the live tail.
+    ///
+    /// This is the "seek-to-past variant" [`Trunk::subscribe`]'s own docs
+    /// anticipated ("a later step may add a seek-to-past variant... this
+    /// step does not need one") — the step turned out to be issue #808's
+    /// segment-bridge fix: a [`TrunkWriter::publish`] batch that lands
+    /// *before* a consumer subscribes (e.g. the very same `feed` call that
+    /// both announces a program and publishes its first samples) is
+    /// otherwise invisible to a [`Trunk::subscribe`] cursor forever, even
+    /// though the samples are sitting right there in the ring.
+    ///
+    /// # Replay is bounded by ring capacity, not "everything ever published"
+    ///
+    /// This does **not** reach further back than what each ring still
+    /// holds: an entry already evicted by [`TrunkConfig::timed_capacity`]/
+    /// [`TrunkConfig::sparse_capacity`] before this call is gone, exactly as
+    /// it would be for any other cursor — there is no unbounded replay log
+    /// behind this method, only the same fixed-size rings every other
+    /// cursor reads. Concretely: this cursor starts at each ring's current
+    /// `base` (the oldest index still resident), not index 0, so its first
+    /// `poll` never reports a spurious `Lagged`/`Degraded` for data that was
+    /// evicted *before* this call — from this cursor's point of view,
+    /// "backlog" means "what the ring can show me right now", not "what was
+    /// ever published". Both retention classes replay this way,
+    /// independently: a `Timed` backlog and a `Sparse` backlog are each
+    /// bounded by their own ring's own capacity.
+    ///
+    /// [`SampleCursorItem::Lagged`]/[`SampleCursorItem::Degraded`] still
+    /// fire exactly as they do for a [`Trunk::subscribe`] cursor for any
+    /// loss that happens **after** this call — falling behind the live tail
+    /// once subscribed is reported in-band the same way for both kinds of
+    /// cursor; only the starting position differs.
+    ///
+    /// # This call *is* fan-out — read this before calling it per connection
+    ///
+    /// Exactly [`Trunk::subscribe`]'s own fan-out warning, verbatim: writer
+    /// cost is **O(N) in cursor count** (`spikes/trunk-bench` measured 956 ns
+    /// → 9.98 µs from 1 → 16 readers; spec §3.1) — every cursor contends the
+    /// same shared lock every publish. **A cursor is for a distinct
+    /// consumer of the stream**, **never** one per peer of a one-to-many
+    /// protocol. Supported reader count is **single-digit by design**; do
+    /// not call this once per connection.
+    pub fn subscribe_from_backlog(self: &Arc<Self>) -> SampleCursor {
+        let state = self.state.lock().unwrap();
+        SampleCursor {
+            trunk: Arc::clone(self),
+            timed_consumed: state.timed.base,
+            sparse_consumed: state.sparse.base,
         }
     }
 
@@ -2539,6 +2596,134 @@ mod tests {
         }
         assert_eq!(trunk.timed_len(), 4);
         assert_eq!(trunk.sparse_len(), 3);
+    }
+
+    // --- 5b. subscribe_from_backlog: exact replay + Lagged on overwrite ---
+
+    /// [`Trunk::subscribe_from_backlog`]'s core promise: a cursor subscribed
+    /// *after* samples have already landed in both rings still sees them,
+    /// exactly (in order, no dup), for each retention class independently —
+    /// the property issue #808's `ProgramSegmenter` fix depends on.
+    ///
+    /// MUTATION VERIFIED: changing `subscribe_from_backlog`'s
+    /// `timed_consumed: state.timed.base` to
+    /// `timed_consumed: state.timed.published` (i.e. accidentally reusing
+    /// `subscribe`'s live-tail initialisation) makes this test's
+    /// `assert_eq!(timed_bytes, vec![10, 11, 12])` fail: `drain` returns an
+    /// empty `Vec` (actual) instead of the expected `[10, 11, 12]`, because
+    /// `timed_consumed` now equals `published` — every published entry
+    /// already counts as "consumed" the instant the cursor is created, so
+    /// `poll` immediately returns `None` instead of replaying the resident
+    /// backlog. Recompiled and re-run to confirm this exact failure, then
+    /// reverted.
+    #[test]
+    fn subscribe_from_backlog_replays_exact_resident_entries_both_classes() {
+        let trunk = Trunk::new(TrunkConfig::new(nz(100), nz(100), nz(4), nz(8), nz(8)));
+        let writer = trunk.writer().unwrap();
+
+        // Published *before* the cursor exists — subscribe() would never see
+        // any of this; subscribe_from_backlog() must replay all of it, since
+        // ring capacity (100) is nowhere near exhausted.
+        for i in 10u8..13 {
+            writer.publish(1, RetentionClass::Timed, sample(i, 4));
+        }
+        for i in 20u8..22 {
+            writer.publish(2, RetentionClass::Sparse, sample(i, 4));
+        }
+
+        let mut cursor = trunk.subscribe_from_backlog();
+
+        // Merge order (module docs): pending lag reports first (none here),
+        // then Sparse data, then Timed data.
+        let sparse_items = drain(&mut cursor, 2);
+        let sparse_bytes: Vec<u8> = sparse_items
+            .iter()
+            .map(|item| match item {
+                SampleCursorItem::Sparse { sample, .. } => sample.data[0],
+                other => panic!("expected Sparse, got {other:?}"),
+            })
+            .collect();
+        assert_eq!(sparse_bytes, vec![20, 21], "exact resident Sparse backlog");
+
+        let timed_items = drain(&mut cursor, 3);
+        let timed_bytes: Vec<u8> = timed_items
+            .iter()
+            .map(|item| timed_data(item).unwrap().1.data[0])
+            .collect();
+        assert_eq!(
+            timed_bytes,
+            vec![10, 11, 12],
+            "exact resident Timed backlog"
+        );
+
+        assert!(
+            cursor.poll().is_none(),
+            "no extra items beyond the resident backlog"
+        );
+
+        // New samples published after subscribing still flow through
+        // normally, proving this cursor is a real live cursor afterwards,
+        // not a one-shot snapshot.
+        writer.publish(1, RetentionClass::Timed, sample(99, 4));
+        let live = cursor.poll().unwrap();
+        assert_eq!(timed_data(&live).unwrap().1.data[0], 99);
+    }
+
+    /// When the backlog a [`Trunk::subscribe_from_backlog`] cursor would
+    /// have replayed has *already* been evicted by ring capacity before the
+    /// subscribe call, this cursor must behave exactly like an ordinary
+    /// [`Trunk::subscribe`] cursor from that point on: report the loss
+    /// in-band as `Lagged`/`Degraded`, never silently skip it.
+    ///
+    /// MUTATION VERIFIED: changing `subscribe_from_backlog`'s
+    /// `timed_consumed: state.timed.base` to `timed_consumed: 0` (simulating
+    /// "replay from the beginning of time" rather than "replay what the ring
+    /// still holds", anchoring at the wrong reference point) makes this
+    /// test's `assert!(matches!(first, SampleCursorItem::Lagged { skipped: 6
+    /// }))` fail: actual `Lagged { skipped: 12 }` (`12 - 0`, counting the 6
+    /// entries already evicted *before* this cursor even subscribed as if
+    /// they were its own loss) instead of the expected `Lagged { skipped: 6
+    /// }` (`12 - 6`, only the 6 evictions that happened *after* this cursor
+    /// subscribed). Recompiled and re-run to confirm this exact failure,
+    /// then reverted.
+    #[test]
+    fn subscribe_from_backlog_reports_lagged_when_backlog_already_overwritten() {
+        let trunk = Trunk::new(TrunkConfig::new(nz(3), nz(10), nz(4), nz(8), nz(8)));
+        let writer = trunk.writer().unwrap();
+
+        // Capacity 3, publish 9: only bytes 6,7,8 remain resident; 0..6 are
+        // already gone by the time subscribe_from_backlog is called — this
+        // cursor must NOT report those 6 as its own loss (they were never
+        // its backlog to miss), which is exactly why it anchors at `base`
+        // (6), not `0`.
+        for i in 0u8..9 {
+            writer.publish(1, RetentionClass::Timed, sample(i, 4));
+        }
+        let mut cursor = trunk.subscribe_from_backlog();
+
+        // Publish 6 more before this cursor ever polls — the ring is
+        // already full (capacity 3), so each push evicts exactly one
+        // resident entry, advancing `base` from 6 to 12. This IS loss this
+        // cursor is responsible for (it subscribed to a live cursor at 6,
+        // then fell behind by 6 before its first poll).
+        for i in 9u8..15 {
+            writer.publish(1, RetentionClass::Timed, sample(i, 4));
+        }
+
+        let first = cursor.poll().unwrap();
+        assert!(
+            matches!(first, SampleCursorItem::Lagged { skipped: 6 }),
+            "expected Lagged{{skipped: 6}}, got {first:?}"
+        );
+
+        // The remaining resident 3 (bytes 12,13,14) must still be readable.
+        let items = drain(&mut cursor, 3);
+        let bytes: Vec<u8> = items
+            .iter()
+            .map(|item| timed_data(item).unwrap().1.data[0])
+            .collect();
+        assert_eq!(bytes, vec![12, 13, 14]);
+        assert!(cursor.poll().is_none());
     }
 
     // --- 6. payload sharing: Bytes::as_ptr() identity, not equality -------

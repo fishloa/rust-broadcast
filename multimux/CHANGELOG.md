@@ -2,6 +2,21 @@
 
 ## [Unreleased]
 
+### Fixed (issue #808)
+- **Samples published in the SAME `feed` call as `NewProgram` are no longer
+  silently dropped.** `ProgramSegmenter::try_new` now subscribes with
+  `media_plane::trunk::Trunk::subscribe_from_backlog` instead of `subscribe`:
+  the driver's own feed batch that announces a program routinely carries its
+  first samples too (a single MPEG-TS feed of 64 packets commonly carries
+  the PMT and the first PES packets together), and those samples were
+  already sitting in the ring by the time `drive_program_segmenters` built
+  the segmenter — a live-tail `subscribe()` cursor never observed them. If
+  the dropped batch held the opening IDR, the first segment either started
+  on a non-keyframe or was delayed; this was silent (no error, no log).
+  `examples/custom_scheme.rs` and `tests/dispatch_ingest.rs` no longer split
+  their announce/sample script across two `feed` calls to work around this —
+  both now announce and publish in one call, the ordinary shape.
+
 ### Removed (BREAKING — issue #805 task 5/6: convergence)
 - **`SourceConnector`, `supervise`, and the whole `pipeline` module are
   deleted.** Every input kind now dials/listens over

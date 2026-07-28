@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added (issue #808)
+- **`Trunk::subscribe_from_backlog`**: a [`SampleCursor`] seek-to-past variant
+  next to `Trunk::subscribe`, for a consumer built *after* samples it needs
+  have already landed in the ring (e.g. a segmenter reacting to the very
+  `feed` batch that also announced its program — MPEG-TS routinely carries
+  the PMT and the first PES samples together). Starts each retention class
+  (`Timed`/`Sparse`) independently at that ring's own current `base` (the
+  oldest entry still resident), so replay is bounded by ring capacity, never
+  unbounded, and never double-reports data already evicted before the
+  subscribe call as this cursor's own loss. `Lagged`/`Degraded` still fire
+  in-band for any loss *after* subscribing, exactly as for `subscribe`'s
+  cursor. Carries the same fan-out warning as `subscribe` (writer cost is
+  O(N) in cursor count — a cursor is per distinct consumer, never per peer).
+
 ### Changed (BREAKING — plan step 5a, round 3)
 - **`IngestSession` no longer pins `Stage::In` to `&'a [u8]`, and gains an
   associated `Request` type.** The supertrait bound relaxes from

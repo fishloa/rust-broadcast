@@ -467,23 +467,18 @@ mod custom_dispatch_driver_backed {
     /// `examples/custom_scheme.rs` documents, just fed real fixture-derived
     /// media instead of synthetic frames.
     ///
-    /// Its **first** `feed` call only announces the one program (the real
-    /// track); its **second** queues every one of its real samples. This is
-    /// deliberately two calls, not one: `Trunk::subscribe`'s "starting from
-    /// now" contract means a `ProgramSegmenter`'s cursor (subscribed by
-    /// `drive_program_segmenters` only once `NewProgram` has landed) would
-    /// never observe samples written in the *same* `feed` call that also
-    /// announced the program -- exactly the ordering
-    /// `multimux::source::ts_udp`'s own loopback test's doc comment ("Second
-    /// feed: real media the segmenter's cursor ... actually observes") warns
-    /// about. A genuine external transport would instead depayload/demux
-    /// across many `feed` calls as bytes arrive, but the `IngestSession`
-    /// contract (announce, then sample, each a call `run_real_ts` drains
-    /// between) is identical.
+    /// Its **first** `feed` call announces the one program (the real track)
+    /// *and* queues every one of its real samples, in that same call -- the
+    /// ordinary shape a real transport produces (a single MPEG-TS feed batch
+    /// commonly carries the PMT and the first PES samples together), and
+    /// exactly the shape `ProgramSegmenter`'s `subscribe_from_backlog`
+    /// cursor (issue #808) exists to handle: it replays whatever backlog is
+    /// already resident in the ring by the time `drive_program_segmenters`
+    /// builds the segmenter, so samples published in the same `feed` call
+    /// that announced the program are not lost.
     struct RealTsSession {
         pending: VecDeque<SessionEvent>,
-        announced: bool,
-        samples_sent: bool,
+        sent: bool,
         spec: TrackSpec,
         samples: Vec<Sample>,
     }
@@ -498,14 +493,12 @@ mod custom_dispatch_driver_backed {
         }
 
         fn feed(&mut self, _input: &[u8], _now: Timestamp) -> Result<(), Infallible> {
-            if !self.announced {
-                self.announced = true;
+            if !self.sent {
+                self.sent = true;
                 self.pending.push_back(SessionEvent::NewProgram {
                     program: ProgramId(0),
                     tracks: vec![self.spec.clone()],
                 });
-            } else if !self.samples_sent {
-                self.samples_sent = true;
                 let track_id = self.spec.track_id;
                 for sample in self.samples.drain(..) {
                     self.pending.push_back(SessionEvent::Sample {
@@ -554,8 +547,7 @@ mod custom_dispatch_driver_backed {
             pending.push_back(SessionEvent::Established);
             Ok(RealTsSession {
                 pending,
-                announced: false,
-                samples_sent: false,
+                sent: false,
                 spec: self.spec.clone(),
                 samples: self.samples.clone(),
             })
@@ -589,17 +581,14 @@ mod custom_dispatch_driver_backed {
         let mut published: HashSet<ProgramId> = HashSet::new();
         let mut segmenters: StdHashMap<ProgramId, ProgramSegmenter> = StdHashMap::new();
 
-        // First feed: announces NewProgram only -- mints the driver-side
-        // Trunk and (via drive_program_segmenters, below) subscribes this
-        // program's ProgramSegmenter cursor *before* any sample exists.
+        // One feed: announces NewProgram AND queues every real sample --
+        // mints the driver-side Trunk and publishes its samples in the same
+        // batch. The ProgramSegmenter this call's own drive_program_segmenters
+        // builds is subscribed via `subscribe_from_backlog` (issue #808),
+        // which replays whatever backlog is already resident in the ring
+        // rather than starting from "now" -- so this single feed's samples
+        // are not lost.
         driver.feed(&[], Timestamp::from_nanos(0));
-        report_driver_progress(&driver, &route_handle, &mut published);
-        drive_program_segmenters(&driver, &route_handle, &mut segmenters);
-
-        // Second feed: the real samples the now-subscribed cursor actually
-        // observes -- see RealTsSession's own doc for why this must be a
-        // separate call from the announcement above.
-        driver.feed(&[], Timestamp::from_nanos(1));
         report_driver_progress(&driver, &route_handle, &mut published);
         drive_program_segmenters(&driver, &route_handle, &mut segmenters);
 
@@ -626,7 +615,7 @@ mod custom_dispatch_driver_backed {
     /// (health `Live`) but never carry a single `#EXTINF:` line, since
     /// nothing would ever turn the ingested samples into closed segments.
     ///
-    /// MUTATION VERIFIED: commenting out all three of this test's own
+    /// MUTATION VERIFIED: commenting out both of this test's own
     /// `report_driver_progress(&driver, &route_handle, &mut published);`
     /// calls inside `run_real_ts` (i.e. simulating a `Custom` factory author
     /// who forgets the registry-publish half of the extension contract

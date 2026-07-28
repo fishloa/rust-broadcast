@@ -118,7 +118,19 @@ impl ProgramSegmenter {
             }
         };
         Some(ProgramSegmenter {
-            cursor: trunk.subscribe(),
+            // `subscribe_from_backlog`, not `subscribe` (issue #808): the
+            // driver's own `feed` call that announced this program's
+            // `NewProgram` routinely carries its first samples too (a
+            // single MPEG-TS feed batch commonly holds the PMT *and* the
+            // first PES packets) — those samples are already sitting in
+            // the ring by the time this constructor runs, and a
+            // live-tail `subscribe()` cursor would never see them (the
+            // opening IDR risks landing in that skipped batch). Replaying
+            // whatever backlog the ring still retains is exactly this
+            // consumer's shape: it exists to segment everything a program
+            // ever publishes, not just what arrives after it happens to be
+            // built.
+            cursor: trunk.subscribe_from_backlog(),
             segment_writer,
             seg,
             next_timeline_ns: 0,
@@ -354,10 +366,10 @@ mod tests {
         report_driver_progress(&driver, &route, &mut published);
         drive_program_segmenters(&driver, &route, &mut segmenters);
 
-        // Second feed: real media the segmenter's cursor (subscribed just
-        // above) actually observes — `Trunk::subscribe`'s "starts from now"
-        // contract means the first batch, fed before the cursor existed, is
-        // invisible to it (see `ts_program`'s own reference test).
+        // Second feed: more real media, proving the segmenter's cursor
+        // (subscribed just above via `subscribe_from_backlog` — issue #808)
+        // keeps observing new samples live *in addition to* replaying the
+        // first feed's own backlog, not merely as a substitute for it.
         let more = build_ts_bytes(1, 0xCD, 90);
         driver.feed(&more, Timestamp::from_nanos(1));
         report_driver_progress(&driver, &route, &mut published);
@@ -381,6 +393,80 @@ mod tests {
             playlist.contains("#EXTINF:") || playlist.contains("#EXT-X-PART:"),
             "the route's own LlHlsOrigin must serve real closed segments/parts, \
              resolved exactly the way egress resolves them: {playlist}"
+        );
+    }
+
+    /// **Issue #808, the regression test.** A source that announces
+    /// `NewProgram` *and* publishes its samples in a **single** `feed`
+    /// call — ordinary behaviour for MPEG-TS, where one PMT-carrying feed
+    /// batch routinely also carries the first PES samples — must still get
+    /// those samples segmented and served. Deliberately only one `feed`
+    /// call, unlike `driver_backed_route_serves_real_media_through_ll_hls`
+    /// above: that test's second feed would mask exactly the bug this test
+    /// exists to catch.
+    ///
+    /// Asserts on `"#EXT-X-PART:"`/`"#EXTINF:"` specifically (not merely
+    /// `EgressResponse::Ready`, and not `"#EXT-X-PART-INF:"`/`"#EXT-X-MAP:"`,
+    /// which `ll_hls_runtime` renders unconditionally even for a route with
+    /// zero parts/segments) — see `render_playlist`'s and this module's
+    /// sibling test's own doc for why an unconditional header would let this
+    /// test pass against the bug.
+    ///
+    /// **Confirmed this test fails against live-tail `subscribe()`**: with
+    /// `ProgramSegmenter::try_new`'s `cursor: trunk.subscribe_from_backlog()`
+    /// temporarily reverted to `cursor: trunk.subscribe()`, this test's
+    /// `assert!(playlist.contains("#EXTINF:") || playlist.contains("#EXT-X-PART:"), ...)`
+    /// fails — actual rendered playlist body (verbatim from the panic):
+    /// ```text
+    /// #EXTM3U
+    /// #EXT-X-VERSION:9
+    /// #EXT-X-TARGETDURATION:1
+    /// #EXT-X-MEDIA-SEQUENCE:1
+    /// #EXT-X-SERVER-CONTROL:CAN-BLOCK-RELOAD=YES,PART-HOLD-BACK=0.75
+    /// #EXT-X-PART-INF:PART-TARGET=0.25
+    /// #EXT-X-MAP:URI="init-1.mp4"
+    /// ```
+    /// — the single feed's `NewProgram` *and* all 90 samples land in the
+    /// ring before `drive_program_segmenters` ever builds the
+    /// `ProgramSegmenter`, so a `subscribe()` cursor (starting from "now",
+    /// i.e. *after* that entire batch) never observes a single sample: no
+    /// part, no segment, ever. Recompiled with the revert in place, re-ran
+    /// to confirm this exact failure, then restored
+    /// `subscribe_from_backlog()` and re-ran to confirm this test passes
+    /// again.
+    #[test]
+    fn samples_published_in_the_same_feed_as_new_program_are_still_segmented() {
+        let route = RouteHandle::new(1.0, 250, 8);
+        let mut driver = IngestDriver::new(
+            TsIngestSession::new(),
+            trunk_config(),
+            handshake(),
+            media_plane::DEFAULT_MAX_PROGRAMS,
+        );
+        let mut published = HashSet::new();
+        let mut segmenters = HashMap::new();
+
+        // ONE feed: build_ts_bytes muxes the PMT (-> NewProgram) and 90 real
+        // PES samples (-> Sample events) into the same TS byte stream, so
+        // the driver's own `feed` drains both the NewProgram announcement
+        // and every one of those samples in this single call — exactly the
+        // "ordinary MPEG-TS" shape issue #808 describes, not a contrived
+        // edge case.
+        let ts_bytes = build_ts_bytes(1, 0xAB, 90);
+        driver.feed(&ts_bytes, Timestamp::ZERO);
+        report_driver_progress(&driver, &route, &mut published);
+        drive_program_segmenters(&driver, &route, &mut segmenters);
+
+        assert!(
+            route.init_bytes().is_some_and(|b| !b.is_empty()),
+            "a driver-backed route must end up with real, non-empty init bytes"
+        );
+
+        let playlist = render_playlist(&route);
+        assert!(
+            playlist.contains("#EXTINF:") || playlist.contains("#EXT-X-PART:"),
+            "samples published in the SAME feed call as NewProgram must still reach the \
+             served playlist as real closed segments/parts: {playlist}"
         );
     }
 

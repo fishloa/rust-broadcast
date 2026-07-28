@@ -102,23 +102,19 @@ fn track_spec() -> TrackSpec {
 /// A trivial [`IngestSession`] standing in for a real external ingest
 /// transport.
 ///
-/// Its **first** [`Stage::feed`] call only announces one program carrying a
-/// single synthetic AVC track; its **second** queues every one of its
-/// (already-built) samples. This is deliberately two calls, not one:
-/// `Trunk::subscribe`'s "starting from now" contract means a
-/// `ProgramSegmenter`'s cursor (subscribed by `drive_program_segmenters`
-/// only once `NewProgram` has landed) would never observe samples written in
-/// the *same* `feed` call that also announced the program — exactly the
-/// ordering `multimux::source::ts_udp`'s own loopback test warns about
-/// ("Second feed: real media the segmenter's cursor ... actually observes").
-/// A genuine transport would instead depayload/demux real media across many
-/// `feed` calls as bytes arrive over the wire, but the `IngestSession`
-/// contract (announce, then sample, each a call [`run_demo`] drains between)
-/// is identical.
+/// Its **first** [`Stage::feed`] call announces one program carrying a
+/// single synthetic AVC track *and* queues every one of its (already-built)
+/// samples, in that same call — the ordinary shape a real transport
+/// produces (e.g. a single MPEG-TS feed batch commonly carries the PMT and
+/// the first PES samples together), and exactly the shape
+/// [`multimux::source::segment::ProgramSegmenter`]'s
+/// `subscribe_from_backlog` cursor (issue #808) exists to handle: it
+/// replays whatever backlog is already resident in the ring by the time
+/// `drive_program_segmenters` builds the segmenter, so samples published in
+/// the same `feed` call that announced the program are not lost.
 struct DemoSession {
     pending: VecDeque<SessionEvent>,
-    announced: bool,
-    samples_sent: bool,
+    sent: bool,
 }
 
 impl DemoSession {
@@ -127,8 +123,7 @@ impl DemoSession {
         pending.push_back(SessionEvent::Established);
         DemoSession {
             pending,
-            announced: false,
-            samples_sent: false,
+            sent: false,
         }
     }
 }
@@ -143,14 +138,12 @@ impl Stage for DemoSession {
     }
 
     fn feed(&mut self, _input: &[u8], _now: Timestamp) -> Result<(), Infallible> {
-        if !self.announced {
-            self.announced = true;
+        if !self.sent {
+            self.sent = true;
             self.pending.push_back(SessionEvent::NewProgram {
                 program: ProgramId(0),
                 tracks: vec![track_spec()],
             });
-        } else if !self.samples_sent {
-            self.samples_sent = true;
             for i in 0..FRAME_COUNT {
                 let is_sync = i % SYNC_INTERVAL_FRAMES == 0;
                 let data = vec![0xAAu8.wrapping_add((i % 251) as u8); 32];
@@ -221,9 +214,9 @@ fn nz(n: usize) -> NonZeroUsize {
 /// dial, wrap in an [`IngestDriver`], feed, and after every feed call
 /// [`report_driver_progress`] (publish the registry + flip health) then
 /// [`drive_program_segmenters`] (turn samples into servable segments/parts).
-/// `DemoSession` splits its script over two `feed` calls (announce, then
-/// sample — see its own doc for why), so this attempt drives exactly three
-/// feeds (announce, sample, then one after `finish()` to flush the trailing
+/// `DemoSession` announces its program and queues all of its samples in one
+/// `feed` call (see its own doc), so this attempt drives exactly two feeds
+/// (announce+sample, then one after `finish()` to flush the trailing
 /// partial segment) and returns `Ok(())` — a real transport's attempt would
 /// instead loop forever, awaiting the next read, and only return on a
 /// transport error (see `multimux::supervise_driver`'s own doc for why
@@ -248,17 +241,13 @@ async fn run_demo(route_handle: Arc<RouteHandle>) -> multimux::Result<()> {
     let mut published: HashSet<ProgramId> = HashSet::new();
     let mut segmenters: HashMap<ProgramId, ProgramSegmenter> = HashMap::new();
 
-    // First feed: announces NewProgram only — mints the driver-side Trunk
-    // and (via drive_program_segmenters, below) subscribes this program's
-    // ProgramSegmenter cursor *before* any sample exists.
+    // One feed: announces NewProgram AND queues every sample — mints the
+    // driver-side Trunk and publishes its samples in the same batch. The
+    // ProgramSegmenter this call's own drive_program_segmenters builds is
+    // subscribed via `subscribe_from_backlog` (issue #808), which replays
+    // whatever backlog is already resident in the ring rather than starting
+    // from "now" — so this single feed's samples are not lost.
     driver.feed(&[], Timestamp::from_nanos(0));
-    report_driver_progress(&driver, &route_handle, &mut published);
-    drive_program_segmenters(&driver, &route_handle, &mut segmenters);
-
-    // Second feed: the samples the now-subscribed cursor actually observes —
-    // see DemoSession's own doc for why this must be a separate call from
-    // the announcement above.
-    driver.feed(&[], Timestamp::from_nanos(1));
     report_driver_progress(&driver, &route_handle, &mut published);
     drive_program_segmenters(&driver, &route_handle, &mut segmenters);
 
