@@ -20,19 +20,19 @@
 //! ingest session's own error type and cannot give a homogeneous "is this
 //! route live" answer across routes fed by different connectors.
 
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::num::NonZeroUsize;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, SystemTime};
 
 use broadcast_common::Timestamp;
 use bytes::Bytes;
 use ll_hls_runtime::server::LlHlsOrigin;
-use media_plane::Trunk;
 use media_plane::trunk::{
     PartEntry, SegmentCursor, SegmentCursorItem, SegmentEntry, SegmentWriter, TrunkConfig,
 };
+use media_plane::{ProgramId, Trunk};
 use transmux::TrackSpec;
 
 /// Ring capacities [`RouteHandle::new`] gives the `Trunk` it builds, beyond
@@ -93,6 +93,48 @@ impl HealthState {
 }
 
 broadcast_common::impl_spec_display!(HealthState);
+
+/// The outcome of resolving one [`ProgramId`] against a route's
+/// [`RouteHandle::resolve_program`] registry.
+///
+/// Deliberately **not** an `Option<Arc<Trunk>>`: a bare `Option` can only say
+/// "here it is" or "no" — it cannot distinguish two `None`-shaped situations
+/// that need opposite egress treatment. "No program has been announced on
+/// this route at all yet" (ingest may still be dialing/connecting/
+/// negotiating — a **transient** condition) and "this route has at least one
+/// live program, but not the one that was asked for" (a **permanent**
+/// condition — the requested [`ProgramId`] will not spring into existence
+/// later) look identical as `None`, but the first should make a caller wait
+/// or answer not-ready (exactly [`media_plane::EgressResponse::Await`]'s own
+/// case), while the second is a genuine 404. Collapsing them would make an
+/// ordinary SPTS route mid-connect indistinguishable from a client
+/// misaddressing an MPTS program that will never exist on this route.
+///
+/// Not given a `name()`/`Display` under the workspace's #204 spec/field-enum
+/// label convention: like [`media_plane::EgressResponse`] (whose module doc
+/// gives the same rationale, and whose crate's `tests/label_coverage.rs`
+/// skip-list names it for exactly this reason), this is a **data-carrying**
+/// control-flow ADT — [`ProgramResolution::Found`] carries the resolved
+/// `Arc<Trunk>` itself — not a static token decoded from a cited spec; a
+/// caller already matches the typed variant instead of formatting a label.
+/// `multimux` has no `tests/label_coverage.rs` drift-guard of its own yet
+/// (unlike every sibling crate) to enforce or record that exemption
+/// mechanically — see this task's own report.
+#[non_exhaustive]
+#[allow(dead_code)] // `Found`'s payload is read once an egress caller lands (issue #805)
+pub(crate) enum ProgramResolution {
+    /// `program` is registered; here is its `Trunk`.
+    Found(Arc<Trunk>),
+    /// No program has been announced on this route at all yet. Not a 404 —
+    /// see this type's own doc for why a caller should treat this as
+    /// "not ready", not "will never exist".
+    NotYetAnnounced,
+    /// At least one program is registered on this route, but not `program`.
+    /// Unlike [`ProgramResolution::NotYetAnnounced`], this is a genuine,
+    /// permanent 404: the route is live and simply does not carry the
+    /// requested [`ProgramId`].
+    NotFound,
+}
 
 /// One closed segment's identity, as DASH/LL-DASH's `Representation`
 /// rendering needs it (`crate::output::dash`/`crate::output::ll_dash`) —
@@ -184,6 +226,46 @@ pub struct RouteHandle {
     target_duration_secs: f64,
     part_target_ms: u32,
     created_at: SystemTime,
+    /// Egress-resolvable `ProgramId -> Arc<Trunk>` registry — the additive
+    /// step (issue #805 task 1) toward this crate's converged architecture:
+    /// `media_plane::IngestDriver` mints one `Trunk` per program the instant
+    /// it observes `media_plane::SessionEvent::NewProgram`, while this
+    /// `RouteHandle` is built *before* any program is known
+    /// (`crate::origin::serve_with_registry` constructs one per configured
+    /// route, ahead of dialing/listening). This map is how those two
+    /// lifetimes reconcile without forcing either one to change when the
+    /// other becomes ready: [`RouteHandle::publish_program`] is the ingest
+    /// side's write, [`RouteHandle::resolve_program`] is the egress side's
+    /// read. Additive only, for now — the still-owned `trunk` field above is
+    /// untouched, and nothing yet calls either new method (a later task
+    /// wires ingest publish + migrates the five `trunk()` call sites).
+    ///
+    /// A `HashMap`, not a single slot: MPTS carries an unbounded (bounded
+    /// only by `media_plane::IngestDriver::max_programs`) number of programs
+    /// per one route/`RouteHandle`, so the registry's shape must already be
+    /// "N programs" even though every route wired up so far is SPTS (exactly
+    /// one program). A later, MPTS-aware egress path resolves a request to
+    /// whichever entry its request identifies (e.g. a program number parsed
+    /// from the request path or a query parameter) by calling
+    /// `resolve_program` with that `ProgramId` — this map does not need to
+    /// change shape to support that; only the request-to-`ProgramId` mapping
+    /// on the egress side is new work for that later task.
+    ///
+    /// # Why `RwLock<HashMap<..>>`, not `Mutex` (unlike this struct's
+    /// `Mutex<HealthState>` field, above)
+    ///
+    /// [`RouteHandle::resolve_program`] is the hottest read path this handle
+    /// will expose once wired to egress: unlike `health`
+    /// (touched once per connection-state transition) or `next_timeline_ns`
+    /// (touched once per produced segment), a route's program registry would
+    /// be read on *every* served HTTP request, across however many
+    /// concurrent viewers that route has. A `Mutex` would serialize all of
+    /// those mutually non-conflicting reads against one another for no
+    /// reason; `RwLock` lets an unbounded number of concurrent readers
+    /// proceed together and blocks only around the rare write — at most once
+    /// per announced program, bounded by `max_programs`, never a
+    /// steady-state cost.
+    programs: RwLock<HashMap<ProgramId, Arc<Trunk>>>,
 }
 
 impl RouteHandle {
@@ -221,6 +303,7 @@ impl RouteHandle {
             target_duration_secs,
             part_target_ms,
             created_at: SystemTime::now(),
+            programs: RwLock::new(HashMap::new()),
         }
     }
 
@@ -229,6 +312,45 @@ impl RouteHandle {
     /// genuinely blocked.
     pub(crate) fn trunk(&self) -> &Arc<Trunk> {
         &self.trunk
+    }
+
+    /// Publish `program`'s `Trunk` into this route's registry — the ingest
+    /// side's write, called once `media_plane::IngestDriver` (or
+    /// `ListenDriver`) reports `media_plane::SessionEvent::NewProgram` and
+    /// mints a `Trunk` for it (a later task wires an actual caller; see
+    /// `crate::origin::serve_with_registry`'s currently-stubbed match arm).
+    ///
+    /// Overwrites any prior entry for the same `ProgramId` outright — the
+    /// same "last write wins" semantics `HashMap::insert` always has.
+    /// `IngestDriver` itself keeps one stable `Trunk` per `ProgramId` for the
+    /// life of a session (a repeat `NewProgram` for an already-known program
+    /// does not mint a second `Trunk`), so in practice this is called once
+    /// per program, not repeatedly with different `Trunk`s for the same key.
+    #[allow(dead_code)] // wired to an ingest caller in a later task (issue #805)
+    pub(crate) fn publish_program(&self, program: ProgramId, trunk: Arc<Trunk>) {
+        self.programs
+            .write()
+            .expect("RouteHandle::programs lock poisoned")
+            .insert(program, trunk);
+    }
+
+    /// Resolve `program` against this route's registry — the egress side's
+    /// read (see [`ProgramResolution`] for why this returns a three-way enum
+    /// rather than `Option<Arc<Trunk>>`, and this struct's `programs` field
+    /// doc for why the lock is a `RwLock`). Not yet called by any egress
+    /// path — a later task migrates `crate::output`/`crate::origin::resource`
+    /// off the still-owned `trunk()` accessor onto this method.
+    #[allow(dead_code)] // wired to an egress caller in a later task (issue #805)
+    pub(crate) fn resolve_program(&self, program: ProgramId) -> ProgramResolution {
+        let programs = self
+            .programs
+            .read()
+            .expect("RouteHandle::programs lock poisoned");
+        match programs.get(&program) {
+            Some(trunk) => ProgramResolution::Found(Arc::clone(trunk)),
+            None if programs.is_empty() => ProgramResolution::NotYetAnnounced,
+            None => ProgramResolution::NotFound,
+        }
     }
 
     /// The sans-IO LL-HLS origin every output's init/segment/part bytes (and
@@ -341,5 +463,126 @@ impl RouteHandle {
         } else {
             (candidate, parts.len())
         }
+    }
+}
+
+#[cfg(test)]
+mod program_registry_tests {
+    //! Coverage for `RouteHandle::publish_program`/`resolve_program` (issue
+    //! #805 task 1) — the additive `ProgramId -> Arc<Trunk>` registry. Each
+    //! `MUTATION VERIFIED` doc comment below records a real edit made to
+    //! `route.rs`'s production code, a re-run of that specific test to
+    //! confirm the named assertion failed with the stated actual-vs-expected
+    //! values, and the subsequent revert.
+
+    use super::*;
+
+    /// A minimal standalone `Trunk`, distinct in identity from any other
+    /// call's — every ring capacity is `1` since these tests never publish
+    /// samples/segments/parts/events, only check `Arc` identity through the
+    /// registry.
+    fn test_trunk() -> Arc<Trunk> {
+        Trunk::new(TrunkConfig::new(nz(1), nz(1), nz(1), nz(1), nz(1)))
+    }
+
+    /// MUTATION VERIFIED: changing `publish_program` to insert a
+    /// freshly-constructed `Trunk::new(TrunkConfig::new(nz(1), nz(1), nz(1),
+    /// nz(1), nz(1)))` instead of the `trunk` argument it was actually
+    /// given (i.e. `programs.write().unwrap().insert(program,
+    /// Trunk::new(TrunkConfig::new(nz(1), nz(1), nz(1), nz(1), nz(1))))`)
+    /// makes this test fail: `resolve_program`'s `Found` arm still returns
+    /// `Some`, but `assert_eq!(Arc::as_ptr(&resolved), Arc::as_ptr(&trunk))`
+    /// fails, comparing two genuinely different heap addresses (e.g.
+    /// `0x1055f3ab0 != 0x1055f4120` — exact addresses vary per run) because
+    /// the registry silently substituted a different `Trunk` for the one
+    /// published. Recompiled and re-run to confirm the failure, then
+    /// reverted.
+    #[test]
+    fn publish_then_resolve_returns_same_arc() {
+        let route = RouteHandle::new(4.0, 500, 4);
+        let trunk = test_trunk();
+        route.publish_program(ProgramId(1), Arc::clone(&trunk));
+
+        match route.resolve_program(ProgramId(1)) {
+            ProgramResolution::Found(resolved) => {
+                assert_eq!(Arc::as_ptr(&resolved), Arc::as_ptr(&trunk));
+            }
+            _ => panic!(
+                "expected ProgramResolution::Found for a just-published program, got a variant \
+                 that is not Found"
+            ),
+        }
+    }
+
+    /// MUTATION VERIFIED: swapping `resolve_program`'s two `None` arms (so a
+    /// miss against an *empty* registry returns `ProgramResolution::NotFound`
+    /// and a miss against a *non-empty* registry returns
+    /// `ProgramResolution::NotYetAnnounced`) makes this test fail:
+    /// `assert!(matches!(result, ProgramResolution::NotYetAnnounced))` fails
+    /// because `result` is actually `ProgramResolution::NotFound` — resolving
+    /// against a route with zero announced programs must never look like a
+    /// permanent 404. Recompiled and re-run to confirm the failure, then
+    /// reverted.
+    #[test]
+    fn resolve_before_any_program_is_not_yet_announced() {
+        let route = RouteHandle::new(4.0, 500, 4);
+        let result = route.resolve_program(ProgramId(1));
+        assert!(
+            matches!(result, ProgramResolution::NotYetAnnounced),
+            "expected NotYetAnnounced with an empty registry"
+        );
+    }
+
+    /// MUTATION VERIFIED: changing `resolve_program`'s `None` arm to always
+    /// return `ProgramResolution::NotYetAnnounced` (dropping the
+    /// `programs.is_empty()` check entirely, i.e. `None =>
+    /// ProgramResolution::NotYetAnnounced`) makes this test fail:
+    /// `assert!(matches!(result, ProgramResolution::NotFound))` fails because
+    /// `result` is actually `ProgramResolution::NotYetAnnounced` — a genuine
+    /// 404 (an announced route with a different program than the one asked
+    /// for) must not be reported as merely "not ready yet". Recompiled and
+    /// re-run to confirm the failure, then reverted.
+    #[test]
+    fn resolve_unknown_program_among_others_is_not_found() {
+        let route = RouteHandle::new(4.0, 500, 4);
+        route.publish_program(ProgramId(1), test_trunk());
+
+        let result = route.resolve_program(ProgramId(2));
+        assert!(
+            matches!(result, ProgramResolution::NotFound),
+            "expected NotFound: program 2 was never published, but program 1 was"
+        );
+    }
+
+    /// MUTATION VERIFIED: replacing `resolve_program`'s `programs.get(&program)`
+    /// lookup with a single-program shortcut — `programs.values().next()`
+    /// (return whichever entry happens to be first, ignoring `program`
+    /// entirely) — makes this test fail:
+    /// `assert_eq!(Arc::as_ptr(&second), Arc::as_ptr(&trunk_b))` fails,
+    /// comparing `trunk_a`'s address against `trunk_b`'s (e.g.
+    /// `0x1055f3ab0 != 0x1055f4120`) because the shortcut answers program 2's
+    /// request with program 1's `Trunk`. This is exactly the MPTS-readiness
+    /// property a single-program-only implementation cannot satisfy.
+    /// Recompiled and re-run to confirm the failure, then reverted.
+    #[test]
+    fn two_programs_resolve_independently_to_different_trunks() {
+        let route = RouteHandle::new(4.0, 500, 4);
+        let trunk_a = test_trunk();
+        let trunk_b = test_trunk();
+        route.publish_program(ProgramId(1), Arc::clone(&trunk_a));
+        route.publish_program(ProgramId(2), Arc::clone(&trunk_b));
+
+        let first = match route.resolve_program(ProgramId(1)) {
+            ProgramResolution::Found(t) => t,
+            _ => panic!("expected ProgramResolution::Found for program 1"),
+        };
+        let second = match route.resolve_program(ProgramId(2)) {
+            ProgramResolution::Found(t) => t,
+            _ => panic!("expected ProgramResolution::Found for program 2"),
+        };
+
+        assert_eq!(Arc::as_ptr(&first), Arc::as_ptr(&trunk_a));
+        assert_eq!(Arc::as_ptr(&second), Arc::as_ptr(&trunk_b));
+        assert_ne!(Arc::as_ptr(&first), Arc::as_ptr(&second));
     }
 }
