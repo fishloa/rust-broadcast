@@ -295,19 +295,28 @@ impl DashState {
     }
 
     fn set_track_specs(&self, specs: Vec<TrackSpec>) {
-        *self.track_specs.lock().unwrap() = specs;
+        *self
+            .track_specs
+            .lock()
+            .expect("DashState track_specs lock poisoned") = specs;
     }
 
     fn track_specs(&self) -> Vec<TrackSpec> {
-        self.track_specs.lock().unwrap().clone()
+        self.track_specs
+            .lock()
+            .expect("DashState track_specs lock poisoned")
+            .clone()
     }
 
     /// Absorb every segment this route's `SegmentCursor` has produced since
     /// the last call — the same non-blocking, called-at-the-top-of-render
     /// shape as [`LlHlsOrigin`]'s own `drain` (see that type's module doc).
     fn drain(&self) {
-        let mut cursor = self.cursor.lock().unwrap();
-        let mut window = self.window.lock().unwrap();
+        let mut cursor = self
+            .cursor
+            .lock()
+            .expect("DashState segment cursor lock poisoned");
+        let mut window = self.window.lock().expect("DashState window lock poisoned");
         while let Some(item) = cursor.poll() {
             if let SegmentCursorItem::Segment(entry) = item {
                 if window.len() == self.capacity {
@@ -323,7 +332,12 @@ impl DashState {
 
     fn window_segments(&self) -> Vec<DashWindowSegment> {
         self.drain();
-        self.window.lock().unwrap().iter().copied().collect()
+        self.window
+            .lock()
+            .expect("DashState window lock poisoned")
+            .iter()
+            .copied()
+            .collect()
     }
 }
 
@@ -432,7 +446,10 @@ impl ProgramServing {
     /// mis-mixing both write paths on one `Trunk` is a test-construction bug,
     /// not something that should take the whole process down.
     fn with_segment_writer<R>(&self, f: impl FnOnce(&SegmentWriter) -> R) -> Option<R> {
-        let mut guard = self.segment_writer.lock().unwrap();
+        let mut guard = self
+            .segment_writer
+            .lock()
+            .expect("ProgramServing segment_writer lock poisoned");
         if guard.is_none() {
             *guard = self.trunk.segment_writer();
         }
