@@ -100,6 +100,14 @@ const PIFF_SAMPLE_ENCRYPTION_UUID: [u8; 16] = [
     0xA2, 0x39, 0x4F, 0x52, 0x5A, 0x9B, 0x4F, 0x14, 0xA2, 0x44, 0x6C, 0x42, 0x7C, 0x64, 0x8D, 0xF4,
 ];
 
+/// How long a `run_*_pull` drive loop parks when its session has, momentarily,
+/// neither an outbound request queued nor a fetch in flight — and has not
+/// ended. A bare `continue` there would spin the loop with no `.await` in it,
+/// which on a current-thread runtime starves every other task on the executor
+/// (including the in-flight fetches this loop is waiting for). Short enough
+/// that it costs no observable latency, long enough that it is not a spin.
+const IDLE_POLL_INTERVAL: Duration = Duration::from_millis(5);
+
 /// A remote MS-SSTR client Manifest to pull: its URL, which may carry
 /// `user:pass@` userinfo (see [`Debug`]'s redaction and
 /// `crate::config::InputSpec::validate`).
@@ -225,7 +233,13 @@ impl LiveState {
 
 enum Phase {
     AwaitingManifest,
-    AwaitingFirstFragments(Vec<PendingStream>),
+    /// Every stream resolved from the initial manifest, plus that manifest's
+    /// own `IsLive` — carried through this phase because [`LiveState`] needs
+    /// it the moment the last first-fragment resolves.
+    AwaitingFirstFragments {
+        streams: Vec<PendingStream>,
+        is_live: bool,
+    },
     Live(LiveState),
 }
 
@@ -302,7 +316,17 @@ impl SmoothIngestSession {
                 self.pump_fragment_fetches();
                 Ok(())
             }
-            _ => self.on_initial_manifest(manifest),
+            other @ Phase::AwaitingFirstFragments { .. } => {
+                // A second manifest delivery while the first round of
+                // first-fragment fetches is still outstanding — a driver bug
+                // or a duplicate delivery. Ignored rather than restarting
+                // resolution, which would re-queue a `FetchFirstFragment` for
+                // every stream on top of the ones already in flight (see
+                // `dash_pull`'s identical case).
+                self.phase = other;
+                Ok(())
+            }
+            Phase::AwaitingManifest => self.on_initial_manifest(manifest),
         }
     }
 
@@ -361,13 +385,16 @@ impl SmoothIngestSession {
                 reason: "smooth-pull: manifest resolved no usable stream (video/audio)".into(),
             });
         }
-        self.phase = Phase::AwaitingFirstFragments(pending);
+        self.phase = Phase::AwaitingFirstFragments {
+            streams: pending,
+            is_live: manifest.is_live,
+        };
         self.pending_events.push_back(SessionEvent::Established);
         Ok(())
     }
 
     fn on_first_fragment(&mut self, idx: StreamIdx, bytes: &[u8]) -> Result<()> {
-        let Phase::AwaitingFirstFragments(pending) = &mut self.phase else {
+        let Phase::AwaitingFirstFragments { streams: pending, .. } = &mut self.phase else {
             return Ok(());
         };
         let Some(p) = pending.get_mut(idx.0) else {
@@ -390,8 +417,10 @@ impl SmoothIngestSession {
     }
 
     fn finish_awaiting_first_fragments(&mut self) -> Result<()> {
-        let Phase::AwaitingFirstFragments(pending) =
-            std::mem::replace(&mut self.phase, Phase::AwaitingManifest)
+        let Phase::AwaitingFirstFragments {
+            streams: pending,
+            is_live,
+        } = std::mem::replace(&mut self.phase, Phase::AwaitingManifest)
         else {
             unreachable!("caller only invokes this from Phase::AwaitingFirstFragments");
         };
@@ -448,7 +477,11 @@ impl SmoothIngestSession {
 
         self.phase = Phase::Live(LiveState {
             manifest_url: self.manifest_url.clone(),
-            is_live: false,
+            // Carried through `Phase::AwaitingFirstFragments` from the
+            // initial manifest — getting this wrong would make an
+            // `IsLive="TRUE"` manifest report `ended()` the moment its first
+            // chunk plan drained, ending a live route after one pass.
+            is_live,
             last_manifest_fetch: Timestamp::ZERO,
             streams,
             manifest_refresh_in_flight: false,
@@ -552,15 +585,20 @@ impl Stage for SmoothIngestSession {
     type Error = MultimuxError;
 
     fn feed(&mut self, (id, bytes): (SmoothResourceId, &[u8]), now: Timestamp) -> Result<()> {
+        let was_manifest = matches!(id, SmoothResourceId::Manifest);
         match id {
-            SmoothResourceId::Manifest => {
-                self.on_manifest(bytes)?;
-                if let Phase::Live(live) = &mut self.phase {
-                    live.last_manifest_fetch = now;
-                }
-            }
+            SmoothResourceId::Manifest => self.on_manifest(bytes)?,
             SmoothResourceId::FirstFragment(idx) => self.on_first_fragment(idx, bytes)?,
             SmoothResourceId::Fragment(idx, _) => self.on_fragment(idx, bytes)?,
+        }
+        if let Phase::Live(live) = &mut self.phase {
+            // See `dash_pull`'s identical comment: the *initial* manifest
+            // arrives while still `AwaitingFirstFragments`, so the first feed
+            // that reaches `Live` must stamp the clock too, or the first live
+            // refresh is overdue the instant the session goes live.
+            if was_manifest || live.last_manifest_fetch == Timestamp::ZERO {
+                live.last_manifest_fetch = now;
+            }
         }
         Ok(())
     }
@@ -881,13 +919,17 @@ pub async fn run_smooth_pull(
                 driver.finish();
                 return Ok(());
             }
-            if let Some(deadline) = driver.next_deadline() {
-                let now = Timestamp::from_instant(start, std::time::Instant::now());
-                if now < deadline {
-                    tokio::time::sleep(deadline.saturating_sub(now)).await;
+            match driver.next_deadline() {
+                Some(deadline) => {
+                    let now = Timestamp::from_instant(start, std::time::Instant::now());
+                    if now < deadline {
+                        tokio::time::sleep(deadline.saturating_sub(now)).await;
+                    }
+                    let now = Timestamp::from_instant(start, std::time::Instant::now());
+                    driver.on_deadline(now);
                 }
-                let now = Timestamp::from_instant(start, std::time::Instant::now());
-                driver.on_deadline(now);
+                // See `dash_pull`'s identical arm.
+                None => tokio::time::sleep(IDLE_POLL_INTERVAL).await,
             }
             continue;
         }
@@ -1214,6 +1256,7 @@ mod tests {
                 if driver.session().ended() {
                     break;
                 }
+                tokio::time::sleep(IDLE_POLL_INTERVAL).await;
                 continue;
             };
             let now = Timestamp::from_nanos(0);

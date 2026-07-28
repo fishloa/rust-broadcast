@@ -111,6 +111,14 @@ use crate::source::{IngestTimeouts, MAX_INFLIGHT_FETCHES, Source};
 /// pre-port module.
 const DEFAULT_MPD_REFRESH_INTERVAL: Duration = Duration::from_secs(2);
 
+/// How long a `run_*_pull` drive loop parks when its session has, momentarily,
+/// neither an outbound request queued nor a fetch in flight — and has not
+/// ended. A bare `continue` there would spin the loop with no `.await` in it,
+/// which on a current-thread runtime starves every other task on the executor
+/// (including the in-flight fetches this loop is waiting for). Short enough
+/// that it costs no observable latency, long enough that it is not a spin.
+const IDLE_POLL_INTERVAL: Duration = Duration::from_millis(5);
+
 /// A remote MPEG-DASH presentation to pull: its MPD URL, which may carry
 /// `user:pass@` userinfo (see [`Debug`]'s redaction and
 /// `crate::config::InputSpec::validate`).
@@ -205,7 +213,7 @@ pub enum DashAction {
 }
 
 /// A Representation resolved from the MPD but not yet initialized (its init
-/// fetch is outstanding) — see [`Phase::AwaitingInits`].
+/// fetch is outstanding) — see `Phase::AwaitingInits`.
 struct PendingRep {
     rep_id: String,
     media_template: Option<String>,
@@ -255,7 +263,15 @@ impl LiveState {
 
 enum Phase {
     AwaitingMpd,
-    AwaitingInits(Vec<PendingRep>),
+    /// Every Representation resolved from the initial MPD, plus that MPD's
+    /// own `@type`/`@minimumUpdatePeriod` — carried through this phase
+    /// because [`LiveState`] needs them the moment the last init resolves,
+    /// and re-parsing the MPD just to recover them would mean a second fetch.
+    AwaitingInits {
+        reps: Vec<PendingRep>,
+        is_dynamic: bool,
+        minimum_update_period: Option<Duration>,
+    },
     Live(LiveState),
 }
 
@@ -300,12 +316,16 @@ impl DashIngestSession {
         })?;
         match std::mem::replace(&mut self.phase, Phase::AwaitingMpd) {
             Phase::AwaitingMpd => self.on_initial_mpd(mpd),
-            Phase::AwaitingInits(reps) => {
-                // A second Mpd feed before the first resolved: replace the
-                // plan wholesale (a driver bug/duplicate delivery); simplest
-                // correct behaviour is to restart resolution.
-                self.phase = Phase::AwaitingInits(reps);
-                self.on_initial_mpd(mpd)
+            other @ Phase::AwaitingInits { .. } => {
+                // A second MPD delivery while the first round of init fetches
+                // is still outstanding — a driver bug or a duplicate delivery.
+                // Ignored rather than restarting resolution: re-running
+                // `on_initial_mpd` would re-queue a `FetchInit` for every
+                // Representation on top of the ones already in flight, so the
+                // "bounded in-flight fetches" property would depend on the
+                // driver never double-delivering.
+                self.phase = other;
+                Ok(())
             }
             Phase::Live(mut live) => {
                 live.is_dynamic = matches!(mpd.mpd_type, MpdType::Dynamic);
@@ -393,7 +413,11 @@ impl DashIngestSession {
                 reason: "dash-pull: mpd resolved no usable representation".into(),
             });
         }
-        self.phase = Phase::AwaitingInits(reps);
+        self.phase = Phase::AwaitingInits {
+            reps,
+            is_dynamic: matches!(mpd.mpd_type, MpdType::Dynamic),
+            minimum_update_period: mpd.minimum_update_period,
+        };
         // `Established` is queued the moment the MPD parses: the *connection*
         // is up, and there is no media-level handshake left to negotiate --
         // the byte-stream sources' precedent (see `ts_program`'s module doc).
@@ -404,7 +428,7 @@ impl DashIngestSession {
     }
 
     fn on_init(&mut self, rep: RepIndex, bytes: &[u8]) -> Result<()> {
-        let Phase::AwaitingInits(reps) = &mut self.phase else {
+        let Phase::AwaitingInits { reps, .. } = &mut self.phase else {
             return Ok(()); // late/duplicate delivery once already Live: ignore.
         };
         let Some(pending) = reps.get_mut(rep.0) else {
@@ -432,7 +456,11 @@ impl DashIngestSession {
     /// fixed MPD order (see the module doc's "Track id remapping"), announce
     /// the program, and kick off the first round of segment fetches.
     fn finish_awaiting_inits(&mut self) -> Result<()> {
-        let Phase::AwaitingInits(pending) = std::mem::replace(&mut self.phase, Phase::AwaitingMpd)
+        let Phase::AwaitingInits {
+            reps: pending,
+            is_dynamic,
+            minimum_update_period,
+        } = std::mem::replace(&mut self.phase, Phase::AwaitingMpd)
         else {
             unreachable!("caller only invokes this from Phase::AwaitingInits");
         };
@@ -464,8 +492,12 @@ impl DashIngestSession {
         }
         self.phase = Phase::Live(LiveState {
             mpd_url: self.mpd_url.clone(),
-            is_dynamic: false, // corrected below once we know; see note
-            minimum_update_period: None,
+            // Carried through `Phase::AwaitingInits` from the initial MPD —
+            // getting this wrong would make a *dynamic* MPD report `ended()`
+            // the moment its first plan drained, ending a live route after
+            // one pass instead of refreshing.
+            is_dynamic,
+            minimum_update_period,
             last_mpd_fetch: Timestamp::ZERO,
             reps,
             mpd_refresh_in_flight: false,
@@ -549,15 +581,21 @@ impl Stage for DashIngestSession {
     type Error = MultimuxError;
 
     fn feed(&mut self, (id, bytes): (DashResourceId, &[u8]), now: Timestamp) -> Result<()> {
+        let was_mpd = matches!(id, DashResourceId::Mpd);
         match id {
-            DashResourceId::Mpd => {
-                self.on_mpd(bytes)?;
-                if let Phase::Live(live) = &mut self.phase {
-                    live.last_mpd_fetch = now;
-                }
-            }
+            DashResourceId::Mpd => self.on_mpd(bytes)?,
             DashResourceId::Init(rep) => self.on_init(rep, bytes)?,
             DashResourceId::Segment(rep, _number) => self.on_segment(rep, bytes)?,
+        }
+        if let Phase::Live(live) = &mut self.phase {
+            // Stamp the refresh clock on an MPD delivery, and also on the very
+            // first feed that reaches `Live` at all: the *initial* MPD arrives
+            // while still `AwaitingInits`, so without this second case
+            // `last_mpd_fetch` would stay `ZERO` and the first live refresh
+            // would be considered overdue the instant the session went live.
+            if was_mpd || live.last_mpd_fetch == Timestamp::ZERO {
+                live.last_mpd_fetch = now;
+            }
         }
         Ok(())
     }
@@ -878,13 +916,18 @@ pub async fn run_dash_pull(
                 driver.finish();
                 return Ok(());
             }
-            if let Some(deadline) = driver.next_deadline() {
-                let now = Timestamp::from_instant(start, std::time::Instant::now());
-                if now < deadline {
-                    tokio::time::sleep(deadline.saturating_sub(now)).await;
+            match driver.next_deadline() {
+                Some(deadline) => {
+                    let now = Timestamp::from_instant(start, std::time::Instant::now());
+                    if now < deadline {
+                        tokio::time::sleep(deadline.saturating_sub(now)).await;
+                    }
+                    let now = Timestamp::from_instant(start, std::time::Instant::now());
+                    driver.on_deadline(now);
                 }
-                let now = Timestamp::from_instant(start, std::time::Instant::now());
-                driver.on_deadline(now);
+                // No scheduled work and nothing in flight: park briefly
+                // rather than spinning — see `IDLE_POLL_INTERVAL`.
+                None => tokio::time::sleep(IDLE_POLL_INTERVAL).await,
             }
             continue;
         }
@@ -1085,6 +1128,7 @@ mod tests {
                 if session.ended() || tokio::time::Instant::now() >= deadline {
                     break;
                 }
+                tokio::time::sleep(IDLE_POLL_INTERVAL).await;
                 continue;
             };
             let now = Timestamp::from_nanos(0);

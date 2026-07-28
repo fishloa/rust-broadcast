@@ -83,6 +83,14 @@ use crate::source::http_auth::{
 };
 use crate::source::{IngestTimeouts, MAX_INFLIGHT_FETCHES, Source};
 
+/// How long a `run_*_pull` drive loop parks when its session has, momentarily,
+/// neither an outbound request queued nor a fetch in flight — and has not
+/// ended. A bare `continue` there would spin the loop with no `.await` in it,
+/// which on a current-thread runtime starves every other task on the executor
+/// (including the in-flight fetches this loop is waiting for). Short enough
+/// that it costs no observable latency, long enough that it is not a spin.
+const IDLE_POLL_INTERVAL: Duration = Duration::from_millis(5);
+
 /// A remote (LL-)HLS Media Playlist to pull: its URL, which may carry
 /// `user:pass@` userinfo (see [`Debug`]'s redaction and
 /// `crate::config::InputSpec::validate`).
@@ -429,8 +437,9 @@ pub async fn run_hls_pull(
                 return Ok(());
             }
             // Nothing in flight and nothing queued: the client has genuinely
-            // nothing to do right now (e.g. mid-`WaitMs`). Loop back to
-            // re-check `poll_transmit`.
+            // nothing to do right now. Park briefly rather than spinning —
+            // see `IDLE_POLL_INTERVAL`.
+            tokio::time::sleep(IDLE_POLL_INTERVAL).await;
             continue;
         }
 
@@ -695,6 +704,7 @@ mod tests {
                 if driver.session().ended() {
                     break;
                 }
+                tokio::time::sleep(IDLE_POLL_INTERVAL).await;
                 continue;
             };
             let now = Timestamp::from_instant(start, std::time::Instant::now());
@@ -856,6 +866,7 @@ mod tests {
                 if driver.session().ended() {
                     break;
                 }
+                tokio::time::sleep(IDLE_POLL_INTERVAL).await;
                 continue;
             };
             let now = Timestamp::from_instant(start, std::time::Instant::now());
