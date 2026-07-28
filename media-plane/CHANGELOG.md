@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed (pre-1.0 hardening)
+- **`TapItem` is now `#[non_exhaustive]`.** It was the only public enum in this
+  crate without it, while its two closest analogues — `SampleCursorItem` and
+  `SegmentCursorItem`, the same shape of data interleaved with in-band loss
+  reports — both carry it. The sample ring already distinguishes ordinary
+  `Lagged` from escalated `Degraded`, so a second loss class on the tap is a
+  plausible near-term addition, and adding a variant to a published exhaustive
+  enum is breaking. Free to fix before 0.1.0 ships; not afterwards.
+  - Note for downstream matchers, including **examples and integration tests
+    of this crate itself**: those compile as separate crates, so the attribute
+    applies to them exactly as to an external consumer. This crate's own
+    `byte_tap_wire_observer` example and its fuzz target both needed a
+    catch-all arm — each `panic!`s on an unrecognised variant rather than
+    absorbing it, since silently counting a future loss class as delivered
+    data (or as nothing) is precisely the miscount `TapItem` exists to
+    prevent.
+
 ### Added (issue #808)
 - **`Trunk::subscribe_from_backlog`**: a [`SampleCursor`] seek-to-past variant
   next to `Trunk::subscribe`, for a consumer built *after* samples it needs
