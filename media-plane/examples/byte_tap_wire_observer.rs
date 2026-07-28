@@ -69,6 +69,11 @@ fn main() {
                         lagged_total += skipped;
                         lagged_reports += 1;
                     }
+                    // `TapItem` is `#[non_exhaustive]`: a future loss class
+                    // (the escalated `Degraded` the sample ring already
+                    // distinguishes, say) must not silently count as
+                    // delivered data.
+                    other => panic!("unhandled TapItem variant: {other:?}"),
                 }
             }
         }
@@ -81,6 +86,7 @@ fn main() {
                 lagged_total += skipped;
                 lagged_reports += 1;
             }
+            other => panic!("unhandled TapItem variant: {other:?}"),
         }
     }
 

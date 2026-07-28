@@ -21,7 +21,7 @@
 //! workspace's real captured fixture (`fixtures/ts/h264_aac.ts` — Main
 //! profile, 320x240, 25 fps, 75 real video frames, ISO/IEC 13818-1; see
 //! `fixtures/ts/CODEC-ORACLE.md`) via `TsDemux` and feeds those real samples
-//! through the exact same `LlHlsSegmenter` -> `MediaStore` -> `LlHlsOutput`
+//! through the exact same `LlHlsSegmenter` -> `RouteHandle` -> `LlHlsOutput`
 //! origin stack `glass_to_glass.rs` uses, live-paced at the fixture's own
 //! frame rate. Audio is left out: `multimux::output::llhls::LlHlsOutput`
 //! renders a single fixed track (`DEFAULT_TRACK_ID`), exactly as
@@ -54,7 +54,7 @@ use ll_hls_runtime::server::DEFAULT_TRACK_ID;
 use multimux::origin::{AppState, router};
 use multimux::output::Output as MmOutput;
 use multimux::output::llhls::LlHlsOutput;
-use multimux::store::MediaStore;
+use multimux::route::RouteHandle;
 use transmux::hls::{MapTag, MediaPlaylist, MediaSegment};
 use transmux::ll_hls::LlHlsSegmenter;
 use transmux::{CodecConfig, FragmentTrackData, Sample, TrackSpec, TsDemux};
@@ -221,7 +221,8 @@ const WINDOW_SEGMENTS: usize = 8;
 /// frame rate (25 fps, `fixtures/ts/CODEC-ORACLE.md`) — a live-shaped
 /// producer, not a batch dump, exactly as `glass_to_glass.rs`'s own
 /// `run_live_producer`.
-async fn run_live_producer(store: Arc<MediaStore>, spec: TrackSpec, samples: Vec<Sample>) {
+async fn run_live_producer(store: Arc<RouteHandle>, spec: TrackSpec, samples: Vec<Sample>) {
+    let program = media_plane::ProgramId(0);
     let track_id = spec.track_id;
     let movie_timescale = spec.timescale;
     let mut seg = LlHlsSegmenter::with_part_target(
@@ -231,26 +232,26 @@ async fn run_live_producer(store: Arc<MediaStore>, spec: TrackSpec, samples: Vec
         PART_TARGET_MS,
     )
     .expect("segmenter builds");
-    store.set_init(seg.init_segment().expect("init segment builds"));
+    store.set_init(program, seg.init_segment().expect("init segment builds"));
 
     // h264_aac.ts is a real 25 fps capture (CODEC-ORACLE.md) -> 40ms/frame.
     let frame_interval = Duration::from_millis(40);
     for sample in samples {
         seg.push(track_id, sample).expect("push succeeds");
         for part in seg.take_ready_parts() {
-            store.add_part(part);
+            store.add_part(program, part);
         }
         for segment in seg.take_ready_segments() {
-            store.add_segment(segment);
+            store.add_segment(program, segment);
         }
         tokio::time::sleep(frame_interval).await;
     }
     seg.flush().expect("flush succeeds");
     for part in seg.take_ready_parts() {
-        store.add_part(part);
+        store.add_part(program, part);
     }
     for segment in seg.take_ready_segments() {
-        store.add_segment(segment);
+        store.add_segment(program, segment);
     }
 }
 
@@ -258,12 +259,19 @@ async fn run_live_producer(store: Arc<MediaStore>, spec: TrackSpec, samples: Vec
 /// serving one stream named `live`.
 async fn start_ll_origin(
     spec: TrackSpec,
-) -> (Arc<MediaStore>, String, tokio::task::JoinHandle<()>) {
-    let store = Arc::new(MediaStore::new(
+) -> (Arc<RouteHandle>, String, tokio::task::JoinHandle<()>) {
+    let store = Arc::new(RouteHandle::new(
         TARGET_DURATION_SECS,
         PART_TARGET_MS,
         WINDOW_SEGMENTS,
     ));
+    // `multimux` egress resolves what it serves through the route's program
+    // registry (issue #805/#806). This test drives the handle's own
+    // per-program `Trunk` directly rather than through a supervisor, so it
+    // must publish that program itself -- otherwise every request blocks
+    // waiting for a program that is already there, and the test fails on its
+    // hang guard rather than on anything it means to assert.
+    store.publish_new_program(media_plane::ProgramId(0));
     let mut streams = HashMap::new();
     streams.insert(
         "live".to_string(),

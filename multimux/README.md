@@ -234,13 +234,11 @@ for the original v1 (RTSP→LL-HLS-only) design this hub replaced.
 ## Examples
 
 ```bash
-# Serve a synthetic stream with no camera / network required.
-cargo run --example serve_mock
-
 # Serve one real RTSP source.
 cargo run --example serve_rtsp -- rtsp://cam.local/stream
 
-# Register a custom input scheme with zero multimux edits.
+# Register a custom input scheme with zero multimux edits (drives a real
+# synthetic Dialer/IngestSession through supervise_driver end to end).
 cargo run --example custom_scheme
 ```
 
@@ -265,7 +263,7 @@ from the config schema):
   packaged to all three outputs (`llhls`, `dash`, `ll_dash`) from the same
   CMAF segments (issue #663 P4's "ingest-once, many-outputs").
 - [`custom-scheme.json`](examples/custom-scheme.json) — an `InputSpec::Custom`
-  route naming the `"silence"` scheme
+  route naming the `"demo"` scheme
   [`examples/custom_scheme.rs`](examples/custom_scheme.rs) registers.
 
 ## Spec

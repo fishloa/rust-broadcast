@@ -1,6 +1,7 @@
 //! The `Output` abstraction: one implementation per delivery protocol
 //! (LL-HLS, DASH, LL-DASH) layered over the protocol-neutral
-//! [`crate::store::MediaStore`].
+//! [`crate::route::RouteHandle`] (step 5b's replacement for the deleted
+//! `ll_hls_runtime::server::MediaStore` — see that module's own docs).
 //!
 //! Each `Output` renders only its own **manifest** (m3u8 / MPD) — the
 //! init/segment/part byte serving both protocols reference is identical
@@ -17,7 +18,7 @@ use std::sync::Arc;
 
 use axum::Router;
 
-use crate::store::MediaStore;
+use crate::route::RouteHandle;
 
 /// Which delivery protocol an [`Output`] implements — used for config
 /// (`crate::config::Route::outputs`) and diagnostics; never for dispatch
@@ -128,7 +129,7 @@ pub trait Output: Send + Sync + 'static {
     fn kind(&self) -> OutputKind;
 
     /// Build the axum routes this output serves for one stream's manifest,
-    /// sharing the one `store`. The origin merges the returned router with
+    /// sharing the one `route`. The origin merges the returned router with
     /// every other configured output's manifest routes and the shared
     /// resource route, then mounts the whole thing under `/{stream}/`, so
     /// routes here are relative (e.g. `/media.m3u8`, not `/:stream/media.m3u8`)
@@ -136,7 +137,7 @@ pub trait Output: Send + Sync + 'static {
     /// filename or with the shared `/:file` catch-all (a bare numeric/opaque
     /// filename would; `master.m3u8`/`media.m3u8`/`manifest.mpd`/
     /// `manifest-ll.mpd` don't).
-    fn manifest_routes(&self, store: Arc<MediaStore>) -> Router;
+    fn manifest_routes(&self, route: Arc<RouteHandle>) -> Router;
 }
 
 #[cfg(test)]

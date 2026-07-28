@@ -18,10 +18,12 @@
 //!   { url, blocking, skip }`, …), same reasoning as `Output`.
 //! - `ResourceId` (`client::action`) — data-carrying identity ADT (`Part {
 //!   msn, part }`, …), not a fixed spec label set.
-//! - `PlaylistOutcome` (`server::engine`) — data-carrying outcome ADT
-//!   (`Ready(String)`, …), not a spec-defined wire field.
-//! - `ResourceOutcome` (`server::engine`) — same: data-carrying outcome ADT
-//!   (`Ready { bytes, cache }`, …).
+//! - `LlHlsRequest` (`server::engine`) — data-carrying dispatch ADT
+//!   (`Playlist { track_id, query }`, `Resource { name }`), same reasoning
+//!   as `Action`/`ResourceId` (plan step 4).
+//! - `LlHlsBody` (`server::engine`) — data-carrying outcome ADT
+//!   (`Playlist(String)`, `Resource(Bytes)`), same reasoning as `Output`
+//!   (plan step 4).
 
 use std::collections::BTreeSet;
 use std::fs;
@@ -33,8 +35,8 @@ const SKIP: &[&str] = &[
     "Output",
     "Action",
     "ResourceId",
-    "PlaylistOutcome",
-    "ResourceOutcome",
+    "LlHlsRequest",
+    "LlHlsBody",
 ];
 
 fn read_rs(dir: &Path, out: &mut Vec<String>) {

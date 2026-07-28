@@ -103,9 +103,25 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - uses: Swatinem/rust-cache@v2
+      # Every crate that claims `no_std` support must be listed here, or the
+      # claim is unverified: `cargo build --workspace --no-default-features`
+      # does NOT catch a per-crate break, because feature unification across
+      # the workspace can pull `std` in for a crate that would fail alone
+      # (that masked a std-only `f64::round()` once already).
+      #
+      # `broadcast-common`, `mpeg-ts`, `transmux`, `media-plane`,
+      # `timed-metadata`, `ll-hls-runtime`, `srt-runtime` and `media-doctor`
+      # were all missing from this list while advertising `no_std` on
+      # crates.io — including `broadcast-common`, which everything else
+      # depends on. They cross-build clean today; they are listed now so they
+      # cannot regress silently.
+      #
+      # Deliberately NOT here (they genuinely require `std`, verified):
+      # `dvb-ci-runtime`, `ts-fix`, `multimux`, `multimux-cli`, `dvb-tools`,
+      # `dvb-stream`.
       - name: Build each library crate for bare-metal (no_std)
         run: |
-          for c in dvb-common dvb-bbframe scte35-splice dvb-t2mi dvb-si dvb-conformance mpeg-pes dvb-subtitle mpeg-ps scte104 cc-data st291 ule dvb-ci dvb-simulcrypt mp4-emsg dvb-vbi dvb-flute dvb-scte35 dvb-emsg dvb-pes dvb-cc dvb-ule rtp-packet rtcp-packet st12-1 st337 rdd29 st377-1; do
+          for c in broadcast-common dvb-common dvb-bbframe scte35-splice dvb-t2mi dvb-si dvb-conformance mpeg-pes dvb-subtitle mpeg-ps scte104 cc-data st291 ule dvb-ci dvb-simulcrypt mp4-emsg dvb-vbi dvb-flute dvb-scte35 dvb-emsg dvb-pes dvb-cc dvb-ule rtp-packet rtcp-packet st12-1 st337 rdd29 st377-1 mpeg-ts transmux media-plane timed-metadata ll-hls-runtime srt-runtime media-doctor; do
             echo "::group::$c (no_std)"
             cargo build -p "$c" --no-default-features --target thumbv7em-none-eabi --locked
             echo "::endgroup::"

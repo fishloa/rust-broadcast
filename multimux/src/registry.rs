@@ -20,18 +20,27 @@
 //!
 //! # Writing an input factory
 //!
-//! `crate::source::rtsp::RtspSource`-style connectors implement
-//! [`crate::origin::supervisor::SourceConnector`] — an associated-type trait
-//! that is not object-safe, since `supervise` is generic over it rather than
-//! boxed. An [`InputFactory`] therefore cannot simply return a connector
-//! trait object: instead, the factory closure constructs its own concrete
-//! `impl SourceConnector`, spawns the re-exported
-//! [`crate::origin::supervisor::supervise`] itself, and returns the
-//! resulting [`tokio::task::JoinHandle`] — this erases the connector type at
-//! the closure boundary instead of at the trait boundary. `Output` (unlike
-//! `SourceConnector`) is already object-safe, so an [`OutputFactory`] can
-//! return `Arc<dyn crate::output::Output>` directly; `AuthFactory` similarly
-//! returns a concrete `broadcast_auth::Verifier` (also not generic).
+//! Every built-in source (`crate::source::rtsp`, `ts_udp`, `rtmp`, …) is
+//! driven over `media_plane::ingress`'s `Dialer`/`Listener` + `IngestSession`
+//! traits by [`crate::origin::supervisor::supervise_driver`] — the same
+//! traits and the same supervisor a [`Custom`](crate::config::InputSpec::Custom)
+//! scheme's own factory uses. An [`InputFactory`] cannot simply return a
+//! `Dialer`/`IngestSession` for multimux to drive itself (neither trait is
+//! object-safe: `supervise_driver` is generic over the caller-supplied
+//! `attempt` closure, not a boxed trait object): instead, the factory closure
+//! builds its own concrete `Dialer`/`IngestSession` pair, wraps one
+//! dial-through-disconnect cycle in an `attempt` closure that calls
+//! [`crate::source::advance_route`] (the one facade call: publishes each
+//! newly-announced program into `ctx.store`'s registry *and* turns the
+//! ingested samples into LL-HLS-servable segments/parts) once per iteration
+//! over a caller-owned `crate::source::DriverProgress`, spawns
+//! [`crate::origin::supervisor::supervise_driver`] over that closure, and
+//! returns the resulting [`tokio::task::JoinHandle`] — this erases the
+//! session type at the closure boundary instead of at the trait boundary.
+//! `Output` (unlike `Dialer`/`IngestSession`) is already object-safe, so an
+//! [`OutputFactory`] can return `Arc<dyn crate::output::Output>` directly;
+//! `AuthFactory` similarly returns a concrete `broadcast_auth::Verifier`
+//! (also not generic).
 //!
 //! See `examples/custom_scheme.rs` for a complete (if minimal) external
 //! input scheme registered with zero multimux edits.
@@ -43,17 +52,18 @@ use std::sync::Arc;
 /// supervised ingest task for a [`crate::config::InputSpec::Custom`] route.
 pub struct InputCtx {
     /// The route's served stream name (`crate::config::Route::name`) — pass
-    /// through to [`crate::origin::supervisor::supervise`]'s own `name`
-    /// parameter (used only for logging/metrics labels, never a credential).
+    /// through to [`crate::origin::supervisor::supervise_driver`]'s own
+    /// `name` parameter (used only for logging/metrics labels, never a
+    /// credential).
     pub name: String,
     /// The route's `InputSpec::Custom::params`, opaque to multimux.
     pub params: serde_json::Value,
-    /// This route's shared store — the factory's connector feeds
-    /// `run_pipeline` (via `supervise`) into this same store the origin
+    /// This route's shared state — the factory's own driver loop feeds it via
+    /// [`crate::source::advance_route`], the same `RouteHandle` the origin
     /// serves reads from.
-    pub store: Arc<crate::store::MediaStore>,
+    pub store: Arc<crate::route::RouteHandle>,
     /// `crate::config::Config::target_duration_secs`, forwarded unchanged —
-    /// pass straight through to `supervise`.
+    /// pass straight through to the factory's own segmenter/segmenting loop.
     pub target_duration_secs: f64,
     /// `crate::config::Config::part_target_ms`, forwarded unchanged.
     pub part_target_ms: u32,
@@ -66,7 +76,8 @@ pub struct InputCtx {
 
 /// Builds and spawns one [`crate::config::InputSpec::Custom`] route's ingest
 /// task, returning its `JoinHandle` — see this module's docs for why a
-/// factory spawns `supervise` itself rather than returning a connector.
+/// factory spawns [`crate::origin::supervisor::supervise_driver`] itself
+/// rather than returning a `Dialer`/`IngestSession` for multimux to drive.
 pub type InputFactory =
     Arc<dyn Fn(InputCtx) -> crate::Result<tokio::task::JoinHandle<()>> + Send + Sync>;
 

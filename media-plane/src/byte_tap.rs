@@ -95,7 +95,16 @@ pub enum TapPoint {
 /// ahead of the data that follows the gap it reports — see the
 /// [module docs](self) on why loss must never be a side channel a consumer
 /// could fail to check.
+///
+/// `#[non_exhaustive]` for the same reason [`crate::trunk::SampleCursorItem`]
+/// is: this is the same in-band shape (data interleaved with loss reports),
+/// and a later loss class — the escalated `Degraded` that ring already
+/// distinguishes from ordinary `Lagged`, say — must be addable without a
+/// major version. Adding a variant to a published exhaustive enum is
+/// breaking, and this crate has not shipped yet, so the cost of getting it
+/// right is zero now and non-zero forever after.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum TapItem {
     /// One observed byte unit with its arrival time, verbatim — never
     /// validated, never filtered.

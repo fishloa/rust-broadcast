@@ -1,7 +1,7 @@
 //! Drive the sans-IO LL-HLS **client** engine (`ll_hls_runtime::client`)
 //! against a canned Media Playlist — no socket, no real network. The
-//! playlist text itself comes from this crate's own origin renderer
-//! ([`ll_hls_runtime::server::media_playlist_m3u8`]), so it is guaranteed
+//! playlist text itself comes from this crate's own origin engine
+//! ([`ll_hls_runtime::server::LlHlsOrigin`]), so it is guaranteed
 //! well-formed LL-HLS syntax (the exact symmetric counterpart
 //! `MediaPlaylist::parse` is written against) rather than hand-typed text
 //! that could drift from what the parser actually accepts.
@@ -12,11 +12,23 @@
 //! cargo run --example client_stepping -p ll-hls-runtime
 //! ```
 
+use std::num::NonZeroUsize;
+use std::time::Duration;
+
+use broadcast_common::Timestamp;
 use ll_hls_runtime::client::{Action, LlHlsClient};
-use ll_hls_runtime::server::{DEFAULT_TRACK_ID, MediaStore, media_playlist_m3u8};
-use transmux::ll_hls::{PartInfo, SegmentInfo};
+use ll_hls_runtime::server::{
+    BlockingQuery, DEFAULT_TRACK_ID, LlHlsBody, LlHlsOrigin, LlHlsRequest,
+};
+use media_plane::egress::{AwaitPolicy, EgressResponse, ServedEgress};
+use media_plane::trunk::{PartEntry, SegmentEntry, Trunk, TrunkConfig};
+use transmux::SegmentMeta;
 
 const PLAYLIST_URL: &str = "http://origin/live/media.m3u8";
+
+fn nz(n: usize) -> NonZeroUsize {
+    NonZeroUsize::new(n).expect("example capacity must be non-zero")
+}
 
 /// Builds a small, valid canned Media Playlist: one closed segment plus an
 /// open segment with one part already landed — enough to exercise an init
@@ -24,29 +36,51 @@ const PLAYLIST_URL: &str = "http://origin/live/media.m3u8";
 /// renderer defaults `CAN-BLOCK-RELOAD=YES`) a Blocking Playlist Reload for
 /// the next request.
 fn canned_playlist() -> String {
-    let store = MediaStore::new(1.0, 500, 4);
-    store.set_init(vec![0xAA; 32]);
-    store.add_part(PartInfo {
-        bytes: vec![0x01; 16],
-        duration: 0.5,
-        independent: true,
-        segment_seq: 1,
-        part_index: 0,
-    });
-    store.add_segment(SegmentInfo {
-        bytes: vec![0x02; 32],
-        duration: 1.0,
-        segment_seq: 1,
-        part_count: 1,
-    });
-    store.add_part(PartInfo {
-        bytes: vec![0x03; 16],
-        duration: 0.5,
-        independent: true,
-        segment_seq: 2,
-        part_index: 0,
-    });
-    media_playlist_m3u8(&store, DEFAULT_TRACK_ID)
+    let trunk = Trunk::new(TrunkConfig::new(nz(16), nz(4), nz(8), nz(4), nz(16)));
+    let writer = trunk
+        .segment_writer()
+        .expect("first (and only) segment writer");
+    let origin = LlHlsOrigin::new(std::sync::Arc::clone(&trunk), 1.0, 500, nz(4));
+    origin.set_init(vec![0xAA; 32]);
+
+    writer.publish_part(PartEntry::new(
+        vec![0x01; 16],
+        1,
+        0,
+        Duration::from_millis(500),
+        true,
+    ));
+    writer.publish_segment(SegmentEntry::new(
+        vec![0x02; 32],
+        1,
+        Duration::from_secs(1),
+        Timestamp::from_nanos(0),
+        SegmentMeta {
+            discontinuous: false,
+        },
+    ));
+    writer.publish_part(PartEntry::new(
+        vec![0x03; 16],
+        2,
+        0,
+        Duration::from_millis(500),
+        true,
+    ));
+
+    match origin.resolve(
+        LlHlsRequest::Playlist {
+            track_id: DEFAULT_TRACK_ID,
+            query: BlockingQuery::default(),
+        },
+        Timestamp::from_nanos(0),
+        AwaitPolicy::new(Timestamp::from_nanos(0)),
+    ) {
+        EgressResponse::Ready {
+            body: LlHlsBody::Playlist(m),
+            ..
+        } => m,
+        other => panic!("expected Ready(Playlist), got {other:?}"),
+    }
 }
 
 fn main() {

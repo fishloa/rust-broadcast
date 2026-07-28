@@ -17,23 +17,34 @@
 //!
 //! # `IngestSession` is a `Stage`, matching `ByteStage`'s precedent
 //!
-//! Exactly like [`crate::ByteStage`], `IngestSession` is not a new drive
-//! trait — it is a blanket specialisation of [`broadcast_common::Stage`]
-//! whose input is a borrowed byte slice and whose output is [`SessionEvent`]:
+//! Like [`crate::ByteStage`], `IngestSession` builds on
+//! [`broadcast_common::Stage`] — but, unlike `ByteStage`, it is not a bare
+//! blanket alias over it. Only the output is pinned:
 //!
 //! ```text
-//! pub trait IngestSession: for<'a> Stage<In<'a> = &'a [u8], Out = SessionEvent> + Send { .. }
+//! pub trait IngestSession: for<'a> Stage<Out = SessionEvent> + Send {
+//!     type Request: Send;
+//!     fn poll_transmit(&mut self) -> Option<Self::Request> { None }
+//! }
 //! ```
 //!
-//! This buys the same three things `ByteStage` documents: one drive model
-//! for the whole plane, `finish()` for a clean end-of-input flush, and
-//! `demand()` for back-pressure — plus it means [`run_dial`]/[`run_listen`]
-//! (below) can drive an `IngestSession` with the exact same "feed, drain
-//! `poll()`, repeat" loop [`crate::byte_stage`]'s own tests already validate
-//! against a real `Stage`. The one addition over the bare blanket ([`ByteStage`]
-//! adds nothing) is [`IngestSession::poll_transmit`], with a `None`-returning
-//! default so the blanket impl still applies to every `Stage` for free — see
-//! [Why `poll_transmit` exists](#why-poll_transmit-exists-and-most-sources-will-never-override-it) below.
+//! `Stage::In<'a>` is deliberately **not** pinned to `&'a [u8]` (round 3;
+//! it was through round 2) — see
+//! [Pull sources need a typed request/response identity](#pull-sources-need-a-typed-requestresponse-identity-round-3)
+//! below for why. This still buys the same things `ByteStage` documents for
+//! the byte-stream sources that make up most of the plane: one drive model,
+//! `finish()` for a clean end-of-input flush, and `demand()` for
+//! back-pressure — [`run_dial`]/[`run_listen`] drive any `IngestSession` with
+//! the same "feed, drain `poll()`, repeat" loop
+//! [`crate::byte_stage`]'s own tests already validate against a real `Stage`,
+//! whatever `In<'a>` an implementor chooses. The two things every
+//! `IngestSession` adds over a bare `Stage` are
+//! [`poll_transmit`](IngestSession::poll_transmit) (with a `None`-returning default —
+//! see
+//! [Why `poll_transmit` exists](#why-poll_transmit-exists-and-most-sources-will-never-override-it)
+//! below) and [`Request`](IngestSession::Request) (with **no** default — every
+//! implementor names its own request type explicitly; see the pull-sources
+//! section below for why it has none).
 //!
 //! [`ByteStage`]: crate::ByteStage
 //!
@@ -77,10 +88,13 @@
 //! one-shot `track_specs()` snapshot is already only handled by logging a
 //! warning and dropping it (see that function's `DemuxEvent::TrackAdded`
 //! arm) — there is no live wiring for "new track" today, let alone "new
-//! program". `SessionEvent::NewProgram` is what closes that gap generically:
-//! whether a program is split upstream (known before the session starts) or
-//! discovered while demuxing an MPTS in one session, the driver's reaction is
-//! identical — mint a `Trunk`, keep going.
+//! program". `SessionEvent::NewProgram` is what closes the "new program"
+//! half of that gap generically: whether a program is split upstream (known
+//! before the session starts) or discovered while demuxing an MPTS in one
+//! session, the driver's reaction is identical — mint a `Trunk`, keep going.
+//! [`SessionEvent::TracksChanged`] (issue #781) closes the other half — the
+//! `ts_udp` warn-and-drop case cited above is exactly what an `IngestSession`
+//! now has a real event to emit instead of logging and discarding.
 //!
 //! # Supervision: EOF is not an error (the `HealthState` fix)
 //!
@@ -268,30 +282,60 @@
 //! the session knows how much partial handshake state it is legitimately
 //! holding.
 //!
-//! # Known seam: pull sources (HLS/DASH/Smooth) are request-driven, not
-//! stream-driven
+//! # Pull sources need a typed request/response identity (round 3)
 //!
-//! Recorded, not solved — it is a Step 5 decision and belongs in front of a
-//! human. `multimux`'s `hls_pull`/`dash_pull`/`smooth_pull` sources are not
-//! continuous byte streams: they fetch a playlist/manifest on a reload timer,
-//! compute segment URLs, and GET whole objects. Two observations:
+//! Round 2 recorded this as a seam and stopped, deliberately, with no caller
+//! yet to design against. Round 3 has the caller —
+//! `multimux::source::{hls_pull, dash_pull, smooth_pull}` — and resolves it.
 //!
-//! - **`feed(&[u8])` itself is *not* the problem.** `Stage`'s contract says
-//!   nothing about chunk size and explicitly decouples `poll` from `feed`, so
-//!   handing one whole downloaded segment body to `feed` is entirely within
-//!   contract — no different from a 1316-byte UDP datagram except in size.
-//! - **`poll_transmit() -> Option<Bytes>` *is* the real gap.** It expresses
-//!   "send these bytes on the connection you already have", which is right for
-//!   RTSP/RTMP/SRT but cannot express "issue a GET for *this URL*". A pull
-//!   source's scheduling need is otherwise already covered by the machinery
-//!   above: [`Stage::next_deadline`]/[`Stage::on_deadline`] *is* a playlist
-//!   reload timer, and the establishment pump *is* a request/response loop.
+//! The seam was correctly diagnosed back then: **`feed` was never the
+//! problem.** `Stage`'s contract says nothing about chunk size and explicitly
+//! decouples `poll` from `feed`, so handing one whole downloaded segment body
+//! to `feed` is entirely within contract — no different from a 1316-byte UDP
+//! datagram except in size. **`poll_transmit() -> Option<Bytes>` was the real
+//! gap**: it expresses "send these bytes on the connection you already have",
+//! right for RTSP/RTMP/SRT, but it cannot express "issue a GET for *this
+//! URL*", and there is no way to route an arriving response back to the
+//! request it answers when several are outstanding at once and they can
+//! complete out of order.
 //!
-//! So the missing piece looks like a request-*addressing* type (a
-//! `Transmit`-style enum carrying either raw bytes or a URL + method), not a
-//! second drive model or a pull-shaped sibling trait. Adding one now would be
-//! speculative — no caller exists until Step 5 ports those three sources —
-//! so this module states the seam and stops.
+//! Two shapes were considered for closing it:
+//!
+//! 1. **A per-source pull method**, sitting next to `feed` rather than
+//!    replacing it (e.g. `IngestSession::feed_response(id, bytes)`).
+//!    Rejected: it would make `feed(&[u8])` itself unreachable for a pull
+//!    session (nothing ever calls it — every real input arrives through the
+//!    new method instead) while `IngestSession: Stage<In<'a> = &'a [u8]>`
+//!    still advertises that `feed` as the way in. **A session whose `feed`
+//!    is never called, with every real input arriving out-of-band, is a type
+//!    that lies about the contract it implements.** That is not a style
+//!    objection — it means the trait bound stops meaning what it says for
+//!    exactly the implementors that need the escape hatch, which defeats the
+//!    point of having one drive contract for the whole plane.
+//! 2. **An `Inbound` enum** (`enum Inbound<'a> { Bytes(&'a [u8]), Response {
+//!    id: ResourceId, bytes: &'a [u8] } }`) as the one fixed `In<'a>` every
+//!    `IngestSession` uses. Rejected too: it forces every stream source
+//!    (RTSP/RTMP/SRT/TS-*) to match a `Response` variant that can never occur
+//!    for it, and it bakes pull vocabulary (`ResourceId`) into `media-plane`
+//!    itself — this crate would then need to know what a *resource* is, which
+//!    is exactly the kind of protocol knowledge the plane exists to stay free
+//!    of (`ResourceId`/`Action` belong to `ll-hls-runtime`, and the analogous
+//!    DASH/Smooth identities belong to `multimux`, not here).
+//!
+//! What round 3 actually did: relax `Stage::In<'a>`'s pin (it is no longer
+//! `&'a [u8]`, only `Out = SessionEvent` is pinned) and add
+//! [`IngestSession::Request`], an opaque associated type with **no default**.
+//! A byte-stream source states `type In<'a> = &'a [u8]; type Request =
+//! Bytes;` — one extra line, no behaviour change (see
+//! `multimux::source::ts_program::TsIngestSession`). A pull source states its
+//! own honest shape instead — e.g. `type In<'a> = (HlsResourceId, &'a [u8]);
+//! type Request = ll_hls_runtime::client::Action;` — and correlates an
+//! arriving response to the request that caused it via whatever identity type
+//! it chose, entirely inside its own `feed`. The plane never sees a
+//! `ResourceId` or an `Action`; it only ever sees "some `S::In<'_>` went in,
+//! some `Option<S::Request>` came out", which is the same shape `feed`/
+//! `poll_transmit` always had, just no longer forced to agree on `&[u8]`
+//! across every implementor.
 //!
 //! # Reconnect: caller-chosen backoff, never a hardcoded sleep
 //!
@@ -313,6 +357,10 @@ use std::num::NonZeroUsize;
 use std::sync::Arc;
 
 use broadcast_common::{Stage, Timestamp};
+// Only the test-only `Bytes`-`Request` sessions below reference this type
+// directly now: since round 3, `IngestSession::Request` is generic, so
+// production code in this module no longer names `Bytes` itself.
+#[cfg(test)]
 use bytes::Bytes;
 use transmux::{Sample, TrackSpec};
 
@@ -332,18 +380,28 @@ pub struct ProgramId(pub u32);
 /// for the justification. Not applied automatically (there is no default
 /// constructor for `max_programs`, matching [`TrunkConfig::new`]'s and
 /// [`HandshakePolicy::establish_by`]'s own all-explicit-arguments shape) —
-/// a caller wraps it in a [`NonZeroUsize`] and passes it like any other
-/// driver parameter.
-pub const DEFAULT_MAX_PROGRAMS: usize = 64;
+/// a caller passes it like any other driver parameter.
+///
+/// Typed [`NonZeroUsize`], not `usize`: every consumer of this constant feeds
+/// it to a `max_programs: NonZeroUsize` parameter, so handing back a plain
+/// `usize` made every call site re-wrap it and made a forgotten wrap a
+/// compile error at the *call*, not here. The default for a `NonZeroUsize`
+/// parameter should already be one.
+pub const DEFAULT_MAX_PROGRAMS: NonZeroUsize = match NonZeroUsize::new(64) {
+    Some(n) => n,
+    // Unreachable: 64 is a non-zero literal. `match` rather than `expect`
+    // keeps this a `const` on the 1.86 MSRV.
+    None => panic!("64 is non-zero"),
+};
 
 /// What an [`IngestSession`]'s [`Stage::poll`] hands back to a driver.
 ///
 /// `#[non_exhaustive]`: a later step (egress track-set negotiation, §1.3's
-/// upstream program-split) may need a `ProgramEnded`/`TrackSetChanged`
-/// variant; this step only builds the three events a driver needs to tell
-/// handshaking from live and to route samples into the right [`Trunk`], and
-/// does not add a variant it has no correct producer for yet (this crate's
-/// own precedent — [`crate::byte_merge`]'s `Hitless2022_7` note).
+/// upstream program-split) may still need a `ProgramEnded` variant —
+/// [`SessionEvent::TracksChanged`] (issue #781) closed the mid-stream
+/// track-set half of this gap, but this step does not add a variant it has
+/// no correct producer for yet (this crate's own precedent —
+/// [`crate::byte_merge`]'s `Hitless2022_7` note).
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub enum SessionEvent {
@@ -407,40 +465,132 @@ pub enum SessionEvent {
         /// The decoded sample itself.
         sample: Sample,
     },
+    /// `program`'s track set changed mid-stream (issue #781) — e.g.
+    /// transmux's PMT version diffing detects a broadcaster adding an audio
+    /// language. Must have been announced via a prior `NewProgram` with this
+    /// `program`, exactly like [`SessionEvent::Sample`] — a `TracksChanged`
+    /// for an unannounced program is the identical contract violation, and a
+    /// driver drops it the identical way (see [`IngestDriver`]'s docs); it
+    /// never mints a `Trunk` on its own.
+    ///
+    /// # Why `tracks` is the complete replacement set, not a delta
+    ///
+    /// A PMT carries the **whole** elementary-stream list on every version
+    /// bump, not just what changed — there is no "here is the one track
+    /// that was added" signal at that layer, only "here is the program's
+    /// full track list, as of now". Carrying the complete set here mirrors
+    /// that fact rather than fighting it, and buys two things a delta
+    /// encoding cannot:
+    ///
+    /// - **Idempotence.** Re-delivering the same `TracksChanged` twice (a
+    ///   retried demux pass, a duplicate event) leaves the trunk's track set
+    ///   unchanged in content — replacing a set with an identical set is a
+    ///   no-op in substance, whereas replaying an "add track" delta twice
+    ///   would double-add it.
+    /// - **Immunity to delta-ordering bugs.** A dropped or reordered
+    ///   `TrackAdded`/`TrackRemoved` pair (exactly the demux-layer events
+    ///   `transmux` already emits — see below) can never leave a consumer's
+    ///   view of the track set permanently wrong: the next `TracksChanged`
+    ///   is a fresh, authoritative snapshot, not an increment on top of
+    ///   whatever state happened to accumulate.
+    ///
+    /// A consumer that cares *which* track appeared or vanished diffs this
+    /// snapshot against the previous one it already holds (or against
+    /// [`crate::Trunk::tracks`], which this event's application updates) —
+    /// that comparison is the consumer's to make, not this event's to
+    /// pre-compute.
+    ///
+    /// # Why this layer does not mirror `transmux::DemuxEvent`'s three events
+    ///
+    /// `transmux` already emits `DemuxEvent::TrackAdded`/`TrackRemoved`/
+    /// `TrackUpdated` at the demux layer — finer-grained, delta-shaped
+    /// events aimed at a caller that wants to react to *what changed*. This
+    /// layer deliberately does not mirror that shape: `IngestSession`
+    /// implementors translate whatever demux-layer deltas they see into one
+    /// full snapshot per change, for the same reason [`SessionEvent::NewProgram`]
+    /// carries a full `tracks: Vec<TrackSpec>` rather than a "here is track
+    /// N" event per track — see [the module docs](self#the-program-dimension-b5-sessionevent-newprogram-at-any-time).
+    ///
+    /// # Scope: ingress→`Trunk` plumbing only
+    ///
+    /// This variant and [`IngestDriver`]'s handling of it stop at storing
+    /// the new set on the program's `Trunk` (see
+    /// [`crate::TrunkWriter::set_tracks`]). Deciding whether/when to admit a
+    /// newly-appeared track into an egress manifest (LL-HLS/DASH rendering)
+    /// is a separate, deliberate decision belonging to its own issue — not
+    /// something a track-set snapshot arriving at the `Trunk` should trigger
+    /// implicitly.
+    TracksChanged {
+        /// Which program's track set changed — must match a program already
+        /// announced via [`SessionEvent::NewProgram`].
+        program: ProgramId,
+        /// The complete replacement track set — see this variant's own doc
+        /// for why this is a full snapshot rather than a delta.
+        tracks: Vec<TrackSpec>,
+    },
 }
 
 /// The sans-IO ingress drive contract: a specialisation of [`Stage`] whose
-/// input is a borrowed byte slice and whose output is [`SessionEvent`] — see
+/// output is [`SessionEvent`] — see
 /// [the module docs](self#ingestsession-is-a-stage-matching-bytestages-precedent).
+/// `Stage::In<'a>` is **not** pinned here (round 3 relaxed it from `&'a
+/// [u8]`) — see
+/// [Pull sources need a typed request/response identity](self#pull-sources-need-a-typed-requestresponse-identity-round-3)
+/// for why: a byte-stream source still states `type In<'a> = &'a [u8]`, but a
+/// pull source (HLS/DASH/Smooth) states its own request/response identity
+/// instead.
 ///
 /// # Why this is explicitly implemented, unlike [`crate::ByteStage`]
 ///
 /// `ByteStage` gets a blanket `impl<T> ByteStage for T where T: Stage<…>`
 /// because it adds **nothing** to `Stage` — it is a pure alias, so a blanket
 /// impl costs nothing and saves every implementor a line. `IngestSession`
-/// adds [`poll_transmit`](Self::poll_transmit), which has a default. A blanket
-/// impl here would make that default **impossible to override** (the blanket
-/// would already be the one impl for every type, and a second manual impl
-/// would collide), quietly breaking the handshake mechanism it exists for.
-/// So implementors write one extra line — `impl IngestSession for MySession {}`
-/// to accept the default, or a real body to send bytes. This asymmetry is
-/// deliberate and is the reason it is documented rather than "fixed".
-pub trait IngestSession: for<'a> Stage<In<'a> = &'a [u8], Out = SessionEvent> + Send {
-    /// Outbound bytes this session wants written to its peer.
+/// adds [`poll_transmit`](Self::poll_transmit) (which has a default) and
+/// [`Request`](Self::Request) (which, being an associated type, cannot have
+/// one). A blanket impl here would make `poll_transmit`'s default
+/// **impossible to override** (the blanket would already be the one impl for
+/// every type, and a second manual impl would collide), quietly breaking the
+/// handshake mechanism it exists for — and could not exist at all once
+/// `Request` has no default value to blanket-supply. So implementors write at
+/// least one extra line — `type Request = Bytes;` for every byte-stream
+/// source, plus a real `poll_transmit` body for the two or three that send
+/// back. This asymmetry with `ByteStage` is deliberate and is the reason it
+/// is documented rather than "fixed".
+pub trait IngestSession: for<'a> Stage<Out = SessionEvent> + Send {
+    /// What [`poll_transmit`](Self::poll_transmit) hands back — opaque to the
+    /// plane, deliberately: see
+    /// [the module docs](self#pull-sources-need-a-typed-requestresponse-identity-round-3)
+    /// for why this is not a fixed enum. A byte-stream source (RTSP/RTMP/SRT/
+    /// TS-*) sets this to [`bytes::Bytes`]; a pull source sets it to its own
+    /// protocol's action type (e.g. `ll_hls_runtime::client::Action`).
     ///
-    /// Two uses, one mechanism: the **handshake** requests that establish the
-    /// session (an RTSP `DESCRIBE`, then `SETUP`, then `PLAY` — see
+    /// No default: unlike `poll_transmit`, there is no value every
+    /// implementor could reasonably start from, so every `IngestSession`
+    /// names its own type explicitly, one line, even the sessions that never
+    /// override `poll_transmit`'s body.
+    type Request: Send;
+
+    /// The next outbound request this session wants performed — bytes
+    /// written to an already-open connection, or (for a pull source) a
+    /// fetch/wait action for the driver to carry out.
+    ///
+    /// Two uses of the byte-stream case, one mechanism: the **handshake**
+    /// requests that establish the session (an RTSP `DESCRIBE`, then `SETUP`,
+    /// then `PLAY` — see
     /// [Establishment is ordinary driving](self#establishment-is-ordinary-driving--dial-performs-no-io)),
     /// and in-session traffic afterwards (RTCP receiver reports, an RTSP
     /// keepalive `OPTIONS`, an SRT ACK). This is exactly what
     /// `rtsp_runtime::client::ClientSession`'s request builders return, only
-    /// pulled rather than returned.
+    /// pulled rather than returned. A pull source's own [`Request`](Self::Request)
+    /// plays the identical role in its own protocol — see e.g.
+    /// `ll_hls_runtime::client::Action`, returned unchanged through this
+    /// method by an HLS-pull `IngestSession`.
     ///
     /// A driver drains this in a loop after every
     /// [`Stage::feed`]/[`Stage::on_deadline`] (and once immediately after
     /// [`Dialer::dial`], to send the first handshake request), exactly like
     /// [`Stage::poll`]. A session with nothing to send never overrides it.
-    fn poll_transmit(&mut self) -> Option<Bytes> {
+    fn poll_transmit(&mut self) -> Option<Self::Request> {
         None
     }
 }
@@ -660,11 +810,16 @@ impl<S: IngestSession> IngestDriver<S> {
         self.refused_programs
     }
 
-    /// Feed more bytes read from this session's connection — a handshake
+    /// Feed more input read from this session's connection — a handshake
     /// response while [`HealthState::Establishing`], media once
-    /// [`HealthState::Live`]; the same call either way. A no-op once the
-    /// session has reached a terminal state — it is never fed again.
-    pub fn feed(&mut self, input: &[u8], now: Timestamp) {
+    /// [`HealthState::Live`]; the same call either way. Generic over
+    /// `Stage::In` (round 3: no longer pinned to `&[u8]`) so a pull
+    /// source can feed its own `(id, bytes)` response shape through the same
+    /// method a byte-stream source feeds raw bytes through — see
+    /// [the module docs](self#pull-sources-need-a-typed-requestresponse-identity-round-3).
+    /// A no-op once the session has reached a terminal state — it is never
+    /// fed again.
+    pub fn feed(&mut self, input: S::In<'_>, now: Timestamp) {
         if !self.health.is_running() {
             return;
         }
@@ -710,9 +865,10 @@ impl<S: IngestSession> IngestDriver<S> {
         }
     }
 
-    /// Drain outbound bytes the session wants sent to its peer — handshake
-    /// requests included. See [`IngestSession::poll_transmit`].
-    pub fn poll_transmit(&mut self) -> Option<Bytes> {
+    /// Drain the next outbound request the session wants performed —
+    /// handshake requests included, and (for a pull source) a fetch/wait
+    /// action. See [`IngestSession::poll_transmit`]/[`IngestSession::Request`].
+    pub fn poll_transmit(&mut self) -> Option<S::Request> {
         self.session.poll_transmit()
     }
 
@@ -734,6 +890,32 @@ impl<S: IngestSession> IngestDriver<S> {
     /// This session's current health.
     pub fn health(&self) -> &HealthState<S::Error> {
         &self.health
+    }
+
+    /// Consume this driver, yielding its final [`HealthState`] **by value** —
+    /// so a caller that is tearing the route down can move the concrete
+    /// `S::Error` out of [`HealthState::Failed`] and return it.
+    ///
+    /// [`Self::health`] only lends a `&HealthState`, which is right for
+    /// polling but cannot hand back the error: a session error type is not
+    /// required to be [`Clone`] (`multimux::MultimuxError` is not), so a
+    /// borrowing accessor forces a caller to degrade the typed error into a
+    /// formatted string — exactly the loss this module's docs call out as
+    /// the bug `HealthState<E>` exists to fix. Without this, an
+    /// [`IngestSession`] whose `feed` returns `Err` is *unreportable* by its
+    /// own driver loop: `feed` records the error in `health` and returns
+    /// `()`, so a loop that only ever calls `feed` sees no failure at all and
+    /// spins forever. (That is not hypothetical — it is exactly how
+    /// `multimux::source::smooth_pull`'s PlayReady-detection error escaped
+    /// its drive loop until this method existed.)
+    ///
+    /// Consuming (rather than a `&mut` "take the error out") is deliberate:
+    /// every terminal state is final, so there is no valid use for a driver
+    /// whose failure has been moved out from under it. Any [`Trunk`] this
+    /// driver minted stays alive independently — they are [`Arc`]s a caller
+    /// will already have cloned out via [`Self::trunk`].
+    pub fn into_health(self) -> HealthState<S::Error> {
+        self.health
     }
 
     /// Terminate a still-`Establishing` session whose deadline has passed.
@@ -760,6 +942,23 @@ impl<S: IngestSession> IngestDriver<S> {
         self.programs.keys().copied()
     }
 
+    /// Read-only access to the underlying session — for state a driver loop
+    /// needs to observe beyond what [`SessionEvent`]/[`HealthState`] already
+    /// expose. Concretely: a pull source (HLS/DASH/Smooth) knows it has
+    /// reached true end-of-stream (the origin's playlist/manifest said so
+    /// *and* every outstanding fetch it named is accounted for) entirely from
+    /// its own protocol bookkeeping — unlike a byte-stream transport, whose
+    /// "ended" signal is external (the HTTP body closed, the socket peer
+    /// disconnected) and therefore already known to the driver loop without
+    /// reaching in here at all. `SessionEvent` deliberately has no `Ended`
+    /// variant to carry that (see its own doc's "no field/variant without a
+    /// correct producer" discipline), so a pull source's own inherent
+    /// accessor (e.g. `HlsIngestSession::ended`) is what a driver loop reads
+    /// to decide when to call [`Self::finish`].
+    pub fn session(&self) -> &S {
+        &self.session
+    }
+
     /// Drain every ready [`SessionEvent`], dispatching each into its
     /// program's `Trunk`. A `Sample` for a program never announced via
     /// `NewProgram` is dropped (documented `IngestSession` contract
@@ -778,7 +977,7 @@ impl<S: IngestSession> IngestDriver<S> {
                         self.health = HealthState::Live;
                     }
                 }
-                SessionEvent::NewProgram { program, .. } => {
+                SessionEvent::NewProgram { program, tracks } => {
                     // A repeat announcement of an already-admitted program
                     // does not grow `self.programs`, so it is never refused
                     // here regardless of how full the bound is — only a
@@ -794,10 +993,32 @@ impl<S: IngestSession> IngestDriver<S> {
                         self.refused_programs += 1;
                         continue;
                     }
+                    // A REPEAT announcement updates the existing `Trunk` in
+                    // place; it must never mint a replacement. Re-minting
+                    // would swap a fresh, empty `Trunk` into `self.programs`
+                    // while every already-issued cursor kept reading the
+                    // orphaned one that no longer receives writes — existing
+                    // subscribers would see a permanently stalled stream, and
+                    // whatever the old `Trunk` still held (samples, segments,
+                    // parts, and so the DVR window) would be silently dropped.
+                    //
+                    // Treating the repeat as a track-set update is exactly
+                    // what `TracksChanged` does, so this defers to the same
+                    // path rather than duplicating it: a re-announcement is a
+                    // restatement of the program's tracks, not a new program.
+                    if let Some(writer) = self.writers.get(&program) {
+                        writer.set_tracks(tracks);
+                        continue;
+                    }
                     let trunk = Trunk::new(self.trunk_config);
                     let writer = trunk
                         .writer()
                         .expect("a freshly constructed Trunk always has an unclaimed writer");
+                    // Seed the freshly-minted Trunk's track set from this
+                    // event's `tracks` (issue #781) — previously discarded
+                    // entirely (the `..` this match arm used to bind with),
+                    // leaving every Trunk's track set permanently empty.
+                    writer.set_tracks(tracks);
                     self.programs.insert(program, trunk);
                     self.writers.insert(program, writer);
                 }
@@ -809,6 +1030,15 @@ impl<S: IngestSession> IngestDriver<S> {
                 } => {
                     if let Some(writer) = self.writers.get(&program) {
                         writer.publish(track_id, retention, sample);
+                    }
+                }
+                SessionEvent::TracksChanged { program, tracks } => {
+                    // Same "unannounced program is a dropped contract
+                    // violation, not a panic" contract as `Sample` above —
+                    // reuses the exact same `writers` lookup, not a second
+                    // drop path.
+                    if let Some(writer) = self.writers.get(&program) {
+                        writer.set_tracks(tracks);
                     }
                 }
             }
@@ -1082,12 +1312,23 @@ impl<L: Listener> ListenDriver<L> {
     /// (its slot is free for a future [`Self::poll_accept`]); returns `None`
     /// for an unknown `id` or a session still running (`Establishing` or
     /// `Live`) after this call.
+    ///
+    /// Pinned to `&[u8]` (unlike [`IngestDriver::feed`], generic over
+    /// `Stage::In` since round 3): every [`Listener`] implementor
+    /// today is a push accept over a byte-stream transport (RTMP/SRT
+    /// listener), never a pull source (a pull source dials out via
+    /// [`Dialer`], it does not accept — see `multimux::source::srt`'s "Why
+    /// listener mode is not a `Listener` yet"), so there is no caller needing
+    /// anything else here yet.
     pub fn feed(
         &mut self,
         id: SessionId,
         input: &[u8],
         now: Timestamp,
-    ) -> Option<HealthState<<L::Session as Stage>::Error>> {
+    ) -> Option<HealthState<<L::Session as Stage>::Error>>
+    where
+        L::Session: for<'a> Stage<In<'a> = &'a [u8]>,
+    {
         self.drive(id, |d| d.feed(input, now))
     }
 
@@ -1120,6 +1361,69 @@ impl<L: Listener> ListenDriver<L> {
     /// The `Trunk` for `program` under session `id`, if announced yet.
     pub fn trunk(&self, id: SessionId, program: ProgramId) -> Option<&Arc<Trunk>> {
         self.sessions.get(&id).and_then(|d| d.trunk(program))
+    }
+
+    /// Read-only access to session `id`'s underlying [`IngestDriver`], if
+    /// still admitted.
+    ///
+    /// # Why this (and [`Self::driver_mut`]/[`Self::reap_if_terminal`]) exist
+    ///
+    /// [`Self::feed`] is pinned to `&[u8]` because it bundles three steps —
+    /// feed, then check `is_running()`, then remove if not — into one call,
+    /// which only works when the caller has nothing it needs to observe
+    /// *between* "the session just went terminal" and "the session is gone".
+    /// RTMP (issue #805 task 4) is exactly a caller that does: its
+    /// `Listener::Session` is fed already-parsed-and-replied-to
+    /// `rtmp_runtime::server::ServerEvent`s (`Stage::In<'a> = &'a
+    /// [ServerEvent]`, not `&'a [u8]` — see `multimux::source::rtmp`'s module
+    /// doc for why `RtmpConnection` makes that the honest shape), so
+    /// [`Self::feed`]'s bound does not apply; and every driver-backed `run_*`
+    /// entry point (`crate::source::report_driver_progress`,
+    /// `crate::source::segment::drive_program_segmenters` in the `multimux`
+    /// crate) needs to publish this session's newly-announced programs and
+    /// flush its segmenter *before* a just-terminated session is reaped,
+    /// exactly like the single-`IngestDriver` drive loops
+    /// (`multimux::source::rtsp::run_rtsp` et al.) already do against an
+    /// `IngestDriver` they own outright.
+    ///
+    /// These three methods let a driving loop reassemble that same
+    /// feed → observe → reap sequence for a session admitted by a
+    /// [`ListenDriver`], for any `Stage::In` shape: `driver_mut(id)` to feed
+    /// (via [`IngestDriver::feed`], generic since round 3) or finish, `driver(id)`
+    /// to read back `programs()`/`trunk()`/`health()`/[`IngestDriver::session`]
+    /// afterward, then `reap_if_terminal(id)` to perform the exact removal
+    /// [`Self::feed`] would have, once the caller is done observing.
+    pub fn driver(&self, id: SessionId) -> Option<&IngestDriver<L::Session>> {
+        self.sessions.get(&id)
+    }
+
+    /// Mutable access to session `id`'s underlying [`IngestDriver`], if still
+    /// admitted — see [`Self::driver`] for why this exists. Does **not**
+    /// reap a session that becomes terminal as a result of a call made
+    /// through this reference; call [`Self::reap_if_terminal`] afterward.
+    pub fn driver_mut(&mut self, id: SessionId) -> Option<&mut IngestDriver<L::Session>> {
+        self.sessions.get_mut(&id)
+    }
+
+    /// If session `id` is admitted and has reached a terminal
+    /// [`HealthState`] (`is_running() == false`), removes it and returns that
+    /// final state — exactly the same removal step [`Self::feed`] performs
+    /// internally, exposed standalone for a caller using [`Self::driver_mut`]
+    /// instead of
+    /// [`Self::feed`]/[`Self::on_deadline`]/[`Self::finish`] (see
+    /// [`Self::driver`]'s doc). `None` for an unknown `id` or one still
+    /// running — a no-op either way, so calling this speculatively every
+    /// iteration is always safe.
+    pub fn reap_if_terminal(
+        &mut self,
+        id: SessionId,
+    ) -> Option<HealthState<<L::Session as Stage>::Error>> {
+        let driver = self.sessions.get(&id)?;
+        if driver.health().is_running() {
+            None
+        } else {
+            self.sessions.remove(&id).map(|d| d.health)
+        }
     }
 
     /// Runs `op` against session `id`'s driver, then — if that call left it in
@@ -1282,7 +1586,9 @@ mod tests {
     }
 
     /// Nothing to send: takes `poll_transmit`'s default.
-    impl IngestSession for ScriptedSession {}
+    impl IngestSession for ScriptedSession {
+        type Request = Bytes;
+    }
 
     /// A fake [`Dialer`] yielding one pre-built session then erroring on
     /// every call after (or always erroring, for the reconnect test).
@@ -1345,6 +1651,267 @@ mod tests {
             crate::SampleCursorItem::Timed { track_id, sample } => {
                 assert_eq!(track_id, 7);
                 assert_eq!(sample.data.as_ref(), &[0xAB; 4]);
+            }
+            other => panic!("expected Timed, got {other:?}"),
+        }
+    }
+
+    // --- Track-set plumbing (issue #781): NewProgram seeds, TracksChanged --
+    // --- replaces, unannounced TracksChanged drops -------------------------
+
+    /// The discarded-track-list fix, made to fail against the pre-fix code:
+    /// before `drain()`'s `NewProgram` arm called `writer.set_tracks(tracks)`,
+    /// `tracks` was bound with `..` and never touched a `Trunk` at all, so
+    /// every `Trunk::tracks()` stayed permanently empty.
+    ///
+    /// MUTATION VERIFIED: reverting `drain()`'s `NewProgram` arm to bind
+    /// `SessionEvent::NewProgram { program, .. }` (dropping `tracks`, as it
+    /// was before this change) and removing the `writer.set_tracks(tracks)`
+    /// call makes the `assert_eq!` below fail — `track_ids` reads back `[]`
+    /// instead of `[3, 9]`. Recompiled and re-run to confirm the failure,
+    /// then reverted.
+    #[test]
+    fn new_program_seeds_the_trunk_with_exactly_the_announced_tracks() {
+        let session =
+            ScriptedSession::new(vec![FeedOutcome::Events(vec![SessionEvent::NewProgram {
+                program: ProgramId(1),
+                tracks: vec![opaque_track(3), opaque_track(9)],
+            }])]);
+        let mut dialer = ScriptedDialer {
+            sessions: VecDeque::from(vec![session]),
+            fail_with: FakeError("unused"),
+        };
+        let mut driver = run_dial(&mut dialer, trunk_config(), handshake(), max_programs())
+            .expect("fake dial succeeds");
+
+        driver.feed(b"pat", Timestamp::ZERO);
+
+        let trunk = driver
+            .trunk(ProgramId(1))
+            .cloned()
+            .expect("NewProgram announced a Trunk for program 1");
+        let track_ids: Vec<u32> = trunk.tracks().iter().map(|t| t.track_id).collect();
+        assert_eq!(
+            track_ids,
+            vec![3, 9],
+            "the Trunk must expose exactly the tracks NewProgram carried"
+        );
+    }
+
+    /// `TracksChanged` replaces the previously-seeded set wholesale and
+    /// bumps `track_generation` — NewProgram's own seeding call counts as
+    /// the first `set_tracks`, so generation reads `1` right after
+    /// admission and `2` after the `TracksChanged`.
+    ///
+    /// MUTATION VERIFIED: changing `drain()`'s `TracksChanged` arm from
+    /// `writer.set_tracks(tracks)` to `writer.publish_event(..)`-style no-op
+    /// (concretely: commenting out the `writer.set_tracks(tracks);` call,
+    /// leaving the event silently absorbed) makes both assertions below
+    /// fail — `track_ids` still reads back `[1]` instead of `[1, 2]`, and
+    /// `track_generation()` stays at `1` instead of advancing to `2`.
+    /// Recompiled and re-run to confirm the failure, then reverted.
+    #[test]
+    fn tracks_changed_replaces_the_set_and_bumps_generation() {
+        let session = ScriptedSession::new(vec![
+            FeedOutcome::Events(vec![SessionEvent::NewProgram {
+                program: ProgramId(1),
+                tracks: vec![opaque_track(1)],
+            }]),
+            FeedOutcome::Events(vec![SessionEvent::TracksChanged {
+                program: ProgramId(1),
+                tracks: vec![opaque_track(1), opaque_track(2)],
+            }]),
+        ]);
+        let mut dialer = ScriptedDialer {
+            sessions: VecDeque::from(vec![session]),
+            fail_with: FakeError("unused"),
+        };
+        let mut driver = run_dial(&mut dialer, trunk_config(), handshake(), max_programs())
+            .expect("fake dial succeeds");
+
+        driver.feed(b"pat", Timestamp::from_nanos(0));
+        let trunk = driver.trunk(ProgramId(1)).cloned().unwrap();
+        assert_eq!(
+            trunk.track_generation(),
+            1,
+            "NewProgram's seed counts as the first set_tracks call"
+        );
+
+        driver.feed(b"pmt-bump", Timestamp::from_nanos(1));
+        let track_ids: Vec<u32> = trunk.tracks().iter().map(|t| t.track_id).collect();
+        assert_eq!(
+            track_ids,
+            vec![1, 2],
+            "TracksChanged must replace the set with the new complete snapshot"
+        );
+        assert_eq!(
+            trunk.track_generation(),
+            2,
+            "TracksChanged must bump the generation exactly once"
+        );
+    }
+
+    /// A `TracksChanged` for a program never announced via `NewProgram` is a
+    /// contract violation, handled exactly like an unannounced `Sample`:
+    /// dropped, not panicking, and never minting a `Trunk` on its own.
+    ///
+    /// MUTATION VERIFIED: changing `drain()`'s `TracksChanged` arm from
+    /// `if let Some(writer) = self.writers.get(&program) { .. }` to
+    /// unconditionally minting a fresh `Trunk`/`writer` for `program`
+    /// (mirroring what `NewProgram` does) makes the `assert!` below fail —
+    /// `driver.trunk(ProgramId(1))` comes back `Some(..)` instead of `None`.
+    /// Recompiled and re-run to confirm the failure, then reverted.
+    #[test]
+    fn tracks_changed_for_an_unannounced_program_is_dropped_not_panicking_and_mints_nothing() {
+        let session = ScriptedSession::new(vec![FeedOutcome::Events(vec![
+            SessionEvent::TracksChanged {
+                program: ProgramId(1),
+                tracks: vec![opaque_track(1)],
+            },
+        ])]);
+        let mut driver = IngestDriver::new(session, trunk_config(), handshake(), max_programs());
+
+        // Must not panic.
+        driver.feed(b"stray", Timestamp::ZERO);
+
+        assert!(
+            driver.trunk(ProgramId(1)).is_none(),
+            "TracksChanged must never mint a Trunk on its own"
+        );
+        assert_eq!(
+            driver.program_count(),
+            0,
+            "an unannounced program must not be admitted by TracksChanged"
+        );
+    }
+
+    /// `track_generation` is stable across everything that is *not* a
+    /// `NewProgram` seed or a `TracksChanged` — ordinary samples and no-op
+    /// feed calls must never bump it, so a consumer polling the generation
+    /// as a cheap "did the track set change" check sees no false positives.
+    ///
+    /// MUTATION VERIFIED: adding a `writer.set_tracks(Vec::new())` call to
+    /// `drain()`'s `Sample` arm (simulating "generation accidentally bumped
+    /// by unrelated activity") makes the final `assert_eq!` below fail —
+    /// `track_generation()` reads back `2` instead of `1` after the sample
+    /// is published. Recompiled and re-run to confirm the failure, then
+    /// reverted.
+    #[test]
+    fn track_generation_is_stable_when_nothing_changes() {
+        let session = ScriptedSession::new(vec![
+            FeedOutcome::Events(vec![SessionEvent::NewProgram {
+                program: ProgramId(1),
+                tracks: vec![opaque_track(1)],
+            }]),
+            FeedOutcome::Events(vec![SessionEvent::Sample {
+                program: ProgramId(1),
+                track_id: 1,
+                retention: RetentionClass::Timed,
+                sample: sample(0xAB),
+            }]),
+            FeedOutcome::Events(vec![]),
+        ]);
+        let mut driver = IngestDriver::new(session, trunk_config(), handshake(), max_programs());
+
+        driver.feed(b"1", Timestamp::from_nanos(0));
+        let trunk = driver.trunk(ProgramId(1)).cloned().unwrap();
+        assert_eq!(trunk.track_generation(), 1);
+
+        driver.feed(b"2", Timestamp::from_nanos(1));
+        driver.feed(b"3", Timestamp::from_nanos(2));
+
+        assert_eq!(
+            trunk.track_generation(),
+            1,
+            "samples and no-op feeds must never bump track_generation"
+        );
+    }
+
+    /// A REPEAT `NewProgram` for an already-admitted program must update the
+    /// existing `Trunk` in place, never mint a replacement.
+    ///
+    /// This asserts continuity from the *subscriber's* side, which is the
+    /// property that actually matters and the one a track-set assertion
+    /// alone would miss: `Trunk` is a cloneable handle over shared state, so
+    /// re-minting swaps a fresh empty `Trunk` into `programs` while every
+    /// already-issued cursor keeps reading the orphaned one that no longer
+    /// receives writes. The stream does not error — it silently stops, which
+    /// is far harder to diagnose in production than a crash, and whatever
+    /// the old `Trunk` still buffered (and so the DVR window) goes with it.
+    ///
+    /// MUTATION VERIFIED: removing the `if let Some(writer) =
+    /// self.writers.get(&program) { .. continue }` early-return from
+    /// `drain()`'s `NewProgram` arm (restoring the unconditional
+    /// `Trunk::new`) fails this test on the track-set assertion first —
+    /// `left: [7], right: [7, 8]`, the re-announcement's tracks having
+    /// landed on a replacement `Trunk` the subscriber cannot see.
+    ///
+    /// Both assertions were confirmed to bite independently: re-running the
+    /// mutation with the track-set assertion suppressed then fails on
+    /// `cursor.poll()` returning `None` ("a cursor subscribed before the
+    /// re-announcement must still receive samples"), which is the direct
+    /// proof of subscriber stranding rather than an inference from the
+    /// track set. Recompiled and re-run for each, then reverted.
+    #[test]
+    fn repeat_new_program_updates_in_place_and_does_not_strand_subscribers() {
+        let session = ScriptedSession::new(vec![
+            FeedOutcome::Events(vec![SessionEvent::NewProgram {
+                program: ProgramId(1),
+                tracks: vec![opaque_track(7)],
+            }]),
+            // The same program announced again, with a grown track set --
+            // what a session that re-states its program on a PMT change
+            // emits, rather than using `TracksChanged`.
+            FeedOutcome::Events(vec![SessionEvent::NewProgram {
+                program: ProgramId(1),
+                tracks: vec![opaque_track(7), opaque_track(8)],
+            }]),
+            FeedOutcome::Events(vec![SessionEvent::Sample {
+                program: ProgramId(1),
+                track_id: 7,
+                retention: RetentionClass::Timed,
+                sample: sample(0xCD),
+            }]),
+        ]);
+        let mut dialer = ScriptedDialer {
+            sessions: VecDeque::from(vec![session]),
+            fail_with: FakeError("unused"),
+        };
+        let mut driver = run_dial(&mut dialer, trunk_config(), handshake(), max_programs())
+            .expect("fake dial succeeds");
+
+        driver.feed(b"pat", Timestamp::ZERO);
+        let trunk = driver
+            .trunk(ProgramId(1))
+            .cloned()
+            .expect("NewProgram announced a Trunk for program 1");
+        let mut cursor = trunk.subscribe();
+
+        driver.feed(b"pat-again", Timestamp::from_nanos(1));
+
+        // The re-announcement is an update, not a new program.
+        assert_eq!(
+            driver.program_count(),
+            1,
+            "a repeat announcement must not add a program"
+        );
+        let track_ids: Vec<u32> = trunk.tracks().iter().map(|t| t.track_id).collect();
+        assert_eq!(
+            track_ids,
+            vec![7, 8],
+            "the re-announcement's track set must land on the SAME Trunk the \
+             subscriber already holds"
+        );
+
+        driver.feed(b"pes", Timestamp::from_nanos(2));
+
+        let item = cursor
+            .poll()
+            .expect("a cursor subscribed before the re-announcement must still receive samples");
+        match item {
+            crate::SampleCursorItem::Timed { track_id, sample } => {
+                assert_eq!(track_id, 7);
+                assert_eq!(sample.data.as_ref(), &[0xCD; 4]);
             }
             other => panic!("expected Timed, got {other:?}"),
         }
@@ -1738,6 +2305,81 @@ mod tests {
         assert!(matches!(driver.poll_accept(), AcceptOutcome::Admitted(_)));
     }
 
+    /// `driver`/`driver_mut`/`reap_if_terminal` (issue #805 task 4) must let a
+    /// caller reassemble exactly what `Self::feed`/`Self::finish` do in one
+    /// call, but with the observe step exposed *between* the state change and
+    /// the reap — the whole reason these exist (see `Self::driver`'s doc: a
+    /// `Listener::Session` whose `Stage::In` isn't `&[u8]`, e.g.
+    /// `multimux::source::rtmp`'s `RtmpIngestSession`, cannot use
+    /// `Self::feed` at all).
+    ///
+    /// MUTATION-CHECKED: dropping the `driver_mut(id).finish()` call (so the
+    /// session is never actually finished) would leave `driver(id)`'s health
+    /// at `Live`, failing the `Ended` assertion below; dropping the
+    /// `reap_if_terminal` call would leave `session_count()` at 1 and
+    /// `driver(id)` still `Some(_)`, failing the assertions after it.
+    #[test]
+    fn driver_mut_and_reap_if_terminal_mirror_feed_semantics() {
+        let mut driver = run_listen(
+            FloodingListener { max_sessions: 1 },
+            trunk_config(),
+            handshake(),
+            max_programs(),
+        );
+        let AcceptOutcome::Admitted(id) = driver.poll_accept() else {
+            panic!("expected admission");
+        };
+        assert!(
+            matches!(
+                driver.driver(id).map(IngestDriver::health),
+                Some(HealthState::Establishing)
+            ),
+            "a freshly admitted session must be Establishing, observable via driver()"
+        );
+
+        // `driver_mut` feeds through the exact same `IngestDriver::feed`
+        // `Self::feed` calls internally, but does NOT reap on termination.
+        driver
+            .driver_mut(id)
+            .expect("session just admitted")
+            .feed(b"reply", Timestamp::from_nanos(1));
+        assert!(
+            matches!(
+                driver.driver(id).map(IngestDriver::health),
+                Some(HealthState::Live)
+            ),
+            "driver_mut's feed must reach the session exactly like Self::feed would"
+        );
+        assert_eq!(driver.session_count(), 1, "not reaped: still Live");
+
+        // Finishing must be observable via `driver()` BEFORE `reap_if_terminal`
+        // removes it -- the exact ordering a driving loop that must
+        // publish/flush before reaping depends on.
+        driver.driver_mut(id).expect("still admitted").finish();
+        assert!(
+            matches!(
+                driver.driver(id).map(IngestDriver::health),
+                Some(HealthState::Ended)
+            ),
+            "finish() through driver_mut must be observable via driver() before reaping"
+        );
+        assert_eq!(driver.session_count(), 1, "not yet reaped");
+
+        let health = driver
+            .reap_if_terminal(id)
+            .expect("a terminal session must be reaped");
+        assert!(matches!(health, HealthState::Ended));
+        assert_eq!(
+            driver.session_count(),
+            0,
+            "reap_if_terminal must free the slot"
+        );
+        assert!(driver.driver(id).is_none());
+
+        // A second call on an already-reaped id is a no-op, not a panic.
+        assert!(driver.reap_if_terminal(id).is_none());
+    }
+
     // --- Reconnect: bounded, caller-configurable, never spins --------------
 
     #[test]
@@ -1901,6 +2543,8 @@ mod tests {
     /// The handshake's outbound side: this is the *only* way a request leaves
     /// the session — it has no socket to write to.
     impl IngestSession for HandshakeSession {
+        type Request = Bytes;
+
         fn poll_transmit(&mut self) -> Option<Bytes> {
             self.outbound.pop_front()
         }
@@ -2018,6 +2662,8 @@ mod tests {
     }
 
     impl IngestSession for StallingSession {
+        type Request = Bytes;
+
         fn poll_transmit(&mut self) -> Option<Bytes> {
             self.outbound.pop_front()
         }

@@ -4,7 +4,7 @@ version      = "0.4.0"
 edition      = "2024"
 rust-version = "1.86"
 license      = "MIT OR Apache-2.0"
-description  = "Multi-input (RTSP/RTP/TS-UDP/TS-HTTP/HLS-pull), multi-output (LL-HLS/DASH/LL-DASH) just-in-time repackaging HTTP origin (library: tokio + axum), with shared output auth and an external scheme plugin registry."
+description  = "Multi-input (RTSP/RTP/TS-UDP/TS-HTTP/SRT/HLS-pull/DASH-pull/Smooth-pull/RTMP), multi-output (LL-HLS/DASH/LL-DASH) just-in-time repackaging HTTP origin (library: tokio + axum), with shared output auth and an external scheme plugin registry."
 repository   = "https://github.com/fishloa/rust-broadcast"
 keywords     = ["rtsp", "hls", "ll-hls", "cmaf", "origin"]
 categories   = ["multimedia", "network-programming"]
@@ -30,11 +30,16 @@ srt-runtime       = { path = "../srt-runtime",   version = "0.2", features = ["t
 # pulls in `ll_hls_runtime::client::tokio_client::TokioClient` — the
 # HLS-pull input (`source::hls_pull`, issue #663 P3c) wraps it rather than
 # re-implementing LL-HLS playback.
-ll-hls-runtime    = { path = "../ll-hls-runtime", version = "0.1", features = ["std", "tokio"] }
+ll-hls-runtime    = { path = "../ll-hls-runtime", version = "0.2", features = ["std", "tokio"] }
 # Needed directly (not just via ll-hls-runtime/transmux) by `source::hls_pull`
 # to recover `TrackSpec`s from a pulled stream's init segment via
 # `Fmp4Demux::unpackage` (the `Unpackage` trait) — issue #663 P3c.
 broadcast-common  = { path = "../broadcast-common", version = "9" }
+# The media-plane ingress traits this crate's sources port onto (plan step
+# 5a): `Dialer`/`Listener`/`IngestSession`/`IngestDriver`/`ListenDriver`, and
+# the `Trunk` every ported session publishes into.
+media-plane       = { path = "../media-plane", version = "0.1", features = ["std"] }
+bytes             = "1"
 # Shared Basic/Digest/Bearer auth model + challenge/response helper
 # (`source::http_auth`, issue #663 P3b/P3c) — the same crate `rtsp-runtime`
 # and `ll_hls_runtime::client::tokio_client` use.
@@ -75,11 +80,6 @@ futures-util      = { version = "0.3", default-features = false, features = ["st
 # (`tokio_rustls::client::TlsStream<TcpStream>`).
 default     = ["tls"]
 tls         = ["rtsp-runtime/tls", "dep:tokio-rustls"]
-testsupport = []
-
-[[example]]
-name              = "serve_mock"
-required-features = ["testsupport"]
 
 [[example]]
 name = "serve_rtsp"

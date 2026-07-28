@@ -22,7 +22,7 @@
 //! producer shape as `ll-hls-runtime/tests/golden_gate.rs`
 //! (`fixtures/ts/h264_aac.ts`, 320x240 Main-profile H.264 @ 25 fps, 3.0 s /
 //! 75 frames, demuxed via `TsDemux`) fed through the same real
-//! `transmux::ll_hls::LlHlsSegmenter` that feeds the shared `MediaStore` in
+//! `transmux::ll_hls::LlHlsSegmenter` that feeds the shared `RouteHandle` in
 //! production -- so a real browser must genuinely decode real video, not an
 //! opaque placeholder.
 //!
@@ -47,7 +47,7 @@ use std::time::Duration;
 use multimux::origin::{AppState, router};
 use multimux::output::Output as MmOutput;
 use multimux::output::ll_dash::LlDashOutput;
-use multimux::store::MediaStore;
+use multimux::route::RouteHandle;
 use transmux::ll_hls::LlHlsSegmenter;
 use transmux::{CodecConfig, Sample, TrackSpec, TsDemux};
 
@@ -121,7 +121,8 @@ fn real_video_track_and_samples() -> (TrackSpec, Vec<Sample>) {
 /// this feeds is the same one `crate::output::ll_dash`/
 /// `crate::origin::resource`'s chunked-transfer path reads from in
 /// production.
-async fn run_live_producer(store: Arc<MediaStore>, spec: TrackSpec, samples: Vec<Sample>) {
+async fn run_live_producer(store: Arc<RouteHandle>, spec: TrackSpec, samples: Vec<Sample>) {
+    let program = media_plane::ProgramId(0);
     let track_id = spec.track_id;
     let movie_timescale = spec.timescale;
     let mut seg = LlHlsSegmenter::with_part_target(
@@ -131,25 +132,25 @@ async fn run_live_producer(store: Arc<MediaStore>, spec: TrackSpec, samples: Vec
         PART_TARGET_MS,
     )
     .expect("segmenter builds");
-    store.set_init(seg.init_segment().expect("init segment builds"));
+    store.set_init(program, seg.init_segment().expect("init segment builds"));
 
     let frame_interval = Duration::from_millis(40);
     for sample in samples {
         seg.push(track_id, sample).expect("push succeeds");
         for part in seg.take_ready_parts() {
-            store.add_part(part);
+            store.add_part(program, part);
         }
         for segment in seg.take_ready_segments() {
-            store.add_segment(segment);
+            store.add_segment(program, segment);
         }
         tokio::time::sleep(frame_interval).await;
     }
     seg.flush().expect("flush succeeds");
     for part in seg.take_ready_parts() {
-        store.add_part(part);
+        store.add_part(program, part);
     }
     for segment in seg.take_ready_segments() {
-        store.add_segment(segment);
+        store.add_segment(program, segment);
     }
 }
 
@@ -158,16 +159,21 @@ async fn run_live_producer(store: Arc<MediaStore>, spec: TrackSpec, samples: Vec
 /// `manifest-ll.mpd` is the one URL this test's player fetches.
 async fn start_ll_dash_origin(
     spec: TrackSpec,
-) -> (Arc<MediaStore>, String, tokio::task::JoinHandle<()>) {
-    let store = Arc::new(MediaStore::new(
+) -> (Arc<RouteHandle>, String, tokio::task::JoinHandle<()>) {
+    let store = Arc::new(RouteHandle::new(
         TARGET_DURATION_SECS,
         PART_TARGET_MS,
         WINDOW_SEGMENTS,
     ));
+    // Issue #805 task 6: a `ProgramServing` bundle must exist before
+    // `set_track_specs`/`set_init`/`add_part`/`add_segment` (here or in the
+    // producer spawned afterward) can write into it -- publish first.
+    let program = media_plane::ProgramId(0);
+    store.publish_new_program(program);
     // The LL-DASH manifest handler 503s until track specs are known (issue
     // #663 P4.2) -- set it up front, before the producer's own real-time
     // pacing, so the manifest is servable the instant the player asks.
-    store.set_track_specs(vec![spec]);
+    store.set_track_specs(program, vec![spec]);
 
     let mut streams = HashMap::new();
     streams.insert(

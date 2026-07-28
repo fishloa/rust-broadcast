@@ -7,6 +7,74 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed (pre-1.0 hardening)
+- **`TapItem` is now `#[non_exhaustive]`.** It was the only public enum in this
+  crate without it, while its two closest analogues — `SampleCursorItem` and
+  `SegmentCursorItem`, the same shape of data interleaved with in-band loss
+  reports — both carry it. The sample ring already distinguishes ordinary
+  `Lagged` from escalated `Degraded`, so a second loss class on the tap is a
+  plausible near-term addition, and adding a variant to a published exhaustive
+  enum is breaking. Free to fix before 0.1.0 ships; not afterwards.
+  - Note for downstream matchers, including **examples and integration tests
+    of this crate itself**: those compile as separate crates, so the attribute
+    applies to them exactly as to an external consumer. This crate's own
+    `byte_tap_wire_observer` example and its fuzz target both needed a
+    catch-all arm — each `panic!`s on an unrecognised variant rather than
+    absorbing it, since silently counting a future loss class as delivered
+    data (or as nothing) is precisely the miscount `TapItem` exists to
+    prevent.
+
+### Added (issue #808)
+- **`Trunk::subscribe_from_backlog`**: a [`SampleCursor`] seek-to-past variant
+  next to `Trunk::subscribe`, for a consumer built *after* samples it needs
+  have already landed in the ring (e.g. a segmenter reacting to the very
+  `feed` batch that also announced its program — MPEG-TS routinely carries
+  the PMT and the first PES samples together). Starts each retention class
+  (`Timed`/`Sparse`) independently at that ring's own current `base` (the
+  oldest entry still resident), so replay is bounded by ring capacity, never
+  unbounded, and never double-reports data already evicted before the
+  subscribe call as this cursor's own loss. `Lagged`/`Degraded` still fire
+  in-band for any loss *after* subscribing, exactly as for `subscribe`'s
+  cursor. Carries the same fan-out warning as `subscribe` (writer cost is
+  O(N) in cursor count — a cursor is per distinct consumer, never per peer).
+
+### Changed (BREAKING — plan step 5a, round 3)
+- **`IngestSession` no longer pins `Stage::In` to `&'a [u8]`, and gains an
+  associated `Request` type.** The supertrait bound relaxes from
+  `for<'a> Stage<In<'a> = &'a [u8], Out = SessionEvent> + Send` to
+  `for<'a> Stage<Out = SessionEvent> + Send`, and `poll_transmit` now returns
+  `Option<Self::Request>` rather than `Option<Bytes>`. `IngestDriver::feed`
+  becomes generic over `S::In<'_>`; `IngestDriver::poll_transmit` returns
+  `Option<S::Request>`. `ListenDriver::feed` deliberately keeps its `&[u8]`
+  input (behind a `where L::Session: for<'a> Stage<In<'a> = &'a [u8]>`
+  bound): every `Listener` implementor is a push accept over a byte-stream
+  transport, never a pull source (which dials out via `Dialer`).
+  - **Migration** (every implementor, one line): a byte-stream source adds
+    `type Request = bytes::Bytes;` — no behaviour change. A pull source
+    (`multimux::source::{hls_pull, dash_pull, smooth_pull}`) states its own
+    honest shape instead, e.g. `type In<'a> = (HlsFetchId, &'a [u8]);
+    type Request = ll_hls_runtime::client::Action;`.
+  - **Why `Request` is opaque to the plane, and why an `Inbound` enum was
+    rejected**: recorded in full in `ingress`'s module docs under
+    *"Pull sources need a typed request/response identity (round 3)"*,
+    replacing round 2's *"Known seam"* section. The short version: a
+    per-source escape-hatch method would leave `Stage::feed` never called on
+    a pull session while the trait bound still advertises it as the way in —
+    **a type that lies about the contract it implements**; and a fixed
+    `Inbound { Bytes, Response { id, .. } }` enum would force every stream
+    source to match a variant that cannot occur for it *and* bake pull
+    vocabulary (`ResourceId`/`Action`) into `media-plane`, which is exactly
+    the protocol knowledge this crate exists to stay free of.
+- **`IngestDriver::session()`** (new): read-only access to the driven
+  session, for state a driver loop must observe that `SessionEvent`/
+  `HealthState` cannot carry. Concretely: a pull source knows it has reached
+  true end-of-stream from its own protocol bookkeeping (an `#EXT-X-ENDLIST`
+  with every named fetch accounted for; a static MPD/manifest with every
+  plan exhausted), whereas a byte-stream transport's "ended" signal is
+  external and already known to the driver loop. `SessionEvent` gains no
+  `Ended` variant for this, per its own "no variant without a correct
+  producer" discipline.
+
 ### Added
 - New crate: `media-plane`, the media-plane integration layer (plan step 3a-i).
 - `ByteStage`: the pre-demux byte-to-byte stage contract, defined as
@@ -374,7 +442,52 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     ingress/egress/retention were "later steps... deliberately absent"), and
     to state plainly that only the byte layer is `no_std` + `alloc` — `Trunk`
     and everything built on it require `std`.
+- **`SessionEvent::TracksChanged` — mid-stream track-set changes now reach
+  the `Trunk` (issue #781, closing the ingress→`Trunk` half).** A new
+  `#[non_exhaustive]`-preserving variant, `TracksChanged { program:
+  ProgramId, tracks: Vec<TrackSpec> }`: `tracks` is the **complete
+  replacement set**, not a delta (a PMT carries the whole elementary-stream
+  list on every version bump, so a full snapshot is idempotent and immune to
+  delta-ordering bugs — a consumer diffs against the previous
+  `Trunk::tracks()` snapshot itself if it needs to know which track
+  appeared). `transmux::DemuxEvent::TrackAdded`/`TrackRemoved`/`TrackUpdated`
+  already own the finer-grained, demux-layer shape; this layer deliberately
+  does not mirror them.
+  - `Trunk` gains a current track set (`Trunk::tracks() -> Arc<[TrackSpec]>`,
+    a cheap `Arc` clone) and a monotonic `Trunk::track_generation() -> u64`,
+    bumped by exactly one on every write, so a consumer can detect "the track
+    set may have changed" by comparing two `u64`s instead of diffing two
+    `Vec<TrackSpec>`s.
+  - `TrunkWriter::set_tracks(Vec<TrackSpec>)` (new): the write side —
+    replaces the set wholesale, bumps `track_generation`, and wakes any
+    `Trunk::listen()` registration through the same broad `progress` channel
+    `SegmentWriter::publish_part`/`publish_segment` already use.
+  - `IngestDriver`'s internal `drain()` now seeds a freshly-minted `Trunk`'s
+    track set from `NewProgram`'s own `tracks` field (**previously
+    discarded** — the match arm bound it with `..` and a `Trunk`'s track set
+    stayed permanently empty) and applies a later `TracksChanged` to the
+    already-admitted `Trunk` for that program. A `TracksChanged` for an
+    unannounced program is a dropped contract violation, not a panic —
+    exactly `SessionEvent::Sample`'s existing "unannounced program" path,
+    reused rather than duplicated.
+  - Strictly ingress→`Trunk` plumbing: whether/when to admit a newly-appeared
+    track into an egress manifest (LL-HLS/DASH rendering) is a separate,
+    deliberate decision left to its own issue.
 ### Fixed
+- **A repeat `SessionEvent::NewProgram` no longer strands existing
+  subscribers or discards the DVR window.** `IngestDriver::drain()`'s
+  `NewProgram` arm called `Trunk::new` unconditionally, so re-announcing an
+  already-admitted program replaced that program's entry in the driver's map.
+  Because `Trunk` is a cloneable `Arc` handle, nothing errored: every cursor
+  already issued to consumers kept reading the **orphaned** `Trunk` the writer
+  no longer targets, so the stream silently stopped — far harder to diagnose
+  in production than a crash — and whatever the old `Trunk` still buffered
+  (samples, segments, parts, and therefore the DVR window) went with it. A
+  re-announcement is a restatement of a program's tracks, not a new program,
+  so it now defers to the same in-place update path `TracksChanged` uses.
+  Covered by a test that asserts continuity from the *subscriber's* side (a
+  cursor subscribed before the re-announcement must still receive samples
+  published after it) — a track-set assertion alone would not catch it.
 - **`max_programs`: bound the number of `Trunk`s `IngestDriver`/`ListenDriver`
   will mint per session** — the fifth unbounded-allocation vector shipped
   from this codebase. `SessionEvent::NewProgram` previously minted a fresh
@@ -400,3 +513,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`64`) is provided as a documented, justified default (real DVB MPTS run
   single-digit to low-tens of programs; ATSC/cable can run higher) rather
   than requiring every caller to invent their own bare literal.
+### Breaking
+- `Trunk`'s single write handle is split by **ring group**, fixing a design
+  hole found while porting real ingest sources: `Trunk::writer()` (one
+  `TrunkWriter`, single-take) made it *structurally impossible* for anything
+  other than the ingest driver to ever publish a segment or a part, because
+  the whole `Trunk` had exactly one writer — so a segmenter (a component
+  that needs to *read* samples via a `SampleCursor` and *write* the
+  segments/parts it derives from them, at the same time) could not exist.
+  The original doc's justification ("a second concurrent writer would
+  silently interleave two unrelated publish sequences into one ring") is
+  true, but only protects ordering *within a ring* — samples, segments,
+  parts, and events live in different rings, so the single-writer rule was
+  broader than its own reason.
+  - `TrunkWriter` (via `Trunk::writer`, unchanged signature) now covers only
+    the **samples + events** ring group: `publish`/`publish_event`. Held by
+    the ingest driver, as before.
+  - New `SegmentWriter` (via the new `Trunk::segment_writer`, also
+    single-take via its own `AtomicBool`) covers the **segments + parts**
+    ring group: `publish_segment`/`publish_part`/`note_segment_start`/
+    `set_time_anchor` — moved off `TrunkWriter`. Held by whoever owns
+    segmentation. `note_segment_start`/`set_time_anchor` are grouped here
+    rather than split onto `TrunkWriter` because neither *appends* to the
+    event ring (both resolve an already-published `EventAnchor::Segment`/
+    `EventAnchor::Utc` entry in place), so this does not create a second
+    appender for `TrunkWriter::publish_event`'s ring; `note_segment_start`
+    specifically must live wherever segmentation lives, since only the
+    segmenter can honestly report a segment's start (the literal B1 fix).
+  - Uniqueness is unchanged in kind, only in scope: each ring group still has
+    exactly one writer, guarded by the same `compare_exchange` pattern —
+    two concurrent *sample* writers remain exactly as impossible as before.
+  - The module docs are rewritten to state the invariant as it actually is
+    ("one writer per ring group", not "one writer per `Trunk`") and to
+    answer, rather than leave implicit, whether the split can let a
+    consumer observe a segment before the samples that produced it: it
+    cannot, because every ring still lives behind the one `Mutex<TrunkState>`
+    this module has always used — splitting the write *handle* did not
+    split the *lock* — see `trunk`'s module docs, "One writer per ring
+    group, not one writer per `Trunk`".
+  - Any caller matching on `TrunkWriter`'s method set (rather than calling
+    `Trunk::writer()`/`.publish()`/`.publish_event()` directly) needs to
+    take a second handle via the new `Trunk::segment_writer()` for
+    `publish_segment`/`publish_part`/`note_segment_start`/`set_time_anchor`.

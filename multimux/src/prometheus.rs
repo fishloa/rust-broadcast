@@ -4,18 +4,14 @@
 //! macros (`metrics::counter!`/`gauge!`/`histogram!`):
 //!
 //! - `multimux_route_up` (`ROUTE_UP`) — gauge, labels `route`: 1.0 while
-//!   that route's [`crate::store::HealthState`] is `Live`, else 0.0. Set in
-//!   `origin::supervisor::supervise` alongside every `MediaStore::set_health`
-//!   call (the supervisor is the one place that both knows the route name and
-//!   drives health transitions).
+//!   that route's [`crate::route::HealthState`] is `Live`, else 0.0. Set in
+//!   `origin::supervisor::supervise_driver` alongside every
+//!   `RouteHandle::set_health` call (the supervisor is the one place that
+//!   both knows the route name and drives health transitions).
 //! - `multimux_source_reconnects_total` (`SOURCE_RECONNECTS_TOTAL`) —
 //!   counter, labels `route`: bumped once each time a route's supervisor loop
-//!   re-enters `Reconnecting` (a lost connection or ended pipeline about to be
+//!   re-enters `Reconnecting` (a lost connection or ended attempt about to be
 //!   retried).
-//! - `multimux_segments_produced_total` / `multimux_parts_produced_total`
-//!   (`SEGMENTS_PRODUCED_TOTAL` / `PARTS_PRODUCED_TOTAL`) — counters,
-//!   labels `route`: bumped in `pipeline::run_pipeline` every time a
-//!   completed segment/part is published into the route's `MediaStore`.
 //! - `multimux_active_blocking_requests` (`ACTIVE_BLOCKING_REQUESTS`) —
 //!   gauge (no route label — the LL-HLS output's blocking-wait helpers don't
 //!   currently know their own route name; see `output::llhls`): count of
@@ -27,6 +23,15 @@
 //!   `route`, `path` (and `status` for the requests counter): recorded by
 //!   `origin`'s HTTP middleware for every request the origin serves, root
 //!   endpoints (`/metrics`, `/healthz`, `/readyz`) included.
+//! - `multimux_parts_produced_total` / `multimux_segments_produced_total`
+//!   (`PARTS_PRODUCED_TOTAL` / `SEGMENTS_PRODUCED_TOTAL`) — counters, labels
+//!   `route`: bumped in `crate::source::segment::drive_program_segmenters`,
+//!   the one place in the driver-backed architecture that actually turns raw
+//!   samples into parts/segments, labelled by `RouteHandle::name()` (issue
+//!   #809 — these two counters had no emitter at all since the media-plane
+//!   port; see that issue and this crate's CHANGELOG for the history: they
+//!   silently read zero for a while, which is worse than being entirely
+//!   absent, before being deleted outright pending this fix).
 //!
 //! Cardinality is bounded on purpose: `route` is either a configured stream
 //! name or the fixed token `"unknown"`, and `path` is one of a small fixed
@@ -50,14 +55,6 @@ pub(crate) const ROUTE_UP: &str = "multimux_route_up";
 /// `Reconnecting`. Labels: `route`.
 pub(crate) const SOURCE_RECONNECTS_TOTAL: &str = "multimux_source_reconnects_total";
 
-/// Counter: incremented once per full segment the pipeline publishes into a
-/// route's store. Labels: `route`.
-pub(crate) const SEGMENTS_PRODUCED_TOTAL: &str = "multimux_segments_produced_total";
-
-/// Counter: incremented once per part the pipeline publishes into a route's
-/// store. Labels: `route`.
-pub(crate) const PARTS_PRODUCED_TOTAL: &str = "multimux_parts_produced_total";
-
 /// Gauge: count of LL-HLS blocking requests (media-playlist blocking reload,
 /// or a preload-hinted part fetch) currently parked awaiting new data,
 /// process-wide.
@@ -71,6 +68,16 @@ pub(crate) const HTTP_REQUEST_DURATION_SECONDS: &str = "multimux_http_request_du
 
 /// Counter: total response bytes served. Labels: `route`, `path`.
 pub(crate) const BYTES_SERVED_TOTAL: &str = "multimux_bytes_served_total";
+
+/// Counter: total LL-HLS parts published into a route's `Trunk` by
+/// `crate::source::segment::drive_program_segmenters`. Labels: `route`
+/// (issue #809).
+pub(crate) const PARTS_PRODUCED_TOTAL: &str = "multimux_parts_produced_total";
+
+/// Counter: total segments published into a route's `Trunk` by
+/// `crate::source::segment::drive_program_segmenters`. Labels: `route`
+/// (issue #809).
+pub(crate) const SEGMENTS_PRODUCED_TOTAL: &str = "multimux_segments_produced_total";
 
 static HANDLE: OnceLock<PrometheusHandle> = OnceLock::new();
 

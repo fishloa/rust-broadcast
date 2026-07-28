@@ -16,13 +16,13 @@
 //!   #717 slices 2-4), plus the optional `tokio`-feature
 //!   [`client::TokioClient`] async IO adapter (slice 5). See the module docs
 //!   for full behaviour. No_std-capable (the core needs only `alloc`).
-//! - [`server`] (feature `std`) — the LL-HLS origin engine: the rolling
-//!   window/store ([`server::MediaStore`]), the blocking-reload + part-
-//!   availability decision logic ([`server::MediaStore::resolve_playlist`]/
-//!   [`server::MediaStore::resolve_resource`]), playlist rendering, and the
-//!   TARGETDURATION/msn/abuse rules — all poll/step, no tokio, no axum. See
-//!   the module docs for the caller-driven wait loop an async adapter (e.g.
-//!   `multimux`) builds on top.
+//! - [`server`] (feature `std`) — the LL-HLS origin engine: [`server::LlHlsOrigin`],
+//!   a `media_plane::egress::ServedEgress` rendering playlists and resolving
+//!   blocking-reload/part-availability requests directly from a shared
+//!   `media_plane::Trunk` (plan step 4) — no push-fed rolling-window store of
+//!   its own. Playlist rendering, and the TARGETDURATION/msn/abuse rules, are
+//!   all poll/step, no tokio, no axum. See the module docs for the
+//!   caller-driven wait loop an async adapter (e.g. `multimux`) builds on top.
 
 #![cfg_attr(not(feature = "std"), no_std)]
 #![forbid(unsafe_code)]

@@ -1,58 +1,95 @@
-//! MPEG-2 Transport Stream over HTTP ingest source (issue #663 P3c): a
-//! streaming HTTP GET (chunked/progressive, `reqwest`) feeding transmux's
-//! incremental [`transmux::StreamingTsDemux`] — mirrors
-//! [`crate::source::ts_udp`] almost exactly, just over an HTTP byte stream
-//! instead of UDP datagrams. Auth (Basic/Digest/Bearer) is answered once via
-//! `crate::source::http_auth::authenticated_get`, which delegates to
-//! `broadcast-auth` for the Digest challenge/response — `reqwest` itself has
-//! no Digest support. Credentials come from [`TsHttpSource::with_auth`]
-//! (config-supplied, e.g. a Bearer token — the only way to supply one, since
-//! it has no URL-userinfo form) if set, else the connect URL's own userinfo —
-//! see `crate::source::http_auth::resolve_credentials`.
+//! MPEG-2 Transport Stream over HTTP ingest source (issue #663 P3c; ported
+//! onto the media-plane ingress traits at plan step 5a): a streaming HTTP
+//! GET (chunked/progressive, `reqwest`) feeding the shared
+//! [`crate::source::ts_program::TsIngestSession`].
 //!
-//! Unlike UDP (connectionless, never signals end-of-stream),
-//! [`TsHttpSession::next_samples`] returns `Ok(None)` once the HTTP body
-//! stream ends (server closed the connection, or the response completed
-//! normally) — [`crate::origin::supervisor::supervise`] then reconnects with
-//! backoff, exactly as it does for any other source's end-of-stream.
+//! Like [`crate::source::ts_udp`], this module owns **only the transport**
+//! — all PAT/PMT/PES demuxing and `DemuxEvent`→`SessionEvent` translation
+//! (including the B5 mid-stream `NewProgram` handling) lives in
+//! [`crate::source::ts_program`], shared verbatim between the three TS
+//! transports. Before this port, this file carried its own near-identical
+//! copy of that drain loop.
+//!
+//! # Where the I/O boundary falls, and why `dial()` is still no-I/O
+//!
+//! Opening the HTTP body stream **is** real I/O — one GET (two if a Digest
+//! `401` challenge has to be answered; see
+//! `crate::source::http_auth::authenticated_get`). But it is
+//! *transport-opening*, not a media handshake: it is the same category as
+//! [`crate::source::ts_udp`]'s `UdpSocket::bind` and
+//! [`crate::source::rtsp`]'s `TcpStream::connect`, and in this design that
+//! has always been the driver's job, never the session's. So
+//! [`TsHttpDialer::dial`] constructs the sans-IO session and performs no
+//! I/O, and [`open_stream`]/[`run_ts_http`] — the tokio-side driver — does
+//! the GET and then feeds body chunks in.
+//!
+//! **`reqwest` has no sans-IO core** (its `Response::bytes_stream()` is
+//! bound to a live hyper connection; there is no bytes-in/bytes-out type),
+//! so unlike [`crate::source::rtsp`] — which could delegate its whole
+//! multi-round-trip handshake to `rtsp-runtime`'s sans-IO `ClientSession` —
+//! there is nothing here to delegate the GET to. That is fine precisely
+//! because the GET is not a handshake: nothing about it needs to be
+//! expressed through `poll_transmit`/`feed`. Once the body is open, the
+//! *entire* remaining protocol is "bytes arrive, demux them", which is
+//! exactly `Stage::feed`.
+//!
+//! Auth itself **is** sans-IO (`broadcast_auth::Authenticator` is pure
+//! challenge-string in, `Authorization`-header out) and is unchanged by this
+//! port. Credentials come from [`TsHttpRoute::with_auth`] (config-supplied,
+//! e.g. a Bearer token — the only way to supply one, since it has no
+//! URL-userinfo form) if set, else the connect URL's own userinfo — see
+//! `crate::source::http_auth::resolve_credentials`.
+//!
+//! # End-of-stream is a real, distinct outcome here
+//!
+//! Unlike UDP (connectionless, never signals end-of-stream), an HTTP
+//! response body *does* end. [`recv_and_feed`] reports that as
+//! [`StreamStatus::Ended`], which [`run_ts_http`] turns into
+//! `IngestDriver::finish()` → [`media_plane::ingress::HealthState::Ended`]
+//! — genuinely distinct from [`media_plane::ingress::HealthState::Failed`]
+//! for a read stall or a transport error. That distinction is exactly the
+//! `HealthState` fix plan step 3c made producible, and this is the first
+//! ported source that can actually produce both.
 
-use std::collections::BTreeSet;
+use std::convert::Infallible;
 use std::time::Duration;
 
-use broadcast_auth::Credentials;
+use broadcast_common::Timestamp;
 use futures_util::StreamExt;
 use futures_util::stream::BoxStream;
+use media_plane::ingress::{Dialer, HandshakePolicy, IngestDriver};
+use media_plane::trunk::TrunkConfig;
 use reqwest::Client;
 use url::Url;
 
+use broadcast_auth::Credentials;
+
 use crate::error::{MultimuxError, Result};
-use crate::source::IngestTimeouts;
-use crate::source::Source;
 use crate::source::http_auth::{
     authenticated_get, credentials_from_url, resolve_credentials, strip_userinfo,
 };
-use transmux::pipeline::{Sample, TrackSpec};
-use transmux::{DemuxEvent, StreamingTsDemux};
+use crate::source::ts_program::TsIngestSession;
+use crate::source::{IngestTimeouts, Source};
 
-/// An MPEG-2 TS-over-HTTP stream to pull: an `http(s)://` URL, which may
-/// carry `user:pass@` userinfo (see [`Debug`]'s redaction and
-/// `crate::config::InputSpec::validate`).
+/// An MPEG-2 TS-over-HTTP route: an `http(s)://` URL, which may carry
+/// `user:pass@` userinfo (see [`Debug`]'s redaction and
+/// `crate::config::InputSpec::validate`). Replaces the old (pre-5a)
+/// `TsHttpSource`; [`run_ts_http`] is the new drive loop.
 #[derive(Clone)]
-pub struct TsHttpSource {
+pub struct TsHttpRoute {
     name: String,
     url: String,
     timeouts: IngestTimeouts,
-    /// Config-supplied credentials, taking precedence over any URL userinfo
-    /// — see `crate::source::http_auth::resolve_credentials`.
+    /// Config-supplied credentials, taking precedence over any URL userinfo.
     auth: Option<Credentials>,
 }
 
 /// Manual `Debug` (rather than `#[derive(Debug)]`): `url` may carry a live
 /// origin's `user:pass@` userinfo, so it must never render verbatim; `auth`
 /// (if present) carries a raw password/token, also never rendered verbatim.
-impl std::fmt::Debug for TsHttpSource {
+impl std::fmt::Debug for TsHttpRoute {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("TsHttpSource")
+        f.debug_struct("TsHttpRoute")
             .field("name", &self.name)
             .field("url", &crate::redact::redact_url(&self.url))
             .field("auth", &self.auth.as_ref().map(|_| "***"))
@@ -60,10 +97,10 @@ impl std::fmt::Debug for TsHttpSource {
     }
 }
 
-impl TsHttpSource {
-    /// Build a source descriptor.
+impl TsHttpRoute {
+    /// Build a route descriptor.
     pub fn new(name: impl Into<String>, url: impl Into<String>) -> Self {
-        TsHttpSource {
+        TsHttpRoute {
             name: name.into(),
             url: url.into(),
             timeouts: IngestTimeouts::default(),
@@ -71,281 +108,186 @@ impl TsHttpSource {
         }
     }
 
-    /// Overrides the default [`IngestTimeouts`] — see `RtspSource::with_timeouts`
-    /// for the pattern this mirrors.
+    /// Overrides the default [`IngestTimeouts`].
     #[must_use]
     pub fn with_timeouts(mut self, timeouts: IngestTimeouts) -> Self {
         self.timeouts = timeouts;
         self
     }
 
-    /// Attaches config-supplied credentials, overriding any URL userinfo at
-    /// [`Self::connect`] time — see
-    /// `crate::source::http_auth::resolve_credentials`.
+    /// Attaches config-supplied credentials, overriding any URL userinfo.
     #[must_use]
     pub fn with_auth(mut self, auth: Option<Credentials>) -> Self {
         self.auth = auth;
         self
     }
-
-    /// Opens a streaming GET to the configured URL (answering a `401`
-    /// challenge if the URL carried credentials — see
-    /// `crate::source::http_auth::authenticated_get`), then reads response
-    /// chunks into a [`StreamingTsDemux`] until every currently PMT-declared
-    /// track has resolved (or [`IngestTimeouts::connect`] elapses) — the
-    /// TS-over-HTTP analogue of [`crate::source::ts_udp::TsUdpSource::connect`]'s
-    /// PMT wait.
-    pub async fn connect(&self) -> Result<TsHttpSession> {
-        let parsed = Url::parse(&self.url).map_err(|e| MultimuxError::Connect {
-            reason: format!(
-                "bad TS-over-HTTP URL {}: {e}",
-                crate::redact::redact_url(&self.url)
-            ),
-        })?;
-        let credentials = resolve_credentials(self.auth.clone(), credentials_from_url(&parsed)?);
-        let clean_url = strip_userinfo(&parsed)?;
-
-        let client = Client::builder()
-            .build()
-            .map_err(|e| MultimuxError::Connect {
-                reason: format!("reqwest client: {e}"),
-            })?;
-        let response = authenticated_get(&client, clean_url.as_str(), credentials.as_ref()).await?;
-        let status = response.status();
-        if !status.is_success() {
-            return Err(if status == reqwest::StatusCode::UNAUTHORIZED {
-                MultimuxError::Auth {
-                    reason: format!("ts/http: {status}"),
-                }
-            } else {
-                MultimuxError::Connect {
-                    reason: format!("ts/http: HTTP {status}"),
-                }
-            });
-        }
-
-        let mut stream: BoxStream<'static, reqwest::Result<Vec<u8>>> = response
-            .bytes_stream()
-            .map(|item| item.map(|b| b.to_vec()))
-            .boxed();
-        let mut demux = StreamingTsDemux::new();
-        let mut specs: Vec<TrackSpec> = Vec::new();
-
-        let wait_for_tracks = async {
-            loop {
-                let Some(chunk) = stream.next().await else {
-                    return Err(MultimuxError::Connect {
-                        reason: "ts/http: stream ended before PMT resolved".into(),
-                    });
-                };
-                let chunk = chunk.map_err(|e| MultimuxError::Connect {
-                    reason: format!("ts/http stream read: {e}"),
-                })?;
-                demux.feed(&chunk);
-                let mut resolved = false;
-                while let Some(event) = demux.poll_event() {
-                    match event {
-                        DemuxEvent::TrackAdded(spec) => specs.push(spec),
-                        DemuxEvent::TracksResolved { .. } => resolved = true,
-                        _ => {}
-                    }
-                }
-                if resolved && !specs.is_empty() {
-                    return Ok::<(), MultimuxError>(());
-                }
-            }
-        };
-
-        let connect_timeout = self.timeouts.connect;
-        match tokio::time::timeout(connect_timeout, wait_for_tracks).await {
-            Ok(Ok(())) => {}
-            Ok(Err(e)) => return Err(e),
-            Err(_) => {
-                return Err(MultimuxError::Connect {
-                    reason: format!(
-                        "ts/http: no PMT-declared track resolved within {connect_timeout:?}"
-                    ),
-                });
-            }
-        }
-
-        let known_track_ids: BTreeSet<u32> = specs.iter().map(|s| s.track_id).collect();
-        Ok(TsHttpSession {
-            stream,
-            demux,
-            specs,
-            known_track_ids,
-            read_timeout: self.timeouts.read,
-        })
-    }
 }
 
-impl Source for TsHttpSource {
+impl Source for TsHttpRoute {
     fn stream_name(&self) -> &str {
         &self.name
     }
 }
 
-/// A live TS-over-HTTP session: a streaming response body, feeding a
-/// [`StreamingTsDemux`].
-pub struct TsHttpSession {
-    stream: BoxStream<'static, reqwest::Result<Vec<u8>>>,
-    demux: StreamingTsDemux,
-    specs: Vec<TrackSpec>,
-    /// Track ids known at connect time — a `Sample` for any later-discovered
-    /// track (e.g. a PMT version bump after `connect` returned) is dropped
-    /// rather than surfaced for a track the segmenter was never built with,
-    /// mirroring [`crate::source::ts_udp::TsUdpSession::next_samples`]'s
-    /// "unrouted track -> ignored" handling.
-    known_track_ids: BTreeSet<u32>,
-    /// Bound on each [`Self::next_samples`] read — see
-    /// [`IngestTimeouts::read`].
-    read_timeout: Duration,
+/// Constructs a [`TsIngestSession`] — performs **no I/O** (see the module
+/// doc). The GET lives in [`open_stream`].
+#[derive(Clone, Copy, Debug, Default)]
+pub struct TsHttpDialer;
+
+impl Dialer for TsHttpDialer {
+    type Session = TsIngestSession;
+    /// Construction cannot fail — URL parsing and the GET both belong to
+    /// [`open_stream`], the I/O side.
+    type Error = Infallible;
+
+    fn dial(&mut self) -> core::result::Result<TsIngestSession, Infallible> {
+        Ok(TsIngestSession::new())
+    }
 }
 
-impl TsHttpSession {
-    /// The `TrackSpec`s resolved during [`TsHttpSource::connect`]'s PMT
-    /// wait.
-    pub fn track_specs(&self) -> Vec<TrackSpec> {
-        self.specs.clone()
-    }
+/// The open HTTP response body a [`TsIngestSession`] is fed from.
+pub type TsHttpStream = BoxStream<'static, reqwest::Result<Vec<u8>>>;
 
-    /// Reads the next chunk of the HTTP body and feeds it to the demuxer,
-    /// returning every completed sample it yields for a track known at
-    /// connect time.
-    ///
-    /// Returns `Ok(None)` once the body stream ends — unlike
-    /// [`crate::source::ts_udp::TsUdpSession::next_samples`] (UDP has no
-    /// transport-level end-of-stream signal), an HTTP response body *does*
-    /// end, and that end is exactly the "reconnect" signal
-    /// [`crate::origin::supervisor::supervise`] is built to act on.
-    ///
-    /// Bounded by [`IngestTimeouts::read`] (issue #663 P5, audit-ingest #3):
-    /// a server that stops sending chunks without closing the connection
-    /// (wedged origin) would otherwise leave this `.await` pending forever —
-    /// a timed-out read surfaces as a [`MultimuxError::Connect`], reconnected
-    /// by the supervisor exactly like any other read error.
-    pub async fn next_samples(&mut self) -> Result<Option<Vec<(u32, Sample)>>> {
-        let read_timeout = self.read_timeout;
-        let Some(chunk) = tokio::time::timeout(read_timeout, self.stream.next())
-            .await
-            .map_err(|_| MultimuxError::Connect {
-                reason: format!("ts/http stream read: no data within {read_timeout:?}"),
-            })?
-        else {
-            return Ok(None);
-        };
-        let chunk = chunk.map_err(|e| MultimuxError::Connect {
-            reason: format!("ts/http stream read: {e}"),
+/// Opens the streaming GET for `route` (answering a `401` Digest challenge
+/// if credentials were supplied), returning the response body stream —
+/// **transport-opening I/O, deliberately outside `dial()`**; see the module
+/// doc.
+///
+/// # Errors
+/// A URL that will not parse, a transport failure, or a non-2xx status
+/// (`401` maps to [`MultimuxError::Auth`], anything else to
+/// [`MultimuxError::Connect`]).
+pub async fn open_stream(route: &TsHttpRoute) -> Result<TsHttpStream> {
+    let parsed = Url::parse(&route.url).map_err(|e| MultimuxError::Connect {
+        reason: format!(
+            "bad TS-over-HTTP URL {}: {e}",
+            crate::redact::redact_url(&route.url)
+        ),
+    })?;
+    let credentials = resolve_credentials(route.auth.clone(), credentials_from_url(&parsed)?);
+    let clean_url = strip_userinfo(&parsed)?;
+
+    let client = Client::builder()
+        .build()
+        .map_err(|e| MultimuxError::Connect {
+            reason: format!("reqwest client: {e}"),
         })?;
-        self.demux.feed(&chunk);
-        let mut out = Vec::new();
-        while let Some(event) = self.demux.poll_event() {
-            match event {
-                DemuxEvent::Sample {
-                    track_id, sample, ..
-                } => {
-                    if self.known_track_ids.contains(&track_id) {
-                        out.push((track_id, sample));
-                    }
-                }
-                DemuxEvent::TrackRemoved { track_id, .. } => {
-                    // A mid-stream PMT version bump dropped a previously-live
-                    // PID (issue #774). Drop it from the known set so no
-                    // stale sample is ever forwarded for it (defense in depth
-                    // — `DemuxEvent`'s removal semantics already guarantee no
-                    // `Sample` for this `track_id` follows), and surface the
-                    // change instead of silently swallowing it: the running
-                    // pipeline/segmenter was built once from connect-time
-                    // `track_specs()` and has no way to learn a track vanished.
-                    tracing::warn!(
-                        track_id,
-                        "ts/http: track removed mid-stream (PMT no longer lists it); \
-                         no further samples will be surfaced for it"
-                    );
-                    self.known_track_ids.remove(&track_id);
-                }
-                DemuxEvent::TrackUpdated(spec) => {
-                    tracing::debug!(
-                        track_id = spec.track_id,
-                        "ts/http: track metadata updated mid-stream (es_info_descriptors/\
-                         stream_type); the running pipeline was built from the connect-time \
-                         TrackSpec and does not pick this up"
-                    );
-                }
-                DemuxEvent::TrackAdded(spec) => {
-                    // A PID declared only after `connect()`'s PMT wait
-                    // resolved. The pipeline was built from that connect-time
-                    // track set (`SampleSource::track_specs` is a one-shot
-                    // snapshot, `pipeline::run_pipeline` calls it exactly
-                    // once) — there is no API on this session to add a track
-                    // to an already-running segmenter, so this is reported
-                    // rather than silently dropped or half-wired in.
-                    tracing::warn!(
-                        track_id = spec.track_id,
-                        "ts/http: new track declared mid-stream; the running pipeline was built \
-                         from the connect-time track set and cannot pick it up without a reconnect"
-                    );
-                }
-                DemuxEvent::TrackAbandoned { reason, .. } => {
-                    tracing::warn!(
-                        ?reason,
-                        "ts/http: a probing track was abandoned before it resolved"
-                    );
-                }
-                _ => {}
+    let response = authenticated_get(&client, clean_url.as_str(), credentials.as_ref()).await?;
+    let status = response.status();
+    if !status.is_success() {
+        return Err(if status == reqwest::StatusCode::UNAUTHORIZED {
+            MultimuxError::Auth {
+                reason: format!("ts/http: {status}"),
+            }
+        } else {
+            MultimuxError::Connect {
+                reason: format!("ts/http: HTTP {status}"),
+            }
+        });
+    }
+    Ok(response
+        .bytes_stream()
+        .map(|item| item.map(|b| b.to_vec()))
+        .boxed())
+}
+
+/// What one [`recv_and_feed`] call observed on the body stream.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum StreamStatus {
+    /// A chunk was read and fed to the driver.
+    Fed,
+    /// The response body ended cleanly — not an error. See the module doc's
+    /// "End-of-stream is a real, distinct outcome here".
+    Ended,
+}
+
+/// Reads the next body chunk (bounded by `read_timeout`) and feeds it to
+/// `driver`.
+///
+/// # Errors
+/// A read stall or a transport-level chunk error — both genuine failures,
+/// distinct from the clean [`StreamStatus::Ended`].
+pub async fn recv_and_feed(
+    stream: &mut TsHttpStream,
+    driver: &mut IngestDriver<TsIngestSession>,
+    read_timeout: Duration,
+    now: Timestamp,
+) -> Result<StreamStatus> {
+    let Some(chunk) = tokio::time::timeout(read_timeout, stream.next())
+        .await
+        .map_err(|_| MultimuxError::Connect {
+            reason: format!("ts/http stream read: no data within {read_timeout:?}"),
+        })?
+    else {
+        return Ok(StreamStatus::Ended);
+    };
+    let chunk = chunk.map_err(|e| MultimuxError::Connect {
+        reason: format!("ts/http stream read: {e}"),
+    })?;
+    driver.feed(&chunk, now);
+    Ok(StreamStatus::Fed)
+}
+
+/// Opens `route`'s GET and drives a fresh [`TsIngestSession`] through
+/// [`IngestDriver`] until the body ends or a read fails — the new drive
+/// loop, replacing the pre-5a `TsHttpSource`/`TsHttpSession` pair.
+///
+/// Returns `Ok(())` on a clean end-of-body (the driver is left
+/// [`media_plane::ingress::HealthState::Ended`]) and `Err` on a genuine
+/// failure — the distinction the route supervisor should act on differently.
+///
+/// `route_handle` is the driver-backed registry side of issue #805 task 2 —
+/// see `crate::source::rtsp::run_rtsp`'s own doc for what
+/// `crate::source::report_driver_progress` does with it each iteration.
+pub async fn run_ts_http(
+    route: &TsHttpRoute,
+    trunk_config: TrunkConfig,
+    handshake: HandshakePolicy,
+    route_handle: &std::sync::Arc<crate::route::RouteHandle>,
+) -> Result<()> {
+    let mut stream = open_stream(route).await?;
+    let mut dialer = TsHttpDialer;
+    let session = dialer
+        .dial()
+        .unwrap_or_else(|never: Infallible| match never {});
+    let mut driver = IngestDriver::new(
+        session,
+        trunk_config,
+        handshake,
+        media_plane::DEFAULT_MAX_PROGRAMS,
+    );
+    let read_timeout = route.timeouts.read;
+    let start = std::time::Instant::now();
+    let mut progress = crate::source::DriverProgress::new();
+    loop {
+        let now = Timestamp::from_instant(start, std::time::Instant::now());
+        let status = recv_and_feed(&mut stream, &mut driver, read_timeout, now).await?;
+        crate::source::advance_route(&driver, route_handle, &mut progress);
+        match status {
+            StreamStatus::Fed => {}
+            StreamStatus::Ended => {
+                driver.finish();
+                // Flush every program's trailing buffered partial segment
+                // now that the driver is terminal -- `advance_route` above
+                // ran while the driver was still `Live`; this call's own
+                // internal terminal-health check does the flush.
+                crate::source::advance_route(&driver, route_handle, &mut progress);
+                return Ok(());
             }
         }
-        Ok(Some(out))
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::source::ts_program::test_support::{build_ts_bytes, handshake, trunk_config};
     use axum::Router;
     use axum::body::Body;
     use axum::response::{IntoResponse, Response as AxumResponse};
     use axum::routing::get;
-    use broadcast_common::Package;
-    use transmux::TsMux;
-    use transmux::media::Track;
-    use transmux::pipeline::CodecConfig;
-
-    /// Builds a real (not hand-faked) MPEG-2 TS byte stream carrying one
-    /// H.264 video track with a handful of access units, by round-tripping
-    /// through the workspace's own `transmux::TsMux` packager — mirrors
-    /// `source::ts_udp`'s own `build_ts_bytes` test helper exactly.
-    fn build_ts_bytes() -> Vec<u8> {
-        let avc = transmux::avc_config_from_sprop("Z0IAKeKQFAe2AtwEBAaQeJEV,aM48gA==").unwrap();
-        let spec = TrackSpec::new(
-            1,
-            90_000,
-            CodecConfig::Avc {
-                config: avc,
-                width: 0,
-                height: 0,
-            },
-        );
-        let frame_dur = 90_000 / 30;
-        let samples: Vec<Sample> = (0..10u32)
-            .map(|i| {
-                let nal = [0x65u8, 0xAA, i as u8];
-                let mut data = (nal.len() as u32).to_be_bytes().to_vec();
-                data.extend_from_slice(&nal);
-                Sample::new(
-                    data,
-                    Some(i64::from(i) * i64::from(frame_dur)),
-                    Some(i64::from(i) * i64::from(frame_dur)),
-                    Some(frame_dur),
-                    i == 0,
-                )
-            })
-            .collect();
-        let track = Track::new(spec, samples);
-        let media = transmux::media::Media::new(vec![track], 90_000);
-        TsMux::default().package(&media).expect("mux to TS")
-    }
+    use media_plane::ingress::{HealthState, ProgramId};
 
     /// Starts a tiny axum server streaming `body` in fixed-size chunks (a
     /// real chunked-transfer HTTP response, not a single buffered body) at
@@ -390,32 +332,74 @@ mod tests {
     }
 
     /// Loopback biting test: a real axum server streams a real muxed TS
-    /// fixture over chunked HTTP; asserts `TsHttpSource` resolves the track
+    /// fixture over chunked HTTP; asserts the ported route resolves the track
     /// set and yields real depayloaded samples.
     #[tokio::test]
     async fn loopback_http_ts_yields_samples_after_pmt_resolves() {
-        let ts_bytes = build_ts_bytes();
+        let ts_bytes = build_ts_bytes(1, 0xAB, 10);
         let (url, server) = start_chunked_ts_server(ts_bytes).await;
 
-        let source = TsHttpSource::new("cam-ts-http", url);
-        let mut session = tokio::time::timeout(Duration::from_secs(5), source.connect())
+        let route = TsHttpRoute::new("cam-ts-http", url);
+        let mut stream = tokio::time::timeout(Duration::from_secs(5), open_stream(&route))
             .await
-            .expect("connect timed out")
-            .expect("connect");
+            .expect("open_stream timed out")
+            .expect("open_stream");
 
-        let specs = session.track_specs();
-        assert_eq!(specs.len(), 1, "one video track from the muxed TS");
-        assert_eq!(specs[0].timescale, 90_000);
+        let mut dialer = TsHttpDialer;
+        let session = dialer.dial().expect("dial is infallible and does no I/O");
+        let mut driver = IngestDriver::new(
+            session,
+            trunk_config(),
+            handshake(),
+            media_plane::DEFAULT_MAX_PROGRAMS,
+        );
+        assert!(matches!(driver.health(), HealthState::Establishing));
 
-        let mut samples = Vec::new();
-        while let Ok(Ok(Some(batch))) =
-            tokio::time::timeout(Duration::from_millis(500), session.next_samples()).await
-        {
-            samples.extend(batch);
+        let mut cursor = None;
+        let mut saw_sample = false;
+        let mut ended = false;
+        for i in 0..200u64 {
+            match recv_and_feed(
+                &mut stream,
+                &mut driver,
+                Duration::from_millis(500),
+                Timestamp::from_nanos(i),
+            )
+            .await
+            {
+                Ok(StreamStatus::Fed) => {}
+                Ok(StreamStatus::Ended) => {
+                    driver.finish();
+                    ended = true;
+                }
+                Err(_) => break,
+            }
+            if cursor.is_none() {
+                cursor = driver.trunk(ProgramId(0)).map(|t| t.subscribe());
+            }
+            if let Some(c) = cursor.as_mut() {
+                while let Some(item) = c.poll() {
+                    if matches!(item, media_plane::trunk::SampleCursorItem::Timed { .. }) {
+                        saw_sample = true;
+                    }
+                }
+            }
+            if ended {
+                break;
+            }
         }
         assert!(
-            !samples.is_empty(),
-            "expected at least one sample from the muxed TS stream over HTTP"
+            saw_sample,
+            "expected at least one sample from the muxed TS stream over HTTP in the Trunk"
+        );
+        // The axum helper closes the body at end-of-stream, so this route
+        // ends cleanly rather than failing — the `Ended` vs `Failed`
+        // distinction step 3c made producible, now actually produced.
+        assert!(ended, "the chunked server's body must end cleanly");
+        assert!(
+            matches!(driver.health(), HealthState::Ended),
+            "a cleanly-ended HTTP body must be Ended, not Failed: {:?}",
+            driver.health()
         );
 
         server.abort();
@@ -437,11 +421,11 @@ mod tests {
             axum::serve(listener, app).await.expect("axum server");
         });
 
-        let source = TsHttpSource::new("cam-ts-http", format!("http://{addr}/nope.ts"));
-        let result = tokio::time::timeout(Duration::from_secs(5), source.connect())
+        let route = TsHttpRoute::new("cam-ts-http", format!("http://{addr}/nope.ts"));
+        let result = tokio::time::timeout(Duration::from_secs(5), open_stream(&route))
             .await
-            .expect("connect timed out");
-        assert!(result.is_err(), "a 404 must fail connect()");
+            .expect("open_stream timed out");
+        assert!(result.is_err(), "a 404 must fail open_stream()");
 
         server.abort();
     }
@@ -460,7 +444,7 @@ mod tests {
     async fn read_times_out_against_a_server_that_stalls_mid_body() {
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-        let ts_bytes = build_ts_bytes();
+        let ts_bytes = build_ts_bytes(1, 0xAB, 10);
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
             .await
             .expect("bind ephemeral loopback port");
@@ -487,25 +471,25 @@ mod tests {
             std::future::pending::<()>().await;
         });
 
-        let source = TsHttpSource::new("stalled", format!("http://{addr}/stream.ts"))
-            .with_timeouts(IngestTimeouts {
+        let route = TsHttpRoute::new("stalled", format!("http://{addr}/stream.ts")).with_timeouts(
+            IngestTimeouts {
                 connect: Duration::from_secs(5),
                 read: Duration::from_millis(100),
-            });
-        let mut session = tokio::time::timeout(Duration::from_secs(5), source.connect())
-            .await
-            .expect("connect timed out")
-            .expect("connect resolves tracks from the already-sent prefix");
-
-        let result = tokio::time::timeout(Duration::from_secs(5), session.next_samples())
-            .await
-            .expect(
-                "next_samples() must return on its own via IngestTimeouts::read, \
-                 not hang until this test's own backstop timeout",
-            );
+            },
+        );
+        let route_handle = std::sync::Arc::new(crate::route::RouteHandle::new(4.0, 500, 4));
+        let result = tokio::time::timeout(
+            Duration::from_secs(5),
+            run_ts_http(&route, trunk_config(), handshake(), &route_handle),
+        )
+        .await
+        .expect(
+            "run_ts_http must return on its own via IngestTimeouts::read, \
+             not hang until this test's own backstop timeout",
+        );
         assert!(
             result.is_err(),
-            "a server that goes silent mid-body must fail next_samples(), not hang forever"
+            "a server that goes silent mid-body must fail, not hang forever"
         );
     }
 
@@ -517,34 +501,57 @@ mod tests {
     const DIGEST_REALM: &str = "mock realm";
     const BEARER_TOKEN: &str = "ts-http-bearer-token";
 
-    /// Drives a `TsHttpSource` to connect and pull every sample the server
+    /// Drives a `TsHttpRoute` to open and pull every sample the server
     /// serves, returning the sample count — the common "auth worked, real
     /// media came out" assertion shared by the Basic/Digest/Bearer tests
     /// below.
-    async fn connect_and_drain(source: TsHttpSource) -> Result<usize> {
-        let mut session = tokio::time::timeout(Duration::from_secs(5), source.connect())
+    async fn connect_and_drain(route: TsHttpRoute) -> Result<usize> {
+        let mut stream = tokio::time::timeout(Duration::from_secs(5), open_stream(&route))
             .await
             .map_err(|_| MultimuxError::Connect {
-                reason: "connect timed out".into(),
+                reason: "open_stream timed out".into(),
             })??;
+        let mut dialer = TsHttpDialer;
+        let session = dialer.dial().expect("infallible");
+        let mut driver = IngestDriver::new(
+            session,
+            trunk_config(),
+            handshake(),
+            media_plane::DEFAULT_MAX_PROGRAMS,
+        );
+        let mut cursor = None;
         let mut total = 0usize;
-        while let Ok(Some(batch)) =
-            tokio::time::timeout(Duration::from_millis(500), session.next_samples())
-                .await
-                .unwrap_or(Ok(None))
-        {
-            total += batch.len();
+        for i in 0..200u64 {
+            match recv_and_feed(
+                &mut stream,
+                &mut driver,
+                Duration::from_millis(500),
+                Timestamp::from_nanos(i),
+            )
+            .await
+            {
+                Ok(StreamStatus::Fed) => {}
+                Ok(StreamStatus::Ended) | Err(_) => break,
+            }
+            if cursor.is_none() {
+                cursor = driver.trunk(ProgramId(0)).map(|t| t.subscribe());
+            }
+            if let Some(c) = cursor.as_mut() {
+                while c.poll().is_some() {
+                    total += 1;
+                }
+            }
         }
         Ok(total)
     }
 
     /// Basic (RFC 7617), credentials from URL userinfo: the server issues a
-    /// Basic challenge, `TsHttpSource` answers it via
+    /// Basic challenge, the route answers it via
     /// `source::http_auth::authenticated_get`'s retry path, and real samples
     /// come out.
     #[tokio::test]
     async fn basic_auth_from_url_userinfo_authenticates_and_pulls_samples() {
-        let ts_bytes = build_ts_bytes();
+        let ts_bytes = build_ts_bytes(1, 0xAB, 10);
         let (url, server) = start_chunked_ts_server_with_auth(
             ts_bytes,
             Some(crate::testutil::MockAuthScheme::Basic {
@@ -555,8 +562,8 @@ mod tests {
         .await;
         let credentialed = url.replacen("http://", &format!("http://{AUTH_USER}:{AUTH_PASS}@"), 1);
 
-        let source = TsHttpSource::new("cam-basic", credentialed);
-        let total = connect_and_drain(source)
+        let route = TsHttpRoute::new("cam-basic", credentialed);
+        let total = connect_and_drain(route)
             .await
             .expect("Basic auth from URL userinfo must authenticate");
         assert!(total > 0, "expected real samples after Basic auth");
@@ -568,12 +575,12 @@ mod tests {
     /// real Digest challenge (nonce/realm/qop=auth) via a real
     /// `broadcast_auth::Verifier` (`crate::testutil::require_auth`) that
     /// independently recomputes the expected response — a client that can't
-    /// answer it gets nothing back, so this proves `TsHttpSource` actually
+    /// answer it gets nothing back, so this proves the route actually
     /// computed a correct Digest response via `broadcast-auth`, not just
     /// echoed something Digest-shaped.
     #[tokio::test]
     async fn digest_auth_from_url_userinfo_authenticates_and_pulls_samples() {
-        let ts_bytes = build_ts_bytes();
+        let ts_bytes = build_ts_bytes(1, 0xAB, 10);
         let (url, server) = start_chunked_ts_server_with_auth(
             ts_bytes,
             Some(crate::testutil::MockAuthScheme::Digest {
@@ -585,8 +592,8 @@ mod tests {
         .await;
         let credentialed = url.replacen("http://", &format!("http://{AUTH_USER}:{AUTH_PASS}@"), 1);
 
-        let source = TsHttpSource::new("cam-digest", credentialed);
-        let total = connect_and_drain(source)
+        let route = TsHttpRoute::new("cam-digest", credentialed);
+        let total = connect_and_drain(route)
             .await
             .expect("Digest auth from URL userinfo must authenticate");
         assert!(total > 0, "expected real samples after Digest auth");
@@ -595,11 +602,11 @@ mod tests {
     }
 
     /// Bearer (RFC 6750), config-supplied (the only way to supply one — it
-    /// has no URL-userinfo form): `TsHttpSource::with_auth` overrides the
+    /// has no URL-userinfo form): `TsHttpRoute::with_auth` overrides the
     /// (bare, no-userinfo) connect URL.
     #[tokio::test]
     async fn bearer_auth_config_supplied_authenticates_and_pulls_samples() {
-        let ts_bytes = build_ts_bytes();
+        let ts_bytes = build_ts_bytes(1, 0xAB, 10);
         let (url, server) = start_chunked_ts_server_with_auth(
             ts_bytes,
             Some(crate::testutil::MockAuthScheme::Bearer {
@@ -608,9 +615,9 @@ mod tests {
         )
         .await;
 
-        let source =
-            TsHttpSource::new("cam-bearer", url).with_auth(Some(Credentials::bearer(BEARER_TOKEN)));
-        let total = connect_and_drain(source)
+        let route =
+            TsHttpRoute::new("cam-bearer", url).with_auth(Some(Credentials::bearer(BEARER_TOKEN)));
+        let total = connect_and_drain(route)
             .await
             .expect("config-supplied Bearer token must authenticate");
         assert!(total > 0, "expected real samples after Bearer auth");
@@ -619,13 +626,13 @@ mod tests {
     }
 
     /// Config-supplied auth takes precedence over URL userinfo: the URL
-    /// carries a *wrong* password, but `TsHttpSource::with_auth` supplies the
+    /// carries a *wrong* password, but `TsHttpRoute::with_auth` supplies the
     /// correct one — connect must succeed on the config auth, proving
     /// `resolve_credentials` really overrides rather than merely falling
     /// back.
     #[tokio::test]
     async fn config_auth_overrides_wrong_url_userinfo() {
-        let ts_bytes = build_ts_bytes();
+        let ts_bytes = build_ts_bytes(1, 0xAB, 10);
         let (url, server) = start_chunked_ts_server_with_auth(
             ts_bytes,
             Some(crate::testutil::MockAuthScheme::Digest {
@@ -637,9 +644,9 @@ mod tests {
         .await;
         let wrong_url_creds = url.replacen("http://", &format!("http://{AUTH_USER}:wrongpass@"), 1);
 
-        let source = TsHttpSource::new("cam-override", wrong_url_creds)
+        let route = TsHttpRoute::new("cam-override", wrong_url_creds)
             .with_auth(Some(Credentials::new(AUTH_USER, AUTH_PASS)));
-        let total = connect_and_drain(source)
+        let total = connect_and_drain(route)
             .await
             .expect("config auth must override the URL's wrong userinfo password");
         assert!(
@@ -656,7 +663,7 @@ mod tests {
     /// password gets rejected exactly like a client with none).
     #[tokio::test]
     async fn wrong_credentials_stay_401_and_connect_errors() {
-        let ts_bytes = build_ts_bytes();
+        let ts_bytes = build_ts_bytes(1, 0xAB, 10);
         let (url, server) = start_chunked_ts_server_with_auth(
             ts_bytes,
             Some(crate::testutil::MockAuthScheme::Digest {
@@ -668,13 +675,13 @@ mod tests {
         .await;
         let wrong_creds = url.replacen("http://", &format!("http://{AUTH_USER}:wrongpass@"), 1);
 
-        let source = TsHttpSource::new("cam-wrong", wrong_creds);
-        let result = tokio::time::timeout(Duration::from_secs(5), source.connect())
+        let route = TsHttpRoute::new("cam-wrong", wrong_creds);
+        let result = tokio::time::timeout(Duration::from_secs(5), open_stream(&route))
             .await
-            .expect("connect must not hang against a persistent 401");
+            .expect("open_stream must not hang against a persistent 401");
         assert!(
             result.is_err(),
-            "wrong credentials must fail connect(), not silently proceed"
+            "wrong credentials must fail open_stream(), not silently proceed"
         );
 
         server.abort();

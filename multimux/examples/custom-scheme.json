@@ -5,7 +5,7 @@
       "name": "cam1",
       "input": {
         "type": "custom",
-        "type_tag": "silence",
+        "type_tag": "demo",
         "params": {}
       }
     }

@@ -8,8 +8,8 @@ use broadcast_common::{Demand, Stage, Timestamp};
 use bytes::Bytes;
 use libfuzzer_sys::fuzz_target;
 use media_plane::{
-    HandshakePolicy, IngestDriver, IngestSession, ProgramId, RetentionClass, SessionEvent,
-    TrunkConfig,
+    DEFAULT_MAX_PROGRAMS, HandshakePolicy, IngestDriver, IngestSession, ProgramId, RetentionClass,
+    SessionEvent, TrunkConfig,
 };
 use transmux::pipeline::DataCarriage;
 use transmux::{CodecConfig, Sample, TrackSpec};
@@ -86,7 +86,9 @@ impl Stage for FuzzSession {
 }
 
 /// Takes the default `poll_transmit` (nothing to send).
-impl IngestSession for FuzzSession {}
+impl IngestSession for FuzzSession {
+    type Request = Bytes;
+}
 
 fn nz(n: usize) -> NonZeroUsize {
     NonZeroUsize::new(n).unwrap()
@@ -109,7 +111,11 @@ fuzz_target!(|data: &[u8]| {
     };
     let trunk_config = TrunkConfig::new(nz(8), nz(4), nz(4), nz(4), nz(4));
     let handshake = HandshakePolicy::establish_by(Timestamp::from_nanos(u64::MAX));
-    let mut driver = IngestDriver::new(session, trunk_config, handshake);
+    // `max_programs` (issue #803) bounds how many `Trunk`s one session may
+    // mint -- the fifth unbounded-allocation vector this workspace has had.
+    // The default ceiling is what a real driver loop uses.
+    let mut driver =
+        IngestDriver::new(session, trunk_config, handshake, DEFAULT_MAX_PROGRAMS);
 
     driver.feed(capped, Timestamp::ZERO);
     driver.on_deadline(Timestamp::from_nanos(1));

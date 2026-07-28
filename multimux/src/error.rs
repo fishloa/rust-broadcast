@@ -80,7 +80,7 @@ pub enum MultimuxError {
 
     /// Ingest-side framing of samples out of the wire container failed:
     /// either RTP depayloading into access units, or an ingest container
-    /// demux (e.g. the FLV tag stream a `rtmp::RtmpSource` publisher
+    /// demux (e.g. the FLV tag stream a `rtmp::RtmpRoute` publisher
     /// carries — `transmux::flv::FlvError`) — distinct from a *downstream*
     /// `transmux` segmentation/mux error (see [`Self::Transmux`]), which
     /// this crate never produces on the ingest path.
@@ -93,6 +93,13 @@ pub enum MultimuxError {
     /// A `transmux` segmentation/mux error.
     #[error("transmux: {0}")]
     Transmux(#[from] transmux::Error),
+
+    /// An `ll_hls_runtime::client::LlHlsClient` (`source::hls_pull`, plan
+    /// step 5a round 3) rejected a fed playlist/resource — malformed
+    /// playlist text, a demux failure, or a resource delivered for an id it
+    /// never requested (a driver bug).
+    #[error("hls-pull client: {0}")]
+    LlHls(#[from] ll_hls_runtime::client::Error),
 
     /// An I/O error (socket, bind) not already covered by [`Self::Connect`]
     /// or [`Self::ConfigRead`].

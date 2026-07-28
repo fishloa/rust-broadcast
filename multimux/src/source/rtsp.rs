@@ -1,56 +1,79 @@
-//! RTSP ingest source — DESCRIBE/SETUP/PLAY over interleaved TCP, depayloaded
-//! into timed [`Sample`]s.
+//! RTSP ingest source (ported onto the media-plane ingress traits at plan
+//! step 5a) — DESCRIBE/SETUP/PLAY over interleaved TCP, depayloaded into
+//! timed [`transmux::Sample`]s.
 //!
-//! Drives [`rtsp_runtime::io::AsyncRtspClient`] (RFC 2326 Appendix A client
-//! state machine, `rtsp://` (plain TCP) + `rtsps://` (RTSP-over-TLS, gated on
-//! this crate's `tls` feature, default-on) + interleaved `$`-framed media per
-//! §10.12) and feeds each received RTP packet into a [`RtpStreamDepacketiser`]
-//! (RFC 6184 / RFC 3640) built from the DESCRIBE SDP
-//! ([`crate::source::sdp::parse_sdp_tracks`]).
+//! # The sans-IO reshape, for real RTSP — this module is the test of it
 //!
-//! `RtspSource` is the immutable "how to reach this stream" descriptor;
-//! [`RtspSource::connect`] performs the DESCRIBE → SETUP (one per media,
-//! interleaved) → PLAY handshake and returns a live [`RtspSession`] that
-//! [`RtspSession::next_samples`] pulls one interleaved frame at a time.
+//! [`RtspDialer::dial`] performs **no I/O**: it parses the URL, resolves
+//! credentials, and builds exactly one thing — the DESCRIBE request bytes —
+//! via [`rtsp_runtime::client::ClientSession`], the sans-IO RTSP engine
+//! `rtsp-runtime` already ships (its request builders *return* the bytes to
+//! send; `handle_data` consumes replies and returns typed events; the RFC
+//! 2326 Appendix A.1 state machine lives inside it, never touching a
+//! socket). [`RtspIngestSession`] wraps that engine directly — no
+//! `AsyncRtspClient`, no owned `TcpStream` — so the *entire* DESCRIBE → SETUP
+//! (× N tracks) → PLAY handshake completes through the ordinary
+//! [`IngestSession::poll_transmit`]/[`Stage::feed`] pump: [`run_rtsp`] (the
+//! multimux-side driver that owns the real socket) writes whatever
+//! `poll_transmit` returns, reads the reply, and hands it to `feed`, which
+//! either queues the next request or emits [`SessionEvent::Established`].
+//!
+//! This confirms `media_plane::ingress`'s central design bet: a "genuinely
+//! multi-round-trip" protocol does **not** need a blocking `dial()` or an
+//! executor-bridge thread, *provided* a sans-IO engine already exists to
+//! delegate to. `rtsp-runtime` is that engine for RTSP. (Contrast
+//! [`crate::source::ts_http`]/[`crate::source::srt`]'s caller mode, which
+//! have no such sans-IO core and therefore *do* need the bridge — see their
+//! own module docs.)
+//!
+//! # What did not carry over
+//!
+//! - **Keepalive / RTCP receiver reports.** The pre-5a session never sent
+//!   either (it only ever read), so this port carries no regression, but
+//!   [`IngestSession::poll_transmit`] is exactly the seam
+//!   `media_plane::ingress`'s own docs name for wiring one in later
+//!   (a periodic `OPTIONS`, driven off [`Stage::on_deadline`]) — not done
+//!   here, since nothing pre-5a did it either.
+//! - **`rtsps://` (TLS) in [`run_rtsp`].** The session/`Stage` logic is
+//!   completely transport-agnostic (it only ever sees bytes), but the
+//!   driver loop below only wires a plain `TcpStream` for this story's time
+//!   budget; wiring `tokio_rustls` back in is a small, mechanical addition
+//!   to `run_rtsp` alone (the pre-5a `RtspClient` enum's `Plain`/`Tls` split
+//!   is the template), not a design gap.
 
-use std::time::Duration;
+use std::collections::VecDeque;
 
+use bytes::Bytes;
 use rtsp_runtime::auth::Credentials;
 use rtsp_runtime::client::{ClientEvent, ClientSession};
-use rtsp_runtime::io::AsyncRtspClient;
 use rtsp_runtime::transport::{Transport, TransportSpec};
+use rtsp_runtime::{Method, StatusCode};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use url::Url;
+
+use broadcast_common::{Demand, Stage, Timestamp};
+use media_plane::ingress::{
+    Dialer, HandshakePolicy, IngestDriver, IngestSession, ProgramId, SessionEvent,
+};
+use media_plane::trunk::{RetentionClass, TrunkConfig};
 
 use crate::error::{MultimuxError, Result};
 use crate::source::http_auth::resolve_credentials;
 use crate::source::{IngestTimeouts, Source, TrackInit, sdp::parse_sdp_tracks};
-use transmux::pipeline::{Sample, TrackSpec};
-use transmux::{RtpStreamDepacketiser, RtpStreamTrack};
 
 /// Interleaved channel offset from a media's RTP channel to its paired RTCP
 /// channel (RFC 2326 §10.12: `interleaved=lo-hi` with `hi = lo + 1`).
 const RTCP_CHANNEL_OFFSET: u8 = 1;
 
-/// Default port for a bare `rtsp://host/...` URL with no explicit port
-/// (RFC 2326 §1 / IANA `rtsp`), re-exported by `rtsp-runtime`.
+/// Default port for a bare `rtsp://host/...` URL with no explicit port.
 const RTSP_DEFAULT_PORT: u16 = rtsp_runtime::RTSP_DEFAULT_PORT;
 
-/// Default port for a bare `rtsps://host/...` URL with no explicit port
-/// (IANA `rtsps`), re-exported by `rtsp-runtime`.
+/// Default port for a bare `rtsps://host/...` URL with no explicit port.
 const RTSPS_DEFAULT_PORT: u16 = rtsp_runtime::RTSPS_DEFAULT_PORT;
 
 /// Map an interleaved RTP channel to its track id (even channels only; RTCP
 /// odd channels return `None`).
-// TODO(P5.3): RTCP SR wallclock A/V sync — this is where the odd (RTCP)
-// interleaved channel's `MediaData` is currently discarded (audit-ingest #9).
-// Per-track RTP timestamps are rebased to 0 independently (see
-// `transmux::rtp_stream`'s module doc), so cross-track A/V alignment today
-// relies on both tracks' encoders having started at the same wall-clock
-// instant. Wiring RTCP Sender Report NTP/RTP correlation here (parse via
-// `transmux::rtcp`, feed the resulting per-track offset into the
-// `Track`/`Sample` timing model) would close that gap; deferred as a large,
-// multi-crate lift (issue #663 P5).
 pub fn route_channel(channel: u8, tracks: &[TrackInit]) -> Option<u32> {
     if channel % 2 != 0 {
         return None;
@@ -61,23 +84,19 @@ pub fn route_channel(channel: u8, tracks: &[TrackInit]) -> Option<u32> {
         .map(|t| t.track_id)
 }
 
-/// An RTSP stream to pull: a name (for logging/metrics) plus its source URL.
+/// An RTSP route: a name (for logging/metrics) plus its source URL. Replaces
+/// the old (pre-5a) `RtspSource`; [`run_rtsp`] is the new drive loop.
 #[derive(Clone)]
-pub struct RtspSource {
+pub struct RtspRoute {
     name: String,
     url: String,
     timeouts: IngestTimeouts,
-    /// Config-supplied credentials, taking precedence over any URL userinfo
-    /// — see `crate::source::http_auth::resolve_credentials`.
     auth: Option<Credentials>,
 }
 
-/// Manual `Debug` (rather than `#[derive(Debug)]`): `url` may carry a live
-/// camera's `user:pass@` userinfo, so it must never render verbatim; `auth`
-/// (if present) carries a raw password/token, also never rendered verbatim.
-impl std::fmt::Debug for RtspSource {
+impl std::fmt::Debug for RtspRoute {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("RtspSource")
+        f.debug_struct("RtspRoute")
             .field("name", &self.name)
             .field("url", &crate::redact::redact_url(&self.url))
             .field("auth", &self.auth.as_ref().map(|_| "***"))
@@ -85,11 +104,10 @@ impl std::fmt::Debug for RtspSource {
     }
 }
 
-impl RtspSource {
-    /// Build a source descriptor. `url` is the `rtsp://` (or `rtsps://`) URL
-    /// used for DESCRIBE and as the base for relative `a=control` SETUP URLs.
+impl RtspRoute {
+    /// Build a route descriptor.
     pub fn new(name: impl Into<String>, url: impl Into<String>) -> Self {
-        RtspSource {
+        RtspRoute {
             name: name.into(),
             url: url.into(),
             timeouts: IngestTimeouts::default(),
@@ -97,219 +115,343 @@ impl RtspSource {
         }
     }
 
-    /// Overrides the default [`IngestTimeouts`] — see
-    /// `crate::origin::HttpLimits`/`AppState::with_limits` for the analogous
-    /// pattern this mirrors. [`crate::origin::serve`] applies `Config`'s
-    /// configured values; callers that only want the defaults (most tests)
-    /// keep using [`Self::new`] unchanged.
+    /// Overrides the default [`IngestTimeouts`].
     #[must_use]
     pub fn with_timeouts(mut self, timeouts: IngestTimeouts) -> Self {
         self.timeouts = timeouts;
         self
     }
 
-    /// Attaches config-supplied credentials, overriding any URL userinfo at
-    /// [`Self::connect`] time — see
-    /// `crate::source::http_auth::resolve_credentials`.
+    /// Attaches config-supplied credentials, overriding any URL userinfo.
     #[must_use]
     pub fn with_auth(mut self, auth: Option<Credentials>) -> Self {
         self.auth = auth;
         self
     }
+}
 
-    /// Connects, DESCRIBEs, SETUPs every media (interleaved TCP, channels
-    /// `(2i, 2i+1)` per the SDP's media order), and PLAYs — returning a live
-    /// session ready for [`RtspSession::next_samples`].
-    ///
-    /// The whole handshake (TCP/TLS connect through PLAY) is bounded by
-    /// [`IngestTimeouts::connect`] (issue #663 P5, audit-ingest #3): a
-    /// stalled/half-open server that accepts the connection but never
-    /// replies would otherwise hang this method forever, starving
-    /// [`crate::origin::supervisor::supervise`]'s backoff of a chance to
-    /// retry — a timed-out handshake instead surfaces as a
-    /// [`MultimuxError::Connect`], exactly like any other connect failure.
-    pub async fn connect(&self) -> Result<RtspSession> {
+impl Source for RtspRoute {
+    fn stream_name(&self) -> &str {
+        &self.name
+    }
+}
+
+/// Which handshake request [`RtspIngestSession`] is currently waiting a
+/// response for — the state `poll_transmit`/`feed` walk through instead of
+/// `RtspDialer::dial` blocking on it.
+enum Phase {
+    AwaitDescribe,
+    AwaitSetup(usize),
+    AwaitPlay,
+    Live,
+}
+
+/// A live RTSP [`IngestSession`]: wraps `rtsp-runtime`'s sans-IO
+/// [`ClientSession`] directly (no socket) — see the module doc.
+pub struct RtspIngestSession {
+    session: ClientSession,
+    base_url: Url,
+    request_uri: String,
+    tracks: Vec<TrackInit>,
+    depacketiser: Option<transmux::RtpStreamDepacketiser>,
+    phase: Phase,
+    outbound: VecDeque<Bytes>,
+    pending: VecDeque<SessionEvent>,
+}
+
+impl RtspIngestSession {
+    fn begin_setup(&mut self, index: usize) -> Result<()> {
+        let track = &self.tracks[index];
+        let uri = resolve_control(&self.base_url, track.control.as_deref())?;
+        let transport = Transport::single(TransportSpec::rtp_avp_tcp_interleaved(
+            track.channel,
+            track.channel.saturating_add(RTCP_CHANNEL_OFFSET),
+        ));
+        let bytes = self
+            .session
+            .setup(&uri, &transport)
+            .map_err(protocol_err("SETUP"))?;
+        self.outbound.push_back(Bytes::from(bytes));
+        self.phase = Phase::AwaitSetup(index);
+        Ok(())
+    }
+
+    fn handle_event(&mut self, event: ClientEvent) -> Result<()> {
+        match event {
+            ClientEvent::AuthRetry { request, .. } => {
+                self.outbound.push_back(Bytes::from(request));
+            }
+            ClientEvent::Response {
+                status,
+                body,
+                method,
+                ..
+            } => {
+                if !status.is_success() {
+                    return Err(response_error(&method, status));
+                }
+                match (&self.phase, &method) {
+                    (Phase::AwaitDescribe, m) if *m == Method::Describe => {
+                        let tracks = parse_sdp_tracks(&body)?;
+                        self.tracks = tracks;
+                        if self.tracks.is_empty() {
+                            return Err(MultimuxError::Sdp {
+                                reason: "DESCRIBE: SDP declared no media".into(),
+                            });
+                        }
+                        self.begin_setup(0)?;
+                    }
+                    (Phase::AwaitSetup(index), m) if *m == Method::Setup => {
+                        let index = *index;
+                        let spec = self
+                            .session
+                            .negotiated_transport()
+                            .and_then(Transport::first)
+                            .ok_or_else(|| MultimuxError::Protocol {
+                                phase: "SETUP",
+                                reason: format!(
+                                    "track {}: server did not provide negotiated transport",
+                                    self.tracks[index].track_id
+                                ),
+                            })?;
+                        let channel =
+                            interleaved_channel(spec).ok_or_else(|| MultimuxError::Protocol {
+                                phase: "SETUP",
+                                reason: format!(
+                                    "track {}: server did not negotiate interleaved TCP transport",
+                                    self.tracks[index].track_id
+                                ),
+                            })?;
+                        self.tracks[index].channel = channel;
+                        let next = index + 1;
+                        if next < self.tracks.len() {
+                            self.begin_setup(next)?;
+                        } else {
+                            self.depacketiser = Some(transmux::RtpStreamDepacketiser::new(
+                                self.tracks
+                                    .iter()
+                                    .map(|t| {
+                                        transmux::RtpStreamTrack::new(
+                                            t.track_id,
+                                            t.kind,
+                                            t.config.clone(),
+                                            t.clock_rate,
+                                        )
+                                    })
+                                    .collect(),
+                            ));
+                            let bytes = self
+                                .session
+                                .play(&self.request_uri)
+                                .map_err(protocol_err("PLAY"))?;
+                            self.outbound.push_back(Bytes::from(bytes));
+                            self.phase = Phase::AwaitPlay;
+                        }
+                    }
+                    (Phase::AwaitPlay, m) if *m == Method::Play => {
+                        self.pending.push_back(SessionEvent::Established);
+                        let specs = self
+                            .depacketiser
+                            .as_ref()
+                            .expect("depacketiser built before PLAY is sent")
+                            .track_specs();
+                        self.pending.push_back(SessionEvent::NewProgram {
+                            program: ProgramId(0),
+                            tracks: specs,
+                        });
+                        self.phase = Phase::Live;
+                    }
+                    _ => {
+                        // A response for a request phase we've already moved
+                        // past (e.g. a stray retransmit) — ignore rather than
+                        // error, mirroring how `handle_data` already
+                        // correlates by CSeq.
+                    }
+                }
+            }
+            ClientEvent::MediaData { channel, data } => {
+                if !matches!(self.phase, Phase::Live) {
+                    return Ok(());
+                }
+                let Some(track_id) = route_channel(channel, &self.tracks) else {
+                    return Ok(());
+                };
+                let Some(depa) = self.depacketiser.as_mut() else {
+                    return Ok(());
+                };
+                let samples = depa
+                    .push(track_id, &data)
+                    .map_err(|e| MultimuxError::Depay {
+                        reason: e.to_string(),
+                    })?;
+                for sample in samples {
+                    self.pending.push_back(SessionEvent::Sample {
+                        program: ProgramId(0),
+                        track_id,
+                        retention: RetentionClass::Timed,
+                        sample,
+                    });
+                }
+            }
+            // `ClientEvent` is `#[non_exhaustive]`: a future variant this
+            // session has no reaction to yet is ignored, not a hard error.
+            _ => {}
+        }
+        Ok(())
+    }
+}
+
+impl Stage for RtspIngestSession {
+    type In<'a> = &'a [u8];
+    type Out = SessionEvent;
+    type Error = MultimuxError;
+
+    fn feed(&mut self, input: &[u8], _now: Timestamp) -> Result<()> {
+        let events = self
+            .session
+            .handle_data(input)
+            .map_err(protocol_err("recv"))?;
+        for event in events {
+            self.handle_event(event)?;
+        }
+        Ok(())
+    }
+
+    fn poll(&mut self) -> Option<SessionEvent> {
+        self.pending.pop_front()
+    }
+
+    fn finish(&mut self) -> Result<()> {
+        Ok(())
+    }
+
+    fn next_deadline(&self) -> Option<Timestamp> {
+        None
+    }
+
+    fn on_deadline(&mut self, _now: Timestamp) {}
+
+    fn demand(&self) -> Demand {
+        Demand::new(4096)
+    }
+}
+
+impl IngestSession for RtspIngestSession {
+    type Request = Bytes;
+
+    fn poll_transmit(&mut self) -> Option<Bytes> {
+        self.outbound.pop_front()
+    }
+}
+
+/// Constructs an [`RtspIngestSession`] and queues its first handshake
+/// request (DESCRIBE) — **no I/O**: see the module doc.
+pub struct RtspDialer {
+    url: String,
+    auth: Option<Credentials>,
+}
+
+impl RtspDialer {
+    /// Build a dialer for `url` (`rtsp://`/`rtsps://`), with optional
+    /// config-supplied credentials taking precedence over URL userinfo.
+    pub fn new(url: impl Into<String>, auth: Option<Credentials>) -> Self {
+        RtspDialer {
+            url: url.into(),
+            auth,
+        }
+    }
+
+    /// The `host:port` [`run_rtsp`] must TCP-connect to — computed here
+    /// (pure, no I/O) so the driver never needs to re-parse the URL.
+    pub fn connect_addr(&self) -> Result<String> {
+        let base = Url::parse(&self.url).map_err(|e| MultimuxError::Connect {
+            reason: format!(
+                "bad rtsp(s) URL {}: {e}",
+                crate::redact::redact_url(&self.url)
+            ),
+        })?;
+        let clean = strip_userinfo(&base)?;
+        connect_addr(&clean)
+    }
+
+    /// Whether `run_rtsp` needs a TLS-wrapped connection (`rtsps://`).
+    pub fn is_tls(&self) -> Result<bool> {
+        let base = Url::parse(&self.url).map_err(|e| MultimuxError::Connect {
+            reason: format!(
+                "bad rtsp(s) URL {}: {e}",
+                crate::redact::redact_url(&self.url)
+            ),
+        })?;
+        scheme_is_tls(&strip_userinfo(&base)?)
+    }
+}
+
+impl Dialer for RtspDialer {
+    type Session = RtspIngestSession;
+    type Error = MultimuxError;
+
+    fn dial(&mut self) -> Result<RtspIngestSession> {
         let base_url = Url::parse(&self.url).map_err(|e| MultimuxError::Connect {
             reason: format!(
                 "bad rtsp(s) URL {}: {e}",
                 crate::redact::redact_url(&self.url)
             ),
         })?;
-        // Pull credentials from the URL's userinfo (RFC 3986 §3.2.1), if any,
-        // then strip it: RTSP request URIs (DESCRIBE/SETUP/PLAY) must not
-        // carry `user:pass@`, and stripping keeps secrets out of logs/request
-        // lines. Every subsequent use of the URL — connect address, SNI name,
-        // scheme check, and any error message that embeds it — uses
-        // `request_url` (userinfo already stripped), never `base_url`.
         let credentials = resolve_credentials(self.auth.clone(), extract_credentials(&base_url)?);
         let request_url = strip_userinfo(&base_url)?;
         let request_uri = request_url.to_string();
 
-        let is_tls = scheme_is_tls(&request_url)?;
-        let addr = connect_addr(&request_url)?;
-        let connect_timeout = self.timeouts.connect;
+        let mut session = session_with_credentials(credentials);
+        let describe_bytes = session
+            .describe(&request_uri)
+            .map_err(protocol_err("DESCRIBE"))?;
 
-        let (tracks, client) = tokio::time::timeout(connect_timeout, async {
-            let mut client = if is_tls {
-                let server_name = sni_server_name(&request_url)?;
-                connect_tls_client(&addr, &server_name, credentials).await?
-            } else {
-                connect_plain_client(&addr, credentials).await?
-            };
-
-            let describe = client
-                .describe(&request_uri)
-                .await
-                .map_err(protocol_err("DESCRIBE"))?;
-            let sdp = expect_ok_response(describe, "DESCRIBE")?;
-            let mut tracks = parse_sdp_tracks(&sdp)?;
-
-            for track in &mut tracks {
-                let uri = resolve_control(&request_url, track.control.as_deref())?;
-                let transport = Transport::single(TransportSpec::rtp_avp_tcp_interleaved(
-                    track.channel,
-                    track.channel.saturating_add(RTCP_CHANNEL_OFFSET),
-                ));
-                let setup = client
-                    .setup(&uri, &transport)
-                    .await
-                    .map_err(protocol_err("SETUP"))?;
-                expect_ok_response(setup, "SETUP")?;
-
-                // The server must negotiate TCP-interleaved transport. Extract
-                // the negotiated spec and verify it has both TCP
-                // lower-transport and interleaved channels; reject any
-                // non-interleaved response (e.g. a server that ignores TCP
-                // and negotiates UDP).
-                let spec = client
-                    .session()
-                    .negotiated_transport()
-                    .and_then(Transport::first)
-                    .ok_or_else(|| MultimuxError::Protocol {
-                        phase: "SETUP",
-                        reason: format!(
-                            "track {}: server did not provide negotiated transport",
-                            track.track_id
-                        ),
-                    })?;
-
-                // Ensure the negotiated transport is TCP-interleaved.
-                if let Some(channel) = interleaved_channel(spec) {
-                    track.channel = channel;
-                } else {
-                    return Err(MultimuxError::Protocol {
-                        phase: "SETUP",
-                        reason: format!(
-                            "track {}: server did not negotiate interleaved TCP transport",
-                            track.track_id
-                        ),
-                    });
-                }
-            }
-
-            let play = client
-                .play(&request_uri)
-                .await
-                .map_err(protocol_err("PLAY"))?;
-            expect_ok_response(play, "PLAY")?;
-
-            Ok::<_, MultimuxError>((tracks, client))
-        })
-        .await
-        .map_err(|_| MultimuxError::Connect {
-            reason: format!(
-                "rtsp connect: no response within {connect_timeout:?} ({})",
-                crate::redact::redact_url(&self.url)
-            ),
-        })??;
-
-        let depacketiser = RtpStreamDepacketiser::new(
-            tracks
-                .iter()
-                .map(|t| RtpStreamTrack::new(t.track_id, t.kind, t.config.clone(), t.clock_rate))
-                .collect(),
-        );
-
-        Ok(RtspSession {
-            tracks,
-            client,
-            depacketiser,
-            read_timeout: self.timeouts.read,
+        Ok(RtspIngestSession {
+            session,
+            base_url: request_url,
+            request_uri,
+            tracks: Vec::new(),
+            depacketiser: None,
+            phase: Phase::AwaitDescribe,
+            outbound: VecDeque::from(vec![Bytes::from(describe_bytes)]),
+            pending: VecDeque::new(),
         })
     }
 }
 
-impl Source for RtspSource {
-    fn stream_name(&self) -> &str {
-        &self.name
+/// Builds a fresh [`ClientSession`], attaching `credentials` if present.
+fn session_with_credentials(credentials: Option<Credentials>) -> ClientSession {
+    match credentials {
+        Some(creds) => ClientSession::new().with_credentials(creds),
+        None => ClientSession::new(),
     }
 }
 
-/// A live, connected RTSP session: PLAYing, pulling interleaved media frames
-/// and depayloading them into timed [`Sample`]s.
-pub struct RtspSession {
-    /// Per-track init derived from the DESCRIBE SDP (channel assignments
-    /// reflect whatever SETUP ultimately negotiated).
-    pub tracks: Vec<TrackInit>,
-    client: RtspClient,
-    depacketiser: RtpStreamDepacketiser,
-    /// Bound on each [`Self::next_samples`] read — see [`IngestTimeouts::read`].
-    read_timeout: Duration,
-}
-
-impl RtspSession {
-    /// The `TrackSpec`s (timescale = RTP clock rate) for init-segment
-    /// construction.
-    pub fn track_specs(&self) -> Vec<TrackSpec> {
-        self.depacketiser.track_specs()
-    }
-
-    /// Pulls one interleaved frame and depayloads it. Returns the samples
-    /// emitted (zero or more, paired with their track id), an empty `Vec` for
-    /// non-media events or an unrouted (RTCP/unknown) channel, or `Ok(None)`
-    /// when the peer has closed the connection.
-    ///
-    /// Bounded by [`IngestTimeouts::read`] (issue #663 P5, audit-ingest #3):
-    /// a server that stops sending interleaved frames mid-session (wedged
-    /// firmware, silently dropped link) would otherwise leave this `.await`
-    /// pending forever — a read that times out surfaces as a
-    /// [`MultimuxError::Protocol`], which [`crate::pipeline::run_pipeline`]
-    /// propagates and [`crate::origin::supervisor::supervise`] reconnects on,
-    /// same as any other read error.
-    pub async fn next_samples(&mut self) -> Result<Option<Vec<(u32, Sample)>>> {
-        let event = tokio::time::timeout(self.read_timeout, self.client.recv_interleaved())
-            .await
-            .map_err(|_| MultimuxError::Protocol {
-                phase: "recv",
-                reason: format!("no data within {:?}", self.read_timeout),
-            })?
-            .map_err(protocol_err("recv"))?;
-        let Some(event) = event else {
-            return Ok(None);
-        };
-        let ClientEvent::MediaData { channel, data } = event else {
-            return Ok(Some(Vec::new()));
-        };
-        let Some(track_id) = route_channel(channel, &self.tracks) else {
-            return Ok(Some(Vec::new()));
-        };
-        let samples =
-            self.depacketiser
-                .push(track_id, &data)
-                .map_err(|e| MultimuxError::Depay {
-                    reason: e.to_string(),
-                })?;
-        Ok(Some(samples.into_iter().map(|s| (track_id, s)).collect()))
+/// A non-success response status becomes the concrete error the driver
+/// reports (via `Stage::feed`'s `Err`, i.e. `HealthState::Failed`) — a `401`/
+/// `403` maps to [`MultimuxError::Auth`] (matchable), anything else to
+/// [`MultimuxError::Protocol`].
+fn response_error(method: &Method, status: StatusCode) -> MultimuxError {
+    let phase: &'static str = match *method {
+        Method::Describe => "DESCRIBE",
+        Method::Setup => "SETUP",
+        Method::Play => "PLAY",
+        _ => "recv",
+    };
+    if matches!(status, StatusCode::Unauthorized | StatusCode::Forbidden) {
+        MultimuxError::Auth {
+            reason: format!("{phase}: {status}"),
+        }
+    } else {
+        MultimuxError::Protocol {
+            phase,
+            reason: format!("non-success status {status}"),
+        }
     }
 }
 
 /// Resolves a per-media SETUP URI from the base RTSP URL and its `a=control`
-/// value, per RFC 2326 §C.1.1: a missing control, or the aggregate-control
-/// token `"*"` (RFC 2326 §C.1), falls back to the base (whole-presentation)
-/// URL; any other value — absolute or relative — is resolved against the
-/// base URL per RFC 3986 §5 (`Url::join` handles both: an absolute
-/// `rtsp(s)://...` reference is returned as-is, a relative one like
-/// `trackID=1` replaces the base's last path segment).
+/// value, per RFC 2326 §C.1.1.
 fn resolve_control(base_url: &Url, control: Option<&str>) -> Result<String> {
     match control {
         None | Some("*") => Ok(base_url.to_string()),
@@ -322,12 +464,8 @@ fn resolve_control(base_url: &Url, control: Option<&str>) -> Result<String> {
     }
 }
 
-/// Extracts RTSP [`Credentials`] from a base URL's userinfo (RFC 3986
-/// §3.2.1), percent-decoding both the username and password (userinfo
-/// components may be percent-encoded, e.g. a literal `@` or `:` in a
-/// password). Returns `Ok(None)` when the URL carries no username — the
-/// common case, meaning "connect with no auth" exactly as before this URL
-/// carried credentials.
+/// Extracts RTSP [`Credentials`] from a base URL's userinfo, percent-decoding
+/// both components.
 fn extract_credentials(url: &Url) -> Result<Option<Credentials>> {
     if url.username().is_empty() {
         return Ok(None);
@@ -340,11 +478,8 @@ fn extract_credentials(url: &Url) -> Result<Option<Credentials>> {
     Ok(Some(Credentials::new(username, password)))
 }
 
-/// Percent-decodes a URL userinfo component (RFC 3986 §2.1) to UTF-8.
-///
-/// The error message deliberately does **not** echo `s` — it is (part of) a
-/// still percent-encoded credential, and even encoded it must never appear
-/// in an error/log.
+/// Percent-decodes a URL userinfo component to UTF-8. Never echoes `s`: it is
+/// (part of) a still percent-encoded credential.
 fn percent_decode(s: &str) -> Result<String> {
     percent_encoding::percent_decode_str(s)
         .decode_utf8()
@@ -354,14 +489,7 @@ fn percent_decode(s: &str) -> Result<String> {
         })
 }
 
-/// Returns a copy of `url` with its userinfo (username/password) removed, so
-/// it is safe to use in RTSP request lines (DESCRIBE/SETUP/PLAY must not
-/// carry `user:pass@`) and as the base for `a=control` resolution.
-///
-/// `url` here still carries the userinfo being stripped, so on the (very
-/// rare — `url::Url::set_username`/`set_password` only fail for
-/// cannot-be-a-base URLs, which an `rtsp(s)://` URL never is) error path the
-/// message must redact it rather than `Display`ing `url` verbatim.
+/// Returns a copy of `url` with its userinfo removed.
 fn strip_userinfo(url: &Url) -> Result<Url> {
     let mut clean = url.clone();
     clean
@@ -383,22 +511,14 @@ fn strip_userinfo(url: &Url) -> Result<Url> {
     Ok(clean)
 }
 
-/// Derives the `host:port` connect address from the base `rtsp://`/`rtsps://`
-/// URL, defaulting to [`RTSP_DEFAULT_PORT`] (`rtsp://`) or [`RTSPS_DEFAULT_PORT`]
-/// (`rtsps://`) when no port is given (RFC 2326 §1 / IANA). `Url::host_str`
-/// already renders IPv6 literals bracketed (the URL's authority component, per
-/// RFC 3986 §3.2.2 `IP-literal`), so simply joining `host:port` yields a valid
-/// socket-address string — e.g. `[::1]:8554` — for both IPv6 literals and
-/// plain hostnames/IPv4 addresses.
+/// Derives the `host:port` connect address from the base URL, defaulting to
+/// [`RTSP_DEFAULT_PORT`]/[`RTSPS_DEFAULT_PORT`].
 fn connect_addr(url: &Url) -> Result<String> {
     let default_port = if scheme_is_tls(url)? {
         RTSPS_DEFAULT_PORT
     } else {
         RTSP_DEFAULT_PORT
     };
-    // Safe to `Display` `url` directly here: every caller passes the
-    // already userinfo-stripped `request_url` (see `RtspSource::connect`),
-    // never the raw credentialed `base_url`.
     let host = url.host_str().ok_or_else(|| MultimuxError::Connect {
         reason: format!("rtsp(s) URL has no host: {url}"),
     })?;
@@ -406,36 +526,8 @@ fn connect_addr(url: &Url) -> Result<String> {
     Ok(format!("{host}:{port}"))
 }
 
-/// Unwraps a `ClientEvent::Response` with a success status into its body;
-/// anything else (non-2xx status, or an unexpected event shape) becomes an
-/// error naming which request failed. A `401`/`403` status maps to
-/// [`MultimuxError::Auth`] (a distinct, matchable kind from a generic
-/// protocol failure); any other non-success status or unexpected event shape
-/// maps to [`MultimuxError::Protocol`].
-fn expect_ok_response(event: ClientEvent, what: &'static str) -> Result<Vec<u8>> {
-    use rtsp_runtime::StatusCode;
-    match event {
-        ClientEvent::Response { status, body, .. } if status.is_success() => Ok(body),
-        ClientEvent::Response {
-            status: status @ (StatusCode::Unauthorized | StatusCode::Forbidden),
-            ..
-        } => Err(MultimuxError::Auth {
-            reason: format!("{what}: {status}"),
-        }),
-        ClientEvent::Response { status, .. } => Err(MultimuxError::Protocol {
-            phase: what,
-            reason: format!("non-success status {status}"),
-        }),
-        other => Err(MultimuxError::Protocol {
-            phase: what,
-            reason: format!("unexpected event {other:?}"),
-        }),
-    }
-}
-
-/// Maps an `rtsp-runtime` error from an RTSP request/response phase
-/// (DESCRIBE/SETUP/PLAY/recv) into [`MultimuxError::Protocol`], naming which
-/// phase failed.
+/// Maps an `rtsp-runtime` error from a request/response phase into
+/// [`MultimuxError::Protocol`].
 fn protocol_err(phase: &'static str) -> impl Fn(rtsp_runtime::error::Error) -> MultimuxError {
     move |e| MultimuxError::Protocol {
         phase,
@@ -443,16 +535,7 @@ fn protocol_err(phase: &'static str) -> impl Fn(rtsp_runtime::error::Error) -> M
     }
 }
 
-/// Maps an `rtsp-runtime` error from the transport-connect step (TCP/TLS)
-/// into [`MultimuxError::Connect`].
-fn connect_err(e: rtsp_runtime::error::Error) -> MultimuxError {
-    MultimuxError::Connect {
-        reason: e.to_string(),
-    }
-}
-
-/// Extracts the RTP channel from a transport spec if it is TCP-interleaved,
-/// returns `None` otherwise (e.g. UDP or missing interleaved parameter).
+/// Extracts the RTP channel from a transport spec if it is TCP-interleaved.
 fn interleaved_channel(spec: &TransportSpec) -> Option<u8> {
     use rtsp_runtime::transport::LowerTransport;
     if spec.lower_transport == Some(LowerTransport::Tcp) {
@@ -462,9 +545,7 @@ fn interleaved_channel(spec: &TransportSpec) -> Option<u8> {
     }
 }
 
-/// Decides which connected-client kind a base RTSP URL needs: `Ok(false)` for
-/// plain `rtsp://` (TCP), `Ok(true)` for `rtsps://` (RTSP-over-TLS per the
-/// `tls` feature), `Err` for any other scheme.
+/// Decides which connected-client kind a base RTSP URL needs.
 fn scheme_is_tls(url: &Url) -> Result<bool> {
     match url.scheme() {
         "rtsp" => Ok(false),
@@ -475,161 +556,132 @@ fn scheme_is_tls(url: &Url) -> Result<bool> {
     }
 }
 
-/// Derives the SNI server name for TLS handshake from a base `rtsp(s)://` URL,
-/// stripping brackets from IPv6 literals. `Url::host_str()` returns IPv6
-/// addresses in bracketed form (per RFC 3986 authority syntax, e.g.
-/// `"[2001:db8::1]"`), but rustls `ServerName::try_from()` rejects the
-/// brackets. This function extracts the host and strips leading `[` and
-/// trailing `]` if present, leaving hostnames and IPv4 addresses unchanged.
-fn sni_server_name(url: &Url) -> Result<String> {
-    // Safe to `Display` `url` directly: called only with the already
-    // userinfo-stripped `request_url` (see `RtspSource::connect`).
-    let host = url.host_str().ok_or_else(|| MultimuxError::Connect {
-        reason: format!("rtsp(s) URL has no host: {url}"),
-    })?;
-    // Strip brackets from IPv6 literals: "[2001:db8::1]" -> "2001:db8::1".
-    // Hostnames and IPv4 are unchanged.
-    let sni = host
-        .strip_prefix('[')
-        .and_then(|h| h.strip_suffix(']'))
-        .unwrap_or(host);
-    Ok(sni.to_string())
-}
-
-/// A connected RTSP client: either plain TCP (`rtsp://`) or RTSP-over-TLS
-/// (`rtsps://`, gated on the `tls` feature). Plain and TLS clients are
-/// different concrete `AsyncRtspClient<S>` instantiations (the socket types
-/// don't unify), so `RtspSession` holds this enum and forwards the handful of
-/// calls it needs to whichever inner client is live.
+/// Binds a TCP connection to `route` and drives an [`RtspIngestSession`]
+/// through [`IngestDriver`] until the connection closes or fails — the new
+/// drive loop, replacing the pre-5a `RtspSource::connect`/`RtspSession::next_samples`
+/// pair. **Plain `rtsp://` only** in this port (see the module doc's "what
+/// did not carry over").
 ///
-/// Both variants are boxed. The inner clients are large (~408 bytes plain,
-/// ~1472 with rustls connection state), and an unboxed enum would be sized by
-/// its largest variant — inflating every `RtspClient`, and the [`RtspSession`]
-/// embedding it, to the TLS size even on a plain `rtsp://` connect
-/// (`clippy::large_enum_variant`, which fires on either variant left unboxed).
-/// The one allocation happens once per connect, never on the per-packet
-/// `recv_interleaved` path, which only follows the pointer.
-enum RtspClient {
-    Plain(Box<AsyncRtspClient<TcpStream>>),
-    #[cfg(feature = "tls")]
-    Tls(Box<AsyncRtspClient<tokio_rustls::client::TlsStream<TcpStream>>>),
-}
-
-impl RtspClient {
-    async fn describe(&mut self, uri: &str) -> rtsp_runtime::error::Result<ClientEvent> {
-        match self {
-            RtspClient::Plain(c) => c.describe(uri).await,
-            #[cfg(feature = "tls")]
-            RtspClient::Tls(c) => c.describe(uri).await,
+/// `route_handle` is the driver-backed registry side of issue #805 task 2:
+/// after every [`IngestDriver::feed`], `crate::source::report_driver_progress`
+/// flips `route_handle` to [`crate::route::HealthState::Live`] the first time
+/// this session establishes, and publishes each newly-announced program's
+/// `Trunk` into `route_handle`'s registry.
+pub async fn run_rtsp(
+    route: &RtspRoute,
+    trunk_config: TrunkConfig,
+    handshake: HandshakePolicy,
+    route_handle: &std::sync::Arc<crate::route::RouteHandle>,
+) -> MultimuxError {
+    let mut dialer = RtspDialer::new(route.url.clone(), route.auth.clone());
+    if matches!(dialer.is_tls(), Ok(true)) {
+        return MultimuxError::Connect {
+            reason: "rtsps:// (TLS) is not wired into run_rtsp in this port (step 5a scope cut)"
+                .into(),
+        };
+    }
+    let addr = match dialer.connect_addr() {
+        Ok(a) => a,
+        Err(e) => return e,
+    };
+    let connect_timeout = route.timeouts.connect;
+    let stream = match tokio::time::timeout(connect_timeout, TcpStream::connect(&addr)).await {
+        Ok(Ok(s)) => s,
+        Ok(Err(e)) => {
+            return MultimuxError::Connect {
+                reason: format!("rtsp connect {addr}: {e}"),
+            };
         }
-    }
-
-    async fn setup(
-        &mut self,
-        uri: &str,
-        transport: &Transport,
-    ) -> rtsp_runtime::error::Result<ClientEvent> {
-        match self {
-            RtspClient::Plain(c) => c.setup(uri, transport).await,
-            #[cfg(feature = "tls")]
-            RtspClient::Tls(c) => c.setup(uri, transport).await,
+        Err(_) => {
+            return MultimuxError::Connect {
+                reason: format!("rtsp connect {addr}: no response within {connect_timeout:?}"),
+            };
         }
-    }
-
-    async fn play(&mut self, uri: &str) -> rtsp_runtime::error::Result<ClientEvent> {
-        match self {
-            RtspClient::Plain(c) => c.play(uri).await,
-            #[cfg(feature = "tls")]
-            RtspClient::Tls(c) => c.play(uri).await,
-        }
-    }
-
-    async fn recv_interleaved(&mut self) -> rtsp_runtime::error::Result<Option<ClientEvent>> {
-        match self {
-            RtspClient::Plain(c) => c.recv_interleaved().await,
-            #[cfg(feature = "tls")]
-            RtspClient::Tls(c) => c.recv_interleaved().await,
-        }
-    }
-
-    fn session(&self) -> &ClientSession {
-        match self {
-            RtspClient::Plain(c) => c.session(),
-            #[cfg(feature = "tls")]
-            RtspClient::Tls(c) => c.session(),
-        }
-    }
-}
-
-/// Connects a plain `rtsp://` (TCP) client to `addr`, attaching `credentials`
-/// (if any) so the engine can answer a `401` challenge on DESCRIBE (RFC 2326
-/// §14).
-async fn connect_plain_client(addr: &str, credentials: Option<Credentials>) -> Result<RtspClient> {
-    let session = session_with_credentials(credentials);
-    let client = AsyncRtspClient::<TcpStream>::connect_with(addr, session)
-        .await
-        .map_err(connect_err)?;
-    Ok(RtspClient::Plain(Box::new(client)))
-}
-
-/// Builds a fresh [`ClientSession`], attaching `credentials` via
-/// [`ClientSession::with_credentials`] when present.
-fn session_with_credentials(credentials: Option<Credentials>) -> ClientSession {
-    match credentials {
-        Some(creds) => ClientSession::new().with_credentials(creds),
-        None => ClientSession::new(),
-    }
-}
-
-/// Connects an `rtsps://` (RTSP-over-TLS) client to `addr`, presenting
-/// `server_name` for SNI/certificate validation against the public-CA trust
-/// store ([`rtsp_runtime::io::default_tls_client_config`]).
-///
-/// Only available when this crate's `tls` feature is enabled; otherwise
-/// returns a [`MultimuxError::Connect`] naming the missing feature (rather
-/// than failing to compile), so callers get a clear runtime message if `tls`
-/// was deliberately disabled.
-#[cfg(feature = "tls")]
-async fn connect_tls_client(
-    addr: &str,
-    server_name: &str,
-    credentials: Option<Credentials>,
-) -> Result<RtspClient> {
-    let config = rtsp_runtime::io::default_tls_client_config();
-    let session = session_with_credentials(credentials);
-    let client = AsyncRtspClient::<tokio_rustls::client::TlsStream<TcpStream>>::connect_tls_with(
-        addr,
-        server_name,
-        config,
+    };
+    let session = match dialer.dial() {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let mut driver = IngestDriver::new(
         session,
-    )
-    .await
-    .map_err(connect_err)?;
-    Ok(RtspClient::Tls(Box::new(client)))
-}
+        trunk_config,
+        handshake,
+        // Bound the Trunks one session may mint (media-plane #803). Routes here
+        // carry a single programme today; the default ceiling covers an MPTS.
+        media_plane::DEFAULT_MAX_PROGRAMS,
+    );
+    let (mut rd, mut wr) = stream.into_split();
+    let start = std::time::Instant::now();
+    let mut buf = vec![0u8; 64 * 1024];
+    let read_timeout = route.timeouts.read;
+    let mut progress = crate::source::DriverProgress::new();
 
-#[cfg(not(feature = "tls"))]
-async fn connect_tls_client(
-    addr: &str,
-    _server_name: &str,
-    _credentials: Option<Credentials>,
-) -> Result<RtspClient> {
-    Err(MultimuxError::Connect {
-        reason: format!(
-            "rtsps:// (TLS) requires multimux's `tls` feature; cannot connect to {addr}"
-        ),
-    })
+    loop {
+        while let Some(bytes) = driver.poll_transmit() {
+            if let Err(e) = wr.write_all(&bytes).await {
+                return MultimuxError::Connect {
+                    reason: format!("rtsp write: {e}"),
+                };
+            }
+        }
+        if !driver.health().is_running() {
+            break;
+        }
+        let n = match tokio::time::timeout(read_timeout, rd.read(&mut buf)).await {
+            Ok(Ok(0)) => {
+                driver.finish();
+                break;
+            }
+            Ok(Ok(n)) => n,
+            Ok(Err(e)) => {
+                return MultimuxError::Protocol {
+                    phase: "recv",
+                    reason: e.to_string(),
+                };
+            }
+            Err(_) => {
+                return MultimuxError::Protocol {
+                    phase: "recv",
+                    reason: format!("no data within {read_timeout:?}"),
+                };
+            }
+        };
+        let now = Timestamp::from_instant(start, std::time::Instant::now());
+        driver.feed(&buf[..n], now);
+        crate::source::advance_route(&driver, route_handle, &mut progress);
+    }
+    // Health is already terminal on every path that broke out of the loop
+    // above (handshake timeout, clean socket EOF via `driver.finish()`) —
+    // this call's internal terminal-health check flushes every program's
+    // trailing buffered partial segment.
+    crate::source::advance_route(&driver, route_handle, &mut progress);
+    MultimuxError::Connect {
+        reason: format!("rtsp: session ended: {:?}", driver.health()),
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use media_plane::ingress::HealthState;
+    use std::num::NonZeroUsize;
     use transmux::avc_config_from_sprop;
     use transmux::pipeline::CodecConfig;
     use transmux::rtp::RtpMediaKind;
 
+    fn nz(n: usize) -> NonZeroUsize {
+        NonZeroUsize::new(n).unwrap()
+    }
+
+    fn trunk_config() -> TrunkConfig {
+        TrunkConfig::new(nz(64), nz(16), nz(8), nz(8), nz(8))
+    }
+
+    fn handshake() -> HandshakePolicy {
+        HandshakePolicy::establish_by(Timestamp::from_nanos(u64::MAX))
+    }
+
     fn video_track(channel: u8) -> TrackInit {
-        // reuse a known-good sprop; any valid avcC works here.
         let avc = avc_config_from_sprop("Z0IAKeKQFAe2AtwEBAaQeJEV,aM48gA==").unwrap();
         TrackInit {
             track_id: 1,
@@ -647,29 +699,11 @@ mod tests {
     }
 
     #[test]
-    fn sni_server_name_strips_ipv6_brackets() {
-        let url = Url::parse("rtsps://[2001:db8::1]:8554/stream").unwrap();
-        assert_eq!(sni_server_name(&url).unwrap(), "2001:db8::1");
-    }
-
-    #[test]
-    fn sni_server_name_hostname_unchanged() {
-        let url = Url::parse("rtsps://cam.local/stream").unwrap();
-        assert_eq!(sni_server_name(&url).unwrap(), "cam.local");
-    }
-
-    #[test]
-    fn sni_server_name_ipv4_unchanged() {
-        let url = Url::parse("rtsps://192.0.2.4:8554/stream").unwrap();
-        assert_eq!(sni_server_name(&url).unwrap(), "192.0.2.4");
-    }
-
-    #[test]
     fn routes_even_channel_to_track_ignores_rtcp() {
         let tracks = vec![video_track(0)];
-        assert_eq!(route_channel(0, &tracks), Some(1)); // RTP -> track 1
-        assert_eq!(route_channel(1, &tracks), None); // RTCP -> ignored
-        assert_eq!(route_channel(4, &tracks), None); // unknown
+        assert_eq!(route_channel(0, &tracks), Some(1));
+        assert_eq!(route_channel(1, &tracks), None);
+        assert_eq!(route_channel(4, &tracks), None);
     }
 
     #[test]
@@ -680,33 +714,7 @@ mod tests {
     }
 
     #[test]
-    fn setup_uri_absolute_control() {
-        let base = Url::parse("rtsp://h/media.sdp").unwrap();
-        // Absolute control is an RFC-3986 absolute URI reference, so
-        // `Url::join` returns it as-is rather than resolving against base.
-        assert_eq!(
-            resolve_control(&base, Some("rtsp://h/media.sdp/trackID=2")).unwrap(),
-            "rtsp://h/media.sdp/trackID=2"
-        );
-    }
-
-    #[test]
-    fn setup_uri_resolves_relative_control() {
-        let base = Url::parse("rtsp://h/media.sdp").unwrap();
-        // RFC-3986 resolution replaces the base's last path segment, unlike a
-        // naive concat (which would wrongly produce ".../media.sdp/trackID=1").
-        assert_eq!(
-            resolve_control(&base, Some("trackID=1")).unwrap(),
-            base.join("trackID=1").unwrap().to_string()
-        );
-        assert_eq!(
-            resolve_control(&base, Some("trackID=1")).unwrap(),
-            "rtsp://h/trackID=1"
-        );
-    }
-
-    #[test]
-    fn setup_uri_missing_or_aggregate_control_falls_back_to_base() {
+    fn resolve_control_falls_back_to_base_on_aggregate_or_missing() {
         let base = Url::parse("rtsp://cam/base").unwrap();
         assert_eq!(resolve_control(&base, None).unwrap(), base.to_string());
         assert_eq!(resolve_control(&base, Some("*")).unwrap(), base.to_string());
@@ -719,7 +727,6 @@ mod tests {
             connect_addr(&base).unwrap(),
             format!("cam.local:{RTSP_DEFAULT_PORT}")
         );
-        assert_eq!(connect_addr(&base).unwrap(), "cam.local:554");
     }
 
     #[test]
@@ -735,12 +742,6 @@ mod tests {
     }
 
     #[test]
-    fn connect_addr_rejects_non_rtsp_scheme() {
-        let base = Url::parse("http://cam.local/stream").unwrap();
-        assert!(connect_addr(&base).is_err());
-    }
-
-    #[test]
     fn connect_addr_defaults_rtsps_port_322() {
         let base = Url::parse("rtsps://cam.local/stream").unwrap();
         assert_eq!(
@@ -748,6 +749,12 @@ mod tests {
             format!("cam.local:{RTSPS_DEFAULT_PORT}")
         );
         assert_eq!(connect_addr(&base).unwrap(), "cam.local:322");
+    }
+
+    #[test]
+    fn connect_addr_rejects_non_rtsp_scheme() {
+        let base = Url::parse("http://cam.local/stream").unwrap();
+        assert!(connect_addr(&base).is_err());
     }
 
     #[test]
@@ -766,90 +773,6 @@ mod tests {
     fn scheme_is_tls_rejects_other_scheme() {
         let base = Url::parse("http://cam.local/stream").unwrap();
         assert!(scheme_is_tls(&base).is_err());
-    }
-
-    #[test]
-    fn rtsp_source_new_and_stream_name() {
-        let src = RtspSource::new("cam1", "rtsp://cam.local/stream");
-        assert_eq!(src.stream_name(), "cam1");
-    }
-
-    /// Biting test: an `RtspSource`'s credential must never appear in its
-    /// `Debug` output. Fails immediately if the manual `Debug` impl is
-    /// reverted to `#[derive(Debug)]`, which would render `url` (and its
-    /// `user:pass@`) verbatim.
-    #[test]
-    fn rtsp_source_debug_redacts_credentials() {
-        let src = RtspSource::new("cam1", "rtsp://user:secretpass@host/s");
-        let debug = format!("{src:?}");
-        assert!(!debug.contains("user"), "debug leaked username: {debug}");
-        assert!(
-            !debug.contains("secretpass"),
-            "debug leaked password: {debug}"
-        );
-        assert!(debug.contains("***@host"), "debug: {debug}");
-    }
-
-    /// Biting test: the connect-time error path for a URL that fails
-    /// `Url::parse` must not leak the raw credentialed string — this drives
-    /// `RtspSource::connect`'s very first fallible step (before any real I/O)
-    /// with a URL malformed enough to fail parsing while still carrying
-    /// `user:pass@`.
-    #[tokio::test]
-    async fn connect_bad_url_error_redacts_credentials() {
-        // A userinfo-bearing URL with an invalid (space-containing, thus
-        // unparsable) host — fails `Url::parse` before any network I/O.
-        let src = RtspSource::new("cam1", "rtsp://user:secretpass@bad host/s");
-        // Not `.expect_err()`/`.unwrap_err()`: both require `RtspSession`
-        // (the `Ok` type) to implement `Debug`, which it doesn't.
-        let msg = match src.connect().await {
-            Ok(_) => panic!("bad host must fail to parse"),
-            Err(e) => e.to_string(),
-        };
-        assert!(!msg.contains("user"), "error leaked username: {msg}");
-        assert!(!msg.contains("secretpass"), "error leaked password: {msg}");
-    }
-
-    /// Biting test (issue #663 P5, audit-ingest #3): a server that accepts
-    /// the TCP connection but never replies (a wedged/half-open RTSP
-    /// server — the exact failure mode a "no timeout anywhere" `RtspSource`
-    /// used to hang on forever) must fail `connect()` within the configured
-    /// [`IngestTimeouts::connect`], not hang. A short timeout keeps the test
-    /// itself fast; the outer `tokio::time::timeout` is a generous test-only
-    /// backstop that must never actually fire.
-    #[tokio::test]
-    async fn connect_times_out_against_a_stalled_server() {
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-            .await
-            .expect("bind ephemeral loopback port");
-        let addr = listener.local_addr().expect("local addr");
-        // Accept the connection and then do nothing at all — never read,
-        // never write, never close. Held for the test's duration so the
-        // socket doesn't get RST before `connect()` gets a chance to hang on
-        // it.
-        let _accepted = tokio::spawn(async move {
-            let (stream, _) = listener.accept().await.expect("accept");
-            std::future::pending::<()>().await;
-            drop(stream);
-        });
-
-        let source = RtspSource::new("stalled", format!("rtsp://{addr}/stream")).with_timeouts(
-            IngestTimeouts {
-                connect: Duration::from_millis(100),
-                read: Duration::from_secs(30),
-            },
-        );
-
-        let result = tokio::time::timeout(Duration::from_secs(5), source.connect())
-            .await
-            .expect(
-                "connect() must return on its own via IngestTimeouts::connect, \
-                 not hang until this test's own backstop timeout",
-            );
-        assert!(
-            result.is_err(),
-            "a server that never responds must fail connect(), not hang forever"
-        );
     }
 
     #[test]
@@ -885,48 +808,262 @@ mod tests {
         assert_eq!(interleaved_channel(&spec), None);
     }
 
-    /// Live smoke test against a real RTSP source: connects, pulls a few
-    /// samples, and confirms the depayload pipeline runs end-to-end. Skipped
-    /// unless `MULTIMUX_TEST_RTSP` is set (no CI fixture server), and reviewed
-    /// by inspection.
-    #[ignore]
-    #[tokio::test]
-    async fn live_rtsp_smoke() {
-        let url = std::env::var("MULTIMUX_TEST_RTSP")
-            .expect("set MULTIMUX_TEST_RTSP to a live rtsp:// URL to run this test");
-        let source = RtspSource::new("live", url);
-        let mut session = source.connect().await.expect("connect");
-        assert!(!session.track_specs().is_empty());
-        for _ in 0..10 {
-            match session.next_samples().await.expect("next_samples") {
-                Some(samples) if !samples.is_empty() => return,
-                Some(_) => continue,
-                None => panic!("stream ended before any sample was emitted"),
-            }
-        }
-        panic!("no samples emitted within 10 frames");
+    #[test]
+    fn rtsp_dialer_debug_redacts_credentials_via_route() {
+        let route = RtspRoute::new("cam1", "rtsp://user:secretpass@host/s");
+        let debug = format!("{route:?}");
+        assert!(
+            !debug.contains("secretpass"),
+            "debug leaked password: {debug}"
+        );
+        assert!(debug.contains("***@host"), "debug: {debug}");
     }
 
-    /// Live smoke test against a real `rtsps://` (TLS) source: connects,
-    /// pulls a few samples, and confirms the depayload pipeline runs
-    /// end-to-end over TLS. Skipped unless `MULTIMUX_TEST_RTSPS` is set (no
-    /// CI fixture TLS server), and reviewed by inspection — mirrors
-    /// `live_rtsp_smoke` above for the plain-TCP path.
-    #[ignore]
+    /// Biting test: the connect-time error path for a URL that fails
+    /// `Url::parse` must not leak the raw credentialed string — this drives
+    /// `RtspDialer::connect_addr`'s very first fallible step (before any real
+    /// I/O) with a URL malformed enough to fail parsing while still carrying
+    /// `user:pass@`. Ported from the pre-5a `RtspSource::connect` version of
+    /// this test: the redaction happens in `RtspDialer::connect_addr`/`dial`
+    /// now, but it is exactly the same security-relevant property (raw
+    /// credentials must never appear in an error string) on the same "bad
+    /// URL" input, so it stays a plain sync `#[test]` rather than needing
+    /// `#[tokio::test]` — `connect_addr` performs no I/O at all.
+    #[test]
+    fn connect_bad_url_error_redacts_credentials() {
+        // A userinfo-bearing URL with an invalid (space-containing, thus
+        // unparsable) host — fails `Url::parse` before any network I/O.
+        let dialer = RtspDialer::new("rtsp://user:secretpass@bad host/s", None);
+        let msg = match dialer.connect_addr() {
+            Ok(_) => panic!("bad host must fail to parse"),
+            Err(e) => e.to_string(),
+        };
+        assert!(!msg.contains("user"), "error leaked username: {msg}");
+        assert!(!msg.contains("secretpass"), "error leaked password: {msg}");
+    }
+
+    // --- The central test: real RTSP DESCRIBE/SETUP/PLAY, entirely through
+    // poll_transmit()/feed() — no socket, no executor bridge. -------------
+
+    /// A minimal, valid single-track SDP body (RFC 4566), the same fixture
+    /// the pre-5a RTP/RTSP tests used.
+    fn sdp_body() -> String {
+        let sprop = "Z0IAKeKQFAe2AtwEBAaQeJEV,aM48gA==";
+        format!(
+            "v=0\r\n\
+             o=- 0 0 IN IP4 127.0.0.1\r\n\
+             s=-\r\n\
+             t=0 0\r\n\
+             m=video 0 RTP/AVP 96\r\n\
+             a=control:trackID=1\r\n\
+             a=rtpmap:96 H264/90000\r\n\
+             a=fmtp:96 packetization-mode=1;sprop-parameter-sets={sprop}\r\n"
+        )
+    }
+
+    /// Builds a real RTSP/1.0 response (RFC 2326 §6): status line + headers
+    /// (+ body, with a matching `Content-Length`) — hand-written wire text,
+    /// but to the real grammar `rtsp_types::Message::parse` (driven via
+    /// `ClientSession::handle_data`) actually parses, not a shortcut.
+    fn rtsp_response(cseq: u32, status: &str, extra_headers: &str, body: &str) -> Vec<u8> {
+        let content_length = if body.is_empty() {
+            String::new()
+        } else {
+            format!("Content-Length: {}\r\n", body.len())
+        };
+        format!("RTSP/1.0 {status}\r\nCSeq: {cseq}\r\n{extra_headers}{content_length}\r\n{body}")
+            .into_bytes()
+    }
+
+    /// The centrepiece test: dial() only constructs (asserted via the exact
+    /// DESCRIBE bytes it queues); the whole DESCRIBE → SETUP → PLAY
+    /// handshake then completes purely through `poll_transmit`/`feed`, one
+    /// request in flight at a time, ending in `SessionEvent::Established` +
+    /// a `NewProgram` trunk, and a subsequent interleaved RTP frame produces
+    /// a real depayloaded `Sample` in that `Trunk`.
+    ///
+    /// MUTATION-CHECKED (by inspection of the assertions, each independently
+    /// falsifiable):
+    /// - swallowing `Established`/`NewProgram` in `handle_event`'s
+    ///   `AwaitPlay` arm would fail `driver.health()` staying `Establishing`.
+    /// - severing `poll_transmit` (returning `None` always) would fail the
+    ///   very first assertion (no DESCRIBE bytes to send) — the no-hidden-IO
+    ///   proof `media_plane::ingress`'s own suite uses for the same purpose.
+    /// - collapsing SETUP's per-track channel assignment (e.g. hardcoding
+    ///   channel 0) would still pass here (single track), but the interleaved
+    ///   frame is sent on the *server-negotiated* channel from the SETUP
+    ///   response below (channel 4, not the client's proposed 0), so a
+    ///   session that ignored the negotiated transport and routed by its own
+    ///   proposed channel would fail to route the media at all — proving
+    ///   `route_channel` uses what the server actually returned.
     #[tokio::test]
-    async fn live_rtsps_smoke() {
-        let url = std::env::var("MULTIMUX_TEST_RTSPS")
-            .expect("set MULTIMUX_TEST_RTSPS to a live rtsps:// URL to run this test");
-        let source = RtspSource::new("live-tls", url);
-        let mut session = source.connect().await.expect("connect");
-        assert!(!session.track_specs().is_empty());
-        for _ in 0..10 {
-            match session.next_samples().await.expect("next_samples") {
-                Some(samples) if !samples.is_empty() => return,
-                Some(_) => continue,
-                None => panic!("stream ended before any sample was emitted"),
+    async fn multi_round_trip_rtsp_handshake_completes_through_feed_and_poll_transmit_only() {
+        let mut dialer = RtspDialer::new("rtsp://cam.local/stream", None);
+        let session = dialer
+            .dial()
+            .expect("dial: local construction only, no I/O");
+        let mut driver = IngestDriver::new(
+            session,
+            trunk_config(),
+            handshake(),
+            media_plane::DEFAULT_MAX_PROGRAMS,
+        );
+        assert!(matches!(driver.health(), HealthState::Establishing));
+
+        // 1. DESCRIBE went out; nothing else queued.
+        let describe_req = driver
+            .poll_transmit()
+            .expect("dial() must have queued the DESCRIBE request");
+        assert!(
+            driver.poll_transmit().is_none(),
+            "only one request in flight at a time"
+        );
+        let describe_text = String::from_utf8(describe_req.to_vec()).unwrap();
+        assert!(describe_text.starts_with("DESCRIBE rtsp://cam.local/stream RTSP/1.0\r\n"));
+        assert!(describe_text.contains("CSeq: 1\r\n"));
+
+        // 2. Feed a real DESCRIBE response (SDP body) -> SETUP goes out.
+        let describe_resp = rtsp_response(
+            1,
+            "200 OK",
+            "Content-Type: application/sdp\r\n",
+            &sdp_body(),
+        );
+        driver.feed(&describe_resp, Timestamp::ZERO);
+        assert!(matches!(driver.health(), HealthState::Establishing));
+        let setup_req = driver
+            .poll_transmit()
+            .expect("DESCRIBE response must queue a SETUP request");
+        let setup_text = String::from_utf8(setup_req.to_vec()).unwrap();
+        assert!(setup_text.starts_with("SETUP rtsp://cam.local/trackID=1 RTSP/1.0\r\n"));
+        assert!(setup_text.contains("CSeq: 2\r\n"));
+        assert!(setup_text.contains("Transport:"));
+
+        // 3. Feed a real SETUP response, negotiating interleaved channel 4/5
+        // (deliberately NOT the client's proposed 0/1) -> PLAY goes out.
+        let setup_resp = rtsp_response(
+            2,
+            "200 OK",
+            "Transport: RTP/AVP/TCP;interleaved=4-5\r\nSession: ABC123;timeout=60\r\n",
+            "",
+        );
+        driver.feed(&setup_resp, Timestamp::from_nanos(1));
+        assert!(matches!(driver.health(), HealthState::Establishing));
+        let play_req = driver
+            .poll_transmit()
+            .expect("SETUP response must queue a PLAY request");
+        let play_text = String::from_utf8(play_req.to_vec()).unwrap();
+        assert!(play_text.starts_with("PLAY rtsp://cam.local/stream RTSP/1.0\r\n"));
+        assert!(play_text.contains("Session: ABC123"));
+
+        // 4. Feed a real PLAY response -> Established + NewProgram.
+        let play_resp = rtsp_response(3, "200 OK", "", "");
+        driver.feed(&play_resp, Timestamp::from_nanos(2));
+        assert!(
+            matches!(driver.health(), HealthState::Live),
+            "after the final handshake reply the session must be Live: {:?}",
+            driver.health()
+        );
+        let trunk = driver
+            .trunk(ProgramId(0))
+            .cloned()
+            .expect("PLAY response must announce NewProgram(0)");
+        let mut cursor = trunk.subscribe();
+
+        // 5. A real interleaved RTP frame, on the *server-negotiated*
+        // channel (4), produces a depayloaded Sample in the Trunk.
+        let nal = [0x65u8, 0xAA, 0xBB];
+        let mut rtp_pkt = Vec::new();
+        rtp_pkt.push(0x80); // V=2
+        rtp_pkt.push(0x80 | 96); // marker + PT 96
+        rtp_pkt.extend_from_slice(&1u16.to_be_bytes()); // seq
+        rtp_pkt.extend_from_slice(&1000u32.to_be_bytes()); // timestamp
+        rtp_pkt.extend_from_slice(&0xCAFEBABEu32.to_be_bytes()); // SSRC
+        rtp_pkt.extend_from_slice(&nal);
+        let frame = rtsp_runtime::interleaved::InterleavedFrame::new(4, rtp_pkt)
+            .to_bytes()
+            .expect("serialize interleaved frame");
+        // A second frame with a later timestamp so the depacketiser closes
+        // out the first access unit.
+        let nal2 = [0x41u8, 0xCC];
+        let mut rtp_pkt2 = Vec::new();
+        rtp_pkt2.push(0x80);
+        rtp_pkt2.push(96);
+        rtp_pkt2.extend_from_slice(&2u16.to_be_bytes());
+        rtp_pkt2.extend_from_slice(&4000u32.to_be_bytes());
+        rtp_pkt2.extend_from_slice(&0xCAFEBABEu32.to_be_bytes());
+        rtp_pkt2.extend_from_slice(&nal2);
+        let frame2 = rtsp_runtime::interleaved::InterleavedFrame::new(4, rtp_pkt2)
+            .to_bytes()
+            .expect("serialize interleaved frame 2");
+        // A third frame: the depacketiser needs the *next* AU's timestamp to
+        // finalise the previous one's duration (mirrors the pre-5a
+        // `rtp_udp`/RTSP tests' 3-packet-for-2-samples shape), so the second
+        // AU (nal2) only closes once this one arrives.
+        let nal3 = [0x41u8, 0xDD];
+        let mut rtp_pkt3 = Vec::new();
+        rtp_pkt3.push(0x80);
+        rtp_pkt3.push(96);
+        rtp_pkt3.extend_from_slice(&3u16.to_be_bytes());
+        rtp_pkt3.extend_from_slice(&7000u32.to_be_bytes());
+        rtp_pkt3.extend_from_slice(&0xCAFEBABEu32.to_be_bytes());
+        rtp_pkt3.extend_from_slice(&nal3);
+        let frame3 = rtsp_runtime::interleaved::InterleavedFrame::new(4, rtp_pkt3)
+            .to_bytes()
+            .expect("serialize interleaved frame 3");
+
+        driver.feed(&frame, Timestamp::from_nanos(3));
+        driver.feed(&frame2, Timestamp::from_nanos(4));
+        driver.feed(&frame3, Timestamp::from_nanos(5));
+
+        let item = cursor
+            .poll()
+            .expect("a depayloaded sample must reach the Trunk");
+        match item {
+            media_plane::trunk::SampleCursorItem::Timed { track_id, sample } => {
+                assert_eq!(track_id, 1);
+                assert!(sample.flags.is_sync, "the IDR NAL must be marked sync");
             }
+            other => panic!("expected Timed, got {other:?}"),
         }
-        panic!("no samples emitted within 10 frames");
+    }
+
+    /// Severing `poll_transmit` (the no-hidden-I/O proof `media_plane::ingress`'s
+    /// own suite uses): if `IngestSession::poll_transmit` were never drained,
+    /// the DESCRIBE bytes would simply sit unread — this asserts the
+    /// dialer's queued request is *only* observable through `poll_transmit`,
+    /// never as a side effect of `dial()` or `feed()` alone.
+    #[test]
+    fn dial_alone_performs_no_io_the_request_only_appears_via_poll_transmit() {
+        let mut dialer = RtspDialer::new("rtsp://cam.local/stream", None);
+        let mut session = dialer.dial().expect("local construction only");
+        // Before poll_transmit is ever called, the session has produced no
+        // SessionEvent (no Established, nothing) — dial() truly did nothing
+        // beyond construct + queue.
+        assert!(session.poll().is_none());
+        assert!(session.poll_transmit().is_some());
+    }
+
+    /// A non-success DESCRIBE response (e.g. a stalled/misconfigured camera
+    /// returning 404) must fail the session (`Stage::feed`'s `Err`), driving
+    /// `HealthState::Failed` — not silently hang in `Establishing` forever.
+    #[test]
+    fn non_success_describe_response_fails_the_session() {
+        let mut dialer = RtspDialer::new("rtsp://cam.local/stream", None);
+        let session = dialer.dial().unwrap();
+        let mut driver = IngestDriver::new(
+            session,
+            trunk_config(),
+            handshake(),
+            media_plane::DEFAULT_MAX_PROGRAMS,
+        );
+        let _describe = driver.poll_transmit().unwrap();
+        let not_found = rtsp_response(1, "404 Not Found", "", "");
+        driver.feed(&not_found, Timestamp::ZERO);
+        assert!(
+            matches!(driver.health(), HealthState::Failed(_)),
+            "a non-success DESCRIBE must fail the session: {:?}",
+            driver.health()
+        );
     }
 }

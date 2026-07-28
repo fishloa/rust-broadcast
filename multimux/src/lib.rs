@@ -1,15 +1,25 @@
 //! multimux — a multi-input, multi-output just-in-time repackaging HTTP
 //! origin.
 //!
-//! Pull/receive live media from any of several ingest transports —
+//! Pull or receive live media over any of nine ingest transports —
 //! [`config::InputSpec`]: RTSP pull, raw RTP/UDP, MPEG-TS/UDP, MPEG-TS/HTTP,
-//! or HLS-pull — and serve each ingested stream as any combination of
-//! [`output::OutputKind`]: Low-Latency HLS, DASH, or LL-DASH, from one
-//! in-process tokio + axum HTTP origin. One ingest, many outputs, no
-//! per-output re-mux. Built on `rtsp-runtime` (RTSP), `ll-hls-runtime`
-//! (LL-HLS client/server engine + HLS-pull), `broadcast-auth` (client and
-//! server auth), and `transmux` (RTP/TS depayload + CMAF segmentation +
-//! DASH packaging). Muxing only — samples are never transcoded.
+//! SRT, HLS pull, DASH pull, Smooth pull, and RTMP push — and serve each
+//! ingested stream as any combination of [`output::OutputKind`]: Low-Latency
+//! HLS, DASH, or LL-DASH, from one in-process tokio + axum HTTP origin. One
+//! ingest, many outputs, no per-output re-mux. Muxing only — samples are
+//! never transcoded.
+//!
+//! Every input runs on **one** ingest architecture: `media-plane`'s ingress
+//! contracts (`Dialer` for the eight that dial out, `Listener` for RTMP's
+//! push accept) driven by its `IngestDriver`/`ListenDriver`, publishing
+//! samples into a per-program `Trunk` that egress serves from. Issue #805
+//! converged the last holdout onto this, so there is no second path a sample
+//! can take from socket to segment.
+//!
+//! Also built on `rtsp-runtime` (RTSP), `rtmp-runtime` (RTMP), `srt-runtime`
+//! (SRT), `ll-hls-runtime` (LL-HLS client/server engine + HLS pull),
+//! `broadcast-auth` (client and server auth), and `transmux` (RTP/TS
+//! depayload + CMAF segmentation + DASH packaging).
 //!
 //! Third-party crates can add a new input/output/output-auth scheme without
 //! editing this crate at all — see [`registry`] (issue #663 external scheme
@@ -17,14 +27,14 @@
 
 pub mod config;
 pub mod error;
+mod http;
 pub mod origin;
 pub mod output;
-pub mod pipeline;
 pub mod prometheus;
 mod redact;
 pub mod registry;
+pub mod route;
 pub mod source;
-pub mod store;
 #[cfg(test)]
 pub(crate) mod testutil;
 
@@ -39,10 +49,16 @@ pub use error::{MultimuxError, Result};
 pub use broadcast_auth;
 pub use origin::serve;
 pub use origin::serve_with_registry;
-pub use origin::supervisor::{Backoff, SourceConnector, supervise};
+/// [`supervisor::supervise_driver`](origin::supervisor::supervise_driver) is
+/// the one supported way to drive a [`registry::InputFactory`]'s ingest task
+/// (issue #805 task 5 deleted the old `SourceConnector`/`supervise` pair, the
+/// last user of which was a `Custom`-scheme factory) — see
+/// `examples/custom_scheme.rs` for a complete external input scheme built on
+/// it over a small `media_plane::ingress::Dialer`/`IngestSession` of its own.
+pub use origin::supervisor::{Backoff, supervise_driver};
 pub use output::Output;
 pub use registry::{
     AuthCtx, AuthFactory, InputCtx, InputFactory, OutputCtx, OutputFactory, SchemeRegistry,
 };
+pub use route::{HealthState, RouteHandle};
 pub use source::Source;
-pub use store::MediaStore;

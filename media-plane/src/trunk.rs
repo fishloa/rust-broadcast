@@ -1,32 +1,139 @@
 //! [`Trunk`] — the sample ring, [`TrunkWriter`], and [`SampleCursor`] (plan
 //! step 3b-i); the segment log, [`SegmentCursor`], and the
 //! lossless-by-retention pinning mechanism (plan step 3b-ii); the 90 kHz
-//! event log, [`EventCursor`], and [`EventAnchor`] (plan step 3b-iii); and
-//! now the live-part log and the [`Trunk::listen`] reader-wake primitive
-//! (plan step 3b-iv), closing the two gaps step 3d found while reading
+//! event log, [`EventCursor`], and [`EventAnchor`] (plan step 3b-iii); the
+//! live-part log and the [`Trunk::listen`] reader-wake primitive (plan step
+//! 3b-iv), closing the two gaps step 3d found while reading
 //! `ll-hls-runtime/src/server/` before writing the egress traits — see
 //! [The live-part log](#the-live-part-log-parts-before-their-segment-closes)
 //! and
 //! [The reader-wake primitive](#the-reader-wake-primitive-listen-not-one-registration-per-remote-peer)
+//! below; and now [`SegmentWriter`], splitting the single write handle 3b-i
+//! introduced by **ring group** so a segmenter can exist at all — see
+//! [One writer per ring group, not one writer per `Trunk`](#one-writer-per-ring-group-not-one-writer-per-trunk)
 //! below — per
 //! `docs/superpowers/specs/2026-07-26-media-plane-architecture.md` §1.2.
 //!
-//! This is four bounded rings behind the one writer, and the cursors/queries
-//! that read them: the sample path, the segment log, the event log, and now
-//! the live-part log. See
+//! This is four bounded rings behind two write handles, split by ring group
+//! (see the section linked just above), and the cursors/queries that read
+//! them: the sample path, the segment log, the event log, and the live-part
+//! log. See
 //! [The event log: 90 kHz absolute, and the B1 crux](#the-event-log-90-khz-absolute-and-the-b1-crux)
 //! below for why the event log needed a third, genuinely different shape —
 //! not just a third copy of `ClassLog`/`SegmentLog` (this module's internal
 //! per-class/per-segment logs) — to resolve the architecture audit's
 //! blocking finding B1.
 //!
+//! # One writer per ring group, not one writer per `Trunk`
+//!
+//! [`Trunk::writer`] used to be the *only* way to publish anything, and its
+//! doc said so in terms broader than the actual reason it exists: "a second
+//! concurrent writer would silently interleave two unrelated publish
+//! sequences into one ring with no way for a reader to tell them apart." That
+//! sentence is true, but it over-generalises from "one ring" to "one
+//! `Trunk`" — and a real consumer wiring this crate up (a segmenter: it reads
+//! samples via a [`SampleCursor`] and, from what it reads, produces segments
+//! and parts) hit the gap that over-generalisation opened: with exactly one
+//! writer for the entire `Trunk`, whichever component takes it for ingest
+//! samples makes it **structurally impossible** for anything else to ever
+//! call [`SegmentWriter::publish_segment`] — no segmenter can exist, and a
+//! segment log/live-part log that can never be filled is not a real feature,
+//! just an unreachable one.
+//!
+//! **The actual invariant, restated correctly**: *within a given ring, there
+//! is exactly one appender* — that is what prevents the interleave the
+//! original sentence worried about, because an interleave requires two
+//! writers racing to append to the *same* ring. It says nothing about a
+//! *different* ring. So the write capability is split by **ring group**,
+//! each still taken at most once via the same `compare_exchange` pattern
+//! [`Trunk::writer`] always used, just with one flag per group instead of
+//! one flag for the whole `Trunk`:
+//!
+//! - [`TrunkWriter`] (via [`Trunk::writer`]) — the **samples + events**
+//!   group: [`TrunkWriter::publish`] (the two [`RetentionClass`] sample
+//!   rings) and [`TrunkWriter::publish_event`] (the event ring's only
+//!   *appending* operation). Held by the ingest driver — the entity that
+//!   actually produces both: a demuxed sample, or an inband SCTE-35/`emsg`
+//!   event lifted straight off the incoming stream.
+//! - [`SegmentWriter`] (via [`Trunk::segment_writer`]) — the
+//!   **segments + parts** group: [`SegmentWriter::publish_segment`],
+//!   [`SegmentWriter::publish_part`], plus
+//!   [`SegmentWriter::note_segment_start`]/[`SegmentWriter::set_time_anchor`].
+//!   Held by whoever owns segmentation.
+//!
+//! The last two methods are grouped here on purpose, not by accident of
+//! naming: neither **appends** an entry to the event ring the way
+//! [`TrunkWriter::publish_event`] does — both *resolve an already-stored*
+//! [`EventAnchor::Segment`]/[`EventAnchor::Utc`] entry **in place** (see
+//! [The event log](#the-event-log-90-khz-absolute-and-the-b1-crux) below).
+//! Since neither is an append, giving them to [`SegmentWriter`] does not
+//! create a second appender for the event ring — [`TrunkWriter::publish_event`]
+//! remains the event ring's only one — while `note_segment_start` in
+//! particular *has* to live wherever segmentation lives: only the segmenter
+//! knows where a segment boundary actually falls (this is the literal B1 fix
+//! — "it cannot be finalised until the segmenter owns a boundary"), so it is
+//! the one entity that can honestly report `note_segment_start`. Placing
+//! `set_time_anchor` alongside it, rather than on [`TrunkWriter`], keeps this
+//! crate's set of "resolve a pending anchor" entry points in one place
+//! instead of splitting a single conceptual capability (anchor resolution)
+//! across two handles for no test or caller that needs it split further; if
+//! a future caller's wall-clock mapping genuinely comes from the ingest side
+//! instead, adding it to [`TrunkWriter`] alongside `publish_event` is
+//! additive, not a breaking re-split of what is here today.
+//!
+//! **Still exactly one writer per group, enforced the same way**: both
+//! [`Trunk::writer`] and [`Trunk::segment_writer`] return `None` on every
+//! call after their first, via their own `AtomicBool` — two concurrent
+//! *sample* writers remain exactly as impossible as before this split; what
+//! changed is that a *segment* writer and a *sample* writer are no longer
+//! forced to be the same handle.
+//!
+//! **The cross-ring ordering question this split raises, answered rather
+//! than left implicit.** A segment is derived from samples the segmenter has
+//! already consumed via its own [`SampleCursor`] — causally, those samples
+//! exist first. With one shared writer, that causal fact was also a
+//! *program-order* fact (one thread called `publish` some number of times,
+//! then called `publish_segment`). With the split, ingest and segmentation
+//! are ordinarily two different threads — could a consumer ever observe
+//! [`SegmentWriter::publish_segment`]'s entry in the segment log *before* the
+//! samples that produced it are visible in the sample ring? **No** — and not
+//! by luck: every ring here (`timed`, `sparse`, `segments`, `events`,
+//! `parts`) still lives inside the *one* `Mutex<TrunkState>` this module has
+//! always used (see [the benchmark verdict](#the-benchmark-verdict-this-design-is-built-around)
+//! below) — splitting the *write handle* did not split the *lock*. The
+//! segmenter can only have samples to build a segment from because its own
+//! `SampleCursor::poll` already returned them, which requires those samples
+//! to have been committed to `state.timed`/`state.sparse` under an *earlier*
+//! acquisition of that same `Mutex`; `SegmentWriter::publish_segment` is then
+//! called afterward, in the segmenter's own program order, under a *later*
+//! acquisition of the identical `Mutex`. Any third party that subsequently
+//! acquires that lock — to poll any ring, from any thread — is guaranteed by
+//! the transitivity of the `Mutex`'s release/acquire ordering to observe at
+//! least everything the segmenter itself had already observed before it
+//! published, samples included. So the specific ordering a consumer must
+//! never see reversed (a segment's constituent samples appearing to lag
+//! behind the segment itself) cannot happen. What *is* true, and is exactly
+//! the existing [`RetentionClass::Timed`]/[`RetentionClass::Sparse`]
+//! precedent extended one layer: the *global* order across unrelated
+//! ring-group activity is not fixed by any one thread's program order any
+//! more — a new, unrelated sample the ingest thread publishes concurrently
+//! may land before or after a segment close the segmenter thread publishes,
+//! in either order, depending on which wins the lock race. Nothing
+//! downstream needs that unrelated cross-ring interleave to be
+//! deterministic (see [Two retention classes](#two-retention-classes-and-why-they-are-two-independent-rings)
+//! below for why this crate already treats "no global cross-ring order" as
+//! an acceptable, load-bearing property, not a defect) — only the *causal*
+//! one, which is what the shared `Mutex` structurally guarantees.
+//!
 //! # Why this module needs `std`, unlike its byte-layer siblings
 //!
 //! [`crate::byte_stage`], [`crate::byte_tap`], and [`crate::byte_merge`] are
 //! `no_std` because each is driven synchronously by a single caller — there is
 //! no cross-thread sharing to arrange. `Trunk` is different in kind: one
-//! writer thread (ingest) and an unbounded set of reader threads (egress,
-//! analysis, DVR) must observe the *same* ring concurrently. That needs a
+//! writer thread per ring group (ingest for samples/events; a segmenter for
+//! segments/parts, once one exists) and an unbounded set of reader threads
+//! (egress, analysis, DVR) must observe the *same* ring concurrently. That
+//! needs a
 //! shared, lockable interior — `std::sync::{Arc, Mutex}` here, matching
 //! exactly the shape validated by `spikes/trunk-bench` (§3.1 of the spec).
 //! Pulling in a `no_std` spinlock crate just to keep this one module
@@ -157,7 +264,7 @@
 //! the same bound that governs ordinary eviction for every cursor. There is
 //! no independent "how far behind may a pin fall" setting to tune
 //! separately and get wrong. When the segment log is at capacity and the
-//! next [`TrunkWriter::publish_segment`] would evict an entry some pin has
+//! next [`SegmentWriter::publish_segment`] would evict an entry some pin has
 //! not yet consumed, the bound has been hit, and something genuinely has to
 //! give — the caller decided what, in advance, via the [`ArchiveOverrun`]
 //! passed to [`Trunk::pin_segments`]:
@@ -167,7 +274,7 @@
 //!   ([`SegmentCursorItem::Gap`]). The recording gets a hole; the live
 //!   stream and every other cursor are unaffected.
 //! - [`ArchiveOverrun::StallIngest`] — apply real back-pressure:
-//!   [`TrunkWriter::publish_segment`] blocks until this cursor consumes
+//!   [`SegmentWriter::publish_segment`] blocks until this cursor consumes
 //!   enough to release its pin (or is dropped). **The only place in this
 //!   entire design where a reader may block the writer** — opt-in,
 //!   documented loudly here and on the variant itself, and never the
@@ -258,7 +365,7 @@
 //! - [`EventAnchor::Segment`] — an `emsg` v0's `presentation_time_delta`
 //!   plus the `segment_number` it is relative to. Stays exactly this
 //!   variant — addressable by segment number, **not** by media time —
-//!   until [`TrunkWriter::note_segment_start`] reports that segment's
+//!   until [`SegmentWriter::note_segment_start`] reports that segment's
 //!   start, at which point this module's internal event log resolves it
 //!   **in place**, computed from *that segment's own* reported start —
 //!   never "whichever segment happens to be currently open", which would
@@ -268,7 +375,7 @@
 //!   media-timeline position at all. Stays exactly this variant — not
 //!   returned by [`Trunk::events_between`] or [`Trunk::events_in_segment`],
 //!   because there is no honest media time to filter on — until
-//!   [`TrunkWriter::set_time_anchor`] gives the event log a
+//!   [`SegmentWriter::set_time_anchor`] gives the event log a
 //!   [`timed_metadata::TimeAnchor`] to translate through. This is the
 //!   literal B1 test: an event with only a wall-clock time and no anchor
 //!   must never be handed a fabricated media time.
@@ -290,7 +397,7 @@
 //! (half-open `[from, to)` over every currently-`Media`-resolved entry);
 //! [`Trunk::events_in_segment`] answers the second, by consulting
 //! `EventLog::segment_starts` — a small boundary table, populated by
-//! [`TrunkWriter::note_segment_start`], bounded by the **same**
+//! [`SegmentWriter::note_segment_start`], bounded by the **same**
 //! `TrunkConfig::event_capacity` rather than a second, independent knob
 //! (exactly [`TrunkConfig::segment_capacity`]'s "no second capacity knob"
 //! precedent for pinning). Both queries only ever return `Media`-resolved
@@ -353,7 +460,7 @@
 //! additive later, not a gap today.
 //!
 //! **What happens when the parent segment closes — decided, not left
-//! implicit**: [`TrunkWriter::publish_segment`] does **not** touch the
+//! implicit**: [`SegmentWriter::publish_segment`] does **not** touch the
 //! live-part log at all. A part stays addressable via [`Trunk::part_bytes`]
 //! for exactly as long as [`TrunkConfig::part_capacity`]'s ordinary
 //! evict-oldest bound has not yet reclaimed it — whether its parent segment
@@ -412,8 +519,8 @@
 //! [`ProgressListener::wait_deadline`] with no executor at all — precisely
 //! `MediaStore::listen`'s own two documented ways to wait.
 //!
-//! **The writer never blocks on this.** [`TrunkWriter::publish_part`]/
-//! [`TrunkWriter::publish_segment`] call `Event::notify(usize::MAX)`, which
+//! **The writer never blocks on this.** [`SegmentWriter::publish_part`]/
+//! [`SegmentWriter::publish_segment`] call `Event::notify(usize::MAX)`, which
 //! wakes every currently-registered listener without waiting for any of
 //! them to actually resume running — the same non-blocking-producer
 //! guarantee this module makes everywhere else
@@ -464,7 +571,7 @@ use broadcast_common::stage::Timestamp;
 use bytes::Bytes;
 use event_listener::{Event, EventListener, Listener};
 use timed_metadata::{MediaTime, PTS_HZ, TimeAnchor, TimedEvent};
-use transmux::{Sample, SegmentMeta};
+use transmux::{Sample, SegmentMeta, TrackSpec};
 
 /// Which retention discipline a published entry follows once inside the
 /// [`Trunk`]'s sample ring.
@@ -658,7 +765,7 @@ impl ClassLog {
 /// sequence number, or its position on *this trunk's* absolute timeline —
 /// those are properties of the log a segment lands in, not of the segmenter
 /// that produced its bytes, so they are new fields here, supplied by
-/// whoever is feeding [`TrunkWriter::publish_segment`], exactly as
+/// whoever is feeding [`SegmentWriter::publish_segment`], exactly as
 /// `track_id`/[`RetentionClass`] are supplied by whoever feeds
 /// [`TrunkWriter::publish`].
 #[derive(Debug, Clone)]
@@ -722,7 +829,7 @@ pub enum ArchiveOverrun {
     /// [`RetentionClass::Timed`]'s ordinary `Lagged` already makes for the
     /// sample ring.
     Gap,
-    /// Apply real back-pressure: [`TrunkWriter::publish_segment`] blocks
+    /// Apply real back-pressure: [`SegmentWriter::publish_segment`] blocks
     /// until this cursor consumes far enough to release its pin (or the
     /// cursor is dropped). **The only place in this entire design where a
     /// reader may block the writer** — opt-in only, never the default;
@@ -745,7 +852,7 @@ impl Default for ArchiveOverrun {
 }
 
 /// Per-pinning-cursor bookkeeping the segment log consults, at each
-/// [`TrunkWriter::publish_segment`], to decide whether evicting the oldest
+/// [`SegmentWriter::publish_segment`], to decide whether evicting the oldest
 /// entry is safe.
 struct PinState {
     /// This pin's own read progress: the same role [`SampleCursor`]'s local
@@ -771,7 +878,7 @@ struct PinState {
 /// Evict-then-push shape identical to [`ClassLog`] — `base`/`published`
 /// mean exactly the same thing here as there — with one addition: a publish
 /// that would evict an entry a pinning cursor has not yet consumed does not
-/// evict unconditionally; [`TrunkWriter::publish_segment`] consults that
+/// evict unconditionally; [`SegmentWriter::publish_segment`] consults that
 /// pin's [`ArchiveOverrun`] first.
 struct SegmentLog {
     entries: VecDeque<SegmentEntry>,
@@ -796,7 +903,7 @@ impl SegmentLog {
 
     /// Unconditional evict-then-push — exactly [`ClassLog::push`]'s shape.
     /// [`ArchiveOverrun`] handling against `pins` happens *before* this is
-    /// called; see [`TrunkWriter::publish_segment`].
+    /// called; see [`SegmentWriter::publish_segment`].
     fn push(&mut self, entry: SegmentEntry) {
         if self.entries.len() == self.capacity {
             self.entries.pop_front();
@@ -827,7 +934,7 @@ pub enum EventAnchor {
     /// 23009-1 §5.10.3.3): this event's media time is `delta` ticks after
     /// the *start* of segment `segment_number` — a start this entry does
     /// not know yet. Resolves in place, to that segment's own reported
-    /// start, the instant [`TrunkWriter::note_segment_start`] reports it;
+    /// start, the instant [`SegmentWriter::note_segment_start`] reports it;
     /// until then it stays exactly this variant — addressable by
     /// `segment_number` (once a boundary exists), never by a fabricated
     /// media time.
@@ -841,7 +948,7 @@ pub enum EventAnchor {
     /// GPS/UTC wall-clock only (SCTE-35 `splice_schedule.utc_splice_time`,
     /// §9.7.4): this event has **no** media-timeline position at all, only
     /// an instant on the wall clock, until
-    /// [`TrunkWriter::set_time_anchor`] gives the event log a
+    /// [`SegmentWriter::set_time_anchor`] gives the event log a
     /// [`TimeAnchor`] to translate through. **This is the B1 case** — see
     /// [The event log](self#the-event-log-90-khz-absolute-and-the-b1-crux).
     Utc {
@@ -877,7 +984,7 @@ struct EventLog {
     published: u64,
     capacity: usize,
     /// Recently-reported segment starts, in the order
-    /// [`TrunkWriter::note_segment_start`] received them (playlist order in
+    /// [`SegmentWriter::note_segment_start`] received them (playlist order in
     /// practice, since segments are announced in sequence). Bounded by the
     /// **same** `capacity` as `entries` — see [`TrunkConfig::event_capacity`]'s
     /// doc for why this deliberately is not a second, independently-tuned
@@ -1053,7 +1160,7 @@ impl PartEntry {
 ///
 /// Evict-then-push shape identical to [`ClassLog`]/[`SegmentLog`]/[`EventLog`]
 /// — `base`/`published` mean exactly the same thing here as there. Unlike the
-/// segment log, publishing a segment ([`TrunkWriter::publish_segment`]) does
+/// segment log, publishing a segment ([`SegmentWriter::publish_segment`]) does
 /// **not** touch this ring at all — see
 /// [The live-part log](self#the-live-part-log-parts-before-their-segment-closes)
 /// for why a part's addressability deliberately does not change the instant
@@ -1101,6 +1208,16 @@ struct TrunkState {
     segments: SegmentLog,
     events: EventLog,
     parts: PartLog,
+    /// The program's current complete track set — see
+    /// [`TrunkWriter::set_tracks`] for why this is always a full replacement
+    /// snapshot, never a delta. `Arc<[TrackSpec]>` rather than a bare `Vec`
+    /// so [`Trunk::tracks`] hands back a clone of the *reference*, not the
+    /// whole set, to every caller — cheap even for a many-track program.
+    tracks: Arc<[TrackSpec]>,
+    /// Bumped by exactly one on every [`TrunkWriter::set_tracks`] call — see
+    /// [`Trunk::track_generation`] for why a consumer compares this instead
+    /// of the track [`Vec`] itself.
+    track_generation: u64,
 }
 
 /// The sample ring: bounded, dual-retention-class, single-writer,
@@ -1114,7 +1231,7 @@ struct TrunkState {
 /// does.
 pub struct Trunk {
     state: Mutex<TrunkState>,
-    /// Wakes a [`TrunkWriter::publish_segment`] parked on
+    /// Wakes a [`SegmentWriter::publish_segment`] parked on
     /// [`ArchiveOverrun::StallIngest`] once a pin it is waiting on advances
     /// (a [`SegmentCursor::poll`] consuming further) or is released (its
     /// cursor dropped). Paired with `state` in the usual `Condvar` idiom:
@@ -1123,14 +1240,25 @@ pub struct Trunk {
     /// (sample publish, any cursor's `poll`) need — see
     /// [The DVR contradiction](self#the-dvr-contradiction-losslessness-from-retention-not-back-pressure).
     segment_pin_released: Condvar,
+    /// Guards [`Trunk::writer`]'s single-take — the **samples + events** ring
+    /// group. See [One writer per ring group](self#one-writer-per-ring-group-not-one-writer-per-trunk).
     writer_taken: AtomicBool,
+    /// Guards [`Trunk::segment_writer`]'s single-take — the
+    /// **segments + parts** ring group, taken independently of
+    /// `writer_taken` so a segmenter and the ingest driver can each hold
+    /// their own write handle at once. See
+    /// [One writer per ring group](self#one-writer-per-ring-group-not-one-writer-per-trunk).
+    segment_writer_taken: AtomicBool,
     /// Broad "a part or a segment close was just published, go re-check
     /// your condition" notification — see
     /// [The reader-wake primitive](self#the-reader-wake-primitive-listen-not-one-registration-per-remote-peer).
-    /// Bumped by exactly [`TrunkWriter::publish_part`]/
-    /// [`TrunkWriter::publish_segment`] (never by a sample/event publish —
-    /// nothing today waits on those through this channel, and adding scope
-    /// later is additive, not this step's job to speculate).
+    /// Bumped by exactly [`SegmentWriter::publish_part`]/
+    /// [`SegmentWriter::publish_segment`] and, since the ingress track-set
+    /// plumbing (issue #781), [`TrunkWriter::set_tracks`] — never by a
+    /// sample/event publish (nothing today waits on those through this
+    /// channel). Track-set changes are rare compared to samples/parts, so
+    /// folding them into this same broad wake is additive scope, not a new
+    /// channel to reason about.
     progress: Event,
     /// Count of currently-registered, not-yet-dropped [`ProgressListener`]s —
     /// what bounds [`Trunk::listen`] against `part_waiter_cap`. A plain
@@ -1162,22 +1290,30 @@ impl Trunk {
                 segments: SegmentLog::new(config.segment_capacity.get()),
                 events: EventLog::new(config.event_capacity.get()),
                 parts: PartLog::new(config.part_capacity.get()),
+                tracks: Arc::from(Vec::new()),
+                track_generation: 0,
             }),
             segment_pin_released: Condvar::new(),
             writer_taken: AtomicBool::new(false),
+            segment_writer_taken: AtomicBool::new(false),
             progress: Event::new(),
             waiter_count: AtomicUsize::new(0),
             part_waiter_cap: config.part_capacity.get(),
         })
     }
 
-    /// Take the one [`TrunkWriter`] for this `Trunk`.
+    /// Take the one [`TrunkWriter`] for this `Trunk` — the write handle for
+    /// the **samples + events** ring group ([`TrunkWriter::publish`]/
+    /// [`TrunkWriter::publish_event`]). See
+    /// [One writer per ring group](self#one-writer-per-ring-group-not-one-writer-per-trunk)
+    /// for the invariant this enforces (and why it does not also cover
+    /// [`Trunk::segment_writer`]'s group).
     ///
-    /// Returns `None` on every call after the first — a `Trunk` has exactly
-    /// one writer, enforced here rather than left as a documented-only
-    /// convention, because a second concurrent writer would silently
-    /// interleave two unrelated publish sequences into one ring with no way
-    /// for a reader to tell them apart.
+    /// Returns `None` on every call after the first — this ring group has
+    /// exactly one writer, enforced here rather than left as a
+    /// documented-only convention, because a second concurrent sample/event
+    /// writer would silently interleave two unrelated publish sequences into
+    /// the same ring with no way for a reader to tell them apart.
     pub fn writer(self: &Arc<Self>) -> Option<TrunkWriter> {
         self.writer_taken
             .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
@@ -1187,11 +1323,37 @@ impl Trunk {
             })
     }
 
+    /// Take the one [`SegmentWriter`] for this `Trunk` — the write handle for
+    /// the **segments + parts** ring group ([`SegmentWriter::publish_segment`]/
+    /// [`SegmentWriter::publish_part`]/[`SegmentWriter::note_segment_start`]/
+    /// [`SegmentWriter::set_time_anchor`]), independent of [`Trunk::writer`]'s
+    /// group so a segmenter can hold this while the ingest driver
+    /// simultaneously holds a [`TrunkWriter`] — see
+    /// [One writer per ring group](self#one-writer-per-ring-group-not-one-writer-per-trunk)
+    /// for why the split is safe and what it does and does not guarantee
+    /// across rings.
+    ///
+    /// Returns `None` on every call after the first — this ring group has
+    /// exactly one writer too, guarded by its own `AtomicBool` rather than
+    /// [`Trunk::writer`]'s, for exactly the same reason: a second concurrent
+    /// segment/part writer would silently interleave two unrelated publish
+    /// sequences into the segment or part ring.
+    pub fn segment_writer(self: &Arc<Self>) -> Option<SegmentWriter> {
+        self.segment_writer_taken
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .ok()
+            .map(|_| SegmentWriter {
+                trunk: Arc::clone(self),
+            })
+    }
+
     /// Subscribe a new [`SampleCursor`], starting from *now* — the next
     /// entry [`TrunkWriter::publish`] produces after this call, not any
-    /// backlog already in either ring. (A later step may add a seek-to-past
-    /// variant once the segment log gives "a past point" a real meaning;
-    /// this step does not need one.)
+    /// backlog already in either ring. See [`Trunk::subscribe_from_backlog`]
+    /// for the seek-to-past variant this method's own docs used to
+    /// anticipate (a consumer built *after* samples it needs already landed
+    /// in the ring — e.g. a segmenter reacting to the same batch that
+    /// announced its program — wants that one instead).
     ///
     /// # This call *is* fan-out — read this before calling it per connection
     ///
@@ -1214,6 +1376,61 @@ impl Trunk {
             trunk: Arc::clone(self),
             timed_consumed: state.timed.published,
             sparse_consumed: state.sparse.published,
+        }
+    }
+
+    /// Subscribe a new [`SampleCursor`], starting from the **oldest entry
+    /// each ring currently retains** instead of [`Trunk::subscribe`]'s
+    /// "now" — i.e. this cursor's first `poll` replays whatever backlog is
+    /// still resident in the `Timed` ring and the `Sparse` ring, each
+    /// independently, before catching up to the live tail.
+    ///
+    /// This is the "seek-to-past variant" [`Trunk::subscribe`]'s own docs
+    /// anticipated ("a later step may add a seek-to-past variant... this
+    /// step does not need one") — the step turned out to be issue #808's
+    /// segment-bridge fix: a [`TrunkWriter::publish`] batch that lands
+    /// *before* a consumer subscribes (e.g. the very same `feed` call that
+    /// both announces a program and publishes its first samples) is
+    /// otherwise invisible to a [`Trunk::subscribe`] cursor forever, even
+    /// though the samples are sitting right there in the ring.
+    ///
+    /// # Replay is bounded by ring capacity, not "everything ever published"
+    ///
+    /// This does **not** reach further back than what each ring still
+    /// holds: an entry already evicted by [`TrunkConfig::timed_capacity`]/
+    /// [`TrunkConfig::sparse_capacity`] before this call is gone, exactly as
+    /// it would be for any other cursor — there is no unbounded replay log
+    /// behind this method, only the same fixed-size rings every other
+    /// cursor reads. Concretely: this cursor starts at each ring's current
+    /// `base` (the oldest index still resident), not index 0, so its first
+    /// `poll` never reports a spurious `Lagged`/`Degraded` for data that was
+    /// evicted *before* this call — from this cursor's point of view,
+    /// "backlog" means "what the ring can show me right now", not "what was
+    /// ever published". Both retention classes replay this way,
+    /// independently: a `Timed` backlog and a `Sparse` backlog are each
+    /// bounded by their own ring's own capacity.
+    ///
+    /// [`SampleCursorItem::Lagged`]/[`SampleCursorItem::Degraded`] still
+    /// fire exactly as they do for a [`Trunk::subscribe`] cursor for any
+    /// loss that happens **after** this call — falling behind the live tail
+    /// once subscribed is reported in-band the same way for both kinds of
+    /// cursor; only the starting position differs.
+    ///
+    /// # This call *is* fan-out — read this before calling it per connection
+    ///
+    /// Exactly [`Trunk::subscribe`]'s own fan-out warning, verbatim: writer
+    /// cost is **O(N) in cursor count** (`spikes/trunk-bench` measured 956 ns
+    /// → 9.98 µs from 1 → 16 readers; spec §3.1) — every cursor contends the
+    /// same shared lock every publish. **A cursor is for a distinct
+    /// consumer of the stream**, **never** one per peer of a one-to-many
+    /// protocol. Supported reader count is **single-digit by design**; do
+    /// not call this once per connection.
+    pub fn subscribe_from_backlog(self: &Arc<Self>) -> SampleCursor {
+        let state = self.state.lock().unwrap();
+        SampleCursor {
+            trunk: Arc::clone(self),
+            timed_consumed: state.timed.base,
+            sparse_consumed: state.sparse.base,
         }
     }
 
@@ -1344,7 +1561,7 @@ impl Trunk {
 
     /// Every currently-resolved event whose media time falls within segment
     /// `segment_number`'s span: `[start_N, start_{N+1})` once
-    /// [`TrunkWriter::note_segment_start`] has reported the *next*
+    /// [`SegmentWriter::note_segment_start`] has reported the *next*
     /// segment's start too, else `[start_N, ∞)` (the segment is still open
     /// — nothing yet says where it ends). Returns nothing for a
     /// `segment_number` this trunk has never reported a start for: there is
@@ -1433,7 +1650,7 @@ impl Trunk {
     }
 
     /// The sequence number of the most-recently-**closed** segment (the
-    /// newest [`TrunkWriter::publish_segment`] call), or `None` if no
+    /// newest [`SegmentWriter::publish_segment`] call), or `None` if no
     /// segment has closed yet. Distinguishes "closed" (a whole, fetchable
     /// [`SegmentEntry`]) from merely "has live parts" — RFC 8216bis
     /// §6.2.5.2's bare-`_HLS_msn` blocking-reload condition needs exactly
@@ -1448,6 +1665,27 @@ impl Trunk {
             .entries
             .back()
             .map(|e| e.sequence_number)
+    }
+
+    /// This program's current complete track set — see
+    /// [`TrunkWriter::set_tracks`] for how it is set/replaced. Empty until
+    /// the first `set_tracks` call (a freshly-minted `Trunk` announces no
+    /// tracks yet). Stored as `Arc<[TrackSpec]>`, so this is a cheap `Arc`
+    /// clone (a refcount bump), never a `Vec` copy, however many tracks the
+    /// program carries.
+    pub fn tracks(&self) -> Arc<[TrackSpec]> {
+        Arc::clone(&self.state.lock().unwrap().tracks)
+    }
+
+    /// Bumped by exactly one on every [`TrunkWriter::set_tracks`] call
+    /// (including one that happens to set an identical set to what was
+    /// already there — this counts *calls*, not distinct sets). Lets a
+    /// consumer detect "the track set may have changed" by comparing two
+    /// `u64`s rather than diffing two `Vec<TrackSpec>`s — cheap regardless
+    /// of how many tracks a program carries. `0` until the first
+    /// `set_tracks` call.
+    pub fn track_generation(&self) -> u64 {
+        self.state.lock().unwrap().track_generation
     }
 
     /// Register for the next part/segment-close notification — see
@@ -1559,7 +1797,11 @@ impl Future for ProgressListener {
     }
 }
 
-/// The one writer for a [`Trunk`]. Obtained via [`Trunk::writer`].
+/// The write handle for a [`Trunk`]'s **samples + events** ring group.
+/// Obtained via [`Trunk::writer`]. See
+/// [One writer per ring group](self#one-writer-per-ring-group-not-one-writer-per-trunk)
+/// for why this group is exactly these two rings, and
+/// [`SegmentWriter`] for the sibling handle covering segments + parts.
 ///
 /// `publish` never blocks and never rejects: a full class ring evicts its
 /// oldest entry (see the internal per-class log's push logic) rather than waiting for a reader or
@@ -1588,6 +1830,68 @@ impl TrunkWriter {
         }
     }
 
+    /// Publish one event. Never blocks and never rejects — a full event log
+    /// evicts its oldest entry exactly like the sample/segment logs.
+    /// `anchor` is resolved immediately against whatever segment starts /
+    /// time anchor this trunk already knows; if it cannot be resolved yet,
+    /// the entry is stored exactly as given, and resolves later, in place,
+    /// once [`SegmentWriter::note_segment_start`]/[`SegmentWriter::set_time_anchor`]
+    /// supplies what was missing. See
+    /// [The event log](self#the-event-log-90-khz-absolute-and-the-b1-crux).
+    pub fn publish_event(&self, event: TimedEvent, anchor: EventAnchor) {
+        let mut state = self.trunk.state.lock().unwrap();
+        state.events.push(event, anchor);
+    }
+
+    /// Replace this program's track set wholesale — the write side of
+    /// [`Trunk::tracks`]/[`Trunk::track_generation`], and the method
+    /// [`crate::ingress::IngestDriver`] calls to seed a freshly-minted
+    /// `Trunk` from `SessionEvent::NewProgram`'s `tracks` and to apply a
+    /// later `SessionEvent::TracksChanged`.
+    ///
+    /// `tracks` is taken as the **complete replacement set**, matching
+    /// `SessionEvent::TracksChanged`'s own doc: a PMT (or any container's
+    /// track-declaration mechanism) carries the whole elementary-stream
+    /// list, so this call is idempotent (calling it twice with the same set
+    /// leaves the trunk's tracks unchanged in content, only `track_generation`
+    /// advances) and immune to delta-ordering bugs — there is no "add
+    /// track"/"remove track" pair to apply out of order. A caller that wants
+    /// to know *which* track changed diffs the previous [`Trunk::tracks`]
+    /// snapshot against this one itself.
+    ///
+    /// Bumps [`Trunk::track_generation`] by exactly one and wakes any
+    /// [`Trunk::listen`] registration, the same
+    /// [`event_listener::Event::notify`] fan-out
+    /// [`SegmentWriter::publish_segment`]/[`SegmentWriter::publish_part`]
+    /// already use — see [`Trunk`]'s `progress` field doc for why a
+    /// track-set change is folded into that same broad wake rather than a
+    /// new channel.
+    pub fn set_tracks(&self, tracks: Vec<TrackSpec>) {
+        let mut state = self.trunk.state.lock().unwrap();
+        state.tracks = Arc::from(tracks);
+        state.track_generation += 1;
+        drop(state);
+        self.trunk.progress.notify(usize::MAX);
+    }
+}
+
+/// The write handle for a [`Trunk`]'s **segments + parts** ring group.
+/// Obtained via [`Trunk::segment_writer`], independently of [`TrunkWriter`]
+/// (via [`Trunk::writer`]) — see
+/// [One writer per ring group](self#one-writer-per-ring-group-not-one-writer-per-trunk)
+/// for why this split exists, why `note_segment_start`/`set_time_anchor` are
+/// grouped here rather than on [`TrunkWriter`], and what is (and is not)
+/// guaranteed about ordering relative to the sample/event rings.
+///
+/// Like [`TrunkWriter`], every method here either never blocks (ordinary
+/// eviction, exactly the sample rings' non-blocking-producer principle) or
+/// blocks only in the one documented [`ArchiveOverrun::StallIngest`] case —
+/// see [`SegmentWriter::publish_segment`].
+pub struct SegmentWriter {
+    trunk: Arc<Trunk>,
+}
+
+impl SegmentWriter {
     /// Publish one finished segment, in playlist order.
     ///
     /// Never blocks and never rejects for **every non-pinning**
@@ -1660,7 +1964,7 @@ impl TrunkWriter {
     /// Never blocks and never rejects: a full part log evicts its oldest
     /// entry exactly like every other ring in this module — the same
     /// non-blocking-producer principle as [`TrunkWriter::publish`]/
-    /// [`TrunkWriter::publish_segment`]'s ordinary (non-`StallIngest`) path.
+    /// [`SegmentWriter::publish_segment`]'s ordinary (non-`StallIngest`) path.
     /// Wakes any [`Trunk::listen`] registration once this part has actually
     /// landed (RFC 8216bis blocking-reload's part-availability condition).
     pub fn publish_part(&self, entry: PartEntry) {
@@ -1670,25 +1974,18 @@ impl TrunkWriter {
         self.trunk.progress.notify(usize::MAX);
     }
 
-    /// Publish one event. Never blocks and never rejects — a full event log
-    /// evicts its oldest entry exactly like the sample/segment logs.
-    /// `anchor` is resolved immediately against whatever segment starts /
-    /// time anchor this trunk already knows; if it cannot be resolved yet,
-    /// the entry is stored exactly as given, and resolves later, in place,
-    /// once [`TrunkWriter::note_segment_start`]/[`TrunkWriter::set_time_anchor`]
-    /// supplies what was missing. See
-    /// [The event log](self#the-event-log-90-khz-absolute-and-the-b1-crux).
-    pub fn publish_event(&self, event: TimedEvent, anchor: EventAnchor) {
-        let mut state = self.trunk.state.lock().unwrap();
-        state.events.push(event, anchor);
-    }
-
     /// Report that segment `segment_number` starts at `start` on this
     /// trunk's 90 kHz absolute clock — the boundary an
     /// [`EventAnchor::Segment`] (an `emsg` v0's `presentation_time_delta`)
     /// needs before it can resolve. Called by whoever owns segmentation —
     /// the entity the spec's B1 fix names explicitly: "it cannot be
-    /// finalised until the segmenter owns a boundary."
+    /// finalised until the segmenter owns a boundary." Lives here, not on
+    /// [`TrunkWriter`], for exactly that reason: only the segmenter can
+    /// honestly report it. This does **not** append to the event ring — it
+    /// resolves an already-published [`EventAnchor::Segment`] entry in
+    /// place, so grouping it with [`SegmentWriter::publish_segment`] does not
+    /// create a second appender for [`TrunkWriter::publish_event`]'s ring;
+    /// see [One writer per ring group](self#one-writer-per-ring-group-not-one-writer-per-trunk).
     pub fn note_segment_start(&self, segment_number: u32, start: MediaTime) {
         let mut state = self.trunk.state.lock().unwrap();
         state.events.note_segment_start(segment_number, start);
@@ -1696,7 +1993,12 @@ impl TrunkWriter {
 
     /// Give the event log a wall-clock↔media-clock mapping. Resolves every
     /// currently-pending [`EventAnchor::Utc`] entry immediately, and every
-    /// future one at publish time, until a later call replaces it.
+    /// future one at publish time, until a later call replaces it. Grouped
+    /// with [`SegmentWriter::note_segment_start`] rather than split onto
+    /// [`TrunkWriter`] — see
+    /// [One writer per ring group](self#one-writer-per-ring-group-not-one-writer-per-trunk)
+    /// for why, and the same in-place-resolution reasoning: this is not an
+    /// append to the event ring either.
     pub fn set_time_anchor(&self, anchor: TimeAnchor) {
         let mut state = self.trunk.state.lock().unwrap();
         state.events.set_time_anchor(anchor);
@@ -1913,7 +2215,7 @@ impl SegmentCursor {
         };
 
         // Pinning: progress lives in the shared `PinState`, because
-        // `TrunkWriter::publish_segment` has to consult it before evicting,
+        // `SegmentWriter::publish_segment` has to consult it before evicting,
         // not merely react to it afterward.
         let mut state = self.trunk.state.lock().unwrap();
         let Some(pin) = state.segments.pins.get(&pin_id) else {
@@ -2025,6 +2327,23 @@ mod tests {
     use super::*;
     use std::sync::mpsc;
     use std::thread;
+    use transmux::pipeline::{CodecConfig, DataCarriage};
+
+    /// An opaque `TrackSpec` for track-set tests — mirrors `ingress`'s own
+    /// identically-named test helper (same shape, so a track built here and
+    /// one built there compare equal field-for-field for any given
+    /// `track_id`).
+    fn opaque_track(track_id: u32) -> TrackSpec {
+        TrackSpec::new(
+            track_id,
+            90_000,
+            CodecConfig::Data {
+                stream_type: 0x06,
+                descriptors: Vec::new(),
+                carriage: DataCarriage::Pes,
+            },
+        )
+    }
 
     /// `NonZeroUsize` from a literal capacity, for readability at the ~30
     /// `TrunkConfig::new` call sites below. Panicking on `0` here is correct
@@ -2279,6 +2598,134 @@ mod tests {
         assert_eq!(trunk.sparse_len(), 3);
     }
 
+    // --- 5b. subscribe_from_backlog: exact replay + Lagged on overwrite ---
+
+    /// [`Trunk::subscribe_from_backlog`]'s core promise: a cursor subscribed
+    /// *after* samples have already landed in both rings still sees them,
+    /// exactly (in order, no dup), for each retention class independently —
+    /// the property issue #808's `ProgramSegmenter` fix depends on.
+    ///
+    /// MUTATION VERIFIED: changing `subscribe_from_backlog`'s
+    /// `timed_consumed: state.timed.base` to
+    /// `timed_consumed: state.timed.published` (i.e. accidentally reusing
+    /// `subscribe`'s live-tail initialisation) makes this test's
+    /// `assert_eq!(timed_bytes, vec![10, 11, 12])` fail: `drain` returns an
+    /// empty `Vec` (actual) instead of the expected `[10, 11, 12]`, because
+    /// `timed_consumed` now equals `published` — every published entry
+    /// already counts as "consumed" the instant the cursor is created, so
+    /// `poll` immediately returns `None` instead of replaying the resident
+    /// backlog. Recompiled and re-run to confirm this exact failure, then
+    /// reverted.
+    #[test]
+    fn subscribe_from_backlog_replays_exact_resident_entries_both_classes() {
+        let trunk = Trunk::new(TrunkConfig::new(nz(100), nz(100), nz(4), nz(8), nz(8)));
+        let writer = trunk.writer().unwrap();
+
+        // Published *before* the cursor exists — subscribe() would never see
+        // any of this; subscribe_from_backlog() must replay all of it, since
+        // ring capacity (100) is nowhere near exhausted.
+        for i in 10u8..13 {
+            writer.publish(1, RetentionClass::Timed, sample(i, 4));
+        }
+        for i in 20u8..22 {
+            writer.publish(2, RetentionClass::Sparse, sample(i, 4));
+        }
+
+        let mut cursor = trunk.subscribe_from_backlog();
+
+        // Merge order (module docs): pending lag reports first (none here),
+        // then Sparse data, then Timed data.
+        let sparse_items = drain(&mut cursor, 2);
+        let sparse_bytes: Vec<u8> = sparse_items
+            .iter()
+            .map(|item| match item {
+                SampleCursorItem::Sparse { sample, .. } => sample.data[0],
+                other => panic!("expected Sparse, got {other:?}"),
+            })
+            .collect();
+        assert_eq!(sparse_bytes, vec![20, 21], "exact resident Sparse backlog");
+
+        let timed_items = drain(&mut cursor, 3);
+        let timed_bytes: Vec<u8> = timed_items
+            .iter()
+            .map(|item| timed_data(item).unwrap().1.data[0])
+            .collect();
+        assert_eq!(
+            timed_bytes,
+            vec![10, 11, 12],
+            "exact resident Timed backlog"
+        );
+
+        assert!(
+            cursor.poll().is_none(),
+            "no extra items beyond the resident backlog"
+        );
+
+        // New samples published after subscribing still flow through
+        // normally, proving this cursor is a real live cursor afterwards,
+        // not a one-shot snapshot.
+        writer.publish(1, RetentionClass::Timed, sample(99, 4));
+        let live = cursor.poll().unwrap();
+        assert_eq!(timed_data(&live).unwrap().1.data[0], 99);
+    }
+
+    /// When the backlog a [`Trunk::subscribe_from_backlog`] cursor would
+    /// have replayed has *already* been evicted by ring capacity before the
+    /// subscribe call, this cursor must behave exactly like an ordinary
+    /// [`Trunk::subscribe`] cursor from that point on: report the loss
+    /// in-band as `Lagged`/`Degraded`, never silently skip it.
+    ///
+    /// MUTATION VERIFIED: changing `subscribe_from_backlog`'s
+    /// `timed_consumed: state.timed.base` to `timed_consumed: 0` (simulating
+    /// "replay from the beginning of time" rather than "replay what the ring
+    /// still holds", anchoring at the wrong reference point) makes this
+    /// test's `assert!(matches!(first, SampleCursorItem::Lagged { skipped: 6
+    /// }))` fail: actual `Lagged { skipped: 12 }` (`12 - 0`, counting the 6
+    /// entries already evicted *before* this cursor even subscribed as if
+    /// they were its own loss) instead of the expected `Lagged { skipped: 6
+    /// }` (`12 - 6`, only the 6 evictions that happened *after* this cursor
+    /// subscribed). Recompiled and re-run to confirm this exact failure,
+    /// then reverted.
+    #[test]
+    fn subscribe_from_backlog_reports_lagged_when_backlog_already_overwritten() {
+        let trunk = Trunk::new(TrunkConfig::new(nz(3), nz(10), nz(4), nz(8), nz(8)));
+        let writer = trunk.writer().unwrap();
+
+        // Capacity 3, publish 9: only bytes 6,7,8 remain resident; 0..6 are
+        // already gone by the time subscribe_from_backlog is called — this
+        // cursor must NOT report those 6 as its own loss (they were never
+        // its backlog to miss), which is exactly why it anchors at `base`
+        // (6), not `0`.
+        for i in 0u8..9 {
+            writer.publish(1, RetentionClass::Timed, sample(i, 4));
+        }
+        let mut cursor = trunk.subscribe_from_backlog();
+
+        // Publish 6 more before this cursor ever polls — the ring is
+        // already full (capacity 3), so each push evicts exactly one
+        // resident entry, advancing `base` from 6 to 12. This IS loss this
+        // cursor is responsible for (it subscribed to a live cursor at 6,
+        // then fell behind by 6 before its first poll).
+        for i in 9u8..15 {
+            writer.publish(1, RetentionClass::Timed, sample(i, 4));
+        }
+
+        let first = cursor.poll().unwrap();
+        assert!(
+            matches!(first, SampleCursorItem::Lagged { skipped: 6 }),
+            "expected Lagged{{skipped: 6}}, got {first:?}"
+        );
+
+        // The remaining resident 3 (bytes 12,13,14) must still be readable.
+        let items = drain(&mut cursor, 3);
+        let bytes: Vec<u8> = items
+            .iter()
+            .map(|item| timed_data(item).unwrap().1.data[0])
+            .collect();
+        assert_eq!(bytes, vec![12, 13, 14]);
+        assert!(cursor.poll().is_none());
+    }
+
     // --- 6. payload sharing: Bytes::as_ptr() identity, not equality -------
 
     /// MUTATION VERIFIED: replacing `sample.clone()` in both of
@@ -2337,7 +2784,134 @@ mod tests {
     fn second_writer_is_refused() {
         let trunk = Trunk::new(TrunkConfig::new(nz(4), nz(4), nz(4), nz(8), nz(8)));
         let _first = trunk.writer().unwrap();
-        assert!(trunk.writer().is_none(), "a Trunk has exactly one writer");
+        assert!(
+            trunk.writer().is_none(),
+            "a Trunk has exactly one sample/event writer"
+        );
+    }
+
+    // --- W1. the SegmentWriter half of the split is single-take too, ------
+    // --- independently of TrunkWriter ---------------------------------------
+
+    /// MUTATION VERIFIED: replacing `Trunk::segment_writer`'s
+    /// `compare_exchange` call with an unconditional `Some(SegmentWriter {
+    /// .. })` (i.e. reintroducing "anyone can take it, any number of times")
+    /// makes this test's `assert!(trunk.segment_writer().is_none(), ..)`
+    /// fail — the second call succeeds instead of being refused. Recompiled
+    /// and re-run to confirm the failure, then reverted.
+    #[test]
+    fn second_segment_writer_is_refused() {
+        let trunk = Trunk::new(TrunkConfig::new(nz(4), nz(4), nz(4), nz(8), nz(8)));
+        let _first = trunk.segment_writer().unwrap();
+        assert!(
+            trunk.segment_writer().is_none(),
+            "a Trunk has exactly one segment/part writer"
+        );
+    }
+
+    // --- W2. THE GAP THIS STEP CLOSES: a sample/event writer and a --------
+    // --- segment/part writer can be held AT THE SAME TIME -------------------
+
+    /// This is the property that was **structurally impossible** before this
+    /// step: `Trunk::writer()` and a hypothetical segment-writing capability
+    /// shared one `AtomicBool`, so whichever component (the ingest driver)
+    /// took the one writer made it impossible for anything else (a
+    /// segmenter) to ever publish a segment or a part.
+    ///
+    /// MUTATION VERIFIED: changing `Trunk::segment_writer` to gate on
+    /// `self.writer_taken` instead of its own `self.segment_writer_taken`
+    /// (i.e. reintroducing the single-shared-flag bug this step fixes) makes
+    /// this test's `let segments = trunk.segment_writer().unwrap();` line
+    /// panic — `segment_writer()` returns `None` because the sample/event
+    /// writer taken just above already flipped the shared flag. Recompiled
+    /// and re-run to confirm the failure, then reverted.
+    #[test]
+    fn sample_and_segment_writers_can_be_held_simultaneously() {
+        let trunk = Trunk::new(TrunkConfig::new(nz(4), nz(4), nz(4), nz(8), nz(8)));
+        let samples = trunk.writer().unwrap();
+        let segments = trunk.segment_writer().expect(
+            "the segment/part writer must still be takeable while the sample/event writer is held",
+        );
+
+        // Both are simultaneously live and independently usable — not merely
+        // both `Some` a moment apart.
+        samples.publish(1, RetentionClass::Timed, sample(1, 4));
+        segments.publish_segment(segment_entry(1, 1));
+        assert_eq!(trunk.timed_len(), 1);
+        assert_eq!(trunk.segment_len(), 1);
+    }
+
+    // --- W3. THE SEGMENTER-SHAPED, END-TO-END PROPERTY: a segmenter reads --
+    // --- samples through its own cursor and publishes the segment/part it --
+    // --- derives from them through the OTHER writer — unreachable before ---
+    // --- this step, since there was only one writer for the whole Trunk ----
+
+    /// The load-bearing test for this step: models exactly the component the
+    /// gap analysis found could not exist — a segmenter that holds a
+    /// [`SampleCursor`] (to read the samples it segments) *and* a
+    /// [`SegmentWriter`] (to publish what it produces) at the same time,
+    /// distinct from the ingest driver's own [`TrunkWriter`].
+    ///
+    /// MUTATION VERIFIED: commenting out `state.segments.push(entry);` in
+    /// `SegmentWriter::publish_segment` (simulating "the moved method is a
+    /// stub that does not actually reach the ring") makes this test's
+    /// `let got = seg_cursor.poll().expect(..)` panic — nothing was ever
+    /// pushed, so the segment log stays empty and the cursor has nothing to
+    /// return. Recompiled and re-run to confirm the failure, then reverted.
+    #[test]
+    fn segmenter_holds_sample_cursor_and_segment_writer_at_once() {
+        let trunk = Trunk::new(TrunkConfig::new(nz(8), nz(4), nz(4), nz(8), nz(8)));
+
+        // The ingest driver's own handle — a different component, a
+        // different ring group.
+        let ingest = trunk.writer().unwrap();
+        // The segmenter's read side (its own SampleCursor) and write side
+        // (the SegmentWriter) — held together, which is exactly what the
+        // single-writer-per-Trunk model made impossible.
+        let mut samples = trunk.subscribe();
+        let segmenter = trunk.segment_writer().expect(
+            "a segmenter must be able to take the segment/part writer \
+                     while the ingest driver still holds the sample/event writer",
+        );
+        // `subscribe_segments` only sees entries published *after* this call
+        // (exactly `Trunk::subscribe`'s "starts from now" contract) — taken
+        // up front so the read-back below has something to see.
+        let mut seg_cursor = trunk.subscribe_segments();
+
+        for i in 0u8..3 {
+            ingest.publish(1, RetentionClass::Timed, sample(i, 4));
+        }
+
+        // The segmenter consumes exactly the samples it is about to derive
+        // a segment from.
+        let mut muxed = Vec::new();
+        for _ in 0..3 {
+            match samples.poll() {
+                Some(SampleCursorItem::Timed { sample, .. }) => {
+                    muxed.push(sample.data[0]);
+                }
+                other => panic!("expected a Timed sample, got {other:?}"),
+            }
+        }
+        assert_eq!(muxed, vec![0, 1, 2]);
+
+        // ...then publishes the segment (and one live part of it) derived
+        // from exactly those samples — through the OTHER writer.
+        segmenter.publish_part(part_entry(0xAB, 1, 0));
+        segmenter.publish_segment(segment_entry(0xAA, 1));
+
+        // Read both back through the segment/part log's own query surface —
+        // proving the publish actually reached the shared Trunk, not just a
+        // private buffer inside the segmenter.
+        let got = seg_cursor
+            .poll()
+            .expect("the segmenter's published segment must be visible");
+        assert_eq!(segment_data(&got).unwrap().sequence_number, 1);
+        assert_eq!(
+            trunk.part_bytes(1, 0),
+            Some(Bytes::from(vec![0xAB; 8])),
+            "the segmenter's published part must be individually addressable too"
+        );
     }
 
     #[test]
@@ -2374,7 +2948,7 @@ mod tests {
         let mut c1 = trunk.subscribe_segments();
         let mut c2 = trunk.subscribe_segments();
         let mut c3 = trunk.subscribe_segments();
-        let writer = trunk.writer().unwrap();
+        let writer = trunk.segment_writer().unwrap();
 
         for i in 0u32..5 {
             writer.publish_segment(segment_entry(i as u8, i + 1));
@@ -2404,7 +2978,7 @@ mod tests {
     fn non_pinning_slow_segment_reader_lags_but_writer_completes_regardless() {
         let trunk = Trunk::new(TrunkConfig::new(nz(4), nz(4), nz(4), nz(8), nz(8)));
         let mut slow = trunk.subscribe_segments();
-        let writer = trunk.writer().unwrap();
+        let writer = trunk.segment_writer().unwrap();
 
         // The slow (non-pinning) reader never polls while 1024 segments are
         // published — there is no wait-for-reader path for a non-pinning
@@ -2430,7 +3004,7 @@ mod tests {
     // --- non-pinning sibling lags, and StallIngest is what makes it true --
 
     /// MUTATION VERIFIED: changing the `must_wait` computation in
-    /// `TrunkWriter::publish_segment`'s `ArchiveOverrun::StallIngest` arm
+    /// `SegmentWriter::publish_segment`'s `ArchiveOverrun::StallIngest` arm
     /// from `must_wait = true;` to `{}` (a no-op, i.e. treating
     /// `StallIngest` exactly like `Gap`) makes this test fail: the third
     /// `publish_segment` call no longer blocks, so the background-thread
@@ -2443,7 +3017,7 @@ mod tests {
         let trunk = Trunk::new(TrunkConfig::new(nz(4), nz(4), nz(2), nz(8), nz(8)));
         let mut slow = trunk.subscribe_segments(); // non-pinning: will lag
         let mut archive = trunk.pin_segments(ArchiveOverrun::StallIngest); // pinning: must lose nothing
-        let writer = Arc::new(trunk.writer().unwrap());
+        let writer = Arc::new(trunk.segment_writer().unwrap());
 
         // Fill the segment log's capacity (2) without any eviction yet.
         writer.publish_segment(segment_entry(1, 1));
@@ -2451,10 +3025,10 @@ mod tests {
 
         // A third publish must evict the oldest (seq 1), which `archive`'s
         // pin has not yet consumed — with `StallIngest`, this call blocks.
-        // Run it on a background thread (the same one `TrunkWriter`, shared
-        // via `Arc` — this is the one-writer invariant, just called from a
-        // different thread) and prove, via a completion channel, that it
-        // has NOT returned yet.
+        // Run it on a background thread (the same one `SegmentWriter`,
+        // shared via `Arc` — this is the segment/part ring group's own
+        // single-writer invariant, just called from a different thread) and
+        // prove, via a completion channel, that it has NOT returned yet.
         let (done_tx, done_rx) = mpsc::channel();
         let blocked_writer = Arc::clone(&writer);
         let handle = thread::spawn(move || {
@@ -2516,7 +3090,7 @@ mod tests {
         // Default policy (`Gap`) pinning cursor that never polls at all —
         // the worst case for memory growth: a dead/wedged archive consumer.
         let _archive = trunk.pin_segments(ArchiveOverrun::default());
-        let writer = trunk.writer().unwrap();
+        let writer = trunk.segment_writer().unwrap();
 
         for i in 0u32..50_000 {
             writer.publish_segment(segment_entry((i % 256) as u8, i + 1));
@@ -2540,7 +3114,7 @@ mod tests {
     fn archive_overrun_gap_evicts_and_reports_gap() {
         let trunk = Trunk::new(TrunkConfig::new(nz(4), nz(4), nz(2), nz(8), nz(8)));
         let mut archive = trunk.pin_segments(ArchiveOverrun::Gap);
-        let writer = trunk.writer().unwrap();
+        let writer = trunk.segment_writer().unwrap();
 
         // Publish 5 segments into a capacity-2 log without archive ever
         // polling: with `Gap`, eviction proceeds unconditionally, so this
@@ -2578,7 +3152,7 @@ mod tests {
     fn archive_overrun_stall_ingest_actually_blocks_the_writer() {
         let trunk = Trunk::new(TrunkConfig::new(nz(4), nz(4), nz(1), nz(8), nz(8)));
         let mut archive = trunk.pin_segments(ArchiveOverrun::StallIngest);
-        let writer = Arc::new(trunk.writer().unwrap());
+        let writer = Arc::new(trunk.segment_writer().unwrap());
 
         writer.publish_segment(segment_entry(1, 1)); // fills capacity-1 log
 
@@ -2606,7 +3180,7 @@ mod tests {
     // --- S7. ArchiveOverrun::Terminate drops the cursor --------------------
 
     /// MUTATION VERIFIED: changing `ArchiveOverrun::Terminate => pin.terminated
-    /// = true,` in `TrunkWriter::publish_segment` to `ArchiveOverrun::Terminate
+    /// = true,` in `SegmentWriter::publish_segment` to `ArchiveOverrun::Terminate
     /// => {}` (a no-op, treating `Terminate` exactly like `Gap`) makes this
     /// test fail: `archive.poll()` returns `Some(Gap { .. })` instead of
     /// `Some(Terminated)`, so the `matches!` assertion on `Terminated` fails.
@@ -2615,7 +3189,7 @@ mod tests {
     fn archive_overrun_terminate_drops_the_cursor() {
         let trunk = Trunk::new(TrunkConfig::new(nz(4), nz(4), nz(2), nz(8), nz(8)));
         let mut archive = trunk.pin_segments(ArchiveOverrun::Terminate);
-        let writer = trunk.writer().unwrap();
+        let writer = trunk.segment_writer().unwrap();
 
         // Publish past capacity without archive ever polling: `Terminate`
         // never blocks (like `Gap`), so this completes.
@@ -2657,7 +3231,7 @@ mod tests {
         let mut c1 = trunk.subscribe_segments();
         let mut c2 = trunk.subscribe_segments();
         let mut c3 = trunk.subscribe_segments();
-        let writer = trunk.writer().unwrap();
+        let writer = trunk.segment_writer().unwrap();
 
         writer.publish_segment(SegmentEntry::new(
             Bytes::from(vec![0xCDu8; 65536]),
@@ -2772,9 +3346,13 @@ mod tests {
     #[test]
     fn segment_relative_event_resolves_at_publish_time_when_boundary_already_known() {
         let trunk = Trunk::new(TrunkConfig::new(nz(4), nz(4), nz(4), nz(8), nz(8)));
+        // Two separate writers, held at once: `note_segment_start` lives on
+        // the segmenter's `SegmentWriter`, `publish_event` on the ingest
+        // driver's `TrunkWriter` — exactly the split this step introduces.
         let writer = trunk.writer().unwrap();
+        let segment_writer = trunk.segment_writer().unwrap();
 
-        writer.note_segment_start(3, MediaTime(300_000));
+        segment_writer.note_segment_start(3, MediaTime(300_000));
         writer.publish_event(
             basic_event(9),
             EventAnchor::Segment {
@@ -2810,6 +3388,7 @@ mod tests {
     fn segment_relative_event_resolves_to_the_named_segment_not_whichever_is_open() {
         let trunk = Trunk::new(TrunkConfig::new(nz(4), nz(4), nz(4), nz(8), nz(8)));
         let writer = trunk.writer().unwrap();
+        let segment_writer = trunk.segment_writer().unwrap();
         let mut cursor = trunk.subscribe_events();
 
         // The event targets segment 2 specifically, delta 1_000 after ITS
@@ -2824,7 +3403,7 @@ mod tests {
 
         // Segment 1 — a DIFFERENT, "currently open" segment — reports its
         // start first. This must NOT resolve the segment-2-targeted event.
-        writer.note_segment_start(1, MediaTime(0));
+        segment_writer.note_segment_start(1, MediaTime(0));
 
         let item = cursor.poll().unwrap();
         let entry = match item {
@@ -2851,7 +3430,7 @@ mod tests {
 
         // Now segment 2's own start arrives: resolves in place, to the
         // RIGHT segment's start + delta.
-        writer.note_segment_start(2, MediaTime(90_000));
+        segment_writer.note_segment_start(2, MediaTime(90_000));
 
         let in_seg2 = trunk.events_in_segment(2);
         assert_eq!(in_seg2.len(), 1);
@@ -2882,6 +3461,7 @@ mod tests {
     fn utc_only_event_stays_unanchored_until_a_time_anchor_arrives() {
         let trunk = Trunk::new(TrunkConfig::new(nz(4), nz(4), nz(4), nz(8), nz(8)));
         let writer = trunk.writer().unwrap();
+        let segment_writer = trunk.segment_writer().unwrap();
         let mut cursor = trunk.subscribe_events();
 
         // A GPS/UTC-scheduled event (SCTE-35 splice_schedule.utc_splice_time
@@ -2919,7 +3499,7 @@ mod tests {
 
         // An anchor arrives: pts 0 == epoch 1_000ms (`TimeAnchor`'s own
         // convention), so epoch 5_000ms is 4_000ms == 360_000 ticks later.
-        writer.set_time_anchor(TimeAnchor {
+        segment_writer.set_time_anchor(TimeAnchor {
             pts_90k: 0,
             utc_epoch_ms: 1_000,
         });
@@ -3296,14 +3876,14 @@ mod tests {
     /// reload has nothing to answer with).
     ///
     /// MUTATION VERIFIED: commenting out `state.parts.push(entry);` in
-    /// `TrunkWriter::publish_part` (simulating "the part never actually
+    /// `SegmentWriter::publish_part` (simulating "the part never actually
     /// lands in the log") makes `trunk.part_bytes(9, 0)` return `None`
     /// instead of `Some(..)`, failing the `expect` below. Recompiled and
     /// re-run to confirm the failure, then reverted.
     #[test]
     fn part_is_addressable_and_readable_before_its_parent_segment_closes() {
         let trunk = Trunk::new(TrunkConfig::new(nz(4), nz(4), nz(4), nz(8), nz(8)));
-        let writer = trunk.writer().unwrap();
+        let writer = trunk.segment_writer().unwrap();
 
         // Segment 9 has never been closed — no `publish_segment` call for it
         // anywhere in this test.
@@ -3335,7 +3915,7 @@ mod tests {
     /// MUTATION VERIFIED (two independent mutations, each reverted after
     /// confirming failure):
     /// 1. Removing `self.trunk.progress.notify(usize::MAX);` from
-    ///    `TrunkWriter::publish_part` makes `listener.wait_deadline(..)`
+    ///    `SegmentWriter::publish_part` makes `listener.wait_deadline(..)`
     ///    time out (`false`) instead of waking (`true`) within the 2 s bound
     ///    used below — the first assertion fails.
     /// 2. Changing `Trunk::part_bytes`'s filter from
@@ -3347,7 +3927,7 @@ mod tests {
     #[test]
     fn waiter_is_woken_when_the_awaited_part_lands_and_resolves_to_it() {
         let trunk = Trunk::new(TrunkConfig::new(nz(4), nz(4), nz(4), nz(8), nz(8)));
-        let writer = Arc::new(trunk.writer().unwrap());
+        let writer = Arc::new(trunk.segment_writer().unwrap());
 
         // Register BEFORE re-checking/waiting — the documented no-missed-
         // wakeup ordering.
@@ -3365,8 +3945,19 @@ mod tests {
             bg_writer.publish_part(part_entry(0xAB, 9, 0));
         });
 
-        let woken = listener.wait_deadline(std::time::Instant::now() + Duration::from_secs(2));
-        assert!(woken, "listener must wake within 2s of publish_part");
+        // Deliberately generous. The claim under test is "the listener wakes
+        // rather than parking forever", NOT "it wakes inside N seconds": the
+        // publish happens on another thread, so any tight upper bound is a
+        // bound on the *machine's* scheduling, not on this code. A 2s bound
+        // here failed once during a loaded full-workspace run and passed on
+        // 38 consecutive idle runs -- a false red that trains people to
+        // re-run the suite. 60s still fails instantly if the wake channel
+        // genuinely never fires, which is the only failure worth reporting.
+        let woken = listener.wait_deadline(std::time::Instant::now() + Duration::from_secs(60));
+        assert!(
+            woken,
+            "listener must wake on publish_part, not park forever"
+        );
         handle.join().unwrap();
 
         let bytes = trunk
@@ -3400,8 +3991,12 @@ mod tests {
         let elapsed = start.elapsed();
 
         assert!(!woken, "must report timeout, not a fabricated wake-up");
+        // Same reasoning as the generous bound in
+        // `awaited_part_wakes_its_listener`: this asserts "returns rather
+        // than parking forever", and any tight bound measures the machine.
+        // The real assertion is `!woken` above; this one only catches a hang.
         assert!(
-            elapsed < Duration::from_secs(5),
+            elapsed < Duration::from_secs(60),
             "must actually return at the deadline, not hang: took {elapsed:?}"
         );
     }
@@ -3430,7 +4025,7 @@ mod tests {
     #[test]
     fn writer_never_blocks_with_a_registered_never_serviced_waiter() {
         let trunk = Trunk::new(TrunkConfig::new(nz(4), nz(4), nz(4), nz(8), nz(8)));
-        let writer = Arc::new(trunk.writer().unwrap());
+        let writer = Arc::new(trunk.segment_writer().unwrap());
 
         // Registered, kept alive for the whole test, and never waited on or
         // dropped before the assertions below run.
@@ -3524,7 +4119,7 @@ mod tests {
     fn parts_remain_addressable_after_segment_close_until_ordinary_eviction_reclaims_them() {
         let part_cap = nz(4).get();
         let trunk = Trunk::new(TrunkConfig::new(nz(4), nz(4), nz(4), nz(8), nz(part_cap)));
-        let writer = trunk.writer().unwrap();
+        let writer = trunk.segment_writer().unwrap();
 
         writer.publish_part(part_entry(0xAB, 1, 0));
         writer.publish_segment(segment_entry(1, 1));
@@ -3551,5 +4146,136 @@ mod tests {
              it — NOT because its segment closed, but because the ring's own \
              bound was exceeded, exactly like every other ring in this module"
         );
+    }
+
+    // === Issue #781: track-set snapshot + generation counter ==============
+
+    /// A freshly-minted `Trunk` announces no tracks yet — `set_tracks` has
+    /// never been called, so there is nothing to seed `tracks()`/
+    /// `track_generation()` from other than the empty defaults `Trunk::new`
+    /// establishes.
+    ///
+    /// MUTATION VERIFIED: changing `Trunk::new`'s `track_generation: 0` to
+    /// `track_generation: 1` makes the second `assert_eq!` below fail — it
+    /// reads back `1` instead of `0`. Recompiled and re-run to confirm the
+    /// failure, then reverted.
+    #[test]
+    fn fresh_trunk_has_no_tracks_and_generation_zero() {
+        let trunk = Trunk::new(TrunkConfig::new(nz(4), nz(4), nz(4), nz(8), nz(8)));
+        assert_eq!(trunk.tracks().len(), 0, "nothing has ever set a track set");
+        assert_eq!(trunk.track_generation(), 0);
+    }
+
+    /// `set_tracks` is a **whole-set replacement**, not a merge/append, and
+    /// bumps the generation by exactly one per call.
+    ///
+    /// MUTATION VERIFIED: changing `TrunkWriter::set_tracks`'s body to merge
+    /// the old set with the new one (`let mut merged = state.tracks.to_vec();
+    /// merged.extend(tracks); state.tracks = Arc::from(merged);`) instead of
+    /// replacing outright makes the second `assert_eq!` below fail —
+    /// `trunk.tracks()`'s track ids read back `[1, 7, 9]` (the old track 1
+    /// still present) instead of `[7, 9]`. Recompiled and re-run to confirm
+    /// the failure, then reverted.
+    #[test]
+    fn set_tracks_replaces_the_whole_set_and_bumps_generation_by_one_per_call() {
+        let trunk = Trunk::new(TrunkConfig::new(nz(4), nz(4), nz(4), nz(8), nz(8)));
+        let writer = trunk.writer().unwrap();
+
+        writer.set_tracks(vec![opaque_track(1)]);
+        assert_eq!(
+            trunk
+                .tracks()
+                .iter()
+                .map(|t| t.track_id)
+                .collect::<Vec<_>>(),
+            vec![1]
+        );
+        assert_eq!(trunk.track_generation(), 1);
+
+        // A completely different, larger set: if this were a merge/append
+        // rather than a replacement, the old track_id 1 would still be
+        // present alongside the two new ones.
+        writer.set_tracks(vec![opaque_track(7), opaque_track(9)]);
+        assert_eq!(
+            trunk
+                .tracks()
+                .iter()
+                .map(|t| t.track_id)
+                .collect::<Vec<_>>(),
+            vec![7, 9],
+            "set_tracks must replace the set wholesale, not append to it"
+        );
+        assert_eq!(
+            trunk.track_generation(),
+            2,
+            "generation must advance by exactly one per set_tracks call"
+        );
+    }
+
+    /// `track_generation` is stable across everything that is *not*
+    /// `set_tracks` — publishing samples/events/segments/parts must never
+    /// bump it, so a consumer polling the generation as a cheap "did the
+    /// track set change" check cannot see false positives.
+    ///
+    /// MUTATION VERIFIED: adding `state.track_generation += 1;` to
+    /// `TrunkWriter::publish` (simulating "generation accidentally bumped by
+    /// unrelated activity") makes the final `assert_eq!` below fail — the
+    /// generation reads back `11` (bumped once per one of the 10 published
+    /// samples, on top of the `1` from `set_tracks`) instead of staying at
+    /// `1`. Recompiled and re-run to confirm the failure, then reverted.
+    #[test]
+    fn generation_is_stable_across_unrelated_activity() {
+        let trunk = Trunk::new(TrunkConfig::new(nz(4), nz(4), nz(4), nz(8), nz(8)));
+        let writer = trunk.writer().unwrap();
+
+        writer.set_tracks(vec![opaque_track(1)]);
+        assert_eq!(trunk.track_generation(), 1);
+
+        for i in 0u8..10 {
+            writer.publish(1, RetentionClass::Timed, sample(i, 4));
+        }
+        writer.publish_event(basic_event(1), EventAnchor::Media(MediaTime(0)));
+
+        assert_eq!(
+            trunk.track_generation(),
+            1,
+            "publishing samples/events must never bump track_generation"
+        );
+    }
+
+    /// `set_tracks` wakes a registered [`Trunk::listen`] listener, the same
+    /// broad `progress` channel [`SegmentWriter::publish_part`]/
+    /// [`SegmentWriter::publish_segment`] already wake — see
+    /// [`waiter_is_woken_when_the_awaited_part_lands_and_resolves_to_it`] for
+    /// the identical pattern this test mirrors.
+    ///
+    /// MUTATION VERIFIED: removing `self.trunk.progress.notify(usize::MAX);`
+    /// from `TrunkWriter::set_tracks` makes `listener.wait_deadline(..)`
+    /// time out (`false`) instead of waking (`true`) within the 60s bound
+    /// used below. Recompiled and re-run to confirm the failure, then
+    /// reverted.
+    #[test]
+    fn set_tracks_wakes_a_registered_listener() {
+        let trunk = Trunk::new(TrunkConfig::new(nz(4), nz(4), nz(4), nz(8), nz(8)));
+        let writer = Arc::new(trunk.writer().unwrap());
+
+        // Register BEFORE the change — the documented no-missed-wakeup
+        // ordering every other `listen()` test in this module follows.
+        let listener = trunk.listen().expect("first registration must succeed");
+
+        let bg_writer = Arc::clone(&writer);
+        let handle = thread::spawn(move || {
+            thread::sleep(Duration::from_millis(50));
+            bg_writer.set_tracks(vec![opaque_track(1)]);
+        });
+
+        // Same generous, machine-independent bound as this module's other
+        // wake tests — see their comments for why 60s asserts only "it woke
+        // at all", not "it woke fast".
+        let woken = listener.wait_deadline(std::time::Instant::now() + Duration::from_secs(60));
+        assert!(woken, "listener must wake on set_tracks, not park forever");
+        handle.join().unwrap();
+
+        assert_eq!(trunk.track_generation(), 1);
     }
 }

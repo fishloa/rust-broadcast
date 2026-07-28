@@ -267,6 +267,17 @@ impl std::fmt::Debug for AuthSpec {
 impl AuthSpec {
     /// Converts to the scheme-agnostic [`Credentials`] the RTSP source /
     /// HTTP sources actually authenticate with.
+    ///
+    /// `#[allow(dead_code)]`: this crate's only real call site was the
+    /// per-route ingest wiring that built an `RtspRoute`/`TsHttpRoute`/etc.
+    /// from a configured `Route` — currently a `tracing::error!` stub for
+    /// every input kind but `rtmp` (`crate::origin::serve_with_registry`,
+    /// step 5a rounds 2/3), so nothing calls this today. Kept (with its own
+    /// test coverage below) rather than deleted: the conversion is exactly
+    /// what that wiring will need once it lands, and deleting tested,
+    /// still-correct conversion logic to silence a lint would be removing
+    /// coverage, not fixing a defect.
+    #[allow(dead_code)]
     pub(crate) fn to_credentials(&self) -> Credentials {
         match self {
             AuthSpec::Password { username, password } => {

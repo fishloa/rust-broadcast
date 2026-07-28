@@ -1,6 +1,6 @@
 //! HTTP origin server for stream delivery.
 //!
-//! Wires a per-stream [`crate::store::MediaStore`] to the axum sub-routers of
+//! Wires a per-stream [`crate::route::RouteHandle`] to the axum sub-routers of
 //! each stream's configured [`crate::output::Output`]s (LL-HLS, DASH — issue
 //! #663 P4), mounting under `/{stream}/`:
 //! - the **shared resource route** (`resource`) — `init-*.mp4`/`seg-*.m4s`/
@@ -63,8 +63,8 @@ use tower_http::timeout::TimeoutLayer;
 
 use crate::output::Output;
 use crate::registry::{AuthCtx, InputCtx, OutputCtx, SchemeRegistry};
-use crate::store::{HealthState, MediaStore};
-use supervisor::{Backoff, supervise};
+use crate::route::{HealthState, RouteHandle};
+use supervisor::Backoff;
 
 /// Realm advertised by the shared output-auth `Verifier`'s Basic/Digest
 /// challenge (`crate::config::OutputAuthSpec`) — fixed rather than
@@ -153,9 +153,9 @@ impl From<&crate::config::Config> for HttpLimits {
 const SUPERVISOR_SHUTDOWN_GRACE: Duration = Duration::from_secs(5);
 
 /// One stream's shared store plus the `Output`s configured to serve it.
-pub type StreamRoute = (Arc<MediaStore>, Vec<Arc<dyn Output>>);
+pub type StreamRoute = (Arc<RouteHandle>, Vec<Arc<dyn Output>>);
 
-/// Shared HTTP origin state: one [`MediaStore`] plus its configured
+/// Shared HTTP origin state: one [`RouteHandle`] plus its configured
 /// [`Output`]s per served stream name, keyed by the stream name used in the
 /// URL path (`/:stream/...`), plus the process-wide Prometheus metrics handle
 /// rendered by `GET /metrics`.
@@ -219,7 +219,7 @@ impl AppState {
 /// - For each stream, the shared resource route (`resource::router`) is
 ///   merged with every configured `Output`'s manifest routes
 ///   ([`Output::manifest_routes`]) — all sharing that stream's one
-///   [`MediaStore`] — into **one** router, wrapped in
+///   [`RouteHandle`] — into **one** router, wrapped in
 ///   `add_response_headers`, then `nest`ed under `/{stream}/` **once**
 ///   (merging first, rather than nesting each output separately, is what
 ///   avoids axum's duplicate-nest panic — see this module's docs). A request
@@ -575,28 +575,25 @@ pub async fn serve(config: crate::config::Config) -> crate::Result<()> {
     serve_with_registry(config, SchemeRegistry::new()).await
 }
 
-/// Run the multimux origin: one [`MediaStore`] + one supervised ingest task
-/// per `config.routes` entry, then bind `config.bind` and serve them all
-/// under [`router`]. Each route is served by the [`Output`]s named in its
+/// Run the multimux origin: one [`RouteHandle`] + one ingest task per
+/// `config.routes` entry, then bind `config.bind` and serve them all under
+/// [`router`]. Each route is served by the [`Output`]s named in its
 /// [`crate::config::Route::outputs`] (LL-HLS by default — see
 /// [`crate::output::OutputKind`]).
 ///
-/// Each route's task is driven by [`supervisor::supervise`]: depending on
-/// that route's [`crate::config::InputSpec`], it connects
-/// [`crate::source::rtsp::RtspSource`], [`crate::source::rtp_udp::RtpUdpSource`],
-/// [`crate::source::ts_udp::TsUdpSource`], [`crate::source::ts_http::TsHttpSource`],
-/// [`crate::source::hls_pull::HlsPullSource`], [`crate::source::dash_pull::DashPullSource`],
-/// [`crate::source::smooth_pull::SmoothPullSource`], [`crate::source::rtmp::RtmpSource`],
-/// or [`crate::source::srt::SrtSource`]
-/// — one `match` arm per variant,
-/// each instantiating the generic `supervise::<ThatConnector>` (the
-/// connectors have different `Source` associated types, so this dispatch
-/// stays monomorphised rather than boxed) — runs it through
-/// [`crate::pipeline::run_pipeline`], and on either a connect failure, a
-/// pipeline error, or source end-of-stream, reconnects with capped backoff
-/// instead of dying — a bad/flaky source degrades that route's
-/// [`crate::store::MediaStore::health`] rather than freezing it forever, and
-/// never brings the server (or any other route) down.
+/// Every configured [`crate::config::InputSpec`] variant now drives a route
+/// (issue #805 tasks 2/4/5 — see `spawn_ingest`, which this function's
+/// per-route loop calls) through [`supervisor::supervise_driver`] (a
+/// `media_plane::ingress::IngestDriver`- (or, for a push/`Listener`-shaped
+/// source like RTMP, `ListenDriver`-) driven `crate::source::*::run_*` entry
+/// point — or, for [`crate::config::InputSpec::Custom`], the equivalent
+/// driver loop a registered [`crate::registry::InputFactory`] builds itself),
+/// publishing each announced program's driver-minted `Trunk` into the route's
+/// registry via [`crate::source::advance_route`]. A connect
+/// failure, protocol error, or clean end-of-stream reconnects with capped
+/// backoff instead of dying — a bad/flaky source degrades that route's
+/// [`crate::route::RouteHandle::health`] rather than freezing it forever,
+/// and never brings the server (or any other route) down.
 ///
 /// [`crate::config::InputSpec::Custom`]/[`crate::output::OutputKind::Custom`]/
 /// [`crate::config::OutputAuthSpec::Custom`] (issue #663 external scheme
@@ -633,11 +630,10 @@ pub async fn serve_with_registry(
     let mut supervisor_handles: Vec<(String, tokio::task::JoinHandle<()>)> = Vec::new();
 
     for route in &config.routes {
-        let store = Arc::new(MediaStore::new(
-            target_duration_secs,
-            part_target_ms,
-            config.window_segments,
-        ));
+        let store = Arc::new(
+            RouteHandle::new(target_duration_secs, part_target_ms, config.window_segments)
+                .with_name(route.name.clone()),
+        );
         let outputs: Vec<Arc<dyn Output>> = route
             .outputs
             .iter()
@@ -647,179 +643,7 @@ pub async fn serve_with_registry(
 
         let name = route.name.clone();
         let shutdown_rx = shutdown_rx.clone();
-        let handle = match &route.input {
-            crate::config::InputSpec::Rtsp { url, auth } => {
-                let connector = crate::source::rtsp::RtspSource::new(name.clone(), url.clone())
-                    .with_auth(auth.as_ref().map(crate::config::AuthSpec::to_credentials));
-                tokio::spawn(supervise(
-                    connector,
-                    store,
-                    target_duration_secs,
-                    part_target_ms,
-                    Backoff::production_default(),
-                    name.clone(),
-                    shutdown_rx,
-                ))
-            }
-            crate::config::InputSpec::Rtp {
-                addr,
-                sdp,
-                multicast_group,
-            } => {
-                let connector = crate::source::rtp_udp::RtpUdpSource::new(
-                    name.clone(),
-                    addr.clone(),
-                    sdp.clone(),
-                    multicast_group.clone(),
-                );
-                tokio::spawn(supervise(
-                    connector,
-                    store,
-                    target_duration_secs,
-                    part_target_ms,
-                    Backoff::production_default(),
-                    name.clone(),
-                    shutdown_rx,
-                ))
-            }
-            crate::config::InputSpec::TsUdp {
-                addr,
-                multicast_group,
-            } => {
-                let connector = crate::source::ts_udp::TsUdpSource::new(
-                    name.clone(),
-                    addr.clone(),
-                    multicast_group.clone(),
-                );
-                tokio::spawn(supervise(
-                    connector,
-                    store,
-                    target_duration_secs,
-                    part_target_ms,
-                    Backoff::production_default(),
-                    name.clone(),
-                    shutdown_rx,
-                ))
-            }
-            crate::config::InputSpec::TsHttp { url, auth } => {
-                let connector =
-                    crate::source::ts_http::TsHttpSource::new(name.clone(), url.clone())
-                        .with_auth(auth.as_ref().map(crate::config::AuthSpec::to_credentials));
-                tokio::spawn(supervise(
-                    connector,
-                    store,
-                    target_duration_secs,
-                    part_target_ms,
-                    Backoff::production_default(),
-                    name.clone(),
-                    shutdown_rx,
-                ))
-            }
-            crate::config::InputSpec::HlsPull { url, auth } => {
-                let connector =
-                    crate::source::hls_pull::HlsPullSource::new(name.clone(), url.clone())
-                        .with_auth(auth.as_ref().map(crate::config::AuthSpec::to_credentials));
-                tokio::spawn(supervise(
-                    connector,
-                    store,
-                    target_duration_secs,
-                    part_target_ms,
-                    Backoff::production_default(),
-                    name.clone(),
-                    shutdown_rx,
-                ))
-            }
-            crate::config::InputSpec::DashPull { url, auth } => {
-                let connector =
-                    crate::source::dash_pull::DashPullSource::new(name.clone(), url.clone())
-                        .with_auth(auth.as_ref().map(crate::config::AuthSpec::to_credentials));
-                tokio::spawn(supervise(
-                    connector,
-                    store,
-                    target_duration_secs,
-                    part_target_ms,
-                    Backoff::production_default(),
-                    name.clone(),
-                    shutdown_rx,
-                ))
-            }
-            crate::config::InputSpec::SmoothPull { url, auth } => {
-                let connector =
-                    crate::source::smooth_pull::SmoothPullSource::new(name.clone(), url.clone())
-                        .with_auth(auth.as_ref().map(crate::config::AuthSpec::to_credentials));
-                tokio::spawn(supervise(
-                    connector,
-                    store,
-                    target_duration_secs,
-                    part_target_ms,
-                    Backoff::production_default(),
-                    name.clone(),
-                    shutdown_rx,
-                ))
-            }
-            crate::config::InputSpec::Rtmp {
-                listen,
-                app,
-                stream_key,
-            } => {
-                let connector = crate::source::rtmp::RtmpSource::new(name.clone(), listen.clone())
-                    .with_app(app.clone())
-                    .with_stream_key(stream_key.clone());
-                tokio::spawn(supervise(
-                    connector,
-                    store,
-                    target_duration_secs,
-                    part_target_ms,
-                    Backoff::production_default(),
-                    name.clone(),
-                    shutdown_rx,
-                ))
-            }
-            crate::config::InputSpec::Srt {
-                listen,
-                remote,
-                stream_id,
-                latency_ms,
-            } => {
-                // `config.validate()` (called above) already guarantees
-                // exactly one of listen/remote is `Some`.
-                let connector = if let Some(listen) = listen {
-                    crate::source::srt::SrtSource::new_listener(name.clone(), listen.clone())
-                } else {
-                    crate::source::srt::SrtSource::new_caller(
-                        name.clone(),
-                        remote.clone().expect("validated: listen or remote is Some"),
-                    )
-                }
-                .with_stream_id(stream_id.clone())
-                .with_latency_ms(*latency_ms);
-                tokio::spawn(supervise(
-                    connector,
-                    store,
-                    target_duration_secs,
-                    part_target_ms,
-                    Backoff::production_default(),
-                    name.clone(),
-                    shutdown_rx,
-                ))
-            }
-            crate::config::InputSpec::Custom { type_tag, params } => {
-                let factory = registry.input(type_tag).ok_or_else(|| {
-                    crate::MultimuxError::UnknownScheme {
-                        kind: "input",
-                        tag: type_tag.clone(),
-                    }
-                })?;
-                factory(InputCtx {
-                    name: name.clone(),
-                    params: params.clone(),
-                    store,
-                    target_duration_secs,
-                    part_target_ms,
-                    shutdown_rx,
-                })?
-            }
-        };
+        let handle = spawn_ingest(route, store, &config, &registry, shutdown_rx)?;
         supervisor_handles.push((name, handle));
     }
 
@@ -888,6 +712,341 @@ pub async fn serve_with_registry(
     Ok(())
 }
 
+/// Builds and spawns the ingest task for one configured route — pulled out of
+/// [`serve_with_registry`]'s per-route loop (issue #805 task 2) so the
+/// per-`InputSpec` wiring is callable, and individually testable, without
+/// spinning up the whole HTTP server (see this module's own tests for the
+/// `media_plane`-ported input kinds).
+///
+/// Every built-in variant drives [`supervisor::supervise_driver`] with the
+/// matching `crate::source::*::run_*` entry point;
+/// [`crate::config::InputSpec::Custom`] resolves its `type_tag` through
+/// `registry` and calls the registered [`crate::registry::InputFactory`] instead,
+/// which builds and spawns the equivalent `supervise_driver`-wrapped loop
+/// itself — see [`serve_with_registry`]'s own doc for the full picture.
+fn spawn_ingest(
+    route: &crate::config::Route,
+    store: Arc<RouteHandle>,
+    config: &crate::config::Config,
+    registry: &SchemeRegistry,
+    shutdown_rx: watch::Receiver<bool>,
+) -> crate::Result<tokio::task::JoinHandle<()>> {
+    let name = route.name.clone();
+    let target_duration_secs = config.target_duration_secs;
+    let part_target_ms = config.part_target_ms;
+    let window_segments = config.window_segments;
+    let timeouts = crate::source::IngestTimeouts::from(config);
+
+    Ok(match &route.input {
+        crate::config::InputSpec::Rtsp { url, auth } => {
+            let route_cfg = Arc::new(
+                crate::source::rtsp::RtspRoute::new(name.clone(), url.clone())
+                    .with_timeouts(timeouts)
+                    .with_auth(auth.as_ref().map(crate::config::AuthSpec::to_credentials)),
+            );
+            tokio::spawn(supervisor::supervise_driver(
+                move |route_handle| {
+                    let route_cfg = Arc::clone(&route_cfg);
+                    async move {
+                        let trunk_config = crate::source::driver_trunk_config(window_segments);
+                        let handshake = crate::source::handshake_policy(timeouts.connect);
+                        Err(crate::source::rtsp::run_rtsp(
+                            &route_cfg,
+                            trunk_config,
+                            handshake,
+                            &route_handle,
+                        )
+                        .await)
+                    }
+                },
+                store,
+                Backoff::production_default(),
+                name.clone(),
+                shutdown_rx,
+            ))
+        }
+        crate::config::InputSpec::Rtp {
+            addr,
+            sdp,
+            multicast_group,
+        } => {
+            let route_cfg = Arc::new(
+                crate::source::rtp_udp::RtpUdpRoute::new(
+                    name.clone(),
+                    addr.clone(),
+                    sdp.clone(),
+                    multicast_group.clone(),
+                )
+                .with_timeouts(timeouts),
+            );
+            tokio::spawn(supervisor::supervise_driver(
+                move |route_handle| {
+                    let route_cfg = Arc::clone(&route_cfg);
+                    async move {
+                        let trunk_config = crate::source::driver_trunk_config(window_segments);
+                        let handshake = crate::source::handshake_policy(timeouts.connect);
+                        Err(crate::source::rtp_udp::run_rtp_udp(
+                            &route_cfg,
+                            trunk_config,
+                            handshake,
+                            &route_handle,
+                        )
+                        .await)
+                    }
+                },
+                store,
+                Backoff::production_default(),
+                name.clone(),
+                shutdown_rx,
+            ))
+        }
+        crate::config::InputSpec::TsUdp {
+            addr,
+            multicast_group,
+        } => {
+            let route_cfg = Arc::new(
+                crate::source::ts_udp::TsUdpRoute::new(
+                    name.clone(),
+                    addr.clone(),
+                    multicast_group.clone(),
+                )
+                .with_timeouts(timeouts),
+            );
+            tokio::spawn(supervisor::supervise_driver(
+                move |route_handle| {
+                    let route_cfg = Arc::clone(&route_cfg);
+                    async move {
+                        let trunk_config = crate::source::driver_trunk_config(window_segments);
+                        let handshake = crate::source::handshake_policy(timeouts.connect);
+                        Err(crate::source::ts_udp::run_ts_udp(
+                            &route_cfg,
+                            trunk_config,
+                            handshake,
+                            &route_handle,
+                        )
+                        .await)
+                    }
+                },
+                store,
+                Backoff::production_default(),
+                name.clone(),
+                shutdown_rx,
+            ))
+        }
+        crate::config::InputSpec::TsHttp { url, auth } => {
+            let route_cfg = Arc::new(
+                crate::source::ts_http::TsHttpRoute::new(name.clone(), url.clone())
+                    .with_timeouts(timeouts)
+                    .with_auth(auth.as_ref().map(crate::config::AuthSpec::to_credentials)),
+            );
+            tokio::spawn(supervisor::supervise_driver(
+                move |route_handle| {
+                    let route_cfg = Arc::clone(&route_cfg);
+                    async move {
+                        let trunk_config = crate::source::driver_trunk_config(window_segments);
+                        let handshake = crate::source::handshake_policy(timeouts.connect);
+                        crate::source::ts_http::run_ts_http(
+                            &route_cfg,
+                            trunk_config,
+                            handshake,
+                            &route_handle,
+                        )
+                        .await
+                    }
+                },
+                store,
+                Backoff::production_default(),
+                name.clone(),
+                shutdown_rx,
+            ))
+        }
+        crate::config::InputSpec::Srt {
+            listen,
+            remote,
+            stream_id,
+            latency_ms,
+        } => {
+            // `config.validate()` (called at the top of `serve_with_registry`)
+            // already enforced exactly one of `listen`/`remote` is `Some`.
+            let is_listener = listen.is_some();
+            let mut srt_route = match (listen, remote) {
+                (Some(l), None) => {
+                    crate::source::srt::SrtRoute::new_listener(name.clone(), l.clone())
+                }
+                (None, Some(r)) => {
+                    crate::source::srt::SrtRoute::new_caller(name.clone(), r.clone())
+                }
+                _ => unreachable!("config.validate() enforces exactly one of Srt listen/remote"),
+            };
+            srt_route = srt_route
+                .with_stream_id(stream_id.clone())
+                .with_latency_ms(*latency_ms)
+                .with_timeouts(timeouts);
+            let route_cfg = Arc::new(srt_route);
+            tokio::spawn(supervisor::supervise_driver(
+                move |route_handle| {
+                    let route_cfg = Arc::clone(&route_cfg);
+                    async move {
+                        let trunk_config = crate::source::driver_trunk_config(window_segments);
+                        let handshake = crate::source::handshake_policy(timeouts.connect);
+                        if is_listener {
+                            crate::source::srt::run_srt_listener_once(
+                                &route_cfg,
+                                trunk_config,
+                                handshake,
+                                &route_handle,
+                            )
+                            .await
+                        } else {
+                            crate::source::srt::run_srt_caller(
+                                &route_cfg,
+                                trunk_config,
+                                handshake,
+                                &route_handle,
+                            )
+                            .await
+                        }
+                    }
+                },
+                store,
+                Backoff::production_default(),
+                name.clone(),
+                shutdown_rx,
+            ))
+        }
+        crate::config::InputSpec::HlsPull { url, auth } => {
+            let route_cfg = Arc::new(
+                crate::source::hls_pull::HlsPullRoute::new(name.clone(), url.clone())
+                    .with_timeouts(timeouts)
+                    .with_auth(auth.as_ref().map(crate::config::AuthSpec::to_credentials)),
+            );
+            tokio::spawn(supervisor::supervise_driver(
+                move |route_handle| {
+                    let route_cfg = Arc::clone(&route_cfg);
+                    async move {
+                        let trunk_config = crate::source::driver_trunk_config(window_segments);
+                        let handshake = crate::source::handshake_policy(timeouts.connect);
+                        crate::source::hls_pull::run_hls_pull(
+                            &route_cfg,
+                            trunk_config,
+                            handshake,
+                            &route_handle,
+                        )
+                        .await
+                    }
+                },
+                store,
+                Backoff::production_default(),
+                name.clone(),
+                shutdown_rx,
+            ))
+        }
+        crate::config::InputSpec::DashPull { url, auth } => {
+            let route_cfg = Arc::new(
+                crate::source::dash_pull::DashPullRoute::new(name.clone(), url.clone())
+                    .with_timeouts(timeouts)
+                    .with_auth(auth.as_ref().map(crate::config::AuthSpec::to_credentials)),
+            );
+            tokio::spawn(supervisor::supervise_driver(
+                move |route_handle| {
+                    let route_cfg = Arc::clone(&route_cfg);
+                    async move {
+                        let trunk_config = crate::source::driver_trunk_config(window_segments);
+                        let handshake = crate::source::handshake_policy(timeouts.connect);
+                        crate::source::dash_pull::run_dash_pull(
+                            &route_cfg,
+                            trunk_config,
+                            handshake,
+                            &route_handle,
+                        )
+                        .await
+                    }
+                },
+                store,
+                Backoff::production_default(),
+                name.clone(),
+                shutdown_rx,
+            ))
+        }
+        crate::config::InputSpec::SmoothPull { url, auth } => {
+            let route_cfg = Arc::new(
+                crate::source::smooth_pull::SmoothPullRoute::new(name.clone(), url.clone())
+                    .with_timeouts(timeouts)
+                    .with_auth(auth.as_ref().map(crate::config::AuthSpec::to_credentials)),
+            );
+            tokio::spawn(supervisor::supervise_driver(
+                move |route_handle| {
+                    let route_cfg = Arc::clone(&route_cfg);
+                    async move {
+                        let trunk_config = crate::source::driver_trunk_config(window_segments);
+                        let handshake = crate::source::handshake_policy(timeouts.connect);
+                        crate::source::smooth_pull::run_smooth_pull(
+                            &route_cfg,
+                            trunk_config,
+                            handshake,
+                            &route_handle,
+                        )
+                        .await
+                    }
+                },
+                store,
+                Backoff::production_default(),
+                name.clone(),
+                shutdown_rx,
+            ))
+        }
+        crate::config::InputSpec::Rtmp {
+            listen,
+            app,
+            stream_key,
+        } => {
+            let route_cfg = Arc::new(
+                crate::source::rtmp::RtmpRoute::new(name.clone(), listen.clone())
+                    .with_app(app.clone())
+                    .with_stream_key(stream_key.clone())
+                    .with_timeouts(timeouts),
+            );
+            tokio::spawn(supervisor::supervise_driver(
+                move |route_handle| {
+                    let route_cfg = Arc::clone(&route_cfg);
+                    async move {
+                        let trunk_config = crate::source::driver_trunk_config(window_segments);
+                        let handshake = crate::source::handshake_policy(timeouts.connect);
+                        Err(crate::source::rtmp::run_rtmp(
+                            &route_cfg,
+                            trunk_config,
+                            handshake,
+                            &route_handle,
+                        )
+                        .await)
+                    }
+                },
+                store,
+                Backoff::production_default(),
+                name.clone(),
+                shutdown_rx,
+            ))
+        }
+        crate::config::InputSpec::Custom { type_tag, params } => {
+            let factory =
+                registry
+                    .input(type_tag)
+                    .ok_or_else(|| crate::MultimuxError::UnknownScheme {
+                        kind: "input",
+                        tag: type_tag.clone(),
+                    })?;
+            factory(InputCtx {
+                name: name.clone(),
+                params: params.clone(),
+                store,
+                target_duration_secs,
+                part_target_ms,
+                shutdown_rx,
+            })?
+        }
+    })
+}
+
 /// Resolves once an external shutdown signal is received: Ctrl-C
 /// (`SIGINT`) on every platform, plus `SIGTERM` on unix (the signal a
 /// process manager / `docker stop` / `systemd` sends for a graceful stop).
@@ -918,12 +1077,20 @@ async fn shutdown_signal() {
 mod tests {
     use super::*;
     use crate::output::llhls::LlHlsOutput;
-    use crate::store::MediaStore;
+    use crate::route::RouteHandle;
     use tower::ServiceExt;
 
     fn make_state() -> Arc<AppState> {
-        let store = Arc::new(MediaStore::new(4.0, 500, 4));
-        store.set_init(vec![0xAA; 4]);
+        let store = Arc::new(RouteHandle::new(4.0, 500, 4));
+        // Issue #805 tasks 3/6: the migrated egress call sites (`dynamic_file`
+        // et al.) now resolve through the registry, not a `RouteHandle`-owned
+        // `Trunk` directly -- publish this bare-constructed test route's own
+        // program first, exactly as a real driver-backed route's
+        // `crate::source::report_driver_progress` call would for its own
+        // driver-minted Trunk once live, so there is a `ProgramServing`
+        // bundle for `set_init` to write into at all.
+        store.publish_new_program(crate::route::SPTS_PROGRAM_ID);
+        store.set_init(crate::route::SPTS_PROGRAM_ID, vec![0xAA; 4]);
         let mut streams = HashMap::new();
         streams.insert(
             "cam1".to_string(),
@@ -1057,13 +1224,13 @@ mod tests {
         assert_eq!(resp.status(), axum::http::StatusCode::SERVICE_UNAVAILABLE);
     }
 
-    /// Biting test 3b: `GET /readyz` must 200 once a route's `MediaStore` is
+    /// Biting test 3b: `GET /readyz` must 200 once a route's `RouteHandle` is
     /// `Live` — the counterpart to 3a, proving `/readyz` actually reads
     /// `HealthState` rather than being hardcoded to one status.
     #[tokio::test]
     async fn readyz_200_when_a_route_is_live() {
-        let store = Arc::new(MediaStore::new(4.0, 500, 4));
-        store.set_init(vec![0xAA; 4]);
+        let store = Arc::new(RouteHandle::new(4.0, 500, 4));
+        store.set_init(crate::route::SPTS_PROGRAM_ID, vec![0xAA; 4]);
         store.set_health(HealthState::Live);
         let mut streams = HashMap::new();
         streams.insert(
@@ -1102,8 +1269,8 @@ mod tests {
     /// this assertion.
     #[tokio::test]
     async fn http_requests_total_counter_increases_on_requests() {
-        let store = Arc::new(MediaStore::new(4.0, 500, 4));
-        store.set_init(vec![0xAA; 4]);
+        let store = Arc::new(RouteHandle::new(4.0, 500, 4));
+        store.set_init(crate::route::SPTS_PROGRAM_ID, vec![0xAA; 4]);
         let mut streams = HashMap::new();
         streams.insert(
             "metrics-probe".to_string(),
@@ -1208,26 +1375,33 @@ mod tests {
     /// `SegmentTemplate` (once its `$RepresentationID$`/`$Number$` tokens are
     /// substituted exactly like a real DASH client would) names the *same*
     /// `seg-*.m4s` file the LL-HLS playlist already references — proving
-    /// ingest-once/many-outputs from one shared `MediaStore`, not a
+    /// ingest-once/many-outputs from one shared `RouteHandle`, not a
     /// per-output re-mux.
     #[tokio::test]
     async fn both_outputs_serve_from_shared_segments_and_mpd_resolves() {
-        let store = Arc::new(MediaStore::new(4.0, 500, 4));
-        store.set_init(vec![0xAA; 4]);
-        store.set_track_specs(vec![transmux::TrackSpec::new(
-            9,
-            90_000,
-            transmux::CodecConfig::Vp8 {
-                width: 640,
-                height: 480,
+        let store = Arc::new(RouteHandle::new(4.0, 500, 4));
+        store.publish_new_program(crate::route::SPTS_PROGRAM_ID);
+        store.set_init(crate::route::SPTS_PROGRAM_ID, vec![0xAA; 4]);
+        store.set_track_specs(
+            crate::route::SPTS_PROGRAM_ID,
+            vec![transmux::TrackSpec::new(
+                9,
+                90_000,
+                transmux::CodecConfig::Vp8 {
+                    width: 640,
+                    height: 480,
+                },
+            )],
+        );
+        store.add_segment(
+            crate::route::SPTS_PROGRAM_ID,
+            transmux::ll_hls::SegmentInfo {
+                bytes: vec![0x33; 16],
+                duration: 4.0,
+                segment_seq: 1,
+                part_count: 1,
             },
-        )]);
-        store.add_segment(transmux::ll_hls::SegmentInfo {
-            bytes: vec![0x33; 16],
-            duration: 4.0,
-            segment_seq: 1,
-            part_count: 1,
-        });
+        );
 
         let mut streams = HashMap::new();
         streams.insert(
@@ -1305,15 +1479,19 @@ mod tests {
     /// genuinely per-output, not a hardcoded LL-HLS+DASH pair.
     #[tokio::test]
     async fn dash_only_route_has_no_llhls_routes() {
-        let store = Arc::new(MediaStore::new(4.0, 500, 4));
-        store.set_track_specs(vec![transmux::TrackSpec::new(
-            1,
-            90_000,
-            transmux::CodecConfig::Vp8 {
-                width: 640,
-                height: 480,
-            },
-        )]);
+        let store = Arc::new(RouteHandle::new(4.0, 500, 4));
+        store.publish_new_program(crate::route::SPTS_PROGRAM_ID);
+        store.set_track_specs(
+            crate::route::SPTS_PROGRAM_ID,
+            vec![transmux::TrackSpec::new(
+                1,
+                90_000,
+                transmux::CodecConfig::Vp8 {
+                    width: 640,
+                    height: 480,
+                },
+            )],
+        );
         let mut streams = HashMap::new();
         streams.insert(
             "cam1".to_string(),
@@ -1346,37 +1524,50 @@ mod tests {
     /// once the segment closes.
     #[tokio::test]
     async fn ll_dash_output_signals_and_resolves_alongside_dash_and_llhls() {
-        let store = Arc::new(MediaStore::new(4.0, 500, 4));
-        store.set_init(vec![0xAA; 4]);
-        store.set_track_specs(vec![transmux::TrackSpec::new(
-            9,
-            90_000,
-            transmux::CodecConfig::Vp8 {
-                width: 640,
-                height: 480,
+        let store = Arc::new(RouteHandle::new(4.0, 500, 4));
+        store.publish_new_program(crate::route::SPTS_PROGRAM_ID);
+        store.set_init(crate::route::SPTS_PROGRAM_ID, vec![0xAA; 4]);
+        store.set_track_specs(
+            crate::route::SPTS_PROGRAM_ID,
+            vec![transmux::TrackSpec::new(
+                9,
+                90_000,
+                transmux::CodecConfig::Vp8 {
+                    width: 640,
+                    height: 480,
+                },
+            )],
+        );
+        store.add_segment(
+            crate::route::SPTS_PROGRAM_ID,
+            transmux::ll_hls::SegmentInfo {
+                bytes: vec![0x33; 16],
+                duration: 4.0,
+                segment_seq: 1,
+                part_count: 2,
             },
-        )]);
-        store.add_segment(transmux::ll_hls::SegmentInfo {
-            bytes: vec![0x33; 16],
-            duration: 4.0,
-            segment_seq: 1,
-            part_count: 2,
-        });
+        );
         // Live parts of the in-progress segment (seq 2) -- not yet closed.
-        store.add_part(transmux::ll_hls::PartInfo {
-            bytes: vec![0x50; 4],
-            duration: 0.5,
-            independent: true,
-            segment_seq: 2,
-            part_index: 0,
-        });
-        store.add_part(transmux::ll_hls::PartInfo {
-            bytes: vec![0x51; 4],
-            duration: 0.5,
-            independent: false,
-            segment_seq: 2,
-            part_index: 1,
-        });
+        store.add_part(
+            crate::route::SPTS_PROGRAM_ID,
+            transmux::ll_hls::PartInfo {
+                bytes: vec![0x50; 4],
+                duration: 0.5,
+                independent: true,
+                segment_seq: 2,
+                part_index: 0,
+            },
+        );
+        store.add_part(
+            crate::route::SPTS_PROGRAM_ID,
+            transmux::ll_hls::PartInfo {
+                bytes: vec![0x51; 4],
+                duration: 0.5,
+                independent: false,
+                segment_seq: 2,
+                part_index: 1,
+            },
+        );
 
         let mut streams = HashMap::new();
         streams.insert(
@@ -1459,12 +1650,15 @@ mod tests {
         let store_for_close = store.clone();
         let closer = tokio::spawn(async move {
             tokio::time::sleep(Duration::from_millis(50)).await;
-            store_for_close.add_segment(transmux::ll_hls::SegmentInfo {
-                bytes: vec![0x99; 8], // distinct from the concatenated parts
-                duration: 1.0,
-                segment_seq: 2,
-                part_count: 2,
-            });
+            store_for_close.add_segment(
+                crate::route::SPTS_PROGRAM_ID,
+                transmux::ll_hls::SegmentInfo {
+                    bytes: vec![0x99; 8], // distinct from the concatenated parts
+                    duration: 1.0,
+                    segment_seq: 2,
+                    part_count: 2,
+                },
+            );
         });
         let resp = app.oneshot(get("/cam1/seg-1-2.m4s")).await.unwrap();
         assert_eq!(
@@ -1487,22 +1681,29 @@ mod tests {
     /// (which only ever checked `.m3u8`) actually covers DASH too.
     #[tokio::test]
     async fn manifest_and_resource_responses_carry_expected_cache_control_and_cors() {
-        let store = Arc::new(MediaStore::new(4.0, 500, 4));
-        store.set_init(vec![0xAA; 4]);
-        store.set_track_specs(vec![transmux::TrackSpec::new(
-            1,
-            90_000,
-            transmux::CodecConfig::Vp8 {
-                width: 640,
-                height: 480,
+        let store = Arc::new(RouteHandle::new(4.0, 500, 4));
+        store.publish_new_program(crate::route::SPTS_PROGRAM_ID);
+        store.set_init(crate::route::SPTS_PROGRAM_ID, vec![0xAA; 4]);
+        store.set_track_specs(
+            crate::route::SPTS_PROGRAM_ID,
+            vec![transmux::TrackSpec::new(
+                1,
+                90_000,
+                transmux::CodecConfig::Vp8 {
+                    width: 640,
+                    height: 480,
+                },
+            )],
+        );
+        store.add_segment(
+            crate::route::SPTS_PROGRAM_ID,
+            transmux::ll_hls::SegmentInfo {
+                bytes: vec![0x33; 16],
+                duration: 4.0,
+                segment_seq: 1,
+                part_count: 1,
             },
-        )]);
-        store.add_segment(transmux::ll_hls::SegmentInfo {
-            bytes: vec![0x33; 16],
-            duration: 4.0,
-            segment_seq: 1,
-            part_count: 1,
-        });
+        );
         let mut streams = HashMap::new();
         streams.insert(
             "cam1".to_string(),
@@ -1620,14 +1821,18 @@ mod tests {
     /// still bind when configured tighter.
     #[tokio::test]
     async fn global_timeout_layer_cuts_off_a_slow_blocking_request() {
-        let store = Arc::new(MediaStore::new(4.0, 500, 4));
-        store.set_init(vec![0xAA; 4]);
-        store.add_segment(transmux::ll_hls::SegmentInfo {
-            bytes: vec![0x20; 8],
-            duration: 4.0,
-            segment_seq: 1,
-            part_count: 1,
-        });
+        let store = Arc::new(RouteHandle::new(4.0, 500, 4));
+        store.publish_new_program(crate::route::SPTS_PROGRAM_ID);
+        store.set_init(crate::route::SPTS_PROGRAM_ID, vec![0xAA; 4]);
+        store.add_segment(
+            crate::route::SPTS_PROGRAM_ID,
+            transmux::ll_hls::SegmentInfo {
+                bytes: vec![0x20; 8],
+                duration: 4.0,
+                segment_seq: 1,
+                part_count: 1,
+            },
+        );
         let mut streams = HashMap::new();
         streams.insert(
             "cam1".to_string(),
@@ -1663,8 +1868,8 @@ mod tests {
     /// [`HttpLimits`] via [`AppState::with_limits`], which [`make_state`]
     /// itself doesn't expose).
     fn make_state_streams() -> HashMap<String, StreamRoute> {
-        let store = Arc::new(MediaStore::new(4.0, 500, 4));
-        store.set_init(vec![0xAA; 4]);
+        let store = Arc::new(RouteHandle::new(4.0, 500, 4));
+        store.set_init(crate::route::SPTS_PROGRAM_ID, vec![0xAA; 4]);
         let mut streams = HashMap::new();
         streams.insert(
             "cam1".to_string(),
@@ -2191,7 +2396,7 @@ mod tests {
             }),
         );
 
-        let store = Arc::new(MediaStore::new(4.0, 500, 4));
+        let store = Arc::new(RouteHandle::new(4.0, 500, 4));
         let (_shutdown_tx, shutdown_rx) = watch::channel(false);
         let factory = registry.input("silence").expect("factory registered above");
         let handle = factory(crate::registry::InputCtx {
@@ -2217,5 +2422,324 @@ mod tests {
         assert!(became_live, "factory-spawned task must reach the store");
 
         handle.abort();
+    }
+
+    /// Issue #805 task 2's own bite: a route configured with
+    /// [`crate::config::InputSpec::TsUdp`] (one of the eight
+    /// `media_plane`-ported input kinds) must actually ingest through
+    /// [`spawn_ingest`]'s real wiring and become resolvable through the
+    /// registry — not just compile against the new signatures.
+    ///
+    /// MUTATION VERIFIED: reverting `spawn_ingest`'s `InputSpec::TsUdp` arm
+    /// (and the other seven driver-backed arms) to the pre-#805 combined stub
+    /// (`{ tokio::spawn(async move { tracing::error!(..); }) }`, matching
+    /// what every one of those eight `InputSpec` variants used to do) makes
+    /// this test fail: `assert!(resolved, ...)` fails because
+    /// `store.resolve_program` never leaves `ProgramResolution::NotYetAnnounced`
+    /// within the 5 s timeout (the stub never touches `store` at all) —
+    /// exactly the dead-route regression issue #805 exists to fix. Rebuilt
+    /// and re-run to confirm the failure, then reverted.
+    #[tokio::test]
+    async fn ts_udp_input_ingests_and_becomes_resolvable_through_the_registry() {
+        let reserved = tokio::net::UdpSocket::bind("127.0.0.1:0")
+            .await
+            .expect("reserve port");
+        let addr = reserved.local_addr().expect("local addr");
+        drop(reserved);
+
+        let cfg = crate::config::Config {
+            routes: vec![crate::config::Route {
+                name: "cam1".into(),
+                input: crate::config::InputSpec::TsUdp {
+                    addr: addr.to_string(),
+                    multicast_group: None,
+                },
+                outputs: vec![crate::output::OutputKind::LlHls],
+            }],
+            bind: "127.0.0.1:0".into(),
+            ..crate::config::Config::default()
+        };
+        let store = Arc::new(RouteHandle::new(4.0, 500, 4));
+        let (_shutdown_tx, shutdown_rx) = watch::channel(false);
+        let handle = spawn_ingest(
+            &cfg.routes[0],
+            store.clone(),
+            &cfg,
+            &SchemeRegistry::new(),
+            shutdown_rx,
+        )
+        .expect("spawn_ingest must accept a TsUdp route");
+
+        // Real muxed TS bytes (the same fixture builder `ts_udp`'s own
+        // loopback test uses), sent repeatedly so the supervisor's own
+        // (asynchronous) socket bind has ample time to land before the first
+        // datagram that matters arrives.
+        let ts_bytes = crate::source::ts_program::test_support::build_ts_bytes(1, 0xAB, 60);
+        let sender = tokio::net::UdpSocket::bind("127.0.0.1:0")
+            .await
+            .expect("bind sender");
+        let send_task = tokio::spawn(async move {
+            loop {
+                for chunk in ts_bytes.chunks(7 * 188) {
+                    let _ = sender.send_to(chunk, addr).await;
+                    tokio::time::sleep(Duration::from_millis(5)).await;
+                }
+            }
+        });
+
+        let resolved = tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                if matches!(
+                    store.resolve_program(crate::route::SPTS_PROGRAM_ID),
+                    crate::route::ProgramResolution::Found(_)
+                ) {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+        })
+        .await
+        .is_ok();
+
+        assert!(
+            resolved,
+            "a TsUdp route must actually ingest and publish its program into the registry"
+        );
+
+        send_task.abort();
+        handle.abort();
+    }
+
+    /// A minimal, `sdp-types`-parseable single-media SDP (mirrors
+    /// `multimux/tests/rtsp_ingest.rs`'s own `sdp_body`) — just enough for
+    /// [`crate::config::InputSpec::Rtp`]'s `sdp` field to be genuinely valid,
+    /// so that variant's dispatch reaches its real "bind the UDP socket and
+    /// wait for datagrams" path rather than failing earlier on SDP parsing.
+    fn minimal_rtp_sdp() -> String {
+        "v=0\r\n\
+         o=- 0 0 IN IP4 127.0.0.1\r\n\
+         s=-\r\n\
+         t=0 0\r\n\
+         m=video 0 RTP/AVP 96\r\n\
+         a=rtpmap:96 H264/90000\r\n\
+         a=control:streamid=0\r\n"
+            .to_string()
+    }
+
+    /// Compile-time exhaustiveness net (issue #805 task 3): a **separate**
+    /// exhaustive match from `spawn_ingest`'s own — that one only proves
+    /// *production* wiring keeps pace with a newly-added `InputSpec` variant
+    /// (it would fail to compile on its own); this one proves this
+    /// **regression test's enumeration** does too. `InputSpec` is
+    /// `#[non_exhaustive]`, so an external crate's `match` would be forced to
+    /// carry a `_ =>` arm that silently swallows a new variant — this only
+    /// works as a real compile-time net because this test lives in-crate
+    /// (`multimux/src/origin/mod.rs`), not in `multimux/tests/*.rs`. Every
+    /// arm returns the same value; the only thing under test is the *shape*
+    /// of the match itself.
+    fn every_input_spec_variant_is_named_here(spec: &crate::config::InputSpec) -> bool {
+        match spec {
+            crate::config::InputSpec::Rtsp { .. } => true,
+            crate::config::InputSpec::Rtp { .. } => true,
+            crate::config::InputSpec::TsUdp { .. } => true,
+            crate::config::InputSpec::TsHttp { .. } => true,
+            crate::config::InputSpec::Srt { .. } => true,
+            crate::config::InputSpec::HlsPull { .. } => true,
+            crate::config::InputSpec::DashPull { .. } => true,
+            crate::config::InputSpec::SmoothPull { .. } => true,
+            crate::config::InputSpec::Rtmp { .. } => true,
+            crate::config::InputSpec::Custom { .. } => true,
+        }
+    }
+
+    /// Issue #805 task 3's own regression net: **every** non-`Custom`
+    /// [`crate::config::InputSpec`] variant — not just `TsUdp` (task 2's own
+    /// bite, above) — must dispatch to a route that genuinely attempts
+    /// ingest, not the pre-#805 combined stub arm that logged an error and
+    /// spawned a no-op future for eight of nine variants while every gate
+    /// (build/clippy/doc/5674 tests) stayed green.
+    ///
+    /// Every variant here is pointed at a deliberately dead/unreachable
+    /// endpoint (a refused TCP connect, a UDP port nothing ever sends to, an
+    /// SRT caller dialing nobody, or — for `Rtmp` — a listen port this test
+    /// has already bound out from under it) so no real server is needed
+    /// anywhere. A genuinely-wired route's supervisor (`supervise_driver`)
+    /// completes one full attempt-and-fail cycle and transitions
+    /// [`RouteHandle::health`] `Connecting` -> `Reconnecting`;
+    /// the old combined stub arm never touched `route_handle` at all, so a
+    /// regressed variant would still read `Connecting` at the hang guard.
+    ///
+    /// `Custom` is deliberately excluded from the dead-endpoint loop below —
+    /// it resolves through [`SchemeRegistry`], not a built-in `run_*` entry
+    /// point, and is already covered by
+    /// `registered_custom_input_factory_runs_against_a_real_input_ctx` and
+    /// the `serve_with_registry_unregistered_custom_*_errors_not_panics`
+    /// tests above — but it is still named in
+    /// [`every_input_spec_variant_is_named_here`]'s match, so the compile-time
+    /// net covers the whole enum, not just the nine `run_*`-backed variants.
+    ///
+    /// MUTATION VERIFIED: replacing `spawn_ingest`'s `InputSpec::TsUdp` arm
+    /// with the pre-#805 combined stub (`InputSpec::TsUdp { .. } =>
+    /// tokio::spawn(async move { tracing::error!("ingest kind not yet
+    /// wired"); })`) makes this test fail on the `TsUdp` iteration
+    /// specifically: the 10 s hang-guard `reached_reconnecting` poll loop
+    /// times out (`is_ok()` is `false`, since the stub never calls
+    /// `route_handle.set_health` at all) and the very next
+    /// `assert!(reached_reconnecting, ...)` — not the later `assert_eq!`,
+    /// which the panic short-circuits before ever reaching — fires with:
+    /// `variant TsUdp { addr: "127.0.0.1:58600", multicast_group: None }
+    /// never left HealthState::Connecting within the hang guard (still
+    /// Connecting) -- looks like a stubbed dispatch arm`. Rebuilt and re-ran
+    /// to confirm this exact message, then reverted (confirmed green again
+    /// afterwards).
+    #[tokio::test]
+    async fn every_input_spec_variant_dispatches_to_real_ingest_not_a_stub() {
+        // Shrunk so the UDP-bind-but-no-data-arrives path (Rtp/TsUdp) and the
+        // SRT-caller-dialing-nobody path resolve in well under a second
+        // instead of waiting the production 30 s/10 s defaults.
+        let config = crate::config::Config {
+            ingest_connect_timeout_secs: 0.2,
+            ingest_read_timeout_secs: 0.2,
+            ..crate::config::Config::default()
+        };
+
+        // A TCP port nothing listens on: every HTTP/RTSP-based puller gets a
+        // connection refused practically instantly.
+        let refused = std::net::TcpListener::bind("127.0.0.1:0").expect("reserve tcp port");
+        let refused_addr = refused.local_addr().expect("local addr");
+        drop(refused);
+
+        let reserve_udp = || {
+            let s = std::net::UdpSocket::bind("127.0.0.1:0").expect("reserve udp port");
+            let addr = s.local_addr().expect("local addr");
+            drop(s);
+            addr
+        };
+        let quiet_rtp_addr = reserve_udp();
+        let quiet_ts_udp_addr = reserve_udp();
+        let quiet_srt_addr = reserve_udp();
+
+        // Steal an RTMP listen port so `AsyncRtmpServer::bind` itself fails
+        // on every attempt -- no client connection needed at all, since
+        // `RtmpRoute`'s accept-pump task (unlike every other variant here)
+        // has no timeout of its own on `server.accept().await` and would
+        // otherwise hang forever waiting for a publisher that never arrives.
+        let rtmp_thief =
+            std::net::TcpListener::bind("127.0.0.1:0").expect("steal an rtmp listen port");
+        let rtmp_addr = rtmp_thief.local_addr().expect("local addr");
+
+        let variants: Vec<crate::config::InputSpec> = vec![
+            crate::config::InputSpec::Rtsp {
+                url: format!("rtsp://{refused_addr}/x"),
+                auth: None,
+            },
+            crate::config::InputSpec::Rtp {
+                addr: quiet_rtp_addr.to_string(),
+                sdp: minimal_rtp_sdp(),
+                multicast_group: None,
+            },
+            crate::config::InputSpec::TsUdp {
+                addr: quiet_ts_udp_addr.to_string(),
+                multicast_group: None,
+            },
+            crate::config::InputSpec::TsHttp {
+                url: format!("http://{refused_addr}/x"),
+                auth: None,
+            },
+            crate::config::InputSpec::Srt {
+                listen: None,
+                remote: Some(quiet_srt_addr.to_string()),
+                stream_id: None,
+                latency_ms: None,
+            },
+            crate::config::InputSpec::HlsPull {
+                url: format!("http://{refused_addr}/x"),
+                auth: None,
+            },
+            crate::config::InputSpec::DashPull {
+                url: format!("http://{refused_addr}/x"),
+                auth: None,
+            },
+            crate::config::InputSpec::SmoothPull {
+                url: format!("http://{refused_addr}/x"),
+                auth: None,
+            },
+            crate::config::InputSpec::Rtmp {
+                listen: rtmp_addr.to_string(),
+                app: None,
+                stream_key: None,
+            },
+        ];
+        assert_eq!(
+            variants.len(),
+            9,
+            "every non-Custom InputSpec kind must be represented exactly once"
+        );
+
+        let (_shutdown_tx, shutdown_rx) = watch::channel(false);
+        let registry = SchemeRegistry::new();
+
+        for spec in variants {
+            assert!(
+                every_input_spec_variant_is_named_here(&spec),
+                "compile-time net: every match arm returns true"
+            );
+
+            let route = crate::config::Route {
+                name: "cam".into(),
+                input: spec.clone(),
+                outputs: vec![crate::output::OutputKind::LlHls],
+            };
+            let store = Arc::new(RouteHandle::new(
+                config.target_duration_secs,
+                config.part_target_ms,
+                config.window_segments,
+            ));
+
+            let handle = spawn_ingest(
+                &route,
+                store.clone(),
+                &config,
+                &registry,
+                shutdown_rx.clone(),
+            )
+            .unwrap_or_else(|e| panic!("spawn_ingest must accept {spec:?}, got {e}"));
+
+            // No `.await` has happened on this task yet since `store` was
+            // constructed, so the spawned supervisor task has not had a
+            // chance to run a single instruction -- this is a deterministic
+            // check of `RouteHandle::new`'s own initial value, not a race.
+            assert_eq!(
+                store.health(),
+                HealthState::Connecting,
+                "variant {spec:?} must start Connecting"
+            );
+
+            let reached_reconnecting = tokio::time::timeout(Duration::from_secs(10), async {
+                loop {
+                    if store.health() == HealthState::Reconnecting {
+                        break;
+                    }
+                    tokio::time::sleep(Duration::from_millis(10)).await;
+                }
+            })
+            .await
+            .is_ok();
+            assert!(
+                reached_reconnecting,
+                "variant {spec:?} never left HealthState::Connecting within the hang guard \
+                 (still {:?}) -- looks like a stubbed dispatch arm",
+                store.health()
+            );
+            assert_eq!(
+                store.health(),
+                HealthState::Reconnecting,
+                "variant {spec:?} must be Reconnecting after its first failed attempt"
+            );
+
+            handle.abort();
+        }
+
+        drop(rtmp_thief);
     }
 }

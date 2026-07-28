@@ -2,6 +2,719 @@
 
 ## [Unreleased]
 
+### Added (issue #805 task 6: per-program serving state, MPTS-ready)
+- **`RouteHandle` gains per-program serving state.** A new crate-private
+  `ProgramServing` bundle groups one program's `Trunk`, its
+  `LlHlsOrigin`, and its `DashState` together, keyed by `ProgramId` in
+  `RouteHandle`'s registry — replacing the single owned `Trunk`/`ll_hls`/
+  `dash` triple `RouteHandle::new` used to build eagerly. A `ProgramServing`
+  bundle is created the instant (and only the instant)
+  `RouteHandle::publish_program` is called for that program, mirroring
+  `media_plane::IngestDriver` minting a `Trunk` the instant it observes
+  `SessionEvent::NewProgram`. Proven end to end by a new test
+  (`route::program_registry_tests::two_programs_serve_distinct_media`): two
+  programs on one route now serve genuinely distinct init bytes and segments.
+- **`RouteHandle::publish_new_program(program) -> Arc<Trunk>`** (new, `pub`):
+  mints a `Trunk` sized like the route's own configured ring capacities and
+  publishes it under `program` in one step — the test/plugin-facing
+  replacement for the deleted `publish_owned_trunk`, and the only way to get
+  a `Trunk` handle back from a `RouteHandle` (it is always already
+  registered).
+- **`RouteHandle::name()`/`with_name()`** (new, `pub`): a route's own name,
+  defaulting to `"unknown"`. `crate::origin::serve_with_registry`'s one
+  production route-construction call site now chains `.with_name(route.name)`
+  so `crate::source::segment::drive_program_segmenters` (issue #809, below)
+  can label its metrics without threading a name parameter through every
+  `run_*` call site.
+- **`crate::source::{DriverProgress, advance_route}`** (new, `pub`): the one
+  facade a driver-backed drive loop (in-tree `run_*`, or an external
+  `SchemeRegistry` `Custom` factory) now calls once per iteration, replacing
+  the caller-assembled pair `report_driver_progress` +
+  `segment::drive_program_segmenters` those two functions used to require
+  (both narrowed back to `pub(crate)` — see Changed, below). `DriverProgress`
+  is the one opaque per-attempt state value a caller declares and threads
+  through; `advance_route` performs both steps, in order, every time — a
+  wrong order or a skipped step (the exact footgun the old two-call API
+  invited) is no longer possible. `examples/custom_scheme.rs` and
+  `tests/dispatch_ingest.rs`'s `Custom`-dispatch coverage are rewritten onto
+  this facade.
+
+### Fixed (issue #809)
+- **`multimux_parts_produced_total`/`multimux_segments_produced_total` have
+  an emitter again.** These two counters had no emitter at all since the
+  media-plane port — they read zero while media flowed perfectly (worse than
+  absent) before being deleted outright pending this fix (see the entry
+  below). `crate::source::segment::drive_program_segmenters` — the one place
+  in the driver-backed architecture that actually turns samples into
+  parts/segments — now bumps both, labelled by the new `RouteHandle::name()`
+  (see Added, above) rather than threading a route-name parameter through
+  nine `run_*` call sites. A new test
+  (`source::segment::tests::drive_program_segmenters_bumps_parts_and_segments_produced_counters`)
+  asserts both counters actually increment for a driver-backed route.
+  Swept the rest of `crate::prometheus` for the same failure mode: `ROUTE_UP`/
+  `SOURCE_RECONNECTS_TOTAL` (`origin::supervisor`), `ACTIVE_BLOCKING_REQUESTS`
+  (`origin::resource`/`output::llhls`), and `HTTP_REQUESTS_TOTAL`/
+  `HTTP_REQUEST_DURATION_SECONDS`/`BYTES_SERVED_TOTAL` (`origin`'s HTTP
+  middleware) all still have live emitters — no other casualty found.
+
+### Removed (BREAKING — issue #805 task 6: the placeholder `Trunk` is gone)
+- **`RouteHandle`'s owned placeholder `Trunk` field and `publish_owned_trunk`
+  are deleted.** `RouteHandle::new` no longer builds any `Trunk`/`LlHlsOrigin`/
+  `DashState` at all; every program's serving state lives only in the new
+  per-program registry (see Added, above), created only by
+  `publish_program`/`publish_new_program`. This makes the **publish-or-hang
+  footgun structurally impossible** rather than merely documented against: a
+  producer can no longer write into a `Trunk` that egress cannot resolve,
+  because there is no `Trunk` to write into until it is published. Callers
+  that used to build a route, write via `set_init`/`add_part`/`add_segment`,
+  then call `publish_owned_trunk()` now call `publish_new_program(program)`
+  **first** (it both mints and publishes), then write.
+- **`RouteHandle::set_init`/`init_bytes`/`set_track_specs`/`track_specs`/
+  `add_part`/`add_segment`/`window_segments` all take a new leading
+  `ProgramId` parameter.** These used to operate on the single owned `Trunk`;
+  they now resolve (or, for the writers, silently no-op with a logged
+  warning if unpublished) the named program's `ProgramServing` bundle. Every
+  in-tree egress call site resolves `crate::route::SPTS_PROGRAM_ID` (the
+  SPTS default, unchanged behaviour for every existing route) via the new
+  `crate::http::resolve_route_program` (renamed from `resolve_route_trunk`,
+  which returned just the `Trunk`; the renamed function returns the whole
+  `ProgramServing` bundle so a caller never risks pairing one program's
+  `Trunk` with a different program's `LlHlsOrigin`).
+- **MPTS addressing is documented, not implemented** (as scoped): with
+  per-program serving state in place, a route can genuinely serve several
+  programs, but there is still no way for an HTTP request to *select* a
+  non-default one. `RouteHandle`'s own module doc records three options (URL
+  path segment, query parameter, config-declared per-program route) and
+  recommends the query parameter as the additive "MVP" choice, plus a known
+  gap: `ProgramResolution::NotYetAnnounced` vs. `NotFound` is derived from
+  "the registry is empty", which cannot yet distinguish "this MPTS program
+  hasn't been minted yet" from "this program will never exist" for a
+  route where at least one *other* program has already landed.
+
+### Fixed (issue #808)
+- **Samples published in the SAME `feed` call as `NewProgram` are no longer
+  silently dropped.** `ProgramSegmenter::try_new` now subscribes with
+  `media_plane::trunk::Trunk::subscribe_from_backlog` instead of `subscribe`:
+  the driver's own feed batch that announces a program routinely carries its
+  first samples too (a single MPEG-TS feed of 64 packets commonly carries
+  the PMT and the first PES packets together), and those samples were
+  already sitting in the ring by the time `drive_program_segmenters` built
+  the segmenter — a live-tail `subscribe()` cursor never observed them. If
+  the dropped batch held the opening IDR, the first segment either started
+  on a non-keyframe or was delayed; this was silent (no error, no log).
+  `examples/custom_scheme.rs` and `tests/dispatch_ingest.rs` no longer split
+  their announce/sample script across two `feed` calls to work around this —
+  both now announce and publish in one call, the ordinary shape.
+
+### Removed (BREAKING — issue #805 task 5/6: convergence)
+- **`SourceConnector`, `supervise`, and the whole `pipeline` module are
+  deleted.** Every input kind now dials/listens over
+  `media_plane::ingress`'s `Dialer`/`Listener` + `IngestSession` traits, driven
+  by `supervisor::supervise_driver` — RTMP (task 4) was the last holdout, and
+  once it moved, `SourceConnector`/`supervise` (and the `pipeline::SampleSource`/
+  `run_pipeline`/`MockSource` trio it drove) had no remaining caller.
+  - `pub use origin::supervisor::{Backoff, SourceConnector, supervise};` is now
+    `pub use origin::supervisor::{Backoff, supervise_driver};` — a downstream
+    crate implementing `SourceConnector` or calling `supervise`/
+    `multimux::pipeline::*` directly no longer compiles against this crate;
+    port onto `supervise_driver` over your own `Dialer`/`IngestSession` (see
+    `examples/custom_scheme.rs`, rewritten to demonstrate exactly this).
+  - The `testsupport` feature and the `serve_mock` example are removed with
+    it: both existed solely to gate `pipeline::MockSource`.
+- **`RouteHandle`'s owned `Trunk` field now has no production writer.** It
+  stays (removing it forces `ll_hls`/`dash` to be built per-program instead of
+  once in `RouteHandle::new`) but is now a pre-first-program **placeholder**,
+  driven only by this crate's own `tests/*.rs` (via `set_init`/`add_part`/
+  `add_segment` + `publish_owned_trunk`, which stays `pub` for exactly that
+  reason). See `RouteHandle`'s own doc. **Superseded by issue #805 task 6,
+  below: the placeholder and `publish_owned_trunk` are deleted outright.**
+- **`crate::prometheus::{SEGMENTS_PRODUCED_TOTAL, PARTS_PRODUCED_TOTAL}`
+  removed** (the two counters became dead code — the deleted `run_pipeline`
+  was their only caller; no driver-backed `run_*` path ever bumped them, since
+  `crate::source::segment::ProgramSegmenter` has no route name to label them
+  with). Restoring `multimux_segments_produced_total`/
+  `multimux_parts_produced_total` for the driver-backed architecture is a
+  separate, unscoped follow-up (threading a route name through
+  `drive_program_segmenters`/`ProgramSegmenter`, touching every `run_*` call
+  site) — flagged here rather than silently dropped or hastily wired up
+  underneath this task.
+
+### Changed (issue #805 task 5/6: the plugin extension point)
+- **`crate::source::report_driver_progress` and
+  `crate::source::segment::{ProgramSegmenter, drive_program_segmenters}` are
+  now `pub`** (were `pub(crate)`). These are the two per-iteration calls every
+  in-tree driver-backed `run_*` makes; with `SourceConnector`/`supervise`
+  gone, they are also the *only* way an external `SchemeRegistry`-registered
+  `Custom` input factory driving its own `Dialer`/`IngestSession` can publish
+  its ingest into `RouteHandle`'s (crate-private) program registry and turn
+  its samples into LL-HLS-servable segments/parts — without this, the
+  extension point documented in `crate::registry`/`examples/custom_scheme.rs`
+  would be unusable for anything beyond a trivial connect-only stub.
+  **Superseded by issue #805 task 6, above: narrowed back to `pub(crate)`
+  behind the single `crate::source::advance_route` facade.**
+- **`examples/custom_scheme.rs` rewritten** to demonstrate the supported
+  plugin shape: a small `Dialer`/`IngestSession` pair (`DemoDialer`/
+  `DemoSession`, synthetic single-track AVC media) driven by
+  `supervise_driver`, publishing through `report_driver_progress` +
+  `drive_program_segmenters` exactly like a built-in source. The example now
+  actually invokes the registered factory and waits for real init bytes to
+  land, rather than only checking registry lookup + config parsing. The
+  `"silence"`-tagged scheme is renamed `"demo"` (`examples/custom-scheme.json`
+  updated to match) since it now carries real synthetic media, not silence.
+- **`examples/serve_mock.rs` deleted** rather than rewritten: its
+  demonstration value (drive a synthetic ingest end to end, serve it over a
+  real HTTP origin, no camera/ffmpeg needed) is now covered by
+  `examples/custom_scheme.rs` (same Dialer/IngestSession/supervise_driver/
+  segmenting mechanics) together with `tests/dispatch_ingest.rs`'s real
+  end-to-end HTTP tests (`ts_udp`/`ts_http`/`rtmp` dispatch tests already
+  serve real — not synthetic — fixture-derived media over real HTTP).
+- **`tests/dispatch_ingest.rs`'s `InputSpec::Custom` coverage retargeted onto
+  the new plugin shape**: `custom_dispatch_drives_a_driver_backed_source_and_serves_real_media`
+  replaces `custom_dispatch_drives_run_pipeline_and_serves_real_media`,
+  registering a `Custom` factory that spawns `supervise_driver` over a small
+  `IngestSession` fed the real (demuxed, not synthetic) `h264_aac.ts` fixture
+  — the dispatch path (`InputSpec::Custom` -> `SchemeRegistry` -> `InputCtx`
+  -> factory -> real HTTP `#EXTINF:`) is still fully covered, just through
+  the surviving architecture.
+- **`tests/origin_llhls.rs`'s first test retargeted** onto a real
+  `LlHlsSegmenter` fed directly (mirroring `tests/lldash_dashjs.rs`'s own
+  `run_live_producer`) in place of the deleted `run_pipeline`/`MockSource`;
+  the file's `#![cfg(feature = "testsupport")]` gate is removed (nothing in
+  it needs `MockSource` any more).
+- **`multimux::origin::supervisor::supervise_driver` gains direct unit
+  test coverage** (`origin::supervisor::tests`): a fake `attempt` closure
+  (replacing the deleted `SourceConnector`-based `FlakyConnector`/
+  `PacedFlakyConnector` mocks) proves reconnect-after-failure,
+  reconnect-after-live-attempt-ends, and shutdown-cancels-mid-backoff —
+  properties `supervise`'s own tests used to prove for the now-deleted loop.
+
+### Added (in progress — issue #805, task 1 of 6)
+- **`RouteHandle` gained a `ProgramId -> Arc<Trunk>` registry**, the first step
+  of converging multimux's two ingest architectures onto one. `publish_program`
+  is the ingest-side write; `resolve_program` returns a typed three-case
+  `ProgramResolution` — `Found(Arc<Trunk>)`, `NotYetAnnounced`, `NotFound`.
+  Held in an `RwLock<HashMap<..>>` because resolution is the hottest read path
+  once egress is wired to it (every served request, every viewer) while
+  publication is rare and bounded by `IngestDriver`'s `max_programs`.
+  - The three cases are deliberately **not** an `Option`: "this route is
+    connected but no program has appeared yet" is a wait, whereas "no such
+    program" is a 404, and collapsing them would make a still-connecting
+    route indistinguishable from a typo in a request path.
+  - The registry carries no single-program assumption, so MPTS support (one
+    route, N programs, one handle) is an addition rather than a reshaping.
+  - Additive only: `RouteHandle` still owns its legacy `trunk` field and
+    egress still reads it, so nothing changes behaviourally yet.
+
+### Fixed
+- **`pipeline::run_pipeline` published nothing, so every consumer of it hung.**
+  Once egress resolved exclusively through the route's program registry
+  (task 2), a producer that writes `RouteHandle`'s own `Trunk` without
+  indexing it there is served to nobody — and because a request then blocks on
+  `ProgramResolution::NotYetAnnounced` waiting for a program that is already
+  present, the symptom is an **infinite hang, not a 404**. `run_pipeline` is a
+  public entry point and never published. It now calls
+  `RouteHandle::publish_owned_trunk()`, matching `origin::supervisor::supervise`.
+  - Caught by `ll-hls-runtime`, which dev-depends on this crate and drives
+    `RouteHandle` + `LlHlsOutput` directly: its `glass_to_glass` test tripped a
+    25 s hang guard and `golden_gate` a 20 s one, both reproducibly, both green
+    before task 1/2 landed. An external consumer found this, not our own suite.
+  - `RouteHandle::new`'s docs now state the contract and that the failure mode
+    is a hang. `new()` deliberately does **not** auto-publish: a bare,
+    unpublished route is the genuine driver-route connecting window that the
+    four `NotYetAnnounced` → 503 tests assert, and the owned field carrying
+    this hazard goes away once every route is driver-backed.
+- **The workspace doc gate is green again (26 `error:` lines → 0).** The 5a/5b
+  port renamed and deleted types without updating the prose that referenced
+  them, leaving dead intra-doc links across twelve files: `RtspSource` (split
+  into `RtspDialer` + `RtspIngestSession`), `RtpUdpSource`/`TsUdpSource`/
+  `TsHttpSource`/`SrtSource` (renamed to their `*Route` config types), and
+  `crate::store::MediaStore`/`HealthState` (that module was deleted outright;
+  `HealthState` now lives at `crate::route::HealthState`). Public docs also
+  linked to private items (`crate::http::resolve_blocking`,
+  `into_response`, `select_representable_track`), which are now plain
+  backticked code rather than links — no API was widened to satisfy rustdoc.
+  - One correction went beyond relinking: `serve_with_registry`'s docs claimed
+    every `InputSpec` variant dispatches through `supervisor::supervise`. Only
+    `Rtmp` and `Custom` do. The prose now says so (see issue #805).
+### Changed (issue #805 task 2/6 — wire the eight `media_plane`-ported inputs)
+- **All nine ingest input kinds now genuinely ingest and serve, via
+  `RouteHandle`'s program registry** (task 1 added the registry additively;
+  this wires both sides of it). `rtsp`/`rtp`/`ts_udp`/`ts_http`/`srt`/
+  `hls_pull`/`dash_pull`/`smooth_pull` were ported onto
+  `media_plane::ingress::{Dialer, IngestSession, IngestDriver}` at plan step
+  5a but left unreachable from `origin::serve_with_registry` — a combined
+  match arm logged an error and spawned a no-op. That stub is deleted.
+  - New `origin::supervisor::supervise_driver`: the driver-backed sibling of
+    `supervise`, reusing its exact operational shape (`Backoff` between
+    attempts, `RouteHandle::health` transitions, `record_route_up`/
+    `record_reconnect`, a cancellable shutdown `watch::Receiver<bool>`) for
+    the eight input kinds whose `run_*` entry point fuses dial+drive into one
+    call rather than exposing a separate `SourceConnector::connect()` step.
+  - New `crate::source::report_driver_progress`, called by every
+    `run_rtsp`/`run_rtp_udp`/`run_ts_udp`/`run_ts_http`/`srt::drive_socket`/
+    `run_hls_pull`/`run_dash_pull`/`run_smooth_pull` from inside its own drive
+    loop: flips the route to `Live` the moment its `IngestDriver` establishes,
+    and publishes each newly-announced program's driver-minted `Trunk` into
+    the route's registry (`RouteHandle::publish_program`). All eight `run_*`/
+    `drive_socket` entry points gained a `route_handle: &Arc<RouteHandle>`
+    parameter for this (source-breaking for direct callers of those `pub`
+    functions).
+  - `origin::serve_with_registry`'s per-route ingest wiring moved into a new
+    `spawn_ingest` helper, one arm per `InputSpec` variant, so it is
+    individually testable without a real HTTP server.
+- **Egress now resolves every route through the registry, uniformly** —
+  migrated the five `RouteHandle::trunk()` call sites
+  (`output::llhls::media_playlist`, `output::dash::manifest`,
+  `output::ll_dash::manifest`, `origin::resource::dynamic_file`/`fetch_part`)
+  onto a new shared `crate::http::resolve_route_trunk`, which resolves
+  `RouteHandle::SPTS_PROGRAM_ID` (the single-program-route default; MPTS
+  resolution is task 6) and maps the three-way
+  `RouteHandle::ProgramResolution`: `Found` resolves and serves;
+  `NotYetAnnounced` (connected, but no program has appeared yet) is a `503`
+  "not ready", **not** a `404`; `NotFound` is a genuine `404`. The now-unused
+  `RouteHandle::trunk()` accessor was deleted (the owned `Trunk` **field**
+  stays — task 5 removes it).
+  - So RTMP/`Custom` (the old `SourceConnector`-fed path) keep serving through
+    this same migration with no fallback branch in egress:
+    `origin::supervisor::supervise` now calls a new, `pub`
+    `RouteHandle::publish_owned_trunk()` right after reaching `Live`,
+    publishing its own owned `Trunk` into the registry under
+    `SPTS_PROGRAM_ID`. `pub` (not `pub(crate)`) because this crate's own
+    `tests/*.rs`/examples that drive `crate::pipeline::run_pipeline` directly
+    (bypassing `supervise`) call it explicitly to stay resolvable.
+
+### Added (issue #805 task 2b/6 — close the segmenter gap)
+- **The eight driver-backed inputs now actually produce segments/parts, not
+  just samples.** Task 2 wired ingest (each publishes its driver-minted
+  `Trunk` into `RouteHandle`'s registry) and made egress resolve through that
+  registry, but nothing turned the raw samples the driver publishes into
+  segments/parts — a driver-backed route's LL-HLS/DASH playlists came back
+  empty. New `crate::source::segment::ProgramSegmenter` +
+  `drive_program_segmenters` close it: one `ProgramSegmenter` per announced
+  `ProgramId`, subscribing a `SampleCursor` to that program's driver-minted
+  `Trunk`, feeding a `transmux::ll_hls::LlHlsSegmenter`, and publishing the
+  resulting parts/segments back into **the same `Trunk`** via its own
+  `Trunk::segment_writer()` — never a second `Trunk`, never copying samples
+  between trunks (the decision recorded in
+  `docs/superpowers/specs/2026-07-26-media-plane-architecture.md` §8).
+  Segmenting is per-program, so an MPTS route (several programs on one
+  `IngestDriver`) segments each independently; only `SPTS_PROGRAM_ID`'s init
+  bytes are wired to `RouteHandle`'s single-slot LL-HLS/DASH accessors today
+  (MPTS egress resolution is task 6). All eight `run_*`/`drive_socket` entry
+  points call `drive_program_segmenters` right alongside
+  `report_driver_progress`, and again after `driver.finish()` where the loop
+  shape made that easy (`ts_http`/`srt`/`hls_pull`/`dash_pull`/`smooth_pull`/
+  `rtsp`), so a cleanly-ending session flushes its trailing partial segment
+  instead of dropping it.
+  - Killed the two remaining `MOVIE_TIMESCALE = 90_000` magic-number
+    hardcodes (`source::ts_program`'s and `source::hls_pull`'s test fixtures)
+    and `pipeline::run_pipeline`'s own copy, in favour of
+    `transmux::VIDEO_CLOCK_RATE` — matching `source::smooth_pull`'s existing
+    convention.
+- **`RouteHandle` rebinds its `ll_hls`/`dash` to a driver-minted `Trunk`.**
+  `LlHlsOrigin`/`DashState` are bound to one `Trunk` at construction, and
+  `RouteHandle::new` builds them from its own placeholder `Trunk` before any
+  program is known. `ll_hls`/`dash` are now `RwLock<Arc<..>>`, and
+  `publish_program` — for `SPTS_PROGRAM_ID` only — rebuilds them over
+  whichever `Trunk` was just published, but **only** if it is a genuinely
+  different `Arc` from the one they are currently bound to (`Arc::ptr_eq`
+  guard): a same-`Arc` republish (the legacy RTMP/`Custom` path always
+  publishes this handle's own `trunk`, already what `ll_hls`/`dash` were
+  built from) is a strict no-op, so it never discards init bytes/segments/
+  parts a caller already wrote before publishing. New `active_trunk` field
+  tracks which `Trunk` is authoritative for `latest_progress()`'s abuse-bound
+  check. Without this, `ProgramSegmenter` publishing into the driver's own
+  `Trunk` (as decided above) would never be visible to `route.ll_hls()`,
+  which stayed bound to the route's own never-written placeholder forever.
+
+### Added (issue #805 task 3/6 — the dispatch-path regression net)
+- **Closed the hole that let eight of nine `InputSpec` variants dispatch to a
+  no-op stub for a long time while build/clippy/doc and thousands of tests
+  all stayed green** (see `docs/superpowers/specs/2026-07-26-media-plane-architecture.md`
+  §8's own account): no test in the suite entered through
+  `serve_with_registry`/`spawn_ingest` itself — every source was well-tested
+  in isolation (`RtspDialer`/`RtspIngestSession` directly, a hand-built
+  `RouteHandle`), but the dispatch that routes to them was tested by nothing.
+  - **Layer 1 (exhaustive, cheap):** new
+    `origin::tests::every_input_spec_variant_dispatches_to_real_ingest_not_a_stub`
+    points every non-`Custom` `InputSpec` variant at a deliberately dead/
+    unreachable endpoint (a refused TCP connect, a quiet UDP port, an SRT
+    caller dialing nobody, or — for `Rtmp` — a listen port the test has
+    already stolen) and asserts `RouteHandle::health` transitions
+    `Connecting` -> `Reconnecting`; a stubbed arm would never touch
+    `route_handle` at all, so it would still read `Connecting` at the hang
+    guard. Exhaustive over the enum via a **compile-time** net: a second,
+    independent exhaustive `match` over `InputSpec` (no `_ =>` arm) fails to
+    compile the moment a new variant is added without also updating this
+    test — stronger than any runtime assertion, and only possible because
+    the test lives in-crate (`InputSpec` is `#[non_exhaustive]`, so an
+    external `multimux/tests/*.rs` match would be forced to carry a
+    wildcard arm that silently swallows a new variant).
+  - **Layer 2 (deep, representative):** new `multimux/tests/dispatch_ingest.rs`
+    drives real fixture bytes (`fixtures/ts/h264_aac.ts`, a real ffmpeg
+    capture — never synthesised bytes) through `serve_with_registry` for
+    `InputSpec::TsUdp` (a real UDP socket) and `InputSpec::TsHttp` (a small
+    loopback HTTP server), and asserts a real HTTP `GET` of the resulting
+    LL-HLS media playlist carries an actual `#EXTINF:` line (not merely the
+    `#EXT-X-PART-INF`/`#EXT-X-MAP` headers a zero-segment route still emits)
+    plus non-empty init/segment bytes.
+  - **`pipeline::run_pipeline` coverage:** the same file's
+    `custom_dispatch_drives_run_pipeline_and_serves_real_media` drives
+    `run_pipeline` through the exact `InputSpec::Custom` ->
+    `SchemeRegistry` -> `InputCtx` -> factory path a real embedding
+    application uses, catching a regression of `run_pipeline`'s
+    `publish_owned_trunk()` call (see the "Fixed" entry above) the same way
+    a real deployment would notice it — every request hanging, not erroring.
+  - Every new test is mutation-verified: the exact production stub/removed
+    call was restored, the specific assertion/panic confirmed, then
+    reverted — see each test's own `MUTATION VERIFIED` doc comment.
+
+### Added (issue #805 task 4/6 — RTMP onto `media_plane::ingress::Listener`)
+- **RTMP is off the old `SourceConnector`/`supervise` path** — the last of
+  the nine input kinds to move onto `media_plane::ingress`, closing the
+  "eight ported, one held back" gap tasks 2/2b/3 deliberately left open (see
+  `docs/superpowers/specs/2026-07-26-media-plane-architecture.md` §8's
+  sequencing note: RTMP was kept on the working old path until every other
+  kind, and the registry reconciliation it depends on, was proven).
+  - New `media_plane::ingress::ListenDriver::driver`/`driver_mut`/
+    `reap_if_terminal` (in `media-plane`, additive): RTMP's `Listener::Session`
+    is fed already-parsed-and-replied-to `rtmp_runtime::server::ServerEvent`s
+    (`Stage::In<'a> = &'a [ServerEvent]`, not `&'a [u8]` — see
+    `source::rtmp`'s module doc for why `AsyncRtmpServer`/`RtmpConnection`
+    make that the honest shape), so `ListenDriver::feed`'s `&[u8]`-pinned
+    convenience wrapper doesn't fit. These three accessors let a driving loop
+    reassemble the same feed -> observe -> reap sequence for any `Stage::In`
+    shape.
+  - `source::rtmp::RtmpRoute` (replaces `RtmpSource`) implements
+    `media_plane::ingress::Listener`: `AsyncRtmpServer::accept()` (blocking-
+    async, no `try_accept`) is bridged into `Listener::poll_accept`'s
+    non-blocking contract by an accept-pump task, spawned once alongside the
+    bind-once listen socket, that loops `accept().await` and sends each
+    `RtmpConnection` into a bounded `mpsc` channel; `poll_accept` drains it
+    with `try_recv()`.
+  - New `source::rtmp::run_rtmp`: a `ListenDriver`-backed loop that admits and
+    drives up to `max_sessions` publishers **concurrently** (`FuturesUnordered`
+    over one read task per admitted session), fixing a real, previously-only-
+    mitigated defect — `supervise` awaited `RtmpSource::connect()`
+    *sequentially* against the bind-once listener, so a publisher that
+    completed the handshake and then went idle wedged the entire route, never
+    accepting another publisher (#738 T11b review, Critical). One stalled
+    publisher no longer blocks another (see `second_publisher_is_served_while_first_is_stalled_at_handshake`).
+  - Preserved exactly: bind-once/reuse-forever (via `tokio::sync::OnceCell`,
+    shared across every `run_rtmp` attempt), `Established` gating on the
+    first `DemuxEvent::Sample` rather than the first `TrackAdded` (FLV has no
+    `TracksResolved`; leans on `transmux::flv_stream`'s Annex E ordering
+    assumption, exactly as `SessionEvent::Established`'s own doc prescribes
+    for RTMP), the first sample never being dropped (buffered, then
+    re-emitted immediately after the `NewProgram`/`Established` pair), and
+    `IngestTimeouts` still bounding every read.
+  - RTMP publishes under `SPTS_PROGRAM_ID` (`ProgramId(0)`) like every other
+    single-program driver-backed source; MPTS is task 6, out of scope here.
+  - Why RTMP *can* implement `Listener` where SRT's listener mode explicitly
+    cannot (see `source::srt`'s "Why listener mode is not a `Listener` yet"):
+    `AsyncRtmpServer::accept` takes `&self` (shareable via `Arc`, no `Mutex`
+    needed) and each accepted connection owns its own `TcpStream` — SRT's
+    blockers (a `&mut self` accept, one shared `UdpSocket` across the
+    listener and every connection) are specific to `srt-runtime`'s current
+    API, not a general objection to a push source using `Listener`.
+  - `crate::pipeline`'s `SampleSource for RtmpSession` impl and
+    `crate::origin::supervisor`'s `SourceConnector for RtmpSource` impl are
+    deleted (RTMP no longer implements either). `SourceConnector`/`supervise`/
+    `run_pipeline` themselves are unchanged — `InputSpec::Custom` still uses
+    them (task 5 removes them, once `Custom` is the only remaining user).
+
+### Changed (BREAKING, in progress — plan step 5b)
+- **Ported the three outputs (LL-HLS, DASH, LL-DASH) and the shared
+  init/segment/part resource route onto `media_plane::egress::ServedEgress`
+  behind one axum adapter**, and **deleted `crate::store` (`MediaStore`,
+  `HealthState`)** — the module was a re-export of `ll_hls_runtime::server`
+  types Step 4 replaced with the sans-IO `LlHlsOrigin`/`Trunk` design, and
+  multimux has not compiled since. This unblocks the whole workspace: it has
+  not built since Step 4 deleted `MediaStore`.
+  - New `crate::route::RouteHandle` replaces `MediaStore` as the shared
+    per-stream state: a `media_plane::Trunk`, the `LlHlsOrigin` over it
+    (serves every output's init/segment/part bytes and LL-HLS's own
+    playlist), a small `Trunk`-drained `DashState` (track specs + created-at
+    + closed-segment window — the only things no `Trunk` ring holds), and a
+    new `crate::route::HealthState` (route up/down; distinct from
+    `media_plane::ingress::HealthState`, which is generic over one ingest
+    session's own connector error type and cannot give one route's
+    homogeneous live/down status). Same public method surface as the deleted
+    `MediaStore` (`set_init`/`init_bytes`/`set_track_specs`/`track_specs`/
+    `add_part`/`add_segment`/`window_segments`/`health`/`set_health`) so
+    `crate::pipeline::run_pipeline`/`crate::origin::supervisor::supervise`
+    needed only a type-rename, not a rewrite.
+  - New `crate::http` module: the **one** axum adapter every route goes
+    through — `resolve_blocking` (the caller-driven blocking-reload wait
+    loop `ll_hls_runtime::server`'s own module doc sketches, generalised to
+    any `ServedEgress`) and `into_response` (`EgressResponse` -> HTTP
+    response, `Await`/`NotFound`/`BadRequest` mapped once, not per output).
+    `crate::output::dash`/`crate::output::ll_dash` now implement
+    `ServedEgress` too (`Request = ()`, `Body = String`) purely so their
+    manifest routes go through the same adapter as LL-HLS, even though
+    neither ever answers `Await`.
+  - `crate::origin::resource`'s shared `/:file` route now resolves through
+    `LlHlsOrigin::resolve` (`LlHlsRequest::Resource`) instead of the deleted
+    `MediaStore::resolve_resource`; the issue #721 chunked-transfer
+    in-progress-segment path is unchanged in shape, re-fetching parts via
+    the same adapter.
+  - **Fix #776**: `render_mpd`/`render_ll_dash_mpd` took `specs.remove(0)`
+    unconditionally, so a track set whose first elementary stream is an
+    opaque `CodecConfig::Data`/`Subtitle` track (teletext, DSM-CC, SCTE-35 —
+    routine in a real DVB multiplex) made `DashPackager`/`LlDashPackager`
+    reject the `Media` and the whole DASH/LL-DASH route return a
+    **permanent 503**. New `crate::output::dash::select_representable_track`
+    selects the first track (preferring a video-shaped codec, then any
+    other) that actually trial-packages successfully through the real
+    `DashPackager` — reusing its codec-support decision rather than
+    re-deriving it — so a representable track behind an opaque one is no
+    longer starved. Only a track set with genuinely no representable track
+    is still a 503.
+  - The two RFC 8216bis behaviours that shipped as multimux 0.2.1 (a
+    preload-hinted part blocks until produced rather than 404ing) and 0.2.2
+    (a just-closed segment's final part still serves) now fall out of the
+    `Trunk`'s live-part log for free (segment close deliberately never
+    evicts parts — see `media-plane`'s own module doc) — both are asserted
+    directly in `crate::origin::resource`'s own tests, not merely assumed to
+    still hold.
+  - Fixed two pre-existing, unrelated defects the first successful
+    `cargo test --workspace`/`cargo clippy --workspace --all-targets` since
+    Step 4 surfaced (not caused by this port): `ll-hls-runtime`'s own
+    `LlHlsOrigin` test helpers and two of its examples
+    (`client_stepping`/`origin_playlist`) called `Trunk::writer()` (the
+    samples+events writer) instead of `Trunk::segment_writer()` for
+    segment/part publishing — a stale call from before Step 4's
+    `SegmentWriter` split that never compiled since; and multimux's
+    `AuthSpec::to_credentials` had gone dead (its only call site was the
+    per-route ingest wiring Step 5a rounds 2/3 replaced with a
+    `tracing::error!` stub for every non-`rtmp` input), now `#[allow(dead_code)]`
+    with its reason recorded rather than deleted, since the (tested) logic
+    is still exactly what that wiring will need once it lands.
+  - **Not fixed, reported**: `multimux/tests/rtsp_ingest.rs` has not
+    compiled since Step 5a round 2 ported `crate::source::rtsp` off
+    `RtspSource`/`SourceConnector` onto `run_rtsp`/`IngestDriver` — the test
+    file was never updated and still imports the deleted `RtspSource` (and
+    references a `Sample::flags` field the media-plane step 2c PTS/DTS
+    refactor also removed independently). Out of this step's scope (RTSP
+    ingest wiring is a later step's job, not the output port); every other
+    target in the workspace builds and passes.
+
+### Changed (BREAKING, in progress — plan step 5a, round 3)
+- **Ported `hls_pull`, `dash_pull` and `smooth_pull` onto the plane's ingress
+  traits**, on the back of `media-plane`'s round-3 `IngestSession` change
+  (relaxed `Stage::In` + associated `Request` — see that crate's CHANGELOG
+  for the trait diff and the reasoning). Round 2 deliberately did **not**
+  port these three because contorting them into the then-current trait would
+  have produced a session whose `Stage::feed` is never called; the trait now
+  expresses what they actually do, so the port is honest rather than a
+  workaround.
+  - `HlsPullSource`/`HlsPullSession` → `HlsPullRoute`/`HlsPullDialer`/
+    `HlsIngestSession` + `run_hls_pull`. **Now wraps the sans-IO
+    `ll_hls_runtime::client::LlHlsClient` directly, not `TokioClient`.**
+    `TokioClient` owns its own `reqwest` fetch loop internally, so there was
+    nothing for `feed`/`poll_transmit` to drive; `LlHlsClient` is the sans-IO
+    core `TokioClient` itself wraps. This module is now the *other* adapter
+    over the same engine — all LL-HLS logic (reload scheduling, part/segment
+    dedup, fMP4 and issue-#760 classic-TS demux) still lives entirely in
+    `ll-hls-runtime`. `Request = ll_hls_runtime::client::Action`;
+    `In<'a> = (HlsFetchId, &'a [u8])`, where `HlsFetchId::{Playlist,
+    Resource(ResourceId)}` is this module's own correlation identity.
+  - `DashPullSource`/`DashPullSession` → `DashPullRoute`/`DashPullDialer`/
+    `DashIngestSession` + `run_dash_pull`. `Request = DashAction`;
+    `In<'a> = (DashResourceId, &'a [u8])`.
+  - `SmoothPullSource`/`SmoothPullSession` → `SmoothPullRoute`/
+    `SmoothPullDialer`/`SmoothIngestSession` + `run_smooth_pull`.
+    `Request = SmoothAction`; `In<'a> = (SmoothResourceId, &'a [u8])`.
+  - **`dash_pull`'s in-read-path sleep is gone.** `maybe_refresh_mpd` buried
+    a wall-clock `Instant::elapsed` + `tokio::time::sleep` inside what was
+    nominally a "compute the next samples" step — a sans-IO session that
+    sleeps internally is not sans-IO. The live-MPD refresh now goes through
+    `Stage::next_deadline`/`on_deadline` (an absolute `Timestamp` on the
+    driver's clock, exactly like `HandshakePolicy::establish_by`), and
+    `run_dash_pull`'s own loop is the only place a clock is read or a sleep
+    awaited. `smooth_pull`'s identical `maybe_refresh_manifest` sleep got the
+    same treatment.
+  - **`dash_pull`'s three pieces of per-Representation state, judged
+    individually** (round-2 flagged them as possible `Trunk` duplication;
+    all three are kept, with reasons recorded in the module doc):
+    - `RepState::init_bytes` — **kept.** Genuinely per-source parsing state:
+      the `Trunk` stores decoded `Sample`s, never raw container bytes, so
+      there is nothing to duplicate. Re-concatenating the cached init onto
+      every `moof`+`mdat` media segment is a structural requirement of DASH's
+      own wire format (`Fmp4Demux::unpackage` needs the `moov` in the same
+      buffer), not a cache of plane state.
+    - `RepState::plan` — **kept.** Fetch *scheduling* state (what to request
+      next), a concept the `Trunk` does not have at all — it only ever sees
+      samples after they arrive.
+    - `RepState::last_number` — **kept.** The high-water mark that stops a
+      live-MPD refresh re-enqueueing an already-planned segment number;
+      again a fact about *pending fetches*, recorded nowhere else in the
+      pipeline.
+  - **In-flight fetches are bounded.** New `source::MAX_INFLIGHT_FETCHES`
+    (8): a pull session can hand back many `poll_transmit` requests in one
+    drain (an LL-HLS playlist reload revealing a dozen available parts at
+    once; a manifest refresh extending several Representations' plans
+    simultaneously) with nothing in the session capping how many the driver
+    launches concurrently. Each `run_*_pull` loop gates every `JoinSet::spawn`
+    on that cap and queues the rest — this project has already shipped five
+    unbounded-allocation vectors in remote-input-driven code, and an uncapped
+    fan-out of open sockets per route is the same class of bug.
+    `dash_pull`/`smooth_pull` additionally keep at most one fetch per
+    Representation/StreamIndex outstanding (`in_flight`), preserving the
+    pre-port per-round pacing.
+  - `origin::serve_with_registry`'s `HlsPull`/`DashPull`/`SmoothPull` arms
+    join the existing step-5a stub arm (an explicit `tracing::error!`)
+    alongside `Rtsp`/`Rtp`/`TsUdp`/`TsHttp`/`Srt`, and their
+    `SourceConnector`/`SampleSource` impls are removed. `rtmp` is now the
+    only source still on the pre-5a `run_pipeline` path, which is therefore
+    still load-bearing for exactly one input kind.
+- New `MultimuxError::LlHls` variant wrapping `ll_hls_runtime::client::Error`
+  (a malformed playlist, a demux failure, or a resource fed for an id the
+  client never requested).
+
+### Changed (BREAKING, in progress — plan step 5a, round 2)
+- **Ported `ts_http` and `srt` onto the plane's ingress traits**, and
+  **extracted the shared `source::ts_program::TsIngestSession`** — one copy
+  of the `StreamingTsDemux` → `SessionEvent` translation (including the B5
+  mid-stream `NewProgram` handling), now shared verbatim by `ts_udp`,
+  `ts_http` and `srt`. Those three previously carried three near-identical
+  ~60-line drain loops that had already drifted.
+  - `TsHttpSource`/`TsHttpSession` → `TsHttpRoute`/`TsHttpDialer` +
+    `open_stream`/`recv_and_feed`/`run_ts_http`.
+  - `SrtSource`/`SrtSession` → `SrtRoute`/`SrtDialer` +
+    `connect_caller`/`accept_listener`/`drive_socket`/`run_srt_caller`/
+    `run_srt_listener_once`.
+  - `ts_http` is the first ported source that produces **both**
+    `HealthState::Ended` (a cleanly-finished HTTP body) and
+    `HealthState::Failed` (a read stall) — the EOF≠error distinction step 3c
+    made producible is now actually produced, and mutation-checked.
+  - All 5 of `ts_http`'s Basic/Digest/Bearer/override/wrong-credential auth
+    tests are preserved, retargeted at the new API.
+
+### Findings from this round (design-level, not defects)
+- **The segmenter gap is CLOSED** by `Trunk::segment_writer()`. Proven, not
+  asserted: `source::ts_program`'s
+  `a_segmenter_can_hold_a_segment_writer_while_ingest_holds_the_sample_writer`
+  drives real muxed TS → `TsIngestSession` → `IngestDriver` (holding the
+  `TrunkWriter`) → `SampleCursor` → a real `LlHlsSegmenter` → a
+  `SegmentWriter` taken from the **same** `Trunk`, and asserts the segments
+  land in `Trunk::last_closed_segment`/`segment_len`. It also asserts
+  `trunk.writer().is_none()` so the test cannot silently degrade into "a
+  `Trunk` nobody else was writing to". `MOVIE_TIMESCALE` is now a parameter
+  of the segmenter component rather than a hardcoded `run_pipeline`
+  constant, which is what makes it per-route-configurable at all; **which**
+  component owns the segmenter is step 5b's call, since egress consumes
+  segments.
+- **The pull sources DO need a plane change** — this refutes round 1's
+  answer ("a concrete per-source method suffices"). `ll-hls-runtime`
+  *already* ships the request-addressing type 3c predicted: `LlHlsClient` is
+  a sans-IO engine with `poll() -> Option<Action>`, `on_playlist(&[u8])`,
+  `on_resource(ResourceId, &[u8])`, `on_error(Option<ResourceId>)`.
+  The blocker is not the *request* side, which `poll_transmit` could be
+  widened to carry — it is the **response** side: `Stage::feed(&[u8])` is a
+  single, uncorrelated input, while a pull source has N in-flight requests
+  whose responses must be routed back **by identity** (`ResourceId`) and
+  arrive out of order. There is no honest way to express "these bytes are
+  the response to `Part{msn:5,part:2}`" through `feed(&[u8], now)`.
+  - **Minimum shape** (recorded, not implemented — it is a `media-plane`
+    change with its own blast radius): relax `IngestSession`'s pin of
+    `Stage::In` from `&'a [u8]` to the implementor's choice, and add an
+    associated request type:
+    ```rust
+    pub trait IngestSession: for<'a> Stage<Out = SessionEvent> + Send {
+        type Request: Send;
+        fn poll_transmit(&mut self) -> Option<Self::Request>;
+    }
+    ```
+    Stream sources keep `In<'a> = &'a [u8]`, `Request = Bytes` — no
+    behaviour change. A pull source sets `In<'a> = (ResourceId, &'a [u8])`,
+    `Request = Action`. `IngestDriver::feed` becomes
+    `feed(&mut self, input: S::In<'_>, now)`, which is still fully generic.
+    Associated types cannot have defaults on stable, so every implementor
+    gains one line (`type Request = Bytes;`).
+  - `hls_pull`/`dash_pull`/`smooth_pull` are therefore **deliberately not
+    ported**. Contorting them into the current trait would mean a session
+    whose `Stage::feed` is never called (all real input arriving through
+    out-of-band `on_resource` calls made by the driver), i.e. a type that
+    lies about the contract it implements.
+  - Separately, `dash_pull` holds three pieces of state a segment store
+    would duplicate (`RepState::init_bytes`, re-concatenated onto every
+    segment; `plan`; `last_number`) and buries a wall-clock
+    `Instant::elapsed` + `tokio::time::sleep` inside its read path
+    (`maybe_refresh_mpd`) — a second, independent obstacle to a sans-IO
+    port, which wants `next_deadline`/`on_deadline` instead.
+- **`rtmp` and `srt`-listener: scoped estimate, not a half-port.**
+  - **RTMP is genuinely cheap and worth doing.** `rtmp_runtime::server::ServerSession`
+    is *already* exactly the right sans-IO shape:
+    `handle_data(&[u8]) -> Result<(Vec<u8>, Vec<ServerEvent>)>` — bytes in,
+    (reply bytes, events) out, buffering partial handshakes/chunks
+    internally. That maps onto `Stage::feed` + `poll` + `poll_transmit` with
+    no new machinery, and `rtmp_runtime::io` is a ~246-line adapter (half
+    tests) that would mostly disappear. `AsyncRtmpServer::accept()` is
+    `&self` (no `Mutex` needed) and a *pure* TCP accept exchanging zero
+    protocol bytes. **Estimate: the session half is ~1 day** (close to a
+    transcription of `RtmpConnection::next_events`). **The `Listener` half
+    needs one small upstream addition** — a non-blocking
+    `AsyncRtmpServer::poll_accept()` (a `TcpListener::poll_accept` wrapper,
+    a few lines in `rtmp-runtime`), after which `Listener{max_sessions}` +
+    `ListenDriver` fit with no further redesign. Total ≈ 1.5–2 days.
+  - **SRT-listener is substantially harder and should be sequenced after a
+    `srt-runtime` change.** `SrtListener::accept` is a blocking `.await`
+    only (no `poll_accept`/`try_accept`) and takes `&mut self`; more
+    fundamentally the listener and *every* accepted connection share one
+    `UdpSocket` (`drain_completed` hands each new connection an
+    `Arc::clone`), so "accept another while N are live" is a demultiplexing
+    responsibility **inside `srt-runtime`**, not something `multimux` can
+    arrange. `srt-runtime` does ship a full sans-IO core
+    (`CallerHandshake`/`ListenerHandshake`/`arq`/`tsbpd`/`livecc`) but hides
+    it behind a private `Driver` task; `SrtSocket` is only a pair of `mpsc`
+    channels, so there is **no public "feed a datagram in, get a payload
+    out" connection type**. **Estimate: ~3–5 days in `srt-runtime`**
+    (expose a sans-IO connection + a pollable listener owning the shared
+    socket demux), then ~1 day in `multimux`. Until then `srt`-listener
+    keeps today's accept-one-serially semantics via
+    `run_srt_listener_once`, which is documented rather than disguised.
+
+### Changed (BREAKING, in progress — plan step 5a)
+- **Ported `rtsp`, `rtp_udp`, and `ts_udp` onto `media_plane::ingress`'s
+  `Dialer`/`IngestSession`/`IngestDriver`** (plan step 5, "port the 9 ingest
+  sources" — `docs/superpowers/plans/2026-07-26-media-plane-implementation.md`):
+  - `RtspSource`/`RtspSession` → `RtspRoute`/`RtspDialer`/`RtspIngestSession`
+    + `run_rtsp`. `RtspDialer::dial` performs **no I/O** — it wraps
+    `rtsp_runtime::client::ClientSession` (already sans-IO) directly, so the
+    whole DESCRIBE→SETUP(×N)→PLAY handshake completes through the ordinary
+    `poll_transmit`/`feed` pump, confirming `media_plane::ingress`'s central
+    design bet for a protocol with a pre-existing sans-IO engine. `rtsps://`
+    (TLS) is not yet wired into `run_rtsp`'s driver loop (scope cut, not a
+    design gap — see the module doc).
+  - `TsUdpSource`/`TsUdpSession` → `TsUdpRoute`/`TsUdpDialer`/`TsUdpIngestSession`
+    + `run_ts_udp`. Fixes issue #774's silent-drop of a `DemuxEvent::TrackAdded`
+    declared after the initial PMT resolution: it now mints a **new**
+    `ProgramId` (media-plane finding B5) instead of being logged and
+    dropped.
+  - `RtpUdpSource`/`RtpUdpSession` → `RtpUdpRoute`/`RtpUdpDialer`/`RtpUdpIngestSession`
+    + `run_rtp_udp`.
+  - All three publish raw samples straight into a `media_plane::Trunk` via
+    `IngestDriver`, replacing their own hand-rolled demux-drain loops.
+  - **Not yet wired into `origin::serve_with_registry`/`origin::supervisor::supervise`**:
+    that loop is built on `MediaStore`/`HealthState`, which plan step 4
+    deleted from `ll-hls-runtime` (the crate does not currently build — see
+    the 4 `ll_hls_runtime::server::{HealthState,MediaStore,PlaylistOutcome,
+    ResourceOutcome,media_playlist_m3u8}` import errors, all pre-existing
+    and unrelated to this change) — rewiring these three routes needs step
+    5b's `Trunk`-backed replacement, not just a source rename; the affected
+    `InputSpec` match arms are stubbed with a clear "not yet wired" log line
+    rather than left silently referencing removed types.
+  - **Not ported** (superseded by round 2 above, which added `ts_http` and
+    `srt`): `rtmp`, `hls_pull`, `dash_pull`, `smooth_pull` remain on the
+    pre-5a `SampleSource`/`run_pipeline`/`SourceConnector` path, which stays
+    in place (`crate::pipeline`/`crate::origin::supervisor`) for exactly
+    those four. See "Findings from this round" for why each is deferred.
+  - `crate::pipeline::SampleSource`/`run_pipeline` and
+    `crate::origin::supervisor::SourceConnector` are **not** deleted this
+    pass (still load-bearing for the six not-yet-ported sources); only the
+    three ported sources' `impl`s were removed from them.
+
 ### Fixed
 - **Cleared this crate's share of the latest-stable clippy canary** (issue
   #770 — the non-blocking `clippy (latest stable)` CI job, which had been
