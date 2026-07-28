@@ -134,6 +134,7 @@ fn glass_to_glass(sample: &Sample) -> Duration {
 /// `transmux::ll_hls::LlHlsSegmenter`, real-time-paced at [`FPS`] frames/sec
 /// — a live-shaped producer, not a batch dump.
 async fn run_live_producer(store: Arc<RouteHandle>) {
+    let program = media_plane::ProgramId(0);
     let mut seg = LlHlsSegmenter::with_part_target(
         vec![video_track()],
         MOVIE_TIMESCALE,
@@ -141,7 +142,7 @@ async fn run_live_producer(store: Arc<RouteHandle>) {
         PART_TARGET_MS,
     )
     .expect("segmenter builds");
-    store.set_init(seg.init_segment().expect("init segment builds"));
+    store.set_init(program, seg.init_segment().expect("init segment builds"));
 
     let frame_interval = Duration::from_millis(1000 / u64::from(FPS));
     for i in 0..FRAME_COUNT {
@@ -149,19 +150,19 @@ async fn run_live_producer(store: Arc<RouteHandle>) {
         seg.push(TRACK_ID, timestamped_sample(is_sync))
             .expect("push succeeds");
         for part in seg.take_ready_parts() {
-            store.add_part(part);
+            store.add_part(program, part);
         }
         for segment in seg.take_ready_segments() {
-            store.add_segment(segment);
+            store.add_segment(program, segment);
         }
         tokio::time::sleep(frame_interval).await;
     }
     seg.flush().expect("flush succeeds");
     for part in seg.take_ready_parts() {
-        store.add_part(part);
+        store.add_part(program, part);
     }
     for segment in seg.take_ready_segments() {
-        store.add_segment(segment);
+        store.add_segment(program, segment);
     }
 }
 
@@ -174,12 +175,13 @@ async fn start_ll_origin() -> (Arc<RouteHandle>, String, tokio::task::JoinHandle
         WINDOW_SEGMENTS,
     ));
     // `multimux` egress resolves what it serves through the route's program
-    // registry (issue #805). This test drives the handle's own `Trunk`
-    // directly rather than through a supervisor, so it has to index that
-    // `Trunk` itself — otherwise every playlist request blocks waiting for a
-    // program that is already there, and this test fails on its 25s hang
-    // guard rather than on anything it means to assert.
-    store.publish_owned_trunk();
+    // registry (issue #805/#806). This test drives the handle's own
+    // per-program `Trunk` directly rather than through a supervisor, so it
+    // has to publish that program itself -- otherwise every playlist request
+    // blocks waiting for a program that is already there, and this test
+    // fails on its 25s hang guard rather than on anything it means to
+    // assert.
+    store.publish_new_program(media_plane::ProgramId(0));
     let mut streams = HashMap::new();
     streams.insert(
         "live".to_string(),

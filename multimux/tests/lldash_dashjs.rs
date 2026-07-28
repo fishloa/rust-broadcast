@@ -122,6 +122,7 @@ fn real_video_track_and_samples() -> (TrackSpec, Vec<Sample>) {
 /// `crate::origin::resource`'s chunked-transfer path reads from in
 /// production.
 async fn run_live_producer(store: Arc<RouteHandle>, spec: TrackSpec, samples: Vec<Sample>) {
+    let program = media_plane::ProgramId(0);
     let track_id = spec.track_id;
     let movie_timescale = spec.timescale;
     let mut seg = LlHlsSegmenter::with_part_target(
@@ -131,25 +132,25 @@ async fn run_live_producer(store: Arc<RouteHandle>, spec: TrackSpec, samples: Ve
         PART_TARGET_MS,
     )
     .expect("segmenter builds");
-    store.set_init(seg.init_segment().expect("init segment builds"));
+    store.set_init(program, seg.init_segment().expect("init segment builds"));
 
     let frame_interval = Duration::from_millis(40);
     for sample in samples {
         seg.push(track_id, sample).expect("push succeeds");
         for part in seg.take_ready_parts() {
-            store.add_part(part);
+            store.add_part(program, part);
         }
         for segment in seg.take_ready_segments() {
-            store.add_segment(segment);
+            store.add_segment(program, segment);
         }
         tokio::time::sleep(frame_interval).await;
     }
     seg.flush().expect("flush succeeds");
     for part in seg.take_ready_parts() {
-        store.add_part(part);
+        store.add_part(program, part);
     }
     for segment in seg.take_ready_segments() {
-        store.add_segment(segment);
+        store.add_segment(program, segment);
     }
 }
 
@@ -164,15 +165,15 @@ async fn start_ll_dash_origin(
         PART_TARGET_MS,
         WINDOW_SEGMENTS,
     ));
+    // Issue #805 task 6: a `ProgramServing` bundle must exist before
+    // `set_track_specs`/`set_init`/`add_part`/`add_segment` (here or in the
+    // producer spawned afterward) can write into it -- publish first.
+    let program = media_plane::ProgramId(0);
+    store.publish_new_program(program);
     // The LL-DASH manifest handler 503s until track specs are known (issue
     // #663 P4.2) -- set it up front, before the producer's own real-time
     // pacing, so the manifest is servable the instant the player asks.
-    store.set_track_specs(vec![spec]);
-    // Issue #805 task 3: egress resolves through the program registry now,
-    // not the owned `Trunk` directly -- publish it explicitly (issue #805
-    // task 5: `RouteHandle`'s owned `Trunk` is a test-only placeholder now,
-    // so this is exactly the kind of direct-feed test that must call this).
-    store.publish_owned_trunk();
+    store.set_track_specs(program, vec![spec]);
 
     let mut streams = HashMap::new();
     streams.insert(

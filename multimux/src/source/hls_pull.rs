@@ -403,8 +403,7 @@ pub async fn run_hls_pull(
     let mut backlog: VecDeque<Action> = VecDeque::new();
     let mut inflight: JoinSet<(HlsFetchId, Result<Vec<u8>>)> = JoinSet::new();
     let start = std::time::Instant::now();
-    let mut published = std::collections::HashSet::new();
-    let mut segmenters = std::collections::HashMap::new();
+    let mut progress = crate::source::DriverProgress::new();
 
     loop {
         while let Some(action) = driver.poll_transmit() {
@@ -478,11 +477,7 @@ pub async fn run_hls_pull(
         if inflight.is_empty() {
             if driver.session().ended() {
                 driver.finish();
-                crate::source::segment::drive_program_segmenters(
-                    &driver,
-                    route_handle,
-                    &mut segmenters,
-                );
+                crate::source::advance_route(&driver, route_handle, &mut progress);
                 return terminal_result(driver, "hls-pull");
             }
             // Nothing in flight and nothing queued: the client has genuinely
@@ -497,12 +492,7 @@ pub async fn run_hls_pull(
         match joined {
             Some(Ok((fetch_id, Ok(bytes)))) => {
                 driver.feed((fetch_id, bytes.as_slice()), now);
-                crate::source::report_driver_progress(&driver, route_handle, &mut published);
-                crate::source::segment::drive_program_segmenters(
-                    &driver,
-                    route_handle,
-                    &mut segmenters,
-                );
+                crate::source::advance_route(&driver, route_handle, &mut progress);
             }
             Some(Ok((_fetch_id, Err(e)))) => return Err(e),
             Some(Err(join_err)) => {
@@ -518,21 +508,13 @@ pub async fn run_hls_pull(
             // playlist/manifest/resource) — see `terminal_result`. Health is
             // already terminal here, so this call's internal terminal-health
             // check flushes every program's trailing partial segment.
-            crate::source::segment::drive_program_segmenters(
-                &driver,
-                route_handle,
-                &mut segmenters,
-            );
+            crate::source::advance_route(&driver, route_handle, &mut progress);
             return terminal_result(driver, "hls-pull");
         }
 
         if driver.session().ended() {
             driver.finish();
-            crate::source::segment::drive_program_segmenters(
-                &driver,
-                route_handle,
-                &mut segmenters,
-            );
+            crate::source::advance_route(&driver, route_handle, &mut progress);
             return terminal_result(driver, "hls-pull");
         }
     }

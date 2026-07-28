@@ -109,7 +109,9 @@ fn get(uri: &str) -> Request<Body> {
 /// `set_init`/`add_part`/`add_segment` calls, just inlined here rather than
 /// wrapped behind a `SampleSource`/`MockSource` indirection this crate no
 /// longer has. Flushes any trailing buffered partial segment at the end,
-/// exactly like the deleted `run_pipeline` did.
+/// exactly like the deleted `run_pipeline` did. Publishes `SPTS_PROGRAM_ID`
+/// first (issue #805 task 6: a `ProgramServing` bundle must exist before
+/// `set_init`/`add_part`/`add_segment` can write into it).
 ///
 /// MUTATION VERIFIED: commenting out the `store.set_init(...)` call below
 /// makes `end_to_end_pipeline_serves_valid_llhls` fail:
@@ -123,6 +125,9 @@ fn feed_via_segmenter(
     specs: Vec<TrackSpec>,
     batches: Vec<Vec<(u32, Sample)>>,
 ) {
+    let program = media_plane::ProgramId(0);
+    store.publish_new_program(program);
+
     let mut seg = LlHlsSegmenter::with_part_target(
         specs,
         transmux::VIDEO_CLOCK_RATE,
@@ -130,26 +135,26 @@ fn feed_via_segmenter(
         PART_TARGET_MS,
     )
     .expect("segmenter builds");
-    store.set_init(seg.init_segment().expect("init segment builds"));
+    store.set_init(program, seg.init_segment().expect("init segment builds"));
 
     for batch in batches {
         for (track_id, sample) in batch {
             seg.push(track_id, sample).expect("push succeeds");
         }
         for part in seg.take_ready_parts() {
-            store.add_part(part);
+            store.add_part(program, part);
         }
         for segment in seg.take_ready_segments() {
-            store.add_segment(segment);
+            store.add_segment(program, segment);
         }
     }
 
     seg.flush().expect("flush succeeds");
     for part in seg.take_ready_parts() {
-        store.add_part(part);
+        store.add_part(program, part);
     }
     for segment in seg.take_ready_segments() {
-        store.add_segment(segment);
+        store.add_segment(program, segment);
     }
 }
 
@@ -176,12 +181,9 @@ async fn end_to_end_pipeline_serves_valid_llhls() {
         batches.push(vec![(1u32, sample)]);
     }
 
+    // `feed_via_segmenter` publishes `SPTS_PROGRAM_ID` itself before writing
+    // (issue #805 task 6) — no separate publish call needed here.
     feed_via_segmenter(&store, specs, batches);
-    // Issue #805 task 5: `RouteHandle`'s owned `Trunk` is a test-only
-    // placeholder now — a test driving it directly must publish it itself
-    // (see `RouteHandle::new`'s own doc), exactly like
-    // `tests/lldash_dashjs.rs`'s `start_ll_dash_origin` already does.
-    store.publish_owned_trunk();
 
     let mut streams = HashMap::new();
     streams.insert(
@@ -269,9 +271,10 @@ fn part(seq: u32, idx: u32) -> PartInfo {
 #[tokio::test]
 async fn blocking_reload_resolves_when_part_arrives() {
     let store = Arc::new(RouteHandle::new(4.0, 500, 8));
-    store.set_init(vec![0xAA; 8]);
-    store.add_part(part(1, 0));
-    store.publish_owned_trunk();
+    let program = media_plane::ProgramId(0);
+    store.publish_new_program(program);
+    store.set_init(program, vec![0xAA; 8]);
+    store.add_part(program, part(1, 0));
 
     let mut streams = HashMap::new();
     streams.insert(
@@ -302,7 +305,7 @@ async fn blocking_reload_resolves_when_part_arrives() {
         tokio::task::yield_now().await;
     }
 
-    store.add_part(part(1, 1));
+    store.add_part(program, part(1, 1));
 
     // Bound the wait in *real* time (no `tokio::time::pause()`): a working
     // watch wakeup resolves within milliseconds of `add_part`, whereas a

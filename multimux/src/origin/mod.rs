@@ -589,7 +589,7 @@ pub async fn serve(config: crate::config::Config) -> crate::Result<()> {
 /// point — or, for [`crate::config::InputSpec::Custom`], the equivalent
 /// driver loop a registered [`crate::registry::InputFactory`] builds itself),
 /// publishing each announced program's driver-minted `Trunk` into the route's
-/// registry via [`crate::source::report_driver_progress`]. A connect
+/// registry via [`crate::source::advance_route`]. A connect
 /// failure, protocol error, or clean end-of-stream reconnects with capped
 /// backoff instead of dying — a bad/flaky source degrades that route's
 /// [`crate::route::RouteHandle::health`] rather than freezing it forever,
@@ -630,11 +630,10 @@ pub async fn serve_with_registry(
     let mut supervisor_handles: Vec<(String, tokio::task::JoinHandle<()>)> = Vec::new();
 
     for route in &config.routes {
-        let store = Arc::new(RouteHandle::new(
-            target_duration_secs,
-            part_target_ms,
-            config.window_segments,
-        ));
+        let store = Arc::new(
+            RouteHandle::new(target_duration_secs, part_target_ms, config.window_segments)
+                .with_name(route.name.clone()),
+        );
         let outputs: Vec<Arc<dyn Output>> = route
             .outputs
             .iter()
@@ -1083,14 +1082,15 @@ mod tests {
 
     fn make_state() -> Arc<AppState> {
         let store = Arc::new(RouteHandle::new(4.0, 500, 4));
-        store.set_init(vec![0xAA; 4]);
-        // Issue #805 task 3: the migrated egress call sites (`dynamic_file`
-        // et al.) now resolve through the registry, not `RouteHandle::trunk`
-        // directly -- publish this bare-constructed test route's own Trunk
-        // so it is `Found`, exactly as a real driver-backed route's
+        // Issue #805 tasks 3/6: the migrated egress call sites (`dynamic_file`
+        // et al.) now resolve through the registry, not a `RouteHandle`-owned
+        // `Trunk` directly -- publish this bare-constructed test route's own
+        // program first, exactly as a real driver-backed route's
         // `crate::source::report_driver_progress` call would for its own
-        // driver-minted Trunk once live.
-        store.publish_owned_trunk();
+        // driver-minted Trunk once live, so there is a `ProgramServing`
+        // bundle for `set_init` to write into at all.
+        store.publish_new_program(crate::route::SPTS_PROGRAM_ID);
+        store.set_init(crate::route::SPTS_PROGRAM_ID, vec![0xAA; 4]);
         let mut streams = HashMap::new();
         streams.insert(
             "cam1".to_string(),
@@ -1230,7 +1230,7 @@ mod tests {
     #[tokio::test]
     async fn readyz_200_when_a_route_is_live() {
         let store = Arc::new(RouteHandle::new(4.0, 500, 4));
-        store.set_init(vec![0xAA; 4]);
+        store.set_init(crate::route::SPTS_PROGRAM_ID, vec![0xAA; 4]);
         store.set_health(HealthState::Live);
         let mut streams = HashMap::new();
         streams.insert(
@@ -1270,7 +1270,7 @@ mod tests {
     #[tokio::test]
     async fn http_requests_total_counter_increases_on_requests() {
         let store = Arc::new(RouteHandle::new(4.0, 500, 4));
-        store.set_init(vec![0xAA; 4]);
+        store.set_init(crate::route::SPTS_PROGRAM_ID, vec![0xAA; 4]);
         let mut streams = HashMap::new();
         streams.insert(
             "metrics-probe".to_string(),
@@ -1380,22 +1380,28 @@ mod tests {
     #[tokio::test]
     async fn both_outputs_serve_from_shared_segments_and_mpd_resolves() {
         let store = Arc::new(RouteHandle::new(4.0, 500, 4));
-        store.publish_owned_trunk();
-        store.set_init(vec![0xAA; 4]);
-        store.set_track_specs(vec![transmux::TrackSpec::new(
-            9,
-            90_000,
-            transmux::CodecConfig::Vp8 {
-                width: 640,
-                height: 480,
+        store.publish_new_program(crate::route::SPTS_PROGRAM_ID);
+        store.set_init(crate::route::SPTS_PROGRAM_ID, vec![0xAA; 4]);
+        store.set_track_specs(
+            crate::route::SPTS_PROGRAM_ID,
+            vec![transmux::TrackSpec::new(
+                9,
+                90_000,
+                transmux::CodecConfig::Vp8 {
+                    width: 640,
+                    height: 480,
+                },
+            )],
+        );
+        store.add_segment(
+            crate::route::SPTS_PROGRAM_ID,
+            transmux::ll_hls::SegmentInfo {
+                bytes: vec![0x33; 16],
+                duration: 4.0,
+                segment_seq: 1,
+                part_count: 1,
             },
-        )]);
-        store.add_segment(transmux::ll_hls::SegmentInfo {
-            bytes: vec![0x33; 16],
-            duration: 4.0,
-            segment_seq: 1,
-            part_count: 1,
-        });
+        );
 
         let mut streams = HashMap::new();
         streams.insert(
@@ -1474,15 +1480,18 @@ mod tests {
     #[tokio::test]
     async fn dash_only_route_has_no_llhls_routes() {
         let store = Arc::new(RouteHandle::new(4.0, 500, 4));
-        store.publish_owned_trunk();
-        store.set_track_specs(vec![transmux::TrackSpec::new(
-            1,
-            90_000,
-            transmux::CodecConfig::Vp8 {
-                width: 640,
-                height: 480,
-            },
-        )]);
+        store.publish_new_program(crate::route::SPTS_PROGRAM_ID);
+        store.set_track_specs(
+            crate::route::SPTS_PROGRAM_ID,
+            vec![transmux::TrackSpec::new(
+                1,
+                90_000,
+                transmux::CodecConfig::Vp8 {
+                    width: 640,
+                    height: 480,
+                },
+            )],
+        );
         let mut streams = HashMap::new();
         streams.insert(
             "cam1".to_string(),
@@ -1516,37 +1525,49 @@ mod tests {
     #[tokio::test]
     async fn ll_dash_output_signals_and_resolves_alongside_dash_and_llhls() {
         let store = Arc::new(RouteHandle::new(4.0, 500, 4));
-        store.publish_owned_trunk();
-        store.set_init(vec![0xAA; 4]);
-        store.set_track_specs(vec![transmux::TrackSpec::new(
-            9,
-            90_000,
-            transmux::CodecConfig::Vp8 {
-                width: 640,
-                height: 480,
+        store.publish_new_program(crate::route::SPTS_PROGRAM_ID);
+        store.set_init(crate::route::SPTS_PROGRAM_ID, vec![0xAA; 4]);
+        store.set_track_specs(
+            crate::route::SPTS_PROGRAM_ID,
+            vec![transmux::TrackSpec::new(
+                9,
+                90_000,
+                transmux::CodecConfig::Vp8 {
+                    width: 640,
+                    height: 480,
+                },
+            )],
+        );
+        store.add_segment(
+            crate::route::SPTS_PROGRAM_ID,
+            transmux::ll_hls::SegmentInfo {
+                bytes: vec![0x33; 16],
+                duration: 4.0,
+                segment_seq: 1,
+                part_count: 2,
             },
-        )]);
-        store.add_segment(transmux::ll_hls::SegmentInfo {
-            bytes: vec![0x33; 16],
-            duration: 4.0,
-            segment_seq: 1,
-            part_count: 2,
-        });
+        );
         // Live parts of the in-progress segment (seq 2) -- not yet closed.
-        store.add_part(transmux::ll_hls::PartInfo {
-            bytes: vec![0x50; 4],
-            duration: 0.5,
-            independent: true,
-            segment_seq: 2,
-            part_index: 0,
-        });
-        store.add_part(transmux::ll_hls::PartInfo {
-            bytes: vec![0x51; 4],
-            duration: 0.5,
-            independent: false,
-            segment_seq: 2,
-            part_index: 1,
-        });
+        store.add_part(
+            crate::route::SPTS_PROGRAM_ID,
+            transmux::ll_hls::PartInfo {
+                bytes: vec![0x50; 4],
+                duration: 0.5,
+                independent: true,
+                segment_seq: 2,
+                part_index: 0,
+            },
+        );
+        store.add_part(
+            crate::route::SPTS_PROGRAM_ID,
+            transmux::ll_hls::PartInfo {
+                bytes: vec![0x51; 4],
+                duration: 0.5,
+                independent: false,
+                segment_seq: 2,
+                part_index: 1,
+            },
+        );
 
         let mut streams = HashMap::new();
         streams.insert(
@@ -1629,12 +1650,15 @@ mod tests {
         let store_for_close = store.clone();
         let closer = tokio::spawn(async move {
             tokio::time::sleep(Duration::from_millis(50)).await;
-            store_for_close.add_segment(transmux::ll_hls::SegmentInfo {
-                bytes: vec![0x99; 8], // distinct from the concatenated parts
-                duration: 1.0,
-                segment_seq: 2,
-                part_count: 2,
-            });
+            store_for_close.add_segment(
+                crate::route::SPTS_PROGRAM_ID,
+                transmux::ll_hls::SegmentInfo {
+                    bytes: vec![0x99; 8], // distinct from the concatenated parts
+                    duration: 1.0,
+                    segment_seq: 2,
+                    part_count: 2,
+                },
+            );
         });
         let resp = app.oneshot(get("/cam1/seg-1-2.m4s")).await.unwrap();
         assert_eq!(
@@ -1658,22 +1682,28 @@ mod tests {
     #[tokio::test]
     async fn manifest_and_resource_responses_carry_expected_cache_control_and_cors() {
         let store = Arc::new(RouteHandle::new(4.0, 500, 4));
-        store.publish_owned_trunk();
-        store.set_init(vec![0xAA; 4]);
-        store.set_track_specs(vec![transmux::TrackSpec::new(
-            1,
-            90_000,
-            transmux::CodecConfig::Vp8 {
-                width: 640,
-                height: 480,
+        store.publish_new_program(crate::route::SPTS_PROGRAM_ID);
+        store.set_init(crate::route::SPTS_PROGRAM_ID, vec![0xAA; 4]);
+        store.set_track_specs(
+            crate::route::SPTS_PROGRAM_ID,
+            vec![transmux::TrackSpec::new(
+                1,
+                90_000,
+                transmux::CodecConfig::Vp8 {
+                    width: 640,
+                    height: 480,
+                },
+            )],
+        );
+        store.add_segment(
+            crate::route::SPTS_PROGRAM_ID,
+            transmux::ll_hls::SegmentInfo {
+                bytes: vec![0x33; 16],
+                duration: 4.0,
+                segment_seq: 1,
+                part_count: 1,
             },
-        )]);
-        store.add_segment(transmux::ll_hls::SegmentInfo {
-            bytes: vec![0x33; 16],
-            duration: 4.0,
-            segment_seq: 1,
-            part_count: 1,
-        });
+        );
         let mut streams = HashMap::new();
         streams.insert(
             "cam1".to_string(),
@@ -1792,14 +1822,17 @@ mod tests {
     #[tokio::test]
     async fn global_timeout_layer_cuts_off_a_slow_blocking_request() {
         let store = Arc::new(RouteHandle::new(4.0, 500, 4));
-        store.publish_owned_trunk();
-        store.set_init(vec![0xAA; 4]);
-        store.add_segment(transmux::ll_hls::SegmentInfo {
-            bytes: vec![0x20; 8],
-            duration: 4.0,
-            segment_seq: 1,
-            part_count: 1,
-        });
+        store.publish_new_program(crate::route::SPTS_PROGRAM_ID);
+        store.set_init(crate::route::SPTS_PROGRAM_ID, vec![0xAA; 4]);
+        store.add_segment(
+            crate::route::SPTS_PROGRAM_ID,
+            transmux::ll_hls::SegmentInfo {
+                bytes: vec![0x20; 8],
+                duration: 4.0,
+                segment_seq: 1,
+                part_count: 1,
+            },
+        );
         let mut streams = HashMap::new();
         streams.insert(
             "cam1".to_string(),
@@ -1836,7 +1869,7 @@ mod tests {
     /// itself doesn't expose).
     fn make_state_streams() -> HashMap<String, StreamRoute> {
         let store = Arc::new(RouteHandle::new(4.0, 500, 4));
-        store.set_init(vec![0xAA; 4]);
+        store.set_init(crate::route::SPTS_PROGRAM_ID, vec![0xAA; 4]);
         let mut streams = HashMap::new();
         streams.insert(
             "cam1".to_string(),
