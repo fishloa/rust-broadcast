@@ -226,7 +226,9 @@ struct LiveState {
 
 impl LiveState {
     fn all_idle_and_exhausted(&self) -> bool {
-        self.streams.iter().all(|s| !s.in_flight && s.plan.is_empty())
+        self.streams
+            .iter()
+            .all(|s| !s.in_flight && s.plan.is_empty())
     }
 }
 
@@ -300,9 +302,13 @@ impl SmoothIngestSession {
                     else {
                         continue;
                     };
-                    let chunks = found.enumerate_chunks().map_err(|e| MultimuxError::Connect {
-                        reason: format!("smooth-pull: manifest refresh: chunk enumeration: {e}"),
-                    })?;
+                    let chunks = found
+                        .enumerate_chunks()
+                        .map_err(|e| MultimuxError::Connect {
+                            reason: format!(
+                                "smooth-pull: manifest refresh: chunk enumeration: {e}"
+                            ),
+                        })?;
                     for (t, d) in chunks {
                         if t >= stream.last_time {
                             stream.last_time = t.saturating_add(d).max(stream.last_time);
@@ -361,15 +367,19 @@ impl SmoothIngestSession {
             plan.pop_front();
 
             let rel = si.resolve_fragment_url(quality.bitrate, first_t);
-            let url = self.manifest_url.join(&rel).map_err(|e| MultimuxError::Connect {
-                reason: format!("smooth-pull: bad fragment URL {rel:?}: {e}"),
-            })?;
+            let url = self
+                .manifest_url
+                .join(&rel)
+                .map_err(|e| MultimuxError::Connect {
+                    reason: format!("smooth-pull: bad fragment URL {rel:?}: {e}"),
+                })?;
 
             let idx = StreamIdx(pending.len());
-            self.pending_requests.push_back(SmoothAction::FetchFirstFragment {
-                stream: idx,
-                url: url.to_string(),
-            });
+            self.pending_requests
+                .push_back(SmoothAction::FetchFirstFragment {
+                    stream: idx,
+                    url: url.to_string(),
+                });
             pending.push(PendingStream {
                 stream: si.clone(),
                 stream_type,
@@ -393,7 +403,10 @@ impl SmoothIngestSession {
     }
 
     fn on_first_fragment(&mut self, idx: StreamIdx, bytes: &[u8]) -> Result<()> {
-        let Phase::AwaitingFirstFragments { streams: pending, .. } = &mut self.phase else {
+        let Phase::AwaitingFirstFragments {
+            streams: pending, ..
+        } = &mut self.phase
+        else {
             return Ok(());
         };
         let Some(p) = pending.get_mut(idx.0) else {
@@ -433,24 +446,27 @@ impl SmoothIngestSession {
             let local_track_id = discover_moof_track_id(&first_bytes)?;
             let effective_timescale: u32 = match p.stream_type {
                 StreamType::Video => transmux::VIDEO_CLOCK_RATE,
-                StreamType::Audio => {
-                    p.stream
-                        .qualities
-                        .first()
-                        .and_then(|q| q.sampling_rate)
-                        .ok_or_else(|| MultimuxError::Connect {
-                            reason: format!(
-                                "smooth-pull: StreamIndex {:?} audio QualityLevel has no \
+                StreamType::Audio => p
+                    .stream
+                    .qualities
+                    .first()
+                    .and_then(|q| q.sampling_rate)
+                    .ok_or_else(|| MultimuxError::Connect {
+                        reason: format!(
+                            "smooth-pull: StreamIndex {:?} audio QualityLevel has no \
                                  SamplingRate",
-                                p.stream.name
-                            ),
-                        })?
-                }
+                            p.stream.name
+                        ),
+                    })?,
                 StreamType::Text => unreachable!("Text streams are skipped at manifest parse"),
             };
             let quality = p.stream.qualities.first().expect("checked above");
-            let local_spec =
-                track_spec_from_quality_level(local_track_id, effective_timescale, p.stream_type, quality)?;
+            let local_spec = track_spec_from_quality_level(
+                local_track_id,
+                effective_timescale,
+                p.stream_type,
+                quality,
+            )?;
             let init_bytes =
                 build_init_segment(std::slice::from_ref(&local_spec), SYNTHETIC_MOVIE_TIMESCALE)?;
 
@@ -502,7 +518,11 @@ impl SmoothIngestSession {
         let Phase::Live(live) = &self.phase else {
             return Ok(());
         };
-        let Some(stream) = live.streams.iter().find(|s| s.global_track_id == global_track_id) else {
+        let Some(stream) = live
+            .streams
+            .iter()
+            .find(|s| s.global_track_id == global_track_id)
+        else {
             return Ok(());
         };
         let mut combined = Vec::with_capacity(stream.init_bytes.len() + bytes.len());
@@ -543,13 +563,14 @@ impl SmoothIngestSession {
                 continue;
             };
             stream.in_flight = true;
-            self.pending_requests.push_back(SmoothAction::FetchFragment {
-                stream: StreamIdx(i),
-                t,
-                d,
-                url: url.to_string(),
-                tolerate_404: is_live,
-            });
+            self.pending_requests
+                .push_back(SmoothAction::FetchFragment {
+                    stream: StreamIdx(i),
+                    t,
+                    d,
+                    url: url.to_string(),
+                    tolerate_404: is_live,
+                });
         }
     }
 
@@ -616,7 +637,10 @@ impl Stage for SmoothIngestSession {
         if !live.is_live || live.manifest_refresh_in_flight || !live.all_idle_and_exhausted() {
             return None;
         }
-        Some(live.last_manifest_fetch.saturating_add(MANIFEST_REFRESH_INTERVAL))
+        Some(
+            live.last_manifest_fetch
+                .saturating_add(MANIFEST_REFRESH_INTERVAL),
+        )
     }
 
     fn on_deadline(&mut self, now: Timestamp) {
@@ -626,13 +650,18 @@ impl Stage for SmoothIngestSession {
         if !live.is_live || live.manifest_refresh_in_flight || !live.all_idle_and_exhausted() {
             return;
         }
-        if now < live.last_manifest_fetch.saturating_add(MANIFEST_REFRESH_INTERVAL) {
+        if now
+            < live
+                .last_manifest_fetch
+                .saturating_add(MANIFEST_REFRESH_INTERVAL)
+        {
             return;
         }
         live.manifest_refresh_in_flight = true;
-        self.pending_requests.push_back(SmoothAction::FetchManifest {
-            url: live.manifest_url.to_string(),
-        });
+        self.pending_requests
+            .push_back(SmoothAction::FetchManifest {
+                url: live.manifest_url.to_string(),
+            });
     }
 
     fn demand(&self) -> Demand {
@@ -1195,7 +1224,12 @@ mod tests {
         (format!("http://{addr}/Manifest"), server)
     }
 
-    fn oracle_sample_count(media: &Media, out: &SmoothOutput, track_id: u32, timescale: u32) -> usize {
+    fn oracle_sample_count(
+        media: &Media,
+        out: &SmoothOutput,
+        track_id: u32,
+        timescale: u32,
+    ) -> usize {
         let track = media
             .tracks
             .iter()
@@ -1225,7 +1259,11 @@ mod tests {
             let demuxed = Fmp4Demux::new()
                 .unpackage(combined.as_slice())
                 .expect("oracle demux");
-            total += demuxed.tracks.iter().map(|t| t.samples.len()).sum::<usize>();
+            total += demuxed
+                .tracks
+                .iter()
+                .map(|t| t.samples.len())
+                .sum::<usize>();
         }
         total
     }
@@ -1334,10 +1372,13 @@ mod tests {
             .qualities[0]
             .sampling_rate
             .expect("audio SamplingRate");
-        let want_video =
-            oracle_sample_count(&media, &out, video_track_id(&media), transmux::VIDEO_CLOCK_RATE);
-        let want_audio =
-            oracle_sample_count(&media, &out, audio_track_id(&media), audio_timescale);
+        let want_video = oracle_sample_count(
+            &media,
+            &out,
+            video_track_id(&media),
+            transmux::VIDEO_CLOCK_RATE,
+        );
+        let want_audio = oracle_sample_count(&media, &out, audio_track_id(&media), audio_timescale);
         assert!(
             want_video > 0 && want_audio > 0,
             "sanity: fixture must carry real samples for both streams"
@@ -1484,7 +1525,10 @@ mod tests {
         )
         .await
         .expect("run_smooth_pull must not hang");
-        assert!(result.is_ok(), "a static manifest must end cleanly: {result:?}");
+        assert!(
+            result.is_ok(),
+            "a static manifest must end cleanly: {result:?}"
+        );
         server.abort();
     }
 
@@ -1496,7 +1540,11 @@ mod tests {
     async fn read_times_out_against_a_server_that_stalls_on_a_later_fragment() {
         let (media, out) = build_smooth_output();
         let audio_id = audio_track_id(&media);
-        let audio_frags: Vec<_> = out.fragments.iter().filter(|f| f.track_id == audio_id).collect();
+        let audio_frags: Vec<_> = out
+            .fragments
+            .iter()
+            .filter(|f| f.track_id == audio_id)
+            .collect();
         assert!(
             audio_frags.len() >= 2,
             "fixture must produce at least 2 audio fragments: got {}",
@@ -1589,10 +1637,18 @@ mod tests {
         let video_id = video_track_id(&media);
         let audio_id = audio_track_id(&media);
 
-        let video_frag = out.fragments.iter().find(|f| f.track_id == video_id).unwrap();
+        let video_frag = out
+            .fragments
+            .iter()
+            .find(|f| f.track_id == video_id)
+            .unwrap();
         assert_eq!(discover_moof_track_id(&video_frag.data).unwrap(), video_id);
 
-        let audio_frag = out.fragments.iter().find(|f| f.track_id == audio_id).unwrap();
+        let audio_frag = out
+            .fragments
+            .iter()
+            .find(|f| f.track_id == audio_id)
+            .unwrap();
         assert_eq!(discover_moof_track_id(&audio_frag.data).unwrap(), audio_id);
     }
 

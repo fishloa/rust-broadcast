@@ -290,7 +290,11 @@ impl Dialer for HlsPullDialer {
 
 /// Performs `GET url` (answering a Digest challenge if `creds` names one),
 /// returning an error on any non-2xx status.
-async fn fetch_bytes(client: &HttpClient, url: &str, creds: Option<&Credentials>) -> Result<Vec<u8>> {
+async fn fetch_bytes(
+    client: &HttpClient,
+    url: &str,
+    creds: Option<&Credentials>,
+) -> Result<Vec<u8>> {
     let response = authenticated_get(client, url, creds).await?;
     let status = response.status();
     if !status.is_success() {
@@ -421,16 +425,18 @@ pub async fn run_hls_pull(
                     let http = http.clone();
                     let creds = credentials.clone();
                     inflight.spawn(async move {
-                        let result =
-                            tokio::time::timeout(read_timeout, fetch_bytes(&http, &url, creds.as_ref()))
-                                .await
-                                .unwrap_or_else(|_| {
-                                    Err(MultimuxError::Connect {
-                                        reason: format!(
-                                            "hls-pull: playlist read exceeded {read_timeout:?}"
-                                        ),
-                                    })
-                                });
+                        let result = tokio::time::timeout(
+                            read_timeout,
+                            fetch_bytes(&http, &url, creds.as_ref()),
+                        )
+                        .await
+                        .unwrap_or_else(|_| {
+                            Err(MultimuxError::Connect {
+                                reason: format!(
+                                    "hls-pull: playlist read exceeded {read_timeout:?}"
+                                ),
+                            })
+                        });
                         (HlsFetchId::Playlist, result)
                     });
                 }
@@ -438,16 +444,18 @@ pub async fn run_hls_pull(
                     let http = http.clone();
                     let creds = credentials.clone();
                     inflight.spawn(async move {
-                        let result =
-                            tokio::time::timeout(read_timeout, fetch_bytes(&http, &url, creds.as_ref()))
-                                .await
-                                .unwrap_or_else(|_| {
-                                    Err(MultimuxError::Connect {
-                                        reason: format!(
-                                            "hls-pull: resource {id:?} read exceeded {read_timeout:?}"
-                                        ),
-                                    })
-                                });
+                        let result = tokio::time::timeout(
+                            read_timeout,
+                            fetch_bytes(&http, &url, creds.as_ref()),
+                        )
+                        .await
+                        .unwrap_or_else(|_| {
+                            Err(MultimuxError::Connect {
+                                reason: format!(
+                                    "hls-pull: resource {id:?} read exceeded {read_timeout:?}"
+                                ),
+                            })
+                        });
                         (HlsFetchId::Resource(id), result)
                     });
                 }
@@ -510,7 +518,9 @@ mod tests {
     use transmux::hls::{MediaPlaylist, MediaSegment};
     use transmux::ll_hls::LlHlsSegmenter;
     use transmux::pipeline::Sample;
-    use transmux::{AVCConfigurationBox, AVCDecoderConfigurationRecord, AvcPps, AvcSps, CodecConfig};
+    use transmux::{
+        AVCConfigurationBox, AVCDecoderConfigurationRecord, AvcPps, AvcSps, CodecConfig,
+    };
 
     fn nz(n: usize) -> NonZeroUsize {
         NonZeroUsize::new(n).expect("test capacity must be non-zero")
@@ -890,13 +900,11 @@ mod tests {
         let (url, server) = start_cmaf_fixture_server(None).await;
         let route = HlsPullRoute::new("pulled-cam", url);
 
-        let (specs, per_track) = tokio::time::timeout(
-            Duration::from_secs(20),
-            drive_session_and_count(&route),
-        )
-        .await
-        .expect("drive timed out")
-        .expect("drive");
+        let (specs, per_track) =
+            tokio::time::timeout(Duration::from_secs(20), drive_session_and_count(&route))
+                .await
+                .expect("drive timed out")
+                .expect("drive");
 
         assert_eq!(specs.len(), 1, "one video track recovered: {specs:?}");
         assert_eq!(specs[0].track_id, TRACK_ID);
@@ -954,8 +962,8 @@ mod tests {
             env!("CARGO_MANIFEST_DIR"),
             "/../ll-hls-runtime/tests/fixtures/ts-hls"
         ));
-        let playlist_text = std::fs::read_to_string(fixture_dir.join("index.m3u8"))
-            .expect("read fixture playlist");
+        let playlist_text =
+            std::fs::read_to_string(fixture_dir.join("index.m3u8")).expect("read fixture playlist");
         assert!(
             !playlist_text.contains("EXT-X-MAP"),
             "sanity: fixture must genuinely carry no EXT-X-MAP"
@@ -1005,13 +1013,11 @@ mod tests {
 
         let route = HlsPullRoute::new("pulled-ts-hls", format!("http://{addr}/media.m3u8"));
 
-        let (specs, per_track) = tokio::time::timeout(
-            Duration::from_secs(20),
-            drive_session_and_count(&route),
-        )
-        .await
-        .expect("drive timed out")
-        .expect("drive");
+        let (specs, per_track) =
+            tokio::time::timeout(Duration::from_secs(20), drive_session_and_count(&route))
+                .await
+                .expect("drive timed out")
+                .expect("drive");
 
         assert!(
             specs
@@ -1142,12 +1148,11 @@ mod tests {
             std::future::pending::<()>().await;
         });
 
-        let route = HlsPullRoute::new("stalled", format!("http://{addr}/media.m3u8")).with_timeouts(
-            IngestTimeouts {
+        let route = HlsPullRoute::new("stalled", format!("http://{addr}/media.m3u8"))
+            .with_timeouts(IngestTimeouts {
                 connect: IngestTimeouts::default().connect,
                 read: Duration::from_millis(150),
-            },
-        );
+            });
         let result = tokio::time::timeout(
             Duration::from_secs(5),
             run_hls_pull(&route, trunk_config(), handshake()),

@@ -39,10 +39,10 @@
 //! [`crate::byte_stage`]'s own tests already validate against a real `Stage`,
 //! whatever `In<'a>` an implementor chooses. The two things every
 //! `IngestSession` adds over a bare `Stage` are
-//! [`poll_transmit`](Self::poll_transmit) (with a `None`-returning default —
+//! [`poll_transmit`](IngestSession::poll_transmit) (with a `None`-returning default —
 //! see
 //! [Why `poll_transmit` exists](#why-poll_transmit-exists-and-most-sources-will-never-override-it)
-//! below) and [`Request`](Self::Request) (with **no** default — every
+//! below) and [`Request`](IngestSession::Request) (with **no** default — every
 //! implementor names its own request type explicitly; see the pull-sources
 //! section below for why it has none).
 //!
@@ -495,7 +495,7 @@ pub trait IngestSession: for<'a> Stage<Out = SessionEvent> + Send {
     /// plane, deliberately: see
     /// [the module docs](self#pull-sources-need-a-typed-requestresponse-identity-round-3)
     /// for why this is not a fixed enum. A byte-stream source (RTSP/RTMP/SRT/
-    /// TS-*) sets this to [`Bytes`]; a pull source sets it to its own
+    /// TS-*) sets this to [`bytes::Bytes`]; a pull source sets it to its own
     /// protocol's action type (e.g. `ll_hls_runtime::client::Action`).
     ///
     /// No default: unlike `poll_transmit`, there is no value every
@@ -753,7 +753,7 @@ impl<S: IngestSession> IngestDriver<S> {
     /// [the module docs](self#pull-sources-need-a-typed-requestresponse-identity-round-3).
     /// A no-op once the session has reached a terminal state — it is never
     /// fed again.
-    pub fn feed<'a>(&mut self, input: S::In<'a>, now: Timestamp) {
+    pub fn feed(&mut self, input: S::In<'_>, now: Timestamp) {
         if !self.health.is_running() {
             return;
         }

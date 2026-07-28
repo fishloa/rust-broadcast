@@ -372,20 +372,23 @@ impl DashIngestSession {
             let Some(st) = &rep.segment_template else {
                 continue;
             };
-            let init_template = st
-                .initialization
-                .as_deref()
-                .ok_or_else(|| MultimuxError::Connect {
-                    reason: format!(
-                        "dash-pull: representation {:?} has no SegmentTemplate@initialization",
-                        rep.id
-                    ),
-                })?;
+            let init_template =
+                st.initialization
+                    .as_deref()
+                    .ok_or_else(|| MultimuxError::Connect {
+                        reason: format!(
+                            "dash-pull: representation {:?} has no SegmentTemplate@initialization",
+                            rep.id
+                        ),
+                    })?;
             let init_rel =
                 SegmentTemplate::resolve(init_template, &rep.id, None, None, Some(rep.bandwidth));
-            let init_url = self.mpd_url.join(&init_rel).map_err(|e| MultimuxError::Connect {
-                reason: format!("dash-pull: bad initialization URL {init_rel:?}: {e}"),
-            })?;
+            let init_url = self
+                .mpd_url
+                .join(&init_rel)
+                .map_err(|e| MultimuxError::Connect {
+                    reason: format!("dash-pull: bad initialization URL {init_rel:?}: {e}"),
+                })?;
 
             let plan = build_plan(st, total_duration)?;
             let last_number = plan
@@ -527,7 +530,13 @@ impl DashIngestSession {
                 continue;
             };
             let template = rep.media_template.clone().unwrap_or_default();
-            let rel = SegmentTemplate::resolve(&template, &rep.rep_id, Some(number), time, Some(rep.bandwidth));
+            let rel = SegmentTemplate::resolve(
+                &template,
+                &rep.rep_id,
+                Some(number),
+                time,
+                Some(rep.bandwidth),
+            );
             let Ok(url) = mpd_url.join(&rel) else {
                 // Malformed template output: drop this entry rather than
                 // wedge the Representation forever on a URL that will never
@@ -572,7 +581,6 @@ impl DashIngestSession {
         self.pump_segment_fetches();
         Ok(())
     }
-
 }
 
 impl Stage for DashIngestSession {
@@ -1175,8 +1183,7 @@ mod tests {
                     .await
                     .map_err(|_| MultimuxError::Connect {
                         reason: "mpd fetch timed out".into(),
-                    })??
-                    {
+                    })?? {
                         session.feed((DashResourceId::Mpd, b.as_slice()), now)?;
                     }
                 }
@@ -1188,8 +1195,7 @@ mod tests {
                     .await
                     .map_err(|_| MultimuxError::Connect {
                         reason: "init fetch timed out".into(),
-                    })??
-                    {
+                    })?? {
                         session.feed((DashResourceId::Init(rep), b.as_slice()), now)?;
                     }
                 }
@@ -1207,8 +1213,7 @@ mod tests {
                     .await
                     .map_err(|_| MultimuxError::Connect {
                         reason: "segment fetch timed out".into(),
-                    })??
-                    {
+                    })?? {
                         session.feed((DashResourceId::Segment(rep, number), b.as_slice()), now)?;
                     }
                 }
@@ -1257,10 +1262,11 @@ mod tests {
             "sanity: fixture must carry real samples for both streams"
         );
 
-        let (specs, per_track) = tokio::time::timeout(Duration::from_secs(15), drive_and_collect(&route))
-            .await
-            .expect("drive_and_collect timed out")
-            .expect("drive_and_collect");
+        let (specs, per_track) =
+            tokio::time::timeout(Duration::from_secs(15), drive_and_collect(&route))
+                .await
+                .expect("drive_and_collect timed out")
+                .expect("drive_and_collect");
 
         assert_eq!(specs.len(), 2, "one video + one audio track: {specs:?}");
         let mut ids: Vec<u32> = specs.iter().map(|s| s.track_id).collect();
@@ -1278,7 +1284,11 @@ mod tests {
             .find(|s| matches!(s.config, CodecConfig::Aac { .. }))
             .expect("an AAC track")
             .track_id;
-        assert_eq!(per_track.len(), 2, "samples must land on exactly 2 distinct track ids: {per_track:?}");
+        assert_eq!(
+            per_track.len(),
+            2,
+            "samples must land on exactly 2 distinct track ids: {per_track:?}"
+        );
         assert_eq!(
             per_track.get(&video_id).copied().unwrap_or(0),
             want_video,
@@ -1440,8 +1450,7 @@ mod tests {
     /// fetch must fail within `IngestTimeouts::read`, not hang forever.
     #[tokio::test]
     async fn read_times_out_against_a_server_that_stalls_on_a_segment() {
-        let (url, server) =
-            start_fixture_server(None, Some("chunk-stream0-00001.m4s")).await;
+        let (url, server) = start_fixture_server(None, Some("chunk-stream0-00001.m4s")).await;
         let route = DashPullRoute::new("dash-stalled", url).with_timeouts(IngestTimeouts {
             connect: Duration::from_secs(5),
             read: Duration::from_millis(150),
@@ -1492,5 +1501,4 @@ mod tests {
         );
         server.abort();
     }
-
 }
