@@ -207,7 +207,8 @@ fn klv_rtp_fragmentation_round_trip() {
     // MTU that forces >= 2 fragments (header 12 + payload budget 50 = 62).
     let mtu = RTP_HEADER_LEN + 50;
     let ts_rtp = 90_000u32;
-    let packets = packetise_klv(&unit, 98, 0, ts_rtp, 0xCAFEBABE, mtu).unwrap();
+    let unit_bytes = bytes::Bytes::from(unit.clone());
+    let packets = packetise_klv(&unit_bytes, 98, 0, ts_rtp, 0xCAFEBABE, mtu).unwrap();
     assert!(
         packets.len() >= 2,
         "expected fragmentation, got {}",
@@ -216,14 +217,16 @@ fn klv_rtp_fragmentation_round_trip() {
 
     // All fragments share the timestamp; marker set ONLY on the last.
     for (i, pkt) in packets.iter().enumerate() {
-        let ts_field = u32::from_be_bytes([pkt[4], pkt[5], pkt[6], pkt[7]]);
+        let h = &pkt.header;
+        let ts_field = u32::from_be_bytes([h[4], h[5], h[6], h[7]]);
         assert_eq!(ts_field, ts_rtp, "fragment {i} timestamp");
-        let marker = pkt[1] & RTP_MARKER_MASK != 0;
+        let marker = h[1] & RTP_MARKER_MASK != 0;
         assert_eq!(marker, i == packets.len() - 1, "marker on fragment {i}");
     }
 
     // Depacketise → exact original KLV bytes.
-    let units = depacketise_klv(&packets).unwrap();
+    let contiguous: Vec<Vec<u8>> = packets.iter().map(|p| p.as_contiguous().to_vec()).collect();
+    let units = depacketise_klv(&contiguous).unwrap();
     assert_eq!(units.len(), 1);
     assert_eq!(units[0], unit);
     // And it still parses + verifies.
@@ -237,17 +240,19 @@ fn klv_rtp_small_unit_single_packet() {
         0u64.to_be_bytes().to_vec(),
     )]);
     let unit = ls.serialize_with_checksum();
-    let packets = packetise_klv(&unit, 98, 7, 42, 0x1234, 1400).unwrap();
+    let unit_bytes = bytes::Bytes::from(unit.clone());
+    let packets = packetise_klv(&unit_bytes, 98, 7, 42, 0x1234, 1400).unwrap();
     assert_eq!(packets.len(), 1);
     // Single packet: marker MUST be set.
-    assert!(packets[0][1] & RTP_MARKER_MASK != 0);
+    assert!(packets[0].header[1] & RTP_MARKER_MASK != 0);
     // Payload is exactly the KLV unit (no payload header — RFC 6597 §6.1).
-    assert_eq!(&packets[0][RTP_HEADER_LEN..], unit.as_slice());
+    assert_eq!(&packets[0].payload[..], unit.as_slice());
     // Round-trip.
-    assert_eq!(depacketise_klv(&packets).unwrap(), vec![unit]);
+    let contiguous: Vec<Vec<u8>> = packets.iter().map(|p| p.as_contiguous().to_vec()).collect();
+    assert_eq!(depacketise_klv(&contiguous).unwrap(), vec![unit]);
 }
 
 #[test]
 fn klv_rtp_empty_unit_rejected() {
-    assert!(packetise_klv(&[], 98, 0, 0, 0, 1400).is_err());
+    assert!(packetise_klv(&bytes::Bytes::new(), 98, 0, 0, 0, 1400).is_err());
 }

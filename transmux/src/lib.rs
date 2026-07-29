@@ -294,7 +294,7 @@ pub use rtmp::{
 };
 pub use rtp::{
     DEFAULT_AUDIO_PT, DEFAULT_KLV_PT, DEFAULT_MTU, DEFAULT_VIDEO_PT, KLV_ENCODING_NAME,
-    NAL_TYPE_IDR, RtpDepacketiser, RtpInput, RtpInputStream, RtpMediaKind, RtpOutput,
+    NAL_TYPE_IDR, RtpDepacketiser, RtpInput, RtpInputStream, RtpMediaKind, RtpOutput, RtpPacket,
     RtpPacketiser, RtpStream, VIDEO_CLOCK_RATE, depacketise_klv, packetise_klv,
 };
 pub use rtp_sdp::{

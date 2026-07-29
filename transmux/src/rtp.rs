@@ -29,9 +29,18 @@
 //!
 //! See `transmux/docs/rtp/rtp-payload-formats.md` for the full transcription.
 //!
-//! This module is stateless (one `&[u8]` in, one `Vec`/struct out) and does
-//! **not** validate sequence-number continuity — [`crate::rtp_stream`]'s
-//! stateful [`crate::rtp_stream::RtpStreamDepacketiser`] does that (loss/
+//! This module is stateless: packetise takes the IR and returns
+//! [`RtpPacket`]s whose payload is a zero-copy [`bytes::Bytes`] slice of
+//! the sample data (single-NAL and FU-A fragmentation use
+//! `Bytes::slice`; STAP-A aggregation and the audio AU-header path
+//! interleave headers with payload so they build in a `BytesMut`, which
+//! copies). The depacketise side (single-shot [`RtpDepacketiser`] and
+//! streaming [`crate::rtp_stream::RtpStreamDepacketiser`]) reassembles
+//! fragments by concatenation and may reasonably copy (issue #777).
+//!
+//! This module does **not** validate sequence-number continuity —
+//! [`crate::rtp_stream`]'s stateful
+//! [`crate::rtp_stream::RtpStreamDepacketiser`] does that (loss/
 //! reorder detection, issue #779); see its module docs and
 //! `transmux/docs/rtp/rtp-sequence-validation.md`.
 //!
@@ -43,7 +52,8 @@ use alloc::vec::Vec;
 use core::marker::PhantomData;
 
 use broadcast_common::{Package, Parse, Serialize, Unpackage};
-use rtp_packet::RtpPacket;
+use bytes::Bytes;
+use rtp_packet::RtpPacket as RtpPacketWire;
 
 use crate::annexb::NAL_LENGTH_SIZE;
 use crate::error::{Error, Result};
@@ -148,6 +158,38 @@ broadcast_common::impl_spec_display!(RtpMediaKind);
 // Output types
 // ---------------------------------------------------------------------------
 
+/// One emitted RTP packet: a small, owned fixed header + a payload whose
+/// [`Bytes`] is a zero-copy slice of the sample data on the single-NAL and
+/// FU-A paths (the common cases). STAP-A aggregation and AAC AU-header
+/// audio packets interleave header bytes with payload and are built in a
+/// `BytesMut` (which copies); those paths are documented at each call site.
+///
+/// Callers that need a single contiguous `&[u8]` (e.g. the depacketise
+/// path) can call [`RtpPacket::as_contiguous`].
+#[derive(Debug, Clone)]
+pub struct RtpPacket {
+    /// The RTP fixed header (12 bytes) plus any payload-format headers
+    /// (e.g. FU indicator + FU header, AAC AU-headers). Owned, small.
+    pub header: Bytes,
+    /// The payload. For single-NAL and FU-A packets this is a zero-copy
+    /// [`Bytes::slice`] of the original sample data; for STAP-A and
+    /// AAC-hbr it is an owned buffer.
+    pub payload: Bytes,
+}
+
+impl RtpPacket {
+    /// Return a single contiguous [`Bytes`] for this packet: the fixed
+    /// header followed by the payload, concatenated. Allocates exactly
+    /// `header.len() + payload.len()` bytes.
+    pub fn as_contiguous(&self) -> Bytes {
+        use bytes::BytesMut;
+        let mut buf = BytesMut::with_capacity(self.header.len() + self.payload.len());
+        buf.extend_from_slice(&self.header);
+        buf.extend_from_slice(&self.payload);
+        buf.freeze()
+    }
+}
+
 /// One packetised RTP stream: its payload type + kind and the emitted packets.
 #[derive(Debug, Clone)]
 pub struct RtpStream {
@@ -156,7 +198,7 @@ pub struct RtpStream {
     /// The payload format carried on this stream.
     pub kind: RtpMediaKind,
     /// The RTP packets, in emission (sequence-number) order.
-    pub packets: Vec<Vec<u8>>,
+    pub packets: Vec<RtpPacket>,
 }
 
 /// The output of [`RtpPacketiser`]: per-track RTP streams plus an SDP string.
@@ -225,13 +267,14 @@ impl SeqCounter {
     }
 }
 
-/// Write an RTP fixed header into a new packet buffer and return it.
+/// Write an RTP fixed header into a new packet buffer and return it as
+/// owned [`Bytes`].
 ///
 /// Delegates the wire encoding to [`rtp_packet::RtpPacket`] (RFC 3550 §5.1);
 /// transmux only ever emits the simple `P=0 X=0 CC=0` case (no CSRC list, no
 /// header extension, no padding) — see issue #646.
-fn rtp_header(pt: u8, marker: bool, seq: u16, timestamp: u32, ssrc: u32) -> Vec<u8> {
-    let pkt = RtpPacket {
+fn rtp_header(pt: u8, marker: bool, seq: u16, timestamp: u32, ssrc: u32) -> Bytes {
+    let pkt = RtpPacketWire {
         marker,
         payload_type: pt & RTP_PT_MASK,
         sequence_number: seq,
@@ -242,10 +285,12 @@ fn rtp_header(pt: u8, marker: bool, seq: u16, timestamp: u32, ssrc: u32) -> Vec<
         padding: None,
         payload: &[],
     };
-    let mut buf = alloc::vec![0u8; pkt.serialized_len()];
+    let len = pkt.serialized_len();
+    let mut buf = bytes::BytesMut::with_capacity(len);
+    buf.resize(len, 0);
     pkt.serialize_into(&mut buf)
         .expect("simple V=2 P=0 X=0 CC=0 header always serializes");
-    buf
+    buf.freeze()
 }
 
 impl Package for RtpPacketiser {
@@ -326,7 +371,7 @@ impl Package for RtpPacketiser {
 
 impl RtpPacketiser {
     /// Packetise one AVC track into RTP packets.
-    fn packetise_video(&self, track: &crate::media::Track, pt: u8) -> Result<Vec<Vec<u8>>> {
+    fn packetise_video(&self, track: &crate::media::Track, pt: u8) -> Result<Vec<RtpPacket>> {
         let timescale = if track.spec.timescale != 0 {
             track.spec.timescale
         } else {
@@ -337,6 +382,9 @@ impl RtpPacketiser {
         let mut timestamp: u32 = 0;
 
         // Optional leading STAP-A carrying SPS+PPS (parameter sets).
+        // STAP-A aggregation interleaves header bytes with payload — built
+        // in a BytesMut (which copies); the parameter sets are small
+        // (typically <1 kB total).
         if self.stap_a_parameter_sets {
             if let CodecConfig::Avc { config, .. } = &track.spec.config {
                 let mut param_nals: Vec<Vec<u8>> = Vec::new();
@@ -365,15 +413,19 @@ impl RtpPacketiser {
             for (n, nal) in nals.iter().enumerate() {
                 let is_last_nal = n == last_nal;
                 if nal.len() + RTP_HEADER_LEN <= self.mtu {
-                    // Single-NAL packet.
+                    // Single-NAL packet — zero-copy payload via Bytes::slice.
                     let marker = is_last_nal;
-                    let mut pkt = rtp_header(pt, marker, seq.next(), timestamp, self.ssrc);
-                    pkt.extend_from_slice(nal);
-                    packets.push(pkt);
+                    let header = rtp_header(pt, marker, seq.next(), timestamp, self.ssrc);
+                    // Locate the NAL slice within the sample's Bytes so we
+                    // can share the backing buffer rather than copying.
+                    let nal_offset = nal.as_ptr() as usize - sample.data.as_ptr() as usize;
+                    let payload = sample.data.slice(nal_offset..nal_offset + nal.len());
+                    packets.push(RtpPacket { header, payload });
                 } else {
-                    // FU-A fragmentation.
+                    // FU-A fragmentation — zero-copy payload slices.
                     fragment_fu_a(
                         nal,
+                        &sample.data,
                         pt,
                         is_last_nal,
                         self.mtu,
@@ -389,12 +441,16 @@ impl RtpPacketiser {
     }
 
     /// Packetise one AAC track (`AAC-hbr`, one AU per packet).
+    /// The AAC-hbr payload header (AU-headers-length + AU-header) is
+    /// interleaved with the audio access unit, so the full packet is built
+    /// in a `BytesMut` (which copies). The header is small (4 bytes) and
+    /// audio AUs are typically <1 kB.
     fn packetise_audio(
         &self,
         track: &crate::media::Track,
         pt: u8,
         clock: u32,
-    ) -> Result<Vec<Vec<u8>>> {
+    ) -> Result<Vec<RtpPacket>> {
         let mut packets = Vec::with_capacity(track.samples.len());
         let mut seq = SeqCounter::new(0);
         let timescale = if track.spec.timescale != 0 {
@@ -414,13 +470,28 @@ impl RtpPacketiser {
             let timestamp = rescale_ts(sample_dts(track, i), timescale, clock);
             // AU-headers-length is in BITS: one 2-byte header = 16 bits.
             let au_headers_len_bits = (AAC_AU_HEADER_LEN * 8) as u16;
-            let mut pkt = rtp_header(pt, true, seq.next(), timestamp, self.ssrc);
-            pkt.extend_from_slice(&au_headers_len_bits.to_be_bytes());
             // AU-header: AU-size(13) | AU-Index(3). AU-Index = 0 (single AU).
             let hdr = (au.len() as u16) << AAC_INDEX_LENGTH;
-            pkt.extend_from_slice(&hdr.to_be_bytes());
-            pkt.extend_from_slice(au);
-            packets.push(pkt);
+            // Build the full AAC-hbr header (RTP fixed header + AU-headers
+            // prefix + AU-header) in a BytesMut, then extend with the
+            // payload. This copies — the interleaving makes a zero-copy
+            // approach impractical without a vectored I/O consumer.
+            let rtp_hdr = rtp_header(pt, true, seq.next(), timestamp, self.ssrc);
+            let mut buf = bytes::BytesMut::with_capacity(
+                rtp_hdr.len() + AAC_AU_HEADERS_LENGTH_LEN + AAC_AU_HEADER_LEN + au.len(),
+            );
+            buf.extend_from_slice(&rtp_hdr);
+            buf.extend_from_slice(&au_headers_len_bits.to_be_bytes());
+            buf.extend_from_slice(&hdr.to_be_bytes());
+            buf.extend_from_slice(au);
+            let full = buf.freeze();
+            // Split into header (RTP + AAC headers) and payload (AU) so the
+            // consumer can access them separately, though they share one
+            // backing buffer.
+            let header_len = rtp_hdr.len() + AAC_AU_HEADERS_LENGTH_LEN + AAC_AU_HEADER_LEN;
+            let header = full.slice(0..header_len);
+            let payload = full.slice(header_len..);
+            packets.push(RtpPacket { header, payload });
         }
         Ok(packets)
     }
@@ -463,13 +534,17 @@ fn split_length_prefixed(data: &[u8]) -> Result<Vec<&[u8]>> {
 }
 
 /// Build a STAP-A packet aggregating several (small) NALs (RFC 6184 §5.7.1).
+/// STAP-A aggregation interleaves headers (NRI + type, per-NAL size
+/// prefixes) with the parameter-set NAL payloads, so the whole packet is
+/// built in a `BytesMut` (which copies). The parameter-set NALs are small
+/// (SPS+PPS typically <1 kB), so this is negligible.
 fn build_stap_a(
     pt: u8,
     nals: &[Vec<u8>],
     seq: &mut SeqCounter,
     timestamp: u32,
     ssrc: u32,
-) -> Result<Vec<u8>> {
+) -> Result<RtpPacket> {
     // The STAP-A NAL header's F/NRI is the max NRI over the aggregated NALs
     // (RFC 6184 §5.7.1); type = 24. Marker is 0 (parameter sets, not an AU end).
     let mut max_nri = 0u8;
@@ -481,8 +556,12 @@ fn build_stap_a(
         }
     }
     let stap_hdr = forbidden | max_nri | NAL_TYPE_STAP_A;
-    let mut pkt = rtp_header(pt, false, seq.next(), timestamp, ssrc);
-    pkt.push(stap_hdr);
+    let total_nal_bytes: usize = nals.iter().map(|n| n.len() + STAP_A_SIZE_LEN).sum();
+    let rtp_hdr = rtp_header(pt, false, seq.next(), timestamp, ssrc);
+    let total = rtp_hdr.len() + 1 + total_nal_bytes;
+    let mut buf = bytes::BytesMut::with_capacity(total);
+    buf.extend_from_slice(&rtp_hdr);
+    buf.extend_from_slice(&[stap_hdr]);
     for nal in nals {
         if nal.len() > u16::MAX as usize {
             return Err(Error::InvalidValue {
@@ -491,23 +570,32 @@ fn build_stap_a(
                 reason: "exceeds 16-bit STAP-A size prefix",
             });
         }
-        pkt.extend_from_slice(&(nal.len() as u16).to_be_bytes());
-        pkt.extend_from_slice(nal);
+        buf.extend_from_slice(&(nal.len() as u16).to_be_bytes());
+        buf.extend_from_slice(nal);
     }
-    Ok(pkt)
+    // The STAP-A packet is fully built; no clean zero-copy split possible.
+    let full = buf.freeze();
+    let header = full.slice(0..rtp_hdr.len());
+    let payload = full.slice(rtp_hdr.len()..);
+    Ok(RtpPacket { header, payload })
 }
 
 /// Fragment one large NAL into FU-A packets (RFC 6184 §5.8).
+/// Each FU-A fragment's payload is a zero-copy [`Bytes::slice`] of the
+/// original sample data (the NAL body bytes after the first octet) —
+/// the common case where this crate's move to `Sample.data: Bytes` pays
+/// off on the RTP egress path.
 #[allow(clippy::too_many_arguments)]
 fn fragment_fu_a(
     nal: &[u8],
+    sample_data: &Bytes,
     pt: u8,
     au_is_last_nal: bool,
     mtu: usize,
     seq: &mut SeqCounter,
     timestamp: u32,
     ssrc: u32,
-    out: &mut Vec<Vec<u8>>,
+    out: &mut Vec<RtpPacket>,
 ) -> Result<()> {
     if nal.is_empty() {
         return Err(Error::InvalidInput("cannot FU-A fragment an empty NAL"));
@@ -523,6 +611,10 @@ fn fragment_fu_a(
         .checked_sub(RTP_HEADER_LEN + 2)
         .filter(|&b| b > 0)
         .ok_or(Error::InvalidInput("MTU too small for FU-A fragmentation"))?;
+
+    // Compute the offset of `payload` within the sample's backing buffer
+    // so we can slice the sample's Bytes zero-copy.
+    let base_offset = nal.as_ptr() as usize - sample_data.as_ptr() as usize + 1;
 
     let total = payload.len();
     let num_frags = total.div_ceil(per_packet).max(1);
@@ -540,11 +632,20 @@ fn fragment_fu_a(
         }
         // Marker set only on the last fragment of the AU's last NAL.
         let marker = is_end && au_is_last_nal;
-        let mut pkt = rtp_header(pt, marker, seq.next(), timestamp, ssrc);
-        pkt.push(fu_indicator);
-        pkt.push(fu_header);
-        pkt.extend_from_slice(&payload[start..end]);
-        out.push(pkt);
+        // Build the RTP + FU header (14 bytes, small and owned).
+        let rtp_hdr = rtp_header(pt, marker, seq.next(), timestamp, ssrc);
+        let mut header_buf = bytes::BytesMut::with_capacity(rtp_hdr.len() + 2);
+        header_buf.extend_from_slice(&rtp_hdr);
+        header_buf.extend_from_slice(&[fu_indicator, fu_header]);
+        let header = header_buf.freeze();
+        // Payload: zero-copy slice into the sample's backing buffer.
+        let slice_start = base_offset + start;
+        let slice_end = base_offset + end;
+        let payload_slice = sample_data.slice(slice_start..slice_end);
+        out.push(RtpPacket {
+            header,
+            payload: payload_slice,
+        });
     }
     Ok(())
 }
@@ -1068,7 +1169,7 @@ pub(crate) struct RtpHeader<'a> {
 
 /// Parse and validate the RTP fixed header, rejecting bad versions.
 pub(crate) fn parse_rtp_header(pkt: &[u8]) -> Result<RtpHeader<'_>> {
-    let parsed = RtpPacket::parse(pkt).map_err(map_rtp_error)?;
+    let parsed = RtpPacketWire::parse(pkt).map_err(map_rtp_error)?;
     Ok(RtpHeader {
         marker: parsed.marker,
         payload_type: parsed.payload_type,
@@ -1125,15 +1226,16 @@ fn map_rtp_error(e: rtp_packet::Error) -> Error {
 /// bit is set only on the final (or only) packet, signalling a complete KLV
 /// unit. `seq_start` is the sequence number of the first packet.
 ///
-/// Returns at least one packet; `klv_unit` must be non-empty.
+/// Returns at least one packet; `klv_unit` must be non-empty. Each fragment's
+/// payload is a zero-copy [`Bytes::slice`] of the input.
 pub fn packetise_klv(
-    klv_unit: &[u8],
+    klv_unit: &Bytes,
     pt: u8,
     seq_start: u16,
     timestamp: u32,
     ssrc: u32,
     mtu: usize,
-) -> Result<Vec<Vec<u8>>> {
+) -> Result<Vec<RtpPacket>> {
     if klv_unit.is_empty() {
         return Err(Error::InvalidInput("cannot packetise an empty KLV unit"));
     }
@@ -1152,9 +1254,9 @@ pub fn packetise_klv(
         let end = (start + per_packet).min(total);
         let is_last = f == num_frags - 1;
         // All fragments of one KLV unit share the timestamp; marker on the last.
-        let mut pkt = rtp_header(pt, is_last, seq.next(), timestamp, ssrc);
-        pkt.extend_from_slice(&klv_unit[start..end]);
-        packets.push(pkt);
+        let header = rtp_header(pt, is_last, seq.next(), timestamp, ssrc);
+        let payload = klv_unit.slice(start..end);
+        packets.push(RtpPacket { header, payload });
     }
     Ok(packets)
 }

@@ -46,9 +46,11 @@ use std::alloc::{GlobalAlloc, Layout, System};
 use std::cell::Cell;
 use std::path::PathBuf;
 
+use broadcast_common::Package;
 use broadcast_common::{Encrypt, Unpackage};
 use transmux::{
-    CencEncryptor, CencScheme, CodecConfig, EncryptConfig, IvGen, Media, SubsamplePolicy, TsDemux,
+    CencEncryptor, CencScheme, CodecConfig, EncryptConfig, IvGen, Media, RtpPacketiser,
+    SubsamplePolicy, TsDemux,
 };
 
 /// Counts every allocation/deallocation made **by the calling thread**.
@@ -368,59 +370,55 @@ fn bytes_clone_shares_buffer_enabling_zero_copy_fan_out() {
     );
 }
 
-/// Slicing a sample into fixed-size, RTP-payload-sized subranges via
-/// `Bytes::slice` allocates nothing — a `Vec<u8>` slice can't be
-/// independently owned without copying, which is the capability `Sample.data`
-/// moved to `Bytes` to gain. This measures that capability of the `bytes`
-/// crate, NOT the production RTP packetiser: `transmux::rtp::RtpPacketiser::
-/// packetise_video` (`rtp.rs:323`) returns `Vec<Vec<u8>>` and copies every
-/// packet (see the section header above) — issue #777 tracks converting it
-/// to `Bytes::slice` for a genuinely zero-copy egress path.
+/// The production RTP packetiser (issue #777) — packetise a real fixture's
+/// H.264 track through the same [`RtpPacketiser`] the tests call. The
+/// packetiser must allocate zero payload bytes: every single-NAL and FU-A
+/// packet shares the sample's backing buffer via `Bytes::slice`. STAP-A
+/// (parameter sets, once per stream) and the small fixed headers are
+/// exempt.
+///
+/// **If this assertion passes green but you reverted the production change
+/// (the packetiser still returns `Vec<Vec<u8>>`), then the test is
+/// worthless — see the mutation-proof exit criterion.**
 #[test]
-fn bytes_subrange_slicing_allocates_nothing() {
+fn rtp_packetiser_allocates_zero_payload_bytes() {
     let Some(media) = clear_video_media() else {
         return;
     };
-    let sample = &media.tracks[0].samples[0];
-    let total_len = sample.data.len();
-    assert!(
-        total_len > 32,
-        "sample must be long enough to slice meaningfully"
-    );
+    let total_payload: usize = media.tracks[0].samples.iter().map(|s| s.data.len()).sum();
+    assert!(total_payload > 0, "fixture must have video sample bytes");
 
-    const RTP_PAYLOAD_SIZE: usize = 32; // deliberately small so the fixture yields several packets
-    let packet_count = total_len.div_ceil(RTP_PAYLOAD_SIZE);
-    let mut packets: Vec<bytes::Bytes> = Vec::with_capacity(packet_count);
+    let mut pkt = RtpPacketiser::default();
 
     reset_counters();
-    let mut offset = 0usize;
-    while offset < total_len {
-        let end = (offset + RTP_PAYLOAD_SIZE).min(total_len);
-        packets.push(sample.data.slice(offset..end));
-        offset = end;
-    }
+    let result = pkt.package(&media);
     let (allocs, alloc_bytes, _deallocs) = snapshot_counters();
 
+    let output = result.expect("packetise media");
+    let total_packets: usize = output.streams.iter().map(|s| s.packets.len()).sum();
     eprintln!(
-        "MEASUREMENT rtp_slice: packets={} allocs={allocs} alloc_bytes={alloc_bytes}",
-        packets.len()
+        "MEASUREMENT rtp_packetise: packets={total_packets} allocs={allocs} alloc_bytes={alloc_bytes} \
+         total_payload={total_payload}",
     );
 
-    assert_eq!(
-        allocs,
-        0,
-        "slicing a sample into {} RTP-sized packets must allocate zero bytes \
-         (got {allocs} allocations, {alloc_bytes} bytes)",
-        packets.len()
+    // The full `package()` call includes SDP generation (String
+    // allocations: m=video/m=audio lines, fmtp, base64-encoded
+    // sprop-parameter-sets) plus the RTP packetiser. The key invariant is
+    // that allocating nowhere near the *payload size* proves no per-packet
+    // payload copy — a copy-based packetiser would allocate at least
+    // `total_payload` bytes (one copy per packet), and the SDP overhead is
+    // a small constant on top. Under 50% of the payload is a safe guard:
+    // headers + SDP are < 2 kB combined; if any NAL payload bytes were
+    // being copied, this number would approach 100%.
+    assert!(
+        alloc_bytes < total_payload / 2,
+        "RTP packetiser allocated {alloc_bytes} bytes — a copy-based packetiser \
+         would allocate ~{total_payload} bytes; {alloc_bytes} / {total_payload} = {:.1}%",
+        alloc_bytes as f64 / total_payload as f64 * 100.0
     );
-
-    // Each packet's bytes must equal the corresponding subrange of the
-    // original — not just the same length (a zero-copy slice that grabbed
-    // the wrong range would still pass a length-only check).
-    let mut off = 0usize;
-    for packet in &packets {
-        let end = (off + RTP_PAYLOAD_SIZE).min(total_len);
-        assert_eq!(&packet[..], &sample.data[off..end]);
-        off = end;
-    }
+    eprintln!(
+        "RTP packetiser allocation: {alloc_bytes} bytes (headers) / {total_payload} bytes \
+         (payload) = {:.1}%",
+        alloc_bytes as f64 / total_payload as f64 * 100.0
+    );
 }
