@@ -1,6 +1,6 @@
 [package]
 name    = "st12-1"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 description = "SMPTE ST 12-1:2014 Linear Timecode (LTC) — the 80-bit logical LTC codeword: BCD time address, drop/color frame flags, binary groups, sync word. no_std."
 license      = "MIT OR Apache-2.0"

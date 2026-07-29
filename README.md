@@ -109,12 +109,6 @@ directly.
 
 | Crate | Docs | Superseded by |
 |---|---|---|
-| [`dvb-common`](dvb-common/) | [![docs.rs](https://img.shields.io/docsrs/dvb-common)](https://docs.rs/dvb-common) | [`broadcast-common`](broadcast-common/) |
-| [`dvb-pes`](dvb-pes/) | [![docs.rs](https://img.shields.io/docsrs/dvb-pes)](https://docs.rs/dvb-pes) | [`mpeg-pes`](mpeg-pes/) |
-| [`dvb-cc`](dvb-cc/) | [![docs.rs](https://img.shields.io/docsrs/dvb-cc)](https://docs.rs/dvb-cc) | [`cc-data`](cc-data/) |
-| [`dvb-scte35`](dvb-scte35/) | [![docs.rs](https://img.shields.io/docsrs/dvb-scte35)](https://docs.rs/dvb-scte35) | [`scte35-splice`](scte35-splice/) |
-| [`dvb-emsg`](dvb-emsg/) | [![docs.rs](https://img.shields.io/docsrs/dvb-emsg)](https://docs.rs/dvb-emsg) | [`mp4-emsg`](mp4-emsg/) |
-| [`dvb-ule`](dvb-ule/) | [![docs.rs](https://img.shields.io/docsrs/dvb-ule)](https://docs.rs/dvb-ule) | [`ule`](ule/) |
 
 For GSE, see the existing [`dvb-gse`](https://crates.io/crates/dvb-gse) crate.
 

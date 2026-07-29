@@ -5,6 +5,26 @@ All notable changes to `dvb-simulcrypt` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] - 2026-07-29
+
+### Changed (BREAKING)
+- **Requires `broadcast-common` 9** (issue #819). No functional or API change of
+  this crate's own.
+
+  Staying on `broadcast-common` 8 was not neutral: this crate's types implement
+  `Parse`/`Serialize` from whichever major it links, so a consumer that used it
+  alongside a 9-based crate (`transmux` 0.20, `dvb-si` 9, …) got **both majors
+  in one graph**, and the trait methods resolved against the wrong one —
+  surfacing as `no method named to_bytes found` / `no function named parse
+  found` on types that plainly have them, with the compiler pointing at
+  `broadcast-common-8.x/src/traits.rs`.
+
+  The 9.0.0 wave originally shipped only the crates needed to publish
+  `transmux`/`media-plane`/`multimux`, on the reasoning that everything else
+  stayed coherent on its own 8 line. That reasoning was wrong: these crates
+  exist to be composed, and the breakage only appears in a consumer that mixes
+  them.
+
 ## [0.3.0] - 2026-07-03
 ### Changed
 - Rust **edition 2024**; MSRV raised to **1.86**; format-argument modernisation. No functional or API change.

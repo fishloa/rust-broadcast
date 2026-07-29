@@ -1,6 +1,6 @@
 [package]
 name    = "dvb-subtitle"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2024"
 description = "DVB subtitling (bitmap) segment parser — ETSI EN 300 743, the segments carried in subtitle PES."
 license      = "MIT OR Apache-2.0"

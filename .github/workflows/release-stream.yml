@@ -40,7 +40,6 @@ jobs:
             echo "::error::dvb-stream is $V but tag is $TAG"; exit 1
           fi
 
-      # dvb-stream's dvb-si / dvb-t2mi / dvb-common dependencies must already be
       # on crates.io (they ship via the lockstep `v*` release). Idempotent: an
       # "already uploaded" error is treated as success so a re-run is safe.
       - name: Publish dvb-stream

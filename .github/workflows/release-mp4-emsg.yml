@@ -43,7 +43,6 @@ jobs:
             echo "::error::mp4-emsg is $V but tag is $TAG"; exit 1
           fi
 
-      # mp4-emsg's dvb-common dependency must already be on crates.io.
       # Idempotent: an "already uploaded" error is treated as success.
       - name: Publish mp4-emsg
         run: |
