@@ -35,6 +35,7 @@ const RESERVED_FINAL: u64 = 0;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[repr(u8)]
+#[non_exhaustive]
 pub enum ZoneId {
     /// `0` — all screen speakers left of center.
     ScreenLeft = 0,

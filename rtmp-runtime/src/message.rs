@@ -91,6 +91,7 @@ fn need_u32(bytes: &[u8], what: &'static str) -> Result<u32> {
 
 /// Set Peer Bandwidth's `Limit Type` byte (§5.4.5).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum LimitType {
     /// Peer SHOULD limit output to exactly the indicated window.
     Hard,

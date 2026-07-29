@@ -181,6 +181,10 @@ pub(crate) async fn media_playlist(
             ([(header::CONTENT_TYPE, MEDIA_PLAYLIST_CONTENT_TYPE)], m).into_response()
         }
         LlHlsBody::Resource(_) => StatusCode::NOT_FOUND.into_response(),
+        // `LlHlsBody` is `#[non_exhaustive]`; a future body variant this
+        // playlist route doesn't understand is treated the same as a
+        // resource body -- not found here.
+        _ => StatusCode::NOT_FOUND.into_response(),
     })
 }
 

@@ -1927,6 +1927,7 @@ impl Serialize for Mp4aSampleEntry {
 /// Describes one sample entry in an stsd box.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
 pub enum SampleEntryVariant {
     Avc1(crate::sample_entries::AVCSampleEntry),
     Hevc1(crate::sample_entries::HEVCSampleEntry),
@@ -2145,6 +2146,7 @@ pub struct StblOpaque {
 /// A single child within an stbl container.
 #[derive(Debug, Clone, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
 pub enum StblChild {
     Stsd(SampleDescriptionBox),
     Stts(crate::timing::TimeToSampleBox),

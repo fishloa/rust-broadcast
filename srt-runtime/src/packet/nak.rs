@@ -21,6 +21,7 @@ use super::{Error, F_BIT, Result, SEQ_NUMBER_MASK, be32};
 /// convention (see `tests/label_coverage.rs`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
 pub enum LossListEntry {
     /// A single lost packet sequence number (Figure 21).
     Single(u32),

@@ -98,6 +98,7 @@ fn find_start_code(data: &[u8], code: u8) -> Option<usize> {
 /// header (ISO/IEC 11172-3 §2.4.2.3, coded `11`=I, `10`=II, `01`=III).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
 pub enum MpegAudioLayer {
     /// Layer I (MP1).
     LayerI,

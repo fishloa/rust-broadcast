@@ -31,6 +31,9 @@ fn main() {
                 process::exit(1);
             }
         }
+        // `Cli` is `#[non_exhaustive]`, but this binary is the only caller
+        // of `Cli::parse()` and clap can only ever produce `Check`/`Watch`.
+        _ => unreachable!("clap only ever produces a known Cli subcommand"),
     }
 }
 

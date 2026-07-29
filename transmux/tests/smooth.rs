@@ -211,6 +211,7 @@ fn fragment_c_timeline() {
             StreamType::Video => video_track(&media),
             StreamType::Audio => audio_track(&media),
             StreamType::Text => panic!("unexpected text stream"),
+            _ => panic!("unexpected stream type"),
         };
 
         // Number of `c` == number of emitted fragments for this track.

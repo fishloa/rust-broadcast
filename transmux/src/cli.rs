@@ -221,6 +221,7 @@ pub struct Args {
 
 /// clap `ValueEnum` mirror of [`OutputFormat`] (kebab-case flag values).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+#[non_exhaustive]
 pub enum FormatArg {
     /// CMAF/fMP4 single init+media segment.
     Cmaf,
@@ -258,6 +259,7 @@ impl From<FormatArg> for OutputFormat {
 /// [`Error`](crate::Error), and CLI-specific conditions (unknown container,
 /// missing format, bad key). Never panics on bad input — always returns `Err`.
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum CliError {
     /// Reading the input or writing the output failed.
     Io(std::io::Error),
@@ -362,6 +364,7 @@ pub fn detect_container(data: &[u8]) -> CliResult<Container> {
 /// The packaged output of a run: raw bytes for binary formats, or (for HLS/DASH)
 /// a text manifest plus the referenced media segments.
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum Output {
     /// A single binary artifact (CMAF, TS, progressive MP4).
     Bytes(Vec<u8>),

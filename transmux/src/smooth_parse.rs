@@ -262,6 +262,7 @@ pub const MAX_CODEC_PRIVATE_DATA_HEX_LEN: usize = 65_536;
 
 /// `StreamIndex@Type` (§2.2.2.3).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum StreamType {
     /// `Type="video"`.
     Video,

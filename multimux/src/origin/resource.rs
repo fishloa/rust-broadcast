@@ -163,6 +163,9 @@ fn resource_body_response(body: ll_hls_runtime::server::LlHlsBody) -> Response {
         // A resource request never resolves to a rendered playlist body --
         // defensive, not reachable via `dynamic_file`'s own `LlHlsRequest::Resource`.
         ll_hls_runtime::server::LlHlsBody::Playlist(_) => StatusCode::NOT_FOUND.into_response(),
+        // `LlHlsBody` is `#[non_exhaustive]`; treat any future body variant
+        // the same as the playlist case above -- not a resource body.
+        _ => StatusCode::NOT_FOUND.into_response(),
     }
 }
 

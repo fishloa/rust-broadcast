@@ -5,6 +5,17 @@ All notable changes to `media-doctor` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed (Breaking)
+- `cli::Cli` now carries `#[non_exhaustive]` (issue #806's non_exhaustive
+  drift-guard audit). Not expected to affect real consumers (this is the
+  binary's own top-level subcommand enum), but is technically a public API
+  change since `cli` is a public module.
+
+### Added
+- `tests/non_exhaustive_coverage.rs` drift guard (issue #806).
+
 ## [0.5.0] - 2026-07-29
 
 ### Changed (BREAKING)

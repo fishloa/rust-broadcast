@@ -44,6 +44,7 @@ use alloc::vec::Vec;
 /// packet `KK` field / §6.1.6's odd/even alternation) is meant.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
 pub enum KeyParity {
     /// The even-numbered SEK.
     Even,

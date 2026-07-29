@@ -1,0 +1,60 @@
+name: Published-dependency consistency
+
+# Catches the failure mode behind issue #819: a published workspace crate
+# still requiring a superseded major of a workspace sibling.
+#
+# `cargo build --workspace` (the rest of ci.yml) CANNOT catch this: every
+# workspace crate depends on its siblings via a `path = "../x"` Cargo.toml
+# entry, so path resolution always picks up the LOCAL copy of the sibling
+# regardless of the version requirement written next to it. The workspace is
+# therefore internally consistent by construction, no matter how stale a
+# published dependency requirement gets -- the mismatch exists ONLY in the
+# graph crates.io hands to an external consumer, which no local build or test
+# ever looks at.
+#
+# The failure shape (three separate instances the week issue #821 was filed):
+# a crate takes a major bump, some sibling that depends on it is not
+# republished requiring the new major, and a downstream consumer who combines
+# the stale sibling with the bumped crate ends up with two majors of the same
+# library in one Cargo.lock. Trait impls belong to the wrong major and the
+# symptom is a baffling "no method found" on a type that plainly has it.
+#
+# `tools/check-published-dep-consistency.py` fetches each workspace crate's
+# LATEST PUBLISHED manifest from crates.io and compares its declared
+# requirement on every workspace sibling (including versioned dev-dependencies
+# -- `cargo publish` resolves those too, and that is exactly what broke
+# rtmp-runtime's publish against transmux) against that sibling's CURRENT
+# in-tree version. A crate that has never been published is skipped, not a
+# failure. A flaky crates.io request is retried, then skipped with a warning
+# -- a network blip must never read as a real violation.
+#
+# Advisory (never fails the run) on ordinary pushes/PRs, so routine
+# development doesn't go red while a multi-crate publish wave is mid-flight
+# and some crates are intentionally still catching up. BLOCKING on any
+# release tag (the lockstep `v*` and every independent `<crate>-v*|main`),
+# since that is the point past which a stale requirement becomes a
+# consumer-visible break.
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*", "*-v*"]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  check:
+    name: published-dependency consistency
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Check (advisory)
+        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
+        run: python3 tools/check-published-dep-consistency.py
+
+      - name: Check (blocking -- release tag)
+        if: ${{ startsWith(github.ref, 'refs/tags/') }}
+        run: python3 tools/check-published-dep-consistency.py --blocking

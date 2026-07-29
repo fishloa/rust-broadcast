@@ -85,6 +85,7 @@ const VALID_LENGTH_SIZES: [u8; 3] = [0, 1, 3];
 /// enumerated; any other value maps to [`VvcNalUnitType::Other`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
 pub enum VvcNalUnitType {
     /// Operating point information (`OPI_NUT` = 12).
     Opi,

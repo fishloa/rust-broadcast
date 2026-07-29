@@ -171,6 +171,7 @@ impl Serialize for CleanApertureBox {
 /// Colour type indicator inside [`ColourInformationBox`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
 pub enum ColourType {
     Nclx,
     RIcc,

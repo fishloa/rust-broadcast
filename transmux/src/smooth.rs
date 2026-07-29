@@ -98,6 +98,7 @@ const SAMPLE_FLAGS_NON_SYNC: u32 = 0x0101_0000;
 /// Determines the `Type` attribute, the FourCC, and which
 /// geometry / audio attributes the `QualityLevel` carries.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum SmoothStreamType {
     /// Video stream — `Type="video"`, `FourCC="H264"`.
     Video,

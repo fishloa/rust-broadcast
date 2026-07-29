@@ -260,6 +260,7 @@ fn ts_to_cmaf_ffprobe_validated() {
     let bytes = match out {
         Output::Bytes(b) => b,
         Output::Manifest { .. } => panic!("CMAF must produce a single binary artefact"),
+        _ => panic!("unexpected Output variant"),
     };
     assert!(!bytes.is_empty(), "CMAF output must not be empty");
 
@@ -296,6 +297,7 @@ fn ts_to_progressive_mp4_ffprobe_validated() {
     let bytes = match out {
         Output::Bytes(b) => b,
         Output::Manifest { .. } => panic!("progressive MP4 must produce a single binary artefact"),
+        _ => panic!("unexpected Output variant"),
     };
     assert!(
         !bytes.is_empty(),
@@ -338,6 +340,7 @@ fn ts_to_ts_hls_segment_and_playlist_ffprobe_validated() {
     let (playlist, segments) = match out {
         Output::Manifest { text, segments } => (text, segments),
         Output::Bytes(_) => panic!("TS-HLS must produce a manifest + segments"),
+        _ => panic!("unexpected Output variant"),
     };
     assert!(
         playlist.contains("#EXTM3U"),
@@ -398,6 +401,7 @@ fn ts_to_dash_mpd_validated() {
     let (mpd, segments) = match out {
         Output::Manifest { text, segments } => (text, segments),
         Output::Bytes(_) => panic!("DASH must produce an MPD manifest + segments"),
+        _ => panic!("unexpected Output variant"),
     };
     assert!(
         !segments.is_empty(),
@@ -484,6 +488,7 @@ fn mutated_cmaf_output_fails_the_gate() {
     let mut bytes = match out {
         Output::Bytes(b) => b,
         Output::Manifest { .. } => panic!("CMAF must produce a single binary artefact"),
+        _ => panic!("unexpected Output variant"),
     };
     assert!(
         bytes.len() > 64,

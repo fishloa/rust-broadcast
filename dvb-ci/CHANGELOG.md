@@ -6,6 +6,15 @@ versioning.
 
 ## Unreleased
 
+### Changed (Breaking)
+- `SamplePayload` (`ci_plus::sample_decryption`) now carries
+  `#[non_exhaustive]` (issue #806's non_exhaustive drift-guard audit). A
+  downstream `match` on `SamplePayload` now needs a wildcard arm.
+
+### Added
+- `tests/label_coverage.rs` + `tests/non_exhaustive_coverage.rs` drift guards
+  (issue #806).
+
 ## 0.5.1 — 2026-06-29
 
 ### Changed
