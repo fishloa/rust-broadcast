@@ -294,9 +294,7 @@ pub(crate) fn report_driver_progress<S: media_plane::ingress::IngestSession>(
             continue;
         }
         let tracks = trunk.tracks();
-        if !tracks.is_empty() {
-            route_handle.set_track_specs(program, tracks.to_vec());
-        }
+        route_handle.set_track_specs(program, tracks.to_vec());
         track_generations.insert(program, generation);
     }
 }
@@ -555,6 +553,106 @@ mod driver_progress_tests {
             crate::route::ProgramResolution::Found(_) => {}
             _ => panic!("expected ProgramResolution::Found"),
         }
+    }
+
+    /// When a program's track set goes from populated to **empty**, the
+    /// route's track specs must reflect the empty set — not keep serving the
+    /// stale old specs ([`crate::source::report_driver_progress`] issue #831
+    /// fix 1: the `if !tracks.is_empty()` guard skipped `set_track_specs`
+    /// when `tracks` was empty, leaving stale specs forever).
+    ///
+    /// MUTATION VERIFIED: adding the `if !tracks.is_empty()` guard back
+    /// (reverting fix 1) makes this test's `assert_eq!(specs.len(), 0, ...)`
+    /// fail: `left: [1], right: []` — the route's track specs still hold the
+    /// now-removed track from the first NewProgram, because the sync loop
+    /// silently skipped the empty set.
+    #[test]
+    fn empty_track_set_replaces_previous_populated_set() {
+        struct TrackSetSession {
+            pending: std::collections::VecDeque<SessionEvent>,
+            feed_count: u32,
+        }
+
+        impl Stage for TrackSetSession {
+            type In<'a> = &'a [u8];
+            type Out = SessionEvent;
+            type Error = std::convert::Infallible;
+
+            fn demand(&self) -> Demand {
+                Demand::new(4096)
+            }
+
+            fn feed(&mut self, _input: &[u8], _now: Timestamp) -> Result<(), Self::Error> {
+                self.feed_count += 1;
+                if self.feed_count == 2 {
+                    self.pending.push_back(SessionEvent::NewProgram {
+                        program: ProgramId(0),
+                        tracks: vec![crate::source::ts_program::test_support::track_spec(1)],
+                    });
+                } else if self.feed_count == 3 {
+                    self.pending.push_back(SessionEvent::TracksChanged {
+                        program: ProgramId(0),
+                        tracks: Vec::new(),
+                    });
+                }
+                Ok(())
+            }
+
+            fn poll(&mut self) -> Option<SessionEvent> {
+                self.pending.pop_front()
+            }
+            fn next_deadline(&self) -> Option<Timestamp> {
+                None
+            }
+            fn on_deadline(&mut self, _now: Timestamp) {}
+            fn finish(&mut self) -> Result<(), Self::Error> {
+                Ok(())
+            }
+        }
+
+        impl IngestSession for TrackSetSession {
+            type Request = bytes::Bytes;
+        }
+
+        let mut pending = std::collections::VecDeque::new();
+        pending.push_back(SessionEvent::Established);
+        let session = TrackSetSession {
+            pending,
+            feed_count: 0,
+        };
+        let mut driver = IngestDriver::new(
+            session,
+            trunk_config(),
+            HandshakePolicy::establish_by(Timestamp::from_nanos(u64::MAX)),
+            nz(4),
+        );
+        let route = crate::route::RouteHandle::new(4.0, 500, 4);
+        let mut published = HashSet::new();
+        let mut track_generations = std::collections::HashMap::new();
+
+        // Feed 1: Established.
+        driver.feed(&[], Timestamp::from_nanos(1));
+        report_driver_progress(&driver, &route, &mut published, &mut track_generations);
+        // Feed 2: NewProgram(0, [track_spec(1)]) — populates tracks.
+        driver.feed(&[], Timestamp::from_nanos(2));
+        report_driver_progress(&driver, &route, &mut published, &mut track_generations);
+        let specs = route.track_specs(ProgramId(0));
+        assert_eq!(
+            specs.len(),
+            1,
+            "track specs must reflect the announced track"
+        );
+
+        // Feed 3: TracksChanged(0, []) — clears tracks.
+        driver.feed(&[], Timestamp::from_nanos(3));
+        report_driver_progress(&driver, &route, &mut published, &mut track_generations);
+        let specs = route.track_specs(ProgramId(0));
+        assert_eq!(
+            specs.len(),
+            0,
+            "empty TracksChanged must replace the old track set — \
+             the route's track specs must reflect empty, not the stale old set"
+        );
     }
 }
 

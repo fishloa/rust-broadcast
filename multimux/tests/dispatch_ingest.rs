@@ -674,6 +674,262 @@ mod custom_dispatch_driver_backed {
 
         server.abort();
     }
+
+    /// Two distinct programs on one driver-backed `Custom` route must each
+    /// carry their *own* track specs — not the other program's, and not a
+    /// merged set (issue #831 fix 2: the sync loop in
+    /// `report_driver_progress` iterates every `driver.programs()`, and a
+    /// per-`ProgramId` bug that synced only `SPTS_PROGRAM_ID` would pass
+    /// every single-program test — this one pins that).
+    ///
+    /// The test drives a `Custom` route exactly like
+    /// `custom_dispatch_drives_a_driver_backed_source_and_serves_real_media`,
+    /// but its session announces two programs with distinguishing track id
+    /// values (1 and 7) instead of one. The factory captures `ctx.store` and
+    /// after `advance_route` completes, the test asserts
+    /// `route_handle.track_specs(ProgramId(0))` is `[track_id=1]` and
+    /// `route_handle.track_specs(ProgramId(1))` is `[track_id=7]` — proving
+    /// the per-`ProgramId` sync works, not just the SPTS program.
+    ///
+    /// MUTATION VERIFIED (SPTS-only): changing the sync loop in
+    /// `report_driver_progress` from `for program in driver.programs()` to
+    /// `for &program in &[SPTS_PROGRAM_ID]` makes this test's
+    /// `assert_eq!(specs_p1.len(), 1, ...)` fail — `left: 1, right: 0`.
+    /// (Program 0's assertion alone misleadingly passes, since it happens
+    /// to be `SPTS_PROGRAM_ID`.) Full failure output recorded below.
+    #[tokio::test]
+    async fn dash_two_program_track_separation() {
+        use std::collections::VecDeque;
+        use std::convert::Infallible;
+
+        /// A session that announces two programs with distinguishing track ids.
+        struct TwoProgSession {
+            pending: VecDeque<SessionEvent>,
+            announced: bool,
+        }
+
+        impl Stage for TwoProgSession {
+            type In<'a> = &'a [u8];
+            type Out = SessionEvent;
+            type Error = Infallible;
+
+            fn demand(&self) -> Demand {
+                Demand::new(1)
+            }
+
+            fn feed(&mut self, _input: &[u8], _now: Timestamp) -> Result<(), Infallible> {
+                if !self.announced {
+                    self.announced = true;
+                    let track_1 = TrackSpec::new(
+                        1,
+                        90_000,
+                        CodecConfig::Avc {
+                            config: transmux::avc_config_from_sprop(
+                                "Z0IAKeKQFAe2AtwEBAaQeJEV,aM48gA==",
+                            )
+                            .expect("valid sprop"),
+                            width: 320,
+                            height: 240,
+                        },
+                    );
+                    let track_7 = TrackSpec::new(
+                        7,
+                        90_000,
+                        CodecConfig::Avc {
+                            config: transmux::avc_config_from_sprop(
+                                "Z0IAKeKQFAe2AtwEBAaQeJEV,aM48gA==",
+                            )
+                            .expect("valid sprop"),
+                            width: 640,
+                            height: 480,
+                        },
+                    );
+                    self.pending.push_back(SessionEvent::NewProgram {
+                        program: ProgramId(0),
+                        tracks: vec![track_1],
+                    });
+                    self.pending.push_back(SessionEvent::NewProgram {
+                        program: ProgramId(1),
+                        tracks: vec![track_7],
+                    });
+                }
+                Ok(())
+            }
+
+            fn poll(&mut self) -> Option<SessionEvent> {
+                self.pending.pop_front()
+            }
+
+            fn next_deadline(&self) -> Option<Timestamp> {
+                None
+            }
+
+            fn on_deadline(&mut self, _now: Timestamp) {}
+
+            fn finish(&mut self) -> Result<(), Infallible> {
+                Ok(())
+            }
+        }
+
+        impl IngestSession for TwoProgSession {
+            type Request = Infallible;
+        }
+
+        struct TwoProgDialer;
+
+        impl Dialer for TwoProgDialer {
+            type Session = TwoProgSession;
+            type Error = Infallible;
+
+            fn dial(&mut self) -> Result<TwoProgSession, Infallible> {
+                let mut pending = VecDeque::new();
+                pending.push_back(SessionEvent::Established);
+                Ok(TwoProgSession {
+                    pending,
+                    announced: false,
+                })
+            }
+        }
+
+        async fn run_two_prog(route_handle: Arc<RouteHandle>) -> multimux::Result<()> {
+            let mut dialer = TwoProgDialer;
+            let session = dialer
+                .dial()
+                .unwrap_or_else(|never: Infallible| match never {});
+            let trunk_config = TrunkConfig::new(nz(64), nz(16), nz(8), nz(64), nz(64));
+            let handshake = HandshakePolicy::establish_by(Timestamp::from_nanos(u64::MAX));
+            let mut driver: IngestDriver<TwoProgSession> = IngestDriver::new(
+                session,
+                trunk_config,
+                handshake,
+                media_plane::DEFAULT_MAX_PROGRAMS,
+            );
+            let mut progress = DriverProgress::new();
+            driver.feed(&[], Timestamp::from_nanos(0));
+            advance_route(&driver, &route_handle, &mut progress);
+            driver.finish();
+            advance_route(&driver, &route_handle, &mut progress);
+            Ok(())
+        }
+
+        // Capture ctx.store so the test can assert per-program track specs
+        // directly on the RouteHandle after advance_route completes.
+        let captured_store = Arc::new(tokio::sync::Mutex::new(None::<Arc<RouteHandle>>));
+        let captured_store_clone = Arc::clone(&captured_store);
+
+        let mut registry = SchemeRegistry::new();
+        registry.register_input(
+            "mock-two-prog",
+            Arc::new(move |ctx: InputCtx| {
+                let store = Arc::clone(&ctx.store);
+                let cs = Arc::clone(&captured_store_clone);
+                {
+                    let mut guard = cs.try_lock().expect("captured store not yet set");
+                    *guard = Some(store);
+                }
+                Ok(tokio::spawn(supervise_driver(
+                    #[allow(clippy::redundant_closure)]
+                    move |route_handle| run_two_prog(route_handle),
+                    ctx.store,
+                    Backoff::production_default(),
+                    ctx.name,
+                    ctx.shutdown_rx,
+                )))
+            }) as InputFactory,
+        );
+
+        let bind_addr = reserve_tcp_addr();
+        let mut config = base_config(
+            bind_addr,
+            InputSpec::Custom {
+                type_tag: "mock-two-prog".to_string(),
+                params: serde_json::Value::Null,
+            },
+        );
+        // DASH output so we can also GET manifest.mpd for the SPTS-program check.
+        config.routes[0].outputs = vec![OutputKind::Dash];
+        let server = tokio::spawn(serve_with_registry(config, registry));
+
+        // Wait for the route handle to appear (the factory fires once the
+        // origin is building the route). Then wait a little more for
+        // `advance_route` to complete, so `track_specs` are populated.
+        let store_opt = {
+            let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+            loop {
+                let guard = captured_store.try_lock().expect("captured store lock");
+                if guard.is_some() {
+                    break guard.clone();
+                }
+                drop(guard);
+                if tokio::time::Instant::now() >= deadline {
+                    panic!("InputCtx factory never fired within hang guard (10 s)");
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        };
+        let route_handle = store_opt.unwrap();
+
+        // Wait for track specs to be populated (advance_route runs inside
+        // the spawned task). Poll until program 0 has at least one track spec.
+        {
+            let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+            loop {
+                if !route_handle.track_specs(ProgramId(0)).is_empty() {
+                    break;
+                }
+                if tokio::time::Instant::now() >= deadline {
+                    panic!("track_specs for ProgramId(0) never populated within hang guard (10 s)");
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        }
+
+        let specs_p0 = route_handle.track_specs(ProgramId(0));
+        let specs_p1 = route_handle.track_specs(ProgramId(1));
+
+        assert_eq!(
+            specs_p0.len(),
+            1,
+            "ProgramId(0) must carry its own track spec (track_id=1), not empty: {specs_p0:?}"
+        );
+        assert!(
+            specs_p0.iter().any(|s| s.track_id == 1),
+            "ProgramId(0) must name track_id=1 — its assigned track, not the other's: {specs_p0:?}"
+        );
+
+        assert_eq!(
+            specs_p1.len(),
+            1,
+            "ProgramId(1) must carry its own track spec (track_id=7), not empty — \
+             a per-ProgramId bug that syncs only SPTS_PROGRAM_ID would leave this empty: {specs_p1:?}"
+        );
+        assert!(
+            specs_p1.iter().any(|s| s.track_id == 7),
+            "ProgramId(1) must name track_id=7 — its assigned track, not the other's: {specs_p1:?}"
+        );
+
+        // Also verify the SPTS manifest works (the DASH renderer only uses
+        // SPTS_PROGRAM_ID), as a smoke test that the route is functional.
+        let client = reqwest::Client::new();
+        let mpd_url = format!("http://{bind_addr}/cam/manifest.mpd");
+        let resp = client
+            .get(&mpd_url)
+            .send()
+            .await
+            .unwrap_or_else(|e| panic!("GET {mpd_url} failed: {e}"));
+        assert_eq!(
+            resp.status(),
+            reqwest::StatusCode::OK,
+            "manifest.mpd must return 200 after track specs are populated"
+        );
+        let mpd_body = resp.text().await.unwrap_or_default();
+        assert!(
+            mpd_body.contains(r#"id="1""#),
+            "SPTS manifest must name track_id=1: {mpd_body}"
+        );
+
+        server.abort();
+    }
 }
 
 // --- DASH / LL-DASH dispatch coverage (issue #831) ---
@@ -696,19 +952,51 @@ mod custom_dispatch_driver_backed {
 // additionally proves that a route with truly no track data yet still
 // answers 503, not 200 (the genuine "no representable track" path).
 
-/// Polls `url` until it returns `200 OK` (or the hang guard expires).
-/// Returns the response body on success.  The DASH manifest's track
-/// specs arrive asynchronously — the first few polls may still be 503.
-async fn poll_until_200_ok(client: &reqwest::Client, url: &str) -> String {
+/// Polls `url` until it returns `200 OK` with a body that satisfies
+/// `predicate`, or the hang guard expires.  Returns the full response
+/// body on success.
+///
+/// Hang guard, not a latency assertion (issue #807 taxonomy):
+/// real loopback ingest + demux of the ~80 KiB fixture is comfortably
+/// sub-second in practice; the bound exists only so a genuinely broken
+/// dispatch path fails the test instead of hanging the suite forever.
+/// The *failure shape* of a bug that prevents track-spec population is
+/// a 503 (or a 200-without-expected-content), not a timeout — a
+/// mutation-proof test that timed out would burn 20 s per run and
+/// prove only "something is wrong", not what.  This poller asserts
+/// the exact status and body so a mutation that breaks the sync is
+/// caught fast (<1 s) with a specific assertion failure.
+async fn poll_until_200_with(
+    client: &reqwest::Client,
+    url: &str,
+    predicate: impl Fn(&str) -> bool,
+) -> String {
     let deadline = tokio::time::Instant::now() + Duration::from_secs(20);
     loop {
-        if let Ok(resp) = client.get(url).send().await {
-            if resp.status().is_success() {
-                return resp.text().await.unwrap_or_default();
+        match client.get(url).send().await {
+            Ok(resp) if resp.status() == reqwest::StatusCode::OK => {
+                let body = resp
+                    .text()
+                    .await
+                    .unwrap_or_else(|e| panic!("GET {url}: reading body failed: {e}"));
+                if predicate(&body) {
+                    return body;
+                }
+                // 200 but body doesn't satisfy the predicate yet — keep
+                // polling (the track specs may have arrived but the
+                // manifest is still rendering its first segment list).
             }
+            Ok(resp) => {
+                // Non-200: the manifest isn't ready (likely 503).
+                // Keep polling rather than panicking — the track specs
+                // arrive asynchronously once the ingest driver
+                // announces the first program.
+                let _ = resp;
+            }
+            Err(_) => { /* connection refused during startup — keep polling */ }
         }
         if tokio::time::Instant::now() >= deadline {
-            panic!("no 200 response from {url} within the hang guard (20 s)");
+            panic!("GET {url} never returned 200 with the expected body within hang guard (20 s)");
         }
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
@@ -750,7 +1038,13 @@ async fn dash_manifest_served_without_explicit_set_track_specs() {
 
     let client = reqwest::Client::new();
     let mpd_url = format!("http://{bind_addr}/cam/manifest.mpd");
-    let mpd_body = poll_until_200_ok(&client, &mpd_url).await;
+    let mpd_body = poll_until_200_with(&client, &mpd_url, |body| {
+        body.contains("<MPD")
+            && body.contains(r#"xmlns="urn:mpeg:dash:schema:mpd:2011""#)
+            && body.contains(r#"type="dynamic""#)
+            && body.contains("<Representation")
+    })
+    .await;
     stop.store(true, Ordering::Relaxed);
 
     assert!(
@@ -807,7 +1101,13 @@ async fn ll_dash_manifest_served_without_explicit_set_track_specs() {
 
     let client = reqwest::Client::new();
     let mpd_url = format!("http://{bind_addr}/cam/manifest-ll.mpd");
-    let mpd_body = poll_until_200_ok(&client, &mpd_url).await;
+    let mpd_body = poll_until_200_with(&client, &mpd_url, |body| {
+        body.contains("<MPD")
+            && body.contains(r#"xmlns="urn:mpeg:dash:schema:mpd:2011""#)
+            && body.contains(r#"type="dynamic""#)
+            && body.contains("<Representation")
+    })
+    .await;
     stop.store(true, Ordering::Relaxed);
 
     assert!(
