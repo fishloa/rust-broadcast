@@ -617,13 +617,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "dvb-cc"
-version = "0.3.0"
-dependencies = [
- "cc-data",
-]
-
-[[package]]
 name = "dvb-ci"
 version = "0.7.0"
 dependencies = [
@@ -647,13 +640,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "dvb-common"
-version = "9.0.0"
-dependencies = [
- "broadcast-common",
-]
-
-[[package]]
 name = "dvb-conformance"
 version = "9.0.0"
 dependencies = [
@@ -664,13 +650,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "dvb-emsg"
-version = "0.2.0"
-dependencies = [
- "mp4-emsg",
-]
-
-[[package]]
 name = "dvb-flute"
 version = "0.3.0"
 dependencies = [
@@ -678,20 +657,6 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror",
-]
-
-[[package]]
-name = "dvb-pes"
-version = "0.2.0"
-dependencies = [
- "mpeg-pes",
-]
-
-[[package]]
-name = "dvb-scte35"
-version = "8.0.0"
-dependencies = [
- "scte35-splice",
 ]
 
 [[package]]
@@ -776,13 +741,6 @@ dependencies = [
  "dvb-t2mi",
  "mpeg-ts",
  "serde_json",
-]
-
-[[package]]
-name = "dvb-ule"
-version = "0.2.0"
-dependencies = [
- "ule",
 ]
 
 [[package]]

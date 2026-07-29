@@ -43,7 +43,6 @@ jobs:
             echo "::error::dvb-subtitle is $V but tag is $TAG"; exit 1
           fi
 
-      # dvb-subtitle's dvb-common dependency must already be on crates.io (it
       # ships via the lockstep `v*` release). Idempotent: an "already uploaded"
       # error is treated as success so a re-run is safe.
       - name: Publish dvb-subtitle

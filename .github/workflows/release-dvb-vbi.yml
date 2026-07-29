@@ -43,7 +43,6 @@ jobs:
             echo "::error::dvb-vbi is $V but tag is $TAG"; exit 1
           fi
 
-      # dvb-vbi's dvb-common dependency must already be on crates.io.
       # Idempotent: an "already uploaded" error is treated as success.
       - name: Publish dvb-vbi
         run: |

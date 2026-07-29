@@ -47,7 +47,6 @@ jobs:
             echo "::error::timed-metadata is $V but tag is $TAG"; exit 1
           fi
 
-      # timed-metadata's scte35-splice / mp4-emsg / dvb-common dependencies must
       # already be on crates.io. Idempotent: an "already uploaded" error is treated
       # as success so a re-run is safe.
       - name: Publish timed-metadata
