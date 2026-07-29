@@ -1,6 +1,6 @@
 [package]
 name    = "rtcp-packet"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 description = "RTCP control packets: SR/RR/SDES/BYE/APP + compound packet (RFC 3550 §6) — spec-complete parse/serialize, no_std."
 license      = "MIT OR Apache-2.0"

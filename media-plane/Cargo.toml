@@ -30,7 +30,7 @@ event-listener   = { version = "5", default-features = false, features = ["std"]
 # fixtures in-test, to drive `timed_metadata::Timeline`'s 33-bit PTS
 # wrap-unroll across a genuine wrap boundary — see the event-log wrap test in
 # `src/trunk.rs`. Test-only: the library itself depends only on `timed-metadata`.
-scte35-splice = { path = "../scte35-splice", version = "1", default-features = false }
+scte35-splice = { path = "../scte35-splice", version = "2", default-features = false }
 
 [features]
 default = ["std"]

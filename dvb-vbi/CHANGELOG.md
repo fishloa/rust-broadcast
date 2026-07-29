@@ -5,6 +5,18 @@ All notable changes to `dvb-vbi` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] - 2026-07-29
+
+### Changed (BREAKING)
+- **Requires `broadcast-common` 9.** No functional or API change of this
+  crate's own; the bump exists solely to carry the new requirement.
+  `broadcast-common` 9.0.0 changed `Encrypt::encrypt` to take `&mut self` (so a
+  stateful implementor can own a running per-key IV counter — it fixes a
+  duplicate-IV/two-time-pad defect), and its `Parse`/`Serialize` traits appear
+  in this crate's public API, so a consumer cannot mix a `broadcast-common` 8
+  build with this one. That makes it a breaking release even though no line of
+  logic here moved.
+
 ## [0.2.0] - 2026-07-03
 ### Changed
 - Rust **edition 2024**; MSRV raised to **1.86**; format-argument modernisation. No functional or API change.
