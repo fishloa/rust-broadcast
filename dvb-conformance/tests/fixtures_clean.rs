@@ -96,6 +96,29 @@ fn m6_single_no_non_cc_priority1_events() {
         cc_count > 0,
         "m6-single.ts is known to have CC discontinuities — expected some ContinuityCountError events"
     );
+
+    // Exit criterion: a clean real fixture produces ZERO T-STD events.
+    // m6-single.ts is a well-formed DVB multiplex with correct PCR timing.
+    let tstd_errors: Vec<_> = events
+        .iter()
+        .filter(|e| {
+            e.indicator == Indicator::BufferError
+                || e.indicator == Indicator::EmptyBufferError
+                || e.indicator == Indicator::DataDelayError
+        })
+        .collect();
+    if !tstd_errors.is_empty() {
+        for e in &tstd_errors {
+            eprintln!(
+                "T-STD event on m6-single.ts: {:?} pid={:?} detail={}",
+                e.indicator, e.pid, e.detail
+            );
+        }
+        panic!(
+            "m6-single.ts raised {} T-STD event(s) on a clean fixture — investigate",
+            tstd_errors.len()
+        );
+    }
 }
 
 #[test]
