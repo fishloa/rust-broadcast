@@ -116,8 +116,11 @@ fn sample_to_py(py: Python<'_>, sample: &Sample) -> PyResult<PyObject> {
     let dict = PyDict::new(py);
     dict.set_item("data", PyBytes::new(py, &sample.data))?;
     dict.set_item("duration", sample.duration)?;
-    dict.set_item("is_sync", sample.is_sync)?;
-    dict.set_item("composition_offset", sample.composition_offset)?;
+    // transmux 0.20 moved the sync flag onto `SampleFlags` and made the
+    // composition offset a derived accessor (it is computed from pts/dts
+    // rather than stored), so both are read through the new shape.
+    dict.set_item("is_sync", sample.flags.is_sync)?;
+    dict.set_item("composition_offset", sample.composition_offset())?;
     Ok(dict.into())
 }
 
