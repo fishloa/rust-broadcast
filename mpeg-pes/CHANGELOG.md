@@ -1,5 +1,16 @@
 # Changelog
 
+## [Unreleased]
+
+### Changed (Breaking)
+- `TrickMode` (`packet`) now carries `#[non_exhaustive]` (issue #806's
+  non_exhaustive drift-guard audit: every other public enum in the workspace
+  already did). A downstream `match` on `TrickMode` now needs a wildcard arm.
+
+### Added
+- `tests/label_coverage.rs` + `tests/non_exhaustive_coverage.rs` drift guards
+  (issue #806).
+
 ## [0.3.0] - 2026-07-29
 
 ### Changed (BREAKING)

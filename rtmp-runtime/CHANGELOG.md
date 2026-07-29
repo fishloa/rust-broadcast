@@ -4,6 +4,16 @@ All notable changes to `rtmp-runtime` are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project adheres
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed (Breaking)
+- `LimitType`, `Fmt`, `MessageHeader` (`chunk`, `message`) now carry
+  `#[non_exhaustive]` (issue #806's non_exhaustive drift-guard audit). A
+  downstream `match` on any of these now needs a wildcard arm.
+
+### Added
+- `tests/non_exhaustive_coverage.rs` drift guard (issue #806).
+
 ## [0.2.0] - 2026-07-29
 
 ### Changed (BREAKING)
@@ -15,8 +25,6 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   in this crate's public API, so a consumer cannot mix a `broadcast-common` 8
   build with this one. That makes it a breaking release even though no line of
   logic here moved.
-
-## [Unreleased]
 
 ## [0.1.0] - 2026-07-26
 

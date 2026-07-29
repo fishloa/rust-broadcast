@@ -341,7 +341,12 @@ impl SmoothIngestSession {
         let mut pending = Vec::new();
         for si in &manifest.streams {
             let stream_type = si.stream_type;
-            if matches!(stream_type, StreamType::Text) {
+            // Only Video/Audio StreamIndexes are muxed; Text is explicitly
+            // out of scope, and `StreamType` is `#[non_exhaustive]` -- any
+            // future variant this code doesn't yet know how to mux is
+            // skipped the same way rather than reaching the exhaustive
+            // Video/Audio match in `finish_awaiting_first_fragments` below.
+            if !matches!(stream_type, StreamType::Video | StreamType::Audio) {
                 continue;
             }
             let quality = si.qualities.first().ok_or_else(|| MultimuxError::Connect {
@@ -459,7 +464,10 @@ impl SmoothIngestSession {
                             p.stream.name
                         ),
                     })?,
-                StreamType::Text => unreachable!("Text streams are skipped at manifest parse"),
+                _ => unreachable!(
+                    "only Video/Audio StreamIndexes reach here -- \
+                     Text and any other stream type are skipped at manifest parse"
+                ),
             };
             let quality = p.stream.qualities.first().expect("checked above");
             let local_spec = track_spec_from_quality_level(

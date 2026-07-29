@@ -1,5 +1,11 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+- `tests/label_coverage.rs` + `tests/non_exhaustive_coverage.rs` drift guards
+  (issue #806). No public API or behaviour change.
+
 ## [0.4.0] - 2026-07-29
 
 ### Changed (BREAKING)
@@ -19,8 +25,6 @@
   stayed coherent on its own 8 line. That reasoning was wrong: these crates
   exist to be composed, and the breakage only appears in a consumer that mixes
   them.
-
-## [Unreleased]
 
 ## [0.3.1] - 2026-07-21
 ### Changed

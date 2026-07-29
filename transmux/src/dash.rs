@@ -136,6 +136,7 @@ const ISO_639_LANGUAGE_DESCRIPTOR_TAG: u8 = 0x0A;
 /// Table 16 / §5.3.9.6) — the two modes are mutually exclusive on one template
 /// (§5.3.9.4.4 L1628).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[non_exhaustive]
 pub enum Addressing {
     /// `$Number$` substitution with a constant nominal `SegmentTemplate@duration`
     /// (§5.3.9.4.4): start of segment N = `(N - startNumber) * @duration`; only
@@ -229,6 +230,7 @@ pub struct InbandEventStream {
 /// Determines the `mimeType` and which geometry / audio attributes a
 /// `Representation` carries.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum MediaKind {
     /// Video track — `video/mp4`, carries `@width`/`@height`/`@frameRate`.
     Video,

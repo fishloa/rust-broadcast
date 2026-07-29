@@ -97,6 +97,7 @@ impl Escr {
 /// (ISO/IEC 13818-1 §2.4.3.8, Table 2-24).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
 pub enum TrickMode {
     /// `000` — fast forward.
     FastForward {

@@ -60,6 +60,7 @@ pub trait CaDevice {
 
 /// One recorded device operation, for assertions + differential testing.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum DeviceOp {
     /// A `write()` of these exact bytes.
     Write(Vec<u8>),
@@ -151,6 +152,7 @@ impl CaDevice for MockCaDevice {
 /// One link-layer event for diagnostics, captured in both directions by
 /// [`RecordingCaDevice`].
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum LinkEvent {
     /// Host → module: a frame the host wrote.
     Tx(Vec<u8>),

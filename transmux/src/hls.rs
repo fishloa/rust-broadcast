@@ -230,6 +230,7 @@ pub struct MapTag {
 
 /// `TYPE` attribute of `#EXT-X-PRELOAD-HINT` (RFC 8216bis §4.4.5.3).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[non_exhaustive]
 pub enum PreloadHintType {
     /// `PART` — the hinted resource is a Partial Segment.
     #[default]

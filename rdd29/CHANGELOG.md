@@ -5,6 +5,16 @@ All notable changes to `rdd29` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed (Breaking)
+- `ZoneId` (`object_definition`) now carries `#[non_exhaustive]` (issue
+  #806's non_exhaustive drift-guard audit). A downstream `match` on
+  `ZoneId` now needs a wildcard arm.
+
+### Added
+- `tests/non_exhaustive_coverage.rs` drift guard (issue #806).
+
 ## [0.2.0] - 2026-07-29
 
 ### Changed (BREAKING)

@@ -5,6 +5,27 @@ All notable changes to `transmux` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed (Breaking)
+- The following public enums now carry `#[non_exhaustive]` (issue #806's
+  non_exhaustive drift-guard audit -- every other public enum in the
+  workspace already did): `Addressing`, `MediaKind` (`dash`); `SgpdEntry`
+  (`sample_groups`); `PreloadHintType` (`hls`); `SampleEntryVariant`,
+  `StblChild` (`init_segment`); `MpdType` (`dash_parse`); `ColourType`
+  (`visual_ext`); `MpegAudioLayer` (`mpeg_legacy`); `StreamType`
+  (`smooth_parse`); `VvcNalUnitType` (`vvc_config`); `SmoothStreamType`
+  (`smooth`); `FormatArg`, `CliError`, `Output` (`cli`, `cli` feature). A
+  downstream `match` on any of these now needs a wildcard arm.
+- Fixed a latent panic this same audit surfaced: `smooth_parse::StreamType`
+  gaining `#[non_exhaustive]` exposed that `ll_hls_runtime`/`multimux`'s
+  Smooth-pull ingest matched `Video`/`Audio`/`Text` exhaustively and would
+  have panicked on any future stream type; see `multimux`'s own changelog for
+  the corresponding fix.
+
+### Added
+- `tests/non_exhaustive_coverage.rs` drift guard (issue #806).
+
 ## [0.20.0] - 2026-07-28
 
 ### Fixed

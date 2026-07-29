@@ -193,6 +193,7 @@ const TRACK_PID_MASK: u16 = 0x1FFF;
 /// `sd_start` (Table 33) and `sd_update` (Table 38): selected by `ts_flag`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
 pub enum SamplePayload<'a> {
     /// `ts_flag == 1` — a TS-level metadata-record loop
     /// (`number_of_metadata_records`).

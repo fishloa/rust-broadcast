@@ -134,6 +134,7 @@ pub struct BlockingQuery {
 /// `client::action::Action`/`ResourceId` convention) — see
 /// `tests/label_coverage.rs`'s SKIP list.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum LlHlsRequest {
     /// `GET <media playlist>`, optionally carrying a blocking-reload query.
     Playlist {
@@ -155,6 +156,7 @@ pub enum LlHlsRequest {
 /// which [`LlHlsRequest`] produced it. A data-carrying ADT — see
 /// `tests/label_coverage.rs`'s SKIP list.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum LlHlsBody {
     /// A rendered Media Playlist (`#EXTM3U` text).
     Playlist(String),

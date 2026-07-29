@@ -1,5 +1,11 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+- A crate-root note recording this crate's exemption from both #806
+  drift guards (it defines no `pub enum`). No functional change.
+
 ## [0.3.1] - 2026-07-21
 ### Changed
 - Widen the internal `mpeg-ts` dependency to `0.3` (was `0.2`; issue #663;

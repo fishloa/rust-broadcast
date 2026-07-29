@@ -137,6 +137,7 @@ fn write_u24_be(v: u32, buf: &mut [u8]) {
 /// The 2-bit `fmt` field selecting one of the 4 Chunk Message Header formats
 /// (§5.3.1.1, §5.3.1.2).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum Fmt {
     /// Type 0 (§5.3.1.2.1): the full 11-byte header.
     Type0,
@@ -359,6 +360,7 @@ fn needs_extended_timestamp(field: u32) -> bool {
 /// consumes an Extended Timestamp for `Fmt::Type3`; the reassembler must
 /// apply this rule itself once it is tracking that state.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum MessageHeader {
     /// Type 0 (§5.3.1.2.1, 11 bytes on the wire before any Extended
     /// Timestamp). MUST be used at the start of a chunk stream and whenever

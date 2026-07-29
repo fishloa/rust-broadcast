@@ -4,6 +4,19 @@ All notable changes to `ll-hls-runtime` are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project adheres
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed (Breaking)
+- `LlHlsRequest`, `LlHlsBody` (`server::engine`) now carry
+  `#[non_exhaustive]` (issue #806's non_exhaustive drift-guard audit). A
+  downstream `match` on either of these now needs a wildcard arm.
+- The client's part-prefetch now ignores (rather than exhaustively assumes
+  only `PART`/`MAP`) a future `PreloadHintType` variant from a newer
+  `transmux`, consistent with that enum's own new `#[non_exhaustive]`.
+
+### Added
+- `tests/non_exhaustive_coverage.rs` drift guard (issue #806).
+
 ## [0.2.0] - 2026-07-28
 
 ### Fixed

@@ -5,6 +5,17 @@ All notable changes to `dvb-ci-runtime` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed (Breaking)
+- `DeviceOp` (`device`), `LinkEvent` (`device`), and `TcState` (`transport`)
+  now carry `#[non_exhaustive]` (issue #806's non_exhaustive drift-guard
+  audit). A downstream `match` on any of these now needs a wildcard arm.
+
+### Added
+- `tests/label_coverage.rs` + `tests/non_exhaustive_coverage.rs` drift guards
+  (issue #806).
+
 ## [0.15.0] - 2026-07-29
 
 ### Changed (BREAKING)
@@ -24,8 +35,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   stayed coherent on its own 8 line. That reasoning was wrong: these crates
   exist to be composed, and the breakage only appears in a consumer that mixes
   them.
-
-## [Unreleased]
 
 ## [0.14.1] - 2026-07-25
 ### Fixed

@@ -1,5 +1,20 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+- Smooth-pull ingest (`source::smooth_pull`) now skips any `StreamType`
+  other than `Video`/`Audio` at manifest-parse time (previously only `Text`
+  was filtered, so a future `StreamType` variant would have reached an
+  exhaustive match and panicked). Surfaced by `transmux`'s `StreamType`
+  gaining `#[non_exhaustive]` (issue #806).
+- `output::llhls`/`origin::resource` now handle a future `LlHlsBody` variant
+  defensively (same status as the existing `Resource`/`Playlist` fallback),
+  consistent with `ll-hls-runtime`'s `LlHlsBody` gaining `#[non_exhaustive]`.
+
+### Added
+- `tests/label_coverage.rs` drift guard (issue #806).
+
 ## [0.5.0] - 2026-07-28
 
 ### Changed (BREAKING — pre-publish hardening)

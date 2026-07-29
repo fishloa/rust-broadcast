@@ -1,5 +1,11 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+- `tests/non_exhaustive_coverage.rs` drift guard (issue #806). No public API
+  or behaviour change.
+
 ## [0.3.1] - 2026-07-27
 ### Changed
 - Internal, test-only: dropped a redundant `&` in a `fixture_roundtrip`

@@ -223,6 +223,7 @@ impl Serialize for ProducerReferenceTimeBox {
 /// types carry their body as raw bytes in [`SgpdEntry::Unknown`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
 pub enum SgpdEntry {
     /// RollRecoveryEntry for grouping type `'roll'` (§10.6).
     ///

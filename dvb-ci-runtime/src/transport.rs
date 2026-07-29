@@ -42,6 +42,7 @@ pub const DEFAULT_REPLY_TIMEOUT: Duration = Duration::from_millis(1000);
 
 /// Transport connection state (EN 50221 §A.4, Figures 6/7).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum TcState {
     /// No connection; nothing sent.
     Idle,

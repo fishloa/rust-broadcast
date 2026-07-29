@@ -236,6 +236,12 @@ impl LlHlsClient {
                         };
                         self.ensure_init_requested(&map)?;
                     }
+                    _ => {
+                        // RFC 8216bis §4.4.5.3 defines only PART/MAP today; a
+                        // future hint type from a newer transmux is simply not
+                        // prefetched rather than treated as an error
+                        // (`PreloadHintType` is `#[non_exhaustive]`).
+                    }
                 }
             }
         }

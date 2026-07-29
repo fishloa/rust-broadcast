@@ -1,5 +1,15 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+- `tests/label_coverage.rs` drift guard (issue #806).
+- `tests/workspace_drift_guard_coverage.rs`: a workspace-level guard asserting
+  every library crate carries both the `label_coverage.rs` and
+  `non_exhaustive_coverage.rs` drift guards (or a recorded exemption), so a
+  newly added crate cannot silently skip either convention (issue #806).
+  No public API or behaviour change.
+
 ## [9.0.0] - 2026-07-27
 ### Changed (Breaking)
 - **`Encrypt::encrypt` now takes `&mut self`, not `&self`.** Needed so a

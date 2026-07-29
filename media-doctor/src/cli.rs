@@ -35,6 +35,7 @@ pub struct WatchArgs {
     version,
     about = "DVB/MPEG-TS diagnostics harness"
 )]
+#[non_exhaustive]
 pub enum Cli {
     /// Run diagnostic checks against a Transport Stream.
     Check(CheckArgs),

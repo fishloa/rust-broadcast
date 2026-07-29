@@ -239,6 +239,7 @@ pub const MAX_FORMAT_WIDTH: usize = 20;
 
 /// `MPD@type` (ISO/IEC 23009-1 §5.3.1.2 Table 3).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[non_exhaustive]
 pub enum MpdType {
     /// VOD — the presentation's Periods are fixed and never change.
     #[default]
