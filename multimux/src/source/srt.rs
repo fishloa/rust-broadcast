@@ -609,7 +609,7 @@ mod tests {
     /// rather than `next_samples`'s).
     #[tokio::test]
     async fn drive_socket_times_out_when_source_goes_silent() {
-        const READ_TIMEOUT: Duration = Duration::from_millis(150);
+        const READ_TIMEOUT: Duration = Duration::from_secs(2);
 
         let listener_addr = "127.0.0.1:0".parse::<std::net::SocketAddr>().unwrap();
         let mut listener = SrtListener::bind(listener_addr, HandshakeConfig::default())
@@ -635,18 +635,21 @@ mod tests {
             },
         );
         let route_handle = Arc::new(crate::route::RouteHandle::new(4.0, 500, 4));
-        // HANG GUARD (issue #826): backstop around `run_srt_caller`. The
-        // 150 ms read timeout causes it to return on its own; this only
-        // exists to fail "never returns" rather than hang, not a timing
-        // claim. The test's semantic assertion — that `run_srt_caller`
-        // returns an `Err` — gates on the inner read timeout, not this
-        // ceiling.
+        // DISCRIMINATOR (issue #826): must prove the operation returns
+        // through the CONFIGURED read timeout (above), not via the SRT
+        // library's own internal retry/default budget. Gap widened:
+        // configured read timeout raised from 150ms to 2s, assertion
+        // window raised from 10s to 15s — 15s is still well below any
+        // plausible fallback (SRT's internal default is 30s+). MUTATION
+        // CHECKED: inflating READ_TIMEOUT to 30s makes the 15s outer
+        // timeout fire first, producing `Elapsed` instead of
+        // `run_srt_caller`'s own error.
         let outcome = tokio::time::timeout(
-            Duration::from_secs(60),
+            Duration::from_secs(15),
             run_srt_caller(&route, trunk_config(), handshake(), &route_handle),
         )
         .await
-        .expect("run_srt_caller must not hang");
+        .expect("run_srt_caller must not exceed the assertion window");
         assert!(
             outcome.is_err(),
             "an idle-but-open publisher must surface a read-timeout error"

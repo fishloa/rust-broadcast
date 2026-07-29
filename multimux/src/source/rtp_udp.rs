@@ -536,14 +536,14 @@ mod tests {
         );
         let mut buf = vec![0u8; MAX_UDP_DATAGRAM];
 
-        const READ_TIMEOUT: Duration = Duration::from_millis(100);
-        // HANG GUARD (issue #826): backstop around the `recv_and_feed` call
-        // that is configured with the real 100 ms read timeout. The test's
-        // semantic assertion — that `recv_and_feed` returns an error — gates
-        // on that inner read timeout, not this ceiling. Only job is to fail
-        // "never returns" rather than hang.
+        const READ_TIMEOUT: Duration = Duration::from_secs(2);
+        // DISCRIMINATOR (issue #826): same gap-widening pattern as
+        // `ts_udp::recv_and_feed_times_out_when_source_goes_silent`.
+        // Configured read timeout raised 100ms→2s, assertion window
+        // raised 500ms→10s — 10s still discriminates against a 30+s
+        // system-default fallback.
         let outcome = tokio::time::timeout(
-            Duration::from_secs(60),
+            Duration::from_secs(10),
             recv_and_feed(
                 &socket,
                 &mut buf,
@@ -553,7 +553,7 @@ mod tests {
             ),
         )
         .await
-        .expect("recv_and_feed must not hang");
+        .expect("recv_and_feed must not exceed the assertion window");
         assert!(
             outcome.is_err(),
             "expected a recoverable read-timeout error"

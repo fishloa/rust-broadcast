@@ -1302,11 +1302,17 @@ mod tests {
         );
         let route_handle = std::sync::Arc::new(crate::route::RouteHandle::new(1.0, 250, 8));
 
-        // HANG GUARD (issue #826): bounds the whole call so a wiring bug
-        // fails in seconds, not forever — not an assertion on how fast the
-        // connect resolves. Connect is configured with a 500ms timeout on
-        // this route, so `run_rtsp` returns on its own well within this
-        // ceiling.
+        // HANG GUARD (issue #826): the test's semantic assertion is that
+        // the rtsps:// client sends a real TLS ClientHello on the wire
+        // (the TLS record-type and version-byte checks below). The TLS
+        // handshake against a plaintext listener fails instantly — the
+        // client sends its ClientHello, the plain TCP server reads it and
+        // closes the connection, and `connect_tls` returns an error
+        // instantly on the EOF. Verified: with connect timeout inflated
+        // to 30s, the test still passes in <100ms (TLS handshake failure
+        // is immediate, not timeout-driven). Raised to 60s for load
+        // tolerance since this is not a timing claim — only job is to
+        // fail a deadlock rather than hang CI.
         let result = tokio::time::timeout(
             std::time::Duration::from_secs(60),
             run_rtsp(&route, trunk_config(), handshake(), &route_handle),

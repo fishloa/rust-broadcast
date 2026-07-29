@@ -1197,19 +1197,22 @@ mod tests {
         let route = HlsPullRoute::new("stalled", format!("http://{addr}/media.m3u8"))
             .with_timeouts(IngestTimeouts {
                 connect: IngestTimeouts::default().connect,
-                read: Duration::from_millis(150),
+                read: Duration::from_secs(2),
             });
         let route_handle = std::sync::Arc::new(crate::route::RouteHandle::new(4.0, 500, 4));
-        // HANG GUARD (issue #826): backstop around `run_hls_pull` for the
-        // read-timeout test. The test's semantic assertion — that the
-        // 150 ms read timeout causes `run_hls_pull` to fail — gates on
-        // that inner timeout, not this ceiling.
+        // DISCRIMINATOR (issue #826): must prove the operation returns
+        // through the CONFIGURED read timeout, not via any longer system/
+        // library default. Gap widened: configured read timeout raised
+        // from 150ms to 2s, assertion window raised from 5s to 10s — 10s
+        // is still well below any plausible fallback. MUTATION CHECKED:
+        // inflating the configured read timeout to 30s makes the 10s
+        // outer timeout fire first, producing `Elapsed`.
         let result = tokio::time::timeout(
-            Duration::from_secs(60),
+            Duration::from_secs(10),
             run_hls_pull(&route, trunk_config(), handshake(), &route_handle),
         )
         .await
-        .expect("run_hls_pull must not hang");
+        .expect("run_hls_pull must not exceed the assertion window");
         assert!(
             result.is_err(),
             "a stalled playlist fetch must fail, not hang forever"

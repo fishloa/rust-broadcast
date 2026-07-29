@@ -269,7 +269,7 @@ mod tests {
         let addr = reserved.local_addr().expect("local addr");
         drop(reserved);
 
-        const READ_TIMEOUT: Duration = Duration::from_millis(100);
+        const READ_TIMEOUT: Duration = Duration::from_secs(2);
         let route = TsUdpRoute::new("cam-ts", addr.to_string(), None);
         let socket = bind(&route).await.expect("bind");
 
@@ -283,15 +283,20 @@ mod tests {
         );
         let mut buf = vec![0u8; MAX_TS_READ];
 
-        // HANG GUARD (issue #826): backstop wrapping the real-socket
-        // `recv_and_feed` call. `recv_and_feed` is configured with a real
-        // 100 ms `READ_TIMEOUT` (the timeout under test) so it returns on
-        // its own well within a second; this outer timeout only exists to
-        // fail "never returns" rather than hang CI, not a timing claim.
-        // The test's semantic assertion — that `recv_and_feed` returns an
-        // error — gates on the inner read timeout, not this ceiling.
+        // DISCRIMINATOR (issue #826): the assertion window must prove the
+        // operation returns through the CONFIGURED read timeout, not via
+        // any longer default/system timeout. Widen the gap rather than
+        // only the assertion side: the configured READ_TIMEOUT was raised
+        // from 100ms to 2s (generous for scheduling under load) and the
+        // assertion window from 500ms to 10s — 10s is still well below
+        // any plausible fallback, so a broken implementation that ignores
+        // the configured timeout and falls through to a 30+s system
+        // default is still caught. MUTATION CHECKED: inflating
+        // READ_TIMEOUT to 30s makes the 10s outer timeout fire first,
+        // producing `Elapsed` instead of `recv_and_feed`'s own error,
+        // proving this bound still discriminates.
         let outcome = tokio::time::timeout(
-            Duration::from_secs(60),
+            Duration::from_secs(10),
             recv_and_feed(
                 &socket,
                 &mut buf,
@@ -301,7 +306,7 @@ mod tests {
             ),
         )
         .await
-        .expect("recv_and_feed must not hang");
+        .expect("recv_and_feed must not exceed the assertion window");
         assert!(
             outcome.is_err(),
             "expected a recoverable read-timeout error"

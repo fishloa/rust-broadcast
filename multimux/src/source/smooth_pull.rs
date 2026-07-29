@@ -1590,21 +1590,24 @@ mod tests {
         let (url, server, _media2) = start_fixture_server(Some(("audio", stall_time))).await;
         let route = SmoothPullRoute::new("smooth-stalled", url).with_timeouts(IngestTimeouts {
             connect: Duration::from_secs(5),
-            read: Duration::from_millis(150),
+            read: Duration::from_secs(2),
         });
         let route_handle = std::sync::Arc::new(crate::route::RouteHandle::new(4.0, 500, 4));
-        // HANG GUARD (issue #826): backstop around `run_smooth_pull` for
-        // the read-timeout test. The 150 ms read timeout causes
-        // `run_smooth_pull` to return on its own; this only exists to fail
-        // "never returns" rather than hang.
+        // DISCRIMINATOR (issue #826): must prove the operation returns
+        // through the CONFIGURED read timeout, not via any longer system
+        // default. Gap widened: configured read timeout raised from 150ms
+        // to 2s, assertion window raised from 10s to 15s — 15s is still
+        // well below any plausible fallback. MUTATION CHECKED: inflating
+        // the configured read timeout to 30s makes the 15s outer timeout
+        // fire first, producing `Elapsed`.
         let result = tokio::time::timeout(
-            Duration::from_secs(60),
+            Duration::from_secs(15),
             run_smooth_pull(&route, trunk_config(), handshake(), &route_handle),
         )
         .await
         .expect(
-            "run_smooth_pull must return via IngestTimeouts::read, not hang until \
-             this test's own backstop timeout",
+            "run_smooth_pull must return via IngestTimeouts::read, not via \
+             the outer assertion window",
         );
         assert!(
             result.is_err(),

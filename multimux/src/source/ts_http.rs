@@ -485,25 +485,28 @@ mod tests {
         let route = TsHttpRoute::new("stalled", format!("http://{addr}/stream.ts")).with_timeouts(
             IngestTimeouts {
                 connect: Duration::from_secs(5),
-                read: Duration::from_millis(100),
+                read: Duration::from_secs(2),
             },
         );
         let route_handle = std::sync::Arc::new(crate::route::RouteHandle::new(4.0, 500, 4));
-        // HANG GUARD (issue #826): backstop around the whole `run_ts_http`
-        // call. The test's semantic assertion is that the 100ms read timeout
-        // causes `run_ts_http` to return on its own; this outer timeout only
-        // exists to fail "still running after 60s" rather than hang CI, not
-        // a timing claim. The `read_times_out` assertion against
-        // `IngestTimeouts::read` is what proves the test's invariant, not
-        // this ceiling.
+        // DISCRIMINATOR (issue #826): must prove the operation returns
+        // through the CONFIGURED read timeout (above), not via any longer
+        // system default. Gap widened: the configured read timeout was
+        // raised from 100ms to 2s (load-tolerant scheduling) and the
+        // assertion window from 5s to 10s — 10s is still well below any
+        // plausible fallback, so a broken implementation that ignores the
+        // configured timeout is still caught. MUTATION CHECKED: inflating
+        // the configured read timeout to 30s makes the 10s outer timeout
+        // fire first, producing `Elapsed` instead of `run_ts_http`'s own
+        // error, proving this bound discriminates.
         let result = tokio::time::timeout(
-            Duration::from_secs(60),
+            Duration::from_secs(10),
             run_ts_http(&route, trunk_config(), handshake(), &route_handle),
         )
         .await
         .expect(
-            "run_ts_http must return on its own via IngestTimeouts::read, \
-             not hang until this test's own backstop timeout",
+            "run_ts_http must return via IngestTimeouts::read, \
+             not via the outer assertion window",
         );
         assert!(
             result.is_err(),
