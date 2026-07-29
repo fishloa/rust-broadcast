@@ -106,6 +106,41 @@ impl AbandonReason {
 
 broadcast_common::impl_spec_display!(AbandonReason);
 
+/// What degraded the input signal — a condition the source container reported
+/// that the demuxer cannot repair (issue #778). `#[non_exhaustive]`: a future
+/// degradation source (e.g. RTP sequence-number gap) adds a variant, not a
+/// breaking change.
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InputDegradation {
+    /// The `transport_error_indicator` bit was set in the TS header
+    /// (ISO/IEC 13818-1 §2.4.3.2) — the demodulator could not correct this
+    /// packet.
+    TransportError,
+    /// A continuity-counter gap was observed, *excluding* legal duplicates
+    /// (same CC + byte-identical payload) and signalled discontinuities
+    /// (`discontinuity_indicator` in the adaptation field). `expected` is the
+    /// *last-observed* CC + 1 mod 16; `got` is the wire value that arrived.
+    ContinuityGap {
+        /// The expected counter (`last_cc + 1 & 0x0F`).
+        expected: u8,
+        /// The counter value that arrived on the wire.
+        got: u8,
+    },
+}
+
+impl InputDegradation {
+    /// A short, stable label for this degradation — used by `Display`.
+    pub fn name(&self) -> &'static str {
+        match self {
+            InputDegradation::TransportError => "transport error",
+            InputDegradation::ContinuityGap { .. } => "continuity gap",
+        }
+    }
+}
+
+broadcast_common::impl_spec_display!(InputDegradation);
+
 /// A demux event, drained incrementally from a streaming demuxer (issue #555:
 /// [`crate::ts_demux::StreamingTsDemux`]; issue #738:
 /// [`crate::flv_stream::StreamingFlvDemux`]).
@@ -224,6 +259,25 @@ pub enum DemuxEvent {
         /// when the container has one.
         provenance: EventProvenance,
     },
+    /// A signal from the source container that the input degraded in a way
+    /// the demuxer cannot repair — e.g. an MPEG-2 TS transport-error
+    /// indicator (`tei`) or a continuity-counter gap (issue #778). A
+    /// consumer repackaging a lossy UDP multicast can expose this as an
+    /// operational metric; it is the difference between a diagnosable fault
+    /// and a mystery.
+    #[non_exhaustive]
+    InputDegraded {
+        /// The track this degradation was observed on, when the carrying
+        /// PID/stream had already resolved to one at the time it fired.
+        /// `None` before that resolution (never fabricated) — degradation
+        /// can legitimately be observed on a PID whose track isn't known yet.
+        track: Option<u32>,
+        /// What degraded.
+        kind: InputDegradation,
+        /// Container-native identity for this observation (e.g. the TS PID),
+        /// when the container has one.
+        provenance: EventProvenance,
+    },
     /// Every currently-known declared track has resolved: none is still
     /// pending config recovery. By the time this fires,
     /// [`DemuxEvent::TrackAdded`] has already been (or is about to be, in the
@@ -316,6 +370,20 @@ impl DemuxEvent {
     /// why this variant needs a constructor.
     pub fn sample(track_id: u32, sample: Sample) -> Self {
         DemuxEvent::Sample { track_id, sample }
+    }
+
+    /// Construct a [`DemuxEvent::InputDegraded`] — see
+    /// [`Self::clock_reference`] for why this variant needs a constructor.
+    pub fn input_degraded(
+        track: Option<u32>,
+        kind: InputDegradation,
+        provenance: EventProvenance,
+    ) -> Self {
+        DemuxEvent::InputDegraded {
+            track,
+            kind,
+            provenance,
+        }
     }
 
     /// Construct a [`DemuxEvent::TracksResolved`] — see

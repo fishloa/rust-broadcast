@@ -343,7 +343,8 @@ pub use timing::{
 };
 pub use trickplay::{append_iframe_track, derive_iframe_track};
 pub use ts_demux::{
-    AbandonReason, DemuxEvent, DiscontinuityKind, EventProvenance, StreamingTsDemux, TsDemux,
+    AbandonReason, DemuxEvent, DiscontinuityKind, EventProvenance, InputDegradation,
+    StreamingTsDemux, TsDemux,
 };
 pub use ts_hls::{StreamingTsHlsSegmenter, TsHlsOutput, TsHlsPackager, TsSegment};
 pub use ts_mux::TsMux;
