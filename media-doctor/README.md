@@ -1,6 +1,6 @@
 # media-doctor — DVB / MPEG-TS diagnostics
 
-A lint-style analysis harness for MPEG-2 Transport Streams (and HLS playlists).
+A lint-style analysis harness for MPEG-2 Transport Streams, HLS playlists, and DASH MPDs.
 Each [`Diagnostic`] checks one rule against a TS byte buffer and pushes
 [`Finding`]s into a [`Report`]; a small CLI runs the full set over a file.
 `no_std` + `alloc` (the CLI is `std`).
@@ -21,6 +21,8 @@ Each [`Diagnostic`] checks one rule against a TS byte buffer and pushes
 | `ParamSetsCheck` | missing SPS/PPS/VPS before the first IDR/IRAP |
 | `InterlaceCheck` | interlaced coding (`frame_mbs_only_flag == 0`) reported as content fact |
 | `check_playlist` | HLS playlist validation (RFC 8216): missing `#EXTM3U`, missing `#EXT-X-TARGETDURATION`, `#EXTINF` exceeding target, malformed `#EXT-X-DATERANGE` |
+| `check_hls_playlist` | HLS playlist validator (RFC 8216bis): structured parse via `transmux::MediaPlaylist`, plus LL-HLS rules — `hls-preload-hint-with-endlist` (§4.4.5.3), `hls-skip-without-can-skip-until` (§4.4.3.8), `hls-part-duration-range` (§4.4.4.9), `hls-malformed-daterange` (§4.4.5.1), `hls-parse-error` (§4) |
+| `check_dash_mpd` | DASH MPD validator (ISO/IEC 23009-1): structured parse via `transmux::Mpd`, plus — `dash-static-mpd-missing-duration` (§5.3.1.2), `dash-representation-id-duplicate` (§5.3.5.2), `dash-segment-timeline-monotonic` (§5.3.9.6), `dash-period-no-adaptation-sets` (§5.3.2), `dash-bandwidth-mismatch` (§5.3.5.2) |
 
 Diagnostics are validated against **real captures** (e.g. a clean H.264+AAC
 stream and a multi-programme DVB capture yield zero false positives) plus
@@ -30,6 +32,12 @@ crafted fault fixtures.
 
 ```console
 $ media-doctor check --input stream.ts
+Findings: 0 error(s), 0 warning(s), 0 info(s)
+
+$ media-doctor check-hls --input playlist.m3u8
+Findings: 0 error(s), 0 warning(s), 0 info(s)
+
+$ media-doctor check-dash --input manifest.mpd
 Findings: 0 error(s), 0 warning(s), 0 info(s)
 ```
 
@@ -93,7 +101,9 @@ for f in report.findings() {
 }
 ```
 
-HLS playlists are validated with the free function `check_playlist(&str, &mut Report)`.
+HLS playlists are validated with `check_playlist` (legacy line-based) or
+`check_hls_playlist` (structured, using `transmux::MediaPlaylist::parse`).
+DASH MPDs are validated with `check_dash_mpd` (structured, using `transmux::Mpd::parse`).
 
 ## License
 

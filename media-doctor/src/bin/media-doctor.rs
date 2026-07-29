@@ -9,11 +9,11 @@ use std::thread;
 use std::time::Instant;
 
 use clap::Parser;
-use media_doctor::cli::{CheckArgs, Cli, WatchArgs};
+use media_doctor::cli::{CheckArgs, CheckDashArgs, CheckHlsArgs, Cli, WatchArgs};
 use media_doctor::{
     CcAnomalyCheck, CodecSignallingCheck, Diagnostic, FpsCadenceCheck, InterlaceCheck,
     ParamSetsCheck, PatPmtVersionCheck, PcrCheck, PtsCheck, Report, Scte35Check, SyncByteCheck,
-    WatchState, check_container_codec, run_all,
+    WatchState, check_container_codec, check_dash_mpd, check_hls_playlist, run_all,
 };
 
 fn main() {
@@ -21,6 +21,18 @@ fn main() {
     match cli {
         Cli::Check(args) => {
             if let Err(e) = run_check(&args) {
+                eprintln!("error: {e}");
+                process::exit(1);
+            }
+        }
+        Cli::CheckHls(args) => {
+            if let Err(e) = run_check_hls(&args) {
+                eprintln!("error: {e}");
+                process::exit(1);
+            }
+        }
+        Cli::CheckDash(args) => {
+            if let Err(e) = run_check_dash(&args) {
                 eprintln!("error: {e}");
                 process::exit(1);
             }
@@ -80,6 +92,38 @@ fn run_check(args: &CheckArgs) -> Result<(), Box<dyn std::error::Error>> {
         #[cfg(not(feature = "serde"))]
         {
             // Should not happen: cli feature implies serde, but be safe.
+            eprintln!("JSON output requires the `serde` feature.");
+            process::exit(1);
+        }
+    } else {
+        println!("{report}");
+    }
+    Ok(())
+}
+
+fn run_check_hls(args: &CheckHlsArgs) -> Result<(), Box<dyn std::error::Error>> {
+    let text = fs::read_to_string(&args.input)?;
+    let mut report = Report::new();
+    check_hls_playlist(&text, &mut report);
+    emit_report(&report, args.json)
+}
+
+fn run_check_dash(args: &CheckDashArgs) -> Result<(), Box<dyn std::error::Error>> {
+    let text = fs::read_to_string(&args.input)?;
+    let mut report = Report::new();
+    check_dash_mpd(&text, &mut report);
+    emit_report(&report, args.json)
+}
+
+fn emit_report(report: &Report, json: bool) -> Result<(), Box<dyn std::error::Error>> {
+    if json {
+        #[cfg(feature = "serde")]
+        {
+            let json = serde_json::to_string_pretty(report)?;
+            println!("{json}");
+        }
+        #[cfg(not(feature = "serde"))]
+        {
             eprintln!("JSON output requires the `serde` feature.");
             process::exit(1);
         }
