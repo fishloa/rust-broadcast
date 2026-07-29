@@ -1,3 +1,10 @@
+# Its own workspace root, so `cargo` invoked in here never walks up and adopts
+# the repo's workspace (which pins MSRV 1.86 and the lockstep versions). The
+# root manifest's `exclude` keeps it out of the member glob, but that alone does
+# not stop the upward walk — `transmux-py` already carries this stanza for the
+# same reason, and without it a build from inside a git worktree fails outright.
+[workspace]
+
 [package]
 name    = "dvb-si-py"
 version = "0.1.0"
