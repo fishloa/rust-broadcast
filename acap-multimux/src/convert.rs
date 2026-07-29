@@ -74,13 +74,9 @@ const HVCC_NUM_TEMPORAL_LAYERS: u8 = 1;
 /// only the auxiliary `CodecConfig` width/height fields are affected.
 const UNKNOWN_DIMENSION: u16 = 0;
 
-/// Microseconds per second, for converting a VDO µs timestamp delta into
-/// track-timescale ticks.
+/// Microseconds per second, for converting a VDO µs timestamp (absolute or a
+/// delta) into track-timescale ticks.
 const MICROS_PER_SECOND: u64 = 1_000_000;
-
-/// `Sample::from_annexb` composition time offset — VDO delivers samples in
-/// decode order with no separate PTS/DTS, so `pts == dts` (offset 0).
-const COMPOSITION_OFFSET_ZERO: i32 = 0;
 
 /// The video codec family of a VDO stream.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -287,8 +283,28 @@ fn clamp_u16(v: u32) -> u16 {
 /// [`extract_param_sets`]/[`track_spec`] — H.264 and H.265 access units both
 /// use the same Annex B -> length-prefixed conversion, so it isn't needed to
 /// select behaviour here.
-pub fn au_to_sample(_codec: Codec, annexb_au: &[u8], duration_ticks: u32, is_sync: bool) -> Sample {
-    Sample::from_annexb(annexb_au, duration_ticks, is_sync, COMPOSITION_OFFSET_ZERO)
+///
+/// `pts_dts_ticks` is passed as **both** `dts` and `pts` (transmux 0.20's
+/// `Sample` carries an absolute `dts`/`pts` pair rather than the old
+/// relative-duration + composition-offset model) — VDO delivers access units
+/// in decode order with no separate PTS/DTS, so `pts == dts`, matching every
+/// other in-tree source's "no B-frames from this transport" samples (e.g.
+/// `transmux::ts_demux`'s `Sample::new(data, Some(dts), Some(dts), ...)`
+/// call sites).
+pub fn au_to_sample(
+    _codec: Codec,
+    annexb_au: &[u8],
+    pts_dts_ticks: i64,
+    duration_ticks: u32,
+    is_sync: bool,
+) -> Sample {
+    Sample::from_annexb(
+        annexb_au,
+        Some(pts_dts_ticks),
+        Some(pts_dts_ticks),
+        Some(duration_ticks),
+        is_sync,
+    )
 }
 
 /// Convert a VDO µs-timestamp delta into track-timescale ticks.
@@ -301,6 +317,27 @@ pub fn duration_ticks(prev_ts_us: u64, ts_us: u64, clock_rate: u32) -> u32 {
     let delta_us = ts_us.saturating_sub(prev_ts_us);
     let ticks = delta_us.saturating_mul(u64::from(clock_rate)) / MICROS_PER_SECOND;
     ticks.min(u64::from(u32::MAX)) as u32
+}
+
+/// Convert a VDO **absolute** µs timestamp (`vdo::StreamBuffer::timestamp`,
+/// µs since some device epoch — VDO does not document it as wall-clock, only
+/// as monotonically increasing) into an absolute track-timescale tick count,
+/// for `Sample::from_annexb`'s `dts`/`pts`. Unlike [`duration_ticks`] this
+/// takes one timestamp, not a delta — every other in-tree transmux source
+/// passes its own wire clock's raw (unrebased) value directly as `dts`/`pts`
+/// (e.g. `transmux::ts_demux`'s PCR/PTS-derived ticks), so VDO's own µs clock
+/// is converted and used the same way rather than rebased to start near zero.
+///
+/// The multiply-then-divide runs in `u128` (not `u64`, unlike
+/// [`duration_ticks`]'s delta): `ts_us * clock_rate` can itself exceed
+/// `u64::MAX` for a large `clock_rate` well before the final `/
+/// MICROS_PER_SECOND` would bring it back into range, so clamping the
+/// intermediate product in `u64` would silently produce a wrong (truncated)
+/// answer instead of an honestly saturated one. Saturates at `i64::MAX`
+/// rather than panicking on the final `u128 -> i64` narrowing.
+pub fn absolute_ticks(ts_us: u64, clock_rate: u32) -> i64 {
+    let ticks = u128::from(ts_us) * u128::from(clock_rate) / u128::from(MICROS_PER_SECOND);
+    i64::try_from(ticks).unwrap_or(i64::MAX)
 }
 
 #[cfg(test)]
@@ -334,5 +371,23 @@ mod tests {
     fn clamp_u16_saturates() {
         assert_eq!(clamp_u16(u32::MAX), u16::MAX);
         assert_eq!(clamp_u16(1920), 1920);
+    }
+
+    #[test]
+    fn absolute_ticks_converts_micros_to_90khz_ticks() {
+        // 1 second @ 90 kHz = 90_000 ticks exactly.
+        assert_eq!(absolute_ticks(1_000_000, 90_000), 90_000);
+    }
+
+    #[test]
+    fn absolute_ticks_saturates_on_overflow() {
+        // u64::MAX us * u32::MAX (clock_rate) / 1e6 ~= 7.9e22 ticks — far past
+        // i64::MAX (~9.2e18) — MUTATION VERIFIED: replacing the `u128`
+        // multiply-then-divide with a `u64` one (mirroring `duration_ticks`)
+        // makes this assertion fail with `left: 18446744073709551615` (the
+        // `u64` saturating_mul cap, divided back down) instead of `i64::MAX`,
+        // confirming the `u128` intermediate — not the final `try_from` — is
+        // what makes this overflow actually reachable.
+        assert_eq!(absolute_ticks(u64::MAX, u32::MAX), i64::MAX);
     }
 }
