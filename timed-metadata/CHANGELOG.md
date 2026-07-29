@@ -8,6 +8,19 @@ All notable changes to this crate. Format: [Keep a Changelog](https://keepachang
 - `tests/non_exhaustive_coverage.rs` drift guard (issue #806). No public API
   or behaviour change.
 
+### Removed
+- Dev-only: the `ssai_ad_stitch` example + its integration test (issue #812).
+  The 0.4.1 "move" from `transmux` copied the file here but never deleted
+  `transmux`'s own copy, so the two crates ended up shipping a byte-identical
+  24 KB example under the same name — a cargo output-filename collision.
+  `transmux`'s manifest already documents this example as the reason for its
+  `scte35-splice`/`timed-metadata` dev-deps, and this crate's own half of the
+  SSAI story (SCTE-35 -> `EXT-X-DATERANGE`, SCTE-35 -> `emsg`, both with
+  round-trip verification) is already demonstrated more directly by the
+  existing `scte35_to_hls`/`scte35_to_dash` examples, so the duplicate here
+  was dropped rather than re-split. Dropped the now-unused `mpeg-ts`
+  dev-dependency it needed. No public API or behaviour change.
+
 ## [0.4.1] - 2026-07-27
 
 ### Changed
