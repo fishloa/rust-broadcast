@@ -40,7 +40,6 @@ jobs:
             echo "::error::dvb-ci-runtime is $V but tag is $TAG"; exit 1
           fi
 
-      # dvb-ci-runtime's dvb-ci / dvb-common dependencies must already be on
       # crates.io. Idempotent: an "already uploaded" error is treated as success
       # so a re-run is safe.
       - name: Publish dvb-ci-runtime

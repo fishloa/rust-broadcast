@@ -43,7 +43,6 @@ jobs:
             echo "::error::scte35-splice is $V but tag is $TAG"; exit 1
           fi
 
-      # scte35-splice's dvb-common dependency must already be on crates.io.
       # Idempotent: an "already uploaded" error is treated as success.
       - name: Publish scte35-splice
         run: |
