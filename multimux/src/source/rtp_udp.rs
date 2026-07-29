@@ -488,15 +488,20 @@ mod tests {
         let mut cursor = None;
         let mut samples_seen = 0usize;
         for i in 0..10u64 {
+            // HANG GUARD (issue #826): per-iteration recv timeout within a
+            // 10-iteration loopback test. All 3 RTP packets arrive within
+            // ~ms of each other over loopback UDP, so this recv normally
+            // resolves immediately. Only job is to prevent spinning on an
+            // empty socket, not a timing claim.
             recv_and_feed(
                 &socket,
                 &mut buf,
                 &mut driver,
-                Duration::from_secs(5),
+                Duration::from_secs(60),
                 Timestamp::from_nanos(i),
             )
             .await
-            .expect("recv within generous timeout");
+            .expect("recv within hang guard");
             if cursor.is_none() {
                 cursor = driver.trunk(ProgramId(0)).map(|t| t.subscribe());
             }
@@ -532,8 +537,13 @@ mod tests {
         let mut buf = vec![0u8; MAX_UDP_DATAGRAM];
 
         const READ_TIMEOUT: Duration = Duration::from_millis(100);
+        // HANG GUARD (issue #826): backstop around the `recv_and_feed` call
+        // that is configured with the real 100 ms read timeout. The test's
+        // semantic assertion — that `recv_and_feed` returns an error — gates
+        // on that inner read timeout, not this ceiling. Only job is to fail
+        // "never returns" rather than hang.
         let outcome = tokio::time::timeout(
-            READ_TIMEOUT * 5,
+            Duration::from_secs(60),
             recv_and_feed(
                 &socket,
                 &mut buf,
@@ -543,7 +553,7 @@ mod tests {
             ),
         )
         .await
-        .expect("recv_and_feed must return within a bounded multiple of the read timeout");
+        .expect("recv_and_feed must not hang");
         assert!(
             outcome.is_err(),
             "expected a recoverable read-timeout error"

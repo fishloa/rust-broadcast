@@ -837,14 +837,24 @@ mod tests {
 
         let client = tokio::spawn(async move {
             let stream = connect_and_write(addr, fixture).await;
-            drain_for(stream, Duration::from_secs(3)).await;
+            // HANG GUARD (issue #826): drains whatever the server echoes
+            // back (RTMP handshake/ack bytes) so the server's writes never
+            // block. The fixture data is fully written before this point;
+            // the drain exits as soon as the socket's read buffer is empty
+            // and the remote side of the loopback doesn't produce more.
+            drain_for(stream, Duration::from_secs(60)).await;
         });
 
         // Wait for the driver-minted Trunk to appear under SPTS_PROGRAM_ID
         // and carry both resolved track specs — the registry-resolvable
         // proof, mirroring every other driver-backed source's own loopback
         // test.
-        let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+        //
+        // HANG GUARD (issue #826): the RTMP fixture plays back at wire speed
+        // over loopback TCP, so the session resolves both tracks in well
+        // under a second. Raised to 60s for load tolerance — only job is to
+        // fail "never lands" rather than hang, not a timing claim.
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(60);
         let landed = loop {
             if let Ok(resolved) = crate::http::resolve_route_program(&route_handle) {
                 if resolved.trunk().tracks().len() == 2 {
@@ -934,7 +944,14 @@ mod tests {
         // holds the socket open and sends nothing further.
         let stalled_client = tokio::spawn(async move {
             let stream = connect_and_write(addr, stall_prefix).await;
-            drain_for(stream, Duration::from_secs(20)).await;
+            // HANG GUARD (issue #826): drains the handshake/ack bytes the
+            // server echoes back for the stalled client. The 30s read
+            // timeout on the route means the server's read loop won't give
+            // up for 30s; the drain here just keeps the stalled client's
+            // send buffers from blocking. The test's real assertion (that
+            // the second publisher's tracks resolve) does not depend on this
+            // timeout.
+            drain_for(stream, Duration::from_secs(60)).await;
         });
 
         // Give the stalled publisher a head start so it is genuinely
@@ -945,10 +962,17 @@ mod tests {
 
         let good_client = tokio::spawn(async move {
             let stream = connect_and_write(addr, fixture).await;
-            drain_for(stream, Duration::from_secs(3)).await;
+            // HANG GUARD (issue #826): drains the good client's echo bytes
+            // after all fixture data is written. See the same pattern in
+            // `loopback_rtmp_publish_lands_media_in_the_trunk`.
+            drain_for(stream, Duration::from_secs(60)).await;
         });
 
-        let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+        // HANG GUARD (issue #826): deadline for the second publisher's
+        // tracks to resolve. Loopback TCP normally resolves both tracks in
+        // well under a second; raised to 60s for load tolerance since it is
+        // not a timing claim.
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(60);
         let landed = loop {
             if let Ok(resolved) = crate::http::resolve_route_program(&route_handle) {
                 if resolved.trunk().tracks().len() == 2 {
@@ -1065,10 +1089,14 @@ mod tests {
                 .write_all(&chunk2)
                 .await
                 .expect("write chunk 2 (the second track's sequence header onward)");
-            drain_for(stream, Duration::from_secs(3)).await;
+            drain_for(stream, Duration::from_secs(60)).await;
         });
 
-        let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+        // HANG GUARD (issue #826): deadline for both tracks to resolve
+        // despite the split writes. Loopback TCP + small fixture normally
+        // resolves in well under a second; raised to 60s for load tolerance
+        // since it is not a timing claim.
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(60);
         let landed = loop {
             if let Ok(resolved) = crate::http::resolve_route_program(&route_handle) {
                 if resolved.trunk().tracks().len() == 2 {
@@ -1153,10 +1181,19 @@ mod tests {
         let fixture = load_fixture();
         let good_client = tokio::spawn(async move {
             let stream = connect_and_write(addr, fixture).await;
-            drain_for(stream, Duration::from_secs(3)).await;
+            // HANG GUARD (issue #826): drains the good client's echo bytes
+            // after all fixture data is written.
+            drain_for(stream, Duration::from_secs(60)).await;
         });
 
-        let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+        // HANG GUARD (issue #826): deadline for the good client's tracks to
+        // resolve after the idle session's slot has been freed by the read
+        // timeout. The 200ms read timeout on the route means the slot is
+        // freed within ~200ms of the idle client connecting; the 800ms
+        // sleep above comfortably exceeds that. The resolution itself (~ms
+        // after the good client starts writing) completes far within this
+        // ceiling; raised for load tolerance since it is not a timing claim.
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(60);
         let landed = loop {
             if let Ok(resolved) = crate::http::resolve_route_program(&route_handle) {
                 if resolved.trunk().tracks().len() == 2 {

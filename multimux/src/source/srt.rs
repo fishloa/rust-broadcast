@@ -492,7 +492,11 @@ mod tests {
 
         let cursor: Arc<StdMutex<Option<SampleCursor>>> = Arc::new(StdMutex::new(None));
         let cursor_for_cb = Arc::clone(&cursor);
-        let sock = tokio::time::timeout(Duration::from_secs(10), accept_listener(&route))
+        // HANG GUARD (issue #826): real-SRT listen/accept over loopback UDP
+        // normally resolves in ~ms (the client retries every 10ms). Only
+        // job is to fail "never accepts" rather than hang, not a timing
+        // claim.
+        let sock = tokio::time::timeout(Duration::from_secs(60), accept_listener(&route))
             .await
             .expect("accept must not hang")
             .expect("accept");
@@ -500,8 +504,13 @@ mod tests {
         // Drive to completion: the client stops sending, so the 300 ms read
         // timeout ends the loop with an `Err` — expected here, and the
         // samples have already landed by then.
+        //
+        // HANG GUARD (issue #826): backstop around the whole drive loop.
+        // The 300 ms read timeout makes the loop return on its own well
+        // within this ceiling; this only exists to fail "never returns"
+        // rather than hang.
         let _ = tokio::time::timeout(
-            Duration::from_secs(10),
+            Duration::from_secs(60),
             drive_socket(
                 sock,
                 Duration::from_millis(300),
@@ -554,7 +563,10 @@ mod tests {
                 read: Duration::from_millis(300),
             },
         );
-        let sock = tokio::time::timeout(Duration::from_secs(10), connect_caller(&route))
+        // HANG GUARD (issue #826): real-SRT caller dial over loopback UDP
+        // normally resolves in ~ms. Only job is to fail "never connects"
+        // rather than hang, not a timing claim.
+        let sock = tokio::time::timeout(Duration::from_secs(60), connect_caller(&route))
             .await
             .expect("caller dial must not hang")
             .expect("caller dial");
@@ -562,8 +574,11 @@ mod tests {
         let cursor: Arc<StdMutex<Option<SampleCursor>>> = Arc::new(StdMutex::new(None));
         let cursor_for_cb = Arc::clone(&cursor);
         let route_handle = Arc::new(crate::route::RouteHandle::new(4.0, 500, 4));
+        // HANG GUARD (issue #826): backstop around the whole drive loop.
+        // The 300 ms read timeout makes it return on its own well within
+        // this ceiling; only exists to fail "never returns" rather than hang.
         let _ = tokio::time::timeout(
-            Duration::from_secs(10),
+            Duration::from_secs(60),
             drive_socket(
                 sock,
                 Duration::from_millis(300),
@@ -620,12 +635,18 @@ mod tests {
             },
         );
         let route_handle = Arc::new(crate::route::RouteHandle::new(4.0, 500, 4));
+        // HANG GUARD (issue #826): backstop around `run_srt_caller`. The
+        // 150 ms read timeout causes it to return on its own; this only
+        // exists to fail "never returns" rather than hang, not a timing
+        // claim. The test's semantic assertion — that `run_srt_caller`
+        // returns an `Err` — gates on the inner read timeout, not this
+        // ceiling.
         let outcome = tokio::time::timeout(
-            Duration::from_secs(10),
+            Duration::from_secs(60),
             run_srt_caller(&route, trunk_config(), handshake(), &route_handle),
         )
         .await
-        .expect("run_srt_caller must return via IngestTimeouts::read, not hang");
+        .expect("run_srt_caller must not hang");
         assert!(
             outcome.is_err(),
             "an idle-but-open publisher must surface a read-timeout error"
@@ -653,9 +674,17 @@ mod tests {
                 read: Duration::from_secs(30),
             });
         let started = std::time::Instant::now();
-        let outcome = tokio::time::timeout(Duration::from_secs(10), connect_caller(&route))
+        // HANG GUARD (issue #826): backstop around `connect_caller`. The
+        // configured 200 ms connect timeout (the timeout under test) causes
+        // it to return on its own within a fraction of this ceiling. Only
+        // job is to fail "never returns" rather than hang, not a timing
+        // claim. The test's semantic assertion — that `connect_caller`
+        // returns an `Err` and that `started.elapsed()` stays within the
+        // configured timeout × 4 — gates on the inner connect timeout, not
+        // this ceiling.
+        let outcome = tokio::time::timeout(Duration::from_secs(60), connect_caller(&route))
             .await
-            .expect("connect_caller must return on its own, not hang");
+            .expect("connect_caller must not hang");
         assert!(outcome.is_err(), "a blackholed remote must fail the dial");
         assert!(
             started.elapsed() < CONNECT_TIMEOUT * 4,

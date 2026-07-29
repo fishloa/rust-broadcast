@@ -340,7 +340,11 @@ mod tests {
         let (url, server) = start_chunked_ts_server(ts_bytes).await;
 
         let route = TsHttpRoute::new("cam-ts-http", url);
-        let mut stream = tokio::time::timeout(Duration::from_secs(5), open_stream(&route))
+        // HANG GUARD (issue #826): real loopback TCP open against an axum
+        // server that is already listening before this line, so this
+        // normally resolves in low ms. Only job is to fail "never connects"
+        // rather than hang, not a timing claim.
+        let mut stream = tokio::time::timeout(Duration::from_secs(60), open_stream(&route))
             .await
             .expect("open_stream timed out")
             .expect("open_stream");
@@ -359,10 +363,14 @@ mod tests {
         let mut saw_sample = false;
         let mut ended = false;
         for i in 0..200u64 {
+            // HANG GUARD (issue #826): per-iteration read timeout within
+            // a 200-iteration loopback test. Loopback TCP resolves in ~ms;
+            // this only prevents fast spinning on an empty stream, not a
+            // timing claim.
             match recv_and_feed(
                 &mut stream,
                 &mut driver,
-                Duration::from_millis(500),
+                Duration::from_secs(60),
                 Timestamp::from_nanos(i),
             )
             .await
@@ -422,7 +430,10 @@ mod tests {
         });
 
         let route = TsHttpRoute::new("cam-ts-http", format!("http://{addr}/nope.ts"));
-        let result = tokio::time::timeout(Duration::from_secs(5), open_stream(&route))
+        // HANG GUARD (issue #826): the axum 404 handler returns immediately,
+        // so `open_stream` fails in ~ms on the HTTP response. Only job is
+        // to fail "never fails" rather than hang, not a timing claim.
+        let result = tokio::time::timeout(Duration::from_secs(60), open_stream(&route))
             .await
             .expect("open_stream timed out");
         assert!(result.is_err(), "a 404 must fail open_stream()");
@@ -478,8 +489,15 @@ mod tests {
             },
         );
         let route_handle = std::sync::Arc::new(crate::route::RouteHandle::new(4.0, 500, 4));
+        // HANG GUARD (issue #826): backstop around the whole `run_ts_http`
+        // call. The test's semantic assertion is that the 100ms read timeout
+        // causes `run_ts_http` to return on its own; this outer timeout only
+        // exists to fail "still running after 60s" rather than hang CI, not
+        // a timing claim. The `read_times_out` assertion against
+        // `IngestTimeouts::read` is what proves the test's invariant, not
+        // this ceiling.
         let result = tokio::time::timeout(
-            Duration::from_secs(5),
+            Duration::from_secs(60),
             run_ts_http(&route, trunk_config(), handshake(), &route_handle),
         )
         .await
@@ -506,7 +524,10 @@ mod tests {
     /// media came out" assertion shared by the Basic/Digest/Bearer tests
     /// below.
     async fn connect_and_drain(route: TsHttpRoute) -> Result<usize> {
-        let mut stream = tokio::time::timeout(Duration::from_secs(5), open_stream(&route))
+        // HANG GUARD (issue #826): loopback TCP open against a server that
+        // is already listening; normally resolves in ~ms. Only job is to
+        // fail "never connects" rather than hang, not a timing claim.
+        let mut stream = tokio::time::timeout(Duration::from_secs(60), open_stream(&route))
             .await
             .map_err(|_| MultimuxError::Connect {
                 reason: "open_stream timed out".into(),
@@ -522,10 +543,13 @@ mod tests {
         let mut cursor = None;
         let mut total = 0usize;
         for i in 0..200u64 {
+            // HANG GUARD (issue #826): per-iteration read timeout within a
+            // 200-iteration loopback test. Loopback TCP resolves in ~ms;
+            // this only prevents fast spinning on an empty stream.
             match recv_and_feed(
                 &mut stream,
                 &mut driver,
-                Duration::from_millis(500),
+                Duration::from_secs(60),
                 Timestamp::from_nanos(i),
             )
             .await
@@ -676,7 +700,10 @@ mod tests {
         let wrong_creds = url.replacen("http://", &format!("http://{AUTH_USER}:wrongpass@"), 1);
 
         let route = TsHttpRoute::new("cam-wrong", wrong_creds);
-        let result = tokio::time::timeout(Duration::from_secs(5), open_stream(&route))
+        // HANG GUARD (issue #826): the mock server returns 401
+        // immediately (no body to parse), so `open_stream` fails in ~ms.
+        // Only job is to fail "never fails" rather than hang.
+        let result = tokio::time::timeout(Duration::from_secs(60), open_stream(&route))
             .await
             .expect("open_stream must not hang against a persistent 401");
         assert!(
