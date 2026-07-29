@@ -38,7 +38,9 @@ use std::path::PathBuf;
 
 use broadcast_common::{Encrypt, Unpackage};
 use bytes::Bytes;
-use transmux::{CencEncryptor, CencScheme, CodecConfig, EncryptConfig, IvGen, SubsamplePolicy};
+use transmux::{
+    CencEncryptor, CencScheme, CodecConfig, ConstantIvSenc, EncryptConfig, IvGen, SubsamplePolicy,
+};
 use transmux::{Media, TsDemux};
 
 const KID_A: [u8; 16] = [
@@ -188,6 +190,7 @@ fn cenc_cfg() -> EncryptConfig {
         iv: IvGen::Counter,
         pattern: None,
         subsample: SubsamplePolicy::Video,
+        constant_iv_senc: ConstantIvSenc::default(),
     }
 }
 
@@ -247,6 +250,7 @@ fn cbcs_encrypt_changes_bytes_and_records_well_formed_metadata() {
         iv: IvGen::Counter,
         pattern: Some((1, 9)),
         subsample: SubsamplePolicy::Video,
+        constant_iv_senc: ConstantIvSenc::default(),
     };
     CencEncryptor::new(KEY_A)
         .encrypt(&mut media_a, &cfg_a)
@@ -554,7 +558,7 @@ fn constant_iv_under_cbcs_still_works() {
         .encrypt(&mut media, &cfg)
         .expect("cbcs + constant IV is the standard convention and must be accepted");
     let enc = media.tracks[0].encryption.as_ref().expect("Some");
-    assert_eq!(enc.tenc.default_per_sample_iv_size, 0);
+    assert_eq!(enc.tenc.default_per_sample_iv_size, 16);
     assert_eq!(
         enc.tenc.default_constant_iv.as_deref(),
         Some(&CONSTANT_IV[..])
@@ -562,8 +566,8 @@ fn constant_iv_under_cbcs_still_works() {
     assert!(
         enc.samples
             .iter()
-            .all(|e| e.initialization_vector.is_empty()),
-        "a constant-IV track carries no per-sample senc IV"
+            .all(|e| e.initialization_vector == CONSTANT_IV),
+        "default constant_iv_senc=Emit must carry the constant IV in every senc entry"
     );
     assert_ne!(snapshot(&media), original, "cbcs must change bytes");
 }

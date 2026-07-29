@@ -48,8 +48,8 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     use transmux::movie_fragment::{FragmentProtection, protect_media_segment};
     use transmux::pipeline::CodecConfig;
     use transmux::{
-        CencEncryptor, CencScheme, CmafMux, DashPackager, EncryptConfig, IvGen, Media,
-        SubsamplePolicy, TrackEncryption, TsDemux, cenc_ext_x_key,
+        CencEncryptor, CencScheme, CmafMux, ConstantIvSenc, DashPackager, EncryptConfig, IvGen,
+        Media, SubsamplePolicy, TrackEncryption, TsDemux, cenc_ext_x_key,
     };
 
     // A test KID/key (never a real production key) — the standard `cbcs`
@@ -102,6 +102,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         iv: IvGen::Constant(CONSTANT_IV),
         pattern: Some((1, 9)),
         subsample: SubsamplePolicy::Video,
+        constant_iv_senc: ConstantIvSenc::default(),
     };
     CencEncryptor::new(KEY).encrypt(&mut media, &cfg)?;
     let track_id = media.tracks[0].spec.track_id;

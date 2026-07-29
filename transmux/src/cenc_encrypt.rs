@@ -65,9 +65,9 @@ const KEY_LEN: usize = 16;
 /// Per-sample IV size (bytes) for [`IvGen::Counter`] (every counter IV is an
 /// 8-byte big-endian value) and the fallback for an empty [`IvGen::Explicit`]
 /// list — the common CMAF `cenc` convention (ISO/IEC 23001-7 §12.2 permits 8
-/// or 16). [`IvGen::Constant`] instead derives `0` (see [`tenc_iv_fields`]) —
-/// a `cbcs` sample's constant IV then lives only in `tenc.default_constant_IV`,
-/// never per-sample in `senc`.
+/// or 16). [`IvGen::Constant`] derives `16` per sample when
+/// [`ConstantIvSenc::Emit`] (the default), or `0` when
+/// [`ConstantIvSenc::Omit`] — see [`tenc_iv_fields`].
 const PER_SAMPLE_IV_SIZE: u8 = 8;
 
 /// Default `cbcs` pattern (`crypt_byte_block`:`skip_byte_block`) — 1 crypt
@@ -153,6 +153,50 @@ pub enum IvGen {
     Constant([u8; KEY_LEN]),
 }
 
+/// Whether a `cbcs` track with [`IvGen::Constant`] emits a `senc` box with
+/// the constant IV replicated per sample (the default, for interop with
+/// decryptors such as Bento4 `mp4decrypt` that silently ignore protected
+/// tracks lacking a `senc`), or omits the `senc`/`saiz`/`saio` triple
+/// entirely (the spec-minimal shape — ISO/IEC 23001-7 §12.2/§12.3 permit it
+/// because `tenc.default_constant_IV` carries the lone IV and there is no
+/// per-sample subsample map to record). The self-consistency gate
+/// ([`CencDecryptor`](crate::CencDecryptor) round-trip) is tested for both
+/// shapes; the new default shape is additionally verified against Bento4's
+/// `mp4decrypt`. Has no effect when `iv` is not [`IvGen::Constant`] or
+/// `scheme` is not [`CencScheme::Cbcs`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[non_exhaustive]
+pub enum ConstantIvSenc {
+    /// Emit a `senc` box with each sample's entry carrying the constant IV
+    /// replicated (`per_sample_iv_size = 16`). The default — chosen for
+    /// maximum third-party decryptor interop (Bento4 `mp4decrypt`, Shaka
+    /// Packager, and several other tools require an explicit `senc` in the
+    /// `traf` to recognize the track as decryptable at all, even when a
+    /// `tenc.default_constant_IV` is present). The few extra bytes per
+    /// fragment are the cost of interop.
+    #[default]
+    Emit,
+    /// Omit `senc`/`saiz`/`saio` entirely. The spec-minimal, `tenc`-only
+    /// shape: every decryptor that follows ISO/IEC 23001-7 to the letter
+    /// can decrypt this shape, and it costs zero overhead per fragment,
+    /// but it is known to be silently ignored by common tools (notably
+    /// Bento4 `mp4decrypt` 1.6.0.0 — it exits 0 but the `mdat` is
+    /// unchanged). Opt in when you control the decryptor chain.
+    Omit,
+}
+
+impl ConstantIvSenc {
+    /// Human-readable label for this enum variant.
+    pub fn name(&self) -> &'static str {
+        match self {
+            ConstantIvSenc::Emit => "emit",
+            ConstantIvSenc::Omit => "omit",
+        }
+    }
+}
+
+broadcast_common::impl_spec_display!(ConstantIvSenc);
+
 /// How the protected byte ranges (subsample map) of each sample are chosen.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
@@ -186,6 +230,11 @@ pub struct EncryptConfig {
     pub pattern: Option<(u8, u8)>,
     /// How the subsample map is chosen.
     pub subsample: SubsamplePolicy,
+    /// Whether to emit a `senc` box for `cbcs` + [`IvGen::Constant`] tracks
+    /// (default: [`ConstantIvSenc::Emit`] — emits a `senc` with the constant
+    /// IV replicated in each sample entry for maximum decryptor interop).
+    /// See [`ConstantIvSenc`] for the rationale and the opt-out shape.
+    pub constant_iv_senc: ConstantIvSenc,
 }
 
 /// Applies CENC/CBCS sample protection to a [`Media`], implementing
@@ -328,7 +377,8 @@ impl Encrypt for CencEncryptor {
             }
             CencScheme::Cenc => (0, 0),
         };
-        let (per_sample_iv_size, default_constant_iv) = tenc_iv_fields(&cfg.iv)?;
+        let (per_sample_iv_size, default_constant_iv) =
+            tenc_iv_fields(&cfg.iv, cfg.constant_iv_senc)?;
         let tenc = TrackEncryptionBox {
             // `cbcs` pattern fields only carry meaning under version 1
             // (ISO/IEC 23001-7 §12.2); `cenc` has no pattern, so version 0.
@@ -353,8 +403,8 @@ impl Encrypt for CencEncryptor {
         // sample is touched. The main loop below then consumes this exact
         // plan (never re-resolving), so what was validated and what gets
         // recorded/ciphered can never drift apart.
-        let plan = self.plan_sample_ivs(media, &cfg.iv)?;
-        assert_ivs_unique(&plan)?;
+        let plan = self.plan_sample_ivs(media, &cfg.iv, cfg.constant_iv_senc)?;
+        assert_ivs_unique(&plan, cfg.constant_iv_senc)?;
 
         for (track, track_ivs) in media.tracks.iter_mut().zip(plan.iter()) {
             let nal_codec = nal_codec_for(&track.spec.config);
@@ -392,6 +442,7 @@ impl Encrypt for CencEncryptor {
                 scheme: cfg.scheme,
                 tenc: tenc.clone(),
                 samples: entries,
+                constant_iv_senc: cfg.constant_iv_senc,
             });
         }
 
@@ -478,13 +529,18 @@ impl CencEncryptor {
     /// This is the data [`assert_ivs_unique`] validates and the main cipher
     /// loop consumes directly (never re-resolved), so there is no window in
     /// which what was checked for uniqueness can differ from what gets used.
-    fn plan_sample_ivs(&self, media: &Media, iv_gen: &IvGen) -> Result<Vec<Vec<Vec<u8>>>> {
+    fn plan_sample_ivs(
+        &self,
+        media: &Media,
+        iv_gen: &IvGen,
+        constant_iv_senc: ConstantIvSenc,
+    ) -> Result<Vec<Vec<Vec<u8>>>> {
         let mut media_sample_idx = 0usize;
         let mut plan = Vec::with_capacity(media.tracks.len());
         for track in &media.tracks {
             let mut track_ivs = Vec::with_capacity(track.samples.len());
             for _ in &track.samples {
-                track_ivs.push(self.resolve_iv(iv_gen, media_sample_idx)?);
+                track_ivs.push(self.resolve_iv(iv_gen, media_sample_idx, constant_iv_senc)?);
                 media_sample_idx += 1;
             }
             plan.push(track_ivs);
@@ -499,10 +555,17 @@ impl CencEncryptor {
     /// Assumes [`Self::validate_iv_gen`] has already checked the list length,
     /// IV lengths, and overflow bound for this `Media`; the length/overflow
     /// guards here are kept as a belt-and-braces second line, never the only
-    /// one. [`IvGen::Constant`] resolves to an *empty* IV — its 16-byte seed
-    /// lives only in `tenc.default_constant_IV` (see [`tenc_iv_fields`]),
-    /// never per-sample.
-    fn resolve_iv(&self, iv_gen: &IvGen, idx: usize) -> Result<Vec<u8>> {
+    /// one. [`IvGen::Constant`] returns the 16-byte constant IV when
+    /// `constant_iv_senc` is [`ConstantIvSenc::Emit`] (the default —
+    /// recorded per-sample in `senc`), or an empty IV when
+    /// [`ConstantIvSenc::Omit`] (the spec-minimal shape where the IV lives
+    /// only in `tenc.default_constant_IV`).
+    fn resolve_iv(
+        &self,
+        iv_gen: &IvGen,
+        idx: usize,
+        constant_iv_senc: ConstantIvSenc,
+    ) -> Result<Vec<u8>> {
         match iv_gen {
             IvGen::Counter => {
                 let v = self
@@ -524,7 +587,10 @@ impl CencEncryptor {
                 }
                 Ok(iv.clone())
             }
-            IvGen::Constant(_) => Ok(Vec::new()),
+            IvGen::Constant(iv) => match constant_iv_senc {
+                ConstantIvSenc::Emit => Ok(iv.to_vec()),
+                ConstantIvSenc::Omit => Ok(Vec::new()),
+            },
         }
     }
 }
@@ -543,10 +609,17 @@ impl CencEncryptor {
 /// unmodified, a rejection here happens strictly before `media` is touched.
 /// Cost is one `BTreeSet` of borrowed slices (no IV is cloned).
 ///
-/// [`IvGen::Constant`]'s empty per-sample IVs are skipped: there is no
-/// per-sample IV on the wire at all (it lives once in
-/// `tenc.default_constant_IV`), and that variant is `cbcs`-only.
-fn assert_ivs_unique(plan: &[Vec<Vec<u8>>]) -> Result<()> {
+/// [`IvGen::Constant`] IVs are skipped: when
+/// [`ConstantIvSenc::Emit`](super::ConstantIvSenc::Emit) every entry carries
+/// the same constant IV by design (the duplicate check would be a false
+/// positive), and when [`ConstantIvSenc::Omit`](super::ConstantIvSenc::Omit)
+/// every entry is empty (there is no per-sample IV at all).
+fn assert_ivs_unique(plan: &[Vec<Vec<u8>>], constant_iv_senc: ConstantIvSenc) -> Result<()> {
+    // Constant-IV tracks carry the same IV per sample by design —
+    // the per-key uniqueness rule does not apply to them.
+    if matches!(constant_iv_senc, ConstantIvSenc::Emit) {
+        return Ok(());
+    }
     let mut seen: BTreeSet<&[u8]> = BTreeSet::new();
     for track_ivs in plan {
         for iv in track_ivs {
@@ -613,10 +686,15 @@ fn nal_subsamples(codec: NalCodec, data: &[u8]) -> Result<Vec<SubSampleEntry>> {
 }
 
 /// Derive `tenc`'s `(default_per_sample_iv_size, default_constant_IV)` pair
-/// from the chosen [`IvGen`] (ISO/IEC 23001-7 §12.2):
+/// from the chosen [`IvGen`] and [`ConstantIvSenc`] choice (ISO/IEC 23001-7 §12.2):
 ///
-/// - [`IvGen::Constant`]: `default_per_sample_iv_size = 0`, `default_constant_IV
-///   = Some(iv)` — the mandatory pairing when no per-sample IV is carried.
+/// - [`IvGen::Constant`] + [`ConstantIvSenc::Emit`]: `default_per_sample_iv_size = 16`,
+///   `default_constant_IV = Some(iv)` — the constant IV is carried in both
+///   `tenc` and replicated into every `senc` entry (the default for maximum
+///   interop).
+/// - [`IvGen::Constant`] + [`ConstantIvSenc::Omit`]: `default_per_sample_iv_size = 0`,
+///   `default_constant_IV = Some(iv)` — the spec-minimal, `tenc`-only shape
+///   (no `senc`/`saiz`/`saio`).
 /// - [`IvGen::Counter`]: `default_per_sample_iv_size = 8` (every counter IV is
 ///   an 8-byte big-endian value — see [`CencEncryptor::resolve_iv`]), no
 ///   constant IV.
@@ -631,9 +709,15 @@ fn nal_subsamples(codec: NalCodec, data: &[u8]) -> Result<Vec<SubSampleEntry>> {
 ///   no sample to measure; [`CencEncryptor::validate_iv_gen`] will itself
 ///   reject the count mismatch against the `Media`'s real total sample
 ///   count).
-fn tenc_iv_fields(iv_gen: &IvGen) -> Result<(u8, Option<Vec<u8>>)> {
+fn tenc_iv_fields(
+    iv_gen: &IvGen,
+    constant_iv_senc: ConstantIvSenc,
+) -> Result<(u8, Option<Vec<u8>>)> {
     match iv_gen {
-        IvGen::Constant(iv) => Ok((0, Some(iv.to_vec()))),
+        IvGen::Constant(iv) => match constant_iv_senc {
+            ConstantIvSenc::Emit => Ok((16, Some(iv.to_vec()))),
+            ConstantIvSenc::Omit => Ok((0, Some(iv.to_vec()))),
+        },
         IvGen::Counter => Ok((PER_SAMPLE_IV_SIZE, None)),
         IvGen::Explicit(ivs) => {
             let len = match ivs.first() {
@@ -768,6 +852,7 @@ mod tests {
             iv: IvGen::Counter,
             pattern: None,
             subsample: SubsamplePolicy::Video,
+            constant_iv_senc: ConstantIvSenc::default(),
         };
         CencEncryptor::resume(KEY, 7)
             .encrypt(&mut media, &cfg)
@@ -811,6 +896,7 @@ mod tests {
             iv: IvGen::Counter,
             pattern: Some((1, 9)),
             subsample: SubsamplePolicy::Video,
+            constant_iv_senc: ConstantIvSenc::default(),
         };
         CencEncryptor::new(KEY)
             .encrypt(&mut media, &cfg)
@@ -851,6 +937,7 @@ mod tests {
             iv: IvGen::default(),
             pattern: None,
             subsample: SubsamplePolicy::WholeSample,
+            constant_iv_senc: ConstantIvSenc::default(),
         };
         CencEncryptor::new(KEY)
             .encrypt(&mut media, &cfg)
@@ -873,6 +960,7 @@ mod tests {
             iv: IvGen::Explicit(alloc::vec![alloc::vec![0u8; 8]; n - 1]),
             pattern: None,
             subsample: SubsamplePolicy::WholeSample,
+            constant_iv_senc: ConstantIvSenc::default(),
         };
         let err = CencEncryptor::new(KEY)
             .encrypt(&mut media, &cfg)
@@ -890,6 +978,7 @@ mod tests {
             iv: IvGen::Explicit(alloc::vec![alloc::vec![0u8; 17]; n]),
             pattern: None,
             subsample: SubsamplePolicy::WholeSample,
+            constant_iv_senc: ConstantIvSenc::default(),
         };
         let err = CencEncryptor::new(KEY)
             .encrypt(&mut media, &cfg)
@@ -911,6 +1000,7 @@ mod tests {
             iv: IvGen::Explicit(alloc::vec![alloc::vec![]; n]),
             pattern: None,
             subsample: SubsamplePolicy::WholeSample,
+            constant_iv_senc: ConstantIvSenc::default(),
         };
         let err = CencEncryptor::new(KEY)
             .encrypt(&mut media, &cfg)
@@ -931,6 +1021,7 @@ mod tests {
             iv: IvGen::Explicit(alloc::vec![alloc::vec![0u8; 12]; n]),
             pattern: None,
             subsample: SubsamplePolicy::WholeSample,
+            constant_iv_senc: ConstantIvSenc::default(),
         };
         let err = CencEncryptor::new(KEY)
             .encrypt(&mut media, &cfg)
@@ -952,6 +1043,7 @@ mod tests {
                 iv: IvGen::Explicit(distinct_ivs(n, len)),
                 pattern: None,
                 subsample: SubsamplePolicy::WholeSample,
+                constant_iv_senc: ConstantIvSenc::default(),
             };
             CencEncryptor::new(KEY)
                 .encrypt(&mut media, &cfg)
@@ -977,6 +1069,7 @@ mod tests {
             iv: IvGen::Counter,
             pattern: Some((0, 9)),
             subsample: SubsamplePolicy::Video,
+            constant_iv_senc: ConstantIvSenc::default(),
         };
         let err = CencEncryptor::new(KEY)
             .encrypt(&mut media, &cfg)
@@ -997,6 +1090,7 @@ mod tests {
             iv: IvGen::Counter,
             pattern: Some((17, 9)),
             subsample: SubsamplePolicy::Video,
+            constant_iv_senc: ConstantIvSenc::default(),
         };
         let err = CencEncryptor::new(KEY)
             .encrypt(&mut media, &cfg)
@@ -1029,6 +1123,7 @@ mod tests {
                     None
                 },
                 subsample: SubsamplePolicy::Video,
+                constant_iv_senc: ConstantIvSenc::default(),
             };
             CencEncryptor::resume(KEY, 3)
                 .encrypt(&mut media, &cfg)
@@ -1083,6 +1178,7 @@ mod tests {
             iv: IvGen::Counter,
             pattern: None,
             subsample: SubsamplePolicy::WholeSample,
+            constant_iv_senc: ConstantIvSenc::default(),
         };
         CencEncryptor::resume(KEY, BASE)
             .encrypt(&mut media, &cfg)
@@ -1127,6 +1223,7 @@ mod tests {
             iv: IvGen::Constant([0x5Au8; KEY_LEN]),
             pattern: None,
             subsample: SubsamplePolicy::WholeSample,
+            constant_iv_senc: ConstantIvSenc::default(),
         };
         let err = CencEncryptor::new(KEY)
             .encrypt(&mut media, &cfg)
@@ -1151,6 +1248,7 @@ mod tests {
             iv: IvGen::Explicit(distinct_ivs(first_track_len, 8)),
             pattern: None,
             subsample: SubsamplePolicy::WholeSample,
+            constant_iv_senc: ConstantIvSenc::default(),
         };
         let err = CencEncryptor::new(KEY)
             .encrypt(&mut media, &cfg)
@@ -1181,7 +1279,7 @@ mod tests {
             alloc::vec![dup.clone(), alloc::vec![0u8, 0, 0, 0, 0, 0, 0, 2]],
             alloc::vec![dup],
         ];
-        let err = assert_ivs_unique(&plan).unwrap_err();
+        let err = assert_ivs_unique(&plan, ConstantIvSenc::Omit).unwrap_err();
         assert!(matches!(err, Error::InvalidInput(_)));
 
         // A correctly-generated (strictly increasing, Media-wide) plan must
@@ -1194,7 +1292,7 @@ mod tests {
             alloc::vec![alloc::vec![0u8, 0, 0, 0, 0, 0, 0, 2]],
         ];
         assert!(
-            assert_ivs_unique(&good_plan).is_ok(),
+            assert_ivs_unique(&good_plan, ConstantIvSenc::Omit).is_ok(),
             "a correctly Media-wide-continuous plan must pass the backstop"
         );
     }
@@ -1225,6 +1323,7 @@ mod tests {
             iv: IvGen::Explicit(distinct_ivs(n - 1, 8)), // wrong total count
             pattern: None,
             subsample: SubsamplePolicy::WholeSample,
+            constant_iv_senc: ConstantIvSenc::default(),
         };
         let err = CencEncryptor::new(KEY)
             .encrypt(&mut media, &cfg)
@@ -1257,6 +1356,7 @@ mod tests {
             iv: IvGen::Counter,
             pattern: None,
             subsample: SubsamplePolicy::WholeSample,
+            constant_iv_senc: ConstantIvSenc::default(),
         };
 
         let mut enc = CencEncryptor::new(KEY);

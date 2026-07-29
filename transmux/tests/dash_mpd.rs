@@ -23,9 +23,9 @@ use std::path::PathBuf;
 use broadcast_common::{Package, Unpackage};
 use transmux::pipeline::CodecConfig;
 use transmux::{
-    Addressing, CencScheme, CmafMux, ContentProtectionSystem, DashPackager, Fmp4Demux,
-    InbandEventStream, MP4_PROTECTION_SCHEME_URI, Media, Sample, SampleEncryptionEntry, Segmenter,
-    TrackEncryption, TrackEncryptionBox, TrackSegments, TrackSpec, TsDemux,
+    Addressing, CencScheme, CmafMux, ConstantIvSenc, ContentProtectionSystem, DashPackager,
+    Fmp4Demux, InbandEventStream, MP4_PROTECTION_SCHEME_URI, Media, Sample, SampleEncryptionEntry,
+    Segmenter, TrackEncryption, TrackEncryptionBox, TrackSegments, TrackSpec, TsDemux,
 };
 
 // ---------------------------------------------------------------------------
@@ -730,6 +730,7 @@ fn track_encryption(scheme: CencScheme, kid: [u8; 16], sample_count: usize) -> T
             };
             sample_count
         ],
+        ConstantIvSenc::default(),
     )
 }
 

@@ -166,20 +166,27 @@ pub struct TrackEncryption {
     /// Per-sample IV + subsample map, in decode order — ISO/IEC 23001-7 §12.3.
     /// `samples.len()` must equal the owning [`Track`]'s `samples.len()`.
     pub samples: Vec<crate::cenc::SampleEncryptionEntry>,
+    /// Whether a `cbcs` + [`crate::IvGen::Constant`](crate::cenc_encrypt::IvGen::Constant)
+    /// track should emit a `senc` box with the constant IV replicated per
+    /// sample. See [`ConstantIvSenc`](crate::cenc_encrypt::ConstantIvSenc).
+    pub constant_iv_senc: crate::cenc_encrypt::ConstantIvSenc,
 }
 
 impl TrackEncryption {
     /// Build a track's crypto carrier from its scheme, `tenc` defaults, and
     /// per-sample IV/subsample entries in decode order.
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         scheme: crate::cenc::CencScheme,
         tenc: crate::cenc::TrackEncryptionBox,
         samples: Vec<crate::cenc::SampleEncryptionEntry>,
+        constant_iv_senc: crate::cenc_encrypt::ConstantIvSenc,
     ) -> Self {
         Self {
             scheme,
             tenc,
             samples,
+            constant_iv_senc,
         }
     }
 }
