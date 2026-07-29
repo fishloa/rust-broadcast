@@ -314,6 +314,10 @@ async fn ll_hls_client_reference_reconstructs_decodable_stream() {
     let (store, playlist_url, server) = start_ll_origin(spec.clone()).await;
     let producer = tokio::spawn(run_live_producer(store, spec.clone(), fed_samples.clone()));
 
+    // HANG GUARD (issue #807): 20s on a ~3s real-time-paced fixture playback
+    // (h264_aac.ts, 25fps). No latency claim here — this file's job is
+    // decode-correctness via ffprobe, not timing; only fails a genuine
+    // deadlock rather than hanging CI forever.
     let (init_bytes, got_samples, stats) = tokio::time::timeout(Duration::from_secs(20), async {
         let mut client = TokioClient::new(&playlist_url).expect("client builds");
         let mut init_bytes: Option<Vec<u8>> = None;
@@ -545,6 +549,9 @@ async fn non_ll_full_segment_path_also_decodes() {
         axum::serve(listener, app).await.expect("axum server");
     });
 
+    // HANG GUARD (issue #807): 10s on a non-live, non-paced fetch of a single
+    // pre-built segment -- normally near-instant. Only fails a genuine
+    // deadlock rather than hanging CI forever.
     let (got_init, got_samples) = tokio::time::timeout(Duration::from_secs(10), async {
         let mut client =
             TokioClient::new(format!("http://{addr}/media.m3u8")).expect("client builds");

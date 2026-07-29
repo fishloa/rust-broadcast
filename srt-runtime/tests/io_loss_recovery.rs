@@ -12,8 +12,11 @@
 //! queue, the dropped payloads are never recovered and this test times out /
 //! fails on a byte mismatch.
 //!
-//! Wrapped in [`tokio::time::timeout`] (15 s) so a regression FAILS fast
-//! instead of hanging forever.
+//! HANG GUARD (issue #807): wrapped in [`tokio::time::timeout`] so a
+//! regression FAILS fast instead of hanging forever. Real loopback UDP +
+//! real NAK/retransmit timers, so genuinely slower than a pure in-memory
+//! test, but still normally well under a second; the bound is generous on
+//! purpose and makes no latency claim.
 
 #![cfg(feature = "tokio")]
 
@@ -38,7 +41,7 @@ const NUM_PAYLOADS: usize = 40;
 const DROP_MODULUS: usize = 7;
 const DROP_REMAINDER: usize = 3;
 const DROP_WINDOW: usize = NUM_PAYLOADS - 10;
-const TEST_TIMEOUT: Duration = Duration::from_secs(15);
+const TEST_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// A minimal loss-injecting UDP relay: forwards datagrams in both directions
 /// between a "client-facing" socket (the address the Caller connects to) and

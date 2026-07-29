@@ -348,7 +348,13 @@ mod tests {
             shutdown_rx,
         ));
 
-        let reached_live = wait_until(Duration::from_secs(2), || {
+        // HANG GUARD (issue #807): `tiny_backoff` caps at 20ms and this needs
+        // at most a couple of retries, so this normally resolves in well
+        // under 100ms; `wait_until` polls every 1ms rather than sleeping a
+        // fixed span, so raising this costs nothing when the state is
+        // already reached. Only job: fail "never reaches Live" rather than
+        // hang, not a timing claim.
+        let reached_live = wait_until(Duration::from_secs(60), || {
             route.health() == HealthState::Live
         })
         .await;
@@ -361,7 +367,9 @@ mod tests {
         // retry a third time — proving the "ended after being live" arm
         // retries exactly like the "failed before ever live" arm already
         // proven above, not just once each.
-        let retried_again = wait_until(Duration::from_secs(2), || {
+        //
+        // HANG GUARD (issue #807): same reasoning as `reached_live` above.
+        let retried_again = wait_until(Duration::from_secs(60), || {
             call_count.load(Ordering::SeqCst) >= 3
         })
         .await;
@@ -371,7 +379,11 @@ mod tests {
         );
 
         shutdown_tx.send(true).unwrap();
-        tokio::time::timeout(Duration::from_secs(1), handle)
+        // HANG GUARD (issue #807): shutdown with `tiny_backoff` (max 20ms)
+        // means the loop is never sitting in a long sleep to cancel; this
+        // normally returns in ~ms. Raised for load-tolerance -- only job is
+        // to fail "task never returns" rather than hang.
+        tokio::time::timeout(Duration::from_secs(60), handle)
             .await
             .expect("supervise_driver returns promptly on shutdown")
             .expect("supervise_driver task did not panic");
@@ -387,11 +399,22 @@ mod tests {
     /// shutdown.changed() => { break; } }` with a plain, un-cancellable
     /// `tokio::time::sleep(delay).await` makes this test fail:
     /// `.expect("supervise_driver must return promptly on shutdown, not
-    /// after the 10s backoff")` panics on the `Err` from
-    /// `tokio::time::timeout(Duration::from_millis(500), handle)`, i.e. a
+    /// after the 90s backoff")` panics on the `Err` from
+    /// `tokio::time::timeout(Duration::from_secs(5), handle)`, i.e. a
     /// `Elapsed` timeout error, because the spawned task is still sleeping
-    /// out its 10s backoff instead of observing shutdown. Recompiled and
+    /// out its 90s backoff instead of observing shutdown. Recompiled and
     /// re-run to confirm that exact panic, then reverted.
+    ///
+    /// NOT a pure hang guard (issue #807): this assertion window must stay
+    /// meaningfully smaller than the backoff length below, or a broken
+    /// (non-cancellable) sleep would still pass by coincidence once the
+    /// window is raised close to the backoff itself. The fix here is
+    /// widening the GAP rather than the window alone: the backoff was raised
+    /// from 10s/30s to 60s/90s (free to do — `tokio::time::timeout` still
+    /// fires at the window's own bound regardless of how long the inner
+    /// backoff is, so this does not slow down the failing case), and the
+    /// window itself raised from 500ms to 5s for scheduling headroom, still
+    /// 12x below the shortest backoff it must distinguish from.
     #[tokio::test]
     async fn shutdown_stops_supervise_driver_promptly_mid_backoff() {
         let route = Arc::new(RouteHandle::new(1.0, 500, 8));
@@ -402,7 +425,7 @@ mod tests {
         // A backoff far larger than the shutdown-stops-it assertion window
         // below: if shutdown didn't cancel the sleep, the timeout on the
         // join would fire first and this test would fail.
-        let backoff = Backoff::new(Duration::from_secs(10), Duration::from_secs(30), 2.0);
+        let backoff = Backoff::new(Duration::from_secs(60), Duration::from_secs(90), 2.0);
         let (shutdown_tx, shutdown_rx) = watch::channel(false);
 
         let handle = tokio::spawn(supervise_driver(
@@ -414,13 +437,13 @@ mod tests {
         ));
 
         // Give the loop a moment to fail its first attempt and enter the
-        // (10s) backoff sleep.
+        // (60s) backoff sleep.
         tokio::time::sleep(Duration::from_millis(20)).await;
         shutdown_tx.send(true).unwrap();
 
-        tokio::time::timeout(Duration::from_millis(500), handle)
+        tokio::time::timeout(Duration::from_secs(5), handle)
             .await
-            .expect("supervise_driver must return promptly on shutdown, not after the 10s backoff")
+            .expect("supervise_driver must return promptly on shutdown, not after the 90s backoff")
             .expect("supervise_driver task did not panic");
     }
 }

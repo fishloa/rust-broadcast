@@ -36,9 +36,14 @@ fn make_si_ts_packet(pid: u16, _payload_byte: u8) -> [u8; 188] {
     pkt
 }
 
-/// Drain a SectionStream with a 5-second timeout.
+/// Drain a SectionStream with a hard timeout.
+///
+/// HANG GUARD (issue #807): in-memory Cursor over hand-crafted small byte
+/// streams, normally completes well under a second. Only job is to fail a
+/// stalled/deadlocked stream rather than hang CI forever — not a timing
+/// claim, so generous on purpose.
 async fn drain_section_stream<R: tokio::io::AsyncRead + Unpin>(stream: &mut SectionStream<R>) {
-    tokio::time::timeout(Duration::from_secs(5), async {
+    tokio::time::timeout(Duration::from_secs(60), async {
         loop {
             let item = std::future::poll_fn(|cx| Pin::new(&mut *stream).poll_next(cx)).await;
             if item.is_none() {
@@ -47,7 +52,7 @@ async fn drain_section_stream<R: tokio::io::AsyncRead + Unpin>(stream: &mut Sect
         }
     })
     .await
-    .expect("SectionStream stalled — timeout after 5 s");
+    .expect("SectionStream stalled — hang guard (issue #807) fired after 60 s");
 }
 
 // ── test 1: clean stream ──────────────────────────────────────────────────────

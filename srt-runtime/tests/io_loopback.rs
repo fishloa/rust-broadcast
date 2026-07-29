@@ -4,8 +4,11 @@
 //! Drives the full stack: UDP bind → HSv5 handshake → ARQ data transfer
 //! (N >= 20 payloads) → TSBPD-ordered delivery.
 //!
-//! The test body is wrapped in [`tokio::time::timeout`] (10 s) so a deadlock
-//! FAILS fast instead of hanging forever.
+//! HANG GUARD (issue #807): the test body is wrapped in
+//! [`tokio::time::timeout`] so a deadlock FAILS fast instead of hanging
+//! forever. Real loopback UDP + a real handshake + ARQ transfer normally
+//! completes in well under a second; the bound is generous on purpose and
+//! makes no latency claim.
 
 #![cfg(feature = "tokio")]
 
@@ -17,7 +20,7 @@ use srt_runtime::io::{SrtListener, SrtSocket};
 const CALLER_ISN: u32 = 500;
 const LISTENER_ISN: u32 = 1000;
 const NUM_PAYLOADS: usize = 20;
-const TEST_TIMEOUT: Duration = Duration::from_secs(10);
+const TEST_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// Loopback test: listener binds, caller connects, they exchange N payloads,
 /// receiver gets them all in order, byte-identical.

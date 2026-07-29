@@ -74,9 +74,13 @@ const SPROP: &str = "Z0IAKeKQFAe2AtwEBAaQeJEV,aM48gA==";
 /// (RTCP rides the paired odd channel, unused by this test).
 const RTP_CHANNEL: u8 = 0;
 
-/// Bound on the whole DESCRIBE->SETUP->PLAY->depayload exchange: a wiring bug
-/// (e.g. a response the client can't parse) must fail fast, not hang CI.
-const TEST_TIMEOUT: Duration = Duration::from_secs(5);
+/// HANG GUARD (issue #807): bound on the whole DESCRIBE->SETUP->PLAY->depayload
+/// exchange over real loopback TCP -- a wiring bug (e.g. a response the
+/// client can't parse) must fail fast, not hang CI. Every step here is
+/// synchronized by the handshake itself (no arbitrary sleeps to race), so
+/// this normally completes in well under a second; raised from 5s to 60s for
+/// load tolerance since it is not a timing claim.
+const TEST_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// Bound on how many read/write rounds [`drive_and_collect`] will attempt —
 /// a wiring bug must fail fast rather than spin; `TEST_TIMEOUT` is the real
