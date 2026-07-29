@@ -21,5 +21,5 @@ crate-type = ["cdylib"]
 pyo3 = { version = "0.24", features = ["extension-module", "abi3-py39"] }
 # Consumed by VERSION (from crates.io), not path — keeps the binding decoupled
 # from the workspace and its MSRV/lockstep.
-broadcast-common = "8"
-transmux         = "0.15"
+broadcast-common = "9"
+transmux         = "0.20"
