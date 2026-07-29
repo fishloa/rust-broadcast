@@ -235,7 +235,7 @@ dependencies = [
 
 [[package]]
 name = "broadcast-auth"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "base64",
  "http-auth",
@@ -303,7 +303,7 @@ dependencies = [
 
 [[package]]
 name = "cc-data"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "broadcast-common",
  "serde",
@@ -787,7 +787,7 @@ dependencies = [
 
 [[package]]
 name = "dvb-vbi"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "broadcast-common",
  "serde",
@@ -1665,7 +1665,7 @@ dependencies = [
 
 [[package]]
 name = "mp4-emsg"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "broadcast-common",
  "serde",
@@ -1675,7 +1675,7 @@ dependencies = [
 
 [[package]]
 name = "mpeg-pes"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "broadcast-common",
  "serde",
@@ -1685,7 +1685,7 @@ dependencies = [
 
 [[package]]
 name = "mpeg-ps"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "broadcast-common",
  "mpeg-pes",
@@ -2272,7 +2272,7 @@ dependencies = [
 
 [[package]]
 name = "rtcp-packet"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "broadcast-common",
  "serde",
@@ -2282,7 +2282,7 @@ dependencies = [
 
 [[package]]
 name = "rtmp-runtime"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "broadcast-common",
  "log",
@@ -2295,7 +2295,7 @@ dependencies = [
 
 [[package]]
 name = "rtp-packet"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "broadcast-common",
  "serde",
@@ -2305,7 +2305,7 @@ dependencies = [
 
 [[package]]
 name = "rtsp-runtime"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "broadcast-auth",
  "log",
@@ -2420,7 +2420,7 @@ dependencies = [
 
 [[package]]
 name = "scte35-splice"
-version = "1.1.0"
+version = "2.0.0"
 dependencies = [
  "base64",
  "broadcast-common",
@@ -2590,7 +2590,7 @@ dependencies = [
 
 [[package]]
 name = "srt-runtime"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "aes",
  "aes-kw",

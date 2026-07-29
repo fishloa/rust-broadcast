@@ -1,5 +1,21 @@
 # Changelog
 
+## [2.0.0] - 2026-07-29
+
+### Changed (BREAKING)
+- **Requires `broadcast-common` 9.** No functional or API change of this
+  crate's own; the bump exists solely to carry the new requirement.
+  `broadcast-common` 9.0.0 changed `Encrypt::encrypt` to take `&mut self` (so a
+  stateful implementor can own a running per-key IV counter — it fixes a
+  duplicate-IV/two-time-pad defect), and its `Parse`/`Serialize` traits appear
+  in this crate's public API, so a consumer cannot mix a `broadcast-common` 8
+  build with this one. That makes it a breaking release even though no line of
+  logic here moved.
+
+  This is a **major** bump (1.x → 2.0.0) for that reason alone: anything pinned
+  to `scte35-splice` 1.x with `broadcast-common` 8 keeps working and is not
+  forced to move.
+
 ## [1.1.0] - 2026-07-03
 ### Changed
 - Rust **edition 2024**; MSRV raised to **1.86**; format-argument modernisation. No functional or API change.
