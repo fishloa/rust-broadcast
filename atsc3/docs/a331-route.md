@@ -112,7 +112,7 @@ _Figure A.3.7, A/331:2025-06 p.167_
 Two 32-bit words total (HEL = 2).
 
 - **Selection rule**: "when EXT_FTI is not present, then either the 24-bit or 48-bit version of
-  EXT_TOL should be present" (§A.3.5.1 area) — i.e. exactly one length-signalling mechanism
+  EXT_TOL should be present" (§A.3.8.1) — i.e. exactly one length-signalling mechanism
   (EXT_FTI *or* EXT_TOL) is expected per delivery object, not both, though the spec's language
   here is "should" (recommendation), not "shall".
 
@@ -215,6 +215,12 @@ _§A.3.3.1, A/331:2025-06 p.153_
     `Content-Location` on the fly — avoids continuously re-sending the FDT for real-time
     objects. Table A.3.5 defines the substitution grammar (`$$` -> literal `$`, `$TOI$` ->
     TOI value, default width 1).
+  - **ROUTE-vs-FLUTE delta (§A.3.3.2.7)**: in File Template mode, EXT_TOL/EXT_FTI presence is
+    upgraded from the general "should" (§A.3.8.1) to "shall": if `File@Transfer-Length` in the
+    Extended FDT Instance is not present, then EXT_TOL or EXT_FTI *shall* be present. If the
+    broadcaster does not know the length at the start of the transfer, EXT_TOL or EXT_FTI shall
+    be included in at least the last packet (and *should* be in the last few packets). This is
+    stricter than the base FLUTE/ALC rule where EXT_FTI is optional.
 - **Entity Mode (2)** — delivery object modeled as an HTTP/1.1 representation: entity/payload/
   response headers (RFC 7231 §§3.1, 3.3, 7) accompany the object instead of an FDT. A
   `Content-Range` header indicates a byte-range portion of a larger target file.

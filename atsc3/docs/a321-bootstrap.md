@@ -95,9 +95,11 @@ _§6.1.1.1, A/321:2026-06 p.14-15_
 | `system_bandwidth` | 2 | uimsbf |
 | `}` |
 
-- **`ea_wake_up_1`** — bit 1 of the emergency-alert wake-up field. Bit semantics are defined
-  externally (spec cites `[2]`, an ATSC document this repo does not have vendored — see
-  [`README.md`](README.md) "could not establish").
+- **`ea_wake_up_1`** — bit 1 (LSB) of the 2-bit emergency-alert Wake-up Field (concatenated
+  with `ea_wake_up_2` as the MSB). Bit semantics defined by A/321's normative reference [2],
+  i.e. ATSC A/331 Annex G.2 (which is vendored and transcribed in this same directory — see
+  [`a331-signalling.md`](a331-signalling.md) Annex G.2 summary below). See end of this
+  document for the semantics extracted from that source.
 - **`min_time_to_next`** — 5-bit index into a non-linear (piecewise-linear, increasing-step)
   time scale giving the minimum time interval, in ms, to the next frame matching the *same*
   major+minor version. Value 31 (`11111`) is reserved ("shall not be indicated"). The full
@@ -157,8 +159,8 @@ _§6.1.1.1, A/321:2026-06 p.16_
 | `bsr_coefficient` | 7 | uimsbf |
 | `}` |
 
-- **`ea_wake_up_2`** — bit 2 of the emergency-alert wake-up field (see `ea_wake_up_1`; same
-  external-reference caveat).
+- **`ea_wake_up_2`** — bit 2 (MSB) of the 2-bit emergency-alert Wake-up Field (see
+  `ea_wake_up_1` above; defined by reference [2] = A/331 Annex G.2, transcribed below).
 - **`bsr_coefficient`** — 7-bit unsigned value `N` (range 0-80 inclusive; 81-127 reserved) used
   as `Sample Rate Post-Bootstrap = (N + 16) x 0.384 MHz`.
 
@@ -239,3 +241,35 @@ domain sequence generation, IFFT, cyclic shift structure) are physical-layer DSP
 wire-format syntax a `no_std` byte-oriented parser crate would implement; they are out of scope
 for this document and not transcribed here. See [`README.md`](README.md) for the full list of
 things this pass did not establish.
+
+## 7. Reference [2] — `ea_wake_up` semantics (A/331 Annex G.2)
+
+A/321's normative reference [2] is **ATSC A/331, "Signaling, Delivery, Synchronization, and
+Error Protection"** (A/321:2026-06 cites A/331:2026-04). The `ea_wake_up_1` / `ea_wake_up_2`
+bit semantics are defined in A/331 Annex G.2, transcribed here from the source document (both
+A/331:2025-06, which was initially transcribed for this PR, and A/331:2026-04, verified as
+having identical Annex G.2 content):
+
+- The two bits are concatenated into a 2-bit **Wake-up Field**: `{ea_wake_up_2, ea_wake_up_1}`,
+  i.e. `ea_wake_up_1` is the LSB, `ea_wake_up_2` is the MSB.
+- When an AEA message with `AEA@wakeup="true"` is present, Wake-up Field shall be non-zero.
+- Wake-up Field shall change when an AEA message with `AEA@wakeup="true"` is added.
+- Wake-up Field *may* change when an AEA message with `AEA@wakeup="true"` is changed.
+- When no AEA messages have `AEA@wakeup="true"`, Wake-up Field shall be `00`.
+
+### Table G.2.1 — Meaning of Wake-up Field
+
+| Value | Meaning |
+|---|---|
+| `00` | No emergency to wake up devices is currently signaled |
+| `01` | Emergency to wake up devices — setting 1 |
+| `10` | Emergency to wake up devices — setting 2 |
+| `11` | Emergency to wake up devices — setting 3 |
+
+Note (informative): the Wake-up Field does not encode a one-to-one correspondence to a
+particular alert; canceling the latest alert does not revert the field value while another alert
+that triggered a field change remains active. A receiver that powers off while the field is
+non-zero should remain off unless a *new* non-zero value is transmitted. A/331 Annex G.2 places
+this in the context of the AEA (Advanced Emergency Alerting) message framework, described
+further in A/331 §6.5 (not transcribed in this pass — see
+[`a331-signalling.md`](a331-signalling.md)).

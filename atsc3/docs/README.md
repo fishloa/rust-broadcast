@@ -7,9 +7,9 @@ section; syntax tables live as reviewable markdown before any code is written).
 
 ## Sources and provenance
 
-| Document | Revision transcribed | Obtained from | Date fetched |
+| Document | Revision | Obtained from | Date fetched |
 |---|---|---|---|
-| ATSC A/331, "Signaling, Delivery, Synchronization, and Error Protection" | **A/331:2025-06** (18 June 2025; a rollup of A/331:2025-02 Amendment No. 1) | `https://www.atsc.org/wp-content/uploads/2025/06/A331-2025-06-Signaling-Delivery-Sync-FEC.pdf` | 2026-07-29 (this pass) |
+| ATSC A/331, "Signaling, Delivery, Synchronization, and Error Protection" | **A/331:2025-06** (18 June 2025; a rollup of A/331:2025-02 Amendment No. 1). Also verified against **A/331:2026-04** (14 April 2026) — no differences in transcribed clauses. | `https://www.atsc.org/wp-content/uploads/2025/06/A331-2025-06-Signaling-Delivery-Sync-FEC.pdf` | 2026-07-29 (this pass); 2026-07-30 (2026-04 verification) |
 | ATSC A/321, "System Discovery and Signaling" | **A/321:2026-06** (11 June 2026) | `https://www.atsc.org/wp-content/uploads/2026/06/A321-2026-06-System-Discovery-and-Signaling.pdf` | 2026-07-29 (this pass) |
 
 Both documents were checked for a private-submodule copy first
@@ -19,14 +19,15 @@ there**; the submodule has `atsc_a342-3_2025_mpegh_system.pdf` and
 `atsc.org` (confirmed via `curl` — no paywall, no login), so they were fetched directly from
 the URLs above rather than deferred. Neither PDF has been added to this repo (public or
 private) — only their extracted markdown lives under a scratch directory used to write these
-docs; re-running `pdf2md` against the same URLs will reproduce it.
+docs; re-running the same pipeline against either URL will reproduce it. The 2026-04 edition of
+A/331 was separately fetched and verified (see "A/331 revision note" below).
 
-**A/331 revision note**: A/331 is revised very frequently (per its own revision history: five
-rollups in 2025 alone — 2025-02, then a same-day 2025-06 rollup of a 2025-02 Amendment). The
-version transcribed here, **A/331:2025-06**, was the latest available at fetch time. Anyone
-picking this work up later should check `atsc.org/atsc-documents/` for a newer rollup before
-implementing, and diff against the clauses cited here (A/331 is additive/corrective release to
-release; wholesale renumbering across the transcribed clauses is unlikely but not guaranteed).
+**A/331 revision note**: A/331:2025-06 was the version transcribed. A/331:2026-04 (14 April
+2026, "references to ATSC documents updated") was subsequently fetched and diffed against
+2025-06 across every clause transcribed here (Annex A ROUTE tables, §6 LLS/SLT tables, §7.1
+ROUTE/DASH SLS tables, §7.2 MMT envelope + USBD tables, Annex H media-type registry, Annex G.2
+Wake-up Field table). **No value, bit-width, or semantic differs in any transcribed clause.**
+Both revisions carry the same wire format. The transcription remains current.
 
 **A/321 revision note**: **A/321:2026-06** was the latest found (search results also mentioned
 a "2025-07" filename that 404s — likely a search-index artifact, not a real prior revision at
@@ -120,9 +121,7 @@ explicitly-scoped catalog (MMT's remaining descriptors) left for future work.
 
 ## Could not establish (explicit, not guessed)
 
-- **A/321**: the meaning of the `ea_wake_up_1`/`ea_wake_up_2` emergency-alert wake-up bits is
-  deferred by A/321 itself to an external reference (`[2]` in A/321's own bibliography) not
-  identified/vendored in this pass. The concrete bootstrap-version-to-signal-type allocation
+- **A/321**: the concrete bootstrap-version-to-signal-type allocation
   registry (beyond A/321's own two illustrative example tables, 7.1/7.2) was not located —
   presumably the ATSC Code Point Registry, an external, evolving document.
 - **A/331 Annex A (ROUTE)**: RFC 6330 (RaptorQ) is not vendored in this repo, so the repair
@@ -159,3 +158,35 @@ explicitly-scoped catalog (MMT's remaining descriptors) left for future work.
   plus the accompanying normative "shall" text — described by A/331 as informative
   restatements of the (unfetched) normative schemas, so treat the schemas as the final
   authority if a discrepancy is ever found.
+
+## Adversarial fidelity audit (2026-07-30)
+
+Every numeric/bit-syntax table was independently verified against its source PDF prior to commit,
+and a second adversarial audit was done against the same source with the following scope:
+
+**Tables verified** (no fabrication found in any):
+- A/321 Tables 6.1 (PN seed per minor version), 6.2-6.5 (bootstrap symbol 1/2/3 signaling
+  fields + symbol 2), 6.6 (major version 1 PN seeds)
+- A/331 Annex A Tables A.3.1 (SrcFlow XML), A.3.2 (delivery-object format IDs), A.3.3/A.3.4
+  (EFDT extensions), A.3.5 (file-template identifiers), A.3.6 (Codepoint semantics), A.4.1
+  (RepairFlow XML)
+- A/331 Tables 6.1 (LLS_table() bit-syntax), 6.2 (SLT XML), 6.3-6.5 (code-value tables), 6.6
+  (OtherBsid@type), 7.9 (mmt_atsc3_message()), 7.10-7.11
+- Annex H media-type registry
+
+**Defects found and corrected:**
+1. **Reference [2] misreported as unvendored** — A/321's ref [2] is A/331:2026-04 (named
+   explicitly in A/321's bibliography §2.1). The `ea_wake_up_1`/`ea_wake_up_2` semantics were
+   always present in the A/331 PDF already transcribed — the gap was a research error, not a
+   sourcing one. Fixed: ref [2] identified, A/331 Annex G.2's Wake-up Field table + semantics
+   transcribed into [`a321-bootstrap.md`](a321-bootstrap.md) §7, and the README gaps list
+   updated.
+2. **A/331 revision currency** — A/321:2026-06 cites A/331:2026-04; this PR transcribed
+   2025-06. A/331:2026-04 was fetched and diffed against 2025-06 across every transcribed
+   clause. **No value, bit-width, or semantic differs in any transcribed clause.** The
+   transcription remains current. The README source table now names both revisions.
+3. **Wrong cross-reference** — EXT_TOL "should be present" selection rule cited "§A.3.5.1 area"
+   in [`a331-route.md`](a331-route.md); it lives in §A.3.8/A.3.8.1. Fixed.
+4. **Missing ROUTE-vs-FLUTE delta** — §A.3.3.2.7 (File Template mode) upgrades
+   EXT_TOL/EXT_FTI presence from the general "should" of §A.3.8.1 to "shall", with a
+   last-packet timing requirement. This was omitted from the delta list. Added.
