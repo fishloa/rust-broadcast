@@ -19,8 +19,8 @@ path              = "src/bin/acap-multimux.rs"
 required-features = ["device"]
 
 [dependencies]
-multimux  = "0.3"
-transmux  = "0.18"
+multimux  = "0.5"
+transmux  = "0.20"
 tokio     = { version = "1", features = ["rt-multi-thread", "net", "macros", "time", "sync"] }
 axum      = "0.7"
 serde     = { version = "1", features = ["derive"] }
@@ -38,14 +38,27 @@ log       = "0.4"
 vdo          = { git = "https://github.com/fishloa/acap-rs", rev = "3c513f92bf3dc2e6d1dbb1e3d5c00c0c294a6a69", optional = true }
 axparameter  = { git = "https://github.com/fishloa/acap-rs", rev = "3c513f92bf3dc2e6d1dbb1e3d5c00c0c294a6a69", optional = true }
 acap-logging = { git = "https://github.com/fishloa/acap-rs", rev = "3c513f92bf3dc2e6d1dbb1e3d5c00c0c294a6a69", optional = true }
+# `VdoIngestSession` (src/vdo_source.rs, device-gated) implements
+# `media_plane::ingress`'s `Stage`/`IngestSession` traits directly — multimux
+# 0.5 (issue #805) deleted `multimux::pipeline::{run_pipeline, SampleSource}`
+# in favour of this one ingest architecture, driven by
+# `multimux::supervise_driver`/`multimux::source::advance_route` (see
+# `src/bin/acap-multimux.rs`). Optional + device-gated, like `vdo` itself,
+# since only `vdo_source.rs` needs them; versions pinned to exactly what
+# `multimux` 0.5 itself depends on, so `transmux::pipeline::{Sample,
+# TrackSpec}`/`media_plane::trunk::RetentionClass` are the *same* types
+# `multimux::source::advance_route`/`SessionEvent` expect, not a second,
+# semver-incompatible copy.
+broadcast-common = { version = "9", optional = true }
+media-plane      = { version = "0.1", features = ["std"], optional = true }
 
 [features]
 default = []
-# `device` pulls the ACAP-only crates + enables the VdoSource + the bin. It
-# ONLY builds inside the Axis ACAP Native SDK sysroot (vdo-sys needs
-# pkg-config `vdo`). Host builds omit it and compile just the pure `convert`
-# lib + its tests.
-device = ["dep:vdo", "dep:axparameter", "dep:acap-logging"]
+# `device` pulls the ACAP-only crates + `media_plane`/`broadcast-common` (for
+# `VdoIngestSession`) + enables the bin. It ONLY builds inside the Axis ACAP
+# Native SDK sysroot (vdo-sys needs pkg-config `vdo`). Host builds omit it and
+# compile just the pure `convert`/`admin` lib + their tests.
+device = ["dep:vdo", "dep:axparameter", "dep:acap-logging", "dep:broadcast-common", "dep:media-plane"]
 
 [dev-dependencies]
 tower = { version = "0.5", features = ["util"] }

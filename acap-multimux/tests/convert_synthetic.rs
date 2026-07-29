@@ -83,12 +83,14 @@ fn track_spec_h264_has_timescale_and_non_empty_avcc() {
 }
 
 #[test]
-fn au_to_sample_h264_carries_duration_sync_and_data() {
+fn au_to_sample_h264_carries_timestamps_sync_and_data() {
     let au = h264_au();
-    let sample = au_to_sample(Codec::H264, &au, 3000, true);
+    let sample = au_to_sample(Codec::H264, &au, 90_000, 3000, true);
 
-    assert_eq!(sample.duration, 3000);
-    assert!(sample.is_sync);
+    assert_eq!(sample.dts, Some(90_000));
+    assert_eq!(sample.pts, Some(90_000));
+    assert_eq!(sample.duration, Some(3000));
+    assert!(sample.flags.is_sync);
     assert!(!sample.data.is_empty());
     // The Annex B start codes are stripped in favour of 4-byte length
     // prefixes (transmux::annexb::annexb_to_length_prefixed); the SPS bytes
