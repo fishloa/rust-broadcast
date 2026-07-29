@@ -151,7 +151,23 @@ one signature per element instance (no structured-field dictionary, no `tag` par
 | `@created` | 0..1 | Integer | Signature creation time, UNIX timestamp. |
 | `@expires` | 0..1 | Integer | Signature expiry time, UNIX timestamp. |
 | `@algorithm` | 1 | String | Message signature algorithm, from the HTTP Message Signature Algorithm Registry. |
-| `@keyUri` | 1 | URI string | Subject key identifier of the X.509 certificate whose public key verifies the signature. |
+| `@keyUri` (prose) / `keyId` (XSD) | 1 | URI string (prose) / `xs:hexBinary` (XSD) | ⚠️ **SPEC CONFLICT** — see below. |
+
+**⚠️ Flagged spec-internal conflict — `@keyUri` vs `keyId`:**
+
+The prose Table F.2.4.1-1 (clause F.2.4.1, page 137) names this attribute
+**`@keyUri`** and types it as a **URI string**. The Annex F.2.5.1 XSD
+(page 138), which is the normative authority for XML validation, names it
+**`keyId`** and types it as **`xs:hexBinary`**.
+
+These disagree on both *name* and *type*:
+- Prose table: `@keyUri`, URI string — suggests a dereferenceable key reference.
+- XSD: `keyId`, `xs:hexBinary` — the raw X.509 Subject Key Identifier bytes.
+
+An implementation that validates against the XSD will reject `@keyUri`;
+one that reads the prose will look for the wrong attribute name. Until an
+erratum resolves this, an implementation should follow the XSD (as the
+normative wire-format authority) or accept both attribute names.
 
 Normative constraints: when used to assert transport-object authenticity, `@scope` must
 include `@@Content-Digest`; the signature base is built per RFC 9421 §2.5 in the exact
@@ -165,9 +181,9 @@ namespace `urn:3GPP:metadata:2022:FLUTE:FDT`. Defines `SignatureType` (the
 `File/Signature` element of §2.4), `MessageDigestType` (pattern
 `[a-z][-_.*a-z0-9]*=:[a-zA-Z0-9+/=]*:`), and extends the 3GPP `FileType` with the
 optional `Content-Digest`/`Repr-Digest` attributes (both typed `MessageDigestType`) and
-an unbounded `Signature` child sequence. The full XSD text is in the vendored PDF,
-Annex F.2.5.1; not repeated here since it is reproduced verbatim in the spec and adds no
-information beyond §2.3-2.4 above.
+an unbounded `Signature` child sequence. ⚠️ **Note:** the XSD names the signature
+key attribute **`keyId`** (typed `xs:hexBinary`), not `@keyUri` as the prose table
+in §2.4 does — see the flagged conflict in §2.4 above.
 
 ### 2.6 Multicast gateway operation, FLUTE (clause F.3)
 

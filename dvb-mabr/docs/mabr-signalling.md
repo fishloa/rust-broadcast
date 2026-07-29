@@ -39,7 +39,7 @@ embedded — their own formats (ISO/IEC 23009-1, IETF RFC 8216) are out of scope
 ## 2. Document root (clause 10.2.1, Table 10.2.1.1-1 / Table 10.2.1.2-1)
 
 Both roots declare `@schemaVersion` (unsigned integer, required — the highest value in
-Annex A Table A.0-1 the document conforms to; **current value: `2`**, namespace
+Annex A Table A.0-1 the document conforms to; **current value: `2`**, baseline namespace
 `urn:dvb:metadata:MulticastSessionConfiguration:2024`) and a validity, either
 `@validityPeriod` (ISO 8601-1 §5.5.2 duration, excluding the §5.5.2.4 alternative form)
 or `@validUntil` (MPEG-7 Part 5 §6.4.3 `TimePoint` — a restricted ISO 8601-1 §5.4 subset
@@ -97,9 +97,9 @@ then mandatory non-empty) if reference point `A` is not present in the deploymen
 | `@transmissionMode` | 0..1 | `resource` \| `chunked` (default `resource`) | See `mabr-transport.md` §1. |
 | `@transportSecurity` | 0..1 | `none` \| `integrity` \| `integrityAndAuthenticity` (default `none`) | See `mabr-transport.md` §4. |
 | `@sessionIdleTimeout` | 1 | Unsigned integer, ms | Max inter-packet gap before the gateway may treat the session as inactive/unsubscribe. Takes precedence over other timeouts. |
-| `TransportProtocol` | 1 | — | `@protocolIdentifier` (1, MPEG-7 termReference, a `MulticastTransportProtocolCS` term — §8) + `@protocolVersion` (1, string/positive integer, major version). |
+| `TransportProtocol` | 1 | — | `@protocolIdentifier` (1, MPEG-7 termReference, a `MulticastTransportProtocolCS` term — §8) + `@protocolVersion` (1, `xs:positiveInteger`, major version number). |
 | `EndpointAddress` | 1..n | — | See §4.1. |
-| `BitRate` | 1 | — | `@average` (0..1, positive integer, bit/s) + `@maximum` (1, positive integer, bit/s) — across all endpoints, FEC included. |
+| `BitRate` | 1 | — | `@average` (0..1, positive integer, bit/s) + `@maximum` (1, positive integer, bit/s) — across all endpoints declared for this session, including any FEC repair packets addressed to the **same** destination group network address (clause 10.2.3.10). If FEC uses a different endpoint address, its bit rate is not included here. |
 | `ForwardErrorCorrectionParameters` | 0..n | — | See §4.2. |
 | `UnicastRepairParameters` | 0..1 | — | See §4.3. |
 | `ObjectCarousel` | 0..1 | — | See §4.4. |
@@ -191,20 +191,13 @@ only); both may be active simultaneously.
 
 The report body itself is a **JSON** document (clause 11.1, `Content-Type:
 application/json`) POSTed to `http[s]://<Host>/dvb/mabr/reportingInformationInstance`
-(clause 11.2.1). **Not transcribed here** — the source table (Table 11.1.1-1, a
-multi-page JSON property table) came back column-scrambled from the textlayer PDF
-extraction used for this pass (unlike the XML tables above, which read cleanly); see
-[`README.md`](README.md) "could not establish" list. The prose in clauses 11.1.2.1-11.1.2.5
-(readable, not table-mangled) does establish: three top-level event types
-(`session-started`, `session-ended`, and a `type`-tagged set of "running" events —
-`heartbeat`, `service-component-switch`, `multicast-join`, `multicast-leave`,
-`object-delivery`), an `object-delivery-status` enumeration (`cache-hit-m`,
-`cache-hit-a`, `cache-hit-mr`, `cache-miss-expired`, `cache-miss-incomplete`,
-`cache-miss-filter`, `cache-miss-nodata-s`, `cache-miss-nodata-m`,
-`cache-miss-nodata-j`, `cache-miss-nodata-o`), and named per-session counters
-(`errors-b`, `errors-l`, `errors-a`, `errors-m`, byte/segment counters, etc.) — but the
-full JSON schema needs re-extraction (e.g. `pdf2md --engine hybrid` on pages ~85-92, or
-`blaze`) before it can be implemented.
+(clause 11.2.1). This is now **fully transcribed** in
+[`mabr-reporting.md`](mabr-reporting.md), drawn from the clean, table-aware
+conversion of normative **Annex N** (the complete OpenAPI 3.0.1 YAML schema,
+pages 179-183) — which the initial transcription pass missed because Annex N
+was not detected. See that document for the complete schema, the seven event
+types, and a flagged spec-internal conflict between clause 11.1.2.2's
+`object-delivery-status` enumeration (10 values) and Annex N's (9 values).
 
 ## 7. `MulticastGatewayConfigurationTransportSession` (clause 10.2.5, Table 10.2.5.1-1)
 
@@ -215,7 +208,7 @@ as `MulticastTransportSession` (§4) **except**: no `@id`/`@start`/`@duration`/
 | Element/attribute | Use | Data type | Description |
 |---|---|---|---|
 | `@tags` | 0..1 | Whitespace-separated URI list | Applicability tags a gateway can filter on. |
-| `ObjectCarousel` | 0..1 | (`ReferencingObjectCarouselType`) | As §4.4, but each `PresentationManifests`/`InitSegments` child additionally takes `@serviceIdRef` (0..1, URI — target `MulticastSession/@serviceIdentifier`; omitted = all active sessions) and `@transportSessionIdRef` (0..1 — target `MulticastTransportSession/@id` within that session; illegal without `@serviceIdRef`). |
+| `ObjectCarousel` | 0..1 | (`ReferencingObjectCarouselType`) | As §4.4 but with a different child element type: `PresentationManifests` and `InitSegments` each have cardinality **`0..n`** (vs `0..1` in the base `MulticastTransportSession`), allowing the carousel to serve manifests/init-segments from multiple sessions. Each child additionally takes `@serviceIdRef` (0..1, URI — target `MulticastSession/@serviceIdentifier`; omitted = all active sessions) and `@transportSessionIdRef` (0..1 — target `MulticastTransportSession/@id` within that session; illegal without `@serviceIdRef`). |
 | `MulticastGatewayConfigurationMacro` | 0..n | String, `@key` (1, NameToken) | Per-transport-session macro override (see §9). |
 
 ## 8. Classification schemes (Annex B, normative — controlled vocabularies)
@@ -227,10 +220,10 @@ as `MulticastTransportSession` (§4) **except**: no `@id`/`@start`/`@duration`/
 | `FLUTE` | `:2019:` | IETF RFC 3926 v1, as profiled by 3GPP TS 26.346 R16 + this spec's Annex F. |
 | `ROUTE` | `:2019:` | ATSC A/331, as profiled by this spec's Annex H. |
 | `NORM` | `:2022:` | IETF RFC 5740, as profiled by this spec (no annex — **not further specified in the normative body**; recorded in the CS only). |
-| `MSync` | `:2022:` | `draft-bichot-msync-06` (Internet-Draft). |
-| `MSync/RTP` | `:2022:` | MSync conveyed over RTP. |
+| `MSync` | `:2022:` | `draft-bichot-msync-06` (Internet-Draft). Contains a **child term** `RTP`: MSync conveyed over RTP. |
+| | `:2022:` — child: `MSync/RTP` | Nested under `MSync`; not a flat sibling term. |
 
-Full term URI form: `urn:dvb:metadata:cs:MulticastTransportProtocolCS:<year>:<termID>`.
+Full term URI form: `urn:dvb:metadata:cs:MulticastTransportProtocolCS:<year>:<termID>`. The `MSync/RTP` term is addressed as `MSync.RTP` in classification-scheme term-path notation (since `RTP` is a child `<Term>` of `MSync` in the XML schema `MulticastTransportProtocolCS_2022.xml`, Annex B.1).
 
 ### 8.2 `ForwardErrorCorrectionSchemeCS` (clause B.2)
 
@@ -275,8 +268,19 @@ Two independent extension axes, both requiring a namespace different from the ba
   (`urn:dvb:metadata:Extensibility:2024`) so older parsers can still skip forward past
   them without ambiguity (XML Schema 1.0 Unique Particle Attribution). `@schemaVersion`
   increments by 1 every time a revision adds standardized extension element(s); Annex A
-  Table A.0-1 lists the namespace set required per version (`1` = baseline 2019 schema
-  + Extensibility; `2` = baseline 2024 schema, current).
+  Table A.0-1 lists the namespace set required per version:
+
+  | Schema version | Required schema namespaces |
+  |---|---|
+  | `1` | `urn:dvb:metadata:MulticastSessionConfiguration:2019` |
+  | `2` (current) | `urn:dvb:metadata:MulticastSessionConfiguration:2024` |
+
+  Note: version 1 requires **only** the 2019 baseline namespace (no Extensibility
+  namespace is listed for v1 in Table A.0-1). The Extensibility schema
+  (`urn:dvb:metadata:Extensibility:2024`) is used at the instance-document level
+  for the `@schemaVersion` attribute declaration under *both* versions (via
+  `xs:import`) but is not separately listed as a required *schema* namespace in
+  Table A.0-1's v1 row.
 - A private/implementation extension (any other namespace) is always permitted after
   the last standardized extension (or immediately, if none), and is silently skippable
   by any conformant parser regardless of schema version.

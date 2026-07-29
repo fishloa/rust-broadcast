@@ -53,9 +53,10 @@ transcription rather than from memory of the spec.
 |---|---|
 | [`mabr-architecture.md`](mabr-architecture.md) | Reference architecture: logical functions, reference points (clause 5), deployment models (clause 6), modes of system operation incl. rendezvous request/redirect syntax (clause 7). |
 | [`mabr-transport.md`](mabr-transport.md) | Multicast transport object formats: the FLUTE profile (Annex F), the ROUTE profile (Annex H, excluding the ATSC A/331 packet-header bytes themselves — see below), FEC (clause 8.3.4.2), unicast repair (clause 9), and the integrity/authenticity metadata profiles (clause 12) both annexes build on. |
-| [`mabr-signalling.md`](mabr-signalling.md) | The multicast session configuration XML document: data model (clause 10), extensibility mechanism and full baseline schema (Annex A), classification schemes (Annex B), and a pointer at the JSON reporting document (clause 11, not fully transcribed — see below). |
+| [`mabr-signalling.md`](mabr-signalling.md) | The multicast session configuration XML document: data model (clause 10), extensibility mechanism and full baseline schema (Annex A), classification schemes (Annex B). |
+| [`mabr-reporting.md`](mabr-reporting.md) | Service reporting information document (JSON): the full OpenAPI 3.0.1 YAML schema from normative Annex N, cross-checked against clause 11 prose — including the seven event types, all per-session counters, and the flagged `object-delivery-status` enum conflict (§2.2.1). |
 
-**33 distinct wire/data structures** are documented with a field table across the three
+**34 distinct wire/data structures** are documented with a field table across the four
 files: the rendezvous request/redirect URL syntax (2 tables, clause 7), 3 root/session
 XML elements (`MulticastServerConfiguration`, `MulticastGatewayConfiguration`,
 `MulticastSession`), the `MulticastTransportSession` element (the largest, with 4 nested
@@ -64,8 +65,10 @@ sub-structures: `EndpointAddress`, `ForwardErrorCorrectionParameters`,
 `PresentationManifestLocator`, 3 `ServiceComponentIdentifier` variants (DASH/HLS/generic),
 `MulticastGatewaySessionReporting`, 3 classification-scheme vocabularies (Annex B), the
 FLUTE Extended-FDT `Signature`/digest attributes (Annex F.2.3-F.2.4), the ROUTE
-`Table H.2.0-1` LCT-field constraints and the `S-TSID` mapping tables (H.5.0-1/2/3), and
-the two HTTP security profiles (chunk-digest / chunk-signature ABNF, clause 12).
+`Table H.2.0-1` LCT-field constraints and the `S-TSID` mapping tables (H.5.0-1/2/3),
+the two HTTP security profiles (chunk-digest / chunk-signature ABNF, clause 12), and
+the full service reporting JSON/OpenAPI schema (Annex N in
+[`mabr-reporting.md`](mabr-reporting.md)).
 
 ## Overlap with existing crates and issues in this workspace
 
@@ -94,12 +97,14 @@ the two HTTP security profiles (chunk-digest / chunk-signature ABNF, clause 12).
 
 ## Explicit list of what could NOT be established from a readable source
 
-Per the project's "never invent a value" rule, these are named here rather than guessed:
+Per the project's "never invent a value" rule, these are named here rather than guessed.
+This list has been updated after the **adversarial fidelity audit** (2026-07-30 — see
+"Audit history" below) and now records only genuine unknowns, not resolved gaps:
 
 1. **The exact bit layout of `EXT_TOL` and `EXT_TIME`** (ROUTE-specific LCT header
    extensions used by Annex H, clause H.2.1) — defined in ATSC A/331 Annex A, which is
    not vendored or transcribed anywhere in this workspace. Needed before Annex H can be
-   implemented; see the #750 overlap above.
+   fully implemented; see the #750 overlap above.
 2. **The ROUTE `Codepoint` registry's full semantics** (ATSC A/331 Table A.3.6) — TS 103
    769 clause H.4 only says Codepoints 5-9 are used and what each means at a summary
    level (init segment vs. media segment, File vs. Entity mode); the full registry
@@ -111,33 +116,88 @@ Per the project's "never invent a value" rule, these are named here rather than 
    table and read cleanly) was used instead. The diagram itself adds no information
    beyond "this is the standard ALC/LCT/FEC-Payload-ID/payload stacking" already
    documented in `dvb-flute/docs/alc.md`.
-4. **The full JSON service-reporting schema** (clause 11.1.1, Table 11.1.1-1, and the
-   per-event-type property tables in clauses 11.1.2.2-11.1.2.5) — these are multi-page
-   tables that reflowed into scrambled column order in the textlayer conversion (see
-   "How it was read" above). The clause *prose* (readable, not table-mangled) was used
-   to record the three top-level event types, the `object-delivery-status` enum values,
-   and the named per-session counters in `mabr-signalling.md` §6, but the complete
-   property list (types, `Use` cardinalities, and several counter names visible only in
-   the scrambled table, e.g. the `cache-hit`/`cache-miss` sub-metrics beyond
-   `object-delivery-status`) needs a **re-run with a different pdf2md engine
-   (`--engine hybrid` or `--engine marker`) or the `blaze` OCR skill** on pages
-   approximately 85-92 of the PDF before the reporting document can be implemented.
-   This gap does not block the three files actually required by this task (they cover
-   architecture/transport/signalling of the *session configuration*, not the reporting
-   protocol), so it was left as a named gap rather than delegated a token budget it
-   didn't need for issue #755's acceptance criteria — but a future "reporting" story
-   should not skip straight to implementation without first closing this gap.
-5. **The reference-architecture box diagrams** (figures 5.1.0-1, 5.2-1, 6.1-1, 6.2-1,
+4. **The reference-architecture box diagrams** (figures 5.1.0-1, 5.2-1, 6.1-1, 6.2-1,
    6.3-1, 7.1-1, 7.2-1) — same textlayer-diagram limitation as #3. The named reference
    points and workflow steps were fully recovered from the surrounding prose (which is
    not diagram content and reads cleanly), so no information required by
    `mabr-architecture.md` is actually missing — this entry just documents *why* no ASCII
    reproduction of the diagrams themselves appears in that file.
-6. **DVB-MABR V1.1.1 (2020) vs. V1.2.1 (2024) diff** — not established; only V1.2.1 was
+5. **DVB-MABR V1.1.1 (2020) vs. V1.2.1 (2024) diff** — not established; only V1.2.1 was
    read (see "Source" above). If back-compatibility with V1.1.1-only deployments ever
    becomes a requirement, that edition needs its own read.
 
-Everything else field/attribute/element-level in `mabr-architecture.md`,
-`mabr-transport.md`, and `mabr-signalling.md` was read directly from a `pdf2md`
-conversion that the tool's own byte-level verifier confirmed as token-exact against the
-PDF's text layer (exit code 0), from clean (non-scrambled) prose or tables.
+**Resolved gaps** (formerly on this list, now fixed):
+- ~~The full JSON service-reporting schema~~ — now transcribed from Annex N in
+  [`mabr-reporting.md`](mabr-reporting.md). Annex N (page 179, the complete OpenAPI
+  3.0.1 YAML) was initially missed entirely by the first transcription pass.
+
+## Flagged spec-internal conflicts (do not resolve by picking one silently)
+
+These two inconsistencies within TS 103 769 V1.2.1 itself were found by the audit.
+Neither list below is speculative — both sides were read directly from the rendered
+PDF and verified against the source:
+
+1. **`object-delivery-status` enum — clause 11.1.2.2 vs. Annex N:**
+   - **Table 11.1.2.2-1** (normative body, page 89) specifies 10 values:
+     `cache-hit-m`, `cache-hit-a`, `cache-hit-mr`, `cache-miss-expired`,
+     `cache-miss-incomplete`, `cache-miss-filter`, `cache-miss-nodata-s`,
+     `cache-miss-nodata-m`, `cache-miss-nodata-j`, `cache-miss-nodata-o`.
+   - **Annex N (normative OpenAPI YAML, pages 180, 183)** specifies 9 values:
+     `cache-hit-m`, `cache-hit-a`, `cache-miss-incomplete`, `cache-miss-filter`,
+     `cache-miss-nodata-s`, `cache-miss-nodata-m`, `cache-miss-nodata-j`,
+     `cache-miss-nodata-o`, `cache-miss-timeshift`.
+     (The YAML's `MABR_ObjectDeliveryStatus` on page 183 additionally contains a
+     duplicate `cache-miss-expired` entry — a clear typo.)
+   - Clause 11.1.2.2 has `cache-hit-mr` and `cache-miss-expired`; Annex N has
+     `cache-miss-timeshift`. The other 8 values overlap.
+   - An implementation that picks one side will emit reports the other side rejects.
+     Documented in full in [`mabr-reporting.md`](mabr-reporting.md) §flag.
+
+2. **Signature key attribute — `@keyUri` vs `keyId`:**
+   - **Prose Table F.2.4.1-1** (page 137) names it `@keyUri`, typed as a URI string.
+   - **Annex F.2.5.1 XSD** (page 138, the normative wire-format authority) names it
+     `keyId`, typed as `xs:hexBinary`.
+   - These disagree on both *name* and *type*. Documented in
+     [`mabr-transport.md`](mabr-transport.md) §2.4.
+
+## Audit history
+
+**2026-07-30 — adversarial fidelity audit** (against the rendered PDF, not the
+pdf2md conversion):
+
+Seven defects were found across the three initial transcription files, three severe:
+
+| # | Severity | Finding | File affected |
+|---|---|---|---|
+| 1 | **Severe** | Annex N (normative OpenAPI reporting schema, page 179) was missed entirely; transcription pointed at the garbled clause 11.1.1 table instead. Annex N is now transcribed in `mabr-reporting.md`, and the spec-internal `object-delivery-status` enum conflict between clause 11.1.2.2 (10 values) and Annex N (9 values) is flagged. | New: `mabr-reporting.md` |
+| 2 | **Severe** | Table A.0-1 (schema version → required namespaces) was reversed — v1 listed as 2019+Extensibility, v2 as 2024. The table actually says v1 = 2019 only, v2 = 2024. Fixed in `mabr-signalling.md` §9. | `mabr-signalling.md` |
+| 3 | **Severe** | The Annex F.2.5.1 XSD was dismissed as "adds no information" but it names the key attribute `keyId` (typed `xs:hexBinary`), not `@keyUri` (URI string) as the prose table says — a second spec-internal conflict. Flagged in `mabr-transport.md` §2.4. | `mabr-transport.md` |
+| 4 | Moderate | `MulticastGatewayConfigurationTransportSession`'s `PresentationManifests`/`InitSegments` cardinality silently changes `0..1` → `0..n` relative to the base element. Noted explicitly. | `mabr-signalling.md` |
+| 5 | Moderate | The classification-scheme table fabricated `MSync/RTP` as a flat term; `RTP` is actually nested as a child `<Term>` under `MSync` in the XML schema. Fixed with term-path notation. | `mabr-signalling.md` |
+| 6 | Minor | `@protocolVersion` typed as "string/positive integer"; the XSD says `xs:positiveInteger`. Corrected. | `mabr-signalling.md` |
+| 7 | Minor | `BitRate` description said "FEC included" unconditionally; clause 10.2.3.10 includes FEC only when repair packets are addressed to the **same** destination group network address. Conditional restored. | `mabr-signalling.md` |
+
+**Meta-finding:** the initial gaps list was incomplete in exactly the dangerous way:
+findings 2 and 3 were stated *confidently* and *wrongly*, so they never appeared on
+the gaps list. The gaps list only catches the unknowns you know about. It has been
+rewritten to record only genuine, verified unknowns, and the two spec-internal
+conflicts are now flagged at the head of the README rather than resolved silently.
+
+**What the audit confirmed correct** (independently verified against the PDF):
+- The `dvb-flute` reuse claim is sound; Annex F's delta list is complete.
+- V1.2.1 is the current edition; no later edition exists on the ETSI server.
+- The core `MulticastTransportSession` element tree, rendezvous syntax,
+  extensibility mechanism, FEC-scheme vocabulary, and Annex H deltas all check out.
+
+Areas checked: every normative table/field in the three initial transcription files was
+cross-read against a rendered page image or a table-aware `pdfplumber` extraction; the
+entire Annex N YAML was extracted with `pdfplumber` (which preserves column order) and
+verified field-by-field against clause 11 prose. The Annex A.0-1 table, Annex B.1
+classification-scheme XML, Annex F.2.4.1 prose table, and Annex F.2.5.1 XSD were all
+read directly and compared.
+
+**Not yet independently verified (defer to a future audit):**
+- The Annex A.2 baseline XSD beyond the types already spot-checked in the field tables.
+- The Annex C.1 worked example XML (recommended as the primary round-trip fixture).
+- The Annex I implementation guidance and Annex J NORM profile.
+- The exact ROUTE packet-header bits (ATSC A/331 territory, blocked on issue #750).
