@@ -35,9 +35,14 @@ carried at L2–L4 (that is deliberately left open — see §3 below).
 
 Normative requirements on the transmitter:
 
-- **shall** transmit at least two streams (2019; 2013's text required
-  exactly two — see the version note above), each carrying copies of every
-  RTP datagram.
+- **shall** transmit at least two streams, each carrying copies of every RTP
+  datagram. **Both editions say this identically** — 2013 §6 already reads
+  verbatim "shall transmit **at least two** streams". (An earlier draft of this
+  document claimed 2013 required *exactly* two and that 2019 relaxed it; that
+  was wrong, and it was caught by the adversarial fidelity audit. The only
+  two-vs-more wording change between editions is in the Definitions clause —
+  2013 §5.10 "two" became 2019 §4.10 "two or more" — which is a definition, not
+  a change to this normative requirement.)
 - **The RTP header and the RTP payload shall be identical for each datagram
   copy.**
 - "The seamless reconstruction method described herein makes no assumptions

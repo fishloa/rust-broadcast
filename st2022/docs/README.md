@@ -61,6 +61,26 @@ mismatch:
   Receiver Classification / skew table (§7 Table 1), and the informative
   buffer-sizing worked example (Annex A).
 
+## Fidelity audit
+
+These documents were audited adversarially against freshly downloaded copies of
+both PDFs (2026-07-29) — every field width, offset, enum coding table, sizing
+equation and clause number re-checked independently, because a transcription is
+not an oracle until someone has tried to break it. Findings recorded in
+`.delegate/752-fidelity-audit.md`.
+
+**One severe defect was found and is now corrected:** the ST 2022-7 redundancy
+section claimed that 2013 required *exactly* two streams and that 2019 relaxed
+this to "at least two". Both editions in fact say "at least two" identically;
+the only two-vs-more change is in the Definitions clause (2013 §5.10 "two" →
+2019 §4.10 "two or more"). The claim was stated unhedged, so it would have
+misled an implementer about a normative requirement that never changed — and it
+was the one thing this gaps list should have contained and did not, because the
+transcriber did not know it was wrong. That is precisely why the audit is a
+gate and not an optional extra.
+
+Everything else verified accurate, including both items flagged below.
+
 ## Could NOT establish (explicit gaps — do not fill from memory)
 
 1. **HBRMT Payload Header `RESERVE` field's exact bit width (5 bits, in
