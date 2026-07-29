@@ -371,7 +371,10 @@ impl Package for RtpPacketiser {
 
 impl RtpPacketiser {
     /// Packetise one AVC track into RTP packets.
-    fn packetise_video(&self, track: &crate::media::Track, pt: u8) -> Result<Vec<RtpPacket>> {
+    ///
+    /// Public for the zero-copy allocation test (`alloc_measurement.rs`);
+    /// the main consumer calls [`Package::package`] instead.
+    pub fn packetise_video(&self, track: &crate::media::Track, pt: u8) -> Result<Vec<RtpPacket>> {
         let timescale = if track.spec.timescale != 0 {
             track.spec.timescale
         } else {
