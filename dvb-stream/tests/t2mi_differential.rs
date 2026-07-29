@@ -43,7 +43,10 @@ async fn t2mi_stream_matches_sync_oracle() {
     let cursor = std::io::Cursor::new(data.clone());
     let stream = T2miEventStream::new(cursor, T2MI_PID);
 
-    let async_events = tokio::time::timeout(Duration::from_secs(5), async {
+    // HANG GUARD (issue #807): in-memory Cursor over a small fixture, no real
+    // I/O wait — normally completes well under a second. Generous on
+    // purpose: only fails a stalled/deadlocked stream, not a timing claim.
+    let async_events = tokio::time::timeout(Duration::from_secs(60), async {
         let mut events = Vec::new();
         let mut stream = stream;
         loop {
@@ -56,7 +59,7 @@ async fn t2mi_stream_matches_sync_oracle() {
         events
     })
     .await
-    .expect("T2miEventStream stalled — timeout after 5 s");
+    .expect("T2miEventStream stalled — hang guard (issue #807) fired after 60 s");
 
     assert_eq!(
         async_events.len(),
@@ -115,7 +118,9 @@ async fn t2mi_stream_in_memory_constructed_packet() {
     let cursor = std::io::Cursor::new(pkt.to_vec());
     let stream = T2miEventStream::new(cursor, PID);
 
-    let events = tokio::time::timeout(Duration::from_secs(5), async {
+    // HANG GUARD (issue #807): single 188-byte in-memory packet — normally
+    // instant. Generous on purpose, not a timing claim.
+    let events = tokio::time::timeout(Duration::from_secs(60), async {
         let mut events = Vec::new();
         let mut stream = stream;
         loop {
@@ -128,7 +133,7 @@ async fn t2mi_stream_in_memory_constructed_packet() {
         events
     })
     .await
-    .expect("timed out");
+    .expect("hang guard (issue #807) fired: stream never completed within 60s");
 
     assert_eq!(events.len(), 1, "expected exactly one T2-MI event");
     assert_eq!(
@@ -148,7 +153,9 @@ async fn t2mi_stream_stats_after_completion() {
     let cursor = std::io::Cursor::new(pkt.to_vec());
     let mut stream = T2miEventStream::new(cursor, PID);
 
-    tokio::time::timeout(Duration::from_secs(5), async {
+    // HANG GUARD (issue #807): single 188-byte in-memory packet — normally
+    // instant. Generous on purpose, not a timing claim.
+    tokio::time::timeout(Duration::from_secs(60), async {
         loop {
             let item = std::future::poll_fn(|cx| Pin::new(&mut stream).poll_next(cx)).await;
             if item.is_none() {
@@ -157,7 +164,7 @@ async fn t2mi_stream_stats_after_completion() {
         }
     })
     .await
-    .expect("timeout");
+    .expect("hang guard (issue #807) fired: stream never completed within 60s");
 
     let stats = stream.stats();
     assert!(stats.ts_packets >= 1, "expected at least 1 ts_packets");

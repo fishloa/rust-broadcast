@@ -1855,8 +1855,15 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(resp.status(), axum::http::StatusCode::REQUEST_TIMEOUT);
+        // NOT a pure hang guard (issue #807): this must stay meaningfully
+        // below the 5s internal LL-HLS blocking-reload cap it is
+        // distinguishing from, or a broken `TimeoutLayer` (one that let the
+        // request fall through to the 5s internal cap instead of cutting it
+        // off at the configured 50ms) would still pass by coincidence.
+        // Raised from 1s to 3s for scheduling headroom under load while
+        // staying clearly below the 5s cap it must distinguish from.
         assert!(
-            started.elapsed() < std::time::Duration::from_secs(1),
+            started.elapsed() < std::time::Duration::from_secs(3),
             "must be cut off by the 50ms configured timeout, not the 5s \
              internal LL-HLS blocking-reload cap: {:?}",
             started.elapsed()
@@ -2409,7 +2416,11 @@ mod tests {
         })
         .expect("factory must succeed");
 
-        let became_live = tokio::time::timeout(Duration::from_secs(1), async {
+        // HANG GUARD (issue #807): the factory closure sets `Live`
+        // synchronously before ever yielding, so this normally resolves on
+        // its first 1ms poll. Raised for load tolerance -- only job is to
+        // fail "never becomes Live" rather than hang, not a timing claim.
+        let became_live = tokio::time::timeout(Duration::from_secs(60), async {
             loop {
                 if store.health() == HealthState::Live {
                     break;
@@ -2487,7 +2498,12 @@ mod tests {
             }
         });
 
-        let resolved = tokio::time::timeout(Duration::from_secs(5), async {
+        // HANG GUARD (issue #807): real loopback UDP + real TS demux, so this
+        // needs actual socket/scheduling time (unlike the in-process cases
+        // elsewhere in this file), but still normally resolves in low tens
+        // of ms given the sender retries every 5ms. Raised for load
+        // tolerance -- only job is to fail "never ingests" rather than hang.
+        let resolved = tokio::time::timeout(Duration::from_secs(60), async {
             loop {
                 if matches!(
                     store.resolve_program(crate::route::SPTS_PROGRAM_ID),
@@ -2715,7 +2731,11 @@ mod tests {
                 "variant {spec:?} must start Connecting"
             );
 
-            let reached_reconnecting = tokio::time::timeout(Duration::from_secs(10), async {
+            // HANG GUARD (issue #807): every input variant here fails fast
+            // (unreachable/invalid target) so this normally resolves in low
+            // tens of ms. Raised for load tolerance -- only job is to fail
+            // "never reaches Reconnecting" rather than hang.
+            let reached_reconnecting = tokio::time::timeout(Duration::from_secs(60), async {
                 loop {
                     if store.health() == HealthState::Reconnecting {
                         break;

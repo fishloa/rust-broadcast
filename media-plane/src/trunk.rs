@@ -3088,8 +3088,14 @@ mod tests {
         let first = archive.poll().unwrap();
         assert_eq!(segment_data(&first).unwrap().sequence_number, 1);
 
+        // HANG GUARD (issue #807): generous on purpose, same reasoning as
+        // `retention.rs`'s `archive_overrun_stall_ingest_blocks_writer_until_driver_advances`
+        // (the sibling proof of this same mechanism) -- the claim is "the
+        // writer unblocks once the pin is drained", not "within N seconds".
+        // The unblock is observed across a thread boundary, so a tight bound
+        // measures the machine's scheduler, not this code.
         done_rx
-            .recv_timeout(Duration::from_secs(5))
+            .recv_timeout(Duration::from_secs(60))
             .expect("publish_segment must unblock once the pin advances");
         handle.join().unwrap();
 
@@ -3213,8 +3219,13 @@ mod tests {
         let first = archive.poll().unwrap();
         assert_eq!(segment_data(&first).unwrap().sequence_number, 1);
 
+        // HANG GUARD (issue #807): generous on purpose, same reasoning as the
+        // sibling test above (`pinning_reader_receives_every_segment_while_non_pinning_reader_lags`)
+        // -- claim is "unblocks once drained", not "within N seconds"; the
+        // unblock crosses a thread boundary so a tight bound measures the
+        // scheduler, not this code.
         done_rx
-            .recv_timeout(Duration::from_secs(5))
+            .recv_timeout(Duration::from_secs(60))
             .expect("publish_segment must unblock once the pin advances");
         handle.join().unwrap();
     }
@@ -4081,7 +4092,12 @@ mod tests {
             done_tx.send(()).unwrap();
         });
 
-        done_rx.recv_timeout(Duration::from_secs(2)).expect(
+        // HANG GUARD (issue #807): the property under test is "never blocks",
+        // i.e. these calls return almost immediately (`Event::notify`
+        // doesn't wait for listeners to resume) -- a stuck/blocked writer
+        // here is the only thing this should ever catch, so raised for
+        // load-tolerance rather than left as a timing claim.
+        done_rx.recv_timeout(Duration::from_secs(60)).expect(
             "publish_part/publish_segment must complete promptly even with \
                  a live, never-serviced waiter registered",
         );

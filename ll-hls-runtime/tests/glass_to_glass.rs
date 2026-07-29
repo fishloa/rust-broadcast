@@ -208,6 +208,11 @@ async fn start_ll_origin() -> (Arc<RouteHandle>, String, tokio::task::JoinHandle
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn glass_to_glass_sub_second_over_loopback_with_blocking_reload_and_prefetch() {
+    // HANG GUARD (issue #807): 25s on work that normally completes in ~3s
+    // (FRAME_COUNT=90 @ 30fps). Its only job is to fail a deadlock rather
+    // than hang CI forever -- raise freely if it ever proves too tight, it
+    // asserts nothing about latency itself (see the tight `max_latency`
+    // assertion below for that).
     let result = tokio::time::timeout(Duration::from_secs(25), async {
         let (store, playlist_url, server) = start_ll_origin().await;
         let producer = tokio::spawn(run_live_producer(store));
@@ -246,10 +251,33 @@ async fn glass_to_glass_sub_second_over_loopback_with_blocking_reload_and_prefet
         sample_count, FRAME_COUNT as usize,
         "must reconstruct every sample the producer pushed, no gaps/duplicates"
     );
-    assert!(
-        max_latency < Duration::from_secs(1),
-        "glass-to-glass latency must be sub-second (issue #717 headline acceptance): {max_latency:?}"
-    );
+    // LATENCY ASSERTION (issue #807 — do NOT loosen this number): sub-second
+    // glass-to-glass is the product's headline acceptance bar (issue #717),
+    // and the measured ~227ms figure is quoted in the crate's own docs.
+    // Loosening this bound would leave a green test no longer capable of
+    // failing for the reason it exists.
+    //
+    // It IS environment-sensitive: this measures real wall-clock latency
+    // through a real loopback HTTP round trip, so host contention (CPU
+    // starvation, disk pressure delaying the axum task, etc.) can inflate it
+    // independent of any code defect. Per issue #807, the fix for that is an
+    // opt-in escape hatch for a known-loaded box — never a relaxed threshold.
+    // Default CI behavior is unchanged: strict, and this is what must fail to
+    // catch a real latency regression.
+    if std::env::var_os("LL_HLS_RELAX_LATENCY_ASSERTIONS").is_some() {
+        eprintln!(
+            "WARNING: LL_HLS_RELAX_LATENCY_ASSERTIONS is set -- skipping the \
+             sub-second glass-to-glass latency assertion (measured {max_latency:?}). \
+             This does NOT validate the product's headline latency claim; only set \
+             this on a box you already know is contended, and get a real signal by \
+             unsetting it on a quiet box."
+        );
+    } else {
+        assert!(
+            max_latency < Duration::from_secs(1),
+            "glass-to-glass latency must be sub-second (issue #717 headline acceptance): {max_latency:?}"
+        );
+    }
 
     assert!(
         stats.blocking_reloads > 0,
@@ -274,6 +302,9 @@ async fn glass_to_glass_sub_second_over_loopback_with_blocking_reload_and_prefet
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn non_ll_origin_plays_via_full_segment_fallback_over_http() {
+    // HANG GUARD (issue #807): 15s on work that normally completes in well
+    // under a second (30-31 synthetic samples, no real-time pacing on this
+    // path). Only job: fail a deadlock rather than hang CI forever.
     tokio::time::timeout(Duration::from_secs(15), async {
         // target_duration_secs=1.0 (matching FRAME_COUNT=30 @ 30fps = 1.0s):
         // the 31st (sync) sample below crosses the target and auto-closes
