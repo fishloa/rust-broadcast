@@ -51,7 +51,7 @@ cli    = ["dep:clap", "std"]
 # normal-deps transmux; same with timed-metadata. By resolving these from the
 # registry rather than local paths, `cargo publish` won't require building
 # media-doctor/timed-metadata against 0.20 (which may not be published yet).
-media-doctor = { path = "../media-doctor", version = "0.4", default-features = false, features = ["std"] }
+media-doctor = { path = "../media-doctor", version = "0.5", default-features = false, features = ["std"] }
 # golden_gate.rs (issue #569) shells out to `ffprobe -of json` and parses the
 # result; already resolved workspace-wide at this version (see Cargo.lock), so
 # this adds no new dependency to the tree.

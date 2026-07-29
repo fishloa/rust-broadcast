@@ -618,14 +618,14 @@ dependencies = [
 
 [[package]]
 name = "dvb-cc"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "cc-data",
 ]
 
 [[package]]
 name = "dvb-ci"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "broadcast-common",
  "dvb-si",
@@ -636,7 +636,7 @@ dependencies = [
 
 [[package]]
 name = "dvb-ci-runtime"
-version = "0.14.1"
+version = "0.15.0"
 dependencies = [
  "broadcast-common",
  "clap",
@@ -648,7 +648,7 @@ dependencies = [
 
 [[package]]
 name = "dvb-common"
-version = "8.1.0"
+version = "9.0.0"
 dependencies = [
  "broadcast-common",
 ]
@@ -665,14 +665,14 @@ dependencies = [
 
 [[package]]
 name = "dvb-emsg"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "mp4-emsg",
 ]
 
 [[package]]
 name = "dvb-flute"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "broadcast-common",
  "serde",
@@ -682,14 +682,14 @@ dependencies = [
 
 [[package]]
 name = "dvb-pes"
-version = "0.1.2"
+version = "0.2.0"
 dependencies = [
  "mpeg-pes",
 ]
 
 [[package]]
 name = "dvb-scte35"
-version = "7.9.1"
+version = "8.0.0"
 dependencies = [
  "scte35-splice",
 ]
@@ -717,7 +717,7 @@ dependencies = [
 
 [[package]]
 name = "dvb-simulcrypt"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "broadcast-common",
  "serde",
@@ -740,7 +740,7 @@ dependencies = [
 
 [[package]]
 name = "dvb-subtitle"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "broadcast-common",
  "mpeg-pes",
@@ -780,7 +780,7 @@ dependencies = [
 
 [[package]]
 name = "dvb-ule"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "ule",
 ]
@@ -1553,7 +1553,7 @@ dependencies = [
 
 [[package]]
 name = "media-doctor"
-version = "0.4.3"
+version = "0.5.0"
 dependencies = [
  "broadcast-common",
  "clap",
@@ -2169,7 +2169,7 @@ dependencies = [
 
 [[package]]
 name = "rdd29"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "broadcast-common",
  "serde",
@@ -2410,7 +2410,7 @@ checksum = "94143f37725109f92c262ed2cf5e59bce7498c01bcc1502d7b9afe439a4e9f49"
 
 [[package]]
 name = "scte104"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "broadcast-common",
  "serde",
@@ -2607,7 +2607,7 @@ dependencies = [
 
 [[package]]
 name = "st12-1"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "broadcast-common",
  "serde",
@@ -2617,7 +2617,7 @@ dependencies = [
 
 [[package]]
 name = "st291"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "broadcast-common",
  "rtp-packet",
@@ -2628,7 +2628,7 @@ dependencies = [
 
 [[package]]
 name = "st337"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "broadcast-common",
  "serde",
@@ -2638,7 +2638,7 @@ dependencies = [
 
 [[package]]
 name = "st377-1"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "broadcast-common",
  "serde",
@@ -3025,7 +3025,7 @@ checksum = "e421abadd41a4225275504ea4d6566923418b7f05506fbc9c0fe86ba7396114b"
 
 [[package]]
 name = "ts-fix"
-version = "0.3.1"
+version = "0.4.0"
 dependencies = [
  "broadcast-common",
  "clap",
@@ -3051,7 +3051,7 @@ checksum = "b6f5e870be6c3b371b77fe0ee0bafb859fa4964b4404c27de1d380043c4dda20"
 
 [[package]]
 name = "ule"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "broadcast-common",
  "serde",
