@@ -307,11 +307,14 @@ async fn blocking_reload_resolves_when_part_arrives() {
 
     store.add_part(program, part(1, 1));
 
-    // Bound the wait in *real* time (no `tokio::time::pause()`): a working
-    // watch wakeup resolves within milliseconds of `add_part`, whereas a
-    // broken wakeup only resolves at the handler's internal 5 s
-    // `BLOCKING_RELOAD_TIMEOUT` fallback. 500 ms comfortably separates the
-    // two without being flaky on a loaded CI box.
+    // NOT a pure hang guard (issue #807): this must stay meaningfully below
+    // the 5s internal `BLOCKING_RELOAD_TIMEOUT` fallback it distinguishes
+    // from, or a broken (never-wakes) watch would still pass by falling
+    // through to that same fallback within a too-generous window. Bound the
+    // wait in *real* time (no `tokio::time::pause()`): a working watch wakeup
+    // resolves within milliseconds of `add_part`, whereas a broken wakeup
+    // only resolves at the 5s fallback. 500 ms comfortably separates the two
+    // (10x below the 5s cap) without being flaky on a loaded CI box.
     let resp = tokio::time::timeout(std::time::Duration::from_millis(500), handle)
         .await
         .expect("blocking reload must resolve promptly on the watch wakeup, not the 5s timeout fallback")

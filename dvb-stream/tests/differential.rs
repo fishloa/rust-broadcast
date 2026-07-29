@@ -17,12 +17,17 @@ use tokio::io::AsyncRead;
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
-/// Collect all `SectionEvent`s from `stream` with a hard 5-second timeout.
-/// Panics if the timeout fires (catches a stalled stream instead of hanging).
+/// Collect all `SectionEvent`s from `stream` with a hard timeout.
+///
+/// HANG GUARD (issue #807): all the driven streams here are in-memory
+/// `Cursor`s over small fixture files (no real I/O wait), so this normally
+/// completes in well under a second. Its only job is to fail a stalled/
+/// deadlocked stream rather than hang CI forever — generous on purpose, not
+/// a timing claim.
 async fn collect_section_stream<R: AsyncRead + Unpin>(
     mut stream: SectionStream<R>,
 ) -> Vec<dvb_si::demux::SectionEvent> {
-    tokio::time::timeout(Duration::from_secs(5), async {
+    tokio::time::timeout(Duration::from_secs(60), async {
         let mut events = Vec::new();
         while let Some(ev) = futures_util_poll_once(&mut stream).await {
             events.push(ev);
@@ -30,7 +35,7 @@ async fn collect_section_stream<R: AsyncRead + Unpin>(
         events
     })
     .await
-    .expect("SectionStream stalled — timeout after 5 s")
+    .expect("SectionStream stalled — hang guard (issue #807) fired after 60 s")
 }
 
 /// Poll a `Stream` once, returning `Some(item)` or `None` on termination.
@@ -116,7 +121,10 @@ async fn section_stream_in_memory_cursor_produces_events() {
     let cursor = std::io::Cursor::new(data);
     let stream = SectionStream::new(cursor);
 
-    let events = tokio::time::timeout(Duration::from_secs(5), async {
+    // HANG GUARD (issue #807): in-memory Cursor over a small fixture,
+    // normally completes in well under a second. See `collect_section_stream`
+    // above for the same reasoning; kept generous, not a timing claim.
+    let events = tokio::time::timeout(Duration::from_secs(60), async {
         let mut events = Vec::new();
         let mut stream = stream;
         loop {
@@ -129,7 +137,7 @@ async fn section_stream_in_memory_cursor_produces_events() {
         events
     })
     .await
-    .expect("timed out");
+    .expect("hang guard (issue #807) fired: stream never completed within 60s");
 
     assert!(
         !events.is_empty(),
@@ -173,7 +181,10 @@ async fn section_stream_one_byte_at_a_time_matches_oracle() {
         pos: 0,
     };
     let stream = SectionStream::new(reader);
-    let async_events = tokio::time::timeout(Duration::from_secs(10), async {
+    // HANG GUARD (issue #807): still in-memory, one byte at a time is slower
+    // than the bulk cursor case above but still normally sub-second even for
+    // a whole TS fixture; generous rather than a timing claim.
+    let async_events = tokio::time::timeout(Duration::from_secs(60), async {
         let mut events = Vec::new();
         let mut stream = stream;
         loop {
@@ -186,7 +197,7 @@ async fn section_stream_one_byte_at_a_time_matches_oracle() {
         events
     })
     .await
-    .expect("one-byte-at-a-time test timed out");
+    .expect("hang guard (issue #807) fired: one-byte-at-a-time stream never completed within 60s");
 
     assert_eq!(
         async_events.len(),
@@ -213,8 +224,9 @@ async fn section_stream_stats_after_completion() {
     let cursor = std::io::Cursor::new(data);
     let mut stream = SectionStream::new(cursor);
 
-    // Drain the stream.
-    tokio::time::timeout(Duration::from_secs(5), async {
+    // HANG GUARD (issue #807): in-memory cursor, normally sub-second; see
+    // `collect_section_stream` above for the same reasoning.
+    tokio::time::timeout(Duration::from_secs(60), async {
         loop {
             let item = std::future::poll_fn(|cx| Pin::new(&mut stream).poll_next(cx)).await;
             if item.is_none() {
@@ -223,7 +235,7 @@ async fn section_stream_stats_after_completion() {
         }
     })
     .await
-    .expect("timeout");
+    .expect("hang guard (issue #807) fired: stream never completed within 60s");
 
     let stats = stream.stats();
     // We should have processed at least data_len / 188 packets.

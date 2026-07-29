@@ -749,8 +749,13 @@ mod tests {
         let listener = trunk.listen().expect("listener slot available");
         let woken = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
         let woken2 = std::sync::Arc::clone(&woken);
+        // HANG GUARD (issue #807): deliberately generous, same reasoning as
+        // `media-plane/src/trunk.rs`'s own `Trunk::listen()` wake tests --
+        // the claim is "wakes rather than parking forever", not "wakes
+        // within N seconds"; the publish happens on another thread, so a
+        // tight bound would measure the machine's scheduler, not this code.
         let waiter = std::thread::spawn(move || {
-            let ok = listener.wait_deadline(Instant::now() + Duration::from_secs(2));
+            let ok = listener.wait_deadline(Instant::now() + Duration::from_secs(60));
             woken2.store(ok, std::sync::atomic::Ordering::SeqCst);
         });
 

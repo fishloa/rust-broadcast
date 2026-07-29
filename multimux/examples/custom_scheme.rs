@@ -339,7 +339,11 @@ async fn main() {
     // `window_segments` non-empty is what actually proves the samples
     // `DemoSession`'s second `feed` call queued were observed by the
     // segmenter's cursor and turned into a real, servable segment.
-    let landed = tokio::time::timeout(Duration::from_secs(5), async {
+    // HANG GUARD (issue #807): the synthetic "demo" scheme produces samples
+    // in-process with no real I/O wait, so this normally lands in well under
+    // a second. Only job is to fail "never lands" rather than hang, not a
+    // timing claim.
+    let landed = tokio::time::timeout(Duration::from_secs(60), async {
         loop {
             if store.init_bytes(ProgramId(0)).is_some()
                 && !store.window_segments(ProgramId(0)).is_empty()
