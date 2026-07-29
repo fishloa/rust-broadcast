@@ -263,6 +263,7 @@ pub(crate) fn report_driver_progress<S: media_plane::ingress::IngestSession>(
     driver: &media_plane::ingress::IngestDriver<S>,
     route_handle: &crate::route::RouteHandle,
     published: &mut std::collections::HashSet<media_plane::ingress::ProgramId>,
+    track_generations: &mut std::collections::HashMap<media_plane::ingress::ProgramId, u64>,
 ) {
     if matches!(driver.health(), media_plane::ingress::HealthState::Live)
         && route_handle.health() != crate::route::HealthState::Live
@@ -275,6 +276,28 @@ pub(crate) fn report_driver_progress<S: media_plane::ingress::IngestSession>(
                 route_handle.publish_program(program, std::sync::Arc::clone(trunk));
             }
         }
+    }
+    // Sync track specs from each published program's trunk into the route
+    // handle — the one piece of codec metadata the DASH/LL-DASH renderers
+    // need that no Trunk ring holds (issue #831: this sync was missing,
+    // shipping every driver-backed route with 503-forever DASH/LL-DASH).
+    for program in driver.programs() {
+        let Some(trunk) = driver.trunk(program) else {
+            continue;
+        };
+        let generation = trunk.track_generation();
+        if generation == 0 {
+            continue;
+        }
+        let last = track_generations.get(&program).copied();
+        if last == Some(generation) {
+            continue;
+        }
+        let tracks = trunk.tracks();
+        if !tracks.is_empty() {
+            route_handle.set_track_specs(program, tracks.to_vec());
+        }
+        track_generations.insert(program, generation);
     }
 }
 
@@ -294,6 +317,11 @@ pub struct DriverProgress {
     published: std::collections::HashSet<media_plane::ingress::ProgramId>,
     segmenters:
         std::collections::HashMap<media_plane::ingress::ProgramId, segment::ProgramSegmenter>,
+    /// Last-seen [`media_plane::trunk::Trunk::track_generation`] per program
+    /// — compared each call to avoid an unconditional `set_track_specs` on
+    /// every poll (issue #831: a missing sync here shipped DASH/LL-DASH 503
+    /// forever for every driver-backed route).
+    track_generations: std::collections::HashMap<media_plane::ingress::ProgramId, u64>,
 }
 
 impl DriverProgress {
@@ -324,7 +352,12 @@ pub fn advance_route<S: media_plane::ingress::IngestSession>(
     route_handle: &crate::route::RouteHandle,
     state: &mut DriverProgress,
 ) {
-    report_driver_progress(driver, route_handle, &mut state.published);
+    report_driver_progress(
+        driver,
+        route_handle,
+        &mut state.published,
+        &mut state.track_generations,
+    );
     segment::drive_program_segmenters(driver, route_handle, &mut state.segmenters);
 }
 
@@ -444,10 +477,11 @@ mod driver_progress_tests {
         let mut driver = driver();
         let route = crate::route::RouteHandle::new(4.0, 500, 4);
         let mut published = HashSet::new();
+        let mut track_generations = std::collections::HashMap::new();
 
         // Establish: driver becomes Live once it drains SessionEvent::Established.
         driver.feed(&[], Timestamp::from_nanos(1));
-        report_driver_progress(&driver, &route, &mut published);
+        report_driver_progress(&driver, &route, &mut published, &mut track_generations);
 
         assert_eq!(
             route.health(),
@@ -472,11 +506,12 @@ mod driver_progress_tests {
         let mut driver = driver();
         let route = crate::route::RouteHandle::new(4.0, 500, 4);
         let mut published = HashSet::new();
+        let mut track_generations = std::collections::HashMap::new();
 
         driver.feed(&[], Timestamp::from_nanos(1)); // Established
-        report_driver_progress(&driver, &route, &mut published);
+        report_driver_progress(&driver, &route, &mut published, &mut track_generations);
         driver.feed(&[], Timestamp::from_nanos(2)); // NewProgram(0)
-        report_driver_progress(&driver, &route, &mut published);
+        report_driver_progress(&driver, &route, &mut published, &mut track_generations);
 
         let expected = driver.trunk(ProgramId(0)).expect("driver minted a Trunk");
         match route.resolve_program(crate::route::SPTS_PROGRAM_ID) {
@@ -507,13 +542,14 @@ mod driver_progress_tests {
         let mut driver = driver();
         let route = crate::route::RouteHandle::new(4.0, 500, 4);
         let mut published = HashSet::new();
+        let mut track_generations = std::collections::HashMap::new();
 
         driver.feed(&[], Timestamp::from_nanos(1));
-        report_driver_progress(&driver, &route, &mut published);
+        report_driver_progress(&driver, &route, &mut published, &mut track_generations);
         driver.feed(&[], Timestamp::from_nanos(2));
-        report_driver_progress(&driver, &route, &mut published);
+        report_driver_progress(&driver, &route, &mut published, &mut track_generations);
         // No new SessionEvents fed; calling again must be a harmless no-op.
-        report_driver_progress(&driver, &route, &mut published);
+        report_driver_progress(&driver, &route, &mut published, &mut track_generations);
 
         match route.resolve_program(crate::route::SPTS_PROGRAM_ID) {
             crate::route::ProgramResolution::Found(_) => {}

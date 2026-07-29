@@ -11,6 +11,11 @@
 - `output::llhls`/`origin::resource` now handle a future `LlHlsBody` variant
   defensively (same status as the existing `Resource`/`Playlist` fallback),
   consistent with `ll-hls-runtime`'s `LlHlsBody` gaining `#[non_exhaustive]`.
+- **DASH and LL-DASH manifests returned 503 forever on every driver-backed
+  route** (shipped in v0.5.0). `RouteHandle::set_track_specs` had no
+  production call site — `report_driver_progress` now syncs track specs
+  from each published program's `Trunk` into the route on every poll, using
+  `track_generation()` to avoid redundant syncs (issue #831).
 
 ### Added
 - `tests/label_coverage.rs` drift guard (issue #806).

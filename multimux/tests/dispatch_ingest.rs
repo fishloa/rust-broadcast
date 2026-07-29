@@ -675,3 +675,199 @@ mod custom_dispatch_driver_backed {
         server.abort();
     }
 }
+
+// --- DASH / LL-DASH dispatch coverage (issue #831) ---
+//
+// Before the #831 fix, `RouteHandle::set_track_specs` had no production
+// call site — every `report_driver_progress`/`drive_program_segmenters`
+// path correctly published programs and segmented samples, but never
+// populated the one piece of codec metadata the DASH/LL-DASH renderers
+// read from `RouteHandle::track_specs`.  `manifest.mpd` and
+// `manifest-ll.mpd` returned 503 forever on every real driver-backed
+// route.
+//
+// These tests drive a real ingest route through `serve_with_registry`,
+// assert over HTTP that the DASH/LL-DASH manifests return 200 with
+// valid content, and do NOT call `set_track_specs` by hand — if they
+// did they would reproduce the blind spot that hid the bug, and the
+// test would not count.
+//
+// The `ts_udp_dash_manifest_returns_503_before_tracks_are_known` test
+// additionally proves that a route with truly no track data yet still
+// answers 503, not 200 (the genuine "no representable track" path).
+
+/// Polls `url` until it returns `200 OK` (or the hang guard expires).
+/// Returns the response body on success.  The DASH manifest's track
+/// specs arrive asynchronously — the first few polls may still be 503.
+async fn poll_until_200_ok(client: &reqwest::Client, url: &str) -> String {
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(20);
+    loop {
+        if let Ok(resp) = client.get(url).send().await {
+            if resp.status().is_success() {
+                return resp.text().await.unwrap_or_default();
+            }
+        }
+        if tokio::time::Instant::now() >= deadline {
+            panic!("no 200 response from {url} within the hang guard (20 s)");
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+}
+
+/// A DASH-only route (`OutputKind::Dash`, no LL-HLS) driven by
+/// real TS-UDP fixture bytes serves a valid `manifest.mpd` over HTTP
+/// with zero calls to `set_track_specs` — proving the production
+/// wiring (issue #831) now populates track specs from the driver.
+#[tokio::test]
+async fn dash_manifest_served_without_explicit_set_track_specs() {
+    let bind_addr = reserve_tcp_addr();
+    let udp_addr = reserve_udp_addr();
+    let mut config = base_config(
+        bind_addr,
+        InputSpec::TsUdp {
+            addr: udp_addr.to_string(),
+            multicast_group: None,
+        },
+    );
+    config.routes[0].outputs = vec![OutputKind::Dash];
+
+    let server = tokio::spawn(serve_with_registry(config, SchemeRegistry::new()));
+
+    let ts_bytes = std::fs::read(fixture_path()).expect("h264_aac.ts fixture must exist");
+    let stop = Arc::new(AtomicBool::new(false));
+    let sender_stop = Arc::clone(&stop);
+    let sender = tokio::net::UdpSocket::bind("127.0.0.1:0")
+        .await
+        .expect("bind sender");
+    let send_task = tokio::spawn(async move {
+        while !sender_stop.load(Ordering::Relaxed) {
+            for chunk in ts_bytes.chunks(7 * 188) {
+                let _ = sender.send_to(chunk, udp_addr).await;
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+        }
+    });
+
+    let client = reqwest::Client::new();
+    let mpd_url = format!("http://{bind_addr}/cam/manifest.mpd");
+    let mpd_body = poll_until_200_ok(&client, &mpd_url).await;
+    stop.store(true, Ordering::Relaxed);
+
+    assert!(
+        mpd_body.contains("<MPD"),
+        "manifest.mpd must be well-formed XML: {mpd_body}"
+    );
+    assert!(
+        mpd_body.contains(r#"xmlns="urn:mpeg:dash:schema:mpd:2011""#),
+        "{mpd_body}"
+    );
+    assert!(mpd_body.contains(r#"type="dynamic""#), "{mpd_body}");
+    assert!(
+        mpd_body.contains("<Representation"),
+        "manifest must describe at least one Representation — \
+         the route's real H.264 track from the fixture: {mpd_body}"
+    );
+
+    send_task.abort();
+    server.abort();
+}
+
+/// An LL-DASH route (`OutputKind::LlDash`) driven by real TS-UDP
+/// fixture bytes serves a valid `manifest-ll.mpd` over HTTP with zero
+/// calls to `set_track_specs` — the LL-DASH counterpart of the DASH test above.
+#[tokio::test]
+async fn ll_dash_manifest_served_without_explicit_set_track_specs() {
+    let bind_addr = reserve_tcp_addr();
+    let udp_addr = reserve_udp_addr();
+    let mut config = base_config(
+        bind_addr,
+        InputSpec::TsUdp {
+            addr: udp_addr.to_string(),
+            multicast_group: None,
+        },
+    );
+    config.routes[0].outputs = vec![OutputKind::LlDash];
+
+    let server = tokio::spawn(serve_with_registry(config, SchemeRegistry::new()));
+
+    let ts_bytes = std::fs::read(fixture_path()).expect("h264_aac.ts fixture must exist");
+    let stop = Arc::new(AtomicBool::new(false));
+    let sender_stop = Arc::clone(&stop);
+    let sender = tokio::net::UdpSocket::bind("127.0.0.1:0")
+        .await
+        .expect("bind sender");
+    let send_task = tokio::spawn(async move {
+        while !sender_stop.load(Ordering::Relaxed) {
+            for chunk in ts_bytes.chunks(7 * 188) {
+                let _ = sender.send_to(chunk, udp_addr).await;
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+        }
+    });
+
+    let client = reqwest::Client::new();
+    let mpd_url = format!("http://{bind_addr}/cam/manifest-ll.mpd");
+    let mpd_body = poll_until_200_ok(&client, &mpd_url).await;
+    stop.store(true, Ordering::Relaxed);
+
+    assert!(
+        mpd_body.contains("<MPD"),
+        "manifest-ll.mpd must be well-formed XML: {mpd_body}"
+    );
+    assert!(
+        mpd_body.contains(r#"xmlns="urn:mpeg:dash:schema:mpd:2011""#),
+        "{mpd_body}"
+    );
+    assert!(mpd_body.contains(r#"type="dynamic""#), "{mpd_body}");
+    assert!(
+        mpd_body.contains("<Representation"),
+        "LL-DASH manifest must describe at least one Representation: {mpd_body}"
+    );
+
+    send_task.abort();
+    server.abort();
+}
+
+/// A DASH route with no tracks published yet (no UDP sender, so the
+/// ingest driver never observes a program) answers 503 on
+/// `manifest.mpd` — the genuine "no representable track known yet"
+/// path, distinct from the "not yet announced" (registry-empty) 503.
+#[tokio::test]
+async fn ts_udp_dash_manifest_returns_503_before_tracks_are_known() {
+    let bind_addr = reserve_tcp_addr();
+    let udp_addr = reserve_udp_addr();
+    let mut config = base_config(
+        bind_addr,
+        InputSpec::TsUdp {
+            addr: udp_addr.to_string(),
+            multicast_group: None,
+        },
+    );
+    config.routes[0].outputs = vec![OutputKind::Dash];
+
+    let server = tokio::spawn(serve_with_registry(config, SchemeRegistry::new()));
+
+    // Deliberately send nothing — the route binds its UDP socket but
+    // never receives a single datagram, so no IngestSession ever
+    // announces a program, so the route's track specs stay empty.
+    tokio::time::sleep(Duration::from_millis(200)).await;
+
+    let client = reqwest::Client::new();
+    let mpd_url = format!("http://{bind_addr}/cam/manifest.mpd");
+    let resp = client
+        .get(&mpd_url)
+        .send()
+        .await
+        .unwrap_or_else(|e| panic!("GET {mpd_url} failed: {e}"));
+
+    assert_eq!(
+        resp.status(),
+        reqwest::StatusCode::SERVICE_UNAVAILABLE,
+        "manifest.mpd must return 503 until at least one program \
+         with known tracks is announced — a route with no ingest yet \
+         must not return 200: status={}",
+        resp.status()
+    );
+
+    server.abort();
+}
