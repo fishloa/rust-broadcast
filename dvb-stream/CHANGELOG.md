@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.4.0] - 2026-07-29
+
+### Changed (BREAKING)
+- **Requires `dvb-si` 9 and `dvb-t2mi` 9** (issue #819). No functional change.
+
+  The published 0.3.1 still required `^8` of both as *normal* dependencies, so
+  a consumer combining it with `dvb-si` 9 got two majors of the same crate in
+  one graph and the `Parse`/`Serialize` impls belonged to the wrong one. This
+  was missed by the #819 sweep, which only checked `broadcast-common`
+  requirements -- `dvb-stream`'s broadcast-common dependency is dev-only, so it
+  did not show up. Found by the new published-dependency consistency check
+  (#821) on its first run, which is the argument for having it.
+
 ## [Unreleased]
 
 ### Added

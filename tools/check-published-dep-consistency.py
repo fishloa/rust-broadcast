@@ -109,6 +109,31 @@ def latest_published_version(crate: str) -> str | None | str:
     return data.get("crate", {}).get("max_version")
 
 
+def range_still_resolvable(crate: str, req: str) -> bool:
+    """True if some unyanked published version of `crate` satisfies `req`'s
+    major/compat epoch.
+
+    Used to decide whether a stale *dev*-dependency actually blocks anything.
+    `cargo publish` must resolve versioned dev-deps, so a dev-dep pointing at a
+    major that no longer exists is a hard failure -- but one pointing at a
+    major that is still on crates.io resolves fine and is merely untidy.
+    """
+    epoch = compat_epoch(req)
+    if epoch is None:
+        return True
+    data = http_get_json(f"https://crates.io/api/v1/crates/{crate}")
+    if data in (None, "error"):
+        # Unknown: assume resolvable so a network blip cannot manufacture a
+        # blocking violation.
+        return True
+    for v in data.get("versions", []):
+        if v.get("yanked"):
+            continue
+        if compat_epoch(v.get("num", "")) == epoch:
+            return True
+    return False
+
+
 def published_dependencies(crate: str, version: str) -> list[dict] | str:
     data = http_get_json(f"https://crates.io/api/v1/crates/{crate}/{version}/dependencies")
     if data == "error":
@@ -158,6 +183,7 @@ def main() -> int:
 
     members = workspace_packages()
     violations: list[str] = []
+    stale_dev: list[str] = []
     skipped: list[str] = []
 
     for name, in_tree_version in sorted(members.items()):
@@ -184,15 +210,44 @@ def main() -> int:
             if published_epoch is None or current_epoch is None:
                 continue
             if published_epoch < current_epoch:
-                violations.append(
-                    f"{name} {max_version} ({dep.get('kind') or 'normal'}-dep) requires "
-                    f"{sibling} {req}, but {sibling} is now {members[sibling]} in-tree "
-                    f"(published requirement is a superseded major)"
+                kind = dep.get("kind") or "normal"
+                detail = (
+                    f"{name} {max_version} ({kind}-dep) requires "
+                    f"{sibling} {req}, but {sibling} is now {members[sibling]} in-tree"
                 )
+                # A NORMAL dep is consumer-visible: anyone combining this
+                # published crate with a current sibling gets two majors of
+                # the same library in one graph, and trait impls belong to the
+                # wrong one. That is the #819 failure and it is an error.
+                #
+                # A versioned DEV dep is only a problem when the required
+                # range cannot be resolved at all -- which is what actually
+                # broke rtmp-runtime's publish (it needed transmux 0.20 before
+                # 0.20 existed). While the old major is still published and
+                # unyanked, the publish resolves and no consumer ever pulls a
+                # dev-dep, so this is hygiene, not breakage. Reporting it as a
+                # blocking violation would cry wolf on every release tag.
+                if kind == "dev" and range_still_resolvable(sibling, req):
+                    stale_dev.append(
+                        detail + " (dev-dep; old major still published, so"
+                        " publishes resolve -- hygiene only)"
+                    )
+                else:
+                    violations.append(detail + " (superseded major)")
 
     print()
     if skipped:
         print(f"::warning::skipped {len(skipped)} crate(s) due to crates.io network errors: {skipped}")
+
+    if stale_dev:
+        print(
+            f"{len(stale_dev)} stale dev-dependency requirement(s) -- untidy but"
+            " not blocking (old major still published, and consumers never pull"
+            " dev-deps):"
+        )
+        for d in stale_dev:
+            print(f"  - {d}")
+        print()
 
     if violations:
         print(f"Found {len(violations)} published-dependency consistency violation(s):")
