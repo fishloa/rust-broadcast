@@ -5,6 +5,14 @@ All notable changes to `transmux` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.21.1] - 2026-07-30
+
+### Fixed
+- Floor `mpeg-ts` to `0.3.1`. The `^0.3` bucket also contains 0.3.0, which is
+  built against `broadcast-common` 8, so a consumer could resolve two
+  `broadcast-common` majors into one graph and hit trait-resolution errors
+  pointing at this crate's internals (#858).
+
 ## [0.21.0] - 2026-07-30
 
 ### Added

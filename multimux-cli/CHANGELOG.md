@@ -2,6 +2,14 @@
 
 All notable changes to `multimux-cli` will be documented in this file.
 
+## [0.3.1] - 2026-07-30
+
+### Fixed
+- Floor `multimux` to `0.5.1`. The `^0.5` bucket also contains 0.5.0,
+  which is built against `media-plane` 0.1.0, so a consumer could resolve
+  two `transmux` minors into one graph and hit trait-resolution errors
+  pointing at this crate's internals (#858).
+
 ## [0.3.0] - 2026-07-28
 
 ## [0.2.1] - 2026-07-26

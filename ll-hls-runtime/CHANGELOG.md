@@ -4,6 +4,14 @@ All notable changes to `ll-hls-runtime` are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project adheres
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.1] - 2026-07-30
+
+### Fixed
+- Floor `media-plane` to `0.1.1`. The `^0.1` bucket also contains 0.1.0,
+  which is built against `transmux` 0.20, so a consumer could resolve two
+  `transmux` minors into one graph and hit trait-resolution errors pointing
+  at this crate's internals (#858).
+
 ## [0.3.0] - 2026-07-30
 
 ### Changed (Breaking)

@@ -1,5 +1,13 @@
 # Changelog
 
+## [9.1.1] - 2026-07-30
+
+### Fixed
+- Floor `mpeg-ts` to `0.3.1`. The `^0.3` bucket also contains 0.3.0, which is
+  built against `broadcast-common` 8, so a consumer could resolve two
+  `broadcast-common` majors into one graph and hit trait-resolution errors
+  pointing at this crate's internals (#858).
+
 ## [9.1.0] - 2026-07-30
 ### Added
 - T-STD buffer model and four new indicators (#737):
