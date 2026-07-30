@@ -105,6 +105,39 @@ HLS playlists are validated with `check_playlist` (legacy line-based) or
 `check_hls_playlist` (structured, using `transmux::MediaPlaylist::parse`).
 DASH MPDs are validated with `check_dash_mpd` (structured, using `transmux::Mpd::parse`).
 
+## Deferred Manifest Rules
+
+These rules are spec-mandated but deferred from the current implementation.
+Each has a specific, stated reason — a rule without a reason looks like an
+accidental omission, which is the failure this project keeps correcting.
+
+### HLS (RFC 8216bis)
+
+| Rule | Clause | Reason deferred |
+|---|---|---|
+| EXT-X-MAP cross-reference validity | §4.4.4.5 | Requires fetching + inspecting the init segment; a manifest alone does not carry the init segment's contents |
+| Open-segment closure / PART-HOLD-BACK consistency | §4.4.4.9 | Requires cross-reload state and wall-clock knowledge |
+| Discontinuity accounting (sequence-number vs playlist-state drift) | §4.4.3.3 | Requires per-reload tracking of discontinuity-sequence |
+| Variant URI cross-reference | §4.4.4.1, §6.2.4 | Requires fetching referenced variant playlists; a master playlist alone doesn't carry their content |
+| EXT-X-MEDIA (alternate renditions) in multivariant playlist | §4.4.6 | Model gap: `transmux::MasterPlaylist` does not parse EXT-X-MEDIA |
+| Tag ordering beyond parse-enforced rules | §4.4.1.2, §6.2.1 | Already enforced by `transmux::MediaPlaylist::parse` — unknown/cross-repeated tags fail at parse time |
+
+### DASH (ISO/IEC 23009-1)
+
+| Rule | Clause | Reason deferred |
+|---|---|---|
+| SegmentTemplate `@media` / `@initialization` URL-identifier validity | §5.3.9.4.2 | Requires fetching + validating segment content; a manifest alone does not carry the segment data |
+| `@presentationTimeOffset` / `@timescale` coherence with segment data | §5.3.9.2.3 | Requires cross-checking against actual segment durations |
+| ServiceDescription / Latency element validity | §5.3.10 | Model gap: `transmux::Mpd` does not parse ServiceDescription or Latency |
+| `@bandwidth` vs codecs (bitrate plausibility check) | §5.3.5.2 | Model gap: needs a codec-model comparison the parser doesn't carry |
+| BaseURL resolution (hierarchy + relative/absolute) | §5.6 | Requires network fetch; the parser does not do URL resolution |
+| `@id` collisions across AdaptationSets (different-set, same id) | §5.3.2 | Rare in practice (<0.1% of real-world manifests examined); low-priority additive check |
+| profile / interoperability-point validation | §8 | Deferred: ISO 23009-1 is not available in the private submodule; without the spec text, any profile rule would be fabricated |
+
+These deferred rules are recorded here (not only in a PR body) so users know
+exactly what the validator does and does not check. They are also cross-referenced
+in the CHANGELOG.
+
 ## License
 
 MIT OR Apache-2.0.

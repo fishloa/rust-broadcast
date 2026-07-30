@@ -18,7 +18,10 @@
 //!
 //! After the structured parse, also run a minimal set of line-based checks
 //! on the original text for rules the structured model doesn't enforce:
-//! DATERANGE well-formedness (via `timed_metadata::DateRange::parse_tag_line`).
+//! DATERANGE well-formedness (via `timed_metadata::DateRange::parse_tag_line`),
+//! version-tag position (`#EXT-X-VERSION` must appear before the first segment
+//! — the structured model stores only the final version value, not its line
+//! position).
 //!
 //! # Rule IDs
 //!
@@ -207,6 +210,7 @@ fn legacy_line_checks(text: &str, report: &mut Report) {
     let mut targetduration_val: u64 = 0;
     let mut extinf_line_nums: Vec<usize> = Vec::new();
     let mut extinf_durations: Vec<f64> = Vec::new();
+    let mut first_extinf_line: Option<usize> = None;
 
     for (i, line) in lines.iter().enumerate() {
         let line_num = i + 1;
@@ -220,6 +224,9 @@ fn legacy_line_checks(text: &str, report: &mut Report) {
         }
 
         if trimmed.starts_with("#EXTINF:") {
+            if first_extinf_line.is_none() {
+                first_extinf_line = Some(line_num);
+            }
             extinf_line_nums.push(line_num);
             if let Some(dur_str) = trimmed.strip_prefix("#EXTINF:") {
                 let dur = dur_str.split(',').next().unwrap_or("0");
@@ -227,6 +234,28 @@ fn legacy_line_checks(text: &str, report: &mut Report) {
                 extinf_durations.push(parsed);
             } else {
                 extinf_durations.push(0.0);
+            }
+        }
+    }
+
+    // hls-version-tag-after-segments — RFC 8216bis §4.4.1.2, §6.2.1
+    // EXT-X-VERSION must appear before any segment. A version tag appearing
+    // after the first EXTINF means the version applies to tags that have
+    // already been parsed — the parser would have already committed to the
+    // wrong lower version. This is a line-position rule that the structured
+    // model cannot enforce (MediaPlaylist stores only the final version).
+    if let Some(first_extinf) = first_extinf_line {
+        for (i, line) in lines.iter().enumerate() {
+            let line_num = i + 1;
+            if line_num > first_extinf && line.trim().starts_with("#EXT-X-VERSION:") {
+                report.push(Finding::new(
+                    Severity::Error,
+                    Location::new(line_num, 0),
+                    "hls-version-tag-after-segments",
+                    alloc::format!(
+                        "EXT-X-VERSION on line {line_num} must appear before the first segment — §4.4.1.2, §6.2.1",
+                    ),
+                ));
             }
         }
     }

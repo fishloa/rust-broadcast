@@ -25,9 +25,11 @@ all text is normative except the Introduction, sections/paragraphs marked
 ## 1. Scope (§1)
 
 ST 2022-7 defines requirements for **multiple redundant streams of RTP
-packets** (2019 generalizes 2013's fixed "two streams" to "at least two",
-§6) that allow a receiver to reconstruct a single output stream via seamless,
-per-datagram protection switching. It constrains only the **RTP-and-above**
+packets** — both editions require "at least two" streams identically (§6);
+the only two-vs-more wording change between editions is in the Definitions
+clause (2013 §5.10 "two" → 2019 §4.10 "two or more"), which is a definition,
+not this normative requirement. The standard allows a receiver to reconstruct
+a single output stream via seamless, per-datagram protection switching. It constrains only the **RTP-and-above**
 content of the redundant streams; it says nothing about how the streams are
 carried at L2–L4 (that is deliberately left open — see §3 below).
 

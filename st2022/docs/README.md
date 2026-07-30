@@ -70,14 +70,20 @@ not an oracle until someone has tried to break it. Findings recorded in
 `.delegate/752-fidelity-audit.md`.
 
 **One severe defect was found and is now corrected:** the ST 2022-7 redundancy
-section claimed that 2013 required *exactly* two streams and that 2019 relaxed
-this to "at least two". Both editions in fact say "at least two" identically;
-the only two-vs-more change is in the Definitions clause (2013 §5.10 "two" →
-2019 §4.10 "two or more"). The claim was stated unhedged, so it would have
-misled an implementer about a normative requirement that never changed — and it
-was the one thing this gaps list should have contained and did not, because the
-transcriber did not know it was wrong. That is precisely why the audit is a
-gate and not an optional extra.
+section (§2 in `st2022-7-hitless.md` line 38–44 and the Scope section) claimed
+that 2013 required *exactly* two streams and that 2019 relaxed this to "at least
+two". Both editions in fact say "at least two" identically; the only two-vs-more
+change is in the Definitions clause (2013 §5.10 "two" → 2019 §4.10 "two or
+more"). The claim was stated unhedged, so it would have misled an implementer
+about a normative requirement that never changed — and it was the one thing this
+gaps list should have contained and did not, because the transcriber did not
+know it was wrong. That is precisely why the audit is a gate and not an optional
+extra.
+
+The §2 redundancy section (line 38–44) already carried the correction from a
+prior pass. The Scope section (§1, line 28) still contained the original false
+claim ("2019 generalizes 2013's fixed 'two streams' to 'at least two'"). That
+instance is now corrected in this pass.
 
 Everything else verified accurate, including both items flagged below.
 
@@ -107,14 +113,11 @@ Everything else verified accurate, including both items flagged below.
    transcribed — it is out of ST 2022-6's own scope, so this is flagged for
    completeness rather than treated as a real gap in the HBRMT framing spec.
 5. **The 2^32/27MHz RTP-timestamp-rollover arithmetic discrepancy between
-   editions** (`st2022-7-hitless.md` §6): the 2019 edition states "≈159.07
-   seconds (2^32/27,000,000)", which checks out arithmetically
-   (4,294,967,296 / 27,000,000 ≈ 159.07). The 2013 edition states "40,722.6
-   seconds (2^32/27M)" for the same quantity, which does **not** check out
-   against that formula as written. Both numbers are quoted verbatim from
-   their respective PDFs; this prep does not attempt to resolve which (if
-   either) is a typo in the original SMPTE document, since doing so would
-   require guessing SMPTE's intent rather than reading it from a source.
+   editions** (`st2022-7-hitless.md` §6): resolved — see the note below. The
+   2019 figure (≈159.07 s) is correct (`2^32/27,000,000 ≈ 159.07`); the 2013
+   figure (40,722.6 s) is a typo in the original SMPTE document that the 2019
+   edition silently corrected. The body of `st2022-7-hitless.md` already states
+   this resolution; this item is retained here only as a cross-reference.
 6. **Whether a newer errata/amendment of ST 2022-7:2019 exists** beyond what
    `pub.smpte.org/latest/...` served. The "latest" URL path suggests this is
    the current edition, but no exhaustive search for a subsequent revision

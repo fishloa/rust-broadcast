@@ -21,6 +21,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `hls-skip-without-can-skip-until` (§4.4.3.8),
   `hls-part-duration-range` (§4.4.4.9), `hls-malformed-daterange` (§4.4.5.1),
   `hls-parse-error` (§4).
+  - 13 manifest rules are spec-mandated but **deferred** with stated reasons
+    (see [`README.md §Deferred Manifest Rules`](README.md#deferred-manifest-rules)).
+    The list was previously recorded only in the PR body and is now permanently
+    documented there.
 - DASH MPD validator `check_dash_mpd()` (issue #756) — structured validation
   via `transmux::Mpd::parse`: `dash-static-mpd-missing-duration` (ISO/IEC
   23009-1:2012 §5.3.1.2 Table 3, CM), `dash-representation-id-duplicate`
