@@ -8,13 +8,15 @@
 //!
 //! The LL-HLS half of this file reuses `multimux`'s real, production
 //! `RouteHandle` + `LlHlsOutput` + `origin::router` (the same axum origin
-//! shipped in `multimux`, added as a dev-dependency here) — not a test
-//! double — driven by a hand-written, real-time-paced producer loop (a
-//! `transmux::ll_hls::LlHlsSegmenter` fed one sample every ~33ms, mirroring
-//! `multimux::pipeline::run_pipeline`'s own segmenter->store wiring, but with
-//! genuine wall-clock pacing between samples so the origin is *live-shaped*
-//! rather than dumping every part into the store instantly). No dev-dep
-//! cycle: `multimux` does not depend on `ll-hls-runtime`.
+//! shipped in `multimux`) — not a test double — driven by a hand-written,
+//! real-time-paced producer loop (a `transmux::ll_hls::LlHlsSegmenter` fed
+//! one sample every ~33ms, mirroring `multimux::pipeline::run_pipeline`'s own
+//! segmenter->store wiring, but with genuine wall-clock pacing between
+//! samples so the origin is *live-shaped* rather than dumping every part into
+//! the store instantly). This test lives in `multimux/tests/` because
+//! `ll-hls-runtime` is a normal dependency of `multimux`, so there is no
+//! cycle: the governing rule is that a cross-crate test lives in the
+//! topologically highest crate it touches.
 //!
 //! The non-LL half uses a minimal hand-built axum app instead of
 //! `multimux`'s origin, since `multimux::output::llhls::LlHlsOutput` always
@@ -29,8 +31,6 @@
 //! On the client side, `glass_to_glass = now() - decoded_push_time` for
 //! every sample the client emits; the assertion is on the **max** observed
 //! across the whole run.
-
-#![cfg(feature = "tokio")]
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -53,9 +53,8 @@ use transmux::{
     TrackSpec,
 };
 
-/// Matches `multimux::output::llhls::DEFAULT_TRACK_ID` (the single track the
-/// origin renders under `part-1-*`/`seg-1-*`/`init-1.mp4` filenames).
-const TRACK_ID: u32 = 1;
+use ll_hls_runtime::server::DEFAULT_TRACK_ID;
+const TRACK_ID: u32 = DEFAULT_TRACK_ID;
 /// Matches `multimux::pipeline`'s own fixed CMAF movie timescale.
 const MOVIE_TIMESCALE: u32 = 90_000;
 const VIDEO_TIMESCALE: u32 = 90_000;
