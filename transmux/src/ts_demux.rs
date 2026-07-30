@@ -106,6 +106,7 @@
 //! - **Byte-stream resynchronisation**: ISO/IEC 13818-1 §2.4.3.2, via
 //!   [`mpeg_ts::resync::TsResync`] (also strips 204-byte Reed-Solomon FEC).
 
+use alloc::collections::btree_map::Entry;
 use alloc::collections::{BTreeMap, BTreeSet, VecDeque};
 use alloc::vec::Vec;
 use core::marker::PhantomData;
@@ -2235,12 +2236,30 @@ fn on_completed_section(
 /// not TS-only — [`crate::flv_stream::StreamingFlvDemux`] emits it too).
 /// Re-exported from this path so `transmux::ts_demux::DemuxEvent` keeps
 /// resolving unchanged.
-pub use crate::ir::{AbandonReason, DemuxEvent, DiscontinuityKind, EventProvenance};
+pub use crate::ir::{
+    AbandonReason, DemuxEvent, DiscontinuityKind, EventProvenance, InputDegradation,
+};
 
 /// `program_clock_reference`'s native clock rate (ISO/IEC 13818-1 §2.4.3.5) —
 /// the `clock_hz` [`DemuxEvent::ClockReference`] carries for every PCR this
 /// demuxer emits.
 const PCR_CLOCK_HZ: u32 = 27_000_000;
+
+/// Per-PID continuity-counter state for [`StreamingTsDemux`] (issue #778).
+///
+/// Tracks the last-seen CC and its payload bytes for duplicate detection
+/// (ISO/IEC 13818-1 §2.4.3.3: a legal duplicate is a re-transmitted packet
+/// with same CC + identical payload). Skipping non-payload-bearing packets
+/// (AFC `00`/`10`) on this PID, as they do not advance the counter.
+#[derive(Debug, Clone)]
+struct CcState {
+    /// Whether we've seen the first payload-bearing packet for this PID.
+    initialized: bool,
+    /// Last continuity counter value on this PID (payload-bearing only).
+    last_cc: u8,
+    /// Payload bytes of the last packet (for duplicate detection).
+    last_payload: Vec<u8>,
+}
 
 /// Event-driven, incremental MPEG-2 Transport Stream demuxer (issue #555) —
 /// the one demux core [`TsDemux`] is a thin batch wrapper over.
@@ -2343,6 +2362,12 @@ pub struct StreamingTsDemux {
     /// `generation` advances past this value (issue #624 original mechanism;
     /// re-keyed off `generation` instead of a PID count by issue #774).
     tracks_resolved_signalled_at: Option<u32>,
+    /// Per-PID continuity-counter state for `InputDegraded::ContinuityGap`
+    /// detection (issue #778). Only populated for payload-bearing, non-null
+    /// packets; non-payload-bearing packets (AFC `00`/`10`) are skipped and do
+    /// not create entries or advance the counter. Null PID (0x1FFF) is always
+    /// excluded.
+    cc_states: BTreeMap<u16, CcState>,
 }
 
 /// Per-PMT-PID reassembly + version-diffing state (issue #774): the
@@ -2388,6 +2413,7 @@ impl StreamingTsDemux {
             events: VecDeque::new(),
             generation: 0,
             tracks_resolved_signalled_at: None,
+            cc_states: BTreeMap::new(),
         }
     }
 
@@ -2422,6 +2448,29 @@ impl StreamingTsDemux {
             return;
         };
 
+        // TEI degradation (issue #778) — the demodulator-set flag on an
+        // uncorrectable packet error, independent of PID classification or
+        // adaptation field handling.
+        if pkt.header.tei {
+            let provenance = EventProvenance {
+                pid: Some(pkt.header.pid),
+                packet_index: Some(idx),
+            };
+            self.events.push_back(DemuxEvent::InputDegraded {
+                track: self.live_track_id(pkt.header.pid),
+                kind: InputDegradation::TransportError,
+                provenance,
+            });
+        }
+
+        // CC check (issue #778) — payload-bearing, non-null packets only,
+        // excluding signalled discontinuities (the adaptation-field check
+        // that follows).
+        let discontinuity_signalled = pkt.header.has_adaptation
+            && raw
+                .get(4)
+                .is_some_and(|af_len| *af_len > 0 && raw.get(5).is_some_and(|b| b & 0x80 != 0));
+
         // PCR / discontinuity — independent of PID classification, matches
         // every packet's adaptation field regardless of payload routing.
         if let Some(Ok(af)) = pkt.adaptation_field() {
@@ -2444,6 +2493,23 @@ impl StreamingTsDemux {
                     provenance,
                 });
             }
+        }
+
+        // CC gap degradation (issue #778) — payload-bearing, non-null packets
+        // only. The discontinuity flag is passed in so check_cc can suppress
+        // the EVENT but STILL UPDATE the per-PID state (matching both in-repo
+        // reference implementations: dvb-conformance's check_cc at
+        // lib.rs:979-982 and media-doctor's CcAnomalyCheck at cc_anomaly.rs:110-113
+        // — both update last_cc unconditionally on every payload-bearing packet,
+        // including those with discontinuity_indicator set).
+        if pkt.header.has_payload && pkt.header.pid != NULL_PACKET_PID {
+            self.check_cc(
+                pkt.header.pid,
+                pkt.header.continuity_counter,
+                pkt.payload,
+                discontinuity_signalled,
+                idx,
+            );
         }
 
         let pid = pkt.header.pid;
@@ -2562,6 +2628,77 @@ impl StreamingTsDemux {
             self.evict_unattributed();
         }
         self.try_promote_ready();
+    }
+
+    /// Check the continuity counter for `pid` against the tracking state,
+    /// emitting [`DemuxEvent::InputDegraded`]`(`[`InputDegradation::ContinuityGap`]`)`
+    /// when a genuine gap is detected (issue #778).
+    ///
+    /// Does **not** fire for:
+    /// - Signalled discontinuities (`discontinuity_signalled`): the event is
+    ///   suppressed, but `last_cc` and `last_payload` are still updated to
+    ///   this packet (matching the dvb-conformance and media-doctor reference
+    ///   implementations — both update the CC baseline unconditionally).
+    /// - Legal duplicates: same CC + identical *payload* (not including
+    ///   adaptation-field variations like a re-encoded PCR). Payload bytes
+    ///   are taken from `pkt.payload`, which excludes the adaptation field.
+    ///
+    /// # Arguments
+    /// - `pid` — the TS PID.
+    /// - `cc` — the 4-bit continuity counter from the packet header.
+    /// - `payload` — the packet's payload bytes (after the adaptation field,
+    ///   if any), from [`TsPacket::payload`].
+    /// - `discontinuity_signalled` — `true` when the adaptation field's
+    ///   `discontinuity_indicator` is set. Suppresses the event but NOT the
+    ///   state update.
+    /// - `packet_index` — 0-based index of this packet in the stream.
+    fn check_cc(
+        &mut self,
+        pid: u16,
+        cc: u8,
+        payload: Option<&[u8]>,
+        discontinuity_signalled: bool,
+        packet_index: u64,
+    ) {
+        let payload_bytes = payload.unwrap_or(&[]);
+        let track = self.live_track_id(pid);
+        match self.cc_states.entry(pid) {
+            Entry::Occupied(mut e) => {
+                let state = e.get_mut();
+                if !state.initialized {
+                    state.initialized = true;
+                    state.last_cc = cc;
+                    state.last_payload = payload_bytes.to_vec();
+                    return;
+                }
+                let expected = (state.last_cc + 1) & 0x0F;
+                if !discontinuity_signalled && cc != expected {
+                    // Check for legal duplicate: same CC + identical payload.
+                    let is_dup = cc == state.last_cc
+                        && payload_bytes.len() == state.last_payload.len()
+                        && payload_bytes == state.last_payload.as_slice();
+                    if !is_dup {
+                        self.events.push_back(DemuxEvent::InputDegraded {
+                            track,
+                            kind: InputDegradation::ContinuityGap { expected, got: cc },
+                            provenance: EventProvenance {
+                                pid: Some(pid),
+                                packet_index: Some(packet_index),
+                            },
+                        });
+                    }
+                }
+                state.last_cc = cc;
+                state.last_payload = payload_bytes.to_vec();
+            }
+            Entry::Vacant(e) => {
+                e.insert(CcState {
+                    initialized: true,
+                    last_cc: cc,
+                    last_payload: payload_bytes.to_vec(),
+                });
+            }
+        }
     }
 
     /// Bind `pmt_pid` to the `program_number` a currently-applicable PAT
@@ -3261,6 +3398,7 @@ impl<'a> TsDemux<'a> {
                     discontinuity: discontinuous,
                 }),
                 DemuxEvent::Discontinuity { .. } => {}
+                DemuxEvent::InputDegraded { .. } => {}
                 DemuxEvent::TracksResolved { .. } => {}
             }
         }
@@ -4195,5 +4333,572 @@ mod tests {
             "PID X must keep its original (first) declaration-order slot, not move to the back"
         );
         assert_eq!(demux.streams.get(&PID_X).unwrap().codec, Codec::Data(0x08));
+    }
+
+    // ── InputDegradation tests (issue #778) ─────────────────────────────────
+
+    /// A valid TS null packet (PID 0x1FFF, AFC=01, CC=0).
+    fn null_packet() -> [u8; TS_PACKET_SIZE] {
+        let mut p = [0xFFu8; TS_PACKET_SIZE];
+        p[0] = 0x47;
+        p[1] = 0x1F;
+        p[2] = 0xFF;
+        p[3] = 0x10;
+        p
+    }
+
+    /// Helper: build a TS packet with explicit tei, pusi, pid, cc, adaptation
+    /// field, and payload.
+    fn ts_packet_degradation(
+        tei: bool,
+        pid: u16,
+        cc: u8,
+        afc: u8,
+        adaptation: Option<&[u8]>,
+        payload: &[u8],
+    ) -> [u8; TS_PACKET_SIZE] {
+        let mut p = [0xFFu8; TS_PACKET_SIZE];
+        p[0] = 0x47;
+        p[1] = (if tei { 0x80 } else { 0x00 }) | ((pid >> 8) as u8 & PID_HI_MASK);
+        p[2] = (pid & 0xFF) as u8;
+        p[3] = afc | (cc & 0x0F);
+
+        let mut off = 4usize;
+        if let Some(af) = adaptation {
+            let af_len = af.len() as u8;
+            p[off] = af_len;
+            off += 1;
+            p[off..off + af.len()].copy_from_slice(af);
+            off += af.len();
+        }
+        // Copy payload into remaining space.
+        let payload_end = off + payload.len().min(TS_PACKET_SIZE - off);
+        p[off..payload_end].copy_from_slice(&payload[..payload_end - off]);
+        p
+    }
+
+    // ── TEI test ────────────────────────────────────────────────────────────
+
+    #[test]
+    fn tei_set_packet_emits_transport_error() {
+        let mut demux = StreamingTsDemux::new();
+        // Bootstrap TsResync lock with enough null packets.
+        let null = null_packet();
+        for _ in 0..mpeg_ts::resync::LOCK_CONFIRMATIONS + 1 {
+            demux.feed(&null);
+        }
+        let pkt = ts_packet_degradation(
+            true, // tei
+            0x0100,
+            0,
+            0x10, // AFC=01 (payload only)
+            None,
+            b"some payload",
+        );
+        demux.feed(&pkt);
+        let events: Vec<_> = std::iter::from_fn(|| demux.poll_event()).collect();
+        let degraded: Vec<_> = events
+            .iter()
+            .filter_map(|e| match e {
+                DemuxEvent::InputDegraded {
+                    kind, provenance, ..
+                } => Some((*kind, *provenance)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(degraded.len(), 1, "expected exactly one InputDegraded");
+        assert_eq!(degraded[0].0, InputDegradation::TransportError);
+        assert_eq!(degraded[0].1.pid, Some(0x0100));
+        // packet_index includes the bootstrap null packets.
+        assert_eq!(
+            degraded[0].1.packet_index,
+            Some(mpeg_ts::resync::LOCK_CONFIRMATIONS as u64 + 1)
+        );
+    }
+
+    // ── Clean fixture: h264_aac.ts produces zero InputDegraded ───────────────
+
+    #[test]
+    fn h264_aac_clean_fixture_produces_zero_input_degraded() {
+        let mut path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        path.push("..");
+        path.push("fixtures");
+        path.push("ts");
+        path.push("h264_aac.ts");
+        let data = std::fs::read(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+
+        let mut demux = StreamingTsDemux::new();
+        demux.feed(&data);
+        demux.finish();
+        let degraded: Vec<_> = std::iter::from_fn(|| demux.poll_event())
+            .filter(|e| matches!(e, DemuxEvent::InputDegraded { .. }))
+            .collect();
+        assert!(
+            degraded.is_empty(),
+            "h264_aac.ts must produce zero InputDegraded events, got {degraded:?}"
+        );
+    }
+
+    // ── m6-discontinuity.ts smoke ───────────────────────────────────────────
+
+    /// The m6-discontinuity fixture is a real, lossy capture — it has genuine
+    /// CC gaps AND signalled discontinuities. This test asserts the gap count
+    /// matches media-doctor's CcAnomalyCheck (877) — the two must agree.
+    #[test]
+    fn m6_discontinuity_fixture_gap_count_matches_media_doctor() {
+        let mut path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        path.push("..");
+        path.push("fixtures");
+        path.push("ts");
+        path.push("m6-discontinuity.ts");
+        let data = std::fs::read(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+
+        let mut demux = StreamingTsDemux::new();
+        demux.feed(&data);
+        demux.finish();
+
+        let gap_count = std::iter::from_fn(|| demux.poll_event())
+            .filter(|e| {
+                matches!(
+                    e,
+                    DemuxEvent::InputDegraded {
+                        kind: InputDegradation::ContinuityGap { .. },
+                        ..
+                    }
+                )
+            })
+            .count();
+        assert_eq!(
+            gap_count, 877,
+            "m6-discontinuity.ts must produce exactly 877 ContinuityGap events \
+             (matching media-doctor CcAnomalyCheck); any divergence means the \
+             exclusion rules disagree with the two in-repo reference \
+             implementations"
+        );
+    }
+
+    /// The same fixture — CC gaps AND signalled discontinuities. This test
+    /// just confirms the fixture plays through without panicking and that
+    /// signalled discontinuities are still observed as `Discontinuity` events.
+    #[test]
+    fn m6_discontinuity_fixture_plays_through() {
+        let mut path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        path.push("..");
+        path.push("fixtures");
+        path.push("ts");
+        path.push("m6-discontinuity.ts");
+        let data = std::fs::read(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+
+        let mut demux = StreamingTsDemux::new();
+        demux.feed(&data);
+        demux.finish();
+
+        let mut saw_discontinuity = false;
+        while let Some(event) = demux.poll_event() {
+            if matches!(event, DemuxEvent::Discontinuity { .. }) {
+                saw_discontinuity = true;
+            }
+        }
+        assert!(
+            saw_discontinuity,
+            "m6-discontinuity.ts must produce at least one Discontinuity event"
+        );
+    }
+
+    // ── Legal duplicate: same CC + identical payload emits nothing ──────────
+
+    #[test]
+    fn legal_duplicate_same_cc_and_identical_payload_emits_nothing() {
+        let mut demux = StreamingTsDemux::new();
+        // Bootstrap TsResync lock.
+        let null = null_packet();
+        for _ in 0..mpeg_ts::resync::LOCK_CONFIRMATIONS + 1 {
+            demux.feed(&null);
+        }
+        let payload = b"duplicate payload bytes";
+        let pkt = |cc: u8| -> [u8; TS_PACKET_SIZE] {
+            let mut p = [0xFFu8; TS_PACKET_SIZE];
+            p[0] = 0x47;
+            p[1] = 0x00; // PID=0
+            p[2] = 0x31; // PID=0x0031
+            p[3] = 0x10 | (cc & 0x0F); // AFC=01
+            let end = 4 + payload.len().min(TS_PACKET_SIZE - 4);
+            p[4..end].copy_from_slice(&payload[..end - 4]);
+            p
+        };
+
+        // First packet: CC=0.
+        demux.feed(&pkt(0));
+        // Second packet: legal duplicate — same CC=0, identical payload.
+        demux.feed(&pkt(0));
+
+        let degraded: Vec<_> = std::iter::from_fn(|| demux.poll_event())
+            .filter(|e| matches!(e, DemuxEvent::InputDegraded { .. }))
+            .collect();
+        assert!(
+            degraded.is_empty(),
+            "legal duplicate must not emit InputDegraded, got {degraded:?}"
+        );
+    }
+
+    // ── CC gap (synthetic) ──────────────────────────────────────────────────
+
+    #[test]
+    fn cc_gap_emits_continuity_gap() {
+        let mut demux = StreamingTsDemux::new();
+        // Bootstrap TsResync lock.
+        let null = null_packet();
+        for _ in 0..mpeg_ts::resync::LOCK_CONFIRMATIONS + 1 {
+            demux.feed(&null);
+        }
+        let payload_a = b"first packet";
+        let payload_b = b"second different";
+        let pkt = |cc: u8, payload: &[u8]| -> [u8; TS_PACKET_SIZE] {
+            let mut p = [0xFFu8; TS_PACKET_SIZE];
+            p[0] = 0x47;
+            p[1] = 0x00;
+            p[2] = 0x42; // PID=0x0042
+            p[3] = 0x10 | (cc & 0x0F); // AFC=01
+            let end = 4 + payload.len().min(TS_PACKET_SIZE - 4);
+            p[4..end].copy_from_slice(&payload[..end - 4]);
+            p
+        };
+
+        // First packet: CC=0.
+        demux.feed(&pkt(0, payload_a));
+        // Second packet: CC=5 (gap: expected=1, got=5), different payload.
+        demux.feed(&pkt(5, payload_b));
+
+        let degraded: Vec<_> = std::iter::from_fn(|| demux.poll_event())
+            .filter_map(|e| match e {
+                DemuxEvent::InputDegraded {
+                    kind, provenance, ..
+                } => Some((kind, provenance)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            degraded.len(),
+            1,
+            "expected exactly one InputDegraded on CC gap"
+        );
+        assert_eq!(
+            degraded[0].0,
+            InputDegradation::ContinuityGap {
+                expected: 1,
+                got: 5
+            }
+        );
+        assert_eq!(degraded[0].1.pid, Some(0x0042));
+        // packet_index of the second packet (the gap), offset by bootstrap nulls.
+        assert_eq!(
+            degraded[0].1.packet_index,
+            Some(mpeg_ts::resync::LOCK_CONFIRMATIONS as u64 + 2)
+        );
+    }
+
+    // ── Mutation proof: disabling duplicate check produces false positives ──
+
+    /// Confirms that the duplicate-detection exclusion is load-bearing: if we
+    /// craft a synthetic scenario where a legal duplicate would appear and
+    /// assert that the *undecorated* CC gap fires, the test must PASS (the
+    /// real implementation skips duplicates correctly, so this test documents
+    /// that duplicates are NOT reported). The mutation proof is the inverse:
+    /// if an engineer removes the duplicate check, the CC=0 duplicate packet
+    /// WOULD fire a ContinuityGap — but since we're testing the actual code
+    /// (not a mutated copy), we assert the gap is absent.
+    #[test]
+    fn mutation_proof_duplicate_exclusion_is_load_bearing() {
+        // This test exercises the duplicate path: two packets on same PID,
+        // same CC, identical payload. If duplicate detection were removed,
+        // the second packet would trigger a ContinuityGap { expected: 1, got: 0 }.
+        // Since the real code skips it, we expect zero InputDegraded.
+        let mut demux = StreamingTsDemux::new();
+        // Bootstrap TsResync lock.
+        let null = null_packet();
+        for _ in 0..mpeg_ts::resync::LOCK_CONFIRMATIONS + 1 {
+            demux.feed(&null);
+        }
+        let payload = b"identical";
+        let pkt = |cc: u8| -> [u8; TS_PACKET_SIZE] {
+            let mut p = [0xFFu8; TS_PACKET_SIZE];
+            p[0] = 0x47;
+            p[1] = 0x00;
+            p[2] = 0x55;
+            p[3] = 0x10 | (cc & 0x0F);
+            let end = 4 + payload.len().min(TS_PACKET_SIZE - 4);
+            p[4..end].copy_from_slice(&payload[..end - 4]);
+            p
+        };
+        demux.feed(&pkt(0));
+        demux.feed(&pkt(0)); // legal duplicate — same CC, same payload
+
+        let degraded: Vec<_> = std::iter::from_fn(|| demux.poll_event())
+            .filter(|e| matches!(e, DemuxEvent::InputDegraded { .. }))
+            .collect();
+        assert!(
+            degraded.is_empty(),
+            "legal duplicate must not fire InputDegraded; \
+             would produce ContinuityGap {{ expected: 1, got: 0 }} if exclusion were removed"
+        );
+    }
+
+    // ── Mutation proof: change duplicate payload, confirm gap fires ─────────
+
+    /// If the payload changes but CC is the same, it is NOT a legal duplicate
+    /// — it's a genuine gap (or at minimum, it's not the spec-blessed
+    /// duplicate case). This test confirms the code does NOT treat it as a
+    /// duplicate.
+    #[test]
+    fn mutation_proof_changed_payload_same_cc_is_not_a_duplicate() {
+        let mut demux = StreamingTsDemux::new();
+        // Bootstrap TsResync lock.
+        let null = null_packet();
+        for _ in 0..mpeg_ts::resync::LOCK_CONFIRMATIONS + 1 {
+            demux.feed(&null);
+        }
+        let pkt = |cc: u8, payload: &[u8]| -> [u8; TS_PACKET_SIZE] {
+            let mut p = [0xFFu8; TS_PACKET_SIZE];
+            p[0] = 0x47;
+            p[1] = 0x00;
+            p[2] = 0x66;
+            p[3] = 0x10 | (cc & 0x0F);
+            let end = 4 + payload.len().min(TS_PACKET_SIZE - 4);
+            p[4..end].copy_from_slice(&payload[..end - 4]);
+            p
+        };
+        demux.feed(&pkt(0, b"first"));
+        demux.feed(&pkt(0, b"second")); // same CC, DIFFERENT payload — NOT a duplicate
+
+        let degraded: Vec<_> = std::iter::from_fn(|| demux.poll_event())
+            .filter_map(|e| match e {
+                DemuxEvent::InputDegraded { kind, .. } => Some(kind),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            degraded.len(),
+            1,
+            "same CC + different payload must fire InputDegraded"
+        );
+        assert!(matches!(
+            degraded[0],
+            InputDegradation::ContinuityGap { .. }
+        ));
+    }
+
+    // ── Mutation proof: signalled discontinuity skips CC gap ────────────────
+
+    /// A packet whose adaptation field sets `discontinuity_indicator` must
+    /// emit `Discontinuity`, not `InputDegraded::ContinuityGap`, even if its
+    /// CC is a gap. This confirms the exclusion rule: if an engineer removes
+    /// the `discontinuity_signalled` check, this test's assertion that no
+    /// ContinuityGap appeared would fail.
+    #[test]
+    fn mutation_proof_signalled_discontinuity_suppresses_cc_gap() {
+        let mut demux = StreamingTsDemux::new();
+        // Bootstrap TsResync lock.
+        let null = null_packet();
+        for _ in 0..mpeg_ts::resync::LOCK_CONFIRMATIONS + 1 {
+            demux.feed(&null);
+        }
+        let payload = b"payload";
+
+        // First packet: CC=0, no adaptation, PID=0x0077.
+        demux.feed(&ts_packet_degradation(
+            false, 0x0077, 0, 0x10, None, payload,
+        ));
+        // Second packet: CC=5 (gap), BUT adaptation field with
+        // discontinuity_indicator=1. Should emit Discontinuity, NOT
+        // InputDegraded::ContinuityGap.
+        let af = [
+            0x80u8, // discontinuity_indicator=1, no other flags
+            0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, // stuffing
+        ];
+        demux.feed(&ts_packet_degradation(
+            false,
+            0x0077,
+            5,
+            0x30,
+            Some(&af),
+            payload, // AFC=11
+        ));
+
+        let mut saw_discontinuity = false;
+        let mut saw_cc_gap = false;
+        while let Some(event) = demux.poll_event() {
+            match event {
+                DemuxEvent::Discontinuity { .. } => saw_discontinuity = true,
+                DemuxEvent::InputDegraded {
+                    kind: InputDegradation::ContinuityGap { .. },
+                    ..
+                } => saw_cc_gap = true,
+                _ => {}
+            }
+        }
+        assert!(
+            saw_discontinuity,
+            "packet with discontinuity_indicator must emit Discontinuity"
+        );
+        assert!(
+            !saw_cc_gap,
+            "packet with discontinuity_indicator must NOT emit ContinuityGap — \
+             the exclusion rule was removed or broken"
+        );
+    }
+
+    // ── Mutation proof: CC wraps correctly ──────────────────────────────────
+
+    #[test]
+    fn cc_wraps_at_15_to_0_without_false_gap() {
+        let mut demux = StreamingTsDemux::new();
+        // Bootstrap TsResync lock.
+        let null = null_packet();
+        for _ in 0..mpeg_ts::resync::LOCK_CONFIRMATIONS + 1 {
+            demux.feed(&null);
+        }
+        let pkt = |cc: u8| -> [u8; TS_PACKET_SIZE] {
+            let mut p = [0xFFu8; TS_PACKET_SIZE];
+            p[0] = 0x47;
+            p[1] = 0x00;
+            p[2] = 0x88;
+            p[3] = 0x10 | (cc & 0x0F);
+            p[4..11].copy_from_slice(b"payload");
+            p
+        };
+
+        // CC 14, 15, 0 — no gap, normal wrap.
+        demux.feed(&pkt(14));
+        demux.feed(&pkt(15));
+        demux.feed(&pkt(0));
+
+        let degraded: Vec<_> = std::iter::from_fn(|| demux.poll_event())
+            .filter(|e| matches!(e, DemuxEvent::InputDegraded { .. }))
+            .collect();
+        assert!(
+            degraded.is_empty(),
+            "normal CC wrap 15→0 must not emit InputDegraded, got {degraded:?}"
+        );
+    }
+
+    // ── Regression: post-discontinuity legal CC is not a false gap (defect 1) ─
+
+    /// Regression test for the review-found false positive: a payload-bearing
+    /// signalled discontinuity must NOT prevent `last_cc` from being updated.
+    /// The next legal CC (discontinuity's CC + 1) must emit nothing.
+    ///
+    /// Derived from the real pid 0x0083 sequence in m6-discontinuity.ts:
+    /// packet N carries discontinuity_indicator + CC=X; packet N+1 is the
+    /// next legal payload-bearing packet with CC=(X+1) & 0x0F.
+    #[test]
+    fn post_discontinuity_legal_cc_emits_nothing() {
+        let mut demux = StreamingTsDemux::new();
+        let null = null_packet();
+        for _ in 0..mpeg_ts::resync::LOCK_CONFIRMATIONS + 1 {
+            demux.feed(&null);
+        }
+
+        let payload = b"payload";
+        // First: normal packet, CC=0, PID=0x0083.
+        demux.feed(&ts_packet_degradation(
+            false, 0x0083, 0, 0x10, None, payload,
+        ));
+        // Second: discontinuity_indicator=1, CC=5 (gap — suppressed event, but state updated).
+        let af = [0x80u8, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF];
+        demux.feed(&ts_packet_degradation(
+            false,
+            0x0083,
+            5,
+            0x30,
+            Some(&af),
+            payload,
+        ));
+        // Third: legal follow-up, CC=6 ((5+1) & 0x0F). Must NOT fire ContinuityGap.
+        demux.feed(&ts_packet_degradation(
+            false, 0x0083, 6, 0x10, None, payload,
+        ));
+
+        let gaps: Vec<_> = std::iter::from_fn(|| demux.poll_event())
+            .filter(|e| {
+                matches!(
+                    e,
+                    DemuxEvent::InputDegraded {
+                        kind: InputDegradation::ContinuityGap { .. },
+                        ..
+                    }
+                )
+            })
+            .collect();
+        assert!(
+            gaps.is_empty(),
+            "post-discontinuity legal CC must not fire ContinuityGap; \
+             discontinuity_indicator suppresses the event but updates last_cc. \
+             Got {gaps:?}"
+        );
+    }
+
+    // ── Regression: PCR-only adaptation-field change is NOT a false duplicate mismatch (defect 2) ─
+
+    /// Regression test for the review-found false positive: a legal duplicate
+    /// whose only difference is a re-encoded PCR in the adaptation field must
+    /// still be recognised as a duplicate. The duplicate check compares
+    /// `pkt.payload`, not `raw[4..]` (which includes the adaptation field).
+    ///
+    /// Derived from the real PCR-bearing PID behaviour in broadcast streams.
+    #[test]
+    fn pcr_variation_in_adaptation_field_is_still_a_legal_duplicate() {
+        let mut demux = StreamingTsDemux::new();
+        let null = null_packet();
+        for _ in 0..mpeg_ts::resync::LOCK_CONFIRMATIONS + 1 {
+            demux.feed(&null);
+        }
+
+        let payload = b"identical payload for duplicate test";
+
+        // First: CC=0, PID=0x0100, adaptation field with PCR=100.
+        let af_pcr_100 = [
+            0x10u8, // PCR flag only
+            0x00, 0x00, 0x00, 0x00, 0x7E, 0x64, // PCR = 100 (encoded as 6-byte PCR field)
+        ];
+        demux.feed(&ts_packet_degradation(
+            false,
+            0x0100,
+            0,
+            0x30, // AFC=11: adaptation + payload
+            Some(&af_pcr_100),
+            payload,
+        ));
+
+        // Second: CC=0 (legal duplicate), same payload, adaptation field with
+        // PCR=200 (different PCR encoding — NOT a different payload).
+        let af_pcr_200 = [
+            0x10u8, // PCR flag only
+            0x00, 0x00, 0x00, 0x00, 0x7E, 0xC8, // PCR = 200
+        ];
+        demux.feed(&ts_packet_degradation(
+            false,
+            0x0100,
+            0, // same CC
+            0x30,
+            Some(&af_pcr_200),
+            payload, // same payload
+        ));
+
+        let gaps: Vec<_> = std::iter::from_fn(|| demux.poll_event())
+            .filter(|e| {
+                matches!(
+                    e,
+                    DemuxEvent::InputDegraded {
+                        kind: InputDegradation::ContinuityGap { .. },
+                        ..
+                    }
+                )
+            })
+            .collect();
+        assert!(
+            gaps.is_empty(),
+            "PCR-only adaptation-field change must not break duplicate detection; \
+             duplicate check uses pkt.payload, not raw[4..]. Got {gaps:?}"
+        );
     }
 }

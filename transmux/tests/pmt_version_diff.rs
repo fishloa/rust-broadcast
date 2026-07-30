@@ -369,7 +369,7 @@ fn carousel_repeat_of_identical_version_emits_nothing() {
     // Same version (1), same cni, same entries — a pure carousel repeat.
     let repeat = psi_packet(
         PMT_PID,
-        2,
+        1,
         &build_pmt(
             1,
             true,
@@ -400,7 +400,7 @@ fn next_table_cni_zero_is_not_applied() {
     // Different version (5, not 1) but cni=0: a real "next" PMT dropping B.
     let next = psi_packet(
         PMT_PID,
-        2,
+        1,
         &build_pmt(
             5,
             false,
@@ -443,7 +443,7 @@ fn removal_and_update_and_rearm_from_one_version_bump() {
 
     let v2 = psi_packet(
         PMT_PID,
-        2,
+        1,
         &build_pmt(
             2,
             true,
@@ -541,7 +541,7 @@ fn tracks_resolved_rearms_even_when_known_pid_count_returns_to_its_prior_value()
     // C resolves), i.e. it returns to its prior value of 3.
     let v2 = psi_packet(
         PMT_PID,
-        2,
+        1,
         &build_pmt(
             2,
             true,
@@ -606,7 +606,7 @@ fn version_wrap_31_to_0_is_treated_as_a_change() {
 
     let wrapped = psi_packet(
         PMT_PID,
-        2,
+        1,
         &build_pmt(
             0,
             true,
@@ -777,7 +777,7 @@ fn codec_reclassification_rebuilds_the_probe_instead_of_panicking() {
     // v2: same PID, same stream_type, now with an AC-3 descriptor.
     demux.feed(&psi_packet(
         PMT_PID,
-        2,
+        1,
         &build_pmt(
             2,
             true,
@@ -842,7 +842,7 @@ fn carrier_is_rebuilt_when_a_section_carried_pid_becomes_pes_carried() {
     // v2 reclassifies the same PID as H.264.
     demux.feed(&psi_packet(
         PMT_PID,
-        2,
+        1,
         &build_pmt(2, true, &[(PID_V, STREAM_TYPE_AVC, &[][..])]),
     ));
     drain(&mut demux);
@@ -909,7 +909,7 @@ fn corrupt_crc_pmt_is_dropped_and_disturbs_nothing() {
             // audioB dropped.
         ],
     );
-    demux.feed(&psi_packet(PMT_PID, 2, &corrupt_crc(bad)));
+    demux.feed(&psi_packet(PMT_PID, 1, &corrupt_crc(bad)));
     let events = drain(&mut demux);
     assert!(
         events.is_empty(),
@@ -927,7 +927,7 @@ fn corrupt_crc_pmt_is_dropped_and_disturbs_nothing() {
             (PID_A, STREAM_TYPE_A, &lang_descriptor(b"eng", 0)),
         ],
     );
-    demux.feed(&psi_packet(PMT_PID, 3, &good));
+    demux.feed(&psi_packet(PMT_PID, 2, &good));
     let events = drain(&mut demux);
     let removed: Vec<_> = events
         .iter()
@@ -1027,7 +1027,7 @@ fn pat_remap_of_a_pmt_pid_is_honoured() {
     // A PMT under the NEW program, dropping audioB. It must be applied.
     demux.feed(&psi_packet(
         PMT_PID,
-        2,
+        1,
         &build_pmt_for(
             PROGRAM_NUMBER_2,
             2,
@@ -1076,7 +1076,7 @@ fn post_removal_payload_is_not_replayed_into_the_re_added_track() {
     // v2 drops audioB.
     demux.feed(&psi_packet(
         PMT_PID,
-        2,
+        1,
         &build_pmt(
             2,
             true,
@@ -1108,7 +1108,7 @@ fn post_removal_payload_is_not_replayed_into_the_re_added_track() {
     // v3 re-adds the same PID.
     demux.feed(&psi_packet(
         PMT_PID,
-        3,
+        2,
         &build_pmt(
             3,
             true,

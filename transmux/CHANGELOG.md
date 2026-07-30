@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `InputDegradation` enum + `DemuxEvent::InputDegraded` (issue #778):
+  `StreamingTsDemux` now emits `TransportError` when the MPEG-2 TS
+  `transport_error_indicator` (`tei`) is set, and `ContinuityGap { expected,
+  got }` when a genuine continuity-counter gap is detected (excluding
+  legal duplicates — same CC + identical payload — and signalled
+  discontinuities per ISO/IEC 13818-1 §2.4.3.3). A consumer repackaging a
+  lossy UDP multicast can now distinguish a clean stream from one losing
+  packets, rather than seeing silently-corrupt samples.
+
 ## [0.21.0] - 2026-07-29
 
 ### Changed (Breaking)
