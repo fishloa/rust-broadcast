@@ -25,8 +25,8 @@ use transmux::cenc::{
 use transmux::init_segment::{MovieBox, SampleEntryVariant, StblChild, protect_init_segment};
 use transmux::movie_fragment::{FragmentProtection, MovieFragmentBox, protect_media_segment};
 use transmux::{
-    CencEncryptor, CencScheme, CmafMux, CodecConfig, EncryptConfig, IvGen, Media, SubsamplePolicy,
-    TsDemux,
+    CencEncryptor, CencScheme, CmafMux, CodecConfig, ConstantIvSenc, EncryptConfig, IvGen, Media,
+    SubsamplePolicy, TsDemux,
 };
 
 const KID: [u8; 16] = [
@@ -143,6 +143,7 @@ fn cenc_cfg(subsample: SubsamplePolicy) -> EncryptConfig {
         iv: IvGen::Counter,
         pattern: None,
         subsample,
+        constant_iv_senc: ConstantIvSenc::default(),
     }
 }
 

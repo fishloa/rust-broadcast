@@ -903,6 +903,13 @@ impl CencFragmentBoxes {
 /// (subsample-free) whole-sample protection convention — so the correct fix is
 /// to omit the triple entirely, not to shrink it into an unparseable shape.
 ///
+/// When the schema is `cbcs` with [`crate::ConstantIvSenc::Emit`] (the
+/// default), a constant-IV track instead sets `per_sample_iv_size = 16` in
+/// `tenc` and carries the constant IV replicated in every `senc` entry — so
+/// this function's normal emission path (below) produces a regular `senc`
+/// with 16-byte IVs per sample. The `None` return above is only reached for
+/// the [`crate::ConstantIvSenc::Omit`] opt-out.
+///
 /// `saio.offsets[0]` (when `Some` is returned) is a placeholder (`0`) —
 /// [`protect_media_segment`] back-patches it once every box's final position
 /// in the rebuilt `moof` is known.

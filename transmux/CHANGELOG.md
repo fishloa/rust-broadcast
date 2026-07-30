@@ -16,6 +16,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   discontinuities per ISO/IEC 13818-1 §2.4.3.3). A consumer repackaging a
   lossy UDP multicast can now distinguish a clean stream from one losing
   packets, rather than seeing silently-corrupt samples.
+- `ConstantIvSenc` enum (`Emit`/`Omit`) and `constant_iv_senc` field on
+  `EncryptConfig` (issue #783). Controls whether a `cbcs` +
+  `IvGen::Constant` track emits a `senc` box with the constant IV
+  replicated per sample (the new default, for interop with Bento4
+  `mp4decrypt` and other tools that require an explicit `senc`), or omits
+  the `senc`/`saiz`/`saio` triple entirely (the spec-minimal, `tenc`-only
+  shape). The old shape remains reachable via `ConstantIvSenc::Omit` and
+  is still tested for self-consistency round-trips.
+
+### Changed (Breaking)
+- `EncryptConfig` gains `constant_iv_senc: ConstantIvSenc` — every
+  struct-literal construction site must add this field.
+- `TrackEncryption::new` gains a fourth argument (`constant_iv_senc:
+  ConstantIvSenc`).
 
 ## [0.21.0] - 2026-07-29
 

@@ -200,7 +200,7 @@ pub use cenc::{
 #[cfg(feature = "cenc")]
 pub use cenc_decrypt::{CencDecryptor, KeyMap};
 #[cfg(feature = "cenc")]
-pub use cenc_encrypt::{CencEncryptor, EncryptConfig, IvGen, SubsamplePolicy};
+pub use cenc_encrypt::{CencEncryptor, ConstantIvSenc, EncryptConfig, IvGen, SubsamplePolicy};
 pub use dash::{
     Addressing, ContentProtectionSystem, DashPackager, InbandEventStream,
     MP4_PROTECTION_SCHEME_URI, MPD_NAMESPACE, MediaKind, PROFILE_ISOFF_LIVE, TRICKMODE_SCHEME,

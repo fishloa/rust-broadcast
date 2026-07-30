@@ -48,8 +48,8 @@ use std::path::PathBuf;
 
 use broadcast_common::{Encrypt, Unpackage};
 use transmux::{
-    CencEncryptor, CencScheme, CodecConfig, EncryptConfig, IvGen, Media, RtpPacketiser, Sample,
-    SubsamplePolicy, TsDemux,
+    CencEncryptor, CencScheme, CodecConfig, ConstantIvSenc, EncryptConfig, IvGen, Media,
+    RtpPacketiser, Sample, SubsamplePolicy, TsDemux,
 };
 
 /// Counts every allocation/deallocation made **by the calling thread**.
@@ -189,6 +189,7 @@ fn cenc_encrypt_allocation_count_over_real_fixture() {
         iv: IvGen::Counter,
         pattern: None,
         subsample: SubsamplePolicy::Video,
+        constant_iv_senc: ConstantIvSenc::default(),
     };
 
     reset_counters();
@@ -263,6 +264,7 @@ fn cbcs_encrypt_allocation_count_over_real_fixture() {
         iv: IvGen::Counter,
         pattern: Some((1, 9)),
         subsample: SubsamplePolicy::Video,
+        constant_iv_senc: ConstantIvSenc::default(),
     };
 
     reset_counters();
