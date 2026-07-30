@@ -34,3 +34,7 @@ target-*/
 # multimux/tests/lldash_dashjs.rs / multimux/tests/assets/) -- installed JS
 # deps only; the pinned dash.all.min.js fixture itself IS committed.
 /multimux/tests/assets/node_modules/
+
+# Python bytecode from tools/ and its tests
+__pycache__/
+*.pyc
