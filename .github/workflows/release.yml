@@ -35,7 +35,7 @@ jobs:
       - name: Gate — tag matches crate versions
         run: |
           TAG="${GITHUB_REF_NAME#v}"
-          for c in broadcast-common dvb-si dvb-conformance dvb-t2mi dvb-bbframe dvb-tools; do
+          for c in dvb-si dvb-conformance dvb-t2mi dvb-bbframe dvb-tools; do
             V=$(cargo metadata --no-deps --format-version 1 --locked \
                 | python3 -c "import json,sys; print({p['name']: p['version'] for p in json.load(sys.stdin)['packages']}['$c'])")
             if [ "$V" != "$TAG" ]; then
@@ -43,13 +43,25 @@ jobs:
             fi
           done
 
-      # Dependency order (topological): broadcast-common has no workspace deps
-      # and must go FIRST. dvb-si and dvb-bbframe each depend on broadcast-common.
+      # broadcast-common is NO LONGER part of this lockstep. It has its own
+      # tag lane (`broadcast-common-v*`, see release-broadcast-common.yml) and
+      # versions on its own API changes. It was ejected because lockstep forced
+      # it to major whenever a sibling broke — 9.0.0 was purely additive and
+      # should have been 8.2.0 — and with a fan-in of 35 (only five of them
+      # lockstep members) each inherited major migrated thirty uninvolved
+      # crates and created the 8/9 boundary behind #819, #824 and #858.
+      #
+      # If a wave moves broadcast-common too, push `broadcast-common-v<x>` and
+      # let it go LIVE before pushing this `v<y>` tag: dvb-* here require it
+      # from crates.io, not by path, at publish time.
+      #
+      # Dependency order (topological) for the five that remain:
+      # dvb-si and dvb-bbframe each depend on broadcast-common (already live).
       # dvb-t2mi depends on broadcast-common AND (optionally, ts-gated) dvb-bbframe,
       # so it must publish after dvb-bbframe is on the index.
       # dvb-tools depends on both dvb-si (ts + serde + chrono) and dvb-t2mi (ts),
       # so it publishes LAST. Hence:
-      #   broadcast-common → bbframe → si → conformance → t2mi → tools.
+      #   bbframe → si → conformance → t2mi → tools.
       # dvb-common is a deprecated re-export shim, now FROZEN at 8.1.0 and no
       # longer part of the lockstep — like the other shims (dvb-scte35, dvb-pes,
       # dvb-cc, dvb-ule, dvb-emsg), it is not gated or published
@@ -82,7 +94,6 @@ jobs:
             echo "::error::failed to publish $crate"
             return 1
           }
-          publish_crate broadcast-common
           publish_crate dvb-bbframe
           publish_crate dvb-si
           publish_crate dvb-conformance
