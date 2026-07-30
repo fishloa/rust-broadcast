@@ -828,8 +828,7 @@ mod custom_dispatch_driver_backed {
                     *guard = Some(store);
                 }
                 Ok(tokio::spawn(supervise_driver(
-                    #[allow(clippy::redundant_closure)]
-                    move |route_handle| run_two_prog(route_handle),
+                    run_two_prog,
                     ctx.store,
                     Backoff::production_default(),
                     ctx.name,
@@ -960,12 +959,12 @@ mod custom_dispatch_driver_backed {
 /// real loopback ingest + demux of the ~80 KiB fixture is comfortably
 /// sub-second in practice; the bound exists only so a genuinely broken
 /// dispatch path fails the test instead of hanging the suite forever.
-/// The *failure shape* of a bug that prevents track-spec population is
-/// a 503 (or a 200-without-expected-content), not a timeout — a
-/// mutation-proof test that timed out would burn 20 s per run and
-/// prove only "something is wrong", not what.  This poller asserts
-/// the exact status and body so a mutation that breaks the sync is
-/// caught fast (<1 s) with a specific assertion failure.
+/// The *failure shape* of a bug that returns 200-without-expected-content
+/// is caught by the predicate — a specific assertion failure, not a
+/// timeout. A bug that returns 503 forever (e.g. no track specs at all,
+/// the original #831 defect) still times out at the hang guard, which is
+/// acceptable here because the in-crate `dash_two_program_track_separation`
+/// test catches that class of failure directly on the `RouteHandle`.
 async fn poll_until_200_with(
     client: &reqwest::Client,
     url: &str,
