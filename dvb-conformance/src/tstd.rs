@@ -32,18 +32,22 @@
 //!
 //! # Buffer-size grounding
 //!
-//! All buffer sizes and rates are grounded in H.222.0 §2.4.2.4 ("Buffering"),
-//! PDF pages 42–43 of the 2023-08 edition. See
-//! [`docs/h222_0-tstd-buffer-model.md`] for the full transcription.
+//! The eight constants below are grounded in two sources:
+//! - **H.222.0 §2.4.2.4 for buffer sizes and rates**: TB_SIZE, TB_SYS_SIZE,
+//!   TB_SYS_LEAK_RATE, and TB_LEAK_RATE_FLOOR (the last is a modelling floor,
+//!   not a spec value, but bootstraps from §2.4.2.4's Rxn ≥ 2×10⁶ bps).
+//! - **ETSI TR 101 290 v1.4.1 Table 5.0c for conformance thresholds**:
+//!   DATA_DELAY_LIMIT_SECS, TB_EMPTY_INTERVAL_SECS, TB_SYS_EMPTY_INTERVAL_SECS.
 //!
-//! | Constant | Value | H.222.0 clause |
-//! |----------|-------|----------------|
-//! | TB_SIZE | 512 bytes | §2.4.2.4, p.42 l.20: "The transport buffer size is fixed at 512 bytes." |
-//! | TB_SYS_SIZE | 512 bytes | §2.4.2.4 (same line; TBSsys defined at §2.4.2.1 p.39 l.23) |
-//! | TB_SYS_LEAK_RATE | 1 000 000 bps | §2.4.2.4, p.42 l.10: "For systems data: Rxn = 1×10⁶ bits per second." Rxsys (§2.4.2.1 p.39 l.35) is TBsys's drain rate; the spec states no separate numeric value, so it is the systems-data Rxn. |
-//! | TB_LEAK_RATE_FLOOR | 15 625 bytes/s | Not from the spec — a conservative floor below any real DVB stream's coded rate, used only during bitrate convergence |
+//! See [`docs/h222_0-tstd-buffer-model.md`] for the full transcription.
+//!
+//! | Constant | Value | Source |
+//! |----------|-------|--------|
+//! | TB_SIZE | 512 bytes | H.222.0 §2.4.2.4, p.42 l.20: "The transport buffer size is fixed at 512 bytes." |
+//! | TB_SYS_SIZE | 512 bytes | H.222.0 §2.4.2.4 (same line; TBSsys defined at §2.4.2.1 p.39 l.23) |
+//! | TB_SYS_LEAK_RATE | 125 000 bytes/s | H.222.0 §2.4.2.4, p.42 l.10: "For systems data: Rxn = 1×10⁶ bits per second." Rxsys (§2.4.2.1 p.39 l.35) is TBsys's drain rate; the spec states no separate numeric value, so it is the systems-data Rxn. |
+//! | TB_LEAK_RATE_FLOOR | 15 625 bytes/s | Modelling floor (not a spec value) — a conservative floor below any real DVB stream's coded rate, used only during bitrate convergence |
 //! | DATA_DELAY_LIMIT_SECS | 1 s | TR 101 290 v1.4.1 Table 5.0c indicator 3.10 |
-//! | STILL_PICTURE_DELAY_LIMIT_SECS | 60 s | TR 101 290 v1.4.1 Table 5.0c indicator 3.10 |
 //! | TB_EMPTY_INTERVAL_SECS | 1 s | TR 101 290 v1.4.1 Table 5.0c indicator 3.9 |
 //! | TB_SYS_EMPTY_INTERVAL_SECS | 1 s | TR 101 290 v1.4.1 Table 5.0c indicator 3.9 |
 //!
@@ -56,13 +60,24 @@
 //!   to all stream types.
 //! - **Bsys** (1536 bytes, H.222.0 §2.4.2.4 p.43 l.37) is deferred — the PSI
 //!   input buffer is downstream of TBsys and not currently modelled.
+//! - **Still-picture differentiation not implemented**: TR 101 290 indicator 3.10
+//!   specifies a 60 s data-delay limit for still-picture video data versus
+//!   1 s for all other data. The monitor applies only the 1 s limit because
+//!   detecting still-picture PIDs requires parsing the PMT's stream_type
+//!   (currently tracked only as a PID set, not typed). Implementing the
+//!   60 s threshold is feasible but deferred pending PMT descriptor parsing.
+//! - **No still-picture data-delay differentiation**: the monitor applies
+//!   only the 1 s limit from TR 101 290 indicator 3.10. The 60 s allowance
+//!   for still-picture video data is not implemented — see above.
+//!
 //! - **No arrival-time validation**: the model trusts the caller's timestamps.
-//!   If the caller supplies timestamps inconsistent with the transport rate,
-//!   buffer behaviour will not reflect real hardware.
 
 use core::time::Duration;
 
-// ── T-STD buffer constants (ISO/IEC 13818-1 §2.4.2.3 / §2.4.2.6) ──────────
+// ── T-STD buffer constants ──────────────────────────────────────────────────
+//
+// Buffer sizes and rates: H.222.0 §2.4.2.4 ("Buffering").
+// Conformance thresholds: ETSI TR 101 290 v1.4.1 Table 5.0c.
 
 /// Size of a single elementary-stream transport buffer TBn.
 ///
@@ -97,18 +112,16 @@ pub(crate) const TB_SYS_LEAK_RATE: u64 = 1_000_000 / 8;
 /// in ~32.8 ms — well within the 1 s empty-buffer check interval.
 pub(crate) const TB_LEAK_RATE_FLOOR: u64 = 15_625;
 
-/// Maximum data delay through the T-STD buffers for non-still-picture data.
+/// Maximum data delay through the T-STD buffers.
 ///
 /// ETSI TR 101 290 v1.4.1 Table 5.0c indicator 3.10: "Delay of data (except
 /// still picture video data) through the T-STD buffers superior to 1 second".
-pub(crate) const DATA_DELAY_LIMIT_SECS: u64 = 1;
-
-/// Maximum data delay through the T-STD buffers for still-picture video data.
 ///
-/// ETSI TR 101 290 v1.4.1 Table 5.0c indicator 3.10: "delay of still picture
-/// video data through the T-STD buffers superior to 60 s".
-#[allow(dead_code)]
-pub(crate) const STILL_PICTURE_DELAY_LIMIT_SECS: u64 = 60;
+/// Note: TR 101 290 allows 60 s for still-picture video data — the monitor
+/// does NOT differentiate still-picture PIDs (see the "Known limitations"
+/// section of the module doc). Detecting still-picture stream_type requires
+/// PMT descriptor parsing which is not yet implemented.
+pub(crate) const DATA_DELAY_LIMIT_SECS: u64 = 1;
 
 /// Interval over which TBn must empty at least once.
 ///
