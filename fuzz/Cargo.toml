@@ -38,6 +38,7 @@ st337        = { path = "../st337" }
 rdd29        = { path = "../rdd29" }
 st377-1      = { path = "../st377-1" }
 transmux      = { path = "../transmux" }
+media-doctor  = { path = "../media-doctor" }
 broadcast-auth = { path = "../broadcast-auth" }
 rtmp-runtime  = { path = "../rtmp-runtime" }
 media-plane   = { path = "../media-plane" }
@@ -257,5 +258,16 @@ doc  = false
 [[bin]]
 name = "media_plane_ingest_driver"
 path = "fuzz_targets/media_plane_ingest_driver.rs"
+test = false
+
+[[bin]]
+name = "md_hls_playlist"
+path = "fuzz_targets/md_hls_playlist.rs"
+test = false
+doc  = false
+
+[[bin]]
+name = "md_dash_mpd"
+path = "fuzz_targets/md_dash_mpd.rs"
 test = false
 doc  = false

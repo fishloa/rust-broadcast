@@ -22,7 +22,7 @@ Each [`Diagnostic`] checks one rule against a TS byte buffer and pushes
 | `InterlaceCheck` | interlaced coding (`frame_mbs_only_flag == 0`) reported as content fact |
 | `check_playlist` | HLS playlist validation (RFC 8216): missing `#EXTM3U`, missing `#EXT-X-TARGETDURATION`, `#EXTINF` exceeding target, malformed `#EXT-X-DATERANGE` |
 | `check_hls_playlist` | HLS playlist validator (RFC 8216bis): structured parse via `transmux::MediaPlaylist`, plus LL-HLS rules — `hls-preload-hint-with-endlist` (§4.4.5.3), `hls-skip-without-can-skip-until` (§4.4.3.8), `hls-part-duration-range` (§4.4.4.9), `hls-malformed-daterange` (§4.4.5.1), `hls-parse-error` (§4) |
-| `check_dash_mpd` | DASH MPD validator (ISO/IEC 23009-1): structured parse via `transmux::Mpd`, plus — `dash-static-mpd-missing-duration` (§5.3.1.2), `dash-representation-id-duplicate` (§5.3.5.2), `dash-segment-timeline-monotonic` (§5.3.9.6), `dash-period-no-adaptation-sets` (§5.3.2), `dash-bandwidth-mismatch` (§5.3.5.2) |
+| `check_dash_mpd` | DASH MPD validator (ISO/IEC 23009-1): structured parse via `transmux::Mpd`, plus — `dash-static-mpd-missing-duration` (ISO/IEC 23009-1:2012 §5.3.1.2), `dash-representation-id-duplicate` (§5.3.5.2 Table 7), `dash-segment-timeline-monotonic` (§5.3.9.6.2), `dash-period-no-adaptation-sets` (§5.3.2), `dash-parse-error` |
 
 Diagnostics are validated against **real captures** (e.g. a clean H.264+AAC
 stream and a multi-programme DVB capture yield zero false positives) plus

@@ -23,10 +23,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `hls-parse-error` (§4).
 - DASH MPD validator `check_dash_mpd()` (issue #756) — structured validation
   via `transmux::Mpd::parse`: `dash-static-mpd-missing-duration` (ISO/IEC
-  23009-1 §5.3.1.2), `dash-representation-id-duplicate` (§5.3.5.2),
-  `dash-segment-timeline-monotonic` (§5.3.9.6),
-  `dash-period-no-adaptation-sets` (§5.3.2), `dash-bandwidth-mismatch`
-  (§5.3.5.2), `dash-parse-error`.
+  23009-1:2012 §5.3.1.2 Table 3, CM), `dash-representation-id-duplicate`
+  (§5.3.5.2 Table 7), `dash-segment-timeline-monotonic` (§5.3.9.6.2),
+  `dash-period-no-adaptation-sets` (§5.3.2), `dash-parse-error`.
+  - Deleted `dash-bandwidth-mismatch` before release: it was a heuristic
+    not grounded in any ISO/IEC 23009-1 clause and produced false positives
+    on standard ABR ladders (reviewer-confirmed against
+    `dash.akamaized.net/akamai/bbb_30fps/bbb_30fps.mpd`).
 - CLI subcommands `check-hls` and `check-dash` (issue #756).
 
 ## [0.5.0] - 2026-07-29

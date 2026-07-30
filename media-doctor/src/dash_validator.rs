@@ -9,16 +9,14 @@
 //! | ID | Severity | Description | Clause |
 //! |---|---|---|---|
 //! | `dash-parse-error` | Error | MPD XML fails to parse | §5.3 |
-//! | `dash-representation-id-duplicate` | Error | Duplicate `@id` across Representations | §5.3.5.2 |
-//! | `dash-segment-timeline-monotonic` | Error | SegmentTimeline `t` values not monotonic | §5.3.9.6 |
-//! | `dash-static-mpd-missing-duration` | Error | Static MPD missing `mediaPresentationDuration` | §5.3.1.2 |
-//! | `dash-dynamic-mpd-no-availability-start` | Error | Dynamic MPD missing `availabilityStartTime` | §5.3.1.2 |
-//! | `dash-bandwidth-mismatch` | Warning | Representation bandwidth contradicts AdaptationSet peers | §5.3.5.2 |
+//! | `dash-representation-id-duplicate` | Error | Duplicate `@id` across Representations | ISO/IEC 23009-1:2012 §5.3.5.2 Table 7 (@id shall be unique within a Period) |
+//! | `dash-segment-timeline-monotonic` | Error | SegmentTimeline `t` values not monotonic | ISO/IEC 23009-1:2012 §5.3.9.6.2 (@t must be ≥ previous S end time, defaulting to 0 for first S) |
+//! | `dash-static-mpd-missing-duration` | Error | Static MPD missing `mediaPresentationDuration` | ISO/IEC 23009-1:2012 §5.3.1.2 Table 3 (CM — must be present for @type='static') |
+//! | `dash-dynamic-mpd-no-availability-start` | Error | Dynamic MPD missing `availabilityStartTime` | ISO/IEC 23009-1:2012 §5.3.1.2 Table 3 (CM — must be present for @type='dynamic') |
 //! | `dash-period-no-adaptation-sets` | Error | Period has no AdaptationSets | §5.3.2 |
 
 use crate::report::{Finding, Location, Report, Severity};
 use alloc::collections::BTreeSet;
-use alloc::vec::Vec;
 
 /// Validate a DASH MPD XML text, appending findings for each violation.
 pub fn check_dash_mpd(text: &str, report: &mut Report) {
@@ -35,17 +33,19 @@ pub fn check_dash_mpd(text: &str, report: &mut Report) {
         }
     };
 
-    // dash-static-mpd-missing-duration — §5.3.1.2 Table 3
+    // dash-static-mpd-missing-duration — ISO/IEC 23009-1:2012 §5.3.1.2 Table 3
+    // CM (Conditionally Mandatory) — must be present for @type='static'.
     if mpd.mpd_type == transmux::MpdType::Static && mpd.media_presentation_duration.is_none() {
         report.push(Finding::new(
             Severity::Error,
             Location::new(1, 0),
             "dash-static-mpd-missing-duration",
-            "Static MPD is missing required @mediaPresentationDuration — §5.3.1.2 Table 3",
+            "Static MPD is missing required @mediaPresentationDuration — ISO/IEC 23009-1:2012 §5.3.1.2 Table 3 (CM: mandatory for @type='static')",
         ));
     }
 
-    // dash-dynamic-mpd-no-availability-start — §5.3.1.2 Table 3
+    // dash-dynamic-mpd-no-availability-start — ISO/IEC 23009-1:2012 §5.3.1.2 Table 3
+    // CM (Conditionally Mandatory) — must be present for @type='dynamic'.
     if mpd.mpd_type == transmux::MpdType::Dynamic && mpd.availability_start_time.is_none() {
         report.push(Finding::new(
             Severity::Error,
@@ -77,10 +77,6 @@ pub fn check_dash_mpd(text: &str, report: &mut Report) {
             // dash-representation-id-duplicate — §5.3.5.2
             check_representation_id_duplicates(aset, &as_key, report);
 
-            // dash-bandwidth-mismatch — §5.3.5.2: check bandwidth
-            // consistency within an AdaptationSet
-            check_bandwidth_consistency(aset, &as_key, report);
-
             // Per-Representation SegmentTimeline validation
             for (r_idx, repr) in aset.representations.iter().enumerate() {
                 let r_key = alloc::format!("{as_key}.{r_idx}");
@@ -95,7 +91,7 @@ pub fn check_dash_mpd(text: &str, report: &mut Report) {
 }
 
 /// Check for duplicate `@id` values across Representations in an AdaptationSet.
-/// §5.3.5.2: `@id` must be unique within the Period.
+/// ISO/IEC 23009-1:2012 §5.3.5.2 Table 7: `@id` "shall be unique within a Period".
 fn check_representation_id_duplicates(
     aset: &transmux::AdaptationSet,
     as_key: &str,
@@ -117,42 +113,12 @@ fn check_representation_id_duplicates(
     }
 }
 
-/// Check bandwidth consistency within an AdaptationSet — representations
-/// within the same AdaptationSet are alternate encodings of the same content
-/// and should have distinct, ordered bandwidths.
-fn check_bandwidth_consistency(aset: &transmux::AdaptationSet, as_key: &str, report: &mut Report) {
-    if aset.representations.len() < 2 {
-        return;
-    }
-
-    // Warn if a Representation's bandwidth is <= half or >= double the
-    // AdaptationSet's median — a strong signal of a mislabeled AdaptationSet.
-    let mut bandwidths: Vec<u64> = aset.representations.iter().map(|r| r.bandwidth).collect();
-    bandwidths.sort_unstable();
-    let median = bandwidths[bandwidths.len() / 2];
-    if median == 0 {
-        return;
-    }
-
-    for repr in &aset.representations {
-        if repr.bandwidth > 0 {
-            let ratio = repr.bandwidth as f64 / median as f64;
-            if !(DASH_BANDWIDTH_RATIO_LOW..=DASH_BANDWIDTH_RATIO_HIGH).contains(&ratio) {
-                report.push(Finding::new(
-                    Severity::Warning,
-                    Location::new(1, 0),
-                    "dash-bandwidth-mismatch",
-                    alloc::format!(
-                        "AdaptationSet {as_key}: Representation @id=\"{}\" bandwidth {} is {ratio:.1}x the set median {median} — possible misassignment",
-                        repr.id, repr.bandwidth,
-                    ),
-                ));
-            }
-        }
-    }
-}
-
-/// Validate SegmentTimeline for monotonic time progression — §5.3.9.6.
+/// Validate SegmentTimeline for monotonic time progression.
+///
+/// ISO/IEC 23009-1:2012 §5.3.9.6.2 Table 17: `@t` defaults to 0 for the first
+/// `S` element; for subsequent elements, `@t` defaults to the previous element's
+/// end time. The explicit/computed `@t` must be ≥ the previous element's end
+/// time (a gap is a legal discontinuity; backward time is not).
 fn validate_segment_timeline(
     timeline: &transmux::SegmentTimeline,
     timescale: u64,
@@ -163,7 +129,9 @@ fn validate_segment_timeline(
 
     for (s_idx, s) in timeline.segments.iter().enumerate() {
         let start_time = s.t.unwrap_or_else(|| {
-            prev_end_time.expect("first S element must have @t — §5.3.9.6.2 Table 21")
+            // §5.3.9.6.2: If @t is not present, it defaults to 0 for the first S
+            // element, and to the previous S's end time for subsequent elements.
+            prev_end_time.unwrap_or(0)
         });
 
         // Each S element's @t (explicit or computed) must be >= previous end time.
@@ -203,13 +171,3 @@ fn timescale_str(value: u64, timescale: u64) -> alloc::string::String {
         alloc::format!("{value} ({secs:.3}s)")
     }
 }
-
-// ---------------------------------------------------------------------------
-// Constants
-// ---------------------------------------------------------------------------
-
-/// Low bandwidth ratio threshold for the bandwidth-mismatch check.
-const DASH_BANDWIDTH_RATIO_LOW: f64 = 0.4;
-
-/// High bandwidth ratio threshold for the bandwidth-mismatch check.
-const DASH_BANDWIDTH_RATIO_HIGH: f64 = 2.5;

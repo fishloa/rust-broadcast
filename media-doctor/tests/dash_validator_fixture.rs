@@ -158,3 +158,32 @@ fn empty_period_detected() {
         report.findings(),
     );
 }
+
+/// First `<S>` without `@t` is legal — §5.3.9.6.2 says it defaults to 0.
+/// The validator must NOT panic; it must produce zero findings.
+#[test]
+fn first_s_without_t_is_clean() {
+    let text = r#"<?xml version="1.0"?>
+<MPD xmlns="urn:mpeg:dash:schema:mpd:2011" profiles="urn:mpeg:dash:profile:isoff-live:2011" type="static" mediaPresentationDuration="PT5S">
+  <Period id="0">
+    <AdaptationSet id="0" contentType="video">
+      <Representation id="0" bandwidth="500000" codecs="avc1.4d400d" width="320" height="240">
+        <SegmentTemplate timescale="90000" initialization="init$RepresentationID$.m4s" media="chunk$RepresentationID$-$Time$.m4s" startNumber="1">
+          <SegmentTimeline>
+            <S d="90000" r="2"/>
+          </SegmentTimeline>
+        </SegmentTemplate>
+      </Representation>
+    </AdaptationSet>
+  </Period>
+</MPD>"#;
+    let mut report = Report::new();
+    check_dash_mpd(text, &mut report);
+
+    assert!(
+        report.is_empty(),
+        "first S without @t should be clean (defaults to 0 per §5.3.9.6.2), got {}: {:?}",
+        report.len(),
+        report.findings(),
+    );
+}
