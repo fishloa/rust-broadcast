@@ -10,8 +10,19 @@ Companion to [`DESCRIPTOR-ACCEPTANCE.md`](DESCRIPTOR-ACCEPTANCE.md) (descriptor-
 > code, docs, and quality all round, continuously. (CLAUDE.md "continuous improvement".)
 
 ## 1. Wire contract — the non-negotiable invariants
+
+### Binary wire formats
 - **Symmetric `Parse` + `Serialize`** for every wire structure, with a **round-trip test that is byte-identical** — `parse(real_bytes) → serialize → ==` the input bytes, INCLUDING stuffing/padding/reserved bits. "Semantic" round-trip (re-parse → fields equal) is **NOT sufficient** — it is passed by garbage and by raw-passthrough serializers.
 - **No `self.raw` passthrough** in serialize: lengths/offsets are COMPUTED from fields, never stored-and-echoed. `grep self.raw` inside serialize must be empty.
+
+### Text/markup formats (XML, M3U8, MPD, and similar)
+Byte-identical round-trip for text formats **requires** storing and re-emitting source spans (comments, attribute order, namespace prefix spelling, whitespace, empty-element form) — which IS the `self.raw` passthrough the binary rule bans. The anti-cheat property is therefore enforced directly instead of via a proxy the format cannot honestly satisfy:
+- **No source passthrough**: the serializer builds output **solely from the typed model**. `grep` for stored-source echo must be empty.
+- **`parse → serialize → re-parse` must yield an equal document** (fields compare equal; structural fidelity).
+- **Mutating any field must change the output** — this is what kills a passthrough serializer, since an echo cannot reflect a mutation.
+- **The crate's README must enumerate every way its output may differ from its input** (comments, attribute ordering, prefix spelling, whitespace, empty-element form). Byte-identity is not required, and a crate must not fake it by storing raw spans.
+
+### Shared (both format classes)
 - **No raw-byte public API** for structured data: fully typed (typed `Vec`/enums). Only genuinely-opaque blobs (compressed/private/unknown) stay `&[u8]`, documented as such.
 - **No magic numbers** outside `#[cfg(test)]`: every hex literal is a named const or enum.
 - **`#[non_exhaustive]`** on every public enum/struct that may gain variants/fields.
@@ -26,7 +37,7 @@ Companion to [`DESCRIPTOR-ACCEPTANCE.md`](DESCRIPTOR-ACCEPTANCE.md) (descriptor-
 
 ## 3. Real-fixture gate (the bug-catcher)
 - A **committed real fixture** (broadcast capture / spec test vector), not hand-made happy-path bytes. Real data carries the reserved bits, mixed stream_ids, stuffing, and layouts that expose bugs.
-- Parser crate: **parse + byte-exact round-trip the real fixture.**
+- Parser crate: **parse + round-trip the real fixture** (byte-exact for binary; equal re-parse for text/markup).
 - Transform/repair/mux crate: **fault-inject → operate → assert-known-good** on real data (oracle = the clean original or a third-party reference). Each operation gets its own biting test.
 - **Tests must BITE**: stub the impl to a no-op and the test must FAIL. A green suite that a wrong impl also passes is not a gate.
 - **Fixtures must be genuine**: unscrambled, structurally valid for the field under test. (Session lesson: scrambled packets misparse as plausible typed fields under loose assertions — byte-identical + provenance checks catch it.)
@@ -53,7 +64,7 @@ Independent crates version on their own cadence; lockstep crates move together. 
 
 ---
 ### Acceptance checklist (tick before any publish -- new crate or new version)
-- [ ] Symmetric parse/serialize + **byte-identical** round-trip test
+- [ ] Symmetric parse/serialize + round-trip test (**byte-identical** for binary; **equal re-parse + mutation-bites** for text/markup)
 - [ ] No `self.raw` passthrough · no raw-byte public API · no magic numbers · `#[non_exhaustive]`
 - [ ] Spec-cited modules; sources verified (no fabrication; pdf2md exit 0 / cross-checked)
 - [ ] Committed **real fixture**; per-op **biting** test (fault-inject→assert-known-good for transforms)
