@@ -106,6 +106,7 @@
 //! - **Byte-stream resynchronisation**: ISO/IEC 13818-1 §2.4.3.2, via
 //!   [`mpeg_ts::resync::TsResync`] (also strips 204-byte Reed-Solomon FEC).
 
+use alloc::collections::btree_map::Entry;
 use alloc::collections::{BTreeMap, BTreeSet, VecDeque};
 use alloc::vec::Vec;
 use core::marker::PhantomData;
@@ -2659,8 +2660,6 @@ impl StreamingTsDemux {
         discontinuity_signalled: bool,
         packet_index: u64,
     ) {
-        use std::collections::btree_map::Entry;
-
         let payload_bytes = payload.unwrap_or(&[]);
         let track = self.live_track_id(pid);
         match self.cc_states.entry(pid) {
