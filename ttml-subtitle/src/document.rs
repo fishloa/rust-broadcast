@@ -9,6 +9,7 @@
 //! Rust structure that does NOT contain the original XML text (no raw-passthrough).
 
 extern crate alloc;
+use alloc::boxed::Box;
 use alloc::format;
 use alloc::string::String;
 use alloc::string::ToString;
@@ -572,9 +573,9 @@ pub enum InlineContent {
     /// A text node (character data).
     Text(String),
     /// A `<span>` element.
-    Span(SpanElement),
+    Span(Box<SpanElement>),
     /// A `<br>` element.
-    Br(BrElement),
+    Br(Box<BrElement>),
 }
 
 /// Animation children (in body, div, p, span, region).
@@ -1348,10 +1349,10 @@ fn parse_p_element(node: roxmltree::Node<'_, '_>) -> Result<PElement> {
 
             match (name, ns) {
                 ("span", Some(NS_TT)) => {
-                    content.push(InlineContent::Span(parse_span_element(child)?));
+                    content.push(InlineContent::Span(Box::new(parse_span_element(child)?)));
                 }
                 ("br", Some(NS_TT)) => {
-                    content.push(InlineContent::Br(parse_br_element(child)?));
+                    content.push(InlineContent::Br(Box::new(parse_br_element(child)?)));
                 }
                 ("metadata", Some(NS_TT)) => {
                     metadata.push(MetadataChild::Metadata(parse_metadata_element(child)?));
@@ -1410,10 +1411,10 @@ fn parse_span_element(node: roxmltree::Node<'_, '_>) -> Result<SpanElement> {
 
             match (name, ns) {
                 ("span", Some(NS_TT)) => {
-                    content.push(InlineContent::Span(parse_span_element(child)?));
+                    content.push(InlineContent::Span(Box::new(parse_span_element(child)?)));
                 }
                 ("br", Some(NS_TT)) => {
-                    content.push(InlineContent::Br(parse_br_element(child)?));
+                    content.push(InlineContent::Br(Box::new(parse_br_element(child)?)));
                 }
                 ("metadata", Some(NS_TT)) => {
                     metadata.push(MetadataChild::Metadata(parse_metadata_element(child)?));
