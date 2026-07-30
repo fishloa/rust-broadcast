@@ -1654,78 +1654,43 @@ fn buffer_error_absent_on_small_sections() {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 #[test]
-fn empty_buffer_error_trips_when_tbsys_never_empty_for_1s() {
+fn empty_buffer_error_trips_when_tbsys_never_empties_for_1s() {
     let mut monitor = ConformanceMonitor::new();
     acquire_sync(&mut monitor);
 
-    // Feed a PAT section at t≈0. The section bytes enter TBsys at
-    // section completion. Then wait >1 s and feed another PAT section.
-    // At the second section's completion, TBsys has been non-empty for
-    // the entire interval, so the empty-interval check fires.
-    let section = build_pat_section(&[(0x0001, 0x0100)]);
+    // TBsys drains at 125 000 bytes/s (1 Mbit/s). A single large section
+    // (~900 bytes) drains in ~7.2 ms. To keep TBsys non-empty for >1 s
+    // across the second empty-interval window (the first window always
+    // passes because `empty_since_check` starts true from the initial
+    // feed), we flood large PAT sections continuously: each 5 ms section
+    // feeds ~900 bytes while only ~625 bytes drain between completions,
+    // so occupancy never hits 0.
+    //
+    // Timeline: first `check_empty_interval` at ~1 s drains the initial
+    // `empty_since_check = true` (no error). Second call at ~2 s finds
+    // `empty_since_check = false` (buffer never emptied) → error.
+    // TR 101 290 v1.4.1 Table 5.0c indicator 3.9.
+    let section = build_large_pat_section();
+    let section_packets = packetise_section(PID_PAT, &section);
 
-    // Feed first section at t=0 (section completes, feeds TBsys).
-    let packets1 = packetise_section(PID_PAT, &section);
-    let _ = feed_all(&mut monitor, &packets1, ms(5), ms(1));
+    let section_interval_ms = 5u64;
+    let mut events = Vec::new();
+    // 450 sections ≈ 2250 ms, enough for two 1 s check windows.
+    for section_idx in 0..450u64 {
+        for (pkt_idx, pkt) in section_packets.iter().enumerate() {
+            let t = Duration::from_millis(section_idx * section_interval_ms + pkt_idx as u64);
+            let evts = monitor.feed(pkt, t);
+            let evts_slice = evts.to_vec();
+            if !evts_slice.is_empty() {
+                events.extend(evts_slice);
+            }
+        }
+    }
 
-    // Now feed a SECOND PAT section at t≥1 s.
-    // The TBsys empty-interval check runs at the second section's
-    // completion time, at which point TBsys has not been empty since
-    // the first section was fed — the drain time for a 20-byte section
-    // at 125 KB/s is only ~0.16 ms, so TBsys IS empty. To trigger the
-    // error, we need TBsys to stay non-empty for >1s. That requires
-    // continuous feeding or a section that doesn't drain.
-    //
-    // Strategy: feed a LARGE section that fills TBsys, then at t=2s
-    // feed another section. TBsys drained 125 KB/s × 2 s = 250 KB,
-    // so even a large section would be drained. We need to PREVENT
-    // drain or use a different approach.
-    //
-    // The simplest correct approach: use a large section (>512 bytes)
-    // and feed the packets with very tight timing (no time to drain
-    // fully), then immediately at t=2s complete another section.
-    // TBsys occupancy starts high (from the first burst), and after 2 s
-    // of drain (250 KB), the buffer is definitely empty.
-    //
-    // Better approach: the empty check runs at `check_empty_interval`
-    // which uses a 1 s window. If we feed a section at t=0, then at
-    // t=0.5 s feed another (within the 1 s window), TBsys never empties
-    // in that window. At t=1.5 s, the check fires because the elapsed
-    // time since the last check is ≥1 s AND the buffer hasn't been empty.
-    //
-    // But the check interval is at least 1 s. So: feed at t=0, then
-    // feed another section at t=0.5 s. The first completion at t≈5 ms
-    // sets last_empty_check=5 ms. Second completion at t=0.5 s sets
-    // elapsed=0.495 s < 1 s, no check yet. Feed a third at t=1.5 s:
-    // elapsed=1.0 s AND the buffer was empty between completions
-    // (small section drains fast). So no error.
-    //
-    // To make this test work, I need to use a large section so TBsys
-    // stays non-empty. Or: I can acknowledge that for small sections
-    // that drain fast, the empty-interval check won't fire in a unit
-    // test with realistic timing. The real-world scenario is a busy
-    // PSI PID where sections arrive faster than TBsys can drain.
-
-    // Let me use a large section approach: 512 bytes of section data
-    // with minimal drain time (fast packet timing). Then at t=2 s,
-    // TBsys has had time to drain (250 KB), so it IS empty.
-    //
-    // The fundamental issue: TBsys at 1 Mbit/s drain empties in <5 ms
-    // for a full 512-byte buffer. To keep it non-empty for >1 s,
-    // sections must arrive continuously at >1 Mbit/s. That's a valid
-    // violation scenario but hard to trigger in a unit test.
-    //
-    // For now, mark this as a known limitation: the test exercises the
-    // code path but a positive violation requires sustained high-rate
-    // section arrival. See the report for details.
-    let section2 = build_pat_section(&[(0x0001, 0x0100), (0x0002, 0x0200)]);
-    let packets2 = packetise_section(PID_PAT, &section2);
-    let _events = feed_all(&mut monitor, &packets2, secs(2), ms(1));
-    // The section is small and drains quickly — no error expected.
-    // This test validates that the empty-interval code path doesn't
-    // produce false positives on normal operation.
-    // A true positive requires sustained high-rate section arrival
-    // that is impractical in a unit test. See the report for details.
+    assert!(
+        has_indicator(&events, Indicator::EmptyBufferError),
+        "EmptyBufferError should fire when TBsys never empties for >1 s"
+    );
 }
 
 #[test]
@@ -1759,49 +1724,30 @@ fn data_delay_error_trips_when_data_lingers_over_1s() {
     let mut monitor = ConformanceMonitor::new();
     acquire_sync(&mut monitor);
 
-    // Feed a large section that fills TBsys, then pause for >1 s
-    // without any further drain. TBsys still holds section bytes
-    // whose first_byte_arrival is >1 s in the past.
+    // TBsys drains at 125 000 bytes/s. With continuous large-section
+    // feeding at 5 ms per section, the buffer stays non-empty and
+    // `first_byte_arrival` stays at the first section's completion
+    // time (~5 ms). At t > 1.005 s, delay exceeds 1 s → error.
+    // TR 101 290 v1.4.1 Table 5.0c indicator 3.10.
     let section = build_large_pat_section();
-    let packets = packetise_section(PID_PAT, &section);
+    let section_packets = packetise_section(PID_PAT, &section);
 
-    // Feed the first packet of the section at t=0 to start filling TBsys.
-    // TBsys doesn't drain because section bytes arrive at completion only.
-    // After the section completes, TBsys has data with first_byte_arrival=t.
-    let mut found = false;
-    for (i, pkt) in packets.iter().enumerate() {
-        let t = ms(i as u64);
-        let events = monitor.feed(pkt, t);
-        if events
-            .iter()
-            .any(|e| e.indicator == Indicator::DataDelayError)
-        {
-            found = true;
-            break;
+    let section_interval_ms = 5u64;
+    let mut events = Vec::new();
+    for section_idx in 0..250u64 {
+        for (pkt_idx, pkt) in section_packets.iter().enumerate() {
+            let t = Duration::from_millis(section_idx * section_interval_ms + pkt_idx as u64);
+            let evts = monitor.feed(pkt, t);
+            let evts_slice = evts.to_vec();
+            if !evts_slice.is_empty() {
+                events.extend(evts_slice);
+            }
         }
     }
-    // At 1 ms spacing, the first section completes in a few ms (not >1s).
-    // Delay only fires when data sits >1 s. No error expected yet.
-    assert!(!found, "no delay expected during fast burst");
 
-    // Now pause for >1 s and feed a packet on the same PID:
-    // the first_byte_arrival is still from the original feed time,
-    // so delay > 1s.
-    let pkt = make_ts_packet(PID_PAT, 0, false, false, &[], &[]);
-    let _events = monitor.feed(&pkt, secs(3));
-    // Note: TBsys delay tracks the occupancy; a subsequent section-feed
-    // would trigger the delay check. But a non-payload packet on PID_PAT
-    // won't feed TBsys. We need to feed another section.
-    // Let me use a different approach: feed a section at t=0, then
-    // at t=2s feed another section — TBsys still has data from t=0.
-    let section2 = build_pat_section(&[(0x0001, 0x0100)]);
-    let packets2 = packetise_section(PID_PAT, &section2);
-    let events = feed_all(&mut monitor, &packets2, secs(2), ms(1));
-    // TBsys drained 1 Mbit/s for 2 s = 250 KB, so a 900-byte section
-    // should be fully drained by then.
     assert!(
-        !has_indicator(&events, Indicator::DataDelayError),
-        "section fully drained after 2 s, no delay expected"
+        has_indicator(&events, Indicator::DataDelayError),
+        "DataDelayError should fire when data stays in TBsys for >1 s"
     );
 }
 
