@@ -28,10 +28,16 @@ name: Published-dependency consistency
 # failure. A flaky crates.io request is retried, then skipped with a warning
 # -- a network blip must never read as a real violation.
 #
-# Advisory (never fails the run) on ordinary pushes/PRs, so routine
-# development doesn't go red while a multi-crate publish wave is mid-flight
-# and some crates are intentionally still catching up. BLOCKING on any
-# release tag (the lockstep `v*` and every independent `<crate>-v*|main`),
+# Four checks (see the script docstring for details):
+#   1. Bucket homogeneity — enumerates admitted published versions and their
+#      transitive sibling-dep epochs.
+#   2. Bump class — epoch change without major-class bump.
+#   3. Dev-dep acyclicity — pure cargo-metadata graph check, no network.
+#   4. Publish order — topological sort of normal-dep graph, no network.
+#
+# Checks 1-2 require network (crates.io); checks 3-4 are pure graph checks
+# that run on every push/PR.  Checks 1-2 run advisory on pushes/PRs and
+# BLOCKING on release tags (the lockstep `v*` and independent `*-v*`),
 # since that is the point past which a stale requirement becomes a
 # consumer-visible break.
 
@@ -57,10 +63,15 @@ jobs:
       - name: Run tests
         run: python3 -m pytest tools/tests/ -q
 
-      - name: Check (advisory)
+      - name: Check graph-only (checks 3-4, no network)
+        run: python3 tools/check-published-dep-consistency.py
+        env:
+          SKIP_NETWORK: "1"
+
+      - name: Check full (advisory — push/PR)
         if: ${{ !startsWith(github.ref, 'refs/tags/') }}
         run: python3 tools/check-published-dep-consistency.py
 
-      - name: Check (blocking -- release tag)
+      - name: Check full (blocking — release tag)
         if: ${{ startsWith(github.ref, 'refs/tags/') }}
         run: python3 tools/check-published-dep-consistency.py --blocking
