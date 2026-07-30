@@ -170,11 +170,11 @@ Seven defects were found across the three initial transcription files, three sev
 | # | Severity | Finding | File affected |
 |---|---|---|---|
 | 1 | **Severe** | Annex N (normative OpenAPI reporting schema, page 179) was missed entirely; transcription pointed at the garbled clause 11.1.1 table instead. Annex N is now transcribed in `mabr-reporting.md`, and the spec-internal `object-delivery-status` enum conflict between clause 11.1.2.2 (10 values) and Annex N (9 values) is flagged. | New: `mabr-reporting.md` |
-| 2 | **Severe** | Table A.0-1 (schema version → required namespaces) was reversed — v1 listed as 2019+Extensibility, v2 as 2024. The table actually says v1 = 2019 only, v2 = 2024. Fixed in `mabr-signalling.md` §9. | `mabr-signalling.md` |
+| 2 | **Severe** | Table A.0-1 (schema version → required namespaces) was reversed — v1 listed as 2019+Extensibility, v2 as 2024. The table actually says v1 = 2019 only, v2 requires **two** namespaces: `Extensibility:2024` (Clause A.1) and `MulticastSessionConfiguration:2024` (Clause A.2). Fixed in `mabr-signalling.md` §9. | `mabr-signalling.md` |
 | 3 | **Severe** | The Annex F.2.5.1 XSD was dismissed as "adds no information" but it names the key attribute `keyId` (typed `xs:hexBinary`), not `@keyUri` (URI string) as the prose table says — a second spec-internal conflict. Flagged in `mabr-transport.md` §2.4. | `mabr-transport.md` |
 | 4 | Moderate | `MulticastGatewayConfigurationTransportSession`'s `PresentationManifests`/`InitSegments` cardinality silently changes `0..1` → `0..n` relative to the base element. Noted explicitly. | `mabr-signalling.md` |
 | 5 | Moderate | The classification-scheme table fabricated `MSync/RTP` as a flat term; `RTP` is actually nested as a child `<Term>` under `MSync` in the XML schema. Fixed with term-path notation. | `mabr-signalling.md` |
-| 6 | Minor | `@protocolVersion` typed as "string/positive integer"; the XSD says `xs:positiveInteger`. Corrected. | `mabr-signalling.md` |
+| 6 | Minor | `@protocolVersion` typed as "string/positive integer"; the XSD says `xs:positiveInteger`. Corrected. ⚠️ This is a **prose-vs-XSD conflict**: the prose Table 10.2.3.1-1 says "String" but the XSD `MulticastTransportProtocolType` (Annex A.2) says `xs:positiveInteger` — same class as finding 3 above. Flagged in `mabr-signalling.md` §4. | `mabr-signalling.md` |
 | 7 | Minor | `BitRate` description said "FEC included" unconditionally; clause 10.2.3.10 includes FEC only when repair packets are addressed to the **same** destination group network address. Conditional restored. | `mabr-signalling.md` |
 
 **Meta-finding:** the initial gaps list was incomplete in exactly the dangerous way:
@@ -182,6 +182,16 @@ findings 2 and 3 were stated *confidently* and *wrongly*, so they never appeared
 the gaps list. The gaps list only catches the unknowns you know about. It has been
 rewritten to record only genuine, verified unknowns, and the two spec-internal
 conflicts are now flagged at the head of the README rather than resolved silently.
+
+**2026-07-30 — second-round corrections** (re-verified independently against rendered pages):
+
+Two residual defects from the initial audit were fixed:
+
+| # | Severity | Finding | File affected |
+|---|---|---|---|
+| A | **Severe** | `mabr-reporting.md` falsely claimed the per-event `object-delivery-status` (page 180) and the schema-level `MABR_ObjectDeliveryStatus` (page 183) were "the same enumeration". They are **not**: page 180 has 9 values incl. `cache-miss-timeshift`; page 183 has 10 values incl. `cache-miss-expired` (duplicated) but no `cache-miss-timeshift` and also no `cache-hit-mr`. TS 103 769 carries **three** mutually inconsistent versions of this enum. `MABR_ObjectDeliveryStatus` is an orphan type — never `$ref`'d. The `MABR_Report.required` quirk (`event` singular vs `events` plural) is also now documented. | `mabr-reporting.md` |
+| B | **Severe** | Table A.0-1 v2 row under-listed the required namespaces. The real table requires **two**: `urn:dvb:metadata:Extensibility:2024` (Clause A.1) AND `urn:dvb:metadata:MulticastSessionConfiguration:2024` (Clause A.2). Fixed in both `mabr-signalling.md` §9 and the audit-history row above. | `mabr-signalling.md`, `README.md` |
+| — | Policy | **Prose-vs-XSD flagging rule**: Where the prose table's Data type column disagrees with the XSD's `type="..."` value, the transcription follows the XSD (it is the normative wire-format authority) but **flags the divergence** so an implementer knows they may encounter tooling or documentation that expects the prose value. Finding 3 (`keyId`/`@keyUri`) and the updated finding 6 (`@protocolVersion`: `"String"` vs `xs:positiveInteger`) now both follow this rule uniformly. | — |
 
 **What the audit confirmed correct** (independently verified against the PDF):
 - The `dvb-flute` reuse claim is sound; Annex F's delta list is complete.

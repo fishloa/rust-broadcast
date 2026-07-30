@@ -97,7 +97,7 @@ then mandatory non-empty) if reference point `A` is not present in the deploymen
 | `@transmissionMode` | 0..1 | `resource` \| `chunked` (default `resource`) | See `mabr-transport.md` §1. |
 | `@transportSecurity` | 0..1 | `none` \| `integrity` \| `integrityAndAuthenticity` (default `none`) | See `mabr-transport.md` §4. |
 | `@sessionIdleTimeout` | 1 | Unsigned integer, ms | Max inter-packet gap before the gateway may treat the session as inactive/unsubscribe. Takes precedence over other timeouts. |
-| `TransportProtocol` | 1 | — | `@protocolIdentifier` (1, MPEG-7 termReference, a `MulticastTransportProtocolCS` term — §8) + `@protocolVersion` (1, `xs:positiveInteger`, major version number). |
+| `TransportProtocol` | 1 | — | `@protocolIdentifier` (1, MPEG-7 termReference, a `MulticastTransportProtocolCS` term — §8) + `@protocolVersion` (1, `xs:positiveInteger`, major version number). ⚠️ **Prose Table 10.2.3.1-1 says "String" but the XSD (Annex A.2, `MulticastTransportProtocolType`) says `xs:positiveInteger`** — a prose-vs-XSD conflict of the same class as `keyId`/`@keyUri` (see `mabr-transport.md` §2.4). This transcription follows the XSD. |
 | `EndpointAddress` | 1..n | — | See §4.1. |
 | `BitRate` | 1 | — | `@average` (0..1, positive integer, bit/s) + `@maximum` (1, positive integer, bit/s) — across all endpoints declared for this session, including any FEC repair packets addressed to the **same** destination group network address (clause 10.2.3.10). If FEC uses a different endpoint address, its bit rate is not included here. |
 | `ForwardErrorCorrectionParameters` | 0..n | — | See §4.2. |
@@ -273,7 +273,7 @@ Two independent extension axes, both requiring a namespace different from the ba
   | Schema version | Required schema namespaces |
   |---|---|
   | `1` | `urn:dvb:metadata:MulticastSessionConfiguration:2019` |
-  | `2` (current) | `urn:dvb:metadata:MulticastSessionConfiguration:2024` |
+  | `2` (current) | `urn:dvb:metadata:Extensibility:2024` (Clause A.1) and `urn:dvb:metadata:MulticastSessionConfiguration:2024` (Clause A.2) |
 
   Note: version 1 requires **only** the 2019 baseline namespace (no Extensibility
   namespace is listed for v1 in Table A.0-1). The Extensibility schema

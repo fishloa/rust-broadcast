@@ -16,38 +16,57 @@ The transcription below is based on the OpenAPI YAML (authoritative for types an
 values), cross-checked against clause 11's prose and property tables, with conflicts
 flagged explicitly.
 
-## ⚠️ Flagged spec-internal conflict: `object-delivery-status` / `MABR_ObjectDeliveryStatus`
+## ⚠️ Flagged spec-internal conflict: three incompatible `object-delivery-status` enumerations
 
-The spec defines the media-object delivery status enumeration in **two incompatible
-places**. An implementer must reconcile them — neither list can be taken alone:
+TS 103 769 V1.2.1 carries **three** mutually inconsistent versions of the
+media-object delivery status enumeration. They are listed here side by side so an
+implementer can see the shape of the conflict — none can be taken alone:
 
 | Source | Location | Values listed |
 |---|---|---|
 | Clause 11.1.2.2, Table 11.1.2.2-1 | Normative body (page 89) | 10 values: `cache-hit-m`, `cache-hit-a`, `cache-hit-mr`, `cache-miss-expired`, `cache-miss-incomplete`, `cache-miss-filter`, `cache-miss-nodata-s`, `cache-miss-nodata-m`, `cache-miss-nodata-j`, `cache-miss-nodata-o` |
-| Annex N, `MABR_Event.object-delivery-status` + `MABR_ObjectDeliveryStatus` | Normative OpenAPI schema (pages 180, 183) | 9 values: `cache-hit-m`, `cache-hit-a`, `cache-miss-incomplete`, `cache-miss-filter`, `cache-miss-nodata-s`, `cache-miss-nodata-m`, `cache-miss-nodata-j`, `cache-miss-nodata-o`, `cache-miss-timeshift` |
+| Annex N, `MABR_Event.object-delivery-status` | Normative OpenAPI schema (page 180) | 9 values: `cache-hit-m`, `cache-hit-a`, `cache-miss-incomplete`, `cache-miss-filter`, `cache-miss-nodata-s`, `cache-miss-nodata-m`, `cache-miss-nodata-j`, `cache-miss-nodata-o`, `cache-miss-timeshift` |
+| Annex N, `MABR_ObjectDeliveryStatus` | Normative OpenAPI schema (page 183) | 10 values (9 unique): `cache-hit-m`, `cache-hit-a`, `cache-miss-expired`, `cache-miss-incomplete`, `cache-miss-filter`, `cache-miss-nodata-s`, `cache-miss-nodata-m`, `cache-miss-nodata-j`, `cache-miss-nodata-o`, `cache-miss-expired` (duplicated) |
 
-**The conflicts are:**
+**Key observations:**
 
-1. Clause 11.1.2.2 has `cache-hit-mr` (repaired via A/U) and `cache-miss-expired`
-   (expired from cache); Annex N has **neither**.
-2. Annex N has `cache-miss-timeshift` (timeshift/catch-up miss); clause 11.1.2.2 has
-   **no** such value.
-3. `MABR_ObjectDeliveryStatus` (page 183) contains a duplicate entry for
-   `cache-miss-expired` — it appears both in the middle of the list and again at the
-   end — clearly a typo in the YAML rather than an intentional extra value.
+1. No two lists are identical. Clause 11.1.2.2 has `cache-hit-mr` and
+   `cache-miss-expired` but not `cache-miss-timeshift`. The per-event inline enum
+   (page 180) has `cache-miss-timeshift` but not `cache-hit-mr` or `cache-miss-expired`.
+   `MABR_ObjectDeliveryStatus` (page 183) has `cache-miss-expired` but not
+   `cache-hit-mr` or `cache-miss-timeshift`.
+2. `MABR_ObjectDeliveryStatus` (page 183) is an **orphan type** — it is defined in the
+   schema but is never `$ref`'d by any other component. The per-event
+   `object-delivery-status` field (page 180) inlines its own enum literal and does not
+   reference this type.
+3. `MABR_ObjectDeliveryStatus` contains a **duplicate `cache-miss-expired`** entry
+   — it appears in the middle of the list and again at the end — clearly a typo in the
+   YAML rather than an intentional extra value.
 
 **Do not pick one silently.** An implementation emitting the clause-11.1.2.2 set will
 produce reports containing `cache-hit-mr` / `cache-miss-expired` that a schema-based
-receiver rejects; one emitting the Annex N set will produce `cache-miss-timeshift`
-that the prose doesn't describe. Until an erratum or V1.3.1 resolves this, an
-implementation should:
-- Accept **both** sets on the receive side (be lenient).
+receiver rejects; one emitting the Annex N per-event set will produce
+`cache-miss-timeshift` that the prose doesn't describe. Until an erratum or V1.3.1
+resolves this, an implementation should:
+- Accept **all three** sets on the receive side (be lenient).
 - Document which set it emits and why.
 
-The per-event `object-delivery-status` field (Annex N page 180) and the schema-level
-`MABR_ObjectDeliveryStatus` type (page 183) define the *same* enumeration — both
-are the Annex N variant (9 values with `cache-miss-timeshift`), but the type-level
-list has the spurious duplicate `cache-miss-expired` entry.
+### ⚠️ Spec quirk: `MABR_Report.required` says `event` (singular)
+
+The YAML on page 179 declares:
+
+```yaml
+MABR_Report:
+  required:
+    - timestamp
+    - gateway-id
+    - event
+```
+
+— **`event`**, not `events`. The actual data property is named `events` (plural, an
+array). This is a spec bug (the YAML `required` list names a non-existent property)
+that would silently break a strict YAML-to-code generator. An implementation should
+treat the `required` list as naming `events` instead.
 
 ## 1. HTTP endpoint (clause 11.2)
 
