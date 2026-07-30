@@ -46,12 +46,22 @@ sample-aes = ["cenc", "cbc/alloc", "cbc/block-padding"]
 cli    = ["dep:clap", "std"]
 
 [dev-dependencies]
-# Pin media-doctor and timed-metadata to published versions to break the
-# publish-time dev-dep cycle: transmux 0.20 dev-deps media-doctor, which
-# normal-deps transmux; same with timed-metadata. By resolving these from the
-# registry rather than local paths, `cargo publish` won't require building
-# media-doctor/timed-metadata against 0.20 (which may not be published yet).
-media-doctor = { path = "../media-doctor", version = "0.6", default-features = false, features = ["std"] }
+# media-doctor and timed-metadata are PATH-ONLY dev-deps, deliberately carrying
+# no `version` key. Both normal-dep transmux, so a versioned dev-dep here is a
+# publish-time cycle: `cargo publish` resolves dev-deps from the registry, so
+# transmux could not publish until media-doctor's new version existed, and
+# media-doctor could not publish until transmux's did.
+#
+# This was previously handled by pinning them one release BEHIND (to whatever
+# was already published). That is a rule a human has to re-apply every release,
+# and it failed on the 0.21.0 tag — release prep bumped the pin to
+# `media-doctor = "0.6"` and the publish died with `failed to select a version
+# for the requirement media-doctor = "^0.6"`.
+#
+# Cargo strips path-only dev-deps from the published manifest, so the cycle
+# cannot form regardless of what is or isn't on crates.io. Do not add a
+# `version` key to either of these.
+media-doctor = { path = "../media-doctor", default-features = false, features = ["std"] }
 # golden_gate.rs (issue #569) shells out to `ffprobe -of json` and parses the
 # result; already resolved workspace-wide at this version (see Cargo.lock), so
 # this adds no new dependency to the tree.
@@ -63,7 +73,7 @@ serde_json   = "1.0"
 # *points* from SCTE-35 cues is left to callers, and this example is exactly
 # that follow-up wiring, not a library dependency.
 scte35-splice  = { path = "../scte35-splice", version = "2", default-features = false, features = ["std"] }
-timed-metadata = { path = "../timed-metadata", version = "0.4", default-features = false, features = ["std"] }
+timed-metadata = { path = "../timed-metadata", default-features = false, features = ["std"] }
 
 [package.metadata.docs.rs]
 all-features = true
