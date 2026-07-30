@@ -24,6 +24,8 @@ pub const NS_TT: &str = "http://www.w3.org/ns/ttml";
 pub const NS_TTP: &str = "http://www.w3.org/ns/ttml#parameter";
 /// TT Style namespace: `http://www.w3.org/ns/ttml#styling`
 pub const NS_TTS: &str = "http://www.w3.org/ns/ttml#styling";
+/// TT Audio Style namespace: `http://www.w3.org/ns/ttml#audio`
+pub const NS_TTA: &str = "http://www.w3.org/ns/ttml#audio";
 /// TT Metadata namespace: `http://www.w3.org/ns/ttml#metadata`
 pub const NS_TTM: &str = "http://www.w3.org/ns/ttml#metadata";
 /// TT Profile namespace: `http://www.w3.org/ns/ttml/profile/`
@@ -983,6 +985,7 @@ fn other_attributes(node: &roxmltree::Node<'_, '_>) -> BTreeMap<(String, String)
         NS_TT,
         NS_TTP,
         NS_TTS,
+        NS_TTA,
         NS_TTM,
         NS_TT_PROFILE,
         NS_ITTS,
@@ -1799,6 +1802,9 @@ fn serialize_tt_element(tt: &TtElement, buf: &mut String, indent: usize) {
     if tt_ns_needed(tt, NS_SMPTE) {
         buf.push_str(r#" xmlns:smpte="http://www.smpte-ra.org/schemas/2052-1/2010/smpte-tt""#);
     }
+    if tt_ns_needed(tt, NS_TTA) {
+        buf.push_str(r#" xmlns:tta="http://www.w3.org/ns/ttml#audio""#);
+    }
 
     // xml:lang
     if let Some(ref lang) = tt.xml_lang {
@@ -2092,6 +2098,12 @@ fn style_ns_needed(attrs: &StyleAttributes, ns: &str) -> bool {
         }
         NS_ITTS => attrs.itts_forced_display.is_some() || attrs.itts_fill_line_gap.is_some(),
         NS_EBUTTS => attrs.ebutts_line_padding.is_some() || attrs.ebutts_multi_row_align.is_some(),
+        NS_TTA => {
+            attrs.tta_gain.is_some()
+                || attrs.tta_pan.is_some()
+                || attrs.tta_pitch.is_some()
+                || attrs.tta_speak.is_some()
+        }
         _ => false,
     }
 }
@@ -2729,10 +2741,10 @@ fn parse_style_attributes(node: roxmltree::Node<'_, '_>) -> StyleAttributes {
         tts_wrap_option: attribute_value(&node, NS_TTS, "wrapOption").map(|s| s.to_string()),
         tts_writing_mode: attribute_value(&node, NS_TTS, "writingMode").map(|s| s.to_string()),
         tts_z_index: attribute_value(&node, NS_TTS, "zIndex").map(|s| s.to_string()),
-        tta_gain: attribute_value(&node, NS_TTS, "gain").map(|s| s.to_string()),
-        tta_pan: attribute_value(&node, NS_TTS, "pan").map(|s| s.to_string()),
-        tta_pitch: attribute_value(&node, NS_TTS, "pitch").map(|s| s.to_string()),
-        tta_speak: attribute_value(&node, NS_TTS, "speak").map(|s| s.to_string()),
+        tta_gain: attribute_value(&node, NS_TTA, "gain").map(|s| s.to_string()),
+        tta_pan: attribute_value(&node, NS_TTA, "pan").map(|s| s.to_string()),
+        tta_pitch: attribute_value(&node, NS_TTA, "pitch").map(|s| s.to_string()),
+        tta_speak: attribute_value(&node, NS_TTA, "speak").map(|s| s.to_string()),
         itts_forced_display: attribute_value(&node, NS_ITTS, "forcedDisplay")
             .map(|s| s.to_string()),
         itts_fill_line_gap: attribute_value(&node, NS_ITTS, "fillLineGap").map(|s| s.to_string()),
