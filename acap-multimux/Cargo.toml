@@ -20,7 +20,7 @@ required-features = ["device"]
 
 [dependencies]
 multimux  = "0.5"
-transmux  = "0.20"
+transmux  = "0.21"
 tokio     = { version = "1", features = ["rt-multi-thread", "net", "macros", "time", "sync"] }
 axum      = "0.7"
 serde     = { version = "1", features = ["derive"] }
