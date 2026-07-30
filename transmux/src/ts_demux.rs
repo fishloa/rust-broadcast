@@ -2495,11 +2495,20 @@ impl StreamingTsDemux {
         }
 
         // CC gap degradation (issue #778) — payload-bearing, non-null packets
-        // only, after the discontinuity check (a signalled discontinuity is
-        // `Discontinuity`, not `InputDegraded`). Legal duplicates (same CC +
-        // identical payload) are excluded per ISO/IEC 13818-1 §2.4.3.3.
-        if pkt.header.has_payload && pkt.header.pid != NULL_PACKET_PID && !discontinuity_signalled {
-            self.check_cc(pkt.header.pid, pkt.header.continuity_counter, raw, idx);
+        // only. The discontinuity flag is passed in so check_cc can suppress
+        // the EVENT but STILL UPDATE the per-PID state (matching both in-repo
+        // reference implementations: dvb-conformance's check_cc at
+        // lib.rs:979-982 and media-doctor's CcAnomalyCheck at cc_anomaly.rs:110-113
+        // — both update last_cc unconditionally on every payload-bearing packet,
+        // including those with discontinuity_indicator set).
+        if pkt.header.has_payload && pkt.header.pid != NULL_PACKET_PID {
+            self.check_cc(
+                pkt.header.pid,
+                pkt.header.continuity_counter,
+                pkt.payload,
+                discontinuity_signalled,
+                idx,
+            );
         }
 
         let pid = pkt.header.pid;
@@ -2625,22 +2634,34 @@ impl StreamingTsDemux {
     /// when a genuine gap is detected (issue #778).
     ///
     /// Does **not** fire for:
-    /// - The first payload-bearing packet on this PID (`initialized` guard).
-    /// - Legal duplicates: same CC + identical payload (ISO/IEC 13818-1 §2.4.3.3).
-    ///   This is already pre-filtered by the caller: `discontinuity_signalled`
-    ///   packets never reach here.
-    /// - Non-payload-bearing or null-PID packets (already filtered by the caller).
+    /// - Signalled discontinuities (`discontinuity_signalled`): the event is
+    ///   suppressed, but `last_cc` and `last_payload` are still updated to
+    ///   this packet (matching the dvb-conformance and media-doctor reference
+    ///   implementations — both update the CC baseline unconditionally).
+    /// - Legal duplicates: same CC + identical *payload* (not including
+    ///   adaptation-field variations like a re-encoded PCR). Payload bytes
+    ///   are taken from `pkt.payload`, which excludes the adaptation field.
     ///
     /// # Arguments
     /// - `pid` — the TS PID.
     /// - `cc` — the 4-bit continuity counter from the packet header.
-    /// - `raw` — the full 188-byte TS packet (for duplicate detection: payload
-    ///   bytes compared).
+    /// - `payload` — the packet's payload bytes (after the adaptation field,
+    ///   if any), from [`TsPacket::payload`].
+    /// - `discontinuity_signalled` — `true` when the adaptation field's
+    ///   `discontinuity_indicator` is set. Suppresses the event but NOT the
+    ///   state update.
     /// - `packet_index` — 0-based index of this packet in the stream.
-    fn check_cc(&mut self, pid: u16, cc: u8, raw: &[u8; TS_PACKET_SIZE], packet_index: u64) {
+    fn check_cc(
+        &mut self,
+        pid: u16,
+        cc: u8,
+        payload: Option<&[u8]>,
+        discontinuity_signalled: bool,
+        packet_index: u64,
+    ) {
         use std::collections::btree_map::Entry;
 
-        let payload = &raw[4..];
+        let payload_bytes = payload.unwrap_or(&[]);
         let track = self.live_track_id(pid);
         match self.cc_states.entry(pid) {
             Entry::Occupied(mut e) => {
@@ -2648,15 +2669,15 @@ impl StreamingTsDemux {
                 if !state.initialized {
                     state.initialized = true;
                     state.last_cc = cc;
-                    state.last_payload = payload.to_vec();
+                    state.last_payload = payload_bytes.to_vec();
                     return;
                 }
                 let expected = (state.last_cc + 1) & 0x0F;
-                if cc != expected {
+                if !discontinuity_signalled && cc != expected {
                     // Check for legal duplicate: same CC + identical payload.
                     let is_dup = cc == state.last_cc
-                        && payload.len() == state.last_payload.len()
-                        && payload == state.last_payload.as_slice();
+                        && payload_bytes.len() == state.last_payload.len()
+                        && payload_bytes == state.last_payload.as_slice();
                     if !is_dup {
                         self.events.push_back(DemuxEvent::InputDegraded {
                             track,
@@ -2669,13 +2690,13 @@ impl StreamingTsDemux {
                     }
                 }
                 state.last_cc = cc;
-                state.last_payload = payload.to_vec();
+                state.last_payload = payload_bytes.to_vec();
             }
             Entry::Vacant(e) => {
                 e.insert(CcState {
                     initialized: true,
                     last_cc: cc,
-                    last_payload: payload.to_vec(),
+                    last_payload: payload_bytes.to_vec(),
                 });
             }
         }
@@ -4422,9 +4443,44 @@ mod tests {
     // ── m6-discontinuity.ts smoke ───────────────────────────────────────────
 
     /// The m6-discontinuity fixture is a real, lossy capture — it has genuine
-    /// CC gaps AND signalled discontinuities. This test just confirms the
-    /// fixture plays through without panicking and that signalled
-    /// discontinuities are still observed as `Discontinuity` events.
+    /// CC gaps AND signalled discontinuities. This test asserts the gap count
+    /// matches media-doctor's CcAnomalyCheck (877) — the two must agree.
+    #[test]
+    fn m6_discontinuity_fixture_gap_count_matches_media_doctor() {
+        let mut path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        path.push("..");
+        path.push("fixtures");
+        path.push("ts");
+        path.push("m6-discontinuity.ts");
+        let data = std::fs::read(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+
+        let mut demux = StreamingTsDemux::new();
+        demux.feed(&data);
+        demux.finish();
+
+        let gap_count = std::iter::from_fn(|| demux.poll_event())
+            .filter(|e| {
+                matches!(
+                    e,
+                    DemuxEvent::InputDegraded {
+                        kind: InputDegradation::ContinuityGap { .. },
+                        ..
+                    }
+                )
+            })
+            .count();
+        assert_eq!(
+            gap_count, 877,
+            "m6-discontinuity.ts must produce exactly 877 ContinuityGap events \
+             (matching media-doctor CcAnomalyCheck); any divergence means the \
+             exclusion rules disagree with the two in-repo reference \
+             implementations"
+        );
+    }
+
+    /// The same fixture — CC gaps AND signalled discontinuities. This test
+    /// just confirms the fixture plays through without panicking and that
+    /// signalled discontinuities are still observed as `Discontinuity` events.
     #[test]
     fn m6_discontinuity_fixture_plays_through() {
         let mut path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
@@ -4723,6 +4779,127 @@ mod tests {
         assert!(
             degraded.is_empty(),
             "normal CC wrap 15→0 must not emit InputDegraded, got {degraded:?}"
+        );
+    }
+
+    // ── Regression: post-discontinuity legal CC is not a false gap (defect 1) ─
+
+    /// Regression test for the review-found false positive: a payload-bearing
+    /// signalled discontinuity must NOT prevent `last_cc` from being updated.
+    /// The next legal CC (discontinuity's CC + 1) must emit nothing.
+    ///
+    /// Derived from the real pid 0x0083 sequence in m6-discontinuity.ts:
+    /// packet N carries discontinuity_indicator + CC=X; packet N+1 is the
+    /// next legal payload-bearing packet with CC=(X+1) & 0x0F.
+    #[test]
+    fn post_discontinuity_legal_cc_emits_nothing() {
+        let mut demux = StreamingTsDemux::new();
+        let null = null_packet();
+        for _ in 0..mpeg_ts::resync::LOCK_CONFIRMATIONS + 1 {
+            demux.feed(&null);
+        }
+
+        let payload = b"payload";
+        // First: normal packet, CC=0, PID=0x0083.
+        demux.feed(&ts_packet_degradation(
+            false, 0x0083, 0, 0x10, None, payload,
+        ));
+        // Second: discontinuity_indicator=1, CC=5 (gap — suppressed event, but state updated).
+        let af = [0x80u8, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF];
+        demux.feed(&ts_packet_degradation(
+            false,
+            0x0083,
+            5,
+            0x30,
+            Some(&af),
+            payload,
+        ));
+        // Third: legal follow-up, CC=6 ((5+1) & 0x0F). Must NOT fire ContinuityGap.
+        demux.feed(&ts_packet_degradation(
+            false, 0x0083, 6, 0x10, None, payload,
+        ));
+
+        let gaps: Vec<_> = std::iter::from_fn(|| demux.poll_event())
+            .filter(|e| {
+                matches!(
+                    e,
+                    DemuxEvent::InputDegraded {
+                        kind: InputDegradation::ContinuityGap { .. },
+                        ..
+                    }
+                )
+            })
+            .collect();
+        assert!(
+            gaps.is_empty(),
+            "post-discontinuity legal CC must not fire ContinuityGap; \
+             discontinuity_indicator suppresses the event but updates last_cc. \
+             Got {gaps:?}"
+        );
+    }
+
+    // ── Regression: PCR-only adaptation-field change is NOT a false duplicate mismatch (defect 2) ─
+
+    /// Regression test for the review-found false positive: a legal duplicate
+    /// whose only difference is a re-encoded PCR in the adaptation field must
+    /// still be recognised as a duplicate. The duplicate check compares
+    /// `pkt.payload`, not `raw[4..]` (which includes the adaptation field).
+    ///
+    /// Derived from the real PCR-bearing PID behaviour in broadcast streams.
+    #[test]
+    fn pcr_variation_in_adaptation_field_is_still_a_legal_duplicate() {
+        let mut demux = StreamingTsDemux::new();
+        let null = null_packet();
+        for _ in 0..mpeg_ts::resync::LOCK_CONFIRMATIONS + 1 {
+            demux.feed(&null);
+        }
+
+        let payload = b"identical payload for duplicate test";
+
+        // First: CC=0, PID=0x0100, adaptation field with PCR=100.
+        let af_pcr_100 = [
+            0x10u8, // PCR flag only
+            0x00, 0x00, 0x00, 0x00, 0x7E, 0x64, // PCR = 100 (encoded as 6-byte PCR field)
+        ];
+        demux.feed(&ts_packet_degradation(
+            false,
+            0x0100,
+            0,
+            0x30, // AFC=11: adaptation + payload
+            Some(&af_pcr_100),
+            payload,
+        ));
+
+        // Second: CC=0 (legal duplicate), same payload, adaptation field with
+        // PCR=200 (different PCR encoding — NOT a different payload).
+        let af_pcr_200 = [
+            0x10u8, // PCR flag only
+            0x00, 0x00, 0x00, 0x00, 0x7E, 0xC8, // PCR = 200
+        ];
+        demux.feed(&ts_packet_degradation(
+            false,
+            0x0100,
+            0, // same CC
+            0x30,
+            Some(&af_pcr_200),
+            payload, // same payload
+        ));
+
+        let gaps: Vec<_> = std::iter::from_fn(|| demux.poll_event())
+            .filter(|e| {
+                matches!(
+                    e,
+                    DemuxEvent::InputDegraded {
+                        kind: InputDegradation::ContinuityGap { .. },
+                        ..
+                    }
+                )
+            })
+            .collect();
+        assert!(
+            gaps.is_empty(),
+            "PCR-only adaptation-field change must not break duplicate detection; \
+             duplicate check uses pkt.payload, not raw[4..]. Got {gaps:?}"
         );
     }
 }
