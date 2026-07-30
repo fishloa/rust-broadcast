@@ -27,9 +27,12 @@ permissions:
   pages: write
   id-token: write
 
-# Only one deployment runs at a time; cancel in-flight runs on new push.
+# Only one deployment runs at a time; cancel in-flight runs on new push
+# to the same branch. The group is keyed on ref so that PRs do not cancel
+# one another (the old flat "pages" group made every PR and push share a
+# single slot — the root cause of repeated CANCELLED results on PRs).
 concurrency:
-  group: pages
+  group: pages-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
