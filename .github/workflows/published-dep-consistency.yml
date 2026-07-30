@@ -51,6 +51,12 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
+      - name: Install dependencies
+        run: python3 -m pip install pytest
+
+      - name: Run tests
+        run: python3 -m pytest tools/tests/ -q
+
       - name: Check (advisory)
         if: ${{ !startsWith(github.ref, 'refs/tags/') }}
         run: python3 tools/check-published-dep-consistency.py
