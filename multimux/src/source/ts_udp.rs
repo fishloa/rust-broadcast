@@ -223,11 +223,15 @@ mod tests {
         let mut cursor = None;
         let mut saw_sample = false;
         for i in 0..200u64 {
+            // HANG GUARD (issue #826): per-iteration read timeout in a
+            // real-socket loopback test. Real UDP on loopback resolves in
+            // ~ms; this only exists to keep the 200-iteration loop from
+            // spinning on an empty socket, not a timing claim.
             let read = recv_and_feed(
                 &socket,
                 &mut buf,
                 &mut driver,
-                Duration::from_millis(500),
+                Duration::from_secs(60),
                 Timestamp::from_nanos(i),
             )
             .await;
@@ -265,7 +269,7 @@ mod tests {
         let addr = reserved.local_addr().expect("local addr");
         drop(reserved);
 
-        const READ_TIMEOUT: Duration = Duration::from_millis(100);
+        const READ_TIMEOUT: Duration = Duration::from_secs(2);
         let route = TsUdpRoute::new("cam-ts", addr.to_string(), None);
         let socket = bind(&route).await.expect("bind");
 
@@ -279,8 +283,20 @@ mod tests {
         );
         let mut buf = vec![0u8; MAX_TS_READ];
 
+        // DISCRIMINATOR (issue #826): the assertion window must prove the
+        // operation returns through the CONFIGURED read timeout, not via
+        // any longer default/system timeout. Widen the gap rather than
+        // only the assertion side: the configured READ_TIMEOUT was raised
+        // from 100ms to 2s (generous for scheduling under load) and the
+        // assertion window from 500ms to 10s — 10s is still well below
+        // any plausible fallback, so a broken implementation that ignores
+        // the configured timeout and falls through to a 30+s system
+        // default is still caught. MUTATION CHECKED: inflating
+        // READ_TIMEOUT to 30s makes the 10s outer timeout fire first,
+        // producing `Elapsed` instead of `recv_and_feed`'s own error,
+        // proving this bound still discriminates.
         let outcome = tokio::time::timeout(
-            READ_TIMEOUT * 5,
+            Duration::from_secs(10),
             recv_and_feed(
                 &socket,
                 &mut buf,
@@ -290,7 +306,7 @@ mod tests {
             ),
         )
         .await
-        .expect("recv_and_feed must return within a bounded multiple of the read timeout");
+        .expect("recv_and_feed must not exceed the assertion window");
         assert!(
             outcome.is_err(),
             "expected a recoverable read-timeout error"

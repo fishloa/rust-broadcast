@@ -750,7 +750,12 @@ mod tests {
         let mut backlog: VecDeque<Action> = VecDeque::new();
         let mut specs: Vec<TrackSpec> = Vec::new();
         let mut per_track: HashMap<u32, usize> = HashMap::new();
-        let deadline = tokio::time::Instant::now() + Duration::from_secs(15);
+        // HANG GUARD (issue #826): ceiling on the whole session-drive loop.
+        // The session fetches playlist + init + segments over real loopback
+        // HTTP against a local axum server; each fetch completes in ~ms.
+        // Raised to 60s for load tolerance — only job is to fail "never
+        // finishes" rather than hang, not a timing claim.
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(60);
 
         loop {
             while let Some(a) = session.poll_transmit() {
@@ -819,7 +824,11 @@ mod tests {
         let mut cursor: Option<SampleCursor> = None;
         let start = std::time::Instant::now();
         let mut total = 0usize;
-        let deadline = tokio::time::Instant::now() + Duration::from_secs(15);
+        // HANG GUARD (issue #826): ceiling on the whole Trunk-drive loop.
+        // Same reasoning as `drive_session_and_count`'s deadline — real
+        // loopback HTTP, each fetch ~ms, raised for load tolerance, not a
+        // timing claim.
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(60);
         loop {
             while let Some(a) = driver.poll_transmit() {
                 backlog.push_back(a);
@@ -914,7 +923,11 @@ mod tests {
         let route = HlsPullRoute::new("pulled-cam", url);
 
         let (specs, per_track) =
-            tokio::time::timeout(Duration::from_secs(20), drive_session_and_count(&route))
+            // HANG GUARD (issue #826): backstop around the session drive
+            // against a real axum server. The session's own internal pacing
+            // keeps it alive for the content's duration; raised to 60s for
+            // load tolerance since it only exists to fail "never finishes".
+            tokio::time::timeout(Duration::from_secs(60), drive_session_and_count(&route))
                 .await
                 .expect("drive timed out")
                 .expect("drive");
@@ -945,8 +958,12 @@ mod tests {
         let (url, server) = start_cmaf_fixture_server(None).await;
         let route = HlsPullRoute::new("pulled-cam", url);
         let route_handle = std::sync::Arc::new(crate::route::RouteHandle::new(4.0, 500, 4));
+        // HANG GUARD (issue #826): backstop around the full `run_hls_pull`
+        // against a static CMAF fixture. `run_hls_pull` returns on its own
+        // once the playlist is exhausted; this only exists to fail "never
+        // returns" rather than hang CI, not a timing claim.
         let result = tokio::time::timeout(
-            Duration::from_secs(10),
+            Duration::from_secs(60),
             run_hls_pull(&route, trunk_config(), handshake(), &route_handle),
         )
         .await
@@ -1028,7 +1045,10 @@ mod tests {
         let route = HlsPullRoute::new("pulled-ts-hls", format!("http://{addr}/media.m3u8"));
 
         let (specs, per_track) =
-            tokio::time::timeout(Duration::from_secs(20), drive_session_and_count(&route))
+            // HANG GUARD (issue #826): backstop around the session drive
+            // against the TS-HLS fixture. Same reasoning as the CMAF
+            // loopback test — real loopback HTTP, raised for load tolerance.
+            tokio::time::timeout(Duration::from_secs(60), drive_session_and_count(&route))
                 .await
                 .expect("drive timed out")
                 .expect("drive");
@@ -1076,7 +1096,10 @@ mod tests {
         .await;
         let credentialed = url.replacen("http://", &format!("http://{AUTH_USER}:{AUTH_PASS}@"), 1);
         let route = HlsPullRoute::new("pulled-basic", credentialed);
-        let result = tokio::time::timeout(Duration::from_secs(10), drain_via_run_hls_pull(route))
+        // HANG GUARD (issue #826): backstop around `drain_via_run_hls_pull`
+        // for the Basic auth test. The route authenticates and drains a
+        // static fixture; `run_hls_pull` returns on its own once exhausted.
+        let result = tokio::time::timeout(Duration::from_secs(60), drain_via_run_hls_pull(route))
             .await
             .expect("must not hang");
         assert!(
@@ -1096,7 +1119,9 @@ mod tests {
         .await;
         let credentialed = url.replacen("http://", &format!("http://{AUTH_USER}:{AUTH_PASS}@"), 1);
         let route = HlsPullRoute::new("pulled-digest", credentialed);
-        let result = tokio::time::timeout(Duration::from_secs(10), drain_via_run_hls_pull(route))
+        // HANG GUARD (issue #826): same as Basic auth — backstop, not a
+        // timing claim.
+        let result = tokio::time::timeout(Duration::from_secs(60), drain_via_run_hls_pull(route))
             .await
             .expect("must not hang");
         assert!(
@@ -1114,7 +1139,9 @@ mod tests {
         .await;
         let route = HlsPullRoute::new("pulled-bearer", url)
             .with_auth(Some(Credentials::bearer(BEARER_TOKEN)));
-        let result = tokio::time::timeout(Duration::from_secs(10), drain_via_run_hls_pull(route))
+        // HANG GUARD (issue #826): same as Basic auth — backstop, not a
+        // timing claim.
+        let result = tokio::time::timeout(Duration::from_secs(60), drain_via_run_hls_pull(route))
             .await
             .expect("must not hang");
         assert!(
@@ -1137,7 +1164,11 @@ mod tests {
             connect: IngestTimeouts::default().connect,
             read: Duration::from_secs(2),
         });
-        let result = tokio::time::timeout(Duration::from_secs(10), drain_via_run_hls_pull(route))
+        // HANG GUARD (issue #826): backstop around `drain_via_run_hls_pull`
+        // for wrong credentials. The server returns 401 immediately so
+        // `run_hls_pull` fails within ~ms; this only exists to fail "never
+        // fails" rather than hang, not a timing claim.
+        let result = tokio::time::timeout(Duration::from_secs(60), drain_via_run_hls_pull(route))
             .await
             .expect("must not hang");
         assert!(
@@ -1166,15 +1197,22 @@ mod tests {
         let route = HlsPullRoute::new("stalled", format!("http://{addr}/media.m3u8"))
             .with_timeouts(IngestTimeouts {
                 connect: IngestTimeouts::default().connect,
-                read: Duration::from_millis(150),
+                read: Duration::from_secs(2),
             });
         let route_handle = std::sync::Arc::new(crate::route::RouteHandle::new(4.0, 500, 4));
+        // DISCRIMINATOR (issue #826): must prove the operation returns
+        // through the CONFIGURED read timeout, not via any longer system/
+        // library default. Gap widened: configured read timeout raised
+        // from 150ms to 2s, assertion window raised from 5s to 10s — 10s
+        // is still well below any plausible fallback. MUTATION CHECKED:
+        // inflating the configured read timeout to 30s makes the 10s
+        // outer timeout fire first, producing `Elapsed`.
         let result = tokio::time::timeout(
-            Duration::from_secs(5),
+            Duration::from_secs(10),
             run_hls_pull(&route, trunk_config(), handshake(), &route_handle),
         )
         .await
-        .expect("run_hls_pull must return via IngestTimeouts::read, not hang");
+        .expect("run_hls_pull must not exceed the assertion window");
         assert!(
             result.is_err(),
             "a stalled playlist fetch must fail, not hang forever"

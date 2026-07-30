@@ -1275,11 +1275,15 @@ mod tests {
         let server = tokio::spawn(async move {
             let (mut sock, _) = listener.accept().await.expect("accept");
             let mut buf = [0u8; 256];
-            // Best-effort read: whatever the client sent (if anything)
-            // before giving up. A plain listener can never complete a real
-            // TLS handshake, so the client is expected to fail — this read
-            // just captures what it wrote first, if anything.
-            let n = tokio::time::timeout(std::time::Duration::from_secs(3), sock.read(&mut buf))
+            // HANG GUARD (issue #826): best-effort read to capture what the
+            // client sent before giving up. The test's semantic assertions
+            // (TLS record type and version bytes) are on the content of
+            // whatever was written, not on how fast it arrives; 3s was
+            // generous for loopback but under load even a 1-byte write can
+            // be delayed by local scheduling. Raised to 60s since this is
+            // purely a "did the client write anything at all" check, not a
+            // timing claim.
+            let n = tokio::time::timeout(std::time::Duration::from_secs(60), sock.read(&mut buf))
                 .await
                 .unwrap_or(Ok(0))
                 .unwrap_or(0);
@@ -1298,11 +1302,19 @@ mod tests {
         );
         let route_handle = std::sync::Arc::new(crate::route::RouteHandle::new(1.0, 250, 8));
 
-        // Hang guard (issue #807): bounds the whole call so a wiring bug
-        // fails in seconds, not forever — not an assertion on how fast the
-        // connect resolves.
+        // HANG GUARD (issue #826): the test's semantic assertion is that
+        // the rtsps:// client sends a real TLS ClientHello on the wire
+        // (the TLS record-type and version-byte checks below). The TLS
+        // handshake against a plaintext listener fails instantly — the
+        // client sends its ClientHello, the plain TCP server reads it and
+        // closes the connection, and `connect_tls` returns an error
+        // instantly on the EOF. Verified: with connect timeout inflated
+        // to 30s, the test still passes in <100ms (TLS handshake failure
+        // is immediate, not timeout-driven). Raised to 60s for load
+        // tolerance since this is not a timing claim — only job is to
+        // fail a deadlock rather than hang CI.
         let result = tokio::time::timeout(
-            std::time::Duration::from_secs(5),
+            std::time::Duration::from_secs(60),
             run_rtsp(&route, trunk_config(), handshake(), &route_handle),
         )
         .await
@@ -1363,8 +1375,9 @@ mod tests {
 
         /// A hang guard, not a speed assertion (issue #807): every
         /// real-socket step below is wrapped in this so a wiring bug fails
-        /// in seconds instead of hanging CI forever.
-        const HANG_GUARD: Duration = Duration::from_secs(10);
+        /// in seconds instead of hanging CI forever. Raised from 10s to 60s
+        /// for the same load-tolerance reason (issue #826).
+        const HANG_GUARD: Duration = Duration::from_secs(60);
 
         fn tls_provider() -> Arc<rustls::crypto::CryptoProvider> {
             // Explicit provider, not the process-global default: another

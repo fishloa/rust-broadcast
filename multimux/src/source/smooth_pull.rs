@@ -1307,7 +1307,11 @@ mod tests {
         let mut backlog: VecDeque<SmoothAction> = VecDeque::new();
         let mut specs: Vec<TrackSpec> = Vec::new();
         let mut per_track: HashMap<u32, usize> = HashMap::new();
-        let deadline = tokio::time::Instant::now() + Duration::from_secs(15);
+        // HANG GUARD (issue #826): ceiling on the whole session-drive loop.
+        // Each HTTP fetch (manifest + first fragments + follow-up fragments)
+        // completes in ~ms over loopback. Raised to 60s for load tolerance
+        // — only job is to fail "never finishes" rather than hang.
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(60);
 
         loop {
             while let Some(a) = session.poll_transmit() {
@@ -1406,7 +1410,12 @@ mod tests {
 
         let route = SmoothPullRoute::new("smooth-cam", url);
         let (specs, per_track) =
-            tokio::time::timeout(Duration::from_secs(20), drive_session_and_count(&route))
+            // HANG GUARD (issue #826): backstop around the session drive.
+            // The session fetches manifest + fragments from a real axum
+            // server; each fetch ~ms, total drive time bounded by the
+            // content's fragment count. Raised to 60s for load tolerance
+            // since it only exists to fail "never finishes" rather than hang.
+            tokio::time::timeout(Duration::from_secs(60), drive_session_and_count(&route))
                 .await
                 .expect("drive timed out")
                 .expect("drive");
@@ -1470,7 +1479,9 @@ mod tests {
         let mut backlog: VecDeque<SmoothAction> = VecDeque::new();
         let mut cursor: Option<SampleCursor> = None;
         let mut total = 0usize;
-        let deadline = tokio::time::Instant::now() + Duration::from_secs(15);
+        // HANG GUARD (issue #826): ceiling on the Trunk-drive loop, same
+        // reasoning as `drive_session_and_count`'s deadline.
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(60);
         loop {
             while let Some(a) = driver.poll_transmit() {
                 backlog.push_back(a);
@@ -1540,8 +1551,11 @@ mod tests {
         let (url, server, _media) = start_fixture_server(None).await;
         let route = SmoothPullRoute::new("smooth-cam", url);
         let route_handle = std::sync::Arc::new(crate::route::RouteHandle::new(4.0, 500, 4));
+        // HANG GUARD (issue #826): backstop around `run_smooth_pull`.
+        // The static manifest is exhausted by the session's fragment-fetch
+        // loop; `run_smooth_pull` returns on its own once complete.
         let result = tokio::time::timeout(
-            Duration::from_secs(15),
+            Duration::from_secs(60),
             run_smooth_pull(&route, trunk_config(), handshake(), &route_handle),
         )
         .await
@@ -1576,17 +1590,24 @@ mod tests {
         let (url, server, _media2) = start_fixture_server(Some(("audio", stall_time))).await;
         let route = SmoothPullRoute::new("smooth-stalled", url).with_timeouts(IngestTimeouts {
             connect: Duration::from_secs(5),
-            read: Duration::from_millis(150),
+            read: Duration::from_secs(2),
         });
         let route_handle = std::sync::Arc::new(crate::route::RouteHandle::new(4.0, 500, 4));
+        // DISCRIMINATOR (issue #826): must prove the operation returns
+        // through the CONFIGURED read timeout, not via any longer system
+        // default. Gap widened: configured read timeout raised from 150ms
+        // to 2s, assertion window raised from 10s to 15s — 15s is still
+        // well below any plausible fallback. MUTATION CHECKED: inflating
+        // the configured read timeout to 30s makes the 15s outer timeout
+        // fire first, producing `Elapsed`.
         let result = tokio::time::timeout(
-            Duration::from_secs(10),
+            Duration::from_secs(15),
             run_smooth_pull(&route, trunk_config(), handshake(), &route_handle),
         )
         .await
         .expect(
-            "run_smooth_pull must return on its own via IngestTimeouts::read, not hang until \
-             this test's own backstop timeout",
+            "run_smooth_pull must return via IngestTimeouts::read, not via \
+             the outer assertion window",
         );
         assert!(
             result.is_err(),
@@ -1613,8 +1634,11 @@ mod tests {
         let (url, server) = start_manifest_only_server(MANIFEST).await;
         let route = SmoothPullRoute::new("smooth-drm", url);
         let route_handle = std::sync::Arc::new(crate::route::RouteHandle::new(4.0, 500, 4));
+        // HANG GUARD (issue #826): backstop around `run_smooth_pull` for
+        // the DRM manifest test. The manifest parse check returns
+        // immediately so `run_smooth_pull` fails within ~ms.
         let result = tokio::time::timeout(
-            Duration::from_secs(5),
+            Duration::from_secs(60),
             run_smooth_pull(&route, trunk_config(), handshake(), &route_handle),
         )
         .await

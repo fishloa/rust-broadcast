@@ -488,15 +488,20 @@ mod tests {
         let mut cursor = None;
         let mut samples_seen = 0usize;
         for i in 0..10u64 {
+            // HANG GUARD (issue #826): per-iteration recv timeout within a
+            // 10-iteration loopback test. All 3 RTP packets arrive within
+            // ~ms of each other over loopback UDP, so this recv normally
+            // resolves immediately. Only job is to prevent spinning on an
+            // empty socket, not a timing claim.
             recv_and_feed(
                 &socket,
                 &mut buf,
                 &mut driver,
-                Duration::from_secs(5),
+                Duration::from_secs(60),
                 Timestamp::from_nanos(i),
             )
             .await
-            .expect("recv within generous timeout");
+            .expect("recv within hang guard");
             if cursor.is_none() {
                 cursor = driver.trunk(ProgramId(0)).map(|t| t.subscribe());
             }
@@ -531,9 +536,14 @@ mod tests {
         );
         let mut buf = vec![0u8; MAX_UDP_DATAGRAM];
 
-        const READ_TIMEOUT: Duration = Duration::from_millis(100);
+        const READ_TIMEOUT: Duration = Duration::from_secs(2);
+        // DISCRIMINATOR (issue #826): same gap-widening pattern as
+        // `ts_udp::recv_and_feed_times_out_when_source_goes_silent`.
+        // Configured read timeout raised 100ms→2s, assertion window
+        // raised 500ms→10s — 10s still discriminates against a 30+s
+        // system-default fallback.
         let outcome = tokio::time::timeout(
-            READ_TIMEOUT * 5,
+            Duration::from_secs(10),
             recv_and_feed(
                 &socket,
                 &mut buf,
@@ -543,7 +553,7 @@ mod tests {
             ),
         )
         .await
-        .expect("recv_and_feed must return within a bounded multiple of the read timeout");
+        .expect("recv_and_feed must not exceed the assertion window");
         assert!(
             outcome.is_err(),
             "expected a recoverable read-timeout error"

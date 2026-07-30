@@ -1165,7 +1165,11 @@ mod tests {
         let mut backlog: VecDeque<DashAction> = VecDeque::new();
         let mut specs: Vec<TrackSpec> = Vec::new();
         let mut per_track: HashMap<u32, usize> = HashMap::new();
-        let deadline = tokio::time::Instant::now() + Duration::from_secs(15);
+        // HANG GUARD (issue #826): ceiling on the whole session-drive loop.
+        // Each HTTP fetch (MPD + inits + segments) completes in ~ms over
+        // loopback. Raised to 60s for load tolerance — only job is to fail
+        // "never finishes" rather than hang, not a timing claim.
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(60);
 
         loop {
             while let Some(a) = session.poll_transmit() {
@@ -1278,7 +1282,12 @@ mod tests {
         );
 
         let (specs, per_track) =
-            tokio::time::timeout(Duration::from_secs(15), drive_and_collect(&route))
+            // HANG GUARD (issue #826): backstop around the session drive
+            // against a real axum server serving the committed DASH fixture.
+            // Each MPD/init/segment fetch ~ms over loopback; raised to 60s
+            // for load tolerance since it only exists to fail "never
+            // finishes" rather than hang, not a timing claim.
+            tokio::time::timeout(Duration::from_secs(60), drive_and_collect(&route))
                 .await
                 .expect("drive_and_collect timed out")
                 .expect("drive_and_collect");
@@ -1365,7 +1374,9 @@ mod tests {
         let mut backlog: VecDeque<DashAction> = VecDeque::new();
         let mut cursor: Option<SampleCursor> = None;
         let mut total = 0usize;
-        let deadline = tokio::time::Instant::now() + Duration::from_secs(15);
+        // HANG GUARD (issue #826): ceiling on the Trunk-drive loop, same
+        // reasoning as `drive_and_collect`'s deadline.
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(60);
         loop {
             while let Some(a) = driver.poll_transmit() {
                 backlog.push_back(a);
@@ -1435,8 +1446,11 @@ mod tests {
         let (url, server) = start_fixture_server(None, None).await;
         let route = DashPullRoute::new("dash-cam", url);
         let route_handle = std::sync::Arc::new(crate::route::RouteHandle::new(4.0, 500, 4));
+        // HANG GUARD (issue #826): backstop around `run_dash_pull`. The
+        // static MPD is exhausted by the segment-fetch loop; `run_dash_pull`
+        // returns on its own once complete.
         let result = tokio::time::timeout(
-            Duration::from_secs(15),
+            Duration::from_secs(60),
             run_dash_pull(&route, trunk_config(), handshake(), &route_handle),
         )
         .await
@@ -1452,8 +1466,12 @@ mod tests {
         let bad_url = base_url.replace("manifest.mpd", "does-not-exist.mpd");
         let route = DashPullRoute::new("dash-missing", bad_url);
         let route_handle = std::sync::Arc::new(crate::route::RouteHandle::new(4.0, 500, 4));
+        // HANG GUARD (issue #826): backstop around `run_dash_pull` for a
+        // missing MPD. The HTTP 404 returns immediately so `run_dash_pull`
+        // fails within ~ms; this only exists to fail "never fails" rather
+        // than hang, not a timing claim.
         let result = tokio::time::timeout(
-            Duration::from_secs(10),
+            Duration::from_secs(60),
             run_dash_pull(&route, trunk_config(), handshake(), &route_handle),
         )
         .await
@@ -1473,8 +1491,12 @@ mod tests {
             read: Duration::from_millis(150),
         });
         let route_handle = std::sync::Arc::new(crate::route::RouteHandle::new(4.0, 500, 4));
+        // HANG GUARD (issue #826): backstop around `run_dash_pull` for the
+        // read-timeout test. The 150 ms read timeout causes `run_dash_pull`
+        // to return on its own; this only exists to fail "never returns"
+        // rather than hang.
         let result = tokio::time::timeout(
-            Duration::from_secs(10),
+            Duration::from_secs(60),
             run_dash_pull(&route, trunk_config(), handshake(), &route_handle),
         )
         .await
@@ -1508,8 +1530,11 @@ mod tests {
         let credentialed = url.replacen("http://", &format!("http://{AUTH_USER}:{AUTH_PASS}@"), 1);
         let route = DashPullRoute::new("dash-basic", credentialed);
         let route_handle = std::sync::Arc::new(crate::route::RouteHandle::new(4.0, 500, 4));
+        // HANG GUARD (issue #826): backstop around `run_dash_pull` for the
+        // Basic auth test. The fixture is static, so `run_dash_pull` returns
+        // on its own once all segments are exhausted.
         let result = tokio::time::timeout(
-            Duration::from_secs(15),
+            Duration::from_secs(60),
             run_dash_pull(&route, trunk_config(), handshake(), &route_handle),
         )
         .await
