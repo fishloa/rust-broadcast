@@ -1,5 +1,29 @@
 //! CLI subcommands and entry-point (feature `cli`).
 
+/// `media-doctor check-hls` — run HLS playlist validation.
+#[derive(clap::Parser, Debug)]
+pub struct CheckHlsArgs {
+    /// Input HLS playlist file (.m3u8).
+    #[arg(short = 'i', long = "input")]
+    pub input: String,
+
+    /// Emit JSON report on stdout instead of human text.
+    #[arg(long = "json")]
+    pub json: bool,
+}
+
+/// `media-doctor check-dash` — run DASH MPD validation.
+#[derive(clap::Parser, Debug)]
+pub struct CheckDashArgs {
+    /// Input DASH MPD file (.mpd).
+    #[arg(short = 'i', long = "input")]
+    pub input: String,
+
+    /// Emit JSON report on stdout instead of human text.
+    #[arg(long = "json")]
+    pub json: bool,
+}
+
 /// `media-doctor check` — run diagnostics against a TS file.
 #[derive(clap::Parser, Debug)]
 pub struct CheckArgs {
@@ -39,6 +63,10 @@ pub struct WatchArgs {
 pub enum Cli {
     /// Run diagnostic checks against a Transport Stream.
     Check(CheckArgs),
+    /// Validate an HLS playlist (.m3u8).
+    CheckHls(CheckHlsArgs),
+    /// Validate a DASH MPD (.mpd).
+    CheckDash(CheckDashArgs),
     /// Continuously ingest a live UDP MPEG-TS feed, serving Prometheus metrics.
     Watch(WatchArgs),
 }

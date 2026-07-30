@@ -31,12 +31,15 @@
 extern crate alloc;
 
 mod container_codec;
+mod dash_validator;
 mod diagnostics;
+mod hls_validator;
 mod playlist;
 mod report;
 mod watch;
 
 pub use container_codec::check_container_codec;
+pub use dash_validator::check_dash_mpd;
 pub use diagnostics::cc_anomaly::CcAnomalyCheck;
 pub use diagnostics::codec_signalling::CodecSignallingCheck;
 pub use diagnostics::fps_cadence::FpsCadenceCheck;
@@ -47,6 +50,7 @@ pub use diagnostics::pcr_check::PcrCheck;
 pub use diagnostics::pts_check::PtsCheck;
 pub use diagnostics::scte35_check::Scte35Check;
 pub use diagnostics::sync_byte::SyncByteCheck;
+pub use hls_validator::check_hls_playlist;
 pub use playlist::check_playlist;
 pub use report::{Finding, Location, Report, Severity};
 pub use watch::WatchState;
