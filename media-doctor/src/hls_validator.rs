@@ -32,7 +32,6 @@
 //! | `hls-preload-hint-with-endlist` | Error | PRELOAD-HINT in a playlist with ENDLIST | §4.4.5.3 |
 //! | `hls-skip-without-can-skip-until` | Error | EXT-X-SKIP without CAN-SKIP-UNTIL in SERVER-CONTROL | §4.4.5.2, §4.4.3.8 |
 //! | `hls-malformed-daterange` | Error | DATERANGE line fails `DateRange::parse_tag_line` | §4.4.5.1 |
-//! | `hls-version-tag-after-segments` | Error | EXT-X-VERSION appears after the first segment | §4.4.1.2, §6.2.1 |
 
 use crate::report::{Finding, Location, Report, Severity};
 use alloc::vec::Vec;
@@ -207,7 +206,6 @@ fn legacy_line_checks(text: &str, report: &mut Report) {
     let mut targetduration_val: u64 = 0;
     let mut extinf_line_nums: Vec<usize> = Vec::new();
     let mut extinf_durations: Vec<f64> = Vec::new();
-
     for (i, line) in lines.iter().enumerate() {
         let line_num = i + 1;
         let trimmed = line.trim();
