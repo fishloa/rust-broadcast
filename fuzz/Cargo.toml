@@ -42,8 +42,15 @@ media-doctor  = { path = "../media-doctor" }
 broadcast-auth = { path = "../broadcast-auth" }
 rtmp-runtime  = { path = "../rtmp-runtime" }
 media-plane   = { path = "../media-plane" }
+ttml-subtitle = { path = "../ttml-subtitle" }
 bytes         = "1"
 libfuzzer-sys = "0.4"
+
+[[bin]]
+name = "ttml_subtitle"
+path = "fuzz_targets/ttml_subtitle.rs"
+test = false
+doc  = false
 
 [[bin]]
 name = "si_table_section"

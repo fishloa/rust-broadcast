@@ -1,0 +1,30 @@
+[package]
+name    = "ttml-subtitle"
+version = "0.1.0"
+edition = "2024"
+description = "TTML2 / IMSC 1.1 timed-text subtitle parser — W3C TTML2 + IMSC 1.1 profile validation."
+license      = "MIT OR Apache-2.0"
+authors      = ["Alex Fishlock <alex.fishlock@racingjag.com>"]
+keywords = ["ttml", "imsc", "subtitle", "timed-text", "broadcast"]
+categories = ["parser-implementations", "multimedia"]
+repository   = "https://github.com/fishloa/rust-broadcast"
+readme       = "README.md"
+rust-version = "1.86"
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+
+[dependencies]
+broadcast-common = { path = "../broadcast-common", version = "9", default-features = false }
+roxmltree = { version = "0.20", default-features = false }
+thiserror  = { version = "2", default-features = false }
+serde      = { version = "1", optional = true, features = ["derive"] }
+
+[dev-dependencies]
+serde_json = "1.0"
+
+[features]
+default = ["std"]
+std = ["broadcast-common/std", "thiserror/std", "roxmltree/std"]
+serde = ["dep:serde"]
