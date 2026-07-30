@@ -720,7 +720,7 @@ fn parse_wallclock_time_components(
     }
 }
 
-fn parse_digits<T: std::str::FromStr>(
+fn parse_digits<T: core::str::FromStr>(
     s: &str,
     name: &str,
     err: &impl Fn(&str) -> crate::error::Error,

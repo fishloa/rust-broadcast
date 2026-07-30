@@ -248,11 +248,52 @@ impl Validator {
     }
 
     fn has_frame_usage(&self, tt: &TtElement) -> bool {
-        // Simplified: check if frameRate is set (indicates frame usage) or
-        // if any time expr contains 'f' metric or clock-time with frames
-        // For now: if ttp:frameRateMultiplier is set (non-standard), frames are in use
-        tt.ttp_frame_rate_multiplier.is_some()
-            && (tt.ttp_frame_rate_multiplier.as_deref() != Some("1 1"))
+        // Scan the document's time expressions for frame metrics
+        let body = match tt.body {
+            Some(ref b) => b,
+            None => return false,
+        };
+        Self::body_has_frame_usage(body)
+    }
+
+    fn body_has_frame_usage(body: &BodyElement) -> bool {
+        for div in &body.divs {
+            if Self::time_expr_has_frame(body.begin.as_deref())
+                || Self::time_expr_has_frame(body.dur.as_deref())
+                || Self::time_expr_has_frame(body.end.as_deref())
+            {
+                return true;
+            }
+            for p in &div.paragraphs {
+                if Self::time_expr_has_frame(p.begin.as_deref())
+                    || Self::time_expr_has_frame(p.dur.as_deref())
+                    || Self::time_expr_has_frame(p.end.as_deref())
+                {
+                    return true;
+                }
+            }
+            for img in &div.images {
+                if Self::time_expr_has_frame(img.begin.as_deref())
+                    || Self::time_expr_has_frame(img.dur.as_deref())
+                    || Self::time_expr_has_frame(img.end.as_deref())
+                {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
+    fn time_expr_has_frame(expr: Option<&str>) -> bool {
+        let expr = match expr {
+            Some(e) => e,
+            None => return false,
+        };
+        if expr.ends_with('f') && expr.len() > 1 {
+            return true;
+        }
+        let colon_count = expr.chars().filter(|&c| c == ':').count();
+        colon_count == 3
     }
 
     fn validate_head(&mut self, head: &HeadElement) {

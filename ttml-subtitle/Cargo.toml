@@ -26,5 +26,5 @@ serde_json = "1.0"
 
 [features]
 default = ["std"]
-std = ["broadcast-common/std", "thiserror/std"]
+std = ["broadcast-common/std", "thiserror/std", "roxmltree/std"]
 serde = ["dep:serde"]
