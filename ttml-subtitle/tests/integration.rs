@@ -564,3 +564,34 @@ fn no_raw_passthrough_in_serializer() {
         "Mutated output should contain 'green'"
     );
 }
+
+#[test]
+fn reject_frame_metric_without_frame_rate() {
+    // §7.12.7: if the document includes frame terms, ttp:frameRate SHALL be present
+    let xml = r#"<?xml version="1.0" encoding="UTF-8"?>
+<tt xml:lang="en" xmlns="http://www.w3.org/ns/ttml"
+   xmlns:ttp="http://www.w3.org/ns/ttml#parameter"
+   ttp:contentProfiles="http://www.w3.org/ns/ttml/profile/imsc1.1/text">
+  <body>
+    <div>
+      <p begin="0f" end="24f">frames without frameRate</p>
+    </div>
+  </body>
+</tt>"#;
+
+    let doc = Document::parse_str(xml).unwrap();
+    let validator = validation::Validator::new(
+        validation::Profile::Text,
+        validation::ImscVersion::V1_1,
+    );
+    let result = validator.validate(&doc);
+    assert!(
+        !result.valid,
+        "Document with frame terms but no ttp:frameRate should be rejected"
+    );
+    assert!(
+        result.errors.iter().any(|e| e.constraint.contains("7.12.7")),
+        "Should cite §7.12.7 constraint, got: {:?}",
+        result.errors
+    );
+}
