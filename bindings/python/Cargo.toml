@@ -7,7 +7,7 @@
 
 [package]
 name    = "dvb-si-py"
-version = "0.2.0"
+version = "0.1.0"
 edition = "2021"
 description = "Python bindings for dvb-si — parse DVB SI/PSI sections and demux MPEG-TS into Python dicts."
 license      = "MIT OR Apache-2.0"

@@ -10,8 +10,8 @@ See the [lockstep 9.1.0 release note](v9.1.0.md) for the full summary.
 
 ## Added
 
-- HLS manifest validator `check_hls_playlist()` (#756): structured M3U8 parse via `transmux::MediaPlaylist::parse`, plus 5 LL-HLS rules. 12 deferred rules documented in README.
-- DASH MPD validator `check_dash_manifest()`: structured MPD parse with 9 rules.
+- HLS manifest validator `check_hls_playlist()` (#756): structured M3U8 parse via `transmux::MediaPlaylist::parse`, plus 8 HLS rules (3 LL-HLS-specific). 12 deferred rules documented in README.
+- DASH MPD validator `check_dash_mpd()`: structured MPD parse with 6 rules.
 - New `check-hls` and `check-dash` CLI subcommands.
 - `tests/non_exhaustive_coverage.rs` drift guard (#806).
 - Now requires `transmux` 0.21.

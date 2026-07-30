@@ -2,7 +2,7 @@
 
 [package]
 name    = "transmux-py"
-version = "0.2.0"
+version = "0.1.0"
 edition = "2021"
 description = "Python bindings for transmux — demux TS/fMP4 into the shared Media/Track/Sample IR as Python dicts, ready for PyAV/ONNX-style ML front-ends."
 license      = "MIT OR Apache-2.0"
@@ -22,4 +22,4 @@ pyo3 = { version = "0.24", features = ["extension-module", "abi3-py39"] }
 # Consumed by VERSION (from crates.io), not path — keeps the binding decoupled
 # from the workspace and its MSRV/lockstep.
 broadcast-common = "9"
-transmux         = "0.21"
+transmux         = "0.20"
