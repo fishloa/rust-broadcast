@@ -5,9 +5,10 @@ All notable changes to `transmux` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.21.0] - 2026-07-30
 
 ### Added
+- `RtpPacket` public type (exported from `transmux::rtp`).
 - `InputDegradation` enum + `DemuxEvent::InputDegraded` (issue #778):
   `StreamingTsDemux` now emits `TransportError` when the MPEG-2 TS
   `transport_error_indicator` (`tei`) is set, and `ContinuityGap { expected,
@@ -24,14 +25,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the `senc`/`saiz`/`saio` triple entirely (the spec-minimal, `tenc`-only
   shape). The old shape remains reachable via `ConstantIvSenc::Omit` and
   is still tested for self-consistency round-trips.
-
-### Changed (Breaking)
-- `EncryptConfig` gains `constant_iv_senc: ConstantIvSenc` — every
-  struct-literal construction site must add this field.
-- `TrackEncryption::new` gains a fourth argument (`constant_iv_senc:
-  ConstantIvSenc`).
-
-## [0.21.0] - 2026-07-29
+- `tests/non_exhaustive_coverage.rs` drift guard (issue #806).
 
 ### Changed (Breaking)
 - `RtpStream::packets` is now `Vec<RtpPacket>` instead of `Vec<Vec<u8>>`
@@ -44,6 +38,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   concatenation and may reasonably copy).
 - `packetise_klv()` now takes `&Bytes` instead of `&[u8]`; each fragment's
   payload is a zero-copy `Bytes::slice`.
+- `EncryptConfig` gains `constant_iv_senc: ConstantIvSenc` — every
+  struct-literal construction site must add this field.
+- `TrackEncryption::new` gains a fourth argument (`constant_iv_senc:
+  ConstantIvSenc`).
 - The following public enums now carry `#[non_exhaustive]` (issue #806's
   non_exhaustive drift-guard audit -- every other public enum in the
   workspace already did): `Addressing`, `MediaKind` (`dash`); `SgpdEntry`
@@ -58,10 +56,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Smooth-pull ingest matched `Video`/`Audio`/`Text` exhaustively and would
   have panicked on any future stream type; see `multimux`'s own changelog for
   the corresponding fix.
-
-### Added
-- `RtpPacket` public type (exported from `transmux::rtp`).
-- `tests/non_exhaustive_coverage.rs` drift guard (issue #806).
 
 ### Changed
 - STAP-A aggregation and AAC-hbr audio packets interleave headers with

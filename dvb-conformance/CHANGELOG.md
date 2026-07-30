@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [9.1.0] - 2026-07-30
 ### Added
 - T-STD buffer model and four new indicators (#737):
   - `BufferError` (3.3): TBsys overflow detection; TBn overflow deferred

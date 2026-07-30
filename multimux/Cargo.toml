@@ -1,6 +1,6 @@
 [package]
 name         = "multimux"
-version      = "0.5.0"
+version      = "0.5.1"
 edition      = "2024"
 rust-version = "1.86"
 license      = "MIT OR Apache-2.0"
@@ -18,7 +18,7 @@ rtsp-runtime      = { path = "../rtsp-runtime",  version = "0.4", features = ["t
 # RTMP push ingest (`source::rtmp`, issue #738): the `tokio` feature pulls
 # `rtmp_runtime::io::AsyncRtmpServer`/`RtmpConnection`, the real-socket
 # adapter over the sans-IO `ServerSession`.
-rtmp-runtime      = { path = "../rtmp-runtime",  version = "0.2", features = ["tokio"] }
+rtmp-runtime      = { path = "../rtmp-runtime",  version = "0.3", features = ["tokio"] }
 # SRT push/pull ingest (`source::srt`, issue #739): the `tokio` feature
 # pulls `srt_runtime::io::{SrtListener, SrtSocket}`, the real-socket adapter
 # over the sans-IO ARQ/TSBPD/handshake engines.
@@ -30,7 +30,7 @@ srt-runtime       = { path = "../srt-runtime",   version = "0.3", features = ["t
 # pulls in `ll_hls_runtime::client::tokio_client::TokioClient` — the
 # HLS-pull input (`source::hls_pull`, issue #663 P3c) wraps it rather than
 # re-implementing LL-HLS playback.
-ll-hls-runtime    = { path = "../ll-hls-runtime", version = "0.2", features = ["std", "tokio"] }
+ll-hls-runtime    = { path = "../ll-hls-runtime", version = "0.3", features = ["std", "tokio"] }
 # Needed directly (not just via ll-hls-runtime/transmux) by `source::hls_pull`
 # to recover `TrackSpec`s from a pulled stream's init segment via
 # `Fmp4Demux::unpackage` (the `Unpackage` trait) — issue #663 P3c.

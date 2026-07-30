@@ -1,5 +1,8 @@
 # Changelog
 
+## [9.1.0] - 2026-07-30
+Lockstep release alongside `dvb-conformance` 9.1.0; no functional changes.
+
 ## [9.0.0] - 2026-07-27
 ### Changed (Breaking)
 - Lockstep major bump alongside `broadcast-common` 9.0.0, whose `Encrypt::encrypt`

@@ -1,0 +1,62 @@
+name: Release ttml-subtitle
+
+# Publishes the ttml-subtitle crate to crates.io on a `ttml-subtitle-v*` tag.
+# ttml-subtitle is versioned and released INDEPENDENTLY of the lockstep `v*` tag
+# (it is a standalone reusable crate with its own cadence), so it has its own
+# publish workflow. CI is the only source of published artifacts — never
+# `cargo publish` from a workstation. Requires the CARGO_REGISTRY_TOKEN secret.
+#
+# DEPENDENCY ORDER: ttml-subtitle depends only on broadcast-common (lockstep,
+# already live) and roxmltree. No new crate needs to land before this one.
+
+on:
+  push:
+    tags: ["ttml-subtitle-v*"]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  publish:
+    name: publish ttml-subtitle to crates.io
+    runs-on: ubuntu-latest
+    # crates.io publish is gated: pauses for manual approval by a
+    # required reviewer before any cargo publish can run. See the
+    # 'crates-io' environment (repo Settings -> Environments).
+    environment: crates-io
+    steps:
+      - uses: actions/checkout@v5
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Gate — ttml-subtitle tests
+        run: cargo test -p ttml-subtitle --all-features --locked
+
+      - name: Gate — ttml-subtitle clippy
+        run: cargo clippy -p ttml-subtitle --all-features --all-targets --locked -- -D warnings
+
+      - name: Gate — ttml-subtitle no_std build
+        run: cargo build -p ttml-subtitle --no-default-features --target thumbv7em-none-eabi --locked
+
+      - name: Gate — ttml-subtitle examples build
+        run: cargo build -p ttml-subtitle --all-features --examples --locked
+
+      - name: Gate — tag matches ttml-subtitle version
+        run: |
+          TAG="${GITHUB_REF_NAME#ttml-subtitle-v}"
+          V=$(cargo metadata --no-deps --format-version 1 --locked \
+              | python3 -c "import json,sys; print({p['name']: p['version'] for p in json.load(sys.stdin)['packages']}['ttml-subtitle'])")
+          if [ "$V" != "$TAG" ]; then
+            echo "::error::ttml-subtitle is $V but tag is $TAG"; exit 1
+          fi
+
+      - name: Publish ttml-subtitle
+        run: |
+          if out=$(cargo publish -p ttml-subtitle --locked 2>&1); then
+            echo "$out"; echo "::notice::published ttml-subtitle"
+          elif echo "$out" | grep -qiE "already (been )?uploaded|already exists"; then
+            echo "$out"; echo "::notice::ttml-subtitle already on crates.io at this version — skipping"
+          else
+            echo "$out"; echo "::error::failed to publish ttml-subtitle"; exit 1
+          fi
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
