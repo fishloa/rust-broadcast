@@ -111,28 +111,55 @@ These rules are spec-mandated but deferred from the current implementation.
 Each has a specific, stated reason — a rule without a reason looks like an
 accidental omission, which is the failure this project keeps correcting.
 
+Deferred rules fall into three categories:
+- **Source not available**: the spec text is not in a form this project can
+  read (e.g. ISO/IEC 23009-1 is not vendored, so any profile rule would be
+  fabricated).
+- **Information not in manifest**: the manifest alone does not carry the
+  data the rule needs (e.g. init-segment contents, cross-reload state,
+  another playlist's content).
+- **Model gap**: the `transmux` parser for the manifest doesn't carry the
+  field the rule would inspect.
+
+Anything not in one of these categories — most importantly, things the spec
+does **not** require — are listed separately under "Rules that are not spec
+requirements" below so they are never mistaken for missing checks.
+
 ### HLS (RFC 8216bis)
 
 | Rule | Clause | Reason deferred |
 |---|---|---|
-| EXT-X-MAP cross-reference validity | §4.4.4.5 | Requires fetching + inspecting the init segment; a manifest alone does not carry the init segment's contents |
-| Open-segment closure / PART-HOLD-BACK consistency | §4.4.4.9 | Requires cross-reload state and wall-clock knowledge |
-| Discontinuity accounting (sequence-number vs playlist-state drift) | §4.4.3.3 | Requires per-reload tracking of discontinuity-sequence |
-| Variant URI cross-reference | §4.4.4.1, §6.2.4 | Requires fetching referenced variant playlists; a master playlist alone doesn't carry their content |
+| EXT-X-MAP cross-reference validity | §4.4.4.5 | Information not in manifest: requires fetching + inspecting the init segment |
+| Open-segment closure / PART-HOLD-BACK consistency | §4.4.4.9 | Information not in manifest: requires cross-reload state and wall-clock knowledge |
+| Discontinuity accounting (sequence-number vs playlist-state drift) | §4.4.3.3 | Information not in manifest: requires per-reload tracking of discontinuity-sequence |
+| Variant URI cross-reference (master→media) | §4.4.4.1, §6.2.4 | Information not in manifest: requires fetching referenced variant playlists |
 | EXT-X-MEDIA (alternate renditions) in multivariant playlist | §4.4.6 | Model gap: `transmux::MasterPlaylist` does not parse EXT-X-MEDIA |
-| Tag ordering beyond parse-enforced rules | §4.4.1.2, §6.2.1 | Already enforced by `transmux::MediaPlaylist::parse` — unknown/cross-repeated tags fail at parse time |
+
+6 deferred HLS rules (was previously counted as 7 — the tag-ordering entry
+was a miscount, since tag ordering is enforced by the structured parser and
+is not a deferred gap).
 
 ### DASH (ISO/IEC 23009-1)
 
 | Rule | Clause | Reason deferred |
 |---|---|---|
-| SegmentTemplate `@media` / `@initialization` URL-identifier validity | §5.3.9.4.2 | Requires fetching + validating segment content; a manifest alone does not carry the segment data |
-| `@presentationTimeOffset` / `@timescale` coherence with segment data | §5.3.9.2.3 | Requires cross-checking against actual segment durations |
+| SegmentTemplate `@media` / `@initialization` URL-identifier validity | §5.3.9.4.2 | Information not in manifest: requires fetching + validating segment content |
+| `@presentationTimeOffset` / `@timescale` coherence with segment data | §5.3.9.2.3 | Information not in manifest: requires cross-checking against actual segment durations |
 | ServiceDescription / Latency element validity | §5.3.10 | Model gap: `transmux::Mpd` does not parse ServiceDescription or Latency |
 | `@bandwidth` vs codecs (bitrate plausibility check) | §5.3.5.2 | Model gap: needs a codec-model comparison the parser doesn't carry |
-| BaseURL resolution (hierarchy + relative/absolute) | §5.6 | Requires network fetch; the parser does not do URL resolution |
+| BaseURL resolution (hierarchy + relative/absolute) | §5.6 | Information not in manifest: requires network fetch |
 | `@id` collisions across AdaptationSets (different-set, same id) | §5.3.2 | Rare in practice (<0.1% of real-world manifests examined); low-priority additive check |
-| profile / interoperability-point validation | §8 | Deferred: ISO 23009-1 is not available in the private submodule; without the spec text, any profile rule would be fabricated |
+| profile / interoperability-point validation | §8 | Source not available: ISO 23009-1 is not vendored; without the spec text, any profile rule would be fabricated |
+
+### Rules that are not spec requirements
+
+These are things that might look like missing checks but are simply not
+required by the spec. They belong here — not in the deferred list — so
+their absence is not mistaken for an omission.
+
+| Item | Why it is not a rule |
+|---|---|
+| EXT-X-VERSION position (before/after first segment) | Not required by RFC 8216. §4.3.1.2 says VERSION "applies to the entire Playlist file" — **no position requirement**. By contrast, `EXT-X-MEDIA-SEQUENCE` and `EXT-X-DISCONTINUITY-SEQUENCE` each explicitly state "MUST appear before the first Media Segment". VERSION carries no such clause. A validator that flags a conformant playlist is worse than no validator. |
 
 These deferred rules are recorded here (not only in a PR body) so users know
 exactly what the validator does and does not check. They are also cross-referenced
