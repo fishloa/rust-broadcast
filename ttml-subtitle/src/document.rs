@@ -92,41 +92,7 @@ impl Document {
     /// `..Default::default()` where `Default` is implemented.
     pub fn new() -> Self {
         Document {
-            tt: TtElement {
-                xml_lang: None,
-                xml_id: None,
-                xml_space: None,
-                ttp_time_base: None,
-                ttp_frame_rate: None,
-                ttp_frame_rate_multiplier: None,
-                ttp_tick_rate: None,
-                ttp_sub_frame_rate: None,
-                ttp_drop_mode: None,
-                ttp_marker_mode: None,
-                ttp_clock_mode: None,
-                ttp_cell_resolution: None,
-                ttp_pixel_aspect_ratio: None,
-                ttp_display_aspect_ratio: None,
-                ttp_profile: None,
-                ttp_content_profiles: None,
-                ttp_content_profile_combination: None,
-                ttp_processor_profiles: None,
-                ttp_processor_profile_combination: None,
-                ttp_infer_processor_profile_method: None,
-                ttp_infer_processor_profile_source: None,
-                ttp_permit_feature_narrowing: None,
-                ttp_permit_feature_widening: None,
-                ttp_validation: None,
-                ttp_validation_action: None,
-                tts_extent: None,
-                ittp_active_area: None,
-                ittp_aspect_ratio: None,
-                ittp_progressively_decodable: None,
-                other_attributes: BTreeMap::new(),
-                head: None,
-                body: None,
-                text: None,
-            },
+            tt: TtElement::default(),
             xml_declaration: None,
         }
     }
@@ -195,7 +161,7 @@ impl Default for Document {
 // ─── Element types ─────────────────────────────────────────────────
 
 /// The root `<tt>` element — TTML2 §8.1.1.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Default)]
 #[non_exhaustive]
 pub struct TtElement {
     /// XML language, e.g. "en".
@@ -264,12 +230,6 @@ pub struct TtElement {
     pub body: Option<BodyElement>,
     /// Text content (if any) — should be empty per spec.
     pub text: Option<String>,
-}
-
-impl Default for TtElement {
-    fn default() -> Self {
-        Document::new().tt
-    }
 }
 
 impl TtElement {
@@ -344,7 +304,7 @@ impl TtElement {
 }
 
 /// `<head>` element — TTML2 §8.1.2.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Default)]
 #[non_exhaustive]
 pub struct HeadElement {
     /// XML id.
@@ -362,7 +322,7 @@ pub struct HeadElement {
 }
 
 /// `<body>` element — TTML2 §8.1.3.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Default)]
 #[non_exhaustive]
 pub struct BodyElement {
     /// XML id.
@@ -400,7 +360,7 @@ pub struct BodyElement {
 }
 
 /// `<div>` element — TTML2 §8.1.4.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Default)]
 #[non_exhaustive]
 pub struct DivElement {
     /// XML id.
@@ -442,7 +402,7 @@ pub struct DivElement {
 }
 
 /// `<p>` element — TTML2 §8.1.5.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Default)]
 #[non_exhaustive]
 pub struct PElement {
     /// XML id.
@@ -480,7 +440,7 @@ pub struct PElement {
 }
 
 /// `<span>` element — TTML2 §8.1.6.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Default)]
 #[non_exhaustive]
 pub struct SpanElement {
     /// XML id.
@@ -518,7 +478,7 @@ pub struct SpanElement {
 }
 
 /// `<br>` element — TTML2 §8.1.7.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Default)]
 #[non_exhaustive]
 pub struct BrElement {
     /// XML id.
@@ -538,7 +498,7 @@ pub struct BrElement {
 }
 
 /// `<set>` element — TTML2 §13.1.3.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Default)]
 #[non_exhaustive]
 pub struct SetElement {
     /// XML id.
@@ -566,7 +526,7 @@ pub struct SetElement {
 }
 
 /// An `<image>` element — TTML2 §9.1.5 / IMSC 1.1 §9.4.4.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Default)]
 #[non_exhaustive]
 pub struct ImageElement {
     /// XML id.
@@ -652,7 +612,7 @@ pub enum MetadataChild {
 }
 
 /// A `<metadata>` element — TTML2 §14.1.1.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Default)]
 #[non_exhaustive]
 pub struct MetadataElement {
     /// XML id.
@@ -668,7 +628,7 @@ pub struct MetadataElement {
 }
 
 /// A text-only metadata element (`ttm:title`, `ttm:desc`, `ttm:copyright`).
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Default)]
 #[non_exhaustive]
 pub struct TtmTextElement {
     /// XML id.
@@ -684,7 +644,7 @@ pub struct TtmTextElement {
 }
 
 /// `<ttm:agent>` — TTML2 §14.1.3.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Default)]
 #[non_exhaustive]
 pub struct TtmAgentElement {
     /// XML id.
@@ -702,7 +662,7 @@ pub struct TtmAgentElement {
 }
 
 /// `<ttm:name>` — TTML2 §14.1.7.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Default)]
 #[non_exhaustive]
 pub struct TtmNameElement {
     /// XML id.
@@ -720,7 +680,7 @@ pub struct TtmNameElement {
 }
 
 /// `<ttm:item>` — TTML2 §14.1.6.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Default)]
 #[non_exhaustive]
 pub struct TtmItemElement {
     /// XML id.
@@ -740,7 +700,7 @@ pub struct TtmItemElement {
 }
 
 /// Generic EBU-TT-M element (like `<ebuttm:documentMetadata>`).
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Default)]
 #[non_exhaustive]
 pub struct EbuttmElement {
     /// Children within the EBU-TT-M element.
@@ -748,7 +708,7 @@ pub struct EbuttmElement {
 }
 
 /// Text-only EBU-TT-M element (like `<ebuttm:conformsToStandard>`).
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Default)]
 #[non_exhaustive]
 pub struct EbuttmTextElement {
     /// Text content.
@@ -756,7 +716,7 @@ pub struct EbuttmTextElement {
 }
 
 /// `<ittm:altText>` — IMSC 1.1 §7.8.4.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Default)]
 #[non_exhaustive]
 pub struct IttmAltTextElement {
     /// XML id.
@@ -772,7 +732,7 @@ pub struct IttmAltTextElement {
 // ─── Layout elements ───────────────────────────────────────────────
 
 /// `<layout>` container — TTML2 §11.1.1.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Default)]
 #[non_exhaustive]
 pub struct LayoutElement {
     /// XML id.
@@ -786,7 +746,7 @@ pub struct LayoutElement {
 }
 
 /// `<region>` element — TTML2 §11.1.2.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Default)]
 #[non_exhaustive]
 pub struct RegionElement {
     /// XML id (required for referential binding).
@@ -820,7 +780,7 @@ pub struct RegionElement {
 // ─── Styling elements ──────────────────────────────────────────────
 
 /// `<styling>` container — TTML2 §10.1.3.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Default)]
 #[non_exhaustive]
 pub struct StylingElement {
     /// XML id.
@@ -836,7 +796,7 @@ pub struct StylingElement {
 }
 
 /// `<initial>` element — TTML2 §10.1.1.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Default)]
 #[non_exhaustive]
 pub struct InitialElement {
     /// XML id.
@@ -854,7 +814,7 @@ pub struct InitialElement {
 }
 
 /// `<style>` element — TTML2 §10.1.2.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Default)]
 #[non_exhaustive]
 pub struct StyleElement {
     /// XML id (required for referential binding).
@@ -1861,9 +1821,6 @@ fn serialize_tt_element(tt: &TtElement, buf: &mut String, indent: usize) {
     }
     if tt_ns_needed(tt, NS_SMPTE) {
         buf.push_str(r#" xmlns:smpte="http://www.smpte-ra.org/schemas/2052-1/2010/smpte-tt""#);
-    }
-    if tt_ns_needed(tt, NS_TTA) {
-        buf.push_str(r#" xmlns:tta="http://www.w3.org/ns/ttml#audio""#);
     }
     if tt_ns_needed(tt, NS_TTA) {
         buf.push_str(r#" xmlns:tta="http://www.w3.org/ns/ttml#audio""#);

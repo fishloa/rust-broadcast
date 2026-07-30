@@ -36,7 +36,7 @@ assert_eq!(body.divs[0].paragraphs[0].begin.as_deref(), Some("0s"));
 - Exhaustive `<time-expression>` grammar (clock-time, offset-time, wallclock-time) with frame/tick/SMPTE constraint enforcement
 - IMSC 1.1 profile validation (159-row feature disposition table, §7.12 "must reject" constraints)
 - Parse/validate split — inspect non-conformant documents before deciding to reject
-- Semantic round-trip (parse → serialize → re-parse → equal); byte-exact round-trip is infeasible for XML
+- Semantic round-trip (see [Round-Trip Guarantee](#round-trip-guarantee)) — parse → serialize → re-parse yields an equal document
 - No raw-passthrough in the serializer — output is generated from typed fields
 - Real-fixture tested against 11 W3C IMSC conformance suite documents
 - `#[no_std]` + `alloc` compatible (with `std` feature)
@@ -47,7 +47,29 @@ assert_eq!(body.divs[0].paragraphs[0].begin.as_deref(), Some("0s"));
 ```bash
 cargo run -p ttml-subtitle --example parse_document
 cargo run -p ttml-subtitle --example validate_document
+cargo run -p ttml-subtitle --example from_scratch
 ```
+
+## Round-Trip Guarantee
+
+The crate provides **semantic** round-trip fidelity, not byte-identity. Parsing a document,
+serializing the typed model, and re-parsing yields an equal document (`parse → serialize →
+re-parse → equal`). But the serialized XML will differ from the input in the following
+ways (each verified against `roxmltree`'s actual API, not assumed):
+
+| Category | Status | Reason |
+|---|---|---|
+| XML declaration | **Lost** (roxmltree) | `roxmltree` skips `<?xml version="1.0" encoding="UTF-8"?>`; the serializer always emits `<?xml version="1.0" encoding="UTF-8"?>` |
+| Comments | **Lost** (parser) | `roxmltree` *does* expose comments (`is_comment()`, `text()`), but the parser does not store them |
+| Processing instructions | **Lost** (parser) | `roxmltree` *does* expose PIs (`NodeType::PI`), but the parser does not store them |
+| `other_attributes` (custom attributes not explicitly modeled) | **Lost** (serializer) | Parsed into `BTreeMap<(ns, local), value>` per element, but the serializer does not emit them — it only serializes known, explicitly modeled attributes |
+| Attribute order | **Deterministic, not preserved** (parser) | `roxmltree` *does* preserve document order via `attributes()`, but the parser collects known attrs into named fields and serializes them in a fixed code order |
+| Namespace prefix spelling | **Deterministic, not preserved** (roxmltree + serializer) | `roxmltree` resolves QNames to `(namespace_uri, local_name)` pairs; the original prefix per-attribute is not exposed. The serializer uses fixed prefixes (`tts:`, `ttp:`, `itta:`, etc.) |
+| Whitespace / indentation | **Deterministic, not preserved** | Indentation is always 2-space, closing tags always on new lines; interstitial whitespace-only text nodes are preserved by the parser but may differ in placement on re-serialization |
+
+The invariant that *must* hold: a document constructed entirely via the public types (no
+parsed input) will serialize and re-parse to an equal document. This is tested by the
+`from_scratch` example.
 
 ## Profile Validation
 
