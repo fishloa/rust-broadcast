@@ -23,15 +23,22 @@
 //! let body = doc.tt.body.as_ref().unwrap();
 //! assert_eq!(body.divs[0].paragraphs[0].begin.as_deref(), Some("0s"));
 //! ```
+#![cfg_attr(not(feature = "std"), no_std)]
 #![warn(missing_docs)]
 #![cfg_attr(docsrs, feature(doc_cfg))]
+
+extern crate alloc;
 
 pub mod document;
 pub mod error;
 pub mod time;
 pub mod validation;
 
-pub use document::Document;
+pub use document::{
+    BodyElement, BrElement, DivElement, Document, HeadElement, ImageElement, InlineContent,
+    LayoutElement, PElement, RegionElement, SpanElement, StyleAttributes, StyleElement,
+    StylingElement, TtElement, XmlDeclaration,
+};
 pub use error::{Error, Result};
 pub use time::TimeExpression;
 pub use validation::{ImscVersion, Profile, ValidationError, ValidationResult, Validator};

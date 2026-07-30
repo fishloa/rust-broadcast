@@ -9,10 +9,12 @@
 //! Rust structure that does NOT contain the original XML text (no raw-passthrough).
 
 extern crate alloc;
+use alloc::format;
+use alloc::string::String;
+use alloc::string::ToString;
+use alloc::vec::Vec;
 
 use alloc::collections::BTreeMap;
-use alloc::string::String;
-use alloc::vec::Vec;
 
 use crate::error::{Error, Result};
 
@@ -83,6 +85,52 @@ pub struct XmlDeclaration {
 }
 
 impl Document {
+    /// Create a new empty document for from-scratch construction.
+    ///
+    /// Use this to build TTML documents programmatically.
+    /// Fields marked `#[non_exhaustive]` can be constructed using
+    /// `..Default::default()` where `Default` is implemented.
+    pub fn new() -> Self {
+        Document {
+            tt: TtElement {
+                xml_lang: None,
+                xml_id: None,
+                xml_space: None,
+                ttp_time_base: None,
+                ttp_frame_rate: None,
+                ttp_frame_rate_multiplier: None,
+                ttp_tick_rate: None,
+                ttp_sub_frame_rate: None,
+                ttp_drop_mode: None,
+                ttp_marker_mode: None,
+                ttp_clock_mode: None,
+                ttp_cell_resolution: None,
+                ttp_pixel_aspect_ratio: None,
+                ttp_display_aspect_ratio: None,
+                ttp_profile: None,
+                ttp_content_profiles: None,
+                ttp_content_profile_combination: None,
+                ttp_processor_profiles: None,
+                ttp_processor_profile_combination: None,
+                ttp_infer_processor_profile_method: None,
+                ttp_infer_processor_profile_source: None,
+                ttp_permit_feature_narrowing: None,
+                ttp_permit_feature_widening: None,
+                ttp_validation: None,
+                ttp_validation_action: None,
+                tts_extent: None,
+                ittp_active_area: None,
+                ittp_aspect_ratio: None,
+                ittp_progressively_decodable: None,
+                other_attributes: BTreeMap::new(),
+                head: None,
+                body: None,
+                text: None,
+            },
+            xml_declaration: None,
+        }
+    }
+
     /// Parse a TTML document from an XML string.
     pub fn parse_str(xml: &str) -> Result<Self> {
         let doc = roxmltree::Document::parse(xml).map_err(|e| Error::XmlParse(e.to_string()))?;
@@ -135,6 +183,12 @@ impl Document {
     /// Get the effective time context from the root `<tt>` element's parameter attributes.
     pub fn time_context(&self) -> crate::time::TimeContext {
         self.tt.time_context()
+    }
+}
+
+impl Default for Document {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -210,6 +264,12 @@ pub struct TtElement {
     pub body: Option<BodyElement>,
     /// Text content (if any) — should be empty per spec.
     pub text: Option<String>,
+}
+
+impl Default for TtElement {
+    fn default() -> Self {
+        Document::new().tt
+    }
 }
 
 impl TtElement {
@@ -1801,6 +1861,9 @@ fn serialize_tt_element(tt: &TtElement, buf: &mut String, indent: usize) {
     }
     if tt_ns_needed(tt, NS_SMPTE) {
         buf.push_str(r#" xmlns:smpte="http://www.smpte-ra.org/schemas/2052-1/2010/smpte-tt""#);
+    }
+    if tt_ns_needed(tt, NS_TTA) {
+        buf.push_str(r#" xmlns:tta="http://www.w3.org/ns/ttml#audio""#);
     }
     if tt_ns_needed(tt, NS_TTA) {
         buf.push_str(r#" xmlns:tta="http://www.w3.org/ns/ttml#audio""#);

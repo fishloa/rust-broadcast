@@ -580,17 +580,18 @@ fn reject_frame_metric_without_frame_rate() {
 </tt>"#;
 
     let doc = Document::parse_str(xml).unwrap();
-    let validator = validation::Validator::new(
-        validation::Profile::Text,
-        validation::ImscVersion::V1_1,
-    );
+    let validator =
+        validation::Validator::new(validation::Profile::Text, validation::ImscVersion::V1_1);
     let result = validator.validate(&doc);
     assert!(
         !result.valid,
         "Document with frame terms but no ttp:frameRate should be rejected"
     );
     assert!(
-        result.errors.iter().any(|e| e.constraint.contains("7.12.7")),
+        result
+            .errors
+            .iter()
+            .any(|e| e.constraint.contains("7.12.7")),
         "Should cite §7.12.7 constraint, got: {:?}",
         result.errors
     );

@@ -28,6 +28,13 @@
 //! metric : "h" | "m" | "s" | "ms" | "f" | "t"
 //! ```
 
+extern crate alloc;
+
+use alloc::format;
+use alloc::string::String;
+use alloc::string::ToString;
+use alloc::vec::Vec;
+
 /// Time context gathered from document parameters.
 ///
 /// Defaults match TTML2 §7.2 prose defaults.

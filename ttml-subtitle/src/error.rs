@@ -1,5 +1,8 @@
 //! Error types for ttml-subtitle.
 
+extern crate alloc;
+
+use alloc::string::String;
 use thiserror::Error;
 
 /// Result type alias for ttml-subtitle operations.
