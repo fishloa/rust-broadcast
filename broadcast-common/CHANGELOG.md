@@ -1,6 +1,8 @@
 # Changelog
 
-## [Unreleased]
+## [9.1.0] - 2026-07-30
+
+Lockstep release with dvb-conformance 9.1.0; no functional changes.
 
 ### Added
 - `tests/label_coverage.rs` drift guard (issue #806).

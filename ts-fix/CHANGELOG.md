@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [0.4.1] - 2026-07-30
 
 ### Added
 - `tests/label_coverage.rs` + `tests/non_exhaustive_coverage.rs` drift guards

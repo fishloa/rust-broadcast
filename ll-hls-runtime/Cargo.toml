@@ -1,6 +1,6 @@
 [package]
 name         = "ll-hls-runtime"
-version      = "0.2.0"
+version      = "0.3.0"
 edition      = "2024"
 description  = "Sans-IO Low-Latency HLS (RFC 8216bis) client + server engines in one crate (blocking reload, part prefetch, rolling-window origin), with an optional tokio+reqwest IO adapter."
 license      = "MIT OR Apache-2.0"

@@ -2,7 +2,7 @@
 
 All notable changes to this crate. Format: [Keep a Changelog](https://keepachangelog.com/).
 
-## [Unreleased]
+## [0.4.2] - 2026-07-30
 
 ### Added
 - `tests/non_exhaustive_coverage.rs` drift guard (issue #806). No public API
