@@ -139,7 +139,8 @@ fn ts_round_trip_recovers_timing_config_and_builds_fmp4() {
     )]);
     let mut recovered = Vec::new();
     for pkt in &video_stream.packets {
-        recovered.extend(d.push(1, pkt).unwrap());
+        let c = pkt.as_contiguous();
+        recovered.extend(d.push(1, &c).unwrap());
     }
     recovered.extend(d.flush(1).unwrap());
 
@@ -276,7 +277,11 @@ fn video_fixture() -> (CodecConfig, Vec<bytes::Bytes>, Vec<Vec<u8>>) {
         .expect("video track");
     let config = video.spec.config.clone();
     let originals: Vec<bytes::Bytes> = video.samples.iter().map(|s| s.data.clone()).collect();
-    let packets = video_stream(&out).packets.clone();
+    let packets = video_stream(&out)
+        .packets
+        .iter()
+        .map(|p| p.as_contiguous().to_vec())
+        .collect();
     (config, originals, packets)
 }
 
@@ -436,11 +441,13 @@ fn clean_capture_emits_zero_loss_signals() {
     ]);
 
     for pkt in &video_stream(&out).packets {
-        d.push(1, pkt).unwrap();
+        let c = pkt.as_contiguous();
+        d.push(1, &c).unwrap();
     }
     d.flush(1).unwrap();
     for pkt in &audio_stream(&out).packets {
-        d.push(2, pkt).unwrap();
+        let c = pkt.as_contiguous();
+        d.push(2, &c).unwrap();
     }
     d.flush(2).unwrap();
 

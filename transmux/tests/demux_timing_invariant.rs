@@ -292,7 +292,11 @@ fn rtp_depacketiser_timing_invariant_holds() {
                 .iter()
                 .map(|s| RtpInputStream {
                     kind: s.kind,
-                    packets: s.packets.clone(),
+                    packets: s
+                        .packets
+                        .iter()
+                        .map(|p| p.as_contiguous().to_vec())
+                        .collect(),
                 })
                 .collect(),
         })

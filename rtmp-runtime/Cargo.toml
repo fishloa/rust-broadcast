@@ -37,5 +37,5 @@ name = "capture_publish"
 required-features = ["tokio"]
 
 [dev-dependencies]
-transmux   = { path = "../transmux", version = "0.20", default-features = false, features = ["std"] }
+transmux   = { path = "../transmux", version = "0.21", default-features = false, features = ["std"] }
 serde_json = "1"

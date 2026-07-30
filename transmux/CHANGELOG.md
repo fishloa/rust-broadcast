@@ -7,7 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.21.0] - 2026-07-29
+
 ### Changed (Breaking)
+- `RtpStream::packets` is now `Vec<RtpPacket>` instead of `Vec<Vec<u8>>`
+  (issue #777). `RtpPacket` carries a small, owned `header: Bytes` and a
+  `payload: Bytes`; on the single-NAL and FU-A paths the payload is a
+  zero-copy `Bytes::slice` of the original sample data, so fanning a sample
+  out to multiple RTP streams doesn't copy the coded payload bytes.
+  `RtpPacket::as_contiguous()` returns a single `Bytes` for consumers that
+  need a contiguous packet (e.g. the depacketise path, which reassembles by
+  concatenation and may reasonably copy).
+- `packetise_klv()` now takes `&Bytes` instead of `&[u8]`; each fragment's
+  payload is a zero-copy `Bytes::slice`.
 - The following public enums now carry `#[non_exhaustive]` (issue #806's
   non_exhaustive drift-guard audit -- every other public enum in the
   workspace already did): `Addressing`, `MediaKind` (`dash`); `SgpdEntry`
@@ -24,7 +36,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the corresponding fix.
 
 ### Added
+- `RtpPacket` public type (exported from `transmux::rtp`).
 - `tests/non_exhaustive_coverage.rs` drift guard (issue #806).
+
+### Changed
+- STAP-A aggregation and AAC-hbr audio packets interleave headers with
+  payload, so they build the full RTP packet in a `BytesMut` (which copies).
+  The parameter sets and audio AUs are small, so this is negligible.
 
 ## [0.20.0] - 2026-07-28
 

@@ -14,7 +14,7 @@ readme       = "README.md"
 broadcast-common = { path = "../broadcast-common", version = "9.0", default-features = false }
 bytes            = { version = "1", default-features = false }
 thiserror        = { version = "2", default-features = false }
-transmux         = { path = "../transmux", version = "0.20", default-features = false, optional = true }
+transmux         = { path = "../transmux", version = "0.21", default-features = false, optional = true }
 timed-metadata   = { path = "../timed-metadata", version = "0.4", default-features = false, optional = true }
 # Only pulled in by the `std` feature: `Trunk`'s reader-wake primitive
 # (step 3b-iv) needs a runtime-agnostic wakeup a `ServedEgress` can wait on

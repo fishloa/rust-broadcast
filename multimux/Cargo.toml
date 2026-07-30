@@ -13,7 +13,7 @@ categories   = ["multimedia", "network-programming"]
 all-features = true
 
 [dependencies]
-transmux          = { path = "../transmux",     version = "0.20" }
+transmux          = { path = "../transmux",     version = "0.21" }
 rtsp-runtime      = { path = "../rtsp-runtime",  version = "0.4", features = ["tokio"] }
 # RTMP push ingest (`source::rtmp`, issue #738): the `tokio` feature pulls
 # `rtmp_runtime::io::AsyncRtmpServer`/`RtmpConnection`, the real-socket

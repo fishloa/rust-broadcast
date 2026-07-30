@@ -770,7 +770,11 @@ fn rtp_depacketiser_emits_absolute_time_from_rtp_timestamps() {
                 .iter()
                 .map(|s| RtpInputStream {
                     kind: s.kind,
-                    packets: s.packets.clone(),
+                    packets: s
+                        .packets
+                        .iter()
+                        .map(|p| p.as_contiguous().to_vec())
+                        .collect(),
                 })
                 .collect(),
         })
@@ -786,7 +790,8 @@ fn rtp_depacketiser_emits_absolute_time_from_rtp_timestamps() {
         .expect("an H.264 RTP stream");
     let mut want: Vec<i64> = Vec::new();
     for pkt in &video.packets {
-        let t = u32::from_be_bytes([pkt[4], pkt[5], pkt[6], pkt[7]]) as i64;
+        let h = &pkt.header;
+        let t = u32::from_be_bytes([h[4], h[5], h[6], h[7]]) as i64;
         if want.last() != Some(&t) {
             want.push(t);
         }

@@ -8,8 +8,8 @@ use broadcast_common::{Package, Unpackage};
 use transmux::pipeline::CodecConfig;
 use transmux::rtp::{base64_decode, hex_decode};
 use transmux::{
-    Media, NAL_TYPE_IDR, RtpDepacketiser, RtpInput, RtpInputStream, RtpMediaKind, RtpPacketiser,
-    VIDEO_CLOCK_RATE,
+    Media, NAL_TYPE_IDR, RtpDepacketiser, RtpInput, RtpInputStream, RtpMediaKind, RtpPacket,
+    RtpPacketiser, VIDEO_CLOCK_RATE,
 };
 
 const MTU: usize = 1400;
@@ -34,13 +34,14 @@ fn packetise(media: &Media) -> transmux::RtpOutput {
     p.package(media).expect("packetise IR → RTP")
 }
 
-fn parse_hdr(pkt: &[u8]) -> (u8, u8, bool, u16, u32, u32) {
-    let version = pkt[0] >> 6;
-    let marker = pkt[1] & 0x80 != 0;
-    let pt = pkt[1] & 0x7F;
-    let seq = u16::from_be_bytes([pkt[2], pkt[3]]);
-    let ts = u32::from_be_bytes([pkt[4], pkt[5], pkt[6], pkt[7]]);
-    let ssrc = u32::from_be_bytes([pkt[8], pkt[9], pkt[10], pkt[11]]);
+fn parse_hdr(pkt: &RtpPacket) -> (u8, u8, bool, u16, u32, u32) {
+    let h = &pkt.header;
+    let version = h[0] >> 6;
+    let marker = h[1] & 0x80 != 0;
+    let pt = h[1] & 0x7F;
+    let seq = u16::from_be_bytes([h[2], h[3]]);
+    let ts = u32::from_be_bytes([h[4], h[5], h[6], h[7]]);
+    let ssrc = u32::from_be_bytes([h[8], h[9], h[10], h[11]]);
     (version, pt, marker, seq, ts, ssrc)
 }
 
@@ -89,7 +90,7 @@ fn valid_rtp_headers_and_marker_semantics() {
         // Every packet: V=2, correct PT, fixed SSRC; strictly monotonic seq (+1).
         let mut expected_seq: Option<u16> = None;
         for pkt in &stream.packets {
-            assert!(pkt.len() >= RTP_HEADER_LEN);
+            assert!(pkt.header.len() >= RTP_HEADER_LEN);
             let (v, pt, _m, seq, _ts, ssrc) = parse_hdr(pkt);
             assert_eq!(v, 2, "RTP version must be 2");
             assert_eq!(pt, stream.pt, "payload type matches the stream PT");
@@ -106,8 +107,8 @@ fn valid_rtp_headers_and_marker_semantics() {
     // the AU timestamps advance by the per-frame 90 kHz delta (3600).
     let vs = video_stream(&out);
     // Skip the leading STAP-A parameter-set packet (marker=0, its own TS group).
-    let mut aus: Vec<Vec<&Vec<u8>>> = Vec::new();
-    let mut cur: Vec<&Vec<u8>> = Vec::new();
+    let mut aus: Vec<Vec<&RtpPacket>> = Vec::new();
+    let mut cur: Vec<&RtpPacket> = Vec::new();
     // The STAP-A is the first packet and has no marker; treat everything up to
     // and including each marker as one AU (STAP-A then rides with the first AU's
     // timestamp group, but it is emitted before frame 0 with timestamp 0 too).
@@ -182,17 +183,22 @@ fn fu_a_fragmentation_happens() {
     let out = packetise(&media);
     let vs = video_stream(&out);
 
-    // Find FU-A packets (payload byte 0 low-5-bits == 28).
+    // Find FU-A packets (FU indicator is in the header at offset RTP_HEADER_LEN;
+    // its low 5 bits carry the FU-A type = 28).
     let mut fu_packets = 0usize;
     let mut fu_starts = 0usize;
     let mut fu_ends = 0usize;
     let mut reconstructed_types = Vec::new();
     for pkt in &vs.packets {
-        let payload = &pkt[RTP_HEADER_LEN..];
-        let nal_type = payload[0] & 0x1F;
+        let hdr = &pkt.header;
+        if hdr.len() <= RTP_HEADER_LEN {
+            continue; // single-NAL packet — no FU indicator
+        }
+        let fu_indicator = hdr[RTP_HEADER_LEN];
+        let nal_type = fu_indicator & 0x1F;
         if nal_type == 28 {
             fu_packets += 1;
-            let fu_header = payload[1];
+            let fu_header = hdr[RTP_HEADER_LEN + 1];
             let s = fu_header & 0x80 != 0;
             let e = fu_header & 0x40 != 0;
             if s {
@@ -247,7 +253,11 @@ fn video_round_trip_byte_identical() {
         .unpackage(RtpInput {
             streams: vec![RtpInputStream {
                 kind: RtpMediaKind::H264,
-                packets: vs.packets.clone(),
+                packets: vs
+                    .packets
+                    .iter()
+                    .map(|p| p.as_contiguous().to_vec())
+                    .collect(),
             }],
         })
         .expect("depacketise video");
@@ -309,7 +319,11 @@ fn audio_round_trip_byte_identical() {
         .unpackage(RtpInput {
             streams: vec![RtpInputStream {
                 kind: RtpMediaKind::Aac,
-                packets: as_.packets.clone(),
+                packets: as_
+                    .packets
+                    .iter()
+                    .map(|p| p.as_contiguous().to_vec())
+                    .collect(),
             }],
         })
         .expect("depacketise audio");
@@ -332,14 +346,21 @@ fn audio_round_trip_byte_identical() {
 
     // The AU-headers-length / AU-size math must be exact: mutating a size byte
     // in the header breaks reassembly (proves the size field is honoured).
-    let mut broken = as_.packets[0].clone();
-    // AU-header sits at payload offset [2..4]; corrupt the AU-size (top 13 bits).
-    broken[RTP_HEADER_LEN + 2] ^= 0x08; // flips a bit in the AU-size field
+    let pkt0 = &as_.packets[0];
+    // Build a contiguous copy to mutate — the AAC-hbr header bytes are at
+    // the tail of `pkt0.header`, and the AU-header is at `header[RTP_HEADER_LEN + 2]`.
+    let broken = pkt0.as_contiguous();
+    let broken_vec = {
+        let mut v = broken.to_vec();
+        // AU-header sits at payload offset [2..4]; corrupt the AU-size (top 13 bits).
+        v[RTP_HEADER_LEN + 2] ^= 0x08;
+        v
+    };
     let mut d2 = RtpDepacketiser::new();
     let bad = d2.unpackage(RtpInput {
         streams: vec![RtpInputStream {
             kind: RtpMediaKind::Aac,
-            packets: vec![broken],
+            packets: vec![broken_vec],
         }],
     });
     // Either it errors (declared size overran) or the reassembled AU differs.
