@@ -1,7 +1,10 @@
-//! Gate tests for HLS playlist output.
+//! Gate tests for HLS playlist output — structural invariants on the
+//! generated `#EXTM3U` text.
 //!
-//! Validates the generated `#EXTM3U` against the `media_doctor::check_playlist`
-//! RFC-8216 validator and against structural invariants.
+//! RFC-8216 oracle validation (via `media_doctor::check_playlist`) lives in
+//! `media-doctor/tests/transmux_oracle.rs` — a cross-crate test that follows
+//! the governing rule that a test touching two crates lives in the
+//! topologically highest one.
 
 use transmux::{CencScheme, MasterPlaylist, MediaPlaylist, MediaSegment, Variant, cenc_ext_x_key};
 
@@ -58,46 +61,6 @@ fn media_playlist_rfc_valid() {
     assert!(
         m3u8.ends_with("#EXT-X-ENDLIST\n"),
         "must end with #EXT-X-ENDLIST"
-    );
-
-    // RFC-8216 validation via media-doctor.
-    let mut report = media_doctor::Report::new();
-    media_doctor::check_playlist(&m3u8, &mut report);
-    assert!(
-        report.is_empty(),
-        "media playlist must be RFC-valid but got: {report}",
-    );
-}
-
-#[test]
-fn media_playlist_invalid_target_duration_reported() {
-    let pl = MediaPlaylist {
-        version: 3,
-        target_duration: 10,
-        media_sequence: 0,
-        discontinuity_sequence: 0,
-        segments: vec![MediaSegment {
-            uri: "long.m4s".into(),
-            duration: 15.0,
-            discontinuous: false,
-            parts: vec![],
-            ..Default::default()
-        }],
-        endlist: true,
-        extra_tags: vec![],
-        low_latency: None,
-        iframes_only: false,
-        open_segment: None,
-        ..Default::default()
-    };
-
-    let m3u8 = pl.to_m3u8();
-
-    let mut report = media_doctor::Report::new();
-    media_doctor::check_playlist(&m3u8, &mut report);
-    assert!(
-        !report.is_empty(),
-        "segment duration > target_duration should produce findings"
     );
 }
 

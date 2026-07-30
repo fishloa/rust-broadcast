@@ -35,8 +35,6 @@
 //! must genuinely assert against `ffprobe`'s own output — never just "exited
 //! 0".
 
-#![cfg(feature = "tokio")]
-
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
