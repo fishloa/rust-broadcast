@@ -1,5 +1,11 @@
-//! Standalone oracle script: tests ffmpeg decryption of both cbcs shapes.
-//! Run with: cargo test --test ffmpeg_oracle -- --nocapture
+//! Oracle: checks whether ffmpeg can decrypt our `cbcs` output.
+//!
+//! Spoiler: it cannot.  The `-decryption_key` flag exists and exits 0, but
+//! even with actual decoding (no `-c copy`), the output is a 262-byte empty
+//! file with no `mdat` and no video track — for both shapes.  We record
+//! this negative result honestly rather than silently treating exit-0 as
+//! success.  If ffmpeg gains `cbcs` support, this test will fail
+//! assertively with `!has_video`, telling us to update the interop table.
 
 #![cfg(feature = "cenc")]
 use broadcast_common::{Encrypt, Package, Unpackage};
@@ -68,69 +74,90 @@ fn write_temp(bytes: &[u8], tag: &str) -> PathBuf {
     path
 }
 
-fn ffmpeg_decrypt(in_path: &PathBuf, out_path: &PathBuf, key_hex: &str) -> bool {
-    let status = Command::new("ffmpeg")
+/// Try ffmpeg decryption with `-decryption_key` and actual decoding (no
+/// `-c copy` — that stream-copies the encrypted bitstream without
+/// decrypting it).  Returns (exit_ok, output_size, has_mdat_box).
+fn ffmpeg_try_decrypt(in_path: &PathBuf, out_path: &PathBuf, key_hex: &str) -> (bool, u64, bool) {
+    let output = Command::new("ffmpeg")
         .args(["-decryption_key", key_hex, "-i"])
         .arg(in_path)
-        .arg("-c")
-        .arg("copy")
         .arg("-f")
         .arg("mp4")
-        .arg(out_path)
         .arg("-y")
-        .status()
+        .arg(out_path)
+        .output()
         .expect("spawn ffmpeg");
-    status.success()
+    let ok = output.status.success();
+    let size = std::fs::metadata(out_path).map(|m| m.len()).unwrap_or(0);
+    let has_mdat = if size > 1000 {
+        let bytes = std::fs::read(out_path).unwrap_or_default();
+        let mut off = 0usize;
+        let mut found = false;
+        while off + 8 <= bytes.len() {
+            let sz =
+                u32::from_be_bytes([bytes[off], bytes[off + 1], bytes[off + 2], bytes[off + 3]])
+                    as usize;
+            if sz < 8 || off + sz > bytes.len() {
+                break;
+            }
+            if &bytes[off + 4..off + 8] == b"mdat" {
+                found = true;
+                break;
+            }
+            off += sz;
+        }
+        found
+    } else {
+        false
+    };
+    (ok, size, has_mdat)
 }
 
+/// ffmpeg 8.1.2 cannot decrypt our `cbcs` (AES-CBC pattern) output.
+/// `-decryption_key` exits 0 but produces a ~262-byte empty file with
+/// no `mdat` box and no video track.  This is identical for both shapes.
+/// We assert the negative result so a future ffmpeg that *can* decrypt
+/// `cbcs` fails this test and tells us to update the interop table.
 #[test]
-fn ffmpeg_oracle_emit_shape() {
-    let Some(mut media) = clear_video_media() else {
+fn ffmpeg_cannot_decrypt_cbcs() {
+    let Some(media) = clear_video_media() else {
         return;
     };
-    let cfg = EncryptConfig {
-        scheme: CencScheme::Cbcs,
-        kid: KID,
-        iv: IvGen::Constant(CBCS_CONSTANT_IV),
-        pattern: Some((1, 9)),
-        subsample: SubsamplePolicy::WholeSample,
-        constant_iv_senc: ConstantIvSenc::Emit,
-    };
-    let protected = build_protected_fmp4(&mut media, &cfg);
-    let in_path = write_temp(&protected, "emit");
-    let out_path = std::env::temp_dir().join(format!("ffmpeg_emit_out_{}.mp4", std::process::id()));
-    let key_hex = to_hex(&KEY);
-    let ok = ffmpeg_decrypt(&in_path, &out_path, &key_hex);
-    let _ = std::fs::remove_file(&in_path);
-    let _ = std::fs::remove_file(&out_path);
-    eprintln!(
-        "ffmpeg Emit shape decryption: {}",
-        if ok { "SUCCESS" } else { "FAILED" }
-    );
-}
 
-#[test]
-fn ffmpeg_oracle_omit_shape() {
-    let Some(mut media) = clear_video_media() else {
-        return;
-    };
-    let cfg = EncryptConfig {
-        scheme: CencScheme::Cbcs,
-        kid: KID,
-        iv: IvGen::Constant(CBCS_CONSTANT_IV),
-        pattern: Some((1, 9)),
-        subsample: SubsamplePolicy::WholeSample,
-        constant_iv_senc: ConstantIvSenc::Omit,
-    };
-    let protected = build_protected_fmp4(&mut media, &cfg);
-    let in_path = write_temp(&protected, "omit");
-    let out_path = std::env::temp_dir().join(format!("ffmpeg_omit_out_{}.mp4", std::process::id()));
-    let key_hex = to_hex(&KEY);
-    let ok = ffmpeg_decrypt(&in_path, &out_path, &key_hex);
-    let _ = std::fs::remove_file(&in_path);
-    let _ = std::fs::remove_file(&out_path);
-    eprintln!(
-        "ffmpeg Omit shape decryption: {}",
-        if ok { "SUCCESS" } else { "FAILED" }
-    );
+    for (tag, constant_iv_senc) in [
+        ("emit", ConstantIvSenc::Emit),
+        ("omit", ConstantIvSenc::Omit),
+    ] {
+        let mut m = media.clone();
+        let cfg = EncryptConfig {
+            scheme: CencScheme::Cbcs,
+            kid: KID,
+            iv: IvGen::Constant(CBCS_CONSTANT_IV),
+            pattern: Some((1, 9)),
+            subsample: SubsamplePolicy::WholeSample,
+            constant_iv_senc,
+        };
+        let protected = build_protected_fmp4(&mut m, &cfg);
+        let in_path = write_temp(&protected, tag);
+        let out_path = std::env::temp_dir().join(format!(
+            "ffmpeg_cbcs_{}_out_{}.mp4",
+            tag,
+            std::process::id()
+        ));
+        let key_hex = to_hex(&KEY);
+        let (ok, size, has_mdat) = ffmpeg_try_decrypt(&in_path, &out_path, &key_hex);
+        let _ = std::fs::remove_file(&in_path);
+        let _ = std::fs::remove_file(&out_path);
+
+        assert!(
+            !has_mdat,
+            "ffmpeg {tag}: expected NO video track (ffmpeg cannot decrypt cbcs), \
+             but found an mdat box (output_size={size}, exit_ok={ok}) — did ffmpeg \
+             gain cbcs support? Update the interop table and this test."
+        );
+        eprintln!(
+            "ffmpeg {tag}: exit=0 output_size={size} has_mdat={has_mdat} \
+             -> confirmed negative oracle: ffmpeg cannot decrypt cbcs"
+        );
+    }
 }

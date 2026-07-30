@@ -26,6 +26,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   is still tested for self-consistency round-trips.
 
 ### Changed (Breaking)
+- `EncryptConfig` gains `constant_iv_senc: ConstantIvSenc` — every
+  struct-literal construction site must add this field.
 - `TrackEncryption::new` gains a fourth argument (`constant_iv_senc:
   ConstantIvSenc`).
 

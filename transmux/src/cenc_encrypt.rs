@@ -404,7 +404,7 @@ impl Encrypt for CencEncryptor {
         // plan (never re-resolving), so what was validated and what gets
         // recorded/ciphered can never drift apart.
         let plan = self.plan_sample_ivs(media, &cfg.iv, cfg.constant_iv_senc)?;
-        assert_ivs_unique(&plan, cfg.constant_iv_senc)?;
+        assert_ivs_unique(&plan, &cfg.iv, cfg.constant_iv_senc)?;
 
         for (track, track_ivs) in media.tracks.iter_mut().zip(plan.iter()) {
             let nal_codec = nal_codec_for(&track.spec.config);
@@ -613,11 +613,20 @@ impl CencEncryptor {
 /// [`ConstantIvSenc::Emit`](super::ConstantIvSenc::Emit) every entry carries
 /// the same constant IV by design (the duplicate check would be a false
 /// positive), and when [`ConstantIvSenc::Omit`](super::ConstantIvSenc::Omit)
-/// every entry is empty (there is no per-sample IV at all).
-fn assert_ivs_unique(plan: &[Vec<Vec<u8>>], constant_iv_senc: ConstantIvSenc) -> Result<()> {
-    // Constant-IV tracks carry the same IV per sample by design —
-    // the per-key uniqueness rule does not apply to them.
-    if matches!(constant_iv_senc, ConstantIvSenc::Emit) {
+/// every entry is empty (there is no per-sample IV at all). Every other
+/// `IvGen` + `constant_iv_senc` combination is checked — including `cenc` +
+/// `Counter` with `Emit` set, where the short-circuit is intentionally NOT
+/// applied: `Emit` only makes sense with `cbcs`+`Constant`, and a future
+/// regression that introduces duplicates on a `cenc`/`Counter` path must
+/// still be caught by this backstop.
+fn assert_ivs_unique(
+    plan: &[Vec<Vec<u8>>],
+    iv_gen: &IvGen,
+    constant_iv_senc: ConstantIvSenc,
+) -> Result<()> {
+    // Only skip the check for the one combination where repetition is by
+    // design: cbcs with a constant IV being replicated into every entry.
+    if matches!(iv_gen, IvGen::Constant(_)) && matches!(constant_iv_senc, ConstantIvSenc::Emit) {
         return Ok(());
     }
     let mut seen: BTreeSet<&[u8]> = BTreeSet::new();
@@ -1279,7 +1288,7 @@ mod tests {
             alloc::vec![dup.clone(), alloc::vec![0u8, 0, 0, 0, 0, 0, 0, 2]],
             alloc::vec![dup],
         ];
-        let err = assert_ivs_unique(&plan, ConstantIvSenc::Omit).unwrap_err();
+        let err = assert_ivs_unique(&plan, &IvGen::Counter, ConstantIvSenc::Omit).unwrap_err();
         assert!(matches!(err, Error::InvalidInput(_)));
 
         // A correctly-generated (strictly increasing, Media-wide) plan must
@@ -1292,9 +1301,25 @@ mod tests {
             alloc::vec![alloc::vec![0u8, 0, 0, 0, 0, 0, 0, 2]],
         ];
         assert!(
-            assert_ivs_unique(&good_plan, ConstantIvSenc::Omit).is_ok(),
+            assert_ivs_unique(&good_plan, &IvGen::Counter, ConstantIvSenc::Omit).is_ok(),
             "a correctly Media-wide-continuous plan must pass the backstop"
         );
+    }
+
+    /// **Regression #783**: `cenc` + `IvGen::Counter` + `ConstantIvSenc::Emit`
+    /// must NOT short-circuit the duplicate-IV check.  The `Emit` variant
+    /// only makes semantic sense with `cbcs`+`Constant`; a duplicate IV on
+    /// a `cenc`/`Counter` path (even with `Emit` set) is still a two-time
+    /// pad and must be caught by this backstop.
+    #[test]
+    fn emit_does_not_short_circuit_duplicate_check_for_cenc_counter() {
+        let dup = alloc::vec![0u8; 8];
+        // Two identical IVs across tracks — same shape as
+        // `planned_duplicate_ivs_are_rejected_before_ciphering`.
+        let plan: Vec<Vec<Vec<u8>>> = alloc::vec![alloc::vec![dup.clone()], alloc::vec![dup],];
+        let err = assert_ivs_unique(&plan, &IvGen::Counter, ConstantIvSenc::Emit)
+            .expect_err("duplicate IV on cenc+Counter+Emit must be rejected");
+        assert!(matches!(err, Error::InvalidInput(_)));
     }
 
     /// **F1 regression, end to end**: a `Media` whose `encrypt()` call is

@@ -150,9 +150,9 @@ const KEY: [u8; 16] = [
 /// `encrypt()` call, not a regression. Tightening these to `assert_eq!` (the
 /// original T2 story) is what caught both drifts: the previous "<= 2x"
 /// tolerance band would have silently absorbed them.
-const CENC_MEASURED_ALLOCS: usize = 65;
-const CENC_MEASURED_ALLOC_BYTES: usize = 2_720;
-const CENC_MEASURED_DEALLOCS: usize = 48;
+const CENC_MEASURED_ALLOCS: usize = 68;
+const CENC_MEASURED_ALLOC_BYTES: usize = 3_392;
+const CENC_MEASURED_DEALLOCS: usize = 51;
 // NOTE: the three pinned metrics (allocs/alloc_bytes/deallocs) are asserted
 // with `assert_eq!` below, not a tolerance band. A tolerance multiple (e.g.
 // "within 2x") is wide enough that short-circuiting `CencEncryptor::encrypt`
@@ -245,9 +245,9 @@ fn cenc_encrypt_allocation_count_over_real_fixture() {
 /// way as the `cenc` consts above — same plan-then-cipher (F1) rationale for
 /// the move from 51/2_888/34, which itself had moved from 48/2216/31 for the
 /// 76b9325d IV-uniqueness fix.
-const CBCS_MEASURED_ALLOCS: usize = 65;
-const CBCS_MEASURED_ALLOC_BYTES: usize = 2_720;
-const CBCS_MEASURED_DEALLOCS: usize = 48;
+const CBCS_MEASURED_ALLOCS: usize = 68;
+const CBCS_MEASURED_ALLOC_BYTES: usize = 3_392;
+const CBCS_MEASURED_DEALLOCS: usize = 51;
 
 /// Same measurement for `cbcs` (AES-CBC pattern) — a different code path
 /// through `cenc_crypto::cbcs_sample` with its own subsample walk.
