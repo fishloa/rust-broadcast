@@ -16,7 +16,23 @@ the same library in one dependency graph. Trait impls belong to the wrong
 major, and the symptom is a baffling "no method found" on a type that plainly
 has it -- the old major's compiled code, not the new one.
 
-Three violation buckets:
+Four checks, all generic over workspace siblings (no special-casing):
+  1. **Bucket homogeneity** — for each in-tree requirement on a workspace
+     sibling, enumerate every unyanked published version that the requirement
+     admits, fetch that version's own workspace-sibling deps, and flag any
+     whose epochs disagree with in-tree epochs.  Catches consumers resolving
+     a stale intermediate dep into their graph (issue #858).
+  2. **Bump class** — compare each crate's latest-published sibling-dep epochs
+     against its in-tree epochs.  If any epoch changed but the crate's version
+     stayed inside the same compat bucket, that is a violation: an epoch
+     change requires a major-class bump (minor for 0.x, major for >=1.0).
+  3. **Dev-dep acyclicity** — no workspace crate may dev-depend on a workspace
+     crate that transitively normal-depends on it.  Pure `cargo metadata`
+     graph check, no network.  Controlled by `--enforce-dev-cycles`.
+  4. **Publish order** — emit a topologically sorted publish order over
+     normal edges only.
+
+Three violation buckets (legacy, from the original single-check era):
 
   **BLOCKING** -- the in-tree manifest is itself stale (someone forgot to bump
   the requirement), or the requirement is fixed in-tree but the crate is not
@@ -74,7 +90,10 @@ parser (`cargo_metadata` does not expose one).
 from __future__ import annotations
 
 import argparse
+import collections
+import itertools
 import json
+import os
 import re
 import subprocess
 import sys
@@ -134,6 +153,54 @@ def workspace_dependencies() -> dict[tuple[str, str], tuple[str, str]]:
             kind = dep.get("kind") or "normal"
             result[(member, sibling)] = (req, kind)
     return result
+
+
+# ── Generic workspace-sibling listing ────────────────────────────────────
+# These extracts a list of all sibling crate names, and a normal- /
+# dev-dependency adjacency structure, from `cargo metadata --no-deps`,
+# staying generic over whatever crates are in the workspace.
+# --------------------------------------------------------------------------
+
+def workspace_sibling_names() -> list[str]:
+    """Sorted list of every workspace member name."""
+    data = _cargo_metadata()
+    names = sorted(p["name"] for p in data["packages"])
+    return names
+
+
+def workspace_normal_dep_map() -> dict[str, set[str]]:
+    """crate -> set of sibling names it normal-depends on (direct)."""
+    data = _cargo_metadata()
+    siblings = {p["name"] for p in data["packages"]}
+    result: dict[str, set[str]] = {}
+    for pkg in data["packages"]:
+        member = pkg["name"]
+        result.setdefault(member, set())
+        for dep in pkg.get("dependencies", []):
+            if dep.get("name") in siblings:
+                kind = dep.get("kind") or "normal"
+                if kind == "normal":
+                    result[member].add(dep["name"])
+    return result
+
+
+def workspace_dev_dep_map() -> dict[str, set[str]]:
+    """crate -> set of sibling names it dev-depends on (direct)."""
+    data = _cargo_metadata()
+    siblings = {p["name"] for p in data["packages"]}
+    result: dict[str, set[str]] = {}
+    for pkg in data["packages"]:
+        member = pkg["name"]
+        result.setdefault(member, set())
+        for dep in pkg.get("dependencies", []):
+            if dep.get("name") in siblings:
+                kind = dep.get("kind") or "normal"
+                if kind == "dev":
+                    result[member].add(dep["name"])
+    return result
+
+
+# ── crates.io helpers ────────────────────────────────────────────────────
 
 
 def http_get_json(url: str) -> dict | None:
@@ -273,6 +340,369 @@ def compat_epoch(version_str: str) -> tuple[int, int, int] | None:
     return (0, 0, patch)
 
 
+def compat_bucket(version_str: str) -> tuple[int, int] | None:
+    """The version bucket for bump-class decision: (0, minor) for 0.x,
+    (major, 0) for >=1.0.  A change of bucket requires a major-class bump.
+    """
+    m = _VERSION_TOKEN.search(version_str)
+    if not m:
+        return None
+    parts = [int(x) for x in m.group(0).split(".")]
+    while len(parts) < 2:
+        parts.append(0)
+    major, minor = parts[0], parts[1]
+    if major > 0:
+        return (major, 0)
+    return (0, minor)
+
+
+def compare_versions(a: str, b: str) -> int:
+    """Compare two semver-ish version strings: -1 if a<b, 0 if equal, 1 if a>b.
+
+    Strips pre-release and build-metadata suffixes (`-` and `+`) before
+    comparing numeric components.  Non-numeric components are treated as 0.
+    """
+    a = _strip_meta(a)
+    b = _strip_meta(b)
+    a_parts: list[int] = []
+    b_parts: list[int] = []
+    for x in a.split("."):
+        try:
+            a_parts.append(int(x))
+        except ValueError:
+            a_parts.append(0)
+    for x in b.split("."):
+        try:
+            b_parts.append(int(x))
+        except ValueError:
+            b_parts.append(0)
+    while len(a_parts) < 3:
+        a_parts.append(0)
+    while len(b_parts) < 3:
+        b_parts.append(0)
+    if a_parts < b_parts:
+        return -1
+    if a_parts > b_parts:
+        return 1
+    return 0
+
+
+def _strip_meta(v: str) -> str:
+    """Strip pre-release (`-`) and build-metadata (`+`) suffixes."""
+    for sep in ("-", "+"):
+        idx = v.find(sep)
+        if idx != -1:
+            v = v[:idx]
+    return v
+
+
+# ── Published version helper ─────────────────────────────────────────────
+
+_published_sibling_deps_cache: dict[tuple[str, str], dict[str, str]] = {}
+
+
+def _published_sibling_deps(crate: str, version: str) -> dict[str, str]:
+    """Return {sibling_name: req} for all workspace-sibling normal deps of
+    `crate` at published `version`.  Cached.
+
+    Returns empty dict on error (warned by http_get_json); the caller must
+    not treat an empty dict as "no deps" for correctness-critical checks.
+    """
+    key = (crate, version)
+    if key in _published_sibling_deps_cache:
+        return _published_sibling_deps_cache[key]
+
+    siblings = set(workspace_sibling_names())
+    deps = published_dependencies(crate, version)
+    if deps == "error":
+        _published_sibling_deps_cache[key] = {}
+        return {}
+
+    result: dict[str, str] = {}
+    for dep in deps:
+        sib = dep.get("crate_id")
+        req = dep.get("req")
+        kind = dep.get("kind") or "normal"
+        if sib in siblings and req is not None and kind == "normal":
+            result[sib] = req
+    _published_sibling_deps_cache[key] = result
+    return result
+
+
+# ── Check 1: bucket homogeneity ──────────────────────────────────────────
+# For each in-tree requirement on a workspace sibling, enumerate every
+# unyanked published version of that sibling which the requirement admits.
+# For each admitted version, compare its own workspace-sibling dep epochs
+# against the current in-tree epochs.  Any disagreement is a violation.
+
+def _check1_bucket_homogeneity(
+    in_tree_deps: dict[tuple[str, str], tuple[str, str]],
+    members: dict[str, str],
+    normal_dep_map: dict[str, set[str]],
+) -> list[str]:
+    """Return violation messages for bucket-homogeneity check 1."""
+    violations: list[str] = []
+    seen: set[tuple[str, str, str, str, str, str]] = set()
+
+    for (consumer, sibling), (req, kind) in sorted(in_tree_deps.items()):
+        if kind not in ("normal", "dev"):
+            continue
+        req_epoch = compat_epoch(req)
+        if req_epoch is None:
+            continue
+
+        # Enumerate all unyanked published versions of the sibling that
+        # the requirement admits.
+        admitted = [
+            v for v in _crate_versions(sibling)
+            if compat_epoch(v) == req_epoch
+        ]
+        for admitted_version in admitted:
+            # Get that published version's own workspace-sibling deps
+            pub_deps = _published_sibling_deps(sibling, admitted_version)
+            if not pub_deps:
+                # Could be an error or genuinely no sibling deps
+                continue
+
+            # Check each published dep's epoch against in-tree
+            for trans_dep, pub_req in sorted(pub_deps.items()):
+                pub_epoch = compat_epoch(pub_req)
+                if pub_epoch is None:
+                    continue
+                in_tree_epoch = compat_epoch(members.get(trans_dep, "0.0.0"))
+                if in_tree_epoch is None:
+                    continue
+                if pub_epoch == in_tree_epoch:
+                    continue  # clean
+
+                # Found an epoch disagreement
+                key = (consumer, req, sibling, admitted_version, trans_dep, pub_req)
+                if key in seen:
+                    continue
+                seen.add(key)
+
+                # Format the in-tree transitive dep's epoch for the message
+                in_tree_trans_req = None
+                # Find what epoch the sibling requires in-tree
+                for (sib_member, tdep), (t_req, t_kind) in in_tree_deps.items():
+                    if sib_member == sibling and tdep == trans_dep and t_kind == "normal":
+                        in_tree_trans_req = t_req
+                        break
+
+                in_tree_ref = in_tree_trans_req if in_tree_trans_req else f"(version {members[trans_dep]})"
+                violations.append(
+                    f"{consumer} requires {sibling} {req}, which admits "
+                    f"{sibling} {admitted_version} built against {trans_dep} "
+                    f"{pub_req} (in-tree is {in_tree_ref}) -- a consumer "
+                    f"can resolve two {trans_dep} majors"
+                )
+
+    return violations
+
+
+# ── Check 2: bump class ──────────────────────────────────────────────────
+
+def _check2_bump_class(
+    in_tree_deps: dict[tuple[str, str], tuple[str, str]],
+    members: dict[str, str],
+) -> list[str]:
+    """Return violation messages for bump-class check 2.
+
+    For each workspace member, compare its in-tree sibling-dep epochs against
+    those of its last published version.  If any sibling epoch changed but the
+    crate's own version stayed inside the same compat bucket, flag it.
+    """
+    violations: list[str] = []
+
+    for name, in_tree_version in sorted(members.items()):
+        max_version = latest_published_version(name)
+        if max_version in (None, "error"):
+            continue
+
+        # Compare the crate's own bucket
+        in_tree_bucket = compat_bucket(in_tree_version)
+        published_bucket = compat_bucket(max_version)
+        if in_tree_bucket is None or published_bucket is None:
+            continue
+        if in_tree_bucket == published_bucket:
+            # Same bucket — check if any sibling epoch changed
+            pub_deps = _published_sibling_deps(name, max_version)
+            for sibling, pub_req in sorted(pub_deps.items()):
+                pub_epoch = compat_epoch(pub_req)
+                if pub_epoch is None:
+                    continue
+                # Find in-tree requirement for this sibling
+                in_tree_req = None
+                for (m, s), (r, k) in in_tree_deps.items():
+                    if m == name and s == sibling and k == "normal":
+                        in_tree_req = r
+                        break
+                if in_tree_req is None:
+                    continue
+                in_tree_epoch = compat_epoch(in_tree_req)
+                if in_tree_epoch is None:
+                    continue
+                if pub_epoch == in_tree_epoch:
+                    continue  # clean
+
+                # Epoch changed but bucket stayed → violation
+                required_bump = _bump_class_to_str(name, in_tree_bucket)
+                violations.append(
+                    f"{name} {max_version} requires {sibling} {pub_req}, "
+                    f"but {name} {in_tree_version} in-tree requires "
+                    f"{sibling} {in_tree_req} — an epoch change ({pub_req} → "
+                    f"{in_tree_req}) while staying in the "
+                    f"{_bucket_human(name, in_tree_bucket)} bucket; "
+                    f"requires {required_bump}"
+                )
+    return violations
+
+
+_BUCKET_HUMAN_CACHE: dict[tuple[str, tuple[int, int]], str] = {}
+
+
+def _bucket_human(name: str, bucket: tuple[int, int]) -> str:
+    """Human-readable bucket name like '0.3' or '9'."""
+    key = (name, bucket)
+    if key in _BUCKET_HUMAN_CACHE:
+        return _BUCKET_HUMAN_CACHE[key]
+    maj, minor = bucket
+    if maj > 0:
+        s = str(maj)
+    else:
+        s = f"0.{minor}"
+    _BUCKET_HUMAN_CACHE[key] = s
+    return s
+
+
+def _bump_class_to_str(name: str, bucket: tuple[int, int]) -> str:
+    """The version string that would be the next major-class bump."""
+    maj, minor = bucket
+    if maj > 0:
+        return f"{maj + 1}.0.0"
+    else:
+        return f"0.{minor + 1}.0"
+
+
+# ── Check 3: dev-dep acyclicity ──────────────────────────────────────────
+
+def _check3_dev_cycles(
+    normal_dep_map: dict[str, set[str]],
+    dev_dep_map: dict[str, set[str]],
+) -> list[str]:
+    """Return violation messages for dev-dep cycle check 3.
+
+    For each dev-dep edge A (dev)-> B, check if there is a transitive
+    normal-dep path from B to A.
+    """
+    violations: list[str] = []
+    seen: set[tuple[str, str]] = set()
+
+    for dev_src, dev_targets in sorted(dev_dep_map.items()):
+        for dev_tgt in sorted(dev_targets):
+            if (dev_src, dev_tgt) in seen:
+                continue
+
+            # Find transitive normal-dep closure of dev_tgt
+            visited = set()
+            stack = [dev_tgt]
+            reachable = set()
+            while stack:
+                node = stack.pop()
+                if node in visited:
+                    continue
+                visited.add(node)
+                for nd in normal_dep_map.get(node, set()):
+                    reachable.add(nd)
+                    if nd not in visited:
+                        stack.append(nd)
+
+            if dev_src in reachable:
+                # Find a path for reporting
+                path = _find_normal_path(normal_dep_map, dev_tgt, dev_src)
+                path_str = " → ".join(path) if path else f"{dev_tgt} → ... → {dev_src}"
+                violations.append(
+                    f"{dev_src} --dev--> {dev_tgt}  AND  "
+                    f"{dev_tgt} --normal-->* {dev_src}  "
+                    f"(path: {path_str})"
+                )
+                seen.add((dev_src, dev_tgt))
+
+    return violations
+
+
+def _find_normal_path(
+    normal_dep_map: dict[str, set[str]],
+    start: str,
+    target: str,
+) -> list[str] | None:
+    """BFS to find a normal-dep path from start to target."""
+    from collections import deque
+    parent: dict[str, str | None] = {start: None}
+    queue = deque([start])
+    while queue:
+        node = queue.popleft()
+        if node == target:
+            # Reconstruct path
+            path: list[str] = []
+            cur: str | None = node
+            while cur is not None:
+                path.append(cur)
+                cur = parent[cur]
+            path.reverse()
+            return path
+        for neighbor in normal_dep_map.get(node, set()):
+            if neighbor not in parent:
+                parent[neighbor] = node
+                queue.append(neighbor)
+    return None
+
+
+# ── Check 4: publish order ───────────────────────────────────────────────
+
+def _check4_publish_order(
+    normal_dep_map: dict[str, set[str]],
+) -> tuple[list[str], list[str]]:
+    """Return (sorted_publish_order, cycle_nodes_if_any).
+
+    Topological sort of normal-dep graph.  If a cycle exists, return the
+    nodes involved in the cycle.
+    """
+    from collections import deque
+
+    # Kahn's algorithm
+    in_degree: dict[str, int] = {}
+    all_nodes = set(normal_dep_map.keys())
+    for n in all_nodes:
+        in_degree.setdefault(n, 0)
+    for n, deps in normal_dep_map.items():
+        for d in deps:
+            all_nodes.add(d)
+            in_degree.setdefault(d, 0)
+            in_degree[d] += 1
+
+    queue = deque([n for n in sorted(all_nodes) if in_degree.get(n, 0) == 0])
+    order: list[str] = []
+
+    while queue:
+        n = queue.popleft()
+        order.append(n)
+        for d in sorted(normal_dep_map.get(n, set())):
+            in_degree[d] -= 1
+            if in_degree[d] == 0:
+                queue.append(d)
+
+    if len(order) != len(all_nodes):
+        # Cycle detected
+        cycle_nodes = [n for n in sorted(all_nodes) if in_degree.get(n, 0) > 0]
+        return order, cycle_nodes
+
+    return order, []
+
+
+# ── classify (legacy single-check logic) ─────────────────────────────────
+
+
 def classify(
     name: str,
     max_version: str,
@@ -324,44 +754,7 @@ def classify(
         return "blocking"
 
 
-def compare_versions(a: str, b: str) -> int:
-    """Compare two semver-ish version strings: -1 if a<b, 0 if equal, 1 if a>b.
-
-    Strips pre-release and build-metadata suffixes (`-` and `+`) before
-    comparing numeric components.  Non-numeric components are treated as 0.
-    """
-    a = _strip_meta(a)
-    b = _strip_meta(b)
-    a_parts: list[int] = []
-    b_parts: list[int] = []
-    for x in a.split("."):
-        try:
-            a_parts.append(int(x))
-        except ValueError:
-            a_parts.append(0)
-    for x in b.split("."):
-        try:
-            b_parts.append(int(x))
-        except ValueError:
-            b_parts.append(0)
-    while len(a_parts) < 3:
-        a_parts.append(0)
-    while len(b_parts) < 3:
-        b_parts.append(0)
-    if a_parts < b_parts:
-        return -1
-    if a_parts > b_parts:
-        return 1
-    return 0
-
-
-def _strip_meta(v: str) -> str:
-    """Strip pre-release (`-`) and build-metadata (`+`) suffixes."""
-    for sep in ("-", "+"):
-        idx = v.find(sep)
-        if idx != -1:
-            v = v[:idx]
-    return v
+# ── main ─────────────────────────────────────────────────────────────────
 
 
 def main() -> int:
@@ -373,10 +766,21 @@ def main() -> int:
         "Without this flag, violations are printed but the exit code is 0 "
         "(ordinary push/PR runs).",
     )
+    parser.add_argument(
+        "--enforce-dev-cycles",
+        action="store_true",
+        help="Exit 1 on dev-dep cycle violations (check 3). "
+        "Not yet the default — TODO(#858-followup): make default-on "
+        "once the two known cycles are removed.",
+    )
     args = parser.parse_args()
+
+    skip_network = os.environ.get("SKIP_NETWORK", "") == "1"
 
     members = workspace_packages()
     in_tree_deps = workspace_dependencies()
+    normal_dep_map = workspace_normal_dep_map()
+    dev_dep_map = workspace_dev_dep_map()
 
     blocking: list[str] = []
     pending: list[str] = []
@@ -385,136 +789,138 @@ def main() -> int:
     publish_order: list[str] = []
     skipped: list[str] = []
 
-    for name, in_tree_version in sorted(members.items()):
-        max_version = latest_published_version(name)
-        if max_version == "error":
-            skipped.append(name)
-            continue
-        if max_version is None:
-            print(f"  {name}: not yet published, skipping")
-            continue
-
-        deps = published_dependencies(name, max_version)
-        if deps == "error":
-            skipped.append(name)
-            continue
-
-        for dep in deps:
-            sibling = dep.get("crate_id")
-            req = dep.get("req")
-            if sibling not in members or req is None:
+    if skip_network:
+        print("SKIP_NETWORK=1: running graph-only checks (3-4), skipping crates.io checks (1-2)")
+        print()
+        check1_violations = []
+        check2_violations = []
+    else:
+        # ── Legacy check: latest-published-vs-in-tree ────────────────────────
+        for name, in_tree_version in sorted(members.items()):
+            max_version = latest_published_version(name)
+            if max_version == "error":
+                skipped.append(name)
                 continue
-            published_epoch = compat_epoch(req)
-            sibling_in_tree_version = members[sibling]
-            current_epoch = compat_epoch(sibling_in_tree_version)
-            if published_epoch is None or current_epoch is None:
+            if max_version is None:
+                print(f"  {name}: not yet published, skipping")
                 continue
-            if published_epoch >= current_epoch:
-                continue  # requirement is current -- ok
 
-            kind = dep.get("kind") or "normal"
+            deps = published_dependencies(name, max_version)
+            if deps == "error":
+                skipped.append(name)
+                continue
 
-            # Resolve in-tree req, matching kind
-            in_tree_req = None
-            for (m, s), (r, k) in in_tree_deps.items():
-                if m == name and s == sibling and k == kind:
-                    in_tree_req = r
-                    break
+            for dep in deps:
+                sibling = dep.get("crate_id")
+                req = dep.get("req")
+                if sibling not in members or req is None:
+                    continue
+                published_epoch = compat_epoch(req)
+                sibling_in_tree_version = members[sibling]
+                current_epoch = compat_epoch(sibling_in_tree_version)
+                if published_epoch is None or current_epoch is None:
+                    continue
+                if published_epoch >= current_epoch:
+                    continue  # requirement is current -- ok
 
-            dev_range_resolvable = range_still_resolvable(sibling, req) if kind == "dev" else False
+                kind = dep.get("kind") or "normal"
 
-            bucket = classify(
-                name=name,
-                max_version=max_version,
-                in_tree_version=in_tree_version,
-                sibling=sibling,
-                published_req=req,
-                in_tree_req=in_tree_req,
-                kind=kind,
-                sibling_in_tree_version=sibling_in_tree_version,
-                dev_range_resolvable=dev_range_resolvable,
-            )
+                # Resolve in-tree req, matching kind
+                in_tree_req = None
+                for (m, s), (r, k) in in_tree_deps.items():
+                    if m == name and s == sibling and k == kind:
+                        in_tree_req = r
+                        break
 
-            detail = (
-                f"{name} {max_version} ({kind}-dep) requires "
-                f"{sibling} {req}, but {sibling} is now {sibling_in_tree_version} in-tree"
-            )
+                dev_range_resolvable = range_still_resolvable(sibling, req) if kind == "dev" else False
 
-            if bucket == "stale_dev":
-                stale_dev.append(
-                    detail + " (dev-dep; old major still published, so"
-                    " publishes resolve -- hygiene only)"
-                )
-            elif bucket == "pending":
-                suffix = _pending_suffix(
+                bucket = classify(
                     name=name,
                     max_version=max_version,
                     in_tree_version=in_tree_version,
                     sibling=sibling,
-                    sibling_in_tree_version=sibling_in_tree_version,
+                    published_req=req,
                     in_tree_req=in_tree_req,
                     kind=kind,
+                    sibling_in_tree_version=sibling_in_tree_version,
+                    dev_range_resolvable=dev_range_resolvable,
                 )
-                pending.append(detail + suffix)
-            else:
-                blocking.append(detail + " (superseded major)")
 
-    # ── Second check: in-tree requirement satisfiability ───────────────
-    # A workspace crate whose Cargo.toml `version` requirement on a sibling
-    # points at a compat epoch that has no published unyanked version is an
-    # UNPUBLISHABLE crate -- `cargo publish` resolves deps from the registry,
-    # so it will fail the moment it hits crates.io (this is what broke
-    # transmux v0.21.0's publish when it required media-doctor ^0.6 before
-    # 0.6.0 was published).
-    #
-    # If the sibling IS being published in the same wave, the requirement
-    # becomes satisfiable once the sibling lands -- but publish ORDER matters,
-    # so we report it under its own heading rather than as a violation.
-    for (name, sibling), (req, kind) in sorted(in_tree_deps.items()):
-        if name not in members or sibling not in members:
-            continue
+                detail = (
+                    f"{name} {max_version} ({kind}-dep) requires "
+                    f"{sibling} {req}, but {sibling} is now {sibling_in_tree_version} in-tree"
+                )
 
-        # Is the requirement already satisfiable from published crates?
-        if any_published_version_satisfies(sibling, req):
-            continue
+                if bucket == "stale_dev":
+                    stale_dev.append(
+                        detail + " (dev-dep; old major still published, so"
+                        " publishes resolve -- hygiene only)"
+                    )
+                elif bucket == "pending":
+                    suffix = _pending_suffix(
+                        name=name,
+                        max_version=max_version,
+                        in_tree_version=in_tree_version,
+                        sibling=sibling,
+                        sibling_in_tree_version=sibling_in_tree_version,
+                        in_tree_req=in_tree_req,
+                        kind=kind,
+                    )
+                    pending.append(detail + suffix)
+                else:
+                    blocking.append(detail + " (superseded major)")
 
-        sibling_in_tree = members[sibling]
-        # Does the sibling's in-tree version satisfy the requirement?
-        sibling_satisfies = _version_satisfies_req(sibling_in_tree, req)
-        if not sibling_satisfies:
-            # The in-tree requirement points at an epoch that doesn't
-            # exist anywhere -- not published, and the sibling's own
-            # version doesn't match.
-            unpublishable.append(
-                f"{name} ({kind}-dep) requires {sibling} {req}, "
-                f"but no published version satisfies that requirement "
-                f"and the sibling's in-tree version ({sibling_in_tree}) "
-                f"also does not match -- cargo publish will FAIL"
-            )
-            continue
+        # ── Second check: in-tree requirement satisfiability ───────────────
+        for (name, sibling), (req, kind) in sorted(in_tree_deps.items()):
+            if name not in members or sibling not in members:
+                continue
 
-        # The sibling's in-tree version satisfies the requirement, but
-        # it's not published.  Is the sibling being republished?
-        max_version = latest_published_version(sibling)
-        if max_version and max_version not in (None, "error"):
-            if compare_versions(sibling_in_tree, max_version) > 0:
-                # Being published this wave → informational
-                publish_order.append(
-                    f"{name} ({kind}-dep) requires {sibling} {req} -- "
-                    f"no published version satisfies this yet, but "
-                    f"{sibling} {sibling_in_tree} is being published "
-                    f"this wave and will satisfy it.  Publish "
-                    f"{sibling} before {name}."
+            if any_published_version_satisfies(sibling, req):
+                continue
+
+            sibling_in_tree = members[sibling]
+            sibling_satisfies = _version_satisfies_req(sibling_in_tree, req)
+            if not sibling_satisfies:
+                unpublishable.append(
+                    f"{name} ({kind}-dep) requires {sibling} {req}, "
+                    f"but no published version satisfies that requirement "
+                    f"and the sibling's in-tree version ({sibling_in_tree}) "
+                    f"also does not match -- cargo publish will FAIL"
                 )
                 continue
 
-        # Sibling satisfies but is NOT being republished → BLOCKING
-        unpublishable.append(
-            f"{name} ({kind}-dep) requires {sibling} {req}, "
-            f"but no published version satisfies that requirement "
-            f"and {sibling} ({sibling_in_tree}) is not being "
-            f"republished -- cargo publish will FAIL"
-        )
+            max_version = latest_published_version(sibling)
+            if max_version and max_version not in (None, "error"):
+                if compare_versions(sibling_in_tree, max_version) > 0:
+                    publish_order.append(
+                        f"{name} ({kind}-dep) requires {sibling} {req} -- "
+                        f"no published version satisfies this yet, but "
+                        f"{sibling} {sibling_in_tree} is being published "
+                        f"this wave and will satisfy it.  Publish "
+                        f"{sibling} before {name}."
+                    )
+                    continue
+
+            unpublishable.append(
+                f"{name} ({kind}-dep) requires {sibling} {req}, "
+                f"but no published version satisfies that requirement "
+                f"and {sibling} ({sibling_in_tree}) is not being "
+                f"republished -- cargo publish will FAIL"
+            )
+
+        # ── Check 1: bucket homogeneity ─────────────────────────────────────
+        check1_violations = _check1_bucket_homogeneity(in_tree_deps, members, normal_dep_map)
+
+        # ── Check 2: bump class ─────────────────────────────────────────────
+        check2_violations = _check2_bump_class(in_tree_deps, members)
+
+    # ── Check 3: dev-dep cycles ─────────────────────────────────────────
+    check3_violations = _check3_dev_cycles(normal_dep_map, dev_dep_map)
+
+    # ── Check 4: publish order ──────────────────────────────────────────
+    sorted_order, cycle_nodes = _check4_publish_order(normal_dep_map)
+
+    # ── Output ──────────────────────────────────────────────────────────
 
     print()
     if skipped:
@@ -558,13 +964,72 @@ def main() -> int:
             print(f"  - {d}")
         print()
 
+    # ── Check 1 output ──────────────────────────────────────────────────
+    if check1_violations:
+        print(
+            f"{len(check1_violations)} bucket-homogeneity violation(s) "
+            f"(check 1 -- admits a published version with mismatched "
+            f"transitive dep epochs):"
+        )
+        for v in check1_violations:
+            print(f"  - {v}")
+        print()
+
+    # ── Check 2 output ──────────────────────────────────────────────────
+    if check2_violations:
+        print(
+            f"{len(check2_violations)} bump-class violation(s) "
+            f"(check 2 -- epoch change without major-class bump):"
+        )
+        for v in check2_violations:
+            print(f"  - {v}")
+        print()
+
+    # ── Check 3 output ──────────────────────────────────────────────────
+    if check3_violations:
+        known_msg = (
+            "KNOWN, being fixed in the test-relocation PR"
+        )
+        print(
+            f"{len(check3_violations)} dev-dep cycle(s) "
+            f"(check 3 -- {known_msg}):"
+        )
+        for v in check3_violations:
+            print(f"  - {v}")
+        print()
+
+    # ── Check 4 output ──────────────────────────────────────────────────
+    if cycle_nodes:
+        print("  ERROR: normal-dep graph has a cycle, publish order invalid.")
+        print(f"  Nodes in cycle: {', '.join(cycle_nodes)}")
+        print()
+    else:
+        print(f"  Publish order ({len(sorted_order)} crates, normal deps only):")
+        for i, crate in enumerate(sorted_order, 1):
+            deps = sorted(normal_dep_map.get(crate, set()))
+            dep_str = f"  (depends on: {', '.join(deps)})" if deps else ""
+            print(f"  {i:2d}. {crate}{dep_str}")
+        print()
+
     all_blocking = blocking + unpublishable
+
+    # Check 1 and check 2 violations contribute to blocking
+    all_blocking.extend(check1_violations)
+    all_blocking.extend(check2_violations)
+
+    if getattr(args, "enforce_dev_cycles", False):
+        all_blocking.extend(check3_violations)
+
+    # Cycle in normal-dep graph is always blocking
+    if cycle_nodes:
+        cycle_msg = f"Normal-dep graph cycle detected: {', '.join(cycle_nodes)}"
+        all_blocking.append(cycle_msg)
 
     if all_blocking:
         print(f"Found {len(all_blocking)} published-dependency consistency violation(s) (BLOCKING):")
         for v in all_blocking:
             print(f"  - {v}")
-    elif not pending:
+    elif not pending and not stale_dev and not publish_order:
         print("No published-dependency consistency violations found.")
 
     if all_blocking and args.blocking:
