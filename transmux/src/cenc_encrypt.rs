@@ -153,49 +153,7 @@ pub enum IvGen {
     Constant([u8; KEY_LEN]),
 }
 
-/// Whether a `cbcs` track with [`IvGen::Constant`] emits a `senc` box with
-/// the constant IV replicated per sample (the default, for interop with
-/// decryptors such as Bento4 `mp4decrypt` that silently ignore protected
-/// tracks lacking a `senc`), or omits the `senc`/`saiz`/`saio` triple
-/// entirely (the spec-minimal shape — ISO/IEC 23001-7 §12.2/§12.3 permit it
-/// because `tenc.default_constant_IV` carries the lone IV and there is no
-/// per-sample subsample map to record). The self-consistency gate
-/// ([`CencDecryptor`](crate::CencDecryptor) round-trip) is tested for both
-/// shapes; the new default shape is additionally verified against Bento4's
-/// `mp4decrypt`. Has no effect when `iv` is not [`IvGen::Constant`] or
-/// `scheme` is not [`CencScheme::Cbcs`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-#[non_exhaustive]
-pub enum ConstantIvSenc {
-    /// Emit a `senc` box with each sample's entry carrying the constant IV
-    /// replicated (`per_sample_iv_size = 16`). The default — chosen for
-    /// maximum third-party decryptor interop (Bento4 `mp4decrypt`, Shaka
-    /// Packager, and several other tools require an explicit `senc` in the
-    /// `traf` to recognize the track as decryptable at all, even when a
-    /// `tenc.default_constant_IV` is present). The few extra bytes per
-    /// fragment are the cost of interop.
-    #[default]
-    Emit,
-    /// Omit `senc`/`saiz`/`saio` entirely. The spec-minimal, `tenc`-only
-    /// shape: every decryptor that follows ISO/IEC 23001-7 to the letter
-    /// can decrypt this shape, and it costs zero overhead per fragment,
-    /// but it is known to be silently ignored by common tools (notably
-    /// Bento4 `mp4decrypt` 1.6.0.0 — it exits 0 but the `mdat` is
-    /// unchanged). Opt in when you control the decryptor chain.
-    Omit,
-}
-
-impl ConstantIvSenc {
-    /// Human-readable label for this enum variant.
-    pub fn name(&self) -> &'static str {
-        match self {
-            ConstantIvSenc::Emit => "emit",
-            ConstantIvSenc::Omit => "omit",
-        }
-    }
-}
-
-broadcast_common::impl_spec_display!(ConstantIvSenc);
+pub use super::cenc::ConstantIvSenc;
 
 /// How the protected byte ranges (subsample map) of each sample are chosen.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

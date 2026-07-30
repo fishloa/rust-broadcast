@@ -168,8 +168,8 @@ pub struct TrackEncryption {
     pub samples: Vec<crate::cenc::SampleEncryptionEntry>,
     /// Whether a `cbcs` + [`crate::IvGen::Constant`](crate::cenc_encrypt::IvGen::Constant)
     /// track should emit a `senc` box with the constant IV replicated per
-    /// sample. See [`ConstantIvSenc`](crate::cenc_encrypt::ConstantIvSenc).
-    pub constant_iv_senc: crate::cenc_encrypt::ConstantIvSenc,
+    /// sample. See [`ConstantIvSenc`](crate::cenc::ConstantIvSenc).
+    pub constant_iv_senc: crate::cenc::ConstantIvSenc,
 }
 
 impl TrackEncryption {
@@ -180,7 +180,7 @@ impl TrackEncryption {
         scheme: crate::cenc::CencScheme,
         tenc: crate::cenc::TrackEncryptionBox,
         samples: Vec<crate::cenc::SampleEncryptionEntry>,
-        constant_iv_senc: crate::cenc_encrypt::ConstantIvSenc,
+        constant_iv_senc: crate::cenc::ConstantIvSenc,
     ) -> Self {
         Self {
             scheme,

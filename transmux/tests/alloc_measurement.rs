@@ -49,8 +49,7 @@ use std::path::PathBuf;
 use broadcast_common::{Encrypt, Unpackage};
 use transmux::{
     CencEncryptor, CencScheme, CodecConfig, ConstantIvSenc, EncryptConfig, IvGen, Media,
-    RtpPacketiser, Sample,
-    SubsamplePolicy, TsDemux,
+    RtpPacketiser, Sample, SubsamplePolicy, TsDemux,
 };
 
 /// Counts every allocation/deallocation made **by the calling thread**.

@@ -77,8 +77,12 @@ fn write_temp(bytes: &[u8], tag: &str) -> PathBuf {
 /// Try ffmpeg decryption with `-decryption_key` and actual decoding (no
 /// `-c copy` — that stream-copies the encrypted bitstream without
 /// decrypting it).  Returns (exit_ok, output_size, has_mdat_box).
-fn ffmpeg_try_decrypt(in_path: &PathBuf, out_path: &PathBuf, key_hex: &str) -> (bool, u64, bool) {
-    let output = Command::new("ffmpeg")
+fn ffmpeg_try_decrypt(
+    in_path: &PathBuf,
+    out_path: &PathBuf,
+    key_hex: &str,
+) -> Option<(bool, u64, bool)> {
+    let output = match Command::new("ffmpeg")
         .args(["-decryption_key", key_hex, "-i"])
         .arg(in_path)
         .arg("-f")
@@ -86,7 +90,10 @@ fn ffmpeg_try_decrypt(in_path: &PathBuf, out_path: &PathBuf, key_hex: &str) -> (
         .arg("-y")
         .arg(out_path)
         .output()
-        .expect("spawn ffmpeg");
+    {
+        Ok(o) => o,
+        Err(_) => return None,
+    };
     let ok = output.status.success();
     let size = std::fs::metadata(out_path).map(|m| m.len()).unwrap_or(0);
     let has_mdat = if size > 1000 {
@@ -110,7 +117,7 @@ fn ffmpeg_try_decrypt(in_path: &PathBuf, out_path: &PathBuf, key_hex: &str) -> (
     } else {
         false
     };
-    (ok, size, has_mdat)
+    Some((ok, size, has_mdat))
 }
 
 /// ffmpeg 8.1.2 cannot decrypt our `cbcs` (AES-CBC pattern) output.
@@ -145,7 +152,11 @@ fn ffmpeg_cannot_decrypt_cbcs() {
             std::process::id()
         ));
         let key_hex = to_hex(&KEY);
-        let (ok, size, has_mdat) = ffmpeg_try_decrypt(&in_path, &out_path, &key_hex);
+        let Some((ok, size, has_mdat)) = ffmpeg_try_decrypt(&in_path, &out_path, &key_hex) else {
+            let _ = std::fs::remove_file(&in_path);
+            eprintln!("ffmpeg {tag}: ffmpeg not found — skipping negative oracle");
+            continue;
+        };
         let _ = std::fs::remove_file(&in_path);
         let _ = std::fs::remove_file(&out_path);
 
