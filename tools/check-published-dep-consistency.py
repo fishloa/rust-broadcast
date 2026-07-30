@@ -71,20 +71,19 @@ Exit code is always 0 unless `--blocking` is passed, in which case it is 1 if
 any BLOCKING violation was found. The caller (CI) decides whether this run is
 advisory (ordinary pushes/PRs) or blocking (release tags).
 
-Known limitation: epoch-granularity comparison
+Requirement matching honours floors and ceilings
 ------------------------------------------------
-`any_published_version_satisfies()` and `_version_satisfies_req()` compare
-only the caret-compatible **epoch** of a requirement, not the full semver
-range.  For example, `^0.6.5` has epoch `(0, 6, 0)` and is reported as
-satisfied by a published `0.6.0`, even though `cargo` would reject that.
-Similarly `^9.1` has epoch `(1, 9, 0)` and matches `9.0.0`.
+`req_admits()` is the single place a requirement is tested against a published
+version. It understands the forms this workspace uses -- bare/caret (`0.3`,
+`^0.21`, `9`, `0.3.1`) and comparator sets (`>=0.3.0, <0.3.1`) -- and honours
+both the floor and any explicit upper bound.
 
-This is safe for this workspace today because every inter-crate version
-requirement uses **two-component** forms (`"0.21"`, `"9"`, `"0.4"`),
-where epoch comparison and full comparison agree.  It would stop being
-safe if a three-component requirement (e.g. `^0.6.5`) were introduced
-to a sibling dependency.  Fixing this requires a real semver range
-parser (`cargo_metadata` does not expose one).
+This matters because the fix for #858 introduces three-component requirements
+(`mpeg-ts = "0.3.1"`). An epoch-only comparison collapses `0.3.1` to the bucket
+`(0, 3, 0)`, identical to `0.3.0`'s, so it would keep reporting a violation the
+floor has already resolved -- blocking the release tag forever on 22 findings
+that are fixed. `compat_epoch()` is still used where a BUCKET is genuinely the
+question (bump-class decisions); it is no longer used to decide admission.
 """
 
 from __future__ import annotations
@@ -304,20 +303,14 @@ def _crate_versions(crate: str) -> list[str]:
 
 
 def any_published_version_satisfies(crate: str, req: str) -> bool:
-    """True if some published, unyanked version of `crate` matches the compat
-    epoch of `req`.
+    """True if some published, unyanked version of `crate` satisfies `req`.
 
-    NOTE: epoch-granularity approximation, see module docstring "Known
-    limitation: epoch-granularity comparison".  A requirement like `^0.6.5`
-    matches `0.6.0` here, which `cargo` would reject.
+    Uses `req_admits`, so floors and explicit ceilings are honoured: a
+    requirement of `>=0.3.0, <0.3.1` is NOT reported as satisfied by 0.3.1.
     """
-    epoch = compat_epoch(req)
-    if epoch is None:
+    if compat_epoch(req) is None:
         return True
-    for v in _crate_versions(crate):
-        if compat_epoch(v) == epoch:
-            return True
-    return False
+    return any(req_admits(req, v) for v in _crate_versions(crate))
 
 
 def version_is_published(crate: str, version: str) -> bool:
@@ -326,13 +319,8 @@ def version_is_published(crate: str, version: str) -> bool:
 
 
 def _version_satisfies_req(version: str, req: str) -> bool:
-    """True if `version` satisfies a caret-style `req` (same compat epoch).
-
-    NOTE: epoch-granularity approximation, see module docstring "Known
-    limitation: epoch-granularity comparison".  `^0.6.5` is accepted as
-    satisfied by `0.6.0`, which `cargo` would reject.
-    """
-    return compat_epoch(version) == compat_epoch(req)
+    """True if `version` satisfies `req`, honouring floors and ceilings."""
+    return req_admits(req, version)
 
 
 def published_dependencies(crate: str, version: str) -> list[dict] | str:
@@ -369,6 +357,57 @@ def compat_epoch(version_str: str) -> tuple[int, int, int] | None:
     if minor > 0:
         return (0, minor, 0)
     return (0, 0, patch)
+
+
+def req_admits(req: str, version: str) -> bool:
+    """True if `req` actually admits `version`.
+
+    Unlike `compat_epoch`, this honours the FLOOR and any explicit upper bound,
+    so a three-component requirement is understood:
+
+        req_admits("0.3",            "0.3.0") -> True
+        req_admits("0.3.1",          "0.3.0") -> False   # floored above it
+        req_admits(">=0.3.0, <0.3.1","0.3.1") -> False   # explicit ceiling
+
+    Without this, check 1 could not see the fix for #858: flooring `mpeg-ts` to
+    `"0.3.1"` leaves the caret EPOCH at (0, 3, 0), identical to 0.3.0's, so an
+    epoch-only comparison keeps reporting a violation that has been resolved --
+    and blocks the release tag forever.
+
+    Supports the forms this workspace uses: bare/caret (`0.3`, `^0.21`,
+    `9`, `0.3.1`) and comma-separated comparator sets (`>=0.3.0, <0.3.1`).
+    Anything unrecognised falls back to the epoch comparison, which is the
+    previous behaviour.
+    """
+    req = req.strip()
+
+    if any(op in req for op in (">", "<", "=")) and "," in req or req.startswith((">", "<")):
+        for clause in req.split(","):
+            clause = clause.strip()
+            m = re.match(r"(>=|<=|>|<|=)?\s*(\d+(?:\.\d+){0,2})", clause)
+            if not m:
+                return False
+            op, bound = m.group(1) or "=", m.group(2)
+            cmp = compare_versions(version, bound)
+            if op == ">=" and cmp < 0:
+                return False
+            if op == ">" and cmp <= 0:
+                return False
+            if op == "<=" and cmp > 0:
+                return False
+            if op == "<" and cmp >= 0:
+                return False
+            if op == "=" and cmp != 0:
+                return False
+        return True
+
+    # Bare or caret requirement: same compat epoch AND at or above the floor.
+    if compat_epoch(req) != compat_epoch(version):
+        return False
+    m = _VERSION_TOKEN.search(req)
+    if not m:
+        return True
+    return compare_versions(version, m.group(0)) >= 0
 
 
 def compat_bucket(version_str: str) -> tuple[int, int] | None:
@@ -484,9 +523,12 @@ def _check1_bucket_homogeneity(
 
         # Enumerate all unyanked published versions of the sibling that
         # the requirement admits.
+        # `req_admits` honours the floor and any explicit ceiling, so a
+        # three-component requirement is understood. Epoch-only matching would
+        # keep flagging versions the requirement has already excluded.
         admitted = [
             v for v in _crate_versions(sibling)
-            if compat_epoch(v) == req_epoch
+            if req_admits(req, v)
         ]
         for admitted_version in admitted:
             # Get that published version's own workspace-sibling deps

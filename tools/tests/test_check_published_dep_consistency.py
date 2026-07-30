@@ -170,19 +170,42 @@ class TestClassify:
         assert result == "stale_dev"
 
 
-class TestEpochApproximation:
-    """Pins the documented epoch-granularity limitation."""
+class TestRequirementAdmission:
+    """Requirement matching honours floors and explicit ceilings.
 
-    def test_epoch_granularity_is_a_known_limitation(self) -> None:
-        """_version_satisfies_req("0.6.0", "^0.6.5") returns True.
+    This class replaces a pin on the former epoch-granularity approximation,
+    which asserted that `^0.6.5` was satisfied by `0.6.0`. That approximation
+    stopped being safe the moment #858's fix introduced three-component
+    requirements: an epoch-only comparison collapses `0.3.1` to the same
+    bucket as `0.3.0` and keeps reporting a violation the floor has resolved,
+    which would block the release tag forever.
+    """
 
-        This documents the approximation rather than endorsing it.  Epoch
-        comparison sees both as epoch (0, 6, 0) and reports satisfied, even
-        though cargo would reject `^0.6.5` as unsatisfied by 0.6.0.
-        If someone tightens the comparison to a precise semver check, this
-        test is the thing to update — change it to assert False then.
-        """
-        assert dut._version_satisfies_req("0.6.0", "^0.6.5") is True
+    def test_floor_excludes_lower_patch(self) -> None:
+        """The case that broke the old approximation: `^0.6.5` is NOT
+        satisfied by `0.6.0`, and cargo agrees."""
+        assert dut._version_satisfies_req("0.6.0", "^0.6.5") is False
+
+    def test_858_floor_excludes_the_bc8_version(self) -> None:
+        """`mpeg-ts = "0.3.1"` must not admit 0.3.0 (broadcast-common 8)."""
+        assert dut.req_admits("0.3.1", "0.3.0") is False
+        assert dut.req_admits("0.3.1", "0.3.1") is True
+
+    def test_two_component_req_still_admits_whole_bucket(self) -> None:
+        """The unfloored form is unchanged — this is what makes 0.3.0
+        reachable and is exactly the #858 defect."""
+        assert dut.req_admits("0.3", "0.3.0") is True
+        assert dut.req_admits("0.3", "0.3.1") is True
+
+    def test_explicit_ceiling_excludes_upper(self) -> None:
+        """The 8.x maintenance form: `>=0.3.0, <0.3.1` keeps the bc-8 line on
+        0.3.0 and refuses the bc-9 0.3.1."""
+        assert dut.req_admits(">=0.3.0, <0.3.1", "0.3.0") is True
+        assert dut.req_admits(">=0.3.0, <0.3.1", "0.3.1") is False
+
+    def test_major_req_rejects_other_major(self) -> None:
+        assert dut.req_admits("9", "9.1.0") is True
+        assert dut.req_admits("9", "8.6.1") is False
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -742,3 +765,40 @@ def _mock_published_deps_minimal(crate: str, version: str) -> list[dict]:
         ],
     }
     return deps_map.get(crate, [])
+
+
+class TestCheck1HonoursFloors:
+    """Check 1 must USE `req_admits`, not just have it available.
+
+    A mutation reverting check 1's admitted-version list to an epoch-only
+    comparison passed every other test in this file: `req_admits` was covered
+    directly, but nothing covered its wiring into the check. That is the exact
+    shape of defect this whole tool exists to catch — an absent check reading
+    as a passing one — so it gets its own test.
+    """
+
+    def _run(self, req, published, monkeypatch):
+        monkeypatch.setattr(dut, "_crate_versions", lambda crate: published)
+        # mpeg-ts 0.3.0 is on broadcast-common ^8; 0.3.1 is on ^9.
+        monkeypatch.setattr(
+            dut,
+            "_published_sibling_deps",
+            lambda crate, version: {
+                "broadcast-common": "^8" if version == "0.3.0" else "^9"
+            },
+        )
+        return dut._check1_bucket_homogeneity(
+            {("dvb-si", "mpeg-ts"): (req, "normal")},
+            {"dvb-si": "9.1.1", "mpeg-ts": "0.3.1", "broadcast-common": "9.1.0"},
+            {"dvb-si": {"mpeg-ts"}},
+        )
+
+    def test_unfloored_req_reports_the_858_violation(self, monkeypatch) -> None:
+        v = self._run("0.3", ["0.3.0", "0.3.1"], monkeypatch)
+        assert len(v) >= 1
+        assert "0.3.0" in v[0]
+
+    def test_floored_req_reports_nothing(self, monkeypatch) -> None:
+        """The fix for #858. If this regresses, the release tag is blocked
+        forever on a violation that has actually been resolved."""
+        assert self._run("0.3.1", ["0.3.0", "0.3.1"], monkeypatch) == []
