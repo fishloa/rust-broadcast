@@ -54,18 +54,62 @@ max intervals, PCR repetition and discontinuity limits, SI repetition intervals,
 | 3 | 3.7 | `RstError` | Bad table_id on PID 0x0013 (not RST/ST) |
 | 3 | 3.8 | `TdtError` | Bad table_id on PID 0x0014 (not TDT/TOT/ST); TDT absent > 30 s (default) |
 
+### New indicators (T-STD, #737)
+
+| Priority | Clause | Indicator | Notes |
+|----------|--------|-----------|-------|
+| 2 | 2.4 | `PcrAccuracyError` | **Not implemented** — requires hardware arrival timing with ±500 ns resolution (ISO/IEC 13818-1 §2.4.2.2); the variant exists for documentation completeness only; never emitted |
+| 3 | 3.3 | `BufferError` | TBsys overflow (512-byte buffer, 1 Mbit/s drain); TBn overflow deferred (needs coded bitrate Rxn from descriptors) |
+| 3 | 3.9 | `EmptyBufferError` | TBn/TBsys empty at least once per second; MBn check deferred (needs leak-method parameters from descriptors) |
+| 3 | 3.10 | `DataDelayError` | Data delay through T-STD transport buffers > 1 s; still-picture 60 s threshold tracked but not yet differentiated |
+
+### T-STD buffer model (#737)
+
+A partial ISO/IEC 13818-1 T-STD buffer model (see `src/tstd.rs`) drives
+indicators 3.3, 3.9, and 3.10:
+
+- **TBn** (per-PID, 512 bytes): modelled for empty-interval and data-delay
+  tracking. Overflow detection is **deferred** — it requires the coded bitrate
+  `Rxn` from descriptors (multiplex_buffer_descriptor).
+- **TBsys** (global, 512 bytes, 1 Mbit/s drain): fed at PSI section completion.
+  Overflow (firewall), empty-interval, and data-delay checks are implemented.
+- **MBn / EBn / Bn / Bsys**: **deferred** — these require codec-level buffer
+  sizes from descriptors and are not yet parsed by the monitor.
+
+All buffer sizes and rates are named constants citing the vendored ITU-T
+H.222.0 v9 (08/2023) PDF. The full transcription is at
+`dvb-conformance/docs/h222_0-tstd-buffer-model.md`.
+
+| Constant | Value | H.222.0 clause |
+|----------|-------|----------------|
+| TBn / TBsys size | 512 bytes | §2.4.2.4, p.42: "The transport buffer size is fixed at 512 bytes" |
+| TBsys drain rate | 1 Mbit/s | §2.4.2.4, p.42: "For systems data: Rxn = 1×10⁶ bits per second" |
+| Bsys size | 1536 bytes | §2.4.2.4, p.43: "The main buffer Bsys … size BSsys = 1536 bytes" (deferred) |
+| TB leak rate floor | 125 kbit/s | Modelling floor, not a spec value (Rxn ≥ 2×10⁶ bps per §2.4.2.4) |
+
+**Note on 2.4 PCR_accuracy_error**: this indicator requires hardware arrival
+timestamps with ±500 ns accuracy. The monitor is sans-IO with a
+caller-supplied clock; a packet-index-derived timing estimate cannot
+honestly resolve 500 ns. A false positive here is worse than a gap
+(cf. the withdrawn `PtsCheck`). The indicator exists in the enum for
+documentation completeness but is never emitted.
+
 Excluded, split by reason:
 
-**Not computable under this crate's architecture** (needs the ISO/IEC 13818-1
-T-STD buffer model or hardware arrival timing — this monitor is sans-IO with
-a caller-supplied clock and no independent hardware clock):
+**Not computable without hardware arrival timing** (needs ±500 ns resolution):
 
 | Clause | Indicator | Reason |
 |--------|-----------|--------|
-| 2.4 | `PCR_accuracy_error` | Requires PCR accuracy within ±500 ns of a hardware reference clock |
-| 3.3 | `Buffer_error` | Requires the T-STD transport/multiplexing/elementary-stream buffer model |
-| 3.9 | `Empty_buffer_error` | Requires the T-STD buffer model |
-| 3.10 | `Data_delay_error` | Requires T-STD buffer delay tracking |
+| 2.4 | `PCR_accuracy_error` | Requires ±500 ns PCR accuracy measurement against a hardware reference clock (ISO/IEC 13818-1 §2.4.2.2); a packet-index-derived arrival estimate cannot resolve 500 ns |
+
+**Partially implemented — TBn overflow / MBn / EBn / Bn / Bsys deferred**
+(needs codec-dependent buffer-size descriptors not yet parsed by the monitor):
+
+| Clause | Indicator | Deferred sub-checks |
+|--------|-----------|---------------------|
+| 3.3 | `Buffer_error` | TBn overflow (needs Rxn from descriptors); MBn/EBn/Bn underflow/overflow; Bsys overflow |
+| 3.9 | `Empty_buffer_error` | MBn empty-at-least-once-per-second (leak method) |
+| 3.10 | `Data_delay_error` | Still-picture video data 60 s threshold differentiation; MBn delay |
 
 **Feasible, deferred** (reusable with the existing timer machinery, but not
 yet implemented):

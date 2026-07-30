@@ -1,5 +1,24 @@
 # Changelog
 
+## [Unreleased]
+### Added
+- T-STD buffer model and four new indicators (#737):
+  - `BufferError` (3.3): TBsys overflow detection; TBn overflow deferred
+  - `EmptyBufferError` (3.9): TBn/TBsys empty-at-least-once-per-second
+  - `DataDelayError` (3.10): data delay > 1 s through transport buffers
+  - `PcrAccuracyError` (2.4): documented as not implemented (needs ±500 ns hardware timing)
+- Partial ISO/IEC 13818-1 T-STD buffer model in `src/tstd.rs`:
+  - Per-PID TBn (512 bytes) with dynamic leak-rate estimation
+  - Global TBsys (512 bytes, 1 Mbit/s drain) fed at PSI section completion
+  - Named constants with spec citations for all buffer sizes and rates
+- TBsy overflow fires `BufferError` when a completed PSI section exceeds
+  the 512-byte capacity with insufficient drain time
+
+### Changed
+- `Indicator` enum is now `#[non_exhaustive]` with 4 new variants
+- Indicator-coverage documentation updated in README, docs/tr_101_290.md,
+  and lib.rs module doc
+
 ## [9.0.0] - 2026-07-27
 ### Changed (Breaking)
 - Lockstep major bump alongside `broadcast-common` 9.0.0, whose `Encrypt::encrypt`

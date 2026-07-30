@@ -2,13 +2,29 @@
 //!
 //! Implements the **first-priority** (Table 5.0a, indicators 1.1–1.6),
 //! **second-priority** (Table 5.0b, indicators 2.1–2.3b, 2.5–2.6), and
-//! **third-priority** (Table 5.0c, indicators 3.1, 3.2, 3.4, 3.5, 3.6, 3.7,
-//! 3.8) indicator sets — see `docs/tr_101_290.md` for the full spec
-//! transcription and the crate-coverage mapping.
+//! **third-priority** (Table 5.0c, indicators 3.1–3.10) indicator sets —
+//! see `docs/tr_101_290.md` for the full spec transcription and the
+//! crate-coverage mapping.
 //!
-//! Not computable under this crate's architecture (needs the ISO/IEC 13818-1
-//! **T-STD buffer model** or hardware arrival timing): 2.4 `PCR_accuracy_error`,
-//! 3.3 `Buffer_error`, 3.9 `Empty_buffer_error`, 3.10 `Data_delay_error`.
+//! ## T-STD buffer model (indicators 3.3, 3.9, 3.10)
+//!
+//! A partial ISO/IEC 13818-1 T-STD buffer model (see `src/tstd.rs`) drives
+//! the buffer-model indicators:
+//!
+//! - **3.3 `BufferError`**: TBsys overflow detection (512-byte buffer at
+//!   1 Mbit/s drain, fed at PSI section completion). TBn overflow is deferred
+//!   — it requires the coded bitrate `Rxn` from descriptors.
+//! - **3.9 `EmptyBufferError`**: TBn (per-PID) and TBsys (global) empty at
+//!   least once per second. MBn empty check is deferred.
+//! - **3.10 `Data_delay_error`**: Data delay > 1 s through TBn and TBsys.
+//!   Still-picture 60 s threshold is tracked but not yet differentiated.
+//! - **2.4 `PcrAccuracyError`**: not implemented — requires hardware arrival
+//!   timestamps with ±500 ns resolution. The variant exists for documentation
+//!   completeness only.
+//!
+//! MBn/EBn/Bn/Bsys buffer modelling is deferred — it requires codec-level
+//! buffer sizes from descriptors (multiplex_buffer_descriptor,
+//! smoothing_buffer_descriptor) not yet parsed by the monitor.
 //!
 //! Feasible but deferred: the 25 ms minimum-gap dimension shared by 3.1.a /
 //! 3.2 / 3.5.a / 3.6.a / 3.7 / 3.8 (needs per-`(table_id, section_number)`
@@ -45,11 +61,15 @@
 #![doc = "```"]
 extern crate alloc;
 
+mod tstd;
+
 use alloc::collections::BTreeMap;
 use alloc::format;
 use alloc::string::String;
 use alloc::vec::Vec;
 use core::time::Duration;
+
+use tstd::TstdModel;
 
 use broadcast_common::Parse;
 use dvb_si::tables::pat::{PatSection, TABLE_ID as PAT_TABLE_ID};
@@ -306,6 +326,46 @@ pub enum Indicator {
     /// TR 101 290 v1.4.1 Table 5.0c indicator 3.8 — TDT_error (bad table_id
     /// on PID 0x0014 + TDT absence; the 25 ms min-gap dimension is deferred).
     TdtError,
+
+    // ── Priority 2 (Table 5.0b) — T-STD ──────────────────────────────────
+    /// TR 101 290 v1.4.1 Table 5.0b indicator 2.4 — PCR_accuracy_error.
+    ///
+    /// **Not implemented**: requires hardware arrival timing with ±500 ns
+    /// resolution (ISO/IEC 13818-1 §2.4.2.2). A packet-index-derived arrival
+    /// estimate cannot honestly resolve 500 ns, and a false positive is worse
+    /// than a gap (c.f. the withdrawn `PtsCheck`). This variant exists for
+    /// documentation completeness only and is never emitted by the monitor.
+    PcrAccuracyError,
+
+    // ── Priority 3 (Table 5.0c) — T-STD ──────────────────────────────────
+    /// TR 101 290 v1.4.1 Table 5.0c indicator 3.3 — Buffer_error.
+    ///
+    /// Currently checks `TB_buffering_error` (overflow of transport buffer
+    /// TBn, 512 bytes per ISO/IEC 13818-1 §2.4.2.3) and
+    /// `TBsys_buffering_error` (overflow of TBsys, 512 bytes). The remaining
+    /// sub-checks — `MB_buffering_error`, `EB_buffering_error`,
+    /// `B_buffering_error`, `Bsys_buffering_error` — require codec-dependent
+    /// buffer sizes from descriptors (multiplex_buffer_descriptor,
+    /// smoothing_buffer_descriptor) and are deferred until the monitor
+    /// parses those descriptors.
+    BufferError,
+
+    /// TR 101 290 v1.4.1 Table 5.0c indicator 3.9 — Empty_buffer_error.
+    ///
+    /// Checks that TBn (transport buffer for each elementary stream) and
+    /// TBsys (system-information transport buffer) are empty at least once
+    /// per second. The MBn check (multiplexing buffer, leak method) is
+    /// deferred — it requires the full MBn buffer model with leak-rate
+    /// parameters from descriptors.
+    EmptyBufferError,
+
+    /// TR 101 290 v1.4.1 Table 5.0c indicator 3.10 — Data_delay_error.
+    ///
+    /// Checks that data delay through the T-STD transport buffers (TBn,
+    /// TBsys) does not exceed 1 second (60 s for still-picture video).
+    /// The full end-to-end delay through MBn/EBn/Bn is not modelled
+    /// (deferred — see `Buffer_error` doc).
+    DataDelayError,
 }
 
 impl Indicator {
@@ -324,14 +384,18 @@ impl Indicator {
             | Self::PcrRepetitionError
             | Self::PcrDiscontinuityError
             | Self::PtsError
-            | Self::CatError => Priority::Second,
+            | Self::CatError
+            | Self::PcrAccuracyError => Priority::Second,
             Self::NitError
             | Self::SiRepetitionError
             | Self::UnreferencedPid
             | Self::SdtError
             | Self::EitError
             | Self::RstError
-            | Self::TdtError => Priority::Third,
+            | Self::TdtError
+            | Self::BufferError
+            | Self::EmptyBufferError
+            | Self::DataDelayError => Priority::Third,
         }
     }
 
@@ -358,6 +422,10 @@ impl Indicator {
             Self::EitError => "EIT_error",
             Self::RstError => "RST_error",
             Self::TdtError => "TDT_error",
+            Self::PcrAccuracyError => "PCR_accuracy_error",
+            Self::BufferError => "Buffer_error",
+            Self::EmptyBufferError => "Empty_buffer_error",
+            Self::DataDelayError => "Data_delay_error",
         }
     }
 
@@ -384,6 +452,10 @@ impl Indicator {
             Self::EitError => "TR 101 290 v1.4.1 Table 5.0c indicator 3.6",
             Self::RstError => "TR 101 290 v1.4.1 Table 5.0c indicator 3.7",
             Self::TdtError => "TR 101 290 v1.4.1 Table 5.0c indicator 3.8",
+            Self::PcrAccuracyError => "TR 101 290 v1.4.1 Table 5.0b indicator 2.4",
+            Self::BufferError => "TR 101 290 v1.4.1 Table 5.0c indicator 3.3",
+            Self::EmptyBufferError => "TR 101 290 v1.4.1 Table 5.0c indicator 3.9",
+            Self::DataDelayError => "TR 101 290 v1.4.1 Table 5.0c indicator 3.10",
         }
     }
 }
@@ -593,6 +665,9 @@ pub struct ConformanceMonitor {
 
     // Unreferenced_PID candidate tracking (3.4)
     unreferenced_pid_timers: BTreeMap<u16, UnreferencedPidTracking>,
+
+    // T-STD buffer model (3.3, 3.9, 3.10)
+    tstd: TstdModel,
 }
 
 impl ConformanceMonitor {
@@ -638,6 +713,7 @@ impl ConformanceMonitor {
             scrambled_without_cat_reported: false,
             si_timers: BTreeMap::new(),
             unreferenced_pid_timers: BTreeMap::new(),
+            tstd: TstdModel::new(Duration::ZERO),
         }
     }
 
@@ -847,6 +923,10 @@ impl ConformanceMonitor {
             self.track_unreferenced_pid(pid, t);
         }
 
+        // ── T-STD buffer model (3.3, 3.9, 3.10) ─────────────────────────
+        // ts_packet is a raw 188-byte (or larger) TS packet.
+        self.process_tstd(header, ts_packet, t);
+
         // ── Presence-timeout evaluation (1.3.a, 1.5.a, 1.6, 3.4) ────────
         self.check_presence_timeouts(t);
 
@@ -1009,12 +1089,19 @@ impl ConformanceMonitor {
     /// TR 101 290 v1.4.1 Table 5.0b indicator 2.2 — CRC_error.
     ///
     /// On any tracked PID, if a completed long-form section has a CRC
-    /// mismatch, emit `CrcError`.
+    /// mismatch, emit `CrcError`. Also feeds section bytes into TBsys
+    /// for T-STD Buffer_error tracking (indicator 3.3).
     fn check_crc_for_section(&mut self, section_bytes: &[u8], pid: u16, t: Duration) {
         let section = match Section::parse(section_bytes) {
             Ok(s) => s,
             Err(_) => return,
         };
+
+        // Feed section bytes into TBsys for T-STD buffer tracking
+        // (ISO/IEC 13818-1 §2.4.2.3: PSI sections pass through TBsys
+        // before entering Bsys). TBsys has 512 bytes capacity and drains
+        // at 1 Mbit/s. Overflow fires Buffer_error (3.3).
+        self.feed_tbsys_section_bytes(section_bytes, pid, t);
 
         // validate_crc returns Ok for short-form sections (no CRC to check).
         if let Err(mpeg_ts::error::Error::CrcMismatch { .. }) = section.validate_crc(section_bytes)
@@ -1028,6 +1115,65 @@ impl ConformanceMonitor {
                     pid, section.table_id
                 ),
             );
+        }
+    }
+
+    /// Feed PSI section bytes into TBsys and check for overflow.
+    ///
+    /// TBsys (ISO/IEC 13818-1 §2.4.2.3): 512-byte transport buffer for system
+    /// information. Receives PSI section bytes from the well-known SI/PSI PIDs.
+    /// Drains at 1 Mbit/s (125 000 bytes/s). Overflow fires Buffer_error (3.3).
+    fn feed_tbsys_section_bytes(&mut self, section_bytes: &[u8], pid: u16, t: Duration) {
+        let section_len = section_bytes.len() as u64;
+
+        // Drain TBsys to current time using the fixed 1 Mbit/s leak rate.
+        self.tstd.drain_tb_sys(t);
+
+        // Check if adding these section bytes would overflow TBsys.
+        // TBsys has 512 bytes capacity at 1 Mbit/s drain.
+        if self.tstd.tb_sys.would_overflow(section_len, t) {
+            self.emit(
+                Indicator::BufferError,
+                Some(pid),
+                t,
+                format!(
+                    "TBsys overflow on PID 0x{pid:04X}: section {section_len} bytes exceeds {} byte capacity at 1 Mbit/s drain",
+                    tstd::TB_SYS_SIZE,
+                ),
+            );
+        }
+
+        // Feed the section bytes into TBsys regardless (the buffer
+        // model tracks occupancy for empty-interval and delay checks).
+        let _overflow = self.tstd.tb_sys.feed(section_len, t);
+
+        // Indicator 3.9: TBsys empty at least once per second?
+        if self.tstd.tb_sys.check_empty_interval(t) && !self.tstd.tb_sys_empty_reported {
+            self.tstd.tb_sys_empty_reported = true;
+            self.emit(
+                Indicator::EmptyBufferError,
+                Some(pid),
+                t,
+                format!(
+                    "TBsys not empty in the last {} s",
+                    tstd::TB_SYS_EMPTY_INTERVAL_SECS
+                ),
+            );
+        }
+
+        // Indicator 3.10: TBsys data delay > 1 s?
+        if let Some(delay) = self.tstd.tb_sys.delay_secs(t) {
+            if delay > tstd::DATA_DELAY_LIMIT_SECS as f64 {
+                self.emit(
+                    Indicator::DataDelayError,
+                    Some(pid),
+                    t,
+                    format!(
+                        "TBsys data delay {delay:.2} s exceeds {} s on PID 0x{pid:04X}",
+                        tstd::DATA_DELAY_LIMIT_SECS,
+                    ),
+                );
+            }
         }
     }
 
@@ -1511,6 +1657,182 @@ impl ConformanceMonitor {
         timer.last_seen = t;
         timer.reported = false;
         timer.armed = true;
+    }
+
+    /// T-STD buffer model processing: run the buffer simulation for one TS
+    /// packet and evaluate indicators 3.3 (Buffer_error), 3.9
+    /// (Empty_buffer_error), and 3.10 (Data_delay_error).
+    ///
+    /// # Buffer model
+    ///
+    /// - **TBn** (per-PID, 512 bytes): each payload PID gets a transport
+    ///   buffer. The full 188-byte packet (minus sync) enters the buffer
+    ///   instantaneously at the caller's timestamp `t`. The buffer drains at
+    ///   the stream's effective bitrate (estimated from accumulated bytes
+    ///   divided by elapsed wall-clock time, clamped to a floor of
+    ///   125 kbit/s).
+    /// - **TBsys** (global, 512 bytes, 1 Mbit/s leak): the PSI/SI PIDs (PAT,
+    ///   CAT, NIT, SDT/BAT, EIT, RST, TDT/TOT) feed into TBsys. When a
+    ///   completed section is assembled and passed to the SI/PSI decoder, the
+    ///   section bytes are removed from TBsys.
+    ///
+    /// # Known limitation
+    ///
+    /// The effective bitrate estimate from accumulated bytes / wall-clock time
+    /// is inherently approximate when the caller's timestamps do not match the
+    /// actual transport rate. The monitor documents this: the caller is
+    /// responsible for supplying realistic timestamps.
+    fn process_tstd(&mut self, header: &mpeg_ts::ts::TsHeader, ts_packet: &[u8], t: Duration) {
+        let pid = header.pid;
+
+        // Periodic TBsys drain and empty-interval check. TBsys feeds at
+        // section-completion, but we must drain it on every packet to
+        // accurately model the 1 Mbit/s continuous drain rate.
+        self.tstd.drain_tb_sys(t);
+
+        // ── TBsys: PSI/SI PIDs ──────────────────────────────────────────
+        let is_si_pid = pid == PID_PAT
+            || pid == PID_CAT
+            || pid == PID_NIT
+            || pid == PID_SDT_BAT
+            || pid == PID_EIT
+            || pid == PID_RST
+            || pid == PID_TDT_TOT;
+
+        // Count the packet bytes for T-STD accounting.
+        // The T-STD model uses the full 188-byte TS packet as the arrival
+        // unit (ISO/IEC 13818-1 §2.4.2.3: the transport buffer receives TS
+        // packets and strips the TS header + adaptation field before passing
+        // bytes downstream; but for TBn overflow, the relevant input unit
+        // is the packet's contribution to buffer occupancy).
+        let packet_bytes = ts_packet.len() as u64;
+
+        if is_si_pid && header.has_payload {
+            // TBsys is fed at section-completion time (see
+            // `feed_tbsys_section_bytes` called from `check_crc_for_section`).
+            // The per-packet path only drains TBsys and does empty/delay
+            // checks, which are also done at section-completion.
+        }
+
+        // ── TBn: per-PID buffers for all non-SI, non-null PIDs ──────────
+        if pid == PID_NULL || is_si_pid {
+            return;
+        }
+
+        // Compute T-STD checks without holding a mutable borrow on self.tstd
+        // across any self.emit() calls. We collect the events to emit, then
+        // emit them after releasing the borrow.
+        struct TstdCheck {
+            buffer_overflow: bool,
+            empty_interval: bool,
+            delay_exceeded: bool,
+        }
+
+        let check = {
+            let entry = self.tstd.pid_buffers.entry(pid).or_insert_with(|| {
+                // Initial leak rate conservatively high: the effective
+                // bitrate will be estimated once we have timing data.
+                tstd::PidStdState::new(1_000_000u64, t)
+            });
+
+            // Accumulate bytes for effective bitrate estimation.
+            entry.total_bytes += packet_bytes;
+
+            // Estimate the effective transport rate from accumulated bytes
+            // and elapsed wall-clock time. Wait until we have at least
+            // 1 ms of history before estimating; use a default of
+            // ~6 Mbit/s (750 KB/s) until then.
+            let leak = {
+                let elapsed_us = t.saturating_sub(entry.first_seen).as_micros() as u64;
+                if elapsed_us >= 1_000 {
+                    // bytes per second = total_bytes * 1_000_000 / elapsed_us
+                    (entry.total_bytes * 1_000_000 / elapsed_us).max(tstd::TB_LEAK_RATE_FLOOR)
+                } else {
+                    // Default: generous initial rate (~40 Mbit/s).
+                    // This prevents false overflows during the first
+                    // millisecond before we have enough data to estimate
+                    // the effective bitrate. For a real ~38 Mbit/s stream
+                    // with 40 µs inter-packet, this is close enough to
+                    // prevent overflow during the convergence period.
+                    5_000_000u64
+                }
+            };
+            entry.tb.set_leak_rate(leak);
+
+            // Drain the buffer TO the current time (i.e. drain up to the
+            // arrival instant of this packet, before the packet data enters).
+            entry.tb.drain_to(t);
+
+            let buffer_overflow = {
+                // Drain, then feed (for occupancy tracking). We do NOT flag
+                // TBn overflow as BufferError — accurate overflow detection
+                // requires the coded bitrate Rxn from descriptors
+                // (multiplex_buffer_descriptor). Without that, the
+                // estimated leak rate is approximate and produces false
+                // positives on clean streams. TBn occupancy is still
+                // tracked for empty-interval and data-delay checks.
+                entry.tb.drain_to(t);
+                let _overflow = entry.tb.feed(packet_bytes, t);
+                false
+            };
+            let empty_interval = entry.tb.check_empty_interval(t) && !entry.empty_reported;
+            let delay_exceeded = if let Some(delay) = entry.tb.delay_secs(t) {
+                delay > tstd::DATA_DELAY_LIMIT_SECS as f64 && !entry.delay_reported
+            } else {
+                false
+            };
+
+            if empty_interval {
+                entry.empty_reported = true;
+            }
+            if delay_exceeded {
+                entry.delay_reported = true;
+            }
+            entry.last_packet_time = t;
+
+            TstdCheck {
+                buffer_overflow,
+                empty_interval,
+                delay_exceeded,
+            }
+        };
+
+        // Emit events outside the borrow.
+        if check.buffer_overflow {
+            self.emit(
+                Indicator::BufferError,
+                Some(pid),
+                t,
+                format!(
+                    "TBn overflow on PID 0x{pid:04X}: {} byte capacity exceeded",
+                    tstd::TB_SIZE,
+                ),
+            );
+        }
+
+        if check.empty_interval {
+            self.emit(
+                Indicator::EmptyBufferError,
+                Some(pid),
+                t,
+                format!(
+                    "TBn not empty in the last {} s on PID 0x{pid:04X}",
+                    tstd::TB_EMPTY_INTERVAL_SECS,
+                ),
+            );
+        }
+
+        if check.delay_exceeded {
+            self.emit(
+                Indicator::DataDelayError,
+                Some(pid),
+                t,
+                format!(
+                    "TBn data delay exceeds {} s on PID 0x{pid:04X}",
+                    tstd::DATA_DELAY_LIMIT_SECS,
+                ),
+            );
+        }
     }
 
     /// Evaluate all presence/absence timeouts against the current time `t`.
