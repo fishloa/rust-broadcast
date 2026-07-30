@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.2] - 2026-07-30
+
+### Fixed
+- Floor `timed-metadata` to `0.4.1`. The `^0.4` bucket also contains 0.4.0,
+  which is built against `broadcast-common` 8, so a consumer could resolve two
+  `broadcast-common` majors into one graph and hit trait-resolution errors
+  pointing at this crate's internals (#858).
+
 ## [0.1.1] - 2026-07-30
 
 ### Added
