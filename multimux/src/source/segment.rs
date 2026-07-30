@@ -399,11 +399,12 @@ mod tests {
         );
         let mut published = HashSet::new();
         let mut segmenters = HashMap::new();
+        let mut track_generations = HashMap::new();
 
         // First feed: resolves the PMT, mints program 0's driver-side Trunk.
         let ts_bytes = build_ts_bytes(1, 0xAB, 90);
         driver.feed(&ts_bytes, Timestamp::ZERO);
-        report_driver_progress(&driver, &route, &mut published);
+        report_driver_progress(&driver, &route, &mut published, &mut track_generations);
         drive_program_segmenters(&driver, &route, &mut segmenters);
 
         // Second feed: more real media, proving the segmenter's cursor
@@ -412,7 +413,7 @@ mod tests {
         // first feed's own backlog, not merely as a substitute for it.
         let more = build_ts_bytes(1, 0xCD, 90);
         driver.feed(&more, Timestamp::from_nanos(1));
-        report_driver_progress(&driver, &route, &mut published);
+        report_driver_progress(&driver, &route, &mut published, &mut track_generations);
         drive_program_segmenters(&driver, &route, &mut segmenters);
 
         assert!(
@@ -470,6 +471,7 @@ mod tests {
         );
         let mut published = HashSet::new();
         let mut segmenters = HashMap::new();
+        let mut track_generations = HashMap::new();
 
         fn metric_total(metric: &str, route_label: &str) -> f64 {
             let rendered = crate::prometheus::install().render();
@@ -492,11 +494,11 @@ mod tests {
 
         let ts_bytes = build_ts_bytes(1, 0xAB, 90);
         driver.feed(&ts_bytes, Timestamp::ZERO);
-        report_driver_progress(&driver, &route, &mut published);
+        report_driver_progress(&driver, &route, &mut published, &mut track_generations);
         drive_program_segmenters(&driver, &route, &mut segmenters);
         let more = build_ts_bytes(1, 0xCD, 90);
         driver.feed(&more, Timestamp::from_nanos(1));
-        report_driver_progress(&driver, &route, &mut published);
+        report_driver_progress(&driver, &route, &mut published, &mut track_generations);
         drive_program_segmenters(&driver, &route, &mut segmenters);
 
         let parts_after = metric_total(
@@ -568,6 +570,7 @@ mod tests {
         );
         let mut published = HashSet::new();
         let mut segmenters = HashMap::new();
+        let mut track_generations = HashMap::new();
 
         // ONE feed: build_ts_bytes muxes the PMT (-> NewProgram) and 90 real
         // PES samples (-> Sample events) into the same TS byte stream, so
@@ -577,7 +580,7 @@ mod tests {
         // edge case.
         let ts_bytes = build_ts_bytes(1, 0xAB, 90);
         driver.feed(&ts_bytes, Timestamp::ZERO);
-        report_driver_progress(&driver, &route, &mut published);
+        report_driver_progress(&driver, &route, &mut published, &mut track_generations);
         drive_program_segmenters(&driver, &route, &mut segmenters);
 
         assert!(
@@ -622,15 +625,16 @@ mod tests {
         );
         let mut published = HashSet::new();
         let mut segmenters = HashMap::new();
+        let mut track_generations = HashMap::new();
 
         let ts_bytes = build_ts_bytes(1, 0xAB, 90);
         driver.feed(&ts_bytes, Timestamp::ZERO);
-        report_driver_progress(&driver, &route, &mut published);
+        report_driver_progress(&driver, &route, &mut published, &mut track_generations);
         drive_program_segmenters(&driver, &route, &mut segmenters);
 
         let more = build_ts_bytes(1, 0xCD, 90);
         driver.feed(&more, Timestamp::from_nanos(1));
-        report_driver_progress(&driver, &route, &mut published);
+        report_driver_progress(&driver, &route, &mut published, &mut track_generations);
         drive_program_segmenters(&driver, &route, &mut segmenters);
 
         let program_trunk = driver
@@ -776,15 +780,16 @@ mod tests {
         );
         let mut published = HashSet::new();
         let mut segmenters = HashMap::new();
+        let mut track_generations = HashMap::new();
 
         // Feed 1: Established. Feed 2: both NewProgram announcements (mints
         // both driver-side Trunks and, via `drive_program_segmenters`,
         // subscribes both `ProgramSegmenter`s *before* any sample exists).
         driver.feed(&[], Timestamp::from_nanos(0));
-        report_driver_progress(&driver, &route, &mut published);
+        report_driver_progress(&driver, &route, &mut published, &mut track_generations);
         drive_program_segmenters(&driver, &route, &mut segmenters);
         driver.feed(&[], Timestamp::from_nanos(1));
-        report_driver_progress(&driver, &route, &mut published);
+        report_driver_progress(&driver, &route, &mut published, &mut track_generations);
         drive_program_segmenters(&driver, &route, &mut segmenters);
 
         // 90 samples @ 3000 ticks/30fps = 3s of media per program,
