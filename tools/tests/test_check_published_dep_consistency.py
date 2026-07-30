@@ -23,6 +23,39 @@ sys.modules["check_published_dep_consistency"] = dut
 spec.loader.exec_module(dut)
 
 
+class TestCompareVersions:
+    """Tests for compare_versions()."""
+
+    def test_simple_gt(self) -> None:
+        assert dut.compare_versions("0.3.0", "0.2.0") == 1
+
+    def test_simple_lt(self) -> None:
+        assert dut.compare_versions("0.2.0", "0.3.0") == -1
+
+    def test_simple_eq(self) -> None:
+        assert dut.compare_versions("1.0.0", "1.0.0") == 0
+
+    def test_pre_release_does_not_raise(self) -> None:
+        """1.0.0-rc1 should not raise ValueError."""
+        result = dut.compare_versions("1.0.0-rc1", "1.0.0")
+        assert result == 0  # both strip to 1.0.0
+
+    def test_pre_release_ordering(self) -> None:
+        """1.0.0-rc1 vs 0.9.0 orders sensibly."""
+        result = dut.compare_versions("1.0.0-rc1", "0.9.0")
+        assert result == 1
+
+    def test_build_metadata_stripped(self) -> None:
+        """Build metadata after + is stripped."""
+        result = dut.compare_versions("1.0.0+build1", "1.0.0+build2")
+        assert result == 0
+
+    def test_non_numeric_component(self) -> None:
+        """A non-numeric component is treated as 0."""
+        result = dut.compare_versions("0.beta.3", "0.1.3")
+        assert result == -1
+
+
 class TestClassify:
     """Pure-function tests for classify()."""
 
@@ -102,27 +135,6 @@ class TestClassify:
             dev_range_resolvable=True,
         )
         assert result == "stale_dev"
-
-    def test_ok_current_requirement(self) -> None:
-        """Caller should not call classify for current requirements,
-        but it returns 'ok' for any non-stale path.
-        """
-        # This case is never reached in practice because the caller filters
-        # stale requirements first.  The function's return for the ok path
-        # falls through, but we validate it doesn't crash on valid input that
-        # should be ok.
-        result = dut.classify(
-            name="ll-hls-runtime",
-            max_version="0.3.0",
-            in_tree_version="0.3.0",
-            sibling="transmux",
-            published_req="^0.21",
-            in_tree_req="^0.21",
-            kind="normal",
-            sibling_in_tree_version="0.21.0",
-            dev_range_resolvable=False,
-        )
-        assert result == "blocking"  # in_tree_version == max_version → blocking
 
 
 class TestMainExitCode:
@@ -222,6 +234,21 @@ class TestMainExitCode:
             "latest_published_version": _mock_latest_published,
             "published_dependencies": _mock_published_deps_pending,
             "range_still_resolvable": lambda crate, req: True,
+            "any_published_version_satisfies": lambda crate, req: True,
+        }
+
+    def _patch_for_pending_with_unpublished_deps(self) -> dict:
+        """Like _patch_for_pending_only but any_published_version_satisfies
+        returns False, exposing in-tree requirements that aren't yet on
+        crates.io.
+        """
+        return {
+            "workspace_packages": lambda: dict(self.MEMBERS),
+            "workspace_dependencies": lambda: dict(self.IN_TREE_DEPS),
+            "latest_published_version": _mock_latest_published,
+            "published_dependencies": _mock_published_deps_pending,
+            "range_still_resolvable": lambda crate, req: True,
+            "any_published_version_satisfies": lambda crate, req: False,
         }
 
     def test_all_pending_exits_zero_with_blocking(self) -> None:
@@ -261,6 +288,7 @@ class TestMainExitCode:
                 latest_published_version=_mock_latest_published,
                 published_dependencies=_mock_published_deps_pending,
                 range_still_resolvable=lambda crate, req: True,
+                any_published_version_satisfies=lambda crate, req: True,
             ),
             patch.object(argparse.ArgumentParser, "parse_args", return_value=ns),
         ):
@@ -281,11 +309,84 @@ class TestMainExitCode:
                 latest_published_version=_mock_latest_published,
                 published_dependencies=_mock_published_deps_pending,
                 range_still_resolvable=lambda crate, req: True,
+                any_published_version_satisfies=lambda crate, req: True,
             ),
             patch.object(argparse.ArgumentParser, "parse_args", return_value=ns),
         ):
             exit_code = dut.main()
             assert exit_code == 0
+
+
+class TestInTreePublishability:
+    """Tests for the second check: in-tree requirement satisfiability.
+
+    transmux (dev-dep) requires media-doctor ^0.6, but media-doctor 0.6.0
+    has not been published yet. This is the exact bug that broke transmux
+    v0.21.0's publish.
+    """
+
+    # Minimal workspace: just transmux and media-doctor
+    MINIMAL_MEMBERS = {
+        "transmux": "0.21.0",
+        "media-doctor": "0.6.0",
+    }
+
+    # In-tree deps: transmux dev-dep requires media-doctor ^0.6
+    MINIMAL_IN_TREE_DEPS = {
+        ("transmux", "media-doctor"): ("^0.6", "dev"),
+    }
+
+    # Published deps for transmux's published manifest
+    MINIMAL_PUBLISHED_DEPS = {
+        "transmux": [
+            {"crate_id": "media-doctor", "req": "^0.4", "kind": "dev"},
+        ],
+    }
+
+    def test_publish_order_not_blocking(self) -> None:
+        """transmux requires media-doctor ^0.6, nothing published satisfies it,
+        but media-doctor 0.6.0 is being published this wave → NOT a violation.
+        """
+        ns = argparse.Namespace(blocking=True)
+        with (
+            patch.multiple(
+                dut,
+                workspace_packages=lambda: dict(self.MINIMAL_MEMBERS),
+                workspace_dependencies=lambda: dict(self.MINIMAL_IN_TREE_DEPS),
+                latest_published_version=_mock_latest_published_minimal,
+                published_dependencies=_mock_published_deps_minimal,
+                range_still_resolvable=lambda crate, req: True,
+                any_published_version_satisfies=lambda crate, req: False,
+            ),
+            patch.object(argparse.ArgumentParser, "parse_args", return_value=ns),
+        ):
+            exit_code = dut.main()
+            assert exit_code == 0
+
+    def test_sibling_not_being_republished_blocking(self) -> None:
+        """transmux requires media-doctor ^0.6, nothing published satisfies it,
+        and media-doctor 0.5.0 is NOT being republished → BLOCKING.
+        """
+        # media-doctor in-tree version equals published max → not being republished
+        members = {
+            "transmux": "0.21.0",
+            "media-doctor": "0.5.0",
+        }
+        ns = argparse.Namespace(blocking=True)
+        with (
+            patch.multiple(
+                dut,
+                workspace_packages=lambda: dict(members),
+                workspace_dependencies=lambda: dict(self.MINIMAL_IN_TREE_DEPS),
+                latest_published_version=_mock_latest_published_minimal,
+                published_dependencies=_mock_published_deps_minimal,
+                range_still_resolvable=lambda crate, req: True,
+                any_published_version_satisfies=lambda crate, req: False,
+            ),
+            patch.object(argparse.ArgumentParser, "parse_args", return_value=ns),
+        ):
+            exit_code = dut.main()
+            assert exit_code == 1
 
 
 # ── Mock helpers ──────────────────────────────────────────────────────────
@@ -352,5 +453,24 @@ def _mock_published_deps_pending(crate: str, version: str) -> list[dict]:
         "mpeg-ts": [{"crate_id": "mp4-emsg", "req": "^0.2", "kind": "dev"}],
         "rtmp-runtime": [{"crate_id": "transmux", "req": "^0.20", "kind": "dev"}],
         "transmux": [{"crate_id": "media-doctor", "req": "^0.4", "kind": "dev"}],
+    }
+    return deps_map.get(crate, [])
+
+
+def _mock_latest_published_minimal(crate: str) -> str | None:
+    """Published versions for the transmux/media-doctor minimal scenario."""
+    published = {
+        "transmux": "0.20.0",
+        "media-doctor": "0.5.0",
+    }
+    return published.get(crate)
+
+
+def _mock_published_deps_minimal(crate: str, version: str) -> list[dict]:
+    """Published deps for the transmux/media-doctor minimal scenario."""
+    deps_map = {
+        "transmux": [
+            {"crate_id": "media-doctor", "req": "^0.4", "kind": "dev"},
+        ],
     }
     return deps_map.get(crate, [])

@@ -168,20 +168,49 @@ def range_still_resolvable(crate: str, req: str) -> bool:
     major that no longer exists is a hard failure -- but one pointing at a
     major that is still on crates.io resolves fine and is merely untidy.
     """
+    return any_published_version_satisfies(crate, req)
+
+
+_crate_versions_cache: dict[str, list[str]] = {}
+
+
+def _crate_versions(crate: str) -> list[str]:
+    """Return published unyanked version strings for `crate`, with caching."""
+    global _crate_versions_cache
+    if crate not in _crate_versions_cache:
+        data = http_get_json(f"https://crates.io/api/v1/crates/{crate}")
+        if data in (None, "error"):
+            _crate_versions_cache[crate] = []
+        else:
+            _crate_versions_cache[crate] = [
+                v["num"]
+                for v in data.get("versions", [])
+                if not v.get("yanked")
+            ]
+    return _crate_versions_cache[crate]
+
+
+def any_published_version_satisfies(crate: str, req: str) -> bool:
+    """True if some published, unyanked version of `crate` matches the compat
+    epoch of `req`.
+    """
     epoch = compat_epoch(req)
     if epoch is None:
         return True
-    data = http_get_json(f"https://crates.io/api/v1/crates/{crate}")
-    if data in (None, "error"):
-        # Unknown: assume resolvable so a network blip cannot manufacture a
-        # blocking violation.
-        return True
-    for v in data.get("versions", []):
-        if v.get("yanked"):
-            continue
-        if compat_epoch(v.get("num", "")) == epoch:
+    for v in _crate_versions(crate):
+        if compat_epoch(v) == epoch:
             return True
     return False
+
+
+def version_is_published(crate: str, version: str) -> bool:
+    """True if `version` exists as a published unyanked version of `crate`."""
+    return version in _crate_versions(crate)
+
+
+def _version_satisfies_req(version: str, req: str) -> bool:
+    """True if `version` satisfies a caret-style `req` (same compat epoch)."""
+    return compat_epoch(version) == compat_epoch(req)
 
 
 def published_dependencies(crate: str, version: str) -> list[dict] | str:
@@ -233,15 +262,16 @@ def classify(
 ) -> str:
     """Classify a stale published-requirement into a bucket.
 
+    PRECONDITION: the caller must only call this when the published requirement
+    is already known to be stale, i.e.
+    `compat_epoch(published_req) < compat_epoch(sibling_in_tree_version)`.
+    Current requirements are filtered out before classify is reached; there is
+    no `"ok"` return from this function.
+
     Returns one of:
       `"blocking"`  -- requires human action (manifest edit or version bump)
       `"pending"`   -- self-heals when the current wave finishes publishing
       `"stale_dev"` -- dev-dep with a still-resolvable range (hygiene only)
-      `"ok"`        -- no violation (published requirement is current)
-
-    The caller determines the published requirement is stale *before* calling:
-    `compat_epoch(published_req) < compat_epoch(sibling_in_tree_version)` must
-    already hold.
     """
     # Stale-dev bucket: dev-dep with a still-resolvable range.
     if kind == "dev" and dev_range_resolvable:
@@ -271,9 +301,25 @@ def classify(
 
 
 def compare_versions(a: str, b: str) -> int:
-    """Compare two semver-ish version strings: -1 if a<b, 0 if equal, 1 if a>b."""
-    a_parts = [int(x) for x in a.split(".")]
-    b_parts = [int(x) for x in b.split(".")]
+    """Compare two semver-ish version strings: -1 if a<b, 0 if equal, 1 if a>b.
+
+    Strips pre-release and build-metadata suffixes (`-` and `+`) before
+    comparing numeric components.  Non-numeric components are treated as 0.
+    """
+    a = _strip_meta(a)
+    b = _strip_meta(b)
+    a_parts: list[int] = []
+    b_parts: list[int] = []
+    for x in a.split("."):
+        try:
+            a_parts.append(int(x))
+        except ValueError:
+            a_parts.append(0)
+    for x in b.split("."):
+        try:
+            b_parts.append(int(x))
+        except ValueError:
+            b_parts.append(0)
     while len(a_parts) < 3:
         a_parts.append(0)
     while len(b_parts) < 3:
@@ -283,6 +329,15 @@ def compare_versions(a: str, b: str) -> int:
     if a_parts > b_parts:
         return 1
     return 0
+
+
+def _strip_meta(v: str) -> str:
+    """Strip pre-release (`-`) and build-metadata (`+`) suffixes."""
+    for sep in ("-", "+"):
+        idx = v.find(sep)
+        if idx != -1:
+            v = v[:idx]
+    return v
 
 
 def main() -> int:
@@ -302,6 +357,8 @@ def main() -> int:
     blocking: list[str] = []
     pending: list[str] = []
     stale_dev: list[str] = []
+    unpublishable: list[str] = []
+    publish_order: list[str] = []
     skipped: list[str] = []
 
     for name, in_tree_version in sorted(members.items()):
@@ -378,6 +435,63 @@ def main() -> int:
             else:
                 blocking.append(detail + " (superseded major)")
 
+    # ── Second check: in-tree requirement satisfiability ───────────────
+    # A workspace crate whose Cargo.toml `version` requirement on a sibling
+    # points at a compat epoch that has no published unyanked version is an
+    # UNPUBLISHABLE crate -- `cargo publish` resolves deps from the registry,
+    # so it will fail the moment it hits crates.io (this is what broke
+    # transmux v0.21.0's publish when it required media-doctor ^0.6 before
+    # 0.6.0 was published).
+    #
+    # If the sibling IS being published in the same wave, the requirement
+    # becomes satisfiable once the sibling lands -- but publish ORDER matters,
+    # so we report it under its own heading rather than as a violation.
+    for (name, sibling), (req, kind) in sorted(in_tree_deps.items()):
+        if name not in members or sibling not in members:
+            continue
+
+        # Is the requirement already satisfiable from published crates?
+        if any_published_version_satisfies(sibling, req):
+            continue
+
+        sibling_in_tree = members[sibling]
+        # Does the sibling's in-tree version satisfy the requirement?
+        sibling_satisfies = _version_satisfies_req(sibling_in_tree, req)
+        if not sibling_satisfies:
+            # The in-tree requirement points at an epoch that doesn't
+            # exist anywhere -- not published, and the sibling's own
+            # version doesn't match.
+            unpublishable.append(
+                f"{name} ({kind}-dep) requires {sibling} {req}, "
+                f"but no published version satisfies that requirement "
+                f"and the sibling's in-tree version ({sibling_in_tree}) "
+                f"also does not match -- cargo publish will FAIL"
+            )
+            continue
+
+        # The sibling's in-tree version satisfies the requirement, but
+        # it's not published.  Is the sibling being republished?
+        max_version = latest_published_version(sibling)
+        if max_version and max_version not in (None, "error"):
+            if compare_versions(sibling_in_tree, max_version) > 0:
+                # Being published this wave → informational
+                publish_order.append(
+                    f"{name} ({kind}-dep) requires {sibling} {req} -- "
+                    f"no published version satisfies this yet, but "
+                    f"{sibling} {sibling_in_tree} is being published "
+                    f"this wave and will satisfy it.  Publish "
+                    f"{sibling} before {name}."
+                )
+                continue
+
+        # Sibling satisfies but is NOT being republished → BLOCKING
+        unpublishable.append(
+            f"{name} ({kind}-dep) requires {sibling} {req}, "
+            f"but no published version satisfies that requirement "
+            f"and {sibling} ({sibling_in_tree}) is not being "
+            f"republished -- cargo publish will FAIL"
+        )
+
     print()
     if skipped:
         print(f"::warning::skipped {len(skipped)} crate(s) due to crates.io network errors: {skipped}")
@@ -392,6 +506,25 @@ def main() -> int:
             print(f"  - {d}")
         print()
 
+    if unpublishable:
+        print(
+            f"{len(unpublishable)} unpublishable dependency problem(s) --"
+            " BLOCKING (cargo publish will fail):"
+        )
+        for d in unpublishable:
+            print(f"  - {d}")
+        print()
+
+    if publish_order:
+        print(
+            f"{len(publish_order)} publish-order dependency(s) -- satisfied by"
+            " a sibling being published in this wave (not blocking, but"
+            " publish order matters):"
+        )
+        for d in publish_order:
+            print(f"  - {d}")
+        print()
+
     if pending:
         print(
             f"{len(pending)} pending violation(s) -- resolved when this wave"
@@ -401,17 +534,19 @@ def main() -> int:
             print(f"  - {d}")
         print()
 
-    if blocking:
-        print(f"Found {len(blocking)} published-dependency consistency violation(s) (BLOCKING):")
-        for v in blocking:
+    all_blocking = blocking + unpublishable
+
+    if all_blocking:
+        print(f"Found {len(all_blocking)} published-dependency consistency violation(s) (BLOCKING):")
+        for v in all_blocking:
             print(f"  - {v}")
     elif not pending:
         print("No published-dependency consistency violations found.")
 
-    if blocking and args.blocking:
+    if all_blocking and args.blocking:
         print("\nBLOCKING: failing this run (release tag).", file=sys.stderr)
         return 1
-    if blocking:
+    if all_blocking:
         print(
             "\nADVISORY: not failing this run (not a release tag) -- "
             "these must be resolved before the next tag.",
