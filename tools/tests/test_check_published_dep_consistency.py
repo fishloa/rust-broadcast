@@ -137,6 +137,21 @@ class TestClassify:
         assert result == "stale_dev"
 
 
+class TestEpochApproximation:
+    """Pins the documented epoch-granularity limitation."""
+
+    def test_epoch_granularity_is_a_known_limitation(self) -> None:
+        """_version_satisfies_req("0.6.0", "^0.6.5") returns True.
+
+        This documents the approximation rather than endorsing it.  Epoch
+        comparison sees both as epoch (0, 6, 0) and reports satisfied, even
+        though cargo would reject `^0.6.5` as unsatisfied by 0.6.0.
+        If someone tightens the comparison to a precise semver check, this
+        test is the thing to update — change it to assert False then.
+        """
+        assert dut._version_satisfies_req("0.6.0", "^0.6.5") is True
+
+
 class TestMainExitCode:
     """End-to-end exit code tests, monkeypatching network/cargo accessors."""
 

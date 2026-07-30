@@ -54,6 +54,21 @@ Network errors talking to crates.io are retried, then SKIPPED with a warning
 Exit code is always 0 unless `--blocking` is passed, in which case it is 1 if
 any BLOCKING violation was found. The caller (CI) decides whether this run is
 advisory (ordinary pushes/PRs) or blocking (release tags).
+
+Known limitation: epoch-granularity comparison
+------------------------------------------------
+`any_published_version_satisfies()` and `_version_satisfies_req()` compare
+only the caret-compatible **epoch** of a requirement, not the full semver
+range.  For example, `^0.6.5` has epoch `(0, 6, 0)` and is reported as
+satisfied by a published `0.6.0`, even though `cargo` would reject that.
+Similarly `^9.1` has epoch `(1, 9, 0)` and matches `9.0.0`.
+
+This is safe for this workspace today because every inter-crate version
+requirement uses **two-component** forms (`"0.21"`, `"9"`, `"0.4"`),
+where epoch comparison and full comparison agree.  It would stop being
+safe if a three-component requirement (e.g. `^0.6.5`) were introduced
+to a sibling dependency.  Fixing this requires a real semver range
+parser (`cargo_metadata` does not expose one).
 """
 
 from __future__ import annotations
@@ -193,6 +208,10 @@ def _crate_versions(crate: str) -> list[str]:
 def any_published_version_satisfies(crate: str, req: str) -> bool:
     """True if some published, unyanked version of `crate` matches the compat
     epoch of `req`.
+
+    NOTE: epoch-granularity approximation, see module docstring "Known
+    limitation: epoch-granularity comparison".  A requirement like `^0.6.5`
+    matches `0.6.0` here, which `cargo` would reject.
     """
     epoch = compat_epoch(req)
     if epoch is None:
@@ -209,7 +228,12 @@ def version_is_published(crate: str, version: str) -> bool:
 
 
 def _version_satisfies_req(version: str, req: str) -> bool:
-    """True if `version` satisfies a caret-style `req` (same compat epoch)."""
+    """True if `version` satisfies a caret-style `req` (same compat epoch).
+
+    NOTE: epoch-granularity approximation, see module docstring "Known
+    limitation: epoch-granularity comparison".  `^0.6.5` is accepted as
+    satisfied by `0.6.0`, which `cargo` would reject.
+    """
     return compat_epoch(version) == compat_epoch(req)
 
 
