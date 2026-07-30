@@ -105,6 +105,22 @@ USER_AGENT = "rust-broadcast-published-dep-consistency-check (github.com/fishloa
 RETRIES = 3
 RETRY_BACKOFF_SECONDS = 2
 
+# crates.io asks for ~1 request/second from tooling. Check 1 enumerates every
+# published version a requirement admits, so a full run makes hundreds of
+# requests and WILL be rate-limited without pacing. Being throttled is not a
+# cosmetic problem: an unreachable crate is an unchecked crate.
+MIN_REQUEST_INTERVAL_SECONDS = 1.0
+_last_request_at = 0.0
+
+
+def _throttle() -> None:
+    """Sleep so consecutive crates.io requests stay ~1s apart."""
+    global _last_request_at
+    delta = time.monotonic() - _last_request_at
+    if delta < MIN_REQUEST_INTERVAL_SECONDS:
+        time.sleep(MIN_REQUEST_INTERVAL_SECONDS - delta)
+    _last_request_at = time.monotonic()
+
 
 _cargo_metadata_cache: dict | None = None
 
@@ -140,6 +156,12 @@ def workspace_dependencies() -> dict[tuple[str, str], tuple[str, str]]:
     stays `"build"`.
     """
     data = _cargo_metadata()
+    # Membership filter. Without it this returns EVERY dependency, including
+    # third-party ones, and check 1 then enumerates every published version of
+    # `serde`, `tokio`, … — hundreds of crates.io requests that rate-limit
+    # (HTTP 429). Skipped requests are silently treated as "no violation", so
+    # the check under-reports rather than failing loudly. Keep this filter.
+    members = {p["name"] for p in data["packages"]}
     result: dict[tuple[str, str], tuple[str, str]] = {}
     for pkg in data["packages"]:
         member = pkg["name"]
@@ -147,6 +169,8 @@ def workspace_dependencies() -> dict[tuple[str, str], tuple[str, str]]:
             sibling = dep.get("name")
             req = dep.get("req")
             if sibling is None or req is None:
+                continue
+            if sibling not in members:
                 continue
             if req == "*":
                 continue
@@ -213,12 +237,19 @@ def http_get_json(url: str) -> dict | None:
     req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
     last_err = None
     for attempt in range(1, RETRIES + 1):
+        _throttle()
         try:
             with urllib.request.urlopen(req, timeout=15) as resp:
                 return json.loads(resp.read())
         except urllib.error.HTTPError as e:
             if e.code == 404:
                 return None
+            # 429 means we are asking too fast, not that the data is absent.
+            # Back off hard: the alternative is exhausting retries and
+            # recording the crate as "skipped", which on a release tag now
+            # fails the run outright.
+            if e.code == 429:
+                time.sleep(RETRY_BACKOFF_SECONDS * (2 ** attempt))
             last_err = e
         except (urllib.error.URLError, TimeoutError, OSError) as e:
             last_err = e
@@ -1031,6 +1062,20 @@ def main() -> int:
             print(f"  - {v}")
     elif not pending and not stale_dev and not publish_order:
         print("No published-dependency consistency violations found.")
+
+    # A crate we could not reach was NOT checked. On a release tag that is
+    # indistinguishable from "checked and clean", which is precisely the
+    # failure mode this whole tool exists to prevent: an absent check reading
+    # as a passing check. Refuse to certify a release on unverified data.
+    if skipped and args.blocking:
+        print(
+            f"\nBLOCKING: {len(skipped)} crate(s) could not be verified against "
+            f"crates.io ({', '.join(sorted(skipped))}). A skipped crate is an "
+            "UNCHECKED crate, not a clean one -- refusing to pass a release gate "
+            "on unverified data. Re-run when crates.io is reachable.",
+            file=sys.stderr,
+        )
+        return 1
 
     if all_blocking and args.blocking:
         print("\nBLOCKING: failing this run (release tag).", file=sys.stderr)
