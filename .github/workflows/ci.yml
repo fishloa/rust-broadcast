@@ -1,13 +1,13 @@
 name: CI
 
 on:
- push:
- branches: [main]
- pull_request:
+  push:
+    branches: [main]
+  pull_request:
 
 env:
- CARGO_TERM_COLOR: always
- RUSTFLAGS: "-D warnings"
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: "-D warnings"
 
 # The toolchain is pinned once in rust-toolchain.toml (channel = the workspace
 # MSRV, 1.86, plus the clippy/rustfmt components and the bare-metal target).
@@ -17,235 +17,235 @@ env:
 # file with `cargo +nightly` / `cargo +stable`. See issue #574.
 
 jobs:
- test:
- name: test (MSRV 1.86)
- runs-on: ubuntu-latest
- steps:
- - uses: actions/checkout@v5
- - uses: Swatinem/rust-cache@v2
- - uses: taiki-e/install-action@nextest
- # --locked: the committed Cargo.lock pins MSRV-compatible dependency
- # versions (some newer transitive crates require edition2024 / Cargo 1.85).
- # dvb-stream is excluded from the core build/test: it depends on tokio and
- # is feature-forcing; it has its own job below. dvb-tools and
- # dvb-conformance are excluded because they are feature-forcing leaf crates
- # that would mask regressions in the library crates' bare
- # --no-default-features build.
- - name: Build (all features)
- run: cargo build --workspace --exclude dvb-tools --exclude dvb-conformance --exclude dvb-stream --all-features --locked
- # Examples are a published docs surface (they show on docs.rs and double as
- # compile-checked usage docs). Build the whole workspace's examples — no
- # excludes, so dvb-stream/dvb-conformance examples are covered too.
- - name: Build examples (all features)
- run: cargo build --workspace --examples --all-features --locked
- # nextest enforces the per-test terminate-after timeout (.config/nextest.toml
- # [profile.ci]) so a hung/runaway test FAILS instead of blocking CI; it does
- # not run doctests, which get their own bounded lane below.
- - name: Test (all features)
- run: cargo nextest run --workspace --exclude dvb-tools --exclude dvb-conformance --exclude dvb-stream --all-features --locked --profile ci
- - name: Doctests (all features)
- timeout-minutes: 15
- run: cargo test --workspace --exclude dvb-tools --exclude dvb-conformance --exclude dvb-stream --all-features --locked --doc
- # Exclude the feature-forcing leaf crates here. dvb-tools (binary) needs
- # dvb-si's ts/serde/chrono + dvb-t2mi's ts; dvb-conformance needs dvb-si's
- # ts/serde; dvb-stream always depends on tokio. Including any of them would
- # — via workspace feature unification — force those features on and mask a
- # regression in the library crates' bare --no-default-features build.
- - name: Build (no default features)
- run: cargo build --workspace --exclude dvb-tools --exclude dvb-conformance --exclude dvb-stream --no-default-features --locked
- # `--features std`: the library crates are #![no_std] with the default
- # `std` feature off, and the libtest harness requires std — so tests are
- # run with std re-enabled but the OTHER optional features (chrono/ts/serde)
- # still off, to catch feature-gating regressions. The bare-metal `no_std`
- # job below is what proves the #![no_std] build.
- - name: Test (no optional features, std on)
- run: cargo nextest run --workspace --exclude dvb-tools --exclude dvb-conformance --exclude dvb-stream --no-default-features --features std --locked --profile ci
- - name: Doctests (no optional features, std on)
- timeout-minutes: 15
- run: cargo test --workspace --exclude dvb-tools --exclude dvb-conformance --exclude dvb-stream --no-default-features --features std --locked --doc
+  test:
+    name: test (MSRV 1.86)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@nextest
+      # --locked: the committed Cargo.lock pins MSRV-compatible dependency
+      # versions (some newer transitive crates require edition2024 / Cargo 1.85).
+      # dvb-stream is excluded from the core build/test: it depends on tokio and
+      # is feature-forcing; it has its own job below. dvb-tools and
+      # dvb-conformance are excluded because they are feature-forcing leaf crates
+      # that would mask regressions in the library crates' bare
+      # --no-default-features build.
+      - name: Build (all features)
+        run: cargo build --workspace --exclude dvb-tools --exclude dvb-conformance --exclude dvb-stream --all-features --locked
+      # Examples are a published docs surface (they show on docs.rs and double as
+      # compile-checked usage docs). Build the whole workspace's examples — no
+      # excludes, so dvb-stream/dvb-conformance examples are covered too.
+      - name: Build examples (all features)
+        run: cargo build --workspace --examples --all-features --locked
+      # nextest enforces the per-test terminate-after timeout (.config/nextest.toml
+      # [profile.ci]) so a hung/runaway test FAILS instead of blocking CI; it does
+      # not run doctests, which get their own bounded lane below.
+      - name: Test (all features)
+        run: cargo nextest run --workspace --exclude dvb-tools --exclude dvb-conformance --exclude dvb-stream --all-features --locked --profile ci
+      - name: Doctests (all features)
+        timeout-minutes: 15
+        run: cargo test --workspace --exclude dvb-tools --exclude dvb-conformance --exclude dvb-stream --all-features --locked --doc
+      # Exclude the feature-forcing leaf crates here. dvb-tools (binary) needs
+      # dvb-si's ts/serde/chrono + dvb-t2mi's ts; dvb-conformance needs dvb-si's
+      # ts/serde; dvb-stream always depends on tokio. Including any of them would
+      # — via workspace feature unification — force those features on and mask a
+      # regression in the library crates' bare --no-default-features build.
+      - name: Build (no default features)
+        run: cargo build --workspace --exclude dvb-tools --exclude dvb-conformance --exclude dvb-stream --no-default-features --locked
+      # `--features std`: the library crates are #![no_std] with the default
+      # `std` feature off, and the libtest harness requires std — so tests are
+      # run with std re-enabled but the OTHER optional features (chrono/ts/serde)
+      # still off, to catch feature-gating regressions. The bare-metal `no_std`
+      # job below is what proves the #![no_std] build.
+      - name: Test (no optional features, std on)
+        run: cargo nextest run --workspace --exclude dvb-tools --exclude dvb-conformance --exclude dvb-stream --no-default-features --features std --locked --profile ci
+      - name: Doctests (no optional features, std on)
+        timeout-minutes: 15
+        run: cargo test --workspace --exclude dvb-tools --exclude dvb-conformance --exclude dvb-stream --no-default-features --features std --locked --doc
 
- lint:
- name: clippy
- runs-on: ubuntu-latest
- steps:
- - uses: actions/checkout@v5
- - uses: Swatinem/rust-cache@v2
- # Deliberate column alignment (TableId / DescriptorTag discriminants)
- # is protected by #[rustfmt::skip]; everything else is rustfmt-clean.
- - name: rustfmt
- run: cargo fmt --all --check
- - name: clippy
- run: cargo clippy --workspace --all-features --all-targets --locked -- -D warnings
+  lint:
+    name: clippy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: Swatinem/rust-cache@v2
+      # Deliberate column alignment (TableId / DescriptorTag discriminants)
+      # is protected by #[rustfmt::skip]; everything else is rustfmt-clean.
+      - name: rustfmt
+        run: cargo fmt --all --check
+      - name: clippy
+        run: cargo clippy --workspace --all-features --all-targets --locked -- -D warnings
 
- docs:
- name: doc build
- runs-on: ubuntu-latest
- steps:
- - uses: actions/checkout@v5
- - uses: Swatinem/rust-cache@v2
- # Docs are warning-clean: bit-range notation is backticked (`[7:4]`)
- # so it can't be mistaken for intra-doc links. Keep it that way.
- - name: cargo doc
- run: cargo doc --workspace --all-features --no-deps --locked
- env:
- RUSTDOCFLAGS: "-D warnings"
+  docs:
+    name: doc build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: Swatinem/rust-cache@v2
+      # Docs are warning-clean: bit-range notation is backticked (`[7:4]`)
+      # so it can't be mistaken for intra-doc links. Keep it that way.
+      - name: cargo doc
+        run: cargo doc --workspace --all-features --no-deps --locked
+        env:
+          RUSTDOCFLAGS: "-D warnings"
 
- # True no_std proof: build each library crate for a bare-metal target with
- # its default `std` feature off. This is per-crate (no workspace feature
- # unification) and links without the std runtime — the only check that
- # genuinely enforces #![no_std] (the `--no-default-features` host lane above
- # does not, since std is present on the host). The bare-metal target is
- # provided by rust-toolchain.toml. dvb-tools/dvb-stream are std-only
- # applications and are intentionally not built here.
- no-std:
- name: no_std (thumbv7em-none-eabi)
- runs-on: ubuntu-latest
- steps:
- - uses: actions/checkout@v5
- - uses: Swatinem/rust-cache@v2
- # Every crate that claims `no_std` support must be listed here, or the
- # claim is unverified: `cargo build --workspace --no-default-features`
- # does NOT catch a per-crate break, because feature unification across
- # the workspace can pull `std` in for a crate that would fail alone
- # (that masked a std-only `f64::round()` once already).
- #
- # `broadcast-common`, `mpeg-ts`, `transmux`, `media-plane`,
- # `timed-metadata`, `ll-hls-runtime`, `srt-runtime` and `media-doctor`
- # were all missing from this list while advertising `no_std` on
- # crates.io — including `broadcast-common`, which everything else
- # depends on. They cross-build clean today; they are listed now so they
- # cannot regress silently.
- #
- # Deliberately NOT here (they genuinely require `std`, verified):
- # `dvb-ci-runtime`, `ts-fix`, `multimux`, `multimux-cli`, `dvb-tools`,
- # `dvb-stream`.
- - name: Build each library crate for bare-metal (no_std)
- run: |
- for c in broadcast-common dvb-bbframe scte35-splice dvb-t2mi dvb-si dvb-conformance mpeg-pes dvb-subtitle mpeg-ps scte104 cc-data st291 ule dvb-ci dvb-simulcrypt mp4-emsg dvb-vbi dvb-flute rtp-packet rtcp-packet st12-1 st337 rdd29 st377-1 mpeg-ts transmux media-plane timed-metadata ll-hls-runtime srt-runtime media-doctor; do
- echo "::group::$c (no_std)"
- cargo build -p "$c" --no-default-features --target thumbv7em-none-eabi --locked
- echo "::endgroup::"
- done
+  # True no_std proof: build each library crate for a bare-metal target with
+  # its default `std` feature off. This is per-crate (no workspace feature
+  # unification) and links without the std runtime — the only check that
+  # genuinely enforces #![no_std] (the `--no-default-features` host lane above
+  # does not, since std is present on the host). The bare-metal target is
+  # provided by rust-toolchain.toml. dvb-tools/dvb-stream are std-only
+  # applications and are intentionally not built here.
+  no-std:
+    name: no_std (thumbv7em-none-eabi)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: Swatinem/rust-cache@v2
+      # Every crate that claims `no_std` support must be listed here, or the
+      # claim is unverified: `cargo build --workspace --no-default-features`
+      # does NOT catch a per-crate break, because feature unification across
+      # the workspace can pull `std` in for a crate that would fail alone
+      # (that masked a std-only `f64::round()` once already).
+      #
+      # `broadcast-common`, `mpeg-ts`, `transmux`, `media-plane`,
+      # `timed-metadata`, `ll-hls-runtime`, `srt-runtime` and `media-doctor`
+      # were all missing from this list while advertising `no_std` on
+      # crates.io — including `broadcast-common`, which everything else
+      # depends on. They cross-build clean today; they are listed now so they
+      # cannot regress silently.
+      #
+      # Deliberately NOT here (they genuinely require `std`, verified):
+      # `dvb-ci-runtime`, `ts-fix`, `multimux`, `multimux-cli`, `dvb-tools`,
+      # `dvb-stream`.
+      - name: Build each library crate for bare-metal (no_std)
+        run: |
+          for c in broadcast-common dvb-bbframe scte35-splice dvb-t2mi dvb-si dvb-conformance mpeg-pes dvb-subtitle mpeg-ps scte104 cc-data st291 ule dvb-ci dvb-simulcrypt mp4-emsg dvb-vbi dvb-flute rtp-packet rtcp-packet st12-1 st337 rdd29 st377-1 mpeg-ts transmux media-plane timed-metadata ll-hls-runtime srt-runtime media-doctor; do
+            echo "::group::$c (no_std)"
+            cargo build -p "$c" --no-default-features --target thumbv7em-none-eabi --locked
+            echo "::endgroup::"
+          done
 
- # Fuzz targets are not part of the workspace (own sub-workspace under fuzz/)
- # and so are never built by the jobs above — they rot silently when a crate's
- # parse API changes. This job builds every libfuzzer target on nightly (build
- # only, no run) so a broken target fails CI. `cargo +nightly` overrides the
- # pinned toolchain from rust-toolchain.toml. RUSTFLAGS="-D warnings" is unset
- # here: cargo-fuzz injects sanitizer/coverage codegen flags and we only need a
- # compile smoke, not a warning gate (the library warning gate is the lint job).
- fuzz:
- name: fuzz build (nightly)
- runs-on: ubuntu-latest
- env:
- RUSTFLAGS: ""
- steps:
- - uses: actions/checkout@v5
- - uses: dtolnay/rust-toolchain@nightly
- - uses: Swatinem/rust-cache@v2
- with:
- workspaces: fuzz
- - uses: taiki-e/install-action@v2
- with:
- tool: cargo-fuzz
- - name: Build all fuzz targets
- working-directory: fuzz
- # No --locked: fuzz/Cargo.lock is gitignored (the harness is not a
- # published artifact), so CI resolves fresh against the current crates.
- # Pin the gnu target: the taiki-e cargo-fuzz binary is musl-static, so
- # its host triple leaks as the default --target (musl), whose std isn't
- # installed and whose static libc is incompatible with the sanitizer.
- run: cargo +nightly fuzz build --target x86_64-unknown-linux-gnu
+  # Fuzz targets are not part of the workspace (own sub-workspace under fuzz/)
+  # and so are never built by the jobs above — they rot silently when a crate's
+  # parse API changes. This job builds every libfuzzer target on nightly (build
+  # only, no run) so a broken target fails CI. `cargo +nightly` overrides the
+  # pinned toolchain from rust-toolchain.toml. RUSTFLAGS="-D warnings" is unset
+  # here: cargo-fuzz injects sanitizer/coverage codegen flags and we only need a
+  # compile smoke, not a warning gate (the library warning gate is the lint job).
+  fuzz:
+    name: fuzz build (nightly)
+    runs-on: ubuntu-latest
+    env:
+      RUSTFLAGS: ""
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@nightly
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: fuzz
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-fuzz
+      - name: Build all fuzz targets
+        working-directory: fuzz
+        # No --locked: fuzz/Cargo.lock is gitignored (the harness is not a
+        # published artifact), so CI resolves fresh against the current crates.
+        # Pin the gnu target: the taiki-e cargo-fuzz binary is musl-static, so
+        # its host triple leaks as the default --target (musl), whose std isn't
+        # installed and whose static libc is incompatible with the sanitizer.
+        run: cargo +nightly fuzz build --target x86_64-unknown-linux-gnu
 
- # dvb-stream is versioned and released independently from the lockstep
- # v-tag publish and is feature-forcing (tokio), so it is excluded from the
- # core `test` job's workspace build and gets its own here — still on the
- # pinned MSRV toolchain from rust-toolchain.toml.
- dvb-stream:
- name: dvb-stream
- runs-on: ubuntu-latest
- steps:
- - uses: actions/checkout@v5
- - uses: Swatinem/rust-cache@v2
- - uses: taiki-e/install-action@nextest
- - name: Build
- run: cargo build -p dvb-stream --all-features --locked
- - name: Test
- run: cargo nextest run -p dvb-stream --all-features --locked --profile ci
- - name: Doctests
- timeout-minutes: 10
- run: cargo test -p dvb-stream --all-features --locked --doc
- - name: Clippy
- run: cargo clippy -p dvb-stream --all-features --all-targets --locked -- -D warnings
- - name: rustfmt
- run: cargo fmt --all --check
- - name: Doc
- run: cargo doc -p dvb-stream --all-features --no-deps --locked
- env:
- RUSTDOCFLAGS: "-D warnings"
+  # dvb-stream is versioned and released independently from the lockstep
+  # v-tag publish and is feature-forcing (tokio), so it is excluded from the
+  # core `test` job's workspace build and gets its own here — still on the
+  # pinned MSRV toolchain from rust-toolchain.toml.
+  dvb-stream:
+    name: dvb-stream
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@nextest
+      - name: Build
+        run: cargo build -p dvb-stream --all-features --locked
+      - name: Test
+        run: cargo nextest run -p dvb-stream --all-features --locked --profile ci
+      - name: Doctests
+        timeout-minutes: 10
+        run: cargo test -p dvb-stream --all-features --locked --doc
+      - name: Clippy
+        run: cargo clippy -p dvb-stream --all-features --all-targets --locked -- -D warnings
+      - name: rustfmt
+        run: cargo fmt --all --check
+      - name: Doc
+        run: cargo doc -p dvb-stream --all-features --no-deps --locked
+        env:
+          RUSTDOCFLAGS: "-D warnings"
 
- # Non-blocking early-warning canary: clippy on a stable NEWER than the MSRV,
- # so a new lint surfaces here as a soft failure instead of red-lighting a real
- # PR the day upstream stable moves. Counterweight to pinning the gate jobs at
- # the MSRV; `cargo +$CANARY_RUST` overrides rust-toolchain.toml.
- #
- # PINNED ON PURPOSE. This used to track floating `stable`, which made the job
- # unreproducible and unownable: it could go red overnight with no code change,
- # and nobody could reproduce it locally unless their toolchain happened to
- # match the runner's. It was red for months and everyone learned to ignore it
- # (see #770, and #785 for the same rot in the Pages workflow).
- #
- # To reproduce EXACTLY what this job runs:
- # rustup toolchain install 1.97.1
- # cargo +1.97.1 clippy --workspace --all-features --all-targets --locked -- -D warnings
- #
- # Bumping the pin is a deliberate PR of its own: raise CANARY_RUST, fix
- # whatever new lints appear, and land the two together. That keeps "upstream
- # added a lint" as reviewable work rather than as ambient breakage. Bumping
- # the MSRV itself is separate — rust-toolchain.toml + Cargo.toml, issue #574.
- clippy-canary:
- name: clippy (pinned stable, non-blocking)
- runs-on: ubuntu-latest
- continue-on-error: true
- env:
- CANARY_RUST: "1.97.1"
- steps:
- - uses: actions/checkout@v5
- - uses: dtolnay/rust-toolchain@master
- with:
- toolchain: "1.97.1"
- components: clippy
- - uses: Swatinem/rust-cache@v2
- - name: clippy on pinned stable ${{ env.CANARY_RUST }}
- run: cargo +$CANARY_RUST clippy --workspace --all-features --all-targets --locked -- -D warnings
+  # Non-blocking early-warning canary: clippy on a stable NEWER than the MSRV,
+  # so a new lint surfaces here as a soft failure instead of red-lighting a real
+  # PR the day upstream stable moves. Counterweight to pinning the gate jobs at
+  # the MSRV; `cargo +$CANARY_RUST` overrides rust-toolchain.toml.
+  #
+  # PINNED ON PURPOSE. This used to track floating `stable`, which made the job
+  # unreproducible and unownable: it could go red overnight with no code change,
+  # and nobody could reproduce it locally unless their toolchain happened to
+  # match the runner's. It was red for months and everyone learned to ignore it
+  # (see #770, and #785 for the same rot in the Pages workflow).
+  #
+  # To reproduce EXACTLY what this job runs:
+  #   rustup toolchain install 1.97.1
+  #   cargo +1.97.1 clippy --workspace --all-features --all-targets --locked -- -D warnings
+  #
+  # Bumping the pin is a deliberate PR of its own: raise CANARY_RUST, fix
+  # whatever new lints appear, and land the two together. That keeps "upstream
+  # added a lint" as reviewable work rather than as ambient breakage. Bumping
+  # the MSRV itself is separate — rust-toolchain.toml + Cargo.toml, issue #574.
+  clippy-canary:
+    name: clippy (pinned stable, non-blocking)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    env:
+      CANARY_RUST: "1.97.1"
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.97.1"
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: clippy on pinned stable ${{ env.CANARY_RUST }}
+        run: cargo +$CANARY_RUST clippy --workspace --all-features --all-targets --locked -- -D warnings
 
- # Player-validated golden gate (issue #569): every other transmux test
- # proves round-trip symmetry against our own parsers only. This job packages
- # a real fixture through transmux's CMAF/progressive-MP4/TS-HLS/DASH outputs
- # (`transmux/tests/golden_gate.rs`) and hands them to an INDEPENDENT decoder
- # (`ffprobe`) to confirm they are well-formed and report the expected
- # codec/dimensions/track-count. Non-blocking to start (continue-on-error,
- # like clippy-canary above) because external-tool availability/behaviour
- # varies across runner images; promote to required once stable. Uses the
- # pinned toolchain from rust-toolchain.toml — no dtolnay step needed, this
- # only needs `cargo test`, not a different channel.
- #
- # Issue #717's closing acceptance item extends this to the CLIENT side:
- # `ll-hls-runtime/tests/golden_gate.rs` stands up a real LL-HLS origin over
- # loopback, drives the real `TokioClient` (the epic's reference client)
- # against it, and hands the client's OWN reconstruction (not the origin's
- # output) to the same `ffprobe` oracle — closing the origin-only gap the
- # transmux job above leaves open.
- golden-gate:
- name: golden gate (ffprobe, non-blocking)
- runs-on: ubuntu-latest
- continue-on-error: true
- steps:
- - uses: actions/checkout@v5
- - uses: Swatinem/rust-cache@v2
- - name: Install ffmpeg (provides ffprobe)
- run: sudo apt-get update && sudo apt-get install -y ffmpeg
- - name: Golden gate (transmux, all features)
- run: cargo test -p transmux --test golden_gate --all-features --locked
- - name: Golden gate (ll-hls-runtime reference client, all features)
- run: cargo test -p ll-hls-runtime --test golden_gate --all-features --locked
+  # Player-validated golden gate (issue #569): every other transmux test
+  # proves round-trip symmetry against our own parsers only. This job packages
+  # a real fixture through transmux's CMAF/progressive-MP4/TS-HLS/DASH outputs
+  # (`transmux/tests/golden_gate.rs`) and hands them to an INDEPENDENT decoder
+  # (`ffprobe`) to confirm they are well-formed and report the expected
+  # codec/dimensions/track-count. Non-blocking to start (continue-on-error,
+  # like clippy-canary above) because external-tool availability/behaviour
+  # varies across runner images; promote to required once stable. Uses the
+  # pinned toolchain from rust-toolchain.toml — no dtolnay step needed, this
+  # only needs `cargo test`, not a different channel.
+  #
+  # Issue #717's closing acceptance item extends this to the CLIENT side:
+  # `ll-hls-runtime/tests/golden_gate.rs` stands up a real LL-HLS origin over
+  # loopback, drives the real `TokioClient` (the epic's reference client)
+  # against it, and hands the client's OWN reconstruction (not the origin's
+  # output) to the same `ffprobe` oracle — closing the origin-only gap the
+  # transmux job above leaves open.
+  golden-gate:
+    name: golden gate (ffprobe, non-blocking)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v5
+      - uses: Swatinem/rust-cache@v2
+      - name: Install ffmpeg (provides ffprobe)
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+      - name: Golden gate (transmux, all features)
+        run: cargo test -p transmux --test golden_gate --all-features --locked
+      - name: Golden gate (ll-hls-runtime reference client, all features)
+        run: cargo test -p ll-hls-runtime --test golden_gate --all-features --locked
