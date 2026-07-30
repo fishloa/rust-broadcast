@@ -88,3 +88,18 @@ data Rxn) is the only rate consistent with §2.4.2.4.
 | TBsys (512 B, 1 Mbit/s) | Yes | Overflow, empty-interval, data-delay checks |
 | Bsys (1536 B) | Deferred | Not yet modelled (needs descriptor parsing for section flow) |
 | MBn / EBn / Bn | Deferred | Codec-dependent sizes from descriptors |
+
+## Conformance thresholds (not from H.222.0)
+
+The delay and empty-interval thresholds used by indicators 3.9 and 3.10 are
+specified by **ETSI TR 101 290 v1.4.1 Table 5.0c**, not by H.222.0:
+
+| Constant | Value | Source |
+|----------|-------|--------|
+| DATA_DELAY_LIMIT_SECS | 1 s | TR 101 290 indicator 3.10 |
+| TB_EMPTY_INTERVAL_SECS | 1 s | TR 101 290 indicator 3.9 |
+| TB_SYS_EMPTY_INTERVAL_SECS | 1 s | TR 101 290 indicator 3.9 |
+
+The still-picture 60 s delay threshold (also indicator 3.10) is **not
+implemented**: detecting still-picture PIDs requires PMT stream_type
+parsing which is deferred pending descriptor support.
