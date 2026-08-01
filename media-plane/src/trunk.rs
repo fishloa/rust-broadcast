@@ -4,7 +4,7 @@
 //! event log, [`EventCursor`], and [`EventAnchor`] (plan step 3b-iii); the
 //! live-part log and the [`Trunk::listen`] reader-wake primitive (plan step
 //! 3b-iv), closing the two gaps step 3d found while reading
-//! `ll-hls-runtime/src/server/` before writing the egress traits — see
+//! `hls-runtime/src/server/` before writing the egress traits — see
 //! [The live-part log](#the-live-part-log-parts-before-their-segment-closes)
 //! and
 //! [The reader-wake primitive](#the-reader-wake-primitive-listen-not-one-registration-per-remote-peer)
@@ -432,7 +432,7 @@
 //! # The live-part log: parts before their segment closes
 //!
 //! Step 3d built `ServedEgress`/`EgressResponse::Await` and, per its own
-//! brief, read `ll-hls-runtime/src/server/` before finishing to report what
+//! brief, read `hls-runtime/src/server/` before finishing to report what
 //! did **not** fit. It found the segment log alone cannot serve LL-HLS at
 //! all: RFC 8216bis's entire low-latency mechanism is **part-level**
 //! availability ("does part 3 of the segment currently being written
@@ -474,7 +474,7 @@
 //!   a property ([`Trunk::part_bytes`] already answers "is this part ready")
 //!   nothing needs.
 //! - *Evict a segment's parts the instant it closes* — rejected: this is
-//!   the exact bug `ll_hls_runtime::server::MediaStore`'s own `recent_parts`
+//!   the exact bug `hls_runtime::server::MediaStore`'s own `recent_parts`
 //!   buffer exists to prevent (documented there as "the segmenter emits a
 //!   segment's final part and closes the segment in the same pipeline
 //!   step... without this the part is evicted microseconds after it
@@ -497,7 +497,7 @@
 //! at which point this ring cannot distinguish "evicted" from "never
 //! existed"; a `ServedEgress` wanting RFC 8216bis's sharper "will never
 //! exist, stop waiting" signal for a part of an *already-closed* segment
-//! (`ll_hls_runtime::server::MediaStore::resolve_resource`'s
+//! (`hls_runtime::server::MediaStore::resolve_resource`'s
 //! `ResourceOutcome::NotFound` case) gets that distinction the same way
 //! `MediaStore` itself does: by also consulting [`Trunk::last_closed_segment`]
 //! — if the requested part's `segment_number` is at or before that value
@@ -512,7 +512,7 @@
 //! *on* — only a poll-with-backoff loop. [`Trunk::listen`] closes that gap
 //! by handing back a [`ProgressListener`] wrapping
 //! [`event_listener::EventListener`] — the exact runtime-agnostic primitive
-//! `ll_hls_runtime::server::MediaStore::listen` already returns (an already
+//! `hls_runtime::server::MediaStore::listen` already returns (an already
 //! std+`event-listener`-feature dependency of this crate's sibling, and now
 //! of this one), not a hand-rolled parallel mechanism, so a caller ports
 //! mechanically: `.await` it under any executor, or call
@@ -1680,7 +1680,7 @@ impl Trunk {
     /// [`SegmentEntry`]) from merely "has live parts" — RFC 8216bis
     /// §6.2.5.2's bare-`_HLS_msn` blocking-reload condition needs exactly
     /// this distinction (mirrors
-    /// `ll_hls_runtime::server::MediaStore::last_closed_segment_seq`, which
+    /// `hls_runtime::server::MediaStore::last_closed_segment_seq`, which
     /// this method lets a `ServedEgress` stop duplicating).
     pub fn last_closed_segment(&self) -> Option<u32> {
         self.state
@@ -1726,7 +1726,7 @@ impl Trunk {
     /// as a caller must once [`crate::egress::AwaitPolicy`] itself has
     /// expired. **Register before re-checking the condition you are waiting
     /// on** — `event_listener`'s standard idiom, and the same ordering
-    /// `ll_hls_runtime::server::MediaStore::listen`'s own docs require —
+    /// `hls_runtime::server::MediaStore::listen`'s own docs require —
     /// otherwise a `notify` racing your check can be missed.
     pub fn listen(self: &Arc<Self>) -> Option<ProgressListener> {
         loop {
@@ -1800,7 +1800,7 @@ impl ProgressListener {
     /// Deliberately no unbounded `wait()` is exposed here — only this
     /// deadline-bound form and the `Future` impl below (whose bound is
     /// whatever timeout the caller's own executor wraps it in, exactly the
-    /// `ll_hls_runtime::server` "caller-driven wait loop" shape) — matching
+    /// `hls_runtime::server` "caller-driven wait loop" shape) — matching
     /// this crate's [`crate::egress::AwaitPolicy`] philosophy that a wait on
     /// remote-triggerable input must never be able to park forever.
     pub fn wait_deadline(self, deadline: std::time::Instant) -> bool {

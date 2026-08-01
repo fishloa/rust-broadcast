@@ -1,8 +1,20 @@
 # Changelog
 
-All notable changes to `ll-hls-runtime` are documented here. The format follows
+All notable changes to `hls-runtime` (formerly `ll-hls-runtime`) are
+documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project adheres
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [0.4.0] - 2026-08-01
+
+### Changed (Breaking)
+- **Crate renamed** `ll-hls-runtime` -> `hls-runtime` (issue #868): the
+  crate is gaining a non-low-latency mode, so the `ll-` name became wrong.
+  A clean break — no deprecated alias, no re-export shim. `ll-hls-runtime`'s
+  already-published versions stay live on crates.io, untouched.
+- Public types dropped their `Ll` prefix: `LlHlsOrigin` -> `HlsOrigin`,
+  `LlHlsRequest` -> `HlsRequest`, `LlHlsBody` -> `HlsBody`, `LlHlsClient` ->
+  `HlsClient`. No other behaviour change.
 
 ## [0.3.1] - 2026-07-30
 

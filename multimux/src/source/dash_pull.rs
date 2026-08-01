@@ -5,9 +5,9 @@
 //! plus [`run_dash_pull`], the tokio drive loop that performs the real GETs.
 //!
 //! There is no reusable sans-IO DASH client the way `hls_pull` reuses
-//! `ll_hls_runtime::client::LlHlsClient` — this module's [`DashAction`]/
+//! `hls_runtime::client::HlsClient` — this module's [`DashAction`]/
 //! [`DashResourceId`] are its own request/response identity, in the same
-//! *shape* `ll-hls-runtime` uses (an opaque request type + a correlating id),
+//! *shape* `hls-runtime` uses (an opaque request type + a correlating id),
 //! chosen entirely by this module; `media-plane` never sees either.
 //!
 //! # Round 3: the in-read-path sleep is gone
@@ -31,7 +31,7 @@
 //! carry only `moof`+`mdat` — [`Fmp4Demux::unpackage`] needs a `moov` in the
 //! same buffer it walks, so each media segment's bytes are demuxed
 //! concatenated onto that Representation's cached init bytes, exactly the
-//! pattern `ll_hls_runtime::client::engine`'s `demux_and_emit` uses for
+//! pattern `hls_runtime::client::engine`'s `demux_and_emit` uses for
 //! CMAF parts/segments.
 //!
 //! # Round 3: the three `RepState` fields, judged individually

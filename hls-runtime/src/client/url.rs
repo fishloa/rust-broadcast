@@ -7,7 +7,7 @@
 //! playlist's own URL directory). This resolver only handles those three; a
 //! caller whose origin serves anything stranger (`..`-segments, `;params`)
 //! should resolve URIs itself before handing bytes to
-//! [`crate::client::LlHlsClient::on_resource`].
+//! [`crate::client::HlsClient::on_resource`].
 
 use alloc::format;
 use alloc::string::{String, ToString};

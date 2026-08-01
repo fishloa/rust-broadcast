@@ -1,7 +1,7 @@
 //! Issue #760 acceptance: classic MPEG-TS-segment HLS (HLS v3, RFC 8216 —
 //! the dominant legacy/IPTV form: whole `.ts` segments, no `EXT-X-MAP`/init
 //! resource, self-contained PAT/PMT/PES per segment) ingest through the
-//! sans-IO [`LlHlsClient`], mirroring `examples/client_stepping.rs`'s
+//! sans-IO [`HlsClient`], mirroring `examples/client_stepping.rs`'s
 //! offline drive style (no socket, no real network — fixture bytes are fed
 //! straight from disk).
 //!
@@ -12,7 +12,7 @@
 //! (not just the happy path a synthetic fixture would cover).
 //!
 //! The oracle: demux each `.ts` segment directly via `transmux::TsDemux`
-//! (exactly what `LlHlsClient`'s TS routing does internally, per segment)
+//! (exactly what `HlsClient`'s TS routing does internally, per segment)
 //! and compare the per-track sample counts against what actually drained out
 //! of the client. If issue #760's TS routing were ever removed, the client
 //! would have no init resource to wait for (this playlist never advertises
@@ -23,7 +23,7 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use broadcast_common::Unpackage;
-use ll_hls_runtime::client::{Action, LlHlsClient, Output};
+use hls_runtime::client::{Action, HlsClient, Output};
 use transmux::{CodecConfig, TsDemux};
 
 const PLAYLIST_URL: &str = "http://fixture/index.m3u8";
@@ -57,7 +57,7 @@ fn segment_names_from_playlist(playlist_text: &str) -> Vec<String> {
 /// segment bytes), draining every `Output` in order. No HTTP, no real
 /// clock — every `Action` this VOD (ENDLIST) fixture can ever produce is
 /// answered synchronously from the fixture directory.
-fn drive_to_end(client: &mut LlHlsClient) -> Vec<Output> {
+fn drive_to_end(client: &mut HlsClient) -> Vec<Output> {
     let mut outputs = Vec::new();
     loop {
         match client.poll() {
@@ -91,7 +91,7 @@ fn drive_to_end(client: &mut LlHlsClient) -> Vec<Output> {
 
 /// Direct-demux oracle: per-track sample counts from feeding each `.ts`
 /// segment through `transmux::TsDemux` one at a time (the same
-/// one-segment-at-a-time shape `LlHlsClient`'s TS routing uses internally),
+/// one-segment-at-a-time shape `HlsClient`'s TS routing uses internally),
 /// independent of the client entirely.
 fn oracle_track_totals(segment_names: &[String]) -> BTreeMap<u32, usize> {
     let mut totals = BTreeMap::new();
@@ -141,7 +141,7 @@ fn client_ingests_classic_ts_segment_hls_end_to_end() {
     let playlist_text_str = String::from_utf8(playlist_text).expect("playlist is UTF-8");
     let segment_names = segment_names_from_playlist(&playlist_text_str);
 
-    let mut client = LlHlsClient::new(PLAYLIST_URL);
+    let mut client = HlsClient::new(PLAYLIST_URL);
     let outputs = drive_to_end(&mut client);
 
     assert!(

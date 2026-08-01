@@ -1,6 +1,6 @@
 [package]
-name         = "ll-hls-runtime"
-version      = "0.3.1"
+name         = "hls-runtime"
+version      = "0.4.0"
 edition      = "2024"
 description  = "Sans-IO Low-Latency HLS (RFC 8216bis) client + server engines in one crate (blocking reload, part prefetch, rolling-window origin), with an optional tokio+reqwest IO adapter."
 license      = "MIT OR Apache-2.0"
@@ -21,13 +21,13 @@ broadcast-common = { path = "../broadcast-common", version = "9", default-featur
 transmux          = { path = "../transmux", version = "0.21", default-features = false }
 thiserror         = { version = "2", default-features = false }
 serde             = { version = "1", optional = true, default-features = false, features = ["derive", "alloc"] }
-# Only pulled in by the `std` feature: `server::engine::LlHlsOrigin` renders
+# Only pulled in by the `std` feature: `server::engine::HlsOrigin` renders
 # from a `media_plane::Trunk` (plan step 4) — the shared sample/segment/
 # event/live-part ring `Trunk` is itself `std`-only (see its own module doc),
 # so this crate's `server` module inherits the same `std` gate `MediaStore`
 # used to. `bytes` is needed directly (not just transitively) because
 # `Trunk::part_bytes`/`SegmentEntry::bytes` hand back `bytes::Bytes` this
-# crate's own types carry forward (e.g. `LlHlsBody::Resource`).
+# crate's own types carry forward (e.g. `HlsBody::Resource`).
 media-plane       = { path = "../media-plane", version = "0.1.1", optional = true, default-features = false }
 bytes             = { version = "1", optional = true, default-features = false }
 # Only pulled in by the `tokio` feature (issue #717 slice 5) — the sans-IO
@@ -52,7 +52,7 @@ std = ["broadcast-common/std", "thiserror/std", "transmux/std", "media-plane/std
 # Derive serde on the public wire/event types (`Action`, `Output`, `ResourceId`, ...).
 serde = ["dep:serde"]
 # `TokioClient` (issue #717 slice 5): an async shell driving the sans-IO
-# `LlHlsClient` core over real HTTP (tokio + reqwest/rustls). NOT default —
+# `HlsClient` core over real HTTP (tokio + reqwest/rustls). NOT default —
 # the core (`client/engine.rs`) stays IO-free regardless of this feature;
 # enabling it only adds the `client::tokio_client` module alongside it.
 tokio = ["std", "dep:tokio", "dep:reqwest", "dep:broadcast-auth"]

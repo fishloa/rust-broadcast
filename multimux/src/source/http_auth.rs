@@ -10,7 +10,7 @@
 //! `401`, read the challenge, compute the answer, resend once) so neither
 //! HTTP source hand-rolls Digest: the actual challenge parsing and response
 //! computation is entirely [`broadcast_auth`]'s (issue #663 P3b) — the same
-//! shared model `rtsp-runtime` and `ll_hls_runtime::client::tokio_client`
+//! shared model `rtsp-runtime` and `hls_runtime::client::tokio_client`
 //! use, so every credentialed client in the workspace answers a challenge
 //! through the same code.
 //!

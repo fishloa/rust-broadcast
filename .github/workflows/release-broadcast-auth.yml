@@ -8,7 +8,7 @@ name: Release broadcast-auth
 # DEPENDENCY ORDER: broadcast-auth has NO workspace-crate dependencies (only
 # the external http-auth / thiserror / base64 / md-5 / rand crates), so it can
 # be published on its own with no ordering constraint. It IS a dependency of
-# rtsp-runtime, ll-hls-runtime, and multimux — publish broadcast-auth FIRST,
+# rtsp-runtime, hls-runtime, and multimux — publish broadcast-auth FIRST,
 # before any of those.
 #
 # broadcast-auth is a std application crate — no no_std gate.

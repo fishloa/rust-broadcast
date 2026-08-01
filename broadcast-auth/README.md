@@ -106,7 +106,7 @@ their own config.
 - [`rtsp-runtime`](../rtsp-runtime) — re-exports `broadcast_auth::Credentials`
   as `rtsp_runtime::Credentials` and delegates its `Authenticator` to this
   crate (RFC 2326 §14).
-- [`ll-hls-runtime`](../ll-hls-runtime) — `client::tokio_client::TokioClient`
+- [`hls-runtime`](../hls-runtime) — `client::tokio_client::TokioClient`
   authenticates via this crate's `Credentials`/`Authenticator`
   (Basic/Digest/Bearer).
 - `multimux` — client-side: its `TsHttp`/`HlsPull`/`Rtsp` input adapters

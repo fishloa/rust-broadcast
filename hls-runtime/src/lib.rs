@@ -1,22 +1,22 @@
-//! `ll-hls-runtime` — sans-IO Low-Latency HLS (RFC 8216bis) client **and**
+//! `hls-runtime` — sans-IO Low-Latency HLS (RFC 8216bis) client **and**
 //! server/origin engines, in one crate — mirroring `rtsp-runtime`'s
 //! client+server split.
 //!
 //! This crate unifies what used to be the standalone `ll-hls-client` crate
-//! (Stage 1: a pure rename to `ll-hls-runtime`, zero behaviour change) with
+//! (Stage 1: a pure rename to `hls-runtime`, zero behaviour change) with
 //! the LL-HLS origin engine that used to live in `multimux` (Stage 2: moved
 //! into [`server`] — issue #663/#717,
 //! `docs/superpowers/specs/2026-07-18-multimux-hub-design.md`,
-//! "ll-hls-runtime — client + server in one crate").
+//! "hls-runtime — client + server in one crate").
 //!
 //! # Module map
 //!
-//! - [`client`] — the LL-HLS playback client engine: [`client::LlHlsClient`],
+//! - [`client`] — the LL-HLS playback client engine: [`client::HlsClient`],
 //!   the sans-IO reload scheduler / fetch pipeline / output adapter (issue
 //!   #717 slices 2-4), plus the optional `tokio`-feature
 //!   [`client::TokioClient`] async IO adapter (slice 5). See the module docs
 //!   for full behaviour. No_std-capable (the core needs only `alloc`).
-//! - [`server`] (feature `std`) — the LL-HLS origin engine: [`server::LlHlsOrigin`],
+//! - [`server`] (feature `std`) — the LL-HLS origin engine: [`server::HlsOrigin`],
 //!   a `media_plane::egress::ServedEgress` rendering playlists and resolving
 //!   blocking-reload/part-availability requests directly from a shared
 //!   `media_plane::Trunk` (plan step 4) — no push-fed rolling-window store of

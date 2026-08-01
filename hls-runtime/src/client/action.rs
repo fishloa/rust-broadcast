@@ -1,5 +1,5 @@
 //! Actions the caller must perform IO for — [`Action`] out of
-//! [`crate::client::LlHlsClient::poll`].
+//! [`crate::client::HlsClient::poll`].
 
 use alloc::format;
 use alloc::string::String;
@@ -7,7 +7,7 @@ use alloc::string::String;
 /// Identifies one fetchable resource: the initialisation segment, a Low-Latency
 /// HLS partial segment ("part", RFC 8216bis §4.4.4.9), or a whole media
 /// segment. Used to correlate an [`Action::FetchResource`] with the matching
-/// [`crate::client::LlHlsClient::on_resource`] call.
+/// [`crate::client::HlsClient::on_resource`] call.
 ///
 /// `Part`/`Segment` are keyed by Media Sequence Number (RFC 8216 §4.3.3.2) +
 /// (for parts) the 0-based Part Index within that segment — stable identity
@@ -53,7 +53,7 @@ pub struct BlockingReload {
 }
 
 /// One unit of IO the caller must perform, in response to a
-/// [`crate::client::LlHlsClient::poll`] call. The client core never touches a socket
+/// [`crate::client::HlsClient::poll`] call. The client core never touches a socket
 /// or a clock itself — every `Action` names exactly what to fetch and, for a
 /// playlist reload, how to shape the request.
 #[derive(Debug, Clone, PartialEq)]
@@ -77,7 +77,7 @@ pub enum Action {
     },
     /// Fetch one resource (init/part/segment).
     FetchResource {
-        /// Correlates the eventual [`crate::client::LlHlsClient::on_resource`] call.
+        /// Correlates the eventual [`crate::client::HlsClient::on_resource`] call.
         id: ResourceId,
         /// The resource URL (already resolved against the playlist URL).
         url: String,

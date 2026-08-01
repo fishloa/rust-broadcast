@@ -1,0 +1,71 @@
+name: Release hls-runtime
+
+# Publishes the hls-runtime crate to crates.io on a `hls-runtime-v*` tag.
+# hls-runtime is versioned and released INDEPENDENTLY (standalone integration
+# crate with its own cadence). CI is the only source of published artifacts —
+# never `cargo publish` from a workstation. Requires the CARGO_REGISTRY_TOKEN
+# secret.
+#
+# DEPENDENCY ORDER: hls-runtime depends on broadcast-common (lockstep,
+# already live) and transmux (>= 0.21, already live), and — only under its
+# `std` feature — media-plane (>= 0.1.1, already live), and — only under its
+# `tokio` feature — broadcast-auth (>= 0.2, already live). No new crate needs
+# to land before this one. Downstream, multimux depends on hls-runtime — this
+# must land before that.
+#
+# Renamed from `ll-hls-runtime` (issue #868, a clean break — no deprecated
+# alias, no re-export shim). `ll-hls-runtime`'s last published versions stay
+# live on crates.io untouched; this workflow replaces
+# `release-ll-hls-runtime.yml`.
+
+on:
+  push:
+    tags: ["hls-runtime-v*"]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  publish:
+    name: publish hls-runtime to crates.io
+    runs-on: ubuntu-latest
+    # crates.io publish is gated: pauses for manual approval by a
+    # required reviewer before any cargo publish can run. See the
+    # 'crates-io' environment (repo Settings -> Environments).
+    environment: crates-io
+    steps:
+      - uses: actions/checkout@v5
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Gate — hls-runtime tests (all features)
+        run: cargo test -p hls-runtime --all-features --locked
+
+      - name: Gate — hls-runtime clippy
+        run: cargo clippy -p hls-runtime --all-features --all-targets --locked -- -D warnings
+
+      - name: Gate — hls-runtime no_std (+alloc) lib build
+        run: cargo build -p hls-runtime --no-default-features --locked
+
+      - name: Gate — hls-runtime examples build
+        run: cargo build -p hls-runtime --all-features --examples --locked
+
+      - name: Gate — tag matches hls-runtime version
+        run: |
+          TAG="${GITHUB_REF_NAME#hls-runtime-v}"
+          V=$(cargo metadata --no-deps --format-version 1 --locked \
+              | python3 -c "import json,sys; print({p['name']: p['version'] for p in json.load(sys.stdin)['packages']}['hls-runtime'])")
+          if [ "$V" != "$TAG" ]; then
+            echo "::error::hls-runtime is $V but tag is $TAG"; exit 1
+          fi
+
+      - name: Publish hls-runtime
+        run: |
+          if out=$(cargo publish -p hls-runtime --locked 2>&1); then
+            echo "$out"; echo "::notice::published hls-runtime"
+          elif echo "$out" | grep -qiE "already (been )?uploaded|already exists"; then
+            echo "$out"; echo "::notice::hls-runtime already on crates.io at this version — skipping"
+          else
+            echo "$out"; echo "::error::failed to publish hls-runtime"; exit 1
+          fi
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}

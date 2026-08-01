@@ -37,11 +37,11 @@
 //! # Why `SPTS_PROGRAM_ID`'s init bytes go through `RouteHandle::set_init`
 //!
 //! The fMP4 init segment has no home in a `Trunk` (no ring holds it — see
-//! `ll_hls_runtime::server::engine`'s own module doc, "the one thing that
+//! `hls_runtime::server::engine`'s own module doc, "the one thing that
 //! genuinely cannot come from the `Trunk` alone"); it lives inside the
-//! route's [`ll_hls_runtime::server::LlHlsOrigin`] instead.
+//! route's [`hls_runtime::server::HlsOrigin`] instead.
 //! `RouteHandle::publish_program` (crate-private) builds that program's
-//! `ProgramServing` bundle (`LlHlsOrigin`+`DashState`) the first time its
+//! `ProgramServing` bundle (`HlsOrigin`+`DashState`) the first time its
 //! `Trunk` is published — see that method's own doc — so calling
 //! [`crate::route::RouteHandle::set_init`] here, *after* this program's
 //! `Trunk` has already been published into the registry, lands the init
@@ -338,7 +338,7 @@ mod tests {
         build_ts_bytes, handshake, track_spec, trunk_config,
     };
     use broadcast_common::{Demand, Stage};
-    use ll_hls_runtime::server::{DEFAULT_TRACK_ID, LlHlsBody, LlHlsRequest};
+    use hls_runtime::server::{DEFAULT_TRACK_ID, HlsBody, HlsRequest};
     use media_plane::egress::{AwaitPolicy, EgressResponse, ServedEgress};
     use media_plane::ingress::{IngestDriver, IngestSession, SessionEvent};
     use std::collections::{HashSet, VecDeque};
@@ -356,7 +356,7 @@ mod tests {
             .ll_hls(crate::route::SPTS_PROGRAM_ID)
             .expect("SPTS_PROGRAM_ID must be published before rendering");
         match ll_hls.resolve(
-            LlHlsRequest::Playlist {
+            HlsRequest::Playlist {
                 track_id: DEFAULT_TRACK_ID,
                 query: Default::default(),
             },
@@ -364,7 +364,7 @@ mod tests {
             AwaitPolicy::new(Timestamp::from_nanos(0)),
         ) {
             EgressResponse::Ready {
-                body: LlHlsBody::Playlist(m),
+                body: HlsBody::Playlist(m),
                 ..
             } => m,
             other => panic!("expected Ready(Playlist), got {other:?}"),
@@ -376,7 +376,7 @@ mod tests {
     /// `TsMux`-muxed TS stream → `TsIngestSession` → `IngestDriver` →
     /// `report_driver_progress` (publishes the registry) →
     /// `drive_program_segmenters` (this module) → the route's own
-    /// `RouteHandle::init_bytes`/`LlHlsOrigin`.
+    /// `RouteHandle::init_bytes`/`HlsOrigin`.
     ///
     /// MUTATION VERIFIED: changing the `if program == SPTS_PROGRAM_ID { ...
     /// route_handle.set_init(SPTS_PROGRAM_ID, init); }` push in
@@ -385,7 +385,7 @@ mod tests {
     /// `assert!(route.init_bytes(crate::route::SPTS_PROGRAM_ID).is_some_and(|b| !b.is_empty()), ...)`
     /// fails — actual value `None` (the registry's `ProgramServing` for
     /// program 0 exists and its `Trunk` carries real segments/parts, but its
-    /// `LlHlsOrigin` never received the init segment bytes at all), not the
+    /// `HlsOrigin` never received the init segment bytes at all), not the
     /// expected `Some(bytes)`. Recompiled and re-run to confirm the failure,
     /// then reverted.
     #[test]
@@ -434,7 +434,7 @@ mod tests {
         // duration tag, §4.3.2.1) instead.
         assert!(
             playlist.contains("#EXTINF:") || playlist.contains("#EXT-X-PART:"),
-            "the route's own LlHlsOrigin must serve real closed segments/parts, \
+            "the route's own HlsOrigin must serve real closed segments/parts, \
              resolved exactly the way egress resolves them: {playlist}"
         );
     }
@@ -532,7 +532,7 @@ mod tests {
     ///
     /// Asserts on `"#EXT-X-PART:"`/`"#EXTINF:"` specifically (not merely
     /// `EgressResponse::Ready`, and not `"#EXT-X-PART-INF:"`/`"#EXT-X-MAP:"`,
-    /// which `ll_hls_runtime` renders unconditionally even for a route with
+    /// which `hls_runtime` renders unconditionally even for a route with
     /// zero parts/segments) — see `render_playlist`'s and this module's
     /// sibling test's own doc for why an unconditional header would let this
     /// test pass against the bug.

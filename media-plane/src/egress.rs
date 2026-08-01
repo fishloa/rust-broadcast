@@ -54,7 +54,7 @@
 //!
 //! The architecture spec's own pseudocode (§3) sketches
 //! `fn resolve(req, &Trunk) -> EgressResponse`. Reading
-//! `ll-hls-runtime/src/server/` (the engine this trait exists to receive,
+//! `hls-runtime/src/server/` (the engine this trait exists to receive,
 //! per the implementation plan's Step 4) before writing this trait surfaced
 //! the same class of problem that reading `rtsp-runtime` before writing
 //! [`crate::ingress::Dialer::dial`] surfaced: the pseudocode names a
@@ -74,7 +74,7 @@
 //! the way the event log has `events_between`. So a `resolve()` that took
 //! `&Trunk` would, for every real implementation, immediately have to ignore
 //! it and consult a second, self-maintained cache instead — which is exactly
-//! what `ll_hls_runtime::server::MediaStore` already does in production: it
+//! what `hls_runtime::server::MediaStore` already does in production: it
 //! is fed by `add_segment`/`add_part`/`set_init` (called by whatever drains
 //! the segmenter) and *separately* answers `resolve_playlist`/
 //! `resolve_resource` from that already-synced state. `MediaStore` is
@@ -250,7 +250,7 @@ use crate::trunk::{SampleCursorItem, SegmentCursorItem};
 /// [`EgressResponse::Ready`] body — playlists/manifests are always
 /// re-fetched for liveness, while a produced init/segment/part byte range
 /// never changes once produced. Mirrors
-/// `ll_hls_runtime::server::CachePolicy` in spirit (this crate cannot depend
+/// `hls_runtime::server::CachePolicy` in spirit (this crate cannot depend
 /// on that crate — the dependency runs the other way, per the migration
 /// order in `docs/superpowers/plans/2026-07-26-media-plane-implementation.md`
 /// Step 4) so it is redefined here rather than borrowed.

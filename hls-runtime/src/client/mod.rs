@@ -1,15 +1,15 @@
 //! LL-HLS playback client engine — a sans-IO Low-Latency HLS (RFC 8216bis)
 //! client (issue #717, slices 2-4; formerly the standalone `ll-hls-client`
-//! crate, folded in here as `ll-hls-runtime`'s `client` module — see
+//! crate, folded in here as `hls-runtime`'s `client` module — see
 //! `docs/superpowers/specs/2026-07-18-multimux-hub-design.md`).
 //!
-//! [`LlHlsClient`] is a driveable, caller-driven state machine — the same
+//! [`HlsClient`] is a driveable, caller-driven state machine — the same
 //! sans-IO shape as `srt-runtime` (issue #565): the core never opens a socket
 //! or reads a clock. The caller drains [`Action`]s (what to fetch, and how),
 //! performs the IO itself, and feeds the response back in via
-//! [`LlHlsClient::on_playlist`] / [`LlHlsClient::on_resource`] /
-//! [`LlHlsClient::on_error`]; decoded [`Output`]s (the init segment, then
-//! ordered access units) drain out via [`LlHlsClient::next_output`].
+//! [`HlsClient::on_playlist`] / [`HlsClient::on_resource`] /
+//! [`HlsClient::on_error`]; decoded [`Output`]s (the init segment, then
+//! ordered access units) drain out via [`HlsClient::next_output`].
 //!
 //! # Reuse, not re-description
 //!
@@ -20,11 +20,11 @@
 //! segment into access units is [`transmux::Fmp4Demux`]. `client` holds only
 //! the client **engine**: the reload scheduler, the fetch pipeline
 //! (prefetch/byte-range/dedup), and the output ordering — see
-//! [`LlHlsClient`]'s docs for the full behaviour.
+//! [`HlsClient`]'s docs for the full behaviour.
 //!
 //! # Zero IO in the core
 //!
-//! No `tokio`/`reqwest`/socket dependency in [`LlHlsClient`] itself, ever —
+//! No `tokio`/`reqwest`/socket dependency in [`HlsClient`] itself, ever —
 //! it is driveable by hand (see the crate's `tests/origin_loop.rs` for a
 //! complete in-process example against a real
 //! `transmux::ll_hls::LlHlsSegmenter` origin) with zero IO dependencies at
@@ -34,7 +34,7 @@
 //!
 //! Enabling the `tokio` cargo feature (NOT default) adds
 //! [`tokio_client::TokioClient`], a thin async shell (tokio + reqwest/rustls)
-//! that drives [`LlHlsClient`] over real HTTP — blocking-reload/preload-hint
+//! that drives [`HlsClient`] over real HTTP — blocking-reload/preload-hint
 //! query params, byte-range `Range` headers, per-request timeouts, and
 //! retry/backoff on transient failures. See [`tokio_client`]'s module docs
 //! for the full behaviour and its `tests/glass_to_glass.rs` for a
@@ -45,9 +45,9 @@
 //! # Example
 //!
 //! ```
-//! use ll_hls_runtime::client::{Action, LlHlsClient};
+//! use hls_runtime::client::{Action, HlsClient};
 //!
-//! let mut client = LlHlsClient::new("http://origin/live/stream.m3u8");
+//! let mut client = HlsClient::new("http://origin/live/stream.m3u8");
 //! // The caller performs this GET; here we just inspect the first action.
 //! match client.poll() {
 //!     Some(Action::FetchPlaylist { url, blocking, .. }) => {
@@ -67,7 +67,7 @@ pub mod tokio_client;
 mod url;
 
 pub use action::{Action, BlockingReload, ResourceId};
-pub use engine::LlHlsClient;
+pub use engine::HlsClient;
 pub use error::{Error, Result};
 pub use output::Output;
 #[cfg(feature = "tokio")]

@@ -1,7 +1,7 @@
 //! The `Output` abstraction: one implementation per delivery protocol
 //! (LL-HLS, DASH, LL-DASH) layered over the protocol-neutral
 //! [`crate::route::RouteHandle`] (step 5b's replacement for the deleted
-//! `ll_hls_runtime::server::MediaStore` — see that module's own docs).
+//! `hls_runtime::server::MediaStore` — see that module's own docs).
 //!
 //! Each `Output` renders only its own **manifest** (m3u8 / MPD) — the
 //! init/segment/part byte serving both protocols reference is identical

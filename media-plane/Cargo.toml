@@ -20,7 +20,7 @@ timed-metadata   = { path = "../timed-metadata", version = "0.4.1", default-feat
 # (step 3b-iv) needs a runtime-agnostic wakeup a `ServedEgress` can wait on
 # without busy-polling — NOT `tokio::sync::watch`, so it works under any
 # executor (or none, via its blocking `.wait_deadline()`). Same crate,
-# same version, same feature set `ll-hls-runtime::server::MediaStore`
+# same version, same feature set `hls-runtime::server::MediaStore`
 # already depends on (see its Cargo.toml) — reusing the primitive the
 # consumer already uses, not hand-rolling a parallel one.
 event-listener   = { version = "5", default-features = false, features = ["std"], optional = true }

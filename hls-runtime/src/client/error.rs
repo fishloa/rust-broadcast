@@ -1,4 +1,4 @@
-//! Error type returned by [`crate::client::LlHlsClient`].
+//! Error type returned by [`crate::client::HlsClient`].
 
 use alloc::string::String;
 use thiserror::Error;
@@ -6,11 +6,11 @@ use thiserror::Error;
 /// Crate-wide result alias.
 pub type Result<T> = core::result::Result<T, Error>;
 
-/// Error variants [`crate::client::LlHlsClient`] can return.
+/// Error variants [`crate::client::HlsClient`] can return.
 #[derive(Debug, Error)]
 #[non_exhaustive]
 pub enum Error {
-    /// The playlist bytes fed to [`crate::client::LlHlsClient::on_playlist`]
+    /// The playlist bytes fed to [`crate::client::HlsClient::on_playlist`]
     /// are not valid UTF-8 (RFC 8216 §4.1 playlists are UTF-8 text).
     #[error("playlist is not valid UTF-8: {0}")]
     PlaylistNotUtf8(#[from] core::str::Utf8Error),
@@ -20,7 +20,7 @@ pub enum Error {
     #[error("playlist parse: {0}")]
     PlaylistParse(#[from] transmux::Error),
 
-    /// [`crate::client::LlHlsClient::on_resource`] was fed bytes for a
+    /// [`crate::client::HlsClient::on_resource`] was fed bytes for a
     /// [`crate::client::ResourceId`] the client never requested (a
     /// caller/driver bug, or a stale/duplicate delivery after the client
     /// already moved past it).
@@ -32,7 +32,7 @@ pub enum Error {
 
     /// Defensive-only: a Part/Segment reached the demux step with no init
     /// segment cached. In normal operation this cannot happen —
-    /// [`crate::client::LlHlsClient::on_resource`] buffers any Part/Segment
+    /// [`crate::client::HlsClient::on_resource`] buffers any Part/Segment
     /// that arrives before the init segment and replays it once the init is
     /// delivered, so callers may complete fetches in any order.
     #[error("resource {id:?} delivered before the init segment was available")]

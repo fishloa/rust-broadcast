@@ -6,7 +6,7 @@ Sequenced plan for the backlog filed 2026-07-24 (#736–#760). Ordered **reuse-f
 
 | # | Item | Home | New crate? |
 |---|------|------|-----------|
-| #760 | HLS-pull TS-segment ingest | `ll-hls-runtime` (client demux) + `multimux` (source) | addon |
+| #760 | HLS-pull TS-segment ingest | `hls-runtime` (client demux) + `multimux` (source) | addon |
 | #738 | RTMP ingest | **`rtmp-runtime`** (sans-IO session: handshake/chunk-stream/AMF — mirrors `rtsp-runtime`) + `multimux` source; `transmux` keeps the FLV/message→Media demux | **NEW** `rtmp-runtime` |
 | #739 | SRT ingest | `srt-runtime` (receiver adapter) + `multimux` source | addon |
 | #758 | DASH-pull ingest | `transmux::dash` (add MPD **parse**, inverse of the packager) + `multimux` source | addon |

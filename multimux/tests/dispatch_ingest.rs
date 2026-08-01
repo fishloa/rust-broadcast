@@ -131,9 +131,9 @@ fn base_config(bind: SocketAddr, input: InputSpec) -> Config {
 
 /// Polls `playlist_url` until its body carries a real closed-segment
 /// `#EXTINF:` line -- deliberately **not** satisfied by
-/// `#EXT-X-PART-INF`/`#EXT-X-MAP`, which `ll_hls_runtime`'s engine renders
+/// `#EXT-X-PART-INF`/`#EXT-X-MAP`, which `hls_runtime`'s engine renders
 /// unconditionally even for a route with zero closed segments (see
-/// `ll-hls-runtime/src/server/engine.rs`'s `render_playlist`), so a
+/// `hls-runtime/src/server/engine.rs`'s `render_playlist`), so a
 /// zero-segment route cannot accidentally pass this check.
 ///
 /// A generous hang guard, not a latency assertion (issue #807): real

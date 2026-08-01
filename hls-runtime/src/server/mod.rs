@@ -5,7 +5,7 @@
 //!
 //! # Sans-IO shape
 //!
-//! Nothing here ever `.await`s or opens a socket. [`LlHlsOrigin`] implements
+//! Nothing here ever `.await`s or opens a socket. [`HlsOrigin`] implements
 //! [`media_plane::egress::ServedEgress`]: its
 //! [`resolve`](media_plane::egress::ServedEgress::resolve) is a poll method
 //! returning [`media_plane::egress::EgressResponse`] — `Ready`, `Await`,
@@ -51,5 +51,5 @@
 mod engine;
 
 pub use engine::{
-    BlockingQuery, DEFAULT_TRACK_ID, LlHlsBody, LlHlsOrigin, LlHlsRequest, master_playlist_m3u8,
+    BlockingQuery, DEFAULT_TRACK_ID, HlsBody, HlsOrigin, HlsRequest, master_playlist_m3u8,
 };
