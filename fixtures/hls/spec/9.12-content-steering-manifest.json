@@ -1,0 +1,9 @@
+{
+  "VERSION": 1,
+  "TTL": 300,
+  "RELOAD-URI": "https://example.com/steering?video=00012&session=123",
+  "PATHWAY-PRIORITY": [
+    "CDN-A",
+    "CDN-B"
+  ]
+}
