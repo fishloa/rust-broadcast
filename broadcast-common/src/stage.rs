@@ -12,7 +12,7 @@
 //!   no inline output.
 //! - `transmux::StreamingTsHlsSegmenter::push` returns the completed segment
 //!   inline from the feed call itself.
-//! - `ll_hls_runtime`'s `LlHlsSegmenter` splits draining into two separate
+//! - `hls_runtime`'s `LlHlsSegmenter` splits draining into two separate
 //!   methods, `take_ready_parts` and `take_ready_segments`.
 //!
 //! None of these agree on whether output comes back from `feed`, from a

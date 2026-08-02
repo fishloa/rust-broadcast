@@ -1,9 +1,9 @@
-# ll-hls-runtime
+# hls-runtime
 
 A sans-IO Low-Latency HLS (**RFC 8216bis**, HTTP Live Streaming 2nd Edition)
 **client + server** engine in one crate, mirroring `rtsp-runtime`'s
 client+server split (renamed from `ll-hls-client`, never published — Stage 1
-of the ll-hls-runtime unification). The crate holds two halves:
+of the hls-runtime unification). The crate holds two halves:
 
 - **`client`** (issue [#717](https://github.com/fishloa/rust-broadcast/issues/717),
   slices 2-4: reload scheduler, fetch pipeline, output adapter, plus slice
@@ -11,14 +11,14 @@ of the ll-hls-runtime unification). The crate holds two halves:
   playback client engine.
 - **`server`** (feature `std`; issue #663/#717 Stage 2, media-plane
   implementation plan step 4) — the sans-IO LL-HLS **origin engine**:
-  `server::LlHlsOrigin`, a `media_plane::egress::ServedEgress` rendering
+  `server::HlsOrigin`, a `media_plane::egress::ServedEgress` rendering
   playlists and resolving blocking-reload/part-availability requests
   (never blocking, never touching a clock) directly from a shared
   `media_plane::Trunk` — not a push-fed rolling-window store of its own.
   An async adapter (`multimux`, over tokio + axum) drives this engine the same
   way any HTTP framework can adapt it.
 
-`client::LlHlsClient` is a driveable, caller-driven state machine in the same
+`client::HlsClient` is a driveable, caller-driven state machine in the same
 sans-IO shape as [`srt-runtime`](../srt-runtime) (issue #565): the core never
 opens a socket or reads a clock. The caller drains `Action`s (what to fetch,
 and how), performs the IO itself, and feeds the response back in; decoded
@@ -69,7 +69,7 @@ units is `transmux::Fmp4Demux` (or, for classic MPEG-TS-segment HLS, issue
 
 ## Zero IO in the core
 
-No `tokio`/`reqwest`/socket dependency in `LlHlsClient` itself, ever. `no_std`
+No `tokio`/`reqwest`/socket dependency in `HlsClient` itself, ever. `no_std`
 + `alloc` (default `std` feature can be turned off) — verified by the
 `--no-default-features` gate. Drive it by hand — see `tests/origin_loop.rs`
 for a complete in-process example against a real
@@ -80,7 +80,7 @@ HTTP fetch loop would).
 ## The `tokio` feature (issue #717 slice 5)
 
 Enabling the (non-default) `tokio` cargo feature adds `client::tokio_client::TokioClient`:
-a thin async shell (tokio + reqwest/rustls) driving `LlHlsClient` over real
+a thin async shell (tokio + reqwest/rustls) driving `HlsClient` over real
 HTTP — blocking-reload/preload-hint query params, `Range` byte-ranges,
 per-request timeouts, and retry/backoff on transient failures. Authenticates
 via the shared [`broadcast-auth`](../broadcast-auth) crate
@@ -100,7 +100,7 @@ The sans-IO LL-HLS **origin engine**, rendering from a shared
 `media_plane::Trunk` (media-plane implementation plan step 4) so any HTTP
 framework can adapt it:
 
-- **`server::LlHlsOrigin`** — implements `media_plane::egress::ServedEgress`.
+- **`server::HlsOrigin`** — implements `media_plane::egress::ServedEgress`.
   Owns exactly one `media_plane::trunk::SegmentCursor` (never one per
   request/peer) to keep a small synced window of currently-advertised closed
   segments, the lifetime-max segment duration, and the cumulative
@@ -110,7 +110,7 @@ framework can adapt it:
   closed, and the just-closed-segment's-final-part-still-serves guarantee
   (multimux 0.2.1/0.2.2's hard-won bug fixes) — comes straight from the
   `Trunk`'s own live-part log, with no cache at all.
-- **`LlHlsOrigin::resolve`** (the `ServedEgress` impl) — the Blocking
+- **`HlsOrigin::resolve`** (the `ServedEgress` impl) — the Blocking
   Playlist Reload (RFC 8216bis §6.2.5.2) and part-availability decision
   logic as a synchronous poll method returning
   `media_plane::egress::EgressResponse` (`Ready`/`Await`/`BadRequest`/
@@ -127,8 +127,8 @@ framework can adapt it:
   adapter to apply as HTTP `Cache-Control`.
 
 `multimux` is the reference adapter, and as of its 0.5.0 it serves every route
-through `LlHlsOrigin`/`ServedEgress` over a `media_plane::Trunk` — one
-`LlHlsOrigin` per program, resolved per request. The push-fed `MediaStore`
+through `HlsOrigin`/`ServedEgress` over a `media_plane::Trunk` — one
+`HlsOrigin` per program, resolved per request. The push-fed `MediaStore`
 re-export it carried through 0.1.x is deleted: the `Trunk` is the single copy
 of the data, never a second cache of it.
 
@@ -136,7 +136,7 @@ of the data, never a second cache of it.
 
 - **Multivariant Playlist rendition selection** — `transmux::hls::MasterPlaylist::parse`
   exists, but choosing a rendition/bitrate is a player-level policy this crate
-  doesn't impose; `LlHlsClient` follows one Media Playlist URL.
+  doesn't impose; `HlsClient` follows one Media Playlist URL.
 - **Discontinuity signalling on a still-open segment** — RFC 8216bis's
   `OpenSegment` (the in-progress, not-yet-closed segment) carries no
   discontinuity flag of its own; if every part of a segment was already
@@ -146,7 +146,7 @@ of the data, never a second cache of it.
 
 ```toml
 [dependencies]
-ll-hls-runtime = "0.1"
+hls-runtime = "0.1"
 ```
 
 ## License

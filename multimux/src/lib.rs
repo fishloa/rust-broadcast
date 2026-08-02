@@ -17,7 +17,7 @@
 //! can take from socket to segment.
 //!
 //! Also built on `rtsp-runtime` (RTSP), `rtmp-runtime` (RTMP), `srt-runtime`
-//! (SRT), `ll-hls-runtime` (LL-HLS client/server engine + HLS pull),
+//! (SRT), `hls-runtime` (LL-HLS client/server engine + HLS pull),
 //! `broadcast-auth` (client and server auth), and `transmux` (RTP/TS
 //! depayload + CMAF segmentation + DASH packaging).
 //!

@@ -1,7 +1,7 @@
 //! Origin <-> client in-process loop (issue #717 slices 2-4).
 //!
 //! No real IO: a `transmux::ll_hls::LlHlsSegmenter` plays the origin, its
-//! `MediaPlaylist`/part/segment bytes are handed to `LlHlsClient` exactly as a
+//! `MediaPlaylist`/part/segment bytes are handed to `HlsClient` exactly as a
 //! caller's HTTP fetch loop would, and the assertions bite on the client's
 //! *behaviour*, not just that it parses without panicking:
 //!
@@ -16,7 +16,7 @@
 //! - a non-LL playlist (no PART tags at all) still plays via the full-segment
 //!   fallback path.
 
-use ll_hls_runtime::client::{Action, LlHlsClient, Output, ResourceId};
+use hls_runtime::client::{Action, HlsClient, Output, ResourceId};
 use transmux::hls::{LowLatencyConfig, MapTag, MediaPlaylist, MediaSegment, OpenSegment, PartSpec};
 use transmux::ll_hls::{LlHlsSegmenter, PartInfo, SegmentInfo};
 use transmux::{
@@ -73,7 +73,7 @@ fn segment_uri(s: &SegmentInfo) -> String {
 }
 
 /// Resolve a relative playlist URI against the fixed playlist directory
-/// (`http://origin/live/`) — matching what `LlHlsClient` itself resolves
+/// (`http://origin/live/`) — matching what `HlsClient` itself resolves
 /// relative part/segment/map URIs to, so the origin fixture's lookup keys
 /// agree with the `url` field on the client's `Action::FetchResource`.
 fn abs_uri(relative: &str) -> String {
@@ -193,7 +193,7 @@ impl Origin {
 
 /// Drain every currently-pending `Action`, returning them (does not perform
 /// any IO/feeding — a test helper to inspect what the client asked for).
-fn drain_actions(client: &mut LlHlsClient) -> Vec<Action> {
+fn drain_actions(client: &mut HlsClient) -> Vec<Action> {
     let mut out = Vec::new();
     while let Some(a) = client.poll() {
         out.push(a);
@@ -201,7 +201,7 @@ fn drain_actions(client: &mut LlHlsClient) -> Vec<Action> {
     out
 }
 
-fn drain_outputs(client: &mut LlHlsClient) -> Vec<Output> {
+fn drain_outputs(client: &mut HlsClient) -> Vec<Output> {
     let mut out = Vec::new();
     while let Some(o) = client.next_output() {
         out.push(o);
@@ -314,7 +314,7 @@ fn origin_client_loop_blocking_reload_prefetch_dedup_and_ordered_output() {
     };
 
     // === Drive the client ===
-    let mut client = LlHlsClient::new(PLAYLIST_URL);
+    let mut client = HlsClient::new(PLAYLIST_URL);
 
     // 1. First action: fetch the playlist (no LL info known yet).
     let first = client.poll().expect("first action");
@@ -534,7 +534,7 @@ fn can_block_reload_no_yields_non_blocking_reload_with_backoff() {
         skip: None,
     };
 
-    let mut client = LlHlsClient::new(PLAYLIST_URL);
+    let mut client = HlsClient::new(PLAYLIST_URL);
     let _ = client.poll(); // discard the initial plain GET
     client.on_playlist(pl.to_m3u8().as_bytes()).unwrap();
     let actions = drain_actions(&mut client);
@@ -613,7 +613,7 @@ fn non_ll_playlist_plays_via_full_segment_fallback() {
         skip: None,
     };
 
-    let mut client = LlHlsClient::new(PLAYLIST_URL);
+    let mut client = HlsClient::new(PLAYLIST_URL);
     let _ = client.poll();
     client.on_playlist(pl.to_m3u8().as_bytes()).unwrap();
     let actions = drain_actions(&mut client);

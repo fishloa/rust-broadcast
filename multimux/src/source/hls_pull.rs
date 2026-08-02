@@ -1,17 +1,17 @@
 //! HLS-pull ingest source (issue #663 P3c / #717 / #760; re-ported onto the
 //! media-plane ingress traits at plan step 5a round 3): a driven
-//! [`ll_hls_runtime::client::LlHlsClient`] — the sans-IO Low-Latency HLS
+//! [`hls_runtime::client::HlsClient`] — the sans-IO Low-Latency HLS
 //! (RFC 8216bis) playback engine — feeding real fetch bytes in and turning
 //! its `Output`s into [`SessionEvent`]s.
 //!
-//! # Why this reuses `LlHlsClient`, not `TokioClient`
+//! # Why this reuses `HlsClient`, not `TokioClient`
 //!
 //! Before this port, this module wrapped
-//! `ll_hls_runtime::client::tokio_client::TokioClient` — the executor-bound
+//! `hls_runtime::client::tokio_client::TokioClient` — the executor-bound
 //! adapter that owns its own `reqwest` fetch loop internally. That fit the
 //! pre-5a `connect()`/`next_samples()` shape, but it cannot fit
 //! [`IngestSession`]: `TokioClient` performs its own I/O, so there is nothing
-//! for `Stage::feed`/[`IngestSession::poll_transmit`] to drive. `LlHlsClient`
+//! for `Stage::feed`/[`IngestSession::poll_transmit`] to drive. `HlsClient`
 //! is the sans-IO core `TokioClient` itself wraps —
 //! `poll() -> Option<Action>` out, `on_playlist`/`on_resource` in — which is
 //! exactly the [`IngestSession::Request`]/`Stage::In` shape round 3 added.
@@ -19,11 +19,11 @@
 //! parallel to `TokioClient`, driven by [`media_plane::ingress::IngestDriver`] instead of a bespoke
 //! `connect`/`next_samples` pair — so the actual LL-HLS logic (reload
 //! scheduling, part/segment dedup, fMP4/classic-TS demux) is still owned
-//! entirely by `ll-hls-runtime`, never duplicated here.
+//! entirely by `hls-runtime`, never duplicated here.
 //!
 //! # Establishment is genuinely ordinary driving here
 //!
-//! [`HlsPullDialer::dial`] performs no I/O at all — `LlHlsClient::new` only
+//! [`HlsPullDialer::dial`] performs no I/O at all — `HlsClient::new` only
 //! queues the first `Action::FetchPlaylist`. [`SessionEvent::Established`] +
 //! `NewProgram` are queued the moment the recovered `TrackSpec`s are known
 //! (the first `Output::Init`, exactly like the pre-5a `wait_for_init`, just
@@ -35,7 +35,7 @@
 //!
 //! # Correlating a fetch response: `HlsFetchId`
 //!
-//! `LlHlsClient::on_playlist` and `on_resource` are two different methods,
+//! `HlsClient::on_playlist` and `on_resource` are two different methods,
 //! but a `Stage::In` is one type. [`HlsFetchId`] is this session's own
 //! (opaque to `media-plane`) request/response identity — `Playlist` for the
 //! one method, `Resource(id)` wrapping [`ResourceId`] for the other — chosen
@@ -43,7 +43,7 @@
 //!
 //! # Bounded in-flight fetches
 //!
-//! `LlHlsClient::poll` can hand back many `Action::FetchResource`s in one
+//! `HlsClient::poll` can hand back many `Action::FetchResource`s in one
 //! drain (e.g. every already-available part of a freshly-opened segment)
 //! with nothing in the client itself capping how many the caller launches at
 //! once. [`run_hls_pull`] never has more than
@@ -66,7 +66,7 @@ use std::time::Duration;
 
 use broadcast_auth::Credentials;
 use broadcast_common::{Demand, Stage, Timestamp, Unpackage};
-use ll_hls_runtime::client::{Action, LlHlsClient, Output as HlsOutput, ResourceId};
+use hls_runtime::client::{Action, HlsClient, Output as HlsOutput, ResourceId};
 use media_plane::ingress::{
     Dialer, HandshakePolicy, IngestSession, ProgramId, SessionEvent, run_dial,
 };
@@ -155,16 +155,16 @@ impl Source for HlsPullRoute {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum HlsFetchId {
-    /// A Media Playlist fetch — routes to `LlHlsClient::on_playlist`.
+    /// A Media Playlist fetch — routes to `HlsClient::on_playlist`.
     Playlist,
-    /// An init/part/segment fetch — routes to `LlHlsClient::on_resource`.
+    /// An init/part/segment fetch — routes to `HlsClient::on_resource`.
     Resource(ResourceId),
 }
 
-/// The sans-IO HLS-pull [`IngestSession`]: a driven [`LlHlsClient`], no
+/// The sans-IO HLS-pull [`IngestSession`]: a driven [`HlsClient`], no
 /// socket. [`run_hls_pull`] owns the real GETs and feeds responses in.
 pub struct HlsIngestSession {
-    client: LlHlsClient,
+    client: HlsClient,
     pending: VecDeque<SessionEvent>,
     /// Set once the first `Output::Init` is recovered — guards against ever
     /// queuing a second `Established`/`NewProgram` pair (see the module doc's
@@ -180,10 +180,10 @@ pub struct HlsIngestSession {
 
 impl HlsIngestSession {
     /// Construct a fresh session for `playlist_url` — performs no I/O
-    /// (`LlHlsClient::new` only queues the first `Action::FetchPlaylist`).
+    /// (`HlsClient::new` only queues the first `Action::FetchPlaylist`).
     pub fn new(playlist_url: impl Into<String>) -> Self {
         HlsIngestSession {
-            client: LlHlsClient::new(playlist_url),
+            client: HlsClient::new(playlist_url),
             pending: VecDeque::new(),
             program_announced: false,
             ended: false,
@@ -733,7 +733,7 @@ mod tests {
     ///
     /// **Why the session and not an `IngestDriver`+`SampleCursor` for the
     /// exact count**: `Trunk::subscribe()` starts from *now* and sees no
-    /// backlog, and `LlHlsClient` legitimately flushes a whole batch of
+    /// backlog, and `HlsClient` legitimately flushes a whole batch of
     /// buffered part/segment resources the instant the init segment arrives —
     /// i.e. `NewProgram` (which is what mints the `Trunk`) and that batch's
     /// `Sample`s are drained by the *same* `IngestDriver::feed` call, so no
@@ -835,7 +835,7 @@ mod tests {
             }
             // Deliver the init resource FIRST, ahead of any part/segment.
             //
-            // `LlHlsClient::on_playlist` queues its `FetchResource` actions
+            // `HlsClient::on_playlist` queues its `FetchResource` actions
             // segments-first, map-last, and buffers every part/segment that
             // arrives before the init — replaying the whole batch the instant
             // the init lands. Delivered in queue order against a fully-known
@@ -977,11 +977,11 @@ mod tests {
 
     /// Issue #760: classic MPEG-TS-segment HLS (HLS v3 — no `EXT-X-MAP`,
     /// self-contained `.ts` segments, the dominant legacy/IPTV form) served
-    /// from the real, committed `ll-hls-runtime/tests/fixtures/ts-hls/`
+    /// from the real, committed `hls-runtime/tests/fixtures/ts-hls/`
     /// fixture — proving the pump recovers real `TrackSpec`s (from the
     /// client's issue-#760-synthesized `Output::Init`) and every real access
     /// unit lands in the `Trunk`, entirely through the production
-    /// `LlHlsClient` — no TS-specific code in this module at all.
+    /// `HlsClient` — no TS-specific code in this module at all.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn pulls_classic_ts_segment_hls_and_lands_samples_in_trunk() {
         use axum::Router;
@@ -991,7 +991,7 @@ mod tests {
 
         let fixture_dir = std::path::PathBuf::from(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/../ll-hls-runtime/tests/fixtures/ts-hls"
+            "/../hls-runtime/tests/fixtures/ts-hls"
         ));
         let playlist_text =
             std::fs::read_to_string(fixture_dir.join("index.m3u8")).expect("read fixture playlist");

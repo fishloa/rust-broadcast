@@ -102,7 +102,7 @@
 //! `run_pipeline`'s `Ok(())` (clean source EOF) and `Err(_)` (a real failure)
 //! identically — both fall into the same `set_health(HealthState::Reconnecting)`
 //! arm (`multimux/src/origin/supervisor.rs`) — and
-//! `ll_hls_runtime::server::store::HealthState::Failed`'s own doc comment
+//! `hls_runtime::server::store::HealthState::Failed`'s own doc comment
 //! admits *"the loop here does not currently produce it"*. Nothing
 //! distinguishes "the stream ended" from "the stream broke" because both are
 //! folded into one `Result<(), Error>` before the health state is even set.
@@ -220,7 +220,7 @@
 //! held internally and exposed via `state()`. `IngestSession` is that shape
 //! expressed through `Stage`: `poll_transmit` ≙ "the bytes to send",
 //! `feed` ≙ `handle_data`, `poll` ≙ the returned events, and
-//! [`IngestDriver::health`] ≙ `state()`. `ll-hls-runtime` splits its client
+//! [`IngestDriver::health`] ≙ `state()`. `hls-runtime` splits its client
 //! and server engines the same way.
 //!
 //! An earlier revision of this module had `dial()` "perform the whole
@@ -319,7 +319,7 @@
 //!    for it, and it bakes pull vocabulary (`ResourceId`) into `media-plane`
 //!    itself — this crate would then need to know what a *resource* is, which
 //!    is exactly the kind of protocol knowledge the plane exists to stay free
-//!    of (`ResourceId`/`Action` belong to `ll-hls-runtime`, and the analogous
+//!    of (`ResourceId`/`Action` belong to `hls-runtime`, and the analogous
 //!    DASH/Smooth identities belong to `multimux`, not here).
 //!
 //! What round 3 actually did: relax `Stage::In<'a>`'s pin (it is no longer
@@ -329,7 +329,7 @@
 //! Bytes;` — one extra line, no behaviour change (see
 //! `multimux::source::ts_program::TsIngestSession`). A pull source states its
 //! own honest shape instead — e.g. `type In<'a> = (HlsResourceId, &'a [u8]);
-//! type Request = ll_hls_runtime::client::Action;` — and correlates an
+//! type Request = hls_runtime::client::Action;` — and correlates an
 //! arriving response to the request that caused it via whatever identity type
 //! it chose, entirely inside its own `feed`. The plane never sees a
 //! `ResourceId` or an `Action`; it only ever sees "some `S::In<'_>` went in,
@@ -562,7 +562,7 @@ pub trait IngestSession: for<'a> Stage<Out = SessionEvent> + Send {
     /// [the module docs](self#pull-sources-need-a-typed-requestresponse-identity-round-3)
     /// for why this is not a fixed enum. A byte-stream source (RTSP/RTMP/SRT/
     /// TS-*) sets this to [`bytes::Bytes`]; a pull source sets it to its own
-    /// protocol's action type (e.g. `ll_hls_runtime::client::Action`).
+    /// protocol's action type (e.g. `hls_runtime::client::Action`).
     ///
     /// No default: unlike `poll_transmit`, there is no value every
     /// implementor could reasonably start from, so every `IngestSession`
@@ -583,7 +583,7 @@ pub trait IngestSession: for<'a> Stage<Out = SessionEvent> + Send {
     /// `rtsp_runtime::client::ClientSession`'s request builders return, only
     /// pulled rather than returned. A pull source's own [`Request`](Self::Request)
     /// plays the identical role in its own protocol — see e.g.
-    /// `ll_hls_runtime::client::Action`, returned unchanged through this
+    /// `hls_runtime::client::Action`, returned unchanged through this
     /// method by an HLS-pull `IngestSession`.
     ///
     /// A driver drains this in a loop after every

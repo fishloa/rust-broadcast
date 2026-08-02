@@ -94,12 +94,12 @@ pub enum MultimuxError {
     #[error("transmux: {0}")]
     Transmux(#[from] transmux::Error),
 
-    /// An `ll_hls_runtime::client::LlHlsClient` (`source::hls_pull`, plan
+    /// An `hls_runtime::client::HlsClient` (`source::hls_pull`, plan
     /// step 5a round 3) rejected a fed playlist/resource — malformed
     /// playlist text, a demux failure, or a resource delivered for an id it
     /// never requested (a driver bug).
     #[error("hls-pull client: {0}")]
-    LlHls(#[from] ll_hls_runtime::client::Error),
+    LlHls(#[from] hls_runtime::client::Error),
 
     /// An I/O error (socket, bind) not already covered by [`Self::Connect`]
     /// or [`Self::ConfigRead`].

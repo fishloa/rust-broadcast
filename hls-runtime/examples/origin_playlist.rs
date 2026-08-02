@@ -1,7 +1,7 @@
-//! Drive the sans-IO LL-HLS **origin** engine (`ll_hls_runtime::server`)
+//! Drive the sans-IO LL-HLS **origin** engine (`hls_runtime::server`)
 //! with zero IO: publish synthetic init/segment/part bytes into a
 //! [`Trunk`], then render playlists and resolve resources through
-//! [`LlHlsOrigin`]'s [`ServedEgress`] impl exactly as an HTTP adapter would —
+//! [`HlsOrigin`]'s [`ServedEgress`] impl exactly as an HTTP adapter would —
 //! no socket, no clock, no async runtime.
 //!
 //! A real pipeline (a segmenter feeding a `TrunkWriter`) would publish real
@@ -12,15 +12,15 @@
 //! # Usage
 //!
 //! ```bash
-//! cargo run --example origin_playlist -p ll-hls-runtime
+//! cargo run --example origin_playlist -p hls-runtime
 //! ```
 
 use std::num::NonZeroUsize;
 use std::time::Duration;
 
 use broadcast_common::Timestamp;
-use ll_hls_runtime::server::{
-    BlockingQuery, DEFAULT_TRACK_ID, LlHlsBody, LlHlsOrigin, LlHlsRequest, master_playlist_m3u8,
+use hls_runtime::server::{
+    BlockingQuery, DEFAULT_TRACK_ID, HlsBody, HlsOrigin, HlsRequest, master_playlist_m3u8,
 };
 use media_plane::egress::{AwaitPolicy, EgressResponse, ServedEgress};
 use media_plane::trunk::{PartEntry, SegmentEntry, Trunk, TrunkConfig};
@@ -41,7 +41,7 @@ fn nz(n: usize) -> NonZeroUsize {
 /// Every call in this example is a plain, non-blocking `resolve` — no
 /// request here ever needs to wait, so `now`/`await_policy` are nominal
 /// zero values throughout.
-fn resolve(origin: &LlHlsOrigin, request: LlHlsRequest) -> EgressResponse<LlHlsBody> {
+fn resolve(origin: &HlsOrigin, request: HlsRequest) -> EgressResponse<HlsBody> {
     origin.resolve(
         request,
         Timestamp::from_nanos(0),
@@ -54,7 +54,7 @@ fn main() {
     let writer = trunk
         .segment_writer()
         .expect("first (and only) segment writer");
-    let origin = LlHlsOrigin::new(
+    let origin = HlsOrigin::new(
         std::sync::Arc::clone(&trunk),
         TARGET_DURATION_SECS,
         PART_TARGET_MS,
@@ -102,13 +102,13 @@ fn main() {
     println!("--- media.m3u8 ---");
     match resolve(
         &origin,
-        LlHlsRequest::Playlist {
+        HlsRequest::Playlist {
             track_id: DEFAULT_TRACK_ID,
             query: BlockingQuery::default(),
         },
     ) {
         EgressResponse::Ready {
-            body: LlHlsBody::Playlist(m),
+            body: HlsBody::Playlist(m),
             ..
         } => println!("{m}"),
         other => panic!("expected Ready(Playlist), got {other:?}"),
@@ -117,7 +117,7 @@ fn main() {
     // A plain (non-blocking) request is Ready immediately.
     let outcome = resolve(
         &origin,
-        LlHlsRequest::Playlist {
+        HlsRequest::Playlist {
             track_id: DEFAULT_TRACK_ID,
             query: BlockingQuery::default(),
         },
@@ -125,7 +125,7 @@ fn main() {
     assert!(matches!(
         outcome,
         EgressResponse::Ready {
-            body: LlHlsBody::Playlist(_),
+            body: HlsBody::Playlist(_),
             ..
         }
     ));
@@ -137,7 +137,7 @@ fn main() {
     // fabricated Ready.
     let outcome = resolve(
         &origin,
-        LlHlsRequest::Playlist {
+        HlsRequest::Playlist {
             track_id: DEFAULT_TRACK_ID,
             query: BlockingQuery {
                 hls_msn: Some(5),
@@ -152,7 +152,7 @@ fn main() {
     // (RFC 8216bis §6.2.5.2 abuse prevention) rather than ever Await-ing.
     let outcome = resolve(
         &origin,
-        LlHlsRequest::Playlist {
+        HlsRequest::Playlist {
             track_id: DEFAULT_TRACK_ID,
             query: BlockingQuery {
                 hls_msn: Some(999),
@@ -166,7 +166,7 @@ fn main() {
     // `Resource`: the init segment and the closed segment are Ready...
     match resolve(
         &origin,
-        LlHlsRequest::Resource {
+        HlsRequest::Resource {
             name: "init-1.mp4".to_string(),
         },
     ) {
@@ -175,7 +175,7 @@ fn main() {
     }
     match resolve(
         &origin,
-        LlHlsRequest::Resource {
+        HlsRequest::Resource {
             name: "seg-1-1.m4s".to_string(),
         },
     ) {
@@ -185,7 +185,7 @@ fn main() {
     // ...a live part of the still-open segment is Ready too...
     match resolve(
         &origin,
-        LlHlsRequest::Resource {
+        HlsRequest::Resource {
             name: "part-1-2.0.m4s".to_string(),
         },
     ) {
@@ -197,7 +197,7 @@ fn main() {
     // instead give it a real deadline and block on `Trunk::listen()`)...
     match resolve(
         &origin,
-        LlHlsRequest::Resource {
+        HlsRequest::Resource {
             name: "part-1-2.1.m4s".to_string(),
         },
     ) {
@@ -211,7 +211,7 @@ fn main() {
     // ...and an unrecognised filename is a plain 404.
     match resolve(
         &origin,
-        LlHlsRequest::Resource {
+        HlsRequest::Resource {
             name: "nope.txt".to_string(),
         },
     ) {

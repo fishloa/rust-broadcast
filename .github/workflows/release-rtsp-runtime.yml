@@ -8,7 +8,7 @@ name: Release rtsp-runtime
 # DEPENDENCY ORDER: rtsp-runtime depends on broadcast-auth (plus the external
 # rtsp-types / sdp-types / http-auth / tokio / rustls crates). Publish
 # broadcast-auth FIRST, or crates.io will reject the publish because a
-# required dependency is not yet live. Downstream, ll-hls-runtime and
+# required dependency is not yet live. Downstream, hls-runtime and
 # multimux depend on rtsp-runtime (>= the referenced 0.3), so this must land
 # before those.
 

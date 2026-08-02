@@ -1,6 +1,6 @@
 //! `LlHlsOutput`: the LL-HLS [`crate::output::Output`] implementation — a
 //! thin tokio+axum adapter over the sans-IO LL-HLS origin engine
-//! ([`ll_hls_runtime::server::LlHlsOrigin`], plan step 4): axum routes for
+//! ([`hls_runtime::server::HlsOrigin`], plan step 4): axum routes for
 //! the master/media playlists, resolved through the **one** shared adapter
 //! (`crate::http::resolve_blocking`/`crate::http::into_response`) —
 //! including the actual bounded `.await` on an
@@ -13,7 +13,7 @@
 //!
 //! Master/media playlist tags are RFC 8216 §4.3.4 (`#EXT-X-STREAM-INF`) and
 //! §4.3.3 (`#EXTM3U`/`#EXT-X-VERSION`, rendered by
-//! [`ll_hls_runtime::server::master_playlist_m3u8`]); the blocking reload
+//! [`hls_runtime::server::master_playlist_m3u8`]); the blocking reload
 //! query parameters (`_HLS_msn`/`_HLS_part`) are the Blocking Playlist Reload
 //! mechanism of RFC 8216bis §6.2.5.2 — the client asks the origin to hold the
 //! response open until the requested Media Sequence Number/part is
@@ -27,8 +27,8 @@ use axum::extract::{Query, State};
 use axum::http::{StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
-use ll_hls_runtime::server::{
-    BlockingQuery, DEFAULT_TRACK_ID, LlHlsBody, LlHlsRequest, master_playlist_m3u8,
+use hls_runtime::server::{
+    BlockingQuery, DEFAULT_TRACK_ID, HlsBody, HlsRequest, master_playlist_m3u8,
 };
 use serde::Deserialize;
 
@@ -121,7 +121,7 @@ pub(crate) async fn master_playlist(State(state): State<LlHlsState>) -> Response
 
 /// Blocking playlist reload query parameters (RFC 8216bis §6.2.5.2), as
 /// deserialized from the HTTP query string — the wire-format counterpart of
-/// [`ll_hls_runtime::server::BlockingQuery`], which `media_playlist` maps
+/// [`hls_runtime::server::BlockingQuery`], which `media_playlist` maps
 /// this into before handing off to the sans-IO engine.
 #[derive(Debug, Default, Deserialize)]
 pub struct BlockingReloadQuery {
@@ -151,7 +151,7 @@ impl From<BlockingReloadQuery> for BlockingQuery {
 /// `_HLS_msn` is meaningless (a part is only addressable relative to a
 /// segment) and a `_HLS_msn` unreasonably far beyond the current live edge is
 /// either a broken client or abuse — both are rejected with `400 Bad
-/// Request` immediately (`LlHlsOrigin::resolve` answers `BadRequest`, which
+/// Request` immediately (`HlsOrigin::resolve` answers `BadRequest`, which
 /// [`http::into_response`] maps to `400` with no wait at all), rather than
 /// blocking to the blocking-reload timeout and returning `200` regardless.
 pub(crate) async fn media_playlist(
@@ -164,7 +164,7 @@ pub(crate) async fn media_playlist(
     };
     let trunk = serving.trunk();
     let ll_hls = serving.ll_hls();
-    let request = LlHlsRequest::Playlist {
+    let request = HlsRequest::Playlist {
         track_id: DEFAULT_TRACK_ID,
         query: q.into(),
     };
@@ -177,11 +177,11 @@ pub(crate) async fn media_playlist(
     )
     .await;
     http::into_response(resp, StatusCode::NOT_FOUND, |body| match body {
-        LlHlsBody::Playlist(m) => {
+        HlsBody::Playlist(m) => {
             ([(header::CONTENT_TYPE, MEDIA_PLAYLIST_CONTENT_TYPE)], m).into_response()
         }
-        LlHlsBody::Resource(_) => StatusCode::NOT_FOUND.into_response(),
-        // `LlHlsBody` is `#[non_exhaustive]`; a future body variant this
+        HlsBody::Resource(_) => StatusCode::NOT_FOUND.into_response(),
+        // `HlsBody` is `#[non_exhaustive]`; a future body variant this
         // playlist route doesn't understand is treated the same as a
         // resource body -- not found here.
         _ => StatusCode::NOT_FOUND.into_response(),

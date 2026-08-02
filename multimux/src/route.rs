@@ -1,21 +1,21 @@
 //! One route's shared state: a [`ProgramId`]-keyed registry of
 //! `ProgramServing` bundles — each one the `media_plane::Trunk` a program's
 //! samples land in, the sans-IO LL-HLS origin over it
-//! ([`ll_hls_runtime::server::LlHlsOrigin`], plan step 4), and the small
+//! ([`hls_runtime::server::HlsOrigin`], plan step 4), and the small
 //! `Trunk`-drained window DASH/LL-DASH need beyond what any `Trunk` ring
 //! holds (`DashState`, below) — plus this route's [`HealthState`], which is
 //! route-wide, not per-program.
 //!
-//! Replaces the deleted `ll_hls_runtime::server::{MediaStore, HealthState}`
+//! Replaces the deleted `hls_runtime::server::{MediaStore, HealthState}`
 //! (step 5b): `MediaStore`'s playlist-rendering half moved into
-//! [`LlHlsOrigin`] (step 4, reusing it rather than reimplementing it here —
+//! [`HlsOrigin`] (step 4, reusing it rather than reimplementing it here —
 //! see this crate's `http` module docs); its DASH-only fields
 //! (`track_specs`/`created_at`/the closed-segment window) have no `Trunk`
 //! ring of their own (a `Trunk` carries samples/segments/parts/events, never
 //! codec metadata or a route's start time) and are recreated here, in
 //! exactly the same "one small synced window, fed by draining one
 //! `SegmentCursor`, never a second cache of the `Trunk`'s own data" shape
-//! [`LlHlsOrigin`]'s own `Window` already established — see that type's
+//! [`HlsOrigin`]'s own `Window` already established — see that type's
 //! module doc, "The one thing that genuinely cannot come from the `Trunk`
 //! alone". [`HealthState`] (route up/down) is also recreated here: it is
 //! *not* [`media_plane::ingress::HealthState`], which is generic over one
@@ -24,7 +24,7 @@
 //!
 //! # No pre-first-program placeholder (issue #805 task 6)
 //!
-//! Earlier revisions of this type owned a single `Trunk`/`LlHlsOrigin`/
+//! Earlier revisions of this type owned a single `Trunk`/`HlsOrigin`/
 //! `DashState` triple, built eagerly in [`RouteHandle::new`] before any
 //! program was known, with a `publish_owned_trunk` method to register that
 //! placeholder into the (separately added) program registry once a caller had
@@ -41,7 +41,7 @@
 //! `ProgramResolution::NotYetAnnounced` forever — a hang, not an error
 //! (issue #805 task 2 caught exactly this bug twice, in both of that era's
 //! production writers). That is now structurally impossible: there is no
-//! `Trunk`/`LlHlsOrigin`/`DashState` to write into, resolvably or not, until
+//! `Trunk`/`HlsOrigin`/`DashState` to write into, resolvably or not, until
 //! [`RouteHandle::publish_program`] creates one. A test or plugin that wants
 //! to drive a program's serving state directly (rather than through a real
 //! `media_plane::IngestDriver`) calls [`RouteHandle::publish_new_program`],
@@ -117,7 +117,7 @@ use std::time::{Duration, SystemTime};
 
 use broadcast_common::Timestamp;
 use bytes::Bytes;
-use ll_hls_runtime::server::LlHlsOrigin;
+use hls_runtime::server::HlsOrigin;
 use media_plane::trunk::{
     PartEntry, SegmentCursor, SegmentCursorItem, SegmentEntry, SegmentWriter, TrunkConfig,
 };
@@ -260,7 +260,7 @@ pub(crate) enum ProgramResolution {
 /// rendering needs it (`crate::output::dash`/`crate::output::ll_dash`) —
 /// bytes are never held here (a DASH manifest never embeds segment bytes;
 /// it only names them), so this is not a duplicate of what
-/// [`LlHlsOrigin`]'s own `Window` (or the `Trunk`'s segment log itself)
+/// [`HlsOrigin`]'s own `Window` (or the `Trunk`'s segment log itself)
 /// holds.
 #[derive(Debug, Clone, Copy)]
 pub struct DashWindowSegment {
@@ -310,7 +310,7 @@ impl DashState {
 
     /// Absorb every segment this route's `SegmentCursor` has produced since
     /// the last call — the same non-blocking, called-at-the-top-of-render
-    /// shape as [`LlHlsOrigin`]'s own `drain` (see that type's module doc).
+    /// shape as [`HlsOrigin`]'s own `drain` (see that type's module doc).
     fn drain(&self) {
         let mut cursor = self
             .cursor
@@ -342,7 +342,7 @@ impl DashState {
 }
 
 /// One program's complete serving state: its `Trunk`, the sans-IO
-/// [`LlHlsOrigin`] built over it, and the [`DashState`] window drained from
+/// [`HlsOrigin`] built over it, and the [`DashState`] window drained from
 /// it — grouped in one struct (rather than three parallel
 /// `ProgramId`-keyed maps that could disagree with each other about which
 /// `Trunk` a given program's `ll_hls`/`dash` are actually bound to) because
@@ -354,7 +354,7 @@ impl DashState {
 /// this crate's own tests; never named outside this crate.
 pub(crate) struct ProgramServing {
     trunk: Arc<Trunk>,
-    ll_hls: Arc<LlHlsOrigin>,
+    ll_hls: Arc<HlsOrigin>,
     dash: Arc<DashState>,
     /// Lazily-acquired write handle for [`RouteHandle::add_segment`]/
     /// [`RouteHandle::add_part`] (this crate's own direct-`Trunk`-write test
@@ -381,7 +381,7 @@ pub(crate) struct ProgramServing {
 }
 
 impl ProgramServing {
-    /// Build a fresh bundle over `trunk`: the [`LlHlsOrigin`] and
+    /// Build a fresh bundle over `trunk`: the [`HlsOrigin`] and
     /// [`DashState`] every egress call site reads, both bound to `trunk` from
     /// construction. The one and only place either is created — see
     /// [`RouteHandle::publish_program`].
@@ -391,7 +391,7 @@ impl ProgramServing {
         part_target_ms: u32,
         window_segments: NonZeroUsize,
     ) -> Arc<Self> {
-        let ll_hls = Arc::new(LlHlsOrigin::new(
+        let ll_hls = Arc::new(HlsOrigin::new(
             Arc::clone(&trunk),
             target_duration_secs,
             part_target_ms,
@@ -414,7 +414,7 @@ impl ProgramServing {
     }
 
     /// This program's sans-IO LL-HLS origin.
-    pub(crate) fn ll_hls(&self) -> Arc<LlHlsOrigin> {
+    pub(crate) fn ll_hls(&self) -> Arc<HlsOrigin> {
         Arc::clone(&self.ll_hls)
     }
 
@@ -501,7 +501,7 @@ impl ProgramServing {
 
     /// `(in-progress-or-last-closed segment sequence number, its currently
     /// resident live-part count)` — mirrors
-    /// `ll_hls_runtime::server::LlHlsOrigin::live_edge`'s own derivation,
+    /// `hls_runtime::server::HlsOrigin::live_edge`'s own derivation,
     /// directly against the `Trunk` (no cache): the abuse-bound check
     /// `crate::origin::resource`'s chunked-transfer whole-segment route
     /// (issue #721) needs.
@@ -525,7 +525,7 @@ impl ProgramServing {
 /// [`crate::source::advance_route`] facade over both) and every
 /// [`crate::output::Output`]/the shared resource route that reads from it.
 ///
-/// Owns **no** `Trunk`/`LlHlsOrigin`/`DashState` of its own — see this
+/// Owns **no** `Trunk`/`HlsOrigin`/`DashState` of its own — see this
 /// module's own "No pre-first-program placeholder" doc. Every program's
 /// serving state lives in `Self::programs` (the `programs` field, below),
 /// created only by [`Self::publish_program`].
@@ -585,7 +585,7 @@ impl RouteHandle {
     /// Build a fresh route: no program known yet, an empty registry, and this
     /// route's target duration/part target/window depth recorded so every
     /// later [`Self::publish_program`] builds each program's `Trunk`/
-    /// `LlHlsOrigin`/`DashState` consistently.
+    /// `HlsOrigin`/`DashState` consistently.
     pub fn new(target_duration_secs: f64, part_target_ms: u32, window_segments: usize) -> Self {
         let window_segments = NonZeroUsize::new(window_segments).unwrap_or(NonZeroUsize::MIN);
         RouteHandle {
@@ -616,7 +616,7 @@ impl RouteHandle {
     }
 
     /// Publish `program`'s `Trunk` into this route's registry, building its
-    /// `ProgramServing` bundle (`LlHlsOrigin`+`DashState`) the first time —
+    /// `ProgramServing` bundle (`HlsOrigin`+`DashState`) the first time —
     /// the ingest side's write. Two kinds of caller: every driver-backed
     /// `run_*`, via `crate::source::report_driver_progress`, once
     /// `media_plane::IngestDriver` reports `media_plane::SessionEvent::NewProgram`
@@ -715,12 +715,12 @@ impl RouteHandle {
     /// `crate::http::resolve_route_program` (trunk + `ll_hls` together,
     /// atomically, from one registry read), so this has no production caller.
     #[cfg(test)]
-    pub(crate) fn ll_hls(&self, program: ProgramId) -> Option<Arc<LlHlsOrigin>> {
+    pub(crate) fn ll_hls(&self, program: ProgramId) -> Option<Arc<HlsOrigin>> {
         self.serving(program).map(|s| s.ll_hls())
     }
 
     /// Store `program`'s fMP4 init segment bytes — forwards to
-    /// [`LlHlsOrigin::set_init`]. A no-op (logged) if `program` has not been
+    /// [`HlsOrigin::set_init`]. A no-op (logged) if `program` has not been
     /// published yet — there is nowhere for the bytes to land until
     /// [`Self::publish_program`]/[`Self::publish_new_program`] creates the
     /// bundle.

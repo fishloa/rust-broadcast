@@ -1,4 +1,4 @@
-//! Issue #717 acceptance: `ll-hls-runtime`'s [`TokioClient`] as the
+//! Issue #717 acceptance: `hls-runtime`'s [`TokioClient`] as the
 //! **reference client** in the #569 player-validated golden-gate harness.
 //!
 //! `transmux/tests/golden_gate.rs` (#569) validates only the ORIGIN half of
@@ -46,9 +46,9 @@ use axum::response::IntoResponse;
 use axum::routing::get;
 use serde_json::Value;
 
-use ll_hls_runtime::client::Output;
-use ll_hls_runtime::client::tokio_client::TokioClient;
-use ll_hls_runtime::server::DEFAULT_TRACK_ID;
+use hls_runtime::client::Output;
+use hls_runtime::client::tokio_client::TokioClient;
+use hls_runtime::server::DEFAULT_TRACK_ID;
 use multimux::origin::{AppState, router};
 use multimux::output::Output as MmOutput;
 use multimux::output::llhls::LlHlsOutput;
@@ -381,7 +381,7 @@ async fn ll_hls_client_reference_reconstructs_decodable_stream() {
     // Independent decoder oracle #1: ffprobe identifies it as H.264 at the
     // source's own resolution.
     let out_probe = ffprobe_json(&path);
-    assert_video_matches_source(&src_probe, &out_probe, "ll-hls-runtime golden gate");
+    assert_video_matches_source(&src_probe, &out_probe, "hls-runtime golden gate");
 
     // Independent decoder oracle #2: ffprobe's OWN decode (not just demux)
     // reports exactly the frame count fed in -- catches drops/dupes/reorders
@@ -601,7 +601,7 @@ async fn non_ll_full_segment_path_also_decodes() {
     assert_video_matches_source(
         &src_probe,
         &out_probe,
-        "ll-hls-runtime golden gate (non-LL fallback)",
+        "hls-runtime golden gate (non-LL fallback)",
     );
 
     let decoded_frames = ffprobe_decoded_frame_count(&path);

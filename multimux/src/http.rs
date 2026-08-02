@@ -35,9 +35,9 @@ pub(crate) const BLOCKING_RELOAD_TIMEOUT: Duration = Duration::from_secs(5);
 /// ([`crate::route::SPTS_PROGRAM_ID`]) against its registry, handling the
 /// three-way [`crate::route::ProgramResolution`] the same way at every
 /// migrated egress call site (issue #805 tasks 3/4/6): `Found` hands back the
-/// whole bundle (`Trunk` + `LlHlsOrigin` + `DashState`, resolved together from
+/// whole bundle (`Trunk` + `HlsOrigin` + `DashState`, resolved together from
 /// one registry read, so a caller never risks reading one program's `Trunk`
-/// against a different program's `LlHlsOrigin`); `NotYetAnnounced` (the route
+/// against a different program's `HlsOrigin`); `NotYetAnnounced` (the route
 /// is connected but no program has appeared yet — ingest may still be
 /// dialing/handshaking) is a `503 Service Unavailable` "not ready", **not** a
 /// `404` — collapsing the two would make an ordinary route mid-connect
@@ -81,8 +81,8 @@ const NO_SLOT_BACKOFF: Duration = Duration::from_millis(20);
 /// Resolve `request` against `egress`, holding a blocking-reload-style wait
 /// (RFC 8216bis §6.2.5.2) up to `timeout` while [`ServedEgress::resolve`]
 /// answers [`EgressResponse::Await`] — the caller-driven wait loop
-/// `ll_hls_runtime::server`'s own module doc sketches, generalised to any
-/// `ServedEgress` implementation (LL-HLS's [`ll_hls_runtime::server::LlHlsOrigin`],
+/// `hls_runtime::server`'s own module doc sketches, generalised to any
+/// `ServedEgress` implementation (LL-HLS's [`hls_runtime::server::HlsOrigin`],
 /// or this crate's own DASH/LL-DASH manifest origins).
 ///
 /// A `Trunk::listen()` wake-up is registered **before** re-checking
@@ -170,7 +170,7 @@ where
 
 /// Turn one [`EgressResponse`] into an HTTP [`Response`] — the one place in
 /// this crate that does so. `render_ready` supplies the content-type/body
-/// for [`EgressResponse::Ready`] (protocol-specific: LL-HLS's `LlHlsBody`'s
+/// for [`EgressResponse::Ready`] (protocol-specific: LL-HLS's `HlsBody`'s
 /// two shapes, or a plain MPD `String`); `not_found_status` is the one
 /// per-route status choice this adapter still leaves to its caller — a
 /// resource byte-range that will never exist is a `404` (gone forever), but

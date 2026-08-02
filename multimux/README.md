@@ -25,7 +25,7 @@ Each route names one ingest transport (`InputSpec`):
 | `rtp` | Raw RTP over UDP (uni/multicast) | needs an out-of-band SDP (inline or `@path`) for codec/fmtp |
 | `ts_udp` | MPEG-2 TS over UDP (uni/multicast) | track set comes from the in-band PMT — no SDP needed |
 | `ts_http` | MPEG-2 TS over a streaming HTTP GET (chunked/progressive) | optional `auth` |
-| `hls_pull` | Pull a remote (LL-)HLS Media Playlist, via `ll-hls-runtime`'s client | optional `auth` |
+| `hls_pull` | Pull a remote (LL-)HLS Media Playlist, via `hls-runtime`'s client | optional `auth` |
 | `srt` | MPEG-2 TS over SRT, caller (dial out) or listener (bind + accept), via `srt-runtime` | track set from the in-band PMT; payload encryption out of scope |
 | `dash_pull` | Pull a remote DASH MPD and its segments | optional `auth` |
 | `smooth_pull` | Pull a remote Smooth Streaming manifest and its fragments | optional `auth` |

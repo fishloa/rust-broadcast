@@ -2,7 +2,7 @@
 //! `part-*.m4s` byte serving, mounted **once per stream** by
 //! [`crate::origin::router`] rather than per-`Output` — LL-HLS and DASH are
 //! both fMP4/CMAF and reference the exact same bytes (resolved through the
-//! route's shared [`ll_hls_runtime::server::LlHlsOrigin`], the `ServedEgress`
+//! route's shared [`hls_runtime::server::HlsOrigin`], the `ServedEgress`
 //! every output's bytes resolve through — see [`crate::http`]), so serving
 //! them per-output would duplicate the route (and previously caused an axum
 //! panic: two `Output`s both mounting a `/:file` catch-all under the same
@@ -21,7 +21,7 @@
 //! `seg-*.m4s` request that doesn't (yet) resolve to a closed segment falls
 //! through to [`stream_in_progress_segment`], which re-fetches that
 //! segment's `part-{track}-{seq}.{idx}.m4s` entries in order — the exact
-//! bytes the route's `LlHlsOrigin` already produces for LL-HLS's own
+//! bytes the route's `HlsOrigin` already produces for LL-HLS's own
 //! preload-hint requests — and streams them as one HTTP
 //! chunked-transfer-encoded response body, ending once a part index resolves
 //! [`media_plane::egress::EgressResponse::NotFound`] (which only happens once
@@ -42,7 +42,7 @@ use axum::http::{HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use futures_util::stream;
-use ll_hls_runtime::server::LlHlsRequest;
+use hls_runtime::server::HlsRequest;
 
 use crate::http::{self, BLOCKING_RELOAD_TIMEOUT};
 use crate::route::{ProgramServing, RouteHandle};
@@ -50,7 +50,7 @@ use crate::route::{ProgramServing, RouteHandle};
 pub(crate) const MP4_CONTENT_TYPE: &str = "video/mp4";
 
 /// Abuse bound for [`stream_in_progress_segment`]'s whole-segment number,
-/// mirroring `ll_hls_runtime::server::engine`'s own `ABUSE_MSN_FUTURE_BOUND`
+/// mirroring `hls_runtime::server::engine`'s own `ABUSE_MSN_FUTURE_BOUND`
 /// (RFC 8216bis §6.2.5.2's abuse-prevention SHOULD, applied here to the
 /// DASH-facing whole-segment lookup): a legitimate LL-DASH client only ever
 /// requests the segment right after the one it already has, so a segment
@@ -83,7 +83,7 @@ impl Drop for BlockingRequestGuard {
 
 /// Build the shared resource router for one stream: `GET /:file`, serving
 /// `init-{track}.mp4` / `seg-{track}-{seq}.m4s` / `part-{track}-{seq}.{idx}.m4s`
-/// via `route`'s `LlHlsOrigin`. Mounted once per stream by
+/// via `route`'s `HlsOrigin`. Mounted once per stream by
 /// [`crate::origin::router`], merged alongside every configured `Output`'s
 /// manifest routes before the whole per-stream router is `.nest`ed — see
 /// this module's docs.
@@ -110,7 +110,7 @@ pub(crate) async fn cors_preflight() -> StatusCode {
 }
 
 /// `GET /:file` — catch-all for the dynamic init/segment/part filenames
-/// `route`'s `LlHlsOrigin` names (and the same filenames a DASH
+/// `route`'s `HlsOrigin` names (and the same filenames a DASH
 /// `SegmentTemplate` references — see `crate::output::dash`).
 ///
 /// A single catch-all (rather than three routes with per-filename literals)
@@ -119,7 +119,7 @@ pub(crate) async fn cors_preflight() -> StatusCode {
 /// param per segment is supported, capturing the whole segment. Parsing
 /// `file` into a segment/part/init lookup — including the "block until a
 /// preload-hinted part is produced" behaviour (RFC 8216bis §6.2.2, §6.3.1) —
-/// is [`ll_hls_runtime::server::LlHlsOrigin::resolve`]'s job; this handler
+/// is [`hls_runtime::server::HlsOrigin::resolve`]'s job; this handler
 /// only drives the wait ([`http::resolve_blocking`]) and maps the outcome to
 /// an HTTP response ([`http::into_response`]).
 async fn dynamic_file(State(route): State<Arc<RouteHandle>>, Path(file): Path<String>) -> Response {
@@ -132,7 +132,7 @@ async fn dynamic_file(State(route): State<Arc<RouteHandle>>, Path(file): Path<St
     let resp = http::resolve_blocking(
         &trunk,
         ll_hls.as_ref(),
-        LlHlsRequest::Resource { name: file.clone() },
+        HlsRequest::Resource { name: file.clone() },
         BLOCKING_RELOAD_TIMEOUT,
         BlockingRequestGuard::new,
     )
@@ -155,28 +155,28 @@ async fn dynamic_file(State(route): State<Arc<RouteHandle>>, Path(file): Path<St
     }
 }
 
-fn resource_body_response(body: ll_hls_runtime::server::LlHlsBody) -> Response {
+fn resource_body_response(body: hls_runtime::server::HlsBody) -> Response {
     match body {
-        ll_hls_runtime::server::LlHlsBody::Resource(bytes) => {
+        hls_runtime::server::HlsBody::Resource(bytes) => {
             ([(header::CONTENT_TYPE, MP4_CONTENT_TYPE)], bytes).into_response()
         }
         // A resource request never resolves to a rendered playlist body --
-        // defensive, not reachable via `dynamic_file`'s own `LlHlsRequest::Resource`.
-        ll_hls_runtime::server::LlHlsBody::Playlist(_) => StatusCode::NOT_FOUND.into_response(),
-        // `LlHlsBody` is `#[non_exhaustive]`; treat any future body variant
+        // defensive, not reachable via `dynamic_file`'s own `HlsRequest::Resource`.
+        hls_runtime::server::HlsBody::Playlist(_) => StatusCode::NOT_FOUND.into_response(),
+        // `HlsBody` is `#[non_exhaustive]`; treat any future body variant
         // the same as the playlist case above -- not a resource body.
         _ => StatusCode::NOT_FOUND.into_response(),
     }
 }
 
 /// Parse a whole-segment dynamic filename (`seg-{track}-{seq}.m4s`) into
-/// `(track, seq)`. Mirrors `ll_hls_runtime::server`'s own (private)
+/// `(track, seq)`. Mirrors `hls_runtime::server`'s own (private)
 /// `seg-`/`part-` filename parsing, but keeps `track` as a borrowed `&str`
 /// (rather than discarding it once validated) so [`stream_in_progress_segment`]
 /// can reuse it verbatim to build this segment's `part-{track}-{seq}.{idx}.m4s`
 /// filenames -- `{track}` is otherwise unused (the origin holds a single
 /// track's data regardless of the number a client's `$RepresentationID$`
-/// substitution produces, exactly like `LlHlsOrigin::resolve` itself).
+/// substitution produces, exactly like `HlsOrigin::resolve` itself).
 fn parse_segment_filename(file: &str) -> Option<(&str, u32)> {
     let rest = file.strip_prefix("seg-")?.strip_suffix(".m4s")?;
     let (track, seq) = rest.split_once('-')?;
@@ -266,14 +266,14 @@ async fn fetch_part(
     let resp = http::resolve_blocking(
         &trunk,
         ll_hls.as_ref(),
-        LlHlsRequest::Resource { name },
+        HlsRequest::Resource { name },
         BLOCKING_RELOAD_TIMEOUT,
         BlockingRequestGuard::new,
     )
     .await;
     match resp {
         media_plane::egress::EgressResponse::Ready {
-            body: ll_hls_runtime::server::LlHlsBody::Resource(bytes),
+            body: hls_runtime::server::HlsBody::Resource(bytes),
             ..
         } => Some(bytes),
         _ => None,
@@ -417,7 +417,7 @@ mod tests {
         // the segment close must not 404. Both behaviours below shipped as
         // multimux 0.2.1/0.2.2 bug fixes and are now asserted directly
         // against the live camera's own regression shape (see
-        // `ll-hls-runtime/src/server/engine.rs`'s own tests for the same
+        // `hls-runtime/src/server/engine.rs`'s own tests for the same
         // property at the `ServedEgress` layer; this test proves the axum
         // adapter preserves it end to end).
         let route = make_route();

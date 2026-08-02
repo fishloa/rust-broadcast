@@ -1,4 +1,4 @@
-//! [`LlHlsOrigin`] — the LL-HLS origin [`ServedEgress`] (plan step 4):
+//! [`HlsOrigin`] — the LL-HLS origin [`ServedEgress`] (plan step 4):
 //! blocking-reload/part-availability *decision* logic and playlist rendering,
 //! rendered directly from a shared [`Trunk`] instead of the deleted
 //! `MediaStore` push-fed rolling window.
@@ -24,7 +24,7 @@
 //!   `live_parts`/`recent_parts` buffers in the first place.
 //! - **Whether a segment has closed** — [`Trunk::last_closed_segment`].
 //! - **The "in-progress-or-last-active segment" `MediaStore::latest_progress`
-//!   used to track as a push-fed field** — [`LlHlsOrigin::live_edge`] derives
+//!   used to track as a push-fed field** — [`HlsOrigin::live_edge`] derives
 //!   it from the two queries above alone (`last_closed_segment() + 1`, probed
 //!   via `parts_in_segment`), needing no field of its own. See that method's
 //!   doc for the derivation and why it is exact, not a heuristic.
@@ -54,7 +54,7 @@
 //! `Window` is that assembly, and it is **not** a second `MediaStore`: it
 //! holds only bytes/duration/discontinuity-bit for the segments currently in
 //! the advertised window, fed by exactly **one** [`SegmentCursor`] this
-//! `LlHlsOrigin` owns — precisely the shape `media_plane::egress`'s module
+//! `HlsOrigin` owns — precisely the shape `media_plane::egress`'s module
 //! doc prescribes ("a `ServedEgress` implementation... keeps its own
 //! resolvable window in sync by draining [cursors]... `resolve` only ever
 //! reads that already-synced state"). It carries none of `MediaStore`'s
@@ -67,7 +67,7 @@
 //! outside the `Trunk`: an init segment is neither a sample, a finished
 //! segment, an event, nor a live part — it is produced once by the
 //! segmenter and never changes, so it was never in scope for any of
-//! `Trunk`'s four rings. [`LlHlsOrigin::set_init`] is the (small, honest) side
+//! `Trunk`'s four rings. [`HlsOrigin::set_init`] is the (small, honest) side
 //! channel for it — not a duplicate of anything `Trunk` holds.
 
 use std::collections::VecDeque;
@@ -129,13 +129,13 @@ pub struct BlockingQuery {
     pub hls_part: Option<u32>,
 }
 
-/// [`ServedEgress::Request`] for [`LlHlsOrigin`]: which wire resource is
+/// [`ServedEgress::Request`] for [`HlsOrigin`]: which wire resource is
 /// being asked for. A data-carrying dispatch ADT (matches this crate's
 /// `client::action::Action`/`ResourceId` convention) — see
 /// `tests/label_coverage.rs`'s SKIP list.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
-pub enum LlHlsRequest {
+pub enum HlsRequest {
     /// `GET <media playlist>`, optionally carrying a blocking-reload query.
     Playlist {
         /// The track id to render the playlist for (a naming parameter only —
@@ -152,12 +152,12 @@ pub enum LlHlsRequest {
     },
 }
 
-/// [`ServedEgress::Body`] for [`LlHlsOrigin`]: the resolved body, typed by
-/// which [`LlHlsRequest`] produced it. A data-carrying ADT — see
+/// [`ServedEgress::Body`] for [`HlsOrigin`]: the resolved body, typed by
+/// which [`HlsRequest`] produced it. A data-carrying ADT — see
 /// `tests/label_coverage.rs`'s SKIP list.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
-pub enum LlHlsBody {
+pub enum HlsBody {
     /// A rendered Media Playlist (`#EXTM3U` text).
     Playlist(String),
     /// Resolved resource bytes (init/segment/part).
@@ -176,7 +176,7 @@ struct WindowSegment {
     discontinuous: bool,
 }
 
-/// The small per-[`LlHlsOrigin`] synced window this module's own doc
+/// The small per-[`HlsOrigin`] synced window this module's own doc
 /// ("The one thing that genuinely cannot come from the `Trunk` alone")
 /// explains the need for — fed by draining exactly one [`SegmentCursor`],
 /// never pushed into directly.
@@ -252,7 +252,7 @@ fn parse_part(file: &str) -> Option<(u32, u32)> {
 /// Parse a `init-{track}.mp4`/`seg-{track}-{seq}.m4s` dynamic filename;
 /// `part-…` filenames are handled separately by [`parse_part`] (they can
 /// block until available). `{track}` is validated as a number but otherwise
-/// unused: an [`LlHlsOrigin`] holds a single track's data (see
+/// unused: an [`HlsOrigin`] holds a single track's data (see
 /// [`DEFAULT_TRACK_ID`]).
 enum ImmediateResource {
     Init,
@@ -278,7 +278,7 @@ fn parse_immediate(file: &str) -> Option<ImmediateResource> {
 /// blocking-reload/part-availability requests for one stream, backed by a
 /// shared [`Trunk`]. See this module's own doc for exactly what comes
 /// straight from the `Trunk` and what needs the small synced `Window`.
-pub struct LlHlsOrigin {
+pub struct HlsOrigin {
     trunk: Arc<Trunk>,
     /// This origin's **one** [`SegmentCursor`] — see [`Trunk::subscribe_segments`]'s
     /// own docs (and this crate's `media_plane::egress` module doc) for why a
@@ -292,7 +292,7 @@ pub struct LlHlsOrigin {
     part_target_ms: u32,
 }
 
-impl LlHlsOrigin {
+impl HlsOrigin {
     /// Build a fresh origin over `trunk`, subscribing its one [`SegmentCursor`]
     /// immediately (so the window starts empty but never misses a segment
     /// published from this point on).
@@ -310,7 +310,7 @@ impl LlHlsOrigin {
         window_segments: NonZeroUsize,
     ) -> Self {
         let cursor = trunk.subscribe_segments();
-        LlHlsOrigin {
+        HlsOrigin {
             trunk,
             cursor: Mutex::new(cursor),
             window: Mutex::new(Window::new(window_segments)),
@@ -478,7 +478,7 @@ impl LlHlsOrigin {
         query: BlockingQuery,
         now: Timestamp,
         await_policy: AwaitPolicy,
-    ) -> EgressResponse<LlHlsBody> {
+    ) -> EgressResponse<HlsBody> {
         if query.hls_part.is_some() && query.hls_msn.is_none() {
             return EgressResponse::BadRequest {
                 reason: "_HLS_part without _HLS_msn is meaningless",
@@ -504,7 +504,7 @@ impl LlHlsOrigin {
             }
         }
         EgressResponse::Ready {
-            body: LlHlsBody::Playlist(self.render_playlist(track_id)),
+            body: HlsBody::Playlist(self.render_playlist(track_id)),
             cache: CachePolicy::NoCache,
         }
     }
@@ -524,11 +524,11 @@ impl LlHlsOrigin {
         name: &str,
         now: Timestamp,
         await_policy: AwaitPolicy,
-    ) -> EgressResponse<LlHlsBody> {
+    ) -> EgressResponse<HlsBody> {
         if let Some((seq, idx)) = parse_part(name) {
             if let Some(bytes) = self.trunk.part_bytes(seq, idx) {
                 return EgressResponse::Ready {
-                    body: LlHlsBody::Resource(bytes),
+                    body: HlsBody::Resource(bytes),
                     cache: CachePolicy::Immutable,
                 };
             }
@@ -551,7 +551,7 @@ impl LlHlsOrigin {
         };
         match bytes {
             Some(bytes) => EgressResponse::Ready {
-                body: LlHlsBody::Resource(bytes),
+                body: HlsBody::Resource(bytes),
                 cache: CachePolicy::Immutable,
             },
             None => EgressResponse::NotFound,
@@ -559,21 +559,21 @@ impl LlHlsOrigin {
     }
 }
 
-impl ServedEgress for LlHlsOrigin {
-    type Request = LlHlsRequest;
-    type Body = LlHlsBody;
+impl ServedEgress for HlsOrigin {
+    type Request = HlsRequest;
+    type Body = HlsBody;
 
     fn resolve(
         &self,
-        request: LlHlsRequest,
+        request: HlsRequest,
         now: Timestamp,
         await_policy: AwaitPolicy,
-    ) -> EgressResponse<LlHlsBody> {
+    ) -> EgressResponse<HlsBody> {
         match request {
-            LlHlsRequest::Playlist { track_id, query } => {
+            HlsRequest::Playlist { track_id, query } => {
                 self.resolve_playlist(track_id, query, now, await_policy)
             }
-            LlHlsRequest::Resource { name } => self.resolve_resource(&name, now, await_policy),
+            HlsRequest::Resource { name } => self.resolve_resource(&name, now, await_policy),
         }
     }
 }
@@ -590,11 +590,11 @@ mod tests {
     }
 
     /// A fresh `Trunk` sized generously for these tests, plus the one
-    /// `LlHlsOrigin` under test.
-    fn make_origin() -> (Arc<Trunk>, LlHlsOrigin, media_plane::trunk::SegmentWriter) {
+    /// `HlsOrigin` under test.
+    fn make_origin() -> (Arc<Trunk>, HlsOrigin, media_plane::trunk::SegmentWriter) {
         let trunk = Trunk::new(TrunkConfig::new(nz(64), nz(8), nz(8), nz(8), nz(64)));
         let writer = trunk.segment_writer().expect("first segment writer");
-        let origin = LlHlsOrigin::new(Arc::clone(&trunk), 4.0, 500, nz(4));
+        let origin = HlsOrigin::new(Arc::clone(&trunk), 4.0, 500, nz(4));
         origin.set_init(vec![0xAAu8; 8]);
         (trunk, origin, writer)
     }
@@ -624,7 +624,7 @@ mod tests {
         ));
     }
 
-    fn resolve_now(origin: &LlHlsOrigin, request: LlHlsRequest) -> EgressResponse<LlHlsBody> {
+    fn resolve_now(origin: &HlsOrigin, request: HlsRequest) -> EgressResponse<HlsBody> {
         origin.resolve(
             request,
             Timestamp::from_nanos(0),
@@ -669,13 +669,13 @@ mod tests {
 
         let body = match resolve_now(
             &origin,
-            LlHlsRequest::Playlist {
+            HlsRequest::Playlist {
                 track_id: DEFAULT_TRACK_ID,
                 query: BlockingQuery::default(),
             },
         ) {
             EgressResponse::Ready {
-                body: LlHlsBody::Playlist(m),
+                body: HlsBody::Playlist(m),
                 cache,
             } => {
                 assert_eq!(cache, CachePolicy::NoCache);
@@ -731,7 +731,7 @@ mod tests {
         let deadline = Timestamp::from_nanos(5_000_000_000);
         let policy = AwaitPolicy::new(deadline);
         let first = origin.resolve(
-            LlHlsRequest::Resource {
+            HlsRequest::Resource {
                 name: "part-1-1.0.m4s".to_string(),
             },
             Timestamp::from_nanos(0),
@@ -770,14 +770,14 @@ mod tests {
 
         // Re-resolving now must serve it -- not 404.
         match origin.resolve(
-            LlHlsRequest::Resource {
+            HlsRequest::Resource {
                 name: "part-1-1.0.m4s".to_string(),
             },
             Timestamp::from_nanos(1),
             policy,
         ) {
             EgressResponse::Ready {
-                body: LlHlsBody::Resource(bytes),
+                body: HlsBody::Resource(bytes),
                 cache,
             } => {
                 assert_eq!(bytes, Bytes::from(vec![0u8; 4]));
@@ -804,7 +804,7 @@ mod tests {
         let policy = AwaitPolicy::new(deadline);
 
         let still_waiting = origin.resolve(
-            LlHlsRequest::Resource {
+            HlsRequest::Resource {
                 name: "part-1-9.0.m4s".to_string(),
             },
             Timestamp::from_nanos(999_999_999),
@@ -813,7 +813,7 @@ mod tests {
         assert!(matches!(still_waiting, EgressResponse::Await { .. }));
 
         let expired = origin.resolve(
-            LlHlsRequest::Resource {
+            HlsRequest::Resource {
                 name: "part-1-9.0.m4s".to_string(),
             },
             deadline,
@@ -851,12 +851,12 @@ mod tests {
 
         match resolve_now(
             &origin,
-            LlHlsRequest::Resource {
+            HlsRequest::Resource {
                 name: "part-1-1.1.m4s".to_string(),
             },
         ) {
             EgressResponse::Ready {
-                body: LlHlsBody::Resource(bytes),
+                body: HlsBody::Resource(bytes),
                 ..
             } => assert_eq!(bytes, Bytes::from(vec![1u8; 4])),
             other => panic!("the just-closed segment's final part must still serve, got {other:?}"),
@@ -866,7 +866,7 @@ mod tests {
         assert_eq!(
             resolve_now(
                 &origin,
-                LlHlsRequest::Resource {
+                HlsRequest::Resource {
                     name: "part-1-1.9.m4s".to_string(),
                 }
             ),
@@ -877,13 +877,13 @@ mod tests {
         // "open" -- it is rendered whole.
         let body = match resolve_now(
             &origin,
-            LlHlsRequest::Playlist {
+            HlsRequest::Playlist {
                 track_id: DEFAULT_TRACK_ID,
                 query: BlockingQuery::default(),
             },
         ) {
             EgressResponse::Ready {
-                body: LlHlsBody::Playlist(m),
+                body: HlsBody::Playlist(m),
                 ..
             } => m,
             other => panic!("expected Ready(Playlist), got {other:?}"),
@@ -923,13 +923,13 @@ mod tests {
         // DISCONTINUITY-SEQUENCE yet, nothing has rolled off).
         let body = match resolve_now(
             &origin,
-            LlHlsRequest::Playlist {
+            HlsRequest::Playlist {
                 track_id: DEFAULT_TRACK_ID,
                 query: BlockingQuery::default(),
             },
         ) {
             EgressResponse::Ready {
-                body: LlHlsBody::Playlist(m),
+                body: HlsBody::Playlist(m),
                 ..
             } => m,
             other => panic!("expected Ready(Playlist), got {other:?}"),
@@ -947,13 +947,13 @@ mod tests {
         seg(&writer, 5, 4.0, false);
         let body = match resolve_now(
             &origin,
-            LlHlsRequest::Playlist {
+            HlsRequest::Playlist {
                 track_id: DEFAULT_TRACK_ID,
                 query: BlockingQuery::default(),
             },
         ) {
             EgressResponse::Ready {
-                body: LlHlsBody::Playlist(m),
+                body: HlsBody::Playlist(m),
                 ..
             } => m,
             other => panic!("expected Ready(Playlist), got {other:?}"),
@@ -967,13 +967,13 @@ mod tests {
         seg(&writer, 6, 4.0, false);
         let body = match resolve_now(
             &origin,
-            LlHlsRequest::Playlist {
+            HlsRequest::Playlist {
                 track_id: DEFAULT_TRACK_ID,
                 query: BlockingQuery::default(),
             },
         ) {
             EgressResponse::Ready {
-                body: LlHlsBody::Playlist(m),
+                body: HlsBody::Playlist(m),
                 ..
             } => m,
             other => panic!("expected Ready(Playlist), got {other:?}"),
@@ -993,13 +993,13 @@ mod tests {
         seg(&writer, 1, 7.5, false);
         let body = match resolve_now(
             &origin,
-            LlHlsRequest::Playlist {
+            HlsRequest::Playlist {
                 track_id: DEFAULT_TRACK_ID,
                 query: BlockingQuery::default(),
             },
         ) {
             EgressResponse::Ready {
-                body: LlHlsBody::Playlist(m),
+                body: HlsBody::Playlist(m),
                 ..
             } => m,
             other => panic!("expected Ready(Playlist), got {other:?}"),
@@ -1016,7 +1016,7 @@ mod tests {
         seg(&writer, 1, 4.0, false);
         let outcome = resolve_now(
             &origin,
-            LlHlsRequest::Playlist {
+            HlsRequest::Playlist {
                 track_id: DEFAULT_TRACK_ID,
                 query: BlockingQuery {
                     hls_msn: Some(1002),
@@ -1032,7 +1032,7 @@ mod tests {
         let (_trunk, origin, _writer) = make_origin();
         let outcome = resolve_now(
             &origin,
-            LlHlsRequest::Playlist {
+            HlsRequest::Playlist {
                 track_id: DEFAULT_TRACK_ID,
                 query: BlockingQuery {
                     hls_msn: None,
@@ -1048,12 +1048,12 @@ mod tests {
         let (_trunk, origin, _writer) = make_origin();
         match resolve_now(
             &origin,
-            LlHlsRequest::Resource {
+            HlsRequest::Resource {
                 name: "init-1.mp4".to_string(),
             },
         ) {
             EgressResponse::Ready {
-                body: LlHlsBody::Resource(bytes),
+                body: HlsBody::Resource(bytes),
                 cache,
             } => {
                 assert_eq!(bytes, Bytes::from(vec![0xAAu8; 8]));
@@ -1069,7 +1069,7 @@ mod tests {
         assert_eq!(
             resolve_now(
                 &origin,
-                LlHlsRequest::Resource {
+                HlsRequest::Resource {
                     name: "not-a-thing.txt".to_string(),
                 }
             ),

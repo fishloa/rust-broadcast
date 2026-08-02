@@ -1,4 +1,4 @@
-//! [`LlHlsClient`] — the sans-IO caller-driven engine.
+//! [`HlsClient`] — the sans-IO caller-driven engine.
 
 use alloc::collections::{BTreeMap, BTreeSet, VecDeque};
 use alloc::string::{String, ToString};
@@ -24,16 +24,16 @@ const TS_SYNC_BYTE: u8 = 0x47;
 
 /// A driveable, sans-IO Low-Latency HLS (RFC 8216bis) playback client.
 ///
-/// `LlHlsClient` never touches a socket or a clock. The caller drives it:
+/// `HlsClient` never touches a socket or a clock. The caller drives it:
 ///
-/// 1. [`LlHlsClient::new`] seeds the first [`Action::FetchPlaylist`]; drain it
-///    with [`LlHlsClient::poll`] and perform the GET.
-/// 2. Feed the response back with [`LlHlsClient::on_playlist`] (playlist) or
-///    [`LlHlsClient::on_resource`] (init/part/segment bytes) —
+/// 1. [`HlsClient::new`] seeds the first [`Action::FetchPlaylist`]; drain it
+///    with [`HlsClient::poll`] and perform the GET.
+/// 2. Feed the response back with [`HlsClient::on_playlist`] (playlist) or
+///    [`HlsClient::on_resource`] (init/part/segment bytes) —
 ///    [`Action::FetchResource`]'s `id` correlates the two.
-/// 3. Drain [`LlHlsClient::poll`] again for the next round of actions (a new
+/// 3. Drain [`HlsClient::poll`] again for the next round of actions (a new
 ///    reload, newly discoverable parts, a preload-hint prefetch, ...) and
-///    [`LlHlsClient::next_output`] for newly available [`Output`]s.
+///    [`HlsClient::next_output`] for newly available [`Output`]s.
 ///
 /// # Behaviour
 ///
@@ -94,7 +94,7 @@ const TS_SYNC_BYTE: u8 = 0x47;
 ///   fMP4/CMAF plus LL (parts/preload-hint) path above is entirely
 ///   unchanged; the two never overlap for a single playlist.
 #[derive(Debug)]
-pub struct LlHlsClient {
+pub struct HlsClient {
     playlist_url: String,
 
     pending_actions: VecDeque<Action>,
@@ -122,7 +122,7 @@ pub struct LlHlsClient {
     last_full_playlist: Option<MediaPlaylist>,
 }
 
-impl LlHlsClient {
+impl HlsClient {
     /// Create a new client for the Media Playlist at `playlist_url`, seeding
     /// the first [`Action::FetchPlaylist`] (a plain, non-blocking GET — the
     /// client does not yet know whether the origin supports blocking reload).
@@ -472,7 +472,7 @@ impl LlHlsClient {
             // requests every known part each time it's polled, so by the
             // time the segment closes none can have been missed) — fetching
             // the whole segment *as well* would demux and emit its samples a
-            // second time. Caught by `ll-hls-runtime/tests/glass_to_glass.rs`
+            // second time. Caught by `hls-runtime/tests/glass_to_glass.rs`
             // (issue #717 slice 5): every sample was double-delivered for
             // the first two segments of a real, live-paced run.
             let already_have_parts = self
@@ -667,7 +667,7 @@ mod tests {
     // accepted. Must FAIL if that check is ever removed.
     #[test]
     fn on_resource_rejects_a_never_requested_id() {
-        let mut client = LlHlsClient::new("http://example.com/playlist.m3u8");
+        let mut client = HlsClient::new("http://example.com/playlist.m3u8");
         let id = ResourceId::Segment { msn: 0 };
 
         let err = client
@@ -700,7 +700,7 @@ mod tests {
     // must still be accepted, not spuriously rejected.
     #[test]
     fn on_resource_accepts_a_previously_requested_id() {
-        let mut client = LlHlsClient::new("http://example.com/playlist.m3u8");
+        let mut client = HlsClient::new("http://example.com/playlist.m3u8");
         let id = ResourceId::Segment { msn: 0 };
         client.request_resource(id, "http://example.com/seg0.m4s".to_string(), None);
 
@@ -722,7 +722,7 @@ mod tests {
     // say yes to a genuine TS resource (sync byte, no map ever seen)...
     #[test]
     fn is_ts_segment_true_when_no_map_seen_and_sync_byte_present() {
-        let client = LlHlsClient::new("http://example.com/playlist.m3u8");
+        let client = HlsClient::new("http://example.com/playlist.m3u8");
         assert!(client.is_ts_segment(&[TS_SYNC_BYTE, 0x40, 0x11, 0x00]));
     }
 
@@ -732,7 +732,7 @@ mod tests {
     // misrouted into `TsDemux` (which would reject it as malformed TS).
     #[test]
     fn is_ts_segment_false_for_an_isobmff_resource_with_no_map_seen() {
-        let client = LlHlsClient::new("http://example.com/playlist.m3u8");
+        let client = HlsClient::new("http://example.com/playlist.m3u8");
         let ftyp_box = b"\x00\x00\x00\x18ftypiso5\x00\x00\x02\x00iso5iso6mp41";
         assert!(!client.is_ts_segment(ftyp_box));
     }
@@ -745,7 +745,7 @@ mod tests {
     // fetched bytes belong with.
     #[test]
     fn is_ts_segment_false_once_a_map_has_been_requested() {
-        let mut client = LlHlsClient::new("http://example.com/playlist.m3u8");
+        let mut client = HlsClient::new("http://example.com/playlist.m3u8");
         client
             .ensure_init_requested(&MapTag {
                 uri: "init.mp4".to_string(),

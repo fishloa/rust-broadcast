@@ -14,7 +14,7 @@
 //! segmenter->store wiring, but with genuine wall-clock pacing between
 //! samples so the origin is *live-shaped* rather than dumping every part into
 //! the store instantly). This test lives in `multimux/tests/` because
-//! `ll-hls-runtime` is a normal dependency of `multimux`, so there is no
+//! `hls-runtime` is a normal dependency of `multimux`, so there is no
 //! cycle: the governing rule is that a cross-crate test lives in the
 //! topologically highest crate it touches.
 //!
@@ -40,8 +40,8 @@ use axum::Router;
 use axum::response::IntoResponse;
 use axum::routing::get;
 
-use ll_hls_runtime::client::Output;
-use ll_hls_runtime::client::tokio_client::TokioClient;
+use hls_runtime::client::Output;
+use hls_runtime::client::tokio_client::TokioClient;
 use multimux::origin::{AppState, router};
 use multimux::output::Output as MmOutput;
 use multimux::output::llhls::LlHlsOutput;
@@ -53,7 +53,7 @@ use transmux::{
     TrackSpec,
 };
 
-use ll_hls_runtime::server::DEFAULT_TRACK_ID;
+use hls_runtime::server::DEFAULT_TRACK_ID;
 const TRACK_ID: u32 = DEFAULT_TRACK_ID;
 /// Matches `multimux::pipeline`'s own fixed CMAF movie timescale.
 const MOVIE_TIMESCALE: u32 = 90_000;
@@ -296,7 +296,7 @@ async fn glass_to_glass_sub_second_over_loopback_with_blocking_reload_and_prefet
 // ===========================================================================
 // Non-LL origin: full-segment fallback, over real HTTP via the same
 // `TokioClient` (proving the *adapter*, not just the sans-IO core, handles
-// it — `ll-hls-runtime/tests/origin_loop.rs` already proves the core alone).
+// it — `hls-runtime/tests/origin_loop.rs` already proves the core alone).
 // ===========================================================================
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
