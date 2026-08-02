@@ -27,5 +27,15 @@ thiserror = "2"
 base64    = "0.22"
 md-5      = "0.10"
 rand      = "0.8"
+# Signed-URL scheme (`signed_url::SignedUrlKeySet`, issue #747): HMAC-SHA256
+# over the canonical `path\nexp\nip` string. `hmac`/`sha2` are already
+# transitive dependencies of `srt-runtime`'s `crypto` feature at these same
+# versions; `subtle` is already transitive via `digest` (which `md-5` above
+# already pulls in) — none of the three adds a new version to the workspace
+# lock. `subtle::ConstantTimeEq` is the constant-time signature compare (see
+# the module docs — never a hand-rolled short-circuiting `==`).
+hmac      = { version = "0.12", default-features = false }
+sha2      = { version = "0.10", default-features = false }
+subtle    = { version = "2", default-features = false }
 
 [dev-dependencies]

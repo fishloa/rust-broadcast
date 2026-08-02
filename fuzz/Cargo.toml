@@ -204,6 +204,12 @@ test = false
 doc  = false
 
 [[bin]]
+name = "auth_signed_url"
+path = "fuzz_targets/auth_signed_url.rs"
+test = false
+doc  = false
+
+[[bin]]
 name = "rtmp_server_session"
 path = "fuzz_targets/rtmp_server_session.rs"
 test = false

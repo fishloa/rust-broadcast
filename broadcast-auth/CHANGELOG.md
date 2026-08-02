@@ -9,6 +9,18 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Added
 - `tests/non_exhaustive_coverage.rs` drift guard (issue #806). No public API
   or behaviour change.
+- HMAC signed-URL output-auth scheme (issue #747): `SignedUrlKeySet` (a
+  rotatable set of `(kid, secret)` HMAC-SHA256 keys, each secret enforced to
+  be at least 32 bytes at construction time) + `Verifier::signed_url` for a
+  new `SignedUrl` scheme alongside Basic/Digest/Bearer/Forwarded. Verifies a
+  `?exp=<unix-seconds>&kid=<key-id>&sig=<base64url-nopad>[&ip=<addr>]` query
+  string against the canonical `<path>\n<exp>\n<ip-or-empty-string>` string —
+  the path is always part of what's signed, so a token minted for one route
+  cannot replay against another. Constant-time signature compare via
+  `subtle::ConstantTimeEq`; every rejection reason (expired, unknown `kid`,
+  bad/missing `sig`, wrong `ip`, malformed input) folds into the same
+  `AuthResult::Unauthorized`. New `fuzz/fuzz_targets/auth_signed_url.rs`
+  target for the token parser.
 
 ## [0.2.0] - 2026-07-29
 

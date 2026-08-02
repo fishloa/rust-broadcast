@@ -56,6 +56,14 @@
 //!   bypass authentication entirely. [`Self::challenge`] returns just the
 //!   bare scheme name for diagnostics (there is no challenge/response
 //!   round-trip a direct client could answer).
+//! - **SignedUrl** ([`Self::signed_url`], issue #747): a CDN-style,
+//!   short-lived, tamper-proof token in the URL's own query string — no
+//!   `Authorization` header at all, so a player can fetch segments without
+//!   carrying a credential. See [`crate::signed_url`] for the full wire
+//!   form, canonical string, and rejection semantics. Like `Forwarded`,
+//!   [`Self::challenge`] returns just the bare scheme name — there is no
+//!   `WWW-Authenticate` round-trip a client could answer for a query-string
+//!   token.
 //!
 //! # Nonce handling (replay caveat)
 //!
@@ -74,6 +82,7 @@ use md5::{Digest as _, Md5};
 
 use crate::credentials::Credentials;
 use crate::request::RequestContext;
+use crate::signed_url::{self, SignedUrlKeySet};
 
 /// The outcome of [`Verifier::verify`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -111,6 +120,12 @@ enum VerifierScheme {
     Forwarded {
         user_header: String,
         forwarded_for_header: Option<String>,
+    },
+    /// HMAC signed-URL (see the module docs / [`crate::signed_url`]) — no
+    /// `Credentials`/realm/nonce either: the token lives in the request's own
+    /// query string, verified against `keys`.
+    SignedUrl {
+        keys: SignedUrlKeySet,
     },
 }
 
@@ -166,6 +181,15 @@ impl Verifier {
         }
     }
 
+    /// Builds a verifier for the HMAC signed-URL scheme (issue #747) —
+    /// see [`crate::signed_url`] for the wire form, canonical string, and
+    /// rejection semantics.
+    pub fn signed_url(keys: SignedUrlKeySet) -> Self {
+        Verifier {
+            scheme: VerifierScheme::SignedUrl { keys },
+        }
+    }
+
     /// The `WWW-Authenticate` header value to send on a `401` in response to
     /// a missing/failed [`Self::verify`] call.
     ///
@@ -180,6 +204,7 @@ impl Verifier {
             }
             VerifierScheme::Bearer { .. } => "Bearer".to_string(),
             VerifierScheme::Forwarded { .. } => "Forwarded".to_string(),
+            VerifierScheme::SignedUrl { .. } => "SignedUrl".to_string(),
         }
     }
 
@@ -194,7 +219,9 @@ impl Verifier {
     /// §3.4.1's SHOULD, accepting either origin-form or absolute-form —
     /// unused for Basic/Bearer.
     /// Forwarded reads `ctx`'s configured user header instead — see the
-    /// module docs.
+    /// module docs. SignedUrl reads `ctx.uri`'s own query string (`exp`/
+    /// `kid`/`sig`[/`ip`]) instead of any header at all, and `ctx.peer_addr`
+    /// when the token is IP-scoped — see [`crate::signed_url`].
     ///
     /// A pathologically large `Digest` `Authorization` header is rejected
     /// outright rather than parsed (see `MAX_DIGEST_FIELDS`) — this bounds
@@ -221,6 +248,7 @@ impl Verifier {
                 )
             }),
             VerifierScheme::Forwarded { user_header, .. } => verify_forwarded(ctx, user_header),
+            VerifierScheme::SignedUrl { keys } => signed_url::verify(ctx, keys),
         };
         if ok {
             AuthResult::Ok
@@ -255,6 +283,7 @@ impl core::fmt::Debug for Verifier {
             VerifierScheme::Digest { .. } => "Digest",
             VerifierScheme::Bearer { .. } => "Bearer",
             VerifierScheme::Forwarded { .. } => "Forwarded",
+            VerifierScheme::SignedUrl { .. } => "SignedUrl",
         };
         f.debug_struct("Verifier")
             .field("scheme", &scheme)
@@ -864,6 +893,31 @@ mod tests {
         let v = Verifier::forwarded("X-Forwarded-User", Some("X-Forwarded-For".to_string()));
         let debug = format!("{v:?}");
         assert!(debug.contains("Forwarded"), "debug: {debug}");
+    }
+
+    // --- SignedUrl (issue #747) — the scheme's own biting tests (sign/
+    // verify round trip, cross-route replay, expiry, key rotation, IP
+    // scoping, malformed input) live in `crate::signed_url`'s test module;
+    // these just cover `Verifier`'s own surface (`challenge`/`Debug`).
+
+    #[test]
+    fn signed_url_challenge_is_bare_scheme_name() {
+        let keys = SignedUrlKeySet::new([("k".to_string(), vec![0u8; 32])]).unwrap();
+        let v = Verifier::signed_url(keys);
+        assert_eq!(v.challenge(), "SignedUrl");
+    }
+
+    #[test]
+    fn signed_url_debug_names_scheme_and_never_leaks_secret() {
+        let secret = b"super-secret-32-byte-hmac-key!!!".to_vec();
+        let keys = SignedUrlKeySet::new([("k".to_string(), secret.clone())]).unwrap();
+        let v = Verifier::signed_url(keys);
+        let debug = format!("{v:?}");
+        assert!(debug.contains("SignedUrl"), "debug: {debug}");
+        assert!(
+            !debug.contains(std::str::from_utf8(&secret).unwrap()),
+            "debug: {debug}"
+        );
     }
 
     #[test]

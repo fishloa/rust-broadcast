@@ -238,9 +238,12 @@ name = "broadcast-auth"
 version = "0.2.0"
 dependencies = [
  "base64",
+ "hmac",
  "http-auth",
  "md-5",
  "rand 0.8.7",
+ "sha2",
+ "subtle",
  "thiserror",
 ]
 

@@ -359,6 +359,24 @@ pub enum OutputAuthSpec {
         #[serde(default = "default_forwarded_for_header")]
         forwarded_for_header: Option<String>,
     },
+    /// HMAC signed-URL (issue #747, `broadcast_auth::Verifier::signed_url`):
+    /// a CDN-style, short-lived, tamper-proof token carried in the request's
+    /// own query string (`?exp=...&kid=...&sig=...[&ip=...]`) — no
+    /// `Authorization` header at all, so a player can fetch segments/parts
+    /// without carrying a credential. `keys` is the full set of currently
+    /// valid `(kid, secret)` pairs; listing more than one lets keys rotate
+    /// without invalidating URLs already handed out under an older
+    /// (still-listed) key. See `broadcast_auth::signed_url` for the wire
+    /// form and canonical string a token is minted against.
+    ///
+    /// JSON: `{ "scheme": "signed_url", "keys": [{ "kid": "...", "secret":
+    /// "..." }, ...] }`.
+    SignedUrl {
+        /// The currently valid signing keys. Each `secret` must be at least
+        /// `broadcast_auth::SignedUrlKeySet::MIN_SECRET_LEN` (32) bytes —
+        /// checked at config `validate()` time, not per-request.
+        keys: Vec<SignedUrlKeySpec>,
+    },
     /// External output-auth scheme resolved at runtime via
     /// [`crate::registry::SchemeRegistry`] (issue #663 external scheme
     /// plugin registry) — the escape hatch that lets a third-party crate add
@@ -377,6 +395,31 @@ pub enum OutputAuthSpec {
         #[serde(default)]
         params: serde_json::Value,
     },
+}
+
+/// One HMAC signed-URL key (issue #747): a `kid` (key id, selects this entry
+/// out of [`OutputAuthSpec::SignedUrl`]'s `keys`) and its `secret`, taken as
+/// this string's raw UTF-8 bytes (the same convention `AuthSpec`/
+/// `OutputAuthSpec`'s other secret fields use — a plain config string, not a
+/// separately-encoded byte blob).
+#[derive(Clone, Deserialize)]
+pub struct SignedUrlKeySpec {
+    /// The key id a token's `kid` query parameter selects.
+    pub kid: String,
+    /// The HMAC secret, as raw UTF-8 bytes — must be at least
+    /// `broadcast_auth::SignedUrlKeySet::MIN_SECRET_LEN` (32) bytes.
+    pub secret: String,
+}
+
+/// Manual `Debug` (rather than `#[derive(Debug)]`): `secret` must never
+/// render verbatim; `kid` is not secret and renders as-is.
+impl std::fmt::Debug for SignedUrlKeySpec {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SignedUrlKeySpec")
+            .field("kid", &self.kid)
+            .field("secret", &"***")
+            .finish()
+    }
 }
 
 /// [`OutputAuthSpec::Forwarded`]'s default `user_header` when the config
@@ -418,6 +461,13 @@ impl std::fmt::Debug for OutputAuthSpec {
                 .field("user_header", user_header)
                 .field("forwarded_for_header", forwarded_for_header)
                 .finish(),
+            OutputAuthSpec::SignedUrl { keys } => f
+                .debug_struct("SignedUrl")
+                .field(
+                    "kids",
+                    &keys.iter().map(|k| k.kid.as_str()).collect::<Vec<_>>(),
+                )
+                .finish(),
             OutputAuthSpec::Custom { type_tag, .. } => f
                 .debug_struct("Custom")
                 .field("type_tag", type_tag)
@@ -435,7 +485,16 @@ impl OutputAuthSpec {
     /// actually configured with, not whichever the client's challenge
     /// implies); `Forwarded` via [`broadcast_auth::Verifier::forwarded`]
     /// (no credential/challenge round-trip at all — see that variant's
-    /// trust-assumption docs).
+    /// trust-assumption docs); `SignedUrl` via
+    /// [`broadcast_auth::Verifier::signed_url`].
+    ///
+    /// `SignedUrl`'s `broadcast_auth::SignedUrlKeySet::new` call is
+    /// infallible *here*: [`Self::validate`] already enforces every key's
+    /// minimum secret length before this is ever called (see
+    /// [`Config::validate`]'s call site, always before any `build_verifier`
+    /// call) — the `.expect` below documents that invariant rather than
+    /// re-deriving a `Result` this method's signature (matching every other
+    /// builtin scheme) doesn't carry.
     pub(crate) fn build_verifier(&self, realm: &str) -> broadcast_auth::Verifier {
         match self {
             OutputAuthSpec::Basic { username, password } => broadcast_auth::Verifier::new(
@@ -462,6 +521,16 @@ impl OutputAuthSpec {
                 user_header.clone(),
                 forwarded_for_header.clone(),
             ),
+            OutputAuthSpec::SignedUrl { keys } => {
+                let key_pairs = keys
+                    .iter()
+                    .map(|k| (k.kid.clone(), k.secret.clone().into_bytes()));
+                let keyset = broadcast_auth::SignedUrlKeySet::new(key_pairs).expect(
+                    "OutputAuthSpec::validate already enforces the minimum signed-url secret \
+                     length before build_verifier is ever called",
+                );
+                broadcast_auth::Verifier::signed_url(keyset)
+            }
             OutputAuthSpec::Custom { .. } => unreachable!(
                 "OutputAuthSpec::Custom cannot build a Verifier without a SchemeRegistry — \
                  crate::origin::serve_with_registry resolves it via `registry.auth(type_tag)` \
@@ -473,7 +542,10 @@ impl OutputAuthSpec {
     /// Rejects an empty `username`/`token`/`user_header` (an empty `password`
     /// is left unvalidated, mirroring [`validate_auth`]); an explicitly-set
     /// but empty `forwarded_for_header` is also rejected (use `null` to
-    /// disable it instead of an empty string).
+    /// disable it instead of an empty string). `SignedUrl` additionally
+    /// rejects an empty `keys` list, an empty `kid`, and any `secret` shorter
+    /// than `broadcast_auth::SignedUrlKeySet::MIN_SECRET_LEN` — checked here,
+    /// at config-load time, so [`Self::build_verifier`] never has to.
     fn validate(&self) -> Result<()> {
         match self {
             OutputAuthSpec::Basic { username, .. } | OutputAuthSpec::Digest { username, .. }
@@ -503,6 +575,33 @@ impl OutputAuthSpec {
                 field: "output_auth.forwarded_for_header",
                 reason: "must not be empty (use null to disable)".into(),
             }),
+            OutputAuthSpec::SignedUrl { keys } if keys.is_empty() => {
+                Err(MultimuxError::ConfigInvalid {
+                    field: "output_auth.keys",
+                    reason: "must not be empty".into(),
+                })
+            }
+            OutputAuthSpec::SignedUrl { keys } => {
+                for key in keys {
+                    if key.kid.is_empty() {
+                        return Err(MultimuxError::ConfigInvalid {
+                            field: "output_auth.keys[].kid",
+                            reason: "must not be empty".into(),
+                        });
+                    }
+                    if key.secret.len() < broadcast_auth::SignedUrlKeySet::MIN_SECRET_LEN {
+                        return Err(MultimuxError::ConfigInvalid {
+                            field: "output_auth.keys[].secret",
+                            reason: format!(
+                                "must be at least {} bytes, got {}",
+                                broadcast_auth::SignedUrlKeySet::MIN_SECRET_LEN,
+                                key.secret.len()
+                            ),
+                        });
+                    }
+                }
+                Ok(())
+            }
             _ => Ok(()),
         }
     }
@@ -2382,6 +2481,151 @@ mod tests {
         let debug = format!("{forwarded:?}");
         assert!(debug.contains("X-Forwarded-User"), "debug: {debug}");
         assert!(debug.contains("X-Forwarded-For"), "debug: {debug}");
+    }
+
+    // --- issue #747 "signed-URL output auth" ---
+
+    fn valid_signed_url_key() -> String {
+        "01234567890123456789012345678901".to_string() // 32 bytes
+    }
+
+    #[test]
+    fn output_auth_parses_signed_url() {
+        let json = format!(
+            r#"{{
+                "output_auth": {{
+                    "scheme": "signed_url",
+                    "keys": [{{ "kid": "key-1", "secret": "{}" }}]
+                }},
+                "routes": [
+                    {{ "name": "cam1", "input": {{ "type": "rtsp", "url": "rtsp://host/stream1" }} }}
+                ]
+            }}"#,
+            valid_signed_url_key()
+        );
+        let cfg: Config = serde_json::from_str(&json).unwrap();
+        match &cfg.output_auth {
+            Some(OutputAuthSpec::SignedUrl { keys }) => {
+                assert_eq!(keys.len(), 1);
+                assert_eq!(keys[0].kid, "key-1");
+                assert_eq!(keys[0].secret, valid_signed_url_key());
+            }
+            other => panic!("expected Some(OutputAuthSpec::SignedUrl), got {other:?}"),
+        }
+        cfg.validate().unwrap();
+    }
+
+    #[test]
+    fn output_auth_parses_signed_url_with_multiple_keys_for_rotation() {
+        let json = format!(
+            r#"{{
+                "output_auth": {{
+                    "scheme": "signed_url",
+                    "keys": [
+                        {{ "kid": "old", "secret": "{}" }},
+                        {{ "kid": "new", "secret": "{}" }}
+                    ]
+                }},
+                "routes": [
+                    {{ "name": "cam1", "input": {{ "type": "rtsp", "url": "rtsp://host/stream1" }} }}
+                ]
+            }}"#,
+            valid_signed_url_key(),
+            "abcdefghijabcdefghijabcdefghij01"
+        );
+        let cfg: Config = serde_json::from_str(&json).unwrap();
+        match &cfg.output_auth {
+            Some(OutputAuthSpec::SignedUrl { keys }) => assert_eq!(keys.len(), 2),
+            other => panic!("expected Some(OutputAuthSpec::SignedUrl), got {other:?}"),
+        }
+        cfg.validate().unwrap();
+    }
+
+    #[test]
+    fn validate_rejects_output_auth_signed_url_empty_keys() {
+        let cfg = Config {
+            output_auth: Some(OutputAuthSpec::SignedUrl { keys: vec![] }),
+            ..cfg_with_one_route()
+        };
+        assert!(cfg.validate().is_err());
+    }
+
+    #[test]
+    fn validate_rejects_output_auth_signed_url_empty_kid() {
+        let cfg = Config {
+            output_auth: Some(OutputAuthSpec::SignedUrl {
+                keys: vec![SignedUrlKeySpec {
+                    kid: String::new(),
+                    secret: valid_signed_url_key(),
+                }],
+            }),
+            ..cfg_with_one_route()
+        };
+        assert!(cfg.validate().is_err());
+    }
+
+    /// Biting test: the 32-byte minimum secret length is enforced at
+    /// config-validate time, not silently accepted or deferred to a
+    /// per-request failure.
+    #[test]
+    fn validate_rejects_output_auth_signed_url_secret_too_short() {
+        let cfg = Config {
+            output_auth: Some(OutputAuthSpec::SignedUrl {
+                keys: vec![SignedUrlKeySpec {
+                    kid: "key-1".into(),
+                    secret: "too-short".into(),
+                }],
+            }),
+            ..cfg_with_one_route()
+        };
+        assert!(cfg.validate().is_err());
+    }
+
+    #[test]
+    fn validate_accepts_output_auth_signed_url_secret_exactly_min_len() {
+        let cfg = Config {
+            output_auth: Some(OutputAuthSpec::SignedUrl {
+                keys: vec![SignedUrlKeySpec {
+                    kid: "key-1".into(),
+                    secret: valid_signed_url_key(),
+                }],
+            }),
+            ..cfg_with_one_route()
+        };
+        cfg.validate().unwrap();
+    }
+
+    /// `build_verifier` produces a `SignedUrl`-scheme `Verifier` (bare
+    /// scheme-name challenge, same as `Forwarded`) once `validate()` has
+    /// already guaranteed every secret meets the minimum length.
+    #[test]
+    fn output_auth_spec_signed_url_build_verifier_produces_signed_url_scheme() {
+        let spec = OutputAuthSpec::SignedUrl {
+            keys: vec![SignedUrlKeySpec {
+                kid: "key-1".into(),
+                secret: valid_signed_url_key(),
+            }],
+        };
+        spec.validate().unwrap();
+        assert_eq!(spec.build_verifier("realm").challenge(), "SignedUrl");
+    }
+
+    /// Biting test: `OutputAuthSpec::SignedUrl`'s `Debug` must show `kid`s
+    /// but never render a `secret`.
+    #[test]
+    fn output_auth_spec_signed_url_debug_redacts_secret() {
+        let spec = OutputAuthSpec::SignedUrl {
+            keys: vec![SignedUrlKeySpec {
+                kid: "key-1".into(),
+                secret: valid_signed_url_key(),
+            }],
+        };
+        let debug = format!("{spec:?}");
+        assert!(debug.contains("key-1"), "kid should render: {debug}");
+        assert!(
+            !debug.contains(&valid_signed_url_key()),
+            "secret leaked: {debug}"
+        );
     }
 
     // --- issue #663 external scheme plugin registry: `Custom` variants ---

@@ -33,6 +33,12 @@
 //!   forwards the authenticated username in a configured header. No
 //!   `Credentials`/challenge-response round-trip. See the [`Verifier`]
 //!   module docs for the trust assumption.
+//! - **SignedUrl** (server-side only, `Verifier::signed_url`, issue #747) —
+//!   CDN-style HMAC-SHA256 signed query-string tokens (`exp`/`kid`/`sig`[/
+//!   `ip`]), so a player can fetch segments with no credential header at
+//!   all. Key rotation via multiple simultaneously-valid `kid`s, optional
+//!   IP scoping, constant-time signature compare. See [`signed_url`] for the
+//!   wire form and canonical string.
 //!
 //! # Usage
 //!
@@ -78,6 +84,21 @@
 //! let creds = Credentials::bearer("mytoken");
 //! assert_eq!(creds, Credentials::Bearer { token: "mytoken".into() });
 //! ```
+//!
+//! Signed URLs (issue #747) mint and verify through the same
+//! [`SignedUrlKeySet`], no `Authorization` header involved:
+//!
+//! ```
+//! use broadcast_auth::{AuthResult, RequestContext, SignedUrlKeySet, Verifier};
+//!
+//! let keys = SignedUrlKeySet::new([("key-1".to_string(), vec![0u8; 32])]).unwrap();
+//! let exp = 4_000_000_000; // far future
+//! let query = keys.sign("key-1", "/stream/media.m3u8", exp, None).unwrap();
+//!
+//! let verifier = Verifier::signed_url(keys);
+//! let uri = format!("/stream/media.m3u8?{query}");
+//! assert_eq!(verifier.verify(&RequestContext::new("GET", &uri)), AuthResult::Ok);
+//! ```
 
 #![forbid(unsafe_code)]
 
@@ -86,12 +107,14 @@ mod credentials;
 mod error;
 mod request;
 mod server;
+pub mod signed_url;
 
 pub use authenticator::{Authenticator, respond};
 pub use credentials::Credentials;
 pub use error::{Error, Result};
 pub use request::RequestContext;
 pub use server::{AuthResult, Verifier};
+pub use signed_url::SignedUrlKeySet;
 
 #[cfg(test)]
 mod tests {
