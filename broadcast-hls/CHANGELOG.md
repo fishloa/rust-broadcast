@@ -8,6 +8,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.1.0] - Unreleased
 
 ### Fixed
+- **An exactly-whole `#EXTINF` duration now renders as an integer** (`4.0` ->
+  `#EXTINF:4,`, was `#EXTINF:4.000,`) — a conformance fix, found while
+  testing issue #873's classic TS-HLS output. RFC 8216bis §8 row 3 requires
+  `EXT-X-VERSION` >= 3 for a playlist that *contains* floating-point
+  `EXTINF` values, and §4.4.4.1 conversely requires durations to be integers
+  when the compatibility version is below 3. `to_m3u8` rendered `4.000` — a
+  floating-point value — while `computed_version()` reported no requirement,
+  so the emitted playlist declared itself version-1 compatible and then
+  handed a v1/v2 client a duration it cannot parse.
+  - `is_fractional_duration` (the §8 row-3 predicate) is now **defined as**
+    "does `format_extinf` emit a decimal point", so the renderer and the
+    version derivation cannot diverge again. They had diverged in both
+    directions: the integral case above, and — since the sub-millisecond
+    precision fix — a `4.0004` that rendered at full precision while the
+    integer-millisecond predicate still called it integral.
+  - Issue #882's precision work is unaffected: `9.9766` still renders as
+    `9.9766` and `2.00004` still does not collapse to `2`. Only the
+    exactly-integral case changed.
+  - `#EXT-X-PART`'s `DURATION` never had the bug — it already routed through
+    `format_secs`, which renders a whole value as an integer.
 - `EXT-X-VERSION` is now **computed** from the playlist's actual content
   (RFC 8216bis §8), not chosen ahead of time (issue #871): `to_m3u8` takes
   the `max()` of the minimums the content triggers, per the feature-to-row

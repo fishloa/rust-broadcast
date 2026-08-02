@@ -1574,10 +1574,14 @@ mod tests {
         let (_trunk, origin, writer) = make_origin_with(Container::MpegTs, None);
         seg(&writer, 1, 4.0, false);
         let body = render_body(&origin);
-        // `to_m3u8` always renders 3 decimal places, but §8 row 3 keys off
-        // the *value* (`4.000` is a whole number of seconds), so no row
-        // fires and the tag is omitted entirely.
-        assert!(body.contains("#EXTINF:4.000,"), "body: {body}");
+        // A whole number of seconds renders as an integer, so the playlist
+        // genuinely contains no floating-point EXTINF value -- §8 row 3
+        // does not fire, and omitting `EXT-X-VERSION` is honest rather than
+        // a lie to a v1/v2 client. (`broadcast-hls` used to render `4.000`
+        // here while still reporting no version requirement; fixed in the
+        // same PR as this test.)
+        assert!(body.contains("#EXTINF:4,"), "body: {body}");
+        assert!(!body.contains("4.000"), "body: {body}");
         assert_eq!(
             assert_version_matches_broadcast_hls_derivation(&body),
             None,
