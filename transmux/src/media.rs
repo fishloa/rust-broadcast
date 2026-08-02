@@ -37,7 +37,7 @@ use core::marker::PhantomData;
 use broadcast_common::{Package, Parse, Unpackage};
 
 use crate::ac3::{Ac3SpecificBox, Ec3SpecificBox};
-use broadcast_hls::{MediaPlaylist, MediaSegment};
+use broadcast_hls::{ByteRange, MapTag, MediaPlaylist, MediaSegment};
 
 use crate::ac4::Ac4SpecificBox;
 use crate::box_types::{BOX_HEADER_MIN_SIZE, parse_box};
@@ -423,30 +423,55 @@ impl Package for HlsPackager {
         if media.tracks.is_empty() {
             return Err(Error::InvalidInput("cannot package a Media with no tracks"));
         }
-        let mut segments = Vec::with_capacity(media.tracks.len());
+        // A section-carried track (SCTE-35 `stream_type` 0x86, DSM-CC, private
+        // sections) has no timestamps at all (`Sample::duration` is `None` for
+        // every sample, deliberately) — see the per-track skip below for why
+        // it is omitted from the playlist. Such a track is also frequently
+        // not BMFF-muxable at all (an opaque `CodecConfig::Data` track), so it
+        // must be excluded here too: only tracks that will actually become a
+        // `#EXTINF` segment below feed the shared init segment's track list.
+        let kept: Vec<&Track> = media
+            .tracks
+            .iter()
+            .filter(|t| t.samples.iter().any(|s| s.duration.is_some()))
+            .collect();
+
+        // Every segment this packager names (`{prefix}{track_id}.m4s`) is
+        // produced downstream (`cli::package`'s `OutputFormat::Hls` arm) as a
+        // *self-initializing* CMAF artifact: `build_init_segment` immediately
+        // followed by `build_media_segment` in the same file — i.e. the exact
+        // byte layout `CmafMux` builds (media.rs doc comment above), fed the
+        // same kept-track set (`filter_for_bmff_mux` already stripped any
+        // non-muxable track before either packager runs, in the real
+        // pipeline). Apple's HLS Authoring Specification requires an
+        // `#EXT-X-MAP` on every fMP4 Media Segment even when it is
+        // self-initializing (mediastreamvalidator 1.25.36: "Each fMP4 Segment
+        // in a Media Playlist MUST have an EXT-X-MAP tag applied to it" —
+        // issue #870 caught this gap: no `#EXT-X-MAP` was emitted at all). The
+        // Media Initialization Section is the leading `ftyp`+`moov` — exactly
+        // `build_init_segment`'s output length — so every segment's
+        // `#EXT-X-MAP` points at itself with a `BYTERANGE` covering just that
+        // leading span; `build_init_segment` is a pure function of (specs,
+        // movie_timescale), the same inputs `CmafMux` uses, so this computes
+        // the true offset without needing the actual segment bytes in hand.
+        let specs: Vec<TrackSpec> = kept.iter().map(|t| t.spec.clone()).collect();
+        let movie_timescale = if media.movie_timescale == 0 {
+            DEFAULT_MOVIE_TIMESCALE
+        } else {
+            media.movie_timescale
+        };
+        let init_len = if specs.is_empty() {
+            0
+        } else {
+            build_init_segment(&specs, movie_timescale)?.len() as u64
+        };
+
+        let mut segments = Vec::with_capacity(kept.len());
         // Target duration is the ceiling of the longest track's duration in
         // whole seconds, computed with integer ceil-division so no std-only
         // float intrinsic (`f64::ceil`) is needed in `no_std`.
         let mut target_secs = 0u32;
-        for t in &media.tracks {
-            // A section-carried track (SCTE-35 `stream_type` 0x86, DSM-CC,
-            // private sections) has no timestamps and no durations at all —
-            // `Sample::duration` is `None` for every sample, deliberately, and
-            // is never fabricated. Summing `unwrap_or(0)` over it rendered
-            // `#EXTINF:0.000`, a duration RFC 8216 §4.3.2.1 defines as this
-            // segment's real playback time — i.e. a knowingly-wrong value a
-            // player would honour.
-            //
-            // Decision: **omit the track from the playlist**. An HLS media
-            // playlist is a timeline of playable segments; a track with no
-            // timeline is not one, and this packager has nothing truthful to
-            // put in its `EXTINF`. Such a track still reaches an output via
-            // the paths built for it (an inband `emsg`, an
-            // `EXT-X-DATERANGE`) — see `timed-metadata` — never as a
-            // zero-length segment here.
-            if t.samples.iter().all(|s| s.duration.is_none()) {
-                continue;
-            }
+        for t in kept {
             let ticks: u64 = t
                 .samples
                 .iter()
@@ -461,8 +486,16 @@ impl Package for HlsPackager {
             if ceil_secs > target_secs {
                 target_secs = ceil_secs;
             }
+            let uri = format!("{}{}.m4s", self.uri_prefix, t.spec.track_id);
             segments.push(MediaSegment {
-                uri: format!("{}{}.m4s", self.uri_prefix, t.spec.track_id),
+                map: Some(MapTag {
+                    uri: uri.clone(),
+                    byte_range: Some(ByteRange {
+                        length: init_len,
+                        offset: Some(0),
+                    }),
+                }),
+                uri,
                 duration: ticks as f64 / ts as f64,
                 discontinuous: false,
                 parts: vec![],

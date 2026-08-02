@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.22.0] - Unreleased
 
+### Fixed
+- `HlsPackager` (CMAF-HLS) now emits an `#EXT-X-MAP` tag on every Media
+  Segment, with a `BYTERANGE` covering the leading `ftyp`+`moov` span of
+  the self-initializing CMAF artifact each segment names (issue #870).
+  Previously no `#EXT-X-MAP` was emitted at all — a real conformance gap
+  caught by wiring Apple's `mediastreamvalidator` in as an independent
+  oracle over the packager's actual output ("Each fMP4 Segment in a Media
+  Playlist MUST have an EXT-X-MAP tag applied to it"), not by any of this
+  crate's own round-trip tests, which shared the same blind spot.
+
 ### Changed (BREAKING)
 - **HLS (M3U8) playlist syntax moved to the new `broadcast-hls` crate**
   (issue #878). `transmux::hls` and every `transmux::{MediaPlaylist,

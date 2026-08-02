@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `mediastreamvalidator_oracle.rs` test harness (issue #870): renders every
+  HLS playlist shape the origin can produce and validates each with Apple's
+  own `mediastreamvalidator` — a genuinely independent oracle, unlike
+  validating our renderer against our own `check_hls_playlist` (both encode
+  the same reading of the spec, so a shared misreading passes both). macOS-
+  only; skips loudly (prints why) when the binary isn't on `PATH`, so it is
+  a no-op on Linux/CI. Calibrated against the RFC's own §9 example
+  playlists first (`fixtures/hls/spec/`) and proven to bite against a
+  deliberately malformed playlist. Caught and fixed a real gap in
+  `transmux`'s CMAF-HLS `HlsPackager`: no `#EXT-X-MAP` tag was emitted at
+  all (see `transmux`'s own CHANGELOG). Wired into the `golden-gate` CI job
+  (non-blocking, same posture as the existing `ffprobe` check) and
+  documented as a local command in `CLAUDE.md`.
+
 ### Changed
 - `check_hls_playlist`'s structured parse layer now uses `broadcast-hls`
   directly instead of reaching through `transmux` for it (issue #878) — this

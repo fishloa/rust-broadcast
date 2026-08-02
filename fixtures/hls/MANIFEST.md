@@ -148,6 +148,20 @@ artifact of committing spec prose byte-for-byte. Recorded here rather than
 worked around, per the issue's instruction not to weaken the assertion, not
 implement missing tags, and not delete the fixture.
 
+**Issue #870 calibration note** (Apple `mediastreamvalidator` run over the 8
+parseable fixtures, `media-doctor/tests/mediastreamvalidator_oracle.rs`):
+three more editorial/topology artifacts of these being spec-prose excerpts,
+not real streams, surfaced there and are documented (with exact match
+strings) in that test file rather than here —
+`9.6-multivariant-alternative-audio.m3u8` and
+`9.7-multivariant-alternative-video.m3u8` both use `CODECS="..."` (the same
+elision convention as 9.10/9.11's bare `...` line, reused inline as a
+placeholder attribute value); `9.12-content-steering.m3u8` deliberately
+defines two Pathways' audio groups with different members (`NAME="English"`
+vs `NAME="ENGLISH"`), which is the entire point of per-Pathway Content
+Steering but trips the validator's older, pathway-unaware "same TYPE ⇒ same
+members" rule.
+
 ---
 
 ## Tier 1b — hand-built fixtures (`fixtures/hls/handbuilt/`)

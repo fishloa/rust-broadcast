@@ -83,6 +83,16 @@ cargo run -p dvb-tools -- dump dvb-si/tests/fixtures/m6-single.ts
 cargo run -p dvb-tools -- dump dvb-si/tests/fixtures/m6-single.ts --json
 cargo run -p dvb-tools -- t2mi <file.ts> [--pid 0xNNN|raw] [--inner] [--plp N]
 cargo run -p dvb-tools -- services|epg|pids <file.ts>
+
+# HLS conformance oracle (issue #870): Apple's OWN `mediastreamvalidator` —
+# independent of both our renderer and our own `check_hls_playlist` checker,
+# so it catches a misreading of the HLS spec shared by both of those (unlike
+# validating our renderer with our own checker, which just proves the two
+# agree with each other). macOS-only (Apple's Additional Tools for Xcode,
+# `/usr/local/bin/mediastreamvalidator`) — every test skips itself loudly
+# (prints why, via `--nocapture`) when the binary isn't on PATH, so this is a
+# no-op pass on Linux/CI; run it locally on macOS for the genuine check:
+cargo test -p media-doctor --test mediastreamvalidator_oracle --all-features --locked -- --nocapture
 ```
 
 Formatting is rustfmt-clean and CI-gated (`cargo fmt --all --check`). The deliberately column-aligned enums (`TableId`, `DescriptorTag`) carry `#[rustfmt::skip]` — keep the attribute (and the alignment) when editing them, and use the same pattern for any new aligned table. Cargo.toml manifests keep their manual column alignment (rustfmt doesn't touch them).
