@@ -1380,14 +1380,39 @@ mod tests {
 
     /// Assert the rendered `#EXT-X-VERSION` equals `broadcast_hls`'s own
     /// `computed_version()`, re-derived by round-trip parsing the rendered
-    /// text -- never an integer this test independently guessed.
-    fn assert_version_matches_broadcast_hls_derivation(body: &str) {
+    /// text -- never an integer this test independently guessed. Returns the
+    /// rendered value so a caller can make a further, non-vacuous claim
+    /// about it.
+    fn assert_version_matches_broadcast_hls_derivation(body: &str) -> Option<u8> {
         let parsed = MediaPlaylist::parse(body).expect("rendered body must round-trip parse");
+        let rendered = extract_version_tag(body);
         assert_eq!(
-            extract_version_tag(body),
+            rendered,
             parsed.computed_version(),
             "rendered #EXT-X-VERSION must equal broadcast_hls's own derivation, body: {body}"
         );
+        rendered
+    }
+
+    /// [`assert_version_matches_broadcast_hls_derivation`] **plus a
+    /// non-vacuity guard**: the playlist must actually trigger at least one
+    /// RFC 8216bis §8 version rule, so the equality above cannot pass by
+    /// comparing `None` against `None`.
+    ///
+    /// Without this, a cell whose every `#EXTINF` is integral (e.g. a
+    /// duration of exactly `4.0`, which renders `#EXTINF:4,`) trips no §8
+    /// row at all, and the derivation could be entirely broken while the
+    /// test stayed green. Real segmenters cut on keyframes, not whole
+    /// seconds, so a fractional `#EXTINF` is also the realistic shape --
+    /// cf. `fixtures/hls/spec/9.1-simple-media-playlist.m3u8` (`#EXTINF:9.009`,
+    /// `#EXT-X-VERSION:3`).
+    fn assert_version_present_and_matches_derivation(body: &str) -> u8 {
+        assert_version_matches_broadcast_hls_derivation(body).unwrap_or_else(|| {
+            panic!(
+                "this cell must trigger a real RFC 8216bis §8 version rule -- a \
+                 missing #EXT-X-VERSION makes the derivation check vacuous, body: {body}"
+            )
+        })
     }
 
     /// MUTATION VERIFIED (issue #873): making `HlsOriginBuilder::container`
@@ -1398,10 +1423,17 @@ mod tests {
     /// URI assertions fail too (segments render as `seg-1-1.m4s` instead of
     /// `seg-1-1.ts`). Recompiled and re-run to confirm the failure (see the
     /// PR description for the pasted `cargo test` output), then reverted.
+    /// The mutation bites four tests in total -- this one, the low-latency
+    /// `MpegTs` cell, the integral-`EXTINF` version case, and the
+    /// cross-container refusal.
     #[test]
     fn mpegts_classic_no_map_ts_uris_no_ll_tags() {
         let (_trunk, origin, writer) = make_origin_with(Container::MpegTs, None);
-        seg(&writer, 1, 4.0, false);
+        // Fractional, like every real keyframe-cut segment (and like the
+        // RFC's own classic examples) -- so RFC 8216bis §8 row 3
+        // (floating-point EXTINF) genuinely fires and the version assertion
+        // below is not `None == None`.
+        seg(&writer, 1, 4.004, false);
 
         let body = render_body(&origin);
         assert!(!body.contains("#EXT-X-MAP"), "body: {body}");
@@ -1410,7 +1442,7 @@ mod tests {
         assert!(!body.contains("#EXT-X-PRELOAD-HINT"), "body: {body}");
         assert!(!body.contains(".m4s"), "body: {body}");
         assert!(body.contains("seg-1-1.ts"), "body: {body}");
-        assert_version_matches_broadcast_hls_derivation(&body);
+        assert_version_present_and_matches_derivation(&body);
 
         // advertised == servable: fetch every URI the rendered text itself
         // named, and check its bytes against what was actually published
@@ -1436,23 +1468,32 @@ mod tests {
     /// MUTATION VERIFIED (issue #873): making `HlsOriginBuilder::container`
     /// a no-op makes this test's `assert!(!body.contains("#EXT-X-MAP"))`
     /// fail identically to the classic-`MpegTs` test above, and the part
-    /// URIs render as `part-1-1.0.m4s` instead of `part-1-1.0.ts`, so
-    /// `assert!(body.contains("part-1-1.0.ts"))` also fails. Recompiled and
+    /// URIs render as `part-1-2.0.m4s` instead of `part-1-2.0.ts`, so
+    /// `assert!(body.contains("part-1-2.0.ts"))` also fails. Recompiled and
     /// re-run to confirm, then reverted.
     #[test]
     fn mpegts_low_latency_part_ts_uris_blocking_part_requests_resolve() {
         let (trunk, origin, writer) = make_origin_with(Container::MpegTs, Some(500));
         let origin = Arc::new(origin);
-        part(&writer, 1, 0, true);
-        part(&writer, 1, 1, false);
+        // A closed segment with a fractional (keyframe-cut) duration, so
+        // RFC 8216bis §8 row 3 fires and the version assertion below is not
+        // `None == None`; segment 2 is then the open one carrying live parts.
+        seg(&writer, 1, 4.004, false);
+        part(&writer, 2, 0, true);
+        part(&writer, 2, 1, false);
 
         let body = render_body(&origin);
         assert!(!body.contains("#EXT-X-MAP"), "body: {body}");
         assert!(body.contains("#EXT-X-PART-INF"), "body: {body}");
         assert!(body.contains("#EXT-X-PART:"), "body: {body}");
-        assert!(body.contains("part-1-1.0.ts"), "body: {body}");
+        assert!(body.contains("seg-1-1.ts"), "body: {body}");
+        assert!(body.contains("part-1-2.0.ts"), "body: {body}");
         assert!(!body.contains(".m4s"), "body: {body}");
-        assert_version_matches_broadcast_hls_derivation(&body);
+        // LL-HLS directives add no §8 version requirement of their own --
+        // the finding that killed the old hardcoded `EXT-X-VERSION:9` --
+        // so this must derive to exactly the same value as the classic
+        // MpegTs cell above.
+        assert_version_present_and_matches_derivation(&body);
 
         // advertised == servable for every advertised part.
         let parts = part_uris(&body);
@@ -1466,7 +1507,7 @@ mod tests {
                     ..
                 } => {
                     assert_eq!(bytes, Bytes::from(vec![idx as u8; 4]));
-                    assert_eq!(seq, 1);
+                    assert_eq!(seq, 2);
                 }
                 other => panic!("expected Ready for {uri}, got {other:?}"),
             }
@@ -1479,7 +1520,7 @@ mod tests {
         let policy = AwaitPolicy::new(deadline);
         let pending = origin.resolve(
             HlsRequest::Resource {
-                name: "part-1-1.2.ts".to_string(),
+                name: "part-1-2.2.ts".to_string(),
             },
             Timestamp::from_nanos(0),
             policy,
@@ -1496,7 +1537,7 @@ mod tests {
             let ok = listener.wait_deadline(Instant::now() + Duration::from_secs(60));
             woken2.store(ok, std::sync::atomic::Ordering::SeqCst);
         });
-        part(&writer, 1, 2, false);
+        part(&writer, 2, 2, false);
         waiter.join().expect("waiter thread must not panic");
         assert!(
             woken.load(std::sync::atomic::Ordering::SeqCst),
@@ -1505,7 +1546,7 @@ mod tests {
 
         match origin.resolve(
             HlsRequest::Resource {
-                name: "part-1-1.2.ts".to_string(),
+                name: "part-1-2.2.ts".to_string(),
             },
             Timestamp::from_nanos(1),
             policy,
@@ -1518,11 +1559,63 @@ mod tests {
         }
     }
 
+    /// RFC 8216bis §8's opening rule: a playlist that triggers no version
+    /// row at all is version-1 compatible and need not carry the tag. Kept
+    /// as its own case (rather than as the `MpegTs` cells' only version
+    /// check, which made those assertions vacuous) because an integral
+    /// `#EXTINF` is a real, if unusual, shape.
+    ///
+    /// MUTATION VERIFIED (issue #873): making `HlsOriginBuilder::container`
+    /// a no-op makes this fail with `left: Some(6), right: None` -- the
+    /// mutated build emits `#EXT-X-MAP`, which trips §8 row 6. Recompiled
+    /// and re-run to confirm, then reverted.
+    #[test]
+    fn mpegts_classic_integral_extinf_emits_no_version_tag() {
+        let (_trunk, origin, writer) = make_origin_with(Container::MpegTs, None);
+        seg(&writer, 1, 4.0, false);
+        let body = render_body(&origin);
+        // `to_m3u8` always renders 3 decimal places, but §8 row 3 keys off
+        // the *value* (`4.000` is a whole number of seconds), so no row
+        // fires and the tag is omitted entirely.
+        assert!(body.contains("#EXTINF:4.000,"), "body: {body}");
+        assert_eq!(
+            assert_version_matches_broadcast_hls_derivation(&body),
+            None,
+            "nothing in this playlist triggers an RFC 8216bis §8 row: {body}"
+        );
+    }
+
+    /// LL-HLS directives carry no RFC 8216bis §8 version requirement of
+    /// their own -- the finding that killed the old hardcoded
+    /// `EXT-X-VERSION:9`. Enabling low latency must therefore not change
+    /// the derived version for otherwise-identical content.
+    #[test]
+    fn low_latency_does_not_raise_the_derived_version() {
+        let (_t1, classic, w1) = make_origin_with(Container::MpegTs, None);
+        seg(&w1, 1, 4.004, false);
+        let classic_version = assert_version_present_and_matches_derivation(&render_body(&classic));
+
+        let (_t2, low_latency, w2) = make_origin_with(Container::MpegTs, Some(500));
+        seg(&w2, 1, 4.004, false);
+        part(&w2, 2, 0, true);
+        let ll_body = render_body(&low_latency);
+        assert!(ll_body.contains("#EXT-X-PART:"), "body: {ll_body}");
+        assert_eq!(
+            assert_version_present_and_matches_derivation(&ll_body),
+            classic_version,
+            "enabling low latency must not raise the derived version"
+        );
+    }
+
     #[test]
     fn fmp4_classic_map_present_no_ll_tags() {
         let (_trunk, origin, writer) = make_origin_with(Container::Fmp4, None);
         origin.set_init(vec![0xBBu8; 8]);
-        seg(&writer, 1, 4.0, false);
+        // Fractional, so §8 row 3 fires alongside row 6 (EXT-X-MAP without
+        // EXT-X-I-FRAMES-ONLY). `max(6, 3) = 6`, so the rendered value is
+        // unchanged -- this removes the ambiguity of an integral EXTINF
+        // leaving row 3 entirely untested here.
+        seg(&writer, 1, 4.004, false);
 
         let body = render_body(&origin);
         assert!(
@@ -1533,7 +1626,7 @@ mod tests {
         assert!(!body.contains("#EXT-X-SERVER-CONTROL"), "body: {body}");
         assert!(!body.contains("#EXT-X-PRELOAD-HINT"), "body: {body}");
         assert!(body.contains("seg-1-1.m4s"), "body: {body}");
-        assert_version_matches_broadcast_hls_derivation(&body);
+        assert_version_present_and_matches_derivation(&body);
 
         // advertised == servable, including the init segment the MAP names.
         match resolve_now(
@@ -1570,7 +1663,8 @@ mod tests {
     fn fmp4_low_latency_existing_behaviour_preserved() {
         let (_trunk, origin, writer) = make_origin_with(Container::Fmp4, Some(500));
         origin.set_init(vec![0xAAu8; 8]);
-        seg(&writer, 1, 4.0, false);
+        // Fractional for the same reason as the Fmp4-classic cell above.
+        seg(&writer, 1, 4.004, false);
         part(&writer, 2, 0, true);
         part(&writer, 2, 1, false);
 
@@ -1585,7 +1679,7 @@ mod tests {
         assert!(body.contains("seg-1-1.m4s"), "body: {body}");
         assert!(body.contains("part-1-2.0.m4s"), "body: {body}");
         assert!(!body.contains(".ts\""), "body: {body}");
-        assert_version_matches_broadcast_hls_derivation(&body);
+        assert_version_present_and_matches_derivation(&body);
 
         match resolve_now(
             &origin,
