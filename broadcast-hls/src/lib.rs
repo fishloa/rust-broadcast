@@ -150,46 +150,16 @@ use alloc::format;
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 
-/// A CENC protection scheme identity relevant to HLS `#EXT-X-KEY` signalling
-/// (ISO/IEC 23001-7 §4) — mirrors the `transmux` crate's own
-/// `cenc::CencScheme` (the two crates cannot share one type: `transmux`
-/// depends on `broadcast-hls`, not the other way around, so `transmux`
-/// converts at the boundary — see its `cenc_ext_x_key` wrapper).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[non_exhaustive]
-#[cfg_attr(feature = "serde", derive(serde::Serialize))]
-pub enum CencScheme {
-    /// `cenc` — AES-128 full-block counter (CTR) mode.
-    Cenc,
-    /// `cbcs` — AES-128 pattern cipher-block-chaining mode.
-    Cbcs,
-}
+use broadcast_common::hex::hex_encode;
 
-impl CencScheme {
-    /// The scheme's four-CC token as it appears in `schm` (`"cenc"` / `"cbcs"`).
-    pub fn name(&self) -> &'static str {
-        match self {
-            CencScheme::Cenc => "cenc",
-            CencScheme::Cbcs => "cbcs",
-        }
-    }
-}
-
-broadcast_common::impl_spec_display!(CencScheme);
-
-/// Hex-encode `data` as lowercase ASCII (e.g. for a `KEYID=0x...` attribute
-/// value). Private: a small local copy of the same helper `transmux::rtp`
-/// carries, kept in-crate rather than reaching back across the dependency
-/// boundary for six lines of code.
-fn hex_encode(data: &[u8]) -> String {
-    const HEX: &[u8; 16] = b"0123456789abcdef";
-    let mut out = String::with_capacity(data.len() * 2);
-    for &b in data {
-        out.push(HEX[(b >> 4) as usize] as char);
-        out.push(HEX[(b & 0x0F) as usize] as char);
-    }
-    out
-}
+/// A CENC protection scheme (`schm.scheme_type`) — ISO/IEC 23001-7 §4.
+///
+/// Re-exported from [`broadcast_common::cenc`], which holds the single
+/// definition. CENC is *Common* Encryption — a container-independent scheme
+/// identity — so it sits below both this crate and `transmux` (which owns the
+/// ISOBMFF `schm`/`tenc`/`senc` boxes carrying it), rather than being defined
+/// twice and converted at the boundary (issues #564, #878).
+pub use broadcast_common::CencScheme;
 
 // ---------------------------------------------------------------------------
 // CENC/CBCS DRM signalling — ISO/IEC 23001-7 `cbcs` over CMAF-HLS (issue #564).

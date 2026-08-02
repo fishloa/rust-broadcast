@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 A Rust workspace of DVB (Digital Video Broadcasting) protocol parsers + builders, published to crates.io:
 
-- **broadcast-common** — shared `Parse<'a>` / `Serialize` traits, the `mux` container-mux traits (`Unpackage`/`Package`/`Encrypt`/`Decrypt`), and CRC-32/MPEG-2. Everything else depends on it.
+- **broadcast-common** — shared `Parse<'a>` / `Serialize` traits, the `mux` container-mux traits (`Unpackage`/`Package`/`Encrypt`/`Decrypt`), CRC-32/MPEG-2, the `bcd`/`time`/`hex` codecs, and `cenc::CencScheme` (the container-independent ISO/IEC 23001-7 scheme identity that `transmux`'s crypto boxes and `broadcast-hls`'s `#EXT-X-KEY` both name — defined once here, below both). Everything else depends on it; versioned independently of the DVB lockstep.
 - **dvb-si** — the big one: ETSI EN 300 468 Service Information + MPEG-2 PSI. All 29 allocated table_ids, descriptors, DSM-CC data carousel, Annex A text decoding. TS packet / section reassembly lives in `mpeg-ts` (used internally via the `ts` feature).
 - **mpeg-ts** — generic MPEG-2 TS framing (ITU-T H.222.0 / ISO/IEC 13818-1): TS packet, adaptation field, PCR, PSI section reassembly + packetisation, resync. `no_std`. Independently versioned.
 - **dvb-t2mi** — TS 102 773 T2-MI packet/payload parsing.

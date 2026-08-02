@@ -1360,15 +1360,14 @@ pub fn base64_decode(s: &str) -> Result<Vec<u8>> {
 }
 
 /// Hex-encode bytes (lowercase).
-pub fn hex_encode(data: &[u8]) -> String {
-    const HEX: &[u8; 16] = b"0123456789abcdef";
-    let mut out = String::with_capacity(data.len() * 2);
-    for &b in data {
-        out.push(HEX[(b >> 4) as usize] as char);
-        out.push(HEX[(b & 0x0F) as usize] as char);
-    }
-    out
-}
+///
+/// Re-exported from [`broadcast_common::hex`], which holds the single
+/// definition: `broadcast-hls` renders an `#EXT-X-KEY:KEYID=0x…` attribute
+/// with the same encoder (issue #878) and cannot reach into this crate for it
+/// (the dependency runs the other way). Only the *encoder* is shared —
+/// [`hex_decode`] below stays here because it reports through this crate's
+/// own [`Error`].
+pub use broadcast_common::hex::hex_encode;
 
 /// Hex-decode a string; rejects odd lengths and invalid nibbles.
 pub fn hex_decode(s: &str) -> Result<Vec<u8>> {

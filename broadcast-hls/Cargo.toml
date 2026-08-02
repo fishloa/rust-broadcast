@@ -17,7 +17,9 @@ all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
 
 [dependencies]
-broadcast-common = { path = "../broadcast-common", version = "9", default-features = false }
+# Floored at 9.2: `cenc::CencScheme` (which `cenc_ext_x_key` takes, shared with
+# `transmux`) and `hex::hex_encode` landed there — issue #878.
+broadcast-common = { path = "../broadcast-common", version = "9.2", default-features = false }
 thiserror  = { version = "2", default-features = false }
 serde      = { version = "1", optional = true, default-features = false, features = ["derive", "alloc"] }
 
@@ -29,4 +31,4 @@ default = ["std"]
 # `std` links the standard library. Without it the crate is `#![no_std]` and
 # needs only `alloc`.
 std = ["broadcast-common/std", "thiserror/std", "serde?/std"]
-serde = ["dep:serde"]
+serde = ["dep:serde", "broadcast-common/serde"]

@@ -2,7 +2,8 @@
 //!
 //! See individual modules for documentation: the [`Parse`] / [`Serialize`]
 //! traits every wire type implements, the MPEG-2 [`crc32_mpeg2`] CRC, the
-//! [`bcd`] / [`time`] codecs, and the [`mux`] container-mux traits.
+//! [`bcd`] / [`time`] / [`hex`] codecs, the [`mux`] container-mux traits, and
+//! the [`cenc`] Common Encryption scheme identity those traits protect with.
 //!
 //! # Container-mux traits ([`mux`])
 //!
@@ -61,12 +62,15 @@ extern crate alloc;
 
 pub mod bcd;
 pub mod bits;
+pub mod cenc;
 pub mod crc32_mpeg2;
+pub mod hex;
 pub mod mux;
 pub mod stage;
 pub mod time;
 pub mod traits;
 
+pub use cenc::CencScheme;
 pub use mux::{Decrypt, Encrypt, Package, Unpackage};
 pub use stage::{Demand, Stage, Timestamp};
 pub use traits::{Parse, Serialize};

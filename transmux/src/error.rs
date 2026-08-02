@@ -93,6 +93,23 @@ pub enum Error {
         codec: &'static str,
     },
 
+    /// A CENC protection scheme ([`CencScheme`](broadcast_common::CencScheme))
+    /// this crate has no cipher implementation for was handed to the encrypt
+    /// or decrypt path.
+    ///
+    /// `CencScheme` is `#[non_exhaustive]` and defined in `broadcast-common`
+    /// (issue #878), so a scheme ISO/IEC 23001-7 defines but this crate does
+    /// not implement (`cens`, `cbc1`) can reach a cipher-dispatch site here.
+    /// Those sites reject rather than fall back to a different cipher:
+    /// guessing would silently produce garbage plaintext (decrypt) or
+    /// content protected under a scheme the manifest does not advertise
+    /// (encrypt).
+    #[error("CENC scheme '{scheme}' has no cipher implementation in this crate")]
+    UnsupportedCencScheme {
+        /// The scheme that could not be applied.
+        scheme: broadcast_common::CencScheme,
+    },
+
     /// The MPEG-1/2 Program Stream framing could not be parsed
     /// ([`PsDemux`](crate::PsDemux) input — ISO/IEC 13818-1 §2.5, via `mpeg_ps`).
     #[error("program stream: {0}")]

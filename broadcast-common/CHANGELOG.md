@@ -1,5 +1,35 @@
 # Changelog
 
+## [9.2.0] - Unreleased
+
+### Added
+- **`cenc::CencScheme`** — the Common Encryption scheme identity
+  (`schm.scheme_type`, ISO/IEC 23001-7 §4: `cenc` / `cbcs`), with `name()`,
+  `to_four_cc()`, `from_four_cc()`, `Display`, and the `SCHEME_CENC` /
+  `SCHEME_CBCS` four-CC constants. Re-exported at the crate root as
+  `broadcast_common::CencScheme`.
+
+  It moved here from `transmux::cenc` (issue #878) because two sibling crates
+  now need it and cannot share it any other way: `transmux` (which owns the
+  ISOBMFF `schm`/`tenc`/`senc` boxes that carry it) and `broadcast-hls` (which
+  renders the HLS `#EXT-X-KEY` tag from it). CENC is *Common* Encryption — a
+  container-independent identity — so it belongs below both, alongside the
+  `Encrypt`/`Decrypt` traits it parameterises. Issue #564 had already
+  consolidated three copies into one; this preserves that across the crate
+  split instead of reintroducing a second definition.
+- **`hex::hex_encode`** — lowercase hex encoding of a byte slice, shared by
+  every wire format here that renders an opaque byte field as text (HLS
+  `KEYID=0x…`, SDP `fmtp`, Smooth `CodecPrivateData`). Moved from
+  `transmux::rtp`, which now re-exports it. Only the *encoder* is shared;
+  decoders stay with their callers, each reporting through its own error type.
+- **`serde` feature** (off by default) — derives `serde::Serialize` on the
+  shared spec types (currently `CencScheme`). Pulls no dependency unless
+  enabled.
+
+Both additions are purely additive — no existing item changed — so every
+`broadcast-common = "9"` consumer is unaffected. Crates using the new items
+floor at `9.2`.
+
 ## [9.1.0] - 2026-07-30
 
 Lockstep release with dvb-conformance 9.1.0; no functional changes.

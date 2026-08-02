@@ -11,7 +11,9 @@ categories   = ["multimedia::video", "parser-implementations", "no-std"]
 readme       = "README.md"
 
 [dependencies]
-broadcast-common = { path = "../broadcast-common", version = "9.0", default-features = false }
+# Floored at 9.2: `cenc::CencScheme` and `hex::hex_encode` (the definitions this
+# crate re-exports, shared with `broadcast-hls` — issue #878) landed there.
+broadcast-common = { path = "../broadcast-common", version = "9.2", default-features = false }
 thiserror  = { version = "2", default-features = false }
 serde      = { version = "1", default-features = false, features = ["derive", "alloc"], optional = true }
 # HLS (M3U8) playlist syntax (issue #878): the `ts_hls`/`ll_hls` segmenters
@@ -37,7 +39,7 @@ required-features = ["cli"]
 [features]
 default = ["std", "serde", "cenc"]
 std    = ["broadcast-common/std", "thiserror/std", "serde?/std", "broadcast-hls/std", "mp4-emsg/std", "mpeg-ts/std", "mpeg-pes/std", "mpeg-ps/std", "rtp-packet/std", "rtcp-packet/std"]
-serde  = ["dep:serde", "mpeg-ts/serde", "mpeg-pes/serde", "mpeg-ps/serde", "rtcp-packet/serde"]
+serde  = ["dep:serde", "broadcast-common/serde", "broadcast-hls/serde", "mpeg-ts/serde", "mpeg-pes/serde", "mpeg-ps/serde", "rtcp-packet/serde"]
 cenc   = ["dep:aes", "dep:ctr", "dep:cbc"]
 # `sample-aes` adds Apple HLS Sample-AES + full-segment AES-128 (AES-128-CBC)
 # content protection. Extends `cenc` (which already pulls the `cbc` mode crate

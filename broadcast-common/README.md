@@ -120,6 +120,7 @@ live in the container crates (e.g. `transmux`).
 |----------|---------|-------------|
 | `std`    | on      | Link `std`; enables `std::error::Error` and `chrono`'s clock/timezone. Without it the crate is `#![no_std]` + `alloc`. |
 | `chrono` | off     | MJD↔`chrono::DateTime<Utc>` conversion in the `time` module. |
+| `serde`  | off     | `serde::Serialize` derives on the shared spec types (currently `cenc::CencScheme`). |
 
 ## MSRV
 

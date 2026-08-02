@@ -21,8 +21,8 @@
 //! - [`broadcast_hls::cenc_ext_x_key`] renders the HLS `#EXT-X-KEY` tag for
 //!   the `cbcs` scheme (`cenc`/CTR has no valid HLS `METHOD` and is
 //!   DASH-only). HLS playlist syntax lives in the `broadcast-hls` crate
-//!   (issue #878), which cannot depend back on `transmux`'s own
-//!   `CencScheme`, so this example converts at the boundary.
+//!   (issue #878), but both crates name the scheme with the *same*
+//!   [`broadcast_common::CencScheme`], so no conversion is needed.
 //!
 //! Run it with:
 //!
@@ -151,18 +151,12 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     println!("\n--- DASH signalling ---\n{}", cp_line.trim());
 
     // 6. HLS signalling: `cenc_ext_x_key` renders `#EXT-X-KEY` for `cbcs`;
-    //    it returns `None` for `cenc` (CTR has no valid HLS METHOD).
-    //    `broadcast-hls` has its own `CencScheme` (it cannot depend on
-    //    `transmux`'s), so convert at the boundary.
+    //    it returns `None` for `cenc` (CTR has no valid HLS METHOD). No
+    //    conversion needed — `transmux::CencScheme` and the scheme
+    //    `broadcast_hls::cenc_ext_x_key` takes are the *same*
+    //    `broadcast_common::CencScheme`.
     let key_uri = "https://keyserver.example.com/key";
-    let hls_scheme = match encryption.scheme {
-        CencScheme::Cenc => broadcast_hls::CencScheme::Cenc,
-        CencScheme::Cbcs => broadcast_hls::CencScheme::Cbcs,
-        // `CencScheme` is `#[non_exhaustive]`: only these two schemes exist
-        // today, and neither would render an HLS key line but `Cbcs`.
-        _ => broadcast_hls::CencScheme::Cenc,
-    };
-    match cenc_ext_x_key(hls_scheme, &encryption.tenc.default_kid, key_uri) {
+    match cenc_ext_x_key(encryption.scheme, &encryption.tenc.default_kid, key_uri) {
         Some(tag) => println!("--- HLS signalling ---\n{tag}"),
         None => println!(
             "--- HLS signalling ---\n{} has no HLS key tag (DASH-only)",
