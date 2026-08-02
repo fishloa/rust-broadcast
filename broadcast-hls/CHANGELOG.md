@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - Unreleased
 
+### Added
+- `LowLatencyConfig::hold_back` (`Option<f64>`) — the `HOLD-BACK` attribute
+  of `#EXT-X-SERVER-CONTROL` (RFC 8216bis §4.4.3.8). Parsed from and rendered
+  to the `#EXT-X-SERVER-CONTROL` line; absent when `None`.
+- `LowLatencyConfig::can_skip_dateranges` (`bool`) — the
+  `CAN-SKIP-DATERANGES` attribute of `#EXT-X-SERVER-CONTROL`
+  (RFC 8216bis §4.4.3.8). Rendered only when `can_skip_until` is `Some`.
+
+### Changed
+- **`EXT-X-SESSION-KEY` now rejects `METHOD=NONE` at parse time**
+  (RFC 8216bis §4.4.6.5 MUST NOT). Previously accepted and round-tripped
+  unchanged; the module doc previously documented this as an intentional gap.
+
 ### Fixed
 - **An exactly-whole `#EXTINF` duration now renders as an integer** (`4.0` ->
   `#EXTINF:4,`, was `#EXTINF:4.000,`) — a conformance fix, found while

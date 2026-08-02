@@ -150,12 +150,13 @@ impl Default for Container {
 /// fixed estimate is used for the single variant served.
 const PLACEHOLDER_BANDWIDTH_BPS: u64 = 5_000_000;
 
-/// RFC 8216bis §6.2.5.2 (SHOULD): a `_HLS_msn` unreasonably far in the future
-/// should be rejected rather than always blocking to the caller's timeout — a
-/// legitimate client only ever asks for the segment/part right after the one
-/// it already has, so anything more than a few segments beyond the current
-/// live edge is either a malfunctioning client or abuse.
-const ABUSE_MSN_FUTURE_BOUND: u64 = 4;
+/// RFC 8216bis §6.2.5.2 (SHOULD): a `_HLS_msn` greater than "the Media
+/// Sequence Number of the last Media Segment in the current Playlist plus
+/// two" should be rejected rather than always blocking to the caller's
+/// timeout — a legitimate client only ever asks for the segment/part right
+/// after the one it already has, so anything more than two segments beyond
+/// the current last closed segment is either a malfunctioning client or abuse.
+const ABUSE_MSN_FUTURE_BOUND: u64 = 2;
 
 /// RFC 8216bis / Apple LL-HLS §4.4.3.7: `#EXT-X-SERVER-CONTROL`'s
 /// `PART-HOLD-BACK` attribute MUST be at least 3x the part target duration
@@ -1247,6 +1248,56 @@ mod tests {
             },
         );
         assert!(matches!(outcome, EgressResponse::BadRequest { .. }));
+    }
+
+    /// RFC 8216bis §6.2.5.2: `_HLS_msn` at `last_closed + 2` is the
+    /// spec's bound — it MUST be accepted. With one segment closed (seq=1),
+    /// the last closed is 1, so `_HLS_msn=3` (last_closed + 2) is accepted
+    /// and the request blocks (returns Pending, not BadRequest).
+    #[test]
+    fn msn_at_spec_bound_is_accepted() {
+        let (_trunk, origin, writer) = make_origin();
+        seg(&writer, 1, 4.0, false);
+        let outcome = resolve_now(
+            &origin,
+            HlsRequest::Playlist {
+                track_id: DEFAULT_TRACK_ID,
+                query: BlockingQuery {
+                    hls_msn: Some(3),
+                    hls_part: None,
+                },
+            },
+        );
+        assert!(
+            !matches!(outcome, EgressResponse::BadRequest { .. }),
+            "msn at spec bound (last_closed+2) must be accepted, not rejected"
+        );
+    }
+
+    /// RFC 8216bis §6.2.5.2: `_HLS_msn` one beyond the spec's +2 SHOULD
+    /// boundary is rejected. With one segment closed (seq=1, last_closed=1),
+    /// the live edge in_progress_seg is 1 (not 2, because no parts exist to
+    /// advance it), so `_HLS_msn=4` (1 + 2 + 1) is rejected.
+    #[test]
+    fn msn_one_beyond_spec_bound_is_rejected() {
+        let (_trunk, origin, writer) = make_origin();
+        seg(&writer, 1, 4.0, false);
+        // With segments up to 1 closed, in_progress_seg is 1.
+        // _HLS_msn > 1 + 2 == 3 → rejected. So msn=4 is rejected.
+        let outcome = resolve_now(
+            &origin,
+            HlsRequest::Playlist {
+                track_id: DEFAULT_TRACK_ID,
+                query: BlockingQuery {
+                    hls_msn: Some(4),
+                    hls_part: None,
+                },
+            },
+        );
+        assert!(
+            matches!(outcome, EgressResponse::BadRequest { .. }),
+            "msn at spec bound + 1 (last_closed+3) must be rejected"
+        );
     }
 
     #[test]

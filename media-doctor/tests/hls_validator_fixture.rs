@@ -188,4 +188,117 @@ seg0.m4s
         "too-short part duration should produce finding, got {:?}",
         report.findings(),
     );
+    assert!(
+        hits.iter()
+            .any(|f| f.severity == media_doctor::Severity::Error),
+        "too-short part duration must be Error severity, not Warning"
+    );
+}
+
+/// A part below 85% duration floor with `INDEPENDENT=YES` is ACCEPTED
+/// (RFC 8216bis §4.4.4.9 exception).
+#[test]
+fn short_part_with_independent_accepted() {
+    let text = "\
+#EXTM3U
+#EXT-X-VERSION:9
+#EXT-X-TARGETDURATION:4
+#EXT-X-MEDIA-SEQUENCE:0
+#EXT-X-SERVER-CONTROL:CAN-BLOCK-RELOAD=YES,PART-HOLD-BACK=1.0
+#EXT-X-PART-INF:PART-TARGET=0.333
+#EXT-X-PART:DURATION=0.100,URI=\"part0.m4s\",INDEPENDENT=YES
+#EXT-X-PART:DURATION=0.333,URI=\"part1.m4s\"
+#EXTINF:1.0,
+seg0.m4s
+";
+    let mut report = Report::new();
+    check_hls_playlist(text, &mut report);
+
+    let hits = findings(&report, "hls-part-duration-range");
+    assert!(
+        hits.is_empty(),
+        "INDEPENDENT=YES part below 85% floor must be accepted, got {:?}",
+        report.findings(),
+    );
+}
+
+/// A part below 85% duration floor with `GAP=YES` is ACCEPTED
+/// (RFC 8216bis §4.4.4.9 exception).
+#[test]
+fn short_part_with_gap_accepted() {
+    let text = "\
+#EXTM3U
+#EXT-X-VERSION:9
+#EXT-X-TARGETDURATION:4
+#EXT-X-MEDIA-SEQUENCE:0
+#EXT-X-SERVER-CONTROL:CAN-BLOCK-RELOAD=YES,PART-HOLD-BACK=1.0
+#EXT-X-PART-INF:PART-TARGET=0.333
+#EXT-X-PART:DURATION=0.100,URI=\"part0.m4s\",GAP=YES
+#EXT-X-PART:DURATION=0.333,URI=\"part1.m4s\"
+#EXTINF:1.0,
+seg0.m4s
+";
+    let mut report = Report::new();
+    check_hls_playlist(text, &mut report);
+
+    let hits = findings(&report, "hls-part-duration-range");
+    assert!(
+        hits.is_empty(),
+        "GAP=YES part below 85% floor must be accepted, got {:?}",
+        report.findings(),
+    );
+}
+
+/// A part below 85% duration floor IMMEDIATELY BEFORE a `GAP=YES` part is
+/// ACCEPTED (RFC 8216bis §4.4.4.9 exception).
+#[test]
+fn short_part_before_gap_accepted() {
+    let text = "\
+#EXTM3U
+#EXT-X-VERSION:9
+#EXT-X-TARGETDURATION:4
+#EXT-X-MEDIA-SEQUENCE:0
+#EXT-X-SERVER-CONTROL:CAN-BLOCK-RELOAD=YES,PART-HOLD-BACK=1.0
+#EXT-X-PART-INF:PART-TARGET=0.333
+#EXT-X-PART:DURATION=0.100,URI=\"part0.m4s\"
+#EXT-X-PART:DURATION=0.333,URI=\"part1.m4s\",GAP=YES
+#EXTINF:1.0,
+seg0.m4s
+";
+    let mut report = Report::new();
+    check_hls_playlist(text, &mut report);
+
+    let hits = findings(&report, "hls-part-duration-range");
+    assert!(
+        hits.is_empty(),
+        "part before GAP=YES below 85% floor must be accepted, got {:?}",
+        report.findings(),
+    );
+}
+
+/// The FINAL part of a segment below 85% duration floor is ACCEPTED
+/// (RFC 8216bis §4.4.4.9 exception).
+#[test]
+fn short_final_part_of_segment_accepted() {
+    let text = "\
+#EXTM3U
+#EXT-X-VERSION:9
+#EXT-X-TARGETDURATION:4
+#EXT-X-MEDIA-SEQUENCE:0
+#EXT-X-SERVER-CONTROL:CAN-BLOCK-RELOAD=YES,PART-HOLD-BACK=1.0
+#EXT-X-PART-INF:PART-TARGET=0.333
+#EXT-X-PART:DURATION=0.333,URI=\"part0.m4s\"
+#EXT-X-PART:DURATION=0.100,URI=\"part1.m4s\"
+#EXTINF:1.0,
+seg0.m4s
+";
+    let mut report = Report::new();
+    check_hls_playlist(text, &mut report);
+
+    let hits = findings(&report, "hls-part-duration-range");
+    assert!(
+        hits.is_empty(),
+        "final part of segment below 85% floor must be accepted, got {:?}",
+        report.findings(),
+    );
 }
