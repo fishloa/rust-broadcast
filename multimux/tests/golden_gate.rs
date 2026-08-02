@@ -499,6 +499,7 @@ async fn non_ll_full_segment_path_also_decodes() {
                 uri: "init.mp4".to_string(),
                 byte_range: None,
             }),
+            ..Default::default()
         }],
         open_segment: None,
         endlist: true,
@@ -507,6 +508,7 @@ async fn non_ll_full_segment_path_also_decodes() {
         iframes_only: false,
         rendition_reports: vec![],
         skip: None,
+        ..Default::default()
     };
     let playlist_text = playlist.to_m3u8();
     assert!(

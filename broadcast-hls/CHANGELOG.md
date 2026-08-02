@@ -64,3 +64,62 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   crates rather than once per crate (issues #564, #878). `hex_encode` comes
   from `broadcast_common::hex` for the same reason.
 - Requires `broadcast-common` **9.2** for those two items.
+- The remaining 9 of RFC 8216bis §4.4's 32 tags (issue #872), all parsing
+  *and* serializing with a round-trip test:
+  `#EXT-X-INDEPENDENT-SEGMENTS` (`MediaPlaylist`/`MasterPlaylist`
+  `independent_segments: bool`), `#EXT-X-START` (`StartPoint`,
+  `MediaPlaylist`/`MasterPlaylist` `start`), `#EXT-X-DEFINE` (`Define`,
+  `MediaPlaylist`/`MasterPlaylist` `defines`), `#EXT-X-PLAYLIST-TYPE`
+  (`PlaylistType`: `Vod`/`Event`, `MediaPlaylist::playlist_type`),
+  `#EXT-X-GAP` (`MediaSegment::gap`), `#EXT-X-BITRATE`
+  (`MediaSegment::bitrate`, carry-forward + dedup-render like
+  `MediaSegment::map`), `#EXT-X-SESSION-DATA` (`SessionData`,
+  `SessionDataContent`, `SessionDataFormat`, `MasterPlaylist::session_data`),
+  `#EXT-X-SESSION-KEY` (`SessionKey`, `EncryptionMethod`,
+  `MasterPlaylist::session_keys`), `#EXT-X-CONTENT-STEERING`
+  (`ContentSteering`, `MasterPlaylist::content_steering`). All 32 §4.4 tags
+  now parse; `tests/hls_tag_completeness.rs` is a drift-guard enumerating
+  all 32 by name so a future spec revision (or a regression) surfaces as a
+  red test. Three new hand-built fixtures under `fixtures/hls/handbuilt/`
+  (authored from the confirmed attribute grammar, for the tags the spec's
+  own §9 examples don't cover as complete playlists) join the corpus in
+  `tests/hls_fixture_corpus.rs`, which now also asserts a
+  parse → serialize → re-parse round trip for **every** passing fixture in
+  every tier. Round-trip divergences (unmodeled `#EXT-X-MEDIA`, canonical
+  tag ordering, always-emitted `#EXT-X-VERSION`, dropped whitespace/
+  comments) are enumerated in the README.
+
+- **Integration with the §8 version derivation (#871/#880).** The rows that
+  read tags #872 made typed now read the typed data instead of
+  string-matching `extra_tags`: **row 11** (`EXT-X-DEFINE` with
+  `QUERYPARAM`) reads `defines`, and **row 8** (variable substitution) also
+  scans the typed string fields (`EXT-X-DEFINE` values, `EXT-X-SESSION-DATA`
+  `VALUE`/`URI`, `EXT-X-SESSION-KEY` `URI`, `EXT-X-CONTENT-STEERING`
+  `SERVER-URI`, plus the already-typed `EXT-X-MAP`/`EXT-X-PART`/preload-hint/
+  rendition-report URIs). Without this, row 11 would have silently stopped
+  firing the moment `EXT-X-DEFINE` became typed, since a parsed tag no longer
+  reaches `extra_tags`. Rows 7/12/13 still scan `extra_tags` — they are
+  attributes of `EXT-X-MEDIA`, which this crate still does not model.
+  `fixtures/hls/MANIFEST.md`'s per-fixture version derivations are now
+  asserted by `tests/spec_fixture_version.rs`, making that table executable.
+- **Known gap (documented, tested):** §8 row 12 (`REQ-` attribute) is matched
+  only on tags that reach `extra_tags`. A `REQ-` attribute on a tag this
+  crate models with typed fields is discarded at parse time and cannot reach
+  the check. Closing it needs unknown-attribute retention on every modeled
+  tag — an API change beyond this issue — so it is pinned by
+  `req_attribute_on_a_modeled_tag_is_a_known_gap` rather than left implicit.
+
+### Fixed
+- **Sub-millisecond durations were silently corrupted on render.**
+  `to_m3u8()` emitted `#EXTINF` via a hardcoded `{:.3}` and every other
+  seconds value (`EXT-X-PART:DURATION`, `PART-TARGET`, `PART-HOLD-BACK`,
+  `CAN-SKIP-UNTIL`, `EXT-X-START:TIME-OFFSET`) via integer-millisecond
+  math, so any finer value was rounded away: Apple's real
+  `#EXTINF:9.9766` came back as `9.977`, and RFC 8216bis §9.11's
+  `DURATION=2.00004` as `2`. Rendering is now lossless — the compact
+  historical form is kept whenever it re-parses bit-exactly (so ordinary
+  ms-granular output is byte-for-byte unchanged), otherwise the shortest
+  exactly-round-tripping decimal is emitted. Caught by round-tripping the
+  real `fixtures/hls/real/` Apple playlists; no hand-made fixture in the
+  repo could have surfaced it, since all were authored at exactly the
+  3-decimal precision the bug preserved.

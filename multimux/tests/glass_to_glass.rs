@@ -345,6 +345,7 @@ async fn non_ll_origin_plays_via_full_segment_fallback_over_http() {
                     uri: "init.mp4".to_string(),
                     byte_range: None,
                 }),
+                ..Default::default()
             }],
             open_segment: None,
             endlist: true,
@@ -353,6 +354,7 @@ async fn non_ll_origin_plays_via_full_segment_fallback_over_http() {
             iframes_only: false,
             rendition_reports: vec![],
             skip: None,
+            ..Default::default()
         };
         let playlist_text = playlist.to_m3u8();
         assert!(

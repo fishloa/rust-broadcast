@@ -640,6 +640,7 @@ mod tests {
                 parts: Vec::new(),
                 byte_range: None,
                 map: Some(map.clone()),
+                ..Default::default()
             });
             segments.push(segment.bytes);
         }
@@ -657,6 +658,7 @@ mod tests {
             iframes_only: false,
             rendition_reports: Vec::new(),
             skip: None,
+            ..Default::default()
         };
         (playlist.to_m3u8(), init, segments)
     }

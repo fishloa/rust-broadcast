@@ -85,7 +85,7 @@ fn master_playlist_structure() {
             },
         ],
         iframe_variants: vec![],
-        extra_tags: vec![],
+        ..Default::default()
     };
 
     let m3u8 = pl.to_m3u8();
