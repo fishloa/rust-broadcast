@@ -1,7 +1,7 @@
 //! HLS fixture-corpus conformance test (issue #869).
 //!
 //! Parses **every** committed `.m3u8` fixture under `fixtures/hls/` with
-//! [`transmux::MediaPlaylist::parse`] / [`transmux::MasterPlaylist::parse`]
+//! [`broadcast_hls::MediaPlaylist::parse`] / [`broadcast_hls::MasterPlaylist::parse`]
 //! and asserts the outcome — either a clean parse, or (for the two spec
 //! fixtures that are genuinely unparsable) the exact documented error.
 //!
@@ -33,8 +33,8 @@
 //! doesn't structurally model (`EXT-X-MEDIA`, `EXT-X-KEY`,
 //! `EXT-X-CONTENT-STEERING`, `EXT-X-DATERANGE`/SCTE-35) — parses without
 //! error: unrecognized tags are preserved verbatim into
-//! [`transmux::hls::MediaPlaylist::extra_tags`] (or silently skipped by
-//! [`transmux::hls::MasterPlaylist`], which has no such escape hatch) rather
+//! [`broadcast_hls::MediaPlaylist::extra_tags`] (or silently skipped by
+//! [`broadcast_hls::MasterPlaylist`], which has no such escape hatch) rather
 //! than rejected. So this run surfaces **no** missing-tag parse failures for
 //! issue #872 to pick up — the two failures above are a structural property
 //! of the spec excerpts, not an implementation gap.
@@ -42,7 +42,7 @@
 use std::fs;
 use std::path::PathBuf;
 
-use transmux::{MasterPlaylist, MediaPlaylist};
+use broadcast_hls::{MasterPlaylist, MediaPlaylist};
 
 /// `fixtures/hls/`, resolved from this crate's own manifest dir — never a
 /// bare relative path (that depends on the caller's cwd).
