@@ -52,6 +52,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   previously-documented round-trip gap and is also the substrate
   `computed_version` scans for the §8 rows this crate does not (yet) model
   with typed fields (rows 7/8/11/12/13).
+- **Stale documentation corrected in README and MANIFEST.md** (issue #890):
+  `MasterPlaylist::extra_tags` was documented as non-existent ("no
+  `extra_tags` escape hatch on `MasterPlaylist`") despite being fully
+  wired since the previous release. The README's round-trip-fidelity
+  section now correctly distinguishes "reordered" (tag ordering is
+  canonical rather than input-preserving) from "dropped" (no longer true —
+  every parsed tag survives). MANIFEST.md's §9.10/§9.11 Findings section
+  was similarly corrected.
 
 ### Testing
 - `tests/spec_fixture_version.rs` cross-checks the derivation against the
@@ -64,6 +72,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   to leave them untagged. Compares `computed_version()` rather than rendered
   output, because a parsed playlist's `version` field acts as a floor and
   would make a rendered comparison circular.
+- Two hand-built fixtures covering the tag combinations demonstrated by the
+  RFC's abridged §9 examples (issue #890):
+  `handbuilt/daterange-scte35-media.m3u8` (EXT-X-DATERANGE with SCTE35-OUT
+  and SCTE35-IN, the DATERANGE lines landing in `extra_tags` because the tag
+  is not structurally modeled — derived from §9.10 by supplying the Media
+  Segments the spec elides with `...`) and
+  `handbuilt/low-latency-parts-preload-report.m3u8` (EXT-X-PART,
+  EXT-X-PRELOAD-HINT, EXT-X-RENDITION-REPORT, EXT-X-DISCONTINUITY, and
+  EXT-X-MAP — all as typed fields — derived from §9.11 by replacing its
+  leading `...` with a real LL-HLS header block). Both round-trip and their
+  `computed_version()` matches the derivation recorded in MANIFEST.md.
+- `tests/hls_fixture_corpus.rs::unmodeled_ext_x_media_survives_master_parse_round_trip`
+  proves an unmodeled `EXT-X-MEDIA` tag on a Multivariant Playlist survives
+  parse→serialize→re-parse; a mutation that disables the `extra_tags`
+  retention arm makes it fail (issue #890).
 
 ### Added
 - Initial release. HLS (M3U8) playlist syntax (RFC 8216 / RFC 8216bis)

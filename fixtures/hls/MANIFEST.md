@@ -138,9 +138,9 @@ Since no `#EXTINF` precedes it, that's a hard parse error by the crate's own
 **This is not a missing-tag gap for issue #872.** Every *tag* in both
 examples that this crate doesn't structurally model — `EXT-X-KEY`,
 `EXT-X-MEDIA`, `EXT-X-CONTENT-STEERING`, `EXT-X-DATERANGE` (incl. its
-`SCTE35-OUT`/`SCTE35-IN` sub-fields) — is either preserved verbatim
-(`MediaPlaylist::extra_tags`) or silently skipped (`MasterPlaylist`, which
-has no extra_tags field), never rejected. §9.10 and §9.11 fail purely
+`SCTE35-OUT`/`SCTE35-IN` sub-fields) — is preserved verbatim
+(either `MediaPlaylist::extra_tags` or `MasterPlaylist::extra_tags`),
+never rejected. §9.10 and §9.11 fail purely
 because they are intentionally-incomplete excerpts of a longer playlist, not
 because of unimplemented tag support. No real encoder emits a literal `...`
 segment URI, so this is not evidence of a parser defect either — it's an
@@ -190,6 +190,8 @@ Licence: project licence (MIT OR Apache-2.0), same as all in-repo source.
 | `multivariant-header-tags.m3u8` | Master | `EXT-X-INDEPENDENT-SEGMENTS`, `EXT-X-START` (negative `TIME-OFFSET` + `PRECISE=YES`), `EXT-X-DEFINE` (`NAME`/`VALUE` and `QUERYPARAM` forms), `EXT-X-SESSION-KEY` (`AES-128` with `KEYFORMAT`/`KEYFORMATVERSIONS`, and `SAMPLE-AES-CTR` with a 128-bit `IV`) | ✅ |
 | `session-data-multivariant.m3u8` | Master | `EXT-X-SESSION-DATA` — the `URI` form, plus two `VALUE`+`LANGUAGE` entries sharing one `DATA-ID` (the en/es pair) | ✅ |
 | `live-vod-gap-bitrate.m3u8` | Media | `EXT-X-PLAYLIST-TYPE:VOD`, `EXT-X-GAP`, `EXT-X-BITRATE` (carry-forward across a segment, then a change), `EXT-X-START` (positive offset, `PRECISE` absent), `EXT-X-DEFINE:IMPORT` + `{$base}` variable substitution, `EXT-X-INDEPENDENT-SEGMENTS` | ✅ |
+| `daterange-scte35-media.m3u8` | Media | `EXT-X-DATERANGE` with `SCTE35-OUT` and `SCTE35-IN` (unmodeled tags, preserved in `extra_tags`) — derived from §9.10's abridged example by supplying the Media Segments the spec elides with its `...` markers | ✅ |
+| `low-latency-parts-preload-report.m3u8` | Media | `EXT-X-PART`, `EXT-X-PRELOAD-HINT`, `EXT-X-RENDITION-REPORT`, `EXT-X-DISCONTINUITY`, `EXT-X-MAP`, `EXT-X-SERVER-CONTROL`, `EXT-X-PART-INF` — derived from §9.11's abridged example by replacing its leading `...` with a real LL-HLS header block | ✅ |
 
 ### Relationship to §9.8 (`session-data-multivariant.m3u8`)
 
@@ -226,6 +228,8 @@ firing and fail here.
 | `multivariant-header-tags.m3u8` | `11` | §8 row 11 — "contains an `EXT-X-DEFINE` tag with a `QUERYPARAM` attribute". This is the highest trigger present; the `NAME`/`VALUE` `EXT-X-DEFINE` alone would be row 8, and the `IV`/`KEYFORMAT` attributes rows 2/5. |
 | `session-data-multivariant.m3u8` | *(none)* | **No §8 row is triggered.** `EXT-X-SESSION-DATA` has no version requirement, so no `EXT-X-VERSION` tag is emitted at all — matching §9.4, the spec's own multivariant example, which likewise carries none. (Version 7 would be wrong here: that row is triggered by `SERVICE` values for `INSTREAM-ID`, which this fixture does not contain.) |
 | `live-vod-gap-bitrate.m3u8` | `8` | §8 row 8 — "contains variable substitution". The fixture both declares (`EXT-X-DEFINE:IMPORT="base"`) *and* substitutes (`{$base}/seg0.ts`), so the trigger is unambiguous. Floating-point `EXTINF` (row 3) is also present but lower. `EXT-X-GAP`/`EXT-X-BITRATE`/`EXT-X-PLAYLIST-TYPE`/`EXT-X-START` trigger no row. |
+| `daterange-scte35-media.m3u8` | `3` | §8 row 3 — "floating-point `EXTINF` duration values" (the segments' 10.000 and 5.993 durations are fractional). No other row is triggered — `EXT-X-DATERANGE`/`SCTE35-*` attributes carry no version requirement. |
+| `low-latency-parts-preload-report.m3u8` | `6` | §8 row 6 — "contains an `EXT-X-MAP` tag in a Media Playlist that does not contain `EXT-X-I-FRAMES-ONLY`". Row 3 (floating-point `EXTINF`) is also present but lower. `EXT-X-PART`/`EXT-X-PRELOAD-HINT`/`EXT-X-RENDITION-REPORT`/`EXT-X-SERVER-CONTROL` trigger no row. |
 
 ### Known semantic caveat
 
@@ -238,6 +242,37 @@ MUST-constraints (see the crate's README, "Round-trip fidelity"), which is
 exactly what makes this fixture parseable. It is testing the tag's *syntax*,
 not its resolution semantics. `IMPORT` is nonetheless the only form that
 belongs in a Media Playlist, so there is nowhere else to cover it.
+
+### Relationship to §9.10 (`daterange-scte35-media.m3u8`)
+
+This fixture is **derived from §9.10's abridged example**, not verbatim
+from it. §9.10 in the RFC uses a bare `...` on line 2 and the prose line
+"... Media Segment declarations for 60s worth of media" to elide all the
+Media Segments its DATERANGE tags are embedded in. Neither is valid playlist
+syntax, so §9.10 itself cannot parse (see Tier 1 Findings). This fixture
+supplies the three Media Segments the RFC elided — one before the out-point,
+one spanning the splice, and one after the in-point — to make the tag
+combination of `EXT-X-DATERANGE` + `SCTE35-OUT`/`SCTE35-IN` parseable as a
+complete playlist. The two SCTE-35 hex payloads are the same as §9.10's,
+joined from their editorial backslash continuations (same treatment as the
+Tier 1 joined forms). The DATERANGE lines are unmodeled, so they land in
+`extra_tags`.
+
+### Relationship to §9.11 (`low-latency-parts-preload-report.m3u8`)
+
+This fixture is **derived from §9.11's abridged example**. The RFC uses a
+leading `...` on line 3 to stand in for "EXT-X-PART tags have been removed
+from earlier Parent Segments" and the `EXT-X-VERSION`/`EXT-X-SERVER-CONTROL`/
+`EXT-X-PART-INF`/`EXT-X-MAP` header block that precedes them. This fixture
+replaces that `...` with the real header tags, making the playlist parseable
+from its first line. The remaining lines — segments 268 through 272 (with
+their PART tags), the DISCONTINUITY, the mid-roll segments 273/274 with
+parts, preload-hint, and rendition-report — are exactly as in the RFC
+(modulo variant URI names, which §9.11's intro says are illustrative and
+not prescriptive). Unlike the DATERANGE fixture, all tags here are modeled
+as typed struct fields (EXT-X-PART → `PartSpec`, EXT-X-PRELOAD-HINT →
+`LowLatencyConfig::preload_hint_part`, EXT-X-RENDITION-REPORT →
+`MediaPlaylist::rendition_reports`).
 
 ---
 

@@ -59,20 +59,22 @@ round trip, only for a *second* parse of the rendered output to equal the
 first parse. Known ways rendered output can differ from arbitrary input
 text:
 
-- **Unmodeled tags are dropped, not preserved, in a `MasterPlaylist`.**
+- **Unmodeled tags are preserved, not dropped, in a `MasterPlaylist`.**
   `#EXT-X-MEDIA` (alternate audio/video/subtitle renditions) has no
-  corresponding field and no `extra_tags` escape hatch on `MasterPlaylist`
-  (unlike `MediaPlaylist::extra_tags`), so it is silently skipped by
-  `MasterPlaylist::parse` and never reappears in `to_m3u8()`'s output. A
-  fixture containing `#EXT-X-MEDIA` still round-trips under this crate's
-  invariant (the *parsed struct* is stable across a second parse), but the
-  rendered text is shorter than the input.
-- **Tag ordering is canonical, not preserved.** `to_m3u8()` always emits
-  tags in a fixed order (e.g. `#EXT-X-INDEPENDENT-SEGMENTS` /
-  `#EXT-X-DEFINE` / `#EXT-X-START` right after `#EXT-X-VERSION`;
-  `#EXT-X-SESSION-KEY` / `#EXT-X-SESSION-DATA` / `#EXT-X-CONTENT-STEERING`
-  before the variant list), regardless of where those tags appeared in the
-  source text.
+  corresponding typed field but is preserved verbatim into
+  `MasterPlaylist::extra_tags`, the Multivariant-Playlist counterpart of
+  `MediaPlaylist::extra_tags`. A fixture containing `#EXT-X-MEDIA` therefore
+  round-trips under this crate's invariant (the *parsed struct* is stable
+  across a second parse); the rendered text differs in tag ordering (see
+  below) but no tag is silently lost.
+- **Tag ordering is canonical on re-emit, not input-preserving.** `to_m3u8()`
+  always emits tags in a fixed order relative to the variant list:
+  `extra_tags` first, then `INDEPENDENT-SEGMENTS` / `DEFINE` / `START`,
+  then `SESSION-KEY` / `SESSION-DATA` / `CONTENT-STEERING`, then the
+  variant and I-frame-variant entries — regardless of where those tags
+  appeared in the source text. The ordering divergence is a formatting
+  difference, not data loss: every parsed tag (typed or verbatim) survives
+  the round trip; it is just re-sequenced on output.
 - **Line-continuation backslashes are never round-tripped.** Some RFC
   8216bis §9 examples use a trailing `\` to wrap a long attribute list
   across lines for readability in the spec text itself (not literal m3u8

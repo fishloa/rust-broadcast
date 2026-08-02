@@ -218,11 +218,23 @@ const HANDBUILT_MULTIVARIANT_VERSIONS: &[(&str, Option<u8>, &str)] = &[
     ),
 ];
 
-const HANDBUILT_MEDIA_VERSIONS: &[(&str, Option<u8>, &str)] = &[(
-    "live-vod-gap-bitrate.m3u8",
-    Some(8),
-    "§8 row 8 — variable substitution ({$base} in the segment URIs)",
-)];
+const HANDBUILT_MEDIA_VERSIONS: &[(&str, Option<u8>, &str)] = &[
+    (
+        "live-vod-gap-bitrate.m3u8",
+        Some(8),
+        "§8 row 8 — variable substitution ({$base} in the segment URIs)",
+    ),
+    (
+        "daterange-scte35-media.m3u8",
+        Some(3),
+        "§8 row 3 — floating-point EXTINF durations (all segments are 10.000 or 5.993)",
+    ),
+    (
+        "low-latency-parts-preload-report.m3u8",
+        Some(6),
+        "§8 row 6 — EXT-X-MAP without EXT-X-I-FRAMES-ONLY",
+    ),
+];
 
 #[test]
 fn handbuilt_multivariant_computed_version_matches_the_manifest_derivation() {

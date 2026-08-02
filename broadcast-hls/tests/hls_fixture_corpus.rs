@@ -322,6 +322,24 @@ const HANDBUILT_CASES: &[Case] = &[
         kind: Kind::Media,
         expect: Expect::Ok,
     },
+    // Derived from §9.10: EXT-X-DATERANGE with SCTE35-OUT and SCTE35-IN,
+    // made parseable by supplying the real Media Segments the spec elides
+    // with its `...` markers. DATERANGE tags are unmodeled and preserved
+    // via `extra_tags`. See MANIFEST.md for EXT-X-VERSION derivation.
+    Case {
+        path: "handbuilt/daterange-scte35-media.m3u8",
+        kind: Kind::Media,
+        expect: Expect::Ok,
+    },
+    // Derived from §9.11: EXT-X-PART partial segments, EXT-X-PRELOAD-HINT,
+    // EXT-X-RENDITION-REPORT, and an EXT-X-DISCONTINUITY mid-roll ad break,
+    // with the leading `...` replaced by real header tags
+    // (EXT-X-VERSION, SERVER-CONTROL, PART-INF, MAP). See MANIFEST.md.
+    Case {
+        path: "handbuilt/low-latency-parts-preload-report.m3u8",
+        kind: Kind::Media,
+        expect: Expect::Ok,
+    },
 ];
 
 #[test]
@@ -410,6 +428,60 @@ fn handbuilt_fixtures_expose_the_872_tags_as_typed_data() {
     assert_eq!(media.segments[0].bitrate, Some(2000));
     assert_eq!(media.segments[1].bitrate, Some(2000), "carry-forward");
     assert_eq!(media.segments[2].bitrate, Some(1800));
+
+    // Derived from §9.10: two EXT-X-DATERANGE lines (unmodeled tags that
+    // go into `extra_tags`) carrying SCTE35-OUT and SCTE35-IN.
+    let dtrng = MediaPlaylist::parse(&read_fixture("handbuilt/daterange-scte35-media.m3u8"))
+        .expect("must parse");
+    assert_eq!(dtrng.segments.len(), 3, "three segments");
+    assert!(
+        dtrng.extra_tags.len() >= 2,
+        "at least two unmodeled EXT-X-DATERANGE lines must land in extra_tags"
+    );
+    assert!(
+        dtrng.extra_tags.iter().any(|t| t.contains("SCTE35-OUT")),
+        "SCTE35-OUT DATERANGE must be in extra_tags"
+    );
+    assert!(
+        dtrng.extra_tags.iter().any(|t| t.contains("SCTE35-IN")),
+        "SCTE35-IN DATERANGE must be in extra_tags"
+    );
+
+    // Derived from §9.11: EXT-X-PART, EXT-X-PRELOAD-HINT,
+    // EXT-X-RENDITION-REPORT, EXT-X-DISCONTINUITY, EXT-X-MAP.
+    let ll = MediaPlaylist::parse(&read_fixture(
+        "handbuilt/low-latency-parts-preload-report.m3u8",
+    ))
+    .expect("must parse");
+    assert_eq!(ll.segments.len(), 6, "six closed segments");
+    assert!(
+        ll.segments[5].discontinuous,
+        "mid-roll DISCONTINUITY at seg-273"
+    );
+    let seg271 = &ll.segments[3];
+    assert_eq!(seg271.parts.len(), 2, "seg271 has two EXT-X-PARTs");
+    assert_eq!(&seg271.parts[0].uri, "filePart271.0.mp4");
+    assert!(
+        seg271.parts[0].independent,
+        "first part of seg271 is INDEPENDENT"
+    );
+    assert_eq!(&seg271.parts[1].uri, "filePart271.1.mp4");
+    let _seg274 = &ll.segments[4];
+    let ll_config = ll.low_latency.as_ref().expect("must have LowLatencyConfig");
+    assert!(
+        ll_config.preload_hint_part.is_some(),
+        "PRELOAD-HINT must be typed"
+    );
+    assert!(
+        !ll.rendition_reports.is_empty(),
+        "RENDITION-REPORT must be typed"
+    );
+    assert_eq!(
+        ll.rendition_reports[0].uri, "/1M/LL-HLS.m3u8",
+        "RENDITION-REPORT URI must match"
+    );
+    assert_eq!(ll.rendition_reports[0].last_msn, 274);
+    assert_eq!(ll.rendition_reports[0].last_part, Some(1));
 }
 
 // ---------------------------------------------------------------------------
@@ -511,4 +583,54 @@ fn real_stream_fixtures_parse_cleanly() {
     for case in REAL_CASES {
         assert_case(case);
     }
+}
+
+// ---------------------------------------------------------------------------
+// Gap A (issue #890) — an unmodeled tag on a MasterPlaylist is preserved
+// (NOT dropped), so parse → serialize → re-parse yields an equal document.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn unmodeled_ext_x_media_survives_master_parse_round_trip() {
+    let input = "\
+#EXTM3U
+#EXT-X-VERSION:4
+#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID=\"audio\",LANGUAGE=\"eng\",NAME=\"English\",URI=\"audio.m3u8\"
+#EXT-X-STREAM-INF:BANDWIDTH=1280000,CODECS=\"avc1.64001e,mp4a.40.2\",AUDIO=\"audio\"
+low.m3u8
+";
+    let parsed = MasterPlaylist::parse(input).expect("master with EXT-X-MEDIA must parse");
+
+    // EXT-X-MEDIA is an unmodeled tag on MasterPlaylist — it must land
+    // in extra_tags, not be silently dropped.
+    assert_eq!(
+        parsed.extra_tags.len(),
+        1,
+        "EXT-X-MEDIA must be preserved in extra_tags"
+    );
+    assert!(
+        parsed.extra_tags[0].starts_with("#EXT-X-MEDIA:"),
+        "extra_tags[0] must be the EXT-X-MEDIA line: {}",
+        parsed.extra_tags[0]
+    );
+
+    // Round-trip: parse → serialize → re-parse must yield an equal document.
+    let rendered = parsed.to_m3u8();
+    let reparsed = MasterPlaylist::parse(&rendered).unwrap_or_else(|e| {
+        panic!(
+            "re-parsing this crate's own rendered output must succeed: {e}\n\
+             rendered:\n{rendered}"
+        )
+    });
+    assert_eq!(
+        reparsed, parsed,
+        "parse → serialize → re-parse must yield an equal document\n\
+         rendered:\n{rendered}"
+    );
+
+    // EXT-X-MEDIA must appear in the rendered output — it must not vanish.
+    assert!(
+        rendered.contains("#EXT-X-MEDIA:TYPE=AUDIO"),
+        "rendered output must contain the EXT-X-MEDIA line:\n{rendered}"
+    );
 }
