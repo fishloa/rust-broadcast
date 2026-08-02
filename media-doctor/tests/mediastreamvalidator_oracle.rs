@@ -600,12 +600,14 @@ fn origin_multivariant_shape_validates_clean() {
                 codecs: "avc1.64001f,mp4a.40.2".into(),
                 resolution: Some((640, 360)),
                 uri: "low.m3u8".into(),
+                extra_attrs: vec![],
             },
             Variant {
                 bandwidth: 2_560_000,
                 codecs: "avc1.64001f,mp4a.40.2".into(),
                 resolution: Some((1280, 720)),
                 uri: "hi.m3u8".into(),
+                extra_attrs: vec![],
             },
         ],
         ..Default::default()
@@ -649,12 +651,14 @@ fn origin_iframe_variant_shape_validates_clean() {
             codecs: "avc1.64001f,mp4a.40.2".into(),
             resolution: Some((1280, 720)),
             uri: "hi.m3u8".into(),
+            extra_attrs: vec![],
         }],
         iframe_variants: vec![IFrameVariant {
             bandwidth: 150_000,
             codecs: Some("avc1.64001f".into()),
             resolution: Some((1280, 720)),
             uri: "iframe.m3u8".into(),
+            extra_attrs: vec![],
         }],
         ..Default::default()
     };

@@ -87,6 +87,7 @@ fn part_spec(p: &PartInfo) -> PartSpec {
         independent: p.independent,
         byte_range: None,
         gap: false,
+        extra_attrs: vec![],
     }
 }
 
@@ -120,6 +121,7 @@ impl PlaylistBuilder<'_> {
                     Some(MapTag {
                         uri: INIT_URL.to_string(),
                         byte_range: None,
+                        extra_attrs: vec![],
                     })
                 } else {
                     None
@@ -515,11 +517,13 @@ fn can_block_reload_no_yields_non_blocking_reload_with_backoff() {
                 independent: true,
                 byte_range: None,
                 gap: false,
+                extra_attrs: vec![],
             }],
             byte_range: None,
             map: Some(MapTag {
                 uri: INIT_URL.to_string(),
                 byte_range: None,
+                extra_attrs: vec![],
             }),
             ..Default::default()
         }],
@@ -606,6 +610,7 @@ fn non_ll_playlist_plays_via_full_segment_fallback() {
             map: Some(MapTag {
                 uri: INIT_URL.to_string(),
                 byte_range: None,
+                extra_attrs: vec![],
             }),
             ..Default::default()
         }],

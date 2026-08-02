@@ -306,7 +306,7 @@ impl ByteRange {
 
 /// The Media Initialization Section reference of `#EXT-X-MAP` (RFC 8216bis
 /// §4.4.4.5) — see [`MediaSegment::map`] for carry-forward/dedup semantics.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct MapTag {
     /// `URI` — the resource containing the Media Initialization Section
     /// (REQUIRED).
@@ -316,6 +316,9 @@ pub struct MapTag {
     /// offset is always present when this is `Some` (spec requires it here,
     /// unlike [`MediaSegment::byte_range`]/[`PartSpec::byte_range`]).
     pub byte_range: Option<ByteRange>,
+    /// Unmodeled attributes, retained so `REQ-` prefixed names can fire
+    /// RFC 8216bis §8 row 12. Sorted by name on parse (deterministic).
+    pub extra_attrs: Vec<(String, String)>,
 }
 
 /// `TYPE` attribute of `#EXT-X-PRELOAD-HINT` (RFC 8216bis §4.4.5.3).
@@ -356,6 +359,9 @@ pub struct RenditionReport {
     /// `LAST-PART` — Part Index of the last partial segment at `last_msn`,
     /// if that Rendition has partial segments.
     pub last_part: Option<u64>,
+    /// Unmodeled attributes, retained so `REQ-` prefixed names can fire
+    /// RFC 8216bis §8 row 12. Sorted by name on parse (deterministic).
+    pub extra_attrs: Vec<(String, String)>,
 }
 
 /// `#EXT-X-SKIP` (RFC 8216bis §4.4.5.2) — present on a Playlist Delta Update
@@ -368,6 +374,9 @@ pub struct SkipInfo {
     /// the playlist recently (tab-delimited on the wire). Empty when the
     /// attribute is absent.
     pub recently_removed_daterange_ids: Vec<String>,
+    /// Unmodeled attributes, retained so `REQ-` prefixed names can fire
+    /// RFC 8216bis §8 row 12. Sorted by name on parse (deterministic).
+    pub extra_attrs: Vec<(String, String)>,
 }
 
 /// A single partial segment ("part") of a [`MediaSegment`] — RFC 8216bis
@@ -394,6 +403,9 @@ pub struct PartSpec {
     /// `GAP` attribute (RFC 8216bis §4.4.4.9) — `true` if this partial
     /// segment is not actually available (a hole in the part list).
     pub gap: bool,
+    /// Unmodeled attributes, retained so `REQ-` prefixed names can fire
+    /// RFC 8216bis §8 row 12. Sorted by name on parse (deterministic).
+    pub extra_attrs: Vec<(String, String)>,
 }
 
 /// An in-progress (open) LL-HLS segment: its parts are known and being served,
@@ -435,7 +447,7 @@ impl OpenSegment {
 
 /// `#EXT-X-START` (RFC 8216bis §4.4.2.2) — a preferred playback start point.
 /// Valid in either a [`MediaPlaylist`] or a [`MasterPlaylist`].
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
 pub struct StartPoint {
     /// `TIME-OFFSET` — signed seconds from the start of the Playlist
@@ -446,6 +458,9 @@ pub struct StartPoint {
     /// `time_offset` within the segment it lands in. Absence on the wire
     /// means `false` (RFC 8216bis §4.4.2.2).
     pub precise: bool,
+    /// Unmodeled attributes, retained so `REQ-` prefixed names can fire
+    /// RFC 8216bis §8 row 12. Sorted by name on parse (deterministic).
+    pub extra_attrs: Vec<(String, String)>,
 }
 
 /// A single `#EXT-X-DEFINE` variable declaration (RFC 8216bis §4.4.2.3).
@@ -461,6 +476,9 @@ pub enum Define {
         name: String,
         /// The Variable Value (MAY be empty).
         value: String,
+        /// Unmodeled attributes, retained so `REQ-` prefixed names can fire
+        /// RFC 8216bis §8 row 12. Sorted by name on parse (deterministic).
+        extra_attrs: Vec<(String, String)>,
     },
     /// `IMPORT` form — imports a Variable of the same name from the parent
     /// Multivariant Playlist. The spec says this **MUST NOT** occur in a
@@ -472,12 +490,18 @@ pub enum Define {
     Import {
         /// The imported Variable Name.
         name: String,
+        /// Unmodeled attributes, retained so `REQ-` prefixed names can fire
+        /// RFC 8216bis §8 row 12. Sorted by name on parse (deterministic).
+        extra_attrs: Vec<(String, String)>,
     },
     /// `QUERYPARAM` form — imports a Variable from the query parameter of
     /// the same name in the Playlist's own URI.
     QueryParam {
         /// The Variable Name / query parameter name.
         name: String,
+        /// Unmodeled attributes, retained so `REQ-` prefixed names can fire
+        /// RFC 8216bis §8 row 12. Sorted by name on parse (deterministic).
+        extra_attrs: Vec<(String, String)>,
     },
 }
 
@@ -569,6 +593,9 @@ pub struct SessionData {
     /// `LANGUAGE` — an RFC 5646 language tag, typically qualifying a
     /// [`SessionDataContent::Value`].
     pub language: Option<String>,
+    /// Unmodeled attributes, retained so `REQ-` prefixed names can fire
+    /// RFC 8216bis §8 row 12. Sorted by name on parse (deterministic).
+    pub extra_attrs: Vec<(String, String)>,
 }
 
 /// `METHOD` attribute shared by `#EXT-X-KEY`/`#EXT-X-SESSION-KEY`
@@ -622,6 +649,9 @@ pub struct SessionKey {
     pub keyformat: Option<String>,
     /// `KEYFORMATVERSIONS` — absence on the wire implies `"1"`.
     pub keyformatversions: Option<String>,
+    /// Unmodeled attributes, retained so `REQ-` prefixed names can fire
+    /// RFC 8216bis §8 row 12. Sorted by name on parse (deterministic).
+    pub extra_attrs: Vec<(String, String)>,
 }
 
 /// `#EXT-X-CONTENT-STEERING` (RFC 8216bis §4.4.6.6) — a pointer to a Content
@@ -634,6 +664,9 @@ pub struct ContentSteering {
     /// `PATHWAY-ID` — the Pathway to apply before the first Steering
     /// Manifest has been obtained.
     pub pathway_id: Option<String>,
+    /// Unmodeled attributes, retained so `REQ-` prefixed names can fire
+    /// RFC 8216bis §8 row 12. Sorted by name on parse (deterministic).
+    pub extra_attrs: Vec<(String, String)>,
 }
 
 /// A single media segment in a media playlist.
@@ -794,6 +827,16 @@ pub struct LowLatencyConfig {
     /// blocking-reload support merely from [`MediaPlaylist::low_latency`]
     /// being `Some`; it must check this field (issue #717 slice 1 gap).
     pub can_block_reload: bool,
+    /// Unmodeled attributes from `#EXT-X-SERVER-CONTROL`,
+    /// `#EXT-X-PART-INF`, and `#EXT-X-PRELOAD-HINT`, retained so `REQ-`
+    /// prefixed names can fire RFC 8216bis §8 row 12. Sorted by name on parse (deterministic).
+    pub extra_attrs: Vec<(String, String)>,
+    /// Unmodeled attributes from `#EXT-X-SERVER-CONTROL` only.
+    pub sc_extra_attrs: Vec<(String, String)>,
+    /// Unmodeled attributes from `#EXT-X-PART-INF` only.
+    pub pi_extra_attrs: Vec<(String, String)>,
+    /// Unmodeled attributes from `#EXT-X-PRELOAD-HINT` only.
+    pub ph_extra_attrs: Vec<(String, String)>,
 }
 
 impl LowLatencyConfig {
@@ -828,6 +871,10 @@ impl Default for LowLatencyConfig {
             preload_hint_byte_range_length: None,
             can_skip_until: None,
             can_block_reload: true,
+            extra_attrs: Vec::new(),
+            sc_extra_attrs: Vec::new(),
+            pi_extra_attrs: Vec::new(),
+            ph_extra_attrs: Vec::new(),
         }
     }
 }
@@ -950,15 +997,13 @@ fn contains_variable_substitution(s: &str) -> bool {
 /// purely for a caller who hand-pushes a verbatim tag line. `bump_version`
 /// is a max, so the two paths cannot double-count or disagree.
 ///
-/// **Row 12's known blind spot.** `REQ-` is matched only on tags that reach
-/// `extra_tags`. An attribute named `REQ-*` on a tag this crate *does* model
-/// (`EXT-X-DEFINE`, `EXT-X-START`, `EXT-X-SESSION-DATA`,
-/// `EXT-X-SESSION-KEY`, `EXT-X-CONTENT-STEERING`) is dropped at parse time —
-/// those parsers read the attributes they know and discard the rest — so it
-/// cannot be seen here. Closing that would mean retaining unknown attributes
-/// on every modeled tag, which is an API change well beyond issue #872; the
-/// limitation is asserted by `req_attribute_on_a_modeled_tag_is_a_known_gap`
-/// so it stays visible rather than becoming folklore.
+///
+/// **Row 12 now fires on typed tags too.** Unknown attributes on modeled tags
+/// are retained since issue #884 (`extra_attrs` on every attribute-list-bearing
+/// struct); the typed check in `any_typed_req_attr` and
+/// `any_media_typed_req_attr` scans those fields so `REQ-` attributes reach
+/// the version derivation whether they appear on a modeled or an unmodeled
+/// tag.
 fn scan_tag_lines_for_version(tags: &[String]) -> Option<u8> {
     let mut v: Option<u8> = None;
     for tag in tags {
@@ -1012,6 +1057,101 @@ fn scan_tag_lines_for_version(tags: &[String]) -> Option<u8> {
         }
     }
     v
+}
+
+/// Check whether any extra_attrs on any typed struct carry a `REQ-` prefix
+/// (RFC 8216bis §8 row 12). `start` is Option<StartPoint>, `defines` is
+/// `&[Define]`, `sd` is `&[SessionData]`, `sk` is `&[SessionKey]`,
+/// `cs` is `Option<&ContentSteering>`, `variants` is `&[Variant]`,
+/// `iframes` is `&[IFrameVariant]`.
+///
+/// AttributeName contains only uppercase letters per §4.2, so the `REQ-`
+/// prefix match is case-sensitive.
+fn any_typed_req_attr(
+    start: Option<&StartPoint>,
+    defines: &[Define],
+    sd: &[SessionData],
+    sk: &[SessionKey],
+    cs: Option<&ContentSteering>,
+    variants: &[Variant],
+    iframes: &[IFrameVariant],
+) -> bool {
+    let extra_attr_is_req =
+        |attrs: &[(String, String)]| -> bool { attrs.iter().any(|(k, _)| k.starts_with("REQ-")) };
+    if start.is_some_and(|s| extra_attr_is_req(&s.extra_attrs)) {
+        return true;
+    }
+    if defines.iter().any(|d| {
+        let attrs = match d {
+            Define::Name { extra_attrs, .. } => extra_attrs,
+            Define::Import { extra_attrs, .. } => extra_attrs,
+            Define::QueryParam { extra_attrs, .. } => extra_attrs,
+        };
+        extra_attr_is_req(attrs)
+    }) {
+        return true;
+    }
+    if sd.iter().any(|s| extra_attr_is_req(&s.extra_attrs)) {
+        return true;
+    }
+    if sk.iter().any(|s| extra_attr_is_req(&s.extra_attrs)) {
+        return true;
+    }
+    if cs.is_some_and(|c| extra_attr_is_req(&c.extra_attrs)) {
+        return true;
+    }
+    if variants.iter().any(|v| extra_attr_is_req(&v.extra_attrs)) {
+        return true;
+    }
+    if iframes.iter().any(|i| extra_attr_is_req(&i.extra_attrs)) {
+        return true;
+    }
+    false
+}
+
+/// Check whether any extra_attrs on media-playlist-specific typed structs
+/// carry a `REQ-` prefix: `MapTag` (in segments/open), `PartSpec`,
+/// `RenditionReport`, `SkipInfo`, `LowLatencyConfig`.
+fn any_media_typed_req_attr(
+    segments: &[MediaSegment],
+    open_segment: Option<&OpenSegment>,
+    rendition_reports: &[RenditionReport],
+    skip: Option<&SkipInfo>,
+    low_latency: Option<&LowLatencyConfig>,
+) -> bool {
+    let extra_attr_is_req =
+        |attrs: &[(String, String)]| -> bool { attrs.iter().any(|(k, _)| k.starts_with("REQ-")) };
+    if segments.iter().any(|s| {
+        s.map
+            .as_ref()
+            .is_some_and(|m| extra_attr_is_req(&m.extra_attrs))
+            || s.parts.iter().any(|p| extra_attr_is_req(&p.extra_attrs))
+    }) {
+        return true;
+    }
+    if let Some(open) = open_segment {
+        if open
+            .map
+            .as_ref()
+            .is_some_and(|m| extra_attr_is_req(&m.extra_attrs))
+            || open.parts.iter().any(|p| extra_attr_is_req(&p.extra_attrs))
+        {
+            return true;
+        }
+    }
+    if rendition_reports
+        .iter()
+        .any(|r| extra_attr_is_req(&r.extra_attrs))
+    {
+        return true;
+    }
+    if skip.is_some_and(|s| extra_attr_is_req(&s.extra_attrs)) {
+        return true;
+    }
+    if low_latency.is_some_and(|ll| extra_attr_is_req(&ll.extra_attrs)) {
+        return true;
+    }
+    false
 }
 
 /// Shared floor/clamp logic behind `MediaPlaylist`'s and `MasterPlaylist`'s
@@ -1111,11 +1251,26 @@ impl MediaPlaylist {
         }
 
         // Rows 2/5/7/12/13: EXT-X-KEY's IV/METHOD/KEYFORMAT*, EXT-X-MEDIA's
-        // INSTREAM-ID, and any REQ- attribute — none of these tags has a
-        // modeled struct field in this crate, so `extra_tags` remains the
-        // only substrate. (Row 11 moved to the typed check above.)
+        // INSTREAM-ID, and any REQ- attribute on *unmodeled* tags — none of
+        // these tags has a modeled struct field in this crate, so `extra_tags`
+        // remains the substrate for the first three. Row 12 on modeled tags
+        // is now checked below via the typed extra_attrs scan (issue #884).
+        // (Row 11 moved to the typed check above.)
         if let Some(m) = scan_tag_lines_for_version(&self.extra_tags) {
             bump_version(&mut v, m);
+        }
+
+        // Row 12: REQ- attribute on any typed struct — modeled tags that
+        // carry extra_attrs fields since issue #884.
+        if any_media_typed_req_attr(
+            &self.segments,
+            self.open_segment.as_ref(),
+            &self.rendition_reports,
+            self.skip.as_ref(),
+            self.low_latency.as_ref(),
+        ) || any_typed_req_attr(self.start.as_ref(), &self.defines, &[], &[], None, &[], &[])
+        {
+            bump_version(&mut v, VERSION_REQ_ATTRIBUTE);
         }
 
         v
@@ -1233,12 +1388,15 @@ impl MediaPlaylist {
             if let Some(csu) = ll.can_skip_until {
                 s.push_str(&format!(",CAN-SKIP-UNTIL={}", format_secs(csu)));
             }
+            push_extra_attrs(&mut s, &ll.sc_extra_attrs);
             s.push('\n');
             // #EXT-X-PART-INF — the part-target duration.
             s.push_str(&format!(
-                "#EXT-X-PART-INF:PART-TARGET={}\n",
+                "#EXT-X-PART-INF:PART-TARGET={}",
                 format_secs(ll.part_target),
             ));
+            push_extra_attrs(&mut s, &ll.pi_extra_attrs);
+            s.push('\n');
         }
 
         // #EXT-X-SKIP (RFC 8216bis §4.4.5.2) — a Playlist Delta Update marker
@@ -1254,6 +1412,7 @@ impl MediaPlaylist {
                     skip.recently_removed_daterange_ids.join("\t")
                 ));
             }
+            push_extra_attrs(&mut s, &skip.extra_attrs);
             s.push('\n');
         }
 
@@ -1350,6 +1509,7 @@ impl MediaPlaylist {
                 if let Some(len) = ll.preload_hint_byte_range_length {
                     s.push_str(&format!(",BYTERANGE-LENGTH={len}"));
                 }
+                push_extra_attrs(&mut s, &ll.ph_extra_attrs);
                 s.push('\n');
             }
         }
@@ -1363,6 +1523,7 @@ impl MediaPlaylist {
             if let Some(lp) = rr.last_part {
                 s.push_str(&format!(",LAST-PART={lp}"));
             }
+            push_extra_attrs(&mut s, &rr.extra_attrs);
             s.push('\n');
         }
 
@@ -1418,6 +1579,9 @@ impl MediaPlaylist {
         let mut preload_hint_byte_range_start: Option<u64> = None;
         let mut preload_hint_byte_range_length: Option<u64> = None;
         let mut saw_ll_tag = false;
+        let mut sc_extra_attrs: Vec<(String, String)> = Vec::new();
+        let mut pi_extra_attrs: Vec<(String, String)> = Vec::new();
+        let mut ph_extra_attrs: Vec<(String, String)> = Vec::new();
 
         // Per-segment pending state, reset each time a bare URI line closes
         // a segment.
@@ -1492,7 +1656,12 @@ impl MediaPlaylist {
                     Some(v) => Some(ByteRange::parse(v, line_no, line)?),
                     None => None,
                 };
-                current_map = Some(MapTag { uri, byte_range });
+                let extra_attrs = filter_extra_attrs(&attrs, &["URI", "BYTERANGE"]);
+                current_map = Some(MapTag {
+                    uri,
+                    byte_range,
+                    extra_attrs,
+                });
             } else if let Some(rest) = line.strip_prefix("#EXTINF:") {
                 let dur_str = rest.split(',').next().unwrap_or(rest);
                 pending_duration = Some(parse_decimal(dur_str, line_no, line, "EXTINF duration")?);
@@ -1501,6 +1670,7 @@ impl MediaPlaylist {
                 if let Some(v) = attrs.get("PART-TARGET") {
                     part_target = Some(parse_decimal(v, line_no, line, "PART-TARGET")?);
                 }
+                pi_extra_attrs.extend(filter_extra_attrs(&attrs, &["PART-TARGET"]));
                 saw_ll_tag = true;
             } else if let Some(rest) = line.strip_prefix("#EXT-X-SERVER-CONTROL:") {
                 let attrs = parse_attr_list(rest);
@@ -1511,6 +1681,10 @@ impl MediaPlaylist {
                     can_skip_until = Some(parse_decimal(v, line_no, line, "CAN-SKIP-UNTIL")?);
                 }
                 can_block_reload = attrs.get("CAN-BLOCK-RELOAD").map(String::as_str) == Some("YES");
+                sc_extra_attrs.extend(filter_extra_attrs(
+                    &attrs,
+                    &["PART-HOLD-BACK", "CAN-SKIP-UNTIL", "CAN-BLOCK-RELOAD"],
+                ));
                 saw_ll_tag = true;
             } else if let Some(rest) = line.strip_prefix("#EXT-X-PART:") {
                 let attrs = parse_attr_list(rest);
@@ -1527,12 +1701,17 @@ impl MediaPlaylist {
                     Some(v) => Some(ByteRange::parse(v, line_no, line)?),
                     None => None,
                 };
+                let extra_attrs = filter_extra_attrs(
+                    &attrs,
+                    &["URI", "DURATION", "INDEPENDENT", "GAP", "BYTERANGE"],
+                );
                 pending_parts.push(PartSpec {
                     uri,
                     duration,
                     independent,
                     byte_range,
                     gap,
+                    extra_attrs,
                 });
                 saw_ll_tag = true;
             } else if let Some(rest) = line.strip_prefix("#EXT-X-PRELOAD-HINT:") {
@@ -1556,6 +1735,10 @@ impl MediaPlaylist {
                     preload_hint_byte_range_length =
                         Some(parse_decimal(v, line_no, line, "BYTERANGE-LENGTH")?);
                 }
+                ph_extra_attrs.extend(filter_extra_attrs(
+                    &attrs,
+                    &["TYPE", "URI", "BYTERANGE-START", "BYTERANGE-LENGTH"],
+                ));
                 saw_ll_tag = true;
             } else if let Some(rest) = line.strip_prefix("#EXT-X-RENDITION-REPORT:") {
                 let attrs = parse_attr_list(rest);
@@ -1568,10 +1751,12 @@ impl MediaPlaylist {
                     Some(v) => Some(parse_decimal(v, line_no, line, "LAST-PART")?),
                     None => None,
                 };
+                let extra_attrs = filter_extra_attrs(&attrs, &["URI", "LAST-MSN", "LAST-PART"]);
                 rendition_reports.push(RenditionReport {
                     uri,
                     last_msn,
                     last_part,
+                    extra_attrs,
                 });
             } else if let Some(rest) = line.strip_prefix("#EXT-X-SKIP:") {
                 let attrs = parse_attr_list(rest);
@@ -1588,9 +1773,14 @@ impl MediaPlaylist {
                             .collect()
                     })
                     .unwrap_or_default();
+                let extra_attrs = filter_extra_attrs(
+                    &attrs,
+                    &["SKIPPED-SEGMENTS", "RECENTLY-REMOVED-DATERANGES"],
+                );
                 skip = Some(SkipInfo {
                     skipped_segments,
                     recently_removed_daterange_ids,
+                    extra_attrs,
                 });
             } else if let Some(rest) = line.strip_prefix("#EXT") {
                 let _ = rest;
@@ -1647,6 +1837,10 @@ impl MediaPlaylist {
         };
 
         let low_latency = if saw_ll_tag {
+            let mut all_extra: Vec<(String, String)> = Vec::new();
+            all_extra.extend(sc_extra_attrs.iter().cloned());
+            all_extra.extend(pi_extra_attrs.iter().cloned());
+            all_extra.extend(ph_extra_attrs.iter().cloned());
             Some(LowLatencyConfig {
                 part_target: part_target.unwrap_or(0.0),
                 part_hold_back: part_hold_back.unwrap_or(0.0),
@@ -1656,6 +1850,10 @@ impl MediaPlaylist {
                 preload_hint_byte_range_length,
                 can_skip_until,
                 can_block_reload,
+                extra_attrs: all_extra,
+                sc_extra_attrs,
+                pi_extra_attrs,
+                ph_extra_attrs,
             })
         } else {
             None
@@ -1701,6 +1899,7 @@ fn push_part_line(s: &mut String, part: &PartSpec) {
     if part.gap {
         s.push_str(",GAP=YES");
     }
+    push_extra_attrs(s, &part.extra_attrs);
     s.push('\n');
 }
 
@@ -1711,22 +1910,31 @@ fn push_map_line(s: &mut String, map: &MapTag) {
     if let Some(br) = &map.byte_range {
         s.push_str(&format!(",BYTERANGE=\"{}\"", br.render()));
     }
+    push_extra_attrs(s, &map.extra_attrs);
     s.push('\n');
 }
 
 /// Render one `#EXT-X-DEFINE:...` line (RFC 8216bis §4.4.2.3, issue #872).
 fn push_define_line(s: &mut String, def: &Define) {
     match def {
-        Define::Name { name, value } => {
-            s.push_str(&format!(
-                "#EXT-X-DEFINE:NAME=\"{name}\",VALUE=\"{value}\"\n"
-            ));
+        Define::Name {
+            name,
+            value,
+            extra_attrs,
+        } => {
+            s.push_str(&format!("#EXT-X-DEFINE:NAME=\"{name}\",VALUE=\"{value}\""));
+            push_extra_attrs(s, extra_attrs);
+            s.push('\n');
         }
-        Define::Import { name } => {
-            s.push_str(&format!("#EXT-X-DEFINE:IMPORT=\"{name}\"\n"));
+        Define::Import { name, extra_attrs } => {
+            s.push_str(&format!("#EXT-X-DEFINE:IMPORT=\"{name}\""));
+            push_extra_attrs(s, extra_attrs);
+            s.push('\n');
         }
-        Define::QueryParam { name } => {
-            s.push_str(&format!("#EXT-X-DEFINE:QUERYPARAM=\"{name}\"\n"));
+        Define::QueryParam { name, extra_attrs } => {
+            s.push_str(&format!("#EXT-X-DEFINE:QUERYPARAM=\"{name}\""));
+            push_extra_attrs(s, extra_attrs);
+            s.push('\n');
         }
     }
 }
@@ -1752,18 +1960,44 @@ fn parse_define(rest: &str, line_no: usize, line: &str) -> Result<Define> {
     }
     if let Some(name) = attrs.get("NAME") {
         let value = require_attr(&attrs, "VALUE", line_no, line, "EXT-X-DEFINE")?;
+        let extra_attrs = filter_extra_attrs(&attrs, &["NAME", "VALUE"]);
         Ok(Define::Name {
             name: name.clone(),
             value,
+            extra_attrs,
         })
     } else if let Some(name) = attrs.get("IMPORT") {
-        Ok(Define::Import { name: name.clone() })
+        let extra_attrs = filter_extra_attrs(&attrs, &["IMPORT"]);
+        Ok(Define::Import {
+            name: name.clone(),
+            extra_attrs,
+        })
     } else {
         let name = attrs
             .get("QUERYPARAM")
             .expect("exactly one of the three checked above")
             .clone();
-        Ok(Define::QueryParam { name })
+        let extra_attrs = filter_extra_attrs(&attrs, &["QUERYPARAM"]);
+        Ok(Define::QueryParam { name, extra_attrs })
+    }
+}
+
+/// Append `,NAME=VALUE` (or `,NAME="VALUE"` for values containing special
+/// characters) for each extra attribute. Sorted by name (already sorted on
+/// parse via `filter_extra_attrs`, kept sorted here for programmatic
+/// construction).
+fn push_extra_attrs(s: &mut String, attrs: &[(String, String)]) {
+    for (name, value) in attrs {
+        s.push(',');
+        s.push_str(name);
+        s.push('=');
+        if value.contains(',') || value.contains('"') || value.contains(char::is_whitespace) {
+            s.push('"');
+            s.push_str(value);
+            s.push('"');
+        } else {
+            s.push_str(value);
+        }
     }
 }
 
@@ -1776,6 +2010,7 @@ fn push_start_line(s: &mut String, start: &StartPoint) {
     if start.precise {
         s.push_str(",PRECISE=YES");
     }
+    push_extra_attrs(s, &start.extra_attrs);
     s.push('\n');
 }
 
@@ -1785,9 +2020,11 @@ fn parse_start(rest: &str, line_no: usize, line: &str) -> Result<StartPoint> {
     let time_offset_str = require_attr(&attrs, "TIME-OFFSET", line_no, line, "EXT-X-START")?;
     let time_offset = parse_decimal(&time_offset_str, line_no, line, "TIME-OFFSET")?;
     let precise = attrs.get("PRECISE").map(String::as_str) == Some("YES");
+    let extra_attrs = filter_extra_attrs(&attrs, &["TIME-OFFSET", "PRECISE"]);
     Ok(StartPoint {
         time_offset,
         precise,
+        extra_attrs,
     })
 }
 
@@ -1808,6 +2045,7 @@ fn push_session_data_line(s: &mut String, sd: &SessionData) {
     if let Some(lang) = &sd.language {
         s.push_str(&format!(",LANGUAGE=\"{lang}\""));
     }
+    push_extra_attrs(s, &sd.extra_attrs);
     s.push('\n');
 }
 
@@ -1845,10 +2083,16 @@ fn parse_session_data(rest: &str, line_no: usize, line: &str) -> Result<SessionD
         }
     };
     let language = attrs.get("LANGUAGE").cloned();
+    let known: &[&str] = match &content {
+        SessionDataContent::Value(_) => &["DATA-ID", "VALUE", "LANGUAGE"],
+        SessionDataContent::Uri { .. } => &["DATA-ID", "URI", "FORMAT", "LANGUAGE"],
+    };
+    let extra_attrs = filter_extra_attrs(&attrs, known);
     Ok(SessionData {
         data_id,
         content,
         language,
+        extra_attrs,
     })
 }
 
@@ -1867,6 +2111,7 @@ fn push_session_key_line(s: &mut String, sk: &SessionKey) {
     if let Some(kfv) = &sk.keyformatversions {
         s.push_str(&format!(",KEYFORMATVERSIONS=\"{kfv}\""));
     }
+    push_extra_attrs(s, &sk.extra_attrs);
     s.push('\n');
 }
 
@@ -1896,12 +2141,17 @@ fn parse_session_key(rest: &str, line_no: usize, line: &str) -> Result<SessionKe
     };
     let keyformat = attrs.get("KEYFORMAT").cloned();
     let keyformatversions = attrs.get("KEYFORMATVERSIONS").cloned();
+    let extra_attrs = filter_extra_attrs(
+        &attrs,
+        &["METHOD", "URI", "IV", "KEYFORMAT", "KEYFORMATVERSIONS"],
+    );
     Ok(SessionKey {
         method,
         uri,
         iv,
         keyformat,
         keyformatversions,
+        extra_attrs,
     })
 }
 
@@ -2100,6 +2350,17 @@ fn parse_attr_list(s: &str) -> BTreeMap<String, String> {
     map
 }
 
+/// From an already-parsed attribute map, collect every attribute whose name
+/// is not in `known` into a `Vec<(name, value)>`, sorted by name for
+/// deterministic serialization.
+fn filter_extra_attrs(attrs: &BTreeMap<String, String>, known: &[&str]) -> Vec<(String, String)> {
+    attrs
+        .iter()
+        .filter(|(k, _)| !known.contains(&k.as_str()))
+        .map(|(k, v)| (k.clone(), v.clone()))
+        .collect()
+}
+
 /// Fetch a required attribute from an already-parsed attribute map, or
 /// return a contextual [`crate::Error::HlsParse`] naming the missing
 /// attribute and the owning tag.
@@ -2118,7 +2379,7 @@ fn require_attr(
 }
 
 /// A variant stream entry in a master playlist.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Default)]
 pub struct Variant {
     /// `BANDWIDTH` in bits per second.
     pub bandwidth: u32,
@@ -2128,6 +2389,9 @@ pub struct Variant {
     pub resolution: Option<(u32, u32)>,
     /// URI of the media playlist for this variant.
     pub uri: String,
+    /// Unmodeled attributes, retained so `REQ-` prefixed names can fire
+    /// RFC 8216bis §8 row 12. Sorted by name on parse (deterministic).
+    pub extra_attrs: Vec<(String, String)>,
 }
 
 /// An I-frame-only rendition entry for a master playlist — RFC 8216 §4.3.4.2
@@ -2138,7 +2402,7 @@ pub struct Variant {
 /// ```text
 /// #EXT-X-I-FRAME-STREAM-INF:BANDWIDTH=<n>[,CODECS="<c>"][,RESOLUTION=<w>x<h>],URI="<uri>"
 /// ```
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Default)]
 pub struct IFrameVariant {
     /// `BANDWIDTH` in bits per second (required).
     pub bandwidth: u32,
@@ -2148,6 +2412,9 @@ pub struct IFrameVariant {
     pub resolution: Option<(u32, u32)>,
     /// URI of the I-frame-only media playlist.
     pub uri: String,
+    /// Unmodeled attributes, retained so `REQ-` prefixed names can fire
+    /// RFC 8216bis §8 row 12. Sorted by name on parse (deterministic).
+    pub extra_attrs: Vec<(String, String)>,
 }
 
 /// A master playlist (`#EXTM3U` / `#EXT-X-STREAM-INF` / ...).
@@ -2198,7 +2465,7 @@ pub struct MasterPlaylist {
 
 /// A parsed but not-yet-closed `#EXT-X-STREAM-INF` — `(bandwidth, codecs,
 /// resolution)` — awaiting the URI line that turns it into a [`Variant`].
-type PendingStreamInf = (u32, String, Option<(u32, u32)>);
+type PendingStreamInf = (u32, String, Option<(u32, u32)>, Vec<(String, String)>);
 
 impl MasterPlaylist {
     /// Render this master playlist as an RFC 8216 `#EXTM3U` string.
@@ -2244,6 +2511,7 @@ impl MasterPlaylist {
             if let Some(pid) = &cs.pathway_id {
                 s.push_str(&format!(",PATHWAY-ID=\"{pid}\""));
             }
+            push_extra_attrs(&mut s, &cs.extra_attrs);
             s.push('\n');
         }
 
@@ -2255,6 +2523,7 @@ impl MasterPlaylist {
             if let Some((w, h)) = var.resolution {
                 s.push_str(&format!(",RESOLUTION={w}x{h}"));
             }
+            push_extra_attrs(&mut s, &var.extra_attrs);
             s.push('\n');
             s.push_str(&var.uri);
             s.push('\n');
@@ -2273,6 +2542,7 @@ impl MasterPlaylist {
             if let Some((w, h)) = iv.resolution {
                 s.push_str(&format!(",RESOLUTION={w}x{h}"));
             }
+            push_extra_attrs(&mut s, &iv.extra_attrs);
             s.push_str(&format!(",URI=\"{}\"\n", iv.uri));
         }
 
@@ -2332,7 +2602,9 @@ impl MasterPlaylist {
                     Some(v) => Some(parse_resolution(v, line_no, line)?),
                     None => None,
                 };
-                pending_stream_inf = Some((bandwidth, codecs, resolution));
+                let extra_attrs =
+                    filter_extra_attrs(&attrs, &["BANDWIDTH", "CODECS", "RESOLUTION"]);
+                pending_stream_inf = Some((bandwidth, codecs, resolution, extra_attrs));
             } else if let Some(rest) = line.strip_prefix("#EXT-X-I-FRAME-STREAM-INF:") {
                 let attrs = parse_attr_list(rest);
                 let bandwidth_str = require_attr(
@@ -2349,11 +2621,14 @@ impl MasterPlaylist {
                     None => None,
                 };
                 let uri = require_attr(&attrs, "URI", line_no, line, "EXT-X-I-FRAME-STREAM-INF")?;
+                let extra_attrs =
+                    filter_extra_attrs(&attrs, &["BANDWIDTH", "CODECS", "RESOLUTION", "URI"]);
                 iframe_variants.push(IFrameVariant {
                     bandwidth,
                     codecs,
                     resolution,
                     uri,
+                    extra_attrs,
                 });
             } else if line == "#EXT-X-INDEPENDENT-SEGMENTS" {
                 independent_segments = true;
@@ -2375,9 +2650,11 @@ impl MasterPlaylist {
                     "EXT-X-CONTENT-STEERING",
                 )?;
                 let pathway_id = attrs.get("PATHWAY-ID").cloned();
+                let extra_attrs = filter_extra_attrs(&attrs, &["SERVER-URI", "PATHWAY-ID"]);
                 content_steering = Some(ContentSteering {
                     server_uri,
                     pathway_id,
+                    extra_attrs,
                 });
             } else if let Some(rest) = line.strip_prefix("#EXT") {
                 let _ = rest;
@@ -2391,7 +2668,7 @@ impl MasterPlaylist {
             } else if line.starts_with('#') {
                 // RFC 8216 §4.1: a non-"#EXT" '#' line is a comment — ignore.
             } else {
-                let (bandwidth, codecs, resolution) =
+                let (bandwidth, codecs, resolution, extra_attrs) =
                     pending_stream_inf.take().ok_or_else(|| Error::HlsParse {
                         line_no,
                         line: line.to_string(),
@@ -2402,6 +2679,7 @@ impl MasterPlaylist {
                     codecs,
                     resolution,
                     uri: line.to_string(),
+                    extra_attrs,
                 });
             }
         }
@@ -2435,9 +2713,10 @@ impl MasterPlaylist {
     /// [`MediaPlaylist::computed_version`] for the Media-Playlist-only rows
     /// (2–6, 9–10) that do not apply to a Multivariant Playlist.
     pub fn computed_version(&self) -> Option<u8> {
-        // Rows 7/12/13 (SERVICE INSTREAM-ID, REQ- attributes, non-CC
-        // INSTREAM-ID) — all attributes of `EXT-X-MEDIA` or of tags this
-        // crate still does not model, so `extra_tags` remains the substrate.
+        // Rows 7/13 (SERVICE INSTREAM-ID, non-CC INSTREAM-ID) — all
+        // attributes of `EXT-X-MEDIA` or of tags this crate still does not
+        // model, so `extra_tags` remains the substrate. Row 12 on *unmodeled*
+        // tags is handled here; row 12 on modeled tags is checked below.
         let mut v = scan_tag_lines_for_version(&self.extra_tags);
 
         // Row 11: EXT-X-DEFINE with a QUERYPARAM attribute — typed since
@@ -2471,6 +2750,21 @@ impl MasterPlaylist {
         {
             bump_version(&mut v, VERSION_VARIABLE_SUBSTITUTION);
         }
+
+        // Row 12: REQ- attribute on any typed struct — modeled tags that
+        // carry extra_attrs fields since issue #884.
+        if any_typed_req_attr(
+            self.start.as_ref(),
+            &self.defines,
+            &self.session_data,
+            &self.session_keys,
+            self.content_steering.as_ref(),
+            &self.variants,
+            &self.iframe_variants,
+        ) {
+            bump_version(&mut v, VERSION_REQ_ATTRIBUTE);
+        }
+
         v
     }
 
@@ -2671,12 +2965,14 @@ mod tests {
                     codecs: "avc1.64001e,mp4a.40.2".into(),
                     resolution: Some((640, 360)),
                     uri: "v300/index.m3u8".into(),
+                    ..Default::default()
                 },
                 Variant {
                     bandwidth: 800_000,
                     codecs: "avc1.640028,mp4a.40.2".into(),
                     resolution: Some((1280, 720)),
                     uri: "v800/index.m3u8".into(),
+                    ..Default::default()
                 },
             ],
             iframe_variants: vec![],
@@ -2700,6 +2996,7 @@ mod tests {
                 codecs: "avc1.640028".into(),
                 resolution: None,
                 uri: "v1k/index.m3u8".into(),
+                extra_attrs: vec![],
             }],
             iframe_variants: vec![],
             ..Default::default()
@@ -3182,6 +3479,7 @@ mod tests {
             Some(MapTag {
                 uri: "init-1.mp4".into(),
                 byte_range: None,
+                extra_attrs: vec![],
             }),
             "the open segment must inherit the EXT-X-MAP that precedes it, \
              even though no segment has closed yet"
@@ -3209,6 +3507,7 @@ mod tests {
                 .with_map(MapTag {
                     uri: "init-1.mp4".into(),
                     byte_range: None,
+                    extra_attrs: vec![],
                 }),
             ),
             endlist: false,
@@ -3238,6 +3537,7 @@ mod tests {
             preload_hint_byte_range_length: Some(1000),
             can_skip_until: Some(24.0),
             can_block_reload: true,
+            ..Default::default()
         }
     }
 
@@ -3249,6 +3549,7 @@ mod tests {
                 length: 800,
                 offset: Some(0),
             }),
+            extra_attrs: vec![],
         };
         let pl = MediaPlaylist {
             version: 9,
@@ -3266,6 +3567,7 @@ mod tests {
                         independent: true,
                         byte_range: None,
                         gap: false,
+                        ..Default::default()
                     },
                     PartSpec {
                         uri: "part-9.1.m4s".into(),
@@ -3276,6 +3578,7 @@ mod tests {
                             offset: Some(1000),
                         }),
                         gap: false,
+                        ..Default::default()
                     },
                 ],
                 byte_range: None,
@@ -3294,6 +3597,7 @@ mod tests {
                     independent: true,
                     byte_range: None,
                     gap: true,
+                    extra_attrs: vec![],
                 }])
                 .with_map(map.clone()),
             ),
@@ -3305,6 +3609,7 @@ mod tests {
                 uri: "../audio/playlist.m3u8".into(),
                 last_msn: 100,
                 last_part: Some(1),
+                extra_attrs: vec![],
             }],
             skip: None,
             ..Default::default()
@@ -3319,6 +3624,7 @@ mod tests {
         let map = MapTag {
             uri: "init.mp4".into(),
             byte_range: None,
+            extra_attrs: vec![],
         };
         let pl = MediaPlaylist {
             version: 6,
@@ -3393,9 +3699,11 @@ mod tests {
             start: Some(StartPoint {
                 time_offset: 5.5,
                 precise: false,
+                extra_attrs: vec![],
             }),
             defines: vec![Define::Import {
                 name: "base".into(),
+                extra_attrs: vec![],
             }],
             playlist_type: Some(PlaylistType::Vod),
             segments: vec![
@@ -3509,12 +3817,14 @@ s0.m4s\n";
                     codecs: "avc1.64001e,mp4a.40.2".into(),
                     resolution: Some((640, 360)),
                     uri: "v300/index.m3u8".into(),
+                    ..Default::default()
                 },
                 Variant {
                     bandwidth: 800_000,
                     codecs: "avc1.640028,mp4a.40.2".into(),
                     resolution: Some((1280, 720)),
                     uri: "v800/index.m3u8".into(),
+                    ..Default::default()
                 },
             ],
             iframe_variants: vec![IFrameVariant {
@@ -3522,6 +3832,7 @@ s0.m4s\n";
                 codecs: Some("avc1.64001e".into()),
                 resolution: Some((640, 360)),
                 uri: "v300/iframe.m3u8".into(),
+                extra_attrs: vec![],
             }],
             ..Default::default()
         };
@@ -3548,14 +3859,17 @@ s0.m4s\n";
             start: Some(StartPoint {
                 time_offset: -10.5,
                 precise: true,
+                extra_attrs: vec![],
             }),
             defines: vec![
                 Define::Name {
                     name: "base".into(),
                     value: "https://cdn.example.com/video12".into(),
+                    extra_attrs: vec![],
                 },
                 Define::QueryParam {
                     name: "token".into(),
+                    extra_attrs: vec![],
                 },
             ],
             session_data: vec![
@@ -3566,11 +3880,13 @@ s0.m4s\n";
                         format: SessionDataFormat::Json,
                     },
                     language: None,
+                    extra_attrs: vec![],
                 },
                 SessionData {
                     data_id: "com.example.title".into(),
                     content: SessionDataContent::Value("This is an example".into()),
                     language: Some("en".into()),
+                    extra_attrs: vec![],
                 },
             ],
             session_keys: vec![
@@ -3580,6 +3896,7 @@ s0.m4s\n";
                     iv: None,
                     keyformat: Some("identity".into()),
                     keyformatversions: Some("1".into()),
+                    extra_attrs: vec![],
                 },
                 SessionKey {
                     method: EncryptionMethod::SampleAesCtr,
@@ -3590,17 +3907,20 @@ s0.m4s\n";
                     ]),
                     keyformat: None,
                     keyformatversions: None,
+                    extra_attrs: vec![],
                 },
             ],
             content_steering: Some(ContentSteering {
                 server_uri: "/steering?video=00012".into(),
                 pathway_id: Some("CDN-A".into()),
+                extra_attrs: vec![],
             }),
             variants: vec![Variant {
                 bandwidth: 1_280_000,
                 codecs: "avc1.64001e,mp4a.40.2".into(),
                 resolution: Some((640, 360)),
                 uri: "low/index.m3u8".into(),
+                extra_attrs: vec![],
             }],
             iframe_variants: vec![],
             extra_tags: vec![],
@@ -3979,6 +4299,7 @@ v300/index.m3u8\n";
         pl.segments[0].map = Some(MapTag {
             uri: "init.mp4".into(),
             byte_range: None,
+            extra_attrs: vec![],
         });
         let out = pl.to_m3u8();
         assert_eq!(rendered_version(&out), Some(5), "{out}");
@@ -3990,6 +4311,7 @@ v300/index.m3u8\n";
         pl.segments[0].map = Some(MapTag {
             uri: "init.mp4".into(),
             byte_range: None,
+            extra_attrs: vec![],
         });
         let out = pl.to_m3u8();
         assert_eq!(rendered_version(&out), Some(6), "{out}");
@@ -4004,6 +4326,7 @@ v300/index.m3u8\n";
                 codecs: "avc1.64001e".into(),
                 resolution: None,
                 uri: "v300/index.m3u8".into(),
+                extra_attrs: vec![],
             }],
             iframe_variants: vec![],
             extra_tags: vec![],
@@ -4035,6 +4358,7 @@ v300/index.m3u8\n";
                 codecs: "avc1.64001e".into(),
                 resolution: None,
                 uri: "{$base}/index.m3u8".into(),
+                extra_attrs: vec![],
             }],
             iframe_variants: vec![],
             extra_tags: vec![],
@@ -4050,6 +4374,7 @@ v300/index.m3u8\n";
         pl.skip = Some(SkipInfo {
             skipped_segments: 5,
             recently_removed_daterange_ids: vec![],
+            ..Default::default()
         });
         let out = pl.to_m3u8();
         assert_eq!(rendered_version(&out), Some(9), "{out}");
@@ -4061,6 +4386,7 @@ v300/index.m3u8\n";
         pl.skip = Some(SkipInfo {
             skipped_segments: 5,
             recently_removed_daterange_ids: vec!["ad-1".into()],
+            ..Default::default()
         });
         let out = pl.to_m3u8();
         assert_eq!(rendered_version(&out), Some(10), "{out}");
@@ -4083,6 +4409,7 @@ v300/index.m3u8\n";
                 codecs: "avc1.64001e".into(),
                 resolution: None,
                 uri: "v300/index.m3u8".into(),
+                ..Default::default()
             }],
             iframe_variants: vec![],
             extra_tags: vec!["#EXT-X-DEFINE:QUERYPARAM=\"auth\"".into()],
@@ -4109,6 +4436,7 @@ v300/index.m3u8\n";
                 codecs: "avc1.64001e".into(),
                 resolution: None,
                 uri: "v300/index.m3u8".into(),
+                ..Default::default()
             }],
             iframe_variants: vec![],
             extra_tags: vec!["#EXT-X-FUTURE-FEATURE:REQ-CODEC=\"av01\"".into()],
@@ -4127,6 +4455,7 @@ v300/index.m3u8\n";
                 codecs: "avc1.64001e".into(),
                 resolution: None,
                 uri: "v300/index.m3u8".into(),
+                ..Default::default()
             }],
             iframe_variants: vec![],
             extra_tags: vec![
@@ -4147,6 +4476,7 @@ v300/index.m3u8\n";
                 codecs: "avc1.64001e".into(),
                 resolution: None,
                 uri: "v300/index.m3u8".into(),
+                ..Default::default()
             }],
             iframe_variants: vec![],
             extra_tags: vec![],
@@ -4231,6 +4561,7 @@ v300/index.m3u8\n";
         pl.skip = Some(SkipInfo {
             skipped_segments: 3,
             recently_removed_daterange_ids: vec![],
+            ..Default::default()
         });
         let out = pl.to_m3u8();
         assert_eq!(rendered_version(&out), Some(9), "{out}");

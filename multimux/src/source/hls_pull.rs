@@ -629,6 +629,7 @@ mod tests {
         let map = broadcast_hls::MapTag {
             uri: "init.mp4".to_string(),
             byte_range: None,
+            extra_attrs: vec![],
         };
         let mut segments = Vec::new();
         let mut media_segments = Vec::new();

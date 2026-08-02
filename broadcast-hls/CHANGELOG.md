@@ -60,6 +60,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   canonical rather than input-preserving) from "dropped" (no longer true —
   every parsed tag survives). MANIFEST.md's §9.10/§9.11 Findings section
   was similarly corrected.
+- **Unknown attributes on modeled tags are now retained** (issue #884).
+  Every tag struct that carries an attribute list now holds an
+  `extra_attrs: Vec<(String, String)>` for attribute names this crate
+  does not model. These survive parse → serialize and feed the RFC
+  8216bis §8 row 12 `REQ-` version-derivation check, which previously
+  only fired on unmodeled tags in `extra_tags`.
 
 ### Testing
 - `tests/spec_fixture_version.rs` cross-checks the derivation against the

@@ -75,6 +75,22 @@ text:
   appeared in the source text. The ordering divergence is a formatting
   difference, not data loss: every parsed tag (typed or verbatim) survives
   the round trip; it is just re-sequenced on output.
+
+- **Unknown attributes on modeled tags are retained and re-emitted** (issue
+  #884). Every tag struct that carries an attribute list (
+  `ContentSteering`, `Variant`, `IFrameVariant`, `MapTag`, `PartSpec`,
+  `RenditionReport`, `SkipInfo`, `SessionData`, `SessionKey`, `StartPoint`,
+  `Define`, `LowLatencyConfig`) now holds an `extra_attrs:
+  Vec<(String, String)>` for attribute names this crate does not model.
+  These survive parse → serialize and feed the §8 row 12 `REQ-` check.
+  They are always emitted *after* each tag's known attributes, so a tag
+  with unknown attrs will have them appended in sorted-by-name order.
+- **Tag ordering is canonical, not preserved.** `to_m3u8()` always emits
+  tags in a fixed order (e.g. `#EXT-X-INDEPENDENT-SEGMENTS` /
+  `#EXT-X-DEFINE` / `#EXT-X-START` right after `#EXT-X-VERSION`;
+  `#EXT-X-SESSION-KEY` / `#EXT-X-SESSION-DATA` / `#EXT-X-CONTENT-STEERING`
+  before the variant list), regardless of where those tags appeared in the
+  source text.
 - **Line-continuation backslashes are never round-tripped.** Some RFC
   8216bis §9 examples use a trailing `\` to wrap a long attribute list
   across lines for readability in the spec text itself (not literal m3u8
