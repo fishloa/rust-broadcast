@@ -498,6 +498,7 @@ async fn non_ll_full_segment_path_also_decodes() {
             map: Some(MapTag {
                 uri: "init.mp4".to_string(),
                 byte_range: None,
+                extra_attrs: vec![],
             }),
             ..Default::default()
         }],

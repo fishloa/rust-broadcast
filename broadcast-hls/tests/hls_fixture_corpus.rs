@@ -396,7 +396,7 @@ fn handbuilt_fixtures_expose_the_872_tags_as_typed_data() {
     assert!(start.precise, "PRECISE=YES must be typed");
     assert_eq!(mv.defines.len(), 2, "both EXT-X-DEFINEs must be typed");
     assert!(matches!(&mv.defines[0], Define::Name { name, .. } if name == "base"));
-    assert!(matches!(&mv.defines[1], Define::QueryParam { name } if name == "token"));
+    assert!(matches!(&mv.defines[1], Define::QueryParam { name, .. } if name == "token"));
     assert_eq!(mv.session_keys.len(), 2, "both EXT-X-SESSION-KEYs");
     assert!(
         mv.session_keys[1].iv.is_some(),
@@ -419,7 +419,7 @@ fn handbuilt_fixtures_expose_the_872_tags_as_typed_data() {
     let media = MediaPlaylist::parse(&read_fixture("handbuilt/live-vod-gap-bitrate.m3u8"))
         .expect("must parse");
     assert_eq!(media.playlist_type, Some(PlaylistType::Vod));
-    assert!(matches!(&media.defines[..], [Define::Import { name }] if name == "base"));
+    assert!(matches!(&media.defines[..], [Define::Import { name, .. }] if name == "base"));
     assert_eq!(media.segments.len(), 3);
     assert!(!media.segments[0].gap, "seg0 carries no EXT-X-GAP");
     assert!(media.segments[1].gap, "seg1's EXT-X-GAP must be typed");

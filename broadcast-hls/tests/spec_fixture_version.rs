@@ -307,9 +307,11 @@ fn query_param_define_triggers_row_11_when_built_programmatically() {
             codecs: "avc1.64001e".into(),
             resolution: None,
             uri: "v300/index.m3u8".into(),
+            extra_attrs: vec![],
         }],
         defines: vec![Define::QueryParam {
             name: "token".into(),
+            extra_attrs: vec![],
         }],
         ..Default::default()
     };
@@ -328,6 +330,7 @@ fn query_param_define_triggers_row_11_when_built_programmatically() {
         defines: vec![Define::Name {
             name: "base".into(),
             value: "https://cdn.example.com".into(),
+            extra_attrs: vec![],
         }],
         ..Default::default()
     };
@@ -338,16 +341,15 @@ fn query_param_define_triggers_row_11_when_built_programmatically() {
     );
 }
 
-/// Known gap, pinned so it stays visible: §8 row 12 (`REQ-` attribute) is
-/// matched only on tags that reach `extra_tags`. On a tag this crate models
-/// with typed fields, unknown attributes are discarded at parse time, so a
-/// `REQ-` attribute there is invisible to the derivation. Closing this needs
-/// unknown-attribute retention on every modeled tag — an API change beyond
-/// issue #872's scope. If this test starts failing because the gap was
-/// closed, delete it and celebrate.
+/// Fixed by issue #884: §8 row 12 now fires on modeled tags because unknown
+/// attributes are retained in `extra_attrs` fields on every typed struct.
+/// Before #884, `REQ-` attributes on modeled tags were dropped at parse time
+/// and never reached the `computed_version` scan — only `extra_tags` lines
+/// could trigger it. The old test asserted `None` here to pin the gap open;
+/// now it asserts `Some(12)` because the gap is closed.
 #[test]
-fn req_attribute_on_a_modeled_tag_is_a_known_gap() {
-    // On an UNMODELED tag, row 12 fires correctly.
+fn req_attribute_on_a_modeled_tag_now_fires_row_12() {
+    // Row 12 on an UNMODELED tag still fires (must not regress).
     let unmodeled = MasterPlaylist::parse(
         "#EXTM3U\n#EXT-X-FUTURE-FEATURE:REQ-CODEC=\"av01\"\n\
          #EXT-X-STREAM-INF:BANDWIDTH=300000\nv.m3u8\n",
@@ -359,7 +361,8 @@ fn req_attribute_on_a_modeled_tag_is_a_known_gap() {
         "REQ- on an unmodeled tag reaches extra_tags and must trigger row 12"
     );
 
-    // On a MODELED tag it does not, because the attribute is dropped.
+    // Row 12 on a MODELED tag now also fires — the attribute is retained
+    // in ContentSteering::extra_attrs since issue #884.
     let modeled = MasterPlaylist::parse(
         "#EXTM3U\n#EXT-X-CONTENT-STEERING:SERVER-URI=\"/s\",REQ-FOO=\"bar\"\n\
          #EXT-X-STREAM-INF:BANDWIDTH=300000\nv.m3u8\n",
@@ -367,9 +370,8 @@ fn req_attribute_on_a_modeled_tag_is_a_known_gap() {
     .expect("must parse");
     assert_eq!(
         modeled.computed_version(),
-        None,
-        "documented gap: REQ- on a modeled tag is dropped at parse time and \
-         cannot reach the row-12 check. If this now returns Some(12), the \
-         gap was closed — update the docs in `scan_tag_lines_for_version`."
+        Some(12),
+        "issue #884: REQ- on a modeled tag is now retained in extra_attrs \
+         and must trigger row 12"
     );
 }

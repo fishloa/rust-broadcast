@@ -69,12 +69,14 @@ fn iframe_stream_inf_renders_and_opt_in() {
             codecs: "hvc1.1.6.L93.B0,mp4a.40.2".into(),
             resolution: Some((1280, 720)),
             uri: "main.m3u8".into(),
+            extra_attrs: vec![],
         }],
         iframe_variants: vec![IFrameVariant {
             bandwidth: 200_000,
             codecs: Some("hvc1.1.6.L93.B0".into()),
             resolution: Some((320, 240)),
             uri: "iframe.m3u8".into(),
+            extra_attrs: vec![],
         }],
         ..Default::default()
     };
@@ -113,6 +115,7 @@ fn iframe_stream_inf_renders_and_opt_in() {
             codecs: "hvc1.1.6.L93.B0,mp4a.40.2".into(),
             resolution: Some((1280, 720)),
             uri: "main.m3u8".into(),
+            extra_attrs: vec![],
         }],
         iframe_variants: vec![],
         ..Default::default()
@@ -344,6 +347,7 @@ fn ir_trick_track_wired_to_signalling() {
         codecs: None,       // omit codecs; test only checks resolution
         resolution: Some((src_w, src_h)),
         uri: "iframe.m3u8".into(),
+        extra_attrs: vec![],
     };
 
     let master = MasterPlaylist {
@@ -353,6 +357,7 @@ fn ir_trick_track_wired_to_signalling() {
             codecs: "avc1.640028".into(),
             resolution: Some((src_w, src_h)),
             uri: "main.m3u8".into(),
+            extra_attrs: vec![],
         }],
         iframe_variants: vec![iframe_variant],
         ..Default::default()

@@ -344,6 +344,7 @@ async fn non_ll_origin_plays_via_full_segment_fallback_over_http() {
                 map: Some(MapTag {
                     uri: "init.mp4".to_string(),
                     byte_range: None,
+                    extra_attrs: vec![],
                 }),
                 ..Default::default()
             }],
