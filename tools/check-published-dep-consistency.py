@@ -770,6 +770,16 @@ def _check4_publish_order(
         cycle_nodes = [n for n in sorted(all_nodes) if in_degree.get(n, 0) > 0]
         return order, cycle_nodes
 
+    # `in_degree[d]` counts how many crates DEPEND ON `d`, so Kahn's algorithm
+    # above starts from the crates nobody depends on (media-doctor,
+    # multimux-cli, …) and walks DOWN to the foundation. That is the reverse of
+    # a publish order: `cargo publish` requires every dependency to be on the
+    # index already, so `broadcast-common` must go FIRST, not last.
+    #
+    # Reverse it. Emitting this backwards is worse than emitting nothing — a
+    # release engineer following it publishes every dependent before its
+    # dependencies and every single publish fails.
+    order.reverse()
     return order, []
 
 
