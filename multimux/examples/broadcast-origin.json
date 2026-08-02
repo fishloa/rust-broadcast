@@ -1,0 +1,121 @@
+{
+  "bind": "0.0.0.0:8080",
+  "target_duration_secs": 4.0,
+  "part_target_ms": 500,
+  "window_segments": 12,
+  "playlist_name": "index.m3u8",
+  "request_timeout_secs": 30.0,
+  "max_concurrent_requests": 2048,
+  "max_request_body_bytes": 65536,
+  "ingest_connect_timeout_secs": 8.0,
+  "ingest_read_timeout_secs": 15.0,
+  "output_auth": {
+    "scheme": "signed_url",
+    "keys": [
+      {
+        "kid": "2026-08",
+        "secret": "REPLACE-ME-with-at-least-32-bytes-of-random"
+      },
+      {
+        "kid": "2026-07",
+        "secret": "REPLACE-ME-previous-key-kept-for-rotation-32b"
+      }
+    ]
+  },
+  "admin": {
+    "bind": "127.0.0.1:8081",
+    "auth": {
+      "scheme": "bearer",
+      "token": "REPLACE-ME-admin-token"
+    }
+  },
+  "routes": [
+    {
+      "name": "studio-a",
+      "input": {
+        "type": "rtsp",
+        "url": "rtsp://studio-a.internal:554/main"
+      },
+      "outputs": [
+        "llhls",
+        "ll_dash"
+      ]
+    },
+    {
+      "name": "studio-b",
+      "input": {
+        "type": "rtsp",
+        "url": "rtsps://studio-b.internal:322/main"
+      },
+      "outputs": [
+        "llhls",
+        "ll_dash"
+      ]
+    },
+    {
+      "name": "contribution-srt",
+      "input": {
+        "type": "srt",
+        "listen": "0.0.0.0:9000"
+      },
+      "outputs": [
+        "llhls",
+        "dash"
+      ]
+    },
+    {
+      "name": "encoder-rtmp",
+      "input": {
+        "type": "rtmp",
+        "listen": "0.0.0.0:1935",
+        "app": "live"
+      },
+      "outputs": [
+        "llhls"
+      ]
+    },
+    {
+      "name": "satellite-mux",
+      "input": {
+        "type": "ts_udp",
+        "addr": "0.0.0.0:5000",
+        "multicast_group": "239.10.0.5"
+      },
+      "outputs": [
+        "llhls",
+        "dash"
+      ]
+    },
+    {
+      "name": "partner-feed",
+      "input": {
+        "type": "ts_http",
+        "url": "https://partner.example.net/live/stream.ts"
+      },
+      "outputs": [
+        "llhls"
+      ]
+    },
+    {
+      "name": "upstream-hls",
+      "input": {
+        "type": "hls_pull",
+        "url": "https://upstream.example.net/live/index.m3u8"
+      },
+      "outputs": [
+        "llhls",
+        "dash"
+      ]
+    },
+    {
+      "name": "upstream-dash",
+      "input": {
+        "type": "dash_pull",
+        "url": "https://upstream.example.net/live/manifest.mpd"
+      },
+      "outputs": [
+        "llhls"
+      ]
+    }
+  ]
+}
