@@ -250,8 +250,17 @@ fn independent_flag_tracks_sync_first_sample() {
     };
     let m3u8 = pl.to_m3u8();
     // Part 0 has INDEPENDENT=YES; parts 1 and 2 do not.
+    //
+    // The duration is deliberately NOT pinned here: it is an unrounded f64
+    // straight out of the segmenter (11/30 s), and `broadcast-hls` now
+    // renders durations losslessly rather than rounding them to
+    // milliseconds (issue #872 — that rounding silently corrupted real
+    // sub-millisecond durations such as Apple's `#EXTINF:9.9766`). What
+    // this test is about is the INDEPENDENT flag landing on the right
+    // part; the URI-anchored assertion below, the exact count, and the
+    // mid-GOP negative case still pin that exactly.
     assert!(
-        m3u8.contains("#EXT-X-PART:DURATION=0.367,URI=\"seg1.0.m4s\",INDEPENDENT=YES"),
+        m3u8.contains("URI=\"seg1.0.m4s\",INDEPENDENT=YES"),
         "independent part must render INDEPENDENT=YES:\n{m3u8}"
     );
     let indep_count = m3u8.matches("INDEPENDENT=YES").count();

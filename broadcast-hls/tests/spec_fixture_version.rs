@@ -175,3 +175,189 @@ fn abridged_spec_fixtures_do_not_parse_because_the_rfc_elides_them() {
         );
     }
 }
+
+// ---------------------------------------------------------------------------
+// Hand-built fixtures (issue #872) — `fixtures/hls/handbuilt/`.
+//
+// These are NOT spec vectors, so unlike the §9 fixtures above they carry no
+// independent authority: their declared version is *our* claim, derived by
+// hand from the §8 table and written down in `fixtures/hls/MANIFEST.md`'s
+// "EXT-X-VERSION derivation" section. Asserting `computed_version()` against
+// them therefore proves something narrower but still worth having — that the
+// hand-derivation in the manifest and the code's derivation agree. It makes
+// the manifest's prose table executable, so a claim there cannot rot.
+//
+// It is also the integration check between #872 and #880: the tags whose
+// typed representations #872 added (notably `EXT-X-DEFINE`) are the substrate
+// several §8 rows read, so a row left string-matching `extra_tags` after
+// those tags became typed would silently stop firing and show up right here.
+// ---------------------------------------------------------------------------
+
+fn read_handbuilt_fixture(name: &str) -> String {
+    let path = format!(
+        "{}/../fixtures/hls/handbuilt/{}",
+        env!("CARGO_MANIFEST_DIR"),
+        name
+    );
+    fs::read_to_string(&path).unwrap_or_else(|e| panic!("read handbuilt fixture {path}: {e}"))
+}
+
+/// `(fixture, expected computed_version, the MANIFEST's stated reason)` —
+/// values transcribed from `fixtures/hls/MANIFEST.md`'s Tier 1b derivation
+/// table. Keep the two in step; that is the whole point of this test.
+const HANDBUILT_MULTIVARIANT_VERSIONS: &[(&str, Option<u8>, &str)] = &[
+    (
+        "multivariant-header-tags.m3u8",
+        Some(11),
+        "§8 row 11 — EXT-X-DEFINE with a QUERYPARAM attribute",
+    ),
+    (
+        "session-data-multivariant.m3u8",
+        None,
+        "no §8 row triggered — EXT-X-SESSION-DATA carries no version requirement",
+    ),
+];
+
+const HANDBUILT_MEDIA_VERSIONS: &[(&str, Option<u8>, &str)] = &[(
+    "live-vod-gap-bitrate.m3u8",
+    Some(8),
+    "§8 row 8 — variable substitution ({$base} in the segment URIs)",
+)];
+
+#[test]
+fn handbuilt_multivariant_computed_version_matches_the_manifest_derivation() {
+    for (name, expected, why) in HANDBUILT_MULTIVARIANT_VERSIONS {
+        let text = read_handbuilt_fixture(name);
+        let pl = MasterPlaylist::parse(&text)
+            .unwrap_or_else(|e| panic!("handbuilt fixture {name} must parse: {e}"));
+        assert_eq!(
+            pl.computed_version(),
+            *expected,
+            "{name}: computed version disagrees with the derivation recorded \
+             in fixtures/hls/MANIFEST.md ({why}). Either the manifest's \
+             reasoning is wrong or the §8 implementation is.\n{text}"
+        );
+    }
+}
+
+#[test]
+fn handbuilt_media_computed_version_matches_the_manifest_derivation() {
+    for (name, expected, why) in HANDBUILT_MEDIA_VERSIONS {
+        let text = read_handbuilt_fixture(name);
+        let pl = MediaPlaylist::parse(&text)
+            .unwrap_or_else(|e| panic!("handbuilt fixture {name} must parse: {e}"));
+        assert_eq!(
+            pl.computed_version(),
+            *expected,
+            "{name}: computed version disagrees with the derivation recorded \
+             in fixtures/hls/MANIFEST.md ({why}). Either the manifest's \
+             reasoning is wrong or the §8 implementation is.\n{text}"
+        );
+    }
+}
+
+/// Guard the guard, as above: the fixtures' own declared `EXT-X-VERSION`
+/// must equal what we derive, otherwise the fixture is itself mis-declared
+/// and would mislead any human reading it. (The untagged one must stay
+/// untagged — that is its whole point, and inventing a version line for it
+/// is exactly the mistake this fixture exists to *not* make.)
+#[test]
+fn handbuilt_fixtures_declare_the_version_they_derive() {
+    for (name, expected, why) in HANDBUILT_MULTIVARIANT_VERSIONS
+        .iter()
+        .chain(HANDBUILT_MEDIA_VERSIONS.iter())
+    {
+        let text = read_handbuilt_fixture(name);
+        assert_eq!(
+            declared_version(&text),
+            *expected,
+            "{name}: the #EXT-X-VERSION written into the fixture must match \
+             the version §8 requires for its content ({why}) — over-declaring \
+             locks out clients that could have played it, under-declaring \
+             misrepresents the content"
+        );
+    }
+}
+
+/// Row 11 specifically, asserted through the *typed* field rather than the
+/// fixture text, so the #872/#880 integration is pinned independently of any
+/// parse path: a `Define::QueryParam` built programmatically (never having
+/// been text at all) must still trigger row 11. Before #872 wired this row
+/// to `defines`, only a raw `extra_tags` line could reach it — so this test
+/// fails against a row-11 check that still string-matches.
+#[test]
+fn query_param_define_triggers_row_11_when_built_programmatically() {
+    use broadcast_hls::Define;
+
+    let pl = MasterPlaylist {
+        variants: vec![broadcast_hls::Variant {
+            bandwidth: 300_000,
+            codecs: "avc1.64001e".into(),
+            resolution: None,
+            uri: "v300/index.m3u8".into(),
+        }],
+        defines: vec![Define::QueryParam {
+            name: "token".into(),
+        }],
+        ..Default::default()
+    };
+    assert_eq!(
+        pl.computed_version(),
+        Some(11),
+        "a programmatically-built EXT-X-DEFINE:QUERYPARAM must trigger §8 \
+         row 11 — it never passes through extra_tags, so a string-matching \
+         implementation of this row would silently miss it"
+    );
+
+    // The NAME/VALUE form must NOT trigger row 11 (it is row 8 territory,
+    // and only when a substitution is actually used) — otherwise the check
+    // above would pass for the wrong reason.
+    let plain = MasterPlaylist {
+        defines: vec![Define::Name {
+            name: "base".into(),
+            value: "https://cdn.example.com".into(),
+        }],
+        ..Default::default()
+    };
+    assert_eq!(
+        plain.computed_version(),
+        None,
+        "a NAME/VALUE EXT-X-DEFINE with no substitution used triggers no row"
+    );
+}
+
+/// Known gap, pinned so it stays visible: §8 row 12 (`REQ-` attribute) is
+/// matched only on tags that reach `extra_tags`. On a tag this crate models
+/// with typed fields, unknown attributes are discarded at parse time, so a
+/// `REQ-` attribute there is invisible to the derivation. Closing this needs
+/// unknown-attribute retention on every modeled tag — an API change beyond
+/// issue #872's scope. If this test starts failing because the gap was
+/// closed, delete it and celebrate.
+#[test]
+fn req_attribute_on_a_modeled_tag_is_a_known_gap() {
+    // On an UNMODELED tag, row 12 fires correctly.
+    let unmodeled = MasterPlaylist::parse(
+        "#EXTM3U\n#EXT-X-FUTURE-FEATURE:REQ-CODEC=\"av01\"\n\
+         #EXT-X-STREAM-INF:BANDWIDTH=300000\nv.m3u8\n",
+    )
+    .expect("must parse");
+    assert_eq!(
+        unmodeled.computed_version(),
+        Some(12),
+        "REQ- on an unmodeled tag reaches extra_tags and must trigger row 12"
+    );
+
+    // On a MODELED tag it does not, because the attribute is dropped.
+    let modeled = MasterPlaylist::parse(
+        "#EXTM3U\n#EXT-X-CONTENT-STEERING:SERVER-URI=\"/s\",REQ-FOO=\"bar\"\n\
+         #EXT-X-STREAM-INF:BANDWIDTH=300000\nv.m3u8\n",
+    )
+    .expect("must parse");
+    assert_eq!(
+        modeled.computed_version(),
+        None,
+        "documented gap: REQ- on a modeled tag is dropped at parse time and \
+         cannot reach the row-12 check. If this now returns Some(12), the \
+         gap was closed — update the docs in `scan_tag_lines_for_version`."
+    );
+}

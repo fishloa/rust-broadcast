@@ -150,6 +150,83 @@ implement missing tags, and not delete the fixture.
 
 ---
 
+## Tier 1b — hand-built fixtures (`fixtures/hls/handbuilt/`)
+
+Added by issue **#872** (the nine remaining RFC 8216bis §4.4 tags).
+**Authored in-repo — NOT spec vectors, NOT captured from any real stream.**
+They live in their own `handbuilt/` directory, and are named so they cannot
+be mistaken for a §9 example, precisely because a fixture that *looks* like
+a spec vector gets treated as ground truth by every later reader and test.
+
+Why they exist: six of the nine tags #872 implemented
+(`EXT-X-GAP`, `EXT-X-BITRATE`, `EXT-X-PLAYLIST-TYPE`, `EXT-X-START`,
+`EXT-X-DEFINE`, `EXT-X-SESSION-KEY`) appear in **no** §9 example at all, and
+the seventh (`EXT-X-SESSION-DATA`) appears only in §9.8 — an explicit
+fragment with no `#EXTM3U` line, excluded from Tier 1 above. Without these,
+those tags would have no fixture-level coverage. Content is derived from
+each tag's confirmed attribute grammar in
+`broadcast-hls/docs/playlist-tags.md` (the §4.4 transcription), not invented
+freehand.
+
+Extraction/authoring date: 2026-08-02.
+Licence: project licence (MIT OR Apache-2.0), same as all in-repo source.
+
+| File | Kind | Tags exercised | Parses? |
+|---|---|---|---|
+| `multivariant-header-tags.m3u8` | Master | `EXT-X-INDEPENDENT-SEGMENTS`, `EXT-X-START` (negative `TIME-OFFSET` + `PRECISE=YES`), `EXT-X-DEFINE` (`NAME`/`VALUE` and `QUERYPARAM` forms), `EXT-X-SESSION-KEY` (`AES-128` with `KEYFORMAT`/`KEYFORMATVERSIONS`, and `SAMPLE-AES-CTR` with a 128-bit `IV`) | ✅ |
+| `session-data-multivariant.m3u8` | Master | `EXT-X-SESSION-DATA` — the `URI` form, plus two `VALUE`+`LANGUAGE` entries sharing one `DATA-ID` (the en/es pair) | ✅ |
+| `live-vod-gap-bitrate.m3u8` | Media | `EXT-X-PLAYLIST-TYPE:VOD`, `EXT-X-GAP`, `EXT-X-BITRATE` (carry-forward across a segment, then a change), `EXT-X-START` (positive offset, `PRECISE` absent), `EXT-X-DEFINE:IMPORT` + `{$base}` variable substitution, `EXT-X-INDEPENDENT-SEGMENTS` | ✅ |
+
+### Relationship to §9.8 (`session-data-multivariant.m3u8`)
+
+The three `EXT-X-SESSION-DATA` lines are taken from **§9.8's fragment**, with
+its editorial backslash line-continuations joined (same treatment as the
+Tier 1 joined forms). It is **not verbatim §9.8** and must not be cited as
+such: §9.8 is only those three tag lines — the spec's own prose says "In
+this example, only the EXT-X-SESSION-DATA is shown" — so to make a *parseable
+playlist* this fixture adds an `#EXTM3U` header and one
+`EXT-X-STREAM-INF` + URI pair that appear nowhere in §9.8. That addition is
+the entire reason it lives here in `handbuilt/` rather than in `spec/`, and
+the reason §9.8 itself stays excluded from Tier 1.
+
+### `EXT-X-VERSION` derivation (§8)
+
+Version numbers here are **derived from the §8 table** in
+`broadcast-hls/docs/version-compatibility.md`, not guessed. That doc's own
+note explains why guessing high is harmful and not merely untidy: a client
+that doesn't support a falsely-declared version is required by §8 to refuse
+playback entirely.
+
+**This table is executable, not prose.**
+`broadcast-hls/tests/spec_fixture_version.rs` asserts `computed_version()`
+(issue #880's §8 implementation) equals the value claimed below for each
+fixture, *and* that each fixture's own declared `#EXT-X-VERSION` line
+matches it — so a claim here cannot rot, and a fixture cannot drift from its
+stated derivation. It doubles as the integration check between #872 and
+#880: several §8 rows read tags that #872 gave typed representations, and a
+row still string-matching `extra_tags` after that change would silently stop
+firing and fail here.
+
+| File | Declared | Why |
+|---|---|---|
+| `multivariant-header-tags.m3u8` | `11` | §8 row 11 — "contains an `EXT-X-DEFINE` tag with a `QUERYPARAM` attribute". This is the highest trigger present; the `NAME`/`VALUE` `EXT-X-DEFINE` alone would be row 8, and the `IV`/`KEYFORMAT` attributes rows 2/5. |
+| `session-data-multivariant.m3u8` | *(none)* | **No §8 row is triggered.** `EXT-X-SESSION-DATA` has no version requirement, so no `EXT-X-VERSION` tag is emitted at all — matching §9.4, the spec's own multivariant example, which likewise carries none. (Version 7 would be wrong here: that row is triggered by `SERVICE` values for `INSTREAM-ID`, which this fixture does not contain.) |
+| `live-vod-gap-bitrate.m3u8` | `8` | §8 row 8 — "contains variable substitution". The fixture both declares (`EXT-X-DEFINE:IMPORT="base"`) *and* substitutes (`{$base}/seg0.ts`), so the trigger is unambiguous. Floating-point `EXTINF` (row 3) is also present but lower. `EXT-X-GAP`/`EXT-X-BITRATE`/`EXT-X-PLAYLIST-TYPE`/`EXT-X-START` trigger no row. |
+
+### Known semantic caveat
+
+`live-vod-gap-bitrate.m3u8` uses `EXT-X-DEFINE:IMPORT`, which per §4.4.2.3
+is only legal in a Media Playlist **loaded from** a Multivariant Playlist
+(and a parser "MUST fail" if it wasn't). As a standalone committed file it
+has no parent, so that cross-file precondition is deliberately unsatisfied —
+`broadcast-hls` documents that it does not enforce cross-file
+MUST-constraints (see the crate's README, "Round-trip fidelity"), which is
+exactly what makes this fixture parseable. It is testing the tag's *syntax*,
+not its resolution semantics. `IMPORT` is nonetheless the only form that
+belongs in a Media Playlist, so there is nowhere else to cover it.
+
+---
+
 ## Tier 2 — real streams (`fixtures/hls/real/`)
 
 Source: Apple's public HLS example streams, linked from
@@ -201,6 +278,31 @@ All six real-stream files above parse cleanly (`MasterPlaylist::parse` /
 
 No fetch failures to record for this run — every URL above resolved on the
 first attempt; nothing was substituted or fabricated.
+
+### Finding: these fixtures caught a real precision bug (issue #872)
+
+When issue #872 added the round-trip assertion (`parse -> to_m3u8() ->
+parse` must yield an equal document) to `hls_fixture_corpus.rs`,
+`real/bipbop-ts/gear1-video.m3u8` **failed** — and it was the only tier that
+did. Root cause: `to_m3u8()` rendered `#EXTINF` with a hardcoded `{:.3}`
+and every other seconds value via integer-millisecond math, so any duration
+finer than 1 ms was silently rounded on output. This playlist's real
+durations are `9.9766`/`9.9433`, which came back as `9.977`/`9.943` — a
+corrupted timeline on every repackage.
+
+Fixed in `broadcast-hls` by rendering losslessly (keeping the compact
+historical form whenever it re-parses bit-exactly, else the shortest
+exactly-round-tripping decimal); regression-pinned by
+`sub_millisecond_durations_survive_rendering` and
+`round_trip_rfc_9_11_sub_millisecond_part_durations` in `src/lib.rs`.
+
+Worth recording as the concrete payoff of Tier 2: **no hand-made fixture in
+this repo could have caught it**, because every one of them was authored
+with 3-decimal durations — the exact precision the buggy renderer happened
+to preserve. The same class of bug also affected `EXT-X-PART:DURATION`
+(RFC 8216bis §9.11's real values are `2.00004`/`4.00008`, which rendered as
+`2`/`4`), which the spec tier could not catch either since §9.11 is one of
+the two unparsable elision fixtures.
 
 ---
 

@@ -1,0 +1,6 @@
+#EXTM3U
+#EXT-X-SESSION-DATA:DATA-ID="com.example.lyrics",URI="lyrics.json"
+#EXT-X-SESSION-DATA:DATA-ID="com.example.title",LANGUAGE="en",VALUE="This is an example"
+#EXT-X-SESSION-DATA:DATA-ID="com.example.title",LANGUAGE="es",VALUE="Este es un ejemplo"
+#EXT-X-STREAM-INF:BANDWIDTH=1280000
+low.m3u8

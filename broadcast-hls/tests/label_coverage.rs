@@ -12,7 +12,11 @@ use std::collections::BTreeSet;
 use std::fs;
 use std::path::Path;
 
-const SKIP: &[&str] = &["Error"];
+// `Define`/`SessionDataContent` are data-carrying ADTs (each variant holds
+// caller-supplied `String`s, not a fixed spec token to label), not
+// spec/field label enums — the documented SKIP category for such types
+// (issue #872).
+const SKIP: &[&str] = &["Error", "Define", "SessionDataContent"];
 
 fn read_rs(dir: &Path, out: &mut Vec<String>) {
     for entry in fs::read_dir(dir).expect("read src dir") {

@@ -31,13 +31,45 @@
 //!
 //! Every other spec fixture — including ones exercising tags this crate
 //! doesn't structurally model (`EXT-X-MEDIA`, `EXT-X-KEY`,
-//! `EXT-X-CONTENT-STEERING`, `EXT-X-DATERANGE`/SCTE-35) — parses without
-//! error: unrecognized tags are preserved verbatim into
-//! [`broadcast_hls::MediaPlaylist::extra_tags`] (or silently skipped by
-//! [`broadcast_hls::MasterPlaylist`], which has no such escape hatch) rather
-//! than rejected. So this run surfaces **no** missing-tag parse failures for
-//! issue #872 to pick up — the two failures above are a structural property
-//! of the spec excerpts, not an implementation gap.
+//! `EXT-X-DATERANGE`/SCTE-35) — parses without error: unrecognized tags are
+//! preserved verbatim into [`broadcast_hls::MediaPlaylist::extra_tags`] (or
+//! silently skipped by [`broadcast_hls::MasterPlaylist`], which has no such
+//! escape hatch) rather than rejected. So this run surfaces **no**
+//! missing-tag parse failures for issue #872 to pick up — the two failures
+//! above are a structural property of the spec excerpts, not an
+//! implementation gap.
+//!
+//! # Round-trip invariant (issue #872)
+//!
+//! Every fixture that parses is additionally asserted to **round-trip**:
+//! `parse -> to_m3u8() -> parse` must yield an equal document. Per
+//! `docs/CRATE-ACCEPTANCE.md` §1 a text format is *not* required to be
+//! byte-identical across that cycle, so the assertion is on the parsed
+//! document, not the bytes; every way the rendered text may legitimately
+//! differ from the input (unmodeled `EXT-X-MEDIA` dropped from a
+//! Multivariant Playlist, canonical tag ordering, an always-emitted
+//! `EXT-X-VERSION`, …) is enumerated in `broadcast-hls/README.md` under
+//! "Round-trip fidelity".
+//!
+//! Note this makes the real-stream tier (`fixtures/hls/real/`) do double
+//! duty: those six Apple playlists carry `EXT-X-MEDIA` groups, byte-ranges
+//! and `EXT-X-MAP` init segments that no hand-made fixture exercises, so
+//! they are where a carry-forward/dedup regression in `map`/`bitrate`
+//! rendering would actually surface.
+//!
+//! # Tier 1b — hand-built fixtures (`fixtures/hls/handbuilt/`, issue #872)
+//!
+//! Nine of RFC 8216bis §4.4's 32 tags landed in #872, and the spec's own §9
+//! examples do not cover all of them with a complete, parseable playlist
+//! (`EXT-X-GAP`, `EXT-X-BITRATE`, `EXT-X-PLAYLIST-TYPE`, `EXT-X-START`,
+//! `EXT-X-DEFINE` and `EXT-X-SESSION-KEY` appear in no §9 example at all;
+//! `EXT-X-SESSION-DATA` appears only in §9.8, which is an explicit
+//! *fragment* with no `#EXTM3U` line and is therefore excluded from the
+//! spec tier — see MANIFEST.md). The `handbuilt/` fixtures fill exactly
+//! that gap. They are **not** spec vectors and are deliberately pathed and
+//! named so nobody mistakes them for one; their `EXT-X-VERSION` lines are
+//! derived from the §8 table in `broadcast-hls/docs/version-compatibility.md`
+//! rather than invented (see MANIFEST.md for each derivation).
 
 use std::fs;
 use std::path::PathBuf;
@@ -84,13 +116,44 @@ fn assert_case(case: &Case) {
     let text = read_fixture(case.path);
     match (case.kind, &case.expect) {
         (Kind::Media, Expect::Ok) => {
-            MediaPlaylist::parse(&text)
+            let parsed = MediaPlaylist::parse(&text)
                 .unwrap_or_else(|e| panic!("{} should parse as a Media Playlist: {e}", case.path));
+            // Round-trip (issue #872): parse -> serialize -> re-parse must
+            // yield an equal document. Not byte-identity — see the module
+            // doc's "Round-trip invariant" section.
+            let rendered = parsed.to_m3u8();
+            let reparsed = MediaPlaylist::parse(&rendered).unwrap_or_else(|e| {
+                panic!(
+                    "{}: re-parsing this crate's own rendered output must succeed: {e}\n\
+                     rendered:\n{rendered}",
+                    case.path
+                )
+            });
+            assert_eq!(
+                reparsed, parsed,
+                "{}: parse -> serialize -> re-parse must yield an equal document\n\
+                 rendered:\n{rendered}",
+                case.path
+            );
         }
         (Kind::Master, Expect::Ok) => {
-            MasterPlaylist::parse(&text).unwrap_or_else(|e| {
+            let parsed = MasterPlaylist::parse(&text).unwrap_or_else(|e| {
                 panic!("{} should parse as a Multivariant Playlist: {e}", case.path)
             });
+            let rendered = parsed.to_m3u8();
+            let reparsed = MasterPlaylist::parse(&rendered).unwrap_or_else(|e| {
+                panic!(
+                    "{}: re-parsing this crate's own rendered output must succeed: {e}\n\
+                     rendered:\n{rendered}",
+                    case.path
+                )
+            });
+            assert_eq!(
+                reparsed, parsed,
+                "{}: parse -> serialize -> re-parse must yield an equal document\n\
+                 rendered:\n{rendered}",
+                case.path
+            );
         }
         (Kind::Media, Expect::Err(reason_substr)) => {
             let err = MediaPlaylist::parse(&text).expect_err(&format!(
@@ -225,6 +288,128 @@ fn spec_dir_has_no_untested_m3u8_fixtures() {
         on_disk, expected,
         "fixtures/hls/spec/*.m3u8 on disk must exactly match SPEC_CASES in this test"
     );
+}
+
+// ---------------------------------------------------------------------------
+// Tier 1b — hand-built fixtures for the #872 tags (fixtures/hls/handbuilt/).
+//
+// NOT spec vectors. Each is authored in-repo from the confirmed attribute
+// grammar in `broadcast-hls/docs/playlist-tags.md`, covering tags no §9
+// example exercises as a complete playlist. Provenance + per-file
+// EXT-X-VERSION derivation in MANIFEST.md.
+// ---------------------------------------------------------------------------
+
+const HANDBUILT_CASES: &[Case] = &[
+    // INDEPENDENT-SEGMENTS + START(PRECISE) + DEFINE(NAME/VALUE, QUERYPARAM)
+    // + SESSION-KEY (two METHODs, one with an IV).
+    Case {
+        path: "handbuilt/multivariant-header-tags.m3u8",
+        kind: Kind::Master,
+        expect: Expect::Ok,
+    },
+    // SESSION-DATA in all three shapes (URI form, and VALUE+LANGUAGE twice
+    // sharing a DATA-ID) — derived from the §9.8 fragment, made into a real
+    // playlist. See MANIFEST.md.
+    Case {
+        path: "handbuilt/session-data-multivariant.m3u8",
+        kind: Kind::Master,
+        expect: Expect::Ok,
+    },
+    // PLAYLIST-TYPE + GAP + BITRATE (carry-forward and change) + START
+    // (positive offset, no PRECISE) + DEFINE(IMPORT) + variable substitution.
+    Case {
+        path: "handbuilt/live-vod-gap-bitrate.m3u8",
+        kind: Kind::Media,
+        expect: Expect::Ok,
+    },
+];
+
+#[test]
+fn handbuilt_fixtures_parse_as_expected() {
+    for case in HANDBUILT_CASES {
+        assert_case(case);
+    }
+}
+
+/// Same directory-completeness guard as the spec tier: a `handbuilt/`
+/// fixture added later without a matching case fails loudly rather than
+/// sitting unparsed forever.
+#[test]
+fn handbuilt_dir_has_no_untested_m3u8_fixtures() {
+    let dir = fixtures_hls_root().join("handbuilt");
+    let mut on_disk: Vec<String> = fs::read_dir(&dir)
+        .unwrap_or_else(|e| panic!("failed to read {}: {e}", dir.display()))
+        .map(|entry| {
+            entry
+                .expect("dir entry")
+                .file_name()
+                .to_string_lossy()
+                .into_owned()
+        })
+        .filter(|name| name.ends_with(".m3u8"))
+        .collect();
+    on_disk.sort();
+
+    let mut expected: Vec<String> = HANDBUILT_CASES
+        .iter()
+        .map(|c| c.path.trim_start_matches("handbuilt/").to_string())
+        .collect();
+    expected.sort();
+
+    assert_eq!(
+        on_disk, expected,
+        "fixtures/hls/handbuilt/*.m3u8 on disk must exactly match HANDBUILT_CASES in this test"
+    );
+}
+
+/// The #872 tags must actually be reachable as *typed* data from these
+/// fixtures — not merely swept into `extra_tags` (which would let a
+/// parse-only regression pass the round-trip assertions above, since a
+/// verbatim-preserved tag round-trips just as cleanly as a modeled one).
+#[test]
+fn handbuilt_fixtures_expose_the_872_tags_as_typed_data() {
+    use broadcast_hls::{Define, PlaylistType, SessionDataContent};
+
+    let mv = MasterPlaylist::parse(&read_fixture("handbuilt/multivariant-header-tags.m3u8"))
+        .expect("must parse");
+    assert!(mv.independent_segments, "EXT-X-INDEPENDENT-SEGMENTS");
+    let start = mv.start.expect("EXT-X-START must be typed");
+    assert_eq!(start.time_offset, -10.5);
+    assert!(start.precise, "PRECISE=YES must be typed");
+    assert_eq!(mv.defines.len(), 2, "both EXT-X-DEFINEs must be typed");
+    assert!(matches!(&mv.defines[0], Define::Name { name, .. } if name == "base"));
+    assert!(matches!(&mv.defines[1], Define::QueryParam { name } if name == "token"));
+    assert_eq!(mv.session_keys.len(), 2, "both EXT-X-SESSION-KEYs");
+    assert!(
+        mv.session_keys[1].iv.is_some(),
+        "the SAMPLE-AES-CTR key's IV must decode to 16 bytes, not stay a string"
+    );
+
+    let sd = MasterPlaylist::parse(&read_fixture("handbuilt/session-data-multivariant.m3u8"))
+        .expect("must parse");
+    assert_eq!(sd.session_data.len(), 3, "all three EXT-X-SESSION-DATA");
+    assert!(matches!(
+        &sd.session_data[0].content,
+        SessionDataContent::Uri { .. }
+    ));
+    assert!(matches!(
+        &sd.session_data[1].content,
+        SessionDataContent::Value(v) if v == "This is an example"
+    ));
+    assert_eq!(sd.session_data[2].language.as_deref(), Some("es"));
+
+    let media = MediaPlaylist::parse(&read_fixture("handbuilt/live-vod-gap-bitrate.m3u8"))
+        .expect("must parse");
+    assert_eq!(media.playlist_type, Some(PlaylistType::Vod));
+    assert!(matches!(&media.defines[..], [Define::Import { name }] if name == "base"));
+    assert_eq!(media.segments.len(), 3);
+    assert!(!media.segments[0].gap, "seg0 carries no EXT-X-GAP");
+    assert!(media.segments[1].gap, "seg1's EXT-X-GAP must be typed");
+    assert!(!media.segments[2].gap, "GAP must not leak past its segment");
+    // EXT-X-BITRATE carries forward onto seg1, then changes at seg2.
+    assert_eq!(media.segments[0].bitrate, Some(2000));
+    assert_eq!(media.segments[1].bitrate, Some(2000), "carry-forward");
+    assert_eq!(media.segments[2].bitrate, Some(1800));
 }
 
 // ---------------------------------------------------------------------------

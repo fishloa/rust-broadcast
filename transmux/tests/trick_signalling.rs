@@ -76,7 +76,7 @@ fn iframe_stream_inf_renders_and_opt_in() {
             resolution: Some((320, 240)),
             uri: "iframe.m3u8".into(),
         }],
-        extra_tags: vec![],
+        ..Default::default()
     };
     let out = pl.to_m3u8();
 
@@ -115,7 +115,7 @@ fn iframe_stream_inf_renders_and_opt_in() {
             uri: "main.m3u8".into(),
         }],
         iframe_variants: vec![],
-        extra_tags: vec![],
+        ..Default::default()
     };
     let plain_out = plain.to_m3u8();
     assert!(
@@ -355,7 +355,7 @@ fn ir_trick_track_wired_to_signalling() {
             uri: "main.m3u8".into(),
         }],
         iframe_variants: vec![iframe_variant],
-        extra_tags: vec![],
+        ..Default::default()
     };
     let m3u8 = master.to_m3u8();
 

@@ -124,6 +124,7 @@ impl PlaylistBuilder<'_> {
                 } else {
                     None
                 },
+                ..Default::default()
             })
             .collect();
         // EXT-X-MAP carries forward: stamp every segment after the first with
@@ -162,6 +163,7 @@ impl PlaylistBuilder<'_> {
             iframes_only: false,
             rendition_reports: vec![],
             skip: None,
+            ..Default::default()
         }
     }
 }
@@ -519,6 +521,7 @@ fn can_block_reload_no_yields_non_blocking_reload_with_backoff() {
                 uri: INIT_URL.to_string(),
                 byte_range: None,
             }),
+            ..Default::default()
         }],
         open_segment: None,
         endlist: false,
@@ -532,6 +535,7 @@ fn can_block_reload_no_yields_non_blocking_reload_with_backoff() {
         iframes_only: false,
         rendition_reports: vec![],
         skip: None,
+        ..Default::default()
     };
 
     let mut client = HlsClient::new(PLAYLIST_URL);
@@ -603,6 +607,7 @@ fn non_ll_playlist_plays_via_full_segment_fallback() {
                 uri: INIT_URL.to_string(),
                 byte_range: None,
             }),
+            ..Default::default()
         }],
         open_segment: None,
         endlist: true,
@@ -611,6 +616,7 @@ fn non_ll_playlist_plays_via_full_segment_fallback() {
         iframes_only: false,
         rendition_reports: vec![],
         skip: None,
+        ..Default::default()
     };
 
     let mut client = HlsClient::new(PLAYLIST_URL);
