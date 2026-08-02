@@ -403,7 +403,13 @@ class TestCheck4PublishOrder:
     """Pure-function tests for _check4_publish_order()."""
 
     def test_simple_acyclic(self) -> None:
-        """Known-acyclic graph: A→B→C sorts correctly."""
+        """`a` depends on `b` depends on `c`, so `c` PUBLISHES FIRST.
+
+        This previously asserted `["a", "b", "c"]` — dependent before
+        dependency — which pinned a real bug: the emitted "publish order" was
+        reversed, putting `broadcast-common` last of 42 when it depends on
+        nothing and must go first. See TestPublishOrderDirection.
+        """
         normal_dep_map = {
             "a": {"b"},
             "b": {"c"},
@@ -411,7 +417,7 @@ class TestCheck4PublishOrder:
         }
         order, cycles = dut._check4_publish_order(normal_dep_map)
         assert cycles == []
-        assert order == ["a", "b", "c"]
+        assert order == ["c", "b", "a"]
 
     def test_injected_cycle_detected(self) -> None:
         """A→B→A cycle is reported, not silently dropped."""
@@ -802,3 +808,42 @@ class TestCheck1HonoursFloors:
         """The fix for #858. If this regresses, the release tag is blocked
         forever on a violation that has actually been resolved."""
         assert self._run("0.3.1", ["0.3.0", "0.3.1"], monkeypatch) == []
+
+
+class TestPublishOrderDirection:
+    """The publish order must list dependencies BEFORE their dependents.
+
+    This was emitted reversed: `in_degree[d]` counts how many crates depend on
+    `d`, so Kahn's algorithm naturally yields consumers first and
+    `broadcast-common` — which depends on nothing and must publish first —
+    came out LAST of 42. A release engineer following that order publishes
+    every dependent before its dependencies and every `cargo publish` fails.
+
+    A gate emitting backwards instructions is worse than one emitting none,
+    so the direction gets its own test.
+    """
+
+    def test_dependency_precedes_dependent(self) -> None:
+        # foundation <- mid <- top
+        order, cycles = dut._check4_publish_order({
+            "top": {"mid", "foundation"},
+            "mid": {"foundation"},
+            "foundation": set(),
+        })
+        assert cycles == []
+        assert order.index("foundation") < order.index("mid")
+        assert order.index("mid") < order.index("top")
+
+    def test_foundation_is_first_not_last(self) -> None:
+        """The specific shape that was wrong: one crate everything depends on."""
+        order, _ = dut._check4_publish_order({
+            "a": {"foundation"},
+            "b": {"foundation"},
+            "c": {"foundation"},
+            "foundation": set(),
+        })
+        assert order[0] == "foundation", f"foundation must publish first, got {order}"
+
+    def test_cycle_still_reported(self) -> None:
+        _, cycles = dut._check4_publish_order({"x": {"y"}, "y": {"x"}})
+        assert set(cycles) == {"x", "y"}
