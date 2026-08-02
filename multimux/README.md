@@ -123,6 +123,68 @@ such stripping and trusts every inbound header completely — if the origin
 is *also* reachable directly, any client can set these headers itself and
 bypass authentication entirely.
 
+## Runtime admin API
+
+Add/remove/list routes and reload the config file **without restarting the
+origin** — restarting drops every live viewer on every route, not just the
+one being changed. Opt-in: omit `admin` from the config (the default) and no
+admin listener is ever bound, no admin route ever exists.
+
+```json
+{
+  "bind": "0.0.0.0:8080",
+  "admin": {
+    "bind": "127.0.0.1:9090",
+    "auth": { "scheme": "bearer", "token": "admin-secret" }
+  },
+  "routes": [ /* ... */ ]
+}
+```
+
+### Security posture — read this before enabling it
+
+- **Separate listener, always.** `admin.bind` **must differ** from `bind`
+  (enforced by `Config::validate` — a config with the two equal is rejected
+  at load time). The admin API is never reachable on the public media port.
+  Bind it to `127.0.0.1` or a private management network, never `0.0.0.0`
+  on a box with a public media port, unless a firewall in front of it
+  already restricts access.
+- **Auth is mandatory, not optional.** `admin.auth` is a plain
+  `OutputAuthSpec` (same schemes as `output_auth` — Basic/Digest/Bearer/
+  Forwarded/Custom), **not** `Option<OutputAuthSpec>`: a config that sets
+  `admin.bind` without `admin.auth` fails to parse before the process ever
+  binds a socket. There is no way to run an unauthenticated admin listener.
+  Use a *different* credential from `output_auth` — the admin API can add
+  and remove routes; media playback can only read them.
+
+### Endpoints
+
+| Method | Path | |
+| --- | --- | --- |
+| `GET` | `/admin/routes` | List every route + live status (`name`, input kind, outputs, health, `created_at`). |
+| `GET` | `/admin/routes/{name}` | One route's status, or `404`. |
+| `POST` | `/admin/routes` | Add a route. Body: the same `Route` JSON shape a config file's `routes[]` entries use. `409 Conflict` if `name` already exists (the existing route is left untouched); `400` if the body is malformed or fails validation (the route list is left exactly as it was). |
+| `DELETE` | `/admin/routes/{name}` | Remove a route. `404` if unknown. New requests for `{name}` 404 immediately; any request already being served from it (an open LL-HLS long-poll, e.g.) completes normally against whatever had already landed — a graceful drain, not a dropped connection. Every *other* route keeps serving uninterrupted. |
+| `POST` | `/admin/reload` | Re-read the config file this process was started with (`--config <FILE>` / `serve_config_file`) and converge: routes added, removed, and changed are applied; **a route whose config is byte-for-byte unchanged is never restarted.** Returns a summary: `{ "added": [...], "removed": [...], "changed": [...], "unchanged": [...] }`. |
+
+Every mutation is validated *before* it is applied — a malformed or
+unbuildable route never leaves the origin half-converged.
+
+```bash
+curl -u admin:hunter2 http://127.0.0.1:9090/admin/routes
+curl -X POST -H 'Content-Type: application/json' \
+  -d '{"name":"cam41","input":{"type":"rtsp","url":"rtsp://cam41.local/stream"}}' \
+  http://127.0.0.1:9090/admin/routes
+curl -X DELETE http://127.0.0.1:9090/admin/routes/cam41
+curl -X POST http://127.0.0.1:9090/admin/reload
+```
+
+`POST /admin/reload` only works when the process knows its own config file
+path (`multimux --config routes.json`, or `origin::serve_config_file`); an
+origin started from an in-memory `Config` (`origin::serve`/
+`serve_with_registry`, no file) rejects reload with a clear error — add/
+remove/list still work normally.
+
 ## Config shape
 
 ```json
@@ -138,6 +200,7 @@ bypass authentication entirely.
   "ingest_read_timeout_secs": 30.0,
   "playlist_name": "media.m3u8",
   "output_auth": null,
+  "admin": null,
   "routes": [
     {
       "name": "cam1",

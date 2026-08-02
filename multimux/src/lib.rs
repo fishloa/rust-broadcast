@@ -48,6 +48,11 @@ pub use error::{MultimuxError, Result};
 /// on `broadcast-auth`.
 pub use broadcast_auth;
 pub use origin::serve;
+/// See [`origin::serve_config_file`] (issue #749: needed so
+/// `POST /admin/reload` has a config file path to re-read).
+pub use origin::serve_config_file;
+/// See [`origin::serve_config_file_with_registry`].
+pub use origin::serve_config_file_with_registry;
 pub use origin::serve_with_registry;
 /// [`supervisor::supervise_driver`](origin::supervisor::supervise_driver) is
 /// the one supported way to drive a [`registry::InputFactory`]'s ingest task

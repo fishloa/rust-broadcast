@@ -40,10 +40,12 @@
 //! authenticates its own upstream feed. `output_auth: None` (the default)
 //! leaves every output route open, unchanged from pre-#663 behaviour.
 
+pub mod admin;
 pub(crate) mod resource;
 pub mod supervisor;
 
 use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -566,13 +568,71 @@ fn build_output(
     }
 }
 
+/// Resolves `spec` into a real [`Verifier`] — `Custom` via `registry`'s
+/// `auth` factory ([`crate::registry::SchemeRegistry::auth`]), every
+/// built-in scheme via [`crate::config::OutputAuthSpec::build_verifier`].
+/// Shared by the shared-output-auth verifier ([`serve_with_registry`]) and
+/// the mandatory admin-auth verifier ([`admin::serve_with_admin`], issue
+/// #749) — one resolution path, so the two can never drift.
+fn resolve_verifier(
+    spec: &crate::config::OutputAuthSpec,
+    realm: &str,
+    registry: &SchemeRegistry,
+) -> crate::Result<broadcast_auth::Verifier> {
+    match spec {
+        crate::config::OutputAuthSpec::Custom { type_tag, params } => {
+            let factory =
+                registry
+                    .auth(type_tag)
+                    .ok_or_else(|| crate::MultimuxError::UnknownScheme {
+                        kind: "auth",
+                        tag: type_tag.clone(),
+                    })?;
+            factory(&AuthCtx {
+                params: params.clone(),
+                realm,
+            })
+        }
+        builtin => Ok(builtin.build_verifier(realm)),
+    }
+}
+
 /// Run the multimux origin with an empty [`SchemeRegistry`] — equivalent to
 /// `serve_with_registry(config, SchemeRegistry::new())`. A config whose
 /// route/output-auth uses a `Custom` scheme always fails with
 /// [`crate::MultimuxError::UnknownScheme`] under plain `serve`; use
 /// [`serve_with_registry`] with a populated registry to resolve one.
+///
+/// No [`crate::config::Config::admin`] reload support: `POST /admin/reload`
+/// needs a config file path to re-read, which a bare in-memory [`crate::config::Config`]
+/// doesn't have — use [`serve_config_file`] (or [`serve_config_file_with_registry`])
+/// when the config is (or may be) loaded from a file and the admin API is
+/// configured. A `serve`/`serve_with_registry` origin with the admin API
+/// enabled still serves `/admin/routes` add/remove/list normally; only
+/// `/admin/reload` fails (with a clear error, not a panic) — see
+/// `admin::RouteRegistry::reload`.
 pub async fn serve(config: crate::config::Config) -> crate::Result<()> {
     serve_with_registry(config, SchemeRegistry::new()).await
+}
+
+/// [`serve_config_file`] with a caller-supplied [`SchemeRegistry`] — see that
+/// function's docs.
+pub async fn serve_config_file_with_registry(
+    path: impl AsRef<Path>,
+    registry: SchemeRegistry,
+) -> crate::Result<()> {
+    let path = path.as_ref().to_path_buf();
+    let config = crate::config::Config::from_json_file(&path)?;
+    serve_with_registry_impl(config, registry, Some(path)).await
+}
+
+/// Load a JSON config from `path` and run the multimux origin exactly like
+/// [`serve`], but also remembering `path` so, if
+/// [`crate::config::Config::admin`] is configured, `POST /admin/reload`
+/// (issue #749) can re-read it later — see `admin::RouteRegistry::reload`.
+/// Equivalent to `serve_config_file_with_registry(path, SchemeRegistry::new())`.
+pub async fn serve_config_file(path: impl AsRef<Path>) -> crate::Result<()> {
+    serve_config_file_with_registry(path, SchemeRegistry::new()).await
 }
 
 /// Run the multimux origin: one [`RouteHandle`] + one ingest task per
@@ -611,11 +671,31 @@ pub async fn serve(config: crate::config::Config) -> crate::Result<()> {
 ///
 /// Otherwise returns only on a bind failure or if the HTTP server itself
 /// stops (e.g. a fatal accept-loop I/O error).
+///
+/// If [`crate::config::Config::admin`] is configured, this delegates whole to
+/// `admin::serve_with_admin` (issue #749) instead of the static
+/// single-`Router` path below — see that function's docs for the runtime
+/// admin API (separate listener, mandatory auth, add/remove/list routes +
+/// reload). `POST /admin/reload` has no config file path to re-read under
+/// this entry point (`config` may not have come from a file at all); use
+/// [`serve_config_file_with_registry`] if reload support is needed.
 pub async fn serve_with_registry(
     config: crate::config::Config,
     registry: SchemeRegistry,
 ) -> crate::Result<()> {
+    serve_with_registry_impl(config, registry, None).await
+}
+
+async fn serve_with_registry_impl(
+    config: crate::config::Config,
+    registry: SchemeRegistry,
+    config_path: Option<PathBuf>,
+) -> crate::Result<()> {
     config.validate()?;
+
+    if config.admin.is_some() {
+        return admin::serve_with_admin(config, registry, config_path).await;
+    }
 
     tracing::info!(
         bind = %config.bind,
@@ -649,22 +729,7 @@ pub async fn serve_with_registry(
 
     let mut app_state = AppState::new(streams).with_limits(HttpLimits::from(&config));
     if let Some(output_auth) = &config.output_auth {
-        let verifier = match output_auth {
-            crate::config::OutputAuthSpec::Custom { type_tag, params } => {
-                let factory =
-                    registry
-                        .auth(type_tag)
-                        .ok_or_else(|| crate::MultimuxError::UnknownScheme {
-                            kind: "auth",
-                            tag: type_tag.clone(),
-                        })?;
-                factory(&AuthCtx {
-                    params: params.clone(),
-                    realm: OUTPUT_AUTH_REALM,
-                })?
-            }
-            builtin => builtin.build_verifier(OUTPUT_AUTH_REALM),
-        };
+        let verifier = resolve_verifier(output_auth, OUTPUT_AUTH_REALM, &registry)?;
         app_state = app_state.with_output_auth(Arc::new(verifier));
     }
     let state = Arc::new(app_state);

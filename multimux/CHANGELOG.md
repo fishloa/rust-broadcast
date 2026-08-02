@@ -11,6 +11,28 @@
   list, an empty `kid`, or a `secret` shorter than
   `broadcast_auth::SignedUrlKeySet::MIN_SECRET_LEN` (32 bytes) at config-load
   time, not per-request.
+- **Runtime admin API** (issue #749): add/remove/list routes and reload the
+  config file without restarting the origin — restarting previously dropped
+  every live viewer on every route, not just the one being changed. Opt-in
+  via the new `Config::admin` field (`AdminSpec { bind, auth }`), which binds
+  a **separate** listener from the media port and requires auth (`auth` is
+  mandatory, not `Option`) — starting the admin API unauthenticated is
+  impossible by construction. Endpoints: `GET /admin/routes`,
+  `GET /admin/routes/{name}`, `POST /admin/routes` (body: the same `Route`
+  config shape, `409` on a duplicate name), `DELETE /admin/routes/{name}`
+  (`404` if unknown; drains the removed route's supervisor without
+  disturbing any other route), `POST /admin/reload` (re-reads the config
+  file and converges added/removed/changed routes — an unchanged route is
+  never restarted). See `crate::origin::admin` and the README's new
+  "Runtime admin API" section.
+- New `origin::serve_config_file`/`serve_config_file_with_registry` entry
+  points: load a JSON config from a path and remember it, so
+  `POST /admin/reload` has a file to re-read. `multimux-cli --config <FILE>`
+  now goes through this path.
+- `config::Route`/`InputSpec`/`AuthSpec`/`output::OutputKind` now derive
+  `PartialEq` (used by the admin reload diff to detect an unchanged route).
+- `error::MultimuxError` gained `RouteExists`/`RouteNotFound` variants (the
+  admin API's `409`/`404` mappings).
 
 ### Changed
 - `source::hls_pull` builds/parses HLS playlists via `broadcast-hls` directly

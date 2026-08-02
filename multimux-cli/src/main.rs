@@ -172,6 +172,15 @@ async fn main() {
 
 async fn run() -> Result<()> {
     let cli = Cli::parse();
+    // `--config <FILE>` goes through `serve_config_file` (rather than
+    // `build_config` + `serve`) so the process remembers its own config
+    // path: if the file's `admin` field enables the runtime admin API
+    // (issue #749), `POST /admin/reload` needs that path to re-read the
+    // file. The quick-start (`--rtsp`/`--name`) path never has a file to
+    // remember, so it keeps using `build_config` + `serve` unchanged.
+    if let Some(path) = cli.config.clone() {
+        return multimux::origin::serve_config_file(path).await;
+    }
     let config = build_config(cli)?;
     multimux::origin::serve(config).await
 }
