@@ -1,6 +1,6 @@
 # Changelog
 
-## [9.2.0] - Unreleased
+## [9.2.0] - 2026-08-02
 
 ### Added
 - **`cenc::CencScheme`** — the Common Encryption scheme identity

@@ -4,7 +4,7 @@ All notable changes to `broadcast-auth` are documented here. The format
 follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.2.1] - 2026-08-02
 
 ### Added
 - `tests/non_exhaustive_coverage.rs` drift guard (issue #806). No public API

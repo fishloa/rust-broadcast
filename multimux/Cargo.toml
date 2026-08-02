@@ -1,6 +1,6 @@
 [package]
 name         = "multimux"
-version      = "0.5.2"
+version      = "0.6.0"
 edition      = "2024"
 rust-version = "1.86"
 license      = "MIT OR Apache-2.0"
@@ -41,7 +41,7 @@ broadcast-common  = { path = "../broadcast-common", version = "9" }
 # The media-plane ingress traits this crate's sources port onto (plan step
 # 5a): `Dialer`/`Listener`/`IngestSession`/`IngestDriver`/`ListenDriver`, and
 # the `Trunk` every ported session publishes into.
-media-plane       = { path = "../media-plane", version = "0.1.1", features = ["std"] }
+media-plane       = { path = "../media-plane", version = "0.2", features = ["std"] }
 bytes             = "1"
 # Shared Basic/Digest/Bearer auth model + challenge/response helper
 # (`source::http_auth`, issue #663 P3b/P3c) — the same crate `rtsp-runtime`
