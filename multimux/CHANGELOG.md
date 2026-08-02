@@ -2,6 +2,16 @@
 
 ## [Unreleased]
 
+### Added
+- `OutputAuthSpec::SignedUrl` (issue #747): configures
+  `broadcast_auth::Verifier::signed_url` as a route's output-auth scheme —
+  `{ "scheme": "signed_url", "keys": [{ "kid": "...", "secret": "..." }, ...] }`.
+  Multiple `keys` entries let secrets rotate without invalidating URLs signed
+  under an older, still-listed key. `validate()` rejects an empty `keys`
+  list, an empty `kid`, or a `secret` shorter than
+  `broadcast_auth::SignedUrlKeySet::MIN_SECRET_LEN` (32 bytes) at config-load
+  time, not per-request.
+
 ### Changed
 - `source::hls_pull` builds/parses HLS playlists via `broadcast-hls` directly
   instead of reaching through `transmux::hls` for it (issue #878). No public

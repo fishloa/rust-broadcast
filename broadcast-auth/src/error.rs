@@ -17,4 +17,27 @@ pub enum Error {
     /// `algorithm`/`qop`).
     #[error("failed to compute Authorization response: {0}")]
     ResponseCompute(String),
+
+    /// [`crate::SignedUrlKeySet::new`] rejected a key whose secret is shorter
+    /// than the required minimum (issue #747) — a setup-time error, never
+    /// returned from request verification. The `kid` is included since this
+    /// is a config-diagnostic error, not an attacker-facing one.
+    #[error("signed-url key {kid:?} has a {actual}-byte secret, must be at least {min} bytes")]
+    SignedUrlKeyTooShort {
+        /// The offending key's id.
+        kid: String,
+        /// The required minimum secret length in bytes.
+        min: usize,
+        /// The offending secret's actual length in bytes.
+        actual: usize,
+    },
+
+    /// [`crate::SignedUrlKeySet::sign`] was asked to mint a token for a `kid`
+    /// the keyset has no secret for. Only reachable from the *signing* helper
+    /// (used by tests/operators minting URLs) — never from
+    /// [`crate::Verifier::verify`], which folds every signed-URL rejection
+    /// reason into the same [`crate::AuthResult::Unauthorized`] (see that
+    /// module's docs).
+    #[error("signed-url keyset has no key with kid {0:?}")]
+    UnknownSignedUrlKeyId(String),
 }
