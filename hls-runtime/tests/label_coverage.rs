@@ -24,6 +24,8 @@
 //! - `HlsBody` (`server::engine`) — data-carrying outcome ADT
 //!   (`Playlist(String)`, `Resource(Bytes)`), same reasoning as `Output`
 //!   (plan step 4).
+//! - `HlsOriginBuildError` (`server::engine`) — structured `thiserror` error
+//!   (issue #873's `HlsOriginBuilder::build`), not a spec/field label.
 
 use std::collections::BTreeSet;
 use std::fs;
@@ -37,6 +39,7 @@ const SKIP: &[&str] = &[
     "ResourceId",
     "HlsRequest",
     "HlsBody",
+    "HlsOriginBuildError",
 ];
 
 fn read_rs(dir: &Path, out: &mut Vec<String>) {

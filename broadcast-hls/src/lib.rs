@@ -898,14 +898,33 @@ fn bump_version(v: &mut Option<u8>, n: u8) {
     });
 }
 
-/// `true` if `duration` is not a whole number of seconds, to the same
-/// integer-millisecond precision `to_m3u8` itself renders at (§8 row 3).
-/// Uses integer millisecond math rather than `f64::fract()`/`round()`,
-/// which are `std`-only and unavailable to this `no_std`+`alloc` crate (see
-/// `format_secs` below for the same pattern).
+/// `true` if this duration **renders** as a floating-point `EXTINF` value
+/// (§8 row 3).
+///
+/// Deliberately defined as "does [`format_extinf`] emit a decimal point",
+/// not as a numeric property of `duration`, because §8 row 3 constrains what
+/// the *playlist contains* — "A Media Playlist MUST indicate an
+/// EXT-X-VERSION of 3 or higher if it contains: Floating-point EXTINF
+/// duration values" — not what the in-memory type happens to be. Deriving
+/// the predicate from the renderer makes the two impossible to diverge.
+///
+/// They previously did, in both directions, and both were spec violations:
+///
+/// - a whole `4.0` rendered as `#EXTINF:4.000,` — a floating-point value —
+///   while this predicate (integer-millisecond) called it integral, so no
+///   `EXT-X-VERSION` was emitted at all and a v1/v2 client was told the
+///   playlist was compatible with it before meeting a float it cannot parse;
+/// - a sub-millisecond `4.0004` rendered at full precision as
+///   `#EXTINF:4.0004,` (correctly, since issue #872) while the same
+///   millisecond-granular rounding still called it integral.
+///
+/// Note the modeling boundary this implies: a playlist *parsed* from text
+/// that literally said `4.000` reports no row-3 requirement here, because
+/// [`MediaPlaylist`] stores the numeric duration, not its original lexical
+/// form — and this crate would re-render it as `4`. The claim is about the
+/// playlist this crate emits, which is the one a client will actually read.
 fn is_fractional_duration(duration: f64) -> bool {
-    let millis = (duration * 1000.0 + 0.5) as u64;
-    millis % 1000 != 0
+    format_extinf(duration).contains('.')
 }
 
 /// `true` if `s` carries a variable-substitution reference (§8 row 8).
@@ -1958,19 +1977,63 @@ fn format_secs(v: f64) -> String {
 
 /// Format an `#EXTINF` duration losslessly (RFC 8216bis §4.4.4.1).
 ///
-/// Keeps the historical fixed 3-decimal rendering (`9.000`, `9.009` — the
-/// form every RFC 8216 example and every existing consumer of this crate
-/// expects) whenever it re-parses to bit-identical `v`; otherwise emits the
-/// shortest exactly-round-tripping decimal, same rule as [`format_secs`].
-/// A hardcoded `{:.3}` alone loses real-world precision — Apple's BipBop
-/// playlists carry `#EXTINF:9.9766`, which would render back as `9.977`.
+/// Three tiers, in order:
+///
+/// 1. **An exactly-whole number of seconds renders as an integer** (`4.0` ->
+///    `4`), so the playlist contains no floating-point duration value and is
+///    honestly compatible with protocol version 1 (§8 row 3 — see
+///    [`is_fractional_duration`], which is defined in terms of this
+///    function). Rendering `4.000` here instead declared a float while
+///    emitting no `EXT-X-VERSION`, locking a v1/v2 client into a value it
+///    cannot parse.
+///
+///    §4.4.4.1 makes this a MUST, not merely an option: `duration` "is a
+///    decimal-floating-point **or decimal-integer** number", and "if the
+///    compatibility version number is less than 3, durations MUST be
+///    integers". Emitting no `EXT-X-VERSION` tag means version 1, so an
+///    integral render is the only conforming output. (§4.4.4.1 also SHOULDs
+///    that durations be floating-point for accuracy — but that is authoring
+///    advice subordinate to the MUST, and it is satisfied the moment a
+///    caller supplies a genuinely fractional duration, which every real
+///    keyframe-cutting segmenter does.)
+/// 2. Otherwise the historical fixed 3-decimal rendering (`9.009` — the form
+///    every RFC 8216 example and every existing consumer of this crate
+///    expects) whenever it re-parses to bit-identical `v`.
+/// 3. Otherwise the shortest exactly-round-tripping decimal, same rule as
+///    [`format_secs`]. A hardcoded `{:.3}` alone loses real-world precision —
+///    Apple's BipBop playlists carry `#EXTINF:9.9766`, which would render
+///    back as `9.977` (issue #882).
 fn format_extinf(v: f64) -> String {
+    if let Some(whole) = whole_seconds(v) {
+        return format!("{whole}");
+    }
     let three = format!("{v:.3}");
     if three.parse::<f64>() == Ok(v) {
         return three;
     }
     format!("{v}")
 }
+
+/// `Some(n)` if `v` is exactly the whole number of seconds `n`, else `None`.
+///
+/// Uses an integer cast rather than `f64::fract()`, which is `std`-only and
+/// unavailable to this `no_std`+`alloc` crate (same constraint that shaped
+/// [`format_secs`]). The round-trip comparison is what makes it exact: a
+/// value with any fractional part, however small, fails `(v as u64) as f64
+/// == v` and is rejected.
+fn whole_seconds(v: f64) -> Option<u64> {
+    if !v.is_finite() || !(0.0..WHOLE_SECONDS_CAST_LIMIT).contains(&v) {
+        return None;
+    }
+    let whole = v as u64;
+    (whole as f64 == v).then_some(whole)
+}
+
+/// Upper bound for the `f64 -> u64` cast in [`whole_seconds`]. Beyond 2^53 an
+/// `f64` cannot represent consecutive integers anyway, so a duration that
+/// large is not a meaningful segment length; falling through to the decimal
+/// path is the safe answer.
+const WHOLE_SECONDS_CAST_LIMIT: f64 = 9_007_199_254_740_992.0; // 2^53
 
 /// Parse a decimal-integer or decimal-floating-point attribute/tag value
 /// (RFC 8216bis §4.2), returning a structured, contextual
@@ -2646,11 +2709,80 @@ mod tests {
         assert!(out.contains("#EXT-X-STREAM-INF:BANDWIDTH=1000000,CODECS=\"avc1.640028\""));
     }
 
+    /// The 3-decimal `#EXTINF` form (`9.009` — what every RFC 8216 example
+    /// and every existing consumer expects) is kept for genuinely fractional
+    /// durations.
     #[test]
     fn extinf_three_decimals() {
-        let pl = playlist(vec![seg("s.m4s", 9.0)]);
+        let pl = playlist(vec![seg("s.m4s", 9.009)]);
         let out = pl.to_m3u8();
-        assert!(out.contains("#EXTINF:9.000,\n"));
+        assert!(out.contains("#EXTINF:9.009,\n"), "{out}");
+    }
+
+    /// RFC 8216bis §8 row 3: "A Media Playlist MUST indicate an
+    /// EXT-X-VERSION of 3 or higher if it contains: Floating-point EXTINF
+    /// duration values." The requirement is about what the playlist
+    /// **contains**, so a whole number of seconds must render as an integer
+    /// — otherwise `to_m3u8` emitted `#EXTINF:9.000,` (a floating-point
+    /// value) while `computed_version` reported `None`, telling a v1/v2
+    /// client the playlist was compatible with it and then handing it a
+    /// float it cannot parse.
+    ///
+    /// MUTATION VERIFIED: restoring the old `format!("{v:.3}")`-first body
+    /// of `format_extinf` makes the `#EXTINF:9,` assertion below fail
+    /// (`9.000` is rendered instead). Recompiled and re-run to confirm,
+    /// then reverted.
+    #[test]
+    fn integral_extinf_renders_as_an_integer_and_needs_no_version() {
+        // `version: 0` — no explicit floor, so the rendered tag (or its
+        // absence) is exactly what the derivation asks for.
+        let pl = MediaPlaylist {
+            version: 0,
+            ..playlist(vec![seg("s.m4s", 9.0)])
+        };
+        let out = pl.to_m3u8();
+        assert!(out.contains("#EXTINF:9,\n"), "{out}");
+        assert!(!out.contains("9.000"), "{out}");
+        assert_eq!(
+            pl.computed_version(),
+            None,
+            "a playlist with no floating-point EXTINF trips no §8 row: {out}"
+        );
+        assert!(!out.contains("#EXT-X-VERSION"), "{out}");
+        // ...and it still re-parses to the identical f64.
+        let reparsed = MediaPlaylist::parse(&out).expect("round-trip parse");
+        assert_eq!(reparsed.segments[0].duration, 9.0);
+    }
+
+    /// The renderer and the §8 row-3 predicate must never disagree about
+    /// whether a duration is floating-point — the divergence that caused the
+    /// bug above. Pins the exact four values from the report, plus the
+    /// sub-millisecond case that diverged in the *other* direction (the
+    /// old integer-millisecond predicate called `4.0004` integral while
+    /// issue #882's precision fallback rendered it as `4.0004`).
+    #[test]
+    fn extinf_rendering_and_version_derivation_never_diverge() {
+        for (duration, expected_text, expected_version) in [
+            (4.0_f64, "#EXTINF:4,", None),
+            (4.004, "#EXTINF:4.004,", Some(3)),
+            (9.9766, "#EXTINF:9.9766,", Some(3)), // issue #882 regression guard
+            (4.0004, "#EXTINF:4.0004,", Some(3)), // sub-ms: predicate used to say None
+        ] {
+            let pl = playlist(vec![seg("s.m4s", duration)]);
+            let out = pl.to_m3u8();
+            assert!(out.contains(expected_text), "{duration}: {out}");
+            assert_eq!(pl.computed_version(), expected_version, "{duration}: {out}");
+            // The invariant, stated directly: a rendered decimal point and a
+            // row-3 requirement are the same thing.
+            assert_eq!(
+                out.contains(expected_text) && expected_text.contains('.'),
+                expected_version == Some(3),
+                "{duration}: rendered text and §8 row 3 must agree: {out}"
+            );
+            // Bit-exact round-trip of the duration itself.
+            let reparsed = MediaPlaylist::parse(&out).expect("round-trip parse");
+            assert_eq!(reparsed.segments[0].duration, duration, "{out}");
+        }
     }
 
     /// Regression (issue #872): durations finer than 1 ms must survive
@@ -2888,8 +3020,10 @@ mod tests {
             out.contains("#EXT-X-PART:DURATION=0.5,URI=\"part-1-5.0.m4s\",INDEPENDENT=YES"),
             "open segment's part must render:\n{out}"
         );
-        // The closed segment is still rendered with its #EXTINF.
-        assert!(out.contains("#EXTINF:4.000,\n"));
+        // The closed segment is still rendered with its #EXTINF (a whole
+        // 4.0 s renders as the integer `4` — see
+        // `integral_extinf_renders_as_an_integer_and_needs_no_version`).
+        assert!(out.contains("#EXTINF:4,\n"), "{out}");
         assert!(out.contains("seg-1-4.m4s"));
         // The open part's URI never appears on an #EXTINF/plain-URI line — only
         // inside its #EXT-X-PART line (there is no #EXTINF for an open segment).

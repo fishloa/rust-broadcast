@@ -84,6 +84,67 @@ use media_plane::trunk::{PartEntry, SegmentCursor, SegmentCursorItem, SegmentEnt
 /// multi-rendition support yet).
 pub const DEFAULT_TRACK_ID: u32 = 1;
 
+/// Which container [`HlsOrigin`] serves segments/parts as — orthogonal to
+/// whether LL-HLS is enabled ([`HlsOriginBuilder::low_latency`]); issue #873.
+///
+/// RFC 8216bis §3.1.1 / §3.1.2 give the two containers different
+/// `#EXT-X-MAP` obligations:
+///
+/// - fMP4 (§3.1.2): "Each fMP4 Segment in a Media Playlist MUST have an
+///   `EXT-X-MAP` tag applied to it" — unconditional, so [`Container::Fmp4`]
+///   always emits one.
+/// - MPEG-2 TS (§3.1.1): "Each Transport Stream Segment MUST contain a PAT
+///   and a PMT, **or** have an `EXT-X-MAP` tag applied to it" — a
+///   disjunction, not a container restriction. `EXT-X-MAP` is legal for TS;
+///   it is not required when the segments carry their own PAT/PMT.
+///
+/// [`Container::MpegTs`] omits `#EXT-X-MAP` **by default**, on the
+/// assumption that segments come from a self-initialising source (e.g.
+/// `transmux`'s TS segmenter, which re-emits PAT+PMT at the head of every
+/// segment) — it does not *forbid* the tag; a future caller feeding
+/// pre-segmented TS without in-band PSI would need a way to opt back in,
+/// which is not implemented here (out of scope for issue #873; the current
+/// wiring never calls `set_init` from a `MpegTs`-configured pipeline, so the
+/// gap has no live caller yet).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum Container {
+    /// Fragmented MP4 / CMAF segments (`.m4s`), with an fMP4 init segment
+    /// (`.mp4`) referenced by an always-present `#EXT-X-MAP`.
+    Fmp4,
+    /// Whole MPEG-2 Transport Stream segments (`.ts`), self-initialising
+    /// (in-band PAT/PMT) — no `#EXT-X-MAP`, no init segment served.
+    MpegTs,
+}
+
+impl Container {
+    /// The spec token for this container — `"fmp4"` / `"mpeg-ts"`.
+    pub fn name(&self) -> &'static str {
+        match self {
+            Container::Fmp4 => "fmp4",
+            Container::MpegTs => "mpeg-ts",
+        }
+    }
+
+    /// The dynamic-filename extension (without the leading `.`) this
+    /// container's segments/parts are named with.
+    fn segment_extension(self) -> &'static str {
+        match self {
+            Container::Fmp4 => "m4s",
+            Container::MpegTs => "ts",
+        }
+    }
+}
+
+broadcast_common::impl_spec_display!(Container);
+
+impl Default for Container {
+    /// [`Container::Fmp4`] — preserves every pre-#873 caller's behaviour.
+    fn default() -> Self {
+        Container::Fmp4
+    }
+}
+
 /// Placeholder `BANDWIDTH` (bits/second) advertised in the master playlist's
 /// `#EXT-X-STREAM-INF` — actual encoded bitrate isn't measured, so a single
 /// fixed estimate is used for the single variant served.
@@ -232,41 +293,173 @@ impl Window {
     }
 }
 
-/// Parse a `part-{track}-{seq}.{idx}.m4s` dynamic filename into `(seq, idx)`,
-/// or `None` if it isn't a part filename (or its numeric fields don't parse).
-/// `{track}` is validated but unused (matches every other dynamic-filename
-/// resource in this module).
-fn parse_part(file: &str) -> Option<(u32, u32)> {
-    let rest = file.strip_prefix("part-")?.strip_suffix(".m4s")?;
+/// Parse a `part-{track}-{seq}.{idx}.{ext}` dynamic filename into
+/// `(seq, idx)`, or `None` if it isn't a part filename in `container`'s own
+/// extension (or its numeric fields don't parse). `{track}` is validated but
+/// unused (matches every other dynamic-filename resource in this module).
+fn parse_part(file: &str, container: Container) -> Option<(u32, u32)> {
+    let suffix = format!(".{}", container.segment_extension());
+    let rest = file.strip_prefix("part-")?.strip_suffix(suffix.as_str())?;
     let (track_seq, idx) = rest.rsplit_once('.')?;
     let (track, seq) = track_seq.split_once('-')?;
     track.parse::<u32>().ok()?;
     Some((seq.parse().ok()?, idx.parse().ok()?))
 }
 
-/// Parse a `init-{track}.mp4`/`seg-{track}-{seq}.m4s` dynamic filename;
+/// Parse a `init-{track}.mp4`/`seg-{track}-{seq}.{ext}` dynamic filename;
 /// `part-…` filenames are handled separately by [`parse_part`] (they can
 /// block until available). `{track}` is validated as a number but otherwise
 /// unused: an [`HlsOrigin`] holds a single track's data (see
 /// [`DEFAULT_TRACK_ID`]).
+///
+/// The `Init` variant is only ever recognised under [`Container::Fmp4`] — a
+/// `MpegTs` origin's grammar has no init resource at all (its segments are
+/// self-initialising; see [`Container`]'s own doc), so `init-*.mp4` under
+/// `MpegTs` falls through to `None` regardless of whether
+/// [`HlsOrigin::set_init`] was ever called. This is issue #873's
+/// cross-container refusal: advertised == servable, and an `MpegTs` origin
+/// never advertises an init segment to begin with.
 enum ImmediateResource {
     Init,
     Segment(u32),
 }
 
-fn parse_immediate(file: &str) -> Option<ImmediateResource> {
-    if let Some(rest) = file.strip_prefix("init-") {
-        let track = rest.strip_suffix(".mp4")?;
-        track.parse::<u32>().ok()?;
-        return Some(ImmediateResource::Init);
+fn parse_immediate(file: &str, container: Container) -> Option<ImmediateResource> {
+    if container == Container::Fmp4 {
+        if let Some(rest) = file.strip_prefix("init-") {
+            let track = rest.strip_suffix(".mp4")?;
+            track.parse::<u32>().ok()?;
+            return Some(ImmediateResource::Init);
+        }
     }
     if let Some(rest) = file.strip_prefix("seg-") {
-        let rest = rest.strip_suffix(".m4s")?;
+        let suffix = format!(".{}", container.segment_extension());
+        let rest = rest.strip_suffix(suffix.as_str())?;
         let (track, seq) = rest.split_once('-')?;
         track.parse::<u32>().ok()?;
         return Some(ImmediateResource::Segment(seq.parse().ok()?));
     }
     None
+}
+
+/// Error returned by [`HlsOriginBuilder::build`] when a required field was
+/// never set — never a silently-defaulted value (issue #873).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+#[non_exhaustive]
+pub enum HlsOriginBuildError {
+    /// [`HlsOriginBuilder::target_duration_secs`] was never called.
+    #[error("HlsOrigin::builder(...).target_duration_secs(...) is required but was never called")]
+    MissingTargetDurationSecs,
+    /// [`HlsOriginBuilder::window_segments`] was never called.
+    #[error("HlsOrigin::builder(...).window_segments(...) is required but was never called")]
+    MissingWindowSegments,
+}
+
+/// Fluent builder for [`HlsOrigin`] (issue #873) — replaces the old
+/// four-positional `HlsOrigin::new` (deleted; this crate is at 0.4.0
+/// unpublished, so there is no compatibility burden), which could not
+/// express "classic HLS, no low latency" at all since `part_target_ms` was a
+/// mandatory positional argument.
+///
+/// ```
+/// # use std::num::NonZeroUsize;
+/// # use std::sync::Arc;
+/// # use hls_runtime::server::{Container, HlsOrigin};
+/// # use media_plane::trunk::{Trunk, TrunkConfig};
+/// # let nz = |n: usize| NonZeroUsize::new(n).unwrap();
+/// # let trunk = Arc::new(Trunk::new(TrunkConfig::new(nz(16), nz(4), nz(8), nz(4), nz(16))));
+/// let classic_ts = HlsOrigin::builder(Arc::clone(&trunk))
+///     .target_duration_secs(6.0)
+///     .window_segments(nz(4))
+///     .container(Container::MpegTs)
+///     // `.low_latency(..)` omitted entirely -> classic HLS.
+///     .build()
+///     .expect("both required fields were set");
+/// # let _ = classic_ts;
+/// ```
+pub struct HlsOriginBuilder {
+    trunk: Arc<Trunk>,
+    target_duration_secs: Option<f64>,
+    window_segments: Option<NonZeroUsize>,
+    container: Container,
+    part_target_ms: Option<u32>,
+}
+
+impl HlsOriginBuilder {
+    fn new(trunk: Arc<Trunk>) -> Self {
+        HlsOriginBuilder {
+            trunk,
+            target_duration_secs: None,
+            window_segments: None,
+            container: Container::default(),
+            part_target_ms: None,
+        }
+    }
+
+    /// `#EXT-X-TARGETDURATION`'s configured floor (RFC 8216bis §4.4.3.1) —
+    /// required; [`HlsOriginBuilder::build`] errors if this is never called.
+    /// The actually-rendered value is raised to the largest real segment
+    /// duration seen, if that ever exceeds this (see `render_playlist`).
+    pub fn target_duration_secs(mut self, target_duration_secs: f64) -> Self {
+        self.target_duration_secs = Some(target_duration_secs);
+        self
+    }
+
+    /// How many closed segments this origin advertises in a rendered Media
+    /// Playlist — required; independent of
+    /// [`media_plane::trunk::TrunkConfig::segment_capacity`] (the `Trunk`'s
+    /// own retention bound): a caller may legitimately want a shorter
+    /// advertised window than the `Trunk` retains for other consumers (e.g. a
+    /// DVR `SegmentEgress` reading the same `Trunk`).
+    pub fn window_segments(mut self, window_segments: NonZeroUsize) -> Self {
+        self.window_segments = Some(window_segments);
+        self
+    }
+
+    /// Which container this origin serves segments/parts as. Defaults to
+    /// [`Container::Fmp4`] if never called, matching every pre-#873 caller's
+    /// behaviour. Orthogonal to [`Self::low_latency`] — all four
+    /// `{Fmp4, MpegTs} x {classic, low-latency}` combinations are valid.
+    pub fn container(mut self, container: Container) -> Self {
+        self.container = container;
+        self
+    }
+
+    /// Opt into LL-HLS: `part_target_ms` becomes `#EXT-X-PART-INF`'s
+    /// `PART-TARGET` (milliseconds). **Omit this call entirely for classic
+    /// HLS** — no `#EXT-X-PART`/`#EXT-X-PART-INF`/`#EXT-X-SERVER-CONTROL`/
+    /// `#EXT-X-PRELOAD-HINT` tags are then rendered, regardless of
+    /// [`Self::container`]. This is what the old constructor's mandatory
+    /// `part_target_ms` positional could not express.
+    pub fn low_latency(mut self, part_target_ms: u32) -> Self {
+        self.part_target_ms = Some(part_target_ms);
+        self
+    }
+
+    /// Build the [`HlsOrigin`], subscribing its one [`SegmentCursor`]
+    /// immediately (so the window starts empty but never misses a segment
+    /// published from this point on).
+    ///
+    /// Errors, never silently defaults, if [`Self::target_duration_secs`] or
+    /// [`Self::window_segments`] was never called.
+    pub fn build(self) -> Result<HlsOrigin, HlsOriginBuildError> {
+        let target_duration_secs = self
+            .target_duration_secs
+            .ok_or(HlsOriginBuildError::MissingTargetDurationSecs)?;
+        let window_segments = self
+            .window_segments
+            .ok_or(HlsOriginBuildError::MissingWindowSegments)?;
+        let cursor = self.trunk.subscribe_segments();
+        Ok(HlsOrigin {
+            trunk: self.trunk,
+            cursor: Mutex::new(cursor),
+            window: Mutex::new(Window::new(window_segments)),
+            init: Mutex::new(None),
+            target_duration_secs,
+            container: self.container,
+            part_target_ms: self.part_target_ms,
+        })
+    }
 }
 
 /// The LL-HLS origin [`ServedEgress`]: renders playlists and resolves
@@ -284,39 +477,32 @@ pub struct HlsOrigin {
     /// not answerable by any `Trunk` ring.
     init: Mutex<Option<Bytes>>,
     target_duration_secs: f64,
-    part_target_ms: u32,
+    container: Container,
+    /// `Some(part_target_ms)` enables LL-HLS; `None` renders classic HLS —
+    /// no `#EXT-X-PART`/`#EXT-X-PART-INF`/`#EXT-X-SERVER-CONTROL`/
+    /// `#EXT-X-PRELOAD-HINT` at all, orthogonal to [`Self::container`] (issue
+    /// #873).
+    part_target_ms: Option<u32>,
 }
 
 impl HlsOrigin {
-    /// Build a fresh origin over `trunk`, subscribing its one [`SegmentCursor`]
-    /// immediately (so the window starts empty but never misses a segment
-    /// published from this point on).
-    ///
-    /// `window_segments` bounds how many closed segments this origin
-    /// advertises in a rendered Media Playlist — independent of
-    /// [`media_plane::trunk::TrunkConfig::segment_capacity`] (the `Trunk`'s own
-    /// retention bound): a caller may legitimately want a shorter advertised
-    /// window than the `Trunk` retains for other consumers (e.g. a DVR
-    /// `SegmentEgress` reading the same `Trunk`).
-    pub fn new(
-        trunk: Arc<Trunk>,
-        target_duration_secs: f64,
-        part_target_ms: u32,
-        window_segments: NonZeroUsize,
-    ) -> Self {
-        let cursor = trunk.subscribe_segments();
-        HlsOrigin {
-            trunk,
-            cursor: Mutex::new(cursor),
-            window: Mutex::new(Window::new(window_segments)),
-            init: Mutex::new(None),
-            target_duration_secs,
-            part_target_ms,
-        }
+    /// Start building an [`HlsOrigin`] over `trunk` — see [`HlsOriginBuilder`]
+    /// for the required fields (`target_duration_secs`/`window_segments`),
+    /// the container choice, and how to opt into LL-HLS.
+    pub fn builder(trunk: Arc<Trunk>) -> HlsOriginBuilder {
+        HlsOriginBuilder::new(trunk)
     }
 
-    /// Store the fMP4 init segment bytes — see this module's doc for why an
-    /// init segment is not something any `Trunk` ring holds.
+    /// Store the init segment bytes — see this module's doc for why an init
+    /// segment is not something any `Trunk` ring holds.
+    ///
+    /// **Documented no-op under [`Container::MpegTs`]**: this origin's
+    /// `MpegTs` grammar has no init resource and never emits `#EXT-X-MAP`
+    /// by default (see [`Container`]'s own doc), so bytes stored here are
+    /// never advertised or served in that mode. The method stays callable
+    /// regardless of container so a caller sharing one code path across
+    /// both (e.g. a segmenter that always calls `set_init` once available)
+    /// does not need to branch on which container it configured.
     pub fn set_init(&self, bytes: impl Into<Bytes>) {
         *self.init.lock().unwrap() = Some(bytes.into());
     }
@@ -394,7 +580,14 @@ impl HlsOrigin {
         // never re-render an already-closed segment's lingering parts (the
         // `Trunk`'s live-part log deliberately does not evict them on close;
         // see `trunk`'s own module doc) as if they were still open.
-        let has_open_parts = !open_parts.is_empty();
+        // Classic HLS (no `.low_latency(...)` call, issue #873) never
+        // advertises an in-progress segment at all — RFC 8216bis §4.4.4.9's
+        // trailing-`#EXT-X-PART`-only representation is itself an LL-HLS
+        // directive, so it is gated on low latency being enabled, not merely
+        // on the Trunk happening to have live parts.
+        let low_latency_enabled = self.part_target_ms.is_some();
+        let has_open_parts = low_latency_enabled && !open_parts.is_empty();
+        let ext = self.container.segment_extension();
 
         let media_sequence = window
             .segments
@@ -406,20 +599,22 @@ impl HlsOrigin {
             .segments
             .iter()
             .map(|s| MediaSegment {
-                uri: format!("seg-{track_id}-{}.m4s", s.sequence_number),
+                uri: format!("seg-{track_id}-{}.{ext}", s.sequence_number),
                 duration: s.duration_secs,
                 discontinuous: s.discontinuous,
                 parts: Vec::new(),
                 ..Default::default()
             })
             .collect();
-        let part_target = f64::from(self.part_target_ms) / 1000.0;
         let open_segment = has_open_parts.then(|| {
             OpenSegment::new(
                 open_parts
                     .iter()
                     .map(|p| PartSpec {
-                        uri: format!("part-{track_id}-{}.{}.m4s", p.segment_number, p.part_index),
+                        uri: format!(
+                            "part-{track_id}-{}.{}.{ext}",
+                            p.segment_number, p.part_index
+                        ),
                         duration: p.duration.as_secs_f64(),
                         independent: p.independent,
                         ..Default::default()
@@ -434,7 +629,7 @@ impl HlsOrigin {
                 .max()
                 .map(|idx| idx + 1)
                 .unwrap_or(0);
-            format!("part-{track_id}-{open_seq}.{next_idx}.m4s")
+            format!("part-{track_id}-{open_seq}.{next_idx}.{ext}")
         });
         // RFC 8216bis §4.4.3.1 (MUST): every Media Segment's EXTINF duration,
         // rounded to the nearest integer, MUST be <= TARGETDURATION. The
@@ -446,6 +641,26 @@ impl HlsOrigin {
             .target_duration_secs
             .max(window.max_segment_duration_secs)
             .round() as u32;
+        // `#EXT-X-MAP`: unconditional under Fmp4 (RFC 8216bis §3.1.2 MUST);
+        // omitted under MpegTs by default (§3.1.1's PAT/PMT-or-MAP
+        // disjunction — see `Container`'s own doc for why this is a default,
+        // not a hard restriction).
+        let extra_tags = match self.container {
+            Container::Fmp4 => vec![format!("#EXT-X-MAP:URI=\"init-{track_id}.mp4\"")],
+            Container::MpegTs => Vec::new(),
+        };
+        let low_latency = low_latency_enabled.then(|| {
+            let part_target_ms = self
+                .part_target_ms
+                .expect("low_latency_enabled implies Some");
+            let part_target = f64::from(part_target_ms) / 1000.0;
+            LowLatencyConfig {
+                part_target,
+                part_hold_back: part_target * PART_HOLD_BACK_MULTIPLIER,
+                preload_hint_part: next_part_hint,
+                ..Default::default()
+            }
+        });
         let playlist = MediaPlaylist {
             // No explicit floor: `broadcast_hls::MediaPlaylist::to_m3u8`
             // computes `EXT-X-VERSION` from the content actually emitted
@@ -459,13 +674,8 @@ impl HlsOrigin {
             segments,
             open_segment,
             endlist: false,
-            extra_tags: vec![format!("#EXT-X-MAP:URI=\"init-{track_id}.mp4\"")],
-            low_latency: Some(LowLatencyConfig {
-                part_target,
-                part_hold_back: part_target * PART_HOLD_BACK_MULTIPLIER,
-                preload_hint_part: next_part_hint,
-                ..Default::default()
-            }),
+            extra_tags,
+            low_latency,
             iframes_only: false,
             ..Default::default()
         };
@@ -525,7 +735,7 @@ impl HlsOrigin {
         now: Timestamp,
         await_policy: AwaitPolicy,
     ) -> EgressResponse<HlsBody> {
-        if let Some((seq, idx)) = parse_part(name) {
+        if let Some((seq, idx)) = parse_part(name, self.container) {
             if let Some(bytes) = self.trunk.part_bytes(seq, idx) {
                 return EgressResponse::Ready {
                     body: HlsBody::Resource(bytes),
@@ -544,7 +754,7 @@ impl HlsOrigin {
             };
         }
         self.drain();
-        let bytes = match parse_immediate(name) {
+        let bytes = match parse_immediate(name, self.container) {
             Some(ImmediateResource::Init) => self.init_bytes(),
             Some(ImmediateResource::Segment(seq)) => self.window.lock().unwrap().bytes_of(seq),
             None => None,
@@ -590,11 +800,17 @@ mod tests {
     }
 
     /// A fresh `Trunk` sized generously for these tests, plus the one
-    /// `HlsOrigin` under test.
+    /// `HlsOrigin` under test — `Fmp4` + low-latency, matching every
+    /// pre-#873 test in this module (regression guard).
     fn make_origin() -> (Arc<Trunk>, HlsOrigin, media_plane::trunk::SegmentWriter) {
         let trunk = Trunk::new(TrunkConfig::new(nz(64), nz(8), nz(8), nz(8), nz(64)));
         let writer = trunk.segment_writer().expect("first segment writer");
-        let origin = HlsOrigin::new(Arc::clone(&trunk), 4.0, 500, nz(4));
+        let origin = HlsOrigin::builder(Arc::clone(&trunk))
+            .target_duration_secs(4.0)
+            .window_segments(nz(4))
+            .low_latency(500)
+            .build()
+            .expect("both required fields set");
         origin.set_init(vec![0xAAu8; 8]);
         (trunk, origin, writer)
     }
@@ -1081,5 +1297,479 @@ mod tests {
             ),
             EgressResponse::NotFound
         );
+    }
+
+    // --- issue #873: Container x low-latency matrix -----------------------
+    //
+    // Every cell below asserts on rendered playlist text AND on request
+    // resolution (fetch every URI the rendered text itself advertised, never
+    // a hard-coded filename) -- "advertised == servable" is the entire
+    // reason `HlsOrigin` exists, per the issue. `EXT-X-VERSION` is checked
+    // against `broadcast_hls::MediaPlaylist::computed_version()` re-derived
+    // from a round-trip parse of the rendered text -- never an independently
+    // guessed integer literal, which is exactly the bug issue #871 removed.
+
+    fn make_origin_with(
+        container: Container,
+        low_latency_ms: Option<u32>,
+    ) -> (Arc<Trunk>, HlsOrigin, media_plane::trunk::SegmentWriter) {
+        let trunk = Trunk::new(TrunkConfig::new(nz(64), nz(8), nz(8), nz(8), nz(64)));
+        let writer = trunk.segment_writer().expect("first segment writer");
+        let mut builder = HlsOrigin::builder(Arc::clone(&trunk))
+            .target_duration_secs(4.0)
+            .window_segments(nz(4))
+            .container(container);
+        if let Some(ms) = low_latency_ms {
+            builder = builder.low_latency(ms);
+        }
+        let origin = builder.build().expect("both required fields set");
+        (trunk, origin, writer)
+    }
+
+    fn render_body(origin: &HlsOrigin) -> String {
+        match resolve_now(
+            origin,
+            HlsRequest::Playlist {
+                track_id: DEFAULT_TRACK_ID,
+                query: BlockingQuery::default(),
+            },
+        ) {
+            EgressResponse::Ready {
+                body: HlsBody::Playlist(m),
+                ..
+            } => m,
+            other => panic!("expected Ready(Playlist), got {other:?}"),
+        }
+    }
+
+    /// The `#EXT-X-VERSION:<n>` value present in `body`, if any.
+    fn extract_version_tag(body: &str) -> Option<u8> {
+        body.lines()
+            .find_map(|l| l.strip_prefix("#EXT-X-VERSION:")?.parse::<u8>().ok())
+    }
+
+    /// Every segment URI (the line immediately after a `#EXTINF:` line), in
+    /// playlist order -- exactly what a real client would fetch next.
+    fn segment_uris(body: &str) -> Vec<String> {
+        let lines: Vec<&str> = body.lines().collect();
+        let mut out = Vec::new();
+        for i in 0..lines.len() {
+            if lines[i].starts_with("#EXTINF:") {
+                if let Some(next) = lines.get(i + 1) {
+                    if !next.starts_with('#') {
+                        out.push((*next).to_string());
+                    }
+                }
+            }
+        }
+        out
+    }
+
+    /// Every `#EXT-X-PART:` line's `URI="..."` value, in order.
+    fn part_uris(body: &str) -> Vec<String> {
+        body.lines()
+            .filter(|l| l.starts_with("#EXT-X-PART:"))
+            .filter_map(|l| {
+                let start = l.find("URI=\"")? + "URI=\"".len();
+                let rest = &l[start..];
+                let end = rest.find('"')?;
+                Some(rest[..end].to_string())
+            })
+            .collect()
+    }
+
+    /// Assert the rendered `#EXT-X-VERSION` equals `broadcast_hls`'s own
+    /// `computed_version()`, re-derived by round-trip parsing the rendered
+    /// text -- never an integer this test independently guessed. Returns the
+    /// rendered value so a caller can make a further, non-vacuous claim
+    /// about it.
+    fn assert_version_matches_broadcast_hls_derivation(body: &str) -> Option<u8> {
+        let parsed = MediaPlaylist::parse(body).expect("rendered body must round-trip parse");
+        let rendered = extract_version_tag(body);
+        assert_eq!(
+            rendered,
+            parsed.computed_version(),
+            "rendered #EXT-X-VERSION must equal broadcast_hls's own derivation, body: {body}"
+        );
+        rendered
+    }
+
+    /// [`assert_version_matches_broadcast_hls_derivation`] **plus a
+    /// non-vacuity guard**: the playlist must actually trigger at least one
+    /// RFC 8216bis §8 version rule, so the equality above cannot pass by
+    /// comparing `None` against `None`.
+    ///
+    /// Without this, a cell whose every `#EXTINF` is integral (e.g. a
+    /// duration of exactly `4.0`, which renders `#EXTINF:4,`) trips no §8
+    /// row at all, and the derivation could be entirely broken while the
+    /// test stayed green. Real segmenters cut on keyframes, not whole
+    /// seconds, so a fractional `#EXTINF` is also the realistic shape --
+    /// cf. `fixtures/hls/spec/9.1-simple-media-playlist.m3u8` (`#EXTINF:9.009`,
+    /// `#EXT-X-VERSION:3`).
+    fn assert_version_present_and_matches_derivation(body: &str) -> u8 {
+        assert_version_matches_broadcast_hls_derivation(body).unwrap_or_else(|| {
+            panic!(
+                "this cell must trigger a real RFC 8216bis §8 version rule -- a \
+                 missing #EXT-X-VERSION makes the derivation check vacuous, body: {body}"
+            )
+        })
+    }
+
+    /// MUTATION VERIFIED (issue #873): making `HlsOriginBuilder::container`
+    /// a no-op (so every origin renders as `Fmp4` regardless of the
+    /// `Container` passed to it) makes this test's
+    /// `assert!(!body.contains("#EXT-X-MAP"))` fail -- the mutated build
+    /// unconditionally emits `#EXT-X-MAP:URI="init-1.mp4"`, and the `.ts`
+    /// URI assertions fail too (segments render as `seg-1-1.m4s` instead of
+    /// `seg-1-1.ts`). Recompiled and re-run to confirm the failure (see the
+    /// PR description for the pasted `cargo test` output), then reverted.
+    /// The mutation bites four tests in total -- this one, the low-latency
+    /// `MpegTs` cell, the integral-`EXTINF` version case, and the
+    /// cross-container refusal.
+    #[test]
+    fn mpegts_classic_no_map_ts_uris_no_ll_tags() {
+        let (_trunk, origin, writer) = make_origin_with(Container::MpegTs, None);
+        // Fractional, like every real keyframe-cut segment (and like the
+        // RFC's own classic examples) -- so RFC 8216bis §8 row 3
+        // (floating-point EXTINF) genuinely fires and the version assertion
+        // below is not `None == None`.
+        seg(&writer, 1, 4.004, false);
+
+        let body = render_body(&origin);
+        assert!(!body.contains("#EXT-X-MAP"), "body: {body}");
+        assert!(!body.contains("#EXT-X-PART"), "body: {body}");
+        assert!(!body.contains("#EXT-X-SERVER-CONTROL"), "body: {body}");
+        assert!(!body.contains("#EXT-X-PRELOAD-HINT"), "body: {body}");
+        assert!(!body.contains(".m4s"), "body: {body}");
+        assert!(body.contains("seg-1-1.ts"), "body: {body}");
+        assert_version_present_and_matches_derivation(&body);
+
+        // advertised == servable: fetch every URI the rendered text itself
+        // named, and check its bytes against what was actually published
+        // (via this crate's own `parse_immediate`, not a hard-coded filename).
+        let uris = segment_uris(&body);
+        assert_eq!(uris, vec!["seg-1-1.ts".to_string()]);
+        for uri in uris {
+            let ImmediateResource::Segment(seq) = parse_immediate(&uri, Container::MpegTs)
+                .expect("advertised segment URI must parse under MpegTs")
+            else {
+                panic!("expected a Segment resource for {uri}");
+            };
+            match resolve_now(&origin, HlsRequest::Resource { name: uri.clone() }) {
+                EgressResponse::Ready {
+                    body: HlsBody::Resource(bytes),
+                    ..
+                } => assert_eq!(bytes, Bytes::from(vec![seq as u8; 8])),
+                other => panic!("expected Ready for {uri}, got {other:?}"),
+            }
+        }
+    }
+
+    /// MUTATION VERIFIED (issue #873): making `HlsOriginBuilder::container`
+    /// a no-op makes this test's `assert!(!body.contains("#EXT-X-MAP"))`
+    /// fail identically to the classic-`MpegTs` test above, and the part
+    /// URIs render as `part-1-2.0.m4s` instead of `part-1-2.0.ts`, so
+    /// `assert!(body.contains("part-1-2.0.ts"))` also fails. Recompiled and
+    /// re-run to confirm, then reverted.
+    #[test]
+    fn mpegts_low_latency_part_ts_uris_blocking_part_requests_resolve() {
+        let (trunk, origin, writer) = make_origin_with(Container::MpegTs, Some(500));
+        let origin = Arc::new(origin);
+        // A closed segment with a fractional (keyframe-cut) duration, so
+        // RFC 8216bis §8 row 3 fires and the version assertion below is not
+        // `None == None`; segment 2 is then the open one carrying live parts.
+        seg(&writer, 1, 4.004, false);
+        part(&writer, 2, 0, true);
+        part(&writer, 2, 1, false);
+
+        let body = render_body(&origin);
+        assert!(!body.contains("#EXT-X-MAP"), "body: {body}");
+        assert!(body.contains("#EXT-X-PART-INF"), "body: {body}");
+        assert!(body.contains("#EXT-X-PART:"), "body: {body}");
+        assert!(body.contains("seg-1-1.ts"), "body: {body}");
+        assert!(body.contains("part-1-2.0.ts"), "body: {body}");
+        assert!(!body.contains(".m4s"), "body: {body}");
+        // LL-HLS directives add no §8 version requirement of their own --
+        // the finding that killed the old hardcoded `EXT-X-VERSION:9` --
+        // so this must derive to exactly the same value as the classic
+        // MpegTs cell above.
+        assert_version_present_and_matches_derivation(&body);
+
+        // advertised == servable for every advertised part.
+        let parts = part_uris(&body);
+        assert!(!parts.is_empty(), "body: {body}");
+        for uri in &parts {
+            let (seq, idx) = parse_part(uri, Container::MpegTs)
+                .unwrap_or_else(|| panic!("advertised part URI {uri} must parse under MpegTs"));
+            match resolve_now(&origin, HlsRequest::Resource { name: uri.clone() }) {
+                EgressResponse::Ready {
+                    body: HlsBody::Resource(bytes),
+                    ..
+                } => {
+                    assert_eq!(bytes, Bytes::from(vec![idx as u8; 4]));
+                    assert_eq!(seq, 2);
+                }
+                other => panic!("expected Ready for {uri}, got {other:?}"),
+            }
+        }
+
+        // A blocking request for a `.ts` part not yet produced must Await,
+        // then resolve once produced -- the same guarantee the pre-#873
+        // fMP4-only test proves, now exercised over the `.ts` URI scheme.
+        let deadline = Timestamp::from_nanos(5_000_000_000);
+        let policy = AwaitPolicy::new(deadline);
+        let pending = origin.resolve(
+            HlsRequest::Resource {
+                name: "part-1-2.2.ts".to_string(),
+            },
+            Timestamp::from_nanos(0),
+            policy,
+        );
+        assert!(
+            matches!(pending, EgressResponse::Await { .. }),
+            "expected Await before the part exists, got {pending:?}"
+        );
+
+        let listener = trunk.listen().expect("listener slot available");
+        let woken = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let woken2 = std::sync::Arc::clone(&woken);
+        let waiter = std::thread::spawn(move || {
+            let ok = listener.wait_deadline(Instant::now() + Duration::from_secs(60));
+            woken2.store(ok, std::sync::atomic::Ordering::SeqCst);
+        });
+        part(&writer, 2, 2, false);
+        waiter.join().expect("waiter thread must not panic");
+        assert!(
+            woken.load(std::sync::atomic::Ordering::SeqCst),
+            "Trunk::listen() must wake once publish_part lands"
+        );
+
+        match origin.resolve(
+            HlsRequest::Resource {
+                name: "part-1-2.2.ts".to_string(),
+            },
+            Timestamp::from_nanos(1),
+            policy,
+        ) {
+            EgressResponse::Ready {
+                body: HlsBody::Resource(bytes),
+                ..
+            } => assert_eq!(bytes, Bytes::from(vec![2u8; 4])),
+            other => panic!("expected Ready once produced, got {other:?}"),
+        }
+    }
+
+    /// RFC 8216bis §8's opening rule: a playlist that triggers no version
+    /// row at all is version-1 compatible and need not carry the tag. Kept
+    /// as its own case (rather than as the `MpegTs` cells' only version
+    /// check, which made those assertions vacuous) because an integral
+    /// `#EXTINF` is a real, if unusual, shape.
+    ///
+    /// MUTATION VERIFIED (issue #873): making `HlsOriginBuilder::container`
+    /// a no-op makes this fail with `left: Some(6), right: None` -- the
+    /// mutated build emits `#EXT-X-MAP`, which trips §8 row 6. Recompiled
+    /// and re-run to confirm, then reverted.
+    #[test]
+    fn mpegts_classic_integral_extinf_emits_no_version_tag() {
+        let (_trunk, origin, writer) = make_origin_with(Container::MpegTs, None);
+        seg(&writer, 1, 4.0, false);
+        let body = render_body(&origin);
+        // A whole number of seconds renders as an integer, so the playlist
+        // genuinely contains no floating-point EXTINF value -- §8 row 3
+        // does not fire, and omitting `EXT-X-VERSION` is honest rather than
+        // a lie to a v1/v2 client. (`broadcast-hls` used to render `4.000`
+        // here while still reporting no version requirement; fixed in the
+        // same PR as this test.)
+        assert!(body.contains("#EXTINF:4,"), "body: {body}");
+        assert!(!body.contains("4.000"), "body: {body}");
+        assert_eq!(
+            assert_version_matches_broadcast_hls_derivation(&body),
+            None,
+            "nothing in this playlist triggers an RFC 8216bis §8 row: {body}"
+        );
+    }
+
+    /// LL-HLS directives carry no RFC 8216bis §8 version requirement of
+    /// their own -- the finding that killed the old hardcoded
+    /// `EXT-X-VERSION:9`. Enabling low latency must therefore not change
+    /// the derived version for otherwise-identical content.
+    #[test]
+    fn low_latency_does_not_raise_the_derived_version() {
+        let (_t1, classic, w1) = make_origin_with(Container::MpegTs, None);
+        seg(&w1, 1, 4.004, false);
+        let classic_version = assert_version_present_and_matches_derivation(&render_body(&classic));
+
+        let (_t2, low_latency, w2) = make_origin_with(Container::MpegTs, Some(500));
+        seg(&w2, 1, 4.004, false);
+        part(&w2, 2, 0, true);
+        let ll_body = render_body(&low_latency);
+        assert!(ll_body.contains("#EXT-X-PART:"), "body: {ll_body}");
+        assert_eq!(
+            assert_version_present_and_matches_derivation(&ll_body),
+            classic_version,
+            "enabling low latency must not raise the derived version"
+        );
+    }
+
+    #[test]
+    fn fmp4_classic_map_present_no_ll_tags() {
+        let (_trunk, origin, writer) = make_origin_with(Container::Fmp4, None);
+        origin.set_init(vec![0xBBu8; 8]);
+        // Fractional, so §8 row 3 fires alongside row 6 (EXT-X-MAP without
+        // EXT-X-I-FRAMES-ONLY). `max(6, 3) = 6`, so the rendered value is
+        // unchanged -- this removes the ambiguity of an integral EXTINF
+        // leaving row 3 entirely untested here.
+        seg(&writer, 1, 4.004, false);
+
+        let body = render_body(&origin);
+        assert!(
+            body.contains("#EXT-X-MAP:URI=\"init-1.mp4\""),
+            "body: {body}"
+        );
+        assert!(!body.contains("#EXT-X-PART"), "body: {body}");
+        assert!(!body.contains("#EXT-X-SERVER-CONTROL"), "body: {body}");
+        assert!(!body.contains("#EXT-X-PRELOAD-HINT"), "body: {body}");
+        assert!(body.contains("seg-1-1.m4s"), "body: {body}");
+        assert_version_present_and_matches_derivation(&body);
+
+        // advertised == servable, including the init segment the MAP names.
+        match resolve_now(
+            &origin,
+            HlsRequest::Resource {
+                name: "init-1.mp4".to_string(),
+            },
+        ) {
+            EgressResponse::Ready {
+                body: HlsBody::Resource(bytes),
+                ..
+            } => assert_eq!(bytes, Bytes::from(vec![0xBBu8; 8])),
+            other => panic!("expected Ready(init), got {other:?}"),
+        }
+        for uri in segment_uris(&body) {
+            let ImmediateResource::Segment(seq) = parse_immediate(&uri, Container::Fmp4)
+                .expect("advertised segment URI must parse under Fmp4")
+            else {
+                panic!("expected a Segment resource for {uri}");
+            };
+            match resolve_now(&origin, HlsRequest::Resource { name: uri.clone() }) {
+                EgressResponse::Ready {
+                    body: HlsBody::Resource(bytes),
+                    ..
+                } => assert_eq!(bytes, Bytes::from(vec![seq as u8; 8])),
+                other => panic!("expected Ready for {uri}, got {other:?}"),
+            }
+        }
+    }
+
+    /// Regression guard (issue #873, matrix cell 4): the pre-#873 default
+    /// shape (`Fmp4` + low-latency) must render unchanged.
+    #[test]
+    fn fmp4_low_latency_existing_behaviour_preserved() {
+        let (_trunk, origin, writer) = make_origin_with(Container::Fmp4, Some(500));
+        origin.set_init(vec![0xAAu8; 8]);
+        // Fractional for the same reason as the Fmp4-classic cell above.
+        seg(&writer, 1, 4.004, false);
+        part(&writer, 2, 0, true);
+        part(&writer, 2, 1, false);
+
+        let body = render_body(&origin);
+        assert!(
+            body.contains("#EXT-X-MAP:URI=\"init-1.mp4\""),
+            "body: {body}"
+        );
+        assert!(body.contains("#EXT-X-PART-INF"), "body: {body}");
+        assert!(body.contains("#EXT-X-SERVER-CONTROL"), "body: {body}");
+        assert!(body.contains("#EXT-X-PRELOAD-HINT"), "body: {body}");
+        assert!(body.contains("seg-1-1.m4s"), "body: {body}");
+        assert!(body.contains("part-1-2.0.m4s"), "body: {body}");
+        assert!(!body.contains(".ts\""), "body: {body}");
+        assert_version_present_and_matches_derivation(&body);
+
+        match resolve_now(
+            &origin,
+            HlsRequest::Resource {
+                name: "init-1.mp4".to_string(),
+            },
+        ) {
+            EgressResponse::Ready {
+                body: HlsBody::Resource(bytes),
+                ..
+            } => assert_eq!(bytes, Bytes::from(vec![0xAAu8; 8])),
+            other => panic!("expected Ready(init), got {other:?}"),
+        }
+        for uri in segment_uris(&body) {
+            let ImmediateResource::Segment(seq) = parse_immediate(&uri, Container::Fmp4)
+                .expect("advertised segment URI must parse under Fmp4")
+            else {
+                panic!("expected a Segment resource for {uri}");
+            };
+            match resolve_now(&origin, HlsRequest::Resource { name: uri.clone() }) {
+                EgressResponse::Ready {
+                    body: HlsBody::Resource(bytes),
+                    ..
+                } => assert_eq!(bytes, Bytes::from(vec![seq as u8; 8])),
+                other => panic!("expected Ready for {uri}, got {other:?}"),
+            }
+        }
+        for uri in part_uris(&body) {
+            let (_seq, idx) = parse_part(&uri, Container::Fmp4)
+                .unwrap_or_else(|| panic!("advertised part URI {uri} must parse under Fmp4"));
+            match resolve_now(&origin, HlsRequest::Resource { name: uri.clone() }) {
+                EgressResponse::Ready {
+                    body: HlsBody::Resource(bytes),
+                    ..
+                } => assert_eq!(bytes, Bytes::from(vec![idx as u8; 4])),
+                other => panic!("expected Ready for {uri}, got {other:?}"),
+            }
+        }
+    }
+
+    /// MUTATION VERIFIED (issue #873): making `HlsOriginBuilder::container`
+    /// a no-op makes every origin behave as `Fmp4`, so `init-1.mp4` under a
+    /// nominally-`MpegTs` origin resolves `Ready` instead of `NotFound` --
+    /// this test's final assertion fails. Recompiled and re-run to confirm,
+    /// then reverted.
+    #[test]
+    fn cross_container_refusal_mp4_init_under_mpegts_not_found() {
+        let (_trunk, origin, _writer) = make_origin_with(Container::MpegTs, None);
+        // Still callable (documented no-op) -- the bytes are simply never
+        // advertised or served under `MpegTs`.
+        origin.set_init(vec![0xCCu8; 8]);
+        assert_eq!(
+            resolve_now(
+                &origin,
+                HlsRequest::Resource {
+                    name: "init-1.mp4".to_string(),
+                }
+            ),
+            EgressResponse::NotFound
+        );
+    }
+
+    #[test]
+    fn builder_errors_on_missing_required_fields() {
+        let trunk = Trunk::new(TrunkConfig::new(nz(64), nz(8), nz(8), nz(8), nz(64)));
+        match HlsOrigin::builder(Arc::clone(&trunk))
+            .window_segments(nz(4))
+            .build()
+        {
+            Err(e) => assert_eq!(e, HlsOriginBuildError::MissingTargetDurationSecs),
+            Ok(_) => panic!("expected an error: target_duration_secs was never set"),
+        }
+        match HlsOrigin::builder(Arc::clone(&trunk))
+            .target_duration_secs(4.0)
+            .build()
+        {
+            Err(e) => assert_eq!(e, HlsOriginBuildError::MissingWindowSegments),
+            Ok(_) => panic!("expected an error: window_segments was never set"),
+        }
+    }
+
+    #[test]
+    fn container_label_and_display() {
+        assert_eq!(Container::Fmp4.name(), "fmp4");
+        assert_eq!(Container::MpegTs.name(), "mpeg-ts");
+        assert_eq!(Container::Fmp4.to_string(), "fmp4");
+        assert_eq!(Container::default(), Container::Fmp4);
     }
 }

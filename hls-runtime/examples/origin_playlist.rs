@@ -54,12 +54,12 @@ fn main() {
     let writer = trunk
         .segment_writer()
         .expect("first (and only) segment writer");
-    let origin = HlsOrigin::new(
-        std::sync::Arc::clone(&trunk),
-        TARGET_DURATION_SECS,
-        PART_TARGET_MS,
-        nz(WINDOW_SEGMENTS),
-    );
+    let origin = HlsOrigin::builder(std::sync::Arc::clone(&trunk))
+        .target_duration_secs(TARGET_DURATION_SECS)
+        .window_segments(nz(WINDOW_SEGMENTS))
+        .low_latency(PART_TARGET_MS)
+        .build()
+        .expect("both required fields set");
     origin.set_init(vec![0xAA; 32]);
 
     // Segment 1 closes with two parts.
