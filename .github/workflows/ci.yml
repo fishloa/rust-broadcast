@@ -237,8 +237,22 @@ jobs:
   # against it, and hands the client's OWN reconstruction (not the origin's
   # output) to the same `ffprobe` oracle — closing the origin-only gap the
   # transmux job above leaves open.
+  #
+  # Issue #870 adds a SECOND independent oracle alongside `ffprobe`:
+  # `media-doctor/tests/mediastreamvalidator_oracle.rs` renders every HLS
+  # playlist shape the origin can produce and validates it with Apple's own
+  # `mediastreamvalidator` — catching a shared our-renderer/our-checker
+  # misreading of the HLS spec that `ffprobe` and `media-doctor`'s own
+  # `check_hls_playlist` cannot (both `check_hls_playlist` and our renderer
+  # encode the same understanding; `mediastreamvalidator` is independent of
+  # both). The tool is macOS-only — this `ubuntu-latest` runner never has it
+  # on `PATH`, so every test in that file skips itself loudly (an `eprintln!`
+  # naming the reason) and passes trivially here; this step exists only to
+  # keep the file itself building/passing on Linux. The genuine check is
+  # local-only — run it on macOS with Apple's Additional Tools for Xcode
+  # installed (see the command in `CLAUDE.md`).
   golden-gate:
-    name: golden gate (ffprobe, non-blocking)
+    name: golden gate (ffprobe + mediastreamvalidator, non-blocking)
     runs-on: ubuntu-latest
     continue-on-error: true
     steps:
@@ -250,3 +264,5 @@ jobs:
         run: cargo test -p transmux --test golden_gate --all-features --locked
       - name: Golden gate (LL-HLS reference client, all features)
         run: cargo test -p multimux --test golden_gate --all-features --locked
+      - name: HLS conformance oracle (media-doctor, all features)
+        run: cargo test -p media-doctor --test mediastreamvalidator_oracle --all-features --locked

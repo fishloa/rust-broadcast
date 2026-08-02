@@ -38,6 +38,16 @@ std     = ["broadcast-common/std", "mpeg-ts/std", "transmux/std", "dvb-conforman
 serde   = ["dep:serde", "dep:serde_json"]
 cli     = ["dep:clap", "dep:thiserror", "std"]
 
+[dev-dependencies]
+# `mediastreamvalidator_oracle.rs` (issue #870) renders real TS-HLS/CMAF-HLS
+# output through the `transmux` packager CLI core (`transmux::cli::run_bytes`)
+# to hand Apple's independent HLS conformance tool something the origin
+# actually produces, not a hand-typed approximation. `cli` is dev-only here —
+# the library dependency above stays `default-features = false` (no `cli`,
+# no `clap`); Cargo unifies the two requirements for test builds only, same
+# pattern as `rtmp-runtime`'s dev-dependency on `transmux`.
+transmux = { path = "../transmux", version = "0.22", default-features = false, features = ["cli"] }
+
 [package.metadata.docs.rs]
 all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
