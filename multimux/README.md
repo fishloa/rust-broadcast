@@ -8,11 +8,12 @@ transcoded. Every route (one ingest → its served outputs) is independent —
 a single instance can serve dozens of unrelated cameras/feeds side by side.
 
 ```text
-  RTSP  ─┐                                          ┌─▶  LL-HLS  (media.m3u8 + parts)
+  RTSP  ─┐                                          ┌─▶  LL-HLS   (media.m3u8 + parts, fMP4)
   RTP   ─┤                                          │
-  TS/UDP─┼─▶  ingest  ─▶  transmux (depay/segment) ──┼─▶  DASH     (manifest.mpd)
-  TS/HTTP┤                     one route =                │
-  HLS-pull┘               one ingest, N outputs           └─▶  LL-DASH  (manifest-ll.mpd)
+  TS/UDP─┼─▶  ingest  ─▶  transmux (depay/segment) ──┼─▶  DASH     (manifest.mpd, fMP4)
+  TS/HTTP┤                     one route =                ├─▶  LL-DASH  (manifest-ll.mpd, fMP4)
+  HLS-pull┘          one ingest, one container,            └─▶  TS-HLS   (media.m3u8, classic .ts)
+                        N same-container outputs
 ```
 
 ## Inputs
@@ -51,17 +52,29 @@ upstream, in `transmux` or `rtsp-runtime`, never in this crate).
 
 Each route selects which delivery protocol(s) to serve its ingested media
 as (`outputs`, defaulting to `["llhls"]` — every pre-existing config is
-unaffected), all reading the exact same segmented CMAF — ingest-once,
-many-outputs, no per-output re-mux:
+unaffected):
 
 | `outputs` token | Served as | Manifest |
 | --- | --- | --- |
-| `"llhls"` | Low-Latency HLS (RFC 8216bis) | `master.m3u8` + `media.m3u8` (or the configured `playlist_name`) |
-| `"dash"` | MPEG-DASH, `$Number$`-addressed | `manifest.mpd` |
+| `"llhls"` | Low-Latency HLS (RFC 8216bis), fMP4/CMAF | `master.m3u8` + `media.m3u8` (or the configured `playlist_name`) |
+| `"dash"` | MPEG-DASH, `$Number$`-addressed, fMP4/CMAF | `manifest.mpd` |
 | `"ll_dash"` | Low-latency DASH, true chunked-transfer CMAF (whole-segment `$Number$`, served over HTTP chunked transfer while in progress) | `manifest-ll.mpd` |
+| `"ts_hls"` | Classic HLS, whole MPEG-2 TS media segments (RFC 8216 §3, no `#EXT-X-MAP`, no low-latency parts) | `master.m3u8` + `media.m3u8` (or the configured `playlist_name`) |
 
-A route can enable more than one (e.g. `["llhls", "dash"]`), and different
-routes may enable different sets.
+`"llhls"`/`"dash"`/`"ll_dash"` all read the exact same segmented CMAF —
+ingest-once, many-outputs, no per-output re-mux — so a route can enable more
+than one of them together (e.g. `["llhls", "dash"]`), and different routes
+may enable different sets.
+
+**`"ts_hls"` is mutually exclusive with the three fMP4-based outputs on the
+same route** — `Config::validate()` rejects, at config-load time, a route
+that names both `"ts_hls"` and any of `"llhls"`/`"dash"`/`"ll_dash"`.
+Container (fMP4 vs. classic MPEG-TS) is a **per-route**, not per-output,
+property: the ingest pipeline's `Trunk` has exactly one segment ring per
+program, so a program's samples are segmented into fMP4 *or* TS, never both,
+without a second ring — a legitimate future want, tracked separately, not
+something this release does. If both containers are genuinely needed for one
+source today, run two routes against it, one per container.
 
 ## Served endpoints
 
@@ -69,13 +82,14 @@ One route ("stream") is served per configured `name`, under `/{stream}/...`:
 
 | Endpoint | Description |
 | --- | --- |
-| `GET /{stream}/master.m3u8` | LL-HLS master playlist (if `llhls` is enabled). |
-| `GET /{stream}/media.m3u8[?_HLS_msn=&_HLS_part=]` | LL-HLS media playlist (or the configured `playlist_name`). Blocking Playlist Reload (RFC 8216bis §6.2.5.2) when `_HLS_msn`/`_HLS_part` are present. |
+| `GET /{stream}/master.m3u8` | Master playlist (if `llhls` or `ts_hls` is enabled). |
+| `GET /{stream}/media.m3u8[?_HLS_msn=&_HLS_part=]` | Media playlist (or the configured `playlist_name`) — fMP4/CMAF with LL-HLS parts under `llhls`, whole `.ts` segments with no `#EXT-X-MAP` under `ts_hls`. Blocking Playlist Reload (RFC 8216bis §6.2.5.2) via `_HLS_msn`/`_HLS_part` applies to `llhls`; harmless no-ops (render immediately) under `ts_hls`, which has no low-latency parts to block on. |
 | `GET /{stream}/manifest.mpd` | DASH manifest (if `dash` is enabled). |
 | `GET /{stream}/manifest-ll.mpd` | Low-latency DASH manifest (if `ll_dash` is enabled). |
-| `GET /{stream}/init-{track}.mp4` | fMP4 init segment (`moov`) — shared across every enabled output. |
-| `GET /{stream}/seg-{track}-{seq}.m4s` | A full media segment: served whole (`Content-Length`) once closed, or streamed over **HTTP chunked transfer-encoding** while still in progress (issue #721 — `ll_dash`'s low-latency delivery). |
-| `GET /{stream}/part-{track}-{seq}.{part}.m4s` | An LL-HLS partial segment of the in-progress segment (also how `ll_dash`'s chunked-transfer path internally sources the bytes it streams — never addressed directly by the LL-DASH MPD itself). |
+| `GET /{stream}/init-{track}.mp4` | fMP4 init segment (`moov`) — shared across every fMP4-based output (`llhls`/`dash`/`ll_dash`). Not served under `ts_hls`: a classic `.ts` segment carries its own PAT/PMT and needs no init segment. |
+| `GET /{stream}/seg-{track}-{seq}.m4s` | A full fMP4 media segment: served whole (`Content-Length`) once closed, or streamed over **HTTP chunked transfer-encoding** while still in progress (issue #721 — `ll_dash`'s low-latency delivery). |
+| `GET /{stream}/seg-{track}-{seq}.ts` | A full whole-packet MPEG-2 TS media segment (`ts_hls` only) — self-contained (its own PAT + PMT, exactly one program per RFC 8216bis §3.1.1), served whole once closed. |
+| `GET /{stream}/part-{track}-{seq}.{part}.m4s` | An LL-HLS partial segment of the in-progress segment (also how `ll_dash`'s chunked-transfer path internally sources the bytes it streams — never addressed directly by the LL-DASH MPD itself). Not applicable under `ts_hls`, which never produces parts. |
 | `GET /healthz` | Liveness — always `200`. Never gated by `output_auth`. |
 | `GET /readyz` | Readiness — `200` once at least one route is live, `503` otherwise. Never gated by `output_auth`. |
 | `GET /metrics` | Prometheus metrics. Never gated by `output_auth`. |

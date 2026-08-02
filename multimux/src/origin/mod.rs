@@ -538,6 +538,29 @@ async fn track_http(State(state): State<Arc<AppState>>, req: Request, next: Next
     Response::from_parts(parts, Body::from(bytes))
 }
 
+/// Which [`hls_runtime::server::Container`] `route` must be served as (issue
+/// #887): [`hls_runtime::server::Container::MpegTs`] if
+/// [`crate::config::Route::outputs`] names [`crate::output::OutputKind::TsHls`],
+/// else [`hls_runtime::server::Container::Fmp4`]. `ts_hls` is mutually
+/// exclusive with `llhls`/`dash`/`ll_dash` on the same route
+/// (`crate::config::Route::validate_standalone`, enforced before this ever
+/// runs), so this check is always unambiguous. Shared by
+/// [`serve_with_registry`]'s own per-route loop and
+/// [`admin::RouteRegistry::spawn_route`] — the runtime `POST /admin/routes`/
+/// reload path — so a `ts_hls` route added or reloaded at runtime gets
+/// exactly the same container a route configured at startup does.
+pub(crate) fn route_container(route: &crate::config::Route) -> hls_runtime::server::Container {
+    if route
+        .outputs
+        .iter()
+        .any(|k| matches!(k, crate::output::OutputKind::TsHls))
+    {
+        hls_runtime::server::Container::MpegTs
+    } else {
+        hls_runtime::server::Container::Fmp4
+    }
+}
+
 /// Build the [`Output`]s a route's [`crate::config::Route::outputs`] names,
 /// resolving any [`crate::output::OutputKind::Custom`] entry via `registry`
 /// (issue #663 external scheme plugin registry) and every built-in kind via
@@ -712,7 +735,8 @@ async fn serve_with_registry_impl(
     for route in &config.routes {
         let store = Arc::new(
             RouteHandle::new(target_duration_secs, part_target_ms, config.window_segments)
-                .with_name(route.name.clone()),
+                .with_name(route.name.clone())
+                .with_container(route_container(route)),
         );
         let outputs: Vec<Arc<dyn Output>> = route
             .outputs

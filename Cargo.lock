@@ -1682,6 +1682,7 @@ dependencies = [
  "media-plane",
  "metrics",
  "metrics-exporter-prometheus",
+ "mpeg-ts",
  "percent-encoding",
  "reqwest",
  "rtmp-runtime",

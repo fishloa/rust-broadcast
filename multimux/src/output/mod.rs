@@ -1,18 +1,28 @@
 //! The `Output` abstraction: one implementation per delivery protocol
-//! (LL-HLS, DASH, LL-DASH) layered over the protocol-neutral
+//! (LL-HLS, DASH, LL-DASH, classic TS-HLS) layered over the protocol-neutral
 //! [`crate::route::RouteHandle`] (step 5b's replacement for the deleted
 //! `hls_runtime::server::MediaStore` — see that module's own docs).
 //!
 //! Each `Output` renders only its own **manifest** (m3u8 / MPD) — the
-//! init/segment/part byte serving both protocols reference is identical
-//! (LL-HLS and DASH are both fMP4/CMAF over the same produced bytes) and is
-//! mounted **once per stream** by the origin itself
-//! (`crate::origin::resource`), not per-output; see that module's docs for
-//! why (the "multi-output nest collision" this split fixes — issue #663 P4).
+//! init/segment/part byte serving is mounted **once per stream** by the
+//! origin itself (`crate::origin::resource`), not per-output; see that
+//! module's docs for why (the "multi-output nest collision" this split fixes
+//! — issue #663 P4). LL-HLS and DASH share that one shared resource route
+//! because they are both fMP4/CMAF over the same produced bytes;
+//! [`ts_hls::TsHlsOutput`] (issue #887) shares the exact same route, but the
+//! bytes it references are classic whole-segment `.ts` instead — the
+//! resource route itself is container-agnostic (resolved through the route's
+//! `hls_runtime::server::HlsOrigin`, which already dispatches on its own
+//! configured `Container`), so no separate resource route is needed for it.
+//! [`OutputKind::TsHls`] is mutually exclusive with
+//! [`OutputKind::LlHls`]/[`OutputKind::Dash`]/[`OutputKind::LlDash`] on one
+//! route (`crate::config::Route::validate_standalone`) — see that check's own
+//! doc for why.
 
 pub mod dash;
 pub mod ll_dash;
 pub mod llhls;
+pub mod ts_hls;
 
 use std::sync::Arc;
 
@@ -51,6 +61,15 @@ pub enum OutputKind {
     /// transfer-encoding while the segment is still being produced.
     #[serde(rename = "ll_dash")]
     LlDash,
+    /// Classic MPEG-TS HLS (`master.m3u8` + `media.m3u8` referencing `.ts`
+    /// media segments instead of fMP4) — issue #887. Container is a
+    /// per-*route* property (`crate::route::RouteHandle::with_container`),
+    /// not per-output, so this kind is mutually exclusive with
+    /// [`OutputKind::LlHls`]/[`OutputKind::Dash`]/[`OutputKind::LlDash`] on
+    /// the same route — see `crate::config::Route::validate_standalone` for
+    /// why (one `Trunk` segment ring per program, fMP4 *or* TS, never both).
+    #[serde(rename = "ts_hls")]
+    TsHls,
     /// External output scheme resolved at runtime via
     /// [`crate::registry::SchemeRegistry`]. `type_tag` selects the registered
     /// factory; `params` is passed opaquely to it. JSON (this variant is not
@@ -80,6 +99,7 @@ impl OutputKind {
             OutputKind::LlHls => "llhls",
             OutputKind::Dash => "dash",
             OutputKind::LlDash => "ll_dash",
+            OutputKind::TsHls => "ts_hls",
             OutputKind::Custom { type_tag, .. } => type_tag,
         }
     }
@@ -112,6 +132,7 @@ impl OutputKind {
             OutputKind::LlHls => Arc::new(llhls::LlHlsOutput::new(playlist_name)),
             OutputKind::Dash => Arc::new(dash::DashOutput),
             OutputKind::LlDash => Arc::new(ll_dash::LlDashOutput),
+            OutputKind::TsHls => Arc::new(ts_hls::TsHlsOutput::new(playlist_name)),
             OutputKind::Custom { .. } => unreachable!(
                 "OutputKind::Custom cannot be built without a SchemeRegistry — \
                  crate::origin::serve_with_registry resolves it via \
@@ -153,6 +174,7 @@ mod tests {
             (OutputKind::LlHls, "llhls"),
             (OutputKind::Dash, "dash"),
             (OutputKind::LlDash, "ll_dash"),
+            (OutputKind::TsHls, "ts_hls"),
         ] {
             assert_eq!(kind.name(), label);
             assert_eq!(kind.to_string(), label);
@@ -164,7 +186,12 @@ mod tests {
         // `OutputKind` no longer derives `PartialEq` (its `Custom` variant
         // carries a `serde_json::Value`, so instances are compared by
         // `name()` instead of `==` — see the type's doc comment).
-        for kind in [OutputKind::LlHls, OutputKind::Dash, OutputKind::LlDash] {
+        for kind in [
+            OutputKind::LlHls,
+            OutputKind::Dash,
+            OutputKind::LlDash,
+            OutputKind::TsHls,
+        ] {
             let json = serde_json::to_string(&kind).unwrap();
             let back: OutputKind = serde_json::from_str(&json).unwrap();
             assert_eq!(back.name(), kind.name());
@@ -172,6 +199,10 @@ mod tests {
         assert_eq!(
             serde_json::to_string(&OutputKind::LlHls).unwrap(),
             "\"llhls\""
+        );
+        assert_eq!(
+            serde_json::to_string(&OutputKind::TsHls).unwrap(),
+            "\"ts_hls\""
         );
     }
 
@@ -185,6 +216,10 @@ mod tests {
         assert!(matches!(
             OutputKind::LlDash.build().kind(),
             OutputKind::LlDash
+        ));
+        assert!(matches!(
+            OutputKind::TsHls.build().kind(),
+            OutputKind::TsHls
         ));
     }
 
