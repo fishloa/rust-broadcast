@@ -20,8 +20,9 @@
 //!   declaring that every segment carries a single I-frame.  Set
 //!   [`MediaPlaylist::iframes_only`] to `true`; `to_m3u8` emits the tag in
 //!   the header block (after the version line).  RFC 8216 §4.3.3.6 requires
-//!   protocol version ≥ 4 when this tag is present; the renderer enforces
-//!   this by emitting `max(self.version, 4)`.
+//!   protocol version ≥ 4 when this tag is present; the renderer computes
+//!   this as one input to the general `#EXT-X-VERSION` derivation (see
+//!   "Protocol version derivation" below), not as a special case.
 //!
 //! # Discontinuity support
 //!
@@ -75,6 +76,35 @@
 //! `#EXT-X-PART` lines with **no** `#EXTINF`/URI (RFC 8216bis §4.4.4.9), same
 //! opt-in gating as the closed segments' parts above.
 //!
+//! # Protocol version derivation (RFC 8216bis §8, issue #871)
+//!
+//! `#EXT-X-VERSION` is never chosen ahead of time — it is *computed* as the
+//! `max()` of the minimums the playlist's actual content triggers, per the
+//! feature → minimum-version table transcribed at
+//! `docs/version-compatibility.md` (twice-verified against
+//! draft-pantos-hls-rfc8216bis-22 §8). [`MediaPlaylist::computed_version`]
+//! and [`MasterPlaylist::computed_version`] expose this directly; `to_m3u8`
+//! uses it internally. A Playlist that triggers nothing (fully compatible
+//! with version 1) carries **no** `#EXT-X-VERSION` tag at all, per §8's
+//! opening rule.
+//!
+//! [`MediaPlaylist::version`]/[`MasterPlaylist::version`] stay a *settable*
+//! floor rather than becoming computed-only: `0` (the field's `Default`)
+//! means "no explicit floor" (render exactly the computed value, or nothing);
+//! a nonzero value is raised — never lowered — to the computed minimum, so a
+//! caller can still deliberately over-declare (e.g. the backward-compatible
+//! `EXT-X-MEDIA`/`AUDIO`/`VIDEO`/`SUBTITLES` MAY-rule in §8) but can never
+//! silently under-declare an invalid playlist.
+//!
+//! This replaces a real bug (issue #871): an LL-HLS origin previously baked
+//! in a hardcoded `EXT-X-VERSION:9` unconditionally, even though none of the
+//! low-latency tags it emits (`EXT-X-PART`/`EXT-X-PART-INF`/
+//! `EXT-X-PRELOAD-HINT`/`EXT-X-SERVER-CONTROL`) carry any version
+//! requirement at all — only `EXT-X-SKIP` does. RFC 8216 §7: "A client MUST
+//! NOT attempt playback if it does not support the protocol version
+//! specified by the EXT-X-VERSION tag" — so over-declaring silently locks
+//! out every client that supports the playlist's true (lower) requirement.
+//!
 //! # CENC/CBCS DRM signalling (ISO/IEC 23001-7, issue #564)
 //!
 //! [`cenc_ext_x_key`] renders the `#EXT-X-KEY` tag line for a `cbcs`
@@ -105,10 +135,11 @@
 //! called out per the project's round-trip-fidelity discipline rather than
 //! silently dropped):
 //! - `#EXT-X-MEDIA` (Multivariant Playlist alternate audio/subtitle
-//!   renditions) is not modeled — `to_m3u8()` doesn't render it either, so
-//!   there is nothing to round-trip yet; `MasterPlaylist::parse` skips it as
-//!   an unrecognized tag (it has no per-file `extra_tags` field to preserve
-//!   it into).
+//!   renditions) is not modeled with typed fields — but `MasterPlaylist`
+//!   now has its own `extra_tags` (mirroring [`MediaPlaylist::extra_tags`]):
+//!   `MasterPlaylist::parse` preserves an unrecognized `#EXT-...` tag like
+//!   this one verbatim, and `to_m3u8` re-renders it, so it round-trips (just
+//!   without structured field access) rather than being silently dropped.
 //! - `#EXT-X-MAP` is carried on [`MediaSegment::map`] with carry-forward
 //!   parse semantics (a map applies to every following segment until the
 //!   next `EXT-X-MAP`, per spec) and dedup-render semantics (re-emitted only
@@ -403,7 +434,12 @@ pub struct MediaSegment {
 /// A media playlist (`#EXTM3U` / `#EXTINF` / ...).
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct MediaPlaylist {
-    /// `#EXT-X-VERSION`
+    /// `#EXT-X-VERSION` — an explicit *floor*, not the rendered value. `0`
+    /// (this type's `Default`) means "no explicit floor": [`Self::to_m3u8`]
+    /// renders exactly [`Self::computed_version`], or no tag at all when
+    /// nothing triggers one. A nonzero value is raised — never lowered — to
+    /// the computed minimum. See the module's "Protocol version derivation"
+    /// docs (issue #871).
     pub version: u8,
     /// `#EXT-X-TARGETDURATION` — must be >= the max rounded segment duration.
     pub target_duration: u32,
@@ -532,6 +568,242 @@ impl Default for LowLatencyConfig {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Protocol Version Compatibility — RFC 8216bis §8 (issue #871).
+//
+// Source of truth: `docs/version-compatibility.md`, a twice-verified
+// transcription of §8 from draft-pantos-hls-rfc8216bis-22. One named
+// constant per row of that table, cited by row number. `#EXT-X-VERSION` is
+// always `max()` over the minimums the playlist's actual content triggers —
+// never a value picked ahead of time and baked in (the bug this issue
+// fixes: a low-latency origin unconditionally declaring 9 when nothing it
+// emits requires more than 6, forcing every client on 6/7/8 to refuse a
+// stream it could have played).
+// ---------------------------------------------------------------------------
+
+/// §8 row 2 (Media Playlist): the `IV` attribute of `EXT-X-KEY`.
+const VERSION_KEY_IV: u8 = 2;
+/// §8 row 3 (Media Playlist): a floating-point `EXTINF` duration.
+const VERSION_FLOAT_EXTINF: u8 = 3;
+/// §8 row 4 (Media Playlist): `EXT-X-BYTERANGE`, or `EXT-X-I-FRAMES-ONLY`.
+const VERSION_BYTERANGE_OR_IFRAMES_ONLY: u8 = 4;
+/// §8 row 5 (Media Playlist): `EXT-X-KEY` with `METHOD=SAMPLE-AES`, or its
+/// `KEYFORMAT`/`KEYFORMATVERSIONS` attributes, or `EXT-X-MAP` **together
+/// with** `EXT-X-I-FRAMES-ONLY`. (`EXT-X-MAP` alone, without
+/// `EXT-X-I-FRAMES-ONLY`, needs [`VERSION_MAP_WITHOUT_IFRAMES_ONLY`] = 6
+/// instead — the row-6 note in `docs/version-compatibility.md`.)
+const VERSION_SAMPLE_AES_OR_KEYFORMAT_OR_MAP_WITH_IFRAMES_ONLY: u8 = 5;
+/// §8 row 6 (Media Playlist): `EXT-X-MAP` in a playlist that does *not* also
+/// carry `EXT-X-I-FRAMES-ONLY`.
+const VERSION_MAP_WITHOUT_IFRAMES_ONLY: u8 = 6;
+/// §8 row 7 (Multivariant Playlist): a `"SERVICE"` value for the
+/// `INSTREAM-ID` attribute of `EXT-X-MEDIA`.
+const VERSION_MEDIA_SERVICE_INSTREAM_ID: u8 = 7;
+/// §8 row 8 (any Playlist): variable substitution.
+const VERSION_VARIABLE_SUBSTITUTION: u8 = 8;
+/// §8 row 9 (any Playlist): `EXT-X-SKIP`.
+const VERSION_SKIP: u8 = 9;
+/// §8 row 10 (any Playlist): an `EXT-X-SKIP` that replaces
+/// `EXT-X-DATERANGE` tags in a Playlist Delta Update — its
+/// `RECENTLY-REMOVED-DATERANGES` attribute is non-empty.
+const VERSION_SKIP_REPLACES_DATERANGE: u8 = 10;
+/// §8 row 11 (any Playlist): `EXT-X-DEFINE` with a `QUERYPARAM` attribute.
+const VERSION_DEFINE_QUERYPARAM: u8 = 11;
+/// §8 row 12 (any Playlist): an attribute whose name starts with `"REQ-"`.
+const VERSION_REQ_ATTRIBUTE: u8 = 12;
+/// §8 row 13 (Multivariant Playlist): `EXT-X-MEDIA` with an `INSTREAM-ID`
+/// attribute for a non-`CLOSED-CAPTIONS` `TYPE`.
+const VERSION_MEDIA_INSTREAM_ID_NON_CC: u8 = 13;
+
+/// RFC 8216bis §4.2.2's variable-substitution marker (`{$name}`, inside a
+/// quoted-string attribute value or a URI) — §8 row 8's trigger. This is
+/// *not* part of the version-compatibility transcription (that section
+/// states only the rule, not the substitution grammar, which lives in a
+/// different part of the spec) — it is a textual heuristic over the opaque
+/// strings this crate already carries (`extra_tags`, segment/variant URIs),
+/// not a modeled `EXT-X-DEFINE` parser.
+const VARIABLE_SUBSTITUTION_MARKER: &str = "{$";
+
+/// Fold `n` into the running maximum `v` — §8's rule is that the highest
+/// version required by any single triggered feature governs the whole
+/// Playlist.
+fn bump_version(v: &mut Option<u8>, n: u8) {
+    *v = Some(match *v {
+        Some(m) => m.max(n),
+        None => n,
+    });
+}
+
+/// `true` if `duration` is not a whole number of seconds, to the same
+/// integer-millisecond precision `to_m3u8` itself renders at (§8 row 3).
+/// Uses integer millisecond math rather than `f64::fract()`/`round()`,
+/// which are `std`-only and unavailable to this `no_std`+`alloc` crate (see
+/// `format_secs` below for the same pattern).
+fn is_fractional_duration(duration: f64) -> bool {
+    let millis = (duration * 1000.0 + 0.5) as u64;
+    millis % 1000 != 0
+}
+
+/// `true` if `s` carries a variable-substitution reference (§8 row 8).
+fn contains_variable_substitution(s: &str) -> bool {
+    s.contains(VARIABLE_SUBSTITUTION_MARKER)
+}
+
+/// Scan a set of opaque, verbatim tag lines (a playlist's `extra_tags`) for
+/// the §8 triggers that are attributes of tags this crate does not model as
+/// struct fields: `EXT-X-KEY`'s `IV`/`METHOD`/`KEYFORMAT*` attributes (rows
+/// 2 and 5), `EXT-X-DEFINE`'s `QUERYPARAM` (row 11), `EXT-X-MEDIA`'s
+/// `INSTREAM-ID` (rows 7 and 13 — Multivariant-Playlist-only; harmless to
+/// scan on a Media Playlist's `extra_tags` since that tag never legitimately
+/// appears there), and any attribute name starting `REQ-` (row 12). Returns
+/// the max triggered version, or `None`.
+fn scan_tag_lines_for_version(tags: &[String]) -> Option<u8> {
+    let mut v: Option<u8> = None;
+    for tag in tags {
+        if let Some(rest) = tag.strip_prefix("#EXT-X-KEY:") {
+            let attrs = parse_attr_list(rest);
+            if attrs.contains_key("IV") {
+                bump_version(&mut v, VERSION_KEY_IV);
+            }
+            if attrs.get("METHOD").map(String::as_str) == Some("SAMPLE-AES")
+                || attrs.contains_key("KEYFORMAT")
+                || attrs.contains_key("KEYFORMATVERSIONS")
+            {
+                bump_version(
+                    &mut v,
+                    VERSION_SAMPLE_AES_OR_KEYFORMAT_OR_MAP_WITH_IFRAMES_ONLY,
+                );
+            }
+        } else if let Some(rest) = tag.strip_prefix("#EXT-X-DEFINE:") {
+            if parse_attr_list(rest).contains_key("QUERYPARAM") {
+                bump_version(&mut v, VERSION_DEFINE_QUERYPARAM);
+            }
+        } else if let Some(rest) = tag.strip_prefix("#EXT-X-MEDIA:") {
+            let attrs = parse_attr_list(rest);
+            if let Some(instream_id) = attrs.get("INSTREAM-ID") {
+                if instream_id.starts_with("SERVICE") {
+                    bump_version(&mut v, VERSION_MEDIA_SERVICE_INSTREAM_ID);
+                }
+                let is_closed_captions =
+                    attrs.get("TYPE").map(String::as_str) == Some("CLOSED-CAPTIONS");
+                if !is_closed_captions {
+                    bump_version(&mut v, VERSION_MEDIA_INSTREAM_ID_NON_CC);
+                }
+            }
+        }
+        // Row 12 applies to ANY attribute-bearing tag, not just the three
+        // handled above — scan every tag's attribute keys uniformly.
+        if let Some(colon) = tag.find(':') {
+            if parse_attr_list(&tag[colon + 1..])
+                .keys()
+                .any(|k| k.starts_with("REQ-"))
+            {
+                bump_version(&mut v, VERSION_REQ_ATTRIBUTE);
+            }
+        }
+    }
+    v
+}
+
+/// Shared floor/clamp logic behind `MediaPlaylist`'s and `MasterPlaylist`'s
+/// private `effective_version` methods: `explicit` (the public `version`
+/// field) acts as a floor over `computed` (the derived minimum), raised —
+/// never lowered — to it. `0` means "no explicit floor".
+fn effective_version(explicit: u8, computed: Option<u8>) -> Option<u8> {
+    match (explicit, computed) {
+        (0, None) => None,
+        (0, Some(m)) => Some(m),
+        (e, None) => Some(e),
+        (e, Some(m)) => Some(e.max(m)),
+    }
+}
+
+impl MediaPlaylist {
+    /// Compute the minimum `#EXT-X-VERSION` this playlist's actual content
+    /// requires, per RFC 8216bis §8 (`docs/version-compatibility.md`).
+    /// `None` means the playlist is fully compatible with version 1, which
+    /// per §8's opening rule need not carry the tag at all.
+    ///
+    /// This is `max()` over every triggered rule — see the `VERSION_*`
+    /// constants above for the rule → row mapping. [`Self::to_m3u8`] uses
+    /// this (via the private `effective_version`) rather than blindly
+    /// trusting [`Self::version`]; see that field's docs for how an
+    /// explicit value interacts with this computed minimum.
+    pub fn computed_version(&self) -> Option<u8> {
+        let mut v: Option<u8> = None;
+
+        // Rows 5/6: EXT-X-MAP, present either as a structured
+        // MediaSegment/OpenSegment map, or (a caller that hasn't adopted
+        // that field, e.g. a raw #EXT-X-MAP: line) in `extra_tags`.
+        let has_map = self.segments.iter().any(|s| s.map.is_some())
+            || self.open_segment.as_ref().is_some_and(|o| o.map.is_some())
+            || self.extra_tags.iter().any(|t| t.starts_with("#EXT-X-MAP:"));
+        if has_map {
+            bump_version(
+                &mut v,
+                if self.iframes_only {
+                    VERSION_SAMPLE_AES_OR_KEYFORMAT_OR_MAP_WITH_IFRAMES_ONLY
+                } else {
+                    VERSION_MAP_WITHOUT_IFRAMES_ONLY
+                },
+            );
+        }
+
+        // Row 4: EXT-X-BYTERANGE, or EXT-X-I-FRAMES-ONLY.
+        if self.iframes_only || self.segments.iter().any(|s| s.byte_range.is_some()) {
+            bump_version(&mut v, VERSION_BYTERANGE_OR_IFRAMES_ONLY);
+        }
+
+        // Row 3: floating-point EXTINF duration.
+        if self
+            .segments
+            .iter()
+            .any(|s| is_fractional_duration(s.duration))
+        {
+            bump_version(&mut v, VERSION_FLOAT_EXTINF);
+        }
+
+        // Rows 9/10: EXT-X-SKIP, optionally replacing EXT-X-DATERANGE.
+        if let Some(skip) = &self.skip {
+            bump_version(&mut v, VERSION_SKIP);
+            if !skip.recently_removed_daterange_ids.is_empty() {
+                bump_version(&mut v, VERSION_SKIP_REPLACES_DATERANGE);
+            }
+        }
+
+        // Row 8: variable substitution, wherever this crate carries a URI
+        // or tag verbatim.
+        if self
+            .extra_tags
+            .iter()
+            .any(|t| contains_variable_substitution(t))
+            || self
+                .segments
+                .iter()
+                .any(|s| contains_variable_substitution(&s.uri))
+        {
+            bump_version(&mut v, VERSION_VARIABLE_SUBSTITUTION);
+        }
+
+        // Rows 2/5/11/12: EXT-X-KEY's IV/METHOD/KEYFORMAT*, EXT-X-DEFINE's
+        // QUERYPARAM, and any REQ- attribute — reachable today only via
+        // extra_tags (none of these tags has a modeled struct field).
+        if let Some(m) = scan_tag_lines_for_version(&self.extra_tags) {
+            bump_version(&mut v, m);
+        }
+
+        v
+    }
+
+    /// The `#EXT-X-VERSION` value actually rendered by [`Self::to_m3u8`]:
+    /// [`Self::computed_version`], raised — never lowered — to
+    /// [`Self::version`] when that field carries a nonzero explicit floor.
+    /// See [`Self::version`]'s docs for the full rule.
+    fn effective_version(&self) -> Option<u8> {
+        effective_version(self.version, self.computed_version())
+    }
+}
+
 impl MediaPlaylist {
     /// Render this media playlist as an RFC 8216 `#EXTM3U` string.
     ///
@@ -542,18 +814,17 @@ impl MediaPlaylist {
     /// (RFC 8216 §4.3.4.3).
     ///
     /// When [`Self::iframes_only`] is `true`, emits `#EXT-X-I-FRAMES-ONLY`
-    /// (RFC 8216 §4.3.3.6) in the header block and renders version ≥ 4 as
-    /// required by that section.
+    /// (RFC 8216 §4.3.3.6) in the header block; the version this (and every
+    /// other triggering feature) requires is derived by
+    /// [`Self::computed_version`] (see the module's "Protocol version
+    /// derivation" docs, issue #871) — omitted entirely when nothing in the
+    /// playlist triggers a version requirement.
     pub fn to_m3u8(&self) -> String {
         let mut s = String::new();
         s.push_str("#EXTM3U\n");
-        // RFC 8216 §4.3.3.6: EXT-X-I-FRAMES-ONLY requires protocol version >= 4.
-        let version = if self.iframes_only {
-            self.version.max(4)
-        } else {
-            self.version
-        };
-        s.push_str(&format!("#EXT-X-VERSION:{version}\n"));
+        if let Some(version) = self.effective_version() {
+            s.push_str(&format!("#EXT-X-VERSION:{version}\n"));
+        }
         if self.iframes_only {
             s.push_str("#EXT-X-I-FRAMES-ONLY\n");
         }
@@ -714,7 +985,11 @@ impl MediaPlaylist {
     /// tag with a missing required attribute or an unparsable value returns
     /// [`crate::Error::HlsParse`].
     pub fn parse(input: &str) -> Result<Self> {
-        let mut version: u8 = 1;
+        // `0` (not `1`): distinguishes "no #EXT-X-VERSION line was present
+        // on the wire at all" from "the wire explicitly said version 1",
+        // so a fully-untagged input round-trips back to no tag rather than
+        // gaining one (see `effective_version`/issue #871).
+        let mut version: u8 = 0;
         let mut target_duration: Option<u32> = None;
         let mut media_sequence: u64 = 0;
         let mut discontinuity_sequence: u64 = 0;
@@ -1138,7 +1413,12 @@ pub struct IFrameVariant {
 /// A master playlist (`#EXTM3U` / `#EXT-X-STREAM-INF` / ...).
 #[derive(Debug, Clone, PartialEq)]
 pub struct MasterPlaylist {
-    /// `#EXT-X-VERSION`
+    /// `#EXT-X-VERSION` — an explicit *floor*, not the rendered value. `0`
+    /// means "no explicit floor": [`Self::to_m3u8`] renders exactly
+    /// [`Self::computed_version`], or no tag at all when nothing triggers
+    /// one. A nonzero value is raised — never lowered — to the computed
+    /// minimum. See the module's "Protocol version derivation" docs
+    /// (issue #871).
     pub version: u8,
     /// Ordered list of variant streams.
     pub variants: Vec<Variant>,
@@ -1148,6 +1428,15 @@ pub struct MasterPlaylist {
     /// URI as an attribute (not a following line).  An empty `Vec` (the
     /// default) produces no such lines.
     pub iframe_variants: Vec<IFrameVariant>,
+    /// Extra tag lines emitted verbatim after the variant/I-frame-variant
+    /// entries (e.g. `#EXT-X-MEDIA:...`, `#EXT-X-DEFINE:...`) — the
+    /// Multivariant-Playlist counterpart of [`MediaPlaylist::extra_tags`].
+    /// [`Self::parse`] preserves any unrecognized `#EXT-...` tag here
+    /// (forward-compat) instead of dropping it; [`Self::computed_version`]
+    /// scans these lines for the §8 rows this crate does not (yet) model as
+    /// typed struct fields (rows 7/8/11/12/13 —
+    /// `docs/version-compatibility.md`).
+    pub extra_tags: Vec<String>,
 }
 
 /// A parsed but not-yet-closed `#EXT-X-STREAM-INF` — `(bandwidth, codecs,
@@ -1164,7 +1453,14 @@ impl MasterPlaylist {
     pub fn to_m3u8(&self) -> String {
         let mut s = String::new();
         s.push_str("#EXTM3U\n");
-        s.push_str(&format!("#EXT-X-VERSION:{}\n", self.version));
+        if let Some(version) = self.effective_version() {
+            s.push_str(&format!("#EXT-X-VERSION:{version}\n"));
+        }
+
+        for tag in &self.extra_tags {
+            s.push_str(tag);
+            s.push('\n');
+        }
 
         for var in &self.variants {
             s.push_str(&format!(
@@ -1203,17 +1499,19 @@ impl MasterPlaylist {
     ///
     /// Recognizes `#EXT-X-VERSION`, `#EXT-X-STREAM-INF` + its following URI
     /// line, and `#EXT-X-I-FRAME-STREAM-INF`. `#EXT-X-MEDIA` (alternate
-    /// audio/subtitle renditions) and any other tag are not modeled by
-    /// [`MasterPlaylist`] (`to_m3u8` doesn't render them either) and are
-    /// silently skipped — there is no per-playlist `extra_tags` field here to
-    /// preserve them into (unlike [`MediaPlaylist`]). A malformed
+    /// audio/subtitle renditions), `#EXT-X-DEFINE`, and any other
+    /// unrecognized `#EXT-...` tag are not modeled with typed fields, but
+    /// are preserved verbatim into [`Self::extra_tags`] (forward-compat),
+    /// mirroring [`MediaPlaylist::parse`]. A malformed
     /// `#EXT-X-STREAM-INF`/`#EXT-X-I-FRAME-STREAM-INF` (missing required
     /// attribute, unparsable value) or a variant URI with no preceding
     /// `#EXT-X-STREAM-INF` returns [`crate::Error::HlsParse`].
     pub fn parse(input: &str) -> Result<Self> {
-        let mut version: u8 = 1;
+        // `0` (not `1`): see the identical comment in `MediaPlaylist::parse`.
+        let mut version: u8 = 0;
         let mut variants: Vec<Variant> = Vec::new();
         let mut iframe_variants: Vec<IFrameVariant> = Vec::new();
+        let mut extra_tags: Vec<String> = Vec::new();
         let mut saw_extm3u = false;
         let mut pending_stream_inf: Option<PendingStreamInf> = None;
 
@@ -1265,10 +1563,15 @@ impl MasterPlaylist {
                     resolution,
                     uri,
                 });
+            } else if let Some(rest) = line.strip_prefix("#EXT") {
+                let _ = rest;
+                // A well-formed but unrecognized tag (e.g. #EXT-X-MEDIA,
+                // #EXT-X-DEFINE): preserve verbatim (forward-compat, and the
+                // substrate `computed_version` scans for rows 7/8/11/12/13),
+                // mirroring `MediaPlaylist::parse`.
+                extra_tags.push(line.to_string());
             } else if line.starts_with('#') {
-                // Unrecognized tag (e.g. #EXT-X-MEDIA) or a comment: this
-                // struct has no escape hatch to preserve it into, and
-                // `to_m3u8` doesn't render it either — skip gracefully.
+                // RFC 8216 §4.1: a non-"#EXT" '#' line is a comment — ignore.
             } else {
                 let (bandwidth, codecs, resolution) =
                     pending_stream_inf.take().ok_or_else(|| Error::HlsParse {
@@ -1297,7 +1600,40 @@ impl MasterPlaylist {
             version,
             variants,
             iframe_variants,
+            extra_tags,
         })
+    }
+
+    /// Compute the minimum `#EXT-X-VERSION` this Multivariant Playlist's
+    /// actual content requires, per RFC 8216bis §8
+    /// (`docs/version-compatibility.md`). `None` means fully compatible
+    /// with version 1 (no tag required). See
+    /// [`MediaPlaylist::computed_version`] for the Media-Playlist-only rows
+    /// (2–6, 9–10) that do not apply to a Multivariant Playlist.
+    pub fn computed_version(&self) -> Option<u8> {
+        let mut v = scan_tag_lines_for_version(&self.extra_tags);
+        if self
+            .extra_tags
+            .iter()
+            .any(|t| contains_variable_substitution(t))
+            || self
+                .variants
+                .iter()
+                .any(|var| contains_variable_substitution(&var.uri))
+            || self
+                .iframe_variants
+                .iter()
+                .any(|iv| contains_variable_substitution(&iv.uri))
+        {
+            bump_version(&mut v, VERSION_VARIABLE_SUBSTITUTION);
+        }
+        v
+    }
+
+    /// The `#EXT-X-VERSION` value actually rendered by [`Self::to_m3u8`] —
+    /// see [`MediaPlaylist::effective_version`] for the shared rule.
+    fn effective_version(&self) -> Option<u8> {
+        effective_version(self.version, self.computed_version())
     }
 }
 
@@ -1476,6 +1812,7 @@ mod tests {
                 },
             ],
             iframe_variants: vec![],
+            extra_tags: vec![],
         };
         let out = pl.to_m3u8();
         assert!(out.starts_with("#EXTM3U\n"));
@@ -1497,6 +1834,7 @@ mod tests {
                 uri: "v1k/index.m3u8".into(),
             }],
             iframe_variants: vec![],
+            extra_tags: vec![],
         };
         let out = pl.to_m3u8();
         assert!(!out.contains("RESOLUTION"));
@@ -2039,6 +2377,7 @@ mod tests {
                 resolution: Some((640, 360)),
                 uri: "v300/iframe.m3u8".into(),
             }],
+            extra_tags: vec![],
         };
         let text = pl.to_m3u8();
         let parsed = MasterPlaylist::parse(&text).expect("parse must succeed");
@@ -2271,9 +2610,10 @@ seg.m4s\n";
     }
 
     #[test]
-    fn parse_master_playlist_ignores_ext_x_media() {
-        // #EXT-X-MEDIA is not modeled (to_m3u8 doesn't render it either) but
-        // must not cause a parse error.
+    fn parse_master_playlist_preserves_ext_x_media_into_extra_tags() {
+        // #EXT-X-MEDIA is not modeled with typed fields, but must not cause
+        // a parse error, and must be preserved verbatim (not dropped) since
+        // `MasterPlaylist` now has its own `extra_tags`.
         let text = "#EXTM3U\n\
 #EXT-X-VERSION:7\n\
 #EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID=\"aac\",NAME=\"English\",DEFAULT=YES,URI=\"eng.m3u8\"\n\
@@ -2282,5 +2622,380 @@ v300/index.m3u8\n";
         let pl = MasterPlaylist::parse(text).expect("EXT-X-MEDIA must be ignored, not error");
         assert_eq!(pl.variants.len(), 1);
         assert_eq!(pl.variants[0].uri, "v300/index.m3u8");
+        assert!(
+            pl.extra_tags.iter().any(|t| t.starts_with("#EXT-X-MEDIA:")),
+            "unrecognized tag must be preserved verbatim, not dropped: {:?}",
+            pl.extra_tags
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Protocol version derivation (RFC 8216bis §8, issue #871) — table-driven
+    // per docs/version-compatibility.md, plus the five named regression
+    // cases from that issue.
+    // -----------------------------------------------------------------------
+
+    /// A minimal, otherwise-untriggering Media Playlist: integer-second
+    /// duration, no map/byte-range/iframes-only/skip/extra_tags. Every
+    /// table-driven test starts here and flips exactly one trigger.
+    fn base_media_playlist() -> MediaPlaylist {
+        MediaPlaylist {
+            version: 0,
+            target_duration: 6,
+            media_sequence: 0,
+            segments: vec![seg("s0.m4s", 6.0)],
+            endlist: true,
+            ..Default::default()
+        }
+    }
+
+    /// Extract the `#EXT-X-VERSION:<n>` value from rendered text, or `None`
+    /// if no such line is present.
+    fn rendered_version(m3u8: &str) -> Option<u8> {
+        m3u8.lines()
+            .find_map(|l| l.strip_prefix("#EXT-X-VERSION:"))
+            .map(|v| v.parse::<u8>().expect("version must be a valid u8"))
+    }
+
+    #[test]
+    fn version_row1_no_trigger_omits_the_tag() {
+        let out = base_media_playlist().to_m3u8();
+        assert_eq!(rendered_version(&out), None, "no trigger:\n{out}");
+    }
+
+    #[test]
+    fn version_row2_key_iv_triggers_v2() {
+        let mut pl = base_media_playlist();
+        pl.extra_tags = vec![
+            "#EXT-X-KEY:METHOD=AES-128,URI=\"https://k\",IV=0x00000000000000000000000000000001"
+                .into(),
+        ];
+        let out = pl.to_m3u8();
+        assert_eq!(rendered_version(&out), Some(2), "{out}");
+    }
+
+    #[test]
+    fn version_row3_float_extinf_triggers_v3() {
+        let mut pl = base_media_playlist();
+        pl.segments = vec![seg("s0.m4s", 6.5)];
+        let out = pl.to_m3u8();
+        assert_eq!(rendered_version(&out), Some(3), "{out}");
+    }
+
+    #[test]
+    fn version_row4_byterange_triggers_v4() {
+        let mut pl = base_media_playlist();
+        pl.segments[0].byte_range = Some(ByteRange {
+            length: 1000,
+            offset: Some(0),
+        });
+        let out = pl.to_m3u8();
+        assert_eq!(rendered_version(&out), Some(4), "{out}");
+    }
+
+    #[test]
+    fn version_row4_iframes_only_triggers_v4() {
+        let mut pl = base_media_playlist();
+        pl.iframes_only = true;
+        let out = pl.to_m3u8();
+        assert_eq!(rendered_version(&out), Some(4), "{out}");
+    }
+
+    #[test]
+    fn version_row5_sample_aes_triggers_v5() {
+        let mut pl = base_media_playlist();
+        pl.extra_tags = vec!["#EXT-X-KEY:METHOD=SAMPLE-AES,URI=\"https://k\",KEYID=0x01".into()];
+        let out = pl.to_m3u8();
+        assert_eq!(rendered_version(&out), Some(5), "{out}");
+    }
+
+    #[test]
+    fn version_row5_keyformat_triggers_v5() {
+        let mut pl = base_media_playlist();
+        pl.extra_tags = vec![
+            "#EXT-X-KEY:METHOD=AES-128,URI=\"https://k\",KEYFORMAT=\"com.example\",\
+             KEYFORMATVERSIONS=\"1\""
+                .into(),
+        ];
+        let out = pl.to_m3u8();
+        assert_eq!(rendered_version(&out), Some(5), "{out}");
+    }
+
+    #[test]
+    fn version_row5_map_with_iframes_only_triggers_v5_not_v6() {
+        let mut pl = base_media_playlist();
+        pl.iframes_only = true;
+        pl.segments[0].map = Some(MapTag {
+            uri: "init.mp4".into(),
+            byte_range: None,
+        });
+        let out = pl.to_m3u8();
+        assert_eq!(rendered_version(&out), Some(5), "{out}");
+    }
+
+    #[test]
+    fn version_row6_map_without_iframes_only_triggers_v6() {
+        let mut pl = base_media_playlist();
+        pl.segments[0].map = Some(MapTag {
+            uri: "init.mp4".into(),
+            byte_range: None,
+        });
+        let out = pl.to_m3u8();
+        assert_eq!(rendered_version(&out), Some(6), "{out}");
+    }
+
+    #[test]
+    fn version_row7_media_service_instream_id_triggers_v7_multivariant_only() {
+        let mut pl = MasterPlaylist {
+            version: 0,
+            variants: vec![Variant {
+                bandwidth: 300_000,
+                codecs: "avc1.64001e".into(),
+                resolution: None,
+                uri: "v300/index.m3u8".into(),
+            }],
+            iframe_variants: vec![],
+            extra_tags: vec![],
+        };
+        pl.extra_tags = vec![
+            "#EXT-X-MEDIA:TYPE=CLOSED-CAPTIONS,GROUP-ID=\"cc\",NAME=\"CC1\",\
+             INSTREAM-ID=\"SERVICE1\""
+                .into(),
+        ];
+        let out = pl.to_m3u8();
+        assert_eq!(rendered_version(&out), Some(7), "{out}");
+    }
+
+    #[test]
+    fn version_row8_variable_substitution_triggers_v8() {
+        let mut pl = base_media_playlist();
+        pl.segments = vec![seg("seg-{$id}.m4s", 6.0)];
+        let out = pl.to_m3u8();
+        assert_eq!(rendered_version(&out), Some(8), "{out}");
+    }
+
+    #[test]
+    fn version_row8_variable_substitution_triggers_v8_multivariant() {
+        let pl = MasterPlaylist {
+            version: 0,
+            variants: vec![Variant {
+                bandwidth: 300_000,
+                codecs: "avc1.64001e".into(),
+                resolution: None,
+                uri: "{$base}/index.m3u8".into(),
+            }],
+            iframe_variants: vec![],
+            extra_tags: vec![],
+        };
+        let out = pl.to_m3u8();
+        assert_eq!(rendered_version(&out), Some(8), "{out}");
+    }
+
+    #[test]
+    fn version_row9_skip_triggers_v9() {
+        let mut pl = base_media_playlist();
+        pl.skip = Some(SkipInfo {
+            skipped_segments: 5,
+            recently_removed_daterange_ids: vec![],
+        });
+        let out = pl.to_m3u8();
+        assert_eq!(rendered_version(&out), Some(9), "{out}");
+    }
+
+    #[test]
+    fn version_row10_skip_replacing_daterange_triggers_v10() {
+        let mut pl = base_media_playlist();
+        pl.skip = Some(SkipInfo {
+            skipped_segments: 5,
+            recently_removed_daterange_ids: vec!["ad-1".into()],
+        });
+        let out = pl.to_m3u8();
+        assert_eq!(rendered_version(&out), Some(10), "{out}");
+    }
+
+    #[test]
+    fn version_row11_define_queryparam_triggers_v11() {
+        let mut pl = base_media_playlist();
+        pl.extra_tags = vec!["#EXT-X-DEFINE:QUERYPARAM=\"auth\"".into()];
+        let out = pl.to_m3u8();
+        assert_eq!(rendered_version(&out), Some(11), "{out}");
+    }
+
+    #[test]
+    fn version_row11_define_queryparam_triggers_v11_multivariant() {
+        let pl = MasterPlaylist {
+            version: 0,
+            variants: vec![Variant {
+                bandwidth: 300_000,
+                codecs: "avc1.64001e".into(),
+                resolution: None,
+                uri: "v300/index.m3u8".into(),
+            }],
+            iframe_variants: vec![],
+            extra_tags: vec!["#EXT-X-DEFINE:QUERYPARAM=\"auth\"".into()],
+        };
+        let out = pl.to_m3u8();
+        assert_eq!(rendered_version(&out), Some(11), "{out}");
+    }
+
+    #[test]
+    fn version_row12_req_attribute_triggers_v12() {
+        let mut pl = base_media_playlist();
+        pl.extra_tags = vec!["#EXT-X-FUTURE-FEATURE:REQ-CODEC=\"av01\"".into()];
+        let out = pl.to_m3u8();
+        assert_eq!(rendered_version(&out), Some(12), "{out}");
+    }
+
+    #[test]
+    fn version_row12_req_attribute_triggers_v12_multivariant() {
+        let pl = MasterPlaylist {
+            version: 0,
+            variants: vec![Variant {
+                bandwidth: 300_000,
+                codecs: "avc1.64001e".into(),
+                resolution: None,
+                uri: "v300/index.m3u8".into(),
+            }],
+            iframe_variants: vec![],
+            extra_tags: vec!["#EXT-X-FUTURE-FEATURE:REQ-CODEC=\"av01\"".into()],
+        };
+        let out = pl.to_m3u8();
+        assert_eq!(rendered_version(&out), Some(12), "{out}");
+    }
+
+    #[test]
+    fn version_row13_media_instream_id_non_cc_triggers_v13_multivariant_only() {
+        let pl = MasterPlaylist {
+            version: 0,
+            variants: vec![Variant {
+                bandwidth: 300_000,
+                codecs: "avc1.64001e".into(),
+                resolution: None,
+                uri: "v300/index.m3u8".into(),
+            }],
+            iframe_variants: vec![],
+            extra_tags: vec![
+                "#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID=\"aud\",NAME=\"Eng\",INSTREAM-ID=\"CC1\"".into(),
+            ],
+        };
+        let out = pl.to_m3u8();
+        assert_eq!(rendered_version(&out), Some(13), "{out}");
+    }
+
+    #[test]
+    fn version_multivariant_no_trigger_omits_the_tag() {
+        let pl = MasterPlaylist {
+            version: 0,
+            variants: vec![Variant {
+                bandwidth: 300_000,
+                codecs: "avc1.64001e".into(),
+                resolution: None,
+                uri: "v300/index.m3u8".into(),
+            }],
+            iframe_variants: vec![],
+            extra_tags: vec![],
+        };
+        let out = pl.to_m3u8();
+        assert_eq!(rendered_version(&out), None, "{out}");
+    }
+
+    // --- The five named regression cases from issue #871 ---
+
+    /// Case 1: the specific regression this issue exists for. Shaped like
+    /// `hls-runtime`'s actual LL-HLS media playlist (fMP4 segments, an
+    /// `EXT-X-MAP` conveyed via `extra_tags` exactly as that origin emits
+    /// it, `low_latency` config, no `EXT-X-I-FRAMES-ONLY`, no `EXT-X-SKIP`)
+    /// — must render **6**, never the old hardcoded **9**.
+    #[test]
+    fn named_case_1_fmp4_low_latency_renders_6_not_9() {
+        let pl = MediaPlaylist {
+            version: 0, // hls-runtime no longer supplies an explicit floor.
+            target_duration: 4,
+            media_sequence: 100,
+            segments: vec![MediaSegment {
+                uri: "seg-1-100.m4s".into(),
+                duration: 4.0,
+                ..Default::default()
+            }],
+            open_segment: Some(OpenSegment::new(vec![PartSpec {
+                uri: "part-1-101.0.m4s".into(),
+                duration: 0.5,
+                independent: true,
+                ..Default::default()
+            }])),
+            extra_tags: vec!["#EXT-X-MAP:URI=\"init-1.mp4\"".into()],
+            low_latency: Some(LowLatencyConfig {
+                part_target: 0.5,
+                part_hold_back: 1.5,
+                ..Default::default()
+            }),
+            iframes_only: false,
+            ..Default::default()
+        };
+        let out = pl.to_m3u8();
+        assert_eq!(
+            rendered_version(&out),
+            Some(6),
+            "fMP4 + low-latency must render 6, not the old hardcoded 9:\n{out}"
+        );
+        assert!(!out.contains("#EXT-X-VERSION:9"), "{out}");
+    }
+
+    /// Case 2: a classic MPEG-TS playlist (no fMP4/LL features at all) whose
+    /// segment durations are genuine floating-point values renders **3**.
+    #[test]
+    fn named_case_2_classic_mpegts_float_extinf_renders_3() {
+        let pl = MediaPlaylist {
+            version: 0,
+            target_duration: 10,
+            media_sequence: 0,
+            segments: vec![
+                seg("seg0.ts", 9.009),
+                seg("seg1.ts", 9.009),
+                seg("seg2.ts", 3.003),
+            ],
+            endlist: true,
+            ..Default::default()
+        };
+        let out = pl.to_m3u8();
+        assert_eq!(rendered_version(&out), Some(3), "{out}");
+    }
+
+    /// Case 3: adding `EXT-X-SKIP` to an otherwise-untriggering playlist
+    /// raises the rendered version to **9** automatically.
+    #[test]
+    fn named_case_3_adding_skip_raises_version_to_9() {
+        let mut pl = base_media_playlist();
+        assert_eq!(
+            rendered_version(&pl.to_m3u8()),
+            None,
+            "sanity: no trigger before adding EXT-X-SKIP"
+        );
+        pl.skip = Some(SkipInfo {
+            skipped_segments: 3,
+            recently_removed_daterange_ids: vec![],
+        });
+        let out = pl.to_m3u8();
+        assert_eq!(rendered_version(&out), Some(9), "{out}");
+    }
+
+    /// Case 4: a playlist triggering nothing renders NO `EXT-X-VERSION` tag
+    /// at all (RFC 8216bis §8's opening rule).
+    #[test]
+    fn named_case_4_no_trigger_renders_no_version_tag() {
+        let out = base_media_playlist().to_m3u8();
+        assert!(!out.contains("#EXT-X-VERSION"), "{out}");
+    }
+
+    /// Case 5: `SAMPLE-AES` (the CBCS CENC key tag this crate's own
+    /// `cenc_ext_x_key` produces) renders **5**.
+    #[test]
+    fn named_case_5_sample_aes_renders_5() {
+        let tag = cenc_ext_x_key(CencScheme::Cbcs, &[0xab; 16], "https://k.example/key")
+            .expect("cbcs must emit an EXT-X-KEY tag");
+        let mut pl = base_media_playlist();
+        pl.extra_tags = vec![tag];
+        let out = pl.to_m3u8();
+        assert_eq!(rendered_version(&out), Some(5), "{out}");
     }
 }
