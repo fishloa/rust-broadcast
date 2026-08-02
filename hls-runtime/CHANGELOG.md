@@ -7,6 +7,17 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+- The LL-HLS origin (`server::engine`) no longer supplies a hardcoded
+  `EXT-X-VERSION:9` (`LL_HLS_VERSION`, deleted). `broadcast_hls::MediaPlaylist::to_m3u8`
+  now computes the version from the content actually emitted (RFC 8216bis
+  §8) — the true minimum for this origin's fMP4 playlist is 6, since none
+  of the LL-HLS directives it renders (`EXT-X-PART`/`EXT-X-PART-INF`/
+  `EXT-X-PRELOAD-HINT`/`EXT-X-SERVER-CONTROL`) carry any version requirement
+  at all. The old hardcoded 9 over-declared and would have caused every
+  client on protocol version 6, 7, or 8 to refuse a stream it could
+  otherwise have played (issue #871).
+
 ### Changed
 - The client/origin engines parse and render HLS playlists via `broadcast-hls`
   directly instead of reaching through `transmux::hls` for it (issue #878).

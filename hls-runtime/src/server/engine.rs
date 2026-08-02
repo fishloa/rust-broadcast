@@ -96,11 +96,6 @@ const PLACEHOLDER_BANDWIDTH_BPS: u64 = 5_000_000;
 /// live edge is either a malfunctioning client or abuse.
 const ABUSE_MSN_FUTURE_BOUND: u64 = 4;
 
-/// HLS requires HLS protocol version 9 (RFC 8216bis §4.4.3.7/§4.4.3.8: the
-/// `#EXT-X-PART-INF`/`#EXT-X-PART` directives this renderer always emits
-/// require it).
-const LL_HLS_VERSION: u8 = 9;
-
 /// RFC 8216bis / Apple LL-HLS §4.4.3.7: `#EXT-X-SERVER-CONTROL`'s
 /// `PART-HOLD-BACK` attribute MUST be at least 3x the part target duration
 /// (`#EXT-X-PART-INF`'s `PART-TARGET`).
@@ -452,7 +447,12 @@ impl HlsOrigin {
             .max(window.max_segment_duration_secs)
             .round() as u32;
         let playlist = MediaPlaylist {
-            version: LL_HLS_VERSION,
+            // No explicit floor: `broadcast_hls::MediaPlaylist::to_m3u8`
+            // computes `EXT-X-VERSION` from the content actually emitted
+            // (RFC 8216bis §8) rather than this origin choosing a value
+            // ahead of time (issue #871) — none of the LL-HLS directives
+            // below (`EXT-X-PART`/`EXT-X-PART-INF`/`EXT-X-PRELOAD-HINT`/
+            // `EXT-X-SERVER-CONTROL`) carry any version requirement at all.
             target_duration,
             media_sequence,
             discontinuity_sequence: window.discontinuity_sequence,
@@ -684,7 +684,13 @@ mod tests {
             other => panic!("expected Ready(Playlist), got {other:?}"),
         };
 
-        assert!(body.contains("#EXT-X-VERSION:9"), "body: {body}");
+        // RFC 8216bis §8 (issue #871): this playlist's true minimum is 6
+        // (EXT-X-MAP without EXT-X-I-FRAMES-ONLY) — none of the LL-HLS
+        // directives it also carries require any version at all. The old
+        // hardcoded `EXT-X-VERSION:9` over-declared and would have locked
+        // out every client on protocol version 6, 7, or 8.
+        assert!(body.contains("#EXT-X-VERSION:6"), "body: {body}");
+        assert!(!body.contains("#EXT-X-VERSION:9"), "body: {body}");
         assert!(body.contains("#EXT-X-TARGETDURATION:4"), "body: {body}");
         assert!(
             body.contains("#EXT-X-SERVER-CONTROL:CAN-BLOCK-RELOAD=YES,PART-HOLD-BACK=1.5"),
