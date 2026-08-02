@@ -1,0 +1,28 @@
+{
+  "VERSION": 1,
+  "TTL": 300,
+  "PATHWAY-PRIORITY": [
+    "CDN-A-CLONE",
+    "CDN-A"
+  ],
+  "PATHWAY-CLONES": [
+    {
+      "BASE-ID": "CDN-A",
+      "ID": "CDN-A-CLONE",
+      "URI-REPLACEMENT": {
+        "HOST": "b2.example.com",
+        "PARAMS": {
+          "token": "dkfs1239414"
+        },
+        "PER-VARIANT-URIS": {
+          "Video-768":
+            "https://pv.example.com/videos/video12/768/video.m3u8"
+        },
+        "PER-RENDITION-URIS": {
+          "Audio-37262":
+            "https://pr.example.com/videos/video12/audio-eng.m3u8?a=1"
+        }
+      }
+    }
+  ]
+}
