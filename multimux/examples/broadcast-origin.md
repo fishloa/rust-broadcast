@@ -1,6 +1,6 @@
 # A complex HLS origin, explained
 
-Companion to [`broadcast-origin.json`](broadcast-origin.json) — eight sources across six ingest
+Companion to [`broadcast-origin.json`](broadcast-origin.json) — eight sources across seven ingest
 transports, packaged to three delivery protocols, with signed-URL egress and a runtime admin
 API.
 
@@ -34,7 +34,7 @@ getting a `Lagged` error rather than media.
 RFC 8216bis §4.4.3.8 requires `PART-HOLD-BACK >= 2×` the part target and recommends `>= 3×`.
 `hls-runtime` derives it at 3× — you do not configure it, and it is deliberately not exposed.
 
-## Ingest — six transports
+## Ingest — seven transports
 
 | route | transport | notes |
 |---|---|---|
