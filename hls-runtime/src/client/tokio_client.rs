@@ -326,7 +326,7 @@ impl TokioClient {
     fn note_preload_hint(&mut self, playlist_bytes: &[u8]) {
         self.last_preload_hint_url = core::str::from_utf8(playlist_bytes)
             .ok()
-            .and_then(|text| transmux::hls::MediaPlaylist::parse(text).ok())
+            .and_then(|text| broadcast_hls::MediaPlaylist::parse(text).ok())
             .and_then(|pl| pl.low_latency)
             .and_then(|ll| ll.preload_hint_part)
             .map(|hint| super::url::resolve(&self.playlist_url, &hint));

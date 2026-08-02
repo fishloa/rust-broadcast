@@ -18,8 +18,11 @@
 //! - [`transmux::DashPackager`] auto-derives a `<ContentProtection
 //!   schemeIdUri="urn:mpeg:dash:mp4protection:2011">` element from
 //!   `Track::encryption` — no extra wiring needed.
-//! - [`transmux::cenc_ext_x_key`] renders the HLS `#EXT-X-KEY` tag for the
-//!   `cbcs` scheme (`cenc`/CTR has no valid HLS `METHOD` and is DASH-only).
+//! - [`broadcast_hls::cenc_ext_x_key`] renders the HLS `#EXT-X-KEY` tag for
+//!   the `cbcs` scheme (`cenc`/CTR has no valid HLS `METHOD` and is
+//!   DASH-only). HLS playlist syntax lives in the `broadcast-hls` crate
+//!   (issue #878), which cannot depend back on `transmux`'s own
+//!   `CencScheme`, so this example converts at the boundary.
 //!
 //! Run it with:
 //!
@@ -44,12 +47,13 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     use std::path::PathBuf;
 
     use broadcast_common::{Encrypt, Package, Unpackage};
+    use broadcast_hls::cenc_ext_x_key;
     use transmux::init_segment::protect_init_segment;
     use transmux::movie_fragment::{FragmentProtection, protect_media_segment};
     use transmux::pipeline::CodecConfig;
     use transmux::{
         CencEncryptor, CencScheme, CmafMux, ConstantIvSenc, DashPackager, EncryptConfig, IvGen,
-        Media, SubsamplePolicy, TrackEncryption, TsDemux, cenc_ext_x_key,
+        Media, SubsamplePolicy, TrackEncryption, TsDemux,
     };
 
     // A test KID/key (never a real production key) — the standard `cbcs`
@@ -148,8 +152,17 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
 
     // 6. HLS signalling: `cenc_ext_x_key` renders `#EXT-X-KEY` for `cbcs`;
     //    it returns `None` for `cenc` (CTR has no valid HLS METHOD).
+    //    `broadcast-hls` has its own `CencScheme` (it cannot depend on
+    //    `transmux`'s), so convert at the boundary.
     let key_uri = "https://keyserver.example.com/key";
-    match cenc_ext_x_key(encryption.scheme, &encryption.tenc.default_kid, key_uri) {
+    let hls_scheme = match encryption.scheme {
+        CencScheme::Cenc => broadcast_hls::CencScheme::Cenc,
+        CencScheme::Cbcs => broadcast_hls::CencScheme::Cbcs,
+        // `CencScheme` is `#[non_exhaustive]`: only these two schemes exist
+        // today, and neither would render an HLS key line but `Cbcs`.
+        _ => broadcast_hls::CencScheme::Cenc,
+    };
+    match cenc_ext_x_key(hls_scheme, &encryption.tenc.default_kid, key_uri) {
         Some(tag) => println!("--- HLS signalling ---\n{tag}"),
         None => println!(
             "--- HLS signalling ---\n{} has no HLS key tag (DASH-only)",

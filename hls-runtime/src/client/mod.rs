@@ -14,7 +14,7 @@
 //! # Reuse, not re-description
 //!
 //! This module defines **no playlist model of its own**. Parsing is
-//! [`transmux::hls::MediaPlaylist::parse`] (issue #717 slice 1 — the
+//! [`broadcast_hls::MediaPlaylist::parse`] (issue #717 slice 1 — the
 //! symmetric inverse of the LL-HLS origin's own `to_m3u8()` renderer, so
 //! origin and client share one wire model); demuxing a fetched CMAF part or
 //! segment into access units is [`transmux::Fmp4Demux`]. `client` holds only

@@ -525,11 +525,11 @@ pub async fn run_hls_pull(
 mod tests {
     use super::*;
     use crate::testutil::MockAuthScheme;
+    use broadcast_hls::{MediaPlaylist, MediaSegment};
     use media_plane::ingress::HealthState;
     use media_plane::trunk::{SampleCursor, SampleCursorItem, TrunkConfig};
     use std::collections::HashMap;
     use std::num::NonZeroUsize;
-    use transmux::hls::{MediaPlaylist, MediaSegment};
     use transmux::ll_hls::LlHlsSegmenter;
     use transmux::pipeline::Sample;
     use transmux::{
@@ -596,7 +596,7 @@ mod tests {
     /// init/segment byte blobs by driving a real `LlHlsSegmenter` — the same
     /// "real fixture, not hand-faked bytes" discipline
     /// `ts_program::test_support::build_ts_bytes` uses — and renders the
-    /// playlist via `transmux::hls::MediaPlaylist::to_m3u8` (the same real
+    /// playlist via `broadcast_hls::MediaPlaylist::to_m3u8` (the same real
     /// renderer the workspace's own LL-HLS origin uses), rather than
     /// depending on `multimux`'s own (unrelated, currently-broken — see this
     /// crate's CHANGELOG) `store`/`origin`/`output::llhls` modules the pre-5a
@@ -626,7 +626,7 @@ mod tests {
         }
         seg.flush().expect("flush succeeds");
 
-        let map = transmux::hls::MapTag {
+        let map = broadcast_hls::MapTag {
             uri: "init.mp4".to_string(),
             byte_range: None,
         };

@@ -1,6 +1,6 @@
 [package]
 name         = "transmux"
-version      = "0.21.1"
+version      = "0.22.0"
 edition      = "2024"
 license      = "MIT OR Apache-2.0"
 repository   = "https://github.com/fishloa/rust-broadcast"
@@ -14,6 +14,10 @@ readme       = "README.md"
 broadcast-common = { path = "../broadcast-common", version = "9.0", default-features = false }
 thiserror  = { version = "2", default-features = false }
 serde      = { version = "1", default-features = false, features = ["derive", "alloc"], optional = true }
+# HLS (M3U8) playlist syntax (issue #878): the `ts_hls`/`ll_hls` segmenters
+# produce `broadcast_hls::MediaPlaylist`/`MediaSegment` values; the playlist
+# syntax itself no longer lives in this crate.
+broadcast-hls = { path = "../broadcast-hls", version = "0.1", default-features = false }
 mp4-emsg   = { path = "../mp4-emsg",  version = "0.3", default-features = false }
 mpeg-ts    = { path = "../mpeg-ts",  version = "0.3.1", default-features = false }
 mpeg-pes   = { path = "../mpeg-pes", version = "0.3", default-features = false }
@@ -32,7 +36,7 @@ required-features = ["cli"]
 
 [features]
 default = ["std", "serde", "cenc"]
-std    = ["broadcast-common/std", "thiserror/std", "serde?/std", "mp4-emsg/std", "mpeg-ts/std", "mpeg-pes/std", "mpeg-ps/std", "rtp-packet/std", "rtcp-packet/std"]
+std    = ["broadcast-common/std", "thiserror/std", "serde?/std", "broadcast-hls/std", "mp4-emsg/std", "mpeg-ts/std", "mpeg-pes/std", "mpeg-ps/std", "rtp-packet/std", "rtcp-packet/std"]
 serde  = ["dep:serde", "mpeg-ts/serde", "mpeg-pes/serde", "mpeg-ps/serde", "rtcp-packet/serde"]
 cenc   = ["dep:aes", "dep:ctr", "dep:cbc"]
 # `sample-aes` adds Apple HLS Sample-AES + full-segment AES-128 (AES-128-CBC)

@@ -5,8 +5,8 @@ use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 
 use broadcast_common::Unpackage;
-use transmux::hls::{ByteRange, MapTag, PreloadHintType};
-use transmux::{Fmp4Demux, MediaPlaylist, MediaSegment, OpenSegment, TrackSpec, TsDemux};
+use broadcast_hls::{ByteRange, MapTag, MediaPlaylist, MediaSegment, OpenSegment, PreloadHintType};
+use transmux::{Fmp4Demux, TrackSpec, TsDemux};
 
 use super::action::{Action, BlockingReload, ResourceId};
 use super::error::{Error, Result};
@@ -40,8 +40,8 @@ const TS_SYNC_BYTE: u8 = 0x47;
 /// - **Reload scheduling** (issue #717 slice 2): once a playlist advertises
 ///   `EXT-X-SERVER-CONTROL`/`EXT-X-PART-INF` **and** the origin's
 ///   `CAN-BLOCK-RELOAD` attribute is `YES`
-///   ([`transmux::hls::LowLatencyConfig::can_block_reload`] is `true` —
-///   *not* merely [`transmux::hls::MediaPlaylist::low_latency`] being
+///   ([`broadcast_hls::LowLatencyConfig::can_block_reload`] is `true` —
+///   *not* merely [`broadcast_hls::MediaPlaylist::low_latency`] being
 ///   `Some`, since an origin may carry parts/PART-INF while still
 ///   advertising `CAN-BLOCK-RELOAD=NO`), every reload is a Blocking
 ///   Playlist Reload (RFC 8216bis §6.2.5.2) naming the next not-yet-seen
@@ -78,7 +78,7 @@ const TS_SYNC_BYTE: u8 = 0x47;
 ///   [`MediaSegment`] does) — if every part of a segment was already
 ///   delivered while it was still open, a discontinuity revealed only once it
 ///   closes is signalled late (after those parts' samples, not before). This
-///   is a gap in the current wire model ([`transmux::hls::OpenSegment`]), not
+///   is a gap in the current wire model ([`broadcast_hls::OpenSegment`]), not
 ///   something this crate can fix locally.
 /// - **Classic MPEG-TS-segment HLS** (issue #760): a playlist that never
 ///   advertises an `EXT-X-MAP` (HLS v3, the dominant legacy/IPTV form —
@@ -574,7 +574,7 @@ impl HlsClient {
     fn resolve_hint_byte_range(
         &mut self,
         url: &str,
-        ll: &transmux::hls::LowLatencyConfig,
+        ll: &broadcast_hls::LowLatencyConfig,
     ) -> Option<(u64, u64)> {
         let length = ll.preload_hint_byte_range_length?;
         let br = ByteRange {

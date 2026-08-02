@@ -3,8 +3,9 @@
 use libfuzzer_sys::fuzz_target;
 
 // Fuzz `media_doctor::check_hls_playlist` — the validator built on top of
-// `transmux::MediaPlaylist::parse` / `MasterPlaylist::parse` — on arbitrary
-// UTF-8 text. Must not panic on any input, however malformed or adversarial.
+// `broadcast_hls::MediaPlaylist::parse` / `MasterPlaylist::parse` — on
+// arbitrary UTF-8 text. Must not panic on any input, however malformed or
+// adversarial.
 fuzz_target!(|data: &[u8]| {
     // Cap input size at 1 MiB to avoid unbounded allocation in the fuzzer.
     if data.len() > 1_048_576 {

@@ -1,8 +1,8 @@
 //! HLS playlist validator (RFC 8216bis draft-pantos-hls-rfc8216bis-22).
 //!
 //! Accepts a playlist text and a [`Report`](crate::Report), appending findings
-//! for spec violations. Reuses [`transmux::MediaPlaylist::parse`] and
-//! [`transmux::MasterPlaylist::parse`] as the structured parse layer — no
+//! for spec violations. Reuses [`broadcast_hls::MediaPlaylist::parse`] and
+//! [`broadcast_hls::MasterPlaylist::parse`] as the structured parse layer — no
 //! regex-based or line-by-line re-parsing of recognised tags.
 //!
 //! # Detection strategy
@@ -46,7 +46,7 @@ pub fn check_hls_playlist(text: &str, report: &mut Report) {
     check_daterange_lines(text, report);
 
     // Try parsing as a Media Playlist first.
-    match transmux::MediaPlaylist::parse(text) {
+    match broadcast_hls::MediaPlaylist::parse(text) {
         Ok(media) => {
             validate_media_playlist(&media, report);
             // Also run EXTINF/TARGETDURATION checks on the original text
@@ -56,7 +56,7 @@ pub fn check_hls_playlist(text: &str, report: &mut Report) {
         }
         Err(_media_err) => {
             // Try as a Master (multivariant) Playlist.
-            match transmux::MasterPlaylist::parse(text) {
+            match broadcast_hls::MasterPlaylist::parse(text) {
                 Ok(master) => {
                     validate_master_playlist(&master, report);
                 }
@@ -80,7 +80,7 @@ pub fn check_hls_playlist(text: &str, report: &mut Report) {
 // Media Playlist structured validation (RFC 8216bis)
 // ---------------------------------------------------------------------------
 
-fn validate_media_playlist(pl: &transmux::MediaPlaylist, report: &mut Report) {
+fn validate_media_playlist(pl: &broadcast_hls::MediaPlaylist, report: &mut Report) {
     // hls-preload-hint-with-endlist — §4.4.5.3
     if pl.endlist {
         if let Some(ref ll) = pl.low_latency {
@@ -154,7 +154,7 @@ fn validate_media_playlist(pl: &transmux::MediaPlaylist, report: &mut Report) {
 // Master Playlist structured validation (RFC 8216bis)
 // ---------------------------------------------------------------------------
 
-fn validate_master_playlist(_pl: &transmux::MasterPlaylist, _report: &mut Report) {
+fn validate_master_playlist(_pl: &broadcast_hls::MasterPlaylist, _report: &mut Report) {
     // Master playlist rules: the structured parser already validates required
     // attributes. Future rules (cross-referential integrity) can be added here.
 }

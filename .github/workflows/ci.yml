@@ -114,14 +114,15 @@ jobs:
       # and `ttml-subtitle` were all missing from this list while advertising
       # `no_std` on crates.io — including `broadcast-common`, which everything
       # else depends on. They cross-build clean today; they are listed now
-      # so they cannot regress silently.
+      # so they cannot regress silently. `broadcast-hls` (issue #878) is a new
+      # leaf crate added directly to this list at its own creation.
       #
       # Deliberately NOT here (they genuinely require `std`, verified):
       # `dvb-ci-runtime`, `ts-fix`, `multimux`, `multimux-cli`, `dvb-tools`,
       # `dvb-stream`.
       - name: Build each library crate for bare-metal (no_std)
         run: |
-          for c in broadcast-common dvb-bbframe scte35-splice dvb-t2mi dvb-si dvb-conformance mpeg-pes dvb-subtitle mpeg-ps scte104 cc-data st291 ule dvb-ci dvb-simulcrypt mp4-emsg dvb-vbi dvb-flute rtp-packet rtcp-packet st12-1 st337 rdd29 st377-1 mpeg-ts transmux media-plane timed-metadata hls-runtime srt-runtime media-doctor ttml-subtitle; do
+          for c in broadcast-common dvb-bbframe scte35-splice dvb-t2mi dvb-si dvb-conformance mpeg-pes dvb-subtitle mpeg-ps scte104 cc-data st291 ule dvb-ci dvb-simulcrypt mp4-emsg dvb-vbi dvb-flute rtp-packet rtcp-packet st12-1 st337 rdd29 st377-1 mpeg-ts broadcast-hls transmux media-plane timed-metadata hls-runtime srt-runtime media-doctor ttml-subtitle; do
             echo "::group::$c (no_std)"
             cargo build -p "$c" --no-default-features --target thumbv7em-none-eabi --locked
             echo "::endgroup::"

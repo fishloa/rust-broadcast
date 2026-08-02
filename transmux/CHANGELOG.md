@@ -5,6 +5,26 @@ All notable changes to `transmux` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.22.0] - Unreleased
+
+### Changed (BREAKING)
+- **HLS (M3U8) playlist syntax moved to the new `broadcast-hls` crate**
+  (issue #878). `transmux::hls` and every `transmux::{MediaPlaylist,
+  MasterPlaylist, MediaSegment, Variant, IFrameVariant, LowLatencyConfig,
+  OpenSegment, PartSpec, MapTag, ByteRange, PreloadHintType,
+  RenditionReport, SkipInfo, CENC_KEYFORMAT, CENC_KEYFORMATVERSIONS,
+  cenc_ext_x_key, mark_init_discontinuities}` path no longer exists — no
+  compatibility re-export. Depend on `broadcast-hls` directly for playlist
+  syntax; `transmux` now depends on it for its own HLS/LL-HLS
+  **segmenters** (`ts_hls`, `ll_hls`, which still live here — they produce
+  container bytes, not playlist syntax). `Error::HlsParse` is removed from
+  `transmux::Error` (playlist parsing, and its error type, moved with the
+  syntax); `broadcast_hls::Error::HlsParse` replaces it.
+  `broadcast_hls::cenc_ext_x_key` takes `broadcast_hls::CencScheme`, a
+  distinct type from `transmux::CencScheme` (the dependency direction —
+  `transmux` depends on `broadcast-hls`, not the reverse — means the two
+  crates cannot share it); convert at the call site.
+
 ## [0.21.1] - 2026-07-30
 
 ### Fixed

@@ -9,7 +9,7 @@
 //!    non-low-latency playlist is asserted to carry NONE of them (opt-in);
 //!  - a part's sample set is reconstructed and compared to `build_media_segment`.
 
-use transmux::hls::{LowLatencyConfig, MediaPlaylist, MediaSegment, PartSpec};
+use broadcast_hls::{LowLatencyConfig, MediaPlaylist, MediaSegment, PartSpec};
 use transmux::ll_hls::LlHlsSegmenter;
 use transmux::{
     AVCConfigurationBox, AVCDecoderConfigurationRecord, CodecConfig, DecoderConfigDescriptor,

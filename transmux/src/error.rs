@@ -103,22 +103,6 @@ pub enum Error {
     #[error("emsg serialize: {0}")]
     EmsgSerialize(#[from] mp4_emsg::Error),
 
-    /// An HLS playlist (`.m3u8`, RFC 8216bis) tag could not be parsed —
-    /// [`crate::hls::MediaPlaylist::parse`] / [`crate::hls::MasterPlaylist::parse`]
-    /// (issue #717 slice 1, the `to_m3u8()` renderers' symmetric inverse).
-    /// Unrecognized tags are ignored (forward-compat); this variant is only
-    /// returned for a *known* tag whose required attribute is missing or
-    /// whose value fails to parse.
-    #[error("hls parse (line {line_no}): {reason}\n  {line}")]
-    HlsParse {
-        /// 1-based line number within the input playlist text.
-        line_no: usize,
-        /// The offending line, verbatim.
-        line: String,
-        /// Human-readable explanation.
-        reason: String,
-    },
-
     /// A demuxed ISOBMFF sample entry (`stsd` entry, ISO/IEC 14496-12:2015
     /// §8.5.2) describes a codec this crate has no
     /// [`CodecConfig`](crate::pipeline::CodecConfig) reconstruction for —

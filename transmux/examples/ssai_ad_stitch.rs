@@ -15,7 +15,7 @@
 //!    splice on the demuxed [`Media`] IR, returning a
 //!    [`SpliceResult`](transmux::SpliceResult) whose
 //!    [`SplicePoint`](transmux::SplicePoint)s mark the ad-in and resume cuts.
-//! 4. **`transmux`'s HLS/DASH packaging** (`hls::MediaPlaylist`,
+//! 4. **`transmux`'s HLS/DASH packaging** (`broadcast_hls::MediaPlaylist`,
 //!    `DashPackager`, `build_media_segment_with_events`) renders the spliced
 //!    timeline as a real `#EXT-X-DISCONTINUITY` + `#EXT-X-DATERANGE` HLS media
 //!    playlist and a real DASH `.mpd` carrying an inband `emsg` at the splice
@@ -64,6 +64,7 @@ use std::fs;
 use std::path::PathBuf;
 
 use broadcast_common::{Serialize, Unpackage};
+use broadcast_hls::{MediaPlaylist, MediaSegment};
 use mpeg_ts::ts::{SectionReassembler, TS_PACKET_SIZE, TsPacket};
 use scte35_splice::SpliceInfoSection;
 use scte35_splice::commands::{AnyCommand, SpliceInsert};
@@ -72,9 +73,8 @@ use timed_metadata::convert::{EmsgConfig, SCTE35_SCHEME};
 use timed_metadata::{DateRange, TimeAnchor, Timeline};
 use transmux::{
     Addressing, CodecConfig, DashPackager, EmsgBox, FragmentTrackData, InbandEventStream, Media,
-    MediaPlaylist, MediaSegment, PresentationTime, Sample, SplicePoint, Track, TrackSegments,
-    TsDemux, build_init_segment, build_media_segment, build_media_segment_with_events,
-    splice_insert,
+    PresentationTime, Sample, SplicePoint, Track, TrackSegments, TsDemux, build_init_segment,
+    build_media_segment, build_media_segment_with_events, splice_insert,
 };
 
 /// This example's base fixture is H.264/AVC video; used to tell the video

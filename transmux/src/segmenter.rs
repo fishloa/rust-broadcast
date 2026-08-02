@@ -61,7 +61,7 @@
 //!
 //! Both mechanisms set the [`SegmentMeta::discontinuous`] flag returned by
 //! [`Segmenter::take_ready_with_meta`], which callers can forward directly to
-//! [`crate::hls::MediaSegment::discontinuous`].
+//! [`broadcast_hls::MediaSegment::discontinuous`].
 
 use alloc::collections::VecDeque;
 use alloc::vec::Vec;

@@ -39,9 +39,10 @@
 //!   `#EXT-X-DISCONTINUITY-SEQUENCE:<n>` when `n > 0`; absent (defaulting
 //!   to 0) otherwise.
 //!
-//! Use [`Segmenter::mark_discontinuity`](crate::Segmenter::mark_discontinuity)
-//! to mark the next cut as discontinuous; the segmenter also auto-detects
-//! init-segment changes and marks those cuts automatically.
+//! A caller assembling segments (e.g. the `transmux` crate's `Segmenter`,
+//! via its `mark_discontinuity` method) marks the next cut as discontinuous;
+//! a segmenter also typically auto-detects init-segment changes and marks
+//! those cuts automatically (see [`mark_init_discontinuities`] below).
 //!
 //! # Low-Latency HLS (RFC 8216bis)
 //!
@@ -83,8 +84,8 @@
 //! protects). `cenc` (AES-128 full-block CTR) has **no** valid HLS `METHOD`
 //! — CTR is not one of HLS's two encryption methods (`SAMPLE-AES`/
 //! `AES-128`, both CBC) — so `cenc`-protected CMAF is signalling-only on the
-//! DASH side (`crate::dash`); `cenc_ext_x_key` returns `None` rather than
-//! emit an invalid tag.
+//! DASH side (the `transmux` crate's `dash` module); `cenc_ext_x_key` returns
+//! `None` rather than emit an invalid tag.
 //!
 //! # Parsing (RFC 8216bis, issue #717 slice 1)
 //!
@@ -122,14 +123,73 @@
 //!   is preserved, not dropped, but re-rendering loses its original
 //!   interleaved position (extra tags always render as one block before all
 //!   segments, matching `to_m3u8()`'s existing placement).
+//!
+//! Depends only on `broadcast-common`. `#![no_std]` (+ `alloc`) when the
+//! `std` feature is disabled.
+#![cfg_attr(not(feature = "std"), no_std)]
+#![cfg_attr(docsrs, feature(doc_cfg))]
+#![warn(missing_docs)]
+// Runnable examples, embedded so they render on docs.rs and stay in sync with
+// the actual `examples/*.rs` files (shown, not compiled).
+#![doc = "\n## Runnable examples\n"]
+#![doc = "Run with `cargo run -p broadcast-hls --example <name>`.\n"]
+#![doc = "\n### `build_playlist`\n\n```rust,ignore"]
+#![doc = include_str!("../examples/build_playlist.rs")]
+#![doc = "```\n\n### `parse_playlist`\n\n```rust,ignore"]
+#![doc = include_str!("../examples/parse_playlist.rs")]
+#![doc = "```"]
+
+extern crate alloc;
+
+mod error;
+
+pub use error::{Error, Result};
 
 use alloc::collections::BTreeMap;
 use alloc::format;
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 
-use crate::cenc::CencScheme;
-use crate::error::{Error, Result};
+/// A CENC protection scheme identity relevant to HLS `#EXT-X-KEY` signalling
+/// (ISO/IEC 23001-7 §4) — mirrors the `transmux` crate's own
+/// `cenc::CencScheme` (the two crates cannot share one type: `transmux`
+/// depends on `broadcast-hls`, not the other way around, so `transmux`
+/// converts at the boundary — see its `cenc_ext_x_key` wrapper).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+pub enum CencScheme {
+    /// `cenc` — AES-128 full-block counter (CTR) mode.
+    Cenc,
+    /// `cbcs` — AES-128 pattern cipher-block-chaining mode.
+    Cbcs,
+}
+
+impl CencScheme {
+    /// The scheme's four-CC token as it appears in `schm` (`"cenc"` / `"cbcs"`).
+    pub fn name(&self) -> &'static str {
+        match self {
+            CencScheme::Cenc => "cenc",
+            CencScheme::Cbcs => "cbcs",
+        }
+    }
+}
+
+broadcast_common::impl_spec_display!(CencScheme);
+
+/// Hex-encode `data` as lowercase ASCII (e.g. for a `KEYID=0x...` attribute
+/// value). Private: a small local copy of the same helper `transmux::rtp`
+/// carries, kept in-crate rather than reaching back across the dependency
+/// boundary for six lines of code.
+fn hex_encode(data: &[u8]) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut out = String::with_capacity(data.len() * 2);
+    for &b in data {
+        out.push(HEX[(b >> 4) as usize] as char);
+        out.push(HEX[(b & 0x0F) as usize] as char);
+    }
+    out
+}
 
 // ---------------------------------------------------------------------------
 // CENC/CBCS DRM signalling — ISO/IEC 23001-7 `cbcs` over CMAF-HLS (issue #564).
@@ -155,9 +215,10 @@ pub const CENC_KEYFORMATVERSIONS: &str = "1";
 /// the module docs).
 ///
 /// `key_uri` is caller-supplied (a key-server URL, `skd://`, or `data:`
-/// URI — no DRM logic lives here) and `kid` is the track's
-/// [`crate::cenc::TrackEncryptionBox::default_kid`]
-/// (`crate::media::TrackEncryption::tenc::default_kid`).
+/// URI — no DRM logic lives here) and `kid` is the track's Track Encryption
+/// Box default KID (`tenc.default_kid`, ISO/IEC 14496-12 §8.12.1 — the
+/// `transmux` crate's `cenc::TrackEncryptionBox::default_kid` /
+/// `media::TrackEncryption::tenc::default_kid`).
 pub fn cenc_ext_x_key(scheme: CencScheme, kid: &[u8; 16], key_uri: &str) -> Option<String> {
     if scheme != CencScheme::Cbcs {
         return None;
@@ -165,7 +226,7 @@ pub fn cenc_ext_x_key(scheme: CencScheme, kid: &[u8; 16], key_uri: &str) -> Opti
     Some(format!(
         "#EXT-X-KEY:METHOD=SAMPLE-AES,URI=\"{key_uri}\",KEYFORMAT=\"{CENC_KEYFORMAT}\",\
          KEYFORMATVERSIONS=\"{CENC_KEYFORMATVERSIONS}\",KEYID=0x{}",
-        crate::rtp::hex_encode(kid)
+        hex_encode(kid)
     ))
 }
 
@@ -1298,7 +1359,7 @@ fn parse_resolution(v: &str, line_no: usize, line: &str) -> Result<(u32, u32)> {
 ///
 /// # Example
 /// ```
-/// use transmux::hls::{mark_init_discontinuities, MediaSegment};
+/// use broadcast_hls::{mark_init_discontinuities, MediaSegment};
 /// let init_a = b"moov_a" as &[u8];
 /// let init_b = b"moov_b" as &[u8];
 /// let mut seg0 = MediaSegment { uri: "s0.m4s".into(), duration: 5.0, discontinuous: false, parts: vec![], ..Default::default() };
@@ -2228,12 +2289,8 @@ s0.m4s\n\
 #EXTINF:4.000,\n\
 seg.m4s\n";
         let err = MediaPlaylist::parse(text).expect_err("EXT-X-PART without DURATION must error");
-        match err {
-            Error::HlsParse { reason, .. } => {
-                assert!(reason.contains("DURATION"), "{reason}");
-            }
-            other => panic!("expected HlsParse, got {other:?}"),
-        }
+        let Error::HlsParse { reason, .. } = err;
+        assert!(reason.contains("DURATION"), "{reason}");
     }
 
     #[test]

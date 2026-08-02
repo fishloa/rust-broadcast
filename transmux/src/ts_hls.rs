@@ -72,9 +72,9 @@ use alloc::vec;
 use alloc::vec::Vec;
 
 use broadcast_common::{Demand, Package, Stage, Timestamp};
+use broadcast_hls::{MediaPlaylist, MediaSegment};
 
 use crate::error::{Error, Result};
-use crate::hls::{MediaPlaylist, MediaSegment};
 use crate::media::{Media, Track};
 use crate::pipeline::{Sample, TrackSpec};
 use crate::segmenter::{
