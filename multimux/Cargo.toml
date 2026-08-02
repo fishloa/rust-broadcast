@@ -97,6 +97,11 @@ name = "serve_rtsp"
 name = "custom_scheme"
 
 [dev-dependencies]
+# TS packet/PSI-section framing (issue #887): counts PMT sections in a
+# served classic-TS-HLS segment's bytes (`source::segment`'s MPTS test) —
+# proving RFC 8216bis §3.1.1's "single MPEG-2 Program" constraint by parsing
+# actual bytes rather than trusting construction.
+mpeg-ts          = { path = "../mpeg-ts", version = "0.3" }
 base64           = "0.22"
 # Independent RFC 7616 Digest response verification in the mock auth server
 # (`testutil`, issue #663 "Finish client-side multi-scheme auth") — the

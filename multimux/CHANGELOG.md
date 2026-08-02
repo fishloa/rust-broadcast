@@ -3,6 +3,19 @@
 ## [Unreleased]
 
 ### Added
+- **Classic MPEG-TS HLS output** (`OutputKind::TsHls`, config token
+  `"ts_hls"`, issue #887): a route configured with it is served with whole
+  `.ts` media segments (RFC 8216 §3/RFC 8216bis §3.1.1) instead of fMP4,
+  self-initialising (no `#EXT-X-MAP`, no init segment) and classic (no
+  low-latency parts — `transmux::ts_hls::StreamingTsHlsSegmenter` has no
+  partial-segment concept). Container is a **per-route**, not per-output,
+  property (`route::RouteHandle::with_container`): `"ts_hls"` is mutually
+  exclusive with `"llhls"`/`"dash"`/`"ll_dash"` on the same route, rejected by
+  `Config::validate()` at load time (a `media_plane::Trunk` has one segment
+  ring per program — a program's samples are segmented into fMP4 *or* TS,
+  never both, without a second ring; run two routes against the same source
+  if both containers are needed today). See `output::ts_hls` and the
+  README's new "Classic MPEG-TS HLS output" section.
 - `OutputAuthSpec::SignedUrl` (issue #747): configures
   `broadcast_auth::Verifier::signed_url` as a route's output-auth scheme —
   `{ "scheme": "signed_url", "keys": [{ "kid": "...", "secret": "..." }, ...] }`.

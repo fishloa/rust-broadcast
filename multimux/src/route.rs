@@ -117,7 +117,7 @@ use std::time::{Duration, SystemTime};
 
 use broadcast_common::Timestamp;
 use bytes::Bytes;
-use hls_runtime::server::HlsOrigin;
+use hls_runtime::server::{Container, HlsOrigin};
 use media_plane::trunk::{
     PartEntry, SegmentCursor, SegmentCursorItem, SegmentEntry, SegmentWriter, TrunkConfig,
 };
@@ -390,12 +390,24 @@ impl ProgramServing {
         target_duration_secs: f64,
         part_target_ms: u32,
         window_segments: NonZeroUsize,
+        container: Container,
     ) -> Arc<Self> {
+        let mut builder = HlsOrigin::builder(Arc::clone(&trunk))
+            .target_duration_secs(target_duration_secs)
+            .window_segments(window_segments)
+            .container(container);
+        // Classic (no low-latency) HLS for `Container::MpegTs`: the
+        // `transmux::ts_hls::StreamingTsHlsSegmenter` this container is fed by
+        // (`crate::source::segment::ProgramSegmenter`) has no partial-segment
+        // ("part") concept at all — it only ever produces whole `.ts`
+        // segments (issue #887) — so there is nothing for a `.low_latency(..)`
+        // call to advertise. `Container::Fmp4` keeps calling it unconditionally,
+        // preserving every pre-#887 route's behaviour.
+        if container == Container::Fmp4 {
+            builder = builder.low_latency(part_target_ms);
+        }
         let ll_hls = Arc::new(
-            HlsOrigin::builder(Arc::clone(&trunk))
-                .target_duration_secs(target_duration_secs)
-                .window_segments(window_segments)
-                .low_latency(part_target_ms)
+            builder
                 .build()
                 .expect("target_duration_secs and window_segments are always set above"),
         );
@@ -539,6 +551,13 @@ pub struct RouteHandle {
     /// build every program's [`ProgramServing`]/`Trunk` with the same
     /// advertised-window depth [`Self::new`] was given.
     window_segments_cap: NonZeroUsize,
+    /// Which container every program on this route is served as — set via
+    /// [`Self::with_container`], defaulting to [`Container::Fmp4`] (every
+    /// pre-#887 route's behaviour, unchanged). A route-wide property, not a
+    /// per-program one (see issue #887 / `crate::config::Route::outputs`'s
+    /// exclusivity rule): a `Trunk` has one segment ring per program, so a
+    /// program's samples are segmented into fMP4 *or* TS, never both.
+    container: Container,
     created_at: SystemTime,
     /// Egress-resolvable `ProgramId -> Arc<ProgramServing>` registry:
     /// `media_plane::IngestDriver` mints one `Trunk` per program the instant
@@ -595,6 +614,7 @@ impl RouteHandle {
             target_duration_secs,
             part_target_ms,
             window_segments_cap: window_segments,
+            container: Container::default(),
             created_at: SystemTime::now(),
             programs: RwLock::new(HashMap::new()),
             name: DEFAULT_ROUTE_NAME.to_string(),
@@ -615,6 +635,35 @@ impl RouteHandle {
     /// called.
     pub fn name(&self) -> &str {
         &self.name
+    }
+
+    /// Sets which container every program on this route is served as
+    /// (issue #887) — a consuming builder, chained onto [`Self::new`] the
+    /// same way as [`Self::with_name`]. Every program [`Self::publish_program`]
+    /// builds from this point on gets an [`hls_runtime::server::HlsOrigin`]
+    /// configured with this container (see `ProgramServing::new`).
+    /// Defaults to [`Container::Fmp4`] if never called.
+    pub fn with_container(mut self, container: Container) -> Self {
+        self.container = container;
+        self
+    }
+
+    /// This route's configured container (see [`Self::with_container`]) —
+    /// needed by [`crate::source::segment::drive_program_segmenters`] to pick
+    /// the fMP4 (`LlHlsSegmenter`) or classic-TS
+    /// (`transmux::ts_hls::StreamingTsHlsSegmenter`) segmenter path for every
+    /// program on this route.
+    pub(crate) fn container(&self) -> Container {
+        self.container
+    }
+
+    /// This route's configured advertised-window depth (see
+    /// [`Self::window_segments_cap`]'s own field doc) — needed by
+    /// [`crate::source::segment::drive_program_segmenters`] to size a
+    /// `StreamingTsHlsSegmenter`'s own internal rolling-playlist window
+    /// consistently with every other per-route capacity.
+    pub(crate) fn window_segments_cap(&self) -> NonZeroUsize {
+        self.window_segments_cap
     }
 
     /// Publish `program`'s `Trunk` into this route's registry, building its
@@ -652,6 +701,7 @@ impl RouteHandle {
             self.target_duration_secs,
             self.part_target_ms,
             self.window_segments_cap,
+            self.container,
         );
         programs.insert(program, serving);
     }

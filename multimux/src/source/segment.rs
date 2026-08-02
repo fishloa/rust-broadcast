@@ -25,6 +25,17 @@
 //! program's tracks have landed, then pump every already-built segmenter's
 //! cursor.
 //!
+//! **Issue #887**: `ProgramSegmenter` feeds one of *two* segmenter kinds —
+//! [`transmux::ll_hls::LlHlsSegmenter`] (fMP4/CMAF, LL-HLS parts) or
+//! [`transmux::ts_hls::StreamingTsHlsSegmenter`] (classic whole-`.ts`
+//! segments, no parts) — selected per-program by that program's route's
+//! configured `crate::route::RouteHandle::container()` (see `AnySegmenter`,
+//! below). A route's container is fixed at route-construction time
+//! (`crate::config::OutputKind::TsHls` is mutually exclusive with
+//! `llhls`/`dash`/`ll_dash` on the same route, enforced by
+//! `crate::config::Route::validate_standalone`), so every program on one
+//! route always takes the same branch.
+//!
 //! Both are `pub(crate)` (issue #805 task 6 narrowed them back from `pub`):
 //! the supported extension surface for a [`crate::registry::SchemeRegistry`]
 //! `Custom` input factory is now the single [`crate::source::advance_route`]
@@ -68,14 +79,137 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use broadcast_common::Timestamp;
+use hls_runtime::server::Container;
 use media_plane::ingress::{IngestDriver, IngestSession, ProgramId};
 use media_plane::trunk::{
     PartEntry, SampleCursor, SampleCursorItem, SegmentEntry, SegmentWriter, Trunk,
 };
 use transmux::SegmentMeta;
-use transmux::ll_hls::LlHlsSegmenter;
+use transmux::ll_hls::{LlHlsSegmenter, PartInfo};
+use transmux::pipeline::Sample;
+use transmux::ts_hls::StreamingTsHlsSegmenter;
 
 use crate::route::{RouteHandle, SPTS_PROGRAM_ID};
+
+/// One closed segment, normalised across the two segmenter kinds
+/// [`AnySegmenter`] wraps — [`transmux::ll_hls::SegmentInfo`] (fMP4) and
+/// [`transmux::ts_hls::TsSegment`] (classic TS) carry the same information
+/// under different field names/numbering conventions (see
+/// [`AnySegmenter::take_ready_segments`]), so [`ProgramSegmenter::publish_ready`]
+/// works against this one shape regardless of which segmenter produced it.
+struct ReadySegment {
+    bytes: Vec<u8>,
+    /// 1-based, matching [`media_plane::trunk::SegmentEntry::sequence_number`]'s
+    /// own convention (which in turn mirrors
+    /// [`transmux::ll_hls::SegmentInfo::segment_seq`]) — a
+    /// [`transmux::ts_hls::TsSegment::sequence`] is 0-based, so
+    /// [`AnySegmenter::take_ready_segments`] adds one when normalising it.
+    segment_seq: u32,
+    duration: f64,
+    discontinuous: bool,
+}
+
+impl From<transmux::ll_hls::SegmentInfo> for ReadySegment {
+    fn from(info: transmux::ll_hls::SegmentInfo) -> Self {
+        ReadySegment {
+            bytes: info.bytes,
+            segment_seq: info.segment_seq,
+            duration: info.duration,
+            // The fMP4 segmenter never itself flags a discontinuity (see
+            // `ProgramSegmenter::publish_ready`'s pre-#887 hardcoded `false` —
+            // preserved here, not a behaviour change).
+            discontinuous: false,
+        }
+    }
+}
+
+impl From<transmux::ts_hls::TsSegment> for ReadySegment {
+    fn from(seg: transmux::ts_hls::TsSegment) -> Self {
+        ReadySegment {
+            bytes: seg.bytes,
+            segment_seq: u32::try_from(seg.sequence)
+                .unwrap_or(u32::MAX)
+                .saturating_add(1),
+            duration: seg.duration,
+            discontinuous: seg.discontinuous,
+        }
+    }
+}
+
+/// The two segmenter kinds a [`ProgramSegmenter`] can drive, selected by the
+/// route's configured [`Container`] (`crate::route::RouteHandle::container`,
+/// issue #887): [`Container::Fmp4`] feeds an [`LlHlsSegmenter`] (parts +
+/// segments), [`Container::MpegTs`] feeds a [`StreamingTsHlsSegmenter`]
+/// (whole self-initialising `.ts` segments only — no parts, no init segment;
+/// see that type's own module doc). Kept as one enum (rather than
+/// `ProgramSegmenter` being generic) so `drive_program_segmenters` and its
+/// `HashMap<ProgramId, ProgramSegmenter>` stay a single concrete type
+/// regardless of which container any given route is configured for.
+enum AnySegmenter {
+    Fmp4(LlHlsSegmenter),
+    Ts(StreamingTsHlsSegmenter),
+}
+
+impl AnySegmenter {
+    fn push(&mut self, track_id: u32, sample: Sample) -> transmux::Result<()> {
+        match self {
+            AnySegmenter::Fmp4(seg) => seg.push(track_id, sample),
+            AnySegmenter::Ts(seg) => seg.push(track_id, sample),
+        }
+    }
+
+    /// Finalize any trailing buffered partial segment — `LlHlsSegmenter::flush`
+    /// for fMP4, `StreamingTsHlsSegmenter::finish` for classic TS (same job,
+    /// different name: see that method's own doc for why it is not named
+    /// `flush` there).
+    fn finish(&mut self) -> transmux::Result<()> {
+        match self {
+            AnySegmenter::Fmp4(seg) => seg.flush(),
+            AnySegmenter::Ts(seg) => seg.finish(),
+        }
+    }
+
+    /// The init segment bytes, fMP4 only — `Container::MpegTs`'s classic TS
+    /// segments are self-initialising (in-band PAT/PMT at the head of every
+    /// segment; see [`StreamingTsHlsSegmenter`]'s own doc), so this is always
+    /// `None` for [`AnySegmenter::Ts`] — mirroring
+    /// `hls_runtime::server::HlsOrigin::set_init`'s documented no-op under
+    /// [`Container::MpegTs`].
+    fn init_segment(&self) -> Option<Vec<u8>> {
+        match self {
+            AnySegmenter::Fmp4(seg) => match seg.init_segment() {
+                Ok(bytes) => Some(bytes),
+                Err(e) => {
+                    tracing::warn!(error = %e, "driver-backed segmenter init segment build failed");
+                    None
+                }
+            },
+            AnySegmenter::Ts(_) => None,
+        }
+    }
+
+    /// LL-HLS partial segments — always empty for [`AnySegmenter::Ts`], which
+    /// has no partial-segment concept at all (see [`AnySegmenter`]'s own doc).
+    fn take_ready_parts(&mut self) -> Vec<PartInfo> {
+        match self {
+            AnySegmenter::Fmp4(seg) => seg.take_ready_parts(),
+            AnySegmenter::Ts(_) => Vec::new(),
+        }
+    }
+
+    /// Closed segments, normalised to [`ReadySegment`] — see that type's own
+    /// doc for the fMP4/TS field-mapping differences this bridges.
+    fn take_ready_segments(&mut self) -> Vec<ReadySegment> {
+        match self {
+            AnySegmenter::Fmp4(seg) => seg
+                .take_ready_segments()
+                .into_iter()
+                .map(Into::into)
+                .collect(),
+            AnySegmenter::Ts(seg) => seg.take_ready().into_iter().map(Into::into).collect(),
+        }
+    }
+}
 
 /// One program's segmenting state: a [`SampleCursor`] on its driver-minted
 /// [`Trunk`], an [`LlHlsSegmenter`] fed from it, and the *same* `Trunk`'s own
@@ -90,12 +224,24 @@ use crate::route::{RouteHandle, SPTS_PROGRAM_ID};
 pub(crate) struct ProgramSegmenter {
     cursor: SampleCursor,
     segment_writer: SegmentWriter,
-    seg: LlHlsSegmenter,
+    seg: AnySegmenter,
     /// Cumulative nanoseconds of segment duration published so far by this
     /// segmenter — mirrors `crate::route::RouteHandle`'s own
     /// `next_timeline_ns`, kept per-program here since each program's
     /// timeline is independent.
     next_timeline_ns: u64,
+}
+
+/// Rolling-window depth [`StreamingTsHlsSegmenter::new`] is given —
+/// irrelevant to a driver-backed route in practice (its own `.playlist()`
+/// method, the only consumer of this window, is never called here: the
+/// served playlist is rendered from the `Trunk`'s own segment log via
+/// `crate::route::ProgramServing`'s `HlsOrigin`, exactly like the fMP4 path).
+/// Any positive value works; matches this route's own advertised-window
+/// depth (`crate::route::RouteHandle::window_segments_cap`) so memory use is
+/// at least bounded consistently with everything else per-route.
+fn ts_segmenter_window(route_handle: &RouteHandle) -> usize {
+    route_handle.window_segments_cap().get()
 }
 
 impl ProgramSegmenter {
@@ -104,25 +250,65 @@ impl ProgramSegmenter {
     /// unusual but not impossible — retried on the next call), if its
     /// segment writer has already been taken (must never happen for a
     /// freshly-observed per-program `Trunk`, but defensive rather than
-    /// panicking on a driver/caller bug), or if [`LlHlsSegmenter::with_part_target`]
-    /// itself rejects the track set (logged, not propagated — a
-    /// segmentation failure on one program must not tear down the whole
-    /// ingest session; see [`drive_program_segmenters`]'s own doc).
-    fn try_new(trunk: &Arc<Trunk>, target_duration_secs: f64, part_target_ms: u32) -> Option<Self> {
+    /// panicking on a driver/caller bug), or if the underlying segmenter
+    /// constructor ([`LlHlsSegmenter::with_part_target`] for
+    /// [`Container::Fmp4`], [`StreamingTsHlsSegmenter::new`] for
+    /// [`Container::MpegTs`]) itself rejects the track set (logged, not
+    /// propagated — a segmentation failure on one program must not tear down
+    /// the whole ingest session; see [`drive_program_segmenters`]'s own doc).
+    fn try_new(
+        trunk: &Arc<Trunk>,
+        route_handle: &RouteHandle,
+        target_duration_secs: f64,
+        part_target_ms: u32,
+    ) -> Option<Self> {
         let tracks = trunk.tracks();
         if tracks.is_empty() {
             return None;
         }
         let segment_writer = trunk.segment_writer()?;
-        let seg = match LlHlsSegmenter::with_part_target(
-            tracks.to_vec(),
-            transmux::VIDEO_CLOCK_RATE,
-            target_duration_secs,
-            part_target_ms,
-        ) {
-            Ok(seg) => seg,
-            Err(e) => {
-                tracing::warn!(error = %e, "driver-backed segmenter build failed");
+        let seg = match route_handle.container() {
+            Container::Fmp4 => match LlHlsSegmenter::with_part_target(
+                tracks.to_vec(),
+                transmux::VIDEO_CLOCK_RATE,
+                target_duration_secs,
+                part_target_ms,
+            ) {
+                Ok(seg) => AnySegmenter::Fmp4(seg),
+                Err(e) => {
+                    tracing::warn!(error = %e, "driver-backed fMP4 segmenter build failed");
+                    return None;
+                }
+            },
+            Container::MpegTs => {
+                // Whole seconds, clamped >= 1 (mirrors
+                // `StreamingTsHlsSegmenter::new`'s own clamp) — the target
+                // duration is configured as `f64` seconds route-wide
+                // (`crate::config::Config::target_duration_secs`), but the
+                // classic-TS segmenter's cut rule is integer-second, per
+                // `transmux::ts_hls`'s own module doc ("no_std-friendly").
+                let target_secs = target_duration_secs.round().max(1.0) as u32;
+                match StreamingTsHlsSegmenter::new(
+                    tracks.to_vec(),
+                    target_secs,
+                    ts_segmenter_window(route_handle),
+                ) {
+                    Ok(seg) => AnySegmenter::Ts(seg),
+                    Err(e) => {
+                        tracing::warn!(error = %e, "driver-backed TS-HLS segmenter build failed");
+                        return None;
+                    }
+                }
+            }
+            // `Container` is `#[non_exhaustive]`: a future container variant
+            // this segmenter has no branch for is refused (logged, not
+            // propagated — see this function's own doc), not silently
+            // defaulted into one of the two existing branches.
+            other => {
+                tracing::warn!(
+                    ?other,
+                    "driver-backed segmenter: no segmenter implementation for this container"
+                );
                 return None;
             }
         };
@@ -148,15 +334,10 @@ impl ProgramSegmenter {
 
     /// The init segment bytes — built once, at construction, stable for the
     /// life of the segmenter (mirrors [`LlHlsSegmenter::init_segment`]'s own
-    /// doc).
+    /// doc). Always `None` under [`Container::MpegTs`] — see
+    /// [`AnySegmenter::init_segment`].
     fn init_segment(&self) -> Option<Vec<u8>> {
-        match self.seg.init_segment() {
-            Ok(bytes) => Some(bytes),
-            Err(e) => {
-                tracing::warn!(error = %e, "driver-backed segmenter init segment build failed");
-                None
-            }
-        }
+        self.seg.init_segment()
     }
 
     /// Drain every sample this program's cursor has observed since the last
@@ -173,9 +354,9 @@ impl ProgramSegmenter {
                 }
             }
             // `Sparse`/`Lagged`/`Degraded` items: a section-carried (sparse)
-            // track has no place in an fMP4 media segment and `Lagged`/
-            // `Degraded` are cursor bookkeeping, not media — nothing to feed
-            // the segmenter with either way, mirroring
+            // track has no place in either segmenter's media segment (fMP4 or
+            // classic TS) and `Lagged`/`Degraded` are cursor bookkeeping, not
+            // media — nothing to feed the segmenter with either way, mirroring
             // `ts_program`'s own reference test, which only ever matches
             // `SampleCursorItem::Timed`.
         }
@@ -190,7 +371,7 @@ impl ProgramSegmenter {
     /// Returns `(parts_published, segments_published)` this call — see
     /// [`Self::pump`].
     fn flush(&mut self) -> (usize, usize) {
-        if let Err(e) = self.seg.flush() {
+        if let Err(e) = self.seg.finish() {
             tracing::warn!(error = %e, "driver-backed segmenter flush failed");
         }
         self.publish_ready()
@@ -221,7 +402,7 @@ impl ProgramSegmenter {
                 duration,
                 Timestamp::from_nanos(start_ns),
                 SegmentMeta {
-                    discontinuous: false,
+                    discontinuous: segment.discontinuous,
                 },
             ));
             segments_published += 1;
@@ -278,6 +459,7 @@ pub(crate) fn drive_program_segmenters<S: IngestSession>(
         };
         let Some(segmenter) = ProgramSegmenter::try_new(
             trunk,
+            route_handle,
             route_handle.target_duration_secs(),
             route_handle.part_target_ms(),
         ) else {
@@ -658,9 +840,25 @@ mod tests {
 
     const FRAME_DUR: u32 = transmux::VIDEO_CLOCK_RATE / 30;
 
+    /// A length-prefixed AVC NAL sample — the same per-sample byte layout
+    /// `ts_program::test_support::build_ts_bytes` uses (`(nal.len() as
+    /// u32).to_be_bytes()` prefix, then `[0x65, nal_byte, seq_byte]`), rather
+    /// than an arbitrary opaque byte blob. `LlHlsSegmenter` never
+    /// re-interprets a sample's bytes (fMP4 stores whatever it's given
+    /// verbatim), so the older opaque-blob shape worked for that path; issue
+    /// #887's `StreamingTsHlsSegmenter`/`ts_mux` path DOES parse AVC samples
+    /// as length-prefixed NALs (to re-wrap them Annex-B for the muxed TS), so
+    /// `TwoProgramSession`'s samples must be real ones for
+    /// `ts_hls_mpts_route_segments_each_program_into_single_pmt_segments`
+    /// (below) to mux successfully — this shape also still satisfies every
+    /// existing fMP4-path test in this module, which never inspects sample
+    /// content.
     fn sample_at(i: u32, is_sync: bool) -> Sample {
+        let nal = [0x65u8, 0xAAu8.wrapping_add(i as u8), (i % 256) as u8];
+        let mut data = (nal.len() as u32).to_be_bytes().to_vec();
+        data.extend_from_slice(&nal);
         Sample::new(
-            vec![0xAAu8.wrapping_add(i as u8); 8],
+            data,
             Some(i64::from(i) * i64::from(FRAME_DUR)),
             Some(i64::from(i) * i64::from(FRAME_DUR)),
             Some(FRAME_DUR),
@@ -822,6 +1020,204 @@ mod tests {
             trunk_1.last_closed_segment().is_some(),
             "program 1 must have segmented its own media independently"
         );
+    }
+
+    /// Render `route`'s current classic-HLS media playlist for `program`
+    /// synchronously — the multi-program analogue of `render_playlist` (which
+    /// hardcodes `SPTS_PROGRAM_ID`), needed by the MPTS test below since it
+    /// must render two DIFFERENT programs' playlists off the SAME route.
+    fn render_playlist_for(route: &RouteHandle, program: ProgramId) -> String {
+        let ll_hls = route
+            .ll_hls(program)
+            .unwrap_or_else(|| panic!("{program:?} must be published before rendering"));
+        match ll_hls.resolve(
+            HlsRequest::Playlist {
+                track_id: DEFAULT_TRACK_ID,
+                query: Default::default(),
+            },
+            Timestamp::from_nanos(0),
+            AwaitPolicy::new(Timestamp::from_nanos(0)),
+        ) {
+            EgressResponse::Ready {
+                body: HlsBody::Playlist(m),
+                ..
+            } => m,
+            other => panic!("expected Ready(Playlist) for {program:?}, got {other:?}"),
+        }
+    }
+
+    /// Resolve one dynamic resource (a served `.ts` segment, by URI) against
+    /// `program`'s `HlsOrigin` — the same `ServedEgress::resolve` call
+    /// `crate::origin::resource::dynamic_file` drives in production, minus
+    /// the axum/tokio wrapping (mirrors `render_playlist`/`render_playlist_for`
+    /// resolving playlists the same way).
+    fn resolve_resource(route: &RouteHandle, program: ProgramId, name: &str) -> bytes::Bytes {
+        let ll_hls = route
+            .ll_hls(program)
+            .unwrap_or_else(|| panic!("{program:?} must be published before resolving"));
+        match ll_hls.resolve(
+            HlsRequest::Resource {
+                name: name.to_string(),
+            },
+            Timestamp::from_nanos(0),
+            AwaitPolicy::new(Timestamp::from_nanos(0)),
+        ) {
+            EgressResponse::Ready {
+                body: HlsBody::Resource(bytes),
+                ..
+            } => bytes,
+            other => panic!("expected Ready(Resource) for {name:?} ({program:?}), got {other:?}"),
+        }
+    }
+
+    /// The first `.ts` segment URI line in a rendered classic-HLS media
+    /// playlist (a bare `seg-{track}-{seq}.ts` line, distinct from every
+    /// `#`-prefixed tag line) — `None` if the playlist advertises no closed
+    /// segment yet.
+    fn first_ts_segment_uri(playlist: &str) -> Option<&str> {
+        playlist
+            .lines()
+            .find(|l| !l.starts_with('#') && l.ends_with(".ts"))
+    }
+
+    /// Count PMT sections (`table_id == 0x02`, ISO/IEC 13818-1 Table 2-31) in
+    /// one whole-packet MPEG-2 TS byte buffer — a genuine parse of the wire
+    /// bytes (per-PID PSI section reassembly via `mpeg_ts::ts::SectionReassembler`,
+    /// same machinery `dvb-si`'s own `ts` feature is built on), not an
+    /// assumption about which PID `transmux::ts_mux` happens to place the PMT
+    /// on (issue #887's MPTS test needs this to actually *prove* RFC
+    /// 8216bis §3.1.1's "a Transport Stream Segment MUST contain a single
+    /// MPEG-2 Program" constraint, not merely trust `ts_mux`'s own
+    /// single-PMT-by-construction doc).
+    fn count_pmt_sections(ts_bytes: &[u8]) -> usize {
+        use broadcast_common::Parse;
+        use mpeg_ts::section::Section;
+        use mpeg_ts::ts::{SectionReassembler, TsPacket};
+
+        const TS_PACKET_SIZE: usize = 188;
+        const PMT_TABLE_ID: u8 = 0x02;
+
+        let mut reassemblers: HashMap<u16, SectionReassembler> = HashMap::new();
+        let mut pmt_count = 0usize;
+        for chunk in ts_bytes.chunks_exact(TS_PACKET_SIZE) {
+            let packet = TsPacket::parse(chunk).expect("a muxed TS segment is well-formed packets");
+            let Some(payload) = packet.payload else {
+                continue;
+            };
+            let reassembler = reassemblers.entry(packet.header.pid).or_default();
+            reassembler.feed(payload, packet.header.pusi);
+            while let Some(section_bytes) = reassembler.pop_section() {
+                if let Ok(section) = Section::parse(section_bytes.as_ref()) {
+                    if section.table_id == PMT_TABLE_ID {
+                        pmt_count += 1;
+                    }
+                }
+            }
+        }
+        pmt_count
+    }
+
+    /// **Issue #887 — RFC 8216bis §3.1.1's "single MPEG-2 Program"
+    /// constraint, proven by parsing served bytes.** Feeds the same
+    /// hand-scripted two-program (MPTS) session
+    /// `two_programs_on_one_route_segment_independently` uses into a
+    /// `ts_hls` route (`Container::MpegTs`) instead of the default fMP4
+    /// container, then asserts:
+    ///
+    /// 1. each program renders its OWN classic-HLS playlist — resolved off
+    ///    its own `Trunk`/`HlsOrigin`, never a shared one — referencing `.ts`
+    ///    segment URIs with no `#EXT-X-MAP` (classic TS is
+    ///    self-initialising), and
+    /// 2. each program's first served `.ts` segment contains EXACTLY ONE
+    ///    PMT section — never zero (a malformed mux) and never more than
+    ///    one (which would make the segment a genuine multi-program
+    ///    stream, exactly what RFC 8216bis §3.1.1 says playback is
+    ///    undefined for).
+    ///
+    /// The architecture already satisfies this by construction
+    /// (`transmux::ts_mux` mints one PAT + one PMT per mux call — see that
+    /// module's own doc — and `drive_program_segmenters` gives each program
+    /// its own independent `StreamingTsHlsSegmenter`/mux, never a shared
+    /// one), so this test is the missing proof, not a fix: it parses the
+    /// actual served TS bytes via `count_pmt_sections` rather than trusting
+    /// that construction.
+    #[test]
+    fn ts_hls_mpts_route_serves_each_program_as_its_own_single_pmt_playlist() {
+        let route = RouteHandle::new(1.0, 500, 8).with_container(Container::MpegTs);
+        let mut driver = IngestDriver::new(
+            TwoProgramSession::new(),
+            trunk_config(),
+            handshake(),
+            media_plane::DEFAULT_MAX_PROGRAMS,
+        );
+        let mut published = HashSet::new();
+        let mut segmenters = HashMap::new();
+        let mut track_generations = HashMap::new();
+
+        // Feed 1: Established. Feed 2: both NewProgram announcements.
+        driver.feed(&[], Timestamp::from_nanos(0));
+        report_driver_progress(&driver, &route, &mut published, &mut track_generations);
+        drive_program_segmenters(&driver, &route, &mut segmenters);
+        driver.feed(&[], Timestamp::from_nanos(1));
+        report_driver_progress(&driver, &route, &mut published, &mut track_generations);
+        drive_program_segmenters(&driver, &route, &mut segmenters);
+
+        // Same 90-sample budget as `two_programs_on_one_route_segment_independently`
+        // -- comfortably over the 1.0s target duration for both programs.
+        for _ in 0..90 {
+            let now = Timestamp::from_nanos(driver_feed_nanos());
+            driver.feed(&[], now);
+            drive_program_segmenters(&driver, &route, &mut segmenters);
+        }
+
+        // "Own playlist" means independently resolvable off its own
+        // Trunk/HlsOrigin, not merely textually different — with both
+        // programs fed identical sample cadences (`TwoProgramSession` pushes
+        // the same `sample_at(i, is_sync)` bytes to each), their rendered
+        // playlist text can legitimately coincide (same URI-naming scheme,
+        // same durations) even though the underlying `.ts` segment bytes and
+        // Trunks are genuinely distinct — proven the same way
+        // `two_programs_on_one_route_segment_independently` proves it.
+        let trunk_0 = driver
+            .trunk(ProgramId(0))
+            .cloned()
+            .expect("program 0 announced");
+        let trunk_1 = driver
+            .trunk(ProgramId(1))
+            .cloned()
+            .expect("program 1 announced");
+        assert!(
+            !Arc::ptr_eq(&trunk_0, &trunk_1),
+            "each program must be served off its own Trunk, not a shared one"
+        );
+
+        let playlist_0 = render_playlist_for(&route, ProgramId(0));
+        let playlist_1 = render_playlist_for(&route, ProgramId(1));
+
+        assert!(
+            playlist_0.contains(".ts") && !playlist_0.contains("#EXT-X-MAP"),
+            "program 0's classic-TS playlist must reference .ts segments with no init \
+             segment: {playlist_0}"
+        );
+        assert!(
+            playlist_1.contains(".ts") && !playlist_1.contains("#EXT-X-MAP"),
+            "program 1's classic-TS playlist must reference .ts segments with no init \
+             segment: {playlist_1}"
+        );
+
+        for (program, playlist) in [(ProgramId(0), &playlist_0), (ProgramId(1), &playlist_1)] {
+            let uri = first_ts_segment_uri(playlist).unwrap_or_else(|| {
+                panic!("{program:?}'s playlist has no closed .ts segment yet: {playlist}")
+            });
+            let bytes = resolve_resource(&route, program, uri);
+            let pmt_count = count_pmt_sections(&bytes);
+            assert_eq!(
+                pmt_count, 1,
+                "{program:?}'s served segment {uri:?} must carry exactly one PMT \
+                 (RFC 8216bis §3.1.1: a Transport Stream Segment MUST contain a single \
+                 MPEG-2 Program), got {pmt_count}"
+            );
+        }
     }
 
     /// Monotonic nanosecond source for `two_programs_on_one_route_segment_independently`'s

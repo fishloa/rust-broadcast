@@ -1048,6 +1048,36 @@ impl Route {
                 reason: format!("route {:?} has no outputs configured", self.name),
             });
         }
+        // Issue #887: `ts_hls` is mutually exclusive with `llhls`/`dash`/
+        // `ll_dash` on the same route. Container (fMP4 vs. classic TS) is a
+        // per-*route* property (`crate::route::RouteHandle::with_container`),
+        // not per-output, because a `media_plane::Trunk` has exactly ONE
+        // segment ring per program — a program's samples are segmented into
+        // fMP4 *or* TS, never both, without a second ring. Serving both
+        // containers from one ingest is a legitimate future want, but it
+        // needs a `Trunk` change (a second, container-keyed ring group) and
+        // belongs in its own issue; today the workaround is to run two routes
+        // against the same source, one per container. See
+        // `crate::output`/`crate::route`'s own module docs for the same
+        // constraint from the serving side.
+        if self.outputs.iter().any(|k| matches!(k, OutputKind::TsHls))
+            && self
+                .outputs
+                .iter()
+                .any(|k| matches!(k, OutputKind::LlHls | OutputKind::Dash | OutputKind::LlDash))
+        {
+            return Err(MultimuxError::ConfigInvalid {
+                field: "routes.outputs",
+                reason: format!(
+                    "route {:?} configures both \"ts_hls\" and an fMP4-based output \
+                     (\"llhls\"/\"dash\"/\"ll_dash\") — a route's container (fMP4 vs. classic \
+                     TS) is one property shared by every output on it, since a Trunk has only \
+                     one segment ring per program; run two routes against the same source \
+                     instead, one per container",
+                    self.name
+                ),
+            });
+        }
         self.input.validate()
     }
 }
@@ -1087,10 +1117,13 @@ pub struct Config {
     /// Ingest per-read timeout, in seconds, applied to every route's source
     /// — see [`crate::source::IngestTimeouts::read`].
     pub ingest_read_timeout_secs: f64,
-    /// The LL-HLS media-playlist filename served at `/{stream}/{playlist_name}`
+    /// The media-playlist filename served at `/{stream}/{playlist_name}`
     /// (issue #663 "configurable `playlist_name`") — `master.m3u8`'s
     /// `#EXT-X-STREAM-INF` reference follows suit
-    /// (`crate::output::llhls::LlHlsOutput::new`). Defaults to
+    /// (`crate::output::llhls::LlHlsOutput::new`). Applies to whichever of
+    /// [`OutputKind::LlHls`]/[`OutputKind::TsHls`] a route configures (issue
+    /// #887: the two are mutually exclusive on one route, so this is never
+    /// ambiguous). Defaults to
     /// [`crate::output::llhls::DEFAULT_PLAYLIST_NAME`] (`"media.m3u8"`),
     /// preserving every existing config's behaviour unchanged. `master.m3u8`
     /// itself is not configurable, and DASH's `manifest.mpd` is unaffected.
@@ -1509,6 +1542,52 @@ mod tests {
         }"#;
         let result: std::result::Result<Config, _> = serde_json::from_str(json);
         assert!(result.is_err(), "unknown output kind must be rejected");
+    }
+
+    /// Issue #887: `"ts_hls"` is mutually exclusive with `"llhls"` (and with
+    /// `"dash"`/`"ll_dash"`) on the same route — a `Trunk` has one segment
+    /// ring per program, so a program's samples are segmented into fMP4 or
+    /// classic TS, never both. Rejected at `Config::validate()` time with a
+    /// message naming both offending kinds and the route.
+    #[test]
+    fn validate_rejects_ts_hls_combined_with_llhls_on_one_route() {
+        let json = r#"{
+            "routes": [
+                {
+                    "name": "cam1",
+                    "input": { "type": "rtsp", "url": "rtsp://host/stream1" },
+                    "outputs": ["ts_hls", "llhls"]
+                }
+            ]
+        }"#;
+        let cfg: Config = serde_json::from_str(json).unwrap();
+        let err = cfg
+            .validate()
+            .expect_err("ts_hls + llhls on one route must be rejected");
+        let message = err.to_string();
+        assert!(
+            message.contains("ts_hls") && message.contains("llhls"),
+            "error must name both offending output kinds: {message}"
+        );
+    }
+
+    /// `"ts_hls"` alone (or alongside another `"ts_hls"`-only route) is fine
+    /// — only combined with an fMP4-based output on the SAME route is
+    /// rejected.
+    #[test]
+    fn validate_accepts_ts_hls_alone() {
+        let json = r#"{
+            "routes": [
+                {
+                    "name": "cam1",
+                    "input": { "type": "rtsp", "url": "rtsp://host/stream1" },
+                    "outputs": ["ts_hls"]
+                }
+            ]
+        }"#;
+        let cfg: Config = serde_json::from_str(json).unwrap();
+        cfg.validate()
+            .expect("a ts_hls-only route must be accepted");
     }
 
     #[test]

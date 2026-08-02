@@ -225,7 +225,8 @@ impl RouteRegistry {
                 self.ctx.base_config.part_target_ms,
                 self.ctx.base_config.window_segments,
             )
-            .with_name(route.name.clone()),
+            .with_name(route.name.clone())
+            .with_container(super::route_container(route)),
         );
         let (shutdown_tx, shutdown_rx) = watch::channel(false);
         let handle = super::spawn_ingest(
