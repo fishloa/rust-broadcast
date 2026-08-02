@@ -57,6 +57,15 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
+      # This job shells out to `cargo metadata --locked` (the workspace member
+      # list and the in-tree dependency graph both come from it), so it needs a
+      # toolchain like every other workflow here. It previously relied on the
+      # runner's implicit cargo, which cannot resolve the `rust-toolchain.toml`
+      # pin — the check then died on a CalledProcessError from cargo rather
+      # than reporting anything about dependencies.
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
       - name: Install dependencies
         run: python3 -m pip install pytest
 
