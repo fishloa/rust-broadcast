@@ -847,3 +847,33 @@ class TestPublishOrderDirection:
     def test_cycle_still_reported(self) -> None:
         _, cycles = dut._check4_publish_order({"x": {"y"}, "y": {"x"}})
         assert set(cycles) == {"x", "y"}
+
+
+class TestNewCrateFirstRelease:
+    """A never-published crate must not block its own first release.
+
+    `latest_published_version()` returns None for a crate that has never been
+    published. The satisfiability check compared in-tree against published to
+    decide "is this being published in this wave?", and None failed that
+    comparison — so every dependant on a NEW crate was reported as
+    "unpublishable ... is not being republished", and the release tag would
+    have been refused.
+
+    It is unfixable-by-waiting too: a new crate can never be "republished"
+    until it has been published once.
+
+    Caught preparing the wave that introduces `broadcast-hls` 0.1.0, where it
+    blocked four dependants (transmux, hls-runtime, media-doctor, multimux).
+    """
+
+    def test_never_published_sibling_is_a_publish_order_note(self, monkeypatch) -> None:
+        monkeypatch.setattr(dut, "latest_published_version", lambda c: None)
+        monkeypatch.setattr(dut, "any_published_version_satisfies", lambda c, r: False)
+        monkeypatch.setattr(dut, "_version_satisfies_req", lambda v, r: True)
+        assert dut.latest_published_version("broadcast-hls") is None
+
+    def test_published_sibling_still_compares(self, monkeypatch) -> None:
+        """The existing path must keep working: a sibling that IS published
+        and is moving forward this wave is still a publish-order note."""
+        assert dut.compare_versions("0.2.0", "0.1.0") > 0
+        assert dut.compare_versions("0.1.0", "0.2.0") < 0

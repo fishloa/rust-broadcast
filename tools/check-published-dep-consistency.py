@@ -973,7 +973,27 @@ def main() -> int:
                 continue
 
             max_version = latest_published_version(sibling)
-            if max_version and max_version not in (None, "error"):
+
+            # A sibling with NO published version at all is a NEW crate having
+            # its first release in this wave. Its in-tree version satisfies the
+            # requirement (checked above), so this is a publish-ORDER note, not
+            # an unpublishable dependency.
+            #
+            # Without this branch a new crate blocks its own first release
+            # forever: it can never be "republished" until it has been
+            # published once, so the fall-through below reported every
+            # dependant on `broadcast-hls` as unpublishable and would have
+            # refused the release tag.
+            if max_version is None:
+                publish_order.append(
+                    f"{name} ({kind}-dep) requires {sibling} {req} -- "
+                    f"{sibling} is a NEW crate ({sibling_in_tree}) being "
+                    f"published for the first time in this wave.  Publish "
+                    f"{sibling} before {name}."
+                )
+                continue
+
+            if max_version and max_version != "error":
                 if compare_versions(sibling_in_tree, max_version) > 0:
                     publish_order.append(
                         f"{name} ({kind}-dep) requires {sibling} {req} -- "
