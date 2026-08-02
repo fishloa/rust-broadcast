@@ -494,7 +494,7 @@ impl Package for HlsPackager {
                         length: init_len,
                         offset: Some(0),
                     }),
-                    extra_attrs: vec![],
+                    extra_attrs: Vec::new(),
                 }),
                 uri,
                 duration: ticks as f64 / ts as f64,

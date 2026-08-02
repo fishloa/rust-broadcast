@@ -233,7 +233,7 @@ impl HlsClient {
                                 length,
                                 offset: ll.preload_hint_byte_range_start,
                             }),
-                            extra_attrs: vec![],
+                            extra_attrs: Vec::new(),
                         };
                         self.ensure_init_requested(&map)?;
                     }
@@ -751,7 +751,7 @@ mod tests {
             .ensure_init_requested(&MapTag {
                 uri: "init.mp4".to_string(),
                 byte_range: None,
-                extra_attrs: vec![],
+                extra_attrs: Vec::new(),
             })
             .expect("ensure_init_requested succeeds");
         assert!(!client.is_ts_segment(&[TS_SYNC_BYTE, 0x40, 0x11, 0x00]));

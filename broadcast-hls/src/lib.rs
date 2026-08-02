@@ -2996,7 +2996,7 @@ mod tests {
                 codecs: "avc1.640028".into(),
                 resolution: None,
                 uri: "v1k/index.m3u8".into(),
-                extra_attrs: vec![],
+                extra_attrs: Vec::new(),
             }],
             iframe_variants: vec![],
             ..Default::default()
@@ -3479,7 +3479,7 @@ mod tests {
             Some(MapTag {
                 uri: "init-1.mp4".into(),
                 byte_range: None,
-                extra_attrs: vec![],
+                extra_attrs: Vec::new(),
             }),
             "the open segment must inherit the EXT-X-MAP that precedes it, \
              even though no segment has closed yet"
@@ -3507,7 +3507,7 @@ mod tests {
                 .with_map(MapTag {
                     uri: "init-1.mp4".into(),
                     byte_range: None,
-                    extra_attrs: vec![],
+                    extra_attrs: Vec::new(),
                 }),
             ),
             endlist: false,
@@ -3549,7 +3549,7 @@ mod tests {
                 length: 800,
                 offset: Some(0),
             }),
-            extra_attrs: vec![],
+            extra_attrs: Vec::new(),
         };
         let pl = MediaPlaylist {
             version: 9,
@@ -3597,7 +3597,7 @@ mod tests {
                     independent: true,
                     byte_range: None,
                     gap: true,
-                    extra_attrs: vec![],
+                    extra_attrs: Vec::new(),
                 }])
                 .with_map(map.clone()),
             ),
@@ -3609,7 +3609,7 @@ mod tests {
                 uri: "../audio/playlist.m3u8".into(),
                 last_msn: 100,
                 last_part: Some(1),
-                extra_attrs: vec![],
+                extra_attrs: Vec::new(),
             }],
             skip: None,
             ..Default::default()
@@ -3624,7 +3624,7 @@ mod tests {
         let map = MapTag {
             uri: "init.mp4".into(),
             byte_range: None,
-            extra_attrs: vec![],
+            extra_attrs: Vec::new(),
         };
         let pl = MediaPlaylist {
             version: 6,
@@ -3699,11 +3699,11 @@ mod tests {
             start: Some(StartPoint {
                 time_offset: 5.5,
                 precise: false,
-                extra_attrs: vec![],
+                extra_attrs: Vec::new(),
             }),
             defines: vec![Define::Import {
                 name: "base".into(),
-                extra_attrs: vec![],
+                extra_attrs: Vec::new(),
             }],
             playlist_type: Some(PlaylistType::Vod),
             segments: vec![
@@ -3832,7 +3832,7 @@ s0.m4s\n";
                 codecs: Some("avc1.64001e".into()),
                 resolution: Some((640, 360)),
                 uri: "v300/iframe.m3u8".into(),
-                extra_attrs: vec![],
+                extra_attrs: Vec::new(),
             }],
             ..Default::default()
         };
@@ -3859,17 +3859,17 @@ s0.m4s\n";
             start: Some(StartPoint {
                 time_offset: -10.5,
                 precise: true,
-                extra_attrs: vec![],
+                extra_attrs: Vec::new(),
             }),
             defines: vec![
                 Define::Name {
                     name: "base".into(),
                     value: "https://cdn.example.com/video12".into(),
-                    extra_attrs: vec![],
+                    extra_attrs: Vec::new(),
                 },
                 Define::QueryParam {
                     name: "token".into(),
-                    extra_attrs: vec![],
+                    extra_attrs: Vec::new(),
                 },
             ],
             session_data: vec![
@@ -3880,13 +3880,13 @@ s0.m4s\n";
                         format: SessionDataFormat::Json,
                     },
                     language: None,
-                    extra_attrs: vec![],
+                    extra_attrs: Vec::new(),
                 },
                 SessionData {
                     data_id: "com.example.title".into(),
                     content: SessionDataContent::Value("This is an example".into()),
                     language: Some("en".into()),
-                    extra_attrs: vec![],
+                    extra_attrs: Vec::new(),
                 },
             ],
             session_keys: vec![
@@ -3896,7 +3896,7 @@ s0.m4s\n";
                     iv: None,
                     keyformat: Some("identity".into()),
                     keyformatversions: Some("1".into()),
-                    extra_attrs: vec![],
+                    extra_attrs: Vec::new(),
                 },
                 SessionKey {
                     method: EncryptionMethod::SampleAesCtr,
@@ -3907,20 +3907,20 @@ s0.m4s\n";
                     ]),
                     keyformat: None,
                     keyformatversions: None,
-                    extra_attrs: vec![],
+                    extra_attrs: Vec::new(),
                 },
             ],
             content_steering: Some(ContentSteering {
                 server_uri: "/steering?video=00012".into(),
                 pathway_id: Some("CDN-A".into()),
-                extra_attrs: vec![],
+                extra_attrs: Vec::new(),
             }),
             variants: vec![Variant {
                 bandwidth: 1_280_000,
                 codecs: "avc1.64001e,mp4a.40.2".into(),
                 resolution: Some((640, 360)),
                 uri: "low/index.m3u8".into(),
-                extra_attrs: vec![],
+                extra_attrs: Vec::new(),
             }],
             iframe_variants: vec![],
             extra_tags: vec![],
@@ -4299,7 +4299,7 @@ v300/index.m3u8\n";
         pl.segments[0].map = Some(MapTag {
             uri: "init.mp4".into(),
             byte_range: None,
-            extra_attrs: vec![],
+            extra_attrs: Vec::new(),
         });
         let out = pl.to_m3u8();
         assert_eq!(rendered_version(&out), Some(5), "{out}");
@@ -4311,7 +4311,7 @@ v300/index.m3u8\n";
         pl.segments[0].map = Some(MapTag {
             uri: "init.mp4".into(),
             byte_range: None,
-            extra_attrs: vec![],
+            extra_attrs: Vec::new(),
         });
         let out = pl.to_m3u8();
         assert_eq!(rendered_version(&out), Some(6), "{out}");
@@ -4326,7 +4326,7 @@ v300/index.m3u8\n";
                 codecs: "avc1.64001e".into(),
                 resolution: None,
                 uri: "v300/index.m3u8".into(),
-                extra_attrs: vec![],
+                extra_attrs: Vec::new(),
             }],
             iframe_variants: vec![],
             extra_tags: vec![],
@@ -4358,7 +4358,7 @@ v300/index.m3u8\n";
                 codecs: "avc1.64001e".into(),
                 resolution: None,
                 uri: "{$base}/index.m3u8".into(),
-                extra_attrs: vec![],
+                extra_attrs: Vec::new(),
             }],
             iframe_variants: vec![],
             extra_tags: vec![],
