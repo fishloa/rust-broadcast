@@ -26,9 +26,9 @@ use std::fs;
 use std::path::PathBuf;
 
 use broadcast_common::{Package, Unpackage};
+use broadcast_hls::{IFrameVariant, MasterPlaylist, MediaPlaylist, MediaSegment, Variant};
 use transmux::avc_config::{AVCConfigurationBox, AVCDecoderConfigurationRecord};
 use transmux::dash::{DashPackager, TRICKMODE_SCHEME, TrickModeAdaptationSet, TrickModeRepr};
-use transmux::hls::{IFrameVariant, MasterPlaylist, MediaPlaylist, MediaSegment, Variant};
 use transmux::media::{Fmp4Demux, Track};
 use transmux::pipeline::{CodecConfig, Sample, TrackSpec};
 use transmux::trickplay::derive_iframe_track;

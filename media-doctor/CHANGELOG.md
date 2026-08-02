@@ -5,6 +5,16 @@ All notable changes to `media-doctor` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+- `check_hls_playlist`'s structured parse layer now uses `broadcast-hls`
+  directly instead of reaching through `transmux` for it (issue #878) — this
+  crate no longer needs `transmux` solely to parse an M3U8 playlist (it
+  still depends on `transmux` for container/codec diagnostics). No public
+  API or behaviour change: `check_hls_playlist`/`check_playlist` still take
+  `&str` and never exposed the playlist types themselves.
+
 ## [0.6.1] - 2026-07-30
 
 ### Fixed

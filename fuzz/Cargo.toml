@@ -38,6 +38,7 @@ st337        = { path = "../st337" }
 rdd29        = { path = "../rdd29" }
 st377-1      = { path = "../st377-1" }
 transmux      = { path = "../transmux" }
+broadcast-hls = { path = "../broadcast-hls" }
 media-doctor  = { path = "../media-doctor" }
 broadcast-auth = { path = "../broadcast-auth" }
 rtmp-runtime  = { path = "../rtmp-runtime" }

@@ -61,7 +61,7 @@ and how), performs the IO itself, and feeds the response back in; decoded
 ## Reuse, not re-description
 
 The `client` module defines **no playlist model of its own**. Parsing is
-`transmux::hls::MediaPlaylist::parse` (issue #717 slice 1 — the symmetric
+`broadcast_hls::MediaPlaylist::parse` (issue #717 slice 1 — the symmetric
 inverse of the LL-HLS origin's own `to_m3u8()` renderer, so origin and client
 share one wire model); demuxing a fetched CMAF part or segment into access
 units is `transmux::Fmp4Demux` (or, for classic MPEG-TS-segment HLS, issue
@@ -134,7 +134,7 @@ of the data, never a second cache of it.
 
 ## What's *not* here — explicit follow-ups
 
-- **Multivariant Playlist rendition selection** — `transmux::hls::MasterPlaylist::parse`
+- **Multivariant Playlist rendition selection** — `broadcast_hls::MasterPlaylist::parse`
   exists, but choosing a rendition/bitrate is a player-level policy this crate
   doesn't impose; `HlsClient` follows one Media Playlist URL.
 - **Discontinuity signalling on a still-open segment** — RFC 8216bis's

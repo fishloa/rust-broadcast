@@ -12,7 +12,7 @@ material lives in the private `private/` git submodule, never here.
 | `missing-extm3u.m3u8` | Hand-crafted fault-injection fixture (no `#EXTM3U` on first line). Issue #383. | 2025-07 | Own work — MIT OR Apache-2.0 |
 | `bad-extinf.m3u8` | Hand-crafted fault-injection fixture (EXTINF 15.0 > TARGETDURATION 10). Issue #383. | 2025-07 | Own work — MIT OR Apache-2.0 |
 | `malformed-daterange.m3u8` | Hand-crafted fault-injection fixture (DATERANGE missing required `ID`). Issue #383. | 2025-07 | Own work — MIT OR Apache-2.0 |
-| `reference-vod.m3u8` | Output of `transmux::MediaPlaylist::to_m3u8()` — same struct shape exercised by `transmux/tests/hls_playlist.rs`. 10 segments, TARGETDURATION 10, ENDLIST. Issue #756. | 2026-07 | Own work — MIT OR Apache-2.0 |
+| `reference-vod.m3u8` | Output of `broadcast_hls::MediaPlaylist::to_m3u8()` (playlist syntax moved from `transmux` to `broadcast-hls` in issue #878) — same struct shape exercised by `broadcast-hls/tests/hls_playlist.rs`. 10 segments, TARGETDURATION 10, ENDLIST. Issue #756. | 2026-07 | Own work — MIT OR Apache-2.0 |
 
 ### Excluded manifest
 

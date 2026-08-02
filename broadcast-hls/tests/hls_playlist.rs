@@ -2,11 +2,13 @@
 //! generated `#EXTM3U` text.
 //!
 //! RFC-8216 oracle validation (via `media_doctor::check_playlist`) lives in
-//! `media-doctor/tests/transmux_oracle.rs` — a cross-crate test that follows
-//! the governing rule that a test touching two crates lives in the
+//! `media-doctor/tests/broadcast_hls_oracle.rs` — a cross-crate test that
+//! follows the governing rule that a test touching two crates lives in the
 //! topologically highest one.
 
-use transmux::{CencScheme, MasterPlaylist, MediaPlaylist, MediaSegment, Variant, cenc_ext_x_key};
+use broadcast_hls::{
+    CencScheme, MasterPlaylist, MediaPlaylist, MediaSegment, Variant, cenc_ext_x_key,
+};
 
 #[test]
 fn media_playlist_rfc_valid() {

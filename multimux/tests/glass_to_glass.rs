@@ -40,13 +40,13 @@ use axum::Router;
 use axum::response::IntoResponse;
 use axum::routing::get;
 
+use broadcast_hls::{MapTag, MediaPlaylist, MediaSegment};
 use hls_runtime::client::Output;
 use hls_runtime::client::tokio_client::TokioClient;
 use multimux::origin::{AppState, router};
 use multimux::output::Output as MmOutput;
 use multimux::output::llhls::LlHlsOutput;
 use multimux::route::RouteHandle;
-use transmux::hls::{MapTag, MediaPlaylist, MediaSegment};
 use transmux::ll_hls::LlHlsSegmenter;
 use transmux::{
     AVCConfigurationBox, AVCDecoderConfigurationRecord, AvcPps, AvcSps, CodecConfig, Sample,

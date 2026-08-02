@@ -102,7 +102,7 @@ for f in report.findings() {
 ```
 
 HLS playlists are validated with `check_playlist` (legacy line-based) or
-`check_hls_playlist` (structured, using `transmux::MediaPlaylist::parse`).
+`check_hls_playlist` (structured, using `broadcast_hls::MediaPlaylist::parse`).
 DASH MPDs are validated with `check_dash_mpd` (structured, using `transmux::Mpd::parse`).
 
 ## Deferred Manifest Rules

@@ -75,10 +75,10 @@ use std::num::NonZeroUsize;
 use std::sync::{Arc, Mutex};
 
 use broadcast_common::Timestamp;
+use broadcast_hls::{LowLatencyConfig, MediaPlaylist, MediaSegment, OpenSegment, PartSpec};
 use bytes::Bytes;
 use media_plane::egress::{AwaitPolicy, CachePolicy, EgressResponse, ServedEgress};
 use media_plane::trunk::{PartEntry, SegmentCursor, SegmentCursorItem, SegmentEntry, Trunk};
-use transmux::hls::{LowLatencyConfig, MediaPlaylist, MediaSegment, OpenSegment, PartSpec};
 
 /// Track id for the single rendition served per stream (no multi-track/
 /// multi-rendition support yet).
@@ -384,7 +384,7 @@ impl HlsOrigin {
     /// RFC 8216bis §4.4.4.9: an in-progress (not yet closed) segment MUST NOT
     /// be advertised with an `#EXTINF`/URI pair — that segment has no
     /// fetchable resource yet — it may only appear as trailing `#EXT-X-PART`
-    /// lines. `transmux::hls::MediaPlaylist::open_segment` is exactly this
+    /// lines. `broadcast_hls::MediaPlaylist::open_segment` is exactly this
     /// representation: its parts render as trailing `#EXT-X-PART` lines with
     /// no `#EXTINF`/URI, so the in-progress segment's parts and the
     /// `#EXT-X-PRELOAD-HINT` for the next, not-yet-available part are both

@@ -5,6 +5,17 @@ documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project adheres
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+- The client/origin engines parse and render HLS playlists via `broadcast-hls`
+  directly instead of reaching through `transmux::hls` for it (issue #878).
+  `Error::PlaylistParse` now wraps `broadcast_hls::Error` instead of
+  `transmux::Error` — a source-type change to a `#[from]`-wrapped variant,
+  not a shape change to `Error` itself. Playlist docs moved from this
+  crate's `docs/` to `broadcast-hls/docs/`, since they document the tags
+  that crate now implements.
+
 ## [0.4.0] - 2026-08-01
 
 ### Changed (Breaking)

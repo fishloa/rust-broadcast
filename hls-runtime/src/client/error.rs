@@ -15,10 +15,10 @@ pub enum Error {
     #[error("playlist is not valid UTF-8: {0}")]
     PlaylistNotUtf8(#[from] core::str::Utf8Error),
 
-    /// `transmux::hls::MediaPlaylist::parse` rejected the playlist text (a
+    /// `broadcast_hls::MediaPlaylist::parse` rejected the playlist text (a
     /// known tag with a missing/unparsable required attribute).
     #[error("playlist parse: {0}")]
-    PlaylistParse(#[from] transmux::Error),
+    PlaylistParse(#[from] broadcast_hls::Error),
 
     /// [`crate::client::HlsClient::on_resource`] was fed bytes for a
     /// [`crate::client::ResourceId`] the client never requested (a

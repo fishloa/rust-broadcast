@@ -252,6 +252,12 @@ impl CencDecryptor {
                 cenc_crypto::apply_ctr(&entry.initialization_vector, key, &entry.subsamples, buf)
             }
             CencScheme::Cbcs => cenc_crypto::cbcs_sample(tenc, entry, key, buf, CbcsOp::Decrypt),
+            // `CencScheme` is `#[non_exhaustive]` and now lives in
+            // `broadcast-common`, so this arm is reachable if a future scheme
+            // (`cens`/`cbc1`) is added there before the cipher for it lands
+            // here. Reject rather than guess: picking the wrong cipher would
+            // silently emit garbage plaintext.
+            other => Err(Error::UnsupportedCencScheme { scheme: other }),
         })
     }
 }

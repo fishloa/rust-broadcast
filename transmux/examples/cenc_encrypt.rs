@@ -18,8 +18,11 @@
 //! - [`transmux::DashPackager`] auto-derives a `<ContentProtection
 //!   schemeIdUri="urn:mpeg:dash:mp4protection:2011">` element from
 //!   `Track::encryption` — no extra wiring needed.
-//! - [`transmux::cenc_ext_x_key`] renders the HLS `#EXT-X-KEY` tag for the
-//!   `cbcs` scheme (`cenc`/CTR has no valid HLS `METHOD` and is DASH-only).
+//! - [`broadcast_hls::cenc_ext_x_key`] renders the HLS `#EXT-X-KEY` tag for
+//!   the `cbcs` scheme (`cenc`/CTR has no valid HLS `METHOD` and is
+//!   DASH-only). HLS playlist syntax lives in the `broadcast-hls` crate
+//!   (issue #878), but both crates name the scheme with the *same*
+//!   [`broadcast_common::CencScheme`], so no conversion is needed.
 //!
 //! Run it with:
 //!
@@ -44,12 +47,13 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     use std::path::PathBuf;
 
     use broadcast_common::{Encrypt, Package, Unpackage};
+    use broadcast_hls::cenc_ext_x_key;
     use transmux::init_segment::protect_init_segment;
     use transmux::movie_fragment::{FragmentProtection, protect_media_segment};
     use transmux::pipeline::CodecConfig;
     use transmux::{
         CencEncryptor, CencScheme, CmafMux, ConstantIvSenc, DashPackager, EncryptConfig, IvGen,
-        Media, SubsamplePolicy, TrackEncryption, TsDemux, cenc_ext_x_key,
+        Media, SubsamplePolicy, TrackEncryption, TsDemux,
     };
 
     // A test KID/key (never a real production key) — the standard `cbcs`
@@ -147,7 +151,10 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     println!("\n--- DASH signalling ---\n{}", cp_line.trim());
 
     // 6. HLS signalling: `cenc_ext_x_key` renders `#EXT-X-KEY` for `cbcs`;
-    //    it returns `None` for `cenc` (CTR has no valid HLS METHOD).
+    //    it returns `None` for `cenc` (CTR has no valid HLS METHOD). No
+    //    conversion needed — `transmux::CencScheme` and the scheme
+    //    `broadcast_hls::cenc_ext_x_key` takes are the *same*
+    //    `broadcast_common::CencScheme`.
     let key_uri = "https://keyserver.example.com/key";
     match cenc_ext_x_key(encryption.scheme, &encryption.tenc.default_kid, key_uri) {
         Some(tag) => println!("--- HLS signalling ---\n{tag}"),

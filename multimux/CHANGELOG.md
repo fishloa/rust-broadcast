@@ -1,5 +1,12 @@
 # Changelog
 
+## [Unreleased]
+
+### Changed
+- `source::hls_pull` builds/parses HLS playlists via `broadcast-hls` directly
+  instead of reaching through `transmux::hls` for it (issue #878). No public
+  API or behaviour change.
+
 ## [0.5.2] - 2026-07-30
 
 ### Fixed

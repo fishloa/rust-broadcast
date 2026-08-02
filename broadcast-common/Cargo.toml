@@ -1,6 +1,6 @@
 [package]
 name         = "broadcast-common"
-version      = "9.1.0"
+version      = "9.2.0"
 edition      = "2024"
 description  = "Shared Parse/Serialize traits and CRC-32 MPEG-2 used by the dvb_si / dvb_t2mi / dvb_bbframe family."
 license      = "MIT OR Apache-2.0"
@@ -23,6 +23,11 @@ std = ["chrono?/std", "chrono?/clock"]
 # MJD↔calendar conversion for the UTC time codec. Off = the BCD/duration
 # helpers remain available; only the chrono-typed UTC functions are gated.
 chrono = ["dep:chrono"]
+# `serde::Serialize` derives on the shared spec types (currently
+# `cenc::CencScheme`). Off by default: the parse/serialize core needs no
+# serialization framework, and a consumer that wants one enables it through
+# its own `serde` feature (e.g. `transmux/serde`, `broadcast-hls/serde`).
+serde = ["dep:serde"]
 
 [dependencies]
 # Default build stays lean — consumers of broadcast_common pay for nothing they aren't
@@ -34,6 +39,9 @@ chrono = { version = "0.4", optional = true, default-features = false, features 
 # intrinsic, so the no_std build needs libm. `floor` is exact, so libm::floor is
 # bit-identical to `f64::floor` and is used uniformly in std and no_std.
 libm = "0.2"
+# Only pulled in by the `serde` feature — see its comment above. Configured
+# `no_std` (`derive` only, no `std`) so it composes with the no_std build.
+serde = { version = "1", optional = true, default-features = false, features = ["derive"] }
 
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }

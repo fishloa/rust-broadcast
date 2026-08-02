@@ -1,0 +1,57 @@
+name: Release broadcast-hls
+
+# Publishes the broadcast-hls crate to crates.io on a `broadcast-hls-v*` tag.
+# broadcast-hls is versioned and released INDEPENDENTLY of the lockstep `v*`
+# tag (it is a standalone reusable crate with its own cadence), so it has its
+# own publish workflow. CI is the only source of published artifacts — never
+# `cargo publish` from a workstation. Requires the CARGO_REGISTRY_TOKEN secret.
+
+on:
+  push:
+    tags: ["broadcast-hls-v*"]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  publish:
+    name: publish broadcast-hls to crates.io
+    runs-on: ubuntu-latest
+    # crates.io publish is gated: pauses for manual approval by a
+    # required reviewer before any cargo publish can run. See the
+    # 'crates-io' environment (repo Settings -> Environments).
+    environment: crates-io
+    steps:
+      - uses: actions/checkout@v5
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Gate — broadcast-hls tests
+        run: cargo test -p broadcast-hls --all-features --locked
+
+      - name: Gate — broadcast-hls clippy
+        run: cargo clippy -p broadcast-hls --all-features --all-targets --locked -- -D warnings
+
+      - name: Gate — broadcast-hls no_std build
+        run: cargo build -p broadcast-hls --no-default-features --target thumbv7em-none-eabi --locked
+
+      - name: Gate — tag matches broadcast-hls version
+        run: |
+          TAG="${GITHUB_REF_NAME#broadcast-hls-v}"
+          V=$(cargo metadata --no-deps --format-version 1 --locked \
+              | python3 -c "import json,sys; print({p['name']: p['version'] for p in json.load(sys.stdin)['packages']}['broadcast-hls'])")
+          if [ "$V" != "$TAG" ]; then
+            echo "::error::broadcast-hls is $V but tag is $TAG"; exit 1
+          fi
+
+      # Idempotent: an "already uploaded" error is treated as success.
+      - name: Publish broadcast-hls
+        run: |
+          if out=$(cargo publish -p broadcast-hls --locked 2>&1); then
+            echo "$out"; echo "::notice::published broadcast-hls"
+          elif echo "$out" | grep -qiE "already (been )?uploaded|already exists"; then
+            echo "$out"; echo "::notice::broadcast-hls already on crates.io at this version — skipping"
+          else
+            echo "$out"; echo "::error::failed to publish broadcast-hls"; exit 1
+          fi
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}

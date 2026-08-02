@@ -334,6 +334,10 @@ impl Encrypt for CencEncryptor {
                 p
             }
             CencScheme::Cenc => (0, 0),
+            // `CencScheme` is `#[non_exhaustive]` (and now defined in
+            // `broadcast-common`): reject a scheme this crate has no cipher
+            // for rather than silently encrypting under the wrong one.
+            other => return Err(Error::UnsupportedCencScheme { scheme: other }),
         };
         let (per_sample_iv_size, default_constant_iv) =
             tenc_iv_fields(&cfg.iv, cfg.constant_iv_senc)?;
@@ -391,6 +395,11 @@ impl Encrypt for CencEncryptor {
                     CencScheme::Cbcs => cenc_crypto::rewrite_in_place(&mut sample.data, |buf| {
                         cenc_crypto::cbcs_sample(&tenc, &entry, &self.key, buf, CbcsOp::Encrypt)
                     })?,
+                    // Unreachable in practice: the same scheme was already
+                    // validated at the top of `encrypt`. Kept as an error (not
+                    // `unreachable!`) so a future scheme added to
+                    // `broadcast-common` can never turn this into a panic.
+                    other => return Err(Error::UnsupportedCencScheme { scheme: other }),
                 };
 
                 entries.push(entry);
@@ -1116,6 +1125,10 @@ mod tests {
                         CencScheme::Cbcs => {
                             cenc_crypto::cbcs_sample(&enc.tenc, entry, &KEY, buf, CbcsOp::Decrypt)
                         }
+                        // This test drives exactly the two schemes above; a
+                        // third reaching here means the caller list changed
+                        // without the reverse-cipher being taught about it.
+                        other => panic!("test drives only cenc/cbcs, got {other}"),
                     })
                     .unwrap_or_else(|e| panic!("{}: reverse: {e:?}", scheme.name()));
                 }

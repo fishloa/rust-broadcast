@@ -5,6 +5,40 @@ All notable changes to `transmux` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.22.0] - Unreleased
+
+### Changed (BREAKING)
+- **HLS (M3U8) playlist syntax moved to the new `broadcast-hls` crate**
+  (issue #878). `transmux::hls` and every `transmux::{MediaPlaylist,
+  MasterPlaylist, MediaSegment, Variant, IFrameVariant, LowLatencyConfig,
+  OpenSegment, PartSpec, MapTag, ByteRange, PreloadHintType,
+  RenditionReport, SkipInfo, CENC_KEYFORMAT, CENC_KEYFORMATVERSIONS,
+  cenc_ext_x_key, mark_init_discontinuities}` path no longer exists — no
+  compatibility re-export. Depend on `broadcast-hls` directly for playlist
+  syntax; `transmux` now depends on it for its own HLS/LL-HLS
+  **segmenters** (`ts_hls`, `ll_hls`, which still live here — they produce
+  container bytes, not playlist syntax). `Error::HlsParse` is removed from
+  `transmux::Error` (playlist parsing, and its error type, moved with the
+  syntax); `broadcast_hls::Error::HlsParse` replaces it.
+- **`CencScheme` moved to `broadcast-common` 9.2** (`broadcast_common::cenc`).
+  `transmux::CencScheme` / `transmux::cenc::CencScheme` still resolve — they
+  are now re-exports of that single shared definition, so `transmux` and
+  `broadcast-hls` name the *same* type and `broadcast_hls::cenc_ext_x_key`
+  takes it with no conversion. Two consequences for callers:
+  - `CencScheme` is `#[non_exhaustive]` **across a crate boundary** now, so a
+    downstream `match` on it needs a wildcard arm.
+  - New `Error::UnsupportedCencScheme { scheme }` — the encrypt/decrypt cipher
+    dispatch sites now reject a scheme this crate has no cipher for rather
+    than relying on compile-time exhaustiveness. Unreachable today (only
+    `cenc` and `cbcs` exist); it is there so adding `cens`/`cbc1` to
+    `broadcast-common` later can never turn those sites into a panic.
+- **`rtp::hex_encode` moved to `broadcast-common` 9.2** (`broadcast_common::hex`).
+  `transmux::rtp::hex_encode` still resolves, as a re-export.
+  `rtp::hex_decode` is unchanged and stays here (it reports through this
+  crate's own `Error`).
+- Requires `broadcast-common` **9.2** (was 9.0) — the floor for the two items
+  above. Same caret epoch, so no consumer migration.
+
 ## [0.21.1] - 2026-07-30
 
 ### Fixed

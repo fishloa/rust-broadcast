@@ -31,9 +31,9 @@
 //!
 //! The playlist tags an LL-HLS client needs (`#EXT-X-SERVER-CONTROL`,
 //! `#EXT-X-PART-INF`, `#EXT-X-PART`, `#EXT-X-PRELOAD-HINT`) are rendered by
-//! [`crate::hls::MediaPlaylist`] when its
-//! [`low_latency`](crate::hls::MediaPlaylist::low_latency) config is set; see
-//! [`crate::hls`] for the exact RFC 8216bis syntax and sections.
+//! [`broadcast_hls::MediaPlaylist`] when its
+//! [`low_latency`](broadcast_hls::MediaPlaylist::low_latency) config is set;
+//! see the `broadcast-hls` crate for the exact RFC 8216bis syntax and sections.
 
 use alloc::collections::VecDeque;
 use alloc::vec::Vec;
@@ -298,7 +298,7 @@ impl LlHlsSegmenter {
     }
 
     /// The part-target duration in seconds — the `#EXT-X-PART-INF:PART-TARGET`
-    /// value a caller should advertise (see [`crate::hls::LowLatencyConfig`]).
+    /// value a caller should advertise (see [`broadcast_hls::LowLatencyConfig`]).
     pub fn part_target_secs(&self) -> f64 {
         self.part_target_ticks as f64 / self.tracks[self.anchor].spec.timescale as f64
     }
