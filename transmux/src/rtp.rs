@@ -1367,7 +1367,11 @@ pub fn base64_decode(s: &str) -> Result<Vec<u8>> {
 /// (the dependency runs the other way). Only the *encoder* is shared —
 /// [`hex_decode`] below stays here because it reports through this crate's
 /// own [`Error`].
-pub use broadcast_common::hex::hex_encode;
+///
+/// Imported privately, NOT re-exported: `transmux::rtp::hex_encode` is gone as
+/// a public path. Callers use `broadcast_common::hex::hex_encode` directly —
+/// one owner, one name, no compatibility alias to keep in step.
+use broadcast_common::hex::hex_encode;
 
 /// Hex-decode a string; rejects odd lengths and invalid nibbles.
 pub fn hex_decode(s: &str) -> Result<Vec<u8>> {
