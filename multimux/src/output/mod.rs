@@ -30,11 +30,14 @@ use crate::route::RouteHandle;
 /// [`crate::registry::SchemeRegistry::output`] — the escape hatch that lets a
 /// third-party crate add a new output without editing this crate. Its
 /// `params` is a `serde_json::Value`, which is `Clone` but not `Copy`, so this
-/// enum can no longer derive `Copy`/`PartialEq`/`Eq`/`Hash` (a breaking
-/// change from the pre-registry `OutputKind`) — compare kinds via
-/// [`Self::name`] or `matches!` instead of `==`.
+/// enum can no longer derive `Copy`/`Hash` (a breaking change from the
+/// pre-registry `OutputKind`); `PartialEq` (via `serde_json::Value`'s own) is
+/// still derived — the runtime admin API's reload diffing
+/// (`crate::origin::admin`, issue #749) compares a whole `crate::config::Route`
+/// (which embeds `Vec<OutputKind>`) for equality to decide whether a route's
+/// config actually changed.
 #[non_exhaustive]
-#[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
+#[derive(Debug, Clone, PartialEq, serde::Deserialize, serde::Serialize)]
 pub enum OutputKind {
     /// Low-Latency HLS (`master.m3u8` + `media.m3u8`).
     #[serde(rename = "llhls")]

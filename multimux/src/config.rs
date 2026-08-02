@@ -72,7 +72,7 @@ fn default_outputs() -> Vec<OutputKind> {
 ///   a third-party crate add a new ingest transport without editing this
 ///   crate. `params` is passed through unexamined to the registered factory.
 #[non_exhaustive]
-#[derive(Clone, Deserialize)]
+#[derive(Clone, Deserialize, PartialEq)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum InputSpec {
     /// Pull a live RTSP source.
@@ -227,7 +227,7 @@ pub enum InputSpec {
 /// `{ "username": "...", "password": "..." }` or
 /// `{ "bearer_token": "..." }`.
 #[non_exhaustive]
-#[derive(Clone, Deserialize)]
+#[derive(Clone, Deserialize, PartialEq)]
 #[serde(untagged)]
 pub enum AuthSpec {
     /// Username/password, answered as Basic or Digest per the server's
@@ -607,6 +607,37 @@ impl OutputAuthSpec {
     }
 }
 
+/// Runtime admin API configuration (issue #749) — opt-in: omit this field
+/// entirely (the default, `None`) and no admin listener is ever bound, no
+/// admin route ever exists. See [`crate::origin::admin`]'s module doc for
+/// the full design (add/remove/list routes + reload without restarting the
+/// origin) and this crate's README for the security posture.
+///
+/// # Two hard rules, both enforced structurally
+///
+/// - **Separate listener.** [`Self::bind`] must differ from
+///   [`Config::bind`] (the media listener) — [`Config::validate`] rejects a
+///   config where they're equal. The admin API must never be reachable on
+///   the public media port.
+/// - **Mandatory auth.** [`Self::auth`] is a plain [`OutputAuthSpec`], not
+///   `Option<OutputAuthSpec>` — a config that enables the admin API without
+///   naming a scheme fails to *deserialize* (a missing required field),
+///   before the process ever binds a socket. There is no way to start the
+///   admin listener unauthenticated.
+#[derive(Debug, Clone, Deserialize)]
+pub struct AdminSpec {
+    /// `host:port` the admin HTTP API binds. Must differ from
+    /// [`Config::bind`] — see this struct's own docs.
+    pub bind: String,
+    /// Mandatory auth gating every admin request. Reuses [`OutputAuthSpec`]
+    /// (the same scheme set that gates media output routes) rather than a
+    /// parallel type, since the shape (Basic/Digest/Bearer/Forwarded/Custom)
+    /// is identical; this is a *separate* [`broadcast_auth::Verifier`]
+    /// instance from [`Config::output_auth`], so the admin credential can
+    /// (and should) differ from whatever gates media playback.
+    pub auth: OutputAuthSpec,
+}
+
 /// Manual `Debug` (rather than `#[derive(Debug)]`): [`InputSpec::Rtsp`]'s
 /// `url` may carry a live camera's `user:pass@` userinfo, so it must never
 /// render verbatim; the UDP variants carry no secret but get a tidy summary
@@ -959,7 +990,7 @@ fn validate_sdp(sdp: &str) -> Result<()> {
 /// e.g. a DASH-only route feeding an existing DASH-only player fleet
 /// alongside an LL-HLS+DASH route for a browser audience — a single
 /// process-wide default couldn't express that).
-#[derive(Clone, Deserialize)]
+#[derive(Clone, Deserialize, PartialEq)]
 pub struct Route {
     /// Served stream name (URL path segment).
     pub name: String,
@@ -984,6 +1015,40 @@ impl std::fmt::Debug for Route {
             .field("input", &self.input)
             .field("outputs", &self.outputs)
             .finish()
+    }
+}
+
+impl Route {
+    /// Semantic validation for one route in isolation — no other route's
+    /// name is visible here, so the duplicate-name check stays in
+    /// [`Config::validate`]'s own loop. Reused by that loop (so every startup
+    /// route is checked exactly the same way) and by the runtime admin API
+    /// (`crate::origin::admin`, issue #749) for a `POST /admin/routes` body
+    /// and every route a `POST /admin/reload` would add or restart —
+    /// validated before any of them touch the live registry.
+    pub(crate) fn validate_standalone(&self) -> Result<()> {
+        if self.name.is_empty() {
+            return Err(MultimuxError::ConfigInvalid {
+                field: "routes.name",
+                reason: "must not be empty".into(),
+            });
+        }
+        if self.name.contains('/') {
+            return Err(MultimuxError::ConfigInvalid {
+                field: "routes.name",
+                reason: format!(
+                    "must not contain '/' (it is a URL path segment), got {:?}",
+                    self.name
+                ),
+            });
+        }
+        if self.outputs.is_empty() {
+            return Err(MultimuxError::ConfigInvalid {
+                field: "routes.outputs",
+                reason: format!("route {:?} has no outputs configured", self.name),
+            });
+        }
+        self.input.validate()
     }
 }
 
@@ -1039,6 +1104,12 @@ pub struct Config {
     /// output route open, unchanged from pre-#663 behaviour.
     #[serde(default)]
     pub output_auth: Option<OutputAuthSpec>,
+    /// Runtime admin API (issue #749): add/remove/list routes and reload the
+    /// config file without restarting — see [`AdminSpec`] and
+    /// [`crate::origin::admin`]. `None` (the default): no admin listener, no
+    /// admin routes, at all.
+    #[serde(default)]
+    pub admin: Option<AdminSpec>,
 }
 
 /// Default [`Config::playlist_name`] when a config omits the field:
@@ -1063,6 +1134,7 @@ impl Default for Config {
             ingest_read_timeout_secs: crate::source::DEFAULT_READ_TIMEOUT.as_secs_f64(),
             playlist_name: default_playlist_name(),
             output_auth: None,
+            admin: None,
         }
     }
 }
@@ -1164,13 +1236,26 @@ impl Config {
                     reason: format!("duplicate stream name {:?}", r.name),
                 });
             }
-            if r.outputs.is_empty() {
+            r.validate_standalone()?;
+        }
+        if let Some(admin) = &self.admin {
+            if admin.bind.is_empty() {
                 return Err(MultimuxError::ConfigInvalid {
-                    field: "routes.outputs",
-                    reason: format!("route {:?} has no outputs configured", r.name),
+                    field: "admin.bind",
+                    reason: "must not be empty".into(),
                 });
             }
-            r.input.validate()?;
+            if admin.bind == self.bind {
+                return Err(MultimuxError::ConfigInvalid {
+                    field: "admin.bind",
+                    reason: format!(
+                        "must differ from bind (both {:?}) — the runtime admin API must never \
+                         be reachable on the media listener",
+                        admin.bind
+                    ),
+                });
+            }
+            admin.auth.validate()?;
         }
         Ok(())
     }

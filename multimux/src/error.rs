@@ -132,6 +132,26 @@ pub enum MultimuxError {
         /// The unresolved `type_tag`.
         tag: String,
     },
+
+    /// The runtime admin API's `POST /admin/routes`
+    /// (`crate::origin::admin::RouteRegistry::add_route`) named a route
+    /// already present in the registry — mapped to `409 Conflict`. The
+    /// existing route is left completely untouched; adding a route never
+    /// implicitly replaces one already live.
+    #[error("route {name:?} already exists")]
+    RouteExists {
+        /// The duplicate route name.
+        name: String,
+    },
+
+    /// The runtime admin API's `GET`/`DELETE /admin/routes/{name}`
+    /// (`crate::origin::admin::RouteRegistry`) named a route not present in
+    /// the registry — mapped to `404 Not Found`.
+    #[error("route {name:?} not found")]
+    RouteNotFound {
+        /// The unknown route name.
+        name: String,
+    },
 }
 
 /// multimux result alias.
