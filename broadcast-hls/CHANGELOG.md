@@ -33,6 +33,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `computed_version` scans for the §8 rows this crate does not (yet) model
   with typed fields (rows 7/8/11/12/13).
 
+### Testing
+- `tests/spec_fixture_version.rs` cross-checks the derivation against the
+  RFC's own §9 example playlists (`fixtures/hls/spec/`, issue #877) — the
+  only independent check, since every other version test compares the code
+  against our own reading of the transcription. All three §9 Media Playlist
+  examples that declare a version (9.1/9.2/9.3) compute exactly the `3` the
+  spec authors declared, and all five Multivariant examples
+  (9.4/9.5/9.6/9.7/9.12) compute `None`, agreeing with the authors' choice
+  to leave them untagged. Compares `computed_version()` rather than rendered
+  output, because a parsed playlist's `version` field acts as a floor and
+  would make a rendered comparison circular.
+
 ### Added
 - Initial release. HLS (M3U8) playlist syntax (RFC 8216 / RFC 8216bis)
   extracted from `transmux/src/hls.rs` (issue #878): `MediaPlaylist`,
