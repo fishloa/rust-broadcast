@@ -391,12 +391,14 @@ impl ProgramServing {
         part_target_ms: u32,
         window_segments: NonZeroUsize,
     ) -> Arc<Self> {
-        let ll_hls = Arc::new(HlsOrigin::new(
-            Arc::clone(&trunk),
-            target_duration_secs,
-            part_target_ms,
-            window_segments,
-        ));
+        let ll_hls = Arc::new(
+            HlsOrigin::builder(Arc::clone(&trunk))
+                .target_duration_secs(target_duration_secs)
+                .window_segments(window_segments)
+                .low_latency(part_target_ms)
+                .build()
+                .expect("target_duration_secs and window_segments are always set above"),
+        );
         let dash = Arc::new(DashState::new(&trunk, window_segments));
         Arc::new(ProgramServing {
             trunk,

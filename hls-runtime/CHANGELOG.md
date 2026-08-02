@@ -7,6 +7,32 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+- `server::Container` (`Fmp4` / `MpegTs`, `#[non_exhaustive]`) and
+  `HlsOrigin::builder(trunk)` -> `HlsOriginBuilder` (issue #873, closes #865):
+  `HlsOrigin`'s origin can now serve classic HLS-of-TS (`.ts` segments, no
+  `#EXT-X-MAP` by default) as well as fMP4, and container is orthogonal to
+  low latency — `.container(Container::MpegTs)` and `.low_latency(part_target_ms)`
+  are independent builder calls, so classic HLS (no low-latency tags at all)
+  is finally expressible. `HlsOriginBuildError` (`#[non_exhaustive]`,
+  `thiserror`) surfaces a missing `target_duration_secs`/`window_segments` as
+  an error rather than a silent default.
+  - RFC 8216bis §3.1.1's `EXT-X-MAP` rule for MPEG-2 TS is a disjunction
+    (PAT+PMT in-band, *or* `EXT-X-MAP`), not a container restriction —
+    `Container::MpegTs` omits the tag by default (matching `transmux`'s
+    self-initialising TS segments) without forbidding it structurally.
+  - `HlsOrigin::set_init` stays callable under `MpegTs` — a documented no-op
+    (bytes stored, never advertised or served), so a caller sharing one code
+    path across both containers need not branch.
+
+### Changed (Breaking)
+- **`HlsOrigin::new` deleted**, replaced by `HlsOrigin::builder(trunk)`
+  (issue #873): the old four-positional constructor made `part_target_ms`
+  mandatory, so classic (non-low-latency) HLS was inexpressible. No
+  compatibility shim — this crate is at 0.4.0, unpublished at the time of
+  this change. `multimux`'s `HlsOrigin::new` call site is updated to the
+  builder in the same release.
+
 ### Fixed
 - The LL-HLS origin (`server::engine`) no longer supplies a hardcoded
   `EXT-X-VERSION:9` (`LL_HLS_VERSION`, deleted). `broadcast_hls::MediaPlaylist::to_m3u8`
