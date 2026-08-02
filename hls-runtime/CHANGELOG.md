@@ -7,6 +7,11 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+- `HlsOrigin`'s `_HLS_msn` abuse bound tightened from +4 to the spec's +2
+  (RFC 8216bis §6.2.5.2 SHOULD: "greater than the Media Sequence Number of
+  the last Media Segment in the current Playlist plus two").
+
 ### Added
 - `server::Container` (`Fmp4` / `MpegTs`, `#[non_exhaustive]`) and
   `HlsOrigin::builder(trunk)` -> `HlsOriginBuilder` (issue #873, closes #865):

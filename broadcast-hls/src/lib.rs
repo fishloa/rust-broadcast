@@ -178,10 +178,9 @@
 //! This crate does not enforce every spec MUST-constraint that requires
 //! cross-tag or cross-file context it cannot see at single-playlist parse
 //! time (e.g. `EXT-X-DEFINE`'s IMPORT/QUERYPARAM resolution against a parent
-//! Multivariant Playlist or a request URI, `EXT-X-SESSION-KEY`'s "METHOD
-//! MUST NOT be NONE", or any "MUST NOT appear more than once" rule) — it
-//! parses the tag's own attribute grammar and leaves such semantic
-//! validation to a higher-level tool (e.g. `media-doctor`).
+//! Multivariant Playlist or a request URI, or any "MUST NOT appear more than
+//! once" rule) — it parses the tag's own attribute grammar and leaves such
+//! semantic validation to a higher-level tool (e.g. `media-doctor`).
 //!
 //! Depends only on `broadcast-common`. `#![no_std]` (+ `alloc`) when the
 //! `std` feature is disabled.
@@ -633,9 +632,8 @@ broadcast_common::impl_spec_display!(EncryptionMethod);
 
 /// `#EXT-X-SESSION-KEY` (RFC 8216bis §4.4.6.5) — preloadable decryption key
 /// info for a [`MasterPlaylist`] (Multivariant Playlist only), carrying the
-/// same attributes as `#EXT-X-KEY` (§4.4.4.4) except that the spec disallows
-/// a `METHOD` of `NONE` here (not enforced at parse time — see the module
-/// docs on this crate's general MUST-constraint leniency).
+/// same attributes as `#EXT-X-KEY` (§4.4.4.4) except that the spec requires
+/// `METHOD` not be `NONE` (enforced at parse time).
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct SessionKey {
@@ -837,6 +835,23 @@ pub struct LowLatencyConfig {
     pub pi_extra_attrs: Vec<(String, String)>,
     /// Unmodeled attributes from `#EXT-X-PRELOAD-HINT` only.
     pub ph_extra_attrs: Vec<(String, String)>,
+    /// `HOLD-BACK` attribute of `#EXT-X-SERVER-CONTROL` (RFC 8216bis
+    /// §4.4.3.8) — the server-recommended minimum distance from the live
+    /// edge for clients NOT playing in Low-Latency Mode. `None` means the
+    /// attribute is absent (the spec default: three times the Target
+    /// Duration). When `Some`, the value MUST be at least three times the
+    /// Target Duration per the spec. Only meaningful when
+    /// [`LowLatencyConfig`] is present; for a non-LL-HLS playlist with a
+    /// custom hold-back, set this on a playlist that also carries the
+    /// `#EXT-X-PART-INF` and `#EXT-X-SERVER-CONTROL` tags.
+    pub hold_back: Option<f64>,
+    /// `CAN-SKIP-DATERANGES` attribute of `#EXT-X-SERVER-CONTROL`
+    /// (RFC 8216bis §4.4.3.8) — enumerated-string `YES` if the server can
+    /// produce Playlist Delta Updates (§6.2.5.1) that skip older
+    /// `#EXT-X-DATERANGE` tags in addition to Media Segments. REQUIRES the
+    /// presence of [`Self::can_skip_until`]; the renderer suppresses this
+    /// attribute when that field is `None` regardless of this value.
+    pub can_skip_dateranges: bool,
 }
 
 impl LowLatencyConfig {
@@ -875,6 +890,8 @@ impl Default for LowLatencyConfig {
             sc_extra_attrs: Vec::new(),
             pi_extra_attrs: Vec::new(),
             ph_extra_attrs: Vec::new(),
+            hold_back: None,
+            can_skip_dateranges: false,
         }
     }
 }
@@ -1378,15 +1395,22 @@ impl MediaPlaylist {
         if let Some(ll) = &self.low_latency {
             // #EXT-X-SERVER-CONTROL — CAN-BLOCK-RELOAD (the actual value,
             // not always YES) + PART-HOLD-BACK (>= 3x part-target, enforced
-            // by effective_part_hold_back) + optional CAN-SKIP-UNTIL
+            // by effective_part_hold_back) + optional HOLD-BACK +
+            // optional CAN-SKIP-UNTIL + optional CAN-SKIP-DATERANGES
             // (RFC 8216bis §4.4.3.8).
             s.push_str(&format!(
                 "#EXT-X-SERVER-CONTROL:CAN-BLOCK-RELOAD={},PART-HOLD-BACK={}",
                 if ll.can_block_reload { "YES" } else { "NO" },
                 format_secs(ll.effective_part_hold_back()),
             ));
+            if let Some(hb) = ll.hold_back {
+                s.push_str(&format!(",HOLD-BACK={}", format_secs(hb)));
+            }
             if let Some(csu) = ll.can_skip_until {
                 s.push_str(&format!(",CAN-SKIP-UNTIL={}", format_secs(csu)));
+                if ll.can_skip_dateranges {
+                    s.push_str(",CAN-SKIP-DATERANGES=YES");
+                }
             }
             push_extra_attrs(&mut s, &ll.sc_extra_attrs);
             s.push('\n');
@@ -1569,6 +1593,8 @@ impl MediaPlaylist {
         let mut part_target: Option<f64> = None;
         let mut part_hold_back: Option<f64> = None;
         let mut can_skip_until: Option<f64> = None;
+        let mut can_skip_dateranges = false;
+        let mut hold_back: Option<f64> = None;
         // RFC 8216bis §4.4.3.8: absent CAN-BLOCK-RELOAD (or an absent
         // #EXT-X-SERVER-CONTROL tag entirely) means the server does NOT
         // support Blocking Playlist Reload — default false, not the
@@ -1680,10 +1706,21 @@ impl MediaPlaylist {
                 if let Some(v) = attrs.get("CAN-SKIP-UNTIL") {
                     can_skip_until = Some(parse_decimal(v, line_no, line, "CAN-SKIP-UNTIL")?);
                 }
+                can_skip_dateranges =
+                    attrs.get("CAN-SKIP-DATERANGES").map(String::as_str) == Some("YES");
                 can_block_reload = attrs.get("CAN-BLOCK-RELOAD").map(String::as_str) == Some("YES");
+                if let Some(v) = attrs.get("HOLD-BACK") {
+                    hold_back = Some(parse_decimal(v, line_no, line, "HOLD-BACK")?);
+                }
                 sc_extra_attrs.extend(filter_extra_attrs(
                     &attrs,
-                    &["PART-HOLD-BACK", "CAN-SKIP-UNTIL", "CAN-BLOCK-RELOAD"],
+                    &[
+                        "PART-HOLD-BACK",
+                        "CAN-SKIP-UNTIL",
+                        "CAN-BLOCK-RELOAD",
+                        "HOLD-BACK",
+                        "CAN-SKIP-DATERANGES",
+                    ],
                 ));
                 saw_ll_tag = true;
             } else if let Some(rest) = line.strip_prefix("#EXT-X-PART:") {
@@ -1854,6 +1891,8 @@ impl MediaPlaylist {
                 sc_extra_attrs,
                 pi_extra_attrs,
                 ph_extra_attrs,
+                hold_back,
+                can_skip_dateranges,
             })
         } else {
             None
@@ -2116,12 +2155,19 @@ fn push_session_key_line(s: &mut String, sk: &SessionKey) {
 }
 
 /// Parse an `#EXT-X-SESSION-KEY:<attribute-list>` value (same attribute set
-/// as `#EXT-X-KEY`, RFC 8216bis §4.4.4.4).
+/// as `#EXT-X-KEY`, RFC 8216bis §4.4.4.4, except METHOD MUST NOT be NONE).
 fn parse_session_key(rest: &str, line_no: usize, line: &str) -> Result<SessionKey> {
     let attrs = parse_attr_list(rest);
     let method_str = require_attr(&attrs, "METHOD", line_no, line, "EXT-X-SESSION-KEY")?;
     let method = match method_str.as_str() {
-        "NONE" => EncryptionMethod::None,
+        "NONE" => {
+            return Err(Error::HlsParse {
+                line_no,
+                line: line.to_string(),
+                reason: "EXT-X-SESSION-KEY METHOD MUST NOT be NONE (RFC 8216bis §4.4.6.5)"
+                    .to_string(),
+            });
+        }
         "AES-128" => EncryptionMethod::Aes128,
         "SAMPLE-AES" => EncryptionMethod::SampleAes,
         "SAMPLE-AES-CTR" => EncryptionMethod::SampleAesCtr,
@@ -3537,6 +3583,8 @@ mod tests {
             preload_hint_byte_range_length: Some(1000),
             can_skip_until: Some(24.0),
             can_block_reload: true,
+            hold_back: None,
+            can_skip_dateranges: false,
             ..Default::default()
         }
     }
@@ -4585,5 +4633,222 @@ v300/index.m3u8\n";
         pl.extra_tags = vec![tag];
         let out = pl.to_m3u8();
         assert_eq!(rendered_version(&out), Some(5), "{out}");
+    }
+
+    // --- F1 + F4: HOLD-BACK and CAN-SKIP-DATERANGES attribute coverage ---
+
+    /// RFC 8216bis §4.4.3.8: `CAN-SKIP-DATERANGES=YES` with `CAN-SKIP-UNTIL`
+    /// must survive parse -> serialize -> re-parse losslessly.
+    #[test]
+    fn parse_and_round_trip_can_skip_dateranges_yes() {
+        let text = "#EXTM3U\n\
+#EXT-X-VERSION:9\n\
+#EXT-X-TARGETDURATION:4\n\
+#EXT-X-PART-INF:PART-TARGET=0.5\n\
+#EXT-X-SERVER-CONTROL:CAN-BLOCK-RELOAD=YES,PART-HOLD-BACK=1.5,CAN-SKIP-UNTIL=24.0,CAN-SKIP-DATERANGES=YES\n\
+#EXTINF:4.000,\n\
+seg0.m4s\n";
+        let pl = MediaPlaylist::parse(text).expect("parse must succeed");
+        let ll = pl.low_latency.as_ref().expect("must have low_latency");
+        assert!(
+            ll.can_skip_dateranges,
+            "CAN-SKIP-DATERANGES=YES must parse to true"
+        );
+        let round = pl.to_m3u8();
+        assert!(
+            round.contains("CAN-SKIP-DATERANGES=YES"),
+            "render must emit CAN-SKIP-DATERANGES=YES:\n{round}"
+        );
+        let reparse = MediaPlaylist::parse(&round).expect("reparse must succeed");
+        let re_ll = reparse
+            .low_latency
+            .as_ref()
+            .expect("must have low_latency on reparse");
+        assert!(
+            re_ll.can_skip_dateranges,
+            "CAN-SKIP-DATERANGES=YES must survive round trip"
+        );
+    }
+
+    /// RFC 8216bis §4.4.3.8: `CAN-SKIP-DATERANGES` suppressed when
+    /// `CAN-SKIP-UNTIL` is absent (REQUIRES relationship).
+    #[test]
+    fn can_skip_dateranges_not_rendered_without_can_skip_until() {
+        let pl = MediaPlaylist {
+            version: 9,
+            target_duration: 4,
+            media_sequence: 0,
+            segments: vec![],
+            low_latency: Some(LowLatencyConfig {
+                part_target: 0.5,
+                part_hold_back: 1.5,
+                can_skip_until: None,
+                can_skip_dateranges: true,
+                can_block_reload: true,
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let out = pl.to_m3u8();
+        assert!(
+            !out.contains("CAN-SKIP-DATERANGES"),
+            "CAN-SKIP-DATERANGES must NOT render without CAN-SKIP-UNTIL:\n{out}"
+        );
+    }
+
+    /// RFC 8216bis §4.4.3.8: `HOLD-BACK` attribute survives parse ->
+    /// serialize -> re-parse losslessly.
+    #[test]
+    fn parse_and_round_trip_hold_back() {
+        let text = "#EXTM3U\n\
+#EXT-X-VERSION:9\n\
+#EXT-X-TARGETDURATION:4\n\
+#EXT-X-PART-INF:PART-TARGET=0.5\n\
+#EXT-X-SERVER-CONTROL:CAN-BLOCK-RELOAD=YES,PART-HOLD-BACK=1.5,HOLD-BACK=12.0\n\
+#EXTINF:4.000,\n\
+seg0.m4s\n";
+        let pl = MediaPlaylist::parse(text).expect("parse must succeed");
+        let ll = pl.low_latency.as_ref().expect("must have low_latency");
+        assert_eq!(ll.hold_back, Some(12.0), "HOLD-BACK=12.0 must parse");
+        let round = pl.to_m3u8();
+        // format_secs renders 12.0 as "12" (no trailing zero).
+        assert!(
+            round.contains("HOLD-BACK=12"),
+            "render must emit HOLD-BACK=12:\n{round}"
+        );
+        let reparse = MediaPlaylist::parse(&round).expect("reparse must succeed");
+        let re_ll = reparse
+            .low_latency
+            .as_ref()
+            .expect("must have low_latency on reparse");
+        assert_eq!(
+            re_ll.hold_back,
+            Some(12.0),
+            "HOLD-BACK must survive round trip"
+        );
+    }
+
+    /// `HOLD-BACK` omitted when `None` (spec default: 3× Target Duration).
+    #[test]
+    fn hold_back_omitted_when_none() {
+        let pl = MediaPlaylist {
+            version: 9,
+            target_duration: 4,
+            media_sequence: 0,
+            segments: vec![MediaSegment {
+                uri: "seg0.m4s".into(),
+                duration: 4.0,
+                ..Default::default()
+            }],
+            low_latency: Some(LowLatencyConfig {
+                part_target: 0.5,
+                part_hold_back: 1.5,
+                hold_back: None,
+                can_block_reload: true,
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let out = pl.to_m3u8();
+        assert!(
+            !out.contains(",HOLD-BACK="),
+            "HOLD-BACK must be absent when None:\n{out}"
+        );
+    }
+
+    // --- F3: EXT-X-SESSION-KEY METHOD=NONE rejection ---
+
+    /// RFC 8216bis §4.4.6.5: `EXT-X-SESSION-KEY` MUST NOT have a METHOD of
+    /// NONE. Parsing a playlist with `METHOD=NONE` must error.
+    #[test]
+    fn session_key_method_none_is_rejected() {
+        let text = "#EXTM3U\n\
+#EXT-X-VERSION:6\n\
+#EXT-X-STREAM-INF:BANDWIDTH=5000000\n\
+v300/index.m3u8\n\
+#EXT-X-SESSION-KEY:METHOD=NONE,URI=\"https://k.example/key\"\n";
+        let err = MasterPlaylist::parse(text)
+            .expect_err("EXT-X-SESSION-KEY with METHOD=NONE must be rejected");
+        let Error::HlsParse { reason, .. } = err;
+        assert!(reason.contains("NONE"), "error must mention NONE: {reason}");
+    }
+
+    /// `EXT-X-SESSION-KEY` with a real method (AES-128) is accepted and
+    /// round-trips.
+    #[test]
+    fn session_key_real_method_is_accepted_and_round_trips() {
+        let text = "#EXTM3U\n\
+#EXT-X-VERSION:6\n\
+#EXT-X-STREAM-INF:BANDWIDTH=5000000\n\
+v300/index.m3u8\n\
+#EXT-X-SESSION-KEY:METHOD=AES-128,URI=\"https://k.example/key\"\n";
+        let pl = MasterPlaylist::parse(text).expect("legitimate session key must parse");
+        assert_eq!(pl.session_keys.len(), 1);
+        assert_eq!(pl.session_keys[0].method, EncryptionMethod::Aes128);
+        let round = pl.to_m3u8();
+        let reparse = MasterPlaylist::parse(&round).expect("reparse must succeed");
+        assert_eq!(reparse.session_keys.len(), 1);
+        assert_eq!(reparse.session_keys[0].method, EncryptionMethod::Aes128);
+    }
+
+    /// Interaction test (rebase #893 + #894): EXT-X-SERVER-CONTROL with
+    /// typed attributes (HOLD-BACK, CAN-SKIP-DATERANGES) plus a REQ-
+    /// attribute must round-trip all three and compute version 12
+    /// (RFC 8216bis §8 row 12 + §4.4.3.8). The REQ- attribute must
+    /// survive in `sc_extra_attrs`/`extra_attrs` and not be swallowed
+    /// by the typed field parser.
+    #[test]
+    fn server_control_typed_and_req_attrs_round_trip_and_version_12() {
+        let text = "#EXTM3U\n\
+#EXT-X-VERSION:12\n\
+#EXT-X-TARGETDURATION:4\n\
+#EXT-X-PART-INF:PART-TARGET=0.5,REQ-VIDEO=720p\n\
+#EXT-X-SERVER-CONTROL:CAN-BLOCK-RELOAD=YES,PART-HOLD-BACK=1.5,HOLD-BACK=12.0,CAN-SKIP-UNTIL=24.0,CAN-SKIP-DATERANGES=YES,REQ-LATENCY=ultra-low\n\
+#EXTINF:4,\n\
+seg0.m4s\n";
+        let pl = MediaPlaylist::parse(text).expect("parse must succeed");
+        let ll = pl.low_latency.as_ref().expect("must have low_latency");
+
+        // Typed attributes survive.
+        assert_eq!(ll.hold_back, Some(12.0));
+        assert!(ll.can_skip_dateranges);
+
+        // REQ-VIDEO from PART-INF → pi_extra_attrs.
+        assert!(
+            ll.pi_extra_attrs
+                .iter()
+                .any(|(k, v)| k == "REQ-VIDEO" && v == "720p"),
+            "REQ-VIDEO must survive in pi_extra_attrs"
+        );
+
+        // REQ-LATENCY from SERVER-CONTROL → sc_extra_attrs.
+        assert!(
+            ll.sc_extra_attrs
+                .iter()
+                .any(|(k, v)| k == "REQ-LATENCY" && v == "ultra-low"),
+            "REQ-LATENCY must survive in sc_extra_attrs"
+        );
+
+        // Aggregated extra_attrs contains both.
+        assert!(ll.extra_attrs.iter().any(|(k, _)| k == "REQ-VIDEO"));
+        assert!(ll.extra_attrs.iter().any(|(k, _)| k == "REQ-LATENCY"));
+
+        // Version must be 12.
+        let round = pl.to_m3u8();
+        assert!(
+            round.contains("#EXT-X-VERSION:12"),
+            "must emit version 12:\n{round}"
+        );
+
+        // Round-trip lossless.
+        let reparse = MediaPlaylist::parse(&round).expect("reparse must succeed");
+        let re_ll = reparse
+            .low_latency
+            .as_ref()
+            .expect("must have low_latency on reparse");
+        assert_eq!(re_ll.hold_back, Some(12.0));
+        assert!(re_ll.can_skip_dateranges);
+        assert!(re_ll.sc_extra_attrs.iter().any(|(k, _)| k == "REQ-LATENCY"));
+        assert!(re_ll.pi_extra_attrs.iter().any(|(k, _)| k == "REQ-VIDEO"));
     }
 }

@@ -135,7 +135,7 @@ fn validate_media_playlist(pl: &broadcast_hls::MediaPlaylist, report: &mut Repor
                         && (part.duration < lower || part.duration > upper)
                     {
                         report.push(Finding::new(
-                            Severity::Warning,
+                            Severity::Error,
                             Location::new(seg_idx + 1, 0),
                             "hls-part-duration-range",
                             alloc::format!(

@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- `hls-part-duration-range` severity raised from Warning to Error
+  (RFC 8216bis §4.4.4.9 MUST: the 85% partial-segment duration floor is a
+  MUST, not a SHOULD). Validator exceptions for INDEPENDENT=YES, GAP=YES,
+  immediately-before-GAP, and final-part-of-segment are unchanged.
+
 ### Added
 - `mediastreamvalidator_oracle.rs` test harness (issue #870): renders every
   HLS playlist shape the origin can produce and validates each with Apple's
