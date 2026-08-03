@@ -23,7 +23,7 @@ fn main() {
     }
 
     // Feed to the meter (interleaved API — one slice per channel)
-    let mut meter = LoudnessMeter::new(sample_rate, layout);
+    let mut meter = LoudnessMeter::new(sample_rate, layout).unwrap();
     meter.push_interleaved_f32(&left, &right).unwrap();
     meter.finish();
 

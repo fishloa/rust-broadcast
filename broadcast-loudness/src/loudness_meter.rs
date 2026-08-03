@@ -129,13 +129,23 @@ pub struct LoudnessMeter {
 impl LoudnessMeter {
     /// Create a new loudness meter.
     ///
-    /// `sample_rate` — input sample rate in Hz (must match the 48 kHz
-    /// K‑weighting design; other rates are not supported).
+    /// `sample_rate` — input sample rate in Hz.
+    /// **Only 48 kHz is supported** because the K‑weighting filter coefficients
+    /// in ITU‑R BS.1770‑5 Annex 1 Tables 1‑2 are specified *only* for 48 kHz.
+    /// The spec says other rates "require different coefficient values" but
+    /// does not provide those values or a design formula.
+    ///
+    /// Returns `Error::UnsupportedSampleRate` for any rate other than 48 000.
+    ///
     /// `layout` — channel configuration with per‑channel weights.
     #[must_use]
-    pub fn new(sample_rate: u32, layout: ChannelLayout) -> Self {
+    pub fn new(sample_rate: u32, layout: ChannelLayout) -> Result<Self, crate::Error> {
+        const SUPPORTED_RATE: u32 = 48_000;
+        if sample_rate != SUPPORTED_RATE {
+            return Err(crate::Error::UnsupportedSampleRate { got: sample_rate });
+        }
         let channel_count = layout.channel_count();
-        Self {
+        Ok(Self {
             sample_rate,
             layout,
             channel_count,
@@ -148,7 +158,7 @@ impl LoudnessMeter {
             max_short_term: f64::NEG_INFINITY,
             finished: false,
             frame_count: 0,
-        }
+        })
     }
 
     /// Reset the meter for a new measurement.
@@ -480,7 +490,7 @@ mod tests {
             left[i] = val;
             right[i] = val;
         }
-        let mut meter = LoudnessMeter::new(sample_rate, ChannelLayout::Stereo);
+        let mut meter = LoudnessMeter::new(sample_rate, ChannelLayout::Stereo).unwrap();
         meter.push_interleaved_f32(&left, &right).unwrap();
         meter.finish();
         let lufs = meter.integrated_lufs();
@@ -505,7 +515,7 @@ mod tests {
             left[i] = val;
             right[i] = val;
         }
-        let mut meter = LoudnessMeter::new(sample_rate, ChannelLayout::Stereo);
+        let mut meter = LoudnessMeter::new(sample_rate, ChannelLayout::Stereo).unwrap();
         meter.push_interleaved_f32(&left, &right).unwrap();
         meter.finish();
         let lufs = meter.integrated_lufs();
@@ -550,10 +560,18 @@ mod tests {
             right[offset + i] = val;
         }
 
-        let mut meter = LoudnessMeter::new(sample_rate, ChannelLayout::Stereo);
+        let mut meter = LoudnessMeter::new(sample_rate, ChannelLayout::Stereo).unwrap();
         meter.push_interleaved_f32(&left, &right).unwrap();
         meter.finish();
         let lufs = meter.integrated_lufs();
         assert!((lufs - (-23.0)).abs() < 0.5, "got {lufs}, expected ~-23.0 (low segments should be gated out)");
+    }
+
+    #[test]
+    fn rejects_441_khz() {
+        let err = LoudnessMeter::new(44_100, ChannelLayout::Stereo).unwrap_err();
+        let msg = format!("{err}");
+        assert!(msg.contains("48 kHz") || msg.contains("48000"),
+            "expected error stating 48 kHz requirement, got: {msg}");
     }
 }
