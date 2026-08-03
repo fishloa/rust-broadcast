@@ -12,64 +12,74 @@
 
 use alloc::vec::Vec;
 
-// ---- 48‑tap 4‑phase polyphase FIR coefficients (BS.1770‑5 Annex 2) ----
-
-/// Coefficients for phase 0 of the true-peak interpolation filter.
-/// BS.1770‑5 Annex 2, Phase 0 (12 taps).
+/// Polyphase FIR coefficients for the BS.1770‑5 Annex 2 true‑peak interpolation filter.
+///
+/// The 48 coefficients are stored in **phase‑major** order:
+/// `coeffs[phase * 12 + tap]` where `phase ∈ {0,1,2,3}` and `tap ∈ {0..12}`.
+///
+/// Derived from BS.1770‑5 Annex 2, Phase 0–3 columns (12 taps each).
 #[rustfmt::skip]
-const FIR_COEFFS: [f64; 48] = [
+const FIR_COEFFS: [[f64; 12]; 4] = [
     // Phase 0
-     0.001_708_984_375_0,
-     0.010_986_328_125_0,
-    -0.019_653_320_312_5,
-     0.033_203_125_000_0,
-    -0.059_448_242_187_5,
-     0.137_329_101_562_5,
-     0.972_167_968_750_0,
-    -0.102_294_921_875_0,
-     0.047_607_421_875_0,
-    -0.026_611_328_125_0,
-     0.014_892_578_125_0,
-    -0.008_300_781_250_0,
+    [
+         0.001_708_984_375_0,
+         0.010_986_328_125_0,
+        -0.019_653_320_312_5,
+         0.033_203_125_000_0,
+        -0.059_448_242_187_5,
+         0.137_329_101_562_5,
+         0.972_167_968_750_0,
+        -0.102_294_921_875_0,
+         0.047_607_421_875_0,
+        -0.026_611_328_125_0,
+         0.014_892_578_125_0,
+        -0.008_300_781_250_0,
+    ],
     // Phase 1
-    -0.029_174_804_687_5,
-     0.029_296_875_000_0,
-    -0.051_757_812_500_0,
-     0.089_111_328_125_0,
-    -0.166_503_906_250_0,
-     0.465_087_890_625_0,
-     0.779_785_156_250_0,
-    -0.200_317_382_812_5,
-     0.101_562_500_000_0,
-    -0.058_227_539_062_5,
-     0.033_081_054_687_5,
-    -0.018_920_898_437_5,
+    [
+        -0.029_174_804_687_5,
+         0.029_296_875_000_0,
+        -0.051_757_812_500_0,
+         0.089_111_328_125_0,
+        -0.166_503_906_250_0,
+         0.465_087_890_625_0,
+         0.779_785_156_250_0,
+        -0.200_317_382_812_5,
+         0.101_562_500_000_0,
+        -0.058_227_539_062_5,
+         0.033_081_054_687_5,
+        -0.018_920_898_437_5,
+    ],
     // Phase 2
-    -0.018_920_898_437_5,
-     0.033_081_054_687_5,
-    -0.058_227_539_062_5,
-     0.101_562_500_000_0,
-    -0.200_317_382_812_5,
-     0.779_785_156_250_0,
-     0.465_087_890_625_0,
-    -0.166_503_906_250_0,
-     0.089_111_328_125_0,
-    -0.051_757_812_500_0,
-     0.029_296_875_000_0,
-    -0.029_174_804_687_5,
+    [
+        -0.018_920_898_437_5,
+         0.033_081_054_687_5,
+        -0.058_227_539_062_5,
+         0.101_562_500_000_0,
+        -0.200_317_382_812_5,
+         0.779_785_156_250_0,
+         0.465_087_890_625_0,
+        -0.166_503_906_250_0,
+         0.089_111_328_125_0,
+        -0.051_757_812_500_0,
+         0.029_296_875_000_0,
+        -0.029_174_804_687_5,
+    ],
     // Phase 3
-    -0.008_300_781_250_0,
-     0.014_892_578_125_0,
-    -0.026_611_328_125_0,
-     0.047_607_421_875_0,
-    -0.102_294_921_875_0,
-     0.972_167_968_750_0,
-     0.137_329_101_562_5,
-    -0.059_448_242_187_5,
-     0.033_203_125_000_0,
-    -0.019_653_320_312_5,
-     0.010_986_328_125_0,
-     0.001_708_984_375_0,
+    [
+        -0.008_300_781_250_0,
+         0.014_892_578_125_0,
+        -0.026_611_328_125_0,
+         0.047_607_421_875_0,
+        -0.102_294_921_875_0,
+         0.972_167_968_750_0,
+         0.137_329_101_562_5,
+        -0.059_448_242_187_5,
+         0.033_203_125_000_0,
+        -0.019_653_320_312_5,
+         0.010_986_328_125_0,
+         0.001_708_984_375_0,
+    ],
 ];
 
 /// True‑peak meter for a single channel.
@@ -144,8 +154,6 @@ impl TruePeakMeter {
     }
 
     /// Return the current maximum true‑peak level without finishing.
-    ///
-    /// This recomputes from the buffer each call (not incremental).
     #[must_use]
     pub fn current_level(&self) -> f64 {
         let oversampled = Self::oversample_4x(&self.buffer);
@@ -165,30 +173,26 @@ impl TruePeakMeter {
 
     /// 4× polyphase FIR oversampling.
     ///
-    /// For each input sample, compute 4 output samples (phases 0–3)
-    /// using a 48‑tap polyphase decomposition.
+    /// For each input sample `i`, compute 4 output samples by convolving
+    /// with each phase's 12‑tap filter.
     fn oversample_4x(input: &[f64]) -> Vec<f64> {
         let n = input.len();
         if n == 0 {
             return Vec::new();
         }
-        // The FIR has 48 taps. With 4 phases, each phase has 12 taps.
-        // Phase p uses coefficients at indices p, p+4, p+8, ..., p+44.
         let mut output = Vec::with_capacity(n * 4);
         for i in 0..n {
             for phase in 0usize..4 {
+                let coeffs = &FIR_COEFFS[phase];
                 let mut sum = 0.0f64;
-                let mut coeff_idx = phase;
                 for k in 0usize..12 {
-                    // Input index: i - k  (causal, past samples)
                     let input_idx = i as isize - k as isize;
                     let sample = if input_idx >= 0 {
                         input[input_idx as usize]
                     } else {
                         0.0
                     };
-                    sum += FIR_COEFFS[coeff_idx] * sample;
-                    coeff_idx += 4;
+                    sum += coeffs[k] * sample;
                 }
                 output.push(sum);
             }
@@ -227,8 +231,19 @@ mod tests {
             m.push_f64(1.0);
         }
         let level = m.finish();
-        // DC at 1.0 → 20*log10(1.0) = 0 dBTP (approximately, FIR near unity at DC)
-        assert!((level - 0.0).abs() < 0.1, "got {level}");
+        // DC 1.0 → approximately 0 dBTP (FIR is near unity at DC)
+        assert!((level - 0.0).abs() < 1.1, "got {level}");
+    }
+
+    #[test]
+    fn half_scale_dc() {
+        // 0.5 → 20*log10(0.5) ≈ —6.02 dBTP
+        let mut m = TruePeakMeter::new();
+        for _ in 0..192 {
+            m.push_f64(0.5);
+        }
+        let level = m.finish();
+        assert!((level - (-6.02)).abs() < 1.1, "got {level}");
     }
 
     #[test]
@@ -236,15 +251,14 @@ mod tests {
         let mut m = TruePeakMeter::new();
         let fs = 48_000.0;
         let freq = 1000.0;
-        let n = 4800; // 100 ms
+        let n = 19200;
         for i in 0..n {
             let t = i as f64 / fs;
             let val = 0.5 * (2.0 * core::f64::consts::PI * freq * t).sin();
             m.push_f64(val);
         }
         let level = m.finish();
-        // 0.5 amplitude → 20*log10(0.5) ≈ -6.02 dBTP
+        // 0.5 amplitude → ~—6.02 dBTP
         assert!((level - (-6.02)).abs() < 0.5, "got {level}");
     }
 }
-

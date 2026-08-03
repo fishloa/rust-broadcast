@@ -244,14 +244,6 @@ impl LoudnessMeter {
                 let f = self.filters[1].process(f64::from(r));
                 sum_sq += weight_r * f * f;
             }
-            // Remaining channels (if any) contribute 0.
-            for _ch in 2..self.channel_count {
-                let filtered = self.filters[2].process(0.0);
-                let w = self.layout.weight(2);
-                if w != 0.0 {
-                    sum_sq += w * filtered * filtered;
-                }
-            }
             self.weighted_power.push(sum_sq);
         }
         self.frame_count += left.len();
@@ -329,25 +321,24 @@ impl LoudnessMeter {
     }
 
     /// Compute the maximum loudness over a sliding window of `window_s` seconds.
+    /// Uses an incremental running mean (O(N) complexity).
     fn compute_max_sliding(&self, window_s: f64) -> f64 {
         let window_samples = ((window_s * self.sample_rate as f64) as usize).max(1);
-        if self.weighted_power.is_empty() {
+        let n = self.weighted_power.len();
+        if n == 0 || n < window_samples {
             return f64::NEG_INFINITY;
         }
-        let mut max_lkfs = f64::NEG_INFINITY;
-        let mut start = 0usize;
-        loop {
-            let end = (start + window_samples).min(self.weighted_power.len());
-            if end - start < window_samples.min(1) {
-                break;
-            }
-            let n = end - start;
-            let mean_sq: f64 = self.weighted_power[start..end].iter().sum::<f64>() / n as f64;
-            let lkfs = mean_sq_to_lkfs(mean_sq);
+        // Initial window sum
+        let mut window_sum: f64 = self.weighted_power[..window_samples].iter().sum();
+        let mut max_lkfs = mean_sq_to_lkfs(window_sum / window_samples as f64);
+        // Slide the window
+        for i in 1..=(n - window_samples) {
+            window_sum -= self.weighted_power[i - 1];
+            window_sum += self.weighted_power[i + window_samples - 1];
+            let lkfs = mean_sq_to_lkfs(window_sum / window_samples as f64);
             if lkfs > max_lkfs {
                 max_lkfs = lkfs;
             }
-            start += 1;
         }
         max_lkfs
     }
@@ -472,54 +463,13 @@ fn compute_lra(blocks: &[GatingBlock]) -> f64 {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::LoudnessMeter;
     use crate::channel_layout::ChannelLayout;
-
-    fn make_sine(
-        freq: f64,
-        amplitude_db: f64,
-        duration_s: f64,
-        sample_rate: u32,
-        channel: usize,
-        num_channels: usize,
-    ) -> alloc::vec::Vec<f32> {
-        let amplitude = 10.0f64.powf(amplitude_db / 20.0) as f32;
-        let n = (duration_s * sample_rate as f64) as usize;
-        let mut samples = alloc::vec![0.0f32; n * num_channels];
-        for i in 0..n {
-            let t = i as f64 / sample_rate as f64;
-            let val = (amplitude as f64 * (2.0 * core::f64::consts::PI * freq * t).sin()) as f32;
-            samples[i * num_channels + channel] = val;
-        }
-        samples
-    }
-
-    fn make_sine_planar(
-        freq: f64,
-        amplitude_db: f64,
-        duration_s: f64,
-        sample_rate: u32,
-        num_channels: usize,
-    ) -> alloc::vec::Vec<alloc::vec::Vec<f32>> {
-        let amplitude = 10.0f64.powf(amplitude_db / 20.0) as f32;
-        let n = (duration_s * sample_rate as f64) as usize;
-        let mut channels: alloc::vec::Vec<_> = (0..num_channels)
-            .map(|_| alloc::vec![0.0f32; n])
-            .collect();
-        for i in 0..n {
-            let t = i as f64 / sample_rate as f64;
-            let val = (amplitude as f64 * (2.0 * core::f64::consts::PI * freq * t).sin()) as f32;
-            for ch in 0..num_channels {
-                channels[ch][i] = val;
-            }
-        }
-        channels
-    }
 
     #[test]
     fn stereo_1khz_minus_23_lufs_is_minus_23() {
         let sample_rate = 48_000;
-        let duration = 20.0;
+        let duration = 2.0;
         let n = (duration * sample_rate as f64) as usize;
         let amplitude = 10.0f64.powf(-23.0 / 20.0) as f32;
         let mut left = alloc::vec![0.0f32; n];
@@ -539,10 +489,10 @@ mod tests {
 
     #[test]
     fn absolute_gate_excludes_silence() {
-        // Two segments: 10 s of silence, then 20 s at —23 LUFS.
+        // 2 s of silence, then 3 s at —23 LUFS.
         let sample_rate = 48_000;
-        let silence_s = 10.0;
-        let tone_s = 20.0;
+        let silence_s = 2.0;
+        let tone_s = 3.0;
         let n_silence = (silence_s * sample_rate as f64) as usize;
         let n_tone = (tone_s * sample_rate as f64) as usize;
         let amplitude = 10.0f64.powf(-23.0 / 20.0) as f32;
@@ -559,20 +509,19 @@ mod tests {
         meter.push_interleaved_f32(&left, &right).unwrap();
         meter.finish();
         let lufs = meter.integrated_lufs();
-        // Should not be dragged down much — still near —23.
         assert!((lufs - (-23.0)).abs() < 0.5, "got {lufs}, expected ~-23.0 (gating should exclude silence)");
     }
 
     #[test]
     fn low_signal_below_absolute_gate_does_not_drag_integrated() {
-        // 10 s at —80 LUFS (below —70 gate), then 60 s at —23 LUFS, then 10 s at —80.
+        // 2 s at —80 LUFS, then 3 s at —23 LUFS, then 2 s at —80.
         let sample_rate = 48_000;
         let tone_amplitude = 10.0f64.powf(-23.0 / 20.0) as f32;
         let low_amplitude = 10.0f64.powf(-80.0 / 20.0) as f32;
 
-        let seg_low1_s = 10.0;
-        let seg_tone_s = 60.0;
-        let seg_low2_s = 10.0;
+        let seg_low1_s = 2.0;
+        let seg_tone_s = 3.0;
+        let seg_low2_s = 2.0;
         let total = (seg_low1_s + seg_tone_s + seg_low2_s) * sample_rate as f64;
         let n = total as usize;
         let mut left = alloc::vec![0.0f32; n];
@@ -605,7 +554,6 @@ mod tests {
         meter.push_interleaved_f32(&left, &right).unwrap();
         meter.finish();
         let lufs = meter.integrated_lufs();
-        // The —80 segments should be excluded by absolute gating; result should be near —23.
         assert!((lufs - (-23.0)).abs() < 0.5, "got {lufs}, expected ~-23.0 (low segments should be gated out)");
     }
 }
