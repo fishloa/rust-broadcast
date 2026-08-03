@@ -235,7 +235,7 @@ dependencies = [
 
 [[package]]
 name = "broadcast-auth"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "base64",
  "hmac",
@@ -1513,7 +1513,7 @@ dependencies = [
 
 [[package]]
 name = "media-doctor"
-version = "0.6.1"
+version = "0.7.0"
 dependencies = [
  "broadcast-common",
  "broadcast-hls",
@@ -1532,7 +1532,7 @@ dependencies = [
 
 [[package]]
 name = "media-plane"
-version = "0.1.2"
+version = "0.2.0"
 dependencies = [
  "broadcast-common",
  "bytes",
@@ -1668,7 +1668,7 @@ dependencies = [
 
 [[package]]
 name = "multimux"
-version = "0.5.2"
+version = "0.6.0"
 dependencies = [
  "axum",
  "base64",
@@ -1704,7 +1704,7 @@ dependencies = [
 
 [[package]]
 name = "multimux-cli"
-version = "0.3.1"
+version = "0.4.0"
 dependencies = [
  "clap",
  "multimux",

@@ -30,7 +30,7 @@ serde             = { version = "1", optional = true, default-features = false, 
 # used to. `bytes` is needed directly (not just transitively) because
 # `Trunk::part_bytes`/`SegmentEntry::bytes` hand back `bytes::Bytes` this
 # crate's own types carry forward (e.g. `HlsBody::Resource`).
-media-plane       = { path = "../media-plane", version = "0.1.1", optional = true, default-features = false }
+media-plane       = { path = "../media-plane", version = "0.2", optional = true, default-features = false }
 bytes             = { version = "1", optional = true, default-features = false }
 # Only pulled in by the `tokio` feature (issue #717 slice 5) — the sans-IO
 # core (`client/engine.rs`) never depends on either.

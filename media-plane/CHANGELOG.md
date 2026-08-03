@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.0] - 2026-08-02
+
+### Changed
+
+- Requires `transmux` 0.22, which moved M3U8 playlist syntax out to the new
+  `broadcast-hls` crate. **No API or behaviour change in this crate** — the
+  bump exists because `transmux` crossed a pre-1.0 caret boundary (`^0.21` ->
+  `^0.22`), and a dependent that keeps the old requirement lets a consumer
+  resolve two incompatible `transmux` copies into one graph (issue #858).
+
 ## [0.1.2] - 2026-07-30
 
 ### Fixed

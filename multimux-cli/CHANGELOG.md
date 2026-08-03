@@ -2,6 +2,16 @@
 
 All notable changes to `multimux-cli` will be documented in this file.
 
+## [0.4.0] - 2026-08-02
+
+### Changed
+
+- Requires `multimux` 0.6, which gained the runtime admin API (#749),
+  signed-URL egress auth (#747) and classic MPEG-TS HLS output (#887).
+  **No change in this crate itself** — the bump propagates `multimux`'s
+  pre-1.0 caret boundary (`^0.5` -> `^0.6`) so a consumer cannot end up with
+  two `multimux` copies in one graph.
+
 ## [0.3.1] - 2026-07-30
 
 ### Fixed

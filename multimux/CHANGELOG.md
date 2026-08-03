@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [0.6.0] - 2026-08-02
 
 ### Added
 - **Classic MPEG-TS HLS output** (`OutputKind::TsHls`, config token
