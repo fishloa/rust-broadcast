@@ -852,28 +852,71 @@ class TestPublishOrderDirection:
 class TestNewCrateFirstRelease:
     """A never-published crate must not block its own first release.
 
-    `latest_published_version()` returns None for a crate that has never been
-    published. The satisfiability check compared in-tree against published to
-    decide "is this being published in this wave?", and None failed that
-    comparison — so every dependant on a NEW crate was reported as
-    "unpublishable ... is not being republished", and the release tag would
-    have been refused.
+    `latest_published_version()` returns None for a crate never published. The
+    satisfiability check used `in_tree > published` to decide "is this sibling
+    shipping in this wave?", and None failed that comparison — so it fell
+    through to "unpublishable ... cargo publish will FAIL", and the release tag
+    would have been refused.
 
-    It is unfixable-by-waiting too: a new crate can never be "republished"
-    until it has been published once.
+    Unfixable by waiting: a new crate can never be *re*published until it has
+    been published once. It blocked `broadcast-hls` 0.1.0 and all four of its
+    dependants (transmux, hls-runtime, media-doctor, multimux).
 
-    Caught preparing the wave that introduces `broadcast-hls` 0.1.0, where it
-    blocked four dependants (transmux, hls-runtime, media-doctor, multimux).
+    NOTE: an earlier version of this class was VACUOUS — it monkeypatched
+    `latest_published_version` to return None and then asserted it returned
+    None, never touching the fixed code. These call the real classifier.
     """
 
-    def test_never_published_sibling_is_a_publish_order_note(self, monkeypatch) -> None:
-        monkeypatch.setattr(dut, "latest_published_version", lambda c: None)
-        monkeypatch.setattr(dut, "any_published_version_satisfies", lambda c, r: False)
-        monkeypatch.setattr(dut, "_version_satisfies_req", lambda v, r: True)
-        assert dut.latest_published_version("broadcast-hls") is None
+    def test_new_crate_is_a_publish_order_note_not_unpublishable(self) -> None:
+        """The exact broadcast-hls case: nothing published, in-tree satisfies."""
+        assert dut.classify_in_tree_satisfiability(
+            published_satisfies=False,
+            sibling_in_tree_satisfies=True,
+            sibling_max_version=None,        # never published
+            sibling_in_tree="0.1.0",
+        ) == "publish_order"
 
-    def test_published_sibling_still_compares(self, monkeypatch) -> None:
-        """The existing path must keep working: a sibling that IS published
-        and is moving forward this wave is still a publish-order note."""
-        assert dut.compare_versions("0.2.0", "0.1.0") > 0
-        assert dut.compare_versions("0.1.0", "0.2.0") < 0
+    def test_published_sibling_moving_forward_is_also_publish_order(self) -> None:
+        """The pre-existing path must keep working: transmux 0.21.1 -> 0.22.0."""
+        assert dut.classify_in_tree_satisfiability(
+            published_satisfies=False,
+            sibling_in_tree_satisfies=True,
+            sibling_max_version="0.21.1",
+            sibling_in_tree="0.22.0",
+        ) == "publish_order"
+
+    def test_stale_sibling_not_shipping_is_unpublishable(self) -> None:
+        """The genuine failure this check exists for: nothing published
+        satisfies it and the sibling is NOT moving, so publishing will fail."""
+        assert dut.classify_in_tree_satisfiability(
+            published_satisfies=False,
+            sibling_in_tree_satisfies=True,
+            sibling_max_version="0.22.0",
+            sibling_in_tree="0.22.0",        # not being republished
+        ) == "unpublishable"
+
+    def test_in_tree_does_not_satisfy_is_unpublishable(self) -> None:
+        """A requirement no version can satisfy, in-tree or published."""
+        assert dut.classify_in_tree_satisfiability(
+            published_satisfies=False,
+            sibling_in_tree_satisfies=False,
+            sibling_max_version="0.22.0",
+            sibling_in_tree="0.22.0",
+        ) == "unpublishable"
+
+    def test_already_satisfied_is_ok(self) -> None:
+        assert dut.classify_in_tree_satisfiability(
+            published_satisfies=True,
+            sibling_in_tree_satisfies=True,
+            sibling_max_version="0.22.0",
+            sibling_in_tree="0.22.0",
+        ) == "ok"
+
+    def test_network_error_is_not_silently_ok(self) -> None:
+        """An unreachable sibling must not be assumed shippable."""
+        assert dut.classify_in_tree_satisfiability(
+            published_satisfies=False,
+            sibling_in_tree_satisfies=True,
+            sibling_max_version="error",
+            sibling_in_tree="0.1.0",
+        ) == "unpublishable"

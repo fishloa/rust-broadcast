@@ -786,6 +786,42 @@ def _check4_publish_order(
 # ── classify (legacy single-check logic) ─────────────────────────────────
 
 
+
+def classify_in_tree_satisfiability(
+    published_satisfies: bool,
+    sibling_in_tree_satisfies: bool,
+    sibling_max_version: str | None,
+    sibling_in_tree: str,
+) -> str:
+    """Classify one in-tree requirement on a workspace sibling.
+
+    Returns:
+      `"ok"`            -- some published version already satisfies it
+      `"unpublishable"` -- nothing published satisfies it and this wave will not
+                           fix it: `cargo publish` will fail
+      `"publish_order"` -- nothing published satisfies it YET, but the sibling is
+                           shipping in this wave, so it is an ordering note
+
+    Extracted so the new-crate case is testable. `sibling_max_version is None`
+    means the sibling has NEVER been published -- a new crate having its first
+    release. That fell through to `"unpublishable"` and blocked a new crate's own
+    first release permanently: it can never be "republished" until it has been
+    published once. It blocked `broadcast-hls` 0.1.0 and all four of its
+    dependants.
+    """
+    if published_satisfies:
+        return "ok"
+    if not sibling_in_tree_satisfies:
+        return "unpublishable"
+    if sibling_max_version is None:
+        return "publish_order"
+    if sibling_max_version == "error":
+        return "unpublishable"
+    if compare_versions(sibling_in_tree, sibling_max_version) > 0:
+        return "publish_order"
+    return "unpublishable"
+
+
 def classify(
     name: str,
     max_version: str,
