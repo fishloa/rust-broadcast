@@ -5,6 +5,17 @@ All notable changes to `transmux` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- `LlHlsSegmenter::next_sequence_numbers()` — returns the `(next_seq,
+  current_segment)` pair the segmenter would give the next emitted part
+  and segment (issue #781). Used by a caller that rebuilds the segmenter
+  mid-stream to resume sequence numbering.
+- `LlHlsSegmenter::with_part_target_at()` — builds a segmenter whose
+  `mfhd.sequence_number` and 1-based segment number start from the given
+  values, resuming where a previous segmenter left off.
+
 ## [0.22.0] - 2026-08-02
 
 ### Fixed

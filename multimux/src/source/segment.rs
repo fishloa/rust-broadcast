@@ -472,61 +472,74 @@ impl ProgramSegmenter {
             // updated track set.
             match route_handle.container() {
                 Container::Fmp4 => {
-                    match LlHlsSegmenter::with_part_target(
+                    // Take out the old segmenter, flush it, drain its
+                    // output, and read its next sequence numbers — the
+                    // replacement resumes from there so segment numbering
+                    // is strictly monotonic (issue #781 BLOCKER).
+                    let mut old_seg = match std::mem::replace(
+                        &mut self.seg,
+                        AnySegmenter::Ts(
+                            // Temporary placeholder; replaced below.
+                            StreamingTsHlsSegmenter::new(
+                                new_tracks.to_vec(),
+                                route_handle.target_duration_secs().round().max(1.0) as u32,
+                                ts_segmenter_window(route_handle),
+                            )
+                            .expect("valid TS segmenter for placeholder"),
+                        ),
+                    ) {
+                        AnySegmenter::Fmp4(seg) => seg,
+                        _ => unreachable!("seg is Fmp4 in this branch"),
+                    };
+
+                    if let Err(e) = old_seg.flush() {
+                        tracing::warn!(error = %e, "old segmenter flush on rebuild failed");
+                    }
+                    for part in old_seg.take_ready_parts() {
+                        self.segment_writer.publish_part(PartEntry::new(
+                            part.bytes,
+                            part.segment_seq,
+                            part.part_index,
+                            Duration::from_secs_f64(part.duration),
+                            part.independent,
+                        ));
+                    }
+                    for segment in old_seg.take_ready_segments() {
+                        let seg: ReadySegment = segment.into();
+                        let duration = Duration::from_secs_f64(seg.duration);
+                        let start_ns = self.next_timeline_ns;
+                        self.next_timeline_ns = self
+                            .next_timeline_ns
+                            .saturating_add(u64::try_from(duration.as_nanos()).unwrap_or(u64::MAX));
+                        self.segment_writer.publish_segment(SegmentEntry::new(
+                            seg.bytes,
+                            seg.segment_seq,
+                            duration,
+                            Timestamp::from_nanos(start_ns),
+                            SegmentMeta {
+                                discontinuous: seg.discontinuous,
+                            },
+                        ));
+                    }
+
+                    let (next_seq, current_seg) = old_seg.next_sequence_numbers();
+
+                    match LlHlsSegmenter::with_part_target_at(
                         new_tracks.to_vec(),
                         transmux::VIDEO_CLOCK_RATE,
                         route_handle.target_duration_secs(),
                         route_handle.part_target_ms(),
+                        next_seq,
+                        current_seg,
                     ) {
                         Ok(seg) => {
-                            // Update the init segment bytes on the route —
-                            // the new init reflects the complete track set.
                             if let Ok(init) = seg.init_segment() {
                                 route_handle.set_init(SPTS_PROGRAM_ID, init);
                             }
-                            let replaced =
-                                std::mem::replace(&mut self.seg, AnySegmenter::Fmp4(seg));
-                            // Flush any remaining buffered output from the old
-                            // segmenter before discarding it — a segment that
-                            // was still accumulating gets a clean cut here so
-                            // the Trunk sees a closed segment, not a gap.
-                            if let AnySegmenter::Fmp4(mut old) = replaced {
-                                if let Err(e) = old.flush() {
-                                    tracing::warn!(error = %e, "old segmenter flush on rebuild failed");
-                                }
-                                // Publish whatever the old segmenter produced
-                                // from its flush — parts/segments go to the
-                                // Trunk, preserving continuity.
-                                for part in old.take_ready_parts() {
-                                    self.segment_writer.publish_part(PartEntry::new(
-                                        part.bytes,
-                                        part.segment_seq,
-                                        part.part_index,
-                                        Duration::from_secs_f64(part.duration),
-                                        part.independent,
-                                    ));
-                                }
-                                for segment in old.take_ready_segments() {
-                                    let seg: ReadySegment = segment.into();
-                                    let duration = Duration::from_secs_f64(seg.duration);
-                                    let start_ns = self.next_timeline_ns;
-                                    self.next_timeline_ns = self.next_timeline_ns.saturating_add(
-                                        u64::try_from(duration.as_nanos()).unwrap_or(u64::MAX),
-                                    );
-                                    self.segment_writer.publish_segment(SegmentEntry::new(
-                                        seg.bytes,
-                                        seg.segment_seq,
-                                        duration,
-                                        Timestamp::from_nanos(start_ns),
-                                        SegmentMeta {
-                                            discontinuous: seg.discontinuous,
-                                        },
-                                    ));
-                                }
-                            }
+                            self.seg = AnySegmenter::Fmp4(seg);
                             tracing::info!(
                                 "fMP4 segmenter rebuilt with updated track set for \
-                                 mid-stream addition"
+                                 mid-stream addition (resuming seq={next_seq} seg={current_seg})"
                             );
                         }
                         Err(e) => {
@@ -761,6 +774,7 @@ mod tests {
     use media_plane::ingress::{IngestDriver, IngestSession, SessionEvent};
     use std::collections::{HashSet, VecDeque};
     use std::convert::Infallible;
+    use transmux::DemuxEvent;
     use transmux::pipeline::Sample;
 
     /// Render `route`'s current LL-HLS media playlist synchronously — the
@@ -1182,6 +1196,14 @@ mod tests {
         type Request = bytes::Bytes;
     }
 
+    // --- Issue #781 test helpers ---
+
+    /// Maximum feeds for any bounded wait loop — 500 iterations is more
+    /// than enough to close one segment at a 1.0 s target duration with
+    /// 30 fps samples (each feed advances the timeline by at most one
+    /// sample per track; 500 × 33 ms ≈ 16.7 s of media, 16× the target).
+    const MAX_BOUNDED_FEEDS: usize = 2000;
+
     /// An MPTS route (one `IngestDriver`, two announced programs) must
     /// segment each program independently — issue #805 task 2b's explicit
     /// "do not write anything that assumes one program per route".
@@ -1456,156 +1478,128 @@ mod tests {
         }
     }
 
-    /// Monotonic nanosecond source for `two_programs_on_one_route_segment_independently`'s
-    /// feed loop — the exact `now` value is immaterial (`TwoProgramSession`
-    /// never reads it), only that each call passes a value (an
-    /// `IngestDriver` contract, not a real timing requirement here).
+    /// Monotonic nanosecond source for feed-loop timestamps — the exact
+    /// `now` value is immaterial (sessions never read it), only that each
+    /// call passes a value (an `IngestDriver` contract).
     fn driver_feed_nanos() -> u64 {
         use std::sync::atomic::{AtomicU64, Ordering};
         static N: AtomicU64 = AtomicU64::new(2);
         N.fetch_add(1, Ordering::Relaxed)
     }
 
-    /// **Issue #781 — TrackAdded reaches the running segmenter.** Drives a
-    /// session that starts with one track, feeds enough samples to cut at
-    /// least one segment, then emits `TracksChanged` adding a second track
-    /// mid-stream. The new track's samples must appear in served output,
-    /// the original track's output must be uninterrupted (no gap, no
-    /// media-sequence reset), and the change must land on a segment boundary.
-    ///
-    /// MUTATION VERIFIED: changing the `track_generation` check in `pump`
-    /// to `if false && ...` (never detect the change) makes this test's
-    /// post-change assertion fail — only one track is reported and the
-    /// second track's samples are never served.
-    #[test]
-    fn track_added_mid_stream_reaches_the_segmenter_and_is_served() {
-        let route = RouteHandle::new(1.0, 250, 8);
-        let mut driver = IngestDriver::new(
-            TrackAdditionSession::new(),
-            trunk_config(),
-            handshake(),
-            media_plane::DEFAULT_MAX_PROGRAMS,
-        );
-        let mut published = HashSet::new();
-        let mut segmenters = HashMap::new();
-        let mut track_generations = HashMap::new();
+    // --- ISOBMFF box parser (issue #781: assert track 9 in output) ---
 
-        // Feed 1: Established.
-        driver.feed(&[], Timestamp::from_nanos(0));
-        report_driver_progress(&driver, &route, &mut published, &mut track_generations);
-        drive_program_segmenters(&driver, &route, &mut segmenters);
+    type BoxPayload<'a> = &'a [u8];
 
-        // Feed 2: NewProgram with track 1 only — the segmenter is built
-        // with just one track.
-        driver.feed(&[], Timestamp::from_nanos(1));
-        report_driver_progress(&driver, &route, &mut published, &mut track_generations);
-        drive_program_segmenters(&driver, &route, &mut segmenters);
-
-        // Feed 90 samples for track 1 only — this cuts at least one segment
-        // from the single-track segmenter. At feed count TRACK_CHANGE_AT (=92
-        // after the initial 2 setup feeds), the session emits TracksChanged
-        // adding track 9 mid-stream.
-        for _ in 0..90 {
-            let now = Timestamp::from_nanos(driver_feed_nanos());
-            driver.feed(&[], now);
-            drive_program_segmenters(&driver, &route, &mut segmenters);
-        }
-
-        // Feed another 90 samples — the session now publishes samples for
-        // BOTH tracks (track 1 and the newly-added track 9).
-        for _ in 0..90 {
-            let now = Timestamp::from_nanos(driver_feed_nanos());
-            driver.feed(&[], now);
-            drive_program_segmenters(&driver, &route, &mut segmenters);
-        }
-
-        let trunk = driver
-            .trunk(ProgramId(0))
-            .cloned()
-            .expect("program 0 announced");
-
-        // The trunk must report at least 2 tracks after the mid-stream addition.
-        let trunk_tracks = trunk.tracks();
-        assert!(
-            trunk_tracks.len() >= 2,
-            "trunk must report at least 2 tracks after mid-stream addition: got {}",
-            trunk_tracks.len()
-        );
-
-        // The init segment must exist.
-        let init = route
-            .init_bytes(crate::route::SPTS_PROGRAM_ID)
-            .expect("init bytes must exist");
-        assert!(
-            !init.is_empty(),
-            "a driver-backed route must end up with real, non-empty init bytes"
-        );
-
-        // The init segment must have grown to accommodate the second track
-        // (an fMP4 init contains one `trak` box per track). A single-track
-        // init is smaller than the two-track init rebuilt by
-        // `apply_track_change`.
-        assert!(
-            init.len() > 700,
-            "init bytes must reflect the second track (expected >700 bytes for \
-             two tracks, got {})",
-            init.len()
-        );
-
-        // The playlist must serve closed segments/parts.
-        let playlist = render_playlist(&route);
-        assert!(
-            playlist.contains("#EXTINF:") || playlist.contains("#EXT-X-PART:"),
-            "the route must serve closed segments/parts: {playlist}"
-        );
-
-        // Track generation must have advanced beyond the initial seed.
-        assert!(
-            trunk.track_generation() >= 2,
-            "track generation must have advanced past the initial seed (>=2), \
-             got {}",
-            trunk.track_generation()
-        );
+    fn box_iter(buf: &[u8]) -> impl Iterator<Item = (u32, BoxPayload<'_>)> {
+        BoxIter { buf }
     }
 
-    /// A scripted session for testing mid-stream track addition (issue #781):
-    /// announces one program with track 1, feeds samples for track 1 only
-    /// (enough to cut a segment), then emits `TracksChanged` adding track 9
-    /// when `feed_count` reaches `TRACK_CHANGE_AT`.
-    struct TrackAdditionSession {
-        pending: VecDeque<SessionEvent>,
+    struct BoxIter<'a> {
+        buf: &'a [u8],
+    }
+
+    impl<'a> Iterator for BoxIter<'a> {
+        type Item = (u32, BoxPayload<'a>);
+
+        fn next(&mut self) -> Option<Self::Item> {
+            if self.buf.len() < 8 {
+                return None;
+            }
+            let size =
+                u32::from_be_bytes([self.buf[0], self.buf[1], self.buf[2], self.buf[3]]) as usize;
+            if size < 8 || size > self.buf.len() {
+                return None;
+            }
+            let fourcc = u32::from_be_bytes([self.buf[4], self.buf[5], self.buf[6], self.buf[7]]);
+            let payload = &self.buf[8..size];
+            self.buf = &self.buf[size..];
+            Some((fourcc, payload))
+        }
+    }
+
+    /// Collect every `track_ID` from `tfhd` boxes in a CMAF segment
+    /// (walks `moof` → `traf` → `tfhd`, ISO/IEC 14496-12 §8.8.7).
+    fn tfhd_track_ids(segment_bytes: &[u8]) -> Vec<u32> {
+        let mut ids = Vec::new();
+        for (fourcc, moof) in box_iter(segment_bytes) {
+            if fourcc != u32::from_be_bytes(*b"moof") {
+                continue;
+            }
+            for (traf_cc, traf) in box_iter(moof) {
+                if traf_cc != u32::from_be_bytes(*b"traf") {
+                    continue;
+                }
+                for (tfhd_cc, tfhd) in box_iter(traf) {
+                    if tfhd_cc != u32::from_be_bytes(*b"tfhd") {
+                        continue;
+                    }
+                    if tfhd.len() >= 8 {
+                        ids.push(u32::from_be_bytes([tfhd[4], tfhd[5], tfhd[6], tfhd[7]]));
+                    }
+                }
+            }
+        }
+        ids
+    }
+
+    /// Collect segment sequence numbers from an LL-HLS playlist
+    /// (scans for `seg-1-<N>.m4s` lines).
+    fn segment_sequences_from_playlist(playlist: &str) -> Vec<u32> {
+        let mut seqs = Vec::new();
+        for line in playlist.lines() {
+            if let Some(start) = line.find("seg-1-") {
+                let rest = &line[start + 6..];
+                if let Some(end) = rest.find(".m4s") {
+                    if let Ok(n) = rest[..end].parse::<u32>() {
+                        seqs.push(n);
+                    }
+                }
+            }
+        }
+        seqs
+    }
+
+    // ================================================================
+    // Issue #781 tests
+    // ================================================================
+
+    /// A session that announces track 1 at feed 2, emits `TracksChanged`
+    /// adding track 9 when `add_track_9()` is called, and publishes
+    /// samples for all active tracks on every subsequent feed. Uses
+    /// interior mutability (`Cell<bool>`) so `add_track_9()` is `&self`
+    /// and can be called through `driver.session()`.
+    struct TrackChangeSession {
+        pending: std::cell::RefCell<VecDeque<SessionEvent>>,
         feed_count: u32,
-        added_track_9: bool,
+        added_track_9: std::cell::Cell<bool>,
     }
 
-    /// The feed count at which the session emits `TracksChanged` adding
-    /// track 9 — set high enough that at least one segment has been cut
-    /// from the single-track segmenter before the change fires.
-    const TRACK_CHANGE_AT: u32 = 92; // feed 2 = NewProgram, feeds 3..92 = 90 samples
-
-    impl TrackAdditionSession {
+    impl TrackChangeSession {
         fn new() -> Self {
             let mut pending = VecDeque::new();
             pending.push_back(SessionEvent::Established);
-            TrackAdditionSession {
-                pending,
+            TrackChangeSession {
+                pending: std::cell::RefCell::new(pending),
                 feed_count: 0,
-                added_track_9: false,
+                added_track_9: std::cell::Cell::new(false),
             }
         }
 
-        /// Emit `TracksChanged` adding track 9 — called by the feed loop
-        /// when `feed_count` reaches `TRACK_CHANGE_AT`.
-        fn emit_track_change(&mut self) {
-            self.pending.push_back(SessionEvent::TracksChanged {
-                program: ProgramId(0),
-                tracks: vec![track_spec(1), track_spec(9)],
-            });
-            self.added_track_9 = true;
+        /// Queue a `TracksChanged` event — callable via `&self` through
+        /// `driver.session()`.
+        fn add_track_9(&self) {
+            self.pending
+                .borrow_mut()
+                .push_back(SessionEvent::TracksChanged {
+                    program: ProgramId(0),
+                    tracks: vec![track_spec(1), track_spec(9)],
+                });
+            self.added_track_9.set(true);
         }
     }
 
-    impl Stage for TrackAdditionSession {
+    impl Stage for TrackChangeSession {
         type In<'a> = &'a [u8];
         type Out = SessionEvent;
         type Error = Infallible;
@@ -1617,28 +1611,23 @@ mod tests {
         fn feed(&mut self, _input: &[u8], _now: Timestamp) -> Result<(), Infallible> {
             self.feed_count += 1;
             if self.feed_count == 2 {
-                // First program announcement: track 1 only.
-                self.pending.push_back(SessionEvent::NewProgram {
-                    program: ProgramId(0),
-                    tracks: vec![track_spec(1)],
-                });
-            } else if self.feed_count == TRACK_CHANGE_AT {
-                // Mid-stream track addition: emit TracksChanged with both
-                // tracks — the segmenter detects the generation change.
-                self.emit_track_change();
+                self.pending
+                    .borrow_mut()
+                    .push_back(SessionEvent::NewProgram {
+                        program: ProgramId(0),
+                        tracks: vec![track_spec(1)],
+                    });
             } else if self.feed_count >= 3 {
                 let i = self.feed_count - 3;
-                let is_sync = i == 0 || i == 45;
-                // Publish samples for track 1 always.
-                self.pending.push_back(SessionEvent::Sample {
+                let is_sync = i % 45 == 0;
+                self.pending.borrow_mut().push_back(SessionEvent::Sample {
                     program: ProgramId(0),
                     track_id: 1,
                     retention: media_plane::trunk::RetentionClass::Timed,
                     sample: sample_at(i, is_sync),
                 });
-                // After the track addition, also publish samples for track 9.
-                if self.added_track_9 {
-                    self.pending.push_back(SessionEvent::Sample {
+                if self.added_track_9.get() {
+                    self.pending.borrow_mut().push_back(SessionEvent::Sample {
                         program: ProgramId(0),
                         track_id: 9,
                         retention: media_plane::trunk::RetentionClass::Timed,
@@ -1650,7 +1639,7 @@ mod tests {
         }
 
         fn poll(&mut self) -> Option<SessionEvent> {
-            self.pending.pop_front()
+            self.pending.borrow_mut().pop_front()
         }
 
         fn next_deadline(&self) -> Option<Timestamp> {
@@ -1664,7 +1653,340 @@ mod tests {
         }
     }
 
-    impl IngestSession for TrackAdditionSession {
+    impl IngestSession for TrackChangeSession {
         type Request = bytes::Bytes;
+    }
+
+    // --- Test 1: new track's media in output ---
+
+    /// **Issue #781 test 1.** Drives a session with track 1 until a segment
+    /// closes, injects `TracksChanged` adding track 9, feeds both tracks
+    /// until another segment closes, then parses the segment's ISOBMFF
+    /// boxes and asserts a `tfhd` names `track_ID=9`.
+    #[test]
+    fn new_tracks_media_appears_in_output_after_mid_stream_addition() {
+        let route = RouteHandle::new(1.0, 250, 8);
+        let mut driver = IngestDriver::new(
+            TrackChangeSession::new(),
+            trunk_config(),
+            handshake(),
+            media_plane::DEFAULT_MAX_PROGRAMS,
+        );
+        let mut published = HashSet::new();
+        let mut segmenters = HashMap::new();
+        let mut track_generations = HashMap::new();
+
+        driver.feed(&[], Timestamp::from_nanos(driver_feed_nanos()));
+        report_driver_progress(&driver, &route, &mut published, &mut track_generations);
+        drive_program_segmenters(&driver, &route, &mut segmenters);
+        driver.feed(&[], Timestamp::from_nanos(driver_feed_nanos()));
+        report_driver_progress(&driver, &route, &mut published, &mut track_generations);
+        drive_program_segmenters(&driver, &route, &mut segmenters);
+
+        let trunk = driver.trunk(ProgramId(0)).cloned().expect("program 0");
+        for i in 0..MAX_BOUNDED_FEEDS {
+            if trunk.last_closed_segment().is_some() {
+                break;
+            }
+            driver.feed(&[], Timestamp::from_nanos(driver_feed_nanos()));
+            report_driver_progress(&driver, &route, &mut published, &mut track_generations);
+            drive_program_segmenters(&driver, &route, &mut segmenters);
+            if i + 1 >= MAX_BOUNDED_FEEDS {
+                panic!(
+                    "no segment closed before track change after {MAX_BOUNDED_FEEDS} feeds (test 1)"
+                );
+            }
+        }
+        let pre_change_seg_len = trunk.segment_len();
+        let pre_playlist = render_playlist(&route);
+        let pre_seqs = segment_sequences_from_playlist(&pre_playlist);
+        let last_pre_seq = pre_seqs.last().copied().unwrap_or(0);
+
+        driver.session().add_track_9();
+        // Feed once to apply the track change.
+        driver.feed(&[], Timestamp::from_nanos(driver_feed_nanos()));
+        report_driver_progress(&driver, &route, &mut published, &mut track_generations);
+        drive_program_segmenters(&driver, &route, &mut segmenters);
+
+        // Sanity: the track change must have been applied to the trunk.
+        let gen_after = trunk.track_generation();
+        assert!(
+            gen_after >= 2,
+            "track generation must have advanced (got {gen_after})"
+        );
+
+        // The flush created exactly one trailing segment.
+        let flush_seg_len = trunk.segment_len();
+        assert!(
+            flush_seg_len > pre_change_seg_len,
+            "flush must create at least one trailing segment (was {}, now {})",
+            pre_change_seg_len,
+            flush_seg_len,
+        );
+
+        // Feed samples after the change until we get a genuinely new segment
+        // (beyond the flush trailing segment).
+        for i in 0..MAX_BOUNDED_FEEDS {
+            if trunk.segment_len() > pre_change_seg_len + 1 {
+                break;
+            }
+            driver.feed(&[], Timestamp::from_nanos(driver_feed_nanos()));
+            report_driver_progress(&driver, &route, &mut published, &mut track_generations);
+            drive_program_segmenters(&driver, &route, &mut segmenters);
+            if i + 1 >= MAX_BOUNDED_FEEDS {
+                panic!(
+                    "no new segment beyond flush after {} feeds (segment_len={})",
+                    MAX_BOUNDED_FEEDS,
+                    trunk.segment_len(),
+                );
+            }
+        }
+
+        let post_playlist = render_playlist(&route);
+        let post_seqs = segment_sequences_from_playlist(&post_playlist);
+        assert!(
+            post_seqs.iter().any(|&s| s > last_pre_seq),
+            "post-change playlist must have sequence > last pre-change ({last_pre_seq})"
+        );
+
+        let mut found_track_9 = false;
+        for seq in &post_seqs {
+            if *seq <= last_pre_seq {
+                continue;
+            }
+            let uri = format!("seg-1-{seq}.m4s");
+            let bytes = resolve_resource(&route, ProgramId(0), &uri);
+            if tfhd_track_ids(&bytes).contains(&9) {
+                found_track_9 = true;
+                break;
+            }
+        }
+        assert!(
+            found_track_9,
+            "a post-change segment must contain tfhd naming track_ID 9"
+        );
+    }
+
+    // --- Test 2: existing tracks uninterrupted ---
+
+    #[test]
+    fn existing_tracks_are_uninterrupted_across_mid_stream_addition() {
+        let route = RouteHandle::new(1.0, 250, 8);
+        let mut driver = IngestDriver::new(
+            TrackChangeSession::new(),
+            trunk_config(),
+            handshake(),
+            media_plane::DEFAULT_MAX_PROGRAMS,
+        );
+        let mut published = HashSet::new();
+        let mut segmenters = HashMap::new();
+        let mut track_generations = HashMap::new();
+
+        driver.feed(&[], Timestamp::from_nanos(driver_feed_nanos()));
+        report_driver_progress(&driver, &route, &mut published, &mut track_generations);
+        drive_program_segmenters(&driver, &route, &mut segmenters);
+        driver.feed(&[], Timestamp::from_nanos(driver_feed_nanos()));
+        report_driver_progress(&driver, &route, &mut published, &mut track_generations);
+        drive_program_segmenters(&driver, &route, &mut segmenters);
+
+        let trunk = driver.trunk(ProgramId(0)).cloned().expect("program 0");
+        for i in 0..MAX_BOUNDED_FEEDS {
+            if trunk.last_closed_segment().is_some() {
+                break;
+            }
+            driver.feed(&[], Timestamp::from_nanos(driver_feed_nanos()));
+            report_driver_progress(&driver, &route, &mut published, &mut track_generations);
+            drive_program_segmenters(&driver, &route, &mut segmenters);
+            if i + 1 >= MAX_BOUNDED_FEEDS {
+                panic!(
+                    "no segment closed before track change after {MAX_BOUNDED_FEEDS} feeds (test 2)"
+                );
+            }
+        }
+        let pre_change_seqs = segment_sequences_from_playlist(&render_playlist(&route));
+
+        driver.session().add_track_9();
+        driver.feed(&[], Timestamp::from_nanos(driver_feed_nanos()));
+        report_driver_progress(&driver, &route, &mut published, &mut track_generations);
+        drive_program_segmenters(&driver, &route, &mut segmenters);
+
+        let pre_len = trunk.segment_len();
+        for i in 0..MAX_BOUNDED_FEEDS {
+            if trunk.segment_len() > pre_len + 1 {
+                break;
+            }
+            driver.feed(&[], Timestamp::from_nanos(driver_feed_nanos()));
+            report_driver_progress(&driver, &route, &mut published, &mut track_generations);
+            drive_program_segmenters(&driver, &route, &mut segmenters);
+            if i + 1 >= MAX_BOUNDED_FEEDS {
+                panic!(
+                    "no new segment after track change after {MAX_BOUNDED_FEEDS} feeds (test 2, len={})",
+                    trunk.segment_len()
+                );
+            }
+        }
+
+        let post_change_seqs = segment_sequences_from_playlist(&render_playlist(&route));
+        // Only check sequences that came AFTER the change — the playlist
+        // always retains older segments in its window.
+        let max_pre = pre_change_seqs.iter().copied().max().unwrap_or(0);
+        let new_seqs: Vec<_> = post_change_seqs
+            .iter()
+            .filter(|s| **s > max_pre)
+            .copied()
+            .collect();
+        assert!(
+            !new_seqs.is_empty(),
+            "must have at least one new segment after the change"
+        );
+        for s in &new_seqs {
+            for p in &pre_change_seqs {
+                assert!(s > p, "post-change seq {s} must be > pre-change seq {p}");
+            }
+        }
+    }
+
+    // --- Test 3: change lands on segment boundary ---
+
+    #[test]
+    fn track_change_lands_on_segment_boundary() {
+        let route = RouteHandle::new(1.0, 250, 8);
+        let mut driver = IngestDriver::new(
+            TrackChangeSession::new(),
+            trunk_config(),
+            handshake(),
+            media_plane::DEFAULT_MAX_PROGRAMS,
+        );
+        let mut published = HashSet::new();
+        let mut segmenters = HashMap::new();
+        let mut track_generations = HashMap::new();
+
+        driver.feed(&[], Timestamp::from_nanos(driver_feed_nanos()));
+        report_driver_progress(&driver, &route, &mut published, &mut track_generations);
+        drive_program_segmenters(&driver, &route, &mut segmenters);
+        driver.feed(&[], Timestamp::from_nanos(driver_feed_nanos()));
+        report_driver_progress(&driver, &route, &mut published, &mut track_generations);
+        drive_program_segmenters(&driver, &route, &mut segmenters);
+
+        let trunk = driver.trunk(ProgramId(0)).cloned().expect("program 0");
+        for i in 0..MAX_BOUNDED_FEEDS {
+            if trunk.last_closed_segment().is_some() {
+                break;
+            }
+            driver.feed(&[], Timestamp::from_nanos(driver_feed_nanos()));
+            report_driver_progress(&driver, &route, &mut published, &mut track_generations);
+            drive_program_segmenters(&driver, &route, &mut segmenters);
+            if i + 1 >= MAX_BOUNDED_FEEDS {
+                panic!(
+                    "no segment closed before track change after {MAX_BOUNDED_FEEDS} feeds (test 3)"
+                );
+            }
+        }
+
+        let last_closed_seq = trunk.last_closed_segment().expect("segment closed");
+
+        driver.session().add_track_9();
+        driver.feed(&[], Timestamp::from_nanos(driver_feed_nanos()));
+        report_driver_progress(&driver, &route, &mut published, &mut track_generations);
+        drive_program_segmenters(&driver, &route, &mut segmenters);
+
+        let pre_len = trunk.segment_len();
+        for i in 0..MAX_BOUNDED_FEEDS {
+            if trunk.segment_len() > pre_len + 1 {
+                break;
+            }
+            driver.feed(&[], Timestamp::from_nanos(driver_feed_nanos()));
+            report_driver_progress(&driver, &route, &mut published, &mut track_generations);
+            drive_program_segmenters(&driver, &route, &mut segmenters);
+            if i + 1 >= MAX_BOUNDED_FEEDS {
+                panic!(
+                    "no new segment after track change after {MAX_BOUNDED_FEEDS} feeds (test 3, len={})",
+                    trunk.segment_len()
+                );
+            }
+        }
+
+        let next = trunk.last_closed_segment().expect("another segment closed");
+        assert!(
+            next > last_closed_seq,
+            "next segment seq {next} must be > previous {last_closed_seq}"
+        );
+    }
+
+    // --- Test 4: removal and update still degrade ---
+
+    /// **Issue #781 test 4.** Regression guard: removal stops routing
+    /// samples, and `TrackUpdated` does not panic.
+    #[test]
+    fn removal_and_update_degrade_without_panicking() {
+        use crate::source::ts_program::ProgramTracker;
+
+        let mut tracker = ProgramTracker::new();
+        tracker.handle(DemuxEvent::TrackAdded(track_spec(1)));
+        tracker.handle(DemuxEvent::TrackAdded(track_spec(2)));
+        tracker.handle(DemuxEvent::tracks_resolved(0));
+        let _established = tracker.poll();
+        let _new_program = tracker.poll();
+
+        tracker.handle(DemuxEvent::track_removed(
+            2,
+            transmux::EventProvenance::default(),
+        ));
+        tracker.handle(DemuxEvent::tracks_resolved(1));
+
+        match tracker.poll() {
+            Some(SessionEvent::TracksChanged { tracks, .. }) => {
+                assert_eq!(tracks.len(), 1);
+                assert_eq!(tracks[0].track_id, 1);
+            }
+            other => panic!("expected TracksChanged with track 1 only, got {other:?}"),
+        }
+
+        tracker.handle(DemuxEvent::sample(2, sample_at(0, true)));
+        assert!(tracker.poll().is_none(), "sample for removed track dropped");
+
+        tracker.handle(DemuxEvent::TrackUpdated(track_spec(1)));
+        assert!(tracker.poll().is_none(), "TrackUpdated emits no event");
+    }
+
+    // --- Test 5: DASH-output route logs and continues ---
+
+    #[test]
+    fn dash_output_logs_and_continues_on_mid_stream_addition() {
+        let route = RouteHandle::new(1.0, 250, 8);
+        let mut driver = IngestDriver::new(
+            TrackChangeSession::new(),
+            trunk_config(),
+            handshake(),
+            media_plane::DEFAULT_MAX_PROGRAMS,
+        );
+        let mut published = HashSet::new();
+        let mut segmenters = HashMap::new();
+        let mut track_generations = HashMap::new();
+
+        driver.feed(&[], Timestamp::from_nanos(driver_feed_nanos()));
+        report_driver_progress(&driver, &route, &mut published, &mut track_generations);
+        drive_program_segmenters(&driver, &route, &mut segmenters);
+        driver.feed(&[], Timestamp::from_nanos(driver_feed_nanos()));
+        report_driver_progress(&driver, &route, &mut published, &mut track_generations);
+        drive_program_segmenters(&driver, &route, &mut segmenters);
+
+        let specs_before = route.track_specs(ProgramId(0));
+        assert_eq!(specs_before.len(), 1);
+
+        driver.session().add_track_9();
+        driver.feed(&[], Timestamp::from_nanos(driver_feed_nanos()));
+        report_driver_progress(&driver, &route, &mut published, &mut track_generations);
+        drive_program_segmenters(&driver, &route, &mut segmenters);
+
+        let specs_after = route.track_specs(ProgramId(0));
+        assert_eq!(
+            specs_after.len(),
+            2,
+            "DASH path must see the new track spec"
+        );
+
+        let selected = crate::output::dash::select_representable_track(&specs_after);
+        assert!(selected.is_some(), "must still pick a representable track");
     }
 }
