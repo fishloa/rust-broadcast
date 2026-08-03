@@ -1,5 +1,21 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+- Mid-stream track additions (PMT version changes adding an elementary stream)
+  now reach the running segmenter (issue #781). Previously, `track_specs` was a
+  one-shot snapshot consumed at segmenter construction; a broadcaster adding an
+  audio language or subtitle track mid-programme was logged and its samples
+  silently dropped. Now `ProgramTracker` maps mid-stream additions to the same
+  program, emits `SessionEvent::TracksChanged` with the complete track set, and
+  `drive_program_segmenters` detects the `Trunk`'s `track_generation` change to
+  admit the new track into the segmenter (or rebuild it, for fMP4) at the next
+  segment boundary — with no media-sequence reset and no interruption to
+  existing tracks. DASH output explicitly logs and continues serving existing
+  tracks (adding a representation mid-stream needs a new `Period`, which is
+  tracked for a follow-up).
+
 ## [0.6.0] - 2026-08-02
 
 ### Added

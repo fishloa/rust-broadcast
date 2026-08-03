@@ -303,6 +303,50 @@ impl LlHlsSegmenter {
         self.part_target_ticks as f64 / self.tracks[self.anchor].spec.timescale as f64
     }
 
+    /// The `(next_seq, current_segment)` pair this segmenter would give the
+    /// next emitted part and segment — the values `next_seq` (the next
+    /// `mfhd.sequence_number`) and `current_segment` (the 1-based number of
+    /// the segment currently being built, which becomes the next
+    /// [`SegmentInfo::segment_seq`]). A caller that rebuilds the segmenter
+    /// mid-stream (e.g. after a track-set change, issue #781) seeds the new
+    /// one from these so sequence numbering is **strictly monotonic** across
+    /// the rebuild — no `EXT-X-MEDIA-SEQUENCE` reset, no client playlists
+    /// rewinding.
+    pub fn next_sequence_numbers(&self) -> (u32, u32) {
+        (self.next_seq, self.current_segment)
+    }
+
+    /// Build a segmenter whose sequence numbering starts from `next_seq`
+    /// (`mfhd.sequence_number`) and `current_segment` (1-based segment
+    /// number), resuming where a previous segmenter left off — the seeding
+    /// side of [`Self::next_sequence_numbers`] (issue #781).
+    ///
+    /// The usual constructor, [`Self::with_part_target`], starts both at 1.
+    #[doc(hidden)]
+    pub fn with_part_target_at(
+        tracks: Vec<TrackSpec>,
+        movie_timescale: u32,
+        target_duration_secs: f64,
+        part_target_ms: u32,
+        next_seq: u32,
+        current_segment: u32,
+    ) -> Result<Self> {
+        let mut seg = Self::with_part_target(
+            tracks,
+            movie_timescale,
+            target_duration_secs,
+            part_target_ms,
+        )?;
+        seg.next_seq = next_seq;
+        seg.current_segment = current_segment;
+        // Restart the part counter at 0 (the new segment being built is
+        // fresh), but the segment *number* resumes from where the old
+        // segmenter's `current_segment` was (it was already incremented
+        // past the last emitted segment).
+        seg.next_part_index = 0;
+        Ok(seg)
+    }
+
     /// The initialization segment (`ftyp` + fragmented-init `moov`). Stable for
     /// the life of the segmenter; write it once before any part or segment.
     pub fn init_segment(&self) -> Result<Vec<u8>> {

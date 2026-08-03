@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- `TrunkWriter::set_tracks` now wakes `Trunk::progress` listeners (issue #781),
+  so a `Trunk::listen` registration is notified when a track-set change arrives
+  mid-stream — the same wake channel `SegmentWriter::publish_part`/`publish_segment`
+  already use. Previously, `set_tracks` bumped `track_generation` but did not
+  notify waiters, so a consumer polling on `listen()` could stall indefinitely
+  through a mid-stream track addition.
+
 ## [0.2.0] - 2026-08-02
 
 ### Changed

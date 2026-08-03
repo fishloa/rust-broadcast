@@ -17,28 +17,31 @@
 //! driver loop, and this owns the one TS-specific translation the plane
 //! cannot know about.
 //!
-//! # B5: the mid-stream `NewProgram` these sources used to drop
+//! # B5 + issue #781: mid-stream track changes reach the running segmenter
 //!
 //! Before this port, a PID declared only *after* `connect()`'s PMT wait
-//! resolved was logged and silently dropped (issue #774) — cited directly in
-//! `media_plane::ingress`'s own module docs as "the gap `NewProgram`
-//! generalises". `ProgramTracker` closes it: the *first*
-//! [`transmux::DemuxEvent::TracksResolved`] mints `ProgramId(0)` from every
-//! track collected up to that point, and **any**
-//! [`transmux::DemuxEvent::TrackAdded`] arriving after that mints a **new**
-//! `ProgramId` (1, 2, ...) instead of being dropped.
+//! resolved was logged and silently dropped (issue #774). `ProgramTracker`
+//! closed that by minting a new `ProgramId` for each mid-stream
+//! `TrackAdded` — the track's samples were no longer dropped, but the new
+//! program never got a segmenter (the brief's original defect: the segmenter
+//! is built once at program-observation time from a one-shot track-spec
+//! snapshot, issue #781).
+//!
+//! Now a mid-stream `TrackAdded` joins the **same** `ProgramId` as the
+//! initial set — `track_program` maps it into the first-resolved program,
+//! `track_specs` stores the spec, and the following `TracksResolved` emits a
+//! `SessionEvent::TracksChanged` with the complete current track set. The
+//! driver's existing `TracksChanged` handling applies it to the running
+//! `Trunk` (bumping `track_generation`), and `drive_program_segmenters`
+//! detects the generation change to admit the new track into (or rebuild)
+//! the segmenter at the next segment boundary.
 //!
 //! This is a deliberate simplification, not full MPTS `program_number`
-//! support: `transmux::DemuxEvent` does not carry `program_number` today
-//! (`media_plane::ingress`'s own docs record this as finding B5's root
-//! cause), so "a track declared after the stream's initial program resolved"
-//! is treated as a new program rather than being mapped to its real
-//! PMT-declared `program_number` — the latter needs `program_number`
-//! threaded through `transmux`'s IR first (future work, not this port).
-//! What this *does* deliver is the mechanism
-//! [`media_plane::ingress::IngestDriver`] was built for: a `NewProgram`
-//! announced mid-session, on an already-live connection, mints a fresh
-//! `Trunk` exactly like one announced at the start.
+//! support: `transmux::DemuxEvent` does not carry `program_number` today,
+//! so "a track declared after the stream's initial program resolved"
+//! is assumed to belong to the same (single) program. Full MPTS support
+//! needs `program_number` threaded through `transmux`'s IR first (future
+//! work, not this port).
 //!
 //! # Why `Established` is queued at construction
 //!
@@ -74,7 +77,16 @@ pub(crate) struct ProgramTracker {
     /// [`DemuxEvent::TracksResolved`] — becomes `ProgramId(0)`'s track set.
     resolving: Vec<TrackSpec>,
     resolved_once: bool,
+    /// The `ProgramId` minted for the first `TracksResolved` — mid-stream
+    /// additions/removals after that point go to the same program (issue
+    /// #781: a track added mid-stream must reach the running segmenter,
+    /// not be siloed in a new, unserved program).
+    first_program: Option<ProgramId>,
     track_program: HashMap<u32, ProgramId>,
+    /// Complete current track specs, keyed by `track_id` — the source of
+    /// truth for building a `TracksChanged` event when the PMT changes
+    /// mid-stream (issue #781).
+    track_specs: HashMap<u32, TrackSpec>,
     next_program_id: u32,
 }
 
@@ -86,7 +98,9 @@ impl ProgramTracker {
             pending: VecDeque::from(vec![SessionEvent::Established]),
             resolving: Vec::new(),
             resolved_once: false,
+            first_program: None,
             track_program: HashMap::new(),
+            track_specs: HashMap::new(),
             next_program_id: 0,
         }
     }
@@ -95,30 +109,47 @@ impl ProgramTracker {
         match event {
             DemuxEvent::TrackAdded(spec) => {
                 if self.resolved_once {
-                    // B5: a track declared only after the initial program
-                    // resolved — see the module doc.
-                    let program = ProgramId(self.next_program_id);
-                    self.next_program_id += 1;
+                    // Issue #781: a track declared after the initial
+                    // program resolved goes to the SAME program, not a
+                    // new one — so the running segmenter can pick it up
+                    // at the next segment boundary.
+                    let program = self
+                        .first_program
+                        .expect("first_program is always Some when resolved_once is true");
+                    self.track_specs.insert(spec.track_id, spec.clone());
                     self.track_program.insert(spec.track_id, program);
-                    self.pending.push_back(SessionEvent::NewProgram {
-                        program,
-                        tracks: vec![spec],
-                    });
+                    // Buffer for the TracksResolved that follows — emit
+                    // nothing yet; TracksChanged carries the complete set.
                 } else {
                     self.resolving.push(spec);
                 }
             }
             DemuxEvent::TracksResolved { .. } => {
-                if !self.resolved_once && !self.resolving.is_empty() {
-                    self.resolved_once = true;
-                    let program = ProgramId(self.next_program_id);
-                    self.next_program_id += 1;
-                    let tracks = std::mem::take(&mut self.resolving);
-                    for spec in &tracks {
-                        self.track_program.insert(spec.track_id, program);
+                if !self.resolved_once {
+                    if !self.resolving.is_empty() {
+                        self.resolved_once = true;
+                        let program = ProgramId(self.next_program_id);
+                        self.next_program_id += 1;
+                        self.first_program = Some(program);
+                        let tracks = std::mem::take(&mut self.resolving);
+                        for spec in &tracks {
+                            self.track_program.insert(spec.track_id, program);
+                            self.track_specs.insert(spec.track_id, spec.clone());
+                        }
+                        self.pending
+                            .push_back(SessionEvent::NewProgram { program, tracks });
                     }
-                    self.pending
-                        .push_back(SessionEvent::NewProgram { program, tracks });
+                } else {
+                    // A mid-stream TracksResolved: emit TracksChanged with
+                    // the complete current track set (issue #781).
+                    let program = self
+                        .first_program
+                        .expect("first_program is always Some when resolved_once is true");
+                    let tracks: Vec<TrackSpec> = self.track_specs.values().cloned().collect();
+                    if !tracks.is_empty() {
+                        self.pending
+                            .push_back(SessionEvent::TracksChanged { program, tracks });
+                    }
                 }
             }
             DemuxEvent::Sample {
@@ -137,11 +168,9 @@ impl ProgramTracker {
             }
             DemuxEvent::TrackRemoved { track_id, .. } => {
                 // A mid-stream PMT version bump dropped a previously-live
-                // PID (issue #774): stop routing samples for it. No
-                // `SessionEvent` for this yet — `SessionEvent` has no
-                // `TrackRemoved`/`ProgramEnded` variant (`#[non_exhaustive]`,
-                // deliberately not added speculatively; see its own doc).
+                // PID (issue #774): stop routing samples for it.
                 self.track_program.remove(&track_id);
+                self.track_specs.remove(&track_id);
             }
             DemuxEvent::TrackUpdated(_) | DemuxEvent::TrackAbandoned { .. } => {
                 // Metadata-only / pre-resolution events; nothing routes on
@@ -322,15 +351,20 @@ mod tests {
         }
     }
 
-    /// The B5 property: a `TrackAdded` arriving *after* the initial program
-    /// resolved mints a **second** `ProgramId`, not a dropped/logged event —
-    /// the exact bug (issue #774's `TrackAdded`-drop) `NewProgram` closes.
+    /// **Issue #781:** a `TrackAdded` arriving *after* the initial program
+    /// resolved goes to the **same** `ProgramId` — the track's samples join
+    /// the running segmenter, rather than being siloed in a new, unserved
+    /// program (the exact defect the brief describes).
     ///
-    /// MUTATION-CHECKED: change the `if self.resolved_once` branch's
-    /// `ProgramId(self.next_program_id)` to always mint `ProgramId(0)` and
-    /// this test's `assert_ne!` fails: both programs compare equal.
+    /// The `TrackAdded` itself emits nothing; the following `TracksResolved`
+    /// emits `TracksChanged` with the complete current set.
+    ///
+    /// MUTATION-CHECKED: change `self.first_program.expect(...)` in the
+    /// mid-stream `TrackAdded` arm back to minting a new `ProgramId` (the
+    /// pre-781 behaviour) and this test's `assert_eq!(program, first)` fails:
+    /// the sample routes to a new program, not the first one.
     #[test]
-    fn late_track_added_mints_a_second_program_not_a_drop() {
+    fn late_track_added_joins_the_same_program_not_a_new_one() {
         let mut tracker = ProgramTracker::new();
         tracker.handle(DemuxEvent::TrackAdded(track_spec(1)));
         tracker.handle(DemuxEvent::tracks_resolved(0));
@@ -340,28 +374,36 @@ mod tests {
             other => panic!("expected NewProgram, got {other:?}"),
         };
 
+        // Mid-stream TrackAdded: emitted only when TracksResolved follows.
         tracker.handle(DemuxEvent::TrackAdded(track_spec(9)));
-        let second = match tracker.poll() {
-            Some(SessionEvent::NewProgram { program, tracks }) => {
-                assert_eq!(tracks[0].track_id, 9);
-                program
-            }
-            other => panic!("expected a second NewProgram, got {other:?}"),
-        };
-        assert_ne!(
-            first, second,
-            "a late-declared track must mint a NEW program, not be folded into the first"
+        assert!(
+            tracker.poll().is_none(),
+            "TrackAdded alone must not emit anything — TracksChanged waits for TracksResolved"
         );
 
+        // TracksResolved after the addition: emits TracksChanged.
+        tracker.handle(DemuxEvent::tracks_resolved(1));
+        match tracker.poll() {
+            Some(SessionEvent::TracksChanged { program, tracks }) => {
+                assert_eq!(program, first, "TracksChanged must go to the same program");
+                assert_eq!(tracks.len(), 2, "complete current set: both tracks");
+                let ids: Vec<u32> = tracks.iter().map(|t| t.track_id).collect();
+                assert!(ids.contains(&1));
+                assert!(ids.contains(&9));
+            }
+            other => panic!("expected TracksChanged, got {other:?}"),
+        }
+
+        // Sample for the new track routes to the same program.
         tracker.handle(DemuxEvent::sample(9, sample_at(0xAA)));
         match tracker.poll() {
             Some(SessionEvent::Sample {
                 program, track_id, ..
             }) => {
-                assert_eq!(program, second);
+                assert_eq!(program, first);
                 assert_eq!(track_id, 9);
             }
-            other => panic!("expected Sample routed to the second program, got {other:?}"),
+            other => panic!("expected Sample routed to the first program, got {other:?}"),
         }
     }
 
@@ -375,6 +417,41 @@ mod tests {
         assert!(
             tracker.poll().is_none(),
             "no event for an unannounced track's sample"
+        );
+    }
+
+    /// A `TrackRemoved` mid-stream stops routing samples for that track and
+    /// removes its spec from the complete set — the following `TracksResolved`
+    /// emits `TracksChanged` without the removed track.
+    #[test]
+    fn removed_track_vanishes_from_tracks_changed() {
+        let mut tracker = ProgramTracker::new();
+        tracker.handle(DemuxEvent::TrackAdded(track_spec(1)));
+        tracker.handle(DemuxEvent::TrackAdded(track_spec(2)));
+        tracker.handle(DemuxEvent::tracks_resolved(0));
+        let _established = tracker.poll();
+        let _new_program = tracker.poll();
+
+        // Remove track 2.
+        tracker.handle(DemuxEvent::track_removed(
+            2,
+            transmux::EventProvenance::default(),
+        ));
+        // TracksResolved after the removal.
+        tracker.handle(DemuxEvent::tracks_resolved(1));
+        match tracker.poll() {
+            Some(SessionEvent::TracksChanged { tracks, .. }) => {
+                assert_eq!(tracks.len(), 1);
+                assert_eq!(tracks[0].track_id, 1);
+            }
+            other => panic!("expected TracksChanged with track 1 only, got {other:?}"),
+        }
+
+        // Sample for the removed track is dropped.
+        tracker.handle(DemuxEvent::sample(2, sample_at(0xBB)));
+        assert!(
+            tracker.poll().is_none(),
+            "sample for removed track must be dropped"
         );
     }
 
