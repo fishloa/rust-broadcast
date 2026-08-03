@@ -15,6 +15,11 @@
   existing tracks. DASH output explicitly logs and continues serving existing
   tracks (adding a representation mid-stream needs a new `Period`, which is
   tracked for a follow-up).
+- **Smooth Streaming output** (`OutputKind::Smooth`, config token `"smooth"`,
+  issue #742): a route configured with it serves an MS-SSTR client Manifest
+  (`/Manifest`) and fragment responses at the Smooth URL shape
+  (`QualityLevels({bitrate})/Fragments({type}={start time})`), sharing the
+  same fMP4 segment bytes every other output reads from the `Trunk`.
 
 ## [0.6.0] - 2026-08-02
 

@@ -1061,16 +1061,18 @@ impl Route {
         // `crate::output`/`crate::route`'s own module docs for the same
         // constraint from the serving side.
         if self.outputs.iter().any(|k| matches!(k, OutputKind::TsHls))
-            && self
-                .outputs
-                .iter()
-                .any(|k| matches!(k, OutputKind::LlHls | OutputKind::Dash | OutputKind::LlDash))
+            && self.outputs.iter().any(|k| {
+                matches!(
+                    k,
+                    OutputKind::LlHls | OutputKind::Dash | OutputKind::LlDash | OutputKind::Smooth
+                )
+            })
         {
             return Err(MultimuxError::ConfigInvalid {
                 field: "routes.outputs",
                 reason: format!(
                     "route {:?} configures both \"ts_hls\" and an fMP4-based output \
-                     (\"llhls\"/\"dash\"/\"ll_dash\") — a route's container (fMP4 vs. classic \
+                     (\"llhls\"/\"dash\"/\"ll_dash\"/\"smooth\") — a route's container (fMP4 vs. classic \
                      TS) is one property shared by every output on it, since a Trunk has only \
                      one segment ring per program; run two routes against the same source \
                      instead, one per container",
