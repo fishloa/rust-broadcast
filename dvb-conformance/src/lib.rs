@@ -26,12 +26,6 @@
 //! buffer sizes from descriptors (multiplex_buffer_descriptor,
 //! smoothing_buffer_descriptor) not yet parsed by the monitor.
 //!
-//! Feasible but deferred: the 25 ms minimum-gap dimension shared by 3.1.a /
-//! 3.2 / 3.5.a / 3.6.a / 3.7 / 3.8 (needs per-`(table_id, section_number)`
-//! tracking to avoid false positives on dense multi-section tables); the
-//! `_other` repetition sub-clauses 3.1.b / 3.5.b / 3.6.b (need TR 101 211
-//! interval rules); the EIT P/F pairing check 3.6.c.
-//!
 //! # Caller-supplied time
 //!
 //! [`ConformanceMonitor::feed`] takes a [`core::time::Duration`] timestamp
@@ -72,6 +66,7 @@ use core::time::Duration;
 use tstd::TstdModel;
 
 use broadcast_common::Parse;
+use dvb_si::tables::eit::EitSection;
 use dvb_si::tables::pat::{PatSection, TABLE_ID as PAT_TABLE_ID};
 use dvb_si::tables::pmt::PmtSection;
 use mpeg_ts::section::Section;
@@ -168,6 +163,17 @@ const DEFAULT_SI_TDT_INTERVAL_SECS: u64 = 30;
 /// persistence threshold (0,5 s). Transitions shorter than this (e.g. a PID
 /// seen briefly before its PMT arrives) are not errors.
 const DEFAULT_UNREFERENCED_PID_PERIOD_MS: u64 = 500;
+
+// ── 25 ms minimum-gap constants (Table 5.0c rows 3.1.a / 3.2 / 3.5.a / 3.6.a / 3.7 / 3.8)
+
+/// TR 101 290 v1.4.1 Table 5.0c — minimum interval between sections of the
+/// same `(table_id, section_number)` on the same PID (25 ms).
+const DEFAULT_SI_MIN_GAP_MS: u64 = 25;
+
+/// TR 101 290 v1.4.1 Table 5.0c indicator 3.1.b / 3.5.b / 3.6.b — maximum
+/// interval between `_other` sections with the same `section_number` on the
+/// same PID (10 s per ETSI TR 101 211 §4.4).
+const DEFAULT_SI_OTHER_INTERVAL_SECS: u64 = 10;
 
 // ── PCR / PES constants ─────────────────────────────────────────────────────
 
@@ -302,30 +308,51 @@ pub enum Indicator {
 
     // ── Priority 3 (Table 5.0c) ──────────────────────────────────────────
     /// TR 101 290 v1.4.1 Table 5.0c indicator 3.1 — NIT_error (bad table_id
-    /// on PID 0x0010 + NIT_actual absence; the 25 ms min-gap dimension of
-    /// 3.1.a is deferred).
+    /// on PID 0x0010 + NIT_actual absence).
     NitError,
     /// TR 101 290 v1.4.1 Table 5.0c indicator 3.2 — SI_repetition_error
-    /// (maximum interval dimension; minimum-gap deferred).
+    /// (maximum interval dimension).
     SiRepetitionError,
     /// TR 101 290 v1.4.1 Table 5.0c indicator 3.4 — Unreferenced_PID: a PID
     /// persists longer than the presence threshold without being referenced
     /// by the PAT/CAT/a PMT or one of the well-known SI PIDs.
     UnreferencedPid,
     /// TR 101 290 v1.4.1 Table 5.0c indicator 3.5 — SDT_error (bad table_id
-    /// on PID 0x0011 + SDT_actual absence; the 25 ms min-gap dimension of
-    /// 3.5.a is deferred).
+    /// on PID 0x0011 + SDT_actual absence).
     SdtError,
     /// TR 101 290 v1.4.1 Table 5.0c indicator 3.6 — EIT_error (bad table_id
-    /// on PID 0x0012 + EIT P/F actual absence; the 25 ms min-gap dimension of
-    /// 3.6.a and the P/F pairing check 3.6.c are deferred).
+    /// on PID 0x0012 + EIT P/F actual absence).
     EitError,
     /// TR 101 290 v1.4.1 Table 5.0c indicator 3.7 — RST_error (bad table_id
-    /// on PID 0x0013; the 25 ms min-gap dimension is deferred).
+    /// on PID 0x0013).
     RstError,
     /// TR 101 290 v1.4.1 Table 5.0c indicator 3.8 — TDT_error (bad table_id
-    /// on PID 0x0014 + TDT absence; the 25 ms min-gap dimension is deferred).
+    /// on PID 0x0014 + TDT absence).
     TdtError,
+
+    /// TR 101 290 v1.4.1 Table 5.0c indicator 3.6.c — EIT_PF_error: if either
+    /// section ('0' P or '1' F) of an EIT P/F sub-table is present, both
+    /// should exist.
+    EitPfError,
+
+    /// TR 101 290 v1.4.1 Table 5.0c — NIT_other_error (3.1.b): interval between
+    /// sections with the same `section_number` and `table_id = 0x41` on
+    /// PID 0x0010 longer than 10 s.
+    NitOtherError,
+    /// TR 101 290 v1.4.1 Table 5.0c — SDT_other_error (3.5.b): interval between
+    /// sections with the same `section_number` and `table_id = 0x46` on
+    /// PID 0x0011 longer than 10 s.
+    SdtOtherError,
+    /// TR 101 290 v1.4.1 Table 5.0c — EIT_other_error (3.6.b): interval between
+    /// EIT P/F other sections with the same `section_number` and
+    /// `table_id = 0x4F` on PID 0x0012 longer than 10 s.
+    EitOtherError,
+
+    /// TR 101 290 v1.4.1 Table 5.0c — min-gap violation: two sections of the
+    /// same `(table_id, section_number)` occurred closer together than the
+    /// specified minimum interval (25 ms per Table 5.0c rows 3.1.a, 3.2,
+    /// 3.5.a, 3.6.a, 3.7, 3.8).
+    SiMinGapError,
 
     // ── Priority 2 (Table 5.0b) — T-STD ──────────────────────────────────
     /// TR 101 290 v1.4.1 Table 5.0b indicator 2.4 — PCR_accuracy_error.
@@ -395,7 +422,12 @@ impl Indicator {
             | Self::TdtError
             | Self::BufferError
             | Self::EmptyBufferError
-            | Self::DataDelayError => Priority::Third,
+            | Self::DataDelayError
+            | Self::EitPfError
+            | Self::NitOtherError
+            | Self::SdtOtherError
+            | Self::EitOtherError
+            | Self::SiMinGapError => Priority::Third,
         }
     }
 
@@ -426,6 +458,11 @@ impl Indicator {
             Self::BufferError => "Buffer_error",
             Self::EmptyBufferError => "Empty_buffer_error",
             Self::DataDelayError => "Data_delay_error",
+            Self::EitPfError => "EIT_PF_error",
+            Self::NitOtherError => "NIT_other_error",
+            Self::SdtOtherError => "SDT_other_error",
+            Self::EitOtherError => "EIT_other_error",
+            Self::SiMinGapError => "SI_min_gap_error",
         }
     }
 
@@ -456,6 +493,13 @@ impl Indicator {
             Self::BufferError => "TR 101 290 v1.4.1 Table 5.0c indicator 3.3",
             Self::EmptyBufferError => "TR 101 290 v1.4.1 Table 5.0c indicator 3.9",
             Self::DataDelayError => "TR 101 290 v1.4.1 Table 5.0c indicator 3.10",
+            Self::EitPfError => "TR 101 290 v1.4.1 Table 5.0c indicator 3.6.c",
+            Self::NitOtherError => "TR 101 290 v1.4.1 Table 5.0c indicator 3.1.b",
+            Self::SdtOtherError => "TR 101 290 v1.4.1 Table 5.0c indicator 3.5.b",
+            Self::EitOtherError => "TR 101 290 v1.4.1 Table 5.0c indicator 3.6.b",
+            Self::SiMinGapError => {
+                "TR 101 290 v1.4.1 Table 5.0c (25 ms minimum-gap dimension of 3.1.a / 3.2 / 3.5.a / 3.6.a / 3.7 / 3.8)"
+            }
         }
     }
 }
@@ -534,6 +578,15 @@ pub struct Config {
     /// Persistence threshold before an unreferenced PID is flagged
     /// (Table 5.0c 3.4 / note 1). Default: 500 ms.
     pub unreferenced_pid_period: Duration,
+    /// Minimum allowed interval between sections of the same
+    /// `(table_id, section_number)` on the same PID
+    /// (Table 5.0c rows 3.1.a / 3.2 / 3.5.a / 3.6.a / 3.7 / 3.8).
+    /// Default: 25 ms.
+    pub si_min_gap: Duration,
+    /// Maximum interval between `_other` sections with the same
+    /// `section_number` (Table 5.0c indicators 3.1.b / 3.5.b / 3.6.b).
+    /// Default: 10 s per ETSI TR 101 211 §4.4.
+    pub si_other_interval: Duration,
 }
 
 impl Default for Config {
@@ -552,6 +605,8 @@ impl Default for Config {
             si_eit_pf_interval: Duration::from_secs(DEFAULT_SI_EIT_PF_INTERVAL_SECS),
             si_tdt_interval: Duration::from_secs(DEFAULT_SI_TDT_INTERVAL_SECS),
             unreferenced_pid_period: Duration::from_millis(DEFAULT_UNREFERENCED_PID_PERIOD_MS),
+            si_min_gap: Duration::from_millis(DEFAULT_SI_MIN_GAP_MS),
+            si_other_interval: Duration::from_secs(DEFAULT_SI_OTHER_INTERVAL_SECS),
         }
     }
 }
@@ -617,6 +672,54 @@ struct UnreferencedPidTracking {
     reported: bool,
 }
 
+/// Per-`(table_id, section_number)` last-seen tracking for the 25 ms
+/// minimum-gap dimension (indicators 3.1.a / 3.2 / 3.5.a / 3.6.a / 3.7 / 3.8).
+/// Keyed on the well-known PID + `(table_id, section_number)` so a dense
+/// multi-section table does not produce false positives.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+struct MinGapKey {
+    pid: u16,
+    table_id: u8,
+    section_number: u8,
+}
+
+/// State for a single `_other` section_number repetition check (indicators
+/// 3.1.b / 3.5.b / 3.6.b). Lazily armed — only checks after the second
+/// occurrence of the section is seen (so a stream that legitimately carries no
+/// `_other` table is never flagged).
+struct OtherRepetitionState {
+    /// How many times this `(table_id, section_number)` has been seen.
+    occurrences: u64,
+    /// Time of the most recent section.
+    last_seen: Duration,
+    /// Whether the absence has already been reported for this key.
+    reported: bool,
+}
+
+/// Per-sub-table EIT P/F pairing state (indicator 3.6.c).
+/// A sub-table is identified by `(service_id, transport_stream_id,
+/// original_network_id)`.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+struct EitSubTableKey {
+    service_id: u16,
+    transport_stream_id: u16,
+    original_network_id: u16,
+}
+
+/// Tracking for whether section '0' (present) and/or section '1' (following)
+/// have been seen for a given EIT P/F sub-table.
+struct EitPfPairState {
+    has_section_0: bool,
+    has_section_1: bool,
+    /// True once the pairing error has been emitted for this sub-table.
+    reported: bool,
+    /// Timestamp when the first incomplete observation was made (one section
+    /// seen without the other). The error fires only after the EIT P/F
+    /// repetition interval (2 s) has elapsed since this timestamp, giving the
+    /// partner section time to arrive.
+    first_incomplete_at: Option<Duration>,
+}
+
 // ── ConformanceMonitor ───────────────────────────────────────────────────────
 
 /// ETSI TR 101 290 transport-stream conformance monitor.
@@ -666,6 +769,16 @@ pub struct ConformanceMonitor {
     // Unreferenced_PID candidate tracking (3.4)
     unreferenced_pid_timers: BTreeMap<u16, UnreferencedPidTracking>,
 
+    // Per-`(table_id, section_number)` min-gap tracking
+    // (25 ms minimum-gap dimension of 3.1.a / 3.2 / 3.5.a / 3.6.a / 3.7 / 3.8)
+    min_gap_timers: BTreeMap<MinGapKey, Duration>,
+
+    // Per-section_number `_other` repetition tracking (3.1.b / 3.5.b / 3.6.b)
+    other_repetition_timers: BTreeMap<(u8, u8), OtherRepetitionState>,
+
+    // EIT P/F pairing tracking per sub-table (3.6.c)
+    eit_pf_pairs: BTreeMap<EitSubTableKey, EitPfPairState>,
+
     // T-STD buffer model (3.3, 3.9, 3.10)
     tstd: TstdModel,
 }
@@ -713,6 +826,9 @@ impl ConformanceMonitor {
             scrambled_without_cat_reported: false,
             si_timers: BTreeMap::new(),
             unreferenced_pid_timers: BTreeMap::new(),
+            min_gap_timers: BTreeMap::new(),
+            other_repetition_timers: BTreeMap::new(),
+            eit_pf_pairs: BTreeMap::new(),
             tstd: TstdModel::new(Duration::ZERO),
         }
     }
@@ -886,6 +1002,9 @@ impl ConformanceMonitor {
                 self.check_rst_table_id(section_bytes, pid, t);
                 self.check_tdt_table_id(section_bytes, pid, t);
                 self.update_si_repetition(section_bytes, pid, t);
+                self.check_si_min_gap(section_bytes, pid, t);
+                self.check_si_other_section(section_bytes, pid, t);
+                self.track_eit_pf_pair(section_bytes, t);
             }
         }
         // Also CRC-check completed PAT/PMT sections via the si_reassemblies
@@ -929,6 +1048,9 @@ impl ConformanceMonitor {
 
         // ── Presence-timeout evaluation (1.3.a, 1.5.a, 1.6, 3.4) ────────
         self.check_presence_timeouts(t);
+
+        // ── EIT P/F pairing evaluation (3.6.c) ──────────────────────────
+        self.check_eit_pf_pairs(t);
 
         &self.events
     }
@@ -1657,6 +1779,255 @@ impl ConformanceMonitor {
         timer.last_seen = t;
         timer.reported = false;
         timer.armed = true;
+    }
+
+    /// TR 101 290 v1.4.1 Table 5.0c — 25 ms minimum-gap check shared by
+    /// 3.1.a / 3.2 / 3.5.a / 3.6.a / 3.7 / 3.8.
+    ///
+    /// Tracks last-seen time per `(table_id, section_number)`, not per
+    /// `table_id` alone, so a dense legitimate multi-section table does not
+    /// produce false positives. The key also includes `pid` so the same
+    /// `(table_id, section_number)` pair arriving on different PIDs is not
+    /// conflated.
+    ///
+    /// Called for every completed section on the well-known SI PIDs.
+    fn check_si_min_gap(&mut self, section_bytes: &[u8], pid: u16, t: Duration) {
+        let table_id = match Section::parse(section_bytes) {
+            Ok(s) => s.table_id,
+            Err(_) => return,
+        };
+
+        // Only the tracked table_ids participate in the min-gap check.
+        let min_gap_table_ids = [
+            NIT_ACTUAL_TABLE_ID,
+            SDT_ACTUAL_TABLE_ID,
+            EIT_PF_ACTUAL_TABLE_ID,
+            RST_TABLE_ID,
+            TDT_TABLE_ID,
+        ];
+        if !min_gap_table_ids.contains(&table_id) {
+            return;
+        }
+
+        let section_number = match Section::parse(section_bytes) {
+            Ok(s) => s.section_number,
+            Err(_) => return,
+        };
+
+        let key = MinGapKey {
+            pid,
+            table_id,
+            section_number,
+        };
+
+        if let Some(&last_time) = self.min_gap_timers.get(&key) {
+            let gap = t.saturating_sub(last_time);
+            if gap < self.config.si_min_gap {
+                self.emit(
+                    Indicator::SiMinGapError,
+                    Some(pid),
+                    t,
+                    format!(
+                        "table_id 0x{table_id:02X} section_number {section_number} on PID 0x{pid:04X}: gap {gap} µs < {limit} ms minimum",
+                        gap = gap.as_micros(),
+                        limit = self.config.si_min_gap.as_millis(),
+                    ),
+                );
+            }
+        }
+
+        self.min_gap_timers.insert(key, t);
+    }
+
+    /// TR 101 290 v1.4.1 Table 5.0c indicators 3.1.b / 3.5.b / 3.6.b —
+    /// `_other` repetition interval check.
+    ///
+    /// Only checks once the sub-table's presence is **established** (observed
+    /// at least twice). A stream that legitimately carries no `_other` table
+    /// is never flagged.
+    fn check_other_repetition(&mut self, table_id: u8, section_number: u8, pid: u16, t: Duration) {
+        // Only the three `_other` table_ids.
+        if table_id != NIT_OTHER_TABLE_ID
+            && table_id != SDT_OTHER_TABLE_ID
+            && table_id != EIT_PF_OTHER_TABLE_ID
+        {
+            return;
+        }
+
+        let key = (table_id, section_number);
+        let entry =
+            self.other_repetition_timers
+                .entry(key)
+                .or_insert_with(|| OtherRepetitionState {
+                    occurrences: 0,
+                    last_seen: Duration::ZERO,
+                    reported: false,
+                });
+
+        entry.occurrences += 1;
+
+        // Snapshot what we need before any emit.
+        let should_report = entry.occurrences >= 2
+            && !entry.reported
+            && t.saturating_sub(entry.last_seen) > self.config.si_other_interval;
+        let last_seen = entry.last_seen;
+
+        entry.last_seen = t;
+
+        if should_report {
+            entry.reported = true;
+
+            let indicator = match table_id {
+                NIT_OTHER_TABLE_ID => Indicator::NitOtherError,
+                SDT_OTHER_TABLE_ID => Indicator::SdtOtherError,
+                _ => Indicator::EitOtherError,
+            };
+            let (table_name, clause) = match table_id {
+                NIT_OTHER_TABLE_ID => ("NIT_other (0x41)", "3.1.b"),
+                SDT_OTHER_TABLE_ID => ("SDT_other (0x46)", "3.5.b"),
+                _ => ("EIT_other (0x4F)", "3.6.b"),
+            };
+            let interval = t.saturating_sub(last_seen);
+            let interval_ms = interval.as_millis();
+            let limit = self.config.si_other_interval.as_secs();
+            self.emit(
+                indicator,
+                Some(pid),
+                t,
+                format!(
+                    "{table_name} section_number {section_number}: interval {interval_ms} ms exceeds {limit} s ({clause})",
+                ),
+            );
+        }
+    }
+
+    /// TR 101 290 v1.4.1 Table 5.0c indicator 3.6.c — EIT_PF_error: track
+    /// section-0/section-1 presence per sub-table.
+    ///
+    /// A sub-table is keyed by `(service_id, transport_stream_id,
+    /// original_network_id)`. If either section exists, both should.
+    fn track_eit_pf_pair(&mut self, section_bytes: &[u8], t: Duration) {
+        let table_id = match Section::parse(section_bytes) {
+            Ok(s) => s.table_id,
+            Err(_) => return,
+        };
+
+        // Only EIT P/F actual
+        if table_id != EIT_PF_ACTUAL_TABLE_ID {
+            return;
+        }
+
+        let eit = match EitSection::parse(section_bytes) {
+            Ok(e) => e,
+            Err(_) => return,
+        };
+
+        if eit.section_number > 1 {
+            // Only sections '0' (present) and '1' (following) participate.
+            return;
+        }
+
+        let key = EitSubTableKey {
+            service_id: eit.service_id,
+            transport_stream_id: eit.transport_stream_id,
+            original_network_id: eit.original_network_id,
+        };
+
+        let entry = self
+            .eit_pf_pairs
+            .entry(key)
+            .or_insert_with(|| EitPfPairState {
+                has_section_0: false,
+                has_section_1: false,
+                reported: false,
+                first_incomplete_at: None,
+            });
+
+        if eit.section_number == 0 {
+            entry.has_section_0 = true;
+        } else {
+            entry.has_section_1 = true;
+        }
+
+        // If one section is present but the other is not, record the time
+        // of this first incomplete observation (so the pairing check can
+        // wait for the partner to arrive).
+        if entry.first_incomplete_at.is_none() && (entry.has_section_0 != entry.has_section_1) {
+            entry.first_incomplete_at = Some(t);
+        }
+
+        // If both sections have now arrived, clear the incomplete marker.
+        if entry.has_section_0 && entry.has_section_1 {
+            entry.first_incomplete_at = None;
+        }
+    }
+
+    /// Evaluate EIT P/F pairing and emit EIT_PF_error for any sub-table where
+    /// one section exists without the other for longer than the EIT P/F
+    /// repetition interval (2 s per EN 300 468 §5.2.4).
+    fn check_eit_pf_pairs(&mut self, t: Duration) {
+        let limit = self.config.si_eit_pf_interval;
+
+        let to_report: Vec<EitSubTableKey> = self
+            .eit_pf_pairs
+            .iter()
+            .filter_map(|(&key, state)| {
+                if state.reported {
+                    return None;
+                }
+                match (state.has_section_0, state.has_section_1) {
+                    (true, false) | (false, true) => {
+                        // Only fire if the incomplete pair has persisted
+                        // longer than the EIT P/F repetition interval.
+                        if let Some(first_at) = state.first_incomplete_at {
+                            if t.saturating_sub(first_at) > limit {
+                                Some(key)
+                            } else {
+                                None
+                            }
+                        } else {
+                            None
+                        }
+                    }
+                    _ => None,
+                }
+            })
+            .collect();
+
+        for key in to_report {
+            if let Some(state) = self.eit_pf_pairs.get_mut(&key) {
+                state.reported = true;
+            }
+            self.emit(
+                Indicator::EitPfError,
+                Some(PID_EIT),
+                t,
+                format!(
+                    "EIT P/F sub-table (service_id=0x{:04X} ts_id=0x{:04X} onw_id=0x{:04X}): one section present without the other",
+                    key.service_id, key.transport_stream_id, key.original_network_id,
+                ),
+            );
+        }
+    }
+
+    /// Dispatch `_other` repetition tracking for completed SI sections on
+    /// the well-known PIDs. Only sections with `table_id` NIT_other (0x41),
+    /// SDT_other (0x46), or EIT P/F other (0x4F) are tracked.
+    fn check_si_other_section(&mut self, section_bytes: &[u8], pid: u16, t: Duration) {
+        let section = match Section::parse(section_bytes) {
+            Ok(s) => s,
+            Err(_) => return,
+        };
+
+        let table_id = section.table_id;
+        if table_id != NIT_OTHER_TABLE_ID
+            && table_id != SDT_OTHER_TABLE_ID
+            && table_id != EIT_PF_OTHER_TABLE_ID
+        {
+            return;
+        }
+
+        self.check_other_repetition(table_id, section.section_number, pid, t);
     }
 
     /// T-STD buffer model processing: run the buffer simulation for one TS

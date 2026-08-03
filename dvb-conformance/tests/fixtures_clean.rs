@@ -18,6 +18,7 @@
 use core::time::Duration;
 use std::fs::File;
 use std::io::Read;
+use std::path::Path;
 
 use dvb_conformance::{ConformanceMonitor, Indicator, Priority};
 
@@ -137,4 +138,78 @@ fn tnt_fixture_events_are_documented() {
         events.len(),
         p1_count
     );
+}
+
+// ── #736: france-tnt-uhf32.ts (real DVB-T broadcast) ─────────────────────
+
+fn read_france_tnt() -> Option<Vec<u8>> {
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    // Navigate: dvb-conformance/ → workspace root → .test-streams/
+    let path = manifest_dir
+        .parent() // dvb-conformance's parent = workspace root
+        .unwrap()
+        .join(".test-streams")
+        .join("france-tnt-uhf32.ts");
+    let mut f = File::open(&path).ok()?;
+    let mut buf = Vec::new();
+    f.read_to_end(&mut buf).ok()?;
+    Some(buf)
+}
+
+/// THE HARD GATE: a conformant real DVB-T broadcast produces ZERO new-indicator
+/// events for #736 (EitPfError, NitOtherError, SdtOtherError, EitOtherError,
+/// SiMinGapError). A real broadcast meets these requirements; if any fire,
+/// the check is wrong, not the stream.
+#[test]
+fn france_tnt_uhf32_clean_on_new_736_indicators() {
+    let data = match read_france_tnt() {
+        Some(d) => d,
+        None => {
+            eprintln!(
+                "SKIP: .test-streams/france-tnt-uhf32.ts not found — fetch the private test-streams fixture",
+            );
+            return;
+        }
+    };
+
+    let mut monitor = ConformanceMonitor::new();
+    let n_packets = data.len() / TS_PACKET_SIZE;
+
+    let new_indicators: &[Indicator] = &[
+        Indicator::EitPfError,
+        Indicator::NitOtherError,
+        Indicator::SdtOtherError,
+        Indicator::EitOtherError,
+        Indicator::SiMinGapError,
+    ];
+
+    let mut violations: Vec<dvb_conformance::ConformanceEvent> = Vec::new();
+
+    for i in 0..n_packets {
+        let start = i * TS_PACKET_SIZE;
+        let end = start + TS_PACKET_SIZE;
+        if end > data.len() {
+            break;
+        }
+        let t = Duration::from_micros(i as u64 * INTER_PACKET_US);
+        let events = monitor.feed(&data[start..end], t);
+        for e in events {
+            if new_indicators.contains(&e.indicator) {
+                violations.push(e.clone());
+            }
+        }
+    }
+
+    if !violations.is_empty() {
+        for v in &violations {
+            eprintln!(
+                "#736 violation on france-tnt-uhf32.ts: {:?} pid={:?} at={:?} detail={}",
+                v.indicator, v.pid, v.at, v.detail
+            );
+        }
+        panic!(
+            "france-tnt-uhf32.ts raised {} #736-indicator violation(s) on a clean real stream — the check is wrong, not the stream",
+            violations.len()
+        );
+    }
 }

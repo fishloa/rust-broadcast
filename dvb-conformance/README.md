@@ -30,7 +30,7 @@ max intervals, PCR repetition and discontinuity limits, SI repetition intervals,
 
 ## What's implemented
 
-### Indicators — 19 implemented, per the `Indicator` enum in `src/lib.rs`
+### Indicators — 23 implemented, per the `Indicator` enum in `src/lib.rs`
 
 | Priority | Clause | Indicator | Notes |
 |----------|--------|-----------|-------|
@@ -47,12 +47,22 @@ max intervals, PCR repetition and discontinuity limits, SI repetition intervals,
 | 2 | 2.5 | `PtsError` | PTS interval > 700 ms (default) on ES PIDs |
 | 2 | 2.6 | `CatError` | Wrong table_id on PID 0x0001; scrambled packet with no CAT seen |
 | 3 | 3.1 | `NitError` | Bad table_id on PID 0x0010 (not NIT_actual/NIT_other/ST); NIT_actual absent > 10 s (default) |
-| 3 | 3.2 | `SiRepetitionError` | Max-interval dimension: NIT_actual (10 s), SDT_actual (2 s), EIT P/F actual (2 s), TDT (30 s) |
+| 3 | 3.2 | `SiRepetitionError` | Max-interval dimension: NIT_actual (10 s), SDT_actual (2 s), EIT P/F actual (2 s), TDT (30 s); min-gap (25 ms) shared by 3.1.a/3.2/3.5.a/3.6.a/3.7/3.8 via `SiMinGapError` |
 | 3 | 3.4 | `UnreferencedPid` | A PID persists > 500 ms (default) without being referenced by the PAT/CAT/a PMT or a well-known SI PID |
 | 3 | 3.5 | `SdtError` | Bad table_id on PID 0x0011 (not SDT_actual/SDT_other/BAT/ST); SDT_actual absent > 2 s (default) |
 | 3 | 3.6 | `EitError` | Bad table_id on PID 0x0012 (not EIT P/F or schedule range 0x50–0x6F or ST); EIT P/F actual absent > 2 s (default) |
 | 3 | 3.7 | `RstError` | Bad table_id on PID 0x0013 (not RST/ST) |
 | 3 | 3.8 | `TdtError` | Bad table_id on PID 0x0014 (not TDT/TOT/ST); TDT absent > 30 s (default) |
+
+### New indicators (P3 deferred, #736)
+
+| Priority | Clause | Indicator | Notes |
+|----------|--------|-----------|-------|
+| 3 | 3.6.c | `EitPfError` | EIT P/F sub-table missing one of its two sections (per-service, not global) |
+| 3 | 3.1.b | `NitOtherError` | NIT_other (0x41) sections with same `section_number` > 10 s apart; fires only after presence established |
+| 3 | 3.5.b | `SdtOtherError` | SDT_other (0x46) sections with same `section_number` > 10 s apart; fires only after presence established |
+| 3 | 3.6.b | `EitOtherError` | EIT P/F other (0x4F) sections with same `section_number` > 10 s apart; fires only after presence established |
+| 3 | — | `SiMinGapError` | Two sections of same `(table_id, section_number)` < 25 ms apart (shared by 3.1.a/3.2/3.5.a/3.6.a/3.7/3.8) |
 
 ### New indicators (T-STD, #737)
 
@@ -114,11 +124,8 @@ Excluded, split by reason:
 **Feasible, deferred** (reusable with the existing timer machinery, but not
 yet implemented):
 
-| Clause | Indicator | Reason |
-|--------|-----------|--------|
-| 3.1.a / 3.2 / 3.5.a / 3.6.a / 3.7 / 3.8 | (25 ms min-gap dimension) | Needs per-`(table_id, section_number)` tracking to avoid false positives on dense multi-section tables |
-| 3.1.b / 3.5.b / 3.6.b | `NIT_other_error` / `SDT_other_error` / `EIT_other_error` | Need TR 101 211 `_other` repetition interval rules |
-| 3.6.c | `EIT_PF_error` | EIT P/F section-0/1 pairing check not yet implemented |
+None — all previously deferred Priority-3 dimensions (25 ms min-gap, `_other`
+repetition, EIT P/F pairing) were implemented in #736. See the table above.
 
 ### Caller-supplied time model
 
