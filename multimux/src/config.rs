@@ -1072,7 +1072,7 @@ impl Route {
                 field: "routes.outputs",
                 reason: format!(
                     "route {:?} configures both \"ts_hls\" and an fMP4-based output \
-                     (\"llhls\"/\"dash\"/\"ll_dash\") — a route's container (fMP4 vs. classic \
+                     (\"llhls\"/\"dash\"/\"ll_dash\"/\"smooth\") — a route's container (fMP4 vs. classic \
                      TS) is one property shared by every output on it, since a Trunk has only \
                      one segment ring per program; run two routes against the same source \
                      instead, one per container",

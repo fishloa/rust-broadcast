@@ -169,6 +169,20 @@ pub trait Output: Send + Sync + 'static {
     /// filename or with the shared `/:file` catch-all (a bare numeric/opaque
     /// filename would; `master.m3u8`/`media.m3u8`/`manifest.mpd`/
     /// `manifest-ll.mpd` don't).
+    ///
+    /// # At most one output may set a fallback
+    ///
+    /// The origin `merge`s these routers, and **axum panics when two merged
+    /// routers both set a fallback**. `smooth` sets one, because Smooth's
+    /// parenthesised `QualityLevels(…)/Fragments(…)` segments cannot be
+    /// expressed as literal axum routes. It is therefore currently the only
+    /// output that may — and because the collision panics at *startup* rather
+    /// than failing to compile, a second one would take the server down on
+    /// every route that enables both, not fail in CI.
+    ///
+    /// A new output needing multi-segment paths must either extend `smooth`'s
+    /// fallback to dispatch on prefix, or the merge must move to a dispatching
+    /// parent router. `every_output_kind_merges_without_panicking` pins this.
     fn manifest_routes(&self, route: Arc<RouteHandle>) -> Router;
 }
 
@@ -188,6 +202,40 @@ mod tests {
             assert_eq!(kind.name(), label);
             assert_eq!(kind.to_string(), label);
         }
+    }
+
+    /// Merging every output's manifest routes must not panic.
+    ///
+    /// `Router::merge` panics at runtime when both routers set a fallback, and
+    /// `smooth` sets one — its parenthesised `QualityLevels(…)/Fragments(…)`
+    /// segments cannot be literal axum routes. A second fallback-setting
+    /// output would take down every route enabling both, and it would do so at
+    /// **startup**, where nothing in CI exercises it. This is the check that
+    /// turns that into a test failure instead.
+    #[test]
+    fn every_output_kind_merges_without_panicking() {
+        let route = Arc::new(RouteHandle::new(1.0, 250, 8));
+
+        // The maximal set a route may actually configure. `ts_hls` is excluded
+        // deliberately: it is mutually exclusive with the fMP4 outputs (it
+        // serves `/media.m3u8` too, so merging it with `llhls` panics with
+        // "Overlapping method route"), and `Config::validate` rejects that
+        // combination before a router is ever built.
+        let mut merged = Router::new();
+        for kind in [
+            OutputKind::LlHls,
+            OutputKind::Dash,
+            OutputKind::LlDash,
+            OutputKind::Smooth,
+        ] {
+            merged = merged.merge(kind.build().manifest_routes(route.clone()));
+        }
+        // Consuming the merged router is the assertion: `merge` panics on a
+        // duplicate fallback, so reaching here is the pass condition.
+        let _: Router = merged;
+
+        // `ts_hls` alone, the other permitted shape.
+        let _: Router = Router::new().merge(OutputKind::TsHls.build().manifest_routes(route));
     }
 
     #[test]
