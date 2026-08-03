@@ -22,6 +22,7 @@
 pub mod dash;
 pub mod ll_dash;
 pub mod llhls;
+pub mod smooth;
 pub mod ts_hls;
 
 use std::sync::Arc;
@@ -61,6 +62,11 @@ pub enum OutputKind {
     /// transfer-encoding while the segment is still being produced.
     #[serde(rename = "ll_dash")]
     LlDash,
+    /// Microsoft Smooth Streaming (MS-SSTR) — `Manifest` plus fragment
+    /// responses from the shared `Trunk`'s segment ring (the same fMP4
+    /// bytes every other output shares). Issue #742.
+    #[serde(rename = "smooth")]
+    Smooth,
     /// Classic MPEG-TS HLS (`master.m3u8` + `media.m3u8` referencing `.ts`
     /// media segments instead of fMP4) — issue #887. Container is a
     /// per-*route* property (`crate::route::RouteHandle::with_container`),
@@ -99,6 +105,7 @@ impl OutputKind {
             OutputKind::LlHls => "llhls",
             OutputKind::Dash => "dash",
             OutputKind::LlDash => "ll_dash",
+            OutputKind::Smooth => "smooth",
             OutputKind::TsHls => "ts_hls",
             OutputKind::Custom { type_tag, .. } => type_tag,
         }
@@ -132,6 +139,7 @@ impl OutputKind {
             OutputKind::LlHls => Arc::new(llhls::LlHlsOutput::new(playlist_name)),
             OutputKind::Dash => Arc::new(dash::DashOutput),
             OutputKind::LlDash => Arc::new(ll_dash::LlDashOutput),
+            OutputKind::Smooth => Arc::new(smooth::SmoothOutput),
             OutputKind::TsHls => Arc::new(ts_hls::TsHlsOutput::new(playlist_name)),
             OutputKind::Custom { .. } => unreachable!(
                 "OutputKind::Custom cannot be built without a SchemeRegistry — \
@@ -174,6 +182,7 @@ mod tests {
             (OutputKind::LlHls, "llhls"),
             (OutputKind::Dash, "dash"),
             (OutputKind::LlDash, "ll_dash"),
+            (OutputKind::Smooth, "smooth"),
             (OutputKind::TsHls, "ts_hls"),
         ] {
             assert_eq!(kind.name(), label);
@@ -190,6 +199,7 @@ mod tests {
             OutputKind::LlHls,
             OutputKind::Dash,
             OutputKind::LlDash,
+            OutputKind::Smooth,
             OutputKind::TsHls,
         ] {
             let json = serde_json::to_string(&kind).unwrap();

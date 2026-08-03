@@ -12,8 +12,8 @@ a single instance can serve dozens of unrelated cameras/feeds side by side.
   RTP   ─┤                                          │
   TS/UDP─┼─▶  ingest  ─▶  transmux (depay/segment) ──┼─▶  DASH     (manifest.mpd, fMP4)
   TS/HTTP┤                     one route =                ├─▶  LL-DASH  (manifest-ll.mpd, fMP4)
-  HLS-pull┘          one ingest, one container,            └─▶  TS-HLS   (media.m3u8, classic .ts)
-                        N same-container outputs
+  HLS-pull┘          one ingest, one container,            ├─▶  Smooth   (Manifest, fMP4)
+                        N same-container outputs            └─▶  TS-HLS   (media.m3u8, classic .ts)
 ```
 
 ## Inputs
@@ -59,16 +59,17 @@ unaffected):
 | `"llhls"` | Low-Latency HLS (RFC 8216bis), fMP4/CMAF | `master.m3u8` + `media.m3u8` (or the configured `playlist_name`) |
 | `"dash"` | MPEG-DASH, `$Number$`-addressed, fMP4/CMAF | `manifest.mpd` |
 | `"ll_dash"` | Low-latency DASH, true chunked-transfer CMAF (whole-segment `$Number$`, served over HTTP chunked transfer while in progress) | `manifest-ll.mpd` |
+| `"smooth"` | Microsoft Smooth Streaming (MS-SSTR), fMP4/CMAF | `Manifest` |
 | `"ts_hls"` | Classic HLS, whole MPEG-2 TS media segments (RFC 8216 §3, no `#EXT-X-MAP`, no low-latency parts) | `master.m3u8` + `media.m3u8` (or the configured `playlist_name`) |
 
-`"llhls"`/`"dash"`/`"ll_dash"` all read the exact same segmented CMAF —
+`"llhls"`/`"dash"`/`"ll_dash"`/`"smooth"` all read the exact same segmented CMAF —
 ingest-once, many-outputs, no per-output re-mux — so a route can enable more
 than one of them together (e.g. `["llhls", "dash"]`), and different routes
 may enable different sets.
 
-**`"ts_hls"` is mutually exclusive with the three fMP4-based outputs on the
+**`"ts_hls"` is mutually exclusive with the four fMP4-based outputs on the
 same route** — `Config::validate()` rejects, at config-load time, a route
-that names both `"ts_hls"` and any of `"llhls"`/`"dash"`/`"ll_dash"`.
+that names both `"ts_hls"` and any of `"llhls"`/`"dash"`/`"ll_dash"`/`"smooth"`.
 Container (fMP4 vs. classic MPEG-TS) is a **per-route**, not per-output,
 property: the ingest pipeline's `Trunk` has exactly one segment ring per
 program, so a program's samples are segmented into fMP4 *or* TS, never both,
@@ -86,6 +87,8 @@ One route ("stream") is served per configured `name`, under `/{stream}/...`:
 | `GET /{stream}/media.m3u8[?_HLS_msn=&_HLS_part=]` | Media playlist (or the configured `playlist_name`) — fMP4/CMAF with LL-HLS parts under `llhls`, whole `.ts` segments with no `#EXT-X-MAP` under `ts_hls`. Blocking Playlist Reload (RFC 8216bis §6.2.5.2) via `_HLS_msn`/`_HLS_part` applies to `llhls`; harmless no-ops (render immediately) under `ts_hls`, which has no low-latency parts to block on. |
 | `GET /{stream}/manifest.mpd` | DASH manifest (if `dash` is enabled). |
 | `GET /{stream}/manifest-ll.mpd` | Low-latency DASH manifest (if `ll_dash` is enabled). |
+| `GET /{stream}/Manifest` | Smooth Streaming client Manifest XML (if `smooth` is enabled). |
+| `GET /{stream}/QualityLevels({bitrate})/Fragments({type}={start time})` | Smooth fragment — the same fMP4 segment bytes as the shared resource route, addressed by Smooth time (if `smooth` is enabled). |
 | `GET /{stream}/init-{track}.mp4` | fMP4 init segment (`moov`) — shared across every fMP4-based output (`llhls`/`dash`/`ll_dash`). Not served under `ts_hls`: a classic `.ts` segment carries its own PAT/PMT and needs no init segment. |
 | `GET /{stream}/seg-{track}-{seq}.m4s` | A full fMP4 media segment: served whole (`Content-Length`) once closed, or streamed over **HTTP chunked transfer-encoding** while still in progress (issue #721 — `ll_dash`'s low-latency delivery). |
 | `GET /{stream}/seg-{track}-{seq}.ts` | A full whole-packet MPEG-2 TS media segment (`ts_hls` only) — self-contained (its own PAT + PMT, exactly one program per RFC 8216bis §3.1.1), served whole once closed. |

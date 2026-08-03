@@ -1061,10 +1061,12 @@ impl Route {
         // `crate::output`/`crate::route`'s own module docs for the same
         // constraint from the serving side.
         if self.outputs.iter().any(|k| matches!(k, OutputKind::TsHls))
-            && self
-                .outputs
-                .iter()
-                .any(|k| matches!(k, OutputKind::LlHls | OutputKind::Dash | OutputKind::LlDash))
+            && self.outputs.iter().any(|k| {
+                matches!(
+                    k,
+                    OutputKind::LlHls | OutputKind::Dash | OutputKind::LlDash | OutputKind::Smooth
+                )
+            })
         {
             return Err(MultimuxError::ConfigInvalid {
                 field: "routes.outputs",
