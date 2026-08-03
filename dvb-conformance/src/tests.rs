@@ -1766,3 +1766,345 @@ fn data_delay_error_absent_with_rapid_drain() {
         "no delay on normal section"
     );
 }
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// New #736 indicators: min-gap, _other repetition, EIT P/F pairing
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// Build a NIT_actual section with a specific section_number.
+fn build_nit_actual_section_numbered(section_number: u8) -> Vec<u8> {
+    let nit = NitSection {
+        kind: NitKind::Actual,
+        network_id: 1,
+        version_number: 0,
+        current_next_indicator: true,
+        section_number,
+        last_section_number: 0,
+        network_descriptors: DescriptorLoop::new(&[]),
+        transport_streams: vec![],
+    };
+    let mut buf = vec![0u8; nit.serialized_len()];
+    nit.serialize_into(&mut buf).unwrap();
+    buf
+}
+
+/// Build an SDT_actual section with a specific section_number.
+fn build_sdt_actual_section_numbered(section_number: u8) -> Vec<u8> {
+    let sdt = SdtSection {
+        kind: SdtKind::Actual,
+        transport_stream_id: 1,
+        version_number: 0,
+        current_next_indicator: true,
+        section_number,
+        last_section_number: 0,
+        original_network_id: 1,
+        services: vec![],
+    };
+    let mut buf = vec![0u8; sdt.serialized_len()];
+    sdt.serialize_into(&mut buf).unwrap();
+    buf
+}
+
+/// Build an EIT P/F actual section with specific section_number and sub-table key.
+fn build_eit_pf_actual_section_keyed(
+    section_number: u8,
+    service_id: u16,
+    ts_id: u16,
+    onw_id: u16,
+) -> Vec<u8> {
+    let eit = EitSection {
+        kind: EitKind::PresentFollowingActual,
+        table_id: dvb_si::tables::eit::TABLE_ID_PF_ACTUAL,
+        service_id,
+        version_number: 0,
+        current_next_indicator: true,
+        section_number,
+        last_section_number: 0,
+        transport_stream_id: ts_id,
+        original_network_id: onw_id,
+        segment_last_section_number: 0,
+        last_table_id: dvb_si::tables::eit::TABLE_ID_PF_ACTUAL,
+        events: vec![],
+    };
+    let mut buf = vec![0u8; eit.serialized_len()];
+    eit.serialize_into(&mut buf).unwrap();
+    buf
+}
+
+/// Build an NIT_other section (table_id 0x41) with specific section_number.
+fn build_nit_other_section(section_number: u8) -> Vec<u8> {
+    let nit = NitSection {
+        kind: NitKind::Other,
+        network_id: 1,
+        version_number: 0,
+        current_next_indicator: true,
+        section_number,
+        last_section_number: 0,
+        network_descriptors: DescriptorLoop::new(&[]),
+        transport_streams: vec![],
+    };
+    let mut buf = vec![0u8; nit.serialized_len()];
+    nit.serialize_into(&mut buf).unwrap();
+    buf
+}
+
+/// Build an SDT_other section (table_id 0x46) with specific section_number.
+fn build_sdt_other_section(section_number: u8) -> Vec<u8> {
+    let sdt = SdtSection {
+        kind: SdtKind::Other,
+        transport_stream_id: 1,
+        version_number: 0,
+        current_next_indicator: true,
+        section_number,
+        last_section_number: 0,
+        original_network_id: 1,
+        services: vec![],
+    };
+    let mut buf = vec![0u8; sdt.serialized_len()];
+    sdt.serialize_into(&mut buf).unwrap();
+    buf
+}
+
+/// Build an EIT P/F other section (table_id 0x4F) with specific section_number.
+fn build_eit_other_section(section_number: u8) -> Vec<u8> {
+    let eit = EitSection {
+        kind: EitKind::PresentFollowingOther,
+        table_id: dvb_si::tables::eit::TABLE_ID_PF_OTHER,
+        service_id: 1,
+        version_number: 0,
+        current_next_indicator: true,
+        section_number,
+        last_section_number: 0,
+        transport_stream_id: 1,
+        original_network_id: 1,
+        segment_last_section_number: 0,
+        last_table_id: dvb_si::tables::eit::TABLE_ID_PF_OTHER,
+        events: vec![],
+    };
+    let mut buf = vec![0u8; eit.serialized_len()];
+    eit.serialize_into(&mut buf).unwrap();
+    buf
+}
+
+// ── SiMinGapError (25 ms min-gap) ─────────────────────────────────────────
+
+#[test]
+fn si_min_gap_trips_when_same_section_number_too_close() {
+    let mut monitor = ConformanceMonitor::new();
+    acquire_sync(&mut monitor);
+
+    // Feed an SDT_actual section at t=5ms
+    let section = build_sdt_actual_section_numbered(0);
+    let packets = packetise_section(PID_SDT_BAT, &section);
+    feed_all(&mut monitor, &packets, ms(5), ms(1));
+
+    // Feed the SAME section again only 5ms later (gap < 25ms)
+    let packets2 = packetise_section(PID_SDT_BAT, &section);
+    let events = feed_all(&mut monitor, &packets2, ms(10), ms(1));
+    assert!(has_indicator(&events, Indicator::SiMinGapError));
+}
+
+#[test]
+fn si_min_gap_absent_when_25ms_or_more() {
+    let mut monitor = ConformanceMonitor::new();
+    acquire_sync(&mut monitor);
+
+    // Feed an SDT_actual section at t=5ms
+    let section = build_sdt_actual_section_numbered(0);
+    let packets = packetise_section(PID_SDT_BAT, &section);
+    feed_all(&mut monitor, &packets, ms(5), ms(1));
+
+    // Feed same section again 25ms later (exactly the threshold)
+    let packets2 = packetise_section(PID_SDT_BAT, &section);
+    let events = feed_all(&mut monitor, &packets2, ms(30), ms(1));
+    assert!(!has_indicator(&events, Indicator::SiMinGapError));
+}
+
+#[test]
+fn si_min_gap_multi_section_no_false_positive() {
+    // TEST 3 from the brief: a dense legitimate multi-section table must NOT
+    // trigger min-gap. Different section_numbers on the same table_id are ok.
+    let mut monitor = ConformanceMonitor::new();
+    acquire_sync(&mut monitor);
+
+    // Feed NIT_actual section_number=0 at t=5ms
+    let sec0 = build_nit_actual_section_numbered(0);
+    let p0 = packetise_section(PID_NIT, &sec0);
+    feed_all(&mut monitor, &p0, ms(5), ms(1));
+
+    // Feed NIT_actual section_number=1 at t=6ms (different section_number, gap < 25ms)
+    let sec1 = build_nit_actual_section_numbered(1);
+    let p1 = packetise_section(PID_NIT, &sec1);
+    let events = feed_all(&mut monitor, &p1, ms(6), ms(1));
+
+    // Different section_numbers → no min-gap error.
+    assert!(!has_indicator(&events, Indicator::SiMinGapError));
+}
+
+// ── NIT_other / SDT_other / EIT_other repetition ──────────────────────────
+
+#[test]
+fn other_repetition_trips_on_interval_exceeded() {
+    let mut monitor = ConformanceMonitor::new();
+    acquire_sync(&mut monitor);
+
+    // Feed SDT_other section_number=0 at t=5ms (first occurrence — arms but does not fire)
+    let sec = build_sdt_other_section(0);
+    let packets = packetise_section(PID_SDT_BAT, &sec);
+    let events1 = feed_all(&mut monitor, &packets, ms(5), ms(1));
+    assert!(!has_indicator(&events1, Indicator::SdtOtherError));
+
+    // Feed same section at t=15s (interval 15s > 10s limit; second occurrence triggers check)
+    let packets2 = packetise_section(PID_SDT_BAT, &sec);
+    let events2 = feed_all(&mut monitor, &packets2, secs(15), ms(1));
+    assert!(has_indicator(&events2, Indicator::SdtOtherError));
+}
+
+#[test]
+fn other_repetition_silent_when_within_interval() {
+    let mut monitor = ConformanceMonitor::new();
+    acquire_sync(&mut monitor);
+
+    // Feed NIT_other at t=5ms
+    let sec = build_nit_other_section(0);
+    let packets = packetise_section(PID_NIT, &sec);
+    feed_all(&mut monitor, &packets, ms(5), ms(1));
+
+    // Feed same section at t=5s (within 10s limit)
+    let packets2 = packetise_section(PID_NIT, &sec);
+    let events = feed_all(&mut monitor, &packets2, secs(5), ms(1));
+    assert!(!has_indicator(&events, Indicator::NitOtherError));
+}
+
+#[test]
+fn other_repetition_no_false_positive_if_table_absent() {
+    // If a stream carries no NIT_other (0x41) at all, NitOtherError must NOT fire.
+    // A legitimate non-_other stream should be clean.
+    let mut monitor = ConformanceMonitor::new();
+    acquire_sync(&mut monitor);
+
+    // Feed only NIT_actual sections — no _other ever seen.
+    let sec = build_nit_actual_section_numbered(0);
+    for i in 0..3 {
+        let packets = packetise_section(PID_NIT, &sec);
+        let events = feed_all(&mut monitor, &packets, secs(i as u64), ms(1));
+        assert!(!has_indicator(&events, Indicator::NitOtherError));
+    }
+}
+
+// ── EIT_PF_error (3.6.c) ──────────────────────────────────────────────────
+
+#[test]
+fn eit_pf_error_trips_when_only_section_0_present() {
+    let mut monitor = ConformanceMonitor::new();
+    acquire_sync(&mut monitor);
+
+    // Feed only EIT P/F section 0 for service 0x42
+    let sec0 = build_eit_pf_actual_section_keyed(0, 0x42, 1, 1);
+    let packets = packetise_section(PID_EIT, &sec0);
+    let mut all_events = feed_all(&mut monitor, &packets, ms(5), ms(1));
+
+    // EitPfError fires only after > 2 s delay (EIT P/F repetition interval).
+    // Advance time past 2 s so the timer triggers.
+    let pkt = make_ts_packet(0x200, 0, false, false, &[], &[]);
+    all_events.extend(monitor.feed(&pkt, secs(3)).to_vec());
+    assert!(
+        has_indicator(&all_events, Indicator::EitPfError),
+        "events: {all_events:#?}"
+    );
+}
+
+#[test]
+fn eit_pf_error_trips_when_only_section_1_present() {
+    let mut monitor = ConformanceMonitor::new();
+    acquire_sync(&mut monitor);
+
+    // Feed only EIT P/F section 1 for service 0x99
+    let sec1 = build_eit_pf_actual_section_keyed(1, 0x99, 1, 1);
+    let packets = packetise_section(PID_EIT, &sec1);
+    let mut all_events = feed_all(&mut monitor, &packets, ms(5), ms(1));
+
+    // Advance past 2 s interval.
+    let pkt = make_ts_packet(0x200, 0, false, false, &[], &[]);
+    all_events.extend(monitor.feed(&pkt, secs(3)).to_vec());
+    assert!(has_indicator(&all_events, Indicator::EitPfError));
+}
+
+#[test]
+fn eit_pf_error_absent_when_both_sections_present() {
+    let mut monitor = ConformanceMonitor::new();
+    acquire_sync(&mut monitor);
+
+    // Feed EIT P/F section 0 for service 1
+    let sec0 = build_eit_pf_actual_section_keyed(0, 1, 1, 1);
+    let packets0 = packetise_section(PID_EIT, &sec0);
+    feed_all(&mut monitor, &packets0, ms(5), ms(1));
+
+    // Feed EIT P/F section 1 for service 1 (same sub-table)
+    let sec1 = build_eit_pf_actual_section_keyed(1, 1, 1, 1);
+    let packets1 = packetise_section(PID_EIT, &sec1);
+    feed_all(&mut monitor, &packets1, ms(10), ms(1));
+
+    let pkt = make_ts_packet(0x200, 0, false, false, &[], &[]);
+    let events = monitor.feed(&pkt, ms(15));
+    assert!(!has_indicator(events, Indicator::EitPfError));
+}
+
+#[test]
+fn eit_pf_error_per_sub_table_not_global() {
+    // Service 0x10 has only section 0 → error.
+    // Service 0x20 has both sections → no error.
+    // If the check were global, both services would look fine.
+    let mut monitor = ConformanceMonitor::new();
+    acquire_sync(&mut monitor);
+
+    let mut all_events = Vec::new();
+
+    // Section 0 for service 0x10 (incomplete — first_incomplete_at = t=5ms)
+    let sec0_a = build_eit_pf_actual_section_keyed(0, 0x10, 1, 1);
+    let p0_a = packetise_section(PID_EIT, &sec0_a);
+    all_events.extend(feed_all(&mut monitor, &p0_a, ms(5), ms(1)));
+
+    // Both sections for service 0x20 (complete — both arrive, error clears)
+    let sec0_b = build_eit_pf_actual_section_keyed(0, 0x20, 1, 1);
+    let p0_b = packetise_section(PID_EIT, &sec0_b);
+    all_events.extend(feed_all(&mut monitor, &p0_b, ms(10), ms(1)));
+    let sec1_b = build_eit_pf_actual_section_keyed(1, 0x20, 1, 1);
+    let p1_b = packetise_section(PID_EIT, &sec1_b);
+    all_events.extend(feed_all(&mut monitor, &p1_b, ms(15), ms(1)));
+
+    // Advance past 2 s — only service 0x10 should fire EitPfError.
+    let pkt = make_ts_packet(0x200, 0, false, false, &[], &[]);
+    all_events.extend(monitor.feed(&pkt, secs(3)).to_vec());
+
+    assert!(has_indicator(&all_events, Indicator::EitPfError));
+    let pf_events: Vec<_> = all_events
+        .iter()
+        .filter(|e| e.indicator == Indicator::EitPfError)
+        .collect();
+    assert_eq!(
+        pf_events.len(),
+        1,
+        "expected exactly 1 EitPfError (service 0x10 only), got {}: {pf_events:?}",
+        pf_events.len()
+    );
+    assert!(pf_events[0].detail.contains("0x0010"));
+}
+
+#[test]
+fn nit_other_on_eit_pid_no_error() {
+    // EIT_other on PID 0x0010 is valid — NIT_other goes on PID_NIT.
+    // Verify that EitOtherError fires on PID_EIT, not PID_NIT.
+    let mut monitor = ConformanceMonitor::new();
+    acquire_sync(&mut monitor);
+
+    // Feed EIT_other section on PID_EIT at t=5ms
+    let sec = build_eit_other_section(0);
+    let packets = packetise_section(PID_EIT, &sec);
+    feed_all(&mut monitor, &packets, ms(5), ms(1));
+
+    // Second occurrence at t=15s (exceeds 10s limit)
+    let packets2 = packetise_section(PID_EIT, &sec);
+    let events = feed_all(&mut monitor, &packets2, secs(15), ms(1));
+    assert!(has_indicator(&events, Indicator::EitOtherError));
+}

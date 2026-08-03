@@ -1,5 +1,28 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+- Five new TR 101 290 v1.4.1 Priority-3 indicators (#736):
+  - `SiMinGapError` — 25 ms minimum-gap violation between sections of the same
+    `(table_id, section_number)` on the same PID, shared by dimensions 3.1.a /
+    3.2 / 3.5.a / 3.6.a / 3.7 / 3.8. Tracked per-`(table_id, section_number)`,
+    not per `table_id`, to avoid false positives on dense multi-section tables.
+  - `NitOtherError` (3.1.b) — NIT_other (0x41) sections with same
+    `section_number` > 10 s apart on PID 0x0010
+  - `SdtOtherError` (3.5.b) — SDT_other (0x46) sections with same
+    `section_number` > 10 s apart on PID 0x0011
+  - `EitOtherError` (3.6.b) — EIT P/F other (0x4F) sections with same
+    `section_number` > 10 s apart on PID 0x0012
+  - `EitPfError` (3.6.c) — EIT P/F sub-table missing one of its two sections;
+    per-sub-table (`service_id, transport_stream_id, original_network_id`),
+    not global
+- `_other` repetition checks only fire after the sub-table's presence is
+  established (observed at least twice), so streams that legitimately carry no
+  `_other` table are never flagged.
+- New `Config` fields: `si_min_gap` (default 25 ms), `si_other_interval`
+  (default 10 s per ETSI TR 101 211 §4.4)
+
 ## [9.1.1] - 2026-07-30
 
 ### Fixed
