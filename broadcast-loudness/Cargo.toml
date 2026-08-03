@@ -1,0 +1,28 @@
+[package]
+name    = "broadcast-loudness"
+version = "0.1.0"
+edition = "2024"
+description = "EBU R 128 / ITU-R BS.1770-5 loudness measurement: K-weighting, integrated/short-term/momentary loudness (LUFS), loudness range (LRA), and true-peak (dBTP). no_std + alloc."
+license      = "MIT OR Apache-2.0"
+authors      = ["Alex Fishlock <alex.fishlock@racingjag.com>"]
+keywords = ["loudness", "ebur128", "bs1770", "lufs", "broadcast"]
+categories = ["multimedia", "no-std"]
+repository   = "https://github.com/fishloa/rust-broadcast"
+readme       = "README.md"
+rust-version = "1.86"
+exclude = ["docs/**", "fuzz/**"]
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+
+[dependencies]
+broadcast-common = { path = "../broadcast-common", version = "9", default-features = false }
+thiserror  = { version = "2", default-features = false }
+libm       = { version = "0.2", default-features = false }
+
+[dev-dependencies]
+
+[features]
+default = ["std"]
+std = ["broadcast-common/std", "thiserror/std"]
