@@ -28,8 +28,14 @@ fn main() {
     meter.finish();
 
     println!("Integrated loudness: {:.1} LUFS", meter.integrated_lufs());
-    println!("Max momentary:       {:.1} LUFS", meter.max_momentary_lufs());
-    println!("Max short-term:      {:.1} LUFS", meter.max_short_term_lufs());
+    println!(
+        "Max momentary:       {:.1} LUFS",
+        meter.max_momentary_lufs()
+    );
+    println!(
+        "Max short-term:      {:.1} LUFS",
+        meter.max_short_term_lufs()
+    );
     println!("Loudness range:      {:.1} LU", meter.loudness_range());
     println!("Duration:            {:.1} s", meter.duration_seconds());
 }

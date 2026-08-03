@@ -64,9 +64,7 @@ impl ChannelLayout {
                     _ => 0.0,
                 }
             }
-            Self::Custom { weights } => {
-                weights.get(index).copied().unwrap_or(0.0)
-            }
+            Self::Custom { weights } => weights.get(index).copied().unwrap_or(0.0),
         }
     }
 

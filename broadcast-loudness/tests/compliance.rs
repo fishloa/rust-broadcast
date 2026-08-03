@@ -50,8 +50,11 @@ fn case_1_stereo_1khz_minus_23_dbfs() {
     let (left, right) = stereo_sine(-23.0, 1000.0, 20.0);
     let meter = measure_stereo(&left, &right);
     // M, S, I = −23.0 ±0.1 LUFS
-    assert!((meter.integrated_lufs() - (-23.0)).abs() <= TOLERANCE_LU,
-        "case 1: I={}, expected -23.0", meter.integrated_lufs());
+    assert!(
+        (meter.integrated_lufs() - (-23.0)).abs() <= TOLERANCE_LU,
+        "case 1: I={}, expected -23.0",
+        meter.integrated_lufs()
+    );
     assert!(meter.max_momentary_lufs().is_finite());
     assert!(meter.max_short_term_lufs().is_finite());
 }
@@ -62,8 +65,11 @@ fn case_2_stereo_1khz_minus_33_dbfs() {
     let (left, right) = stereo_sine(-33.0, 1000.0, 20.0);
     let meter = measure_stereo(&left, &right);
     // M, S, I = −33.0 ±0.1 LUFS
-    assert!((meter.integrated_lufs() - (-33.0)).abs() <= TOLERANCE_LU,
-        "case 2: I={}, expected -33.0", meter.integrated_lufs());
+    assert!(
+        (meter.integrated_lufs() - (-33.0)).abs() <= TOLERANCE_LU,
+        "case 2: I={}, expected -33.0",
+        meter.integrated_lufs()
+    );
 }
 
 #[test]
@@ -82,8 +88,11 @@ fn case_3_three_tones_minus_36_23_36() {
     right.extend_from_slice(&t3r);
     let meter = measure_stereo(&left, &right);
     // I = −23.0 ±0.1 LUFS
-    assert!((meter.integrated_lufs() - (-23.0)).abs() <= TOLERANCE_LU,
-        "case 3: I={}, expected -23.0", meter.integrated_lufs());
+    assert!(
+        (meter.integrated_lufs() - (-23.0)).abs() <= TOLERANCE_LU,
+        "case 3: I={}, expected -23.0",
+        meter.integrated_lufs()
+    );
 }
 
 #[test]
@@ -110,8 +119,11 @@ fn case_4_five_tones_gated() {
     right.extend_from_slice(&t5r);
     let meter = measure_stereo(&left, &right);
     // I = −23.0 ±0.1 LUFS (gating excludes the −72 segments)
-    assert!((meter.integrated_lufs() - (-23.0)).abs() <= TOLERANCE_LU,
-        "case 4: I={}, expected -23.0", meter.integrated_lufs());
+    assert!(
+        (meter.integrated_lufs() - (-23.0)).abs() <= TOLERANCE_LU,
+        "case 4: I={}, expected -23.0",
+        meter.integrated_lufs()
+    );
 }
 
 #[test]
@@ -130,8 +142,11 @@ fn case_5_three_tones_minus_26_20_26() {
     right.extend_from_slice(&t3r);
     let meter = measure_stereo(&left, &right);
     // I = −23.0 ±0.1 LUFS
-    assert!((meter.integrated_lufs() - (-23.0)).abs() <= TOLERANCE_LU,
-        "case 5: I={}, expected -23.0", meter.integrated_lufs());
+    assert!(
+        (meter.integrated_lufs() - (-23.0)).abs() <= TOLERANCE_LU,
+        "case 5: I={}, expected -23.0",
+        meter.integrated_lufs()
+    );
 }
 
 #[test]
@@ -146,7 +161,9 @@ fn case_6_surround_51_channel_weighting() {
     let mut channels: Vec<Vec<f32>> = (0..6).map(|_| vec![0.0f32; n]).collect();
     let levels = [-28.0, -28.0, -24.0, -99.0, -30.0, -30.0]; // L, R, C, LFE, Ls, Rs
     for (ch, &dbfs) in levels.iter().enumerate() {
-        if dbfs < -90.0 { continue; } // LFE: silent
+        if dbfs < -90.0 {
+            continue;
+        } // LFE: silent
         let amp = 10.0f64.powf(dbfs / 20.0) as f32;
         for i in 0..n {
             let t = i as f64 / SAMPLE_RATE as f64;
@@ -161,8 +178,11 @@ fn case_6_surround_51_channel_weighting() {
     }
     meter.finish();
     // I = −23.0 ±0.1 LUFS
-    assert!((meter.integrated_lufs() - (-23.0)).abs() <= TOLERANCE_LU,
-        "case 6: I={}, expected -23.0", meter.integrated_lufs());
+    assert!(
+        (meter.integrated_lufs() - (-23.0)).abs() <= TOLERANCE_LU,
+        "case 6: I={}, expected -23.0",
+        meter.integrated_lufs()
+    );
 }
 
 #[test]
@@ -181,8 +201,11 @@ fn case_9_short_term_max_23() {
     }
     let meter = measure_stereo(&left, &right);
     // Max S = −23.0 ±0.1 LUFS
-    assert!((meter.max_short_term_lufs() - (-23.0)).abs() <= TOLERANCE_LU,
-        "case 9: max S={}, expected -23.0", meter.max_short_term_lufs());
+    assert!(
+        (meter.max_short_term_lufs() - (-23.0)).abs() <= TOLERANCE_LU,
+        "case 9: max S={}, expected -23.0",
+        meter.max_short_term_lufs()
+    );
 }
 
 #[test]
@@ -201,8 +224,11 @@ fn case_11_momentary_max_23() {
     }
     let meter = measure_stereo(&left, &right);
     // M = −23.0 ±0.1 LUFS
-    assert!((meter.max_momentary_lufs() - (-23.0)).abs() <= TOLERANCE_LU,
-        "case 11: max M={}, expected -23.0", meter.max_momentary_lufs());
+    assert!(
+        (meter.max_momentary_lufs() - (-23.0)).abs() <= TOLERANCE_LU,
+        "case 11: max M={}, expected -23.0",
+        meter.max_momentary_lufs()
+    );
 }
 
 // =====================================================================
@@ -246,8 +272,10 @@ fn case_15_tp_fs4_phase_0() {
     // Max TP = −6.0 +0.2/−0.4 dBTP
     let samples = tp_sine(12_000.0, 0.50, 0.0, 0.5);
     let level = measure_tp_stereo(&samples, &samples);
-    assert!(level <= -5.8 && level >= -6.4,
-        "case 15: TP={level}, expected -6.0 +0.2/-0.4 dBTP");
+    assert!(
+        (-6.4..=-5.8).contains(&level),
+        "case 15: TP={level}, expected -6.0 +0.2/-0.4 dBTP"
+    );
 }
 
 #[test]
@@ -255,8 +283,10 @@ fn case_16_tp_fs4_phase_45() {
     // fs/4 (12 kHz), amplitude 0.50 FFS, phase 45°
     let samples = tp_sine(12_000.0, 0.50, 45.0, 0.5);
     let level = measure_tp_stereo(&samples, &samples);
-    assert!(level <= -5.8 && level >= -6.4,
-        "case 16: TP={level}, expected -6.0 +0.2/-0.4 dBTP");
+    assert!(
+        (-6.4..=-5.8).contains(&level),
+        "case 16: TP={level}, expected -6.0 +0.2/-0.4 dBTP"
+    );
 }
 
 #[test]
@@ -264,8 +294,10 @@ fn case_17_tp_fs6_phase_60() {
     // fs/6 (8 kHz), amplitude 0.50 FFS, phase 60°
     let samples = tp_sine(8_000.0, 0.50, 60.0, 0.5);
     let level = measure_tp_stereo(&samples, &samples);
-    assert!(level <= -5.8 && level >= -6.4,
-        "case 17: TP={level}, expected -6.0 +0.2/-0.4 dBTP");
+    assert!(
+        (-6.4..=-5.8).contains(&level),
+        "case 17: TP={level}, expected -6.0 +0.2/-0.4 dBTP"
+    );
 }
 
 #[test]
@@ -273,8 +305,10 @@ fn case_18_tp_fs8_phase_67_5() {
     // fs/8 (6 kHz), amplitude 0.50 FFS, phase 67.5°
     let samples = tp_sine(6_000.0, 0.50, 67.5, 0.5);
     let level = measure_tp_stereo(&samples, &samples);
-    assert!(level <= -5.8 && level >= -6.4,
-        "case 18: TP={level}, expected -6.0 +0.2/-0.4 dBTP");
+    assert!(
+        (-6.4..=-5.8).contains(&level),
+        "case 18: TP={level}, expected -6.0 +0.2/-0.4 dBTP"
+    );
 }
 
 #[test]
@@ -283,8 +317,10 @@ fn case_19_tp_fs4_amplitude_1_41_phase_45() {
     // Max TP = +3.0 +0.2/−0.4 dBTP
     let samples = tp_sine(12_000.0, 1.41, 45.0, 0.5);
     let level = measure_tp_stereo(&samples, &samples);
-    assert!(level <= 3.2 && level >= 2.6,
-        "case 19: TP={level}, expected +3.0 +0.2/-0.4 dBTP");
+    assert!(
+        (2.6..=3.2).contains(&level),
+        "case 19: TP={level}, expected +3.0 +0.2/-0.4 dBTP"
+    );
 }
 
 // =====================================================================
@@ -309,8 +345,10 @@ fn lra_case_1_two_tones_10_db_apart() {
     // −20 dBFS then −30 dBFS, 20 s each (10 dB apart)
     let lra = lra_two_tones(-20.0, -30.0, 20.0);
     // LRA = 10 ±1 LU
-    assert!((lra - 10.0).abs() <= TOLERANCE_LRA,
-        "LRA case 1: LRA={lra}, expected 10 ±1 LU");
+    assert!(
+        (lra - 10.0).abs() <= TOLERANCE_LRA,
+        "LRA case 1: LRA={lra}, expected 10 ±1 LU"
+    );
 }
 
 #[test]
@@ -318,8 +356,10 @@ fn lra_case_2_two_tones_5_db_apart() {
     // −20 dBFS then −15 dBFS, 20 s each (5 dB apart)
     let lra = lra_two_tones(-20.0, -15.0, 20.0);
     // LRA = 5 ±1 LU
-    assert!((lra - 5.0).abs() <= TOLERANCE_LRA,
-        "LRA case 2: LRA={lra}, expected 5 ±1 LU");
+    assert!(
+        (lra - 5.0).abs() <= TOLERANCE_LRA,
+        "LRA case 2: LRA={lra}, expected 5 ±1 LU"
+    );
 }
 
 #[test]
@@ -327,6 +367,8 @@ fn lra_case_3_two_tones_20_db_apart() {
     // −40 dBFS then −20 dBFS, 20 s each (20 dB apart)
     let lra = lra_two_tones(-40.0, -20.0, 20.0);
     // LRA = 20 ±1 LU
-    assert!((lra - 20.0).abs() <= TOLERANCE_LRA,
-        "LRA case 3: LRA={lra}, expected 20 ±1 LU");
+    assert!(
+        (lra - 20.0).abs() <= TOLERANCE_LRA,
+        "LRA case 3: LRA={lra}, expected 20 ±1 LU"
+    );
 }

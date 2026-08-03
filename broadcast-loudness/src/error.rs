@@ -32,7 +32,9 @@ pub enum Error {
     /// tabulate them or provide a formula.
     ///
     /// Resample the input to 48 kHz before measurement.
-    #[error("K-weighting coefficients are only defined for 48 kHz, got {got} Hz (ITU-R BS.1770-5 Annex 1). Resample to 48 kHz.")]
+    #[error(
+        "K-weighting coefficients are only defined for 48 kHz, got {got} Hz (ITU-R BS.1770-5 Annex 1). Resample to 48 kHz."
+    )]
     UnsupportedSampleRate {
         /// The unsupported sample rate requested.
         got: u32,

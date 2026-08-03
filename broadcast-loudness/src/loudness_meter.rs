@@ -138,7 +138,6 @@ impl LoudnessMeter {
     /// Returns `Error::UnsupportedSampleRate` for any rate other than 48 000.
     ///
     /// `layout` — channel configuration with per‑channel weights.
-    #[must_use]
     pub fn new(sample_rate: u32, layout: ChannelLayout) -> Result<Self, crate::Error> {
         const SUPPORTED_RATE: u32 = 48_000;
         if sample_rate != SUPPORTED_RATE {
@@ -232,7 +231,11 @@ impl LoudnessMeter {
     /// Push interleaved stereo f32 samples.
     ///
     /// `left` and `right` must have equal length.
-    pub fn push_interleaved_f32(&mut self, left: &[f32], right: &[f32]) -> Result<(), crate::Error> {
+    pub fn push_interleaved_f32(
+        &mut self,
+        left: &[f32],
+        right: &[f32],
+    ) -> Result<(), crate::Error> {
         if self.finished {
             return Err(crate::Error::Finished);
         }
@@ -242,7 +245,7 @@ impl LoudnessMeter {
                 got: right.len(),
             });
         }
-        for (_i, (&l, &r)) in left.iter().zip(right.iter()).enumerate() {
+        for (&l, &r) in left.iter().zip(right.iter()) {
             let weight_l = self.layout.weight(0);
             let weight_r = self.layout.weight(1);
             let mut sum_sq = 0.0;
@@ -460,8 +463,8 @@ fn compute_lra(blocks: &[GatingBlock]) -> f64 {
 
     let n = rel_gated.len();
     // Tech 3342 MATLAB: round((n-1)*PRC/100 + 1) — 1‑based indexing → 0‑based
-    let low_idx = (((n as f64 - 1.0) * 10.0 / 100.0 + 1.0).round() as usize).saturating_sub(1);
-    let high_idx = (((n as f64 - 1.0) * 95.0 / 100.0 + 1.0).round() as usize).saturating_sub(1);
+    let low_idx = (libm::round((n as f64 - 1.0) * 10.0 / 100.0 + 1.0) as usize).saturating_sub(1);
+    let high_idx = (libm::round((n as f64 - 1.0) * 95.0 / 100.0 + 1.0) as usize).saturating_sub(1);
     let low_idx = low_idx.min(n - 1);
     let high_idx = high_idx.min(n - 1);
 
@@ -519,7 +522,10 @@ mod tests {
         meter.push_interleaved_f32(&left, &right).unwrap();
         meter.finish();
         let lufs = meter.integrated_lufs();
-        assert!((lufs - (-23.0)).abs() < 0.5, "got {lufs}, expected ~-23.0 (gating should exclude silence)");
+        assert!(
+            (lufs - (-23.0)).abs() < 0.5,
+            "got {lufs}, expected ~-23.0 (gating should exclude silence)"
+        );
     }
 
     #[test]
@@ -542,20 +548,23 @@ mod tests {
 
         for i in 0..n_low1 {
             let t = i as f64 / sample_rate as f64;
-            let val = (low_amplitude as f64 * (2.0 * core::f64::consts::PI * 1000.0 * t).sin()) as f32;
+            let val =
+                (low_amplitude as f64 * (2.0 * core::f64::consts::PI * 1000.0 * t).sin()) as f32;
             left[i] = val;
             right[i] = val;
         }
         for i in 0..n_tone {
             let t = i as f64 / sample_rate as f64;
-            let val = (tone_amplitude as f64 * (2.0 * core::f64::consts::PI * 1000.0 * t).sin()) as f32;
+            let val =
+                (tone_amplitude as f64 * (2.0 * core::f64::consts::PI * 1000.0 * t).sin()) as f32;
             left[n_low1 + i] = val;
             right[n_low1 + i] = val;
         }
         let offset = n_low1 + n_tone;
         for i in 0..(n - offset) {
             let t = i as f64 / sample_rate as f64;
-            let val = (low_amplitude as f64 * (2.0 * core::f64::consts::PI * 1000.0 * t).sin()) as f32;
+            let val =
+                (low_amplitude as f64 * (2.0 * core::f64::consts::PI * 1000.0 * t).sin()) as f32;
             left[offset + i] = val;
             right[offset + i] = val;
         }
@@ -564,14 +573,19 @@ mod tests {
         meter.push_interleaved_f32(&left, &right).unwrap();
         meter.finish();
         let lufs = meter.integrated_lufs();
-        assert!((lufs - (-23.0)).abs() < 0.5, "got {lufs}, expected ~-23.0 (low segments should be gated out)");
+        assert!(
+            (lufs - (-23.0)).abs() < 0.5,
+            "got {lufs}, expected ~-23.0 (low segments should be gated out)"
+        );
     }
 
     #[test]
     fn rejects_441_khz() {
         let err = LoudnessMeter::new(44_100, ChannelLayout::Stereo).unwrap_err();
         let msg = format!("{err}");
-        assert!(msg.contains("48 kHz") || msg.contains("48000"),
-            "expected error stating 48 kHz requirement, got: {msg}");
+        assert!(
+            msg.contains("48 kHz") || msg.contains("48000"),
+            "expected error stating 48 kHz requirement, got: {msg}"
+        );
     }
 }

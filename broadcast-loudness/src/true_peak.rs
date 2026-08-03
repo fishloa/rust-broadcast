@@ -173,8 +173,9 @@ impl TruePeakMeter {
 
     /// 4× polyphase FIR oversampling.
     ///
-    /// For each input sample `i`, compute 4 output samples by convolving
-    /// with each phase's 12‑tap filter.
+    /// For each input sample, compute 4 output samples (phases 0–3)
+    /// using a 48‑tap polyphase decomposition. Each phase uses 12 taps
+    /// at strides of 4 through the coefficient array.
     fn oversample_4x(input: &[f64]) -> Vec<f64> {
         let n = input.len();
         if n == 0 {
@@ -182,18 +183,18 @@ impl TruePeakMeter {
         }
         let mut output = Vec::with_capacity(n * 4);
         for i in 0..n {
-            for phase in 0usize..4 {
-                let coeffs = &FIR_COEFFS[phase];
+            for (phase, taps) in FIR_COEFFS.iter().enumerate() {
                 let mut sum = 0.0f64;
-                for k in 0usize..12 {
-                    let input_idx = i as isize - k as isize;
+                for (t, &coeff) in taps.iter().enumerate() {
+                    let input_idx = i as isize - t as isize;
                     let sample = if input_idx >= 0 {
                         input[input_idx as usize]
                     } else {
                         0.0
                     };
-                    sum += coeffs[k] * sample;
+                    sum += coeff * sample;
                 }
+                let _ = phase; // used for ordering assurance
                 output.push(sum);
             }
         }
