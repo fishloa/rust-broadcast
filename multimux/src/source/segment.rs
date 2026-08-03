@@ -1545,6 +1545,22 @@ mod tests {
 
     /// Collect segment sequence numbers from an LL-HLS playlist
     /// (scans for `seg-1-<N>.m4s` lines).
+    /// Record the trunk's latest closed segment sequence number, in
+    /// publication order, skipping repeats of the value already at the tail.
+    ///
+    /// Sampling this after every feed builds the series a client would see.
+    /// A segmenter rebuilt without carrying its counters forward restarts at
+    /// 1, which shows up here as a value that fails to exceed its predecessor
+    /// — the check `existing_tracks_are_uninterrupted_across_mid_stream_addition`
+    /// makes (issue #781).
+    fn note_segment_seq(trunk: &Trunk, observed: &mut Vec<u32>) {
+        if let Some(seq) = trunk.last_closed_segment() {
+            if observed.last() != Some(&seq) {
+                observed.push(seq);
+            }
+        }
+    }
+
     fn segment_sequences_from_playlist(playlist: &str) -> Vec<u32> {
         let mut seqs = Vec::new();
         for line in playlist.lines() {
@@ -1790,6 +1806,11 @@ mod tests {
         drive_program_segmenters(&driver, &route, &mut segmenters);
 
         let trunk = driver.trunk(ProgramId(0)).cloned().expect("program 0");
+
+        // Every segment sequence number the route publishes, in publication
+        // order, sampled across the whole session.
+        let mut observed: Vec<u32> = Vec::new();
+
         for i in 0..MAX_BOUNDED_FEEDS {
             if trunk.last_closed_segment().is_some() {
                 break;
@@ -1797,18 +1818,21 @@ mod tests {
             driver.feed(&[], Timestamp::from_nanos(driver_feed_nanos()));
             report_driver_progress(&driver, &route, &mut published, &mut track_generations);
             drive_program_segmenters(&driver, &route, &mut segmenters);
+            note_segment_seq(&trunk, &mut observed);
             if i + 1 >= MAX_BOUNDED_FEEDS {
                 panic!(
                     "no segment closed before track change after {MAX_BOUNDED_FEEDS} feeds (test 2)"
                 );
             }
         }
-        let pre_change_seqs = segment_sequences_from_playlist(&render_playlist(&route));
+        note_segment_seq(&trunk, &mut observed);
+        let seqs_before_change = observed.len();
 
         driver.session().add_track_9();
         driver.feed(&[], Timestamp::from_nanos(driver_feed_nanos()));
         report_driver_progress(&driver, &route, &mut published, &mut track_generations);
         drive_program_segmenters(&driver, &route, &mut segmenters);
+        note_segment_seq(&trunk, &mut observed);
 
         let pre_len = trunk.segment_len();
         for i in 0..MAX_BOUNDED_FEEDS {
@@ -1818,6 +1842,7 @@ mod tests {
             driver.feed(&[], Timestamp::from_nanos(driver_feed_nanos()));
             report_driver_progress(&driver, &route, &mut published, &mut track_generations);
             drive_program_segmenters(&driver, &route, &mut segmenters);
+            note_segment_seq(&trunk, &mut observed);
             if i + 1 >= MAX_BOUNDED_FEEDS {
                 panic!(
                     "no new segment after track change after {MAX_BOUNDED_FEEDS} feeds (test 2, len={})",
@@ -1825,24 +1850,27 @@ mod tests {
                 );
             }
         }
+        note_segment_seq(&trunk, &mut observed);
 
-        let post_change_seqs = segment_sequences_from_playlist(&render_playlist(&route));
-        // Only check sequences that came AFTER the change — the playlist
-        // always retains older segments in its window.
-        let max_pre = pre_change_seqs.iter().copied().max().unwrap_or(0);
-        let new_seqs: Vec<_> = post_change_seqs
-            .iter()
-            .filter(|s| **s > max_pre)
-            .copied()
-            .collect();
+        // Segments must have kept flowing across the change, not merely
+        // existed before it.
         assert!(
-            !new_seqs.is_empty(),
-            "must have at least one new segment after the change"
+            observed.len() > seqs_before_change,
+            "no segment was published after the track change: {observed:?}"
         );
-        for s in &new_seqs {
-            for p in &pre_change_seqs {
-                assert!(s > p, "post-change seq {s} must be > pre-change seq {p}");
-            }
+
+        // THE INVARIANT. `#EXT-X-MEDIA-SEQUENCE` is derived from these, and a
+        // client mid-playlist breaks if it ever goes backwards or repeats. A
+        // segmenter rebuilt for the new track set without carrying its
+        // counters forward restarts at 1 and violates this.
+        for pair in observed.windows(2) {
+            assert!(
+                pair[1] > pair[0],
+                "segment sequence must be strictly increasing across a \
+                 mid-stream track change — went {} -> {} in {observed:?}",
+                pair[0],
+                pair[1]
+            );
         }
     }
 
