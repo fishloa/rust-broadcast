@@ -266,7 +266,7 @@ fn render_manifest(route: &RouteHandle) -> Option<String> {
         xml.push_str(" Subtype=\"\"");
         xml.push_str(&format!(" Chunks=\"{chunk_count}\""));
         xml.push_str(" QualityLevels=\"1\"");
-        xml.push_str(&format!(" Url=\"{}\">\n", &url));
+        xml.push_str(&format!(" Url=\"{url}\">\n"));
 
         xml.push_str("    <QualityLevel");
         xml.push_str(" Index=\"0\" Bitrate=\"0\"");
