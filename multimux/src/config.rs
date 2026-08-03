@@ -4,6 +4,7 @@
 //! ([`InputSpec`] — RTSP pull, raw RTP/UDP, MPEG-TS/UDP, MPEG-TS/HTTP,
 //! HLS-pull, or RTMP push) to a served stream name.
 
+use crate::dvr::DvrConfig;
 use crate::error::{MultimuxError, Result};
 use crate::output::OutputKind;
 use broadcast_auth::Credentials;
@@ -1002,6 +1003,11 @@ pub struct Route {
     /// [`Config::validate`].
     #[serde(default = "default_outputs")]
     pub outputs: Vec<OutputKind>,
+    /// DVR durable segment archive (issue #746). Off by default — set
+    /// `"enabled": true` and configure an `archive_root` and at least one
+    /// retention limit to enable recording.
+    #[serde(default)]
+    pub dvr: DvrConfig,
 }
 
 /// Manual `Debug` (rather than `#[derive(Debug)]`): [`InputSpec`] already
@@ -1081,6 +1087,18 @@ impl Route {
             });
         }
         self.input.validate()
+    }
+
+    /// Validate any DVR config on this route — separate so the admin API can
+    /// call it independently.
+    pub(crate) fn validate_dvr(&self) -> Result<()> {
+        if let Err(reason) = self.dvr.validate() {
+            return Err(MultimuxError::ConfigInvalid {
+                field: "routes.dvr",
+                reason,
+            });
+        }
+        Ok(())
     }
 }
 
@@ -1272,6 +1290,7 @@ impl Config {
                 });
             }
             r.validate_standalone()?;
+            r.validate_dvr()?;
         }
         if let Some(admin) = &self.admin {
             if admin.bind.is_empty() {
@@ -1367,6 +1386,7 @@ mod tests {
                         auth: None,
                     },
                     outputs: default_outputs(),
+                    dvr: DvrConfig::default(),
                 }],
                 request_timeout_secs: bad,
                 ..Config::default()
@@ -1385,6 +1405,7 @@ mod tests {
                     auth: None,
                 },
                 outputs: default_outputs(),
+                dvr: DvrConfig::default(),
             }],
             max_concurrent_requests: 0,
             ..Config::default()
@@ -1402,6 +1423,7 @@ mod tests {
                     auth: None,
                 },
                 outputs: default_outputs(),
+                dvr: DvrConfig::default(),
             }],
             max_request_body_bytes: 0,
             ..Config::default()
@@ -1853,6 +1875,7 @@ mod tests {
                     }),
                 },
                 outputs: default_outputs(),
+                dvr: DvrConfig::default(),
             }],
             ..Config::default()
         };
@@ -1871,6 +1894,7 @@ mod tests {
                     }),
                 },
                 outputs: default_outputs(),
+                dvr: DvrConfig::default(),
             }],
             ..Config::default()
         };
@@ -1892,6 +1916,7 @@ mod tests {
                     }),
                 },
                 outputs: default_outputs(),
+                dvr: DvrConfig::default(),
             }],
             ..Config::default()
         };
@@ -1958,6 +1983,7 @@ mod tests {
                     auth: None,
                 },
                 outputs: default_outputs(),
+                dvr: DvrConfig::default(),
             }],
             ..Config::default()
         };
@@ -1974,6 +2000,7 @@ mod tests {
                     auth: None,
                 },
                 outputs: default_outputs(),
+                dvr: DvrConfig::default(),
             }],
             ..Config::default()
         };
@@ -1990,6 +2017,7 @@ mod tests {
                     auth: None,
                 },
                 outputs: default_outputs(),
+                dvr: DvrConfig::default(),
             }],
             ..Config::default()
         };
@@ -2007,6 +2035,7 @@ mod tests {
                 auth: None,
             },
             outputs: default_outputs(),
+            dvr: DvrConfig::default(),
         };
         let debug = format!("{ts_http:?}");
         assert!(!debug.contains("user"), "debug leaked username: {debug}");
@@ -2023,6 +2052,7 @@ mod tests {
                 auth: None,
             },
             outputs: default_outputs(),
+            dvr: DvrConfig::default(),
         };
         let debug = format!("{hls_pull:?}");
         assert!(!debug.contains("user"), "debug leaked username: {debug}");
@@ -2043,6 +2073,7 @@ mod tests {
                     auth: None,
                 },
                 outputs: default_outputs(),
+                dvr: DvrConfig::default(),
             }],
             ..Config::default()
         };
@@ -2059,6 +2090,7 @@ mod tests {
                     multicast_group: None,
                 },
                 outputs: default_outputs(),
+                dvr: DvrConfig::default(),
             }],
             ..Config::default()
         };
@@ -2076,6 +2108,7 @@ mod tests {
                     multicast_group: Some("10.0.0.1".into()),
                 },
                 outputs: default_outputs(),
+                dvr: DvrConfig::default(),
             }],
             ..Config::default()
         };
@@ -2093,6 +2126,7 @@ mod tests {
                     multicast_group: None,
                 },
                 outputs: default_outputs(),
+                dvr: DvrConfig::default(),
             }],
             ..Config::default()
         };
@@ -2110,6 +2144,7 @@ mod tests {
                     multicast_group: None,
                 },
                 outputs: default_outputs(),
+                dvr: DvrConfig::default(),
             }],
             ..Config::default()
         };
@@ -2129,6 +2164,7 @@ mod tests {
                     multicast_group: None,
                 },
                 outputs: default_outputs(),
+                dvr: DvrConfig::default(),
             }],
             ..Config::default()
         };
@@ -2146,6 +2182,7 @@ mod tests {
                         auth: None,
                     },
                     outputs: default_outputs(),
+                    dvr: DvrConfig::default(),
                 },
                 Route {
                     name: "x".into(),
@@ -2154,6 +2191,7 @@ mod tests {
                         auth: None,
                     },
                     outputs: default_outputs(),
+                    dvr: DvrConfig::default(),
                 },
             ],
             ..Config::default()
@@ -2212,6 +2250,7 @@ mod tests {
                 auth: None,
             },
             outputs: default_outputs(),
+            dvr: DvrConfig::default(),
         };
         let debug = format!("{route:?}");
         assert!(!debug.contains("user"), "debug leaked username: {debug}");
@@ -2235,6 +2274,7 @@ mod tests {
                     auth: None,
                 },
                 outputs: default_outputs(),
+                dvr: DvrConfig::default(),
             }],
             ..Config::default()
         };
@@ -2262,6 +2302,7 @@ mod tests {
                 multicast_group: None,
             },
             outputs: default_outputs(),
+            dvr: DvrConfig::default(),
         };
         let debug = format!("{route:?}");
         assert!(!debug.contains(&long_sdp), "debug: {debug}");
@@ -2282,6 +2323,7 @@ mod tests {
                     auth: None,
                 },
                 outputs: default_outputs(),
+                dvr: DvrConfig::default(),
             }],
             ..Config::default()
         }

@@ -124,6 +124,8 @@ use media_plane::trunk::{
 use media_plane::{ProgramId, Trunk};
 use transmux::TrackSpec;
 
+use crate::dvr::DvrRecorder;
+
 /// Ring capacities [`ProgramServing::new`] gives each program's `Trunk`,
 /// beyond [`crate::config::Config::window_segments`] (which becomes the
 /// segment log's own capacity — the same "advertised window == retained
@@ -356,6 +358,10 @@ pub(crate) struct ProgramServing {
     trunk: Arc<Trunk>,
     ll_hls: Arc<HlsOrigin>,
     dash: Arc<DashState>,
+    /// DVR durable segment archive (issue #746) — `None` when this route
+    /// does not have DVR enabled. Owns a pinning `SegmentCursor`, drained
+    /// by [`Self::poll_dvr`].
+    dvr: Mutex<Option<DvrRecorder>>,
     /// Lazily-acquired write handle for [`RouteHandle::add_segment`]/
     /// [`RouteHandle::add_part`] (this crate's own direct-`Trunk`-write test
     /// helpers, standing in for a real `crate::source::segment::ProgramSegmenter`).
@@ -383,7 +389,8 @@ pub(crate) struct ProgramServing {
 impl ProgramServing {
     /// Build a fresh bundle over `trunk`: the [`HlsOrigin`] and
     /// [`DashState`] every egress call site reads, both bound to `trunk` from
-    /// construction. The one and only place either is created — see
+    /// construction, plus an optional DVR recorder if `dvr_config` is
+    /// provided. The one and only place either is created — see
     /// [`RouteHandle::publish_program`].
     fn new(
         trunk: Arc<Trunk>,
@@ -391,18 +398,13 @@ impl ProgramServing {
         part_target_ms: u32,
         window_segments: NonZeroUsize,
         container: Container,
+        dvr_config: Option<crate::dvr::DvrConfig>,
+        route_name: &str,
     ) -> Arc<Self> {
         let mut builder = HlsOrigin::builder(Arc::clone(&trunk))
             .target_duration_secs(target_duration_secs)
             .window_segments(window_segments)
             .container(container);
-        // Classic (no low-latency) HLS for `Container::MpegTs`: the
-        // `transmux::ts_hls::StreamingTsHlsSegmenter` this container is fed by
-        // (`crate::source::segment::ProgramSegmenter`) has no partial-segment
-        // ("part") concept at all — it only ever produces whole `.ts`
-        // segments (issue #887) — so there is nothing for a `.low_latency(..)`
-        // call to advertise. `Container::Fmp4` keeps calling it unconditionally,
-        // preserving every pre-#887 route's behaviour.
         if container == Container::Fmp4 {
             builder = builder.low_latency(part_target_ms);
         }
@@ -412,10 +414,37 @@ impl ProgramServing {
                 .expect("target_duration_secs and window_segments are always set above"),
         );
         let dash = Arc::new(DashState::new(&trunk, window_segments));
+
+        let ext = match container {
+            Container::Fmp4 => ".m4s",
+            Container::MpegTs => ".ts",
+            _ => ".m4s",
+        };
+        let dvr = dvr_config.filter(|c| c.enabled).and_then(|cfg| {
+            match DvrRecorder::new(route_name.to_string(), cfg, ext, &trunk) {
+                Ok(recorder) => {
+                    tracing::info!(
+                        route = %route_name,
+                        "DVR recording started"
+                    );
+                    Some(recorder)
+                }
+                Err(e) => {
+                    tracing::error!(
+                        route = %route_name,
+                        error = %e,
+                        "DVR recorder creation failed; recording disabled for this program"
+                    );
+                    None
+                }
+            }
+        });
+
         Arc::new(ProgramServing {
             trunk,
             ll_hls,
             dash,
+            dvr: Mutex::new(dvr),
             segment_writer: Mutex::new(None),
             next_timeline_ns: AtomicU64::new(0),
         })
@@ -529,6 +558,23 @@ impl ProgramServing {
             (candidate, parts.len())
         }
     }
+
+    /// Drain this program's DVR pinning cursor (if DVR is enabled) and
+    /// persist any new finished segments to disk. Called by the route's
+    /// supervise loop after `drive_program_segmenters`.
+    pub(crate) fn poll_dvr(&self) {
+        let mut dvr_guard = self.dvr.lock().expect("ProgramServing dvr lock poisoned");
+        if let Some(ref mut recorder) = *dvr_guard {
+            let init_bytes = self.init_bytes();
+            let init_slice = init_bytes.as_deref();
+            if let Err(e) = recorder.poll_and_persist(init_slice) {
+                tracing::error!(
+                    "DVR poll_and_persist failed: {e}; \
+                     recording may be incomplete"
+                );
+            }
+        }
+    }
 }
 
 /// One route's shared state — replaces the deleted `MediaStore`. Built once
@@ -600,6 +646,9 @@ pub struct RouteHandle {
     /// sets a real one; `crate::origin::serve_with_registry` always does, for
     /// every production route.
     name: String,
+    /// Per-route DVR config — `None` when not configured, passed to every
+    /// [`ProgramServing::new`] built by [`Self::publish_program`].
+    dvr_config: Option<crate::dvr::DvrConfig>,
 }
 
 impl RouteHandle {
@@ -618,6 +667,7 @@ impl RouteHandle {
             created_at: SystemTime::now(),
             programs: RwLock::new(HashMap::new()),
             name: DEFAULT_ROUTE_NAME.to_string(),
+            dvr_config: None,
         }
     }
 
@@ -645,6 +695,15 @@ impl RouteHandle {
     /// Defaults to [`Container::Fmp4`] if never called.
     pub fn with_container(mut self, container: Container) -> Self {
         self.container = container;
+        self
+    }
+
+    /// Attach DVR config to this route (issue #746) — a consuming builder,
+    /// chained onto [`Self::new`] the same way as [`Self::with_name`].
+    /// Every program [`Self::publish_program`] builds from this point on
+    /// gets a DVR recorder created alongside its `ProgramServing`.
+    pub fn with_dvr(mut self, dvr_config: crate::dvr::DvrConfig) -> Self {
+        self.dvr_config = Some(dvr_config);
         self
     }
 
@@ -702,6 +761,8 @@ impl RouteHandle {
             self.part_target_ms,
             self.window_segments_cap,
             self.container,
+            self.dvr_config.clone(),
+            &self.name,
         );
         programs.insert(program, serving);
     }
@@ -876,6 +937,20 @@ impl RouteHandle {
     /// Transition this route's [`HealthState`].
     pub fn set_health(&self, state: HealthState) {
         *self.health.lock().unwrap() = state;
+    }
+
+    /// Drain every published program's DVR pinning cursor (if DVR is
+    /// enabled on this route) — called by
+    /// [`crate::source::advance_route`] once per iteration, after
+    /// `drive_program_segmenters` has published any new segments.
+    pub(crate) fn drain_dvr(&self) {
+        let programs = self
+            .programs
+            .read()
+            .expect("RouteHandle::programs lock poisoned");
+        for serving in programs.values() {
+            serving.poll_dvr();
+        }
     }
 }
 

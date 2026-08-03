@@ -1165,6 +1165,7 @@ async fn shutdown_signal() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::dvr::DvrConfig;
     use crate::output::llhls::LlHlsOutput;
     use crate::route::RouteHandle;
     use tower::ServiceExt;
@@ -2388,6 +2389,7 @@ mod tests {
                     params: serde_json::Value::Null,
                 },
                 outputs: vec![crate::output::OutputKind::LlHls],
+                dvr: DvrConfig::default(),
             }],
             bind: "127.0.0.1:0".into(),
             ..crate::config::Config::default()
@@ -2418,6 +2420,7 @@ mod tests {
                     type_tag: "webrtc".into(),
                     params: serde_json::Value::Null,
                 }],
+                dvr: DvrConfig::default(),
             }],
             bind: "127.0.0.1:0".into(),
             ..crate::config::Config::default()
@@ -2445,6 +2448,7 @@ mod tests {
                     auth: None,
                 },
                 outputs: vec![crate::output::OutputKind::LlHls],
+                dvr: DvrConfig::default(),
             }],
             bind: "127.0.0.1:0".into(),
             output_auth: Some(crate::config::OutputAuthSpec::Custom {
@@ -2555,6 +2559,7 @@ mod tests {
                     multicast_group: None,
                 },
                 outputs: vec![crate::output::OutputKind::LlHls],
+                dvr: DvrConfig::default(),
             }],
             bind: "127.0.0.1:0".into(),
             ..crate::config::Config::default()
@@ -2794,6 +2799,7 @@ mod tests {
                 name: "cam".into(),
                 input: spec.clone(),
                 outputs: vec![crate::output::OutputKind::LlHls],
+                dvr: DvrConfig::default(),
             };
             let store = Arc::new(RouteHandle::new(
                 config.target_duration_secs,

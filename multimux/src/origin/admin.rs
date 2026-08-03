@@ -881,6 +881,7 @@ pub(crate) async fn serve_with_admin(
 mod tests {
     use super::*;
     use crate::config::InputSpec;
+    use crate::dvr::DvrConfig;
 
     fn ctx_for_tests() -> RegistryContext {
         RegistryContext {
@@ -899,6 +900,7 @@ mod tests {
                 auth: None,
             },
             outputs: vec![OutputKind::LlHls],
+            dvr: DvrConfig::default(),
         }
     }
 
@@ -957,6 +959,7 @@ mod tests {
                 auth: None,
             },
             outputs: Vec::new(),
+            dvr: DvrConfig::default(),
         };
         let err = registry
             .add_route(bad)

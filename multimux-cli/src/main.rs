@@ -138,6 +138,7 @@ fn build_config(cli: Cli) -> Result<Config> {
                 auth: None,
             },
             outputs,
+            dvr: Default::default(),
         }],
         ..Config::default()
     };

@@ -20,6 +20,22 @@
   (`/Manifest`) and fragment responses at the Smooth URL shape
   (`QualityLevels({bitrate})/Fragments({type}={start time})`), sharing the
   same fMP4 segment bytes every other output reads from the `Trunk`.
+- **DVR durable segment archive** (issue #746): a per-route `dvr` config block
+  with `enabled`, `archive_root`, `retention_periods`/`retention_bytes`,
+  `period_duration_secs` (default 3 hours), and `overrun`
+  (`"gap"`/`"stall"`/`"terminate"`). Finished segments are appended to a
+  **period container file** (`<archive_root>/<route>/pN.<ext>`) — one file
+  per period epoch, not one per segment. For fMP4, the init segment is
+  written at the head of the file and media fragments follow; the resulting
+  file is a valid CMAF track (init + concatenated fragments). For MPEG‑TS,
+  segments are natively concatenable 188‑byte packets. A byte-range index
+  sidecar (`pN.idx`) maps `(seq, pts, offset, len)` for O(1) lookup (issue
+  #900) and is rebuildable by rescanning the period file. A new period is
+  rolled on duration expiry or on fMP4 init change (mid-stream track
+  addition — issue #781). Retention operates on whole periods, quantised
+  to the configured duration. Recording is a `SegmentEgress` implementation
+  draining its own pinning `SegmentCursor` — it never holds a lock the
+  live-serving path needs and never perturbs live output.
 
 ## [0.6.0] - 2026-08-02
 

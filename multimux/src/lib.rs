@@ -26,6 +26,7 @@
 //! plugin registry) and [`origin::serve_with_registry`].
 
 pub mod config;
+pub mod dvr;
 pub mod error;
 mod http;
 pub mod origin;
