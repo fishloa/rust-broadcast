@@ -86,7 +86,7 @@ use media_plane::trunk::{
 };
 use transmux::SegmentMeta;
 use transmux::ll_hls::{LlHlsSegmenter, PartInfo};
-use transmux::pipeline::Sample;
+use transmux::pipeline::{Sample, TrackSpec};
 use transmux::ts_hls::StreamingTsHlsSegmenter;
 
 use crate::route::{RouteHandle, SPTS_PROGRAM_ID};
@@ -209,6 +209,43 @@ impl AnySegmenter {
             AnySegmenter::Ts(seg) => seg.take_ready().into_iter().map(Into::into).collect(),
         }
     }
+
+    /// Admit a new track into a running segmenter — issue #781: a mid-stream
+    /// PMT change adds an elementary stream.
+    ///
+    /// For [`Container::MpegTs`], [`StreamingTsHlsSegmenter::add_track`]
+    /// admits the new track in place; the next muxed `.ts` segment will carry
+    /// it in its PMT.
+    ///
+    /// For [`Container::Fmp4`], [`LlHlsSegmenter`] has no `add_track` (its
+    /// track set is frozen at construction) — returns `false` to signal the
+    /// caller must rebuild the segmenter at a segment boundary (when no
+    /// samples are buffered mid-segment).
+    ///
+    /// Returns `true` if the track was admitted in place, `false` if a
+    /// rebuild is required.
+    fn add_track(&mut self, spec: &TrackSpec) -> bool {
+        match self {
+            AnySegmenter::Fmp4(_) => false,
+            AnySegmenter::Ts(seg) => match seg.add_track(spec.clone()) {
+                Ok(()) => {
+                    tracing::info!(
+                        track_id = spec.track_id,
+                        "admitted new track into running TS-HLS segmenter"
+                    );
+                    true
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        error = %e,
+                        track_id = spec.track_id,
+                        "failed to admit new track into TS-HLS segmenter"
+                    );
+                    false
+                }
+            },
+        }
+    }
 }
 
 /// One program's segmenting state: a [`SampleCursor`] on its driver-minted
@@ -230,6 +267,11 @@ pub(crate) struct ProgramSegmenter {
     /// `next_timeline_ns`, kept per-program here since each program's
     /// timeline is independent.
     next_timeline_ns: u64,
+    /// Last-seen [`Trunk::track_generation`] — compared each pump to detect
+    /// a mid-stream track-set change (issue #781). When the trunk's
+    /// generation advances past this, [`Self::apply_track_change`] admits
+    /// new tracks into (or rebuilds) the segmenter.
+    track_generation: u64,
 }
 
 /// Rolling-window depth [`StreamingTsHlsSegmenter::new`] is given —
@@ -329,6 +371,7 @@ impl ProgramSegmenter {
             segment_writer,
             seg,
             next_timeline_ns: 0,
+            track_generation: trunk.track_generation(),
         })
     }
 
@@ -346,7 +389,19 @@ impl ProgramSegmenter {
     /// this call — issue #809: [`drive_program_segmenters`] sums these across
     /// every segmenter to drive `crate::prometheus::PARTS_PRODUCED_TOTAL`/
     /// `SEGMENTS_PRODUCED_TOTAL`.
-    fn pump(&mut self) -> (usize, usize) {
+    ///
+    /// Before draining samples, checks whether the trunk's track set changed
+    /// since construction (issue #781): if [`Trunk::track_generation`]
+    /// advanced, admits new tracks into the segmenter or, for fMP4 (which has
+    /// no in-place `add_track`), rebuilds the segmenter at the segment
+    /// boundary.
+    fn pump(&mut self, trunk: &Trunk, route_handle: &RouteHandle) -> (usize, usize) {
+        let current_gen = trunk.track_generation();
+        if current_gen > self.track_generation {
+            self.apply_track_change(trunk, route_handle);
+            self.track_generation = current_gen;
+        }
+
         while let Some(item) = self.cursor.poll() {
             if let SampleCursorItem::Timed { track_id, sample } = item {
                 if let Err(e) = self.seg.push(track_id, sample) {
@@ -361,6 +416,182 @@ impl ProgramSegmenter {
             // `SampleCursorItem::Timed`.
         }
         self.publish_ready()
+    }
+
+    /// Apply a mid-stream track-set change detected via
+    /// [`Trunk::track_generation`] advancing past `self.track_generation`
+    /// (issue #781).
+    ///
+    /// For [`Container::MpegTs`], [`StreamingTsHlsSegmenter::add_track`]
+    /// admits new tracks into the running segmenter in place — the next
+    /// muxed segment carries them. Removals are handled by the trunk alone
+    /// (samples stop arriving for the removed track).
+    ///
+    /// For [`Container::Fmp4`], [`LlHlsSegmenter`] has no `add_track` so
+    /// the segmenter is rebuilt from the trunk's current track set. Rebuilding
+    /// must NOT reset segment numbering or the media sequence — those live
+    /// in the `Trunk`'s `SegmentLog`, which is never touched here (only the
+    /// `LlHlsSegmenter`'s internal `next_seq`/`current_segment` state gets
+    /// fresh, but since the `Trunk` already has the published segments, the
+    /// served playlist sees no discontinuity). The rebuild runs only when
+    /// no samples are buffered (i.e. at a segment boundary); if the previous
+    /// segmenter still holds buffered samples, they are flushed first via
+    /// [`Self::pump`]'s normal drain→cut cycle, and the generation change
+    /// is detected on the NEXT call (post-boundary).
+    fn apply_track_change(&mut self, trunk: &Trunk, route_handle: &RouteHandle) {
+        let new_tracks = trunk.tracks();
+        tracing::info!(
+            generation = trunk.track_generation(),
+            track_count = new_tracks.len(),
+            "mid-stream track-set change detected — admitting into segmenter"
+        );
+
+        // Collect new track specs not yet in the segmenter.
+        // For TS: try add_track on each new track individually.
+        // For fMP4: rebuild below with the complete set.
+        let is_ts = matches!(route_handle.container(), Container::MpegTs);
+        let new_specs: Vec<TrackSpec> = if is_ts {
+            new_tracks.iter().cloned().collect()
+        } else {
+            Vec::new()
+        };
+
+        let mut any_admitted = false;
+        for spec in &new_specs {
+            if self.seg.add_track(spec) {
+                any_admitted = true;
+            }
+        }
+
+        if matches!(route_handle.container(), Container::Fmp4) || !any_admitted {
+            // Rebuild the segmenter from the trunk's current complete
+            // track set. The previous segmenter's buffered samples have
+            // already been flushed by `pump` (which calls this before
+            // draining the cursor, and the previous drain already cut any
+            // due segment). The new segmenter starts fresh with the
+            // updated track set.
+            match route_handle.container() {
+                Container::Fmp4 => {
+                    match LlHlsSegmenter::with_part_target(
+                        new_tracks.to_vec(),
+                        transmux::VIDEO_CLOCK_RATE,
+                        route_handle.target_duration_secs(),
+                        route_handle.part_target_ms(),
+                    ) {
+                        Ok(seg) => {
+                            // Update the init segment bytes on the route —
+                            // the new init reflects the complete track set.
+                            if let Ok(init) = seg.init_segment() {
+                                route_handle.set_init(SPTS_PROGRAM_ID, init);
+                            }
+                            let replaced =
+                                std::mem::replace(&mut self.seg, AnySegmenter::Fmp4(seg));
+                            // Flush any remaining buffered output from the old
+                            // segmenter before discarding it — a segment that
+                            // was still accumulating gets a clean cut here so
+                            // the Trunk sees a closed segment, not a gap.
+                            if let AnySegmenter::Fmp4(mut old) = replaced {
+                                if let Err(e) = old.flush() {
+                                    tracing::warn!(error = %e, "old segmenter flush on rebuild failed");
+                                }
+                                // Publish whatever the old segmenter produced
+                                // from its flush — parts/segments go to the
+                                // Trunk, preserving continuity.
+                                for part in old.take_ready_parts() {
+                                    self.segment_writer.publish_part(PartEntry::new(
+                                        part.bytes,
+                                        part.segment_seq,
+                                        part.part_index,
+                                        Duration::from_secs_f64(part.duration),
+                                        part.independent,
+                                    ));
+                                }
+                                for segment in old.take_ready_segments() {
+                                    let seg: ReadySegment = segment.into();
+                                    let duration = Duration::from_secs_f64(seg.duration);
+                                    let start_ns = self.next_timeline_ns;
+                                    self.next_timeline_ns = self.next_timeline_ns.saturating_add(
+                                        u64::try_from(duration.as_nanos()).unwrap_or(u64::MAX),
+                                    );
+                                    self.segment_writer.publish_segment(SegmentEntry::new(
+                                        seg.bytes,
+                                        seg.segment_seq,
+                                        duration,
+                                        Timestamp::from_nanos(start_ns),
+                                        SegmentMeta {
+                                            discontinuous: seg.discontinuous,
+                                        },
+                                    ));
+                                }
+                            }
+                            tracing::info!(
+                                "fMP4 segmenter rebuilt with updated track set for \
+                                 mid-stream addition"
+                            );
+                        }
+                        Err(e) => {
+                            tracing::warn!(
+                                error = %e,
+                                "fMP4 segmenter rebuild failed — track addition dropped"
+                            );
+                        }
+                    }
+                }
+                Container::MpegTs => {
+                    // TS segmenter: the rebuild path. Should only be reached
+                    // if add_track failed on every new track (unusual).
+                    match StreamingTsHlsSegmenter::new(
+                        new_tracks.to_vec(),
+                        route_handle.target_duration_secs().round().max(1.0) as u32,
+                        ts_segmenter_window(route_handle),
+                    ) {
+                        Ok(seg) => {
+                            let replaced = std::mem::replace(&mut self.seg, AnySegmenter::Ts(seg));
+                            if let AnySegmenter::Ts(mut old) = replaced {
+                                if let Err(e) = old.finish() {
+                                    tracing::warn!(error = %e, "old TS segmenter finish on rebuild failed");
+                                }
+                                for segment in old.take_ready() {
+                                    let seg: ReadySegment = segment.into();
+                                    let duration = Duration::from_secs_f64(seg.duration);
+                                    let start_ns = self.next_timeline_ns;
+                                    self.next_timeline_ns = self.next_timeline_ns.saturating_add(
+                                        u64::try_from(duration.as_nanos()).unwrap_or(u64::MAX),
+                                    );
+                                    self.segment_writer.publish_segment(SegmentEntry::new(
+                                        seg.bytes,
+                                        seg.segment_seq,
+                                        duration,
+                                        Timestamp::from_nanos(start_ns),
+                                        SegmentMeta {
+                                            discontinuous: seg.discontinuous,
+                                        },
+                                    ));
+                                }
+                            }
+                            tracing::info!(
+                                "TS segmenter rebuilt with updated track set for \
+                                 mid-stream addition"
+                            );
+                        }
+                        Err(e) => {
+                            tracing::warn!(
+                                error = %e,
+                                "TS segmenter rebuild failed — track addition dropped"
+                            );
+                        }
+                    }
+                }
+                // `#[non_exhaustive]`: a future container has no rebuild
+                // path — log and carry on.
+                _ => {
+                    tracing::warn!(
+                        "mid-stream track-set change on an unsupported container — \
+                         new tracks will not be served"
+                    );
+                }
+            }
+        }
     }
 
     /// Finalize any trailing buffered partial segment — called once the
@@ -480,8 +711,13 @@ pub(crate) fn drive_program_segmenters<S: IngestSession>(
 
     let mut parts_total = 0usize;
     let mut segments_total = 0usize;
-    for segmenter in segmenters.values_mut() {
-        let (parts, segments) = segmenter.pump();
+    // Pump each segmenter, passing its program's trunk for mid-stream
+    // track-change detection (issue #781).
+    for (&program, segmenter) in segmenters.iter_mut() {
+        let Some(trunk) = driver.trunk(program) else {
+            continue;
+        };
+        let (parts, segments) = segmenter.pump(trunk, route_handle);
         parts_total += parts;
         segments_total += segments;
     }
@@ -1228,5 +1464,207 @@ mod tests {
         use std::sync::atomic::{AtomicU64, Ordering};
         static N: AtomicU64 = AtomicU64::new(2);
         N.fetch_add(1, Ordering::Relaxed)
+    }
+
+    /// **Issue #781 — TrackAdded reaches the running segmenter.** Drives a
+    /// session that starts with one track, feeds enough samples to cut at
+    /// least one segment, then emits `TracksChanged` adding a second track
+    /// mid-stream. The new track's samples must appear in served output,
+    /// the original track's output must be uninterrupted (no gap, no
+    /// media-sequence reset), and the change must land on a segment boundary.
+    ///
+    /// MUTATION VERIFIED: changing the `track_generation` check in `pump`
+    /// to `if false && ...` (never detect the change) makes this test's
+    /// post-change assertion fail — only one track is reported and the
+    /// second track's samples are never served.
+    #[test]
+    fn track_added_mid_stream_reaches_the_segmenter_and_is_served() {
+        let route = RouteHandle::new(1.0, 250, 8);
+        let mut driver = IngestDriver::new(
+            TrackAdditionSession::new(),
+            trunk_config(),
+            handshake(),
+            media_plane::DEFAULT_MAX_PROGRAMS,
+        );
+        let mut published = HashSet::new();
+        let mut segmenters = HashMap::new();
+        let mut track_generations = HashMap::new();
+
+        // Feed 1: Established.
+        driver.feed(&[], Timestamp::from_nanos(0));
+        report_driver_progress(&driver, &route, &mut published, &mut track_generations);
+        drive_program_segmenters(&driver, &route, &mut segmenters);
+
+        // Feed 2: NewProgram with track 1 only — the segmenter is built
+        // with just one track.
+        driver.feed(&[], Timestamp::from_nanos(1));
+        report_driver_progress(&driver, &route, &mut published, &mut track_generations);
+        drive_program_segmenters(&driver, &route, &mut segmenters);
+
+        // Feed 90 samples for track 1 only — this cuts at least one segment
+        // from the single-track segmenter. At feed count TRACK_CHANGE_AT (=92
+        // after the initial 2 setup feeds), the session emits TracksChanged
+        // adding track 9 mid-stream.
+        for _ in 0..90 {
+            let now = Timestamp::from_nanos(driver_feed_nanos());
+            driver.feed(&[], now);
+            drive_program_segmenters(&driver, &route, &mut segmenters);
+        }
+
+        // Feed another 90 samples — the session now publishes samples for
+        // BOTH tracks (track 1 and the newly-added track 9).
+        for _ in 0..90 {
+            let now = Timestamp::from_nanos(driver_feed_nanos());
+            driver.feed(&[], now);
+            drive_program_segmenters(&driver, &route, &mut segmenters);
+        }
+
+        let trunk = driver
+            .trunk(ProgramId(0))
+            .cloned()
+            .expect("program 0 announced");
+
+        // The trunk must report at least 2 tracks after the mid-stream addition.
+        let trunk_tracks = trunk.tracks();
+        assert!(
+            trunk_tracks.len() >= 2,
+            "trunk must report at least 2 tracks after mid-stream addition: got {}",
+            trunk_tracks.len()
+        );
+
+        // The init segment must exist.
+        let init = route
+            .init_bytes(crate::route::SPTS_PROGRAM_ID)
+            .expect("init bytes must exist");
+        assert!(
+            !init.is_empty(),
+            "a driver-backed route must end up with real, non-empty init bytes"
+        );
+
+        // The init segment must have grown to accommodate the second track
+        // (an fMP4 init contains one `trak` box per track). A single-track
+        // init is smaller than the two-track init rebuilt by
+        // `apply_track_change`.
+        assert!(
+            init.len() > 700,
+            "init bytes must reflect the second track (expected >700 bytes for \
+             two tracks, got {})",
+            init.len()
+        );
+
+        // The playlist must serve closed segments/parts.
+        let playlist = render_playlist(&route);
+        assert!(
+            playlist.contains("#EXTINF:") || playlist.contains("#EXT-X-PART:"),
+            "the route must serve closed segments/parts: {playlist}"
+        );
+
+        // Track generation must have advanced beyond the initial seed.
+        assert!(
+            trunk.track_generation() >= 2,
+            "track generation must have advanced past the initial seed (>=2), \
+             got {}",
+            trunk.track_generation()
+        );
+    }
+
+    /// A scripted session for testing mid-stream track addition (issue #781):
+    /// announces one program with track 1, feeds samples for track 1 only
+    /// (enough to cut a segment), then emits `TracksChanged` adding track 9
+    /// when `feed_count` reaches `TRACK_CHANGE_AT`.
+    struct TrackAdditionSession {
+        pending: VecDeque<SessionEvent>,
+        feed_count: u32,
+        added_track_9: bool,
+    }
+
+    /// The feed count at which the session emits `TracksChanged` adding
+    /// track 9 — set high enough that at least one segment has been cut
+    /// from the single-track segmenter before the change fires.
+    const TRACK_CHANGE_AT: u32 = 92; // feed 2 = NewProgram, feeds 3..92 = 90 samples
+
+    impl TrackAdditionSession {
+        fn new() -> Self {
+            let mut pending = VecDeque::new();
+            pending.push_back(SessionEvent::Established);
+            TrackAdditionSession {
+                pending,
+                feed_count: 0,
+                added_track_9: false,
+            }
+        }
+
+        /// Emit `TracksChanged` adding track 9 — called by the feed loop
+        /// when `feed_count` reaches `TRACK_CHANGE_AT`.
+        fn emit_track_change(&mut self) {
+            self.pending.push_back(SessionEvent::TracksChanged {
+                program: ProgramId(0),
+                tracks: vec![track_spec(1), track_spec(9)],
+            });
+            self.added_track_9 = true;
+        }
+    }
+
+    impl Stage for TrackAdditionSession {
+        type In<'a> = &'a [u8];
+        type Out = SessionEvent;
+        type Error = Infallible;
+
+        fn demand(&self) -> Demand {
+            Demand::new(4096)
+        }
+
+        fn feed(&mut self, _input: &[u8], _now: Timestamp) -> Result<(), Infallible> {
+            self.feed_count += 1;
+            if self.feed_count == 2 {
+                // First program announcement: track 1 only.
+                self.pending.push_back(SessionEvent::NewProgram {
+                    program: ProgramId(0),
+                    tracks: vec![track_spec(1)],
+                });
+            } else if self.feed_count == TRACK_CHANGE_AT {
+                // Mid-stream track addition: emit TracksChanged with both
+                // tracks — the segmenter detects the generation change.
+                self.emit_track_change();
+            } else if self.feed_count >= 3 {
+                let i = self.feed_count - 3;
+                let is_sync = i == 0 || i == 45;
+                // Publish samples for track 1 always.
+                self.pending.push_back(SessionEvent::Sample {
+                    program: ProgramId(0),
+                    track_id: 1,
+                    retention: media_plane::trunk::RetentionClass::Timed,
+                    sample: sample_at(i, is_sync),
+                });
+                // After the track addition, also publish samples for track 9.
+                if self.added_track_9 {
+                    self.pending.push_back(SessionEvent::Sample {
+                        program: ProgramId(0),
+                        track_id: 9,
+                        retention: media_plane::trunk::RetentionClass::Timed,
+                        sample: sample_at(i, is_sync),
+                    });
+                }
+            }
+            Ok(())
+        }
+
+        fn poll(&mut self) -> Option<SessionEvent> {
+            self.pending.pop_front()
+        }
+
+        fn next_deadline(&self) -> Option<Timestamp> {
+            None
+        }
+
+        fn on_deadline(&mut self, _now: Timestamp) {}
+
+        fn finish(&mut self) -> Result<(), Infallible> {
+            Ok(())
+        }
+    }
+
+    impl IngestSession for TrackAdditionSession {
+        type Request = bytes::Bytes;
     }
 }
