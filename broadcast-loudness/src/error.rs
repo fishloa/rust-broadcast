@@ -40,6 +40,22 @@ pub enum Error {
         got: u32,
     },
 
+    /// A non-finite sample (NaN or ±Infinity) was passed to the meter.
+    ///
+    /// Non-finite values are rejected because they propagate through
+    /// the IIR filter state and permanently poison all subsequent
+    /// readings. The caller should either skip, replace, or clamp
+    /// such samples before feeding them.
+    #[error("non-finite sample at index {index} (channel {channel}): {value}")]
+    NonFiniteSample {
+        /// The index of the non-finite sample in the push call.
+        index: usize,
+        /// The channel index (zero-based) of the non-finite sample.
+        channel: usize,
+        /// The non-finite value received.
+        value: f64,
+    },
+
     /// A feature is not yet implemented.
     #[error("{what} is not yet implemented")]
     NotImplemented {

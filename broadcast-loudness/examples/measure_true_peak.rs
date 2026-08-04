@@ -19,8 +19,8 @@ fn main() {
     for i in 0..n {
         let t = i as f64 / sample_rate;
         let val = amplitude * (2.0 * std::f64::consts::PI * freq * t).sin();
-        left_meter.push_f64(val);
-        right_meter.push_f64(val);
+        left_meter.push_f64(val).unwrap();
+        right_meter.push_f64(val).unwrap();
     }
 
     let left_tp = left_meter.finish();

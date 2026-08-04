@@ -112,26 +112,57 @@ impl TruePeakMeter {
     }
 
     /// Push one f32 sample.
-    pub fn push_f32(&mut self, sample: f32) {
-        self.push_f64(f64::from(sample));
+    pub fn push_f32(&mut self, sample: f32) -> Result<(), crate::Error> {
+        self.push_f64(f64::from(sample))
     }
 
     /// Push one f64 sample.
-    pub fn push_f64(&mut self, sample: f64) {
+    ///
+    /// Returns an error if `sample` is non‑finite (NaN or ±Infinity),
+    /// because it would propagate through the oversampling FIR filter
+    /// and permanently poison the peak measurement.
+    pub fn push_f64(&mut self, sample: f64) -> Result<(), crate::Error> {
+        if !sample.is_finite() {
+            return Err(crate::Error::NonFiniteSample {
+                index: self.buffer.len(),
+                channel: 0,
+                value: sample,
+            });
+        }
         self.buffer.push(sample);
+        Ok(())
     }
 
     /// Push a slice of f32 samples.
-    pub fn push_f32_slice(&mut self, samples: &[f32]) {
+    pub fn push_f32_slice(&mut self, samples: &[f32]) -> Result<(), crate::Error> {
         self.buffer.reserve(samples.len());
-        for &s in samples {
-            self.buffer.push(f64::from(s));
+        for (i, &s) in samples.iter().enumerate() {
+            let v = f64::from(s);
+            if !v.is_finite() {
+                return Err(crate::Error::NonFiniteSample {
+                    index: self.buffer.len() + i,
+                    channel: 0,
+                    value: v,
+                });
+            }
+            self.buffer.push(v);
         }
+        Ok(())
     }
 
     /// Push a slice of f64 samples.
-    pub fn push_f64_slice(&mut self, samples: &[f64]) {
+    pub fn push_f64_slice(&mut self, samples: &[f64]) -> Result<(), crate::Error> {
+        for (i, &s) in samples.iter().enumerate() {
+            if !s.is_finite() {
+                return Err(crate::Error::NonFiniteSample {
+                    index: self.buffer.len() + i,
+                    channel: 0,
+                    value: s,
+                });
+            }
+        }
         self.buffer.extend_from_slice(samples);
+        Ok(())
     }
 
     /// Finish measurement and compute the true‑peak level.
@@ -221,7 +252,7 @@ mod tests {
     #[test]
     fn zero_input_returns_neg_infinity() {
         let mut m = TruePeakMeter::new();
-        m.push_f64(0.0);
+        m.push_f64(0.0).unwrap();
         assert!(m.finish().is_infinite() && m.finish() < 0.0);
     }
 
@@ -229,7 +260,7 @@ mod tests {
     fn full_scale_dc() {
         let mut m = TruePeakMeter::new();
         for _ in 0..192 {
-            m.push_f64(1.0);
+            m.push_f64(1.0).unwrap();
         }
         let level = m.finish();
         // DC 1.0 → approximately 0 dBTP (FIR is near unity at DC)
@@ -241,7 +272,7 @@ mod tests {
         // 0.5 → 20*log10(0.5) ≈ —6.02 dBTP
         let mut m = TruePeakMeter::new();
         for _ in 0..192 {
-            m.push_f64(0.5);
+            m.push_f64(0.5).unwrap();
         }
         let level = m.finish();
         assert!((level - (-6.02)).abs() < 1.1, "got {level}");
@@ -256,10 +287,47 @@ mod tests {
         for i in 0..n {
             let t = i as f64 / fs;
             let val = 0.5 * (2.0 * core::f64::consts::PI * freq * t).sin();
-            m.push_f64(val);
+            m.push_f64(val).unwrap();
         }
         let level = m.finish();
         // 0.5 amplitude → ~—6.02 dBTP
         assert!((level - (-6.02)).abs() < 0.5, "got {level}");
+    }
+
+    #[test]
+    fn rejects_nan_f64() {
+        let mut m = TruePeakMeter::new();
+        let err = m.push_f64(f64::NAN).unwrap_err();
+        assert!(format!("{err}").contains("non-finite"));
+    }
+
+    #[test]
+    fn rejects_inf_f32() {
+        let mut m = TruePeakMeter::new();
+        let err = m.push_f32(f32::INFINITY).unwrap_err();
+        assert!(format!("{err}").contains("non-finite"));
+    }
+
+    #[test]
+    fn rejects_non_finite_in_slice() {
+        let mut m = TruePeakMeter::new();
+        let err = m
+            .push_f64_slice(&[0.5, f64::NEG_INFINITY, 0.5])
+            .unwrap_err();
+        let msg = format!("{err}");
+        assert!(msg.contains("non-finite"), "got: {msg}");
+    }
+
+    #[test]
+    fn meter_not_poisoned_after_nan_rejection() {
+        let mut m = TruePeakMeter::new();
+        m.push_f64(0.5).unwrap();
+        let _ = m.push_f64(f64::NAN);
+        for _ in 0..192 {
+            m.push_f64(0.5).unwrap();
+        }
+        let level = m.finish();
+        assert!(level.is_finite(), "meter was poisoned: got {level}");
+        assert!((level - (-6.02)).abs() < 1.1, "got {level}");
     }
 }

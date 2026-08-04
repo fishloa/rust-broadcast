@@ -191,11 +191,19 @@ impl LoudnessMeter {
         }
         let mut sum_sq = 0.0f64;
         for (i, &sample) in channels.iter().enumerate() {
+            let sample_f64 = f64::from(sample);
+            if !sample_f64.is_finite() {
+                return Err(crate::Error::NonFiniteSample {
+                    index: self.frame_count,
+                    channel: i,
+                    value: sample_f64,
+                });
+            }
             let weight = self.layout.weight(i);
             if weight == 0.0 {
                 continue;
             }
-            let filtered = self.filters[i].process(f64::from(sample));
+            let filtered = self.filters[i].process(sample_f64);
             sum_sq += weight * filtered * filtered;
         }
         self.weighted_power.push(sum_sq);
@@ -216,6 +224,13 @@ impl LoudnessMeter {
         }
         let mut sum_sq = 0.0f64;
         for (i, &sample) in channels.iter().enumerate() {
+            if !sample.is_finite() {
+                return Err(crate::Error::NonFiniteSample {
+                    index: self.frame_count,
+                    channel: i,
+                    value: sample,
+                });
+            }
             let weight = self.layout.weight(i);
             if weight == 0.0 {
                 continue;
@@ -245,16 +260,32 @@ impl LoudnessMeter {
                 got: right.len(),
             });
         }
-        for (&l, &r) in left.iter().zip(right.iter()) {
+        for (frame_idx, (&l, &r)) in left.iter().zip(right.iter()).enumerate() {
+            let l_f64 = f64::from(l);
+            let r_f64 = f64::from(r);
+            if !l_f64.is_finite() {
+                return Err(crate::Error::NonFiniteSample {
+                    index: self.frame_count + frame_idx,
+                    channel: 0,
+                    value: l_f64,
+                });
+            }
+            if !r_f64.is_finite() {
+                return Err(crate::Error::NonFiniteSample {
+                    index: self.frame_count + frame_idx,
+                    channel: 1,
+                    value: r_f64,
+                });
+            }
             let weight_l = self.layout.weight(0);
             let weight_r = self.layout.weight(1);
             let mut sum_sq = 0.0;
             if weight_l != 0.0 {
-                let f = self.filters[0].process(f64::from(l));
+                let f = self.filters[0].process(l_f64);
                 sum_sq += weight_l * f * f;
             }
             if weight_r != 0.0 {
-                let f = self.filters[1].process(f64::from(r));
+                let f = self.filters[1].process(r_f64);
                 sum_sq += weight_r * f * f;
             }
             self.weighted_power.push(sum_sq);
@@ -587,5 +618,64 @@ mod tests {
             msg.contains("48 kHz") || msg.contains("48000"),
             "expected error stating 48 kHz requirement, got: {msg}"
         );
+    }
+
+    #[test]
+    fn rejects_nan_in_planar_f32() {
+        let mut meter = LoudnessMeter::new(48_000, ChannelLayout::Stereo).unwrap();
+        let err = meter.push_f32(&[f32::NAN, 0.5]).unwrap_err();
+        let msg = format!("{err}");
+        assert!(msg.contains("non-finite"), "got: {msg}");
+    }
+
+    #[test]
+    fn rejects_inf_in_planar_f32() {
+        let mut meter = LoudnessMeter::new(48_000, ChannelLayout::Stereo).unwrap();
+        let err = meter.push_f32(&[0.5, f32::INFINITY]).unwrap_err();
+        let msg = format!("{err}");
+        assert!(msg.contains("non-finite"), "got: {msg}");
+    }
+
+    #[test]
+    fn rejects_non_finite_in_planar_f64() {
+        let mut meter = LoudnessMeter::new(48_000, ChannelLayout::Stereo).unwrap();
+        let err = meter.push_f64(&[f64::NEG_INFINITY, 0.5]).unwrap_err();
+        let msg = format!("{err}");
+        assert!(msg.contains("non-finite"), "got: {msg}");
+    }
+
+    #[test]
+    fn rejects_non_finite_in_interleaved_f32() {
+        let mut meter = LoudnessMeter::new(48_000, ChannelLayout::Stereo).unwrap();
+        let err = meter.push_interleaved_f32(&[0.5], &[f32::NAN]).unwrap_err();
+        let msg = format!("{err}");
+        assert!(msg.contains("non-finite"), "got: {msg}");
+    }
+
+    #[test]
+    fn meter_not_poisoned_after_non_finite_rejection() {
+        let mut meter = LoudnessMeter::new(48_000, ChannelLayout::Stereo).unwrap();
+
+        meter.push_f32(&[0.5, 0.5]).unwrap();
+
+        let _ = meter.push_f32(&[f32::NAN, 0.5]);
+
+        for _ in 0..192_000 {
+            meter.push_f32(&[0.1, 0.1]).unwrap();
+        }
+        meter.finish();
+        let lufs = meter.integrated_lufs();
+        assert!(lufs.is_finite(), "meter was poisoned: got {lufs}");
+        assert!(lufs < -10.0, "unexpectedly loud: {lufs}");
+    }
+
+    #[test]
+    fn non_finite_sample_error_carries_metadata() {
+        let mut meter = LoudnessMeter::new(48_000, ChannelLayout::Stereo).unwrap();
+        meter.push_f32(&[1.0, 1.0]).unwrap();
+        let err = meter.push_f32(&[f32::NEG_INFINITY, 0.5]).unwrap_err();
+        let msg = format!("{err}");
+        assert!(msg.contains("channel 0"), "got: {msg}");
+        assert!(msg.contains("index 1"), "got: {msg}");
     }
 }

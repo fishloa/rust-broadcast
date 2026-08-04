@@ -323,8 +323,8 @@ fn tp_sine(freq: f64, amplitude_ffs: f64, phase_deg: f64, duration_s: f64) -> Ve
 fn measure_tp_stereo(left: &[f64], right: &[f64]) -> f64 {
     let mut l = TruePeakMeter::new();
     let mut r = TruePeakMeter::new();
-    l.push_f64_slice(left);
-    r.push_f64_slice(right);
+    l.push_f64_slice(left).unwrap();
+    r.push_f64_slice(right).unwrap();
     let lp = l.finish();
     let rp = r.finish();
     lp.max(rp)
