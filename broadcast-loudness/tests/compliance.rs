@@ -165,9 +165,9 @@ fn case_6_surround_51_channel_weighting() {
             continue;
         } // LFE: silent
         let amp = 10.0f64.powf(dbfs / 20.0) as f32;
-        for i in 0..n {
+        for (i, sample) in channels[ch].iter_mut().enumerate() {
             let t = i as f64 / SAMPLE_RATE as f64;
-            channels[ch][i] = (amp as f64 * (2.0 * std::f64::consts::PI * 1000.0 * t).sin()) as f32;
+            *sample = (amp as f64 * (2.0 * std::f64::consts::PI * 1000.0 * t).sin()) as f32;
         }
     }
     let layout = ChannelLayout::Surround51;
