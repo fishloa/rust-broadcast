@@ -1371,139 +1371,43 @@ mod tests {
         );
 
         let archive_dir = tmp.join("france-tnt");
-        if !archive_dir.exists() {
-            // FINDING (not a test failure): the real DVB-T MPTS fixture has 5
-            // services with 41 PIDs. `TsIngestSession` → `ProgramTracker`
-            // currently lumps all tracks from the first `TracksResolved` event
-            // into a single `ProgramId(0)`. The resulting mixed track set
-            // (H.264 video, multiple audio tracks from different services)
-            // cannot form a valid segmenter because the track specs span
-            // incompatible service configurations. `TwoProgramSession`-based
-            // MPTS tests in `segment.rs` bypass this by emitting separate
-            // `NewProgram` events per service directly — the real-TS path
-            // needs the equivalent per-service `ProgramTracker` split, tracked
-            // for the #900 catch-up wave.
-            //
-            // The existing 7 synthetic tests cover the DVR pipeline
-            // exhaustively. This test documents the real-fixture gap
-            // explicitly rather than silently skipping or fabricating a pass.
-            eprintln!(
-                "  FINDING: programmes discovered ({:?}) but the \
-                 segmenter could not build a valid track set from the \
-                 multi-service TS. Tracked for #900 catch-up wave.",
-                program_ids
-            );
-            cleanup_temp(&tmp);
-            return;
-        }
 
-        let period_files: Vec<PathBuf> = {
-            let mut files: Vec<_> = std::fs::read_dir(&archive_dir)
-                .expect("read archive dir")
-                .filter_map(|e| e.ok())
-                .map(|e| e.path())
-                .filter(|p| {
-                    p.extension().is_some_and(|ext| ext == "m4s")
-                        && p.file_name()
-                            .and_then(|n| n.to_str())
-                            .is_some_and(|n| n.starts_with('p'))
-                })
-                .collect();
-            files.sort();
-            files
-        };
-
-        let total_periods = period_files.len();
-        eprintln!("  period files written: {total_periods}");
-
-        let mut total_segments_in_index = 0usize;
-        let mut total_tracks = 0usize;
-        let mut total_samples = 0usize;
-
-        for period_path in &period_files {
-            let data = std::fs::read(period_path).expect("read period file");
-            eprintln!(
-                "  {}: {} bytes",
-                period_path.file_name().unwrap().to_str().unwrap(),
-                data.len()
-            );
-
-            // Demux the period file.
-            use broadcast_common::Unpackage;
-            let mut demux = transmux::Fmp4Demux::new();
-            let media = demux
-                .unpackage(&data)
-                .expect("Fmp4Demux must succeed on period file — init at head + fragments");
-            assert!(
-                !media.tracks.is_empty(),
-                "demux must recover at least one track from {}",
-                period_path.display()
-            );
-            for track in &media.tracks {
-                assert!(
-                    !track.samples.is_empty(),
-                    "track {} must have at least one decodable sample",
-                    track.spec.track_id
-                );
-                eprintln!(
-                    "    track {} — {} samples",
-                    track.spec.track_id,
-                    track.samples.len()
-                );
-                total_tracks += 1;
-                total_samples += track.samples.len();
-            }
-
-            // Verify index offsets.
-            let stem = period_path.file_stem().unwrap().to_str().unwrap();
-            let idx_path = archive_dir.join(format!("{stem}.idx"));
-            if idx_path.exists() {
-                let idx_data = std::fs::read(&idx_path).expect("read index");
-                #[derive(serde::Deserialize)]
-                struct IdxEntry {
-                    byte_offset: u64,
-                    byte_len: u64,
-                }
-                let entries: Vec<IdxEntry> =
-                    serde_json::from_slice(&idx_data).expect("parse index");
-                total_segments_in_index += entries.len();
-                for entry in &entries {
-                    let start = entry.byte_offset as usize;
-                    let end = start + entry.byte_len as usize;
-                    assert!(
-                        end <= data.len(),
-                        "index entry [{start}..{end}) out of bounds (file len={})",
-                        data.len()
-                    );
-                    if entry.byte_len > 0 {
-                        let mut seg_demux = transmux::Fmp4Demux::new();
-                        let seg_media =
-                            seg_demux.unpackage(&data[start..end]).unwrap_or_else(|e| {
-                                panic!("demux of indexed segment [{start}..{end}) failed: {e}")
-                            });
-                        assert!(
-                            !seg_media.tracks.is_empty(),
-                            "each indexed segment must demux to at least one track"
-                        );
-                    }
-                }
-            }
-        }
-
-        assert!(total_periods > 0, "at least one period file must exist");
-        assert!(total_tracks > 0, "must recover at least one track");
-        assert!(
-            total_samples > 0,
-            "must recover at least one decodable sample"
-        );
-
-        eprintln!(
-            "  real-fixture result: packets={n_packets}, programmes={}, \
-             periods={total_periods}, indexed_segments={total_segments_in_index}, \
-             tracks={total_tracks}, samples={total_samples}",
+        // PINNED GAP — issue #906.
+        //
+        // This capture carries 5 services across 41 PIDs. `transmux`'s
+        // `DemuxEvent` does not carry `program_number`, so `ProgramTracker`
+        // collapses every track into one `ProgramId` (the simplification is
+        // deliberate and documented in `source/ts_program.rs`). The resulting
+        // track set spans incompatible service configurations, no segmenter is
+        // built, and nothing is recorded.
+        //
+        // The assertions below pin that broken state ON PURPOSE. An
+        // `if !archive_dir.exists() { return }` here would pass whether or not
+        // the bug were fixed — the can-never-fail shape this test exists to
+        // avoid.
+        //
+        // WHEN #906 LANDS, both assertions fail. That is intended: replace them
+        // with the real acceptance — 5 programmes, each segmenting
+        // independently, and a period file demuxed from disk.
+        assert_eq!(
             program_ids.len(),
+            1,
+            "#906 appears FIXED — expected the single collapsed programme, got {} ({:?}). \
+             Update this test to assert 5 programmes and real recorded output.",
+            program_ids.len(),
+            program_ids
         );
-
+        assert!(
+            !archive_dir.exists(),
+            "#906 appears FIXED — the real MPTS capture produced an archive at {}. \
+             Update this test to demux the period file from disk and assert playability.",
+            archive_dir.display()
+        );
+        eprintln!(
+            "  PINNED GAP #906: {} programme(s) from a 5-service mux, no archive \
+             produced (transmux IR carries no program_number)",
+            program_ids.len()
+        );
         cleanup_temp(&tmp);
     }
 }
