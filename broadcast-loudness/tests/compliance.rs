@@ -232,6 +232,70 @@ fn case_11_momentary_max_23() {
 }
 
 // =====================================================================
+// Tech 3341 Table 1 — File‑based meter compliance tests (cases 10, 12)
+// =====================================================================
+
+#[test]
+fn case_10_short_term_max_file_based() {
+    // 20 segments: i*0.15 s silence, 3 s @ −23 dBFS, 1 s silence, for i=0..19.
+    // Each segment measured individually: Max S = −23.0 ±0.1 LUFS.
+    for i in 0..20 {
+        let silence_before = (i as f64 * 0.15 * SAMPLE_RATE as f64) as usize;
+        let tone_samples = (3.0 * SAMPLE_RATE as f64) as usize;
+        let silence_after = (1.0 * SAMPLE_RATE as f64) as usize;
+        let total = silence_before + tone_samples + silence_after;
+
+        let amplitude = 10.0f64.powf(-23.0 / 20.0) as f32;
+        let mut left = vec![0.0f32; total];
+        let mut right = vec![0.0f32; total];
+        for j in 0..tone_samples {
+            let t = j as f64 / SAMPLE_RATE as f64;
+            let val = (amplitude as f64 * (2.0 * std::f64::consts::PI * 1000.0 * t).sin()) as f32;
+            left[silence_before + j] = val;
+            right[silence_before + j] = val;
+        }
+        let mut meter = LoudnessMeter::new(SAMPLE_RATE, ChannelLayout::Stereo).unwrap();
+        meter.push_interleaved_f32(&left, &right).unwrap();
+        meter.finish();
+        assert!(
+            (meter.max_short_term_lufs() - (-23.0)).abs() <= TOLERANCE_LU,
+            "case 10 segment {i}: max S={}, expected -23.0",
+            meter.max_short_term_lufs()
+        );
+    }
+}
+
+#[test]
+fn case_12_momentary_max_file_based() {
+    // 20 segments: i*20 ms silence, 400 ms @ −23 dBFS, 1 s silence, for i=0..19.
+    // Each segment: Max M = −23.0 ±0.1 LUFS.
+    for i in 0..20 {
+        let silence_before = (i as f64 * 0.020 * SAMPLE_RATE as f64) as usize;
+        let tone_samples = (0.400 * SAMPLE_RATE as f64) as usize;
+        let silence_after = (1.0 * SAMPLE_RATE as f64) as usize;
+        let total = silence_before + tone_samples + silence_after;
+
+        let amplitude = 10.0f64.powf(-23.0 / 20.0) as f32;
+        let mut left = vec![0.0f32; total];
+        let mut right = vec![0.0f32; total];
+        for j in 0..tone_samples {
+            let t = j as f64 / SAMPLE_RATE as f64;
+            let val = (amplitude as f64 * (2.0 * std::f64::consts::PI * 1000.0 * t).sin()) as f32;
+            left[silence_before + j] = val;
+            right[silence_before + j] = val;
+        }
+        let mut meter = LoudnessMeter::new(SAMPLE_RATE, ChannelLayout::Stereo).unwrap();
+        meter.push_interleaved_f32(&left, &right).unwrap();
+        meter.finish();
+        assert!(
+            (meter.max_momentary_lufs() - (-23.0)).abs() <= TOLERANCE_LU,
+            "case 12 segment {i}: max M={}, expected -23.0",
+            meter.max_momentary_lufs()
+        );
+    }
+}
+
+// =====================================================================
 // Tech 3341 Table 1 — True-peak compliance tests (cases 15–19)
 // =====================================================================
 
@@ -324,8 +388,39 @@ fn case_19_tp_fs4_amplitude_1_41_phase_45() {
 }
 
 // =====================================================================
-// Tech 3342 Table 1 — LRA compliance tests (cases 1–3)
+// Tech 3341 Table 1 — True-peak compliance tests (cases 20–23)
 // =====================================================================
+//
+// Cases 20–23 require synthesizing a signal at 4×fs, applying a
+// specific lowpass anti-aliasing filter, then downsampling with
+// 4 different offsets. The exact filter is not specified in the
+// standard — only the resulting reference WAV files (available from
+// the EBU Technical website) produce the correct expected values.
+//
+// Without the exact filter coefficients, we cannot generate test
+// signals that match. These cases are therefore skipped until the
+// reference WAV files can be included as test fixtures.
+//
+// Tests are included as `#[ignore]` to document the gap; they
+// would need the reference `.wav` files from tech.ebu.ch/loudness.
+
+#[test]
+#[ignore = "requires EBU reference WAV files (cases 20-23 from tech.ebu.ch/loudness)"]
+fn case_20_tp_pulse_offset_0() {
+    // Would load reference WAV and verify TP = 0.0 +0.2/-0.4 dBTP
+}
+
+#[test]
+#[ignore = "requires EBU reference WAV files"]
+fn case_21_tp_pulse_offset_1() {}
+
+#[test]
+#[ignore = "requires EBU reference WAV files"]
+fn case_22_tp_pulse_offset_2() {}
+
+#[test]
+#[ignore = "requires EBU reference WAV files"]
+fn case_23_tp_pulse_offset_3() {}
 
 fn lra_two_tones(level1: f64, level2: f64, duration_each: f64) -> f64 {
     let (t1_l, t1_r) = stereo_sine(level1, 1000.0, duration_each);
@@ -372,3 +467,27 @@ fn lra_case_3_two_tones_20_db_apart() {
         "LRA case 3: LRA={lra}, expected 20 ±1 LU"
     );
 }
+
+#[test]
+fn lra_case_4_five_tones_music_box() {
+    // 5 tones: −50, −35, −20, −35, −50 dBFS, 20 s each
+    // LRA = 15 ±1 LU
+    let levels = [-50.0, -35.0, -20.0, -35.0, -50.0];
+    let mut left = Vec::new();
+    let mut right = Vec::new();
+    for &level in &levels {
+        let (l, r) = stereo_sine(level, 1000.0, 20.0);
+        left.extend_from_slice(&l);
+        right.extend_from_slice(&r);
+    }
+    let meter = measure_stereo(&left, &right);
+    let lra = meter.loudness_range();
+    assert!(
+        (lra - 15.0).abs() <= TOLERANCE_LRA,
+        "LRA case 4: LRA={lra}, expected 15 ±1 LU"
+    );
+}
+
+// Cases 5–6 require authentic programme files (NLR/WLR) —
+// not implementable without the EBU reference WAV files.
+// SKIP: no fixture available.

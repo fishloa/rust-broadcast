@@ -15,7 +15,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `TruePeakMeter`: 4× polyphase FIR oversampling per BS.1770-5 Annex 2.
 - Loudness Range (LRA) per EBU Tech 3342 (percentile-based).
 - `ChannelLayout` enum with BS.1770-5 Table 3 G_i channel weights.
-- EBU Tech 3341 compliance test vectors (cases 1–6, 9, 11, 15–19).
-- EBU Tech 3342 LRA compliance test vectors (cases 1–3).
+- EBU Tech 3341 compliance test vectors (cases 1–6, 9–12, 15–19).
+- EBU Tech 3342 LRA compliance test vectors (cases 1–4).
+- Cases 7–8 (authentic programme) and 20–23 (complex true-peak) skipped —
+  require EBU reference WAV files not included in this repo.
 - `no_std` + `alloc` support; bare-metal `thumbv7em-none-eabi` target builds.
 - `#![warn(missing_docs)]`; spec citations in module docs.

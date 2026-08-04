@@ -104,6 +104,7 @@ $ cargo build -p dvb-si --no-default-features --locked
 | Crate | Version | Docs | What it does |
 |---|---|---|---|
 | [`dvb-tools`](dvb-tools/) | [![crates.io](https://img.shields.io/crates/v/dvb-tools.svg)](https://crates.io/crates/dvb-tools) | [![docs.rs](https://img.shields.io/docsrs/dvb-tools)](https://docs.rs/dvb-tools) | Command-line analyzer over the family: `dump` / `services` / `epg` / `pids` / `t2mi`. |
+| [`broadcast-loudness`](broadcast-loudness/) | [![crates.io](https://img.shields.io/crates/v/broadcast-loudness.svg)](https://crates.io/crates/broadcast-loudness) | [![docs.rs](https://img.shields.io/docsrs/broadcast-loudness)](https://docs.rs/broadcast-loudness) | EBU R 128 / ITU-R BS.1770-5 loudness measurement: K-weighting, integrated/short-term/momentary loudness (LUFS), loudness range (LRA), and true-peak (dBTP). `no_std`+`alloc`, depends only on `broadcast-common`. **Independently versioned.** |
 
 ### Deprecated re-export shims
 
