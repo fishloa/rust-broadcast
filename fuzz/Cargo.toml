@@ -44,6 +44,7 @@ broadcast-auth = { path = "../broadcast-auth" }
 rtmp-runtime  = { path = "../rtmp-runtime" }
 media-plane   = { path = "../media-plane" }
 ttml-subtitle = { path = "../ttml-subtitle" }
+broadcast-loudness = { path = "../broadcast-loudness" }
 bytes         = "1"
 libfuzzer-sys = "0.4"
 
@@ -277,6 +278,12 @@ test = false
 [[bin]]
 name = "md_hls_playlist"
 path = "fuzz_targets/md_hls_playlist.rs"
+test = false
+doc  = false
+
+[[bin]]
+name = "loudness"
+path = "fuzz_targets/loudness.rs"
 test = false
 doc  = false
 
