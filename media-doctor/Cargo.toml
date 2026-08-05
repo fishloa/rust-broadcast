@@ -23,7 +23,7 @@ dvb-si           = { path = "../dvb-si", version = "9", default-features = false
 dvb-conformance  = { path = "../dvb-conformance", version = "9", default-features = false }
 scte35-splice    = { path = "../scte35-splice", version = "2", default-features = false }
 timed-metadata   = { path = "../timed-metadata", version = "0.4.1", default-features = false }
-transmux         = { path = "../transmux", version = "0.22", default-features = false }
+transmux         = { path = "../transmux", version = "0.23", default-features = false }
 # HLS (M3U8) playlist syntax (issue #878): the validator parses playlists
 # via this crate directly rather than reaching through `transmux` for it.
 broadcast-hls    = { path = "../broadcast-hls", version = "0.1", default-features = false }
@@ -46,7 +46,7 @@ cli     = ["dep:clap", "dep:thiserror", "std"]
 # the library dependency above stays `default-features = false` (no `cli`,
 # no `clap`); Cargo unifies the two requirements for test builds only, same
 # pattern as `rtmp-runtime`'s dev-dependency on `transmux`.
-transmux = { path = "../transmux", version = "0.22", default-features = false, features = ["cli"] }
+transmux = { path = "../transmux", version = "0.23", default-features = false, features = ["cli"] }
 
 [package.metadata.docs.rs]
 all-features = true

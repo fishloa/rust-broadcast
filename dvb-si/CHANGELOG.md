@@ -1,5 +1,11 @@
 # Changelog
 
+## [Unreleased]
+
+## [9.2.0] - 2026-08-05
+Lockstep minor alongside `dvb-conformance` 9.2.0; no functional changes of
+this crate's own.
+
 ## [9.1.1] - 2026-07-30
 
 ### Fixed

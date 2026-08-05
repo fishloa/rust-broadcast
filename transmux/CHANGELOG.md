@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.23.0] - 2026-08-05
+
 ### Added
 - `TrackSpec::program_number: Option<u16>` — the MPEG-2 TS program_number from
   the declaring PMT (ISO/IEC 13818-1 §2.4.4.3), populated by `StreamingTsDemux`

@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-08-05
+
 ### Added
 - **MPTS (multi-programme transport stream) ingest** (issue #906):
   `ProgramTracker` now groups tracks by `TrackSpec::program_number`, producing

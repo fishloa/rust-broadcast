@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [9.2.0] - 2026-08-05
+
 ### Added
 - Five new TR 101 290 v1.4.1 Priority-3 indicators (#736):
   - `SiMinGapError` — 25 ms minimum-gap violation between sections of the same

@@ -2,6 +2,18 @@
 
 All notable changes to `multimux-cli` will be documented in this file.
 
+## [Unreleased]
+
+## [0.5.0] - 2026-08-05
+
+### Changed
+
+- Requires `multimux` 0.7, which gained MPTS ingest (#906), mid-stream track
+  additions (#781), Smooth Streaming output (#742), and DVR archive (#746).
+  **No change in this crate itself** — the bump propagates `multimux`'s
+  pre-1.0 caret boundary (`^0.6` -> `^0.7`) so a consumer cannot end up with
+  two `multimux` copies in one graph.
+
 ## [0.4.0] - 2026-08-02
 
 ### Changed
