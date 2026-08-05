@@ -25,6 +25,9 @@ pub struct TrackSpec {
     /// (ISO/IEC 13818-1 §2.4.4.8), verbatim; empty for non-TS sources.
     /// transmux does not parse these — consumers use dvb-si. (issue #582)
     pub es_info_descriptors: Vec<u8>,
+    /// MPEG-2 TS program_number from the declaring PMT (ISO/IEC 13818-1
+    /// §2.4.4.3); `None` for non-TS sources (fMP4/FLV/WebM/PS/RTP).
+    pub program_number: Option<u16>,
 }
 
 impl TrackSpec {
@@ -37,6 +40,7 @@ impl TrackSpec {
             config,
             source_pid: None,
             es_info_descriptors: Vec::new(),
+            program_number: None,
         }
     }
 
@@ -45,6 +49,12 @@ impl TrackSpec {
     pub fn with_source(mut self, source_pid: u16, es_info_descriptors: Vec<u8>) -> Self {
         self.source_pid = Some(source_pid);
         self.es_info_descriptors = es_info_descriptors;
+        self
+    }
+
+    /// Attach the TS program_number from the declaring PMT.
+    pub fn with_program(mut self, program_number: u16) -> Self {
+        self.program_number = Some(program_number);
         self
     }
 }
