@@ -36,13 +36,6 @@
 //! detects the generation change to admit the new track into (or rebuild)
 //! the segmenter at the next segment boundary.
 //!
-//! This is a deliberate simplification, not full MPTS `program_number`
-//! support: `transmux::DemuxEvent` does not carry `program_number` today,
-//! so "a track declared after the stream's initial program resolved"
-//! is assumed to belong to the same (single) program. Full MPTS support
-//! needs `program_number` threaded through `transmux`'s IR first (future
-//! work, not this port).
-//!
 //! # Why `Established` is queued at construction
 //!
 //! None of the three TS transports has a *media-level* handshake to
@@ -55,7 +48,7 @@
 //! PMT resolving is a per-*program* one that `NewProgram` already carries
 //! (see `SessionEvent::Established`'s "Why not called `TracksResolved`").
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::convert::Infallible;
 
 use broadcast_common::{Demand, Stage, Timestamp};
@@ -92,6 +85,8 @@ pub(crate) struct ProgramTracker {
     programs: HashMap<Option<u16>, PerProgram>,
     /// Reverse map: `track_id → ProgramId` (for `Sample` routing).
     track_program: HashMap<u32, ProgramId>,
+    /// Programs whose track set changed since last `TracksResolved`.
+    changed: HashSet<ProgramId>,
     next_program_id: u32,
 }
 
@@ -111,6 +106,7 @@ impl ProgramTracker {
             resolved_once: false,
             programs: HashMap::new(),
             track_program: HashMap::new(),
+            changed: HashSet::new(),
             next_program_id: 0,
         }
     }
@@ -126,7 +122,7 @@ impl ProgramTracker {
                     self.track_specs_for_program(program)
                         .insert(spec.track_id, spec.clone());
                     self.track_program.insert(spec.track_id, program);
-                    // Buffered for the TracksResolved that follows.
+                    self.changed.insert(program);
                 } else {
                     self.resolving.entry(pn).or_default().push(spec);
                 }
@@ -160,10 +156,13 @@ impl ProgramTracker {
                         }
                     }
                 } else {
-                    // Mid-stream TracksResolved: for each program that had
-                    // track changes since its last emission, emit
-                    // TracksChanged with its complete current track set.
+                    // Mid-stream TracksResolved: only emit TracksChanged for
+                    // programs whose track set actually changed.
+                    let dirty = std::mem::take(&mut self.changed);
                     for prog in self.programs.values() {
+                        if !dirty.contains(&prog.program_id) {
+                            continue;
+                        }
                         let tracks: Vec<TrackSpec> = prog.track_specs.values().cloned().collect();
                         if !tracks.is_empty() {
                             self.pending.push_back(SessionEvent::TracksChanged {
@@ -195,6 +194,7 @@ impl ProgramTracker {
                     if let Some(prog) = self.program_for_program_id_mut(program) {
                         prog.track_specs.remove(&track_id);
                     }
+                    self.changed.insert(program);
                 }
             }
             DemuxEvent::TrackUpdated(_) | DemuxEvent::TrackAbandoned { .. } => {
@@ -747,22 +747,28 @@ mod tests {
         tracker.handle(DemuxEvent::TrackAdded(spec3));
         tracker.handle(DemuxEvent::tracks_resolved(1));
 
-        // TracksChanged for programme 100 must include both tracks
+        // TracksChanged for programme 100 must include both tracks;
+        // programme 200 must NOT get a spurious TracksChanged.
         let prog100 = programs[&100];
-        let mut saw_tracks_changed = false;
+        let prog200 = programs[&200];
+        let mut saw_tracks_changed_100 = false;
         while let Some(event) = tracker.poll() {
             if let SessionEvent::TracksChanged { program, tracks } = event {
+                assert_ne!(
+                    program, prog200,
+                    "programme 200 must NOT get a spurious TracksChanged"
+                );
                 if program == prog100 {
                     assert_eq!(tracks.len(), 2, "both tracks in programme 100");
                     let ids: Vec<u32> = tracks.iter().map(|t| t.track_id).collect();
                     assert!(ids.contains(&1));
                     assert!(ids.contains(&3));
-                    saw_tracks_changed = true;
+                    saw_tracks_changed_100 = true;
                 }
             }
         }
         assert!(
-            saw_tracks_changed,
+            saw_tracks_changed_100,
             "must see TracksChanged for programme 100"
         );
 
