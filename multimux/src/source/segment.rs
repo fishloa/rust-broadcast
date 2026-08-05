@@ -45,7 +45,7 @@
 //! could silently ingest with nothing ever becoming servable, the exact
 //! footgun `advance_route` exists to remove. See `examples/custom_scheme.rs`.
 //!
-//! # Why `SPTS_PROGRAM_ID`'s init bytes go through `RouteHandle::set_init`
+//! # Init bytes and `RouteHandle::set_init`
 //!
 //! The fMP4 init segment has no home in a `Trunk` (no ring holds it — see
 //! `hls_runtime::server::engine`'s own module doc, "the one thing that
@@ -57,6 +57,8 @@
 //! [`crate::route::RouteHandle::set_init`] here, *after* this program's
 //! `Trunk` has already been published into the registry, lands the init
 //! bytes in the same bundle every driver-backed `run_*` reads from.
+//! Init is pushed for **every** program, not just `SPTS_PROGRAM_ID` — DVR
+//! recording needs it for all programs (issue #906).
 //!
 //! # Why segmenting is per-program, not per-route
 //!
@@ -71,8 +73,7 @@
 //! `two_programs_serve_distinct_media` test proves end to end. *Selecting*
 //! one from an incoming HTTP request (as opposed to segmenting/serving it at
 //! all) is the addressing question `crate::route`'s own module doc records
-//! options for — only `SPTS_PROGRAM_ID`'s init bytes are pushed here as the
-//! one program every current egress call site resolves.
+//! options for.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -89,7 +90,7 @@ use transmux::ll_hls::{LlHlsSegmenter, PartInfo};
 use transmux::pipeline::{Sample, TrackSpec};
 use transmux::ts_hls::StreamingTsHlsSegmenter;
 
-use crate::route::{RouteHandle, SPTS_PROGRAM_ID};
+use crate::route::RouteHandle;
 
 /// One closed segment, normalised across the two segmenter kinds
 /// [`AnySegmenter`] wraps — [`transmux::ll_hls::SegmentInfo`] (fMP4) and
@@ -310,18 +311,28 @@ impl ProgramSegmenter {
         }
         let segment_writer = trunk.segment_writer()?;
         let seg = match route_handle.container() {
-            Container::Fmp4 => match LlHlsSegmenter::with_part_target(
-                tracks.to_vec(),
-                transmux::VIDEO_CLOCK_RATE,
-                target_duration_secs,
-                part_target_ms,
-            ) {
-                Ok(seg) => AnySegmenter::Fmp4(seg),
-                Err(e) => {
-                    tracing::warn!(error = %e, "driver-backed fMP4 segmenter build failed");
+            Container::Fmp4 => {
+                let muxable: Vec<_> = tracks
+                    .iter()
+                    .filter(|t| t.config.is_muxable_in_bmff())
+                    .cloned()
+                    .collect();
+                if muxable.is_empty() {
                     return None;
                 }
-            },
+                match LlHlsSegmenter::with_part_target(
+                    muxable,
+                    transmux::VIDEO_CLOCK_RATE,
+                    target_duration_secs,
+                    part_target_ms,
+                ) {
+                    Ok(seg) => AnySegmenter::Fmp4(seg),
+                    Err(e) => {
+                        tracing::warn!(error = %e, "driver-backed fMP4 segmenter build failed");
+                        return None;
+                    }
+                }
+            }
             Container::MpegTs => {
                 // Whole seconds, clamped >= 1 (mirrors
                 // `StreamingTsHlsSegmenter::new`'s own clamp) — the target
@@ -395,10 +406,15 @@ impl ProgramSegmenter {
     /// advanced, admits new tracks into the segmenter or, for fMP4 (which has
     /// no in-place `add_track`), rebuilds the segmenter at the segment
     /// boundary.
-    fn pump(&mut self, trunk: &Trunk, route_handle: &RouteHandle) -> (usize, usize) {
+    fn pump(
+        &mut self,
+        program: ProgramId,
+        trunk: &Trunk,
+        route_handle: &RouteHandle,
+    ) -> (usize, usize) {
         let current_gen = trunk.track_generation();
         if current_gen > self.track_generation {
-            self.apply_track_change(trunk, route_handle);
+            self.apply_track_change(program, trunk, route_handle);
             self.track_generation = current_gen;
         }
 
@@ -438,7 +454,12 @@ impl ProgramSegmenter {
     /// segmenter still holds buffered samples, they are flushed first via
     /// [`Self::pump`]'s normal drain→cut cycle, and the generation change
     /// is detected on the NEXT call (post-boundary).
-    fn apply_track_change(&mut self, trunk: &Trunk, route_handle: &RouteHandle) {
+    fn apply_track_change(
+        &mut self,
+        program: ProgramId,
+        trunk: &Trunk,
+        route_handle: &RouteHandle,
+    ) {
         let new_tracks = trunk.tracks();
         tracing::info!(
             generation = trunk.track_generation(),
@@ -534,7 +555,7 @@ impl ProgramSegmenter {
                     ) {
                         Ok(seg) => {
                             if let Ok(init) = seg.init_segment() {
-                                route_handle.set_init(SPTS_PROGRAM_ID, init);
+                                route_handle.set_init(program, init);
                             }
                             self.seg = AnySegmenter::Fmp4(seg);
                             tracing::info!(
@@ -709,15 +730,11 @@ pub(crate) fn drive_program_segmenters<S: IngestSession>(
         ) else {
             continue;
         };
-        // SPTS_PROGRAM_ID's init bytes are the one piece of segmenter output
-        // pushed to RouteHandle here directly — see this module's own doc for
-        // why, and why every other program still segments (just isn't wired
-        // to HTTP egress yet: issue #805 task 6's MPTS-addressing doc in
-        // `crate::route`).
-        if program == SPTS_PROGRAM_ID {
-            if let Some(init) = segmenter.init_segment() {
-                route_handle.set_init(SPTS_PROGRAM_ID, init);
-            }
+        // Push the fMP4 init segment for every program — DVR recording
+        // needs it regardless of whether HTTP egress addresses this
+        // program yet (issue #805 task 6's MPTS-addressing doc).
+        if let Some(init) = segmenter.init_segment() {
+            route_handle.set_init(program, init);
         }
         segmenters.insert(program, segmenter);
     }
@@ -730,7 +747,7 @@ pub(crate) fn drive_program_segmenters<S: IngestSession>(
         let Some(trunk) = driver.trunk(program) else {
             continue;
         };
-        let (parts, segments) = segmenter.pump(trunk, route_handle);
+        let (parts, segments) = segmenter.pump(program, trunk, route_handle);
         parts_total += parts;
         segments_total += segments;
     }
@@ -810,10 +827,9 @@ mod tests {
     /// `drive_program_segmenters` (this module) → the route's own
     /// `RouteHandle::init_bytes`/`HlsOrigin`.
     ///
-    /// MUTATION VERIFIED: changing the `if program == SPTS_PROGRAM_ID { ...
-    /// route_handle.set_init(SPTS_PROGRAM_ID, init); }` push in
-    /// `drive_program_segmenters` to `if false { .. }` (never push init bytes
-    /// to `RouteHandle` at all) makes this test's first assertion fail:
+    /// MUTATION VERIFIED: removing the `route_handle.set_init(program, init)`
+    /// push in `drive_program_segmenters` (never push init bytes to
+    /// `RouteHandle` at all) makes this test's first assertion fail:
     /// `assert!(route.init_bytes(crate::route::SPTS_PROGRAM_ID).is_some_and(|b| !b.is_empty()), ...)`
     /// fails — actual value `None` (the registry's `ProgramServing` for
     /// program 0 exists and its `Trunk` carries real segments/parts, but its
