@@ -1,0 +1,37 @@
+[package]
+name         = "dvb-csa"
+version      = "0.1.0"
+edition      = "2024"
+rust-version = "1.86"
+license      = "MIT OR Apache-2.0"
+description  = "DVB Common Scrambling Algorithm (CSA2) — pure-Rust, oracle-validated, with a bitsliced fast path."
+repository   = "https://github.com/fishloa/rust-broadcast"
+keywords     = ["dvb", "csa", "scrambling", "conditional-access", "mpeg-ts"]
+categories   = ["cryptography", "multimedia", "parser-implementations"]
+readme       = "README.md"
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+
+[dependencies]
+broadcast-common = { path = "../broadcast-common", version = "9", default-features = false }
+thiserror        = { version = "2", default-features = false }
+
+[dev-dependencies]
+criterion = { version = "0.5", features = ["html_reports"] }
+rand      = "0.9"
+
+[features]
+default = ["std"]
+std     = ["broadcast-common/std", "thiserror/std"]
+
+[[bench]]
+name    = "throughput"
+harness = false
+
+[[example]]
+name = "scramble_file"
+
+[[example]]
+name = "descramble_file"
