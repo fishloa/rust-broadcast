@@ -71,23 +71,34 @@ use transmux::{DemuxEvent, StreamingTsDemux};
 /// behaviour is unit-testable by constructing [`DemuxEvent`]s directly (via
 /// their own `#[non_exhaustive]` constructors), without needing a hand-built
 /// MPTS byte stream.
+///
+/// # MPTS support (issue #906)
+///
+/// Tracks are grouped by `TrackSpec::program_number`: each distinct
+/// `program_number` gets its own [`ProgramId`], so an MPTS (multi-programme
+/// transport stream) produces N `ProgramId`s for N `program_number`s.
+/// Non-TS sources (`program_number: None`) collapse into one `ProgramId`
+/// (unchanged from the pre-906 single-program behaviour).
+///
+/// Mid-stream `TrackAdded` (issue #781) is preserved PER PROGRAM: a track
+/// added mid-stream joins the program keyed by its `program_number`.
 pub(crate) struct ProgramTracker {
     pending: VecDeque<SessionEvent>,
-    /// [`DemuxEvent::TrackAdded`] specs collected before the first
-    /// [`DemuxEvent::TracksResolved`] — becomes `ProgramId(0)`'s track set.
-    resolving: Vec<TrackSpec>,
+    /// Tracks buffered before the first `TracksResolved`, grouped by
+    /// `program_number`.
+    resolving: HashMap<Option<u16>, Vec<TrackSpec>>,
     resolved_once: bool,
-    /// The `ProgramId` minted for the first `TracksResolved` — mid-stream
-    /// additions/removals after that point go to the same program (issue
-    /// #781: a track added mid-stream must reach the running segmenter,
-    /// not be siloed in a new, unserved program).
-    first_program: Option<ProgramId>,
+    /// Resolved programs keyed by `program_number`.
+    programs: HashMap<Option<u16>, PerProgram>,
+    /// Reverse map: `track_id → ProgramId` (for `Sample` routing).
     track_program: HashMap<u32, ProgramId>,
-    /// Complete current track specs, keyed by `track_id` — the source of
-    /// truth for building a `TracksChanged` event when the PMT changes
-    /// mid-stream (issue #781).
-    track_specs: HashMap<u32, TrackSpec>,
     next_program_id: u32,
+}
+
+struct PerProgram {
+    program_id: ProgramId,
+    /// Complete current track specs for this program, keyed by `track_id`.
+    track_specs: HashMap<u32, TrackSpec>,
 }
 
 impl ProgramTracker {
@@ -96,11 +107,10 @@ impl ProgramTracker {
     pub(crate) fn new() -> Self {
         ProgramTracker {
             pending: VecDeque::from(vec![SessionEvent::Established]),
-            resolving: Vec::new(),
+            resolving: HashMap::new(),
             resolved_once: false,
-            first_program: None,
+            programs: HashMap::new(),
             track_program: HashMap::new(),
-            track_specs: HashMap::new(),
             next_program_id: 0,
         }
     }
@@ -108,47 +118,59 @@ impl ProgramTracker {
     pub(crate) fn handle(&mut self, event: DemuxEvent) {
         match event {
             DemuxEvent::TrackAdded(spec) => {
+                let pn = spec.program_number;
                 if self.resolved_once {
-                    // Issue #781: a track declared after the initial
-                    // program resolved goes to the SAME program, not a
-                    // new one — so the running segmenter can pick it up
-                    // at the next segment boundary.
-                    let program = self
-                        .first_program
-                        .expect("first_program is always Some when resolved_once is true");
-                    self.track_specs.insert(spec.track_id, spec.clone());
+                    // Issue #781 + #906: a track declared after initial
+                    // resolution joins its program_number's program.
+                    let program = self.find_or_create_program(pn);
+                    self.track_specs_for_program(program)
+                        .insert(spec.track_id, spec.clone());
                     self.track_program.insert(spec.track_id, program);
-                    // Buffer for the TracksResolved that follows — emit
-                    // nothing yet; TracksChanged carries the complete set.
+                    // Buffered for the TracksResolved that follows.
                 } else {
-                    self.resolving.push(spec);
+                    self.resolving.entry(pn).or_default().push(spec);
                 }
             }
             DemuxEvent::TracksResolved { .. } => {
                 if !self.resolved_once {
                     if !self.resolving.is_empty() {
                         self.resolved_once = true;
-                        let program = ProgramId(self.next_program_id);
-                        self.next_program_id += 1;
-                        self.first_program = Some(program);
-                        let tracks = std::mem::take(&mut self.resolving);
-                        for spec in &tracks {
-                            self.track_program.insert(spec.track_id, program);
-                            self.track_specs.insert(spec.track_id, spec.clone());
+                        let groups: Vec<_> =
+                            std::mem::take(&mut self.resolving).into_iter().collect();
+                        for (pn, tracks) in groups {
+                            if tracks.is_empty() {
+                                continue;
+                            }
+                            let program = ProgramId(self.next_program_id);
+                            self.next_program_id += 1;
+                            let mut track_specs = HashMap::new();
+                            for spec in &tracks {
+                                self.track_program.insert(spec.track_id, program);
+                                track_specs.insert(spec.track_id, spec.clone());
+                            }
+                            self.programs.insert(
+                                pn,
+                                PerProgram {
+                                    program_id: program,
+                                    track_specs,
+                                },
+                            );
+                            self.pending
+                                .push_back(SessionEvent::NewProgram { program, tracks });
                         }
-                        self.pending
-                            .push_back(SessionEvent::NewProgram { program, tracks });
                     }
                 } else {
-                    // A mid-stream TracksResolved: emit TracksChanged with
-                    // the complete current track set (issue #781).
-                    let program = self
-                        .first_program
-                        .expect("first_program is always Some when resolved_once is true");
-                    let tracks: Vec<TrackSpec> = self.track_specs.values().cloned().collect();
-                    if !tracks.is_empty() {
-                        self.pending
-                            .push_back(SessionEvent::TracksChanged { program, tracks });
+                    // Mid-stream TracksResolved: for each program that had
+                    // track changes since its last emission, emit
+                    // TracksChanged with its complete current track set.
+                    for prog in self.programs.values() {
+                        let tracks: Vec<TrackSpec> = prog.track_specs.values().cloned().collect();
+                        if !tracks.is_empty() {
+                            self.pending.push_back(SessionEvent::TracksChanged {
+                                program: prog.program_id,
+                                tracks,
+                            });
+                        }
                     }
                 }
             }
@@ -169,8 +191,11 @@ impl ProgramTracker {
             DemuxEvent::TrackRemoved { track_id, .. } => {
                 // A mid-stream PMT version bump dropped a previously-live
                 // PID (issue #774): stop routing samples for it.
-                self.track_program.remove(&track_id);
-                self.track_specs.remove(&track_id);
+                if let Some(program) = self.track_program.remove(&track_id) {
+                    if let Some(prog) = self.program_for_program_id_mut(program) {
+                        prog.track_specs.remove(&track_id);
+                    }
+                }
             }
             DemuxEvent::TrackUpdated(_) | DemuxEvent::TrackAbandoned { .. } => {
                 // Metadata-only / pre-resolution events; nothing routes on
@@ -182,6 +207,40 @@ impl ProgramTracker {
 
     pub(crate) fn poll(&mut self) -> Option<SessionEvent> {
         self.pending.pop_front()
+    }
+
+    /// Find or create the `ProgramId` for a given `program_number`.
+    fn find_or_create_program(&mut self, pn: Option<u16>) -> ProgramId {
+        if let Some(prog) = self.programs.get(&pn) {
+            return prog.program_id;
+        }
+        let program = ProgramId(self.next_program_id);
+        self.next_program_id += 1;
+        self.programs.insert(
+            pn,
+            PerProgram {
+                program_id: program,
+                track_specs: HashMap::new(),
+            },
+        );
+        // Mid-stream NewProgram — emitted before any TracksChanged so the
+        // driver can mint a Trunk.
+        self.pending.push_back(SessionEvent::NewProgram {
+            program,
+            tracks: Vec::new(),
+        });
+        program
+    }
+
+    fn track_specs_for_program(&mut self, program: ProgramId) -> &mut HashMap<u32, TrackSpec> {
+        &mut self
+            .program_for_program_id_mut(program)
+            .expect("program must exist")
+            .track_specs
+    }
+
+    fn program_for_program_id_mut(&mut self, program: ProgramId) -> Option<&mut PerProgram> {
+        self.programs.values_mut().find(|p| p.program_id == program)
     }
 }
 
@@ -625,5 +684,130 @@ mod tests {
             tracker.poll().is_none(),
             "a removed track's samples must no longer be routed"
         );
+    }
+
+    // --- MPTS tests (issue #906) ---
+
+    /// Two distinct `program_number`s produce two distinct `ProgramId`s.
+    #[test]
+    fn mpts_two_programmes_produce_two_program_ids() {
+        let mut tracker = ProgramTracker::new();
+        // Program 1: track 1
+        let mut spec1 = track_spec(1);
+        spec1.program_number = Some(100);
+        tracker.handle(DemuxEvent::TrackAdded(spec1));
+        // Program 2: track 2
+        let mut spec2 = track_spec(2);
+        spec2.program_number = Some(200);
+        tracker.handle(DemuxEvent::TrackAdded(spec2));
+        // Resolve
+        tracker.handle(DemuxEvent::tracks_resolved(0));
+        let _established = tracker.poll();
+        let mut new_programs = Vec::new();
+        while let Some(event) = tracker.poll() {
+            if let SessionEvent::NewProgram { program, tracks } = event {
+                new_programs.push((program, tracks.len()));
+            }
+        }
+        assert_eq!(new_programs.len(), 2, "MPTS: two distinct programmes");
+        assert_ne!(new_programs[0].0, new_programs[1].0, "distinct ProgramIds");
+        assert_eq!(new_programs[0].1, 1, "each programme has one track");
+        assert_eq!(new_programs[1].1, 1, "each programme has one track");
+    }
+
+    /// A mid-stream `TrackAdded` with a specific `program_number` joins
+    /// that programme's `TracksChanged`, not a new one.
+    #[test]
+    fn mpts_mid_stream_track_joins_correct_programme() {
+        let mut tracker = ProgramTracker::new();
+        // Program 100: track 1
+        let mut spec1 = track_spec(1);
+        spec1.program_number = Some(100);
+        tracker.handle(DemuxEvent::TrackAdded(spec1));
+        // Program 200: track 2
+        let mut spec2 = track_spec(2);
+        spec2.program_number = Some(200);
+        tracker.handle(DemuxEvent::TrackAdded(spec2));
+        tracker.handle(DemuxEvent::tracks_resolved(0));
+        let _established = tracker.poll();
+        let mut programs: HashMap<u16, ProgramId> = HashMap::new();
+        while let Some(event) = tracker.poll() {
+            if let SessionEvent::NewProgram { program, tracks } = event {
+                if let Some(t) = tracks.first() {
+                    if let Some(pn) = t.program_number {
+                        programs.insert(pn, program);
+                    }
+                }
+            }
+        }
+
+        // Mid-stream: add track 3 to programme 100
+        let mut spec3 = track_spec(3);
+        spec3.program_number = Some(100);
+        tracker.handle(DemuxEvent::TrackAdded(spec3));
+        tracker.handle(DemuxEvent::tracks_resolved(1));
+
+        // TracksChanged for programme 100 must include both tracks
+        let prog100 = programs[&100];
+        let mut saw_tracks_changed = false;
+        while let Some(event) = tracker.poll() {
+            if let SessionEvent::TracksChanged { program, tracks } = event {
+                if program == prog100 {
+                    assert_eq!(tracks.len(), 2, "both tracks in programme 100");
+                    let ids: Vec<u32> = tracks.iter().map(|t| t.track_id).collect();
+                    assert!(ids.contains(&1));
+                    assert!(ids.contains(&3));
+                    saw_tracks_changed = true;
+                }
+            }
+        }
+        assert!(
+            saw_tracks_changed,
+            "must see TracksChanged for programme 100"
+        );
+
+        // Sample for track 3 routes to programme 100
+        tracker.handle(DemuxEvent::sample(3, sample_at(0xCC)));
+        let sample_event = tracker.poll();
+        match sample_event {
+            Some(SessionEvent::Sample {
+                program, track_id, ..
+            }) => {
+                assert_eq!(program, prog100);
+                assert_eq!(track_id, 3);
+            }
+            other => panic!("expected Sample routed to programme 100, got {other:?}"),
+        }
+    }
+
+    /// SPTS (`program_number: None`) works as before — all tracks
+    /// collapse into one `ProgramId`.
+    #[test]
+    fn spts_none_programme_works_as_before() {
+        let mut tracker = ProgramTracker::new();
+        tracker.handle(DemuxEvent::TrackAdded(track_spec(1)));
+        tracker.handle(DemuxEvent::TrackAdded(track_spec(2)));
+        tracker.handle(DemuxEvent::tracks_resolved(0));
+        let _established = tracker.poll();
+        match tracker.poll() {
+            Some(SessionEvent::NewProgram { program, tracks }) => {
+                assert_eq!(program, ProgramId(0));
+                assert_eq!(tracks.len(), 2);
+            }
+            other => panic!("expected single NewProgram with 2 tracks, got {other:?}"),
+        }
+
+        // Mid-stream addition joins the same None programme
+        let mut spec3 = track_spec(3);
+        spec3.program_number = None;
+        tracker.handle(DemuxEvent::TrackAdded(spec3));
+        tracker.handle(DemuxEvent::tracks_resolved(1));
+        match tracker.poll() {
+            Some(SessionEvent::TracksChanged { program, tracks }) => {
+                assert_eq!(program, ProgramId(0));
+                assert_eq!(tracks.len(), 3, "all 3 tracks in TracksChanged");
+            }
+            other => panic!("expected TracksChanged for SPTS, got {other:?}"),
+        }
     }
 }

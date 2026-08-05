@@ -3097,6 +3097,19 @@ impl StreamingTsDemux {
                     // anchor value needs computing here at all.
                     let spec = TrackSpec::new(track_id, timescale, config.clone())
                         .with_source(next_pid, stream.descriptors.clone());
+                    // Look up the program_number for this ES PID via its
+                    // declaring PMT.
+                    let program_number = self
+                        .es_declarers
+                        .get(&next_pid)
+                        .and_then(|pmt_pids| pmt_pids.iter().next())
+                        .and_then(|&pmt_pid| self.pmt_reasm.get(&pmt_pid))
+                        .map(|state| state.program_number);
+                    let spec = if let Some(pn) = program_number {
+                        spec.with_program(pn)
+                    } else {
+                        spec
+                    };
                     self.events.push_back(DemuxEvent::TrackAdded(spec));
                     let mut live = LiveTrack {
                         track_id,
