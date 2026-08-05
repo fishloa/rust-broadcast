@@ -234,6 +234,75 @@ exceed 5.0 (the LL-HLS blocking-reload cap) or a legitimate long-poll
 request would be cut off by the HTTP layer before the LL-HLS engine gets a
 chance to resolve it.
 
+### DVR recording
+
+A route can persist finished segments to disk for catch-up / VOD:
+
+```json
+{
+  "routes": [
+    {
+      "name": "cam1",
+      "input": { "type": "rtsp", "url": "rtsp://host/stream" },
+      "dvr": {
+        "enabled": true,
+        "archive_root": "/data/dvr",
+        "period_duration_secs": 10800,
+        "retention_periods": 8,
+        "retention_bytes": 0,
+        "overrun": "gap"
+      }
+    }
+  ]
+}
+```
+
+- `enabled` (default `false`): opt-in.
+- `archive_root`: filesystem directory; one subdirectory per route.
+- `period_duration_secs` (default **10800** = 3 hours): a new period
+  container file is started when this much wall-clock time elapses.
+  The default keeps a feature film in one file. Retention quantises to
+  the period — a truncation costs up to one period.
+- `retention_periods`: keep at most this many period files (0 = unlimited).
+- `retention_bytes`: keep at most this many total bytes (0 = unlimited).
+  At least one retention axis must be non-zero when DVR is enabled.
+- `overrun` (default `"gap"`): what happens when the live ring evicts a
+  segment before the recorder consumes it:
+  - `"gap"` — the recording gets a hole; live ingest is unaffected.
+    **The default.**
+  - `"stall"` — publication blocks until the recorder catches up.
+    The archive is lossless, but can stall live output.
+  - `"terminate"` — the recorder's pin is dropped; recording stops and
+    existing files are kept.
+
+#### On-disk layout
+
+```
+<archive_root>/<route>/
+├── p0.m4s          ← period 0 container file (init at head, then fragments)
+├── p0.idx          ← JSON byte-range index: (seq, pts_ns, offset, len)
+├── p1.m4s
+├── p1.idx
+├── …
+```
+
+For **fMP4**, the init segment is written at the head of each period file
+and media fragments are appended — the file is a valid CMAF track (init +
+concatenated fragments). For **TS**, segments are natively concatenable
+188-byte packets and the file is directly playable with no init needed.
+
+The index sidecar (`pN.idx`) maps every segment to a byte range
+(`seq`, `start_pts_ns`, `byte_offset`, `byte_len`) — issue #900 will serve
+`EXT-X-BYTERANGE` directly from these offsets. The index is flush-as-you-go
+and can be **rebuilt by rescanning** the period file (crash recovery).
+
+A new period is rolled on either duration expiry OR when the fMP4 init
+segment changes mid-recording (mid-stream track addition — issue #781).
+
+Recording is a `media_plane::egress::SegmentEgress` implementation draining
+its own pinning `SegmentCursor` — it never holds a lock the live-serving
+path needs and never perturbs live output.
+
 ### 40-camera scenario
 
 Many routes, one shared output credential, one process:

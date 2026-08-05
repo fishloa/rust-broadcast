@@ -20,6 +20,7 @@
 //! ```
 
 use multimux::config::{Config, InputSpec, Route};
+use multimux::dvr::DvrConfig;
 use multimux::output::OutputKind;
 
 /// Served stream name for the single route this example configures.
@@ -66,6 +67,7 @@ async fn main() {
                 auth: None,
             },
             outputs,
+            dvr: DvrConfig::default(),
         }],
         ..Config::default()
     };

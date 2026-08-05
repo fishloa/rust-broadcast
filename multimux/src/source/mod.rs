@@ -357,6 +357,9 @@ pub fn advance_route<S: media_plane::ingress::IngestSession>(
         &mut state.track_generations,
     );
     segment::drive_program_segmenters(driver, route_handle, &mut state.segmenters);
+    // Drain DVR cursors for every published program — recording happens
+    // after segmenters have published new segments to the Trunk.
+    route_handle.drain_dvr();
 }
 
 #[cfg(test)]

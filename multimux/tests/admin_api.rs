@@ -33,6 +33,7 @@ use media_plane::ingress::{
 };
 use media_plane::trunk::{RetentionClass, TrunkConfig};
 use multimux::config::{AdminSpec, Config, InputSpec, OutputAuthSpec, Route};
+use multimux::dvr::DvrConfig;
 use multimux::output::OutputKind;
 use multimux::registry::{InputCtx, InputFactory};
 use multimux::route::RouteHandle;
@@ -232,6 +233,7 @@ fn instant_route(name: &str) -> Route {
             params: serde_json::Value::Null,
         },
         outputs: vec![OutputKind::LlHls],
+        dvr: DvrConfig::default(),
     }
 }
 
@@ -247,6 +249,7 @@ fn unreachable_rtsp_route(name: &str, unique: &str) -> Route {
             auth: None,
         },
         outputs: vec![OutputKind::LlHls],
+        dvr: DvrConfig::default(),
     }
 }
 

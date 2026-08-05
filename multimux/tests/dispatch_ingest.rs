@@ -70,6 +70,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use multimux::config::{Config, InputSpec, Route};
+use multimux::dvr::DvrConfig;
 use multimux::output::OutputKind;
 use multimux::registry::SchemeRegistry;
 use multimux::serve_with_registry;
@@ -124,6 +125,7 @@ fn base_config(bind: SocketAddr, input: InputSpec) -> Config {
             name: "cam".to_string(),
             input,
             outputs: vec![OutputKind::LlHls],
+            dvr: DvrConfig::default(),
         }],
         ..Config::default()
     }
