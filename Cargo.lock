@@ -1077,7 +1077,7 @@ checksum = "7f24254aa9a54b5c858eaee2f5bccdb46aaf0e486a595ed5fd8f86ba55232a70"
 
 [[package]]
 name = "hls-runtime"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "broadcast-auth",
  "broadcast-common",
@@ -1541,7 +1541,7 @@ dependencies = [
 
 [[package]]
 name = "media-plane"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "broadcast-common",
  "bytes",
@@ -2260,7 +2260,7 @@ dependencies = [
 
 [[package]]
 name = "rtmp-runtime"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "broadcast-common",
  "log",

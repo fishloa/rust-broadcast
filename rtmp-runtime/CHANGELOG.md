@@ -4,6 +4,14 @@ All notable changes to `rtmp-runtime` are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project adheres
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+## [0.4.0] - 2026-08-05
+
+### Changed
+- Requires `transmux` 0.23 (epoch-pure caret bump from ^0.21; `TrackSpec`
+  is part of this crate's public ingest API).
+
 ## [0.3.0] - 2026-07-30
 
 ### Changed (Breaking)

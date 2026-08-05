@@ -21,7 +21,7 @@ rtsp-runtime      = { path = "../rtsp-runtime",  version = "0.4", features = ["t
 # RTMP push ingest (`source::rtmp`, issue #738): the `tokio` feature pulls
 # `rtmp_runtime::io::AsyncRtmpServer`/`RtmpConnection`, the real-socket
 # adapter over the sans-IO `ServerSession`.
-rtmp-runtime      = { path = "../rtmp-runtime",  version = "0.3", features = ["tokio"] }
+rtmp-runtime      = { path = "../rtmp-runtime",  version = "0.4", features = ["tokio"] }
 # SRT push/pull ingest (`source::srt`, issue #739): the `tokio` feature
 # pulls `srt_runtime::io::{SrtListener, SrtSocket}`, the real-socket adapter
 # over the sans-IO ARQ/TSBPD/handshake engines.
@@ -33,7 +33,7 @@ srt-runtime       = { path = "../srt-runtime",   version = "0.3", features = ["t
 # pulls in `hls_runtime::client::tokio_client::TokioClient` — the
 # HLS-pull input (`source::hls_pull`, issue #663 P3c) wraps it rather than
 # re-implementing LL-HLS playback.
-hls-runtime       = { path = "../hls-runtime",   version = "0.4", features = ["std", "tokio"] }
+hls-runtime       = { path = "../hls-runtime",   version = "0.5", features = ["std", "tokio"] }
 # Needed directly (not just via hls-runtime/transmux) by `source::hls_pull`
 # to recover `TrackSpec`s from a pulled stream's init segment via
 # `Fmp4Demux::unpackage` (the `Unpackage` trait) — issue #663 P3c.
@@ -41,7 +41,7 @@ broadcast-common  = { path = "../broadcast-common", version = "9" }
 # The media-plane ingress traits this crate's sources port onto (plan step
 # 5a): `Dialer`/`Listener`/`IngestSession`/`IngestDriver`/`ListenDriver`, and
 # the `Trunk` every ported session publishes into.
-media-plane       = { path = "../media-plane", version = "0.2", features = ["std"] }
+media-plane       = { path = "../media-plane", version = "0.3", features = ["std"] }
 bytes             = "1"
 # Shared Basic/Digest/Bearer auth model + challenge/response helper
 # (`source::http_auth`, issue #663 P3b/P3c) — the same crate `rtsp-runtime`

@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-08-05
+
 ### Added
 - `TrunkWriter::set_tracks` now wakes `Trunk::progress` listeners (issue #781),
   so a `Trunk::listen` registration is notified when a track-set change arrives
@@ -14,6 +16,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   already use. Previously, `set_tracks` bumped `track_generation` but did not
   notify waiters, so a consumer polling on `listen()` could stall indefinitely
   through a mid-stream track addition.
+
+### Changed
+- Requires `transmux` 0.23 (epoch-pure caret bump from ^0.22; the
+  `TrackSpec::program_number` field added in 0.23.0 is part of this
+  crate's public API via `Trunk`).
 
 ## [0.2.0] - 2026-08-02
 

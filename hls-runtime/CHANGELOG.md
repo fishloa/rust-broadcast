@@ -5,6 +5,14 @@ documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project adheres
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+## [0.5.0] - 2026-08-05
+
+### Changed
+- Requires `transmux` 0.23 (epoch-pure caret bump from ^0.22).
+- Requires `media-plane` 0.3 (epoch-pure caret bump from ^0.2).
+
 ## [0.4.0] - 2026-08-02
 
 ### Changed

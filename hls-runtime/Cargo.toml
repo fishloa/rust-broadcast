@@ -1,6 +1,6 @@
 [package]
 name         = "hls-runtime"
-version      = "0.4.0"
+version      = "0.5.0"
 edition      = "2024"
 description  = "Sans-IO Low-Latency HLS (RFC 8216bis) client + server engines in one crate (blocking reload, part prefetch, rolling-window origin), with an optional tokio+reqwest IO adapter."
 license      = "MIT OR Apache-2.0"
@@ -30,7 +30,7 @@ serde             = { version = "1", optional = true, default-features = false, 
 # used to. `bytes` is needed directly (not just transitively) because
 # `Trunk::part_bytes`/`SegmentEntry::bytes` hand back `bytes::Bytes` this
 # crate's own types carry forward (e.g. `HlsBody::Resource`).
-media-plane       = { path = "../media-plane", version = "0.2", optional = true, default-features = false }
+media-plane       = { path = "../media-plane", version = "0.3", optional = true, default-features = false }
 bytes             = { version = "1", optional = true, default-features = false }
 # Only pulled in by the `tokio` feature (issue #717 slice 5) — the sans-IO
 # core (`client/engine.rs`) never depends on either.
