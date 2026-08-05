@@ -8,6 +8,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `TrackSpec::program_number: Option<u16>` — the MPEG-2 TS program_number from
+  the declaring PMT (ISO/IEC 13818-1 §2.4.4.3), populated by `StreamingTsDemux`
+  at ES promotion time. `None` for non-TS sources. Enables downstream consumers
+  (e.g. `multimux`'s `ProgramTracker`) to distinguish programmes in an MPTS
+  (issue #906).
+- `TrackSpec::with_program(u16)` builder method.
 - `LlHlsSegmenter::next_sequence_numbers()` — returns the `(next_seq,
   current_segment)` pair the segmenter would give the next emitted part
   and segment (issue #781). Used by a caller that rebuilds the segmenter

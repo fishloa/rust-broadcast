@@ -3,6 +3,11 @@
 ## [Unreleased]
 
 ### Added
+- **MPTS (multi-programme transport stream) ingest** (issue #906):
+  `ProgramTracker` now groups tracks by `TrackSpec::program_number`, producing
+  one `ProgramId` per distinct TS programme. Every real DVB-T/S/C multiplex is
+  MPTS — this was the sole gap preventing real DVB ingest. Non-TS sources
+  (`program_number: None`) continue to collapse into one `ProgramId`.
 - Mid-stream track additions (PMT version changes adding an elementary stream)
   now reach the running segmenter (issue #781). Previously, `track_specs` was a
   one-shot snapshot consumed at segmenter construction; a broadcaster adding an
