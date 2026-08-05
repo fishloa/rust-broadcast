@@ -49,6 +49,14 @@
 #![cfg_attr(docsrs, feature(doc_cfg))]
 #![warn(missing_docs)]
 
-extern crate alloc;
+mod block;
+pub mod csa;
+pub mod error;
+pub mod key;
+mod stream;
+mod tables;
+pub mod ts;
 
-// TODO: implement modules
+pub use csa::{descramble, scramble};
+pub use error::Error;
+pub use key::ControlWord;
