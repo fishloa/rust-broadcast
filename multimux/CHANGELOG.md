@@ -9,6 +9,7 @@
 - `ReconnectPolicy` config for exponential backoff reconnect.
 - SRT push transport (Caller mode to remote SRT Listener).
 - RTSP push transport (client ANNOUNCE/RECORD to remote RTSP server).
+- RTMP push transport (client connect/createStream/publish to remote RTMP server).
 
 ## [0.7.0] - 2026-08-05
 

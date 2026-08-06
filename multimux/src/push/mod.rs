@@ -15,7 +15,7 @@
 //! - [`drive_push`] — the async main loop: subscribe to a [`Trunk`]'s sample
 //!   ring, mux the drained samples into the configured container
 //!   ([`PushFormat`]), and `send` them over the transport, reconnecting on
-//!   failure with [`ReconnectPolicy`] backoff.
+//!   failure with [`ReconnectPolicy`](crate::config::ReconnectPolicy) backoff.
 //!
 //! This is the *reverse* of the ingest path: instead of demuxing inbound media
 //! and publishing samples into a `Trunk`, a push driver subscribes to a
@@ -26,6 +26,7 @@
 //! a later phase; this module builds and tests the driver + SRT transport
 //! standalone.
 
+mod rtmp;
 mod rtsp;
 mod srt;
 
@@ -42,6 +43,7 @@ use broadcast_common::Package;
 use transmux::TsMux;
 use transmux::ir::{Media, Sample, Track, TrackSpec};
 
+pub use rtmp::{RtmpTransport, RtmpTransportConfig};
 pub use rtsp::{RtspTransport, RtspTransportConfig};
 pub use srt::{SrtTransport, SrtTransportConfig};
 
@@ -90,7 +92,7 @@ pub trait PushTransport: Send + 'static {
 /// - [`Backoff`](Self::Backoff) — disconnected; waiting until `resume_at`
 ///   before dialing out again.
 /// - [`Failed`](Self::Failed) — gave up permanently after exceeding
-///   [`ReconnectPolicy::max_attempts`].
+///   [`ReconnectPolicy::max_attempts`](crate::config::ReconnectPolicy::max_attempts).
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum ReconnectState {
@@ -137,13 +139,13 @@ impl ReconnectEngine {
     }
 
     /// The connection dropped (or a dial-out failed) — enter backoff,
-    /// increment the attempt counter, and go permanently [`Failed`] once
+    /// increment the attempt counter, and go permanently [`Failed`](ReconnectState::Failed) once
     /// `max_attempts` is exceeded.
     ///
     /// Backoff follows the doubling series 1s, 2s, 4s, … (each retry
-    /// doubles), capped at [`ReconnectPolicy::max_backoff_ms`] — the `attempt`
+    /// doubles), capped at [`ReconnectPolicy::max_backoff_ms`](crate::config::ReconnectPolicy::max_backoff_ms) — the `attempt`
     /// counter is 1-based, so the `n`-th disconnect waits
-    /// [`ReconnectPolicy::backoff_for(n - 1)`](ReconnectPolicy::backoff_for).
+    /// [`ReconnectPolicy::backoff_for(n - 1)`](crate::config::ReconnectPolicy::backoff_for).
     pub fn on_disconnect(&mut self) {
         self.attempt = self.attempt.saturating_add(1);
         if let Some(max) = self.policy.max_attempts {

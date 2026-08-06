@@ -51,6 +51,7 @@
 
 pub mod amf0;
 pub mod chunk;
+pub mod client;
 pub mod error;
 pub mod handshake;
 #[cfg(feature = "tokio")]
