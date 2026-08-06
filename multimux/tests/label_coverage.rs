@@ -23,6 +23,9 @@
 //! - `StreamStatus` (`source::srt`, `source::ts_http`) — an internal
 //!   read-loop outcome discriminant (`Fed`/`Ended`), not itself a wire-format
 //!   field.
+//! - `ReconnectState` (`push`) — the push reconnect FSM's state discriminant
+//!   (`Ready`/`Backoff`/`Failed`), an internal driver enum whose three states
+//!   carry no wire token; a static label would add nothing.
 
 use std::collections::BTreeSet;
 use std::fs;
@@ -39,6 +42,7 @@ const SKIP: &[&str] = &[
     "SmoothResourceId",
     "SmoothAction",
     "StreamStatus",
+    "ReconnectState",
 ];
 
 fn read_rs(dir: &Path, out: &mut Vec<String>) {

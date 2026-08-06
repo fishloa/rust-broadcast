@@ -76,6 +76,33 @@ pub enum OutputKind {
     /// why (one `Trunk` segment ring per program, fMP4 *or* TS, never both).
     #[serde(rename = "ts_hls")]
     TsHls,
+    /// Push to a remote SRT Listener (Caller mode). Issue #744.
+    #[serde(rename = "srt_push")]
+    SrtPush {
+        url: String,
+        #[serde(default)]
+        format: Option<crate::config::PushFormat>,
+        #[serde(default)]
+        reconnect: Option<crate::config::ReconnectPolicy>,
+    },
+    /// Push to a remote RTMP server (client publish). Issue #744.
+    #[serde(rename = "rtmp_push")]
+    RtmpPush {
+        url: String,
+        #[serde(default)]
+        format: Option<crate::config::PushFormat>,
+        #[serde(default)]
+        reconnect: Option<crate::config::ReconnectPolicy>,
+    },
+    /// Push to a remote RTSP server (ANNOUNCE/RECORD). Issue #744.
+    #[serde(rename = "rtsp_push")]
+    RtspPush {
+        url: String,
+        #[serde(default)]
+        format: Option<crate::config::PushFormat>,
+        #[serde(default)]
+        reconnect: Option<crate::config::ReconnectPolicy>,
+    },
     /// External output scheme resolved at runtime via
     /// [`crate::registry::SchemeRegistry`]. `type_tag` selects the registered
     /// factory; `params` is passed opaquely to it. JSON (this variant is not
@@ -107,6 +134,9 @@ impl OutputKind {
             OutputKind::LlDash => "ll_dash",
             OutputKind::Smooth => "smooth",
             OutputKind::TsHls => "ts_hls",
+            OutputKind::SrtPush { .. } => "srt_push",
+            OutputKind::RtmpPush { .. } => "rtmp_push",
+            OutputKind::RtspPush { .. } => "rtsp_push",
             OutputKind::Custom { type_tag, .. } => type_tag,
         }
     }
@@ -141,6 +171,16 @@ impl OutputKind {
             OutputKind::LlDash => Arc::new(ll_dash::LlDashOutput),
             OutputKind::Smooth => Arc::new(smooth::SmoothOutput),
             OutputKind::TsHls => Arc::new(ts_hls::TsHlsOutput::new(playlist_name)),
+            // Push outputs are not `Arc<dyn Output>` — they are driven by the
+            // push driver (`crate::push`) instead of mounting manifest routes.
+            OutputKind::SrtPush { .. }
+            | OutputKind::RtmpPush { .. }
+            | OutputKind::RtspPush { .. } => {
+                unreachable!(
+                    "OutputKind::SrtPush/RtmpPush/RtspPush produce no Arc<dyn Output> — \
+                     push outputs are driven by crate::push::drive_push"
+                )
+            }
             OutputKind::Custom { .. } => unreachable!(
                 "OutputKind::Custom cannot be built without a SchemeRegistry — \
                  crate::origin::serve_with_registry resolves it via \
