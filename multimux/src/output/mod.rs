@@ -141,6 +141,16 @@ impl OutputKind {
         }
     }
 
+    /// Whether this output is a push output (SRT/RTMP/RTSP push) rather than
+    /// an HTTP-served output — push outputs are driven by
+    /// [`crate::push::drive_push`], not built into an [`Output`] trait object.
+    pub fn is_push(&self) -> bool {
+        matches!(
+            self,
+            OutputKind::SrtPush { .. } | OutputKind::RtmpPush { .. } | OutputKind::RtspPush { .. }
+        )
+    }
+
     /// Build the [`Output`] this kind names, using
     /// [`llhls::DEFAULT_PLAYLIST_NAME`] for LL-HLS's media playlist filename.
     /// Use [`Self::build_with_playlist_name`] to serve it under a

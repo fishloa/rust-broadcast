@@ -738,9 +738,18 @@ async fn serve_with_registry_impl(
                 .with_name(route.name.clone())
                 .with_container(route_container(route)),
         );
+        let push_count = route.outputs.iter().filter(|k| k.is_push()).count();
+        if push_count > 0 {
+            tracing::info!(
+                route = %route.name,
+                push_outputs = push_count,
+                "push outputs configured (supervisor wiring is a later phase)"
+            );
+        }
         let outputs: Vec<Arc<dyn Output>> = route
             .outputs
             .iter()
+            .filter(|k| !k.is_push())
             .map(|k| build_output(k, &config.playlist_name, &registry))
             .collect::<crate::Result<Vec<_>>>()?;
         streams.insert(route.name.clone(), (store.clone(), outputs));

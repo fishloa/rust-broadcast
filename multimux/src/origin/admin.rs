@@ -211,6 +211,7 @@ impl RouteRegistry {
         let outputs: Vec<Arc<dyn Output>> = route
             .outputs
             .iter()
+            .filter(|k| !k.is_push())
             .map(|k| {
                 build_output(
                     k,
