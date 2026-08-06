@@ -59,6 +59,65 @@ fn case_1_stereo_1khz_minus_23_dbfs() {
     assert!(meter.max_short_term_lufs().is_finite());
 }
 
+/// Generate the same stereo 1 kHz −23 dBFS tone as [`stereo_sine`], but at an
+/// arbitrary sample rate (the coefficients are derived per-rate).
+fn stereo_sine_at(
+    level_dbfs: f64,
+    freq: f64,
+    duration_s: f64,
+    sample_rate: u32,
+) -> (Vec<f32>, Vec<f32>) {
+    let amplitude = 10.0f64.powf(level_dbfs / 20.0) as f32;
+    let n = (duration_s * sample_rate as f64) as usize;
+    let mut left = vec![0.0f32; n];
+    let mut right = vec![0.0f32; n];
+    for i in 0..n {
+        let t = i as f64 / sample_rate as f64;
+        let val = (amplitude as f64 * (2.0 * std::f64::consts::PI * freq * t).sin()) as f32;
+        left[i] = val;
+        right[i] = val;
+    }
+    (left, right)
+}
+
+/// Measure a stereo signal at an arbitrary sample rate.
+fn measure_stereo_at(left: &[f32], right: &[f32], sample_rate: u32) -> LoudnessMeter {
+    let mut meter = LoudnessMeter::new(sample_rate, ChannelLayout::Stereo).unwrap();
+    meter.push_interleaved_f32(left, right).unwrap();
+    meter.finish();
+    meter
+}
+
+#[test]
+fn case_1_at_44100hz() {
+    // Same stereo 1 kHz −23 dBFS tone, but at 44.1 kHz. Slightly wider
+    // tolerance (±0.2 LUFS) to absorb the rate-remapping of the K-weighting
+    // frequency response.
+    const RATE: u32 = 44_100;
+    let (left, right) = stereo_sine_at(-23.0, 1000.0, 20.0, RATE);
+    let meter = measure_stereo_at(&left, &right, RATE);
+    assert!(
+        (meter.integrated_lufs() - (-23.0)).abs() <= 0.2,
+        "case 1 @ 44.1 kHz: I={}, expected -23.0",
+        meter.integrated_lufs()
+    );
+}
+
+#[test]
+fn case_1_at_96000hz() {
+    // Same stereo 1 kHz −23 dBFS tone, but at 96 kHz. Slightly wider
+    // tolerance (±0.2 LUFS) to absorb the rate-remapping of the K-weighting
+    // frequency response.
+    const RATE: u32 = 96_000;
+    let (left, right) = stereo_sine_at(-23.0, 1000.0, 20.0, RATE);
+    let meter = measure_stereo_at(&left, &right, RATE);
+    assert!(
+        (meter.integrated_lufs() - (-23.0)).abs() <= 0.2,
+        "case 1 @ 96 kHz: I={}, expected -23.0",
+        meter.integrated_lufs()
+    );
+}
+
 #[test]
 fn case_2_stereo_1khz_minus_33_dbfs() {
     // Stereo sine 1 kHz, −33 dBFS, 20 s

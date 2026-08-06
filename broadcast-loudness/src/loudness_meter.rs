@@ -6,7 +6,7 @@
 use alloc::vec::Vec;
 
 use crate::channel_layout::ChannelLayout;
-use crate::filter::{BiquadState, apply_biquad, high_pass_coeffs, shelving_coeffs};
+use crate::filter::{BiquadCoeffs, BiquadState, apply_biquad, k_weighting_coeffs};
 
 /// —70 LUFS absolute gating threshold (ITU‑R BS.1770‑5 §Annex 1, eq. 6).
 const ABSOLUTE_GATE: f64 = -70.0;
@@ -53,21 +53,31 @@ fn lkfs_to_mean_sq(lkfs: f64) -> f64 {
 struct ChannelFilter {
     stage1: BiquadState,
     stage2: BiquadState,
+    coeffs: BiquadCoeffsPair,
+}
+
+/// The two K‑weighting biquad coefficient sets (shelving + high‑pass),
+/// shared by all channels.
+#[derive(Debug, Clone, Copy)]
+struct BiquadCoeffsPair {
+    stage1: BiquadCoeffs,
+    stage2: BiquadCoeffs,
 }
 
 impl ChannelFilter {
-    fn new() -> Self {
+    fn new(stage1: BiquadCoeffs, stage2: BiquadCoeffs) -> Self {
         Self {
             stage1: BiquadState::new(),
             stage2: BiquadState::new(),
+            coeffs: BiquadCoeffsPair { stage1, stage2 },
         }
     }
 
     /// Apply the cascaded K‑weighting to one sample.
     #[inline]
     fn process(&mut self, sample: f64) -> f64 {
-        let y1 = apply_biquad(sample, &shelving_coeffs(), &mut self.stage1);
-        apply_biquad(y1, &high_pass_coeffs(), &mut self.stage2)
+        let y1 = apply_biquad(sample, &self.coeffs.stage1, &mut self.stage1);
+        apply_biquad(y1, &self.coeffs.stage2, &mut self.stage2)
     }
 }
 
@@ -100,6 +110,9 @@ pub struct LoudnessMeter {
     /// Per‑channel K‑weighting filter state.
     filters: Vec<ChannelFilter>,
 
+    /// The K‑weighting biquad coefficients (derived for `sample_rate`).
+    coeffs: BiquadCoeffsPair,
+
     /// Buffer of K‑weighted, channel‑weighted sample energies.
     /// Each entry is the sum-of-squares (weighted) for one sample frame.
     weighted_power: Vec<f64>,
@@ -129,26 +142,31 @@ pub struct LoudnessMeter {
 impl LoudnessMeter {
     /// Create a new loudness meter.
     ///
-    /// `sample_rate` — input sample rate in Hz.
-    /// **Only 48 kHz is supported** because the K‑weighting filter coefficients
-    /// in ITU‑R BS.1770‑5 Annex 1 Tables 1‑2 are specified *only* for 48 kHz.
-    /// The spec says other rates "require different coefficient values" but
-    /// does not provide those values or a design formula.
+    /// `sample_rate` — input sample rate in Hz. Any rate greater than zero is
+    /// accepted (e.g. 44100, 48000, 96000, 192000). The K‑weighting filter
+    /// coefficients are derived for the given rate by a bilinear transform of
+    /// the analog prototype filters with frequency pre‑warping (the same
+    /// derivation libebur128 uses); at 48 kHz they match the ITU‑R BS.1770‑5
+    /// Annex 1 tabulated coefficients to within floating‑point epsilon.
     ///
-    /// Returns `Error::UnsupportedSampleRate` for any rate other than 48 000.
+    /// Returns `Error::InvalidSampleRate` if `sample_rate == 0`.
     ///
     /// `layout` — channel configuration with per‑channel weights.
     pub fn new(sample_rate: u32, layout: ChannelLayout) -> Result<Self, crate::Error> {
-        const SUPPORTED_RATE: u32 = 48_000;
-        if sample_rate != SUPPORTED_RATE {
-            return Err(crate::Error::UnsupportedSampleRate { got: sample_rate });
+        if sample_rate == 0 {
+            return Err(crate::Error::InvalidSampleRate { got: sample_rate });
         }
+        let (stage1, stage2) = k_weighting_coeffs(sample_rate);
+        let coeffs = BiquadCoeffsPair { stage1, stage2 };
         let channel_count = layout.channel_count();
         Ok(Self {
             sample_rate,
             layout,
             channel_count,
-            filters: alloc::vec![ChannelFilter::new(); channel_count],
+            filters: (0..channel_count)
+                .map(|_| ChannelFilter::new(stage1, stage2))
+                .collect(),
+            coeffs,
             weighted_power: Vec::new(),
             gating_blocks: Vec::new(),
             integrated: f64::NEG_INFINITY,
@@ -163,7 +181,7 @@ impl LoudnessMeter {
     /// Reset the meter for a new measurement.
     pub fn reset(&mut self) {
         for f in &mut self.filters {
-            *f = ChannelFilter::new();
+            *f = ChannelFilter::new(self.coeffs.stage1, self.coeffs.stage2);
         }
         self.weighted_power.clear();
         self.gating_blocks.clear();
@@ -611,13 +629,61 @@ mod tests {
     }
 
     #[test]
-    fn rejects_441_khz() {
-        let err = LoudnessMeter::new(44_100, ChannelLayout::Stereo).unwrap_err();
+    fn accepts_441_khz() {
+        // 44100 Hz is now accepted; coefficients are derived via bilinear
+        // transform rather than restricted to 48 kHz.
+        assert!(LoudnessMeter::new(44_100, ChannelLayout::Stereo).is_ok());
+    }
+
+    #[test]
+    fn rejects_zero_rate() {
+        let err = LoudnessMeter::new(0, ChannelLayout::Stereo).unwrap_err();
         let msg = format!("{err}");
         assert!(
-            msg.contains("48 kHz") || msg.contains("48000"),
-            "expected error stating 48 kHz requirement, got: {msg}"
+            msg.contains("sample rate") && msg.contains("0"),
+            "expected invalid sample rate error, got: {msg}"
         );
+    }
+
+    #[test]
+    fn coeffs_at_48k_match_tabulated() {
+        // The bilinear transform at 48 kHz must reproduce the BS.1770-5 Annex 1
+        // tabulated coefficients to within floating-point epsilon.
+        let (stage1, stage2) = crate::filter::k_weighting_coeffs(48_000);
+
+        let shelf_ref = crate::filter::BiquadCoeffs {
+            b0: 1.535_124_859_586_97,
+            b1: -2.691_696_189_406_38,
+            b2: 1.198_392_810_852_85,
+            a1: -1.690_659_293_182_41,
+            a2: 0.732_480_774_215_85,
+        };
+        let hp_ref = crate::filter::BiquadCoeffs {
+            b0: 1.0,
+            b1: -2.0,
+            b2: 1.0,
+            a1: -1.990_047_454_833_98,
+            a2: 0.990_072_250_366_21,
+        };
+
+        for (got, want) in [
+            (stage1.b0, shelf_ref.b0),
+            (stage1.b1, shelf_ref.b1),
+            (stage1.b2, shelf_ref.b2),
+            (stage1.a1, shelf_ref.a1),
+            (stage1.a2, shelf_ref.a2),
+            (stage2.b0, hp_ref.b0),
+            (stage2.b1, hp_ref.b1),
+            (stage2.b2, hp_ref.b2),
+            (stage2.a1, hp_ref.a1),
+            (stage2.a2, hp_ref.a2),
+        ] {
+            assert!(
+                (got - want).abs() < 1e-12,
+                "expected {want}, got {got} (diff {})",
+                (got - want).abs()
+            );
+        }
     }
 
     #[test]

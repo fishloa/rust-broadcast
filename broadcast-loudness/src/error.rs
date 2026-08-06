@@ -26,17 +26,13 @@ pub enum Error {
         got: usize,
     },
 
-    /// The K-weighting filter coefficients are only specified for 48 kHz
-    /// (ITU-R BS.1770-5 Annex 1 Tables 1–2). The spec states that other
-    /// sample rates "require different coefficient values" but does not
-    /// tabulate them or provide a formula.
+    /// A sample rate of zero was requested.
     ///
-    /// Resample the input to 48 kHz before measurement.
-    #[error(
-        "K-weighting coefficients are only defined for 48 kHz, got {got} Hz (ITU-R BS.1770-5 Annex 1). Resample to 48 kHz."
-    )]
-    UnsupportedSampleRate {
-        /// The unsupported sample rate requested.
+    /// A loudness meter needs a positive sample rate to derive K‑weighting
+    /// filter coefficients and to convert sample counts to seconds.
+    #[error("sample rate must be greater than 0, got {got} Hz")]
+    InvalidSampleRate {
+        /// The invalid sample rate requested.
         got: u32,
     },
 
