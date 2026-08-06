@@ -26,6 +26,7 @@
 //! a later phase; this module builds and tests the driver + SRT transport
 //! standalone.
 
+mod rtsp;
 mod srt;
 
 use std::sync::Arc;
@@ -41,6 +42,7 @@ use broadcast_common::Package;
 use transmux::TsMux;
 use transmux::ir::{Media, Sample, Track, TrackSpec};
 
+pub use rtsp::{RtspTransport, RtspTransportConfig};
 pub use srt::{SrtTransport, SrtTransportConfig};
 
 /// MPEG-2 TS `stream_type` for PES private data — ISO/IEC 13818-1 Table 2-34.

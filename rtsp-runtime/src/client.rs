@@ -195,6 +195,21 @@ impl ClientSession {
         self.build_request(Method::Teardown, uri, None, &[])
     }
 
+    /// Builds an `ANNOUNCE` request carrying an SDP body (RFC 2326 §10.3).
+    pub fn announce(&mut self, uri: &str, sdp: &str) -> Result<Vec<u8>> {
+        self.build_request_with_body(
+            Method::Announce,
+            uri,
+            sdp.as_bytes(),
+            &[(headers::CONTENT_TYPE, "application/sdp".to_string())],
+        )
+    }
+
+    /// Builds a `RECORD` request (RFC 2326 §10.11, valid in Ready).
+    pub fn record(&mut self, uri: &str) -> Result<Vec<u8>> {
+        self.build_request(Method::Record, uri, None, &[])
+    }
+
     /// Builds a `GET_PARAMETER` request, optionally with a body (state-neutral;
     /// an empty body is the liveness ping).
     pub fn get_parameter(&mut self, uri: &str, body: &[u8]) -> Result<Vec<u8>> {
@@ -511,6 +526,50 @@ mod tests {
         let b = c.describe("rtsp://h/s").unwrap();
         assert!(String::from_utf8_lossy(&a).contains("CSeq: 1"));
         assert!(String::from_utf8_lossy(&b).contains("CSeq: 2"));
+    }
+
+    #[test]
+    fn announce_emits_request_with_sdp_content_type() {
+        let mut c = ClientSession::new();
+        let sdp = "v=0\r\no=- 0 0 IN IP4 0.0.0.0\r\ns=Test\r\n";
+        let bytes = c.announce("rtsp://h/s", sdp).unwrap();
+        let s = String::from_utf8_lossy(&bytes);
+        assert!(s.contains("ANNOUNCE rtsp://h/s"));
+        assert!(s.contains("Content-Type: application/sdp"));
+        assert!(s.contains(sdp));
+    }
+
+    #[test]
+    fn record_fails_from_init_state() {
+        let mut c = ClientSession::new();
+        assert!(c.record("rtsp://h/s").is_err());
+    }
+
+    #[test]
+    fn record_transitions_to_recording_state() {
+        // RTSP lines are CRLF-terminated (RFC 2326 §1); convert "\n" -> CRLF.
+        fn wire(s: &str) -> Vec<u8> {
+            s.replace('\n', "\r\n").into_bytes()
+        }
+        let mut c = ClientSession::new();
+        // Drive Init -> Ready via a successful SETUP round-trip.
+        let t = Transport::single(crate::transport::TransportSpec::rtp_avp_tcp_interleaved(
+            0, 1,
+        ));
+        c.setup("rtsp://h/s", &t).unwrap();
+        c.handle_data(&wire(
+            "RTSP/1.0 200 OK\nCSeq: 1\nSession: 42\nTransport: RTP/AVP/TCP;interleaved=0-1\n\n",
+        ))
+        .unwrap();
+        assert_eq!(c.state(), SessionState::Ready);
+
+        // RECORD is valid from Ready; the request alone does not move state.
+        c.record("rtsp://h/s").unwrap();
+        assert_eq!(c.state(), SessionState::Ready);
+        // A 2xx response advances Ready -> Recording.
+        c.handle_data(&wire("RTSP/1.0 200 OK\nCSeq: 2\nSession: 42\n\n"))
+            .unwrap();
+        assert_eq!(c.state(), SessionState::Recording);
     }
 
     // Security-blocker regression (pre-release audit): `ClientSession`

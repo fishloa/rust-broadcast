@@ -9,6 +9,8 @@
 //! Skip list:
 //! - `MultimuxError` (`error`) — structured `thiserror` error, not a spec/
 //!   field label.
+//! - `RtspPushError` (`push::rtsp`) — thiserror error for the RTSP push
+//!   transport's connect/protocol/IO failures; not a spec/field label.
 //! - `InputSpec`, `AuthSpec`, `OutputAuthSpec` (`config`) — data-carrying
 //!   config ADTs (`Rtsp { url, .. }`, `Password { .. }`, `Basic { .. }`, …);
 //!   callers match the typed variant, a static label would be lossy.
@@ -33,6 +35,7 @@ use std::path::Path;
 
 const SKIP: &[&str] = &[
     "MultimuxError",
+    "RtspPushError",
     "InputSpec",
     "AuthSpec",
     "OutputAuthSpec",
@@ -43,6 +46,7 @@ const SKIP: &[&str] = &[
     "SmoothAction",
     "StreamStatus",
     "ReconnectState",
+    "RtspPushError",
 ];
 
 fn read_rs(dir: &Path, out: &mut Vec<String>) {

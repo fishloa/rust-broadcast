@@ -8,6 +8,7 @@
 - `PushFormat` config for per-output container format selection.
 - `ReconnectPolicy` config for exponential backoff reconnect.
 - SRT push transport (Caller mode to remote SRT Listener).
+- RTSP push transport (client ANNOUNCE/RECORD to remote RTSP server).
 
 ## [0.7.0] - 2026-08-05
 

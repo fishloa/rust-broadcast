@@ -7,6 +7,8 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Added
+- `ClientSession::announce()` — ANNOUNCE request builder (RFC 2326 §10.3) (#744).
+- `ClientSession::record()` — RECORD request builder (RFC 2326 §10.11) (#744).
 - `tests/non_exhaustive_coverage.rs` drift guard (issue #806). No public API
   or behaviour change.
 
