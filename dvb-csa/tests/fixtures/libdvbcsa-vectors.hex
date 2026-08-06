@@ -1,0 +1,109 @@
+# Vector 1: issue #909 golden vector
+CW: 01 02 03 04 05 06 07 08
+PLAIN: 00 08 10 18 20 28 30 38 40 48 50 58 60 5b 63 6b 73 7b 83 8b 93 9b a3 ab b3 bb b6 be c6 ce d6 de e6 ee f6 fe 06 0e 16 11 19 21 29 31 39 41 49 51 59 61 69 71 6c 74 7c 84 8c 94 9c a4 ac b4 bc c4 cc c7 cf d7 df e7 ef f7 ff 07 0f 17 1f 27 22 2a 32 3a 42 4a 52 5a 62 6a 72 7a 82 7d 85 8d 95 9d a5 ad b5 bd c5 cd d5 dd d8 e0 e8 f0 f8 00 08 10 18 20 28 30 38 33 3b 43 4b 53 5b 63 6b 73 7b 83 8b 93 8e 96 9e a6 ae b6 be c6 ce d6 de e6 ee e9 f1 f9 01 09 11 19 21 29 31 39 41 49 44 4c 54 5c 64 6c 74 7c 84 8c 94 9c a4 9f a7 af b7 bf c7 cf d7 df e7 ef f7 ff fa 02
+SCRAMBLED: 6c a3 30 83 cd ee b9 e1 dc 30 d4 ea a1 18 2d dd d1 6e ff 14 d7 a9 c9 f2 df 31 94 28 82 c4 15 8c 13 d6 19 bb 18 1d 4c 64 7a 59 31 6a a1 81 63 17 ed ab d5 9b ed ab 0e 86 8f 51 4b da be 7b 7b 4a 49 a3 db b3 c3 54 f5 be 08 8e 68 b9 24 fd c6 76 68 05 b1 4d 03 f8 e5 36 97 44 69 d4 49 3e af 76 0a c5 aa c5 9e 5f e3 c4 ef a7 f2 86 97 8a 91 be aa b2 be 6e b9 75 25 e3 84 f1 32 d2 10 27 12 c2 44 65 9f 0c 2c a5 cb f6 a0 fb 64 25 88 05 0c 80 6a 6c 25 3a bf 4b 7d 49 18 50 78 36 37 d7 68 c1 a4 e9 4e 29 89 fe 26 b8 7f c6 27 91 ff 51 71 7c 07 60 96 bd ab 95 b9 b6
+# round-trip: OK
+
+# Vector 2: random
+CW: 71 47 1d 94 ec 89 93 c7
+PLAIN: 44 bc d8 cf cb 3c c5 a6 68 19 a8 e6 ca a4 e2 3b 69 bd 41 89 41 da 1e dc 4e d8 36 13 c6 82 49 4c 19 e2 74 0e a9 4a 4f 39 49 20 c6 ae 77 6d b8 be 59 25 51 54 7a 34 28 e1 41 4d 18 0a 35 71 de 14 f2 41 77 0b ea 05 37 b5 dd 78 a9 3a 16 59 2a 90 6b b2 44 a8 f2 e6 cb 5a 83 7e ba 11 f2 b0 cb 36 09 b3 d8 5e 48 c5 f4 32 5c f8 48 22 5f c0 af c9 d5 3e 11 1e 62 4a 80 60 4d 43 14 c0 b5 96 87 cb 95 0f 8f 9e 79 e2 ff c8 fd 78 9c fd 0a fb c0 80 d0 a0 b1 4e 83 b7 be 0b d5 74 1f ae 36 7b 8a eb ce 2d 95 63 36 b5 cf 8e fa d1 9c 64 cf 60 d4 ce 95 b0 1b d0 0b 85 fe 73
+SCRAMBLED: dd 9a 1f 33 ac 0a f0 a4 80 f3 39 e0 b8 c1 f7 70 57 34 00 86 3a 5d 51 c4 92 25 51 d2 20 90 75 db e6 39 fc af f6 78 74 17 33 8a 1c 5f e7 73 30 70 8a 0f 97 48 82 e0 a6 29 76 21 c7 c8 9d 42 62 46 66 4a ab a9 ef 74 41 1b 10 a6 59 ef aa 20 74 c6 b8 32 08 eb 46 94 bb b0 ad d0 16 00 54 21 73 bc 08 42 8d 29 5b 49 f3 24 b3 68 c5 46 2a cf b2 25 3b 7a 8d 87 40 b2 a6 58 ce 47 18 35 04 4e 17 4e 24 54 e1 ac db b7 ae 4c 12 8c a6 09 48 fc 0f c1 ee 4a c0 4c fc d7 e8 4c 92 d4 c4 12 90 c1 b8 66 20 77 01 f2 b0 85 3a 44 23 dd 63 06 fe 82 08 de 1d 07 1e 5c 05 74 79 f7
+# round-trip: OK
+
+# Vector 3: random
+CW: 54 e9 d2 73 2d b7 4d ad
+PLAIN: eb e5 e1 47 37 94 dc 9d 8a d9 41 ef 66 49 64 cb 5a 47 47 3b b3 0d b7 af 02 7b 26 a9 52 a2 47 2b 26 10 6c e0 35 d9 9f 0c e4 6a 82 35 87 0d e7 8f 58 3b 2e 28 33 a5 62 d8 17 01 12 e6 5d 95 f1 7a b6 84 2d c7 e6 dc 8f f5 42 5b 57 cf ea 04 d5 31 c7 66 c7 2f 43 a7 76 06 cb 53 8f c3 06 e7 c2 b5 d2 1b 1c 94 03 f3 25 6e da 84 b9 55 47 87 a7 ca df 9f 0b e7 9b 6a 6b 50 56 49 94 d8 04 f0 33 f2 b3 ac 32 de 44 77 d8 8f e6 be 9f 5e 56 ec d4 71 d7 be f1 e9 f3 46 ba cf f0 bc 1a bc 11 08 bb 4a 92 10 67 3e 61 c1 21 72 9c df 02 83 ce 8d d5 40 e9 9c 72 cd 03 93 db 9a
+SCRAMBLED: d8 d8 3f 33 41 f4 aa 93 23 06 0f c2 b8 51 b1 8d c1 bb 73 d6 67 50 cf 0f 56 aa 36 d8 a9 8c b8 f6 a7 9f e2 1d 29 e1 92 80 ac d7 6a 47 dd dd 0a 46 97 41 47 12 e7 2d bb bc 2c f0 6f 57 1a 2b 83 5f 69 66 9b 3f 65 b3 af 49 05 e6 47 f6 d8 bc a0 1e 81 b9 76 c5 c2 41 e7 7b 93 d2 24 22 e8 1f 62 04 4b a4 fd b0 cb 01 e7 6c b5 da d5 8a af 5b f1 9e f1 c2 5c 75 42 bc ab fe 0a ae 0a b9 98 8c 04 19 b8 a1 ff f8 d3 cc 6d 40 37 99 0c 1e 13 b3 60 df 40 62 6c 83 7c ef ae 3e 2d 6e 3b f7 76 a8 b0 00 53 77 57 62 be 68 fc 97 98 d1 17 d6 d2 f4 89 94 82 67 6f d9 4b d7 d5 ed
+# round-trip: OK
+
+# Vector 4: random
+CW: d1 82 18 08 e4 87 d2 d5
+PLAIN: a5 1d b1 4b 11 28 77 2d 35 c1 d9 5c 69 c1 21 4c 4c 0f 85 2b 83 aa 44 cb 30 75 86 53 34 c6 f1 aa 25 ad 0b 9f 0e 04 52 d8 e9 3b 1d 81 dd e0 31 b0 38 f1 22 9a 2b e2 70 78 47 6c 5d 37 bb 1b 8f e2 4a 96 6a d0 0f ad 2b 8d f1 25 c5 89 e4 43 7c 82 e4 19 42 b3 b2 92 d4 ba 4d 3f 94 4a 2f e0 25 95 4d b2 c9 76 cb 7c 7a 62 83 57 c9 0d 34 40 7a db 8a 5f dd 0d d2 14 ea a8 79 c7 24 24 49 6c 2a da 64 d9 1d 2b fc c7 b5 6f d8 aa 22 a4 86 31 a4 d3 60 9b e9 41 41 c0 2a 5b 05 da 04 5f c2 18 17 ca c7 e1 60 85 59 e8 57 ce 28 f4 c8 e7 93 6d 71 81 a0 a6 61 e7 b9 ec 0b eb
+SCRAMBLED: 70 b3 89 f8 62 96 11 1e 7b 29 d9 cb ad 5f 3a 79 0c 5c 1c c3 d4 ea ce e3 8d 2c 6a ed 56 df 4d fa 55 20 94 55 d9 0d 8c ab 73 e4 09 57 53 53 6c 46 fc 34 c8 3f ed 66 0f af a1 0d 1e c2 ce 7b 48 a7 e0 b0 68 64 11 09 4d 04 ff 39 c9 27 2f 00 27 ac 9b b1 a1 ee 28 4c 0c 30 76 11 e5 d0 ca f8 63 1b c7 23 1b 03 57 c8 49 28 c7 6b e4 d6 f2 a0 dd 90 2b 46 c7 36 a7 18 06 01 35 5a 0d 44 77 91 12 49 3c 8d c5 20 ad 2a 90 21 59 ed ef 85 1c 82 0d bf d8 d4 47 ef 0f 06 49 a6 f6 2e a1 53 b4 da 2f 8b 22 49 96 10 d9 3c 15 a4 a8 fa 07 d9 11 83 ed 52 b4 b0 14 50 ed 4e 80 9b
+# round-trip: OK
+
+# Vector 5: random
+CW: 27 52 2d 91 50 3a 63 7d
+PLAIN: b0 a4 8a 1c 99 36 d5 95 aa 0f b1 6e 11 4c 5a fe 80 56 3a 97 f0 f2 05 6f 18 06 96 53 ac 2c 86 0a 56 f8 91 8a 75 09 aa dd 98 d2 d8 d1 b9 26 d7 62 3a 85 6e e8 a0 29 91 01 11 ce 37 3c 8e 45 f9 8a f1 b7 70 65 a6 ba 4b bd 29 15 32 a7 43 53 5e c5 04 0a f5 73 7f e8 26 b6 48 83 09 e5 ae dd 34 15 b9 b8 1d 46 e2 9f 32 4f 95 b1 ba 89 67 2c 69 3e 17 bd c6 d0 46 8a 3d a9 f6 fb 03 e6 c4 4c ae c2 e5 d4 90 c4 e2 12 d7 a8 13 7c 65 0f dd 08 70 e6 ab 77 d9 96 ad 64 4d f0 53 10 1e d6 88 ea df aa af e1 c1 78 5e 6a b0 e3 dd 50 2d d0 5d 3f ea d4 f8 0e 27 5e 6c d0 cf a4
+SCRAMBLED: 7d 0e 3c a0 c7 2d 8a ef ee 88 5c 6f e4 36 f4 e7 d4 e7 f0 80 ab 75 0a bd db 07 cc b2 9a 6c 33 77 94 3a b3 8e 9f fb fc 78 0c 7f 23 9c 0e aa 3f 0b 8a 53 7e ca cb 3d ab c7 e7 84 97 40 6c a8 7f 72 2a 15 52 a5 a4 ac 43 30 84 0d c9 61 62 f4 e1 99 f7 e7 21 61 23 70 e5 c2 32 a2 1c f6 db 7b d4 00 a1 b0 ae fa db f7 e3 c6 4f ca 44 01 03 b0 d4 21 7b f8 6a b6 8a c7 35 96 00 13 d3 96 ca 21 86 38 0c 38 f1 17 f7 a7 ff 95 1c 5b 10 a5 f2 ad b0 91 4b 28 f0 17 47 39 ed 20 e1 89 46 bd 75 19 26 bd da 79 24 ad fd a7 04 b6 b0 eb 79 76 dc 3e 94 4d 0b a4 15 6a 92 e3 7f 62
+# round-trip: OK
+
+# Vector 6: random
+CW: 97 99 51 4f b2 10 40 e5
+PLAIN: 4d b9 a9 fa 0e ff 38 16 29 04 09 65 9f 29 4f 21 36 5c a7 c0 3b 24 3a dd fa 6e 95 e7 fa 15 48 8b f9 33 40 e2 aa 2a e4 5a 31 70 f2 66 5a 1e 18 e5 9d 38 52 53 d2 ba 06 b2 b4 67 e1 36 18 51 6f b3 e9 27 7d c7 ea 41 2f c7 2b 6d e0 6a 48 77 bc 38 65 7a 1f b0 e9 e9 ac 3c fd 5c 2d d5 c3 1c 2e 76 57 6d 58 42 86 9e 8e 74 51 d1 c9 0a 20 8b b4 31 c6 fa 07 6f 38 0a a4 93 0d 26 72 5c b5 ce fd ec 79 dd ca eb 36 98 7b 7a d9 76 a8 de 99 b2 77 e9 f7 91 01 27 77 73 64 ce 1c 9c a8 63 a4 c0 53 2c 88 50 ca 59 b2 87 6e f1 fc 33 72 7e 6d 44 7e 77 32 16 05 72 5e 7e 67 06
+SCRAMBLED: 34 49 6f 9d 35 72 6e 56 00 ab 5f 33 b7 f0 ed 17 70 6b 76 28 af b2 51 8e c7 32 5b 11 c4 7d c2 fd 08 af ca 5b 63 70 4b 99 65 5c da 48 f3 17 c1 0d be 9e ea 11 aa 95 a8 e6 62 dd 2c 43 27 05 1c 0c 36 07 c5 4c 60 56 de 02 78 be 0a 4c ee 02 dc 07 26 09 a2 e1 05 ff 40 bb 90 45 e6 36 f6 b5 32 cc 5c 1e ce a0 aa 8b fb 1a 8a f0 67 16 06 25 67 45 88 44 e6 bb 4e b3 a1 79 72 11 6b 23 e8 64 ea 30 e1 54 42 d1 00 f4 8c 93 b0 89 e2 04 8d 8b b2 b3 eb e7 18 45 b2 73 30 e0 88 b7 77 a1 c8 cd 6d 92 8c eb 9c f2 d0 f2 7f 1a 52 03 65 da d7 81 65 bf 49 7e 39 80 d2 bf f8 0e
+# round-trip: OK
+
+# Vector 7: random
+CW: 61 96 c6 81 4a 48 a8 4f
+PLAIN: bc 9d 51 25 b2 c3 de f0 f2 e0 21 81 52 99 40 f5 ae 61 0c e5 a4 82 22 53 16 ec c4 4f 5d c0 75 6c 4d 9c 56 e7 ed a4 43 90 f3 55 ad 80 02 09 35 79 a2 4a 0e 1b 03 d7 0f cc 71 76 9b 65 97 7f 31 9d 73 25 d2 36 1d 83 16 e9 37 6b 0d 12 33 ed d6 1b 48 a9 01 aa 32 d5 a6 8a ac 0d 42 5a ae de 55 f8 66 10 bc ab f8 b7 ce 13 f6 f8 39 d0 9e 9c 9b f5 d6 56 e0 2b e8 d4 5e a5 fd 88 b1 c7 5b 33 58 96 5e 36 0c de 38 98 e4 25 68 d6 2a 52 fb 6e fb 1d 86 2a a0 36 df 2d af 35 9e bf e1 44 56 d8 b2 8e 93 6e bb 66 93 7e cf 38 c5 dc d7 30 03 bb 6e ac 8e fc 3b 62 cd 37 12 51
+SCRAMBLED: 1e 20 30 1a 39 3d 73 3b df 5f 15 fe f5 ec d2 14 37 2d 44 80 68 8a d7 2e 28 78 7a 7d 56 f1 8a a2 82 1b 2a 95 70 4c c6 ae 07 29 74 74 7f c3 b0 c9 5d b5 b5 61 9d 73 52 04 56 1d 83 7e a4 45 20 c8 cf 7b db 37 67 dc 85 74 a4 ea 3a 12 40 54 00 19 38 1e 78 36 b9 c6 9c 04 93 10 7b 52 31 9b c6 eb 96 81 ea 6b 3e 44 1e 9c 36 a6 2e d6 2b 6a 6b 23 f2 ba e2 44 a4 a1 83 ef 9a b0 3d 4e c8 21 f2 99 2c f8 b1 01 48 20 3a 55 3d a3 9e aa 18 c3 75 40 0c 38 2c a2 b6 71 34 10 58 70 c3 84 8d e7 ac 94 b1 5c d4 6f e3 82 e1 35 40 b8 e0 9e 70 f1 98 77 f8 d8 e8 6d 44 74 98 64
+# round-trip: OK
+
+# Vector 8: random
+CW: c5 8a ca 69 57 24 dc f9
+PLAIN: 3d 90 c0 dc c3 c2 08 63 45 e2 39 01 6c dc 6c b9 27 a4 a9 48 6b 4a fe 12 ab c1 63 cd 16 6f 4e ef 94 74 14 d8 7e ba 06 bf 1f c1 47 5e ef 27 6f 5d 89 fa e1 80 71 be ec 8f 88 3d a4 09 4b 11 7e 87 cf f2 ae f1 7d c0 41 64 8d 4f f9 df 44 f6 ec b0 ec d6 db a1 98 eb 53 e1 94 d4 86 b4 ae 62 e7 da 28 e2 87 c1 78 2b 32 6a c6 66 48 1b 22 a0 5d c9 89 11 90 44 96 2a ac 20 08 60 00 67 f7 bb fe 00 d5 1d 96 de 27 53 50 e8 01 dd 2c ab 43 7d 39 c2 96 82 f7 01 24 d1 6e 64 19 b8 0b ba de 73 3d 11 10 7a d4 e0 42 90 14 f7 78 8c 9c 27 5e e6 f9 b1 4b 01 09 6f fa 3a 11 c4
+SCRAMBLED: 4d 30 e2 67 ab 71 de 7b 8e 85 b9 dd 61 b6 5b ef d9 d7 41 54 ce 81 04 bd fd ae 4f d3 93 d3 c1 dd 0b 72 d5 cb a7 c5 61 f2 6b da 8d 66 8f 1d 17 73 52 96 d2 08 0c 2f e4 71 48 02 5b 97 f5 21 ad 60 07 ba 54 d4 43 64 d7 90 cc 6f e3 42 75 49 37 8e 70 a3 9f 06 36 9d 62 5f 8c 48 f1 15 fe 71 49 7f ad f5 70 16 64 f0 ce bf 8c 03 97 e5 2d 44 b4 64 b1 a8 d6 c4 18 94 21 13 ef dc 68 24 f4 8a b3 32 c3 e3 e3 c1 d6 89 fa 0d f4 9b 80 66 b1 82 9d 96 70 31 60 30 7d d8 04 5a af f7 c9 2d e4 49 9c 96 32 8c 20 41 57 07 51 f9 8a 10 4e 27 3b 65 1b a0 ac b6 29 f1 a7 38 75 00
+# round-trip: OK
+
+# Vector 9: random
+CW: 02 b5 9e 45 1b e2 1c 24
+PLAIN: 0f d1 37 60 81 3b f5 af 61 4c 90 26 2b 31 15 ae e2 66 bd 27 d0 bd 0e 59 fa 2d b1 9f 65 60 12 52 0c fa ba f6 9c ab 6c 27 f5 f3 01 41 61 b8 03 d2 92 89 0c c1 5e b0 dd 3b 39 fa 3d 61 76 45 98 b2 3d ce 53 3a 4b 37 f0 78 6d 5b e6 10 ba d2 3e 35 93 43 ed d4 5b 6c f4 81 f7 f2 3a 22 04 ea 24 5e db 23 fa c3 46 39 f9 ba ff 5b 38 2b ec d7 3b ef 1d 6a 58 f9 81 4a ce 44 6b ef 9f 7c c9 a5 31 6c 1e d3 a8 2a 44 09 00 04 e4 cb ee 29 b1 1f 74 17 67 d8 46 c8 87 a1 e0 9c cf c9 64 05 7b d0 35 f4 3e b5 54 07 ff fd 7d 6f 54 83 00 a3 bf 03 61 c6 ab 64 af d9 24 c9 a4 a0
+SCRAMBLED: ba 8d fb 9e 84 a6 69 53 bc c6 c8 eb 6d a0 e7 46 e5 12 34 ee b2 c3 96 39 64 07 bc 88 19 ee ef 4b 3b 0d 5d e4 2c fc e1 e5 06 2f 14 fd 89 16 f3 13 f2 26 12 83 e2 4a 75 5f d3 71 b4 20 ae 15 57 79 14 fd 8d 0f 30 56 ba 41 23 d1 a5 07 e2 dd e0 b0 ed 23 bc e2 df 8b 5f 3c a0 d7 b8 b4 0b 4e b1 eb 96 76 d6 67 61 c1 53 ed d8 c6 d0 09 6a e9 df 7a b2 ae ec 94 93 5d 25 2f 6b 68 3d bb d9 53 8b a2 cf 5a 90 a9 bd 58 7c 03 19 e9 5e d5 6b 3b 0a 0e 08 47 7f 19 60 d2 1d 4f 14 c9 c2 23 9f 28 8e 23 7b 96 ab 17 f2 5f 47 58 52 a4 f3 96 94 32 72 33 ae 3a f2 70 a7 8a 2b 0e
+# round-trip: OK
+
+# Vector 10: random
+CW: 5a 56 82 55 d4 c2 a8 10
+PLAIN: 73 a1 f6 f1 2e 6f e6 13 87 5c 67 30 d0 da 79 14 1f e7 8a c3 12 1a 92 69 43 70 f0 06 8a d4 02 d6 f5 70 87 81 88 b6 b6 07 b5 2c 1a 69 9a fb 34 18 fd 37 cf 1f 07 ed 21 0f c4 ed a6 ae 56 5c bc 5e fc f8 ff 4f c7 2a 62 64 16 cd 12 e6 d6 c1 0b eb 7b 2e 76 84 bd 98 c9 aa 13 a7 9d e6 f0 b4 4e c2 c0 13 55 f2 a1 23 65 42 e2 16 46 3f 3c 81 75 a5 d2 a3 79 8c ea 75 03 51 69 75 cd 45 10 33 2f 18 79 98 81 03 cf f9 34 b9 50 e0 af 0b 84 94 eb 5d 3b 6e cd cd 48 db 46 1d fe 30 2d 64 6e 31 d7 79 5f 5f 7c 1a 0a 05 49 e0 9a 01 44 e3 66 53 e4 2d ec 67 6c df 8d 22 0b 25
+SCRAMBLED: 24 31 17 3a 70 98 0c 50 2a 15 2d 26 06 d3 f2 63 9f 4b 32 0c 9c 46 6a ed 21 34 01 f7 ea 72 18 22 93 8e a5 0c a8 a0 4f d4 72 69 58 fc a4 59 2d 4c 55 0b 50 4a 78 68 c9 75 aa 93 83 96 98 a2 2f 27 7c 44 87 8e 37 b2 f9 14 a3 02 a0 b3 c7 bf c4 bf 7c c3 25 5c d2 b2 4a 44 0c 2f b9 05 be 07 2c d4 7c 22 f4 b2 e8 f4 df 79 3f ad 8c 16 22 19 25 92 28 06 3a 97 3a 37 fd ee 9e 88 95 0c 69 60 a5 56 e6 d7 d2 8b f1 6c 1b 3f 14 31 2d e2 db a3 26 12 2d bc 31 2a ee f8 75 28 04 38 d2 94 50 92 a8 8f c0 90 6a f3 1f b6 05 c2 b4 0c 01 b7 9d 5d 81 e2 2e 72 7c bb d7 8d de d0
+# round-trip: OK
+
+# Vector 11: random
+CW: 0b ae b5 db c2 06 bf fc
+PLAIN: a9 40 3d cf 08 9e 1c d0 f7 53 fe 5f 9a 15 d8 2a 1e 66 4d 5c 72 a2 c9 82 c6 c9 5e 42 c4 0a 5e ba 91 14 bd b9 82 1c 23 a0 9e ac d4 16 d8 32 40 6f 09 44 69 da af b4 f9 4c 68 58 1f 30 2c 96 2d cb 4d b1 f3 71 30 d7 d9 6a c9 e6 be a1 d8 02 94 12 e5 d8 b8 f1 fc af 12 9b 29 33 f1 3e b2 01 a3 47 17 f1 d7 8e ca 27 b3 44 ae d8 b5 98 52 dd 4b 2c ea fa 30 3b 11 eb 8c 86 41 32 cb 03 0e a3 39 45 25 ab 62 aa 08 65 2c 46 87 5b b0 92 fd 1c dd d4 50 82 cb 4e a6 c0 e0 26 e7 2e a5 18 f7 d4 66 de b1 b8 8b 5a a2 e7 b9 89 8a 45 a8 28 93 16 c3 24 4f 48 81 c3 73 86 86 93
+SCRAMBLED: 97 cc b5 d8 42 70 70 56 a3 65 ed 24 44 cf 8f 9e f0 fa 56 6b e7 8e ef ae 91 f0 6a f9 27 7f b0 70 97 27 bc 89 3c 5c 7b 71 6a 0b 05 6a 25 90 c6 fe 5b 87 74 a9 73 fb d3 e7 c9 43 a6 b1 33 ef d2 5b 54 37 e9 b2 a0 9e df ae 5e 6e 07 60 28 97 70 eb 92 01 65 d5 1d fb c4 09 f8 33 19 79 19 ca 23 44 a4 72 1b ec 3f b5 15 18 8f 38 08 e4 0b ab 18 8b 6c 9d 24 9f 25 77 44 4a 53 a1 65 45 88 7c 3a a5 ad bc 62 53 03 12 5b e4 b7 00 49 c8 9a cd 2d 9e 70 51 d8 01 01 d6 ef b7 94 8c fc c2 ac 6d fd 1c cc b8 35 8e e0 57 f1 89 35 0a 55 a2 56 7f bf 87 9e 33 f0 8b c6 df 10 70
+# round-trip: OK
+
+# Vector 12: 8-byte payload
+CW: 55 fd 78 15 27 ec a2 29
+PLAIN: f1 ee 4b 39 50 07 d4 25
+SCRAMBLED: 69 d1 78 32 b1 73 4b 58
+# round-trip: OK
+
+# Vector 13: 16-byte payload
+CW: f0 70 94 f2 ca 22 74 32
+PLAIN: 1e 25 49 31 30 96 f4 e4 c2 79 3c 92 54 44 66 40
+SCRAMBLED: 3d f6 9d f1 4e 97 82 31 1e 31 e6 0f e0 70 17 4e
+# round-trip: OK
+
+# Vector 14: 32-byte payload
+CW: 1e 27 9a dd ca 1c f5 32
+PLAIN: f1 b3 6d 88 5c 9b 68 16 f7 ef 1c 31 94 46 a5 32 66 79 e7 26 38 32 29 39 70 39 6e df c7 7e 93 c8
+SCRAMBLED: b9 59 3e bd e4 ae 0a 30 c7 57 e8 6f f7 6e 7a 42 b1 17 03 16 ca 69 5d 8b 0f 73 7e 1b 62 4e 55 54
+# round-trip: OK
+
+# Vector 15: 64-byte payload
+CW: c6 e6 2a 81 ff d6 18 ea
+PLAIN: 11 80 f1 5b 59 f0 0e 95 78 d5 74 6a 89 10 64 2c 1f fe c1 d7 01 86 26 fe a5 e1 c3 76 6d 2c fc c4 a3 af c0 47 36 eb a9 24 32 66 d8 f6 01 35 8e 33 63 4e 8b 5c 2e 8b 27 ec c7 7d 31 fe 5c f6 8b bc
+SCRAMBLED: 45 d2 49 70 85 52 6f 02 12 94 39 41 07 2e 59 3a 28 93 92 f1 99 7e 2c 0e 5d 3d 72 d5 e3 9a c6 70 39 81 31 43 83 2c d5 c8 f5 d2 7a 28 2b ff 5f 4d b3 c7 2e ce a8 b1 ff bf 7d 12 4d 53 e2 a7 91 4b
+# round-trip: OK
+
+# Vector 16: 100-byte payload
+CW: e7 55 82 8c e2 8f ee f9
+PLAIN: ca 02 0e 61 56 fa 20 64 74 ff c3 07 08 e4 0d ac 64 91 6c b2 85 8b 3d ec 13 48 2e c3 17 35 54 29 7a 83 0b 44 41 b5 91 d7 8a eb 61 70 45 eb 51 54 b3 f4 6b 2a a1 43 8b 6a 60 62 bd 83 8b 33 53 cf 78 c0 c9 37 7a c0 5a a6 dd e8 5e 2f 9f f8 6a fd ee 80 26 fe 66 76 ec 4e 07 79 26 65 f8 e3 64 01 fd 91 40 d2
+SCRAMBLED: ee 6f 10 a0 bc ac 9c e8 5a 70 ed 18 a7 94 a8 10 3c 21 f3 81 ac bf 16 a3 13 9b 16 7b de 56 59 dd dc 8a 8d f6 30 0c bb 58 13 0c ad a0 26 a2 4d de 78 34 ad 6a 30 42 94 1a fb b2 4b 6f 64 67 46 ee f4 62 0e 0f e5 76 dc 4d 24 9a 0e 69 2c c3 ca e5 94 e7 f2 44 43 39 9a 3b 1a e9 c8 a8 24 9c e0 0d 45 40 78 06
+# round-trip: OK
+
+# Vector 17: all-zeros
+CW: 00 00 00 00 00 00 00 00
+PLAIN: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+SCRAMBLED: bf 8a 91 00 77 6f 7d a5 d1 04 c9 08 52 e5 67 bf 7b 25 1e c7 b0 a4 d4 25 af 68 af 9f 01 a5 c7 fe 92 32 9f c9 12 94 a6 34 6a 23 7a 9e 8a 76 a6 80 39 f8 8b 6a 48 c6 8c ca c6 a3 22 94 5f fd 0f 64 ef 72 cc ca 9a 9a 33 88 89 3c 0b e9 7c e6 69 7d e0 8f a5 1d 13 45 e2 fb b3 74 2f 43 a6 6f a2 d4 74 ca 31 89 c6 33 40 a7 9a f5 34 ea 44 50 16 23 4f 09 ef db 2b fe 87 f0 24 e4 74 91 ff b8 cc e6 67 d9 a2 26 08 59 a1 a6 64 7e c4 d5 c7 d5 bc 74 86 ef 41 aa 95 e1 f0 67 3f e2 56 0b 16 89 84 79 b7 2d f0 27 df 9d 74 4b f1 92 f4 13 0f 3f a1 70 b7 c2 e0 47 39 95 89 7a
+# round-trip: OK
+
+# Vector 18: all-0xFF
+CW: ff ff ff ff ff ff ff ff
+PLAIN: ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff
+SCRAMBLED: 2f 6b aa 9b 66 8e eb e8 09 d5 19 98 4c f4 dc e2 b0 64 40 4b 7e 30 b9 46 9e 26 aa 68 b7 0e 37 c4 ef 95 ff 99 74 0a 32 c8 10 0b a4 6a c4 8d b2 dd df eb 56 df a0 da 44 70 56 53 03 33 a0 ad 21 0e aa 1d 3b 03 01 be 4c ff 37 36 0c 3e 23 2e a2 7b 3c 1c 0d a0 33 8a 4b cf 87 9f 78 ad 90 00 77 b5 1b 55 41 1a 52 c8 57 18 90 79 0a 73 57 b8 4d 33 0f b6 d9 8a e3 d2 09 27 9e e1 f5 91 18 72 42 1b c7 e9 e6 f6 73 6e d6 a9 fd 5d 5f 20 a4 36 27 74 f3 13 04 6a a4 1d eb e0 8c 10 0f a4 e7 23 d7 22 56 89 3d 51 e8 aa 7d 96 ec f5 88 2b 45 c7 23 b1 52 82 7f ce 7d 8f 2e 06
+# round-trip: OK
+
+# All vectors generated and round-trip verified.

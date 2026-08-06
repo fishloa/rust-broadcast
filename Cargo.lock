@@ -664,6 +664,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "dvb-csa"
+version = "0.1.0"
+dependencies = [
+ "broadcast-common",
+ "criterion",
+ "rand 0.9.5",
+ "thiserror",
+]
+
+[[package]]
 name = "dvb-flute"
 version = "0.3.1"
 dependencies = [

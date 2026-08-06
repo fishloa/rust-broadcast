@@ -31,18 +31,30 @@ const BINARY_ONLY: &[&str] = &["dvb-tools", "multimux-cli"];
 /// public enums in `src/`" -- anything else means the guard belongs there
 /// instead, or the crate's Display convention is genuinely handled another
 /// way.
-const LABEL_COVERAGE_EXEMPT: &[(&str, &str)] = &[(
-    "dvb-stream",
-    "no public enums in src/ (async stream adapters + ResyncStats struct only)",
-)];
+const LABEL_COVERAGE_EXEMPT: &[(&str, &str)] = &[
+    (
+        "dvb-stream",
+        "no public enums in src/ (async stream adapters + ResyncStats struct only)",
+    ),
+    (
+        "dvb-csa",
+        "only public enum is Error (exempt from #204 labels)",
+    ),
+];
 
 /// Library crates exempt from `tests/non_exhaustive_coverage.rs`, with a
 /// one-line reason. The only legitimate reason is "no public enums in
 /// `src/`".
-const NON_EXHAUSTIVE_EXEMPT: &[(&str, &str)] = &[(
-    "dvb-stream",
-    "no public enums in src/ (async stream adapters + ResyncStats struct only)",
-)];
+const NON_EXHAUSTIVE_EXEMPT: &[(&str, &str)] = &[
+    (
+        "dvb-stream",
+        "no public enums in src/ (async stream adapters + ResyncStats struct only)",
+    ),
+    (
+        "dvb-csa",
+        "only public enum is Error (exempt from #[non_exhaustive] guard)",
+    ),
+];
 
 fn workspace_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
