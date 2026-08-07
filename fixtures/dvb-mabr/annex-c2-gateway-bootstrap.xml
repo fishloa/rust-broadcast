@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Hand-authored MulticastGatewayConfiguration "bootstrap" fixture: a one-off
+  document delivered out-of-band, carrying only the
+  MulticastGatewayConfigurationTransportSession element(s) a gateway needs to
+  find the in-band gateway-configuration carousel (ETSI TS 103 769 V1.2.1
+  clause 10.4.5, method 3): no MulticastSession elements. Modeled on the
+  SHAPE of Annex C.2 but this crate's own content. See fixtures/PROVENANCE.md.
+-->
+<MulticastGatewayConfiguration schemaVersion="2"
+    xmlns="urn:dvb:metadata:MulticastSessionConfiguration:2024">
+
+  <MulticastGatewayConfigurationTransportSession sessionIdleTimeout="45000"
+      transportSecurity="integrity" tags="urn:example:tag:bootstrap">
+    <TransportProtocol protocolIdentifier="urn:dvb:metadata:cs:MulticastTransportProtocolCS:2019:FLUTE" protocolVersion="1"/>
+    <EndpointAddress>
+      <NetworkDestinationGroupAddress>239.20.0.1</NetworkDestinationGroupAddress>
+      <TransportDestinationPort>8000</TransportDestinationPort>
+      <MediaTransportSessionIdentifier>1</MediaTransportSessionIdentifier>
+    </EndpointAddress>
+    <BitRate maximum="100000"/>
+    <ForwardErrorCorrectionParameters>
+      <SchemeIdentifier>urn:ietf:rmt:fec:encoding:0</SchemeIdentifier>
+      <OverheadPercentage>100</OverheadPercentage>
+    </ForwardErrorCorrectionParameters>
+    <ObjectCarousel aggregateTransportSize="65536">
+      <ResourceLocator>urn:dvb:metadata:cs:MulticastTransportObjectTypeCS:2021:gateway-configuration</ResourceLocator>
+    </ObjectCarousel>
+  </MulticastGatewayConfigurationTransportSession>
+</MulticastGatewayConfiguration>

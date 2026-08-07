@@ -1,0 +1,78 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Hand-authored full MulticastGatewayConfiguration fixture: linear services
+  with unicast-retrieval PresentationManifestLocators (one with an EMPTY
+  locator + a mandatory contentPlaybackPathPattern, modeling the "no
+  reference point A" case, clause 10.2.2.2), gateway-referencing object
+  carousels using @serviceIdRef/@transportSessionIdRef, and validUntil
+  absolute expiry. Modeled on the SHAPE of Annex C.3 but this crate's own
+  content. See fixtures/PROVENANCE.md.
+-->
+<MulticastGatewayConfiguration schemaVersion="2" validUntil="2026-12-31T23:59:59"
+    xmlns="urn:dvb:metadata:MulticastSessionConfiguration:2024"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+
+  <MulticastGatewayConfigurationTransportSession sessionIdleTimeout="45000"
+      transportSecurity="none" tags="urn:example:tag:bootstrap">
+    <TransportProtocol protocolIdentifier="urn:dvb:metadata:cs:MulticastTransportProtocolCS:2019:FLUTE" protocolVersion="1"/>
+    <EndpointAddress>
+      <NetworkDestinationGroupAddress>239.30.0.1</NetworkDestinationGroupAddress>
+      <TransportDestinationPort>9000</TransportDestinationPort>
+    </EndpointAddress>
+    <BitRate maximum="300000"/>
+    <ObjectCarousel aggregateTransportSize="131072">
+      <PresentationManifests serviceIdRef="urn:example:service:alpha" targetAcquisitionLatency="PT3S"/>
+      <PresentationManifests serviceIdRef="urn:example:service:beta"
+          transportSessionIdRef="beta-video" targetAcquisitionLatency="PT1S"/>
+      <InitSegments serviceIdRef="urn:example:service:alpha"/>
+    </ObjectCarousel>
+    <MulticastGatewayConfigurationMacro key="RepairHost">https://repair.example.net</MulticastGatewayConfigurationMacro>
+  </MulticastGatewayConfigurationTransportSession>
+
+  <MulticastSession serviceIdentifier="urn:example:service:alpha" contentPlaybackAvailabilityOffset="PT2S">
+    <PresentationManifestLocator manifestId="alpha-mpd" contentType="application/dash+xml"
+        contentPlaybackPathPattern="/alpha/manifest.mpd"></PresentationManifestLocator>
+    <PresentationManifestLocator manifestId="alpha-hls" contentType="audio/mpegurl"
+        >https://a.example.net/alpha/master.m3u8</PresentationManifestLocator>
+    <MulticastGatewaySessionReporting>
+      <ReportingLocator period="PT60S" randomDelay="1000">https://reporting.example.net/alpha</ReportingLocator>
+    </MulticastGatewaySessionReporting>
+    <MulticastTransportSession id="alpha-video" serviceClass="urn:dvb:metadata:cs:MulticastTransportObjectTypeCS:2021:gateway-configuration"
+        sessionIdleTimeout="12000" transportSecurity="integrity">
+      <TransportProtocol protocolIdentifier="urn:dvb:metadata:cs:MulticastTransportProtocolCS:2019:ROUTE" protocolVersion="1"/>
+      <EndpointAddress>
+        <NetworkSourceAddress>2001:db8::5</NetworkSourceAddress>
+        <NetworkDestinationGroupAddress>ff3e::9001:1</NetworkDestinationGroupAddress>
+        <TransportDestinationPort>9100</TransportDestinationPort>
+        <MediaTransportSessionIdentifier>101</MediaTransportSessionIdentifier>
+      </EndpointAddress>
+      <BitRate average="3000000" maximum="5000000"/>
+      <ForwardErrorCorrectionParameters>
+        <SchemeIdentifier>urn:ietf:rmt:fec:encoding:6</SchemeIdentifier>
+        <OverheadPercentage>25</OverheadPercentage>
+      </ForwardErrorCorrectionParameters>
+      <UnicastRepairParameters transportObjectReceptionTimeout="3000">
+        <BaseURL>$RepairHost$/alpha/</BaseURL>
+      </UnicastRepairParameters>
+      <ServiceComponentIdentifier xsi:type="DASHComponentIdentifierType" manifestIdRef="alpha-mpd"
+          periodIdentifier="p0" adaptationSetIdentifier="0" representationIdentifier="alpha-video-1"/>
+      <ServiceComponentIdentifier xsi:type="DASHComponentIdentifierType" manifestIdRef="alpha-mpd"
+          periodIdentifier="p0" adaptationSetIdentifier="0" representationIdentifier="alpha-video-2"/>
+    </MulticastTransportSession>
+  </MulticastSession>
+
+  <MulticastSession serviceIdentifier="urn:example:service:beta">
+    <PresentationManifestLocator manifestId="beta-mpd" contentType="application/dash+xml"
+        contentPlaybackPathPattern="/beta/*"></PresentationManifestLocator>
+    <MulticastTransportSession id="beta-video" sessionIdleTimeout="12000">
+      <TransportProtocol protocolIdentifier="urn:dvb:metadata:cs:MulticastTransportProtocolCS:2022:NORM" protocolVersion="1"/>
+      <EndpointAddress>
+        <NetworkDestinationGroupAddress>239.30.2.1</NetworkDestinationGroupAddress>
+        <TransportDestinationPort>9200</TransportDestinationPort>
+      </EndpointAddress>
+      <BitRate maximum="1500000"/>
+      <ServiceComponentIdentifier xsi:type="GenericComponentIdentifierType" manifestIdRef="beta-mpd"
+          componentIdentifier="beta-video"/>
+    </MulticastTransportSession>
+  </MulticastSession>
+</MulticastGatewayConfiguration>

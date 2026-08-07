@@ -1,0 +1,129 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Hand-authored MulticastServerConfiguration fixture for dvb-mabr's round-trip
+  test suite. Modeled on the SHAPE of ETSI TS 103 769 V1.2.1 Annex C.1's
+  worked example (two gateway-configuration transport sessions, two linear
+  services each with DASH+HLS manifests and video+audio transport sessions,
+  weighted unicast-repair BaseURLs, an in-band object carousel, and macro
+  expansion) but this crate's OWN content throughout: not a transcription
+  of the copyrighted ETSI worked example. See fixtures/PROVENANCE.md.
+-->
+<MulticastServerConfiguration schemaVersion="2" validityPeriod="P1D"
+    xmlns="urn:dvb:metadata:MulticastSessionConfiguration:2024"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+
+  <MulticastGatewayConfigurationTransportSession sessionIdleTimeout="60000"
+      transportSecurity="none" tags="urn:example:tag:bootstrap urn:example:tag:flute">
+    <TransportProtocol protocolIdentifier="urn:dvb:metadata:cs:MulticastTransportProtocolCS:2019:FLUTE" protocolVersion="1"/>
+    <EndpointAddress>
+      <NetworkDestinationGroupAddress>239.10.0.1</NetworkDestinationGroupAddress>
+      <TransportDestinationPort>7000</TransportDestinationPort>
+      <MediaTransportSessionIdentifier>1</MediaTransportSessionIdentifier>
+    </EndpointAddress>
+    <BitRate average="200000" maximum="500000"/>
+    <ForwardErrorCorrectionParameters>
+      <SchemeIdentifier>urn:ietf:rmt:fec:encoding:1</SchemeIdentifier>
+      <OverheadPercentage>20</OverheadPercentage>
+    </ForwardErrorCorrectionParameters>
+    <ObjectCarousel aggregateTransportSize="4194304">
+      <PresentationManifests targetAcquisitionLatency="PT2S" compressionPreferred="true"/>
+    </ObjectCarousel>
+    <MulticastGatewayConfigurationMacro key="PrimaryCDN">https://cdn-primary.example.net</MulticastGatewayConfigurationMacro>
+  </MulticastGatewayConfigurationTransportSession>
+
+  <MulticastGatewayConfigurationTransportSession sessionIdleTimeout="60000"
+      transportSecurity="integrity" tags="urn:example:tag:bootstrap urn:example:tag:route">
+    <TransportProtocol protocolIdentifier="urn:dvb:metadata:cs:MulticastTransportProtocolCS:2019:ROUTE" protocolVersion="1"/>
+    <EndpointAddress>
+      <NetworkDestinationGroupAddress>ff3e::7000:2</NetworkDestinationGroupAddress>
+      <TransportDestinationPort>7001</TransportDestinationPort>
+      <MediaTransportSessionIdentifier>2</MediaTransportSessionIdentifier>
+    </EndpointAddress>
+    <BitRate maximum="600000"/>
+    <ForwardErrorCorrectionParameters>
+      <SchemeIdentifier>urn:ietf:rmt:fec:encoding:6</SchemeIdentifier>
+      <OverheadPercentage>30</OverheadPercentage>
+    </ForwardErrorCorrectionParameters>
+    <MulticastGatewayConfigurationMacro key="SecondaryCDN">https://cdn-secondary.example.net</MulticastGatewayConfigurationMacro>
+  </MulticastGatewayConfigurationTransportSession>
+
+  <MulticastSession serviceIdentifier="urn:example:service:one-hd" contentPlaybackAvailabilityOffset="PT4S">
+    <PresentationManifestLocator manifestId="one-mpd" contentType="application/dash+xml"
+        transportObjectURI="urn:dvb:metadata:cs:MulticastTransportObjectTypeCS:2021:gateway-configuration"
+        >$PrimaryCDN$/one/manifest.mpd</PresentationManifestLocator>
+    <PresentationManifestLocator manifestId="one-hls" contentType="application/vnd.apple.mpegURL"
+        >$PrimaryCDN$/one/master.m3u8</PresentationManifestLocator>
+    <MulticastGatewaySessionReporting>
+      <ReportingLocator period="PT30S" randomDelay="500" proportion="0.1"
+          reportSessionRunningEvents="true">https://reporting.example.net/one</ReportingLocator>
+    </MulticastGatewaySessionReporting>
+    <MulticastTransportSession id="one-video" serviceClass="urn:dvb:metadata:cs:MulticastTransportObjectTypeCS:2021:gateway-configuration"
+        start="2026-08-01T00:00:00" duration="PT24H" contentIngestMethod="push"
+        transmissionMode="chunked" transportSecurity="none" sessionIdleTimeout="15000">
+      <TransportProtocol protocolIdentifier="urn:dvb:metadata:cs:MulticastTransportProtocolCS:2019:FLUTE" protocolVersion="1"/>
+      <EndpointAddress>
+        <NetworkSourceAddress>203.0.113.5</NetworkSourceAddress>
+        <NetworkDestinationGroupAddress>239.10.1.1</NetworkDestinationGroupAddress>
+        <TransportDestinationPort>7100</TransportDestinationPort>
+        <MediaTransportSessionIdentifier>10</MediaTransportSessionIdentifier>
+      </EndpointAddress>
+      <BitRate average="4000000" maximum="6000000"/>
+      <ForwardErrorCorrectionParameters>
+        <SchemeIdentifier>urn:ietf:rmt:fec:encoding:1</SchemeIdentifier>
+        <OverheadPercentage>15</OverheadPercentage>
+        <EndpointAddress>
+          <NetworkDestinationGroupAddress>239.10.1.2</NetworkDestinationGroupAddress>
+          <TransportDestinationPort>7101</TransportDestinationPort>
+        </EndpointAddress>
+      </ForwardErrorCorrectionParameters>
+      <UnicastRepairParameters transportObjectBaseURI="$PrimaryCDN$/one/"
+          transportObjectReceptionTimeout="4000" fixedBackOffPeriod="100" randomBackOffPeriod="900">
+        <BaseURL relativeWeight="3">$PrimaryCDN$/repair/one/</BaseURL>
+        <BaseURL relativeWeight="1">$SecondaryCDN$/repair/one/</BaseURL>
+      </UnicastRepairParameters>
+      <ObjectCarousel aggregateTransportSize="8388608" aggregateContentSize="8000000">
+        <InitSegments targetAcquisitionLatency="PT1S" compressionPreferred="false"/>
+        <ResourceLocator targetAcquisitionLatency="PT5S" revalidationPeriod="PT60S"
+            compressionPreferred="true">$PrimaryCDN$/one/thumbnails.jpg</ResourceLocator>
+      </ObjectCarousel>
+      <ServiceComponentIdentifier xsi:type="DASHComponentIdentifierType" manifestIdRef="one-mpd"
+          periodIdentifier="p0" adaptationSetIdentifier="1" representationIdentifier="video-hd"/>
+    </MulticastTransportSession>
+    <MulticastTransportSession id="one-audio" start="2026-08-01T00:00:00" duration="PT24H"
+        contentIngestMethod="pull" transmissionMode="resource" transportSecurity="integrityAndAuthenticity"
+        sessionIdleTimeout="15000">
+      <TransportProtocol protocolIdentifier="urn:dvb:metadata:cs:MulticastTransportProtocolCS:2019:ROUTE" protocolVersion="1"/>
+      <EndpointAddress>
+        <NetworkDestinationGroupAddress>239.10.1.3</NetworkDestinationGroupAddress>
+        <TransportDestinationPort>7102</TransportDestinationPort>
+      </EndpointAddress>
+      <BitRate maximum="320000"/>
+      <ServiceComponentIdentifier xsi:type="HLSComponentIdentifierType" manifestIdRef="one-hls"
+          mediaPlaylistLocator="$PrimaryCDN$/one/audio/media.m3u8"/>
+    </MulticastTransportSession>
+  </MulticastSession>
+
+  <MulticastSession serviceIdentifier="urn:example:service:two-sd">
+    <PresentationManifestLocator manifestId="two-mpd" contentType="application/dash+xml"
+        >$SecondaryCDN$/two/manifest.mpd</PresentationManifestLocator>
+    <MulticastTransportSession id="two-video" sessionIdleTimeout="20000" transportSecurity="none">
+      <TransportProtocol protocolIdentifier="urn:dvb:metadata:cs:MulticastTransportProtocolCS:2019:FLUTE" protocolVersion="1"/>
+      <EndpointAddress>
+        <NetworkDestinationGroupAddress>239.10.2.1</NetworkDestinationGroupAddress>
+        <TransportDestinationPort>7200</TransportDestinationPort>
+      </EndpointAddress>
+      <BitRate maximum="2500000"/>
+      <ServiceComponentIdentifier xsi:type="GenericComponentIdentifierType" manifestIdRef="two-mpd"
+          componentIdentifier="video-sd"/>
+    </MulticastTransportSession>
+  </MulticastSession>
+
+  <MulticastGatewaySessionReporting>
+    <ReportingLocator period="PT300S" randomDelay="2000">https://reporting.example.net/document</ReportingLocator>
+    <ReportingLocator period="PT0S" randomDelay="0" reportSessionRunningEvents="false"
+        proportion="1.0">https://reporting-events.example.net/document</ReportingLocator>
+  </MulticastGatewaySessionReporting>
+
+  <MulticastServerConfigurationMacro key="PrimaryCDN">https://cdn-primary.example.net</MulticastServerConfigurationMacro>
+  <MulticastServerConfigurationMacro key="SecondaryCDN">https://cdn-secondary.example.net</MulticastServerConfigurationMacro>
+</MulticastServerConfiguration>
