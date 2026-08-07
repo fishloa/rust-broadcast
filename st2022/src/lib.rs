@@ -23,8 +23,8 @@
 
 extern crate alloc;
 
-mod header;
 mod error;
+mod header;
 
-pub use header::*;
 pub use error::*;
+pub use header::*;
