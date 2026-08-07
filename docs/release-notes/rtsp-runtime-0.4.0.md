@@ -2,8 +2,12 @@
 
 **Release date:** 2026-07-29
 
-Epoch-pure bump to `broadcast-common` 9. No functional or API change in this crate. Also adds `tests/non_exhaustive_coverage.rs` drift guard (#806).
+Breaking dependency bump: requires `broadcast-common` 9. No functional or API change in this crate itself — the bump exists because staying on `broadcast-common` 8 caused trait-resolution errors when a consumer mixed this crate with 9-based siblings.
+
+## What changed
+
+- Requires `broadcast-common` 9.
 
 ## Migration
 
-Requires `broadcast-common` 9.
+Requires `broadcast-common` 9. No API changes in this crate.

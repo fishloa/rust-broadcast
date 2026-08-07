@@ -2,12 +2,12 @@
 
 **Release date:** 2026-08-05
 
-Dependency bump to transmux 0.23, which added `TrackSpec::program_number` for MPTS support. No change in this crate's own logic; the bump propagates the pre-1.0 caret boundary (^0.21 to ^0.23).
+Epoch-pure dependency bump: requires `transmux` 0.23 for `TrackSpec::program_number`. No functional or API change in this crate itself.
 
-## What's changed
+## What changed
 
-- Requires `transmux` 0.23 (`TrackSpec` is part of this crate's public ingest API).
+- Requires `transmux` 0.23.
 
 ## Migration
 
-Requires `transmux` 0.23.
+Requires `transmux` 0.23. No API changes in this crate.
