@@ -1,11 +1,23 @@
-# multimux 0.5.1 — 2026-07-30
+# multimux 0.5.1
 
-**Patch.**
+**Release date:** 2026-07-30
 
-See the [lockstep 9.1.0 release note](v9.1.0.md) for the full summary.
+Patch fixing three defects shipped in 0.5.0: DASH/LL-DASH manifests returning
+503 on every driver-backed route (a missing `set_track_specs` call site),
+Smooth-pull panicking on future `StreamType` variants, and LL-HLS output
+panicking on future `LlHlsBody` variants.
 
-## Fixed
+## What's fixed
 
-- **DASH and LL-DASH manifests returned 503 forever on every driver-backed route** (shipped in v0.5.0). `RouteHandle::set_track_specs` had no production call site — `report_driver_progress` now syncs track specs from each published program's `Trunk` into the route on every poll (#831).
-- Smooth-pull ingest now skips any `StreamType` other than `Video`/`Audio` at manifest-parse time, surfaced by `transmux`'s `StreamType` gaining `#[non_exhaustive]` (#806).
-- `output::llhls`/`origin::resource` handle a future `LlHlsBody` variant defensively.
+- **DASH/LL-DASH 503 regression** (issue #831): `report_driver_progress` now
+  syncs track specs from each program's `Trunk` into the route on every poll,
+  using `track_generation()` to avoid redundant syncs.
+- Smooth-pull ingest now skips any `StreamType` other than `Video`/`Audio`
+  (surfaced by `transmux`'s `StreamType` gaining `#[non_exhaustive]`, issue
+  #806).
+- LL-HLS/resource output now handles a future `LlHlsBody` variant defensively
+  (same `#[non_exhaustive]` hardening).
+
+## What's new
+
+- `tests/label_coverage.rs` drift guard (issue #806).
