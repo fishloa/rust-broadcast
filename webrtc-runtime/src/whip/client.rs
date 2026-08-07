@@ -1,0 +1,248 @@
+//! WHIP client (encoder/ingester) state machine.
+
+use alloc::string::String;
+use alloc::vec::Vec;
+
+use crate::Error;
+
+/// State of a WHIP client session.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum State {
+    /// Initial state — ready to send SDP offer.
+    Idle,
+    /// SDP offer sent, awaiting 201 Created.
+    OfferSent,
+    /// Session established — ICE/DTLS in progress or connected.
+    Established {
+        session_url: String,
+        etag: Option<String>,
+    },
+    /// Session terminated.
+    Closed,
+}
+
+/// An HTTP request the caller must send on behalf of the state machine.
+#[derive(Debug, Clone)]
+pub struct HttpRequest {
+    pub method: Method,
+    pub url: String,
+    pub content_type: Option<&'static str>,
+    pub headers: Vec<(String, String)>,
+    pub body: Vec<u8>,
+}
+
+/// HTTP method.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Method {
+    Post,
+    Patch,
+    Delete,
+    Options,
+}
+
+/// Parsed fields from an HTTP response.
+#[derive(Debug, Clone)]
+pub struct HttpResponse {
+    pub status: u16,
+    pub content_type: Option<String>,
+    pub location: Option<String>,
+    pub etag: Option<String>,
+    pub body: Vec<u8>,
+}
+
+/// Events emitted by the WHIP client to the caller.
+#[derive(Debug, Clone)]
+pub enum Event {
+    /// SDP answer received — pass to WebRTC stack.
+    SdpAnswer(Vec<u8>),
+    /// Server's ICE candidates from restart response.
+    IceRestart {
+        sdp_fragment: Vec<u8>,
+        new_etag: String,
+    },
+    /// Session terminated by server (DELETE acknowledged).
+    Terminated,
+}
+
+/// Sans-IO WHIP client state machine.
+///
+/// Caller drives it by:
+/// 1. Calling methods to get `HttpRequest`s to send
+/// 2. Feeding HTTP responses back via `on_response`
+/// 3. Handling emitted `Event`s
+#[derive(Debug)]
+pub struct WhipClient {
+    endpoint_url: String,
+    bearer_token: Option<String>,
+    state: State,
+    buffered_candidates: Vec<Vec<u8>>,
+}
+
+impl WhipClient {
+    pub fn new(endpoint_url: String, bearer_token: Option<String>) -> Self {
+        Self {
+            endpoint_url,
+            bearer_token,
+            state: State::Idle,
+            buffered_candidates: Vec::new(),
+        }
+    }
+
+    pub fn state(&self) -> &State {
+        &self.state
+    }
+
+    /// Generate the HTTP POST request carrying the SDP offer.
+    pub fn offer(&mut self, sdp_offer: Vec<u8>) -> Result<HttpRequest, Error> {
+        if self.state != State::Idle {
+            return Err(Error::WrongState {
+                operation: "offer",
+                state: state_name(&self.state),
+            });
+        }
+        self.state = State::OfferSent;
+        Ok(self.build_request(
+            Method::Post,
+            self.endpoint_url.clone(),
+            Some(super::content_type::SDP),
+            sdp_offer,
+        ))
+    }
+
+    /// Buffer a gathered ICE candidate (sent as aggregated PATCH after 201).
+    pub fn add_candidate(&mut self, sdp_fragment: Vec<u8>) {
+        self.buffered_candidates.push(sdp_fragment);
+    }
+
+    /// Generate aggregated Trickle ICE PATCH for all buffered candidates.
+    pub fn flush_candidates(&mut self, aggregated_fragment: Vec<u8>) -> Result<HttpRequest, Error> {
+        let (session_url, etag) = self.established_fields()?;
+        let mut req = self.build_request(
+            Method::Patch,
+            session_url,
+            Some(super::content_type::TRICKLE_ICE),
+            aggregated_fragment,
+        );
+        if let Some(etag) = etag {
+            req.headers
+                .push(("If-Match".into(), alloc::format!("\"{etag}\"")));
+        }
+        self.buffered_candidates.clear();
+        Ok(req)
+    }
+
+    /// Generate ICE restart PATCH request.
+    pub fn ice_restart(&mut self, sdp_fragment: Vec<u8>) -> Result<HttpRequest, Error> {
+        let (session_url, _) = self.established_fields()?;
+        let mut req = self.build_request(
+            Method::Patch,
+            session_url,
+            Some(super::content_type::TRICKLE_ICE),
+            sdp_fragment,
+        );
+        req.headers.push(("If-Match".into(), "\"*\"".into()));
+        Ok(req)
+    }
+
+    /// Generate DELETE request to terminate the session.
+    pub fn terminate(&mut self) -> Result<HttpRequest, Error> {
+        let (session_url, _) = self.established_fields()?;
+        Ok(self.build_request(Method::Delete, session_url, None, Vec::new()))
+    }
+
+    /// Feed an HTTP response back into the state machine.
+    pub fn on_response(&mut self, resp: HttpResponse) -> Result<Option<Event>, Error> {
+        match &self.state {
+            State::OfferSent => self.handle_offer_response(resp),
+            State::Established { .. } => self.handle_established_response(resp),
+            _ => Err(Error::WrongState {
+                operation: "on_response",
+                state: state_name(&self.state),
+            }),
+        }
+    }
+
+    fn handle_offer_response(&mut self, resp: HttpResponse) -> Result<Option<Event>, Error> {
+        if resp.status == super::status::CREATED {
+            let session_url = resp
+                .location
+                .ok_or(Error::MissingHeader { header: "Location" })?;
+            self.state = State::Established {
+                session_url,
+                etag: resp.etag,
+            };
+            Ok(Some(Event::SdpAnswer(resp.body)))
+        } else {
+            Err(Error::Http {
+                status: resp.status,
+            })
+        }
+    }
+
+    fn handle_established_response(
+        &mut self,
+        resp: HttpResponse,
+    ) -> Result<Option<Event>, Error> {
+        match resp.status {
+            super::status::NO_CONTENT => Ok(None),
+            200 => {
+                if let Some(new_etag) = resp.etag {
+                    if let State::Established { etag, .. } = &mut self.state {
+                        *etag = Some(new_etag.clone());
+                    }
+                    Ok(Some(Event::IceRestart {
+                        sdp_fragment: resp.body,
+                        new_etag,
+                    }))
+                } else {
+                    self.state = State::Closed;
+                    Ok(Some(Event::Terminated))
+                }
+            }
+            _ => Err(Error::Http {
+                status: resp.status,
+            }),
+        }
+    }
+
+    fn established_fields(&self) -> Result<(String, Option<String>), Error> {
+        match &self.state {
+            State::Established { session_url, etag } => {
+                Ok((session_url.clone(), etag.clone()))
+            }
+            _ => Err(Error::WrongState {
+                operation: "requires established session",
+                state: state_name(&self.state),
+            }),
+        }
+    }
+
+    fn build_request(
+        &self,
+        method: Method,
+        url: String,
+        content_type: Option<&'static str>,
+        body: Vec<u8>,
+    ) -> HttpRequest {
+        let mut headers = Vec::new();
+        if let Some(token) = &self.bearer_token {
+            headers.push(("Authorization".into(), alloc::format!("Bearer {token}")));
+        }
+        HttpRequest {
+            method,
+            url,
+            content_type,
+            headers,
+            body,
+        }
+    }
+}
+
+fn state_name(s: &State) -> &'static str {
+    match s {
+        State::Idle => "idle",
+        State::OfferSent => "offer-sent",
+        State::Established { .. } => "established",
+        State::Closed => "closed",
+    }
+}
