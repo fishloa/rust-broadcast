@@ -1,0 +1,103 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- ETSI TS 103 769 V1.2.1 Annex C.2 — Multicast gateway configuration bootstrap instance document -->
+<MulticastGatewayConfiguration xmlns="urn:dvb:metadata:MulticastSessionConfiguration:2024"
+  xmlns:ext="urn:dvb:metadata:Extensibility:2024" xmlns:private="tag:example.com,2024:metadata:cs:carousel"
+  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" schemaVersion="2" validityPeriod="P1D">
+
+  <!-- Special Multicast transport session used to transmit configuration to the population of Multicast
+       gateways -->
+  <MulticastGatewayConfigurationTransportSession transportSecurity="integrityAndAuthenticity">
+    <TransportProtocol protocolIdentifier="urn:dvb:metadata:cs:MulticastTransportProtocolCS:2019:FLUTE"
+      protocolVersion="1"/>
+    <EndpointAddress>
+      <NetworkSourceAddress>10.1.100.1</NetworkSourceAddress>
+      <NetworkDestinationGroupAddress>232.99.1.1</NetworkDestinationGroupAddress>
+      <TransportDestinationPort>9999</TransportDestinationPort>
+      <MediaTransportSessionIdentifier>1</MediaTransportSessionIdentifier>
+    </EndpointAddress>
+    <EndpointAddress>
+      <NetworkSourceAddress>2001:DB8::4456:424D</NetworkSourceAddress>
+      <NetworkDestinationGroupAddress>FF3E::4950:4801</NetworkDestinationGroupAddress>
+      <TransportDestinationPort>9999</TransportDestinationPort>
+      <MediaTransportSessionIdentifier>1</MediaTransportSessionIdentifier>
+    </EndpointAddress>
+    <BitRate average="200" maximum="200"/>
+    <ForwardErrorCorrectionParameters>
+      <SchemeIdentifier>urn:ietf:rmt:fec:encoding:1</SchemeIdentifier>  <!-- Raptor -->
+      <OverheadPercentage>20</OverheadPercentage>
+      <!-- Endpoint address omitted for FLUTE Sessions since this is always the same as the parent transport
+           session -->
+    </ForwardErrorCorrectionParameters>
+    <ObjectCarousel>
+      <PresentationManifests serviceIdRef="tag:bbc.co.uk;2019#bbc-one/scotland"
+        transportSessionIdRef="vision-low" targetAcquisitionLatency="PT1S"/>
+      <InitSegments serviceIdRef="tag:bbc.co.uk;2019#bbc-one/scotland" transportSessionIdRef="vision-low"
+        targetAcquisitionLatency="PT1S"/>
+      <ResourceLocator targetAcquisitionLatency="PT15S"
+        revalidationPeriod="PT1M">http://media.bbc.co.uk/idents/bbc-one/bbc-one-scotland.jpg</ResourceLocator>
+      <PresentationManifests serviceIdRef="tag:bbc.co.uk;2019#bbc-two/scotland"
+        transportSessionIdRef="vision-low" targetAcquisitionLatency="PT1S"/>
+      <InitSegments serviceIdRef="tag:bbc.co.uk;2019#bbc-two/scotland" transportSessionIdRef="vision-low"
+        targetAcquisitionLatency="PT1S"/>
+      <ResourceLocator targetAcquisitionLatency="PT15S"
+        revalidationPeriod="PT1M">http://media.bbc.co.uk/idents/bbc-one/bbc-two-scotland.jpg</ResourceLocator>
+      <private:Digest algorithm="SHA256" salt="readysalted">
+        ba9eb72e806835bd2de13f8386e382a627a1ea14e4edf30cee89b4c0e30f4286
+      </private:Digest>
+    </ObjectCarousel>
+  </MulticastGatewayConfigurationTransportSession>
+
+  <!-- Special Multicast transport session used to transmit configuration to the population of Multicast
+       gateways -->
+  <MulticastGatewayConfigurationTransportSession transportSecurity="integrityAndAuthenticity">
+    <TransportProtocol protocolIdentifier="urn:dvb:metadata:cs:MulticastTransportProtocolCS:2019:ROUTE"
+      protocolVersion="1"/>
+    <EndpointAddress>
+      <NetworkSourceAddress>10.1.100.1</NetworkSourceAddress>
+      <NetworkDestinationGroupAddress>232.98.1.1</NetworkDestinationGroupAddress>
+      <TransportDestinationPort>9999</TransportDestinationPort>
+      <MediaTransportSessionIdentifier>1</MediaTransportSessionIdentifier>
+    </EndpointAddress>
+    <EndpointAddress>
+      <NetworkSourceAddress>2001:DB8::4456:424D</NetworkSourceAddress>
+      <NetworkDestinationGroupAddress>FF3E::4950:4701</NetworkDestinationGroupAddress>
+      <TransportDestinationPort>9999</TransportDestinationPort>
+      <MediaTransportSessionIdentifier>1</MediaTransportSessionIdentifier>
+    </EndpointAddress>
+    <BitRate average="200" maximum="200"/>
+    <ForwardErrorCorrectionParameters>
+      <SchemeIdentifier>urn:ietf:rmt:fec:encoding:6</SchemeIdentifier>  <!-- RaptorQ -->
+      <OverheadPercentage>20</OverheadPercentage>
+      <EndpointAddress>
+        <NetworkSourceAddress>10.1.100.1</NetworkSourceAddress>
+        <NetworkDestinationGroupAddress>232.99.1.1</NetworkDestinationGroupAddress>
+        <TransportDestinationPort>8888</TransportDestinationPort>
+        <MediaTransportSessionIdentifier>2</MediaTransportSessionIdentifier>
+      </EndpointAddress>
+      <EndpointAddress>
+        <NetworkSourceAddress>2001:DB8::4456:424D</NetworkSourceAddress>
+        <NetworkDestinationGroupAddress>FF3E::4950:4702</NetworkDestinationGroupAddress>
+        <TransportDestinationPort>8888</TransportDestinationPort>
+        <MediaTransportSessionIdentifier>2</MediaTransportSessionIdentifier>
+      </EndpointAddress>
+    </ForwardErrorCorrectionParameters>
+    <ObjectCarousel aggregateTransportSize="1945320" aggregateContentSize="2040900">
+      <PresentationManifests serviceIdRef="tag:bbc.co.uk;2019#bbc-one/scotland"
+        transportSessionIdRef="vision-low" targetAcquisitionLatency="PT1S"/>
+      <InitSegments serviceIdRef="tag:bbc.co.uk;2019#bbc-one/scotland" transportSessionIdRef="vision-low"
+        targetAcquisitionLatency="PT1S"/>
+      <ResourceLocator targetAcquisitionLatency="PT15S"
+        revalidationPeriod="PT1M">http://media.bbc.co.uk/idents/bbc-one/bbc-one-scotland.jpg</ResourceLocator>
+      <PresentationManifests serviceIdRef="tag:bbc.co.uk;2019#bbc-two/scotland"
+        transportSessionIdRef="vision-low" targetAcquisitionLatency="PT1S"/>
+      <InitSegments serviceIdRef="tag:bbc.co.uk;2019#bbc-two/scotland" transportSessionIdRef="vision-low"
+        targetAcquisitionLatency="PT1S"/>
+      <ResourceLocator targetAcquisitionLatency="PT15S"
+        revalidationPeriod="PT1M">http://media.bbc.co.uk/idents/bbc-one/bbc-two-scotland.jpg</ResourceLocator>
+      <private:Digest algorithm="SHA256" salt="readysalted">
+        ba9eb72e806835bd2de13f8386e382a627a1ea14e4edf30cee89b4c0e30f4286
+      </private:Digest>
+    </ObjectCarousel>
+  </MulticastGatewayConfigurationTransportSession>
+
+</MulticastGatewayConfiguration>

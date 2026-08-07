@@ -684,6 +684,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "dvb-mabr"
+version = "0.1.0"
+dependencies = [
+ "broadcast-common",
+ "roxmltree",
+ "thiserror",
+]
+
+[[package]]
 name = "dvb-si"
 version = "9.2.0"
 dependencies = [

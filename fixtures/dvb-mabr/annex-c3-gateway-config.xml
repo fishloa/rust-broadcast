@@ -1,0 +1,240 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- ETSI TS 103 769 V1.2.1 Annex C.3 — Multicast gateway configuration instance document -->
+<MulticastGatewayConfiguration xmlns="urn:dvb:metadata:MulticastSessionConfiguration:2024"
+  xmlns:ext="urn:dvb:metadata:Extensibility:2024" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+  schemaVersion="2" validUntil="2024-10-01T22:26:37">
+
+  <!-- BBC One Scotland -->
+  <MulticastSession serviceIdentifier="tag:bbc.co.uk;2019#bbc-one/scotland"
+    contentPlaybackAvailabilityOffset="PT3.84S">
+
+    <!-- Origin locations of MPEG-DASH and HLS presentation manifests for this service -->
+    <PresentationManifestLocator manifestId="bbc-one-scotland_mpd" contentType="application/dash+xml"
+      transportObjectURI="tag:bbc.co.uk;2019/manifests/dash#bbc-one/scotland"
+      contentPlaybackPathPattern="*/bbc-one/scotland/manifest.mpd">http://edge.cdn1.co.uk/simulcast/bbc-one/scotland/manifest.mpd</PresentationManifestLocator>
+    <PresentationManifestLocator manifestId="bbc-one-scotland_hls"
+      contentType="application/vnd.apple.mpegURL"
+      transportObjectURI="tag:bbc.co.uk;2019/manifests/hls#bbc-one/scotland"
+      contentPlaybackPathPattern="*/bbc-one/scotland/master.m3u8">http://edge.cdn1.co.uk/simulcast/bbc-one/scotland/master.m3u8</PresentationManifestLocator>
+
+    <!-- Reporting destination(s) used by the Multicast gateway for this Multicast session -->
+    <MulticastGatewaySessionReporting>
+      <ReportingLocator proportion="0.3" period="P5M" randomDelay="50"
+        reportSessionRunningEvents="true">https://reporting.isp.net/endpoint</ReportingLocator>
+      <ReportingLocator proportion="0.1" period="PT1H" randomDelay="1000"
+        reportSessionRunningEvents="true">https://reporting.bbc.co.uk/dvb_multicast_gateway.cgi</ReportingLocator>
+    </MulticastGatewaySessionReporting>
+
+    <!-- First video component -->
+    <MulticastTransportSession id="vision-low" start="2024-01-01T00:00:00" transmissionMode="chunked"
+      contentIngestMethod="push" sessionIdleTimeout="3840" transportSecurity="integrityAndAuthenticity">
+      <TransportProtocol protocolIdentifier="urn:dvb:metadata:cs:MulticastTransportProtocolCS:2019:FLUTE"
+        protocolVersion="1"/>
+      <EndpointAddress>
+        <NetworkSourceAddress>10.1.100.1</NetworkSourceAddress>
+        <NetworkDestinationGroupAddress>232.100.1.1</NetworkDestinationGroupAddress>
+        <TransportDestinationPort>3922</TransportDestinationPort>
+        <MediaTransportSessionIdentifier>1</MediaTransportSessionIdentifier>
+      </EndpointAddress>
+      <BitRate average="150000" maximum="150000"/>
+      <ForwardErrorCorrectionParameters>
+        <SchemeIdentifier>urn:ietf:rmt:fec:encoding:1</SchemeIdentifier>  <!-- Raptor -->
+        <OverheadPercentage>20</OverheadPercentage>
+        <!-- Endpoint address omitted for FLUTE Sessions since this is always the same as the parent
+             transport session -->
+      </ForwardErrorCorrectionParameters>
+      <UnicastRepairParameters transportObjectReceptionTimeout="500" fixedBackOffPeriod="10"
+        randomBackOffPeriod="20">
+        <BaseURL relativeWeight="7">http://edge.cdn1.co.uk/bbc-one_scotland/vision-low</BaseURL>
+        <BaseURL relativeWeight="3">http://edge.cdn2.co.uk/bbc-one_scotland/vision-low</BaseURL>
+      </UnicastRepairParameters>
+      <ServiceComponentIdentifier xsi:type="DASHComponentIdentifierType" manifestIdRef="bbc-one-scotland_mpd"
+        periodIdentifier="period1" adaptationSetIdentifier="1" representationIdentifier="V1"/>
+      <ServiceComponentIdentifier xsi:type="HLSComponentIdentifierType" manifestIdRef="bbc-one-scotland_hls"
+        mediaPlaylistLocator="http://edge.cdn1.co.uk/simulcast/bbc-one/scotland/V1.m3u8"/>
+      <ObjectCarousel aggregateTransportSize="1198430" aggregateContentSize="1566815">
+        <PresentationManifests targetAcquisitionLatency="PT1S"/>
+        <InitSegments targetAcquisitionLatency="PT1S"/>
+        <ResourceLocator targetAcquisitionLatency="PT15S"
+          revalidationPeriod="PT1M">http://media.bbc.co.uk/idents/bbc-one/bbc-one-scotland.jpg</ResourceLocator>
+      </ObjectCarousel>
+    </MulticastTransportSession>
+
+    <!-- Second video component -->
+    <MulticastTransportSession id="vision-medium" start="2024-01-01T20:00:00" duration="PT2H"
+      transmissionMode="chunked" contentIngestMethod="push" sessionIdleTimeout="3840"
+      transportSecurity="integrityAndAuthenticity">
+      <TransportProtocol protocolIdentifier="urn:dvb:metadata:cs:MulticastTransportProtocolCS:2019:FLUTE"
+        protocolVersion="1"/>
+      <EndpointAddress>
+        <NetworkSourceAddress>10.1.100.1</NetworkSourceAddress>
+        <NetworkDestinationGroupAddress>232.100.1.2</NetworkDestinationGroupAddress>
+        <TransportDestinationPort>3923</TransportDestinationPort>
+        <MediaTransportSessionIdentifier>2</MediaTransportSessionIdentifier>
+      </EndpointAddress>
+      <BitRate average="250000" maximum="250000"/>
+      <ForwardErrorCorrectionParameters>
+        <SchemeIdentifier>urn:ietf:rmt:fec:encoding:1</SchemeIdentifier>  <!-- Raptor -->
+        <OverheadPercentage>20</OverheadPercentage>
+        <!-- Endpoint address omitted for FLUTE Sessions since this is always the same as the parent
+             transport session -->
+      </ForwardErrorCorrectionParameters>
+      <UnicastRepairParameters transportObjectReceptionTimeout="500" fixedBackOffPeriod="10"
+        randomBackOffPeriod="20">
+        <BaseURL relativeWeight="7">http://edge.cdn1.co.uk/bbc-one_scotland/vision-medium</BaseURL>
+        <BaseURL relativeWeight="3">http://edge.cdn2.co.uk/bbc-one_scotland/vision-medium</BaseURL>
+      </UnicastRepairParameters>
+      <ServiceComponentIdentifier xsi:type="DASHComponentIdentifierType" manifestIdRef="bbc-one-scotland_mpd"
+        periodIdentifier="period1" adaptationSetIdentifier="1" representationIdentifier="V2"/>
+      <ServiceComponentIdentifier xsi:type="HLSComponentIdentifierType" manifestIdRef="bbc-one-scotland_hls"
+        mediaPlaylistLocator="http://edge.cdn1.co.uk/simulcast/bbc-one/scotland/V2.m3u8"/>
+      <ObjectCarousel aggregateTransportSize="1495526" aggregateContentSize="1600056">
+        <PresentationManifests targetAcquisitionLatency="PT1S" compressionPreferred="true"/>
+        <InitSegments targetAcquisitionLatency="PT1S"/>
+        <ResourceLocator targetAcquisitionLatency="PT15S"
+          revalidationPeriod="PT1M">http://media.bbc.co.uk/idents/bbc-one/bbc-one-scotland.jpg</ResourceLocator>
+      </ObjectCarousel>
+    </MulticastTransportSession>
+
+    <!-- Single audio component -->
+    <MulticastTransportSession id="sound" start="2024-01-01T00:00:00" transmissionMode="chunked"
+      contentIngestMethod="push" sessionIdleTimeout="3840" transportSecurity="integrityAndAuthenticity">
+      <TransportProtocol protocolIdentifier="urn:dvb:metadata:cs:MulticastTransportProtocolCS:2019:FLUTE"
+        protocolVersion="1"/>
+      <EndpointAddress>
+        <NetworkSourceAddress>10.1.100.1</NetworkSourceAddress>
+        <NetworkDestinationGroupAddress>232.100.2.1</NetworkDestinationGroupAddress>
+        <TransportDestinationPort>3924</TransportDestinationPort>
+        <MediaTransportSessionIdentifier>5</MediaTransportSessionIdentifier>
+      </EndpointAddress>
+      <BitRate average="150000" maximum="150000"/>
+      <ForwardErrorCorrectionParameters>
+        <SchemeIdentifier>urn:ietf:rmt:fec:encoding:1</SchemeIdentifier>  <!-- Raptor -->
+        <OverheadPercentage>20</OverheadPercentage>
+        <!-- Endpoint address omitted for FLUTE Sessions since this is always the same as the parent
+             transport session -->
+      </ForwardErrorCorrectionParameters>
+      <UnicastRepairParameters transportObjectReceptionTimeout="500" fixedBackOffPeriod="10"
+        randomBackOffPeriod="20">
+        <BaseURL relativeWeight="7">http://edge.cdn1.co.uk/bbc-one_scotland/sound</BaseURL>
+        <BaseURL relativeWeight="3">http://edge.cdn2.co.uk/bbc-one_scotland/sound</BaseURL>
+      </UnicastRepairParameters>
+      <ServiceComponentIdentifier xsi:type="DASHComponentIdentifierType" manifestIdRef="bbc-one-scotland_mpd"
+        periodIdentifier="period1" adaptationSetIdentifier="2" representationIdentifier="A1"/>
+      <ServiceComponentIdentifier xsi:type="HLSComponentIdentifierType" manifestIdRef="bbc-one-scotland_hls"
+        mediaPlaylistLocator="http://edge.cdn1.co.uk/simulcast/bbc-one/scotland/A1.m3u8"/>
+      <ObjectCarousel aggregateTransportSize="1236871" aggregateContentSize="1394220">
+        <PresentationManifests targetAcquisitionLatency="PT1S"/>
+        <InitSegments targetAcquisitionLatency="PT1S"/>
+        <ResourceLocator targetAcquisitionLatency="PT15S"
+          revalidationPeriod="PT1M">http://media.bbc.co.uk/idents/bbc-one/bbc-one-scotland.jpg</ResourceLocator>
+      </ObjectCarousel>
+    </MulticastTransportSession>
+
+  </MulticastSession>
+
+  <!-- BBC Two Scotland -->
+  <MulticastSession serviceIdentifier="tag:bbc.co.uk;2019#bbc-two/scotland"
+    contentPlaybackAvailabilityOffset="PT3.84S">
+
+    <!-- Origin locations of MPEG-DASH and HLS presentation manifests for this service -->
+    <PresentationManifestLocator manifestId="bbc-two-scotland_mpd" contentType="application/dash+xml"
+      transportObjectURI="tag:bbc.co.uk;2019/manifests/dash#bbc-two/scotland"
+      contentPlaybackPathPattern="*/bbc-two/scotland/manifest.mpd">http://edge.cdn1.co.uk/simulcast/bbc-two/scotland/manifest.mpd</PresentationManifestLocator>
+    <PresentationManifestLocator manifestId="bbc-two-scotland_hls"
+      contentType="application/vnd.apple.mpegURL"
+      transportObjectURI="tag:bbc.co.uk;2019/manifests/hls#bbc-two/scotland"
+      contentPlaybackPathPattern="*/bbc-two/scotland/master.m3u8">http://edge.cdn1.co.uk/simulcast/bbc-two/scotland/master.m3u8</PresentationManifestLocator>
+
+    <!-- No reporting destination(s) for this Multicast session -->
+
+    <!-- Single video component -->
+    <MulticastTransportSession id="vision" start="2024-01-01T00:00:00" transmissionMode="resource"
+      contentIngestMethod="pull" sessionIdleTimeout="3840" transportSecurity="integrityAndAuthenticity">
+      <TransportProtocol protocolIdentifier="urn:dvb:metadata:cs:MulticastTransportProtocolCS:2019:ROUTE"
+        protocolVersion="1"/>
+      <EndpointAddress>
+        <NetworkSourceAddress>10.1.100.1</NetworkSourceAddress>
+        <NetworkDestinationGroupAddress>232.200.1.1</NetworkDestinationGroupAddress>
+        <TransportDestinationPort>3922</TransportDestinationPort>
+        <MediaTransportSessionIdentifier>11</MediaTransportSessionIdentifier>
+      </EndpointAddress>
+      <BitRate average="150000" maximum="150000"/>
+      <ForwardErrorCorrectionParameters>
+        <SchemeIdentifier>urn:ietf:rmt:fec:encoding:6</SchemeIdentifier>  <!-- RaptorQ -->
+        <OverheadPercentage>20</OverheadPercentage>
+        <EndpointAddress>
+          <NetworkSourceAddress>10.1.100.1</NetworkSourceAddress>
+          <NetworkDestinationGroupAddress>232.200.2.1</NetworkDestinationGroupAddress>
+          <TransportDestinationPort>3922</TransportDestinationPort>
+          <MediaTransportSessionIdentifier>26</MediaTransportSessionIdentifier>
+        </EndpointAddress>
+      </ForwardErrorCorrectionParameters>
+      <UnicastRepairParameters transportObjectReceptionTimeout="500" fixedBackOffPeriod="10"
+        randomBackOffPeriod="20">
+        <BaseURL relativeWeight="7">http://edge.cdn1.co.uk/bbc-two_scotland/vision</BaseURL>
+        <BaseURL relativeWeight="3">http://edge.cdn2.co.uk/bbc-two_scotland/vision</BaseURL>
+      </UnicastRepairParameters>
+      <ServiceComponentIdentifier xsi:type="DASHComponentIdentifierType" manifestIdRef="bbc-two-scotland_mpd"
+        periodIdentifier="period1" adaptationSetIdentifier="1" representationIdentifier="V1"/>
+      <ServiceComponentIdentifier xsi:type="HLSComponentIdentifierType" manifestIdRef="bbc-two-scotland_hls"
+        mediaPlaylistLocator="http://edge.cdn1.co.uk/simulcast/bbc-two/scotland/V1.m3u8"/>
+      <ObjectCarousel aggregateTransportSize="1896351" aggregateContentSize="1998400">
+        <PresentationManifests targetAcquisitionLatency="PT1S"/>
+        <InitSegments targetAcquisitionLatency="PT1S"/>
+        <ResourceLocator targetAcquisitionLatency="PT15S"
+          revalidationPeriod="PT1M">http://media.bbc.co.uk/idents/bbc-two/bbc-two-scotland.jpg</ResourceLocator>
+      </ObjectCarousel>
+    </MulticastTransportSession>
+
+    <!-- Single audio component -->
+    <MulticastTransportSession id="sound" start="2024-01-01T00:00:00" transmissionMode="resource"
+      contentIngestMethod="pull" sessionIdleTimeout="3840" transportSecurity="integrityAndAuthenticity">
+      <TransportProtocol protocolIdentifier="urn:dvb:metadata:cs:MulticastTransportProtocolCS:2019:ROUTE"
+        protocolVersion="1"/>
+      <EndpointAddress>
+        <NetworkSourceAddress>10.1.100.1</NetworkSourceAddress>
+        <NetworkDestinationGroupAddress>232.200.1.1</NetworkDestinationGroupAddress>
+        <TransportDestinationPort>3923</TransportDestinationPort>
+        <MediaTransportSessionIdentifier>15</MediaTransportSessionIdentifier>
+      </EndpointAddress>
+      <BitRate average="150000" maximum="150000"/>
+      <ForwardErrorCorrectionParameters>
+        <SchemeIdentifier>urn:ietf:rmt:fec:encoding:6</SchemeIdentifier>  <!-- RaptorQ -->
+        <OverheadPercentage>20</OverheadPercentage>
+        <EndpointAddress>
+          <NetworkSourceAddress>10.1.100.1</NetworkSourceAddress>
+          <NetworkDestinationGroupAddress>232.200.2.1</NetworkDestinationGroupAddress>
+          <TransportDestinationPort>3922</TransportDestinationPort>
+          <MediaTransportSessionIdentifier>26</MediaTransportSessionIdentifier>
+        </EndpointAddress>
+      </ForwardErrorCorrectionParameters>
+      <UnicastRepairParameters transportObjectReceptionTimeout="500" fixedBackOffPeriod="10"
+        randomBackOffPeriod="20">
+        <BaseURL relativeWeight="7">http://edge.cdn1.co.uk/bbc-one_scotland/sound</BaseURL>
+        <BaseURL relativeWeight="3">http://edge.cdn2.co.uk/bbc-one_scotland/sound</BaseURL>
+      </UnicastRepairParameters>
+      <ServiceComponentIdentifier xsi:type="DASHComponentIdentifierType" manifestIdRef="bbc-two-scotland_mpd"
+        periodIdentifier="period1" adaptationSetIdentifier="2" representationIdentifier="A1"/>
+      <ServiceComponentIdentifier xsi:type="HLSComponentIdentifierType" manifestIdRef="bbc-two-scotland_hls"
+        mediaPlaylistLocator="http://edge.cdn1.co.uk/simulcast/bbc-two/scotland/A1.m3u8"/>
+      <ObjectCarousel aggregateTransportSize="1478924" aggregateContentSize="1554980">
+        <PresentationManifests targetAcquisitionLatency="PT1S"/>
+        <InitSegments targetAcquisitionLatency="PT1S"/>
+        <ResourceLocator targetAcquisitionLatency="PT15S"
+          revalidationPeriod="PT1M">http://media.bbc.co.uk/idents/bbc-two/bbc-two-scotland.jpg</ResourceLocator>
+      </ObjectCarousel>
+    </MulticastTransportSession>
+
+  </MulticastSession>
+
+  <!-- Reporting destination(s) used by the Multicast gateway for consolidated reports about all multicast
+       sessions -->
+  <MulticastGatewaySessionReporting>
+    <ReportingLocator proportion="0.3" period="P5M" randomDelay="50"
+      reportSessionRunningEvents="false">https://reporting.isp.net/endpoint</ReportingLocator>
+    <ReportingLocator proportion="0.1" period="PT1H" randomDelay="1000"
+      reportSessionRunningEvents="false">https://reporting.bbc.co.uk/dvb_multicast_gateway.cgi</ReportingLocator>
+  </MulticastGatewaySessionReporting>
+
+</MulticastGatewayConfiguration>

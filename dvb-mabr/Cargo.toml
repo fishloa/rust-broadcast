@@ -1,0 +1,31 @@
+[package]
+name          = "dvb-mabr"
+version       = "0.1.0"
+edition       = "2024"
+rust-version  = "1.86"
+license       = "MIT OR Apache-2.0"
+description   = "DVB multicast ABR (ETSI TS 103 769) session configuration XML parser/serializer"
+authors       = ["Alex Fishlock <alex.fishlock@racingjag.com>"]
+repository    = "https://github.com/fishloa/rust-broadcast"
+readme        = "README.md"
+keywords      = ["dvb", "mabr", "multicast", "flute", "dash"]
+categories    = ["parser-implementations", "multimedia::video", "no-std"]
+exclude       = ["docs/**"]
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+
+[dependencies]
+broadcast-common = { path = "../broadcast-common", version = "9", default-features = false }
+roxmltree         = { version = "0.20", default-features = false }
+thiserror         = { version = "2", default-features = false }
+
+[dev-dependencies]
+
+[features]
+default = ["std"]
+std     = ["broadcast-common/std", "thiserror/std", "roxmltree/std"]
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(fuzzing)'] }
