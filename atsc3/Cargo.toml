@@ -12,18 +12,22 @@ keywords     = ["atsc3", "nextgentv", "route", "mmt", "broadcast"]
 
 [dependencies]
 broadcast-common = { path = "../broadcast-common", version = "9", default-features = false }
+roxmltree        = { version = "0.20", default-features = false }
 thiserror        = { version = "2", default-features = false }
+
+[dependencies.flate2]
+version  = "1"
+optional = true
 
 [features]
 default = ["std"]
-std     = ["broadcast-common/std"]
+std     = ["broadcast-common/std", "thiserror/std", "roxmltree/std", "dep:flate2"]
 serde   = ["dep:serde", "broadcast-common/serde"]
 
 [dependencies.serde]
-version          = "1"
-default-features = false
-features         = ["derive"]
-optional         = true
+version  = "1"
+features = ["derive"]
+optional = true
 
 [package.metadata.docs.rs]
 all-features = true

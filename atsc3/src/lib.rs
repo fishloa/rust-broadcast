@@ -10,12 +10,18 @@
 //!   signalling (MMTP-based delivery), plus the Service List Table (SLT) and
 //!   Service Layer Signalling (SLS).
 
-#![no_std]
+#![cfg_attr(not(feature = "std"), no_std)]
 #![forbid(unsafe_code)]
 #![deny(missing_docs)]
 
 extern crate alloc;
 
 mod error;
+pub mod lls;
+pub mod lls_table_id;
+pub mod slt;
 
 pub use error::*;
+pub use lls::LlsEnvelope;
+pub use lls_table_id::LlsTableId;
+pub use slt::{BroadcastSvcSignaling, ServiceCategory, SlsProtocol, Slt, SltService};
