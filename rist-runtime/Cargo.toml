@@ -1,0 +1,24 @@
+[package]
+name          = "rist-runtime"
+version       = "0.1.0"
+description   = "RIST Simple Profile (VSF TR-06-1): RTP-based reliable transport with ARQ"
+authors.workspace       = true
+edition.workspace       = true
+license.workspace       = true
+repository.workspace    = true
+rust-version.workspace  = true
+
+[dependencies]
+broadcast-common  = { version = "9", path = "../broadcast-common" }
+rtp-packet        = { version = "0.3", path = "../rtp-packet" }
+rtcp-packet       = { version = "0.2", path = "../rtcp-packet" }
+thiserror         = { version = "2", default-features = false }
+tokio             = { version = "1", features = ["net", "io-util", "rt", "time", "sync"], optional = true }
+
+[features]
+default = ["std"]
+std     = ["broadcast-common/std", "thiserror/std"]
+tokio   = ["dep:tokio", "std"]
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(fuzzing)'] }

@@ -2275,6 +2275,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "rist-runtime"
+version = "0.1.0"
+dependencies = [
+ "broadcast-common",
+ "rtcp-packet",
+ "rtp-packet",
+ "thiserror",
+ "tokio",
+]
+
+[[package]]
 name = "roxmltree"
 version = "0.20.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
