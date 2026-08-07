@@ -2280,9 +2280,7 @@ version = "0.1.0"
 dependencies = [
  "broadcast-common",
  "rtcp-packet",
- "rtp-packet",
  "thiserror",
- "tokio",
 ]
 
 [[package]]
