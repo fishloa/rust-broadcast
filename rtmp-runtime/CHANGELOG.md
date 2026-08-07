@@ -6,6 +6,8 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-08-07
+
 ### Added
 - `client` module — sans-IO RTMP 1.0 client publish session engine
   (`ClientSession`, `ClientHandshake`, `ClientConfig`, `ClientEvent`):

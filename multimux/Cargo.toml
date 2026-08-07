@@ -1,6 +1,6 @@
 [package]
 name         = "multimux"
-version      = "0.7.0"
+version      = "0.8.0"
 edition      = "2024"
 rust-version = "1.86"
 license      = "MIT OR Apache-2.0"
@@ -17,11 +17,11 @@ transmux          = { path = "../transmux",     version = "0.23" }
 # HLS (M3U8) playlist syntax (issue #878): `source::hls_pull` builds/parses
 # playlists via this crate directly rather than through `transmux`.
 broadcast-hls     = { path = "../broadcast-hls", version = "0.1" }
-rtsp-runtime      = { path = "../rtsp-runtime",  version = "0.4", features = ["tokio"] }
+rtsp-runtime      = { path = "../rtsp-runtime",  version = "0.5", features = ["tokio"] }
 # RTMP push ingest (`source::rtmp`, issue #738): the `tokio` feature pulls
 # `rtmp_runtime::io::AsyncRtmpServer`/`RtmpConnection`, the real-socket
 # adapter over the sans-IO `ServerSession`.
-rtmp-runtime      = { path = "../rtmp-runtime",  version = "0.4", features = ["tokio"] }
+rtmp-runtime      = { path = "../rtmp-runtime",  version = "0.5", features = ["tokio"] }
 # SRT push/pull ingest (`source::srt`, issue #739): the `tokio` feature
 # pulls `srt_runtime::io::{SrtListener, SrtSocket}`, the real-socket adapter
 # over the sans-IO ARQ/TSBPD/handshake engines.

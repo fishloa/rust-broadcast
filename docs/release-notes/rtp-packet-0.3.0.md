@@ -1,0 +1,10 @@
+# rtp-packet 0.3.0
+
+Released 2026-07-29.
+
+### Changed (BREAKING)
+
+**Requires `broadcast-common` 9** (issue #819). No functional or API change of
+this crate's own; the bump carries the new requirement so consumers mixing
+9-based crates (transmux, dvb-si 9, etc.) with 8-based ones don't get two
+majors of broadcast-common in one dependency graph.

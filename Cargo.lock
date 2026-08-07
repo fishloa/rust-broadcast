@@ -269,7 +269,7 @@ dependencies = [
 
 [[package]]
 name = "broadcast-loudness"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "broadcast-common",
  "libm",
@@ -1687,7 +1687,7 @@ dependencies = [
 
 [[package]]
 name = "multimux"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "async-trait",
  "axum",
@@ -1725,7 +1725,7 @@ dependencies = [
 
 [[package]]
 name = "multimux-cli"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "clap",
  "multimux",
@@ -2272,7 +2272,7 @@ dependencies = [
 
 [[package]]
 name = "rtmp-runtime"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "broadcast-common",
  "log",
@@ -2295,7 +2295,7 @@ dependencies = [
 
 [[package]]
 name = "rtsp-runtime"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "broadcast-auth",
  "log",
