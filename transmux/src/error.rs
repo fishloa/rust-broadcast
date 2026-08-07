@@ -110,6 +110,18 @@ pub enum Error {
         scheme: broadcast_common::CencScheme,
     },
 
+    /// A [`CodecConfig`](crate::pipeline::CodecConfig) has no Matroska CodecID
+    /// mapping in [`MkvMux`](crate::mkv_mux::MkvMux) (e.g. `Vvc`/`Flac`/`Ac4`/
+    /// `MpegH`/`Mpeg2Video`/`MpegAudio`/`Dts`/`Subtitle`/`Data` — see that
+    /// module's docs for the mapped set). Distinct from [`Error::UnsupportedCodec`]
+    /// (that variant's message names the ISOBMFF/fMP4 carriage this variant is
+    /// not about).
+    #[error("codec {codec} has no Matroska CodecID mapping in this crate")]
+    UnsupportedMkvCodec {
+        /// The codec name (e.g. `"VVC"`, `"FLAC"`, `"Subtitle"`).
+        codec: &'static str,
+    },
+
     /// The MPEG-1/2 Program Stream framing could not be parsed
     /// ([`PsDemux`](crate::PsDemux) input — ISO/IEC 13818-1 §2.5, via `mpeg_ps`).
     #[error("program stream: {0}")]

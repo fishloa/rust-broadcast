@@ -19,13 +19,16 @@
 //!
 //! # Scope
 //!
-//! Only the elements needed to demux WebM video + audio are decoded;
+//! Only the elements needed to demux WebM/Matroska video + audio are decoded;
 //! `SeekHead`, `Cues`, `Tags` and any other master element are skipped by size.
 //! The mapped CodecIDs are `V_VP9` (→ [`CodecConfig::Vp9`]), `V_VP8` (→
-//! [`CodecConfig::Vp8`]), `A_OPUS` (→ [`CodecConfig::Opus`]) and `A_VORBIS` (→
-//! [`CodecConfig::Vorbis`]); every other CodecID is skipped (never fatal).
-//! Lacing is not supported: a laced block is a hard error (VP8/VP9/Opus/Vorbis
-//! WebM from ffmpeg use no lacing — one frame per block).
+//! [`CodecConfig::Vp8`]), `V_MPEG4/ISO/AVC` (→ [`CodecConfig::Avc`]),
+//! `V_MPEGH/ISO/HEVC` (→ [`CodecConfig::Hevc`]), `A_OPUS` (→
+//! [`CodecConfig::Opus`]), `A_VORBIS` (→ [`CodecConfig::Vorbis`]) and `A_AAC`
+//! (→ [`CodecConfig::Aac`]); every other CodecID is skipped (never fatal).
+//! (`crate::mkv_mux::MkvMux`, the inverse packager, mirrors this exact set.)
+//! Lacing is not supported: a laced block is a hard error (real WebM/Matroska
+//! captures from ffmpeg use no lacing — one frame per block).
 //!
 //! # Timescale
 //!
@@ -41,12 +44,15 @@
 use alloc::vec::Vec;
 use core::marker::PhantomData;
 
-use broadcast_common::Unpackage;
+use broadcast_common::{Parse, Unpackage};
 
+use crate::avc_config::{AVCConfigurationBox, AVCDecoderConfigurationRecord};
 use crate::error::{Error, Result};
+use crate::hevc_config::{HEVCConfigurationBox, HEVCDecoderConfigurationRecord};
 use crate::media::{Media, Track};
 use crate::opus::OpusSpecificBox;
 use crate::pipeline::{CodecConfig, Sample, TrackSpec};
+use crate::rtp_sdp::aac_config_from_asc_bytes;
 use crate::vp9::Vp9ConfigurationBox;
 
 // --- EBML / Matroska element IDs (RFC 9559 §27; stored with marker bits) -----
@@ -103,10 +109,20 @@ const REFERENCE_BLOCK: u32 = 0xFB;
 const CODEC_V_VP9: &[u8] = b"V_VP9";
 /// VP8 video CodecID.
 const CODEC_V_VP8: &[u8] = b"V_VP8";
+/// H.264/AVC video CodecID; `CodecPrivate` is the raw `AVCDecoderConfigurationRecord`
+/// (ISO/IEC 14496-15 §5.3.3 — the `avcC` box body, with no box header).
+const CODEC_V_AVC: &[u8] = b"V_MPEG4/ISO/AVC";
+/// H.265/HEVC video CodecID; `CodecPrivate` is the raw `HEVCDecoderConfigurationRecord`
+/// (ISO/IEC 14496-15 §8.3.3.1 — the `hvcC` box body, with no box header).
+const CODEC_V_HEVC: &[u8] = b"V_MPEGH/ISO/HEVC";
 /// Opus audio CodecID.
 const CODEC_A_OPUS: &[u8] = b"A_OPUS";
 /// Vorbis audio CodecID.
 const CODEC_A_VORBIS: &[u8] = b"A_VORBIS";
+/// AAC audio CodecID; `CodecPrivate` is the raw `AudioSpecificConfig`
+/// (ISO/IEC 14496-3 §1.6.2.1 — the same bytes an ISOBMFF `esds`'s
+/// `DecoderSpecificInfo` carries).
+const CODEC_A_AAC: &[u8] = b"A_AAC";
 
 // --- TrackType values (RFC 9559 §27 `TrackType`) -----------------------------
 /// `TrackType` value for a video track.
@@ -546,13 +562,44 @@ fn codec_config_for(info: &TrackInfo, first_frame: &[u8]) -> Result<Option<Codec
         Ok(Some(vp9_config(info)))
     } else if info.track_type == TRACK_TYPE_VIDEO && info.codec_id == CODEC_V_VP8 {
         Ok(Some(vp8_config(first_frame)?))
+    } else if info.track_type == TRACK_TYPE_VIDEO && info.codec_id == CODEC_V_AVC {
+        Ok(Some(avc_config(info)?))
+    } else if info.track_type == TRACK_TYPE_VIDEO && info.codec_id == CODEC_V_HEVC {
+        Ok(Some(hevc_config(info)?))
     } else if info.track_type == TRACK_TYPE_AUDIO && info.codec_id == CODEC_A_OPUS {
         Ok(Some(opus_config(info)?))
     } else if info.track_type == TRACK_TYPE_AUDIO && info.codec_id == CODEC_A_VORBIS {
         Ok(Some(vorbis_config(info)?))
+    } else if info.track_type == TRACK_TYPE_AUDIO && info.codec_id == CODEC_A_AAC {
+        Ok(Some(aac_config_from_asc_bytes(info.codec_private.clone())?))
     } else {
         Ok(None)
     }
+}
+
+/// Build a [`CodecConfig::Avc`] from an H.264 [`TrackInfo`]: `CodecPrivate` is
+/// the raw `AVCDecoderConfigurationRecord` (ISO/IEC 14496-15 §5.3.3); the coded
+/// dimensions come from the `Video` element (§27, `PixelWidth`/`PixelHeight`) —
+/// mirrors [`crate::mkv_mux::MkvMux`]'s inverse `CodecPrivate` emission.
+fn avc_config(info: &TrackInfo) -> Result<CodecConfig> {
+    let record = AVCDecoderConfigurationRecord::parse(&info.codec_private)?;
+    Ok(CodecConfig::Avc {
+        config: AVCConfigurationBox::new(record),
+        width: info.pixel_width,
+        height: info.pixel_height,
+    })
+}
+
+/// Build a [`CodecConfig::Hevc`] from an H.265 [`TrackInfo`]: `CodecPrivate` is
+/// the raw `HEVCDecoderConfigurationRecord` (ISO/IEC 14496-15 §8.3.3.1); the
+/// coded dimensions come from the `Video` element, as [`avc_config`].
+fn hevc_config(info: &TrackInfo) -> Result<CodecConfig> {
+    let record = HEVCDecoderConfigurationRecord::parse(&info.codec_private)?;
+    Ok(CodecConfig::Hevc {
+        config: HEVCConfigurationBox::new(record),
+        width: info.pixel_width,
+        height: info.pixel_height,
+    })
 }
 
 /// Build a [`CodecConfig::Vp8`] by decoding the VP8 key-frame header (RFC 6386

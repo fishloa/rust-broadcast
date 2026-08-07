@@ -136,6 +136,7 @@ pub mod klv;
 pub mod ll_dash;
 pub mod ll_hls;
 pub mod media;
+pub mod mkv_mux;
 pub mod movie_fragment;
 pub mod mp4esds;
 pub mod mpeg_legacy;
@@ -245,6 +246,7 @@ pub use ll_hls::{LlHlsSegmenter, LlHlsStageOutput, PartInfo, SegmentInfo};
 pub use media::{
     CmafMux, Fmp4Demux, HlsPackager, Media, PcrSample, SkippedTrack, Track, TrackEncryption,
 };
+pub use mkv_mux::MkvMux;
 pub use movie_fragment::{
     MovieFragmentBox, MovieFragmentHeaderBox, TrackFragmentBaseMediaDecodeTimeBox,
     TrackFragmentBox, TrackFragmentHeaderBox, TrackFragmentRunBox, TrunSample,
