@@ -14,7 +14,9 @@ pub enum State {
     OfferSent,
     /// Session established — ICE/DTLS in progress or connected.
     Established {
+        /// Resource URL returned in the `Location` header of the 201 response.
         session_url: String,
+        /// Current resource `ETag`, if the server supplied one.
         etag: Option<String>,
     },
     /// Session terminated.
@@ -24,29 +26,43 @@ pub enum State {
 /// An HTTP request the caller must send on behalf of the state machine.
 #[derive(Debug, Clone)]
 pub struct HttpRequest {
+    /// HTTP method to use.
     pub method: Method,
+    /// Absolute or resource-relative URL to send the request to.
     pub url: String,
+    /// `Content-Type` header value, if the request carries a body.
     pub content_type: Option<&'static str>,
+    /// Additional headers to send (e.g. `Authorization`, `If-Match`).
     pub headers: Vec<(String, String)>,
+    /// Request body bytes.
     pub body: Vec<u8>,
 }
 
 /// HTTP method.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Method {
+    /// `POST` — used to create a session with the initial SDP offer.
     Post,
+    /// `PATCH` — used to send Trickle ICE fragments / ICE restarts.
     Patch,
+    /// `DELETE` — used to terminate a session.
     Delete,
+    /// `OPTIONS` — used to discover supported ICE servers.
     Options,
 }
 
 /// Parsed fields from an HTTP response.
 #[derive(Debug, Clone)]
 pub struct HttpResponse {
+    /// HTTP status code.
     pub status: u16,
+    /// `Content-Type` header value, if present.
     pub content_type: Option<String>,
+    /// `Location` header value, if present.
     pub location: Option<String>,
+    /// `ETag` header value, if present.
     pub etag: Option<String>,
+    /// Response body bytes.
     pub body: Vec<u8>,
 }
 
@@ -57,7 +73,9 @@ pub enum Event {
     SdpAnswer(Vec<u8>),
     /// Server's ICE candidates from restart response.
     IceRestart {
+        /// SDP fragment body carrying the server's new ICE candidates.
         sdp_fragment: Vec<u8>,
+        /// The resource's new `ETag` after the restart.
         new_etag: String,
     },
     /// Session terminated by server (DELETE acknowledged).
@@ -72,13 +90,19 @@ pub enum Event {
 /// 3. Handling emitted `Event`s
 #[derive(Debug)]
 pub struct WhipClient {
+    /// WHIP endpoint URL the initial offer is POSTed to.
     endpoint_url: String,
+    /// Bearer token sent as `Authorization` on every request, if configured.
     bearer_token: Option<String>,
+    /// Current client-side session state.
     state: State,
+    /// ICE candidates gathered locally, buffered until the next flush.
     buffered_candidates: Vec<Vec<u8>>,
 }
 
 impl WhipClient {
+    /// Create a new client targeting `endpoint_url`, optionally authenticating
+    /// every request with `bearer_token`.
     pub fn new(endpoint_url: String, bearer_token: Option<String>) -> Self {
         Self {
             endpoint_url,
@@ -88,6 +112,7 @@ impl WhipClient {
         }
     }
 
+    /// The client's current session state.
     pub fn state(&self) -> &State {
         &self.state
     }

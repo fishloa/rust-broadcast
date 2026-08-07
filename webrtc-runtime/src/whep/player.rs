@@ -13,10 +13,15 @@ pub enum State {
     /// SDP offer sent, awaiting 201 or 406.
     OfferSent,
     /// Server counter-offered (406), awaiting our SDP answer via PATCH.
-    CounterOffered { session_url: String },
+    CounterOffered {
+        /// Resource URL to PATCH the SDP answer to.
+        session_url: String,
+    },
     /// Session established — receiving media.
     Established {
+        /// Resource URL returned in the `Location` header of the response.
         session_url: String,
+        /// Current resource `ETag`, if the server supplied one.
         etag: Option<String>,
     },
     /// Session terminated.
@@ -26,30 +31,45 @@ pub enum State {
 /// An HTTP request the caller must send.
 #[derive(Debug, Clone)]
 pub struct HttpRequest {
+    /// HTTP method to use.
     pub method: Method,
+    /// Absolute or resource-relative URL to send the request to.
     pub url: String,
+    /// `Content-Type` header value, if the request carries a body.
     pub content_type: Option<&'static str>,
+    /// Additional headers to send (e.g. `Authorization`, `If-Match`).
     pub headers: Vec<(String, String)>,
+    /// Request body bytes.
     pub body: Vec<u8>,
 }
 
 /// HTTP method.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Method {
+    /// `POST` — used to send the initial SDP offer.
     Post,
+    /// `PATCH` — used for counter-offer answers, Trickle ICE, and ICE restarts.
     Patch,
+    /// `DELETE` — used to terminate a session.
     Delete,
+    /// `OPTIONS` — used to discover supported ICE servers.
     Options,
+    /// `HEAD` — used to poll publisher availability.
     Head,
 }
 
 /// Parsed fields from an HTTP response.
 #[derive(Debug, Clone)]
 pub struct HttpResponse {
+    /// HTTP status code.
     pub status: u16,
+    /// `Content-Type` header value, if present.
     pub content_type: Option<String>,
+    /// `Location` header value, if present.
     pub location: Option<String>,
+    /// `ETag` header value, if present.
     pub etag: Option<String>,
+    /// Response body bytes.
     pub body: Vec<u8>,
 }
 
@@ -63,7 +83,9 @@ pub enum Event {
     CounterOffer(Vec<u8>),
     /// ICE restart response.
     IceRestart {
+        /// SDP fragment body carrying the server's new ICE candidates.
         sdp_fragment: Vec<u8>,
+        /// The resource's new `ETag` after the restart.
         new_etag: String,
     },
     /// Session terminated.
@@ -79,6 +101,8 @@ pub struct WhepPlayer {
 }
 
 impl WhepPlayer {
+    /// Create a new player targeting `endpoint_url`, optionally authenticating
+    /// every request with `bearer_token`.
     pub fn new(endpoint_url: String, bearer_token: Option<String>) -> Self {
         Self {
             endpoint_url,
@@ -87,6 +111,7 @@ impl WhepPlayer {
         }
     }
 
+    /// The player's current session state.
     pub fn state(&self) -> &State {
         &self.state
     }

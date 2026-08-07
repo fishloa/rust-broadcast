@@ -11,9 +11,15 @@ pub enum State {
     /// Awaiting POST with SDP offer.
     AwaitingOffer,
     /// Counter-offer sent (406), awaiting player's SDP answer via PATCH.
-    CounterOffered { etag: Option<String> },
+    CounterOffered {
+        /// The resource's `ETag`, if one was already assigned.
+        etag: Option<String>,
+    },
     /// Session established — sending media to player.
-    Established { etag: String },
+    Established {
+        /// The resource's current `ETag`.
+        etag: String,
+    },
     /// Session terminated.
     Closed,
 }
@@ -21,9 +27,13 @@ pub enum State {
 /// An HTTP response the caller must send.
 #[derive(Debug, Clone)]
 pub struct HttpResponse {
+    /// HTTP status code to send.
     pub status: u16,
+    /// `Content-Type` header value, if the response carries a body.
     pub content_type: Option<&'static str>,
+    /// Additional headers to send (e.g. `Location`, `ETag`, `Retry-After`).
     pub headers: Vec<(String, String)>,
+    /// Response body bytes.
     pub body: Vec<u8>,
 }
 
@@ -36,11 +46,16 @@ pub enum Event {
     SdpAnswer(Vec<u8>),
     /// Trickle ICE candidates from player.
     TrickleIce {
+        /// SDP fragment body carrying the player's new ICE candidates.
         sdp_fragment: Vec<u8>,
+        /// The `If-Match` `ETag` the player supplied, if any.
         if_match: Option<String>,
     },
     /// ICE restart requested by player.
-    IceRestart { sdp_fragment: Vec<u8> },
+    IceRestart {
+        /// SDP fragment body carrying the restarted ICE credentials/candidates.
+        sdp_fragment: Vec<u8>,
+    },
     /// Player terminated the session.
     Terminated,
 }
@@ -53,6 +68,7 @@ pub struct WhepSession {
 }
 
 impl WhepSession {
+    /// Create a new server session that will answer at `session_url`.
     pub fn new(session_url: String) -> Self {
         Self {
             session_url,
@@ -60,10 +76,12 @@ impl WhepSession {
         }
     }
 
+    /// The session's current state.
     pub fn state(&self) -> &State {
         &self.state
     }
 
+    /// The resource URL this session answers at.
     pub fn session_url(&self) -> &str {
         &self.session_url
     }
