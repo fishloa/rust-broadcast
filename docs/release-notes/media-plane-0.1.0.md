@@ -1,16 +1,14 @@
 # media-plane 0.1.0
 
-Released 2026-07-28.
+**Release date:** 2026-07-28
 
-### Added
+Initial release — the ingress/egress spine for live origins. Four layers: `Dialer`/`Listener` → `ByteStage` → `IngestSession` → `IrTransform` → `TrunkWriter` → `Trunk`. A `Trunk` is the per-program hub with bounded sample/segment/event/part rings, cursor subscribers (`Lagged` reported in-band), `ProgramId`-keyed track sets, and three egress shapes (`ServedEgress`, `PushEgress`, `SegmentEgress`). Tiered retention with DVR pinning and `subscribe_from_backlog` for late-joining consumers.
 
-Initial release — the ingress/egress spine for live origins: `Dialer`/`Listener`
-→ `ByteStage` → `IngestSession` → `IrTransform` → `TrunkWriter` → `Trunk`.
-Bounded sample/segment/event/part rings with cursor subscribers, `ProgramId`-
-keyed track sets, three egress shapes (ServedEgress, PushEgress, SegmentEgress),
-tiered retention with DVR pinning. `Trunk::subscribe_from_backlog` for
-consumers built after samples have landed.
+## What's new
 
-### Changed (pre-1.0)
-
-- `TapItem` is now `#[non_exhaustive]`.
+- `Trunk` with bounded rings, cursor-based subscription, and `listen()` wake-ups.
+- `Dialer` / `Listener` ingress traits for connection-oriented and listener-oriented sources.
+- `IngestSession` / `IrTransform` / `TrunkWriter` pipeline stages.
+- `ServedEgress` with `EgressResponse::Await` for LL-HLS blocking reload.
+- `PushEgress` and `SegmentEgress` for push-based and segment-archive outputs.
+- `TapItem` is `#[non_exhaustive]`.

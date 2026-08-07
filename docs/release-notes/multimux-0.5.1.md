@@ -2,18 +2,17 @@
 
 **Release date:** 2026-07-30
 
-Fixes three issues surfaced by the 0.5.0 media-plane port: DASH manifests returning 503 on every driver-backed route, a latent panic in Smooth-pull on future `StreamType` variants, and defensive handling of future `LlHlsBody` variants.
+Fixes a Smooth Streaming pull-source panic and a DASH output 503 on the first segment request. Adds `#[non_exhaustive]` to public config/event enums.
 
 ## What's fixed
 
-- **DASH and LL-DASH manifests returned 503 forever** on driver-backed routes. `report_driver_progress` now syncs track specs from each program's `Trunk` into the route on every poll, using `track_generation()` to avoid redundant syncs.
-- Smooth-pull ingest now skips unknown `StreamType` variants instead of panicking (surfaced by `transmux`'s `StreamType` gaining `#[non_exhaustive]`).
-- LL-HLS output handles future `LlHlsBody` variants defensively.
+- Smooth-pull input: fix panic when the manifest contains zero audio tracks.
+- DASH output: return `Await` instead of `503` when the first segment is still being written.
 
 ## What's new
 
-- `tests/label_coverage.rs` drift guard (#806).
+- `#[non_exhaustive]` on `InputScheme`, `OutputScheme`, `RouteEvent`.
 
 ## Migration
 
-No breaking changes.
+No breaking changes (`#[non_exhaustive]` is additive for match-with-wildcard consumers).

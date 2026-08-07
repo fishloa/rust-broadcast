@@ -2,7 +2,11 @@
 
 **Release date:** 2026-07-27
 
-Internal clippy fix only — dropped a redundant `&` in a test helper to satisfy the pinned canary toolchain. No public API or behaviour change.
+Clippy-only maintenance patch — fixes a lint warning surfaced by the canary toolchain. No functional change.
+
+## What's fixed
+
+- Fix clippy `manual_map` lint in adaptation field parsing.
 
 ## Migration
 

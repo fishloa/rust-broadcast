@@ -1,7 +1,9 @@
 # multimux-cli 0.4.0
 
-Released 2026-08-02.
+**Release date:** 2026-08-02
 
-### Changed
+Tracks `multimux` 0.6 (admin API, signed-URL auth, TS-HLS output). No CLI-level changes.
 
-Requires `multimux` 0.6 (admin API, signed-URL auth, TS-HLS output).
+## Migration
+
+Requires `multimux` 0.6.

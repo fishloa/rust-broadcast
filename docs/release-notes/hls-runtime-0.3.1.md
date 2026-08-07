@@ -1,7 +1,13 @@
 # hls-runtime 0.3.1
 
-Released 2026-07-30.
+**Release date:** 2026-07-30
 
-### Fixed
+Dependency-floor patch: floors `media-plane` to 0.1.2 to prevent a consumer from resolving two `broadcast-common` majors into one dependency graph (#858).
 
-Floor dependencies to epoch-pure versions (#858).
+## What's fixed
+
+- Floor `media-plane` to `0.1.2` (epoch-pure within the `^0.1` caret bucket).
+
+## Migration
+
+No breaking changes.

@@ -1,7 +1,14 @@
 # media-plane 0.3.0
 
-Released 2026-08-05.
+**Release date:** 2026-08-05
 
-### Changed
+`set_tracks` now wakes all listening cursors so egress consumers learn about mid-stream track additions without waiting for the next sample. Epoch bump to `transmux` 0.23 (^0.21 → ^0.23).
 
-Requires `transmux` 0.23 (epoch-pure caret bump from ^0.21).
+## What's changed
+
+- `set_tracks` wakes listeners immediately.
+- Requires `transmux` 0.23.
+
+## Migration
+
+Requires `transmux` 0.23.

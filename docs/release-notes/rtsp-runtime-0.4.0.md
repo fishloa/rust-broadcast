@@ -1,9 +1,9 @@
 # rtsp-runtime 0.4.0
 
-Released 2026-07-29.
+**Release date:** 2026-07-29
 
-### Changed (BREAKING)
+Epoch-pure bump to `broadcast-common` 9. No functional or API change in this crate. Also adds `tests/non_exhaustive_coverage.rs` drift guard (#806).
 
-**Requires `broadcast-common` 9.** No functional or API change of this crate's
-own; the bump carries the new requirement. Also adds `tests/non_exhaustive_
-coverage.rs` drift guard (#806).
+## Migration
+
+Requires `broadcast-common` 9.

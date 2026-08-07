@@ -2,15 +2,19 @@
 
 **Release date:** 2026-08-05
 
-Unlocks real DVB multiplex ingest with MPTS support, adds mid-stream track handling, Smooth Streaming output, and durable DVR segment archiving.
+Adds MPTS (multi-program transport stream) input demux, mid-stream track-set changes (#781), Microsoft Smooth Streaming output, and DVR archive with configurable retention and `ArchiveOverrun` policy. Requires `transmux` 0.23 and `media-plane` 0.3.
 
 ## What's new
 
-- **MPTS ingest** (#906): `ProgramTracker` groups tracks by `TrackSpec::program_number`, producing one `ProgramId` per distinct TS programme. Every real DVB-T/S/C multiplex is MPTS — this was the sole gap preventing real DVB ingest.
-- **Mid-stream track additions** (#781): a broadcaster adding an audio language or subtitle track mid-programme now reaches the running segmenter. Previously these were logged and silently dropped.
-- **Smooth Streaming output** (`OutputKind::Smooth`, config `"smooth"`, #742): serves an MS-SSTR client Manifest and fragment responses, sharing the same fMP4 segment bytes from the `Trunk`.
-- **DVR durable segment archive** (#746): per-route `dvr` config with period-container files, byte-range index sidecars, retention policies, and configurable overrun behaviour. Recording is a `SegmentEgress` that never holds a lock the live-serving path needs.
+- **MPTS input** — a single TS-UDP/TS-HTTP/SRT source carrying multiple programs is demuxed into separate `Trunk` instances, one per `program_number`. Each program gets its own output routes.
+- **Mid-stream track changes** — when a source adds/removes tracks (e.g. ad-break audio-language switch), the `Trunk` track set updates live and downstream segmenters pick up the change via `SessionEvent::TracksChanged`.
+- **Smooth Streaming output** (`OutputScheme::Smooth`) — IIS-compatible fragmented-MP4 manifest + fragments served from `Trunk` segments.
+- **DVR archive** — tiered hot/cold retention with `SegmentSink` archive backend and `ArchiveOverrun` policy (`Drop` oldest vs. `PauseIngest`). Configured per-route via `RetentionConfig`.
+
+## What changed
+
+- Requires `transmux` 0.23 (`TrackSpec::program_number`), `media-plane` 0.3 (`set_tracks` wakes listeners).
 
 ## Migration
 
-Requires `multimux` 0.7 (pre-1.0 caret boundary `^0.6` -> `^0.7`). MPTS addressing for HTTP requests is documented but not yet implemented — all routes currently serve `SPTS_PROGRAM_ID` by default.
+Requires `transmux` 0.23 and `media-plane` 0.3. No breaking API changes to existing routes — MPTS, Smooth output, and DVR are additive features.

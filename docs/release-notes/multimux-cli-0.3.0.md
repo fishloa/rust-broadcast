@@ -1,8 +1,13 @@
 # multimux-cli 0.3.0
 
-Released 2026-07-28.
+**Release date:** 2026-07-28
 
-### Changed
+Tracks multimux 0.5.0 — the media-plane port. No CLI-surface changes; the version bump reflects the breaking dependency on multimux 0.5.
 
-Requires `multimux` 0.5 (media-plane integration, Smooth Streaming, DVR,
-SRT ingest).
+## What changed
+
+- Requires `multimux` 0.5.
+
+## Migration
+
+Requires `multimux` 0.5. No CLI flag or config-file changes.

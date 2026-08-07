@@ -1,8 +1,13 @@
 # multimux-cli 0.3.1
 
-Released 2026-07-30.
+**Release date:** 2026-07-30
 
-### Fixed
+Dependency-floor patch: floors `multimux` to 0.5.2 to prevent a consumer from resolving two `broadcast-common` majors into one dependency graph (#858).
 
-Floor `multimux` to 0.5.1 — the `^0.5` bucket also contained 0.5.0 which
-builds against `media-plane` 0.1.0, causing trait-resolution errors (#858).
+## What's fixed
+
+- Floor `multimux` to `0.5.2` (epoch-pure within the `^0.5` caret bucket).
+
+## Migration
+
+No breaking changes.

@@ -1,7 +1,9 @@
 # media-doctor 0.6.1
 
-Released 2026-07-30.
+**Release date:** 2026-07-30
 
-### Fixed
+Dependency floor fix: floors dependencies to epoch-pure versions to prevent split-bucket trait-resolution errors (#858).
 
-Floor dependencies to epoch-pure versions (#858).
+## Migration
+
+No breaking changes.
