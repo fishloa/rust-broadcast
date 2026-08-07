@@ -89,7 +89,9 @@ fn gateway_bootstrap_round_trips() {
     assert_eq!(parsed, reparsed, "round-trip changed the parsed document");
 
     let mut mutated = parsed.clone();
-    mutated.gateway_config_transport_sessions[0].bit_rate.maximum += 1;
+    mutated.gateway_config_transport_sessions[0]
+        .bit_rate
+        .maximum += 1;
     assert_ne!(mutated.to_xml(), xml2);
 }
 
