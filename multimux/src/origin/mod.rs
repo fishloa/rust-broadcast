@@ -730,6 +730,7 @@ async fn serve_with_registry_impl(
     let target_duration_secs = config.target_duration_secs;
     let part_target_ms = config.part_target_ms;
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
+    let cancel = tokio_util::sync::CancellationToken::new();
     let mut supervisor_handles: Vec<(String, tokio::task::JoinHandle<()>)> = Vec::new();
 
     for route in &config.routes {
@@ -738,14 +739,6 @@ async fn serve_with_registry_impl(
                 .with_name(route.name.clone())
                 .with_container(route_container(route)),
         );
-        let push_count = route.outputs.iter().filter(|k| k.is_push()).count();
-        if push_count > 0 {
-            tracing::info!(
-                route = %route.name,
-                push_outputs = push_count,
-                "push outputs configured (supervisor wiring is a later phase)"
-            );
-        }
         let outputs: Vec<Arc<dyn Output>> = route
             .outputs
             .iter()
@@ -753,6 +746,11 @@ async fn serve_with_registry_impl(
             .map(|k| build_output(k, &config.playlist_name, &registry))
             .collect::<crate::Result<Vec<_>>>()?;
         streams.insert(route.name.clone(), (store.clone(), outputs));
+
+        let push_handles = spawn_push_outputs(route, Arc::clone(&store), &cancel);
+        for h in push_handles {
+            supervisor_handles.push((route.name.clone(), h));
+        }
 
         let name = route.name.clone();
         let shutdown_rx = shutdown_rx.clone();
@@ -770,6 +768,7 @@ async fn serve_with_registry_impl(
     let shutdown_future = async move {
         shutdown_signal().await;
         tracing::info!("shutdown signal received, draining");
+        cancel.cancel();
         // Best-effort: only fails if every receiver (every supervisor task)
         // has already exited, which just means there's nothing left to
         // notify.
@@ -818,6 +817,93 @@ async fn serve_with_registry_impl(
 ///
 /// Every built-in variant drives [`supervisor::supervise_driver`] with the
 /// matching `crate::source::*::run_*` entry point;
+/// Spawn one [`crate::push::drive_push`] task per push output on `route`,
+/// each awaiting the route's first `Trunk` (via
+/// [`RouteHandle::await_first_trunk`]) before subscribing. Returns a
+/// `JoinHandle` per push output; empty vec when `route` has no push outputs.
+fn spawn_push_outputs(
+    route: &crate::config::Route,
+    store: Arc<RouteHandle>,
+    cancel: &tokio_util::sync::CancellationToken,
+) -> Vec<tokio::task::JoinHandle<()>> {
+    let mut handles = Vec::new();
+    for kind in &route.outputs {
+        match kind {
+            crate::output::OutputKind::SrtPush {
+                url,
+                format,
+                reconnect,
+            } => {
+                let url = url.clone();
+                let format = format.unwrap_or(crate::config::PushFormat::Ts);
+                let reconnect = reconnect.clone().unwrap_or_default();
+                let store = Arc::clone(&store);
+                let cancel = cancel.clone();
+                handles.push(tokio::spawn(async move {
+                    let trunk = store.await_first_trunk().await;
+                    tracing::info!(%url, "SRT push output starting");
+                    let config = crate::push::SrtTransportConfig::default();
+                    crate::push::drive_push::<crate::push::SrtTransport>(
+                        trunk, url, config, format, reconnect, cancel,
+                    )
+                    .await;
+                }));
+            }
+            crate::output::OutputKind::RtmpPush {
+                url,
+                format,
+                reconnect,
+            } => {
+                let url = url.clone();
+                let _format = format.unwrap_or(crate::config::PushFormat::Ts);
+                let reconnect = reconnect.clone().unwrap_or_default();
+                let store = Arc::clone(&store);
+                let cancel = cancel.clone();
+                handles.push(tokio::spawn(async move {
+                    let trunk = store.await_first_trunk().await;
+                    tracing::info!(%url, "RTMP push output starting");
+                    let parsed = url::Url::parse(&url).ok();
+                    let app = parsed
+                        .as_ref()
+                        .and_then(|u| u.path().strip_prefix('/'))
+                        .unwrap_or("live")
+                        .to_string();
+                    let config = crate::push::RtmpTransportConfig {
+                        app,
+                        stream_key: String::new(),
+                    };
+                    crate::push::drive_push::<crate::push::RtmpTransport>(
+                        trunk, url, config, _format, reconnect, cancel,
+                    )
+                    .await;
+                }));
+            }
+            crate::output::OutputKind::RtspPush {
+                url,
+                format,
+                reconnect,
+            } => {
+                let url = url.clone();
+                let format = format.unwrap_or(crate::config::PushFormat::Ts);
+                let reconnect = reconnect.clone().unwrap_or_default();
+                let store = Arc::clone(&store);
+                let cancel = cancel.clone();
+                handles.push(tokio::spawn(async move {
+                    let trunk = store.await_first_trunk().await;
+                    tracing::info!(%url, "RTSP push output starting");
+                    let config = crate::push::RtspTransportConfig::default();
+                    crate::push::drive_push::<crate::push::RtspTransport>(
+                        trunk, url, config, format, reconnect, cancel,
+                    )
+                    .await;
+                }));
+            }
+            _ => {}
+        }
+    }
+    handles
+}
+
 /// [`crate::config::InputSpec::Custom`] resolves its `type_tag` through
 /// `registry` and calls the registered [`crate::registry::InputFactory`] instead,
 /// which builds and spawns the equivalent `supervise_driver`-wrapped loop

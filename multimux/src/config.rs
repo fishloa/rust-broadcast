@@ -294,17 +294,20 @@ impl AuthSpec {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PushFormat {
-    /// MPEG-2 Transport Stream. Default for SRT.
+    /// MPEG-2 Transport Stream.
     Ts,
-    /// FLV tag stream. Default for RTMP.
-    Flv,
+    /// Fragmented MP4 / CMAF.
+    Mp4,
+    /// Matroska / WebM.
+    Mkv,
 }
 
 impl PushFormat {
     pub fn name(&self) -> &'static str {
         match self {
             PushFormat::Ts => "ts",
-            PushFormat::Flv => "flv",
+            PushFormat::Mp4 => "mp4",
+            PushFormat::Mkv => "mkv",
         }
     }
 }

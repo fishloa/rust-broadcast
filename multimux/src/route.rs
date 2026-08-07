@@ -649,6 +649,10 @@ pub struct RouteHandle {
     /// Per-route DVR config — `None` when not configured, passed to every
     /// [`ProgramServing::new`] built by [`Self::publish_program`].
     dvr_config: Option<crate::dvr::DvrConfig>,
+    /// Notifies waiters when a new program is published via
+    /// [`Self::publish_program`] — used by push output tasks that need to
+    /// discover a `Trunk` to subscribe to (issue #744).
+    program_notify: tokio::sync::Notify,
 }
 
 impl RouteHandle {
@@ -668,6 +672,7 @@ impl RouteHandle {
             programs: RwLock::new(HashMap::new()),
             name: DEFAULT_ROUTE_NAME.to_string(),
             dvr_config: None,
+            program_notify: tokio::sync::Notify::new(),
         }
     }
 
@@ -765,6 +770,24 @@ impl RouteHandle {
             &self.name,
         );
         programs.insert(program, serving);
+        self.program_notify.notify_waiters();
+    }
+
+    /// Wait until at least one program is published on this route, then return
+    /// the first program's `Trunk`. Used by push output tasks (issue #744).
+    pub async fn await_first_trunk(&self) -> Arc<Trunk> {
+        loop {
+            {
+                let programs = self
+                    .programs
+                    .read()
+                    .expect("RouteHandle::programs lock poisoned");
+                if let Some(serving) = programs.values().next() {
+                    return serving.trunk();
+                }
+            }
+            self.program_notify.notified().await;
+        }
     }
 
     /// Test/plugin convenience: mint a fresh `Trunk` sized like this route's
