@@ -23,11 +23,13 @@ pub use loudness_meter::LoudnessMeter;
 pub use true_peak::TruePeakMeter;
 
 pub mod kfilter {
-    //! K-weighting IIR filter coefficients (ITU-R BS.1770-5 §Annex 1, Tables 1–2).
+    //! K-weighting IIR filter coefficients + state (ITU-R BS.1770-5 §Annex 1).
     //!
-    //! These are the 48 kHz design coefficients. The [`crate::LoudnessMeter`]
+    //! [`k_weighting_coeffs`] derives the two stage coefficients for any
+    //! sample rate via a bilinear transform; at 48 kHz they match the
+    //! BS.1770-5 Annex 1 tabulated coefficients. The [`crate::LoudnessMeter`]
     //! applies them internally; re-exported here for consumers who need the
     //! raw filter (e.g. visualising the frequency response).
 
-    pub use crate::filter::{BiquadState, apply_biquad, high_pass_coeffs, shelving_coeffs};
+    pub use crate::filter::{BiquadCoeffs, BiquadState, apply_biquad, k_weighting_coeffs};
 }
