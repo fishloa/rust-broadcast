@@ -12,3 +12,7 @@ Initial release — the ingress/egress spine for live origins. Four layers: `Dia
 - `ServedEgress` with `EgressResponse::Await` for LL-HLS blocking reload.
 - `PushEgress` and `SegmentEgress` for push-based and segment-archive outputs.
 - `TapItem` is `#[non_exhaustive]`.
+
+## Migration
+
+New crate — no migration needed.

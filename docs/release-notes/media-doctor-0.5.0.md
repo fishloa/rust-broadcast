@@ -5,6 +5,10 @@
 Epoch-pure bump to `broadcast-common` 9 (issue #819). No functional or API
 change of this crate's own.
 
+## What changed
+
+- Requires `broadcast-common` 9.
+
 ## Migration
 
 **Breaking:** requires `broadcast-common` 9. Staying on 8 caused split-graph

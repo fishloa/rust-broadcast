@@ -20,3 +20,7 @@ to the new `broadcast-hls` crate.
   (RFC 8216bis §4.4.4.9 — the 85% partial-segment duration floor is a MUST).
 - `check_hls_playlist` now uses `broadcast-hls` directly instead of routing
   through `transmux` for playlist parsing (issue #878).
+
+## Migration
+
+Requires `broadcast-hls` 0.1. No breaking API changes to this crate's public surface.
