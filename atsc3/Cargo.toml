@@ -1,0 +1,29 @@
+[package]
+name          = "atsc3"
+version       = "0.1.0"
+description   = "ATSC 3.0 signalling: A/321 bootstrap + A/331 ROUTE/DASH and MMT"
+authors.workspace     = true
+edition.workspace     = true
+license.workspace     = true
+repository.workspace  = true
+rust-version.workspace = true
+categories   = ["multimedia::video", "parser-implementations", "no-std"]
+keywords     = ["atsc3", "nextgentv", "route", "mmt", "broadcast"]
+
+[dependencies]
+broadcast-common = { path = "../broadcast-common", version = "9", default-features = false }
+thiserror        = { version = "2", default-features = false }
+
+[features]
+default = ["std"]
+std     = ["broadcast-common/std"]
+serde   = ["dep:serde", "broadcast-common/serde"]
+
+[dependencies.serde]
+version          = "1"
+default-features = false
+features         = ["derive"]
+optional         = true
+
+[package.metadata.docs.rs]
+all-features = true
