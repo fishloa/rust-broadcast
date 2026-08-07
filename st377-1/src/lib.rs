@@ -29,15 +29,29 @@
 //! - [`Preface`], [`Identification`], [`ContentStorage`],
 //!   [`EssenceContainerData`] — the four Root Metadata Sets (Annex A) every
 //!   real MXF file has exactly one/more of, decoded field-by-field.
+//! - [`MaterialPackage`], [`SourcePackage`] — the two concrete Package
+//!   kinds (Annex E / B.1), carrying Package UID, dates, and Track
+//!   references.
+//! - [`TimelineTrack`], [`EventTrack`], [`StaticTrack`] — the three Track
+//!   kinds (B.12/B.13/B.14), wrapping a Sequence reference plus timing
+//!   properties.
+//! - [`Sequence`] — the ordered component collection inside every Track
+//!   (B.9).
+//! - [`SourceClip`] — a component referencing a span of Source Package
+//!   essence (B.10).
+//! - [`TimecodeComponent`] — a component carrying a timecode reference
+//!   (B.17).
+//! - [`FillerComponent`] — a gap placeholder inside a Sequence (B.11).
+//! - [`op1a`] — OP1a Operational Pattern UL helpers (ST 378).
 //! - [`RandomIndexPack`] — the optional file-trailer Partition index (§12).
 //!
 //! **Out of scope entirely**: Essence Container payload bytes (the actual
 //! audio/video/data samples) — carried opaquely via [`KlvItem`], never
 //! decoded, the same boundary as `st337`'s `burst_payload`/`rdd29`'s
-//! `AudioDataDLC`. Index Table *contents* and every Operational-Pattern- or
-//! essence-kind-specific Set (Packages/Tracks/Sequences/Descriptors, DM/
-//! Application Metadata) are identified via [`StructuralSetKind`] but not
-//! individually typed — see `docs/st377-1.md`.
+//! `AudioDataDLC`. Index Table *contents*, Descriptors (F.*), DM Segments/
+//! Source Clips (B.32-B.33), and Application Metadata Sets (C.*) are
+//! identified via [`StructuralSetKind`] but not individually typed — see
+//! `docs/st377-1.md`.
 //!
 //! Depends only on `broadcast-common`. `#![no_std]` + `alloc` when the
 //! `std` feature is disabled.
@@ -89,34 +103,48 @@ mod ber;
 mod content_storage;
 mod error;
 mod essence_container_data;
+mod filler_component;
 mod identification;
 mod klv;
 mod local_set;
+pub mod op1a;
+mod package;
 mod partition;
 mod preface;
 mod primer;
 mod random_index_pack;
+mod sequence;
 mod sets;
+mod source_clip;
+mod timecode_component;
+mod track;
 mod types;
 
 pub use content_storage::ContentStorage;
 pub use error::{Error, Result};
 pub use essence_container_data::EssenceContainerData;
+pub use filler_component::FillerComponent;
 pub use identification::Identification;
 pub use klv::{
     FILL_ITEM_KEY_PREFIX, FILL_ITEM_KEY_SUFFIX, KlvItem, collect_klv_items, is_fill_item_key,
     walk_klv_items,
 };
 pub use local_set::{ItemLengthMode, LocalSet, LocalSetItem, StructuralSetKind, is_local_set_key};
+pub use package::{MaterialPackage, SourcePackage};
 pub use partition::{PartitionKind, PartitionPack, PartitionStatus};
 pub use preface::Preface;
 pub use preface::VERSION_1_3;
 pub use primer::PrimerPack;
 pub use random_index_pack::{PartitionLocation, RandomIndexPack};
+pub use sequence::Sequence;
 pub use sets::InterchangeObjectFields;
+pub use source_clip::SourceClip;
+pub use timecode_component::TimecodeComponent;
+pub use track::{EventTrack, StaticTrack, TimelineTrack};
 pub use types::{
-    Auid, MxfTimestamp, PRODUCT_VERSION_LEN, PackageId, ProductVersion, ReleaseType, TIMESTAMP_LEN,
-    UlBytes, decode_utf16_be, encode_utf16_be, parse_uid_batch, serialize_uid_batch,
+    Auid, MxfTimestamp, PRODUCT_VERSION_LEN, PackageId, ProductVersion, RATIONAL_LEN, Rational,
+    ReleaseType, StrongRef, TIMESTAMP_LEN, UlBytes, decode_utf16_be, encode_utf16_be,
+    parse_uid_batch, serialize_uid_batch,
 };
 
 // Re-exported so downstream code can build owned local-set item lists for

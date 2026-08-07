@@ -11,6 +11,57 @@ use crate::error::{Error, Result};
 /// A 16-byte SMPTE Universal Label or UUID.
 pub type UlBytes = [u8; 16];
 
+/// A Strong Reference (§5.4.4): a 16-byte UUID referencing another Set in the
+/// same file.  Identical on the wire to [`UlBytes`]; the alias documents the
+/// semantic role in property declarations.
+pub type StrongRef = UlBytes;
+
+/// A Rational number (§4.3) — two big-endian `Int32` values, 8 bytes total.
+/// Used for Edit Rate, Sample Rate, and similar time-base properties.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct Rational {
+    /// Numerator (signed 32-bit, big-endian on wire).
+    pub numerator: i32,
+    /// Denominator (signed 32-bit, big-endian on wire).
+    pub denominator: i32,
+}
+
+/// Wire size of [`Rational`] — always 8 bytes.
+pub const RATIONAL_LEN: usize = 8;
+
+impl Rational {
+    /// Parse 8 bytes as a Rational (two big-endian `Int32`).
+    pub fn parse(bytes: &[u8]) -> Result<Self> {
+        if bytes.len() != RATIONAL_LEN {
+            return Err(Error::InvalidPropertyLength {
+                tag: 0,
+                name: "Rational",
+                found: bytes.len(),
+                expected: RATIONAL_LEN,
+            });
+        }
+        Ok(Rational {
+            numerator: i32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]),
+            denominator: i32::from_be_bytes([bytes[4], bytes[5], bytes[6], bytes[7]]),
+        })
+    }
+
+    /// Serialize into an 8-byte buffer.
+    pub fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
+        if buf.len() < RATIONAL_LEN {
+            return Err(Error::BufferTooShort {
+                need: RATIONAL_LEN,
+                have: buf.len(),
+                what: "Rational",
+            });
+        }
+        buf[0..4].copy_from_slice(&self.numerator.to_be_bytes());
+        buf[4..8].copy_from_slice(&self.denominator.to_be_bytes());
+        Ok(RATIONAL_LEN)
+    }
+}
+
 /// Copy the first 16 bytes of `bytes` into an owned [`UlBytes`].
 ///
 /// Callers must have already verified `bytes.len() >= 16` (every call site
@@ -498,6 +549,28 @@ mod tests {
         let s = "MXF \u{1F3AC}"; // includes a surrogate-pair codepoint
         let bytes = encode_utf16_be(s);
         assert_eq!(decode_utf16_be(&bytes).unwrap(), s);
+    }
+
+    #[test]
+    fn rational_round_trip() {
+        let r = Rational {
+            numerator: 25,
+            denominator: 1,
+        };
+        let mut buf = [0u8; RATIONAL_LEN];
+        r.serialize_into(&mut buf).unwrap();
+        assert_eq!(Rational::parse(&buf).unwrap(), r);
+    }
+
+    #[test]
+    fn rational_negative_values_round_trip() {
+        let r = Rational {
+            numerator: -30000,
+            denominator: 1001,
+        };
+        let mut buf = [0u8; RATIONAL_LEN];
+        r.serialize_into(&mut buf).unwrap();
+        assert_eq!(Rational::parse(&buf).unwrap(), r);
     }
 
     #[test]
