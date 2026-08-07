@@ -4,9 +4,14 @@ All notable changes to `multimux-cli` will be documented in this file.
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-08-07
+
 ### Added
 - `--srt-push <URL>`, `--rtmp-push <URL>`, `--rtsp-push <URL>` — push
   outputs for relaying ingested media to downstream servers (#744).
+
+### Changed
+- Requires `multimux` 0.8 (push re-egress outputs).
 
 ## [0.5.0] - 2026-08-05
 

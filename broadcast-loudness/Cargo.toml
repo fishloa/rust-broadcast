@@ -1,6 +1,6 @@
 [package]
 name    = "broadcast-loudness"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 description = "EBU R 128 / ITU-R BS.1770-5 loudness measurement: K-weighting, integrated/short-term/momentary loudness (LUFS), loudness range (LRA), and true-peak (dBTP). no_std + alloc."
 license      = "MIT OR Apache-2.0"
