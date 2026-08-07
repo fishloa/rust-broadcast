@@ -76,11 +76,7 @@ impl WhipSession {
     }
 
     /// Build the 201 Created response after generating an SDP answer.
-    pub fn accept(
-        &mut self,
-        sdp_answer: Vec<u8>,
-        etag: String,
-    ) -> HttpResponse {
+    pub fn accept(&mut self, sdp_answer: Vec<u8>, etag: String) -> HttpResponse {
         self.state = State::Established { etag: etag.clone() };
         HttpResponse {
             status: super::status::CREATED,
@@ -140,20 +136,14 @@ impl WhipSession {
     }
 
     /// Build the 200 OK response for ICE restart.
-    pub fn ack_restart(
-        &mut self,
-        sdp_fragment: Vec<u8>,
-        new_etag: String,
-    ) -> HttpResponse {
+    pub fn ack_restart(&mut self, sdp_fragment: Vec<u8>, new_etag: String) -> HttpResponse {
         self.state = State::Established {
             etag: new_etag.clone(),
         };
         HttpResponse {
             status: 200,
             content_type: Some(super::content_type::TRICKLE_ICE),
-            headers: alloc::vec![
-                ("ETag".into(), alloc::format!("\"{new_etag}\"")),
-            ],
+            headers: alloc::vec![("ETag".into(), alloc::format!("\"{new_etag}\"")),],
             body: sdp_fragment,
         }
     }

@@ -179,10 +179,7 @@ impl WhipClient {
         }
     }
 
-    fn handle_established_response(
-        &mut self,
-        resp: HttpResponse,
-    ) -> Result<Option<Event>, Error> {
+    fn handle_established_response(&mut self, resp: HttpResponse) -> Result<Option<Event>, Error> {
         match resp.status {
             super::status::NO_CONTENT => Ok(None),
             200 => {
@@ -207,9 +204,7 @@ impl WhipClient {
 
     fn established_fields(&self) -> Result<(String, Option<String>), Error> {
         match &self.state {
-            State::Established { session_url, etag } => {
-                Ok((session_url.clone(), etag.clone()))
-            }
+            State::Established { session_url, etag } => Ok((session_url.clone(), etag.clone())),
             _ => Err(Error::WrongState {
                 operation: "requires established session",
                 state: state_name(&self.state),

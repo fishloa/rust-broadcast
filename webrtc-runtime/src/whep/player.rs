@@ -13,9 +13,7 @@ pub enum State {
     /// SDP offer sent, awaiting 201 or 406.
     OfferSent,
     /// Server counter-offered (406), awaiting our SDP answer via PATCH.
-    CounterOffered {
-        session_url: String,
-    },
+    CounterOffered { session_url: String },
     /// Session established — receiving media.
     Established {
         session_url: String,
@@ -111,10 +109,7 @@ impl WhepPlayer {
     }
 
     /// After receiving a CounterOffer event, send our SDP answer via PATCH.
-    pub fn answer_counter_offer(
-        &mut self,
-        sdp_answer: Vec<u8>,
-    ) -> Result<HttpRequest, Error> {
+    pub fn answer_counter_offer(&mut self, sdp_answer: Vec<u8>) -> Result<HttpRequest, Error> {
         match &self.state {
             State::CounterOffered { session_url } => {
                 let url = session_url.clone();
@@ -133,10 +128,7 @@ impl WhepPlayer {
     }
 
     /// Generate Trickle ICE PATCH.
-    pub fn trickle_ice(
-        &self,
-        sdp_fragment: Vec<u8>,
-    ) -> Result<HttpRequest, Error> {
+    pub fn trickle_ice(&self, sdp_fragment: Vec<u8>) -> Result<HttpRequest, Error> {
         let (session_url, etag) = self.established_fields()?;
         let mut req = self.build_request(
             Method::Patch,
@@ -152,10 +144,7 @@ impl WhepPlayer {
     }
 
     /// Generate ICE restart PATCH.
-    pub fn ice_restart(
-        &self,
-        sdp_fragment: Vec<u8>,
-    ) -> Result<HttpRequest, Error> {
+    pub fn ice_restart(&self, sdp_fragment: Vec<u8>) -> Result<HttpRequest, Error> {
         let (session_url, _) = self.established_fields()?;
         let mut req = self.build_request(
             Method::Patch,
@@ -186,10 +175,7 @@ impl WhepPlayer {
         }
     }
 
-    fn handle_offer_response(
-        &mut self,
-        resp: HttpResponse,
-    ) -> Result<Option<Event>, Error> {
+    fn handle_offer_response(&mut self, resp: HttpResponse) -> Result<Option<Event>, Error> {
         match resp.status {
             super::status::CREATED => {
                 let session_url = resp
@@ -235,10 +221,7 @@ impl WhepPlayer {
         }
     }
 
-    fn handle_established_response(
-        &mut self,
-        resp: HttpResponse,
-    ) -> Result<Option<Event>, Error> {
+    fn handle_established_response(&mut self, resp: HttpResponse) -> Result<Option<Event>, Error> {
         match resp.status {
             super::status::NO_CONTENT => Ok(None),
             200 => {
@@ -263,9 +246,7 @@ impl WhepPlayer {
 
     fn established_fields(&self) -> Result<(String, Option<String>), Error> {
         match &self.state {
-            State::Established { session_url, etag } => {
-                Ok((session_url.clone(), etag.clone()))
-            }
+            State::Established { session_url, etag } => Ok((session_url.clone(), etag.clone())),
             _ => Err(Error::WrongState {
                 operation: "requires established session",
                 state: state_name(&self.state),

@@ -13,7 +13,8 @@
 extern crate alloc;
 
 pub mod error;
-pub mod whip;
+pub mod ice;
 pub mod whep;
+pub mod whip;
 
 pub use error::Error;
