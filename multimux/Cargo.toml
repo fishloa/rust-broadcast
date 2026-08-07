@@ -63,6 +63,12 @@ thiserror         = "2"
 url               = "2"
 percent-encoding  = "2"
 tracing           = "0.1"
+# Push output driver (`push`, issue #744): `#[async_trait]` drives the
+# `PushTransport` trait's async methods over the sans-IO `SrtSocket` handle.
+async-trait       = "0.1"
+# `tokio_util::sync::CancellationToken` for cooperative cancellation of the
+# push loop (`drive_push`).
+tokio-util        = { version = "0.7", features = ["rt"] }
 metrics           = "0.24"
 metrics-exporter-prometheus = { version = "0.18", default-features = false }
 tokio-rustls      = { version = "0.26", optional = true }

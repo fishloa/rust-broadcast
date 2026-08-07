@@ -2,6 +2,15 @@
 
 ## [Unreleased]
 
+### Added
+- Push output support: `OutputKind::SrtPush`, `OutputKind::RtmpPush`,
+  `OutputKind::RtspPush` for relaying media to downstream servers (#744).
+- `PushFormat` config for per-output container format selection.
+- `ReconnectPolicy` config for exponential backoff reconnect.
+- SRT push transport (Caller mode to remote SRT Listener).
+- RTSP push transport (client ANNOUNCE/RECORD to remote RTSP server).
+- RTMP push transport (client connect/createStream/publish to remote RTMP server).
+
 ## [0.7.0] - 2026-08-05
 
 ### Added

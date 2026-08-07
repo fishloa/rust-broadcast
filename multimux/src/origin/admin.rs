@@ -114,6 +114,8 @@ struct RouteRuntime {
     outputs: Vec<Arc<dyn Output>>,
     shutdown_tx: watch::Sender<bool>,
     handle: tokio::task::JoinHandle<()>,
+    push_cancel: tokio_util::sync::CancellationToken,
+    push_handles: Vec<tokio::task::JoinHandle<()>>,
 }
 
 /// Everything [`RouteRegistry`] needs to build/rebuild a route or the media
@@ -211,6 +213,7 @@ impl RouteRegistry {
         let outputs: Vec<Arc<dyn Output>> = route
             .outputs
             .iter()
+            .filter(|k| !k.is_push())
             .map(|k| {
                 build_output(
                     k,
@@ -229,6 +232,8 @@ impl RouteRegistry {
             .with_container(super::route_container(route)),
         );
         let (shutdown_tx, shutdown_rx) = watch::channel(false);
+        let push_cancel = tokio_util::sync::CancellationToken::new();
+        let push_handles = super::spawn_push_outputs(route, Arc::clone(&store), &push_cancel);
         let handle = super::spawn_ingest(
             route,
             Arc::clone(&store),
@@ -242,6 +247,8 @@ impl RouteRegistry {
             outputs,
             shutdown_tx,
             handle,
+            push_cancel,
+            push_handles,
         })
     }
 
@@ -451,6 +458,7 @@ impl RouteRegistry {
 /// [`RouteRegistry::remove_route`]/[`RouteRegistry::reload`] never hold a
 /// lock across it (see this module's own "Concurrency" docs).
 async fn drain_route(runtime: RouteRuntime) {
+    runtime.push_cancel.cancel();
     let _ = runtime.shutdown_tx.send(true);
     let abort_handle = runtime.handle.abort_handle();
     if tokio::time::timeout(SUPERVISOR_SHUTDOWN_GRACE, runtime.handle)
@@ -462,6 +470,9 @@ async fn drain_route(runtime: RouteRuntime) {
              aborting"
         );
         abort_handle.abort();
+    }
+    for h in runtime.push_handles {
+        h.abort();
     }
 }
 

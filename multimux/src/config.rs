@@ -289,6 +289,68 @@ impl AuthSpec {
     }
 }
 
+/// Container format for a push output.
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PushFormat {
+    /// MPEG-2 Transport Stream.
+    Ts,
+    /// Fragmented MP4 / CMAF.
+    Mp4,
+    /// Matroska / WebM.
+    Mkv,
+}
+
+impl PushFormat {
+    pub fn name(&self) -> &'static str {
+        match self {
+            PushFormat::Ts => "ts",
+            PushFormat::Mp4 => "mp4",
+            PushFormat::Mkv => "mkv",
+        }
+    }
+}
+
+broadcast_common::impl_spec_display!(PushFormat);
+
+/// Reconnect policy for push outputs.
+#[derive(Debug, Clone, PartialEq, serde::Deserialize, serde::Serialize)]
+pub struct ReconnectPolicy {
+    #[serde(default = "ReconnectPolicy::default_initial_backoff_ms")]
+    pub initial_backoff_ms: u64,
+    #[serde(default = "ReconnectPolicy::default_max_backoff_ms")]
+    pub max_backoff_ms: u64,
+    #[serde(default)]
+    pub max_attempts: Option<u32>,
+}
+
+impl Default for ReconnectPolicy {
+    fn default() -> Self {
+        Self {
+            initial_backoff_ms: 1_000,
+            max_backoff_ms: 30_000,
+            max_attempts: None,
+        }
+    }
+}
+
+impl ReconnectPolicy {
+    fn default_initial_backoff_ms() -> u64 {
+        1_000
+    }
+    fn default_max_backoff_ms() -> u64 {
+        30_000
+    }
+
+    pub fn backoff_for(&self, attempt: u32) -> std::time::Duration {
+        let ms = self
+            .initial_backoff_ms
+            .saturating_mul(1u64 << attempt.min(20));
+        std::time::Duration::from_millis(ms.min(self.max_backoff_ms))
+    }
+}
+
 /// Server-side output auth (issue #663 "shared output auth"): configures one
 /// [`broadcast_auth::Verifier`] gating **every** media output route
 /// (`/{stream}/…` — manifests and init/segment/part bytes alike, across

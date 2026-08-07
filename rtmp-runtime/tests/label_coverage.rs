@@ -33,6 +33,11 @@ const SKIP: &[&str] = &[
     // Data-carrying event ADT `ServerSession::handle_data` surfaces to the
     // caller (Connected{app}/Publish{..}/Media{flv}/Eof) — not a spec label.
     "ServerEvent",
+    // Data-carrying event ADT `ClientSession::handle_data` surfaces to the
+    // caller (Connected/StreamCreated/Publishing/Error/Closed) — not a spec label.
+    "ClientEvent",
+    // Internal client state machine discriminant, not a spec label.
+    "ClientState",
 ];
 
 fn read_rs(dir: &Path, out: &mut Vec<String>) {

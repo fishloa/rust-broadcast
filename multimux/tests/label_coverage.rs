@@ -9,6 +9,10 @@
 //! Skip list:
 //! - `MultimuxError` (`error`) — structured `thiserror` error, not a spec/
 //!   field label.
+//! - `RtmpPushError` (`push::rtmp`) — thiserror error for the RTMP push
+//!   transport's connect/protocol/IO failures; not a spec/field label.
+//! - `RtspPushError` (`push::rtsp`) — thiserror error for the RTSP push
+//!   transport's connect/protocol/IO failures; not a spec/field label.
 //! - `InputSpec`, `AuthSpec`, `OutputAuthSpec` (`config`) — data-carrying
 //!   config ADTs (`Rtsp { url, .. }`, `Password { .. }`, `Basic { .. }`, …);
 //!   callers match the typed variant, a static label would be lossy.
@@ -23,6 +27,9 @@
 //! - `StreamStatus` (`source::srt`, `source::ts_http`) — an internal
 //!   read-loop outcome discriminant (`Fed`/`Ended`), not itself a wire-format
 //!   field.
+//! - `ReconnectState` (`push`) — the push reconnect FSM's state discriminant
+//!   (`Ready`/`Backoff`/`Failed`), an internal driver enum whose three states
+//!   carry no wire token; a static label would add nothing.
 
 use std::collections::BTreeSet;
 use std::fs;
@@ -30,6 +37,8 @@ use std::path::Path;
 
 const SKIP: &[&str] = &[
     "MultimuxError",
+    "RtmpPushError",
+    "RtspPushError",
     "InputSpec",
     "AuthSpec",
     "OutputAuthSpec",
@@ -39,6 +48,7 @@ const SKIP: &[&str] = &[
     "SmoothResourceId",
     "SmoothAction",
     "StreamStatus",
+    "ReconnectState",
 ];
 
 fn read_rs(dir: &Path, out: &mut Vec<String>) {

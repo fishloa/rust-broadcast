@@ -1,10 +1,13 @@
 //! CLI for the `multimux` multi-input (RTSP/RTP/TS-UDP/TS-HTTP/HLS-pull),
-//! multi-output (LL-HLS/DASH/LL-DASH) just-in-time repackaging HTTP origin.
+//! multi-output (LL-HLS/DASH/LL-DASH + SRT/RTMP/RTSP push) just-in-time
+//! repackaging HTTP origin and relay/gateway.
 //!
 //! Either point it at a JSON config file describing one or more routes (any
 //! input, any output(s), optional shared output auth), or use the
 //! single-route RTSP-quick-start (`--rtsp` + `--name`, with `--outputs`/
-//! `--dash` selecting delivery protocol(s)) for a single source. See
+//! `--dash` selecting delivery protocol(s)) for a single source. Push
+//! outputs (`--srt-push`, `--rtmp-push`, `--rtsp-push`) relay the ingested
+//! media to downstream servers in addition to serving HTTP outputs. See
 //! `multimux`'s README for the served endpoint table, config schema, and
 //! scope.
 //!
@@ -12,6 +15,7 @@
 //!
 //! ```bash
 //! multimux --rtsp rtsp://cam.local/stream --name cam1
+//! multimux --rtsp rtsp://cam.local/stream --name cam1 --srt-push srt://relay:9000
 //! multimux --config routes.json
 //! ```
 
@@ -82,6 +86,18 @@ struct Cli {
     /// LL-HLS *and* DASH from the same ingest).
     #[arg(long)]
     dash: bool,
+
+    /// Push to a remote SRT Listener (Caller mode). Repeatable.
+    #[arg(long, value_name = "URL")]
+    srt_push: Vec<String>,
+
+    /// Push to a remote RTMP server (client publish). Repeatable.
+    #[arg(long, value_name = "URL")]
+    rtmp_push: Vec<String>,
+
+    /// Push to a remote RTSP server (ANNOUNCE/RECORD). Repeatable.
+    #[arg(long, value_name = "URL")]
+    rtsp_push: Vec<String>,
 }
 
 /// Parse `--outputs`'s comma-separated tokens into [`OutputKind`]s (or
@@ -90,20 +106,43 @@ struct Cli {
 /// accepts in a JSON config's `outputs` array, kept in sync with those exact
 /// token spellings (`"llhls"`/`"dash"`) rather than re-deriving them.
 fn parse_outputs(cli: &Cli) -> Result<Vec<OutputKind>> {
-    if cli.dash {
-        return Ok(vec![OutputKind::LlHls, OutputKind::Dash]);
+    let mut out = if cli.dash {
+        vec![OutputKind::LlHls, OutputKind::Dash]
+    } else {
+        cli.outputs
+            .iter()
+            .map(|s| match s.trim() {
+                "llhls" => Ok(OutputKind::LlHls),
+                "dash" => Ok(OutputKind::Dash),
+                other => Err(MultimuxError::ConfigInvalid {
+                    field: "outputs",
+                    reason: format!("unknown output kind {other:?} (expected llhls or dash)"),
+                }),
+            })
+            .collect::<Result<Vec<_>>>()?
+    };
+    for url in &cli.srt_push {
+        out.push(OutputKind::SrtPush {
+            url: url.clone(),
+            format: None,
+            reconnect: None,
+        });
     }
-    cli.outputs
-        .iter()
-        .map(|s| match s.trim() {
-            "llhls" => Ok(OutputKind::LlHls),
-            "dash" => Ok(OutputKind::Dash),
-            other => Err(MultimuxError::ConfigInvalid {
-                field: "outputs",
-                reason: format!("unknown output kind {other:?} (expected llhls or dash)"),
-            }),
-        })
-        .collect()
+    for url in &cli.rtmp_push {
+        out.push(OutputKind::RtmpPush {
+            url: url.clone(),
+            format: None,
+            reconnect: None,
+        });
+    }
+    for url in &cli.rtsp_push {
+        out.push(OutputKind::RtspPush {
+            url: url.clone(),
+            format: None,
+            reconnect: None,
+        });
+    }
+    Ok(out)
 }
 
 /// Build a [`Config`] from the parsed CLI: `--config <FILE>` if given,
@@ -292,6 +331,54 @@ mod tests {
             "lldash",
         ]);
         assert!(build_config(cli).is_err());
+    }
+
+    #[test]
+    fn srt_push_flag_adds_push_output() {
+        let cli = Cli::parse_from([
+            "multimux",
+            "--rtsp",
+            "rtsp://cam.local/stream",
+            "--name",
+            "cam1",
+            "--srt-push",
+            "srt://relay:9000",
+        ]);
+        let cfg = build_config(cli).unwrap();
+        assert_eq!(
+            cfg.routes[0]
+                .outputs
+                .iter()
+                .map(OutputKind::name)
+                .collect::<Vec<_>>(),
+            vec!["llhls", "srt_push"]
+        );
+    }
+
+    #[test]
+    fn multiple_push_flags_accumulate() {
+        let cli = Cli::parse_from([
+            "multimux",
+            "--rtsp",
+            "rtsp://cam.local/stream",
+            "--name",
+            "cam1",
+            "--srt-push",
+            "srt://relay:9000",
+            "--rtmp-push",
+            "rtmp://cdn/live/key",
+            "--rtsp-push",
+            "rtsp://dest/stream",
+        ]);
+        let cfg = build_config(cli).unwrap();
+        assert_eq!(
+            cfg.routes[0]
+                .outputs
+                .iter()
+                .map(OutputKind::name)
+                .collect::<Vec<_>>(),
+            vec!["llhls", "srt_push", "rtmp_push", "rtsp_push"]
+        );
     }
 
     #[test]

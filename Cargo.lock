@@ -1689,6 +1689,7 @@ dependencies = [
 name = "multimux"
 version = "0.7.0"
 dependencies = [
+ "async-trait",
  "axum",
  "base64",
  "broadcast-auth",
@@ -1714,6 +1715,7 @@ dependencies = [
  "thiserror",
  "tokio",
  "tokio-rustls",
+ "tokio-util",
  "tower",
  "tower-http 0.5.2",
  "tracing",
@@ -2820,6 +2822,7 @@ dependencies = [
  "bytes",
  "futures-core",
  "futures-sink",
+ "futures-util",
  "pin-project-lite",
  "tokio",
 ]
