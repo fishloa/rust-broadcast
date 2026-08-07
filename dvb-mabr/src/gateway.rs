@@ -21,7 +21,7 @@ use roxmltree::Node;
 use crate::carousel::ObjectCarousel;
 use crate::error::Result;
 use crate::fec::ForwardErrorCorrectionParameters;
-use crate::parse::{child, children, own_text, req_attr_u64, require_attr, require_child};
+use crate::parse::{child, children, opt_attr_u64, own_text, require_attr, require_child};
 use crate::repair::UnicastRepairParameters;
 use crate::serialize::{push_indent, write_attr, write_num_attr, write_opt_attr};
 use crate::transport::{BitRate, EndpointAddress, TransportProtocol, TransportSecurity};
@@ -76,8 +76,10 @@ pub struct MulticastGatewayConfigurationTransportSession {
     /// See `docs/mabr-transport.md` §4.
     pub transport_security: Option<TransportSecurity>,
     /// Max inter-packet gap (ms) before the gateway may treat the session
-    /// as inactive/unsubscribe.
-    pub session_idle_timeout: u64,
+    /// as inactive/unsubscribe. Optional — not present on
+    /// `MulticastGatewayConfigurationTransportSession` per Table 10.2.5.1-1
+    /// (only `MulticastTransportSession` carries it mandatorily).
+    pub session_idle_timeout: Option<u64>,
     /// The multicast transport protocol carrying this session.
     pub transport_protocol: TransportProtocol,
     /// One or more multicast endpoints.
@@ -125,7 +127,7 @@ impl MulticastGatewayConfigurationTransportSession {
                 Ok(v) => Some(TransportSecurity::parse(&v)?),
                 Err(_) => None,
             },
-            session_idle_timeout: req_attr_u64(node, ELEMENT, "sessionIdleTimeout")?,
+            session_idle_timeout: opt_attr_u64(node, ELEMENT, "sessionIdleTimeout")?,
             transport_protocol: TransportProtocol::parse(transport_protocol_node)?,
             endpoints,
             bit_rate: BitRate::parse(bit_rate_node)?,
@@ -150,7 +152,9 @@ impl MulticastGatewayConfigurationTransportSession {
         if let Some(s) = self.transport_security {
             write_attr(out, "transportSecurity", s.name());
         }
-        write_num_attr(out, "sessionIdleTimeout", self.session_idle_timeout);
+        if let Some(t) = self.session_idle_timeout {
+            write_num_attr(out, "sessionIdleTimeout", t);
+        }
         if !self.tags.is_empty() {
             write_attr(out, "tags", &self.tags.join(" "));
         }

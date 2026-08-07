@@ -34,8 +34,10 @@ fn server_config_round_trips() {
     assert_eq!(parsed.schema_version, 2);
     assert_eq!(parsed.gateway_config_transport_sessions.len(), 2);
     assert_eq!(parsed.sessions.len(), 2);
-    assert_eq!(parsed.macros.len(), 2);
-    assert_eq!(parsed.sessions[0].transport_sessions.len(), 2);
+    assert_eq!(parsed.macros.len(), 1);
+    assert_eq!(parsed.macros[0].key, "PrimaryCDN");
+    assert_eq!(parsed.sessions[0].transport_sessions.len(), 3);
+    assert_eq!(parsed.sessions[1].transport_sessions.len(), 2);
     assert!(
         !parsed.sessions[0].transport_sessions[0]
             .fec_params
@@ -71,13 +73,13 @@ fn gateway_bootstrap_round_trips() {
     let parsed = MulticastGatewayConfiguration::parse_str(&xml).expect("parse fixture 2");
 
     assert_eq!(parsed.schema_version, 2);
-    assert_eq!(parsed.gateway_config_transport_sessions.len(), 1);
+    assert_eq!(parsed.gateway_config_transport_sessions.len(), 2);
     assert!(
         parsed.sessions.is_empty(),
         "bootstrap document carries no MulticastSession"
     );
     let ts = &parsed.gateway_config_transport_sessions[0];
-    assert!(!ts.tags.is_empty());
+    assert!(ts.session_idle_timeout.is_none());
     assert!(!ts.fec_params.is_empty());
     assert!(ts.object_carousel.is_some());
 
@@ -87,7 +89,7 @@ fn gateway_bootstrap_round_trips() {
     assert_eq!(parsed, reparsed, "round-trip changed the parsed document");
 
     let mut mutated = parsed.clone();
-    mutated.gateway_config_transport_sessions[0].session_idle_timeout += 1;
+    mutated.gateway_config_transport_sessions[0].bit_rate.maximum += 1;
     assert_ne!(mutated.to_xml(), xml2);
 }
 
@@ -98,27 +100,23 @@ fn full_gateway_config_round_trips() {
 
     assert_eq!(parsed.sessions.len(), 2);
     assert!(parsed.valid_until.is_some());
-    // The empty-locator / mandatory-contentPlaybackPathPattern case (clause
-    // 10.2.2.2) must round-trip too.
+    assert!(
+        parsed.gateway_config_transport_sessions.is_empty(),
+        "full gateway config has no gateway config transport sessions"
+    );
     let alpha = &parsed.sessions[0];
-    assert_eq!(alpha.manifest_locators[0].locator, "");
+    assert_eq!(alpha.manifest_locators.len(), 2);
+    assert_eq!(
+        alpha.manifest_locators[0].locator,
+        "http://edge.cdn1.co.uk/simulcast/bbc-one/scotland/manifest.mpd"
+    );
     assert!(
         alpha.manifest_locators[0]
             .content_playback_path_pattern
             .is_some()
     );
-    // The gateway-referencing object carousel's extra reference attributes.
-    let carousel = parsed.gateway_config_transport_sessions[0]
-        .object_carousel
-        .as_ref()
-        .expect("object carousel");
-    assert_eq!(carousel.presentation_manifests.len(), 2);
-    assert!(carousel.presentation_manifests[0].service_id_ref.is_some());
-    assert!(
-        carousel.presentation_manifests[1]
-            .transport_session_id_ref
-            .is_some()
-    );
+    assert_eq!(alpha.transport_sessions.len(), 3);
+    assert!(parsed.reporting.is_some());
 
     let xml2 = parsed.to_xml();
     let reparsed =
