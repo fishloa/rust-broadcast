@@ -2,15 +2,14 @@
 
 **Release date:** 2026-08-02
 
-HLS playlist syntax (`MediaPlaylist`, `MasterPlaylist`, and all related types) moved out to the new `broadcast-hls` crate (issue #878). `CencScheme` and `hex_encode` moved down to `broadcast-common` 9.2 so sibling crates can share them without depending on `transmux`. The CMAF-HLS `HlsPackager` now emits `#EXT-X-MAP` on every Media Segment, fixing a real conformance gap caught by Apple's `mediastreamvalidator` oracle (#870).
+Extracts HLS playlist syntax into the new `broadcast-hls` crate (issue #878) and moves `CencScheme` down to `broadcast-common` 9.2.0 so both `transmux` and `broadcast-hls` can name it without a circular dependency. The segmenters (`ts_hls`, `ll_hls` — the code that produces container bytes) stay in `transmux` and depend on `broadcast-hls` for playlist rendering.
 
-## What's changed
+## What changed
 
-- **HLS playlist syntax extracted to `broadcast-hls`** — `transmux::hls` and every `MediaPlaylist`/`MasterPlaylist`/`MediaSegment`/`Variant`/etc. path no longer exists. No compatibility re-export. `Error::HlsParse` removed from `transmux::Error`.
-- **`CencScheme` moved to `broadcast-common::cenc`** — `transmux::CencScheme` is now a re-export. `CencScheme` is `#[non_exhaustive]` across a crate boundary; new `Error::UnsupportedCencScheme` for future scheme additions.
-- **`hex_encode` moved to `broadcast-common::hex`** — `transmux::rtp::hex_encode` is now a re-export.
-- **`HlsPackager` conformance fix** — now emits `#EXT-X-MAP` with a `BYTERANGE` covering the `ftyp`+`moov` span on every CMAF segment (RFC 8216bis requirement).
+- **HLS playlist syntax extracted** to `broadcast-hls` 0.1 (issue #878). `transmux::hls::MediaPlaylist`, `MasterPlaylist`, and all M3U8 tag types are re-exported from `broadcast-hls` — existing callers compile but should migrate imports.
+- **`CencScheme` moved** to `broadcast-common::cenc` (was `transmux::cenc`). Re-exported from the old path for backwards compat.
+- Requires `broadcast-common` 9.2, `broadcast-hls` 0.1.
 
 ## Migration
 
-Breaking. Depend on `broadcast-hls` directly for HLS playlist types; `transmux` no longer re-exports them. Requires `broadcast-common` 9.2.
+Replace `transmux::hls::{MediaPlaylist, MasterPlaylist, ...}` imports with `broadcast_hls::*`. Replace `transmux::cenc::CencScheme` with `broadcast_common::cenc::CencScheme`. Both old paths still compile via re-exports but will be removed in a future major.

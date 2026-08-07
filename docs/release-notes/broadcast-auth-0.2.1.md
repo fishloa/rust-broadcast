@@ -1,7 +1,15 @@
 # broadcast-auth 0.2.1
 
-Released 2026-08-02.
+**Release date:** 2026-08-02
 
-### Fixed
+Adds HMAC-SHA256 signed-URL output auth and `#[non_exhaustive]` drift-guard on public enums.
 
-Floor dependencies to epoch-pure versions (#858).
+## What's new
+
+- `SignedUrl` verifier — HMAC-SHA256 query-string token verification with configurable expiry. Used by `multimux` 0.6's signed-URL output auth.
+- `#[non_exhaustive]` on `AuthScheme`, `AuthError`.
+- `label_coverage` drift-guard test.
+
+## Migration
+
+No breaking changes (`#[non_exhaustive]` is additive for match-with-wildcard consumers).
