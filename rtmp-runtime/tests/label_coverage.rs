@@ -56,23 +56,38 @@ fn has_impl(all: &str, prefix: &str, name: &str) -> bool {
     let needle = format!("{prefix}{name}");
     let is_boundary =
         |rest: &str| !matches!(rest.chars().next(), Some(c) if c.is_alphanumeric() || c == '_');
+    let is_path_or_space =
+        |c: char| c.is_whitespace() || c == ':' || c.is_alphanumeric() || c == '_';
+
+    // Strip a leading `ident::` chain (`crate::`, `broadcast_common::`, …) so a
+    // re-exported or fully-qualified invocation still counts as reaching the
+    // needle from the very start of the line.
+    fn strip_path_qualifier(s: &str) -> &str {
+        let mut rest = s;
+        loop {
+            let ident_len = rest
+                .chars()
+                .take_while(|c| c.is_alphanumeric() || *c == '_')
+                .count();
+            if ident_len == 0 {
+                break;
+            }
+            match rest[ident_len..].strip_prefix("::") {
+                Some(after) => rest = after,
+                None => break,
+            }
+        }
+        rest
+    }
 
     for line in all.lines() {
         let trimmed = line.trim_start();
 
         // The invocation must be the first non-whitespace token on its line —
-        // a commented-out `// impl_spec_display!(...)` no longer satisfies this.
-        if let Some(rest) = trimmed.strip_prefix(&needle) {
-            if is_boundary(rest) {
-                return true;
-            }
-        }
-
-        // `broadcast_common::impl_spec_display!(...)` is still the first token.
-        if let Some(rest) = trimmed
-            .strip_prefix("broadcast_common::")
-            .and_then(|s| s.strip_prefix(&needle))
-        {
+        // a commented-out `// impl_spec_display!(...)` no longer satisfies
+        // this. A leading crate-path qualifier (`crate::`, `broadcast_common::`)
+        // is transparent to this check: it is still the first *statement*.
+        if let Some(rest) = strip_path_qualifier(trimmed).strip_prefix(&needle) {
             if is_boundary(rest) {
                 return true;
             }
@@ -87,8 +102,6 @@ fn has_impl(all: &str, prefix: &str, name: &str) -> bool {
             if let Some(after_impl) = trimmed.strip_prefix("impl") {
                 if let Some(pos) = after_impl.find(&needle) {
                     let qualifier = &after_impl[..pos];
-                    let is_path_or_space =
-                        |c: char| c.is_whitespace() || c == ':' || c.is_alphanumeric() || c == '_';
                     if qualifier.chars().all(is_path_or_space) {
                         let rest = &after_impl[pos + needle.len()..];
                         if is_boundary(rest) {
