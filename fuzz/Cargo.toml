@@ -45,6 +45,12 @@ rtmp-runtime  = { path = "../rtmp-runtime" }
 media-plane   = { path = "../media-plane" }
 ttml-subtitle = { path = "../ttml-subtitle" }
 broadcast-loudness = { path = "../broadcast-loudness" }
+dvb-csa        = { path = "../dvb-csa" }
+dvb-mabr       = { path = "../dvb-mabr" }
+atsc3          = { path = "../atsc3" }
+st2022         = { path = "../st2022" }
+rist-runtime   = { path = "../rist-runtime" }
+webrtc-runtime = { path = "../webrtc-runtime" }
 bytes         = "1"
 libfuzzer-sys = "0.4"
 
@@ -290,5 +296,41 @@ doc  = false
 [[bin]]
 name = "md_dash_mpd"
 path = "fuzz_targets/md_dash_mpd.rs"
+test = false
+doc  = false
+
+[[bin]]
+name = "dvb_mabr"
+path = "fuzz_targets/dvb_mabr.rs"
+test = false
+doc  = false
+
+[[bin]]
+name = "atsc3"
+path = "fuzz_targets/atsc3.rs"
+test = false
+doc  = false
+
+[[bin]]
+name = "st2022"
+path = "fuzz_targets/st2022.rs"
+test = false
+doc  = false
+
+[[bin]]
+name = "rist_runtime"
+path = "fuzz_targets/rist_runtime.rs"
+test = false
+doc  = false
+
+[[bin]]
+name = "webrtc_ice"
+path = "fuzz_targets/webrtc_ice.rs"
+test = false
+doc  = false
+
+[[bin]]
+name = "dvb_csa"
+path = "fuzz_targets/dvb_csa.rs"
 test = false
 doc  = false
