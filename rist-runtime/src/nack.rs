@@ -317,6 +317,12 @@ impl<'a> Parse<'a> for RangeNack {
         // Parse range entries.
         let data_bytes = total_len - RANGE_NACK_MIN_LEN;
         let range_count = data_bytes / RANGE_ENTRY_LEN;
+        if range_count > MAX_RANGE_ENTRIES {
+            return Err(Error::TooManyRanges {
+                max: MAX_RANGE_ENTRIES,
+                got: range_count,
+            });
+        }
         let mut ranges = Vec::with_capacity(range_count);
         let mut off = RANGE_NACK_MIN_LEN;
         for _ in 0..range_count {
@@ -456,7 +462,7 @@ mod tests {
     }
 
     #[test]
-    fn range_nack_too_many_ranges() {
+    fn range_nack_too_many_ranges_serialize() {
         let rn = RangeNack {
             ssrc_media: 1,
             ranges: (0..17)
@@ -468,6 +474,29 @@ mod tests {
         };
         let mut buf = alloc::vec![0u8; rn.serialized_len()];
         let err = rn.serialize_into(&mut buf).unwrap_err();
+        assert!(matches!(err, Error::TooManyRanges { max: 16, got: 17 }));
+    }
+
+    #[test]
+    fn range_nack_too_many_ranges_parse() {
+        // Build a wire packet with 17 range entries (exceeds the 16 limit).
+        let entry_count: usize = 17;
+        let total_words = 3 + entry_count; // header(1) + SSRC(1) + name(1) + entries
+        let total_bytes = total_words * 4;
+        let mut buf = alloc::vec![0u8; total_bytes];
+        // V=2, P=0, Subtype=0
+        buf[0] = 0x80;
+        // PT=204
+        buf[1] = PT_APP;
+        // length = total_words - 1
+        let length_field = (total_words - 1) as u16;
+        buf[2..4].copy_from_slice(&length_field.to_be_bytes());
+        // SSRC
+        buf[4..8].copy_from_slice(&1u32.to_be_bytes());
+        // APP name = "RIST"
+        buf[8..12].copy_from_slice(b"RIST");
+        // 17 range entries (all zeros is fine)
+        let err = RangeNack::parse(&buf).unwrap_err();
         assert!(matches!(err, Error::TooManyRanges { max: 16, got: 17 }));
     }
 }
