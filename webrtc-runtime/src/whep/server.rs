@@ -7,6 +7,7 @@ use crate::Error;
 
 /// State of a WHEP server session.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum State {
     /// Awaiting POST with SDP offer.
     AwaitingOffer,
@@ -39,6 +40,7 @@ pub struct HttpResponse {
 
 /// Events emitted by the WHEP server.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub enum Event {
     /// SDP offer received from player.
     SdpOffer(Vec<u8>),

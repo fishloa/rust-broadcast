@@ -7,6 +7,7 @@ use crate::Error;
 
 /// State of a WHIP client session.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum State {
     /// Initial state — ready to send SDP offer.
     Idle,
@@ -40,6 +41,7 @@ pub struct HttpRequest {
 
 /// HTTP method.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum Method {
     /// `POST` — used to create a session with the initial SDP offer.
     Post,
@@ -71,6 +73,7 @@ pub struct HttpResponse {
 
 /// Events emitted by the WHIP client to the caller.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub enum Event {
     /// SDP answer received — pass to WebRTC stack.
     SdpAnswer(Vec<u8>),

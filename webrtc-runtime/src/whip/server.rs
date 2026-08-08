@@ -7,6 +7,7 @@ use crate::Error;
 
 /// State of a WHIP server session.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum State {
     /// Awaiting POST with SDP offer.
     AwaitingOffer,
@@ -34,6 +35,7 @@ pub struct HttpResponse {
 
 /// Events emitted by the WHIP server to the caller.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub enum Event {
     /// SDP offer received — generate an answer.
     SdpOffer(Vec<u8>),

@@ -2,6 +2,7 @@
 
 /// Errors produced during WHIP/WHEP session signalling.
 #[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
 pub enum Error {
     /// A response or request was missing a header required by the spec.
     #[error("missing required header: {header}")]
