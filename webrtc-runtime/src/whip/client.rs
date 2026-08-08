@@ -53,6 +53,20 @@ pub enum Method {
     Options,
 }
 
+impl Method {
+    /// The HTTP method token as it appears on the request line.
+    pub fn name(&self) -> &'static str {
+        match self {
+            Method::Post => "POST",
+            Method::Patch => "PATCH",
+            Method::Delete => "DELETE",
+            Method::Options => "OPTIONS",
+        }
+    }
+}
+
+broadcast_common::impl_spec_display!(Method);
+
 /// Parsed fields from an HTTP response.
 #[derive(Debug, Clone)]
 pub struct HttpResponse {
@@ -270,5 +284,18 @@ fn state_name(s: &State) -> &'static str {
         State::OfferSent => "offer-sent",
         State::Established { .. } => "established",
         State::Closed => "closed",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn method_display_matches_http_request_line_token() {
+        assert_eq!(Method::Post.to_string(), "POST");
+        assert_eq!(Method::Patch.to_string(), "PATCH");
+        assert_eq!(Method::Delete.to_string(), "DELETE");
+        assert_eq!(Method::Options.to_string(), "OPTIONS");
     }
 }
