@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-08-08
+
 ### Added
 - `tests/label_coverage.rs` + `tests/non_exhaustive_coverage.rs` drift guards
   (issue #806). No public API or behaviour change.
