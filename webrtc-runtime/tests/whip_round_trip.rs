@@ -185,7 +185,7 @@ fn whip_client_ice_restart() {
         .iter()
         .find(|(k, _)| k == "If-Match")
         .map(|(_, v)| v.as_str());
-    assert_eq!(if_match, Some("\"*\""));
+    assert_eq!(if_match, Some("*"));
 
     // Server responds 200 with new ETag + server's new fragment
     let server_frag = b"a=ice-ufrag:srv\r\na=ice-pwd:srv\r\n";

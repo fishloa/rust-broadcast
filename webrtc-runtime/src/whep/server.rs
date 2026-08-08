@@ -146,7 +146,7 @@ impl WhepSession {
             }
             State::Established { etag } => {
                 if content_type == super::content_type::TRICKLE_ICE {
-                    if if_match == Some("*") {
+                    if matches!(if_match, Some("*") | Some("\"*\"")) {
                         Ok(Event::IceRestart {
                             sdp_fragment: sdp_body,
                         })

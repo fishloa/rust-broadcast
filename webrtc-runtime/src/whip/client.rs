@@ -60,7 +60,10 @@ pub struct HttpResponse {
     pub content_type: Option<String>,
     /// `Location` header value, if present.
     pub location: Option<String>,
-    /// `ETag` header value, if present.
+    /// `ETag` opaque-tag value (without DQUOTE framing), if present.
+    ///
+    /// Callers extracting this from an HTTP response MUST strip the
+    /// surrounding `"` quotes before storing the value here.
     pub etag: Option<String>,
     /// Response body bytes.
     pub body: Vec<u8>,
@@ -165,7 +168,7 @@ impl WhipClient {
             Some(super::content_type::TRICKLE_ICE),
             sdp_fragment,
         );
-        req.headers.push(("If-Match".into(), "\"*\"".into()));
+        req.headers.push(("If-Match".into(), "*".into()));
         Ok(req)
     }
 

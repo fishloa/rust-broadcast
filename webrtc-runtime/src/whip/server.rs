@@ -114,7 +114,7 @@ impl WhipSession {
     ) -> Result<Event, Error> {
         match &self.state {
             State::Established { etag } => {
-                if if_match == Some("*") {
+                if matches!(if_match, Some("*") | Some("\"*\"")) {
                     Ok(Event::IceRestart { sdp_fragment })
                 } else if let Some(client_etag) = if_match {
                     let client_etag = client_etag.trim_matches('"');

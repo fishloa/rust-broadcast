@@ -183,7 +183,7 @@ fn whep_player_ice_restart() {
         .iter()
         .find(|(k, _)| k == "If-Match")
         .map(|(_, v)| v.as_str());
-    assert_eq!(if_match, Some("\"*\""));
+    assert_eq!(if_match, Some("*"));
 
     // 200 with new ETag
     let event = player
