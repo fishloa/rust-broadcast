@@ -113,6 +113,16 @@ FEC is used, the Column FEC stream's UDP port **shall** be the media port +
 > rather than a directly-quoted one, and is flagged as such in
 > [`README.md`](README.md) for a second pair of eyes before an implementation
 > relies on the exact bit offset.
+>
+> **2026-08 re-verification (issue #926/#943)**: checked directly against the
+> vendored PDF with `pdf2md --engine textlayer` (clean, verified exit). §6.4's
+> complete text for this field is exactly *"Reserved (RESERVE): These fields
+> are reserved for future use and shall be set to 0 by the sender"* — no bit
+> count appears anywhere else in the section either. So the derivation is
+> filling a genuine silence in the specification, not papering over a
+> transcription gap. The arithmetic stands; it remains derived rather than
+> quoted, and confirming it against a real capture is still open (see #926 —
+> no permissively-licensed ST 2022-6 capture has been found).
 
 ### 3.2 Video Source Format row (present because `F` shall be 1 in this standard)
 
