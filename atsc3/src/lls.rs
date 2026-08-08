@@ -121,17 +121,34 @@ mod tests {
 
     const HEADER: [u8; 4] = [0x01, 0x02, 0x03, 0x04];
 
+    /// A real gzip (RFC 1952) stream, decompressing to a spec-valid minimal
+    /// SLT XML document (`<SLT bsid="1"><Service serviceId="1"
+    /// serviceCategory="1"/></SLT>` — A/331 §6.3 Table 6.2 shape) —
+    /// spec-valid data replacing the previous `b"payload-bytes"`, which was
+    /// neither valid gzip nor valid XML (issue #926). Precomputed with
+    /// Python's `gzip` module (`mtime=0`); a genuine real-broadcast capture
+    /// fixture is separately committed under `fixtures/atsc3/` and covered
+    /// by `tests/fixture_slt.rs` — these inline unit tests only need
+    /// spec-shaped bytes, not a second copy of the real capture.
+    const GZIPPED_SLT_XML: [u8; 67] = [
+        0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0xff, 0xb3, 0x09, 0xf6, 0x09, 0x51,
+        0x48, 0x2a, 0xce, 0x4c, 0xb1, 0x55, 0x32, 0x54, 0xb2, 0xb3, 0x09, 0x4e, 0x2d, 0x2a, 0xcb,
+        0x4c, 0x4e, 0x55, 0x28, 0x86, 0xd0, 0x9e, 0x60, 0x61, 0x18, 0xcf, 0x39, 0xb1, 0x24, 0x35,
+        0x3d, 0xbf, 0xa8, 0x12, 0x24, 0xa6, 0x6f, 0x67, 0xa3, 0x0f, 0xd4, 0x6a, 0x07, 0x00, 0xcc,
+        0x27, 0xb5, 0x38, 0x40, 0x00, 0x00, 0x00,
+    ];
+
     #[test]
     fn parse_header_fields() {
         let mut bytes = HEADER.to_vec();
-        bytes.extend_from_slice(b"payload-bytes");
+        bytes.extend_from_slice(&GZIPPED_SLT_XML);
         let env = LlsEnvelope::parse(&bytes).unwrap();
         assert_eq!(env.table_id, LlsTableId::Slt);
         assert_eq!(env.group_id, 0x02);
         assert_eq!(env.group_count_minus1, 0x03);
         assert_eq!(env.group_count(), 0x04);
         assert_eq!(env.table_version, 0x04);
-        assert_eq!(env.payload, b"payload-bytes");
+        assert_eq!(env.payload, &GZIPPED_SLT_XML[..]);
     }
 
     #[test]
@@ -149,7 +166,7 @@ mod tests {
     #[test]
     fn round_trip() {
         let mut bytes = HEADER.to_vec();
-        bytes.extend_from_slice(b"gzip-body-goes-here");
+        bytes.extend_from_slice(&GZIPPED_SLT_XML);
         let env = LlsEnvelope::parse(&bytes).unwrap();
 
         let mut out = alloc::vec![0u8; env.serialized_len()];

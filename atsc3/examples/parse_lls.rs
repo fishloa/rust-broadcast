@@ -2,6 +2,10 @@
 //!
 //! Usage:
 //!   cargo run --example parse_lls -- <lls.bin>
+//!
+//! Run against the real captured fixture (issue #926/#943 — see
+//! `fixtures/atsc3/PROVENANCE.md`):
+//!   cargo run -p atsc3 --example parse_lls -- fixtures/atsc3/slt-lls-2019-01-07.bin
 
 use broadcast_common::Parse;
 use std::env;

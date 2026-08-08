@@ -2,6 +2,19 @@
 
 ## [Unreleased]
 
+### Added
+
+- Real ATSC 3.0 LLS/SLT fixture (#926/#943):
+  `fixtures/atsc3/slt-lls-2019-01-07.bin`, a genuine `LLS_table()` envelope
+  (real gzip payload decompressing to a real SLT XML document) extracted
+  from `junhuac/libatsc3`'s test suite — see `fixtures/atsc3/PROVENANCE.md`
+  for the full verification. Added `tests/fixture_slt.rs` exercising the
+  full envelope-parse -> gunzip -> SLT-parse pipeline against it, and
+  replaced the pre-existing `lls.rs` inline unit tests' `b"payload-bytes"`
+  (neither valid gzip nor XML) with a real gzip-compressed spec-valid SLT
+  XML payload, so the crate's decompress path is now exercised by every
+  test that touches the payload field, not skipped.
+
 ### Fixed
 
 - Doc accuracy (#940): `Cargo.toml` `description`/`keywords`, the crate-root
