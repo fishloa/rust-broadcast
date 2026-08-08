@@ -2626,6 +2626,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "st2022"
+version = "0.1.0"
+dependencies = [
+ "broadcast-common",
+ "serde",
+ "thiserror",
+]
+
+[[package]]
 name = "st291"
 version = "0.3.0"
 dependencies = [

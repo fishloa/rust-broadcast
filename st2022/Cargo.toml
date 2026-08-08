@@ -1,0 +1,29 @@
+[package]
+name          = "st2022"
+version       = "0.1.0"
+description   = "SMPTE ST 2022-6/-7: HBRMT (SDI-over-IP) payload header + seamless protection switching"
+authors.workspace     = true
+edition.workspace     = true
+license.workspace     = true
+repository.workspace  = true
+rust-version.workspace = true
+categories   = ["multimedia::video", "parser-implementations", "no-std"]
+keywords     = ["smpte", "st2022", "hbrmt", "sdi-over-ip", "broadcast"]
+
+[dependencies]
+broadcast-common = { path = "../broadcast-common", version = "9", default-features = false }
+thiserror        = { version = "2", default-features = false }
+
+[features]
+default = ["std"]
+std     = ["broadcast-common/std"]
+serde   = ["dep:serde", "broadcast-common/serde"]
+
+[dependencies.serde]
+version          = "1"
+default-features = false
+features         = ["derive"]
+optional         = true
+
+[package.metadata.docs.rs]
+all-features = true

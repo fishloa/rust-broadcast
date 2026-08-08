@@ -71,7 +71,8 @@ fn real_fixture_every_klv_item_round_trips_byte_identical() {
                 set.serialize_into(&mut out)
                     .unwrap_or_else(|e| panic!("item {i}: LocalSet serialize failed: {e}"));
                 assert_eq!(
-                    out, klv,
+                    out,
+                    klv,
                     "item {i}: LocalSet not byte-identical after round-trip (key {:02x?})",
                     &item.key[..4]
                 );
