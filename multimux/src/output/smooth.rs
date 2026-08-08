@@ -286,7 +286,10 @@ fn render_manifest(route: &RouteHandle) -> Option<String> {
         if params.stream_type == "audio" {
             xml.push_str(" BitsPerSample=\"16\" AudioTag=\"255\"");
         }
-        xml.push_str(" CodecPrivateData=\"\"/>\n");
+        xml.push_str(&format!(
+            " CodecPrivateData=\"{}\"/>\n",
+            params.codec_private_data
+        ));
 
         let mut cumulative_smooth = 0u64;
         for (i, seg) in window.iter().enumerate() {
@@ -314,28 +317,78 @@ struct SmoothCodecParams {
     max_height: Option<u32>,
     sampling_rate: Option<u32>,
     channels: Option<u16>,
+    /// `CodecPrivateData` — the hex-encoded decoder initialisation data a
+    /// Smooth client needs before it can decode anything (MS-SSTR §2.2.2.5).
+    ///
+    /// For H.264/HEVC this is the parameter sets in Annex-B form (each NAL
+    /// preceded by the 4-byte start code `00 00 00 01`); for AAC it is the
+    /// `AudioSpecificConfig`. Empty only when the codec is one this packager
+    /// cannot describe — a client seeing an empty value cannot initialise a
+    /// decoder, which is why this used to be a hard defect (issue #934).
+    codec_private_data: String,
+}
+
+/// Concatenate parameter-set NALs in Annex-B form and hex-encode them.
+fn annex_b_hex(nals: &[&[u8]]) -> String {
+    const START_CODE: [u8; 4] = [0x00, 0x00, 0x00, 0x01];
+    let mut out = Vec::new();
+    for nal in nals {
+        out.extend_from_slice(&START_CODE);
+        out.extend_from_slice(nal);
+    }
+    broadcast_common::hex::hex_encode(&out).to_uppercase()
 }
 
 /// Resolve Smooth codec parameters from a [`CodecConfig`].
 fn smooth_codec_params(config: &CodecConfig) -> SmoothCodecParams {
     match config {
-        CodecConfig::Avc { width, height, .. } => SmoothCodecParams {
-            stream_type: "video",
-            fourcc: FOURCC_H264,
-            max_width: Some(u32::from(*width)),
-            max_height: Some(u32::from(*height)),
-            sampling_rate: None,
-            channels: None,
-        },
-        CodecConfig::Hevc { width, height, .. } => SmoothCodecParams {
-            stream_type: "video",
-            fourcc: "HEVC",
-            max_width: Some(u32::from(*width)),
-            max_height: Some(u32::from(*height)),
-            sampling_rate: None,
-            channels: None,
-        },
+        CodecConfig::Avc {
+            config,
+            width,
+            height,
+        } => {
+            let rec = &config.config;
+            let nals: Vec<&[u8]> = rec
+                .sps
+                .iter()
+                .map(|s| s.0.as_slice())
+                .chain(rec.pps.iter().map(|p| p.0.as_slice()))
+                .collect();
+            SmoothCodecParams {
+                stream_type: "video",
+                fourcc: FOURCC_H264,
+                max_width: Some(u32::from(*width)),
+                max_height: Some(u32::from(*height)),
+                sampling_rate: None,
+                channels: None,
+                codec_private_data: annex_b_hex(&nals),
+            }
+        }
+        CodecConfig::Hevc {
+            config,
+            width,
+            height,
+        } => {
+            // hvcC carries its parameter sets in per-type arrays; all of them
+            // (VPS/SPS/PPS, in array order) go into CodecPrivateData.
+            let nals: Vec<&[u8]> = config
+                .config
+                .arrays
+                .iter()
+                .flat_map(|a| a.nalus.iter().map(|n| n.0.as_slice()))
+                .collect();
+            SmoothCodecParams {
+                stream_type: "video",
+                fourcc: "HEVC",
+                max_width: Some(u32::from(*width)),
+                max_height: Some(u32::from(*height)),
+                sampling_rate: None,
+                channels: None,
+                codec_private_data: annex_b_hex(&nals),
+            }
+        }
         CodecConfig::Aac {
+            esds,
             sample_rate,
             channel_count,
             ..
@@ -346,6 +399,16 @@ fn smooth_codec_params(config: &CodecConfig) -> SmoothCodecParams {
             max_height: None,
             sampling_rate: Some(*sample_rate),
             channels: Some(*channel_count),
+            // AAC's CodecPrivateData is the AudioSpecificConfig verbatim —
+            // no Annex-B framing. It lives in the esds' DecoderSpecificInfo
+            // (ISO/IEC 14496-1 §7.2.6.7).
+            codec_private_data: esds
+                .es_descriptor
+                .decoder_config
+                .as_ref()
+                .and_then(|dc| dc.decoder_specific_info.as_ref())
+                .map(|dsi| broadcast_common::hex::hex_encode(&dsi.data).to_uppercase())
+                .unwrap_or_default(),
         },
         _ => SmoothCodecParams {
             stream_type: "video",
@@ -354,6 +417,54 @@ fn smooth_codec_params(config: &CodecConfig) -> SmoothCodecParams {
             max_height: None,
             sampling_rate: None,
             channels: None,
+            codec_private_data: String::new(),
         },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use transmux::avc_config::{AVCConfigurationBox, AVCDecoderConfigurationRecord};
+    use transmux::nalu_types::{AvcPps, AvcSps};
+
+    /// `CodecPrivateData` must carry the H.264 parameter sets in Annex-B form,
+    /// hex-encoded. It shipped empty (issue #934), which leaves a Smooth client
+    /// unable to initialise a decoder — the manifest looked structurally right
+    /// and was unusable.
+    #[test]
+    fn avc_codec_private_data_carries_annex_b_parameter_sets() {
+        let sps = vec![0x67, 0x42, 0xC0, 0x1E];
+        let pps = vec![0x68, 0xCE, 0x3C, 0x80];
+        let cfg = CodecConfig::Avc {
+            config: AVCConfigurationBox::new(AVCDecoderConfigurationRecord {
+                configuration_version: 1,
+                profile_indication: 0x42,
+                profile_compatibility: 0xC0,
+                level_indication: 0x1E,
+                length_size_minus_one: 3,
+                sps: vec![AvcSps(sps.clone())],
+                pps: vec![AvcPps(pps.clone())],
+                chroma_format: None,
+                bit_depth_luma_minus8: None,
+                bit_depth_chroma_minus8: None,
+                sps_ext: Vec::new(),
+            }),
+            width: 1920,
+            height: 1080,
+        };
+
+        let params = smooth_codec_params(&cfg);
+
+        assert!(
+            !params.codec_private_data.is_empty(),
+            "CodecPrivateData must not be empty — a client cannot decode without it"
+        );
+        // Each parameter set is preceded by the 4-byte Annex-B start code.
+        assert_eq!(
+            params.codec_private_data,
+            "0000000167 42C01E0000000168CE3C80".replace(' ', ""),
+            "expected start-code-prefixed SPS then PPS, hex-encoded"
+        );
     }
 }
