@@ -27,7 +27,7 @@ use broadcast_common::Parse;
 
 let bytes: &[u8] = &[/* RTP payload after fixed header */];
 let header = PayloadHeader::parse(bytes).unwrap();
-println!("Video source: {:?}", header.video_source_format());
+println!("Video source: {:?}", header.video_source_format);
 ```
 
 ## Features
