@@ -20,6 +20,9 @@ extern crate alloc;
 
 pub mod error;
 pub mod ice;
+#[cfg(feature = "media")]
+#[cfg_attr(docsrs, doc(cfg(feature = "media")))]
+pub mod media;
 pub mod whep;
 pub mod whip;
 

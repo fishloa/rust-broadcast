@@ -25,12 +25,26 @@ cd "$(dirname "$0")/.." || exit 1
 # here would hang or collide on a port. Still build-gated.
 SERVER_EXAMPLES=" rtmp-runtime/capture_publish multimux/serve_rtsp "
 
+# Crates whose examples cannot be built under this invocation's feature set /
+# toolchain. `webrtc-runtime` is here because `--all-features` enables its
+# `media` feature, whose dependency graph requires rustc >= 1.88 while the
+# workspace MSRV is 1.86 — `--all-features` has no per-crate opt-out, so the
+# crate is excluded here and covered by its own CI job instead.
+SKIP_CRATES=" webrtc-runtime "
+
 fail=0
 checked=0
 skipped=0
 
 while IFS=$'\t' read -r pkg ex; do
     [ -z "$pkg" ] && continue
+    case "$SKIP_CRATES" in
+        *" $pkg "*)
+            echo "  skip  $pkg/$ex (crate excluded from this feature set)"
+            skipped=$((skipped + 1))
+            continue
+            ;;
+    esac
     case "$SERVER_EXAMPLES" in
         *" $pkg/$ex "*)
             echo "  skip  $pkg/$ex (binds a socket — build-gated only)"

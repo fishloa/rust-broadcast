@@ -32,12 +32,12 @@ jobs:
       # that would mask regressions in the library crates' bare
       # --no-default-features build.
       - name: Build (all features)
-        run: cargo build --workspace --exclude dvb-tools --exclude dvb-conformance --exclude dvb-stream --all-features --locked
+        run: cargo build --workspace --exclude dvb-tools --exclude dvb-conformance --exclude dvb-stream --exclude webrtc-runtime --all-features --locked
       # Examples are a published docs surface (they show on docs.rs and double as
       # compile-checked usage docs). Build the whole workspace's examples — no
       # excludes, so dvb-stream/dvb-conformance examples are covered too.
       - name: Build examples (all features)
-        run: cargo build --workspace --examples --all-features --locked
+        run: cargo build --workspace --examples --exclude webrtc-runtime --all-features --locked
       # Building an example only proves it compiles. Issue #947: 12 examples
       # pointed at fixture paths that stopped existing after the fixtures
       # migration and silently exited 0 via a "fixture not available" fallback,
@@ -49,10 +49,10 @@ jobs:
       # [profile.ci]) so a hung/runaway test FAILS instead of blocking CI; it does
       # not run doctests, which get their own bounded lane below.
       - name: Test (all features)
-        run: cargo nextest run --workspace --exclude dvb-tools --exclude dvb-conformance --exclude dvb-stream --all-features --locked --profile ci
+        run: cargo nextest run --workspace --exclude dvb-tools --exclude dvb-conformance --exclude dvb-stream --exclude webrtc-runtime --all-features --locked --profile ci
       - name: Doctests (all features)
         timeout-minutes: 15
-        run: cargo test --workspace --exclude dvb-tools --exclude dvb-conformance --exclude dvb-stream --all-features --locked --doc
+        run: cargo test --workspace --exclude dvb-tools --exclude dvb-conformance --exclude dvb-stream --exclude webrtc-runtime --all-features --locked --doc
       # Exclude the feature-forcing leaf crates here. dvb-tools (binary) needs
       # dvb-si's ts/serde/chrono + dvb-t2mi's ts; dvb-conformance needs dvb-si's
       # ts/serde; dvb-stream always depends on tokio. Including any of them would
@@ -82,7 +82,7 @@ jobs:
       - name: rustfmt
         run: cargo fmt --all --check
       - name: clippy
-        run: cargo clippy --workspace --all-features --all-targets --locked -- -D warnings
+        run: cargo clippy --workspace --exclude webrtc-runtime --all-features --all-targets --locked -- -D warnings
 
   docs:
     name: doc build
@@ -93,7 +93,7 @@ jobs:
       # Docs are warning-clean: bit-range notation is backticked (`[7:4]`)
       # so it can't be mistaken for intra-doc links. Keep it that way.
       - name: cargo doc
-        run: cargo doc --workspace --all-features --no-deps --locked
+        run: cargo doc --workspace --exclude webrtc-runtime --all-features --no-deps --locked
         env:
           RUSTDOCFLAGS: "-D warnings"
 
@@ -169,6 +169,39 @@ jobs:
   # v-tag publish and is feature-forcing (tokio), so it is excluded from the
   # core `test` job's workspace build and gets its own here — still on the
   # pinned MSRV toolchain from rust-toolchain.toml.
+  # `webrtc-runtime` is excluded from the MSRV(1.86) all-features lanes above
+  # because its optional `media` feature pulls the ICE/DTLS-SRTP transport,
+  # whose dependency graph requires rustc >= 1.88 (rcgen 0.14.8's floor).
+  # `--all-features` has no per-crate opt-out, so the crate is excluded there
+  # and covered here instead — otherwise the media path would rot unbuilt.
+  #
+  # Two legs, and BOTH matter:
+  #   - default features on the MSRV toolchain, proving the signalling surface
+  #     genuinely still builds at 1.86 (the whole point of the containment);
+  #   - `--features media` on the pinned newer toolchain, proving the media
+  #     path compiles at all.
+  webrtc-runtime:
+    name: webrtc-runtime (MSRV split)
+    runs-on: ubuntu-latest
+    env:
+      MEDIA_RUST: "1.97.1"
+    steps:
+      - uses: actions/checkout@v5
+      - uses: Swatinem/rust-cache@v2
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.97.1"
+      # Signalling surface must still build at the workspace MSRV.
+      - name: Default features on MSRV 1.86
+        run: cargo build -p webrtc-runtime --locked
+      # The media path, on a toolchain new enough for its dependency graph.
+      - name: media feature on ${{ env.MEDIA_RUST }}
+        run: cargo +${{ env.MEDIA_RUST }} build -p webrtc-runtime --features media --locked
+      - name: media tests on ${{ env.MEDIA_RUST }}
+        run: cargo +${{ env.MEDIA_RUST }} test -p webrtc-runtime --features media --locked
+      - name: media clippy on ${{ env.MEDIA_RUST }}
+        run: cargo +${{ env.MEDIA_RUST }} clippy -p webrtc-runtime --features media --all-targets --locked -- -D warnings
+
   dvb-stream:
     name: dvb-stream
     runs-on: ubuntu-latest

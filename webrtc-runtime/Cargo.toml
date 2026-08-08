@@ -23,10 +23,56 @@ thiserror = "2"
 log       = "0.4"
 serde = { version = "1", optional = true, default-features = false, features = ["derive", "alloc"] }
 
+# ---------------------------------------------------------------------------
+# `media` feature only (see src/media/mod.rs). All optional: the default
+# build (no_std-capable, MSRV 1.86) never touches these. rtc-dtls's `rcgen`
+# dependency requires rustc >= 1.88 (verified empirically — see README),
+# which is why this whole group is feature-gated rather than a plain dep.
+# ---------------------------------------------------------------------------
+rtp-packet  = { path = "../rtp-packet",  version = "0.3", optional = true }
+rtcp-packet = { path = "../rtcp-packet", version = "0.2", optional = true }
+rtc-ice     = { version = "0.20", optional = true }
+rtc-dtls    = { version = "0.20", optional = true }
+rtc-srtp    = { version = "0.20", optional = true }
+rtc-stun    = { version = "0.20", optional = true }
+rtc-shared  = { version = "0.20", optional = true }
+sansio      = { version = "1",    optional = true }
+bytes       = { version = "1",    optional = true }
+# SHA-256 for the RFC 8122 DTLS certificate fingerprint signalled in SDP
+# (`a=fingerprint:sha-256 ...`). Not in the umbrella-avoidance list of the
+# issue brief, but there is no fingerprint helper on the approved rtc-*
+# crates themselves, and this is the same minimal RustCrypto crate the
+# feasibility spike used.
+sha2        = { version = "0.10", optional = true }
+
 [features]
 default = ["std"]
 std     = []
 serde   = ["dep:serde"]
+# ICE + DTLS-SRTP media transport. Requires rustc >= 1.88 (see README
+# "MSRV" section) — enabling it on the crate's declared 1.86 MSRV fails to
+# build with a dependency-version error, not a clear message, so this is
+# documented loudly rather than left to be discovered.
+media = [
+    "std",
+    "dep:rtp-packet",
+    "dep:rtcp-packet",
+    "dep:rtc-ice",
+    "dep:rtc-dtls",
+    "dep:rtc-srtp",
+    "dep:rtc-stun",
+    "dep:rtc-shared",
+    "dep:sansio",
+    "dep:bytes",
+    "dep:sha2",
+]
 
 [dev-dependencies]
 tokio = { version = "1", features = ["full"] }
+
+# Manual browser-interop smoke test (not run in CI): gated on `media` via
+# `required-features` so `cargo build --examples` with default features
+# skips it cleanly instead of failing to find the `media` module.
+[[example]]
+name              = "whip_media_smoke"
+required-features = ["media"]

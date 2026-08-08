@@ -2,7 +2,9 @@
 
 Sans-IO **WHIP** ([RFC 9725](https://www.rfc-editor.org/rfc/rfc9725)) +
 **WHEP** ([draft-ietf-wish-whep](https://www.ietf.org/archive/id/draft-ietf-wish-whep-04.html))
-HTTP signalling engine for WebRTC session establishment.
+HTTP signalling engine for WebRTC session establishment, plus (feature
+`media`) the ICE/DTLS-SRTP transport that carries the media those two
+protocols negotiate.
 
 Part of the [rust-broadcast](https://github.com/fishloa/rust-broadcast) workspace.
 
@@ -19,6 +21,13 @@ Each state machine is **sans-IO**: it produces `HttpRequest` descriptors the
 caller sends over whatever HTTP stack it prefers, and consumes `HttpResponse`
 values fed back. No sockets, no async runtime, no TLS -- just signalling
 logic and state transitions.
+
+Feature `media` (see "MSRV" below) adds `webrtc_runtime::media::MediaTransport`:
+the ICE agent, DTLS handshake + RFC 5764 SRTP key export, and SRTP decrypt
+context that turns the SDP/candidates this signalling exchanges into an
+actual UDP media path, decrypting inbound SRTP into RTP/RTCP typed by this
+workspace's own `rtp-packet`/`rtcp-packet` crates. Still sans-IO: no socket
+owned, no tokio runtime pulled into the core.
 
 ### Covered flows
 
@@ -107,11 +116,26 @@ let header = format_ice_server_links(&servers);
 |---------|---------|-------------|
 | `std`   | yes     | Enables `std` library support |
 | `serde` | no      | `Serialize`/`Deserialize` on `IceServer` |
+| `media` | no      | ICE + DTLS-SRTP transport (`webrtc_runtime::media`) — **requires rustc >= 1.88**, see "MSRV" below |
 
 The core state machines build with `--no-default-features` (`no_std` + `alloc`).
-No IO adapter exists (see "What it does" above) — there is no `tokio` feature;
-one was declared but never gated any code, so it was removed rather than kept
-as dead weight (see CHANGELOG).
+No IO adapter exists for WHIP/WHEP signalling (see "What it does" above) —
+there is no `tokio` feature for it; one was declared but never gated any
+code, so it was removed rather than kept as dead weight (see CHANGELOG).
+
+## MSRV
+
+The crate's declared MSRV is **1.86**, and every feature except `media`
+builds on it. `media` requires **rustc >= 1.88**, because its `rtc-dtls`
+dependency requires `rcgen ^0.14.8`, whose own MSRV is 1.88. This was
+verified empirically: `cargo +1.86 check -p webrtc-runtime --features media`
+fails (with a dependency-version error, not a message from this crate);
+`cargo +1.88 check -p webrtc-runtime --features media` (or newer) passes.
+`media`'s own module doc repeats this so it is visible from `cargo doc` too.
+
+If you only need WHIP/WHEP signalling, nothing changes: default features
+(`std`) stay on 1.86. Enable `media` only once your toolchain floor is 1.88
+or higher.
 
 ## License
 

@@ -48,4 +48,14 @@ pub enum Error {
         /// The HTTP status code returned.
         status: u16,
     },
+
+    /// An ICE, DTLS, or SRTP media-transport operation failed (feature
+    /// `media`, see [`crate::media`]).
+    ///
+    /// Carries a formatted message rather than a `rtc-ice`/`rtc-dtls`/
+    /// `rtc-srtp` error type so the default (non-`media`) build of this
+    /// crate never has to know those dependency types exist.
+    #[cfg(feature = "media")]
+    #[error("media transport error: {0}")]
+    Media(alloc::string::String),
 }

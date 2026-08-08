@@ -12,12 +12,19 @@
 //! satisfy the check for both, and dropping either impl would go unnoticed.
 //! `impl_spec_display!(Method)` resolves `Method` in the module it is invoked
 //! from, so per-file is also the semantically correct scope.
+//!
+//! `media::transport::MediaEvent` (feature `media`) is likewise skipped: it is
+//! a data-carrying dispatch enum (some variants hold a whole `DecryptedRtp` or
+//! `rtcp_packet::CompoundPacket`), the same shape as WHIP/WHEP's own `Event` —
+//! not a spec/field label. `media::transport::SetupRole` is NOT skipped: its
+//! three variants are the literal SDP `a=setup` tokens (RFC 8842 §4.1), so it
+//! carries `name()` + `impl_spec_display!` like `Method`.
 
 use std::collections::BTreeSet;
 use std::fs;
 use std::path::Path;
 
-const SKIP: &[&str] = &["Error", "Event", "State"];
+const SKIP: &[&str] = &["Error", "Event", "State", "MediaEvent"];
 
 /// Every `.rs` file under `src/`, as `(display path, contents)`.
 fn read_rs(dir: &Path, out: &mut Vec<(String, String)>) {
@@ -153,8 +160,11 @@ fn expected_spec_enum_set_has_not_silently_drifted() {
         .collect();
 
     // The known label-bearing set: `Method`, declared independently by both
-    // the WHIP client and the WHEP player.
-    let expected: BTreeSet<String> = ["Method"].iter().map(|s| s.to_string()).collect();
+    // the WHIP client and the WHEP player, plus `SetupRole` (feature `media`).
+    let expected: BTreeSet<String> = ["Method", "SetupRole"]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
 
     assert_eq!(
         non_skip, expected,
