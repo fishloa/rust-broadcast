@@ -4,6 +4,13 @@ All notable changes to `broadcast-auth` are documented here. The format
 follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+- Doc accuracy (#941 row 5): README "Schemes" section now lists the
+  shipped `SignedUrl` scheme (`Verifier::signed_url`, issue #747) — it was
+  documented in the crate-root doc comment but omitted from the README.
+
 ## [0.2.1] - 2026-08-02
 
 ### Added

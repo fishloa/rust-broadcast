@@ -1,9 +1,43 @@
 # Changelog
 
-All notable changes to `dvb-flute` will be documented in this file.
+All notable changes to `rmt-flute` (formerly `dvb-flute`) will be documented
+in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [0.4.0] - 2026-08-08
+
+### Changed
+- **Renamed `dvb-flute` → `rmt-flute`.** No code, API or behaviour change —
+  this is a naming correction.
+
+  The crate implements only **IETF RMT** standards: LCT (RFC 5651), ALC
+  (RFC 5775), FLUTE (RFC 6726) and NORM (RFC 5740). It implements **no DVB
+  standard**; its own description and keywords never claimed one — only the
+  crate name did. DVB is one of several *consumers* of these formats,
+  alongside 3GPP MBMS/eMBMS and ATSC 3.0 ROUTE.
+
+  The name became actively misleading with ATSC 3.0 ROUTE work planned:
+  A/331 Annex A is written as a profile-and-delta on RFC 5651/5775/6726, so
+  an `atsc3-route` crate would have depended on a crate named `dvb-*` for
+  something that is neither ATSC nor DVB.
+
+  Version continues the existing line rather than restarting at 0.1.0 — the
+  code is five releases in, audited and fuzzed, and a fresh `0.1.0` would
+  misrepresent its maturity. This follows the workspace's own rename
+  precedents (`smpte2038` → `st291` continued at 0.2.0; `ll-hls-runtime` →
+  `hls-runtime` continued at 0.4.0). The minor bump reflects that a rename is
+  breaking for consumers, and for a 0.x crate minor is the breaking axis.
+
+  **All `dvb-flute` versions (0.1.0, 0.1.1, 0.2.0, 0.3.0, 0.3.1) are yanked.**
+  No compatibility shim is published — the same approach taken for
+  `smpte2038`/`dvb-smpte2038`. There were zero reverse dependencies on
+  crates.io at the time of the rename.
+
+### Fixed
+- Crate-root docs and README reframed to lead with IETF RMT and to name DVB,
+  3GPP MBMS and ATSC 3.0 ROUTE as consumers rather than owners.
 
 ## [0.3.1] - 2026-07-30
 

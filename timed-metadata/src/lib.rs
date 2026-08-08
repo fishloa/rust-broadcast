@@ -1,8 +1,12 @@
 //! Timed-metadata / DPI signalling conversion core.
 //!
-//! Translates SCTE-35 splice information to and from the carriages used in OTT
+//! Translates SCTE-35 splice information to the carriages used in OTT
 //! delivery: HLS `EXT-X-DATERANGE` (RFC 8216 / draft-pantos-hls-rfc8216bis
 //! §4.4.5.1) and DASH `emsg` (SCTE 214-3, scheme `urn:scte:scte35:2013:bin`).
+//! The DASH `emsg` conversion is bidirectional (SCTE-35 to and from `emsg`);
+//! the HLS `EXT-X-DATERANGE` conversion is currently one-way (SCTE-35 to
+//! DATERANGE only) — the reverse edge is out of scope for now, see
+//! [`convert::scte35_to_daterange`] doc.
 //!
 //! Conversions are lossless: the original `splice_info_section` bytes are
 //! carried verbatim (DATERANGE `SCTE35-OUT` hex, emsg `message_data`).

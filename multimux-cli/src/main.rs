@@ -1,15 +1,18 @@
-//! CLI for the `multimux` multi-input (RTSP/RTP/TS-UDP/TS-HTTP/HLS-pull),
-//! multi-output (LL-HLS/DASH/LL-DASH + SRT/RTMP/RTSP push) just-in-time
+//! CLI for the `multimux` multi-input (RTSP/RTP, SRT, TS-UDP, TS-HTTP,
+//! HLS-pull, DASH-pull, Smooth-pull, RTMP; WHIP not yet wired), multi-output
+//! (LL-HLS/DASH/LL-DASH/Smooth/TS-HLS/DVR + SRT/RTMP/RTSP push) just-in-time
 //! repackaging HTTP origin and relay/gateway.
 //!
-//! Either point it at a JSON config file describing one or more routes (any
-//! input, any output(s), optional shared output auth), or use the
-//! single-route RTSP-quick-start (`--rtsp` + `--name`, with `--outputs`/
-//! `--dash` selecting delivery protocol(s)) for a single source. Push
-//! outputs (`--srt-push`, `--rtmp-push`, `--rtsp-push`) relay the ingested
-//! media to downstream servers in addition to serving HTTP outputs. See
-//! `multimux`'s README for the served endpoint table, config schema, and
-//! scope.
+//! This binary's own flags reach only a slice of that: the single-route
+//! quick start (`--rtsp` + `--name`) accepts RTSP input only, and
+//! `--outputs` accepts only `llhls`/`dash` (plus the `--dash`/`--srt-push`/
+//! `--rtmp-push`/`--rtsp-push` shorthands). Every other input kind, LL-DASH,
+//! Smooth, TS-HLS, and DVR are reachable only via `--config` (a JSON file
+//! describing one or more routes — any input, any output(s), optional
+//! shared output auth). Push outputs (`--srt-push`, `--rtmp-push`,
+//! `--rtsp-push`) relay the ingested media to downstream servers in addition
+//! to serving HTTP outputs. See `multimux`'s README for the served endpoint
+//! table, config schema, and scope.
 //!
 //! # Example
 //!
@@ -30,14 +33,16 @@ use multimux::{MultimuxError, Result};
 #[command(
     name = "multimux",
     version,
-    about = "Multi-input (RTSP/RTP/TS-UDP/TS-HTTP/HLS-pull) x multi-output (LL-HLS/DASH/LL-DASH) just-in-time repackaging HTTP origin",
-    long_about = "Runs one or more ingest routes, each pulling from RTSP, RTP, \
-                  TS-over-UDP, TS-over-HTTP, or HLS, and serving LL-HLS (RFC 8216bis), \
-                  DASH, or low-latency DASH from an in-process HTTP origin.\n\
-                  Either point it at a JSON config file (--config) describing one or \
-                  more routes (any input, any output(s)), or use the single-route \
-                  RTSP quick start (--rtsp + --name, with --outputs/--dash selecting \
-                  delivery protocol(s))."
+    about = "Just-in-time repackaging HTTP origin: RTSP quick start via flags, or any-input/any-output via --config",
+    long_about = "Runs one or more ingest routes and serves LL-HLS (RFC 8216bis), DASH, \
+                  or low-latency DASH from an in-process HTTP origin.\n\
+                  This binary's flags reach a single RTSP-sourced route: --rtsp + --name, \
+                  with --outputs/--dash selecting llhls/dash and --srt-push/--rtmp-push/ \
+                  --rtsp-push adding push outputs.\n\
+                  For every other input (RTP, SRT, TS-over-UDP, TS-over-HTTP, HLS-pull, \
+                  DASH-pull, Smooth-pull, RTMP) and every other output (LL-DASH, Smooth, \
+                  TS-HLS, DVR), point it at a JSON config file (--config) describing one \
+                  or more routes (any input, any output(s))."
 )]
 struct Cli {
     /// JSON config file describing routes + segmentation/window/bind parameters.

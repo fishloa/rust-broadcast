@@ -122,7 +122,7 @@ fn csa_stream_rotate(p: bool, x: u32) -> u32 {
     }
 }
 
-fn csa_stream_sboxes(a: u64) -> u32 {
+pub(crate) fn csa_stream_sboxes(a: u64) -> u32 {
     let mut t = a & 0x2018004200u64;
     let mut res = u32::from(
         STREAM_SBOX[1]
@@ -165,7 +165,7 @@ fn csa_stream_sboxes(a: u64) -> u32 {
     res
 }
 
-fn csa_stream_b_sel(b: u64) -> u32 {
+pub(crate) fn csa_stream_b_sel(b: u64) -> u32 {
     // C code: `uint32_t t = B >> 9;` — truncation to 32 bits is load-bearing.
     let t = (b >> 9) as u32;
 

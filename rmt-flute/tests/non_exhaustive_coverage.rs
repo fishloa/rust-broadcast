@@ -1,4 +1,4 @@
-//! Drift-guard: every `pub enum` in dvb-flute must carry `#[non_exhaustive]`
+//! Drift-guard: every `pub enum` in rmt-flute must carry `#[non_exhaustive]`
 //! (issue #806).
 //!
 //! Scans `src/` for every `pub enum`, subtracts a documented SKIP list, and

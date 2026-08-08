@@ -9,17 +9,15 @@ use std::fs;
 use dvb_vbi::{DataField, DataUnitPayload};
 
 fn main() {
+    // Fixtures live in the workspace-shared `fixtures/` tree, not under the
+    // crate. A committed fixture that cannot be read is a bug, not a reason
+    // to skip — so a missing/unreadable fixture is a hard failure.
     let path = concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/tests/fixtures/vbi_data_field.bin"
+        "/../fixtures/dvb-vbi/vbi_data_field.bin"
     );
-    let bytes = match fs::read(path) {
-        Ok(d) => d,
-        Err(e) => {
-            eprintln!("fixture not available ({e}); nothing to do");
-            return;
-        }
-    };
+    let bytes = fs::read(path)
+        .unwrap_or_else(|e| panic!("committed fixture {path} could not be read: {e}"));
 
     let field = DataField::parse(&bytes).expect("fixture must parse");
     println!("PES data field: {} bytes", bytes.len());

@@ -676,21 +676,11 @@ dependencies = [
 
 [[package]]
 name = "dvb-csa"
-version = "0.1.0"
+version = "0.1.2"
 dependencies = [
  "broadcast-common",
  "criterion",
  "rand 0.9.5",
- "thiserror",
-]
-
-[[package]]
-name = "dvb-flute"
-version = "0.3.1"
-dependencies = [
- "broadcast-common",
- "serde",
- "serde_json",
  "thiserror",
 ]
 
@@ -2284,6 +2274,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "rmt-flute"
+version = "0.4.0"
+dependencies = [
+ "broadcast-common",
+ "serde",
+ "serde_json",
+ "thiserror",
+]
+
+[[package]]
 name = "roxmltree"
 version = "0.20.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3023,7 +3023,7 @@ dependencies = [
 
 [[package]]
 name = "transmux"
-version = "0.23.0"
+version = "0.23.1"
 dependencies = [
  "aes",
  "broadcast-common",

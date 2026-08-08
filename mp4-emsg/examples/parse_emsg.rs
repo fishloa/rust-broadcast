@@ -10,17 +10,15 @@ use std::fs;
 use mp4_emsg::EmsgBox;
 
 fn main() {
+    // Fixtures live in the workspace-shared `fixtures/` tree, not under the
+    // crate. A committed fixture that cannot be read is a bug, not a reason
+    // to skip — so a missing/unreadable fixture is a hard failure.
     let path = concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/tests/fixtures/scte35_emsg_v0.bin"
+        "/../fixtures/shared/scte35_emsg_v0.bin"
     );
-    let bytes = match fs::read(path) {
-        Ok(d) => d,
-        Err(e) => {
-            eprintln!("fixture not available ({e}); nothing to do");
-            return;
-        }
-    };
+    let bytes = fs::read(path)
+        .unwrap_or_else(|e| panic!("committed fixture {path} could not be read: {e}"));
 
     let b = EmsgBox::parse(&bytes).unwrap();
     println!("emsg box: {} bytes (version {})", bytes.len(), b.version());

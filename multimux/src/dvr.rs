@@ -30,8 +30,12 @@
 //!   hundreds of fragments they have to reassemble.
 //! - **Durability:** a byte-range index per period is flushed after each
 //!   append. A period file whose index is lost is unusable data, so the
-//!   index is a first-class, rebuildable artifact (see `IndexEntry` and
-//!   the index-rebuild path).
+//!   index is a first-class, rebuildable artifact — see [`IndexEntry`] and
+//!   [`DvrRecorder::rebuild_index`], which rescans the period file to
+//!   reconstruct it. **This recovery covers fMP4 periods only**; the TS
+//!   rescan is not implemented, so a TS period that loses its index stays
+//!   unusable. Recovery is also not automatic — nothing calls it on
+//!   startup; a caller must invoke it.
 //!
 //! # Period lifecycle
 //!
@@ -240,19 +244,23 @@ impl DvrConfig {
 // --- Index ---
 
 /// One entry in the byte-range index sidecar (`pN.idx`).
+///
+/// Public because the index is a rebuildable durability artifact — see
+/// [`DvrRecorder::rebuild_index`], which returns these.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-struct IndexEntry {
+#[non_exhaustive]
+pub struct IndexEntry {
     /// Segment sequence number (1-based, matches `_HLS_msn`).
-    seq: u32,
+    pub seq: u32,
     /// Segment start time on the `Trunk`'s absolute timeline (nanoseconds).
-    start_pts_ns: u64,
+    pub start_pts_ns: u64,
     /// Byte offset of this segment's first byte within the period file
     /// (0-based from the start of the file). For fMP4, the init comes
     /// before all segments, so the first segment's offset is
     /// `init_bytes.len()`.
-    byte_offset: u64,
+    pub byte_offset: u64,
     /// Exact byte length of this segment within the period file.
-    byte_len: u64,
+    pub byte_len: u64,
 }
 
 /// In-memory record of one stored period file.
@@ -532,17 +540,22 @@ impl DvrRecorder {
     }
 
     /// Rebuild the byte-range index by rescanning the current period file.
-    /// Used for crash recovery: if the index is lost or corrupted, a
-    /// rescan reconstructs it from the data that is on disk.
     ///
-    /// For fMP4, the init length is known (`self.init_len`) — the rescan
-    /// skips the init and walks the concatenated fragments, recovering each
-    /// segment's byte range.
+    /// Crash recovery: if the `pN.idx` sidecar is lost or corrupted, the
+    /// period file itself still holds the data, and this reconstructs the
+    /// index from it. The caller decides when to invoke it — there is no
+    /// automatic recovery on startup yet.
     ///
-    /// For TS, the rescan walks 188-byte packet boundaries to find segment
-    /// boundaries.
-    #[cfg(test)]
-    fn rebuild_index(&self) -> Result<Vec<IndexEntry>, String> {
+    /// **fMP4 only.** The init length is known (`self.init_len`), so the
+    /// rescan skips the init and walks the concatenated `moof`+`mdat`
+    /// fragments, recovering each segment's byte range.
+    ///
+    /// **TS periods are not recoverable this way** — this returns `Err` for
+    /// them. Walking 188-byte packet boundaries to re-derive segment
+    /// boundaries is not implemented, so a TS period whose index is lost
+    /// stays unusable. Use fMP4 (`.m4s`) periods where index recovery
+    /// matters.
+    pub fn rebuild_index(&self) -> Result<Vec<IndexEntry>, String> {
         let data = fs::read(self.period_path())
             .map_err(|e| format!("reading period file for index rebuild: {e}"))?;
         let data = &data[self.init_len as usize..];

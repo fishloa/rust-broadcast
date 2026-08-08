@@ -1,14 +1,14 @@
 [package]
 name          = "atsc3"
 version       = "0.1.0"
-description   = "ATSC 3.0 signalling: A/321 bootstrap + A/331 ROUTE/DASH and MMT"
+description   = "ATSC 3.0 (A/331) LLS binary envelope + Service List Table (SLT) parser"
 authors.workspace     = true
 edition.workspace     = true
 license.workspace     = true
 repository.workspace  = true
 rust-version.workspace = true
 categories   = ["multimedia::video", "parser-implementations", "no-std"]
-keywords     = ["atsc3", "nextgentv", "route", "mmt", "broadcast"]
+keywords     = ["atsc3", "nextgentv", "lls", "slt", "broadcast"]
 
 [dependencies]
 broadcast-common = { path = "../broadcast-common", version = "9", default-features = false }

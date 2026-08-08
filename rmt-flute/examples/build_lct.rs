@@ -4,9 +4,9 @@
 /// dump the wire bytes.
 ///
 /// ```sh
-/// cargo run -p dvb-flute --example build_lct
+/// cargo run -p rmt-flute --example build_lct
 /// ```
-use dvb_flute::{
+use rmt_flute::{
     AlcPacket, ExtFdt, FLUTE_VERSION, FecPayloadId128, HET_EXT_FDT, LCT_VERSION, LctHeader,
 };
 
@@ -76,7 +76,7 @@ fn main() {
     println!();
 
     // Round-trip sanity (FEC Payload ID len = 8 for fec_id 128/129).
-    let re = AlcPacket::parse(&bytes, dvb_flute::FEC_PAYLOAD_ID_128_LEN).unwrap();
+    let re = AlcPacket::parse(&bytes, rmt_flute::FEC_PAYLOAD_ID_128_LEN).unwrap();
     assert_eq!(re, pkt);
     // The EXT_FDT extension decodes back.
     let re_fdt = ExtFdt::parse(re.lct.extensions[0].content).unwrap();

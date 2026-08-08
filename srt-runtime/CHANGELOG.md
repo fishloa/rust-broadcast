@@ -14,6 +14,10 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Added
 - `tests/non_exhaustive_coverage.rs` drift guard (issue #806).
 
+### Fixed
+- Doc accuracy (#941 row 6): README install snippet corrected from `"0.2"`
+  to `"0.3"` (the crate is 0.3.0).
+
 ## [0.3.0] - 2026-07-29
 
 ### Changed (BREAKING)

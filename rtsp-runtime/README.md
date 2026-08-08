@@ -47,9 +47,9 @@ no sockets in the core. Drive `ClientSession` with the request builders and
 
 ```toml
 [dependencies]
-rtsp-runtime = "0.3"                                  # sans-IO core
-rtsp-runtime = { version = "0.3", features = ["tokio"] }  # + real sockets
-rtsp-runtime = { version = "0.3", features = ["tls"] }    # + rtsps:// (TLS)
+rtsp-runtime = "0.5"                                  # sans-IO core
+rtsp-runtime = { version = "0.5", features = ["tokio"] }  # + real sockets
+rtsp-runtime = { version = "0.5", features = ["tls"] }    # + rtsps:// (TLS)
 ```
 
 ## Status

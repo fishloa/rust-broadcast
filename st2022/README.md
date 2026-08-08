@@ -1,14 +1,17 @@
 # st2022
 
-SMPTE ST 2022-6:2012 / ST 2022-7:2019 — SDI-over-IP transport.
+SMPTE ST 2022-6:2012 — SDI-over-IP transport (HBRMT).
 
 ST 2022-6 defines the **High Bit Rate Media Transport (HBRMT)** RTP payload
 format for carrying uncompressed SDI signals (SD/HD/3G) over IP networks.
 The entire serial digital interface payload — video, embedded audio, VANC,
 HANC — is encapsulated as a single RTP stream.
 
-ST 2022-7 adds **seamless protection switching** across two redundant network
-paths, allowing hitless failover with no visible glitch.
+This crate implements the ST 2022-6 HBRMT payload header only. It does
+**not** implement ST 2022-7 seamless protection switching (hitless
+failover) — see "Planned" below. The `VSID` field this crate parses is the
+one a ST 2022-7 merge needs to identify redundant-path copies of the same
+datagram; the actual hitless merge logic lives in `media-plane::byte_merge`.
 
 ## Wire structures
 
@@ -38,6 +41,19 @@ println!("Video source: {:?}", header.video_source_format);
 | `serde` | no      | Derives `Serialize`/`Deserialize` |
 
 `no_std` + `alloc` when `default-features = false`.
+
+## Planned
+
+Not implemented yet — spec-grounded in `docs/` ahead of any code (see
+`docs/README.md`):
+
+- **ST 2022-7 seamless protection switching** — the redundancy model (§6),
+  duplicate-identification rule (§4.3 + Annex A), and receiver
+  classification (§7 Table 1). The hitless merge itself is expected to land
+  in `media-plane::byte_merge`, consuming the `VSID` this crate already
+  parses, rather than in this crate.
+- **ST 2022-5 FEC** — the separate FEC wire-format standard ST 2022-6 §7.1
+  references for interoperability limits only.
 
 ## License
 

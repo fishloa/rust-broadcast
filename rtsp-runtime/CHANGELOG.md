@@ -6,6 +6,10 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+- Doc accuracy (#941 row 6): README install snippet corrected from `"0.3"`
+  to `"0.5"` (the crate is 0.5.0).
+
 ## [0.5.0] - 2026-08-07
 
 ### Added

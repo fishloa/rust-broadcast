@@ -896,24 +896,10 @@ impl<'a> PayloadHeader<'a> {
                     });
                 }
             }
-            if let FrameStructure::Reserved(v) = vsf.frame {
-                if u32::from(v) > FRAME_MASK {
-                    return Err(Error::InvalidValue {
-                        field: "video_source_format.frame",
-                        value: u64::from(v),
-                        reason: "must be an 8-bit value (0..=255)",
-                    });
-                }
-            }
-            if let FrameRate::Reserved(v) = vsf.frate {
-                if u32::from(v) > FRATE_MASK {
-                    return Err(Error::InvalidValue {
-                        field: "video_source_format.frate",
-                        value: u64::from(v),
-                        reason: "must be an 8-bit value (0..=255)",
-                    });
-                }
-            }
+            // No range check for `FrameStructure::Reserved`/`FrameRate::Reserved` here:
+            // both fields are 8 bits wide (`FRAME_MASK`/`FRATE_MASK` == 0xFF) and the
+            // `Reserved` variant already carries a `u8`, so `u32::from(v) > 0xFF` can
+            // never be true — the check was dead code (#941 row 9).
             if let SampleStructure::Reserved(v) = vsf.sample {
                 if u32::from(v) > SAMPLE_MASK {
                     return Err(Error::InvalidValue {

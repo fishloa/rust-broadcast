@@ -3,21 +3,25 @@
 /// is left opaque — out of scope of this binary crate).
 ///
 /// ```sh
-/// cargo run -p dvb-flute --example parse_flute
+/// cargo run -p rmt-flute --example parse_flute
 /// ```
 use std::fs;
 
-use dvb_flute::{AlcPacket, ExtFdt, FEC_PAYLOAD_ID_128_LEN, FecPayloadId128, HET_EXT_FDT};
+use rmt_flute::{AlcPacket, ExtFdt, FEC_PAYLOAD_ID_128_LEN, FecPayloadId128, HET_EXT_FDT};
 
 fn main() {
-    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/flute_fdt.bin");
-    let data = match fs::read(path) {
-        Ok(d) => d,
-        Err(e) => {
-            eprintln!("fixture not available ({e}); nothing to do");
-            return;
-        }
-    };
+    // Fixtures live in the workspace-shared `fixtures/rmt-flute/` directory,
+    // not under the crate. This example previously pointed at a
+    // `tests/fixtures/` path that has never existed, and its "nothing to do"
+    // fallback silently swallowed the failure — so it never actually ran.
+    // Missing fixture is now a hard error: an example that quietly does
+    // nothing is worse than one that fails.
+    let path = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../fixtures/rmt-flute/flute_fdt.bin"
+    );
+    let data = fs::read(path)
+        .unwrap_or_else(|e| panic!("committed fixture {path} could not be read: {e}"));
 
     // FLUTE default FEC is Compact No-Code (Encoding ID 0): a 16-bit Source
     // Block Number + 16-bit Encoding Symbol ID = 4 bytes. But this fixture uses

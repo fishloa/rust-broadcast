@@ -36,6 +36,12 @@ all).
   `Credentials`/challenge-response round-trip at all. **Safe only behind a
   trusted reverse proxy** that strips any client-supplied copy of that
   header before forwarding — see `Verifier::forwarded`'s doc comment.
+- **SignedUrl** (server-side only, `Verifier::signed_url`, issue #747) —
+  CDN-style HMAC-SHA256 signed query-string tokens (`exp`/`kid`/`sig`[/`ip`])
+  so a player can fetch segments with no `Authorization` header at all. Key
+  rotation via multiple simultaneously-valid `kid`s, optional IP scoping,
+  constant-time signature compare. See the `signed_url` module
+  (`SignedUrlKeySet`) for the wire form and canonical string.
 
 `Credentials::new(user, pass)` doesn't commit to Basic or Digest: the
 responder answers whichever scheme the server's challenge actually advertises

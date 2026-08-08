@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+### Fixed
+- Doc accuracy (#941 row 2): README now documents that
+  `CarryOverExtractor::feed_hem`/`feed_hem_into` emit no output for any HEM
+  frame with `npd=true` (DNP reinsertion is not implemented), and that
+  `CarryOverStats::npd_unsupported` counts this. No behaviour change — this
+  was already disclosed in rustdoc; the README lacked the caveat.
+
 ## [9.2.0] - 2026-08-05
 Lockstep minor alongside `dvb-conformance` 9.2.0; no functional changes of
 this crate's own.

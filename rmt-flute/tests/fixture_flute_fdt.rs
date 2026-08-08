@@ -6,14 +6,14 @@
 
 use std::fs;
 
-use dvb_flute::{
+use rmt_flute::{
     AlcPacket, ExtFdt, FEC_PAYLOAD_ID_128_LEN, FLUTE_VERSION, FecPayloadId128, HET_EXT_FDT, TOI_FDT,
 };
 
 fn fixture() -> Vec<u8> {
     let path = concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/../fixtures/dvb-flute/flute_fdt.bin"
+        "/../fixtures/rmt-flute/flute_fdt.bin"
     );
     fs::read(path).expect("fixture flute_fdt.bin must be committed")
 }

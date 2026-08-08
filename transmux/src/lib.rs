@@ -4,10 +4,15 @@
 //! transmux demuxes any supported container into one neutral in-memory
 //! intermediate representation ([`Media`] / [`Track`]) and muxes from it into any
 //! supported container — the demux and mux spokes meet at the IR, so every
-//! `{input} → {output}` combination composes. It **never encodes or decodes
-//! media**: it parses codec *config/parameter headers* only to build container
-//! boxes and derive metadata; coded samples pass through opaque. `no_std` +
-//! `alloc`.
+//! `{input} → {output}` combination composes, with one documented exception:
+//! WebM's VP8 and Vorbis tracks ([`CodecConfig::Vp8`]/[`CodecConfig::Vorbis`])
+//! have no ISOBMFF sample entry in this crate, so they do not participate in
+//! the fMP4/CMAF mux path — `{WebM} → {CMAF/progressive-MP4/TS/DASH/LL-DASH/
+//! CMAF-HLS/LL-HLS/Smooth}` fails on those tracks with
+//! [`Error::UnsupportedCodec`]; only `WebM → WebM`/[`MkvMux`] round-trips them.
+//! It **never encodes or decodes media**: it parses codec *config/parameter
+//! headers* only to build container boxes and derive metadata; coded samples
+//! pass through opaque. `no_std` + `alloc`.
 //!
 //! The spokes are expressed through the two abstract traits in `broadcast_common`:
 //! [`Unpackage`](broadcast_common::Unpackage) (container → IR) and
@@ -18,12 +23,18 @@
 //!   wrapper over the event-driven [`StreamingTsDemux`] — issue #555),
 //!   fMP4/CMAF ([`Fmp4Demux`]), progressive (non-fragmented) MP4
 //!   ([`ProgressiveDemux`] — issue #561), MPEG Program Stream ([`PsDemux`]),
-//!   WebM/Matroska ([`WebmDemux`]), FLV ([`FlvDemux`]), RTMP ([`RtmpDemux`]).
+//!   WebM/Matroska ([`WebmDemux`] — laced blocks are a hard error, not
+//!   silently skipped; real ffmpeg/mkvmerge captures without lacing demux
+//!   fine, see the module docs), FLV ([`FlvDemux`] — non-AVC video and
+//!   non-AAC audio tracks are silently skipped, no event/error, see the
+//!   module docs), RTMP ([`RtmpDemux`]).
 //! - **Mux (`Package`) outputs:** CMAF/fMP4 ([`CmafMux`]), progressive single-file
-//!   MP4 ([`ProgressiveMux`]), MPEG-2 TS ([`TsMux`]), CMAF-HLS ([`HlsPackager`]),
-//!   TS-segment HLS ([`TsHlsPackager`]), DASH MPD ([`DashPackager`]), low-latency
+//!   MP4 ([`ProgressiveMux`]), MPEG-2 TS ([`TsMux`]), Matroska ([`MkvMux`]),
+//!   CMAF-HLS ([`HlsPackager`]), TS-segment HLS ([`TsHlsPackager`]), DASH MPD
+//!   ([`DashPackager`]), low-latency
 //!   DASH ([`LlSegmenter`]/[`LlDashPackager`]), Microsoft Smooth Streaming
-//!   ([`SmoothPackager`]), RTMP ([`RtmpMux`]), low-latency HLS
+//!   ([`SmoothPackager`] — H.264 video + AAC-LC audio only, every other codec
+//!   rejected), RTMP ([`RtmpMux`]), low-latency HLS
 //!   ([`LlHlsSegmenter`], live-edge open segments via
 //!   [`broadcast_hls::OpenSegment`]).
 //! - **Transforms:** resegment / trim / track-select ([`Repackage`]);
@@ -56,9 +67,10 @@
 //!   [`nal_unit_type`]); I-frame trick-play track derivation ([`derive_iframe_track`]).
 //!
 //! **Codec config coverage** (header parse → container box; no en/decode):
-//! H.264/AVC, H.265/HEVC, H.266/VVC, AV1, VP9, VP8, MPEG-2 video (H.262); AAC,
-//! AC-3, E-AC-3, AC-4, DTS, Opus, FLAC, Vorbis, MPEG-1/2 audio (MP1/2/3), MPEG-H
-//! 3D Audio.
+//! H.264/AVC, H.265/HEVC, H.266/VVC, AV1, VP9, VP8*, MPEG-2 video (H.262); AAC,
+//! AC-3, E-AC-3, AC-4, DTS, Opus, FLAC, Vorbis*, MPEG-1/2 audio (MP1/2/3), MPEG-H
+//! 3D Audio. (*VP8/Vorbis have no ISOBMFF sample entry — WebM-native only,
+//! see the `{input} → {output}` exception noted above.)
 //!
 //! Lower-level entry points remain: [`build_init_segment`]/[`build_media_segment`]
 //! (batch CMAF), [`AvcSps::decode`] + [`AvcSps::rfc6381`] (codec metadata). See the

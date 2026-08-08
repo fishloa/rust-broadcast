@@ -1,12 +1,25 @@
-# dvb-flute
+# rmt-flute
 
-[![Crates.io](https://img.shields.io/crates/v/dvb-flute.svg)](https://crates.io/crates/dvb-flute)
-[![docs.rs](https://img.shields.io/docsrs/dvb-flute)](https://docs.rs/dvb-flute)
+[![Crates.io](https://img.shields.io/crates/v/rmt-flute.svg)](https://crates.io/crates/rmt-flute)
+[![docs.rs](https://img.shields.io/docsrs/rmt-flute)](https://docs.rs/rmt-flute)
 
 Multicast object-delivery wire formats — **ALC / LCT / FLUTE / NORM** — the
-binary headers used to deliver files and streams over IP multicast (the
-building blocks beneath DVB-IPTV / DVB-MABR file delivery and the IETF RMT
-suite).
+binary headers used to deliver files and streams over IP multicast.
+
+Everything here is **IETF RMT** (Reliable Multicast Transport): RFC 5651,
+RFC 5775, RFC 6726 and RFC 5740. No broadcast-specific standard is implemented
+by this crate. Several delivery systems are built *on top* of these formats and
+are consumers of it, not owners of it:
+
+- **DVB** — DVB-IPTV and DVB-MABR (ETSI TS 103 769) file delivery
+- **3GPP** — MBMS / eMBMS download delivery
+- **ATSC 3.0** — ROUTE (A/331 Annex A), written as a profile-and-delta on
+  RFC 5651/5775/6726
+
+> **Renamed from `dvb-flute` at 0.4.0.** The old name implied a DVB standard
+> this crate does not implement, and made it read oddly as a dependency of
+> non-DVB consumers such as ATSC 3.0 ROUTE. All `dvb-flute` versions are
+> yanked; there is no shim. Same code, accurate name.
 
 Implements:
 
@@ -41,7 +54,7 @@ Implements:
 ## Quick start
 
 ```rust
-use dvb_flute::{LctHeader, LCT_VERSION};
+use rmt_flute::{LctHeader, LCT_VERSION};
 
 let cci = [0u8; 4]; // C = 0
 let tsi = [0u8; 4]; // S = 1, H = 0
@@ -66,8 +79,8 @@ assert_eq!(re, hdr);
 ## Examples
 
 ```sh
-cargo run -p dvb-flute --example build_lct
-cargo run -p dvb-flute --example parse_flute
+cargo run -p rmt-flute --example build_lct
+cargo run -p rmt-flute --example parse_flute
 ```
 
 ## Features

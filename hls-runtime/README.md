@@ -143,10 +143,17 @@ of the data, never a second cache of it.
   delivered while it was open, a discontinuity revealed only once it closes is
   signalled late (after those parts' samples). A gap in the current wire
   model, not something this crate can fix locally.
+- **Server-side Playlist Delta Updates** — the `client` half requests
+  `EXT-X-SKIP`/`CAN-SKIP-UNTIL` deltas and merges them back into a full view
+  (`ClientSession::merge_delta`), but `server::HlsOrigin` never emits
+  `EXT-X-SKIP`, never advertises `CAN-SKIP-UNTIL`, and never renders
+  `EXT-X-RENDITION-REPORT`. The two halves of this crate cannot exercise
+  Delta Updates against each other; a client pointed at `HlsOrigin` always
+  gets a full playlist.
 
 ```toml
 [dependencies]
-hls-runtime = "0.1"
+hls-runtime = "0.5"
 ```
 
 ## License

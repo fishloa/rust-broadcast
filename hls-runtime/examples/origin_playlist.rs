@@ -139,14 +139,19 @@ fn main() {
         &origin,
         HlsRequest::Playlist {
             track_id: DEFAULT_TRACK_ID,
+            // Segment 2 is the in-progress one, so msn=3 is the next segment
+            // that has not closed. Keep this within
+            // `ABUSE_MSN_FUTURE_BOUND` (live edge + 2) — a larger value is
+            // rejected outright as abuse and never reaches the Await path
+            // this block is demonstrating.
             query: BlockingQuery {
-                hls_msn: Some(5),
+                hls_msn: Some(3),
                 hls_part: None,
             },
         },
     );
     assert_eq!(outcome, EgressResponse::NotFound);
-    println!("resolve(Playlist, _HLS_msn=5)   -> NotFound (Await's patience already expired)");
+    println!("resolve(Playlist, _HLS_msn=3)   -> NotFound (Await's patience already expired)");
 
     // A `_HLS_msn` unreasonably far beyond the live edge is rejected outright
     // (RFC 8216bis §6.2.5.2 abuse prevention) rather than ever Await-ing.

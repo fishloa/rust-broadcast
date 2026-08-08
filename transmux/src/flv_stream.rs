@@ -41,6 +41,15 @@
 //! makes its forward-delta duration knowable (or [`finish`
 //! ](StreamingFlvDemux::finish) flushes it at end of stream).
 //!
+//! # Non-AVC/AAC tracks
+//!
+//! Mirrors [`FlvDemux`](crate::flv::FlvDemux): unlike the TS demux (which
+//! carries every other `stream_type` as an opaque `Data` track so nothing is
+//! dropped), a video tag whose `CodecID` isn't AVC, or an audio tag whose
+//! `SoundFormat` isn't AAC, is **silently skipped** here too — no track, no
+//! error (see the `CODEC_ID_AVC`/`SOUND_FORMAT_AAC` checks in the
+//! `process_video_tag`/`process_audio_tag` helpers).
+//!
 //! # Ordering assumption (encoder conformance)
 //!
 //! Annex E requires the AVC/AAC sequence-header tag (`AVCPacketType`/

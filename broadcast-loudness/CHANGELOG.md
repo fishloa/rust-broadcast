@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Removed
+- Dead public `Error::NotImplemented` variant (#941 row 4) — never
+  constructed anywhere in the crate. `Error` is `#[non_exhaustive]`, so
+  this is not a breaking change for well-formed `match` callers.
+
 ## [0.2.0] - 2026-08-07
 
 ### Changed

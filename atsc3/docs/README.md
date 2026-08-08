@@ -1,9 +1,12 @@
 # atsc3 — spec table reference (prep for issue #750)
 
-This is **prep work only** — there is no `atsc3` crate yet (no `Cargo.toml`, no `src/`). This
-`docs/` directory transcribes the ATSC 3.0 spec clauses a future `atsc3` crate implementation
-would need, per this repo's spec-grounding discipline (every wire layout must cite a spec
-section; syntax tables live as reviewable markdown before any code is written).
+The `atsc3` crate now exists (`Cargo.toml`, `src/`), but only implements the
+A/331 §6.2 LLS binary envelope and the A/331 §6.3 Service List Table (SLT) —
+see the crate's own README for what is shipped vs. planned. This `docs/`
+directory transcribes the wider ATSC 3.0 spec clauses (A/321 bootstrap,
+A/331 ROUTE/DASH and MMT) that later implementation work will need, per this
+repo's spec-grounding discipline (every wire layout must cite a spec section;
+syntax tables live as reviewable markdown before any code is written).
 
 ## Sources and provenance
 

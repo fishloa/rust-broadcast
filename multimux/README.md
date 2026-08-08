@@ -374,7 +374,10 @@ mutually exclusive — pass one or the other.
 ## v1 limits (still out of scope)
 
 - Per-viewer sessions, server-side ad insertion, manifest rewrites.
-- DVR / VOD / disk spill (the window is RAM-only and rolls forward).
+- VOD / catch-up serving over the DVR archive (disk spill and retention
+  itself landed — see [DVR recording](#dvr-recording) above — but nothing
+  yet serves a manifest/playback session against the archived periods;
+  issue #900).
 - Trick-play.
 
 Additional documented limits inherited from the underlying streaming

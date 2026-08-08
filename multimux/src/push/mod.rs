@@ -3,8 +3,8 @@
 //! ANNOUNCE/RECORD) rather than serving it over HTTP.
 //!
 //! The first push protocol in the workspace, this module introduces the push
-//! driver infrastructure the later transports (RTMP, RTSP — separate phases)
-//! build on:
+//! driver infrastructure the RTMP and RTSP transports also build on
+//! (`PushTransport` now has three implementors: SRT, RTMP, RTSP):
 //!
 //! - [`PushTransport`] — the async trait a concrete push protocol implements
 //!   (`connect`, `send`, optional `setup`, `close`).
@@ -22,9 +22,11 @@
 //! `Trunk`'s samples and muxes them outbound (`transmux::TsMux` implements the
 //! `broadcast_common::Package` trait).
 //!
-//! The supervisor/origin wiring (spawning a push task per configured route) is
-//! a later phase; this module builds and tests the driver + SRT transport
-//! standalone.
+//! The supervisor/origin wiring (spawning a push task per configured route)
+//! is live: `crate::origin::spawn_push_outputs` spawns one [`drive_push`]
+//! task per `srt_push`/`rtmp_push`/`rtsp_push` output on a route
+//! (`src/origin/mod.rs`), and `crate::origin::admin` starts/stops those tasks
+//! as routes are added/removed at runtime.
 
 mod rtmp;
 mod rtsp;
@@ -230,8 +232,11 @@ pub async fn drive_push<T: PushTransport>(
     let mut engine = ReconnectEngine::new(reconnect);
     let mut cursor = trunk.subscribe();
     // `Trunk` samples are already `transmux::Sample`s; the track set we mux
-    // against comes straight from the trunk, so `_format` currently selects
-    // the container (only TS is implemented; FLV is a later phase).
+    // against comes straight from the trunk. `_format` is unused here — it
+    // only ever selects TS (the only implemented `PushFormat`); `Mp4`/`Mkv`
+    // are rejected at config-validate time (`crate::config::Route::
+    // validate_standalone`), so by the time a push task runs, `_format` is
+    // guaranteed to be `Ts`.
     let _ = _format;
 
     loop {

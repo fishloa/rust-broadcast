@@ -7,6 +7,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.23.1] - 2026-08-08
+
+### Added
+- `MkvMux` — a Matroska (MKV) container muxer, the exact inverse of
+  `WebmDemux`: EBML header + `Segment` (`SeekHead`/`Info`/`Tracks`/`Cluster`s
+  of `SimpleBlock`s/`Cues`), sharing `WebmDemux`'s CodecID ↔ `CodecConfig`
+  mapping (`V_MPEG4/ISO/AVC`, `V_MPEGH/ISO/HEVC`, `V_VP9`, `V_VP8`, `V_AV1`,
+  `A_AAC`, `A_OPUS`, `A_VORBIS`, `A_AC3`, `A_EAC3`) plus the ISOBMFF-family
+  codecs a DVR recording carries, so `{WebM/Matroska} → IR → {Matroska}`
+  round-trips (issue #915). Previously shipped at `HEAD` with no version
+  bump, an empty changelog entry, and no README coverage-table row — all
+  three fixed here.
+
+### Fixed
+- Documentation-only corrections: several places where module/README docs
+  overclaimed what the code does.
+  - The crate root's and README's "every `{input} → {output}` combination
+    composes" claim did not disclose that WebM's VP8/Vorbis tracks have no
+    ISOBMFF sample entry in this crate and so cannot be muxed into
+    fMP4/CMAF/progressive-MP4/DASH/LL-DASH/CMAF-HLS/LL-HLS/Smooth — only
+    `WebM → WebM`/MKV round-trips them. Now stated explicitly in both docs;
+    the README codec table marks VP8/Vorbis 🟡 (new legend entry) instead
+    of a bare ✅.
+  - Smooth Streaming output (`SmoothPackager`) rejects every codec but
+    H.264 video + AAC-LC audio, but this restriction was undisclosed
+    everywhere Smooth was presented as a supported output; now called out
+    in the crate root and README.
+  - The README's TS-demux "nothing dropped" guarantee (opaque `Data` track
+    fallback for unrecognised `stream_type`s) was stated without
+    qualification; it does not extend to the FLV demux, which silently
+    skips non-AVC video and non-AAC audio tags (no track, no error, no
+    other signal). Now called out in the README and in the `src/flv.rs`/
+    `src/flv_stream.rs` module docs.
+  - `WebmDemux`'s lacing limitation (a laced block is a hard error, not
+    silently skipped) was documented only in that module's own doc
+    comment; now also surfaced in the crate root and README.
+
 ## [0.23.0] - 2026-08-05
 
 ### Added

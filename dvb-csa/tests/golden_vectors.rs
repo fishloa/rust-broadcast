@@ -52,6 +52,90 @@ fn load_vectors(path: &str) -> Vec<Vector> {
     vectors
 }
 
+/// The same libdvbcsa vectors, driven through the bitsliced batch path.
+///
+/// The bitsliced path must answer to the **external oracle**, not merely agree
+/// with our own scalar code — a shared misreading of the cipher would satisfy
+/// the differential test and fail here.
+///
+/// Each vector is placed in a different lane of a full batch whose other lanes
+/// are unrelated decoy payloads of assorted lengths, so the test also fails if
+/// a neighbouring lane can perturb the answer.
+#[cfg(feature = "bitsliced")]
+mod bitsliced {
+    use super::{Vector, load_vectors};
+    use dvb_csa::ControlWord;
+    use dvb_csa::bitsliced::{LANES, descramble_batch, scramble_batch};
+
+    /// Build a full batch of decoys with `v` planted at `lane`.
+    fn planted(v: &[u8], lane: usize, salt: u8) -> Vec<Vec<u8>> {
+        let lengths = [0usize, 7, 8, 13, 16, 100, 183, 184];
+        let mut batch: Vec<Vec<u8>> = (0..LANES)
+            .map(|i| {
+                let len = lengths[(i + salt as usize) % lengths.len()];
+                (0..len).map(|j| (j as u8) ^ salt ^ (i as u8)).collect()
+            })
+            .collect();
+        batch[lane] = v.to_vec();
+        batch
+    }
+
+    fn run(
+        batch_fn: fn(&ControlWord, &mut [&mut [u8]]),
+        vectors: &[Vector],
+        input: fn(&Vector) -> &Vec<u8>,
+        expected: fn(&Vector) -> &Vec<u8>,
+        what: &str,
+    ) {
+        assert!(!vectors.is_empty(), "no vectors loaded");
+        for (i, v) in vectors.iter().enumerate() {
+            let lane = (i * 7) % LANES;
+            let mut batch = planted(input(v), lane, i as u8);
+            let mut refs: Vec<&mut [u8]> = batch.iter_mut().map(|b| b.as_mut_slice()).collect();
+            batch_fn(&ControlWord::from_bytes(v.cw), &mut refs);
+            assert_eq!(
+                &batch[lane],
+                expected(v),
+                "Vector {} bitsliced {what} mismatch at lane {lane}:\n  CW: {:02x?}",
+                i + 1,
+                v.cw,
+            );
+        }
+    }
+
+    #[test]
+    fn golden_vectors_scramble_batch() {
+        let path = format!(
+            "{}/tests/fixtures/libdvbcsa-vectors.hex",
+            env!("CARGO_MANIFEST_DIR")
+        );
+        let vectors = load_vectors(&path);
+        run(
+            scramble_batch,
+            &vectors,
+            |v| &v.plain,
+            |v| &v.scrambled,
+            "scramble",
+        );
+    }
+
+    #[test]
+    fn golden_vectors_descramble_batch() {
+        let path = format!(
+            "{}/tests/fixtures/libdvbcsa-vectors.hex",
+            env!("CARGO_MANIFEST_DIR")
+        );
+        let vectors = load_vectors(&path);
+        run(
+            descramble_batch,
+            &vectors,
+            |v| &v.scrambled,
+            |v| &v.plain,
+            "descramble",
+        );
+    }
+}
+
 #[test]
 fn golden_vectors_scramble() {
     let manifest_dir = env!("CARGO_MANIFEST_DIR");

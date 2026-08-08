@@ -7,6 +7,15 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+- Doc accuracy (#941 rows 7-8): README install snippet corrected from
+  `"0.1"` to `"0.5"` (the crate is 0.5.0). README now states explicitly
+  that `server::HlsOrigin` does not emit `EXT-X-SKIP`/`CAN-SKIP-UNTIL`/
+  `EXT-X-RENDITION-REPORT`, so the bundled client's Playlist Delta Update
+  support (`ClientSession::merge_delta`) cannot be exercised against the
+  bundled server. No behaviour change — the bundled server has never
+  implemented server-side delta updates.
+
 ## [0.5.0] - 2026-08-05
 
 ### Changed

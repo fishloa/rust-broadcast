@@ -2,6 +2,15 @@
 
 All notable changes to this crate. Format: [Keep a Changelog](https://keepachangelog.com/).
 
+## [Unreleased]
+
+### Fixed
+- Doc accuracy (#941 row 1): the crate-root doc comment claimed SCTE-35 is
+  translated "to and from" both `EXT-X-DATERANGE` and `emsg`. Only the
+  `emsg` conversion is bidirectional; `EXT-X-DATERANGE` conversion is
+  one-way (`scte35_to_daterange` only) — the reverse edge is out of scope.
+  No behaviour change; no data loss either way (raw payloads preserved).
+
 ## [0.4.2] - 2026-07-30
 
 ### Added

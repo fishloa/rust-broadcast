@@ -8,6 +8,13 @@
 //! (Annex E §E.4.3.2 / §E.4.2.2) — reusing the existing
 //! [`CodecConfig::Avc`] / [`CodecConfig::Aac`]; no new codec variant.
 //!
+//! **Unlike the TS demux** (which carries every other `stream_type` as an
+//! opaque [`CodecConfig::Data`] track so nothing is dropped), a video tag
+//! whose `CodecID` isn't AVC, or an audio tag whose `SoundFormat` isn't AAC,
+//! is **silently skipped** here — no track, no error, no other signal that
+//! data was discarded (see the `continue` sites in
+//! [`FlvDemux::unpackage`](Unpackage::unpackage)).
+//!
 //! # Layout (Adobe FLV v10.1 Annex E)
 //!
 //! - **Header** (§E.2, 9 bytes) + first `PreviousTagSize0` (4 bytes, = 0):

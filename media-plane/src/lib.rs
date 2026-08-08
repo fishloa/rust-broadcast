@@ -14,7 +14,7 @@
 //!                                                                   │ segment log           │
 //!                                                                   │ EVENT log (90 kHz)    │
 //!                                                                   └───────────────────────┘
-//!                          subscribe() ─► SampleCursor  ─► PushEgress    (WHEP, RTMP-out, SRT-out)
+//!                          subscribe() ─► SampleCursor  ─► PushEgress    (defined shape; no in-tree impl)
 //!                          subscribe() ─► SegmentCursor ─► SegmentEgress (DVR, MABR, ROUTE, Smooth)
 //!                          resolve()   ─────────────────► ServedEgress   (LL-HLS, DASH, catch-up)
 //! ```
@@ -26,14 +26,22 @@
 //! ([`broadcast_common::Stage`]) and clock/backpressure types
 //! ([`broadcast_common::Timestamp`], [`broadcast_common::Demand`]).
 //!
-//! This crate is now functionally complete end to end (plan steps 3a
-//! through 3e): the byte layer, the whole [`Trunk`] (samples, segments, the
-//! 90 kHz event log, live parts, reader wake), [`ingress`] (`Dialer`/
-//! `Listener`/`IngestSession`/[`IngestDriver`]), [`egress`] ([`PushEgress`]/
-//! [`SegmentEgress`]/[`ServedEgress`]), and [`retention`] (hot/cold tiering
-//! over a caller-supplied [`SegmentSink`]). Step 3f added the acceptance
-//! furniture this doc describes (fuzz targets, examples, the release lane)
-//! without changing any of that behaviour.
+//! The byte layer, the whole [`Trunk`] (samples, segments, the 90 kHz event
+//! log, live parts, reader wake), [`ingress`] (`Dialer`/`Listener`/
+//! `IngestSession`/[`IngestDriver`]), and [`retention`] (hot/cold tiering over
+//! a caller-supplied [`SegmentSink`]) are all exercised end to end by real
+//! callers. Of the three egress shapes: [`ServedEgress`] and [`SegmentEgress`]
+//! each have real production implementors — `hls-runtime`'s `HlsOrigin`
+//! (`ServedEgress`) and multimux's `DashOrigin`/`LlDashOrigin`/
+//! `SmoothManifestOrigin`/`SmoothFragmentOrigin`/`DvrRecorder`
+//! (`ServedEgress`/`SegmentEgress`). [`PushEgress`] is a defined trait shape
+//! with **no in-tree production implementor** — its only impls
+//! (`RecordingPushEgress`, `WhepLikePushEgress`) live in this module's own
+//! `#[cfg(test)]` block. multimux's real push path (SRT/RTMP/RTSP relay,
+//! issue #744) does not use this trait at all; it drives its own
+//! `multimux::push::PushTransport` directly off a `Trunk`'s sample cursor.
+//! Step 3f added the acceptance furniture this doc describes (fuzz targets,
+//! examples, the release lane) without changing any of that behaviour.
 //!
 //! # `no_std` note — the byte layer only, not the whole crate
 //!

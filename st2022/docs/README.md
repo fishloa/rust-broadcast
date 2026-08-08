@@ -1,9 +1,11 @@
 # st2022 — spec prep (issue #752)
 
-Prep-only docs for a future SMPTE ST 2022-6/-7 crate (SDI-over-IP transport +
-seamless protection switching). **No Rust source or `Cargo.toml` exists yet**
-— this directory is the spec-grounding step that has to exist before
-implementation is delegated, per the project's "Spec grounding" convention
+Spec-grounding docs for the SMPTE ST 2022-6/-7 family (SDI-over-IP transport
++ seamless protection switching). The `st2022` crate now exists and
+implements the ST 2022-6 HBRMT payload header parser; it does **not**
+implement ST 2022-7 seamless protection switching — see the crate's own
+README for what is shipped vs. planned. This directory remains the
+spec-grounding record for both, per the project's "Spec grounding" convention
 (root `CLAUDE.md`).
 
 ## Sources

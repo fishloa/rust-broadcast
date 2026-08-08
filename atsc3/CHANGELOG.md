@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Doc accuracy (#940): `Cargo.toml` `description`/`keywords`, the crate-root
+  doc comment, and the README no longer claim A/321 bootstrap, A/331
+  ROUTE/DASH, or MMT support — only the A/331 §6.2 LLS envelope and §6.3 SLT
+  are implemented. Aspirational scope moved to a README "Planned" section.
+
 ## [0.1.0] — 2026-08-08
 
 Initial release.

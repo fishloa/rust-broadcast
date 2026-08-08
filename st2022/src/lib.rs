@@ -1,12 +1,15 @@
-//! SMPTE ST 2022-6:2012 / ST 2022-7:2019 — SDI-over-IP transport
+//! SMPTE ST 2022-6:2012 — SDI-over-IP transport (HBRMT)
 //!
 //! ST 2022-6 defines the **High Bit Rate Media Transport (HBRMT)** RTP payload
 //! format for carrying uncompressed SDI signals (SD/HD/3G) over IP networks.
 //! The entire serial digital interface payload — video, embedded audio, VANC,
 //! HANC — is encapsulated as a single RTP stream.
 //!
-//! ST 2022-7 adds **seamless protection switching** across two redundant network
-//! paths, allowing hitless failover with no visible glitch.
+//! ST 2022-7 **seamless protection switching** (hitless failover across two
+//! redundant network paths) is **not** implemented by this crate — the
+//! hitless merge itself lives in `media-plane::byte_merge`, which this crate
+//! does not depend on. This crate only parses the `VSID` field that a
+//! ST 2022-7 merge needs (§6.4).
 //!
 //! # Wire structures
 //!

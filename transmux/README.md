@@ -1,7 +1,10 @@
 # transmux — any-to-any media container muxing hub
 
 Demux any supported container into one neutral in-memory IR (`Media`/`Track`) and
-mux from it into any supported container — so every `{input} → {output}` composes.
+mux from it into any supported container — so every `{input} → {output}` composes,
+with one documented exception: WebM's VP8/Vorbis tracks have no ISOBMFF sample
+entry in this crate, so they don't participate in the fMP4/CMAF mux path (see
+the codec table below) — only `WebM → WebM`/MKV round-trips them.
 Built to spec (ISO/IEC 14496-12, 13818-1, 23009-1; RFC 8216/3550; [MS-SSTR]).
 No transcode, no codec bitstream en/decode. `no_std` + `alloc`.
 
@@ -13,7 +16,7 @@ The spokes are the `broadcast_common` inverse-pair traits **`Unpackage`** (conta
 | MPEG-2 TS (`TsDemux`, or streaming `StreamingTsDemux`) | CMAF/fMP4 (`CmafMux`) · progressive MP4 (`ProgressiveMux`) |
 | fMP4/CMAF (`Fmp4Demux`) · progressive MP4 (`ProgressiveDemux`) | MPEG-2 TS (`TsMux`) |
 | MPEG Program Stream (`PsDemux`) | CMAF-HLS (`HlsPackager`) · TS-HLS (`TsHlsPackager`, batch or streaming `StreamingTsHlsSegmenter`) |
-| WebM/Matroska (`WebmDemux`) | DASH MPD (`DashPackager`) · LL-DASH (`LlDashPackager`) · Smooth (`SmoothPackager`) |
+| WebM/Matroska (`WebmDemux`; laced blocks are a hard error, not silently skipped — real ffmpeg/mkvmerge output has no lacing) | DASH MPD (`DashPackager`) · LL-DASH (`LlDashPackager`) · Smooth (`SmoothPackager`; H.264 + AAC-LC only, every other codec rejected) · Matroska (`MkvMux`) |
 | RTMP chunk stream (`RtmpDemux`) | RTMP chunk stream (`RtmpMux`) |
 
 Plus transforms — resegment/trim/track-select (`Repackage`), streaming CMAF
@@ -81,8 +84,8 @@ round-trips through the IR.
 | Opus / FLAC / VP9 | `Opus`/`fLaC`/`vp09` | `dOps`/`dfLa`/`vpcC` | — | ✅ |
 | DTS | `dtsc`/`dtsh`/`dtsl`/`dtse` | `ddts` + core-substream frame-header parse (TS) | `dtsc` | ✅ |
 | **H.266 / VVC** | `vvc1`/`vvi1` | `vvcC` + **SPS/profile_tier_level decode** | `vvc1.…` | ✅ |
-| **VP8** | (WebM `V_VP8`) | keyframe-header dims (RFC 6386) | — | ✅ |
-| **Vorbis** | (WebM `A_VORBIS`) | `CodecPrivate` id-header decode | — | ✅ |
+| **VP8** | (WebM `V_VP8`) | keyframe-header dims (RFC 6386) | — | 🟡 |
+| **Vorbis** | (WebM `A_VORBIS`) | `CodecPrivate` id-header decode | — | 🟡 |
 | **MPEG-2 video (H.262)** | `mp4v` / TS 0x02 | `esds` + sequence-header dims | `mp4v.61` | ✅ |
 | **MPEG-1/2 audio (MP1/2/3)** | `mp4a` / TS 0x03/0x04 | `esds` + frame-header decode | `mp4a.6B/69` | ✅ |
 
@@ -112,14 +115,14 @@ round-trips through the IR.
 
 | Spoke | Type | API | Status |
 |---|---|---|---|
-| TS demux | `Unpackage` | `TsDemux` (PAT→PMT, PES, in-band config: H.264 `avcC` · H.265 `hvcC` · MPEG-2 video `esds` · AAC/MPEG audio `esds` · AC-3/E-AC-3 · DTS core `ddts`); every other `stream_type` carried as an opaque `Data` track (PES or reassembled sections) — nothing dropped. `is_sync` marks IDR **and** open-GOP RAPs (recovery-point SEI / SPS-led I-frame) so `Segmenter` anchors broadcast H.264. Every track carries `TrackSpec::source_pid` + `es_info_descriptors` (verbatim PMT ES_info) for player track-selection/labeling | ✅ |
+| TS demux | `Unpackage` | `TsDemux` (PAT→PMT, PES, in-band config: H.264 `avcC` · H.265 `hvcC` · MPEG-2 video `esds` · AAC/MPEG audio `esds` · AC-3/E-AC-3 · DTS core `ddts`); every other `stream_type` carried as an opaque `Data` track (PES or reassembled sections) — nothing dropped. This "nothing dropped" guarantee is **TS-specific**: it does not extend to the FLV demux below, which silently skips non-AVC video and non-AAC audio. `is_sync` marks IDR **and** open-GOP RAPs (recovery-point SEI / SPS-led I-frame) so `Segmenter` anchors broadcast H.264. Every track carries `TrackSpec::source_pid` + `es_info_descriptors` (verbatim PMT ES_info) for player track-selection/labeling | ✅ |
 | TS demux (streaming) | `feed`/`poll_event`/`finish` | `StreamingTsDemux` (event-driven incremental core; `TsDemux` is a batch wrapper over it) | ✅ |
 | fMP4 demux | `Unpackage` | `Fmp4Demux` (moov/moof → IR, all codecs) | ✅ |
 | Progressive MP4 demux | `Unpackage` | `ProgressiveDemux` (non-fragmented `moov` sample tables: `stts`/`ctts`/`stss`/`stsz`/`stsc`+`stco`/`co64` → IR; `sidx` v0/v1) | ✅ |
 | MPEG-PS demux | `Unpackage` | `PsDemux` | ✅ |
-| WebM demux | `Unpackage` | `WebmDemux` (EBML) | ✅ |
-| CMAF / progressive / TS mux | `Package` | `CmafMux` · `ProgressiveMux` · `TsMux` | ✅ |
-| DASH / LL-DASH / Smooth | `Package` | `DashPackager` (static + dynamic/live MPD; `$Number$` or `$Time$`/SegmentTimeline addressing; Role/`@lang`/InbandEventStream; auto `ContentProtection` from `Track::encryption` + caller-supplied per-DRM-system `cenc:pssh`) · `LlDashPackager` · `SmoothPackager` | ✅ |
+| WebM demux | `Unpackage` | `WebmDemux` (EBML). Lacing is not supported — a laced block is a hard error, not silently skipped (real ffmpeg/mkvmerge output has no lacing) | ✅ |
+| CMAF / progressive / TS / MKV mux | `Package` | `CmafMux` · `ProgressiveMux` · `TsMux` · `MkvMux` (the exact inverse of `WebmDemux`, same CodecID mapping) | ✅ |
+| DASH / LL-DASH / Smooth | `Package` | `DashPackager` (static + dynamic/live MPD; `$Number$` or `$Time$`/SegmentTimeline addressing; Role/`@lang`/InbandEventStream; auto `ContentProtection` from `Track::encryption` + caller-supplied per-DRM-system `cenc:pssh`) · `LlDashPackager` · `SmoothPackager` (H.264 video + AAC-LC audio only — every other codec is rejected) | ✅ |
 | TS-HLS | `Package` | `TsHlsPackager` (batch); `StreamingTsHlsSegmenter` (live: `push`→`TsSegment`, rolling media playlist with sliding window + advancing `#EXT-X-MEDIA-SEQUENCE`) | ✅ |
 | Repackage (resegment/trim/select) | — | `Repackage` | ✅ |
 | IR timeline conditioning (rebase / offset / gap) | — | `rebase_to_zero` · `apply_offset` · `insert_discontinuity_gap` (over `Track::start_decode_time`; 33-bit MPEG-2/32-bit RTP wrap unroll happens once at the demux edge, not as a caller transform) | ✅ |
@@ -134,10 +137,14 @@ round-trips through the IR.
 | KLV metadata (SMPTE ST 336 / MISB ST 0601) | — | `KlvItem` · `UasLocalSet` (BER length + BER-OID tags, tag 2 precision timestamp, tag 1 CRC-16/CCITT checksum) | ✅ |
 | KLV-over-RTP | — | `packetise_klv` / `depacketise_klv` (RFC 6597 `smpte336m`, timestamp-shared fragmentation, marker on last) | ✅ |
 | RTMP transport (carries FLV A/V) | `Unpackage`/`Package` | `RtmpDemux` / `RtmpMux` (chunk stream, AMF0, → FLV spoke) | ✅ |
-| FLV demux/mux | `Unpackage`/`Package` | `FlvDemux` / `FlvMux` (H.264 + AAC, Adobe FLV v10.1 Annex E) | ✅ |
+| FLV demux/mux | `Unpackage`/`Package` | `FlvDemux` / `FlvMux` (H.264 + AAC, Adobe FLV v10.1 Annex E). `FlvDemux` **silently skips** non-AVC video and non-AAC audio tags — no track, no error (unlike the TS demux's "nothing dropped" opaque-`Data` fallback above) | ✅ |
 | I-frame trick-play track | — | `derive_iframe_track` / `append_iframe_track` (sync-sample-only, timeline-conserving) | ✅ |
 
-✅ = implemented + round-trip-tested · ⬜ = planned (issue linked)
+✅ = implemented + round-trip-tested · ⬜ = planned (issue linked) ·
+🟡 = implemented + round-trip-tested for `{WebM} → IR → {WebM}`/MKV only — no
+ISOBMFF sample entry in this crate, so it does **not** participate in the
+fMP4/CMAF/progressive-MP4/DASH/LL-DASH/CMAF-HLS/LL-HLS/Smooth mux path
+(fails with `Error::UnsupportedCodec`)
 
 ## Quick start
 

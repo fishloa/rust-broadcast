@@ -52,17 +52,15 @@ fn extract_bbframes(data: &[u8], pid: u16) -> Vec<Vec<u8>> {
 }
 
 fn main() {
+    // Fixtures live in the workspace-shared `fixtures/` tree, not under the
+    // crate. A committed fixture that cannot be read is a bug, not a reason
+    // to skip — so a missing/unreadable fixture is a hard failure.
     let path = concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/tests/fixtures/tnt-5w-12732v-bbframe.ts"
+        "/../fixtures/dvb-bbframe/tnt-5w-12732v-bbframe.ts"
     );
-    let data = match std::fs::read(path) {
-        Ok(b) => b,
-        Err(e) => {
-            eprintln!("fixture not available ({e}); nothing to do");
-            return;
-        }
-    };
+    let data = std::fs::read(path)
+        .unwrap_or_else(|e| panic!("committed fixture {path} could not be read: {e}"));
 
     let frames = extract_bbframes(&data, BBFRAME_PID);
     println!(

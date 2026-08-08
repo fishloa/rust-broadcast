@@ -269,16 +269,11 @@ impl AuthSpec {
     /// Converts to the scheme-agnostic [`Credentials`] the RTSP source /
     /// HTTP sources actually authenticate with.
     ///
-    /// `#[allow(dead_code)]`: this crate's only real call site was the
-    /// per-route ingest wiring that built an `RtspRoute`/`TsHttpRoute`/etc.
-    /// from a configured `Route` — currently a `tracing::error!` stub for
-    /// every input kind but `rtmp` (`crate::origin::serve_with_registry`,
-    /// step 5a rounds 2/3), so nothing calls this today. Kept (with its own
-    /// test coverage below) rather than deleted: the conversion is exactly
-    /// what that wiring will need once it lands, and deleting tested,
-    /// still-correct conversion logic to silence a lint would be removing
-    /// coverage, not fixing a defect.
-    #[allow(dead_code)]
+    /// Called from the per-route ingest wiring in
+    /// `crate::origin::serve_with_registry` for every input kind that carries
+    /// an `AuthSpec` (RTSP, TS-HTTP, HLS/DASH/Smooth pull) — see the
+    /// `with_auth(auth.as_ref().map(AuthSpec::to_credentials))` call sites in
+    /// `src/origin/mod.rs`.
     pub(crate) fn to_credentials(&self) -> Credentials {
         match self {
             AuthSpec::Password { username, password } => {
@@ -290,15 +285,22 @@ impl AuthSpec {
 }
 
 /// Container format for a push output.
+/// Only [`PushFormat::Ts`] is implemented — `crate::push::drive_push` builds
+/// a `transmux::TsMux` unconditionally. `Mp4`/`Mkv` are reserved config
+/// surface for a later phase; selecting either is rejected at config-validate
+/// time (`Route::validate_standalone`, issue #744/M1c) rather than silently
+/// downgraded to TS.
 #[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PushFormat {
-    /// MPEG-2 Transport Stream.
+    /// MPEG-2 Transport Stream. The only variant currently implemented.
     Ts,
-    /// Fragmented MP4 / CMAF.
+    /// Fragmented MP4 / CMAF. Not yet implemented — rejected at config
+    /// validation time.
     Mp4,
-    /// Matroska / WebM.
+    /// Matroska / WebM. Not yet implemented — rejected at config validation
+    /// time.
     Mkv,
 }
 
@@ -1148,6 +1150,32 @@ impl Route {
                 ),
             });
         }
+        // Issue #744/M1c: `PushFormat::Mp4`/`PushFormat::Mkv` are declared
+        // config surface with no muxer behind them — `crate::push::drive_push`
+        // only ever builds a `transmux::TsMux` and silently ignores the
+        // configured format (`let _ = _format;`). Selecting either downgrades
+        // an operator's "mp4"/"mkv" request to TS with no signal that
+        // happened, so reject them here instead of at push-task spawn time,
+        // where the mismatch would otherwise be invisible until packets hit
+        // the wire in the wrong container.
+        for kind in &self.outputs {
+            let format = match kind {
+                OutputKind::SrtPush { format, .. }
+                | OutputKind::RtmpPush { format, .. }
+                | OutputKind::RtspPush { format, .. } => *format,
+                _ => None,
+            };
+            if let Some(bad @ (PushFormat::Mp4 | PushFormat::Mkv)) = format {
+                return Err(MultimuxError::ConfigInvalid {
+                    field: "routes.outputs[].format",
+                    reason: format!(
+                        "push output format {:?} is not implemented — only \"ts\" is \
+                         currently supported for push outputs (srt_push/rtmp_push/rtsp_push)",
+                        bad.name()
+                    ),
+                });
+            }
+        }
         self.input.validate()
     }
 
@@ -1403,6 +1431,73 @@ mod tests {
             other => panic!("expected InputSpec::Rtsp, got {other:?}"),
         }
         cfg.validate().unwrap();
+    }
+
+    // --- push-output format validation (issue #744) ---
+
+    /// `PushFormat::Mp4`/`Mkv` are config surface with no muxer behind them —
+    /// `push::drive_push` only ever builds a `TsMux`. Selecting either used to
+    /// silently downgrade to TS, so validation must reject them outright.
+    ///
+    /// Biting test: remove the check in `validate_standalone` and this fails,
+    /// because the config is otherwise entirely valid.
+    #[test]
+    fn push_output_rejects_unimplemented_formats() {
+        for bad in ["mp4", "mkv"] {
+            for push in ["srt_push", "rtmp_push", "rtsp_push"] {
+                let json = format!(
+                    r#"{{
+                        "routes": [
+                            {{
+                              "name": "cam1",
+                              "input": {{ "type": "rtsp", "url": "rtsp://host/s1" }},
+                              "outputs": [
+                                {{ "{push}": {{ "url": "srt://host:9000", "format": "{bad}" }} }}
+                              ]
+                            }}
+                        ]
+                    }}"#
+                );
+                let cfg: Config = serde_json::from_str(&json).unwrap();
+                let err = cfg
+                    .validate()
+                    .expect_err("mp4/mkv push format must be rejected");
+                match err {
+                    MultimuxError::ConfigInvalid { field, reason } => {
+                        assert_eq!(field, "routes.outputs[].format");
+                        assert!(
+                            reason.to_lowercase().contains(bad),
+                            "reason should name the rejected format {bad}, got: {reason}"
+                        );
+                    }
+                    other => panic!("expected ConfigInvalid for {push}/{bad}, got {other:?}"),
+                }
+            }
+        }
+    }
+
+    /// The supported format, and an omitted format, both still validate — the
+    /// rejection above must not have broken the working path.
+    #[test]
+    fn push_output_accepts_ts_and_default_format() {
+        for fmt in [r#", "format": "ts""#, ""] {
+            let json = format!(
+                r#"{{
+                    "routes": [
+                        {{
+                          "name": "cam1",
+                          "input": {{ "type": "rtsp", "url": "rtsp://host/s1" }},
+                          "outputs": [
+                            {{ "srt_push": {{ "url": "srt://host:9000"{fmt} }} }}
+                          ]
+                        }}
+                    ]
+                }}"#
+            );
+            let cfg: Config = serde_json::from_str(&json).unwrap();
+            cfg.validate()
+                .unwrap_or_else(|e| panic!("ts/default push format must validate, got: {e:?}"));
+        }
     }
 
     // --- issue #663 P5: HTTP-layer resource limits (audit-concurrency #3) ---

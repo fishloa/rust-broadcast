@@ -1,10 +1,10 @@
 [package]
 name         = "dvb-csa"
-version      = "0.1.0"
+version      = "0.1.2"
 edition      = "2024"
 rust-version = "1.86"
 license      = "MIT OR Apache-2.0"
-description  = "DVB Common Scrambling Algorithm (CSA2) — pure-Rust, oracle-validated, with a bitsliced fast path."
+description  = "DVB Common Scrambling Algorithm (CSA2) — pure-Rust, with an optional bitsliced 64-payload batch fast path, validated against libdvbcsa known-answer vectors."
 repository   = "https://github.com/fishloa/rust-broadcast"
 keywords     = ["dvb", "csa", "scrambling", "conditional-access", "mpeg-ts"]
 categories   = ["cryptography", "multimedia", "parser-implementations"]
@@ -23,8 +23,10 @@ criterion = { version = "0.5", features = ["html_reports"] }
 rand      = "0.9"
 
 [features]
-default = ["std"]
-std     = ["broadcast-common/std", "thiserror/std"]
+default   = ["std"]
+std       = ["broadcast-common/std", "thiserror/std"]
+# Bitsliced batch fast path (`dvb_csa::bitsliced`). Additive: off by default.
+bitsliced = []
 
 [[bench]]
 name    = "throughput"

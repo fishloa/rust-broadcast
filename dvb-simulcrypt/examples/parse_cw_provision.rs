@@ -14,17 +14,15 @@ use dvb_simulcrypt::{
 };
 
 fn main() {
+    // Fixtures live in the workspace-shared `fixtures/` tree, not under the
+    // crate. A committed fixture that cannot be read is a bug, not a reason
+    // to skip — so a missing/unreadable fixture is a hard failure.
     let path = concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/tests/fixtures/cw_provision.bin"
+        "/../fixtures/dvb-simulcrypt/cw_provision.bin"
     );
-    let bytes = match fs::read(path) {
-        Ok(d) => d,
-        Err(e) => {
-            eprintln!("fixture not available ({e}); nothing to do");
-            return;
-        }
-    };
+    let bytes = fs::read(path)
+        .unwrap_or_else(|e| panic!("committed fixture {path} could not be read: {e}"));
 
     let msg = SimulcryptMessage::parse_on(Interface::EcmgScs, &bytes)
         .expect("CW_provision fixture must parse");

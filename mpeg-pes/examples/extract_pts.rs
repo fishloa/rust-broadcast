@@ -3,8 +3,8 @@
 //!
 //! Run with: `cargo run -p mpeg-pes --example extract_pts`
 //!
-//! Reads the committed `m6-single.ts` DVB fixture from the sibling `dvb-si`
-//! crate at runtime (so the example compiles even when the fixture is absent).
+//! Reads the committed `m6-single.ts` fixture from the workspace-shared
+//! `fixtures/` tree at runtime.
 
 use mpeg_pes::{PesAssembler, PesPacket};
 
@@ -27,17 +27,12 @@ fn ts_payload(p: &[u8]) -> Option<(u16, bool, &[u8])> {
 }
 
 fn main() {
-    let path = concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../dvb-si/tests/fixtures/m6-single.ts"
-    );
-    let ts = match std::fs::read(path) {
-        Ok(b) => b,
-        Err(e) => {
-            eprintln!("fixture not available ({e}); nothing to do");
-            return;
-        }
-    };
+    // Fixtures live in the workspace-shared `fixtures/` tree, not under a
+    // sibling crate. A committed fixture that cannot be read is a bug, not a
+    // reason to skip — so a missing/unreadable fixture is a hard failure.
+    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../fixtures/ts/m6-single.ts");
+    let ts = std::fs::read(path)
+        .unwrap_or_else(|e| panic!("committed fixture {path} could not be read: {e}"));
 
     let mut asm = PesAssembler::new();
     let mut pes = Vec::new();

@@ -11,17 +11,12 @@ const PKT: usize = 188;
 const INTER_PACKET_US: u64 = 40;
 
 fn main() {
-    let path = concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../dvb-si/tests/fixtures/m6-single.ts"
-    );
-    let data = match std::fs::read(path) {
-        Ok(b) => b,
-        Err(e) => {
-            eprintln!("fixture not available ({e}); nothing to do");
-            return;
-        }
-    };
+    // Fixtures live in the workspace-shared `fixtures/` tree, not under a
+    // sibling crate. A committed fixture that cannot be read is a bug, not a
+    // reason to skip — so a missing/unreadable fixture is a hard failure.
+    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../fixtures/ts/m6-single.ts");
+    let data = std::fs::read(path)
+        .unwrap_or_else(|e| panic!("committed fixture {path} could not be read: {e}"));
 
     let mut monitor = ConformanceMonitor::new();
     let mut events: Vec<ConformanceEvent> = Vec::new();

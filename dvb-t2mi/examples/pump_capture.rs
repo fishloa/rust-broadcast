@@ -12,17 +12,15 @@ const T2MI_PID: u16 = 0x0040;
 const PKT: usize = 188;
 
 fn main() {
+    // Fixtures live in the workspace-shared `fixtures/` tree, not under the
+    // crate. A committed fixture that cannot be read is a bug, not a reason
+    // to skip — so a missing/unreadable fixture is a hard failure.
     let path = concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/tests/fixtures/colombia-capital-t2mi.ts"
+        "/../fixtures/dvb-t2mi/colombia-capital-t2mi.ts"
     );
-    let data = match std::fs::read(path) {
-        Ok(b) => b,
-        Err(e) => {
-            eprintln!("fixture not available ({e}); nothing to do");
-            return;
-        }
-    };
+    let data = std::fs::read(path)
+        .unwrap_or_else(|e| panic!("committed fixture {path} could not be read: {e}"));
 
     let mut pump = T2miPump::new(T2MI_PID);
     let (mut bbframes, mut l1, mut timestamps, mut other) = (0u32, 0u32, 0u32, 0u32);

@@ -83,6 +83,13 @@ All fields from the `Bbheader` struct:
 
 `SYNCD = 0xFFFF` (no UP starts in this data field) is handled correctly.
 
+**NPD caveat**: `CarryOverExtractor`'s HEM path (`feed_hem`/`feed_hem_into`)
+does not yet implement DNP (deleted null-packet) reinsertion. Any HEM frame
+with `npd=true` produces **no output** for that frame (rather than wrong
+output) and increments `CarryOverStats::npd_unsupported` so a caller can
+detect the gap. NPD is commonly enabled on real DVB-S2 streams — check that
+counter before assuming full coverage.
+
 ### BbframePump
 
 `BbframePump` packages the whole BBHEADER-parse → mode-detect → `CarryOverExtractor`

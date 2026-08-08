@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+- Doc accuracy (#941 row 3): the crate-root doc comment and the README's
+  "Round-Trip Guarantee" table now disclose that foreign/unknown child
+  elements are silently dropped during parsing (never re-emitted). This
+  behaviour already existed and is allowed by TTML2 §7.2's extensibility
+  rule; only the disclosure was missing.
+
 ## [0.1.0] - 2026-07-30
 
 ### Added

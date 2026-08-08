@@ -38,6 +38,13 @@ jobs:
       # excludes, so dvb-stream/dvb-conformance examples are covered too.
       - name: Build examples (all features)
         run: cargo build --workspace --examples --all-features --locked
+      # Building an example only proves it compiles. Issue #947: 12 examples
+      # pointed at fixture paths that stopped existing after the fixtures
+      # migration and silently exited 0 via a "fixture not available" fallback,
+      # so they had never actually run — and one carried a stale assertion that
+      # had been failing invisibly. Every argument-free example must now RUN.
+      - name: Run examples (all features)
+        run: ./tools/run-examples.sh --all-features --locked
       # nextest enforces the per-test terminate-after timeout (.config/nextest.toml
       # [profile.ci]) so a hung/runaway test FAILS instead of blocking CI; it does
       # not run doctests, which get their own bounded lane below.
@@ -122,7 +129,7 @@ jobs:
       # `dvb-stream`.
       - name: Build each library crate for bare-metal (no_std)
         run: |
-          for c in broadcast-common dvb-bbframe scte35-splice dvb-t2mi dvb-si dvb-conformance mpeg-pes dvb-subtitle mpeg-ps scte104 cc-data st291 ule dvb-ci dvb-simulcrypt mp4-emsg dvb-vbi dvb-flute rtp-packet rtcp-packet st12-1 st337 rdd29 st377-1 mpeg-ts broadcast-hls transmux media-plane timed-metadata hls-runtime srt-runtime media-doctor ttml-subtitle; do
+          for c in broadcast-common dvb-bbframe scte35-splice dvb-t2mi dvb-si dvb-conformance mpeg-pes dvb-subtitle mpeg-ps scte104 cc-data st291 ule dvb-ci dvb-simulcrypt mp4-emsg dvb-vbi rmt-flute rtp-packet rtcp-packet st12-1 st337 rdd29 st377-1 mpeg-ts broadcast-hls transmux media-plane timed-metadata hls-runtime srt-runtime media-doctor ttml-subtitle; do
             echo "::group::$c (no_std)"
             cargo build -p "$c" --no-default-features --target thumbv7em-none-eabi --locked
             echo "::endgroup::"

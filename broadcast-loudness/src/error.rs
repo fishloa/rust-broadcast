@@ -51,13 +51,6 @@ pub enum Error {
         /// The non-finite value received.
         value: f64,
     },
-
-    /// A feature is not yet implemented.
-    #[error("{what} is not yet implemented")]
-    NotImplemented {
-        /// Description of the missing feature.
-        what: &'static str,
-    },
 }
 
 /// Result type for loudness operations.

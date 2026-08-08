@@ -1,8 +1,22 @@
 //! Multicast object-delivery wire formats: **ALC / LCT / FLUTE / NORM**.
 //!
 //! This crate parses and serializes the binary headers used to deliver files
-//! and streams over IP multicast (the building blocks beneath DVB-IPTV /
-//! DVB-MABR file delivery and IETF RMT):
+//! and streams over IP multicast. Every format here is **IETF RMT** (Reliable
+//! Multicast Transport) — RFC 5651, RFC 5775, RFC 6726, RFC 5740. No
+//! broadcast-specific standard is implemented by this crate.
+//!
+//! Several delivery systems are layered *on top* of these formats and are
+//! consumers of this crate rather than owners of it: **DVB** (DVB-IPTV and
+//! DVB-MABR / ETSI TS 103 769 file delivery), **3GPP** (MBMS/eMBMS download
+//! delivery), and **ATSC 3.0** (ROUTE, A/331 Annex A — written as a
+//! profile-and-delta on RFC 5651/5775/6726).
+//!
+//! Renamed from `dvb-flute` at 0.4.0: the old name named one consumer of an
+//! IETF standard rather than the standard itself, and read as a layering
+//! error once non-DVB consumers needed to depend on it. All `dvb-flute`
+//! versions are yanked; there is no shim.
+//!
+//! Implements:
 //!
 //! - [`LctHeader`] — the **Layered Coding Transport** header (RFC 5651 §5). The
 //!   fixed first word carries `V`/`C`/`PSI`/`S`/`O`/`H`/`A`/`B`, `HDR_LEN` and
@@ -40,7 +54,7 @@
 //! round-trip it:
 //!
 //! ```
-//! use dvb_flute::{LctHeader, LCT_VERSION};
+//! use rmt_flute::{LctHeader, LCT_VERSION};
 //!
 //! let cci = [0u8; 4]; // C = 0
 //! let tsi = [0u8; 4]; // S = 1, H = 0
@@ -67,7 +81,7 @@
 // Runnable examples, embedded so they render on docs.rs and stay in sync with
 // the actual `examples/*.rs` files (shown, not compiled).
 #![doc = "\n## Runnable examples\n"]
-#![doc = "Run with `cargo run -p dvb-flute --example <name>`.\n"]
+#![doc = "Run with `cargo run -p rmt-flute --example <name>`.\n"]
 #![doc = "\n### `build_lct`\n\n```rust,ignore"]
 #![doc = include_str!("../examples/build_lct.rs")]
 #![doc = "```\n\n### `parse_flute`\n\n```rust,ignore"]

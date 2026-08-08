@@ -8,18 +8,15 @@ use std::fs;
 use mpeg_ps::program_stream;
 
 fn main() {
-    // Resolve relative to the crate so it runs from any cwd.
+    // Fixtures live in the workspace-shared `fixtures/` tree, not under the
+    // crate. A committed fixture that cannot be read is a bug, not a reason
+    // to skip — so a missing/unreadable fixture is a hard failure.
     let path = concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/tests/fixtures/ffmpeg-mpeg2-ps.mpg"
+        "/../fixtures/mpeg-ps/ffmpeg-mpeg2-ps.mpg"
     );
-    let data = match fs::read(path) {
-        Ok(d) => d,
-        Err(e) => {
-            eprintln!("fixture not available ({e}); nothing to do");
-            return;
-        }
-    };
+    let data = fs::read(path)
+        .unwrap_or_else(|e| panic!("committed fixture {path} could not be read: {e}"));
     let (packs, trailing) = program_stream::parse_all_packs(&data).unwrap();
 
     println!("File: {path}");

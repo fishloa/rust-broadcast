@@ -1,14 +1,17 @@
-//! ATSC 3.0 signalling — A/321 bootstrap + A/331 ROUTE/DASH and MMT
+//! ATSC 3.0 (NextGen TV) Low-Level Signalling — A/331:2025-06 §6.2/§6.3
 //!
-//! Implements the signalling layer of the ATSC 3.0 (NextGen TV) broadcast
-//! system:
+//! Implements the two pieces of the ATSC 3.0 (NextGen TV) signalling stack
+//! that are shipped today:
 //!
-//! - **A/321** — System Discovery and Signalling: bootstrap signalling that
-//!   lets a receiver discover available services and their delivery parameters.
-//! - **A/331** — Signalling, Delivery, Synchronization, and Error Protection:
-//!   ROUTE/DASH delivery (LCT-based object carriage over ALC/FLUTE) and MMT
-//!   signalling (MMTP-based delivery), plus the Service List Table (SLT) and
-//!   Service Layer Signalling (SLS).
+//! - **LLS binary envelope** (A/331 §6.2) — the 4-byte common `LLS_table()`
+//!   header plus its gzip-compressed table body.
+//! - **Service List Table (SLT)** (A/331 §6.3) — XML parse of the
+//!   rapid-channel-scan bootstrap table carried inside the envelope (a
+//!   subset of fields — see [`crate::slt`] doc for exactly which).
+//!
+//! A/321 bootstrap discovery, A/331 ROUTE/DASH delivery, A/331 MMT
+//! signalling, and Service Layer Signalling (SLS) are **not** implemented —
+//! see the crate README's "Planned" section.
 
 #![cfg_attr(not(feature = "std"), no_std)]
 #![forbid(unsafe_code)]
