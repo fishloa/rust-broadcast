@@ -95,8 +95,26 @@ for tag in "$@"; do
 
     if [ "$(live_version "$crate")" != "$want" ]; then
         echo ""
-        echo "  TIMED OUT after ${TIMEOUT_SECS}s — $crate is still $(live_version "$crate")."
-        echo "  This is the #933 failure mode. Check that a workflow actually ran:"
+        # Distinguish the two very different reasons for not appearing:
+        #   (a) a workflow is sitting on the crates-io environment gate,
+        #       waiting for a human reviewer — expected, not a failure;
+        #   (b) no workflow ran at all — the #933 failure mode.
+        # Reporting (a) as (b) trains the operator to ignore the warning,
+        # which is how #933 went unnoticed in the first place.
+        state=$(gh run list --limit 1 --workflow="Release $crate" \
+                    --json status --jq '.[0].status' 2>/dev/null || echo unknown)
+        if [ "$state" = "waiting" ]; then
+            echo "  $crate $want is NOT published yet — its release workflow is"
+            echo "  WAITING on the crates-io environment approval gate."
+            echo "  That is expected: a human reviewer must approve the publish."
+            echo "    gh run list --limit 1 --workflow=\"Release $crate\" --json url"
+            echo "  Approve it, confirm the crate appears in the index, then re-run"
+            echo "  this script for the remaining tags."
+            exit 2
+        fi
+        echo "  TIMED OUT after ${TIMEOUT_SECS}s — $crate is still $(live_version "$crate"),"
+        echo "  and no workflow is awaiting approval (last run status: $state)."
+        echo "  THIS IS THE #933 FAILURE MODE — the tag was pushed and nothing ran."
         echo "    gh run list --limit 10"
         echo "  Do NOT push the remaining tags until this one is resolved."
         exit 1
