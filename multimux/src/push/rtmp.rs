@@ -93,6 +93,11 @@ impl Default for RtmpTransportConfig {
 pub struct RtmpTransport {
     stream: Option<TcpStream>,
     client: ClientSession,
+    /// Whether a track-refusal warning has already been emitted. FLV carries
+    /// only AVC video and AAC audio, so any other codec is dropped — but
+    /// dropping it *silently*, once per batch, is both a data-loss hazard and
+    /// log spam. Warn once per connection instead.
+    warned_refused_tracks: bool,
 }
 
 impl std::fmt::Debug for RtmpTransport {
@@ -145,6 +150,7 @@ impl PushTransport for RtmpTransport {
                 return Ok(Self {
                     stream: Some(stream),
                     client,
+                    warned_refused_tracks: false,
                 });
             }
             if events
@@ -185,7 +191,7 @@ impl PushTransport for RtmpTransport {
             ));
         }
 
-        let RtmpTransport { stream, client } = self;
+        let RtmpTransport { stream, client, .. } = self;
         let stream = stream
             .as_mut()
             .ok_or_else(|| RtmpPushError::Connect("not connected".into()))?;
@@ -240,14 +246,47 @@ impl PushTransport for RtmpTransport {
             .filter(|t| is_flv_codec(&t.spec.config))
             .cloned()
             .collect();
+
+        // Refusing a track the wire format cannot carry is legitimate;
+        // refusing it *silently* is not. Report it once per connection — a
+        // per-batch log would spam, and no report at all is the same
+        // data-loss hazard as `transmux`'s FLV demux dropping non-AVC/AAC
+        // tracks with no event.
+        let refused = media.tracks.len() - flv_tracks.len();
+        if refused > 0 && !self.warned_refused_tracks {
+            self.warned_refused_tracks = true;
+            let refused_track_ids: Vec<u32> = media
+                .tracks
+                .iter()
+                .filter(|t| !is_flv_codec(&t.spec.config))
+                .map(|t| t.spec.track_id)
+                .collect();
+            tracing::warn!(
+                refused,
+                carried = flv_tracks.len(),
+                ?refused_track_ids,
+                "RTMP push cannot carry these tracks — FLV carries only AVC video \
+                 and AAC audio; they are excluded from this push"
+            );
+        }
+
+        // Every track refused means this push transmits nothing, for as long
+        // as the track set stays this way. Reporting Ok(0) would present a
+        // permanently useless push as a working one. `Mux` is the right
+        // class: it drops the batch without triggering a reconnect, because
+        // reconnecting cannot fix a codec mismatch.
         if flv_tracks.is_empty() {
-            return Ok(0);
+            return Err(SendMediaError::Mux(format!(
+                "no RTMP-carriable track: FLV carries only AVC video and AAC audio, \
+                 but all {} track(s) in this program are other codecs",
+                media.tracks.len()
+            )));
         }
         let filtered = Media::new(flv_tracks, media.movie_timescale);
         let payloads = transmux::flv_frame_payloads(&filtered)
             .map_err(|e| SendMediaError::Mux(e.to_string()))?;
 
-        let RtmpTransport { stream, client } = self;
+        let RtmpTransport { stream, client, .. } = self;
         let stream = stream.as_mut().ok_or_else(|| {
             SendMediaError::Transport(Box::new(RtmpPushError::Connect("not connected".into())))
         })?;
