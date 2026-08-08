@@ -1,13 +1,20 @@
 # rtmp-runtime
 
-Sans-IO **RTMP 1.0 ingest** (publish) session engine — the server side of Adobe's
-Real-Time Messaging Protocol, for receiving a live push from an encoder or OBS.
+Sans-IO **RTMP 1.0 ingest** (publish) session engine for Adobe's Real-Time
+Messaging Protocol, covering both ends of a publish exchange:
+
+- **`server`** — the ingest server side, for receiving a live push from an
+  encoder or OBS.
+- **`client`** — the publish client side, for pushing a live stream to a
+  remote RTMP server.
 
 `rtmp-runtime` owns the RTMP wire layer and session state machine — handshake,
-chunk-stream (de)assembly, AMF0 command routing, and the publish flow — and hands
-the media off as **FLV bytes** for a container demuxer (e.g.
-[`transmux`](https://crates.io/crates/transmux)) to turn into samples. It is
-**ingest-only** (publish); egress/`play` is out of scope.
+chunk-stream (de)assembly, AMF0 command routing, and the publish flow. The
+server hands the received media off as **FLV bytes** for a container demuxer
+(e.g. [`transmux`](https://crates.io/crates/transmux)) to turn into samples;
+the client accepts already-encoded audio/video/metadata to send. Both roles
+are **publish-only**; egress/`play` (on either the client or server side) is
+out of scope.
 
 ## Design
 
@@ -55,6 +62,10 @@ per connection.
   FLV stream for `transmux`.
 - **`tokio` adapter**: `io::AsyncRtmpServer` (listener) / `RtmpConnection`
   (feature `tokio`); the sans-IO core needs no runtime.
+- **Publish client** (§7): `client::ClientSession` drives the client-side
+  handshake and auto-advances `connect` → `createStream` → `publish`, then
+  offers `send_audio`/`send_video`/`send_metadata` once publishing. Sans-IO
+  only — there is no `tokio` adapter for it yet, unlike the server side.
 
 Every wire structure implements symmetric `Parse`/`Serialize` with byte-identical
 round-trips, verified against a real ffmpeg RTMP publish capture

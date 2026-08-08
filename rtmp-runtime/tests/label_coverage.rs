@@ -54,15 +54,52 @@ fn read_rs(dir: &Path, out: &mut Vec<String>) {
 /// True if `{prefix}{name}` appears with an identifier boundary (whole name).
 fn has_impl(all: &str, prefix: &str, name: &str) -> bool {
     let needle = format!("{prefix}{name}");
-    let mut start = 0;
-    while let Some(idx) = all[start..].find(&needle) {
-        let end = start + idx + needle.len();
-        let next = all[end..].chars().next();
-        if !matches!(next, Some(c) if c.is_alphanumeric() || c == '_') {
-            return true;
+    let is_boundary =
+        |rest: &str| !matches!(rest.chars().next(), Some(c) if c.is_alphanumeric() || c == '_');
+
+    for line in all.lines() {
+        let trimmed = line.trim_start();
+
+        // The invocation must be the first non-whitespace token on its line —
+        // a commented-out `// impl_spec_display!(...)` no longer satisfies this.
+        if let Some(rest) = trimmed.strip_prefix(&needle) {
+            if is_boundary(rest) {
+                return true;
+            }
         }
-        start = end;
+
+        // `broadcast_common::impl_spec_display!(...)` is still the first token.
+        if let Some(rest) = trimmed
+            .strip_prefix("broadcast_common::")
+            .and_then(|s| s.strip_prefix(&needle))
+        {
+            if is_boundary(rest) {
+                return true;
+            }
+        }
+
+        // A bare `Display for Name` needle (the generic fallback some crates
+        // use) also counts when reached from the `impl` keyword through
+        // nothing but a module-path qualifier: `impl ::core::fmt::Display for
+        // Name`, `impl std::fmt::Display for Name`, `impl fmt::Display for
+        // Name`, `impl Display for Name`.
+        if !needle.starts_with("impl") {
+            if let Some(after_impl) = trimmed.strip_prefix("impl") {
+                if let Some(pos) = after_impl.find(&needle) {
+                    let qualifier = &after_impl[..pos];
+                    let is_path_or_space =
+                        |c: char| c.is_whitespace() || c == ':' || c.is_alphanumeric() || c == '_';
+                    if qualifier.chars().all(is_path_or_space) {
+                        let rest = &after_impl[pos + needle.len()..];
+                        if is_boundary(rest) {
+                            return true;
+                        }
+                    }
+                }
+            }
+        }
     }
+
     false
 }
 

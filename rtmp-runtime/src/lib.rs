@@ -9,12 +9,22 @@
 //!
 //! # Scope of this release
 //!
-//! This crate implements the **ingest** (publish-receiving server) side only:
-//! a broadcaster pushes a stream in via `connect`/`createStream`/`publish`,
-//! and this engine drives the handshake and session state machine and hands
-//! back typed audio/video/metadata messages. A client role (for pulling from
-//! or pushing to a remote RTMP server) and an egress (play) server role are
-//! on the roadmap but not implemented yet.
+//! This crate implements two roles, both **publish** (ingest) only:
+//!
+//! - An **ingest server** ([`server::ServerSession`]): a broadcaster pushes a
+//!   stream in via `connect`/`createStream`/`publish`; this engine drives the
+//!   handshake and session state machine and hands back typed audio/video/
+//!   metadata messages as FLV bytes.
+//! - A **publish client** ([`client::ClientSession`]): the other end of that
+//!   same exchange — it drives the client-side handshake, auto-advances
+//!   `connect` → `createStream` → `publish`, and offers
+//!   `send_audio`/`send_video`/`send_metadata` once publishing. It has no
+//!   `tokio` socket adapter of its own (unlike [`server::ServerSession`], which
+//!   gets one via feature `tokio`) — callers drive its sans-IO
+//!   `handle_data`/`start` directly over their own transport.
+//!
+//! An egress (play) role — pulling a stream, on either the client or server
+//! side — is on the roadmap but not implemented yet.
 //!
 //! # The sans-IO contract
 //!
@@ -38,12 +48,16 @@
 //!   messages (`[AMF0]`).
 //! - [`server`] — the ingest server session state machine (`connect` →
 //!   `createStream` → `publish`, §7.2).
+//! - [`client`] — the publish client session state machine, the other end of
+//!   that same exchange (issue #744).
 //! - `io` (feature `tokio`) — the async socket adapter driving the sans-IO
-//!   server session over a real `tokio::net::TcpStream`.
+//!   server session over a real `tokio::net::TcpStream`. There is no
+//!   equivalent client adapter; [`client::ClientSession`] is sans-IO only.
 //! - [`error`] — the [`RtmpError`] type.
 //!
 //! The handshake/chunk/message/amf0/server sans-IO engine and the `tokio`
-//! adapter (feature `tokio`) are all implemented (#738 Tasks 1-9).
+//! adapter (feature `tokio`) are all implemented (#738 Tasks 1-9); the
+//! publish client engine (#744) is implemented on top of the same core.
 
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]

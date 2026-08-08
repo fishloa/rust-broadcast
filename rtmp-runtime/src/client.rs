@@ -625,20 +625,124 @@ mod tests {
                 .any(|e| matches!(e, ClientEvent::Connected { .. })),
             "client should see Connected: {client_events2:?}"
         );
+        // `client_out2` alone is not a reliable auto-advance signal: the
+        // server's connect reply also carries a `SetPeerBandwidth` protocol
+        // control message, which the client acks unconditionally — so bytes
+        // come back even if `createStream` itself never fires. Check the
+        // actual state transition instead (issue #933 finding M2).
+        let _ = client_out2;
+        assert!(
+            matches!(client.state, ClientState::CreateStreamSent { .. }),
+            "client should auto-advance from Connected to CreateStreamSent: {:?}",
+            client.state
+        );
+    }
 
-        if !client_out2.is_empty() {
-            let (server_reply2, _) = server.handle_data(&client_out2).unwrap();
-            if !server_reply2.is_empty() {
-                let (client_out3, client_events3) = client.handle_data(&server_reply2).unwrap();
-                let _ = client_out3;
-                if client_events3
-                    .iter()
-                    .any(|e| matches!(e, ClientEvent::StreamCreated { .. }))
-                {
-                    // proceed
-                }
-            }
-        }
+    /// Drives the full client auto-advance —
+    /// `connect` -> `createStream` -> `publish` — end to end against a real
+    /// [`ServerSession`], and asserts every state transition actually
+    /// happens (issue #933 finding M2: the prior version of this test
+    /// buried its post-`Connected` assertions inside
+    /// `if !client_out2.is_empty() { .. }` guards, so a broken auto-advance
+    /// that emitted no bytes would make the test vacuously pass instead of
+    /// fail).
+    #[test]
+    fn client_full_publish_flow() {
+        let config = ClientConfig {
+            app: "live".to_string(),
+            stream_key: "test_key".to_string(),
+            ..ClientConfig::default()
+        };
+        let mut client = ClientSession::new(config);
+        let c0_c1 = client.start();
+
+        let mut server = ServerSession::new(
+            ServerConfig::default().with_expected_stream_key(Some("test_key".to_string())),
+        );
+
+        // Handshake.
+        let (s0_s1_s2, server_events) = server.handle_data(&c0_c1).unwrap();
+        assert!(server_events.is_empty());
+
+        // Client completes the handshake and sends C2 + connect.
+        let (client_out, client_events) = client.handle_data(&s0_s1_s2).unwrap();
+        assert!(
+            !client_out.is_empty(),
+            "client should emit C2 + connect + protocol control"
+        );
+        assert!(
+            client_events.is_empty(),
+            "no client events expected before the server replies: {client_events:?}"
+        );
+        assert_eq!(client.state, ClientState::ConnectSent { txn_id: 1.0 });
+
+        // Server completes the handshake and accepts connect.
+        let (server_reply, server_events) = server.handle_data(&client_out).unwrap();
+        assert!(
+            server_events
+                .iter()
+                .any(|e| matches!(e, crate::server::ServerEvent::Connected { .. })),
+            "server should see connect: {server_events:?}"
+        );
+
+        // Client sees Connected and auto-advances: emits createStream.
+        let (client_out2, client_events2) = client.handle_data(&server_reply).unwrap();
+        assert!(
+            client_events2
+                .iter()
+                .any(|e| matches!(e, ClientEvent::Connected { .. })),
+            "client should see Connected: {client_events2:?}"
+        );
+        assert!(
+            !client_out2.is_empty(),
+            "client should auto-advance from Connected and emit createStream"
+        );
+        assert!(matches!(client.state, ClientState::CreateStreamSent { .. }));
+
+        // Server replies to createStream with an allocated stream id.
+        let (server_reply2, _server_events2) = server.handle_data(&client_out2).unwrap();
+        assert!(
+            !server_reply2.is_empty(),
+            "server should reply to createStream"
+        );
+
+        // Client sees StreamCreated and auto-advances: emits publish.
+        let (client_out3, client_events3) = client.handle_data(&server_reply2).unwrap();
+        assert!(
+            client_events3
+                .iter()
+                .any(|e| matches!(e, ClientEvent::StreamCreated { .. })),
+            "client should see StreamCreated: {client_events3:?}"
+        );
+        assert!(
+            !client_out3.is_empty(),
+            "client should auto-advance from StreamCreated and emit publish"
+        );
+        assert_eq!(client.state, ClientState::PublishSent);
+
+        // Server accepts publish.
+        let (server_reply3, server_events3) = server.handle_data(&client_out3).unwrap();
+        assert!(
+            server_events3
+                .iter()
+                .any(|e| matches!(e, crate::server::ServerEvent::Publish { .. })),
+            "server should see publish: {server_events3:?}"
+        );
+        assert!(
+            !server_reply3.is_empty(),
+            "server should reply onStatus for publish"
+        );
+
+        // Client sees Publishing — the auto-advance has run to completion.
+        let (_client_out4, client_events4) = client.handle_data(&server_reply3).unwrap();
+        assert!(
+            client_events4
+                .iter()
+                .any(|e| matches!(e, ClientEvent::Publishing)),
+            "client should see Publishing: {client_events4:?}"
+        );
+        assert_eq!(client.state, ClientState::Publishing);
+        assert!(client.is_publishing());
     }
 
     #[test]
