@@ -358,6 +358,119 @@ fn cross_hub_flv_to_cmaf() {
     );
 }
 
+// ---------------------------------------------------------------------------
+// Test 6 — streaming RTMP payloads (issue #934): FLV-shaped, not TS-shaped
+// ---------------------------------------------------------------------------
+
+/// `transmux::flv_sequence_header_payloads`/`flv_frame_payloads` are the API
+/// `multimux`'s RTMP push output uses (issue #934) instead of muxing every
+/// push output with `TsMux` and shipping raw MPEG-2 TS as an RTMP video
+/// message — a payload no RTMP server can decode. Asserts the actual byte
+/// **shape**: an RTMP `send_video` payload must look like FLV `VIDEODATA`
+/// (`FrameType`/`CodecID` nibble + `AVCPacketType`), never start with the TS
+/// sync byte `0x47` (0x47's nibbles — `4`/`7` — aren't a `FrameType` this
+/// crate emits (1/2) or `CodecID` 7's low nibble alone, so this is a precise
+/// negative check, not a coincidence of one byte value).
+#[test]
+fn streaming_payloads_are_flv_shaped_not_ts_shaped() {
+    let mut demux = FlvDemux::new();
+    let media = demux.unpackage(FLV).expect("demux av.flv");
+
+    // --- Sequence headers: sent once, up front ---
+    let headers = transmux::flv_sequence_header_payloads(&media).expect("build sequence headers");
+    assert_eq!(headers.len(), 2, "one video + one audio sequence header");
+    let vid_hdr = headers
+        .iter()
+        .find(|p| p.kind == transmux::FlvPayloadKind::Video)
+        .expect("video sequence header present");
+    let aud_hdr = headers
+        .iter()
+        .find(|p| p.kind == transmux::FlvPayloadKind::Audio)
+        .expect("audio sequence header present");
+
+    // VideoTagHeader: FrameType=keyframe(1)<<4 | CodecID=AVC(7) = 0x17;
+    // AVCPacketType=SEQUENCE_HEADER(0). THE BITE: the old defect (TsMux
+    // output as an RTMP video payload) starts with `0x47` (TS sync byte),
+    // never `0x17`.
+    assert_eq!(
+        vid_hdr.body[0], 0x17,
+        "video seq header FrameType/CodecID byte"
+    );
+    assert_ne!(vid_hdr.body[0], 0x47, "must not be a TS sync byte");
+    assert_eq!(
+        vid_hdr.body[1], 0,
+        "video seq header AVCPacketType = sequence header"
+    );
+    // avcC bytes appear verbatim after the 5-byte VideoTagHeader+AVCPacketType+CompositionTime.
+    let CodecConfig::Avc { config, .. } = media.tracks[0].config() else {
+        panic!("track 0 must be AVC");
+    };
+    let mut avcc = alloc_body(config.config.serialized_len());
+    let n = config.config.serialize_into(&mut avcc).unwrap();
+    avcc.truncate(n);
+    assert_eq!(
+        &vid_hdr.body[5..],
+        &avcc[..],
+        "avcC bytes verbatim in the sequence-header payload"
+    );
+
+    // AudioTagHeader (AAC/44.1kHz/16-bit/mono for this fixture) = 0xAE;
+    // AACPacketType=SEQUENCE_HEADER(0).
+    assert_eq!(
+        aud_hdr.body[0], 0xAE,
+        "audio seq header AudioTagHeader byte (mono AAC)"
+    );
+    assert_eq!(
+        aud_hdr.body[1], 0,
+        "audio seq header AACPacketType = sequence header"
+    );
+
+    // --- Per-frame payloads: sent continuously ---
+    let frames = transmux::flv_frame_payloads(&media).expect("build frame payloads");
+    assert_eq!(frames.len(), 75 + 131, "one payload per demuxed sample");
+    let video_frames: Vec<_> = frames
+        .iter()
+        .filter(|p| p.kind == transmux::FlvPayloadKind::Video)
+        .collect();
+    let audio_frames: Vec<_> = frames
+        .iter()
+        .filter(|p| p.kind == transmux::FlvPayloadKind::Audio)
+        .collect();
+    assert_eq!(video_frames.len(), 75, "video frame payload count");
+    assert_eq!(audio_frames.len(), 131, "audio frame payload count");
+
+    for p in &video_frames {
+        assert_ne!(
+            p.body[0], 0x47,
+            "video frame payload must not look like a TS packet"
+        );
+        assert_eq!(p.body[0] & 0x0F, 0x07, "video frame CodecID nibble = AVC");
+        assert!(
+            matches!(p.body[0] >> 4, 1 | 2),
+            "video frame FrameType nibble = keyframe or inter"
+        );
+        assert_eq!(p.body[1], 1, "video frame AVCPacketType = NALU");
+    }
+    for p in &audio_frames {
+        assert_ne!(
+            p.body[0], 0x47,
+            "audio frame payload must not look like a TS packet"
+        );
+        assert_eq!(p.body[0] >> 4, 0x0A, "audio frame SoundFormat nibble = AAC");
+        assert_eq!(p.body[1], 1, "audio frame AACPacketType = raw AU");
+    }
+
+    // Timestamps: FLV-demuxed tracks are already at timescale 1000 (ms), so
+    // `flv_frame_payloads`'s dts-based ms rescale is the identity — the
+    // first video payload's `timestamp_ms` must equal that sample's own
+    // absolute `dts` exactly (bites on any accidental batch-relative reset).
+    let first_sample_dts = media.tracks[0].samples[0].dts.expect("video dts");
+    assert_eq!(
+        video_frames[0].timestamp_ms as i64, first_sample_dts,
+        "first video payload ms timestamp == sample absolute dts"
+    );
+}
+
 /// Allocate a zeroed serialization buffer.
 fn alloc_body(len: usize) -> Vec<u8> {
     vec![0u8; len]

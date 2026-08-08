@@ -236,7 +236,10 @@ pub use error::{Error, Result};
 pub use flac::{
     BLOCK_TYPE_STREAMINFO, DFLA_FOURCC, FLAC_FOURCC, FlacMetadataBlock, FlacSpecificBox,
 };
-pub use flv::{FlvDemux, FlvError, FlvMux};
+pub use flv::{
+    FlvDemux, FlvError, FlvMux, FlvPayload, FlvPayloadKind, flv_frame_payloads,
+    flv_sequence_header_payloads,
+};
 pub use flv_stream::StreamingFlvDemux;
 pub use hevc_config::{HEVCConfigurationBox, HEVCDecoderConfigurationRecord};
 pub use init_segment::{

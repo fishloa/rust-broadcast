@@ -2,6 +2,24 @@
 
 ## [Unreleased]
 
+### Fixed
+- RTMP push (issue #934) shipped raw MPEG-2 TS as an RTMP `send_video`
+  message payload — no RTMP server can decode that; RTMP Audio/Video
+  messages carry FLV `AudioTagHeader`+`AACAUDIODATA` /
+  `VideoTagHeader`+`AVCVIDEOPACKET` bodies. `PushTransport` gained
+  `send_media` (default: mux with `TsMux` and send the blob, what SRT/RTSP
+  push both want); `RtmpTransport` overrides it to split each batch into
+  FLV-framed payloads (`transmux::flv_frame_payloads`) dispatched through
+  `send_video`/`send_audio`, and its `setup` now sends `onMetaData` plus the
+  AVC/AAC sequence headers once, before any frame data. Verified against a
+  real, independent RTMP server implementation over a real TCP loopback
+  connection (`tests/push_rtmp.rs`), not just an inspection of the client's
+  own byte construction.
+- RTMP push's `app`/`stream_key` were derived wrong from the push URL: `app`
+  took the *whole* path and `stream_key` was always empty. An RTMP URL is
+  `rtmp://host/app/streamkey` (or `.../app/instance/streamkey`) — the last
+  path segment is now the stream key, everything before it the app.
+
 ## [0.8.0] - 2026-08-07
 
 ### Added

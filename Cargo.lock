@@ -2666,7 +2666,7 @@ dependencies = [
 
 [[package]]
 name = "st377-1"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "broadcast-common",
  "serde",
@@ -3293,7 +3293,6 @@ dependencies = [
  "broadcast-auth",
  "broadcast-common",
  "log",
- "reqwest",
  "serde",
  "thiserror",
  "tokio",

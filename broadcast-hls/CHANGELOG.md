@@ -5,6 +5,35 @@ All notable changes to `broadcast-hls` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+- **Docs only — no code behavior changed.** `README.md`'s "Round-trip
+  fidelity" section described `#EXT-X-VERSION` backwards (issue #935):
+  it claimed the tag is "always emitted, even if the input omitted it" and
+  that this crate "renders the `version` field as given" without computing
+  a §8 minimum. Both were the *inverse* of the actual (and correct, per
+  issue #871) behavior: `to_m3u8()` computes the tag from playlist content
+  (`computed_version()`) and omits it entirely when nothing triggers a
+  version requirement; `version` is a floor, not the rendered value. The
+  README now matches `src/lib.rs`'s module doc.
+- **"All 32 tags parse and serialize" corrected to the true split.**
+  `README.md` claimed all 32 RFC 8216bis §4.4 tags parse *and* serialize
+  through a typed field. Four — `#EXT-X-KEY`, `#EXT-X-PROGRAM-DATE-TIME`,
+  `#EXT-X-DATERANGE`, `#EXT-X-MEDIA` — have no typed field and are carried
+  opaquely in `extra_tags` (recognized, round-tripped verbatim, but not
+  exposed as structured data). The README now states 28 typed / 4 opaque.
+- **`tests/hls_tag_completeness.rs`'s drift guard is now behavioral.** The
+  original guard only grepped `src/` for each of the 32 tag names — a
+  presence check satisfiable by a doc comment, unable to detect a missing
+  or deleted typed `parse` handler (it admitted this in its own doc
+  comment). Two new tests parse a fixture playlist carrying every one of
+  the 32 tags and assert: for each of the 28 typed tags, the corresponding
+  struct field is actually populated; for the 4 opaque tags, the tag line
+  survives verbatim in `extra_tags`. Verified to bite: temporarily removing
+  the `#EXT-X-GAP` parse arm turns `typed_tags_populate_their_struct_field_on_parse`
+  red while the old presence-only test stays green.
+
 ## [0.1.0] - 2026-08-02
 
 ### Added

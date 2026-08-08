@@ -862,16 +862,8 @@ fn spawn_push_outputs(
                 handles.push(tokio::spawn(async move {
                     let trunk = store.await_first_trunk().await;
                     tracing::info!(%url, "RTMP push output starting");
-                    let parsed = url::Url::parse(&url).ok();
-                    let app = parsed
-                        .as_ref()
-                        .and_then(|u| u.path().strip_prefix('/'))
-                        .unwrap_or("live")
-                        .to_string();
-                    let config = crate::push::RtmpTransportConfig {
-                        app,
-                        stream_key: String::new(),
-                    };
+                    let (app, stream_key) = rtmp_app_and_stream_key(&url);
+                    let config = crate::push::RtmpTransportConfig { app, stream_key };
                     crate::push::drive_push::<crate::push::RtmpTransport>(
                         trunk, url, config, _format, reconnect, cancel,
                     )
@@ -902,6 +894,39 @@ fn spawn_push_outputs(
         }
     }
     handles
+}
+
+/// Split an `rtmp_push` URL's path into `(app, stream_key)` (issue #934). An
+/// RTMP URL is `rtmp://host[:port]/app/streamkey` — Adobe's convention also
+/// allows a multi-segment app (`.../app/instance/streamkey`), so the **last**
+/// path segment is always the stream key and everything before it (joined
+/// back with `/`) is the app:
+///
+/// - 2+ segments (`/app/streamkey`, `/app/instance/streamkey`, …): app = all
+///   but the last segment, stream_key = the last segment.
+/// - exactly 1 segment (`/app`): no stream key was given — app = that
+///   segment, stream_key = "" (previously always the case, even for
+///   `/app/streamkey` URLs — the bug this fixes).
+/// - no path / unparseable URL: app = `"live"` (the pre-existing default),
+///   stream_key = "".
+fn rtmp_app_and_stream_key(url: &str) -> (String, String) {
+    let path = url::Url::parse(url)
+        .ok()
+        .map(|u| u.path().to_string())
+        .unwrap_or_default();
+    let segments: Vec<&str> = path
+        .trim_matches('/')
+        .split('/')
+        .filter(|s| !s.is_empty())
+        .collect();
+    match segments.len() {
+        0 => ("live".to_string(), String::new()),
+        1 => (segments[0].to_string(), String::new()),
+        _ => {
+            let (last, rest) = segments.split_last().expect("len >= 2 checked above");
+            (rest.join("/"), last.to_string())
+        }
+    }
 }
 
 /// [`crate::config::InputSpec::Custom`] resolves its `type_tag` through
@@ -2951,5 +2976,43 @@ mod tests {
         }
 
         drop(rtmp_thief);
+    }
+
+    /// Issue #934: `rtmp://host/app/streamkey` must split into
+    /// `app="app"`, `stream_key="streamkey"` — before this fix, `app` was
+    /// derived from the *whole* path (`"app/streamkey"`) and `stream_key`
+    /// was always `""`, so the publish target was wrong end to end.
+    #[test]
+    fn rtmp_url_splits_app_and_stream_key() {
+        assert_eq!(
+            rtmp_app_and_stream_key("rtmp://host/app/streamkey"),
+            ("app".to_string(), "streamkey".to_string()),
+            "two path segments: app + stream key"
+        );
+        assert_eq!(
+            rtmp_app_and_stream_key("rtmp://host:1935/live/mystream"),
+            ("live".to_string(), "mystream".to_string()),
+            "with an explicit port"
+        );
+        assert_eq!(
+            rtmp_app_and_stream_key("rtmp://host/app/instance/streamkey"),
+            ("app/instance".to_string(), "streamkey".to_string()),
+            "multi-segment app: everything but the last segment"
+        );
+        assert_eq!(
+            rtmp_app_and_stream_key("rtmp://host/app"),
+            ("app".to_string(), String::new()),
+            "one segment only: no stream key given"
+        );
+        assert_eq!(
+            rtmp_app_and_stream_key("rtmp://host"),
+            ("live".to_string(), String::new()),
+            "no path at all: falls back to the pre-existing \"live\" default"
+        );
+        assert_eq!(
+            rtmp_app_and_stream_key("not a url"),
+            ("live".to_string(), String::new()),
+            "unparseable URL: same fallback, never panics"
+        );
     }
 }

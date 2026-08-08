@@ -7,20 +7,25 @@
 //! (`PushTransport` now has three implementors: SRT, RTMP, RTSP):
 //!
 //! - [`PushTransport`] — the async trait a concrete push protocol implements
-//!   (`connect`, `send`, optional `setup`, `close`).
+//!   (`connect`, `send`, `send_media`, optional `setup`, `close`).
 //! - [`ReconnectEngine`] — the exponential-backoff reconnect FSM shared by
 //!   every push transport.
 //! - [`PushMetrics`] — the counters a push task keeps (samples sent/dropped,
 //!   bytes sent, reconnects) for observability.
 //! - [`drive_push`] — the async main loop: subscribe to a [`Trunk`]'s sample
-//!   ring, mux the drained samples into the configured container
-//!   ([`PushFormat`]), and `send` them over the transport, reconnecting on
-//!   failure with [`ReconnectPolicy`](crate::config::ReconnectPolicy) backoff.
+//!   ring and hand the drained batch to [`PushTransport::send_media`],
+//!   reconnecting on failure with [`ReconnectPolicy`](crate::config::ReconnectPolicy)
+//!   backoff.
 //!
 //! This is the *reverse* of the ingest path: instead of demuxing inbound media
 //! and publishing samples into a `Trunk`, a push driver subscribes to a
-//! `Trunk`'s samples and muxes them outbound (`transmux::TsMux` implements the
-//! `broadcast_common::Package` trait).
+//! `Trunk`'s samples and muxes them outbound. Each transport picks its own
+//! wire container via [`PushTransport::send_media`]: SRT and RTSP mux with
+//! `transmux::TsMux` (`broadcast_common::Package`) and ship one opaque TS
+//! blob per batch (the trait's default); RTMP instead splits samples into
+//! FLV-framed messages (`transmux::flv_frame_payloads`) and ships them via
+//! `send_video`/`send_audio` (issue #934) — RTMP carries FLV
+//! `VIDEODATA`/`AUDIODATA` payloads, not MPEG-2 TS.
 //!
 //! The supervisor/origin wiring (spawning a push task per configured route)
 //! is live: `crate::origin::spawn_push_outputs` spawns one [`drive_push`]
@@ -54,12 +59,33 @@ pub use srt::{SrtTransport, SrtTransportConfig};
 /// has no matching spec in the trunk's track set.
 const STREAM_TYPE_PRIVATE: u8 = 0x06;
 
+/// Error from [`PushTransport::send_media`] — distinguishes a muxing failure
+/// (not a connection problem: `drive_push` drops the batch without forcing a
+/// reconnect, matching the pre-#934 `TsMux::package` handling) from a
+/// transport-level send/protocol failure (`drive_push` reconnects).
+///
+/// Generic over no transport type — every [`PushTransport::Error`] already
+/// requires `std::error::Error + Send + Sync + 'static` (the trait bound),
+/// so it boxes into `Transport` uniformly regardless of which transport
+/// raised it.
+#[non_exhaustive]
+#[derive(Debug, thiserror::Error)]
+pub enum SendMediaError {
+    /// Muxing/framing the batch failed — no connection to blame, so the
+    /// batch is dropped without forcing a reconnect.
+    #[error("push mux failed: {0}")]
+    Mux(String),
+    /// The transport's own send/protocol call failed.
+    #[error("push send failed: {0}")]
+    Transport(Box<dyn std::error::Error + Send + Sync>),
+}
+
 /// A concrete push transport: the wire protocol half of a push output.
 ///
 /// Mirrors the ingest side's *socket-as-handle* shape (e.g.
 /// [`srt_runtime::io::SrtSocket`]) — [`connect`](Self::connect) dials out to
-/// the downstream server, [`send`](Self::send) pushes one application payload
-/// (a muxed TS byte bundle), and [`close`](Self::close) tears the
+/// the downstream server, [`send_media`](Self::send_media) muxes and pushes
+/// one drained batch of samples, and [`close`](Self::close) tears the
 /// connection down.
 #[async_trait::async_trait]
 pub trait PushTransport: Send + 'static {
@@ -75,12 +101,43 @@ pub trait PushTransport: Send + 'static {
         Self: Sized;
 
     /// Push one application payload to the downstream server.
+    ///
+    /// The low-level "write these bytes" primitive — used by
+    /// [`send_media`](Self::send_media)'s default implementation (SRT/RTSP:
+    /// one opaque MPEG-2 TS blob per batch). A transport whose wire format
+    /// isn't "one blob" (RTMP, issue #934: distinct typed messages per
+    /// elementary stream) overrides `send_media` instead and may leave this
+    /// unused by `drive_push`, but it must still exist so tests/other code
+    /// can push a raw payload directly.
     async fn send(&mut self, data: &[u8]) -> Result<(), Self::Error>;
 
-    /// Optional session setup before the first `send` — e.g. RTMP's
-    /// `connect`/`createStream`/`publish`, or RTSP's `ANNOUNCE`/`RECORD`.
+    /// Optional session setup before the first `send`/`send_media` — e.g.
+    /// RTMP's `connect`/`createStream`/`publish` (issue #934: also where the
+    /// AVC/AAC sequence headers + `onMetaData` are sent, once), or RTSP's
+    /// `ANNOUNCE`/`RECORD`.
     async fn setup(&mut self, _tracks: &[TrackSpec]) -> Result<(), Self::Error> {
         Ok(())
+    }
+
+    /// Mux one drained batch of samples into this transport's native wire
+    /// format and send it. Default: MPEG-2 TS via [`TsMux`], shipped as one
+    /// opaque payload through [`send`](Self::send) — what SRT and RTSP push
+    /// both want. RTMP overrides this (issue #934): RTMP messages carry FLV
+    /// `VIDEODATA`/`AUDIODATA` bodies, not TS, so it splits `media` into
+    /// per-frame payloads (`transmux::flv_frame_payloads`) and dispatches
+    /// each through `send_video`/`send_audio` directly, bypassing `send`
+    /// and `TsMux` entirely.
+    ///
+    /// Returns the number of payload bytes actually sent, for
+    /// [`PushMetrics::bytes_sent`].
+    async fn send_media(&mut self, media: &Media) -> Result<u64, SendMediaError> {
+        let bytes = TsMux::new()
+            .package(media)
+            .map_err(|e| SendMediaError::Mux(e.to_string()))?;
+        self.send(&bytes)
+            .await
+            .map_err(|e| SendMediaError::Transport(Box::new(e)))?;
+        Ok(bytes.len() as u64)
     }
 
     /// Tear this transport down (free the handle/abort its driver task).
@@ -308,29 +365,25 @@ pub async fn drive_push<T: PushTransport>(
         }
         if transport.is_some() {
             let media = media_from_samples(&trunk.tracks(), &drained);
-            match TsMux::new().package(&media) {
-                Ok(bytes) => match transport.as_mut().unwrap().send(&bytes).await {
-                    Ok(()) => {
-                        metrics
-                            .bytes_sent
-                            .fetch_add(bytes.len() as u64, Ordering::Relaxed);
-                        let sent: u64 = drained.iter().map(|(_, s)| s.len() as u64).sum();
-                        metrics.samples_sent.fetch_add(sent, Ordering::Relaxed);
-                    }
-                    Err(e) => {
-                        tracing::warn!(%url, error = %e, "push send failed; reconnecting");
-                        // Close so `should_connect` dials out afresh.
-                        transport.as_mut().unwrap().close();
-                        transport = None;
-                        engine.on_disconnect();
-                    }
-                },
-                Err(e) => {
-                    tracing::error!(error = %e, "push mux failed; dropping batch");
+            match transport.as_mut().unwrap().send_media(&media).await {
+                Ok(sent_bytes) => {
+                    metrics.bytes_sent.fetch_add(sent_bytes, Ordering::Relaxed);
+                    let sent: u64 = drained.iter().map(|(_, s)| s.len() as u64).sum();
+                    metrics.samples_sent.fetch_add(sent, Ordering::Relaxed);
+                }
+                Err(SendMediaError::Mux(msg)) => {
+                    tracing::error!(error = %msg, "push mux failed; dropping batch");
                     let dropped: u64 = drained.iter().map(|(_, s)| s.len() as u64).sum();
                     metrics
                         .samples_dropped
                         .fetch_add(dropped, Ordering::Relaxed);
+                }
+                Err(SendMediaError::Transport(e)) => {
+                    tracing::warn!(%url, error = %e, "push send failed; reconnecting");
+                    // Close so `should_connect` dials out afresh.
+                    transport.as_mut().unwrap().close();
+                    transport = None;
+                    engine.on_disconnect();
                 }
             }
         } else {

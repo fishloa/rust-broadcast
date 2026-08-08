@@ -713,30 +713,272 @@ impl OutTag {
     }
 }
 
+/// Locate `media`'s (at most one) AVC video track and (at most one) AAC
+/// audio track — shared by [`FlvMux::package`] and the RTMP-payload builders
+/// [`flv_sequence_header_payloads`]/[`flv_frame_payloads`] (issue #934).
+/// Errors if any *other* track carries a codec FLV cannot represent, or if
+/// neither an AVC nor an AAC track is present at all.
+fn locate_av_tracks(
+    media: &Media,
+) -> core::result::Result<(Option<&Track>, Option<&Track>), FlvError> {
+    let mut video: Option<&Track> = None;
+    let mut audio: Option<&Track> = None;
+    for t in &media.tracks {
+        match &t.spec.config {
+            CodecConfig::Avc { .. } if video.is_none() => video = Some(t),
+            CodecConfig::Aac { .. } if audio.is_none() => audio = Some(t),
+            CodecConfig::Avc { .. } | CodecConfig::Aac { .. } => {}
+            other => {
+                return Err(FlvError::UnsupportedCodec {
+                    codec: codec_name(other),
+                });
+            }
+        }
+    }
+    if video.is_none() && audio.is_none() {
+        return Err(FlvError::NoSupportedTrack);
+    }
+    Ok((video, audio))
+}
+
+/// Build the AVC sequence-header (`avcC`) tag body for `vt`, or `None` if
+/// `vt`'s config isn't [`CodecConfig::Avc`] (defensive; callers only pass a
+/// track [`locate_av_tracks`] already classified as video).
+fn video_sequence_header_body(vt: &Track) -> core::result::Result<Option<Vec<u8>>, FlvError> {
+    let CodecConfig::Avc { config, .. } = &vt.spec.config else {
+        return Ok(None);
+    };
+    let mut avcc = vec![0u8; config.config.serialized_len()];
+    let n = config
+        .config
+        .serialize_into(&mut avcc)
+        .map_err(FlvError::Codec)?;
+    avcc.truncate(n);
+    let mut body = Vec::with_capacity(5 + avcc.len());
+    body.push((FRAME_TYPE_KEYFRAME << 4) | CODEC_ID_AVC);
+    body.push(avc_packet_type::SEQUENCE_HEADER);
+    body.extend_from_slice(&[0, 0, 0]); // CompositionTime = 0
+    body.extend_from_slice(&avcc);
+    Ok(Some(body))
+}
+
+/// This audio track's `SoundType` (mono/stereo, §E.4.2) from its channel
+/// count. Defensive default (stereo) if `at` isn't [`CodecConfig::Aac`].
+fn audio_sound_type(at: &Track) -> u8 {
+    match &at.spec.config {
+        CodecConfig::Aac { channel_count, .. } if *channel_count <= 1 => SOUND_TYPE_MONO,
+        _ => SOUND_TYPE_STEREO,
+    }
+}
+
+/// Build the AAC sequence-header (`AudioSpecificConfig`) tag body for `at`,
+/// or `None` if `at`'s config isn't [`CodecConfig::Aac`] (defensive; callers
+/// only pass a track [`locate_av_tracks`] already classified as audio).
+fn audio_sequence_header_body(at: &Track) -> core::result::Result<Option<Vec<u8>>, FlvError> {
+    let CodecConfig::Aac { esds, .. } = &at.spec.config else {
+        return Ok(None);
+    };
+    let asc = esds_asc_bytes(esds)?;
+    let mut body = Vec::with_capacity(2 + asc.len());
+    body.push(audio_tag_header_byte(audio_sound_type(at)));
+    body.push(aac_packet_type::SEQUENCE_HEADER);
+    body.extend_from_slice(&asc);
+    Ok(Some(body))
+}
+
+/// Build one AVC `VideoTagHeader`+`AVCVIDEOPACKET` frame body (§E.4.3):
+/// `FrameType`/`CodecID` nibble + `AVCPacketType::NALU` + `CompositionTime`
+/// (`SI24`, already in FLV's millisecond clock) + the coded NAL data.
+fn video_frame_body(is_sync: bool, composition_time_ms: i32, data: &[u8]) -> Vec<u8> {
+    let mut body = Vec::with_capacity(5 + data.len());
+    let ft = if is_sync {
+        FRAME_TYPE_KEYFRAME
+    } else {
+        FRAME_TYPE_INTER
+    };
+    body.push((ft << 4) | CODEC_ID_AVC);
+    body.push(avc_packet_type::NALU);
+    body.push((composition_time_ms >> 16) as u8);
+    body.push((composition_time_ms >> 8) as u8);
+    body.push(composition_time_ms as u8);
+    body.extend_from_slice(data);
+    body
+}
+
+/// Build one AAC `AudioTagHeader`+`AACAUDIODATA` frame body (§E.4.2):
+/// `AudioTagHeader` byte + `AACPacketType::RAW` + the raw AAC access unit.
+fn audio_frame_body(sound_type: u8, data: &[u8]) -> Vec<u8> {
+    let mut body = Vec::with_capacity(2 + data.len());
+    body.push(audio_tag_header_byte(sound_type));
+    body.push(aac_packet_type::RAW);
+    body.extend_from_slice(data);
+    body
+}
+
+/// Rescale `ticks` (in `timescale`-ticks-per-second) to FLV's millisecond
+/// clock ([`FLV_TIMESCALE`]), for the streaming payload builders below.
+///
+/// Unlike [`FlvMux::package`], whose per-tag `Timestamp` is a running sum of
+/// `Sample::duration` starting at zero (correct for muxing one whole
+/// already-ms-normalised file, matching [`FlvDemux`]'s output), the
+/// streaming builders below feed a live push driver that calls them once per
+/// drained batch, never once for the whole stream — "start of this batch" is
+/// not "start of the stream". They use each [`Sample::dts`]/`pts` directly
+/// (absolute, in the track's own [`crate::pipeline::TrackSpec::timescale`],
+/// per the media-plane architecture) and rescale here instead.
+fn ticks_to_ms(ticks: i64, timescale: u32) -> i64 {
+    if timescale == 0 {
+        return 0;
+    }
+    (ticks as i128 * FLV_TIMESCALE as i128 / timescale as i128) as i64
+}
+
+/// One track's FLV tag *body* — the bytes an RTMP `send_video`/`send_audio`
+/// message must carry (Adobe RTMP 1.0 §7.1.4/§7.1.5) — **without** FLV tag or
+/// file framing (issue #934): no `TagType`/`DataSize`/`Timestamp` tag header,
+/// no trailing `PreviousTagSize`. An RTMP message already carries its own
+/// type + timestamp framing, so only the tag *body* belongs on the wire.
+///
+/// Built by [`flv_sequence_header_payloads`] (the `avcC`/ASC bodies, sent
+/// once) and [`flv_frame_payloads`] (the per-frame bodies, sent
+/// continuously) — see either for the exact byte layout, which is identical
+/// to what [`FlvMux::package`] writes into each of its FLV tags.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FlvPayload {
+    /// Video or audio.
+    pub kind: FlvPayloadKind,
+    /// This payload's FLV tag `Timestamp` equivalent, in milliseconds — the
+    /// DTS an RTMP message carries in its message header.
+    pub timestamp_ms: u32,
+    /// The tag body: `VideoTagHeader`+`AVCVIDEOPACKET` (§E.4.3) or
+    /// `AudioTagHeader`+`AACAUDIODATA` (§E.4.2).
+    pub body: Vec<u8>,
+}
+
+/// [`FlvPayload`]'s track kind.
+///
+/// `#[non_exhaustive]`: FLV's mainstream today is AVC video + AAC audio only
+/// (see the module doc); a future carried codec is additive, not a breaking
+/// match.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum FlvPayloadKind {
+    /// A `VideoTagHeader`+`AVCVIDEOPACKET` body (§E.4.3).
+    Video,
+    /// An `AudioTagHeader`+`AACAUDIODATA` body (§E.4.2).
+    Audio,
+}
+
+impl FlvPayloadKind {
+    /// The FLV tag-type token this payload kind corresponds to (issue #204).
+    pub fn name(&self) -> &'static str {
+        match self {
+            FlvPayloadKind::Video => "video",
+            FlvPayloadKind::Audio => "audio",
+        }
+    }
+}
+
+broadcast_common::impl_spec_display!(FlvPayloadKind);
+
+/// Build the AVC/AAC sequence-header payloads for `media`'s (at most one)
+/// AVC video track and (at most one) AAC audio track (issue #934) — the
+/// `avcC` and `AudioSpecificConfig` bodies a downstream RTMP consumer needs
+/// **once**, before any frame payload, to initialise its decoder. `media`'s
+/// tracks need no samples for this — only [`TrackSpec::config`](crate::pipeline::TrackSpec::config)
+/// is read. Timestamp is always 0, matching the sequence-header tags
+/// [`FlvMux::package`] emits before its interleaved frame tags.
+pub fn flv_sequence_header_payloads(
+    media: &Media,
+) -> core::result::Result<Vec<FlvPayload>, FlvError> {
+    let (video, audio) = locate_av_tracks(media)?;
+    let mut out = Vec::new();
+    if let Some(vt) = video {
+        if let Some(body) = video_sequence_header_body(vt)? {
+            out.push(FlvPayload {
+                kind: FlvPayloadKind::Video,
+                timestamp_ms: 0,
+                body,
+            });
+        }
+    }
+    if let Some(at) = audio {
+        if let Some(body) = audio_sequence_header_body(at)? {
+            out.push(FlvPayload {
+                kind: FlvPayloadKind::Audio,
+                timestamp_ms: 0,
+                body,
+            });
+        }
+    }
+    Ok(out)
+}
+
+/// Build the per-frame `VIDEODATA`/`AUDIODATA` payload bodies for `media`'s
+/// samples (issue #934), interleaved by absolute timestamp across tracks —
+/// same tag-body layout [`FlvMux::package`] writes into each `OutTag`, without
+/// file/tag framing. Each sample's [`Sample::dts`](crate::pipeline::Sample::dts)
+/// (absolute, in its track's own timescale) is rescaled to FLV's millisecond
+/// clock (this crate's internal `ticks_to_ms` helper) — safe to call once per
+/// drained batch from a live push driver, unlike `package`'s zero-based
+/// running sum (see that helper's doc for why). A sample with `dts: None` is
+/// skipped — this crate never fabricates a timestamp (matches
+/// [`Sample::composition_offset`]'s "no timestamp" convention).
+pub fn flv_frame_payloads(media: &Media) -> core::result::Result<Vec<FlvPayload>, FlvError> {
+    let (video, audio) = locate_av_tracks(media)?;
+    // (timestamp_ms, seq_tiebreak, payload): seq preserves each track's own
+    // emission order for same-millisecond ties, mirroring `package`.
+    let mut items: Vec<(u32, u32, FlvPayload)> = Vec::new();
+    let mut seq = 0u32;
+    if let Some(vt) = video {
+        let timescale = vt.spec.timescale;
+        for s in &vt.samples {
+            let Some(dts) = s.dts else { continue };
+            let ts_ms = ticks_to_ms(dts, timescale).max(0) as u32;
+            let comp_ms = ticks_to_ms(s.composition_offset() as i64, timescale) as i32;
+            let body = video_frame_body(s.flags.is_sync, comp_ms, &s.data);
+            items.push((
+                ts_ms,
+                seq,
+                FlvPayload {
+                    kind: FlvPayloadKind::Video,
+                    timestamp_ms: ts_ms,
+                    body,
+                },
+            ));
+            seq += 1;
+        }
+    }
+    if let Some(at) = audio {
+        let timescale = at.spec.timescale;
+        let sound_type = audio_sound_type(at);
+        for s in &at.samples {
+            let Some(dts) = s.dts else { continue };
+            let ts_ms = ticks_to_ms(dts, timescale).max(0) as u32;
+            let body = audio_frame_body(sound_type, &s.data);
+            items.push((
+                ts_ms,
+                seq,
+                FlvPayload {
+                    kind: FlvPayloadKind::Audio,
+                    timestamp_ms: ts_ms,
+                    body,
+                },
+            ));
+            seq += 1;
+        }
+    }
+    items.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)));
+    Ok(items.into_iter().map(|(_, _, p)| p).collect())
+}
+
 impl Package for FlvMux {
     type Media = Media;
     type Output = Vec<u8>;
     type Error = FlvError;
 
     fn package(&mut self, media: &Media) -> core::result::Result<Vec<u8>, FlvError> {
-        // Locate the (at most one) AVC video track and (at most one) AAC audio track.
-        let mut video: Option<&Track> = None;
-        let mut audio: Option<&Track> = None;
-        for t in &media.tracks {
-            match &t.spec.config {
-                CodecConfig::Avc { .. } if video.is_none() => video = Some(t),
-                CodecConfig::Aac { .. } if audio.is_none() => audio = Some(t),
-                CodecConfig::Avc { .. } | CodecConfig::Aac { .. } => {}
-                other => {
-                    return Err(FlvError::UnsupportedCodec {
-                        codec: codec_name(other),
-                    });
-                }
-            }
-        }
-        if video.is_none() && audio.is_none() {
-            return Err(FlvError::NoSupportedTrack);
-        }
+        let (video, audio) = locate_av_tracks(media)?;
 
         let mut out = Vec::new();
 
@@ -770,18 +1012,7 @@ impl Package for FlvMux {
 
         // --- Sequence-header tags ---
         if let Some(vt) = video {
-            if let CodecConfig::Avc { config, .. } = &vt.spec.config {
-                let mut avcc = vec![0u8; config.config.serialized_len()];
-                let n = config
-                    .config
-                    .serialize_into(&mut avcc)
-                    .map_err(FlvError::Codec)?;
-                avcc.truncate(n);
-                let mut body = Vec::with_capacity(5 + avcc.len());
-                body.push((FRAME_TYPE_KEYFRAME << 4) | CODEC_ID_AVC);
-                body.push(avc_packet_type::SEQUENCE_HEADER);
-                body.extend_from_slice(&[0, 0, 0]); // CompositionTime = 0
-                body.extend_from_slice(&avcc);
+            if let Some(body) = video_sequence_header_body(vt)? {
                 OutTag {
                     tag_type: tag_type::VIDEO,
                     timestamp: 0,
@@ -790,58 +1021,31 @@ impl Package for FlvMux {
                 .write_into(&mut out);
             }
         }
-        let (sound_type, asc_bytes) = if let Some(at) = audio {
-            if let CodecConfig::Aac {
-                esds,
-                channel_count,
-                ..
-            } = &at.spec.config
-            {
-                let asc = esds_asc_bytes(esds)?;
-                let st = if *channel_count <= 1 {
-                    SOUND_TYPE_MONO
-                } else {
-                    SOUND_TYPE_STEREO
-                };
-                let mut body = Vec::with_capacity(2 + asc.len());
-                body.push(audio_tag_header_byte(st));
-                body.push(aac_packet_type::SEQUENCE_HEADER);
-                body.extend_from_slice(&asc);
+        let sound_type = audio.map(audio_sound_type).unwrap_or(SOUND_TYPE_STEREO);
+        if let Some(at) = audio {
+            if let Some(body) = audio_sequence_header_body(at)? {
                 OutTag {
                     tag_type: tag_type::AUDIO,
                     timestamp: 0,
                     body,
                 }
                 .write_into(&mut out);
-                (st, asc)
-            } else {
-                (SOUND_TYPE_STEREO, Vec::new())
             }
-        } else {
-            (SOUND_TYPE_STEREO, Vec::new())
-        };
-        let _ = asc_bytes;
+        }
 
         // --- Interleaved A/V type-1 tags, ordered by DTS ---
-        // Precompute (dts, tag) for each track, then merge-sort by dts.
+        // Precompute (dts, tag) for each track, then merge-sort by dts. Note:
+        // this `dts` is a running sum of `Sample::duration` from zero (this
+        // whole-file muxer's own model — see `ticks_to_ms`'s doc for how the
+        // streaming builders below differ), already in FLV's millisecond
+        // clock per this crate's `FlvMux`/`FlvDemux` convention.
         let mut items: Vec<(u32, u32, OutTag)> = Vec::new(); // (dts, seq_tiebreak, tag)
         let mut seq = 0u32;
         if let Some(vt) = video {
             let mut dts = 0u32;
             for s in &vt.samples {
                 let comp = s.composition_offset();
-                let mut body = Vec::with_capacity(5 + s.data.len());
-                let ft = if s.flags.is_sync {
-                    FRAME_TYPE_KEYFRAME
-                } else {
-                    FRAME_TYPE_INTER
-                };
-                body.push((ft << 4) | CODEC_ID_AVC);
-                body.push(avc_packet_type::NALU);
-                body.push((comp >> 16) as u8);
-                body.push((comp >> 8) as u8);
-                body.push(comp as u8);
-                body.extend_from_slice(&s.data);
+                let body = video_frame_body(s.flags.is_sync, comp, &s.data);
                 items.push((
                     dts,
                     seq,
@@ -858,10 +1062,7 @@ impl Package for FlvMux {
         if let Some(at) = audio {
             let mut dts = 0u32;
             for s in &at.samples {
-                let mut body = Vec::with_capacity(2 + s.data.len());
-                body.push(audio_tag_header_byte(sound_type));
-                body.push(aac_packet_type::RAW);
-                body.extend_from_slice(&s.data);
+                let body = audio_frame_body(sound_type, &s.data);
                 items.push((
                     dts,
                     seq,

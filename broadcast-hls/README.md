@@ -39,14 +39,23 @@ Implements:
 - **CENC/CBCS DRM signalling** (ISO/IEC 23001-7, issue #564) —
   `cenc_ext_x_key` renders the `#EXT-X-KEY` tag for a `cbcs`-protected CMAF
   track (`cenc`/AES-CTR has no valid HLS `METHOD`, so it returns `None`).
-- **All 32 RFC 8216bis §4.4 tags** (issue #872) — including
-  `#EXT-X-INDEPENDENT-SEGMENTS`, `#EXT-X-START` (`StartPoint`),
-  `#EXT-X-DEFINE` (`Define`), `#EXT-X-PLAYLIST-TYPE` (`PlaylistType`:
-  `VOD`/`EVENT`), `#EXT-X-GAP`, `#EXT-X-BITRATE`, `#EXT-X-SESSION-DATA`
-  (`SessionData`), `#EXT-X-SESSION-KEY` (`SessionKey`, `EncryptionMethod`)
-  and `#EXT-X-CONTENT-STEERING` (`ContentSteering`) parse *and* serialize;
-  see `tests/hls_tag_completeness.rs` for the drift-guard enumerating all 32
-  by name.
+- **28 of the 32 RFC 8216bis §4.4 tags have a typed struct field** (issue
+  #872) — including `#EXT-X-INDEPENDENT-SEGMENTS`, `#EXT-X-START`
+  (`StartPoint`), `#EXT-X-DEFINE` (`Define`), `#EXT-X-PLAYLIST-TYPE`
+  (`PlaylistType`: `VOD`/`EVENT`), `#EXT-X-GAP`, `#EXT-X-BITRATE`,
+  `#EXT-X-SESSION-DATA` (`SessionData`), `#EXT-X-SESSION-KEY`
+  (`SessionKey`, `EncryptionMethod`) and `#EXT-X-CONTENT-STEERING`
+  (`ContentSteering`) parse *into* that field and serialize *from* it. The
+  remaining **4** — `#EXT-X-KEY`, `#EXT-X-PROGRAM-DATE-TIME`,
+  `#EXT-X-DATERANGE`, `#EXT-X-MEDIA` — have no typed field; `parse()`
+  recognizes them (no error) and preserves the tag line verbatim in
+  `extra_tags`, so they round-trip losslessly, but a caller cannot read or
+  build one through a struct field (see "Round-trip fidelity" below and the
+  module doc's "Known, documented gaps" list in `src/lib.rs`). Both claims
+  are enforced *behaviorally* by `tests/hls_tag_completeness.rs`: it parses
+  a fixture carrying every one of the 32 tags and asserts the typed ones
+  populate their field and the 4 opaque ones survive verbatim — not merely
+  that each tag's name appears somewhere in `src/`.
 
 `#![no_std]` + `alloc`; depends only on `broadcast-common`. Builds for
 `thumbv7em-none-eabi`.
@@ -108,12 +117,24 @@ text:
   MUST NOT be `NONE`", or any "MUST NOT appear more than once" rule. Only
   each tag's own attribute grammar is validated; broader semantic checks are
   left to a higher-level tool (e.g. `media-doctor`).
-- **`#EXT-X-VERSION` is always emitted, even if the input omitted it.** A
-  playlist with no version tag parses as version 1 (the spec's implicit
-  baseline) and renders back as an explicit `#EXT-X-VERSION:1`. The parsed
-  document is unchanged across a second parse; the text gains a line. This
-  crate renders the `version` field as given — it does **not** compute the
-  §8 minimum for you, so declaring a correct version is the caller's job.
+- **`#EXT-X-VERSION` is *computed*, and is often omitted rather than
+  always emitted** (issue #871). `to_m3u8()` never renders a version you
+  handed it verbatim: it derives the minimum version the playlist's actual
+  content requires per RFC 8216bis §8 (`MediaPlaylist::computed_version`/
+  `MasterPlaylist::computed_version`, transcribed in
+  `docs/version-compatibility.md`), and renders exactly that. A playlist
+  that triggers no §8 rule (fully compatible with version 1) gets **no**
+  `#EXT-X-VERSION` tag at all — including one parsed from input that had no
+  version tag either, so that case round-trips with the tag still absent,
+  not gaining one.
+  [`MediaPlaylist::version`]/[`MasterPlaylist::version`] is a *floor*, not
+  the rendered value: `0` (the field's `Default`, and what a version-less
+  input parses to) means "no explicit floor — render exactly the computed
+  value, or nothing"; a nonzero value is raised, never lowered, to the
+  computed minimum, so you can deliberately over-declare but can never
+  silently under-declare an invalid playlist. In short: a caller can rely
+  on the rendered `#EXT-X-VERSION` (when present) being *at least* what the
+  content requires — it is not the caller's job to compute that minimum.
 - **Whitespace and comments are not preserved.** Blank lines, trailing
   whitespace (real playlists do carry it — Apple's BipBop `#EXTINF` lines
   end in a tab), and non-`#EXT` `#` comment lines are dropped at parse time

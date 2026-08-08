@@ -1,11 +1,75 @@
 //! RTMP push transport — client publish to a remote RTMP server.
 //!
-//! Adobe RTMP 1.0 §7.2 (NetConnection/NetStream commands).
+//! Adobe RTMP 1.0 §7.2 (NetConnection/NetStream commands). RTMP Audio (type
+//! 8) / Video (type 9) messages carry FLV `AudioTagHeader`+`AACAUDIODATA` /
+//! `VideoTagHeader`+`AVCVIDEOPACKET` bodies (Adobe FLV v10.1 Annex E
+//! §E.4.2/§E.4.3) — **not** MPEG-2 TS (issue #934: the pre-fix defect muxed
+//! every push output, RTMP included, with `TsMux` and shipped the TS bytes
+//! as a video message, which no RTMP server can decode). `PushTransport::setup`
+//! sends `onMetaData` plus the AVC/AAC sequence headers (`avcC`/ASC) once, and
+//! `send_media` is overridden to split each batch into FLV-framed payloads
+//! (`transmux::flv_frame_payloads`) dispatched through `send_video`/`send_audio`
+//! — see `transmux::flv` for the tag-body layout this reuses.
 
-use crate::push::PushTransport;
+use crate::push::{PushTransport, SendMediaError};
+use rtmp_runtime::amf0::Amf0Value;
 use rtmp_runtime::client::{ClientConfig, ClientSession};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
+use transmux::CodecConfig;
+use transmux::ir::{Media, Track, TrackSpec};
+
+/// FLV `videocodecid` metadata value for AVC (`CodecID` 7, Adobe FLV v10.1 §E.4.3).
+const META_VIDEOCODECID_AVC: f64 = 7.0;
+/// FLV `audiocodecid` metadata value for AAC (`SoundFormat` 10, Adobe FLV v10.1 §E.4.2).
+const META_AUDIOCODECID_AAC: f64 = 10.0;
+
+/// Whether `config` is a codec RTMP/FLV can carry (issue #934: FLV's
+/// mainstream is AVC video + AAC audio only — `transmux::flv`'s module doc).
+/// Any other track present in the trunk (e.g. a private/section stream) is
+/// silently excluded from the RTMP push rather than failing the whole batch.
+fn is_flv_codec(config: &CodecConfig) -> bool {
+    matches!(config, CodecConfig::Avc { .. } | CodecConfig::Aac { .. })
+}
+
+/// Build the `onMetaData` key/value list for `tracks`' (at most one) AVC and
+/// (at most one) AAC track — informational only; a decoder needs the
+/// sequence headers (`avcC`/ASC), not this, to actually decode.
+fn build_metadata(tracks: &[TrackSpec]) -> Vec<(String, Amf0Value)> {
+    let mut meta = Vec::new();
+    for t in tracks {
+        match &t.config {
+            CodecConfig::Avc { width, height, .. } => {
+                meta.push(("width".to_string(), Amf0Value::Number(*width as f64)));
+                meta.push(("height".to_string(), Amf0Value::Number(*height as f64)));
+                meta.push((
+                    "videocodecid".to_string(),
+                    Amf0Value::Number(META_VIDEOCODECID_AVC),
+                ));
+            }
+            CodecConfig::Aac {
+                sample_rate,
+                channel_count,
+                ..
+            } => {
+                meta.push((
+                    "audiocodecid".to_string(),
+                    Amf0Value::Number(META_AUDIOCODECID_AAC),
+                ));
+                meta.push((
+                    "audiosamplerate".to_string(),
+                    Amf0Value::Number(*sample_rate as f64),
+                ));
+                meta.push((
+                    "audiochannels".to_string(),
+                    Amf0Value::Number(*channel_count as f64),
+                ));
+            }
+            _ => {}
+        }
+    }
+    meta
+}
 
 /// Per-connection configuration for the RTMP push transport.
 #[derive(Debug, Clone)]
@@ -102,6 +166,117 @@ impl PushTransport for RtmpTransport {
             .send_video(0, data)
             .map_err(|e| RtmpPushError::Protocol(e.to_string()))?;
         stream.write_all(&bytes).await.map_err(RtmpPushError::Io)
+    }
+
+    /// Send `onMetaData` plus the AVC/AAC sequence headers (`avcC`/ASC) once,
+    /// before any frame data (issue #934) — a decoder cannot initialise
+    /// without them. Tracks this transport cannot carry over RTMP (anything
+    /// but AVC/AAC — `is_flv_codec`) are silently excluded, matching
+    /// `send_media`'s per-batch filtering below.
+    async fn setup(&mut self, tracks: &[TrackSpec]) -> Result<(), Self::Error> {
+        let flv_tracks: Vec<TrackSpec> = tracks
+            .iter()
+            .filter(|t| is_flv_codec(&t.config))
+            .cloned()
+            .collect();
+        if flv_tracks.is_empty() {
+            return Err(RtmpPushError::Protocol(
+                "no AVC video or AAC audio track to publish over RTMP".into(),
+            ));
+        }
+
+        let RtmpTransport { stream, client } = self;
+        let stream = stream
+            .as_mut()
+            .ok_or_else(|| RtmpPushError::Connect("not connected".into()))?;
+
+        let metadata = build_metadata(&flv_tracks);
+        let meta_bytes = client
+            .send_metadata(&metadata)
+            .map_err(|e| RtmpPushError::Protocol(e.to_string()))?;
+        stream
+            .write_all(&meta_bytes)
+            .await
+            .map_err(RtmpPushError::Io)?;
+
+        // A zero-sample `Media` is enough to build the sequence-header
+        // payloads — they're derived only from `TrackSpec::config`.
+        let media = Media::new(
+            flv_tracks
+                .into_iter()
+                .map(|spec| Track::new(spec, Vec::new()))
+                .collect(),
+            0,
+        );
+        let headers = transmux::flv_sequence_header_payloads(&media)
+            .map_err(|e| RtmpPushError::Protocol(e.to_string()))?;
+        for header in &headers {
+            // `FlvPayloadKind` is `#[non_exhaustive]`: only `Video`/`Audio`
+            // exist today (transmux's FLV mainstream); a future kind is
+            // silently skipped here rather than sent as neither.
+            let sent = match header.kind {
+                transmux::FlvPayloadKind::Video => Some(client.send_video(0, &header.body)),
+                transmux::FlvPayloadKind::Audio => Some(client.send_audio(0, &header.body)),
+                _ => None,
+            };
+            let Some(bytes) = sent else { continue };
+            let bytes = bytes.map_err(|e| RtmpPushError::Protocol(e.to_string()))?;
+            stream.write_all(&bytes).await.map_err(RtmpPushError::Io)?;
+        }
+        Ok(())
+    }
+
+    /// Split `media` into FLV-framed video/audio payloads and dispatch each
+    /// through `send_video`/`send_audio` (issue #934) — RTMP messages carry
+    /// FLV tag bodies, not MPEG-2 TS, so this bypasses [`send`](Self::send)
+    /// and the trait's default `TsMux` path entirely. Tracks this transport
+    /// cannot carry over RTMP are excluded (`is_flv_codec`); if that leaves
+    /// nothing to send this batch (e.g. only a private/section track had new
+    /// samples), returns `Ok(0)` rather than an error.
+    async fn send_media(&mut self, media: &Media) -> Result<u64, SendMediaError> {
+        let flv_tracks: Vec<Track> = media
+            .tracks
+            .iter()
+            .filter(|t| is_flv_codec(&t.spec.config))
+            .cloned()
+            .collect();
+        if flv_tracks.is_empty() {
+            return Ok(0);
+        }
+        let filtered = Media::new(flv_tracks, media.movie_timescale);
+        let payloads = transmux::flv_frame_payloads(&filtered)
+            .map_err(|e| SendMediaError::Mux(e.to_string()))?;
+
+        let RtmpTransport { stream, client } = self;
+        let stream = stream.as_mut().ok_or_else(|| {
+            SendMediaError::Transport(Box::new(RtmpPushError::Connect("not connected".into())))
+        })?;
+
+        let mut total = 0u64;
+        for payload in &payloads {
+            // `FlvPayloadKind` is `#[non_exhaustive]`: only `Video`/`Audio`
+            // exist today; a future kind is silently skipped here rather
+            // than sent as neither.
+            let sent = match payload.kind {
+                transmux::FlvPayloadKind::Video => {
+                    Some(client.send_video(payload.timestamp_ms, &payload.body))
+                }
+                transmux::FlvPayloadKind::Audio => {
+                    Some(client.send_audio(payload.timestamp_ms, &payload.body))
+                }
+                _ => None,
+            };
+            let Some(bytes) = sent else { continue };
+            let bytes = bytes.map_err(|e| {
+                SendMediaError::Transport(Box::new(RtmpPushError::Protocol(e.to_string())))
+            })?;
+            stream
+                .write_all(&bytes)
+                .await
+                .map_err(|e| SendMediaError::Transport(Box::new(RtmpPushError::Io(e))))?;
+            total += payload.body.len() as u64;
+        }
+        Ok(total)
     }
 
     fn close(&mut self) {

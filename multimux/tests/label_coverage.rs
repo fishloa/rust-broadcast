@@ -22,6 +22,9 @@
 //!   transport's connect/protocol/IO failures; not a spec/field label.
 //! - `RtspPushError` (`push::rtsp`) — thiserror error for the RTSP push
 //!   transport's connect/protocol/IO failures; not a spec/field label.
+//! - `SendMediaError` (`push`) — thiserror error for
+//!   `PushTransport::send_media` (issue #934): mux failure vs. transport
+//!   send failure; not a spec/field label.
 //! - `InputSpec`, `AuthSpec`, `OutputAuthSpec` (`config`) — data-carrying
 //!   config ADTs (`Rtsp { url, .. }`, `Password { .. }`, `Basic { .. }`, …);
 //!   callers match the typed variant, a static label would be lossy.
@@ -48,6 +51,7 @@ const SKIP: &[&str] = &[
     "MultimuxError",
     "RtmpPushError",
     "RtspPushError",
+    "SendMediaError",
     "InputSpec",
     "AuthSpec",
     "OutputAuthSpec",
