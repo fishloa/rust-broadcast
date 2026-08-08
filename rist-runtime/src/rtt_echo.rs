@@ -44,6 +44,7 @@ const RTT_ECHO_MIN_LEN: usize = RTCP_HEADER_LEN + RTT_ECHO_BODY_LEN;
 /// Discriminates an RTT Echo Request (subtype 2) from an RTT Echo Response
 /// (subtype 3) — TR-06-1 §5.2.6.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum RttEchoKind {
     /// RTT Echo Request (subtype 2). The sender populates `timestamp` with
     /// an arbitrary value and sets `processing_delay_us` to 0.
