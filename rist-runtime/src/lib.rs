@@ -75,6 +75,9 @@ pub const SUBTYPE_RTT_ECHO_RESPONSE: u8 = 3;
 /// Range NACK subtype (TR-06-1 §5.3.2.2).
 pub const SUBTYPE_RANGE_NACK: u8 = 0;
 
+/// Mask for the 5-bit count/FMT/subtype field in RTCP byte 0 (RFC 3550 §6.4.1).
+pub(crate) const RTCP_COUNT_MASK: u8 = 0x1F;
+
 // ---------------------------------------------------------------------------
 // Re-exports for convenience
 // ---------------------------------------------------------------------------

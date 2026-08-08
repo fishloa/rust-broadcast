@@ -16,7 +16,10 @@ use alloc::vec::Vec;
 use broadcast_common::{Parse, Serialize};
 
 use crate::error::{Error, Result};
-use crate::{FMT_GENERIC_NACK, PT_RTPFB, RIST_APP_NAME, RIST_APP_NAME_U32, SUBTYPE_RANGE_NACK};
+use crate::{
+    FMT_GENERIC_NACK, PT_RTPFB, RIST_APP_NAME, RIST_APP_NAME_U32, RTCP_COUNT_MASK,
+    SUBTYPE_RANGE_NACK,
+};
 
 // ---------------------------------------------------------------------------
 // Wire constants
@@ -114,7 +117,7 @@ impl<'a> Parse<'a> for GenericNack {
         }
 
         // Validate FMT=1 (low 5 bits of byte 0).
-        let fmt = bytes[0] & 0x1F;
+        let fmt = bytes[0] & RTCP_COUNT_MASK;
         if fmt != FMT_GENERIC_NACK {
             return Err(Error::InvalidFmt {
                 expected: FMT_GENERIC_NACK,
@@ -274,7 +277,7 @@ impl<'a> Parse<'a> for RangeNack {
         }
 
         // Validate Subtype=0 (low 5 bits of byte 0).
-        let subtype = bytes[0] & 0x1F;
+        let subtype = bytes[0] & RTCP_COUNT_MASK;
         if subtype != SUBTYPE_RANGE_NACK {
             return Err(Error::InvalidSubtype(subtype));
         }

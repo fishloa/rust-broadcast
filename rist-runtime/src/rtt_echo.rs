@@ -14,7 +14,8 @@ use broadcast_common::{Parse, Serialize};
 
 use crate::error::{Error, Result};
 use crate::{
-    RIST_APP_NAME, RIST_APP_NAME_U32, SUBTYPE_RTT_ECHO_REQUEST, SUBTYPE_RTT_ECHO_RESPONSE,
+    RIST_APP_NAME, RIST_APP_NAME_U32, RTCP_COUNT_MASK, SUBTYPE_RTT_ECHO_REQUEST,
+    SUBTYPE_RTT_ECHO_RESPONSE,
 };
 
 // ---------------------------------------------------------------------------
@@ -143,7 +144,7 @@ impl<'a> Parse<'a> for RttEcho {
         }
 
         // Subtype from low 5 bits of byte 0.
-        let subtype = bytes[0] & 0x1F;
+        let subtype = bytes[0] & RTCP_COUNT_MASK;
         let kind = RttEchoKind::from_subtype(subtype)?;
 
         // Validate PT=204.
