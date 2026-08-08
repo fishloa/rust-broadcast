@@ -23,7 +23,7 @@ fn main() {
 
     let bytes = nack.to_bytes();
     println!("Serialized {} bytes", bytes.len());
-    println!("Wire: {:02X?}", &bytes);
+    println!("Wire: {bytes:02X?}");
 
     let parsed = GenericNack::parse(&bytes).expect("round-trip parse");
     assert_eq!(parsed, nack, "round-trip mismatch");
