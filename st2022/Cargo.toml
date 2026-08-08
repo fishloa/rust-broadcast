@@ -12,12 +12,11 @@ keywords     = ["smpte", "st2022", "hbrmt", "sdi-over-ip", "broadcast"]
 
 [dependencies]
 broadcast-common = { path = "../broadcast-common", version = "9", default-features = false }
-rtp-packet       = { path = "../rtp-packet",       version = "0.3", default-features = false }
 thiserror        = { version = "2", default-features = false }
 
 [features]
 default = ["std"]
-std     = ["broadcast-common/std", "rtp-packet/std"]
+std     = ["broadcast-common/std"]
 serde   = ["dep:serde", "broadcast-common/serde"]
 
 [dependencies.serde]

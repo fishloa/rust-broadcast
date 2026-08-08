@@ -2630,7 +2630,6 @@ name = "st2022"
 version = "0.1.0"
 dependencies = [
  "broadcast-common",
- "rtp-packet",
  "serde",
  "thiserror",
 ]

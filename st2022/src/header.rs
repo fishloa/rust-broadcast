@@ -834,12 +834,95 @@ impl<'a> PayloadHeader<'a> {
     }
 
     fn validate(&self) -> Result<()> {
+        if let VideoSourceId::Reserved(v) = self.vsid {
+            if v > VSID_MASK {
+                return Err(Error::InvalidValue {
+                    field: "vsid",
+                    value: u64::from(v),
+                    reason: "must be a 3-bit value (0..=7)",
+                });
+            }
+        }
+        if let TimestampRef::Reserved(v) = self.timestamp_ref {
+            if u16::from(v) > R_MASK {
+                return Err(Error::InvalidValue {
+                    field: "timestamp_ref",
+                    value: u64::from(v),
+                    reason: "must be a 2-bit value (0..=3)",
+                });
+            }
+        }
+        if let Scrambling::Reserved(v) = self.scrambling {
+            if u16::from(v) > S_MASK {
+                return Err(Error::InvalidValue {
+                    field: "scrambling",
+                    value: u64::from(v),
+                    reason: "must be a 2-bit value (0..=3)",
+                });
+            }
+        }
+        if let FecUsage::Reserved(v) = self.fec_usage {
+            if u16::from(v) > FEC_MASK {
+                return Err(Error::InvalidValue {
+                    field: "fec_usage",
+                    value: u64::from(v),
+                    reason: "must be a 3-bit value (0..=7)",
+                });
+            }
+        }
+        if let ClockFrequency::Reserved(v) = self.clock_frequency {
+            if u16::from(v) > CF_MASK {
+                return Err(Error::InvalidValue {
+                    field: "clock_frequency",
+                    value: u64::from(v),
+                    reason: "must be a 4-bit value (0..=15)",
+                });
+            }
+        }
         if self.reserve > MAX_RESERVE {
             return Err(Error::InvalidValue {
                 field: "reserve",
                 value: u64::from(self.reserve),
                 reason: "must be a 5-bit value (0..=31)",
             });
+        }
+        if let Some(ref vsf) = self.video_source_format {
+            if let MapStructure::Reserved(v) = vsf.map {
+                if u32::from(v) > MAP_MASK {
+                    return Err(Error::InvalidValue {
+                        field: "video_source_format.map",
+                        value: u64::from(v),
+                        reason: "must be a 4-bit value (0..=15)",
+                    });
+                }
+            }
+            if let FrameStructure::Reserved(v) = vsf.frame {
+                if u32::from(v) > FRAME_MASK {
+                    return Err(Error::InvalidValue {
+                        field: "video_source_format.frame",
+                        value: u64::from(v),
+                        reason: "must be an 8-bit value (0..=255)",
+                    });
+                }
+            }
+            if let FrameRate::Reserved(v) = vsf.frate {
+                if u32::from(v) > FRATE_MASK {
+                    return Err(Error::InvalidValue {
+                        field: "video_source_format.frate",
+                        value: u64::from(v),
+                        reason: "must be an 8-bit value (0..=255)",
+                    });
+                }
+            }
+            if let SampleStructure::Reserved(v) = vsf.sample {
+                if u32::from(v) > SAMPLE_MASK {
+                    return Err(Error::InvalidValue {
+                        field: "video_source_format.sample",
+                        value: u64::from(v),
+                        reason: "must be a 4-bit value (0..=15)",
+                    });
+                }
+            }
         }
         let requires_timestamp = self.clock_frequency != ClockFrequency::NoTimestamp;
         if requires_timestamp != self.video_timestamp.is_some() {
@@ -1478,5 +1561,182 @@ mod tests {
         );
         assert_eq!(FrameRate::Hz24Div1001.name(), "24/1.001 Hz");
         assert_eq!(SampleStructure::Yuv4224At12Bit.name(), "4:2:2:4, 12 bits");
+    }
+
+    #[test]
+    fn golden_bytes_12_byte_header() {
+        // 1080i25 YCbCr 4:2:2 10-bit, 148.5 MHz clock, protect stream,
+        // locked to UTC, column+row FEC.
+        //
+        // Byte 0: Ext=0, F=1, VSID=001 → 0b0000_1_001 = 0x09
+        // Byte 1: FRCount=42 → 0x2A
+        // Bytes 2-3 (big-endian u16):
+        //   R=10(LockedUtc)=2, S=00(NotScrambled)=0, FEC=010(ColRow)=2,
+        //   CF=0010(148.5MHz)=2, RESERVE=0
+        //   bits: [15:14]=10, [13:12]=00, [11:9]=010, [8:5]=0010, [4:0]=00000
+        //   = 0b10_00_010_0010_00000 = 0x8440
+        // Bytes 4-7 (VSF big-endian u32):
+        //   MAP=0(Direct)<<28, FRAME=0x20(1080i)<<20, FRATE=0x18(25Hz)<<12,
+        //   SAMPLE=0x01(422/10)<<8, FMT_RESERVE=0
+        //   = 0x02018100
+        // Bytes 8-11: video timestamp = 0xDEADBEEF
+        #[rustfmt::skip]
+        let expected: [u8; 12] = [
+            0x09, 0x2A, 0x84, 0x40,
+            0x02, 0x01, 0x81, 0x00,
+            0xDE, 0xAD, 0xBE, 0xEF,
+        ];
+        let vsf = VideoSourceFormat {
+            map: MapStructure::Direct,
+            frame: FrameStructure::Hd1080i,
+            frate: FrameRate::Hz25,
+            sample: SampleStructure::Yuv422At10Bit,
+            fmt_reserve: 0,
+        };
+        let header = PayloadHeader::new(
+            VideoSourceId::Protect,
+            42,
+            TimestampRef::LockedUtc,
+            Scrambling::NotScrambled,
+            FecUsage::ColumnAndRow,
+            ClockFrequency::Mhz148_5,
+            0,
+            Some(vsf),
+            Some(0xDEADBEEF),
+            None,
+        )
+        .unwrap();
+        let bytes = header.to_bytes();
+        assert_eq!(&bytes[..], &expected[..], "golden wire bytes mismatch");
+        let reparsed = PayloadHeader::parse(&expected).unwrap();
+        assert_eq!(reparsed, header);
+    }
+
+    #[test]
+    fn golden_bytes_minimal_4_byte_header() {
+        // Primary, FRCount=0, no lock, no scramble, no FEC, no clock, reserve=0
+        // Byte 0: Ext=0, F=0, VSID=000 → 0x00
+        // Byte 1: FRCount=0 → 0x00
+        // Bytes 2-3: all zeros → 0x0000
+        let expected: [u8; 4] = [0x00, 0x00, 0x00, 0x00];
+        let header = minimal_header();
+        let bytes = header.to_bytes();
+        assert_eq!(&bytes[..], &expected[..]);
+        let reparsed = PayloadHeader::parse(&expected).unwrap();
+        assert_eq!(reparsed, header);
+    }
+
+    #[test]
+    fn rejects_oversized_vsid_reserved() {
+        let err = PayloadHeader::new(
+            VideoSourceId::Reserved(0x08),
+            0,
+            TimestampRef::NotLocked,
+            Scrambling::NotScrambled,
+            FecUsage::None,
+            ClockFrequency::NoTimestamp,
+            0,
+            None,
+            None,
+            None,
+        )
+        .unwrap_err();
+        assert!(matches!(err, Error::InvalidValue { field: "vsid", .. }));
+    }
+
+    #[test]
+    fn rejects_oversized_timestamp_ref_reserved() {
+        let err = PayloadHeader::new(
+            VideoSourceId::Primary,
+            0,
+            TimestampRef::Reserved(0x04),
+            Scrambling::NotScrambled,
+            FecUsage::None,
+            ClockFrequency::NoTimestamp,
+            0,
+            None,
+            None,
+            None,
+        )
+        .unwrap_err();
+        assert!(matches!(
+            err,
+            Error::InvalidValue {
+                field: "timestamp_ref",
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn rejects_oversized_scrambling_reserved() {
+        let err = PayloadHeader::new(
+            VideoSourceId::Primary,
+            0,
+            TimestampRef::NotLocked,
+            Scrambling::Reserved(0x04),
+            FecUsage::None,
+            ClockFrequency::NoTimestamp,
+            0,
+            None,
+            None,
+            None,
+        )
+        .unwrap_err();
+        assert!(matches!(
+            err,
+            Error::InvalidValue {
+                field: "scrambling",
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn rejects_oversized_fec_reserved() {
+        let err = PayloadHeader::new(
+            VideoSourceId::Primary,
+            0,
+            TimestampRef::NotLocked,
+            Scrambling::NotScrambled,
+            FecUsage::Reserved(0x08),
+            ClockFrequency::NoTimestamp,
+            0,
+            None,
+            None,
+            None,
+        )
+        .unwrap_err();
+        assert!(matches!(
+            err,
+            Error::InvalidValue {
+                field: "fec_usage",
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn rejects_oversized_clock_frequency_reserved() {
+        let err = PayloadHeader::new(
+            VideoSourceId::Primary,
+            0,
+            TimestampRef::NotLocked,
+            Scrambling::NotScrambled,
+            FecUsage::None,
+            ClockFrequency::Reserved(0x10),
+            0,
+            None,
+            None,
+            None,
+        )
+        .unwrap_err();
+        assert!(matches!(
+            err,
+            Error::InvalidValue {
+                field: "clock_frequency",
+                ..
+            }
+        ));
     }
 }
