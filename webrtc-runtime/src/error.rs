@@ -11,13 +11,6 @@ pub enum Error {
         header: &'static str,
     },
 
-    /// The SDP offer or answer body could not be parsed or was structurally invalid.
-    #[error("invalid SDP: {reason}")]
-    InvalidSdp {
-        /// Human-readable description of why the SDP was rejected.
-        reason: alloc::string::String,
-    },
-
     /// A Trickle ICE SDP fragment (`application/trickle-ice-sdpfrag`) could not be parsed.
     #[error("invalid SDP fragment: {reason}")]
     InvalidSdpFragment {
@@ -44,10 +37,6 @@ pub enum Error {
         /// The `ETag` actually supplied.
         got: alloc::string::String,
     },
-
-    /// A WHEP counter-offer's response window elapsed before the client replied.
-    #[error("counter-offer expired")]
-    CounterOfferExpired,
 
     /// A WHEP client requested playback but no publisher is active for the resource.
     #[error("no active publisher")]

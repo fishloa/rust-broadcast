@@ -72,6 +72,26 @@ pub enum Error {
     #[error("padding length {0} is not a multiple of 4")]
     InvalidPaddingLength(usize),
 
+    /// A RIST compound packet's SDES sub-packet had no CNAME item
+    /// (TR-06-1:2020 §5.2.1 requires SDES(CNAME) in every compound packet).
+    #[error("RIST compound SDES packet is missing a CNAME item")]
+    MissingCname,
+
+    /// A RIST compound packet contained more than one RTT Echo sub-packet
+    /// (TR-06-1:2020 §5.2.6 permits at most one per compound packet).
+    #[error("duplicate RTT Echo in RIST compound packet")]
+    DuplicateRttEcho,
+
+    /// A sub-packet inside a RIST compound packet had a packet type not
+    /// valid at that position (TR-06-1:2020 §5.2.1 compound structure).
+    #[error("unexpected packet type inside RIST compound: {0}")]
+    UnexpectedPacketType(u8),
+
+    /// A RIST compound packet had bytes left over after its final expected
+    /// sub-packet (TR-06-1:2020 §5.2.1 fixes the compound structure).
+    #[error("unexpected trailing data in RIST compound: {0} byte(s)")]
+    TrailingData(usize),
+
     /// An error from the underlying `rtcp-packet` crate.
     #[error(transparent)]
     Rtcp(#[from] rtcp_packet::Error),

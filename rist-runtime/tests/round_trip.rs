@@ -223,10 +223,13 @@ fn sender_compound_sr_sdes_round_trip() {
     assert_eq!(bytes.len() % 4, 0);
     // First packet: SR (PT 200).
     assert_eq!(bytes[1], 200);
+    let parsed = RistSenderCompound::parse(&bytes).unwrap();
+    assert_eq!(parsed, compound);
+    assert_eq!(parsed.to_bytes(), bytes);
 }
 
 #[test]
-fn sender_compound_with_rtt_echo() {
+fn sender_compound_with_rtt_echo_round_trip() {
     let compound = RistSenderCompound {
         sr: SenderReport {
             ssrc: 0x1122_3344,
@@ -250,10 +253,13 @@ fn sender_compound_with_rtt_echo() {
     assert_eq!(bytes.len() % 4, 0);
     // Verify the compound contains at least 3 RTCP packets worth of data.
     assert!(bytes.len() > 24 + 12 + 24); // SR + minimal SDES + RTT Echo
+    let parsed = RistSenderCompound::parse(&bytes).unwrap();
+    assert_eq!(parsed, compound);
+    assert_eq!(parsed.to_bytes(), bytes);
 }
 
 #[test]
-fn receiver_compound_rr_sdes_nack() {
+fn receiver_compound_rr_sdes_nack_round_trip() {
     let compound = RistReceiverCompound {
         rr: ReceiverReport {
             ssrc: 0xAAAA_BBBB,
@@ -280,10 +286,13 @@ fn receiver_compound_rr_sdes_nack() {
     assert_eq!(bytes.len() % 4, 0);
     // First packet: RR (PT 201).
     assert_eq!(bytes[1], 201);
+    let parsed = RistReceiverCompound::parse(&bytes).unwrap();
+    assert_eq!(parsed, compound);
+    assert_eq!(parsed.to_bytes(), bytes);
 }
 
 #[test]
-fn receiver_compound_empty_rr() {
+fn receiver_compound_empty_rr_round_trip() {
     let compound = RistReceiverCompound {
         rr: ReceiverReport {
             ssrc: 0x0000_0001,
@@ -297,6 +306,83 @@ fn receiver_compound_empty_rr() {
     let bytes = compound.to_bytes();
     assert_eq!(bytes.len() % 4, 0);
     assert_eq!(bytes[1], 201);
+    let parsed = RistReceiverCompound::parse(&bytes).unwrap();
+    assert_eq!(parsed, compound);
+    assert_eq!(parsed.to_bytes(), bytes);
+}
+
+#[test]
+fn receiver_compound_full_round_trip() {
+    // Exercises every optional slot at once: multiple Generic NACKs,
+    // multiple Range NACKs, and a trailing RTT Echo — the parser must
+    // classify and consume each in wire order.
+    let compound = RistReceiverCompound {
+        rr: ReceiverReport {
+            ssrc: 0xAAAA_BBBB,
+            report_blocks: vec![ReportBlock {
+                ssrc: 0xCCCC_DDDD,
+                fraction_lost: 10,
+                cumulative_lost: 5,
+                ext_highest_seq: 0x0000_1000,
+                jitter: 100,
+                lsr: 0,
+                dlsr: 0,
+            }],
+        },
+        cname: "full@example.com".to_string(),
+        nacks: vec![
+            GenericNack {
+                ssrc_sender: 0xAAAA_BBBB,
+                ssrc_media: 0xCCCC_DDDD,
+                nacks: vec![NackFci { pid: 500, blp: 0 }],
+            },
+            GenericNack {
+                ssrc_sender: 0xAAAA_BBBB,
+                ssrc_media: 0xCCCC_DDDD,
+                nacks: vec![NackFci {
+                    pid: 700,
+                    blp: 0x00FF,
+                }],
+            },
+        ],
+        range_nacks: vec![
+            RangeNack {
+                ssrc_media: 0xCCCC_DDDD,
+                ranges: vec![PacketRange {
+                    start: 100,
+                    additional: 3,
+                }],
+            },
+            RangeNack {
+                ssrc_media: 0xCCCC_DDDD,
+                ranges: vec![
+                    PacketRange {
+                        start: 200,
+                        additional: 0,
+                    },
+                    PacketRange {
+                        start: 250,
+                        additional: 5,
+                    },
+                ],
+            },
+        ],
+        rtt_echo: Some(RttEcho {
+            kind: RttEchoKind::Response,
+            ssrc_media: 0xCCCC_DDDD,
+            timestamp: 0xDEAD_BEEF_CAFE_BABE,
+            processing_delay_us: 1_234,
+            padding: vec![0u8; 4],
+        }),
+    };
+    let bytes = compound.to_bytes();
+    assert_eq!(bytes.len() % 4, 0);
+    let parsed = RistReceiverCompound::parse(&bytes).unwrap();
+    assert_eq!(parsed, compound);
+    assert_eq!(parsed.nacks.len(), 2);
+    assert_eq!(parsed.range_nacks.len(), 2);
+    assert!(parsed.rtt_echo.is_some());
+    assert_eq!(parsed.to_bytes(), bytes);
 }
 
 // ---------------------------------------------------------------------------

@@ -107,9 +107,11 @@ let header = format_ice_server_links(&servers);
 |---------|---------|-------------|
 | `std`   | yes     | Enables `std` library support |
 | `serde` | no      | `Serialize`/`Deserialize` on `IceServer` |
-| `tokio` | no      | *(planned)* Real HTTP client/server adapters via tokio + reqwest |
 
 The core state machines build with `--no-default-features` (`no_std` + `alloc`).
+No IO adapter exists (see "What it does" above) — there is no `tokio` feature;
+one was declared but never gated any code, so it was removed rather than kept
+as dead weight (see CHANGELOG).
 
 ## License
 

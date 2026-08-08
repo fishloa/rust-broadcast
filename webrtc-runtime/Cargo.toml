@@ -2,7 +2,7 @@
 name    = "webrtc-runtime"
 version = "0.1.0"
 edition = "2024"
-description = "Sans-IO WHIP (RFC 9725) + WHEP (draft-ietf-wish-whep) HTTP signalling engine — SDP offer/answer, Trickle ICE, ICE restart, session lifecycle; optional tokio HTTP adapter."
+description = "Sans-IO WHIP (RFC 9725) + WHEP (draft-ietf-wish-whep) HTTP signalling engine — SDP offer/answer, Trickle ICE, ICE restart, session lifecycle. No IO adapter; caller drives HTTP."
 license      = "MIT OR Apache-2.0"
 authors      = ["Alex Fishlock <alex.fishlock@racingjag.com>"]
 keywords = ["webrtc", "whip", "whep", "streaming", "sans-io"]
@@ -27,11 +27,6 @@ serde = { version = "1", optional = true, default-features = false, features = [
 default = ["std"]
 std     = []
 serde   = ["dep:serde"]
-tokio   = ["std", "dep:tokio", "dep:reqwest"]
-
-[target.'cfg(not(target_os = "none"))'.dependencies]
-tokio   = { version = "1", optional = true, features = ["net", "io-util", "rt", "macros", "time"] }
-reqwest = { version = "0.12", optional = true, default-features = false, features = ["rustls-tls"] }
 
 [dev-dependencies]
 tokio = { version = "1", features = ["full"] }

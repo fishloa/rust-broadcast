@@ -9,12 +9,12 @@
 //! - [`RistReceiverCompound`] — receiver-side compound: RR + SDES(CNAME) +
 //!   optional Generic/Range NACKs + optional RTT Echo.
 //!
-//! Both types implement [`Serialize`] to produce the compound RTCP bytes.
+//! Both types implement [`Parse`]/[`Serialize`] for byte-exact round-trip.
 
 use alloc::string::String;
 use alloc::vec::Vec;
 
-use broadcast_common::Serialize;
+use broadcast_common::{Parse, Serialize};
 use rtcp_packet::{
     ReceiverReport, SdesChunk, SdesItem, SdesItemType, SenderReport, SourceDescription,
 };
@@ -22,6 +22,68 @@ use rtcp_packet::{
 use crate::error::{Error, Result};
 use crate::nack::{GenericNack, RangeNack};
 use crate::rtt_echo::RttEcho;
+use crate::{
+    PT_RTPFB, RTCP_COUNT_MASK, SUBTYPE_RANGE_NACK, SUBTYPE_RTT_ECHO_REQUEST,
+    SUBTYPE_RTT_ECHO_RESPONSE,
+};
+
+// ---------------------------------------------------------------------------
+// Wire constants
+// ---------------------------------------------------------------------------
+
+/// Common-header length in bytes.
+const RTCP_HEADER_LEN: usize = 4;
+/// One 32-bit word, in bytes.
+const WORD_LEN: usize = 4;
+/// PT for RTCP APP (RFC 3550 §6.7).
+const PT_APP: u8 = 204;
+
+/// Read the total wire length (bytes) of the RTCP sub-packet at the front of
+/// `bytes`, from its 4-byte common header `length` field (RFC 3550 §6.1):
+/// `(length + 1) * 4`.
+fn peek_total_len(bytes: &[u8]) -> Result<usize> {
+    if bytes.len() < RTCP_HEADER_LEN {
+        return Err(Error::BufferTooShort {
+            need: RTCP_HEADER_LEN,
+            have: bytes.len(),
+        });
+    }
+    let length_field = u16::from_be_bytes([bytes[2], bytes[3]]) as usize;
+    Ok((length_field + 1) * WORD_LEN)
+}
+
+/// Parse one RTCP sub-packet from the front of `bytes`, returning the decoded
+/// value and the number of bytes it consumed per its own common-header
+/// `length` field (RFC 3550 §6.1). Works for any sub-packet type, whether its
+/// `Parse::Error` is `rist_runtime::Error` (the RIST-specific types) or
+/// `rtcp_packet::Error` (the underlying SR/RR/SDES types) — both convert into
+/// [`Error`] via `?`.
+fn parse_one<'a, T>(bytes: &'a [u8]) -> Result<(T, usize)>
+where
+    T: Parse<'a>,
+    Error: From<T::Error>,
+{
+    let total = peek_total_len(bytes)?;
+    if bytes.len() < total {
+        return Err(Error::BufferTooShort {
+            need: total,
+            have: bytes.len(),
+        });
+    }
+    let value = T::parse(&bytes[..total]).map_err(Error::from)?;
+    Ok((value, total))
+}
+
+/// Extract the CNAME text from a parsed SDES packet — every RIST compound
+/// packet carries exactly one (TR-06-1:2020 §5.2.1).
+fn extract_cname(sdes: &SourceDescription) -> Result<String> {
+    sdes.chunks
+        .iter()
+        .flat_map(|chunk| chunk.items.iter())
+        .find(|item| item.item_type == SdesItemType::CName)
+        .map(|item| item.text.clone())
+        .ok_or(Error::MissingCname)
+}
 
 /// Build a RIST sender compound RTCP packet (TR-06-1 §5.2.1).
 ///
@@ -88,6 +150,43 @@ impl Serialize for RistSenderCompound {
         }
 
         Ok(off)
+    }
+}
+
+impl<'a> Parse<'a> for RistSenderCompound {
+    type Error = Error;
+
+    fn parse(bytes: &'a [u8]) -> Result<Self> {
+        let mut off = 0;
+
+        // 1. SR
+        let (sr, n) = parse_one::<SenderReport>(&bytes[off..])?;
+        off += n;
+
+        // 2. SDES(CNAME)
+        let (sdes, n) = parse_one::<SourceDescription>(&bytes[off..])?;
+        off += n;
+        let cname = extract_cname(&sdes)?;
+
+        // 3. Optional RTT Echo — at most one, and it must be the last thing
+        // in the compound packet.
+        let rtt_echo = if off < bytes.len() {
+            let (echo, n) = parse_one::<RttEcho>(&bytes[off..])?;
+            off += n;
+            Some(echo)
+        } else {
+            None
+        };
+
+        if off != bytes.len() {
+            return Err(Error::TrailingData(bytes.len() - off));
+        }
+
+        Ok(RistSenderCompound {
+            sr,
+            cname,
+            rtt_echo,
+        })
     }
 }
 
@@ -166,6 +265,71 @@ impl Serialize for RistReceiverCompound {
         }
 
         Ok(off)
+    }
+}
+
+impl<'a> Parse<'a> for RistReceiverCompound {
+    type Error = Error;
+
+    fn parse(bytes: &'a [u8]) -> Result<Self> {
+        let mut off = 0;
+
+        // 1. RR
+        let (rr, n) = parse_one::<ReceiverReport>(&bytes[off..])?;
+        off += n;
+
+        // 2. SDES(CNAME)
+        let (sdes, n) = parse_one::<SourceDescription>(&bytes[off..])?;
+        off += n;
+        let cname = extract_cname(&sdes)?;
+
+        // 3. Zero or more Generic/Range NACKs, then an optional single RTT
+        // Echo — classified by (PT, subtype), consumed in wire order.
+        let mut nacks = Vec::new();
+        let mut range_nacks = Vec::new();
+        let mut rtt_echo = None;
+
+        while off < bytes.len() {
+            let pt = *bytes.get(off + 1).ok_or(Error::BufferTooShort {
+                need: off + 2,
+                have: bytes.len(),
+            })?;
+            match pt {
+                PT_RTPFB => {
+                    let (nack, n) = parse_one::<GenericNack>(&bytes[off..])?;
+                    nacks.push(nack);
+                    off += n;
+                }
+                PT_APP => {
+                    let subtype = bytes[off] & RTCP_COUNT_MASK;
+                    match subtype {
+                        SUBTYPE_RANGE_NACK => {
+                            let (rn, n) = parse_one::<RangeNack>(&bytes[off..])?;
+                            range_nacks.push(rn);
+                            off += n;
+                        }
+                        SUBTYPE_RTT_ECHO_REQUEST | SUBTYPE_RTT_ECHO_RESPONSE => {
+                            if rtt_echo.is_some() {
+                                return Err(Error::DuplicateRttEcho);
+                            }
+                            let (echo, n) = parse_one::<RttEcho>(&bytes[off..])?;
+                            rtt_echo = Some(echo);
+                            off += n;
+                        }
+                        other => return Err(Error::InvalidSubtype(other)),
+                    }
+                }
+                other => return Err(Error::UnexpectedPacketType(other)),
+            }
+        }
+
+        Ok(RistReceiverCompound {
+            rr,
+            cname,
+            nacks,
+            range_nacks,
+            rtt_echo,
+        })
     }
 }
 

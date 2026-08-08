@@ -4,6 +4,19 @@ All notable changes to this crate will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- `RistSenderCompound` and `RistReceiverCompound` now implement `Parse` (in
+  addition to the `Serialize` they already had), so the "byte-exact
+  `Parse`/`Serialize` round-trip fidelity for every wire type" claim in this
+  file / `README.md` / `src/lib.rs` is now actually true instead of covering
+  three of the five wire types (#938).
+- The four `tests/round_trip.rs` tests that were named `*_round_trip` but only
+  called `to_bytes()` (no parse-back) now actually parse the serialized bytes
+  and assert byte-identical equality, plus one new test exercising every
+  optional compound slot (multiple NACKs + Range NACKs + RTT Echo) together
+  (#938).
+
 ### Added
 
 - Initial release

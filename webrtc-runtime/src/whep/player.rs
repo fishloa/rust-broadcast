@@ -54,10 +54,6 @@ pub enum Method {
     Patch,
     /// `DELETE` — used to terminate a session.
     Delete,
-    /// `OPTIONS` — used to discover supported ICE servers.
-    Options,
-    /// `HEAD` — used to poll publisher availability.
-    Head,
 }
 
 impl Method {
@@ -67,8 +63,6 @@ impl Method {
             Method::Post => "POST",
             Method::Patch => "PATCH",
             Method::Delete => "DELETE",
-            Method::Options => "OPTIONS",
-            Method::Head => "HEAD",
         }
     }
 }
@@ -340,7 +334,5 @@ mod tests {
         assert_eq!(Method::Post.to_string(), "POST");
         assert_eq!(Method::Patch.to_string(), "PATCH");
         assert_eq!(Method::Delete.to_string(), "DELETE");
-        assert_eq!(Method::Options.to_string(), "OPTIONS");
-        assert_eq!(Method::Head.to_string(), "HEAD");
     }
 }
