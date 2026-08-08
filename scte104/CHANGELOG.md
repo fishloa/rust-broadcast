@@ -10,6 +10,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - `tests/label_coverage.rs` + `tests/non_exhaustive_coverage.rs` drift guards
   (issue #806). No public API or behaviour change.
+- The 8 remaining Table 8-3 (`single_operation_message`) operations (issue
+  #936): `config_request`/`config_response` (§10.4, opID `0x0009`/`0x000A`),
+  `provisioning_request`/`provisioning_response` (§10.5, opID
+  `0x000B`/`0x000C`), `fault_request`/`fault_response` (§10.6, opID
+  `0x000F`/`0x0010`), and `as_alive_request`/`as_alive_response` (§10.7, opID
+  `0x0011`/`0x0012`). These were previously falling through to
+  `AnySingleOperation::Unknown` (opaque, round-tripped but untyped). All 15
+  Table 8-3 opIDs are now typed, alongside the already-complete 22/22 Table
+  8-4. Field layouts transcribed into new
+  `docs/ansi_scte_104/pams_operations.md` (§10, pp. 69-81, verified via
+  `pdf2md` against the PDF text layer). **User-visible**: new public types
+  `scte104::operations::{ConfigRequest, ConfigResponse, ProvisioningResponse,
+  FaultRequest, FaultResponse, AsAliveRequest, AsAliveResponse}` and
+  `scte104::operations::provisioning_request::{ProvisioningRequest,
+  ProvisioningService, DpiPidEntry, InjectorComponentList}`, plus new
+  `AnySingleOperation` variants — additive, no breaking change.
+- `tests/spec_vectors.rs` (issue #936): hand-derived byte vectors computed
+  directly from the ANSI/SCTE 104 2023 syntax tables (Tables 8-1/8-2/9-5/
+  10-1/10-3/10-5), independently of this crate's own serializer, asserting
+  field values at documented byte offsets before round-tripping. Closes the
+  gap where every prior test was self-referential (build → serialize → parse
+  → compare against itself), which cannot distinguish a correct
+  implementation from a self-consistent wrong one.
+
+### Fixed
+- `src/lib.rs` crate-doc coverage claim ("All operations from Tables 8-3 and
+  8-4") was false — only 7 of 15 Table 8-3 opIDs were dispatched (issue #936).
+  Now genuinely true (15/15 + 22/22).
 
 ## [0.3.0] - 2026-07-29
 

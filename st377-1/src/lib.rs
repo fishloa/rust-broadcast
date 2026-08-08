@@ -53,6 +53,50 @@
 //! identified via [`StructuralSetKind`] but not individually typed — see
 //! `docs/st377-1.md`.
 //!
+//! ## OP1a support is structural-metadata-only (issue #937)
+//!
+//! [`op1a`] plus [`MaterialPackage`]/[`SourcePackage`]/[`TimelineTrack`]/
+//! [`EventTrack`]/[`StaticTrack`]/[`Sequence`]/[`SourceClip`]/
+//! [`TimecodeComponent`]/[`FillerComponent`] parse and byte-losslessly
+//! round-trip every OP1a Header Metadata Set this crate types (see
+//! `docs/st378-op1a.md`), and are validated against a real `ffmpeg`-muxed
+//! OP1a file in `tests/fixture_real_op1a.rs`. Two things this does **not**
+//! add up to:
+//!
+//! - **No Essence Descriptor type.** `docs/st378-op1a.md`'s minimum OP1a
+//!   file requires the File Package to carry an `EssenceDescriptor`
+//!   (§6.5/§8), but this crate has no typed representation of any
+//!   Descriptor (F.2-F.6) — [`SourcePackage::descriptor`] is a bare
+//!   [`StrongRef`], a 16-byte Instance UID this crate can neither resolve
+//!   nor build a target for. Doing so properly would mean typing not just
+//!   ST 377-1's own generic Descriptor Sets but the per-essence-kind
+//!   registrations that actually appear on the wire (this crate's real
+//!   fixture carries an MPEG Video Descriptor and a Wave Audio Descriptor,
+//!   both defined by *sibling* essence-container-mapping specs, not
+//!   ST 377-1 itself) — exactly the ecosystem-anticipation problem the
+//!   Scope section above already declines to take on.
+//! - **No file assembler.** Nothing in this crate computes cross-Partition
+//!   byte offsets (`ThisPartition`/`PreviousPartition`/`FooterPartition`),
+//!   `HeaderByteCount`/`IndexByteCount`, or builds a [`RandomIndexPack`]
+//!   that actually points at the Partitions it describes.
+//!   [`PartitionPack`], [`PrimerPack`], the typed Header Metadata Sets, and
+//!   [`RandomIndexPack`] each parse and serialize correctly in isolation,
+//!   but nothing stitches them into one valid, playable OP1a file —
+//!   confirm this yourself in `tests/round_trip.rs`'s
+//!   `full_op1a_structure_builds_and_round_trips`: every offset/byte-count
+//!   field there is a hardcoded placeholder (`0`, or `9999` for the
+//!   `RandomIndexPack` byte offset), not a computed value.
+//!
+//! A full implementation would need, at minimum: a typed `EssenceDescriptor`
+//! family (File/Generic Picture/CDCI/RGBA/Generic Sound/Generic Data/
+//! Multiple, F.2-F.6) plus a way to plug in essence-kind-specific
+//! descriptors from sibling specs; and a writer that lays out Partitions in
+//! order, tracks running byte offsets as it serializes each one, backpatches
+//! `HeaderByteCount`/`IndexByteCount`/`ThisPartition`/`PreviousPartition`/
+//! `FooterPartition`, and emits a `RandomIndexPack` from the real offsets.
+//! That is a second, comparably-sized project; tracked separately rather
+//! than attempted here.
+//!
 //! Depends only on `broadcast-common`. `#![no_std]` + `alloc` when the
 //! `std` feature is disabled.
 //!

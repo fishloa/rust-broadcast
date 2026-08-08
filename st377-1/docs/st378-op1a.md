@@ -6,6 +6,32 @@ OP1a is the **baseline** generalized operational pattern: a single playable
 essence container with a single item of continuously decodable material.
 All other generalized OPs are a superset of OP1a.
 
+## Implementation status for this crate (read first, issue #937)
+
+This crate types the OP1a structural metadata Sets — Material/Source
+Package, Timeline/Event/Static Track, Sequence, SourceClip,
+TimecodeComponent, FillerComponent — plus the OP1a Operational Pattern UL
+identification helpers (`op1a` module, §4 below), validated against a real
+`ffmpeg`-muxed OP1a file (`tests/fixtures/op1a_mpeg2_pcm.mxf`,
+`tests/fixture_real_op1a.rs`).
+
+It does **not** implement two things §6.5's minimum-file list below
+requires:
+
+- **`EssenceDescriptor`.** No typed Descriptor exists in this crate at all
+  (F.2-F.6 are identified-but-generic, see `docs/st377-1.md`'s Scope
+  section), and the real fixture's actual descriptors (an MPEG Video
+  Descriptor and a Wave Audio Descriptor) are registered by essence-
+  container-mapping specs *outside* ST 377-1, so typing ST 377-1's own
+  generic Descriptor Sets would not even cover them.
+- **A file assembler.** Nothing computes Partition byte offsets,
+  `HeaderByteCount`/`IndexByteCount`, or emits a `RandomIndexPack` that
+  points at real Partition offsets — see the crate root docs for detail.
+
+So: this crate can parse and losslessly round-trip the structural metadata
+of a real OP1a file's Header Metadata, but cannot build (or fully resolve)
+a complete, playable OP1a file end to end.
+
 ---
 
 ## 1. Operational pattern definition (§4.2)

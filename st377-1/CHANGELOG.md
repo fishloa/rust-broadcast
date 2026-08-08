@@ -7,9 +7,62 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-08-08
+
 ### Added
+- OP1a ("single item, single package") structural metadata (issue #921):
+  `MaterialPackage`/`SourcePackage` (Annex E §E.1-E.2), `TimelineTrack`/
+  `EventTrack`/`StaticTrack` (B.12-B.14), `Sequence` (B.9), `SourceClip`
+  (B.10), `TimecodeComponent` (B.17), `FillerComponent` (B.11), plus the
+  `op1a` module (SMPTE ST 378M Operational Pattern UL identification and
+  qualifier-bit helpers). `types::StrongRef` (an alias documenting a Local
+  Set's UUID-to-another-Set reference role) and `types::Rational` (the
+  8-byte Edit-Rate/Sample-Rate compound type) support the new Sets. Purely
+  additive — no existing public type or signature changed, hence a patch
+  release rather than the minor bump this workspace otherwise treats as its
+  breaking axis for 0.x crates.
 - `tests/non_exhaustive_coverage.rs` drift guard (issue #806). No public API
   or behaviour change.
+
+### Fixed
+- `tests/fixture_real_op1a.rs` (issue #937): the real-fixture round-trip
+  test previously routed every Header Metadata Set through
+  `if let Ok(set) = LocalSet::parse(&klv)` with **no `else`**, silently
+  discarding any parse failure — so the new OP1a typed parsers added above
+  had *zero* real-world byte validation despite the fixture already having
+  every Set they model. Rewritten to assert on every branch (a local-set
+  key that fails to parse, or a typed parser that fails or loses data
+  across a round-trip, now fails the test loudly, naming the item and key)
+  and to additionally dispatch every Header Metadata Set to its typed
+  struct by `StructuralSetKind`, not just the generic `LocalSet` passthrough
+  the previous version exercised exclusively.
+- `parse_uid_batch` rejected a real encoder's empty Batch/Array (§4.3):
+  discovered by the test fix above, `ffmpeg`'s OP1a Preface `DMSchemes`
+  property is `count=0, item_len=0`, but this crate required `item_len=16`
+  unconditionally, rejecting it as `InvalidBatchHeader` even though
+  `item_len` only describes an *element's* size and is meaningless when
+  there are no elements. Now validates `item_len` against 16 only when
+  `count > 0`; this crate's own `serialize_uid_batch` continues to emit the
+  canonical `item_len=16` regardless of count.
+
+### Documented
+- README, crate-root docs, and `docs/st378-op1a.md` now describe the OP1a
+  additions above (they previously said Packages/Tracks/Sequences were
+  "identified but generic … not individually decoded" — no longer true) and
+  state plainly that OP1a support is **structural-metadata-only**: this
+  crate has no typed `EssenceDescriptor` (`SourcePackage::descriptor` is an
+  unresolvable `StrongRef`) and no file assembler (nothing computes
+  Partition byte offsets, `HeaderByteCount`/`IndexByteCount`, or a real
+  `RandomIndexPack`), so a complete, playable OP1a file cannot be built or
+  fully parsed by this crate. Also documents that this crate's typed
+  Header-Metadata-Set round-trip is a value round-trip (parse -> serialize
+  -> parse gives an equal value), not a byte-for-byte match against an
+  arbitrary encoder's original bytes — Local Sets are unordered `{tag,
+  value}` bags (§9.3), and the real fixture's `Identification` Set proves a
+  real encoder (`ffmpeg`/`Lavf`) orders optional trailing properties
+  differently from this crate's Annex-A.3-declaration-order
+  canonicalization. The generic `LocalSet` byte-fidelity round-trip (an
+  order-preserving passthrough) remains the true byte-identical gate.
 
 ## [0.2.0] - 2026-07-29
 

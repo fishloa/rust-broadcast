@@ -1,8 +1,8 @@
 [package]
 name    = "st377-1"
-version = "0.2.0"
+version = "0.2.1"
 edition = "2024"
-description = "SMPTE ST 377-1:2019 Material Exchange Format (MXF) file format — KLV framing, Partition Pack, Primer Pack, local-set structural metadata (Preface/Identification/ContentStorage/EssenceContainerData), Random Index Pack. no_std."
+description = "SMPTE ST 377-1:2019 Material Exchange Format (MXF) file format — KLV framing, Partition Pack, Primer Pack, local-set structural metadata (Preface/Identification/ContentStorage/EssenceContainerData), OP1a structural metadata (Material/Source Package, Tracks, Sequence, SourceClip, TimecodeComponent, FillerComponent), Random Index Pack. no_std."
 license      = "MIT OR Apache-2.0"
 authors      = ["Alex Fishlock <alex.fishlock@racingjag.com>"]
 keywords = ["mxf", "smpte", "klv", "st377", "broadcast"]

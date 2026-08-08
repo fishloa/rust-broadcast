@@ -438,7 +438,14 @@ pub fn parse_uid_batch(bytes: &[u8]) -> Result<Vec<UlBytes>> {
     let count = u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
     let item_len = u32::from_be_bytes([bytes[4], bytes[5], bytes[6], bytes[7]]);
     let body = &bytes[8..];
-    if item_len != 16 || body.len() != count as usize * 16 {
+    // `item_len` only describes the size of an actual element, so it is only
+    // meaningful (and validated against 16) when `count > 0`. A real
+    // encoder-written empty Batch (`count == 0`) has been observed with
+    // `item_len == 0` rather than 16 (ffmpeg's OP1a Preface `DMSchemes`,
+    // `tests/fixtures/op1a_mpeg2_pcm.mxf`) — this crate previously rejected
+    // that as `InvalidBatchHeader`, even though `count == 0` unambiguously
+    // means "no elements" regardless of the stated element size.
+    if (count > 0 && item_len != 16) || body.len() != count as usize * 16 {
         return Err(Error::InvalidBatchHeader {
             count,
             item_len,
@@ -453,7 +460,13 @@ pub fn parse_uid_batch(bytes: &[u8]) -> Result<Vec<UlBytes>> {
 }
 
 /// Serialize a Batch/Array of 16-byte elements (§4.3) — see
-/// [`parse_uid_batch`].
+/// [`parse_uid_batch`]. Always writes `item_len = 16`: it names the size of
+/// each *element type* in the batch, not the instance count, so this crate
+/// keeps it constant even when `count == 0`. (Some real encoders write
+/// `item_len = 0` for an empty batch instead — e.g. `ffmpeg`'s OP1a Preface
+/// `DMSchemes` in `tests/fixtures/op1a_mpeg2_pcm.mxf` — which
+/// [`parse_uid_batch`] tolerates on input; this crate's own output stays
+/// canonical.)
 #[must_use]
 pub fn serialize_uid_batch(items: &[UlBytes]) -> Vec<u8> {
     let mut out = Vec::with_capacity(8 + items.len() * 16);

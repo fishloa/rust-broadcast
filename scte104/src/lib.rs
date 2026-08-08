@@ -18,9 +18,12 @@
 //!   with basic request/response operations.
 //! - [`MultipleOperationMessage`] — multi-operation framing (§8.2.3, Table 8-2)
 //!   with Normal, Supplemental, and Control operations.
-//! - All operations from Tables 8-3 and 8-4: splice, time_signal, splice_null,
-//!   descriptor inserts, segmentation, encryption, schedule, control words,
-//!   proprietary commands, and more.
+//! - All 15 Table 8-3 operations (basic request/response, including the
+//!   `general_response`/`init_*`/`alive_*`/`inject_*` messages of §9 and the
+//!   `config_*`/`provisioning_*`/`fault_*`/`AS_alive_*` PAMS⇔AS messages of
+//!   §10) and all 22 Table 8-4 operations (Normal/Supplemental/Control):
+//!   splice, time_signal, splice_null, descriptor inserts, segmentation,
+//!   encryption, schedule, control words, proprietary commands, and more.
 //! - [`Timestamp`](time::Timestamp) (§12.5): variable-length (none/UTC/VITC/GPI)
 //!   with typed payloads.
 //! - [`Time`](time::Time) (§12.4): 8-byte GPS-epoch timestamp used in

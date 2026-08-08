@@ -220,6 +220,11 @@ pub struct SourcePackage {
     pub tracks: Vec<StrongRef>,
     /// Descriptor (`0x4701`, Req) — strong reference to the top-level
     /// Descriptor (or Multiple Descriptor) for this package's essence.
+    ///
+    /// This crate has no typed `EssenceDescriptor` (see the crate root
+    /// docs' "OP1a support is structural-metadata-only" section): this is
+    /// the raw 16-byte Instance UID, opaque here, not a value this crate
+    /// can dereference to the target Descriptor Set.
     pub descriptor: StrongRef,
     /// Unrecognized properties preserved for round-trip fidelity.
     pub dark: Vec<(u16, Vec<u8>)>,
