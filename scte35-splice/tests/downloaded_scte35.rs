@@ -93,10 +93,10 @@ fn russia_t2mi_scte35_parse() {
             // Attempt to parse from the packet start (may fail if the section
             // spans multiple packets — this is a best-effort scaffold).
             let section_bytes = &inner_pkt[sec_start..];
-            if let Ok(section) = SpliceInfoSection::parse(section_bytes) {
-                if section.clear.is_some() {
-                    splice_commands += 1;
-                }
+            if let Ok(section) = SpliceInfoSection::parse(section_bytes)
+                && section.clear.is_some()
+            {
+                splice_commands += 1;
             }
         }
     }

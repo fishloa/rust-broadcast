@@ -44,12 +44,11 @@ fn subtitle_pes(ts: &[u8], pid: u16) -> Vec<Vec<u8>> {
     let mut asm = PesAssembler::new();
     let mut out = Vec::new();
     for pkt in ts.chunks(PKT) {
-        if let Some((p, pusi, payload)) = ts_payload(pkt) {
-            if p == pid {
-                if let Some(v) = asm.feed(pusi, payload) {
-                    out.push(v);
-                }
-            }
+        if let Some((p, pusi, payload)) = ts_payload(pkt)
+            && p == pid
+            && let Some(v) = asm.feed(pusi, payload)
+        {
+            out.push(v);
         }
     }
     if let Some(v) = asm.flush() {

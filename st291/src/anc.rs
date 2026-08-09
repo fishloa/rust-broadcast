@@ -554,7 +554,7 @@ mod tests {
         push(0x2CF, 10);
         push(0x101, 10);
         push(0x233, 10);
-        while expect_bits.len() % 8 != 0 {
+        while !expect_bits.len().is_multiple_of(8) {
             expect_bits.push(1); // '1' padding
         }
         let mut expect_payload = alloc::vec::Vec::new();

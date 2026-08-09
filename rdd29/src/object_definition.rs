@@ -381,14 +381,14 @@ impl<'a> ObjectDefinition1<'a> {
         pan_sub_blocks: Vec<PanSubBlock>,
         audio_description: AudioDescription<'a>,
     ) -> Result<Self> {
-        if let Some(first) = pan_sub_blocks.first() {
-            if first.pan.is_none() {
-                return Err(Error::InvalidValue {
-                    field: "ObjectDefinition1.pan_sub_blocks[0]",
-                    value: 0,
-                    reason: "sub-block 0 always carries pan info (PanInfoExists is implied 1)",
-                });
-            }
+        if let Some(first) = pan_sub_blocks.first()
+            && first.pan.is_none()
+        {
+            return Err(Error::InvalidValue {
+                field: "ObjectDefinition1.pan_sub_blocks[0]",
+                value: 0,
+                reason: "sub-block 0 always carries pan info (PanInfoExists is implied 1)",
+            });
         }
         Ok(Self {
             meta_id,

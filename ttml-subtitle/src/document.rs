@@ -1334,12 +1334,11 @@ fn parse_p_element(node: roxmltree::Node<'_, '_>) -> Result<PElement> {
         if child.is_text() {
             let text = child.text().unwrap_or("");
             if !text.is_empty() {
-                #[allow(clippy::collapsible_match)]
-                if let Some(last) = content.last_mut() {
-                    if let InlineContent::Text(t) = last {
-                        t.push_str(text);
-                        continue;
-                    }
+                if let Some(last) = content.last_mut()
+                    && let InlineContent::Text(t) = last
+                {
+                    t.push_str(text);
+                    continue;
                 }
                 content.push(InlineContent::Text(text.to_string()));
             }
@@ -1396,12 +1395,11 @@ fn parse_span_element(node: roxmltree::Node<'_, '_>) -> Result<SpanElement> {
         if child.is_text() {
             let text = child.text().unwrap_or("");
             if !text.is_empty() {
-                #[allow(clippy::collapsible_match)]
-                if let Some(last) = content.last_mut() {
-                    if let InlineContent::Text(t) = last {
-                        t.push_str(text);
-                        continue;
-                    }
+                if let Some(last) = content.last_mut()
+                    && let InlineContent::Text(t) = last
+                {
+                    t.push_str(text);
+                    continue;
                 }
                 content.push(InlineContent::Text(text.to_string()));
             }
@@ -2130,10 +2128,10 @@ fn style_ns_needed(attrs: &StyleAttributes, ns: &str) -> bool {
 }
 
 fn serialize_opt_attr(buf: &mut String, name: &str, value: &Option<String>) {
-    if let Some(v) = value {
-        if !v.is_empty() {
-            buf.push_str(&format!(r#" {}="{}""#, name, xml_escape(v)));
-        }
+    if let Some(v) = value
+        && !v.is_empty()
+    {
+        buf.push_str(&format!(r#" {}="{}""#, name, xml_escape(v)));
     }
 }
 

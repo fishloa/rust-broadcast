@@ -499,11 +499,11 @@ impl Cea708Decoder {
             (size_code as usize) * 2 - 1
         };
         // discontinuity check (§5.1): non-consecutive seq ⇒ reset every service
-        if let Some(prev) = self.last_seq {
-            if seq != (prev + 1) & 0x03 {
-                for s in &mut self.services {
-                    s.reset();
-                }
+        if let Some(prev) = self.last_seq
+            && seq != (prev + 1) & 0x03
+        {
+            for s in &mut self.services {
+                s.reset();
             }
         }
         self.last_seq = Some(seq);

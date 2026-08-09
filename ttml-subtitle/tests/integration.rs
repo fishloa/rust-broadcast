@@ -459,13 +459,12 @@ fn preserve_style_attributes_across_round_trip() {
     normalize_doc(&mut doc2);
 
     // Check that the region has its style attributes
-    if let Some(ref head) = doc2.tt.head {
-        if let Some(ref layout) = head.layout {
-            if let Some(first_region) = layout.regions.first() {
-                assert!(first_region.style_attributes.tts_origin.is_some());
-                assert!(first_region.style_attributes.tts_extent.is_some());
-            }
-        }
+    if let Some(ref head) = doc2.tt.head
+        && let Some(ref layout) = head.layout
+        && let Some(first_region) = layout.regions.first()
+    {
+        assert!(first_region.style_attributes.tts_origin.is_some());
+        assert!(first_region.style_attributes.tts_extent.is_some());
     }
 
     assert_eq!(doc, doc2);
@@ -516,11 +515,11 @@ fn parse_text_shadow_with_negative_offsets() {
         for div in &body.divs {
             for p in &div.paragraphs {
                 for item in &p.content {
-                    if let document::InlineContent::Span(span) = item {
-                        if let Some(ref shadow) = span.style_attributes.tts_text_shadow {
-                            assert!(shadow.contains("lime"), "should contain lime color");
-                            return;
-                        }
+                    if let document::InlineContent::Span(span) = item
+                        && let Some(ref shadow) = span.style_attributes.tts_text_shadow
+                    {
+                        assert!(shadow.contains("lime"), "should contain lime color");
+                        return;
                     }
                 }
             }
