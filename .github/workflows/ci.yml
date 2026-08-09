@@ -32,12 +32,12 @@ jobs:
       # that would mask regressions in the library crates' bare
       # --no-default-features build.
       - name: Build (all features)
-        run: cargo build --workspace --exclude dvb-tools --exclude dvb-conformance --exclude dvb-stream --exclude webrtc-runtime --all-features --locked
+        run: cargo build --workspace --exclude dvb-tools --exclude dvb-conformance --exclude dvb-stream --exclude webrtc-runtime --exclude multimux --all-features --locked
       # Examples are a published docs surface (they show on docs.rs and double as
       # compile-checked usage docs). Build the whole workspace's examples — no
       # excludes, so dvb-stream/dvb-conformance examples are covered too.
       - name: Build examples (all features)
-        run: cargo build --workspace --examples --exclude webrtc-runtime --all-features --locked
+        run: cargo build --workspace --examples --exclude webrtc-runtime --exclude multimux --all-features --locked
       # Building an example only proves it compiles. Issue #947: 12 examples
       # pointed at fixture paths that stopped existing after the fixtures
       # migration and silently exited 0 via a "fixture not available" fallback,
@@ -49,10 +49,10 @@ jobs:
       # [profile.ci]) so a hung/runaway test FAILS instead of blocking CI; it does
       # not run doctests, which get their own bounded lane below.
       - name: Test (all features)
-        run: cargo nextest run --workspace --exclude dvb-tools --exclude dvb-conformance --exclude dvb-stream --exclude webrtc-runtime --all-features --locked --profile ci
+        run: cargo nextest run --workspace --exclude dvb-tools --exclude dvb-conformance --exclude dvb-stream --exclude webrtc-runtime --exclude multimux --all-features --locked --profile ci
       - name: Doctests (all features)
         timeout-minutes: 15
-        run: cargo test --workspace --exclude dvb-tools --exclude dvb-conformance --exclude dvb-stream --exclude webrtc-runtime --all-features --locked --doc
+        run: cargo test --workspace --exclude dvb-tools --exclude dvb-conformance --exclude dvb-stream --exclude webrtc-runtime --exclude multimux --all-features --locked --doc
       # Exclude the feature-forcing leaf crates here. dvb-tools (binary) needs
       # dvb-si's ts/serde/chrono + dvb-t2mi's ts; dvb-conformance needs dvb-si's
       # ts/serde; dvb-stream always depends on tokio. Including any of them would
@@ -82,7 +82,7 @@ jobs:
       - name: rustfmt
         run: cargo fmt --all --check
       - name: clippy
-        run: cargo clippy --workspace --exclude webrtc-runtime --all-features --all-targets --locked -- -D warnings
+        run: cargo clippy --workspace --exclude webrtc-runtime --exclude multimux --all-features --all-targets --locked -- -D warnings
 
   docs:
     name: doc build
@@ -93,7 +93,7 @@ jobs:
       # Docs are warning-clean: bit-range notation is backticked (`[7:4]`)
       # so it can't be mistaken for intra-doc links. Keep it that way.
       - name: cargo doc
-        run: cargo doc --workspace --exclude webrtc-runtime --all-features --no-deps --locked
+        run: cargo doc --workspace --exclude webrtc-runtime --exclude multimux --all-features --no-deps --locked
         env:
           RUSTDOCFLAGS: "-D warnings"
 
@@ -129,7 +129,7 @@ jobs:
       # `dvb-stream`.
       - name: Build each library crate for bare-metal (no_std)
         run: |
-          for c in broadcast-common dvb-bbframe scte35-splice dvb-t2mi dvb-si dvb-conformance mpeg-pes dvb-subtitle mpeg-ps scte104 cc-data st291 ule dvb-ci dvb-simulcrypt mp4-emsg dvb-vbi rmt-flute rtp-packet rtcp-packet st12-1 st337 rdd29 st377-1 mpeg-ts broadcast-hls transmux media-plane timed-metadata hls-runtime srt-runtime media-doctor ttml-subtitle; do
+          for c in broadcast-common dvb-bbframe scte35-splice dvb-t2mi dvb-si dvb-conformance mpeg-pes dvb-subtitle mpeg-ps scte104 cc-data st291 ule dvb-ci dvb-simulcrypt mp4-emsg dvb-vbi rmt-flute rtp-packet rtcp-packet st12-1 st337 rdd29 st377-1 mpeg-ts broadcast-hls transmux media-plane timed-metadata hls-runtime srt-runtime media-doctor ttml-subtitle atsc3-route caption-convert; do
             echo "::group::$c (no_std)"
             cargo build -p "$c" --no-default-features --target thumbv7em-none-eabi --locked
             echo "::endgroup::"
@@ -201,6 +201,17 @@ jobs:
         run: cargo +${{ env.MEDIA_RUST }} test -p webrtc-runtime --features media --locked
       - name: media clippy on ${{ env.MEDIA_RUST }}
         run: cargo +${{ env.MEDIA_RUST }} clippy -p webrtc-runtime --features media --all-targets --locked -- -D warnings
+      # multimux's `whip` feature enables webrtc-runtime/media, so it inherits
+      # the same 1.88 floor and is excluded from the MSRV all-features lanes
+      # for the same reason. Both halves are covered here.
+      - name: multimux default features on MSRV 1.86
+        run: cargo build -p multimux --locked
+      - name: multimux whip feature on ${{ env.MEDIA_RUST }}
+        run: cargo +${{ env.MEDIA_RUST }} build -p multimux --features whip --locked
+      - name: multimux whip tests on ${{ env.MEDIA_RUST }}
+        run: cargo +${{ env.MEDIA_RUST }} test -p multimux --features whip --locked
+      - name: multimux whip clippy on ${{ env.MEDIA_RUST }}
+        run: cargo +${{ env.MEDIA_RUST }} clippy -p multimux --features whip --all-targets --locked -- -D warnings
 
   dvb-stream:
     name: dvb-stream
