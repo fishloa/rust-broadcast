@@ -65,6 +65,18 @@ cargo clippy --workspace --all-features --all-targets --locked -- -D warnings
 cargo fmt --all --check
 RUSTDOCFLAGS="-D warnings" cargo doc --workspace --all-features --no-deps --locked
 
+# macOS CANNOT verify Linux-gated code. `dvb-ci-runtime/src/linux.rs` is behind
+# `#[cfg(all(feature = "linux", target_os = "linux"))]`, so a clean local
+# clippy on macOS says nothing about it — two lints there passed every local
+# gate and failed CI twice (blocking clippy AND the canary, same root cause).
+# Cross-check that crate before pushing:
+rustup target add x86_64-unknown-linux-gnu
+cargo clippy -p dvb-ci-runtime --all-features --all-targets --locked \
+  --target x86_64-unknown-linux-gnu -- -D warnings
+# Whole-workspace cross-clippy does NOT work from macOS (`ring`'s build script
+# needs a C cross-toolchain). `dvb-ci-runtime` is currently the only crate with
+# `target_os` gating, so it is the only one that needs this.
+
 # The clippy canary — a PINNED stable newer than the MSRV, non-blocking in CI.
 # Pinned so it is reproducible: `cargo +stable` runs whatever you happen to have
 # installed, which is NOT what CI runs and will silently disagree with it (that
