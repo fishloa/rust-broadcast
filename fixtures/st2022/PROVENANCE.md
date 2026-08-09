@@ -293,3 +293,44 @@ no non-Deltacast branch that ever constructs a 2110-20 streamer at all
 case). ST 2110-20 output is dead code in this codebase — this fixture is
 ST 2022-6 only. See `fixtures/st2110/PROVENANCE.md` for the separate
 ST 2110-20 search (Intel MTL, blocked on host-level hugepages).
+
+---
+
+## `st2022-6-hbrmt-payload-header.bin` — derived, not captured
+
+12 bytes: `08 00 00 60 02 01 71 00 00 00 00 00`
+
+This is the HBRMT payload header of the **first** RTP packet in
+`st2022-6-hbrmt-1080i5994-single-frame-loopback.pcap` above, extracted by
+walking the classic-pcap records, taking the first `DLT_EN10MB` / IPv4 /
+UDP payload, and skipping its 12-byte RTP fixed header (`CC=0`, `X=0`, so
+no CSRC list or extension follows).
+
+It carries **no independent authority**: the pcap is the real capture and
+the source of truth, and `st2022/tests/hbrmt_fixture_pcap.rs` parses that
+pcap directly rather than this file. This exists only so
+`st2022/examples/parse_hbrmt.rs` has a committed input — the example takes
+a bare payload header, and asking a reader to first extract one from a
+6.5 MB capture makes the example unrunnable in practice (issue #926) and
+unrunnable by the example gate (issue #947).
+
+Reproduce it from the capture with:
+
+```python
+import struct
+d = open('st2022-6-hbrmt-1080i5994-single-frame-loopback.pcap', 'rb').read()
+assert struct.unpack('<I', d[0:4])[0] == 0xa1b2c3d4   # classic pcap, LE
+assert struct.unpack('<I', d[20:24])[0] == 1          # DLT_EN10MB
+off = 24
+while off + 16 <= len(d):
+    caplen = struct.unpack('<I', d[off + 8:off + 12])[0]
+    rec = d[off + 16:off + 16 + caplen]
+    off += 16 + caplen
+    if len(rec) < 14 or struct.unpack('>H', rec[12:14])[0] != 0x0800:
+        continue                                       # not IPv4
+    ip = rec[14:]
+    if ip[9] != 17:
+        continue                                       # not UDP
+    print(ip[(ip[0] & 0x0f) * 4:][8:][12:][:12].hex())
+    break
+```

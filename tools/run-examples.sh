@@ -40,7 +40,43 @@ SERVER_EXAMPLES=" rtmp-runtime/capture_publish multimux/serve_rtsp "
 SKIP_CRATES="${SKIP_CRATES-" webrtc-runtime multimux "}"
 
 # When non-empty, run ONLY these crates' examples (same space-delimited form).
+# Whitespace-only counts as empty: the lists are written with padding spaces
+# (" a b "), so " " is the natural way to spell "none" and must not be read as
+# a filter that matches nothing.
 ONLY_CRATES="${ONLY_CRATES-}"
+[ -z "${ONLY_CRATES// /}" ] && ONLY_CRATES=""
+
+# Scratch dir for examples that write an output file.
+WORKDIR=$(mktemp -d)
+trap 'rm -rf "$WORKDIR"' EXIT
+
+# Arguments for examples that REQUIRE them. An example listed here runs with
+# these arguments; an example that needs arguments and is NOT listed is a
+# FAILURE, not a skip.
+#
+# This closes the other half of issue #947. The original runner let any
+# argument-taking example exit non-zero, matched its usage message, and pass
+# as "skip (needs an argument)" — so six examples were never executed by any
+# gate, which is the same silent hole #947 was opened about, just reached by a
+# different route. Every argument-taking example now has a declared, committed
+# invocation against a real fixture.
+example_args() {
+    case "$1" in
+        atsc3/parse_lls)      echo "fixtures/atsc3/slt-lls-2019-01-07.bin" ;;
+        atsc3/parse_slt)      echo "fixtures/atsc3/slt-lls-2019-01-07.bin" ;;
+        st2022/parse_hbrmt)   echo "fixtures/st2022/st2022-6-hbrmt-payload-header.bin" ;;
+        dvb-mabr/parse_session) echo "fixtures/dvb-mabr/annex-c3-gateway-config.xml" ;;
+        # Both directions are keystream transforms over opaque bytes, so each
+        # runs standalone against the same input — no ordering dependency
+        # between the two examples (cargo enumerates targets alphabetically,
+        # which would run descramble first).
+        dvb-csa/scramble_file)
+            echo "fixtures/atsc3/slt-lls-2019-01-07.bin $WORKDIR/scrambled.bin 0102030405060708" ;;
+        dvb-csa/descramble_file)
+            echo "fixtures/atsc3/slt-lls-2019-01-07.bin $WORKDIR/descrambled.bin 0102030405060708" ;;
+        *) echo "" ;;
+    esac
+}
 
 fail=0
 checked=0
@@ -69,13 +105,17 @@ while IFS=$'\t' read -r pkg ex; do
             ;;
     esac
     checked=$((checked + 1))
-    out=$(cargo run -q -p "$pkg" --example "$ex" "$@" 2>&1)
+    # shellcheck disable=SC2046 # deliberate word splitting: the map holds a
+    # whitespace-separated argument list, not one argument.
+    out=$(cargo run -q -p "$pkg" --example "$ex" "$@" -- $(example_args "$pkg/$ex") 2>&1)
     rc=$?
 
     if [ "$rc" -ne 0 ]; then
         if printf '%s' "$out" | grep -qiE 'usage:|missing (required )?arg|expects? (a|an) |provide a path'; then
-            echo "  skip  $pkg/$ex (needs an argument)"
-            skipped=$((skipped + 1))
+            echo "  FAIL  $pkg/$ex needs arguments but declares none (issue #947)"
+            echo "        Add its invocation to example_args() in $0 so it actually runs."
+            printf '%s\n' "$out" | sed 's/^/        /'
+            fail=1
             continue
         fi
         echo "  FAIL  $pkg/$ex (exit $rc)"
