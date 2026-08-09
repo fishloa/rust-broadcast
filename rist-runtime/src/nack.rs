@@ -36,13 +36,23 @@ const APP_NAME_LEN: usize = 4;
 /// PT for RTCP APP (RFC 3550 §6.7).
 const PT_APP: u8 = 204;
 /// Maximum number of range entries per Range NACK (TR-06-1 §5.3.2.2).
-const MAX_RANGE_ENTRIES: usize = 16;
+///
+/// `pub(crate)` (rather than private) so `crate::arq`'s receiver-side
+/// engine can cap its own coalesced NACK output at the identical wire limit
+/// instead of repeating the `16` literal.
+pub(crate) const MAX_RANGE_ENTRIES: usize = 16;
 
 /// Minimum GenericNack packet length: header(4) + SSRC sender(4) +
 /// SSRC media(4) = 12 bytes. At least one FCI is required.
 const GENERIC_NACK_MIN_LEN: usize = RTCP_HEADER_LEN + WORD_LEN + WORD_LEN;
 /// Size of one Generic NACK FCI entry: PID(2) + BLP(2) = 4 bytes.
 const NACK_FCI_LEN: usize = 4;
+
+/// Width of the BLP bitmask window: bit *i* (1..=16) signals that `PID + i`
+/// is also lost (RFC 4585 §6.2.1). `pub(crate)` so `crate::arq`'s
+/// bitmask-format conversion helpers (`seqs_to_fci`/`expand_fci`) share this
+/// definition instead of repeating the literal `16`.
+pub(crate) const BLP_BIT_WIDTH: u32 = 16;
 
 /// Minimum RangeNack packet length: header(4) + SSRC(4) + name(4) = 12 bytes.
 const RANGE_NACK_MIN_LEN: usize = RTCP_HEADER_LEN + WORD_LEN + APP_NAME_LEN;

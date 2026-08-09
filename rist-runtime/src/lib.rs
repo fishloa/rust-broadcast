@@ -12,6 +12,13 @@
 //!   Round-trip time measurement (TR-06-1 §5.2.6).
 //! - [`RistSenderCompound`] / [`RistReceiverCompound`] — compound RTCP
 //!   packet builders enforcing the RIST §5.2.1 structure.
+//! - [`arq`] — the sans-IO receiver/sender ARQ reliability engine driving
+//!   *when* to build one of the wire types above and *what* to do with one
+//!   received (§5.3 NACK-Based Recovery). See the module doc there for the
+//!   spec-vs-implementation-policy accounting — TR-06-1 leaves most ARQ
+//!   *timing* to the implementer, so several of that module's numbers are
+//!   this crate's own design choice (informed by librist, the VSF reference
+//!   implementation), not a transcription.
 //!
 //! All wire types implement the workspace-standard
 //! [`Parse`](broadcast_common::Parse)/[`Serialize`](broadcast_common::Serialize)
@@ -45,6 +52,7 @@
 
 extern crate alloc;
 
+pub mod arq;
 pub mod compound;
 pub mod error;
 pub mod nack;
