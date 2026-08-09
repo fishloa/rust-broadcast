@@ -37,7 +37,13 @@ impl StunGather {
             .map_err(|e| Error::Media(format!("build stun client: {e}")))?;
 
         let mut msg = Message::new();
-        msg.build(&[Box::<TransactionId>::default(), Box::new(BINDING_REQUEST)])
+        // RFC 8489 §5: the Transaction ID "MUST be uniformly random ... and
+        // cryptographically random" (see `docs/rfc8489-stun.md` §1).
+        // `TransactionId::default()` is a plain `#[derive(Default)]` (all
+        // zero bytes) — NOT random at all (issue #948 item 4). `::new()` is
+        // the crate's actual randomness source (`rand::rng().fill`), so it
+        // — not `default()` — is what RFC 8489 requires here.
+        msg.build(&[Box::new(TransactionId::new()), Box::new(BINDING_REQUEST)])
             .map_err(|e| Error::Media(format!("build stun binding request: {e}")))?;
         Protocol::handle_write(&mut client, msg)
             .map_err(|e| Error::Media(format!("queue stun binding request: {e}")))?;
@@ -114,5 +120,60 @@ impl StunGather {
     /// Drive retransmission timing (RFC 8489 §7.2.1).
     pub(super) fn handle_timeout(&mut self, now: Instant) {
         let _ = Protocol::handle_timeout(&mut self.client, now);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The 96-bit Transaction ID sits at byte offset 8..20 of a STUN
+    /// message (RFC 8489 §5, `docs/rfc8489-stun.md` §1's own header
+    /// diagram: 2 (type) + 2 (length) + 4 (magic cookie) = 8 header bytes
+    /// before it starts).
+    const TRANSACTION_ID_OFFSET: usize = 8;
+    const TRANSACTION_ID_LEN: usize = 12;
+
+    fn queued_request_bytes(gather: &mut StunGather) -> Vec<u8> {
+        gather
+            .poll_transmit()
+            .expect("StunGather::new must queue its Binding request")
+            .message
+            .to_vec()
+    }
+
+    /// Bite test for issue #948 item 4: before the fix, `gather.rs` built
+    /// its Binding request with `Box::<TransactionId>::default()`, which is
+    /// a plain `#[derive(Default)]` on `rtc_stun::message::TransactionId` —
+    /// i.e. all-zero bytes, not random at all. Swapping `TransactionId::new()`
+    /// back to `TransactionId::default()` in `StunGather::new` makes this
+    /// test fail (both transaction IDs would be the same all-zero value);
+    /// restoring `::new()` makes it pass again.
+    #[test]
+    fn binding_requests_get_distinct_transaction_ids() {
+        let local: SocketAddr = "127.0.0.1:0".parse().unwrap();
+        let server: SocketAddr = "127.0.0.1:3478".parse().unwrap();
+
+        let mut first = StunGather::new(local, server).unwrap();
+        let mut second = StunGather::new(local, server).unwrap();
+
+        let first_bytes = queued_request_bytes(&mut first);
+        let second_bytes = queued_request_bytes(&mut second);
+
+        let first_tid =
+            &first_bytes[TRANSACTION_ID_OFFSET..TRANSACTION_ID_OFFSET + TRANSACTION_ID_LEN];
+        let second_tid =
+            &second_bytes[TRANSACTION_ID_OFFSET..TRANSACTION_ID_OFFSET + TRANSACTION_ID_LEN];
+
+        assert_ne!(
+            first_tid,
+            &[0u8; TRANSACTION_ID_LEN][..],
+            "transaction ID must not be the all-zero Default value (RFC 8489 §5 requires \
+             cryptographic randomness)"
+        );
+        assert_ne!(
+            first_tid, second_tid,
+            "two independently-built Binding requests must not share a transaction ID"
+        );
     }
 }

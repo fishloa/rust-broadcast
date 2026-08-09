@@ -101,24 +101,43 @@ matches the range the spec's own allocation guidance (§4, "SHOULD be made
 after the current assignments in the range 209-223, then ... 194-199")
 concentrates all current and near-future RTCP packet types into.
 
-**Discrepancy / gap worth flagging**: RFC 5761 §4 does not itself put a
-hard ceiling at 223 — it says future assignments *SHOULD* land in
+**Discrepancy — fixed (issue #948 item 3)**: RFC 5761 §4 does not itself
+put a hard ceiling at 223 — it says future assignments *SHOULD* land in
 `[209,223]` then `[194,199]`, and that `[224,254]` (and `[1,191]`) SHOULD
 only be used "when other values have been exhausted." IANA's live RTCP
 packet-type registry has, since this RFC, continued to allocate inside
 `192-223` (SR=200, RR=201, SDES=202, BYE=203, APP=204, RTPFB=205, PSFB=206,
-XR=207, AVB=208, RTPS=209, ...), so `[192,223]` has been sufficient in
-practice and the code's constant has **not yet been wrong for any packet
-type actually in use**. But it is a narrower range than the letter of the
-spec allows: a legitimately-registered RTCP packet type in `[224,254]`
-would misclassify as RTP by this code's demux (`is_rtcp` false ⇒ treated
-as SRTP, decrypted via `decrypt_rtp`/parsed via `rtp_packet::RtpPacket`,
-which would then fail to parse or parse into garbage). This is a
-theoretical gap rather than a live bug — no RTCP packet type in `[224,254]`
-is registered today — but it is exactly the kind of "spec allows more than
-the code checks for" mismatch this transcription exercise exists to catch,
-so it's worth deciding explicitly whether to widen the range or document
-the narrower assumption in the module doc.
+XR=207, AVB=208, RTPS=209, ...), so `[192,223]` alone had **not yet been
+wrong for any packet type actually in use** — but it was a narrower range
+than the letter of the spec allows: a legitimately-registered future RTCP
+packet type in `[224,254]` would misclassify as RTP by this code's demux
+(`is_rtcp` false ⇒ treated as SRTP, decrypted via `decrypt_rtp`/parsed via
+`rtp_packet::RtpPacket`, which would then fail to parse or parse into
+garbage).
+
+`RTCP_MUX_TYPE_MAX` in `transport.rs` is now `254`, folding `[224,254]`
+into the RTCP band. `[1,191]` is deliberately **not** folded in — see
+`RTCP_MUX_TYPE_MIN`/`RTCP_MUX_TYPE_MAX`'s own doc comment in `transport.rs`
+for why: it overlaps essentially all unmarked (`M=0`) RTP traffic (`byte1
+== PT`, `PT` in `0..=127`), so treating it as RTCP would be a live,
+guaranteed misclassification, not a currently-dormant one.
+
+**Residual risk worth flagging explicitly, not yet resolved**: widening to
+`[224,254]` reintroduces the *same class* of aliasing this RFC already
+accepts for `[192,223]` — but against a wider, more commonly-used RTP
+range. RFC 5761 §4 itself recommends dynamic RTP payload types come from
+`96..=127` (only `64..=95` is a hard MUST-NOT), and `96..=127` with the
+marker bit set (`M=1`, extremely common — e.g. every video frame boundary)
+aliases to byte1 values `224..=255`. So a media session using dynamic PT
+`>= 96` with `a=rtcp-mux` negotiated now has a live (if narrow — one byte
+value per PT) ambiguity window that did not exist before this widening,
+traded against fixing a currently-unregistered RTCP gap. This crate has no
+SDP/negotiated-payload-type awareness (by design, see the module doc), so
+it cannot resolve this itself; a caller that both negotiates dynamic PT
+`>= 96` *and* anticipates RTCP packet types being allocated in `[224,254]`
+would need to pick payload types more carefully, or this crate would need
+a way to accept the negotiated PT set to disambiguate. Flagged here rather
+than silently traded off.
 
 ## 4. Bandwidth / QoS (§6) and security (§7) — not applicable here
 

@@ -30,11 +30,15 @@
 //! [RFC 5764] §5.1.2 ("Reception"): a first byte of 0 or 1 is STUN, 20–63 is
 //! DTLS, and 128–191 is RTP or RTCP. Once inside the SRTP/SRTCP band, [RFC
 //! 5761] §4 further separates RTP from RTCP: it reserves RTCP packet types
-//! in `[192, 223]` and requires senders to avoid RTP payload types `[64,
-//! 95]` (whose value, with the RTP marker bit set, aliases into that same
-//! `[192, 223]` band) specifically so that band unambiguously identifies
+//! in `[192, 223]` (current/near-future allocations) and `[224, 254]`
+//! (allocated only once `[192, 223]` is exhausted), and requires senders to
+//! avoid RTP payload types `[64, 95]` (whose value, with the RTP marker bit
+//! set, aliases into `[192, 223]`) so that band unambiguously identifies
 //! RTCP once `a=rtcp-mux` is negotiated. [`MediaTransport::handle_datagram`]
-//! applies both rules via the named constants in this module.
+//! applies both rules via the named constants in `transport.rs`; see that
+//! module's `RTCP_MUX_TYPE_MIN`/`RTCP_MUX_TYPE_MAX` doc for why `[224, 254]`
+//! is folded into the RTCP band but `[1, 191]` deliberately is not (it would
+//! misclassify unmarked RTP wholesale, not just a currently-unused corner).
 //!
 //! # MSRV
 //!
