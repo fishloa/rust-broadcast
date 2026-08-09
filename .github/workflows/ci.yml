@@ -191,6 +191,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: "1.97.1"
+          components: clippy
       # Signalling surface must still build at the workspace MSRV.
       - name: Default features on MSRV 1.86
         run: cargo build -p webrtc-runtime --locked
@@ -212,6 +213,21 @@ jobs:
         run: cargo +${{ env.MEDIA_RUST }} test -p multimux --features whip --locked
       - name: multimux whip clippy on ${{ env.MEDIA_RUST }}
         run: cargo +${{ env.MEDIA_RUST }} clippy -p multimux --features whip --all-targets --locked -- -D warnings
+      # Both crates are excluded from the workspace example runner (their
+      # feature graphs need 1.88), so run their examples HERE — otherwise the
+      # exclusion silently means they never run, the exact hole #947 closed.
+      - name: webrtc-runtime examples on ${{ env.MEDIA_RUST }}
+        env:
+          RUSTUP_TOOLCHAIN: ${{ env.MEDIA_RUST }}
+          ONLY_CRATES: " webrtc-runtime "
+          SKIP_CRATES: " "
+        run: ./tools/run-examples.sh --features media --locked
+      - name: multimux examples on ${{ env.MEDIA_RUST }}
+        env:
+          RUSTUP_TOOLCHAIN: ${{ env.MEDIA_RUST }}
+          ONLY_CRATES: " multimux "
+          SKIP_CRATES: " "
+        run: ./tools/run-examples.sh --features whip --locked
 
   dvb-stream:
     name: dvb-stream

@@ -29,8 +29,18 @@ SERVER_EXAMPLES=" rtmp-runtime/capture_publish multimux/serve_rtsp "
 # toolchain. `webrtc-runtime` is here because `--all-features` enables its
 # `media` feature, whose dependency graph requires rustc >= 1.88 while the
 # workspace MSRV is 1.86 — `--all-features` has no per-crate opt-out, so the
-# crate is excluded here and covered by its own CI job instead.
-SKIP_CRATES=" webrtc-runtime "
+# crate is excluded here and covered by its own CI job instead. `multimux`
+# inherits the same floor through its `whip` feature, which enables
+# `webrtc-runtime/media`.
+#
+# Both are env-overridable so the dedicated MSRV-split job can re-run exactly
+# these crates on the newer toolchain — otherwise excluding them here would
+# mean their examples never run at all, which is the very hole issue #947 was
+# opened about.
+SKIP_CRATES="${SKIP_CRATES-" webrtc-runtime multimux "}"
+
+# When non-empty, run ONLY these crates' examples (same space-delimited form).
+ONLY_CRATES="${ONLY_CRATES-}"
 
 fail=0
 checked=0
@@ -38,6 +48,12 @@ skipped=0
 
 while IFS=$'\t' read -r pkg ex; do
     [ -z "$pkg" ] && continue
+    if [ -n "$ONLY_CRATES" ]; then
+        case "$ONLY_CRATES" in
+            *" $pkg "*) ;;
+            *) continue ;;
+        esac
+    fi
     case "$SKIP_CRATES" in
         *" $pkg "*)
             echo "  skip  $pkg/$ex (crate excluded from this feature set)"
@@ -76,7 +92,10 @@ while IFS=$'\t' read -r pkg ex; do
     fi
 
     echo "  ok    $pkg/$ex"
-done < <(cargo metadata --no-deps --format-version 1 "$@" |
+    # NOTE: no "$@" here. Target enumeration does not depend on the feature
+    # set, and forwarding per-package flags like `--features whip` to a
+    # workspace-wide `cargo metadata` is an error.
+done < <(cargo metadata --no-deps --format-version 1 |
     python3 -c '
 import json, sys
 for p in json.load(sys.stdin)["packages"]:
@@ -85,5 +104,5 @@ for p in json.load(sys.stdin)["packages"]:
             print(p["name"] + "\t" + t["name"])
 ')
 
-echo "examples: $checked checked, $skipped skipped (need args), fail=$fail"
+echo "examples: $checked checked, $skipped skipped, fail=$fail"
 exit $fail
