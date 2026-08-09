@@ -615,10 +615,10 @@ fn write_output(out_path: &Path, out: Output) -> CliResult<()> {
             fs::write(out_path, b)?;
         }
         Output::Manifest { text, segments } => {
-            if let Some(parent) = out_path.parent() {
-                if !parent.as_os_str().is_empty() {
-                    fs::create_dir_all(parent)?;
-                }
+            if let Some(parent) = out_path.parent()
+                && !parent.as_os_str().is_empty()
+            {
+                fs::create_dir_all(parent)?;
             }
             fs::write(out_path, text)?;
             let dir = out_path.parent().unwrap_or_else(|| Path::new("."));

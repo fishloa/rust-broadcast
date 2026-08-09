@@ -1050,10 +1050,10 @@ impl StreamingTsHlsSegmenter {
         });
         self.total_segments += 1;
         while self.window_segments.len() > self.window {
-            if let Some(dropped) = self.window_segments.pop_front() {
-                if dropped.discontinuous {
-                    self.discontinuity_sequence += 1;
-                }
+            if let Some(dropped) = self.window_segments.pop_front()
+                && dropped.discontinuous
+            {
+                self.discontinuity_sequence += 1;
             }
         }
 

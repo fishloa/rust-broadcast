@@ -168,10 +168,10 @@ impl<'a> Unpackage for Fmp4Demux<'a> {
             if &ty == b"moof" {
                 let moof = MovieFragmentBox::parse_body(bx.body)?;
                 pending_moof = Some((offset, moof));
-            } else if &ty == b"mdat" {
-                if let Some((moof_off, moof)) = pending_moof.take() {
-                    absorb_fragment(input, moof_off, &moof, &mut builders)?;
-                }
+            } else if &ty == b"mdat"
+                && let Some((moof_off, moof)) = pending_moof.take()
+            {
+                absorb_fragment(input, moof_off, &moof, &mut builders)?;
             }
             if consumed == 0 {
                 break;

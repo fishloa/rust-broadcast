@@ -404,12 +404,12 @@ pub fn split_eac3_syncframes(payload: &[u8]) -> Vec<Ec3SplitFrame> {
             break;
         }
         let frame_bytes = &payload[off..off + len];
-        if info.strmtyp == EAC3_STRMTYP_DEPENDENT {
-            if let Some(last) = out.last_mut() {
-                last.data.extend_from_slice(frame_bytes);
-                off += len;
-                continue;
-            }
+        if info.strmtyp == EAC3_STRMTYP_DEPENDENT
+            && let Some(last) = out.last_mut()
+        {
+            last.data.extend_from_slice(frame_bytes);
+            off += len;
+            continue;
         }
         out.push(Ec3SplitFrame {
             data: frame_bytes.to_vec(),

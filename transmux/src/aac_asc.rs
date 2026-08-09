@@ -420,25 +420,23 @@ fn detect_heaac_signaling(bytes: &[u8]) -> Option<HeAacSignaling> {
         asc_read_bits(bytes, &mut bit, 3);
         if let Some(sync) = asc_read_bits(bytes, &mut bit, 11) {
             if sync as u16 == SYNC_EXT_SBR {
-                if let Some(ext_aot) = asc_get_aot(bytes, &mut bit) {
-                    if ext_aot == AOT_SBR {
-                        if let Some(flag) = asc_read_bits(bytes, &mut bit, 1) {
-                            sbr_present = flag == 1;
-                            if sbr_present {
-                                let esfi = asc_read_bits(bytes, &mut bit, 4).unwrap_or(0) as u8;
-                                if esfi == SFI_ESCAPE {
-                                    asc_read_bits(bytes, &mut bit, 24);
-                                }
-                                if let Some(sync2) = asc_read_bits(bytes, &mut bit, 11) {
-                                    if sync2 as u16 == SYNC_EXT_PS {
-                                        // The psPresentFlag(1) follows; when the ASC is
-                                        // byte-aligned it may be truncated, in which case
-                                        // the presence of the 0x548 sync itself signals PS.
-                                        ps_present =
-                                            asc_read_bits(bytes, &mut bit, 1).unwrap_or(1) == 1;
-                                    }
-                                }
-                            }
+                if let Some(ext_aot) = asc_get_aot(bytes, &mut bit)
+                    && ext_aot == AOT_SBR
+                    && let Some(flag) = asc_read_bits(bytes, &mut bit, 1)
+                {
+                    sbr_present = flag == 1;
+                    if sbr_present {
+                        let esfi = asc_read_bits(bytes, &mut bit, 4).unwrap_or(0) as u8;
+                        if esfi == SFI_ESCAPE {
+                            asc_read_bits(bytes, &mut bit, 24);
+                        }
+                        if let Some(sync2) = asc_read_bits(bytes, &mut bit, 11)
+                            && sync2 as u16 == SYNC_EXT_PS
+                        {
+                            // The psPresentFlag(1) follows; when the ASC is
+                            // byte-aligned it may be truncated, in which case
+                            // the presence of the 0x548 sync itself signals PS.
+                            ps_present = asc_read_bits(bytes, &mut bit, 1).unwrap_or(1) == 1;
                         }
                     }
                 }

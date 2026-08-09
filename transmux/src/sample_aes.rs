@@ -136,7 +136,7 @@ pub fn aes128_decrypt_segment(
     iv: &[u8; BLOCK_LEN],
     ciphertext: &[u8],
 ) -> Result<Vec<u8>> {
-    if ciphertext.is_empty() || ciphertext.len() % BLOCK_LEN != 0 {
+    if ciphertext.is_empty() || !ciphertext.len().is_multiple_of(BLOCK_LEN) {
         return Err(Error::InvalidInput(
             "AES-128 segment ciphertext length not a positive multiple of 16",
         ));

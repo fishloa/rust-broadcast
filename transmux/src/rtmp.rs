@@ -1045,12 +1045,11 @@ pub fn read_chunks(mut input: &[u8]) -> Result<Vec<Message>, RtmpError> {
             let body = core::mem::take(&mut cx.partial);
             // A Set Chunk Size control message changes the reassembly size for
             // all subsequent chunks (§5.4.1).
-            if cx.message_type_id == msg_type::SET_CHUNK_SIZE {
-                if let Ok(ProtocolControl::SetChunkSize(sz)) =
+            if cx.message_type_id == msg_type::SET_CHUNK_SIZE
+                && let Ok(ProtocolControl::SetChunkSize(sz)) =
                     ProtocolControl::parse(cx.message_type_id, &body)
-                {
-                    chunk_size = (sz as usize).max(1);
-                }
+            {
+                chunk_size = (sz as usize).max(1);
             }
             out.push(Message {
                 csid: bh.csid,

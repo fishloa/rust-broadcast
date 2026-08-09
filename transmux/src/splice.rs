@@ -184,11 +184,11 @@ fn is_video(config: &CodecConfig) -> bool {
 /// section-carried sample — SCTE-35/DSM-CC/private sections — which has no
 /// absolute `dts` to read).
 fn track_end_decode_time(track: &Track) -> u64 {
-    if let Some(last) = track.samples.last() {
-        if let Some(dts) = last.dts {
-            let dts = u64::try_from(dts).unwrap_or(0);
-            return dts.saturating_add(last.duration.unwrap_or(0) as u64);
-        }
+    if let Some(last) = track.samples.last()
+        && let Some(dts) = last.dts
+    {
+        let dts = u64::try_from(dts).unwrap_or(0);
+        return dts.saturating_add(last.duration.unwrap_or(0) as u64);
     }
     let span: u64 = track
         .samples
@@ -336,12 +336,12 @@ pub fn concat(a: &Media, b: &Media) -> Result<SpliceResult> {
 
     // Every `b` track that carries samples must open on a sync sample.
     for &bj in &mapping {
-        if let Some(first) = b.tracks[bj].samples.first() {
-            if !first.flags.is_sync {
-                return Err(Error::InvalidInput(
-                    "concat: appended track does not begin on a sync sample",
-                ));
-            }
+        if let Some(first) = b.tracks[bj].samples.first()
+            && !first.flags.is_sync
+        {
+            return Err(Error::InvalidInput(
+                "concat: appended track does not begin on a sync sample",
+            ));
         }
     }
 
@@ -482,12 +482,12 @@ pub fn splice_insert(base: &Media, ad: &Media, at_ticks: u64) -> Result<SpliceRe
     let mapping = match_tracks(base, ad)?;
 
     for &aj in &mapping {
-        if let Some(first) = ad.tracks[aj].samples.first() {
-            if !first.flags.is_sync {
-                return Err(Error::InvalidInput(
-                    "splice_insert: ad track does not begin on a sync sample",
-                ));
-            }
+        if let Some(first) = ad.tracks[aj].samples.first()
+            && !first.flags.is_sync
+        {
+            return Err(Error::InvalidInput(
+                "splice_insert: ad track does not begin on a sync sample",
+            ));
         }
     }
 

@@ -388,19 +388,19 @@ impl RtpPacketiser {
         // STAP-A aggregation interleaves header bytes with payload — built
         // in a BytesMut (which copies); the parameter sets are small
         // (typically <1 kB total).
-        if self.stap_a_parameter_sets {
-            if let CodecConfig::Avc { config, .. } = &track.spec.config {
-                let mut param_nals: Vec<Vec<u8>> = Vec::new();
-                for sps in &config.config.sps {
-                    param_nals.push(sps.0.clone());
-                }
-                for pps in &config.config.pps {
-                    param_nals.push(pps.0.clone());
-                }
-                if !param_nals.is_empty() {
-                    let pkt = build_stap_a(pt, &param_nals, &mut seq, timestamp, self.ssrc)?;
-                    packets.push(pkt);
-                }
+        if self.stap_a_parameter_sets
+            && let CodecConfig::Avc { config, .. } = &track.spec.config
+        {
+            let mut param_nals: Vec<Vec<u8>> = Vec::new();
+            for sps in &config.config.sps {
+                param_nals.push(sps.0.clone());
+            }
+            for pps in &config.config.pps {
+                param_nals.push(pps.0.clone());
+            }
+            if !param_nals.is_empty() {
+                let pkt = build_stap_a(pt, &param_nals, &mut seq, timestamp, self.ssrc)?;
+                packets.push(pkt);
             }
         }
 
@@ -983,10 +983,11 @@ pub(crate) fn reassemble_video(packets: &[Vec<u8>]) -> Result<Vec<ReassembledAu>
         if payload.is_empty() {
             continue;
         }
-        if let Some(ts) = cur_ts {
-            if ts != hdr.timestamp && !cur_nals.is_empty() {
-                flush_au(&mut aus, &mut cur_nals, ts);
-            }
+        if let Some(ts) = cur_ts
+            && ts != hdr.timestamp
+            && !cur_nals.is_empty()
+        {
+            flush_au(&mut aus, &mut cur_nals, ts);
         }
         cur_ts = Some(hdr.timestamp);
 
@@ -1278,10 +1279,11 @@ pub fn depacketise_klv(packets: &[Vec<u8>]) -> Result<Vec<Vec<u8>>> {
         let hdr = parse_rtp_header(pkt)?;
         // A timestamp change with buffered bytes ends the previous unit (a
         // dropped final/marker packet still flushes the accumulated fragments).
-        if let Some(ts) = cur_ts {
-            if ts != hdr.timestamp && !cur.is_empty() {
-                units.push(core::mem::take(&mut cur));
-            }
+        if let Some(ts) = cur_ts
+            && ts != hdr.timestamp
+            && !cur.is_empty()
+        {
+            units.push(core::mem::take(&mut cur));
         }
         cur_ts = Some(hdr.timestamp);
         cur.extend_from_slice(hdr.payload);
@@ -1384,7 +1386,7 @@ pub fn hex_decode(s: &str) -> Result<Vec<u8>> {
         }
     }
     let bytes = s.as_bytes();
-    if bytes.len() % 2 != 0 {
+    if !bytes.len().is_multiple_of(2) {
         return Err(Error::InvalidValue {
             field: "hex",
             value: bytes.len() as u64,

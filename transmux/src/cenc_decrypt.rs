@@ -714,28 +714,28 @@ fn collect_fragment_samples(
         if bx.header.box_type.is(b"moof") {
             let moof = MovieFragmentBox::parse_body(bx.body)?;
             pending_moof = Some((offset, moof));
-        } else if bx.header.box_type.is(b"mdat") {
-            if let Some((moof_off, moof)) = pending_moof.take() {
-                if !seeded {
-                    if let Some(tfdt) = moof
-                        .traf
-                        .iter()
-                        .find(|t| t.tfhd.track_id == target_track_id)
-                        .and_then(|t| t.tfdt.as_ref())
-                    {
-                        next_dts = tfdt.base_media_decode_time() as i64;
-                    }
-                    seeded = true;
+        } else if bx.header.box_type.is(b"mdat")
+            && let Some((moof_off, moof)) = pending_moof.take()
+        {
+            if !seeded {
+                if let Some(tfdt) = moof
+                    .traf
+                    .iter()
+                    .find(|t| t.tfhd.track_id == target_track_id)
+                    .and_then(|t| t.tfdt.as_ref())
+                {
+                    next_dts = tfdt.base_media_decode_time() as i64;
                 }
-                absorb_protected_fragment(
-                    file,
-                    moof_off,
-                    &moof,
-                    target_track_id,
-                    &mut next_dts,
-                    &mut out,
-                )?;
+                seeded = true;
             }
+            absorb_protected_fragment(
+                file,
+                moof_off,
+                &moof,
+                target_track_id,
+                &mut next_dts,
+                &mut out,
+            )?;
         }
         if consumed == 0 {
             break;
@@ -828,13 +828,12 @@ fn find_avcc_config(stsd: &[u8]) -> Result<crate::avc_config::AVCDecoderConfigur
     for entry in iter_boxes(&stsd[body_start.min(stsd.len())..]) {
         if &entry[4..8] == b"encv" {
             let child_start = BOX_HEADER_MIN_SIZE + VISUAL_SAMPLE_ENTRY_HDR;
-            if child_start <= entry.len() {
-                if let Some(avcc) = iter_boxes(&entry[child_start..]).find(|b| &b[4..8] == b"avcC")
-                {
-                    // avcC full bytes → body after the 8-byte box header.
-                    let cfg = crate::AVCConfigurationBox::parse_body(&avcc[BOX_HEADER_MIN_SIZE..])?;
-                    return Ok(cfg.config);
-                }
+            if child_start <= entry.len()
+                && let Some(avcc) = iter_boxes(&entry[child_start..]).find(|b| &b[4..8] == b"avcC")
+            {
+                // avcC full bytes → body after the 8-byte box header.
+                let cfg = crate::AVCConfigurationBox::parse_body(&avcc[BOX_HEADER_MIN_SIZE..])?;
+                return Ok(cfg.config);
             }
         }
     }
