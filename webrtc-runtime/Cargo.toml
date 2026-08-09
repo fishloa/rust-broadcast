@@ -99,3 +99,10 @@ required-features = ["media"]
 [[test]]
 name              = "stun_rfc5769_vectors"
 required-features = ["media"]
+
+# Real-fixture pcap test (fixtures/webrtc/whip-ice-dtls-srtp-loopback.pcap):
+# decodes the genuine Chrome-emitted STUN messages from a captured
+# ICE/DTLS/SRTP session. Same gating pattern as the two vector tests above.
+[[test]]
+name              = "whip_smoke_pcap_stun"
+required-features = ["media"]

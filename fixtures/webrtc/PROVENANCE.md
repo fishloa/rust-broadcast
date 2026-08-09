@@ -50,6 +50,182 @@ ICE/DTLS/SRTP captures committed; the repos that do have such captures
 docs. This is a genuine "nothing found" result, not an omission — no bytes
 were fabricated or borrowed under a licence that doesn't clear the bar.
 
+**Superseded below** — the search above was for a *pre-existing* capture.
+The same problem is solved by generating our own, the way `rist-runtime`'s
+librist fixture was: this crate already has a working ICE/DTLS/SRTP stack
+(`media` feature) proven against a real browser (issues #740/#743), so
+running that stack against Chrome and capturing the loopback traffic
+produces a genuine ICE/DTLS/SRTP session — Chrome's, an independent
+implementation, not ours. No third-party capture-repository licence
+question even arises: the licence that matters is Chrome's own EULA over
+*running the browser*, and Google's own automation flags
+(`--use-fake-ui-for-media-stream` etc.) exist precisely to make this kind
+of scripted, no-license-question local testing possible. Chrome's output
+bytes (the pcap) are not Google's copyrighted "Chrome" — they're a record
+of the standard IETF ICE/DTLS/SRTP protocol runs Chrome performed against
+our socket, same as any other packet capture of any protocol exchange.
+
+## `whip-ice-dtls-srtp-loopback.pcap` — generated capture (target 1)
+
+A genuine loopback packet capture of a real Google Chrome
+`RTCPeerConnection` publishing a fake-device audio track over WHIP-lite to
+this crate's own `webrtc_runtime::media::MediaTransport`
+(`examples/whip_media_smoke.rs`), captured with `tcpdump` on `lo0`. It
+contains, in order: the WHIP-lite HTTP/SDP offer-answer exchange (plain
+TCP, not part of what this fixture is *for*, but left in because it's what
+actually happened), a full ICE Binding-request/response check exchange in
+both directions (STUN, RFC 5389/8489, with real USERNAME/MESSAGE-INTEGRITY/
+ICE-CONTROLLING/ICE-CONTROLLED/PRIORITY/FINGERPRINT attributes), a complete
+DTLS 1.2 handshake (RFC 6347, with the `use_srtp` extension, RFC 5764) run
+between Chrome's real DTLS stack and this crate's `rtc-dtls`-backed
+`MediaTransport`, and ~100 real SRTP packets (RFC 3711) carrying Chrome's
+fake-audio-device Opus stream, decrypted live by `MediaTransport` during
+the capture (the run's own stdout log confirms a decrypted plaintext RTP
+packet, parsed by this workspace's own `rtp-packet` crate).
+
+### Source
+
+- **Generator:** Google Chrome 151.0.7922.76 (macOS arm64,
+  `/Applications/Google Chrome.app`), driven headlessly
+  (`--headless=new`) by a local static HTML/JS page (not committed — it is
+  ~50 lines of `RTCPeerConnection`/`getUserMedia`/`fetch` boilerplate, no
+  redistribution question because none of Google's/Chromium's code is
+  copied into it).
+- **Chrome launch flags** (the standard WebRTC test-automation set, per
+  Chromium's own documented `--use-fake-ui-for-media-stream` testing
+  convention and this repo's pre-existing doc comment in
+  `whip_media_smoke.rs`):
+  ```
+  --headless=new --disable-gpu \
+    --use-fake-ui-for-media-stream --use-fake-device-for-media-stream \
+    --force-webrtc-ip-handling-policy=default_public_and_private_interfaces \
+    --user-data-dir=<throwaway profile dir> --no-first-run
+  ```
+  `--use-fake-device-for-media-stream` is what makes the audio track real
+  bytes rather than requiring an actual microphone (a deterministic fake
+  sine/noise-ish signal Chromium itself generates) — no third-party sample
+  media is captured or embedded; the SRTP payload bytes are opaque
+  ciphertext regardless of what's inside them.
+- **Peer under test (our own code):** `cargo run -p webrtc-runtime --features
+  media --example whip_media_smoke`, built with the pinned newer-than-MSRV
+  toolchain the `media` feature requires (rustc 1.94.0 — see the crate
+  README's MSRV note; MSRV 1.86 doesn't build `rtc-dtls`'s `rcgen` dep).
+- **Host:** macOS 26.5.2 (Darwin 25.5.0), arm64. `tcpdump` 4.99.1 (Apple
+  version 158), `tshark`/Wireshark 4.6.7 used only for verification
+  (protocol-hierarchy stats and field dumps below), not to write the
+  fixture.
+- **Licence basis:** Chrome is Google-proprietary (not itself
+  redistributed here — only the network bytes it emitted while running
+  locally), but this fixture needs no third-party-repository licence
+  clearance at all, unlike the search above: no third-party source code or
+  data is copied into the repo, only a capture of a standard-protocol
+  network exchange this project's own process participated in. The
+  `whip_media_smoke.rs` example being captured is this repo's own MIT OR
+  Apache-2.0 code.
+
+### Build / run
+
+```bash
+# media feature needs rustc >= 1.88; MSRV toolchain (1.86) cannot build it.
+rustup toolchain install 1.94.0
+cargo +1.94.0 build -p webrtc-runtime --features media --example whip_media_smoke --locked
+```
+
+### Capture command
+
+```bash
+tcpdump -i lo0 -w lo0.pcap -U 'udp or (tcp port 8787)' &
+tcpdump -i en0 -w en0.pcap -U 'udp or (tcp port 8787)' &   # belt-and-braces; ended up empty, see below
+cargo +1.94.0 run -p webrtc-runtime --features media --example whip_media_smoke --locked &
+python3 -m http.server 8000 --bind 127.0.0.1 &             # serves the driver HTML
+"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
+  --headless=new --disable-gpu \
+  --use-fake-ui-for-media-stream --use-fake-device-for-media-stream \
+  --force-webrtc-ip-handling-policy=default_public_and_private_interfaces \
+  --user-data-dir=<throwaway> --no-first-run \
+  http://127.0.0.1:8000/whip_test.html
+```
+
+Chrome's ICE candidates named the host's real LAN IP (`192.168.16.28`, en0)
+rather than `127.0.0.1`, because
+`--force-webrtc-ip-handling-policy=default_public_and_private_interfaces`
+disables Chrome's usual mDNS-obfuscation of local-network candidates so a
+non-browser peer can actually connect. Despite the candidate address being
+en0's IP, the OS delivered the media traffic entirely over `lo0` (sending
+to an IP address owned by one of the host's own interfaces loops back at
+the routing layer rather than actually egressing) — confirmed empirically:
+`en0.pcap` captured zero packets on the negotiated UDP port (only
+unrelated background mDNS/QUIC/SSDP broadcast noise), while `lo0.pcap`
+captured the full STUN/DTLS/SRTP exchange on that port. Only `lo0.pcap`
+(renamed `whip-ice-dtls-srtp-loopback.pcap`) is committed.
+
+### Run result (from the example's own stdout, this run)
+
+```
+[smoke] UDP media socket bound at 127.0.0.1:59668
+[smoke] received SDP offer (1938 bytes)
+[smoke] remote offered 4 candidate(s)
+[smoke] added remote candidate: ... 192.168.16.28 51044 typ host ...
+[smoke] ICE state changed: Checking
+[smoke] ICE state changed: Connected
+[smoke] DTLS handshake complete with 192.168.16.28:51044
+[smoke] DECRYPTED inbound SRTP packet from 192.168.16.28:51044: 32 bytes plaintext payload
+[smoke] RTP header (parsed by workspace rtp-packet crate): marker=true pt=111 seq=28377 ts=363515917 ssrc=0x4c9df50b csrc_count=0
+[smoke] SUCCESS: decrypted a real inbound SRTP packet via MediaTransport.
+```
+
+### Verification (byte-level, hand-checkable — the RIST-fixture standard)
+
+- **File identity:** classic (non-pcapng) libpcap, little-endian, magic
+  `a1 b2 c3 d4` at offset 0, `DLT_NULL` (loopback) link type (`00 00 00 00`
+  at offset 20) — confirmed both by `file`/`xxd` on the raw bytes and by
+  `capinfos`: 146 packets, 23,865 bytes, capture duration 2.14s
+  (2026-08-09 09:56:16.421989–09:56:18.563983 UTC+1), SHA-256
+  `859d82f1bd303fe63e251fd807221caf0fbedf6884f3b69e5da99ed46b04bfcc`.
+- **Protocol hierarchy** (`tshark -r whip-ice-dtls-srtp-loopback.pcap -q -z
+  io,phs`): `tcp > http > sdp` (2 frames — the WHIP POST/201 exchange),
+  `udp > stun` (7 frames), `udp > dtls`/`dtlsv1.2` (9 frames), `udp > rtp`
+  (104 frames — Wireshark's own SRTP heuristic dissector, which classifies
+  RTP-shaped-but-undecryptable-without-the-key payloads as `SRTP` when it
+  detects an RTP header on a flow it can't decrypt: 104 of them appear as
+  plain `rtp` in the `-z io,phs` hierarchy and as `SRTP` in a per-packet
+  `-T fields` dump, both meaning the same thing here — ciphertext with a
+  valid RTP-shaped header, exactly what encrypted SRTP looks like on the
+  wire before/without key material).
+- **First STUN packet (frame 27), read with `tshark -V`:** `Message Type:
+  0x0001 (Binding Request)`, `Message Cookie: 2112a442` (the RFC 5389
+  magic cookie), attributes `USERNAME: zk41pUeB:X4I6`, `ICE-CONTROLLING`
+  (tie-breaker `d6471fb7fffd3f2b`), `USE-CANDIDATE`, `PRIORITY`, and a
+  20-byte `MESSAGE-INTEGRITY` HMAC-SHA1 — real ICE, not a stub.
+- **A request from our own server, frame 28**, is the mirror-image check
+  (full ICE runs bidirectional checks, not ice-lite): same USERNAME
+  reversed (`X4I6:zk41pUeB`), `ICE-CONTROLLED` instead of
+  `ICE-CONTROLLING`, `MESSAGE-INTEGRITY`, and `FINGERPRINT` (CRC-32
+  verified good by Wireshark) — proof this crate's own `rtc-ice`-backed
+  gatherer, not just Chrome's, put a real authenticated Binding request on
+  the wire.
+- **DTLS record types** (`tshark -Y dtls -T fields -e
+  dtls.record.content_type -e dtls.handshake.type`): a full DTLS 1.2
+  flight — ClientHello (1) x2, ServerHello (2) + Certificate (11) +
+  ServerKeyExchange (12) + ServerHelloDone (14) in one flight, ClientKeyExchange
+  (16), ChangeCipherSpec (content type 20) on both sides, and Finished —
+  i.e. a real ECDHE handshake with self-signed certs and DTLS-SRTP keying
+  export (RFC 5764), not a truncated stub.
+- **HTTP layer** (`tshark -Y http -T fields -e http.request.method -e
+  http.response.code`): `OPTIONS`→204 (CORS preflight), `POST`→201 — the
+  WHIP-lite SDP offer/answer exchange that bootstrapped the whole session.
+- Automated re-verification of the STUN layer lives in
+  `webrtc-runtime/tests/whip_smoke_pcap_stun.rs` (feature `media`): it
+  walks this exact file with a hand-written classic-pcap reader (no new
+  `pcap` dependency — none existed in the workspace already) and decodes
+  every STUN message with `rtc_stun::message::Message` (the same type
+  `media::gather` uses in production), asserting the request/response
+  pair, USERNAME/MESSAGE-INTEGRITY, and the ICE-CONTROLLING XOR
+  ICE-CONTROLLED role split found above; a second test spot-checks that
+  later non-STUN UDP payloads on the flow are DTLS-record-shaped and then
+  RTP-shaped (the SRTP tail), i.e. that the fixture's byte progression
+  matches the STUN→DTLS→SRTP story this document claims.
+
 ## RIST — VSF TR-06-1 Appendix A (already committed, cross-referenced here)
 
 The byte-exact worked NACK example (bitmask + range formats) from VSF
