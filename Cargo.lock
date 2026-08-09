@@ -3544,6 +3544,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "ssai-runtime"
+version = "0.1.0"
+dependencies = [
+ "broadcast-common",
+ "broadcast-hls",
+ "mp4-emsg",
+ "scte35-splice",
+ "serde",
+ "thiserror 2.0.19",
+]
+
+[[package]]
 name = "st12-1"
 version = "0.2.0"
 dependencies = [

@@ -1,0 +1,42 @@
+[package]
+name         = "ssai-runtime"
+version      = "0.1.0"
+edition      = "2024"
+description  = "Sans-IO SCTE-35 SSAI session core: per-session ad-break state, a pluggable ad-decision trait, splice-point conditioning, and per-session HLS Interstitial playlist rendering. No HTTP, no ad-decision client. no_std."
+license      = "MIT OR Apache-2.0"
+authors      = ["Alex Fishlock <alex.fishlock@racingjag.com>"]
+keywords     = ["ssai", "scte35", "hls", "ad-insertion", "sans-io"]
+categories   = ["multimedia", "no-std"]
+repository   = "https://github.com/fishloa/rust-broadcast"
+readme       = "README.md"
+rust-version.workspace = true
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+
+[dependencies]
+broadcast-common = { path = "../broadcast-common", version = "9.2", default-features = false }
+# Session playlist rendering (issue #929): the per-session Interstitial
+# `EXT-X-DATERANGE` tag is appended to `MediaPlaylist::extra_tags` — the
+# injection point `broadcast-hls` documents for exactly this purpose.
+broadcast-hls     = { path = "../broadcast-hls",     version = "0.1", default-features = false }
+thiserror         = { version = "2", default-features = false }
+serde             = { version = "1", optional = true, default-features = false, features = ["derive", "alloc"] }
+
+[dev-dependencies]
+# Real-fixture tests/examples only (issue #929 prep, `fixtures/scte35-ssai/`):
+# decode the real cue this crate's splice-point conditioning is verified
+# against. Neither is a runtime dependency of the sans-IO core itself — the
+# core takes plain tick counts, never SCTE-35/emsg wire types.
+scte35-splice = { path = "../scte35-splice", version = "2",   default-features = false }
+mp4-emsg      = { path = "../mp4-emsg",      version = "0.3", default-features = false }
+
+[features]
+default = ["std"]
+# `std` links the standard library. Without it the crate is `#![no_std]` and
+# needs only `alloc` — the session store, decision trait, splice-point
+# conditioning, and playlist rendering never touch a socket or a clock.
+std = ["broadcast-common/std", "broadcast-hls/std", "thiserror/std", "serde?/std"]
+# Derive serde on the public wire/decision types.
+serde = ["dep:serde", "broadcast-common/serde", "broadcast-hls/serde"]
