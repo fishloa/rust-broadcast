@@ -1,0 +1,43 @@
+[package]
+name         = "playout-runtime"
+version      = "0.1.0"
+edition      = "2024"
+description  = "Sans-IO linear channel playout: a schedule model (programme/ad/slate), transition planning across a join (PTS-rebase offset + discontinuity detection), and SCTE-35 splice_insert() emission points built with scte35-splice. No HTTP, no tokio, no transcoding."
+license      = "MIT OR Apache-2.0"
+authors      = ["Alex Fishlock <alex.fishlock@racingjag.com>"]
+keywords     = ["scte35", "playout", "broadcast", "ad-insertion", "sans-io"]
+categories   = ["multimedia", "no-std"]
+repository   = "https://github.com/fishloa/rust-broadcast"
+readme       = "README.md"
+rust-version.workspace = true
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+
+[dependencies]
+broadcast-common = { path = "../broadcast-common", version = "9.2", default-features = false }
+# Splice-point conditioning (nearest-boundary snap with an explicit
+# tolerance): this crate decides *when* a transition happens, ssai-runtime
+# decides *how the splice lands* — see the crate-root docs. Not duplicated
+# here.
+ssai-runtime     = { path = "../ssai-runtime",     version = "0.1", default-features = false }
+# Builds + serializes the splice_insert() a transition implies.
+scte35-splice    = { path = "../scte35-splice",    version = "2",   default-features = false }
+thiserror        = { version = "2", default-features = false }
+serde            = { version = "1", optional = true, default-features = false, features = ["derive", "alloc"] }
+
+[dev-dependencies]
+# Real-fixture tests/examples only (`fixtures/scte35-ssai/`): decode the real
+# emsg-carried cue this crate's transition/emission logic is verified
+# against. Not a runtime dependency of the core itself.
+mp4-emsg = { path = "../mp4-emsg", version = "0.3", default-features = false }
+
+[features]
+default = ["std"]
+# `std` links the standard library. Without it the crate is `#![no_std]` and
+# needs only `alloc` — the schedule, transition planning, and SCTE-35
+# emission-point construction never touch a socket or a clock.
+std = ["broadcast-common/std", "ssai-runtime/std", "scte35-splice/std", "thiserror/std", "serde?/std"]
+# Derive serde on the public schedule/transition/decision types.
+serde = ["dep:serde", "broadcast-common/serde", "ssai-runtime/serde", "scte35-splice/serde"]
