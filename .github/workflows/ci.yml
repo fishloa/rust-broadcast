@@ -81,6 +81,11 @@ jobs:
       # is protected by #[rustfmt::skip]; everything else is rustfmt-clean.
       - name: rustfmt
         run: cargo fmt --all --check
+      # The same `--all-features` MSRV leak has been introduced four times in
+      # four different steps, each caught only by a red run. This checks the
+      # workflow itself so the fifth is caught before it merges.
+      - name: MSRV containment
+        run: python3 tools/check-msrv-containment.py
       - name: clippy
         run: cargo clippy --workspace --exclude webrtc-runtime --exclude multimux --all-features --all-targets --locked -- -D warnings
 
@@ -324,12 +329,20 @@ jobs:
     continue-on-error: true
     steps:
       - uses: actions/checkout@v5
+      # `-p multimux --all-features` enables `whip`, which pulls
+      # webrtc-runtime/media and its rustc 1.88 floor. This job is about
+      # oracle-validating output, not MSRV, so run it on the newer toolchain
+      # and keep `--all-features` genuinely meaning ALL features. The MSRV
+      # claim is proved by the dedicated jobs above.
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.97.1"
       - uses: Swatinem/rust-cache@v2
       - name: Install ffmpeg (provides ffprobe)
         run: sudo apt-get update && sudo apt-get install -y ffmpeg
       - name: Golden gate (transmux, all features)
-        run: cargo test -p transmux --test golden_gate --all-features --locked
+        run: cargo +1.97.1 test -p transmux --test golden_gate --all-features --locked
       - name: Golden gate (LL-HLS reference client, all features)
-        run: cargo test -p multimux --test golden_gate --all-features --locked
+        run: cargo +1.97.1 test -p multimux --test golden_gate --all-features --locked
       - name: HLS conformance oracle (media-doctor, all features)
         run: cargo test -p media-doctor --test mediastreamvalidator_oracle --all-features --locked
