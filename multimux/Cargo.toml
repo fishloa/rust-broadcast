@@ -86,6 +86,13 @@ reqwest           = { version = "0.12", default-features = false, features = ["r
 # `.next()` on `reqwest::Response::bytes_stream()` (a bare `Stream`, no
 # extension methods of its own).
 futures-util      = { version = "0.3", default-features = false, features = ["std"] }
+# WHIP input (`source::whip`, issue #740), `whip` feature only: the ICE +
+# DTLS-SRTP media transport this crate has no reason to reimplement.
+# Declared as a *plain* optional dep (no extra features) so merely depending
+# on it (feature off) never pulls `webrtc-runtime`'s own `media` feature —
+# only `multimux`'s `whip` feature below turns that on. See this crate's
+# `rust-version` note on the `whip` feature itself for why the split matters.
+webrtc-runtime    = { path = "../webrtc-runtime", version = "0.1", optional = true, default-features = false }
 
 [features]
 # `tls` is default-on: `rtsps://` sources should work out of the box. It pulls
@@ -95,6 +102,19 @@ futures-util      = { version = "0.3", default-features = false, features = ["st
 # (`tokio_rustls::client::TlsStream<TcpStream>`).
 default     = ["tls"]
 tls         = ["rtsp-runtime/tls", "dep:tokio-rustls", "dep:rustls"]
+# WHIP (RFC 9725) push input (issue #740): accepts an inbound WHIP publisher
+# over HTTP + ICE/DTLS-SRTP, via `webrtc_runtime::media::MediaTransport`.
+#
+# **Not part of `default`, and never enable it unconditionally.**
+# `webrtc-runtime/media` depends on `rtc-dtls`, which depends on `rcgen
+# ^0.14.8` — that needs rustc >= 1.88. This crate's own `rust-version` stays
+# "1.86" (the workspace MSRV): `cargo +1.86 build -p multimux --locked`
+# (this feature off) must keep working, while `cargo +1.86 build -p multimux
+# --features whip --locked` is *expected* to fail on rcgen's own version
+# gate — that failure is the point, not a bug, and is why this feature is
+# opt-in rather than folded into `default`. Build/test it with a toolchain
+# >= 1.88 (this workspace's clippy canary, currently 1.97.1, covers it).
+whip        = ["dep:webrtc-runtime", "webrtc-runtime/media"]
 
 [[example]]
 name = "serve_rtsp"

@@ -538,6 +538,8 @@ fn input_kind_name(input: &crate::config::InputSpec) -> &'static str {
         DashPull { .. } => "dash_pull",
         SmoothPull { .. } => "smooth_pull",
         Rtmp { .. } => "rtmp",
+        #[cfg(feature = "whip")]
+        Whip { .. } => "whip",
         Srt { .. } => "srt",
         Custom { .. } => "custom",
     }

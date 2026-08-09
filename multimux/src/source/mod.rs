@@ -38,6 +38,11 @@ pub mod ts_http;
 pub mod ts_program;
 pub mod ts_udp;
 pub(crate) mod udp;
+// WHIP push input (issue #740) — needs `webrtc_runtime::media`, MSRV 1.88 (see
+// the `whip` feature's doc in `Cargo.toml`); kept out of the default,
+// MSRV-1.86-clean build entirely.
+#[cfg(feature = "whip")]
+pub mod whip;
 
 use std::time::Duration;
 

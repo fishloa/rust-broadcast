@@ -796,19 +796,27 @@ async fn reload_leaves_unchanged_route_running_restarts_changed_route() {
     };
     assert_eq!(
         as_name_set("added"),
-        ["added-route".to_string()].into_iter().collect()
+        ["added-route".to_string()]
+            .into_iter()
+            .collect::<std::collections::HashSet<String>>()
     );
     assert_eq!(
         as_name_set("removed"),
-        ["remove-me".to_string()].into_iter().collect()
+        ["remove-me".to_string()]
+            .into_iter()
+            .collect::<std::collections::HashSet<String>>()
     );
     assert_eq!(
         as_name_set("changed"),
-        ["change-me".to_string()].into_iter().collect()
+        ["change-me".to_string()]
+            .into_iter()
+            .collect::<std::collections::HashSet<String>>()
     );
     assert_eq!(
         as_name_set("unchanged"),
-        ["keep".to_string()].into_iter().collect()
+        ["keep".to_string()]
+            .into_iter()
+            .collect::<std::collections::HashSet<String>>()
     );
 
     // The headline assertion: "keep" was NEVER restarted.

@@ -174,6 +174,26 @@ impl PushTransport for RtmpTransport {
         stream.write_all(&bytes).await.map_err(RtmpPushError::Io)
     }
 
+    /// Writes `message` to the socket verbatim (issue #942) — unlike
+    /// [`send`](Self::send) above, this does **not** call `send_video`:
+    /// `message` is already a complete chunk-stream-framed RTMP message
+    /// (produced by [`encode_media`](Self::encode_media)'s
+    /// `send_video`/`send_audio` calls), so framing it again here would
+    /// nest one RTMP message inside the body of another.
+    async fn write_message(&mut self, message: &[u8]) -> Result<(), Self::Error> {
+        let stream = self
+            .stream
+            .as_mut()
+            .ok_or_else(|| RtmpPushError::Connect("not connected".into()))?;
+        stream.write_all(message).await.map_err(RtmpPushError::Io)
+    }
+
+    /// FLV's mainstream is AVC video + AAC audio only (issue #942) — see
+    /// this module's own `is_flv_codec`.
+    fn supports_codec(&self, config: &CodecConfig) -> bool {
+        is_flv_codec(config)
+    }
+
     /// Send `onMetaData` plus the AVC/AAC sequence headers (`avcC`/ASC) once,
     /// before any frame data (issue #934) — a decoder cannot initialise
     /// without them. Tracks this transport cannot carry over RTMP (anything
@@ -232,14 +252,19 @@ impl PushTransport for RtmpTransport {
         Ok(())
     }
 
-    /// Split `media` into FLV-framed video/audio payloads and dispatch each
-    /// through `send_video`/`send_audio` (issue #934) — RTMP messages carry
-    /// FLV tag bodies, not MPEG-2 TS, so this bypasses [`send`](Self::send)
-    /// and the trait's default `TsMux` path entirely. Tracks this transport
-    /// cannot carry over RTMP are excluded (`is_flv_codec`); if that leaves
-    /// nothing to send this batch (e.g. only a private/section track had new
-    /// samples), returns `Ok(0)` rather than an error.
-    async fn send_media(&mut self, media: &Media) -> Result<u64, SendMediaError> {
+    /// Split `media` into FLV-framed video/audio *messages*, performing no
+    /// I/O (issue #942: the sans-IO half of `send_media`, below — see
+    /// `PushTransport::encode_media`'s own doc for why this split exists;
+    /// `push::egress::PushTransportEgress::send` is the caller that actually
+    /// needs it, since its trait is synchronous). `rtmp_runtime::client::
+    /// ClientSession::send_video`/`send_audio` are themselves sans-IO
+    /// (RTMP chunk-stream framing is pure computation — only the socket
+    /// write that follows is I/O), so this is a real factoring, not a
+    /// workaround. Tracks this transport cannot carry over RTMP are
+    /// excluded (`is_flv_codec`); if that leaves nothing at all, returns
+    /// [`SendMediaError::Mux`] (excluding *some* tracks while carrying
+    /// others is not an error — see the warn-once note below).
+    fn encode_media(&mut self, media: &Media) -> Result<Vec<bytes::Bytes>, SendMediaError> {
         let flv_tracks: Vec<Track> = media
             .tracks
             .iter()
@@ -251,7 +276,11 @@ impl PushTransport for RtmpTransport {
         // refusing it *silently* is not. Report it once per connection — a
         // per-batch log would spam, and no report at all is the same
         // data-loss hazard as `transmux`'s FLV demux dropping non-AVC/AAC
-        // tracks with no event.
+        // tracks with no event. `push::egress::PushTransportEgress::negotiate`
+        // reports this same fact structurally (via `NegotiationOutcome`) at
+        // connect time; this warn covers the direct-`PushTransport` caller
+        // that never negotiates at all (e.g. `drive_push`'s pre-#942 shape,
+        // or a test driving this transport by hand).
         let refused = media.tracks.len() - flv_tracks.len();
         if refused > 0 && !self.warned_refused_tracks {
             self.warned_refused_tracks = true;
@@ -271,10 +300,10 @@ impl PushTransport for RtmpTransport {
         }
 
         // Every track refused means this push transmits nothing, for as long
-        // as the track set stays this way. Reporting Ok(0) would present a
-        // permanently useless push as a working one. `Mux` is the right
-        // class: it drops the batch without triggering a reconnect, because
-        // reconnecting cannot fix a codec mismatch.
+        // as the track set stays this way. Reporting an empty batch would
+        // present a permanently useless push as a working one. `Mux` is the
+        // right class: it drops the batch without triggering a reconnect,
+        // because reconnecting cannot fix a codec mismatch.
         if flv_tracks.is_empty() {
             return Err(SendMediaError::Mux(format!(
                 "no RTMP-carriable track: FLV carries only AVC video and AAC audio, \
@@ -286,22 +315,17 @@ impl PushTransport for RtmpTransport {
         let payloads = transmux::flv_frame_payloads(&filtered)
             .map_err(|e| SendMediaError::Mux(e.to_string()))?;
 
-        let RtmpTransport { stream, client, .. } = self;
-        let stream = stream.as_mut().ok_or_else(|| {
-            SendMediaError::Transport(Box::new(RtmpPushError::Connect("not connected".into())))
-        })?;
-
-        let mut total = 0u64;
+        let mut messages = Vec::with_capacity(payloads.len());
         for payload in &payloads {
             // `FlvPayloadKind` is `#[non_exhaustive]`: only `Video`/`Audio`
             // exist today; a future kind is silently skipped here rather
             // than sent as neither.
             let sent = match payload.kind {
                 transmux::FlvPayloadKind::Video => {
-                    Some(client.send_video(payload.timestamp_ms, &payload.body))
+                    Some(self.client.send_video(payload.timestamp_ms, &payload.body))
                 }
                 transmux::FlvPayloadKind::Audio => {
-                    Some(client.send_audio(payload.timestamp_ms, &payload.body))
+                    Some(self.client.send_audio(payload.timestamp_ms, &payload.body))
                 }
                 _ => None,
             };
@@ -309,11 +333,27 @@ impl PushTransport for RtmpTransport {
             let bytes = bytes.map_err(|e| {
                 SendMediaError::Transport(Box::new(RtmpPushError::Protocol(e.to_string())))
             })?;
+            messages.push(bytes::Bytes::from(bytes));
+        }
+        Ok(messages)
+    }
+
+    /// Encodes `media` via [`encode_media`](Self::encode_media) then writes
+    /// each resulting chunk-framed RTMP message straight to the socket —
+    /// bypasses [`send`](Self::send) (which would re-frame the bytes as a
+    /// *new* video message) and the trait's default `TsMux` path entirely.
+    async fn send_media(&mut self, media: &Media) -> Result<u64, SendMediaError> {
+        let messages = self.encode_media(media)?;
+        let stream = self.stream.as_mut().ok_or_else(|| {
+            SendMediaError::Transport(Box::new(RtmpPushError::Connect("not connected".into())))
+        })?;
+        let mut total = 0u64;
+        for message in &messages {
             stream
-                .write_all(&bytes)
+                .write_all(message)
                 .await
                 .map_err(|e| SendMediaError::Transport(Box::new(RtmpPushError::Io(e))))?;
-            total += payload.body.len() as u64;
+            total += message.len() as u64;
         }
         Ok(total)
     }
@@ -336,4 +376,69 @@ pub enum RtmpPushError {
     /// I/O error.
     #[error("RTMP I/O error: {0}")]
     Io(#[from] std::io::Error),
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn avc_config() -> CodecConfig {
+        CodecConfig::Avc {
+            config: transmux::AVCConfigurationBox::new(transmux::AVCDecoderConfigurationRecord {
+                configuration_version: 1,
+                profile_indication: 0x42,
+                profile_compatibility: 0,
+                level_indication: 0x1f,
+                length_size_minus_one: 3,
+                sps: Vec::new(),
+                pps: Vec::new(),
+                chroma_format: None,
+                bit_depth_luma_minus8: None,
+                bit_depth_chroma_minus8: None,
+                sps_ext: Vec::new(),
+            }),
+            width: 0,
+            height: 0,
+        }
+    }
+
+    fn opaque_config() -> CodecConfig {
+        CodecConfig::Data {
+            stream_type: 0x06,
+            descriptors: Vec::new(),
+            carriage: transmux::ir::DataCarriage::Pes,
+        }
+    }
+
+    /// `PushTransport::supports_codec` (issue #942) must delegate to the
+    /// real `is_flv_codec` predicate — the one place `push::egress::
+    /// PushTransportEgress::negotiate`/`renegotiate` decide whether a track
+    /// is carriable at all, replacing the transport's own former ad-hoc
+    /// check. Exercised against the real `RtmpTransport`, not a test
+    /// double, since this is the exact call `drive_push` makes in
+    /// production.
+    ///
+    /// MUTATION-CHECKED: changing this override's body to `true` (always
+    /// carriable) makes both assertions fail identically — `supports_codec`
+    /// would then never refuse the opaque config, which is exactly what
+    /// would have let a `Data`-carried private stream silently reach
+    /// `negotiate` as "carriable" and later fail deep inside
+    /// `encode_media`'s FLV framing instead of being refused truthfully at
+    /// negotiation time. Reverted after confirming the failure.
+    #[test]
+    fn supports_codec_matches_is_flv_codec() {
+        let transport = RtmpTransport {
+            stream: None,
+            client: rtmp_runtime::client::ClientSession::new(ClientConfig::default()),
+            warned_refused_tracks: false,
+        };
+        assert!(
+            transport.supports_codec(&avc_config()),
+            "AVC must be RTMP-carriable"
+        );
+        assert!(
+            !transport.supports_codec(&opaque_config()),
+            "opaque PES data must not be RTMP-carriable"
+        );
+    }
 }

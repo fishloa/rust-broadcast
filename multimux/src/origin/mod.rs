@@ -1236,6 +1236,33 @@ fn spawn_ingest(
                 shutdown_rx,
             ))
         }
+        #[cfg(feature = "whip")]
+        crate::config::InputSpec::Whip { listen } => {
+            let route_cfg = Arc::new(
+                crate::source::whip::WhipRoute::new(name.clone(), listen.clone())
+                    .with_timeouts(timeouts),
+            );
+            tokio::spawn(supervisor::supervise_driver(
+                move |route_handle| {
+                    let route_cfg = Arc::clone(&route_cfg);
+                    async move {
+                        let trunk_config = crate::source::driver_trunk_config(window_segments);
+                        let handshake = crate::source::handshake_policy(timeouts.connect);
+                        Err(crate::source::whip::run_whip(
+                            &route_cfg,
+                            trunk_config,
+                            handshake,
+                            &route_handle,
+                        )
+                        .await)
+                    }
+                },
+                store,
+                Backoff::production_default(),
+                name.clone(),
+                shutdown_rx,
+            ))
+        }
         crate::config::InputSpec::Custom { type_tag, params } => {
             let factory =
                 registry
@@ -2778,6 +2805,8 @@ mod tests {
             crate::config::InputSpec::DashPull { .. } => true,
             crate::config::InputSpec::SmoothPull { .. } => true,
             crate::config::InputSpec::Rtmp { .. } => true,
+            #[cfg(feature = "whip")]
+            crate::config::InputSpec::Whip { .. } => true,
             crate::config::InputSpec::Custom { .. } => true,
         }
     }

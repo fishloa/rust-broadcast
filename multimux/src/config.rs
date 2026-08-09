@@ -169,6 +169,21 @@ pub enum InputSpec {
         #[serde(default)]
         stream_key: Option<String>,
     },
+    /// Accept an inbound WHIP (RFC 9725) publisher (issue #740): an HTTP
+    /// `POST`ed SDP offer answered over ICE + DTLS-SRTP — see
+    /// [`crate::source::whip`]. **Video (H.264) only** in this cut: a WHIP
+    /// publisher's audio is essentially always Opus, and this workspace has
+    /// no RTP/Opus depacketiser yet (see that module's doc). Only compiled
+    /// in behind this crate's own `whip` Cargo feature, which (unlike this
+    /// crate's default build) needs rustc >= 1.88 — see `Cargo.toml`'s
+    /// `whip` feature doc.
+    #[cfg(feature = "whip")]
+    Whip {
+        /// `host:port` to bind the WHIP publish HTTP endpoint to (e.g.
+        /// `"0.0.0.0:8080"`). Any request path is accepted — this is a
+        /// single-route listener, not a multi-tenant path router.
+        listen: String,
+    },
     /// Receive an SRT-carried MPEG-2 Transport Stream (issue #739), in
     /// either listener mode (`listen` set — binds and accepts inbound
     /// Callers, a push input) or caller mode (`remote` set — dials out);
@@ -763,6 +778,8 @@ impl std::fmt::Debug for InputSpec {
                 .field("app", app)
                 .field("stream_key", &stream_key.as_ref().map(|_| "***"))
                 .finish(),
+            #[cfg(feature = "whip")]
+            InputSpec::Whip { listen } => f.debug_struct("Whip").field("listen", listen).finish(),
             InputSpec::Srt {
                 listen,
                 remote,
@@ -838,6 +855,8 @@ impl InputSpec {
                 validate_auth(auth)
             }
             InputSpec::Rtmp { listen, .. } => validate_listen_addr(listen),
+            #[cfg(feature = "whip")]
+            InputSpec::Whip { listen } => validate_listen_addr(listen),
             InputSpec::Srt { listen, remote, .. } => match (listen, remote) {
                 (Some(_), Some(_)) => Err(MultimuxError::ConfigInvalid {
                     field: "routes.input.listen",
