@@ -46,7 +46,12 @@ bytes             = "1"
 # Shared Basic/Digest/Bearer auth model + challenge/response helper
 # (`source::http_auth`, issue #663 P3b/P3c) — the same crate `rtsp-runtime`
 # and `hls_runtime::client::tokio_client` use.
-broadcast-auth    = { path = "../broadcast-auth", version = "0.2" }
+# Floor is 0.2.1, not 0.2: `config.rs` uses `Verifier::signed_url` /
+# `SignedUrlKeySet`, added in 0.2.1 (#747). A `"0.2"` bound admits 0.2.0,
+# which lacks them — multimux 0.8.0 shipped with that understated bound and
+# fails to compile against a lock that pins 0.2.0 (hit for real while
+# bumping acap-multimux).
+broadcast-auth    = { path = "../broadcast-auth", version = "0.2.1" }
 sdp-types         = "0.1"
 tokio             = { version = "1", features = ["rt-multi-thread", "net", "io-util", "macros", "time", "sync", "signal"] }
 axum              = "0.7"

@@ -306,25 +306,40 @@ dependencies = [
 
 [[package]]
 name = "broadcast-auth"
-version = "0.2.0"
+version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3fe1a88054b76b10e644e3a4b5bc0556ba962deb0994feeca721bf364933fc8b"
+checksum = "4f1dd70fa72bb6ed6fca5730e92d09f410785415cf916dd79766b4f5c08edfc8"
 dependencies = [
  "base64",
+ "hmac",
  "http-auth",
  "md-5",
  "rand 0.8.7",
+ "sha2",
+ "subtle",
  "thiserror 2.0.19",
 ]
 
 [[package]]
 name = "broadcast-common"
-version = "9.0.0"
+version = "9.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d64078b7abe52ed96cd70c22cf916a13901593d1bad4f217b98314ec5f6e7eb4"
+checksum = "e90a9ee84933b45bdce8d09d98759b530b11761ef1cdf2c83590bc2644dc116e"
 dependencies = [
  "chrono",
  "libm",
+ "serde",
+]
+
+[[package]]
+name = "broadcast-hls"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2342812424998145cefd0d2ba1a44d1595831f8ec8725afad73edf9089ffea96"
+dependencies = [
+ "broadcast-common",
+ "serde",
+ "thiserror 2.0.19",
 ]
 
 [[package]]
@@ -533,6 +548,7 @@ checksum = "9ed9a281f7bc9b7576e61468ba615a66a5c8cfdff42420a70aa82701a3b1e292"
 dependencies = [
  "block-buffer",
  "crypto-common",
+ "subtle",
 ]
 
 [[package]]
@@ -908,6 +924,32 @@ name = "hex"
 version = "0.4.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7f24254aa9a54b5c858eaee2f5bccdb46aaf0e486a595ed5fd8f86ba55232a70"
+
+[[package]]
+name = "hls-runtime"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8913d53ab2beb907d4cc9daf87236310db040ddd26038260af600dd373596d6d"
+dependencies = [
+ "broadcast-auth",
+ "broadcast-common",
+ "broadcast-hls",
+ "bytes",
+ "media-plane",
+ "reqwest",
+ "thiserror 2.0.19",
+ "tokio",
+ "transmux",
+]
+
+[[package]]
+name = "hmac"
+version = "0.12.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6c49c37c09c17a53d937dfbb742eb3a961d65a994e6bcdcf37e7399d0cc8ab5e"
+dependencies = [
+ "digest",
+]
 
 [[package]]
 name = "home"
@@ -1310,22 +1352,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "92daf443525c4cce67b150400bc2316076100ce0b3686209eb8cf3c31612e6f0"
 
 [[package]]
-name = "ll-hls-runtime"
-version = "0.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9016189f24c3b09d16995ba749cfb9da539dae3b970ff2917a1309b46408c9c1"
-dependencies = [
- "broadcast-auth",
- "broadcast-common",
- "bytes",
- "media-plane",
- "reqwest",
- "thiserror 2.0.19",
- "tokio",
- "transmux",
-]
-
-[[package]]
 name = "log"
 version = "0.4.33"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1377,9 +1403,9 @@ dependencies = [
 
 [[package]]
 name = "media-plane"
-version = "0.1.1"
+version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9c5d1cc5f22e1d5ff9e9d670f0adf6a5f75aa92862a8ab2b756ecc63dd0621a3"
+checksum = "74594205e08aa9ed52fe4362f2d92a85f75990500160d9f2b7fbcb8195a5c20c"
 dependencies = [
  "broadcast-common",
  "bytes",
@@ -1507,16 +1533,18 @@ dependencies = [
 
 [[package]]
 name = "multimux"
-version = "0.5.1"
+version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7fae76011ca8120e02d3f636a5c763a2e3ed9d6e02332ce8b9f6b966450650c4"
+checksum = "436e872b8c856073bfddbeb1fea6b2cbfd0e700cd6f7cd0d49e7426aec01096d"
 dependencies = [
+ "async-trait",
  "axum",
  "broadcast-auth",
  "broadcast-common",
+ "broadcast-hls",
  "bytes",
  "futures-util",
- "ll-hls-runtime",
+ "hls-runtime",
  "media-plane",
  "metrics",
  "metrics-exporter-prometheus",
@@ -1532,6 +1560,7 @@ dependencies = [
  "thiserror 2.0.19",
  "tokio",
  "tokio-rustls",
+ "tokio-util",
  "tower",
  "tower-http 0.5.2",
  "tracing",
@@ -1962,9 +1991,9 @@ dependencies = [
 
 [[package]]
 name = "rtmp-runtime"
-version = "0.3.0"
+version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bdeb6f1863ae3eeaa728903d7a7d8595e1fedd84475c368f3bc6f830f8ba17fd"
+checksum = "a4cfbc96853907172ee6616cdfd60fcf63a591957d374a91fbf5e875a0bd620f"
 dependencies = [
  "broadcast-common",
  "log",
@@ -1984,9 +2013,9 @@ dependencies = [
 
 [[package]]
 name = "rtsp-runtime"
-version = "0.4.0"
+version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "46a050ac00b84aaa0a2c27068fff645539f09f68d58dffac356ba401fb865cf8"
+checksum = "967d1453baba70f120232469721a471efd4c15b86136b3ce8382fc4752c81679"
 dependencies = [
  "broadcast-auth",
  "log",
@@ -2484,6 +2513,7 @@ dependencies = [
  "bytes",
  "futures-core",
  "futures-sink",
+ "futures-util",
  "pin-project-lite",
  "tokio",
 ]
@@ -2667,12 +2697,13 @@ dependencies = [
 
 [[package]]
 name = "transmux"
-version = "0.21.0"
+version = "0.23.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bead6e341eeff1a18dd87ca5867ebbebd4ec527f6d6c9844134d4cc1c9141c8b"
+checksum = "56cd5a4e5e4719ac5619e43753e2122bb5a0e7ee492c078ac9227a7016c6f7ba"
 dependencies = [
  "aes",
  "broadcast-common",
+ "broadcast-hls",
  "bytes",
  "cbc",
  "ctr",

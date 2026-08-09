@@ -19,8 +19,8 @@ path              = "src/bin/acap-multimux.rs"
 required-features = ["device"]
 
 [dependencies]
-multimux  = "0.5"
-transmux  = "0.21"
+multimux  = "0.8"
+transmux  = "0.23"
 tokio     = { version = "1", features = ["rt-multi-thread", "net", "macros", "time", "sync"] }
 axum      = "0.7"
 serde     = { version = "1", features = ["derive"] }
@@ -45,12 +45,12 @@ acap-logging = { git = "https://github.com/fishloa/acap-rs", rev = "3c513f92bf3d
 # `multimux::supervise_driver`/`multimux::source::advance_route` (see
 # `src/bin/acap-multimux.rs`). Optional + device-gated, like `vdo` itself,
 # since only `vdo_source.rs` needs them; versions pinned to exactly what
-# `multimux` 0.5 itself depends on, so `transmux::pipeline::{Sample,
+# `multimux` 0.8 itself depends on, so `transmux::pipeline::{Sample,
 # TrackSpec}`/`media_plane::trunk::RetentionClass` are the *same* types
 # `multimux::source::advance_route`/`SessionEvent` expect, not a second,
 # semver-incompatible copy.
-broadcast-common = { version = "9", optional = true }
-media-plane      = { version = "0.1", features = ["std"], optional = true }
+broadcast-common = { version = "9.2", optional = true }
+media-plane      = { version = "0.3", features = ["std"], optional = true }
 
 [features]
 default = []

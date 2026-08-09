@@ -53,6 +53,12 @@
   alignment only ever shortens a period, never removes the cap.
 
 ### Changed
+- **`broadcast-auth` floor raised `0.2` -> `0.2.1`.** `config.rs` uses
+  `Verifier::signed_url` / `SignedUrlKeySet`, which were added in 0.2.1
+  (#747). The `"0.2"` bound admitted 0.2.0, which does not have them, so
+  multimux 0.8.0 shipped declaring a requirement weaker than its real one and
+  fails to build against any lock that resolves 0.2.0. Hit for real while
+  bumping `acap-multimux`, where the lock picked the floor.
 - MSRV raised to **1.95.0** (issue #949). This removes the workspace's MSRV
   split: `webrtc-runtime`'s optional `media` feature needed rustc 1.88 (via
   `rcgen`), which had grown a dedicated CI job, six `--exclude` lanes and a
