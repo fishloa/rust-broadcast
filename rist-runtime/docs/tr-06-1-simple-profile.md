@@ -66,6 +66,19 @@ Standard RFC 3550 RR with exactly 1 report block:
 
 ### 3.5 RTT Echo Request/Response (§5.2.6, PT=APP=204)
 
+Stated purpose (§5.2.6, informative framing): "to allow RIST endpoints to
+measure the Round Trip Time (RTT) to the remote endpoint. The RTT information
+can be used by receivers to optimize their retransmission requests." Support
+is optional. **This is the entirety of what TR-06-1 says about RTT's role in
+retransmission timing** — it does not state a formula relating measured RTT to
+the retransmission-request interval or to buffer sizing; Appendix B's
+132 ms/1000 ms/70 ms/7-retries figures (below) are stated as flat defaults, not
+as a function of measured RTT. A concrete RTT-driven timing algorithm, if one
+exists, is not in this document — check whether TR-06-2 (Main Profile timing,
+2024; also vendored at `private/specs/vsf_tr-06-2_2024_rist_timing_main_profile.pdf`,
+out of scope for this transcription) states one before assuming Simple-Profile
+behaviour extends there.
+
 RTCP APP message with name `"RIST"` (0x52495354).
 
 ```
@@ -103,11 +116,50 @@ RTCP APP message with name `"RIST"` (0x52495354).
 
 ### 4.1 Protocol Overview (§5.3.1, informative)
 
-Receiver buffer = Reorder Section + Retransmission Reassembly Section.
-Loss detected at boundary via RTP sequence number gaps. FIFO; out-of-order
-packets placed by sequence number.
+General operation:
+- Once loss is detected, the receiver requests retransmission of the lost packet(s).
+- The receiver implements a buffer to accommodate one or more network round-trip
+  delays and packet re-ordering.
+- A lost packet may be requested multiple times (the spec does not bound this
+  other than via the Appendix B retry-count default — see Appendix B, below;
+  it does not itself state a suppression rule for "don't re-request a packet
+  that's already been requested/received").
 
-### 4.2 Bitmask-Based Retransmission — Generic NACK (§5.3.2.1)
+Receiver data flow:
+- Packets arrive into a **Reorder Section**, which absorbs out-of-order packets
+  (this is also the mechanism that supports bonding of multiple channels).
+- After the Reorder Section, packets cross into a **Retransmission Reassembly
+  Section**. Packet loss is detected **at the boundary between these two
+  sections**, by looking for discontinuities in the RTP sequence number.
+- The combined buffer behaves as a FIFO: an arriving in-order packet pushes
+  existing packets forward one or more positions. Out-of-order packets whose
+  sequence number falls between the newest packet in the reorder section and the
+  oldest packet in the retransmission-reassembly section are placed by sequence
+  number.
+- **Where exactly loss is detected is explicitly left to the implementation**:
+  - a minimum-delay implementation detects loss at the input of the buffer —
+    packets that arrive out of order then cause *extra* (spurious) retransmission
+    requests;
+  - a bonding-capable implementation sizes the reorder section large enough to
+    absorb the worst-case delay differential between the bonded paths.
+- Recommendation (non-quantified): provision for short network outages; buffer
+  size is "a function of the round-trip time, packet jitter, and these outages,
+  if present" — the spec does not give a formula for this, only Appendix B's
+  flat suggested defaults (§4.4/Appendix B).
+- **Simple Profile specifically**: buffer size is manually configured at both
+  the sending and receiving ends — there is no in-band buffer-size negotiation.
+
+### 4.2 Retransmission Requests (§5.3.2)
+
+RIST Simple Profile defines two retransmission-request wire formats:
+- **Bitmask-based** (§5.3.2.1) — suited to individual losses and short loss bursts.
+- **Range-based** (§5.3.2.2) — suited to block losses.
+
+Conformance: **RIST senders shall support both** request types. **RIST receivers
+may implement either one, or both** — a receiver is not required to implement
+both.
+
+#### 4.2.1 Bitmask-Based Retransmission — Generic NACK (§5.3.2.1)
 
 RFC 4585 §6.2 Generic NACK:
 
@@ -139,7 +191,7 @@ Each FCI (32 bits):
 
 Each FCI can request up to 17 packets. Multiple FCI fields allowed.
 
-### 4.3 Range-Based Retransmission (§5.3.2.2)
+#### 4.2.2 Range-Based Retransmission (§5.3.2.2)
 
 RTCP APP message with name `"RIST"` (0x52495354):
 
@@ -169,11 +221,66 @@ Each Range Request (32 bits):
 | Missing Pkt Sequence Start | 16 | First lost RTP sequence number |
 | Number of Additional Missing Pkts | 16 | Count of consecutive additional packets; 0 = only the start packet |
 
-### 4.4 Retransmitted Packets (§5.3.3)
+#### 4.2.3 RTCP Packet Size Considerations (§5.3.2.3, informative)
+
+- Both NACK wire formats can carry multiple requests in one RTCP packet.
+- Rationale given: under congestion, smaller packets have a higher probability
+  of delivery.
+- **The spec places no hard limit** on how many requests may be included in a
+  single RTCP NACK packet in general. It only *recommends* implementers
+  restrict the count, suggesting "no more than 16 requests per packet."
+- This is an **informative recommendation**, not a "shall" — do not confuse it
+  with the range-based format's own normative cap. §5.3.2.2 (Range-Based
+  Retransmission Requests) separately states the packet **shall** have a
+  maximum of 16 range requests (that limit is on the wire format itself, not
+  this general congestion-avoidance guidance). The bitmask format (§5.3.2.1)
+  has **no stated per-packet limit on the number of Generic NACK FCI fields**
+  at all — the 16-ish figure here is the only guidance that applies to it, and
+  it is advisory only.
+
+### 4.3 Retransmitted Packets (§5.3.3)
 
 - Sender retransmits with same sequence number and timestamp
 - SSRC LSB distinguishes: `0` = original, `1` = retransmission
 - Upper 31 bits of SSRC identical between original and retransmit
+- The retransmitted packet **shall use the same transmission method** as the
+  rest of that flow: same destination IP if unicast; if the flow is bonded
+  (split across multiple destinations), the same path-selection algorithm used
+  for original packets picks the retransmit's path; if the flow is multicast,
+  other receivers on the group may also pick up the retransmitted copy.
+- Sender-side responsibility on receiving a NACK, spelled out here: identify
+  the flow via the SSRC field, locate the originally-sent packet, and resend an
+  exact copy (same seq/timestamp) with the SSRC LSB flipped to 1. The spec does
+  not prescribe *how* the sender looks the packet up (e.g. a send-side ring
+  buffer) — that storage/lookup mechanism is left to the implementation.
+
+### 4.4 Burst Control (§5.3.4, informative)
+
+Two burst scenarios the spec flags as recommendations (not requirements):
+
+1. **NACK packet bursts** (both Bitmask and Range modes): if a receiver needs
+   to send a large number of back-to-back NACK packets, it should take care not
+   to create too large a burst. Which request mode is most efficient (fewest
+   NACK packets for a given loss pattern) depends on the loss pattern itself —
+   no selection algorithm is given.
+2. **Retransmitted-packet bursts**: a sender can receive a NACK requesting a
+   large number of retransmissions in one shot. It is recommended that
+   implementations **throttle** the retransmitted packets so as not to overload
+   the network.
+   - Called out explicitly: a range-based request can, in the extreme, request
+     retransmission of every possible RTP sequence number by setting "Number of
+     addtl missing Pkts" to 65535 for an arbitrary start — i.e. a single 32-bit
+     range-request field can nominally demand 65536 retransmissions. An
+     implementation must be prepared to throttle/reject this rather than
+     attempt it literally.
+
+**For RIST Simple Profile, the spec explicitly states these techniques' details
+are left to the discretion of the implementer.** There is no stated back-off
+algorithm, no stated suppression rule (e.g. "don't re-NACK a sequence number
+already NACKed within window T"), and no stated retransmission-throttle rate.
+Anything an ARQ engine does here beyond Appendix B's flat retry-count/interval
+figures (see Appendix B below for the numeric defaults) is implementation
+policy, not spec-mandated behaviour.
 
 ### 4.5 SSRC Filtering (§5.3.5, informative)
 
@@ -191,11 +298,96 @@ Requirements if implemented:
 - Sender: replicated packets same seq+timestamp; retransmit on any connection
 - SMPTE 2022-7 Class-C compatible for replicated bonding
 
-## Appendix B — Suggested Default Values
+## Appendix A — Retransmission Request Examples (informative)
 
-| Parameter | Suggested Value |
+Worked example straight from the spec (§Appendix A), useful as a hand-checkable
+wire-format test vector (not a network capture — see the fixture assessment in
+the issue-#741 investigation notes for that distinction).
+
+Setup: RIST device receiving a stream from `192.168.1.10:3000`, `SSRC =
+0xAABBCC00`. Sequence 99 received; 100 lost; 101, 102 received; 103–122 lost
+(20 consecutive packets); 123+ received. Retransmission-request packets are
+sent to `192.168.1.10:3001`.
+
+**Bitmask-Based request** (`length=4` → n+2=4 → 2 Generic NACK FCI fields):
+
+```
+|V=2|0| FMT=1  |   PT=205      |  length=4     |
+|         SSRC of packet sender (ignored)       |
+| 0xAA | 0xBB | 0xCC | 0x00 or 0x01              |   (SSRC of media source)
+| PID=100       | BLP=1111111111110000          |
+| PID=117       | BLP=0000000000011111          |
+```
+
+- FCI 1: PID=100 signals packet 100 itself lost. BLP bit1(=101)=0, bit2(=102)=0
+  (both received); bits 3–16 (=103–116) = 1 (lost).
+- FCI 2: PID=117 signals packet 117 itself lost. BLP bits 1–5 (=118–122) = 1
+  (lost); bits 6–16 = 0 (not being requested here).
+- Together: 100, 103–116, 117, 118–122 = 21 lost packets signalled (1 + 14 + 1
+  + 5), matching the 1 (pkt 100) + 20 (103–122) loss pattern in the setup.
+
+**Range-Based request** (`length=4` → n+2=4 → 2 range-request fields):
+
+```
+|V=2|0|Subtype=0|  PT=APP=204   |  length=4     |
+| 0xAA | 0xBB | 0xCC | 0x00 or 0x01              |   (SSRC of media source)
+| 0x52 (R) | 0x49 (I) | 0x53 (S) | 0x54 (T)       |   (name = "RIST")
+| Start=100     | Additional=0                   |
+| Start=103     | Additional=19                   |
+```
+
+- Range 1: Start=100, Additional=0 → packet 100 only.
+- Range 2: Start=103, Additional=19 → packets 103 through 103+19=122 inclusive
+  (20 packets).
+
+Spec's own footnote: "the contents of the fields in red are fixed by this
+standard and never change" — i.e. `PT`, `FMT`/`Subtype`, and the `"RIST"` name
+field are wire constants; only `length`, `SSRC`, `PID`/`BLP`, and
+`Start`/`Additional` vary per-request.
+
+## Appendix B — Suggested Default Values (informative)
+
+> **Correction (this transcription):** an earlier draft of this file listed
+> "NACK processing start: When packet enters retransmission reassembly",
+> "Max retries: 10", "Reorder buffer size: 25 ms (adjustable)", and
+> "Retransmission buffer size: Function of RTT + jitter" for this appendix.
+> None of those four entries match the source PDF. They have been replaced
+> below with the actual Appendix B text, re-verified against
+> `private/specs/vsf_tr-06-1_2020_rist_protocol_simple_profile.pdf` via
+> `pdf2md --engine textlayer` (page 31).
+
+Stated verbatim framing: "RIST implementations complying with this
+specification are manually configured by the user. In the absence of user
+input, the following default parameters are suggested":
+
+| Parameter | Suggested value |
 |---|---|
-| NACK processing start | When packet enters retransmission reassembly |
-| Max retries | 10 |
-| Reorder buffer size | 25 ms (adjustable) |
-| Retransmission buffer size | Function of RTT + jitter |
+| Receiver Buffer | 1000 ms |
+| Sender Buffer | ≥ Receiver Buffer |
+| Reorder Section | 70 ms |
+| Number of Retransmission Requests per Packet | 7 |
+
+The interval between retransmission requests is **derived**, not independently
+stated: "the receiver buffer minus the reorder section divided by the number of
+retransmission requests." For the values above that is
+`(1000 - 70) / 7 = 132.86`, and the spec states the rounded outcome directly:
+**132 ms**.
+
+Notes for an ARQ engine building against these:
+- "Receiver Buffer" is the *total* buffer depth (Reorder Section +
+  Retransmission Reassembly Section combined) — it is not a separate pool from
+  the 70 ms reorder figure; the reassembly section's time budget is the
+  remainder, `1000 - 70 = 930 ms`, which is what the 132 ms interval is derived
+  from (`930 / 7 ≈ 132.86`).
+- "Number of Retransmission Requests per Packet" is, in effect, the maximum
+  number of times a given lost packet is re-requested — 7. The spec does not
+  name it "max retries," but that is its
+  effect: after 7 requests spaced ~132 ms apart (≈924 ms, just inside the
+  930 ms reassembly-section budget), the packet falls off the end of the
+  buffer and further requesting it is moot.
+- "Sender Buffer ≥ Receiver Buffer" is the only stated sender-side buffer-depth
+  constraint — no absolute sender buffer figure is given, only the
+  relationship.
+- All of the above are **suggested defaults for the manually-configured Simple
+  Profile**, not protocol minimums/maximums — nothing in §5 makes these
+  numbers normative ("shall"); Appendix B is explicitly informative.
