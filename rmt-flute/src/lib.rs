@@ -39,6 +39,13 @@
 //! - [`NormCommonHeader`] + [`NormData`] / [`NormInfo`] / [`NormCmd`] / [`NormFeedback`] — the
 //!   **NORM** (RFC 5740) common header and message types (NORM_INFO / NORM_DATA /
 //!   NORM_CMD / NORM_NACK / NORM_ACK / NORM_REPORT).
+//! - [`SourceBlockPartition`] — the FEC Building Block's (RFC 5052 §9.1)
+//!   scheme-agnostic **Block Partitioning Algorithm**: given a transport
+//!   object's Transfer-Length, Encoding-Symbol-Length and
+//!   Maximum-Source-Block-Length, derive the number of source blocks and each
+//!   block's length in symbols. The common substrate `dvb-mabr` and
+//!   `atsc3-route` both need (issue #944) without hardcoding any FEC scheme's
+//!   FEC Payload ID or Scheme-specific OTI layout.
 //!
 //! ⚠ **FEC Payload ID** bit layouts are FEC-scheme dependent (RFC 5052 / the FEC
 //! Scheme document) and are **not** defined by ALC/NORM themselves; this crate
@@ -93,6 +100,7 @@ extern crate alloc;
 mod alc;
 mod error;
 mod ext;
+mod fec;
 mod flute;
 mod lct;
 mod lct_ext;
@@ -103,6 +111,7 @@ pub use alc::{
 };
 pub use error::{Error, Result};
 pub use ext::{FIXED_HET_MIN, HeaderExtension, WORD, chain_len, parse_chain, serialize_chain};
+pub use fec::SourceBlockPartition;
 pub use flute::{
     CencAlgorithm, ExtCenc, ExtFdt, FDT_INSTANCE_ID_MAX, FLUTE_VERSION, HET_EXT_CENC, HET_EXT_FDT,
     TOI_FDT,

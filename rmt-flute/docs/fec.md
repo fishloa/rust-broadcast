@@ -449,15 +449,16 @@ not resolved here, and not invented.
 
 Both `atsc3-route` (A/331 Annex A) and `dvb-mabr` (ETSI TS 103 769) need to
 construct/reassemble a delivery object's FEC-protectable unit from source
-blocks and encoding symbols — the shape recorded as needed (but not yet built)
-in this crate's own tracking issue. This document supplies the RFC 5052 layer
-that construction can be built on without hardcoding a FEC scheme:
+blocks and encoding symbols — tracked in issue #944. This document supplies
+the RFC 5052 layer that construction can be built on without hardcoding a FEC
+scheme:
 
 - The **Block Partitioning Algorithm** (§5) — `L`/`E`/`B` in, `N` source blocks
   (with `A_large`/`A_small`/`I`) out — is exactly "how many source blocks does
   this object split into, and how big is each", entirely in terms of symbol
   *counts*, never FEC-scheme-specific bytes. This is the natural core of a
-  transport-object/source-block helper.
+  transport-object/source-block helper, implemented as
+  [`SourceBlockPartition`] (`src/fec.rs`).
 - What such a helper must **not** do is bake in a FEC Payload ID layout (§3, §8)
   or a Scheme-specific OTI layout (§2.3, §8) — those stay the caller's problem,
   passed through as opaque byte slices (mirroring how `AlcPacket::fec_payload_id`

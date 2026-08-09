@@ -6,6 +6,20 @@ in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- `SourceBlockPartition` — the RFC 5052 §9.1 Block Partitioning Algorithm:
+  given a transport object's Transfer-Length, Encoding-Symbol-Length and
+  Maximum-Source-Block-Length, derives the number of source blocks and each
+  block's length in symbols (`SourceBlockPartition::new`, `block_len`,
+  `last_symbol_len`). This is the scheme-agnostic common substrate both
+  `dvb-mabr` and a future `atsc3-route` need for FEC transport-object /
+  super-object construction (issue #944); it operates purely on symbol
+  counts and deliberately does not define any FEC Payload ID or
+  Scheme-specific FEC OTI byte layout — those remain FEC-scheme dependent and
+  opaque, per the crate's existing stance (`FecPayloadId128`).
+
 ## [0.4.0] - 2026-08-08
 
 ### Changed
