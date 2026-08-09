@@ -209,3 +209,55 @@ The `emib`/`emeb` syntax is in ISO/IEC 23001-18 (paid, not vendored).
 5. **`emib`/`emeb` (MPEG-B Part 18)** are a *separate* box family for Event
    Message *Tracks*, not the `emsg` box; noted for disambiguation only, syntax
    not vendored.
+
+---
+
+## Addendum (2026-08-09): SCTE 214 citation check (issue #929 SSAI prep)
+
+`timed-metadata` (`src/convert/emsg.rs`, `src/lib.rs`, `README.md`,
+`CHANGELOG.md`) cites its `urn:scte:scte35:2013:bin` scheme constant to
+**"SCTE 214-3"**. Checked against the publicly listed SCTE 214 series
+titles (ANSI/SCTE webstore + scte.org catalog, verified 2026-08-09):
+
+| Part | Title |
+|---|---|
+| SCTE 214-1 | MPEG DASH for IP-Based Cable Services Part 1: MPD Constraints and Extensions |
+| SCTE 214-2 | MPEG DASH for IP-Based Cable Services Part 2: DASH/TS Profile |
+| SCTE 214-3 | MPEG DASH for IP-Based Cable Services Part 3: DASH/FF Profile |
+| SCTE 214-4 | MPEG DASH for IP-Based Cable Services Part 4: SCTE Common Intermediate Format (CIF/TS) Manifest for ATS Streams |
+| SCTE 214-5 | ISO BMFF Based DASH Constraints Part 5: DASH/Constrained ISO BMFF Profile |
+
+By title, **SCTE 214-1** ("MPD Constraints and Extensions") is the part that
+would define an MPD-level scheme URI for SCTE 35 signalling, not 214-3
+("DASH/FF Profile", a segment-format profile). This document's own §"SCTE 35
+carriage in emsg" section above already (independently) attributes the
+scheme-URI/payload-binding rules to **SCTE 214-1**, citing DASH-IF Part 10
+§2.2's informative reference [i.2]. So there is an unresolved discrepancy
+between `timed-metadata`'s "SCTE 214-3" comments and this document's "SCTE
+214-1" attribution — **UNVERIFIED which (if either) is correct**, because:
+
+- Neither SCTE 214-1 nor SCTE 214-3 is freely available — both are gated
+  behind the ANSI webstore (paid) / scte.org standards library
+  (membership-gated); a direct fetch of the scte.org catalog page returned
+  HTTP 403 during this check.
+- No vendored source in this repo (including the full `ansi_scte_35_2023r1`
+  PDF transcribed in `scte35-splice/docs/`) mentions `emsg`, DASH, or
+  `scheme_id_uri` anywhere — SCTE 35 itself does not define the DASH
+  carriage; only the SCTE 214 series does, and none of it is vendored.
+- DASH-IF Part 10 (the one free source in this chain, already vendored at
+  `specs/dashif_iop_part10_v5.0.0_emsg.pdf`) only *shows* the scheme URI in
+  two MPD timed-metadata examples (§9.2.5, Examples 9-1/9-2); it does not
+  itself state which SCTE 214 part is normative for the scheme registration.
+
+**Net effect on SSAI (#929) prep:** the `emsg.scheme_id_uri` string values
+(`urn:scte:scte35:2013:bin`, and the `2013:xml` / `2014:xml+bin` variants
+seen in wider industry usage — e.g. dash.js, DASH-IF's Ad-Insertion CR) are
+usable as-implemented (`timed-metadata` already round-trips
+`urn:scte:scte35:2013:bin` against a real fixture), but the **normative SCTE
+214 part number backing that string, and any additional payload-binding
+rules beyond "carry the `splice_info_section` verbatim in
+`message_data[]`"**, remain unverified against a primary source. Do not cite
+"SCTE 214-3" as authoritative without obtaining and checking that document;
+do not silently change it to "SCTE 214-1" either, for the same reason. This
+is a documentation-citation issue in already-shipped code, not fixed here
+per the transcription-only scope of this pass — flagged for the maintainer.

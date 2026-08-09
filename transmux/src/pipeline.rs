@@ -787,7 +787,8 @@ pub fn build_media_segment(
 /// [`EmsgBox`] must appear **at the start of the segment**, after the `styp`
 /// segment-type box but *before* the `moof`.  The boxes in `emsgs` are emitted
 /// in the order given.  A common consumer is SCTE 35 in-band ad-insertion
-/// signalling (`scheme_id_uri = "urn:scte:scte35:2013:bin"`, ANSI/SCTE 214-3 /
+/// signalling (`scheme_id_uri = "urn:scte:scte35:2013:bin"`, DASH-IF IOP
+/// Part 10; SCTE 214 part unverified per #951 —
 /// DASH-IF Part 10 §7.3).
 ///
 /// # Timing
