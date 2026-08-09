@@ -1,0 +1,336 @@
+{
+  "title": "compliance-probe: TR 101 290 / PCR / SCTE-35",
+  "uid": "compliance-probe",
+  "schemaVersion": 39,
+  "version": 1,
+  "editable": true,
+  "timezone": "utc",
+  "time": { "from": "now-6h", "to": "now" },
+  "refresh": "30s",
+  "tags": ["dvb", "tr-101-290", "compliance-probe"],
+  "templating": {
+    "list": [
+      {
+        "name": "datasource",
+        "type": "datasource",
+        "query": "prometheus",
+        "current": {}
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "row",
+      "title": "Overview",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 },
+      "collapsed": false
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "TR 101 290 in sync",
+      "description": "compliance_probe_tr101290_in_sync — 1 while the ConformanceMonitor's TS_sync_loss hysteresis (indicator 1.1) considers the fed packet stream in sync.",
+      "gridPos": { "h": 4, "w": 4, "x": 0, "y": 1 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "targets": [
+        {
+          "expr": "min(compliance_probe_tr101290_in_sync)",
+          "legendFormat": "in sync"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            { "type": "value", "options": { "0": { "text": "OUT OF SYNC", "color": "red" } } },
+            { "type": "value", "options": { "1": { "text": "IN SYNC", "color": "green" } } }
+          ],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "value": null, "color": "red" },
+              { "value": 1, "color": "green" }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "TS packets analysed / s",
+      "description": "rate(compliance_probe_ts_packets_total[$__rate_interval]) — volume actually fed to the conformance monitor and PCR tracker.",
+      "gridPos": { "h": 4, "w": 4, "x": 4, "y": 1 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "targets": [
+        { "expr": "sum(rate(compliance_probe_ts_packets_total[$__rate_interval]))" }
+      ]
+    },
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "ByteTap Lagged / s",
+      "description": "rate(compliance_probe_tap_lagged_total[$__rate_interval]) — non-zero means the wire-level TR 101 290 continuity-count/PCR analysis is gapped across the lost stretch (see media_plane::ByteTap docs). Never expected to be non-zero on a healthy probe.",
+      "gridPos": { "h": 4, "w": 4, "x": 8, "y": 1 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "targets": [
+        { "expr": "sum(rate(compliance_probe_tap_lagged_total[$__rate_interval]))" }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "value": null, "color": "green" },
+              { "value": 0.001, "color": "red" }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": 5,
+      "type": "stat",
+      "title": "EventCursor Lagged / s",
+      "description": "rate(compliance_probe_event_cursor_lagged_total[$__rate_interval]) — non-zero means SCTE-35 cues were evicted from the Trunk event log before this probe polled them.",
+      "gridPos": { "h": 4, "w": 4, "x": 12, "y": 1 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "targets": [
+        { "expr": "sum(rate(compliance_probe_event_cursor_lagged_total[$__rate_interval]))" }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "value": null, "color": "green" },
+              { "value": 0.001, "color": "red" }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": 6,
+      "type": "text",
+      "title": "What this dashboard does NOT show",
+      "gridPos": { "h": 4, "w": 8, "x": 16, "y": 1 },
+      "options": {
+        "mode": "markdown",
+        "content": "**Not monitored, on purpose — a green panel here would be a lie:**\n- TR 101 290 `PCR_accuracy_error` (2.4): never emitted by `dvb-conformance` (needs ±500ns hardware timing). The \"PCR rate estimate\" row below is **not** this.\n- T-STD `Buffer_error`/`Empty_buffer_error`/`Data_delay_error`: partial (see `dvb-conformance` README) **and clock-sensitive** — see below.\n- SCTE-35 malformed-section detection on the Trunk-cursor path: structurally unobservable (event already parsed upstream).\n\n**The arrival clock is an input to the result.** Most TR 101 290 indicators are timeout-based, so a host feeding a synthetic or stalled clock changes what fires. Measured instance: on `m6-single.ts`, a degenerate clock yields 838 events and a realistic one 803 — the whole 35-event gap being T-STD `Buffer_error`. `Continuity_count_error` is clock-independent. See `tests/wasm_analyzer_equivalence.rs`.\n\n**Multiple feeds/routes:** this crate's metrics carry no `route` label of their own — a `Probe` doesn't know which stream it is watching. Running one probe (and one `metrics` recorder/process) per feed and distinguishing them via a Prometheus `external_labels`/scrape-job label, or via a host like `multimux` that already labels its own metrics by `route`, is the host's job, not this crate's."
+      }
+    },
+    {
+      "id": 10,
+      "type": "row",
+      "title": "ETSI TR 101 290",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 5 },
+      "collapsed": false
+    },
+    {
+      "id": 11,
+      "type": "timeseries",
+      "title": "Priority 1 events/s (necessary for decodability)",
+      "description": "TS_sync_loss, Sync_byte_error, PAT_error_2, Continuity_count_error, PMT_error_2, PID_error.",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 6 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "targets": [
+        {
+          "expr": "sum by (indicator) (rate(compliance_probe_tr101290_events_total{priority=\"first priority\"}[$__rate_interval]))",
+          "legendFormat": "{{indicator}}"
+        }
+      ],
+      "alert": {
+        "name": "TR 101 290 priority-1 indicator firing",
+        "message": "A priority-1 (necessary-for-decodability) TR 101 290 indicator is firing.",
+        "frequency": "1m",
+        "conditions": [
+          {
+            "evaluator": { "type": "gt", "params": [0] },
+            "operator": { "type": "and" },
+            "query": { "params": ["A", "5m", "now"] },
+            "reducer": { "type": "sum" },
+            "type": "query"
+          }
+        ]
+      }
+    },
+    {
+      "id": 12,
+      "type": "timeseries",
+      "title": "Priority 2 events/s (continuous/periodic monitoring)",
+      "description": "Transport_error, CRC_error, PCR_repetition_error, PCR_discontinuity_indicator_error, PTS_error, CAT_error. PCR_accuracy_error never appears — see the text panel above.",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 6 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "targets": [
+        {
+          "expr": "sum by (indicator) (rate(compliance_probe_tr101290_events_total{priority=\"second priority\"}[$__rate_interval]))",
+          "legendFormat": "{{indicator}}"
+        }
+      ]
+    },
+    {
+      "id": 13,
+      "type": "timeseries",
+      "title": "Priority 3 events/s (application-dependent monitoring)",
+      "description": "NIT/SDT/EIT/RST/TDT_error, SI_repetition_error, Unreferenced_PID, Buffer_error, Empty_buffer_error, Data_delay_error. TWO CAVEATS: (a) the T-STD sub-checks are partial — see the dvb-conformance README; (b) Buffer_error/Empty_buffer_error/Data_delay_error are statements about ARRIVAL TIMING, so they are only as trustworthy as the arrival clock the host feeds the probe. A host feeding a synthetic or stalled clock can make these fire (or vanish) with no change in the stream. Continuity_count_error, by contrast, is clock-independent.",
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 14 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "targets": [
+        {
+          "expr": "sum by (indicator) (rate(compliance_probe_tr101290_events_total{priority=\"third priority\"}[$__rate_interval]))",
+          "legendFormat": "{{indicator}}"
+        }
+      ]
+    },
+    {
+      "id": 20,
+      "type": "row",
+      "title": "PCR rate estimate — NOT ETSI TR 101 290 (this is not indicator 2.4)",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 22 },
+      "collapsed": false
+    },
+    {
+      "id": 23,
+      "type": "text",
+      "title": "Read this before interpreting the two panels to the right",
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 23 },
+      "options": {
+        "mode": "markdown",
+        "content": "### These are NOT TR 101 290 indicator 2.4\n\nTR 101 290 §5.2 Table 5.0b **2.4 `PCR_accuracy_error`** asks whether a PCR's *value* is within **±500 ns** of the true 27 MHz System Clock (ISO/IEC 13818-1 §2.4.2.2). That needs a hardware reference clock. **It is not measured anywhere on this dashboard, and `dvb-conformance` never emits it.**\n\nThe two panels here answer a *different, weaker* question: does this PID's PCR **advance at the same rate** as packets actually arrive, judged against the caller's own software arrival clock? That catches encoder/mux clock-rate drift and delivery-rate variation — it does **not** certify PCR accuracy, and must never be cited as 2.4 conformance.\n\n**A flat 0 ppm here does not mean 2.4 passes.** 2.4 was not checked."
+      }
+    },
+    {
+      "id": 21,
+      "type": "timeseries",
+      "title": "[non-spec] PCR rate drift (smoothed, ppm) by PID",
+      "description": "compliance_probe_pcr_drift_ppm — this crate's own software-clock estimate of signalled-PCR-interval vs. wall-clock arrival rate. NOT TR 101 290 indicator 2.4 (PCR_accuracy_error), which requires ±500 ns hardware timing and is not measured at all. See the text panel to the left.",
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 23 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "targets": [
+        {
+          "expr": "compliance_probe_pcr_drift_ppm",
+          "legendFormat": "{{pid}}"
+        }
+      ]
+    },
+    {
+      "id": 22,
+      "type": "timeseries",
+      "title": "[non-spec] PCR rate jitter (ppm) by PID",
+      "description": "compliance_probe_pcr_jitter_ppm — instantaneous deviation of the latest PCR interval error from the smoothed drift to the left. NOT TR 101 290 indicator 2.4. See the text panel.",
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 23 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "targets": [
+        {
+          "expr": "compliance_probe_pcr_jitter_ppm",
+          "legendFormat": "{{pid}}"
+        }
+      ]
+    },
+    {
+      "id": 30,
+      "type": "row",
+      "title": "SCTE-35 cue sanity",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 31 },
+      "collapsed": false
+    },
+    {
+      "id": 31,
+      "type": "timeseries",
+      "title": "Cues arriving/s by kind",
+      "description": "compliance_probe_scte35_cues_total{kind=...} — break_start/break_end (wire and Trunk-cursor paths) or other/immediate.",
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 32 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "targets": [
+        {
+          "expr": "sum by (kind) (rate(compliance_probe_scte35_cues_total[$__rate_interval]))",
+          "legendFormat": "{{kind}}"
+        }
+      ]
+    },
+    {
+      "id": 32,
+      "type": "stat",
+      "title": "Malformed sections/s (wire path only)",
+      "description": "compliance_probe_scte35_malformed_total — only observable via Probe::feed_scte35_section; structurally always 0 on the Trunk-cursor path.",
+      "gridPos": { "h": 8, "w": 4, "x": 8, "y": 32 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "targets": [
+        { "expr": "sum(rate(compliance_probe_scte35_malformed_total[$__rate_interval]))" }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "value": null, "color": "green" },
+              { "value": 0.001, "color": "red" }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": 33,
+      "type": "stat",
+      "title": "Cues arriving already in the past /s",
+      "description": "compliance_probe_scte35_pts_in_past_total — a cue whose target pts_time had already elapsed when checked. Should be 0 on a healthy feed.",
+      "gridPos": { "h": 8, "w": 4, "x": 12, "y": 32 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "targets": [
+        { "expr": "sum(rate(compliance_probe_scte35_pts_in_past_total[$__rate_interval]))" }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "value": null, "color": "green" },
+              { "value": 0.001, "color": "red" }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": 34,
+      "type": "timeseries",
+      "title": "Unresolved-anchor / no-reference-now /s (Trunk-cursor path)",
+      "description": "compliance_probe_scte35_unresolved_anchor_total (the cue's own EventAnchor is still Segment/Utc) and compliance_probe_scte35_no_reference_total (Probe::note_media_time was never called) — never fabricated, always counted instead.",
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 32 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "targets": [
+        {
+          "expr": "sum(rate(compliance_probe_scte35_unresolved_anchor_total[$__rate_interval]))",
+          "legendFormat": "unresolved anchor"
+        },
+        {
+          "expr": "sum(rate(compliance_probe_scte35_no_reference_total[$__rate_interval]))",
+          "legendFormat": "no reference now"
+        }
+      ]
+    },
+    {
+      "id": 40,
+      "type": "row",
+      "title": "Structural checks (media-doctor)",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 40 },
+      "collapsed": false
+    },
+    {
+      "id": 41,
+      "type": "timeseries",
+      "title": "Structural findings/s by rule + severity",
+      "description": "compliance_probe_structural_findings_total{rule_id=...,severity=...} — from crate::structural::run_structural_checks. Whole-buffer-shaped, not per-packet: see that module's docs for cadence caveats.",
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 41 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "targets": [
+        {
+          "expr": "sum by (rule_id, severity) (rate(compliance_probe_structural_findings_total[$__rate_interval]))",
+          "legendFormat": "{{rule_id}} ({{severity}})"
+        }
+      ]
+    }
+  ]
+}

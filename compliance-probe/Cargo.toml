@@ -1,0 +1,66 @@
+[package]
+name         = "compliance-probe"
+version      = "0.1.0"
+edition      = "2024"
+rust-version = "1.86"
+license      = "MIT OR Apache-2.0"
+description  = "Live TR 101 290 conformance + PCR-drift + SCTE-35 cue-sanity probe over a media-plane Trunk/ByteTap, exported through the `metrics` facade for a host process to render as Prometheus."
+authors      = ["Alex Fishlock <alex.fishlock@racingjag.com>"]
+keywords     = ["dvb", "tr-101-290", "prometheus", "scte-35", "conformance"]
+categories   = ["multimedia", "network-programming"]
+repository   = "https://github.com/fishloa/rust-broadcast"
+readme       = "README.md"
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+
+[dependencies]
+broadcast-common = { path = "../broadcast-common", version = "9",     default-features = false }
+dvb-conformance  = { path = "../dvb-conformance",  version = "9",     default-features = false }
+mpeg-ts          = { path = "../mpeg-ts",          version = "0.3.1", default-features = false }
+scte35-splice    = { path = "../scte35-splice",    version = "2",     default-features = false }
+timed-metadata   = { path = "../timed-metadata",   version = "0.4.2", default-features = false }
+media-doctor     = { path = "../media-doctor",     version = "0.7",   default-features = false }
+media-plane      = { path = "../media-plane",      version = "0.3",   default-features = false }
+# Optional, enabled only by this crate's own `std` feature: the `metrics`
+# facade macros (`counter!`/`gauge!`) expand to code that needs `std` (they
+# are not no_std-compatible), so every call site in this crate is itself
+# `#[cfg(feature = "std")]`-gated — see e.g. `src/lib.rs`'s `feed_ts_packet`.
+# A `--no-default-features` build still runs every check in this crate; it
+# just cannot report through the facade.
+metrics          = { version = "0.24", optional = true }
+
+[features]
+default = ["std"]
+# `std` links the standard library. Without it the crate is `#![no_std]` +
+# `alloc` for the conformance/PCR/SCTE-35 tracking, with metric recording
+# compiled out entirely (see the `metrics` dependency comment above);
+# `media-plane`'s `Trunk` bridge (`trunk_bridge` module) always needs `std`
+# (it is `media-plane`'s own `std`-only corner — see that crate's docs) and
+# is gated on this feature too.
+std = [
+    "dep:metrics",
+    "broadcast-common/std",
+    "dvb-conformance/std",
+    "mpeg-ts/std",
+    "media-doctor/std",
+    "media-plane/std",
+]
+
+[dev-dependencies]
+# Test-only: renders the `metrics` facade's recorded state back to Prometheus
+# text so tests can assert on it, exactly the pattern `multimux::prometheus`
+# uses for its own `install()` — see that module for why `build_recorder`
+# (no upkeep thread) rather than `install_recorder()`.
+metrics-exporter-prometheus = { version = "0.18", default-features = false }
+# Test-only: `media_plane::ByteTap::record`/`TapItem::Data` are typed on
+# `bytes::Bytes`; tests build these directly rather than going through a real
+# ingest session.
+bytes = "1"
+
+[[example]]
+name = "fixture_report"
+
+[[example]]
+name = "byte_tap_live"

@@ -681,6 +681,22 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1d07550c9036bf2ae0c684c4297d503f838287c83c53686d05370d0e139ae570"
 
 [[package]]
+name = "compliance-probe"
+version = "0.1.0"
+dependencies = [
+ "broadcast-common",
+ "bytes",
+ "dvb-conformance",
+ "media-doctor",
+ "media-plane",
+ "metrics",
+ "metrics-exporter-prometheus",
+ "mpeg-ts",
+ "scte35-splice",
+ "timed-metadata",
+]
+
+[[package]]
 name = "const-oid"
 version = "0.9.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2127,6 +2143,7 @@ dependencies = [
  "percent-encoding",
  "reqwest",
  "rtmp-runtime",
+ "rtp-packet",
  "rtsp-runtime",
  "rustls",
  "sdp-types",

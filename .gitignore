@@ -38,3 +38,7 @@ target-*/
 # Python bytecode from tools/ and its tests
 __pycache__/
 *.pyc
+
+# Local dev: size (GB) of the per-project cargo RAM disk (see ~/.zshrc
+# cargo_ramdisk). Machine-specific, not a project setting.
+.cargo-ramdisk-gb
