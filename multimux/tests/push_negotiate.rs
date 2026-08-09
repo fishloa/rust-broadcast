@@ -100,10 +100,27 @@ async fn drive_push_negotiates_and_carries_only_flv_compatible_tracks() {
                     _ => {}
                 }
             }
-            // Enough real media to demux both tracks meaningfully, and the
-            // rest of `av.flv`'s ~75+131 samples aren't needed to prove the
-            // negotiate/carry property -- stop once there's a solid amount.
-            if flv_bytes.len() > 4096 {
+            // Stop on a CONTENT condition, never a byte count. The publish
+            // loop sends every AVC sample, then every AAC sample, then the
+            // opaque one; `av.flv`'s video track alone exceeds any small
+            // byte threshold, so `flv_bytes.len() > N` could fire after the
+            // video tags and before the first audio tag -- leaving the
+            // assertion below to recover one track and fail. That is exactly
+            // what it did: ~1 run in 8 locally, and on both CI lanes as soon
+            // as a job change let this test run at all.
+            //
+            // Waiting for both tracks keeps the opaque-track bite intact.
+            // The opaque sample is published on every cycle immediately
+            // after the real ones, so by the time audio has arrived
+            // `drive_push` has already been offered it and either refused it
+            // (2 tracks) or framed it (3, which the assertion catches). The
+            // `GUARD` read timeout is the backstop if a regression means a
+            // track never arrives at all.
+            let carried = FlvDemux::new()
+                .unpackage(&flv_bytes)
+                .map(|m| m.tracks.len())
+                .unwrap_or(0);
+            if carried >= 2 && flv_bytes.len() > 4096 {
                 break;
             }
         }
