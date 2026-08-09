@@ -83,8 +83,38 @@ def _cofactor_masks(nvars):
     return full, vmask
 
 
-def bdd_cost(funcs, nvars, order):
-    """Gate cost of the shared ROBDD for `funcs` under `order` (no emission)."""
+def _resolve(ref, negate):
+    """Fold a pending sign into `ref`'s expression — free (no gate): a bare
+    `!` on an existing signal, and `ZERO`/`ONES` swap into each other."""
+    if not negate:
+        return ref
+    if ref == "ZERO":
+        return "ONES"
+    if ref == "ONES":
+        return "ZERO"
+    return "!" + ref
+
+
+def _robdd_rec_factory(nvars, order, on_var, on_xor, on_mux):
+    """Shared recursion for the complemented-edge ROBDD used by both
+    `bdd_cost` (counts gates) and `bdd_build` (emits them).
+
+    Complemented edges: every node is memoized under `canon = min(tt, !tt)`
+    (so a function and its complement share one node — the complement is
+    folded back in by `_resolve`, for free) at a given depth, which is the
+    standard ROBDD extension that lets a shared multi-output diagram reuse a
+    node for both a subfunction and its negation instead of building two.
+    Depth is part of the memo key because a node is really "this function,
+    decided next on `order[depth]`" — the same function can legitimately get
+    different children under different remaining orders, so two nodes only
+    share when both the function and the position in the order agree.
+
+    A second, independent reduction fires when a node's two children are
+    exact complements of each other (`hi == !lo`): `ite(x, hi, lo) = lo ^ x`,
+    one XOR instead of the generic 3-op mux, and only `lo`'s subtree need be
+    built at all — and if `lo` is itself a constant, that XOR is free too
+    (`ZERO ^ x == x`, `ONES ^ x == !x`): the node is `x`, wired for nothing.
+    """
     full, vmask = _cofactor_masks(nvars)
 
     def cof(tt, v):
@@ -95,76 +125,96 @@ def bdd_cost(funcs, nvars, order):
         return ((lo | (lo << step)) & full, (hi | (hi >> step)) & full)
 
     memo = {}
-    cost = [0]
 
     def rec(tt, depth):
         if tt == 0:
-            return "0"
+            return ("ZERO", False)
         if tt == full:
-            return "1"
-        key = (tt, depth)
-        if key in memo:
-            return memo[key]
-        v = order[depth]
-        lo, hi = cof(tt, v)
-        if lo == hi:
-            r = rec(lo, depth + 1)
-        else:
-            a = rec(lo, depth + 1)
-            b = rec(hi, depth + 1)
-            cost[0] += 1 if (a in "01" or b in "01") else 3
-            r = "n%d" % cost[0]
-        memo[key] = r
-        return r
+            return ("ONES", False)
+        canon = min(tt, full ^ tt)
+        negate_outer = tt != canon
+        key = (canon, depth)
+        if key not in memo:
+            v = order[depth]
+            lo, hi = cof(canon, v)
+            if lo == hi:
+                memo[key] = rec(lo, depth + 1)
+            elif hi == (full ^ lo):
+                lo_ref, lo_neg = rec(lo, depth + 1)
+                a = _resolve(lo_ref, lo_neg)
+                if a == "ZERO":
+                    memo[key] = (on_var(v), False)
+                elif a == "ONES":
+                    memo[key] = (on_var(v), True)
+                else:
+                    memo[key] = (on_xor(a, v), False)
+            else:
+                lo_ref, lo_neg = rec(lo, depth + 1)
+                hi_ref, hi_neg = rec(hi, depth + 1)
+                a = _resolve(lo_ref, lo_neg)
+                b = _resolve(hi_ref, hi_neg)
+                memo[key] = (on_mux(a, b, v), False)
+        ref, sign = memo[key]
+        return (ref, negate_outer ^ sign)
 
+    def top(tt):
+        ref, sign = rec(tt, 0)
+        return _resolve(ref, sign)
+
+    return top
+
+
+def bdd_cost(funcs, nvars, order):
+    """Gate cost of the shared, complemented-edge ROBDD for `funcs` under
+    `order` (no emission) — see `_robdd_rec_factory`."""
+    cost = [0]
+    counter = [0]
+
+    def on_var(v):
+        return "v%d" % v
+
+    def on_xor(a, v):
+        cost[0] += 1
+        counter[0] += 1
+        return "n%d" % counter[0]
+
+    def on_mux(a, b, v):
+        cost[0] += 1 if (a in ("ZERO", "ONES") or b in ("ZERO", "ONES")) else 3
+        counter[0] += 1
+        return "n%d" % counter[0]
+
+    top = _robdd_rec_factory(nvars, order, on_var, on_xor, on_mux)
     for f in funcs:
-        rec(f, 0)
+        top(f)
     return cost[0]
 
 
 def bdd_build(circ, funcs, nvars, order):
-    """Emit the shared ROBDD for `funcs` into `circ`; return output expressions."""
-    full, vmask = _cofactor_masks(nvars)
+    """Emit the shared, complemented-edge ROBDD for `funcs` into `circ`;
+    return output expressions — see `_robdd_rec_factory`."""
 
-    def cof(tt, v):
-        m = vmask[v]
-        step = 1 << v
-        lo = tt & ~m
-        hi = tt & m
-        return ((lo | (lo << step)) & full, (hi | (hi >> step)) & full)
+    def on_var(v):
+        return circ.invars[v]
 
-    memo = {}
+    def on_xor(a, v):
+        x = circ.invars[v]
+        return circ.emit("%s ^ %s" % (a, x))
 
-    def rec(tt, depth):
-        if tt == 0:
-            return "ZERO"
-        if tt == full:
-            return "ONES"
-        key = (tt, depth)
-        if key in memo:
-            return memo[key]
-        v = order[depth]
-        lo, hi = cof(tt, v)
-        if lo == hi:
-            r = rec(lo, depth + 1)
+    def on_mux(a, b, v):
+        x = circ.invars[v]
+        if a == "ZERO":
+            return circ.emit("%s & %s" % (b, x))
+        elif b == "ZERO":
+            return circ.emit("%s & !%s" % (a, x))
+        elif a == "ONES":
+            return circ.emit("%s | !%s" % (b, x))
+        elif b == "ONES":
+            return circ.emit("%s | %s" % (a, x))
         else:
-            a = rec(lo, depth + 1)
-            b = rec(hi, depth + 1)
-            x = circ.invars[v]
-            if a == "ZERO":
-                r = circ.emit("%s & %s" % (b, x))
-            elif b == "ZERO":
-                r = circ.emit("%s & !%s" % (a, x))
-            elif a == "ONES":
-                r = circ.emit("%s | !%s" % (b, x))
-            elif b == "ONES":
-                r = circ.emit("%s | %s" % (a, x))
-            else:
-                r = circ.emit("%s ^ ((%s ^ %s) & %s)" % (a, a, b, x))
-        memo[key] = r
-        return r
+            return circ.emit("%s ^ ((%s ^ %s) & %s)" % (a, a, b, x))
 
-    return [rec(f, 0) for f in funcs]
+    top = _robdd_rec_factory(nvars, order, on_var, on_xor, on_mux)
+    return [top(f) for f in funcs]
 
 
 def anf_monomials(tt, nvars):
