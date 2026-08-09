@@ -139,11 +139,17 @@ _Figure A.3.4, A/331:2025-06 p.164_
 
 | Syntax | No. of Bits | Format |
 |---|---|---|
-| `SBN` (Source Block Number) | 16 | uimsbf |
-| `Encoding Symbol ID` | 16 | uimsbf |
+| `SBN` (Source Block Number) | 8 | uimsbf |
+| `Encoding Symbol ID` | 24 | uimsbf |
+
+**Corrected 2026-08-09**: this table previously read SBN 16 / ESI 16, which is wrong and
+contradicted its own citation. A/331:2026-04 §A.3.5.2 states the layout is "In accordance with
+RFC 6330 [28] Section 3.2", and Figure A.3.4's bit ruler gives SBN 8 bits, ESI 24 bits —
+matching RFC 6330 exactly. Verified by counting the figure's own bit-diagram columns in the
+vendored PDF.
 
 Per RFC 6330 §3.2. **RFC 6330 is not vendored in this repository** (neither `specs/` nor
-`private/specs/`); the SBN/ESI field widths above come directly from A/331's own figure, but
+`private/specs/`); the SBN/ESI field widths above come from A/331's Figure A.3.4, but
 the RaptorQ *encoding/decoding* procedure itself (how source/repair symbols are generated from
 these identifiers) is out of scope of A/331 and not established here — see `README.md`.
 
