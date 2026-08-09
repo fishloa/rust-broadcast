@@ -40,6 +40,27 @@
 //! is folded into the RTCP band but `[1, 191]` deliberately is not (it would
 //! misclassify unmarked RTP wholesale, not just a currently-unused corner).
 //!
+//! # Key lifetime and rekey
+//!
+//! RFC 3711 §8.2/§9.2 bounds how many packets one SRTP/SRTCP master key may
+//! protect (2^31, the binding figure once RTP and RTCP share a key, per
+//! §9.2's own "minimum of the two quantities" rule — see `transport.rs`'s
+//! `MAXIMUM_LIFETIME_PACKETS`) before "the key management MUST be called
+//! to provide new master key(s) ... or the session MUST be terminated."
+//! [`MediaTransport::needs_rekey`] reports that threshold;
+//! [`MediaTransport::rekey`] acts on it, tearing down the current DTLS
+//! association and (for [`SetupRole::Active`]) redialling a fresh one. RFC
+//! 5764 §5.2 additionally requires retaining the *old* read key for one
+//! MSL, so a packet reordered across the rekey boundary still decrypts;
+//! [`MediaTransport::handle_datagram`] tries the retired key automatically
+//! when the current one is absent or rejects a packet. RFC 5764 §4.4 names
+//! this same figure `maximum_lifetime` and, on reaching it, prescribes "a
+//! new DTLS session SHOULD be used to establish replacement keys" — exactly
+//! what [`MediaTransport::rekey`] does; see its own doc for how that
+//! compares to §5.2's separately-illustrated in-band-renegotiation
+//! mechanism, which `rtc-dtls` (a dependency, not a choice made here)
+//! exposes no API for.
+//!
 //! # MSRV
 //!
 //! This module (feature `media`) requires **rustc >= 1.88**. The rest of

@@ -174,16 +174,25 @@ directions be exercised by any one component.
   completes).
 - §4.4: `maximum_lifetime` (2^31 for every profile in the table above) is
   the max packets protectable under one key, RTP and RTCP counted
-  **separately** (independent keys). At the limit, a new DTLS session
-  SHOULD establish replacement keys; the old keys MUST NOT be reused for
-  either direction after that.
+  **separately** (independent keys). At the limit, "a new DTLS session
+  SHOULD be used to establish replacement keys"; the old keys MUST NOT be
+  reused for either direction after that.
 
-Neither is implemented in this crate (no packet counting, no key-set
-retention across rehandshake) — `MediaTransport` builds exactly one
-`srtp_read` context per completed handshake and never replaces or retires
-it. Not necessarily wrong for a short WHIP/WHEP session, but a caller
-running a very long-lived session would hit RFC 5764's own recommended
-rekey point with no code path here to act on it.
+**Both are now implemented** (issue #948 item 3, `transport.rs`):
+
+- `MediaTransport::needs_rekey()` tracks four RFC 3711 §9.2 packet
+  counters (write/read × RTP/RTCP) against `MAXIMUM_LIFETIME_PACKETS`
+  (2^31 — see that constant's own doc for why a single figure covers both
+  RTP and RTCP here).
+- `MediaTransport::rekey()` acts on it, and does so via §4.4's own "a new
+  DTLS session SHOULD be used" mechanism — `Endpoint::stop` followed by a
+  fresh `Endpoint::connect`/wait-for-ClientHello — **not** §5.2's
+  separately-illustrated in-band-renegotiation mechanism (a rehandshake
+  over the *existing* association), which the `rtc-dtls` 0.20.0 dependency
+  exposes no API to perform (checked directly: see `rekey`'s own doc for
+  the exact API surface checked). The read-side key retention §4.3/§5.2
+  ask for is implemented as `retired_srtp_read`, independent of which of
+  the two mechanisms produced the new keys.
 
 ## 5. Demultiplexing one UDP flow (§5.1.2, Reception)
 
@@ -227,8 +236,26 @@ apply to it.
 
 ## 6. Rehandshake / rekey (§5.2)
 
-Not implemented: `MediaTransport` has no path to re-enter the DTLS
-handshake after `DtlsHandshakeComplete`, so §5.2's "SHOULD keep both key
-sets around for MSL" guidance has nothing to attach to in this cut. Purely
-a scope gap (there's currently one handshake per `MediaTransport` for its
-whole lifetime), not a misimplementation of anything that does exist.
+**Implemented** (issue #948 item 3) — see §4's update above for the full
+picture. `MediaTransport::rekey()` re-enters the DTLS handshake via a fresh
+association (§4.4's mechanism, not §5.2's in-band-renegotiation one — see
+that method's own doc for exactly why), and `retired_srtp_read` is the
+"keep both key sets around for MSL" guidance §5.2 asks for:
+
+> Because of packet reordering, packets protected by the previous set of
+> keys can appear on the wire after the handshake has completed... The
+> keys should be maintained for the duration of the maximum segment
+> lifetime (MSL).
+
+`RETIRED_KEY_RETENTION` (2 minutes) is this crate's chosen MSL value — RFC
+5764 doesn't itself give MSL a number, so this borrows RFC 793 §3.3's
+conventional TCP figure, the industry-standard reading of "MSL" when a
+citing spec doesn't repeat it.
+
+`handle_srtp_datagram` implements §5.2's decrypt-order guidance directly:
+try the current read key, and only on failure (or absence) fall back to
+the retired one — matching "when a packet arrives after the handshake
+completed, a receiver SHOULD use the newly derived set of keys... If the
+authentication check on the packet fails... the receiver MAY process the
+packet with the older set of keys." (This crate's cut has no MKI, so the
+MKI-based key-selection branch of §5.2 does not apply — see §2.2 above.)

@@ -300,7 +300,51 @@ Default sizes (§5.1–5.3), all in bits:
 `n_a` smaller than these defaults; for SRTP, smaller values are merely NOT
 RECOMMENDED.
 
-## 8. What this crate actually touches
+## 8. Key usage limits and re-keying (§8.1, §8.2, §9.2)
+
+Transcribed for issue #948 item 3 (previously missing from this doc,
+despite being the section the rekey work is grounded in).
+
+§8.2's Key Management Parameters table (verbatim excerpt):
+
+```
+   key lifetime
+      SRTP-packets-max-lifetime      2^48               2^48
+      SRTCP-packets-max-lifetime     2^31               2^31
+```
+
+§9.2 ("Key Usage") explains why tracking just one of those two numbers is
+enough whenever SRTP and SRTCP session keys share one master key (the
+default, §4.3):
+
+> The use of the SRTP and SRTCP indices in the pre-defined transforms
+> fixes the maximum number of packets that can be secured with the same
+> key. This limit is fixed to 2^48 SRTP packets for an SRTP stream, and
+> 2^31 SRTCP packets... when the session keys for related SRTP and SRTCP
+> streams are derived from the same master key... the upper bound that
+> has to be considered is in practice the minimum of the two quantities.
+> That is, when 2^48 SRTP packets or 2^31 SRTCP packets have been secured
+> with the same key (whichever occurs before), the key management MUST be
+> called to provide new master key(s) (previously stored and used keys
+> MUST NOT be used again), or the session MUST be terminated.
+
+i.e. the binding limit is `min(2^48, 2^31) == 2^31`, always, when RTP and
+RTCP share a key. §8.1 ("Re-keying") puts the burden on the sender: "SRTP
+senders SHALL count the amount of SRTP and SRTCP traffic being used for a
+master key and invoke key management to re-key if needed."
+
+RFC 5764 §4.4 ("Key Usage Limitations", `rfc5764-dtls-srtp.md` §4) is the
+DTLS-SRTP-specific restatement of this same 2^31 figure, under the name
+`maximum_lifetime` — that is the term this crate's own code cites, since
+`MediaTransport` only ever deals in DTLS-SRTP-negotiated profiles, not raw
+SRTP key management.
+
+**Implemented** (issue #948 item 3): `MediaTransport::needs_rekey()` /
+`MediaTransport::rekey()` in `transport.rs` — see `rfc5764-dtls-srtp.md`
+§§4/6 for the DTLS-SRTP-side mechanics (which of §4.4's/§5.2's two rekey
+mechanisms is actually used, and why).
+
+## 9. What this crate actually touches
 
 `MediaTransport` (`webrtc-runtime/src/media/transport.rs`) never implements
 any of the above itself — it:
@@ -313,6 +357,10 @@ any of the above itself — it:
    where all of §3–§4 above actually executes.
 3. Calls `ctx.decrypt_rtp`/`ctx.decrypt_rtcp` per inbound datagram and
    trusts the result.
+4. Counts packets protected per direction/type (§9.2, §8's own count-and-
+   rekey burden) and, once `needs_rekey()` reports the §8.2/§9.2 limit
+   crossed, retires the current keys and re-derives fresh ones via a new
+   handshake (`rekey()` — see §8 above and `rfc5764-dtls-srtp.md` §§4/6).
 
 Everything about ROC maintenance, the replay window, ordering of decrypt-
 vs-verify, ROC/`s_l` update, key derivation, and IV formation lives inside
@@ -324,6 +372,8 @@ exists in `webrtc-runtime/src/media` today.
 **No discrepancy found** between `MediaTransport`'s use of the exported
 keying material and RFC 3711 — the crate does not implement enough of SRTP
 itself (by design — it delegates to `rtc-srtp`) for there to be a
-divergence to report at this layer. See `rfc5764-dtls-srtp.md` for the one
-piece this crate *does* implement directly (the key-export byte layout),
-which was checked byte-for-byte against RFC 5764 §4.2 and matches.
+divergence to report at this layer, beyond the packet counting/rekey
+described in §8 above (now implemented, issue #948 item 3). See
+`rfc5764-dtls-srtp.md` for the one piece this crate *does* implement
+directly at the key-export layer (the key-export byte layout), which was
+checked byte-for-byte against RFC 5764 §4.2 and matches.

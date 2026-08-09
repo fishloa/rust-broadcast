@@ -40,9 +40,35 @@ impl StunGather {
         // RFC 8489 §5: the Transaction ID "MUST be uniformly random ... and
         // cryptographically random" (see `docs/rfc8489-stun.md` §1).
         // `TransactionId::default()` is a plain `#[derive(Default)]` (all
-        // zero bytes) — NOT random at all (issue #948 item 4). `::new()` is
-        // the crate's actual randomness source (`rand::rng().fill`), so it
-        // — not `default()` — is what RFC 8489 requires here.
+        // zero bytes) — NOT random at all (issue #948 item 4, confirmed by
+        // this crate's own test below before the fix: every Binding
+        // request went out with transaction ID 0).
+        //
+        // `TransactionId::new()` is what RFC 8489 requires instead —
+        // verified by reading `rtc-stun` 0.20.0's own source (not assumed
+        // from its name), pinned in this workspace's `Cargo.lock`:
+        //
+        //   $CARGO_HOME/registry/src/.../rtc-stun-0.20.0/src/message.rs:48
+        //     pub fn new() -> Self {
+        //         let mut b = TransactionId([0u8; TRANSACTION_ID_SIZE]);
+        //         rand::rng().fill(&mut b.0);   // doc comment: "using crypto/rand as source"
+        //         b
+        //     }
+        //
+        // `rand::rng()` resolves (per this workspace's locked `rand
+        // 0.10.2`) to `rand::rngs::thread::rng()` → `ThreadRng`, whose
+        // generator core is, per that crate's own source
+        // ($CARGO_HOME/registry/src/.../rand-0.10.2/src/rngs/thread.rs:41):
+        //
+        //     type Core = chacha20::ChaChaCore<chacha20::R12, chacha20::variants::Legacy>;
+        //
+        // i.e. ChaCha12, a stream cipher used as a CSPRNG — seeded from
+        // `SysRng` (the OS entropy source, via `Core::try_from_rng(&mut
+        // SysRng)` at thread.rs:63) and periodically reseeded from it
+        // (`RESEED_BLOCK_THRESHOLD`, thread.rs:37). That satisfies RFC
+        // 8489 §5's "cryptographically random" on both counts: the
+        // generator is a CSPRNG, and it is seeded from real entropy, not a
+        // fixed or predictable value.
         msg.build(&[Box::new(TransactionId::new()), Box::new(BINDING_REQUEST)])
             .map_err(|e| Error::Media(format!("build stun binding request: {e}")))?;
         Protocol::handle_write(&mut client, msg)

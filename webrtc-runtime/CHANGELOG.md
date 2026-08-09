@@ -4,6 +4,18 @@ All notable changes to this crate will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- `MediaTransport::needs_rekey()` / `MediaTransport::rekey()` (issue #948
+  item 3): RFC 3711 §8.2/§9.2's `2^31`-packet key-usage limit (RFC 5764
+  §4.4's `maximum_lifetime`) is now tracked per direction/type and
+  actionable — `rekey()` tears down the DTLS association and establishes a
+  fresh one (§4.4's own "a new DTLS session SHOULD be used" mechanism, not
+  §5.2's in-band-renegotiation one, which the `rtc-dtls` dependency has no
+  API for — see `MediaTransport::rekey`'s doc). The old read key is
+  retained for 2 minutes (this crate's chosen MSL, RFC 5764 §5.2) so a
+  packet reordered across the rekey boundary still decrypts.
+
 ### Changed
 - MSRV raised to **1.95.0** (issue #949). This removes the workspace's MSRV
   split: `webrtc-runtime`'s optional `media` feature needed rustc 1.88 (via

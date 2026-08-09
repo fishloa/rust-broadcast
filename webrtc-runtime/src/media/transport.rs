@@ -2,7 +2,7 @@
 
 use std::net::SocketAddr;
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use broadcast_common::{Parse, Serialize};
 use bytes::BytesMut;
@@ -90,6 +90,59 @@ const OFFERED_SRTP_PROFILE: SrtpProtectionProfile =
 /// The label used to export SRTP keying material from a completed DTLS
 /// handshake (RFC 5764 §4.2).
 const SRTP_KEYING_MATERIAL_LABEL: &str = "EXTRACTOR-dtls_srtp";
+
+// ---------------------------------------------------------------------------
+// Key lifetime / rekey (issue #948 item 3) — RFC 3711 §8.2/§9.2, RFC 5764
+// §4.4/§5.2. See the `media` module doc's "Key lifetime and rekey" section
+// for the full picture, including the one place this deliberately falls
+// short of §5.2's illustrative in-band-renegotiation text (this crate uses
+// §4.4's own "a new DTLS session SHOULD be used" mechanism instead —
+// `rtc-dtls` 0.20.0 exposes no API for the former).
+// ---------------------------------------------------------------------------
+
+/// RFC 3711 §8.2's Key Management Parameters table lists two *separate*
+/// per-master-key packet-count limits: `SRTP-packets-max-lifetime = 2^48`
+/// and `SRTCP-packets-max-lifetime = 2^31`. §9.2 ("Key Usage") explains why
+/// only one of them needs tracking in practice when (as here, the default
+/// per §4.3) SRTP and SRTCP session keys share one master key:
+///
+/// > when 2^48 SRTP packets or 2^31 SRTCP packets have been secured with
+/// > the same key (whichever occurs before), the key management MUST be
+/// > called to provide new master key(s) (previously stored and used keys
+/// > MUST NOT be used again), or the session MUST be terminated.
+///
+/// i.e. the *binding* limit is `min(2^48, 2^31) == 2^31`, always. This
+/// crate applies that single 2^31 figure as [`MediaTransport::needs_rekey`]'s
+/// trigger for both the RTP and RTCP packet counters — exact for RTCP,
+/// conservative for RTP (whose own bound is the looser 2^48, never actually
+/// reached first per §9.2's own worked example). RFC 5764 §4.4 ("Key Usage
+/// Limitations") names this same figure `maximum_lifetime` and points at its
+/// own §4.1.2 protection-profile table (`docs/rfc5764-dtls-srtp.md` §2.1),
+/// which independently tabulates 2^31 as "max lifetime" for every profile it
+/// defines, including [`OFFERED_SRTP_PROFILE`].
+const MAXIMUM_LIFETIME_PACKETS: u64 = 1 << 31;
+
+/// RFC 5764 §5.2 ("Rehandshake and Rekey"):
+///
+/// > Because of packet reordering, packets protected by the previous set
+/// > of keys can appear on the wire after the handshake has completed. To
+/// > compensate for this fact, receivers SHOULD maintain both sets of keys
+/// > for some time in order to be able to decrypt and verify older
+/// > packets. The keys should be maintained for the duration of the
+/// > maximum segment lifetime (MSL).
+///
+/// RFC 5764 does not itself give MSL a numeric value. This crate uses the
+/// same 2-minute figure RFC 793 §3.3 assumes for TCP's own MSL — the
+/// conventional reading of "MSL" industry-wide when the citing spec (as
+/// here) doesn't repeat the number.
+const RETIRED_KEY_RETENTION: Duration = Duration::from_secs(120);
+
+/// True once `count` has reached [`MAXIMUM_LIFETIME_PACKETS`] — pulled out
+/// of [`MediaTransport::needs_rekey`] as a pure function so a test can hit
+/// the exact boundary without actually sending two billion packets.
+fn exceeds_maximum_lifetime(count: u64) -> bool {
+    count >= MAXIMUM_LIFETIME_PACKETS
+}
 
 /// The DTLS-SRTP "setup" role (RFC 8842 §4.1, obsoleting RFC 4145 §5): which
 /// side of the DTLS handshake a peer takes.
@@ -228,8 +281,26 @@ pub struct MediaTransport {
     /// once ICE has nominated a pair (see that method's doc). `None` for
     /// [`SetupRole::Passive`], which never dials out.
     dtls_client_config: Option<Arc<HandshakeConfig>>,
+    /// The peer address of the current (or most recent) DTLS association,
+    /// set once a handshake completes. [`Self::rekey`] needs it to tear
+    /// down that association and, for [`SetupRole::Active`], redial a
+    /// fresh one.
+    dtls_peer: Option<SocketAddr>,
     srtp_read: Option<SrtpContext>,
     srtp_write: Option<SrtpContext>,
+    /// RFC 3711 §9.2 packet counters for the *current* `srtp_write`/
+    /// `srtp_read` key epoch — see [`MAXIMUM_LIFETIME_PACKETS`] and
+    /// [`Self::needs_rekey`]. Reset to zero by [`Self::rekey`].
+    write_rtp_count: u64,
+    write_rtcp_count: u64,
+    read_rtp_count: u64,
+    read_rtcp_count: u64,
+    /// RFC 5764 §5.2: the read context [`Self::rekey`] just retired,
+    /// paired with the [`Instant`] it must be dropped by (the rekey time
+    /// plus [`RETIRED_KEY_RETENTION`]) so a reordered packet keyed under
+    /// it can still be decrypted in the meantime. Purged by
+    /// [`Self::purge_expired_retired_key`].
+    retired_srtp_read: Option<(SrtpContext, Instant)>,
     gather: Option<StunGather>,
 }
 
@@ -343,8 +414,14 @@ impl MediaTransport {
             ice,
             dtls,
             dtls_client_config,
+            dtls_peer: None,
             srtp_read: None,
             srtp_write: None,
+            write_rtp_count: 0,
+            write_rtcp_count: 0,
+            read_rtp_count: 0,
+            read_rtcp_count: 0,
+            retired_srtp_read: None,
             gather,
         })
     }
@@ -414,6 +491,21 @@ impl MediaTransport {
         if self.gather.as_ref().is_some_and(StunGather::done) {
             self.gather = None;
         }
+        self.purge_expired_retired_key(now);
+    }
+
+    /// RFC 5764 §5.2's retention window on the previous read key
+    /// ([`Self::rekey`]) has an end, not just a beginning: once `now` is
+    /// past it, drop the retired context so it does not sit around
+    /// forever as a permanent second decrypt attempt for garbage traffic.
+    fn purge_expired_retired_key(&mut self, now: Instant) {
+        if self
+            .retired_srtp_read
+            .as_ref()
+            .is_some_and(|(_, deadline)| now >= *deadline)
+        {
+            self.retired_srtp_read = None;
+        }
     }
 
     /// Feed one inbound UDP datagram from `peer`, demultiplexing it as
@@ -435,7 +527,7 @@ impl MediaTransport {
         } else if (DEMUX_DTLS_MIN..=DEMUX_DTLS_MAX).contains(&first) {
             self.handle_dtls_datagram(now, peer, data, &mut events)?;
         } else if (DEMUX_RTP_MIN..=DEMUX_RTP_MAX).contains(&first) {
-            self.handle_srtp_datagram(data, &mut events)?;
+            self.handle_srtp_datagram(now, data, &mut events)?;
         }
         // Any other first byte has no defined meaning on this flow (see the
         // module doc's demux table) and is silently ignored.
@@ -534,46 +626,71 @@ impl MediaTransport {
         Ok(())
     }
 
+    /// Decrypt one inbound SRTP/SRTCP datagram, per RFC 5764 §5.2's
+    /// two-key-set reordering rule: try the current `srtp_read` context
+    /// first, and only fall back to the retired one (whatever
+    /// [`Self::rekey`] most recently retired) — a packet that arrived
+    /// late, still keyed under the old master key — if that fails or
+    /// there is no current context yet.
     fn handle_srtp_datagram(
         &mut self,
+        now: Instant,
         data: &[u8],
         events: &mut Vec<MediaEvent>,
     ) -> Result<(), Error> {
-        let Some(ctx) = self.srtp_read.as_mut() else {
-            // SRTP arrived before the DTLS handshake finished; there is no
-            // context to decrypt with yet (RFC 3711), so drop it.
-            return Ok(());
-        };
+        self.purge_expired_retired_key(now);
 
         let is_rtcp = data.get(1).is_some_and(|&pt| is_rtcp_packet_type(pt));
 
-        if is_rtcp {
-            let plaintext = ctx
-                .decrypt_rtcp(data)
-                .map_err(|e| Error::Media(format!("srtcp decrypt: {e}")))?;
-            let compound = rtcp_packet::CompoundPacket::parse(&plaintext)
-                .map_err(|e| Error::Media(format!("rtcp parse: {e}")))?;
-            events.push(MediaEvent::Rtcp(compound));
-        } else {
-            let plaintext = ctx
-                .decrypt_rtp(data)
-                .map_err(|e| Error::Media(format!("srtp decrypt: {e}")))?;
-            let pkt = rtp_packet::RtpPacket::parse(&plaintext)
-                .map_err(|e| Error::Media(format!("rtp parse: {e}")))?;
-            events.push(MediaEvent::Rtp(DecryptedRtp {
-                marker: pkt.marker,
-                payload_type: pkt.payload_type,
-                sequence_number: pkt.sequence_number,
-                timestamp: pkt.timestamp,
-                ssrc: pkt.ssrc,
-                csrc: pkt.csrc.clone(),
-                payload: pkt.payload.to_vec(),
-            }));
+        match self
+            .srtp_read
+            .as_mut()
+            .map(|ctx| decrypt_srtp(ctx, is_rtcp, data))
+        {
+            Some(Ok(event)) => {
+                if is_rtcp {
+                    self.read_rtcp_count += 1;
+                } else {
+                    self.read_rtp_count += 1;
+                }
+                events.push(event);
+                Ok(())
+            }
+            Some(Err(current_err)) => {
+                // The current context rejected the packet — exactly what
+                // §5.2 says to expect from a packet reordered across a
+                // rekey, still keyed under the master key `Self::rekey`
+                // just retired. Try that before giving up.
+                if let Some((ctx, _deadline)) = self.retired_srtp_read.as_mut()
+                    && let Ok(event) = decrypt_srtp(ctx, is_rtcp, data)
+                {
+                    events.push(event);
+                    return Ok(());
+                }
+                // Retired didn't save it either (or there wasn't one): an
+                // authentication failure on a packet under the *active*
+                // key is a real problem, not the benign "arrived before
+                // handshake" case below — surface it.
+                Err(current_err)
+            }
+            None => {
+                // No current context at all (no handshake yet, or
+                // mid-rekey) — try the retired one; if that fails too,
+                // drop the packet silently, the same tolerance this
+                // method always had for "SRTP arrived before the DTLS
+                // handshake finished".
+                if let Some((ctx, _deadline)) = self.retired_srtp_read.as_mut()
+                    && let Ok(event) = decrypt_srtp(ctx, is_rtcp, data)
+                {
+                    events.push(event);
+                }
+                Ok(())
+            }
         }
-        Ok(())
     }
 
     fn on_dtls_handshake_complete(&mut self, peer: SocketAddr) -> Result<(), Error> {
+        self.dtls_peer = Some(peer);
         let state = self.dtls.get_connection_state(peer).ok_or_else(|| {
             Error::Media("dtls handshake completed but no connection state for peer".to_string())
         })?;
@@ -622,6 +739,7 @@ impl MediaTransport {
         let protected = ctx
             .encrypt_rtp(&plaintext)
             .map_err(|e| Error::Media(format!("srtp encrypt: {e}")))?;
+        self.write_rtp_count += 1;
         Ok(protected.to_vec())
     }
 
@@ -645,7 +763,86 @@ impl MediaTransport {
         let protected = ctx
             .encrypt_rtcp(&plaintext)
             .map_err(|e| Error::Media(format!("srtcp encrypt: {e}")))?;
+        self.write_rtcp_count += 1;
         Ok(protected.to_vec())
+    }
+
+    /// True once any RFC 3711 §9.2 packet counter for the current key
+    /// epoch — write or read, RTP or RTCP — has reached
+    /// `MAXIMUM_LIFETIME_PACKETS`. The caller's cue to call
+    /// [`Self::rekey`]; [`MediaTransport`] never calls it on its own (it is
+    /// sans-IO and has no clock/scheduler of its own to decide "now" with).
+    pub fn needs_rekey(&self) -> bool {
+        exceeds_maximum_lifetime(self.write_rtp_count)
+            || exceeds_maximum_lifetime(self.write_rtcp_count)
+            || exceeds_maximum_lifetime(self.read_rtp_count)
+            || exceeds_maximum_lifetime(self.read_rtcp_count)
+    }
+
+    /// Retire the current SRTP/SRTCP keys and start a fresh DTLS handshake
+    /// to replace them — the rekey path RFC 3711 §9.2's `maximum_lifetime`
+    /// trigger ([`Self::needs_rekey`]) exists to reach.
+    ///
+    /// The write context is dropped immediately: RFC 3711 §9.2's
+    /// "previously stored and used keys MUST NOT be used again" applies to
+    /// sending unconditionally, and until the new handshake completes,
+    /// [`Self::encrypt_rtp`]/[`Self::encrypt_rtcp`] will error exactly as
+    /// they do before the *first* handshake. The current read context is
+    /// **not** dropped — it moves to the retired slot, retained for
+    /// `RETIRED_KEY_RETENTION` so [`Self::handle_datagram`] can still
+    /// decrypt a packet reordered across the boundary (RFC 5764 §5.2).
+    ///
+    /// # Which RFC 5764 rekey mechanism this is
+    ///
+    /// RFC 5764 §4.4 ("Key Usage Limitations") is what this method actually
+    /// implements: "When \[`maximum_lifetime`\] is reached, **a new DTLS
+    /// session SHOULD be used** to establish replacement keys" — exactly
+    /// [`Endpoint::stop`](rtc_dtls::endpoint::Endpoint::stop) followed by a
+    /// fresh [`Endpoint::connect`](rtc_dtls::endpoint::Endpoint::connect)
+    /// (or wait-for-ClientHello) below. §5.2 ("Rehandshake and Rekey")
+    /// separately illustrates an *alternative* mechanism — "a new
+    /// handshake over the **existing** DTLS channel" (in-band
+    /// renegotiation, same association) — that this method does **not**
+    /// use: `rtc-dtls` 0.20.0 — checked directly, both `endpoint.rs`'s
+    /// public surface (`connect`/`stop`/`close`/`read`/`write`/
+    /// `handle_timeout`/`poll_timeout`, nothing else) and `conn/mod.rs`
+    /// (whose only reference to rehandshaking is a comment citing RFC 6347
+    /// §4.1.0's record-sequence-number-overflow rule, implementing only its
+    /// "abandon" branch, never its "rehandshake" one) — exposes no API for
+    /// it. For [`SetupRole::Active`] this method dials the brand-new
+    /// session itself; for [`SetupRole::Passive`], it waits for the peer to
+    /// send a fresh ClientHello (the same asymmetry
+    /// `maybe_start_active_dtls` already documents for the *first*
+    /// handshake). §5.2's actual receiver-side purpose — tolerating packets
+    /// reordered across the rekey boundary — is unaffected by *which* of
+    /// the two mechanisms produced the new keys, since SRTP/SRTCP packets
+    /// carry no DTLS epoch of their own; that guarantee is fully
+    /// implemented here via `retired_srtp_read`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::Media`] if no DTLS handshake has ever completed
+    /// (nothing to rekey) or if redialling the fresh handshake
+    /// ([`SetupRole::Active`] only) fails.
+    pub fn rekey(&mut self, now: Instant) -> Result<(), Error> {
+        let Some(peer) = self.dtls_peer else {
+            return Err(Error::Media(
+                "rekey: no dtls handshake has completed yet; nothing to rekey".to_string(),
+            ));
+        };
+
+        if let Some(old_read) = self.srtp_read.take() {
+            self.retired_srtp_read = Some((old_read, now + RETIRED_KEY_RETENTION));
+        }
+        self.srtp_write = None;
+        self.write_rtp_count = 0;
+        self.write_rtcp_count = 0;
+        self.read_rtp_count = 0;
+        self.read_rtcp_count = 0;
+
+        let _ = self.dtls.stop(peer);
+        self.maybe_start_active_dtls(peer)?;
+        Ok(())
     }
 
     fn add_server_reflexive_candidate(
@@ -673,6 +870,38 @@ impl MediaTransport {
             .add_local_candidate(candidate)
             .map_err(|e| Error::Media(format!("add server-reflexive candidate: {e}")))?;
         Ok(marshaled)
+    }
+}
+
+/// Decrypt one SRTP or SRTCP datagram with `ctx` and parse the result into
+/// the corresponding [`MediaEvent`]. Pulled out of
+/// [`MediaTransport::handle_srtp_datagram`] as a free function so that
+/// method can try it against the current context and, on failure, the
+/// retired one, without duplicating the decrypt-then-parse logic (RFC 3711
+/// / RFC 5764 §5.2 — see the `media` module doc's demux/rekey sections).
+fn decrypt_srtp(ctx: &mut SrtpContext, is_rtcp: bool, data: &[u8]) -> Result<MediaEvent, Error> {
+    if is_rtcp {
+        let plaintext = ctx
+            .decrypt_rtcp(data)
+            .map_err(|e| Error::Media(format!("srtcp decrypt: {e}")))?;
+        let compound = rtcp_packet::CompoundPacket::parse(&plaintext)
+            .map_err(|e| Error::Media(format!("rtcp parse: {e}")))?;
+        Ok(MediaEvent::Rtcp(compound))
+    } else {
+        let plaintext = ctx
+            .decrypt_rtp(data)
+            .map_err(|e| Error::Media(format!("srtp decrypt: {e}")))?;
+        let pkt = rtp_packet::RtpPacket::parse(&plaintext)
+            .map_err(|e| Error::Media(format!("rtp parse: {e}")))?;
+        Ok(MediaEvent::Rtp(DecryptedRtp {
+            marker: pkt.marker,
+            payload_type: pkt.payload_type,
+            sequence_number: pkt.sequence_number,
+            timestamp: pkt.timestamp,
+            ssrc: pkt.ssrc,
+            csrc: pkt.csrc.clone(),
+            payload: pkt.payload.to_vec(),
+        }))
     }
 }
 
@@ -1036,6 +1265,297 @@ mod tests {
             Err(Error::Media(_)) => {}
             Err(other) => panic!("expected Error::Media, got {other:?}"),
             Ok(_) => panic!("expected an error: no srtp write context before handshake"),
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Key lifetime / rekey (issue #948 item 3): RFC 3711 §8.2/§9.2's
+    // `maximum_lifetime` trigger and RFC 5764 §5.2's key-retention rekey
+    // path.
+    // -----------------------------------------------------------------------
+
+    /// A second master key/salt, distinct from [`APPENDIX_B3_MASTER_KEY`]/
+    /// [`APPENDIX_B3_MASTER_SALT`], standing in for the fresh key set a
+    /// completed rehandshake would install — used to prove the *retired*
+    /// (old) context, not the current one, is what recovers a
+    /// reordered/old-keyed packet.
+    const OTHER_MASTER_KEY: [u8; 16] = [0xFF; 16];
+    const OTHER_MASTER_SALT: [u8; 14] = [0xFF; 14];
+
+    fn b3_srtp_context() -> SrtpContext {
+        SrtpContext::new(
+            &APPENDIX_B3_MASTER_KEY,
+            &APPENDIX_B3_MASTER_SALT,
+            ProtectionProfile::Aes128CmHmacSha1_80,
+            None,
+            None,
+        )
+        .unwrap()
+    }
+
+    fn other_srtp_context() -> SrtpContext {
+        SrtpContext::new(
+            &OTHER_MASTER_KEY,
+            &OTHER_MASTER_SALT,
+            ProtectionProfile::Aes128CmHmacSha1_80,
+            None,
+            None,
+        )
+        .unwrap()
+    }
+
+    /// Builds a `MediaTransport` via the real constructor, then seeds
+    /// `dtls_peer` + both SRTP contexts directly — same-module test access
+    /// standing in for a completed handshake, exactly as
+    /// `transport_with_appendix_b3_write_context` already does for the
+    /// write-only tests above.
+    fn transport_with_completed_handshake(setup: SetupRole) -> (MediaTransport, SocketAddr) {
+        let mut mt = MediaTransport::new(test_config(setup)).unwrap();
+        let peer: SocketAddr = "127.0.0.1:5000".parse().unwrap();
+        mt.dtls_peer = Some(peer);
+        mt.srtp_read = Some(b3_srtp_context());
+        mt.srtp_write = Some(b3_srtp_context());
+        (mt, peer)
+    }
+
+    fn rtp_test_packet(sequence_number: u16) -> rtp_packet::RtpPacket<'static> {
+        rtp_packet::RtpPacket {
+            marker: false,
+            payload_type: 96,
+            sequence_number,
+            timestamp: 0,
+            ssrc: 0,
+            csrc: Vec::new(),
+            extension: None,
+            padding: None,
+            payload: &[0xAA; 32],
+        }
+    }
+
+    #[test]
+    fn exceeds_maximum_lifetime_boundary() {
+        // Bite test: change `count >= MAXIMUM_LIFETIME_PACKETS` to `>` and
+        // the middle assertion flips to failing.
+        assert!(!exceeds_maximum_lifetime(MAXIMUM_LIFETIME_PACKETS - 1));
+        assert!(exceeds_maximum_lifetime(MAXIMUM_LIFETIME_PACKETS));
+        assert!(exceeds_maximum_lifetime(MAXIMUM_LIFETIME_PACKETS + 1));
+    }
+
+    #[test]
+    fn needs_rekey_reports_threshold_crossing_on_every_counter() {
+        let mut mt = MediaTransport::new(test_config(SetupRole::Passive)).unwrap();
+        assert!(!mt.needs_rekey());
+
+        mt.write_rtp_count = MAXIMUM_LIFETIME_PACKETS - 1;
+        assert!(!mt.needs_rekey(), "one below the limit must not trigger");
+        mt.write_rtp_count = MAXIMUM_LIFETIME_PACKETS;
+        assert!(
+            mt.needs_rekey(),
+            "write_rtp_count at the limit must trigger"
+        );
+        mt.write_rtp_count = 0;
+
+        mt.write_rtcp_count = MAXIMUM_LIFETIME_PACKETS;
+        assert!(
+            mt.needs_rekey(),
+            "write_rtcp_count at the limit must trigger"
+        );
+        mt.write_rtcp_count = 0;
+
+        mt.read_rtp_count = MAXIMUM_LIFETIME_PACKETS;
+        assert!(mt.needs_rekey(), "read_rtp_count at the limit must trigger");
+        mt.read_rtp_count = 0;
+
+        mt.read_rtcp_count = MAXIMUM_LIFETIME_PACKETS;
+        assert!(
+            mt.needs_rekey(),
+            "read_rtcp_count at the limit must trigger"
+        );
+    }
+
+    #[test]
+    fn encrypt_rtp_and_rtcp_increment_write_counters() {
+        let mut mt = transport_with_appendix_b3_write_context();
+        assert_eq!(mt.write_rtp_count, 0);
+        assert_eq!(mt.write_rtcp_count, 0);
+
+        mt.encrypt_rtp(&rtp_test_packet(0)).expect("encrypt_rtp");
+        assert_eq!(mt.write_rtp_count, 1);
+        mt.encrypt_rtp(&rtp_test_packet(1)).expect("encrypt_rtp");
+        assert_eq!(mt.write_rtp_count, 2);
+        assert_eq!(
+            mt.write_rtcp_count, 0,
+            "RTP encryption must not touch the RTCP counter"
+        );
+
+        let compound =
+            rtcp_packet::CompoundPacket::new(vec![rtcp_packet::RtcpPacket::SenderReport(
+                rtcp_packet::SenderReport {
+                    ssrc: 0,
+                    ntp_msw: 0,
+                    ntp_lsw: 0,
+                    rtp_timestamp: 0,
+                    packet_count: 0,
+                    octet_count: 0,
+                    report_blocks: Vec::new(),
+                },
+            )])
+            .unwrap();
+        mt.encrypt_rtcp(&compound).expect("encrypt_rtcp");
+        assert_eq!(mt.write_rtcp_count, 1);
+        assert_eq!(
+            mt.write_rtp_count, 2,
+            "RTCP encryption must not touch the RTP counter"
+        );
+    }
+
+    #[test]
+    fn handle_datagram_increments_read_counter_on_successful_decrypt() {
+        let (mut mt, peer) = transport_with_completed_handshake(SetupRole::Passive);
+        let mut oracle = b3_srtp_context();
+        let ciphertext = oracle
+            .encrypt_rtp(&rtp_test_packet(0).to_bytes())
+            .unwrap()
+            .to_vec();
+
+        assert_eq!(mt.read_rtp_count, 0);
+        let now = Instant::now();
+        let events = mt
+            .handle_datagram(now, peer, &ciphertext)
+            .expect("handle_datagram");
+        assert_eq!(
+            events.len(),
+            1,
+            "must decrypt to exactly one MediaEvent::Rtp"
+        );
+        assert_eq!(mt.read_rtp_count, 1);
+    }
+
+    #[test]
+    fn rekey_before_any_handshake_errors() {
+        let mut mt = MediaTransport::new(test_config(SetupRole::Passive)).unwrap();
+        match mt.rekey(Instant::now()) {
+            Err(Error::Media(_)) => {}
+            Err(other) => panic!("expected Error::Media, got {other:?}"),
+            Ok(()) => panic!("expected an error: no dtls handshake has ever completed"),
+        }
+    }
+
+    #[test]
+    fn rekey_retires_read_context_and_drops_write_context() {
+        let (mut mt, _peer) = transport_with_completed_handshake(SetupRole::Passive);
+        mt.write_rtp_count = 5;
+        mt.read_rtp_count = 7;
+
+        mt.rekey(Instant::now()).expect("rekey");
+
+        assert!(
+            mt.srtp_write.is_none(),
+            "RFC 3711 §9.2: the write key MUST NOT be reused past rekey"
+        );
+        assert!(
+            mt.srtp_read.is_none(),
+            "the read context moves to the retired slot, it is not left in place"
+        );
+        assert!(
+            mt.retired_srtp_read.is_some(),
+            "RFC 5764 §5.2: the old read key must be retained, not dropped outright"
+        );
+        assert_eq!(mt.write_rtp_count, 0);
+        assert_eq!(mt.read_rtp_count, 0);
+    }
+
+    /// The central bite test for issue #948 item 3, in two parts. Comment
+    /// out the `self.retired_srtp_read = Some(...)` line in `rekey` (i.e.
+    /// disable the RFC 5764 §5.2 retention this test exists to check), and
+    /// part 1 fails: with no current *and* no retired read context, the
+    /// reordered packet is silently dropped (0 events) instead of
+    /// decrypted.
+    #[test]
+    fn retired_read_context_decrypts_reordered_packet_until_msl_elapses_then_stops() {
+        let (mut mt, peer) = transport_with_completed_handshake(SetupRole::Passive);
+        let mut oracle = b3_srtp_context();
+        // The "in-flight when the rekey happened" packet: encrypted under
+        // the about-to-be-retired key, arrives only after `rekey` below.
+        let reordered_packet = oracle
+            .encrypt_rtp(&rtp_test_packet(0).to_bytes())
+            .unwrap()
+            .to_vec();
+
+        let t0 = Instant::now();
+        mt.rekey(t0).expect("rekey");
+        // Passive role never redials, so `srtp_read` stays `None` until a
+        // new handshake completes (never, in this test) — decrypting the
+        // reordered packet now depends entirely on `retired_srtp_read`.
+        assert!(mt.srtp_read.is_none());
+
+        // Part 1: within the retention window, the retired key recovers it.
+        let events = mt
+            .handle_datagram(t0, peer, &reordered_packet)
+            .expect("handle_datagram within retention window");
+        assert_eq!(events.len(), 1, "the reordered packet must still decrypt");
+        match &events[0] {
+            MediaEvent::Rtp(rtp) => assert_eq!(rtp.sequence_number, 0),
+            other => panic!("expected MediaEvent::Rtp, got {other:?}"),
+        }
+
+        // Part 2: once RETIRED_KEY_RETENTION has elapsed, the key is
+        // purged (via `handle_timeout`) and the same key material can no
+        // longer decrypt anything — a *different* reordered packet (a
+        // fresh sequence number, so this isn't a replay-window rejection
+        // masquerading as "no key") is now dropped silently, same as the
+        // pre-handshake case.
+        let t1 = t0 + RETIRED_KEY_RETENTION + Duration::from_secs(1);
+        mt.handle_timeout(t1);
+        assert!(
+            mt.retired_srtp_read.is_none(),
+            "the retired key must be purged after MSL"
+        );
+
+        let another_reordered_packet = oracle
+            .encrypt_rtp(&rtp_test_packet(1).to_bytes())
+            .unwrap()
+            .to_vec();
+        let events_after_expiry = mt
+            .handle_datagram(t1, peer, &another_reordered_packet)
+            .expect("handle_datagram after retention expiry");
+        assert!(
+            events_after_expiry.is_empty(),
+            "past the MSL, there is no key left to decrypt with"
+        );
+    }
+
+    /// The RFC 5764 §5.2 scenario in its most literal form: a packet
+    /// reordered across the rekey boundary arrives *after* a new
+    /// handshake has already installed fresh keys, so it fails
+    /// authentication under the current context — and only then should
+    /// the retired context be tried. Bite test: skip straight to `Err`
+    /// on a current-context failure (i.e. never fall back to
+    /// `retired_srtp_read`), and this fails — `handle_datagram` would
+    /// return `Err` instead of the one decrypted `MediaEvent::Rtp`.
+    #[test]
+    fn retired_read_context_recovers_packet_that_fails_the_new_key() {
+        let (mut mt, peer) = transport_with_completed_handshake(SetupRole::Passive);
+        // Simulate "a rekey already happened, and a new handshake already
+        // completed": `srtp_read` is the *new* key, `retired_srtp_read` is
+        // the *old* one, both present at once — the exact window RFC 5764
+        // §5.2 describes.
+        mt.srtp_read = Some(other_srtp_context());
+        mt.retired_srtp_read = Some((b3_srtp_context(), Instant::now() + RETIRED_KEY_RETENTION));
+
+        let mut oracle = b3_srtp_context();
+        let old_keyed_packet = oracle
+            .encrypt_rtp(&rtp_test_packet(0).to_bytes())
+            .unwrap()
+            .to_vec();
+
+        let events = mt
+            .handle_datagram(Instant::now(), peer, &old_keyed_packet)
+            .expect("must recover via the retired context, not error out");
+        assert_eq!(events.len(), 1);
+        match &events[0] {
+            MediaEvent::Rtp(rtp) => assert_eq!(rtp.sequence_number, 0),
+            other => panic!("expected MediaEvent::Rtp, got {other:?}"),
         }
     }
 }
