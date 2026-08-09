@@ -229,7 +229,11 @@ impl RouteRegistry {
                 self.ctx.base_config.window_segments,
             )
             .with_name(route.name.clone())
-            .with_container(super::route_container(route)),
+            .with_container(super::route_container(route))
+            // Issue #900 — see the identical fix (and its own doc) in
+            // `super::serve_with_registry_impl`'s per-route loop; this is
+            // the admin-API (`POST /admin/routes`/reload) equivalent.
+            .with_dvr(route.dvr.clone()),
         );
         let (shutdown_tx, shutdown_rx) = watch::channel(false);
         let push_cancel = tokio_util::sync::CancellationToken::new();

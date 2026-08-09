@@ -51,6 +51,6 @@
 mod engine;
 
 pub use engine::{
-    BlockingQuery, Container, DEFAULT_TRACK_ID, HlsBody, HlsOrigin, HlsOriginBuildError,
-    HlsOriginBuilder, HlsRequest, master_playlist_m3u8,
+    BlockingQuery, ClosedSegment, Container, DEFAULT_TRACK_ID, HlsBody, HlsOrigin,
+    HlsOriginBuildError, HlsOriginBuilder, HlsRequest, master_playlist_m3u8,
 };

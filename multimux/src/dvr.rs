@@ -381,6 +381,22 @@ pub struct IndexEntry {
     pub byte_offset: u64,
     /// Exact byte length of this segment within the period file.
     pub byte_len: u64,
+    /// Segment duration in nanoseconds (`SegmentEntry::duration`) — issue
+    /// #900's catch-up serving needs this to render an accurate `#EXTINF`
+    /// for an archived segment; before this field existed, a reader had no
+    /// way to recover a segment's duration without decoding its media
+    /// bytes. `#[serde(default)]` so a `pN.idx` written before this field
+    /// existed still parses (as `0` — a stale sidecar this old is not
+    /// expected to exist outside a pre-release archive).
+    #[serde(default)]
+    pub duration_ns: u64,
+    /// Whether `#EXT-X-DISCONTINUITY` precedes this segment
+    /// (`SegmentEntry::meta.discontinuous`) — needed by issue #900's
+    /// catch-up playlist rendering to reproduce the same discontinuity
+    /// signalling the live playlist would have shown. `#[serde(default)]`
+    /// for the same reason as `duration_ns`.
+    #[serde(default)]
+    pub discontinuous: bool,
 }
 
 /// In-memory record of one stored period file.
@@ -798,6 +814,8 @@ impl DvrRecorder {
             start_pts_ns: entry.timeline_position.as_nanos(),
             byte_offset,
             byte_len,
+            duration_ns: entry.duration.as_nanos() as u64,
+            discontinuous: entry.meta.discontinuous,
         });
 
         self.flush_index()?;
@@ -892,6 +910,12 @@ impl DvrRecorder {
                     start_pts_ns: 0,
                     byte_offset: start,
                     byte_len: total_len,
+                    // Neither is recoverable from the box layout alone (no
+                    // sequence number or discontinuity bit is encoded in
+                    // fMP4 itself) — see this method's own doc for `seq`'s
+                    // identical limitation.
+                    duration_ns: 0,
+                    discontinuous: false,
                 });
                 offset += total_len as usize;
             } else {

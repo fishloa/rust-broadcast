@@ -3,6 +3,38 @@
 ## [Unreleased]
 
 ### Added
+- **Catch-up / time-shift / VOD-from-live serving over the DVR archive**
+  (issue #900, follow-up to #746/#903): a new `"catchup"` output
+  (`OutputKind::Catchup`) serves `GET /catchup.m3u8` (optionally
+  `?window_secs=N` to bound the trailing catch-up window),
+  `GET /vod/p{N}.m3u8` (one archived period rendered as a complete,
+  `#EXT-X-ENDLIST`/`PLAYLIST-TYPE:VOD` asset once a later period exists on
+  disk proving it finished), and `GET /catchup/seg-{seq}.{ext}` (the
+  resource route both playlists reference). Requires
+  `routes.dvr.enabled: true`; rejected otherwise by `Config::validate`.
+  Shares the same output auth (Basic/Digest/Bearer/Forwarded) every other
+  output gets — no separate auth path.
+  - **The straddle boundary** (the reason this exists): the DVR archive and
+    the live `Trunk` are different sources sharing one sequence-number
+    space. `catchup.m3u8` merges the archive's segments with only the live
+    `Trunk`'s still-unarchived tail (`crate::catchup::merge_segments`),
+    producing one continuous, gap-free, duplicate-free playlist across the
+    boundary — never two disjoint lists a client has to stitch together.
+    A request for an archived segment reads its exact byte range off disk;
+    a request for the unarchived tail resolves through the same
+    `HlsOrigin` the live outputs already share. No second in-memory cache
+    of live data is built — per #746's hard constraint, the archive is
+    read fresh from disk per request, and the live tail is read through
+    the existing `HlsOrigin` cursor (`HlsOrigin::closed_segments`, new)
+    rather than a second one.
+  - `crate::dvr::IndexEntry` gained `duration_ns`/`discontinuous` fields
+    (`#[serde(default)]`, so an old `pN.idx` still parses) — needed to
+    render an archived segment's `#EXTINF`/`#EXT-X-DISCONTINUITY` without
+    decoding its media bytes.
+  - `hls_runtime::server::HlsOrigin` gained `closed_segments()` (returning
+    the new public `hls_runtime::server::ClosedSegment`), reusing its
+    existing live-window cursor rather than requiring a caller to open a
+    second one on the same `Trunk`.
 - **Programme-aligned DVR rolling** (issue #903, follow-up to #746): a DVR
   route can now opt in to rolling its archive period on the DVB EIT
   present/following transition (ETSI EN 300 468 §5.2.4) instead of only on
@@ -27,6 +59,14 @@
   guard script to contain. Adopting let-chains and `is_multiple_of` where the
   1.95 lints require them; no functional or API change.
 ### Fixed
+- `routes.dvr` was validated (`Route::validate_dvr`) but never actually
+  wired into the `RouteHandle` built for a config-driven or admin-API-added
+  route — `RouteHandle::with_dvr` was only ever called from this crate's
+  own unit tests, so DVR recording configured via `Config`/JSON silently
+  never ran. Both `origin::serve_with_registry_impl` and
+  `origin::admin::RouteRegistry::spawn_route` now call `.with_dvr(route.dvr.clone())`;
+  found while implementing catch-up serving (issue #900), which depends on
+  DVR actually recording.
 - RTMP push (issue #934) shipped raw MPEG-2 TS as an RTMP `send_video`
   message payload — no RTMP server can decode that; RTMP Audio/Video
   messages carry FLV `AudioTagHeader`+`AACAUDIODATA` /

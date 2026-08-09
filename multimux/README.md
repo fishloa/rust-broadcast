@@ -61,6 +61,7 @@ unaffected):
 | `"ll_dash"` | Low-latency DASH, true chunked-transfer CMAF (whole-segment `$Number$`, served over HTTP chunked transfer while in progress) | `manifest-ll.mpd` |
 | `"smooth"` | Microsoft Smooth Streaming (MS-SSTR), fMP4/CMAF | `Manifest` |
 | `"ts_hls"` | Classic HLS, whole MPEG-2 TS media segments (RFC 8216 §3, no `#EXT-X-MAP`, no low-latency parts) | `master.m3u8` + `media.m3u8` (or the configured `playlist_name`) |
+| `"catchup"` | Catch-up / time-shift / VOD-from-live over the route's DVR archive (requires `dvr.enabled: true` — see [Catch-up / VOD-from-live](#catch-up--vod-from-live)) | `catchup.m3u8` + `vod/p{N}.m3u8` |
 
 `"llhls"`/`"dash"`/`"ll_dash"`/`"smooth"` all read the exact same segmented CMAF —
 ingest-once, many-outputs, no per-output re-mux — so a route can enable more
@@ -99,6 +100,23 @@ One route ("stream") is served per configured `name`, under `/{stream}/...`:
 
 An unknown stream name, or a filename `multimux` doesn't recognize, returns
 `404`.
+
+## Catch-up / VOD-from-live
+
+`"catchup"` (`outputs`, above) serves the route's durable DVR archive
+(`routes.dvr`) for time-shift, a catch-up window, and finished-programme
+VOD — a route must have `routes.dvr.enabled: true` (and at least one
+retention limit) for it to have anything to serve; `Config::validate()`
+rejects a route naming `"catchup"` without it.
+
+| Endpoint | Description |
+| --- | --- |
+| `GET /{stream}/catchup.m3u8[?window_secs=N]` | A live-continuing playlist spanning the archive plus whatever the live `Trunk` has closed since the archive was last written — one continuous, gap-free sequence across that boundary, never two disjoint playlists. `window_secs` bounds it to the trailing N seconds; omitted, the whole archive plus the live tail. |
+| `GET /{stream}/vod/p{N}.m3u8` | One archived period's segments as a standalone playlist — `#EXT-X-ENDLIST` + `PLAYLIST-TYPE:VOD` once that period is definitively finished (a later period exists on disk), otherwise the same still-growing shape as `catchup.m3u8` restricted to that period. |
+| `GET /{stream}/catchup/seg-{seq}.{ext}` | The segment bytes either playlist above references — read straight off disk when archived, or resolved through the same live `HlsOrigin` every other output shares when not (the still-unarchived tail). |
+
+Shares `output_auth` with every other output — no separate credential or
+auth path for catch-up.
 
 ## Shared output auth
 

@@ -734,6 +734,18 @@ impl RouteHandle {
         self.container
     }
 
+    /// This route's DVR archive config (see [`Self::with_dvr`]) — `Some`
+    /// only when DVR recording is actually enabled
+    /// (`crate::dvr::DvrConfig::enabled`), never `Some` with `enabled ==
+    /// false`, so a caller never needs to check that field itself. Needed
+    /// by [`crate::output::catchup::CatchupOutput`] (issue #900) to find
+    /// the on-disk archive root — `crate::dvr::DvrRecorder` itself reads
+    /// `self.dvr_config` directly, not through this accessor, since it is
+    /// built once at [`Self::publish_program`] time.
+    pub(crate) fn dvr_config(&self) -> Option<&crate::dvr::DvrConfig> {
+        self.dvr_config.as_ref().filter(|c| c.enabled)
+    }
+
     /// This route's configured advertised-window depth (see
     /// [`Self::window_segments_cap`]'s own field doc) — needed by
     /// [`crate::source::segment::drive_program_segmenters`] to size a

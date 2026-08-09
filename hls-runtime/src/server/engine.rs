@@ -231,6 +231,57 @@ struct WindowSegment {
     bytes: Bytes,
     duration_secs: f64,
     discontinuous: bool,
+    /// This segment's `SegmentEntry::timeline_position`, in nanoseconds —
+    /// carried through so [`HlsOrigin::closed_segments`] can hand it to a
+    /// caller doing time-based windowing over a *different* source of
+    /// segments (e.g. multimux's DVR archive, issue #900), without that
+    /// caller needing a second cursor of its own just to learn it.
+    start_ns: u64,
+}
+
+/// One closed segment's identity/metadata as tracked by this origin's
+/// `Window` — [`HlsOrigin::closed_segments`]'s return shape. Deliberately
+/// excludes the segment's bytes: a caller merging this with another
+/// segment source (issue #900) fetches bytes through the normal
+/// [`ServedEgress::resolve`] resource path when it needs them, not through
+/// this snapshot.
+#[derive(Debug, Clone, Copy, PartialEq)]
+#[non_exhaustive]
+pub struct ClosedSegment {
+    /// This segment's sequence number (`_HLS_msn`-addressable).
+    pub sequence_number: u32,
+    /// `SegmentEntry::timeline_position`, in nanoseconds — the `Trunk`'s
+    /// absolute timeline, for time-based windowing across sources that
+    /// share the same `Trunk` (e.g. multimux's DVR archive, whose own
+    /// `IndexEntry::start_pts_ns` is exactly this same clock).
+    pub start_ns: u64,
+    /// Segment duration in seconds.
+    pub duration_secs: f64,
+    /// Whether `#EXT-X-DISCONTINUITY` precedes this segment (RFC 8216
+    /// §4.3.4.3).
+    pub discontinuous: bool,
+}
+
+impl ClosedSegment {
+    /// Construct a [`ClosedSegment`] — needed because the type is
+    /// `#[non_exhaustive]` (a struct-literal outside this crate does not
+    /// typecheck), for a caller building test fixtures over the shape
+    /// [`HlsOrigin::closed_segments`] returns (e.g. multimux's own
+    /// catch-up merge tests, issue #900) without depending on this
+    /// module's private `Window`.
+    pub fn new(
+        sequence_number: u32,
+        start_ns: u64,
+        duration_secs: f64,
+        discontinuous: bool,
+    ) -> Self {
+        ClosedSegment {
+            sequence_number,
+            start_ns,
+            duration_secs,
+            discontinuous,
+        }
+    }
 }
 
 /// The small per-[`HlsOrigin`] synced window this module's own doc
@@ -282,6 +333,7 @@ impl Window {
             bytes: entry.bytes,
             duration_secs,
             discontinuous: entry.meta.discontinuous,
+            start_ns: entry.timeline_position.as_nanos(),
         });
     }
 
@@ -531,6 +583,37 @@ impl HlsOrigin {
                 window.push(entry);
             }
         }
+    }
+
+    /// A snapshot of this origin's currently-advertised closed segments
+    /// (drains the cursor first, same as `render_playlist`) — ascending by
+    /// sequence number.
+    ///
+    /// Exists for a caller that needs to merge this origin's live window
+    /// with a *different* source of segments over the same numbering
+    /// (multimux's DVR archive, issue #900: catch-up serving must present
+    /// one continuous playlist spanning the archive and the still-live
+    /// tail that hasn't been archived yet). Reuses the one cursor `drain`
+    /// already maintains rather than making the caller open a second
+    /// cursor on the same `Trunk` just to learn the same window
+    /// `render_playlist` itself renders — `media_plane`'s own module doc:
+    /// writer cost is O(N) in cursor count, so a cursor is per distinct
+    /// consumer, never per peer, and never duplicated for data another
+    /// cursor already tracks.
+    pub fn closed_segments(&self) -> Vec<ClosedSegment> {
+        self.drain();
+        self.window
+            .lock()
+            .unwrap()
+            .segments
+            .iter()
+            .map(|s| ClosedSegment {
+                sequence_number: s.sequence_number,
+                start_ns: s.start_ns,
+                duration_secs: s.duration_secs,
+                discontinuous: s.discontinuous,
+            })
+            .collect()
     }
 
     /// `(in-progress-or-last-active segment sequence number, its currently
@@ -1820,5 +1903,67 @@ mod tests {
         assert_eq!(Container::MpegTs.name(), "mpeg-ts");
         assert_eq!(Container::Fmp4.to_string(), "fmp4");
         assert_eq!(Container::default(), Container::Fmp4);
+    }
+
+    // --- issue #900: `closed_segments()` — the snapshot multimux's DVR
+    //     catch-up serving merges with its on-disk archive ---
+
+    /// MUTATION VERIFIED: changing `Window::push`'s
+    /// `start_ns: entry.timeline_position.as_nanos()` to a constant `0`
+    /// makes this test's `assert_eq!(snapshot[1].start_ns, 4_000_000_000)`
+    /// fail (`left: 0, right: 4000000000`) — `closed_segments()` would then
+    /// report every segment as starting at time zero, which is exactly the
+    /// bug that would make a caller's time-based catch-up window (issue
+    /// #900) unable to tell segments apart. Recompiled and re-run to
+    /// confirm the failure, then reverted.
+    #[test]
+    fn closed_segments_snapshot_matches_published_segments_ascending() {
+        let (_trunk, origin, writer) = make_origin();
+        writer.publish_segment(SegmentEntry::new(
+            Bytes::from(vec![1u8; 8]),
+            1,
+            Duration::from_secs_f64(4.0),
+            Timestamp::from_nanos(0),
+            SegmentMeta {
+                discontinuous: false,
+            },
+        ));
+        writer.publish_segment(SegmentEntry::new(
+            Bytes::from(vec![2u8; 8]),
+            2,
+            Duration::from_secs_f64(4.0),
+            Timestamp::from_nanos(4_000_000_000),
+            SegmentMeta {
+                discontinuous: true,
+            },
+        ));
+
+        let snapshot = origin.closed_segments();
+        assert_eq!(snapshot.len(), 2);
+        assert_eq!(snapshot[0].sequence_number, 1);
+        assert_eq!(snapshot[0].start_ns, 0);
+        assert!(!snapshot[0].discontinuous);
+        assert_eq!(snapshot[1].sequence_number, 2);
+        assert_eq!(snapshot[1].start_ns, 4_000_000_000);
+        assert!(snapshot[1].discontinuous);
+    }
+
+    /// A segment evicted from the window (beyond `window_segments`
+    /// capacity) no longer appears in the snapshot — `closed_segments()`
+    /// reports the *advertised* window, the same one `render_playlist`
+    /// renders, not every segment ever published.
+    #[test]
+    fn closed_segments_reflects_window_eviction() {
+        let (_trunk, origin, writer) = make_origin(); // window_segments = 4
+        for seq in 1..=5 {
+            seg(&writer, seq, 4.0, false);
+        }
+        let snapshot = origin.closed_segments();
+        let seqs: Vec<u32> = snapshot.iter().map(|s| s.sequence_number).collect();
+        assert_eq!(
+            seqs,
+            vec![2, 3, 4, 5],
+            "oldest segment 1 must have rolled off"
+        );
     }
 }

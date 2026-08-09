@@ -19,6 +19,7 @@
 //! route (`crate::config::Route::validate_standalone`) — see that check's own
 //! doc for why.
 
+pub mod catchup;
 pub mod dash;
 pub mod ll_dash;
 pub mod llhls;
@@ -84,6 +85,14 @@ pub enum OutputKind {
     /// why (one `Trunk` segment ring per program, fMP4 *or* TS, never both).
     #[serde(rename = "ts_hls")]
     TsHls,
+    /// Catch-up / time-shift / VOD-from-live serving over the route's DVR
+    /// durable archive (issue #900) — `GET /catchup.m3u8`, `GET
+    /// /vod/p{N}.m3u8`, `GET /catchup/seg-{seq}.{ext}` (see
+    /// [`catchup::CatchupOutput`]). Requires `crate::config::Route::dvr` to
+    /// be `enabled` — `crate::config::Route::validate_standalone` rejects
+    /// this kind otherwise, since there would be no archive to serve.
+    #[serde(rename = "catchup")]
+    Catchup,
     /// Push to a remote SRT Listener (Caller mode). Issue #744.
     #[serde(rename = "srt_push")]
     SrtPush {
@@ -159,6 +168,7 @@ impl OutputKind {
             OutputKind::LlDash => "ll_dash",
             OutputKind::Smooth => "smooth",
             OutputKind::TsHls => "ts_hls",
+            OutputKind::Catchup => "catchup",
             OutputKind::SrtPush { .. } => "srt_push",
             OutputKind::RtmpPush { .. } => "rtmp_push",
             OutputKind::RtspPush { .. } => "rtsp_push",
@@ -226,6 +236,7 @@ impl OutputKind {
             OutputKind::LlDash => Arc::new(ll_dash::LlDashOutput),
             OutputKind::Smooth => Arc::new(smooth::SmoothOutput),
             OutputKind::TsHls => Arc::new(ts_hls::TsHlsOutput::new(playlist_name)),
+            OutputKind::Catchup => Arc::new(catchup::CatchupOutput),
             // Push outputs are not `Arc<dyn Output>` — they are driven by the
             // push driver (`crate::push`) instead of mounting manifest routes.
             OutputKind::SrtPush { .. }
@@ -299,6 +310,7 @@ mod tests {
             (OutputKind::LlDash, "ll_dash"),
             (OutputKind::Smooth, "smooth"),
             (OutputKind::TsHls, "ts_hls"),
+            (OutputKind::Catchup, "catchup"),
         ] {
             assert_eq!(kind.name(), label);
             assert_eq!(kind.to_string(), label);
@@ -328,6 +340,7 @@ mod tests {
             OutputKind::Dash,
             OutputKind::LlDash,
             OutputKind::Smooth,
+            OutputKind::Catchup,
         ] {
             merged = merged.merge(kind.build().manifest_routes(route.clone()));
         }
@@ -350,6 +363,7 @@ mod tests {
             OutputKind::LlDash,
             OutputKind::Smooth,
             OutputKind::TsHls,
+            OutputKind::Catchup,
         ] {
             let json = serde_json::to_string(&kind).unwrap();
             let back: OutputKind = serde_json::from_str(&json).unwrap();
@@ -379,6 +393,10 @@ mod tests {
         assert!(matches!(
             OutputKind::TsHls.build().kind(),
             OutputKind::TsHls
+        ));
+        assert!(matches!(
+            OutputKind::Catchup.build().kind(),
+            OutputKind::Catchup
         ));
     }
 

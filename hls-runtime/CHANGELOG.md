@@ -7,6 +7,18 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+- `server::HlsOrigin::closed_segments()` — a snapshot of the origin's
+  currently-advertised closed segments (sequence number, absolute
+  `start_ns`, duration, discontinuity bit) as the new public
+  `server::ClosedSegment` (with a `ClosedSegment::new` constructor, since
+  the type is `#[non_exhaustive]`). Reuses the origin's existing live-
+  window cursor rather than requiring a caller to open a second one on the
+  same `Trunk` just to learn the same window `render_playlist` itself
+  already renders. Added for multimux's DVR catch-up serving (issue #900),
+  which needs to merge this origin's live window with a different segment
+  source (an on-disk archive) over the same sequence-number space.
+
 ### Changed
 - MSRV raised to **1.95.0** (issue #949). This removes the workspace's MSRV
   split: `webrtc-runtime`'s optional `media` feature needed rustc 1.88 (via

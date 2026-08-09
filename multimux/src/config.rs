@@ -1169,6 +1169,25 @@ impl Route {
                 ),
             });
         }
+        // Issue #900: `"catchup"` serves the route's DVR archive — without
+        // DVR enabled there is no archive to read, so reject the
+        // combination here rather than mounting an output that would 404
+        // every request.
+        if self
+            .outputs
+            .iter()
+            .any(|k| matches!(k, OutputKind::Catchup))
+            && !self.dvr.enabled
+        {
+            return Err(MultimuxError::ConfigInvalid {
+                field: "routes.outputs",
+                reason: format!(
+                    "route {:?} configures the \"catchup\" output but has no DVR archive \
+                     enabled (\"routes.dvr.enabled\": true) — there would be nothing to serve",
+                    self.name
+                ),
+            });
+        }
         // Issue #744/M1c: `PushFormat::Mp4`/`PushFormat::Mkv` are declared
         // config surface with no muxer behind them — `crate::push::drive_push`
         // only ever builds a `transmux::TsMux` and silently ignores the
@@ -1796,6 +1815,54 @@ mod tests {
         let cfg: Config = serde_json::from_str(json).unwrap();
         cfg.validate()
             .expect("a ts_hls-only route must be accepted");
+    }
+
+    // --- issue #900: "catchup" output requires routes.dvr.enabled ---
+
+    /// Biting test: remove the check this test targets from
+    /// `validate_standalone` and this fails, because the config is
+    /// otherwise entirely valid (a plain rtsp route, one output kind).
+    #[test]
+    fn validate_rejects_catchup_output_without_dvr_enabled() {
+        let json = r#"{
+            "routes": [
+                {
+                    "name": "cam1",
+                    "input": { "type": "rtsp", "url": "rtsp://host/stream1" },
+                    "outputs": ["catchup"]
+                }
+            ]
+        }"#;
+        let cfg: Config = serde_json::from_str(json).unwrap();
+        let err = cfg
+            .validate()
+            .expect_err("catchup without routes.dvr.enabled must be rejected");
+        let message = err.to_string();
+        assert!(
+            message.contains("catchup") && message.contains("DVR"),
+            "error must name the offending output and explain why: {message}"
+        );
+    }
+
+    #[test]
+    fn validate_accepts_catchup_output_with_dvr_enabled() {
+        let json = r#"{
+            "routes": [
+                {
+                    "name": "cam1",
+                    "input": { "type": "rtsp", "url": "rtsp://host/stream1" },
+                    "outputs": ["catchup", "llhls"],
+                    "dvr": {
+                        "enabled": true,
+                        "archive_root": "/tmp/multimux-dvr",
+                        "retention_periods": 8
+                    }
+                }
+            ]
+        }"#;
+        let cfg: Config = serde_json::from_str(json).unwrap();
+        cfg.validate()
+            .expect("catchup with routes.dvr.enabled must be accepted");
     }
 
     #[test]

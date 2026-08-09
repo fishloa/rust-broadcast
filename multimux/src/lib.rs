@@ -25,6 +25,7 @@
 //! editing this crate at all — see [`registry`] (issue #663 external scheme
 //! plugin registry) and [`origin::serve_with_registry`].
 
+pub(crate) mod catchup;
 pub mod config;
 pub mod dvr;
 pub mod error;
