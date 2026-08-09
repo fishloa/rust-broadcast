@@ -90,7 +90,26 @@ async fn main() {
             std::process::exit(1);
         }
     };
-    let cfg = store.load();
+
+    let status = StatusHandle::new();
+
+    // Issue #955: a broken config backend used to be indistinguishable from
+    // an unconfigured one — `load()` swallowed the error and handed back
+    // `Config::default()` either way. `LoadOutcome::error` is `Some` only
+    // for a genuinely broken backend (not "nothing stored yet"), so record
+    // it on `status` immediately — before the config's own effects (codec,
+    // port, …) are even applied — so `/admin/status`'s `last_error` shows
+    // it from the very first request, not just after a `POST /admin/config`
+    // round-trip. Uses `set_config_error`, not `set_last_error`: the capture
+    // pipeline (started below, on its own thread) clears/sets
+    // `last_error`'s pipeline slot on every retry attempt, which would
+    // otherwise erase this within moments of boot.
+    let outcome = store.load();
+    if let Some(reason) = outcome.error() {
+        error!("acap-multimux: config load failed, running on defaults: {reason}");
+        status.set_config_error(Some(format!("config load: {reason}")));
+    }
+    let cfg = outcome.into_config();
     info!("acap-multimux: loaded config: {cfg:?}");
 
     let route_handle = Arc::new(RouteHandle::new(
@@ -98,8 +117,6 @@ async fn main() {
         cfg.part_target_ms,
         cfg.window_segments,
     ));
-
-    let status = StatusHandle::new();
 
     spawn_capture_pipeline(&cfg, route_handle.clone(), status.clone());
 
@@ -285,6 +302,26 @@ async fn run_vdo_capture(
         let now = Timestamp::from_instant(start, Instant::now());
         driver.feed((), now);
         advance_route(&driver, route_handle, &mut progress);
+        // Issue #955: `StatusHandle` was never touched by the pipeline, so
+        // `/admin/status` reported `current_segment`/`current_part`/`frames`
+        // as permanent zeros while segments were being served correctly —
+        // confirmed on-device (`#EXT-X-MEDIA-SEQUENCE` climbing while
+        // `/admin/status` stood still). One VDO buffer is processed per
+        // `feed()` call (see this function's own module doc), so counting
+        // one here is the natural unit for "frames processed". The
+        // segment/part position comes straight from this program's `Trunk`
+        // — `last_closed_segment` names the newest *closed* segment, so the
+        // one "currently being written" (this field's documented meaning)
+        // is one past it, or `0` before anything has closed yet; the part
+        // count is how many parts that open segment has accumulated so far.
+        status.add_frames(1);
+        if let Some(program) = driver.programs().next() {
+            if let Some(trunk) = driver.trunk(program) {
+                let current_segment = trunk.last_closed_segment().map_or(0, |seq| seq + 1);
+                let current_part = trunk.parts_in_segment(current_segment).len() as u32;
+                status.set_position(current_segment, current_part);
+            }
+        }
         if !driver.health().is_running() {
             break;
         }
