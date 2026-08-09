@@ -207,17 +207,21 @@ jobs:
         run: cargo +${{ env.MEDIA_RUST }} test -p webrtc-runtime --features media --locked
       - name: media clippy on ${{ env.MEDIA_RUST }}
         run: cargo +${{ env.MEDIA_RUST }} clippy -p webrtc-runtime --features media --all-targets --locked -- -D warnings
-      # multimux's `whip` feature enables webrtc-runtime/media, so it inherits
-      # the same 1.88 floor and is excluded from the MSRV all-features lanes
-      # for the same reason. Both halves are covered here.
+      # multimux's `whip` (ingest) and `whep` (egress) features each enable
+      # webrtc-runtime/media, so both inherit the same 1.88 floor and are
+      # excluded from the MSRV all-features lanes for the same reason. Every
+      # half is covered here: default at MSRV, and both features together on
+      # the newer toolchain (together, not separately, because that is what
+      # `--all-features` builds — a pair that only works apart would pass a
+      # per-feature lane and still break the workspace build).
       - name: multimux default features on MSRV 1.86
         run: cargo build -p multimux --locked
-      - name: multimux whip feature on ${{ env.MEDIA_RUST }}
-        run: cargo +${{ env.MEDIA_RUST }} build -p multimux --features whip --locked
-      - name: multimux whip tests on ${{ env.MEDIA_RUST }}
-        run: cargo +${{ env.MEDIA_RUST }} test -p multimux --features whip --locked
-      - name: multimux whip clippy on ${{ env.MEDIA_RUST }}
-        run: cargo +${{ env.MEDIA_RUST }} clippy -p multimux --features whip --all-targets --locked -- -D warnings
+      - name: multimux whip+whep feature on ${{ env.MEDIA_RUST }}
+        run: cargo +${{ env.MEDIA_RUST }} build -p multimux --features whip,whep --locked
+      - name: multimux whip+whep tests on ${{ env.MEDIA_RUST }}
+        run: cargo +${{ env.MEDIA_RUST }} test -p multimux --features whip,whep --locked
+      - name: multimux whip+whep clippy on ${{ env.MEDIA_RUST }}
+        run: cargo +${{ env.MEDIA_RUST }} clippy -p multimux --features whip,whep --all-targets --locked -- -D warnings
       # Both crates are excluded from the workspace example runner (their
       # feature graphs need 1.88), so run their examples HERE — otherwise the
       # exclusion silently means they never run, the exact hole #947 closed.
@@ -232,7 +236,9 @@ jobs:
           RUSTUP_TOOLCHAIN: ${{ env.MEDIA_RUST }}
           ONLY_CRATES: " multimux "
           SKIP_CRATES: " "
-        run: ./tools/run-examples.sh --features whip --locked
+        # Match the feature set the build/test/clippy steps above use, so an
+        # example that only compiles under one of the two is still caught.
+        run: ./tools/run-examples.sh --features whip,whep --locked
 
   dvb-stream:
     name: dvb-stream
