@@ -2,7 +2,7 @@
 name         = "compliance-probe"
 version      = "0.1.0"
 edition      = "2024"
-rust-version = "1.86"
+rust-version.workspace = true
 license      = "MIT OR Apache-2.0"
 description  = "Live TR 101 290 conformance + PCR-drift + SCTE-35 cue-sanity probe over a media-plane Trunk/ByteTap, exported through the `metrics` facade for a host process to render as Prometheus."
 authors      = ["Alex Fishlock <alex.fishlock@racingjag.com>"]

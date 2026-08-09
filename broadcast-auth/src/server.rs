@@ -405,10 +405,10 @@ fn digest_uri_matches(client_uri: &str, request_uri: &str) -> bool {
     if client_uri == request_uri {
         return true;
     }
-    if let Some((_scheme, after_scheme)) = client_uri.split_once("://") {
-        if let Some(slash) = after_scheme.find('/') {
-            return &after_scheme[slash..] == request_uri;
-        }
+    if let Some((_scheme, after_scheme)) = client_uri.split_once("://")
+        && let Some(slash) = after_scheme.find('/')
+    {
+        return &after_scheme[slash..] == request_uri;
     }
     false
 }

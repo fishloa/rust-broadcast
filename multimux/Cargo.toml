@@ -2,7 +2,7 @@
 name         = "multimux"
 version      = "0.8.0"
 edition      = "2024"
-rust-version = "1.86"
+rust-version.workspace = true
 license      = "MIT OR Apache-2.0"
 description  = "Multi-input (RTSP/RTP/TS-UDP/TS-HTTP/SRT/HLS-pull/DASH-pull/Smooth-pull/RTMP), multi-output (LL-HLS/DASH/LL-DASH) just-in-time repackaging HTTP origin (library: tokio + axum), with shared output auth and an external scheme plugin registry."
 repository   = "https://github.com/fishloa/rust-broadcast"
@@ -97,10 +97,9 @@ webrtc-runtime    = { path = "../webrtc-runtime", version = "0.1", optional = tr
 # WHEP output (`output::whep`, issue #743) only: builds the typed
 # `rtp_packet::RtpPacket` values `webrtc_runtime::media::MediaTransport::
 # encrypt_rtp` requires — see that method's own signature. Unlike
-# `webrtc-runtime`, this crate has no `rtc-dtls`/`rcgen` transitive
-# dependency and builds fine on the workspace MSRV (1.86); it is still kept
-# behind the `whep` feature (rather than unconditional) purely so it is
-# never pulled in by a build that never touches WHEP.
+# `webrtc-runtime`, this crate has no `rtc-dtls` transitive dependency; it
+# is kept behind the `whep` feature (rather than unconditional) purely so it
+# is never pulled in by a build that never touches WHEP.
 rtp-packet        = { path = "../rtp-packet", version = "0.3", optional = true, default-features = false }
 
 [features]
@@ -114,15 +113,15 @@ tls         = ["rtsp-runtime/tls", "dep:tokio-rustls", "dep:rustls"]
 # WHIP (RFC 9725) push input (issue #740): accepts an inbound WHIP publisher
 # over HTTP + ICE/DTLS-SRTP, via `webrtc_runtime::media::MediaTransport`.
 #
-# **Not part of `default`, and never enable it unconditionally.**
-# `webrtc-runtime/media` depends on `rtc-dtls`, which depends on `rcgen
-# ^0.14.8` — that needs rustc >= 1.88. This crate's own `rust-version` stays
-# "1.86" (the workspace MSRV): `cargo +1.86 build -p multimux --locked`
-# (this feature off) must keep working, while `cargo +1.86 build -p multimux
-# --features whip --locked` is *expected* to fail on rcgen's own version
-# gate — that failure is the point, not a bug, and is why this feature is
-# opt-in rather than folded into `default`. Build/test it with a toolchain
-# >= 1.88 (this workspace's clippy canary, currently 1.97.1, covers it).
+# Opt-in rather than `default` because it pulls the whole ICE/DTLS-SRTP
+# dependency tree (`rtc-ice`/`rtc-dtls`/`rtc-srtp`/`rcgen`), which a
+# deployment serving only HTTP outputs has no reason to build.
+#
+# This used to carry an MSRV constraint too — `rcgen ^0.14.8` needs rustc
+# >= 1.88, while the workspace MSRV was 1.86 — which is why the feature was
+# excluded from the `--all-features` lanes and covered by a dedicated CI job.
+# The workspace MSRV is now 1.95.0 (issue #949), so that gap is gone and the
+# feature is opt-in purely on dependency weight.
 whip        = ["dep:webrtc-runtime", "webrtc-runtime/media"]
 # WHEP (draft-ietf-wish-whep) egress (issue #743): accepts a viewer's HTTP
 # `POST` + SDP offer, negotiates ICE/DTLS-SRTP, and pushes the route's
@@ -131,9 +130,8 @@ whip        = ["dep:webrtc-runtime", "webrtc-runtime/media"]
 # than folded into it: ingest and egress are independently useful (a route
 # may want only one), matching this crate's one-feature-per-protocol
 # pattern elsewhere (`InputSpec::Whip` vs. a hypothetical output-side
-# equivalent). Both need `webrtc-runtime/media`, so both carry the exact
-# same MSRV constraint documented on `whip` above — enabling `whep` also
-# needs rustc >= 1.88, for the identical `rcgen` reason.
+# equivalent). Both enable `webrtc-runtime/media`, so both pull the same
+# ICE/DTLS-SRTP dependency tree described on `whip` above.
 whep        = ["dep:webrtc-runtime", "webrtc-runtime/media", "dep:rtp-packet"]
 
 [[example]]

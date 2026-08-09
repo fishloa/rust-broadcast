@@ -2,7 +2,7 @@
 name         = "multimux-cli"
 version      = "0.6.0"
 edition      = "2024"
-rust-version = "1.86"
+rust-version.workspace = true
 license      = "MIT OR Apache-2.0"
 description  = "CLI for multimux — a config-driven, multi-input/multi-output (RTSP/RTP/TS-UDP/TS-HTTP/SRT/HLS-pull/DASH-pull/Smooth-pull/RTMP -> LL-HLS/DASH/LL-DASH) just-in-time repackaging HTTP origin."
 repository   = "https://github.com/fishloa/rust-broadcast"

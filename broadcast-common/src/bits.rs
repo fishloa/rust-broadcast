@@ -110,7 +110,7 @@ impl<'a> BitReader<'a> {
     /// `true` if the cursor sits on a byte boundary.
     #[must_use]
     pub fn is_byte_aligned(&self) -> bool {
-        self.bit_pos % 8 == 0
+        self.bit_pos.is_multiple_of(8)
     }
 
     /// Read `n` bits (`0..=64`) MSB-first into the low bits of a `u64`.
@@ -210,7 +210,7 @@ impl<'a> BitWriter<'a> {
     /// `true` if the cursor sits on a byte boundary.
     #[must_use]
     pub fn is_byte_aligned(&self) -> bool {
-        self.bit_pos % 8 == 0
+        self.bit_pos.is_multiple_of(8)
     }
 
     /// Write the low `n` bits (`0..=64`) of `value`, MSB-first.

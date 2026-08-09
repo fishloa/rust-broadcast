@@ -12,8 +12,10 @@
 #   2. It must not report that it skipped its own committed fixture. A committed
 #      fixture is always present; if it cannot be read, that is a bug.
 #
-# Examples that REQUIRE a CLI argument are skipped (they exit non-zero by design
-# when invoked bare, and print usage). They remain build-gated.
+#   3. An example that REQUIRES arguments must declare them in example_args()
+#      below, and is then run with them. Undeclared is a failure, not a skip —
+#      the original "skip (needs an argument)" branch meant six examples never
+#      ran at all.
 #
 # Usage: tools/run-examples.sh [extra cargo args...]
 set -uo pipefail
@@ -26,18 +28,14 @@ cd "$(dirname "$0")/.." || exit 1
 SERVER_EXAMPLES=" rtmp-runtime/capture_publish multimux/serve_rtsp "
 
 # Crates whose examples cannot be built under this invocation's feature set /
-# toolchain. `webrtc-runtime` is here because `--all-features` enables its
-# `media` feature, whose dependency graph requires rustc >= 1.88 while the
-# workspace MSRV is 1.86 — `--all-features` has no per-crate opt-out, so the
-# crate is excluded here and covered by its own CI job instead. `multimux`
-# inherits the same floor through its `whip` feature, which enables
-# `webrtc-runtime/media`.
+# toolchain. Empty by default.
 #
-# Both are env-overridable so the dedicated MSRV-split job can re-run exactly
-# these crates on the newer toolchain — otherwise excluding them here would
-# mean their examples never run at all, which is the very hole issue #947 was
-# opened about.
-SKIP_CRATES="${SKIP_CRATES-" webrtc-runtime multimux "}"
+# This list used to hold `webrtc-runtime` and `multimux`, whose optional
+# ICE/DTLS-SRTP features needed rustc >= 1.88 while the workspace MSRV was
+# 1.86. The MSRV is now 1.95.0 (issue #949), so `--all-features` reaches
+# every crate and nothing needs excluding. The mechanism stays because the
+# situation recurs; the default is empty because right now it must be.
+SKIP_CRATES="${SKIP_CRATES-}"
 
 # When non-empty, run ONLY these crates' examples (same space-delimited form).
 # Whitespace-only counts as empty: the lists are written with padding spaces

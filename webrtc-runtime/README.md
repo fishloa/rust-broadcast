@@ -125,17 +125,20 @@ code, so it was removed rather than kept as dead weight (see CHANGELOG).
 
 ## MSRV
 
-The crate's declared MSRV is **1.86**, and every feature except `media`
-builds on it. `media` requires **rustc >= 1.88**, because its `rtc-dtls`
-dependency requires `rcgen ^0.14.8`, whose own MSRV is 1.88. This was
-verified empirically: `cargo +1.86 check -p webrtc-runtime --features media`
-fails (with a dependency-version error, not a message from this crate);
-`cargo +1.88 check -p webrtc-runtime --features media` (or newer) passes.
-`media`'s own module doc repeats this so it is visible from `cargo doc` too.
+The crate's declared MSRV is **1.95.0**, the workspace MSRV, and every
+feature builds on it.
 
-If you only need WHIP/WHEP signalling, nothing changes: default features
-(`std`) stay on 1.86. Enable `media` only once your toolchain floor is 1.88
-or higher.
+This used to be a split: the crate declared 1.86 while `media` needed
+**rustc >= 1.88** (its `rtc-dtls` dependency requires `rcgen ^0.14.8`, whose
+own MSRV is 1.88), so `media` was excluded from the workspace
+`--all-features` lanes and covered by a dedicated CI job. Raising the
+workspace MSRV past 1.88 (issue #949) removed the gap, and with it the whole
+containment apparatus.
+
+`media` remains an optional feature — it pulls the ICE/DTLS-SRTP transport
+and its dependency tree, which a consumer that only needs WHIP/WHEP
+signalling has no reason to build. That is now a dependency-weight choice,
+not a toolchain constraint.
 
 ## License
 

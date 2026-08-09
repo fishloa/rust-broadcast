@@ -116,7 +116,7 @@ cargo run -p atsc3-route --example build_route_media_fragment
 
 ## Minimum Supported Rust Version
 
-1.86
+1.95.0
 
 ## License
 

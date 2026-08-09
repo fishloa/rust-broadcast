@@ -2,7 +2,7 @@
 name          = "dvb-mabr"
 version       = "0.1.0"
 edition       = "2024"
-rust-version  = "1.86"
+rust-version.workspace = true
 license       = "MIT OR Apache-2.0"
 description   = "DVB multicast ABR (ETSI TS 103 769) session configuration XML parser/serializer"
 authors       = ["Alex Fishlock <alex.fishlock@racingjag.com>"]
