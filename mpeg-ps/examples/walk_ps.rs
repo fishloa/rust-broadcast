@@ -49,16 +49,16 @@ fn main() {
 
         for pes in &pack.pes_packets {
             pes_total += 1;
-            if let Some(ref hdr) = pes.header {
-                if let Some(pts) = hdr.pts {
-                    let pts_s = pts.seconds();
-                    println!(
-                        "         PES stream_id={:#04x} PTS={:.6}s payload={}B",
-                        pes.stream_id.0,
-                        pts_s,
-                        pes.payload.len(),
-                    );
-                }
+            if let Some(ref hdr) = pes.header
+                && let Some(pts) = hdr.pts
+            {
+                let pts_s = pts.seconds();
+                println!(
+                    "         PES stream_id={:#04x} PTS={:.6}s payload={}B",
+                    pes.stream_id.0,
+                    pts_s,
+                    pes.payload.len(),
+                );
             }
         }
     }

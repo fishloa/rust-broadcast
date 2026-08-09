@@ -340,7 +340,7 @@ impl<'a> NormInfo<'a> {
             });
         }
         let header_bytes = self.header_bytes();
-        if header_bytes % WORD != 0 {
+        if !header_bytes.is_multiple_of(WORD) {
             return Err(Error::InvalidField {
                 what: "hdr_len",
                 reason: "NORM_INFO header length is not a multiple of 4 bytes",
@@ -494,7 +494,7 @@ impl<'a> NormData<'a> {
             });
         }
         let header_bytes = self.header_bytes();
-        if header_bytes % WORD != 0 {
+        if !header_bytes.is_multiple_of(WORD) {
             return Err(Error::InvalidField {
                 what: "hdr_len",
                 reason: "NORM_DATA header length is not a multiple of 4 bytes",

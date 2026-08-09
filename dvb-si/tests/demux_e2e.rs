@@ -436,12 +436,11 @@ fn tnt_decoded_json_acceptance() {
                     .get("service")
                     .and_then(|s| s.get("service_name"))
                     .and_then(|v| v.as_str())
+                    && !name.is_empty()
                 {
-                    if !name.is_empty() {
-                        println!("tnt-5w SDT service_name (via typed loop JSON): {name:?}");
-                        found_name = Some(name.to_string());
-                        break 'sdt;
-                    }
+                    println!("tnt-5w SDT service_name (via typed loop JSON): {name:?}");
+                    found_name = Some(name.to_string());
+                    break 'sdt;
                 }
             }
         }

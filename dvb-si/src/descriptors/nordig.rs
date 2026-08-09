@@ -205,7 +205,7 @@ impl<'a> Parse<'a> for NordigLogicalChannelV2 {
                     what: "NordigLogicalChannelV2 service loop",
                 });
             }
-            if desc_len % V2_SERVICE_ENTRY_LEN != 0 {
+            if !desc_len.is_multiple_of(V2_SERVICE_ENTRY_LEN) {
                 return Err(Error::InvalidDescriptor {
                     tag: TAG_V2,
                     reason: "descriptor_length in channel list must be a multiple of 4",

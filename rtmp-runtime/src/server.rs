@@ -631,30 +631,30 @@ impl ServerSession {
         };
         let stream_id = msg.message_stream_id;
 
-        if let Some(expected) = &self.config.expected_stream_key {
-            if expected != &stream_key {
-                let on_status = Command {
-                    name: "onStatus".to_string(),
-                    transaction_id: 0.0,
-                    arguments: vec![
-                        Amf0Value::Null,
-                        Amf0Value::Object(vec![
-                            ("level".to_string(), Amf0Value::String("error".to_string())),
-                            (
-                                "code".to_string(),
-                                Amf0Value::String("NetStream.Publish.BadName".to_string()),
-                            ),
-                            (
-                                "description".to_string(),
-                                Amf0Value::String("Stream key mismatch.".to_string()),
-                            ),
-                        ]),
-                    ],
-                };
-                out.extend_from_slice(&self.writer.write(&self.command_message(msg, &on_status)));
-                // No Publish/Media events; state unchanged (not Publishing).
-                return Ok(());
-            }
+        if let Some(expected) = &self.config.expected_stream_key
+            && expected != &stream_key
+        {
+            let on_status = Command {
+                name: "onStatus".to_string(),
+                transaction_id: 0.0,
+                arguments: vec![
+                    Amf0Value::Null,
+                    Amf0Value::Object(vec![
+                        ("level".to_string(), Amf0Value::String("error".to_string())),
+                        (
+                            "code".to_string(),
+                            Amf0Value::String("NetStream.Publish.BadName".to_string()),
+                        ),
+                        (
+                            "description".to_string(),
+                            Amf0Value::String("Stream key mismatch.".to_string()),
+                        ),
+                    ]),
+                ],
+            };
+            out.extend_from_slice(&self.writer.write(&self.command_message(msg, &on_status)));
+            // No Publish/Media events; state unchanged (not Publishing).
+            return Ok(());
         }
 
         let stream_begin = UserControl::StreamBegin(stream_id).to_message();

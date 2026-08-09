@@ -434,7 +434,7 @@ impl<'a> KeyMaterial<'a> {
                 have: buf.len(),
             });
         }
-        if self.salt.len() % 4 != 0 {
+        if !self.salt.len().is_multiple_of(4) {
             return Err(Error::InvalidKeyMaterial {
                 field: "Salt",
                 reason: "length must be a whole number of 4-byte words",

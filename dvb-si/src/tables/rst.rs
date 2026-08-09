@@ -77,7 +77,7 @@ impl<'a> Parse<'a> for RstSection {
                 available: bytes.len() - HEADER_LEN,
             });
         }
-        if section_length % ENTRY_LEN != 0 {
+        if !section_length.is_multiple_of(ENTRY_LEN) {
             return Err(Error::BufferTooShort {
                 need: (section_length / ENTRY_LEN + 1) * ENTRY_LEN,
                 have: section_length,

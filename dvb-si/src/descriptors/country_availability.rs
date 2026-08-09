@@ -51,7 +51,7 @@ impl<'a> Parse<'a> for CountryAvailabilityDescriptor {
                 reason: "country_availability_descriptor missing flag byte",
             });
         }
-        if (body.len() - FLAG_LEN) % COUNTRY_CODE_LEN != 0 {
+        if !(body.len() - FLAG_LEN).is_multiple_of(COUNTRY_CODE_LEN) {
             return Err(Error::InvalidDescriptor {
                 tag: TAG,
                 reason: "country_code loop length must be a multiple of 3",

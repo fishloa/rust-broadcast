@@ -569,7 +569,7 @@ impl<'a> HandshakeExtensionBlock<'a> {
     /// each 4-byte word of `contents` is byte-reversed before concatenation,
     /// trailing NUL padding is trimmed, and the result is validated as UTF-8.
     pub fn as_stream_id(&self) -> Result<String> {
-        if self.contents.len() % 4 != 0 {
+        if !self.contents.len().is_multiple_of(4) {
             return Err(Error::BufferTooShort {
                 need: self.contents.len().div_ceil(4) * 4,
                 have: self.contents.len(),
@@ -616,7 +616,7 @@ pub fn encode_stream_id(id: &str) -> Vec<u8> {
 /// [`Error::FieldTooWide`] if `contents` is not a whole number of 4-byte
 /// words, or has more than `0xFFFF` such words.
 pub fn build_extension_block(ext_type: ExtensionType, contents: &[u8]) -> Result<Vec<u8>> {
-    if contents.len() % 4 != 0 {
+    if !contents.len().is_multiple_of(4) {
         return Err(Error::InvalidField {
             what: "Extension Contents",
             reason: "length must be a whole number of 4-byte words",

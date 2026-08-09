@@ -1202,7 +1202,7 @@ impl<'a> Parse<'a> for Ior<'a> {
         let type_id_length =
             u32::from_be_bytes([ior_hdr[0], ior_hdr[1], ior_hdr[2], ior_hdr[3]]) as usize;
         // DVB: only alias type_ids (N%4==0); reject non-conformant.
-        if type_id_length % 4 != 0 {
+        if !type_id_length.is_multiple_of(4) {
             return Err(Error::ValueOutOfRange {
                 field: "IOR.type_id_length",
                 reason: "type_id_length must be a multiple of 4 (DVB alias type_ids only — \
@@ -1286,7 +1286,7 @@ impl Serialize for Ior<'_> {
                 have: buf.len(),
             });
         }
-        if self.type_id.len() % 4 != 0 {
+        if !self.type_id.len().is_multiple_of(4) {
             return Err(Error::ValueOutOfRange {
                 field: "IOR.type_id_length",
                 reason: "type_id_length must be a multiple of 4 (DVB alias type_ids only)",

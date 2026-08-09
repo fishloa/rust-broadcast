@@ -164,7 +164,7 @@ impl<'a> Parse<'a> for FrequencyListDescriptor {
             });
         }
 
-        if (body.len() - CODING_BYTE_LEN) % ENTRY_LEN != 0 {
+        if !(body.len() - CODING_BYTE_LEN).is_multiple_of(ENTRY_LEN) {
             return Err(Error::InvalidDescriptor {
                 tag: TAG,
                 reason: "body length minus coding byte must be multiple of 4",

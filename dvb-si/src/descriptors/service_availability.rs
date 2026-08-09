@@ -48,7 +48,7 @@ impl<'a> Parse<'a> for ServiceAvailabilityDescriptor {
                 reason: "service_availability_descriptor body too short (need flags byte)",
             });
         }
-        if (body.len() - FLAGS_LEN) % CELL_ID_LEN != 0 {
+        if !(body.len() - FLAGS_LEN).is_multiple_of(CELL_ID_LEN) {
             return Err(Error::InvalidDescriptor {
                 tag: TAG,
                 reason: "service_availability cell_id loop must be a multiple of 2 bytes",

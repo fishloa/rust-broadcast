@@ -637,31 +637,31 @@ impl Serialize for CpcmUsi {
         let mut pos = 1 + USI_FLAGS_LEN; // 4
 
         // ── conditional fields ──────────────────────────────────────────────
-        if self.view_window_activated {
-            if let (Some(start), Some(end)) = (self.view_window_start, self.view_window_end) {
-                buf[pos..pos + CPCM_DATE_TIME_LEN].copy_from_slice(&start);
-                pos += CPCM_DATE_TIME_LEN;
-                buf[pos..pos + CPCM_DATE_TIME_LEN].copy_from_slice(&end);
-                pos += CPCM_DATE_TIME_LEN;
-            }
+        if self.view_window_activated
+            && let (Some(start), Some(end)) = (self.view_window_start, self.view_window_end)
+        {
+            buf[pos..pos + CPCM_DATE_TIME_LEN].copy_from_slice(&start);
+            pos += CPCM_DATE_TIME_LEN;
+            buf[pos..pos + CPCM_DATE_TIME_LEN].copy_from_slice(&end);
+            pos += CPCM_DATE_TIME_LEN;
         }
-        if self.view_period_activated {
-            if let Some(vp) = self.view_period_from_first_playback {
-                buf[pos..pos + CPCM_PLAYBACK_PERIOD_LEN].copy_from_slice(&vp);
-                pos += CPCM_PLAYBACK_PERIOD_LEN;
-            }
+        if self.view_period_activated
+            && let Some(vp) = self.view_period_from_first_playback
+        {
+            buf[pos..pos + CPCM_PLAYBACK_PERIOD_LEN].copy_from_slice(&vp);
+            pos += CPCM_PLAYBACK_PERIOD_LEN;
         }
-        if self.simultaneous_view_count_activated {
-            if let Some(svc) = self.simultaneous_view_count {
-                buf[pos] = svc;
-                pos += SIMULTANEOUS_VIEW_COUNT_LEN;
-            }
+        if self.simultaneous_view_count_activated
+            && let Some(svc) = self.simultaneous_view_count
+        {
+            buf[pos] = svc;
+            pos += SIMULTANEOUS_VIEW_COUNT_LEN;
         }
-        if self.remote_access_date_immediate_flag || self.remote_access_date_moving_window_flag {
-            if let Some(rad) = self.remote_access_date {
-                buf[pos..pos + CPCM_DATE_TIME_LEN].copy_from_slice(&rad);
-                pos += CPCM_DATE_TIME_LEN;
-            }
+        if (self.remote_access_date_immediate_flag || self.remote_access_date_moving_window_flag)
+            && let Some(rad) = self.remote_access_date
+        {
+            buf[pos..pos + CPCM_DATE_TIME_LEN].copy_from_slice(&rad);
+            pos += CPCM_DATE_TIME_LEN;
         }
         if self.export_controlled_cps {
             buf[pos] = self.cps_vectors.len() as u8;

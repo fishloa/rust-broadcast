@@ -107,7 +107,7 @@ impl<'a> Parse<'a> for CellFrequencyLinkDescriptor {
             let frequency = u32::from_be_bytes([outer[2], outer[3], outer[4], outer[5]]);
             let subcell_info_loop_length = outer[6] as usize;
             pos += OUTER_FIXED_LEN;
-            if subcell_info_loop_length % SUBCELL_LEN != 0 {
+            if !subcell_info_loop_length.is_multiple_of(SUBCELL_LEN) {
                 return Err(Error::InvalidDescriptor {
                     tag: TAG,
                     reason: "subcell_info_loop_length must be a multiple of 5",

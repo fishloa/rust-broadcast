@@ -41,12 +41,11 @@ fn extracts_video_pts_from_m6_fixture() {
     let mut pes_bytes: Vec<Vec<u8>> = Vec::new();
 
     for pkt in ts.chunks(PKT) {
-        if let Some((pid, pusi, payload)) = ts_payload(pkt) {
-            if pid == PES_PID {
-                if let Some(v) = asm.feed(pusi, payload) {
-                    pes_bytes.push(v);
-                }
-            }
+        if let Some((pid, pusi, payload)) = ts_payload(pkt)
+            && pid == PES_PID
+            && let Some(v) = asm.feed(pusi, payload)
+        {
+            pes_bytes.push(v);
         }
     }
     if let Some(v) = asm.flush() {
@@ -56,11 +55,11 @@ fn extracts_video_pts_from_m6_fixture() {
     let mut pts_list = Vec::new();
     for raw in &pes_bytes {
         let pkt = PesPacket::parse(raw).expect("PES must parse without error");
-        if let Some(h) = &pkt.header {
-            if let Some(pts) = h.pts {
-                assert!(pts.ticks() < (1 << 33), "PTS exceeds 33 bits");
-                pts_list.push(pts.ticks());
-            }
+        if let Some(h) = &pkt.header
+            && let Some(pts) = h.pts
+        {
+            assert!(pts.ticks() < (1 << 33), "PTS exceeds 33 bits");
+            pts_list.push(pts.ticks());
         }
     }
 
