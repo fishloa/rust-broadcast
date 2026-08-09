@@ -191,8 +191,26 @@ impl ConfigStore for DefaultStore {
 /// dependency (see `Cargo.toml`).
 #[cfg(feature = "device")]
 pub struct AxParameterStore {
-    inner: axparameter::parameter::Parameter,
+    /// `None` when the backend could not be opened at all — the store then
+    /// reports [`LoadOutcome::Broken`] and refuses writes, instead of the
+    /// process refusing to start. See `unavailable`.
+    inner: Option<axparameter::parameter::Parameter>,
+    /// Why the backend is unavailable, when `inner` is `None`.
+    open_error: Option<String>,
 }
+
+/// The ACAP `appName` from `manifest.json`, which libaxparameter uses to
+/// locate `/etc/dynamic/param/<appName>.conf`.
+///
+/// This MUST match `manifest.json`'s `appName` exactly. It is **not**
+/// `"acap-multimux"`: ACAP rejects a hyphen in `appName` (fixed in #669),
+/// and this string was missed at the time. Passing the hyphenated form makes
+/// libaxparameter look for a `.conf` that does not exist, so every `add`/`get`
+/// fails with "Failed to get real path for symlink
+/// /etc/dynamic/param/acap-multimux.conf" — which is exactly how #955
+/// presented on a real camera.
+#[cfg(feature = "device")]
+pub const ACAP_APP_NAME: &str = "acapmultimux";
 
 #[cfg(feature = "device")]
 impl AxParameterStore {
@@ -212,11 +230,27 @@ impl AxParameterStore {
     /// value) exactly once per camera, then every subsequent `new()` finds
     /// it already there.
     pub fn new() -> crate::Result<Self> {
-        let inner = axparameter::parameter::Parameter::new("acap-multimux")
+        let inner = axparameter::parameter::Parameter::new(ACAP_APP_NAME)
             .map_err(|e| crate::AcapError::Config(format!("axparameter open: {e}")))?;
-        let store = AxParameterStore { inner };
+        let store = AxParameterStore {
+            inner: Some(inner),
+            open_error: None,
+        };
         store.ensure_parameter()?;
         Ok(store)
+    }
+
+    /// A store whose backend could not be opened.
+    ///
+    /// Every read reports [`LoadOutcome::Broken`] and every write fails, but
+    /// the app still starts and serves media on [`Config::default`]. Exiting
+    /// instead produced a respawn loop on a real camera (#955).
+    #[must_use]
+    pub fn unavailable(reason: String) -> Self {
+        AxParameterStore {
+            inner: None,
+            open_error: Some(reason),
+        }
     }
 
     /// Register [`Self::PARAM_NAME`] via `axparameter::Parameter::add` if it
@@ -232,7 +266,10 @@ impl AxParameterStore {
     fn ensure_parameter(&self) -> crate::Result<()> {
         let initial = serde_json::to_string(&Config::default())
             .map_err(|e| crate::AcapError::Config(format!("config serialize: {e}")))?;
-        match self.inner.add(Self::PARAM_NAME, None, initial) {
+        let Some(inner) = self.inner.as_ref() else {
+            return Ok(());
+        };
+        match inner.add(Self::PARAM_NAME, None, initial) {
             Ok(()) => Ok(()),
             Err(e)
                 if e.matches::<axparameter::error::ParameterError>(
@@ -257,7 +294,14 @@ impl ConfigStore for AxParameterStore {
         // is deliberate: it is the honest description of *that* store,
         // whereas an `AxParameterStore` `get` error is a real fault to
         // surface, not a design-accepted absence.
-        match self.inner.get::<String>(Self::PARAM_NAME) {
+        let Some(inner) = self.inner.as_ref() else {
+            return LoadOutcome::Broken(
+                self.open_error
+                    .clone()
+                    .unwrap_or_else(|| "config backend unavailable".to_string()),
+            );
+        };
+        match inner.get::<String>(Self::PARAM_NAME) {
             Ok(s) => match serde_json::from_str(&s) {
                 Ok(cfg) => LoadOutcome::Stored(cfg),
                 Err(e) => LoadOutcome::Broken(format!("stored config is not valid JSON: {e}")),
@@ -269,7 +313,14 @@ impl ConfigStore for AxParameterStore {
     fn store(&self, c: &Config) -> crate::Result<()> {
         let s = serde_json::to_string(c)
             .map_err(|e| crate::AcapError::Config(format!("config serialize: {e}")))?;
-        self.inner
+        let Some(inner) = self.inner.as_ref() else {
+            return Err(crate::AcapError::Config(
+                self.open_error
+                    .clone()
+                    .unwrap_or_else(|| "config backend unavailable".to_string()),
+            ));
+        };
+        inner
             .set(Self::PARAM_NAME, s, true)
             .map_err(|e| crate::AcapError::Config(format!("axparameter set: {e}")))
     }

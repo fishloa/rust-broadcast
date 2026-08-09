@@ -83,11 +83,22 @@ async fn main() {
     acap_logging::init_logger();
     info!("acap-multimux: starting");
 
-    let store = match AxParameterStore::new() {
-        Ok(store) => Arc::new(store),
+    // A failed config backend is LOUD but NOT fatal.
+    //
+    // #955 correctly stopped this error being swallowed, but the first cut
+    // exited on it — which turned a degraded backend into a crash loop. That
+    // was observed for real on a camera: `runMode: "respawn"` restarted the
+    // app roughly every 250ms, so it served nothing at all. Silently serving
+    // on defaults was wrong; refusing to serve is worse. Run on defaults and
+    // report the reason through `/admin/status`.
+    let (store, store_open_error) = match AxParameterStore::new() {
+        Ok(store) => (Arc::new(store), None),
         Err(e) => {
-            error!("acap-multimux: axparameter store open failed: {e}");
-            std::process::exit(1);
+            error!("acap-multimux: axparameter store open failed, serving on defaults: {e}");
+            (
+                Arc::new(AxParameterStore::unavailable(e.to_string())),
+                Some(format!("config backend unavailable: {e}")),
+            )
         }
     };
 
