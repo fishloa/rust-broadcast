@@ -381,7 +381,8 @@ tbody td { padding: 0.42rem 0.7rem; vertical-align: top; }
 .badge-audio { color: var(--teal); }
 .badge-subtitle { color: var(--magenta); }
 .badge-scte-35 { color: var(--magenta); }
-.badge-null, .badge-other { color: var(--muted); }
+.badge-null, .badge-other, .badge-data { color: var(--muted); }
+.badge-encrypted { color: var(--red); }
 
 .dot-on {
   display: inline-block;

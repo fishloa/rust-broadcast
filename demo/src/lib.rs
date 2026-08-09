@@ -39,7 +39,9 @@ use scte35_splice::SpliceInfoSection;
 use serde::Serialize;
 use wasm_bindgen::prelude::*;
 
+mod mp4;
 mod subtitle;
+use mp4::analyze_mp4_impl;
 use subtitle::{SubtitleReport, SubtitleState};
 
 // ───────────────────────────── caps ───────────────────────────────────────
@@ -198,6 +200,12 @@ struct PidEntry {
     stream_type: Option<&'static str>,
     /// Whether this PID has been observed carrying an adaptation-field PCR.
     has_pcr: bool,
+    /// `packets * 188 bytes * 8 / stream_duration_seconds` — the stream
+    /// duration is the PCR/synthetic reference clock at end of capture (the
+    /// same clock the conformance monitor and timing panel use), so this is
+    /// an average over the whole file, not an instantaneous rate. `0.0` when
+    /// the duration is `0` (e.g. a capture too short to advance the clock).
+    bitrate_bps: f64,
 }
 
 /// One PCR observation (adaptation field, ISO/IEC 13818-1 §2.4.3.5).
@@ -286,9 +294,12 @@ struct ConformanceReport {
     by_priority: Vec<PriorityGroup>,
 }
 
-/// Top-level JSON object returned by [`analyze`].
+/// Top-level JSON object returned by [`analyze`] for an MPEG-TS input.
 #[derive(Serialize)]
 struct AnalysisResult {
+    /// Always `"mpeg-ts"` — lets the UI branch between this report shape and
+    /// the MP4-oriented [`mp4::Mp4Report`].
+    container: &'static str,
     /// Well-formed, 0x47-synced 188-byte packets processed.
     packets_fed: u64,
     /// Chunks that were not a well-formed 188-byte sync'd TS packet.
@@ -471,10 +482,7 @@ fn extract_services(tables: &[TableEntry]) -> Vec<ServiceEntry> {
         };
 
         for svc in svc_list {
-            let service_id = svc
-                .get("service_id")
-                .and_then(|v| v.as_u64())
-                .unwrap_or(0) as u16;
+            let service_id = svc.get("service_id").and_then(|v| v.as_u64()).unwrap_or(0) as u16;
 
             let descriptors = match svc.get("descriptors").and_then(|v| v.as_array()) {
                 Some(a) => a,
@@ -637,10 +645,7 @@ fn analyze_impl(bytes: &[u8]) -> AnalysisResult {
                     upgrade_role(pid_stats.entry(ev_pid).or_default(), PidRole::Pat);
                     for pat_entry in &pat.entries {
                         if pat_entry.program_number != 0 {
-                            upgrade_role(
-                                pid_stats.entry(pat_entry.pid).or_default(),
-                                PidRole::Pmt,
-                            );
+                            upgrade_role(pid_stats.entry(pat_entry.pid).or_default(), PidRole::Pmt);
                         } else {
                             // program_number == 0 -> this entry's PID is the
                             // network_PID (NIT), not a PMT.
@@ -698,9 +703,9 @@ fn analyze_impl(bytes: &[u8]) -> AnalysisResult {
             while let Some(section) = reasm.pop_section() {
                 match SpliceInfoSection::parse(&section[..]) {
                     Ok(splice) => {
-                        let section_json = serde_json::to_value(&splice).unwrap_or_else(|e| {
-                            serde_json::json!({ "serializeError": e.to_string() })
-                        });
+                        let section_json = serde_json::to_value(&splice).unwrap_or_else(
+                            |e| serde_json::json!({ "serializeError": e.to_string() }),
+                        );
                         if scte35_events.len() < MAX_SCTE35_EVENTS {
                             scte35_events.push(Scte35Entry {
                                 pid,
@@ -761,18 +766,40 @@ fn analyze_impl(bytes: &[u8]) -> AnalysisResult {
     let conformance_stats = conformance.stats();
     let services = extract_services(&tables);
 
+    // Bitrate is only meaningful against a REAL elapsed-time duration. When
+    // the capture carries no PCR at all, `clock` never advances from an
+    // actual reference clock — it only ticks forward by a synthetic 1ns
+    // per-packet nudge (just enough to keep the conformance monitor's clock
+    // strictly monotonic, see the loop above), so `clock_seconds` in that
+    // case is on the order of a few microseconds for a whole file. Dividing
+    // real packet bits by that non-duration produces a bitrate off by many
+    // orders of magnitude (observed: ~40 Gbps on a real ~1 Mbps capture) —
+    // reporting it would be actively misleading, not an honest degrade, so
+    // every PID's bitrate is `0.0` (rendered as "—" by the UI) unless at
+    // least one real PCR sample anchored the clock.
+    let has_real_clock = !pcr_samples.is_empty();
     let pid_map: Vec<PidEntry> = pid_stats
         .into_iter()
-        .map(|(pid, acc)| PidEntry {
-            pid,
-            packets: acc.packets,
-            kind: acc.role.unwrap_or(PidRole::Other).label(),
-            stream_type: acc.stream_type_name,
-            has_pcr: acc.has_pcr,
+        .map(|(pid, acc)| {
+            const TS_PACKET_BITS: f64 = TS_PACKET_SIZE as f64 * 8.0;
+            let bitrate_bps = if has_real_clock && clock_seconds > 0.0 {
+                (acc.packets as f64 * TS_PACKET_BITS) / clock_seconds
+            } else {
+                0.0
+            };
+            PidEntry {
+                pid,
+                packets: acc.packets,
+                kind: acc.role.unwrap_or(PidRole::Other).label(),
+                stream_type: acc.stream_type_name,
+                has_pcr: acc.has_pcr,
+                bitrate_bps,
+            }
         })
         .collect();
 
     AnalysisResult {
+        container: "mpeg-ts",
         packets_fed,
         parse_errors,
         crc_errors: demux_stats.crc_failures,
@@ -795,19 +822,59 @@ fn analyze_impl(bytes: &[u8]) -> AnalysisResult {
     }
 }
 
+// ───────────────────────────── container sniff ────────────────────────────
+
+/// ISO-BMFF top-level box fourccs that identify an MP4/CMAF stream at the
+/// head of a file (ISO/IEC 14496-12 §4.3 `ftyp` / §8.16.2 `styp` / §8.2.1
+/// `moov` / §8.8.4 `moof`) — the 4-byte fourcc lives at byte offset 4
+/// (`size`(4) + `fourcc`(4), §4.2). Independently declared rather than
+/// imported from `transmux::cli::detect_container` (whose own copy of this
+/// same spec-cited constant is private to that module, and reachable only
+/// behind the `cli` feature, which pulls `clap` + `std` into this WASM
+/// build for no benefit here — issue #928 asked only for "drop a .ts or
+/// .mp4", not the full any-container CLI sniff).
+const ISOBMFF_LEADING_FOURCCS: [[u8; 4]; 4] = [*b"ftyp", *b"styp", *b"moov", *b"moof"];
+/// Byte offset of the fourcc in a `size`+`fourcc` ISO-BMFF box header.
+const ISOBMFF_FOURCC_OFFSET: usize = 4;
+
+/// Whether `bytes` opens with a recognised ISO-BMFF top-level box, i.e. looks
+/// like an MP4/CMAF/fMP4 file rather than an MPEG-2 TS capture.
+fn looks_like_mp4(bytes: &[u8]) -> bool {
+    bytes.len() >= ISOBMFF_FOURCC_OFFSET + 4
+        && ISOBMFF_LEADING_FOURCCS
+            .iter()
+            .any(|f| f == &bytes[ISOBMFF_FOURCC_OFFSET..ISOBMFF_FOURCC_OFFSET + 4])
+}
+
 // ───────────────────────────── wasm export ────────────────────────────────
 
-/// Analyze a raw MPEG-TS byte buffer and return a single JSON object driving
-/// every panel of the demo UI: PID map, PCR/PTS timing, the SI/PSI table
-/// tree + service list, a TR 101 290 conformance report, an SCTE-35 splice
-/// timeline, and a DVB (bitmap) subtitle preview.
+/// Analyze a raw capture and return a single JSON object driving every panel
+/// of the demo UI.
 ///
-/// Never panics. On any bad packet, section, PES, or SCTE-35 message the
-/// error is counted and processing continues.
+/// Dispatches on the input's own container signature (never a file
+/// extension, since the browser only hands this function bytes):
+///
+/// - An ISO-BMFF (`ftyp`/`styp`/`moov`/`moof`) input is treated as MP4/CMAF —
+///   [`mp4::analyze_mp4_impl`] reports per-track codec identity from the
+///   container's own decoder-config boxes (`avcC`/`hvcC`/`av1C`/`esds`/…).
+/// - Everything else is treated as an MPEG-2 TS capture — [`analyze_impl`]
+///   reports the PID map, PCR/PTS timing, the SI/PSI table tree + service
+///   list, a TR 101 290 conformance report, an SCTE-35 splice timeline, and
+///   a DVB (bitmap) subtitle preview.
+///
+/// Both branches carry a `container` field (`"mpeg-ts"` / `"mp4"`) the UI
+/// switches its rendering on. Never panics: on any bad packet, section, PES,
+/// SCTE-35 message, or unparseable MP4, the error is counted/reported and
+/// processing continues rather than raising.
 #[wasm_bindgen]
 pub fn analyze(bytes: &[u8]) -> String {
-    let result = analyze_impl(bytes);
-    serde_json::to_string(&result).unwrap_or_else(|e| format!("{{\"internalError\":\"{e}\"}}"))
+    if looks_like_mp4(bytes) {
+        let result = analyze_mp4_impl(bytes);
+        serde_json::to_string(&result).unwrap_or_else(|e| format!("{{\"internalError\":\"{e}\"}}"))
+    } else {
+        let result = analyze_impl(bytes);
+        serde_json::to_string(&result).unwrap_or_else(|e| format!("{{\"internalError\":\"{e}\"}}"))
+    }
 }
 
 #[cfg(test)]
@@ -815,8 +882,83 @@ mod tests {
     use super::*;
 
     fn fixture(name: &str) -> Vec<u8> {
-        let path = format!(concat!(env!("CARGO_MANIFEST_DIR"), "/../fixtures/ts/{}"), name);
+        let path = format!(
+            concat!(env!("CARGO_MANIFEST_DIR"), "/../fixtures/ts/{}"),
+            name
+        );
         std::fs::read(&path).unwrap_or_else(|e| panic!("failed to read fixture {path}: {e}"))
+    }
+
+    fn mp4_fixture(name: &str) -> Vec<u8> {
+        let path = format!(
+            concat!(env!("CARGO_MANIFEST_DIR"), "/../fixtures/mp4/{}"),
+            name
+        );
+        std::fs::read(&path).unwrap_or_else(|e| panic!("failed to read fixture {path}: {e}"))
+    }
+
+    /// The wasm-facing [`analyze`] dispatch (GitHub issue #928) must route a
+    /// real TS capture and a real MP4 capture to the two different report
+    /// shapes purely from the bytes — no file extension is available to a
+    /// browser `analyze(bytes)` call.
+    #[test]
+    fn analyze_dispatches_on_container_signature() {
+        let ts_json = analyze(&fixture("m6-single.ts"));
+        let ts_value: serde_json::Value = serde_json::from_str(&ts_json).unwrap();
+        assert_eq!(ts_value["container"], "mpeg-ts");
+        assert!(!ts_value["pid_map"].as_array().unwrap().is_empty());
+
+        let mp4_json = analyze(&mp4_fixture("h264_high.mp4"));
+        let mp4_value: serde_json::Value = serde_json::from_str(&mp4_json).unwrap();
+        assert_eq!(mp4_value["container"], "mp4");
+        assert!(!mp4_value["tracks"].as_array().unwrap().is_empty());
+    }
+
+    /// The PID map's bitrate breakdown (issue #928) must be non-zero for a
+    /// real capture with observed duration, and must equal exactly zero
+    /// packets-times-bits over zero seconds is impossible here since the
+    /// fixture has a non-trivial duration.
+    #[test]
+    fn pid_map_reports_a_bitrate_breakdown() {
+        // `france2.ts` genuinely carries PCR (confirmed via its own
+        // `timing.pcr_samples`, used elsewhere in this suite), unlike
+        // `m6-single.ts` below — a real elapsed-time reference clock is a
+        // precondition for a bitrate to mean anything at all.
+        let result = analyze_impl(&fixture("france2.ts"));
+        let pat_entry = result
+            .pid_map
+            .iter()
+            .find(|e| e.pid == wk::PAT.value())
+            .expect("PAT PID must be present");
+        assert!(
+            pat_entry.bitrate_bps >= 0.0,
+            "bitrate must never be negative"
+        );
+        let any_positive = result.pid_map.iter().any(|e| e.bitrate_bps > 0.0);
+        assert!(
+            any_positive,
+            "expected at least one PID to report a non-zero bitrate for a PCR-bearing capture"
+        );
+    }
+
+    /// A capture with NO PCR at all (`m6-single.ts` — confirmed via its own
+    /// `timing.pcr_samples` being empty) must report every PID's bitrate as
+    /// exactly `0.0`, never a number derived from the synthetic
+    /// clock-monotonicity nudge the conformance monitor uses internally —
+    /// that nudge is on the order of 1ns/packet and dividing real packet
+    /// bits by it previously produced nonsensical ~40 Gbps figures on a real
+    /// ~1 Mbps capture. Honest degrade over a fabricated number.
+    #[test]
+    fn pid_map_reports_zero_bitrate_without_any_pcr() {
+        let result = analyze_impl(&fixture("m6-single.ts"));
+        assert!(
+            result.timing.pcr_samples.is_empty(),
+            "this fixture is expected to carry no PCR at all"
+        );
+        assert!(
+            result.pid_map.iter().all(|e| e.bitrate_bps == 0.0),
+            "every PID's bitrate must be exactly 0.0 with no real reference clock"
+        );
     }
 
     /// The exit-gate test: a real broadcast capture must produce a
@@ -922,7 +1064,10 @@ mod tests {
             };
             header.serialize_into(&mut pkt).unwrap();
             pkt[4] = 0x00; // pointer_field
-            assert!(5 + section.len() <= TS_PACKET_SIZE, "section too big for one packet");
+            assert!(
+                5 + section.len() <= TS_PACKET_SIZE,
+                "section too big for one packet"
+            );
             pkt[5..5 + section.len()].copy_from_slice(section);
             pkt
         }

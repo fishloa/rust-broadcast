@@ -1,8 +1,11 @@
 // SIGNAL — rust-broadcast WASM analyzer. Vanilla JS, no framework, no CDN.
-// Loads the wasm-pack `--target web` output from ./pkg/dvb_demo.js and
-// drives every panel from the single JSON object `analyze()` returns.
-
-import init, { analyze } from './pkg/dvb_demo.js';
+// The actual wasm-pack `--target web` output (./pkg/dvb_demo.js) is loaded
+// inside `worker.js`, a dedicated module Worker — never on this (the main)
+// thread — so a large capture's `analyze()` pass never blocks scrolling or
+// input (issue #928). This module only owns the DOM: it hands the dropped
+// file's bytes to the worker (transferred, not copied) and renders whichever
+// of the two JSON report shapes ("mpeg-ts" / "mp4", see `result.container`)
+// comes back.
 
 // Palette mirrored from style.css custom properties — canvas 2D needs literal
 // color strings, it cannot read CSS custom properties directly.
@@ -20,18 +23,28 @@ const COLOR = {
   legendText: 'rgba(215, 236, 223, 0.8)',
 };
 
-// ── Init ─────────────────────────────────────────────────────────────────
+// ── Worker ───────────────────────────────────────────────────────────────
 
-let wasmReady = false;
+const worker = new Worker(new URL('./worker.js', import.meta.url), { type: 'module' });
 
-(async () => {
-  try {
-    await init();
-    wasmReady = true;
-  } catch (e) {
-    showError(`Failed to load WASM module: ${e}`);
-  }
-})();
+/**
+ * Post `bytes` to the analysis worker and resolve with the JSON string it
+ * returns (or reject with its reported error). `bytes`'s underlying buffer
+ * is transferred, not copied, into the worker — no double allocation of a
+ * potentially large capture.
+ */
+function runAnalyze(bytes) {
+  return new Promise((resolve, reject) => {
+    const onMessage = event => {
+      worker.removeEventListener('message', onMessage);
+      const { json, error } = event.data;
+      if (error) reject(new Error(error));
+      else resolve(json);
+    };
+    worker.addEventListener('message', onMessage);
+    worker.postMessage({ bytes: bytes.buffer }, [bytes.buffer]);
+  });
+}
 
 // ── DOM refs ─────────────────────────────────────────────────────────────
 
@@ -43,6 +56,10 @@ const results   = document.getElementById('results');
 const brandLed  = document.getElementById('brand-led');
 
 const statsList = document.getElementById('stats-list');
+
+const tracksSection = document.getElementById('tracks-section');
+const tracksBody    = document.getElementById('tracks-body');
+const tracksNote    = document.getElementById('tracks-note');
 
 const pidmapSection = document.getElementById('pidmap-section');
 const pidmapBody    = document.getElementById('pidmap-body');
@@ -130,11 +147,6 @@ let lastTiming = null;
 // ── File processing ────────────────────────────────────────────────────────
 
 async function processFile(file) {
-  if (!wasmReady) {
-    showError('WASM module is not ready yet — please wait a moment and try again.');
-    return;
-  }
-
   hideError();
   clearResults();
   loading.classList.remove('hidden');
@@ -143,23 +155,31 @@ async function processFile(file) {
     const arrayBuf = await file.arrayBuffer();
     const bytes = new Uint8Array(arrayBuf);
 
-    // Run on next tick so the browser can paint the loading indicator.
-    await new Promise(r => setTimeout(r, 0));
-
-    const jsonStr = analyze(bytes);
+    // `runAnalyze` transfers `bytes`'s underlying buffer into the worker
+    // (detaching it here) and the actual `analyze()` call happens off this
+    // thread entirely, so the UI stays responsive for a large capture —
+    // capture the size now, before the transfer.
+    const byteLength = bytes.length;
+    const jsonStr = await runAnalyze(bytes);
     const result = JSON.parse(jsonStr);
 
     results.classList.remove('hidden');
-    renderStats(result, file.name, bytes.length);
-    renderPidMap(result.pid_map ?? []);
-    renderServices(result.services ?? []);
-    renderTables(result.tables ?? []);
-    renderConformance(result.conformance);
-    renderScte35(result.scte35);
-    renderSubtitle(result.subtitles);
-    lastTiming = result.timing;
-    timingSection.classList.remove('hidden');
-    renderTiming(result.timing);
+    renderStats(result, file.name, byteLength);
+
+    if (result.container === 'mp4') {
+      renderTracks(result.tracks ?? [], result.skipped_tracks ?? []);
+    } else {
+      renderPidMap(result.pid_map ?? []);
+      renderServices(result.services ?? []);
+      renderTables(result.tables ?? []);
+      renderConformance(result.conformance);
+      renderScte35(result.scte35);
+      renderSubtitle(result.subtitles);
+      lastTiming = result.timing;
+      timingSection.classList.remove('hidden');
+      renderTiming(result.timing);
+    }
+
     renderJson(jsonStr);
   } catch (e) {
     results.classList.add('hidden');
@@ -172,24 +192,40 @@ async function processFile(file) {
 // ── Summary ────────────────────────────────────────────────────────────────
 
 function renderStats(result, filename, byteLen) {
-  const tables = result.tables ?? [];
-  const services = result.services ?? [];
-  const scte35Count = result.scte35?.events?.length ?? 0;
-  const parseErrors = result.parse_errors ?? 0;
-  const crcErrors = result.crc_errors ?? 0;
-
   statsList.innerHTML = '';
-  const items = [
-    ['File', filename],
-    ['Size', formatBytes(byteLen)],
-    ['Packets', result.packets_fed ?? 0],
-    ['PIDs', (result.pid_map ?? []).length],
-    ['SI sections', tables.length],
-    ['Services', services.length],
-    ['SCTE-35', scte35Count],
-    ['Parse err', parseErrors],
-    ['CRC err', crcErrors],
-  ];
+
+  let items;
+  if (result.container === 'mp4') {
+    const tracks = result.tracks ?? [];
+    const skipped = result.skipped_tracks ?? [];
+    items = [
+      ['File', filename],
+      ['Size', formatBytes(byteLen)],
+      ['Container', 'MP4/CMAF'],
+      ['Tracks', tracks.length],
+      ['Skipped tracks', skipped.length],
+      ['Parse err', result.parse_error ? 1 : 0],
+    ];
+  } else {
+    const tables = result.tables ?? [];
+    const services = result.services ?? [];
+    const scte35Count = result.scte35?.events?.length ?? 0;
+    const parseErrors = result.parse_errors ?? 0;
+    const crcErrors = result.crc_errors ?? 0;
+    items = [
+      ['File', filename],
+      ['Size', formatBytes(byteLen)],
+      ['Container', 'MPEG-TS'],
+      ['Packets', result.packets_fed ?? 0],
+      ['PIDs', (result.pid_map ?? []).length],
+      ['SI sections', tables.length],
+      ['Services', services.length],
+      ['SCTE-35', scte35Count],
+      ['Parse err', parseErrors],
+      ['CRC err', crcErrors],
+    ];
+  }
+
   for (const [label, value] of items) {
     const isErr = (label === 'Parse err' || label === 'CRC err') && Number(value) > 0;
     const div = document.createElement('div');
@@ -221,11 +257,63 @@ function renderPidMap(pidMap) {
       <td><span class="badge ${badgeClassFor(e.kind)}">${esc(e.kind)}</span></td>
       <td>${e.stream_type ? esc(e.stream_type) : '—'}</td>
       <td class="num">${esc(String(e.packets))}</td>
+      <td class="num">${esc(formatBitrate(e.bitrate_bps))}</td>
       <td>${e.has_pcr ? '<span class="dot-on" title="carries PCR"></span>' : '<span class="dot-off">—</span>'}</td>
     `;
     pidmapBody.appendChild(tr);
   }
   pidmapSection.classList.remove('hidden');
+}
+
+// ── MP4/CMAF tracks (issue #928) ────────────────────────────────────────────
+
+/** Render the "Geometry / audio" column: `WxH` for video, `N ch @ R Hz` for
+ * audio, or an em dash when neither is known (e.g. a subtitle track, or a
+ * protected track whose sample entry's own geometry this analyzer could not
+ * recover — see `mp4.rs`'s module doc comment). */
+function trackGeometry(t) {
+  if (t.width && t.height) return `${t.width}×${t.height}`;
+  if (t.channel_count && t.sample_rate) {
+    const ch = t.channel_count === 1 ? '1 ch' : `${t.channel_count} ch`;
+    return `${ch} @ ${t.sample_rate} Hz`;
+  }
+  return '—';
+}
+
+function renderTracks(tracks, skippedTracks) {
+  tracksBody.innerHTML = '';
+  tracksNote.classList.add('hidden');
+
+  if (tracks.length === 0 && skippedTracks.length === 0) {
+    tracksSection.classList.add('hidden');
+    return;
+  }
+
+  for (const t of tracks) {
+    const tr = document.createElement('tr');
+    const encryptionCell = t.encrypted
+      ? `<span class="badge badge-encrypted">${esc(t.encryption_scheme ?? 'encrypted')}</span>`
+      : '<span class="dot-off">clear</span>';
+    tr.innerHTML = `
+      <td class="pid-cell">#${esc(String(t.track_id))}</td>
+      <td><span class="badge ${badgeClassFor(t.kind)}">${esc(t.kind)}</span></td>
+      <td>${esc(t.codec)}</td>
+      <td><code>${t.codec_string ? esc(t.codec_string) : '—'}</code></td>
+      <td>${esc(trackGeometry(t))}</td>
+      <td class="num">${esc(String(t.sample_count))}</td>
+      <td class="num">${esc(formatBitrate(t.bitrate_bps))}</td>
+      <td>${encryptionCell}</td>
+    `;
+    tracksBody.appendChild(tr);
+  }
+
+  if (skippedTracks.length > 0) {
+    const bits = skippedTracks.map(s => `${s.fourcc} (${s.reason})`);
+    tracksNote.textContent = `${skippedTracks.length} track(s) not resolved by this analyzer: ${bits.join('; ')}`;
+    tracksNote.classList.remove('hidden');
+  }
+
+  tracksSection.classList.remove('hidden');
 }
 
 // ── Services / SI tables (unchanged shape, restyled) ──────────────────────
@@ -689,6 +777,7 @@ function hideError() {
 function clearResults() {
   results.classList.add('hidden');
   for (const el of [
+    tracksSection,
     pidmapSection,
     timingSection,
     servicesSection,
@@ -700,6 +789,8 @@ function clearResults() {
     el.classList.add('hidden');
   }
   statsList.innerHTML = '';
+  tracksBody.innerHTML = '';
+  tracksNote.classList.add('hidden');
   pidmapBody.innerHTML = '';
   servicesBody.innerHTML = '';
   tablesBody.innerHTML = '';
@@ -717,6 +808,17 @@ function formatBytes(n) {
   if (n < 1024) return `${n} B`;
   if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
   return `${(n / (1024 * 1024)).toFixed(2)} MB`;
+}
+
+/** Format a bits-per-second average (the PID map's / a track's `bitrate_bps`)
+ * as a human-scaled rate. `0` (an unmeasurable duration — see the Rust doc
+ * comments on `PidEntry::bitrate_bps` / `Mp4Track::bitrate_bps`) renders as
+ * an em dash rather than a misleading "0 bps". */
+function formatBitrate(bps) {
+  if (!bps || bps <= 0) return '—';
+  if (bps < 1000) return `${bps.toFixed(0)} bps`;
+  if (bps < 1_000_000) return `${(bps / 1000).toFixed(1)} kbps`;
+  return `${(bps / 1_000_000).toFixed(2)} Mbps`;
 }
 
 function esc(str) {

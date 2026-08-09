@@ -14,19 +14,19 @@
       <span class="brand-led" id="brand-led" aria-hidden="true"></span>
       <h1><span class="brand-mono">SIGNAL</span><span class="brand-sub">/broadcast analyzer</span></h1>
     </div>
-    <p class="subtitle">Drop an MPEG-TS capture — PIDs, PCR/PTS timing, SI/PSI, TR&nbsp;101&nbsp;290 conformance, SCTE-35 and a DVB subtitle preview, parsed entirely in this tab. Nothing is uploaded. No codec bitstream is ever decoded.</p>
+    <p class="subtitle">Drop an MPEG-TS or MP4/CMAF capture — PIDs, PCR/PTS timing, SI/PSI, TR&nbsp;101&nbsp;290 conformance, SCTE-35, a DVB subtitle preview, or per-track codec identity, parsed entirely in this tab (in a worker, off the UI thread). Nothing is uploaded. No codec bitstream is ever decoded.</p>
   </header>
 
   <main>
     <!-- Drop zone -->
-    <div id="dropzone" role="button" tabindex="0" aria-label="Drop zone for .ts files">
+    <div id="dropzone" role="button" tabindex="0" aria-label="Drop zone for a .ts or .mp4 file">
       <div class="dropzone-frame" aria-hidden="true">
         <span class="corner tl"></span><span class="corner tr"></span>
         <span class="corner bl"></span><span class="corner br"></span>
       </div>
-      <span id="dropzone-label">DROP .TS CAPTURE — OR CLICK TO BROWSE</span>
-      <span class="dropzone-hint">accepts raw MPEG-2 transport streams</span>
-      <input type="file" id="file-input" accept=".ts,.m2ts,.mpg,.mpeg" aria-hidden="true">
+      <span id="dropzone-label">DROP .TS OR .MP4 CAPTURE — OR CLICK TO BROWSE</span>
+      <span class="dropzone-hint">accepts raw MPEG-2 transport streams and MP4/CMAF containers</span>
+      <input type="file" id="file-input" accept=".ts,.m2ts,.mpg,.mpeg,.mp4,.m4v,.m4s,.cmfv,.cmfa" aria-hidden="true">
     </div>
 
     <!-- Loading indicator -->
@@ -43,9 +43,32 @@
         <dl id="stats-list"></dl>
       </section>
 
+      <!-- MP4/CMAF per-track codec identity (issue #928) -->
+      <section id="tracks-section" class="panel hidden">
+        <h2><span class="panel-index">02</span>Tracks <span class="panel-sub">(codec identity)</span></h2>
+        <div class="table-scroll">
+          <table id="tracks-table">
+            <thead>
+              <tr>
+                <th>Track</th>
+                <th>Kind</th>
+                <th>Codec</th>
+                <th>Codecs string</th>
+                <th>Geometry / audio</th>
+                <th class="num">Samples</th>
+                <th class="num">Bitrate</th>
+                <th>Encryption</th>
+              </tr>
+            </thead>
+            <tbody id="tracks-body"></tbody>
+          </table>
+        </div>
+        <p id="tracks-note" class="panel-note hidden"></p>
+      </section>
+
       <!-- PID map -->
       <section id="pidmap-section" class="panel hidden">
-        <h2><span class="panel-index">02</span>PID Map</h2>
+        <h2><span class="panel-index">03</span>PID Map</h2>
         <div class="table-scroll">
           <table id="pidmap-table">
             <thead>
@@ -54,6 +77,7 @@
                 <th>Kind</th>
                 <th>Stream type</th>
                 <th class="num">Packets</th>
+                <th class="num">Bitrate</th>
                 <th>PCR</th>
               </tr>
             </thead>
@@ -64,7 +88,7 @@
 
       <!-- Timing -->
       <section id="timing-section" class="panel hidden">
-        <h2><span class="panel-index">03</span>Timing</h2>
+        <h2><span class="panel-index">04</span>Timing</h2>
         <div class="timing-grid">
           <div class="chart-block">
             <div class="chart-label" id="pcr-chart-label">PCR interval</div>
@@ -80,7 +104,7 @@
 
       <!-- SI/PSI tree -->
       <section id="services-section" class="panel hidden">
-        <h2><span class="panel-index">04</span>Services <span class="panel-sub">(SDT)</span></h2>
+        <h2><span class="panel-index">05</span>Services <span class="panel-sub">(SDT)</span></h2>
         <div class="table-scroll">
           <table id="services-table">
             <thead>
@@ -97,7 +121,7 @@
       </section>
 
       <section id="tables-section" class="panel hidden">
-        <h2><span class="panel-index">05</span>SI / PSI Tables</h2>
+        <h2><span class="panel-index">06</span>SI / PSI Tables</h2>
         <div class="table-scroll">
           <table id="tables-table">
             <thead>
@@ -114,21 +138,21 @@
 
       <!-- TR 101 290 -->
       <section id="conformance-section" class="panel hidden">
-        <h2><span class="panel-index">06</span>TR&nbsp;101&nbsp;290 <span class="panel-sub">conformance</span></h2>
+        <h2><span class="panel-index">07</span>TR&nbsp;101&nbsp;290 <span class="panel-sub">conformance</span></h2>
         <dl id="conformance-stats" class="inline-stats"></dl>
         <div id="conformance-groups"></div>
       </section>
 
       <!-- SCTE-35 -->
       <section id="scte35-section" class="panel hidden">
-        <h2><span class="panel-index">07</span>SCTE-35 <span class="panel-sub">splice timeline</span></h2>
+        <h2><span class="panel-index">08</span>SCTE-35 <span class="panel-sub">splice timeline</span></h2>
         <ol id="scte35-timeline" class="timeline"></ol>
         <p id="scte35-note" class="panel-note hidden"></p>
       </section>
 
       <!-- DVB (bitmap) subtitles -->
       <section id="subtitle-section" class="panel hidden">
-        <h2><span class="panel-index">08</span>DVB Subtitles <span class="panel-sub">bitmap preview</span></h2>
+        <h2><span class="panel-index">09</span>DVB Subtitles <span class="panel-sub">bitmap preview</span></h2>
         <p id="subtitle-summary" class="panel-note"></p>
         <div id="subtitle-preview-wrap" class="subtitle-preview-wrap hidden">
           <canvas id="subtitle-canvas" class="subtitle-canvas" role="img" aria-label="Decoded DVB subtitle bitmap preview"></canvas>
@@ -139,7 +163,7 @@
       <!-- Raw JSON -->
       <section id="json-section" class="panel">
         <h2>
-          <span class="panel-index">09</span>Raw JSON
+          <span class="panel-index">10</span>Raw JSON
           <button id="json-toggle" aria-expanded="false">show</button>
         </h2>
         <pre id="json-pre" class="hidden"></pre>

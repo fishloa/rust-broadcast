@@ -65,6 +65,7 @@ jobs:
           cp demo/index.html _site/index.html
           cp demo/style.css  _site/style.css
           cp demo/app.js     _site/app.js
+          cp demo/worker.js  _site/worker.js
           cp -r demo/pkg     _site/pkg
 
       - name: Upload Pages artifact
