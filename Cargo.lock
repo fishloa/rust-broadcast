@@ -1960,7 +1960,7 @@ dependencies = [
 
 [[package]]
 name = "media-doctor"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "broadcast-common",
  "broadcast-hls",
@@ -2133,6 +2133,7 @@ dependencies = [
  "broadcast-common",
  "broadcast-hls",
  "bytes",
+ "dvb-si",
  "futures-util",
  "hls-runtime",
  "md-5",

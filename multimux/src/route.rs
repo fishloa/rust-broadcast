@@ -575,6 +575,19 @@ impl ProgramServing {
             }
         }
     }
+
+    /// Feed raw TS bytes to this program's DVR recorder for EIT p/f
+    /// tracking (issue #903) — a no-op when DVR is disabled, or when
+    /// `DvrConfig::dvb_service_id` was never set. See
+    /// [`crate::dvr::DvrRecorder::feed_si`].
+    pub(crate) fn feed_si(&self, ts_bytes: &[u8]) {
+        let mut dvr_guard = self.dvr.lock().expect("ProgramServing dvr lock poisoned");
+        if let Some(ref mut recorder) = *dvr_guard
+            && let Err(e) = recorder.feed_si(ts_bytes)
+        {
+            tracing::error!("DVR feed_si failed: {e}; EIT-aligned rolling may be incomplete");
+        }
+    }
 }
 
 /// One route's shared state — replaces the deleted `MediaStore`. Built once
@@ -973,6 +986,29 @@ impl RouteHandle {
             .expect("RouteHandle::programs lock poisoned");
         for serving in programs.values() {
             serving.poll_dvr();
+        }
+    }
+
+    /// Feed raw TS bytes to every published program's DVR recorder for EIT
+    /// p/f tracking (issue #903) — called by the TS-carrying ingest
+    /// sources (`source::ts_udp`/`source::ts_http`/`source::srt`) with
+    /// exactly the same bytes they feed their `IngestDriver`. A no-op for
+    /// every route with DVR disabled or `DvrConfig::dvb_service_id` unset
+    /// — which is every non-DVB source, since only `source::ts_udp`/
+    /// `source::ts_http`/`source::srt` call this at all.
+    ///
+    /// This route's `DvrConfig` (including `dvb_service_id`) is shared
+    /// across every program on the route, so on a genuinely multi-program
+    /// (MPTS) route every program's recorder sees the same bytes and only
+    /// the one tracking a matching `service_id` reacts — see the module
+    /// doc on `dvr` for this limitation.
+    pub(crate) fn feed_si_ts(&self, ts_bytes: &[u8]) {
+        let programs = self
+            .programs
+            .read()
+            .expect("RouteHandle::programs lock poisoned");
+        for serving in programs.values() {
+            serving.feed_si(ts_bytes);
         }
     }
 }

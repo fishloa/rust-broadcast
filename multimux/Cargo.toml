@@ -101,6 +101,21 @@ webrtc-runtime    = { path = "../webrtc-runtime", version = "0.1", optional = tr
 # is kept behind the `whep` feature (rather than unconditional) purely so it
 # is never pulled in by a build that never touches WHEP.
 rtp-packet        = { path = "../rtp-packet", version = "0.3", optional = true, default-features = false }
+# DVB SI EIT present/following (issue #903, `dvr`): `dvb_si::demux::SiDemux`
+# reassembles EIT p/f sections from raw TS packets so `DvrRecorder` can roll
+# the archive period on the programme boundary rather than only on the
+# clock. `default-features = false` — only `std` (this crate always links
+# std) + `ts` (the section reassembler `SiDemux` needs); `chrono`/`serde`
+# are not needed since `dvr::EitProgramme` decodes MJD+BCD itself.
+dvb-si            = { path = "../dvb-si", version = "9.2", default-features = false, features = ["std", "ts"] }
+# TS packet/PSI-section framing. Two uses: `mpeg_ts::pid::Pid`, which
+# `dvr::DvrRecorder::new` wraps the EIT PID (`dvb_si::tables::eit::PID`) in
+# to pass to `SiDemux::builder().pid(..)`; and
+# `mpeg_ts::mux::SectionPacketiser`, which `dvr`'s own tests use to wrap the
+# genuine-bytes transition section back into TS packets. Also still used by
+# `source::segment`'s MPTS test (issue #887). Promoted from
+# `[dev-dependencies]` because production code (`dvr.rs`) now needs it too.
+mpeg-ts           = { path = "../mpeg-ts", version = "0.3.1" }
 
 [features]
 # `tls` is default-on: `rtsps://` sources should work out of the box. It pulls
@@ -141,11 +156,6 @@ name = "serve_rtsp"
 name = "custom_scheme"
 
 [dev-dependencies]
-# TS packet/PSI-section framing (issue #887): counts PMT sections in a
-# served classic-TS-HLS segment's bytes (`source::segment`'s MPTS test) —
-# proving RFC 8216bis §3.1.1's "single MPEG-2 Program" constraint by parsing
-# actual bytes rather than trusting construction.
-mpeg-ts          = { path = "../mpeg-ts", version = "0.3.1" }
 base64           = "0.22"
 # Independent RFC 7616 Digest response verification in the mock auth server
 # (`testutil`, issue #663 "Finish client-side multi-scheme auth") — the

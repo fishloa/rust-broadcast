@@ -21,7 +21,7 @@ dvb-conformance  = { path = "../dvb-conformance",  version = "9",     default-fe
 mpeg-ts          = { path = "../mpeg-ts",          version = "0.3.1", default-features = false }
 scte35-splice    = { path = "../scte35-splice",    version = "2",     default-features = false }
 timed-metadata   = { path = "../timed-metadata",   version = "0.4.2", default-features = false }
-media-doctor     = { path = "../media-doctor",     version = "0.7",   default-features = false }
+media-doctor     = { path = "../media-doctor",     version = "0.8",   default-features = false }
 media-plane      = { path = "../media-plane",      version = "0.3",   default-features = false }
 # Optional, enabled only by this crate's own `std` feature: the `metrics`
 # facade macros (`counter!`/`gauge!`) expand to code that needs `std` (they

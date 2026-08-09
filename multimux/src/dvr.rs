@@ -49,10 +49,53 @@
 //!    one would corrupt the file. The old period file is closed and a new
 //!    one is opened with the new init at its head.
 //! 3. Recording starts (the very first period).
+//! 4. The tracked service's EIT present event changes (issue #903 — see
+//!    "Programme-aligned rolling", below). Opt-in via `dvb_service_id`.
 //!
 //! Each period file and its index are self-contained: concatenating the
 //! period file from byte 0 and demuxing it recovers the track's codec
 //! configuration and decodable samples for every segment in that period.
+//!
+//! # Programme-aligned rolling (issue #903)
+//!
+//! A fixed time slice (the default 3-hour period) cuts a recording mid-
+//! programme essentially always — a conventional PVR instead rolls its
+//! recording on the programme boundary, so one recording is one programme.
+//! For a DVB source, that boundary is the Event Information Table
+//! present/following transition (ETSI EN 300 468 §5.2.4): each service
+//! carries an EIT p/f *actual* section (`table_id` `0x4E`) naming the event
+//! currently on air (`running_status == 4`, "running" — Table 6) and the
+//! event due next. When the broadcaster's head-end re-signals the section
+//! with a different event now `running`, that is a real programme boundary
+//! — not a guess, not a clock tick.
+//!
+//! Setting [`DvrConfig::dvb_service_id`] to the service this route records
+//! opts a `DvrRecorder` into tracking that service's EIT p/f: feed it raw
+//! TS packets via [`DvrRecorder::feed_si`] (the ingest side does this only
+//! for the TS-carrying sources that have SI to feed — RTSP/SRT-as-RTP/
+//! RTMP/HLS-pull ingests have none), and when the present event's
+//! `event_id` changes, the recorder rolls to a new period **immediately**,
+//! ahead of `period_duration_secs`. The new period is tagged with an
+//! [`EitProgramme`] — `event_id`, `service_id`, title (from the event's
+//! `short_event_descriptor`, EN 300 468 §6.2.37), announced start time and
+//! duration — written as `pN.event.json` alongside the period file and its
+//! index, so an operator can find *a programme* rather than a timestamp.
+//!
+//! `dvb_service_id` is `None` by default — recording never silently starts
+//! guessing at a service. Left `None`, or fed a stream with no SI at all
+//! (every non-DVB source), a `DvrRecorder` behaves exactly as before this
+//! issue: pure time-based periods.
+//!
+//! **The time-based period is kept as both the fallback and the hard cap**
+//! even when `dvb_service_id` is set: an EPG that never signals a
+//! transition (a stale/frozen EIT carousel) must not produce an unbounded
+//! recording. `period_duration_secs` rolls the file regardless of whether
+//! an EIT transition has been observed — see
+//! [`DvrRecorder::poll_and_persist`]'s time-based rollover check, which
+//! runs unconditionally alongside the EIT-driven one. A hard-cap roll
+//! re-tags the new period with the *same* [`EitProgramme`] (the programme
+//! has not actually changed) so retention/naming stay honest about what
+//! each file actually contains.
 //!
 //! # Initi at the head (fMP4 only)
 //!
@@ -134,10 +177,18 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
+use dvb_si::demux::{SectionEvent, SiDemux};
+use dvb_si::tables::eit::{EitKind, PID as EIT_PID};
+use dvb_si::tables::{AnyTableSection, RunningStatus};
 use media_plane::egress::SegmentEgress;
 use media_plane::trunk::{ArchiveOverrun, SegmentCursor, SegmentCursorItem, Trunk};
+use mpeg_ts::pid::Pid;
 use serde::{Deserialize, Serialize};
 use tracing;
+
+/// Length of one MPEG-2 TS packet — ISO/IEC 13818-1 §2.4.3.2. Used to chunk
+/// raw bytes fed to [`DvrRecorder::feed_si`].
+const TS_PACKET_LEN: usize = 188;
 
 // --- Config ---
 
@@ -180,6 +231,15 @@ pub struct DvrConfig {
     /// uses — see [the module docs](self#archiveoverrun-in-operator-terms).
     #[serde(default)]
     pub overrun: ArchiveOverrunSerde,
+    /// Opt in to programme-aligned rolling (issue #903 — see
+    /// [the module docs](self#programme-aligned-rolling-issue-903)): the
+    /// `service_id` whose EIT present/following *actual* section
+    /// (ETSI EN 300 468 §5.2.4, `table_id` `0x4E`) this recorder tracks via
+    /// [`DvrRecorder::feed_si`]. `None` (default) disables EIT-aligned
+    /// rolling — the recorder rolls purely on `period_duration_secs`/init
+    /// change, exactly as before this issue.
+    #[serde(default)]
+    pub dvb_service_id: Option<u16>,
 }
 
 fn default_period_duration_secs() -> u64 {
@@ -238,6 +298,66 @@ impl DvrConfig {
             );
         }
         Ok(())
+    }
+}
+
+// --- EIT programme identity (issue #903) ---
+
+/// Programme identity for one period file, derived from the tracked
+/// service's EIT present event (ETSI EN 300 468 §5.2.4) at the moment the
+/// period was opened (or, if the event became known only afterwards, at the
+/// moment it did). Written as `pN.event.json` alongside the period file and
+/// its index — see [the module docs](self#programme-aligned-rolling-issue-903).
+///
+/// `None` fields reflect fields the broadcast itself left undecodable
+/// (out-of-range BCD nibbles) or absent (no `short_event_descriptor`) —
+/// never a parse failure silently swallowed.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[non_exhaustive]
+pub struct EitProgramme {
+    /// 16-bit `event_id` (EN 300 468 §5.2.4 Table 7).
+    pub event_id: u16,
+    /// `service_id` this event belongs to (the EIT section's
+    /// `table_id_extension`).
+    pub service_id: u16,
+    /// Event title, decoded from the event's `short_event_descriptor`
+    /// (EN 300 468 §6.2.37). `None` if the event carried no such
+    /// descriptor.
+    pub title: Option<String>,
+    /// Announced start time, decoded from the 40-bit MJD+BCD `start_time`
+    /// field, rendered `YYYY-MM-DDTHH:MM:SSZ` (the field is always UTC per
+    /// EN 300 468 Annex C — this is not a timezone conversion, just a
+    /// human-readable rendering of the same UTC instant).
+    pub start: Option<String>,
+    /// Announced duration in seconds, decoded from the 24-bit BCD
+    /// `duration` field.
+    pub duration_secs: Option<u64>,
+}
+
+impl EitProgramme {
+    /// Build from a decoded present [`dvb_si::tables::eit::EitEvent`] and
+    /// the `service_id` of the section it came from.
+    fn from_event(event: &dvb_si::tables::eit::EitEvent<'_>, service_id: u16) -> Self {
+        let title = event.descriptors.iter().find_map(|d| match d {
+            Ok(dvb_si::descriptors::AnyDescriptor::ShortEvent(se)) => {
+                Some(se.event_name.decode().into_owned())
+            }
+            _ => None,
+        });
+        let start = event.start_time().map(|dt| {
+            format!(
+                "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}Z",
+                dt.year, dt.month, dt.day, dt.hour, dt.minute, dt.second
+            )
+        });
+        let duration_secs = event.duration().map(|d| d.as_secs());
+        EitProgramme {
+            event_id: event.event_id,
+            service_id,
+            title,
+            start,
+            duration_secs,
+        }
     }
 }
 
@@ -317,6 +437,28 @@ pub struct DvrRecorder {
     gaps: u64,
     /// Set once this recorder has seen `SegmentCursorItem::Terminated`.
     terminated: bool,
+    /// EIT p/f section reassembler for [`Self::feed_si`] (issue #903).
+    /// `Some` only when `config.dvb_service_id` is set — `None` disables
+    /// EIT-aligned rolling entirely (pure time-based periods, unchanged).
+    si_demux: Option<SiDemux>,
+    /// The `service_id` this recorder tracks (mirrors
+    /// `config.dvb_service_id`, kept alongside `si_demux` so both are
+    /// `Some`/`None` together).
+    target_service_id: Option<u16>,
+    /// `event_id` of the last-observed EIT present event for
+    /// `target_service_id`. `None` until the first present event is seen —
+    /// that first sighting establishes a baseline (tagged, not rolled); a
+    /// later sighting with a *different* `event_id` is a real transition.
+    last_present_event_id: Option<u16>,
+    /// The programme identity for the currently-open (or about-to-open)
+    /// period, once known. Written to `pN.event.json` whenever a period
+    /// opens — see [`Self::write_programme_sidecar`].
+    current_programme: Option<EitProgramme>,
+    /// Byte carry-over for [`Self::feed_si`]: TS packets are 188 bytes but
+    /// a caller's read (e.g. an HTTP chunk) is not guaranteed to end on a
+    /// packet boundary. Bytes left over from the previous call are
+    /// prepended to the next.
+    si_carry: Vec<u8>,
 }
 
 impl DvrRecorder {
@@ -332,6 +474,16 @@ impl DvrRecorder {
         config.validate()?;
         let archive_dir = PathBuf::from(&config.archive_root).join(&route_name);
         let cursor = trunk.pin_segments(config.overrun.into());
+        // EIT p/f is carried on one well-known PID (EN 300 468 §5.2.4);
+        // watch only that PID, not the full default DVB SI set — this
+        // recorder has no use for PAT/NIT/SDT/TDT.
+        let si_demux = config.dvb_service_id.map(|_| {
+            SiDemux::builder()
+                .dvb_si_pids(false)
+                .pid(Pid::new(EIT_PID))
+                .build()
+        });
+        let target_service_id = config.dvb_service_id;
         Ok(DvrRecorder {
             route_name,
             archive_dir,
@@ -349,12 +501,131 @@ impl DvrRecorder {
             total_bytes: 0,
             gaps: 0,
             terminated: false,
+            si_demux,
+            target_service_id,
+            last_present_event_id: None,
+            current_programme: None,
+            si_carry: Vec::new(),
         })
     }
 
     /// The [`ArchiveOverrun`] policy this recorder's pinning cursor uses.
     pub fn overrun_policy(&self) -> ArchiveOverrun {
         self.config.overrun.into()
+    }
+
+    /// This period's programme identity, if the tracked service's EIT
+    /// present event has been observed (see [`DvrConfig::dvb_service_id`]).
+    pub fn current_programme(&self) -> Option<&EitProgramme> {
+        self.current_programme.as_ref()
+    }
+
+    /// Feed raw MPEG-2 TS bytes for EIT p/f tracking (issue #903) — a
+    /// no-op unless `config.dvb_service_id` is set. Call this with exactly
+    /// the same bytes the ingest side feeds its
+    /// [`media_plane::ingress::IngestDriver`] for a TS-carrying route; a
+    /// route with no TS (RTSP/RTMP/HLS-pull/DASH-pull/Smooth-pull) simply
+    /// never calls it, and EIT-aligned rolling stays off for that route.
+    ///
+    /// `ts_bytes` need not be 188-byte aligned across calls — a byte
+    /// carry-over buffer handles a read that ends mid-packet.
+    pub fn feed_si(&mut self, ts_bytes: &[u8]) -> Result<(), String> {
+        if self.si_demux.is_none() {
+            return Ok(());
+        }
+        let mut buf = std::mem::take(&mut self.si_carry);
+        buf.extend_from_slice(ts_bytes);
+        let mut offset = 0;
+        while offset + TS_PACKET_LEN <= buf.len() {
+            let events: Vec<SectionEvent> = self
+                .si_demux
+                .as_mut()
+                .expect("checked Some above")
+                .feed(&buf[offset..offset + TS_PACKET_LEN])
+                .collect();
+            for event in events {
+                self.handle_si_event(event)?;
+            }
+            offset += TS_PACKET_LEN;
+        }
+        self.si_carry = buf[offset..].to_vec();
+        Ok(())
+    }
+
+    /// Inspect one completed SI section; roll the period on a genuine EIT
+    /// p/f present-event transition for the tracked service.
+    fn handle_si_event(&mut self, event: SectionEvent) -> Result<(), String> {
+        let Some(target) = self.target_service_id else {
+            return Ok(());
+        };
+        let section = match event.table_section() {
+            Ok(AnyTableSection::EitSection(s)) => s,
+            _ => return Ok(()),
+        };
+        if section.kind != EitKind::PresentFollowingActual || section.service_id != target {
+            return Ok(());
+        }
+        // The present event is the one currently on air — EN 300 468
+        // Table 6, running_status == 4 ("running"). Identified by this
+        // field, not by position in the event list, which the syntax table
+        // does not itself order.
+        let Some(present) = section
+            .events
+            .iter()
+            .find(|e| e.running_status == RunningStatus::Running)
+        else {
+            return Ok(());
+        };
+        let event_id = present.event_id;
+        let programme = EitProgramme::from_event(present, section.service_id);
+
+        match self.last_present_event_id {
+            None => {
+                // First sighting — establish the baseline. Nothing to roll
+                // away from yet, so this tags rather than rolls.
+                self.last_present_event_id = Some(event_id);
+                self.current_programme = Some(programme);
+                if self.current_file.is_some() {
+                    self.write_programme_sidecar()?;
+                }
+            }
+            Some(last) if last != event_id => {
+                tracing::info!(
+                    route = %self.route_name,
+                    old_event_id = last,
+                    new_event_id = event_id,
+                    "DVR EIT present/following transition — rolling period"
+                );
+                self.last_present_event_id = Some(event_id);
+                self.current_programme = Some(programme);
+                if self.current_file.is_some() {
+                    let last_init = self.last_init.clone();
+                    self.start_period(last_init.as_deref())?;
+                }
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
+    /// Atomically write `pN.event.json` for the currently-open period, from
+    /// `self.current_programme` — a no-op if it is `None` (no EIT observed
+    /// yet). Called from [`Self::start_period`] every time a period opens,
+    /// and from [`Self::handle_si_event`] when the programme becomes known
+    /// only after the period already opened.
+    fn write_programme_sidecar(&self) -> Result<(), String> {
+        let Some(programme) = &self.current_programme else {
+            return Ok(());
+        };
+        let json = serde_json::to_vec(programme)
+            .map_err(|e| format!("serializing programme metadata: {e}"))?;
+        let tmp = self.archive_dir.join(".event.tmp");
+        let dst = self
+            .archive_dir
+            .join(format!("p{}.event.json", self.period));
+        fs::write(&tmp, &json).map_err(|e| format!("writing programme metadata: {e}"))?;
+        fs::rename(&tmp, &dst).map_err(|e| format!("renaming programme metadata: {e}"))?;
+        Ok(())
     }
 
     /// Drain the pinning cursor and persist any new finished segments.
@@ -387,6 +658,11 @@ impl DvrRecorder {
         }
 
         // --- Time-based period rollover ---
+        // Runs unconditionally — regardless of whether `dvb_service_id` is
+        // set, and regardless of whether an EIT transition has ever been
+        // observed (issue #903's hard cap: an EPG that never signals a
+        // transition, or a non-DVB source with no SI at all, must not
+        // produce an unbounded recording).
         if let Some(opened) = self.period_opened_at {
             let elapsed = opened.elapsed().unwrap_or(Duration::ZERO).as_secs();
             let limit = if self.config.period_duration_secs > 0 {
@@ -468,6 +744,14 @@ impl DvrRecorder {
         self.current_file = Some(file);
         self.period_opened_at = Some(SystemTime::now());
         self.index.clear();
+
+        // Tag the newly-opened period with whatever programme is currently
+        // known (issue #903) — a no-op if EIT has never been observed for
+        // this recorder. A roll that was NOT an EIT transition (time-based
+        // hard cap, or an fMP4 init change) re-tags with the *same*
+        // programme, which is correct: the programme has not changed, only
+        // the file has.
+        self.write_programme_sidecar()?;
 
         tracing::info!(
             route = %self.route_name,
@@ -783,6 +1067,7 @@ mod tests {
             retention_bytes: 0,
             period_duration_secs: 3600, // 1h for tests (faster than default 3h)
             overrun: ArchiveOverrunSerde::Gap,
+            dvb_service_id: None,
         }
     }
 
@@ -1078,6 +1363,7 @@ mod tests {
             retention_bytes: 0,
             period_duration_secs: 86400, // 24h — won't trigger
             overrun: ArchiveOverrunSerde::Gap,
+            dvb_service_id: None,
         };
         let mut recorder =
             DvrRecorder::new("test".to_string(), cfg, ".m4s", &trunk).expect("recorder");
@@ -1188,6 +1474,7 @@ mod tests {
             retention_periods: 8,
             retention_bytes: 0,
             overrun: ArchiveOverrunSerde::Gap,
+            dvb_service_id: None,
         };
 
         let route = crate::route::RouteHandle::new(1.0, 250, 64)
@@ -1334,6 +1621,7 @@ mod tests {
             retention_periods: 16,
             retention_bytes: 0,
             overrun: ArchiveOverrunSerde::Gap,
+            dvb_service_id: None,
         };
 
         let route = crate::route::RouteHandle::new(2.0, 250, 64)
@@ -1408,6 +1696,260 @@ mod tests {
             "  #906 FIXED: {} programme(s) discovered from a 5-service MPTS capture",
             program_ids.len()
         );
+        cleanup_temp(&tmp);
+    }
+
+    // --- Test 9: hard cap — rolls on the clock even with EIT configured
+    //     but never fed (issue #903's safety property) ---
+
+    /// The safety property behind issue #903: opting a route into EIT
+    /// tracking (`dvb_service_id` set) must NOT remove the time-based hard
+    /// cap. A stream that never carries SI at all (every non-DVB source),
+    /// or a DVB stream whose EPG carousel is frozen and never signals a
+    /// transition, must still roll on `period_duration_secs` — otherwise
+    /// an operator gets one unbounded recording. `feed_si` is never called
+    /// in this test, standing in for both cases.
+    #[test]
+    fn hard_cap_rolls_on_clock_even_with_eit_configured_and_never_fed() {
+        let tmp = temp_dir();
+        let trunk = Trunk::new(trunk_config());
+        let writer = trunk.segment_writer().expect("segment writer");
+
+        let cfg = DvrConfig {
+            enabled: true,
+            archive_root: tmp.to_string_lossy().to_string(),
+            retention_periods: 8,
+            retention_bytes: 0,
+            period_duration_secs: 2, // the hard cap under test
+            overrun: ArchiveOverrunSerde::Gap,
+            dvb_service_id: Some(0x0601), // opted in — but never fed below
+        };
+        let mut recorder =
+            DvrRecorder::new("hardcap".to_string(), cfg, ".ts", &trunk).expect("recorder");
+
+        // Open period 0 (TS: lazily, on the first segment).
+        writer.publish_segment(dummy_segment(1, 0xAA));
+        recorder.poll_and_persist(None).expect("persist seg 1");
+        let p0_path = tmp.join("hardcap").join("p0.ts");
+        assert!(p0_path.exists(), "period 0 must exist");
+
+        // Simulate `period_duration_secs` having elapsed. `feed_si` is
+        // never called anywhere in this test — no EIT transition, no EIT
+        // at all — so only the hard cap can cause the roll below.
+        recorder.period_opened_at = Some(SystemTime::now() - Duration::from_secs(3));
+
+        writer.publish_segment(dummy_segment(2, 0xBB));
+        recorder
+            .poll_and_persist(None)
+            .expect("persist seg 2 — hard cap must roll first");
+
+        let p1_path = tmp.join("hardcap").join("p1.ts");
+        assert!(
+            p1_path.exists(),
+            "hard cap must roll to a new period even though dvb_service_id is \
+             set and no EIT was ever fed"
+        );
+
+        cleanup_temp(&tmp);
+    }
+
+    // --- Test 10: EIT p/f transition rolls the period — real fixture bytes ---
+
+    /// PROVENANCE: every content byte in the constructed "transition"
+    /// section below comes from the real DVB-T capture
+    /// `fixtures/dvb-si/tnt-5w-12732v-isi6-10s.ts` — extracted at test
+    /// **run time** by draining the fixture through the same `SiDemux`
+    /// path `DvrRecorder::feed_si` itself uses; nothing here is
+    /// hand-transcribed. Ground truth, cross-checked independently via
+    /// `cargo run -p dvb-tools -- epg fixtures/dvb-si/tnt-5w-12732v-isi6-10s.ts
+    /// --json`: TF1 (`service_id` `0x0601`) carries an EIT p/f actual
+    /// section with a present event (`event_id` `0x7857`, "50' inside...",
+    /// `running_status` `Running`) and a following event (`event_id`
+    /// `0x7858`, "Plus belle la vie, encore...", `running_status`
+    /// `NotRunning`).
+    ///
+    /// The capture is a single 10-second snapshot, so it never contains an
+    /// actual present→following transition on the wire (see issue #903's
+    /// note on this fixture's honest limit — this is not worked around,
+    /// it is why this test is built the way it is). What this test does
+    /// instead: take the genuine *following* `EitEvent` — its `event_id`,
+    /// `start_time`, `duration`, and full descriptor loop (title + text +
+    /// rating), all parsed from the real capture — and change exactly the
+    /// one field that, by the definition of a p/f transition, MUST change
+    /// when a following event becomes the present one:
+    /// `running_status`, from the captured `NotRunning` to `Running`.
+    /// `version_number` is bumped by one, exactly as a real re-signalled
+    /// section is (a repeat with the same version is suppressed by
+    /// `SiDemux`'s gate — see its module docs). Every other byte,
+    /// including the whole descriptor loop, is the fixture's own.
+    #[test]
+    fn eit_transition_rolls_period_using_real_fixture_following_event() {
+        use broadcast_common::{Parse as WireParse, Serialize as WireSerialize};
+
+        const TF1_SERVICE_ID: u16 = 0x0601;
+
+        let fixture_path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../fixtures/dvb-si/tnt-5w-12732v-isi6-10s.ts"
+        );
+        let ts_bytes = std::fs::read(fixture_path).expect("read real DVB-T fixture");
+
+        // Discover every genuine present/following section for TF1. This
+        // fixture's broadcaster segments the p/f table across TWO sections
+        // (`section_number` 0 carries only the present event,
+        // `section_number` 1 only the following event — a spec-legal
+        // segmentation, ETSI EN 300 468 §5.2.4's `segment_last_section_
+        // number`), so the present and following events must be gathered
+        // from across every matching section, not just the first.
+        let mut discover = SiDemux::builder()
+            .dvb_si_pids(false)
+            .pid(Pid::new(EIT_PID))
+            .build();
+        let mut genuine_section_bytes: Vec<bytes::Bytes> = Vec::new();
+        for chunk in ts_bytes.chunks_exact(TS_PACKET_LEN) {
+            for event in discover.feed(chunk) {
+                if let Ok(AnyTableSection::EitSection(section)) = event.table_section()
+                    && section.kind == EitKind::PresentFollowingActual
+                    && section.service_id == TF1_SERVICE_ID
+                {
+                    genuine_section_bytes.push(event.bytes().clone());
+                }
+            }
+        }
+        assert!(
+            !genuine_section_bytes.is_empty(),
+            "fixture must carry a genuine TF1 EIT p/f actual section — see PROVENANCE"
+        );
+        let genuine_sections: Vec<_> = genuine_section_bytes
+            .iter()
+            .map(|b| {
+                dvb_si::tables::eit::EitSection::parse(b)
+                    .expect("parse genuine TF1 EIT p/f section")
+            })
+            .collect();
+        // Header fields (transport_stream_id/original_network_id/table_id)
+        // are identical across every section of the same TS — reuse the
+        // first for the reconstructed section below.
+        let genuine = &genuine_sections[0];
+
+        let present = genuine_sections
+            .iter()
+            .flat_map(|s| s.events.iter())
+            .find(|e| e.running_status == RunningStatus::Running)
+            .expect("genuine sections must have a present (running) event");
+        let mut following = genuine_sections
+            .iter()
+            .flat_map(|s| s.events.iter())
+            .find(|e| e.running_status != RunningStatus::Running)
+            .cloned()
+            .expect("genuine sections must have a following (not-running) event");
+
+        // Ground truth, cross-checked via `dvb-tools epg` (see PROVENANCE).
+        assert_eq!(present.event_id, 0x7857);
+        assert_eq!(following.event_id, 0x7858);
+        let expected_new_title = following.descriptors.iter().find_map(|d| match d {
+            Ok(dvb_si::descriptors::AnyDescriptor::ShortEvent(se)) => {
+                Some(se.event_name.decode().into_owned())
+            }
+            _ => None,
+        });
+        assert_eq!(
+            expected_new_title.as_deref(),
+            Some("Plus belle la vie, encore...")
+        );
+        let expected_duration_secs = following.duration().map(|d| d.as_secs());
+
+        // Build the recorder and feed the WHOLE genuine fixture first, so
+        // it observes the real baseline present event (0x7857) exactly as
+        // a live recorder would.
+        let tmp = temp_dir();
+        let trunk = Trunk::new(trunk_config());
+        let writer = trunk.segment_writer().expect("segment writer");
+        let cfg = DvrConfig {
+            enabled: true,
+            archive_root: tmp.to_string_lossy().to_string(),
+            retention_periods: 8,
+            retention_bytes: 0,
+            // Long enough that only the EIT transition below — not the
+            // clock — can cause the roll under test.
+            period_duration_secs: 3600,
+            overrun: ArchiveOverrunSerde::Gap,
+            dvb_service_id: Some(TF1_SERVICE_ID),
+        };
+        let mut recorder =
+            DvrRecorder::new("tf1".to_string(), cfg, ".ts", &trunk).expect("recorder");
+        recorder.feed_si(&ts_bytes).expect("feed genuine fixture");
+        assert_eq!(
+            recorder.current_programme().map(|p| p.event_id),
+            Some(0x7857),
+            "baseline present event must be the genuine TF1 present event"
+        );
+
+        // Open period 0 by publishing a segment (TS: lazy start_period).
+        writer.publish_segment(dummy_segment(1, 0xAA));
+        recorder.poll_and_persist(None).expect("persist seg 1");
+        assert!(
+            tmp.join("tf1").join("p0.ts").exists(),
+            "period 0 must exist"
+        );
+        let p0_programme: EitProgramme = serde_json::from_slice(
+            &std::fs::read(tmp.join("tf1").join("p0.event.json")).expect("read p0.event.json"),
+        )
+        .expect("parse p0.event.json");
+        assert_eq!(p0_programme.event_id, 0x7857);
+
+        // Construct the transitioned section (see PROVENANCE above): the
+        // genuine following event, running_status forced to Running.
+        following.running_status = RunningStatus::Running;
+        let transitioned = dvb_si::tables::eit::EitSection {
+            kind: genuine.kind,
+            table_id: genuine.table_id,
+            service_id: genuine.service_id,
+            version_number: (genuine.version_number + 1) % 32,
+            current_next_indicator: true,
+            section_number: 0,
+            last_section_number: 0,
+            transport_stream_id: genuine.transport_stream_id,
+            original_network_id: genuine.original_network_id,
+            segment_last_section_number: 0,
+            last_table_id: genuine.table_id,
+            events: vec![following],
+        };
+        let mut section_buf = vec![0u8; WireSerialize::serialized_len(&transitioned)];
+        WireSerialize::serialize_into(&transitioned, &mut section_buf)
+            .expect("serialize transitioned section");
+
+        let mut packetiser = mpeg_ts::mux::SectionPacketiser::new(EIT_PID);
+        let packets = packetiser.packetise(&[&section_buf]);
+        let mut packet_bytes = Vec::new();
+        for p in &packets {
+            packet_bytes.extend_from_slice(p);
+        }
+
+        // Feed the transition — must roll to period 1.
+        recorder
+            .feed_si(&packet_bytes)
+            .expect("feed transitioned section");
+
+        assert_eq!(
+            recorder.current_programme().map(|p| p.event_id),
+            Some(0x7858),
+            "present event must now be the (formerly following) event"
+        );
+
+        assert!(
+            tmp.join("tf1").join("p1.ts").exists(),
+            "EIT p/f transition must roll to a new period file"
+        );
+        let p1_programme: EitProgramme = serde_json::from_slice(
+            &std::fs::read(tmp.join("tf1").join("p1.event.json")).expect("read p1.event.json"),
+        )
+        .expect("parse p1.event.json");
+        assert_eq!(p1_programme.event_id, 0x7858);
+        assert_eq!(p1_programme.service_id, TF1_SERVICE_ID);
+        assert_eq!(p1_programme.title, expected_new_title);
+        assert_eq!(p1_programme.duration_secs, expected_duration_secs);
+
         cleanup_temp(&tmp);
     }
 }

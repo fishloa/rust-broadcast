@@ -3,6 +3,13 @@
 ## [Unreleased]
 
 ### Changed
+- **Version bumped 0.7.0 -> 0.8.0 for epoch purity.** In-tree `media-doctor`
+  0.7.0 requires `transmux ^0.23`, but the *published* 0.7.0 requires
+  `^0.22`; the caret epoch had moved without a version bump. A published
+  bucket spanning two epochs breaks consumers of both lines (#858), so the
+  version moves instead. Caught by
+  `tools/check-published-dep-consistency.py` when `compliance-probe` became
+  the first in-tree consumer.
 - MSRV raised to **1.95.0** (issue #949). This removes the workspace's MSRV
   split: `webrtc-runtime`'s optional `media` feature needed rustc 1.88 (via
   `rcgen`), which had grown a dedicated CI job, six `--exclude` lanes and a

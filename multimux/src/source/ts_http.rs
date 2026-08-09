@@ -192,11 +192,14 @@ pub async fn open_stream(route: &TsHttpRoute) -> Result<TsHttpStream> {
 }
 
 /// What one [`recv_and_feed`] call observed on the body stream.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum StreamStatus {
-    /// A chunk was read and fed to the driver.
-    Fed,
+    /// A chunk was read and fed to the driver — carries the chunk's own
+    /// bytes so the caller can also feed the route's DVR EIT tracker
+    /// (`RouteHandle::feed_si_ts`, crate-private — issue #903) without a
+    /// second read.
+    Fed(Vec<u8>),
     /// The response body ended cleanly — not an error. See the module doc's
     /// "End-of-stream is a real, distinct outcome here".
     Ended,
@@ -226,7 +229,7 @@ pub async fn recv_and_feed(
         reason: format!("ts/http stream read: {e}"),
     })?;
     driver.feed(&chunk, now);
-    Ok(StreamStatus::Fed)
+    Ok(StreamStatus::Fed(chunk))
 }
 
 /// Opens `route`'s GET and drives a fresh [`TsIngestSession`] through
@@ -263,9 +266,14 @@ pub async fn run_ts_http(
     loop {
         let now = Timestamp::from_instant(start, std::time::Instant::now());
         let status = recv_and_feed(&mut stream, &mut driver, read_timeout, now).await?;
+        if let StreamStatus::Fed(ref chunk) = status {
+            // EIT p/f tracking (issue #903) — a no-op unless some program
+            // on this route has DVR enabled with `dvb_service_id` set.
+            route_handle.feed_si_ts(chunk);
+        }
         crate::source::advance_route(&driver, route_handle, &mut progress);
         match status {
-            StreamStatus::Fed => {}
+            StreamStatus::Fed(_) => {}
             StreamStatus::Ended => {
                 driver.finish();
                 // Flush every program's trailing buffered partial segment
@@ -375,7 +383,7 @@ mod tests {
             )
             .await
             {
-                Ok(StreamStatus::Fed) => {}
+                Ok(StreamStatus::Fed(_)) => {}
                 Ok(StreamStatus::Ended) => {
                     driver.finish();
                     ended = true;
@@ -557,7 +565,7 @@ mod tests {
             )
             .await
             {
-                Ok(StreamStatus::Fed) => {}
+                Ok(StreamStatus::Fed(_)) => {}
                 Ok(StreamStatus::Ended) | Err(_) => break,
             }
             if cursor.is_none() {

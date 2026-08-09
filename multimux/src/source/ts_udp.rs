@@ -112,18 +112,24 @@ pub async fn bind(route: &TsUdpRoute) -> Result<UdpSocket> {
 }
 
 /// Reads one datagram from `socket` (bounded by `read_timeout`) and feeds it
-/// to `driver`. Returns `Ok(())` on a normal read, or `Err` on a read stall
-/// or socket error — UDP is connectionless, so unlike a TCP/HTTP source
-/// there is no transport-level clean end-of-stream; every termination here
-/// is reported as an I/O-layer error for the caller (production: the route
-/// supervisor) to reconnect on, exactly as the pre-5a `next_samples` did.
+/// to `driver`. Returns the number of bytes read (and fed) on a normal
+/// read, or `Err` on a read stall or socket error — UDP is connectionless,
+/// so unlike a TCP/HTTP source there is no transport-level clean
+/// end-of-stream; every termination here is reported as an I/O-layer error
+/// for the caller (production: the route supervisor) to reconnect on,
+/// exactly as the pre-5a `next_samples` did.
+///
+/// The returned count lets the caller also feed the same bytes to the
+/// route's DVR EIT tracker (`RouteHandle::feed_si_ts`, crate-private —
+/// issue #903) without an extra allocation: `buf` is a reused buffer, so
+/// only `&buf[..n]` is this read's actual data.
 pub async fn recv_and_feed(
     socket: &UdpSocket,
     buf: &mut [u8],
     driver: &mut media_plane::ingress::IngestDriver<TsIngestSession>,
     read_timeout: Duration,
     now: Timestamp,
-) -> Result<()> {
+) -> Result<usize> {
     let n = tokio::time::timeout(read_timeout, socket.recv(buf))
         .await
         .map_err(|_| MultimuxError::Connect {
@@ -133,7 +139,7 @@ pub async fn recv_and_feed(
             reason: format!("udp recv: {e}"),
         })?;
     driver.feed(&buf[..n], now);
-    Ok(())
+    Ok(n)
 }
 
 /// Binds `route`'s socket and drives a fresh [`TsIngestSession`] through
@@ -172,9 +178,13 @@ pub async fn run_ts_udp(
     let mut progress = crate::source::DriverProgress::new();
     loop {
         let now = Timestamp::from_instant(start, std::time::Instant::now());
-        if let Err(e) = recv_and_feed(&socket, &mut buf, &mut driver, read_timeout, now).await {
-            return e;
-        }
+        let n = match recv_and_feed(&socket, &mut buf, &mut driver, read_timeout, now).await {
+            Ok(n) => n,
+            Err(e) => return e,
+        };
+        // EIT p/f tracking (issue #903) — a no-op unless some program on
+        // this route has DVR enabled with `dvb_service_id` set.
+        route_handle.feed_si_ts(&buf[..n]);
         crate::source::advance_route(&driver, route_handle, &mut progress);
     }
 }

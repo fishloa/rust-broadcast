@@ -2,6 +2,24 @@
 
 ## [Unreleased]
 
+### Added
+- **Programme-aligned DVR rolling** (issue #903, follow-up to #746): a DVR
+  route can now opt in to rolling its archive period on the DVB EIT
+  present/following transition (ETSI EN 300 468 §5.2.4) instead of only on
+  the clock, so one recording is one programme rather than an arbitrary
+  time slice. `DvrConfig::dvb_service_id` names the service to track;
+  `DvrRecorder::feed_si` (fed raw TS bytes by `source::ts_udp`/
+  `source::ts_http`/`source::srt` via the new
+  `RouteHandle::feed_si_ts`/`ProgramServing::feed_si`) reassembles the
+  service's EIT p/f actual section and rolls the period the moment the
+  present `event_id` changes. Each period gets a `pN.event.json` sidecar
+  (`event_id`, `service_id`, title, announced start/duration) alongside its
+  `pN.<ext>`/`pN.idx`, so an operator can find a programme rather than a
+  timestamp. The existing `period_duration_secs` clock stays active
+  unconditionally as both the fallback (routes/sources with no SI) and the
+  hard cap (an EPG whose EIT carousel never signals a transition) — EIT
+  alignment only ever shortens a period, never removes the cap.
+
 ### Changed
 - MSRV raised to **1.95.0** (issue #949). This removes the workspace's MSRV
   split: `webrtc-runtime`'s optional `media` feature needed rustc 1.88 (via
