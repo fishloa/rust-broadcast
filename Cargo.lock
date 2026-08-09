@@ -4246,9 +4246,13 @@ dependencies = [
 name = "webrtc-runtime"
 version = "0.1.0"
 dependencies = [
+ "aes",
  "broadcast-auth",
  "broadcast-common",
  "bytes",
+ "cipher",
+ "ctr",
+ "hmac",
  "log",
  "rtc-dtls",
  "rtc-ice",
@@ -4259,6 +4263,7 @@ dependencies = [
  "rtp-packet",
  "sansio",
  "serde",
+ "sha1",
  "sha2",
  "thiserror 2.0.19",
  "tokio",

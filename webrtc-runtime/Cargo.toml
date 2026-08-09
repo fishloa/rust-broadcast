@@ -69,10 +69,33 @@ media = [
 
 [dev-dependencies]
 tokio = { version = "1", features = ["full"] }
+# Fixture-verification only (tests/srtp_rfc3711_vectors.rs): an independent,
+# from-spec-text AES-CM + HMAC-SHA1 implementation used to cross-check
+# rtc-srtp's own output against the RFC 3711 Appendix B test vectors. Pinned
+# to the same versions rtc-srtp itself already resolves to (see Cargo.lock),
+# so this adds no new dependency version to the workspace's dependency graph.
+aes    = "0.8"
+cipher = "0.4"
+ctr    = "0.9"
+hmac   = "0.12"
+sha1   = "0.10"
 
 # Manual browser-interop smoke test (not run in CI): gated on `media` via
 # `required-features` so `cargo build --examples` with default features
 # skips it cleanly instead of failing to find the `media` module.
 [[example]]
 name              = "whip_media_smoke"
+required-features = ["media"]
+
+# RFC 3711 (SRTP) / RFC 5769 (STUN) spec-vector fixture tests — gated on
+# `media` both here and via `#![cfg(feature = "media")]` in the files
+# themselves (the workspace's documented feature-gated-test-file pattern),
+# so `cargo test -p webrtc-runtime --locked` (no `media`) skips them
+# cleanly instead of needing the media-only optional deps they import.
+[[test]]
+name              = "srtp_rfc3711_vectors"
+required-features = ["media"]
+
+[[test]]
+name              = "stun_rfc5769_vectors"
 required-features = ["media"]
