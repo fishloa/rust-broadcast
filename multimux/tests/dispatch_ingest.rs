@@ -146,14 +146,12 @@ fn base_config(bind: SocketAddr, input: InputSpec) -> Config {
 async fn poll_until_extinf(client: &reqwest::Client, playlist_url: &str) -> String {
     let deadline = tokio::time::Instant::now() + Duration::from_secs(20);
     loop {
-        if let Ok(resp) = client.get(playlist_url).send().await {
-            if resp.status().is_success() {
-                if let Ok(body) = resp.text().await {
-                    if body.contains("#EXTINF:") {
-                        return body;
-                    }
-                }
-            }
+        if let Ok(resp) = client.get(playlist_url).send().await
+            && resp.status().is_success()
+            && let Ok(body) = resp.text().await
+            && body.contains("#EXTINF:")
+        {
+            return body;
         }
         if tokio::time::Instant::now() >= deadline {
             panic!(

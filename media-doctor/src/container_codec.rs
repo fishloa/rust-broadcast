@@ -188,19 +188,19 @@ fn check_avc_track(
             ),
         ));
     }
-    if let Some(chroma) = record.chroma_format {
-        if chroma != info.chroma_format_idc {
-            report.push(Finding::new(
-                Severity::Error,
-                Location::new(0, track_id),
-                "avcc-sps-mismatch",
-                alloc::format!(
-                    "avcC chroma_format {chroma} on track {track_id} disagrees with the \
-                     embedded SPS chroma_format_idc {} — ISO/IEC 14496-15:2017 §5.3.3.1.2",
-                    info.chroma_format_idc,
-                ),
-            ));
-        }
+    if let Some(chroma) = record.chroma_format
+        && chroma != info.chroma_format_idc
+    {
+        report.push(Finding::new(
+            Severity::Error,
+            Location::new(0, track_id),
+            "avcc-sps-mismatch",
+            alloc::format!(
+                "avcC chroma_format {chroma} on track {track_id} disagrees with the \
+                 embedded SPS chroma_format_idc {} — ISO/IEC 14496-15:2017 §5.3.3.1.2",
+                info.chroma_format_idc,
+            ),
+        ));
     }
     if width != 0 && height != 0 && (width as u32, height as u32) != (info.width, info.height) {
         report.push(Finding::new(

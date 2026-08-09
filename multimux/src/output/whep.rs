@@ -53,7 +53,7 @@
 //! module has no such problem: the route's `Trunk` already carries a real
 //! [`transmux::pipeline::TrackSpec`] with a real `CodecConfig::Avc` (whatever
 //! upstream ingest produced it already did the same "read the real
-//! bitstream" work, once, at ingest time) — [`handle_whep_connection`] reads
+//! bitstream" work, once, at ingest time) — `handle_whep_connection` reads
 //! it directly off `Trunk::tracks()` and uses it both to build the answer's
 //! `sprop-parameter-sets`/`profile-level-id` and to drive
 //! [`transmux::RtpPacketiser::packetise_video`]'s per-sample STAP-A
@@ -70,7 +70,7 @@
 //! module still calls `packetise_video` (reusing its already-correct RFC
 //! 6184 single-NAL/STAP-A/FU-A framing rather than re-implementing it) but
 //! then **patches** the two fields that batch call got wrong for a
-//! streaming caller: [`patch_seq_and_timestamp`] overwrites the RTP fixed
+//! streaming caller: `patch_seq_and_timestamp` overwrites the RTP fixed
 //! header's sequence-number and timestamp bytes (always at a fixed byte
 //! offset, RFC 3550 §5.1) with this session's own running counters before
 //! handing the packet to [`MediaTransport::encrypt_rtp`] (which needs the
@@ -86,7 +86,7 @@
 //! design — see that type's own module doc: it owns no socket). Exactly
 //! like `crate::source::whip::read_one`'s own `peer` parameter, this
 //! module learns the viewer's UDP source address from the first inbound
-//! datagram [`run_whep_session`] observes (a STUN binding request, in
+//! datagram `run_whep_session` observes (a STUN binding request, in
 //! practice) and reuses that address for every outbound RTP send for the
 //! rest of the session — a WHEP viewer's ICE candidate is a single stable
 //! 5-tuple once connectivity checks pick it, so one learned address is
@@ -122,7 +122,7 @@ use crate::error::{MultimuxError, Result};
 /// inbound viewer connections.
 pub const DEFAULT_WHEP_MAX_SESSIONS: usize = 64;
 
-/// How often [`run_whep_session`]'s read loop times out waiting for an
+/// How often `run_whep_session`'s read loop times out waiting for an
 /// inbound datagram before checking the `Trunk` cursor for new samples to
 /// send — see `crate::source::whip`'s `ACCEPT_POLL_INTERVAL` for the
 /// identical "bounded poll, not a busy loop" reasoning.
@@ -811,19 +811,16 @@ async fn run_whep_session(
             }
         }
 
-        if handshake_done {
-            if let Some(peer) = peer_addr {
-                while let Some(item) = cursor.poll() {
-                    match item {
-                        SampleCursorItem::Timed { track_id, sample }
-                        | SampleCursorItem::Sparse { track_id, sample }
-                            if track_id == session.spec.track_id =>
-                        {
-                            send_sample(&socket, &media, peer, &mut next_seq, &session, &sample)
-                                .await;
-                        }
-                        _ => {}
+        if handshake_done && let Some(peer) = peer_addr {
+            while let Some(item) = cursor.poll() {
+                match item {
+                    SampleCursorItem::Timed { track_id, sample }
+                    | SampleCursorItem::Sparse { track_id, sample }
+                        if track_id == session.spec.track_id =>
+                    {
+                        send_sample(&socket, &media, peer, &mut next_seq, &session, &sample).await;
                     }
+                    _ => {}
                 }
             }
         }
@@ -1015,7 +1012,7 @@ m=audio 9 UDP/TLS/RTP/SAVPF 111\r\na=ice-ufrag:x\r\na=ice-pwd:xxxxxxxxxxxxxxxxxx
 
     /// A packet too short to carry the fields being patched is refused
     /// (`None`), never returned unpatched — see
-    /// [`patch_seq_and_timestamp`]'s `# Errors` section for why silently
+    /// `patch_seq_and_timestamp`'s `# Errors` section for why silently
     /// handing the buffer back would be the exact bug that function exists
     /// to prevent (a packet on the wire carrying the *packetiser's* own
     /// per-batch sequence number and timestamp instead of the session's).

@@ -25,7 +25,14 @@ cd "$(dirname "$0")/.." || exit 1
 # Examples that bind a socket or otherwise wait on the network. They are
 # long-running servers by design, not self-terminating demos, so running them
 # here would hang or collide on a port. Still build-gated.
-SERVER_EXAMPLES=" rtmp-runtime/capture_publish multimux/serve_rtsp "
+#
+# `webrtc-runtime/whip_media_smoke` joined this list when the MSRV bump
+# (#949) removed the exclusion that had always skipped it, so it ran
+# unattended for the first time: it binds a FIXED signalling port and then
+# blocks waiting for a real external WHIP publisher to connect. Both failure
+# modes showed up immediately — a 32-minute hang on the first run, then
+# `AddrInUse` on the next because the hung instance still held the port.
+SERVER_EXAMPLES=" rtmp-runtime/capture_publish multimux/serve_rtsp webrtc-runtime/whip_media_smoke "
 
 # Crates whose examples cannot be built under this invocation's feature set /
 # toolchain. Empty by default.

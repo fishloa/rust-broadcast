@@ -181,10 +181,11 @@ fn legal_duplicates_are_preserved_from_real_fixture() {
         let cc = extract_cc(chunk);
         let hp = has_payload(chunk);
         if hp {
-            if let Some(&(last_cc, last_hash)) = last_per_pid.get(&pid) {
-                if cc == last_cc && hash_payload_skip_pcr(chunk) == last_hash {
-                    legal_dup_count += 1;
-                }
+            if let Some(&(last_cc, last_hash)) = last_per_pid.get(&pid)
+                && cc == last_cc
+                && hash_payload_skip_pcr(chunk) == last_hash
+            {
+                legal_dup_count += 1;
             }
             last_per_pid.insert(pid, (cc, hash_payload_skip_pcr(chunk)));
         }
@@ -213,10 +214,11 @@ fn legal_duplicates_are_preserved_from_real_fixture() {
         let cc = extract_cc(chunk);
         let hp = has_payload(chunk);
         if hp {
-            if let Some(&(last_cc, last_hash)) = out_last.get(&pid) {
-                if cc == last_cc && hash_payload_skip_pcr(chunk) == last_hash {
-                    output_dup_count += 1;
-                }
+            if let Some(&(last_cc, last_hash)) = out_last.get(&pid)
+                && cc == last_cc
+                && hash_payload_skip_pcr(chunk) == last_hash
+            {
+                output_dup_count += 1;
             }
             out_last.insert(pid, (cc, hash_payload_skip_pcr(chunk)));
         }
@@ -249,10 +251,11 @@ fn cc_errors_on_m6_single_are_renumbered() {
         let cc = extract_cc(chunk);
         let hp = has_payload(chunk);
         if hp {
-            if let Some(&(last_cc, last_hash)) = last_per_pid.get(&pid) {
-                if cc == last_cc && hash_payload_skip_pcr(chunk) != last_hash {
-                    remaining_errors += 1;
-                }
+            if let Some(&(last_cc, last_hash)) = last_per_pid.get(&pid)
+                && cc == last_cc
+                && hash_payload_skip_pcr(chunk) != last_hash
+            {
+                remaining_errors += 1;
             }
             last_per_pid.insert(pid, (cc, hash_payload_skip_pcr(chunk)));
         }
@@ -358,10 +361,11 @@ fn strict_plus_one_would_renumber_legal_duplicates() {
         let cc = extract_cc(chunk);
         let hp = has_payload(chunk);
         if hp {
-            if let Some(&(last_cc, last_hash)) = out_last.get(&pid) {
-                if cc == last_cc && hash_payload_skip_pcr(chunk) == last_hash {
-                    output_dup_count += 1;
-                }
+            if let Some(&(last_cc, last_hash)) = out_last.get(&pid)
+                && cc == last_cc
+                && hash_payload_skip_pcr(chunk) == last_hash
+            {
+                output_dup_count += 1;
             }
             out_last.insert(pid, (cc, hash_payload_skip_pcr(chunk)));
         }
@@ -408,10 +412,10 @@ fn count_pid_anomalies(data: &[u8], pid: u16) -> usize {
             continue;
         }
         let cc = extract_cc(chunk);
-        if let Some(last) = last_cc {
-            if cc != (last + 1) & 0x0F {
-                anomalies += 1;
-            }
+        if let Some(last) = last_cc
+            && cc != (last + 1) & 0x0F
+        {
+            anomalies += 1;
         }
         last_cc = Some(cc);
     }

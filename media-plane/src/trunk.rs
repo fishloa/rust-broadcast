@@ -1063,10 +1063,9 @@ impl EventLog {
                 segment_number: n,
                 delta,
             } = entry.anchor
+                && n == segment_number
             {
-                if n == segment_number {
-                    entry.anchor = EventAnchor::Media(MediaTime(start.0.saturating_add(delta)));
-                }
+                entry.anchor = EventAnchor::Media(MediaTime(start.0.saturating_add(delta)));
             }
         }
     }

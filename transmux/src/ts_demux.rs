@@ -3721,10 +3721,9 @@ mod tests {
                 provenance,
                 ..
             } = ev
+                && let Some(pid) = provenance.pid
             {
-                if let Some(pid) = provenance.pid {
-                    abandoned_pids.push(pid);
-                }
+                abandoned_pids.push(pid);
             }
         }
         assert!(

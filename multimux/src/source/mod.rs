@@ -276,10 +276,10 @@ pub(crate) fn report_driver_progress<S: media_plane::ingress::IngestSession>(
         route_handle.set_health(crate::route::HealthState::Live);
     }
     for program in driver.programs() {
-        if published.insert(program) {
-            if let Some(trunk) = driver.trunk(program) {
-                route_handle.publish_program(program, std::sync::Arc::clone(trunk));
-            }
+        if published.insert(program)
+            && let Some(trunk) = driver.trunk(program)
+        {
+            route_handle.publish_program(program, std::sync::Arc::clone(trunk));
         }
     }
     // Sync track specs from each published program's trunk into the route

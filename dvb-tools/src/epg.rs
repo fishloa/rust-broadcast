@@ -45,12 +45,11 @@ pub fn run(path: &str, json: bool) -> ExitCode {
             // can't abort the run; non-EIT completes are simply dropped here).
             let _ = store.feed_with_pid(Some(pid), bytes);
             // SDT → service names.
-            if SDT_TABLE_IDS.contains(&table_id) {
-                if let Ok(Some(complete)) = sdt_collector.push_section_with_pid(Some(pid), bytes) {
-                    if let Ok(sdt) = complete.sdt() {
-                        store.feed_sdt(&sdt);
-                    }
-                }
+            if SDT_TABLE_IDS.contains(&table_id)
+                && let Ok(Some(complete)) = sdt_collector.push_section_with_pid(Some(pid), bytes)
+                && let Ok(sdt) = complete.sdt()
+            {
+                store.feed_sdt(&sdt);
             }
         }
     }

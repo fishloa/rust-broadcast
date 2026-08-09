@@ -152,22 +152,23 @@ fn find_box<'a>(buf: &'a [u8], base: usize, want: &[u8; 4]) -> Option<Box4<'a>> 
         let containers: &[[u8; 4]] = &[
             *b"moov", *b"trak", *b"mdia", *b"minf", *b"stbl", *b"mvex", *b"edts",
         ];
-        if containers.contains(&b.ty) {
-            if let Some(found) = find_box(b.body, b.offset + b.header, want) {
-                return Some(found);
-            }
+        if containers.contains(&b.ty)
+            && let Some(found) = find_box(b.body, b.offset + b.header, want)
+        {
+            return Some(found);
         }
-        if &b.ty == b"stsd" && b.body.len() > 8 {
-            if let Some(found) = find_box(&b.body[8..], b.offset + b.header + 8, want) {
-                return Some(found);
-            }
+        if &b.ty == b"stsd"
+            && b.body.len() > 8
+            && let Some(found) = find_box(&b.body[8..], b.offset + b.header + 8, want)
+        {
+            return Some(found);
         }
         if &b.ty == b"avc1" || &b.ty == b"mp4a" {
             let skip = if &b.ty == b"avc1" { 78 } else { 28 };
-            if b.body.len() > skip {
-                if let Some(found) = find_box(&b.body[skip..], b.offset + b.header + skip, want) {
-                    return Some(found);
-                }
+            if b.body.len() > skip
+                && let Some(found) = find_box(&b.body[skip..], b.offset + b.header + skip, want)
+            {
+                return Some(found);
             }
         }
     }

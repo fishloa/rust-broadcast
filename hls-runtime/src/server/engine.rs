@@ -271,12 +271,11 @@ impl Window {
     fn push(&mut self, entry: SegmentEntry) {
         let duration_secs = entry.duration.as_secs_f64();
         self.max_segment_duration_secs = self.max_segment_duration_secs.max(duration_secs);
-        if self.segments.len() == self.capacity {
-            if let Some(evicted) = self.segments.pop_front() {
-                if evicted.discontinuous {
-                    self.discontinuity_sequence += 1;
-                }
-            }
+        if self.segments.len() == self.capacity
+            && let Some(evicted) = self.segments.pop_front()
+            && evicted.discontinuous
+        {
+            self.discontinuity_sequence += 1;
         }
         self.segments.push_back(WindowSegment {
             sequence_number: entry.sequence_number,
@@ -326,12 +325,12 @@ enum ImmediateResource {
 }
 
 fn parse_immediate(file: &str, container: Container) -> Option<ImmediateResource> {
-    if container == Container::Fmp4 {
-        if let Some(rest) = file.strip_prefix("init-") {
-            let track = rest.strip_suffix(".mp4")?;
-            track.parse::<u32>().ok()?;
-            return Some(ImmediateResource::Init);
-        }
+    if container == Container::Fmp4
+        && let Some(rest) = file.strip_prefix("init-")
+    {
+        let track = rest.strip_suffix(".mp4")?;
+        track.parse::<u32>().ok()?;
+        return Some(ImmediateResource::Init);
     }
     if let Some(rest) = file.strip_prefix("seg-") {
         let suffix = format!(".{}", container.segment_extension());
@@ -1405,12 +1404,11 @@ mod tests {
         let lines: Vec<&str> = body.lines().collect();
         let mut out = Vec::new();
         for i in 0..lines.len() {
-            if lines[i].starts_with("#EXTINF:") {
-                if let Some(next) = lines.get(i + 1) {
-                    if !next.starts_with('#') {
-                        out.push((*next).to_string());
-                    }
-                }
+            if lines[i].starts_with("#EXTINF:")
+                && let Some(next) = lines.get(i + 1)
+                && !next.starts_with('#')
+            {
+                out.push((*next).to_string());
             }
         }
         out

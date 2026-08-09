@@ -446,21 +446,23 @@ impl DvrRecorder {
 
         // Write init at the head of a new fMP4 period file.
         self.init_len = 0;
-        if let Some(init) = init_bytes {
-            if self.ext == ".m4s" && !init.is_empty() && self.write_offset == 0 {
-                file.write_all(init)
-                    .map_err(|e| format!("writing init: {e}"))?;
-                file.flush().map_err(|e| format!("flushing init: {e}"))?;
-                self.init_len = init.len() as u64;
-                self.write_offset = self.init_len;
-                self.last_init = Some(init.to_vec());
-                tracing::debug!(
-                    route = %self.route_name,
-                    period = self.period,
-                    len = init.len(),
-                    "wrote fMP4 init at period file head"
-                );
-            }
+        if let Some(init) = init_bytes
+            && self.ext == ".m4s"
+            && !init.is_empty()
+            && self.write_offset == 0
+        {
+            file.write_all(init)
+                .map_err(|e| format!("writing init: {e}"))?;
+            file.flush().map_err(|e| format!("flushing init: {e}"))?;
+            self.init_len = init.len() as u64;
+            self.write_offset = self.init_len;
+            self.last_init = Some(init.to_vec());
+            tracing::debug!(
+                route = %self.route_name,
+                period = self.period,
+                len = init.len(),
+                "wrote fMP4 init at period file head"
+            );
         }
 
         self.current_file = Some(file);

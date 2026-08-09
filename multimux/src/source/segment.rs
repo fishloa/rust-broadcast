@@ -419,10 +419,10 @@ impl ProgramSegmenter {
         }
 
         while let Some(item) = self.cursor.poll() {
-            if let SampleCursorItem::Timed { track_id, sample } = item {
-                if let Err(e) = self.seg.push(track_id, sample) {
-                    tracing::warn!(error = %e, "driver-backed segmenter push failed");
-                }
+            if let SampleCursorItem::Timed { track_id, sample } = item
+                && let Err(e) = self.seg.push(track_id, sample)
+            {
+                tracing::warn!(error = %e, "driver-backed segmenter push failed");
             }
             // `Sparse`/`Lagged`/`Degraded` items: a section-carried (sparse)
             // track has no place in either segmenter's media segment (fMP4 or
@@ -1381,10 +1381,10 @@ mod tests {
             let reassembler = reassemblers.entry(packet.header.pid).or_default();
             reassembler.feed(payload, packet.header.pusi);
             while let Some(section_bytes) = reassembler.pop_section() {
-                if let Ok(section) = Section::parse(section_bytes.as_ref()) {
-                    if section.table_id == PMT_TABLE_ID {
-                        pmt_count += 1;
-                    }
+                if let Ok(section) = Section::parse(section_bytes.as_ref())
+                    && section.table_id == PMT_TABLE_ID
+                {
+                    pmt_count += 1;
                 }
             }
         }
@@ -1570,10 +1570,10 @@ mod tests {
     /// — the check `existing_tracks_are_uninterrupted_across_mid_stream_addition`
     /// makes (issue #781).
     fn note_segment_seq(trunk: &Trunk, observed: &mut Vec<u32>) {
-        if let Some(seq) = trunk.last_closed_segment() {
-            if observed.last() != Some(&seq) {
-                observed.push(seq);
-            }
+        if let Some(seq) = trunk.last_closed_segment()
+            && observed.last() != Some(&seq)
+        {
+            observed.push(seq);
         }
     }
 
@@ -1582,10 +1582,10 @@ mod tests {
         for line in playlist.lines() {
             if let Some(start) = line.find("seg-1-") {
                 let rest = &line[start + 6..];
-                if let Some(end) = rest.find(".m4s") {
-                    if let Ok(n) = rest[..end].parse::<u32>() {
-                        seqs.push(n);
-                    }
+                if let Some(end) = rest.find(".m4s")
+                    && let Ok(n) = rest[..end].parse::<u32>()
+                {
+                    seqs.push(n);
                 }
             }
         }
@@ -1651,7 +1651,7 @@ mod tests {
                     });
             } else if self.feed_count >= 3 {
                 let i = self.feed_count - 3;
-                let is_sync = i % 45 == 0;
+                let is_sync = i.is_multiple_of(45);
                 self.pending.borrow_mut().push_back(SessionEvent::Sample {
                     program: ProgramId(0),
                     track_id: 1,

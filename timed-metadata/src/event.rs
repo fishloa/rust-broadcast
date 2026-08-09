@@ -87,20 +87,20 @@ impl TimedEvent {
         let mut at = None;
         let mut duration = None;
 
-        if let Some(clear) = &section.clear {
-            if let AnyCommand::SpliceInsert(si) = &clear.command {
-                id = Some(si.splice_event_id);
-                kind = if si.out_of_network_indicator {
-                    EventKind::BreakStart
-                } else {
-                    EventKind::BreakEnd
-                };
-                if let Some(st) = &si.splice_time {
-                    at = st.pts_time.map(MediaTime);
-                }
-                if let Some(bd) = &si.break_duration {
-                    duration = Some(MediaDuration(bd.duration));
-                }
+        if let Some(clear) = &section.clear
+            && let AnyCommand::SpliceInsert(si) = &clear.command
+        {
+            id = Some(si.splice_event_id);
+            kind = if si.out_of_network_indicator {
+                EventKind::BreakStart
+            } else {
+                EventKind::BreakEnd
+            };
+            if let Some(st) = &si.splice_time {
+                at = st.pts_time.map(MediaTime);
+            }
+            if let Some(bd) = &si.break_duration {
+                duration = Some(MediaDuration(bd.duration));
             }
         }
 

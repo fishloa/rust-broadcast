@@ -41,7 +41,7 @@ pub trait CiDataDevice {
 
 /// Reject a buffer that is not a whole number of TS packets.
 fn check_aligned(len: usize, what: &'static str) -> io::Result<()> {
-    if len % TS_PACKET_LEN == 0 {
+    if len.is_multiple_of(TS_PACKET_LEN) {
         Ok(())
     } else {
         Err(io::Error::new(io::ErrorKind::InvalidInput, what))

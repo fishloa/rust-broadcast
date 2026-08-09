@@ -222,7 +222,7 @@ impl Serialize for RttEcho {
                 have: buf.len(),
             });
         }
-        if self.padding.len() % WORD_LEN != 0 {
+        if !self.padding.len().is_multiple_of(WORD_LEN) {
             return Err(Error::InvalidPaddingLength(self.padding.len()));
         }
 

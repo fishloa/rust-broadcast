@@ -6,6 +6,12 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+- MSRV raised to **1.95.0** (issue #949). This removes the workspace's MSRV
+  split: `webrtc-runtime`'s optional `media` feature needed rustc 1.88 (via
+  `rcgen`), which had grown a dedicated CI job, six `--exclude` lanes and a
+  guard script to contain. Adopting let-chains and `is_multiple_of` where the
+  1.95 lints require them; no functional or API change.
 ### Fixed
 - Doc accuracy (#941 row 5): README "Schemes" section now lists the
   shipped `SignedUrl` scheme (`Verifier::signed_url`, issue #747) — it was

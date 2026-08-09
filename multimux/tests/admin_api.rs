@@ -299,14 +299,12 @@ fn admin_config(media_bind: SocketAddr, admin_bind: SocketAddr, routes: Vec<Rout
 async fn poll_until_extinf(client: &reqwest::Client, playlist_url: &str) -> String {
     let deadline = tokio::time::Instant::now() + Duration::from_secs(20);
     loop {
-        if let Ok(resp) = client.get(playlist_url).send().await {
-            if resp.status().is_success() {
-                if let Ok(body) = resp.text().await {
-                    if body.contains("#EXTINF:") {
-                        return body;
-                    }
-                }
-            }
+        if let Ok(resp) = client.get(playlist_url).send().await
+            && resp.status().is_success()
+            && let Ok(body) = resp.text().await
+            && body.contains("#EXTINF:")
+        {
+            return body;
         }
         if tokio::time::Instant::now() >= deadline {
             panic!(

@@ -61,14 +61,14 @@ impl DiffState {
         if !changed {
             return;
         }
-        if let Some((start, prev)) = self.open.take() {
-            if !prev.is_empty() {
-                cues.push(Cue {
-                    start: MediaTime(start),
-                    end: MediaTime(ticks),
-                    text: prev,
-                });
-            }
+        if let Some((start, prev)) = self.open.take()
+            && !prev.is_empty()
+        {
+            cues.push(Cue {
+                start: MediaTime(start),
+                end: MediaTime(ticks),
+                text: prev,
+            });
         }
         if !text.is_empty() {
             self.open = Some((ticks, text));
@@ -77,14 +77,14 @@ impl DiffState {
 
     /// Close any still-open cue at end of stream (or a channel/service reset).
     fn finalize(&mut self, ticks: u64, cues: &mut Vec<Cue>) {
-        if let Some((start, prev)) = self.open.take() {
-            if !prev.is_empty() {
-                cues.push(Cue {
-                    start: MediaTime(start),
-                    end: MediaTime(ticks),
-                    text: prev,
-                });
-            }
+        if let Some((start, prev)) = self.open.take()
+            && !prev.is_empty()
+        {
+            cues.push(Cue {
+                start: MediaTime(start),
+                end: MediaTime(ticks),
+                text: prev,
+            });
         }
     }
 }

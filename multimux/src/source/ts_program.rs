@@ -732,12 +732,11 @@ mod tests {
         let _established = tracker.poll();
         let mut programs: HashMap<u16, ProgramId> = HashMap::new();
         while let Some(event) = tracker.poll() {
-            if let SessionEvent::NewProgram { program, tracks } = event {
-                if let Some(t) = tracks.first() {
-                    if let Some(pn) = t.program_number {
-                        programs.insert(pn, program);
-                    }
-                }
+            if let SessionEvent::NewProgram { program, tracks } = event
+                && let Some(t) = tracks.first()
+                && let Some(pn) = t.program_number
+            {
+                programs.insert(pn, program);
             }
         }
 

@@ -75,7 +75,6 @@ mod tests {
     /// drifting apart between the `std`/`no_std` halves of each macro.
     #[test]
     fn every_call_shape_compiles() {
-        use super::{record_counter, record_gauge};
         const NAME: &str = "x";
         let pid = alloc::string::String::from("0x0100");
         record_counter!(NAME);
@@ -91,7 +90,6 @@ mod tests {
     #[cfg(feature = "std")]
     #[test]
     fn record_counter_by_call_shape_compiles() {
-        use super::record_counter_by;
         const NAME: &str = "x";
         record_counter_by!(NAME, 3u64);
     }

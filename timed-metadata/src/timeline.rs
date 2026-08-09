@@ -69,10 +69,10 @@ impl Timeline {
 /// Unroll a 33-bit PTS to an absolute monotonic value. On a backward jump of
 /// more than half the range, advance one epoch.
 pub(crate) fn unroll_pts(last_pts: &mut Option<u64>, epoch: &mut u64, pts33: u64) -> u64 {
-    if let Some(prev) = *last_pts {
-        if pts33 + (PTS_WRAP / 2) < prev {
-            *epoch += 1;
-        }
+    if let Some(prev) = *last_pts
+        && pts33 + (PTS_WRAP / 2) < prev
+    {
+        *epoch += 1;
     }
     *last_pts = Some(pts33);
     *epoch * PTS_WRAP + pts33

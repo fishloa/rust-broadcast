@@ -83,7 +83,7 @@ const RTSPS_DEFAULT_PORT: u16 = rtsp_runtime::RTSPS_DEFAULT_PORT;
 /// Map an interleaved RTP channel to its track id (even channels only; RTCP
 /// odd channels return `None`).
 pub fn route_channel(channel: u8, tracks: &[TrackInit]) -> Option<u32> {
-    if channel % 2 != 0 {
+    if !channel.is_multiple_of(2) {
         return None;
     }
     tracks
@@ -1574,10 +1574,10 @@ mod tests {
                 while let Some(bytes) = driver.poll_transmit() {
                     wr.write_all(&bytes).await.expect("write request over TLS");
                 }
-                if cursor.is_none() {
-                    if let Some(trunk) = driver.trunk(ProgramId(0)) {
-                        cursor = Some(trunk.subscribe());
-                    }
+                if cursor.is_none()
+                    && let Some(trunk) = driver.trunk(ProgramId(0))
+                {
+                    cursor = Some(trunk.subscribe());
                 }
                 if let Some(c) = cursor.as_mut() {
                     while let Some(item) = c.poll() {

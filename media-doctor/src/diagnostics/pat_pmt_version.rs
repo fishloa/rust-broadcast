@@ -58,29 +58,29 @@ impl PatPmtVersionCheck {
         let key = (pid, table_id);
         let prev = versions.get(&key).copied();
 
-        if let Some(prev_ver) = prev {
-            if prev_ver != version {
-                let severity = Severity::Info;
-                let rule_id = if table_id == 0x00 {
-                    "pat-version"
-                } else if table_id == 0x02 {
-                    "pmt-version"
-                } else {
-                    return;
-                };
+        if let Some(prev_ver) = prev
+            && prev_ver != version
+        {
+            let severity = Severity::Info;
+            let rule_id = if table_id == 0x00 {
+                "pat-version"
+            } else if table_id == 0x02 {
+                "pmt-version"
+            } else {
+                return;
+            };
 
-                let table_name = if table_id == 0x00 { "PAT" } else { "PMT" };
+            let table_name = if table_id == 0x00 { "PAT" } else { "PMT" };
 
-                report.push(Finding::new(
-                    severity,
-                    Location::new(0, pid),
-                    rule_id,
-                    alloc::format!(
-                        "{table_name} version_number changed: {prev_ver} → {version} \
-                         (table_id_ext=0x{table_id_ext:04X})",
-                    ),
-                ));
-            }
+            report.push(Finding::new(
+                severity,
+                Location::new(0, pid),
+                rule_id,
+                alloc::format!(
+                    "{table_name} version_number changed: {prev_ver} → {version} \
+                     (table_id_ext=0x{table_id_ext:04X})",
+                ),
+            ));
         }
 
         versions.insert(key, version);

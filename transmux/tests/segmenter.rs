@@ -365,12 +365,11 @@ fn real_fixture_remux_is_lossless_and_parseable() {
                 }
             }
             0x0101 => {
-                if let Some(c) = aud_asm.feed(pkt.pusi, payload) {
-                    if let Ok(pes) = mpeg_pes::PesPacket::parse(&c) {
-                        if !pes.payload.is_empty() {
-                            aud.push(pes.payload.to_vec());
-                        }
-                    }
+                if let Some(c) = aud_asm.feed(pkt.pusi, payload)
+                    && let Ok(pes) = mpeg_pes::PesPacket::parse(&c)
+                    && !pes.payload.is_empty()
+                {
+                    aud.push(pes.payload.to_vec());
                 }
             }
             _ => {}
@@ -379,12 +378,11 @@ fn real_fixture_remux_is_lossless_and_parseable() {
     if let Some(c) = vid_asm.flush() {
         ingest_vid(&c, &mut vid);
     }
-    if let Some(c) = aud_asm.flush() {
-        if let Ok(pes) = mpeg_pes::PesPacket::parse(&c) {
-            if !pes.payload.is_empty() {
-                aud.push(pes.payload.to_vec());
-            }
-        }
+    if let Some(c) = aud_asm.flush()
+        && let Ok(pes) = mpeg_pes::PesPacket::parse(&c)
+        && !pes.payload.is_empty()
+    {
+        aud.push(pes.payload.to_vec());
     }
     assert!(!vid.is_empty() && !aud.is_empty(), "demux produced samples");
 

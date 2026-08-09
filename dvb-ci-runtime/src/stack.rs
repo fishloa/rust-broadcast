@@ -324,11 +324,11 @@ impl CiStack {
         }
         // Route each APDU to the resource handler bound to its session.
         for (session_nb, apdu) in apdus {
-            if let Some(resource) = self.session.resource_of(session_nb) {
-                if let Some(i) = self.handler_index(resource) {
-                    let out = self.resources[i].on_apdu(&apdu);
-                    actions.extend(self.process_resource_out(session_nb, out));
-                }
+            if let Some(resource) = self.session.resource_of(session_nb)
+                && let Some(i) = self.handler_index(resource)
+            {
+                let out = self.resources[i].on_apdu(&apdu);
+                actions.extend(self.process_resource_out(session_nb, out));
             }
         }
         actions
@@ -670,16 +670,15 @@ mod tests {
         let tag = [0x9F, 0x80, 0x32];
         let mut out = Vec::new();
         for a in actions {
-            if let Action::Write(w) = a {
-                if let Some(pos) = w.windows(3).position(|x| x == tag) {
-                    if let Ok(p) = CaPmt::parse(&w[pos..]) {
-                        out.push(CaPmtSummary {
-                            list_management: p.list_management,
-                            cmd_id: p.cmd_id.expect("programme cmd_id present"),
-                            program_ca_descriptors: p.program_ca_descriptors.to_vec(),
-                        });
-                    }
-                }
+            if let Action::Write(w) = a
+                && let Some(pos) = w.windows(3).position(|x| x == tag)
+                && let Ok(p) = CaPmt::parse(&w[pos..])
+            {
+                out.push(CaPmtSummary {
+                    list_management: p.list_management,
+                    cmd_id: p.cmd_id.expect("programme cmd_id present"),
+                    program_ca_descriptors: p.program_ca_descriptors.to_vec(),
+                });
             }
         }
         out

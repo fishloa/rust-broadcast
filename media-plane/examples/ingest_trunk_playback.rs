@@ -168,10 +168,10 @@ fn main() {
 
     for (i, chunk) in ts_bytes.chunks(CHUNK_SIZE).enumerate() {
         driver.feed(chunk, Timestamp::from_nanos(i as u64));
-        if cursor.is_none() {
-            if let Some(trunk) = driver.trunk(ProgramId(0)) {
-                cursor = Some(trunk.subscribe());
-            }
+        if cursor.is_none()
+            && let Some(trunk) = driver.trunk(ProgramId(0))
+        {
+            cursor = Some(trunk.subscribe());
         }
         drain_cursor(&mut cursor, &mut per_track, &mut lagged);
     }

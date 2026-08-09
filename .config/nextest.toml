@@ -10,3 +10,31 @@ slow-timeout = { period = "30s", terminate-after = 3 }
 slow-timeout = { period = "30s", terminate-after = 3 }
 retries = 1
 failure-output = "immediate-final"
+
+# Real-browser tests (`real_browser_*`) drive a headless Chromium through
+# Playwright, publish/play several seconds of actual media, and assert on the
+# browser's own decoder. They are slow by design and heavy on CPU and ports.
+#
+# Under the default 90s cap they FAIL. Measured in isolation, with nothing
+# else running: whip_ingest 37s, whep_egress 157s. So these are genuinely
+# long tests, not fast tests starved by contention — browser startup plus
+# several seconds of real media through two peer connections is simply what
+# it costs. `cargo test` passes them because it applies no timeout at all;
+# the failure only appears under the gate CI actually runs.
+#
+# They are given their own single-threaded group and a longer cap rather than
+# being marked `#[ignore]`: an ignored browser test is one nobody runs, which
+# is the hole issue #947 was opened about. On a machine without node or
+# Playwright (CI today) they skip themselves loudly and cost nothing.
+[test-groups]
+browser = { max-threads = 1 }
+
+[[profile.default.overrides]]
+filter = 'test(/^real_browser_/)'
+test-group = 'browser'
+slow-timeout = { period = "60s", terminate-after = 5 }
+
+[[profile.ci.overrides]]
+filter = 'test(/^real_browser_/)'
+test-group = 'browser'
+slow-timeout = { period = "60s", terminate-after = 5 }

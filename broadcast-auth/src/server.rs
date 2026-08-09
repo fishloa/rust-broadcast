@@ -220,7 +220,7 @@ impl Verifier {
     /// unused for Basic/Bearer.
     /// Forwarded reads `ctx`'s configured user header instead — see the
     /// module docs. SignedUrl reads `ctx.uri`'s own query string (`exp`/
-    /// `kid`/`sig`[/`ip`]) instead of any header at all, and `ctx.peer_addr`
+    /// `kid`/`sig`\[/`ip`\]) instead of any header at all, and `ctx.peer_addr`
     /// when the token is IP-scoped — see [`crate::signed_url`].
     ///
     /// A pathologically large `Digest` `Authorization` header is rejected
