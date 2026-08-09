@@ -24,6 +24,14 @@ pub mod ll_dash;
 pub mod llhls;
 pub mod smooth;
 pub mod ts_hls;
+// WHEP egress (issue #743): a raw listen-socket output (HTTP POST + SDP +
+// ICE/DTLS-SRTP, mirroring `crate::source::whip`'s ingest side) rather than
+// an axum-manifest `Output` — see `OutputKind::Whep`/`OutputKind::is_whep`
+// below and `whep`'s own module doc. Only compiled behind this crate's
+// `whep` Cargo feature (needs rustc >= 1.88 — see `Cargo.toml`'s `whep`
+// feature doc).
+#[cfg(feature = "whep")]
+pub mod whep;
 
 use std::sync::Arc;
 
@@ -118,6 +126,23 @@ pub enum OutputKind {
         #[serde(default)]
         params: serde_json::Value,
     },
+    /// WHEP (draft-ietf-wish-whep) egress (issue #743): accepts an inbound
+    /// viewer's HTTP `POST`ed SDP offer, answers over ICE + DTLS-SRTP, and
+    /// pushes this route's `Trunk` samples out as SRTP RTP — see
+    /// [`crate::output::whep`]. **Video (H.264) only** in this cut, the same
+    /// constraint [`crate::config::InputSpec::Whip`] documents in reverse:
+    /// this workspace has no RTP/Opus *packetiser* either. Only compiled in
+    /// behind this crate's own `whep` Cargo feature, which (unlike this
+    /// crate's default build) needs rustc >= 1.88 — see `Cargo.toml`'s
+    /// `whep` feature doc.
+    #[cfg(feature = "whep")]
+    #[serde(rename = "whep")]
+    Whep {
+        /// `host:port` to bind the WHEP viewer HTTP endpoint to (e.g.
+        /// `"0.0.0.0:8081"`). Any request path is accepted — this is a
+        /// single-route listener, not a multi-tenant path router.
+        listen: String,
+    },
 }
 
 impl OutputKind {
@@ -138,6 +163,8 @@ impl OutputKind {
             OutputKind::RtmpPush { .. } => "rtmp_push",
             OutputKind::RtspPush { .. } => "rtsp_push",
             OutputKind::Custom { type_tag, .. } => type_tag,
+            #[cfg(feature = "whep")]
+            OutputKind::Whep { .. } => "whep",
         }
     }
 
@@ -149,6 +176,24 @@ impl OutputKind {
             self,
             OutputKind::SrtPush { .. } | OutputKind::RtmpPush { .. } | OutputKind::RtspPush { .. }
         )
+    }
+
+    /// Whether this is [`OutputKind::Whep`] — a raw listen-socket output
+    /// (like [`Self::is_push`]'s outputs, no [`Output`] trait object, no
+    /// axum manifest routes) but, unlike a push output, one that *accepts*
+    /// inbound viewer connections rather than dialing out to a fixed URL —
+    /// see `crate::origin::serve_with_registry_impl`'s output-spawning
+    /// split. Defined unconditionally (returning `false` when the `whep`
+    /// feature is off) so call sites never need their own `#[cfg]`.
+    pub fn is_whep(&self) -> bool {
+        #[cfg(feature = "whep")]
+        {
+            matches!(self, OutputKind::Whep { .. })
+        }
+        #[cfg(not(feature = "whep"))]
+        {
+            false
+        }
     }
 
     /// Build the [`Output`] this kind names, using
@@ -195,6 +240,12 @@ impl OutputKind {
                 "OutputKind::Custom cannot be built without a SchemeRegistry — \
                  crate::origin::serve_with_registry resolves it via \
                  `registry.output(type_tag)` instead of this method"
+            ),
+            #[cfg(feature = "whep")]
+            OutputKind::Whep { .. } => unreachable!(
+                "OutputKind::Whep produces no Arc<dyn Output> — WHEP egress is driven by \
+                 crate::output::whep::run_whep, a raw listen socket, exactly like WHIP \
+                 ingest on the source side"
             ),
         }
     }

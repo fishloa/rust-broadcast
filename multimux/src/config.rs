@@ -1195,6 +1195,14 @@ impl Route {
                 });
             }
         }
+        // Issue #743: `OutputKind::Whep`'s `listen` field needs the same
+        // `host:port` validation `InputSpec::Whip`'s own `listen` gets below.
+        #[cfg(feature = "whep")]
+        for kind in &self.outputs {
+            if let OutputKind::Whep { listen } = kind {
+                validate_listen_addr(listen)?;
+            }
+        }
         self.input.validate()
     }
 

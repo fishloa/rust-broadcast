@@ -742,13 +742,17 @@ async fn serve_with_registry_impl(
         let outputs: Vec<Arc<dyn Output>> = route
             .outputs
             .iter()
-            .filter(|k| !k.is_push())
+            .filter(|k| !k.is_push() && !k.is_whep())
             .map(|k| build_output(k, &config.playlist_name, &registry))
             .collect::<crate::Result<Vec<_>>>()?;
         streams.insert(route.name.clone(), (store.clone(), outputs));
 
         let push_handles = spawn_push_outputs(route, Arc::clone(&store), &cancel);
         for h in push_handles {
+            supervisor_handles.push((route.name.clone(), h));
+        }
+        let whep_handles = spawn_whep_outputs(route, Arc::clone(&store), &cancel);
+        for h in whep_handles {
             supervisor_handles.push((route.name.clone(), h));
         }
 
@@ -894,6 +898,51 @@ fn spawn_push_outputs(
         }
     }
     handles
+}
+
+/// Spawn one `crate::output::whep::run_whep` task per `OutputKind::Whep`
+/// output on `route` (issue #743) — the egress-side mirror of
+/// [`spawn_ingest`]'s WHIP handling: unlike [`spawn_push_outputs`]'s
+/// dial-out-to-a-fixed-URL outputs, WHEP *accepts* inbound viewer
+/// connections, so it gets its own listen socket rather than a
+/// `crate::push::drive_push` task. Each awaits the route's first `Trunk`
+/// (via [`RouteHandle::await_first_trunk`]) before serving, exactly like
+/// [`spawn_push_outputs`]. Returns a `JoinHandle` per `whep` output; empty
+/// vec when `route` has none — including unconditionally whenever the
+/// `whep` Cargo feature is off, in which case `OutputKind::Whep` does not
+/// exist and this function's body is a no-op by construction (not just an
+/// empty loop) — see the two `#[cfg]` bodies below.
+#[cfg(feature = "whep")]
+fn spawn_whep_outputs(
+    route: &crate::config::Route,
+    store: Arc<RouteHandle>,
+    cancel: &tokio_util::sync::CancellationToken,
+) -> Vec<tokio::task::JoinHandle<()>> {
+    let mut handles = Vec::new();
+    for kind in &route.outputs {
+        if let crate::output::OutputKind::Whep { listen } = kind {
+            let route_cfg = crate::output::whep::WhepRoute::new(listen.clone());
+            let store = Arc::clone(&store);
+            let cancel = cancel.clone();
+            handles.push(tokio::spawn(async move {
+                let trunk = store.await_first_trunk().await;
+                tracing::info!(listen = %route_cfg.listen(), "WHEP egress starting");
+                crate::output::whep::run_whep(&route_cfg, trunk, cancel).await;
+            }));
+        }
+    }
+    handles
+}
+
+/// The `whep`-feature-off stub: see the feature-gated overload's own doc.
+#[cfg(not(feature = "whep"))]
+fn spawn_whep_outputs(
+    route: &crate::config::Route,
+    store: Arc<RouteHandle>,
+    cancel: &tokio_util::sync::CancellationToken,
+) -> Vec<tokio::task::JoinHandle<()>> {
+    let _ = (route, store, cancel);
+    Vec::new()
 }
 
 /// Split an `rtmp_push` URL's path into `(app, stream_key)` (issue #934). An

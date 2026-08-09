@@ -86,13 +86,22 @@ reqwest           = { version = "0.12", default-features = false, features = ["r
 # `.next()` on `reqwest::Response::bytes_stream()` (a bare `Stream`, no
 # extension methods of its own).
 futures-util      = { version = "0.3", default-features = false, features = ["std"] }
-# WHIP input (`source::whip`, issue #740), `whip` feature only: the ICE +
-# DTLS-SRTP media transport this crate has no reason to reimplement.
+# WHIP input (`source::whip`, issue #740) / WHEP output (`output::whep`,
+# issue #743), `whip`/`whep` features only: the ICE + DTLS-SRTP media
+# transport this crate has no reason to reimplement.
 # Declared as a *plain* optional dep (no extra features) so merely depending
 # on it (feature off) never pulls `webrtc-runtime`'s own `media` feature —
-# only `multimux`'s `whip` feature below turns that on. See this crate's
-# `rust-version` note on the `whip` feature itself for why the split matters.
+# only `multimux`'s `whip`/`whep` features below turn that on. See this
+# crate's `rust-version` note on those features for why the split matters.
 webrtc-runtime    = { path = "../webrtc-runtime", version = "0.1", optional = true, default-features = false }
+# WHEP output (`output::whep`, issue #743) only: builds the typed
+# `rtp_packet::RtpPacket` values `webrtc_runtime::media::MediaTransport::
+# encrypt_rtp` requires — see that method's own signature. Unlike
+# `webrtc-runtime`, this crate has no `rtc-dtls`/`rcgen` transitive
+# dependency and builds fine on the workspace MSRV (1.86); it is still kept
+# behind the `whep` feature (rather than unconditional) purely so it is
+# never pulled in by a build that never touches WHEP.
+rtp-packet        = { path = "../rtp-packet", version = "0.3", optional = true, default-features = false }
 
 [features]
 # `tls` is default-on: `rtsps://` sources should work out of the box. It pulls
@@ -115,6 +124,17 @@ tls         = ["rtsp-runtime/tls", "dep:tokio-rustls", "dep:rustls"]
 # opt-in rather than folded into `default`. Build/test it with a toolchain
 # >= 1.88 (this workspace's clippy canary, currently 1.97.1, covers it).
 whip        = ["dep:webrtc-runtime", "webrtc-runtime/media"]
+# WHEP (draft-ietf-wish-whep) egress (issue #743): accepts a viewer's HTTP
+# `POST` + SDP offer, negotiates ICE/DTLS-SRTP, and pushes the route's
+# `Trunk` samples out as SRTP RTP — the mirror image of `whip` (see
+# `crate::output::whep`'s module doc). A *sibling* feature to `whip` rather
+# than folded into it: ingest and egress are independently useful (a route
+# may want only one), matching this crate's one-feature-per-protocol
+# pattern elsewhere (`InputSpec::Whip` vs. a hypothetical output-side
+# equivalent). Both need `webrtc-runtime/media`, so both carry the exact
+# same MSRV constraint documented on `whip` above — enabling `whep` also
+# needs rustc >= 1.88, for the identical `rcgen` reason.
+whep        = ["dep:webrtc-runtime", "webrtc-runtime/media", "dep:rtp-packet"]
 
 [[example]]
 name = "serve_rtsp"
