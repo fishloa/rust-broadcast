@@ -958,10 +958,10 @@ impl ConformanceMonitor {
 
         // ── Step 6b: Section reassembly — PMT PIDs ───────────────────────
         if self.pmt_trackings.contains_key(&pid) && header.has_payload {
-            if let Some(payload) = packet.payload {
-                if let Some(tracking) = self.pmt_trackings.get_mut(&pid) {
-                    tracking.reassembler.feed(payload, header.pusi);
-                }
+            if let Some(payload) = packet.payload
+                && let Some(tracking) = self.pmt_trackings.get_mut(&pid)
+            {
+                tracking.reassembler.feed(payload, header.pusi);
             }
             let sections: Vec<_> = if let Some(tracking) = self.pmt_trackings.get_mut(&pid) {
                 tracking.timer.last_seen = t;
@@ -983,10 +983,10 @@ impl ConformanceMonitor {
             && self.si_reassemblies.contains_key(&pid)
             && header.has_payload
         {
-            if let Some(payload) = packet.payload {
-                if let Some(si_ra) = self.si_reassemblies.get_mut(&pid) {
-                    si_ra.reassembler.feed(payload, header.pusi);
-                }
+            if let Some(payload) = packet.payload
+                && let Some(si_ra) = self.si_reassemblies.get_mut(&pid)
+            {
+                si_ra.reassembler.feed(payload, header.pusi);
             }
             let sections: Vec<_> = if let Some(si_ra) = self.si_reassemblies.get_mut(&pid) {
                 core::iter::from_fn(|| si_ra.reassembler.pop_section()).collect()
@@ -1020,10 +1020,10 @@ impl ConformanceMonitor {
         }
 
         // ── 2.3a / 2.3b: PCR checks (Table 5.0b indicators 2.3a, 2.3b) ──
-        if let Some(Ok(af)) = packet.adaptation_field() {
-            if let Some(pcr) = af.pcr {
-                self.check_pcr(pid, pcr.as_27mhz(), af.discontinuity_indicator, t);
-            }
+        if let Some(Ok(af)) = packet.adaptation_field()
+            && let Some(pcr) = af.pcr
+        {
+            self.check_pcr(pid, pcr.as_27mhz(), af.discontinuity_indicator, t);
         }
 
         // ── 2.5: PTS check (Table 5.0b indicator 2.5) ───────────────────
@@ -1031,10 +1031,9 @@ impl ConformanceMonitor {
             && header.scrambling == 0
             && self.es_trackings.contains_key(&pid)
             && header.has_payload
+            && let Some(payload) = packet.payload
         {
-            if let Some(payload) = packet.payload {
-                self.check_pts(pid, payload, t);
-            }
+            self.check_pts(pid, payload, t);
         }
 
         // ── 3.4: Unreferenced_PID bookkeeping ───────────────────────────
@@ -1284,18 +1283,18 @@ impl ConformanceMonitor {
         }
 
         // Indicator 3.10: TBsys data delay > 1 s?
-        if let Some(delay) = self.tstd.tb_sys.delay_secs(t) {
-            if delay > tstd::DATA_DELAY_LIMIT_SECS as f64 {
-                self.emit(
-                    Indicator::DataDelayError,
-                    Some(pid),
-                    t,
-                    format!(
-                        "TBsys data delay {delay:.2} s exceeds {} s on PID 0x{pid:04X}",
-                        tstd::DATA_DELAY_LIMIT_SECS,
-                    ),
-                );
-            }
+        if let Some(delay) = self.tstd.tb_sys.delay_secs(t)
+            && delay > tstd::DATA_DELAY_LIMIT_SECS as f64
+        {
+            self.emit(
+                Indicator::DataDelayError,
+                Some(pid),
+                t,
+                format!(
+                    "TBsys data delay {delay:.2} s exceeds {} s on PID 0x{pid:04X}",
+                    tstd::DATA_DELAY_LIMIT_SECS,
+                ),
+            );
         }
     }
 

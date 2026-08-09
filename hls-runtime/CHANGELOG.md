@@ -7,6 +7,12 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+- MSRV raised to **1.95.0** (issue #949). This removes the workspace's MSRV
+  split: `webrtc-runtime`'s optional `media` feature needed rustc 1.88 (via
+  `rcgen`), which had grown a dedicated CI job, six `--exclude` lanes and a
+  guard script to contain. Adopting let-chains and `is_multiple_of` where the
+  1.95 lints require them; no functional or API change.
 ### Fixed
 - Doc accuracy (#941 rows 7-8): README install snippet corrected from
   `"0.1"` to `"0.5"` (the crate is 0.5.0). README now states explicitly

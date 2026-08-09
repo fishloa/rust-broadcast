@@ -114,14 +114,12 @@ fn find_traf_for_track(moof_body: &[u8], track_id: u32) -> Option<(usize, &[u8])
         let end = (off + size).min(moof_body.len());
         if &moof_body[off + 4..off + 8] == b"traf" {
             let traf_body = &moof_body[off + 8..end];
-            if let Some((_, tfhd)) = find_child_box(traf_body, b"tfhd") {
-                if let Ok(parsed) =
+            if let Some((_, tfhd)) = find_child_box(traf_body, b"tfhd")
+                && let Ok(parsed) =
                     transmux::movie_fragment::TrackFragmentHeaderBox::parse_body(&tfhd[8..])
-                {
-                    if parsed.track_id == track_id {
-                        return Some((off, &moof_body[off..end]));
-                    }
-                }
+                && parsed.track_id == track_id
+            {
+                return Some((off, &moof_body[off..end]));
             }
         }
         off += size;

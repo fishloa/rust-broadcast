@@ -60,10 +60,10 @@ fn has_impl(all: &str, prefix: &str, name: &str) -> bool {
         // a commented-out `// impl_spec_display!(...)` no longer satisfies
         // this. A leading crate-path qualifier (`crate::`, `broadcast_common::`)
         // is transparent to this check: it is still the first *statement*.
-        if let Some(rest) = strip_path_qualifier(trimmed).strip_prefix(&needle) {
-            if is_boundary(rest) {
-                return true;
-            }
+        if let Some(rest) = strip_path_qualifier(trimmed).strip_prefix(&needle)
+            && is_boundary(rest)
+        {
+            return true;
         }
 
         // A bare `Display for Name` needle (the generic fallback some crates
@@ -71,17 +71,14 @@ fn has_impl(all: &str, prefix: &str, name: &str) -> bool {
         // nothing but a module-path qualifier: `impl ::core::fmt::Display for
         // Name`, `impl std::fmt::Display for Name`, `impl fmt::Display for
         // Name`, `impl Display for Name`.
-        if !needle.starts_with("impl") {
-            if let Some(after_impl) = trimmed.strip_prefix("impl") {
-                if let Some(pos) = after_impl.find(&needle) {
-                    let qualifier = &after_impl[..pos];
-                    if qualifier.chars().all(is_path_or_space) {
-                        let rest = &after_impl[pos + needle.len()..];
-                        if is_boundary(rest) {
-                            return true;
-                        }
-                    }
-                }
+        if !needle.starts_with("impl")
+            && let Some(after_impl) = trimmed.strip_prefix("impl")
+            && let Some(pos) = after_impl.find(&needle)
+        {
+            let qualifier = &after_impl[..pos];
+            let rest = &after_impl[pos + needle.len()..];
+            if qualifier.chars().all(is_path_or_space) && is_boundary(rest) {
+                return true;
             }
         }
     }

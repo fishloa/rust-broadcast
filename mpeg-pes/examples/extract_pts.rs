@@ -37,12 +37,11 @@ fn main() {
     let mut asm = PesAssembler::new();
     let mut pes = Vec::new();
     for pkt in ts.chunks(PKT) {
-        if let Some((pid, pusi, payload)) = ts_payload(pkt) {
-            if pid == PES_PID {
-                if let Some(v) = asm.feed(pusi, payload) {
-                    pes.push(v);
-                }
-            }
+        if let Some((pid, pusi, payload)) = ts_payload(pkt)
+            && pid == PES_PID
+            && let Some(v) = asm.feed(pusi, payload)
+        {
+            pes.push(v);
         }
     }
     if let Some(v) = asm.flush() {

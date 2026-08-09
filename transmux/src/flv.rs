@@ -409,12 +409,12 @@ impl<'a> Unpackage for FlvDemux<'a> {
                     let composition_time = read_si24(&tag.body[2..5]);
                     let data = &tag.body[5..];
                     match avc_packet_type {
-                        avc_packet_type::SEQUENCE_HEADER => {
-                            if avc_config.is_none() && !data.is_empty() {
-                                let record = AVCDecoderConfigurationRecord::parse(data)
-                                    .map_err(FlvError::Codec)?;
-                                avc_config = Some(AVCConfigurationBox::new(record));
-                            }
+                        avc_packet_type::SEQUENCE_HEADER
+                            if avc_config.is_none() && !data.is_empty() =>
+                        {
+                            let record = AVCDecoderConfigurationRecord::parse(data)
+                                .map_err(FlvError::Codec)?;
+                            avc_config = Some(AVCConfigurationBox::new(record));
                         }
                         avc_packet_type::NALU => {
                             let dts = tag.timestamp;
@@ -459,16 +459,15 @@ impl<'a> Unpackage for FlvDemux<'a> {
                     let aac_pkt_type = tag.body[1];
                     let data = &tag.body[2..];
                     match aac_pkt_type {
-                        aac_packet_type::SEQUENCE_HEADER => {
-                            // Some muxers emit a spurious empty AAC sequence
-                            // header; keep looking until a non-empty ASC arrives.
-                            if aac_esds.is_none() && !data.is_empty() {
-                                let asc =
-                                    AudioSpecificConfig::parse(data).map_err(FlvError::Codec)?;
-                                aac_channels = asc.channel_configuration.raw() as u16;
-                                aac_rate = asc_rate_hz(&asc);
-                                aac_esds = Some(build_aac_esds(data.to_vec()));
-                            }
+                        // Some muxers emit a spurious empty AAC sequence
+                        // header; keep looking until a non-empty ASC arrives.
+                        aac_packet_type::SEQUENCE_HEADER
+                            if aac_esds.is_none() && !data.is_empty() =>
+                        {
+                            let asc = AudioSpecificConfig::parse(data).map_err(FlvError::Codec)?;
+                            aac_channels = asc.channel_configuration.raw() as u16;
+                            aac_rate = asc_rate_hz(&asc);
+                            aac_esds = Some(build_aac_esds(data.to_vec()));
                         }
                         aac_packet_type::RAW => {
                             let dts = tag.timestamp;
@@ -498,55 +497,55 @@ impl<'a> Unpackage for FlvDemux<'a> {
 
         let mut tracks: Vec<Track> = Vec::new();
         let mut track_id = 1u32;
-        if let Some(config) = avc_config {
-            if !video_samples.is_empty() {
-                // #738 T11a review (Critical): `AVCDecoderConfigurationRecord::parse`
-                // now rejects 0 SPS, so this is unreachable via `parse` — but
-                // `config.sps` is a public field and a directly-constructed
-                // record could still be empty, so index defensively via
-                // `.first()` rather than `[0]` (no panic either way).
-                let (width, height) = config
-                    .config
-                    .sps
-                    .first()
-                    .and_then(|sps| crate::sps::decode_avc_sps(&sps.0).ok())
-                    .map(|i| (i.width as u16, i.height as u16))
-                    .unwrap_or((0, 0));
-                let anchor = anchor_of(&video_samples);
-                tracks.push(Track::new_at(
-                    TrackSpec::new(
-                        track_id,
-                        FLV_TIMESCALE,
-                        CodecConfig::Avc {
-                            config,
-                            width,
-                            height,
-                        },
-                    ),
-                    video_samples,
-                    anchor,
-                ));
-                track_id += 1;
-            }
+        if let Some(config) = avc_config
+            && !video_samples.is_empty()
+        {
+            // #738 T11a review (Critical): `AVCDecoderConfigurationRecord::parse`
+            // now rejects 0 SPS, so this is unreachable via `parse` — but
+            // `config.sps` is a public field and a directly-constructed
+            // record could still be empty, so index defensively via
+            // `.first()` rather than `[0]` (no panic either way).
+            let (width, height) = config
+                .config
+                .sps
+                .first()
+                .and_then(|sps| crate::sps::decode_avc_sps(&sps.0).ok())
+                .map(|i| (i.width as u16, i.height as u16))
+                .unwrap_or((0, 0));
+            let anchor = anchor_of(&video_samples);
+            tracks.push(Track::new_at(
+                TrackSpec::new(
+                    track_id,
+                    FLV_TIMESCALE,
+                    CodecConfig::Avc {
+                        config,
+                        width,
+                        height,
+                    },
+                ),
+                video_samples,
+                anchor,
+            ));
+            track_id += 1;
         }
-        if let Some(esds) = aac_esds {
-            if !audio_samples.is_empty() {
-                let anchor = anchor_of(&audio_samples);
-                tracks.push(Track::new_at(
-                    TrackSpec::new(
-                        track_id,
-                        FLV_TIMESCALE,
-                        CodecConfig::Aac {
-                            esds,
-                            channel_count: aac_channels,
-                            sample_rate: aac_rate,
-                            sample_size: AUDIO_SAMPLE_SIZE_BITS,
-                        },
-                    ),
-                    audio_samples,
-                    anchor,
-                ));
-            }
+        if let Some(esds) = aac_esds
+            && !audio_samples.is_empty()
+        {
+            let anchor = anchor_of(&audio_samples);
+            tracks.push(Track::new_at(
+                TrackSpec::new(
+                    track_id,
+                    FLV_TIMESCALE,
+                    CodecConfig::Aac {
+                        esds,
+                        channel_count: aac_channels,
+                        sample_rate: aac_rate,
+                        sample_size: AUDIO_SAMPLE_SIZE_BITS,
+                    },
+                ),
+                audio_samples,
+                anchor,
+            ));
         }
 
         if tracks.is_empty() {
@@ -893,23 +892,23 @@ pub fn flv_sequence_header_payloads(
 ) -> core::result::Result<Vec<FlvPayload>, FlvError> {
     let (video, audio) = locate_av_tracks(media)?;
     let mut out = Vec::new();
-    if let Some(vt) = video {
-        if let Some(body) = video_sequence_header_body(vt)? {
-            out.push(FlvPayload {
-                kind: FlvPayloadKind::Video,
-                timestamp_ms: 0,
-                body,
-            });
-        }
+    if let Some(vt) = video
+        && let Some(body) = video_sequence_header_body(vt)?
+    {
+        out.push(FlvPayload {
+            kind: FlvPayloadKind::Video,
+            timestamp_ms: 0,
+            body,
+        });
     }
-    if let Some(at) = audio {
-        if let Some(body) = audio_sequence_header_body(at)? {
-            out.push(FlvPayload {
-                kind: FlvPayloadKind::Audio,
-                timestamp_ms: 0,
-                body,
-            });
-        }
+    if let Some(at) = audio
+        && let Some(body) = audio_sequence_header_body(at)?
+    {
+        out.push(FlvPayload {
+            kind: FlvPayloadKind::Audio,
+            timestamp_ms: 0,
+            body,
+        });
     }
     Ok(out)
 }
@@ -1011,26 +1010,26 @@ impl Package for FlvMux {
         .write_into(&mut out);
 
         // --- Sequence-header tags ---
-        if let Some(vt) = video {
-            if let Some(body) = video_sequence_header_body(vt)? {
-                OutTag {
-                    tag_type: tag_type::VIDEO,
-                    timestamp: 0,
-                    body,
-                }
-                .write_into(&mut out);
+        if let Some(vt) = video
+            && let Some(body) = video_sequence_header_body(vt)?
+        {
+            OutTag {
+                tag_type: tag_type::VIDEO,
+                timestamp: 0,
+                body,
             }
+            .write_into(&mut out);
         }
         let sound_type = audio.map(audio_sound_type).unwrap_or(SOUND_TYPE_STEREO);
-        if let Some(at) = audio {
-            if let Some(body) = audio_sequence_header_body(at)? {
-                OutTag {
-                    tag_type: tag_type::AUDIO,
-                    timestamp: 0,
-                    body,
-                }
-                .write_into(&mut out);
+        if let Some(at) = audio
+            && let Some(body) = audio_sequence_header_body(at)?
+        {
+            OutTag {
+                tag_type: tag_type::AUDIO,
+                timestamp: 0,
+                body,
             }
+            .write_into(&mut out);
         }
 
         // --- Interleaved A/V type-1 tags, ordered by DTS ---

@@ -1,5 +1,13 @@
 # Changelog
 
+## [Unreleased]
+
+### Changed
+- MSRV raised to **1.95.0** (issue #949). This removes the workspace's MSRV
+  split: `webrtc-runtime`'s optional `media` feature needed rustc 1.88 (via
+  `rcgen`), which had grown a dedicated CI job, six `--exclude` lanes and a
+  guard script to contain. Adopting let-chains and `is_multiple_of` where the
+  1.95 lints require them; no functional or API change.
 All notable changes to `media-doctor` will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),

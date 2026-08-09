@@ -9,7 +9,7 @@ keywords     = ["auth", "http-auth", "digest", "basic-auth", "bearer"]
 categories   = ["network-programming", "authentication"]
 repository   = "https://github.com/fishloa/rust-broadcast"
 readme       = "README.md"
-rust-version = "1.86"
+rust-version.workspace = true
 exclude      = ["docs/**"]
 
 [package.metadata.docs.rs]

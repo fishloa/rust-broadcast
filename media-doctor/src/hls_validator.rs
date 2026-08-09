@@ -82,17 +82,16 @@ pub fn check_hls_playlist(text: &str, report: &mut Report) {
 
 fn validate_media_playlist(pl: &broadcast_hls::MediaPlaylist, report: &mut Report) {
     // hls-preload-hint-with-endlist — §4.4.5.3
-    if pl.endlist {
-        if let Some(ref ll) = pl.low_latency {
-            if ll.preload_hint_part.is_some() {
-                report.push(Finding::new(
-                    Severity::Error,
-                    Location::new(1, 0),
-                    "hls-preload-hint-with-endlist",
-                    "Playlist carries EXT-X-ENDLIST and EXT-X-PRELOAD-HINT — §4.4.5.3: a playlist with ENDLIST MUST NOT contain PRELOAD-HINT",
-                ));
-            }
-        }
+    if pl.endlist
+        && let Some(ref ll) = pl.low_latency
+        && ll.preload_hint_part.is_some()
+    {
+        report.push(Finding::new(
+            Severity::Error,
+            Location::new(1, 0),
+            "hls-preload-hint-with-endlist",
+            "Playlist carries EXT-X-ENDLIST and EXT-X-PRELOAD-HINT — §4.4.5.3: a playlist with ENDLIST MUST NOT contain PRELOAD-HINT",
+        ));
     }
 
     // hls-skip-without-can-skip-until — §4.4.5.2, §4.4.3.8

@@ -76,14 +76,14 @@ impl CatSection<'_> {
                     what: "CatSection ca_descriptors truncated descriptor",
                 });
             }
-            if tag == crate::descriptors::ca::TAG {
-                if let Ok(ca) = CaDescriptor::parse(&self.descriptors[pos..end]) {
-                    out.push(CatCaEntry {
-                        ca_system_id: ca.ca_system_id,
-                        ca_pid: ca.ca_pid,
-                        private_data: ca.private_data.to_vec(),
-                    });
-                }
+            if tag == crate::descriptors::ca::TAG
+                && let Ok(ca) = CaDescriptor::parse(&self.descriptors[pos..end])
+            {
+                out.push(CatCaEntry {
+                    ca_system_id: ca.ca_system_id,
+                    ca_pid: ca.ca_pid,
+                    private_data: ca.private_data.to_vec(),
+                });
             }
             pos = end;
         }

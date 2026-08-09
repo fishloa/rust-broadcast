@@ -209,40 +209,40 @@ impl HlsClient {
             self.ensure_init_requested(map)?;
         }
 
-        if let Some(ll) = &playlist.low_latency {
-            if let Some(hint_uri) = &ll.preload_hint_part {
-                match ll.preload_hint_type {
-                    PreloadHintType::Part => {
-                        let part_idx = playlist
-                            .open_segment
-                            .as_ref()
-                            .map(|o| o.parts.len() as u64)
-                            .unwrap_or(0);
-                        let id = ResourceId::Part {
-                            msn: next_msn,
-                            part: part_idx,
-                        };
-                        let url = url::resolve(&self.playlist_url, hint_uri);
-                        let byte_range = self.resolve_hint_byte_range(&url, ll);
-                        self.request_resource(id, url, byte_range);
-                    }
-                    PreloadHintType::Map => {
-                        let map = MapTag {
-                            uri: hint_uri.clone(),
-                            byte_range: ll.preload_hint_byte_range_length.map(|length| ByteRange {
-                                length,
-                                offset: ll.preload_hint_byte_range_start,
-                            }),
-                            extra_attrs: Vec::new(),
-                        };
-                        self.ensure_init_requested(&map)?;
-                    }
-                    _ => {
-                        // RFC 8216bis §4.4.5.3 defines only PART/MAP today; a
-                        // future hint type from a newer transmux is simply not
-                        // prefetched rather than treated as an error
-                        // (`PreloadHintType` is `#[non_exhaustive]`).
-                    }
+        if let Some(ll) = &playlist.low_latency
+            && let Some(hint_uri) = &ll.preload_hint_part
+        {
+            match ll.preload_hint_type {
+                PreloadHintType::Part => {
+                    let part_idx = playlist
+                        .open_segment
+                        .as_ref()
+                        .map(|o| o.parts.len() as u64)
+                        .unwrap_or(0);
+                    let id = ResourceId::Part {
+                        msn: next_msn,
+                        part: part_idx,
+                    };
+                    let url = url::resolve(&self.playlist_url, hint_uri);
+                    let byte_range = self.resolve_hint_byte_range(&url, ll);
+                    self.request_resource(id, url, byte_range);
+                }
+                PreloadHintType::Map => {
+                    let map = MapTag {
+                        uri: hint_uri.clone(),
+                        byte_range: ll.preload_hint_byte_range_length.map(|length| ByteRange {
+                            length,
+                            offset: ll.preload_hint_byte_range_start,
+                        }),
+                        extra_attrs: Vec::new(),
+                    };
+                    self.ensure_init_requested(&map)?;
+                }
+                _ => {
+                    // RFC 8216bis §4.4.5.3 defines only PART/MAP today; a
+                    // future hint type from a newer transmux is simply not
+                    // prefetched rather than treated as an error
+                    // (`PreloadHintType` is `#[non_exhaustive]`).
                 }
             }
         }

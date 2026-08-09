@@ -80,10 +80,10 @@ pub fn check_dash_mpd(text: &str, report: &mut Report) {
             // Per-Representation SegmentTimeline validation
             for (r_idx, repr) in aset.representations.iter().enumerate() {
                 let r_key = alloc::format!("{as_key}.{r_idx}");
-                if let Some(ref st) = repr.segment_template {
-                    if let Some(ref timeline) = st.timeline {
-                        validate_segment_timeline(timeline, st.timescale, &r_key, report);
-                    }
+                if let Some(ref st) = repr.segment_template
+                    && let Some(ref timeline) = st.timeline
+                {
+                    validate_segment_timeline(timeline, st.timescale, &r_key, report);
                 }
             }
         }
@@ -135,19 +135,19 @@ fn validate_segment_timeline(
         });
 
         // Each S element's @t (explicit or computed) must be >= previous end time.
-        if let Some(prev_end) = prev_end_time {
-            if start_time < prev_end {
-                let prev_str = timescale_str(prev_end, timescale);
-                let t_str = timescale_str(start_time, timescale);
-                report.push(Finding::new(
-                    Severity::Error,
-                    Location::new(s_idx + 1, 0),
-                    "dash-segment-timeline-monotonic",
-                    alloc::format!(
-                        "SegmentTimeline {r_key}: <S t={t_str}> starts before previous segment ends (prev_end={prev_str}) — §5.3.9.6",
-                    ),
-                ));
-            }
+        if let Some(prev_end) = prev_end_time
+            && start_time < prev_end
+        {
+            let prev_str = timescale_str(prev_end, timescale);
+            let t_str = timescale_str(start_time, timescale);
+            report.push(Finding::new(
+                Severity::Error,
+                Location::new(s_idx + 1, 0),
+                "dash-segment-timeline-monotonic",
+                alloc::format!(
+                    "SegmentTimeline {r_key}: <S t={t_str}> starts before previous segment ends (prev_end={prev_str}) — §5.3.9.6",
+                ),
+            ));
         }
 
         // Calculate this S element's end time (for the next S's implicit @t).

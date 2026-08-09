@@ -694,10 +694,8 @@ fn write_ptl(w: &mut VvcBitWriter, ptl: &VvcPtlRecord) {
         w.align(); // ptl_reserved_zero_bit
         let mut idc = ptl.sublayer_level_idc.iter();
         for &present in &ptl.sublayer_level_present {
-            if present {
-                if let Some(&v) = idc.next() {
-                    w.bits(v as u64, 8);
-                }
+            if present && let Some(&v) = idc.next() {
+                w.bits(v as u64, 8);
             }
         }
     }
@@ -771,7 +769,7 @@ impl<'a> VvcBitReader<'a> {
 
     /// Consume padding bits up to the next byte boundary.
     fn align(&mut self, what: &'static str) -> Result<()> {
-        while self.bit_pos % 8 != 0 {
+        while !self.bit_pos.is_multiple_of(8) {
             let _ = self.bits(1, what)?;
         }
         Ok(())
@@ -823,7 +821,7 @@ impl<'a> VvcBitWriter<'a> {
 
     /// Advance to the next byte boundary (bits already zeroed by the caller's buffer).
     fn align(&mut self) {
-        while self.bit_pos % 8 != 0 {
+        while !self.bit_pos.is_multiple_of(8) {
             self.bit_pos += 1;
         }
     }

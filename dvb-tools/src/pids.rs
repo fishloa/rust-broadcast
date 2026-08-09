@@ -77,15 +77,15 @@ pub fn run(path: &str) -> ExitCode {
         let pid = parsed.header.pid;
         *counts.entry(pid).or_insert(0) += 1;
 
-        if let Some(Ok(af)) = parsed.adaptation_field() {
-            if let Some(pcr) = af.pcr {
-                let pcr_27 = pcr.as_27mhz();
-                if first_pcr.is_none() {
-                    first_pcr = Some((total_packets, pcr_27));
-                    pcr_pid = Some(pid);
-                }
-                last_pcr = Some((total_packets, pcr_27));
+        if let Some(Ok(af)) = parsed.adaptation_field()
+            && let Some(pcr) = af.pcr
+        {
+            let pcr_27 = pcr.as_27mhz();
+            if first_pcr.is_none() {
+                first_pcr = Some((total_packets, pcr_27));
+                pcr_pid = Some(pid);
             }
+            last_pcr = Some((total_packets, pcr_27));
         }
     }
 

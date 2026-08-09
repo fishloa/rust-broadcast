@@ -352,10 +352,10 @@ impl TokioClient {
                 // `Credentials::Digest` (or any future non_exhaustive
                 // variant): no preemptive header without a cached
                 // authenticator from a prior challenge.
-                if let Some(auth) = self.digest_authenticator.as_mut() {
-                    if let Ok(value) = auth.authorization(&RequestContext::new(method, uri)) {
-                        return req.header(AUTHORIZATION, value);
-                    }
+                if let Some(auth) = self.digest_authenticator.as_mut()
+                    && let Ok(value) = auth.authorization(&RequestContext::new(method, uri))
+                {
+                    return req.header(AUTHORIZATION, value);
                 }
                 req
             }

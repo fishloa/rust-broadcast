@@ -38,7 +38,7 @@ impl<'a> Parse<'a> for ComponentModeDpi {
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         // No explicit count — parse all available entries
         let count = bytes.len() / ENTRY_LEN;
-        if bytes.len() % ENTRY_LEN != 0 {
+        if !bytes.len().is_multiple_of(ENTRY_LEN) {
             return Err(Error::BufferTooShort {
                 need: (count + 1) * ENTRY_LEN,
                 have: bytes.len(),

@@ -143,20 +143,20 @@ impl SessionLayer {
             // Module's reply to our open_session_request (host opened a
             // module-provided resource); the module assigns the session_nb.
             Some(tags::OPEN_SESSION_RESPONSE) => {
-                if let Ok(resp) = OpenSessionResponse::parse(spdu) {
-                    if resp.status == SessionStatus::Ok {
-                        self.sessions.insert(resp.session_nb, resp.resource);
-                        out.opened.push((resp.session_nb, resp.resource));
-                    }
+                if let Ok(resp) = OpenSessionResponse::parse(spdu)
+                    && resp.status == SessionStatus::Ok
+                {
+                    self.sessions.insert(resp.session_nb, resp.resource);
+                    out.opened.push((resp.session_nb, resp.resource));
                 }
             }
             // (Legacy) module's reply to a create_session, if any module uses it.
             Some(tags::CREATE_SESSION_RESPONSE) => {
-                if let Ok(resp) = CreateSessionResponse::parse(spdu) {
-                    if resp.status == SessionStatus::Ok {
-                        self.sessions.insert(resp.session_nb, resp.resource);
-                        out.opened.push((resp.session_nb, resp.resource));
-                    }
+                if let Ok(resp) = CreateSessionResponse::parse(spdu)
+                    && resp.status == SessionStatus::Ok
+                {
+                    self.sessions.insert(resp.session_nb, resp.resource);
+                    out.opened.push((resp.session_nb, resp.resource));
                 }
             }
             // Peer closes a session.
@@ -179,11 +179,11 @@ impl SessionLayer {
             }
             // Data: session_number(nb) + APDU body.
             Some(tags::SESSION_NUMBER) => {
-                if let Ok(sn) = SessionNumber::parse(spdu) {
-                    if spdu.len() > SessionNumber::HEADER_LEN {
-                        out.apdus
-                            .push((sn.session_nb, spdu[SessionNumber::HEADER_LEN..].to_vec()));
-                    }
+                if let Ok(sn) = SessionNumber::parse(spdu)
+                    && spdu.len() > SessionNumber::HEADER_LEN
+                {
+                    out.apdus
+                        .push((sn.session_nb, spdu[SessionNumber::HEADER_LEN..].to_vec()));
                 }
             }
             _ => {}

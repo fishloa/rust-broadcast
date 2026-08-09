@@ -25,11 +25,11 @@
 //!
 //! # Incremental staging ([`stage`])
 //!
-//! The [`stage`] module defines [`Stage`](stage::Stage), the drive shape every
+//! The [`stage`] module defines [`Stage`], the drive shape every
 //! streaming stage in the workspace (TS/FLV demuxers, HLS/LL-HLS segmenters,
 //! conformance monitors, …) is converging on: `feed`/`poll`/`finish` plus a
-//! [`Timestamp`](stage::Timestamp) clock parameter and deadline hooks for
-//! purely time-driven work, and a [`Demand`](stage::Demand) backpressure hint.
+//! [`Timestamp`] clock parameter and deadline hooks for
+//! purely time-driven work, and a [`Demand`] backpressure hint.
 //!
 //! # Quick start
 //! ```

@@ -851,16 +851,16 @@ impl DashPackager {
             }
             w.open("Representation", &rattrs);
 
-            if kind == MediaKind::Audio {
-                if let Some(ch) = r.audio_channels {
-                    w.empty(
-                        "AudioChannelConfiguration",
-                        &[
-                            ("schemeIdUri", AUDIO_CHANNEL_SCHEME.to_string()),
-                            ("value", ch.to_string()),
-                        ],
-                    );
-                }
+            if kind == MediaKind::Audio
+                && let Some(ch) = r.audio_channels
+            {
+                w.empty(
+                    "AudioChannelConfiguration",
+                    &[
+                        ("schemeIdUri", AUDIO_CHANNEL_SCHEME.to_string()),
+                        ("value", ch.to_string()),
+                    ],
+                );
             }
 
             self.write_segment_template(w, r);
@@ -1123,10 +1123,10 @@ fn lang_from_es_info(descriptors: &[u8]) -> Option<String> {
         }
         if tag == ISO_639_LANGUAGE_DESCRIPTOR_TAG && len >= 4 {
             let code = &descriptors[body_start..body_start + 3];
-            if code.iter().all(u8::is_ascii_alphabetic) {
-                if let Ok(s) = core::str::from_utf8(code) {
-                    return Some(s.to_ascii_lowercase());
-                }
+            if code.iter().all(u8::is_ascii_alphabetic)
+                && let Ok(s) = core::str::from_utf8(code)
+            {
+                return Some(s.to_ascii_lowercase());
             }
         }
         i = body_end;

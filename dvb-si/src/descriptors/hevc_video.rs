@@ -231,11 +231,11 @@ impl Serialize for HevcVideoDescriptor {
             | ((self.sub_pic_hrd_params_not_present_flag as u8) << 4)
             | (self.hdr_wcg_idc.to_u8() & 0x03);
 
-        if self.temporal_layer_subset_flag {
-            if let Some(ref ts) = self.temporal_sub {
-                buf[HEADER_LEN + 13] = ts.temporal_id_min << 5;
-                buf[HEADER_LEN + 14] = ts.temporal_id_max << 5;
-            }
+        if self.temporal_layer_subset_flag
+            && let Some(ref ts) = self.temporal_sub
+        {
+            buf[HEADER_LEN + 13] = ts.temporal_id_min << 5;
+            buf[HEADER_LEN + 14] = ts.temporal_id_max << 5;
         }
 
         Ok(len)

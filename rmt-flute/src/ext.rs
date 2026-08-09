@@ -156,7 +156,7 @@ impl<'a> HeaderExtension<'a> {
             Ok(WORD)
         } else {
             // Whole extension must be a multiple of 4 bytes.
-            if total % WORD != 0 {
+            if !total.is_multiple_of(WORD) {
                 return Err(Error::InvalidExtension {
                     reason: "variable-length extension total must be a multiple of 4 bytes",
                 });

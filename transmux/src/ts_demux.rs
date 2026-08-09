@@ -2882,16 +2882,16 @@ impl StreamingTsDemux {
             }
         }
         self.removed_pids.insert(pid);
-        if let Some(stream) = self.streams.remove(&pid) {
-            if let Some(TrackState::Live(live)) = stream.track {
-                self.events.push_back(DemuxEvent::TrackRemoved {
-                    track_id: live.track_id,
-                    provenance: EventProvenance {
-                        pid: Some(pid),
-                        packet_index: None,
-                    },
-                });
-            }
+        if let Some(stream) = self.streams.remove(&pid)
+            && let Some(TrackState::Live(live)) = stream.track
+        {
+            self.events.push_back(DemuxEvent::TrackRemoved {
+                track_id: live.track_id,
+                provenance: EventProvenance {
+                    pid: Some(pid),
+                    packet_index: None,
+                },
+            });
         }
     }
 
@@ -3387,10 +3387,10 @@ impl<'a> TsDemux<'a> {
                         // the first sample's own `dts` (media plane step 2c
                         // invariant, unconditionally true for every track
                         // kind), so derive it here instead.
-                        if track.samples.is_empty() {
-                            if let Some(dts) = sample.dts {
-                                track.start_decode_time = dts as u64;
-                            }
+                        if track.samples.is_empty()
+                            && let Some(dts) = sample.dts
+                        {
+                            track.start_decode_time = dts as u64;
                         }
                         track.samples.push(sample);
                     }
@@ -3721,10 +3721,9 @@ mod tests {
                 provenance,
                 ..
             } = ev
+                && let Some(pid) = provenance.pid
             {
-                if let Some(pid) = provenance.pid {
-                    abandoned_pids.push(pid);
-                }
+                abandoned_pids.push(pid);
             }
         }
         assert!(

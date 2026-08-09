@@ -9,7 +9,7 @@ keywords = ["webrtc", "whip", "whep", "streaming", "sans-io"]
 categories = ["multimedia", "network-programming", "api-bindings"]
 repository   = "https://github.com/fishloa/rust-broadcast"
 readme       = "README.md"
-rust-version = "1.86"
+rust-version.workspace = true
 exclude = ["docs/**", "tests/fixtures/**"]
 
 [package.metadata.docs.rs]
@@ -25,9 +25,9 @@ serde = { version = "1", optional = true, default-features = false, features = [
 
 # ---------------------------------------------------------------------------
 # `media` feature only (see src/media/mod.rs). All optional: the default
-# build (no_std-capable, MSRV 1.86) never touches these. rtc-dtls's `rcgen`
-# dependency requires rustc >= 1.88 (verified empirically — see README),
-# which is why this whole group is feature-gated rather than a plain dep.
+# build (no_std-capable) never touches these. Feature-gated so a consumer
+# that only needs WHIP/WHEP signalling does not build the ICE/DTLS-SRTP
+# transport and its dependency tree.
 # ---------------------------------------------------------------------------
 rtp-packet  = { path = "../rtp-packet",  version = "0.3", optional = true }
 rtcp-packet = { path = "../rtcp-packet", version = "0.2", optional = true }
@@ -49,10 +49,9 @@ sha2        = { version = "0.10", optional = true }
 default = ["std"]
 std     = []
 serde   = ["dep:serde"]
-# ICE + DTLS-SRTP media transport. Requires rustc >= 1.88 (see README
-# "MSRV" section) — enabling it on the crate's declared 1.86 MSRV fails to
-# build with a dependency-version error, not a clear message, so this is
-# documented loudly rather than left to be discovered.
+# ICE + DTLS-SRTP media transport. Optional on dependency weight alone —
+# it used to also require a newer rustc than the workspace MSRV (`rcgen`
+# needs 1.88, the MSRV was 1.86), but the MSRV is now 1.95.0 (issue #949).
 media = [
     "std",
     "dep:rtp-packet",

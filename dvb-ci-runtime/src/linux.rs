@@ -218,7 +218,7 @@ impl LinuxCiDataDevice {
 
 impl CiDataDevice for LinuxCiDataDevice {
     fn write(&mut self, ts: &[u8]) -> io::Result<()> {
-        if ts.len() % TS_PACKET_LEN != 0 {
+        if !ts.len().is_multiple_of(TS_PACKET_LEN) {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
                 "write not a multiple of 188 bytes",
@@ -228,7 +228,7 @@ impl CiDataDevice for LinuxCiDataDevice {
     }
 
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        if buf.len() % TS_PACKET_LEN != 0 {
+        if !buf.len().is_multiple_of(TS_PACKET_LEN) {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
                 "read buffer not a multiple of 188 bytes",

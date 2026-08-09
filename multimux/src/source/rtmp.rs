@@ -414,10 +414,8 @@ impl RtmpIngestSession {
         let mut newly_seen_samples: Vec<(u32, Sample)> = Vec::new();
         while let Some(ev) = self.demux.poll_event() {
             match ev {
-                DemuxEvent::TrackAdded(spec) => {
-                    if !self.established {
-                        self.specs.push(spec);
-                    }
+                DemuxEvent::TrackAdded(spec) if !self.established => {
+                    self.specs.push(spec);
                     // A track resolving *after* establishment is a
                     // genuinely non-conformant encoder (Annex E requires the
                     // sequence header before any media for that track) —
@@ -480,14 +478,14 @@ impl Stage for RtmpIngestSession {
         for event in events {
             match event {
                 ServerEvent::Connected { app } => {
-                    if let Some(expected) = &self.app {
-                        if app != expected {
-                            return Err(MultimuxError::Connect {
-                                reason: format!(
-                                    "rtmp: app {app:?} does not match configured app {expected:?}"
-                                ),
-                            });
-                        }
+                    if let Some(expected) = &self.app
+                        && app != expected
+                    {
+                        return Err(MultimuxError::Connect {
+                            reason: format!(
+                                "rtmp: app {app:?} does not match configured app {expected:?}"
+                            ),
+                        });
                     }
                 }
                 ServerEvent::Media { flv } => {
@@ -674,11 +672,11 @@ pub async fn run_rtmp(
                         }
                         let reaped =
                             report_and_maybe_reap(&mut driver, id, route_handle, &mut progress);
-                        if !reaped {
-                            if let Some(d) = driver.driver(id) {
-                                let conn = d.session().conn_handle();
-                                reads.push(read_one(id, conn, read_timeout));
-                            }
+                        if !reaped
+                            && let Some(d) = driver.driver(id)
+                        {
+                            let conn = d.session().conn_handle();
+                            reads.push(read_one(id, conn, read_timeout));
                         }
                     }
                     ReadOutcome::Eof => {
@@ -856,10 +854,10 @@ mod tests {
         // fail "never lands" rather than hang, not a timing claim.
         let deadline = tokio::time::Instant::now() + Duration::from_secs(60);
         let landed = loop {
-            if let Ok(resolved) = crate::http::resolve_route_program(&route_handle) {
-                if resolved.trunk().tracks().len() == 2 {
-                    break true;
-                }
+            if let Ok(resolved) = crate::http::resolve_route_program(&route_handle)
+                && resolved.trunk().tracks().len() == 2
+            {
+                break true;
             }
             if tokio::time::Instant::now() >= deadline {
                 break false;
@@ -974,10 +972,10 @@ mod tests {
         // not a timing claim.
         let deadline = tokio::time::Instant::now() + Duration::from_secs(60);
         let landed = loop {
-            if let Ok(resolved) = crate::http::resolve_route_program(&route_handle) {
-                if resolved.trunk().tracks().len() == 2 {
-                    break true;
-                }
+            if let Ok(resolved) = crate::http::resolve_route_program(&route_handle)
+                && resolved.trunk().tracks().len() == 2
+            {
+                break true;
             }
             if tokio::time::Instant::now() >= deadline {
                 break false;
@@ -1098,10 +1096,10 @@ mod tests {
         // since it is not a timing claim.
         let deadline = tokio::time::Instant::now() + Duration::from_secs(60);
         let landed = loop {
-            if let Ok(resolved) = crate::http::resolve_route_program(&route_handle) {
-                if resolved.trunk().tracks().len() == 2 {
-                    break true;
-                }
+            if let Ok(resolved) = crate::http::resolve_route_program(&route_handle)
+                && resolved.trunk().tracks().len() == 2
+            {
+                break true;
             }
             if tokio::time::Instant::now() >= deadline {
                 break false;
@@ -1195,10 +1193,10 @@ mod tests {
         // ceiling; raised for load tolerance since it is not a timing claim.
         let deadline = tokio::time::Instant::now() + Duration::from_secs(60);
         let landed = loop {
-            if let Ok(resolved) = crate::http::resolve_route_program(&route_handle) {
-                if resolved.trunk().tracks().len() == 2 {
-                    break true;
-                }
+            if let Ok(resolved) = crate::http::resolve_route_program(&route_handle)
+                && resolved.trunk().tracks().len() == 2
+            {
+                break true;
             }
             if tokio::time::Instant::now() >= deadline {
                 break false;

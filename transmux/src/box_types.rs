@@ -349,11 +349,11 @@ impl Serialize for BoxHeader {
         }
 
         // usertype for uuid
-        if self.box_type.is(b"uuid") {
-            if let Some(ut) = &self.usertype {
-                buf[cursor..cursor + UUID_TYPE_SIZE].copy_from_slice(ut);
-                cursor += UUID_TYPE_SIZE;
-            }
+        if self.box_type.is(b"uuid")
+            && let Some(ut) = &self.usertype
+        {
+            buf[cursor..cursor + UUID_TYPE_SIZE].copy_from_slice(ut);
+            cursor += UUID_TYPE_SIZE;
         }
 
         Ok(cursor)

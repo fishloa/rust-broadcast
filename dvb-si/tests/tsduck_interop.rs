@@ -239,23 +239,23 @@ fn decodes_tsduck_compiled_protection_message() {
     let mut seen = false;
     for stream in &pmt.streams {
         for desc in stream.es_info.iter() {
-            if let AnyDescriptor::Extension(ext) = desc.expect("descriptor must parse") {
-                if let ExtensionBody::ProtectionMessage(pm) = &ext.body {
-                    seen = true;
-                    assert_eq!(ext.kind(), Some(ExtensionTag::ProtectionMessage));
-                    // TSDuck encoded reserved bits as all-ones; we must preserve them.
-                    assert_eq!(pm.reserved, 0x0F);
-                    assert_eq!(pm.component_tags, &[0x10, 0x20, 0x33]);
-                    // Byte-exact round-trip of the descriptor TSDuck produced.
-                    let mut buf = vec![0u8; ext.serialized_len()];
-                    ext.serialize_into(&mut buf).unwrap();
-                    let mut orig = vec![0u8; ext.serialized_len()];
-                    ExtensionDescriptor::parse(&buf)
-                        .unwrap()
-                        .serialize_into(&mut orig)
-                        .unwrap();
-                    assert_eq!(buf, orig);
-                }
+            if let AnyDescriptor::Extension(ext) = desc.expect("descriptor must parse")
+                && let ExtensionBody::ProtectionMessage(pm) = &ext.body
+            {
+                seen = true;
+                assert_eq!(ext.kind(), Some(ExtensionTag::ProtectionMessage));
+                // TSDuck encoded reserved bits as all-ones; we must preserve them.
+                assert_eq!(pm.reserved, 0x0F);
+                assert_eq!(pm.component_tags, &[0x10, 0x20, 0x33]);
+                // Byte-exact round-trip of the descriptor TSDuck produced.
+                let mut buf = vec![0u8; ext.serialized_len()];
+                ext.serialize_into(&mut buf).unwrap();
+                let mut orig = vec![0u8; ext.serialized_len()];
+                ExtensionDescriptor::parse(&buf)
+                    .unwrap()
+                    .serialize_into(&mut orig)
+                    .unwrap();
+                assert_eq!(buf, orig);
             }
         }
     }
@@ -275,21 +275,21 @@ fn decodes_tsduck_compiled_cpcm_delivery_signalling() {
     let mut seen = false;
     for stream in &pmt.streams {
         for desc in stream.es_info.iter() {
-            if let AnyDescriptor::Extension(ext) = desc.expect("descriptor must parse") {
-                if let ExtensionBody::CpcmDeliverySignalling(cpcm) = &ext.body {
-                    seen = true;
-                    assert_eq!(ext.kind(), Some(ExtensionTag::CpcmDeliverySignalling));
-                    assert_eq!(cpcm.cpcm_version, 0x01);
-                    assert!(!cpcm.selector_bytes.is_empty());
-                    let mut buf = vec![0u8; ext.serialized_len()];
-                    ext.serialize_into(&mut buf).unwrap();
-                    let mut round = vec![0u8; ext.serialized_len()];
-                    ExtensionDescriptor::parse(&buf)
-                        .unwrap()
-                        .serialize_into(&mut round)
-                        .unwrap();
-                    assert_eq!(buf, round);
-                }
+            if let AnyDescriptor::Extension(ext) = desc.expect("descriptor must parse")
+                && let ExtensionBody::CpcmDeliverySignalling(cpcm) = &ext.body
+            {
+                seen = true;
+                assert_eq!(ext.kind(), Some(ExtensionTag::CpcmDeliverySignalling));
+                assert_eq!(cpcm.cpcm_version, 0x01);
+                assert!(!cpcm.selector_bytes.is_empty());
+                let mut buf = vec![0u8; ext.serialized_len()];
+                ext.serialize_into(&mut buf).unwrap();
+                let mut round = vec![0u8; ext.serialized_len()];
+                ExtensionDescriptor::parse(&buf)
+                    .unwrap()
+                    .serialize_into(&mut round)
+                    .unwrap();
+                assert_eq!(buf, round);
             }
         }
     }

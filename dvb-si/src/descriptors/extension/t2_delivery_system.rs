@@ -411,7 +411,7 @@ impl<'a> Parse<'a> for T2DeliverySystem {
                     }
                     let freq_loop_len = sel[pos] as usize;
                     pos += 1;
-                    if freq_loop_len % 4 != 0 {
+                    if !freq_loop_len.is_multiple_of(4) {
                         return Err(invalid(
                             "T2_delivery_system: frequency_loop_length not a multiple of 4",
                         ));
@@ -467,7 +467,7 @@ impl<'a> Parse<'a> for T2DeliverySystem {
                 }
                 let subcell_loop_len = sel[pos] as usize;
                 pos += 1;
-                if subcell_loop_len % 5 != 0 {
+                if !subcell_loop_len.is_multiple_of(5) {
                     return Err(invalid(
                         "T2_delivery_system: subcell_info_loop_length not a multiple of 5",
                     ));

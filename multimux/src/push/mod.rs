@@ -274,11 +274,11 @@ impl ReconnectEngine {
     /// [`ReconnectPolicy::backoff_for(n - 1)`](crate::config::ReconnectPolicy::backoff_for).
     pub fn on_disconnect(&mut self) {
         self.attempt = self.attempt.saturating_add(1);
-        if let Some(max) = self.policy.max_attempts {
-            if self.attempt >= max {
-                self.state = ReconnectState::Failed;
-                return;
-            }
+        if let Some(max) = self.policy.max_attempts
+            && self.attempt >= max
+        {
+            self.state = ReconnectState::Failed;
+            return;
         }
         let backoff = self.policy.backoff_for(self.attempt.saturating_sub(1));
         self.state = ReconnectState::Backoff {

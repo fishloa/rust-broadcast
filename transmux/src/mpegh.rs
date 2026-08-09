@@ -266,7 +266,7 @@ impl<'a> BitReader<'a> {
 
     /// The current position as a byte offset, if bit-aligned to a byte.
     fn byte_pos(&self) -> Option<usize> {
-        (self.pos % 8 == 0).then_some(self.pos / 8)
+        self.pos.is_multiple_of(8).then_some(self.pos / 8)
     }
 }
 

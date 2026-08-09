@@ -403,58 +403,54 @@ impl StreamingFlvDemux {
         let composition_time = read_si24(&body[2..5]);
         let data = &body[5..];
         match avc_packet_type_byte {
-            avc_packet_type::SEQUENCE_HEADER => {
-                if video.track_id.is_none() && !data.is_empty() {
-                    // `AVCDecoderConfigurationRecord::parse` rejects 0 SPS
-                    // (#738 T11a review, Critical — see `avc_config.rs`), so
-                    // this never panics on a malicious sequence header; the
-                    // `.first()` below is additional defense-in-depth against
-                    // a directly-constructed (non-`parse`) empty-SPS record.
-                    let record = AVCDecoderConfigurationRecord::parse(data)?;
-                    let config = AVCConfigurationBox::new(record);
-                    let (width, height) = config
-                        .config
-                        .sps
-                        .first()
-                        .and_then(|sps| crate::sps::decode_avc_sps(&sps.0).ok())
-                        .map(|i| (i.width as u16, i.height as u16))
-                        .unwrap_or((0, 0));
-                    let track_id = *next_track_id;
-                    *next_track_id += 1;
-                    video.track_id = Some(track_id);
-                    let spec = TrackSpec::new(
-                        track_id,
-                        FLV_TIMESCALE,
-                        CodecConfig::Avc {
-                            config,
-                            width,
-                            height,
-                        },
-                    );
-                    events.push_back(DemuxEvent::TrackAdded(spec));
-                }
+            avc_packet_type::SEQUENCE_HEADER if video.track_id.is_none() && !data.is_empty() => {
+                // `AVCDecoderConfigurationRecord::parse` rejects 0 SPS
+                // (#738 T11a review, Critical — see `avc_config.rs`), so
+                // this never panics on a malicious sequence header; the
+                // `.first()` below is additional defense-in-depth against
+                // a directly-constructed (non-`parse`) empty-SPS record.
+                let record = AVCDecoderConfigurationRecord::parse(data)?;
+                let config = AVCConfigurationBox::new(record);
+                let (width, height) = config
+                    .config
+                    .sps
+                    .first()
+                    .and_then(|sps| crate::sps::decode_avc_sps(&sps.0).ok())
+                    .map(|i| (i.width as u16, i.height as u16))
+                    .unwrap_or((0, 0));
+                let track_id = *next_track_id;
+                *next_track_id += 1;
+                video.track_id = Some(track_id);
+                let spec = TrackSpec::new(
+                    track_id,
+                    FLV_TIMESCALE,
+                    CodecConfig::Avc {
+                        config,
+                        width,
+                        height,
+                    },
+                );
+                events.push_back(DemuxEvent::TrackAdded(spec));
             }
-            avc_packet_type::NALU => {
-                // Dropped (not buffered) if the sequence header hasn't
-                // resolved the track yet — see the module `# Ordering
-                // assumption` note.
-                if video.track_id.is_some() {
-                    // Absolute dts/pts (media plane step 2c): the FLV tag
-                    // timestamp is already an absolute wire clock
-                    // (milliseconds, `FLV_TIMESCALE`); `CompositionTime`
-                    // (§E.4.3.2) folds directly into `pts`.
-                    let dts_abs = timestamp as i64;
-                    let pts_abs = dts_abs + composition_time as i64;
-                    let sample = Sample {
-                        data: data.to_vec().into(),
-                        dts: Some(dts_abs),
-                        pts: Some(pts_abs),
-                        duration: None, // filled in by `TrackState::advance`/`flush`
-                        flags: crate::ir::SampleFlags::new(frame_type == FRAME_TYPE_KEYFRAME),
-                        provenance: None,
-                    };
-                    video.advance(sample, timestamp, events);
-                }
+            // Dropped (not buffered) if the sequence header hasn't
+            // resolved the track yet — see the module `# Ordering
+            // assumption` note.
+            avc_packet_type::NALU if video.track_id.is_some() => {
+                // Absolute dts/pts (media plane step 2c): the FLV tag
+                // timestamp is already an absolute wire clock
+                // (milliseconds, `FLV_TIMESCALE`); `CompositionTime`
+                // (§E.4.3.2) folds directly into `pts`.
+                let dts_abs = timestamp as i64;
+                let pts_abs = dts_abs + composition_time as i64;
+                let sample = Sample {
+                    data: data.to_vec().into(),
+                    dts: Some(dts_abs),
+                    pts: Some(pts_abs),
+                    duration: None, // filled in by `TrackState::advance`/`flush`
+                    flags: crate::ir::SampleFlags::new(frame_type == FRAME_TYPE_KEYFRAME),
+                    provenance: None,
+                };
+                video.advance(sample, timestamp, events);
             }
             avc_packet_type::END_OF_SEQUENCE => {}
             _ => {}
@@ -483,27 +479,25 @@ impl StreamingFlvDemux {
         let aac_pkt_type = body[1];
         let data = &body[2..];
         match aac_pkt_type {
-            aac_packet_type::SEQUENCE_HEADER => {
-                if audio.track_id.is_none() && !data.is_empty() {
-                    let asc = AudioSpecificConfig::parse(data)?;
-                    let channels = asc.channel_configuration.raw() as u16;
-                    let rate = asc_rate_hz(&asc);
-                    let esds = build_aac_esds(data.to_vec());
-                    let track_id = *next_track_id;
-                    *next_track_id += 1;
-                    audio.track_id = Some(track_id);
-                    let spec = TrackSpec::new(
-                        track_id,
-                        FLV_TIMESCALE,
-                        CodecConfig::Aac {
-                            esds,
-                            channel_count: channels,
-                            sample_rate: rate,
-                            sample_size: AUDIO_SAMPLE_SIZE_BITS,
-                        },
-                    );
-                    events.push_back(DemuxEvent::TrackAdded(spec));
-                }
+            aac_packet_type::SEQUENCE_HEADER if audio.track_id.is_none() && !data.is_empty() => {
+                let asc = AudioSpecificConfig::parse(data)?;
+                let channels = asc.channel_configuration.raw() as u16;
+                let rate = asc_rate_hz(&asc);
+                let esds = build_aac_esds(data.to_vec());
+                let track_id = *next_track_id;
+                *next_track_id += 1;
+                audio.track_id = Some(track_id);
+                let spec = TrackSpec::new(
+                    track_id,
+                    FLV_TIMESCALE,
+                    CodecConfig::Aac {
+                        esds,
+                        channel_count: channels,
+                        sample_rate: rate,
+                        sample_size: AUDIO_SAMPLE_SIZE_BITS,
+                    },
+                );
+                events.push_back(DemuxEvent::TrackAdded(spec));
             }
             // Dropped (not buffered) if the sequence header hasn't resolved
             // the track yet — see the module `# Ordering assumption` note.

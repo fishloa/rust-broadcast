@@ -144,10 +144,10 @@ async fn dynamic_file(State(route): State<Arc<RouteHandle>>, Path(file): Path<St
         // filename the chunked-transfer path (issue #721) can serve while
         // its segment is still in progress -- try that before giving up.
         resp if resp.status() == StatusCode::NOT_FOUND => {
-            if let Some((track, seq)) = parse_segment_filename(&file) {
-                if let Some(resp) = stream_in_progress_segment(serving, track, seq).await {
-                    return resp;
-                }
+            if let Some((track, seq)) = parse_segment_filename(&file)
+                && let Some(resp) = stream_in_progress_segment(serving, track, seq).await
+            {
+                return resp;
             }
             StatusCode::NOT_FOUND.into_response()
         }

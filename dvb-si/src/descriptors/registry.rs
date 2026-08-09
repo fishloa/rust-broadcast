@@ -367,22 +367,21 @@ pub(crate) fn dispatch_entry<'a>(
     tag: u8,
     full: &'a [u8],
 ) -> crate::Result<AnyDescriptor<'a>> {
-    if let Some(pds) = current_pds {
-        if let Some(parse_fn) = registry.custom.get(&(Some(pds), tag)) {
-            return parse_fn(full).map(|value| AnyDescriptor::Other { tag, value });
-        }
+    if let Some(pds) = current_pds
+        && let Some(parse_fn) = registry.custom.get(&(Some(pds), tag))
+    {
+        return parse_fn(full).map(|value| AnyDescriptor::Other { tag, value });
     }
     if let Some(parse_fn) = registry.custom.get(&(None, tag)) {
         return parse_fn(full).map(|value| AnyDescriptor::Other { tag, value });
     }
-    if let Some(pds) = current_pds {
-        if tag == crate::descriptors::logical_channel::TAG
-            && registry.logical_channel_pds.contains(&pds)
-        {
-            use broadcast_common::Parse;
-            return crate::descriptors::logical_channel::LogicalChannelDescriptor::parse(full)
-                .map(AnyDescriptor::LogicalChannel);
-        }
+    if let Some(pds) = current_pds
+        && tag == crate::descriptors::logical_channel::TAG
+        && registry.logical_channel_pds.contains(&pds)
+    {
+        use broadcast_common::Parse;
+        return crate::descriptors::logical_channel::LogicalChannelDescriptor::parse(full)
+            .map(AnyDescriptor::LogicalChannel);
     }
     if registry.logical_channel && tag == crate::descriptors::logical_channel::TAG {
         use broadcast_common::Parse;

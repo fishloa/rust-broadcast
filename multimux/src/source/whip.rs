@@ -1100,12 +1100,12 @@ pub async fn run_whip(
                         }
                         let reaped =
                             report_and_maybe_reap(&mut driver, id, route_handle, &mut progress);
-                        if !reaped {
-                            if let Some(d) = driver.driver(id) {
-                                let socket = d.session().socket_handle();
-                                let media = d.session().media_handle();
-                                reads.push(read_one(id, socket, media, read_timeout));
-                            }
+                        if !reaped
+                            && let Some(d) = driver.driver(id)
+                        {
+                            let socket = d.session().socket_handle();
+                            let media = d.session().media_handle();
+                            reads.push(read_one(id, socket, media, read_timeout));
                         }
                     }
                     ReadOutcome::TimedOut => {

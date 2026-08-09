@@ -39,7 +39,7 @@ pub struct C2BundleDeliverySystem {
 impl<'a> Parse<'a> for C2BundleDeliverySystem {
     type Error = crate::error::Error;
     fn parse(sel: &'a [u8]) -> Result<Self> {
-        if sel.len() % C2_BUNDLE_ENTRY_LEN != 0 {
+        if !sel.len().is_multiple_of(C2_BUNDLE_ENTRY_LEN) {
             return Err(invalid(
                 "C2_bundle_delivery_system: not a whole number of entries",
             ));

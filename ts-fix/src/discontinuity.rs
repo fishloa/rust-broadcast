@@ -80,16 +80,16 @@ pub fn detect_pcr_discontinuities(ts_bytes: &[u8]) -> Vec<PcrDiscontinuity> {
 
         // Flagged: a direct, threshold-free read of discontinuity_indicator
         // on a PCR-bearing packet (a legal system-time-base change).
-        if let Ok(pkt) = TsPacket::parse(packet) {
-            if let Some(Ok(af)) = pkt.adaptation_field() {
-                if af.pcr.is_some() && af.discontinuity_indicator {
-                    found.push(PcrDiscontinuity {
-                        pid: pkt.header.pid,
-                        packet_index,
-                        flagged: true,
-                    });
-                }
-            }
+        if let Ok(pkt) = TsPacket::parse(packet)
+            && let Some(Ok(af)) = pkt.adaptation_field()
+            && af.pcr.is_some()
+            && af.discontinuity_indicator
+        {
+            found.push(PcrDiscontinuity {
+                pid: pkt.header.pid,
+                packet_index,
+                flagged: true,
+            });
         }
 
         // Unflagged: TR 101 290 §5.2.2 indicator 2.3b, reused from

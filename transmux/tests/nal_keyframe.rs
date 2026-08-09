@@ -197,10 +197,10 @@ fn find_box_body<'a>(data: &'a [u8], four_cc: &[u8; 4]) -> Option<&'a [u8]> {
         if ty == four_cc {
             return Some(&data[off + 8..off + size]);
         }
-        if CONTAINERS.contains(&ty) {
-            if let Some(found) = find_box_body(&data[off + 8..off + size], four_cc) {
-                return Some(found);
-            }
+        if CONTAINERS.contains(&ty)
+            && let Some(found) = find_box_body(&data[off + 8..off + size], four_cc)
+        {
+            return Some(found);
         }
         off += size;
     }

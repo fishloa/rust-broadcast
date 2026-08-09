@@ -6,7 +6,7 @@ use cc_data::decode::{Cea608Channel, Cea608Decoder};
 
 /// Add odd parity to a 7-bit value so the pairs look like real line-21 bytes.
 fn par(v: u8) -> u8 {
-    if (v & 0x7F).count_ones() % 2 == 0 {
+    if (v & 0x7F).count_ones().is_multiple_of(2) {
         v | 0x80
     } else {
         v & 0x7F

@@ -52,7 +52,7 @@ A Rust workspace of DVB (Digital Video Broadcasting) protocol parsers + builders
 - **dvb-si-py** (`bindings/python/`) — PyO3/maturin Python bindings over dvb-si/dvb-t2mi: `parse_section(bytes)->dict` + `Demux`/`T2miDemux` classes (read-only, parse→serde_json→Python). NOT a workspace member (own MSRV); consumes published crates by version; abi3 wheels to PyPI via its own workflow.
 - **transmux-py** (`bindings/transmux-py/`) — PyO3/maturin Python bindings over transmux: `demux_ts(bytes)->dict` exposing the `Media`/`Track`/`Sample` IR (codec identity/RFC 6381 string, timescale, opaque coded sample bytes) for ML/analysis front-ends (docs/IDEAS.md item #7). Hand-converts Rust structs to `PyDict`s field-by-field (transmux's pipeline IR carries no `serde::Serialize`, unlike dvb-si-py's json round-trip). NOT a workspace member (own MSRV); consumes published transmux by version; abi3 wheels to PyPI via its own workflow.
 
-MSRV is **1.86** (workspace `rust-version`); the committed `Cargo.lock` pins MSRV-compatible deps — always build/test with `--locked`.
+MSRV is **1.95.0** (workspace `rust-version`, inherited by every member via `rust-version.workspace = true`); the committed `Cargo.lock` pins MSRV-compatible deps — always build/test with `--locked`.
 
 ## Commands
 
@@ -64,6 +64,18 @@ cargo build --workspace --no-default-features --locked
 cargo clippy --workspace --all-features --all-targets --locked -- -D warnings
 cargo fmt --all --check
 RUSTDOCFLAGS="-D warnings" cargo doc --workspace --all-features --no-deps --locked
+
+# macOS CANNOT verify Linux-gated code. `dvb-ci-runtime/src/linux.rs` is behind
+# `#[cfg(all(feature = "linux", target_os = "linux"))]`, so a clean local
+# clippy on macOS says nothing about it — two lints there passed every local
+# gate and failed CI twice (blocking clippy AND the canary, same root cause).
+# Cross-check that crate before pushing:
+rustup target add x86_64-unknown-linux-gnu
+cargo clippy -p dvb-ci-runtime --all-features --all-targets --locked \
+  --target x86_64-unknown-linux-gnu -- -D warnings
+# Whole-workspace cross-clippy does NOT work from macOS (`ring`'s build script
+# needs a C cross-toolchain). `dvb-ci-runtime` is currently the only crate with
+# `target_os` gating, so it is the only one that needs this.
 
 # The clippy canary — a PINNED stable newer than the MSRV, non-blocking in CI.
 # Pinned so it is reproducible: `cargo +stable` runs whatever you happen to have
@@ -108,7 +120,7 @@ Work in this repo is tracked as GitHub issues and lands via PRs to `main`. Use t
 2. **Branch per issue** off `main`, named for the work (e.g. `complete-descriptors`, `fix-tot-crc`).
 3. **Commit style** follows the existing history: `feat(carousel): …`, `fix(text): …`, `docs(dvb-si): …`, or a plain scoped summary. Imperative, specific, references the spec section when relevant.
 4. **Open a PR** with `gh pr create`, body referencing the issue (`Closes #n`). CI must pass before merge:
-   - test matrix on stable **and** 1.86 (MSRV) — all-features and no-default-features builds
+   - test matrix on stable **and** 1.95.0 (MSRV) — all-features and no-default-features builds
    - `cargo fmt --all --check`
    - clippy `-D warnings` on all targets
    - doc build with `RUSTDOCFLAGS="-D warnings"`

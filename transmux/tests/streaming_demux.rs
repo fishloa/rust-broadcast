@@ -83,10 +83,10 @@ fn assemble(mut demux: StreamingTsDemux) -> Media {
                     // first sample's own `dts` (media plane step 2c
                     // invariant), so derive it here instead, matching
                     // `TsDemux::demux`'s own oracle derivation.
-                    if track.samples.is_empty() {
-                        if let Some(dts) = sample.dts {
-                            track.start_decode_time = dts as u64;
-                        }
+                    if track.samples.is_empty()
+                        && let Some(dts) = sample.dts
+                    {
+                        track.start_decode_time = dts as u64;
                     }
                     track.samples.push(sample);
                 }

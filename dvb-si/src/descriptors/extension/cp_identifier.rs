@@ -22,7 +22,7 @@ pub struct CpIdentifier {
 impl<'a> Parse<'a> for CpIdentifier {
     type Error = crate::error::Error;
     fn parse(sel: &'a [u8]) -> Result<Self> {
-        if sel.len() % 2 != 0 {
+        if !sel.len().is_multiple_of(2) {
             return Err(Error::InvalidDescriptor {
                 tag: crate::descriptor_tag::DescriptorTag::Extension as u8,
                 reason: "CP_identifier body length must be a multiple of 2",

@@ -308,12 +308,10 @@ impl ByteMerge {
             secondary,
             silence_timeout,
         } = &self.policy
+            && let Some(last) = self.last_seen[primary.0]
+            && now.saturating_sub(last) >= *silence_timeout
         {
-            if let Some(last) = self.last_seen[primary.0] {
-                if now.saturating_sub(last) >= *silence_timeout {
-                    self.active = secondary.0;
-                }
-            }
+            self.active = secondary.0;
         }
     }
 }

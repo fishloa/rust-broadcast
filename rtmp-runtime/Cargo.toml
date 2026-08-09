@@ -9,7 +9,7 @@ keywords = ["rtmp", "ingest", "streaming", "flv", "live"]
 categories = ["multimedia", "network-programming"]
 repository   = "https://github.com/fishloa/rust-broadcast"
 readme       = "README.md"
-rust-version = "1.86"
+rust-version.workspace = true
 exclude = ["docs/**"]
 
 [package.metadata.docs.rs]

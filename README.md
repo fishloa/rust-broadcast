@@ -20,7 +20,7 @@ feed all the way down to a service name string.
 | | |
 |---|---|
 | **Versions** | 6 lockstep core crates (`broadcast-common`, `dvb-si`, `dvb-t2mi`, `dvb-bbframe`, `dvb-conformance`, `dvb-tools`) at **9.0.0**; every other crate below is independently versioned — see its own badge for the current version |
-| **MSRV** | **1.86** across the workspace (pinned in `rust-toolchain.toml`) |
+| **MSRV** | **1.95.0** across the workspace (pinned in `rust-toolchain.toml`) |
 | **Edition** | **2024** across the workspace |
 | **`no_std`** | Most parser/builder library crates below build `#![no_std]` + `alloc` under `--no-default-features` (suitable for embedded targets with a heap) — see each crate's own docs for its exact story. `dvb-tools`, `dvb-stream`, `dvb-ci-runtime`, `multimux`, `multimux-cli` and other tokio/axum-based crates require `std` and are not embedded-suitable. |
 

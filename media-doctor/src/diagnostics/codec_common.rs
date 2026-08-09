@@ -140,19 +140,19 @@ pub(crate) fn for_each_access_unit(
         }
         let pusi = pkt.header.pusi;
         let assembler = assemblers.entry(pid).or_default();
-        if let Some(pes_bytes) = assembler.feed(pusi, payload) {
-            if let Ok(pes) = mpeg_pes::PesPacket::parse(&pes_bytes) {
-                on_payload(pes.payload, i, pid);
-            }
+        if let Some(pes_bytes) = assembler.feed(pusi, payload)
+            && let Ok(pes) = mpeg_pes::PesPacket::parse(&pes_bytes)
+        {
+            on_payload(pes.payload, i, pid);
         }
     }
 
     let last = n_packets.saturating_sub(1);
     for (&pid, assembler) in assemblers.iter_mut() {
-        if let Some(pes_bytes) = assembler.flush() {
-            if let Ok(pes) = mpeg_pes::PesPacket::parse(&pes_bytes) {
-                on_payload(pes.payload, last, pid);
-            }
+        if let Some(pes_bytes) = assembler.flush()
+            && let Ok(pes) = mpeg_pes::PesPacket::parse(&pes_bytes)
+        {
+            on_payload(pes.payload, last, pid);
         }
     }
 }

@@ -482,11 +482,12 @@ impl SiDemux {
 
         // Update the gate (FIFO-evict at capacity for newly-seen keys).
         let is_new = !self.gate.contains_key(&key);
-        if is_new && self.gate.len() >= self.cfg.gate_capacity {
-            if let Some(old) = self.gate_order.pop_front() {
-                self.gate.remove(&old);
-                self.stats.gate_evictions += 1;
-            }
+        if is_new
+            && self.gate.len() >= self.cfg.gate_capacity
+            && let Some(old) = self.gate_order.pop_front()
+        {
+            self.gate.remove(&old);
+            self.stats.gate_evictions += 1;
         }
         if is_new {
             self.gate_order.push_back(key);

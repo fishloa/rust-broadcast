@@ -479,13 +479,13 @@ impl Serialize for CompactSpliceInsert {
                 have: buf.len(),
             });
         }
-        if let Some(das) = &self.das {
-            if das.upid.len() + 3 > u8::MAX as usize {
-                return Err(Error::InvalidValue {
-                    field: "compact_splice_insert.das.upid",
-                    reason: "DAS body length exceeds 8-bit descriptor_length",
-                });
-            }
+        if let Some(das) = &self.das
+            && das.upid.len() + 3 > u8::MAX as usize
+        {
+            return Err(Error::InvalidValue {
+                field: "compact_splice_insert.das.upid",
+                reason: "DAS body length exceeds 8-bit descriptor_length",
+            });
         }
         buf[0] = (u8::from(self.encrypted_packet) << 7)
             | ((self.encryption_algorithm & 0x3F) << 1)

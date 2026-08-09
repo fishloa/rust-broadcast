@@ -734,10 +734,11 @@ impl RtpStreamDepacketiser {
         // A timestamp change while packets are buffered means the previous
         // timestamp's packets already form a complete AU (defensive: covers
         // a dropped/missing marker bit).
-        if let Some(cur) = st.cur_ts {
-            if cur != ts && !st.cur_pkts.is_empty() {
-                Self::drain_complete_or_discard(st, loss_events, track_id, out);
-            }
+        if let Some(cur) = st.cur_ts
+            && cur != ts
+            && !st.cur_pkts.is_empty()
+        {
+            Self::drain_complete_or_discard(st, loss_events, track_id, out);
         }
         st.cur_ts = Some(ts);
         st.cur_bytes += rtp_packet.len();

@@ -193,7 +193,7 @@ impl<'a> Parse<'a> for CellListDescriptor {
             let (cell_extent_of_latitude, cell_extent_of_longitude) = read_extents(&outer[6..9]);
             let subcell_info_loop_length = outer[9] as usize;
             pos += OUTER_FIXED_LEN;
-            if subcell_info_loop_length % SUBCELL_LEN != 0 {
+            if !subcell_info_loop_length.is_multiple_of(SUBCELL_LEN) {
                 return Err(Error::InvalidDescriptor {
                     tag: TAG,
                     reason: "subcell_info_loop_length must be a multiple of 8",

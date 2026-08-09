@@ -195,15 +195,15 @@ impl Resource for ApplicationInformation {
 
     fn on_apdu(&mut self, apdu: &[u8]) -> ResourceOut {
         let mut out = ResourceOut::default();
-        if peek_tag(apdu) == Some(tag::APPLICATION_INFO) {
-            if let Ok(ai) = ApplicationInfo::parse(apdu) {
-                out.notify.push(Notification::ApplicationInfo {
-                    application_type: ai.application_type.to_u8(),
-                    manufacturer: ai.application_manufacturer,
-                    code: ai.manufacturer_code,
-                    menu: String::from_utf8_lossy(ai.menu_string).into_owned(),
-                });
-            }
+        if peek_tag(apdu) == Some(tag::APPLICATION_INFO)
+            && let Ok(ai) = ApplicationInfo::parse(apdu)
+        {
+            out.notify.push(Notification::ApplicationInfo {
+                application_type: ai.application_type.to_u8(),
+                manufacturer: ai.application_manufacturer,
+                code: ai.manufacturer_code,
+                menu: String::from_utf8_lossy(ai.menu_string).into_owned(),
+            });
         }
         out
     }
@@ -349,12 +349,12 @@ impl Resource for DateTime {
 
     fn on_apdu(&mut self, apdu: &[u8]) -> ResourceOut {
         let mut out = ResourceOut::default();
-        if peek_tag(apdu) == Some(tag::DATE_TIME_ENQ) {
-            if let Ok(enq) = DateTimeEnq::parse(apdu) {
-                self.interval = enq.response_interval;
-                self.since = Duration::ZERO;
-                out.apdus.push(self.reply());
-            }
+        if peek_tag(apdu) == Some(tag::DATE_TIME_ENQ)
+            && let Ok(enq) = DateTimeEnq::parse(apdu)
+        {
+            self.interval = enq.response_interval;
+            self.since = Duration::ZERO;
+            out.apdus.push(self.reply());
         }
         out
     }

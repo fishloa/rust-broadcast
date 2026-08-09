@@ -151,10 +151,10 @@ where
             return egress.resolve(request.clone(), now, policy);
         }
 
-        if _wait_guard.is_none() {
-            if let Some(f) = on_enter_wait.take() {
-                _wait_guard = Some(f());
-            }
+        if _wait_guard.is_none()
+            && let Some(f) = on_enter_wait.take()
+        {
+            _wait_guard = Some(f());
         }
 
         match listener {

@@ -109,7 +109,7 @@ impl BitReader {
     /// Consume padding bits up to the next byte boundary (e.g.
     /// `gci_alignment_zero_bit` / `ptl_reserved_zero_bit`, H.266 §7.3.3).
     pub fn align_to_byte(&mut self, what: &'static str) -> Result<()> {
-        while self.bit_pos % 8 != 0 {
+        while !self.bit_pos.is_multiple_of(8) {
             let _ = self.read_bits(1, what)?;
         }
         Ok(())

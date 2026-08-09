@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+### Changed
+- MSRV raised to **1.95.0** (issue #949). This removes the workspace's MSRV
+  split: `webrtc-runtime`'s optional `media` feature needed rustc 1.88 (via
+  `rcgen`), which had grown a dedicated CI job, six `--exclude` lanes and a
+  guard script to contain. Adopting let-chains and `is_multiple_of` where the
+  1.95 lints require them; no functional or API change.
 ### Added
 
 - Real ATSC 3.0 LLS/SLT fixture (#926/#943):

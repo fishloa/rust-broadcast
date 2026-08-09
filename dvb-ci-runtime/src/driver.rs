@@ -791,12 +791,11 @@ pub(crate) mod tests {
         // confirm it lists HOST_CONTROL.
         let want = dvb_ci::tag::PROFILE.to_bytes();
         let found = d.device().ops.iter().any(|op| {
-            if let DeviceOp::Write(w) = op {
-                if let Some(pos) = w.windows(3).position(|x| x == want) {
-                    if let Ok(p) = Profile::parse(&w[pos..]) {
-                        return p.resources.contains(&HOST_CONTROL);
-                    }
-                }
+            if let DeviceOp::Write(w) = op
+                && let Some(pos) = w.windows(3).position(|x| x == want)
+                && let Ok(p) = Profile::parse(&w[pos..])
+            {
+                return p.resources.contains(&HOST_CONTROL);
             }
             false
         });

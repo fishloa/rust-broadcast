@@ -388,13 +388,13 @@ impl MediaTransport {
                 bytes: msg.message.to_vec(),
             });
         }
-        if let Some(gather) = &mut self.gather {
-            if let Some(msg) = gather.poll_transmit() {
-                return Some(Datagram {
-                    peer: msg.transport.peer_addr,
-                    bytes: msg.message.to_vec(),
-                });
-            }
+        if let Some(gather) = &mut self.gather
+            && let Some(msg) = gather.poll_transmit()
+        {
+            return Some(Datagram {
+                peer: msg.transport.peer_addr,
+                bytes: msg.message.to_vec(),
+            });
         }
         None
     }

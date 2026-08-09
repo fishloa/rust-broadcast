@@ -96,16 +96,15 @@ impl Diagnostic for PtsCheck {
             // Check for TS-layer discontinuity: if present, reset the entire
             // PES state (assembler + baseline) so the jump across the
             // discontinuity is not flagged.
-            if pkt.header.has_adaptation {
-                if let Some(Ok(af)) = pkt.adaptation_field() {
-                    if af.discontinuity_indicator {
-                        pid_states.remove(&pid);
-                        // We removed the assembler, so skip to the next packet
-                        // (the discontinuity packet's payload is the start of a
-                        // new sequence — it will be freshly assembled below).
-                        continue;
-                    }
-                }
+            if pkt.header.has_adaptation
+                && let Some(Ok(af)) = pkt.adaptation_field()
+                && af.discontinuity_indicator
+            {
+                pid_states.remove(&pid);
+                // We removed the assembler, so skip to the next packet
+                // (the discontinuity packet's payload is the start of a
+                // new sequence — it will be freshly assembled below).
+                continue;
             }
 
             // Get the TS payload for PES reassembly.

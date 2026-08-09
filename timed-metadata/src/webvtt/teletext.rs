@@ -139,7 +139,11 @@ pub fn decode_odd_parity(byte: u8) -> Option<u8> {
 #[must_use]
 pub fn encode_odd_parity(data7: u8) -> u8 {
     let d = data7 & 0x7F;
-    if d.count_ones() % 2 == 0 { d | 0x80 } else { d }
+    if d.count_ones().is_multiple_of(2) {
+        d | 0x80
+    } else {
+        d
+    }
 }
 
 /// The C12/C13/C14 "National Option Character Subset" selector (ETSI
@@ -234,10 +238,10 @@ pub fn latin_g0_char(code: u8, option: NationalOption) -> char {
     if code == 0x7F {
         return '\u{2588}';
     }
-    if option == NationalOption::English {
-        if let Some(c) = english_substitution(code) {
-            return c;
-        }
+    if option == NationalOption::English
+        && let Some(c) = english_substitution(code)
+    {
+        return c;
     }
     // Base Latin G0 / International Reference Version: identical to ASCII
     // at every position outside the 13 reserved ones.

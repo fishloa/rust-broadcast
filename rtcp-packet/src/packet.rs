@@ -938,14 +938,14 @@ impl Serialize for Bye {
                 reason: "exceeds 5-bit SC field",
             });
         }
-        if let Some(r) = &self.reason {
-            if r.len() > u8::MAX as usize {
-                return Err(Error::InvalidValue {
-                    field: "bye_reason_len",
-                    value: r.len() as u64,
-                    reason: "exceeds 8-bit reason length",
-                });
-            }
+        if let Some(r) = &self.reason
+            && r.len() > u8::MAX as usize
+        {
+            return Err(Error::InvalidValue {
+                field: "bye_reason_len",
+                value: r.len() as u64,
+                reason: "exceeds 8-bit reason length",
+            });
         }
         // Zero the whole region so trailing padding bytes are 0.
         for b in buf[..len].iter_mut() {
@@ -1045,7 +1045,7 @@ impl Serialize for App {
                 have: buf.len(),
             });
         }
-        if len % WORD_LEN != 0 {
+        if !len.is_multiple_of(WORD_LEN) {
             return Err(Error::InvalidValue {
                 field: "app_data_len",
                 value: self.data.len() as u64,

@@ -2,7 +2,7 @@
 name         = "dvb-csa"
 version      = "0.1.2"
 edition      = "2024"
-rust-version = "1.86"
+rust-version.workspace = true
 license      = "MIT OR Apache-2.0"
 description  = "DVB Common Scrambling Algorithm (CSA2) — pure-Rust, with an optional bitsliced 64-payload batch fast path, validated against libdvbcsa known-answer vectors."
 repository   = "https://github.com/fishloa/rust-broadcast"

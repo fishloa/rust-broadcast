@@ -126,12 +126,12 @@ pub fn run(path: &str) -> ExitCode {
                         absorb_sdt(&sdt, &mut services);
                     }
                 }
-            } else if NIT_TABLE_IDS.contains(&table_id) {
-                if let Some(complete) = collect_event(&mut collector, pid_u16, &bytes) {
-                    nit_seen += 1;
-                    if let Ok(nit) = complete.nit_with_registry(&lcn_registry) {
-                        absorb_nit(&nit, &mut lcn_map);
-                    }
+            } else if NIT_TABLE_IDS.contains(&table_id)
+                && let Some(complete) = collect_event(&mut collector, pid_u16, &bytes)
+            {
+                nit_seen += 1;
+                if let Ok(nit) = complete.nit_with_registry(&lcn_registry) {
+                    absorb_nit(&nit, &mut lcn_map);
                 }
             }
         }

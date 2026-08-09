@@ -158,14 +158,12 @@ fn run_whip_publish_check(whip_url: &str) -> WhipPublishResult {
 async fn poll_until_extinf(client: &reqwest::Client, playlist_url: &str) -> String {
     let deadline = tokio::time::Instant::now() + PLAYLIST_HANG_GUARD;
     loop {
-        if let Ok(resp) = client.get(playlist_url).send().await {
-            if resp.status().is_success() {
-                if let Ok(body) = resp.text().await {
-                    if body.contains("#EXTINF:") {
-                        return body;
-                    }
-                }
-            }
+        if let Ok(resp) = client.get(playlist_url).send().await
+            && resp.status().is_success()
+            && let Ok(body) = resp.text().await
+            && body.contains("#EXTINF:")
+        {
+            return body;
         }
         if tokio::time::Instant::now() >= deadline {
             panic!(

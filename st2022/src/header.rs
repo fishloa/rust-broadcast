@@ -834,50 +834,50 @@ impl<'a> PayloadHeader<'a> {
     }
 
     fn validate(&self) -> Result<()> {
-        if let VideoSourceId::Reserved(v) = self.vsid {
-            if v > VSID_MASK {
-                return Err(Error::InvalidValue {
-                    field: "vsid",
-                    value: u64::from(v),
-                    reason: "must be a 3-bit value (0..=7)",
-                });
-            }
+        if let VideoSourceId::Reserved(v) = self.vsid
+            && v > VSID_MASK
+        {
+            return Err(Error::InvalidValue {
+                field: "vsid",
+                value: u64::from(v),
+                reason: "must be a 3-bit value (0..=7)",
+            });
         }
-        if let TimestampRef::Reserved(v) = self.timestamp_ref {
-            if u16::from(v) > R_MASK {
-                return Err(Error::InvalidValue {
-                    field: "timestamp_ref",
-                    value: u64::from(v),
-                    reason: "must be a 2-bit value (0..=3)",
-                });
-            }
+        if let TimestampRef::Reserved(v) = self.timestamp_ref
+            && u16::from(v) > R_MASK
+        {
+            return Err(Error::InvalidValue {
+                field: "timestamp_ref",
+                value: u64::from(v),
+                reason: "must be a 2-bit value (0..=3)",
+            });
         }
-        if let Scrambling::Reserved(v) = self.scrambling {
-            if u16::from(v) > S_MASK {
-                return Err(Error::InvalidValue {
-                    field: "scrambling",
-                    value: u64::from(v),
-                    reason: "must be a 2-bit value (0..=3)",
-                });
-            }
+        if let Scrambling::Reserved(v) = self.scrambling
+            && u16::from(v) > S_MASK
+        {
+            return Err(Error::InvalidValue {
+                field: "scrambling",
+                value: u64::from(v),
+                reason: "must be a 2-bit value (0..=3)",
+            });
         }
-        if let FecUsage::Reserved(v) = self.fec_usage {
-            if u16::from(v) > FEC_MASK {
-                return Err(Error::InvalidValue {
-                    field: "fec_usage",
-                    value: u64::from(v),
-                    reason: "must be a 3-bit value (0..=7)",
-                });
-            }
+        if let FecUsage::Reserved(v) = self.fec_usage
+            && u16::from(v) > FEC_MASK
+        {
+            return Err(Error::InvalidValue {
+                field: "fec_usage",
+                value: u64::from(v),
+                reason: "must be a 3-bit value (0..=7)",
+            });
         }
-        if let ClockFrequency::Reserved(v) = self.clock_frequency {
-            if u16::from(v) > CF_MASK {
-                return Err(Error::InvalidValue {
-                    field: "clock_frequency",
-                    value: u64::from(v),
-                    reason: "must be a 4-bit value (0..=15)",
-                });
-            }
+        if let ClockFrequency::Reserved(v) = self.clock_frequency
+            && u16::from(v) > CF_MASK
+        {
+            return Err(Error::InvalidValue {
+                field: "clock_frequency",
+                value: u64::from(v),
+                reason: "must be a 4-bit value (0..=15)",
+            });
         }
         if self.reserve > MAX_RESERVE {
             return Err(Error::InvalidValue {
@@ -887,27 +887,27 @@ impl<'a> PayloadHeader<'a> {
             });
         }
         if let Some(ref vsf) = self.video_source_format {
-            if let MapStructure::Reserved(v) = vsf.map {
-                if u32::from(v) > MAP_MASK {
-                    return Err(Error::InvalidValue {
-                        field: "video_source_format.map",
-                        value: u64::from(v),
-                        reason: "must be a 4-bit value (0..=15)",
-                    });
-                }
+            if let MapStructure::Reserved(v) = vsf.map
+                && u32::from(v) > MAP_MASK
+            {
+                return Err(Error::InvalidValue {
+                    field: "video_source_format.map",
+                    value: u64::from(v),
+                    reason: "must be a 4-bit value (0..=15)",
+                });
             }
             // No range check for `FrameStructure::Reserved`/`FrameRate::Reserved` here:
             // both fields are 8 bits wide (`FRAME_MASK`/`FRATE_MASK` == 0xFF) and the
             // `Reserved` variant already carries a `u8`, so `u32::from(v) > 0xFF` can
             // never be true — the check was dead code (#941 row 9).
-            if let SampleStructure::Reserved(v) = vsf.sample {
-                if u32::from(v) > SAMPLE_MASK {
-                    return Err(Error::InvalidValue {
-                        field: "video_source_format.sample",
-                        value: u64::from(v),
-                        reason: "must be a 4-bit value (0..=15)",
-                    });
-                }
+            if let SampleStructure::Reserved(v) = vsf.sample
+                && u32::from(v) > SAMPLE_MASK
+            {
+                return Err(Error::InvalidValue {
+                    field: "video_source_format.sample",
+                    value: u64::from(v),
+                    reason: "must be a 4-bit value (0..=15)",
+                });
             }
         }
         let requires_timestamp = self.clock_frequency != ClockFrequency::NoTimestamp;

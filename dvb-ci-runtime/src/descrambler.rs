@@ -77,7 +77,7 @@ fn packet_pid(packet: &[u8]) -> u16 {
 /// (misaligned input — filtering garbage would silently corrupt the PID
 /// read).
 fn filter_ts(scrambled: &[u8], allow: &BTreeSet<u16>) -> io::Result<Vec<u8>> {
-    if scrambled.len() % TS_PACKET_LEN != 0 {
+    if !scrambled.len().is_multiple_of(TS_PACKET_LEN) {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
             "scrambled TS is not a whole number of 188-byte packets",

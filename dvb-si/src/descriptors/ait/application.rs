@@ -126,7 +126,7 @@ impl<'a> Parse<'a> for ApplicationDescriptor {
                 reason: "application_profiles_length runs past descriptor end",
             });
         }
-        if profiles_length % PROFILE_ENTRY_LEN != 0 {
+        if !profiles_length.is_multiple_of(PROFILE_ENTRY_LEN) {
             return Err(Error::InvalidDescriptor {
                 tag: TAG,
                 reason: "application_profiles_length not a multiple of 5",

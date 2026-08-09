@@ -183,7 +183,7 @@ fn parse_hex(v: &str) -> Result<Vec<u8>> {
         .strip_prefix("0x")
         .or_else(|| v.strip_prefix("0X"))
         .unwrap_or(v);
-    if h.len() % 2 != 0 {
+    if !h.len().is_multiple_of(2) {
         return Err(Error::AttrParse("odd-length hex".to_string()));
     }
     (0..h.len())

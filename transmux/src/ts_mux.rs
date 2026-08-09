@@ -1246,10 +1246,8 @@ fn write_af_packet(
     if af_len >= 1 {
         // Flags byte (byte 5); the rest of the AF stays 0xFF stuffing from init.
         pkt[5] = if has_pcr { AF_PCR_FLAG } else { 0 };
-        if has_pcr {
-            if let Some(p) = pcr {
-                pkt[6..6 + PCR_FIELD_LEN].copy_from_slice(&p.to_field_bytes());
-            }
+        if has_pcr && let Some(p) = pcr {
+            pkt[6..6 + PCR_FIELD_LEN].copy_from_slice(&p.to_field_bytes());
         }
     }
     // Remaining AF bytes (up to 5 + af_len) stay 0xFF stuffing (already set).

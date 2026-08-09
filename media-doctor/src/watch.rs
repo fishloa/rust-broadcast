@@ -304,10 +304,10 @@ impl WatchState {
     /// framing and decode-timestamp monotonicity on each completed unit.
     fn feed_es(&mut self, pid: u16, ts_packet: &TsPacket<'_>) {
         let mut discontinuity = false;
-        if ts_packet.header.has_adaptation {
-            if let Some(Ok(af)) = ts_packet.adaptation_field() {
-                discontinuity = af.discontinuity_indicator;
-            }
+        if ts_packet.header.has_adaptation
+            && let Some(Ok(af)) = ts_packet.adaptation_field()
+        {
+            discontinuity = af.discontinuity_indicator;
         }
 
         let Some(track) = self.es_tracks.get_mut(&pid) else {

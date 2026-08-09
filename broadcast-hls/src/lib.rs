@@ -1064,13 +1064,12 @@ fn scan_tag_lines_for_version(tags: &[String]) -> Option<u8> {
         }
         // Row 12 applies to ANY attribute-bearing tag, not just the three
         // handled above — scan every tag's attribute keys uniformly.
-        if let Some(colon) = tag.find(':') {
-            if parse_attr_list(&tag[colon + 1..])
+        if let Some(colon) = tag.find(':')
+            && parse_attr_list(&tag[colon + 1..])
                 .keys()
                 .any(|k| k.starts_with("REQ-"))
-            {
-                bump_version(&mut v, VERSION_REQ_ATTRIBUTE);
-            }
+        {
+            bump_version(&mut v, VERSION_REQ_ATTRIBUTE);
         }
     }
     v
@@ -1146,15 +1145,14 @@ fn any_media_typed_req_attr(
     }) {
         return true;
     }
-    if let Some(open) = open_segment {
-        if open
+    if let Some(open) = open_segment
+        && (open
             .map
             .as_ref()
             .is_some_and(|m| extra_attr_is_req(&m.extra_attrs))
-            || open.parts.iter().any(|p| extra_attr_is_req(&p.extra_attrs))
-        {
-            return true;
-        }
+            || open.parts.iter().any(|p| extra_attr_is_req(&p.extra_attrs)))
+    {
+        return true;
     }
     if rendition_reports
         .iter()
@@ -1457,10 +1455,10 @@ impl MediaPlaylist {
             } else {
                 self.segments[i - 1].map.as_ref()
             };
-            if seg.map.as_ref() != prev_map {
-                if let Some(map) = &seg.map {
-                    push_map_line(&mut s, map);
-                }
+            if seg.map.as_ref() != prev_map
+                && let Some(map) = &seg.map
+            {
+                push_map_line(&mut s, map);
             }
             // #EXT-X-BITRATE (RFC 8216bis §4.4.4.8, issue #872) — same
             // carry-forward + dedup-render rule as #EXT-X-MAP above.
@@ -1469,10 +1467,10 @@ impl MediaPlaylist {
             } else {
                 self.segments[i - 1].bitrate
             };
-            if seg.bitrate != prev_bitrate {
-                if let Some(kbps) = seg.bitrate {
-                    s.push_str(&format!("#EXT-X-BITRATE:{kbps}\n"));
-                }
+            if seg.bitrate != prev_bitrate
+                && let Some(kbps) = seg.bitrate
+            {
+                s.push_str(&format!("#EXT-X-BITRATE:{kbps}\n"));
             }
             // LL-HLS partial segments precede the parent's #EXTINF
             // (RFC 8216bis §4.4.4.9), rendered only for a low-latency playlist.
@@ -1501,41 +1499,41 @@ impl MediaPlaylist {
         // known but it has not yet closed, so it carries no #EXTINF/URI
         // (RFC 8216bis §4.4.4.9). Rendered only for a low-latency playlist,
         // same opt-in gating as the closed segments' parts above.
-        if self.low_latency.is_some() {
-            if let Some(open) = &self.open_segment {
-                // Same dedup-vs-previous rule as the closed segments' loop
-                // above: `#EXT-X-MAP` applies until a new one is seen, so
-                // only emit it here if it differs from the last *closed*
-                // segment's map (or there were no closed segments at all).
-                let prev_map = self.segments.last().and_then(|s| s.map.as_ref());
-                if open.map.as_ref() != prev_map {
-                    if let Some(map) = &open.map {
-                        push_map_line(&mut s, map);
-                    }
-                }
-                for part in &open.parts {
-                    push_part_line(&mut s, part);
-                }
+        if self.low_latency.is_some()
+            && let Some(open) = &self.open_segment
+        {
+            // Same dedup-vs-previous rule as the closed segments' loop
+            // above: `#EXT-X-MAP` applies until a new one is seen, so
+            // only emit it here if it differs from the last *closed*
+            // segment's map (or there were no closed segments at all).
+            let prev_map = self.segments.last().and_then(|s| s.map.as_ref());
+            if open.map.as_ref() != prev_map
+                && let Some(map) = &open.map
+            {
+                push_map_line(&mut s, map);
+            }
+            for part in &open.parts {
+                push_part_line(&mut s, part);
             }
         }
 
         // LL-HLS preload hint for the next not-yet-available part or map
         // (RFC 8216bis §4.4.5.3) — after the segment list, before ENDLIST.
-        if let Some(ll) = &self.low_latency {
-            if let Some(uri) = &ll.preload_hint_part {
-                s.push_str(&format!(
-                    "#EXT-X-PRELOAD-HINT:TYPE={},URI=\"{uri}\"",
-                    ll.preload_hint_type.name(),
-                ));
-                if let Some(start) = ll.preload_hint_byte_range_start {
-                    s.push_str(&format!(",BYTERANGE-START={start}"));
-                }
-                if let Some(len) = ll.preload_hint_byte_range_length {
-                    s.push_str(&format!(",BYTERANGE-LENGTH={len}"));
-                }
-                push_extra_attrs(&mut s, &ll.ph_extra_attrs);
-                s.push('\n');
+        if let Some(ll) = &self.low_latency
+            && let Some(uri) = &ll.preload_hint_part
+        {
+            s.push_str(&format!(
+                "#EXT-X-PRELOAD-HINT:TYPE={},URI=\"{uri}\"",
+                ll.preload_hint_type.name(),
+            ));
+            if let Some(start) = ll.preload_hint_byte_range_start {
+                s.push_str(&format!(",BYTERANGE-START={start}"));
             }
+            if let Some(len) = ll.preload_hint_byte_range_length {
+                s.push_str(&format!(",BYTERANGE-LENGTH={len}"));
+            }
+            push_extra_attrs(&mut s, &ll.ph_extra_attrs);
+            s.push('\n');
         }
 
         // #EXT-X-RENDITION-REPORT entries (RFC 8216bis §4.4.5.4).

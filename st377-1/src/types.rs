@@ -387,7 +387,7 @@ impl ProductVersion {
 
 /// Decode a big-endian UTF-16 string (§4.3 "String") into an owned `String`.
 pub fn decode_utf16_be(bytes: &[u8]) -> Result<String> {
-    if bytes.len() % 2 != 0 {
+    if !bytes.len().is_multiple_of(2) {
         return Err(Error::InvalidUtf16 {
             tag: 0,
             name: "UTF-16 string",

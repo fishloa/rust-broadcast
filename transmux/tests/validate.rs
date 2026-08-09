@@ -191,10 +191,10 @@ fn find_box_range(data: &[u8], lo: usize, hi: usize, fourcc: &[u8; 4]) -> Option
         if &t == fourcc {
             return Some((off, size));
         }
-        if CONTAINERS.contains(&&t) {
-            if let Some(found) = find_box_range(data, off + 8, off + size, fourcc) {
-                return Some(found);
-            }
+        if CONTAINERS.contains(&&t)
+            && let Some(found) = find_box_range(data, off + 8, off + size, fourcc)
+        {
+            return Some(found);
         }
         off += size;
     }

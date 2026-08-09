@@ -684,16 +684,16 @@ pub fn validate_cmaf_track(init: &[u8], segments: &[&[u8]]) -> Vec<ConformanceIs
         let (prev, next) = (&pair[0], &pair[1]);
 
         // mfhd sequence_number strictly increasing (§8.8.5).
-        if let (Some(a), Some(b)) = (prev.sequence_number, next.sequence_number) {
-            if b <= a {
-                issues.push(ConformanceIssue::warning(
-                    "track.mfhd.sequence",
-                    format!(
-                        "mfhd sequence_number not strictly increasing: {a} then {b} \
-                         (ISO/IEC 14496-12 §8.8.5)"
-                    ),
-                ));
-            }
+        if let (Some(a), Some(b)) = (prev.sequence_number, next.sequence_number)
+            && b <= a
+        {
+            issues.push(ConformanceIssue::warning(
+                "track.mfhd.sequence",
+                format!(
+                    "mfhd sequence_number not strictly increasing: {a} then {b} \
+                     (ISO/IEC 14496-12 §8.8.5)"
+                ),
+            ));
         }
 
         // tfdt continuity per track index (§8.8.12; CMAF §7.5.19).

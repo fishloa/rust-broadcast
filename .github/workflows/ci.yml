@@ -10,15 +10,15 @@ env:
   RUSTFLAGS: "-D warnings"
 
 # The toolchain is pinned once in rust-toolchain.toml (channel = the workspace
-# MSRV, 1.86, plus the clippy/rustfmt components and the bare-metal target).
+# MSRV, 1.95.0, plus the clippy/rustfmt components and the bare-metal target).
 # GitHub runners ship rustup preinstalled, so every `cargo` call below picks it
 # up automatically — no job pins a toolchain itself. The only exceptions are the
 # nightly fuzz build and the non-blocking canary, which deliberately override the
-# file with `cargo +nightly` / `cargo +stable`. See issue #574.
+# file with `cargo +nightly` / `cargo +<CANARY_RUST>`. See issue #574.
 
 jobs:
   test:
-    name: test (MSRV 1.86)
+    name: test (MSRV 1.95.0)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
@@ -32,12 +32,12 @@ jobs:
       # that would mask regressions in the library crates' bare
       # --no-default-features build.
       - name: Build (all features)
-        run: cargo build --workspace --exclude dvb-tools --exclude dvb-conformance --exclude dvb-stream --exclude webrtc-runtime --exclude multimux --all-features --locked
+        run: cargo build --workspace --exclude dvb-tools --exclude dvb-conformance --exclude dvb-stream --all-features --locked
       # Examples are a published docs surface (they show on docs.rs and double as
       # compile-checked usage docs). Build the whole workspace's examples — no
       # excludes, so dvb-stream/dvb-conformance examples are covered too.
       - name: Build examples (all features)
-        run: cargo build --workspace --examples --exclude webrtc-runtime --exclude multimux --all-features --locked
+        run: cargo build --workspace --examples --all-features --locked
       # Building an example only proves it compiles. Issue #947: 12 examples
       # pointed at fixture paths that stopped existing after the fixtures
       # migration and silently exited 0 via a "fixture not available" fallback,
@@ -49,10 +49,10 @@ jobs:
       # [profile.ci]) so a hung/runaway test FAILS instead of blocking CI; it does
       # not run doctests, which get their own bounded lane below.
       - name: Test (all features)
-        run: cargo nextest run --workspace --exclude dvb-tools --exclude dvb-conformance --exclude dvb-stream --exclude webrtc-runtime --exclude multimux --all-features --locked --profile ci
+        run: cargo nextest run --workspace --exclude dvb-tools --exclude dvb-conformance --exclude dvb-stream --all-features --locked --profile ci
       - name: Doctests (all features)
         timeout-minutes: 15
-        run: cargo test --workspace --exclude dvb-tools --exclude dvb-conformance --exclude dvb-stream --exclude webrtc-runtime --exclude multimux --all-features --locked --doc
+        run: cargo test --workspace --exclude dvb-tools --exclude dvb-conformance --exclude dvb-stream --all-features --locked --doc
       # Exclude the feature-forcing leaf crates here. dvb-tools (binary) needs
       # dvb-si's ts/serde/chrono + dvb-t2mi's ts; dvb-conformance needs dvb-si's
       # ts/serde; dvb-stream always depends on tokio. Including any of them would
@@ -81,13 +81,8 @@ jobs:
       # is protected by #[rustfmt::skip]; everything else is rustfmt-clean.
       - name: rustfmt
         run: cargo fmt --all --check
-      # The same `--all-features` MSRV leak has been introduced four times in
-      # four different steps, each caught only by a red run. This checks the
-      # workflow itself so the fifth is caught before it merges.
-      - name: MSRV containment
-        run: python3 tools/check-msrv-containment.py
       - name: clippy
-        run: cargo clippy --workspace --exclude webrtc-runtime --exclude multimux --all-features --all-targets --locked -- -D warnings
+        run: cargo clippy --workspace --all-features --all-targets --locked -- -D warnings
 
   docs:
     name: doc build
@@ -98,7 +93,7 @@ jobs:
       # Docs are warning-clean: bit-range notation is backticked (`[7:4]`)
       # so it can't be mistaken for intra-doc links. Keep it that way.
       - name: cargo doc
-        run: cargo doc --workspace --exclude webrtc-runtime --exclude multimux --all-features --no-deps --locked
+        run: cargo doc --workspace --all-features --no-deps --locked
         env:
           RUSTDOCFLAGS: "-D warnings"
 
@@ -174,71 +169,6 @@ jobs:
   # v-tag publish and is feature-forcing (tokio), so it is excluded from the
   # core `test` job's workspace build and gets its own here — still on the
   # pinned MSRV toolchain from rust-toolchain.toml.
-  # `webrtc-runtime` is excluded from the MSRV(1.86) all-features lanes above
-  # because its optional `media` feature pulls the ICE/DTLS-SRTP transport,
-  # whose dependency graph requires rustc >= 1.88 (rcgen 0.14.8's floor).
-  # `--all-features` has no per-crate opt-out, so the crate is excluded there
-  # and covered here instead — otherwise the media path would rot unbuilt.
-  #
-  # Two legs, and BOTH matter:
-  #   - default features on the MSRV toolchain, proving the signalling surface
-  #     genuinely still builds at 1.86 (the whole point of the containment);
-  #   - `--features media` on the pinned newer toolchain, proving the media
-  #     path compiles at all.
-  webrtc-runtime:
-    name: webrtc-runtime (MSRV split)
-    runs-on: ubuntu-latest
-    env:
-      MEDIA_RUST: "1.97.1"
-    steps:
-      - uses: actions/checkout@v5
-      - uses: Swatinem/rust-cache@v2
-      - uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: "1.97.1"
-          components: clippy
-      # Signalling surface must still build at the workspace MSRV.
-      - name: Default features on MSRV 1.86
-        run: cargo build -p webrtc-runtime --locked
-      # The media path, on a toolchain new enough for its dependency graph.
-      - name: media feature on ${{ env.MEDIA_RUST }}
-        run: cargo +${{ env.MEDIA_RUST }} build -p webrtc-runtime --features media --locked
-      - name: media tests on ${{ env.MEDIA_RUST }}
-        run: cargo +${{ env.MEDIA_RUST }} test -p webrtc-runtime --features media --locked
-      - name: media clippy on ${{ env.MEDIA_RUST }}
-        run: cargo +${{ env.MEDIA_RUST }} clippy -p webrtc-runtime --features media --all-targets --locked -- -D warnings
-      # multimux's `whip` (ingest) and `whep` (egress) features each enable
-      # webrtc-runtime/media, so both inherit the same 1.88 floor and are
-      # excluded from the MSRV all-features lanes for the same reason. Every
-      # half is covered here: default at MSRV, and both features together on
-      # the newer toolchain (together, not separately, because that is what
-      # `--all-features` builds — a pair that only works apart would pass a
-      # per-feature lane and still break the workspace build).
-      - name: multimux default features on MSRV 1.86
-        run: cargo build -p multimux --locked
-      - name: multimux whip+whep feature on ${{ env.MEDIA_RUST }}
-        run: cargo +${{ env.MEDIA_RUST }} build -p multimux --features whip,whep --locked
-      - name: multimux whip+whep tests on ${{ env.MEDIA_RUST }}
-        run: cargo +${{ env.MEDIA_RUST }} test -p multimux --features whip,whep --locked
-      - name: multimux whip+whep clippy on ${{ env.MEDIA_RUST }}
-        run: cargo +${{ env.MEDIA_RUST }} clippy -p multimux --features whip,whep --all-targets --locked -- -D warnings
-      # Both crates are excluded from the workspace example runner (their
-      # feature graphs need 1.88), so run their examples HERE — otherwise the
-      # exclusion silently means they never run, the exact hole #947 closed.
-      - name: webrtc-runtime examples on ${{ env.MEDIA_RUST }}
-        env:
-          RUSTUP_TOOLCHAIN: ${{ env.MEDIA_RUST }}
-          ONLY_CRATES: " webrtc-runtime "
-          SKIP_CRATES: " "
-        run: ./tools/run-examples.sh --features media --locked
-      - name: multimux examples on ${{ env.MEDIA_RUST }}
-        env:
-          RUSTUP_TOOLCHAIN: ${{ env.MEDIA_RUST }}
-          ONLY_CRATES: " multimux "
-          SKIP_CRATES: " "
-        # Match the feature set the build/test/clippy steps above use, so an
-        # example that only compiles under one of the two is still caught.
-        run: ./tools/run-examples.sh --features whip,whep --locked
 
   dvb-stream:
     name: dvb-stream
@@ -335,20 +265,12 @@ jobs:
     continue-on-error: true
     steps:
       - uses: actions/checkout@v5
-      # `-p multimux --all-features` enables `whip`, which pulls
-      # webrtc-runtime/media and its rustc 1.88 floor. This job is about
-      # oracle-validating output, not MSRV, so run it on the newer toolchain
-      # and keep `--all-features` genuinely meaning ALL features. The MSRV
-      # claim is proved by the dedicated jobs above.
-      - uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: "1.97.1"
       - uses: Swatinem/rust-cache@v2
       - name: Install ffmpeg (provides ffprobe)
         run: sudo apt-get update && sudo apt-get install -y ffmpeg
       - name: Golden gate (transmux, all features)
-        run: cargo +1.97.1 test -p transmux --test golden_gate --all-features --locked
+        run: cargo test -p transmux --test golden_gate --all-features --locked
       - name: Golden gate (LL-HLS reference client, all features)
-        run: cargo +1.97.1 test -p multimux --test golden_gate --all-features --locked
+        run: cargo test -p multimux --test golden_gate --all-features --locked
       - name: HLS conformance oracle (media-doctor, all features)
         run: cargo test -p media-doctor --test mediastreamvalidator_oracle --all-features --locked

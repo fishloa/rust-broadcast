@@ -9,7 +9,7 @@ keywords = ["srt", "packet", "sans-io", "transport", "streaming"]
 categories = ["parser-implementations", "multimedia", "network-programming", "no-std"]
 repository   = "https://github.com/fishloa/rust-broadcast"
 readme       = "README.md"
-rust-version = "1.86"
+rust-version.workspace = true
 exclude = ["docs/**"]
 
 [package.metadata.docs.rs]
@@ -24,7 +24,7 @@ serde     = { version = "1", optional = true, default-features = false, features
 # derivation) — all optional, behind the `crypto` feature. `aes`/`ctr` pinned
 # to the same versions already resolved elsewhere in this workspace
 # (`transmux`'s `cenc` feature); `aes-kw`/`pbkdf2`/`hmac`/`sha1` pinned to the
-# newest versions that still build on this workspace's MSRV (1.86) with
+# newest versions that still build on this workspace's MSRV with
 # `--locked` — see CHANGELOG.
 aes    = { version = "0.8", default-features = false, optional = true }
 ctr    = { version = "0.9", default-features = false, optional = true }
@@ -34,7 +34,7 @@ hmac   = { version = "0.12", default-features = false, optional = true }
 sha1   = { version = "0.10", default-features = false, optional = true }
 # Async UDP socket adapter (tokio feature) — mirrors `rtsp-runtime`'s io.rs
 # pattern for driving the sans-IO SRT engines over real UDP sockets. Same
-# tokio feature set as the sibling crate, matching the workspace MSRV (1.86).
+# tokio feature set as the sibling crate, matching the workspace MSRV.
 tokio = { version = "1", optional = true, default-features = false, features = ["net", "io-util", "rt", "macros", "time", "sync"] }
 
 [dev-dependencies]

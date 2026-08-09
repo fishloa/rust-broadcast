@@ -342,11 +342,11 @@ impl ClientSession {
                 let status = response.status();
 
                 // 401: attempt a transparent auth retry.
-                if status == StatusCode::Unauthorized {
-                    if let Some(retry) = self.try_auth_retry(cseq, &response)? {
-                        events.push(retry);
-                        return Ok(());
-                    }
+                if status == StatusCode::Unauthorized
+                    && let Some(retry) = self.try_auth_retry(cseq, &response)?
+                {
+                    events.push(retry);
+                    return Ok(());
                 }
 
                 let pending = self.pending.remove(&cseq).ok_or(Error::UnknownCSeq(cseq))?;
@@ -360,10 +360,10 @@ impl ClientSession {
                     }
                 }
                 // Capture negotiated transport from SETUP response.
-                if pending.method == Method::Setup {
-                    if let Some(t) = header_value(response.header(&headers::TRANSPORT)) {
-                        self.negotiated_transport = Some(Transport::parse(t)?);
-                    }
+                if pending.method == Method::Setup
+                    && let Some(t) = header_value(response.header(&headers::TRANSPORT))
+                {
+                    self.negotiated_transport = Some(Transport::parse(t)?);
                 }
 
                 // State transition.

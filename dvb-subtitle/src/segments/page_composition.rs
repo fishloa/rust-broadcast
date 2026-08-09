@@ -163,7 +163,7 @@ impl<'a> Parse<'a> for PageCompositionSegment {
 
         let region_data = &body[FIXED_LEN..];
         let region_count = region_data.len() / REGION_ENTRY_LEN;
-        if region_data.len() % REGION_ENTRY_LEN != 0 {
+        if !region_data.len().is_multiple_of(REGION_ENTRY_LEN) {
             return Err(Error::BufferTooShort {
                 need: (region_count + 1) * REGION_ENTRY_LEN,
                 have: region_data.len(),

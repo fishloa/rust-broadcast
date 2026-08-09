@@ -504,10 +504,10 @@ impl FileCc {
 
         // Step 1 (identical gate in both phases, L3365-3371 / L3455-3461):
         // if (currTime - LastRCTime < RC_INTERVAL) { keep; stop; }
-        if let Some(last) = self.last_rc_time {
-            if now.saturating_sub(last) < RC_INTERVAL {
-                return;
-            }
+        if let Some(last) = self.last_rc_time
+            && now.saturating_sub(last) < RC_INTERVAL
+        {
+            return;
         }
         // Step 2: LastRCTime = currTime.
         self.last_rc_time = Some(now);

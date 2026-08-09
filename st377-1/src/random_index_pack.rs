@@ -105,7 +105,7 @@ impl RandomIndexPack {
         let v = &bytes[value_start..value_end];
         // Value = N * {BodySID: u32, ByteOffset: u64} (12 bytes each) +
         // trailing overall Length: u32.
-        if v.len() < 4 || (v.len() - 4) % 12 != 0 {
+        if v.len() < 4 || !(v.len() - 4).is_multiple_of(12) {
             return Err(Error::InvalidBatchHeader {
                 count: 0,
                 item_len: 12,

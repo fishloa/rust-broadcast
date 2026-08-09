@@ -10,9 +10,9 @@
 #
 # GitHub runners ship rustup preinstalled, so every `cargo` invocation in CI
 # picks this up automatically — the workflows do not pin a toolchain themselves
-# (except the nightly fuzz job and the floating-stable canary, which override
-# this via `cargo +nightly` / `cargo +stable`).
+# (except the nightly fuzz job and the pinned clippy canary, which override
+# this via `cargo +nightly` / `cargo +<CANARY_RUST>`).
 [toolchain]
-channel    = "1.86"
+channel    = "1.95.0"
 components = ["clippy", "rustfmt"]
 targets    = ["thumbv7em-none-eabi"]

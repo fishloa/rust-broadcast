@@ -67,7 +67,7 @@ pub struct LctHeader<'a> {
 /// TSI and TOI, so the two lengths must agree on whether `H` is set.
 fn flags_from_lengths(cci: usize, tsi: usize, toi: usize) -> Result<(u8, u8, u8, u8)> {
     // CCI: 4*(C+1) bytes → C in 0..=3.
-    if cci == 0 || cci % WORD != 0 {
+    if cci == 0 || !cci.is_multiple_of(WORD) {
         return Err(Error::InvalidField {
             what: "CCI",
             reason: "CCI length must be a non-zero multiple of 4 bytes",
@@ -84,15 +84,15 @@ fn flags_from_lengths(cci: usize, tsi: usize, toi: usize) -> Result<(u8, u8, u8,
 
     // TSI = 4*S + 2*H bytes; TOI = 4*O + 2*H bytes. The half-word parity (odd
     // multiple of 2 bytes) determines H; it MUST match across TSI and TOI.
-    let h_tsi = (tsi % WORD) != 0;
-    let h_toi = (toi % WORD) != 0;
+    let h_tsi = !tsi.is_multiple_of(WORD);
+    let h_toi = !toi.is_multiple_of(WORD);
     if h_tsi != h_toi {
         return Err(Error::InvalidField {
             what: "H",
             reason: "TSI and TOI must agree on the shared half-word (H) bit",
         });
     }
-    if tsi % 2 != 0 || toi % 2 != 0 {
+    if !tsi.is_multiple_of(2) || !toi.is_multiple_of(2) {
         return Err(Error::InvalidField {
             what: "TSI/TOI",
             reason: "TSI and TOI lengths must be a whole number of 16-bit half-words",
@@ -144,7 +144,7 @@ impl<'a> LctHeader<'a> {
     /// use `&&` to reflect the RFC constraint rather than the `||` that would
     /// mask a corrupted struct.
     pub fn h_flag(&self) -> u8 {
-        u8::from((self.tsi.len() % WORD) != 0 && (self.toi.len() % WORD) != 0)
+        u8::from(!self.tsi.len().is_multiple_of(WORD) && !self.toi.len().is_multiple_of(WORD))
     }
     /// The `S` flag (full 32-bit words in TSI).
     pub fn s_flag(&self) -> u8 {
@@ -275,7 +275,7 @@ impl<'a> LctHeader<'a> {
         let (c, s, o, h) = flags_from_lengths(self.cci.len(), self.tsi.len(), self.toi.len())?;
 
         let words = total / WORD;
-        if total % WORD != 0 {
+        if !total.is_multiple_of(WORD) {
             return Err(Error::InvalidField {
                 what: "HDR_LEN",
                 reason: "total LCT header length is not a multiple of 4 bytes",

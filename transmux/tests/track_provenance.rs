@@ -94,11 +94,11 @@ fn reassemble_section(ts: &[u8], pid: u16, table_id: u8) -> Vec<u8> {
         } else {
             continue;
         }
-        if let Some(n) = needed {
-            if buf.len() >= n {
-                buf.truncate(n);
-                return buf;
-            }
+        if let Some(n) = needed
+            && buf.len() >= n
+        {
+            buf.truncate(n);
+            return buf;
         }
     }
     panic!("PSI section (table_id {table_id:#04x}) on PID {pid:#06x} never fully reassembled");

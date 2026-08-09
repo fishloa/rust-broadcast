@@ -102,7 +102,11 @@ mod tests {
 
     fn parity(d7: u8) -> u8 {
         let d = d7 & 0x7F;
-        if d.count_ones() % 2 == 0 { d | 0x80 } else { d }
+        if d.count_ones().is_multiple_of(2) {
+            d | 0x80
+        } else {
+            d
+        }
     }
 
     fn field(block: [u8; 42]) -> TeletextDataField {

@@ -78,20 +78,20 @@ fn run_wasm_analyzer_clock(bytes: &[u8]) -> BTreeMap<&'static str, u64> {
         let Ok(ts_packet) = TsPacket::parse(chunk) else {
             continue;
         };
-        if let Some(Ok(af)) = ts_packet.adaptation_field() {
-            if let Some(pcr) = af.pcr {
-                let pcr_27mhz = pcr.as_27mhz();
-                if let Some((anchor_val, anchor_t)) = pcr_anchor {
-                    if pcr_27mhz >= anchor_val {
-                        let delta_secs = (pcr_27mhz - anchor_val) as f64 / 27_000_000.0;
-                        let candidate = anchor_t + Duration::from_secs_f64(delta_secs);
-                        if candidate > clock {
-                            clock = candidate;
-                        }
-                    }
+        if let Some(Ok(af)) = ts_packet.adaptation_field()
+            && let Some(pcr) = af.pcr
+        {
+            let pcr_27mhz = pcr.as_27mhz();
+            if let Some((anchor_val, anchor_t)) = pcr_anchor
+                && pcr_27mhz >= anchor_val
+            {
+                let delta_secs = (pcr_27mhz - anchor_val) as f64 / 27_000_000.0;
+                let candidate = anchor_t + Duration::from_secs_f64(delta_secs);
+                if candidate > clock {
+                    clock = candidate;
                 }
-                pcr_anchor = Some((pcr_27mhz, clock));
             }
+            pcr_anchor = Some((pcr_27mhz, clock));
         }
         if pcr_anchor.is_none() {
             clock += Duration::from_nanos(1);
@@ -143,10 +143,10 @@ fn fixture_carries_no_pcr_so_the_analyzer_clock_degenerates() {
         if p.header.has_adaptation {
             with_af += 1;
         }
-        if let Some(Ok(af)) = p.adaptation_field() {
-            if af.pcr.is_some() {
-                with_pcr += 1;
-            }
+        if let Some(Ok(af)) = p.adaptation_field()
+            && af.pcr.is_some()
+        {
+            with_pcr += 1;
         }
     }
     assert_eq!(with_af, 95, "packets carrying an adaptation field");
