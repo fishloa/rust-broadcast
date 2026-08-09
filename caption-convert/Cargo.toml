@@ -1,0 +1,50 @@
+[package]
+name         = "caption-convert"
+version      = "0.1.0"
+edition      = "2024"
+description  = "Convert CEA-608/708 and EBU Teletext captions to WebVTT, and WebVTT <-> SRT. DVB bitmap subtitles and TTML/IMSC conversion are documented gaps (see crate docs), never silently degraded."
+license      = "MIT OR Apache-2.0"
+authors      = ["Alex Fishlock <alex.fishlock@racingjag.com>"]
+keywords     = ["webvtt", "srt", "captions", "subtitles", "cea-608"]
+categories   = ["multimedia", "no-std"]
+repository   = "https://github.com/fishloa/rust-broadcast"
+readme       = "README.md"
+rust-version = "1.86"
+exclude = ["docs/**"]
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+
+[dependencies]
+broadcast-common = { path = "../broadcast-common", version = "9",   default-features = false }
+timed-metadata    = { path = "../timed-metadata",   version = "0.4", default-features = false }
+cc-data           = { path = "../cc-data",          version = "0.4", default-features = false, optional = true }
+dvb-vbi           = { path = "../dvb-vbi",          version = "0.3", default-features = false, optional = true }
+thiserror         = { version = "2", default-features = false }
+serde             = { version = "1", default-features = false, features = ["derive", "alloc"], optional = true }
+
+[dev-dependencies]
+serde_json = "1.0"
+
+[features]
+default = ["std", "cc-data", "teletext"]
+# `std` links the standard library. Without it the crate is `#![no_std]` and
+# needs only `alloc`.
+std = ["broadcast-common/std", "timed-metadata/std", "thiserror/std", "cc-data?/std", "dvb-vbi?/std", "serde?/std"]
+serde = ["dep:serde", "timed-metadata/serde", "cc-data?/serde", "dvb-vbi?/serde"]
+# CEA-608/708 -> WebVTT/SRT, layered on `timed-metadata`'s `Cea608CueExtractor`
+# / `Cea708CueExtractor` (issue #568), which itself layers on `cc-data`'s
+# decode-only 608/708 model.
+cc-data = ["dep:cc-data", "cc-data/decode", "timed-metadata/cc-data"]
+# EBU Teletext (ETSI EN 300 706) -> WebVTT/SRT, layered on `timed-metadata`'s
+# `TeletextCueExtractor` (issue #666), which itself layers on `dvb-vbi`'s
+# carriage-only `TeletextDataField`.
+teletext = ["dep:dvb-vbi", "timed-metadata/teletext"]
+
+[[example]]
+name = "cc_to_webvtt"
+required-features = ["cc-data"]
+
+[[example]]
+name = "webvtt_to_srt"
