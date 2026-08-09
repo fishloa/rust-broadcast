@@ -7,6 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- `Fmp4Demux` dropped an entire H.264 video track when a High-profile `avcC`
+  omitted its optional ISO/IEC 14496-15:2017 §5.3.3.1.2 trailer
+  (`chroma_format`/`bit_depth_*`/`sps_ext`) — a real DASH-IF `livesim2`
+  capture does exactly this, and ffmpeg reads it without complaint (issue
+  #952). Two defects, both fixed:
+  1. `avc_config::AVCDecoderConfigurationRecord::parse` read the trailer
+     unconditionally whenever `profile_indication` was in the High-profile
+     family (100/110/122/244), even with zero bytes remaining. It is now
+     read only when at least one byte remains, leaving `chroma_format`/
+     `bit_depth_luma_minus8`/`bit_depth_chroma_minus8` `None` (never an
+     invented default) when the encoder omitted it; `Serialize` mirrors this
+     so a trailer-less record round-trips without growing one back.
+  2. `init_segment::parse_stbl_children`'s `stsd` arm swallowed a parse
+     failure into a blank placeholder (`entries: Vec::new()`), which cost
+     the *entire* track and surfaced only a generic "expected box: stsd
+     entry" — hiding which field actually failed and why. A `stsd` that
+     fails to parse is now kept as raw bytes (`StblChild::Opaque`);
+     `media::track_spec_from_trak` re-parses those bytes so the real error
+     reaches `Media::skipped`'s `SkippedTrack::reason` (shared by
+     `Fmp4Demux` and `ProgressiveDemux`, both of which call
+     `track_spec_from_trak`).
+  Audited `hvcC`/`vvcC` for the same shape: `hvcC`'s chroma/bit-depth fields
+  are unconditionally mandatory per ISO/IEC 14496-15:2017 §8.3.3 (no `if`
+  gate at all); `vvcC`'s optional PTL block is already gated by an explicit
+  on-the-wire `ptl_present_flag` that `VvcDecoderConfigurationRecord::parse`
+  correctly branches on. Neither has this bug.
+
 ### Changed
 - MSRV raised to **1.95.0** (issue #949). This removes the workspace's MSRV
   split: `webrtc-runtime`'s optional `media` feature needed rustc 1.88 (via

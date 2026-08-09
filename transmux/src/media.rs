@@ -44,7 +44,9 @@ use crate::box_types::{BOX_HEADER_MIN_SIZE, parse_box};
 use crate::dts::DtsSpecificBox;
 use crate::error::{Error, Result};
 use crate::flac::FlacSpecificBox;
-use crate::init_segment::{MovieBox, OpaqueBox, SampleEntryVariant, StblChild, TrackBox};
+use crate::init_segment::{
+    MovieBox, OpaqueBox, SampleDescriptionBox, SampleEntryVariant, StblChild, TrackBox,
+};
 use crate::ir::{CodecConfig, FragmentTrackData, Sample, SubtitleFormat, TrackSpec};
 use crate::movie_fragment::MovieFragmentBox;
 use crate::mp4esds::EsdsBox;
@@ -581,14 +583,23 @@ pub(crate) fn track_spec_from_trak(trak: &TrackBox) -> Result<TrackSpec> {
         .stbl
         .as_ref()
         .ok_or(Error::UnexpectedBox { expected: "stbl" })?;
-    let stsd = stbl
+    // A `stsd` that failed to parse during the init-moov walk survives as raw
+    // bytes (`StblChild::Opaque`, boxtype checked below) rather than an empty
+    // placeholder (`init_segment::parse_stbl_children`) — re-parse it here so
+    // the *real* error (e.g. a malformed `avcC` trailer) reaches
+    // `skipped_track`'s `SkippedTrack::reason` instead of the uninformative
+    // "no stsd entry" a blanked-out box would otherwise produce (#952).
+    let stsd: SampleDescriptionBox = stbl
         .children
         .iter()
         .find_map(|c| match c {
-            StblChild::Stsd(s) => Some(s),
+            StblChild::Stsd(s) => Some(Ok(s.clone())),
+            StblChild::Opaque(bytes) if bytes.len() >= 8 && &bytes[4..8] == b"stsd" => {
+                Some(SampleDescriptionBox::parse(bytes.as_slice()))
+            }
             _ => None,
         })
-        .ok_or(Error::UnexpectedBox { expected: "stsd" })?;
+        .ok_or(Error::UnexpectedBox { expected: "stsd" })??;
     let entry = stsd.entries.first().ok_or(Error::UnexpectedBox {
         expected: "stsd entry",
     })?;

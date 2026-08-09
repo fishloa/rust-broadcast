@@ -2171,15 +2171,20 @@ fn parse_stbl_children(body: &[u8]) -> Vec<StblChild> {
         let boxtype = [body[off + 4], body[off + 5], body[off + 6], body[off + 7]];
         let box_bytes = &body[off..off + size.min(body.len() - off)];
         children.push(match &boxtype {
-            b"stsd" => {
-                StblChild::Stsd(SampleDescriptionBox::parse(box_bytes).unwrap_or_else(|_| {
-                    SampleDescriptionBox {
-                        version: 0,
-                        flags: 0,
-                        entries: Vec::new(),
-                    }
-                }))
-            }
+            // A `stsd` that fails to parse (e.g. an `avcC` with a malformed
+            // trailer) is kept as raw bytes rather than defaulted to an empty
+            // box — an empty `entries: Vec::new()` would later present to
+            // `track_spec_from_trak` as "no stsd entry" and discard the real
+            // parse error, hiding *why* the whole track is about to be
+            // dropped (issue #952). The moov as a whole must still parse
+            // (media-plane "lenient but loud": one broken optional field
+            // costs that field, not the file), so `track_spec_from_trak`
+            // re-parses these raw bytes to recover the real error for
+            // `Media::skipped`.
+            b"stsd" => match SampleDescriptionBox::parse(box_bytes) {
+                Ok(stsd) => StblChild::Stsd(stsd),
+                Err(_) => StblChild::Opaque(box_bytes.to_vec()),
+            },
             b"stts" => StblChild::Stts(
                 crate::timing::TimeToSampleBox::parse(box_bytes).unwrap_or_else(|_| {
                     crate::timing::TimeToSampleBox {

@@ -158,13 +158,22 @@ impl<'a> Parse<'a> for AVCDecoderConfigurationRecord {
             pps.push(AvcPps(nalu));
         }
 
-        // High-profile extensions (optional, for profile 100/110/122/244)
+        // High-profile extensions (optional, for profile 100/110/122/244).
+        // ISO/IEC 14496-15:2017 §5.3.3.1.2 places this trailer inside an
+        // `if (profile_idc IN {...})` guard with no length field of its own —
+        // real High-profile encoders are free to omit it entirely once the
+        // PPS array ends (issue #952: a genuine DASH-IF `livesim2` capture's
+        // `avcC` is exactly 41 bytes, profile 100, SPS+PPS consuming every
+        // byte, no trailer at all). So presence requires BOTH the profile
+        // gate AND at least one byte actually remaining; when bytes are
+        // absent we leave every field `None` rather than inventing a default
+        // (absent is not 4:2:0/8-bit, it is unknown).
         let mut chroma_format = None;
         let mut bit_depth_luma_minus8 = None;
         let mut bit_depth_chroma_minus8 = None;
         let mut sps_ext = Vec::new();
 
-        if Self::has_high_profile_ext(profile_indication) {
+        if Self::has_high_profile_ext(profile_indication) && cursor < bytes.len() {
             // byte: reserved(6) + chroma_format(2)
             let b_cf = read_u8(bytes, &mut cursor, "chroma_format byte")?;
             let _reserved_cf = (b_cf >> 2) & 0x3F;
@@ -223,8 +232,12 @@ impl Serialize for AVCDecoderConfigurationRecord {
         for pps in &self.pps {
             len += 2 + pps.0.len();
         }
-        // High-profile ext
-        if Self::has_high_profile_ext(self.profile_indication) {
+        // High-profile ext: emit it iff it was actually present (`chroma_format
+        // .is_some()`), not merely because the profile allows it — a
+        // High-profile `avcC` that omitted the trailer on the wire (#952) must
+        // round-trip back to the same trailer-less bytes, not grow one back
+        // with invented zero defaults.
+        if self.chroma_format.is_some() {
             len += 4; // chroma_fmt + bit_depth_luma + bit_depth_chroma + numSPSExt
             for sps_ext in &self.sps_ext {
                 len += 2 + sps_ext.0.len();
@@ -292,9 +305,9 @@ impl Serialize for AVCDecoderConfigurationRecord {
             cursor += pps.0.len();
         }
 
-        // High-profile ext
-        if Self::has_high_profile_ext(self.profile_indication) {
-            let cf = self.chroma_format.unwrap_or(0);
+        // High-profile ext — mirrors `serialized_len`'s presence gate above:
+        // written iff it was actually present on parse, never invented.
+        if let Some(cf) = self.chroma_format {
             buf[cursor] = 0xFC | (cf & 0x03);
             cursor += 1;
 
@@ -534,6 +547,50 @@ mod tests {
 
         let serialized = record.to_bytes();
         assert_eq!(serialized, body, "high-profile avcC round-trip");
+    }
+
+    #[test]
+    fn test_avc_config_high_profile_no_trailer_952() {
+        // Real DASH-IF `livesim2` `avcC` (`fixtures/scte35-ssai/dash/V300/init.mp4`,
+        // issue #952): profile 100 (High), 41 bytes total, SPS+PPS consuming
+        // every byte — the optional §5.3.3.1.2 high-profile trailer
+        // (chroma_format/bit_depth_*/sps_ext) is simply absent, which a
+        // conformant High-profile encoder is free to do. Must parse (not
+        // error), leave the trailer fields `None` (not an invented default),
+        // and round-trip byte-identically (no trailer grown back).
+        let body = hex_to_bytes(
+            "0164001effe100196764001eacd940a02ff9610000030001000003003c8f162d9601000568ebecb22c",
+        );
+        assert_eq!(body.len(), 41, "fixture avcC body is 41 bytes per #952");
+
+        let record = AVCDecoderConfigurationRecord::parse(&body)
+            .expect("a High-profile avcC with no trailer bytes remaining must parse, not error");
+        assert_eq!(record.configuration_version, 1);
+        assert_eq!(record.profile_indication, 100, "High profile");
+        assert_eq!(record.level_indication, 0x1E);
+        assert_eq!(record.sps.len(), 1);
+        assert_eq!(record.pps.len(), 1);
+        assert_eq!(
+            record.chroma_format, None,
+            "absent trailer must stay None, not default to 4:2:0"
+        );
+        assert_eq!(record.bit_depth_luma_minus8, None);
+        assert_eq!(record.bit_depth_chroma_minus8, None);
+        assert!(record.sps_ext.is_empty());
+
+        let serialized = record.to_bytes();
+        assert_eq!(
+            serialized, body,
+            "a trailer-less High-profile avcC must round-trip without growing one back"
+        );
+    }
+
+    /// Decode a hex string into bytes (test-only helper).
+    fn hex_to_bytes(hex: &str) -> Vec<u8> {
+        (0..hex.len())
+            .step_by(2)
+            .map(|i| u8::from_str_radix(&hex[i..i + 2], 16).unwrap())
+            .collect()
     }
 
     #[test]
