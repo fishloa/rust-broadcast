@@ -154,7 +154,7 @@ impl Media {
     /// `composition_offset`, from a zero base — lies in `[start, end)` is kept.
     ///
     /// To satisfy the CMAF constraint that a track opens on a random-access
-    /// point (ISO/IEC 23000-19 §7.3.2.3), the **anchor** track ([`anchor_index`]:
+    /// point (ISO/IEC 23000-19 §7.3.2.3), the **anchor** track (`anchor_index`:
     /// first video track, else the first anchor-capable track) is back-trimmed:
     /// the first sample it keeps is the nearest sync sample at or before the
     /// first sample the raw window would select. All other tracks keep exactly
@@ -221,7 +221,7 @@ impl Media {
         Ok(Media::new(out_tracks, self.movie_timescale))
     }
 
-    /// Total duration of the segmentation anchor track ([`anchor_index`]: first
+    /// Total duration of the segmentation anchor track (`anchor_index`: first
     /// video track, else the first anchor-capable track) in that track's media
     /// timescale — the denominator for how many segments a resegmentation at a
     /// given target will produce.
