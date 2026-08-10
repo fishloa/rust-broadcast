@@ -3,12 +3,20 @@
 //! Identifies which LLS table body follows the common 4-byte envelope (see
 //! [`crate::lls::LlsEnvelope`]). `0x01`-`0x05` are transcribed verbatim in
 //! `docs/a331-signalling.md` Table 6.1. `0x06` (CDT, A/360 CertificationData)
-//! and `0x07` (CAP, Common Alerting Protocol) are additional cross-spec
-//! registrations — Table 6.1's own prose notes "Additional LLS table IDs
-//! exist outside this list (e.g. A/360's CertificationData...)" but the
-//! ATSC Code Point Registry itself is not vendored in this repo, so these two
-//! byte values are not independently verified against a vendored spec PDF in
-//! this pass.
+//! and `0x07` (DRCT, Dedicated Return Channel Table) are additional
+//! cross-spec registrations — Table 6.1's own prose notes "Additional LLS
+//! table IDs exist outside this list (e.g. A/360's CertificationData...)".
+//!
+//! `0x07` was previously modelled as CAP (Common Alerting Protocol). That was
+//! wrong: ATSC A/323:2026-04 §7 (p. 66) states "The DRCT is allocated the
+//! LLS_table_id 0x07 (see Code Point Registry)", and §5 (p. 18) repeats that
+//! the Dedicated Return Channel Table "is defined as case 0x07". CAP messages
+//! are carried inside the AEAT (A/331 §6.5) and have no LLS_table_id of their
+//! own. Verified against the A/323:2026-04 PDF fetched from atsc.org; A/323 is
+//! not vendored here, so that fetch is the provenance.
+//!
+//! `0x06` (CDT) remains sourced from A/360 and is not independently verified
+//! against a vendored PDF in this pass.
 //!
 //! Table 6.1 as transcribed also names `0xFE` as `SignedMultiTable` (§6.7,
 //! not otherwise modeled here) rather than reserved; this enum folds it into
@@ -34,9 +42,9 @@ pub enum LlsTableId {
     /// `0x06` — Certification Data Table (A/360 CertificationData; see
     /// module doc for sourcing caveat).
     Cdt,
-    /// `0x07` — Common Alerting Protocol table (see module doc for sourcing
-    /// caveat).
-    Cap,
+    /// `0x07` — Dedicated Return Channel Table (ATSC A/323:2026-04 §7,
+    /// p. 66: "The DRCT is allocated the LLS_table_id 0x07").
+    Drct,
     /// `0x00`, `0x08`-`0xFE` — ATSC/Industry Reserved (see module doc:
     /// includes `0xFE` `SignedMultiTable`, not modeled separately yet).
     Reserved(u8),
@@ -56,7 +64,7 @@ impl LlsTableId {
             Self::Aeat => "AEAT",
             Self::OnscreenMessageNotification => "OnscreenMessageNotification",
             Self::Cdt => "CDT",
-            Self::Cap => "CAP",
+            Self::Drct => "DRCT",
             Self::Reserved(_) => "reserved",
             Self::UserDefined => "UserDefined",
         }
@@ -72,7 +80,7 @@ impl LlsTableId {
             0x04 => Self::Aeat,
             0x05 => Self::OnscreenMessageNotification,
             0x06 => Self::Cdt,
-            0x07 => Self::Cap,
+            0x07 => Self::Drct,
             0xFF => Self::UserDefined,
             other => Self::Reserved(other),
         }
@@ -88,7 +96,7 @@ impl LlsTableId {
             Self::Aeat => 0x04,
             Self::OnscreenMessageNotification => 0x05,
             Self::Cdt => 0x06,
-            Self::Cap => 0x07,
+            Self::Drct => 0x07,
             Self::UserDefined => 0xFF,
             Self::Reserved(v) => *v,
         }
@@ -110,7 +118,7 @@ mod tests {
             (LlsTableId::Aeat, 0x04),
             (LlsTableId::OnscreenMessageNotification, 0x05),
             (LlsTableId::Cdt, 0x06),
-            (LlsTableId::Cap, 0x07),
+            (LlsTableId::Drct, 0x07),
             (LlsTableId::UserDefined, 0xFF),
         ] {
             assert_eq!(id.to_u8(), expected);
