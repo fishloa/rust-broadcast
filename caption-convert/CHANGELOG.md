@@ -42,15 +42,43 @@ All notable changes to this crate. Format: [Keep a Changelog](https://keepachang
     dropped.
   - `no_std` + `alloc` (default features add `std`); `cc-data`/`teletext`
     features gate the two extractor backends independently.
-  - Real fixtures throughout (`fixtures/cc/cea608_cc1_synthetic.txt`,
+  - Fixture-driven tests throughout (`fixtures/cc/cea608_cc1_synthetic.txt`,
     `fixtures/teletext/teletext_subtitle_synthetic.txt`,
-    `fixtures/sub/cap.vtt`), with mutation coverage: flipping the EOC wire
+    `fixtures/sub/cap.vtt` — all three **synthetic/hand-authored**, see
+    `fixtures/PROVENANCE.md`), with mutation coverage: flipping the EOC wire
     bytes drops the expected cue, XORing a Teletext parity bit yields
     U+FFFD, and corrupting the `WEBVTT` signature returns a typed
     `Error::InvalidWebVtt` rather than empty output.
 - Not reached, reported rather than implied: the DVB bitmap -> IMSC Image
   pipeline, TTML/IMSC source conversions, and the file/stream service wrapper
   issue #931 also mentions.
+- A **real** fixture, `fixtures/sub/sintel-en.srt` -- the official English
+  dialogue subtitles for Blender Foundation's *Sintel* (CC BY 3.0; see
+  `fixtures/PROVENANCE.md` for the exact Wikimedia Commons source/revision) --
+  plus a new `tests/srt_real_fixture.rs` exercising it (real-structure
+  assertions, a `write_srt`/`parse_srt` round trip, a lossless SRT<->WebVTT
+  conversion, and a timestamp mutation bite).
+- Two `cargo-fuzz` targets, `caption_convert_webvtt` and `caption_convert_srt`
+  (`fuzz/fuzz_targets/`), asserting the text-format round-trip invariant
+  (parse -> write -> re-parse yields an equal `Cue` list) on arbitrary input,
+  not just no-panic. Fuzzing them found and fixed four real bugs in the
+  `webvtt.rs`/`srt.rs`/`time.rs` parsers:
+  - A lone CR (W3C WebVTT SS4's third line-terminator form, alongside LF and
+    CRLF) survived as a literal control character embedded in a cue's text
+    and then silently vanished on the next write; both parsers now
+    normalise all three terminator forms up front (`time::normalize_line_endings`).
+  - `parse_srt`'s block-edge `str::trim()` ate a meaningful trailing/leading
+    space on a payload's boundary line, not just the blank-line padding it
+    was meant for; narrowed to `trim_matches('\n')`.
+  - `parse_webvtt`'s block-boundary check (`line.trim().is_empty()`) treated
+    any whitespace-only line as the blank line ending a cue, silently
+    truncating a cue with a legitimate whitespace-only interior line;
+    narrowed to the spec's actual rule, `line.is_empty()`.
+  - `parse_timestamp`'s `h*3600+m*60+s` (then `*90` ticks) widening
+    multiplication had no overflow check: WebVTT's hour field has no
+    digit-count cap, so a validly-parsed huge `u64` hour overflowed it --
+    panicking under debug-assertions, silently wrapping to a bogus timestamp
+    in release. Now checked arithmetic, returning `Error::InvalidTimestamp`.
 
 ### Changed
 - MSRV raised to **1.95.0** (issue #949), as a workspace-wide uplift; no
