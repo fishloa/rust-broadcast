@@ -1,6 +1,6 @@
 [package]
 name    = "mpeg-ps"
-version = "0.3.0"
+version = "0.4.0"
 edition = "2024"
 description = "MPEG-1/2 Program Stream parser — pack header, system header, program stream map (ISO/IEC 13818-1 §2.5)."
 license      = "MIT OR Apache-2.0"
@@ -17,8 +17,8 @@ all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
 
 [dependencies]
-broadcast-common = { path = "../broadcast-common", version = "9", default-features = false }
-mpeg-pes   = { path = "../mpeg-pes",   version = "0.3", default-features = false }
+broadcast-common = { path = "../broadcast-common", version = "9.3", default-features = false }
+mpeg-pes   = { path = "../mpeg-pes",   version = "0.4", default-features = false }
 thiserror  = { version = "2", default-features = false }
 serde      = { version = "1", optional = true, features = ["derive"] }
 

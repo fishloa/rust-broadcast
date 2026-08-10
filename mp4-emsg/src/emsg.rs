@@ -329,9 +329,10 @@ impl<'a> EmsgBox<'a> {
 }
 
 /// The SCTE 35 scheme-URI prefix carried in `emsg.scheme_id_uri` (e.g.
-/// `urn:scte:scte35:2013:bin`), per DASH-IF Interoperability Points Part 10
-/// §7.3, §9.2.5 (freely published). The SCTE 214 *part* that normatively
-/// defines it is unverified — see issue #951.
+/// `urn:scte:scte35:2013:bin`), per **ANSI/SCTE 214-3 §8.3.3** for the
+/// inband form. This previously cited 214-1, which is the *MPD* carriage
+/// (`urn:scte:scte35:2014:xml+bin`, §6.8.4) — a different part for a
+/// different thing. Settled from DASH-IF IOP v4.3 §5.4.3 p.163 (#951).
 pub const SCTE35_SCHEME_PREFIX: &str = "urn:scte:scte35";
 
 /// Parse a null-terminated UTF-8 string from the front of `data`, returning the

@@ -1,6 +1,6 @@
 [package]
 name    = "st291"
-version = "0.3.0"
+version = "0.4.0"
 edition = "2024"
 description = "SMPTE ST 291-1 ancillary (ANC) data content — typed parse/serialize for its transports: ST 2038:2021 MPEG-2 TS carriage (anc_data_descriptor + ANC data PES packet) and RFC 8331 / ST 2110-40 RTP carriage."
 license      = "MIT OR Apache-2.0"
@@ -17,8 +17,8 @@ all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
 
 [dependencies]
-broadcast-common = { path = "../broadcast-common", version = "9", default-features = false }
-rtp-packet = { path = "../rtp-packet", version = "0.3", default-features = false, optional = true }
+broadcast-common = { path = "../broadcast-common", version = "9.3", default-features = false }
+rtp-packet = { path = "../rtp-packet", version = "0.4", default-features = false, optional = true }
 thiserror  = { version = "2", default-features = false }
 serde      = { version = "1", optional = true, features = ["derive"] }
 

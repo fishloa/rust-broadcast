@@ -1,6 +1,6 @@
 [package]
 name    = "ttml-subtitle"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 description = "TTML2 / IMSC 1.1 timed-text subtitle parser — W3C TTML2 + IMSC 1.1 profile validation."
 license      = "MIT OR Apache-2.0"
@@ -15,7 +15,7 @@ all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
 
 [dependencies]
-broadcast-common = { path = "../broadcast-common", version = "9", default-features = false }
+broadcast-common = { path = "../broadcast-common", version = "9.3", default-features = false }
 roxmltree = { version = "0.20", default-features = false }
 thiserror  = { version = "2", default-features = false }
 serde      = { version = "1", optional = true, features = ["derive"] }

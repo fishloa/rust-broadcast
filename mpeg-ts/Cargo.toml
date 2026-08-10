@@ -1,6 +1,6 @@
 [package]
 name         = "mpeg-ts"
-version      = "0.3.1"
+version      = "0.4.0"
 edition      = "2024"
 license      = "MIT OR Apache-2.0"
 repository   = "https://github.com/fishloa/rust-broadcast"
@@ -11,7 +11,7 @@ categories   = ["parser-implementations", "multimedia::video", "no-std"]
 exclude      = ["docs/**", "tests/fixtures/**"]
 
 [dependencies]
-broadcast-common = { path = "../broadcast-common", version = "9", default-features = false }
+broadcast-common = { path = "../broadcast-common", version = "9.3", default-features = false }
 thiserror  = { version = "2", default-features = false }
 bytes      = { version = "1", default-features = false }
 serde      = { version = "1", default-features = false, features = ["derive", "alloc"], optional = true }
@@ -22,7 +22,7 @@ std    = ["broadcast-common/std", "thiserror/std", "serde?/std"]
 serde  = ["dep:serde"]
 
 [dev-dependencies]
-mp4-emsg = { path = "../mp4-emsg", version = "0.3", default-features = false }
+mp4-emsg = { path = "../mp4-emsg", version = "0.4", default-features = false }
 
 [[test]]
 name = "label_coverage"

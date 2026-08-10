@@ -16,14 +16,14 @@ all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
 
 [dependencies]
-broadcast-common = { path = "../broadcast-common", version = "9.2", default-features = false }
+broadcast-common = { path = "../broadcast-common", version = "9.3", default-features = false }
 # Splice-point conditioning (nearest-boundary snap with an explicit
 # tolerance): this crate decides *when* a transition happens, ssai-runtime
 # decides *how the splice lands* — see the crate-root docs. Not duplicated
 # here.
 ssai-runtime     = { path = "../ssai-runtime",     version = "0.1", default-features = false }
 # Builds + serializes the splice_insert() a transition implies.
-scte35-splice    = { path = "../scte35-splice",    version = "2",   default-features = false }
+scte35-splice    = { path = "../scte35-splice",    version = "2.1",   default-features = false }
 thiserror        = { version = "2", default-features = false }
 serde            = { version = "1", optional = true, default-features = false, features = ["derive", "alloc"] }
 
@@ -31,7 +31,7 @@ serde            = { version = "1", optional = true, default-features = false, f
 # Real-fixture tests/examples only (`fixtures/scte35-ssai/`): decode the real
 # emsg-carried cue this crate's transition/emission logic is verified
 # against. Not a runtime dependency of the core itself.
-mp4-emsg = { path = "../mp4-emsg", version = "0.3", default-features = false }
+mp4-emsg = { path = "../mp4-emsg", version = "0.4", default-features = false }
 
 [features]
 default = ["std"]

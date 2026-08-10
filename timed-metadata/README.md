@@ -24,7 +24,7 @@ across the OTT delivery chain:
 |--------|----------|---------|
 | **SCTE-35** `splice_info_section` | ANSI/SCTE 35 2023r1 | MPEG-2 TS |
 | **HLS `EXT-X-DATERANGE`** | RFC 8216 / draft-pantos-hls-rfc8216bis §4.4.5.1 | HLS playlist |
-| **DASH `emsg`** | DASH-IF IOP Part 10; scheme `urn:scte:scte35:2013:bin` | MP4/CMAF segment |
+| **DASH `emsg`** | ANSI/SCTE 214-3 §8.3.3; scheme `urn:scte:scte35:2013:bin` | MP4/CMAF segment |
 
 `timed-metadata` translates between all three. Conversions are **lossless**: the
 original `splice_info_section` bytes travel verbatim as the `SCTE35-OUT` hex in
@@ -139,7 +139,7 @@ are available in `no_std` mode.
 
 - **ANSI/SCTE 35 2023r1** — `splice_info_section` wire format.
 - **RFC 8216 / draft-pantos-hls-rfc8216bis §4.4.5.1** — `EXT-X-DATERANGE`.
-- **DASH-IF IOP Part 10** — SCTE-35 binary carriage in DASH `emsg`; scheme
+- **ANSI/SCTE 214-3 §8.3.3** — SCTE-35 binary carriage in inband DASH `emsg`; scheme
   `urn:scte:scte35:2013:bin`.
 - **ISO/IEC 23009-1 §5.10.3.3** — ISOBMFF Event Message Box (`emsg`).
 - **W3C WebVTT** + **RFC 8216 §3.5** — WebVTT cue syntax + HLS

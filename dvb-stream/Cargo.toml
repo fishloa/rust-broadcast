@@ -1,6 +1,6 @@
 [package]
 name         = "dvb-stream"
-version      = "0.4.1"
+version      = "0.5.0"
 edition      = "2024"
 description  = "Async/tokio stream adapters over dvb-si SiDemux and dvb-t2mi T2miPump."
 license      = "MIT OR Apache-2.0"
@@ -16,15 +16,15 @@ rust-version.workspace = true
 all-features = true
 
 [dependencies]
-dvb-si       = { path = "../dvb-si",   version = "9", default-features = false, features = ["ts", "std"] }
-dvb-t2mi     = { path = "../dvb-t2mi", version = "9", default-features = false, features = ["ts", "std"] }
-mpeg-ts      = { path = "../mpeg-ts",  version = "0.3.1", default-features = false, features = ["std"] }
+dvb-si       = { path = "../dvb-si",   version = "10", default-features = false, features = ["ts", "std"] }
+dvb-t2mi     = { path = "../dvb-t2mi", version = "10", default-features = false, features = ["ts", "std"] }
+mpeg-ts      = { path = "../mpeg-ts",  version = "0.4", default-features = false, features = ["std"] }
 futures-core = "0.3"
 tokio        = { version = "1", default-features = false, features = ["io-util", "net"] }
 
 [dev-dependencies]
 tokio         = { version = "1", default-features = false, features = ["rt", "macros", "time", "net", "io-util"] }
-broadcast-common    = { path = "../broadcast-common", version = "9" }
+broadcast-common    = { path = "../broadcast-common", version = "9.3" }
 futures-util  = { version = "0.3", default-features = false }
 
 [features]

@@ -1,6 +1,6 @@
 [package]
 name         = "transmux"
-version      = "0.23.1"
+version      = "0.24.0"
 edition      = "2024"
 license      = "MIT OR Apache-2.0"
 repository   = "https://github.com/fishloa/rust-broadcast"
@@ -13,19 +13,19 @@ readme       = "README.md"
 [dependencies]
 # Floored at 9.2: `cenc::CencScheme` and `hex::hex_encode` (the definitions this
 # crate re-exports, shared with `broadcast-hls` — issue #878) landed there.
-broadcast-common = { path = "../broadcast-common", version = "9.2", default-features = false }
+broadcast-common = { path = "../broadcast-common", version = "9.3", default-features = false }
 thiserror  = { version = "2", default-features = false }
 serde      = { version = "1", default-features = false, features = ["derive", "alloc"], optional = true }
 # HLS (M3U8) playlist syntax (issue #878): the `ts_hls`/`ll_hls` segmenters
 # produce `broadcast_hls::MediaPlaylist`/`MediaSegment` values; the playlist
 # syntax itself no longer lives in this crate.
-broadcast-hls = { path = "../broadcast-hls", version = "0.1", default-features = false }
-mp4-emsg   = { path = "../mp4-emsg",  version = "0.3", default-features = false }
-mpeg-ts    = { path = "../mpeg-ts",  version = "0.3.1", default-features = false }
-mpeg-pes   = { path = "../mpeg-pes", version = "0.3", default-features = false }
-mpeg-ps    = { path = "../mpeg-ps",  version = "0.3", default-features = false }
-rtp-packet = { path = "../rtp-packet", version = "0.3", default-features = false }
-rtcp-packet = { path = "../rtcp-packet", version = "0.2", default-features = false }
+broadcast-hls = { path = "../broadcast-hls", version = "0.2", default-features = false }
+mp4-emsg   = { path = "../mp4-emsg",  version = "0.4", default-features = false }
+mpeg-ts    = { path = "../mpeg-ts",  version = "0.4", default-features = false }
+mpeg-pes   = { path = "../mpeg-pes", version = "0.4", default-features = false }
+mpeg-ps    = { path = "../mpeg-ps",  version = "0.4", default-features = false }
+rtp-packet = { path = "../rtp-packet", version = "0.4", default-features = false }
+rtcp-packet = { path = "../rtcp-packet", version = "0.3", default-features = false }
 bytes      = { version = "1", default-features = false }
 aes        = { version = "0.8", default-features = false, optional = true }
 ctr        = { version = "0.9", default-features = false, optional = true }
@@ -62,7 +62,7 @@ serde_json   = "1.0"
 # dependency (see `splice.rs`'s module docs, "Follow-up") — selecting splice
 # *points* from SCTE-35 cues is left to callers, and this example is exactly
 # that follow-up wiring, not a library dependency.
-scte35-splice  = { path = "../scte35-splice", version = "2", default-features = false, features = ["std"] }
+scte35-splice  = { path = "../scte35-splice", version = "2.1", default-features = false, features = ["std"] }
 timed-metadata = { path = "../timed-metadata", default-features = false, features = ["std"] }
 
 [package.metadata.docs.rs]

@@ -1,6 +1,6 @@
 [package]
 name    = "rtsp-runtime"
-version = "0.5.0"
+version = "0.6.0"
 edition = "2024"
 description = "Sans-IO RTSP 1.0 (RFC 2326) session engine — driveable client + server state machines, interleaved RTP/RTCP framing, Basic/Digest/Bearer auth (via broadcast-auth), over the rtsp-types + sdp-types codecs; optional tokio (+ rustls) socket adapter."
 license      = "MIT OR Apache-2.0"
@@ -19,7 +19,7 @@ rustdoc-args = ["--cfg", "docsrs"]
 [dependencies]
 rtsp-types = "0.1"
 sdp-types  = "0.1"
-broadcast-auth = { path = "../broadcast-auth", version = "0.2" }
+broadcast-auth = { path = "../broadcast-auth", version = "0.3" }
 thiserror  = "2"
 log        = "0.4"
 serde      = { version = "1", optional = true, default-features = false, features = ["derive", "alloc"] }

@@ -2,8 +2,8 @@
 //!
 //! Translates SCTE-35 splice information to the carriages used in OTT
 //! delivery: HLS `EXT-X-DATERANGE` (RFC 8216 / draft-pantos-hls-rfc8216bis
-//! §4.4.5.1) and DASH `emsg` (DASH-IF IOP Part 10, scheme
-//! `urn:scte:scte35:2013:bin`; the SCTE 214 part number is unverified — #951).
+//! §4.4.5.1) and DASH `emsg` (ANSI/SCTE 214-3 §8.3.3, scheme
+//! `urn:scte:scte35:2013:bin`).
 //! The DASH `emsg` conversion is bidirectional (SCTE-35 to and from `emsg`);
 //! the HLS `EXT-X-DATERANGE` conversion is currently one-way (SCTE-35 to
 //! DATERANGE only) — the reverse edge is out of scope for now, see

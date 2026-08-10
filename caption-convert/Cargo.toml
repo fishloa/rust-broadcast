@@ -17,10 +17,10 @@ all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
 
 [dependencies]
-broadcast-common = { path = "../broadcast-common", version = "9",   default-features = false }
-timed-metadata    = { path = "../timed-metadata",   version = "0.4.2", default-features = false }
-cc-data           = { path = "../cc-data",          version = "0.4", default-features = false, optional = true }
-dvb-vbi           = { path = "../dvb-vbi",          version = "0.3", default-features = false, optional = true }
+broadcast-common = { path = "../broadcast-common", version = "9.3",   default-features = false }
+timed-metadata    = { path = "../timed-metadata",   version = "0.5", default-features = false }
+cc-data           = { path = "../cc-data",          version = "0.5", default-features = false, optional = true }
+dvb-vbi           = { path = "../dvb-vbi",          version = "0.4", default-features = false, optional = true }
 thiserror         = { version = "2", default-features = false }
 serde             = { version = "1", default-features = false, features = ["derive", "alloc"], optional = true }
 

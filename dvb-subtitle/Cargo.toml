@@ -1,6 +1,6 @@
 [package]
 name    = "dvb-subtitle"
-version = "0.3.0"
+version = "0.4.0"
 edition = "2024"
 description = "DVB subtitling (bitmap) segment parser — ETSI EN 300 743, the segments carried in subtitle PES."
 license      = "MIT OR Apache-2.0"
@@ -17,14 +17,14 @@ all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
 
 [dependencies]
-broadcast-common = { path = "../broadcast-common", version = "9", default-features = false }
+broadcast-common = { path = "../broadcast-common", version = "9.3", default-features = false }
 thiserror  = { version = "2", default-features = false }
 serde      = { version = "1", optional = true, features = ["derive"] }
 
 [dev-dependencies]
 serde_json = "1.0"
 # Reassemble subtitle PES from a real TS capture in the integration fixture test.
-mpeg-pes = { path = "../mpeg-pes", version = "0.3" }
+mpeg-pes = { path = "../mpeg-pes", version = "0.4" }
 
 [features]
 default = ["std"]

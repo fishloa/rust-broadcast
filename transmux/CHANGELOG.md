@@ -94,20 +94,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `rcgen`), which had grown a dedicated CI job, six `--exclude` lanes and a
   guard script to contain. Adopting let-chains and `is_multiple_of` where the
   1.95 lints require them; no functional or API change.
-### Added
-- `flv::flv_sequence_header_payloads` + `flv::flv_frame_payloads` + `FlvPayload`/`FlvPayloadKind`
-  (issue #934): build the same `VideoTagHeader`+`AVCVIDEOPACKET` /
-  `AudioTagHeader`+`AACAUDIODATA` tag *bodies* `FlvMux::package` writes into
-  each FLV tag, without FLV tag/file framing — the bodies an RTMP
-  `send_video`/`send_audio` message needs. `flv_frame_payloads` rescales each
-  sample's absolute `dts`/composition-offset (in its track's own timescale)
-  to FLV's millisecond clock directly, unlike `FlvMux::package`'s zero-based
-  running-duration sum — safe to call once per drained batch from a live
-  push driver, where "start of this batch" isn't "start of the stream".
-  Added for `multimux`'s RTMP push output, which previously shipped raw
-  MPEG-2 TS as an RTMP video payload (no RTMP server can decode that).
 
 ## [0.23.1] - 2026-08-08
+
+**Note:** this was cut as a *patch* release while also adding public API
+(`flv_sequence_header_payloads`/`flv_frame_payloads`/`FlvPayload`/
+`FlvPayloadKind`, below) — a minor by this workspace's own 0.x scheme. That
+mismatch is what produced the understated-floor bug fixed under `multimux`
+(its `push::rtmp` called these functions while multimux's manifest still
+declared `transmux = "0.23"`, which resolves to 0.23.0 and does not have
+them). Recorded here so the next release does not repeat the mistake of
+shipping additive API as a patch.
 
 ### Added
 - `MkvMux` — a Matroska (MKV) container muxer, the exact inverse of
@@ -119,6 +116,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   round-trips (issue #915). Previously shipped at `HEAD` with no version
   bump, an empty changelog entry, and no README coverage-table row — all
   three fixed here.
+- `flv::flv_sequence_header_payloads` + `flv::flv_frame_payloads` + `FlvPayload`/`FlvPayloadKind`
+  (issue #934): build the same `VideoTagHeader`+`AVCVIDEOPACKET` /
+  `AudioTagHeader`+`AACAUDIODATA` tag *bodies* `FlvMux::package` writes into
+  each FLV tag, without FLV tag/file framing — the bodies an RTMP
+  `send_video`/`send_audio` message needs. `flv_frame_payloads` rescales each
+  sample's absolute `dts`/composition-offset (in its track's own timescale)
+  to FLV's millisecond clock directly, unlike `FlvMux::package`'s zero-based
+  running-duration sum — safe to call once per drained batch from a live
+  push driver, where "start of this batch" isn't "start of the stream".
+  Added for `multimux`'s RTMP push output, which previously shipped raw
+  MPEG-2 TS as an RTMP video payload (no RTMP server can decode that).
 
 ### Fixed
 - Documentation-only corrections: several places where module/README docs

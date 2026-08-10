@@ -1,6 +1,6 @@
 [package]
 name    = "rtmp-runtime"
-version = "0.5.0"
+version = "0.6.0"
 edition = "2024"
 description = "Sans-IO RTMP 1.0 (Adobe Real-Time Messaging Protocol) ingest session engine — a driveable server-side publish state machine over the handshake, chunk stream, AMF0, and message layers; optional tokio socket adapter."
 license      = "MIT OR Apache-2.0"
@@ -17,7 +17,7 @@ all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
 
 [dependencies]
-broadcast-common = { path = "../broadcast-common", version = "9", default-features = false }
+broadcast-common = { path = "../broadcast-common", version = "9.3", default-features = false }
 thiserror = "2"
 log       = "0.4"
 serde     = { version = "1", optional = true, features = ["derive"] }
@@ -37,5 +37,5 @@ name = "capture_publish"
 required-features = ["tokio"]
 
 [dev-dependencies]
-transmux   = { path = "../transmux", version = "0.23", default-features = false, features = ["std"] }
+transmux   = { path = "../transmux", version = "0.24", default-features = false, features = ["std"] }
 serde_json = "1"

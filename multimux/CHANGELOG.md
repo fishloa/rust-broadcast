@@ -51,8 +51,72 @@
   unconditionally as both the fallback (routes/sources with no SI) and the
   hard cap (an EPG whose EIT carousel never signals a transition) — EIT
   alignment only ever shortens a period, never removes the cap.
+- **WHEP egress output** (`OutputKind::Whep`, config token `"whep"`, issue
+  #743): accepts a viewer's HTTP `POST`ed SDP offer, negotiates ICE +
+  DTLS-SRTP, and pushes the route's `Trunk` samples out as SRTP RTP over
+  `transmux::RtpPacketiser::packetise_video` (RFC 6184 single-NAL/STAP-A/
+  FU-A). A sibling `whep` Cargo feature to `whip` (below) — both pull in
+  `webrtc-runtime/media` and share its rustc >= 1.88 floor, kept optional so
+  an HTTP-only consumer isn't forced to build the ICE/DTLS-SRTP tree. Scope:
+  video (H.264) only, no trickle ICE, no `PATCH`. Verified against a real
+  second `RTCPeerConnection` (not a mock peer): 119 decoded H.264 frames,
+  `<video>` `currentTime` advancing to ~6.13s, reproduced across two
+  independent runs.
+- **WHIP ingest** (`InputSpec::Whip`, config token `"whip"`, issues #740/
+  #743): an inbound WHIP publisher (RFC 9725) — HTTP `POST`/SDP-offer
+  signalling plus `webrtc-runtime`'s `MediaTransport` for ICE + DTLS-SRTP —
+  behind a new `whip` feature. Real `avcC` config is captured from the
+  in-band STAP-A SPS/PPS (browsers omit it from SDP) rather than fabricated,
+  using the same deferred-announce gate `source::rtmp` already uses for
+  "wait for the first sample". Video-only (H.264); no RTP/Opus depayloader
+  exists anywhere in this workspace, so audio is out of scope rather than
+  half-built. Verified against a real browser (headless Chromium, fake video
+  device, forced H.264) over a real UDP socket and multimux's own generated
+  certificate.
+  - **Push egress converged onto the same sans-IO `PushEgress` shape as
+    WHIP/WHEP** (issue #942): `PushTransport` gained `encode_media`
+    (sans-IO encode) and `write_message` (raw verbatim write, distinct from
+    the framing `send`), so `PushTransportEgress<T>` can implement
+    `PushEgress` — `send()` encodes and queues, `flush_transmit()` writes.
+    RTMP's ad-hoc `is_flv_codec`/`warned_refused_tracks` refusal logic now
+    lives in `supports_codec` + `negotiate`/`renegotiate` returning
+    `NegotiationOutcome::Refused`; `drive_push` also detects a mid-stream
+    track-set change via `Trunk::track_generation` and renegotiates, which
+    it previously never handled.
+
+### Changed (BREAKING — issue #903, EIT-boundary DVR rolling)
+- **BREAKING: `InputSpec` is now `#[non_exhaustive]`.** It was not at the
+  `multimux-v0.8.0` tag (verified with `git show`), so an external exhaustive
+  `match` over it compiled then and will not now. `OutputKind` was already
+  `#[non_exhaustive]` at that tag, so `OutputKind::Catchup` is additive — a
+  pre-release audit initially recorded it as breaking and that was wrong.
+- **`source::ts_udp::recv_and_feed` now returns `Result<usize>`** (was
+  `Result<()>`): the number of bytes read, so a caller can also feed the
+  exact same slice to the new `RouteHandle::feed_si_ts` EIT tracker without
+  a second read. Source-breaking for any direct caller of this `pub` async
+  function.
+- **`source::srt::StreamStatus::Fed` and `source::ts_http::StreamStatus::Fed`
+  now carry the payload (`Fed(Vec<u8>)`)** (were the unit variant `Fed`),
+  for the same reason — feeding `RouteHandle::feed_si_ts` from the drive loop
+  without a second read. Both `StreamStatus` enums are `pub`; a direct match
+  on either no longer compiles without a binding on `Fed`.
 
 ### Changed
+- **`broadcast-common` floor raised `9` -> `9.2`.** `output::smooth` calls
+  `broadcast_common::hex::hex_encode`, absent at the 9.0.0/9.1.0 tags
+  (verified against all three: 9.0.0 -> 0 hits, 9.1.0 -> 0, 9.2.0 -> 1).
+  multimux 0.8.0 shipped this understated, so a lock resolving
+  broadcast-common 9.0/9.1 fails to build published 0.8.0 today.
+- **`transmux` floor raised `0.23` -> `0.23.1`.** `push::rtmp` calls
+  `transmux::flv_sequence_header_payloads`/`flv_frame_payloads`, absent at
+  transmux-v0.23.0 and present at v0.23.1. Same understated-floor class as
+  the broadcast-common entry above, found by the same audit.
+- **`hls-runtime` floor raised `0.5` -> `0.6`.** `src/catchup.rs` uses
+  `hls_runtime::server::ClosedSegment`/`HlsOrigin::closed_segments()`, which
+  do not exist in published hls-runtime 0.5.0 (verified: 0 hits at the
+  hls-runtime-v0.5.0 tag, 7 at HEAD). multimux declared `"0.5"`, so a
+  consumer resolving 0.5.0 would fail to compile multimux; hls-runtime's own
+  0.5.0 -> 0.6.0 minor (new public API) ships alongside this fix.
 - **`broadcast-auth` floor raised `0.2` -> `0.2.1`.** `config.rs` uses
   `Verifier::signed_url` / `SignedUrlKeySet`, which were added in 0.2.1
   (#747). The `"0.2"` bound admitted 0.2.0, which does not have them, so
@@ -65,6 +129,20 @@
   guard script to contain. Adopting let-chains and `is_multiple_of` where the
   1.95 lints require them; no functional or API change.
 ### Fixed
+- **One unauthenticated datagram could tear down a live WHIP ingest.**
+  `handle_datagram` returns `Err` on any SRTP authentication failure, and the
+  WHIP read loop mapped that to a fatal transport error, reaping the session
+  — but the post-handshake media socket accepts datagrams from anyone (no
+  source-address/ICE-pair check), so a single garbage datagram in the RFC
+  5764 §5.1.2 SRTP band ended an established ingest. Now logged at debug and
+  skipped, matching how `output::whep` already handled the identical error;
+  a genuine socket-level read error stays fatal.
+- **Off-by-four panic in DVR index rebuild on a truncated period file.**
+  `rebuild_index` guarded with `mdat_offset + 4 <= data.len()` but then read
+  `&data[mdat_offset + 4..mdat_offset + 8]` — eight bytes behind a four-byte
+  bound. A period file truncated between a `moof` and the `mdat` four-CC (a
+  routine shape after a power loss or full disk mid-write — exactly when
+  `rebuild_index` exists to recover) panicked instead of recovering.
 - `routes.dvr` was validated (`Route::validate_dvr`) but never actually
   wired into the `RouteHandle` built for a config-driven or admin-API-added
   route — `RouteHandle::with_dvr` was only ever called from this crate's

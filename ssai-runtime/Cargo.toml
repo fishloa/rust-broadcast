@@ -16,11 +16,11 @@ all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
 
 [dependencies]
-broadcast-common = { path = "../broadcast-common", version = "9.2", default-features = false }
+broadcast-common = { path = "../broadcast-common", version = "9.3", default-features = false }
 # Session playlist rendering (issue #929): the per-session Interstitial
 # `EXT-X-DATERANGE` tag is appended to `MediaPlaylist::extra_tags` — the
 # injection point `broadcast-hls` documents for exactly this purpose.
-broadcast-hls     = { path = "../broadcast-hls",     version = "0.1", default-features = false }
+broadcast-hls     = { path = "../broadcast-hls",     version = "0.2", default-features = false }
 thiserror         = { version = "2", default-features = false }
 serde             = { version = "1", optional = true, default-features = false, features = ["derive", "alloc"] }
 
@@ -29,8 +29,8 @@ serde             = { version = "1", optional = true, default-features = false, 
 # decode the real cue this crate's splice-point conditioning is verified
 # against. Neither is a runtime dependency of the sans-IO core itself — the
 # core takes plain tick counts, never SCTE-35/emsg wire types.
-scte35-splice = { path = "../scte35-splice", version = "2",   default-features = false }
-mp4-emsg      = { path = "../mp4-emsg",      version = "0.3", default-features = false }
+scte35-splice = { path = "../scte35-splice", version = "2.1",   default-features = false }
+mp4-emsg      = { path = "../mp4-emsg",      version = "0.4", default-features = false }
 
 [features]
 default = ["std"]

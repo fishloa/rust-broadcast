@@ -1,6 +1,6 @@
 [package]
 name    = "srt-runtime"
-version = "0.3.0"
+version = "0.4.0"
 edition = "2024"
 description = "SRT (Secure Reliable Transport, draft-sharabayko-srt-01) packet codecs + sans-IO HSv5 Caller-Listener and Rendezvous handshake state machines, an ARQ reliability engine, a TSBPD delivery scheduler, LiveCC packet pacing, FileCC window-based congestion control, optional (crypto feature) payload encryption, and an optional (tokio feature) async UDP socket adapter; no_std core."
 license      = "MIT OR Apache-2.0"
@@ -17,7 +17,7 @@ all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
 
 [dependencies]
-broadcast-common = { path = "../broadcast-common", version = "9", default-features = false }
+broadcast-common = { path = "../broadcast-common", version = "9.3", default-features = false }
 thiserror = { version = "2", default-features = false }
 serde     = { version = "1", optional = true, default-features = false, features = ["derive", "alloc"] }
 # §6 payload crypto (AES-CTR, RFC 3394 key wrap, PBKDF2/HMAC-SHA1 KEK

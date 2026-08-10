@@ -1,17 +1,19 @@
 //! SCTE-35 ↔ DASH `emsg` conversion (scheme `urn:scte:scte35:2013:bin`).
 //!
-//! Carriage is specified by DASH-IF Interoperability Points Part 10 §7.3,
-//! §9.2.5, which is freely published. This module previously cited
-//! **SCTE 214-3** while `mp4-emsg` cited **SCTE 214-1** for the same URI —
-//! both as fact, at most one correct. Neither part is obtainable without
-//! SCTE catalogue access, so the part number is deliberately not asserted
-//! here. See issue #951.
+//! Carriage is **ANSI/SCTE 214-3 §8.3.3** for the inband `emsg` form used
+//! here. (The MPD `EventStream` form, `urn:scte:scte35:2014:xml+bin`, is
+//! SCTE 214-1 §6.8.4 — a different part for a different carriage.)
+//!
+//! #951 recorded this crate and `mp4-emsg` citing contradictory parts. This
+//! crate was right. Settled from DASH-IF IOP v4.3 §5.4.3 p.163, which is
+//! freely published and states the split explicitly, so no paywalled SCTE
+//! document was needed after all.
 use crate::error::{Error, Result};
 use alloc::{string::String, vec::Vec};
 use mp4_emsg::{EmsgBox, PresentationTime};
 
-/// The SCTE-35 binary carriage scheme for DASH `emsg` (DASH-IF IOP Part 10;
-/// SCTE 214 part unverified, see issue #951).
+/// The SCTE-35 binary carriage scheme for inband DASH `emsg`
+/// (ANSI/SCTE 214-3 §8.3.3).
 pub const SCTE35_SCHEME: &str = "urn:scte:scte35:2013:bin";
 
 /// Parameters for emitting a SCTE-35-carrying `emsg`.

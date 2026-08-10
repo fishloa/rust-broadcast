@@ -17,8 +17,8 @@ all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
 
 [dependencies]
-broadcast-common = { path = "../broadcast-common", version = "9", default-features = false }
-rtcp-packet      = { path = "../rtcp-packet",      version = "0.2", default-features = false }
+broadcast-common = { path = "../broadcast-common", version = "9.3", default-features = false }
+rtcp-packet      = { path = "../rtcp-packet",      version = "0.3", default-features = false }
 thiserror        = { version = "2", default-features = false }
 
 [dev-dependencies]

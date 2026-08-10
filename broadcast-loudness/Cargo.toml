@@ -1,6 +1,6 @@
 [package]
 name    = "broadcast-loudness"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2024"
 description = "EBU R 128 / ITU-R BS.1770-5 loudness measurement: K-weighting, integrated/short-term/momentary loudness (LUFS), loudness range (LRA), and true-peak (dBTP). no_std + alloc."
 license      = "MIT OR Apache-2.0"
@@ -17,7 +17,7 @@ all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
 
 [dependencies]
-broadcast-common = { path = "../broadcast-common", version = "9", default-features = false }
+broadcast-common = { path = "../broadcast-common", version = "9.3", default-features = false }
 thiserror  = { version = "2", default-features = false }
 libm       = { version = "0.2", default-features = false }
 

@@ -15,15 +15,14 @@
 //! - ISO/IEC 14496-12 §8.8 (movie fragments / `emsg` box).
 //! - DASH-IF IOP Part 10 §6.1 (Events and Timed Metadata in MPEG-DASH / CMAF):
 //!   `emsg` boxes follow `styp` and precede `moof` in each media segment.
-//! - DASH-IF IOP Part 10 §7.3: SCTE 35 binary scheme (the SCTE 214 part
-//!   number is unverified — see issue #951)
+//! - ANSI/SCTE 214-3 §8.3.3: SCTE 35 binary scheme for the inband `emsg`
 //!   `urn:scte:scte35:2013:bin`.
 
 use mp4_emsg::{EMSG_BOX_TYPE, EmsgBox, EmsgVersion, PresentationTime};
 use transmux::{FragmentTrackData, Sample, build_media_segment, build_media_segment_with_events};
 
 /// The SCTE 35 scheme URI for binary `splice_info_section` delivery
-/// (DASH-IF IOP Part 10 §7.3; SCTE 214 part unverified, #951).
+/// (ANSI/SCTE 214-3 §8.3.3).
 const SCTE35_SCHEME: &str = "urn:scte:scte35:2013:bin";
 
 /// Load the committed SCTE 35 `emsg` v0 fixture and return the raw `emsg` box

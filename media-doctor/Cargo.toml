@@ -16,17 +16,17 @@ path = "src/bin/media-doctor.rs"
 required-features = ["cli"]
 
 [dependencies]
-broadcast-common = { path = "../broadcast-common", version = "9", default-features = false }
-mpeg-pes         = { path = "../mpeg-pes", version = "0.3", default-features = false }
-mpeg-ts          = { path = "../mpeg-ts", version = "0.3.1", default-features = false }
-dvb-si           = { path = "../dvb-si", version = "9", default-features = false, features = ["ts"] }
-dvb-conformance  = { path = "../dvb-conformance", version = "9", default-features = false }
-scte35-splice    = { path = "../scte35-splice", version = "2", default-features = false }
-timed-metadata   = { path = "../timed-metadata", version = "0.4.1", default-features = false }
-transmux         = { path = "../transmux", version = "0.23", default-features = false }
+broadcast-common = { path = "../broadcast-common", version = "9.3", default-features = false }
+mpeg-pes         = { path = "../mpeg-pes", version = "0.4", default-features = false }
+mpeg-ts          = { path = "../mpeg-ts", version = "0.4", default-features = false }
+dvb-si           = { path = "../dvb-si", version = "10", default-features = false, features = ["ts"] }
+dvb-conformance  = { path = "../dvb-conformance", version = "10", default-features = false }
+scte35-splice    = { path = "../scte35-splice", version = "2.1", default-features = false }
+timed-metadata   = { path = "../timed-metadata", version = "0.5", default-features = false }
+transmux         = { path = "../transmux", version = "0.24", default-features = false }
 # HLS (M3U8) playlist syntax (issue #878): the validator parses playlists
 # via this crate directly rather than reaching through `transmux` for it.
-broadcast-hls    = { path = "../broadcast-hls", version = "0.1", default-features = false }
+broadcast-hls    = { path = "../broadcast-hls", version = "0.2", default-features = false }
 clap             = { version = "4", features = ["derive"], optional = true }
 serde            = { version = "1", features = ["derive", "alloc"], optional = true }
 serde_json       = { version = "1", optional = true }
@@ -46,7 +46,7 @@ cli     = ["dep:clap", "dep:thiserror", "std"]
 # the library dependency above stays `default-features = false` (no `cli`,
 # no `clap`); Cargo unifies the two requirements for test builds only, same
 # pattern as `rtmp-runtime`'s dev-dependency on `transmux`.
-transmux = { path = "../transmux", version = "0.23", default-features = false, features = ["cli"] }
+transmux = { path = "../transmux", version = "0.24", default-features = false, features = ["cli"] }
 
 [package.metadata.docs.rs]
 all-features = true

@@ -1,6 +1,6 @@
 [package]
 name         = "ts-fix"
-version      = "0.4.2"
+version      = "0.5.0"
 edition      = "2024"
 license      = "MIT OR Apache-2.0"
 repository   = "https://github.com/fishloa/rust-broadcast"
@@ -12,11 +12,11 @@ exclude      = ["tests/fixtures/**"]
 readme       = "README.md"
 
 [dependencies]
-broadcast-common = { path = "../broadcast-common", version = "9", default-features = false }
-mpeg-ts   = { path = "../mpeg-ts",  version = "0.3.1", default-features = false }
-mpeg-pes  = { path = "../mpeg-pes", version = "0.3", default-features = false }
-dvb-si    = { path = "../dvb-si",   version = "9",   default-features = false }
-dvb-conformance = { path = "../dvb-conformance", version = "9", default-features = false }
+broadcast-common = { path = "../broadcast-common", version = "9.3", default-features = false }
+mpeg-ts   = { path = "../mpeg-ts",  version = "0.4", default-features = false }
+mpeg-pes  = { path = "../mpeg-pes", version = "0.4", default-features = false }
+dvb-si    = { path = "../dvb-si",   version = "10",   default-features = false }
+dvb-conformance = { path = "../dvb-conformance", version = "10", default-features = false }
 thiserror = { version = "2",        default-features = false }
 clap      = { version = "4.5",      features = ["derive"] }
 
@@ -29,7 +29,7 @@ name = "ts-fix"
 path = "src/bin/ts-fix.rs"
 
 [dev-dependencies]
-scte35-splice = { path = "../scte35-splice", version = "2", default-features = false }
+scte35-splice = { path = "../scte35-splice", version = "2.1", default-features = false }
 
 [package.metadata.docs.rs]
 all-features = true

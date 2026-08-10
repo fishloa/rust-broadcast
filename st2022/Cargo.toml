@@ -11,7 +11,7 @@ categories   = ["multimedia::video", "parser-implementations", "no-std"]
 keywords     = ["smpte", "st2022", "hbrmt", "sdi-over-ip", "broadcast"]
 
 [dependencies]
-broadcast-common = { path = "../broadcast-common", version = "9", default-features = false }
+broadcast-common = { path = "../broadcast-common", version = "9.3", default-features = false }
 thiserror        = { version = "2", default-features = false }
 
 [features]

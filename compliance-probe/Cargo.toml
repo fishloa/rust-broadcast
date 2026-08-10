@@ -16,13 +16,13 @@ all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
 
 [dependencies]
-broadcast-common = { path = "../broadcast-common", version = "9",     default-features = false }
-dvb-conformance  = { path = "../dvb-conformance",  version = "9",     default-features = false }
-mpeg-ts          = { path = "../mpeg-ts",          version = "0.3.1", default-features = false }
-scte35-splice    = { path = "../scte35-splice",    version = "2",     default-features = false }
-timed-metadata   = { path = "../timed-metadata",   version = "0.4.2", default-features = false }
+broadcast-common = { path = "../broadcast-common", version = "9.3",     default-features = false }
+dvb-conformance  = { path = "../dvb-conformance",  version = "10",     default-features = false }
+mpeg-ts          = { path = "../mpeg-ts",          version = "0.4", default-features = false }
+scte35-splice    = { path = "../scte35-splice",    version = "2.1",     default-features = false }
+timed-metadata   = { path = "../timed-metadata",   version = "0.5", default-features = false }
 media-doctor     = { path = "../media-doctor",     version = "0.8",   default-features = false }
-media-plane      = { path = "../media-plane",      version = "0.3",   default-features = false }
+media-plane      = { path = "../media-plane",      version = "0.4",   default-features = false }
 # Optional, enabled only by this crate's own `std` feature: the `metrics`
 # facade macros (`counter!`/`gauge!`) expand to code that needs `std` (they
 # are not no_std-compatible), so every call site in this crate is itself
