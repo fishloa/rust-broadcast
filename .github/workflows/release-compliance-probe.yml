@@ -28,6 +28,11 @@ jobs:
     # required reviewer before any cargo publish can run. See the
     # 'crates-io' environment (repo Settings -> Environments).
     environment: crates-io
+    # `contents: write` is needed to create the GitHub Release below, and is
+    # the only elevated permission this job holds — `cargo publish`
+    # authenticates with CARGO_REGISTRY_TOKEN, not the GitHub token.
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v5
       - uses: Swatinem/rust-cache@v2
@@ -56,6 +61,19 @@ jobs:
       # compliance-probe's media-doctor dependency must already be on
       # crates.io at >= 0.8. Idempotent: an "already uploaded" error is
       # treated as success.
+      # docs/RELEASE-DOCS.md requires a release note per tag, and this workflow
+      # uses it as the GitHub Release body — so a missing one is caught HERE,
+      # before anything reaches crates.io, rather than after the version is
+      # already immutable.
+      - name: Gate — release note exists for this version
+        run: |
+          NOTE="docs/release-notes/compliance-probe-${GITHUB_REF_NAME#compliance-probe-v}.md"
+          if [ ! -s "$NOTE" ]; then
+            echo "::error::$NOTE is missing or empty — see docs/RELEASE-DOCS.md"
+            exit 1
+          fi
+          echo "::notice::release note $NOTE present"
+
       - name: Publish compliance-probe
         run: |
           if out=$(cargo publish -p compliance-probe --locked 2>&1); then
@@ -67,3 +85,22 @@ jobs:
           fi
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+
+      # docs/RELEASE-DOCS.md section 3: a GitHub Release per tag, body = the
+      # release note. This was a manual step for the first 191 releases and was
+      # missed for 102 tags, so it is automated. Idempotent: an existing
+      # release is left untouched, so re-running after a partial failure is
+      # safe.
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          V="${GITHUB_REF_NAME#compliance-probe-v}"
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            echo "::notice::GitHub Release $GITHUB_REF_NAME already exists — leaving it alone"
+          else
+            gh release create "$GITHUB_REF_NAME" \
+              --title "compliance-probe $V" \
+              --notes-file "docs/release-notes/compliance-probe-$V.md"
+            echo "::notice::created GitHub Release $GITHUB_REF_NAME"
+          fi
