@@ -109,10 +109,22 @@ fn flags_from_lengths(cci: usize, tsi: usize, toi: usize) -> Result<(u8, u8, u8,
             reason: "TSI 32-bit-word count (S) must be 0 or 1",
         });
     }
-    if o > 7 {
+    // `O` is a TWO-bit field (RFC 5651 §5.1), at bits 5..6 of the flags word
+    // and masked `& 0x03` on serialize — exactly like `C` and `PSI`. The bound
+    // was `> 7`, which is the only one of the three that contradicted both its
+    // own field width and this struct's doc ("TOI ... 0, 2, 4, ..., 14", i.e.
+    // 4*O + 2*H with O <= 3).
+    //
+    // The consequence was silent, not loud: a TOI of 16/20/24/28/30 bytes gave
+    // o = 4..=7, passed the old check, and then serialized as `o & 0x03` — so
+    // the wire declared a SHORTER TOI than the bytes actually written, and a
+    // reparse read the surplus as a header-extension chain. That breaks the
+    // workspace's byte-exact round-trip invariant, and it is reachable by a
+    // well-behaved sender: wide TOIs are legitimate in FLUTE.
+    if o > 3 {
         return Err(Error::InvalidField {
             what: "O",
-            reason: "TOI 32-bit-word count (O) must be 0..=7",
+            reason: "TOI 32-bit-word count (O) must be 0..=3 (2-bit field)",
         });
     }
     Ok((c, s, o, h))
@@ -357,6 +369,41 @@ mod tests {
 
     // THE flag-dependent-size test: C=1 (CCI 8), S=1 + H=1 (TSI 6), O=1 + H=1
     // (TOI 6). All three widths differ from the minimal case.
+    /// A TOI wider than the 2-bit `O` field can describe must be REJECTED,
+    /// not silently truncated.
+    ///
+    /// `O` is 2 bits (RFC 5651 §5.1) and is masked `& 0x03` on serialize, but
+    /// the bound was `o > 7`. A 16-byte TOI gives `o = 4`: it passed the check
+    /// and then encoded as `O = 0`, so the wire declared a zero-length TOI
+    /// while 16 TOI bytes were written. A reparse then read those bytes as a
+    /// header-extension chain — a byte-exact round-trip failure produced by a
+    /// perfectly well-behaved sender, since wide TOIs are legitimate in FLUTE.
+    #[test]
+    fn a_toi_too_wide_for_the_two_bit_o_field_is_rejected_not_truncated() {
+        let cci = [0u8; 4];
+        let toi = [0u8; 16]; // o = 4, which the 2-bit O field cannot express
+        let hdr = LctHeader {
+            version: LCT_VERSION,
+            psi: 0,
+            close_session: false,
+            close_object: false,
+            codepoint: 0,
+            cci: &cci,
+            tsi: &[],
+            toi: &toi,
+            extensions: vec![],
+        };
+
+        let mut out = vec![0u8; 64];
+        let err = hdr
+            .serialize_into(&mut out)
+            .expect_err("a 16-byte TOI must be refused, not encoded as O=0");
+        assert!(
+            matches!(err, Error::InvalidField { what: "O", .. }),
+            "the error must name the O field, got: {err:?}"
+        );
+    }
+
     #[test]
     fn flag_dependent_widths_round_trip() {
         let cci = [0xAAu8, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF, 0x00, 0x11];

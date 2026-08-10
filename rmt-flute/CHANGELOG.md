@@ -8,6 +8,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **`O` (TOI word-count) bound corrected from `0..=7` to `0..=3`.** `O` is a
+  two-bit field (RFC 5651 §5.1) masked `& 0x03` on serialize, but the
+  validator allowed up to 7. A TOI of 16/20/24/28/30 bytes passed validation
+  and then encoded as `O = 0`, so the wire declared a shorter TOI than the
+  bytes actually written and a reparse read the surplus as a
+  header-extension chain — a byte-exact round-trip failure reachable by a
+  well-behaved sender, since wide TOIs are legitimate in FLUTE. Such headers
+  are now rejected with `InvalidField { what: "O" }`. Behaviour change:
+  input that previously serialized (incorrectly) now errors.
+
 ### Changed
 - MSRV raised to **1.95.0** (issue #949). This removes the workspace's MSRV
   split: `webrtc-runtime`'s optional `media` feature needed rustc 1.88 (via
