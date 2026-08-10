@@ -832,16 +832,16 @@ pub(crate) fn refine_legacy_config(config: &mut CodecConfig, samples: &[Sample])
         return;
     };
     match config {
-        CodecConfig::Mpeg2Video { width, height, .. } => {
-            if let Ok(sh) = Mpeg2SeqHeader::find(&first.data) {
-                *width = sh.width;
-                *height = sh.height;
-            }
+        CodecConfig::Mpeg2Video { width, height, .. }
+            if let Ok(sh) = Mpeg2SeqHeader::find(&first.data) =>
+        {
+            *width = sh.width;
+            *height = sh.height;
         }
-        CodecConfig::MpegAudio { layer, .. } => {
-            if let Ok(hdr) = MpegAudioFrameHeader::parse(&first.data) {
-                *layer = hdr.layer;
-            }
+        CodecConfig::MpegAudio { layer, .. }
+            if let Ok(hdr) = MpegAudioFrameHeader::parse(&first.data) =>
+        {
+            *layer = hdr.layer;
         }
         _ => {}
     }

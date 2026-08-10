@@ -477,16 +477,15 @@ impl Stage for RtmpIngestSession {
     fn feed(&mut self, events: &[ServerEvent], _now: Timestamp) -> Result<()> {
         for event in events {
             match event {
-                ServerEvent::Connected { app } => {
+                ServerEvent::Connected { app }
                     if let Some(expected) = &self.app
-                        && app != expected
-                    {
-                        return Err(MultimuxError::Connect {
-                            reason: format!(
-                                "rtmp: app {app:?} does not match configured app {expected:?}"
-                            ),
-                        });
-                    }
+                        && app != expected =>
+                {
+                    return Err(MultimuxError::Connect {
+                        reason: format!(
+                            "rtmp: app {app:?} does not match configured app {expected:?}"
+                        ),
+                    });
                 }
                 ServerEvent::Media { flv } => {
                     self.demux.feed(flv).map_err(|e| MultimuxError::Depay {

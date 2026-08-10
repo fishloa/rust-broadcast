@@ -140,11 +140,12 @@ impl Resource for ResourceManager {
                 }));
             }
             // Module's profile → record its resources.
-            Some(t) if t == tag::PROFILE => {
-                if let Ok(p) = Profile::parse(apdu) {
-                    self.module_resources = p.resources;
-                    self.module_profiled = true;
-                }
+            Some(t)
+                if t == tag::PROFILE
+                    && let Ok(p) = Profile::parse(apdu) =>
+            {
+                self.module_resources = p.resources;
+                self.module_profiled = true;
             }
             // Resource set changed → re-enquire.
             Some(t) if t == tag::PROFILE_CHANGE => {
@@ -231,36 +232,38 @@ impl Resource for ConditionalAccess {
     fn on_apdu(&mut self, apdu: &[u8]) -> ResourceOut {
         let mut out = ResourceOut::default();
         match peek_tag(apdu) {
-            Some(t) if t == tag::CA_INFO => {
-                if let Ok(ci) = CaInfo::parse(apdu) {
-                    out.notify.push(Notification::CaInfo {
-                        ca_system_ids: ci.ca_system_ids,
-                    });
-                }
+            Some(t)
+                if t == tag::CA_INFO
+                    && let Ok(ci) = CaInfo::parse(apdu) =>
+            {
+                out.notify.push(Notification::CaInfo {
+                    ca_system_ids: ci.ca_system_ids,
+                });
             }
-            Some(t) if t == tag::CA_PMT_REPLY => {
-                if let Ok(r) = CaPmtReply::parse(apdu) {
-                    // EN 50221 §8.4.3.5 Table 26: programme-level `CA_enable`.
-                    // Plumb the object's own `Option<CaEnable>` straight
-                    // through — `None` means the programme
-                    // `CA_enable_flag` bit was clear (no programme-level
-                    // status given), which is distinct from a genuine
-                    // flag-set reserved code and must not be collapsed to a
-                    // sentinel.
-                    let descrambling_ok = matches!(
-                        r.ca_enable,
-                        Some(
-                            CaEnable::Possible
-                                | CaEnable::PossiblePurchaseDialogue
-                                | CaEnable::PossibleTechnicalDialogue
-                        )
-                    );
-                    out.notify.push(Notification::CaPmtReply {
-                        program_number: r.program_number,
-                        ca_enable: r.ca_enable,
-                        descrambling_ok,
-                    });
-                }
+            Some(t)
+                if t == tag::CA_PMT_REPLY
+                    && let Ok(r) = CaPmtReply::parse(apdu) =>
+            {
+                // EN 50221 §8.4.3.5 Table 26: programme-level `CA_enable`.
+                // Plumb the object's own `Option<CaEnable>` straight
+                // through — `None` means the programme
+                // `CA_enable_flag` bit was clear (no programme-level
+                // status given), which is distinct from a genuine
+                // flag-set reserved code and must not be collapsed to a
+                // sentinel.
+                let descrambling_ok = matches!(
+                    r.ca_enable,
+                    Some(
+                        CaEnable::Possible
+                            | CaEnable::PossiblePurchaseDialogue
+                            | CaEnable::PossibleTechnicalDialogue
+                    )
+                );
+                out.notify.push(Notification::CaPmtReply {
+                    program_number: r.program_number,
+                    ca_enable: r.ca_enable,
+                    descrambling_ok,
+                });
             }
             _ => {}
         }
@@ -390,26 +393,29 @@ impl Resource for Mmi {
     fn on_apdu(&mut self, apdu: &[u8]) -> ResourceOut {
         let mut out = ResourceOut::default();
         match peek_tag(apdu) {
-            Some(t) if t == tag::ENQ => {
-                if let Ok(e) = Enq::parse(apdu) {
-                    out.notify.push(Notification::Mmi(MmiEvent::Enquiry {
-                        prompt: text(e.text_chars),
-                        blind: e.blind_answer,
-                        answer_len: e.answer_text_length,
-                    }));
-                }
+            Some(t)
+                if t == tag::ENQ
+                    && let Ok(e) = Enq::parse(apdu) =>
+            {
+                out.notify.push(Notification::Mmi(MmiEvent::Enquiry {
+                    prompt: text(e.text_chars),
+                    blind: e.blind_answer,
+                    answer_len: e.answer_text_length,
+                }));
             }
-            Some(t) if t == tag::MENU_LAST => {
-                if let Ok(m) = Menu::parse(apdu) {
-                    out.notify
-                        .push(Notification::Mmi(MmiEvent::Menu(to_menu(&m))));
-                }
+            Some(t)
+                if t == tag::MENU_LAST
+                    && let Ok(m) = Menu::parse(apdu) =>
+            {
+                out.notify
+                    .push(Notification::Mmi(MmiEvent::Menu(to_menu(&m))));
             }
-            Some(t) if t == tag::LIST_LAST => {
-                if let Ok(l) = List::parse(apdu) {
-                    out.notify
-                        .push(Notification::Mmi(MmiEvent::List(to_menu(&l.0))));
-                }
+            Some(t)
+                if t == tag::LIST_LAST
+                    && let Ok(l) = List::parse(apdu) =>
+            {
+                out.notify
+                    .push(Notification::Mmi(MmiEvent::List(to_menu(&l.0))));
             }
             Some(t) if t == tag::CLOSE_MMI => {
                 out.notify.push(Notification::Mmi(MmiEvent::Close));
@@ -419,25 +425,26 @@ impl Resource for Mmi {
             // `display_reply` or the module aborts the MMI — verified live: a
             // real AlphaCrypt opens MMI after `ca_pmt` and, with no reply, closes
             // the session and never descrambles (an Enigma2 box answers it).
-            Some(t) if t == tag::DISPLAY_CONTROL => {
-                if let Ok(dc) = DisplayControl::parse(apdu) {
-                    let reply = match dc.cmd {
-                        // Acknowledge the requested MMI mode (echo it back).
-                        DisplayControlCmd::SetMmiMode => DisplayReply {
-                            reply_id: DisplayReplyId::MmiModeAck,
-                            body: DisplayReplyBody::MmiModeAck(
-                                dc.mmi_mode.unwrap_or(MmiMode::HighLevel),
-                            ),
-                        },
-                        // We don't implement the character-table / graphics
-                        // queries; tell the module so per Table 35.
-                        _ => DisplayReply {
-                            reply_id: DisplayReplyId::UnknownDisplayControlCmd,
-                            body: DisplayReplyBody::None,
-                        },
-                    };
-                    out.apdus.push(ser(&reply));
-                }
+            Some(t)
+                if t == tag::DISPLAY_CONTROL
+                    && let Ok(dc) = DisplayControl::parse(apdu) =>
+            {
+                let reply = match dc.cmd {
+                    // Acknowledge the requested MMI mode (echo it back).
+                    DisplayControlCmd::SetMmiMode => DisplayReply {
+                        reply_id: DisplayReplyId::MmiModeAck,
+                        body: DisplayReplyBody::MmiModeAck(
+                            dc.mmi_mode.unwrap_or(MmiMode::HighLevel),
+                        ),
+                    },
+                    // We don't implement the character-table / graphics
+                    // queries; tell the module so per Table 35.
+                    _ => DisplayReply {
+                        reply_id: DisplayReplyId::UnknownDisplayControlCmd,
+                        body: DisplayReplyBody::None,
+                    },
+                };
+                out.apdus.push(ser(&reply));
             }
             _ => {}
         }

@@ -120,71 +120,64 @@ impl SessionLayer {
         let mut out = SessionOut::default();
         match spdu.first().copied() {
             // Module wants a host-provided resource.
-            Some(tags::OPEN_SESSION_REQUEST) => {
-                if let Ok(req) = OpenSessionRequest::parse(spdu) {
-                    if provides(req.resource) {
-                        let session_nb = self.alloc();
-                        self.sessions.insert(session_nb, req.resource);
-                        out.spdus.push(ser(&OpenSessionResponse {
-                            status: SessionStatus::Ok,
-                            resource: req.resource,
-                            session_nb,
-                        }));
-                        out.opened.push((session_nb, req.resource));
-                    } else {
-                        out.spdus.push(ser(&OpenSessionResponse {
-                            status: SessionStatus::ResourceNonExistent,
-                            resource: req.resource,
-                            session_nb: 0,
-                        }));
-                    }
+            Some(tags::OPEN_SESSION_REQUEST) if let Ok(req) = OpenSessionRequest::parse(spdu) => {
+                if provides(req.resource) {
+                    let session_nb = self.alloc();
+                    self.sessions.insert(session_nb, req.resource);
+                    out.spdus.push(ser(&OpenSessionResponse {
+                        status: SessionStatus::Ok,
+                        resource: req.resource,
+                        session_nb,
+                    }));
+                    out.opened.push((session_nb, req.resource));
+                } else {
+                    out.spdus.push(ser(&OpenSessionResponse {
+                        status: SessionStatus::ResourceNonExistent,
+                        resource: req.resource,
+                        session_nb: 0,
+                    }));
                 }
             }
             // Module's reply to our open_session_request (host opened a
             // module-provided resource); the module assigns the session_nb.
-            Some(tags::OPEN_SESSION_RESPONSE) => {
+            Some(tags::OPEN_SESSION_RESPONSE)
                 if let Ok(resp) = OpenSessionResponse::parse(spdu)
-                    && resp.status == SessionStatus::Ok
-                {
-                    self.sessions.insert(resp.session_nb, resp.resource);
-                    out.opened.push((resp.session_nb, resp.resource));
-                }
+                    && resp.status == SessionStatus::Ok =>
+            {
+                self.sessions.insert(resp.session_nb, resp.resource);
+                out.opened.push((resp.session_nb, resp.resource));
             }
             // (Legacy) module's reply to a create_session, if any module uses it.
-            Some(tags::CREATE_SESSION_RESPONSE) => {
+            Some(tags::CREATE_SESSION_RESPONSE)
                 if let Ok(resp) = CreateSessionResponse::parse(spdu)
-                    && resp.status == SessionStatus::Ok
-                {
-                    self.sessions.insert(resp.session_nb, resp.resource);
-                    out.opened.push((resp.session_nb, resp.resource));
-                }
+                    && resp.status == SessionStatus::Ok =>
+            {
+                self.sessions.insert(resp.session_nb, resp.resource);
+                out.opened.push((resp.session_nb, resp.resource));
             }
             // Peer closes a session.
-            Some(tags::CLOSE_SESSION_REQUEST) => {
-                if let Ok(req) = CloseSessionRequest::parse(spdu) {
-                    self.sessions.remove(&req.session_nb);
-                    out.spdus.push(ser(&CloseSessionResponse {
-                        status: SessionStatus::Ok,
-                        session_nb: req.session_nb,
-                    }));
-                    out.closed.push(req.session_nb);
-                }
+            Some(tags::CLOSE_SESSION_REQUEST) if let Ok(req) = CloseSessionRequest::parse(spdu) => {
+                self.sessions.remove(&req.session_nb);
+                out.spdus.push(ser(&CloseSessionResponse {
+                    status: SessionStatus::Ok,
+                    session_nb: req.session_nb,
+                }));
+                out.closed.push(req.session_nb);
             }
             // Ack of a close we initiated.
-            Some(tags::CLOSE_SESSION_RESPONSE) => {
-                if let Ok(resp) = CloseSessionResponse::parse(spdu) {
-                    self.sessions.remove(&resp.session_nb);
-                    out.closed.push(resp.session_nb);
-                }
+            Some(tags::CLOSE_SESSION_RESPONSE)
+                if let Ok(resp) = CloseSessionResponse::parse(spdu) =>
+            {
+                self.sessions.remove(&resp.session_nb);
+                out.closed.push(resp.session_nb);
             }
             // Data: session_number(nb) + APDU body.
-            Some(tags::SESSION_NUMBER) => {
+            Some(tags::SESSION_NUMBER)
                 if let Ok(sn) = SessionNumber::parse(spdu)
-                    && spdu.len() > SessionNumber::HEADER_LEN
-                {
-                    out.apdus
-                        .push((sn.session_nb, spdu[SessionNumber::HEADER_LEN..].to_vec()));
-                }
+                    && spdu.len() > SessionNumber::HEADER_LEN =>
+            {
+                out.apdus
+                    .push((sn.session_nb, spdu[SessionNumber::HEADER_LEN..].to_vec()));
             }
             _ => {}
         }

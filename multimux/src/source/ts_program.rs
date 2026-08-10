@@ -173,19 +173,18 @@ impl ProgramTracker {
                     }
                 }
             }
+            // A sample for a track never announced (or since removed) is
+            // dropped by the guard — mirrors the pre-5a `known_track_ids`
+            // check — and falls through to the `_ => {}` catch-all below.
             DemuxEvent::Sample {
                 track_id, sample, ..
-            } => {
-                if let Some(&program) = self.track_program.get(&track_id) {
-                    self.pending.push_back(SessionEvent::Sample {
-                        program,
-                        track_id,
-                        retention: RetentionClass::Timed,
-                        sample,
-                    });
-                }
-                // A sample for a track never announced (or since removed)
-                // is dropped — mirrors the pre-5a `known_track_ids` check.
+            } if let Some(&program) = self.track_program.get(&track_id) => {
+                self.pending.push_back(SessionEvent::Sample {
+                    program,
+                    track_id,
+                    retention: RetentionClass::Timed,
+                    sample,
+                });
             }
             DemuxEvent::TrackRemoved { track_id, .. } => {
                 // A mid-stream PMT version bump dropped a previously-live

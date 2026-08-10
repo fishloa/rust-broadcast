@@ -580,28 +580,23 @@ impl Cea708Decoder {
         match b {
             C0_NUL => 1,
             C0_ETX => 1,
-            C0_BS => {
-                if let Some(w) = service.current() {
-                    w.back_space();
-                }
+            // Each of BS/FF/CR/HCR is a no-op when there's no current window
+            // (falls through to the trailing `_ => 1`, same as the guard-true
+            // arms below — every path through this match returns 1).
+            C0_BS if let Some(w) = service.current() => {
+                w.back_space();
                 1
             }
-            C0_FF => {
-                if let Some(w) = service.current() {
-                    w.clear_text();
-                }
+            C0_FF if let Some(w) = service.current() => {
+                w.clear_text();
                 1
             }
-            C0_CR => {
-                if let Some(w) = service.current() {
-                    w.carriage_return();
-                }
+            C0_CR if let Some(w) = service.current() => {
+                w.carriage_return();
                 1
             }
-            C0_HCR => {
-                if let Some(w) = service.current() {
-                    w.horizontal_cr();
-                }
+            C0_HCR if let Some(w) = service.current() => {
+                w.horizontal_cr();
                 1
             }
             C0_EXT1 => Self::handle_ext1(service, data),
