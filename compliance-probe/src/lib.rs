@@ -64,7 +64,7 @@
 //! spanning 1.264 µs (an implied ~1.5 Tbit/s). At that implied rate TBsys
 //! cannot drain, so indicator 3.3 `Buffer_error` fires 35 times; under any
 //! physically plausible bitrate it fires zero times. Same crate, same
-//! [`dvb_conformance::Config`], same fixture — 838 events vs. 803, entirely
+//! [`dvb_conformance::Config`], same fixture — 911 events vs. 876, entirely
 //! from the clock.
 //!
 //! Two consequences for a caller:
@@ -76,7 +76,7 @@
 //! - **`Buffer_error`/`Empty_buffer_error`/`Data_delay_error` are statements
 //!   about arrival timing**, so they are only as trustworthy as that clock.
 //!   `Continuity_count_error`, by contrast, is clock-independent — the
-//!   equivalence test asserts it is 803 on that fixture at every clock rate
+//!   equivalence test asserts it is 876 on that fixture at every clock rate
 //!   from frozen to 2 ms/packet.
 //!
 //! # Cost: one cursor, not a second copy of the data

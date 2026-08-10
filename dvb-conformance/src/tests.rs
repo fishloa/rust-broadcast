@@ -388,6 +388,12 @@ fn cc_correct_increment_no_error() {
     assert!(!has_indicator(events, Indicator::ContinuityCountError));
 }
 
+// #956: a "duplicate" is legal ONLY when it is byte-identical to its
+// predecessor (PCR excepted) — ISO/IEC 13818-1:2023 §2.4.3.3. These three
+// tests pin that rule directly (a same-CC repeat with a genuinely different
+// payload is a real error, not a duplicate) alongside the still-legal
+// byte-identical case and the "at most 2 consecutive duplicates" rule.
+
 #[test]
 fn cc_single_duplicate_is_legal() {
     let mut monitor = ConformanceMonitor::new();
@@ -396,23 +402,56 @@ fn cc_single_duplicate_is_legal() {
         monitor.feed(&pkt, ms(i as u64));
     }
 
-    let pkt = make_ts_packet(0x100, 4, true, false, &[], &[0xCD]);
+    // Same CC (4) AND byte-identical payload (0xAB) as the last packet —
+    // a genuine legal duplicate per §2.4.3.3.
+    let pkt = make_ts_packet(0x100, 4, true, false, &[], &[0xAB]);
     let events = monitor.feed(&pkt, ms(5));
     assert!(!has_indicator(events, Indicator::ContinuityCountError));
 }
 
 #[test]
-fn cc_double_duplicate_is_error() {
+fn cc_same_cc_different_payload_is_error() {
+    // #956 regression: repeating the previous CC is legal only when the
+    // packet is byte-identical (PCR excepted). A same-CC repeat whose
+    // payload has genuinely changed is a real continuity fault, not a
+    // duplicate — this used to be silently accepted.
     let mut monitor = ConformanceMonitor::new();
     for i in 0u8..5 {
         let pkt = make_ts_packet(0x100, i, true, false, &[], &[0xAB]);
         monitor.feed(&pkt, ms(i as u64));
     }
-    let pkt1 = make_ts_packet(0x100, 4, true, false, &[], &[0xCD]);
-    monitor.feed(&pkt1, ms(5));
-    let pkt2 = make_ts_packet(0x100, 4, true, false, &[], &[0xCD]);
-    let events = monitor.feed(&pkt2, ms(6));
-    assert!(has_indicator(events, Indicator::ContinuityCountError));
+
+    let pkt = make_ts_packet(0x100, 4, true, false, &[], &[0xCD]);
+    let events = monitor.feed(&pkt, ms(5));
+    assert!(
+        has_indicator(events, Indicator::ContinuityCountError),
+        "same CC with a genuinely different payload must raise Continuity_count_error"
+    );
+}
+
+#[test]
+fn cc_double_duplicate_is_error() {
+    // §2.4.3.3: "duplicate packets may be sent as two, and only two,
+    // consecutive transport stream packets of the same PID" — a THIRD
+    // repeat of the same (CC, payload) pair is itself an error, even though
+    // each individual repeat is byte-identical.
+    let mut monitor = ConformanceMonitor::new();
+    for i in 0u8..5 {
+        let pkt = make_ts_packet(0x100, i, true, false, &[], &[0xAB]);
+        monitor.feed(&pkt, ms(i as u64));
+    }
+    let pkt1 = make_ts_packet(0x100, 4, true, false, &[], &[0xAB]);
+    let events1 = monitor.feed(&pkt1, ms(5));
+    assert!(
+        !has_indicator(events1, Indicator::ContinuityCountError),
+        "the first legal duplicate must not raise an error"
+    );
+    let pkt2 = make_ts_packet(0x100, 4, true, false, &[], &[0xAB]);
+    let events2 = monitor.feed(&pkt2, ms(6));
+    assert!(
+        has_indicator(events2, Indicator::ContinuityCountError),
+        "a second consecutive duplicate of the same CC must raise Continuity_count_error"
+    );
 }
 
 #[test]

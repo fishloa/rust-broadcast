@@ -2,6 +2,43 @@
 
 ## [Unreleased]
 
+### Fixed
+- **`Continuity_count_error` (1.4) under-reported legal duplicates** (issue
+  #956). The check treated ANY packet repeating the previous
+  `continuity_counter` on a PID as a legal duplicate — it never compared
+  payload bytes. Per ISO/IEC 13818-1:2023 §2.4.3.3 ("In duplicate packets
+  each byte of the original packet shall be duplicated, with the exception
+  that in the program clock reference fields, if present, a valid value
+  shall be encoded"), a same-CC repeat is legal only when it is
+  byte-identical to its predecessor apart from a re-encoded PCR field. Any
+  other same-CC repeat is a genuine continuity fault that was previously
+  silent.
+  - **Behaviour change**: a stream this monitor previously reported clean
+    (zero indicator-1.4 events) may now report `Continuity_count_error` —
+    correctly. This is not a false positive: the new events fire only on
+    packets that repeat a CC with a payload that has genuinely changed. On
+    the committed `m6-duplicate.ts` fixture, the fixed monitor now
+    distinguishes 5 genuine legal duplicates (still silent) from 77 real
+    same-CC/different-payload repeats (now flagged) that the old code
+    silently absorbed into "duplicate". The `m6-single.ts` fixture carries
+    the same pattern: its `Continuity_count_error` count under
+    `ConformanceMonitor` rises from 803 to 876 (confirmed by running
+    `compliance-probe`'s test suite against this fix). That crate's
+    `tests/wasm_analyzer_equivalence.rs` pins the old 803/838 figures against
+    a reference WASM analyzer that shares this same class of bug — it is now
+    failing as expected and needs its pinned numbers (and the matching
+    `838 events vs. 803` prose in `compliance-probe/src/lib.rs`'s module
+    docs) updated when that crate picks up this fix; left untouched here as
+    out of this crate's scope.
+  - Per-PID memory cost increases by up to one TS packet's worth of bytes
+    (`Vec<u8>`, ≤188 bytes) to retain the previous packet for the
+    byte-identity comparison; this is bounded per distinct PID, not
+    per-packet.
+  - Brings this crate's rule in line with `media-doctor`'s
+    `CcAnomalyCheck`, which already implemented the payload-comparison rule
+    correctly (`media-doctor/src/diagnostics/cc_anomaly.rs`) — the two
+    crates previously disagreed on the same stream.
+
 ### Changed
 - MSRV raised to **1.95.0** (issue #949). This removes the workspace's MSRV
   split: `webrtc-runtime`'s optional `media` feature needed rustc 1.88 (via

@@ -4,7 +4,7 @@
 //! # Why this test exists
 //!
 //! Two independent tools in this repository run ETSI TR 101 290 over the same
-//! fixture and report **different total event counts** — 803 here, 838 there.
+//! fixture and report **different total event counts** — 876 here, 911 there.
 //! That is exactly the shape of an under-reporting defect in a compliance
 //! probe (a probe that silently misses 35 events is indistinguishable from a
 //! clean stream), so the difference is pinned here as an executable fact
@@ -40,7 +40,7 @@
 //! # The invariant worth having
 //!
 //! `Continuity_count_error` — the structural finding about this stream — is
-//! **803 at every clock rate tested**, from a frozen clock to 2 ms/packet.
+//! **876 at every clock rate tested**, from a frozen clock to 2 ms/packet.
 //! It is clock-independent, and the two tools agree on it exactly. What is
 //! clock-dependent is precisely the T-STD buffer-model indicator, which is
 //! a statement about *arrival timing* and therefore cannot be answered
@@ -158,7 +158,7 @@ fn fixture_carries_no_pcr_so_the_analyzer_clock_degenerates() {
     );
 }
 
-/// Reproduce the WASM analyzer's reading **exactly**: 838 total, and the
+/// Reproduce the WASM analyzer's reading **exactly**: 911 total, and the
 /// per-indicator split showing where every one of those events comes from.
 #[test]
 fn reproduces_the_wasm_analyzer_reading_exactly() {
@@ -166,10 +166,10 @@ fn reproduces_the_wasm_analyzer_reading_exactly() {
 
     assert_eq!(
         total(&acc),
-        838,
+        911,
         "must reproduce the demo WASM analyzer's total exactly; got {acc:?}"
     );
-    assert_eq!(acc.get("Continuity_count_error").copied(), Some(803));
+    assert_eq!(acc.get("Continuity_count_error").copied(), Some(876));
     assert_eq!(acc.get("Buffer_error").copied(), Some(35));
     assert_eq!(
         acc.len(),
@@ -178,7 +178,7 @@ fn reproduces_the_wasm_analyzer_reading_exactly() {
     );
 }
 
-/// Under a *physically plausible* arrival clock, the reading is 803 — and the
+/// Under a *physically plausible* arrival clock, the reading is 876 — and the
 /// entire 35-event difference is `Buffer_error`, nothing else. This is the
 /// assertion that would fail if this crate were genuinely under-reporting
 /// some other indicator.
@@ -190,8 +190,8 @@ fn under_a_real_arrival_clock_the_only_difference_is_the_tstd_buffer_indicator()
     let real = run_fixed_rate(&data, 40_000);
     let analyzer = run_wasm_analyzer_clock(&data);
 
-    assert_eq!(total(&real), 803);
-    assert_eq!(real.get("Continuity_count_error").copied(), Some(803));
+    assert_eq!(total(&real), 876);
+    assert_eq!(real.get("Continuity_count_error").copied(), Some(876));
     assert_eq!(
         real.get("Buffer_error").copied(),
         None,
@@ -216,7 +216,7 @@ fn under_a_real_arrival_clock_the_only_difference_is_the_tstd_buffer_indicator()
 }
 
 /// `Continuity_count_error` is clock-**independent**: the structural finding
-/// about this stream is 803 whether the clock is frozen or running at
+/// about this stream is 876 whether the clock is frozen or running at
 /// 2 ms/packet. This is the invariant that makes the two tools genuinely
 /// mutually checkable — it cannot be tuned away by choosing a clock.
 #[test]
@@ -228,8 +228,8 @@ fn continuity_count_is_identical_at_every_clock_rate() {
         let acc = run_fixed_rate(&data, ns);
         assert_eq!(
             acc.get("Continuity_count_error").copied(),
-            Some(803),
-            "Continuity_count_error must be 803 regardless of clock rate \
+            Some(876),
+            "Continuity_count_error must be 876 regardless of clock rate \
              (failed at {ns} ns/packet): {acc:?}"
         );
     }

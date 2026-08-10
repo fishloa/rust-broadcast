@@ -13,6 +13,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `rcgen`), which had grown a dedicated CI job, six `--exclude` lanes and a
   guard script to contain. Adopting let-chains and `is_multiple_of` where the
   1.95 lints require them; no functional or API change.
+- Repinned `tests/wasm_analyzer_equivalence.rs` and the module docs to the
+  post-#956 `dvb-conformance` numbers on `fixtures/ts/m6-single.ts`:
+  `Continuity_count_error` is now **876** (was 803) at every clock rate, and
+  the demo-WASM-analyzer reading is now **911** (was 838). No change in this
+  crate — `dvb-conformance` #956 fixed the monitor to require a repeated
+  packet be byte-identical (bar PCR re-encoding) to count as a legal
+  duplicate per ITU-T H.222.0 §2.4.3.3, so the 73 packets that only repeated
+  the previous continuity counter without being byte-identical now correctly
+  count as `Continuity_count_error`. The cross-tool delta stays exactly
+  `[("Buffer_error", 35)]` — the demo WASM analyzer shares the same fix (both
+  crates hold a plain path dependency on `dvb-conformance`, so there is no
+  duplicated indicator logic to patch twice), so the divergence remains a
+  single, understood cause: that analyzer's PCR-anchored clock degenerating
+  on a PCR-less fixture, not a second bug.
 
 ## [0.1.0] - 2026-08-09
 

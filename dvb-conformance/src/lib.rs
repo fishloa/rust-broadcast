@@ -619,6 +619,74 @@ struct CcState {
     had_payload: bool,
     dup_used: bool,
     initialised: bool,
+    /// Canonicalised bytes of the last payload-bearing packet seen on this
+    /// PID (the raw packet with the PCR field zeroed, if present) — see
+    /// [`canonical_packet_for_dup_check`]. Used to test the H.222.0
+    /// §2.4.3.3 "legal duplicate" byte-identity rule. Empty until the first
+    /// packet is recorded.
+    last_packet: Vec<u8>,
+}
+
+// ── Adaptation-field byte offsets used by the legal-duplicate check ─────────
+//
+// These mirror ISO/IEC 13818-1:2023 §2.4.3.4 Table 2-6, restricted to the
+// pieces needed to locate the PCR field within a raw TS packet without a
+// full adaptation-field parse (`check_cc` runs per-packet, so this stays a
+// cheap slice scan rather than allocating a parsed `AdaptationField`).
+
+/// Byte offset of `adaptation_field_control` within a raw TS packet header.
+const AF_CONTROL_BYTE: usize = 3;
+/// `adaptation_field_control` bit indicating an adaptation field is present
+/// (afc `'10'` or `'11'`) — ISO/IEC 13818-1:2023 §2.4.3.2 Table 2-5.
+const AF_HAS_ADAPTATION: u8 = 0x20;
+/// Byte offset of `adaptation_field_length` within a raw TS packet.
+const AF_LEN_BYTE: usize = 4;
+/// Byte offset of the adaptation-field flags byte (the byte immediately
+/// after `adaptation_field_length`) within a raw TS packet.
+const AF_FLAGS_BYTE: usize = 5;
+/// Adaptation-field flags-byte bit for `PCR_flag` — ISO/IEC 13818-1:2023
+/// §2.4.3.4 Table 2-6.
+const AF_PCR_FLAG: u8 = 0x10;
+/// Encoded PCR field width: 33-bit `program_clock_reference_base` + 6
+/// reserved bits + 9-bit `program_clock_reference_extension` = 48 bits —
+/// ISO/IEC 13818-1:2023 §2.4.3.5.
+const PCR_FIELD_LEN: usize = 6;
+
+/// Canonicalise a raw TS packet for the H.222.0 / ISO/IEC 13818-1 §2.4.3.3
+/// legal-duplicate comparison.
+///
+/// Per the spec text (ISO/IEC 13818-1:2023 §2.4.3.3): "In duplicate packets
+/// each byte of the original packet shall be duplicated, with the exception
+/// that in the program clock reference fields, if present, a valid value
+/// shall be encoded." That licenses a difference ONLY in the PCR field, so
+/// this returns the packet's fixed [`mpeg_ts::ts::TS_PACKET_SIZE`] bytes
+/// with that one field zeroed (if present) — every other byte, including
+/// the rest of the header and adaptation field, is still subject to exact
+/// comparison by the caller.
+///
+/// `OPCR` (original PCR, used for splice points) is intentionally NOT
+/// exempted here: it is not itself a "program clock reference" field in the
+/// spec's naming (its syntax elements are `original_program_clock_
+/// reference_base`/`_extension`), and a real encoder does not re-encode it
+/// packet-by-packet the way it does PCR. This matches the convention
+/// already established by `ts-fix`'s continuity-repair hash (which skips
+/// only the PCR range, not OPCR).
+fn canonical_packet_for_dup_check(raw: &[u8]) -> Vec<u8> {
+    let len = mpeg_ts::ts::TS_PACKET_SIZE.min(raw.len());
+    let mut buf = raw[..len].to_vec();
+
+    if len > AF_FLAGS_BYTE && (buf[AF_CONTROL_BYTE] & AF_HAS_ADAPTATION) != 0 {
+        let af_len = buf[AF_LEN_BYTE] as usize;
+        if af_len > 0 {
+            let flags = buf[AF_FLAGS_BYTE];
+            let pcr_start = AF_FLAGS_BYTE + 1;
+            if flags & AF_PCR_FLAG != 0 && pcr_start + PCR_FIELD_LEN <= len {
+                buf[pcr_start..pcr_start + PCR_FIELD_LEN].fill(0);
+            }
+        }
+    }
+
+    buf
 }
 
 /// Timer state for a presence/absence check (shared by 1.3.a, 1.5.a, 1.6).
@@ -1103,6 +1171,14 @@ impl ConformanceMonitor {
             false
         };
 
+        // ISO/IEC 13818-1:2023 §2.4.3.3: "In duplicate packets each byte of
+        // the original packet shall be duplicated, with the exception that
+        // in the program clock reference fields, if present, a valid value
+        // shall be encoded." Canonicalise this packet (PCR zeroed, if
+        // present) so the duplicate comparison below honours exactly that
+        // exception and nothing more.
+        let canonical = canonical_packet_for_dup_check(raw);
+
         // Compute what we need from the existing state, then decide.
         let (expected, is_duplicate, should_emit_dup, should_emit_cc) = {
             let state = self.cc_states.entry(pid).or_insert_with(|| CcState {
@@ -1110,6 +1186,7 @@ impl ConformanceMonitor {
                 had_payload: has_payload,
                 dup_used: false,
                 initialised: false,
+                last_packet: Vec::new(),
             });
 
             if !state.initialised {
@@ -1117,6 +1194,7 @@ impl ConformanceMonitor {
                 state.had_payload = has_payload;
                 state.dup_used = false;
                 state.initialised = true;
+                state.last_packet = canonical;
                 return;
             }
 
@@ -1124,7 +1202,14 @@ impl ConformanceMonitor {
                 // Will update state below — just signal no emit.
                 (0u8, false, false, false)
             } else {
-                let is_duplicate = cc == state.last_cc && has_payload;
+                // A legal duplicate requires the same CC on a payload-bearing
+                // packet AND byte-identical content (PCR excepted) —
+                // §2.4.3.3. Comparing only `cc == state.last_cc` (as this
+                // code used to) would accept ANY packet repeating the
+                // previous CC, silently swallowing genuine continuity
+                // faults (issue #956).
+                let is_duplicate =
+                    cc == state.last_cc && has_payload && canonical == state.last_packet;
                 let mut should_emit_dup = false;
                 let mut should_emit_cc = false;
 
@@ -1181,13 +1266,18 @@ impl ConformanceMonitor {
             state.last_cc = cc;
             state.had_payload = has_payload;
             state.dup_used = false;
+            state.last_packet = canonical;
         } else if is_duplicate {
-            // First duplicate is legal; mark dup_used but do NOT update last_cc.
+            // First duplicate is legal; mark dup_used but do NOT update
+            // last_cc/last_packet — a legal duplicate is, by construction,
+            // canonically identical to what's already stored, so leaving it
+            // in place is equivalent and avoids an extra allocation.
             state.dup_used = true;
         } else {
             state.dup_used = false;
             state.last_cc = cc;
             state.had_payload = has_payload;
+            state.last_packet = canonical;
         }
     }
 
