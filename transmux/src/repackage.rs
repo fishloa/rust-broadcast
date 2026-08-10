@@ -36,24 +36,27 @@ use broadcast_common::Unpackage;
 
 use crate::error::{Error, Result};
 use crate::media::{Fmp4Demux, Media, Track};
-use crate::pipeline::{CodecConfig, TrackSpec};
-use crate::segmenter::Segmenter;
+use crate::pipeline::TrackSpec;
+use crate::segmenter::{Segmenter, choose_anchor};
 
-/// The segmentation anchor track within a [`Media`]: the first video track, or —
-/// for audio-only media — the first track. This mirrors [`Segmenter`]'s anchor
-/// selection so that trim back-off and resegmentation agree on which track's
-/// keyframes define segment (and trim) boundaries.
-fn anchor_index(media: &Media) -> Option<usize> {
-    if media.tracks.is_empty() {
-        return None;
-    }
-    Some(
-        media
-            .tracks
-            .iter()
-            .position(|t| matches!(t.spec.config, CodecConfig::Avc { .. }))
-            .unwrap_or(0),
-    )
+/// The segmentation anchor track within a [`Media`]: the first video track
+/// (any [`CodecConfig::is_video`](crate::pipeline::CodecConfig::is_video)
+/// codec — AVC, HEVC, AV1, VVC, …), else the first anchor-capable track.
+///
+/// Delegates to [`crate::segmenter::choose_anchor`] — the single shared
+/// selection rule ([`Segmenter`] uses the same function — issue #628 fixed
+/// this exact "only AVC counts as anchor" bug there) — rather than
+/// maintaining a second, independently-drifting copy of the rule here. This
+/// module used to check only `matches!(t.spec.config, CodecConfig::Avc {
+/// .. })`, so HEVC/AV1/VVC-only media (all supported elsewhere in this
+/// crate) fell through to `unwrap_or(0)`: track 0, which may be audio,
+/// making segment/trim boundaries cut on audio "sync samples" instead of
+/// video keyframes — on ordinary, well-formed input, no malformation
+/// required (audit finding #6). An input with genuinely no anchor-capable
+/// track (e.g. only section-carried data tracks) is now a real, explicit
+/// error instead of a silent index-0 fallback.
+fn anchor_index(media: &Media) -> Result<usize> {
+    choose_anchor(media.tracks.iter().map(|t| &t.spec.config))
 }
 
 /// The composition (presentation) time of each sample of a track, in that
@@ -151,20 +154,21 @@ impl Media {
     /// `composition_offset`, from a zero base — lies in `[start, end)` is kept.
     ///
     /// To satisfy the CMAF constraint that a track opens on a random-access
-    /// point (ISO/IEC 23000-19 §7.3.2.3), the **anchor** track (first video
-    /// track, else the first track) is back-trimmed: the first sample it keeps
-    /// is the nearest sync sample at or before the first sample the raw window
-    /// would select. All other tracks keep exactly the samples inside the
-    /// window (audio frames are all sync samples, so their first kept sample is
-    /// already a random-access point).
+    /// point (ISO/IEC 23000-19 §7.3.2.3), the **anchor** track ([`anchor_index`]:
+    /// first video track, else the first anchor-capable track) is back-trimmed:
+    /// the first sample it keeps is the nearest sync sample at or before the
+    /// first sample the raw window would select. All other tracks keep exactly
+    /// the samples inside the window (audio frames are all sync samples, so
+    /// their first kept sample is already a random-access point).
     ///
     /// Output decode times are implicitly re-based to zero — the returned IR
     /// carries only the retained samples in order, and the muxers emit
     /// `base_media_decode_time = 0` for the first output segment.
     ///
     /// # Errors
-    /// [`Error::InvalidInput`] if `start >= end`, the media has no tracks, or the
-    /// window selects no sample on any track.
+    /// [`Error::InvalidInput`] if `start >= end`, the media has no tracks, the
+    /// window selects no sample on any track, or (only possible on an already
+    /// pathological input) no track is anchor-capable.
     pub fn trim(&self, start: u64, end: u64) -> Result<Media> {
         if start >= end {
             return Err(Error::InvalidInput("trim: start must be < end"));
@@ -172,7 +176,7 @@ impl Media {
         if self.tracks.is_empty() {
             return Err(Error::InvalidInput("trim: media has no tracks"));
         }
-        let anchor = anchor_index(self).expect("non-empty media has an anchor");
+        let anchor = anchor_index(self)?;
 
         let mut out_tracks = Vec::with_capacity(self.tracks.len());
         let mut kept_any = false;
@@ -217,14 +221,16 @@ impl Media {
         Ok(Media::new(out_tracks, self.movie_timescale))
     }
 
-    /// Total duration of the segmentation anchor track (first video track, else
-    /// the first track) in that track's media timescale — the denominator for
-    /// how many segments a resegmentation at a given target will produce.
+    /// Total duration of the segmentation anchor track ([`anchor_index`]: first
+    /// video track, else the first anchor-capable track) in that track's media
+    /// timescale — the denominator for how many segments a resegmentation at a
+    /// given target will produce.
     ///
     /// Returns `(anchor_duration_ticks, anchor_timescale)`, or `None` for empty
-    /// media.
+    /// media (or, only on an already pathological input, no anchor-capable
+    /// track).
     pub fn anchor_duration(&self) -> Option<(u64, u32)> {
-        let anchor = anchor_index(self)?;
+        let anchor = anchor_index(self).ok()?;
         let t = &self.tracks[anchor];
         let ticks: u64 = t
             .samples

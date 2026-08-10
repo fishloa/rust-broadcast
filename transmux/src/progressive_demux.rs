@@ -323,6 +323,43 @@ impl Stage for ProgressiveDemux<'_> {
     }
 }
 
+/// Look up a typed `stbl` child, e.g. `StblChild::Stts`.
+///
+/// Tries `variant` first. If that misses, checks whether there's a
+/// same-four-CC [`StblChild::Opaque`] instead — meaning the box is *present*
+/// but `init_segment::parse_stbl_children` couldn't parse it — and if so,
+/// re-parses those bytes to recover and return the real parse error, rather
+/// than falling through to the generic "absent" case. Without this, a
+/// corrupt `stts`/`ctts`/… would silently behave exactly like a well-formed
+/// empty or missing box (issue #952 for `stsd`; audit finding #3 for the
+/// remaining `stbl` children): a mandatory box (`stts`/`stsz`/`stsc`) would
+/// report a misleading "expected stts" instead of the actual cause, and an
+/// optional box (`ctts`/`stss`/`stco`/`co64`) would be treated as *legitimately
+/// absent* — e.g. a corrupt `ctts` silently presenting every composition
+/// offset as `0` instead of failing the track loud enough to reach
+/// [`Media::skipped`](crate::media::Media::skipped).
+fn find_stbl_child<'a, T>(
+    children: &'a [StblChild],
+    fourcc: &[u8; 4],
+    variant: impl Fn(&'a StblChild) -> Option<&'a T>,
+    reparse_err: impl Fn(&'a [u8]) -> Error,
+) -> Result<Option<&'a T>> {
+    for child in children {
+        if let Some(t) = variant(child) {
+            return Ok(Some(t));
+        }
+    }
+    for child in children {
+        if let StblChild::Opaque(bytes) = child
+            && bytes.len() >= 8
+            && &bytes[4..8] == fourcc
+        {
+            return Err(reparse_err(bytes));
+        }
+    }
+    Ok(None)
+}
+
 /// Build one track's decode-ordered [`Sample`]s from its `stbl` sample tables,
 /// slicing coded bytes directly out of `file` via the (file-absolute) chunk
 /// offsets.
@@ -334,46 +371,72 @@ fn samples_from_stbl(file: &[u8], trak: &TrackBox) -> Result<Vec<Sample>> {
         .and_then(|m| m.stbl.as_ref())
         .ok_or(Error::UnexpectedBox { expected: "stbl" })?;
 
-    let stts = stbl
-        .children
-        .iter()
-        .find_map(|c| match c {
+    let stts = find_stbl_child(
+        &stbl.children,
+        b"stts",
+        |c| match c {
             StblChild::Stts(b) => Some(b),
             _ => None,
-        })
-        .ok_or(Error::UnexpectedBox { expected: "stts" })?;
-    let ctts = stbl.children.iter().find_map(|c| match c {
-        StblChild::Ctts(b) => Some(b),
-        _ => None,
-    });
-    let stss = stbl.children.iter().find_map(|c| match c {
-        StblChild::Stss(b) => Some(b),
-        _ => None,
-    });
-    let stsz = stbl
-        .children
-        .iter()
-        .find_map(|c| match c {
+        },
+        |bytes| TimeToSampleBox::parse(bytes).unwrap_err(),
+    )?
+    .ok_or(Error::UnexpectedBox { expected: "stts" })?;
+    let ctts = find_stbl_child(
+        &stbl.children,
+        b"ctts",
+        |c| match c {
+            StblChild::Ctts(b) => Some(b),
+            _ => None,
+        },
+        |bytes| CompositionOffsetBox::parse(bytes).unwrap_err(),
+    )?;
+    let stss = find_stbl_child(
+        &stbl.children,
+        b"stss",
+        |c| match c {
+            StblChild::Stss(b) => Some(b),
+            _ => None,
+        },
+        |bytes| SyncSampleBox::parse(bytes).unwrap_err(),
+    )?;
+    let stsz = find_stbl_child(
+        &stbl.children,
+        b"stsz",
+        |c| match c {
             StblChild::Stsz(b) => Some(b),
             _ => None,
-        })
-        .ok_or(Error::UnexpectedBox { expected: "stsz" })?;
-    let stsc = stbl
-        .children
-        .iter()
-        .find_map(|c| match c {
+        },
+        |bytes| SampleSizeBox::parse(bytes).unwrap_err(),
+    )?
+    .ok_or(Error::UnexpectedBox { expected: "stsz" })?;
+    let stsc = find_stbl_child(
+        &stbl.children,
+        b"stsc",
+        |c| match c {
             StblChild::Stsc(b) => Some(b),
             _ => None,
-        })
-        .ok_or(Error::UnexpectedBox { expected: "stsc" })?;
-    let co64 = stbl.children.iter().find_map(|c| match c {
-        StblChild::Co64(b) => Some(b),
-        _ => None,
-    });
-    let stco = stbl.children.iter().find_map(|c| match c {
-        StblChild::Stco(b) => Some(b),
-        _ => None,
-    });
+        },
+        |bytes| SampleToChunkBox::parse(bytes).unwrap_err(),
+    )?
+    .ok_or(Error::UnexpectedBox { expected: "stsc" })?;
+    let co64 = find_stbl_child(
+        &stbl.children,
+        b"co64",
+        |c| match c {
+            StblChild::Co64(b) => Some(b),
+            _ => None,
+        },
+        |bytes| ChunkLargeOffsetBox::parse(bytes).unwrap_err(),
+    )?;
+    let stco = find_stbl_child(
+        &stbl.children,
+        b"stco",
+        |c| match c {
+            StblChild::Stco(b) => Some(b),
+            _ => None,
+        },
+        |bytes| ChunkOffsetBox::parse(bytes).unwrap_err(),
+    )?;
 
     let chunk_offsets = chunk_offsets(co64, stco)?;
     let samples_per_chunk = expand_stsc(stsc, chunk_offsets.len());
@@ -583,5 +646,77 @@ mod tests {
             !Stage::demand(&demux).saturated,
             "headroom remains under the cap"
         );
+    }
+
+    // -----------------------------------------------------------------------
+    // find_stbl_child (audit finding #3)
+    // -----------------------------------------------------------------------
+
+    /// A genuinely malformed `stsc`: a bare 8-byte header, below
+    /// `SampleToChunkBox::parse`'s own 16-byte minimum, so it is guaranteed
+    /// to fail to parse.
+    fn malformed_stsc_opaque() -> StblChild {
+        let mut raw = alloc::vec![0u8; 8];
+        raw[0..4].copy_from_slice(&8u32.to_be_bytes());
+        raw[4..8].copy_from_slice(b"stsc");
+        StblChild::Opaque(raw)
+    }
+
+    fn stsc_variant(c: &StblChild) -> Option<&SampleToChunkBox> {
+        match c {
+            StblChild::Stsc(b) => Some(b),
+            _ => None,
+        }
+    }
+
+    fn stsc_reparse_err(bytes: &[u8]) -> Error {
+        SampleToChunkBox::parse(bytes).unwrap_err()
+    }
+
+    /// The typed variant, when present, is returned as-is — no Opaque
+    /// fallback is even consulted.
+    #[test]
+    fn find_stbl_child_returns_typed_when_present() {
+        let stsc = SampleToChunkBox {
+            version: 0,
+            flags: 0,
+            entries: Vec::new(),
+        };
+        let children = alloc::vec![StblChild::Stsc(stsc.clone())];
+        let found = find_stbl_child(&children, b"stsc", stsc_variant, stsc_reparse_err)
+            .expect("typed present must not error");
+        assert_eq!(found, Some(&stsc));
+    }
+
+    /// A same-fourcc `Opaque` box (present but failed to parse —
+    /// `init_segment::parse_stbl_children`'s outcome for a malformed box)
+    /// must surface its real parse error, not be treated as "absent". Before
+    /// this helper existed, `init_segment::parse_stbl_children` defaulted the
+    /// box to an empty typed box instead, so a corrupt `stsc` silently
+    /// behaved as a well-formed one with zero entries (audit finding #3).
+    #[test]
+    fn find_stbl_child_recovers_real_error_from_matching_opaque() {
+        let children = alloc::vec![malformed_stsc_opaque()];
+        let err = find_stbl_child(&children, b"stsc", stsc_variant, stsc_reparse_err)
+            .expect_err("a matching Opaque box must surface its real parse error");
+        assert!(
+            matches!(err, Error::BufferTooShort { .. }),
+            "expected the real BufferTooShort from SampleToChunkBox::parse, got {err:?}"
+        );
+    }
+
+    /// An `Opaque` box for a *different* four-CC must not be mistaken for
+    /// this box's parse failure — a genuinely absent box still resolves to
+    /// `Ok(None)`.
+    #[test]
+    fn find_stbl_child_returns_none_for_non_matching_opaque() {
+        let mut raw = alloc::vec![0u8; 8];
+        raw[0..4].copy_from_slice(&8u32.to_be_bytes());
+        raw[4..8].copy_from_slice(b"stsz");
+        let children = alloc::vec![StblChild::Opaque(raw)];
+
+        let found = find_stbl_child(&children, b"stsc", stsc_variant, stsc_reparse_err)
+            .expect("a non-matching Opaque box must not be treated as this box's error");
+        assert!(found.is_none());
     }
 }

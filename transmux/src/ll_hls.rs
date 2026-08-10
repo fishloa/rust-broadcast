@@ -300,7 +300,13 @@ impl LlHlsSegmenter {
     /// The part-target duration in seconds — the `#EXT-X-PART-INF:PART-TARGET`
     /// value a caller should advertise (see [`broadcast_hls::LowLatencyConfig`]).
     pub fn part_target_secs(&self) -> f64 {
-        self.part_target_ticks as f64 / self.tracks[self.anchor].spec.timescale as f64
+        // `timescale` is a wire `u32` (`mdhd.timescale`, ISO/IEC
+        // 14496-12:2015 §8.4.2) — `.max(1)` guards the same zero-timescale
+        // case `ts_hls.rs` guards at every analogous division (e.g.
+        // `ts_hls.rs:225`), so a malformed zero timescale can't turn this
+        // into `inf`/`NaN` rendered straight into `#EXT-X-PART-INF` (audit
+        // finding #5).
+        self.part_target_ticks as f64 / self.tracks[self.anchor].spec.timescale.max(1) as f64
     }
 
     /// The `(next_seq, current_segment)` pair this segmenter would give the
@@ -488,8 +494,9 @@ impl LlHlsSegmenter {
         };
         self.next_seq += 1;
 
+        // See `part_target_secs` above for why `.max(1)` guards this division.
         let seg_duration =
-            self.anchor_seg_dur as f64 / self.tracks[self.anchor].spec.timescale as f64;
+            self.anchor_seg_dur as f64 / self.tracks[self.anchor].spec.timescale.max(1) as f64;
         self.ready.push_back(LlHlsStageOutput::Segment(SegmentInfo {
             bytes: seg_bytes,
             duration: seg_duration,
@@ -552,7 +559,9 @@ impl LlHlsSegmenter {
             .unwrap_or(false);
 
         // Part duration = the anchor's buffered-since-last-part duration.
-        let part_secs = self.anchor_part_dur as f64 / self.tracks[anchor].spec.timescale as f64;
+        // See `part_target_secs` above for why `.max(1)` guards this division.
+        let part_secs =
+            self.anchor_part_dur as f64 / self.tracks[anchor].spec.timescale.max(1) as f64;
 
         let seq = self.next_seq;
         let part_bytes = {

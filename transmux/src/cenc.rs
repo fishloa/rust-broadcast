@@ -71,7 +71,12 @@ pub struct TrackEncryptionBox {
 impl TrackEncryptionBox {
     /// Parse a `tenc` box from FullBox body bytes (after 12-byte header).
     pub fn parse_body(bytes: &[u8], version: u8) -> Result<Self> {
-        let min = 1 + 1 + 1 + 16;
+        // reserved(8) + reserved/crypt-skip(8) + is_protected(8) + iv_size(8)
+        // + default_KID(128) — ISO/IEC 23001-7:2016 §12.2.2 Syntax. Four 1-byte
+        // fields ahead of the 16-byte KID, not three: the guard undercounted by
+        // one byte, so a 19-byte body passed it and then panicked on the KID
+        // slice at offset 4..20 (audit finding #1).
+        let min = 1 + 1 + 1 + 1 + 16;
         if bytes.len() < min {
             return Err(Error::BufferTooShort {
                 need: min,
@@ -1292,6 +1297,39 @@ mod tests {
         assert_eq!(parsed.default_per_sample_iv_size, 8);
         assert_eq!(parsed.default_kid, kid);
         assert_eq!(parsed.default_constant_iv, None);
+    }
+
+    /// Audit finding #1: a 19-byte `tenc` body (one byte short of the true
+    /// minimum — reserved(1) + reserved/crypt-skip(1) + is_protected(1) +
+    /// iv_size(1) + default_KID(16) = 20, ISO/IEC 23001-7:2016 §12.2.2) used to
+    /// pass the length guard (which undercounted by one byte) and then panic
+    /// slicing `bytes[4..20]` for the KID. Must be rejected with `Err`, not
+    /// panic.
+    #[test]
+    fn tenc_19_byte_body_is_rejected_not_panicking() {
+        let body = [0u8; 19];
+        let err = TrackEncryptionBox::parse_body(&body, 0)
+            .expect_err("a 19-byte tenc body is one byte short of the true minimum");
+        assert!(
+            matches!(
+                err,
+                Error::BufferTooShort {
+                    need: 20,
+                    have: 19,
+                    ..
+                }
+            ),
+            "expected BufferTooShort {{ need: 20, have: 19, .. }}, got {err:?}"
+        );
+    }
+
+    /// The corrected minimum (20 bytes) still accepts a well-formed body —
+    /// the fix must not have over-tightened the guard.
+    #[test]
+    fn tenc_20_byte_body_parses() {
+        let body = [0u8; 20];
+        let parsed = TrackEncryptionBox::parse_body(&body, 0).expect("20-byte tenc body parses");
+        assert_eq!(parsed.default_kid, [0u8; 16]);
     }
 
     #[test]

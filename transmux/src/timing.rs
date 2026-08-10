@@ -14,6 +14,7 @@
 //! (no `self.raw`).
 
 use crate::error::{Error, Result};
+use crate::init_segment::bounded_entry_count;
 use alloc::vec::Vec;
 
 use broadcast_common::{Parse, Serialize};
@@ -71,7 +72,11 @@ impl TimeToSampleBox {
         let flags = u32::from_be_bytes([0, body[1], body[2], body[3]]);
         let entry_count = u32::from_be_bytes([body[4], body[5], body[6], body[7]]) as usize;
         let mut c = FULLBOX_EXTRA_SIZE + 4;
-        let mut entries = Vec::with_capacity(entry_count);
+        let mut entries = Vec::with_capacity(bounded_entry_count(
+            body.len().saturating_sub(c),
+            8,
+            entry_count,
+        ));
         for _ in 0..entry_count {
             if body.len() < c + 8 {
                 return Err(Error::BufferTooShort {
@@ -204,7 +209,11 @@ impl CompositionOffsetBox {
         let entry_count = u32::from_be_bytes([body[4], body[5], body[6], body[7]]) as usize;
         let entry_size: usize = 8; // sample_count(32) + sample_offset(32)
         let mut c = FULLBOX_EXTRA_SIZE + 4;
-        let mut entries = Vec::with_capacity(entry_count);
+        let mut entries = Vec::with_capacity(bounded_entry_count(
+            body.len().saturating_sub(c),
+            entry_size,
+            entry_count,
+        ));
         for _ in 0..entry_count {
             if body.len() < c + entry_size {
                 return Err(Error::BufferTooShort {
@@ -487,7 +496,11 @@ impl EditListBox {
         let entry_count = u32::from_be_bytes([body[4], body[5], body[6], body[7]]) as usize;
         let entry_size: usize = if version == 0 { 4 + 4 + 4 } else { 8 + 8 + 4 }; // sd(32)+mt(32)+rate(32) or sd(64)+mt(64)+rate(32)
         let mut c = FULLBOX_EXTRA_SIZE + 4;
-        let mut entries = Vec::with_capacity(entry_count);
+        let mut entries = Vec::with_capacity(bounded_entry_count(
+            body.len().saturating_sub(c),
+            entry_size,
+            entry_count,
+        ));
         for _ in 0..entry_count {
             if body.len() < c + entry_size {
                 return Err(Error::BufferTooShort {
@@ -717,7 +730,11 @@ impl SegmentIndexBox {
         let reference_count = u16::from_be_bytes([body[c], body[c + 1]]) as usize;
         c += 2;
 
-        let mut references = Vec::with_capacity(reference_count);
+        let mut references = Vec::with_capacity(bounded_entry_count(
+            body.len().saturating_sub(c),
+            12,
+            reference_count,
+        ));
         for _ in 0..reference_count {
             if body.len() < c + 12 {
                 return Err(Error::BufferTooShort {

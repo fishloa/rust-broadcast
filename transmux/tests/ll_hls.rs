@@ -534,3 +534,113 @@ fn part_media_matches_whole_segment_build() {
     );
     let _ = whole; // whole is referenced above via whole_vid/whole_aud
 }
+
+// ===========================================================================
+// Test — a zero anchor-track timescale must not render `inf`/`NaN` into the
+// playlist (audit finding #5).
+// ===========================================================================
+
+/// `timescale` is a wire `u32` (`mdhd.timescale`, ISO/IEC 14496-12:2015
+/// §8.4.2) that `LlHlsSegmenter::with_part_target` does not itself validate —
+/// only `target_duration_secs`/`part_target_ms` are checked at construction.
+/// `part_target_secs`/the part- and segment-duration computations divide by
+/// the anchor track's timescale directly; before the fix, a zero timescale
+/// turned every one of those into `f64::INFINITY`/`NaN`, rendered verbatim
+/// into `#EXT-X-PART-INF`/`#EXT-X-PART`/`#EXTINF` text (Rust's `Display` for
+/// `f64` renders those as the literal substrings `"inf"`/`"NaN"`) — a wrong
+/// value shipped to every client with no panic to flag it. This asserts on
+/// the actual rendered playlist text, not on an intermediate float.
+#[test]
+fn zero_anchor_timescale_does_not_render_inf_or_nan_into_playlist() {
+    let zero_ts_video = TrackSpec::new(
+        1,
+        0, // malformed mdhd.timescale
+        CodecConfig::Avc {
+            config: dummy_avc_config(),
+            width: 320,
+            height: 240,
+        },
+    );
+    let mut seg = LlHlsSegmenter::with_part_target(vec![zero_ts_video], 1000, 1.0, 334)
+        .expect("construction does not itself validate per-track timescale");
+
+    assert!(
+        seg.part_target_secs().is_finite(),
+        "part_target_secs() must not be inf/NaN even with a zero timescale"
+    );
+
+    for i in 0..10u8 {
+        seg.push(1, vsample(i == 0, i)).unwrap();
+    }
+    seg.flush().unwrap();
+
+    let parts = seg.take_ready_parts();
+    let segments = seg.take_ready_segments();
+    assert!(!parts.is_empty(), "some part must have been produced");
+    assert!(!segments.is_empty(), "some segment must have been produced");
+    for p in &parts {
+        assert!(
+            p.duration.is_finite(),
+            "PartInfo::duration must be finite, got {}",
+            p.duration
+        );
+    }
+    for s in &segments {
+        assert!(
+            s.duration.is_finite(),
+            "SegmentInfo::duration must be finite, got {}",
+            s.duration
+        );
+    }
+
+    // Render exactly as a real caller would, and assert on the TEXT.
+    let parts_spec: Vec<PartSpec> = parts
+        .iter()
+        .enumerate()
+        .map(|(i, p)| PartSpec {
+            uri: format!("seg1.{i}.m4s"),
+            duration: p.duration,
+            independent: p.independent,
+            ..Default::default()
+        })
+        .collect();
+    let seg1_duration = segments.first().map(|s| s.duration).unwrap_or(0.0);
+    let pl = MediaPlaylist {
+        version: 9,
+        target_duration: 1,
+        media_sequence: 0,
+        discontinuity_sequence: 0,
+        segments: vec![MediaSegment {
+            uri: "seg1.m4s".into(),
+            duration: seg1_duration,
+            discontinuous: false,
+            parts: parts_spec,
+            ..Default::default()
+        }],
+        endlist: false,
+        extra_tags: vec![],
+        low_latency: Some(LowLatencyConfig {
+            part_target: seg.part_target_secs(),
+            part_hold_back: 3.0 * seg.part_target_secs(),
+            preload_hint_part: None,
+            ..Default::default()
+        }),
+        iframes_only: false,
+        open_segment: None,
+        ..Default::default()
+    };
+    let m3u8 = pl.to_m3u8();
+
+    assert!(
+        !m3u8.contains("inf"),
+        "playlist must never render a literal `inf` duration:\n{m3u8}"
+    );
+    assert!(
+        !m3u8.contains("NaN"),
+        "playlist must never render a literal `NaN` duration:\n{m3u8}"
+    );
+    assert!(
+        m3u8.contains("#EXTINF:"),
+        "sanity: the playlist must still carry a real #EXTINF line:\n{m3u8}"
+    );
+}

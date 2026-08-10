@@ -191,6 +191,12 @@ impl OpaqueBox {
 
 /// Find a config box (e.g. `avcC`) inside the sample entry's config region.
 /// Returns the full box bytes (including 8-byte header).
+///
+/// `size` is an untrusted wire `u32` (ISO/IEC 14496-12:2015 §4.2 `Box.size`),
+/// so it is clamped against what actually remains in `region` before it is
+/// used to slice — the same bound `init_segment::parse_stbl_children` applies
+/// — rather than trusted outright: a child box declaring `size = 0xFFFFFFFF`
+/// would otherwise panic on the out-of-bounds slice (audit finding #2).
 pub(crate) fn find_config_box<'a>(region: &'a [u8], fourcc: &[u8; 4]) -> Option<&'a [u8]> {
     let mut off = 0usize;
     while off + 8 <= region.len() {
@@ -204,8 +210,9 @@ pub(crate) fn find_config_box<'a>(region: &'a [u8], fourcc: &[u8; 4]) -> Option<
             break;
         }
         let ty = &region[off + 4..off + 8];
+        let clamped = size.min(region.len() - off);
         if ty == fourcc {
-            return Some(&region[off..off + size]);
+            return Some(&region[off..off + clamped]);
         }
         off += size;
     }
@@ -814,6 +821,39 @@ mod tests {
                 ])],
             }],
         }
+    }
+
+    /// Audit finding #2: a config-region child box declaring a wire `size`
+    /// (ISO/IEC 14496-12:2015 §4.2 `Box.size`) far larger than the region
+    /// actually holding it used to panic slicing `&region[off..off + size]`.
+    /// Must clamp to what the region can hold, not panic — same discipline
+    /// `init_segment::parse_stbl_children` already applies to its own child
+    /// walk.
+    #[test]
+    fn find_config_box_hostile_size_does_not_panic() {
+        let mut region = alloc::vec![0u8; 8];
+        region[0..4].copy_from_slice(&0xFFFF_FFFFu32.to_be_bytes());
+        region[4..8].copy_from_slice(b"avcC");
+
+        let found = find_config_box(&region, b"avcC").expect("fourcc matches at offset 0");
+        assert_eq!(
+            found.len(),
+            region.len(),
+            "hostile size must clamp to the region's actual remaining length"
+        );
+    }
+
+    /// A hostile size on a box whose fourcc does *not* match the one being
+    /// searched for must not panic either (the `off += size` advance uses
+    /// the raw, unclamped size, which is fine as long as nothing slices with
+    /// it — this pins that nothing does).
+    #[test]
+    fn find_config_box_hostile_size_non_matching_fourcc_does_not_panic() {
+        let mut region = alloc::vec![0u8; 8];
+        region[0..4].copy_from_slice(&0xFFFF_FFFFu32.to_be_bytes());
+        region[4..8].copy_from_slice(b"zzzz");
+
+        assert!(find_config_box(&region, b"avcC").is_none());
     }
 
     #[test]

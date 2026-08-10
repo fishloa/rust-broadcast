@@ -8,6 +8,59 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- Six audit findings in the fMP4/CMAF/CENC parse paths, all reachable from
+  ordinary or malformed third-party media (no fuzzing required):
+  1. **`cenc::TrackEncryptionBox::parse_body` panicked** on a `tenc` body of
+     exactly 19 bytes: the minimum-length guard undercounted the fixed
+     1-byte fields ahead of the 16-byte `default_KID` by one
+     (ISO/IEC 23001-7:2016 §12.2.2), so a 19-byte body passed the guard and
+     then panicked slicing the KID at offset `4..20`. The guard now requires
+     the correct 20 bytes.
+  2. **`sample_entries::find_config_box` panicked** on a config-region child
+     box declaring a wire `size` (ISO/IEC 14496-12:2015 §4.2) larger than
+     the region actually holding it. The returned slice is now clamped to
+     the region's remaining length, matching the bound
+     `init_segment::parse_stbl_children` already applied to its own child
+     walk.
+  3. **`init_segment::parse_stbl_children` silently discarded malformed
+     `stts`/`ctts`/`stsc`/`stsz`/`stco`/`co64`/`stss` boxes**, defaulting
+     each to an empty typed box that falsely claimed the table had zero
+     entries — the same defect issue #952 fixed for `stsd`. All seven now
+     get the `stsd` arm's treatment: kept as raw bytes
+     (`StblChild::Opaque`) so the real parse error survives; a new
+     `progressive_demux::find_stbl_child` helper re-parses a same-four-CC
+     `Opaque` box to recover that error at the point of use, so a corrupt
+     sample table now fails the carrying track loudly (visible in
+     `Media::skipped`) instead of silently behaving as absent or empty.
+  4. **Seven wire-count-driven `Vec::with_capacity` sites in
+     `init_segment.rs`** (`dref`/`stsc`/`stsz`/`stco`/`co64`/`stss`/`stsd`)
+     allocated on an untrusted `u32` entry count *before* validating it — a
+     16-byte `co64` declaring `count = 0xFFFFFFFF` asked for ~32 GB up
+     front. A new `bounded_entry_count` helper caps the count against what
+     the remaining buffer could actually hold, computed before any
+     allocation (the same discipline `cenc::SampleEncryptionBox::parse_body`
+     already applied to `senc`'s `sample_count`); the per-iteration bounds
+     checks these parsers already had make this a pure allocation-size fix,
+     not a behavior change for any input that parsed successfully before.
+  5. **`ll_hls.rs` divided by the anchor track's timescale with no zero
+     guard** in three places (`part_target_secs`, whole-segment duration,
+     part duration) — `ts_hls.rs` already guards the identical computation
+     with `.max(1)` at every call site; `ll_hls.rs` now does too. A
+     malformed zero `mdhd.timescale` used to turn these into
+     `f64::INFINITY`/`NaN`, rendered verbatim into `#EXT-X-PART-INF`/
+     `#EXT-X-PART`/`#EXTINF` — a wrong value shipped to every client with no
+     panic to flag it.
+  6. **`repackage::anchor_index` only recognised `CodecConfig::Avc` as a
+     video anchor**, so HEVC/AV1/VVC-only media (all supported elsewhere in
+     this crate) fell through to `unwrap_or(0)` — track 0, which may be
+     audio, cutting `Media::trim`/resegment boundaries on audio "keyframes"
+     instead of real video IDRs, on ordinary well-formed input. It now
+     delegates to the shared `segmenter::choose_anchor` (first video track
+     of any codec, else the first anchor-capable track; the same fix issue
+     #628 made for `Segmenter`/`ts_hls`), so `Repackage` and `Segmenter`
+     can no longer disagree on which track anchors segmentation. A media
+     with no anchor-capable track at all is now a named `Error::InvalidInput`
+     instead of an unchecked index-0 fallback.
 - `Fmp4Demux` dropped an entire H.264 video track when a High-profile `avcC`
   omitted its optional ISO/IEC 14496-15:2017 §5.3.3.1.2 trailer
   (`chroma_format`/`bit_depth_*`/`sps_ext`) — a real DASH-IF `livesim2`

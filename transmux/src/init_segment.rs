@@ -19,6 +19,29 @@ use broadcast_common::{Parse, Serialize};
 const BOX_HDR: usize = 8;
 const FULL_HDR: usize = 4;
 
+/// Bound an untrusted wire entry `count` (ISO/IEC 14496-12:2015 §8.1.1's
+/// FullBox array-count fields, e.g. `stsc`/`stsz`/`stco`/`co64`/`stss`/`stsd`/
+/// `dref`'s `entry_count`) against how many fixed-size `entry_len`-byte
+/// records the bytes remaining after the count field could actually hold,
+/// **before** it drives an allocation — the same discipline
+/// [`crate::cenc::SampleEncryptionBox::parse_body`] applies against `senc`'s
+/// `sample_count` (ISO/IEC 23001-7 §12.3). Without this, a 16-byte `co64`
+/// declaring `count = 0xFFFFFFFF` reaches `Vec::with_capacity` asking for
+/// ~32 GB up front — a remote denial of service, since every one of these
+/// boxes is untrusted wire data (audit finding #4).
+///
+/// The per-entry parse loops already re-check their own bounds each
+/// iteration and stop (rather than reading past the buffer) once bytes run
+/// out, so capping the count fed to `Vec::with_capacity` changes no
+/// successful parse's resulting `entries` — only how large the up-front
+/// allocation is allowed to be.
+pub(crate) fn bounded_entry_count(remaining: usize, entry_len: usize, count: usize) -> usize {
+    if entry_len == 0 {
+        return count;
+    }
+    count.min(remaining / entry_len)
+}
+
 // ---------------------------------------------------------------------------
 // OpaqueBox — round-trip unknown child boxes
 // ---------------------------------------------------------------------------
@@ -761,7 +784,11 @@ impl<'a> Parse<'a> for DataReferenceBox {
         let ver = bytes[8];
         let flags = u32::from_be_bytes([0, bytes[9], bytes[10], bytes[11]]);
         let count = u32::from_be_bytes([bytes[12], bytes[13], bytes[14], bytes[15]]) as usize;
-        let mut entries = Vec::with_capacity(count);
+        let mut entries = Vec::with_capacity(bounded_entry_count(
+            bytes.len().saturating_sub(16),
+            8,
+            count,
+        ));
         let mut off = 16usize;
         for _ in 0..count {
             if off + 8 > bytes.len() {
@@ -926,7 +953,11 @@ impl<'a> Parse<'a> for SampleToChunkBox {
         let ver = bytes[8];
         let flags = u32::from_be_bytes([0, bytes[9], bytes[10], bytes[11]]);
         let count = u32::from_be_bytes([bytes[12], bytes[13], bytes[14], bytes[15]]) as usize;
-        let mut entries = Vec::with_capacity(count);
+        let mut entries = Vec::with_capacity(bounded_entry_count(
+            bytes.len().saturating_sub(16),
+            12,
+            count,
+        ));
         let mut off = 16usize;
         for _ in 0..count {
             if off + 12 > bytes.len() {
@@ -1027,7 +1058,16 @@ impl<'a> Parse<'a> for SampleSizeBox {
         let flags = u32::from_be_bytes([0, bytes[9], bytes[10], bytes[11]]);
         let sample_size = u32::from_be_bytes([bytes[12], bytes[13], bytes[14], bytes[15]]);
         let count = u32::from_be_bytes([bytes[16], bytes[17], bytes[18], bytes[19]]) as usize;
-        let mut entries = Vec::with_capacity(count);
+        // `entries` is only ever populated below when `sample_size == 0`
+        // (per-sample sizes) — a nonzero uniform `sample_size` means the loop
+        // never runs, so a wire `count` in that branch mustn't drive any
+        // allocation at all, not merely a bounded one.
+        let capacity = if sample_size == 0 {
+            bounded_entry_count(bytes.len().saturating_sub(20), 4, count)
+        } else {
+            0
+        };
+        let mut entries = Vec::with_capacity(capacity);
         if sample_size == 0 {
             let mut off = 20usize;
             for _ in 0..count {
@@ -1124,7 +1164,11 @@ impl<'a> Parse<'a> for ChunkOffsetBox {
         let ver = bytes[8];
         let flags = u32::from_be_bytes([0, bytes[9], bytes[10], bytes[11]]);
         let count = u32::from_be_bytes([bytes[12], bytes[13], bytes[14], bytes[15]]) as usize;
-        let mut entries = Vec::with_capacity(count);
+        let mut entries = Vec::with_capacity(bounded_entry_count(
+            bytes.len().saturating_sub(16),
+            4,
+            count,
+        ));
         let mut off = 16usize;
         for _ in 0..count {
             if off + 4 > bytes.len() {
@@ -1209,7 +1253,11 @@ impl<'a> Parse<'a> for ChunkLargeOffsetBox {
         let ver = bytes[8];
         let flags = u32::from_be_bytes([0, bytes[9], bytes[10], bytes[11]]);
         let count = u32::from_be_bytes([bytes[12], bytes[13], bytes[14], bytes[15]]) as usize;
-        let mut entries = Vec::with_capacity(count);
+        let mut entries = Vec::with_capacity(bounded_entry_count(
+            bytes.len().saturating_sub(16),
+            8,
+            count,
+        ));
         let mut off = 16usize;
         for _ in 0..count {
             if off + 8 > bytes.len() {
@@ -1299,7 +1347,11 @@ impl<'a> Parse<'a> for SyncSampleBox {
         let ver = bytes[8];
         let flags = u32::from_be_bytes([0, bytes[9], bytes[10], bytes[11]]);
         let count = u32::from_be_bytes([bytes[12], bytes[13], bytes[14], bytes[15]]) as usize;
-        let mut entries = Vec::with_capacity(count);
+        let mut entries = Vec::with_capacity(bounded_entry_count(
+            bytes.len().saturating_sub(16),
+            4,
+            count,
+        ));
         let mut off = 16usize;
         for _ in 0..count {
             if off + 4 > bytes.len() {
@@ -1983,7 +2035,11 @@ impl<'a> Parse<'a> for SampleDescriptionBox {
         let ver = bytes[8];
         let flags = u32::from_be_bytes([0, bytes[9], bytes[10], bytes[11]]);
         let count = u32::from_be_bytes([bytes[12], bytes[13], bytes[14], bytes[15]]) as usize;
-        let mut entries = Vec::with_capacity(count);
+        let mut entries = Vec::with_capacity(bounded_entry_count(
+            bytes.len().saturating_sub(16),
+            8,
+            count,
+        ));
         let mut off = 16usize;
         for _ in 0..count {
             if off + 8 > bytes.len() {
@@ -2185,66 +2241,45 @@ fn parse_stbl_children(body: &[u8]) -> Vec<StblChild> {
                 Ok(stsd) => StblChild::Stsd(stsd),
                 Err(_) => StblChild::Opaque(box_bytes.to_vec()),
             },
-            b"stts" => StblChild::Stts(
-                crate::timing::TimeToSampleBox::parse(box_bytes).unwrap_or_else(|_| {
-                    crate::timing::TimeToSampleBox {
-                        version: 0,
-                        flags: 0,
-                        entries: Vec::new(),
-                    }
-                }),
-            ),
-            b"ctts" => StblChild::Ctts(
-                crate::timing::CompositionOffsetBox::parse(box_bytes).unwrap_or_else(|_| {
-                    crate::timing::CompositionOffsetBox {
-                        version: 0,
-                        flags: 0,
-                        entries: Vec::new(),
-                    }
-                }),
-            ),
-            b"stsc" => StblChild::Stsc(SampleToChunkBox::parse(box_bytes).unwrap_or_else(|_| {
-                SampleToChunkBox {
-                    version: 0,
-                    flags: 0,
-                    entries: Vec::new(),
-                }
-            })),
-            b"stsz" => {
-                StblChild::Stsz(
-                    SampleSizeBox::parse(box_bytes).unwrap_or_else(|_| SampleSizeBox {
-                        version: 0,
-                        flags: 0,
-                        sample_size: 0,
-                        entries: Vec::new(),
-                    }),
-                )
-            }
-            b"stco" => StblChild::Stco(ChunkOffsetBox::parse(box_bytes).unwrap_or_else(|_| {
-                ChunkOffsetBox {
-                    version: 0,
-                    flags: 0,
-                    entries: Vec::new(),
-                }
-            })),
-            b"co64" => {
-                StblChild::Co64(ChunkLargeOffsetBox::parse(box_bytes).unwrap_or_else(|_| {
-                    ChunkLargeOffsetBox {
-                        version: 0,
-                        flags: 0,
-                        entries: Vec::new(),
-                    }
-                }))
-            }
-            b"stss" => {
-                StblChild::Stss(
-                    SyncSampleBox::parse(box_bytes).unwrap_or_else(|_| SyncSampleBox {
-                        version: 0,
-                        flags: 0,
-                        entries: Vec::new(),
-                    }),
-                )
-            }
+            // Same treatment as the `stsd` arm above (issue #952): a box that
+            // fails to parse is kept as raw bytes, not defaulted to an empty
+            // typed box. `TimeToSampleBox { entries: Vec::new(), .. }` for a
+            // malformed `stts` used to claim (falsely) that the track has
+            // *zero* sample durations — every real duration silently
+            // discarded, with nothing surfacing in `Media::skipped` — rather
+            // than the truth, which is "this box didn't parse". Consumers
+            // (`progressive_demux::find_stbl_child`) re-parse `Opaque` bytes
+            // whose four-CC matches what they're looking for, recovering the
+            // real error instead of silently treating a corrupt table as
+            // absent or empty (audit finding #3).
+            b"stts" => match crate::timing::TimeToSampleBox::parse(box_bytes) {
+                Ok(b) => StblChild::Stts(b),
+                Err(_) => StblChild::Opaque(box_bytes.to_vec()),
+            },
+            b"ctts" => match crate::timing::CompositionOffsetBox::parse(box_bytes) {
+                Ok(b) => StblChild::Ctts(b),
+                Err(_) => StblChild::Opaque(box_bytes.to_vec()),
+            },
+            b"stsc" => match SampleToChunkBox::parse(box_bytes) {
+                Ok(b) => StblChild::Stsc(b),
+                Err(_) => StblChild::Opaque(box_bytes.to_vec()),
+            },
+            b"stsz" => match SampleSizeBox::parse(box_bytes) {
+                Ok(b) => StblChild::Stsz(b),
+                Err(_) => StblChild::Opaque(box_bytes.to_vec()),
+            },
+            b"stco" => match ChunkOffsetBox::parse(box_bytes) {
+                Ok(b) => StblChild::Stco(b),
+                Err(_) => StblChild::Opaque(box_bytes.to_vec()),
+            },
+            b"co64" => match ChunkLargeOffsetBox::parse(box_bytes) {
+                Ok(b) => StblChild::Co64(b),
+                Err(_) => StblChild::Opaque(box_bytes.to_vec()),
+            },
+            b"stss" => match SyncSampleBox::parse(box_bytes) {
+                Ok(b) => StblChild::Stss(b),
+                Err(_) => StblChild::Opaque(box_bytes.to_vec()),
+            },
             _ => StblChild::Opaque(box_bytes.to_vec()),
         });
         off += size;
@@ -3504,5 +3539,128 @@ mod tests {
         let bytes = dref.to_bytes();
         let parsed = DataReferenceBox::parse(&bytes).unwrap();
         assert_eq!(parsed, dref);
+    }
+
+    /// Audit finding #3: a `stbl` child that fails to parse must survive as
+    /// [`StblChild::Opaque`] (its real bytes, so the real error is
+    /// recoverable at the point of use — see
+    /// `progressive_demux::find_stbl_child`), never as a defaulted-empty
+    /// typed box that falsely claims the table has zero entries.
+    ///
+    /// One self-contained `stbl` body: a bare 8-byte `stsc` header (well
+    /// below `SampleToChunkBox::parse`'s own 16-byte minimum, so it is
+    /// guaranteed to fail to parse) followed by nothing else — no sibling
+    /// boxes to keep aligned, so this pins the `parse_stbl_children` behaviour
+    /// in isolation from any other box's layout.
+    #[test]
+    fn parse_stbl_children_keeps_malformed_box_as_opaque_not_defaulted_empty() {
+        let mut body = alloc::vec![0u8; 8];
+        body[0..4].copy_from_slice(&8u32.to_be_bytes());
+        body[4..8].copy_from_slice(b"stsc");
+
+        let children = parse_stbl_children(&body);
+        assert_eq!(children.len(), 1);
+        match &children[0] {
+            StblChild::Opaque(raw) => assert_eq!(raw.as_slice(), body.as_slice()),
+            StblChild::Stsc(b) => panic!(
+                "a malformed stsc must survive as Opaque, not a defaulted-empty typed box \
+                 (got StblChild::Stsc with {} entries)",
+                b.entries.len()
+            ),
+            other => panic!("expected StblChild::Opaque or StblChild::Stsc, got {other:?}"),
+        }
+    }
+
+    /// The same walk over a well-formed `stsc` (entry_count = 0, the smallest
+    /// box that still meets the 16-byte minimum) must still produce the typed
+    /// variant — the fix must not have over-tightened parsing of genuinely
+    /// valid boxes.
+    #[test]
+    fn parse_stbl_children_well_formed_stsc_stays_typed() {
+        let mut body = alloc::vec![0u8; 16];
+        body[0..4].copy_from_slice(&16u32.to_be_bytes());
+        body[4..8].copy_from_slice(b"stsc");
+        // version/flags already zero; entry_count (bytes 12..16) already zero.
+
+        let children = parse_stbl_children(&body);
+        assert_eq!(children.len(), 1);
+        match &children[0] {
+            StblChild::Stsc(b) => assert!(b.entries.is_empty()),
+            other => panic!("expected a well-formed empty StblChild::Stsc, got {other:?}"),
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // bounded_entry_count / Vec::with_capacity DoS (audit finding #4)
+    // -----------------------------------------------------------------------
+
+    /// The audit's own scenario: a 16-byte `co64` (`BOX_HDR` + `FULL_HDR` +
+    /// the 4-byte count field — no room left for even one 8-byte entry)
+    /// declaring `count = 0xFFFFFFFF`. The *naive* `Vec::with_capacity(count)`
+    /// would ask the allocator for ~32 GB; the bound must refuse that
+    /// request outright, not merely complete it.
+    #[test]
+    fn bounded_entry_count_refuses_the_audits_co64_scenario() {
+        let hostile_count = 0xFFFF_FFFFusize;
+        let remaining = 0usize; // nothing left in a 16-byte co64 body
+        let entry_len = 8usize; // co64 entries are 8-byte u64 offsets
+
+        let bounded = bounded_entry_count(remaining, entry_len, hostile_count);
+
+        let naive_bytes = hostile_count as u64 * entry_len as u64;
+        assert!(
+            naive_bytes > 30_000_000_000,
+            "sanity check on the scenario itself: the naive request really is ~32 GB \
+             ({naive_bytes} bytes)"
+        );
+        assert_eq!(bounded, 0, "no bytes remain for even one entry");
+        assert!(
+            (bounded as u64) * (entry_len as u64) < 1024,
+            "the fix must request a bounded, sane allocation instead of {naive_bytes} bytes"
+        );
+    }
+
+    /// The bound must not be so aggressive that it under-serves a
+    /// legitimately-sized body: exactly as many entries fit as the remaining
+    /// bytes can hold, and a genuinely smaller count is passed through
+    /// untouched.
+    #[test]
+    fn bounded_entry_count_allows_exactly_what_fits() {
+        assert_eq!(bounded_entry_count(40, 8, 0xFFFF_FFFF), 5);
+        assert_eq!(
+            bounded_entry_count(40, 8, 3),
+            3,
+            "a smaller, wire-verifiable count must pass through untouched"
+        );
+    }
+
+    /// End-to-end: `ChunkLargeOffsetBox::parse` on the audit's exact `co64`
+    /// scenario must return promptly with zero entries rather than attempt
+    /// to preallocate ~32 GB.
+    #[test]
+    fn co64_hostile_count_does_not_preallocate() {
+        let mut body = alloc::vec![0u8; 16];
+        body[0..4].copy_from_slice(&16u32.to_be_bytes());
+        body[4..8].copy_from_slice(b"co64");
+        body[12..16].copy_from_slice(&0xFFFF_FFFFu32.to_be_bytes());
+
+        let parsed = ChunkLargeOffsetBox::parse(&body).expect("a well-formed-enough header parses");
+        assert!(parsed.entries.is_empty());
+    }
+
+    /// `stsz` with a nonzero uniform `sample_size` never populates `entries`
+    /// at all (§8.7.3) — a hostile `count` in that branch must drive *no*
+    /// allocation whatsoever, not merely a bounded one.
+    #[test]
+    fn stsz_uniform_sample_size_ignores_hostile_count() {
+        let mut body = alloc::vec![0u8; 20];
+        body[0..4].copy_from_slice(&20u32.to_be_bytes());
+        body[4..8].copy_from_slice(b"stsz");
+        body[12..16].copy_from_slice(&64u32.to_be_bytes()); // uniform sample_size
+        body[16..20].copy_from_slice(&0xFFFF_FFFFu32.to_be_bytes()); // hostile count
+
+        let parsed = SampleSizeBox::parse(&body).expect("a well-formed-enough header parses");
+        assert_eq!(parsed.sample_size, 64);
+        assert!(parsed.entries.is_empty());
     }
 }
