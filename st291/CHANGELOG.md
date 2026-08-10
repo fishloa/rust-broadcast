@@ -47,6 +47,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.2.0] - 2026-07-11
 
+Bundles the `st291` rename (0.1.0 was never separately published under this
+name — see below).
+
 ### Added
 - A new `rtp` feature: RFC 8331 / ST 2110-40 carriage of ST 291-1 ANC data
   packets over RTP (issue #648, epic #645 story 3), sitting alongside the
@@ -86,8 +89,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     `AncRtpPayload::parse_rtp_packet`.
 - `Error::ReservedNotZero` and `Error::LengthMismatch` — new error variants
   for the `rtp` feature's payload-header/word-align validation.
-
-## [0.1.0] - 2026-07-11
 
 ### Changed
 - Renamed `smpte2038` → `st291` (issue #647, part of epic #645). No functional

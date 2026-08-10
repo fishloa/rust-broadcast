@@ -42,9 +42,10 @@ So this crate sits where A/321 bootstrap does in #943: a documented
 spec-vector-tested exception with the blocker recorded, rather than fabricated
 or improperly-licensed data. It must not be published while this stands.
 
-## [0.1.0] — 2026-08-08
+### Added
 
-Initial release.
+Not yet released — this crate has never been published to crates.io (see the
+"no real fixture" blocker above).
 
 - `PayloadHeader` parse/serialize for the 4/8/12+-byte HBRMT payload header
   (SMPTE ST 2022-6:2012 §6.4).

@@ -374,6 +374,10 @@ Version-lockstep release with the workspace (dvb-si README overhaul); no code ch
 
 ## [1.0.0] — 2026-06-04
 
+First published release. The 0.1.0 entry below (the crate's original,
+pre-workspace implementation history) was never separately published to
+crates.io — it is folded into this changelog entry for a complete record.
+
 ### Added
 
 - `serde` feature flag — optional `Serialize`/`Deserialize` derives on the T2-MI
@@ -400,11 +404,9 @@ Version-lockstep release with the workspace (dvb-si README overhaul); no code ch
   `fef_null`/`fef_iq` `s2_field` (4-bit) now error on over-range values
   instead of silently masking, matching every other bounded field.
 
-## [0.1.0] — 2026-04-20
+### Added (originally drafted as 0.1.0, 2026-04-20 — never separately published)
 
-Initial release. Complete implementation of ETSI TS 102 773 v1.4.1 DVB-T2 Modulator Interface.
-
-### Added
+Complete implementation of ETSI TS 102 773 v1.4.1 DVB-T2 Modulator Interface.
 
 - **Header parsing** — 6-byte T2-MI header with `PacketType` enum covering all 12 defined types (0x00, 0x01, 0x02, 0x10, 0x11, 0x12, 0x20, 0x21, 0x30, 0x31, 0x32, 0x33)
 - **Payload parsers** — every payload type with `Parse` + `Serialize` round-trip tests:

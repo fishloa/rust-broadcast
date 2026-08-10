@@ -102,15 +102,16 @@
 ### Changed
 - Dependency `broadcast-common` bump (renamed from `dvb-common`); no API change.
 
-## [0.1.1→mpeg-pes] Crate renamed from `dvb-pes` to `mpeg-pes`; code unchanged.
+## [0.1.1] — 2026-06-19
 
-## 0.1.1 — 2026-06-19
+Crate renamed from `dvb-pes` to `mpeg-pes` at this version; code unchanged.
+Also published under the old name as `dvb-pes` 0.1.1.
 
 ### Added
 - `examples/`: `parse_pes_packet` (parse one PES packet from bytes) and
   `extract_pts` (depacketize a capture, reassemble PES, report the PTS timeline).
 
-## 0.1.0 — 2026-06-18
+## [0.1.0] — 2026-06-18 (as `dvb-pes`; never published as `mpeg-pes`)
 
 ### Added
 - Initial release. PES (Packetized Elementary Stream) depacketization per

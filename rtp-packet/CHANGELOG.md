@@ -29,9 +29,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   build with this one. That makes it a breaking release even though no line of
   logic here moved.
 
-## [0.1.0] - 2026-07-11
-
 ## [0.2.0] - 2026-07-11
+
+Bundles the initial release (0.1.0 was never separately published).
 
 ### Added
 
@@ -85,8 +85,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `ExtensionElements` (the `profile_id` dispatch enum) is exempt from the
     workspace's issue #204 label convention (`tests/label_coverage.rs` SKIP
     list) — a data-carrying dispatch wrapper, not a spec/field label.
-
-## [0.1.0] - 2026-07-11
 
 ### Added
 

@@ -2328,14 +2328,18 @@ tests against real ffmpeg-authored fixtures (config-box oracles = ffmpeg's own m
 output); MPEG-H uses a spec vector (no redistributable fixture/encoder).
 
 ## [0.4.1] — 2026-07-01
+
+Bundles three additive releases that were never separately published under
+this name (crates.io jumps 0.1.0 → 0.4.1 directly; 0.2.0/0.3.0/0.4.0 below are
+folded in here for a complete record, newest first).
+
 ### Changed
 - Value-verified the `esds` / `mp4a` descriptor layout against the vendored
   ISO/IEC 14496-1 §7.2.6 (transcribed to `docs/codec/es-descriptor-14496-1.md`)
   and added a **byte-exact round-trip test on a real ffmpeg-authored `esds`**
   (AAC-LC, 4-byte-expanded descriptor sizes, real max/avg bitrates). No API change.
 
-## [0.4.0] — 2026-07-01
-### Added
+### Added (originally drafted as 0.4.0)
 - AC-3 / E-AC-3 audio in the fMP4 path (ETSI TS 102 366 Annex F):
   - `Ac3SpecificBox` (`dac3`) + `Ec3SpecificBox` (`dec3`) — typed config boxes with
     Parse + symmetric Serialize + round-trip.
@@ -2348,8 +2352,7 @@ output); MPEG-H uses a spec vector (no redistributable fixture/encoder).
 - Gate `tests/dolby.rs`: parses real ffmpeg-encoded AC-3/E-AC-3 fixtures and asserts
   the built `dac3`/`dec3` bytes match ffmpeg's own MP4-muxer output byte-for-byte.
 
-## [0.3.0] — 2026-07-01
-### Added
+### Added (originally drafted as 0.3.0)
 - SPS/VPS decode + RFC 6381 codec strings, so transmux no longer needs an external
   parser (e.g. `h264_reader`) to learn what it must put in an `avcC`/`hvcC`:
   - `AvcSps::decode() -> AvcSpsInfo` (ITU-T H.264 §7.3.2.1.1): profile_idc,
@@ -2369,8 +2372,7 @@ output); MPEG-H uses a spec vector (no redistributable fixture/encoder).
   + 1080-cropped) and HEVC main/main10, asserting every field against a
   `trace_headers` oracle, plus a scaling-list spec vector and an avcC round-trip.
 
-## [0.2.0] — 2026-07-01
-### Added
+### Added (originally drafted as 0.2.0)
 - `Segmenter`: a stateful streaming CMAF segmenter wrapping `build_init_segment` /
   `build_media_segment`. Feed coded samples in decode order (`push`), pull finished
   media segments (`take_ready`), and `flush` the trailing partial segment at

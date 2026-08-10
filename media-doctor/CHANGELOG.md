@@ -155,8 +155,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   exist to be composed, and the breakage only appears in a consumer that mixes
   them.
 
-## [0.4.3] - 2026-07-26
-### Changed
+### Changed (originally drafted as 0.4.3, never separately published — crates.io jumps 0.4.2 → 0.5.0)
 - Widen the `transmux` dependency to `0.20` (was `0.18`), picking up
   transmux's media-plane IR changes: `Sample.data` is now `bytes::Bytes`
   and the IR types moved into a `transmux::ir` module. media-doctor's own
