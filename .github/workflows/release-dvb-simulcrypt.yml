@@ -34,6 +34,9 @@ jobs:
       - name: Gate — dvb-simulcrypt no_std build
         run: cargo build -p dvb-simulcrypt --no-default-features --target thumbv7em-none-eabi --locked
 
+      - name: Gate — dvb-simulcrypt examples build
+        run: cargo build -p dvb-simulcrypt --all-features --examples --locked
+
       - name: Gate — tag matches dvb-simulcrypt version
         run: |
           TAG="${GITHUB_REF_NAME#dvb-simulcrypt-v}"

@@ -38,6 +38,9 @@ jobs:
       - name: Gate — rtmp-runtime sans-IO (no-default) lib build
         run: cargo build -p rtmp-runtime --no-default-features --locked
 
+      - name: Gate — rtmp-runtime examples build
+        run: cargo build -p rtmp-runtime --all-features --examples --locked
+
       - name: Gate — tag matches rtmp-runtime version
         run: |
           TAG="${GITHUB_REF_NAME#rtmp-runtime-v}"

@@ -37,6 +37,9 @@ jobs:
       - name: Gate — media-doctor no_std (+alloc) lib build
         run: cargo build -p media-doctor --no-default-features --locked
 
+      - name: Gate — media-doctor examples build
+        run: cargo build -p media-doctor --all-features --examples --locked
+
       - name: Gate — tag matches media-doctor version
         run: |
           TAG="${GITHUB_REF_NAME#media-doctor-v}"

@@ -52,6 +52,9 @@ jobs:
       - name: Gate — broadcast-common no_std (no-default-features) build
         run: cargo build -p broadcast-common --no-default-features --locked
 
+      - name: Gate — broadcast-common examples build
+        run: cargo build -p broadcast-common --all-features --examples --locked
+
       - name: Gate — tag matches broadcast-common version
         run: |
           TAG="${GITHUB_REF_NAME#broadcast-common-v}"

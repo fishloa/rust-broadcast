@@ -35,6 +35,9 @@ jobs:
       - name: Gate — rdd29 no_std build
         run: cargo build -p rdd29 --no-default-features --target thumbv7em-none-eabi --locked
 
+      - name: Gate — rdd29 examples build
+        run: cargo build -p rdd29 --all-features --examples --locked
+
       - name: Gate — tag matches rdd29 version
         run: |
           TAG="${GITHUB_REF_NAME#rdd29-v}"

@@ -36,6 +36,9 @@ jobs:
       - name: Gate — st377-1 no_std build
         run: cargo build -p st377-1 --no-default-features --target thumbv7em-none-eabi --locked
 
+      - name: Gate — st377-1 examples build
+        run: cargo build -p st377-1 --all-features --examples --locked
+
       - name: Gate — tag matches st377-1 version
         run: |
           TAG="${GITHUB_REF_NAME#st377-1-v}"

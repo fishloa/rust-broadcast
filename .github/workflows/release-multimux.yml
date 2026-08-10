@@ -38,6 +38,12 @@ jobs:
       - name: Gate — multimux clippy
         run: cargo clippy -p multimux --all-features --all-targets --locked -- -D warnings
 
+      - name: Gate — multimux examples build
+        run: cargo build -p multimux --all-features --examples --locked
+
+      - name: Gate — multimux no-default-features build
+        run: cargo build -p multimux --no-default-features --locked
+
       - name: Gate — tag matches multimux version
         run: |
           TAG="${GITHUB_REF_NAME#multimux-v}"

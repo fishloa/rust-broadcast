@@ -34,6 +34,9 @@ jobs:
       - name: Gate — scte104 no_std build
         run: cargo build -p scte104 --no-default-features --target thumbv7em-none-eabi --locked
 
+      - name: Gate — scte104 examples build
+        run: cargo build -p scte104 --all-features --examples --locked
+
       - name: Gate — tag matches scte104 version
         run: |
           TAG="${GITHUB_REF_NAME#scte104-v}"

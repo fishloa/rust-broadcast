@@ -62,12 +62,15 @@ jobs:
       # dvb-tools depends on both dvb-si (ts + serde + chrono) and dvb-t2mi (ts),
       # so it publishes LAST. Hence:
       #   bbframe → si → conformance → t2mi → tools.
-      # dvb-common is a deprecated re-export shim, now FROZEN at 8.1.0 and no
-      # longer part of the lockstep — like the other shims (dvb-scte35, dvb-pes,
-      # dvb-cc, dvb-ule, dvb-emsg), it is not gated or published
-      # here. External `dvb-common = "8"` deps still resolve (the 8.1.0 shim
-      # re-exports broadcast-common ^8). It stays a workspace member so it is
-      # still built + tested.
+      # `broadcast-common` is NOT gated or published here. It was ejected from
+      # the lockstep in #862 and ships from its own `broadcast-common-v*` tag.
+      # Its pre-rename versions (1.0.0-8.1.0) are on crates.io under the old
+      # name `dvb-common` and stay there, live and unyanked — that is history,
+      # not a shim: this project publishes no re-export shims, and a rename
+      # here normally yanks the old name so a stale dependency fails loudly
+      # rather than silently resolving to a frozen copy. The same is true of
+      # dvb-scte35, dvb-pes, dvb-cc, dvb-ule and dvb-emsg. None of them is a
+      # workspace member; none of those directories exists.
       # The index can lag a few seconds after a publish; `cargo publish` blocks
       # until the published crate is available since Cargo 1.66, so no manual
       # sleep is needed.

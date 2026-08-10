@@ -34,6 +34,9 @@ jobs:
       - name: Gate — mp4-emsg no_std build
         run: cargo build -p mp4-emsg --no-default-features --target thumbv7em-none-eabi --locked
 
+      - name: Gate — mp4-emsg examples build
+        run: cargo build -p mp4-emsg --all-features --examples --locked
+
       - name: Gate — tag matches mp4-emsg version
         run: |
           TAG="${GITHUB_REF_NAME#mp4-emsg-v}"

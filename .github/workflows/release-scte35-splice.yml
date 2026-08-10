@@ -34,6 +34,9 @@ jobs:
       - name: Gate — scte35-splice no_std build
         run: cargo build -p scte35-splice --no-default-features --target thumbv7em-none-eabi --locked
 
+      - name: Gate — scte35-splice examples build
+        run: cargo build -p scte35-splice --all-features --examples --locked
+
       - name: Gate — tag matches scte35-splice version
         run: |
           TAG="${GITHUB_REF_NAME#scte35-splice-v}"

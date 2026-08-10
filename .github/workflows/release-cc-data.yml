@@ -35,6 +35,9 @@ jobs:
       - name: Gate — cc-data no_std build
         run: cargo build -p cc-data --no-default-features --target thumbv7em-none-eabi --locked
 
+      - name: Gate — cc-data examples build
+        run: cargo build -p cc-data --all-features --examples --locked
+
       - name: Gate — tag matches cc-data version
         run: |
           TAG="${GITHUB_REF_NAME#cc-data-v}"

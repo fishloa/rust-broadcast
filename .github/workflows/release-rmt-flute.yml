@@ -38,6 +38,9 @@ jobs:
       - name: Gate — rmt-flute no_std build
         run: cargo build -p rmt-flute --no-default-features --target thumbv7em-none-eabi --locked
 
+      - name: Gate — rmt-flute examples build
+        run: cargo build -p rmt-flute --all-features --examples --locked
+
       - name: Gate — tag matches rmt-flute version
         run: |
           TAG="${GITHUB_REF_NAME#rmt-flute-v}"

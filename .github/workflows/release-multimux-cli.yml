@@ -27,10 +27,13 @@ jobs:
       - uses: Swatinem/rust-cache@v2
 
       - name: Gate — multimux-cli tests
-        run: cargo test -p multimux-cli --locked
+        run: cargo test -p multimux-cli --all-features --locked
 
       - name: Gate — multimux-cli clippy
-        run: cargo clippy -p multimux-cli --all-targets --locked -- -D warnings
+        run: cargo clippy -p multimux-cli --all-features --all-targets --locked -- -D warnings
+
+      - name: Gate — multimux-cli no-default-features build
+        run: cargo build -p multimux-cli --no-default-features --locked
 
       - name: Gate — tag matches multimux-cli version
         run: |

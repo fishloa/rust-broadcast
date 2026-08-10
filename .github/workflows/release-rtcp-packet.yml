@@ -35,6 +35,9 @@ jobs:
       - name: Gate — rtcp-packet no_std build
         run: cargo build -p rtcp-packet --no-default-features --target thumbv7em-none-eabi --locked
 
+      - name: Gate — rtcp-packet examples build
+        run: cargo build -p rtcp-packet --all-features --examples --locked
+
       - name: Gate — tag matches rtcp-packet version
         run: |
           TAG="${GITHUB_REF_NAME#rtcp-packet-v}"

@@ -37,6 +37,9 @@ jobs:
       - name: Gate — ts-fix no_std (+alloc) lib build
         run: cargo build -p ts-fix --no-default-features --locked
 
+      - name: Gate — ts-fix examples build
+        run: cargo build -p ts-fix --all-features --examples --locked
+
       - name: Gate — tag matches ts-fix version
         run: |
           TAG="${GITHUB_REF_NAME#ts-fix-v}"

@@ -35,6 +35,9 @@ jobs:
       - name: Gate — st337 no_std build
         run: cargo build -p st337 --no-default-features --target thumbv7em-none-eabi --locked
 
+      - name: Gate — st337 examples build
+        run: cargo build -p st337 --all-features --examples --locked
+
       - name: Gate — tag matches st337 version
         run: |
           TAG="${GITHUB_REF_NAME#st337-v}"

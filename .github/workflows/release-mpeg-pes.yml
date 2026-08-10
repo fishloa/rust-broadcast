@@ -35,6 +35,9 @@ jobs:
       - name: Gate — mpeg-pes no_std build
         run: cargo build -p mpeg-pes --no-default-features --target thumbv7em-none-eabi --locked
 
+      - name: Gate — mpeg-pes examples build
+        run: cargo build -p mpeg-pes --all-features --examples --locked
+
       - name: Gate — tag matches mpeg-pes version
         run: |
           TAG="${GITHUB_REF_NAME#mpeg-pes-v}"

@@ -38,6 +38,12 @@ jobs:
       - name: Gate — broadcast-auth clippy
         run: cargo clippy -p broadcast-auth --all-features --all-targets --locked -- -D warnings
 
+      - name: Gate — broadcast-auth examples build
+        run: cargo build -p broadcast-auth --all-features --examples --locked
+
+      - name: Gate — broadcast-auth no-default-features build
+        run: cargo build -p broadcast-auth --no-default-features --locked
+
       - name: Gate — tag matches broadcast-auth version
         run: |
           TAG="${GITHUB_REF_NAME#broadcast-auth-v}"

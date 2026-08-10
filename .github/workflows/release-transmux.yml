@@ -37,6 +37,9 @@ jobs:
       - name: Gate — transmux no_std (+alloc) build
         run: cargo build -p transmux --no-default-features --locked
 
+      - name: Gate — transmux examples build
+        run: cargo build -p transmux --all-features --examples --locked
+
       - name: Gate — tag matches transmux version
         run: |
           TAG="${GITHUB_REF_NAME#transmux-v}"

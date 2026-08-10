@@ -35,6 +35,9 @@ jobs:
       - name: Gate — ule no_std build
         run: cargo build -p ule --no-default-features --target thumbv7em-none-eabi --locked
 
+      - name: Gate — ule examples build
+        run: cargo build -p ule --all-features --examples --locked
+
       - name: Gate — tag matches ule version
         run: |
           TAG="${GITHUB_REF_NAME#ule-v}"

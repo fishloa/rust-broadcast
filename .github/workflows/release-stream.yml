@@ -31,6 +31,12 @@ jobs:
       - name: Gate — dvb-stream clippy
         run: cargo clippy -p dvb-stream --all-features --all-targets --locked -- -D warnings
 
+      - name: Gate — dvb-stream examples build
+        run: cargo build -p dvb-stream --all-features --examples --locked
+
+      - name: Gate — dvb-stream no-default-features build
+        run: cargo build -p dvb-stream --no-default-features --locked
+
       - name: Gate — tag matches dvb-stream version
         run: |
           TAG="${GITHUB_REF_NAME#dvb-stream-v}"

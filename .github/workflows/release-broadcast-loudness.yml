@@ -34,6 +34,9 @@ jobs:
       - name: Gate — broadcast-loudness no_std build
         run: cargo build -p broadcast-loudness --no-default-features --target thumbv7em-none-eabi --locked
 
+      - name: Gate — broadcast-loudness examples build
+        run: cargo build -p broadcast-loudness --all-features --examples --locked
+
       - name: Gate — tag matches broadcast-loudness version
         run: |
           TAG="${GITHUB_REF_NAME#broadcast-loudness-v}"

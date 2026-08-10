@@ -39,6 +39,9 @@ jobs:
       - name: Gate — st291 no_std build
         run: cargo build -p st291 --no-default-features --target thumbv7em-none-eabi --locked
 
+      - name: Gate — st291 examples build
+        run: cargo build -p st291 --all-features --examples --locked
+
       - name: Gate — tag matches st291 version
         run: |
           TAG="${GITHUB_REF_NAME#st291-v}"

@@ -34,6 +34,9 @@ jobs:
       - name: Gate — dvb-ci no_std build
         run: cargo build -p dvb-ci --no-default-features --target thumbv7em-none-eabi --locked
 
+      - name: Gate — dvb-ci examples build
+        run: cargo build -p dvb-ci --all-features --examples --locked
+
       - name: Gate — tag matches dvb-ci version
         run: |
           TAG="${GITHUB_REF_NAME#dvb-ci-v}"

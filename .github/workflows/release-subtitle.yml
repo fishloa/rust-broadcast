@@ -34,6 +34,9 @@ jobs:
       - name: Gate — dvb-subtitle no_std build
         run: cargo build -p dvb-subtitle --no-default-features --target thumbv7em-none-eabi --locked
 
+      - name: Gate — dvb-subtitle examples build
+        run: cargo build -p dvb-subtitle --all-features --examples --locked
+
       - name: Gate — tag matches dvb-subtitle version
         run: |
           TAG="${GITHUB_REF_NAME#dvb-subtitle-v}"
