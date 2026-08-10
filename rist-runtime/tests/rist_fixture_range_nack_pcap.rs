@@ -20,7 +20,7 @@
 //! dependency, following `webrtc-runtime/tests/whip_smoke_pcap_stun.rs`'s
 //! existing precedent for this exact `DLT_NULL` capture shape.
 
-use broadcast_common::Parse;
+use broadcast_common::{Parse, Serialize};
 use rist_runtime::{PacketRange, RangeNack, RistReceiverCompound, RistSenderCompound};
 
 /// libpcap (classic, not pcapng) global header magic for little-endian,
@@ -161,6 +161,21 @@ fn frame15_range_nack_matches_documented_retransmission_pair() {
     // parser (RR + SDES(CNAME) + RangeNack), not a hand-rolled sub-decode.
     let compound = RistReceiverCompound::parse(frame15.payload)
         .expect("parse the real RR+SDES+RangeNack compound packet");
+
+    // Byte-exact round-trip against the REAL captured bytes (not a re-parse
+    // equality check): re-serializing the parsed compound must reproduce
+    // frame 15's genuine wire bytes exactly, including the reserved
+    // count/subtype bits a hand-made vector would never exercise. This is
+    // the CRATE-ACCEPTANCE §1 invariant applied to real capture data — a
+    // raw-passthrough or field-dropping serializer would fail this even
+    // though it can pass a typed-equality round-trip.
+    assert_eq!(
+        compound.to_bytes(),
+        frame15.payload,
+        "serializing the parsed frame-15 compound must reproduce the real \
+         captured bytes exactly"
+    );
+
     assert_eq!(compound.rr.ssrc, SSRC_ORIGINAL);
     assert_eq!(
         compound.nacks.len(),
@@ -250,6 +265,18 @@ fn fixture_totals_match_documented_provenance() {
                     sr_compounds += 1;
                     let compound = RistSenderCompound::parse(pkt.payload)
                         .unwrap_or_else(|e| panic!("frame {}: parse SR compound: {e}", pkt.frame));
+                    // Byte-exact round-trip against the real captured bytes
+                    // for EVERY SR compound in the fixture, not just the
+                    // documented frame 15 — a raw-passthrough or
+                    // field-dropping serializer must fail somewhere across
+                    // 3 real compounds even if it happens to survive one.
+                    assert_eq!(
+                        compound.to_bytes(),
+                        pkt.payload,
+                        "frame {}: serializing the parsed SR compound must reproduce \
+                         the real captured bytes exactly",
+                        pkt.frame
+                    );
                     if compound.rtt_echo.is_some() {
                         // This build's SR compounds all carry an RTT Echo
                         // Request (subtype 2) per PROVENANCE.md.
@@ -260,6 +287,17 @@ fn fixture_totals_match_documented_provenance() {
                     rr_compounds += 1;
                     let compound = RistReceiverCompound::parse(pkt.payload)
                         .unwrap_or_else(|e| panic!("frame {}: parse RR compound: {e}", pkt.frame));
+                    // Byte-exact round-trip against the real captured bytes
+                    // for EVERY RR compound in the fixture (65 of them,
+                    // spanning bare RR, RR+RangeNack, RR+RttEcho and
+                    // combinations) — the same anti-cheat property as above.
+                    assert_eq!(
+                        compound.to_bytes(),
+                        pkt.payload,
+                        "frame {}: serializing the parsed RR compound must reproduce \
+                         the real captured bytes exactly",
+                        pkt.frame
+                    );
                     range_nack_total += compound.range_nacks.len();
                     if let Some(echo) = compound.rtt_echo {
                         match echo.kind {

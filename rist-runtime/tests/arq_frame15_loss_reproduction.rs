@@ -30,7 +30,8 @@
 //! test reproduces that exact, verified loss *shape* (three isolated
 //! single-packet gaps at those exact sequence numbers, everything else in
 //! the local neighbourhood received) as input to our own engine, and checks
-//! the engine's own coalesced NACK output is byte-for-byte identical to
+//! the engine's own coalesced NACK output is field-for-field equal (typed
+//! equality, not a wire-byte comparison) to the `RangeNack` decoded from
 //! what librist really sent — a genuine independent computation compared
 //! against genuine wire bytes, honestly scoped to what the fixture can
 //! actually support.
@@ -213,7 +214,9 @@ fn engine_reproduces_frame15_range_nack_from_the_verified_loss_shape() {
     };
     assert_eq!(
         engine_nack, real,
-        "engine-generated RangeNack must be byte-identical (field-for-field) \
-         to librist's real frame-15 payload"
+        "engine-generated RangeNack must be field-for-field equal to librist's \
+         real frame-15 payload (typed equality — this test compares decoded \
+         `RangeNack` values, not wire bytes; the wire-level byte-exact \
+         round-trip lives in tests/rist_fixture_range_nack_pcap.rs)"
     );
 }
