@@ -673,6 +673,14 @@ impl<'a> Parse<'a> for PmtSection<'a> {
             pos = es_end;
         }
 
+        if pos != stream_loop_end {
+            return Err(Error::BufferTooShort {
+                need: stream_loop_end - pos,
+                have: 0,
+                what: "PmtSection trailing stream bytes",
+            });
+        }
+
         Ok(PmtSection {
             program_number,
             version_number,
@@ -933,6 +941,41 @@ mod tests {
             PmtSection::parse(&buf).unwrap_err(),
             Error::SectionLengthOverflow { .. }
         ));
+    }
+
+    #[test]
+    fn parse_rejects_trailing_slack_bytes() {
+        // ETSI EN 300 468 / ISO 13818-1 §2.4.4.8: the stream loop runs to
+        // stream_loop_end exactly. A truncated final entry (fewer than
+        // STREAM_HEADER_LEN bytes of slack) must be rejected, not silently
+        // dropped (mirrors EitSection's post-loop check).
+        let mut bytes = build_pmt(1, 0, 0x100, &[], &[(0x02, 0x101, vec![])]);
+        let sl = (bytes.len() - MIN_HEADER_LEN) as u16 + 2;
+        bytes[1] = (bytes[1] & 0xF0) | ((sl >> 8) as u8 & 0x0F);
+        bytes[2] = (sl & 0xFF) as u8;
+        let crc_pos = bytes.len() - CRC_LEN;
+        bytes.splice(crc_pos..crc_pos, [0xFF, 0xFF]);
+        let err = PmtSection::parse(&bytes).unwrap_err();
+        assert!(matches!(
+            err,
+            Error::BufferTooShort {
+                what: "PmtSection trailing stream bytes",
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn parse_accepts_well_formed_stream_loop_with_no_slack() {
+        let bytes = build_pmt(
+            1,
+            0,
+            0x101,
+            &[],
+            &[(0x02, 0x102, vec![0x11, 0x22]), (0x1B, 0x103, vec![])],
+        );
+        let pmt = PmtSection::parse(&bytes).unwrap();
+        assert_eq!(pmt.streams.len(), 2);
     }
 
     #[test]

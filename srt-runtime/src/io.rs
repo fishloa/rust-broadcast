@@ -221,7 +221,20 @@ impl SrtSocket {
                                 // packet) is the negotiated
                                 // `params.peer_socket_id` — the two are
                                 // unrelated values (§3).
-                                let peer_isn = extract_isn_from_bytes(bytes).unwrap_or(0);
+                                //
+                                // `require_peer_isn` errors (rather than
+                                // defaulting to 0) if the very bytes that just
+                                // drove the handshake state machine to
+                                // `Connected` fail to re-parse as a Handshake
+                                // control packet — an internal inconsistency
+                                // between this extraction shim and
+                                // `CallerHandshake`. A silent `0` fallback
+                                // would be indistinguishable from a genuine
+                                // ISN of 0 and would seed ARQ/TSBPD sequence
+                                // tracking wrong for the life of the
+                                // connection, surfacing only much later as
+                                // inexplicable loss/reordering.
+                                let peer_isn = require_peer_isn(bytes)?;
                                 let epoch = Instant::now();
                                 let tsbpd_delay_ms = u64::from(config.latency_ms);
                                 let tsbpd_time_base = 0u64;
@@ -919,12 +932,94 @@ async fn resolve_one<A: tokio::net::ToSocketAddrs>(addr: A) -> Result<std::net::
     })
 }
 
-/// Extract the `initial_seq_number` from a handshake control packet's bytes.
-/// Returns `None` if the bytes don't parse as a handshake control packet.
-fn extract_isn_from_bytes(bytes: &[u8]) -> Option<u32> {
-    let pkt = SrtPacket::parse(bytes).ok()?;
-    match pkt {
-        SrtPacket::Control(ControlPacket::Handshake(hp)) => Some(hp.initial_seq_number),
-        _ => None,
+/// Extract the peer's `initial_seq_number` from a handshake control packet's
+/// bytes. This seeds ARQ and TSBPD sequence tracking for the entire
+/// connection, so "the bytes didn't parse as a Handshake" must be a distinct,
+/// caller-visible outcome from "the peer's ISN is genuinely 0" — the two are
+/// otherwise indistinguishable to a caller that only sees a `u32`. Returns
+/// [`Error::InvalidField`] rather than defaulting to `0` on any parse
+/// failure.
+fn require_peer_isn(bytes: &[u8]) -> Result<u32> {
+    match SrtPacket::parse(bytes) {
+        Ok(SrtPacket::Control(ControlPacket::Handshake(hp))) => Ok(hp.initial_seq_number),
+        _ => Err(Error::InvalidField {
+            what: "peer isn",
+            reason: "handshake reached Connected but its final packet did not re-parse as a \
+                     Handshake control packet; refusing to seed ARQ/TSBPD with a fabricated ISN",
+        }),
+    }
+}
+
+#[cfg(test)]
+mod isn_tests {
+    use super::*;
+    use crate::packet::{
+        EncryptionField, HandshakeExtensionFlags, HandshakeExtensions, HandshakePacket,
+        HandshakeType,
+    };
+
+    fn handshake_bytes(initial_seq_number: u32) -> Vec<u8> {
+        let hp = HandshakePacket {
+            timestamp: 0,
+            dest_socket_id: 0,
+            version: 5,
+            encryption_field: EncryptionField::NoEncryption,
+            extension_field: HandshakeExtensionFlags(0),
+            initial_seq_number,
+            mtu: 1500,
+            max_flow_window_size: 8192,
+            handshake_type: HandshakeType::Conclusion,
+            srt_socket_id: 42,
+            syn_cookie: 0,
+            peer_ip: [0; 4],
+            extensions: HandshakeExtensions(&[]),
+        };
+        crate::handshake_sm::build_bytes(hp).expect("build handshake bytes")
+    }
+
+    #[test]
+    fn require_peer_isn_extracts_nonzero_isn() {
+        let bytes = handshake_bytes(0xABCD_1234);
+        assert_eq!(require_peer_isn(&bytes).unwrap(), 0xABCD_1234);
+    }
+
+    #[test]
+    fn require_peer_isn_distinguishes_genuine_zero_from_parse_failure() {
+        // A genuine ISN of 0 is a valid, well-formed handshake and must
+        // succeed as Ok(0) — not be conflated with "couldn't parse".
+        let bytes = handshake_bytes(0);
+        assert_eq!(require_peer_isn(&bytes).unwrap(), 0);
+
+        // Bytes that don't parse as a Handshake control packet at all
+        // (too short to even carry the fixed SRT header) must error, never
+        // silently produce a plausible-looking 0.
+        let err = require_peer_isn(&[0u8; 4]).unwrap_err();
+        assert!(matches!(
+            err,
+            Error::InvalidField {
+                what: "peer isn",
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn require_peer_isn_rejects_non_handshake_control_packet() {
+        // A well-formed control packet of the WRONG type (Keep-Alive, not
+        // Handshake) must also error rather than default to 0.
+        let ka = ControlPacket::KeepAlive(KeepAlivePacket {
+            timestamp: 0,
+            dest_socket_id: 7,
+        });
+        let mut buf = alloc::vec![0u8; ka.serialized_len()];
+        ka.serialize_into(&mut buf).expect("serialize keepalive");
+        let err = require_peer_isn(&buf).unwrap_err();
+        assert!(matches!(
+            err,
+            Error::InvalidField {
+                what: "peer isn",
+                ..
+            }
+        ));
     }
 }

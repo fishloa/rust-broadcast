@@ -2,6 +2,24 @@
 
 ## [Unreleased]
 
+### Fixed
+- `PmtSection`/`SdtSection`/`AitSection` parsing now rejects trailing slack
+  after the last entry in the elementary-stream loop (`PmtSection`,
+  ISO/IEC 13818-1 §2.4.4.8), the service loop (`SdtSection`, ETSI EN 300 468
+  §5.2.3), and the application loop (`AitSection`, ETSI TS 102 809 §5.3.4),
+  matching the post-loop check `EitSection` already had. Previously, a
+  section whose final entry was truncated below its declared header length
+  parsed "successfully" with that entry silently absent, and re-serialising
+  such a section dropped the trailing bytes (parse -> serialize was not
+  byte-identical). `AitSection` additionally now rejects an
+  `application_loop_length` that undershoots the bytes actually available
+  before `CRC_32` — the same silent-drop shape one level up, since nothing
+  else follows the application loop in the section. **Behaviour change:**
+  input that previously parsed now returns `Error::BufferTooShort` in these
+  cases. No real broadcast capture in this crate's fixture suite
+  (`dvb-si/tests/fixtures/`, `fixtures/dvb-si/`) is affected — verified by
+  running the full fixture test suite after the change.
+
 ### Changed
 - MSRV raised to **1.95.0** (issue #949). This removes the workspace's MSRV
   split: `webrtc-runtime`'s optional `media` feature needed rustc 1.88 (via

@@ -300,6 +300,19 @@ impl<'a> Parse<'a> for AitSection<'a> {
                 available: app_loop_end.saturating_sub(app_loop_start),
             });
         }
+        // Per ETSI TS 102 809 §5.3.4, application_loop_length() is the last
+        // field before CRC_32 — nothing else follows it in the section. A
+        // declared length that undershoots app_loop_end leaves bytes between
+        // the two that belong to no field; accepting that would silently
+        // drop them on re-serialisation (parse -> serialize would not be
+        // byte-identical).
+        if app_loop_actual_end != app_loop_end {
+            return Err(Error::BufferTooShort {
+                need: app_loop_end - app_loop_actual_end,
+                have: 0,
+                what: "AitSection trailing bytes after application loop",
+            });
+        }
 
         let mut applications = Vec::new();
         let mut pos = app_loop_start;
@@ -329,6 +342,14 @@ impl<'a> Parse<'a> for AitSection<'a> {
                 descriptors: DescriptorLoop::new(&bytes[app_desc_start..app_desc_end]),
             });
             pos = app_desc_end;
+        }
+
+        if pos != app_loop_actual_end {
+            return Err(Error::BufferTooShort {
+                need: app_loop_actual_end - pos,
+                have: 0,
+                what: "AitSection trailing application bytes",
+            });
         }
 
         Ok(AitSection {
@@ -707,5 +728,73 @@ mod tests {
         // common_ait_descriptors on the same section (empty common loop).
         let common_items: Vec<_> = ait.common_ait_descriptors().iter().collect();
         assert_eq!(common_items.len(), 0);
+    }
+
+    #[test]
+    fn parse_rejects_trailing_bytes_after_undersized_app_loop_length() {
+        // application_loop_length understates the bytes actually available
+        // before CRC_32 (the outer declared-length defect): must be
+        // rejected, not silently dropped.
+        let mut bytes = build_ait(0x0010, false, 0, &[], &[(0x12345678, 0xABCD, 0x01, vec![])]);
+        let sl = (bytes.len() - MIN_HEADER_LEN) as u16 + 2;
+        bytes[1] = (bytes[1] & 0xF0) | ((sl >> 8) as u8 & 0x0F);
+        bytes[2] = (sl & 0xFF) as u8;
+        let crc_pos = bytes.len() - CRC_LEN;
+        bytes.splice(crc_pos..crc_pos, [0xFF, 0xFF]);
+        let err = AitSection::parse(&bytes).unwrap_err();
+        assert!(matches!(
+            err,
+            Error::BufferTooShort {
+                what: "AitSection trailing bytes after application loop",
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn parse_rejects_trailing_slack_bytes() {
+        // ETSI TS 102 809 / EN 300 468 §5.2.3-style loop framing: the
+        // application loop runs to app_loop_actual_end exactly. A truncated
+        // final entry (fewer than APP_HEADER_LEN bytes of slack) must be
+        // rejected, not silently dropped (mirrors EitSection's post-loop
+        // check). Here app_loop_length itself is widened to include the
+        // slack, so the outer declared-length check passes and the inner
+        // per-entry loop is exercised.
+        let mut bytes = build_ait(0x0010, false, 0, &[], &[(0x12345678, 0xABCD, 0x01, vec![])]);
+        let common_desc_end = MIN_HEADER_LEN + EXTENSION_HEADER_LEN + COMMON_DESC_LEN_BYTES;
+        let old_apl =
+            (((bytes[common_desc_end] & 0x0F) as usize) << 8) | bytes[common_desc_end + 1] as usize;
+        let new_apl = old_apl + 2;
+        bytes[common_desc_end] = 0xF0 | ((new_apl >> 8) as u8 & 0x0F);
+        bytes[common_desc_end + 1] = (new_apl & 0xFF) as u8;
+        let sl = (bytes.len() - MIN_HEADER_LEN) as u16 + 2;
+        bytes[1] = (bytes[1] & 0xF0) | ((sl >> 8) as u8 & 0x0F);
+        bytes[2] = (sl & 0xFF) as u8;
+        let crc_pos = bytes.len() - CRC_LEN;
+        bytes.splice(crc_pos..crc_pos, [0xFF, 0xFF]);
+        let err = AitSection::parse(&bytes).unwrap_err();
+        assert!(matches!(
+            err,
+            Error::BufferTooShort {
+                what: "AitSection trailing application bytes",
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn parse_accepts_well_formed_app_loop_with_no_slack() {
+        let bytes = build_ait(
+            0x0010,
+            false,
+            0,
+            &[],
+            &[
+                (0x12345678, 0xABCD, 0x01, vec![]),
+                (0x87654321, 0x00EF, 0x04, vec![0x01, 0x02, 0x61, 0x62]),
+            ],
+        );
+        let ait = AitSection::parse(&bytes).unwrap();
+        assert_eq!(ait.applications.len(), 2);
     }
 }

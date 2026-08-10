@@ -160,6 +160,14 @@ impl<'a> Parse<'a> for SdtSection<'a> {
             pos = desc_end;
         }
 
+        if pos != services_end {
+            return Err(Error::BufferTooShort {
+                need: services_end - pos,
+                have: 0,
+                what: "SdtSection trailing service bytes",
+            });
+        }
+
         Ok(SdtSection {
             kind,
             transport_stream_id,
@@ -428,5 +436,49 @@ mod tests {
             SdtSection::parse(&buf).unwrap_err(),
             Error::SectionLengthOverflow { .. }
         ));
+    }
+
+    #[test]
+    fn parse_rejects_trailing_slack_bytes() {
+        // ETSI EN 300 468 §5.2.3: the service loop runs to services_end
+        // exactly. A truncated final entry (fewer than SERVICE_HEADER_LEN
+        // bytes of slack) must be rejected, not silently dropped (mirrors
+        // EitSection's post-loop check).
+        let mut bytes = build_sdt(
+            SdtKind::Actual,
+            1,
+            0,
+            0x20,
+            &[(1, false, false, 0, false, vec![])],
+        );
+        let sl = (bytes.len() - MIN_HEADER_LEN) as u16 + 2;
+        bytes[1] = (bytes[1] & 0xF0) | ((sl >> 8) as u8 & 0x0F);
+        bytes[2] = (sl & 0xFF) as u8;
+        let crc_pos = bytes.len() - CRC_LEN;
+        bytes.splice(crc_pos..crc_pos, [0xFF, 0xFF]);
+        let err = SdtSection::parse(&bytes).unwrap_err();
+        assert!(matches!(
+            err,
+            Error::BufferTooShort {
+                what: "SdtSection trailing service bytes",
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn parse_accepts_well_formed_service_loop_with_no_slack() {
+        let bytes = build_sdt(
+            SdtKind::Actual,
+            1,
+            0,
+            0x20,
+            &[
+                (1, false, false, 0, false, vec![]),
+                (2, true, true, 4, false, vec![0x48, 0x02, 0xAA, 0xBB]),
+            ],
+        );
+        let sdt = SdtSection::parse(&bytes).unwrap();
+        assert_eq!(sdt.services.len(), 2);
     }
 }

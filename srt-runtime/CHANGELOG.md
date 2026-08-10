@@ -6,6 +6,21 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+- `io::SrtSocket::connect_from` (the tokio Caller adapter) no longer defaults
+  the peer's `initial_seq_number` to `0` when it can't be extracted from the
+  handshake bytes that just drove the connection to `Connected`. That
+  fallback made a genuine peer ISN of 0 indistinguishable from an extraction
+  failure, silently mis-seeding ARQ/TSBPD sequence tracking for the whole
+  connection — a defect that would surface much later as inexplicable
+  loss/reordering, far from its cause. The extraction is now
+  `require_peer_isn`, which returns `Error::InvalidField` instead of `0` on
+  any parse failure; `SrtSocket::connect`/`connect_from` propagate that error
+  instead of silently continuing. No public API previously guaranteed the old
+  default, so this is not expected to be observable as a behaviour change in
+  practice — see the module's `isn_tests` for why the path is effectively
+  unreachable today, and why the guard still matters for future refactors.
+
 ### Changed
 - MSRV raised to **1.95.0** (issue #949). This removes the workspace's MSRV
   split: `webrtc-runtime`'s optional `media` feature needed rustc 1.88 (via
