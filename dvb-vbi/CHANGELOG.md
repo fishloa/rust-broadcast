@@ -105,7 +105,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `TELETEXT_DATA_UNIT_LENGTH` (`0x2C`), `VPS_DATA_BLOCK_LEN`, `VPS_FIELD_LEN`,
   `WSS_FIELD_LEN`, `WSS_DATA_BLOCK_MASK`, `WSS_RESERVED_TAIL`, `CC_FIELD_LEN`,
   `MONO_HEADER_LEN`, and the `ID_*` `data_unit_id` constants.
-- Committed `tests/fixtures/vbi_data_field.bin` fixture (a `data_identifier`
+- Committed `fixtures/dvb-vbi/vbi_data_field.bin` fixture (a `data_identifier`
   `0x10` data field carrying one of every typed unit) exercised by
   `tests/fixture_data_field.rs` (decoded fields + byte-exact round-trip +
   truncation rejection + serde).

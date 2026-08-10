@@ -26,10 +26,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.2] - 2026-08-08
 
+`0.1.1` was never separately published (no such version exists on crates.io,
+no `dvb-csa-v0.1.1` tag) — its doc-accuracy fix is folded into this release
+below, alongside the new bitsliced feature.
+
+### Fixed
+- **Documentation corrected — the published 0.1.0 advertised two things that
+  do not exist.** No code or behaviour change; the cipher is unaffected.
+  - The crates.io `description` claimed "a bitsliced fast path", and the
+    crate-root docs described a `bitsliced` feature "differentially tested
+    against the scalar reference". There is no such feature and no such code.
+    Both claims removed; the docs now say a bitsliced path is unimplemented.
+  - The crate-root docs listed a **TSDuck** scrambled-capture oracle as part
+    of "the gate". The fixture is committed but the control word it was
+    scrambled with was never recorded, so it cannot be decrypted and no test
+    references it. The claim is removed and the situation is now recorded in
+    `tests/fixtures/PROVENANCE.md`, including how to make it a real oracle.
+  - The remaining oracle — byte-exact known-answer vectors from libdvbcsa
+    1.1.0, in `tests/golden_vectors.rs` — is genuine and unchanged.
+
 ### Added
 - **`bitsliced` feature — a real bitsliced fast path**, restoring (and now
-  earning) the claim 0.1.1 had to strip. Off by default; purely additive, so
-  no existing API changes and nothing breaks.
+  earning) the claim the documentation fix above had to strip. Off by
+  default; purely additive, so no existing API changes and nothing breaks.
   - `dvb_csa::bitsliced::{scramble_batch, descramble_batch, LANES}` process up
     to `LANES` (64) **independent payloads** per pass, transposing the data and
     evaluating the cipher as a branch-free boolean circuit so every gate acts
@@ -62,23 +81,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     known-answer vectors through the batch path too — each planted in a
     different lane of a batch of unrelated decoys — so the fast path answers
     to the external oracle, not merely to our own scalar code.
-
-## [0.1.1] - 2026-08-08
-
-### Fixed
-- **Documentation corrected — the published 0.1.0 advertised two things that
-  do not exist.** No code or behaviour change; the cipher is unaffected.
-  - The crates.io `description` claimed "a bitsliced fast path", and the
-    crate-root docs described a `bitsliced` feature "differentially tested
-    against the scalar reference". There is no such feature and no such code.
-    Both claims removed; the docs now say a bitsliced path is unimplemented.
-  - The crate-root docs listed a **TSDuck** scrambled-capture oracle as part
-    of "the gate". The fixture is committed but the control word it was
-    scrambled with was never recorded, so it cannot be decrypted and no test
-    references it. The claim is removed and the situation is now recorded in
-    `tests/fixtures/PROVENANCE.md`, including how to make it a real oracle.
-  - The remaining oracle — byte-exact known-answer vectors from libdvbcsa
-    1.1.0, in `tests/golden_vectors.rs` — is genuine and unchanged.
 
 ## [0.1.0] - 2026-08-07
 

@@ -1,5 +1,9 @@
 # Changelog
 
+All notable changes to `dvb-ci` are documented here. The format follows
+[Keep a Changelog](https://keepachangelog.com/); this crate adheres to semantic
+versioning.
+
 ## [Unreleased]
 
 ### Changed
@@ -8,11 +12,6 @@
   `rcgen`), which had grown a dedicated CI job, six `--exclude` lanes and a
   guard script to contain. Adopting let-chains and `is_multiple_of` where the
   1.95 lints require them; no functional or API change.
-All notable changes to `dvb-ci` are documented here. The format follows
-[Keep a Changelog](https://keepachangelog.com/); this crate adheres to semantic
-versioning.
-
-## Unreleased
 
 ### Changed (Breaking)
 - `SamplePayload` (`ci_plus::sample_decryption`) now carries
@@ -22,6 +21,30 @@ versioning.
 ### Added
 - `tests/label_coverage.rs` + `tests/non_exhaustive_coverage.rs` drift guards
   (issue #806).
+
+## [0.7.0] - 2026-07-29
+
+### Changed (BREAKING)
+- **Requires `broadcast-common` 9** (issue #819). No functional or API change of
+  this crate's own.
+
+  Staying on `broadcast-common` 8 was not neutral: this crate's types implement
+  `Parse`/`Serialize` from whichever major it links, so a consumer that used it
+  alongside a 9-based crate (`transmux` 0.20, `dvb-si` 9, …) got **both majors
+  in one graph**, and the trait methods resolved against the wrong one —
+  surfacing as `no method named to_bytes found` / `no function named parse
+  found` on types that plainly have them, with the compiler pointing at
+  `broadcast-common-8.x/src/traits.rs`.
+
+  The 9.0.0 wave originally shipped only the crates needed to publish
+  `transmux`/`media-plane`/`multimux`, on the reasoning that everything else
+  stayed coherent on its own 8 line. That reasoning was wrong: these crates
+  exist to be composed, and the breakage only appears in a consumer that mixes
+  them.
+
+## [0.6.0] - 2026-07-03
+### Changed
+- Rust **edition 2024**; MSRV raised to **1.86**; format-argument modernisation. No functional or API change.
 
 ## 0.5.1 — 2026-06-29
 
@@ -281,28 +304,4 @@ length fields computed from content and biting round-trip tests.
 Their `apdu_tag`s are retained in `docs/en_50221/apdu-tag-values.md`; until typed
 they parse as `AnyApdu::Unknown` (raw body preserved, lossless round-trip). CI+
 crypto (the CC resource) and the PC-Card hardware transport remain out of scope.
-
-## [0.7.0] - 2026-07-29
-
-### Changed (BREAKING)
-- **Requires `broadcast-common` 9** (issue #819). No functional or API change of
-  this crate's own.
-
-  Staying on `broadcast-common` 8 was not neutral: this crate's types implement
-  `Parse`/`Serialize` from whichever major it links, so a consumer that used it
-  alongside a 9-based crate (`transmux` 0.20, `dvb-si` 9, …) got **both majors
-  in one graph**, and the trait methods resolved against the wrong one —
-  surfacing as `no method named to_bytes found` / `no function named parse
-  found` on types that plainly have them, with the compiler pointing at
-  `broadcast-common-8.x/src/traits.rs`.
-
-  The 9.0.0 wave originally shipped only the crates needed to publish
-  `transmux`/`media-plane`/`multimux`, on the reasoning that everything else
-  stayed coherent on its own 8 line. That reasoning was wrong: these crates
-  exist to be composed, and the breakage only appears in a consumer that mixes
-  them.
-
-## [0.6.0] - 2026-07-03
-### Changed
-- Rust **edition 2024**; MSRV raised to **1.86**; format-argument modernisation. No functional or API change.
 
