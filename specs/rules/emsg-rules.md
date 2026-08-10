@@ -1,9 +1,12 @@
 # DASH `emsg` (Event Message Box) — rules
 
 Inband DASH/CMAF Event Message Box (`emsg`), for `mp4-emsg` and `timed-metadata`. Sources:
-ISO/IEC 23009-1:2022 ed.5 §5.10 — `specs/fulltext/iso_iec_23009-1_dash_2022.md` (`2022 L…`,
-normative); DASH-IF IOP Part 10 v5.0.0 — `specs/fulltext/dashif_iop_part10_v5_emsg.md` (`IOP L…`,
-usage).
+ISO/IEC 23009-1:2022 ed.5 §5.10 (normative); DASH-IF IOP Part 10 v5.0.0 (usage). The `2022 L…`
+and `IOP L…` line anchors below refer to local, gitignored pdf2md dumps
+(`specs/fulltext/iso_iec_23009-1_dash_2022.md` / `specs/fulltext/dashif_iop_part10_v5_emsg.md`,
+per `specs/MEDIA-SPECS-LOCAL.md`) that were never committed and are not reproducible from this
+checkout, so those anchors are not independently verifiable; treat the spec § citations as
+authoritative.
 
 ## Box & versions — §5.10.3.3 (2022 L5231)
 

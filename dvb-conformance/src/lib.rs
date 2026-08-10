@@ -184,7 +184,7 @@ const PCR_MODULUS_27MHZ: u64 = (1u64 << 33) * 300;
 /// 27 MHz clock rate (ticks per second).
 const CLOCK_27MHZ: u64 = 27_000_000;
 
-/// PES start-code prefix byte 0 (ISO/IEC 13818-1 §2.4.3.7 Table 2-18).
+/// PES start-code prefix byte 0 (ISO/IEC 13818-1 §2.4.3.6, Table 2-21).
 const PES_PREFIX_0: u8 = 0x00;
 /// PES start-code prefix byte 1.
 const PES_PREFIX_1: u8 = 0x00;

@@ -4,7 +4,7 @@ use crate::error::{Error, Result};
 
 /// Size of one MPEG-TS packet (ETSI EN 300 468 §3.2, ISO/IEC 13818-1 §2.4.3.2).
 pub const TS_PACKET_SIZE: usize = 188;
-/// Sync byte that every TS packet starts with (ISO/IEC 13818-1 §2.4.3.2).
+/// Sync byte that every TS packet starts with (ISO/IEC 13818-1 §2.4.3.3).
 pub const TS_SYNC_BYTE: u8 = 0x47;
 /// Upper bound on a single section: `section_length` is 12 bits (max 4095)
 /// plus the 3-byte header = 4098. (Long-form SI caps `section_length` at
@@ -374,7 +374,7 @@ impl<'a> TsPacket<'a> {
     ///
     /// Returns `None` when the packet carries no adaptation field, and
     /// `Some(Err(..))` when a present field is truncated. Layout per
-    /// ISO/IEC 13818-1:2007 §2.4.3.4 (`docs/iso_13818_1_systems.md`).
+    /// ISO/IEC 13818-1:2007 §2.4.3.4 (`mpeg-ts/docs/tables/h222_0/transport_packet.md`).
     pub fn adaptation_field(&self) -> Option<crate::Result<AdaptationField<'a>>> {
         self.adaptation.map(AdaptationField::parse)
     }

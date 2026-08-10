@@ -1,6 +1,6 @@
 //! DSM-CC U-N download protocol messages — ISO/IEC 13818-6 §7.2/§7.3.
 //!
-//! Layouts per `docs/iso_13818_6_carousel.md` (hand-transcribed; ISO/IEC
+//! Layouts per `dvb-si/docs/text/iso_13818_6/` (hand-transcribed; ISO/IEC
 //! 13818-6 is not freely redistributable), cross-checked against the vendored
 //! TR 101 202 §4.6/§4.7.5 + TS 102 006 Table 15, and pinned live against the
 //! `m6-single.ts` capture by the `carousel_fixture` integration test.

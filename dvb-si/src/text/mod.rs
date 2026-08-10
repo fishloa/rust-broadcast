@@ -12,7 +12,8 @@
 //! Glyph mappings are pinned to EN 300 468 V1.19.1 (2025-02) Figure A.1
 //! "Character code table 00 - Latin alphabet with Unicode equivalents"
 //! (PDF p. 159, vendored at `specs/etsi_en_300_468_v01.19.01_dvb_si.pdf`;
-//! transcription in `dvb-si/docs/en_300_468.md`).
+//! transcription in
+//! `dvb-si/docs/tables/en_300_468/figure-a1-character-code-table-00-default-latin-alphabet.md`).
 //!
 //! [`DvbText`] wraps the raw wire bytes and decodes only on demand — parsing
 //! stays zero-copy; decoding happens when you call [`DvbText::decode`], `Display`,

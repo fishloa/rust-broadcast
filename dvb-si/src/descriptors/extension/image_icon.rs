@@ -2,7 +2,7 @@
 use super::*;
 
 /// Icon transport mode — ETSI EN 300 468 §6.4.8 Table 146
-/// (`docs/en_300_468.md`, Table 146 — Icon transport mode coding).
+/// (`dvb-si/docs/enums/en_300_468/146-icon-transport-mode-coding.md`).
 ///
 /// 2-bit field. Selects where the icon data is carried.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

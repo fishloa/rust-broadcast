@@ -11,7 +11,7 @@
 
 ```toml
 [dependencies]
-mp4-emsg = "0.1"
+mp4-emsg = "0.4"
 ```
 
 ISO BMFF / DASH Event Message Box (`emsg`, ISO/IEC 23009-1) — inband DASH/CMAF

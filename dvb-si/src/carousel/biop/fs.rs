@@ -6,7 +6,7 @@
 //! and exposes a path-based resolver so callers can retrieve file content
 //! without understanding the IOR chain.
 //!
-//! Spec: `docs/iso_13818_6_biop.md` (ETSI TR 101 202 §4.7.4).
+//! Spec: `dvb-si/docs/text/iso_13818_6/` (ETSI TR 101 202 §4.7.4).
 
 use super::message::{BiopMessage, DirectoryMessage};
 use alloc::collections::BTreeMap;

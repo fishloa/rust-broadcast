@@ -1,7 +1,10 @@
 # Transport stream packet + adaptation field — ITU-T H.222.0 (08/2023) §2.4.3 = ISO/IEC 13818-1
 
-Transcribed from `specs/itu_t_h222_0_202308_mpeg2_systems.pdf` (pp.48–52), pdf2md
-value-verified, then structure-cleaned. Bit-widths, hex values and mnemonics are
+Transcribed from `itu_t_h222_0_202308_mpeg2_systems.pdf` (pp.48–52), pdf2md
+value-verified, then structure-cleaned. The PDF itself lives in the private submodule at
+`private/specs/itu_t_h222_0_202308_mpeg2_systems.pdf` (paywalled ITU-T standard, not
+redistributable) — maintainers run `git submodule update --init private` to open it; a public
+clone or CI run won't have this file, which is expected. Bit-widths, hex values and mnemonics are
 verbatim from the spec; control-flow (`if`/`for`) is shown as indented syntax rows
 per the spec's tabular convention.
 

@@ -91,10 +91,10 @@ impl Escr {
     }
 }
 
-// ── DSM trick mode (ISO/IEC 13818-1 §2.4.3.8, Table 2-24) ──────────────────
+// ── DSM trick mode (ISO/IEC 13818-1 §2.4.3.7, Table 2-24) ──────────────────
 
 /// Trick-mode control values for the `DSM_trick_mode_flag` field
-/// (ISO/IEC 13818-1 §2.4.3.8, Table 2-24).
+/// (ISO/IEC 13818-1 §2.4.3.7, Table 2-24).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[non_exhaustive]
@@ -142,7 +142,7 @@ pub enum TrickMode {
 }
 
 impl TrickMode {
-    /// Decode from the 1-byte trick-mode field (ISO/IEC 13818-1 §2.4.3.8).
+    /// Decode from the 1-byte trick-mode field (ISO/IEC 13818-1 §2.4.3.7).
     pub fn from_byte(b: u8) -> Self {
         let control = (b >> 5) & 0x07;
         let data = b & 0x1F;

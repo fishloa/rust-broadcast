@@ -141,6 +141,26 @@
   guard script to contain. Adopting let-chains and `is_multiple_of` where the
   1.95 lints require them; no functional or API change.
 ### Fixed
+
+- **One authenticated `POST /admin/routes` could permanently disable the admin
+  API** (requires the `whep` feature). `spawn_route` filtered a route's outputs
+  by `!k.is_push()` alone, where the startup path filters
+  `!k.is_push() && !k.is_whep()`. A `whep` output therefore reached
+  `build_output`, which is `unreachable!()` for it — WHEP egress is driven by a
+  raw listen socket, not an `Arc<dyn Output>` — and `validate_standalone` does
+  not reject such a route, since it only checks the listen address.
+
+  The panic is not the damage; where it panics is. `add_route` holds
+  `self.inner.write()` across `spawn_route`, so the unwind **poisoned the
+  registry lock**, and every later admin operation and router rebuild calls
+  `.expect("RouteRegistry::inner lock poisoned")`. One request disabled the
+  admin API for the remaining lifetime of the process. The `reload` path calls
+  `spawn_route` without the lock and so lost only that one request.
+
+  A one-word divergence between two filters that had to agree. The regression
+  test asserts the registry is still usable afterwards — poisoning is what it
+  destroyed, so a test that only asserted "no panic" would not have caught it.
+
 - **A wrong RTSP password retried forever instead of failing the route**
   (issue #957, found end-to-end against a real Axis camera). `origin::
   supervisor::supervise_driver` treated every ingest failure as transient,

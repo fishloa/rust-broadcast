@@ -1,0 +1,20 @@
+# ule 0.4.0
+
+**Release date:** 2026-08-10
+
+MSRV-only release: nothing a consumer calls changes. No API change.
+
+## What changed
+
+- MSRV raised to **1.95.0** (issue #949), the workspace-wide MSRV unification
+  that removes the split caused by `webrtc-runtime`'s optional `media`
+  feature (which had needed rustc 1.88 via `rcgen`, and the dedicated CI
+  job/exclude-lanes/guard-script that split required). Adopts let-chains and
+  `is_multiple_of` where the new lints require them.
+- `tests/non_exhaustive_coverage.rs` drift guard added (issue #806) —
+  internal test-only, no public API or behaviour change.
+
+## Migration
+
+No API changes; no action required. Consumers must build with rustc 1.95.0
+or newer.

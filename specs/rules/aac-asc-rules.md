@@ -2,8 +2,13 @@
 
 The audio decoder-config record carried in an MP4 `mp4a` sample entry's `esds`
 (`DecoderSpecificInfo` when `objectTypeIndication == 0x40`), and the source for an ADTS header on
-TS→MP4 transmux. Source: `specs/fulltext/iso_iec_14496-3_aac_2001.md` (text-layer pdf2md; AOT table
-vision-verified from PDF p11). Cites by spec § + PDF page.
+TS→MP4 transmux. Source: ISO/IEC 14496-3:2001 §1.6 `AudioSpecificConfig` (text-layer pdf2md; AOT table
+vision-verified from PDF p11). Cites by spec § + PDF page. NOTE: the `specs/fulltext/iso_iec_14496-3_aac_2001.md`
+pdf2md dump this file's line-anchors were originally cut against is a local, gitignored working
+artifact per `specs/MEDIA-SPECS-LOCAL.md` (the source PDF itself is a paid ISO standard, not
+vendored) — it was never committed and is not reproducible from this checkout, so any `L…` line
+anchors below this point are not independently verifiable; treat the spec §/PDF-page citations as
+authoritative.
 
 > **HE-AAC (SBR AOT 5 / PS AOT 29) — #393 resolved.** The later **text-layer** edition
 > **`specs/iso_iec_14496-3_2009_audio_sbr_ps.pdf`** now grounds the SBR + Parametric-Stereo

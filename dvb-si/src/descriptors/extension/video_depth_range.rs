@@ -3,7 +3,7 @@ use super::*;
 use alloc::vec::Vec;
 
 /// Range type — ETSI EN 300 468 §6.4.16.1 Table 161
-/// (`docs/en_300_468.md`, Table 161 — Range type coding).
+/// (`dvb-si/docs/enums/en_300_468/161-range-type-coding.md`).
 ///
 /// 8-bit field. Selects the interpretation of the `range_selector` bytes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

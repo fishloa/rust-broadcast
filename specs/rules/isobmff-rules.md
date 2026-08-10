@@ -1,7 +1,11 @@
 # ISO/IEC 14496-12:2015 (ISOBMFF) — MP4/fMP4/CMAF rules
 
 Box / sample / timing / fragment / segment rules for the planned transmux / fMP4-mux and
-`mp4-emsg`. Source: `specs/fulltext/iso_iec_14496-12_isobmff_2015.md` (§ + line cites).
+`mp4-emsg`. Source: ISO/IEC 14496-12:2015 (ISOBMFF). The `fulltext L…` line anchors below refer
+to a local, gitignored `specs/fulltext/iso_iec_14496-12_isobmff_2015.md` pdf2md dump (per
+`specs/MEDIA-SPECS-LOCAL.md`) that was never committed and is not reproducible from this
+checkout, so those anchors are not independently verifiable; treat the spec § citations as
+authoritative.
 
 ## Box / FullBox structure — §4.2 (fulltext L1254)
 

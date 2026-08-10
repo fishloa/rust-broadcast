@@ -4,7 +4,7 @@
 //! sequence (mod 16), respecting the spec-defined exceptions per
 //! ISO/IEC 13818-1 §2.4.3.3 / §2.4.3.5.
 //!
-//! # Spec semantics (§2.4.3.3 L1770–1774)
+//! # Spec semantics (§2.4.3.3, `private/docs/h222-0-transport-stream.md` L552–556)
 //!
 //! - The counter increments (mod 16) **only** on payload-bearing packets
 //!   (`adaptation_field_control` 01 or 11).  On adaptation-only (10) and
@@ -14,7 +14,7 @@
 //!   re-encoded PCR) and same CC as the previous instance.  A repair
 //!   MUST preserve these duplicates.
 //! - A packet whose adaptation field has `discontinuity_indicator == 1`
-//!   may legally have any CC value (§2.4.3.5 L1872).  A repair MUST NOT
+//!   may legally have any CC value (§2.4.3.5 L649).  A repair MUST NOT
 //!   renumber CC across a signalled discontinuity.
 
 use alloc::collections::BTreeMap;
@@ -55,7 +55,8 @@ struct PidState {
 /// adaptation-only packets (10) or reserved/no-payload packets (00), the
 /// counter does not increment.
 ///
-/// Additionally (§2.4.3.3 L1772, §2.4.3.5 L1872):
+/// Additionally (§2.4.3.3 L554, §2.4.3.5 L649 in
+/// `private/docs/h222-0-transport-stream.md`):
 /// - Duplicate packets (same CC, same payload) must be preserved
 ///   without renumbering.
 /// - Packets with `discontinuity_indicator == 1` in their adaptation
@@ -129,7 +130,8 @@ impl Op for ContinuityOp {
 
         // Payload-bearing packet (afc 01 or 11).
 
-        // Check for signalled discontinuity (§2.4.3.5 L1872).
+        // Check for signalled discontinuity (§2.4.3.5, L649 in
+        // `private/docs/h222-0-transport-stream.md`).
         // When discontinuity_indicator == 1, any CC value is legal.
         // We reset our per-PID expected state so subsequent packets are
         // not falsely flagged as errors.
@@ -306,7 +308,7 @@ mod tests {
 
     #[test]
     fn duplicate_packet_is_preserved() {
-        // §2.4.3.3 L1772: same PID, same CC, same payload bytes.
+        // §2.4.3.3 L554 (`private/docs/h222-0-transport-stream.md`): same PID, same CC, same payload bytes.
         let payload = &[0xAB, 0xCD, 0xEF];
         let pkt1 = make_payload_packet(0x0200, 0, false, payload);
         let pkt2 = make_payload_packet(0x0200, 0, false, payload); // duplicate
@@ -320,7 +322,7 @@ mod tests {
 
     #[test]
     fn same_cc_with_different_payload_is_repaired() {
-        // Same CC but different payload — per §2.4.3.3 L1772 this is NOT a
+        // Same CC but different payload — per §2.4.3.3 L554 this is NOT a
         // legal duplicate (payload must be identical).  The repair renumbers
         // it to the expected CC.
         let pkt1 = make_payload_packet(0x0200, 0, false, &[0xAB]);

@@ -1,5 +1,5 @@
 //! Server-reflexive candidate gathering — a one-shot STUN Binding
-//! transaction (RFC 8489 §7.2.1: `rtc-stun`'s [`Client`] applies the
+//! transaction (RFC 8489 §6.2.1: `rtc-stun`'s [`Client`] applies the
 //! retransmission schedule) against a configured STUN server, run on the
 //! same push/pull shape as the rest of [`super::MediaTransport`].
 //!
@@ -143,7 +143,7 @@ impl StunGather {
         Ok(None)
     }
 
-    /// Drive retransmission timing (RFC 8489 §7.2.1).
+    /// Drive retransmission timing (RFC 8489 §6.2.1).
     pub(super) fn handle_timeout(&mut self, now: Instant) {
         let _ = Protocol::handle_timeout(&mut self.client, now);
     }

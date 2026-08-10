@@ -2,9 +2,11 @@
 //!
 //! Tests that the repair_continuity() operation correctly:
 //! 1. Increments CC only on payload-bearing packets per ISO/IEC 13818-1 §2.4.3.3,
-//! 2. Preserves legal duplicates (same PID, same CC, identical payload) per §2.4.3.3 L1772,
+//! 2. Preserves legal duplicates (same PID, same CC, identical payload) per §2.4.3.3
+//!    (`private/docs/h222-0-transport-stream.md` L554),
 //! 3. Renumbers non-duplicate same-CC repeats (different payload = CC error, not spec duplicate),
-//! 4. Preserves CC across signalled discontinuities per §2.4.3.5 L1872,
+//! 4. Preserves CC across signalled discontinuities per §2.4.3.5
+//!    (`private/docs/h222-0-transport-stream.md` L649),
 //! 5. Repairs genuine unsignalled, non-duplicate CC gaps.
 
 use std::{collections::BTreeMap, fs, path::PathBuf};

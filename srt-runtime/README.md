@@ -80,8 +80,8 @@ the packet-codec + sans-IO core pulls zero crypto/async dependencies.
 
 ```toml
 [dependencies]
-srt-runtime = "0.3"
-# optional: srt-runtime = { version = "0.3", features = ["tokio", "crypto"] }
+srt-runtime = "0.4"
+# optional: srt-runtime = { version = "0.4", features = ["tokio", "crypto"] }
 ```
 
 ## License

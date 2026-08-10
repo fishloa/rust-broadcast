@@ -1,8 +1,11 @@
 # ISO/IEC 23009-1 (DASH) — MPD timing rules
 
 MPD timeline / segment-timing model used by `timed-metadata` (DASH ↔ SCTE-35 / HLS
-`EXT-X-DATERANGE`). Source: `specs/fulltext/iso_iec_23009-1_dash_2012.md` (§ + line cites).
-Events and the `emsg` box are in `emsg-rules.md` (23009-1:2022 ed.5 §5.10).
+`EXT-X-DATERANGE`). Source: ISO/IEC 23009-1:2012 (1st ed.) — `§` + line cites below refer to a
+local, gitignored `specs/fulltext/iso_iec_23009-1_dash_2012.md` pdf2md dump (per
+`specs/MEDIA-SPECS-LOCAL.md`) that was never committed and is not reproducible from this
+checkout, so those `L…` anchors are not independently verifiable; treat the spec § citations as
+authoritative. Events and the `emsg` box are in `emsg-rules.md` (23009-1:2022 ed.5 §5.10).
 
 ## Presentation hierarchy & timeline — §5.3.2 (L675)
 

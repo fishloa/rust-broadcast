@@ -89,7 +89,7 @@ impl BufsUnit {
     /// scale (bits / Kbits / Mbits / 8Kbits). The standard does not numerically
     /// define K/M; the decimal convention (K = 1 000, M = 1 000 000, 8K = 8 000)
     /// is used, consistent with the standard's use of decimal `Mbit/s`
-    /// elsewhere (see `docs/en_302_755_t2.md` §BUFS/TTO semantics).
+    /// elsewhere (see `dvb-bbframe/docs/enums/en_302_755/bufs_unit.md` §BUFS/TTO semantics).
     pub fn multiplier_bits(self) -> u64 {
         match self {
             Self::Bits => 1,
@@ -164,7 +164,7 @@ impl SignallingKind {
     /// `bufs_bits = bufs × units.multiplier_bits()`
     ///
     /// See EN 302 755 Annex C Table C.1 + §BUFS/TTO semantics
-    /// (`docs/en_302_755_t2.md`).
+    /// (`dvb-bbframe/docs/enums/en_302_755/bufs_unit.md`).
     ///
     /// # Note on encoders
     ///
@@ -188,7 +188,7 @@ impl SignallingKind {
     /// maximum-size bound per the standard, so a floor is appropriate.
     ///
     /// See EN 302 755 Annex C Table C.1 + §BUFS/TTO semantics
-    /// (`docs/en_302_755_t2.md`).
+    /// (`dvb-bbframe/docs/enums/en_302_755/bufs_unit.md`).
     pub fn bufs_bytes(&self) -> Option<u64> {
         self.bufs_bits().map(|b| b / 8)
     }
@@ -223,7 +223,7 @@ impl SignallingKind {
     /// `TTO` in units of T.
     ///
     /// Per EN 302 755 Annex C Table C.1 + §8.3.3
-    /// (`docs/en_302_755_t2.md`).
+    /// (`dvb-bbframe/docs/enums/en_302_755/bufs_unit.md`).
     pub fn tto_t_over_256(&self) -> Option<u64> {
         match self {
             Self::Tto {

@@ -1,5 +1,5 @@
 ## Table 2-21 — PES packet
-_Rec. ITU-T H.222.0 (06/2021) | ISO/IEC 13818-1:2021 §2.4.3.6/§2.4.3.7; PDF pp. 61-66. Transcribed via BlazeDocs. PTS/DTS are 33-bit, 90 kHz (§2.4.3.7). stream_id assignments in Table 2-22; DSM trick_mode in Table 2-23._
+_Rec. ITU-T H.222.0 (06/2021) | ISO/IEC 13818-1:2021 §2.4.3.6/§2.4.3.7; PDF pp. 61-66. Transcribed via BlazeDocs. PTS/DTS are 33-bit, 90 kHz (§2.4.3.7). stream_id assignments in Table 2-22; DSM trick_mode in Table 2-24._
 
 | Syntax | No. of bits | Mnemonic |
 |---|---|---|

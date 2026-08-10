@@ -2,7 +2,7 @@
 //! [`SectionReassembler::feed`](crate::ts::SectionReassembler::feed)).
 //!
 //! Per the PSI carriage rules of ITU-T H.222.0 §2.4.4 (= ISO/IEC 13818-1:2007 §2.4.4)
-//! (`docs/iso_13818_1_systems.md`): sections are packed into 188-byte packets
+//! (`mpeg-ts/docs/tables/h222_0/psi_section.md`): sections are packed into 188-byte packets
 //! with a `pointer_field` where sections begin, concatenated contiguously, and
 //! 0xFF-stuffed at the batch tail.
 
@@ -26,7 +26,7 @@ const STUFFING_BYTE: u8 = 0xFF;
 /// produced here, when fed back through the reassembler, yield the same
 /// sections in order.
 ///
-/// ISO/IEC 13818-1:2007 §2.4.4 (`docs/iso_13818_1_systems.md`).
+/// ISO/IEC 13818-1:2007 §2.4.4 (`mpeg-ts/docs/tables/h222_0/psi_section.md`).
 pub struct SectionPacketiser {
     pid: u16,
     continuity_counter: u8,
@@ -192,8 +192,8 @@ pub const PAT_MAX_INTERVAL: Duration = Duration::from_millis(100);
 /// dvb-si/docs/ts_101_154_av_coding.md §4.1.7 — PMT maximum interval (shall ≤ 100 ms).
 pub const PMT_MAX_INTERVAL: Duration = Duration::from_millis(100);
 
-/// dvb-si/docs/en_300_468.md §5.1.4.1 — minimum inter-section interval floor
-/// (≤100 Mbit/s TSs).
+/// dvb-si/docs/tables/en_300_468/514-repetition-rates-and-random-access-hand-transcribed.md
+/// §5.1.4.1 — minimum inter-section interval floor (≤100 Mbit/s TSs).
 pub const MIN_SECTION_INTERVAL: Duration = Duration::from_millis(25);
 
 // ── SiMux ────────────────────────────────────────────────────────────────────

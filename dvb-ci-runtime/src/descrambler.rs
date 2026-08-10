@@ -51,7 +51,7 @@ use crate::driver::Driver;
 use crate::event::Notification;
 use crate::managed::CaError;
 
-/// MPEG-2 TS sync byte (ISO/IEC 13818-1 §2.4.3.2).
+/// MPEG-2 TS sync byte (ISO/IEC 13818-1 §2.4.3.3).
 const TS_SYNC_BYTE: u8 = 0x47;
 /// Mask for the PID's upper byte within a TS packet header (byte 1): the top
 /// 3 bits are `transport_error_indicator`/`payload_unit_start_indicator`/

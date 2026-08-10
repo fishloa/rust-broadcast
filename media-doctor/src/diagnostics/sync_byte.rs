@@ -1,5 +1,5 @@
 //! `SyncByteCheck` — flags TS packets whose first byte is not the sync byte
-//! (ITU-T H.222.0 §2.4.3.2).
+//! (ITU-T H.222.0 §2.4.3.3).
 
 use crate::Diagnostic;
 use crate::Report;
@@ -7,7 +7,7 @@ use crate::report::{Finding, Location, Severity};
 
 /// Checks that every 188-byte TS packet starts with `0x47` (the MPEG-TS sync byte).
 ///
-/// ITU-T H.222.0 §2.4.3.2: each TS packet begins with a `sync_byte` of `0x47`.
+/// ITU-T H.222.0 §2.4.3.3: each TS packet begins with a `sync_byte` of `0x47`.
 /// Any deviation indicates corruption, stream misalignment, or a non-TS stream.
 #[derive(Debug, Clone, Copy)]
 pub struct SyncByteCheck;

@@ -3,7 +3,7 @@ use super::*;
 use alloc::vec::Vec;
 
 /// Change type — ETSI EN 300 468 §6.4.10 Table 151
-/// (`docs/en_300_468.md`, Table 151 — Change type coding).
+/// (`dvb-si/docs/enums/en_300_468/151-change-type-coding.md`).
 ///
 /// 4-bit field. Classifies the nature of the network change event.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

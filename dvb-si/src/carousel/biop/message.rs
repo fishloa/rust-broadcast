@@ -1,6 +1,11 @@
 //! BIOP message types and `ModuleInfo` / `ServiceGatewayInfo` wire structures.
 //!
-//! All wire layouts from `docs/iso_13818_6_biop.md` (ETSI TR 101 202 §4.7.4–4.7.5).
+//! All wire layouts from `dvb-si/docs/text/iso_13818_6/` (ETSI TR 101 202
+//! §4.7.4–4.7.5; see `4_9-biopdirectorymessage-syntax.md`,
+//! `4_10-biopfilemessage-syntax.md`, `4_11-biopstreammessage-syntax.md`,
+//! `4_13-biopstreameventmessage-syntax.md`,
+//! `4_14-biopmoduleinfo-syntax-the-dii-moduleinfobytes.md`,
+//! `4_15-biopservicegatewayinfo-syntax-the-dsi-privatedata.md`).
 //!
 //! # Key entry points
 //!
@@ -21,7 +26,7 @@ use crate::error::{Error, Result};
 use broadcast_common::{Parse, Serialize};
 
 /// Binding type — TR 101 202 §4.7.4.1, Table 4.9
-/// (`docs/iso_13818_6_biop.md`, p. 55–56).
+/// (`dvb-si/docs/text/iso_13818_6/4_9-biopdirectorymessage-syntax.md`).
 ///
 /// Indicates whether a BIOP binding names a non-directory/gateway object
 /// (`nobject`) or a directory or service gateway (`ncontext`).

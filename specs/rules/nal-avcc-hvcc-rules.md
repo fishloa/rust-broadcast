@@ -1,9 +1,12 @@
 # ISO/IEC 14496-15:2017 — AVC/HEVC config records (`avcC`/`hvcC`) + sample entries
 
 Decoder-config records and sample entries a transmux lifts when carrying H.264/H.265 in MP4.
-Source: `specs/fulltext/iso_iec_14496-15_avc_hevc_2017_excerpt.md` (vision-transcribed prose +
-syntax of the relevant sections; cites by spec § + printed page). The PDF body is image-only —
-exact bit-field values cross-checked against FFmpeg `movenc.c` where it matters.
+Source: ISO/IEC 14496-15:2017 (vision-transcribed prose + syntax of the relevant sections; cites
+by spec § + printed page). The PDF body is image-only — exact bit-field values cross-checked
+against FFmpeg `movenc.c` where it matters. The `specs/fulltext/iso_iec_14496-15_avc_hevc_2017_excerpt.md`
+vision-transcription this file was originally cut against is a local, gitignored working artifact
+per `specs/MEDIA-SPECS-LOCAL.md` (source PDF is a paid ISO standard, not vendored) — it was never
+committed and is not reproducible from this checkout.
 
 > **#394 (partial):** a **text-layer** edition — **`specs/iso_iec_14496-15_2012_avc_format_TEXTLAYER.pdf`**
 > (ISO/IEC 14496-15:2012, "AVC file format") — now grounds **`avcC`** (`AVCDecoderConfigurationRecord`,

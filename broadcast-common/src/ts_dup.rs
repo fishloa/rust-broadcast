@@ -35,7 +35,7 @@
 
 /// Byte offset of `adaptation_field_control` (bits `[5:4]`) and
 /// `continuity_counter` (bits `[3:0]`) within a raw TS packet — ITU-T
-/// H.222.0 (08/2023) §2.4.3.2 Table 2-5 / §2.4.3.3.
+/// H.222.0 (08/2023) §2.4.3.3, Table 2-5.
 const AFC_BYTE: usize = 3;
 
 /// `adaptation_field_control` bit indicating a payload is present (`01` or

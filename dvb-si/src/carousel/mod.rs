@@ -6,7 +6,7 @@
 //! [`UnMessage`] (DSI/DII) and [`DownloadDataBlock`] — and
 //! [`ModuleReassembler`] collects DDB blocks into complete modules.
 //!
-//! Wire layouts are documented in `docs/iso_13818_6_carousel.md` (with
+//! Wire layouts are documented in `dvb-si/docs/text/iso_13818_6/` (with
 //! provenance notes — ISO/IEC 13818-6 itself cannot be vendored) and pinned
 //! against a live capture by the `carousel_fixture` integration test.
 

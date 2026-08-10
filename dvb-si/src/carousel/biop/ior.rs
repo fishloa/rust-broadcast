@@ -1,6 +1,9 @@
 //! IOP::IOR and its component types for the DVB object-carousel profile.
 //!
-//! All wire layouts are from `docs/iso_13818_6_biop.md` (ETSI TR 101 202 §4.7.3).
+//! All wire layouts are from `dvb-si/docs/text/iso_13818_6/` (ETSI TR 101 202
+//! §4.7.3; see `4_3-iopior-syntax.md`, `4_5-biop-profile-body-syntax.md`,
+//! `4_7-lite-options-profile-body-with-servicelocation-syntax.md`,
+//! `4_8-dvb-carousel-nsap-address-syntax-20-bytes.md`).
 //!
 //! # Layout overview
 //!

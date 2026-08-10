@@ -1,6 +1,6 @@
 # PSI sections + reassembly — ITU-T H.222.0 (08/2023) §2.4.4 = ISO/IEC 13818-1
 
-Transcribed from `specs/itu_t_h222_0_202308_mpeg2_systems.pdf` (pp.74–78), pdf2md
+Transcribed from `itu_t_h222_0_202308_mpeg2_systems.pdf` (pp.74–78), pdf2md
 value-verified (one **false-positive** verifier warning on the Table 2-31 hex column
 — eyeballed, the rendered values 0x00..0x03 are correct; see pdf2md issue #46), then
 structure-cleaned. Scope = the **generic section framing** that `Section<'a>` /
@@ -8,6 +8,11 @@ structure-cleaned. Scope = the **generic section framing** that `Section<'a>` /
 *generic-section* template. Parsing the concrete PSI tables (PAT/PMT/CAT) is **not** in
 `mpeg-ts`'s scope by design — that lives in `dvb-si`, which builds on this framing layer;
 `mpeg-ts` stays the generic section/framing layer and does not duplicate it.
+
+The PDF itself lives in the private submodule at
+`private/specs/itu_t_h222_0_202308_mpeg2_systems.pdf` (paywalled ITU-T standard, not
+redistributable) — maintainers run `git submodule update --init private` to open it; a public
+clone or CI run won't have this file, which is expected.
 
 ## §2.4.4.1 General — PSI structures (Table 2-28)
 

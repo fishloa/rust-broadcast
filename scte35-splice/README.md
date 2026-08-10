@@ -12,7 +12,7 @@
 
 ```toml
 [dependencies]
-scte35-splice = "1.0"
+scte35-splice = "2.1"
 ```
 
 Spec-cited **ANSI/SCTE 35 2023r1** splice information (Digital Program

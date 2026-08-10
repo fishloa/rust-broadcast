@@ -14,7 +14,7 @@
 
 ```toml
 [dependencies]
-broadcast-hls = "0.1"
+broadcast-hls = "0.2"
 ```
 
 HLS (M3U8) playlist syntax — RFC 8216 / RFC 8216bis (Low-Latency HLS): typed

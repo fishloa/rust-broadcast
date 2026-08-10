@@ -1,9 +1,12 @@
 # ISO/IEC 14496-1 (Systems) + 14496-14 (MP4) — `esds` / ES_Descriptor rules
 
 MPEG-4 elementary-stream descriptor (`esds`) carried in MP4 sample entries (`mp4a`/`mp4v`/`mp4s`),
-for the planned transmux / MP4-mux. Sources:
-`specs/fulltext/iso_iec_14496-1_systems_es_descriptor_2010.md` (`14496-1 L…`) and
-`specs/fulltext/iso_iec_14496-14_mp4_2003.md` (`14496-14 L…`).
+for the planned transmux / MP4-mux. Sources: ISO/IEC 14496-1:2010 Systems and ISO/IEC 14496-14:2003
+MP4. The `14496-1 L…` / `14496-14 L…` line anchors below refer to local, gitignored pdf2md dumps
+(`specs/fulltext/iso_iec_14496-1_systems_es_descriptor_2010.md` /
+`specs/fulltext/iso_iec_14496-14_mp4_2003.md`, per `specs/MEDIA-SPECS-LOCAL.md`) that were never
+committed and are not reproducible from this checkout, so those anchors are not independently
+verifiable; treat the spec § citations as authoritative.
 
 ## Expandable descriptor framing — 14496-1 §8.3.3 (fulltext L3986) — the parse primitive
 
