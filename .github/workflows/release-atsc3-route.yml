@@ -1,0 +1,65 @@
+name: Release atsc3-route
+
+# Publishes the atsc3-route crate to crates.io on a `atsc3-route-v*` tag.
+# atsc3-route is versioned and released INDEPENDENTLY (standalone reusable
+# crate with its own cadence, split out of `atsc3` per issue #943). CI is the
+# only source of published artifacts — never `cargo publish` from a
+# workstation. Requires the CARGO_REGISTRY_TOKEN secret.
+#
+# DEPENDENCY ORDER: atsc3-route depends on broadcast-common (lockstep,
+# already live) and rmt-flute (>= 0.4, already live). No new crate needs to
+# land before this one. It is a sibling of `atsc3` (not a dependency of it,
+# nor a dependent) — the two publish independently of each other.
+
+on:
+  push:
+    tags: ["atsc3-route-v*"]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  publish:
+    name: publish atsc3-route to crates.io
+    runs-on: ubuntu-latest
+    # crates.io publish is gated: pauses for manual approval by a
+    # required reviewer before any cargo publish can run. See the
+    # 'crates-io' environment (repo Settings -> Environments).
+    environment: crates-io
+    steps:
+      - uses: actions/checkout@v5
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Gate — atsc3-route tests (all features)
+        run: cargo test -p atsc3-route --all-features --locked
+
+      - name: Gate — atsc3-route clippy
+        run: cargo clippy -p atsc3-route --all-features --all-targets --locked -- -D warnings
+
+      - name: Gate — atsc3-route no_std build
+        run: cargo build -p atsc3-route --no-default-features --target thumbv7em-none-eabi --locked
+
+      - name: Gate — atsc3-route examples build
+        run: cargo build -p atsc3-route --all-features --examples --locked
+
+      - name: Gate — tag matches atsc3-route version
+        run: |
+          TAG="${GITHUB_REF_NAME#atsc3-route-v}"
+          V=$(cargo metadata --no-deps --format-version 1 --locked \
+              | python3 -c "import json,sys; print({p['name']: p['version'] for p in json.load(sys.stdin)['packages']}['atsc3-route'])")
+          if [ "$V" != "$TAG" ]; then
+            echo "::error::atsc3-route is $V but tag is $TAG"; exit 1
+          fi
+
+      # Idempotent: an "already uploaded" error is treated as success.
+      - name: Publish atsc3-route
+        run: |
+          if out=$(cargo publish -p atsc3-route --locked 2>&1); then
+            echo "$out"; echo "::notice::published atsc3-route"
+          elif echo "$out" | grep -qiE "already (been )?uploaded|already exists"; then
+            echo "$out"; echo "::notice::atsc3-route already on crates.io at this version — skipping"
+          else
+            echo "$out"; echo "::error::failed to publish atsc3-route"; exit 1
+          fi
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}

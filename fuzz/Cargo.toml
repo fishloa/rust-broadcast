@@ -51,6 +51,7 @@ atsc3          = { path = "../atsc3" }
 st2022         = { path = "../st2022" }
 rist-runtime   = { path = "../rist-runtime" }
 webrtc-runtime = { path = "../webrtc-runtime" }
+atsc3-route    = { path = "../atsc3-route" }
 bytes         = "1"
 libfuzzer-sys = "0.4"
 
@@ -332,5 +333,11 @@ doc  = false
 [[bin]]
 name = "dvb_csa"
 path = "fuzz_targets/dvb_csa.rs"
+test = false
+doc  = false
+
+[[bin]]
+name = "atsc3_route"
+path = "fuzz_targets/atsc3_route.rs"
 test = false
 doc  = false

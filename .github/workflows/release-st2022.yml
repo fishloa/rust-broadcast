@@ -1,0 +1,63 @@
+name: Release st2022
+
+# Publishes the st2022 crate to crates.io on a `st2022-v*` tag. st2022 is
+# versioned and released INDEPENDENTLY (standalone reusable crate with its
+# own cadence). CI is the only source of published artifacts — never
+# `cargo publish` from a workstation. Requires the CARGO_REGISTRY_TOKEN
+# secret.
+#
+# DEPENDENCY ORDER: st2022 depends only on broadcast-common (lockstep,
+# already live). No new crate needs to land before this one.
+
+on:
+  push:
+    tags: ["st2022-v*"]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  publish:
+    name: publish st2022 to crates.io
+    runs-on: ubuntu-latest
+    # crates.io publish is gated: pauses for manual approval by a
+    # required reviewer before any cargo publish can run. See the
+    # 'crates-io' environment (repo Settings -> Environments).
+    environment: crates-io
+    steps:
+      - uses: actions/checkout@v5
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Gate — st2022 tests (all features)
+        run: cargo test -p st2022 --all-features --locked
+
+      - name: Gate — st2022 clippy
+        run: cargo clippy -p st2022 --all-features --all-targets --locked -- -D warnings
+
+      - name: Gate — st2022 no_std build
+        run: cargo build -p st2022 --no-default-features --target thumbv7em-none-eabi --locked
+
+      - name: Gate — st2022 examples build
+        run: cargo build -p st2022 --all-features --examples --locked
+
+      - name: Gate — tag matches st2022 version
+        run: |
+          TAG="${GITHUB_REF_NAME#st2022-v}"
+          V=$(cargo metadata --no-deps --format-version 1 --locked \
+              | python3 -c "import json,sys; print({p['name']: p['version'] for p in json.load(sys.stdin)['packages']}['st2022'])")
+          if [ "$V" != "$TAG" ]; then
+            echo "::error::st2022 is $V but tag is $TAG"; exit 1
+          fi
+
+      # Idempotent: an "already uploaded" error is treated as success.
+      - name: Publish st2022
+        run: |
+          if out=$(cargo publish -p st2022 --locked 2>&1); then
+            echo "$out"; echo "::notice::published st2022"
+          elif echo "$out" | grep -qiE "already (been )?uploaded|already exists"; then
+            echo "$out"; echo "::notice::st2022 already on crates.io at this version — skipping"
+          else
+            echo "$out"; echo "::error::failed to publish st2022"; exit 1
+          fi
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}

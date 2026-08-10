@@ -1,0 +1,64 @@
+name: Release rist-runtime
+
+# Publishes the rist-runtime crate to crates.io on a `rist-runtime-v*` tag.
+# rist-runtime is versioned and released INDEPENDENTLY (standalone reusable
+# crate with its own cadence). CI is the only source of published artifacts —
+# never `cargo publish` from a workstation. Requires the CARGO_REGISTRY_TOKEN
+# secret.
+#
+# DEPENDENCY ORDER: rist-runtime depends on broadcast-common (lockstep,
+# already live) and rtcp-packet (>= 0.2, already live). No new crate needs
+# to land before this one.
+
+on:
+  push:
+    tags: ["rist-runtime-v*"]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  publish:
+    name: publish rist-runtime to crates.io
+    runs-on: ubuntu-latest
+    # crates.io publish is gated: pauses for manual approval by a
+    # required reviewer before any cargo publish can run. See the
+    # 'crates-io' environment (repo Settings -> Environments).
+    environment: crates-io
+    steps:
+      - uses: actions/checkout@v5
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Gate — rist-runtime tests (all features)
+        run: cargo test -p rist-runtime --all-features --locked
+
+      - name: Gate — rist-runtime clippy
+        run: cargo clippy -p rist-runtime --all-features --all-targets --locked -- -D warnings
+
+      - name: Gate — rist-runtime no_std build
+        run: cargo build -p rist-runtime --no-default-features --target thumbv7em-none-eabi --locked
+
+      - name: Gate — rist-runtime examples build
+        run: cargo build -p rist-runtime --all-features --examples --locked
+
+      - name: Gate — tag matches rist-runtime version
+        run: |
+          TAG="${GITHUB_REF_NAME#rist-runtime-v}"
+          V=$(cargo metadata --no-deps --format-version 1 --locked \
+              | python3 -c "import json,sys; print({p['name']: p['version'] for p in json.load(sys.stdin)['packages']}['rist-runtime'])")
+          if [ "$V" != "$TAG" ]; then
+            echo "::error::rist-runtime is $V but tag is $TAG"; exit 1
+          fi
+
+      # Idempotent: an "already uploaded" error is treated as success.
+      - name: Publish rist-runtime
+        run: |
+          if out=$(cargo publish -p rist-runtime --locked 2>&1); then
+            echo "$out"; echo "::notice::published rist-runtime"
+          elif echo "$out" | grep -qiE "already (been )?uploaded|already exists"; then
+            echo "$out"; echo "::notice::rist-runtime already on crates.io at this version — skipping"
+          else
+            echo "$out"; echo "::error::failed to publish rist-runtime"; exit 1
+          fi
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
