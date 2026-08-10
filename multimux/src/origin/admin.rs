@@ -213,7 +213,15 @@ impl RouteRegistry {
         let outputs: Vec<Arc<dyn Output>> = route
             .outputs
             .iter()
-            .filter(|k| !k.is_push())
+            // `!k.is_whep()` as well as `!k.is_push()` — the startup path in
+            // `origin::mod` filters both, and this one did not. A WHEP output
+            // survived to `build_output`, which hits `unreachable!()` because
+            // WHEP is driven by its own listen socket rather than an
+            // `Arc<dyn Output>`. `add_route` holds the registry WRITE LOCK
+            // across this call, so the unwind poisoned the lock and every
+            // later admin op and router rebuild panicked on
+            // `.expect("...poisoned")` — one request, permanent admin lockout.
+            .filter(|k| !k.is_push() && !k.is_whep())
             .map(|k| {
                 build_output(
                     k,
@@ -907,6 +915,32 @@ mod tests {
             http_limits: HttpLimits::default(),
             output_auth: None,
         }
+    }
+
+    /// A route carrying a `whep` output must not panic `spawn_route`.
+    ///
+    /// `build_output` has an `unreachable!()` for `OutputKind::Whep` (WHEP is
+    /// driven by its own listen socket, not an `Arc<dyn Output>`), and
+    /// `add_route` calls `spawn_route` while holding the registry WRITE lock.
+    /// So the unwind poisoned the lock and every subsequent admin operation
+    /// and router rebuild panicked on `.expect("...poisoned")` — one
+    /// authenticated request, permanent admin lockout for the process
+    /// lifetime. The startup path filtered `is_whep()`; this one did not.
+    #[cfg(feature = "whep")]
+    #[tokio::test]
+    async fn adding_a_route_with_a_whep_output_does_not_poison_the_registry() {
+        let registry = RouteRegistry::new(ctx_for_tests(), None);
+        let mut route = rtsp_route("cam", "rtsp://127.0.0.1:554/s");
+        route.outputs.push(OutputKind::Whep {
+            listen: "127.0.0.1:0".to_string(),
+        });
+
+        // Must not panic. Whether the spawn itself succeeds is not the point.
+        let _ = registry.add_route(route);
+
+        // The lock must still be usable — this is what the poisoning broke.
+        // The lock must still be usable — poisoning is what bricked this.
+        let _routes = registry.list_routes();
     }
 
     fn rtsp_route(name: &str, url: &str) -> Route {
