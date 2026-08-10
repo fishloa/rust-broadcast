@@ -41,24 +41,6 @@ fn read_rs(dir: &Path, out: &mut Vec<(String, String)>) {
 // theorised: commenting out `impl_spec_display!(SnapMode)` left this test
 // green. The rest of the workspace was already hardened; these two newest
 // crates were copied from a stale template.
-fn strip_path_qualifier(s: &str) -> &str {
-    let mut rest = s;
-    loop {
-        let ident_len = rest
-            .chars()
-            .take_while(|c| c.is_alphanumeric() || *c == '_')
-            .count();
-        if ident_len == 0 {
-            break;
-        }
-        match rest[ident_len..].strip_prefix("::") {
-            Some(after) => rest = after,
-            None => break,
-        }
-    }
-    rest
-}
-
 fn has_impl(all: &str, prefix: &str, name: &str) -> bool {
     let needle = format!("{prefix}{name}");
     let is_boundary =
