@@ -744,6 +744,10 @@ impl<'a> VvcBitReader<'a> {
         Self { data, bit_pos: 0 }
     }
 
+    // Bounds are checked here exactly as before; the bit extraction itself
+    // delegates to `broadcast_common::bits::BitReader` (shared with
+    // `dvb-t2mi`/`rdd29`/`st291`) so a bit-order/overrun fix there reaches
+    // this reader too.
     fn bits(&mut self, n: usize, what: &'static str) -> Result<u64> {
         if n > 64 || self.bit_pos + n > self.data.len() * 8 {
             return Err(Error::BufferTooShort {
@@ -752,14 +756,13 @@ impl<'a> VvcBitReader<'a> {
                 what,
             });
         }
-        let mut val = 0u64;
-        for _ in 0..n {
-            let byte_idx = self.bit_pos / 8;
-            let bit_in_byte = 7 - (self.bit_pos % 8);
-            let bit = ((self.data[byte_idx] >> bit_in_byte) & 1) as u64;
-            val = (val << 1) | bit;
-            self.bit_pos += 1;
-        }
+        let mut br = broadcast_common::bits::BitReader::new(self.data);
+        br.skip_bits(self.bit_pos)
+            .expect("bounds already validated above");
+        let val = br
+            .read_bits(n as u32)
+            .expect("bounds already validated above");
+        self.bit_pos += n;
         Ok(val)
     }
 

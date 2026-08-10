@@ -8,6 +8,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- `scte35::judge`'s wrap-aware future-vs-past distance now delegates to
+  `broadcast_common::clock33::wrapping_forward_distance` — the shared owner
+  of this math (a duplication-audit consolidation with `timed-metadata`,
+  `transmux`, `media-doctor`, each of which previously hand-rolled the same
+  modular-distance formula). Identical computation, no behaviour change; no
+  public API change (internal only).
 - MSRV raised to **1.95.0** (issue #949). This removes the workspace's MSRV
   split: `webrtc-runtime`'s optional `media` feature needed rustc 1.88 (via
   `rcgen`), which had grown a dedicated CI job, six `--exclude` lanes and a

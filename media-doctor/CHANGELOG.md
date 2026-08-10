@@ -3,6 +3,12 @@
 ## [Unreleased]
 
 ### Changed
+- `pts_check`'s wrap-aware backward-jump delta now delegates to
+  `broadcast_common::clock33::wrapping_forward_distance` — the shared owner
+  of this math (a duplication-audit consolidation with `timed-metadata`,
+  `transmux`, `compliance-probe`, each of which previously hand-rolled the
+  same modular-distance formula). Identical computation, no behaviour
+  change; no public API change (internal only).
 - **Version bumped 0.7.0 -> 0.8.0 for epoch purity.** In-tree `media-doctor`
   0.7.0 requires `transmux ^0.23`, but the *published* 0.7.0 requires
   `^0.22`; the caret epoch had moved without a version bump. A published

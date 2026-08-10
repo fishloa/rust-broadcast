@@ -10,14 +10,13 @@ use broadcast_common::traits::Parse;
 use scte35_splice::SpliceInfoSection;
 
 /// The 33-bit PTS modulus.
-pub const PTS_WRAP: u64 = 1 << 33;
+pub const PTS_WRAP: u64 = broadcast_common::clock33::WRAP_33BIT;
 
 /// A stateful conversion session.
 #[derive(Debug, Default)]
 pub struct Timeline {
     anchor: Option<TimeAnchor>,
-    last_pts: Option<u64>,
-    epoch: u64,
+    unroller: PtsUnroller,
 }
 
 impl Timeline {
@@ -29,8 +28,7 @@ impl Timeline {
     pub fn with_anchor(anchor: TimeAnchor) -> Self {
         Timeline {
             anchor: Some(anchor),
-            last_pts: None,
-            epoch: 0,
+            unroller: PtsUnroller::default(),
         }
     }
     /// Set / replace the anchor.
@@ -43,7 +41,7 @@ impl Timeline {
         let section = SpliceInfoSection::parse(bytes)?;
         let mut ev = TimedEvent::from_scte35(&section, bytes)?;
         if let Some(MediaTime(pts33)) = ev.at {
-            let abs = unroll_pts(&mut self.last_pts, &mut self.epoch, pts33);
+            let abs = self.unroller.unroll(pts33);
             ev.at = Some(MediaTime(abs));
         }
         Ok(ev)
@@ -66,16 +64,40 @@ impl Timeline {
     }
 }
 
-/// Unroll a 33-bit PTS to an absolute monotonic value. On a backward jump of
-/// more than half the range, advance one epoch.
-pub(crate) fn unroll_pts(last_pts: &mut Option<u64>, epoch: &mut u64, pts33: u64) -> u64 {
-    if let Some(prev) = *last_pts
-        && pts33 + (PTS_WRAP / 2) < prev
-    {
-        *epoch += 1;
+/// Per-signal 33-bit PTS unroller: turns a repeating 90 kHz wire counter into
+/// an absolute, ever-growing tick value.
+///
+/// Thin stateful wrapper around
+/// [`broadcast_common::clock33::unwrap_delta`] — the actual wrap-correction
+/// math lives there (shared with `transmux`'s demux-edge unroller and
+/// `media-doctor`/`compliance-probe`'s wrap-aware comparisons), so a fix
+/// there reaches every 33-bit clock consumer in the workspace instead of
+/// just this one. Used both by [`Timeline`] and by the caption diff-based
+/// boundary tracker (`crate::webvtt::cue::DiffState`) — a second reason not
+/// to hand-roll the (raw, epoch) bookkeeping a third time.
+///
+/// SCTE-35 cues and caption commit events never legitimately reorder across
+/// the 33-bit origin before any sample has been observed (there is no prior
+/// sample to wrap from), so `unroll` never sees a negative accumulator in
+/// practice; the `max(0)` below is a defensive clamp against malformed input
+/// rather than a real code path.
+#[derive(Debug, Default)]
+pub(crate) struct PtsUnroller {
+    /// `(previous raw 33-bit value, previous unwrapped accumulator)`.
+    state: Option<(u64, i128)>,
+}
+
+impl PtsUnroller {
+    pub(crate) fn unroll(&mut self, raw33: u64) -> u64 {
+        let unwrapped = match self.state {
+            Some((prev_raw, prev_unwrapped)) => {
+                broadcast_common::clock33::unwrap_delta(prev_unwrapped, prev_raw, raw33)
+            }
+            None => raw33 as i128,
+        };
+        self.state = Some((raw33, unwrapped));
+        unwrapped.max(0) as u64
     }
-    *last_pts = Some(pts33);
-    *epoch * PTS_WRAP + pts33
 }
 
 #[cfg(test)]
@@ -109,22 +131,41 @@ mod tests {
 
     #[test]
     fn wrap_unroll_adds_one_epoch() {
-        // unroll(prev, cur) — a near-max prev then a small cur crosses one wrap.
-        assert_eq!(
-            unroll_pts(&mut Some((1u64 << 33) - 10), &mut 0u64, 5),
-            5 + (1u64 << 33)
-        );
+        // A near-max previous value then a small next value crosses one wrap.
+        let mut u = PtsUnroller {
+            state: Some(((1u64 << 33) - 10, ((1u64 << 33) - 10) as i128)),
+        };
+        assert_eq!(u.unroll(5), 5 + (1u64 << 33));
     }
 
     #[test]
     fn wrap_unroll_forward_delta_keeps_epoch() {
         // A normal forward delta within range must NOT bump the epoch.
-        let (mut last, mut epoch) = (Some(1_000u64), 0u64);
-        assert_eq!(unroll_pts(&mut last, &mut epoch, 2_000), 2_000);
-        assert_eq!(epoch, 0);
-        // First call (no prior pts) returns the raw value, epoch unchanged.
-        let (mut last2, mut epoch2) = (None, 0u64);
-        assert_eq!(unroll_pts(&mut last2, &mut epoch2, 42), 42);
-        assert_eq!(epoch2, 0);
+        let mut u = PtsUnroller {
+            state: Some((1_000, 1_000)),
+        };
+        assert_eq!(u.unroll(2_000), 2_000);
+        // First call (no prior pts) returns the raw value.
+        let mut u2 = PtsUnroller::default();
+        assert_eq!(u2.unroll(42), 42);
+    }
+
+    /// MUTATION VERIFIED: the previous `unroll_pts` (a forward-only epoch
+    /// counter) could not distinguish a small backward reorder that
+    /// straddles the wrap origin from a huge forward jump — see
+    /// `broadcast_common::clock33::unwrap_delta`'s doc comment for the exact
+    /// case. Reproduced here at the `PtsUnroller` level: a splice/caption
+    /// event at raw tick `2`, then one at raw tick `2^33 - 3` (a legitimate
+    /// 5-tick backward step across the origin), must unroll to a small
+    /// value, not to `~2^33`.
+    #[test]
+    fn wrap_unroll_backward_reorder_across_origin_does_not_leap_forward() {
+        let mut u = PtsUnroller::default();
+        assert_eq!(u.unroll(2), 2);
+        let second = u.unroll((1u64 << 33) - 3);
+        assert!(
+            second < 1000,
+            "expected a small value from a 5-tick backward reorder, got {second}"
+        );
     }
 }

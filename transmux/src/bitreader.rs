@@ -79,6 +79,15 @@ impl BitReader {
     }
 
     /// Read `n` bits as an unsigned integer (`u(n)` / `f(n)`).
+    ///
+    /// Bounds are checked here exactly as before; the extraction itself
+    /// delegates to `broadcast_common::bits::BitReader` (shared with
+    /// `dvb-t2mi`/`rdd29`/`st291`) so a bit-order/overrun fix there reaches
+    /// this reader too. This type stays its own owning wrapper around that
+    /// shared cursor (rather than holding one directly) because it owns the
+    /// unescaped RBSP `Vec<u8>` the shared, borrowing `BitReader<'a>` cannot
+    /// — an owned buffer and a reader borrowing from it can't live in the
+    /// same struct without self-referential lifetimes.
     pub fn read_bits(&mut self, n: usize, what: &'static str) -> Result<u64> {
         if n > 64 || !self.has_bits(n) {
             return Err(Error::BufferTooShort {
@@ -90,14 +99,13 @@ impl BitReader {
         if n == 0 {
             return Ok(0);
         }
-        let mut val: u64 = 0;
-        for _ in 0..n {
-            let byte_idx = self.bit_pos / 8;
-            let bit_in_byte = 7 - (self.bit_pos % 8);
-            let bit = ((self.data[byte_idx] >> bit_in_byte) & 1) as u64;
-            val = (val << 1) | bit;
-            self.bit_pos += 1;
-        }
+        let mut br = broadcast_common::bits::BitReader::new(&self.data);
+        br.skip_bits(self.bit_pos)
+            .expect("bounds already validated above");
+        let val = br
+            .read_bits(n as u32)
+            .expect("bounds already validated above");
+        self.bit_pos += n;
         Ok(val)
     }
 

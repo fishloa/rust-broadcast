@@ -17,6 +17,13 @@ rustdoc-args = ["--cfg", "docsrs"]
 [dependencies]
 broadcast-common = { path = "../broadcast-common", version = "9.3", default-features = false }
 thiserror        = { version = "2", default-features = false }
+# TS header / adaptation-field-control decode for locating the payload to
+# (de)scramble (ISO/IEC 13818-1 §2.4.3.3/§2.4.3.4) — reuses `TsHeader::parse`
+# instead of hand-rolling the AFC bit decode a second time. `mpeg-ts`'s own
+# `TsPacket` has no mutable-in-place payload accessor (its `payload` field
+# borrows immutably), which this crate needs to (de)scramble in place — see
+# `src/ts.rs` for why the payload slicing itself stays hand-rolled.
+mpeg-ts          = { path = "../mpeg-ts", version = "0.4", default-features = false }
 
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }
@@ -24,7 +31,7 @@ rand      = "0.9"
 
 [features]
 default   = ["std"]
-std       = ["broadcast-common/std", "thiserror/std"]
+std       = ["broadcast-common/std", "thiserror/std", "mpeg-ts/std"]
 # Bitsliced batch fast path (`dvb_csa::bitsliced`). Additive: off by default.
 bitsliced = []
 

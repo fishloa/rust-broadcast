@@ -2,6 +2,24 @@
 
 ## [Unreleased]
 
+### Added
+- **`clock33`** — generic 33-bit wrapping-clock helpers: `unwrap_delta`
+  (bidirectional wrap-corrected unroll of a repeating 90 kHz counter into an
+  ever-growing accumulator) and `wrapping_forward_distance` (stateless
+  modular forward-distance for a wrap-vs-past comparison), plus the
+  `WRAP_33BIT`/`WRAP_33BIT_HALF` constants. Consolidates four independent
+  hand-rolled copies of this math (`timed-metadata::Timeline`,
+  `transmux::ts_demux`, `media-doctor::pts_check`,
+  `compliance-probe::scte35`) into one owner — a duplication-audit finding.
+  `transmux` cannot depend on `timed-metadata` (a signalling-conversion
+  crate several layers up the stack) without an inverted, heavy edge, so the
+  primitive lives here instead, in the crate every one of the four already
+  depends on. Also fixes a latent correctness gap the consolidation
+  surfaced: `timed-metadata`'s previous forward-only epoch counter
+  misclassified a small backward reorder that straddles the wrap origin as
+  a huge forward jump; `unwrap_delta`'s bidirectional correction (already
+  used by `transmux`) gets this right.
+
 ### Changed
 - MSRV raised to **1.95.0** (issue #949). This removes the workspace's MSRV
   split: `webrtc-runtime`'s optional `media` feature needed rustc 1.88 (via

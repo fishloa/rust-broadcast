@@ -11,6 +11,21 @@ All notable changes to this crate. Format: [Keep a Changelog](https://keepachang
   guard script to contain. Adopting let-chains and `is_multiple_of` where the
   1.95 lints require them; no functional or API change.
 ### Fixed
+- `Timeline`'s 33-bit PTS unroll (internal `unroll_pts`, now `PtsUnroller`,
+  built on `broadcast_common::clock33::unwrap_delta`) previously used a
+  forward-only epoch counter that misclassified a small backward reorder
+  straddling the wrap origin (e.g. raw tick `2` followed by raw tick
+  `2^33 - 3`, a legitimate 5-tick backward step) as a huge forward jump
+  instead. Switched to the same bidirectional wrap-correction `transmux`'s
+  demux-edge unroller already used, which gets both directions right; also
+  applies to the caption/Teletext diff-based cue boundary tracker
+  (`webvtt::cue::DiffState`), which shared the same internal helper. No
+  public API change (both were crate-internal); this is a pure internal
+  duplication-audit consolidation plus the bug fix it surfaced. This edge
+  case requires a pathological input (a second SCTE-35 cue or caption event
+  legitimately dipping backward across the wrap origin relative to the
+  first) and is not expected to affect ordinary broadcast captures, where
+  cue/event PTS values only ever move forward.
 - Doc accuracy (#941 row 1): the crate-root doc comment claimed SCTE-35 is
   translated "to and from" both `EXT-X-DATERANGE` and `emsg`. Only the
   `emsg` conversion is bidirectional; `EXT-X-DATERANGE` conversion is

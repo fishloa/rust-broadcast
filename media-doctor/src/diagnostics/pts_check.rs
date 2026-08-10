@@ -31,12 +31,15 @@ use crate::report::{Finding, Location, Severity};
 use mpeg_pes::PesPacket;
 use mpeg_ts::ts::{TS_PACKET_SIZE, TsPacket};
 
-/// 33-bit PTS/DTS modulus (2^33).
-const PTS_MODULUS: u64 = 1u64 << 33;
+/// 33-bit PTS/DTS modulus (2^33). Alias for
+/// [`broadcast_common::clock33::WRAP_33BIT`] — the shared owner of the
+/// wrap-vs-genuine-past threshold this module, `compliance_probe::scte35`,
+/// and `transmux`'s demux-edge unroller all apply.
+const PTS_MODULUS: u64 = broadcast_common::clock33::WRAP_33BIT;
 
 /// Half of the 33-bit range — used as the threshold to distinguish a genuine
 /// backward jump from a legal 33-bit wrap.
-const PTS_HALF: u64 = 1u64 << 32;
+const PTS_HALF: u64 = broadcast_common::clock33::WRAP_33BIT_HALF;
 
 /// Which timestamp kinds we track per PID.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -216,7 +219,7 @@ fn check_pes(
     if prev_decode.initialised {
         // Wrap-aware forward-distance on the 33-bit clock: a legal step is a
         // small positive modular delta; a backward jump is a large one.
-        let delta = raw.wrapping_sub(prev_decode.raw) & (PTS_MODULUS - 1);
+        let delta = broadcast_common::clock33::wrapping_forward_distance(prev_decode.raw, raw);
         if delta != 0 && delta > PTS_HALF {
             let rule = if kind == "DTS" {
                 "dts-backward"

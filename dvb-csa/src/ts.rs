@@ -1,20 +1,33 @@
 //! TS packet helpers — scramble/descramble 188-byte MPEG-2 TS packets.
 //!
 //! Handles adaptation-field offset and transport_scrambling_control bits
-//! per ETSI TS 100 289.
+//! per ISO/IEC 13818-1 §2.4.3.3/§2.4.3.4 (ETSI TS 100 289 scrambles the
+//! payload located this way, but does not itself redefine TS framing).
 use crate::csa;
 use crate::error::Error;
 use crate::key::ControlWord;
+use mpeg_ts::ts::{SCRAMBLING_MASK, TS_PACKET_SIZE, TsHeader};
+
+/// `transport_scrambling_control` value for "scrambled with the even control
+/// word" (ISO/IEC 13818-1 §2.4.3.3 Table 2-4: bits `[7:6]` of byte 3 = `10`).
+const TSC_EVEN_KEY: u8 = 0x80;
+
+/// One byte: the `adaptation_field_length` field itself, immediately after
+/// the 4-byte TS header when `adaptation_field_control` signals a present
+/// adaptation field (ISO/IEC 13818-1 §2.4.3.4).
+const ADAPTATION_FIELD_LENGTH_SIZE: usize = 1;
 
 /// Scramble the payload of a 188-byte TS packet in-place.
 ///
 /// Skips the 4-byte header and any adaptation field bytes.
 /// Sets the transport_scrambling_control bits to `10` (even key).
-pub fn scramble_ts_packet(cw: &ControlWord, packet: &mut [u8; 188]) -> Result<(), Error> {
+pub fn scramble_ts_packet(
+    cw: &ControlWord,
+    packet: &mut [u8; TS_PACKET_SIZE],
+) -> Result<(), Error> {
     let payload = ts_payload_mut(packet)?;
     csa::scramble(cw, payload);
-    // Set transport_scrambling_control to 10 (scrambled, even key)
-    packet[3] = (packet[3] & 0x3f) | 0x80;
+    packet[3] = (packet[3] & !SCRAMBLING_MASK) | TSC_EVEN_KEY;
     Ok(())
 }
 
@@ -22,37 +35,51 @@ pub fn scramble_ts_packet(cw: &ControlWord, packet: &mut [u8; 188]) -> Result<()
 ///
 /// Skips the 4-byte header and any adaptation field bytes.
 /// Clears the transport_scrambling_control bits to `00`.
-pub fn descramble_ts_packet(cw: &ControlWord, packet: &mut [u8; 188]) -> Result<(), Error> {
+pub fn descramble_ts_packet(
+    cw: &ControlWord,
+    packet: &mut [u8; TS_PACKET_SIZE],
+) -> Result<(), Error> {
     let payload = ts_payload_mut(packet)?;
     csa::descramble(cw, payload);
-    // Clear transport_scrambling_control
-    packet[3] &= 0x3f;
+    packet[3] &= !SCRAMBLING_MASK;
     Ok(())
 }
 
 /// Get a mutable slice to the TS packet payload, skipping the header and
 /// adaptation field.
-fn ts_payload_mut(packet: &mut [u8; 188]) -> Result<&mut [u8], Error> {
-    let adaptation_field_control = (packet[3] >> 4) & 0x03;
-    let has_adaptation = adaptation_field_control & 0x02 != 0;
-    let has_payload = adaptation_field_control & 0x01 != 0;
+///
+/// The adaptation_field_control decode reuses `mpeg_ts::ts::TsHeader::parse`
+/// (ISO/IEC 13818-1 §2.4.3.3) rather than re-deriving the same bit masks a
+/// second time — an overrun/bit-order fix in that parser now reaches this
+/// crate too. `TsHeader::parse` does not itself locate the payload byte
+/// offset (that also needs the `adaptation_field_length` byte, §2.4.3.4,
+/// which is not a header field), and `mpeg_ts::ts::TsPacket` — which does
+/// compute that offset — only exposes an **immutable** `payload: &[u8]`
+/// borrowed from its input, with no in-place-mutable equivalent. CSA
+/// (de)scrambling must write the descrambled bytes back into the caller's
+/// own buffer, so this function still computes the offset and takes the
+/// `&mut` slice itself rather than depending on a mutable view `mpeg-ts`
+/// does not provide.
+fn ts_payload_mut(packet: &mut [u8; TS_PACKET_SIZE]) -> Result<&mut [u8], Error> {
+    let header = TsHeader::parse(&packet[..TsHeader::serialized_len()])
+        .expect("packet[..TsHeader::serialized_len()] is always exactly 4 bytes");
 
-    if !has_payload {
+    if !header.has_payload {
         return Err(Error::BufferTooShort { need: 1, have: 0 });
     }
 
-    let mut payload_start = 4; // after TS header
+    let mut payload_start = TsHeader::serialized_len();
 
-    if has_adaptation {
-        let af_len = packet[4] as usize;
-        payload_start += 1 + af_len; // adaptation_field_length byte + field
+    if header.has_adaptation {
+        let af_len = packet[payload_start] as usize; // adaptation_field_length, §2.4.3.4
+        payload_start += ADAPTATION_FIELD_LENGTH_SIZE + af_len;
     }
 
-    if payload_start >= 188 {
+    if payload_start >= TS_PACKET_SIZE {
         return Err(Error::BufferTooShort { need: 1, have: 0 });
     }
 
-    Ok(&mut packet[payload_start..188])
+    Ok(&mut packet[payload_start..TS_PACKET_SIZE])
 }
 
 #[cfg(test)]

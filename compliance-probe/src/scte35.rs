@@ -19,7 +19,6 @@
 
 use scte35_splice::SpliceInfoSection;
 use scte35_splice::commands::AnyCommand;
-use scte35_splice::time::PTS_MODULUS;
 
 use broadcast_common::Parse;
 
@@ -27,10 +26,12 @@ use crate::record::record_counter;
 
 /// Half of the 33-bit `pts_time` range (ANSI/SCTE 35 §9.2, `PTS_MODULUS` =
 /// `1 << 33`) — the same wrap-vs-genuine-past threshold
-/// `scte35_splice::time::pts_add_wrapping` and `media_doctor::watch`'s
+/// `scte35_splice::time::pts_add_wrapping` and `media_doctor::pts_check`'s
 /// decode-timestamp tracker both apply: a forward distance greater than half
 /// the modulus is a wrap artefact of "actually behind", not "far ahead".
-const PTS_HALF: u64 = PTS_MODULUS / 2;
+/// Alias for [`broadcast_common::clock33::WRAP_33BIT_HALF`] — the shared
+/// owner of that threshold and of the [`judge`] distance calculation below.
+const PTS_HALF: u64 = broadcast_common::clock33::WRAP_33BIT_HALF;
 
 /// The result of checking one SCTE-35 `splice_insert` cue's target time
 /// against a reference "now".
@@ -126,7 +127,8 @@ pub fn check_section(section: &[u8], now_pts: u64) -> Scte35Sanity {
 /// wrap-aware distance from `now` to `target`, both already on the same
 /// 33-bit tick clock.
 pub(crate) fn judge(target_pts: u64, now_pts: u64) -> Scte35Sanity {
-    let forward_distance = target_pts.wrapping_sub(now_pts) % PTS_MODULUS;
+    let forward_distance =
+        broadcast_common::clock33::wrapping_forward_distance(now_pts, target_pts);
     if forward_distance > PTS_HALF {
         record_counter!(crate::metric_names::SCTE35_PTS_IN_PAST_TOTAL);
         Scte35Sanity::InPast
@@ -141,7 +143,7 @@ mod tests {
     use broadcast_common::Serialize;
     use scte35_splice::SpliceInfoSection;
     use scte35_splice::commands::SpliceInsert;
-    use scte35_splice::time::SpliceTime;
+    use scte35_splice::time::{PTS_MODULUS, SpliceTime};
 
     fn splice_insert_section(pts_time: Option<u64>, out_of_network: bool) -> alloc::vec::Vec<u8> {
         let si = SpliceInsert {

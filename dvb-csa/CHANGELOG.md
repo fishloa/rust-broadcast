@@ -8,6 +8,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- `ts::ts_payload_mut` now decodes `adaptation_field_control` via
+  `mpeg_ts::ts::TsHeader::parse` (a new dependency on `mpeg-ts`) instead of
+  hand-rolling the same AFC bit decode — a duplication-audit finding.
+  Magic-number `188`/`0x3f`/`0x80` replaced with named,
+  spec-cited constants (`mpeg_ts::ts::TS_PACKET_SIZE`/`SCRAMBLING_MASK` plus
+  a local `TSC_EVEN_KEY`). The payload byte-offset computation and the
+  `&mut` slicing itself stay hand-rolled, with a comment explaining why:
+  `mpeg_ts::ts::TsPacket` only exposes an immutable `payload: &[u8]`, and
+  CSA (de)scrambling needs to write back into the caller's own buffer.
+  Identical behaviour; no public API change.
 - MSRV raised to **1.95.0** (issue #949). This removes the workspace's MSRV
   split: `webrtc-runtime`'s optional `media` feature needed rustc 1.88 (via
   `rcgen`), which had grown a dedicated CI job, six `--exclude` lanes and a

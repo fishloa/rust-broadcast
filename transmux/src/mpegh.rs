@@ -235,38 +235,47 @@ const MHAS_LABEL_BITS: (u32, u32, u32) = (2, 8, 32);
 const MHAS_LENGTH_BITS: (u32, u32, u32) = (11, 24, 24);
 
 /// A big-endian, MSB-first bit cursor over a byte slice.
+///
+/// Thin wrapper over [`broadcast_common::bits::BitReader`] — the actual bit
+/// extraction lives there (shared with `dvb-t2mi`/`rdd29`/`st291`; an overrun
+/// or bit-order fix there now reaches this reader too), so this type only
+/// adds the `Option`-returning shape the MHAS walker below wants, plus
+/// `byte_pos`/`seek_to_byte`.
 struct BitReader<'a> {
-    data: &'a [u8],
-    pos: usize,
+    inner: broadcast_common::bits::BitReader<'a>,
 }
 
 impl<'a> BitReader<'a> {
     fn new(data: &'a [u8]) -> Self {
-        Self { data, pos: 0 }
+        Self {
+            inner: broadcast_common::bits::BitReader::new(data),
+        }
     }
 
     fn bits_left(&self) -> usize {
-        self.data.len() * 8 - self.pos
+        self.inner.bits_remaining()
     }
 
     /// Read `n` bits (`n <= 64`), MSB first. `None` if fewer than `n` bits remain.
     fn read(&mut self, n: u32) -> Option<u64> {
-        if (n as usize) > self.bits_left() {
-            return None;
+        self.inner.read_bits(n).ok()
+    }
+
+    /// Jump forward to `byte_offset` (never backward — every call site here
+    /// only ever advances past a just-located, already-consumed header).
+    fn seek_to_byte(&mut self, byte_offset: usize) {
+        let target_bits = byte_offset * 8;
+        let current_bits = self.inner.bits_read();
+        if target_bits > current_bits {
+            let _ = self.inner.skip_bits(target_bits - current_bits);
         }
-        let mut v = 0u64;
-        for _ in 0..n {
-            let byte = self.data[self.pos / 8];
-            let bit = (byte >> (7 - (self.pos % 8))) & 1;
-            v = (v << 1) | u64::from(bit);
-            self.pos += 1;
-        }
-        Some(v)
     }
 
     /// The current position as a byte offset, if bit-aligned to a byte.
     fn byte_pos(&self) -> Option<usize> {
-        self.pos.is_multiple_of(8).then_some(self.pos / 8)
+        self.inner
+            .is_byte_aligned()
+            .then_some(self.inner.bits_read() / 8)
     }
 }
 
@@ -330,7 +339,7 @@ pub(crate) fn walk_mhas_packets(data: &[u8]) -> Vec<MhasPacket<'_>> {
             packet_type: packet_type as u8,
             payload: &data[start..end],
         });
-        br.pos = end * 8;
+        br.seek_to_byte(end);
     }
     out
 }

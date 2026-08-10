@@ -21,6 +21,15 @@
   running the full fixture test suite after the change.
 
 ### Changed
+- `tables::sat`'s private `BitReader::read_u` now delegates its bit
+  extraction to `broadcast_common::bits::BitReader` (a duplication-audit
+  finding: this crate already depends on `broadcast-common` and its
+  `dvb-t2mi`/`rdd29`/`st291` siblings already reuse the shared reader). Same
+  bounds-checking and error shape as before; no behaviour change. The
+  companion `BitWriter` stays hand-rolled, with a comment explaining why:
+  the shared writer validates value width and errors instead of truncating,
+  which several call sites here rely on truncating silently — swapping it
+  in would be a behaviour change this pass must not make.
 - MSRV raised to **1.95.0** (issue #949). This removes the workspace's MSRV
   split: `webrtc-runtime`'s optional `media` feature needed rustc 1.88 (via
   `rcgen`), which had grown a dedicated CI job, six `--exclude` lanes and a

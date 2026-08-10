@@ -46,6 +46,13 @@ impl<'a> BitReader<'a> {
     fn bits_consumed(&self) -> usize {
         self.bit_pos
     }
+    // Bounds are checked here exactly as before (`need`/`have` in absolute
+    // bits, matching this crate's own `Error::BufferTooShort` convention);
+    // the extraction itself delegates to `broadcast_common::bits::BitReader`
+    // (already a dependency of this crate, and already reused by
+    // `dvb-t2mi`/`rdd29`/`st291`) so a bit-order/overrun fix there reaches
+    // this reader too. The companion `BitWriter` below stays hand-rolled —
+    // see its own comment for why.
     fn read_u(&mut self, bits: u8) -> Result<u64> {
         let bits = bits as usize;
         if self.bit_pos + bits > self.data.len() * 8 {
@@ -55,12 +62,12 @@ impl<'a> BitReader<'a> {
                 what: "SatSection bit reader overrun",
             });
         }
-        let mut val: u64 = 0;
-        for i in 0..bits {
-            let byte_idx = (self.bit_pos + i) / 8;
-            let bit_idx = 7 - ((self.bit_pos + i) % 8);
-            val = (val << 1) | ((self.data[byte_idx] >> bit_idx) & 1) as u64;
-        }
+        let mut br = broadcast_common::bits::BitReader::new(self.data);
+        br.skip_bits(self.bit_pos)
+            .expect("bounds already validated above");
+        let val = br
+            .read_bits(bits as u32)
+            .expect("bounds already validated above");
         self.bit_pos += bits;
         Ok(val)
     }
@@ -86,6 +93,19 @@ impl<'a> BitReader<'a> {
     }
 }
 
+// This writer stays hand-rolled rather than delegating to
+// `broadcast_common::bits::BitWriter`, unlike the `BitReader` above: that
+// writer's `write_bits` validates `value < 2^bits` and returns
+// `BitError::ValueTooWide` instead of truncating, whereas several call sites
+// below intentionally pass a computed count/length (e.g.
+// `frag.delivery_system_ids.len() as u64` into a 10-bit field) that this
+// writer has always silently truncated to width, never validated. Swapping
+// in the shared writer would turn some of those (extremely unlikely, but
+// currently silent) oversize cases into a new `Err` a caller doesn't expect
+// today — a behavioural change this consolidation pass must not make. If
+// that latent truncation is ever tightened into validation, do it here
+// explicitly (spec-cited) rather than by taking on the shared writer's
+// stricter, silent behaviour change.
 struct BitWriter<'a> {
     buf: &'a mut [u8],
     bit_pos: usize,

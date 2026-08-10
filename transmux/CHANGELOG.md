@@ -89,6 +89,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   correctly branches on. Neither has this bug.
 
 ### Changed
+- Internal-only duplication-audit consolidation, no behaviour or public API
+  change:
+  - `ts_demux`'s 33-bit PTS/DTS wrap-unroll (`unwrap_ts`) now delegates to
+    `broadcast_common::clock33::unwrap_delta` — the shared owner of this
+    math (also used by `timed-metadata`, `media-doctor`, `compliance-probe`,
+    which previously each hand-rolled their own copy). `transmux`'s own
+    algorithm was already the correct, bidirectional one; nothing about its
+    behaviour changes here.
+  - The six independent MSB-first bit-extraction loops in `bitreader`
+    (RBSP/Exp-Golomb), `mpegh`, `vvc_config`, `ac3`, `dts`, and `aac_asc` now
+    all delegate the actual bit extraction to
+    `broadcast_common::bits::BitReader` (already reused by
+    `dvb-t2mi`/`rdd29`/`st291`) instead of re-implementing the same loop six
+    times; a bit-order/overrun fix there now reaches all of them. Each
+    module keeps its own bounds-checking, error type, and higher-level
+    semantics (Exp-Golomb, MHAS escaped-value coding, etc.) exactly as
+    before — only the innermost extraction moved.
 - MSRV raised to **1.95.0** (issue #949). This removes the workspace's MSRV
   split: `webrtc-runtime`'s optional `media` feature needed rustc 1.88 (via
   `rcgen`), which had grown a dedicated CI job, six `--exclude` lanes and a

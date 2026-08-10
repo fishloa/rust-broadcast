@@ -31,8 +31,7 @@ pub struct Cue {
 /// transitions into completed [`Cue`]s.
 #[cfg(any(feature = "cc-data", feature = "teletext"))]
 struct DiffState {
-    last_pts: Option<u64>,
-    epoch: u64,
+    unroller: crate::timeline::PtsUnroller,
     open: Option<(u64, String)>,
 }
 
@@ -40,14 +39,13 @@ struct DiffState {
 impl DiffState {
     fn new() -> Self {
         DiffState {
-            last_pts: None,
-            epoch: 0,
+            unroller: crate::timeline::PtsUnroller::default(),
             open: None,
         }
     }
 
     fn unroll(&mut self, pts33: u64) -> u64 {
-        crate::timeline::unroll_pts(&mut self.last_pts, &mut self.epoch, pts33)
+        self.unroller.unroll(pts33)
     }
 
     /// Observe the decoded text at `ticks`; push a completed cue into `cues`

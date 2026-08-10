@@ -163,6 +163,11 @@ fn find_dts_sync(data: &[u8]) -> Result<usize> {
 }
 
 /// Read `n` bits MSB-first from `data` at the current `bit_pos`, advancing it.
+///
+/// Bounds are checked here exactly as before (`n` is always <= 64 for every
+/// DTS header field this module reads); the extraction itself delegates to
+/// `broadcast_common::bits::BitReader` (shared with `dvb-t2mi`/`rdd29`/
+/// `st291`) so a bit-order/overrun fix there reaches this reader too.
 fn read_bits(data: &[u8], bit_pos: &mut usize, n: usize, what: &'static str) -> Result<u64> {
     let end = *bit_pos + n;
     let need_bytes = end.div_ceil(8);
@@ -173,14 +178,13 @@ fn read_bits(data: &[u8], bit_pos: &mut usize, n: usize, what: &'static str) -> 
             what,
         });
     }
-    let mut val: u64 = 0;
-    for _ in 0..n {
-        let byte_idx = *bit_pos / 8;
-        let bit_in_byte = 7 - (*bit_pos % 8);
-        let bit = ((data[byte_idx] >> bit_in_byte) & 1) as u64;
-        val = (val << 1) | bit;
-        *bit_pos += 1;
-    }
+    let mut br = broadcast_common::bits::BitReader::new(data);
+    br.skip_bits(*bit_pos)
+        .expect("bounds already validated above");
+    let val = br
+        .read_bits(n as u32)
+        .expect("bounds already validated above");
+    *bit_pos += n;
     Ok(val)
 }
 

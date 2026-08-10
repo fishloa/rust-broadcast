@@ -63,6 +63,7 @@ extern crate alloc;
 pub mod bcd;
 pub mod bits;
 pub mod cenc;
+pub mod clock33;
 pub mod crc32_mpeg2;
 pub mod hex;
 pub mod mux;

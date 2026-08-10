@@ -362,17 +362,19 @@ impl AudioSpecificConfig {
 
 /// Read `n` MSB-first bits from `bytes` at `*bit`, advancing it. Returns `None`
 /// if the buffer is exhausted.
+///
+/// Bounds are checked here exactly as before (`n` is always <= 24 for every
+/// ASC field this module reads); the extraction itself delegates to
+/// `broadcast_common::bits::BitReader` (shared with `dvb-t2mi`/`rdd29`/
+/// `st291`) so a bit-order/overrun fix there reaches this reader too.
 fn asc_read_bits(bytes: &[u8], bit: &mut usize, n: usize) -> Option<u32> {
     if *bit + n > bytes.len() * 8 {
         return None;
     }
-    let mut v = 0u32;
-    for _ in 0..n {
-        let byte = bytes[*bit / 8];
-        let b = (byte >> (7 - (*bit % 8))) & 1;
-        v = (v << 1) | b as u32;
-        *bit += 1;
-    }
+    let mut br = broadcast_common::bits::BitReader::new(bytes);
+    br.skip_bits(*bit).ok()?;
+    let v = br.read_bits(n as u32).ok()? as u32;
+    *bit += n;
     Some(v)
 }
 

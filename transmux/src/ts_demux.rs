@@ -379,9 +379,10 @@ const MPEG2_PICTURE_START_CODE: u8 = 0x00;
 const MPEG2_PICTURE_CODING_TYPE_I: u8 = 0x01;
 
 /// 33-bit PTS/DTS modulus, for wrap-around unrolling (§2.4.3.7, 90 kHz clock).
-const TS_WRAP: u64 = 1 << 33;
-/// Half the 33-bit range — the threshold used to detect a backward wrap.
-const TS_WRAP_HALF: u64 = TS_WRAP / 2;
+/// Alias for [`broadcast_common::clock33::WRAP_33BIT`] — the actual
+/// wrap-correction math (below, [`WrapState`]) is delegated there so a fix
+/// reaches every 33-bit clock consumer in the workspace, not just this one.
+const TS_WRAP: u64 = broadcast_common::clock33::WRAP_33BIT;
 
 /// Codec class recovered from a PMT `stream_type` (used to pick the sample /
 /// config-recovery path). Data-carrying dispatch discriminant, not a spec label
@@ -482,18 +483,14 @@ fn data_carriage(stream_type: u8) -> DataCarriage {
 /// Extend a running unwrapped timestamp by the delta to the next raw 33-bit
 /// value, correcting for a single 90 kHz wrap in either direction (§2.4.3.7).
 ///
-/// The delta is computed on the wrapped clock (a signed value in
-/// `(-2^32, 2^32]`), then applied to the unwrapped accumulator — so ordinary
-/// B-frame reordering (small backward deltas within an epoch) is preserved and
-/// only a near-full-range jump is treated as a wrap.
+/// Thin alias for [`broadcast_common::clock33::unwrap_delta`] — see that
+/// function's doc comment for why the wrap correction must be bidirectional
+/// (a forward-only epoch counter gets a backward-reorder-across-origin case
+/// wrong). Kept as a local `fn` (rather than calling the shared function
+/// directly at each call site) only so [`WrapState::push`] below reads the
+/// same as it always has.
 fn unwrap_ts(prev_unwrapped: i128, prev_raw: u64, raw: u64) -> i128 {
-    let mut delta = raw as i128 - prev_raw as i128;
-    if delta > TS_WRAP_HALF as i128 {
-        delta -= TS_WRAP as i128; // wrapped backward across 2^33
-    } else if delta < -(TS_WRAP_HALF as i128) {
-        delta += TS_WRAP as i128; // wrapped forward across 2^33
-    }
-    prev_unwrapped + delta
+    broadcast_common::clock33::unwrap_delta(prev_unwrapped, prev_raw, raw)
 }
 
 /// Rescale an unwrapped 90 kHz PES-clock timestamp (ISO/IEC 13818-1 §2.4.3.7)
