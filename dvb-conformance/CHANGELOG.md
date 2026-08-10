@@ -2,6 +2,33 @@
 
 ## [Unreleased]
 
+### Changed
+- `check_cc`'s legal-duplicate detection (the #956 fix below) now delegates
+  to the new shared `broadcast_common::ts_dup` (`is_legal_duplicate_pair` /
+  `check_duplicate`), replacing the local `canonical_packet_for_dup_check`.
+  No behaviour change — same byte-identity-except-PCR comparison, same
+  "two, and only two consecutive" `dup_used` state machine, verified by this
+  crate's existing test suite passing unchanged. Consolidates what used to
+  be three independently hand-rolled, disagreeing copies of ITU-T H.222.0
+  §2.4.3.3 (`dvb-conformance`, `media-doctor`, `ts-fix`) into one.
+  - **Correction to the #956 note below**: that note claimed `media-doctor`
+    "already implemented the payload-comparison rule correctly" — it did
+    not. `media-doctor`'s `CcAnomalyCheck` compared only the elementary-
+    stream payload slice, which would have accepted a changed
+    `splice_countdown` or OPCR as a legal duplicate, and never enforced the
+    "two, and only two" cardinality rule at all (an unbounded run of
+    byte-identical repeats was silently accepted). Both are fixed in
+    `media-doctor`'s own CHANGELOG, delegating to the same shared function.
+  - This crate's own property (2) (`adaptation_field_control` must be `01`
+    or `11`) and property (3) ("two, and only two consecutive") were
+    already correctly enforced before #956 — that fix addressed property
+    (1) (byte-identity, PCR excepted) only. Confirmed by reading `check_cc`
+    prior to this change: property (2) via the pre-existing
+    `header.has_payload` gate (`AdaptationFieldControl::from_flags` maps
+    `has_payload == true` to exactly AFC `01`/`11`), property (3) via the
+    pre-existing `dup_used` flag emitting a second `Continuity_count_error`
+    on a third consecutive repeat.
+
 ### Fixed
 - **`Continuity_count_error` (1.4) under-reported legal duplicates** (issue
   #956). The check treated ANY packet repeating the previous

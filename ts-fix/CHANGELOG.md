@@ -3,6 +3,27 @@
 ## [Unreleased]
 
 ### Changed
+- `ops::continuity::ContinuityOp`'s legal-duplicate detection (ITU-T H.222.0
+  §2.4.3.3) now delegates to the new shared
+  `broadcast_common::ts_dup::is_legal_duplicate_pair`, replacing a
+  hand-rolled FNV-1a-style hash (`payload_hash`) that independently
+  implemented the same byte-identity-except-PCR rule already duplicated in
+  `dvb-conformance` and `media-doctor`. `PidState` now stores the previous
+  packet's raw bytes instead of a hash of them. No behaviour change: the
+  old hash already covered the full packet minus the PCR field (header +
+  adaptation-field body + payload), so it was already correct on this
+  property — only the *mechanism* (hash vs. direct comparison) was
+  duplicated, and a hash carries a theoretical (if astronomically remote)
+  collision risk the direct comparison doesn't. Confirmed unchanged by this
+  crate's full test suite, including the exact 5-legal-duplicate /
+  0-remaining-error assertions on `fixtures/ts/m6-duplicate.ts` and
+  `m6-single.ts`; added a new unit test
+  (`splice_countdown_difference_is_not_a_legal_duplicate`) pinning the
+  AF-body (non-PCR) byte-identity requirement this refactor preserves.
+  `tests/cc_repair.rs`'s own hand-rolled `hash_payload_skip_pcr` (a fourth,
+  simpler and less complete copy of the same rule, used only to establish
+  ground truth in test assertions) is replaced by a direct call to the same
+  shared function.
 - MSRV raised to **1.95.0** (issue #949). This removes the workspace's MSRV
   split: `webrtc-runtime`'s optional `media` feature needed rustc 1.88 (via
   `rcgen`), which had grown a dedicated CI job, six `--exclude` lanes and a

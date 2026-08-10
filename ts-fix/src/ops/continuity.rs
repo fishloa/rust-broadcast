@@ -18,6 +18,7 @@
 //!   renumber CC across a signalled discontinuity.
 
 use alloc::collections::BTreeMap;
+use alloc::vec::Vec;
 
 use mpeg_ts::owned::OwnedTsPacket;
 use mpeg_ts::ts::{TS_PACKET_SIZE, TsHeader};
@@ -38,10 +39,12 @@ struct PidState {
     /// value, so that a same-CC pair straddling a gap repair is still
     /// recognised.
     last_wire_cc: u8,
-    /// A hash of the payload bytes of the most recent payload-bearing
-    /// packet (used to identify legal duplicates, which have identical
-    /// payload bytes except possibly re-encoded PCR).
-    last_payload_hash: u64,
+    /// Raw bytes of the most recent payload-bearing packet, used with
+    /// [`broadcast_common::ts_dup::is_legal_duplicate_pair`] to identify
+    /// legal §2.4.3.3 duplicates (identical bytes except a re-encoded
+    /// PCR). Replaces a hand-rolled hash that duplicated the same rule
+    /// already implemented in `dvb-conformance` and `media-doctor`.
+    last_packet: Vec<u8>,
 }
 
 /// Continuity counter repair operation.
@@ -95,80 +98,6 @@ impl ContinuityOp {
         // pkt[5] is the adaptation field flags byte; bit 7 = discontinuity_indicator.
         pkt[5] & AF_DISCONTINUITY != 0
     }
-
-    /// Compute a hash of the payload bytes of a TS packet.
-    ///
-    /// The hash skips the PCR field (6 bytes at adaptation-field body offset 1)
-    /// so that a duplicate with a re-encoded PCR still matches.  This is a
-    /// best-effort heuristic — the spec says "bytes identical except a
-    /// re-encoded valid PCR".
-    fn payload_hash(pkt: &[u8]) -> u64 {
-        debug_assert!(pkt.len() == TS_PACKET_SIZE);
-        let hdr = match TsHeader::parse(&pkt[..4]) {
-            Ok(h) => h,
-            Err(_) => return 0,
-        };
-
-        if !hdr.has_payload {
-            return 0;
-        }
-
-        // Build a hash of all non-PCR bytes: header + AF(no PCR) + payload.
-        // We hash the 4-byte header, the AF bytes skipping the PCR if present,
-        // and the payload.  Using a simple FNV-1a-like hash.
-        let mut hash = 0xCBF29CE484222325u64;
-
-        // Hash the 4-byte header.
-        for &b in &pkt[..4] {
-            hash ^= b as u64;
-            hash = hash.wrapping_mul(0x100000001B3);
-        }
-
-        if hdr.has_adaptation {
-            let af_len = pkt[4] as usize;
-            if af_len > 0 {
-                // af_len counts the flags byte + optional fields + stuffing.
-                // AF flags byte = pkt[5]; PCR (if present) occupies pkt[6..12].
-                let has_pcr = (pkt[5] & 0x10) != 0;
-
-                // Hash the flags byte (always present).
-                hash ^= pkt[5] as u64;
-                hash = hash.wrapping_mul(0x100000001B3);
-
-                if has_pcr {
-                    // Hash AF bytes that come after the 6-byte PCR field:
-                    // pkt[12..5 + af_len].
-                    let after_pcr_start = 12usize;
-                    let af_body_end = 5 + af_len;
-                    for &b in &pkt[after_pcr_start..af_body_end] {
-                        hash ^= b as u64;
-                        hash = hash.wrapping_mul(0x100000001B3);
-                    }
-                } else {
-                    // No PCR — hash the rest of the AF body.
-                    for &b in &pkt[6..5 + af_len] {
-                        hash ^= b as u64;
-                        hash = hash.wrapping_mul(0x100000001B3);
-                    }
-                }
-            }
-        }
-
-        // Determine payload start.
-        let mut payload_start = 4usize;
-        if hdr.has_adaptation {
-            let af_len = pkt[4] as usize;
-            payload_start += 1 + af_len;
-        }
-
-        // Hash the payload bytes.
-        for &b in &pkt[payload_start..TS_PACKET_SIZE] {
-            hash ^= b as u64;
-            hash = hash.wrapping_mul(0x100000001B3);
-        }
-
-        hash
-    }
 }
 
 impl Op for ContinuityOp {
@@ -213,8 +142,6 @@ impl Op for ContinuityOp {
             return;
         }
 
-        let payload_hash = Self::payload_hash(packet);
-
         let mut state_initialised = false;
 
         // Get or initialise per-PID state.  If this is the first payload-bearing
@@ -225,7 +152,7 @@ impl Op for ContinuityOp {
             PidState {
                 expected: current_cc,
                 last_wire_cc: current_cc,
-                last_payload_hash: payload_hash,
+                last_packet: packet.to_vec(),
             }
         });
 
@@ -238,21 +165,23 @@ impl Op for ContinuityOp {
             return;
         }
 
-        // Check for legal duplicate (§2.4.3.3 L1772): a packet with the
-        // same CC as the previous payload-bearing packet on this PID and
-        // IDENTICAL payload (except a re-encoded PCR).  Per the spec a
-        // "duplicate" has the same CC AND the same payload bytes (except
-        // the PCR field which may be re-encoded).
+        // Check for legal duplicate (§2.4.3.3, via the shared
+        // `broadcast_common::ts_dup` rule this crate's own test suite and
+        // `dvb-conformance`/`media-doctor` all delegate to): a packet with
+        // the same CC as the previous payload-bearing packet on this PID
+        // and byte-identical content (except a re-encoded PCR).
         //
         // When preserving a duplicate we do NOT advance `state.expected` —
         // the next packet must still match the pre-duplicate expectation.
         // We DO update `state.last_wire_cc` so that a third identical repeat
         // is also preserved.
-        if current_cc == state.last_wire_cc && payload_hash == state.last_payload_hash {
+        if current_cc == state.last_wire_cc
+            && broadcast_common::ts_dup::is_legal_duplicate_pair(&state.last_packet, packet)
+        {
             // Legal duplicate repeat — pass through unchanged.
             // Don't advance expected, but update last_wire_cc for next comparison.
             state.last_wire_cc = current_cc;
-            state.last_payload_hash = payload_hash;
+            state.last_packet = packet.to_vec();
             out(packet);
             return;
         }
@@ -263,7 +192,7 @@ impl Op for ContinuityOp {
             let next = (current_cc + 1) & 0x0F;
             state.expected = next;
             state.last_wire_cc = current_cc;
-            state.last_payload_hash = payload_hash;
+            state.last_packet = packet.to_vec();
             out(packet);
             return;
         }
@@ -553,5 +482,39 @@ mod tests {
         assert_eq!(output[1][3] & 0x0F, 1);
         // pkt2 (CC=1, duplicate with different PCR) — should be preserved
         assert_eq!(output[2][3] & 0x0F, 1);
+    }
+
+    #[test]
+    fn splice_countdown_difference_is_not_a_legal_duplicate() {
+        // §2.4.3.3: the PCR field is the SOLE exception to byte-identity.
+        // Two packets with the same CC, same PCR, same payload, but a
+        // different `splice_countdown` are NOT a legal duplicate — the
+        // second must be treated as a genuine CC error and renumbered.
+        // (A payload-only or PCR-skipping-but-otherwise-loose comparison
+        // would wrongly preserve this as a duplicate.)
+        let mut pkt1 = [0xFFu8; 188];
+        pkt1[0] = TS_SYNC_BYTE;
+        pkt1[1] = 0x00;
+        pkt1[2] = 0x60; // PID = 0x0060
+        pkt1[3] = 0x30; // afc=11, CC=0
+        pkt1[4] = 8; // af_length: flags(1) + PCR(6) + splicing_point_flag(1)
+        pkt1[5] = 0x10 | 0x04; // PCR_flag | splicing_point_flag
+        pkt1[6..12].copy_from_slice(&[0, 0, 0, 0, 0, 0]); // PCR
+        pkt1[12] = 5; // splice_countdown = 5, INSIDE the adaptation field
+        pkt1[13..19].copy_from_slice(b"PAYLOA");
+
+        let mut pkt2 = pkt1;
+        pkt2[12] = 4; // splice_countdown differs — same CC, same PCR, same payload
+
+        let output = run_op(&[pkt1, pkt2]);
+        assert_eq!(output.len(), 2);
+        assert_eq!(output[0][3] & 0x0F, 0);
+        // pkt2 is NOT a legal duplicate (splice_countdown differs) — it
+        // must be renumbered to the next expected CC, not preserved at 0.
+        assert_eq!(
+            output[1][3] & 0x0F,
+            1,
+            "splice_countdown-only difference must be repaired, not preserved as a duplicate"
+        );
     }
 }

@@ -251,8 +251,11 @@ fn cc_anomaly_discontinuity_not_flagged() {
     );
 }
 
-/// m6-single.ts has ≥70 CC anomalies on PIDs 0x82/0x83/0x84 (same-CC different
-/// payload — genuine CC errors).
+/// m6-single.ts has exactly 879 CC anomalies (§2.4.3.3, via
+/// `broadcast_common::ts_dup`: every same-CC repeat that is not
+/// byte-identical to its predecessor outside the PCR field, and not a
+/// signalled discontinuity, is a genuine continuity fault) concentrated on
+/// PIDs 0x82/0x83/0x84.
 #[test]
 fn cc_anomaly_m6_single_has_many_errors() {
     let ts = fixture("m6-single.ts");
@@ -263,11 +266,10 @@ fn cc_anomaly_m6_single_has_many_errors() {
         .iter()
         .filter(|f| f.rule_id == "cc-anomaly")
         .collect();
-    // The fixture contains 77 same-CC different-payload pairs; our check
-    // flags 77 anomalies on those pairs. All are Errors.
-    assert!(
-        cc_findings.len() >= 70,
-        "expected ≥70 CC anomalies on m6-single.ts, got {}",
+    assert_eq!(
+        cc_findings.len(),
+        879,
+        "expected exactly 879 CC anomalies on m6-single.ts, got {}",
         cc_findings.len()
     );
     for f in &cc_findings {
@@ -285,11 +287,27 @@ fn cc_anomaly_m6_single_has_many_errors() {
     );
 }
 
-/// m6-duplicate.ts has 4 true legal duplicates (same CC + identical payload).
-/// Assert they are NOT flagged as errors.
+/// m6-duplicate.ts has exactly 5 true legal duplicates under the §2.4.3.3
+/// byte-identical-except-PCR rule (cross-checked directly against
+/// `broadcast_common::ts_dup::check_duplicate` below, independently of
+/// `CcAnomalyCheck` itself) and zero illegal third-consecutive repeats.
+/// Assert the legal duplicates are NOT flagged as errors, and that the
+/// total anomaly count matches m6-single.ts exactly (the duplicates are
+/// purely additional packets layered onto the same underlying stream, so
+/// they must not change what's flagged).
 #[test]
 fn cc_anomaly_m6_duplicate_legal_dups_not_flagged() {
     let ts = fixture("m6-duplicate.ts");
+
+    // Ground truth, computed independently of `CcAnomalyCheck` via the same
+    // shared primitive it delegates to.
+    let (legal, illegal_third) = count_legal_duplicates(&ts);
+    assert_eq!(legal, 5, "expected 5 legal duplicates in m6-duplicate.ts");
+    assert_eq!(
+        illegal_third, 0,
+        "expected 0 illegal third-repeats in m6-duplicate.ts"
+    );
+
     let mut report = Report::new();
     CcAnomalyCheck.run(&ts, &mut report);
     let cc_findings: Vec<_> = report
@@ -298,24 +316,80 @@ fn cc_anomaly_m6_duplicate_legal_dups_not_flagged() {
         .filter(|f| f.rule_id == "cc-anomaly")
         .collect();
 
-    // The fixture has many genuine CC errors alongside 4 true duplicates.
-    // The true duplicates (packets with same CC + identical payload) must
-    // NOT appear in findings.
-    //
-    // We verify indirectly: the total CC anomaly count should be the total
-    // same-CC pairs (78 across all PIDs) minus the 4 true duplicates = 74.
-    // (There are also non-same-CC anomalies from the fixture's real stream
-    // errors — so total is >74.)
-    assert!(
-        cc_findings.len() > 70,
-        "expected >70 CC anomalies on m6-duplicate.ts, got {}",
+    // The fixture's duplicate packets are purely additional (layered on top
+    // of m6-single.ts's own stream), so the flagged-anomaly count must be
+    // identical to m6-single.ts's: none of the 5 legal duplicates should
+    // themselves be flagged.
+    assert_eq!(
+        cc_findings.len(),
+        879,
+        "expected exactly 879 CC anomalies on m6-duplicate.ts, got {}",
         cc_findings.len()
     );
-    assert!(
-        cc_findings.len() < 900,
-        "unexpectedly high CC anomaly count {}",
-        cc_findings.len()
+    let third_repeat_findings = cc_findings
+        .iter()
+        .filter(|f| f.message.contains("third consecutive"))
+        .count();
+    assert_eq!(
+        third_repeat_findings, 0,
+        "m6-duplicate.ts should not contain any illegal third-repeat findings"
     );
+}
+
+/// Count legal duplicates / illegal third-repeats on `ts` directly via
+/// `broadcast_common::ts_dup`, independently of `CcAnomalyCheck`'s own use
+/// of it — the oracle the assertions above cross-check against.
+fn count_legal_duplicates(ts: &[u8]) -> (usize, usize) {
+    use broadcast_common::ts_dup::{DuplicateVerdict, check_duplicate};
+    use mpeg_ts::ts::{TS_PACKET_SIZE, TsPacket};
+    use std::collections::BTreeMap;
+
+    struct St {
+        last: Vec<u8>,
+        dup_used: bool,
+        initialised: bool,
+    }
+
+    let mut states: BTreeMap<u16, St> = BTreeMap::new();
+    let mut legal = 0usize;
+    let mut illegal_third = 0usize;
+    let n = ts.len() / TS_PACKET_SIZE;
+    for i in 0..n {
+        let raw = &ts[i * TS_PACKET_SIZE..(i + 1) * TS_PACKET_SIZE];
+        let Ok(pkt) = TsPacket::parse(raw) else {
+            continue;
+        };
+        let pid = pkt.header.pid;
+        if pid == 0x1FFF || !pkt.header.has_payload {
+            continue;
+        }
+        let st = states.entry(pid).or_insert(St {
+            last: Vec::new(),
+            dup_used: false,
+            initialised: false,
+        });
+        if !st.initialised {
+            st.initialised = true;
+            st.last = raw.to_vec();
+            continue;
+        }
+        match check_duplicate(&st.last, raw, st.dup_used) {
+            DuplicateVerdict::Legal => {
+                legal += 1;
+                st.dup_used = true;
+            }
+            DuplicateVerdict::IllegalThirdRepeat => {
+                illegal_third += 1;
+                st.dup_used = true;
+            }
+            DuplicateVerdict::NotDuplicate => {
+                st.dup_used = false;
+                st.last = raw.to_vec();
+            }
+            _ => unreachable!("unhandled DuplicateVerdict variant"),
+        }
+    }
+    (legal, illegal_third)
 }
 
 /// Non-payload-bearing packets (AFC=10) should not advance CC for validation,

@@ -3,6 +3,18 @@
 ## [Unreleased]
 
 ### Added
+- **`ts_dup`** — the ITU-T H.222.0 (08/2023) / ISO/IEC 13818-1 §2.4.3.3
+  "legal duplicate transport-stream-packet" check: `is_legal_duplicate_pair`
+  (byte-for-byte identity between two raw TS packets, with the 6-byte PCR
+  field the sole exception, and `adaptation_field_control` required to be
+  `01`/`11`) and `check_duplicate` (folds in the spec's "two, and only two
+  consecutive" cardinality rule via a caller-tracked `dup_already_used`
+  flag, returning a `DuplicateVerdict`). Consolidates three independent,
+  disagreeing hand-rolled copies of this rule: `dvb-conformance`'s
+  `canonical_packet_for_dup_check` (fixed for property 1 only in #956),
+  `media-doctor`'s `cc_anomaly` (payload-only comparison — too lenient on
+  property 1, and never enforced property 3 at all), and `ts-fix`'s test
+  and production duplicate-detection hashes. `no_std`, no allocation.
 - **`clock33`** — generic 33-bit wrapping-clock helpers: `unwrap_delta`
   (bidirectional wrap-corrected unroll of a repeating 90 kHz counter into an
   ever-growing accumulator) and `wrapping_forward_distance` (stateless

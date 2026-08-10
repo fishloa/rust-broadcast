@@ -2,8 +2,10 @@
 //!
 //! See individual modules for documentation: the [`Parse`] / [`Serialize`]
 //! traits every wire type implements, the MPEG-2 [`crc32_mpeg2`] CRC, the
-//! [`bcd`] / [`time`] / [`hex`] codecs, the [`mux`] container-mux traits, and
-//! the [`cenc`] Common Encryption scheme identity those traits protect with.
+//! [`bcd`] / [`time`] / [`hex`] codecs, the [`mux`] container-mux traits, the
+//! [`cenc`] Common Encryption scheme identity those traits protect with, and
+//! the [`ts_dup`] ITU-T H.222.0 §2.4.3.3 legal-duplicate-packet check shared
+//! by `dvb-conformance`, `media-doctor` and `ts-fix`.
 //!
 //! # Container-mux traits ([`mux`])
 //!
@@ -70,6 +72,7 @@ pub mod mux;
 pub mod stage;
 pub mod time;
 pub mod traits;
+pub mod ts_dup;
 
 pub use cenc::CencScheme;
 pub use mux::{Decrypt, Encrypt, Package, Unpackage};

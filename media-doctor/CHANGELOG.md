@@ -2,7 +2,40 @@
 
 ## [Unreleased]
 
-### Changed
+### Fixed
+- **`cc-anomaly` (`CcAnomalyCheck`) under-enforced ITU-T H.222.0 /
+  ISO/IEC 13818-1 §2.4.3.3's "legal duplicate" rule in two ways**, both now
+  delegated to the new shared `broadcast_common::ts_dup`
+  (`check_duplicate`) — the same primitive `dvb-conformance` was fixed to
+  use for issue #956:
+  - **Byte-identity was payload-only.** The check compared only the
+    elementary-stream payload slice between a same-CC pair, so a packet
+    whose adaptation-field content changed (e.g. `splice_countdown` or
+    OPCR) while the payload stayed identical was wrongly accepted as a
+    legal duplicate. Per §2.4.3.3 ("each byte of the original packet shall
+    be duplicated, with the exception that in the program clock reference
+    fields... a valid value shall be encoded"), only the PCR field is
+    exempt from byte-for-byte identity.
+  - **"Two, and only two" was never enforced.** An unbounded run of
+    byte-identical (PCR excepted) repeats on the same CC was silently
+    accepted forever; the spec permits exactly one repeat, and a third
+    consecutive one is itself flagged.
+  - **Behaviour change**: on the committed `m6-duplicate.ts` fixture, the
+    strict byte-identity rule and third-repeat rule do not change the
+    finding count (879, unchanged from `m6-single.ts` — this fixture's
+    duplicate packets are all genuinely legal under the strict rule and
+    contain no third-repeat runs, confirmed by an independent oracle added
+    to `tests/integration.rs` that recomputes legal/illegal-repeat counts
+    directly via `broadcast_common::ts_dup`), so the two fixture tests'
+    bounds tightened to exact counts but did not move. A stream that DOES
+    carry an AF-body-only difference or a third consecutive repeat will
+    now report additional `cc-anomaly` findings that this check previously
+    missed — confirmed with synthetic packets exercising both gaps.
+  - Also corrects a stale doc-comment on the fixture test
+    (`cc_anomaly_m6_duplicate_legal_dups_not_flagged`), which claimed
+    `m6-duplicate.ts` has "4 true legal duplicates"; the correct count
+    under the spec's byte-identity rule is 5 (matching `ts-fix`'s existing,
+    correct count on the same fixture).
 - `pts_check`'s wrap-aware backward-jump delta now delegates to
   `broadcast_common::clock33::wrapping_forward_distance` — the shared owner
   of this math (a duplication-audit consolidation with `timed-metadata`,

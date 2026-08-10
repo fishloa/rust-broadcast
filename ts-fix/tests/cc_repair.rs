@@ -65,44 +65,16 @@ fn has_discontinuity(pkt: &[u8]) -> bool {
     (pkt[5] & 0x80) != 0
 }
 
-fn get_payload(pkt: &[u8]) -> &[u8] {
-    if !has_payload(pkt) {
-        return &[];
-    }
-    let mut cursor = 4usize;
-    if has_adaptation(pkt) {
-        cursor += 1 + pkt[4] as usize;
-    }
-    if cursor >= 188 {
-        return &[];
-    }
-    &pkt[cursor..188]
-}
-
-fn hash_payload_skip_pcr(pkt: &[u8]) -> u64 {
-    let mut hash = 0xCBF29CE484222325u64;
-    if has_adaptation(pkt) && pkt[4] > 0 {
-        let has_pcr = (pkt[5] & 0x10) != 0;
-        hash ^= pkt[5] as u64;
-        hash = hash.wrapping_mul(0x100000001B3);
-        if has_pcr {
-            let af_body_end = 5 + pkt[4] as usize;
-            for &b in &pkt[12..af_body_end] {
-                hash ^= b as u64;
-                hash = hash.wrapping_mul(0x100000001B3);
-            }
-        } else {
-            for &b in &pkt[6..5 + pkt[4] as usize] {
-                hash ^= b as u64;
-                hash = hash.wrapping_mul(0x100000001B3);
-            }
-        }
-    }
-    for &b in get_payload(pkt) {
-        hash ^= b as u64;
-        hash = hash.wrapping_mul(0x100000001B3);
-    }
-    hash
+/// Whether `curr` is a legal §2.4.3.3 duplicate of `prev` (same PID
+/// implied by caller, same CC, byte-identical except a re-encoded PCR).
+/// Delegates to the single shared implementation in `broadcast-common` —
+/// see its module docs (cited from `mpeg-ts/docs/README.md` §2.4.3.3) for
+/// the exact rule. This test file used to hand-roll its own
+/// `hash_payload_skip_pcr`, a fourth independent copy of the same rule
+/// alongside `dvb-conformance`, `media-doctor`, and this crate's own
+/// `ops::continuity::ContinuityOp`.
+fn is_legal_duplicate(prev: &[u8], curr: &[u8]) -> bool {
+    broadcast_common::ts_dup::is_legal_duplicate_pair(prev, curr)
 }
 
 #[test]
@@ -175,19 +147,17 @@ fn repair_continuity_makes_stream_valid() {
 fn legal_duplicates_are_preserved_from_real_fixture() {
     let input = fs::read(m6_duplicate_path()).expect("fixture m6-duplicate.ts not found");
     let mut legal_dup_count = 0usize;
-    let mut last_per_pid: BTreeMap<u16, (u8, u64)> = BTreeMap::new();
+    let mut last_per_pid: BTreeMap<u16, Vec<u8>> = BTreeMap::new();
     for chunk in input.chunks(188) {
         let pid = extract_pid(chunk);
-        let cc = extract_cc(chunk);
         let hp = has_payload(chunk);
         if hp {
-            if let Some(&(last_cc, last_hash)) = last_per_pid.get(&pid)
-                && cc == last_cc
-                && hash_payload_skip_pcr(chunk) == last_hash
+            if let Some(last_pkt) = last_per_pid.get(&pid)
+                && is_legal_duplicate(last_pkt, chunk)
             {
                 legal_dup_count += 1;
             }
-            last_per_pid.insert(pid, (cc, hash_payload_skip_pcr(chunk)));
+            last_per_pid.insert(pid, chunk.to_vec());
         }
     }
     assert_eq!(
@@ -208,19 +178,17 @@ fn legal_duplicates_are_preserved_from_real_fixture() {
     engine.finish(|pkt| output.extend_from_slice(pkt));
 
     let mut output_dup_count = 0usize;
-    let mut out_last: BTreeMap<u16, (u8, u64)> = BTreeMap::new();
+    let mut out_last: BTreeMap<u16, Vec<u8>> = BTreeMap::new();
     for chunk in output.chunks(188) {
         let pid = extract_pid(chunk);
-        let cc = extract_cc(chunk);
         let hp = has_payload(chunk);
         if hp {
-            if let Some(&(last_cc, last_hash)) = out_last.get(&pid)
-                && cc == last_cc
-                && hash_payload_skip_pcr(chunk) == last_hash
+            if let Some(last_pkt) = out_last.get(&pid)
+                && is_legal_duplicate(last_pkt, chunk)
             {
                 output_dup_count += 1;
             }
-            out_last.insert(pid, (cc, hash_payload_skip_pcr(chunk)));
+            out_last.insert(pid, chunk.to_vec());
         }
     }
     assert_eq!(
@@ -245,19 +213,19 @@ fn cc_errors_on_m6_single_are_renumbered() {
     engine.finish(|pkt| output.extend_from_slice(pkt));
 
     let mut remaining_errors = 0usize;
-    let mut last_per_pid: BTreeMap<u16, (u8, u64)> = BTreeMap::new();
+    let mut last_per_pid: BTreeMap<u16, Vec<u8>> = BTreeMap::new();
     for chunk in output.chunks(188) {
         let pid = extract_pid(chunk);
         let cc = extract_cc(chunk);
         let hp = has_payload(chunk);
         if hp {
-            if let Some(&(last_cc, last_hash)) = last_per_pid.get(&pid)
-                && cc == last_cc
-                && hash_payload_skip_pcr(chunk) != last_hash
+            if let Some(last_pkt) = last_per_pid.get(&pid)
+                && cc == extract_cc(last_pkt)
+                && !is_legal_duplicate(last_pkt, chunk)
             {
                 remaining_errors += 1;
             }
-            last_per_pid.insert(pid, (cc, hash_payload_skip_pcr(chunk)));
+            last_per_pid.insert(pid, chunk.to_vec());
         }
     }
     assert_eq!(
@@ -355,19 +323,17 @@ fn strict_plus_one_would_renumber_legal_duplicates() {
     engine.finish(|pkt| output.extend_from_slice(pkt));
 
     let mut output_dup_count = 0usize;
-    let mut out_last: BTreeMap<u16, (u8, u64)> = BTreeMap::new();
+    let mut out_last: BTreeMap<u16, Vec<u8>> = BTreeMap::new();
     for chunk in output.chunks(188) {
         let pid = extract_pid(chunk);
-        let cc = extract_cc(chunk);
         let hp = has_payload(chunk);
         if hp {
-            if let Some(&(last_cc, last_hash)) = out_last.get(&pid)
-                && cc == last_cc
-                && hash_payload_skip_pcr(chunk) == last_hash
+            if let Some(last_pkt) = out_last.get(&pid)
+                && is_legal_duplicate(last_pkt, chunk)
             {
                 output_dup_count += 1;
             }
-            out_last.insert(pid, (cc, hash_payload_skip_pcr(chunk)));
+            out_last.insert(pid, chunk.to_vec());
         }
     }
     assert_eq!(
