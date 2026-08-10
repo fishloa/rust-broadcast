@@ -17,7 +17,7 @@
 //! [`crate::webvtt_to_srt`] forwards.
 
 use crate::error::Error;
-use crate::time::{normalize_comma_separator, parse_timestamp, to_hms_ms};
+use crate::time::{normalize_comma_separator, normalize_line_endings, parse_timestamp, to_hms_ms};
 use alloc::format;
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
@@ -61,7 +61,11 @@ pub fn write_srt(cues: &[Cue]) -> String {
 /// Parse an SRT document into [`Cue`]s.
 ///
 /// Tolerates a missing leading sequence-number line (some encoders omit it)
-/// and both `\n` and `\r\n` line endings.
+/// and any of `\n`, `\r\n`, or a lone `\r` as a line ending -- SRT has no
+/// formal spec, but real encoders/players are at least as permissive about
+/// line endings as W3C WebVTT's own three-terminator-form definition (the
+/// same private `normalize_line_endings` helper is shared with
+/// [`crate::webvtt::parse_webvtt`]).
 ///
 /// # Errors
 ///
@@ -69,11 +73,18 @@ pub fn write_srt(cues: &[Cue]) -> String {
 /// [`Error::InvalidTimestamp`] if a timestamp does not match
 /// `(hh:)?mm:ss,ttt`.
 pub fn parse_srt(input: &str) -> Result<Vec<Cue>, Error> {
-    let normalized = input.replace("\r\n", "\n");
+    let normalized = normalize_line_endings(input);
     let mut cues = Vec::new();
 
     for block in normalized.split("\n\n") {
-        let block = block.trim();
+        // Trim only the *blank-line* padding a run of more than two
+        // consecutive newlines leaves at a block's edges -- NOT
+        // `str::trim()`'s generic whitespace trim, which also eats a
+        // meaningful leading/trailing space on the block's first/last
+        // *content* line (found by fuzzing: a payload's final line ending
+        // in a real trailing space silently lost that space on parse,
+        // since it sits right at the boundary `"\n\n"` split on).
+        let block = block.trim_matches('\n');
         if block.is_empty() {
             continue;
         }
@@ -165,6 +176,28 @@ mod tests {
         let doc = "1\r\n00:00:00,000 --> 00:00:01,000\r\nhi\r\n";
         let cues = parse_srt(doc).unwrap();
         assert_eq!(cues, alloc::vec![cue(0, 90_000, "hi")]);
+    }
+
+    #[test]
+    fn parse_tolerates_lone_cr_line_ending() {
+        // W3C WebVTT SS4's third line-terminator form (a bare CR, not
+        // followed by LF) -- SRT has no formal spec, but this parser is at
+        // least as permissive as WebVTT's own definition (issue found by
+        // fuzzing `caption-convert`'s webvtt/srt round-trip).
+        let doc = "1\r00:00:00,000 --> 00:00:01,000\rhi\r";
+        let cues = parse_srt(doc).unwrap();
+        assert_eq!(cues, alloc::vec![cue(0, 90_000, "hi")]);
+    }
+
+    #[test]
+    fn parse_preserves_trailing_space_on_final_block_line() {
+        // Found by fuzzing: `block.trim()` (a generic whitespace trim) used
+        // to eat a meaningful trailing space on a block's last content line
+        // whenever that line sat right at the `"\n\n"` block-delimiter
+        // boundary, not just the intentional blank-line padding around it.
+        let doc = "1\n00:00:00,000 --> 00:00:01,000\nhi there \n";
+        let cues = parse_srt(doc).unwrap();
+        assert_eq!(cues, alloc::vec![cue(0, 90_000, "hi there ")]);
     }
 
     #[test]

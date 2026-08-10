@@ -45,8 +45,21 @@ pub(crate) fn parse_timestamp(s: &str) -> Result<u64, Error> {
     if m >= 60 || s >= 60 {
         return Err(invalid());
     }
-    let total_ms = ((h * 60 + m) * 60 + s) * 1000 + ms;
-    Ok(total_ms * TICKS_PER_MS)
+    // WebVTT's hour field has no digit-count cap (W3C WebVTT SS4.3.1: "one
+    // or more" digits), so an attacker-controlled `h` up to `u64::MAX` is a
+    // *validly parsed* value that still overflows the `h*3600 + m*60 + s`
+    // to-milliseconds, and then the `* TICKS_PER_MS` to-90kHz-ticks, widening
+    // multiplications. Debug-assertions builds (this crate's fuzz targets;
+    // any downstream debug build) would panic on that overflow; release
+    // builds would silently wrap to a bogus timestamp -- checked arithmetic
+    // turns both into the same explicit, documented `InvalidTimestamp`.
+    let total_ms = h
+        .checked_mul(MS_PER_HOUR)
+        .and_then(|v| v.checked_add(m * MS_PER_MIN))
+        .and_then(|v| v.checked_add(s * MS_PER_SEC))
+        .and_then(|v| v.checked_add(ms))
+        .ok_or_else(invalid)?;
+    total_ms.checked_mul(TICKS_PER_MS).ok_or_else(invalid)
 }
 
 /// Replace the SRT `,` millisecond separator with `.` so
@@ -56,6 +69,40 @@ pub(crate) fn normalize_comma_separator(s: &str) -> alloc::string::String {
     // single-pass replace is exact and needs no escaping (unlike
     // `webvtt::escape_payload`'s multi-entity payload text).
     s.replace(',', ".")
+}
+
+/// Normalise every WebVTT line-terminator form to a single `\n`.
+///
+/// W3C WebVTT SS4 defines a "line terminator" as one of three forms: a lone
+/// LF, a lone CR *not* followed by LF, or a CRLF pair -- i.e. a bare `\r` is
+/// itself a valid line break, not just the `\r` half of `\r\n`. Rust's
+/// `str::lines()` (and a plain `"\r\n" -> "\n"` substring replace, SRT's own
+/// de facto convention) only recognise LF and CRLF: a lone CR, or a
+/// malformed doubled `\r\r\n`, survives as a literal control character
+/// embedded in a parsed cue's payload -- and since `str::lines()` also
+/// swallows a `\r` immediately preceding a `\n` even when that `\r` is
+/// genuine payload text (not a terminator), the embedded CR is then silently
+/// dropped the next time that cue is written back out. Normalising every
+/// terminator form up front, before either parser's own `.lines()` /
+/// `"\n\n"`-splitting logic runs, closes both holes: no stray `\r` can ever
+/// reach a `Cue`'s text, so writing and re-parsing a cue is always faithful.
+/// Shared between [`crate::webvtt::parse_webvtt`] and [`crate::srt::parse_srt`]
+/// (SRT has no formal spec, but real encoders/players are at least as
+/// permissive about line endings as this).
+pub(crate) fn normalize_line_endings(input: &str) -> alloc::string::String {
+    let mut out = alloc::string::String::with_capacity(input.len());
+    let mut chars = input.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '\r' {
+            if chars.peek() == Some(&'\n') {
+                chars.next(); // the paired LF of a CRLF terminator
+            }
+            out.push('\n');
+        } else {
+            out.push(c);
+        }
+    }
+    out
 }
 
 /// Render 90 kHz ticks as `hh:mm:ss` fields plus milliseconds, for the SRT
@@ -99,12 +146,41 @@ mod tests {
     }
 
     #[test]
+    fn rejects_hour_overflow_instead_of_panicking() {
+        // W3C WebVTT SS4.3.1 puts no digit-count cap on the hour field, so
+        // this is a validly-parsed `u64` that still overflows the
+        // to-milliseconds/to-ticks widening multiplications (found by
+        // fuzzing -- a debug-assertions build used to panic on this input
+        // instead of returning `Err`).
+        assert!(parse_timestamp("11662322688380341727:00:01.000").is_err());
+        // u64::MAX itself, for the same reason.
+        assert!(parse_timestamp("18446744073709551615:00:00.000").is_err());
+    }
+
+    #[test]
     fn comma_normalization() {
         assert_eq!(normalize_comma_separator("00:00:01,500"), "00:00:01.500");
         assert_eq!(
             parse_timestamp(&normalize_comma_separator("00:00:01,500")).unwrap(),
             90_000 + 45_000
         );
+    }
+
+    #[test]
+    fn line_ending_normalization_handles_all_three_terminator_forms() {
+        // LF-only: unchanged.
+        assert_eq!(normalize_line_endings("a\nb"), "a\nb");
+        // CRLF: the pair collapses to one LF (the `\r` is not duplicated).
+        assert_eq!(normalize_line_endings("a\r\nb"), "a\nb");
+        // Lone CR (W3C WebVTT SS4's third terminator form): becomes LF too.
+        assert_eq!(normalize_line_endings("a\rb"), "a\nb");
+        // A malformed doubled `\r\r\n` must not leave a stray `\r` behind --
+        // this is the case issue found by fuzzing: `str::lines()` only
+        // strips the *second* `\r` (the one immediately before `\n`),
+        // leaving the first as literal text that then vanishes on rewrite.
+        assert_eq!(normalize_line_endings("a\r\r\nb"), "a\n\nb");
+        // Trailing lone CR with no following character at all.
+        assert_eq!(normalize_line_endings("a\r"), "a\n");
     }
 
     #[test]

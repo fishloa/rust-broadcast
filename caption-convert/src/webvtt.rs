@@ -27,7 +27,7 @@
 //!   part of the (nonexistent) SRT specification.
 
 use crate::error::Error;
-use crate::time::parse_timestamp;
+use crate::time::{normalize_line_endings, parse_timestamp};
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 use timed_metadata::webvtt::Cue;
@@ -97,7 +97,13 @@ fn unescape_payload(text: &str) -> String {
 /// `(hh:)?mm:ss.ttt`.
 pub fn parse_webvtt(input: &str) -> Result<ParsedWebVtt, Error> {
     let input = input.strip_prefix('\u{FEFF}').unwrap_or(input); // optional BOM
-    let mut lines = input.lines();
+    // Normalise to LF-only *before* splitting into lines: W3C WebVTT SS4
+    // defines a line terminator as LF, lone CR, or CRLF (not just the LF/
+    // CRLF pair `str::lines()` recognises) -- see `normalize_line_endings`'s
+    // docs for why skipping this step lets a stray `\r` end up embedded in a
+    // cue's text and then silently vanish on the next write.
+    let normalized = normalize_line_endings(input);
+    let mut lines = normalized.lines();
     let header = lines.next().ok_or(Error::EmptyInput)?;
     if !(header == "WEBVTT" || header.starts_with("WEBVTT ") || header.starts_with("WEBVTT\t")) {
         return Err(Error::InvalidWebVtt(
@@ -129,7 +135,14 @@ pub fn parse_webvtt(input: &str) -> Result<ParsedWebVtt, Error> {
     };
 
     for line in lines {
-        if line.trim().is_empty() {
+        // W3C WebVTT SS4's block-boundary rule is "the line is the empty
+        // string" -- a zero-length line -- NOT "the line is blank/
+        // whitespace-only". A payload can legitimately have a
+        // whitespace-only *interior* line (e.g. a single-space spacer line);
+        // treating it as a block delimiter (via `.trim().is_empty()`) used
+        // to silently truncate the cue right there, losing every line after
+        // it (found by fuzzing the webvtt<->srt round-trip).
+        if line.is_empty() {
             flush(&mut current)?;
         } else {
             current.push(line);
@@ -267,6 +280,37 @@ mod tests {
             unescape_payload(&escape_payload("a < b & c > d")),
             "a < b & c > d"
         );
+    }
+
+    #[test]
+    fn parse_tolerates_lone_cr_line_ending() {
+        // W3C WebVTT SS4 defines a line terminator as LF, a lone CR (not
+        // followed by LF), or CRLF -- `str::lines()` alone only recognises
+        // the first and third forms. Found by fuzzing: without normalising
+        // the second form too, a lone CR (or the CR of a malformed doubled
+        // `\r\r\n`) survived as a literal control character embedded in a
+        // cue's text, and then silently vanished on the next
+        // `write_document` -> `parse_webvtt` round-trip.
+        let doc = "WEBVTT\r\r00:00:00.000 --> 00:00:01.000\rhi\r";
+        let parsed = parse_webvtt(doc).unwrap();
+        assert_eq!(parsed.cues.len(), 1);
+        assert_eq!(parsed.cues[0].text, "hi");
+
+        let rewritten = write_document(&parsed.cues);
+        let reparsed = parse_webvtt(&rewritten).unwrap();
+        assert_eq!(reparsed.cues, parsed.cues);
+    }
+
+    #[test]
+    fn whitespace_only_interior_line_is_not_a_block_delimiter() {
+        // W3C WebVTT SS4's block boundary is a truly *empty* line (zero
+        // characters), not any whitespace-only line. Found by fuzzing: a
+        // single-space interior payload line used to be misread as the
+        // blank line ending the cue, silently dropping every line after it.
+        let doc = "WEBVTT\n\n00:00:00.000 --> 00:00:01.000\nhi\n \n\n";
+        let parsed = parse_webvtt(doc).unwrap();
+        assert_eq!(parsed.cues.len(), 1);
+        assert_eq!(parsed.cues[0].text, "hi\n ");
     }
 
     #[test]

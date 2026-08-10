@@ -52,6 +52,7 @@ st2022         = { path = "../st2022" }
 rist-runtime   = { path = "../rist-runtime" }
 webrtc-runtime = { path = "../webrtc-runtime" }
 atsc3-route    = { path = "../atsc3-route" }
+caption-convert = { path = "../caption-convert" }
 bytes         = "1"
 libfuzzer-sys = "0.4"
 
@@ -339,5 +340,17 @@ doc  = false
 [[bin]]
 name = "atsc3_route"
 path = "fuzz_targets/atsc3_route.rs"
+test = false
+doc  = false
+
+[[bin]]
+name = "caption_convert_webvtt"
+path = "fuzz_targets/caption_convert_webvtt.rs"
+test = false
+doc  = false
+
+[[bin]]
+name = "caption_convert_srt"
+path = "fuzz_targets/caption_convert_srt.rs"
 test = false
 doc  = false
