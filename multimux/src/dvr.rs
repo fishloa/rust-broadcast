@@ -1011,16 +1011,16 @@ impl SegmentEgress for DvrRecorder {
             return Ok(());
         }
         match item {
+            SegmentCursorItem::Segment(entry) if let Err(e) = self.append_segment(entry) => {
+                tracing::error!(
+                    route = %self.route_name,
+                    seq = entry.sequence_number,
+                    error = %e,
+                    "DVR append failed"
+                );
+                return Err(e);
+            }
             SegmentCursorItem::Segment(entry) => {
-                if let Err(e) = self.append_segment(entry) {
-                    tracing::error!(
-                        route = %self.route_name,
-                        seq = entry.sequence_number,
-                        error = %e,
-                        "DVR append failed"
-                    );
-                    return Err(e);
-                }
                 tracing::debug!(
                     route = %self.route_name,
                     seq = entry.sequence_number,

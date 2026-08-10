@@ -683,29 +683,25 @@ impl Cea708Decoder {
                 continue;
             }
             match op {
-                WindowMapOp::Clear => {
-                    if let Some(w) = service.windows[id].as_mut() {
-                        w.clear_text();
-                    }
+                WindowMapOp::Clear if let Some(w) = service.windows[id].as_mut() => {
+                    w.clear_text();
                 }
-                WindowMapOp::Display => {
-                    if let Some(w) = service.windows[id].as_mut() {
-                        w.state = WindowState::Visible;
-                    }
+                WindowMapOp::Clear => {}
+                WindowMapOp::Display if let Some(w) = service.windows[id].as_mut() => {
+                    w.state = WindowState::Visible;
                 }
-                WindowMapOp::Hide => {
-                    if let Some(w) = service.windows[id].as_mut() {
-                        w.state = WindowState::Hidden;
-                    }
+                WindowMapOp::Display => {}
+                WindowMapOp::Hide if let Some(w) = service.windows[id].as_mut() => {
+                    w.state = WindowState::Hidden;
                 }
-                WindowMapOp::Toggle => {
-                    if let Some(w) = service.windows[id].as_mut() {
-                        w.state = match w.state {
-                            WindowState::Visible => WindowState::Hidden,
-                            WindowState::Hidden => WindowState::Visible,
-                        };
-                    }
+                WindowMapOp::Hide => {}
+                WindowMapOp::Toggle if let Some(w) = service.windows[id].as_mut() => {
+                    w.state = match w.state {
+                        WindowState::Visible => WindowState::Hidden,
+                        WindowState::Hidden => WindowState::Visible,
+                    };
                 }
+                WindowMapOp::Toggle => {}
                 WindowMapOp::Delete => {
                     service.windows[id] = None;
                     if service.current_window == Some(id) {

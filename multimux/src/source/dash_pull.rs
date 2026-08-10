@@ -1194,7 +1194,7 @@ mod tests {
             };
             let now = Timestamp::from_nanos(0);
             match action {
-                DashAction::FetchMpd { url } => {
+                DashAction::FetchMpd { url }
                     if let FetchOutcome::Bytes(b) = tokio::time::timeout(
                         route.timeouts.read,
                         fetch_one(&http, &url, credentials.as_ref(), "mpd", false),
@@ -1202,11 +1202,12 @@ mod tests {
                     .await
                     .map_err(|_| MultimuxError::Connect {
                         reason: "mpd fetch timed out".into(),
-                    })?? {
-                        session.feed((DashResourceId::Mpd, b.as_slice()), now)?;
-                    }
+                    })?? =>
+                {
+                    session.feed((DashResourceId::Mpd, b.as_slice()), now)?;
                 }
-                DashAction::FetchInit { rep, url } => {
+                DashAction::FetchMpd { .. } => {}
+                DashAction::FetchInit { rep, url }
                     if let FetchOutcome::Bytes(b) = tokio::time::timeout(
                         route.timeouts.read,
                         fetch_one(&http, &url, credentials.as_ref(), "init", false),
@@ -1214,28 +1215,29 @@ mod tests {
                     .await
                     .map_err(|_| MultimuxError::Connect {
                         reason: "init fetch timed out".into(),
-                    })?? {
-                        session.feed((DashResourceId::Init(rep), b.as_slice()), now)?;
-                    }
+                    })?? =>
+                {
+                    session.feed((DashResourceId::Init(rep), b.as_slice()), now)?;
                 }
+                DashAction::FetchInit { .. } => {}
                 DashAction::FetchSegment {
                     rep,
                     number,
                     url,
                     tolerate_404,
                     ..
-                } => {
-                    if let FetchOutcome::Bytes(b) = tokio::time::timeout(
-                        route.timeouts.read,
-                        fetch_one(&http, &url, credentials.as_ref(), "segment", tolerate_404),
-                    )
-                    .await
-                    .map_err(|_| MultimuxError::Connect {
-                        reason: "segment fetch timed out".into(),
-                    })?? {
-                        session.feed((DashResourceId::Segment(rep, number), b.as_slice()), now)?;
-                    }
+                } if let FetchOutcome::Bytes(b) = tokio::time::timeout(
+                    route.timeouts.read,
+                    fetch_one(&http, &url, credentials.as_ref(), "segment", tolerate_404),
+                )
+                .await
+                .map_err(|_| MultimuxError::Connect {
+                    reason: "segment fetch timed out".into(),
+                })?? =>
+                {
+                    session.feed((DashResourceId::Segment(rep, number), b.as_slice()), now)?;
                 }
+                DashAction::FetchSegment { .. } => {}
             }
         }
         Ok((specs, per_track))
@@ -1390,39 +1392,38 @@ mod tests {
             };
             let now = Timestamp::from_nanos(0);
             match action {
-                DashAction::FetchMpd { url } => {
+                DashAction::FetchMpd { url }
                     if let FetchOutcome::Bytes(b) =
                         fetch_one(&http, &url, credentials.as_ref(), "mpd", false)
                             .await
-                            .expect("fetch")
-                    {
-                        driver.feed((DashResourceId::Mpd, b.as_slice()), now);
-                    }
+                            .expect("fetch") =>
+                {
+                    driver.feed((DashResourceId::Mpd, b.as_slice()), now);
                 }
-                DashAction::FetchInit { rep, url } => {
+                DashAction::FetchMpd { .. } => {}
+                DashAction::FetchInit { rep, url }
                     if let FetchOutcome::Bytes(b) =
                         fetch_one(&http, &url, credentials.as_ref(), "init", false)
                             .await
-                            .expect("fetch")
-                    {
-                        driver.feed((DashResourceId::Init(rep), b.as_slice()), now);
-                    }
+                            .expect("fetch") =>
+                {
+                    driver.feed((DashResourceId::Init(rep), b.as_slice()), now);
                 }
+                DashAction::FetchInit { .. } => {}
                 DashAction::FetchSegment {
                     rep,
                     number,
                     url,
                     tolerate_404,
                     ..
-                } => {
-                    if let FetchOutcome::Bytes(b) =
-                        fetch_one(&http, &url, credentials.as_ref(), "segment", tolerate_404)
-                            .await
-                            .expect("fetch")
-                    {
-                        driver.feed((DashResourceId::Segment(rep, number), b.as_slice()), now);
-                    }
+                } if let FetchOutcome::Bytes(b) =
+                    fetch_one(&http, &url, credentials.as_ref(), "segment", tolerate_404)
+                        .await
+                        .expect("fetch") =>
+                {
+                    driver.feed((DashResourceId::Segment(rep, number), b.as_slice()), now);
                 }
+                DashAction::FetchSegment { .. } => {}
             }
             if cursor.is_none() {
                 cursor = driver.trunk(ProgramId(0)).map(|t| t.subscribe());

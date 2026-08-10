@@ -440,11 +440,12 @@ impl SmoothPackager {
                 ("FourCC", s.fourcc.to_string()),
             ];
             match s.stream_type {
+                SmoothStreamType::Video if let (Some(wd), Some(ht)) = (s.width, s.height) => {
+                    ql.push(("MaxWidth", wd.to_string()));
+                    ql.push(("MaxHeight", ht.to_string()));
+                    ql.push(("CodecPrivateData", hex_upper(&s.codec_private_data)));
+                }
                 SmoothStreamType::Video => {
-                    if let (Some(wd), Some(ht)) = (s.width, s.height) {
-                        ql.push(("MaxWidth", wd.to_string()));
-                        ql.push(("MaxHeight", ht.to_string()));
-                    }
                     ql.push(("CodecPrivateData", hex_upper(&s.codec_private_data)));
                 }
                 SmoothStreamType::Audio => {

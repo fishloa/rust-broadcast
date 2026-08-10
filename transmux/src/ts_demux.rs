@@ -3376,22 +3376,23 @@ impl<'a> TsDemux<'a> {
                 // had already collected, exactly like `Discontinuity` below.
                 DemuxEvent::TrackRemoved { .. } => {}
                 DemuxEvent::TrackAbandoned { .. } => {}
-                DemuxEvent::Sample { track_id, sample } => {
-                    if let Some(&i) = index_by_id.get(&track_id) {
-                        let track = &mut tracks[i];
-                        // `Track::start_decode_time` is no longer carried by
-                        // `TrackAdded` (issue #774 reshape) — it is exactly
-                        // the first sample's own `dts` (media plane step 2c
-                        // invariant, unconditionally true for every track
-                        // kind), so derive it here instead.
-                        if track.samples.is_empty()
-                            && let Some(dts) = sample.dts
-                        {
-                            track.start_decode_time = dts as u64;
-                        }
-                        track.samples.push(sample);
+                DemuxEvent::Sample { track_id, sample }
+                    if let Some(&i) = index_by_id.get(&track_id) =>
+                {
+                    let track = &mut tracks[i];
+                    // `Track::start_decode_time` is no longer carried by
+                    // `TrackAdded` (issue #774 reshape) — it is exactly
+                    // the first sample's own `dts` (media plane step 2c
+                    // invariant, unconditionally true for every track
+                    // kind), so derive it here instead.
+                    if track.samples.is_empty()
+                        && let Some(dts) = sample.dts
+                    {
+                        track.start_decode_time = dts as u64;
                     }
+                    track.samples.push(sample);
                 }
+                DemuxEvent::Sample { .. } => {}
                 DemuxEvent::ClockReference {
                     ticks,
                     discontinuous,

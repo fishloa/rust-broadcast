@@ -1335,36 +1335,34 @@ mod tests {
             };
             let now = Timestamp::from_nanos(0);
             match action {
-                SmoothAction::FetchManifest { url } => {
+                SmoothAction::FetchManifest { url }
                     if let FetchOutcome::Bytes(b) =
-                        fetch_one(&http, &url, credentials.as_ref(), "manifest", false).await?
-                    {
-                        session.feed((SmoothResourceId::Manifest, b.as_slice()), now)?;
-                    }
+                        fetch_one(&http, &url, credentials.as_ref(), "manifest", false).await? =>
+                {
+                    session.feed((SmoothResourceId::Manifest, b.as_slice()), now)?;
                 }
-                SmoothAction::FetchFirstFragment { stream, url } => {
+                SmoothAction::FetchManifest { .. } => {}
+                SmoothAction::FetchFirstFragment { stream, url }
                     if let FetchOutcome::Bytes(b) =
                         fetch_one(&http, &url, credentials.as_ref(), "first fragment", false)
-                            .await?
-                    {
-                        session
-                            .feed((SmoothResourceId::FirstFragment(stream), b.as_slice()), now)?;
-                    }
+                            .await? =>
+                {
+                    session.feed((SmoothResourceId::FirstFragment(stream), b.as_slice()), now)?;
                 }
+                SmoothAction::FetchFirstFragment { .. } => {}
                 SmoothAction::FetchFragment {
                     stream,
                     t,
                     url,
                     tolerate_404,
                     ..
-                } => {
-                    if let FetchOutcome::Bytes(b) =
-                        fetch_one(&http, &url, credentials.as_ref(), "fragment", tolerate_404)
-                            .await?
-                    {
-                        session.feed((SmoothResourceId::Fragment(stream, t), b.as_slice()), now)?;
-                    }
+                } if let FetchOutcome::Bytes(b) =
+                    fetch_one(&http, &url, credentials.as_ref(), "fragment", tolerate_404)
+                        .await? =>
+                {
+                    session.feed((SmoothResourceId::Fragment(stream, t), b.as_slice()), now)?;
                 }
+                SmoothAction::FetchFragment { .. } => {}
             }
         }
         Ok((specs, per_track))
@@ -1495,39 +1493,38 @@ mod tests {
             };
             let now = Timestamp::from_nanos(0);
             match action {
-                SmoothAction::FetchManifest { url } => {
+                SmoothAction::FetchManifest { url }
                     if let FetchOutcome::Bytes(b) =
                         fetch_one(&http, &url, credentials.as_ref(), "manifest", false)
                             .await
-                            .expect("fetch")
-                    {
-                        driver.feed((SmoothResourceId::Manifest, b.as_slice()), now);
-                    }
+                            .expect("fetch") =>
+                {
+                    driver.feed((SmoothResourceId::Manifest, b.as_slice()), now);
                 }
-                SmoothAction::FetchFirstFragment { stream, url } => {
+                SmoothAction::FetchManifest { .. } => {}
+                SmoothAction::FetchFirstFragment { stream, url }
                     if let FetchOutcome::Bytes(b) =
                         fetch_one(&http, &url, credentials.as_ref(), "first fragment", false)
                             .await
-                            .expect("fetch")
-                    {
-                        driver.feed((SmoothResourceId::FirstFragment(stream), b.as_slice()), now);
-                    }
+                            .expect("fetch") =>
+                {
+                    driver.feed((SmoothResourceId::FirstFragment(stream), b.as_slice()), now);
                 }
+                SmoothAction::FetchFirstFragment { .. } => {}
                 SmoothAction::FetchFragment {
                     stream,
                     t,
                     url,
                     tolerate_404,
                     ..
-                } => {
-                    if let FetchOutcome::Bytes(b) =
-                        fetch_one(&http, &url, credentials.as_ref(), "fragment", tolerate_404)
-                            .await
-                            .expect("fetch")
-                    {
-                        driver.feed((SmoothResourceId::Fragment(stream, t), b.as_slice()), now);
-                    }
+                } if let FetchOutcome::Bytes(b) =
+                    fetch_one(&http, &url, credentials.as_ref(), "fragment", tolerate_404)
+                        .await
+                        .expect("fetch") =>
+                {
+                    driver.feed((SmoothResourceId::Fragment(stream, t), b.as_slice()), now);
                 }
+                SmoothAction::FetchFragment { .. } => {}
             }
             if cursor.is_none() {
                 cursor = driver.trunk(ProgramId(0)).map(|t| t.subscribe());
