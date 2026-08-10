@@ -87,6 +87,23 @@ pub enum TokioError {
     /// unsupported Digest `algorithm`/`qop`) — see [`broadcast_auth::Error`].
     #[error("auth challenge/response failed: {0}")]
     Auth(#[from] broadcast_auth::Error),
+    /// Building the `Range` header for `url` would overflow `u64`
+    /// (`offset + (length - 1)`, RFC 8216bis §4.4.4.9). In normal operation
+    /// this never fires: [`crate::client::HlsClient`]'s internal
+    /// `resolve_byte_range` already rejects any byte range whose
+    /// `offset + length` overflows before it ever reaches this adapter (see
+    /// `crate::client::Error::ByteRangeOverflow`) — this variant is
+    /// defense-in-depth against a future/foreign caller constructing a
+    /// `(u64, u64)` byte range directly, bypassing the sans-IO core.
+    #[error("byte range for {url} overflows u64: offset {offset} + length {length}")]
+    ByteRangeOverflow {
+        /// The request URL the range applies to.
+        url: String,
+        /// The range's starting offset.
+        offset: u64,
+        /// The range's length.
+        length: u64,
+    },
 }
 
 /// Tunables for [`TokioClient`]. [`Default`] gives sane values for a
@@ -407,7 +424,7 @@ impl TokioClient {
         timeout: Duration,
     ) -> Result<Vec<u8>, TokioError> {
         let req = self.apply_auth_preemptive(
-            build_request(&self.http, url, byte_range, timeout),
+            build_request(&self.http, url, byte_range, timeout)?,
             "GET",
             url,
         );
@@ -417,7 +434,7 @@ impl TokioClient {
         })?;
 
         let resp = if resp.status() == StatusCode::UNAUTHORIZED {
-            let retry_req = build_request(&self.http, url, byte_range, timeout);
+            let retry_req = build_request(&self.http, url, byte_range, timeout)?;
             self.retry_after_unauthorized("GET", url, retry_req, resp)
                 .await?
         } else {
@@ -491,18 +508,90 @@ fn build_request(
     url: &str,
     byte_range: Option<(u64, u64)>,
     timeout: Duration,
-) -> reqwest::RequestBuilder {
+) -> Result<reqwest::RequestBuilder, TokioError> {
     let mut req = client.get(url).timeout(timeout);
     if let Some((offset, length)) = byte_range {
-        let end = offset + length.saturating_sub(1);
+        // `saturating_sub` here only guards the `length == 0` underflow
+        // case (`0 - 1`) — it must never silently saturate the *addition*
+        // below, since a saturated `end` would produce a `Range:` header
+        // for the wrong bytes rather than failing this one request. See
+        // `TokioError::ByteRangeOverflow`.
+        let end =
+            offset
+                .checked_add(length.saturating_sub(1))
+                .ok_or(TokioError::ByteRangeOverflow {
+                    url: url.to_string(),
+                    offset,
+                    length,
+                })?;
         req = req.header(reqwest::header::RANGE, format!("bytes={offset}-{end}"));
     }
-    req
+    Ok(req)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // Biting test for the u64-overflow defect (issue's `tokio_client.rs:497`
+    // finding): `build_request`'s old `offset + length.saturating_sub(1)`
+    // guarded only the `-1` underflow, not the addition itself. A byte range
+    // whose `offset` is near `u64::MAX` — reachable via a malicious/corrupt
+    // playlist's `BYTERANGE`, or a long-lived omitted-offset cursor walked
+    // up by `crate::client::HlsClient` — must be rejected, not panic (debug)
+    // or silently wrap to a bogus `Range:` header naming the wrong bytes
+    // (release).
+    //
+    // MUTATION VERIFIED: reverting to the original
+    // `let end = offset + length.saturating_sub(1);` (dropping
+    // `checked_add`/`Err`) makes this test fail: the debug build panics with
+    // "attempt to add with overflow" inside `build_request` before
+    // `expect_err` ever runs (confirmed by running it), rather than
+    // returning `TokioError::ByteRangeOverflow`. Recompiled and re-ran to
+    // observe that exact panic, then restored the checked_add.
+    #[test]
+    fn build_request_rejects_a_range_whose_end_overflows_u64() {
+        let client = Client::new();
+        let err = build_request(
+            &client,
+            "http://example.com/seg.m4s",
+            Some((u64::MAX - 1, 5)),
+            Duration::from_secs(5),
+        )
+        .expect_err("offset near u64::MAX + length must overflow and be rejected");
+        assert!(
+            matches!(
+                err,
+                TokioError::ByteRangeOverflow {
+                    offset,
+                    length: 5,
+                    ..
+                } if offset == u64::MAX - 1
+            ),
+            "wrong error variant/fields: {err:?}"
+        );
+    }
+
+    // The flip side: an ordinary, non-overflowing byte range must still
+    // produce the expected `Range:` header — the overflow guard must not
+    // have broken the common case.
+    #[test]
+    fn build_request_sets_range_header_for_a_normal_byte_range() {
+        let client = Client::new();
+        let req = build_request(
+            &client,
+            "http://example.com/seg.m4s",
+            Some((10, 20)),
+            Duration::from_secs(5),
+        )
+        .expect("a normal byte range must succeed");
+        let built = req.build().expect("request builds");
+        let header = built
+            .headers()
+            .get(reqwest::header::RANGE)
+            .expect("Range header must be present");
+        assert_eq!(header, "bytes=10-29");
+    }
 
     // Security-blocker regression (pre-release audit): `TokioClientConfig`
     // derives `Debug` and embeds `Option<Credentials>` directly (`auth`) — it

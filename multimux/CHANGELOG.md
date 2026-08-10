@@ -129,6 +129,31 @@
   guard script to contain. Adopting let-chains and `is_multiple_of` where the
   1.95 lints require them; no functional or API change.
 ### Fixed
+- **A wrong RTSP password retried forever instead of failing the route**
+  (issue #957, found end-to-end against a real Axis camera). `origin::
+  supervisor::supervise_driver` treated every ingest failure as transient,
+  including `MultimuxError::Auth` (a `401`/`403` that persisted after
+  credentials were supplied) — a wrong password is never going to start
+  working, so it just produced an endless warn-level reconnect loop. Auth
+  failures (and a `404 Not Found` specifically on RTSP DESCRIBE, a wrong
+  URL path — also never self-healing) now stop the supervisor outright and
+  mark the route `HealthState::Failed`, surfaced by the admin API's route
+  status without reading logs. A camera still finishing its boot can
+  transiently answer `401` before its auth subsystem is ready, so auth
+  failures are tolerated for a bounded number of consecutive attempts
+  (`MAX_AUTH_ATTEMPTS_BEFORE_PERMANENT`, 5, chosen against the default
+  backoff schedule's ~15.5s cumulative delay by attempt 5) before being
+  declared permanent — every other failure kind keeps the existing
+  supervised reconnect, unchanged.
+- **`catchup::read_archived_bytes` allocated whatever a corrupt `pN.idx`
+  sidecar claimed.** `byte_len` comes from a DVR-archive `IndexEntry` in a
+  JSON sidecar on disk; `read_exact` caught a truncated container, but
+  nothing bounded `byte_len` against the period file's real size *before*
+  `vec![0u8; byte_len as usize]` allocated for it — a corrupt-but-JSON-valid
+  sidecar (the same power-loss/full-disk class the DVR index-rebuild fix
+  above addresses) meant an unbounded allocation. Now bound against
+  `File::metadata().len()` (with a `checked_add` guard on `offset + len`
+  too) before allocating, returning an error instead.
 - **One unauthenticated datagram could tear down a live WHIP ingest.**
   `handle_datagram` returns `Err` on any SRTP authentication failure, and the
   WHIP read loop mapped that to a fatal transport error, reaping the session

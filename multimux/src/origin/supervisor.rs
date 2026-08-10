@@ -1,7 +1,20 @@
 //! Per-route ingest supervisor: drive a route's ingest attempt (dial/listen,
 //! establish, ingest) and — on a connect/handshake failure, an ingest error,
 //! or the source cleanly ending before ever reconnecting — retry with capped
-//! exponential backoff, forever, until shutdown fires.
+//! exponential backoff, until shutdown fires.
+//!
+//! **Except** two failure kinds that will never succeed on retry (issue
+//! #957, found against a real Axis camera): a wrong password (surfacing as
+//! [`MultimuxError::Auth`], allowed a small bounded number of attempts first
+//! — see `MAX_AUTH_ATTEMPTS_BEFORE_PERMANENT` — to tolerate a camera still
+//! finishing its boot) and a `404 Not Found` specifically on RTSP DESCRIBE
+//! (a wrong URL path). Either stops the loop outright, sets
+//! [`RouteHandle::health`] to [`HealthState::Failed`] (surfaced by the admin
+//! API's route status) rather than the ordinary
+//! [`HealthState::Reconnecting`], and this task simply ends — an operator
+//! sees "failed", not an endless warn-level reconnect loop for a password
+//! that will never start working. Every other failure keeps retrying
+//! forever as before.
 //!
 //! Before this module, `origin::serve` spawned a one-shot per-route task:
 //! connect once, ingest once, and on any failure just `eprintln!` and let the
@@ -39,12 +52,72 @@ use std::time::Duration;
 
 use tokio::sync::watch;
 
+use crate::MultimuxError;
 use crate::route::{HealthState, RouteHandle};
 
 /// Production default backoff: starts at 500 ms, doubles, caps at 30 s.
 const DEFAULT_BACKOFF_MIN: Duration = Duration::from_millis(500);
 const DEFAULT_BACKOFF_MAX: Duration = Duration::from_secs(30);
 const DEFAULT_BACKOFF_FACTOR: f64 = 2.0;
+
+/// How many *consecutive* auth-rejected attempts [`supervise_driver`]
+/// tolerates before declaring the failure permanent (issue #957).
+///
+/// A wrong password will never succeed on retry, so in the steady state a
+/// single `401`/`403` is enough to know retrying is pointless. But issue
+/// #957's own hardware finding is that a camera still finishing its boot can
+/// transiently answer `401` before its auth subsystem is up — observed on
+/// the same Axis units this fix was verified against — so declaring
+/// permanence on the very first rejection would misfire during a normal
+/// power-cycle/reboot, not just a typo'd password.
+///
+/// 5 is chosen against [`Backoff::production_default`]'s schedule (500 ms,
+/// 1 s, 2 s, 4 s, 8 s — about 15.5 s cumulative before the 5th attempt):
+/// comfortably longer than the few-second auth-subsystem warm-up this
+/// issue's own DESCRIBE-Unauthorized-then-recovers observation showed, while
+/// still failing fast in human terms for a genuinely wrong password (an
+/// operator does not want to wait minutes to be told their credentials are
+/// bad). A caller using a much slower custom [`Backoff`] gets a
+/// proportionally longer permanence window, which is the right direction to
+/// err — a device given more time to prove a rejection isn't transient
+/// should get more time, not less.
+const MAX_AUTH_ATTEMPTS_BEFORE_PERMANENT: u32 = 5;
+
+/// Classifies an `attempt` failure as "certain to fail again" vs. "worth
+/// supervised retry" (issue #957). Every other failure (network, transport,
+/// server-side 5xx, protocol errors) is genuinely transient — the camera
+/// rebooted, the network blipped, the far end restarted — so only two kinds
+/// are ever permanent:
+///
+/// - [`MultimuxError::Auth`] — a `401`/`403` that persisted after
+///   credentials were supplied (`crate::source::rtsp::response_error`'s
+///   classification). Bounded by `MAX_AUTH_ATTEMPTS_BEFORE_PERMANENT` by
+///   the caller, not here — a single auth rejection alone is not yet
+///   permanent (see that constant's doc).
+/// - A `404 Not Found` specifically on **DESCRIBE** — a wrong URL path,
+///   which (unlike a transient reboot) never self-heals on retry either.
+///   `MultimuxError::Protocol` carries no numeric status code (this crate's
+///   error type is out of scope for this fix — see issue #957's discussion),
+///   so this matches the exact `reason` text
+///   `crate::source::rtsp::response_error` formats for a non-2xx response
+///   (`format!("non-success status {status}")` with `StatusCode::NotFound`'s
+///   `Display` rendering `"Not Found"`); any other phase or reason text
+///   falls through to the transient/retry path, matching every non-RTSP
+///   input kind's own `Protocol`-shaped errors (SRT/RTMP/HTTP-pull, none of
+///   which reuse this exact phase/reason pairing).
+fn is_auth_failure(err: &MultimuxError) -> bool {
+    matches!(err, MultimuxError::Auth { .. })
+}
+
+/// See [`is_auth_failure`]'s doc — the DESCRIBE-404 half of the same
+/// classification.
+fn is_permanent_describe_not_found(err: &MultimuxError) -> bool {
+    matches!(
+        err,
+        MultimuxError::Protocol { phase, reason }
+            if *phase == "DESCRIBE" && reason == "non-success status Not Found"
+    )
+}
 
 /// Capped exponential backoff: [`Backoff::next`] returns the current delay
 /// then grows it by `factor` (capped at `max`); [`Backoff::reset`] restores
@@ -178,6 +251,10 @@ pub async fn supervise_driver<F, Fut>(
     route_handle.set_health(HealthState::Connecting);
     record_route_up(&name, HealthState::Connecting);
     let mut attempt_no: u64 = 0;
+    // Consecutive auth-rejected attempts since the last success (or the
+    // last non-auth failure) — see `MAX_AUTH_ATTEMPTS_BEFORE_PERMANENT`'s
+    // doc (issue #957).
+    let mut consecutive_auth_failures: u32 = 0;
 
     loop {
         if *shutdown.borrow() {
@@ -188,7 +265,7 @@ pub async fn supervise_driver<F, Fut>(
         let result = attempt(route_handle.clone()).await;
         let reached_live = route_handle.health() == HealthState::Live;
 
-        match result {
+        match &result {
             Ok(()) if reached_live => tracing::info!("ingest ended after being live"),
             Ok(()) => {
                 attempt_no += 1;
@@ -199,6 +276,36 @@ pub async fn supervise_driver<F, Fut>(
                 attempt_no += 1;
                 tracing::warn!(error = %e, attempt = attempt_no, "failed to connect");
             }
+        }
+
+        // Issue #957: a failure is only ever "permanent" (stop retrying,
+        // mark the route Failed) if it happened *before* this attempt ever
+        // reached Live — once Live, the credentials/URL already proved
+        // good for this session, so a later disconnect is an ordinary
+        // transient event like any other "reached_live" arm above, not a
+        // reason to give up on the route.
+        if let Err(e) = &result
+            && !reached_live
+        {
+            if is_auth_failure(e) {
+                consecutive_auth_failures += 1;
+            } else {
+                consecutive_auth_failures = 0;
+            }
+            if is_permanent_describe_not_found(e)
+                || consecutive_auth_failures > MAX_AUTH_ATTEMPTS_BEFORE_PERMANENT
+            {
+                tracing::error!(
+                    error = %e,
+                    attempts = attempt_no,
+                    "permanent failure — giving up, not retrying (issue #957)"
+                );
+                route_handle.set_health(HealthState::Failed);
+                record_route_up(&name, HealthState::Failed);
+                return;
+            }
+        } else {
+            consecutive_auth_failures = 0;
         }
 
         if reached_live {
@@ -278,6 +385,254 @@ mod tests {
             Duration::from_millis(10),
             "back to min after reset"
         );
+    }
+
+    // --- issue #957: permanent vs. transient failure classification ---
+
+    #[test]
+    fn is_auth_failure_true_only_for_the_auth_variant() {
+        assert!(is_auth_failure(&MultimuxError::Auth {
+            reason: "DESCRIBE: 401 Unauthorized".into()
+        }));
+        assert!(!is_auth_failure(&MultimuxError::Connect {
+            reason: "connect refused".into()
+        }));
+        assert!(!is_auth_failure(&MultimuxError::Protocol {
+            phase: "DESCRIBE",
+            reason: "non-success status Not Found".into(),
+        }));
+    }
+
+    #[test]
+    fn is_permanent_describe_not_found_true_only_for_that_exact_shape() {
+        assert!(is_permanent_describe_not_found(&MultimuxError::Protocol {
+            phase: "DESCRIBE",
+            reason: "non-success status Not Found".into(),
+        }));
+        // Same status text on a different phase (e.g. SETUP) is not a wrong
+        // URL path on DESCRIBE — must not be classified permanent.
+        assert!(!is_permanent_describe_not_found(&MultimuxError::Protocol {
+            phase: "SETUP",
+            reason: "non-success status Not Found".into(),
+        }));
+        // A different status on DESCRIBE (e.g. a transient 503) must not be
+        // classified permanent.
+        assert!(!is_permanent_describe_not_found(&MultimuxError::Protocol {
+            phase: "DESCRIBE",
+            reason: "non-success status Service Unavailable".into(),
+        }));
+        assert!(!is_permanent_describe_not_found(&MultimuxError::Auth {
+            reason: "DESCRIBE: 401 Unauthorized".into()
+        }));
+    }
+
+    /// An `attempt` that always fails the same way (never touching health) —
+    /// standing in for a route whose DESCRIBE keeps getting the same
+    /// rejection every single time, e.g. a permanently wrong password or URL.
+    fn always_fails(
+        err: fn() -> MultimuxError,
+        call_count: Arc<AtomicUsize>,
+    ) -> impl FnMut(
+        Arc<RouteHandle>,
+    ) -> std::pin::Pin<Box<dyn Future<Output = crate::Result<()>> + Send>>
+    + Send
+    + 'static {
+        move |_route_handle: Arc<RouteHandle>| {
+            call_count.fetch_add(1, Ordering::SeqCst);
+            Box::pin(async move { Err(err()) })
+        }
+    }
+
+    /// Biting test for issue #957's headline defect: a wrong password
+    /// (`MultimuxError::Auth` on every attempt, verified against a real Axis
+    /// camera as `Failed(Auth { reason: "DESCRIBE: Unauthorized" })`) must
+    /// stop retrying after `MAX_AUTH_ATTEMPTS_BEFORE_PERMANENT + 1` attempts
+    /// and mark the route `Failed`, rather than retrying forever — the task
+    /// itself must end with NO shutdown signal ever sent.
+    ///
+    /// MUTATION VERIFIED: removing the `if let Err(e) = &result && ...
+    /// return; }` permanence block (so the loop falls straight through to
+    /// the unconditional backoff+retry, i.e. the pre-fix behaviour) makes
+    /// this test fail: the `tokio::time::timeout(..., handle)` on the join
+    /// elapses (`Elapsed`) because the loop keeps retrying forever exactly
+    /// as issue #957 reports, rather than the task ending on its own.
+    /// Recompiled and re-ran to confirm that exact timeout, then restored
+    /// the permanence block.
+    #[tokio::test]
+    async fn a_wrong_password_stops_retrying_after_the_bound_and_marks_the_route_failed() {
+        let route = Arc::new(RouteHandle::new(1.0, 500, 8));
+        let call_count = Arc::new(AtomicUsize::new(0));
+        let attempt = always_fails(
+            || MultimuxError::Auth {
+                reason: "DESCRIBE: 401 Unauthorized".into(),
+            },
+            call_count.clone(),
+        );
+        let (_shutdown_tx, shutdown_rx) = watch::channel(false);
+
+        let handle = tokio::spawn(supervise_driver(
+            attempt,
+            route.clone(),
+            tiny_backoff(),
+            "test-route".to_string(),
+            shutdown_rx,
+        ));
+
+        // HANG GUARD: must end on its own — no shutdown signal is ever sent
+        // in this test, so a passing result here IS the proof the loop gave
+        // up rather than retrying forever.
+        tokio::time::timeout(Duration::from_secs(10), handle)
+            .await
+            .expect(
+                "supervise_driver must return on its own once a permanent \
+                 auth failure is declared, not retry forever",
+            )
+            .expect("supervise_driver task did not panic");
+
+        assert_eq!(
+            route.health(),
+            HealthState::Failed,
+            "a permanently wrong password must mark the route Failed"
+        );
+        assert_eq!(
+            call_count.load(Ordering::SeqCst) as u32,
+            MAX_AUTH_ATTEMPTS_BEFORE_PERMANENT + 1,
+            "must attempt exactly bound+1 times before declaring permanence"
+        );
+    }
+
+    /// The DESCRIBE-404 counterpart: permanent on the very first attempt (no
+    /// boot-transient tolerance needed — a wrong URL path doesn't fix itself
+    /// on a reboot the way a not-yet-ready auth subsystem does).
+    #[tokio::test]
+    async fn a_describe_404_is_permanent_on_the_first_attempt() {
+        let route = Arc::new(RouteHandle::new(1.0, 500, 8));
+        let call_count = Arc::new(AtomicUsize::new(0));
+        let attempt = always_fails(
+            || MultimuxError::Protocol {
+                phase: "DESCRIBE",
+                reason: "non-success status Not Found".into(),
+            },
+            call_count.clone(),
+        );
+        let (_shutdown_tx, shutdown_rx) = watch::channel(false);
+
+        let handle = tokio::spawn(supervise_driver(
+            attempt,
+            route.clone(),
+            tiny_backoff(),
+            "test-route".to_string(),
+            shutdown_rx,
+        ));
+
+        tokio::time::timeout(Duration::from_secs(10), handle)
+            .await
+            .expect("supervise_driver must return on its own for a DESCRIBE 404")
+            .expect("supervise_driver task did not panic");
+
+        assert_eq!(route.health(), HealthState::Failed);
+        assert_eq!(
+            call_count.load(Ordering::SeqCst),
+            1,
+            "a DESCRIBE 404 must be declared permanent on the very first attempt"
+        );
+    }
+
+    /// The subtlety issue #957 explicitly calls out: a camera still booting
+    /// can transiently answer 401 a few times before its auth subsystem is
+    /// ready. As long as that recovers *within* the bound, the route must
+    /// reach `Live` normally — never marked `Failed` — proving the bound
+    /// doesn't misfire on the exact scenario it exists to tolerate.
+    #[tokio::test]
+    async fn an_auth_failure_that_recovers_within_the_bound_still_reaches_live() {
+        let route = Arc::new(RouteHandle::new(1.0, 500, 8));
+        let call_count = Arc::new(AtomicUsize::new(0));
+        // Strictly fewer failures than the bound, so recovery must land
+        // before permanence would ever be declared.
+        let fail_times = (MAX_AUTH_ATTEMPTS_BEFORE_PERMANENT - 1) as usize;
+        let cc = call_count.clone();
+        let attempt = move |route_handle: Arc<RouteHandle>| {
+            let cc = cc.clone();
+            Box::pin(async move {
+                let n = cc.fetch_add(1, Ordering::SeqCst);
+                if n < fail_times {
+                    return Err(MultimuxError::Auth {
+                        reason: "DESCRIBE: 401 Unauthorized".into(),
+                    });
+                }
+                route_handle.set_health(HealthState::Live);
+                tokio::time::sleep(Duration::from_millis(20)).await;
+                Ok(())
+            }) as std::pin::Pin<Box<dyn Future<Output = crate::Result<()>> + Send>>
+        };
+        let (shutdown_tx, shutdown_rx) = watch::channel(false);
+
+        let handle = tokio::spawn(supervise_driver(
+            attempt,
+            route.clone(),
+            tiny_backoff(),
+            "test-route".to_string(),
+            shutdown_rx,
+        ));
+
+        let reached_live = wait_until(Duration::from_secs(10), || {
+            route.health() == HealthState::Live
+        })
+        .await;
+        assert!(
+            reached_live,
+            "a camera recovering within the auth bound must still reach Live, not be given up on"
+        );
+
+        shutdown_tx.send(true).unwrap();
+        tokio::time::timeout(Duration::from_secs(10), handle)
+            .await
+            .expect("supervise_driver returns promptly on shutdown")
+            .expect("supervise_driver task did not panic");
+    }
+
+    /// A genuinely transient failure kind (e.g. `Connect`, standing in for a
+    /// dropped TCP/DNS/TLS handshake) must keep retrying past the auth
+    /// bound — the bound only ever applies to `MultimuxError::Auth`.
+    #[tokio::test]
+    async fn a_non_auth_failure_keeps_retrying_past_the_auth_bound() {
+        let route = Arc::new(RouteHandle::new(1.0, 500, 8));
+        let call_count = Arc::new(AtomicUsize::new(0));
+        let attempt = always_fails(
+            || MultimuxError::Connect {
+                reason: "connect refused".into(),
+            },
+            call_count.clone(),
+        );
+        let (shutdown_tx, shutdown_rx) = watch::channel(false);
+
+        let handle = tokio::spawn(supervise_driver(
+            attempt,
+            route.clone(),
+            tiny_backoff(),
+            "test-route".to_string(),
+            shutdown_rx,
+        ));
+
+        let exceeded_bound = wait_until(Duration::from_secs(10), || {
+            call_count.load(Ordering::SeqCst) as u32 > MAX_AUTH_ATTEMPTS_BEFORE_PERMANENT + 2
+        })
+        .await;
+        assert!(
+            exceeded_bound,
+            "a non-auth failure must keep retrying past the auth-only bound"
+        );
+        assert_ne!(
+            route.health(),
+            HealthState::Failed,
+            "a transient connect failure must never be marked permanent"
+        );
+
+        shutdown_tx.send(true).unwrap();
+        tokio::time::timeout(Duration::from_secs(10), handle)
+            .await
+            .expect("supervise_driver returns promptly on shutdown")
+            .expect("supervise_driver task did not panic");
     }
 
     /// A fake `attempt` closure: fails (`Err`, never touching health) the

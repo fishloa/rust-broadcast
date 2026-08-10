@@ -63,4 +63,28 @@ pub enum Error {
         /// Human-readable explanation.
         reason: &'static str,
     },
+
+    /// An `EXT-X-BYTERANGE` (or `EXT-X-PRELOAD-HINT` byte range,
+    /// RFC 8216bis §4.4.4.9/§4.4.5.3) `offset + length` overflowed `u64`.
+    /// Both values come straight from the remote origin's playlist text —
+    /// `broadcast_hls::MediaPlaylist::parse` places no upper bound on
+    /// either (confirmed: it is a bare `str::parse::<u64>()`) — so a
+    /// malicious or corrupt origin can advertise e.g.
+    /// `BYTERANGE:18446744073709551615@0`, or a chain of omitted-offset
+    /// ranges whose per-URL running cursor
+    /// ([`crate::client::HlsClient`]'s `byte_range_cursor`) accumulates past
+    /// `u64::MAX`. Rejected outright rather than saturating: a saturated
+    /// range would silently become a *different, wrong* byte range, and the
+    /// client would demux whatever bytes the origin happened to return for
+    /// it — a worse outcome than simply failing this one fetch.
+    #[error("byte range for {url:?} overflows u64: offset {offset} + length {length}")]
+    ByteRangeOverflow {
+        /// The resolved resource URL the range applies to.
+        url: String,
+        /// The range's starting offset (explicit, or the carried-forward
+        /// cursor for this URL).
+        offset: u64,
+        /// The range's length, as advertised by the playlist.
+        length: u64,
+    },
 }

@@ -177,6 +177,18 @@ pub(crate) fn find_archived_segment(dir: &Path, seq: u32) -> Option<ArchivedSegm
 }
 
 /// Read one archived segment's exact bytes from its period container file.
+///
+/// `byte_offset`/`byte_len` come from an [`IndexEntry`] in the period's
+/// `pN.idx` JSON sidecar — durable disk state, not something this process
+/// controls the shape of. A power loss (or any other corruption) can leave
+/// that JSON syntactically valid but numerically wrong, e.g. a `byte_len`
+/// far larger than the container file ever was. Without a check, `vec![0u8;
+/// byte_len as usize]` allocates whatever a corrupt sidecar claims *before*
+/// `read_exact` ever gets a chance to fail — an unbounded allocation (OOM)
+/// from disk-supplied JSON, the same class of trap the `dvr.rs`
+/// `rebuild_index` truncated-`mdat` fix guards against. So the declared
+/// range is bound against the file's real length first, and a corrupt entry
+/// is rejected before any allocation.
 pub(crate) fn read_archived_bytes(
     dir: &Path,
     ext: &str,
@@ -186,6 +198,23 @@ pub(crate) fn read_archived_bytes(
 ) -> Result<Bytes, String> {
     let path = dir.join(format!("p{period_num}.{ext}"));
     let mut file = File::open(&path).map_err(|e| format!("opening {}: {e}", path.display()))?;
+    let file_len = file
+        .metadata()
+        .map_err(|e| format!("stat {}: {e}", path.display()))?
+        .len();
+    let end = byte_offset.checked_add(byte_len).ok_or_else(|| {
+        format!(
+            "index entry for {} overflows u64: offset {byte_offset} + len {byte_len}",
+            path.display()
+        )
+    })?;
+    if end > file_len {
+        return Err(format!(
+            "index entry for {} claims range [{byte_offset}, {end}) but the file is only \
+             {file_len} bytes — corrupt or truncated sidecar",
+            path.display()
+        ));
+    }
     file.seek(SeekFrom::Start(byte_offset))
         .map_err(|e| format!("seeking {}: {e}", path.display()))?;
     let mut buf = vec![0u8; byte_len as usize];
@@ -580,6 +609,60 @@ mod tests {
         assert_eq!(bytes.as_ref(), vec![0x11u8; 24].as_slice());
 
         assert!(find_archived_segment(&dir, 99).is_none());
+
+        cleanup(&tmp);
+    }
+
+    /// Biting test: a `byte_len` a corrupt (but JSON-valid) `pN.idx` sidecar
+    /// could claim — here, ~9.1 TB, far beyond any real period file but
+    /// nowhere near overflowing `u64` on its own — must be rejected with a
+    /// clear error *before* `read_archived_bytes` ever allocates a buffer
+    /// for it, not discovered only once `read_exact` under-runs the real
+    /// file.
+    ///
+    /// MUTATION VERIFIED: removing the `end > file_len` bounds check (so the
+    /// function goes straight from `file.metadata()` to
+    /// `vec![0u8; byte_len as usize]`) makes this test fail — not with the
+    /// expected `Err`, but with the process itself attempting a ~9.1 TB
+    /// allocation (an `AllocError`/OOM abort on most machines, rather than a
+    /// graceful `Err`) before `expect_err` ever runs, i.e. exactly the
+    /// unbounded-allocation defect this test exists to catch. Recompiled and
+    /// re-run to confirm the mutated build no longer returns the bounds-check
+    /// `Err` (it hangs/aborts attempting the allocation instead), then
+    /// restored the guard.
+    #[test]
+    fn read_archived_bytes_rejects_a_byte_len_the_file_cannot_back() {
+        let tmp = temp_dir();
+        let trunk = Trunk::new(TrunkConfig::new(nz(4), nz(4), nz(8), nz(4), nz(4)));
+        let writer = trunk.segment_writer().expect("segment writer");
+        let mut recorder =
+            DvrRecorder::new("corrupt".to_string(), recorder_cfg(&tmp), ".m4s", &trunk)
+                .expect("recorder");
+        let init = b"INIT";
+        recorder.poll_and_persist(Some(init)).expect("poll init");
+        writer.publish_segment(dummy_segment(1, 0x11));
+        recorder.poll_and_persist(Some(init)).expect("persist");
+
+        let dir = archive_dir(&recorder_cfg(&tmp), "corrupt");
+        let found = find_archived_segment(&dir, 1).expect("segment 1 must be found");
+
+        // Simulate a corrupt sidecar: claim a length the period file cannot
+        // possibly back, but not so large it would overflow u64 on its own
+        // (that's a separate, already-guarded case) — a plausible corrupt
+        // value, not an adversarial one.
+        let implausible_len = 9_100_000_000_000u64; // ~9.1 TB
+        let err = read_archived_bytes(
+            &dir,
+            "m4s",
+            found.period_num,
+            found.byte_offset,
+            implausible_len,
+        )
+        .expect_err("a byte_len the file cannot back must be rejected, not allocated");
+        assert!(
+            err.contains("corrupt or truncated sidecar"),
+            "expected the bounds-check error, got: {err}"
+        );
 
         cleanup(&tmp);
     }

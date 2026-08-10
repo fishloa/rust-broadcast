@@ -33,6 +33,21 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   support (`ClientSession::merge_delta`) cannot be exercised against the
   bundled server. No behaviour change — the bundled server has never
   implemented server-side delta updates.
+- `client::HlsClient` no longer panics (debug) or silently computes a wrong
+  byte range (release) from an untrusted remote playlist's
+  `EXT-X-BYTERANGE`/preload-hint length (RFC 8216bis §4.4.4.9/§4.4.5.3):
+  `offset + length` — and the per-URL omitted-offset running cursor it
+  accumulates into — is now checked (`checked_add`), returning the new
+  `client::Error::ByteRangeOverflow` instead of wrapping. `merge_delta`'s
+  `EXT-X-SKIP` `SKIPPED-SEGMENTS` handling (§4.4.5.2) got the same
+  overflow guard, falling back to its existing "return the delta unmerged"
+  path rather than panicking. `client::tokio_client::TokioClient`'s
+  `Range:`-header builder got the matching `checked_add` guard
+  (`TokioError::ByteRangeOverflow`) as defense-in-depth, though in normal
+  operation the sans-IO core already rejects an overflowing range before
+  it reaches the HTTP adapter. `broadcast_hls::MediaPlaylist::parse` places
+  no upper bound on any of these values (confirmed while fixing this) —
+  tracked separately as a `broadcast-hls` follow-up, not fixed here.
 
 ## [0.5.0] - 2026-08-05
 

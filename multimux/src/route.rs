@@ -184,13 +184,19 @@ pub enum HealthState {
     Connecting,
     /// Connected and actively producing media.
     Live,
-    /// Lost its connection/ingest and is retrying with backoff — never
-    /// permanent; see `crate::origin::supervisor::supervise_driver`'s own doc
-    /// for why a route always retries rather than giving up.
+    /// Lost its connection/ingest and is retrying with backoff. Transient by
+    /// definition — a failure that cannot resolve itself becomes
+    /// [`HealthState::Failed`] instead; see
+    /// `crate::origin::supervisor::supervise_driver`.
     Reconnecting,
-    /// Reserved for an unrecoverable error class a future caller may want to
-    /// distinguish from an ordinary, retried [`HealthState::Reconnecting`] —
-    /// `supervise_driver`'s loop does not currently produce it.
+    /// Stopped retrying because the failure cannot resolve itself: repeated
+    /// RTSP authentication rejections (a wrong password never becomes right)
+    /// or a `404` on DESCRIBE (a wrong path never appears). Issue #957 — the
+    /// supervisor previously retried these forever, so an operator typo
+    /// produced an endless warn-level loop instead of a visible failure.
+    ///
+    /// Surfaced through the admin API's route status, so it is diagnosable
+    /// without reading logs.
     Failed,
 }
 

@@ -224,7 +224,7 @@ impl HlsClient {
                         part: part_idx,
                     };
                     let url = url::resolve(&self.playlist_url, hint_uri);
-                    let byte_range = self.resolve_hint_byte_range(&url, ll);
+                    let byte_range = self.resolve_hint_byte_range(&url, ll)?;
                     self.request_resource(id, url, byte_range);
                 }
                 PreloadHintType::Map => {
@@ -441,8 +441,19 @@ impl HlsClient {
             return playlist;
         }
         let prefix_start = (playlist.media_sequence - prev.media_sequence) as usize;
-        let prefix_end = prefix_start + skip.skipped_segments as usize;
-        let Some(prefix) = prev.segments.get(prefix_start..prefix_end) else {
+        // `skip.skipped_segments` (`EXT-X-SKIP`'s `SKIPPED-SEGMENTS`,
+        // RFC 8216bis §4.4.5.2) is untrusted `u64` straight from the remote
+        // origin's playlist text, with no upper bound enforced by
+        // `broadcast_hls::MediaPlaylist::parse`. `usize::try_from` +
+        // `checked_add` guard both the u64->usize narrowing and the
+        // addition itself, so an adversarial/corrupt value falls through to
+        // the same "can't merge, return the delta as-is" fallback as every
+        // other guard in this function rather than panicking (debug) or
+        // wrapping to a bogus, silently-wrong slice bound (release).
+        let prefix_end = usize::try_from(skip.skipped_segments)
+            .ok()
+            .and_then(|skipped| prefix_start.checked_add(skipped));
+        let Some(prefix) = prefix_end.and_then(|end| prev.segments.get(prefix_start..end)) else {
             return playlist;
         };
         let mut merged = playlist;
@@ -488,7 +499,7 @@ impl HlsClient {
             let id = ResourceId::Segment { msn };
             if !self.requested.contains(&id) {
                 let url = url::resolve(&self.playlist_url, &seg.uri);
-                let byte_range = self.resolve_byte_range(&url, &seg.byte_range);
+                let byte_range = self.resolve_byte_range(&url, &seg.byte_range)?;
                 self.request_resource(id, url, byte_range);
             }
             return Ok(());
@@ -504,7 +515,7 @@ impl HlsClient {
             let id = ResourceId::Part { msn, part: i };
             if !self.requested.contains(&id) {
                 let url = url::resolve(&self.playlist_url, &part.uri);
-                let byte_range = self.resolve_byte_range(&url, &part.byte_range);
+                let byte_range = self.resolve_byte_range(&url, &part.byte_range)?;
                 self.request_resource(id, url, byte_range);
             }
         }
@@ -523,7 +534,7 @@ impl HlsClient {
             let id = ResourceId::Part { msn, part: i };
             if !self.requested.contains(&id) {
                 let url = url::resolve(&self.playlist_url, &part.uri);
-                let byte_range = self.resolve_byte_range(&url, &part.byte_range);
+                let byte_range = self.resolve_byte_range(&url, &part.byte_range)?;
                 self.request_resource(id, url, byte_range);
             }
         }
@@ -538,7 +549,7 @@ impl HlsClient {
         self.init_uri = Some(url.clone());
         self.init_bytes = None;
         self.init_emitted = false;
-        let byte_range = self.resolve_byte_range(&url, &map.byte_range);
+        let byte_range = self.resolve_byte_range(&url, &map.byte_range)?;
         self.pending_actions.push_back(Action::FetchResource {
             id: ResourceId::Init,
             url,
@@ -562,22 +573,44 @@ impl HlsClient {
     /// absolute `(offset, length)`, honouring the "omitted offset continues
     /// the previous sub-range of the same resource" rule (tracked per
     /// resolved URL).
-    fn resolve_byte_range(&mut self, url: &str, br: &Option<ByteRange>) -> Option<(u64, u64)> {
-        let br = br.as_ref()?;
+    ///
+    /// # Errors
+    /// [`Error::ByteRangeOverflow`] if `offset + length` (both taken
+    /// straight from the untrusted remote playlist) overflows `u64` — see
+    /// that variant's doc for why this is rejected rather than saturated.
+    fn resolve_byte_range(
+        &mut self,
+        url: &str,
+        br: &Option<ByteRange>,
+    ) -> Result<Option<(u64, u64)>> {
+        let Some(br) = br.as_ref() else {
+            return Ok(None);
+        };
         let offset = br
             .offset
             .unwrap_or_else(|| *self.byte_range_cursor.get(url).unwrap_or(&0));
-        self.byte_range_cursor
-            .insert(url.to_string(), offset + br.length);
-        Some((offset, br.length))
+        let next_cursor =
+            offset
+                .checked_add(br.length)
+                .ok_or_else(|| Error::ByteRangeOverflow {
+                    url: url.to_string(),
+                    offset,
+                    length: br.length,
+                })?;
+        self.byte_range_cursor.insert(url.to_string(), next_cursor);
+        Ok(Some((offset, br.length)))
     }
 
+    /// Same overflow contract as [`Self::resolve_byte_range`] — see
+    /// [`Error::ByteRangeOverflow`].
     fn resolve_hint_byte_range(
         &mut self,
         url: &str,
         ll: &broadcast_hls::LowLatencyConfig,
-    ) -> Option<(u64, u64)> {
-        let length = ll.preload_hint_byte_range_length?;
+    ) -> Result<Option<(u64, u64)>> {
+        let Some(length) = ll.preload_hint_byte_range_length else {
+            return Ok(None);
+        };
         let br = ByteRange {
             length,
             offset: ll.preload_hint_byte_range_start,
@@ -755,5 +788,128 @@ mod tests {
             })
             .expect("ensure_init_requested succeeds");
         assert!(!client.is_ts_segment(&[TS_SYNC_BYTE, 0x40, 0x11, 0x00]));
+    }
+
+    // Biting test for the u64-overflow defect: a remote origin's
+    // `#EXT-X-BYTERANGE` (or preload-hint byte range) is untrusted text —
+    // `broadcast_hls::MediaPlaylist::parse` places no upper bound on either
+    // the offset or the length (confirmed: bare `str::parse::<u64>()`). A
+    // playlist advertising `BYTERANGE:18446744073709551615@1` must be
+    // rejected with `Error::ByteRangeOverflow`, not panic (debug) or
+    // silently wrap `offset + length` into a bogus cursor (release).
+    //
+    // MUTATION VERIFIED: reverting `resolve_byte_range`'s
+    // `offset.checked_add(br.length).ok_or_else(...)` back to the original
+    // `offset + br.length` makes this test fail — the debug build panics
+    // with "attempt to add with overflow" before `expect_err` ever runs
+    // (confirmed by running it), rather than the release build's silent
+    // wraparound the issue actually reports. Recompiled and re-ran to
+    // observe that exact panic, then restored the checked_add.
+    #[test]
+    fn resolve_byte_range_rejects_an_offset_plus_length_that_overflows_u64() {
+        let mut client = HlsClient::new("http://example.com/playlist.m3u8");
+        let br = Some(ByteRange {
+            length: u64::MAX,
+            offset: Some(1),
+        });
+        let err = client
+            .resolve_byte_range("http://example.com/seg0.m4s", &br)
+            .expect_err("offset 1 + length u64::MAX must overflow and be rejected");
+        assert!(
+            matches!(
+                err,
+                Error::ByteRangeOverflow {
+                    offset: 1,
+                    length: u64::MAX,
+                    ..
+                }
+            ),
+            "wrong error variant/fields: {err:?}"
+        );
+    }
+
+    // Same defect, the other trigger named in the issue: repeated
+    // omitted-offset ranges on the *same* resource URL accumulate via
+    // `byte_range_cursor` (RFC 8216bis §4.4.4.9's "omitted offset continues
+    // the previous sub-range" rule) — a long-lived pull can walk that
+    // cursor arbitrarily close to `u64::MAX` before a single request's
+    // `offset + length` itself overflows.
+    #[test]
+    fn resolve_byte_range_rejects_a_cursor_accumulation_that_overflows_u64() {
+        let mut client = HlsClient::new("http://example.com/playlist.m3u8");
+        let url = "http://example.com/seg0.m4s";
+        // Seed the cursor near the top of the u64 range with an explicit
+        // offset, then the next omitted-offset range pushes it over.
+        let seed = Some(ByteRange {
+            length: u64::MAX - 10,
+            offset: Some(5),
+        });
+        let (offset, length) = client
+            .resolve_byte_range(url, &seed)
+            .expect("seed range does not itself overflow")
+            .expect("Some for a Some(ByteRange)");
+        assert_eq!((offset, length), (5, u64::MAX - 10));
+
+        let next = Some(ByteRange {
+            length: 100,
+            offset: None, // continues the cursor left at 5 + (u64::MAX - 10)
+        });
+        let err = client
+            .resolve_byte_range(url, &next)
+            .expect_err("cursor + next length must overflow and be rejected");
+        assert!(
+            matches!(err, Error::ByteRangeOverflow { length: 100, .. }),
+            "wrong error variant/fields: {err:?}"
+        );
+    }
+
+    // Biting test for the `merge_delta` defect: an `#EXT-X-SKIP` delta's
+    // `SKIPPED-SEGMENTS` is untrusted `u64` text with no upper bound
+    // enforced by `broadcast_hls::MediaPlaylist::parse`. A malicious/corrupt
+    // origin claiming a `SKIPPED-SEGMENTS` value that overflows
+    // `prefix_start + skipped_segments` (here: `prefix_start == 10` from a
+    // 10-segment `media_sequence` advance, plus `skipped_segments ==
+    // u64::MAX - 5`) must fall through to the existing "can't merge, return
+    // the delta as-is" fallback, not panic. `prefix_start` is deliberately
+    // nonzero: `0 + u64::MAX` does not overflow, so a `prefix_start == 0`
+    // case would pass even with the guard removed, for the wrong reason
+    // (the subsequent `.get()` bounds check catching it) rather than the
+    // one this test targets (the addition itself).
+    //
+    // MUTATION VERIFIED: reverting the guard back to the original
+    // `prefix_start + skip.skipped_segments as usize` makes this test fail:
+    // the debug build panics with "attempt to add with overflow" inside
+    // `merge_delta` before the `let merged = ...` assertions ever run
+    // (confirmed by running it), rather than returning the delta unmerged.
+    // Recompiled and re-ran to observe that exact panic, then restored the
+    // checked/try_from guard.
+    #[test]
+    fn merge_delta_does_not_panic_on_an_overflowing_skipped_segments() {
+        let mut client = HlsClient::new("http://example.com/playlist.m3u8");
+        let prev = MediaPlaylist {
+            media_sequence: 0,
+            segments: vec![MediaSegment::default(); 2],
+            ..Default::default()
+        };
+        // `last_full_playlist` is set directly (private field, same module)
+        // rather than driven through a full `on_playlist` round-trip — the
+        // point under test is purely `merge_delta`'s own arithmetic guard.
+        client.last_full_playlist = Some(prev);
+
+        let delta = MediaPlaylist {
+            media_sequence: 10, // prefix_start == 10 - 0 == 10
+            skip: Some(broadcast_hls::SkipInfo {
+                skipped_segments: u64::MAX - 5,
+                ..Default::default()
+            }),
+            segments: Vec::new(),
+            ..Default::default()
+        };
+
+        let merged = client.merge_delta(delta.clone());
+        assert_eq!(
+            merged, delta,
+            "an unmergeable skip count must fall back to the delta as-is, not panic"
+        );
     }
 }
