@@ -61,7 +61,7 @@ cargo run -p ule --example receive_sndu
 
 ## Minimum Supported Rust Version
 
-1.86
+1.95.0
 
 ## License
 

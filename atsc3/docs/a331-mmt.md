@@ -13,7 +13,7 @@ concrete reasons, not laziness:
    Transport, "MMT")** — the MP (MMT Package) table, MPU structure, MMTP packet/session model,
    and the base signaling-message framing all live in ISO/IEC 23008-1, a paywalled ISO standard.
    Unlike ROUTE (which builds on freely-available IETF RFCs 5651/5775/6726, already vendored in
-   this repo and already implemented by `dvb-flute`), **a parser cannot be spec-complete for
+   this repo and already implemented by `rmt-flute`), **a parser cannot be spec-complete for
    MMT without ISO/IEC 23008-1**, which this repository does not have and this pass could not
    obtain (it is not freely published the way the ATSC standards or IETF RFCs are). Anything
    this document says about MP-table/MPU/MMTP-packet structure is at most a paraphrase of what

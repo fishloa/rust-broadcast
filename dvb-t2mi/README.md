@@ -126,7 +126,7 @@ packet_type, value }` where `value` can be downcast to your concrete type.
 
 ## MSRV
 
-Rust **1.86**.
+Rust **1.95.0**.
 
 ## References
 

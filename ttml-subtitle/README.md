@@ -10,7 +10,7 @@ TTML2 / IMSC 1.1 timed-text subtitle parser for Rust.
 Parses W3C Timed Text Markup Language 2 (TTML2) documents and validates them against IMSC 1.1 Text Profile and Image Profile constraints. Parse a document, then validate it separately — the two passes are independent.
 
 - **Spec**: W3C TTML2 Recommendation (08 Nov 2018) + IMSC 1.1 Recommendation (08 Nov 2018, edited 27 Apr 2020)
-- **MSRV**: 1.86
+- **MSRV**: 1.95.0
 - **License**: MIT OR Apache-2.0
 
 ## Quick Start

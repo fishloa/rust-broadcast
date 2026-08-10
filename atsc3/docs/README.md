@@ -53,9 +53,9 @@ was taken from a location the verifier flagged as actually altered.
 on IETF RFC 5651 (LCT), RFC 5775 (ALC), and RFC 6726 (FLUTE). All three are already vendored,
 freely-redistributable text in this repo's public `specs/` directory
 (`rfc5651_lct.txt`, `rfc5775_alc.txt`, `rfc6726_flute.txt`) and are **already implemented** by
-the existing `dvb-flute` crate (with its own `docs/{lct,alc,flute,norm}.md` transcriptions).
+the existing `rmt-flute` crate (with its own `docs/{lct,alc,flute,norm}.md` transcriptions).
 [`a331-route.md`](a331-route.md) reads those RFCs directly (not just A/331's summary of them)
-for the base LCT header/extension format, and points to `dvb-flute` rather than re-transcribing
+for the base LCT header/extension format, and points to `rmt-flute` rather than re-transcribing
 what that crate's docs already cover. RFC 6330 (RaptorQ, referenced by A/331 for repair-flow FEC
 Payload IDs) and 3GPP TS 26.346 (MBMS, referenced by A/331 for FDT extensions) are **not**
 vendored anywhere in this repo and were not independently fetched for this pass — see "could not
@@ -72,7 +72,7 @@ establish" below.
   semantics table, the delivery-object model (File/Entity/Unsigned-Package/Signed-Package
   modes) and the `SrcFlow` XML element, and the FEC repair framework (FEC transport
   object/super-object construction, the `RepairFlow` XML element, TOI mapping). Opens with an
-  explicit pointer to reuse the existing `dvb-flute` crate for the underlying LCT/ALC/FLUTE
+  explicit pointer to reuse the existing `rmt-flute` crate for the underlying LCT/ALC/FLUTE
   layer rather than re-implementing it.
 - [`a331-signalling.md`](a331-signalling.md) — LLS (transport, `LLS_table()` envelope, SLT) and
   ROUTE/DASH SLS (USBD, S-TSID, MPD pointer, APD, HELD, DWD, RSAT pointer), plus the Annex H
@@ -108,15 +108,15 @@ explicitly-scoped catalog (MMT's remaining descriptors) left for future work.
 
 ## Overlaps flagged for the implementer
 
-- **`dvb-flute`** (this workspace) already implements RFC 5651 LCT, RFC 5775 ALC (incl. EXT_FTI),
+- **`rmt-flute`** (this workspace) already implements RFC 5651 LCT, RFC 5775 ALC (incl. EXT_FTI),
   and RFC 6726 FLUTE (incl. EXT_FDT/EXT_CENC, the TOI=0 convention). The `atsc3` crate's ROUTE
-  layer should **depend on `dvb-flute`**, not duplicate its LCT/header-extension parsing. See
+  layer should **depend on `rmt-flute`**, not duplicate its LCT/header-extension parsing. See
   [`a331-route.md`](a331-route.md) §0.
 - **Issue #755 (DVB-MABR)** — ETSI TS 103 769 is a sibling multicast/ROUTE-like stack over the
-  same FLUTE/ALC/LCT base (this is in fact part of why `dvb-flute` exists as a shared crate per
+  same FLUTE/ALC/LCT base (this is in fact part of why `rmt-flute` exists as a shared crate per
   its own README). Whichever of #750/#755 lands a genuinely-shared helper (e.g. FEC
   transport-object/super-object construction, if DVB-MABR needs the same shape) should land it
-  in `dvb-flute`/`broadcast-common`, not duplicate it.
+  in `rmt-flute`/`broadcast-common`, not duplicate it.
 - **`transmux`** already parses DASH MPD and handles CENC (ISO/IEC 23001-7) for ISOBMFF/CMAF.
   A/331's MPD fragment is DASH-IF's MPD verbatim, and A/331's MMT DRM signalling maps onto the
   same CENC model `transmux` already has. The new `atsc3` crate's job is recognizing/routing

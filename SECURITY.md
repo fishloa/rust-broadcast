@@ -32,7 +32,7 @@ We aim to acknowledge within a few days and to ship a fix in a patch release.
   and return structured `thiserror` errors (`BufferTooShort`, `InvalidDescriptor`,
   …) rather than panicking. A panic on any byte input is treated as a bug.
 - **No `unsafe`** in the parsing paths.
-- **`#![no_std]` + `alloc`**, MSRV 1.86 — usable in constrained/embedded targets.
+- **`#![no_std]` + `alloc`**, MSRV 1.95.0 — usable in constrained/embedded targets.
 - **Fuzzed.** `cargo-fuzz` targets exercise the section/descriptor/BBFrame
   parsers against arbitrary input; round-trip and real-broadcast-capture
   fixtures guard correctness.

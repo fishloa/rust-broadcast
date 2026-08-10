@@ -106,7 +106,7 @@ independent per-PLP carry-over state and returns completed 188-byte inner TS pac
 
 ## MSRV
 
-Rust **1.86**.
+Rust **1.95.0**.
 
 ## Authoritative references
 

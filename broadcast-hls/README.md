@@ -187,7 +187,7 @@ cargo run -p broadcast-hls --example parse_playlist
 
 ## Minimum Supported Rust Version
 
-1.86
+1.95.0
 
 ## License
 

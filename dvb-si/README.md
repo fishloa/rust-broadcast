@@ -11,7 +11,7 @@ Table 2 (29 section types; 28 dispatched by `AnyTableSection` + the type-keyed M
 ETSI specs (vendored in the repo and transcribed into reviewable markdown) and
 validated against live broadcast captures.
 
-**MSRV: 1.86.** `no_std + alloc` supported — disable the default `std` feature for embedded targets (non-Latin text charsets and wall-clock time require `std`).
+**MSRV: 1.95.0.** `no_std + alloc` supported — disable the default `std` feature for embedded targets (non-Latin text charsets and wall-clock time require `std`).
 
 ## API model
 

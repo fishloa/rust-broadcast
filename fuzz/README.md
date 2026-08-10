@@ -93,4 +93,4 @@ cargo +nightly fuzz tmin <target> fuzz/artifacts/<target>/<crash-file>
 - `cargo build --workspace --locked` from the repository root must remain
   unaffected (the `fuzz/` directory is excluded from the workspace).
 - `libfuzzer-sys` requires nightly Rust, but the parent workspace stays on
-  stable 1.86 MSRV. Use `cargo +nightly fuzz ...` for fuzzing only.
+  stable 1.95.0 MSRV. Use `cargo +nightly fuzz ...` for fuzzing only.

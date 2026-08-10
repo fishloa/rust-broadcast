@@ -72,12 +72,12 @@ the full service reporting JSON/OpenAPI schema (Annex N in
 
 ## Overlap with existing crates and issues in this workspace
 
-- **`dvb-flute`** (published, v0.3.0) already implements the byte-level LCT header (RFC
+- **`rmt-flute`** (published, v0.3.0) already implements the byte-level LCT header (RFC
   5651), ALC packet + `EXT_FTI` (RFC 5775), and FLUTE `EXT_FDT`/`EXT_CENC` (RFC 6726) —
   exactly the packet layer TS 103 769 Annex F profiles. **`dvb-mabr` should depend on
-  `dvb-flute`, not duplicate it.** See `mabr-transport.md` §0/§6 for the detailed
+  `rmt-flute`, not duplicate it.** See `mabr-transport.md` §0/§6 for the detailed
   breakdown of what Annex F adds on top (an XML extension to the FDT body, a
-  chunked-mode URI convention) versus what it inherits unchanged from `dvb-flute`.
+  chunked-mode URI convention) versus what it inherits unchanged from `rmt-flute`.
 - **Issue #750** ("new crate: ATSC 3.0 (A/331 ROUTE + MMT signalling, A/321
   bootstrap)") is open and unimplemented. TS 103 769 Annex H (the ROUTE-based transport
   profile) is built entirely on top of ATSC A/331 Annex A's ROUTE/LCT packet format,
@@ -115,7 +115,7 @@ This list has been updated after the **adversarial fidelity audit** (2026-07-30 
    sequence, not as a clean table; the *prose* around it (Table H.2.0-1, which is a real
    table and read cleanly) was used instead. The diagram itself adds no information
    beyond "this is the standard ALC/LCT/FEC-Payload-ID/payload stacking" already
-   documented in `dvb-flute/docs/alc.md`.
+   documented in `rmt-flute/docs/alc.md`.
 4. **The reference-architecture box diagrams** (figures 5.1.0-1, 5.2-1, 6.1-1, 6.2-1,
    6.3-1, 7.1-1, 7.2-1) — same textlayer-diagram limitation as #3. The named reference
    points and workflow steps were fully recovered from the surrounding prose (which is
@@ -194,7 +194,7 @@ Two residual defects from the initial audit were fixed:
 | — | Policy | **Prose-vs-XSD flagging rule**: Where the prose table's Data type column disagrees with the XSD's `type="..."` value, the transcription follows the XSD (it is the normative wire-format authority) but **flags the divergence** so an implementer knows they may encounter tooling or documentation that expects the prose value. Finding 3 (`keyId`/`@keyUri`) and the updated finding 6 (`@protocolVersion`: `"String"` vs `xs:positiveInteger`) now both follow this rule uniformly. | — |
 
 **What the audit confirmed correct** (independently verified against the PDF):
-- The `dvb-flute` reuse claim is sound; Annex F's delta list is complete.
+- The `rmt-flute` reuse claim is sound; Annex F's delta list is complete.
 - V1.2.1 is the current edition; no later edition exists on the ETSI server.
 - The core `MulticastTransportSession` element tree, rendezvous syntax,
   extensibility mechanism, FEC-scheme vocabulary, and Annex H deltas all check out.

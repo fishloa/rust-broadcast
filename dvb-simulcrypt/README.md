@@ -91,7 +91,7 @@ cargo run -p dvb-simulcrypt --example parse_cw_provision
 
 ## Minimum Supported Rust Version
 
-1.86
+1.95.0
 
 ## License
 

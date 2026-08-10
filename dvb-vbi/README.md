@@ -77,7 +77,7 @@ cargo run -p dvb-vbi --example parse_data_field
 
 ## Minimum Supported Rust Version
 
-1.86
+1.95.0
 
 ## License
 

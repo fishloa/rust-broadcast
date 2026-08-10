@@ -15,17 +15,17 @@ not by original bit-layout definition:
 
 | Annex | Protocol profiled | Base spec (not TS 103 769) | Already in this workspace? |
 |---|---|---|---|
-| **F** (clause F, normative) | 3GPP FLUTE (the MBMS Download Profile) | 3GPP TS 26.346 clause L.4 (referencing IETF RFC 3926 FLUTE, RFC 5651 LCT, RFC 5775 ALC) | **Yes** — `dvb-flute` (published, v0.3.0) already implements the RFC 5651 `LctHeader`, the RFC 5775 `AlcPacket` + `EXT_FTI`, and the RFC 6726 FLUTE `EXT_FDT`/`EXT_CENC` extensions. TS 103 769 Annex F only adds an **XML** extension to the FDT-Instance body (§F.2.3-F.2.5, covered below) and a set of URI/operational conventions layered on top — it changes no LCT/ALC/FLUTE bit ever emitted on the wire. |
-| **H** (clause H, normative) | ROUTE, per ATSC A/331 Annex A | ATSC A/331:2019 Annex A (which itself profiles RFC 5651 LCT / RFC 5775 ALC, plus ATSC-specific LCT header extensions `EXT_TOL` and `EXT_TIME`, S-TSID/MPD signalling and the ROUTE `Codepoint` registry) | **No.** `dvb-flute` does not implement `EXT_TOL`/`EXT_TIME`/ROUTE Codepoints or S-TSID — that byte-level and XML-signalling work belongs to **issue #750** ("ATSC 3.0: A/331 ROUTE + MMT signalling, A/321 bootstrap"), which is open and unimplemented as of this writing. **`dvb-mabr` cannot fully implement Annex H until #750 (or an equivalent ROUTE-primitives crate) exists**; this document records what TS 103 769 constrains on top of ROUTE, not the ROUTE packet layout itself. |
+| **F** (clause F, normative) | 3GPP FLUTE (the MBMS Download Profile) | 3GPP TS 26.346 clause L.4 (referencing IETF RFC 3926 FLUTE, RFC 5651 LCT, RFC 5775 ALC) | **Yes** — `rmt-flute` (published, v0.4.0) already implements the RFC 5651 `LctHeader`, the RFC 5775 `AlcPacket` + `EXT_FTI`, and the RFC 6726 FLUTE `EXT_FDT`/`EXT_CENC` extensions. TS 103 769 Annex F only adds an **XML** extension to the FDT-Instance body (§F.2.3-F.2.5, covered below) and a set of URI/operational conventions layered on top — it changes no LCT/ALC/FLUTE bit ever emitted on the wire. |
+| **H** (clause H, normative) | ROUTE, per ATSC A/331 Annex A | ATSC A/331:2019 Annex A (which itself profiles RFC 5651 LCT / RFC 5775 ALC, plus ATSC-specific LCT header extensions `EXT_TOL` and `EXT_TIME`, S-TSID/MPD signalling and the ROUTE `Codepoint` registry) | **No.** `rmt-flute` does not implement `EXT_TOL`/`EXT_TIME`/ROUTE Codepoints or S-TSID — that byte-level and XML-signalling work belongs to **issue #750** ("ATSC 3.0: A/331 ROUTE + MMT signalling, A/321 bootstrap"), which is open and unimplemented as of this writing. **`dvb-mabr` cannot fully implement Annex H until #750 (or an equivalent ROUTE-primitives crate) exists**; this document records what TS 103 769 constrains on top of ROUTE, not the ROUTE packet layout itself. |
 
-**Recommendation for implementation planning**: `dvb-mabr` should depend on `dvb-flute`
+**Recommendation for implementation planning**: `dvb-mabr` should depend on `rmt-flute`
 for the FLUTE/LCT/ALC packet layer (Annex F requires nothing further at that layer), and
 should either depend on the crate that comes out of issue #750 for the ROUTE layer, or
 treat Annex H support as blocked on that issue. Do not re-implement LCT/ALC/FLUTE header
-parsing inside `dvb-mabr` — that would duplicate `dvb-flute` and drift from it.
+parsing inside `dvb-mabr` — that would duplicate `rmt-flute` and drift from it.
 
 The **byte-exact LCT/ALC/FLUTE header layout is out of scope of this document** — see
-`dvb-flute/docs/lct.md`, `alc.md`, `flute.md` in this workspace for that transcription
+`rmt-flute/docs/lct.md`, `alc.md`, `flute.md` in this workspace for that transcription
 (RFC 5651/5775/6726, already spec-cited there). Likewise the exact ROUTE/LCT-extension
 bit layout (`EXT_TOL`, `EXT_TIME`, Codepoint semantics) is **not established here** — it
 lives in ATSC A/331 Annex A, which is not yet vendored or transcribed anywhere in this
@@ -425,7 +425,7 @@ optional; HTTPS mandatory for HTTP/3. Byte-range requests (RFC 9110 §14) mandat
 ## 6. Overlap summary (for the implementer / delegate brief)
 
 - **Do not re-implement**: LCT header (RFC 5651), ALC packet + `EXT_FTI` (RFC 5775),
-  FLUTE `EXT_FDT`/`EXT_CENC` (RFC 6726) — use `dvb-flute` (published crate in this
+  FLUTE `EXT_FDT`/`EXT_CENC` (RFC 6726) — use `rmt-flute` (published crate in this
   workspace).
 - **Blocked / needs coordination**: ROUTE packet profiling (`EXT_TOL`, `EXT_TIME`,
   Codepoint dispatch, S-TSID/MPD parsing) is ATSC A/331 territory — issue **#750**. If

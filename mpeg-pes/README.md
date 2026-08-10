@@ -2,7 +2,7 @@
 
 [![crates.io](https://img.shields.io/crates/v/mpeg-pes.svg)](https://crates.io/crates/mpeg-pes)
 [![docs.rs](https://img.shields.io/docsrs/mpeg-pes)](https://docs.rs/mpeg-pes)
-[![MSRV](https://img.shields.io/badge/MSRV-1.86-blue.svg)](https://blog.rust-lang.org/)
+[![MSRV](https://img.shields.io/badge/MSRV-1.95.0-blue.svg)](https://blog.rust-lang.org/)
 [![license](https://img.shields.io/crates/l/mpeg-pes.svg)](#license)
 
 **PES (Packetized Elementary Stream) depacketization + PTS/DTS** — the sublayer

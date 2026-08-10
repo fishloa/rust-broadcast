@@ -51,7 +51,7 @@ cargo run -p mpeg-ps --example walk_ps
 
 ## Minimum Supported Rust Version
 
-1.86
+1.95.0
 
 ## License
 

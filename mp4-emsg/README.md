@@ -92,7 +92,7 @@ cargo run -p mp4-emsg --example parse_emsg
 
 ## Minimum Supported Rust Version
 
-1.86
+1.95.0
 
 ## License
 

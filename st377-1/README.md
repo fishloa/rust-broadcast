@@ -127,7 +127,7 @@ cargo run -p st377-1 --example build_preface
 
 ## Minimum Supported Rust Version
 
-1.86
+1.95.0
 
 ## License
 

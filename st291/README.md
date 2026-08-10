@@ -87,7 +87,7 @@ cargo run -p st291 --example parse_anc_rtp --features rtp
 
 ## Minimum Supported Rust Version
 
-1.86
+1.95.0
 
 ## License
 

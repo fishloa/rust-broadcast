@@ -72,7 +72,7 @@ cargo run -p rtp-packet --example rfc8285_extensions --features rfc8285
 
 ## Minimum Supported Rust Version
 
-1.86
+1.95.0
 
 ## License
 

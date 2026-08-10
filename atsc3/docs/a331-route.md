@@ -5,9 +5,9 @@ June 2025, Annex A (pp. 144-185), plus the LCT/ALC field semantics ROUTE constra
 A §A.3.4/A.3.6 (which are themselves normatively RFC 5651/RFC 5775, not re-specified by A/331).
 See [`README.md`](README.md) for provenance.
 
-## 0. Reuse `dvb-flute` — do not re-implement LCT/ALC/FLUTE
+## 0. Reuse `rmt-flute` — do not re-implement LCT/ALC/FLUTE
 
-**This workspace already has a crate for the layer ROUTE is built on.** `dvb-flute`
+**This workspace already has a crate for the layer ROUTE is built on.** `rmt-flute`
 (`no_std` + `alloc`, depends only on `broadcast-common`) implements:
 
 - `LctHeader` — the full RFC 5651 §5 LCT header (`V`/`C`/`PSI`/`S`/`O`/`H`/`A`/`B`, `HDR_LEN`,
@@ -21,11 +21,11 @@ See [`README.md`](README.md) for provenance.
 - `AlcPacket` + `EXT_FTI` (HET=64, RFC 5775) — see `dvb-flute/docs/alc.md`.
 - `ExtFdt`/`ExtCenc` (HET=192/193, RFC 6726 FLUTE) — see `dvb-flute/docs/flute.md`.
 
-**A ROUTE parser in the new `atsc3` crate should depend on `dvb-flute` for `LctHeader` and
+**A ROUTE parser in the new `atsc3` crate should depend on `rmt-flute` for `LctHeader` and
 `HeaderExtension`, and add only what ROUTE defines on top**: the ROUTE-specific field-value
 constraints (§1 below), the two ROUTE-only extension headers (§2), the ROUTE FEC Payload ID
 formats (§3), the Codepoint semantics (§4), the delivery-object model (§5), and the FEC
-signalling/repair-flow XML model (§6-7) — all of which are genuinely new (not in `dvb-flute`
+signalling/repair-flow XML model (§6-7) — all of which are genuinely new (not in `rmt-flute`
 today, since that crate stops at generic ALC/FLUTE and does not know about ROUTE). This mirrors
 how A/331 itself is written: Annex A is a **profile + delta** on RFC 5651/5775/6726, not a
 ground-up restatement.
@@ -53,10 +53,10 @@ ALC/LCT — "ROUTE limits the usage of the LCT building block to a single channe
 — congestion control is therefore sender-driven; any receiver-driven layered-multicast
 behavior is left to the application layer, not LCT itself.
 
-## 2. ROUTE-specific LCT header extensions (§A.3.7, §A.3.8) — not in `dvb-flute`
+## 2. ROUTE-specific LCT header extensions (§A.3.7, §A.3.8) — not in `rmt-flute`
 
 Two new fixed/variable extensions are defined by A/331 itself (registered with IANA per the
-spec text), neither of which exists in `dvb-flute` today:
+spec text), neither of which exists in `rmt-flute` today:
 
 ### 2.1 EXT_ROUTE_PRESENTATION_TIME (HET = 66)
 _§A.3.7.1, A/331:2025-06 p.166_
@@ -78,7 +78,7 @@ is in use for the stream.
 time; value must always be greater than the accompanying EXT_TIME's SCT.
 
 - **Companion requirement**: any LCT packet carrying EXT_ROUTE_PRESENTATION_TIME **shall** also
-  carry RFC 5651's EXT_TIME (HET=2, already in `dvb-flute`) with both the SCT-High and SCT-Low
+  carry RFC 5651's EXT_TIME (HET=2, already in `rmt-flute`) with both the SCT-High and SCT-Low
   flags set; the SCT value conveyed there denotes the "wait time" value
   `[EXT_ROUTE_PRESENTATION_TIME - SCT]` (§A.3.7.2, tied to §8.1.1.3's buffer model — not
   transcribed in this pass; see "could not establish").
@@ -86,7 +86,7 @@ time; value must always be greater than the accompanying EXT_TIME's SCT.
 ### 2.2 EXT_TOL — Transport Object Length (§A.3.8.1)
 
 Used by a ROUTE receiver (alongside, or instead of, RFC 5775's EXT_FTI, HET=64, already in
-`dvb-flute`) to learn the delivery object's transfer length "after any content encoding (e.g.
+`rmt-flute`) to learn the delivery object's transfer length "after any content encoding (e.g.
 gzip)". Two width variants, distinguished by HET:
 
 #### 24-bit form — HET = 194 (fixed-length extension)
@@ -98,7 +98,7 @@ _Figure A.3.6, A/331:2025-06 p.167_
 | `Transfer Length` | 24 | uimsbf |
 
 One 32-bit word total (matches the generic fixed-length HET>=128 shape already handled by
-`dvb-flute`'s `HeaderExtension`: HET byte + 3 content bytes, no HEL).
+`rmt-flute`'s `HeaderExtension`: HET byte + 3 content bytes, no HEL).
 
 #### 48-bit form — HET = 67 (variable-length extension)
 _Figure A.3.7, A/331:2025-06 p.167_
@@ -119,7 +119,7 @@ Two 32-bit words total (HEL = 2).
 ## 3. FEC Payload ID formats (§A.3.5.1, §A.3.5.2)
 
 The 32-bit "FEC Payload ID" word that follows the LCT header in every ALC/ROUTE packet
-(`dvb-flute`'s `AlcPacket` already carries this as an opaque slice — RFC 5775 explicitly leaves
+(`rmt-flute`'s `AlcPacket` already carries this as an opaque slice — RFC 5775 explicitly leaves
 its format FEC-scheme-dependent) has **two concrete ROUTE-defined layouts**:
 
 ### 3.1 Source flows — Compact No-Code FEC scheme
@@ -208,7 +208,7 @@ _§A.3.3.1, A/331:2025-06 p.153_
   `Transfer-Length`, `FEC-OTI-*`, `Expires` come from RFC 6726 §3.4.2, already vendored at
   `specs/rfc6726_flute.txt`, not re-transcribed here). The Extended FDT is delivered either (a)
   embedded as the `SrcFlow.EFDT` element in the S-TSID, or (b) as a separate delivery object
-  with **TOI=0** in the same LCT channel — this is FLUTE-compatible, matching `dvb-flute`'s
+  with **TOI=0** in the same LCT channel — this is FLUTE-compatible, matching `rmt-flute`'s
   documented "TOI=0 is reserved for FDT Instances" FLUTE convention. ATSC adds its own FDT
   extensions (`@efdtVersion`, `@maxExpiresDelta`, `@maxTransportSize`, `@appContextIdList`,
   `@fileTemplate`, `@filterCodes`, `@maxCacheMemory`, `@order` on FDT-Instance; `@appContextIdList`/
@@ -344,16 +344,16 @@ see `README.md`'s "could not establish" list.
 
 ## Overlap with other workspace crates/issues
 
-- **`dvb-flute`** (this workspace) already implements the RFC 5651/5775/6726 layer ROUTE sits
+- **`rmt-flute`** (this workspace) already implements the RFC 5651/5775/6726 layer ROUTE sits
   on — see §0 above. **Do not re-implement LCT/ALC/FLUTE parsing in the new `atsc3` crate.**
 - **Issue #755 (DVB-MABR)** covers ETSI TS 103 769's multicast ABR stack, which is *also* built
-  on FLUTE/ALC/LCT (and, per `dvb-flute`'s own README, is one of the reasons that crate exists:
+  on FLUTE/ALC/LCT (and, per `rmt-flute`'s own README, is one of the reasons that crate exists:
   "the building blocks beneath DVB-IPTV / DVB-MABR file delivery"). ROUTE and DVB-MABR are
-  sibling profiles of the same RFC 5651/5775/6726 base, so both should depend on `dvb-flute`
+  sibling profiles of the same RFC 5651/5775/6726 base, so both should depend on `rmt-flute`
   rather than each growing their own LCT/FEC-header code — whichever of #750/#755 lands first
   should make sure any genuinely-shared-but-currently-missing piece (e.g. a generic FEC
   transport-object/super-object helper, if DVB-MABR turns out to need the same construction)
-  goes into `dvb-flute` or `broadcast-common`, not duplicated.
+  goes into `rmt-flute` or `broadcast-common`, not duplicated.
 - **`transmux`** already handles DASH/HLS/CMAF packaging and CENC. ROUTE's payload, once
   reassembled from LCT/FEC framing, is typically DASH-formatted CMAF Segments/Initialization
   Segments (see CP values 5-9 in §4) — the *reassembly* (ROUTE -> delivery object bytes) belongs

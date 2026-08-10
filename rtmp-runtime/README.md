@@ -87,7 +87,7 @@ this README and the source doc comments.)
 
 ## MSRV
 
-Rust **1.86**.
+Rust **1.95.0**.
 
 ## License
 

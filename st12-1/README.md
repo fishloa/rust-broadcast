@@ -70,7 +70,7 @@ cargo run -p st12-1 --example parse_frame
 
 ## Minimum Supported Rust Version
 
-1.86
+1.95.0
 
 ## License
 

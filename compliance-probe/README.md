@@ -127,7 +127,7 @@ whichever Prometheus scrapes the host process's `/metrics`.
 
 ## MSRV
 
-Rust **1.86**.
+Rust **1.95.0**.
 
 ## References
 

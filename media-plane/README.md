@@ -96,7 +96,7 @@ driven against a real broadcast capture, and
 
 ## MSRV
 
-Rust **1.86**.
+Rust **1.95.0**.
 
 ## License
 

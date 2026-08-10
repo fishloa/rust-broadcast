@@ -13,7 +13,7 @@ Shared primitives for the DVB crate family. Every sibling crate (`dvb-si`,
 is required — suitable for embedded/RTOS targets with a heap. The `std` feature
 (on by default) re-enables `std::error::Error` integration and `chrono`'s
 wall-clock support. `core::error::Error` is used for the error trait bound in
-`no_std` builds (stabilised in Rust 1.81; workspace MSRV is 1.86). The MJD↔calendar float arithmetic
+`no_std` builds (stabilised in Rust 1.81; workspace MSRV is 1.95.0). The MJD↔calendar float arithmetic
 uses `libm::floor` uniformly in both `std` and `no_std` builds, so the output
 is bit-identical on all targets.
 
@@ -124,8 +124,8 @@ live in the container crates (e.g. `transmux`).
 
 ## MSRV
 
-**1.86** — required for `core::error::Error` (used as the error trait bound in
-`no_std` builds; stabilised in 1.81, workspace MSRV is 1.86).
+**1.95.0** — the workspace MSRV (#949). `core::error::Error` needed 1.81 (used as the error trait bound in
+`no_std` builds; stabilised in 1.81, workspace MSRV is 1.95.0).
 
 ## Non-goals
 

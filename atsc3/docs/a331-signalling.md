@@ -291,7 +291,7 @@ _§7.1.7, A/331:2025-06 p.68-69_
 of file repair is bounded by the S-TSID's `EFDT.FDT-Instance@Expires`. A receiver may start
 earlier upon seeing the LCT header's Close Object flag (`B`, for the file of interest) or Close
 Session flag (`A`, before the FDT's nominal `@Expires`) — both flags are already modeled by
-`dvb-flute`'s `LctHeader` (see [`a331-route.md`](a331-route.md) §0).
+`rmt-flute`'s `LctHeader` (see [`a331-route.md`](a331-route.md) §0).
 
 ### 4.5 HTML Entry pages Location Description (HELD)
 
@@ -366,15 +366,15 @@ confidentiality on their own (rely on the transport / A/360 signing).
 
 ## Overlap with other workspace crates
 
-- **`dvb-flute`** — the LCT-channel/TSI/TOI concepts `S-TSID.RS.LS` describes are the same
-  RFC 5651 concepts `dvb-flute`'s `LctHeader` models; see [`a331-route.md`](a331-route.md) §0.
+- **`rmt-flute`** — the LCT-channel/TSI/TOI concepts `S-TSID.RS.LS` describes are the same
+  RFC 5651 concepts `rmt-flute`'s `LctHeader` models; see [`a331-route.md`](a331-route.md) §0.
 - **`transmux`** — the MPD fragment (§4.3) is DASH-IF's MPD verbatim; `transmux` already parses
   DASH MPDs for its DASH-pull/DASH-mux paths. The new `atsc3` crate's job is recognizing *that*
   an SLS bundle carries an MPD and handing it off, not re-implementing MPD parsing.
 - **Issue #755 (DVB-MABR)** — ETSI TS 103 769 has its own service-list/session-signalling
   layer (a DVB analogue of SLT/S-TSID) over the same FLUTE/ALC base; no XML-schema-level reuse
   is expected between the two (different XML namespaces/schemas entirely), but both should sit
-  on `dvb-flute` for the underlying transport framing.
+  on `rmt-flute` for the underlying transport framing.
 
 ## Could not establish (see also `README.md`)
 

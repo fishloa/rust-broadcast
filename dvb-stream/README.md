@@ -54,7 +54,7 @@ async fn main() -> std::io::Result<()> {
 
 ## MSRV and versioning
 
-**MSRV: 1.86** (matches the workspace). `dvb-stream` is versioned and released
+**MSRV: 1.95.0** (matches the workspace). `dvb-stream` is versioned and released
 **independently** from the `dvb-si`/`dvb-t2mi` lockstep (`0.x` series), because
 tokio's own MSRV moves faster than the workspace pin.
 

@@ -27,7 +27,7 @@ API-level documentation and an example.
 
 Presentation manifests (DASH MPD / HLS Master Playlist) are referenced by
 URL only, never parsed. The multicast transport of the objects themselves
-(FLUTE/ROUTE) is out of scope — see `dvb-flute`.
+(FLUTE/ROUTE) is out of scope — see `rmt-flute`.
 
 ## Round-trip guarantee
 
@@ -49,4 +49,4 @@ under ETSI copyright and are not reproduced in this repository).
 
 ## MSRV
 
-Rust 1.86, edition 2024. `no_std` + `alloc` without the `std` feature.
+Rust 1.95.0, edition 2024. `no_std` + `alloc` without the `std` feature.

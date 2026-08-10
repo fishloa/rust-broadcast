@@ -73,7 +73,7 @@ cargo run -p st337 --example parse_burst
 
 ## Minimum Supported Rust Version
 
-1.86
+1.95.0
 
 ## License
 

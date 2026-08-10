@@ -132,7 +132,7 @@ route them into `SpliceInfoSection::parse`.
 
 ## MSRV
 
-Rust **1.86**.
+Rust **1.95.0**.
 
 ## Spec grounding
 

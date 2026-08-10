@@ -192,7 +192,7 @@ and ES PID extraction (indicator 1.6).
 
 ## MSRV
 
-Rust **1.86**.
+Rust **1.95.0**.
 
 ## References
 

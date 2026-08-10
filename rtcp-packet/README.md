@@ -77,7 +77,7 @@ cargo run -p rtcp-packet --example parse_compound_packet
 
 ## Minimum Supported Rust Version
 
-1.86
+1.95.0
 
 ## License
 

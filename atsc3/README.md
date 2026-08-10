@@ -59,7 +59,7 @@ of any code (see `docs/README.md`):
 - **A/321** — System Discovery and Signalling: physical-layer bootstrap
   signalling.
 - **A/331 ROUTE/DASH** — LCT-based object carriage over ALC/FLUTE (Annex A);
-  the underlying LCT/ALC/FLUTE layer already exists in `dvb-flute`.
+  the underlying LCT/ALC/FLUTE layer already exists in `rmt-flute`.
 - **A/331 MMT** — MMTP-based delivery signalling (§7.2).
 - **Service Layer Signalling (SLS)** — USBD, S-TSID, APD, HELD, DWD (§7.1).
 - The remaining `SLT`/`Service` XML attributes not yet modeled by

@@ -69,7 +69,7 @@ $ cargo run -p dvb-tools --locked -- t2mi dvb-si/tests/fixtures/m6-single.ts --i
 
 ## MSRV
 
-**1.86** (workspace minimum). `dvb-tools` is versioned lockstep with the
+**1.95.0** (workspace minimum). `dvb-tools` is versioned lockstep with the
 library crates (`dvb-si`, `dvb-t2mi`, etc.) and ships as part of the 7.x
 release series.
 

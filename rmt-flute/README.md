@@ -92,7 +92,7 @@ cargo run -p rmt-flute --example parse_flute
 
 ## Minimum Supported Rust Version
 
-1.86
+1.95.0
 
 ## License
 

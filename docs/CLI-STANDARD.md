@@ -12,7 +12,7 @@ named flags, validation, and consistent error messages for free.
 - A binary crate depends on `clap` directly.
 - A binary gated behind a feature (e.g. `ci-probe` under `linux`) takes `clap`
   as an **optional** dep enabled by that feature, so the default build stays lean.
-- Pin a `clap` version that builds on the workspace MSRV (1.86); `--locked` is
+- Pin a `clap` version that builds on the workspace MSRV (1.95.0); `--locked` is
   authoritative.
 
 ## Shape
