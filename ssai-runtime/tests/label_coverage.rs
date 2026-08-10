@@ -35,18 +35,88 @@ fn read_rs(dir: &Path, out: &mut Vec<(String, String)>) {
 /// module-path qualifier (`broadcast_common::impl_spec_display!(...)`),
 /// since every invocation in this crate is fully qualified rather than
 /// `use`-imported.
-fn has_impl(src: &str, prefix: &str, name: &str) -> bool {
+// Hardened variant, copied verbatim from `transmux/tests/label_coverage.rs`.
+// The earlier version used a bare `line.find(&needle)`, so a commented-out
+// `// impl_spec_display!(X);` satisfied the guard — demonstrated, not
+// theorised: commenting out `impl_spec_display!(SnapMode)` left this test
+// green. The rest of the workspace was already hardened; these two newest
+// crates were copied from a stale template.
+fn strip_path_qualifier(s: &str) -> &str {
+    let mut rest = s;
+    loop {
+        let ident_len = rest
+            .chars()
+            .take_while(|c| c.is_alphanumeric() || *c == '_')
+            .count();
+        if ident_len == 0 {
+            break;
+        }
+        match rest[ident_len..].strip_prefix("::") {
+            Some(after) => rest = after,
+            None => break,
+        }
+    }
+    rest
+}
+
+fn has_impl(all: &str, prefix: &str, name: &str) -> bool {
     let needle = format!("{prefix}{name}");
     let is_boundary =
         |rest: &str| !matches!(rest.chars().next(), Some(c) if c.is_alphanumeric() || c == '_');
+    let is_path_or_space =
+        |c: char| c.is_whitespace() || c == ':' || c.is_alphanumeric() || c == '_';
 
-    for line in src.lines() {
-        if let Some(pos) = line.find(&needle)
-            && is_boundary(&line[pos + needle.len()..])
+    // Strip a leading `ident::` chain (`crate::`, `broadcast_common::`, …) so a
+    // re-exported or fully-qualified invocation still counts as reaching the
+    // needle from the very start of the line.
+    fn strip_path_qualifier(s: &str) -> &str {
+        let mut rest = s;
+        loop {
+            let ident_len = rest
+                .chars()
+                .take_while(|c| c.is_alphanumeric() || *c == '_')
+                .count();
+            if ident_len == 0 {
+                break;
+            }
+            match rest[ident_len..].strip_prefix("::") {
+                Some(after) => rest = after,
+                None => break,
+            }
+        }
+        rest
+    }
+
+    for line in all.lines() {
+        let trimmed = line.trim_start();
+
+        // The invocation must be the first non-whitespace token on its line —
+        // a commented-out `// impl_spec_display!(...)` no longer satisfies
+        // this. A leading crate-path qualifier (`crate::`, `broadcast_common::`)
+        // is transparent to this check: it is still the first *statement*.
+        if let Some(rest) = strip_path_qualifier(trimmed).strip_prefix(&needle)
+            && is_boundary(rest)
         {
             return true;
         }
+
+        // A bare `Display for Name` needle (the generic fallback some crates
+        // use) also counts when reached from the `impl` keyword through
+        // nothing but a module-path qualifier: `impl ::core::fmt::Display for
+        // Name`, `impl std::fmt::Display for Name`, `impl fmt::Display for
+        // Name`, `impl Display for Name`.
+        if !needle.starts_with("impl")
+            && let Some(after_impl) = trimmed.strip_prefix("impl")
+            && let Some(pos) = after_impl.find(&needle)
+        {
+            let qualifier = &after_impl[..pos];
+            let rest = &after_impl[pos + needle.len()..];
+            if qualifier.chars().all(is_path_or_space) && is_boundary(rest) {
+                return true;
+            }
+        }
     }
+
     false
 }
 
