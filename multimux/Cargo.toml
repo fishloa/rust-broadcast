@@ -13,7 +13,11 @@ categories   = ["multimedia", "network-programming"]
 all-features = true
 
 [dependencies]
-transmux          = { path = "../transmux",     version = "0.23" }
+# Floor is 0.23.1, not 0.23: `push::rtmp` uses
+# `flv_sequence_header_payloads` / `flv_frame_payloads`, which do not
+# exist in 0.23.0 (verified at the tag). Published multimux 0.8.0 shipped
+# with the understated `"0.23"` bound.
+transmux          = { path = "../transmux",     version = "0.23.1" }
 # HLS (M3U8) playlist syntax (issue #878): `source::hls_pull` builds/parses
 # playlists via this crate directly rather than through `transmux`.
 broadcast-hls     = { path = "../broadcast-hls", version = "0.1" }
@@ -41,7 +45,11 @@ hls-runtime       = { path = "../hls-runtime",   version = "0.6", features = ["s
 # Needed directly (not just via hls-runtime/transmux) by `source::hls_pull`
 # to recover `TrackSpec`s from a pulled stream's init segment via
 # `Fmp4Demux::unpackage` (the `Unpackage` trait) — issue #663 P3c.
-broadcast-common  = { path = "../broadcast-common", version = "9" }
+# Floor is 9.2, not 9: `output::smooth` uses `hex::hex_encode`, added in
+# 9.2.0 (absent at the 9.0.0 and 9.1.0 tags — verified). Published
+# multimux 0.8.0 shipped with the understated `"9"` bound, so a lock
+# resolving 9.0/9.1 fails to compile it today.
+broadcast-common  = { path = "../broadcast-common", version = "9.2" }
 # The media-plane ingress traits this crate's sources port onto (plan step
 # 5a): `Dialer`/`Listener`/`IngestSession`/`IngestDriver`/`ListenDriver`, and
 # the `Trunk` every ported session publishes into.
