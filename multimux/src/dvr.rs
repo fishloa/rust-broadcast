@@ -897,7 +897,11 @@ impl DvrRecorder {
                 } else {
                     0
                 };
-                let total_len = if mdat_offset + 4 <= data.len()
+                // `+ 8`, not `+ 4`: the slice below reads bytes
+                // [mdat_offset + 4, mdat_offset + 8), so `+ 4 <= len` is not
+                // enough to make it in-bounds. A segment file truncated
+                // between the moof and the mdat four-CC panicked here.
+                let total_len = if mdat_offset + 8 <= data.len()
                     && &data[mdat_offset + 4..mdat_offset + 8] == b"mdat"
                     && mdat_size >= 8
                 {
@@ -1106,6 +1110,56 @@ mod tests {
 
     fn cleanup_temp(dir: &std::path::Path) {
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// A period file truncated between a `moof` and the `mdat` four-CC must
+    /// not panic `rebuild_index`.
+    ///
+    /// The bound was `mdat_offset + 4 <= data.len()` while the comparison
+    /// slices `[mdat_offset + 4 .. mdat_offset + 8]`, so eight bytes were read
+    /// behind a four-byte guard. A DVR period file is on disk and can be
+    /// truncated by a power loss or a full disk mid-write, so this is reachable
+    /// without any attacker.
+    #[test]
+    fn rebuild_index_does_not_panic_on_a_period_file_truncated_after_moof() {
+        let tmp = temp_dir();
+        let trunk = Trunk::new(trunk_config());
+        let writer = trunk.segment_writer().expect("segment writer");
+        let cfg = dvr_config(&tmp, 5);
+        let mut recorder =
+            DvrRecorder::new("test".to_string(), cfg, ".m4s", &trunk).expect("recorder");
+
+        let init_bytes = b"INIT";
+        recorder.poll_and_persist(Some(init_bytes)).expect("init");
+
+        // One well-formed moof, then EOF five bytes into what should be the
+        // mdat header — enough for the old `+ 4` guard to pass and the `+ 8`
+        // slice to go out of bounds.
+        let mut moof = Vec::new();
+        moof.extend_from_slice(&16u32.to_be_bytes());
+        moof.extend_from_slice(b"moof");
+        moof.extend_from_slice(&[0u8; 8]);
+        moof.extend_from_slice(&[0u8; 5]);
+        writer.publish_segment(SegmentEntry::new(
+            bytes::Bytes::from(moof),
+            0,
+            Duration::from_secs(1),
+            broadcast_common::Timestamp::from_nanos(0),
+            transmux::SegmentMeta {
+                discontinuous: false,
+            },
+        ));
+        recorder.poll_and_persist(None).expect("persist truncated");
+
+        // The assertion is simply that this returns rather than panicking.
+        let entries = recorder.rebuild_index().expect("rebuild must not panic");
+        assert!(
+            entries.len() <= 1,
+            "a truncated period yields at most the one recoverable moof, got {}",
+            entries.len()
+        );
+
+        cleanup_temp(&tmp);
     }
 
     // --- Test 1: A period file is independently playable ---
