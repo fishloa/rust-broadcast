@@ -991,9 +991,34 @@ fn read_one(
                             .collect();
                         ReadOutcome::Events(wire)
                     }
-                    Err(e) => ReadOutcome::TransportError(e.to_string()),
+                    // A per-datagram failure is NOT session-fatal.
+                    //
+                    // `handle_datagram` returns `Err` for any SRTP
+                    // authentication failure, and post-handshake this socket
+                    // accepts datagrams from anyone: `recv_from`'s peer is
+                    // passed straight to the transport with no source-address
+                    // or ICE-pair check. Treating that as fatal meant a single
+                    // unauthenticated datagram in the RFC 5764 §5.1.2 SRTP
+                    // band (first byte 128..=191) tore down a live ingest.
+                    //
+                    // Failing to authenticate is the *expected* outcome for a
+                    // packet that was not sent by the peer, so it is logged and
+                    // skipped — exactly as the WHEP egress path already did for
+                    // the identical error (`output::whep`). The asymmetry was
+                    // the bug: same error, fatal on ingest, harmless on egress.
+                    Err(e) => {
+                        tracing::debug!(error = %e, %peer, "whip: datagram rejected, skipping");
+                        // Still flush anything the transport wants to send
+                        // (ICE keepalives, DTLS retransmits) before moving on.
+                        while let Some(Datagram { peer, bytes }) = guard.poll_transmit() {
+                            let _ = socket.send_to(&bytes, peer).await;
+                        }
+                        ReadOutcome::Events(Vec::new())
+                    }
                 }
             }
+            // A socket-level read error IS fatal — the session has no
+            // transport left to recover onto.
             Ok(Err(e)) => ReadOutcome::TransportError(e.to_string()),
             Err(_) => {
                 // A read timeout still lets the transport act on the passage
