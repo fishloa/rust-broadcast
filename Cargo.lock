@@ -1515,7 +1515,7 @@ dependencies = [
 
 [[package]]
 name = "hls-runtime"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "broadcast-auth",
  "broadcast-common",
