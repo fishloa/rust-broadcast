@@ -63,7 +63,7 @@ result*, not bookkeeping.
 `tests/wasm_analyzer_equivalence.rs` pins a measured instance of this against
 the `demo/` WASM analyzer over the same fixture. Both tools use the identical
 default `dvb_conformance::Config` — there is no threshold difference — yet
-they report 838 vs. 803 events on `fixtures/ts/m6-single.ts`. The reason:
+they report 911 vs. 876 events on `fixtures/ts/m6-single.ts`. The reason:
 that analyzer anchors its clock on observed PCR values with a `+1 ns`
 per-packet fallback, and **the fixture contains no PCR at all**, so it models
 1264 packets as spanning 1.264 µs (~1.5 Tbit/s). At that implied rate TBsys
@@ -72,15 +72,15 @@ bitrate it fires zero times. That accounts for the entire gap:
 
 | Indicator | Degenerate clock (analyzer) | Realistic clock (40 µs/pkt) |
 |---|---|---|
-| `Continuity_count_error` | 803 | 803 |
+| `Continuity_count_error` | 876 | 876 |
 | `Buffer_error` (T-STD 3.3) | 35 | 0 |
-| **Total** | **838** | **803** |
+| **Total** | **911** | **876** |
 
 So: **feed real arrival time** (`Probe::drain_byte_tap` does, using the
 `ByteTap`'s recorded `Timestamp`), and treat
 `Buffer_error`/`Empty_buffer_error`/`Data_delay_error` as only as trustworthy
 as that clock. `Continuity_count_error` is clock-independent — the test
-asserts it is 803 at every rate from frozen to 2 ms/packet.
+asserts it is 876 at every rate from frozen to 2 ms/packet.
 
 ## `media-plane` integration: one cursor, not a second copy
 

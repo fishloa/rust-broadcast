@@ -4093,7 +4093,7 @@ checksum = "b6f5e870be6c3b371b77fe0ee0bafb859fa4964b4404c27de1d380043c4dda20"
 
 [[package]]
 name = "ule"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "broadcast-common",
  "serde",
@@ -4315,13 +4315,11 @@ name = "webrtc-runtime"
 version = "0.1.0"
 dependencies = [
  "aes",
- "broadcast-auth",
  "broadcast-common",
  "bytes",
  "cipher",
  "ctr",
  "hmac",
- "log",
  "rtc-dtls",
  "rtc-ice",
  "rtc-shared",

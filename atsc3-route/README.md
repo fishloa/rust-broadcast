@@ -6,7 +6,8 @@
 ATSC A/331 Annex A **ROUTE** (Real-time Object delivery over Unidirectional
 Transport) binary framing — split out of the `atsc3` crate (issue #943) so a
 `no_std` ROUTE receiver doesn't have to pull in an XML stack. `atsc3` keeps
-the signalling half (LLS + SLS XML, needs `roxmltree` + `flate2`); this crate
+the signalling half (LLS today, SLS XML planned — it is what needs `roxmltree`
++ `flate2`); this crate
 is the binary ROUTE delta, built directly on [`rmt-flute`](../rmt-flute)'s
 LCT/ALC/FLUTE implementation of the RFC 5651/5775/6726 base A/331 Annex A
 profiles.

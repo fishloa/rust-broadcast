@@ -8,8 +8,10 @@ the cipher underneath conditional access on DVB-S, DVB-T, and DVB-C.
 DVB-CSA has no public normative specification — the algorithm was confidential
 and licensed through ETSI. Every open implementation is reverse-engineered.
 Correctness is established by byte-exact agreement with **libdvbcsa 1.1.0**
-(VideoLAN's reference free implementation): 11 golden vectors (184-byte TS
-payloads) plus inline multi-size vectors (8 B, 16 B, 32 B, 64 B).
+(VideoLAN's reference free implementation): 18 committed golden vectors in
+`tests/fixtures/libdvbcsa-vectors.hex` — 13 full 184-byte TS payloads plus one
+each at 8 B, 16 B, 32 B, 64 B and 100 B, the last covering a residual block
+that is neither empty nor a whole multiple of the 8-byte block size.
 
 ## Algorithm overview
 

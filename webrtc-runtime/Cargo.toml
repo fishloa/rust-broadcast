@@ -17,10 +17,15 @@ all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
 
 [dependencies]
-broadcast-common = { path = "../broadcast-common", version = "9.3" }
-broadcast-auth   = { path = "../broadcast-auth",   version = "0.3" }
-thiserror = "2"
-log       = "0.4"
+# `default-features = false` on both, forwarded by this crate's own `std`
+# feature below. Without that forwarding the advertised `no_std` build was a
+# fiction: `--no-default-features` still pulled a std `broadcast-common` and a
+# std `thiserror`, so the crate never linked without the std runtime.
+broadcast-common = { path = "../broadcast-common", version = "9.3", default-features = false }
+thiserror = { version = "2", default-features = false }
+# `broadcast-auth` and `log` were declared here and referenced by not one line
+# of this crate. Both are std-only, so they alone made the bare-metal build
+# impossible — dead weight that cost the crate its headline property.
 serde = { version = "1", optional = true, default-features = false, features = ["derive", "alloc"] }
 
 # ---------------------------------------------------------------------------
@@ -47,7 +52,7 @@ sha2        = { version = "0.10", optional = true }
 
 [features]
 default = ["std"]
-std     = []
+std     = ["broadcast-common/std", "thiserror/std"]
 serde   = ["dep:serde"]
 # ICE + DTLS-SRTP media transport. Optional on dependency weight alone —
 # it used to also require a newer rustc than the workspace MSRV (`rcgen`

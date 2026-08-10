@@ -11,7 +11,7 @@
 //! of the measurement", that assumption changes the answer for every
 //! timeout-based indicator. 40 µs per 188-byte packet is ~37.6 Mbit/s, a full
 //! DVB multiplex rate. `tests/wasm_analyzer_equivalence.rs` measures the
-//! sensitivity directly: this fixture reports a stable 803 events anywhere
+//! sensitivity directly: this fixture reports a stable 876 events anywhere
 //! from ~100 µs/packet up to ~1.5 ms/packet, so 40 µs sits on that plateau
 //! rather than near a boundary where the number would move.
 

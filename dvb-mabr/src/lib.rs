@@ -13,7 +13,7 @@
 //! Presentation manifests (DASH MPD / HLS Master Playlist) are referenced
 //! by URL only — never parsed; their own formats (ISO/IEC 23009-1, IETF RFC
 //! 8216) are out of scope, as is the multicast *transport* of the objects
-//! themselves (`dvb-flute` covers the ALC/LCT/FLUTE wire format TS 103 769
+//! themselves (`rmt-flute` covers the ALC/LCT/FLUTE wire format TS 103 769
 //! Annex F profiles).
 //!
 //! ## Round-trip guarantee

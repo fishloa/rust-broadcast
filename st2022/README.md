@@ -11,7 +11,10 @@ This crate implements the ST 2022-6 HBRMT payload header only. It does
 **not** implement ST 2022-7 seamless protection switching (hitless
 failover) — see "Planned" below. The `VSID` field this crate parses is the
 one a ST 2022-7 merge needs to identify redundant-path copies of the same
-datagram; the actual hitless merge logic lives in `media-plane::byte_merge`.
+datagram. The merge logic itself is **not implemented anywhere in this
+workspace yet**: `media-plane::byte_merge` is where it is expected to land,
+and that module documents `Hitless2022_7` as deliberately absent rather than
+stubbed (`MergePolicy` has no such variant). Tracked as issue #752.
 
 ## Wire structures
 

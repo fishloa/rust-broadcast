@@ -4,6 +4,18 @@ All notable changes to this crate will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- The advertised `no_std` build now works. `std` was declared as an empty
+  feature (`std = []`) that forwarded nothing, so `--no-default-features`
+  still resolved `broadcast-common` and `thiserror` with their default
+  features and the crate could never link without the std runtime — the
+  crate-root `cfg_attr` and the README claim were both unreachable.
+  `std` now forwards to both dependencies, and `broadcast-auth` and `log`
+  are dropped: they were declared but referenced by no line of this crate,
+  and being std-only they alone made a bare-metal build impossible. The
+  crate is now in CI's `no_std` (`thumbv7em-none-eabi`) job.
+
 ### Added
 
 - `MediaTransport::needs_rekey()` / `MediaTransport::rekey()` (issue #948

@@ -2,7 +2,19 @@
 
 ## [Unreleased]
 
+### Added
+- Feature `cli` (on by default), gating the `ts-fix` binary and its `clap`
+  dependency. `cargo install ts-fix` is unaffected; `--no-default-features`
+  now yields a library with no `clap` in its tree.
+
 ### Changed
+- The crate root has carried `#![cfg_attr(not(feature = "std"), no_std)]`
+  since 0.1.0, but no build could satisfy it: `clap` was an unconditional
+  dependency, so `--no-default-features` still dragged in `anstyle` and the
+  std runtime. Gating `clap` behind the new `cli` feature makes the
+  attribute reachable, and `ts-fix` is now built for `thumbv7em-none-eabi`
+  by CI's `no_std` job. The library itself needed no source change — it uses
+  no `std` path.
 - `ops::continuity::ContinuityOp`'s legal-duplicate detection (ITU-T H.222.0
   §2.4.3.3) now delegates to the new shared
   `broadcast_common::ts_dup::is_legal_duplicate_pair`, replacing a

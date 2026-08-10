@@ -114,11 +114,17 @@ let header = format_ice_server_links(&servers);
 
 | Feature | Default | Description |
 |---------|---------|-------------|
-| `std`   | yes     | Enables `std` library support |
+| `std`   | yes     | Links the standard library; forwarded to `broadcast-common` and `thiserror` |
 | `serde` | no      | `Serialize`/`Deserialize` on `IceServer` |
-| `media` | no      | ICE + DTLS-SRTP transport (`webrtc_runtime::media`) — **requires rustc >= 1.88**, see "MSRV" below |
+| `media` | no      | ICE + DTLS-SRTP transport (`webrtc_runtime::media`); implies `std` |
 
-The core state machines build with `--no-default-features` (`no_std` + `alloc`).
+The core state machines build with `--no-default-features` (`no_std` + `alloc`),
+cross-compiled for `thumbv7em-none-eabi` by CI's `no_std` job — which is what
+makes that a claim rather than an aspiration. It was the latter until the
+1.95.0 release audit: `std` was an empty feature that forwarded nothing, so
+`--no-default-features` still pulled a std `broadcast-common` and a std
+`thiserror`, and two std-only dependencies were declared without a single
+line referencing them.
 No IO adapter exists for WHIP/WHEP signalling (see "What it does" above) —
 there is no `tokio` feature for it; one was declared but never gated any
 code, so it was removed rather than kept as dead weight (see CHANGELOG).

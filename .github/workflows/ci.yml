@@ -124,12 +124,20 @@ jobs:
       # so they cannot regress silently. `broadcast-hls` (issue #878) is a new
       # leaf crate added directly to this list at its own creation.
       #
+      # `webrtc-runtime` and `ts-fix` joined at the 1.95.0 release audit. Both
+      # advertised `no_std` (crate-root `cfg_attr`, README) while being
+      # impossible to build that way: webrtc-runtime took `broadcast-common`
+      # and `thiserror` with default features and declared two std-only deps it
+      # never used, and ts-fix took `clap` unconditionally for its binary.
+      # Fixing those manifests is what made the existing claims true; they are
+      # listed here so neither can quietly become a lie again.
+      #
       # Deliberately NOT here (they genuinely require `std`, verified):
-      # `dvb-ci-runtime`, `ts-fix`, `multimux`, `multimux-cli`, `dvb-tools`,
+      # `dvb-ci-runtime`, `multimux`, `multimux-cli`, `dvb-tools`,
       # `dvb-stream`.
       - name: Build each library crate for bare-metal (no_std)
         run: |
-          for c in broadcast-common dvb-bbframe scte35-splice dvb-t2mi dvb-si dvb-conformance mpeg-pes dvb-subtitle mpeg-ps scte104 cc-data st291 ule dvb-ci dvb-simulcrypt mp4-emsg dvb-vbi rmt-flute rtp-packet rtcp-packet st12-1 st337 rdd29 st377-1 mpeg-ts broadcast-hls transmux media-plane timed-metadata hls-runtime srt-runtime media-doctor ttml-subtitle atsc3-route caption-convert dvb-csa broadcast-loudness atsc3 dvb-mabr st2022 rist-runtime ssai-runtime playout-runtime compliance-probe; do
+          for c in broadcast-common dvb-bbframe scte35-splice dvb-t2mi dvb-si dvb-conformance mpeg-pes dvb-subtitle mpeg-ps scte104 cc-data st291 ule dvb-ci dvb-simulcrypt mp4-emsg dvb-vbi rmt-flute rtp-packet rtcp-packet st12-1 st337 rdd29 st377-1 mpeg-ts broadcast-hls transmux media-plane timed-metadata hls-runtime srt-runtime media-doctor ttml-subtitle atsc3-route caption-convert dvb-csa broadcast-loudness atsc3 dvb-mabr st2022 rist-runtime ssai-runtime playout-runtime compliance-probe webrtc-runtime ts-fix; do
             echo "::group::$c (no_std)"
             cargo build -p "$c" --no-default-features --target thumbv7em-none-eabi --locked
             echo "::endgroup::"

@@ -9,7 +9,8 @@
 //! **not** re-implement LCT/ALC/FLUTE parsing; see `rmt-flute`'s own crate
 //! docs for that layer. The full transcription of the ROUTE delta this crate
 //! covers lives at `atsc3/docs/a331-route.md` (fetched by the sibling `atsc3`
-//! crate, which keeps only the signalling — LLS + SLS XML — half of A/331).
+//! crate, which keeps the signalling half of A/331 — LLS today, SLS XML
+//! planned).
 //!
 //! Implements:
 //!

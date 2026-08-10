@@ -1,6 +1,10 @@
-//! Caption/subtitle format conversion: CEA-608/708, EBU Teletext, DVB
-//! bitmap subtitling, and TTML/IMSC -> WebVTT, SRT, and IMSC 1.1 (issue
-//! #931).
+//! Caption/subtitle format conversion: CEA-608/708 and EBU Teletext ->
+//! WebVTT and SRT, and IMSC -> IMSC (issue #931).
+//!
+//! That list is the whole of what converts today. DVB bitmap subtitling and
+//! the TTML/IMSC -> WebVTT/SRT direction are modelled but not implemented —
+//! see the support matrix below, which is the authoritative statement, and
+//! call [`matrix::check`] rather than assuming a pair converts.
 //!
 //! # Why this crate exists
 //!

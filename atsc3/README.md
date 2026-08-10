@@ -19,7 +19,9 @@ See "Planned" below for what this crate does **not** yet implement.
 - **`LlsEnvelope`** — the binary envelope carrying LLS tables (§6.2), with
   optional gzip decompression (`std` feature).
 - **`LlsTableId`** — table type discriminant (SLT, RRT, SystemTime, AEAT,
-  OnscreenMessage, CDT, CAP).
+  OnscreenMessageNotification, CDT, DRCT). `LLS_table_id` 0x07 is the DRCT
+  (A/323 — Dedicated Return Channel Table), not CAP; it was modelled as CAP
+  until commit 57b79e93 corrected it.
 - **`Slt`** / **`SltService`** — Service List Table XML parse (§6.3).
 - **`ServiceCategory`**, **`SlsProtocol`** — typed field enums.
 

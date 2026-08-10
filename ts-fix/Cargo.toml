@@ -18,15 +18,23 @@ mpeg-pes  = { path = "../mpeg-pes", version = "0.4", default-features = false }
 dvb-si    = { path = "../dvb-si",   version = "10",   default-features = false }
 dvb-conformance = { path = "../dvb-conformance", version = "10", default-features = false }
 thiserror = { version = "2",        default-features = false }
-clap      = { version = "4.5",      features = ["derive"] }
+# Only the `ts-fix` binary uses clap; the library uses no `std` path at all.
+# Unconditional, it made `#![no_std]` unreachable — the crate root carried the
+# `cfg_attr` but no build could ever satisfy it, because clap dragged in
+# `anstyle`/`std` regardless of features. Gated, the library is genuinely
+# bare-metal-buildable and the CI no_std lane proves it.
+clap      = { version = "4.5",      features = ["derive"], optional = true }
 
 [features]
-default = ["std"]
+default = ["std", "cli"]
 std     = ["broadcast-common/std", "mpeg-ts/std", "mpeg-pes/std", "dvb-si/std", "dvb-conformance/std", "thiserror/std"]
+# The `ts-fix` binary. On by default so `cargo install ts-fix` keeps working.
+cli     = ["std", "dep:clap"]
 
 [[bin]]
 name = "ts-fix"
 path = "src/bin/ts-fix.rs"
+required-features = ["cli"]
 
 [dev-dependencies]
 scte35-splice = { path = "../scte35-splice", version = "2.1", default-features = false }

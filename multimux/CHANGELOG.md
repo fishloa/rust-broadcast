@@ -85,11 +85,16 @@
     it previously never handled.
 
 ### Changed (BREAKING — issue #903, EIT-boundary DVR rolling)
-- **BREAKING: `InputSpec` is now `#[non_exhaustive]`.** It was not at the
-  `multimux-v0.8.0` tag (verified with `git show`), so an external exhaustive
-  `match` over it compiled then and will not now. `OutputKind` was already
-  `#[non_exhaustive]` at that tag, so `OutputKind::Catchup` is additive — a
-  pre-release audit initially recorded it as breaking and that was wrong.
+- `InputSpec::Custom` and `OutputKind::Catchup` are **additive**. Both enums
+  were already `#[non_exhaustive]` at the `multimux-v0.8.0` tag
+  (`git show multimux-v0.8.0:multimux/src/config.rs`, line 75 —
+  `#[non_exhaustive]` immediately above `pub enum InputSpec`; and
+  `.../src/output/mod.rs` line 50 for `OutputKind`), so no external
+  exhaustive `match` over either compiled at 0.8.0, and none breaks now. Two
+  successive pre-release audits recorded one of these as a breaking
+  `#[non_exhaustive]` *addition* — both were wrong, in opposite directions.
+  This entry replaces them, and would have sent every consumer on a migration
+  for a break that never happened.
 - **`source::ts_udp::recv_and_feed` now returns `Result<usize>`** (was
   `Result<()>`): the number of bytes read, so a caller can also feed the
   exact same slice to the new `RouteHandle::feed_si_ts` EIT tracker without
@@ -102,27 +107,34 @@
   on either no longer compiles without a binding on `Fed`.
 
 ### Changed
-- **`broadcast-common` floor raised `9` -> `9.2`.** `output::smooth` calls
+- **`broadcast-common` floor raised `9` -> `9.3`.** `output::smooth` calls
   `broadcast_common::hex::hex_encode`, absent at the 9.0.0/9.1.0 tags
   (verified against all three: 9.0.0 -> 0 hits, 9.1.0 -> 0, 9.2.0 -> 1).
   multimux 0.8.0 shipped this understated, so a lock resolving
-  broadcast-common 9.0/9.1 fails to build published 0.8.0 today.
-- **`transmux` floor raised `0.23` -> `0.23.1`.** `push::rtmp` calls
+  broadcast-common 9.0/9.1 fails to build published 0.8.0 today. The API
+  reason bounds it at 9.2; the declared floor is 9.3 because the MSRV-1.95
+  wave (#949) moved broadcast-common there in the same release.
+- **`transmux` floor raised `0.23` -> `0.24`.** `push::rtmp` calls
   `transmux::flv_sequence_header_payloads`/`flv_frame_payloads`, absent at
   transmux-v0.23.0 and present at v0.23.1. Same understated-floor class as
-  the broadcast-common entry above, found by the same audit.
+  the broadcast-common entry above, found by the same audit. The API reason
+  bounds it at 0.23.1; the declared floor is 0.24, the epoch this release
+  builds against (a caret bucket spanning two epochs breaks consumers of
+  both lines — #858).
 - **`hls-runtime` floor raised `0.5` -> `0.6`.** `src/catchup.rs` uses
   `hls_runtime::server::ClosedSegment`/`HlsOrigin::closed_segments()`, which
   do not exist in published hls-runtime 0.5.0 (verified: 0 hits at the
   hls-runtime-v0.5.0 tag, 7 at HEAD). multimux declared `"0.5"`, so a
   consumer resolving 0.5.0 would fail to compile multimux; hls-runtime's own
   0.5.0 -> 0.6.0 minor (new public API) ships alongside this fix.
-- **`broadcast-auth` floor raised `0.2` -> `0.2.1`.** `config.rs` uses
+- **`broadcast-auth` floor raised `0.2` -> `0.3`.** `config.rs` uses
   `Verifier::signed_url` / `SignedUrlKeySet`, which were added in 0.2.1
   (#747). The `"0.2"` bound admitted 0.2.0, which does not have them, so
   multimux 0.8.0 shipped declaring a requirement weaker than its real one and
   fails to build against any lock that resolves 0.2.0. Hit for real while
-  bumping `acap-multimux`, where the lock picked the floor.
+  bumping `acap-multimux`, where the lock picked the floor. The API reason
+  bounds it at 0.2.1; the declared floor is 0.3, the epoch this release
+  builds against.
 - MSRV raised to **1.95.0** (issue #949). This removes the workspace's MSRV
   split: `webrtc-runtime`'s optional `media` feature needed rustc 1.88 (via
   `rcgen`), which had grown a dedicated CI job, six `--exclude` lanes and a
