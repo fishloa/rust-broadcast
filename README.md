@@ -19,7 +19,7 @@ feed all the way down to a service name string.
 
 | | |
 |---|---|
-| **Versions** | 6 lockstep core crates (`broadcast-common`, `dvb-si`, `dvb-t2mi`, `dvb-bbframe`, `dvb-conformance`, `dvb-tools`) at **9.0.0**; every other crate below is independently versioned — see its own badge for the current version |
+| **Versions** | 5 lockstep core crates (`dvb-si`, `dvb-t2mi`, `dvb-bbframe`, `dvb-conformance`, `dvb-tools`) released together from one `v<version>` tag; `broadcast-common` was ejected from that lockstep in #862 and, like every other crate below, versions independently — see each crate's own badge for its current version |
 | **MSRV** | **1.95.0** across the workspace (pinned in `rust-toolchain.toml`) |
 | **Edition** | **2024** across the workspace |
 | **`no_std`** | Most parser/builder library crates below build `#![no_std]` + `alloc` under `--no-default-features` (suitable for embedded targets with a heap) — see each crate's own docs for its exact story. `dvb-tools`, `dvb-stream`, `dvb-ci-runtime`, `multimux`, `multimux-cli` and other tokio/axum-based crates require `std` and are not embedded-suitable. |
@@ -96,7 +96,6 @@ $ cargo build -p dvb-si --no-default-features --locked
 | [`st337`](st337/) | [![crates.io](https://img.shields.io/crates/v/st337.svg)](https://crates.io/crates/st337) | [![docs.rs](https://img.shields.io/docsrs/st337)](https://docs.rs/st337) | SMPTE ST 337-2015 non-PCM audio/data burst-preamble framing over AES3 — spec-complete parse/serialize. `no_std`. **Independently versioned.** |
 | [`rdd29`](rdd29/) | [![crates.io](https://img.shields.io/crates/v/rdd29.svg)](https://crates.io/crates/rdd29) | [![docs.rs](https://img.shields.io/docsrs/rdd29)](https://docs.rs/rdd29) | SMPTE RDD 29:2019 Dolby Atmos bitstream — frame/element framing + bed/object metadata. `no_std`. **Independently versioned.** |
 | [`st377-1`](st377-1/) | [![crates.io](https://img.shields.io/crates/v/st377-1.svg)](https://crates.io/crates/st377-1) | [![docs.rs](https://img.shields.io/docsrs/st377-1)](https://docs.rs/st377-1) | SMPTE ST 377-1:2019 Material Exchange Format (MXF) — KLV framing, Partition/Primer Pack, local-set structural metadata, Random Index Pack. `no_std`. **Independently versioned.** |
-| [`broadcast-loudness`](broadcast-loudness/) | [![crates.io](https://img.shields.io/crates/v/broadcast-loudness.svg)](https://crates.io/crates/broadcast-loudness) | [![docs.rs](https://img.shields.io/docsrs/broadcast-loudness)](https://docs.rs/broadcast-loudness) | EBU R 128 / ITU-R BS.1770-5 loudness measurement: K-weighting, integrated/short-term/momentary loudness (LUFS), Loudness Range (LRA, LU), true-peak (dBTP). `no_std`+`alloc`. **Independently versioned.** |
 
 ### ATSC 3.0 (A/331)
 
@@ -126,14 +125,15 @@ DVB SI + multicast-delivery crates above. Both crates are unpublished; see
 | [`broadcast-loudness`](broadcast-loudness/) | [![crates.io](https://img.shields.io/crates/v/broadcast-loudness.svg)](https://crates.io/crates/broadcast-loudness) | [![docs.rs](https://img.shields.io/docsrs/broadcast-loudness)](https://docs.rs/broadcast-loudness) | EBU R 128 / ITU-R BS.1770-5 loudness measurement: K-weighting, integrated/short-term/momentary loudness (LUFS), loudness range (LRA), and true-peak (dBTP). `no_std`+`alloc`, depends only on `broadcast-common`. **Independently versioned.** |
 | [`compliance-probe`](compliance-probe/) | *unpublished* | *—* | **Unpublished.** Live probe over a `media-plane` `Trunk`/`ByteTap`: drives `dvb-conformance`'s TR 101 290 indicators, a PCR-drift/jitter estimate (explicitly distinct from TR 101 290 2.4, which `dvb-conformance` does not emit), and SCTE-35 `splice_insert` cue-sanity checks, exported through the `metrics` facade for a host process to render as Prometheus. |
 
-### Deprecated re-export shims
+### Renamed crates
 
-Frozen at their last pre-rename version, kept only so old `Cargo.toml`
-references keep resolving. New code should depend on the renamed crate
-directly.
-
-| Crate | Docs | Superseded by |
-|---|---|---|
+This project does not publish re-export shims. When a crate is renamed, every
+version under the old name is **yanked**, so an old `Cargo.toml` reference
+fails loudly instead of silently resolving to a frozen copy. Renamed so far:
+`dvb-flute` -> [`rmt-flute`](rmt-flute/), `smpte2038`/`dvb-smpte2038` ->
+[`st291`](st291/), and `ll-hls-runtime` -> [`hls-runtime`](hls-runtime/) (this
+last one is the exception: its old versions are still live, because the rename
+tracked a scope change rather than a mistaken name).
 
 For GSE, see the existing [`dvb-gse`](https://crates.io/crates/dvb-gse) crate.
 

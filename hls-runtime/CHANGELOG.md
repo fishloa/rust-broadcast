@@ -55,12 +55,22 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Requires `transmux` 0.23 (epoch-pure caret bump from ^0.22).
 - Requires `media-plane` 0.3 (epoch-pure caret bump from ^0.2).
 
-## [0.4.0] - 2026-08-02
+## [0.4.0] - 2026-08-03
 
-### Changed
-- `HlsOrigin`'s `_HLS_msn` abuse bound tightened from +4 to the spec's +2
-  (RFC 8216bis §6.2.5.2 SHOULD: "greater than the Media Sequence Number of
-  the last Media Segment in the current Playlist plus two").
+### Changed (Breaking)
+- **Crate renamed** `ll-hls-runtime` -> `hls-runtime` (issue #868): the
+  crate is gaining a non-low-latency mode, so the `ll-` name became wrong.
+  A clean break — no deprecated alias, no re-export shim. `ll-hls-runtime`'s
+  already-published versions stay live on crates.io, untouched.
+- Public types dropped their `Ll` prefix: `LlHlsOrigin` -> `HlsOrigin`,
+  `LlHlsRequest` -> `HlsRequest`, `LlHlsBody` -> `HlsBody`, `LlHlsClient` ->
+  `HlsClient`. No other behaviour change.
+- **`HlsOrigin::new` deleted**, replaced by `HlsOrigin::builder(trunk)`
+  (issue #873): the old four-positional constructor made `part_target_ms`
+  mandatory, so classic (non-low-latency) HLS was inexpressible. No
+  compatibility shim — this crate is at 0.4.0, unpublished at the time of
+  this change. `multimux`'s `HlsOrigin::new` call site is updated to the
+  builder in the same release.
 
 ### Added
 - `server::Container` (`Fmp4` / `MpegTs`, `#[non_exhaustive]`) and
@@ -80,13 +90,17 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
     (bytes stored, never advertised or served), so a caller sharing one code
     path across both containers need not branch.
 
-### Changed (Breaking)
-- **`HlsOrigin::new` deleted**, replaced by `HlsOrigin::builder(trunk)`
-  (issue #873): the old four-positional constructor made `part_target_ms`
-  mandatory, so classic (non-low-latency) HLS was inexpressible. No
-  compatibility shim — this crate is at 0.4.0, unpublished at the time of
-  this change. `multimux`'s `HlsOrigin::new` call site is updated to the
-  builder in the same release.
+### Changed
+- `HlsOrigin`'s `_HLS_msn` abuse bound tightened from +4 to the spec's +2
+  (RFC 8216bis §6.2.5.2 SHOULD: "greater than the Media Sequence Number of
+  the last Media Segment in the current Playlist plus two").
+- The client/origin engines parse and render HLS playlists via `broadcast-hls`
+  directly instead of reaching through `transmux::hls` for it (issue #878).
+  `Error::PlaylistParse` now wraps `broadcast_hls::Error` instead of
+  `transmux::Error` — a source-type change to a `#[from]`-wrapped variant,
+  not a shape change to `Error` itself. Playlist docs moved from this
+  crate's `docs/` to `broadcast-hls/docs/`, since they document the tags
+  that crate now implements.
 
 ### Fixed
 - The LL-HLS origin (`server::engine`) no longer supplies a hardcoded
@@ -99,25 +113,12 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   client on protocol version 6, 7, or 8 to refuse a stream it could
   otherwise have played (issue #871).
 
-### Changed
-- The client/origin engines parse and render HLS playlists via `broadcast-hls`
-  directly instead of reaching through `transmux::hls` for it (issue #878).
-  `Error::PlaylistParse` now wraps `broadcast_hls::Error` instead of
-  `transmux::Error` — a source-type change to a `#[from]`-wrapped variant,
-  not a shape change to `Error` itself. Playlist docs moved from this
-  crate's `docs/` to `broadcast-hls/docs/`, since they document the tags
-  that crate now implements.
-
-## [0.4.0] - 2026-08-01
-
-### Changed (Breaking)
-- **Crate renamed** `ll-hls-runtime` -> `hls-runtime` (issue #868): the
-  crate is gaining a non-low-latency mode, so the `ll-` name became wrong.
-  A clean break — no deprecated alias, no re-export shim. `ll-hls-runtime`'s
-  already-published versions stay live on crates.io, untouched.
-- Public types dropped their `Ll` prefix: `LlHlsOrigin` -> `HlsOrigin`,
-  `LlHlsRequest` -> `HlsRequest`, `LlHlsBody` -> `HlsBody`, `LlHlsClient` ->
-  `HlsClient`. No other behaviour change.
+> **Versions 0.1.0 through 0.3.1 below shipped under this crate's previous
+> name, `ll-hls-runtime`** (tags `ll-hls-runtime-v0.1.0` .. `-v0.3.1`), and
+> are still live on crates.io under that name — they are not versions of
+> `hls-runtime`, whose own published history starts at 0.4.0. The rename came
+> with the client+server split that made "ll-hls-client" wrong. The entries
+> are kept because they are this code's real history.
 
 ## [0.3.1] - 2026-07-30
 
