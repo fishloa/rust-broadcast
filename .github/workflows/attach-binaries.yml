@@ -23,6 +23,9 @@ on:
         required: false
         type: string
 
+permissions:
+  contents: write
+
 jobs:
   binaries:
     uses: ./.github/workflows/reusable-binaries.yml
