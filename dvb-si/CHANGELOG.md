@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [10.0.0] - 2026-08-11
+
 ### Fixed
 - `PmtSection`/`SdtSection`/`AitSection` parsing now rejects trailing slack
   after the last entry in the elementary-stream loop (`PmtSection`,

@@ -9,6 +9,14 @@ name: Release st2022
 # DEPENDENCY ORDER: st2022 depends only on broadcast-common (lockstep,
 # already live). No new crate needs to land before this one.
 
+# ⚠ DO NOT TAG. st2022 is under a self-imposed publish block recorded in its own
+# CHANGELOG: there is no licensable real ST 2022-6 HBRMT capture, so the crate is
+# tested against spec vectors only and "must not be published while this stands".
+# Unlike atsc3 — whose block is enforced by a deliberately absent release note —
+# st2022 HAS an honest release note documenting the blocker, so the note-exists
+# gate would let it through. The explicit gate below stops it instead. Delete
+# that step in the same change that lifts the block.
+
 on:
   push:
     tags: ["st2022-v*"]
@@ -32,6 +40,13 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - uses: Swatinem/rust-cache@v2
+
+      - name: Gate — st2022 publish block (no licensable real fixture)
+        run: |
+          echo "::error::st2022 must not be published: no licensable real ST 2022-6"
+          echo "::error::HBRMT capture exists, so the crate is spec-vector-tested only."
+          echo "::error::See st2022/CHANGELOG.md. Remove this step to lift the block."
+          exit 1
 
       - name: Gate — st2022 tests (all features)
         run: cargo test -p st2022 --all-features --locked

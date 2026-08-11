@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-08-11
+
 ### Fixed
 - **`cc-anomaly` (`CcAnomalyCheck`) under-enforced ITU-T H.222.0 /
   ISO/IEC 13818-1 §2.4.3.3's "legal duplicate" rule in two ways**, both now

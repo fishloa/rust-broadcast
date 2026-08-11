@@ -4,6 +4,8 @@ All notable changes to this crate. Format: [Keep a Changelog](https://keepachang
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-08-11
+
 ### Added
 - Initial release (issue #931): caption/subtitle format conversion — CEA-608/
   708 and EBU Teletext to WebVTT/SRT, and WebVTT <-> SRT — wrapping the

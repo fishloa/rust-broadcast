@@ -4,6 +4,8 @@ All notable changes to this crate. Format: [Keep a Changelog](https://keepachang
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-08-11
+
 ### Added
 - Initial release (issue #748): sans-IO linear channel playout.
   - `schedule::Schedule` / `schedule::ScheduleEntry` / `schedule::EntryKind` —

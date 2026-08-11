@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-08-11
+
 ### Added
 - Feature `cli` (on by default), gating the `ts-fix` binary and its `clap`
   dependency. `cargo install ts-fix` is unaffected; `--no-default-features`

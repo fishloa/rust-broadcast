@@ -4,6 +4,8 @@ All notable changes to dvb-mabr will be documented in this file.
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-08-11
+
 ### Changed
 - MSRV raised to **1.95.0** (issue #949). This removes the workspace's MSRV
   split: `webrtc-runtime`'s optional `media` feature needed rustc 1.88 (via
@@ -17,12 +19,6 @@ All notable changes to dvb-mabr will be documented in this file.
   the crate has never had a `serde` feature or dependency, only `default`
   and `std`. Removed the `flute`/`dash` crates.io keywords (`Cargo.toml`),
   since both are explicitly out of scope per the README's "Scope" section.
-
-## [0.1.0] — not yet published
-
-`dvb-mabr` has never been published to crates.io; this section describes
-the contents of its pending first release, not a version anyone can
-install today.
 
 DVB Multicast ABR (ETSI TS 103 769 V1.2.1) session
 configuration XML parser/serializer.

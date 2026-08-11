@@ -4,6 +4,8 @@ All notable changes to this crate. Format: [Keep a Changelog](https://keepachang
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-08-11
+
 ### Added
 - Initial release (issue #929): sans-IO SCTE-35 SSAI session core.
   - `session::SessionStore` / `session::BreakState` — per-session ad-break

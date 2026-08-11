@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-08-11
+
 ### Added
 - **Catch-up / time-shift / VOD-from-live serving over the DVR archive**
   (issue #900, follow-up to #746/#903): a new `"catchup"` output

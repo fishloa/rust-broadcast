@@ -7,6 +7,8 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-08-11
+
 ### Added
 - `server::HlsOrigin::closed_segments()` — a snapshot of the origin's
   currently-advertised closed segments (sequence number, absolute

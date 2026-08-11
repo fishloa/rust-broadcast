@@ -6,6 +6,8 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-08-11
+
 ### Changed
 - MSRV raised to **1.95.0** (issue #949). This removes the workspace's MSRV
   split: `webrtc-runtime`'s optional `media` feature needed rustc 1.88 (via

@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.24.0] - 2026-08-11
+
 ### Fixed
 - Six audit findings in the fMP4/CMAF/CENC parse paths, all reachable from
   ordinary or malformed third-party media (no fuzzing required):

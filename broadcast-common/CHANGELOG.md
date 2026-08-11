@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [9.3.0] - 2026-08-11
+
 ### Added
 - **`ts_dup`** — the ITU-T H.222.0 (08/2023) / ISO/IEC 13818-1 §2.4.3.3
   "legal duplicate transport-stream-packet" check: `is_legal_duplicate_pair`

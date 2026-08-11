@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-08-11
+
 ### Fixed
 - **`O` (TOI word-count) bound corrected from `0..=7` to `0..=3`.** `O` is a
   two-bit field (RFC 5651 §5.1) masked `& 0x03` on serialize, but the

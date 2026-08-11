@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [10.0.0] - 2026-08-11
+
 ### Changed
 - `check_cc`'s legal-duplicate detection (the #956 fix below) now delegates
   to the new shared `broadcast_common::ts_dup` (`is_legal_duplicate_pair` /

@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-08-11
+
 Split out of `atsc3` (issue #943): `atsc3` keeps the signalling half (LLS +
 SLS XML), this crate is the binary ROUTE delta over `rmt-flute`'s RFC
 5651/5775/6726 LCT/ALC/FLUTE implementation. Not yet published — no

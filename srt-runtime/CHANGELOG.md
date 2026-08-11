@@ -6,6 +6,8 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-08-11
+
 ### Fixed
 - `io::SrtSocket::connect_from` (the tokio Caller adapter) no longer defaults
   the peer's `initial_seq_number` to `0` when it can't be extracted from the
