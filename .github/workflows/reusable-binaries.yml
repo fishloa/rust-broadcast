@@ -52,12 +52,23 @@ on:
            {"os":"ubuntu-24.04-arm","target":"aarch64-unknown-linux-gnu"},
            {"os":"macos-latest","target":"aarch64-apple-darwin"},
            {"os":"macos-latest","target":"x86_64-apple-darwin"}]
+      tag:
+        description: >-
+          The tag whose GitHub Release receives the binaries. Defaults to
+          RELEASE_TAG (the tag that triggered the calling workflow). Pass
+          explicitly from workflow_dispatch callers where RELEASE_TAG is a
+          branch, not a tag.
+        required: false
+        type: string
+        default: ""
 
 permissions:
   contents: write
 
 env:
   CARGO_TERM_COLOR: always
+  # Resolve the effective tag once: explicit input wins, else the triggering ref.
+  RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
 
 jobs:
   build:
@@ -93,7 +104,7 @@ jobs:
           set -euo pipefail
           # Handles both tag shapes: `<crate>-v1.2.3` and the lockstep `v1.2.3`
           # (which has no `-v` to strip, so `##*-v` would leave the leading v).
-          VER="${GITHUB_REF_NAME##*-v}"; VER="${VER#v}"
+          VER="${RELEASE_TAG##*-v}"; VER="${VER#v}"
           NAME="${{ inputs.bin }}-${VER}-${{ matrix.target }}"
           mkdir -p "dist/$NAME"
           cp "target/${{ matrix.target }}/release/${{ inputs.bin }}" "dist/$NAME/"
@@ -116,8 +127,8 @@ jobs:
           set -euo pipefail
           # --clobber so re-running a lane after a partial failure replaces the
           # asset instead of erroring on a name collision.
-          gh release upload "$GITHUB_REF_NAME" \
+          gh release upload "$RELEASE_TAG" \
             "dist/${{ steps.pkg.outputs.name }}.tar.gz" \
             "dist/${{ steps.pkg.outputs.name }}.tar.gz.sha256" \
             --clobber
-          echo "::notice::attached ${{ steps.pkg.outputs.name }}.tar.gz to $GITHUB_REF_NAME"
+          echo "::notice::attached ${{ steps.pkg.outputs.name }}.tar.gz to $RELEASE_TAG"

@@ -1,0 +1,42 @@
+name: Attach binaries to existing release
+
+# One-shot workflow: build a crate's binary for supported targets and attach
+# the archives to an EXISTING GitHub Release. For backfilling releases that
+# were created before the binary automation existed, or when a tag-recreation
+# causes startup_failure on the normal release lane.
+#
+# Does NOT publish to crates.io — only builds and uploads.
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag name of the existing Release (e.g. multimux-cli-v0.7.0)'
+        required: true
+        type: string
+      crate:
+        description: 'Cargo crate name (e.g. multimux-cli)'
+        required: true
+        type: string
+      bin:
+        description: 'Binary name if different from crate (e.g. multimux for multimux-cli)'
+        required: false
+        type: string
+      features:
+        description: 'Cargo features to enable (blank = default features)'
+        required: false
+        type: string
+      targets:
+        description: 'JSON array of targets (blank = all 4)'
+        required: false
+        type: string
+
+jobs:
+  binaries:
+    uses: ./.github/workflows/reusable-binaries.yml
+    with:
+      crate: ${{ inputs.crate }}
+      bin: ${{ inputs.bin || inputs.crate }}
+      features: ${{ inputs.features }}
+      targets: ${{ inputs.targets }}
+      tag: ${{ inputs.tag }}
