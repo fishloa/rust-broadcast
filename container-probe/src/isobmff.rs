@@ -11,9 +11,10 @@
 //!   header, or on a clean truncation at the region end) -> `STRUCTURAL`.
 //! - One valid box that runs to the region end -> `HEURISTIC`; fewer -> none.
 //! - When the first box is `ftyp`/`styp`, its major brand (the first 4 bytes of
-//!   the box body) goes into `Detail::Isobmff { major_brand, boxes_walked }`.
+//!   the box body) goes into `Detail::Isobmff`, together with the
+//!   [`IsobmffLayout`](crate::IsobmffLayout) the walk observed.
 
-use crate::{Confidence, Detail::Isobmff, Evidence, Outcome};
+use crate::{Confidence, Detail::Isobmff, Evidence, IsobmffLayout, Outcome};
 
 /// Header size of the fixed `size`(32) + `type`(32) Box fields (ISO/IEC
 /// 14496-12:2015 §4.2).
@@ -72,6 +73,13 @@ pub(crate) fn probe(data: &[u8], limit: usize) -> Outcome {
     let mut offset = 0usize;
     let mut boxes = 0u64;
     let mut brand: Option<[u8; 4]> = None;
+    // Which structural box the file uses to carry sample metadata. `moof`
+    // means fragmented (ISO/IEC 14496-12 §8.8 movie fragments, the CMAF/fMP4
+    // shape); `moov` alone means a progressive file with sample tables. The
+    // walk already visits every top-level box, so this costs nothing and
+    // spares a consumer re-walking the chain to pick a demuxer.
+    let mut saw_moof = false;
+    let mut saw_moov = false;
     // `clean` stays true while each box lands exactly at the next header or at
     // the region end — the chain neither overflows nor leaves a dangling tail.
     let mut clean = true;
@@ -99,6 +107,12 @@ pub(crate) fn probe(data: &[u8], limit: usize) -> Outcome {
             if offset == 0 && leading_is_ftyp && rem.len() >= BRAND_OFFSET + BRAND_LEN {
                 brand = Some([rem[8], rem[9], rem[10], rem[11]]);
             }
+            let this_type = [rem[4], rem[5], rem[6], rem[7]];
+            if this_type == TYPE_MOOF {
+                saw_moof = true;
+            } else if this_type == TYPE_MOOV {
+                saw_moov = true;
+            }
             boxes += 1;
             if size_u32 == SIZE_TO_EOF || eff > rem.len() {
                 // To-EOF, or the region truncates this box -> it is the last one.
@@ -115,9 +129,32 @@ pub(crate) fn probe(data: &[u8], limit: usize) -> Outcome {
         return Outcome::None;
     }
 
+    // True only when the walk consumed every byte the caller supplied — the
+    // chain ended exactly at the region end AND the region was not clipped by
+    // the probe budget. Anything less means more boxes may follow.
+    let walked_whole_input = clean && offset >= region.len() && limit == data.len();
+
     let detail = Isobmff {
         major_brand: brand,
         boxes_walked: boxes.min(u8::MAX as u64) as u8,
+        // `moof` is definitive on sight: only a fragmented file has one, and
+        // seeing it does not depend on having read the rest.
+        //
+        // The absence of `moof` is NOT definitive unless the whole supplied
+        // buffer was walked. Every fragmented file OPENS with a `ftyp`+`moov`
+        // init segment and only reaches its first `moof` later, so a truncated
+        // prefix of a fragmented file is indistinguishable from a progressive
+        // one. Claiming `Progressive` there would send a consumer to the wrong
+        // demuxer — measured: the first 64 bytes of a real fragmented CMAF
+        // file (`fixtures/mp4/cmaf/av_frag.mp4`) contain `ftyp` and the start
+        // of `moov` and nothing else.
+        layout: if saw_moof {
+            IsobmffLayout::Fragmented
+        } else if saw_moov && walked_whole_input {
+            IsobmffLayout::Progressive
+        } else {
+            IsobmffLayout::Unknown
+        },
     };
 
     let confidence = if clean && boxes >= 2 {

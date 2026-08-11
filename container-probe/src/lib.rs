@@ -199,6 +199,42 @@ impl Confidence {
     }
 }
 
+/// How an ISOBMFF file carries its sample metadata — the discriminator a
+/// consumer needs to choose a demuxer.
+///
+/// ISO/IEC 14496-12 allows both shapes and they are demuxed differently: a
+/// fragmented file's samples are described by `moof` movie fragments (§8.8,
+/// the CMAF/fMP4 shape), a progressive file's by `moov` sample tables (§8.7).
+/// The prober walks the top-level boxes anyway, so it reports what it saw
+/// rather than making every consumer re-walk the chain to find out — the same
+/// reason [`Detail::Ts`] carries the stride and phase it measured.
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IsobmffLayout {
+    /// A `moof` box was seen: fragmented (CMAF / fMP4 / DASH segment).
+    Fragmented,
+    /// A `moov` box was seen and no `moof`: progressive, with sample tables.
+    Progressive,
+    /// Neither was seen within the probed region — e.g. a buffer holding only
+    /// `ftyp` and the start of a large `mdat`. The file is ISOBMFF, but which
+    /// shape is undetermined from these bytes; a consumer should read further
+    /// rather than assume.
+    Unknown,
+}
+
+impl IsobmffLayout {
+    /// Stable label.
+    pub fn name(&self) -> &'static str {
+        match self {
+            IsobmffLayout::Fragmented => "fragmented",
+            IsobmffLayout::Progressive => "progressive",
+            IsobmffLayout::Unknown => "unknown",
+        }
+    }
+}
+
+broadcast_common::impl_spec_display!(IsobmffLayout);
+
 /// What a prober learned on the way to its conclusion — the difference between
 /// "it is TS" and "it is TS, 192-byte stride, first sync at offset 4".
 #[non_exhaustive]
@@ -219,6 +255,9 @@ pub enum Detail {
         major_brand: Option<[u8; 4]>,
         /// Number of top-level boxes that chained cleanly into the buffer.
         boxes_walked: u8,
+        /// Which structural layout the top-level walk observed — the
+        /// discriminator between a fragmented and a progressive file.
+        layout: IsobmffLayout,
     },
     /// Matroska/WebM: the EBML header's `DocType` string.
     Ebml {
