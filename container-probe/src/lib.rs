@@ -21,9 +21,15 @@
 //!
 //! The structural probers: [`isobmff`] (ISO/IEC 14496-12 box chain), [`ebml`]
 //! (Matroska/WebM), [`mxf`] (SMPTE ST 377-1 partition pack), and [`mpegps`]
-//! (ISO/IEC 13818-1 §2.5 pack header). The remaining probers (FLV, WAV/Ogg/ASF,
-//! ADTS-MP3-AnnexB elementary streams) land in later work packages; adding one
-//! is a one-line registry change (see `PROBERS`).
+//! (ISO/IEC 13818-1 §2.5 pack header).
+//!
+//! # Work-package 3 scope
+//!
+//! The magic probers ([`flv`], [`riff`]/Wav, [`ogg`], [`asf`]) and the
+//! chain-validated elementary-stream probers ([`adts`], [`mp3`], [`annexb`]),
+//! plus the one-directional cross-prober suppression rule that zeroes
+//! elementary-stream candidates whenever a container matches at
+//! `LATTICE_STRONG` or above.
 //!
 //! `no_std` + `alloc`.
 
@@ -33,10 +39,22 @@
 
 extern crate alloc;
 
+// Unit tests in the prober modules need `std` for fixture file IO; the test
+// build links it even though the crate is `#![no_std]`.
+#[cfg(test)]
+extern crate std;
+
+pub mod adts;
+pub mod annexb;
+pub mod asf;
 pub mod ebml;
+pub mod flv;
 pub mod isobmff;
+pub mod mp3;
 pub mod mpegps;
 pub mod mxf;
+pub mod ogg;
+pub mod riff;
 pub mod ts;
 
 use alloc::vec::Vec;
@@ -94,6 +112,16 @@ impl Format {
             Format::Mp3 => "Mp3",
             Format::AnnexB => "AnnexB",
         }
+    }
+
+    /// `true` when this format is an elementary (packetised payload) stream
+    /// that a strong container match should suppress — ADTS AAC, MP3, and
+    /// Annex B. These carry no container framing of their own and routinely
+    /// appear *inside* a container's payload, so a container verdict at
+    /// `LATTICE_STRONG` or above must outvote them (see
+    /// `suppress_elementary_streams`).
+    pub fn is_elementary_stream(&self) -> bool {
+        matches!(self, Format::AdtsAac | Format::Mp3 | Format::AnnexB)
     }
 }
 
@@ -338,6 +366,13 @@ const PROBERS: &[(Format, Prober)] = &[
     (Format::Matroska, ebml::probe),
     (Format::Mxf, mxf::probe),
     (Format::MpegPs, mpegps::probe),
+    (Format::Flv, flv::probe),
+    (Format::Wav, riff::probe),
+    (Format::Ogg, ogg::probe),
+    (Format::Asf, asf::probe),
+    (Format::AdtsAac, adts::probe),
+    (Format::Mp3, mp3::probe),
+    (Format::AnnexB, annexb::probe),
 ];
 
 /// Resolve the final candidate `Format`, given a registry format and the
@@ -350,6 +385,29 @@ fn candidate_format(format: Format, detail: Detail) -> Format {
             DocType::Matroska | DocType::Other => Format::Matroska,
         },
         _ => format,
+    }
+}
+
+/// Cross-prober **suppression**: when any container matches at
+/// `LATTICE_STRONG` (144) or above, every elementary-stream candidate is
+/// dropped.
+///
+/// ADTS frames, MP3 frames, and Annex B NAL units routinely appear *inside* a
+/// real container's payload — they are the expected data, not evidence the file
+/// is raw elementary audio or video. A high-entropy container can also align
+/// enough syncwords to score weakly, so an elementary-stream candidate is never
+/// allowed to outvote or tie a genuine container. The container's high score is
+/// exactly the proof that it is (also) a container; ruling out the ES reading
+/// is the one-directional, named trade this function makes (design §"Confidence
+/// model", "Cross-prober suppression"). This must never be an implicit ordering
+/// a later edit can silently reverse — it is the explicit final transformation
+/// before scoring.
+fn suppress_elementary_streams(candidates: &mut Vec<Candidate>) {
+    let container_wins = candidates
+        .iter()
+        .any(|c| !c.format.is_elementary_stream() && c.confidence.as_u8() >= TIER_LATTICE_STRONG);
+    if container_wins {
+        candidates.retain(|c| !c.format.is_elementary_stream());
     }
 }
 
@@ -388,6 +446,11 @@ pub fn probe_with_budget(data: &[u8], budget: usize) -> Probe {
             Outcome::None => {}
         }
     }
+
+    // Cross-prober suppression: a container matched strongly -> zero the
+    // elementary-stream candidates before scoring (see
+    // `suppress_elementary_streams`).
+    suppress_elementary_streams(&mut candidates);
 
     match candidates.len() {
         0 => match need_more {

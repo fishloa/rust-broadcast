@@ -40,6 +40,13 @@ fn extension_format(ext: &str) -> Option<Format> {
         "webm" => Some(Format::WebM),
         "mxf" => Some(Format::Mxf),
         "ps" => Some(Format::MpegPs),
+        "flv" => Some(Format::Flv),
+        "wav" => Some(Format::Wav),
+        "ogg" => Some(Format::Ogg),
+        "asf" | "wmv" => Some(Format::Asf),
+        "adts" | "aac" => Some(Format::AdtsAac),
+        "mp3" => Some(Format::Mp3),
+        "annexb" | "h264" | "264" => Some(Format::AnnexB),
         _ => None,
     }
 }

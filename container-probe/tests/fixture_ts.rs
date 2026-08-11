@@ -155,19 +155,6 @@ fn tnt5w_capture() {
     );
 }
 
-/// Assert a fully-read non-TS file concludes precisely `Unknown`.
-///
-/// Each of these files is far longer than any lattice needs to prove itself
-/// (`TS_CONFIRM_FOR_STRONG * TS_PACKET_SIZE_208`), yet none reaches even the
-/// weak threshold of contiguous syncs. `Unknown` — not `Insufficient` — is the
-/// only correct verdict: a streaming caller must stop, not read more. (A stray
-/// `0x47`, the ASCII letter "G", appears in essentially any binary file and is
-/// not evidence a larger buffer would turn into a transport stream.)
-fn assert_unknown_non_ts(rel: &str) {
-    let p = probe_fixture(rel);
-    assert_eq!(p, Probe::Unknown, "{rel} must be Unknown, got {p:?}");
-}
-
 /// Assert a file is identified as `format` (WP2+ structural probers). Keeps the
 /// WP1 "not TS" contract: these files are definitive non-TS containers.
 fn assert_format(rel: &str, format: Format) {
@@ -185,12 +172,12 @@ fn mp4_is_not_ts() {
 
 #[test]
 fn wav_is_not_ts() {
-    assert_unknown_non_ts("fixtures/container-probe/pcm_s16le.wav");
+    assert_format("fixtures/container-probe/pcm_s16le.wav", Format::Wav);
 }
 
 #[test]
 fn ogg_is_not_ts() {
-    assert_unknown_non_ts("fixtures/container-probe/opus.ogg");
+    assert_format("fixtures/container-probe/opus.ogg", Format::Ogg);
 }
 
 #[test]
@@ -200,12 +187,12 @@ fn mkv_is_not_ts() {
 
 #[test]
 fn flv_is_not_ts() {
-    assert_unknown_non_ts("fixtures/flv/av.flv");
+    assert_format("fixtures/flv/av.flv", Format::Flv);
 }
 
 #[test]
 fn asf_is_not_ts() {
-    assert_unknown_non_ts("fixtures/container-probe/video.asf");
+    assert_format("fixtures/container-probe/video.asf", Format::Asf);
 }
 
 /// Regression guard for the CENC **TS-misidentification** false positive
@@ -300,17 +287,17 @@ fn mxf_is_not_ts() {
 
 #[test]
 fn adts_aac_is_not_ts() {
-    assert_unknown_non_ts("fixtures/container-probe/aac.adts");
+    assert_format("fixtures/container-probe/aac.adts", Format::AdtsAac);
 }
 
 #[test]
 fn mp3_is_not_ts() {
-    assert_unknown_non_ts("fixtures/container-probe/audio.mp3");
+    assert_format("fixtures/container-probe/audio.mp3", Format::Mp3);
 }
 
 #[test]
 fn annexb_is_not_ts() {
-    assert_unknown_non_ts("fixtures/container-probe/h264.annexb");
+    assert_format("fixtures/container-probe/h264.annexb", Format::AnnexB);
 }
 
 // ---------------------------------------------------------------------------
