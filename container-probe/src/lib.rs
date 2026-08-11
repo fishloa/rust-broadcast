@@ -99,18 +99,18 @@ extern crate alloc;
 #[cfg(test)]
 extern crate std;
 
-pub mod adts;
-pub mod annexb;
-pub mod asf;
-pub mod ebml;
-pub mod flv;
-pub mod isobmff;
-pub mod mp3;
-pub mod mpegps;
-pub mod mxf;
-pub mod ogg;
-pub mod riff;
-pub mod ts;
+mod adts;
+mod annexb;
+mod asf;
+mod ebml;
+mod flv;
+mod isobmff;
+mod mp3;
+mod mpegps;
+mod mxf;
+mod ogg;
+mod riff;
+mod ts;
 
 use alloc::vec::Vec;
 
