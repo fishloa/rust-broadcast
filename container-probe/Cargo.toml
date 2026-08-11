@@ -1,0 +1,34 @@
+[package]
+name    = "container-probe"
+version = "0.1.0"
+edition = "2024"
+description = "Robust media container-format detection — MPEG-2 TS (188/192/204/208 stride + phase), ISOBMFF, Matroska/WebM, MPEG-PS, FLV, MXF, WAV, Ogg, ASF, and elementary streams."
+license      = "MIT OR Apache-2.0"
+authors      = ["Alex Fishlock <alex.fishlock@racingjag.com>"]
+keywords = ["container", "detection", "mpeg-ts", "mp4", "probe"]
+categories = ["parser-implementations", "multimedia", "no-std"]
+repository   = "https://github.com/fishloa/rust-broadcast"
+readme       = "README.md"
+rust-version.workspace = true
+exclude = ["docs/**", "tests/fixtures/**"]
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+
+[dependencies]
+broadcast-common = { path = "../broadcast-common", version = "9.3", default-features = false }
+
+# Dev-only: the drift guard pins this crate's constants against the crates that
+# already validate them against real fixtures. Never a runtime dependency — the
+# runtime graph is `broadcast-common` only.
+[dev-dependencies]
+mpeg-ts  = { path = "../mpeg-ts",  version = "0.4" }
+mpeg-ps  = { path = "../mpeg-ps",  version = "0.4" }
+st377-1  = { path = "../st377-1",  version = "0.3" }
+
+[features]
+default = ["std"]
+# `std` links the standard library. Without it the crate is `#![no_std]` and
+# needs only `alloc`.
+std = ["broadcast-common/std"]
