@@ -303,9 +303,7 @@ impl ByteRange {
             return Err(Error::HlsParse {
                 line_no,
                 line: line.to_string(),
-                reason: format!(
-                    "BYTERANGE offset ({o}) + length ({length}) overflows u64"
-                ),
+                reason: format!("BYTERANGE offset ({o}) + length ({length}) overflows u64"),
             });
         }
         Ok(ByteRange { length, offset })
