@@ -1,7 +1,6 @@
 # dvb-tools
 
 [![crates.io](https://img.shields.io/crates/v/dvb-tools.svg)](https://crates.io/crates/dvb-tools)
-[![docs.rs](https://img.shields.io/docsrs/dvb-tools)](https://docs.rs/dvb-tools)
 [![License](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](#license)
 
 `dvb-tools` is a command-line stream analyzer over the `rust-broadcast` library
