@@ -204,14 +204,36 @@ A standalone tokio task, not a `Dialer`/`IngestSession` (there is no connection
 to dial and no reconnect semantics to honour).
 
 - **Identify** — probe the file's leading bytes with `container-probe`
-  ([sub-project 1](2026-08-11-container-probe-design.md)) to decide which
-  `transmux` demuxer to feed. A `Probe::Ambiguous`, `Insufficient`, or
+  ([sub-project 1](2026-08-11-container-probe-design.md), shipped) to decide
+  which `transmux` demuxer to feed. A `Probe::Ambiguous`, `Insufficient`, or
   `Unknown` result fails the source at startup with the candidates named — the
   file is never fed to a guessed demuxer. A format `transmux` cannot demux
   (`Wav`/`Ogg`/`Asf`, or an elementary stream) fails the same way: identified,
   but explicitly unsupported as a playout source.
-- **Demux** — feed the file bytes to the demuxer the probe selected, yielding
-  the `Media`/`Track`/`Sample` IR every other ingest path produces after its own
+
+  Probe the **whole file**, not a prefix: `probe_with_budget(bytes, bytes.len())`.
+  The default 64 KiB budget is enough to identify the format but not always to
+  settle the ISOBMFF layout below, and a `FileReader` has the whole file in
+  hand anyway.
+- **Select the demuxer.** `Format` maps to a `transmux` demuxer, except that
+  ISOBMFF splits in two — so read `Detail::Isobmff`'s `IsobmffLayout`:
+
+  | Probe result | `transmux` demuxer |
+  |---|---|
+  | `MpegTs` | `StreamingTsDemux` |
+  | `Isobmff` + `IsobmffLayout::Fragmented` | `Fmp4Demux` |
+  | `Isobmff` + `IsobmffLayout::Progressive` | `ProgressiveDemux` |
+  | `Isobmff` + `IsobmffLayout::Unknown` | fail the source — undetermined, never guessed |
+  | `Matroska` / `WebM` | `WebmDemux` |
+  | `MpegPs` | `PsDemux` |
+  | `Flv` | `StreamingFlvDemux` |
+  | `Mxf`, `Wav`, `Ogg`, `Asf`, `AdtsAac`, `Mp3`, `AnnexB` | unsupported as a playout source |
+
+  Do **not** re-derive the layout by walking boxes here — the probe already did
+  it, and two implementations of the same rule that can disagree is the bug
+  class this workspace keeps finding.
+- **Demux** — feed the file bytes to the demuxer selected above, yielding the
+  `Media`/`Track`/`Sample` IR every other ingest path produces after its own
   demux.
 - **Pace** — write samples to the private Trunk at their natural PTS cadence
   relative to a wall-clock start instant. Without pacing the whole file lands in

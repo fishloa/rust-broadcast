@@ -32,11 +32,16 @@ fn detail_text(detail: &Detail) -> String {
         Detail::Isobmff {
             major_brand,
             boxes_walked,
+            layout,
         } => {
             let brand = major_brand
                 .map(|b| String::from_utf8_lossy(&b).into_owned())
                 .unwrap_or_else(|| "<none>".into());
-            format!("ISOBMFF: major brand '{brand}', {boxes_walked} boxes chained")
+            // `layout` is what a consumer needs to pick a demuxer: a
+            // fragmented file wants transmux's `Fmp4Demux`, a progressive one
+            // `ProgressiveDemux`. The major brand cannot tell them apart —
+            // real fragmented and progressive files share the `isom` brand.
+            format!("ISOBMFF: major brand '{brand}', {boxes_walked} boxes chained, {layout} layout")
         }
         Detail::Ebml { doc_type } => format!("EBML: DocType {doc_type}"),
         Detail::None => "no format-specific detail".into(),

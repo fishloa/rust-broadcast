@@ -4,7 +4,9 @@
 //! full field values. Fixture paths are workspace-relative; we join
 //! `CARGO_MANIFEST_DIR` to `../<path>` as `fixture_ts.rs` does.
 
-use container_probe::{Confidence, Detail::Ebml, Detail::Isobmff, DocType, Format, Probe};
+use container_probe::{
+    Confidence, Detail::Ebml, Detail::Isobmff, DocType, Format, IsobmffLayout, Probe,
+};
 use std::fs;
 
 /// Read a workspace-relative fixture.
@@ -231,4 +233,107 @@ fn mpeg_ps() {
         ),
         "fixtures/ps/h264_ac3.ps: expected MpegPs STRUCTURAL, got {p:?}"
     );
+}
+
+// --- ISOBMFF layout: fragmented vs progressive (issue #960 follow-up) ---
+
+/// Assert an ISOBMFF fixture reports the layout it actually has.
+fn assert_layout(rel: &str, expect: IsobmffLayout) {
+    let data = fixture(rel);
+    match container_probe::probe(&data) {
+        Probe::Identified {
+            format: Format::Isobmff,
+            detail: Isobmff { layout, .. },
+            ..
+        } => assert_eq!(layout, expect, "{rel}"),
+        other => panic!("{rel} must be Isobmff, got {other:?}"),
+    }
+}
+
+/// Progressive files — sample tables in `moov`, no `moof`. These are what
+/// `transmux::ProgressiveDemux` handles.
+#[test]
+fn progressive_mp4s_report_progressive_layout() {
+    for rel in [
+        "fixtures/mp4/h264_high.mp4",
+        "fixtures/mp4/cenc.mp4",
+        "fixtures/mp4/av1.mp4",
+        "fixtures/mp4/progressive/av_prog.mp4",
+        "fixtures/mp4/progressive/av_faststart.mp4",
+    ] {
+        assert_layout(rel, IsobmffLayout::Progressive);
+    }
+}
+
+/// Fragmented files — `moof` movie fragments. These are what
+/// `transmux::Fmp4Demux` handles.
+///
+/// `cmaf/av_frag.mp4` is the fixture that proves the walk is necessary: its
+/// major brand is `isom`, exactly the same brand every progressive file above
+/// carries, yet it is fragmented. **The brand cannot discriminate** — only
+/// seeing a `moof` box can.
+#[test]
+fn fragmented_mp4s_report_fragmented_layout() {
+    for rel in [
+        "fixtures/mp4/frag/av1.frag.mp4",
+        "fixtures/mp4/frag/vvc.frag.mp4",
+        "fixtures/mp4/cmaf/av_frag.mp4",
+        "fixtures/mp4/llcmaf/ll_chunked.mp4",
+    ] {
+        assert_layout(rel, IsobmffLayout::Fragmented);
+    }
+}
+
+/// The brand really is ambiguous: at least one fragmented and one progressive
+/// fixture share the identical `isom` major brand. Pinned so nobody later
+/// "optimises" the box walk away in favour of a brand lookup.
+#[test]
+fn major_brand_alone_cannot_discriminate_layout() {
+    let brand_of = |rel: &str| -> Option<[u8; 4]> {
+        match container_probe::probe(&fixture(rel)) {
+            Probe::Identified {
+                detail: Isobmff { major_brand, .. },
+                ..
+            } => major_brand,
+            other => panic!("{rel}: {other:?}"),
+        }
+    };
+    let progressive = brand_of("fixtures/mp4/h264_high.mp4");
+    let fragmented = brand_of("fixtures/mp4/cmaf/av_frag.mp4");
+    assert_eq!(
+        progressive, fragmented,
+        "these two fixtures must share a brand for this test to mean anything"
+    );
+    assert_eq!(progressive, Some(*b"isom"));
+}
+
+/// A truncated prefix reports `Unknown`, never `Progressive`.
+///
+/// This is the regression guard for a real trap. Every fragmented file OPENS
+/// with a `ftyp` + `moov` init segment and only reaches its first `moof`
+/// later, so a short prefix of a fragmented file is byte-for-byte
+/// indistinguishable from a progressive one. An earlier revision concluded
+/// `saw_moov && !saw_moof => Progressive` and therefore called the first 64
+/// bytes of this genuinely fragmented CMAF file `Progressive` — which would
+/// have sent a consumer to `ProgressiveDemux` for an fMP4 file.
+///
+/// `Progressive` is now claimed only when the walk consumed the entire
+/// supplied buffer (and the buffer was not clipped by the probe budget), so
+/// the absence of a `moof` actually means something.
+///
+/// MUTATION VERIFIED: dropping the `walked_whole_input` condition turns this
+/// red with `left: Progressive, right: Unknown`.
+#[test]
+fn a_prefix_without_moof_or_moov_reports_unknown_layout() {
+    let data = fixture("fixtures/mp4/cmaf/av_frag.mp4");
+    // 64 bytes covers `ftyp` and lands inside the following box, well before
+    // any `moof`.
+    match container_probe::probe(&data[..64]) {
+        Probe::Identified {
+            format: Format::Isobmff,
+            detail: Isobmff { layout, .. },
+            ..
+        } => assert_eq!(layout, IsobmffLayout::Unknown),
+        other => panic!("a 64-byte ISOBMFF prefix should still identify, got {other:?}"),
+    }
 }
