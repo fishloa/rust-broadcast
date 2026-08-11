@@ -78,3 +78,34 @@ fn markers_valid(p: &[u8]) -> bool {
     }
     true
 }
+
+#[cfg(test)]
+mod drift {
+    //! Pins this module's `PACK_START_CODE` to `mpeg-ps`.
+    //!
+    //! Lives here rather than in `tests/drift_guard.rs` because the constant is
+    //! private: an integration test can only compare upstream against a
+    //! literal, which catches upstream changing but not this crate's copy
+    //! drifting. A unit test sees the real constant.
+
+    /// `mpeg-ps` keeps its own `PACK_START_CODE` in a private module
+    /// (`mpeg-ps/src/pack_header.rs`) and does not re-export it, so the exact
+    /// 4-byte value cannot be compared. Its public
+    /// `PACKET_START_CODE_PREFIX` is the `00 00 01` that opens every
+    /// pack/system/PSM start code — pin our first three bytes to it. The `BA`
+    /// suffix is ISO/IEC 13818-1 §2.5.3.3 and is asserted here as a literal
+    /// because no public upstream constant carries it.
+    #[test]
+    fn pack_start_code_prefix_matches_mpeg_ps() {
+        assert_eq!(
+            super::PACK_START_CODE[..3],
+            mpeg_ps::PACKET_START_CODE_PREFIX[..],
+            "container-probe's PACK_START_CODE prefix has drifted from mpeg-ps's"
+        );
+        assert_eq!(
+            super::PACK_START_CODE[3],
+            0xBA,
+            "pack_start_code must end in BA (ISO/IEC 13818-1 §2.5.3.3)"
+        );
+    }
+}

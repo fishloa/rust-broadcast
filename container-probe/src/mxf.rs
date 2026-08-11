@@ -76,3 +76,36 @@ fn ber_length_well_formed(ber: &[u8]) -> bool {
     // The declared octets must all be present in the region.
     ber.len() > octets
 }
+
+#[cfg(test)]
+mod drift {
+    //! Pins this module's `MXF_KEY_PREFIX` to `st377-1`.
+    //!
+    //! Lives here rather than in `tests/drift_guard.rs` because the constant is
+    //! private: an integration test can only compare upstream against a
+    //! literal, which catches upstream changing but not this crate's copy
+    //! drifting. A unit test sees the real constant.
+
+    /// `st377-1`'s own `PARTITION_KEY_PREFIX` (`st377-1/src/partition.rs`) is
+    /// private, so the exact 7-byte partition prefix cannot be compared. Every
+    /// MXF Universal Label shares the SMPTE organisation header `06 0E 2B 34`,
+    /// which IS public via `op1a::OP1A_UL_PREFIX` and `klv::FILL_ITEM_KEY_PREFIX`
+    /// — pin our first four bytes to both. The remaining `02 05 01` (partition
+    /// pack) is SMPTE ST 377-1 and stays a cited literal here for want of a
+    /// public upstream constant.
+    #[test]
+    fn ul_header_matches_st377_1() {
+        use st377_1::FILL_ITEM_KEY_PREFIX;
+        use st377_1::op1a::OP1A_UL_PREFIX;
+        assert_eq!(
+            super::MXF_KEY_PREFIX[..4],
+            OP1A_UL_PREFIX[..4],
+            "container-probe's MXF UL header has drifted from st377-1's"
+        );
+        assert_eq!(
+            super::MXF_KEY_PREFIX[..4],
+            FILL_ITEM_KEY_PREFIX[..4],
+            "container-probe's MXF UL header has drifted from st377-1's"
+        );
+    }
+}

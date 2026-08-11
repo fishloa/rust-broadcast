@@ -174,8 +174,13 @@ fn suppression_synthetic_ts_carrying_adts() {
     );
 }
 
-/// Build the synthetic TS lattice + ADTS frames buffer (duplicate of the
-/// `#[cfg(test)]` helper in `src/adts.rs`; this test cannot see it).
+/// Build the synthetic TS lattice + ADTS frames buffer.
+///
+/// Intentionally a byte-copy of the `#[cfg(test)]` helper in `src/adts.rs`
+/// (this external test cannot reach that crate-private helper, so the
+/// duplication is unavoidable without widening a `pub(crate)` item). Drift
+/// between the two is caught by `adts::tests::synthetic_ts_carrying_adts_layout_is_pinned`,
+/// which fixes the exact byte layout both must produce.
 fn synthetic_ts_carrying_adts(frame_count: usize) -> Vec<u8> {
     let aac_len = frame_count * 274usize;
     let packets = std::cmp::max(12, aac_len.div_ceil(188) * 2);

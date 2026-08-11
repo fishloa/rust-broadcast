@@ -1,37 +1,92 @@
-//! Robust media container-format detection over a byte prefix — issue
-//! [#960](https://github.com/fishloa/rust-broadcast/issues/960).
+//! Robust media **container-format detection** over a caller-owned byte slice.
 //!
-//! Identifies a container/stream format from a caller-owned byte slice (a file
-//! prefix, a network read) — one-shot, no IO, no state. The design is
-//! `docs/superpowers/specs/2026-08-11-container-probe-design.md`.
+//! `container-probe` identifies whether a byte prefix (a file's leading bytes,
+//! a network read) is an MPEG-2 Transport Stream, an ISOBMFF file, a
+//! Matroska/WebM file, MXF, MPEG—PS, FLV, WAV, Ogg, ASF, or a raw ADTS AAC /
+//! MP3 / Annex B elementary stream. One-shot over a slice: the crate holds no
+//! buffer, owns no IO, and keeps no state.
 //!
-//! Every registered prober runs over the same buffer and scores its candidate
-//! (`Evidence`); the highest score wins. A single best match is
-//! `Probe::Identified`, two within `TIE_THRESHOLD` is `Probe::Ambiguous`,
-//! nothing conclusive with no hope of progress is `Probe::Unknown`, and a
-//! match that a longer buffer could confirm reports
-//! `Probe::Insufficient { need_at_least }`.
+//! # Detected formats
 //!
-//! # Work-package 1 scope
+//! | Format | How it is detected | Best confidence tier |
+//! |---|---|---|
+//! | MPEG-2 TS | sync lattice over 188/192/204/208-byte strides | `LATTICE_STRONG` |
+//! | ISOBMFF | box-chain walk (ISO/IEC 14496-12 §4.2) | `STRUCTURAL` |
+//! | Matroska/WebM | EBML magic + `DocType` | `CERTAIN` |
+//! | MXF | partition-pack key + BER length | `CERTAIN` |
+//! | MPEG-PS | pack start code + marker bits | `STRUCTURAL` |
+//! | FLV | `"FLV"` signature + header fields | `STRONG` |
+//! | WAV | `"RIFF".."WAVE"` | `STRONG` |
+//! | Ogg | `"OggS"` | `STRONG` |
+//! | ASF | 16-byte header GUID | `STRONG` |
+//! | ADTS AAC | frame-length chain | `LATTICE_STRONG` |
+//! | MP3 | frame-length chain | `LATTICE_STRONG` |
+//! | Annex B H.264/H.265 | start-code NAL chain | `LATTICE_STRONG` |
 //!
-//! The core types, the confidence/scoring model, the dispatch harness, and the
-//! MPEG-2 TS prober ([`ts`]).
+//! # The scored confidence model
 //!
-//! # Work-package 2 scope
+//! Every registered prober runs over the same bytes and returns a scored
+//! candidate (an `Evidence`): a `Confidence` tier and a `Detail`. All probers
+//! **always** run, so the answer does not depend on declaration order. The
+//! highest score wins:
 //!
-//! The structural probers: [`isobmff`] (ISO/IEC 14496-12 box chain), [`ebml`]
-//! (Matroska/WebM), [`mxf`] (SMPTE ST 377-1 partition pack), and [`mpegps`]
-//! (ISO/IEC 13818-1 §2.5 pack header).
+//! | Tier | Value | Meaning |
+//! |---|---|---|
+//! | `CERTAIN` | 240 | Magic **plus** a structural confirmation |
+//! | `STRONG` | 192 | Unambiguous magic at a defined offset |
+//! | `STRUCTURAL` | 160 | A validated structure chain |
+//! | `LATTICE_STRONG` | 144 | `>= 8` lattice/frame confirmations |
+//! | `LATTICE_WEAK` | 96 | 3-7 lattice/frame confirmations |
+//! | `HEURISTIC` | 64 | A signature with real false-positive risk |
 //!
-//! # Work-package 3 scope
+//! If the top two candidates are within `TIE_THRESHOLD` (16), the result is
+//! [`Probe::Ambiguous`] with every candidate listed — never an arbitrary pick.
+//! A container matched at `LATTICE_STRONG` or above zeroes every
+//! elementary-stream candidate (ADTS/MP3/Annex B), on the principle that ES
+//! frames inside a container payload are expected data, not evidence the file
+//! is a raw stream.
 //!
-//! The magic probers ([`flv`], [`riff`]/Wav, [`ogg`], [`asf`]) and the
-//! chain-validated elementary-stream probers ([`adts`], [`mp3`], [`annexb`]),
-//! plus the one-directional cross-prober suppression rule that zeroes
-//! elementary-stream candidates whenever a container matches at
-//! `LATTICE_STRONG` or above.
+//! # `Insufficient` vs `Unknown`
 //!
-//! `no_std` + `alloc`.
+//! These are deliberately distinct, and a caller must not conflate them:
+//!
+//! - [`Probe::Insufficient { need_at_least }`](Probe) means **read more bytes** —
+//!   nothing conclusive matched yet, but a longer buffer could change that. Use
+//!   `need_at_least` to decide how much more to buffer.
+//! - [`Probe::Unknown`] means **stop** — nothing matched and more bytes will not
+//!   help.
+//!
+//! # `no_std` + `alloc`
+//!
+//! The crate is `#![no_std]` and links only `alloc`. Its single runtime
+//! dependency is `broadcast-common`. The only allocation is the candidate `Vec`
+//! of a genuine `Ambiguous` result. Build it without the default features for a
+//! pure-`alloc` target.
+//!
+//! # Example
+//!
+//! ```
+//! use container_probe::{probe, Probe};
+//!
+//! // An empty slice concludes Unknown: nothing matched, and no amount of extra
+//! // bytes would make this particular input a recognised format.
+//! let p = probe(&[]);
+//! assert!(matches!(p, Probe::Unknown));
+//! ```
+//!
+//! # Non-goals
+//!
+//! - **No demuxing** — the probe identifies a format; parsing its content is a
+//!   demuxer's job.
+//! - **No codec identification** — "this is TS" is the answer, not "this TS
+//!   carries H.264".
+//! - **No file IO** — `no_std`; the caller supplies bytes.
+//! - **No format conversion or repair** — identification only.
+//! - **No incremental/streaming API** — the probe is one-shot over a slice; a
+//!   streaming caller reads more and re-probes, guided by `Insufficient`'s
+//!   `need_at_least`.
+//!
+//! `no_std` + `alloc`; runtime dependency is `broadcast-common` only.
 
 #![no_std]
 #![forbid(unsafe_code)]

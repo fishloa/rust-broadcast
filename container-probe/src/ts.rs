@@ -219,3 +219,54 @@ fn need_at_least(have: usize) -> usize {
         have + TS_PACKET_SIZE,
     )
 }
+
+#[cfg(test)]
+mod drift {
+    //! Pins this module's re-declared constants to the upstream crate that
+    //! already validates them against real fixtures.
+    //!
+    //! These live here, not in `tests/drift_guard.rs`, because the constants
+    //! are private to this module. An integration test cannot see them, so it
+    //! can only compare upstream against a *literal* — which catches upstream
+    //! changing but NOT this crate's copy drifting, the direction that actually
+    //! matters. Verified: with the guard in `tests/`, editing `TS_SYNC_BYTE` to
+    //! `0x48` left it green. A unit test sees the real constant.
+
+    /// ISO/IEC 13818-1 §2.4.3.3 sync byte, pinned to `mpeg-ts`.
+    #[test]
+    fn sync_byte_matches_mpeg_ts() {
+        assert_eq!(
+            super::TS_SYNC_BYTE,
+            mpeg_ts::ts::TS_SYNC_BYTE,
+            "container-probe's TS_SYNC_BYTE has drifted from mpeg-ts's"
+        );
+    }
+
+    /// ISO/IEC 13818-1 §2.4.3.2 packet length, pinned to `mpeg-ts`.
+    #[test]
+    fn packet_size_matches_mpeg_ts() {
+        assert_eq!(
+            super::TS_PACKET_SIZE,
+            mpeg_ts::ts::TS_PACKET_SIZE,
+            "container-probe's TS_PACKET_SIZE has drifted from mpeg-ts's"
+        );
+    }
+
+    /// The M2TS/BDAV and DVB strides are the 188-byte packet plus their
+    /// respective wrappers, so they must stay derived from it rather than
+    /// becoming independent literals.
+    #[test]
+    fn wrapped_strides_stay_derived_from_the_packet_size() {
+        const TP_EXTRA_HEADER: usize = 4;
+        const RS_PARITY: usize = 16;
+        assert_eq!(
+            super::TS_PACKET_SIZE_192,
+            super::TS_PACKET_SIZE + TP_EXTRA_HEADER
+        );
+        assert_eq!(super::TS_PACKET_SIZE_204, super::TS_PACKET_SIZE + RS_PARITY);
+        assert_eq!(
+            super::TS_PACKET_SIZE_208,
+            super::TS_PACKET_SIZE + RS_PARITY + TP_EXTRA_HEADER
+        );
+    }
+}

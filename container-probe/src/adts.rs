@@ -216,4 +216,41 @@ mod tests {
             other => panic!("h264_aac.ts must NOT match ADTS at the real threshold, got {other:?}"),
         }
     }
+
+    /// Pins the synthetic TS+ADTS byte layout so the duplicated builder in
+    /// `tests/fixture_magic_es.rs` (WP4 of the "remove duplication" task) cannot
+    /// silently drift from this crate-internal one.
+    ///
+    /// The integration test cannot see the `#[cfg(test)]` helper here (it is
+    /// external to the crate), so no direction removes the duplication without
+    /// widening a `pub(crate)` item. Both are left in place; this assertion is
+    /// the drift tripwire — it fixes the exact layout the two builders must
+    /// agree on, so a divergence becomes a test failure rather than a quiet
+    /// change in whether one suppression proof fires.
+    #[test]
+    fn synthetic_ts_carrying_adts_layout_is_pinned() {
+        let data = synthetic_ts_carrying_adts(32);
+        // 94 whole 188-byte TS packets, then 32 274-byte ADTS frames.
+        let base = 94 * 188;
+        assert_eq!(data.len(), base + 32 * 274);
+        // Every packet starts with the TS sync byte.
+        for p in 0..94 {
+            assert_eq!(
+                data[p * 188],
+                0x47,
+                "packet {p} must start with the sync byte"
+            );
+        }
+        // The ADTS region begins after the TS prefix with a valid chained frame.
+        assert_eq!(data[base], 0xFF);
+        assert_eq!(data[base + 1], 0xF1);
+        // frame_length = 274, encoded across bytes 3-5.
+        assert_eq!(data[base + 3], 0);
+        assert_eq!(data[base + 4], (274u16 >> 3) as u8);
+        assert_eq!(data[base + 5], ((274u16 & 0x07) as u8) << 5);
+        // Last ADTS frame present and self-consistent.
+        let last = base + 31 * 274;
+        assert_eq!(data[last], 0xFF);
+        assert_eq!(data[last + 4], (274u16 >> 3) as u8);
+    }
 }
