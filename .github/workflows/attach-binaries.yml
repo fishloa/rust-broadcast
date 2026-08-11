@@ -22,14 +22,6 @@ on:
         description: 'Binary name if different from crate (e.g. multimux for multimux-cli)'
         required: false
         type: string
-      features:
-        description: 'Cargo features to enable (blank = default features)'
-        required: false
-        type: string
-      targets:
-        description: 'JSON array of targets (blank = all 4)'
-        required: false
-        type: string
 
 jobs:
   binaries:
@@ -37,6 +29,4 @@ jobs:
     with:
       crate: ${{ inputs.crate }}
       bin: ${{ inputs.bin || inputs.crate }}
-      features: ${{ inputs.features }}
-      targets: ${{ inputs.targets }}
       tag: ${{ inputs.tag }}
