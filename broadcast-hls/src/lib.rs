@@ -299,6 +299,13 @@ impl ByteRange {
             Some(o) => Some(parse_decimal::<u64>(o, line_no, line, "BYTERANGE offset")?),
             None => None,
         };
+        if let Some(o) = offset.filter(|&o| o.checked_add(length).is_none()) {
+            return Err(Error::HlsParse {
+                line_no,
+                line: line.to_string(),
+                reason: format!("BYTERANGE offset ({o}) + length ({length}) overflows u64"),
+            });
+        }
         Ok(ByteRange { length, offset })
     }
 }
@@ -1870,6 +1877,20 @@ impl MediaPlaylist {
                 None => open,
             })
         };
+
+        if let (Some(start), Some(len)) = (
+            preload_hint_byte_range_start,
+            preload_hint_byte_range_length,
+        ) && start.checked_add(len).is_none()
+        {
+            return Err(Error::HlsParse {
+                line_no: 0,
+                line: String::new(),
+                reason: format!(
+                    "PRELOAD-HINT BYTERANGE-START ({start}) + BYTERANGE-LENGTH ({len}) overflows u64"
+                ),
+            });
+        }
 
         let low_latency = if saw_ll_tag {
             let mut all_extra: Vec<(String, String)> = Vec::new();
@@ -4848,5 +4869,91 @@ seg0.m4s\n";
         assert!(re_ll.can_skip_dateranges);
         assert!(re_ll.sc_extra_attrs.iter().any(|(k, _)| k == "REQ-LATENCY"));
         assert!(re_ll.pi_extra_attrs.iter().any(|(k, _)| k == "REQ-VIDEO"));
+    }
+
+    // --- #958 overflow-rejection tests ---
+
+    #[test]
+    fn byterange_offset_plus_length_overflow_rejected() {
+        let input = "#EXTM3U\n\
+                      #EXT-X-TARGETDURATION:10\n\
+                      #EXTINF:10,\n\
+                      #EXT-X-BYTERANGE:1@18446744073709551615\n\
+                      seg0.ts\n";
+        let err = MediaPlaylist::parse(input).unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("overflows"), "expected overflow error: {msg}");
+    }
+
+    #[test]
+    fn byterange_exact_max_accepted() {
+        let input = "#EXTM3U\n\
+                      #EXT-X-TARGETDURATION:10\n\
+                      #EXTINF:10,\n\
+                      #EXT-X-BYTERANGE:1@18446744073709551614\n\
+                      seg0.ts\n";
+        let pl = MediaPlaylist::parse(input).expect("u64::MAX exactly must parse");
+        assert_eq!(pl.segments[0].byte_range.as_ref().unwrap().length, 1);
+        assert_eq!(
+            pl.segments[0].byte_range.as_ref().unwrap().offset,
+            Some(u64::MAX - 1)
+        );
+    }
+
+    #[test]
+    fn byterange_no_offset_max_length_accepted() {
+        let input = "#EXTM3U\n\
+                      #EXT-X-TARGETDURATION:10\n\
+                      #EXTINF:10,\n\
+                      #EXT-X-BYTERANGE:18446744073709551615\n\
+                      seg0.ts\n";
+        let pl = MediaPlaylist::parse(input).expect("no offset means no overflow check");
+        assert_eq!(pl.segments[0].byte_range.as_ref().unwrap().length, u64::MAX);
+        assert!(pl.segments[0].byte_range.as_ref().unwrap().offset.is_none());
+    }
+
+    #[test]
+    fn map_byterange_overflow_rejected() {
+        let input = "#EXTM3U\n\
+                      #EXT-X-TARGETDURATION:10\n\
+                      #EXT-X-MAP:URI=\"init.mp4\",BYTERANGE=\"1@18446744073709551615\"\n\
+                      #EXTINF:10,\n\
+                      seg0.ts\n";
+        let err = MediaPlaylist::parse(input).unwrap_err();
+        assert!(
+            err.to_string().contains("overflows"),
+            "MAP BYTERANGE overflow: {err}"
+        );
+    }
+
+    #[test]
+    fn part_byterange_overflow_rejected() {
+        let input = "#EXTM3U\n\
+                      #EXT-X-TARGETDURATION:10\n\
+                      #EXT-X-PART-INF:PART-TARGET=1.0\n\
+                      #EXT-X-PART:URI=\"p0.m4s\",DURATION=1.0,BYTERANGE=\"1@18446744073709551615\"\n\
+                      #EXTINF:10,\n\
+                      seg0.ts\n";
+        let err = MediaPlaylist::parse(input).unwrap_err();
+        assert!(
+            err.to_string().contains("overflows"),
+            "PART BYTERANGE overflow: {err}"
+        );
+    }
+
+    #[test]
+    fn preload_hint_byterange_overflow_rejected() {
+        let input = "#EXTM3U\n\
+                      #EXT-X-TARGETDURATION:10\n\
+                      #EXT-X-PART-INF:PART-TARGET=1.0\n\
+                      #EXT-X-PRELOAD-HINT:TYPE=PART,URI=\"next.m4s\",\
+                      BYTERANGE-START=18446744073709551615,BYTERANGE-LENGTH=1\n\
+                      #EXTINF:10,\n\
+                      seg0.ts\n";
+        let err = MediaPlaylist::parse(input).unwrap_err();
+        assert!(
+            err.to_string().contains("overflows"),
+            "PRELOAD-HINT overflow: {err}"
+        );
     }
 }
