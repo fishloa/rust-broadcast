@@ -203,9 +203,16 @@ Each iteration:
 A standalone tokio task, not a `Dialer`/`IngestSession` (there is no connection
 to dial and no reconnect semantics to honour).
 
-- **Demux** — read file bytes, feed `transmux`'s demuxer, which probes the
-  container and yields the `Media`/`Track`/`Sample` IR every other ingest path
-  produces after its own demux.
+- **Identify** — probe the file's leading bytes with `container-probe`
+  ([sub-project 1](2026-08-11-container-probe-design.md)) to decide which
+  `transmux` demuxer to feed. A `Probe::Ambiguous`, `Insufficient`, or
+  `Unknown` result fails the source at startup with the candidates named — the
+  file is never fed to a guessed demuxer. A format `transmux` cannot demux
+  (`Wav`/`Ogg`/`Asf`, or an elementary stream) fails the same way: identified,
+  but explicitly unsupported as a playout source.
+- **Demux** — feed the file bytes to the demuxer the probe selected, yielding
+  the `Media`/`Track`/`Sample` IR every other ingest path produces after its own
+  demux.
 - **Pace** — write samples to the private Trunk at their natural PTS cadence
   relative to a wall-clock start instant. Without pacing the whole file lands in
   the ring instantly and overflows it.
