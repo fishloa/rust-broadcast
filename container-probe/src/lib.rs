@@ -15,9 +15,15 @@
 //! # Work-package 1 scope
 //!
 //! The core types, the confidence/scoring model, the dispatch harness, and the
-//! MPEG-2 TS prober ([`ts`]). The remaining probers (ISOBMFF, Matroska/WebM,
-//! MPEG-PS, FLV, WAV/Ogg/ASF, ADTS-MP3-AnnexB elementary streams) land in later
-//! work packages; adding one is a one-line registry change (see `PROBERS`).
+//! MPEG-2 TS prober ([`ts`]).
+//!
+//! # Work-package 2 scope
+//!
+//! The structural probers: [`isobmff`] (ISO/IEC 14496-12 box chain), [`ebml`]
+//! (Matroska/WebM), [`mxf`] (SMPTE ST 377-1 partition pack), and [`mpegps`]
+//! (ISO/IEC 13818-1 §2.5 pack header). The remaining probers (FLV, WAV/Ogg/ASF,
+//! ADTS-MP3-AnnexB elementary streams) land in later work packages; adding one
+//! is a one-line registry change (see `PROBERS`).
 //!
 //! `no_std` + `alloc`.
 
@@ -27,6 +33,10 @@
 
 extern crate alloc;
 
+pub mod ebml;
+pub mod isobmff;
+pub mod mpegps;
+pub mod mxf;
 pub mod ts;
 
 use alloc::vec::Vec;
@@ -318,7 +328,30 @@ type Prober = fn(&[u8], limit: usize) -> Outcome;
 /// format is a one-line change here**: append `(Format::X, x::probe)` and the
 /// harness picks it up. Order does not bias the result — all probers always
 /// run and the highest score wins.
-const PROBERS: &[(Format, Prober)] = &[(Format::MpegTs, ts::probe)];
+///
+/// One entry per format. The EBML prober is registered under `Format::Matroska`
+/// and reports `Format::WebM` (or stays Matroska) via its `Detail::Ebml`
+/// `DocType`, resolved by [`candidate_format`].
+const PROBERS: &[(Format, Prober)] = &[
+    (Format::MpegTs, ts::probe),
+    (Format::Isobmff, isobmff::probe),
+    (Format::Matroska, ebml::probe),
+    (Format::Mxf, mxf::probe),
+    (Format::MpegPs, mpegps::probe),
+];
+
+/// Resolve the final candidate `Format`, given a registry format and the
+/// prober's `Detail`. Only the EBML prober ever disagrees: `Detail::Ebml` with
+/// `DocType::Webm` is a WebM, anything else is a Matroska (the registry label).
+fn candidate_format(format: Format, detail: Detail) -> Format {
+    match detail {
+        Detail::Ebml { doc_type } => match doc_type {
+            DocType::Webm => Format::WebM,
+            DocType::Matroska | DocType::Other => Format::Matroska,
+        },
+        _ => format,
+    }
+}
 
 /// Probe with the default budget (`DEFAULT_BUDGET`).
 pub fn probe(data: &[u8]) -> Probe {
@@ -342,7 +375,7 @@ pub fn probe_with_budget(data: &[u8], budget: usize) -> Probe {
     for (format, prober) in PROBERS {
         match prober(data, limit) {
             Outcome::Match(ev) => candidates.push(Candidate {
-                format: *format,
+                format: candidate_format(*format, ev.detail),
                 confidence: ev.confidence,
                 detail: ev.detail,
             }),

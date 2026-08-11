@@ -168,9 +168,19 @@ fn assert_unknown_non_ts(rel: &str) {
     assert_eq!(p, Probe::Unknown, "{rel} must be Unknown, got {p:?}");
 }
 
+/// Assert a file is identified as `format` (WP2+ structural probers). Keeps the
+/// WP1 "not TS" contract: these files are definitive non-TS containers.
+fn assert_format(rel: &str, format: Format) {
+    let p = probe_fixture(rel);
+    assert!(
+        matches!(p, Probe::Identified { format: f, .. } if f == format),
+        "{rel} must be Identified {format:?}, got {p:?}"
+    );
+}
+
 #[test]
 fn mp4_is_not_ts() {
-    assert_unknown_non_ts("fixtures/mp4/h264_high.mp4");
+    assert_format("fixtures/mp4/h264_high.mp4", Format::Isobmff);
 }
 
 #[test]
@@ -185,7 +195,7 @@ fn ogg_is_not_ts() {
 
 #[test]
 fn mkv_is_not_ts() {
-    assert_unknown_non_ts("fixtures/mkv/h264_aac.mkv");
+    assert_format("fixtures/mkv/h264_aac.mkv", Format::Matroska);
 }
 
 #[test]
@@ -198,7 +208,8 @@ fn asf_is_not_ts() {
     assert_unknown_non_ts("fixtures/container-probe/video.asf");
 }
 
-/// Regression guard for the CENC false positive.
+/// Regression guard for the CENC **TS-misidentification** false positive
+/// (WP1): the encrypted payload aligned 3-byte `0x47` runs on one lane.
 ///
 /// This CENC-encrypted MP4 (high-entropy encrypted payload) previously probed
 /// to a confident `MpegTs` at `Ts { stride: 208, phase: 142 }`, conf 96
@@ -206,49 +217,85 @@ fn asf_is_not_ts() {
 /// aligned on one lane purely by chance. A confident wrong answer is the worst
 /// outcome a probe can produce. The fix required a candidate lane to *cover* at
 /// least `TS_MIN_COVERAGE_PCT` of its positions with sync bytes — a real TS
-/// stream syncs at ~100% of positions, random noise at ~2.5% — so this file now
-/// correctly reports `Unknown`.
+/// stream syncs at ~100% of positions, random noise at ~2.5%.
+///
+/// WP2 adds the ISOBMFF prober, so the whole file now correctly identifies as
+/// `Isobmff` (leading `ftyp`, major brand `isom`).
+///
+/// **This test alone no longer guards the coverage rule** — see
+/// [`cenc_payload_without_its_boxes_is_not_ts`], which does. Once ISOBMFF is
+/// registered, this file matches it at `STRUCTURAL` (160) while the spurious TS
+/// lattice scores only `LATTICE_WEAK` (96); 160 beats 96 by far more than
+/// `TIE_THRESHOLD`, so the verdict stays `Isobmff` even with the coverage gate
+/// deleted. Verified: with `TS_MIN_COVERAGE_PCT` set to `0` and a forced
+/// rebuild, the whole suite still passed. A guard that cannot fail is not a
+/// guard.
+#[test]
+fn cenc_mp4_is_isobmff() {
+    assert_format("fixtures/mp4/cenc.mp4", Format::Isobmff);
+}
+
+/// The real guard for `TS_MIN_COVERAGE_PCT`, isolating the TS prober from
+/// ISOBMFF's shadow.
+///
+/// `fixtures/mp4/cenc.mp4` carries a high-entropy CENC-encrypted payload. Across
+/// the 792 lanes (188+192+204+208 phases) three consecutive `0x47` bytes align
+/// on one lane purely by chance — measured at stride 208, phase 141, with a
+/// longest run of 3 and just 4 sync bytes over 117 lane positions (3% coverage).
+/// Run length alone called that a match; a confident wrong answer is the worst
+/// outcome a probe can produce.
+///
+/// Skipping the first byte removes the valid box header at offset 0, so the
+/// ISOBMFF prober cannot match and cannot mask the TS prober's verdict. What
+/// remains is exactly the encrypted noise the coverage rule exists to reject.
 ///
 /// # Mutation proof
 ///
-/// This test bites: setting `TS_MIN_COVERAGE_PCT` to `0` (keeping only the
-/// run-length test) makes `cenc.mp4` probe to a false positive again. Observed
-/// failure:
+/// Re-measured against this test, with a **forced rebuild** (`touch` on the
+/// source — a restored file with an older mtime leaves cargo serving a stale
+/// binary, which briefly produced a false result during this investigation).
+/// Setting `TS_MIN_COVERAGE_PCT` to `0`:
 /// ```
-/// assertion `left == right` failed:
+/// assertion `left == right` failed
 ///   left: Identified { format: MpegTs, confidence: Confidence(96),
-///          detail: Ts { stride: 208, phase: 142 } }
+///          detail: Ts { stride: 208, phase: 141 } }
 ///   right: Unknown
 /// ```
-/// The constant was restored to `50` and the coverage gate is guarded here.
+/// Restored to `50`, this slice is `Unknown`.
 #[test]
-fn cenc_mp4_is_not_ts() {
-    assert_unknown_non_ts("fixtures/mp4/cenc.mp4");
+fn cenc_payload_without_its_boxes_is_not_ts() {
+    let data = fixture("fixtures/mp4/cenc.mp4");
+    let p = probe(&data[1..]);
+    assert_eq!(
+        p,
+        Probe::Unknown,
+        "encrypted payload with no box header must not match any prober, got {p:?}"
+    );
 }
 
 #[test]
 fn av1_mp4_is_not_ts() {
-    assert_unknown_non_ts("fixtures/mp4/av1.mp4");
+    assert_format("fixtures/mp4/av1.mp4", Format::Isobmff);
 }
 
 #[test]
 fn vp9_opus_mkv_is_not_ts() {
-    assert_unknown_non_ts("fixtures/mkv/vp9_opus.mkv");
+    assert_format("fixtures/mkv/vp9_opus.mkv", Format::Matroska);
 }
 
 #[test]
 fn vp8_opus_webm_is_not_ts() {
-    assert_unknown_non_ts("fixtures/webm/vp8_opus.webm");
+    assert_format("fixtures/webm/vp8_opus.webm", Format::WebM);
 }
 
 #[test]
 fn ps_is_not_ts() {
-    assert_unknown_non_ts("fixtures/ps/h264_ac3.ps");
+    assert_format("fixtures/ps/h264_ac3.ps", Format::MpegPs);
 }
 
 #[test]
 fn mxf_is_not_ts() {
-    assert_unknown_non_ts("fixtures/mxf/op1a_mpeg2_pcm.mxf");
+    assert_format("fixtures/mxf/op1a_mpeg2_pcm.mxf", Format::Mxf);
 }
 
 #[test]
