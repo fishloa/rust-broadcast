@@ -1,0 +1,123 @@
+name: Reusable — release binaries
+
+# Build a crate's binary for every supported target and attach the archives to
+# the GitHub Release for the tag that called this workflow.
+#
+# Why this exists: the CLI crates publish their SOURCE to crates.io, which means
+# using them requires a Rust toolchain and `cargo install`. Nothing in this repo
+# produced a runnable binary for anyone else. Attaching them to the Release the
+# tag already creates closes that with no new infrastructure.
+#
+# One reusable workflow rather than ~40 lines copied into six release lanes: the
+# packaging rules, target list and checksum format then have exactly one
+# definition, and a fix lands everywhere at once.
+#
+# TARGETS — three runners, four targets:
+#   ubuntu-latest    -> x86_64-unknown-linux-gnu    (native)
+#   ubuntu-24.04-arm -> aarch64-unknown-linux-gnu   (native; free on public repos)
+#   macos-latest     -> aarch64-apple-darwin        (native)
+#                    -> x86_64-apple-darwin         (cross)
+# The Apple cross-build is native-toolchain cross-compilation and was verified
+# against `multimux`, the heaviest binary here (it pulls `ring`, whose build
+# script needs a working C cross toolchain — the reason a Linux aarch64 cross
+# from x86_64 is NOT done, and a real arm64 runner is used instead).
+
+on:
+  workflow_call:
+    inputs:
+      crate:
+        description: Cargo package name.
+        required: true
+        type: string
+      bin:
+        description: Binary target name (may differ from the crate, e.g. multimux-cli -> multimux).
+        required: true
+        type: string
+      features:
+        description: Extra --features to pass, if the bin needs any.
+        required: false
+        type: string
+        default: ""
+      targets:
+        description: >-
+          JSON array of {os, target} pairs to build. Defaults to all four.
+          A caller whose binary is platform-gated passes a narrower set — this
+          is an input rather than a job-level `if`, because GitHub does NOT
+          expose the `matrix` context to `jobs.<id>.if`, so a conditional skip
+          there silently would not work.
+        required: false
+        type: string
+        default: >-
+          [{"os":"ubuntu-latest","target":"x86_64-unknown-linux-gnu"},
+           {"os":"ubuntu-24.04-arm","target":"aarch64-unknown-linux-gnu"},
+           {"os":"macos-latest","target":"aarch64-apple-darwin"},
+           {"os":"macos-latest","target":"x86_64-apple-darwin"}]
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: ${{ inputs.bin }} ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      # One target failing must not deny the other three their artifacts — a
+      # partial set of binaries is far better than none.
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(inputs.targets) }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+
+      - name: Add target
+        run: rustup target add ${{ matrix.target }}
+
+      - name: Build
+        run: |
+          cargo build --release --locked \
+            -p '${{ inputs.crate }}' --bin '${{ inputs.bin }}' \
+            --target '${{ matrix.target }}' \
+            ${{ inputs.features && format('--features {0}', inputs.features) || '' }}
+
+      # The archive carries the licences because the binary is redistributed on
+      # its own, detached from the repo that states its terms.
+      - name: Package
+        id: pkg
+        run: |
+          set -euo pipefail
+          # Handles both tag shapes: `<crate>-v1.2.3` and the lockstep `v1.2.3`
+          # (which has no `-v` to strip, so `##*-v` would leave the leading v).
+          VER="${GITHUB_REF_NAME##*-v}"; VER="${VER#v}"
+          NAME="${{ inputs.bin }}-${VER}-${{ matrix.target }}"
+          mkdir -p "dist/$NAME"
+          cp "target/${{ matrix.target }}/release/${{ inputs.bin }}" "dist/$NAME/"
+          for f in README.md LICENSE-MIT LICENSE-APACHE LICENSE; do
+            [ -f "${{ inputs.crate }}/$f" ] && cp "${{ inputs.crate }}/$f" "dist/$NAME/" || true
+            [ -f "$f" ] && [ ! -f "dist/$NAME/$f" ] && cp "$f" "dist/$NAME/" || true
+          done
+          tar -C dist -czf "dist/$NAME.tar.gz" "$NAME"
+          # Checksums are generated on the runner that built the binary, so a
+          # downloader can verify the exact artifact rather than trust the
+          # transport.
+          ( cd dist && shasum -a 256 "$NAME.tar.gz" > "$NAME.tar.gz.sha256" )
+          echo "name=$NAME" >> "$GITHUB_OUTPUT"
+          ls -l "dist/$NAME.tar.gz"
+
+      - name: Attach to the GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          # --clobber so re-running a lane after a partial failure replaces the
+          # asset instead of erroring on a name collision.
+          gh release upload "$GITHUB_REF_NAME" \
+            "dist/${{ steps.pkg.outputs.name }}.tar.gz" \
+            "dist/${{ steps.pkg.outputs.name }}.tar.gz.sha256" \
+            --clobber
+          echo "::notice::attached ${{ steps.pkg.outputs.name }}.tar.gz to $GITHUB_REF_NAME"

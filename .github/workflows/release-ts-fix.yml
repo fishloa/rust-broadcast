@@ -97,3 +97,14 @@ jobs:
               --notes-file "docs/release-notes/ts-fix-$V.md"
             echo "::notice::created GitHub Release $GITHUB_REF_NAME"
           fi
+
+  # Compiled binaries for the four supported targets, attached to the Release
+  # this tag's publish job creates. crates.io carries the source; without this
+  # there is no way to use ts-fix without a Rust toolchain.
+  binaries:
+    needs: publish
+    uses: ./.github/workflows/reusable-binaries.yml
+    with:
+      crate: ts-fix
+      bin: ts-fix
+      features: cli

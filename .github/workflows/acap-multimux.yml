@@ -9,6 +9,13 @@ on:
       - "acap-multimux/**"
       - ".github/workflows/acap-multimux.yml"
   workflow_dispatch:
+  # acap-multimux is `publish = false` and deliberately NOT a crates.io crate —
+  # its deliverable is the `.eap` an operator installs on a camera. Before this
+  # trigger existed the only copies were `actions/upload-artifact` uploads,
+  # which expire and are reachable only from the Actions run page, so there was
+  # no versioned, downloadable build of it anywhere.
+  push:
+    tags: ["acap-multimux-v*"]
 
 env:
   CARGO_TERM_COLOR: always
@@ -243,3 +250,73 @@ jobs:
           name: acapmultimux-fw${{ matrix.fw }}-${{ matrix.arch }}
           path: acap-multimux/target/acap/*.eap
           if-no-files-found: error
+
+  # Collect all four `.eap` cells (fw11/fw12 x aarch64/armv7hf) and attach them
+  # to the GitHub Release for the tag. Tag-only: a PR build still just uploads
+  # expiring artifacts, which is the right behaviour for a PR.
+  release:
+    name: publish .eap to the GitHub Release
+    if: startsWith(github.ref, 'refs/tags/acap-multimux-v')
+    needs: eap
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v5
+
+      # NOT `merge-multiple: true`. cargo-acap-build names the package
+      # `acap-multimux_<ver>_<arch>.eap` with NO firmware component — the fw11
+      # and fw12 packages for one arch are byte-different but IDENTICALLY
+      # NAMED, so merging them into one directory silently overwrites one with
+      # the other and yields two files where there should be four. The
+      # firmware only appears in the ARTIFACT name, so download per-artifact
+      # and fold it into the filename here.
+      - name: Download every .eap built by the matrix
+        uses: actions/download-artifact@v4
+        with:
+          pattern: acapmultimux-*
+          path: artifacts
+
+      - name: Name each package by (firmware, arch) and checksum
+        run: |
+          set -euo pipefail
+          mkdir -p eaps
+          for d in artifacts/acapmultimux-*; do
+            fw="$(basename "$d" | cut -d- -f2)"        # e.g. fw12
+            for f in "$d"/*.eap; do
+              base="$(basename "$f" .eap)"             # acap-multimux_0_1_0_aarch64
+              # acap-multimux_0_1_0_aarch64 -> acap-multimux_0_1_0_fw12_aarch64
+              arch="${base##*_}"
+              stem="${base%_*}"
+              cp "$f" "eaps/${stem}_${fw}_${arch}.eap"
+            done
+          done
+          cd eaps
+          ls -l
+          n=$(ls -1 *.eap | wc -l)
+          if [ "$n" -ne 4 ]; then
+            echo "::error::expected 4 .eap packages (fw11/fw12 x aarch64/armv7hf), got $n"
+            exit 1
+          fi
+          # A camera operator downloads one file and installs it; the checksum
+          # is how they know it is the one CI built.
+          shasum -a 256 *.eap > SHA256SUMS
+          cat SHA256SUMS
+
+      - name: Create the Release and attach the .eap set
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          VER="${GITHUB_REF_NAME##*-v}"
+          NOTE="docs/release-notes/acap-multimux-${VER}.md"
+          if [ ! -s "$NOTE" ]; then
+            echo "::error::$NOTE is missing or empty — see docs/RELEASE-DOCS.md"
+            exit 1
+          fi
+          if ! gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release create "$GITHUB_REF_NAME" \
+              --title "acap-multimux $VER" --notes-file "$NOTE"
+          fi
+          gh release upload "$GITHUB_REF_NAME" eaps/*.eap eaps/SHA256SUMS --clobber
+          echo "::notice::attached $(ls eaps/*.eap | wc -l) .eap packages to $GITHUB_REF_NAME"

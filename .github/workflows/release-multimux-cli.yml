@@ -92,3 +92,13 @@ jobs:
               --notes-file "docs/release-notes/multimux-cli-$V.md"
             echo "::notice::created GitHub Release $GITHUB_REF_NAME"
           fi
+
+  # Compiled binaries for the four supported targets, attached to the Release
+  # this tag's publish job creates. crates.io carries the source; without this
+  # there is no way to use multimux without a Rust toolchain.
+  binaries:
+    needs: publish
+    uses: ./.github/workflows/reusable-binaries.yml
+    with:
+      crate: multimux-cli
+      bin: multimux

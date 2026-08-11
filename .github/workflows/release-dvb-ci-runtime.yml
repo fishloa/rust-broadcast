@@ -96,3 +96,18 @@ jobs:
               --notes-file "docs/release-notes/dvb-ci-runtime-$V.md"
             echo "::notice::created GitHub Release $GITHUB_REF_NAME"
           fi
+
+  # Compiled binaries for the four supported targets, attached to the Release
+  # this tag's publish job creates. crates.io carries the source; without this
+  # there is no way to use ci-probe without a Rust toolchain.
+  binaries:
+    needs: publish
+    uses: ./.github/workflows/reusable-binaries.yml
+    with:
+      crate: dvb-ci-runtime
+      bin: ci-probe
+      features: linux
+      # ci-probe is `#[cfg(target_os = "linux")]` gated — the Apple
+      # targets are omitted rather than built and skipped.
+      targets: '[{"os":"ubuntu-latest","target":"x86_64-unknown-linux-gnu"},
+                 {"os":"ubuntu-24.04-arm","target":"aarch64-unknown-linux-gnu"}]'

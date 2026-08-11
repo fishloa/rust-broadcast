@@ -141,3 +141,14 @@ jobs:
               --notes-file "docs/release-notes/${GITHUB_REF_NAME}.md"
             echo "::notice::created GitHub Release $GITHUB_REF_NAME"
           fi
+
+  # dvb-tools is the family's CLI analyzer and has no lane of its own — it ships
+  # from this lockstep tag. Its compiled binaries attach to the same Release.
+  # It is also the one crate here docs.rs cannot document (no library target),
+  # so the binary IS its deliverable.
+  binaries:
+    needs: publish
+    uses: ./.github/workflows/reusable-binaries.yml
+    with:
+      crate: dvb-tools
+      bin: dvb-tools
