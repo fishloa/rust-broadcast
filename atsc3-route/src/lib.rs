@@ -1,3 +1,18 @@
+//! # ARCHIVED — no further development
+//!
+//! ATSC 3.0 work in this workspace is **abandoned** and these crates are
+//! **permanently unpublished**. The market is US/South Korea only and closed
+//! enough that real fixtures are unobtainable: an extensive hunt across three
+//! independent public sources turned up scraps, and the two ROUTE header
+//! extensions this crate once decoded appear in **zero** of 14 000+ real
+//! captured packets.
+//!
+//! The crate still compiles and its tests still run, so it does not rot
+//! silently — but it receives no active development. `rmt-flute` (the
+//! RFC 5651/5775/6726 LCT/ALC/FLUTE layer beneath this one) is published and
+//! useful independently. If real captures ever surface, revisit; do not go
+//! looking.
+//!
 //! ATSC A/331 Annex A **ROUTE** (Real-time Object delivery over Unidirectional
 //! Transport) — the binary delivery layer, split out of the `atsc3` crate
 //! (issue #943) so a `no_std` ROUTE receiver does not have to pull in an XML
@@ -18,12 +33,11 @@
 //!   [`rmt_flute::LctHeader`] constrained to A/331's mandated field widths
 //!   (§A.3.4/§A.3.6) plus PSI-bit validation, the SPI-bit-dispatched
 //!   [`RouteFecPayloadId`], and the opaque delivery-object payload.
-//! - [`ext::ExtRoutePresentationTime`] — `EXT_ROUTE_PRESENTATION_TIME` (HET
-//!   66, §A.3.7.1): the full 64-bit NTP presentation time of an MDE Random
-//!   Access Point.
-//! - [`ext::ExtTol`] — `EXT_TOL` (HET 194 fixed / 67 variable, §A.3.8.1): the
-//!   delivery object's post-content-encoding transfer length, in its 24-bit
-//!   and 48-bit forms.
+//! - [`ext`] — HET constants for `EXT_ROUTE_PRESENTATION_TIME` (HET 66,
+//!   §A.3.7.1) and `EXT_TOL` (HET 194/67, §A.3.8.1). Typed decoders were
+//!   removed because no publicly-available ATSC 3.0 ROUTE capture contains
+//!   either extension; the constants remain for callers walking extension
+//!   chains.
 //! - [`fec::SourceFecPayloadId`] / [`fec::RepairFecPayloadId`] /
 //!   [`RouteFecPayloadId`] — the two ROUTE FEC Payload ID layouts
 //!   (§A.3.5.1/§A.3.5.2): Compact No-Code `start_offset` for source flows,
@@ -116,11 +130,7 @@ mod packet;
 
 pub use codepoint::{Codepoint, CodepointSemantics, FormatId, FragMode};
 pub use error::{Error, Result};
-pub use ext::{
-    EXT_ROUTE_PRESENTATION_TIME_CONTENT_LEN, EXT_TOL_24_CONTENT_LEN, EXT_TOL_48_CONTENT_LEN,
-    ExtRoutePresentationTime, ExtTol, HET_EXT_ROUTE_PRESENTATION_TIME, HET_EXT_TOL_24,
-    HET_EXT_TOL_48, MAX_TOL_24, MAX_TOL_48,
-};
+pub use ext::{HET_EXT_ROUTE_PRESENTATION_TIME, HET_EXT_TOL_24, HET_EXT_TOL_48};
 pub use fec::{
     MAX_ESI, ROUTE_FEC_PAYLOAD_ID_LEN, RepairFecPayloadId, RouteFecPayloadId, SourceFecPayloadId,
 };

@@ -1,8 +1,8 @@
 //! Drift-guard for the spec/field-enum label convention (issue #204).
 //!
-//! `atsc3-route` defines four public spec/field label enums — [`Codepoint`],
-//! [`FormatId`], [`FragMode`] (all in `codepoint.rs`) and [`ExtTol`]
-//! (`ext.rs`) — each carrying `name()` + `impl_spec_display!`.
+//! `atsc3-route` defines three public spec/field label enums — [`Codepoint`],
+//! [`FormatId`], [`FragMode`] (all in `codepoint.rs`) — each carrying
+//! `name()` + `impl_spec_display!`.
 //!
 //! `Error` is skipped (structured error, no spec label). `RouteFecPayloadId`
 //! (`fec.rs`) is also skipped: it is a **dispatch enum** selecting between
@@ -19,7 +19,6 @@
 //! [`Codepoint`]: atsc3_route::Codepoint
 //! [`FormatId`]: atsc3_route::FormatId
 //! [`FragMode`]: atsc3_route::FragMode
-//! [`ExtTol`]: atsc3_route::ExtTol
 
 use std::collections::BTreeSet;
 use std::fs;
@@ -145,7 +144,7 @@ fn expected_spec_enum_set_has_not_silently_drifted() {
         .filter(|e| !SKIP.contains(&e.as_str()))
         .collect();
 
-    let expected: BTreeSet<String> = ["Codepoint", "FormatId", "FragMode", "ExtTol"]
+    let expected: BTreeSet<String> = ["Codepoint", "FormatId", "FragMode"]
         .iter()
         .map(|s| s.to_string())
         .collect();
