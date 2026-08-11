@@ -53,6 +53,7 @@ rist-runtime   = { path = "../rist-runtime" }
 webrtc-runtime = { path = "../webrtc-runtime" }
 atsc3-route    = { path = "../atsc3-route" }
 caption-convert = { path = "../caption-convert" }
+container-probe = { path = "../container-probe" }
 bytes         = "1"
 libfuzzer-sys = "0.4"
 
@@ -352,5 +353,11 @@ doc  = false
 [[bin]]
 name = "caption_convert_srt"
 path = "fuzz_targets/caption_convert_srt.rs"
+test = false
+doc  = false
+
+[[bin]]
+name = "container_probe"
+path = "fuzz_targets/container_probe.rs"
 test = false
 doc  = false
