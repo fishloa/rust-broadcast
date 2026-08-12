@@ -2,6 +2,7 @@
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-08-12
 ### Added
 - **`InputSpec::File { path, loop }` — stream a media file as a route input**
   (issue #748). Point a route at a file on disk and it is served through the
