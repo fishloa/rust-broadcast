@@ -133,20 +133,15 @@ pub enum MultimuxError {
         tag: String,
     },
 
-    /// A configured route input is valid config surface but its runtime is
-    /// not implemented yet — the caller must fail cleanly rather than panic
-    /// or silently skip the route. Currently used only by the linear-playout
-    /// work package (issue #748): [`crate::config::InputSpec::Playout`] and a
-    /// bare [`crate::config::InputSpec::File`] source parse and validate, but
-    /// their controller/reader land in later work packages, so
-    /// `crate::origin::spawn_ingest` returns this instead of `todo!()`ing.
-    #[error(
-        "input kind {kind} is not yet implemented — runtime lands in a later work package of issue #748"
-    )]
-    NotImplemented {
-        /// A human-readable name for the unimplemented input kind.
-        kind: &'static str,
-    },
+    /// An `InputSpec::File` route's ingest (issue #748 WP5) failed to read,
+    /// probe, or demux its media file — surfaced through the route's
+    /// supervisor so the route retries rather than dying silently.
+    #[error("file route ingest failed: {0}")]
+    FileRoute(
+        /// The underlying file-reader error (read / probe / demux).
+        #[from]
+        crate::source::file_reader::FileReaderError,
+    ),
 
     /// The runtime admin API's `POST /admin/routes`
     /// (`crate::origin::admin::RouteRegistry::add_route`) named a route

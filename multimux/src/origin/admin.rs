@@ -555,7 +555,6 @@ fn input_kind_name(input: &crate::config::InputSpec) -> &'static str {
         Srt { .. } => "srt",
         Custom { .. } => "custom",
         File { .. } => "file",
-        Playout { .. } => "playout",
     }
 }
 

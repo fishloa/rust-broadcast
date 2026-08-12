@@ -3,7 +3,7 @@
 //! produces.
 //!
 //! This is a **plain tokio task**, not a
-//! [`Dialer`](media_plane::ingress::Dialer)/[`IngestSession`](media_plane::ingress::IngestSession):
+//! [`Dialer`](media_plane::ingress::Dialer)/[`IngestSession`]:
 //! there is no connection to dial and no reconnect semantics to honour. The
 //! design it implements is `docs/superpowers/specs/2026-08-11-linear-playout-design.md`
 //! §"`multimux/src/source/file_reader.rs`", issue #748.
@@ -727,5 +727,369 @@ impl FileReader {
             retry_interval: Duration::from_millis(500),
             max_loops: None,
         })
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Route wiring (issue #748 WP5) — the file route served through the shared
+// driver/segmenter machinery.
+//
+// The standalone [`FileReader`] above is a plain task that writes a Trunk
+// directly; a *route* needs its output turned into servable segments, which is
+// `crate::source::advance_route`'s job — and that facade enumerates programs
+// from an [`media_plane::ingress::IngestDriver`], not a bare Trunk. So the
+// route mints a single program through a `FileIngestSession` (the one thin
+// adapter the driver understands), whose demux is the very same
+// [`FileReader::read_probe_demux`] path — one demux, two entry points.
+// ---------------------------------------------------------------------------
+
+use broadcast_common::{Demand, Stage, Timestamp};
+use media_plane::ingress::{IngestDriver, IngestSession, ProgramId, SessionEvent};
+use std::collections::VecDeque;
+
+/// A sans-IO `IngestSession` that replays a demuxed file into the shared
+/// driver/segmenter machinery: it announces one program (the file's track
+/// set) on the **first** feed, and emits the samples on **subsequent** feeds,
+/// so `crate::source::advance_route` (called between those feeds) creates the
+/// per-program segmenter before any sample lands — a segmenter subscribes its
+/// trunk cursor at the live edge, so samples published in the same drain as
+/// the `NewProgram` that mints the trunk would be invisible to it.
+///
+/// With `loop_file: true`, once a pass's queue is exhausted `feed` refills it
+/// from the **same** parsed content (never re-demuxing, never growing), applying
+/// the per-track PTS offset from `ParsedFile::build_playout`'s `PassRange`s via
+/// [`advance_offsets`] so the output timeline stays strictly monotonic — no
+/// reset to zero, no backwards step — across every loop point.
+struct FileIngestSession {
+    program: ProgramId,
+    tracks: std::sync::Arc<[TrackSpec]>,
+    /// The presentation-ordered samples (`track_ref` → sample), reused for
+    /// every loop pass — never re-demuxed.
+    order: Vec<PublishItem>,
+    /// Per-track pass spans/frame periods, from `build_playout`.
+    ranges: Vec<PassRange>,
+    /// Per-track running PTS offset (tracks the loop point), advanced by
+    /// [`advance_offsets`] after each pass.
+    offsets: Vec<i64>,
+    /// `track_ref` → the track's id, for publishing.
+    track_ids: Vec<u32>,
+    /// The current pass's sample queue (presentation order, PTS-offset applied).
+    queue: VecDeque<(u32, Sample)>,
+    loop_file: bool,
+    established: bool,
+    announced: bool,
+    started: bool,
+}
+
+impl FileIngestSession {
+    /// Build the session from an already-demuxed file, honouring `loop_file`.
+    fn new(parsed: ParsedFile, program: ProgramId, loop_file: bool) -> Self {
+        let (specs, order, ranges) = parsed.build_playout();
+        let track_ids: Vec<u32> = specs.iter().map(|t| t.track_id).collect();
+        let mut session = FileIngestSession {
+            program,
+            tracks: specs.into(),
+            order,
+            ranges,
+            offsets: vec![0i64; track_ids.len()],
+            track_ids,
+            queue: VecDeque::new(),
+            loop_file,
+            established: false,
+            announced: false,
+            started: false,
+        };
+        // First pass: offsets are all zero (the file's own timeline).
+        session.refill();
+        session
+    }
+
+    /// Refill the queue from the already-parsed content, applying the current
+    /// per-track PTS offset (the loop point), then advance the offset so the
+    /// next pass continues monotonically. Reuses the parsed `order` — nothing
+    /// is re-demuxed and the queue's capacity is reused, so memory is bounded
+    /// at the file's own sample count no matter how many passes happen.
+    fn refill(&mut self) {
+        self.queue.clear();
+        for item in &self.order {
+            let mut sample = item.sample.clone();
+            let off = self.offsets[item.track_ref];
+            if let Some(p) = sample.pts {
+                sample.pts = Some(p + off);
+            }
+            if let Some(d) = sample.dts {
+                sample.dts = Some(d + off);
+            }
+            self.queue
+                .push_back((self.track_ids[item.track_ref], sample));
+        }
+        advance_offsets(&mut self.offsets, &self.ranges);
+    }
+}
+
+impl Stage for FileIngestSession {
+    type In<'a> = ();
+    type Out = SessionEvent;
+    type Error = FileReaderError;
+
+    fn feed(&mut self, _input: (), _now: Timestamp) -> Result<(), Self::Error> {
+        // With `loop_file`, refill when the previous pass's queue has drained.
+        if self.loop_file && self.queue.is_empty() {
+            self.refill();
+        }
+        Ok(())
+    }
+
+    fn poll(&mut self) -> Option<SessionEvent> {
+        if !self.established {
+            self.established = true;
+            return Some(SessionEvent::Established);
+        }
+        if !self.announced {
+            self.announced = true;
+            return Some(SessionEvent::NewProgram {
+                program: self.program,
+                tracks: self.tracks.to_vec(),
+            });
+        }
+        if !self.started {
+            // End this drain right after `NewProgram` so the driver's later
+            // `advance_route` creates the segmenter before any sample flows.
+            self.started = true;
+            return None;
+        }
+        self.queue
+            .pop_front()
+            .map(|(track_id, sample)| SessionEvent::Sample {
+                program: self.program,
+                track_id,
+                retention: RetentionClass::Timed,
+                sample,
+            })
+    }
+
+    fn finish(&mut self) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
+    fn next_deadline(&self) -> Option<Timestamp> {
+        None
+    }
+
+    fn on_deadline(&mut self, _now: Timestamp) {}
+
+    fn demand(&self) -> Demand {
+        Demand::new(0)
+    }
+}
+
+impl IngestSession for FileIngestSession {
+    type Request = bytes::Bytes;
+}
+
+/// Run a `InputSpec::File` route to completion on the current task: demux the
+/// file, replay it through a single-program [`IngestDriver`] over a
+/// [`FileIngestSession`], and pump `crate::source::advance_route` once per
+/// iteration so samples become servable segments/parts. Mirrors
+/// [`crate::source::ts_udp::run_ts_udp`]'s shape; returns `Err` only on a
+/// failure (a bad/unreadable file), which the route's supervisor retries.
+pub(crate) async fn run_file_source(
+    path: &str,
+    loop_file: bool,
+    window_segments: usize,
+    handshake: media_plane::ingress::HandshakePolicy,
+    route_handle: &std::sync::Arc<crate::route::RouteHandle>,
+) -> crate::MultimuxError {
+    // Demux the file eagerly (the same probe->demux path the standalone
+    // FileReader uses); a failure surfaces through the supervisor's retry.
+    let scratch_cfg = crate::source::driver_trunk_config(window_segments);
+    let scratch = media_plane::trunk::Trunk::new(scratch_cfg);
+    let reader = FileReader::new(FileReaderConfig {
+        path: std::path::PathBuf::from(path),
+        loop_file,
+        trunk: scratch,
+        pace: false,
+        max_retries: 0,
+        retry_interval: std::time::Duration::ZERO,
+        max_loops: None,
+    });
+    let parsed = match reader.read_probe_demux().await {
+        Ok(p) => p,
+        Err(e) => return e.into(),
+    };
+
+    // Size the sample ring to hold the whole file: unlike a live source,
+    // whose samples arrive incrementally and are segmented as they come, an
+    // instant file publishes everything at once, so a live-sized (64-entry)
+    // ring would evict most of the file before the segmenter read it.
+    let total_samples: usize = parsed.tracks.iter().map(|t| t.samples.len()).sum();
+    let nz = |n: usize| std::num::NonZeroUsize::new(n.max(1)).expect("non-zero cap");
+    let trunk_config = media_plane::trunk::TrunkConfig::new(
+        nz(total_samples + 64),
+        nz(16),
+        nz(window_segments),
+        nz(64),
+        nz(64),
+    );
+
+    let session = FileIngestSession::new(parsed, crate::route::SPTS_PROGRAM_ID, loop_file);
+    let mut driver = IngestDriver::new(
+        session,
+        trunk_config,
+        handshake,
+        std::num::NonZeroUsize::new(1).expect("one program"),
+    );
+    let start = std::time::Instant::now();
+    let mut progress = crate::source::DriverProgress::new();
+    loop {
+        let now = broadcast_common::Timestamp::from_instant(start, std::time::Instant::now());
+        // Feed the session: on the first feed it emits Established + NewProgram
+        // (minting the program's Trunk), on later feeds it emits the samples —
+        // so `advance_route` below creates the segmenter *between* those two
+        // phases, before any sample lands.
+        driver.feed((), now);
+        crate::source::advance_route(&driver, route_handle, &mut progress);
+        // Give the runtime time to serve; the finite file's segments stay
+        // servable (the route serves VOD-style once produced).
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+}
+
+#[cfg(test)]
+mod loop_tests {
+    use super::*;
+    use media_plane::ingress::{ProgramId, SessionEvent};
+
+    /// Demux a real TS fixture into a `ParsedFile`.
+    async fn demux_fixture() -> ParsedFile {
+        let path = format!("{}/../fixtures/ts/h264_aac.ts", env!("CARGO_MANIFEST_DIR"));
+        let trunk_cfg = crate::source::driver_trunk_config(8);
+        let scratch = media_plane::trunk::Trunk::new(trunk_cfg);
+        let reader = FileReader::new(FileReaderConfig {
+            path: path.into(),
+            loop_file: true,
+            trunk: scratch,
+            pace: false,
+            max_retries: 0,
+            retry_interval: std::time::Duration::ZERO,
+            max_loops: None,
+        });
+        reader.read_probe_demux().await.expect("demux fixture")
+    }
+
+    /// Drive a session's `poll` until `None`, collecting the PTS of every
+    /// sample (skipping the program/established events).
+    fn drain_pts(sess: &mut FileIngestSession) -> Vec<(u32, i64)> {
+        let mut pts = Vec::new();
+        while let Some(ev) = sess.poll() {
+            if let SessionEvent::Sample {
+                track_id, sample, ..
+            } = ev
+                && let Some(p) = sample.pts
+            {
+                pts.push((track_id, p));
+            }
+        }
+        pts
+    }
+
+    /// The loop offset keeps each track's published PTS strictly monotonic
+    /// across the loop point — no reset to zero, no backwards step.
+    ///
+    /// (The file's audio and video carry different timescales, so raw PTS are
+    /// not comparable across tracks; the monotonic invariant is therefore held
+    /// per track, which is exactly the property the offset exists to preserve.)
+    ///
+    /// MUTATION PROOF, recorded verbatim: removing the per-track PTS offset on
+    /// refill (`sample.pts = Some(p)` instead of `Some(p + off)` in
+    /// `FileIngestSession::refill`) makes each pass restart at the file's own
+    /// per-track first PTS, so a track's pass-1 first sits at or below its own
+    /// pass-0 last — and this test FAILS with:
+    ///
+    ///     PTS must be strictly monotonic across the loop point (track 2): 195315 then 64243
+    ///
+    /// (audio track 2's pass-0 last PTS 195315 is followed by its unoffset
+    /// pass-1 first PTS 64243 — a backwards step). Restoring the offset (and
+    /// a `touch`) makes it pass again.
+    #[tokio::test]
+    async fn loop_refill_keeps_pts_monotonic_across_loop_point() {
+        let parsed = demux_fixture().await;
+        let mut sess = FileIngestSession::new(parsed, ProgramId(0), true);
+
+        // Pass the one-time setup gate, then collect pass 0's samples.
+        let _ = sess.feed((), broadcast_common::Timestamp::from_nanos(0));
+        let _setup = drain_pts(&mut sess);
+        let pass0 = drain_pts(&mut sess);
+        assert!(!pass0.is_empty(), "pass 0 must emit samples");
+
+        // Trigger the loop refill (pass 1, offset advanced) and collect it.
+        let _ = sess.feed((), broadcast_common::Timestamp::from_nanos(0));
+        let pass1 = drain_pts(&mut sess);
+        assert_eq!(
+            pass0.len(),
+            pass1.len(),
+            "each pass emits the same sample count"
+        );
+        assert!(!pass1.is_empty(), "a looped pass must emit samples");
+
+        // Per-track: concatenate pass0 + pass1 and assert strictly monotonic.
+        let both: Vec<(u32, i64)> = pass0.into_iter().chain(pass1).collect();
+        let mut by_track: std::collections::HashMap<u32, Vec<i64>> =
+            std::collections::HashMap::new();
+        for (track_id, p) in &both {
+            by_track.entry(*track_id).or_default().push(*p);
+        }
+        for (track_id, seq) in &by_track {
+            for pair in seq.windows(2) {
+                assert!(
+                    pair[1] > pair[0],
+                    "PTS must be strictly monotonic across the loop point (track {track_id}): {} then {}",
+                    pair[0],
+                    pair[1]
+                );
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn no_loop_drains_once_then_stops() {
+        let parsed = demux_fixture().await;
+        let mut sess = FileIngestSession::new(parsed, ProgramId(0), false);
+        let _ = sess.feed((), broadcast_common::Timestamp::from_nanos(0));
+        let _setup = drain_pts(&mut sess);
+        let pass0 = drain_pts(&mut sess);
+        assert!(!pass0.is_empty());
+        // A further feed must not refill (loop is off); poll stays empty.
+        let _ = sess.feed((), broadcast_common::Timestamp::from_nanos(0));
+        assert_eq!(drain_pts(&mut sess).len(), 0, "loop:false must not refill");
+    }
+
+    /// The queue's length after a refill equals its length after the first
+    /// fill — memory held by the session stays bounded at the file's own
+    /// sample count no matter how many passes happen (it reuses the same
+    /// parsed content and queue capacity, never growing per pass).
+    #[tokio::test]
+    async fn queue_length_stays_bounded_across_passes() {
+        let parsed = demux_fixture().await;
+        let mut sess = FileIngestSession::new(parsed, ProgramId(0), true);
+        let first = sess.queue.len();
+        assert!(first > 0, "pass 0 fills the queue");
+
+        // Pass the setup gate once.
+        let _ = sess.feed((), broadcast_common::Timestamp::from_nanos(0));
+        let _ = drain_pts(&mut sess);
+        let _ = drain_pts(&mut sess);
+
+        // Run several passes; after each refill the queue is the same size.
+        for _ in 0..5 {
+            let _ = drain_pts(&mut sess); // drain the current pass
+            let _ = sess.feed((), broadcast_common::Timestamp::from_nanos(0)); // refill for next
+            let after = sess.queue.len();
+            assert_eq!(
+                after, first,
+                "queue length must not grow per pass: after a pass it holds {} not {}",
+                after, first
+            );
+        }
     }
 }
