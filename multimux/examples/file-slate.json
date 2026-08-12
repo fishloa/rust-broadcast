@@ -1,0 +1,27 @@
+{
+  "bind": "0.0.0.0:8080",
+  "target_duration_secs": 4.0,
+  "part_target_ms": 500,
+  "window_segments": 12,
+  "playlist_name": "index.m3u8",
+  "routes": [
+    {
+      "name": "slate",
+      "input": {
+        "type": "file",
+        "path": "/media/slate.ts",
+        "loop": true
+      },
+      "outputs": ["llhls"]
+    },
+    {
+      "name": "ident",
+      "input": {
+        "type": "file",
+        "path": "/media/ident.mp4",
+        "loop": false
+      },
+      "outputs": ["llhls", "dash"]
+    }
+  ]
+}

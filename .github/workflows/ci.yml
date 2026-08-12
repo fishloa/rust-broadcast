@@ -137,7 +137,7 @@ jobs:
       # `dvb-stream`.
       - name: Build each library crate for bare-metal (no_std)
         run: |
-          for c in broadcast-common dvb-bbframe scte35-splice dvb-t2mi dvb-si dvb-conformance mpeg-pes dvb-subtitle mpeg-ps scte104 cc-data st291 ule dvb-ci dvb-simulcrypt mp4-emsg dvb-vbi rmt-flute rtp-packet rtcp-packet st12-1 st337 rdd29 st377-1 mpeg-ts broadcast-hls transmux media-plane timed-metadata hls-runtime srt-runtime media-doctor ttml-subtitle atsc3-route caption-convert dvb-csa broadcast-loudness atsc3 dvb-mabr st2022 rist-runtime ssai-runtime playout-runtime compliance-probe webrtc-runtime ts-fix; do
+          for c in broadcast-common dvb-bbframe scte35-splice dvb-t2mi dvb-si dvb-conformance mpeg-pes dvb-subtitle mpeg-ps scte104 cc-data st291 ule dvb-ci dvb-simulcrypt mp4-emsg dvb-vbi rmt-flute rtp-packet rtcp-packet st12-1 st337 rdd29 st377-1 mpeg-ts container-probe broadcast-hls transmux media-plane timed-metadata hls-runtime srt-runtime media-doctor ttml-subtitle atsc3-route caption-convert dvb-csa broadcast-loudness atsc3 dvb-mabr st2022 rist-runtime ssai-runtime playout-runtime compliance-probe webrtc-runtime ts-fix; do
             echo "::group::$c (no_std)"
             cargo build -p "$c" --no-default-features --target thumbv7em-none-eabi --locked
             echo "::endgroup::"
@@ -172,6 +172,30 @@ jobs:
         # its host triple leaks as the default --target (musl), whose std isn't
         # installed and whose static libc is incompatible with the sanitizer.
         run: cargo +nightly fuzz build --target x86_64-unknown-linux-gnu
+
+      # Building a fuzz target proves it COMPILES, not that the code it drives
+      # survives hostile input. container-probe shipped a panic reachable from a
+      # 12-byte slice, in a crate whose fuzz target was written specifically to
+      # catch that class -- because the target had never actually been executed.
+      #
+      # So: a bounded smoke run of every target. `-runs` (not a time budget)
+      # keeps this deterministic and reproducible; it is a regression gate, not
+      # a fuzzing campaign. A real campaign belongs in a scheduled job.
+      - name: Smoke-run every fuzz target
+        working-directory: fuzz
+        run: |
+          set -euo pipefail
+          fail=0
+          for t in $(cargo +nightly fuzz list); do
+            echo "::group::$t"
+            if ! cargo +nightly fuzz run "$t" --target x86_64-unknown-linux-gnu \
+                 -- -runs=20000 -max_total_time=60 -print_final_stats=1; then
+              echo "::error::fuzz target $t failed"
+              fail=1
+            fi
+            echo "::endgroup::"
+          done
+          exit "$fail"
 
   # dvb-stream is versioned and released independently from the lockstep
   # v-tag publish and is feature-forcing (tokio), so it is excluded from the

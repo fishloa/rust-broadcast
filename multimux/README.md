@@ -31,6 +31,7 @@ Each route names one ingest transport (`InputSpec`):
 | `dash_pull` | Pull a remote DASH MPD and its segments | optional `auth` |
 | `smooth_pull` | Pull a remote Smooth Streaming manifest and its fragments | optional `auth` |
 | `rtmp` | **Push** ingest: binds a listen port and accepts RTMP publishers (FLV), via `rtmp-runtime` | `app`/`stream_key` filters; concurrent publishers |
+| `file` | A local media file on disk, identified with `container-probe` and demuxed by the matching `transmux` demuxer | `loop` (default `true`); a long asset holds its parsed samples in memory — see the crate CHANGELOG |
 
 `rtsp` accepts `rtsps://` for RTSP over TLS. `rtmp` is the only *push* input —
 nothing is dialled out to; it binds and accepts, and one stalled publisher does
@@ -427,6 +428,11 @@ JSON files under [`examples/`](examples/) — each a realistic, valid
 `validate()` are guarded by `tests/example_configs.rs`, so they can't drift
 from the config schema):
 
+- [`file-slate.json`](examples/file-slate.json) — two file routes: a looping
+  slate (`loop: true`, the default) and a play-once ident (`loop: false`).
+  The container is identified with `container-probe`, so the file may be TS,
+  fMP4, progressive MP4, Matroska/WebM, MPEG-PS or FLV without being
+  declared. Note the memory characteristic in the Inputs table above.
 - [`webcam-fleet-40.json`](examples/webcam-fleet-40.json) — 40 routes
   (`cam1`..`cam40`) spanning all five ingest protocols (RTSP with per-camera
   Password/Bearer `auth`, RTP, TS/UDP multicast, TS/HTTP, HLS-pull), all

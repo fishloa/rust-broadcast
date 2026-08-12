@@ -1,9 +1,10 @@
 //! multimux — a multi-input, multi-output just-in-time repackaging HTTP
 //! origin.
 //!
-//! Pull or receive live media over any of nine ingest transports —
+//! Pull or receive live media over any of ten ingest sources —
 //! [`config::InputSpec`]: RTSP pull, raw RTP/UDP, MPEG-TS/UDP, MPEG-TS/HTTP,
-//! SRT, HLS pull, DASH pull, Smooth pull, and RTMP push — and serve each
+//! SRT, HLS pull, DASH pull, Smooth pull, RTMP push, and a local media **file**
+//! ([`config::InputSpec::File`], issue #748) — and serve each
 //! ingested stream as any combination of [`output::OutputKind`]: Low-Latency
 //! HLS, DASH, or LL-DASH, from one in-process tokio + axum HTTP origin. One
 //! ingest, many outputs, no per-output re-mux. Muxing only — samples are
