@@ -2,7 +2,61 @@
 
 **Issue:** [#748](https://github.com/fishloa/rust-broadcast/issues/748)
 **Date:** 2026-08-11
-**Status:** approved
+**Status:** SUPERSEDED — most of this was cancelled. Read the note below before
+anything else.
+
+---
+
+## ⚠️ Cancelled: the channel, the scheduler, and the ad breaks
+
+This document designs a linear playout **channel**: scheduled switching between
+multiple sources, a shared rebased timeline, and SCTE-35 ad-break signalling.
+**That was cancelled during implementation.** The complexity was not earning
+its keep for the value it returned.
+
+What actually shipped from #748 is a much smaller thing, and it is the part
+that was pulling its weight:
+
+> **a multimux route can take a media file as its input and stream it** —
+> `InputSpec::File { path, loop }`, served through the same
+> `supervise_driver` + `advance_route` path as every other source.
+
+So, of this document:
+
+| Section | Status |
+|---|---|
+| `multimux/src/source/file_reader.rs` — probe, demux, pace, loop | **SHIPPED** (see below) |
+| Container identification via `container-probe` | **SHIPPED** |
+| `InputSpec::File` config + validation | **SHIPPED** |
+| `InputSpec::Playout`, the schedule, `fallback_source` | cancelled, code reverted |
+| The controller — source switching, PTS rebase, monotonicity guard | cancelled, code reverted |
+| SCTE-35 emission and carriage | cancelled, never completed |
+| Failure modes (fallback, degraded health) | cancelled with the controller |
+
+One deviation from this document survived into the shipped code and is worth
+knowing: it specifies pacing samples at their PTS cadence, which the standalone
+`FileReader` does. The **route** path publishes the parsed file and lets the
+segmenter drive, so `pace` is off there; the sample ring is sized to the parsed
+file instead. Long assets therefore hold their parsed samples in memory — a
+real limit, not a hidden one.
+
+Two things this cancellation also resolved:
+
+- **The publish blocker is gone.** The controller needed `playout-runtime`,
+  which needs `ssai-runtime`; neither is on crates.io, so multimux could not
+  have been published while it depended on them. Reverting the controller
+  removed that dependency.
+- **Issue [#965](https://github.com/fishloa/rust-broadcast/issues/965)** (render
+  Trunk events into `EXT-X-DATERANGE`/`emsg` in `hls-runtime`) no longer blocks
+  anything. It remains a genuine gap on its own merits.
+
+The rest of this document is kept as-is, unedited, because the reasoning in it
+is still worth reading if anyone revisits scheduled playout — particularly the
+timeline-correctness section, and the record of a false claim it once made about
+manifest SCTE-35 carriage. Do not read anything below this note as describing
+code that exists.
+
+---
 
 Assemble a linear channel from a schedule of sources (programmes, ads, slates),
 switching between them on a shared channel timeline and emitting SCTE-35
