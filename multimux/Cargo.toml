@@ -18,6 +18,7 @@ all-features = true
 # exist in 0.23.0 (verified at the tag). Published multimux 0.8.0 shipped
 # with the understated `"0.23"` bound.
 transmux          = { path = "../transmux",     version = "0.24" }
+container-probe   = { path = "../container-probe", version = "0.1" }
 # HLS (M3U8) playlist syntax (issue #878): `source::hls_pull` builds/parses
 # playlists via this crate directly rather than through `transmux`.
 broadcast-hls     = { path = "../broadcast-hls", version = "0.2" }
