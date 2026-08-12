@@ -473,7 +473,7 @@ async fn nonexistent_path_yields_read_error() {
 }
 
 #[tokio::test]
-async fn empty_file_yields_unknown_probe_error() {
+async fn empty_file_is_reported_as_too_short_to_identify() {
     // Write a truly empty temp file so the probe sees zero bytes.
     let dir = std::env::temp_dir().join("multimux-file-reader-empty");
     std::fs::create_dir_all(&dir).unwrap();
@@ -482,9 +482,21 @@ async fn empty_file_yields_unknown_probe_error() {
 
     let trunk = trunk();
     let result = reader(empty.clone(), false, false, None, trunk).run().await;
+    // An empty file is not "unknown format" — there is nothing to identify.
+    // `container-probe` answers `Insufficient` for a 0-byte slice because it
+    // has no end-of-file signal and a longer buffer genuinely could decide.
+    // This reader probes the WHOLE file, so it knows there are no more bytes
+    // and reports that directly rather than propagating "read more" for a file
+    // that has no more.
     match result {
-        Err(FileReaderError::UnknownProbe) => {}
-        other => panic!("empty file must be UnknownProbe, got {other:?}"),
+        Err(FileReaderError::FileTooShortToIdentify {
+            need_at_least,
+            file_bytes,
+        }) => {
+            assert_eq!(file_bytes, 0, "the fixture is a 0-byte file");
+            assert!(need_at_least > 0, "the probe must ask for a real minimum");
+        }
+        other => panic!("empty file must be FileTooShortToIdentify, got {other:?}"),
     }
 }
 

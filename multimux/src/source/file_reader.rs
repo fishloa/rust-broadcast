@@ -100,13 +100,22 @@ pub enum FileReaderError {
         /// The tied candidates, best first (from [`Probe::Ambiguous`]).
         candidates: Vec<String>,
     },
-    /// The probe found nothing conclusive but more bytes could change that
-    /// (never the case here — the reader probes the whole file, so this is
-    /// unexpected but handled).
-    #[error("container undetermined — probe needs at least {need_at_least} bytes")]
-    InsufficientProbe {
+    /// The probe could not conclude from the bytes it was given, and asked for
+    /// more than the file contains.
+    ///
+    /// `container-probe` takes a slice with no end-of-file signal, so it
+    /// answers `Insufficient` whenever a longer buffer *could* decide — which
+    /// for a 0-byte or near-empty file is honest but not actionable. This
+    /// reader always probes the WHOLE file, so there are no more bytes to
+    /// supply: the file is simply too short to identify.
+    #[error(
+        "file is too short to identify: {file_bytes} bytes, and the probe          needs at least {need_at_least}"
+    )]
+    FileTooShortToIdentify {
         /// The minimum buffer length the probe asked for.
         need_at_least: usize,
+        /// How many bytes the file actually holds.
+        file_bytes: usize,
     },
     /// The probe found no known container at all.
     #[error("unknown/unsupported container")]
@@ -424,7 +433,14 @@ impl FileReader {
                 return Err(FileReaderError::AmbiguousProbe { candidates: names });
             }
             Probe::Insufficient { need_at_least } => {
-                return Err(FileReaderError::InsufficientProbe { need_at_least });
+                // The whole file was probed, so "supply more bytes" cannot be
+                // satisfied — report it as the file being too short instead of
+                // propagating a streaming-oriented verdict a caller cannot act
+                // on.
+                return Err(FileReaderError::FileTooShortToIdentify {
+                    need_at_least,
+                    file_bytes: bytes.len(),
+                });
             }
             Probe::Unknown => return Err(FileReaderError::UnknownProbe),
             // Any future probe outcome cannot name a demuxer — fail the source
