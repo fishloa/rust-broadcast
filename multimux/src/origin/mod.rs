@@ -1321,6 +1321,18 @@ fn spawn_ingest(
                 shutdown_rx,
             ))
         }
+        // Issue #748 linear playout, WP1 — config + validation ONLY. A
+        // playout channel (and a bare `File` source, which is also usable as
+        // a standalone route input) parses and validates, but the controller
+        // and file reader land in later work packages of #748. Return a
+        // proper error rather than `todo!()`/`unimplemented!()` — those panic,
+        // and this is reachable from a user config.
+        crate::config::InputSpec::Playout { .. } => {
+            return Err(crate::MultimuxError::NotImplemented { kind: "playout" });
+        }
+        crate::config::InputSpec::File { .. } => {
+            return Err(crate::MultimuxError::NotImplemented { kind: "file" });
+        }
         crate::config::InputSpec::Custom { type_tag, params } => {
             let factory =
                 registry
@@ -2865,6 +2877,8 @@ mod tests {
             crate::config::InputSpec::Rtmp { .. } => true,
             #[cfg(feature = "whip")]
             crate::config::InputSpec::Whip { .. } => true,
+            crate::config::InputSpec::File { .. } => true,
+            crate::config::InputSpec::Playout { .. } => true,
             crate::config::InputSpec::Custom { .. } => true,
         }
     }

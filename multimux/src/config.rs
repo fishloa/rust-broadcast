@@ -18,6 +18,12 @@ fn default_outputs() -> Vec<OutputKind> {
     vec![OutputKind::LlHls]
 }
 
+/// Default [`InputSpec::File::loop_file`] when a config omits the field:
+/// restart from the beginning at EOF (`true`), matching `default_outputs`.
+fn default_file_loop() -> bool {
+    true
+}
+
 /// One route's ingest transport (issue #663 P3a/P3c): tagged so a JSON
 /// config can name which transport a route uses (`"type": "rtsp" | "rtp" |
 /// "ts_udp" | "ts_http" | "hls_pull"`).
@@ -227,7 +233,93 @@ pub enum InputSpec {
         #[serde(default)]
         params: serde_json::Value,
     },
+    /// Play a media file from local disk as a source.
+    File {
+        /// Path to the media file.
+        path: String,
+        /// Restart from the beginning at EOF. Defaults to `true` — a slate or
+        /// filler asset is normally expected to run until the schedule moves
+        /// on.
+        #[serde(default = "default_file_loop", rename = "loop")]
+        loop_file: bool,
+    },
+    /// A linear channel of named sources switched by an ordered schedule
+    /// (issue #748 — WP1: config surface + validation only; the controller
+    /// that switches between sources lands in a later work package).
+    ///
+    /// `sources` maps a name to an [`InputSpec`]; `schedule` is an ordered
+    /// list of entries naming a source and the channel-relative time it
+    /// starts (see [`PlayoutEntry`]). This makes [`InputSpec`] recursive
+    /// (fine for serde — the map heap-allocates), subject to the nesting
+    /// rules enforced at config validation time ([`Self::Playout`] inside a
+    /// playout is rejected, as are `Custom` and — where compiled — `Whip`).
+    ///
+    /// A `Playout` is usable as a standalone route input too (not only a
+    /// nested source), but this work package does not implement its runtime —
+    /// `crate::origin::spawn_ingest` returns a not-implemented error for a
+    /// bare `Playout` route or for a bare [`Self::File`] source, which WP2+
+    /// fills in.
+    Playout {
+        /// Named sources this channel switches between.
+        sources: std::collections::BTreeMap<String, InputSpec>,
+        /// Ordered schedule entries.
+        schedule: Vec<PlayoutEntry>,
+        /// Source to switch to when the scheduled one has no samples.
+        /// Optional.
+        #[serde(default)]
+        fallback_source: Option<String>,
+        /// Splice-conditioning tolerance in seconds. Optional; the controller
+        /// defaults it to the route's `target_duration_secs`.
+        #[serde(default)]
+        splice_tolerance_secs: Option<f64>,
+    },
 }
+
+/// One schedule entry in an [`InputSpec::Playout`] channel (issue #748).
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+pub struct PlayoutEntry {
+    /// Name of the source in the playout's `sources` map.
+    pub source: String,
+    /// `programme` | `ad` | `slate` — the entry's role.
+    pub kind: PlayoutKind,
+    /// Seconds from channel start at which this entry begins.
+    pub offset_secs: f64,
+}
+
+/// The role of a [`PlayoutEntry`] in a channel's schedule (issue #748).
+///
+/// Mirrors `playout_runtime::EntryKind`. A `#[derive(Deserialize)]` enum with
+/// `#[serde(rename_all = "snake_case")]`: `programme`, `ad`, or `slate`.
+///
+/// Note: `playout-runtime` is **not** a multimux dependency in this work
+/// package, so this type stands alone rather than reusing
+/// `playout_runtime::EntryKind` — the in-scope manifest restriction forbids
+/// adding it here. A later work package can add the `From<PlayoutKind> for
+/// EntryKind` bridge when `playout-runtime` becomes a dependency.
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum PlayoutKind {
+    /// A regular programme (the bulk of a channel's broadcast day).
+    Programme,
+    /// An advertisement.
+    Ad,
+    /// A slate / filler asset, used when the schedule has nothing else.
+    Slate,
+}
+
+impl PlayoutKind {
+    /// The spec label for this kind (`"programme"`, `"ad"`, or `"slate"`).
+    pub fn name(&self) -> &'static str {
+        match self {
+            PlayoutKind::Programme => "programme",
+            PlayoutKind::Ad => "ad",
+            PlayoutKind::Slate => "slate",
+        }
+    }
+}
+
+broadcast_common::impl_spec_display!(PlayoutKind);
 
 /// Config-supplied credentials for an [`InputSpec::Rtsp`]/
 /// [`InputSpec::TsHttp`]/[`InputSpec::HlsPull`] route (client-side
@@ -797,6 +889,23 @@ impl std::fmt::Debug for InputSpec {
                 .field("type_tag", type_tag)
                 .field("params", &"<params>")
                 .finish(),
+            InputSpec::File { path, loop_file } => f
+                .debug_struct("File")
+                .field("path", path)
+                .field("loop_file", loop_file)
+                .finish(),
+            InputSpec::Playout {
+                sources,
+                schedule,
+                fallback_source,
+                splice_tolerance_secs,
+            } => f
+                .debug_struct("Playout")
+                .field("sources", &sources)
+                .field("schedule", schedule)
+                .field("fallback_source", fallback_source)
+                .field("splice_tolerance_secs", splice_tolerance_secs)
+                .finish(),
         }
     }
 }
@@ -873,7 +982,187 @@ impl InputSpec {
             // `crate::origin::serve_with_registry` time, not here) validates
             // `params` itself.
             InputSpec::Custom { .. } => Ok(()),
+            // Path existence/reachability is checked at connect time, not
+            // here — always structurally valid.
+            InputSpec::File { .. } => Ok(()),
+            InputSpec::Playout { .. } => validate_playout(self),
         }
+    }
+}
+
+/// Validates an [`InputSpec::Playout`] channel at config time (issue #748 —
+/// never at runtime, so a bad config fails before serving starts). Every
+/// rejection names the offending field and, where relevant, the offending
+/// source/index.
+///
+/// Checks, in order:
+///
+/// - `sources` must be non-empty.
+/// - `schedule` must be non-empty.
+/// - every `schedule` entry's `source` must be a key of `sources`.
+/// - `fallback_source`, if present, must be a key of `sources`.
+/// - every `offset_secs` must be finite and non-negative.
+/// - `splice_tolerance_secs`, if present, must be finite and strictly
+///   positive.
+/// - `offset_secs` must be strictly increasing (an equal offset is an error
+///   too — two entries cannot start at the same channel-relative second).
+/// - nesting rules: no [`Self::Playout`] inside a playout; `Custom` inside a
+///   playout is rejected in this version; `Whip` inside a playout is rejected
+///   in this version (see [`validate_playout_source`]).
+fn validate_playout(spec: &InputSpec) -> Result<()> {
+    let InputSpec::Playout {
+        sources,
+        schedule,
+        fallback_source,
+        splice_tolerance_secs,
+    } = spec
+    else {
+        unreachable!("validate_playout called on non-Playout input");
+    };
+
+    if sources.is_empty() {
+        return Err(MultimuxError::ConfigInvalid {
+            field: "routes.input.sources",
+            reason: "a playout must declare at least one source".into(),
+        });
+    }
+    if schedule.is_empty() {
+        return Err(MultimuxError::ConfigInvalid {
+            field: "routes.input.schedule",
+            reason: "a playout must have at least one schedule entry".into(),
+        });
+    }
+
+    // Validate the nesting rules and per-source fields first so the
+    // schedule/sources cross-checks below resolve cleanly.
+    for (name, source) in sources {
+        validate_playout_source(name, source)?;
+    }
+
+    for (idx, entry) in schedule.iter().enumerate() {
+        if !sources.contains_key(&entry.source) {
+            return Err(MultimuxError::ConfigInvalid {
+                field: "routes.input.schedule",
+                reason: format!(
+                    "schedule entry {idx} names source {:?}, which is not a key of \
+                     \"routes.input.sources\"",
+                    entry.source
+                ),
+            });
+        }
+        if !entry.offset_secs.is_finite() {
+            return Err(MultimuxError::ConfigInvalid {
+                field: "routes.input.schedule",
+                reason: format!(
+                    "schedule entry {idx} has a non-finite offset_secs ({})",
+                    entry.offset_secs
+                ),
+            });
+        }
+        if entry.offset_secs < 0.0 {
+            return Err(MultimuxError::ConfigInvalid {
+                field: "routes.input.schedule",
+                reason: format!(
+                    "schedule entry {idx} has a negative offset_secs ({})",
+                    entry.offset_secs
+                ),
+            });
+        }
+        if idx > 0 && entry.offset_secs <= schedule[idx - 1].offset_secs {
+            return Err(MultimuxError::ConfigInvalid {
+                field: "routes.input.schedule",
+                reason: format!(
+                    "schedule offsets must be strictly increasing: entry {idx} at {} must be \
+                     later than entry {} at {}",
+                    entry.offset_secs,
+                    idx - 1,
+                    schedule[idx - 1].offset_secs,
+                ),
+            });
+        }
+        // `kind` is always valid — `PlayoutKind` is a closed serde enum, so an
+        // unknown `"kind"` never deserializes into a `PlayoutEntry` at all.
+    }
+
+    if let Some(fallback) = fallback_source
+        && !sources.contains_key(fallback)
+    {
+        return Err(MultimuxError::ConfigInvalid {
+            field: "routes.input.fallback_source",
+            reason: format!(
+                "fallback_source {:?} is not a key of \"routes.input.sources\"",
+                fallback
+            ),
+        });
+    }
+
+    if let Some(tol) = splice_tolerance_secs {
+        if !tol.is_finite() {
+            return Err(MultimuxError::ConfigInvalid {
+                field: "routes.input.splice_tolerance_secs",
+                reason: format!("splice_tolerance_secs must be finite, got ({tol})"),
+            });
+        }
+        if *tol <= 0.0 {
+            return Err(MultimuxError::ConfigInvalid {
+                field: "routes.input.splice_tolerance_secs",
+                reason: format!("splice_tolerance_secs must be > 0, got ({tol})"),
+            });
+        }
+    }
+
+    Ok(())
+}
+
+/// Validates one named source inside an [`InputSpec::Playout`] channel
+/// (issue #748): recurses into nested inputs (so a nested Rtsp URL's fields
+/// are checked too) and enforces the playout nesting rules.
+///
+/// Nesting rules (decided in WP1 — exact, not approximations):
+///
+/// - **`Playout` inside `Playout` is rejected.** No use case, and it invites
+///   unbounded nesting and resource explosion.
+/// - **`Custom` inside `Playout` is rejected in this version.** The
+///   registry's `InputFactory` is built around an `Arc<RouteHandle>`
+///   (`crate::registry` — `InputCtx::store`), but a playout source writes
+///   into a *private* `Trunk` that is not a `RouteHandle`. Supporting it
+///   needs an extension-point change that is out of scope — a current
+///   limitation, not a permanent rule.
+/// - **`Whip` inside `Playout` is rejected in this version** — the variant is
+///   `#[cfg(feature = "whip")]`-gated, so allowing it would fork validation
+///   across feature combinations for no v1 benefit. Same "current
+///   limitation" wording.
+///
+/// Every other variant (`Rtsp`, `Rtp`, `TsUdp`, `TsHttp`, `Srt`, `HlsPull`,
+/// `DashPull`, `SmoothPull`, `Rtmp`, `File`) is allowed as a playout source
+/// and recursed into via [`InputSpec::validate`].
+fn validate_playout_source(name: &str, source: &InputSpec) -> Result<()> {
+    match source {
+        InputSpec::Playout { .. } => Err(MultimuxError::ConfigInvalid {
+            field: "routes.input.sources",
+            reason: format!(
+                "source {name:?} is itself a playout — nesting a playout inside a playout \
+                 is rejected (no use case, and it invites unbounded nesting and resource \
+                 explosion)"
+            ),
+        }),
+        InputSpec::Custom { .. } => Err(MultimuxError::ConfigInvalid {
+            field: "routes.input.sources",
+            reason: format!(
+                "source {name:?} is a \"custom\" input, which cannot be a playout source in \
+                 this version (a playout source writes into a private Trunk, not a RouteHandle \
+                 — this is a current limitation, not a permanent rule)"
+            ),
+        }),
+        #[cfg(feature = "whip")]
+        InputSpec::Whip { .. } => Err(MultimuxError::ConfigInvalid {
+            field: "routes.input.sources",
+            reason: format!(
+                "source {name:?} is a \"whip\" input, which cannot be a playout source in \
+                 this version (this is a current limitation, not a permanent rule)"
+            ),
+        }),
+        _ => source.validate(),
     }
 }
 
@@ -3301,5 +3590,542 @@ mod tests {
             }
             other => panic!("expected ConfigInvalid, got {other:?}"),
         }
+    }
+
+    // --- issue #748 linear playout (WP1: config + validation) ---
+
+    /// The full example from the spec's Config section, asserted field by
+    /// field — three sources (rtsp / ts_udp / file), a three-entry schedule
+    /// with strictly-increasing offsets, a `fallback_source`, and a
+    /// `splice_tolerance_secs`. `loop` is omitted on the file source, so it
+    /// must default to `true`.
+    #[test]
+    fn playout_accepts_full_spec_example() {
+        let json = r#"{
+            "bind": "127.0.0.1:9000",
+            "target_duration_secs": 2.0,
+            "part_target_ms": 250,
+            "window_segments": 6,
+            "routes": [
+                {
+                    "name": "channel-1",
+                    "input": {
+                        "type": "playout",
+                        "sources": {
+                            "camera-1": { "type": "rtsp", "url": "rtsp://10.0.0.1/stream" },
+                            "camera-2": { "type": "ts_udp", "addr": "239.1.1.1:5000" },
+                            "slate":    { "type": "file", "path": "/media/slate.ts" }
+                        },
+                        "schedule": [
+                            { "source": "camera-1", "kind": "programme", "offset_secs": 0 },
+                            { "source": "slate",    "kind": "slate",     "offset_secs": 3600 },
+                            { "source": "camera-2", "kind": "programme", "offset_secs": 3660 }
+                        ],
+                        "fallback_source": "slate",
+                        "splice_tolerance_secs": 6.0
+                    },
+                    "outputs": ["llhls", "dash"]
+                }
+            ]
+        }"#;
+        let cfg: Config = serde_json::from_str(json).unwrap();
+        cfg.validate().unwrap();
+        let InputSpec::Playout {
+            sources,
+            schedule,
+            fallback_source,
+            splice_tolerance_secs,
+        } = &cfg.routes[0].input
+        else {
+            panic!("expected playout input");
+        };
+        assert_eq!(sources.len(), 3);
+        match &sources["camera-1"] {
+            InputSpec::Rtsp { url, .. } => assert_eq!(url, "rtsp://10.0.0.1/stream"),
+            other => panic!("expected Rtsp, got {other:?}"),
+        }
+        match &sources["camera-2"] {
+            InputSpec::TsUdp { addr, .. } => assert_eq!(addr, "239.1.1.1:5000"),
+            other => panic!("expected TsUdp, got {other:?}"),
+        }
+        match &sources["slate"] {
+            InputSpec::File { path, loop_file } => {
+                assert_eq!(path, "/media/slate.ts");
+                assert!(*loop_file, "loop must default to true when omitted");
+            }
+            other => panic!("expected File, got {other:?}"),
+        }
+        assert_eq!(schedule.len(), 3);
+        assert_eq!(schedule[0].source, "camera-1");
+        assert_eq!(schedule[0].kind, PlayoutKind::Programme);
+        assert_eq!(schedule[0].offset_secs, 0.0);
+        assert_eq!(schedule[1].source, "slate");
+        assert_eq!(schedule[1].kind, PlayoutKind::Slate);
+        assert_eq!(schedule[1].offset_secs, 3600.0);
+        assert_eq!(schedule[2].source, "camera-2");
+        assert_eq!(schedule[2].kind, PlayoutKind::Programme);
+        assert_eq!(schedule[2].offset_secs, 3660.0);
+        assert_eq!(fallback_source.as_deref(), Some("slate"));
+        assert_eq!(*splice_tolerance_secs, Some(6.0));
+    }
+
+    /// `loop: false` is honored (does not silently stay at the default), and
+    /// every schedule `kind` maps through `PlayoutKind::name()`/`Display`.
+    #[test]
+    fn playout_file_loop_false_and_kind_labels() {
+        let json = r#"{
+            "routes": [
+                {
+                    "name": "ch",
+                    "input": {
+                        "type": "playout",
+                        "sources": {
+                            "slate": { "type": "file", "path": "/a.ts", "loop": false },
+                            "cam":   { "type": "rtsp", "url": "rtsp://h/s" }
+                        },
+                        "schedule": [
+                            { "source": "slate", "kind": "slate", "offset_secs": 0 },
+                            { "source": "cam", "kind": "programme", "offset_secs": 10 },
+                            { "source": "slate", "kind": "ad", "offset_secs": 20 }
+                        ]
+                    },
+                    "outputs": ["llhls"]
+                }
+            ]
+        }"#;
+        let cfg: Config = serde_json::from_str(json).unwrap();
+        cfg.validate().unwrap();
+        let InputSpec::Playout {
+            sources, schedule, ..
+        } = &cfg.routes[0].input
+        else {
+            panic!("expected playout input");
+        };
+        match &sources["slate"] {
+            InputSpec::File { loop_file, .. } => {
+                assert!(!*loop_file, "loop: false must be honored")
+            }
+            other => panic!("expected File, got {other:?}"),
+        }
+        assert_eq!(schedule[2].kind.name(), "ad");
+        assert_eq!(format!("{}", schedule[2].kind), "ad");
+        assert_eq!(PlayoutKind::Programme.name(), "programme");
+        assert_eq!(PlayoutKind::Slate.name(), "slate");
+    }
+
+    /// A playout with each allowed source kind (every variant except the
+    /// three nesting-rule rejections) validates.
+    #[test]
+    fn playout_accepts_every_allowed_source_kind() {
+        let json = r#"{
+            "routes": [
+                {
+                    "name": "ch",
+                    "input": {
+                        "type": "playout",
+                        "sources": {
+                            "rtsp":      { "type": "rtsp",      "url": "rtsp://h/s" },
+                            "rtp":       { "type": "rtp",       "addr": "239.1.1.1:5004",
+                                            "sdp": "v=0\r\no=- 0 0 IN IP4 239.1.1.1\r\ns=-\r\nc=IN IP4 239.1.1.1\r\nt=0 0\r\nm=video 5004 RTP/AVP 96\r\na=rtpmap:96 H264/90000\r\n" },
+                            "ts_udp":    { "type": "ts_udp",    "addr": "239.1.1.1:5000" },
+                            "ts_http":   { "type": "ts_http",   "url": "http://h/s.ts" },
+                            "srt":       { "type": "srt",       "remote": "h:9000" },
+                            "hls_pull":  { "type": "hls_pull",  "url": "http://h/p.m3u8" },
+                            "dash_pull": { "type": "dash_pull", "url": "http://h/p.mpd" },
+                            "smooth_pull": { "type": "smooth_pull", "url": "http://h/Manifest" },
+                            "rtmp":      { "type": "rtmp",      "listen": "0.0.0.0:1935" },
+                            "file":      { "type": "file",      "path": "/a.ts" }
+                        },
+                        "schedule": [
+                            { "source": "rtsp", "kind": "programme", "offset_secs": 0 },
+                            { "source": "file", "kind": "slate", "offset_secs": 10 }
+                        ]
+                    },
+                    "outputs": ["llhls"]
+                }
+            ]
+        }"#;
+        let cfg: Config = serde_json::from_str(json).unwrap();
+        cfg.validate()
+            .unwrap_or_else(|e| panic!("every allowed source kind must validate, got {e:?}"));
+    }
+
+    /// Extract the `ConfigInvalid` reason from a validation failure, panicking
+    /// on any other error kind.
+    fn playout_err_reason(cfg: &Config) -> (String, String) {
+        let err = cfg.validate().expect_err("config must fail validation");
+        match err {
+            MultimuxError::ConfigInvalid { field, reason } => (field.to_string(), reason),
+            other => panic!("expected ConfigInvalid, got {other:?}"),
+        }
+    }
+
+    /// Minimal two-source playout JSON with the given `sources`/`schedule`
+    /// bodies dropped in —  `set` naming `"body"` and the body text.
+    fn playout_json(sources_body: &str, schedule_body: &str) -> String {
+        format!(
+            r#"{{
+                "routes": [
+                    {{
+                        "name": "ch",
+                        "input": {{
+                            "type": "playout",
+                            "sources": {{ {sources_body} }},
+                            "schedule": [ {schedule_body} ]
+                        }},
+                        "outputs": ["llhls"]
+                    }}
+                ]
+            }}"#
+        )
+    }
+
+    #[test]
+    fn playout_rejects_empty_sources() {
+        let json = playout_json(
+            "",
+            r#"{ "source": "cam", "kind": "programme", "offset_secs": 0 }"#,
+        );
+        let cfg: Config = serde_json::from_str(&json).unwrap();
+        let (field, reason) = playout_err_reason(&cfg);
+        assert_eq!(field, "routes.input.sources");
+        assert!(
+            reason.contains("at least one source"),
+            "reason should explain empty sources, got: {reason}"
+        );
+    }
+
+    #[test]
+    fn playout_rejects_empty_schedule() {
+        let json = playout_json(r#""cam": { "type": "rtsp", "url": "rtsp://h/s" }"#, "");
+        let cfg: Config = serde_json::from_str(&json).unwrap();
+        let (field, reason) = playout_err_reason(&cfg);
+        assert_eq!(field, "routes.input.schedule");
+        assert!(
+            reason.contains("at least one schedule entry"),
+            "reason should explain empty schedule, got: {reason}"
+        );
+    }
+
+    #[test]
+    fn playout_rejects_schedule_source_not_in_sources() {
+        let json = playout_json(
+            r#""cam": { "type": "rtsp", "url": "rtsp://h/s" },
+               "slate": { "type": "file", "path": "/a.ts" }"#,
+            r#"{ "source": "ghost", "kind": "programme", "offset_secs": 0 }"#,
+        );
+        let cfg: Config = serde_json::from_str(&json).unwrap();
+        let (field, reason) = playout_err_reason(&cfg);
+        assert_eq!(field, "routes.input.schedule");
+        assert!(
+            reason.contains("\"ghost\"") && reason.contains("0"),
+            "reason should name source \"ghost\" and entry index 0, got: {reason}"
+        );
+    }
+
+    #[test]
+    fn playout_rejects_fallback_source_not_in_sources() {
+        let json = r#"{
+                "routes": [
+                    {
+                        "name": "ch",
+                        "input": {
+                            "type": "playout",
+                            "sources": { "cam": { "type": "rtsp", "url": "rtsp://h/s" } },
+                            "schedule": [ { "source": "cam", "kind": "programme", "offset_secs": 0 } ],
+                            "fallback_source": "nope"
+                        },
+                        "outputs": ["llhls"]
+                    }
+                ]
+            }"#;
+        let cfg: Config = serde_json::from_str(json).unwrap();
+        let (field, reason) = playout_err_reason(&cfg);
+        assert_eq!(field, "routes.input.fallback_source");
+        assert!(
+            reason.contains("\"nope\""),
+            "reason should name fallback source \"nope\", got: {reason}"
+        );
+    }
+
+    #[test]
+    fn playout_rejects_negative_offset() {
+        let json = playout_json(
+            r#""cam": { "type": "rtsp", "url": "rtsp://h/s" }"#,
+            r#"{ "source": "cam", "kind": "programme", "offset_secs": -1.0 }"#,
+        );
+        let cfg: Config = serde_json::from_str(&json).unwrap();
+        let (field, reason) = playout_err_reason(&cfg);
+        assert_eq!(field, "routes.input.schedule");
+        assert!(
+            reason.contains("negative offset") && reason.contains("0"),
+            "reason should name negative offset and entry 0, got: {reason}"
+        );
+    }
+
+    #[test]
+    fn playout_rejects_nan_offset() {
+        let json = playout_json(
+            r#""cam": { "type": "rtsp", "url": "rtsp://h/s" }"#,
+            r#"{ "source": "cam", "kind": "programme", "offset_secs": 0 }"#,
+        );
+        let mut cfg: Config = serde_json::from_str(&json).unwrap();
+        let InputSpec::Playout { schedule, .. } = &mut cfg.routes[0].input else {
+            panic!("expected playout");
+        };
+        schedule[0].offset_secs = f64::NAN;
+        let (field, reason) = playout_err_reason(&cfg);
+        assert_eq!(field, "routes.input.schedule");
+        assert!(
+            reason.contains("non-finite") && reason.contains("0"),
+            "reason should name non-finite offset and entry 0, got: {reason}"
+        );
+    }
+
+    #[test]
+    fn playout_rejects_infinite_offset() {
+        let json = playout_json(
+            r#""cam": { "type": "rtsp", "url": "rtsp://h/s" }"#,
+            r#"{ "source": "cam", "kind": "programme", "offset_secs": 0 }"#,
+        );
+        let mut cfg: Config = serde_json::from_str(&json).unwrap();
+        let InputSpec::Playout { schedule, .. } = &mut cfg.routes[0].input else {
+            panic!("expected playout");
+        };
+        schedule[0].offset_secs = f64::INFINITY;
+        let (field, reason) = playout_err_reason(&cfg);
+        assert_eq!(field, "routes.input.schedule");
+        assert!(
+            reason.contains("non-finite") && reason.contains("0"),
+            "reason should name non-finite offset and entry 0, got: {reason}"
+        );
+    }
+
+    #[test]
+    fn playout_rejects_non_strictly_increasing_offsets() {
+        // Equal consecutive offsets (entry 1 equals entry 0) must be rejected.
+        let json = playout_json(
+            r#""cam": { "type": "rtsp", "url": "rtsp://h/s" },
+               "cam2": { "type": "rtsp", "url": "rtsp://h/s2" }"#,
+            r#"{ "source": "cam", "kind": "programme", "offset_secs": 10 },
+               { "source": "cam2", "kind": "programme", "offset_secs": 10 }"#,
+        );
+        let cfg: Config = serde_json::from_str(&json).unwrap();
+        let (field, reason) = playout_err_reason(&cfg);
+        assert_eq!(field, "routes.input.schedule");
+        assert!(
+            reason.contains("strictly increasing") && reason.contains("1") && reason.contains("0"),
+            "reason should name both offending indices, got: {reason}"
+        );
+    }
+
+    #[test]
+    fn playout_rejects_decreasing_offsets() {
+        let json = playout_json(
+            r#""cam": { "type": "rtsp", "url": "rtsp://h/s" },
+               "cam2": { "type": "rtsp", "url": "rtsp://h/s2" }"#,
+            r#"{ "source": "cam", "kind": "programme", "offset_secs": 20 },
+               { "source": "cam2", "kind": "programme", "offset_secs": 10 }"#,
+        );
+        let cfg: Config = serde_json::from_str(&json).unwrap();
+        let (field, reason) = playout_err_reason(&cfg);
+        assert_eq!(field, "routes.input.schedule");
+        assert!(
+            reason.contains("strictly increasing") && reason.contains("1") && reason.contains("0"),
+            "reason should name both offending indices, got: {reason}"
+        );
+    }
+
+    #[test]
+    fn playout_rejects_negative_splice_tolerance() {
+        let json = r#"{
+                "routes": [
+                    {
+                        "name": "ch",
+                        "input": {
+                            "type": "playout",
+                            "sources": { "cam": { "type": "rtsp", "url": "rtsp://h/s" } },
+                            "schedule": [ { "source": "cam", "kind": "programme", "offset_secs": 0 } ],
+                            "splice_tolerance_secs": -1.0
+                        },
+                        "outputs": ["llhls"]
+                    }
+                ]
+            }"#;
+        let cfg: Config = serde_json::from_str(json).unwrap();
+        let (field, reason) = playout_err_reason(&cfg);
+        assert_eq!(field, "routes.input.splice_tolerance_secs");
+        assert!(
+            reason.contains("> 0"),
+            "reason should explain the tolerance must be positive, got: {reason}"
+        );
+    }
+
+    #[test]
+    fn playout_rejects_zero_splice_tolerance() {
+        let json = r#"{
+                "routes": [
+                    {
+                        "name": "ch",
+                        "input": {
+                            "type": "playout",
+                            "sources": { "cam": { "type": "rtsp", "url": "rtsp://h/s" } },
+                            "schedule": [ { "source": "cam", "kind": "programme", "offset_secs": 0 } ],
+                            "splice_tolerance_secs": 0.0
+                        },
+                        "outputs": ["llhls"]
+                    }
+                ]
+            }"#;
+        let cfg: Config = serde_json::from_str(json).unwrap();
+        let (field, reason) = playout_err_reason(&cfg);
+        assert_eq!(field, "routes.input.splice_tolerance_secs");
+        assert!(
+            reason.contains("> 0"),
+            "reason should explain the tolerance must be positive, got: {reason}"
+        );
+    }
+
+    #[test]
+    fn playout_rejects_nan_splice_tolerance() {
+        let json = r#"{
+                "routes": [
+                    {
+                        "name": "ch",
+                        "input": {
+                            "type": "playout",
+                            "sources": { "cam": { "type": "rtsp", "url": "rtsp://h/s" } },
+                            "schedule": [ { "source": "cam", "kind": "programme", "offset_secs": 0 } ],
+                            "splice_tolerance_secs": null
+                        },
+                        "outputs": ["llhls"]
+                    }
+                ]
+            }"#;
+        // `null` would deserialize `Option<f64>` to `None`; set a NaN in Rust
+        // to exercise the finiteness check directly.
+        let mut cfg: Config = serde_json::from_str(json).unwrap();
+        let InputSpec::Playout {
+            splice_tolerance_secs,
+            ..
+        } = &mut cfg.routes[0].input
+        else {
+            panic!("expected playout");
+        };
+        *splice_tolerance_secs = Some(f64::NAN);
+        let (field, reason) = playout_err_reason(&cfg);
+        assert_eq!(field, "routes.input.splice_tolerance_secs");
+        assert!(
+            reason.contains("finite"),
+            "reason should name the non-finite tolerance, got: {reason}"
+        );
+    }
+
+    #[test]
+    fn playout_rejects_nested_playout_inside_playout() {
+        let json = playout_json(
+            r#""cam": { "type": "rtsp", "url": "rtsp://h/s" },
+               "inner": {
+                   "type": "playout",
+                   "sources": { "x": { "type": "rtsp", "url": "rtsp://h/x" } },
+                   "schedule": [ { "source": "x", "kind": "programme", "offset_secs": 0 } ]
+               }"#,
+            r#"{ "source": "cam", "kind": "programme", "offset_secs": 0 }"#,
+        );
+        let cfg: Config = serde_json::from_str(&json).unwrap();
+        let (field, reason) = playout_err_reason(&cfg);
+        assert_eq!(field, "routes.input.sources");
+        assert!(
+            reason.contains("inner")
+                && reason.contains("playout inside a playout")
+                && reason.contains("rejected"),
+            "reason should reject nesting plainly, got: {reason}"
+        );
+    }
+
+    #[test]
+    fn playout_rejects_custom_source() {
+        let json = playout_json(
+            r#""cam": { "type": "rtsp", "url": "rtsp://h/s" },
+               "ext": { "type": "custom", "type_tag": "webrtc", "params": { "x": 1 } }"#,
+            r#"{ "source": "cam", "kind": "programme", "offset_secs": 0 }"#,
+        );
+        let cfg: Config = serde_json::from_str(&json).unwrap();
+        let (field, reason) = playout_err_reason(&cfg);
+        assert_eq!(field, "routes.input.sources");
+        assert!(
+            reason.contains("ext") && reason.contains("current limitation"),
+            "reason should state current-limitation wording, got: {reason}"
+        );
+    }
+
+    /// `Whip` as a playout source is rejected only when the `whip` feature is
+    /// compiled in (the variant itself doesn't exist without it).
+    #[cfg(feature = "whip")]
+    #[test]
+    fn playout_rejects_whip_source() {
+        let json = playout_json(
+            r#""cam": { "type": "rtsp", "url": "rtsp://h/s" },
+               "w": { "type": "whip", "listen": "0.0.0.0:8080" }"#,
+            r#"{ "source": "cam", "kind": "programme", "offset_secs": 0 }"#,
+        );
+        let cfg: Config = serde_json::from_str(&json).unwrap();
+        let (field, reason) = playout_err_reason(&cfg);
+        assert_eq!(field, "routes.input.sources");
+        assert!(
+            reason.contains("whip") && reason.contains("current limitation"),
+            "reason should state the whip limitation, got: {reason}"
+        );
+    }
+
+    /// Biting test: a nested `rtsp://user:pass@host/s` inside a playout's
+    /// `sources` must not appear in the playout's (and therefore `Route`'s)
+    /// `Debug` output — the manual `Debug` renders the schedule and source
+    /// NAMES but pushes each nested source through the same redacting
+    /// `InputSpec` `Debug`. This is a real credential-leak path.
+    #[test]
+    fn playout_debug_redacts_nested_source_credentials() {
+        let json = r#"{
+            "routes": [
+                {
+                    "name": "ch",
+                    "input": {
+                        "type": "playout",
+                        "sources": {
+                            "cam":  { "type": "rtsp", "url": "rtsp://secretuser:secretpass@host/s" },
+                            "slate": { "type": "file", "path": "/a.ts" }
+                        },
+                        "schedule": [
+                            { "source": "cam", "kind": "programme", "offset_secs": 0 },
+                            { "source": "slate", "kind": "slate", "offset_secs": 10 }
+                        ]
+                    },
+                    "outputs": ["llhls"]
+                }
+            ]
+        }"#;
+        let cfg: Config = serde_json::from_str(json).unwrap();
+        // Round-trip the whole playout through `Debug`.
+        let debug = format!("{:?}", cfg.routes[0].input);
+        assert!(
+            !debug.contains("secretuser"),
+            "debug leaked nested username: {debug}"
+        );
+        assert!(
+            !debug.contains("secretpass"),
+            "debug leaked nested password: {debug}"
+        );
+        // The redaction surrogate and the source NAME must still render.
+        assert!(debug.contains("***@host"), "debug: {debug}");
+        assert!(
+            debug.contains("\"cam\""),
+            "source name must render: {debug}"
+        );
+        assert!(
+            debug.contains("\"slate\""),
+            "source name must render: {debug}"
+        );
+        // The file path is not a credential and must render.
+        assert!(debug.contains("/a.ts"), "file path must render: {debug}");
     }
 }
