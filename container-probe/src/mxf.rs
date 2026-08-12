@@ -37,7 +37,13 @@ pub(crate) fn probe(data: &[u8], limit: usize) -> Outcome {
     let region = &data[..limit];
 
     // Key at offset 0, first the fixed 7-byte UL prefix, then a 16-byte key.
-    if region.len() < UL_KEY_LEN || region[..MXF_KEY_PREFIX.len()] != MXF_KEY_PREFIX {
+    if region.len() < UL_KEY_LEN {
+        // Shorter than the 16-byte Partition Pack Key (the fixture's key runs
+        // through byte 15): a truncated .mxf read a few bytes at a time is
+        // undecided (`Insufficient`), not `Unknown`.
+        return Outcome::Insufficient(UL_KEY_LEN);
+    }
+    if region[..MXF_KEY_PREFIX.len()] != MXF_KEY_PREFIX {
         return Outcome::None;
     }
     // The BER length begins immediately after the 16-byte key.
@@ -107,5 +113,27 @@ mod drift {
             FILL_ITEM_KEY_PREFIX[..4],
             "container-probe's MXF UL header has drifted from st377-1's"
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn fixture_bytes(rel: &str) -> std::vec::Vec<u8> {
+        std::fs::read(std::format!("{}/../{}", env!("CARGO_MANIFEST_DIR"), rel))
+            .unwrap_or_else(|e| panic!("failed to read {rel}: {e}"))
+    }
+
+    /// Finding 4: a 15-byte prefix of a real MXF fixture (1 byte short of the
+    /// 16-byte Partition Pack Key) is `Insufficient`, not `Unknown`.
+    #[test]
+    fn short_prefix_is_insufficient() {
+        let data = fixture_bytes("fixtures/mxf/op1a_mpeg2_pcm.mxf");
+        let region = &data[..UL_KEY_LEN - 1];
+        match probe(region, region.len()) {
+            Outcome::Insufficient(n) => assert_eq!(n, UL_KEY_LEN),
+            other => panic!("15-byte MXF prefix must be Insufficient(16), got {other:?}"),
+        }
     }
 }

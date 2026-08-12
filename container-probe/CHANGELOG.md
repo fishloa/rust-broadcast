@@ -23,7 +23,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   ISOBMFF (box-chain walk), Matroska and WebM (EBML magic + `DocType`), MXF
   (partition-pack key + BER length), MPEG-PS (pack header marker bits), FLV,
   WAV, Ogg, ASF (magic signatures), and the elementary streams ADTS AAC, MP3
-  and Annex B H.264/H.265 (frame/NAL length chaining).
+  and Annex B H.264 (frame/NAL length chaining).
 - **Cross-prober suppression** — a container matched at `LATTICE_STRONG` or
   above zeroes every elementary-stream candidate.
 - **`Detail`** — prober-specific findings (TS stride/phase, ISOBMFF major brand

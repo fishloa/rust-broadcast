@@ -18,7 +18,12 @@ pub(crate) fn probe(data: &[u8], limit: usize) -> Outcome {
     debug_assert!(limit <= data.len(), "harness caps limit at data.len()");
     let region = &data[..limit];
 
-    if region.len() < ASF_HEADER_GUID.len() || region[..ASF_HEADER_GUID.len()] != ASF_HEADER_GUID {
+    if region.len() < ASF_HEADER_GUID.len() {
+        // Shorter than the 16-byte Header Object GUID: a truncated ASF read a
+        // few bytes at a time is undecided (`Insufficient`), not `Unknown`.
+        return Outcome::Insufficient(ASF_HEADER_GUID.len());
+    }
+    if region[..ASF_HEADER_GUID.len()] != ASF_HEADER_GUID {
         return Outcome::None;
     }
 
@@ -26,4 +31,26 @@ pub(crate) fn probe(data: &[u8], limit: usize) -> Outcome {
         confidence: Confidence::STRONG,
         detail: Detail::None,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn fixture_bytes(rel: &str) -> std::vec::Vec<u8> {
+        std::fs::read(std::format!("{}/../{}", env!("CARGO_MANIFEST_DIR"), rel))
+            .unwrap_or_else(|e| panic!("failed to read {rel}: {e}"))
+    }
+
+    /// Finding 4: a 15-byte prefix of a real ASF fixture (1 byte short of the
+    /// 16-byte Header Object GUID) is `Insufficient`, not `Unknown`.
+    #[test]
+    fn short_prefix_is_insufficient() {
+        let data = fixture_bytes("fixtures/container-probe/video.asf");
+        let region = &data[..ASF_HEADER_GUID.len() - 1];
+        match probe(region, region.len()) {
+            Outcome::Insufficient(n) => assert_eq!(n, ASF_HEADER_GUID.len()),
+            other => panic!("15-byte ASF prefix must be Insufficient(16), got {other:?}"),
+        }
+    }
 }
