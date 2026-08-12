@@ -133,6 +133,16 @@ pub enum MultimuxError {
         tag: String,
     },
 
+    /// An `InputSpec::File` route's ingest (issue #748 WP5) failed to read,
+    /// probe, or demux its media file — surfaced through the route's
+    /// supervisor so the route retries rather than dying silently.
+    #[error("file route ingest failed: {0}")]
+    FileRoute(
+        /// The underlying file-reader error (read / probe / demux).
+        #[from]
+        crate::source::file_reader::FileReaderError,
+    ),
+
     /// The runtime admin API's `POST /admin/routes`
     /// (`crate::origin::admin::RouteRegistry::add_route`) named a route
     /// already present in the registry — mapped to `409 Conflict`. The

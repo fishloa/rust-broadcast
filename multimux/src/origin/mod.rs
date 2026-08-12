@@ -1321,6 +1321,30 @@ fn spawn_ingest(
                 shutdown_rx,
             ))
         }
+        crate::config::InputSpec::File { path, loop_file } => {
+            let path = path.clone();
+            let loop_file = *loop_file;
+            tokio::spawn(supervisor::supervise_driver(
+                move |route_handle| {
+                    let path = path.clone();
+                    async move {
+                        let handshake = crate::source::handshake_policy(timeouts.connect);
+                        Err(crate::source::file_reader::run_file_source(
+                            &path,
+                            loop_file,
+                            window_segments,
+                            handshake,
+                            &route_handle,
+                        )
+                        .await)
+                    }
+                },
+                store,
+                Backoff::production_default(),
+                name.clone(),
+                shutdown_rx,
+            ))
+        }
         crate::config::InputSpec::Custom { type_tag, params } => {
             let factory =
                 registry
@@ -2865,6 +2889,7 @@ mod tests {
             crate::config::InputSpec::Rtmp { .. } => true,
             #[cfg(feature = "whip")]
             crate::config::InputSpec::Whip { .. } => true,
+            crate::config::InputSpec::File { .. } => true,
             crate::config::InputSpec::Custom { .. } => true,
         }
     }

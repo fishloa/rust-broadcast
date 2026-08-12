@@ -2144,6 +2144,7 @@ dependencies = [
  "broadcast-common",
  "broadcast-hls",
  "bytes",
+ "container-probe",
  "dvb-si",
  "futures-util",
  "hls-runtime",

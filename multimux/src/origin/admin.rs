@@ -554,6 +554,7 @@ fn input_kind_name(input: &crate::config::InputSpec) -> &'static str {
         Whip { .. } => "whip",
         Srt { .. } => "srt",
         Custom { .. } => "custom",
+        File { .. } => "file",
     }
 }
 

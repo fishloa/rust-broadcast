@@ -18,6 +18,12 @@ fn default_outputs() -> Vec<OutputKind> {
     vec![OutputKind::LlHls]
 }
 
+/// Default [`InputSpec::File::loop_file`] when a config omits the field:
+/// restart from the beginning at EOF (`true`), matching `default_outputs`.
+fn default_file_loop() -> bool {
+    true
+}
+
 /// One route's ingest transport (issue #663 P3a/P3c): tagged so a JSON
 /// config can name which transport a route uses (`"type": "rtsp" | "rtp" |
 /// "ts_udp" | "ts_http" | "hls_pull"`).
@@ -226,6 +232,16 @@ pub enum InputSpec {
         /// `"<params>"`) in `Debug`, never rendered.
         #[serde(default)]
         params: serde_json::Value,
+    },
+    /// Play a media file from local disk as a source.
+    File {
+        /// Path to the media file.
+        path: String,
+        /// Restart from the beginning at EOF. Defaults to `true` — a slate or
+        /// filler asset is normally expected to run until the schedule moves
+        /// on.
+        #[serde(default = "default_file_loop", rename = "loop")]
+        loop_file: bool,
     },
 }
 
@@ -797,6 +813,11 @@ impl std::fmt::Debug for InputSpec {
                 .field("type_tag", type_tag)
                 .field("params", &"<params>")
                 .finish(),
+            InputSpec::File { path, loop_file } => f
+                .debug_struct("File")
+                .field("path", path)
+                .field("loop_file", loop_file)
+                .finish(),
         }
     }
 }
@@ -873,6 +894,9 @@ impl InputSpec {
             // `crate::origin::serve_with_registry` time, not here) validates
             // `params` itself.
             InputSpec::Custom { .. } => Ok(()),
+            // Path existence/reachability is checked at connect time, not
+            // here — always structurally valid.
+            InputSpec::File { .. } => Ok(()),
         }
     }
 }
@@ -3301,5 +3325,52 @@ mod tests {
             }
             other => panic!("expected ConfigInvalid, got {other:?}"),
         }
+    }
+
+    // --- issue #748 WP5: the file input is the whole feature now ---
+
+    /// A `File` route input parses with its path, and `loop` defaults to
+    /// `true` when omitted.
+    #[test]
+    fn file_input_parses_with_loop_defaulting_to_true() {
+        let json = r#"{
+            "routes": [
+                { "name": "file-route", "input": { "type": "file", "path": "/media/slate.ts" } }
+            ]
+        }"#;
+        let cfg: Config = serde_json::from_str(json).unwrap();
+        cfg.validate().unwrap();
+        match &cfg.routes[0].input {
+            InputSpec::File { path, loop_file } => {
+                assert_eq!(path, "/media/slate.ts");
+                assert!(*loop_file, "loop must default to true when omitted");
+            }
+            other => panic!("expected InputSpec::File, got {other:?}"),
+        }
+    }
+
+    /// `loop: false` on a `File` input is honored (not silently left at the
+    /// default), and the `Debug` arm renders the path without redacting it.
+    #[test]
+    fn file_input_loop_false_is_honored_and_debug_shows_path() {
+        let json = r#"{
+            "routes": [
+                { "name": "file-route", "input": { "type": "file", "path": "/media/slate.ts", "loop": false } }
+            ]
+        }"#;
+        let cfg: Config = serde_json::from_str(json).unwrap();
+        cfg.validate().unwrap();
+        match &cfg.routes[0].input {
+            InputSpec::File { path, loop_file } => {
+                assert_eq!(path, "/media/slate.ts");
+                assert!(!*loop_file, "loop: false must be honored");
+            }
+            other => panic!("expected InputSpec::File, got {other:?}"),
+        }
+        let debug = format!("{:?}", cfg.routes[0].input);
+        assert!(
+            debug.contains("/media/slate.ts"),
+            "the path is not a credential and must render: {debug}"
+        );
     }
 }

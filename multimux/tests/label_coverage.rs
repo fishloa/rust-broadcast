@@ -18,6 +18,9 @@
 //! Skip list:
 //! - `MultimuxError` (`error`) — structured `thiserror` error, not a spec/
 //!   field label.
+//! - `FileReaderError` (`source::file_reader`) — structured `thiserror` error
+//!   for the file-reader task's read/probe/demux failures; not a spec/field
+//!   label.
 //! - `RtmpPushError` (`push::rtmp`) — thiserror error for the RTMP push
 //!   transport's connect/protocol/IO failures; not a spec/field label.
 //! - `RtspPushError` (`push::rtsp`) — thiserror error for the RTSP push
@@ -49,6 +52,7 @@ use std::path::Path;
 
 const SKIP: &[&str] = &[
     "MultimuxError",
+    "FileReaderError",
     "RtmpPushError",
     "RtspPushError",
     "SendMediaError",
