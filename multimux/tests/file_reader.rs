@@ -54,15 +54,13 @@ fn reader(
     max_loops: Option<u32>,
     trunk: Arc<Trunk>,
 ) -> FileReader {
-    FileReader::new(FileReaderConfig {
-        path,
-        loop_file,
-        trunk,
-        pace,
-        max_retries: 0,
-        retry_interval: Duration::from_millis(1),
-        max_loops,
-    })
+    FileReader::new(
+        FileReaderConfig::new(path, loop_file, trunk)
+            .with_pace(pace)
+            .with_max_retries(0)
+            .with_retry_interval(Duration::from_millis(1))
+            .with_max_loops(max_loops),
+    )
 }
 
 /// Probe a fixture file and return its `(format, detail)` for feeding to
@@ -515,4 +513,115 @@ async fn random_bytes_yield_a_probe_error_never_panic() {
         result.is_err(),
         "random bytes must fail, and must never panic"
     );
+}
+
+// ---------------------------------------------------------------------------
+// The production `pace: true` × `loop_file: true` cell — the shipped default
+// that the earlier tests never exercised, and whose pacing baseline used to be
+// a fixed `start` (so every pass past the first found every due instant in the
+// past and never `.await`ed, spinning at 100% CPU).
+// ---------------------------------------------------------------------------
+
+/// When pacing AND looping are both on (the [`FileReader::standard`] default),
+/// the second pass must not complete before its content duration has elapsed —
+/// the pacing baseline advances one content span per pass, so the loop does not
+/// dump the whole file instantly and does not spin once its targets are past.
+#[tokio::test]
+async fn paced_loop_second_pass_waits_for_content_duration() {
+    let trunk = trunk();
+    let t = trunk.clone();
+    let started = std::time::Instant::now();
+    let handle = tokio::spawn(async move {
+        reader(fixture("fixtures/ts/h264_aac.ts"), true, true, Some(2), t)
+            .run()
+            .await
+    });
+    handle
+        .await
+        .unwrap()
+        .expect("a bounded paced loop must finish cleanly");
+
+    // The fixture is ~3 s of media; a paced 2-pass run must take at least one
+    // full content duration (not ~instantly, as the un-advanced baseline did).
+    let elapsed = started.elapsed();
+    assert!(
+        elapsed >= Duration::from_secs(2),
+        "a paced 2-pass loop must take ~2× content duration, not {elapsed:?} (baseline did not advance)"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// WriterUnavailable — a second FileReader over one Arc<Trunk> (or a caller
+// that already took the writer) must fail as a structured error, never panic.
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn second_reader_over_same_trunk_fails_with_writer_unavailable() {
+    let trunk = trunk();
+    // Claim the one sample/event writer ourselves.
+    let _writer = trunk.writer().expect("first writer must be claimable");
+
+    let result = reader(
+        fixture("fixtures/ts/h264_aac.ts"),
+        false,
+        false,
+        None,
+        trunk,
+    )
+    .run()
+    .await;
+    match result {
+        Err(FileReaderError::WriterUnavailable) => {}
+        other => {
+            panic!("a second reader over a claimed trunk must be WriterUnavailable, got {other:?}")
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Size cap + regular-file check — an operator-supplied path is never read
+// unbounded (a character device/FIFO would OOM the whole origin), and an
+// over-cap file fails cleanly before the read.
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn oversized_file_yields_file_too_large() {
+    let dir = std::env::temp_dir().join("multimux-file-reader-oversize");
+    std::fs::create_dir_all(&dir).unwrap();
+    let big = dir.join("big.bin");
+    // 1 KiB of bytes, under a 512-byte cap.
+    std::fs::write(&big, vec![0u8; 1024]).unwrap();
+
+    let trunk = trunk();
+    let config = FileReaderConfig::new(big.clone(), false, trunk)
+        .with_pace(false)
+        .with_max_retries(0)
+        .with_retry_interval(Duration::from_millis(1))
+        .with_max_file_bytes(512);
+    let result = FileReader::new(config).run().await;
+    match result {
+        Err(FileReaderError::FileTooLarge { size, max, .. }) => {
+            assert_eq!(size, 1024, "must report the file's actual size");
+            assert_eq!(max, 512, "must report the configured cap");
+        }
+        other => panic!("over-cap file must be FileTooLarge, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn directory_path_yields_not_a_regular_file() {
+    // A directory is not a regular file — the reader must reject it before any
+    // read, with a structured error rather than an unbounded read.
+    let dir = std::env::temp_dir(); // a real directory
+    let trunk = trunk();
+    let result = reader(dir.clone(), false, false, None, trunk).run().await;
+    match result {
+        Err(FileReaderError::NotARegularFile { kind, .. }) => {
+            assert_eq!(
+                kind, "directory",
+                "a directory must be labelled 'directory'"
+            );
+        }
+        other => panic!("a directory must be NotARegularFile, got {other:?}"),
+    }
 }
