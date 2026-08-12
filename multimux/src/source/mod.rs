@@ -25,6 +25,7 @@
 //! P3c).
 
 pub mod dash_pull;
+pub mod file_reader;
 pub mod hls_pull;
 pub mod http_auth;
 pub mod rtmp;
