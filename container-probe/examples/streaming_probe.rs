@@ -14,20 +14,6 @@
 
 use container_probe::Probe;
 
-/// Map a `Confidence` score to its tier name (display only; the crate's named
-/// tier constants are internal).
-fn tier_label(score: u8) -> &'static str {
-    match score {
-        240 => "CERTAIN",
-        192 => "STRONG",
-        160 => "STRUCTURAL",
-        144 => "LATTICE_STRONG",
-        96 => "LATTICE_WEAK",
-        64 => "HEURISTIC",
-        _ => "?",
-    }
-}
-
 fn main() {
     let path = std::env::args()
         .nth(1)
@@ -55,7 +41,7 @@ fn main() {
                 println!(
                     "  {budget:<8} IDENTIFIED: {} ({}) — stopping",
                     format.name(),
-                    tier_label(confidence.as_u8())
+                    confidence.name()
                 );
                 break;
             }

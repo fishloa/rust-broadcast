@@ -22,23 +22,37 @@ const TYPE_FLAG_VIDEO: u8 = 0x01;
 /// must be zero in a conformant header.
 const TYPE_FLAG_RESERVED_MASK: u8 = !(TYPE_FLAG_AUDIO | TYPE_FLAG_VIDEO);
 
+/// `TypeFlags` is the byte immediately after the signature + version.
+const TYPE_FLAGS_OFFSET: usize = 4;
+/// `DataOffset` is the 4-byte big-endian field starting at byte 5.
+const DATA_OFFSET_POS: usize = 5;
+
 /// The registered FLV prober: signature + header-field checks over `limit`.
 pub(crate) fn probe(data: &[u8], limit: usize) -> Outcome {
     debug_assert!(limit <= data.len(), "harness caps limit at data.len()");
     let region = &data[..limit];
 
-    if region.len() < FLV_HEADER_LEN || region[..FLV_SIGNATURE.len()] != FLV_SIGNATURE {
+    if region.len() < FLV_HEADER_LEN {
+        // Shorter than the 9-byte header the field checks need -> undecided.
+        return Outcome::Insufficient(FLV_HEADER_LEN);
+    }
+    if region[..FLV_SIGNATURE.len()] != FLV_SIGNATURE {
         return Outcome::None;
     }
 
     // Reserved bits in TypeFlags must be clear.
-    let type_flags = region[4];
+    let type_flags = region[TYPE_FLAGS_OFFSET];
     if type_flags & TYPE_FLAG_RESERVED_MASK != 0 {
         return Outcome::None;
     }
     // DataOffset (bytes 5..9) is the header size; it must be >= the 9-byte
     // header (so the field itself is sane and points at/after the header).
-    let data_offset = u32::from_be_bytes([region[5], region[6], region[7], region[8]]) as usize;
+    let data_offset = u32::from_be_bytes([
+        region[DATA_OFFSET_POS],
+        region[DATA_OFFSET_POS + 1],
+        region[DATA_OFFSET_POS + 2],
+        region[DATA_OFFSET_POS + 3],
+    ]) as usize;
     if data_offset < FLV_HEADER_LEN {
         return Outcome::None;
     }
@@ -47,4 +61,26 @@ pub(crate) fn probe(data: &[u8], limit: usize) -> Outcome {
         confidence: Confidence::STRONG,
         detail: Detail::None,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn fixture_bytes(rel: &str) -> std::vec::Vec<u8> {
+        std::fs::read(std::format!("{}/../{}", env!("CARGO_MANIFEST_DIR"), rel))
+            .unwrap_or_else(|e| panic!("failed to read {rel}: {e}"))
+    }
+
+    /// Finding 4: an 8-byte prefix of a real FLV fixture (1 byte short of the
+    /// 9-byte header) is `Insufficient`, not `Unknown`.
+    #[test]
+    fn short_prefix_is_insufficient() {
+        let data = fixture_bytes("fixtures/flv/av.flv");
+        let region = &data[..FLV_HEADER_LEN - 1];
+        match probe(region, region.len()) {
+            Outcome::Insufficient(need) => assert_eq!(need, FLV_HEADER_LEN),
+            other => panic!("8-byte FLV prefix must be Insufficient(9), got {other:?}"),
+        }
+    }
 }

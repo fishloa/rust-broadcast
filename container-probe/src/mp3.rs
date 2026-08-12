@@ -19,6 +19,9 @@ const ID3_SIGNATURE: [u8; 3] = *b"ID3";
 /// Fixed portion of an ID3v2 tag header before the syncsafe size: `"ID3"`(3) +
 /// version(2) + flags(1) = 6, plus the 4 syncsafe size bytes = 10.
 const ID3_HEADER_LEN: usize = 10;
+/// A 10-byte ID3v2 footer tag (same fixed portion plus a trailing copy) when
+/// the footer flag is set (ID3v2 §3.1).
+const ID3_FOOTER_LEN: usize = 10;
 /// Flag bit 4 of the ID3v2 flags byte: indicates a 10-byte footer tag follows
 /// (ID3v2 §3.1).
 const ID3_FLAG_FOOTER: u8 = 0x10;
@@ -38,6 +41,11 @@ const MP3_LAYER_III: u8 = 1;
 const FRAME_LENGTH_COEFF: u32 = 144;
 /// Minimum valid MP3 frame length (the 4-byte header; real frames are larger).
 const MP3_MIN_FRAME_LEN: usize = 4;
+/// The bytes a 4-byte MP3 frame header occupies; a region shorter than this
+/// cannot offer one header, so the prober cannot rule MP3 out.
+const MP3_HEADER_LEN: usize = 4;
+/// Convert the kbps bitrate table to bits per second for `frame_length`.
+const BITRATE_KILO_FACTOR: u32 = 1000;
 /// Minimum chained frames for a positive `LATTICE_WEAK` match.
 const MP3_MIN_CHAIN_WEAK: usize = 4;
 /// Chained frames that lift the verdict to `LATTICE_STRONG`.
@@ -57,6 +65,13 @@ const SAMPLE_RATE_MPEG1: [u32; 3] = [44_100, 48_000, 32_000];
 pub(crate) fn probe(data: &[u8], limit: usize) -> Outcome {
     debug_assert!(limit <= data.len(), "harness caps limit at data.len()");
     let region = &data[..limit];
+
+    // Shorter than one 4-byte frame header: undecided (`Insufficient`), not
+    // `Unknown` — a truncated .mp3 read a few bytes at a time could still be a
+    // frame's syncword.
+    if region.len() < MP3_HEADER_LEN {
+        return Outcome::Insufficient(MP3_HEADER_LEN);
+    }
 
     let longest = longest_mp3_chain(region);
 
@@ -134,7 +149,8 @@ fn mp3_frame_len(data: &[u8], i: usize) -> Option<usize> {
         return None; // reserved/free-format
     }
     let padding = (b3 >> 1) & 0x01;
-    let len = (FRAME_LENGTH_COEFF * u32::from(bitrate) * 1000) / SAMPLE_RATE_MPEG1[sr_idx as usize]
+    let len = (FRAME_LENGTH_COEFF * u32::from(bitrate) * BITRATE_KILO_FACTOR)
+        / SAMPLE_RATE_MPEG1[sr_idx as usize]
         + u32::from(padding);
     let len = len as usize;
     if len < MP3_MIN_FRAME_LEN {
@@ -155,7 +171,7 @@ fn id3_skip(data: &[u8]) -> Option<usize> {
         | ((u32::from(data[8]) & u32::from(ID3_SYNCSAFE_MASK)) << 7)
         | (u32::from(data[9]) & u32::from(ID3_SYNCSAFE_MASK));
     let footer = if flags & ID3_FLAG_FOOTER != 0 {
-        10u32
+        ID3_FOOTER_LEN as u32
     } else {
         0
     };
@@ -222,6 +238,18 @@ mod tests {
                 assert_eq!(ev.confidence, Confidence::LATTICE_STRONG);
             }
             other => panic!("audio.mp3 must identify as Mp3, got {other:?}"),
+        }
+    }
+
+    /// Finding 4: a 3-byte prefix of a real MP3 fixture (1 byte short of the
+    /// 4-byte frame header) is `Insufficient`, not `Unknown`.
+    #[test]
+    fn short_prefix_is_insufficient() {
+        let data = fixture_bytes("fixtures/container-probe/audio.mp3");
+        let region = &data[..MP3_HEADER_LEN - 1];
+        match probe(region, region.len()) {
+            Outcome::Insufficient(need) => assert_eq!(need, MP3_HEADER_LEN),
+            other => panic!("3-byte MP3 prefix must be Insufficient(4), got {other:?}"),
         }
     }
 }

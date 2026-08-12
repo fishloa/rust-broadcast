@@ -20,11 +20,18 @@ const ADTS_LAYER_MASK: u8 = 0xF6;
 /// The ADTS syncword bytes (`0xFF` + `0xF0` profile/layer pattern).
 const ADTS_SYNC: [u8; 2] = [0xFF, 0xF0];
 /// Bits 1:0 of byte 3 and the whole of bytes 4-5 carry the 13-bit
-/// `frame_length` (ISO/IEC 13818-7 §6.2.1).
-const ADTS_FRAME_LENGTH_SHIFT: u8 = 3;
+/// `frame_length` (ISO/IEC 13818-7 §6.2.1): `byte3[1:0]` are bits `[12:11]`,
+/// `byte4` is `[10:3]`, `byte5[7:5]` is `[2:0]`. So the two high bits from byte 3
+/// shift left by **11** (they land at bit 12 and 11 of the 13-bit field).
+/// `frame_len = ((byte3 & 0x03) << 11) | (byte4 << 3) | (byte5 >> 5)`.
+const ADTS_FRAME_LENGTH_SHIFT: u8 = 11;
 /// Minimum aac profile frame length for a plausible frame (a header alone is
 /// 7 bytes; shorter is not a real ADTS frame).
 const ADTS_MIN_FRAME_LEN: usize = 7;
+/// The number of header bytes `adts_frame_len` reads: the 12-bit syncword +
+/// layer byte + the three frame-length bytes (through byte 5). A region shorter
+/// than this cannot even offer one header, so the prober cannot rule ADTS out.
+const ADTS_HEADER_LEN: usize = 6;
 /// Minimum valid-frames-in-a-chain for a positive `LATTICE_WEAK` match.
 const ADTS_MIN_CHAIN_WEAK: usize = 4;
 /// Valid-frames-in-a-chain that lift the verdict to `LATTICE_STRONG`.
@@ -34,6 +41,13 @@ const ADTS_MIN_CHAIN_STRONG: usize = 16;
 pub(crate) fn probe(data: &[u8], limit: usize) -> Outcome {
     debug_assert!(limit <= data.len(), "harness caps limit at data.len()");
     let region = &data[..limit];
+
+    // Shorter than one full header: the prober cannot even read a `frame_length`
+    // to start a chain, so a truncated .aac read a few bytes at a time is
+    // undecided (`Insufficient`), not `Unknown`.
+    if region.len() < ADTS_HEADER_LEN {
+        return Outcome::Insufficient(ADTS_HEADER_LEN);
+    }
 
     let longest = longest_adts_chain(region);
 
@@ -52,7 +66,11 @@ pub(crate) fn probe(data: &[u8], limit: usize) -> Outcome {
     Outcome::None
 }
 
-/// `true` if a valid ADTS frame header sits at `i` (with room for its body).
+/// `true` if a valid ADTS frame header sits at `i`, and if so the
+/// 13-bit `frame_length`. Only the 6 bytes through byte 5 (the syncword, the
+/// layer byte and the three length bytes) are read — the frame's *body* is
+/// deliberately not inspected, so the check is "a header fits", not "the whole
+/// frame fits".
 fn adts_frame_len(data: &[u8], i: usize) -> Option<usize> {
     if i + 6 > data.len() {
         return None;
@@ -252,5 +270,55 @@ mod tests {
         let last = base + 31 * 274;
         assert_eq!(data[last], 0xFF);
         assert_eq!(data[last + 4], (274u16 >> 3) as u8);
+    }
+
+    /// Finding 2: a frame >= 2048 bytes round-trips exactly.
+    ///
+    /// The prior `ADTS_FRAME_LENGTH_SHIFT` was 3 instead of 11, so every
+    /// `frame_length >= 0x800` decoded wrong (e.g. 2500 decoded as 460) and the
+    /// length chain broke, mis-chaining every real high-bitrate frame. The
+    /// fixture fixtures used `frame_len = 274`, and `274 >> 11 == 0`, so the
+    /// high two bits of the 13-bit field were never exercised — a 274-byte frame
+    /// cannot prove the top of the field is decoded correctly. Here we encode a
+    /// `frame_len` that *needs* those two high bits and assert it decodes back
+    /// byte-exactly.
+    #[test]
+    fn large_frame_length_round_trips() {
+        // Encode `frame_len` the same way the fixtures do (ISO/IEC 13818-7
+        // §6.2.1): bit [12:11] in byte 3 [1:0], [10:3] in byte 4, [2:0] in
+        // byte 5 [7:5].
+        let encode = |frame_len: u16| -> [u8; 6] {
+            [
+                0xFF, // sync hi
+                0xF1, // layer 00, profile 1
+                0x00, // not read
+                ((frame_len >> 11) & 0x03) as u8,
+                ((frame_len >> 3) & 0xFF) as u8,
+                (((frame_len & 0x07) as u8) << 5),
+            ]
+        };
+        // 2050 needs both high bits: 2050 = 0b1000_0000_0010, bit 11 set.
+        for frame_len in [0x800u16, 2050, 0x1FFF] {
+            let hdr = encode(frame_len);
+            let decoded = adts_frame_len(&hdr, 0).expect("valid header must decode");
+            assert_eq!(
+                usize::from(frame_len),
+                decoded,
+                "13-bit frame_length {frame_len} must round-trip exactly"
+            );
+        }
+    }
+
+    /// Finding 4: a 5-byte prefix of a real ADTS fixture (1 byte short of the
+    /// 6-byte header the length decoder needs) is `Insufficient`, not `Unknown`.
+    #[test]
+    fn short_prefix_is_insufficient() {
+        let data = fixture_bytes("fixtures/container-probe/aac.adts");
+        // 6 header bytes are the minimum the decoder reads; 5 is 1 short.
+        let region = &data[..ADTS_HEADER_LEN - 1];
+        match probe(region, region.len()) {
+            Outcome::Insufficient(need) => assert_eq!(need, ADTS_HEADER_LEN),
+            other => panic!("5-byte ADTS prefix must be Insufficient(6), got {other:?}"),
+        }
     }
 }
