@@ -325,27 +325,47 @@ warning and performs the transition **without** a cue. The switch is a
 scheduling commitment; the cue is signalling. Losing the cue degrades downstream
 ad insertion; refusing the switch breaks the channel.
 
-### Dual carriage from one serialized section
+### Carriage
 
-`to_section(insert).to_bytes()` produces the wire bytes **once**. Those same
-bytes go to both:
+`to_section(insert).to_bytes()` produces the wire bytes **once**, and every
+carriage serializes from that one section. Two code paths each building "the
+same" cue is precisely the bug class this workspace keeps finding, so the rule
+holds even while only one carriage is implemented.
 
-1. **In-band, on a TS PID.** The output Trunk's track set includes a synthetic
-   SCTE-35 track, declared at channel start:
-   `CodecConfig::Data { stream_type: 0x86, descriptors:
-   [registration_descriptor("CUEI")], carriage: DataCarriage::Sections }`. The
-   serialized section is published as a sample on that track — no PTS, no DTS,
-   `SampleFlags::SYNC`, matching what `TsDemux` emits for a section-carried
-   track. `transmux`'s TS muxer already handles the PMT declaration
-   (ISO/IEC 13818-1 Table 2-34 stream_type `0x86`, ANSI/SCTE 35) and the section
-   packetization. This is what the `TsHls` output carries.
-2. **In the manifest.** The same bytes are published as a Trunk event, which
-   existing egress renders into `EXT-X-DATERANGE` (HLS, via `timed-metadata`)
-   and `emsg` (DASH). This is what the `LlHls`/`Dash`/`LlDash` outputs carry.
+**Implemented — in-band, on a TS PID.** The output Trunk's track set includes a
+synthetic SCTE-35 track, declared at channel start:
+`CodecConfig::Data { stream_type: 0x86, descriptors:
+[registration_descriptor("CUEI")], carriage: DataCarriage::Sections }`. The
+serialized section is published as a sample on that track — no PTS, no DTS,
+`SampleFlags::SYNC`, matching what `TsDemux` emits for a section-carried track.
+`transmux`'s TS muxer already handles the PMT declaration (ISO/IEC 13818-1
+Table 2-34 stream_type `0x86`, ANSI/SCTE 35) and the section packetization.
+This is what the `TsHls` output carries. The cue is also published as a Trunk
+event via `TrunkWriter::publish_event`, so the data is present for the manifest
+work below without that work having to re-derive it.
 
-Serializing once and fanning out makes divergence structurally impossible. Two
-code paths each building "the same" cue is precisely the bug class this
-workspace keeps finding.
+**KNOWN GAP — manifest signalling (`EXT-X-DATERANGE` / `emsg`).** An earlier
+revision of this document asserted that "existing egress renders Trunk events
+into `EXT-X-DATERANGE` (HLS) and `emsg` (DASH)". **That was wrong**, and the
+error was mine: I inferred the capability from the existence of the
+`timed-metadata` crate without checking that anything consumed it. Verified
+against the tree:
+
+- `EXT-X-DATERANGE` appears only inside `timed-metadata` itself;
+- `Trunk::publish_event` and `Trunk::events_between` both exist, so cues can be
+  stored and queried;
+- but **nothing** in `hls-runtime` or `multimux` reads the event ring to emit
+  playlist or manifest tags.
+
+Building that path means adding event-to-playlist rendering inside
+`hls-runtime`, a **published** crate — its own version bump, release docs and
+review. That is deliberately out of scope for issue #748 and belongs in its own
+issue.
+
+Consequence, stated plainly rather than left implicit: **the `LlHls`, `Dash` and
+`LlDash` outputs carry no SCTE-35 signalling.** Only `TsHls` does. A consumer
+needing cues on those outputs must wait for the follow-up. This gap is recorded
+here, in the crate CHANGELOG and in the README — never silently absent.
 
 ## Failure modes
 
