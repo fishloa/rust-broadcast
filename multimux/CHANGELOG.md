@@ -2,6 +2,53 @@
 
 ## [Unreleased]
 
+### Added
+- **`InputSpec::File { path, loop }` — stream a media file as a route input**
+  (issue #748). Point a route at a file on disk and it is served through the
+  same `supervise_driver` + `advance_route` path as every other source, so the
+  existing outputs (LL-HLS, DASH, LL-DASH, TS-HLS) work unchanged:
+
+  ```json
+  { "name": "slate",
+    "input": { "type": "file", "path": "/media/slate.ts", "loop": true },
+    "outputs": ["llhls"] }
+  ```
+
+  The container is identified with the new `container-probe` crate over the
+  whole file, and the verdict selects the demuxer — including the ISOBMFF
+  fragmented/progressive split via `IsobmffLayout`, so no box-walking is
+  duplicated here. A format `transmux` cannot demux, and every ambiguous or
+  undetermined verdict, fails with its own structured error: **a file is never
+  fed to a guessed demuxer.**
+
+  `loop` defaults to `true`. Looping refills from the already-parsed content
+  with a per-track PTS offset so the output timeline stays strictly monotonic
+  across the loop point. That offset derives from the **presentation-max** PTS
+  rather than the decode-order last sample — a track with B-frames reorders, so
+  a decode-order basis would step backwards across the loop.
+
+  **Known limit:** the route path does not pace samples. It publishes the parsed
+  file and lets the segmenter drive, sizing the sample ring to the parsed file,
+  so **a long asset holds its parsed samples in memory**. Suited to slates and
+  short assets; a long-file path would need incremental demux.
+
+### Note on scope
+
+Issue #748 originally designed a linear-playout **channel** — scheduled
+switching between sources, a rebased shared timeline, and SCTE-35 ad-break
+signalling. **That was cancelled during implementation** and its code reverted
+rather than left half-finished; the complexity was not earning its keep. Only
+the file-input capability above shipped. See
+`docs/superpowers/specs/2026-08-11-linear-playout-design.md`, marked
+`SUPERSEDED`, for what was dropped and why.
+
+(An earlier draft of this entry claimed the cancelled controller's dependency on
+`playout-runtime`/`ssai-runtime` would have blocked publishing `multimux`
+because neither was on crates.io. That was wrong — both are live at 0.1.0. The
+check had queried crates.io without a `User-Agent`, which the API answers with
+HTTP 403, and the rejection was misread as absence. The cancellation stands on
+its own merits; the claim does not.)
+
 ## [0.9.0] - 2026-08-11
 
 ### Added

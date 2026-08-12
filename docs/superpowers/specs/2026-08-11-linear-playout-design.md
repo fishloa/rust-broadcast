@@ -42,10 +42,17 @@ real limit, not a hidden one.
 
 Two things this cancellation also resolved:
 
-- **The publish blocker is gone.** The controller needed `playout-runtime`,
-  which needs `ssai-runtime`; neither is on crates.io, so multimux could not
-  have been published while it depended on them. Reverting the controller
-  removed that dependency.
+- ~~**The publish blocker is gone.**~~ **CORRECTION — there was no blocker.**
+  This document previously claimed `playout-runtime` and `ssai-runtime` were
+  absent from crates.io, so a multimux dependency on them would have blocked
+  publishing. **That was wrong.** Both are live at 0.1.0, published
+  2026-08-11. The original check queried crates.io without a `User-Agent`,
+  which the API answers with **HTTP 403**; that rejection was misread as "not
+  published". A failed request is not a negative answer.
+
+  The cancellation stands on its own merits and nothing about the decision
+  depended on this — but the claim was an input to it and was false, so it is
+  corrected here rather than quietly dropped.
 - **Issue [#965](https://github.com/fishloa/rust-broadcast/issues/965)** (render
   Trunk events into `EXT-X-DATERANGE`/`emsg` in `hls-runtime`) no longer blocks
   anything. It remains a genuine gap on its own merits.
