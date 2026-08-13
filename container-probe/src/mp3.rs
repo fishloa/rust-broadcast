@@ -73,7 +73,7 @@ pub(crate) fn probe(data: &[u8], limit: usize) -> Outcome {
         return Outcome::Insufficient(MP3_HEADER_LEN);
     }
 
-    let longest = longest_mp3_chain(region);
+    let (longest, truncated, anchor, frame_len) = longest_mp3_chain(region);
 
     if longest >= MP3_MIN_CHAIN_STRONG {
         return Outcome::Match(Evidence {
@@ -87,38 +87,74 @@ pub(crate) fn probe(data: &[u8], limit: usize) -> Outcome {
             detail: Detail::None,
         });
     }
-    Outcome::None
+    if longest == 0 {
+        // No valid MP3 frame header anywhere -> nothing to build on.
+        return Outcome::None;
+    }
+    // A partial chain of 1..=(WEAK-1) frames: `Insufficient` only when it ended
+    // by running off the end of the buffer (`truncated`); a chain that ended at
+    // an invalid next header is a scattered frame and will not become an MP3
+    // stream by reading further. Mirrors the TS prober's `could_prove`.
+    if truncated {
+        Outcome::Insufficient(need_at_least(anchor, frame_len, region.len()))
+    } else {
+        Outcome::None
+    }
 }
 
-/// The length of the longest chain of valid MPEG-1 Layer III frames linked by
-/// their own `frame_length` fields, scanning from every candidate position
-/// (after skipping any leading ID3v2 tag). Short-circuits at
+/// A lower bound on bytes that could resolve the verdict to `LATTICE_WEAK`:
+/// room at the observed frame size for [`MP3_MIN_CHAIN_WEAK`] frames from the
+/// chain's anchor, and strictly more than the caller already holds.
+fn need_at_least(anchor: usize, frame_len: usize, have: usize) -> usize {
+    core::cmp::max(
+        anchor.saturating_add(MP3_MIN_CHAIN_WEAK.saturating_mul(frame_len)),
+        have.saturating_add(frame_len),
+    )
+}
+
+/// The longest chain of valid MPEG-1 Layer III frames linked by their own
+/// `frame_length` fields, scanning from every candidate position (after
+/// skipping any leading ID3v2 tag), together with whether that chain ended by
+/// running off the buffer (`truncated`) or hitting an invalid next header, plus
+/// its anchor offset and first-frame length. Short-circuits at
 /// [`MP3_MIN_CHAIN_STRONG`], bounding the work.
-fn longest_mp3_chain(data: &[u8]) -> usize {
+fn longest_mp3_chain(data: &[u8]) -> (usize, bool, usize, usize) {
     let n = data.len();
     let mut best = 0usize;
+    let mut best_truncated = false;
+    let mut best_anchor = 0usize;
+    let mut best_frame_len = 0usize;
     let mut i = id3_skip(data).unwrap_or(0);
     while i < n {
-        if mp3_frame_len(data, i).is_some() {
+        if let Some(first_len) = mp3_frame_len(data, i) {
             let mut p = i;
             let mut run = 0usize;
+            let mut truncated = false;
             while let Some(l) = mp3_frame_len(data, p) {
                 run += 1;
                 if run >= MP3_MIN_CHAIN_STRONG {
-                    return run;
+                    return (run, false, i, first_len);
                 }
-                p += l;
-                if p <= i {
+                if p + l > n {
+                    // The frame's body extends past the buffer: a genuine
+                    // truncation (the stream was cut mid-frame).
+                    truncated = true;
                     break;
                 }
+                p += l;
             }
-            best = best.max(run);
+            if run > best || (run == best && truncated) {
+                best = run;
+                best_truncated = truncated;
+                best_anchor = i;
+                best_frame_len = first_len;
+            }
             i += 1;
         } else {
             i += 1;
         }
     }
-    best
+    (best, best_truncated, best_anchor, best_frame_len)
 }
 
 /// `frame_length` for a valid MPEG-1 Layer III frame header at `i`, or `None`

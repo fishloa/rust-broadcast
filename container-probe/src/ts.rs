@@ -176,7 +176,7 @@ pub(crate) fn probe(data: &[u8], limit: usize) -> Outcome {
             if could_prove {
                 return Outcome::None;
             }
-            return Outcome::Insufficient(need_at_least(data.len()));
+            return Outcome::Insufficient(need_at_least(region.len()));
         }
     };
 
@@ -208,11 +208,14 @@ pub(crate) fn probe(data: &[u8], limit: usize) -> Outcome {
 }
 
 /// A lower bound on bytes that could resolve the verdict: strictly more than
-/// the caller already holds (`data.len()`), and at least enough for
-/// `TS_CONFIRM_FOR_STRONG` whole packets at the smallest (188-byte) stride.
+/// the bytes actually examined (`have` = the budget-capped region length), and
+/// at least enough for `TS_CONFIRM_FOR_STRONG` whole packets at the smallest
+/// (188-byte) stride.
 ///
-/// Base this on the *caller's* buffer length, not a budget-capped region, so
-/// that "supply more" always exceeds what was already supplied.
+/// Base this on the *examined* region length, not the caller's full buffer:
+/// `probe_with_budget(&ten_mb_ts, 64)` examined only 64 bytes, so its
+/// `need_at_least` must answer "supply more than 64", never "supply more than
+/// 10 000 000" — the budget, not the buffer, was the constraint.
 fn need_at_least(have: usize) -> usize {
     core::cmp::max(
         TS_PACKET_SIZE * TS_CONFIRM_FOR_STRONG,

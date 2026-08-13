@@ -331,7 +331,7 @@ fn short_but_complete_ts_is_a_weak_match_not_insufficient() {
 fn a_single_ts_packet_is_insufficient() {
     let data = fixture("fixtures/ts/h264_aac.ts");
     match probe(&data[..188]) {
-        Probe::Insufficient { need_at_least } => {
+        Probe::Insufficient { need_at_least, .. } => {
             assert!(
                 need_at_least > 188,
                 "need_at_least {need_at_least} must exceed the 188 supplied"
@@ -402,7 +402,7 @@ fn tiny_ts_fixtures_below_the_weak_threshold_are_insufficient() {
     ] {
         let data = fixture(path);
         match probe(&data) {
-            Probe::Insufficient { need_at_least } => {
+            Probe::Insufficient { need_at_least, .. } => {
                 assert!(need_at_least > data.len(), "{path}");
             }
             other => panic!(
@@ -464,11 +464,37 @@ fn budget_caps_the_read() {
                 other => panic!("expected Ts detail, got {other:?}"),
             }
         }
-        Probe::Insufficient { need_at_least } => {
+        Probe::Insufficient { need_at_least, .. } => {
             // Also acceptable; the buffer was too short to prove the lattice.
             assert!(need_at_least > 512);
         }
         other => panic!("budget probe returned {other:?}; expected a weak verdict or Insufficient"),
+    }
+}
+
+/// Finding 10: `need_at_least` must be sized by the budget the prober actually
+/// read (the capped region), not the caller's whole buffer. Probing a 10 MB TS
+/// with a 64-byte budget must answer "supply a few hundred bytes more", never
+/// "supply 10 MB more" — the budget was the constraint, not a short file.
+#[test]
+fn budget_sizes_the_insufficient_hint() {
+    let data = fixture("fixtures/ts/h264_aac.ts");
+    let p = probe_with_budget(&data, 64);
+    match p {
+        Probe::Insufficient { need_at_least, .. } => {
+            // A genuine lower bound (a 188-byte packet × the strong threshold),
+            // but never scaled to the ignored full buffer length.
+            assert!(
+                need_at_least > 64,
+                "need_at_least {need_at_least} must exceed the 64-byte budget"
+            );
+            assert!(
+                need_at_least < data.len() + 188,
+                "need_at_least {need_at_least} must not be sized by the full {} byte buffer",
+                data.len()
+            );
+        }
+        other => panic!("a 64-byte budget on a TS must be Insufficient, got {other:?}"),
     }
 }
 

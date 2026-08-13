@@ -17,7 +17,7 @@ candidate; the highest score wins.
 
 | Format | Detected by | Confidence tier |
 |---|---|---|
-| MPEG-2 TS | sync lattice over 188/192/204/208-byte strides | `LATTICE_STRONG` (144) |
+| MPEG-2 TS | sync lattice over 188/192/204/208-byte strides | `LATTICE_STRONG` (128) |
 | ISOBMFF (`.mp4`/`.m4s`) | box-chain walk (ISO/IEC 14496-12 §4.2) | `STRUCTURAL` (160) |
 | Matroska (`.mkv`) | EBML magic + `DocType == "matroska"` | `CERTAIN` (240) |
 | WebM (`.webm`) | EBML magic + `DocType == "webm"` | `CERTAIN` (240) |
@@ -27,27 +27,31 @@ candidate; the highest score wins.
 | WAV (`.wav`) | `"RIFF".."WAVE"` | `STRONG` (192) |
 | Ogg (`.ogg`) | `"OggS"` | `STRONG` (192) |
 | ASF (`.asf`/`.wmv`) | 16-byte header GUID | `STRONG` (192) |
-| ADTS AAC (`.aac`/`.adts`) | frame-length chaining | `LATTICE_STRONG` (144) |
-| MP3 (`.mp3`) | frame-length chaining | `LATTICE_STRONG` (144) |
-| Annex B H.264 (`.h264`) | start-code NAL chaining | `LATTICE_STRONG` (144) |
+| ADTS AAC (`.aac`/`.adts`) | frame-length chaining | `LATTICE_STRONG` (128) |
+| MP3 (`.mp3`) | frame-length chaining | `LATTICE_STRONG` (128) |
+| Annex B H.264 (`.h264`) | start-code NAL chaining | `LATTICE_STRONG` (128) |
 
 ## Usage
 
 ```rust
-use container_probe::{probe, Format, Probe};
+use container_probe::{probe, Probe};
 
-let bytes = [0x47, 0x40, 0x11, 0x10, 0x00, 0x42, 0xf0, 0x25]; // a TS packet head
+// The first 8 bytes of a TS packet's sync-adjacent header. This is too short
+// for any prober to conclude from, so `probe` reports `Insufficient` (read
+// more), never `Identified`.
+let bytes = [0x47, 0x40, 0x11, 0x10, 0x00, 0x42, 0xf0, 0x25];
 match probe(&bytes) {
     Probe::Identified { format, .. } => println!("detected {}", format.name()),
-    Probe::Insufficient { need_at_least } => println!("need at least {need_at_least} bytes"),
+    Probe::Insufficient { need_at_least, .. } => println!("need at least {need_at_least} bytes"),
     Probe::Unknown => println!("nothing matched; stop"),
-    Probe::Ambiguous { candidates } => println!("tied: {:?}", candidates),
+    Probe::Ambiguous { candidates, .. } => println!("tied: {:?}", candidates),
+    _ => {} // `#[non_exhaustive]` requires a wildcard arm.
 }
 ```
 
 To probe a real file:
 
-```rust
+```rust,no_run
 use std::fs;
 let data = fs::read("fixtures/ts/h264_aac.ts").unwrap();
 println!("{:?}", container_probe::probe(&data));

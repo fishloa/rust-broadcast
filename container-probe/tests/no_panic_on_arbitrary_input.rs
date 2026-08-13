@@ -49,11 +49,15 @@ fn assert_well_formed(data: &[u8]) {
         Probe::Identified { .. } | Probe::Ambiguous { .. } => {
             // Identified is fine (possibly Ambiguous). Nothing more to check.
         }
-        Probe::Insufficient { need_at_least } => {
-            // A request for more bytes must be a positive, oversized demand.
+        Probe::Insufficient { need_at_least, .. } => {
+            // A request for more bytes must exceed what was already supplied —
+            // a `need_at_least <= data.len()` would tell the caller to fetch
+            // bytes it already holds, and is the one property of this variant
+            // with value to assert.
             assert!(
-                *need_at_least >= 1,
-                "Insufficient must demand a positive need_at_least, got {p:?}"
+                *need_at_least > data.len(),
+                "Insufficient must demand more than the {} supplied bytes, got {p:?}",
+                data.len()
             );
         }
         Probe::Unknown => {}
@@ -108,4 +112,93 @@ fn no_panic_on_deterministic_random() {
     let mut buf = vec![0u8; 8192];
     rng.fill(&mut buf);
     assert_well_formed(&buf);
+}
+
+/// Structured length-field mutations: valid magic followed by adversarial
+/// length fields, for every prober that decodes one.
+///
+/// The truncation + random + fill inputs above deliberately cannot reach these
+/// code paths — a width-8 EBML VINT, an ISOBMFF `largesize`, an MXF BER length,
+/// or an ADTS/MP3 `frame_length` never appears in a 64-byte prefix of the
+/// fixtures, in uniform bytes, or at random. The one real input that did reach
+/// them — `1A 45 DF A3 01 …` (EBML magic + a width-8 size VINT) — panicked the
+/// pre-fix arithmetic (`1 << (7 - width + 1)` underflow). These inputs drive
+/// each length decoder directly so a regression that the random corpus cannot
+/// see still fails this test.
+fn structured_length_mutations() -> Vec<Vec<u8>> {
+    let mut out = Vec::new();
+
+    // EBML: magic + an element-size VINT of every width 1..=8. A width-`w`
+    // VINT opens with a first byte whose low `8 - w` bit is the length marker
+    // (`1 << (8 - w)`), so `vint_width` reports `w`. Width 8 is exactly the
+    // underflow case.
+    for width in 1..=8u32 {
+        let mut buf = vec![0x1A, 0x45, 0xDF, 0xA3]; // EBML magic
+        buf.push(1u8 << (8 - width));
+        buf.resize(4 + width as usize, 0);
+        // Trailing bytes so the header walk has data to scan for a DocType.
+        buf.extend_from_slice(b"\x42\x82\x80\x00\x00\x00\x00\x00\x00\x00");
+        out.push(buf);
+    }
+
+    // ISOBMFF: `size32 == 1` (64-bit `largesize` follows), with adversarial
+    // largesize values — including one that cannot fit a `usize` on a 32-bit
+    // target, which the decoder must reject rather than truncate.
+    let mut large = vec![0u8; 16];
+    large[3] = 1; // SIZE_INDICATES_LARGESIZE == 1
+    large[4..8].copy_from_slice(b"free");
+    large[8..].copy_from_slice(&u64::MAX.to_be_bytes());
+    out.push(large);
+    // `size32 == 0` (runs to end of file).
+    let mut eof = vec![0u8; 8];
+    eof[4..8].copy_from_slice(b"free");
+    out.push(eof);
+    // A size32 below the 8-byte header minimum.
+    let mut tiny = vec![0u8; 8];
+    tiny[3] = 7;
+    tiny[4..8].copy_from_slice(b"free");
+    out.push(tiny);
+
+    // MXF: 16-byte partition-pack key, then a BER long-form length whose
+    // octet-count field takes every value 1..=9 (9 is out of the legal 1..=8
+    // range and must be rejected).
+    let mxf_key = [
+        0x06, 0x0E, 0x2B, 0x34, 0x02, 0x05, 0x01, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    ];
+    for octets in 1..=9u8 {
+        let mut m = mxf_key.to_vec();
+        m.push(0x80 | octets); // long form, count = octets
+        m.extend(std::iter::repeat_n(0u8, octets as usize + 2));
+        out.push(m);
+    }
+
+    // ADTS: valid sync + adversarial 13-bit `frame_length` (including the
+    // maximum 0x1FFF and a sub-minimum value).
+    for fl in [7u16, 0x01FF, 0x1FFF, 0x0800] {
+        let mut a = vec![0xFF, 0xF1, 0x00, 0, 0, 0];
+        a[3] = ((fl >> 11) & 0x03) as u8;
+        a[4] = ((fl >> 3) & 0xFF) as u8;
+        a[5] = ((fl & 0x07) as u8) << 5;
+        a.extend(std::iter::repeat_n(0x00, 32));
+        out.push(a);
+    }
+
+    // MP3: valid MPEG-1 Layer III sync + adversarial bitrate/sample-rate/padding
+    // bytes (reserved bitrate index, max bitrate, reserved sample rate).
+    for (b2, b3) in [(0x54u8, 0x00u8), (0xF4, 0x00), (0x20, 0x02), (0x54, 0x02)] {
+        let mut m = vec![0xFF, 0xFB, b2, b3];
+        m.extend(std::iter::repeat_n(0x00, 32));
+        out.push(m);
+    }
+
+    out
+}
+
+/// Every structured length-field mutation must be fed and return a well-formed
+/// `Probe` — this is the path a random corpus cannot reach.
+#[test]
+fn no_panic_on_structured_length_mutations() {
+    for input in structured_length_mutations() {
+        assert_well_formed(&input);
+    }
 }

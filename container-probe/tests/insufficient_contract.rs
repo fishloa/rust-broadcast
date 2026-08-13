@@ -102,7 +102,7 @@ fn annexb_start_code_prefix() {
 #[test]
 fn empty_is_insufficient_full_file_identifies() {
     match container_probe::probe(&[]) {
-        Probe::Insufficient { need_at_least } => {
+        Probe::Insufficient { need_at_least, .. } => {
             assert!(need_at_least >= 1);
         }
         other => panic!("the empty slice must be Insufficient, got {other:?}"),
@@ -113,4 +113,48 @@ fn empty_is_insufficient_full_file_identifies() {
         Probe::Identified { format, .. } => assert_eq!(format, Format::MpegTs),
         other => panic!("a full TS fixture must identify, got {other:?}"),
     }
+}
+
+/// Finding 4 (extended): a 64-byte prefix of a real elementary-stream file —
+/// long enough to read a header, too short for the frame/NAL chain to reach the
+/// weak threshold — must also be `Insufficient` (read more), never `Unknown`
+/// (stop). The pre-fix probers returned `None` for a chain of length 1..=3,
+/// telling a streaming caller reading 64 bytes at a time to STOP on a valid
+/// AAC/MP3/H.264 stream.
+fn assert_es_prefix_is_insufficient(rel: &str, min: usize) {
+    let data = fixture(rel);
+    assert!(data.len() >= 64, "{rel} must be at least 64 bytes");
+    let prefix = &data[..64];
+    match container_probe::probe(prefix) {
+        Probe::Insufficient { need_at_least, .. } => {
+            assert!(
+                need_at_least > prefix.len(),
+                "{rel}: need_at_least {need_at_least} must exceed the {} supplied bytes",
+                prefix.len()
+            );
+            assert!(
+                need_at_least >= min,
+                "{rel}: need_at_least {need_at_least} must be a plausible lower bound (>= {min})"
+            );
+        }
+        other => {
+            panic!("{rel}: a 64-byte prefix of a real stream must be Insufficient, got {other:?}")
+        }
+    }
+}
+
+#[test]
+fn adts_64_byte_prefix_is_insufficient() {
+    // 4 frames at the observed ~274-byte frame size.
+    assert_es_prefix_is_insufficient("fixtures/container-probe/aac.adts", 4 * 7);
+}
+
+#[test]
+fn mp3_64_byte_prefix_is_insufficient() {
+    assert_es_prefix_is_insufficient("fixtures/container-probe/audio.mp3", 4 * 4);
+}
+
+#[test]
+fn annexb_64_byte_prefix_is_insufficient() {
+    assert_es_prefix_is_insufficient("fixtures/container-probe/h264.annexb", 4 * 4);
 }

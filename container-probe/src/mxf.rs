@@ -9,9 +9,11 @@
 //! set) gives the count of following length bytes in the low 7 bits, which must
 //! be 1..=8 and must not run past the region.
 //!
-//! - Key at offset 0 **plus** a well-formed BER length -> `CERTAIN`.
-//! - Key at offset 0 with a malformed length -> `STRONG`.
-//! - `Detail::None`.
+//! - Full Partition Pack Key at offset 0 **plus** a well-formed BER length ->
+//!   `CERTAIN`.
+//! - Key prefix at offset 0 but a malformed full key or a malformed length ->
+//!   `STRONG`.
+//! - `Detail::Mxf { partition_kind }`.
 
 use crate::{Confidence, Detail, Evidence, Outcome};
 
@@ -19,6 +21,17 @@ use crate::{Confidence, Detail, Evidence, Outcome};
 /// `st377-1/src/partition.rs` `PARTITION_KEY_PREFIX` — "Defined-Length Pack,
 /// Set/Pack Registry" family, bytes 1-7 of the 16-byte UL).
 const MXF_KEY_PREFIX: [u8; 7] = [0x06, 0x0E, 0x2B, 0x34, 0x02, 0x05, 0x01];
+/// The fixed "mid" section of the Partition Pack Key UL (bytes 9-12), `0D 01 02
+/// 01` (`st377-1` `PARTITION_KEY_MID`). The prefix alone cannot separate a
+/// Partition Pack from a Primer Pack or Random Index Pack — all three share it
+/// — so the mid section and the Partition Kind byte must be checked too.
+const MXF_KEY_MID: [u8; 4] = [0x0D, 0x01, 0x02, 0x01];
+/// Byte 13 of the UL (byte 13 1-indexed): the "Structure Kind" (`0x01`).
+const MXF_KEY_STRUCTURE_KIND: u8 = 0x01;
+/// Byte 14 of the UL carries the Partition Kind (`PartitionKind`), one of
+/// `0x02` Header / `0x03` Body / `0x04` Footer (SMPTE ST 377-1 §7.2-7.4).
+const MXF_PARTITION_KIND_HEADER: u8 = 0x02;
+const MXF_PARTITION_KIND_FOOTER: u8 = 0x04;
 /// Length of the full Partition Pack Key UL: 16 bytes (SMPTE ST 377-1 §7.1).
 const UL_KEY_LEN: usize = 16;
 /// The low-7-bits mask of a BER length tag byte (ITU-T X.690 §8.1.3 / ST 377-1
@@ -49,19 +62,35 @@ pub(crate) fn probe(data: &[u8], limit: usize) -> Outcome {
     // The BER length begins immediately after the 16-byte key.
     let ber = &region[UL_KEY_LEN..];
 
-    let detail = Detail::None;
-    if ber_length_well_formed(ber) {
+    let detail = Detail::Mxf {
+        partition_kind: region[13],
+    };
+    if is_partition_pack_key(region) && ber_length_well_formed(ber) {
         Outcome::Match(Evidence {
             confidence: Confidence::CERTAIN,
             detail,
         })
     } else {
-        // Distinct UL but a malformed BER length -> unambiguous MXF, weaker.
+        // The UL prefix matched but it is not a complete Partition Pack Key, or
+        // the BER length is malformed -> unambiguous MXF, weaker.
         Outcome::Match(Evidence {
             confidence: Confidence::STRONG,
             detail,
         })
     }
+}
+
+/// `true` when `key` is a complete Partition Pack Key (SMPTE ST 377-1 §7.1,
+/// Table 4): the fixed 7-byte prefix, the `0D 01 02 01` mid section, the
+/// `0x01` Structure Kind byte, and a valid Partition Kind byte (`0x02`/`0x03`/
+/// `0x04`). `st377-1`'s `PartitionPack::is_partition_key` applies exactly this
+/// check and is drift-guarded against it in the test module below; the prefix
+/// alone cannot separate a Partition Pack from a Primer/Random-Index Pack.
+fn is_partition_pack_key(key: &[u8]) -> bool {
+    key[..MXF_KEY_PREFIX.len()] == MXF_KEY_PREFIX
+        && key[8..8 + MXF_KEY_MID.len()] == MXF_KEY_MID
+        && key[12] == MXF_KEY_STRUCTURE_KIND
+        && (MXF_PARTITION_KIND_HEADER..=MXF_PARTITION_KIND_FOOTER).contains(&key[13])
 }
 
 /// `true` when `ber` begins with a well-formed BER length (ITU-T X.690 §8.1.3):
@@ -114,6 +143,60 @@ mod drift {
             "container-probe's MXF UL header has drifted from st377-1's"
         );
     }
+
+    /// `is_partition_pack_key` must agree exactly with `st377-1`'s own
+    /// `PartitionPack::is_partition_key` (its private `PARTITION_KEY_MID` /
+    /// Structure-Kind / Partition-Kind literals are the authoritative source).
+    /// Agreement is checked over the real fixture key, a synthesized valid key,
+    /// and adversarial mutations of each of the MID/Structure-Kind/Partition-Kind
+    /// bytes, so a drift in any one of them (not just the shared prefix) fails.
+    #[test]
+    fn partition_key_predicate_matches_st377_1() {
+        let mut base = [0u8; 16];
+        base[0..7].copy_from_slice(&super::MXF_KEY_PREFIX);
+        base[7] = 0x01;
+        base[8..12].copy_from_slice(&super::MXF_KEY_MID);
+        base[12] = 0x01;
+        base[13] = 0x02; // Header partition
+        base[14] = 0x04; // Closed and Complete
+        base[15] = 0x00;
+
+        // The synthesized valid key.
+        assert_eq!(
+            super::is_partition_pack_key(&base),
+            st377_1::PartitionPack::is_partition_key(&base),
+        );
+
+        // Real fixture key (extracted from the file).
+        let real = std::fs::read(std::format!(
+            "{}/../fixtures/mxf/op1a_mpeg2_pcm.mxf",
+            env!("CARGO_MANIFEST_DIR")
+        ))
+        .expect("fixture");
+        let real_key: [u8; 16] = real[..16].try_into().expect("16 bytes");
+        assert_eq!(
+            super::is_partition_pack_key(&real_key),
+            st377_1::PartitionPack::is_partition_key(&real_key),
+        );
+        assert!(
+            super::is_partition_pack_key(&real_key),
+            "real fixture must be a partition pack"
+        );
+
+        // Muate each discriminating byte in turn and require both predicates to
+        // stay in agreement.
+        for pos in [8usize, 9, 10, 11, 12, 13] {
+            for val in [0x00u8, 0x01, 0xFF] {
+                let mut m = base;
+                m[pos] = val;
+                assert_eq!(
+                    super::is_partition_pack_key(&m),
+                    st377_1::PartitionPack::is_partition_key(&m),
+                    "predicates disagree at byte {pos}={val:#x}"
+                );
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -134,6 +217,28 @@ mod tests {
         match probe(region, region.len()) {
             Outcome::Insufficient(n) => assert_eq!(n, UL_KEY_LEN),
             other => panic!("15-byte MXF prefix must be Insufficient(16), got {other:?}"),
+        }
+    }
+
+    /// Finding 8: a UL with the 7-byte prefix but a wrong mid section (i.e. not
+    /// a Partition Pack Key) must not score `CERTAIN` — the prefix alone cannot
+    /// separate a Partition Pack from a Primer/Random-Index Pack, which is the
+    /// whole reason for the full-key check. It still matches MXF (`STRONG`),
+    /// just not the "magic **plus** structural confirmation" tier.
+    #[test]
+    fn prefix_but_not_partition_key_is_strong_not_certain() {
+        let mut key = [0u8; 32]; // 16-byte key + a well-formed short BER length
+        key[0..7].copy_from_slice(&MXF_KEY_PREFIX);
+        key[7] = 0x01;
+        // Wrong mid section: 00 00 00 00 instead of 0D 01 02 01.
+        key[8..12].copy_from_slice(&[0x00, 0x00, 0x00, 0x00]);
+        key[12] = 0x01;
+        key[13] = 0x02;
+        // BER short-form length follows the key (byte 16): 0x10 (top bit clear).
+        key[16] = 0x10;
+        match probe(&key, key.len()) {
+            Outcome::Match(ev) => assert_eq!(ev.confidence, Confidence::STRONG),
+            other => panic!("prefix-only MXF must be STRONG, got {other:?}"),
         }
     }
 }

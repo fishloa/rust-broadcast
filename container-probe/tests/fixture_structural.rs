@@ -49,6 +49,7 @@ fn assert_matroska(rel: &str) {
                 confidence: Confidence::CERTAIN,
                 detail: Ebml {
                     doc_type: DocType::Matroska,
+                    ..
                 },
                 ..
             }
@@ -68,6 +69,7 @@ fn assert_webm(rel: &str) {
                 confidence: Confidence::CERTAIN,
                 detail: Ebml {
                     doc_type: DocType::Webm,
+                    ..
                 },
                 ..
             }

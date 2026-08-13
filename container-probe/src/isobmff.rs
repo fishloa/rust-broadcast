@@ -100,13 +100,20 @@ pub(crate) fn probe(data: &[u8], limit: usize) -> Outcome {
                 break;
             }
         };
-        // A box must at least contain its own header. A `size == 0` box runs to
-        // the region end and is always valid and last. A box whose declared
-        // size exceeds the remaining region is a *truncated* final box (a
-        // segment clipped mid-box at the region end) — the brief's "clean
-        // truncation at the region end": count it, treat the region as
-        // exhausted, and keep the chain clean.
-        if size_u32 == SIZE_TO_EOF || eff >= BOX_HEADER_MIN_SIZE {
+        // A box must at least contain its own header — 8 bytes normally, but 16
+        // when `size32 == 1` (the `largesize` field is part of the header, so a
+        // `largesize` smaller than 16 would reach into the middle of its own
+        // size field). A `size == 0` box runs to the region end and is always
+        // valid and last. A box whose declared size exceeds the remaining region
+        // is a *truncated* final box (a segment clipped mid-box at the region
+        // end) — the brief's "clean truncation at the region end": count it,
+        // treat the region as exhausted, and keep the chain clean.
+        let min_header = if size_u32 == SIZE_INDICATES_LARGESIZE {
+            BOX_HEADER_LARGESIZE_SIZE
+        } else {
+            BOX_HEADER_MIN_SIZE
+        };
+        if size_u32 == SIZE_TO_EOF || eff >= min_header {
             if offset == 0 && leading_is_ftyp && rem.len() >= BRAND_OFFSET + BRAND_LEN {
                 brand = Some([rem[8], rem[9], rem[10], rem[11]]);
             }
@@ -269,5 +276,27 @@ mod tests {
         // counts it, so the probe may legitimately Match. Only guard the 32-bit
         // no-panic / no-walk-into-size-field property.
         let _ = probe(&data, data.len());
+    }
+
+    /// Finding 7: a `largesize` box whose `largesize` is smaller than its own
+    /// 16-byte header (`00 00 00 01 66 72 65 65 … 00 08` — `largesize == 8`)
+    /// must be rejected, not accepted as a 2-box structural walk into the
+    /// middle of the `largesize` field.
+    #[test]
+    fn largesize_smaller_than_its_own_header_is_rejected() {
+        let data: [u8; 16] = [
+            0x00, 0x00, 0x00, 0x01, // size32 == 1 (largesize follows)
+            0x66, 0x72, 0x65, 0x65, // "free"
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x08, // largesize == 8
+        ];
+        // `largesize == 8 < 16` -> the walk cannot chain a 16-byte header in 8
+        // bytes, so the prober returns `None` (not a STRUCTURAL match claiming
+        // two boxes were walked).
+        match probe(&data, data.len()) {
+            Outcome::None => {}
+            other => panic!(
+                "a largesize smaller than its own 16-byte header must be None, got {other:?}"
+            ),
+        }
     }
 }

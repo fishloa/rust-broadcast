@@ -434,14 +434,14 @@ impl FileReader {
         let probe = container_probe::probe_with_budget(&bytes, bytes.len());
         let demuxed = match probe {
             Probe::Identified { format, detail, .. } => demux_identified(&bytes, format, detail)?,
-            Probe::Ambiguous { candidates } => {
+            Probe::Ambiguous { candidates, .. } => {
                 let names = candidates
                     .iter()
                     .map(|c| c.format.name().to_string())
                     .collect();
                 return Err(FileReaderError::AmbiguousProbe { candidates: names });
             }
-            Probe::Insufficient { need_at_least } => {
+            Probe::Insufficient { need_at_least, .. } => {
                 // The whole file was probed, so "supply more bytes" cannot be
                 // satisfied — report it as the file being too short instead of
                 // propagating a streaming-oriented verdict a caller cannot act

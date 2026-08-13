@@ -44,7 +44,7 @@
 //! | `CERTAIN` | 240 | Magic **plus** a structural confirmation |
 //! | `STRONG` | 192 | Unambiguous magic at a defined offset |
 //! | `STRUCTURAL` | 160 | A validated structure chain |
-//! | `LATTICE_STRONG` | 144 | `>= 8` lattice/frame confirmations |
+//! | `LATTICE_STRONG` | 128 | `>= 8` lattice/frame confirmations |
 //! | `LATTICE_WEAK` | 96 | 3-7 lattice/frame confirmations |
 //! | `HEURISTIC` | 64 | A signature with real false-positive risk |
 //!
@@ -82,7 +82,7 @@
 //! // the honest contract for a buffer that has not yet ruled anything out.
 //! let p = probe(&[]);
 //! match p {
-//!     Probe::Insufficient { need_at_least } => assert!(need_at_least >= 1),
+//!     Probe::Insufficient { need_at_least, .. } => assert!(need_at_least >= 1),
 //!     _ => unreachable!("an empty slice cannot be concluded from"),
 //! }
 //! ```
@@ -104,6 +104,14 @@
 #![no_std]
 #![forbid(unsafe_code)]
 #![cfg_attr(docsrs, feature(doc_cfg))]
+// `container-probe` README is the canonical quick-start surface; `readme =
+// "README.md"` in Cargo.toml makes docs.rs/crates.io render it, and this line
+// also feeds its `rust` code blocks to rustdoc as doctests. The `doctest` cfg is
+// set by rustdoc only when collecting doctests, so the README is compiled as
+// doctests (never part of the build), which is what keeps the headline example
+// from silently rotting (it once matched all four `Probe` variants with no
+// wildcard arm, an E0004 for any downstream consumer, and nothing caught it).
+#![cfg_attr(doctest, doc = include_str!("../README.md"))]
 
 extern crate alloc;
 
@@ -291,9 +299,35 @@ pub enum Detail {
         layout: IsobmffLayout,
     },
     /// Matroska/WebM: the EBML header's `DocType` string.
+    #[non_exhaustive]
     Ebml {
         /// The EBML DocType.
         doc_type: DocType,
+    },
+    /// FLV: the header's `TypeFlags` (which tag types are present) and the
+    /// `DataOffset` header size.
+    #[non_exhaustive]
+    Flv {
+        /// `TypeFlags` bit 0 — audio tags present.
+        has_audio: bool,
+        /// `TypeFlags` bit 2 — video tags present.
+        has_video: bool,
+        /// The `DataOffset` field (bytes 5..9), the header size.
+        data_offset: u32,
+    },
+    /// MXF: the decoded Partition Pack `PartitionKind` byte (byte 14 of the UL).
+    #[non_exhaustive]
+    Mxf {
+        /// The Partition Kind byte (`0x02` Header / `0x03` Body / `0x04` Footer).
+        partition_kind: u8,
+    },
+    /// MPEG-PS: whether the pack header's SCR/mux-rate marker bits validated.
+    #[non_exhaustive]
+    MpegPs {
+        /// `true` when the SCR `'01'` prefix, the four SCR marker bits and the
+        /// two `program_mux_rate` marker bits all validated (`STRUCTURAL`);
+        /// `false` when only the pack start code matched (`HEURISTIC`).
+        structurally_valid: bool,
     },
     /// No format-specific detail to report.
     None,
@@ -306,6 +340,9 @@ impl Detail {
             Detail::Ts { .. } => "Ts",
             Detail::Isobmff { .. } => "Isobmff",
             Detail::Ebml { .. } => "Ebml",
+            Detail::Flv { .. } => "Flv",
+            Detail::Mxf { .. } => "Mxf",
+            Detail::MpegPs { .. } => "MpegPs",
             Detail::None => "None",
         }
     }
@@ -354,6 +391,20 @@ impl core::fmt::Display for Detail {
                 )
             }
             Detail::Ebml { doc_type } => write!(f, "Ebml {{ doc_type: {doc_type} }}"),
+            Detail::Flv {
+                has_audio,
+                has_video,
+                data_offset,
+            } => write!(
+                f,
+                "Flv {{ has_audio: {has_audio}, has_video: {has_video}, data_offset: {data_offset} }}"
+            ),
+            Detail::Mxf { partition_kind } => {
+                write!(f, "Mxf {{ partition_kind: 0x{partition_kind:02X} }}")
+            }
+            Detail::MpegPs { structurally_valid } => {
+                write!(f, "MpegPs {{ structural: {structurally_valid} }}")
+            }
             Detail::None => f.write_str("None"),
         }
     }
@@ -417,11 +468,13 @@ pub enum Probe {
     /// Two or more candidates within `TIE_THRESHOLD`, ordered by descending
     /// confidence. A caller that wants a decision takes the first; a caller
     /// that wants correctness refuses.
+    #[non_exhaustive]
     Ambiguous {
         /// The tied candidates, best first.
         candidates: Vec<Candidate>,
     },
     /// Nothing matched, but a longer buffer could change that.
+    #[non_exhaustive]
     Insufficient {
         /// The minimum buffer length that could plausibly resolve a match.
         need_at_least: usize,
@@ -474,7 +527,7 @@ const TIER_STRONG: u8 = 192;
 const TIER_STRUCTURAL: u8 = 160;
 /// A repeating sync lattice with many confirmations (`>= 8` TS syncs at a
 /// consistent stride).
-const TIER_LATTICE_STRONG: u8 = 144;
+const TIER_LATTICE_STRONG: u8 = 128;
 /// A repeating lattice with few confirmations (3-7 TS syncs).
 const TIER_LATTICE_WEAK: u8 = 96;
 /// A signature with meaningful false-positive probability (bare MPEG-PS pack
@@ -497,7 +550,7 @@ impl Confidence {
     pub const STRONG: Confidence = Confidence(TIER_STRONG);
     /// A validated structure chain (160).
     pub const STRUCTURAL: Confidence = Confidence(TIER_STRUCTURAL);
-    /// `>= 8` lattice confirmations at a consistent stride (144).
+    /// `>= 8` lattice confirmations at a consistent stride (128).
     pub const LATTICE_STRONG: Confidence = Confidence(TIER_LATTICE_STRONG);
     /// 3-7 lattice confirmations (96).
     pub const LATTICE_WEAK: Confidence = Confidence(TIER_LATTICE_WEAK);
@@ -564,7 +617,7 @@ fn candidate_format(format: Format, detail: Detail) -> Format {
 }
 
 /// Cross-prober **suppression**: when any container matches at
-/// `LATTICE_STRONG` (144) or above, every elementary-stream candidate is
+/// `LATTICE_STRONG` (128) or above, every elementary-stream candidate is
 /// dropped.
 ///
 /// ADTS frames, MP3 frames, and Annex B NAL units routinely appear *inside* a
@@ -649,16 +702,25 @@ pub fn probe_with_budget(data: &[u8], budget: usize) -> Probe {
 fn probe_to_identify(candidates: &[Candidate]) -> Probe {
     let top = &candidates[0];
     if let Some(second) = candidates.get(1) {
-        // Scores are within `TIE_THRESHOLD` -> genuinely ambiguous, list all.
+        // Scores are within `TIE_THRESHOLD` -> genuinely ambiguous. List only
+        // the candidates actually within `TIE_THRESHOLD` of the winner (the
+        // tied set), not every lower-scored also-ran: `Probe::Ambiguous`
+        // documents "two or more candidates within `TIE_THRESHOLD`", and a
+        // candidate well below the winner is not part of that tie.
         if top
             .confidence
             .as_u8()
             .saturating_sub(second.confidence.as_u8())
             <= TIE_THRESHOLD
         {
-            return Probe::Ambiguous {
-                candidates: candidates.to_vec(),
-            };
+            let tied: Vec<Candidate> = candidates
+                .iter()
+                .copied()
+                .take_while(|c| {
+                    top.confidence.as_u8().saturating_sub(c.confidence.as_u8()) <= TIE_THRESHOLD
+                })
+                .collect();
+            return Probe::Ambiguous { candidates: tied };
         }
     }
     Probe::Identified {
@@ -669,8 +731,87 @@ fn probe_to_identify(candidates: &[Candidate]) -> Probe {
 }
 
 #[cfg(test)]
+mod tier_spacing {
+    use super::*;
+
+    /// Every tier, highest first. Adding a tier without adding it here is
+    /// caught by the exhaustiveness assertion below.
+    const TIERS: [(&str, u8); 6] = [
+        ("CERTAIN", TIER_CERTAIN),
+        ("STRONG", TIER_STRONG),
+        ("STRUCTURAL", TIER_STRUCTURAL),
+        ("LATTICE_STRONG", TIER_LATTICE_STRONG),
+        ("LATTICE_WEAK", TIER_LATTICE_WEAK),
+        ("HEURISTIC", TIER_HEURISTIC),
+    ];
+
+    /// The scoring model reports `Ambiguous` when the top two candidates are
+    /// within `TIE_THRESHOLD`. For that to mean "the evidence is genuinely
+    /// equal" rather than "the tiers happen to sit close together", adjacent
+    /// tiers must be separated by strictly more than `TIE_THRESHOLD` — so a
+    /// candidate on a *lower* tier can never tie with one above it, and only a
+    /// same-tier collision is ever reported as ambiguous.
+    ///
+    /// This is the invariant behind moving `TIER_LATTICE_STRONG` 144 -> 128:
+    /// at 144 the gap to `TIER_STRUCTURAL` (160) was exactly 16, so a
+    /// `STRUCTURAL` container and a `LATTICE_STRONG` elementary stream were
+    /// reported as tied despite the model ranking one strictly above the other.
+    /// Without this guard the next tier added lands back in that trap silently.
+    #[test]
+    fn adjacent_tiers_are_further_apart_than_the_tie_threshold() {
+        for pair in TIERS.windows(2) {
+            let (hi_name, hi) = pair[0];
+            let (lo_name, lo) = pair[1];
+            assert!(
+                hi > lo,
+                "TIERS must be listed strictly descending: {hi_name} ({hi}) is not above {lo_name} ({lo})"
+            );
+            let gap = hi - lo;
+            assert!(
+                gap > TIE_THRESHOLD,
+                "{hi_name} ({hi}) and {lo_name} ({lo}) are {gap} apart, which is not more than \
+                 TIE_THRESHOLD ({TIE_THRESHOLD}): two candidates on these different tiers would \
+                 be reported as Ambiguous even though the model ranks one strictly above the other"
+            );
+        }
+    }
+
+    /// `TIERS` above must list every tier the crate defines. `Confidence`'s
+    /// public constants are the enumeration of record, so pin the two together:
+    /// a new `pub const` on `Confidence` whose value is missing from `TIERS`
+    /// would otherwise skip the spacing check entirely.
+    #[test]
+    fn tiers_covers_every_public_confidence_constant() {
+        let public = [
+            ("CERTAIN", Confidence::CERTAIN),
+            ("STRONG", Confidence::STRONG),
+            ("STRUCTURAL", Confidence::STRUCTURAL),
+            ("LATTICE_STRONG", Confidence::LATTICE_STRONG),
+            ("LATTICE_WEAK", Confidence::LATTICE_WEAK),
+            ("HEURISTIC", Confidence::HEURISTIC),
+        ];
+        assert_eq!(
+            public.len(),
+            TIERS.len(),
+            "TIERS and Confidence's public tier constants have drifted apart"
+        );
+        for (name, c) in public {
+            let found = TIERS.iter().find(|(n, _)| *n == name);
+            let (_, v) = found.unwrap_or_else(|| panic!("tier {name} is missing from TIERS"));
+            assert_eq!(
+                *v,
+                c.as_u8(),
+                "tier {name}: TIERS says {v}, Confidence::{name} says {}",
+                c.as_u8()
+            );
+        }
+    }
+}
+
+#[cfg(test)]
 mod dispatch {
     use super::*;
+    use alloc::vec;
 
     /// Every `Format` variant must be *reachable*: either its own prober is a
     /// `PROBERS` row, or `candidate_format` can produce it from a registered
@@ -728,6 +869,53 @@ mod dispatch {
                 f,
                 resolved
             );
+        }
+    }
+
+    /// `Probe::Ambiguous` must carry only the candidates actually within
+    /// `TIE_THRESHOLD` of the winner, not every lower-scored also-ran (the
+    /// variant documents "two or more candidates within `TIE_THRESHOLD`").
+    #[test]
+    fn ambiguous_lists_only_genuinely_tied_candidates() {
+        let mk = |format: Format, score: u8| Candidate {
+            format,
+            confidence: Confidence(score),
+            detail: Detail::None,
+        };
+        // Scores 240, 232, 192: 232 is within 16 of 240 (tied), 192 is not.
+        let candidates = vec![
+            mk(Format::MpegTs, 240),
+            mk(Format::Isobmff, 232),
+            mk(Format::MpegPs, 192),
+        ];
+        let p = probe_to_identify(&candidates);
+        match p {
+            Probe::Ambiguous { candidates: tied } => {
+                assert_eq!(tied.len(), 2, "only the top two are within TIE_THRESHOLD");
+                assert_eq!(tied[0].format, Format::MpegTs);
+                assert_eq!(tied[1].format, Format::Isobmff);
+            }
+            other => panic!("expected Ambiguous, got {other:?}"),
+        }
+    }
+
+    /// A top candidate that beats its runner-up by more than `TIE_THRESHOLD` is
+    /// `Identified`, not `Ambiguous`.
+    #[test]
+    fn decisive_winner_is_not_ambiguous() {
+        let mk = |format: Format, score: u8| Candidate {
+            format,
+            confidence: Confidence(score),
+            detail: Detail::None,
+        };
+        let candidates = vec![
+            mk(Format::MpegTs, 240),
+            mk(Format::Isobmff, 200),
+            mk(Format::MpegPs, 64),
+        ];
+        match probe_to_identify(&candidates) {
+            Probe::Identified { format, .. } => assert_eq!(format, Format::MpegTs),
+            other => panic!("expected Identified, got {other:?}"),
         }
     }
 }

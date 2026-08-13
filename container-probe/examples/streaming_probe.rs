@@ -45,7 +45,7 @@ fn main() {
                 );
                 break;
             }
-            Probe::Insufficient { need_at_least } => {
+            Probe::Insufficient { need_at_least, .. } => {
                 println!("  {budget:<8} Insufficient: supply >= {need_at_least} bytes (read more)");
             }
             Probe::Unknown => {

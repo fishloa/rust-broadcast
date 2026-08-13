@@ -62,7 +62,7 @@ pub(crate) fn probe(data: &[u8], limit: usize) -> Outcome {
         return Outcome::Insufficient(ANNEXB_MIN_LEN);
     }
 
-    let chain = annexb_nal_chain(region);
+    let (chain, truncated) = annexb_nal_chain(region);
 
     if chain >= ANNEXB_MIN_NALS_STRONG {
         return Outcome::Match(Evidence {
@@ -76,7 +76,28 @@ pub(crate) fn probe(data: &[u8], limit: usize) -> Outcome {
             detail: Detail::None,
         });
     }
-    Outcome::None
+    if chain == 0 {
+        // No valid NAL header (either no start code at offset 0, or the first
+        // NAL header was invalid) -> nothing to build on.
+        return Outcome::None;
+    }
+    // A partial chain of 1..=(WEAK-1) NAL units. `Insufficient` only when the
+    // chain ended because the buffer ran out mid-stream (`truncated`) — a
+    // longer buffer could still confirm more NALs. When the chain ended because
+    // a NAL header failed to validate within the region, more bytes will not
+    // change that: the start codes were payload noise.
+    if truncated {
+        Outcome::Insufficient(need_at_least(region.len()))
+    } else {
+        Outcome::None
+    }
+}
+
+/// A lower bound on bytes that could resolve the verdict to `LATTICE_WEAK`: at
+/// least [`ANNEXB_MIN_NALS_WEAK`] minimal NAL units, and strictly more than the
+/// caller already holds (so "supply more" always exceeds what was supplied).
+fn need_at_least(have: usize) -> usize {
+    core::cmp::max(ANNEXB_MIN_NALS_WEAK * ANNEXB_MIN_LEN, have + ANNEXB_MIN_LEN)
 }
 
 /// Length (in bytes) of the start code at `i`, or `0` if none. A 4-byte start
@@ -122,24 +143,34 @@ fn valid_nal(data: &[u8], i: usize) -> bool {
 /// Walk the Annex B byte stream from offset 0 counting consecutive NAL units,
 /// each terminated by a start code whose NAL header validates. Non-conformant
 /// NAL headers or gaps stop the count.
-fn annexb_nal_chain(data: &[u8]) -> usize {
+///
+/// Returns the count and whether the walk stopped because the buffer ran out
+/// mid-stream (`truncated == true`) rather than because a NAL header failed to
+/// validate (`truncated == false`). The distinction is what decides
+/// `Insufficient` ("read more") vs `None` ("stop") for a partial chain.
+fn annexb_nal_chain(data: &[u8]) -> (usize, bool) {
     let n = data.len();
     // A start code must be at offset 0 — Annex B begins with the byte stream's
     // first NAL unit boundary, never with payload mid-stream.
     if start_code_len(data, 0) == 0 {
-        return 0;
+        return (0, false);
     }
     let mut cnt = 0usize;
     let mut i = 0usize;
-    while i < n && start_code_len(data, i) != 0 {
+    loop {
         let sc = start_code_len(data, i);
+        if sc == 0 {
+            // The previous advance left `i` pointing past the buffer's start
+            // codes — the stream was cut off before a terminating start code.
+            return (cnt, true);
+        }
         // Validate the NAL header immediately after this start code.
         if !valid_nal(data, i) {
-            break;
+            return (cnt, false);
         }
         cnt += 1;
         if cnt >= ANNEXB_MIN_NALS_STRONG {
-            return cnt;
+            return (cnt, false);
         }
         // Advance to the next start code strictly after the current header
         // byte; the first plausible start-code location is the unit boundary.
@@ -147,9 +178,13 @@ fn annexb_nal_chain(data: &[u8]) -> usize {
         while next + 2 <= n && start_code_len(data, next) == 0 {
             next += 1;
         }
+        if next + 2 > n {
+            // Fewer than three bytes remain: no terminating start code is
+            // visible, so the buffer ended mid-NAL.
+            return (cnt, true);
+        }
         i = next;
     }
-    cnt
 }
 
 #[cfg(test)]
