@@ -1,5 +1,5 @@
-//! Drift-guard: every `pub enum` in mpeg-ps must carry `#[non_exhaustive]`
-//! (issue #806).
+//! Drift-guard: every `pub enum` in container-probe must carry
+//! `#[non_exhaustive]` (issue #806).
 //!
 //! Scans `src/` for every `pub enum`, subtracts a documented SKIP list, and
 //! fails if any remaining enum lacks a `#[non_exhaustive]` attribute on one of

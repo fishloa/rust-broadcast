@@ -895,8 +895,19 @@ impl InputSpec {
             // `params` itself.
             InputSpec::Custom { .. } => Ok(()),
             // Path existence/reachability is checked at connect time, not
-            // here — always structurally valid.
-            InputSpec::File { .. } => Ok(()),
+            // here; only the empty path is rejected at validate time (an
+            // empty path is always invalid and would otherwise spin the
+            // supervisor's retry forever).
+            InputSpec::File { path, .. } => {
+                if path.trim().is_empty() {
+                    Err(MultimuxError::ConfigInvalid {
+                        field: "routes.input.path",
+                        reason: "file input path must not be empty".into(),
+                    })
+                } else {
+                    Ok(())
+                }
+            }
         }
     }
 }
@@ -3372,5 +3383,27 @@ mod tests {
             debug.contains("/media/slate.ts"),
             "the path is not a credential and must render: {debug}"
         );
+    }
+
+    /// An empty `path` on a `File` input is rejected at validate time — it is
+    /// always invalid and would otherwise spin the route's supervisor retrying
+    /// the same empty path forever.
+    #[test]
+    fn file_input_rejects_empty_path() {
+        let json = r#"{
+            "routes": [
+                { "name": "file-route", "input": { "type": "file", "path": "" } }
+            ]
+        }"#;
+        let cfg: Config = serde_json::from_str(json).unwrap();
+        let err = cfg
+            .validate()
+            .expect_err("empty file path must fail validation");
+        match err {
+            MultimuxError::ConfigInvalid { field, .. } => {
+                assert_eq!(field, "routes.input.path");
+            }
+            other => panic!("expected ConfigInvalid, got {other:?}"),
+        }
     }
 }

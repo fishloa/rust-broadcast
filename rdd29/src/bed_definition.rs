@@ -176,6 +176,21 @@ impl<'a> Parse<'a> for BedDefinition1 {
             "BedDefinition1.Reserved(pre-ChannelCount)",
         )?;
         let channel_count = read_plex(&mut r, 4, "BedDefinition1.ChannelCount")?;
+        // `channel_count` is a Plex field read from the input and is therefore
+        // unbounded — see the same hazard in `atmos_frame.rs`. Each channel
+        // consumes at least one bit, so the count cannot exceed the bits left;
+        // reserve the smaller of the two rather than trusting the wire value.
+        // Same hazard and same reasoning as `ATMOSFrame.SubElementCount`:
+        // reject an impossible count rather than capping a reserve that
+        // overcommit would let succeed silently.
+        let remaining_bits = r.bits_remaining() as u64;
+        if channel_count > remaining_bits {
+            return Err(Error::InvalidValue {
+                field: "BedDefinition1.ChannelCount",
+                value: channel_count,
+                reason: "exceeds the bits remaining in the element",
+            });
+        }
         let mut channels = Vec::with_capacity(channel_count as usize);
         for _ in 0..channel_count {
             let channel_id =

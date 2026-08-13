@@ -100,13 +100,22 @@ pub enum FileReaderError {
         /// The tied candidates, best first (from [`Probe::Ambiguous`]).
         candidates: Vec<String>,
     },
-    /// The probe found nothing conclusive but more bytes could change that
-    /// (never the case here — the reader probes the whole file, so this is
-    /// unexpected but handled).
-    #[error("container undetermined — probe needs at least {need_at_least} bytes")]
-    InsufficientProbe {
+    /// The probe could not conclude from the bytes it was given, and asked for
+    /// more than the file contains.
+    ///
+    /// `container-probe` takes a slice with no end-of-file signal, so it
+    /// answers `Insufficient` whenever a longer buffer *could* decide — which
+    /// for a 0-byte or near-empty file is honest but not actionable. This
+    /// reader always probes the WHOLE file, so there are no more bytes to
+    /// supply: the file is simply too short to identify.
+    #[error(
+        "file is too short to identify: {file_bytes} bytes, and the probe          needs at least {need_at_least}"
+    )]
+    FileTooShortToIdentify {
         /// The minimum buffer length the probe asked for.
         need_at_least: usize,
+        /// How many bytes the file actually holds.
+        file_bytes: usize,
     },
     /// The probe found no known container at all.
     #[error("unknown/unsupported container")]
@@ -130,6 +139,46 @@ pub enum FileReaderError {
     /// rather than [`transmux::Error`].
     #[error("flv demux failed: {0}")]
     Flv(#[from] transmux::flv::FlvError),
+    /// The configured [`Trunk`] had already given up its [`TrunkWriter`] — a
+    /// `Trunk` has exactly one sample/event writer, so a second [`FileReader`]
+    /// over one `Arc<Trunk>` (or a caller that took the writer itself) cannot
+    /// publish. Never a panic.
+    #[error("the configured trunk's writer is already claimed")]
+    WriterUnavailable,
+    /// The configured [`Self::Read`] path is not a regular file — a character
+    /// device, FIFO, socket, or directory cannot be played as a bounded media
+    /// file (and an unbounded read here would grow until the process dies).
+    #[error("path {path:?} is not a regular file (kind: {kind})")]
+    NotARegularFile {
+        /// The path that is not a regular file.
+        path: PathBuf,
+        /// The file-type label the metadata reported.
+        kind: &'static str,
+    },
+    /// The file is a regular file but exceeds the configured size cap
+    /// ([`FileReaderConfig::max_file_bytes`]) — an operator-supplied path is
+    /// never read unbounded, so a multi-gigabyte (or `/dev/zero`-backed) file
+    /// fails here rather than after the read has exhausted the process.
+    #[error("file {path:?} is {size} bytes, over the {max} byte cap")]
+    FileTooLarge {
+        /// The path that exceeds the cap.
+        path: PathBuf,
+        /// The file's actual byte length.
+        size: u64,
+        /// The configured cap ([`FileReaderConfig::max_file_bytes`]).
+        max: usize,
+    },
+    /// The file demuxed into zero timed (PTS-carrying) samples — nothing can
+    /// be paced, looped, or written, so the source fails rather than spinning
+    /// a no-op publish loop forever.
+    #[error("file yielded no playable (timed) samples")]
+    NoPlayableSamples,
+    /// Advancing the per-track loop offset (or applying it to a sample's
+    /// PTS/DTS) would overflow `i64` — a file with absurdly large `stts`
+    /// deltas cannot be replayed, so the source fails instead of wrapping to
+    /// a backwards timestamp.
+    #[error("loop offset overflow applying per-track PTS offset")]
+    OffsetOverflow,
 }
 
 /// A structured document used only by a [`FileReader`] to decide where one
@@ -141,9 +190,21 @@ struct PassRange {
     /// One frame duration in the track's timescale (avoids a zero-length or
     /// whole-file-length loop boundary).
     frame_ticks: i64,
+    /// The track's file span in seconds (`span_ticks / timescale`) — the
+    /// cross-track pacing baseline advances by one pass's worth of *wall
+    /// time* per loop, exactly as the PTS offsets advance by `span_ticks +
+    /// frame_ticks` per track.
+    span_secs: f64,
+    /// One frame duration in seconds (`frame_ticks / timescale`).
+    frame_secs: f64,
 }
 
 /// Configuration for one [`FileReader`] run.
+///
+/// `#[non_exhaustive]`: adding a field (e.g. the size cap, which shipped as a
+/// later hardening) must not be a breaking change — construct with
+/// [`FileReaderConfig::new`] and tune with the builder methods.
+#[non_exhaustive]
 pub struct FileReaderConfig {
     /// Path to the media file to play.
     pub path: PathBuf,
@@ -170,10 +231,69 @@ pub struct FileReaderConfig {
     /// reader bounded without changing its semantics. `None` (the runtime
     /// default) loops forever.
     pub max_loops: Option<u32>,
+    /// Cap on the file's size in bytes, enforced **before** the read — an
+    /// operator-supplied path (e.g. a character device or FIFO) is never read
+    /// unbounded. Defaults to [`DEFAULT_MAX_FILE_BYTES`].
+    pub max_file_bytes: usize,
+}
+
+/// The default [`FileReaderConfig::max_file_bytes`]: 1 GiB. Generous enough for
+/// any real slate/filler/loop asset, small enough that a misconfigured path
+/// fails cleanly ([`FileReaderError::FileTooLarge`]) long before an unbounded
+/// read could exhaust process memory.
+pub const DEFAULT_MAX_FILE_BYTES: usize = 1 << 30;
+
+impl FileReaderConfig {
+    /// Construct with sensible runtime defaults: pacing on, 3 read retries at
+    /// 500 ms, no loop cap, and the [`DEFAULT_MAX_FILE_BYTES`] size cap. Use
+    /// the `with_*` builders to tune the remaining knobs.
+    pub fn new(path: PathBuf, loop_file: bool, trunk: Arc<Trunk>) -> Self {
+        FileReaderConfig {
+            path,
+            loop_file,
+            trunk,
+            pace: true,
+            max_retries: 3,
+            retry_interval: Duration::from_millis(500),
+            max_loops: None,
+            max_file_bytes: DEFAULT_MAX_FILE_BYTES,
+        }
+    }
+
+    /// Set [`Self::pace`].
+    pub fn with_pace(mut self, pace: bool) -> Self {
+        self.pace = pace;
+        self
+    }
+
+    /// Set [`Self::max_retries`].
+    pub fn with_max_retries(mut self, max_retries: u32) -> Self {
+        self.max_retries = max_retries;
+        self
+    }
+
+    /// Set [`Self::retry_interval`].
+    pub fn with_retry_interval(mut self, retry_interval: Duration) -> Self {
+        self.retry_interval = retry_interval;
+        self
+    }
+
+    /// Set [`Self::max_loops`].
+    pub fn with_max_loops(mut self, max_loops: Option<u32>) -> Self {
+        self.max_loops = max_loops;
+        self
+    }
+
+    /// Set [`Self::max_file_bytes`].
+    pub fn with_max_file_bytes(mut self, max_file_bytes: usize) -> Self {
+        self.max_file_bytes = max_file_bytes;
+        self
+    }
 }
 
 /// A [`FileReader`] that has been spawned onto a tokio task; the run's
 /// terminal [`Result`] arrives on the wrapped [`JoinHandle`].
+#[non_exhaustive]
 pub struct SpawnedReader {
     /// The tokio task's join handle — awaiting it yields the run's outcome.
     pub handle: JoinHandle<Result<(), FileReaderError>>,
@@ -267,6 +387,32 @@ impl FileReader {
     /// Read the whole file, probe it, and demux it into the playable tracks —
     /// no pacing, no publishing.
     async fn read_probe_demux_once(&self) -> Result<ParsedFile, FileReaderError> {
+        // Metadata first — reject a non-regular file (character device /
+        // FIFO / socket / directory) and an over-cap file *before* the read,
+        // so an operator-supplied path can never trigger an unbounded read
+        // that grows until the process dies.
+        let metadata = tokio::fs::metadata(&self.config.path)
+            .await
+            .map_err(|source| FileReaderError::Read {
+                path: self.config.path.clone(),
+                source,
+            })?;
+        let kind = file_type_label(metadata.file_type());
+        if !metadata.is_file() {
+            return Err(FileReaderError::NotARegularFile {
+                path: self.config.path.clone(),
+                kind,
+            });
+        }
+        let cap = self.config.max_file_bytes;
+        if metadata.len() > cap as u64 {
+            return Err(FileReaderError::FileTooLarge {
+                path: self.config.path.clone(),
+                size: metadata.len(),
+                max: cap,
+            });
+        }
+
         let bytes =
             tokio::fs::read(&self.config.path)
                 .await
@@ -287,7 +433,14 @@ impl FileReader {
                 return Err(FileReaderError::AmbiguousProbe { candidates: names });
             }
             Probe::Insufficient { need_at_least } => {
-                return Err(FileReaderError::InsufficientProbe { need_at_least });
+                // The whole file was probed, so "supply more bytes" cannot be
+                // satisfied — report it as the file being too short instead of
+                // propagating a streaming-oriented verdict a caller cannot act
+                // on.
+                return Err(FileReaderError::FileTooShortToIdentify {
+                    need_at_least,
+                    file_bytes: bytes.len(),
+                });
             }
             Probe::Unknown => return Err(FileReaderError::UnknownProbe),
             // Any future probe outcome cannot name a demuxer — fail the source
@@ -300,28 +453,48 @@ impl FileReader {
     /// Publish the parsed file into the trunk: announce tracks, then
     /// pace/write samples, looping per `loop_file`/`max_loops`.
     async fn publish_looping(&self, parsed: ParsedFile) -> Result<(), FileReaderError> {
+        // `Trunk::writer` returns `None` on every call after the first — a
+        // second reader over the same `Arc<Trunk>`, or a caller that already
+        // took the writer, must fail as a structured error, never panic.
         let writer = self
             .config
             .trunk
             .writer()
-            .expect("a FileReader trunk must have its unclaimed writer (caller owns it)");
+            .ok_or(FileReaderError::WriterUnavailable)?;
 
         let (track_refs, order, pass_ranges) = parsed.build_playout();
 
+        // A file with zero timed (PTS-carrying) samples cannot be paced,
+        // looped, or written — fail rather than spin a no-op publish loop.
+        if order.is_empty() {
+            return Err(FileReaderError::NoPlayableSamples);
+        }
+
         // The file's earliest presentation time (across all tracks) — the
-        // pacing anchor. Each sample is due at `start + (due_seconds -
-        // file_start_secs)`, so the file begins playing at the wall-clock
-        // start instant and continues at its natural cadence.
+        // pacing anchor. Each sample is due at the *advanced* start instant
+        // plus `(due_seconds - file_start_secs)`, so the file begins playing
+        // at the wall-clock start instant and continues at its natural cadence.
         let file_start_secs = order
             .iter()
             .map(|i| i.due_seconds)
             .fold(f64::INFINITY, f64::min);
 
+        // One full pass's worth of wall time, in seconds: the largest span +
+        // one frame across tracks (the same `PassRange` data the PTS offsets
+        // advance by per track — one mechanism, not two). This is what makes
+        // the pacing baseline *grow* each pass, so a looped sample's due
+        // instant is never in the past the way an unadvanced start would make
+        // it.
+        let pass_duration_secs = pass_ranges
+            .iter()
+            .map(|r| r.span_secs + r.frame_secs)
+            .fold(0.0f64, f64::max);
+
         // Announce the track set once, before the first sample, exactly like
         // every other ingest announces a program's tracks.
         announce_tracks(&writer, &track_refs);
 
-        let start = if self.config.pace {
+        let mut start = if self.config.pace {
             Some(std::time::Instant::now())
         } else {
             None
@@ -343,16 +516,20 @@ impl FileReader {
             .await?;
 
             loop_index += 1;
-            if !self.config.loop_file || self.config.max_loops.is_some_and(|m| loop_index >= m) {
-                // Advance one more pass's offset so a caller that drains a
-                // `max_loops`-bounded run still sees a seamless continuation
-                // on the final boundary (not strictly required to stop, but
-                // keeps monotonicity invariants honest for bounded runs that
-                // are observed up to the boundary).
-                advance_offsets(&mut offsets, &pass_ranges);
+            let done =
+                !self.config.loop_file || self.config.max_loops.is_some_and(|m| loop_index >= m);
+            // Advance the per-track PTS offsets (checked). Then advance the
+            // pacing baseline by one pass's wall span, mirroring the PTS
+            // offset advance — pass N+1's due instants sit exactly one content
+            // duration after pass N's, so pacing never dumps the whole file
+            // and never spins with every target already in the past.
+            advance_offsets(&mut offsets, &pass_ranges)?;
+            if let Some(start) = &mut start {
+                *start += Duration::from_secs_f64(pass_duration_secs);
+            }
+            if done {
                 break;
             }
-            advance_offsets(&mut offsets, &pass_ranges);
         }
         Ok(())
     }
@@ -408,32 +585,43 @@ impl ParsedFile {
                 ranges.push(PassRange {
                     span_ticks: 0,
                     frame_ticks: 1,
+                    span_secs: 0.0,
+                    frame_secs: 0.0,
                 });
                 continue;
             }
             pres_pts.sort_unstable();
             pres_pts.dedup();
             let first_pts = pres_pts[0];
-            let max_pts = *pres_pts.last().unwrap();
-            let span_ticks = max_pts - first_pts;
+            let max_pts = pres_pts.last().copied().unwrap_or(first_pts);
+            let span_ticks = max_pts.checked_sub(first_pts).unwrap_or(0);
             let mut frame = 0i64;
             for pair in pres_pts.windows(2) {
-                let d = pair[1] - pair[0];
+                let d = match pair[1].checked_sub(pair[0]) {
+                    Some(d) => d,
+                    None => continue,
+                };
                 if d > 0 && (frame == 0 || d < frame) {
                     frame = d;
                 }
             }
             if frame == 0 {
-                // Fall back to the first sample's declared duration.
+                // Fall back to the first sample's *positive* declared
+                // duration — a `Some(0)` duration is treated as absent so the
+                // loop offset cannot become a permanent no-op.
                 frame = track
                     .samples
                     .iter()
-                    .find_map(|s| s.duration.map(i64::from))
+                    .filter_map(|s| s.duration.map(i64::from).filter(|&d| d > 0))
+                    .next()
                     .unwrap_or(1);
             }
+            let timescale_secs = 1.0f64 / timescale;
             ranges.push(PassRange {
                 span_ticks,
                 frame_ticks: frame,
+                span_secs: span_ticks as f64 * timescale_secs,
+                frame_secs: frame as f64 * timescale_secs,
             });
 
             for s in &track.samples {
@@ -449,11 +637,32 @@ impl ParsedFile {
         // Presentation order across tracks: smallest **absolute** presentation
         // time first (in seconds — comparable across differing track
         // timescales), breaking ties stably by track index then order.
-        // `due_seconds` is non-negative for these files, so its `to_bits` is
-        // an `Ord` monotonic key.
-        order.sort_by_key(|item| (item.due_seconds.to_bits(), item.track_ref as u64));
+        // `due_seconds` can be negative from a version-1 `ctts` composition
+        // offset, so order by `total_cmp` — a total order correct across zero
+        // and signs (`.to_bits()` is only monotonic for non-negatives and
+        // would invert negative magnitudes).
+        order.sort_by(|a, b| {
+            a.due_seconds
+                .total_cmp(&b.due_seconds)
+                .then(a.track_ref.cmp(&b.track_ref))
+        });
 
         (specs, order, ranges)
+    }
+}
+
+/// Stable label for a [`std::fs::FileType`], for the [`FileReaderError`]
+/// diagnostics — every non-file kind gets a distinct, named label (never a
+/// catch-all string).
+fn file_type_label(ft: std::fs::FileType) -> &'static str {
+    if ft.is_dir() {
+        "directory"
+    } else if ft.is_symlink() {
+        "symlink"
+    } else if ft.is_file() {
+        "file"
+    } else {
+        "non-regular (device/FIFO/socket/other)"
     }
 }
 
@@ -615,9 +824,16 @@ where
     while let Some(event) = poll(demux) {
         match event {
             DemuxEvent::TrackAdded(spec) => {
-                let idx = tracks.len();
-                index.entry(spec.track_id).or_insert(idx);
-                tracks.push((spec, Vec::new()));
+                match index.get(&spec.track_id) {
+                    // A repeat `TrackAdded` for an already-known id updates the
+                    // existing track in place — never push an orphan duplicate.
+                    Some(&i) => tracks[i].0 = spec,
+                    None => {
+                        let idx = tracks.len();
+                        index.insert(spec.track_id, idx);
+                        tracks.push((spec, Vec::new()));
+                    }
+                }
             }
             DemuxEvent::TrackUpdated(spec) => {
                 if let Some(&i) = index.get(&spec.track_id) {
@@ -652,8 +868,14 @@ where
         .into_iter()
         .map(|(spec, samples)| Track::new(spec, samples))
         .collect();
-    Ok(Media::new(movie, 90_000))
+    Ok(Media::new(movie, MPEG_TS_MOVIE_TIMESCALE))
 }
+
+/// The movie timescale assigned to a TS-derived `Media`: the MPEG-2 TS
+/// 90 kHz clock (a 27 MHz system clock divided by 300), per ISO/IEC 13818-1 —
+/// every TS demuxer's track timescales are multiples of it. A named constant
+/// (not a bare `90_000`) so the value's source is cited where it is used.
+const MPEG_TS_MOVIE_TIMESCALE: u32 = 90_000;
 
 /// Announce the track set on the trunk, seeding it before the first sample —
 /// the same `set_tracks` call [`media_plane::ingress::IngestDriver`] makes for
@@ -690,10 +912,16 @@ async fn publish_one_pass(
         }
         let mut sample = item.sample.clone();
         if let Some(pts) = sample.pts {
-            sample.pts = Some(pts + offset);
+            sample.pts = Some(
+                pts.checked_add(offset)
+                    .ok_or(FileReaderError::OffsetOverflow)?,
+            );
         }
         if let Some(dts) = sample.dts {
-            sample.dts = Some(dts + offset);
+            sample.dts = Some(
+                dts.checked_add(offset)
+                    .ok_or(FileReaderError::OffsetOverflow)?,
+            );
         }
         writer.publish(
             track_refs[item.track_ref].track_id,
@@ -706,10 +934,22 @@ async fn publish_one_pass(
 
 /// Advance each track's accumulated PTS offset by `span + one frame` so the
 /// next pass continues on the same monotonic timeline.
-fn advance_offsets(offsets: &mut [i64], ranges: &[PassRange]) {
+///
+/// Returns `Err(OffsetOverflow)` if any track's accumulated offset would
+/// exceed `i64::MAX` — a file with absurdly large `stts` deltas fails cleanly
+/// rather than wrapping to a negative offset and replaying backwards.
+fn advance_offsets(offsets: &mut [i64], ranges: &[PassRange]) -> Result<(), FileReaderError> {
     for (o, r) in offsets.iter_mut().zip(ranges) {
-        *o += r.span_ticks + r.frame_ticks;
+        let step = r.span_ticks.checked_add(r.frame_ticks);
+        let Some(step) = step else {
+            return Err(FileReaderError::OffsetOverflow);
+        };
+        let Some(next) = o.checked_add(step) else {
+            return Err(FileReaderError::OffsetOverflow);
+        };
+        *o = next;
     }
+    Ok(())
 }
 
 /// The [`FileReaderConfig`] builder / constructor, kept small now that WP2
@@ -718,15 +958,7 @@ impl FileReader {
     /// Convenience constructor with pacing and retries on, `loop_file` as
     /// given, and no loop cap.
     pub fn standard(path: PathBuf, loop_file: bool, trunk: Arc<Trunk>) -> Self {
-        FileReader::new(FileReaderConfig {
-            path,
-            loop_file,
-            trunk,
-            pace: true,
-            max_retries: 3,
-            retry_interval: Duration::from_millis(500),
-            max_loops: None,
-        })
+        FileReader::new(FileReaderConfig::new(path, loop_file, trunk))
     }
 }
 
@@ -760,6 +992,13 @@ use std::collections::VecDeque;
 /// the per-track PTS offset from `ParsedFile::build_playout`'s `PassRange`s via
 /// [`advance_offsets`] so the output timeline stays strictly monotonic — no
 /// reset to zero, no backwards step — across every loop point.
+///
+/// With `pace: true` (the route's setting), `poll` hands out only the samples
+/// whose within-pass media time has elapsed on the wall clock — so the trunk
+/// advances at roughly realtime instead of dumping the whole file in one drain
+/// (which, with the 10 ms route tick, used to republish ~300× realtime). With
+/// `pace: false` (the unit tests), every sample is due immediately — no wall
+/// clock consulted, so the tests stay deterministic.
 struct FileIngestSession {
     program: ProgramId,
     tracks: std::sync::Arc<[TrackSpec]>,
@@ -773,8 +1012,20 @@ struct FileIngestSession {
     offsets: Vec<i64>,
     /// `track_ref` → the track's id, for publishing.
     track_ids: Vec<u32>,
-    /// The current pass's sample queue (presentation order, PTS-offset applied).
-    queue: VecDeque<(u32, Sample)>,
+    /// The file's earliest presentation time in seconds, across all tracks —
+    /// the pacing anchor each sample's within-pass offset is measured from.
+    file_start_secs: f64,
+    /// The current pass's sample queue, in presentation order, PTS-offset
+    /// applied, with each sample's **within-pass** media time in seconds
+    /// (`due_seconds - file_start_secs`, non-negative) for wall-clock pacing.
+    queue: VecDeque<(u32, Sample, f64)>,
+    /// The wall-clock instant the current pass began — each sample is due at
+    /// `pass_wall_start + within_pass_secs`. `None` until the first sample
+    /// phase.
+    pass_wall_start: Option<std::time::Instant>,
+    /// Gate emission on wall clock (`true`) or emit everything immediately
+    /// (`false`).
+    pace: bool,
     loop_file: bool,
     established: bool,
     announced: bool,
@@ -782,9 +1033,23 @@ struct FileIngestSession {
 }
 
 impl FileIngestSession {
-    /// Build the session from an already-demuxed file, honouring `loop_file`.
-    fn new(parsed: ParsedFile, program: ProgramId, loop_file: bool) -> Self {
+    /// Build the session from an already-demuxed file, honouring `loop_file`
+    /// and `pace`. Fails ([`FileReaderError::NoPlayableSamples`]) if the file
+    /// produced no timed samples.
+    fn new(
+        parsed: ParsedFile,
+        program: ProgramId,
+        loop_file: bool,
+        pace: bool,
+    ) -> Result<Self, FileReaderError> {
         let (specs, order, ranges) = parsed.build_playout();
+        if order.is_empty() {
+            return Err(FileReaderError::NoPlayableSamples);
+        }
+        let file_start_secs = order
+            .iter()
+            .map(|i| i.due_seconds)
+            .fold(f64::INFINITY, f64::min);
         let track_ids: Vec<u32> = specs.iter().map(|t| t.track_id).collect();
         let mut session = FileIngestSession {
             program,
@@ -793,15 +1058,34 @@ impl FileIngestSession {
             ranges,
             offsets: vec![0i64; track_ids.len()],
             track_ids,
+            file_start_secs,
             queue: VecDeque::new(),
+            pass_wall_start: None,
+            pace,
             loop_file,
             established: false,
             announced: false,
             started: false,
         };
-        // First pass: offsets are all zero (the file's own timeline).
-        session.refill();
-        session
+        // First pass: offsets are all zero (the file's own timeline), so this
+        // cannot overflow; the checked path is still taken for uniformity.
+        session.refill()?;
+        Ok(session)
+    }
+
+    /// `true` once the finite (non-looping) file is fully drained and nothing
+    /// further will be emitted — the controller uses this to finish cleanly.
+    fn drained(&self) -> bool {
+        self.started && !self.loop_file && self.queue.is_empty()
+    }
+
+    /// The wall-clock instant the front sample is due, for the controller to
+    /// sleep until (rather than tick at 100 Hz). `None` when the queue is
+    /// empty or `pace` is off.
+    fn next_due(&self) -> Option<std::time::Instant> {
+        let rel = self.queue.front()?.2;
+        let base = self.pass_wall_start?;
+        Some(base + Duration::from_secs_f64(rel))
     }
 
     /// Refill the queue from the already-parsed content, applying the current
@@ -809,21 +1093,23 @@ impl FileIngestSession {
     /// next pass continues monotonically. Reuses the parsed `order` — nothing
     /// is re-demuxed and the queue's capacity is reused, so memory is bounded
     /// at the file's own sample count no matter how many passes happen.
-    fn refill(&mut self) {
+    fn refill(&mut self) -> Result<(), FileReaderError> {
         self.queue.clear();
         for item in &self.order {
             let mut sample = item.sample.clone();
             let off = self.offsets[item.track_ref];
             if let Some(p) = sample.pts {
-                sample.pts = Some(p + off);
+                sample.pts = Some(p.checked_add(off).ok_or(FileReaderError::OffsetOverflow)?);
             }
             if let Some(d) = sample.dts {
-                sample.dts = Some(d + off);
+                sample.dts = Some(d.checked_add(off).ok_or(FileReaderError::OffsetOverflow)?);
             }
+            let within_pass = (item.due_seconds - self.file_start_secs).max(0.0);
             self.queue
-                .push_back((self.track_ids[item.track_ref], sample));
+                .push_back((self.track_ids[item.track_ref], sample, within_pass));
         }
-        advance_offsets(&mut self.offsets, &self.ranges);
+        advance_offsets(&mut self.offsets, &self.ranges)?;
+        Ok(())
     }
 }
 
@@ -835,7 +1121,7 @@ impl Stage for FileIngestSession {
     fn feed(&mut self, _input: (), _now: Timestamp) -> Result<(), Self::Error> {
         // With `loop_file`, refill when the previous pass's queue has drained.
         if self.loop_file && self.queue.is_empty() {
-            self.refill();
+            self.refill()?;
         }
         Ok(())
     }
@@ -856,11 +1142,25 @@ impl Stage for FileIngestSession {
             // End this drain right after `NewProgram` so the driver's later
             // `advance_route` creates the segmenter before any sample flows.
             self.started = true;
+            if self.pace {
+                self.pass_wall_start = Some(std::time::Instant::now());
+            }
             return None;
+        }
+        if self.pace {
+            // Handle out only the samples whose within-pass media time has
+            // elapsed on the wall clock — pacing, so the trunk advances at
+            // roughly realtime. A sample not yet due stops this drain (the
+            // controller sleeps until `next_due` and feeds again).
+            let rel = self.queue.front()?.2;
+            let base = self.pass_wall_start?;
+            if base.elapsed() < Duration::from_secs_f64(rel) {
+                return None;
+            }
         }
         self.queue
             .pop_front()
-            .map(|(track_id, sample)| SessionEvent::Sample {
+            .map(|(track_id, sample, _)| SessionEvent::Sample {
                 program: self.program,
                 track_id,
                 retention: RetentionClass::Timed,
@@ -893,6 +1193,13 @@ impl IngestSession for FileIngestSession {
 /// iteration so samples become servable segments/parts. Mirrors
 /// [`crate::source::ts_udp::run_ts_udp`]'s shape; returns `Err` only on a
 /// failure (a bad/unreadable file), which the route's supervisor retries.
+///
+/// The drive loop is **paced**: it sleeps until the next sample is due on the
+/// wall clock (`FileIngestSession::next_due`), never a fixed 10 ms spin — the
+/// earlier fixed-tick loop dumped the whole file every tick, ~300× realtime.
+/// A finite `loop_file: false` file that has fully drained parks (zero CPU)
+/// holding its trunk, so its served segments stay servable until shutdown
+/// rather than spinning or triggering a supervisor re-serve.
 pub(crate) async fn run_file_source(
     path: &str,
     loop_file: bool,
@@ -904,15 +1211,12 @@ pub(crate) async fn run_file_source(
     // FileReader uses); a failure surfaces through the supervisor's retry.
     let scratch_cfg = crate::source::driver_trunk_config(window_segments);
     let scratch = media_plane::trunk::Trunk::new(scratch_cfg);
-    let reader = FileReader::new(FileReaderConfig {
-        path: std::path::PathBuf::from(path),
-        loop_file,
-        trunk: scratch,
-        pace: false,
-        max_retries: 0,
-        retry_interval: std::time::Duration::ZERO,
-        max_loops: None,
-    });
+    let reader = FileReader::new(
+        FileReaderConfig::new(std::path::PathBuf::from(path), loop_file, scratch)
+            .with_pace(false)
+            .with_max_retries(0)
+            .with_retry_interval(std::time::Duration::ZERO),
+    );
     let parsed = match reader.read_probe_demux().await {
         Ok(p) => p,
         Err(e) => return e.into(),
@@ -923,7 +1227,8 @@ pub(crate) async fn run_file_source(
     // instant file publishes everything at once, so a live-sized (64-entry)
     // ring would evict most of the file before the segmenter read it.
     let total_samples: usize = parsed.tracks.iter().map(|t| t.samples.len()).sum();
-    let nz = |n: usize| std::num::NonZeroUsize::new(n.max(1)).expect("non-zero cap");
+    let nz =
+        |n: usize| std::num::NonZeroUsize::new(n.max(1)).unwrap_or(std::num::NonZeroUsize::MIN);
     let trunk_config = media_plane::trunk::TrunkConfig::new(
         nz(total_samples + 64),
         nz(16),
@@ -932,12 +1237,16 @@ pub(crate) async fn run_file_source(
         nz(64),
     );
 
-    let session = FileIngestSession::new(parsed, crate::route::SPTS_PROGRAM_ID, loop_file);
+    let session =
+        match FileIngestSession::new(parsed, crate::route::SPTS_PROGRAM_ID, loop_file, true) {
+            Ok(s) => s,
+            Err(e) => return e.into(),
+        };
     let mut driver = IngestDriver::new(
         session,
         trunk_config,
         handshake,
-        std::num::NonZeroUsize::new(1).expect("one program"),
+        std::num::NonZeroUsize::new(1).unwrap_or(std::num::NonZeroUsize::MIN),
     );
     let start = std::time::Instant::now();
     let mut progress = crate::source::DriverProgress::new();
@@ -949,9 +1258,27 @@ pub(crate) async fn run_file_source(
         // phases, before any sample lands.
         driver.feed((), now);
         crate::source::advance_route(&driver, route_handle, &mut progress);
-        // Give the runtime time to serve; the finite file's segments stay
-        // servable (the route serves VOD-style once produced).
-        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+
+        if driver.session().drained() {
+            // Finite, non-looping file has fully run: stop the drive loop
+            // cleanly and park (zero CPU) holding the trunk so the served
+            // segments remain servable until shutdown — no 100 Hz spin, no
+            // supervisor re-serve of the same finite asset.
+            std::future::pending::<()>().await;
+        }
+
+        // Pace: sleep until the next sample is due (nor round at 100 Hz).
+        match driver.session().next_due() {
+            Some(due) => {
+                let now = std::time::Instant::now();
+                if due > now {
+                    tokio::time::sleep(due - now).await;
+                }
+            }
+            // Loop refill happens on the next feed; a short yield avoids a
+            // tight spin while the previous pass drains or refills.
+            None => tokio::time::sleep(std::time::Duration::from_millis(1)).await,
+        }
     }
 }
 
@@ -965,15 +1292,12 @@ mod loop_tests {
         let path = format!("{}/../fixtures/ts/h264_aac.ts", env!("CARGO_MANIFEST_DIR"));
         let trunk_cfg = crate::source::driver_trunk_config(8);
         let scratch = media_plane::trunk::Trunk::new(trunk_cfg);
-        let reader = FileReader::new(FileReaderConfig {
-            path: path.into(),
-            loop_file: true,
-            trunk: scratch,
-            pace: false,
-            max_retries: 0,
-            retry_interval: std::time::Duration::ZERO,
-            max_loops: None,
-        });
+        let reader = FileReader::new(
+            FileReaderConfig::new(path.into(), true, scratch)
+                .with_pace(false)
+                .with_max_retries(0)
+                .with_retry_interval(std::time::Duration::ZERO),
+        );
         reader.read_probe_demux().await.expect("demux fixture")
     }
 
@@ -1014,7 +1338,8 @@ mod loop_tests {
     #[tokio::test]
     async fn loop_refill_keeps_pts_monotonic_across_loop_point() {
         let parsed = demux_fixture().await;
-        let mut sess = FileIngestSession::new(parsed, ProgramId(0), true);
+        let mut sess = FileIngestSession::new(parsed, ProgramId(0), true, false)
+            .expect("fixture must have playable samples");
 
         // Pass the one-time setup gate, then collect pass 0's samples.
         let _ = sess.feed((), broadcast_common::Timestamp::from_nanos(0));
@@ -1054,7 +1379,8 @@ mod loop_tests {
     #[tokio::test]
     async fn no_loop_drains_once_then_stops() {
         let parsed = demux_fixture().await;
-        let mut sess = FileIngestSession::new(parsed, ProgramId(0), false);
+        let mut sess = FileIngestSession::new(parsed, ProgramId(0), false, false)
+            .expect("fixture must have playable samples");
         let _ = sess.feed((), broadcast_common::Timestamp::from_nanos(0));
         let _setup = drain_pts(&mut sess);
         let pass0 = drain_pts(&mut sess);
@@ -1071,7 +1397,8 @@ mod loop_tests {
     #[tokio::test]
     async fn queue_length_stays_bounded_across_passes() {
         let parsed = demux_fixture().await;
-        let mut sess = FileIngestSession::new(parsed, ProgramId(0), true);
+        let mut sess = FileIngestSession::new(parsed, ProgramId(0), true, false)
+            .expect("fixture must have playable samples");
         let first = sess.queue.len();
         assert!(first > 0, "pass 0 fills the queue");
 
@@ -1091,5 +1418,147 @@ mod loop_tests {
                 after, first
             );
         }
+    }
+}
+
+/// Unit tests for the playout invariants that need synthetic tracks (negative
+/// PTS, zero/absent duration, absurdly large deltas, no timed samples) — none
+/// of which a real fixture produces, so each is built from the public
+/// [`transmux`] IR and driven through the private `build_playout`/
+/// `advance_offsets`/`FileIngestSession::new` paths directly.
+#[cfg(test)]
+mod playout_tests {
+    use super::*;
+    use transmux::avc_config::{AVCConfigurationBox, AVCDecoderConfigurationRecord};
+
+    /// A minimal AVC [`TrackSpec`] at the given timescale — `build_playout`
+    /// reads only `timescale`/`track_id`, so the codec config body is inert.
+    fn avc_spec(track_id: u32, timescale: u32) -> TrackSpec {
+        TrackSpec::new(
+            track_id,
+            timescale,
+            transmux::CodecConfig::Avc {
+                config: AVCConfigurationBox {
+                    config: AVCDecoderConfigurationRecord {
+                        configuration_version: 1,
+                        profile_indication: 66,
+                        profile_compatibility: 0,
+                        level_indication: 30,
+                        length_size_minus_one: 3,
+                        sps: vec![],
+                        pps: vec![],
+                        chroma_format: None,
+                        bit_depth_luma_minus8: None,
+                        bit_depth_chroma_minus8: None,
+                        sps_ext: vec![],
+                    },
+                },
+                width: 1920,
+                height: 1080,
+            },
+        )
+    }
+
+    /// A single-track [`ParsedFile`] whose samples carry the given `pts`
+    /// (with `duration = 10`, `dts = pts`).
+    fn one_track_file(pts: &[i64]) -> ParsedFile {
+        let samples = pts
+            .iter()
+            .map(|&p| Sample::new(vec![0], Some(p), Some(p), Some(10), true))
+            .collect();
+        ParsedFile {
+            tracks: vec![Track::new(avc_spec(1, 90_000), samples)],
+        }
+    }
+
+    /// Finding 5: negative PTS (reachable from a version-1 `ctts` leading
+    /// B-frame) must still merge in ascending presentation order. A
+    /// `.to_bits()` key inverts negative magnitudes, so `-10` would sort after
+    /// `0` and before `-5`.
+    #[test]
+    fn negative_pts_merge_ascending() {
+        let parsed = one_track_file(&[-10, 0, -5, 5]);
+        let (_, order, _) = parsed.build_playout();
+        let due: Vec<i64> = order
+            .iter()
+            .map(|i| (i.due_seconds * 90_000.0).round() as i64)
+            .collect();
+        assert_eq!(
+            due,
+            vec![-10, -5, 0, 5],
+            "presentation order must be ascending, negatives included"
+        );
+    }
+
+    /// Finding 6: a zero-duration sample is treated as duration-absent, so the
+    /// loop frame falls back to one tick — never zero (a zero frame makes
+    /// `advance_offsets` a permanent no-op and every pass republish identical
+    /// PTS).
+    #[test]
+    fn zero_duration_falls_back_to_unit_frame() {
+        let samples = vec![Sample::new(vec![0], Some(0), Some(0), Some(0), true)];
+        let parsed = ParsedFile {
+            tracks: vec![Track::new(avc_spec(1, 90_000), samples)],
+        };
+        let (_, _, ranges) = parsed.build_playout();
+        assert_eq!(
+            ranges[0].frame_ticks, 1,
+            "a zero duration must fall back to a unit frame, never 0"
+        );
+    }
+
+    /// Finding 7: advancing an offset past `i64::MAX` fails with
+    /// [`FileReaderError::OffsetOverflow`] rather than wrapping to a negative
+    /// offset and replaying backwards.
+    #[test]
+    fn advance_offsets_overflow_fails_cleanly() {
+        let mut offsets = vec![i64::MAX - 5];
+        let ranges = vec![PassRange {
+            span_ticks: 100,
+            frame_ticks: 10,
+            span_secs: 1.0,
+            frame_secs: 1.0,
+        }];
+        let err = advance_offsets(&mut offsets, &ranges);
+        assert!(
+            matches!(err, Err(FileReaderError::OffsetOverflow)),
+            "offset past i64::MAX must be OffsetOverflow, got {err:?}"
+        );
+    }
+
+    /// Finding 8: a file yielding zero timed (PTS-carrying) samples fails the
+    /// route session with [`FileReaderError::NoPlayableSamples`] instead of
+    /// spinning a no-op publish loop.
+    #[test]
+    fn no_playable_samples_fails_session() {
+        let samples = vec![Sample::new(vec![0], None, None, None, false)];
+        let parsed = ParsedFile {
+            tracks: vec![Track::new(avc_spec(1, 90_000), samples)],
+        };
+        let err = FileIngestSession::new(parsed, ProgramId(0), true, false);
+        assert!(
+            matches!(err, Err(FileReaderError::NoPlayableSamples)),
+            "a file with no timed samples must fail"
+        );
+    }
+
+    /// Finding 8 (standalone reader half): `publish_looping` rejects a file
+    /// with no timed samples before spinning.
+    #[tokio::test]
+    async fn publish_looping_rejects_no_playable_samples() {
+        let cfg = crate::source::driver_trunk_config(8);
+        let trunk = media_plane::trunk::Trunk::new(cfg);
+        let reader = FileReader::new(
+            FileReaderConfig::new(std::path::PathBuf::from("unused"), true, trunk).with_pace(false),
+        );
+        let samples = vec![Sample::new(vec![0], None, None, None, false)];
+        let parsed = ParsedFile {
+            tracks: vec![Track::new(avc_spec(1, 90_000), samples)],
+        };
+        let err = reader.publish_looping(parsed).await;
+        assert!(
+            matches!(err, Err(FileReaderError::NoPlayableSamples)),
+            "publish_looping must fail with NoPlayableSamples"
+        );
     }
 }

@@ -1,0 +1,113 @@
+name: Release container-probe
+
+# Publishes the container-probe crate to crates.io on a `container-probe-v*`
+# tag. container-probe is versioned and released INDEPENDENTLY of the lockstep
+# `v*` tag (a standalone reusable crate with its own cadence), so it has its own
+# publish workflow. CI is the only source of published artifacts — never
+# `cargo publish` from a workstation. Requires the CARGO_REGISTRY_TOKEN secret.
+#
+# This crate's whole job is eating untrusted bytes, and its 0.1.0 was blocked by
+# an audit that found a panic reachable from a 12-byte slice — in a crate that
+# already had a fuzz target, which had never been run. So this lane gates on a
+# bounded fuzz RUN, not just a build.
+
+on:
+  push:
+    tags: ["container-probe-v*"]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  publish:
+    name: publish container-probe to crates.io
+    runs-on: ubuntu-latest
+    # crates.io publish is gated: pauses for manual approval by a
+    # required reviewer before any cargo publish can run. See the
+    # 'crates-io' environment (repo Settings -> Environments).
+    environment: crates-io
+    # `contents: write` is needed to create the GitHub Release below, and is
+    # the only elevated permission this job holds — `cargo publish`
+    # authenticates with CARGO_REGISTRY_TOKEN, not the GitHub token.
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v5
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Gate — container-probe tests
+        run: cargo test -p container-probe --all-features --locked
+
+      - name: Gate — container-probe clippy
+        run: cargo clippy -p container-probe --all-features --all-targets --locked -- -D warnings
+
+      - name: Gate — container-probe no_std build
+        run: cargo build -p container-probe --no-default-features --target thumbv7em-none-eabi --locked
+
+      - name: Gate — container-probe examples build
+        run: cargo build -p container-probe --all-features --examples --locked
+
+      # A build proves the target compiles; only a run proves the code survives
+      # hostile input. Bounded and deterministic (`-runs`), so this is a
+      # regression gate rather than a fuzzing campaign.
+      - name: Gate — container-probe fuzz run
+        run: |
+          rustup toolchain install nightly --profile minimal
+          cargo install cargo-fuzz --locked || true
+          cd fuzz
+          cargo +nightly fuzz run container_probe --target x86_64-unknown-linux-gnu \
+            -- -runs=50000 -max_total_time=120
+
+      - name: Gate — tag matches container-probe version
+        run: |
+          TAG="${GITHUB_REF_NAME#container-probe-v}"
+          V=$(cargo metadata --no-deps --format-version 1 --locked \
+              | python3 -c "import json,sys; print({p['name']: p['version'] for p in json.load(sys.stdin)['packages']}['container-probe'])")
+          if [ "$V" != "$TAG" ]; then
+            echo "::error::container-probe is $V but tag is $TAG"; exit 1
+          fi
+
+      # Idempotent: an "already uploaded" error is treated as success.
+      # docs/RELEASE-DOCS.md requires a release note per tag, and this workflow
+      # uses it as the GitHub Release body — so a missing one is caught HERE,
+      # before anything reaches crates.io, rather than after the version is
+      # already immutable.
+      - name: Gate — release note exists for this version
+        run: |
+          NOTE="docs/release-notes/container-probe-${GITHUB_REF_NAME#container-probe-v}.md"
+          if [ ! -s "$NOTE" ]; then
+            echo "::error::$NOTE is missing or empty — see docs/RELEASE-DOCS.md"
+            exit 1
+          fi
+          echo "::notice::release note $NOTE present"
+
+      - name: Publish container-probe
+        run: |
+          if out=$(cargo publish -p container-probe --locked 2>&1); then
+            echo "$out"; echo "::notice::published container-probe"
+          elif echo "$out" | grep -qiE "already (been )?uploaded|already exists"; then
+            echo "$out"; echo "::notice::container-probe already on crates.io at this version — skipping"
+          else
+            echo "$out"; echo "::error::failed to publish container-probe"; exit 1
+          fi
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+
+      # docs/RELEASE-DOCS.md section 3: a GitHub Release per tag, body = the
+      # release note. This was a manual step for the first 191 releases and was
+      # missed for 102 tags, so it is automated. Idempotent: an existing
+      # release is left untouched, so re-running after a partial failure is
+      # safe.
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          V="${GITHUB_REF_NAME#container-probe-v}"
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            echo "::notice::GitHub Release $GITHUB_REF_NAME already exists — leaving it alone"
+          else
+            gh release create "$GITHUB_REF_NAME" \
+              --title "container-probe $V" \
+              --notes-file "docs/release-notes/container-probe-$V.md"
+            echo "::notice::created GitHub Release $GITHUB_REF_NAME"
+          fi

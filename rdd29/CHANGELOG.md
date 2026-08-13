@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **Unbounded allocation from a wire-supplied Plex count (DoS).**
+  `ATMOSFrame.SubElementCount` and `BedDefinition1.ChannelCount` are Plex
+  fields read straight from the input. Plex escalates 8 -> 16 -> 32 bits, so
+  twelve bytes encode a count of `0x7FFF_FFFF`, which was passed directly to
+  `Vec::with_capacity` — a reserve of roughly **240 GB**. Found by the CI fuzz
+  run: AddressSanitizer aborted with
+  `out of memory: allocator is trying to allocate 0x37cbb80000 bytes`.
+
+  Both counts are now **rejected** when they exceed what the remaining input
+  could possibly contain, rather than merely capped. Capping alone would be
+  untestable: `Vec::with_capacity(2^31)` succeeds under ordinary overcommit and
+  only a sanitizer refuses it, so a cap can be verified by the fuzzer and by
+  nothing else. An explicit `InvalidValue` error is observable and carries a
+  regression test (`tests/oom_regression.rs`), mutation-verified.
+
 ## [0.3.0] - 2026-08-11
 
 ### Changed

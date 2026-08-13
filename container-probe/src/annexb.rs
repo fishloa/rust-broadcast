@@ -1,5 +1,14 @@
-//! H.264/H.265 Annex B prober — ITU-T H.264 §7.4 / H.265 (byte-stream NAL unit
-//! format, start codes `00 00 01` / `00 00 00 01`).
+//! H.264 Annex B prober — ITU-T H.264 §7.4 / Annex B byte-stream NAL unit
+//! format (start codes `00 00 01` / `00 00 00 01`).
+//!
+//! **Annex B detection is H.264 only.** HEVC (H.265) is NOT detected, and no
+//! claim is made that it is: HEVC uses a 2-byte NAL header with
+//! `nal_unit_type` at bits `[6:1]`, not the H.264 1-byte header masked with
+//! `0x1F` that this prober validates, so an HEVC stream fails the range check
+//! and its chain breaks at the first NAL. This workspace does not implement a
+//! format without a real fixture to test it against, and there is no HEVC
+//! Annex B fixture in the repo — see the crate-root "Known gaps". The
+//! `AnnexB` format name refers to the framing, not to both codecs.
 //!
 //! Requires a start code **at offset 0** and validates each NAL unit header:
 //! `forbidden_zero_bit` (the top bit) MUST be clear and `nal_unit_type` in a
@@ -18,8 +27,8 @@ use crate::{Confidence, Detail, Evidence, Outcome};
 const START_CODE_3: [u8; 3] = [0x00, 0x00, 0x01];
 /// The 4-byte start-code `00 00 00 01` (ITU-T H.264 Annex B).
 const START_CODE_4: [u8; 4] = [0x00, 0x00, 0x00, 0x01];
-/// `forbidden_zero_bit` must be `1` (clear) in a conformant NAL header
-/// (ITU-T H.264 §7.4.1 / H.265 §7.3.1.1).
+/// `forbidden_zero_bit` must be **`0`** (clear) in a conformant H.264 NAL header
+/// (ITU-T H.264 §7.4.1); this mask is what rejects MPEG-PS's `00 00 01 BA`.
 const NAL_FORBIDDEN_ZERO: u8 = 0x80;
 /// Mask to extract `nal_unit_type` (low 5 bits of the header byte).
 const NAL_TYPE_MASK: u8 = 0x1F;
@@ -36,11 +45,22 @@ const NAL_TYPE_MAX: u8 = 0x1F;
 const ANNEXB_MIN_NALS_WEAK: usize = 4;
 /// Chained NAL headers that lift the verdict to `LATTICE_STRONG`.
 const ANNEXB_MIN_NALS_STRONG: usize = 16;
+/// Minimum bytes to attempt the first NAL: the shortest start code (3 bytes)
+/// plus the 1-byte NAL header that follows it. A shorter region cannot even
+/// begin validating a NAL unit, so the prober cannot rule Annex B out.
+const ANNEXB_MIN_LEN: usize = START_CODE_3.len() + 1;
 
 /// The registered Annex B prober: start code at offset 0 + chained NAL headers.
 pub(crate) fn probe(data: &[u8], limit: usize) -> Outcome {
     debug_assert!(limit <= data.len(), "harness caps limit at data.len()");
     let region = &data[..limit];
+
+    // Shorter than one start code + NAL header: undecided (`Insufficient`), not
+    // `Unknown` — a truncated .h264 read a few bytes at a time could still be
+    // the start codes this prober looks for.
+    if region.len() < ANNEXB_MIN_LEN {
+        return Outcome::Insufficient(ANNEXB_MIN_LEN);
+    }
 
     let chain = annexb_nal_chain(region);
 
@@ -72,11 +92,13 @@ fn start_code_len(data: &[u8], i: usize) -> usize {
 }
 
 fn start_code4_at(data: &[u8], i: usize) -> bool {
-    i + START_CODE_4.len() <= data.len() && data.get(i..i + 4) == Some(&START_CODE_4[..])
+    i + START_CODE_4.len() <= data.len()
+        && data.get(i..i + START_CODE_4.len()) == Some(&START_CODE_4[..])
 }
 
 fn start_code3_at(data: &[u8], i: usize) -> bool {
-    i + START_CODE_3.len() <= data.len() && data.get(i..i + 3) == Some(&START_CODE_3[..])
+    i + START_CODE_3.len() <= data.len()
+        && data.get(i..i + START_CODE_3.len()) == Some(&START_CODE_3[..])
 }
 
 /// `true` when `data[i..]` begins a start code whose NAL header byte is valid.
@@ -154,6 +176,18 @@ mod tests {
         match probe(&data, data.len()) {
             Outcome::None => {}
             other => panic!("h264_ac3.ps must NOT match AnnexB (forbidden bit), got {other:?}"),
+        }
+    }
+
+    /// Finding 4: a 3-byte prefix of a real H.264 Annex B fixture (1 byte short
+    /// of a start code + NAL header) is `Insufficient`, not `Unknown`.
+    #[test]
+    fn short_prefix_is_insufficient() {
+        let data = fixture_bytes("fixtures/container-probe/h264.annexb");
+        let region = &data[..ANNEXB_MIN_LEN - 1];
+        match probe(region, region.len()) {
+            Outcome::Insufficient(need) => assert_eq!(need, ANNEXB_MIN_LEN),
+            other => panic!("3-byte Annex B prefix must be Insufficient(4), got {other:?}"),
         }
     }
 }

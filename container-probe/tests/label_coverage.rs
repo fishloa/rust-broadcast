@@ -6,19 +6,17 @@
 //! impl. A present `Display` delegates to an inherent `name()`, so this one
 //! check transitively enforces the whole convention (issue #806).
 //!
-//! Skip list:
-//! - `Probe` — the top-level verdict ADT. It carries data (`candidates`,
-//!   `need_at_least`, the identified triple) rather than naming a spec field,
-//!   and its variants are rendered by the caller, so a single `Display` string
-//!   would be lossy. `Format` and `Detail`, which DO name spec identities,
-//!   carry the convention.
-//! - `Candidate` is a struct, not an enum, so it never reaches this scan.
+//! The SKIP list is empty: every `pub enum` here carries `name()` + a `Display`.
+//! `Probe`, `Detail`, `IsobmffLayout`, `DocType` and `Format` all implement
+//! `impl_spec_display!` (or, for the data-bearing `Detail`, a lossless
+//! hand-written `Display` that delegates to `name()`); `Candidate` is a struct,
+//! not an enum, so it never reaches this scan.
 
 use std::collections::BTreeSet;
 use std::fs;
 use std::path::Path;
 
-const SKIP: &[&str] = &["Probe"];
+const SKIP: &[&str] = &[];
 
 fn read_rs(dir: &Path, out: &mut Vec<String>) {
     for entry in fs::read_dir(dir).expect("read src dir") {

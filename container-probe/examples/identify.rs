@@ -8,31 +8,17 @@
 
 use container_probe::{Detail, Probe};
 
-/// Map a `Confidence` score to its tier name. The named tier constants
-/// (`Confidence::CERTAIN` etc.) are crate-internal; the example keeps the
-/// display mapping to the documented values.
-fn tier_label(score: u8) -> &'static str {
-    match score {
-        240 => "CERTAIN",
-        192 => "STRONG",
-        160 => "STRUCTURAL",
-        144 => "LATTICE_STRONG",
-        96 => "LATTICE_WEAK",
-        64 => "HEURISTIC",
-        _ => "?",
-    }
-}
-
 /// Render the prober detail for `Identified` output.
 fn detail_text(detail: &Detail) -> String {
     match detail {
-        Detail::Ts { stride, phase } => {
+        Detail::Ts { stride, phase, .. } => {
             format!("MPEG-2 TS: {stride}-byte stride, first sync at offset {phase}")
         }
         Detail::Isobmff {
             major_brand,
             boxes_walked,
             layout,
+            ..
         } => {
             let brand = major_brand
                 .map(|b| String::from_utf8_lossy(&b).into_owned())
@@ -43,7 +29,7 @@ fn detail_text(detail: &Detail) -> String {
             // real fragmented and progressive files share the `isom` brand.
             format!("ISOBMFF: major brand '{brand}', {boxes_walked} boxes chained, {layout} layout")
         }
-        Detail::Ebml { doc_type } => format!("EBML: DocType {doc_type}"),
+        Detail::Ebml { doc_type, .. } => format!("EBML: DocType {doc_type}"),
         Detail::None => "no format-specific detail".into(),
         _ => "unknown detail".into(),
     }
@@ -66,12 +52,13 @@ fn main() {
             format,
             confidence,
             detail,
+            ..
         } => {
             println!(
                 "{}: {} ({}, {})",
                 path,
                 format.name(),
-                tier_label(confidence.as_u8()),
+                confidence.name(),
                 detail_text(&detail)
             );
         }
@@ -81,7 +68,7 @@ fn main() {
                 println!(
                     "    {} ({} = {})",
                     c.format.name(),
-                    tier_label(c.confidence.as_u8()),
+                    c.confidence.name(),
                     c.confidence.as_u8()
                 );
             }

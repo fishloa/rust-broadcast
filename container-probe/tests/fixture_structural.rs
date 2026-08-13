@@ -29,7 +29,8 @@ fn assert_isobmff(rel: &str, brand: &[u8; 4]) {
                 detail: Isobmff {
                     major_brand: Some(b),
                     ..
-                }
+                },
+                ..
             } if &b == brand
         ),
         "{rel}: expected Isobmff STRUCTURAL brand={:?}, got {p:?}",
@@ -47,8 +48,9 @@ fn assert_matroska(rel: &str) {
                 format: Format::Matroska,
                 confidence: Confidence::CERTAIN,
                 detail: Ebml {
-                    doc_type: DocType::Matroska
-                }
+                    doc_type: DocType::Matroska,
+                },
+                ..
             }
         ),
         "{rel}: expected Matroska CERTAIN DocType::Matroska, got {p:?}"
@@ -65,8 +67,9 @@ fn assert_webm(rel: &str) {
                 format: Format::WebM,
                 confidence: Confidence::CERTAIN,
                 detail: Ebml {
-                    doc_type: DocType::Webm
-                }
+                    doc_type: DocType::Webm,
+                },
+                ..
             }
         ),
         "{rel}: expected WebM CERTAIN DocType::Webm, got {p:?}"

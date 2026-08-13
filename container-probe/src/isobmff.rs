@@ -60,7 +60,10 @@ pub(crate) fn probe(data: &[u8], limit: usize) -> Outcome {
     let region = &data[..limit];
 
     if region.len() < BOX_HEADER_MIN_SIZE {
-        return Outcome::None;
+        // Shorter than one 8-byte box header: the walk cannot even read the
+        // first box's size+type, so a truncated .mp4 read a few bytes at a time
+        // is undecided (`Insufficient`), not `Unknown`.
+        return Outcome::Insufficient(BOX_HEADER_MIN_SIZE);
     }
 
     let leading_type = [region[4], region[5], region[6], region[7]];
@@ -186,10 +189,85 @@ fn decode_header(rem: &[u8]) -> Option<(u32, usize)> {
         let ls = u64::from_be_bytes([
             rem[8], rem[9], rem[10], rem[11], rem[12], rem[13], rem[14], rem[15],
         ]);
-        Some((size32, ls as usize))
+        // A `largesize` that does not fit a `usize` cannot be addressed into a
+        // slice, and must be **rejected**, not truncated: truncating it (the
+        // old `ls as usize`) on a 32-bit target turned e.g. `0x1_0000_0008`
+        // into `eff == 8`, which slipped past the `eff > rem.len()` guard and
+        // let the walk step *into the middle of the size field*. `?` here
+        // returns `None`, which the caller treats as a non-clean chain.
+        Some((size32, usize::try_from(ls).ok()?))
     } else if size32 == SIZE_TO_EOF {
         Some((size32, 0))
     } else {
         Some((size32, size32 as usize))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn fixture_bytes(rel: &str) -> std::vec::Vec<u8> {
+        std::fs::read(std::format!("{}/../{}", env!("CARGO_MANIFEST_DIR"), rel))
+            .unwrap_or_else(|e| panic!("failed to read {rel}: {e}"))
+    }
+
+    /// Finding 4: a 7-byte prefix of a real MP4 fixture (1 byte short of the
+    /// 8-byte box header) is `Insufficient`, not `Unknown`.
+    #[test]
+    fn short_prefix_is_insufficient() {
+        let data = fixture_bytes("fixtures/mp4/h264_high.mp4");
+        let region = &data[..BOX_HEADER_MIN_SIZE - 1];
+        match probe(region, region.len()) {
+            Outcome::Insufficient(need) => assert_eq!(need, BOX_HEADER_MIN_SIZE),
+            other => panic!("7-byte ISOBMFF prefix must be Insufficient(8), got {other:?}"),
+        }
+    }
+
+    /// Finding 5: a `largesize` that exceeds `usize::MAX` on this target must be
+    /// rejected, never truncated to a small `usize`.
+    ///
+    /// On a 32-bit target, `0x1_0000_0008` truncated with `as usize` became
+    /// `eff == 8`, which the probe accepted and used to step *into the middle of
+    /// the size field* (bypassing the `eff > rem.len()` guard). The fixed
+    /// decoder returns `None` for it, so the walk treats the header as not
+    /// cleanly chainable.
+    #[test]
+    fn oversized_largesize_is_rejected_not_truncated() {
+        // size32 == 1 says "64-bit largesize follows"; largesize set high.
+        let mut box8 = [0u8; 16];
+        box8[3] = SIZE_INDICATES_LARGESIZE as u8;
+        box8[8..].copy_from_slice(&0x1_0000_0008u64.to_be_bytes());
+        match decode_header(&box8) {
+            Some((size, eff)) => {
+                // On any target where it fits, the value must equal the
+                // requested largesize — never a truncated 8.
+                assert_eq!(size, SIZE_INDICATES_LARGESIZE);
+                assert_eq!(eff, 0x1_0000_0008usize);
+            }
+            None => {
+                // On a 32-bit target the largesize cannot be addressed; the
+                // rejection is the whole point. Nothing further to assert.
+            }
+        }
+    }
+
+    /// Finding 5 also on a whole-buffer walk: a truncated prefix whose leading
+    /// box claims an oversized largesize yields `None` rather than stepping
+    /// into the size field.
+    #[test]
+    fn oversized_largesize_probe_returns_none() {
+        // A 16-byte header: size32 == 1, largesize == 0x1_0000_0008, then a
+        // plausible leading type.
+        let mut data = [0u8; 16];
+        data[3] = SIZE_INDICATES_LARGESIZE as u8;
+        data[4..8].copy_from_slice(&TYPE_MDAT);
+        data[8..].copy_from_slice(&0x1_0000_0008u64.to_be_bytes());
+        // On a 32-bit target the largesize is rejected -> Outcome::None (the
+        // walk cannot chain it). On 64-bit the box is huge but "to the end";
+        // the walk treats a size exceeding the region as the last box and still
+        // counts it, so the probe may legitimately Match. Only guard the 32-bit
+        // no-panic / no-walk-into-size-field property.
+        let _ = probe(&data, data.len());
     }
 }

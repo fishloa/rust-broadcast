@@ -40,15 +40,7 @@ const LATTICE_STRONG: Confidence = Confidence::LATTICE_STRONG;
 #[test]
 fn m2ts_192_stride() {
     let p = probe_fixture("fixtures/container-probe/m2ts_192.m2ts");
-    assert_identified(
-        p,
-        Format::MpegTs,
-        LATTICE_STRONG,
-        Detail::Ts {
-            stride: 192,
-            phase: 4,
-        },
-    );
+    assert_identical_ts(p, 192, 4, LATTICE_STRONG);
 }
 
 /// The mid-packet phase test.
@@ -72,43 +64,19 @@ fn m2ts_192_stride() {
 #[test]
 fn ts_midpacket_phase() {
     let p = probe_fixture("fixtures/container-probe/ts_midpacket_phase.ts");
-    assert_identified(
-        p,
-        Format::MpegTs,
-        LATTICE_STRONG,
-        Detail::Ts {
-            stride: 188,
-            phase: 111,
-        },
-    );
+    assert_identical_ts(p, 188, 111, LATTICE_STRONG);
 }
 
 #[test]
 fn ts_204_stride_synthetic() {
     let p = probe_fixture("fixtures/container-probe/ts_204_stride_SYNTHETIC.ts");
-    assert_identified(
-        p,
-        Format::MpegTs,
-        LATTICE_STRONG,
-        Detail::Ts {
-            stride: 204,
-            phase: 0,
-        },
-    );
+    assert_identical_ts(p, 204, 0, LATTICE_STRONG);
 }
 
 #[test]
 fn h264_aac_188_stride() {
     let p = probe_fixture("fixtures/ts/h264_aac.ts");
-    assert_identified(
-        p,
-        Format::MpegTs,
-        LATTICE_STRONG,
-        Detail::Ts {
-            stride: 188,
-            phase: 0,
-        },
-    );
+    assert_identical_ts(p, 188, 0, LATTICE_STRONG);
 }
 
 /// Large real DVB captures (multimegabyte) the suite previously did not cover —
@@ -116,43 +84,19 @@ fn h264_aac_188_stride() {
 #[test]
 fn france2_capture() {
     let p = probe_fixture("fixtures/ts/france2.ts");
-    assert_identified(
-        p,
-        Format::MpegTs,
-        LATTICE_STRONG,
-        Detail::Ts {
-            stride: 188,
-            phase: 0,
-        },
-    );
+    assert_identical_ts(p, 188, 0, LATTICE_STRONG);
 }
 
 #[test]
 fn gulli_opengop_capture() {
     let p = probe_fixture("fixtures/ts/gulli-opengop.ts");
-    assert_identified(
-        p,
-        Format::MpegTs,
-        LATTICE_STRONG,
-        Detail::Ts {
-            stride: 188,
-            phase: 0,
-        },
-    );
+    assert_identical_ts(p, 188, 0, LATTICE_STRONG);
 }
 
 #[test]
 fn tnt5w_capture() {
     let p = probe_fixture("fixtures/dvb-si/tnt-5w-12732v-isi6-10s.ts");
-    assert_identified(
-        p,
-        Format::MpegTs,
-        LATTICE_STRONG,
-        Detail::Ts {
-            stride: 188,
-            phase: 0,
-        },
-    );
+    assert_identical_ts(p, 188, 0, LATTICE_STRONG);
 }
 
 /// Assert a file is identified as `format` (WP2+ structural probers). Keeps the
@@ -375,24 +319,7 @@ fn zeros_with_single_sync_byte() {
 fn short_but_complete_ts_is_a_weak_match_not_insufficient() {
     let data = fixture("fixtures/ts/h264_aac.ts");
     let p = probe(&data[..600]);
-    match p {
-        Probe::Identified {
-            format,
-            confidence,
-            detail,
-        } => {
-            assert_eq!(format, Format::MpegTs);
-            assert_eq!(confidence, Confidence::LATTICE_WEAK);
-            assert_eq!(
-                detail,
-                Detail::Ts {
-                    stride: 188,
-                    phase: 0
-                }
-            );
-        }
-        other => panic!("600 bytes of whole TS packets must be a weak match, got {other:?}"),
-    }
+    assert_identical_ts(p, 188, 0, Confidence::LATTICE_WEAK);
 }
 
 /// A single 188-byte packet is genuinely too little to conclude from: one sync
@@ -436,22 +363,18 @@ fn small_complete_ts_fixtures_all_identify() {
         "fixtures/ts/scte35-pcr.ts",                     // 1128 B — 6 packets
     ] {
         let data = fixture(path);
-        match probe(&data) {
+        let p = probe(&data);
+        match &p {
             Probe::Identified {
                 format,
                 confidence,
-                detail,
+                detail: Detail::Ts { stride, phase, .. },
+                ..
             } => {
-                assert_eq!(format, Format::MpegTs, "{path}");
-                assert_eq!(confidence, Confidence::LATTICE_WEAK, "{path}");
-                assert_eq!(
-                    detail,
-                    Detail::Ts {
-                        stride: 188,
-                        phase: 0
-                    },
-                    "{path}"
-                );
+                assert_eq!(*format, Format::MpegTs, "{path}");
+                assert_eq!(*confidence, Confidence::LATTICE_WEAK, "{path}");
+                assert_eq!(*stride, 188, "{path}");
+                assert_eq!(*phase, 0, "{path}");
             }
             other => panic!("{path} ({} bytes) must identify, got {other:?}", data.len()),
         }
@@ -527,16 +450,19 @@ fn budget_caps_the_read() {
             format,
             confidence,
             detail,
+            ..
         } => {
             assert_eq!(format, Format::MpegTs);
             assert_eq!(confidence, Confidence::LATTICE_WEAK);
-            assert_eq!(
-                detail,
-                Detail::Ts {
-                    stride: 188,
-                    phase: 0
+            // `Detail::Ts` is `#[non_exhaustive]`, so it cannot be *constructed*
+            // here; match it structurally and assert each field.
+            match detail {
+                Detail::Ts { stride, phase, .. } => {
+                    assert_eq!(stride, 188);
+                    assert_eq!(phase, 0);
                 }
-            );
+                other => panic!("expected Ts detail, got {other:?}"),
+            }
         }
         Probe::Insufficient { need_at_least } => {
             // Also acceptable; the buffer was too short to prove the lattice.
@@ -547,17 +473,32 @@ fn budget_caps_the_read() {
 }
 
 /// Run [`container_probe::ts::probe`]-level assertion helper: unwrap an
-/// `Identified` and check all three fields.
-fn assert_identified(p: Probe, format: Format, confidence: Confidence, detail: Detail) {
-    assert_eq!(
-        p,
+/// `Identified` TS result and check the format, confidence, stride and phase.
+///
+/// The `Detail::Ts` variant is `#[non_exhaustive]` (so adding a field is not
+/// breaking), which means a downstream crate cannot *construct* it with a struct
+/// expression to compare against. This helper matches it structurally instead
+/// and asserts each field individually, keeping the exactness the old
+/// `assert_eq!(p, Probe::Identified { .. Detail::Ts { .. } })` had.
+fn assert_identical_ts(p: Probe, stride: u16, phase: u16, confidence: Confidence) {
+    match p {
         Probe::Identified {
-            format,
-            confidence,
-            detail
-        },
-        "probe mismatch"
-    );
+            format: Format::MpegTs,
+            confidence: c,
+            detail:
+                Detail::Ts {
+                    stride: s,
+                    phase: ph,
+                    ..
+                },
+            ..
+        } => {
+            assert_eq!(c, confidence, "probe mismatch: confidence");
+            assert_eq!(s, stride, "probe mismatch: stride");
+            assert_eq!(ph, phase, "probe mismatch: phase");
+        }
+        other => panic!("probe mismatch: {other:?}"),
+    }
 }
 
 fn probe(data: &[u8]) -> Probe {

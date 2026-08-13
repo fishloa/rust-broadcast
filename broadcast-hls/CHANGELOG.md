@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-08-12
 ### Fixed
 - `MediaPlaylist::parse` now rejects `BYTERANGE` (on segments, `EXT-X-MAP`,
   and `EXT-X-PART`) whose `offset + length` overflows `u64`, and

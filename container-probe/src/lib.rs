@@ -21,7 +21,16 @@
 //! | ASF | 16-byte header GUID | `STRONG` |
 //! | ADTS AAC | frame-length chain | `LATTICE_STRONG` |
 //! | MP3 | frame-length chain | `LATTICE_STRONG` |
-//! | Annex B H.264/H.265 | start-code NAL chain | `LATTICE_STRONG` |
+//! | Annex B (H.264) | start-code NAL chain | `LATTICE_STRONG` |
+//!
+//! # Known gaps
+//!
+//! - **Annex B detection is H.264 only.** HEVC (H.265) NAL units use a 2-byte
+//!   header with `nal_unit_type` at bits `[6:1]`, which this prober does not
+//!   parse — it validates the H.264 1-byte header, so an HEVC stream fails the
+//!   range check at the first NAL. HEVC is deliberately not implemented: this
+//!   workspace does not implement a format without a real fixture to test it
+//!   against, and no HEVC Annex B fixture exists in the repository.
 //!
 //! # The scored confidence model
 //!
@@ -68,10 +77,14 @@
 //! ```
 //! use container_probe::{probe, Probe};
 //!
-//! // An empty slice concludes Unknown: nothing matched, and no amount of extra
-//! // bytes would make this particular input a recognised format.
+//! // An empty slice is `Insufficient`: reading more bytes could make it any
+//! // registered format, so a caller must not stop — it must read more. This is
+//! // the honest contract for a buffer that has not yet ruled anything out.
 //! let p = probe(&[]);
-//! assert!(matches!(p, Probe::Unknown));
+//! match p {
+//!     Probe::Insufficient { need_at_least } => assert!(need_at_least >= 1),
+//!     _ => unreachable!("an empty slice cannot be concluded from"),
+//! }
 //! ```
 //!
 //! # Non-goals
@@ -145,7 +158,8 @@ pub enum Format {
     AdtsAac,
     /// Raw MPEG-1/2 Layer III (MP3) elementary stream — ISO/IEC 11172-3.
     Mp3,
-    /// Annex B NAL-unit byte stream — ITU-T H.264/H.265.
+    /// Annex B NAL-unit byte stream — ITU-T H.264 only (HEVC is not detected;
+    /// see the crate-root "Known gaps").
     AnnexB,
 }
 
@@ -197,7 +211,22 @@ impl Confidence {
     pub const fn as_u8(self) -> u8 {
         self.0
     }
+
+    /// The human-readable name of this confidence tier (the `TIER_*` table).
+    pub fn name(&self) -> &'static str {
+        match self.0 {
+            TIER_CERTAIN => "CERTAIN",
+            TIER_STRONG => "STRONG",
+            TIER_STRUCTURAL => "STRUCTURAL",
+            TIER_LATTICE_STRONG => "LATTICE_STRONG",
+            TIER_LATTICE_WEAK => "LATTICE_WEAK",
+            TIER_HEURISTIC => "HEURISTIC",
+            _ => "unknown",
+        }
+    }
 }
+
+broadcast_common::impl_spec_display!(Confidence);
 
 /// How an ISOBMFF file carries its sample metadata — the discriminator a
 /// consumer needs to choose a demuxer.
@@ -242,6 +271,7 @@ broadcast_common::impl_spec_display!(IsobmffLayout);
 pub enum Detail {
     /// MPEG-2 TS lattice: packet `stride` (188/192/204/208) and the byte
     /// offset of the first sync (`phase`), so a demuxer need not re-derive them.
+    #[non_exhaustive]
     Ts {
         /// Byte distance between consecutive sync bytes (a packet length).
         stride: u16,
@@ -250,6 +280,7 @@ pub enum Detail {
     },
     /// ISOBMFF: the `ftyp` major brand (if seen) and how many top-level boxes
     /// chained cleanly.
+    #[non_exhaustive]
     Isobmff {
         /// The 4-character code from the `ftyp` major brand, if one was read.
         major_brand: Option<[u8; 4]>,
@@ -278,9 +309,55 @@ impl Detail {
             Detail::None => "None",
         }
     }
+
+    /// The `ftyp`/`styp` major brand as a string, when the identifying file
+    /// carried one (an ISOBMFF result). The brand is a registered 4-character
+    /// code, so this is the ergonomic view of the raw `[u8; 4]` in
+    /// [`Detail::Isobmff`].
+    ///
+    /// Returns `None` when the detail is not `Isobmff`, when no brand was
+    /// observed, or when the 4 bytes are not valid UTF-8.
+    #[must_use]
+    pub fn major_brand_str(&self) -> Option<&str> {
+        if let Detail::Isobmff { major_brand, .. } = self {
+            // `major_brand` is a reference into `self` (match ergonomics on the
+            // connected `&self`), so the returned `&str` borrows from `self`.
+            let bytes: &[u8; 4] = major_brand.as_ref()?;
+            core::str::from_utf8(&bytes[..]).ok()
+        } else {
+            None
+        }
+    }
 }
 
-broadcast_common::impl_spec_display!(Detail);
+/// A lossless `Display` for [`Detail`]: every data-bearing variant renders its
+/// fields, so `Detail::Ts { stride, phase }` is not collapsed to just `"Ts"`.
+/// `Display` delegates to [`Detail::name`] (the #204 convention) for the label,
+/// then appends the field data the variant actually carries.
+impl core::fmt::Display for Detail {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Detail::Ts { stride, phase } => {
+                write!(f, "Ts {{ stride: {stride}, phase: {phase} }}")
+            }
+            Detail::Isobmff {
+                major_brand,
+                boxes_walked,
+                layout,
+            } => {
+                let brand = major_brand
+                    .map(|b| alloc::string::String::from_utf8_lossy(&b[..]).into_owned())
+                    .unwrap_or_else(|| "<none>".into());
+                write!(
+                    f,
+                    "Isobmff {{ major_brand: {brand:?}, boxes_walked: {boxes_walked}, layout: {layout} }}"
+                )
+            }
+            Detail::Ebml { doc_type } => write!(f, "Ebml {{ doc_type: {doc_type} }}"),
+            Detail::None => f.write_str("None"),
+        }
+    }
+}
 
 /// The EBML `DocType` string (`"webm"` or `"matroska"`) decoded from an EBML
 /// header's `EBMLDocType` element.
@@ -310,6 +387,9 @@ broadcast_common::impl_spec_display!(DocType);
 
 /// One scored candidate: a format, the evidence strength behind it, and what
 /// the prober learned on the way.
+///
+/// `#[non_exhaustive]` so adding a field is not a breaking change.
+#[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Candidate {
     /// The candidate container/stream format.
@@ -325,6 +405,7 @@ pub struct Candidate {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Probe {
     /// A single best match.
+    #[non_exhaustive]
     Identified {
         /// The winning format.
         format: Format,
@@ -584,5 +665,69 @@ fn probe_to_identify(candidates: &[Candidate]) -> Probe {
         format: top.format,
         confidence: top.confidence,
         detail: top.detail,
+    }
+}
+
+#[cfg(test)]
+mod dispatch {
+    use super::*;
+
+    /// Every `Format` variant must be *reachable*: either its own prober is a
+    /// `PROBERS` row, or `candidate_format` can produce it from a registered
+    /// one. Deleting a `PROBERS` row for a format that only that row reaches
+    /// silently disables detection of a real format; this test turns that into
+    /// a hard failure instead.
+    ///
+    /// The only cross-row transformation is the EBML one: the EBML prober is
+    /// registered under `Format::Matroska` and `candidate_format` promotes a
+    /// `DocType::Webm` to `Format::WebM`. Every other registered format maps to
+    /// itself, so the reachable set is *exactly* `PROBERS`'s formats ∪ `WebM`.
+    #[test]
+    fn every_format_variant_is_reachable() {
+        let any_registered: Vec<Format> = PROBERS.iter().map(|(f, _)| *f).collect();
+        // The one produced-by-candidate_format case (not itself in PROBERS).
+        let webm = candidate_format(
+            Format::Matroska,
+            Detail::Ebml {
+                doc_type: DocType::Webm,
+            },
+        );
+        assert_eq!(webm, Format::WebM);
+
+        // The complete variant list, drifted-shielded against `Format`.
+        for variant in [
+            Format::MpegTs,
+            Format::Isobmff,
+            Format::MpegPs,
+            Format::Matroska,
+            Format::WebM,
+            Format::Flv,
+            Format::Mxf,
+            Format::Wav,
+            Format::Ogg,
+            Format::Asf,
+            Format::AdtsAac,
+            Format::Mp3,
+            Format::AnnexB,
+        ] {
+            assert!(
+                any_registered.contains(&variant) || variant == Format::WebM,
+                "Format::{} is not reachable: it is neither a PROBERS row nor \
+                 produced by candidate_format from one",
+                variant.name()
+            );
+        }
+        // Belt-and-braces: also verify every registered row maps *to itself*
+        // under `candidate_format` except the EBML special case, so a future
+        // edit cannot quietly re-point a row elsewhere and strand its format.
+        for &(f, _) in PROBERS {
+            let resolved = candidate_format(f, Detail::None);
+            assert!(
+                resolved == f || f == Format::Matroska,
+                "{:?} row resolves to {:?} under no-detail — unexpected drift",
+                f,
+                resolved
+            );
+        }
     }
 }

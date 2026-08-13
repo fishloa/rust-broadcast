@@ -223,8 +223,11 @@ async fn file_route_loop_false_stops() {
     let client = reqwest::Client::new();
     let playlist_url = format!("http://{bind}/cam/media.m3u8");
 
-    // Wait for the first pass's segments to be served, then snapshot.
+    // Wait for the first pass's segments to be served, then let the single
+    // pass fully drain (well past its ~3 s duration, paced near-realtime),
+    // *then* snapshot the served set.
     poll_until_extinf(&client, &playlist_url).await;
+    tokio::time::sleep(Duration::from_secs(6)).await;
     let t0 = segment_uris(
         &client
             .get(&playlist_url)
@@ -260,5 +263,66 @@ async fn file_route_loop_false_stops() {
         "loop:false must stop producing segments, but {:?} is new",
         later.iter().filter(|u| !t0.contains(u)).collect::<Vec<_>>()
     );
+    server.abort();
+}
+
+/// `loop: true` paces to roughly realtime: a new closed segment appears every
+/// ~`target_duration` (0.5 s), not ~300× faster (the bug dumped the whole
+/// 3 s file every 10 ms tick). We assert only cadence — the wall time to
+/// accumulate a handful of segments stays within a sane factor of realtime —
+/// never exact counts, to stay robust to scheduler jitter.
+#[tokio::test]
+async fn file_route_loop_true_paces_near_realtime() {
+    let bind = reserve_tcp_addr();
+    let config = file_config(bind, fixture_path(), true);
+    let server = tokio::spawn(serve_with_registry(config, SchemeRegistry::new()));
+    let client = reqwest::Client::new();
+    let playlist_url = format!("http://{bind}/cam/media.m3u8");
+
+    // First closed segment appears.
+    poll_until_extinf(&client, &playlist_url).await;
+    let start = tokio::time::Instant::now();
+
+    // Accumulate a handful of distinct segment URIs, measuring wall time. At
+    // realtime (0.5 s target) the 3rd distinct segment lands ~1 s in; the bug's
+    // 300× rate lands them ~instantly.
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let want = 3usize;
+    let deadline = start + Duration::from_secs(20);
+    loop {
+        let body = client
+            .get(&playlist_url)
+            .send()
+            .await
+            .unwrap()
+            .text()
+            .await
+            .unwrap();
+        for u in segment_uris(&body) {
+            seen.insert(u);
+        }
+        if seen.len() >= want {
+            break;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "loop:true must keep producing segments; only saw {seen:?}"
+        );
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    let elapsed = start.elapsed();
+
+    // Cadence: far slower than the 300× dump (which is ~milliseconds) and far
+    // from a stall. At realtime, `want` distinct segments ≈ `want * 0.5 s` =
+    // 1.5 s; a 0.6 s floor and 10 s ceiling give wide, deterministic bounds.
+    assert!(
+        elapsed >= Duration::from_millis(600),
+        "segments must appear at roughly realtime, not 300× — {want} closed segments in {elapsed:?}"
+    );
+    assert!(
+        elapsed <= Duration::from_secs(10),
+        "segment cadence must not stall — {want} closed segments took {elapsed:?}"
+    );
+
     server.abort();
 }

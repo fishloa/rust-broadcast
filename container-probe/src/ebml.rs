@@ -41,7 +41,14 @@ pub(crate) fn probe(data: &[u8], limit: usize) -> Outcome {
     debug_assert!(limit <= data.len(), "harness caps limit at data.len()");
     let region = &data[..limit];
 
-    if region.len() < EBML_MAGIC.len() || region[..EBML_MAGIC.len()] != EBML_MAGIC {
+    if region.len() < EBML_MAGIC.len() {
+        // Shorter than the 4-byte magic we must rule out: an EBML file read a
+        // few bytes at a time is genuinely undecided, so this is `Insufficient`
+        // (`need` = the magic length), not `Unknown` — more bytes could make it
+        // the exact bytes EBML opens with.
+        return Outcome::Insufficient(EBML_MAGIC.len());
+    }
+    if region[..EBML_MAGIC.len()] != EBML_MAGIC {
         return Outcome::None;
     }
 
@@ -72,8 +79,15 @@ fn find_doc_type(region: &[u8]) -> Option<DocType> {
     let (len, size) = read_size_vint(&region[cursor..])?;
     // The header data runs for `size` bytes (or to region end when unknown).
     let data = if let Some(sz) = size {
-        let end = (cursor + len + sz).min(region.len());
-        &region[cursor + len..end]
+        // `cursor + len + sz` cannot be trusted to fit a `usize` in one
+        // addition on every target: it is the attacker-controlled `size`, so
+        // add it checked (as line 92 does) and clamp to the region.
+        let body_start = cursor + len; // <= region.len(), guaranteed by read_size_vint
+        let end = match body_start.checked_add(sz) {
+            Some(e) => e.min(region.len()),
+            None => region.len(),
+        };
+        &region[body_start..end]
     } else {
         &region[cursor + len..]
     };
@@ -128,19 +142,34 @@ fn read_size_vint(b: &[u8]) -> Option<(usize, Option<usize>)> {
     if b.len() < width {
         return None;
     }
-    // Zero out the marker bit (bit 8-width).
+    // Zero out the length-marker bit. For a width-`w` VINT the first byte
+    // holds `w-1` leading zeros then the marker `1` (RFC 8794 §4.2), so the
+    // marker is the `(8-w)`-th bit from the right. `8 - w` is in `1..=7` for
+    // every valid width `1..=8`, so `1u8 << (8 - w)` never shifts off a bit
+    // and never underflows — unlike the earlier `7 - width + 1`, which
+    // underflowed to `0..6` for `width == 8` and panicked (attacker bytes can
+    // set any width).
+    let marker: u8 = 1u8 << (8 - width);
+    // A size VINT's value field is `7 * w` bits in total (RFC 8794 §4.5): the
+    // marker bit is data-free in the first byte and the remaining `w-1` bytes
+    // each carry a full 8; `7 * 8 == 56`, the width-8 maximum. Decode into a
+    // `u64` so the `(1 << bits) - 1` "all-ones unknown-size" test never
+    // overflows on a 32-bit `usize` target (where `1usize << 35` for width 5
+    // would otherwise panic or mask).
     let bits = width * 7;
-    let marker: u8 = 1 << (7 - width + 1);
-    let mut v: usize = (first & !marker) as usize;
+    let mut v: u64 = u64::from(first & !marker);
     for &byte in &b[1..width] {
-        v = (v << 8) | byte as usize;
+        v = (v << 8) | u64::from(byte);
     }
-    // "Unknown size": all payload bits set + width's implied max.
-    let max = if width > 0 { (1usize << bits) - 1 } else { 0 };
+    // "Unknown size": every payload bit set = this width's all-ones value.
+    let max: u64 = (1u64 << bits) - 1;
     if v == max {
         Some((width, None))
     } else {
-        Some((width, Some(v)))
+        // A known size that does not fit a `usize` (possible only in the last
+        // two widths on a 32-bit target) cannot be addressed into a slice, so
+        // abort the element walk — the header is unreadable on this target.
+        Some((width, Some(usize::try_from(v).ok()?)))
     }
 }
 
@@ -151,5 +180,75 @@ fn vint_width(first: u8) -> Option<usize> {
         Some(width)
     } else {
         None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn fixture_bytes(rel: &str) -> std::vec::Vec<u8> {
+        std::fs::read(std::format!("{}/../{}", env!("CARGO_MANIFEST_DIR"), rel))
+            .unwrap_or_else(|e| panic!("failed to read {rel}: {e}"))
+    }
+
+    /// Finding 1: a 12-byte input whose size VINT width is 8 must never panic.
+    ///
+    /// `1A 45 DF A3 | 01 00 00 00 00 00 00 00` is the EBML magic followed by a
+    /// size VINT whose first byte `0x01` implies width 8 (seven leading zeros).
+    /// The old marker arithmetic `1 << (7 - width + 1)` underflowed for
+    /// `width == 8` (`7usize - 8usize`) and panicked with "attempt to subtract
+    /// with overflow"; release builds only survived because the double wrap
+    /// happened to land on the answer. The width-8 (7 leading zeros) case is
+    /// attacker-reachable, so it must be exercised, not assumed away.
+    #[test]
+    fn width_8_size_vint_does_not_panic() {
+        let input: [u8; 12] = [
+            0x1A, 0x45, 0xDF, 0xA3, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        ];
+        let p = crate::probe(&input);
+        // No panic is the core assertion; the specific verdict just confirms the
+        // walk still concluded something sane (magic + no DocType -> STRONG).
+        assert!(matches!(
+            p,
+            crate::Probe::Identified {
+                confidence: crate::Confidence::STRONG,
+                ..
+            }
+        ));
+    }
+
+    /// Finding 1: every VINT width 1..=8 must decode a size without panic or
+    /// underflow. A first byte with `w-1` leading zeros (so `vint_width == w`)
+    /// followed by zeros yields a valid, decodable size VINT.
+    #[test]
+    fn every_vint_width_decodes_without_panic() {
+        for width in 1..=8u32 {
+            // `vint_width(first) = leading_zeros + 1 = width` needs the top
+            // `width` bits of `first` clear except a `1` at position
+            // `8 - width` — a single `1 << (8 - width)`.
+            let first = 1u8 << (8 - width);
+            // The remaining (width-1) bytes are zero, so the decoded value is
+            // just first's low bits after the marker is cleared (0).
+            let mut buf = [0u8; 8];
+            buf[0] = first;
+            let (got_width, size) = read_size_vint(&buf).expect("width {width} must decode");
+            assert_eq!(got_width, width as usize);
+            // The marker bit is cleared, so the value is 0 — a *known* size.
+            assert_eq!(size, Some(0));
+        }
+    }
+
+    /// Finding 4: a 3-byte prefix of a real Matroska file (1 byte short of the
+    /// 4-byte EBML magic) is `Insufficient`, not `Unknown` — a truncated .mkv
+    /// must be told to read more, never to stop.
+    #[test]
+    fn short_magic_prefix_is_insufficient() {
+        let data = fixture_bytes("fixtures/mkv/h264_aac.mkv");
+        let region = &data[..EBML_MAGIC.len() - 1];
+        match probe(region, region.len()) {
+            Outcome::Insufficient(need) => assert_eq!(need, EBML_MAGIC.len()),
+            other => panic!("3-byte EBML prefix must be Insufficient(4), got {other:?}"),
+        }
     }
 }

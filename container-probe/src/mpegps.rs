@@ -43,7 +43,13 @@ pub(crate) fn probe(data: &[u8], limit: usize) -> Outcome {
     debug_assert!(limit <= data.len(), "harness caps limit at data.len()");
     let region = &data[..limit];
 
-    if region.len() < PACK_HEADER_MIN_LEN || region[..4] != PACK_START_CODE {
+    if region.len() < PACK_HEADER_MIN_LEN {
+        // Shorter than a full pack header: cannot reach the marker bits, so a
+        // truncated .ps read a few bytes at a time is undecided (`Insufficient`),
+        // not `Unknown`.
+        return Outcome::Insufficient(PACK_HEADER_MIN_LEN);
+    }
+    if region[..PACK_START_CODE.len()] != PACK_START_CODE {
         return Outcome::None;
     }
 
@@ -107,5 +113,27 @@ mod drift {
             0xBA,
             "pack_start_code must end in BA (ISO/IEC 13818-1 §2.5.3.3)"
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn fixture_bytes(rel: &str) -> std::vec::Vec<u8> {
+        std::fs::read(std::format!("{}/../{}", env!("CARGO_MANIFEST_DIR"), rel))
+            .unwrap_or_else(|e| panic!("failed to read {rel}: {e}"))
+    }
+
+    /// Finding 4: a 13-byte prefix of a real MPEG-PS fixture (1 byte short of
+    /// the 14-byte pack header) is `Insufficient`, not `Unknown`.
+    #[test]
+    fn short_prefix_is_insufficient() {
+        let data = fixture_bytes("fixtures/ps/h264_ac3.ps");
+        let region = &data[..PACK_HEADER_MIN_LEN - 1];
+        match probe(region, region.len()) {
+            Outcome::Insufficient(need) => assert_eq!(need, PACK_HEADER_MIN_LEN),
+            other => panic!("13-byte MPEG-PS prefix must be Insufficient(14), got {other:?}"),
+        }
     }
 }

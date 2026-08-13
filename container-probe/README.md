@@ -29,7 +29,7 @@ candidate; the highest score wins.
 | ASF (`.asf`/`.wmv`) | 16-byte header GUID | `STRONG` (192) |
 | ADTS AAC (`.aac`/`.adts`) | frame-length chaining | `LATTICE_STRONG` (144) |
 | MP3 (`.mp3`) | frame-length chaining | `LATTICE_STRONG` (144) |
-| Annex B H.264/H.265 (`.h264`) | start-code NAL chaining | `LATTICE_STRONG` (144) |
+| Annex B H.264 (`.h264`) | start-code NAL chaining | `LATTICE_STRONG` (144) |
 
 ## Usage
 
@@ -79,6 +79,12 @@ where naive magic-byte counting fails:
 
 ## Known gaps
 
+- **Annex B detection is H.264 only.** HEVC (H.265) is **not** detected — HEVC
+  uses a 2-byte NAL header with `nal_unit_type` at bits `[6:1]`, which the H.264
+  1-byte-header probe does not parse, so an HEVC stream fails at the first NAL.
+  It is deliberately not implemented: this workspace does not implement a format
+  without a real fixture to test it against, and no HEVC Annex B fixture exists
+  in the repo.
 - **204-byte-stride TS** (DVB with Reed–Solomon parity) is covered only by a
   marked synthetic fixture — `fixtures/container-probe/PROVENANCE.md` explains
   why: no real DVB Reed–Solomon capture exists in this repository.

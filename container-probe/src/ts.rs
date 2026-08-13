@@ -2,9 +2,9 @@
 //!
 //! A **lattice** search rather than fixed-offset checks. For each candidate
 //! stride (188, 192, 204, 208) and each phase offset `0..stride` (bounded by
-//! the probe budget), we walk `phase + n*stride` and count the longest run of
-//! consecutive `TS_SYNC_BYTE`s. The `(stride, phase)` pair with the longest
-//! run wins.
+//! the stride itself — one phase per byte position within a packet), we walk
+//! `phase + n*stride` and count the longest run of consecutive `TS_SYNC_BYTE`s.
+//! The `(stride, phase)` pair with the longest run wins.
 //!
 //! - `>= 8` confirmations -> [`crate::Confidence::LATTICE_STRONG`].
 //! - `3..=7` -> [`crate::Confidence::LATTICE_WEAK`].
