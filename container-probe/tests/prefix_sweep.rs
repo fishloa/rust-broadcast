@@ -50,7 +50,9 @@ use std::path::PathBuf;
 const SWEEP_LIMIT: usize = 2048;
 
 fn repo_path(rel: &str) -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..").join(rel)
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join(rel)
 }
 
 /// Whether the *complete* file carries enough evidence to be identified.
@@ -71,8 +73,16 @@ enum WholeFile {
 /// A non-media file is deliberately absent: `Unknown` is the *correct* answer
 /// there, and that direction is covered by `tests/corpus_sweep.rs`.
 const REAL_FILES: &[(&str, Format, WholeFile)] = &[
-    ("fixtures/ts/h264_aac.ts", Format::MpegTs, WholeFile::Identifies),
-    ("fixtures/ts/france2.ts", Format::MpegTs, WholeFile::Identifies),
+    (
+        "fixtures/ts/h264_aac.ts",
+        Format::MpegTs,
+        WholeFile::Identifies,
+    ),
+    (
+        "fixtures/ts/france2.ts",
+        Format::MpegTs,
+        WholeFile::Identifies,
+    ),
     // 188 bytes: exactly ONE TS packet. The weak tier needs 3 sync
     // confirmations and the strong tier 8, so one packet cannot reach either.
     // Reporting `Insufficient { need_at_least: 1504 }` (188 * 8) is correct;
@@ -83,7 +93,11 @@ const REAL_FILES: &[(&str, Format, WholeFile)] = &[
         Format::MpegTs,
         WholeFile::TooShortToConclude,
     ),
-    ("fixtures/ts/pcr-wrap.ts", Format::MpegTs, WholeFile::Identifies),
+    (
+        "fixtures/ts/pcr-wrap.ts",
+        Format::MpegTs,
+        WholeFile::Identifies,
+    ),
     // 376 bytes: two TS packets, one short of the 3-sync weak threshold.
     (
         "fixtures/mpeg-ts/af-pcr-stuffing.ts",
@@ -100,9 +114,21 @@ const REAL_FILES: &[(&str, Format, WholeFile)] = &[
         Format::MpegTs,
         WholeFile::Identifies,
     ),
-    ("fixtures/mp4/h264_high.mp4", Format::Isobmff, WholeFile::Identifies),
-    ("fixtures/mp4/hevc_main.mp4", Format::Isobmff, WholeFile::Identifies),
-    ("fixtures/mp4/cenc.mp4", Format::Isobmff, WholeFile::Identifies),
+    (
+        "fixtures/mp4/h264_high.mp4",
+        Format::Isobmff,
+        WholeFile::Identifies,
+    ),
+    (
+        "fixtures/mp4/hevc_main.mp4",
+        Format::Isobmff,
+        WholeFile::Identifies,
+    ),
+    (
+        "fixtures/mp4/cenc.mp4",
+        Format::Isobmff,
+        WholeFile::Identifies,
+    ),
     (
         "fixtures/mp4/cmaf/av_frag.mp4",
         Format::Isobmff,
@@ -118,16 +144,36 @@ const REAL_FILES: &[(&str, Format, WholeFile)] = &[
         Format::Isobmff,
         WholeFile::Identifies,
     ),
-    ("fixtures/mkv/h264_aac.mkv", Format::Matroska, WholeFile::Identifies),
-    ("fixtures/mkv/vp9_opus.mkv", Format::Matroska, WholeFile::Identifies),
-    ("fixtures/webm/vorbis.webm", Format::WebM, WholeFile::Identifies),
-    ("fixtures/webm/vp9_opus.webm", Format::WebM, WholeFile::Identifies),
+    (
+        "fixtures/mkv/h264_aac.mkv",
+        Format::Matroska,
+        WholeFile::Identifies,
+    ),
+    (
+        "fixtures/mkv/vp9_opus.mkv",
+        Format::Matroska,
+        WholeFile::Identifies,
+    ),
+    (
+        "fixtures/webm/vorbis.webm",
+        Format::WebM,
+        WholeFile::Identifies,
+    ),
+    (
+        "fixtures/webm/vp9_opus.webm",
+        Format::WebM,
+        WholeFile::Identifies,
+    ),
     (
         "fixtures/mxf/op1a_mpeg2_pcm.mxf",
         Format::Mxf,
         WholeFile::Identifies,
     ),
-    ("fixtures/ps/h264_ac3.ps", Format::MpegPs, WholeFile::Identifies),
+    (
+        "fixtures/ps/h264_ac3.ps",
+        Format::MpegPs,
+        WholeFile::Identifies,
+    ),
     ("fixtures/flv/av.flv", Format::Flv, WholeFile::Identifies),
     (
         "fixtures/container-probe/pcm_s16le.wav",
@@ -244,7 +290,10 @@ fn no_prefix_of_a_real_file_is_identified_as_another_format() {
         }
     }
 
-    assert!(checked > 0, "no fixtures present — the sweep proved nothing");
+    assert!(
+        checked > 0,
+        "no fixtures present — the sweep proved nothing"
+    );
     assert!(
         failures.is_empty(),
         "a prefix identified as the wrong format sends the caller to the wrong \
@@ -262,7 +311,9 @@ fn every_real_file_identifies_in_full() {
     let mut checked = 0usize;
 
     for (rel, expected, whole) in REAL_FILES {
-        let Ok(data) = fs::read(repo_path(rel)) else { continue };
+        let Ok(data) = fs::read(repo_path(rel)) else {
+            continue;
+        };
         checked += 1;
         let got = container_probe::probe(&data);
         match (whole, &got) {
@@ -281,7 +332,10 @@ fn every_real_file_identifies_in_full() {
         }
     }
 
-    assert!(checked > 0, "no fixtures present — the sweep proved nothing");
+    assert!(
+        checked > 0,
+        "no fixtures present — the sweep proved nothing"
+    );
     assert!(
         failures.is_empty(),
         "a complete real file must identify as its own format:\n{}",

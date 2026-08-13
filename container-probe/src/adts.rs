@@ -224,7 +224,7 @@ mod tests {
     /// exercise the harness's cross-prober suppression rule, not to claim any
     /// real file does this (no corpus container has an ADTS chain > 1).
     ///
-    /// Without suppression this probes Ambiguous (MpegTs 144 vs AdtsAac 144);
+    /// Without suppression this probes Ambiguous (MpegTs 128 vs AdtsAac 128);
     /// with it, MpegTs. The assembly-level assertion lives in
     /// `tests/fixture_magic_es.rs`; here we confirm the ADTS prober itself
     /// fires directly (chain >= 16) on the TS payload.

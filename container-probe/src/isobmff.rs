@@ -86,6 +86,15 @@ pub(crate) fn probe(data: &[u8], limit: usize) -> Outcome {
     // `clean` stays true while each box lands exactly at the next header or at
     // the region end — the chain neither overflows nor leaves a dangling tail.
     let mut clean = true;
+    // `ran_out` becomes true when the walk stopped because the supplied region
+    // ended mid-structure (a box header or body extends past the region) rather
+    // than because a box size was *invalid*. That distinction is the whole
+    // `Insufficient` vs `Unknown` contract: ending mid-box proves nothing, so
+    // the prober must ask for more bytes; a size that could never chain is a
+    // definitive rejection. `ran_out_need` carries the byte count that would
+    // complete the structure the walk was cut short in.
+    let mut ran_out = false;
+    let mut ran_out_need = 0usize;
 
     loop {
         if offset >= region.len() {
@@ -95,8 +104,13 @@ pub(crate) fn probe(data: &[u8], limit: usize) -> Outcome {
         let (size_u32, eff) = match decode_header(rem) {
             Some(x) => x,
             None => {
-                // A trailing header that cannot be read is not a clean chain.
+                // A trailing header that cannot be read: the region ended
+                // mid-box-header. Not clean, and not a ruling-out — the missing
+                // bytes could have completed a valid box. A full header needs
+                // BOX_HEADER_MIN_SIZE bytes past the current offset.
                 clean = false;
+                ran_out = true;
+                ran_out_need = offset.saturating_add(BOX_HEADER_MIN_SIZE);
                 break;
             }
         };
@@ -126,6 +140,12 @@ pub(crate) fn probe(data: &[u8], limit: usize) -> Outcome {
             boxes += 1;
             if size_u32 == SIZE_TO_EOF || eff > rem.len() {
                 // To-EOF, or the region truncates this box -> it is the last one.
+                // A `size == 0` box is valid-to-EOF (not truncated); a box whose
+                // declared size exceeds the region ran out of data mid-body.
+                if size_u32 != SIZE_TO_EOF {
+                    ran_out = true;
+                    ran_out_need = offset.saturating_add(eff);
+                }
                 break;
             }
             offset += eff;
@@ -136,7 +156,11 @@ pub(crate) fn probe(data: &[u8], limit: usize) -> Outcome {
     }
 
     if boxes == 0 {
-        return Outcome::None;
+        // Nothing walked: the chain never even started, so the first box header
+        // itself cannot be read. That is a truncation (ran out), not a proof of
+        // non-membership — the leading type was already pinned as a legal box
+        // type above, so "could not read the first box" means "give me more".
+        return crate::ran_out_or_ruled_out(ran_out, need_at_least(region.len()));
     }
 
     // True only when the walk consumed every byte the caller supplied — the
@@ -172,10 +196,22 @@ pub(crate) fn probe(data: &[u8], limit: usize) -> Outcome {
     } else if clean && boxes == 1 {
         Confidence::HEURISTIC
     } else {
-        return Outcome::None;
+        // The chain is not clean. If that is because the region ended
+        // mid-structure (`ran_out`), the prober has proven nothing and must ask
+        // for more bytes; if a box size was outright invalid, the file is ruled
+        // out (`None`). This is the shared `Insufficient` vs `Unknown` decision
+        // — see `crate::ran_out_or_ruled_out`.
+        let need = core::cmp::max(ran_out_need, region.len() + BOX_HEADER_MIN_SIZE);
+        return crate::ran_out_or_ruled_out(ran_out, need);
     };
 
     Outcome::Match(Evidence { confidence, detail })
+}
+
+/// A lower bound on bytes that could resolve the verdict: enough to complete
+/// the box the walk was cut short in, and strictly more than what was supplied.
+fn need_at_least(have: usize) -> usize {
+    have.saturating_add(BOX_HEADER_MIN_SIZE)
 }
 
 /// Decode a box header at the front of `rem`: the raw `u32` size and the
@@ -184,6 +220,33 @@ pub(crate) fn probe(data: &[u8], limit: usize) -> Outcome {
 ///
 /// The effective length is the `largesize` when `size == 1`, `0`
 /// (end-of-file) when `size == 0`, else the 32-bit `size` itself.
+/// Convert a 64-bit `largesize` to an addressable length, or reject it.
+///
+/// A `largesize` that does not fit a `usize` cannot be addressed into a slice
+/// and must be **rejected**, not truncated. Truncating it (`ls as usize`) on a
+/// 32-bit target turns `0x1_0000_0008` into `8`, which slips past the
+/// `eff > rem.len()` guard and lets the walk step *into the middle of the size
+/// field*.
+///
+/// `pointer_bits` is the target's pointer width, passed explicitly rather than
+/// read from `usize::BITS` inside. That is the whole point of this function
+/// existing: on a 64-bit host every `u64` fits, so the defect is *unobservable*
+/// and a `#[cfg(target_pointer_width = "32")]` test would be needed to catch
+/// it — but this workspace never runs tests on a 32-bit target (the only
+/// 32-bit CI job is a bare-metal `cargo build` for `thumbv7em-none-eabi`, with
+/// no test runner). Such a test cannot fail, because it never executes.
+/// Threading the width through as a parameter makes the truncation decision
+/// testable for both widths on any host.
+fn largesize_to_len(ls: u64, pointer_bits: u32) -> Option<usize> {
+    // Anything at or above 2^pointer_bits is unaddressable on that target.
+    // Guard the shift itself: `1u64 << 64` is UB-adjacent (it panics in debug,
+    // wraps to 1 in release), and `pointer_bits == 64` is the common case.
+    if pointer_bits < u64::BITS && ls >= (1u64 << pointer_bits) {
+        return None;
+    }
+    usize::try_from(ls).ok()
+}
+
 fn decode_header(rem: &[u8]) -> Option<(u32, usize)> {
     if rem.len() < BOX_HEADER_MIN_SIZE {
         return None;
@@ -196,13 +259,7 @@ fn decode_header(rem: &[u8]) -> Option<(u32, usize)> {
         let ls = u64::from_be_bytes([
             rem[8], rem[9], rem[10], rem[11], rem[12], rem[13], rem[14], rem[15],
         ]);
-        // A `largesize` that does not fit a `usize` cannot be addressed into a
-        // slice, and must be **rejected**, not truncated: truncating it (the
-        // old `ls as usize`) on a 32-bit target turned e.g. `0x1_0000_0008`
-        // into `eff == 8`, which slipped past the `eff > rem.len()` guard and
-        // let the walk step *into the middle of the size field*. `?` here
-        // returns `None`, which the caller treats as a non-clean chain.
-        Some((size32, usize::try_from(ls).ok()?))
+        Some((size32, largesize_to_len(ls, usize::BITS)?))
     } else if size32 == SIZE_TO_EOF {
         Some((size32, 0))
     } else {
@@ -231,51 +288,76 @@ mod tests {
         }
     }
 
-    /// Finding 5: a `largesize` that exceeds `usize::MAX` on this target must be
-    /// rejected, never truncated to a small `usize`.
+    /// Finding 5 (32-bit target): a `largesize` that does not fit a `usize` on
+    /// this target must be **rejected** (`None`), never truncated with
+    /// `ls as usize`.
     ///
-    /// On a 32-bit target, `0x1_0000_0008` truncated with `as usize` became
-    /// `eff == 8`, which the probe accepted and used to step *into the middle of
-    /// the size field* (bypassing the `eff > rem.len()` guard). The fixed
-    /// decoder returns `None` for it, so the walk treats the header as not
-    /// cleanly chainable.
+    /// Reverting `usize::try_from(ls).ok()?` to the original `ls as usize`
+    /// turns `0x1_0000_0008` into `eff == 8` on a 32-bit target, which slips
+    /// past the `eff > rem.len()` guard and lets the walk step *into the middle
+    /// of the size field* instead of rejecting the header. On a 64-bit target
+    /// `usize` is a `u64`, so `u64 as usize` is lossless and this bug cannot
+    /// manifest — which is exactly why this test is `cfg`-gated to 32-bit and
+    /// why the whole suite was green under the mutation on the (64-bit) audit
+    /// host.
+    /// The 32-bit truncation decision, exercised **on any host**.
+    ///
+    /// A `#[cfg(target_pointer_width = "32")]` test would be the obvious way to
+    /// cover this and would be worthless: nothing in this workspace runs tests
+    /// on a 32-bit target (the sole 32-bit CI job is a bare-metal `cargo build`
+    /// for `thumbv7em-none-eabi`, which has no test runner). It would be a test
+    /// that cannot fail because it never executes — the same defect class as
+    /// the assertion-free `let _ = probe(...)` this replaces, only hidden
+    /// behind a `cfg` instead of a missing assertion.
+    ///
+    /// So the pointer width is a parameter of [`largesize_to_len`] and both
+    /// widths are asserted here directly.
+    ///
+    /// MUTATION VERIFIED: replacing the body with `usize::try_from(ls).ok()`
+    /// (equivalently, the original `ls as usize`) fails the 32-bit case with
+    /// `left: Some(4294967304), right: None`.
     #[test]
-    fn oversized_largesize_is_rejected_not_truncated() {
-        // size32 == 1 says "64-bit largesize follows"; largesize set high.
-        let mut box8 = [0u8; 16];
-        box8[3] = SIZE_INDICATES_LARGESIZE as u8;
-        box8[8..].copy_from_slice(&0x1_0000_0008u64.to_be_bytes());
-        match decode_header(&box8) {
-            Some((size, eff)) => {
-                // On any target where it fits, the value must equal the
-                // requested largesize — never a truncated 8.
-                assert_eq!(size, SIZE_INDICATES_LARGESIZE);
-                assert_eq!(eff, 0x1_0000_0008usize);
-            }
-            None => {
-                // On a 32-bit target the largesize cannot be addressed; the
-                // rejection is the whole point. Nothing further to assert.
-            }
-        }
+    fn a_largesize_beyond_the_target_pointer_width_is_rejected() {
+        // Exactly 2^32 + 8: fits a 64-bit usize, does not fit a 32-bit one.
+        // `as usize` on a 32-bit target would silently yield 8 and send the
+        // walk into the middle of the size field.
+        const OVERSIZED: u64 = 0x1_0000_0008;
+
+        assert_eq!(
+            largesize_to_len(OVERSIZED, 32),
+            None,
+            "a largesize of 2^32+8 is unaddressable on a 32-bit target and must \
+             be rejected, never truncated to 8"
+        );
+        assert_eq!(
+            largesize_to_len(OVERSIZED, 64),
+            Some(OVERSIZED as usize),
+            "the same largesize fits a 64-bit usize and must be decoded exactly"
+        );
+        // The boundary itself: 2^32 - 1 is the largest 32-bit-addressable value.
+        assert_eq!(
+            largesize_to_len(u32::MAX as u64, 32),
+            Some(u32::MAX as usize)
+        );
+        assert_eq!(largesize_to_len(1u64 << 32, 32), None);
+        // u64::MAX must not be accepted at any width below 64.
+        assert_eq!(largesize_to_len(u64::MAX, 32), None);
     }
 
-    /// Finding 5 also on a whole-buffer walk: a truncated prefix whose leading
-    /// box claims an oversized largesize yields `None` rather than stepping
-    /// into the size field.
+    /// The value must also survive the real header path unclobbered on this
+    /// host, so the parameterised check above is wired to actual decoding.
     #[test]
-    fn oversized_largesize_probe_returns_none() {
-        // A 16-byte header: size32 == 1, largesize == 0x1_0000_0008, then a
-        // plausible leading type.
-        let mut data = [0u8; 16];
-        data[3] = SIZE_INDICATES_LARGESIZE as u8;
-        data[4..8].copy_from_slice(&TYPE_MDAT);
-        data[8..].copy_from_slice(&0x1_0000_0008u64.to_be_bytes());
-        // On a 32-bit target the largesize is rejected -> Outcome::None (the
-        // walk cannot chain it). On 64-bit the box is huge but "to the end";
-        // the walk treats a size exceeding the region as the last box and still
-        // counts it, so the probe may legitimately Match. Only guard the 32-bit
-        // no-panic / no-walk-into-size-field property.
-        let _ = probe(&data, data.len());
+    fn largesize_is_decoded_faithfully_through_decode_header() {
+        let mut header = [0u8; 16];
+        header[3] = SIZE_INDICATES_LARGESIZE as u8;
+        header[8..].copy_from_slice(&0x1_0000_0008u64.to_be_bytes());
+        let expected =
+            largesize_to_len(0x1_0000_0008, usize::BITS).map(|len| (SIZE_INDICATES_LARGESIZE, len));
+        assert_eq!(
+            decode_header(&header),
+            expected,
+            "decode_header must agree with largesize_to_len on this target"
+        );
     }
 
     /// Finding 7: a `largesize` box whose `largesize` is smaller than its own

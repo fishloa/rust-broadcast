@@ -164,6 +164,12 @@ fn annexb_nal_chain(data: &[u8]) -> (usize, bool) {
             // codes — the stream was cut off before a terminating start code.
             return (cnt, true);
         }
+        if i + sc >= n {
+            // A start code is present but its NAL header byte lies past the
+            // region end: the buffer ended mid-NAL-header. The chain has not
+            // been ruled out — it ran out of data, so report truncated.
+            return (cnt, true);
+        }
         // Validate the NAL header immediately after this start code.
         if !valid_nal(data, i) {
             return (cnt, false);
@@ -203,7 +209,7 @@ mod tests {
     /// NALs), misidentifying the PS as Annex B. Observed under the mutation:
     /// ```
     /// h264_ac3.ps must NOT match AnnexB (forbidden bit),
-    ///   got Match(Evidence { confidence: Confidence(144), detail: None })
+    ///   got Match(Evidence { confidence: Confidence(128), detail: None })
     /// ```
     #[test]
     fn forbidden_zero_bit_keeps_ps_out_of_annexb() {
