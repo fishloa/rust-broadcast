@@ -28,9 +28,13 @@
   rather than the decode-order last sample — a track with B-frames reorders, so
   a decode-order basis would step backwards across the loop.
 
-  **Known limit:** the route path does not pace samples. It publishes the parsed
-  file and lets the segmenter drive, sizing the sample ring to the parsed file,
-  so **a long asset holds its parsed samples in memory**. Suited to slates and
+  Samples are paced to wall clock on both the standalone reader and the route
+  path, in every `pace` x `loop` combination, including across the loop
+  boundary. Unpaced, the route republished the whole file every 10 ms (~300x
+  realtime), leaving the playlist's segment cadence meaningless to a player.
+
+  **Known limit:** a long asset holds its parsed samples in memory — the file is
+  demuxed in one pass and the sample ring is sized to it. Suited to slates and
   short assets; a long-file path would need incremental demux.
 
 ### Note on scope

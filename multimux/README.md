@@ -31,7 +31,7 @@ Each route names one ingest transport (`InputSpec`):
 | `dash_pull` | Pull a remote DASH MPD and its segments | optional `auth` |
 | `smooth_pull` | Pull a remote Smooth Streaming manifest and its fragments | optional `auth` |
 | `rtmp` | **Push** ingest: binds a listen port and accepts RTMP publishers (FLV), via `rtmp-runtime` | `app`/`stream_key` filters; concurrent publishers |
-| `file` | A local media file on disk, identified with `container-probe` and demuxed by the matching `transmux` demuxer | `loop` (default `true`); a long asset holds its parsed samples in memory — see the crate CHANGELOG |
+| `file` | A local media file on disk, identified with `container-probe` and demuxed by the matching `transmux` demuxer | `loop` (default `true`); paced to wall clock, including across the loop point; a long asset holds its parsed samples in memory — see the crate CHANGELOG |
 
 `rtsp` accepts `rtsps://` for RTSP over TLS. `rtmp` is the only *push* input —
 nothing is dialled out to; it binds and accepts, and one stalled publisher does

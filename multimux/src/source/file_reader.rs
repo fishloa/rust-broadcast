@@ -47,7 +47,7 @@
 //! and the wall-clock cadence continues seamlessly because pacing is relative
 //! to the same continuous `(pts + offset)` timeline. This is the property the
 //! loop tests assert (and a mutation hides it; see
-//! `tests/file_reader.rs`'s `loop_preserves_monotonicity`).
+//! `tests/file_reader.rs`'s `loop_preserves_dts_monotonicity_across_boundary`).
 //!
 //! With `loop_file: false`, the reader stops after the first pass and reports
 //! no further samples.
@@ -109,7 +109,7 @@ pub enum FileReaderError {
     /// reader always probes the WHOLE file, so there are no more bytes to
     /// supply: the file is simply too short to identify.
     #[error(
-        "file is too short to identify: {file_bytes} bytes, and the probe          needs at least {need_at_least}"
+        "file is too short to identify: {file_bytes} bytes, and the probe needs at least {need_at_least}"
     )]
     FileTooShortToIdentify {
         /// The minimum buffer length the probe asked for.
@@ -735,9 +735,9 @@ fn file_type_label(ft: std::fs::FileType) -> &'static str {
 /// [`container_probe::Probe`]; the ISOBMFF layout is read from the probe's own
 /// [`container_probe::Detail`] — never re-derived here.
 ///
-/// Returns [`Err`] for an `Ambiguous`/`Insufficient`/`Unknown`-grade container
-/// can't reach here (those are rejected before this), and for the
-/// "identified but unsupported as a playout source" formats — each with a
+/// Returns [`Err`] only for the "identified but unsupported as a playout
+/// source" formats. An `Ambiguous`/`Insufficient`/`Unknown` verdict cannot
+/// reach here — those are rejected earlier — so each error carries a
 /// distinct [`FileReaderError`].
 pub fn select_demuxer(
     format: Format,
@@ -831,8 +831,6 @@ fn media_into_parsed(media: Media) -> Result<ParsedFile, DemuxError> {
     })
 }
 
-/// Internal demux phase error — flattened into [`FileReaderError`] variants
-/// at the `read_probe_demux_once` boundary.
 /// Internal demux phase error — flattened into [`FileReaderError`] variants
 /// at the `read_probe_demux_once` boundary.
 enum DemuxError {
@@ -1393,7 +1391,7 @@ pub(crate) async fn run_file_source(
             std::future::pending::<()>().await;
         }
 
-        // Pace: sleep until the next sample is due (nor round at 100 Hz).
+        // Pace: sleep until the next sample is due, rather than polling at 100 Hz.
         match driver.session().next_due() {
             Some(due) => {
                 let now = std::time::Instant::now();

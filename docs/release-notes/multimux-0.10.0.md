@@ -38,11 +38,21 @@ opening samples.
 
 ## Known limit
 
-**The route path does not pace samples.** It publishes the parsed file and lets
-the segmenter drive, sizing the sample ring to the parsed file — so **a long
-asset holds its parsed samples in memory**. This suits slates, idents and short
-filler. A long-file path needs incremental demux, which this release does not
-attempt.
+**A long asset holds its parsed samples in memory.** The file is demuxed in one
+pass and the sample ring sized to it, so memory scales with asset length. This
+suits slates, idents and short filler. A long-file path needs incremental
+demux, which this release does not attempt.
+
+Pacing is *not* a limitation. The route path paces to wall clock, across the
+loop boundary, in every `pace` x `loop` combination. An earlier draft of this
+note listed "the route path does not pace samples" as a permanent limit; that
+described the first implementation and was fixed before release. Unpaced, the
+route republished the whole file every 10 ms — roughly 300x realtime — which
+made the playlist's segment cadence meaningless to a player. Covered by
+`file_route_loop_true_paces_near_realtime` and
+`file_route_loop_true_paces_past_first_pass`; the latter exists because the
+original cadence test measured only inside pass 1 and so could not see the
+defect at all.
 
 ## Scope note
 

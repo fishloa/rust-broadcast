@@ -205,15 +205,6 @@ impl<'a> Parse<'a> for AtmosFrame<'a> {
 
         let mut offset = br.bits_read() / 8;
         // `sub_element_count` is a Plex field read straight from the input, so
-        // it is attacker-controlled and unbounded. Reserving from it directly
-        // is an unbounded allocation: a crafted count made this ask the
-        // allocator for 0x37cbb80000 bytes (~240 GB), found by the CI fuzz run.
-        //
-        // Every sub-element consumes at least one byte of `body`, so the count
-        // can never exceed the bytes remaining. Reserve the smaller of the two
-        // — the parse still fails on the first out-of-bounds element, but it
-        // fails without trying to allocate first.
-        // `sub_element_count` is a Plex field read straight from the input, so
         // it is attacker-controlled and effectively unbounded — Plex escalates
         // 8 -> 16 -> 32 bits, so twelve bytes encode a count of 0x7FFF_FFFF.
         //
