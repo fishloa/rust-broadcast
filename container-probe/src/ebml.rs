@@ -53,41 +53,67 @@ pub(crate) fn probe(data: &[u8], limit: usize) -> Outcome {
     }
 
     match find_doc_type(region) {
-        Some(doc_type) => Outcome::Match(Evidence {
+        DocTypeResult::Found(doc_type) => Outcome::Match(Evidence {
             confidence: Confidence::CERTAIN,
             detail: Ebml { doc_type },
         }),
-        None => {
-            // Magic at offset 0 but the header would not yield a DocType. That
-            // is still unambiguous EBML (STRONG), just with no DocType to name.
-            Outcome::Match(Evidence {
-                confidence: Confidence::STRONG,
-                detail: Ebml {
-                    doc_type: DocType::Other,
-                },
-            })
-        }
+        // The header walk ran off the end of the supplied region before it
+        // could read the DocType. `DocType` is what distinguishes `WebM` from
+        // `Matroska`, so concluding here would send the caller to the wrong
+        // demuxer — this must be `Insufficient` ("read more"), not a confident
+        // guess at the more general format (the shared `Insufficient` vs
+        // `Unknown` decision).
+        DocTypeResult::Truncated => Outcome::Insufficient(region.len() + 1),
+        // Magic at offset 0 but the header was fully walked and holds no
+        // DocType. That is still unambiguous EBML (STRONG), just with no
+        // DocType to name.
+        DocTypeResult::Absent => Outcome::Match(Evidence {
+            confidence: Confidence::STRONG,
+            detail: Ebml {
+                doc_type: DocType::Other,
+            },
+        }),
     }
 }
 
-/// Walk the EBML header element to read its `DocType`. Returns `None` if the
-/// DocType element is absent or its string cannot be read.
-fn find_doc_type(region: &[u8]) -> Option<DocType> {
+/// The outcome of walking the EBML header for its `DocType`.
+enum DocTypeResult {
+    /// A `DocType` element was read.
+    Found(DocType),
+    /// The walk ran off the end of the supplied region mid-structure, so the
+    /// `DocType` could not yet be read.
+    Truncated,
+    /// The region was fully walked and held no (or an unreadable) `DocType`.
+    Absent,
+}
+
+/// Walk the EBML header element to read its `DocType`. See [`DocTypeResult`].
+///
+/// `Truncated` is reported whenever a VINT or element body extends past the
+/// end of `region` (the prober ran out of data before the DocType was
+/// readable); `Absent` is reported only when the header was examined and the
+/// DocType element is missing or holds a non-UTF-8 string.
+fn find_doc_type(region: &[u8]) -> DocTypeResult {
     // The 4-byte EBML element ID is followed by a size VINT bounding its data.
     let cursor = EBML_MAGIC.len(); // 4
-    // Read the EBML header element's size VINT.
-    let (len, size) = read_size_vint(&region[cursor..])?;
+    // Read the EBML header element's size VINT. An empty or too-short tail is a
+    // truncation, not an absence.
+    let (len, size) = match read_size_vint(&region[cursor..]) {
+        Some(x) => x,
+        None => return DocTypeResult::Truncated,
+    };
     // The header data runs for `size` bytes (or to region end when unknown).
+    // A known `size` that extends past the region is a truncation: the header
+    // body the DocType lives in is not fully present.
     let data = if let Some(sz) = size {
         // `cursor + len + sz` cannot be trusted to fit a `usize` in one
         // addition on every target: it is the attacker-controlled `size`, so
         // add it checked (as line 92 does) and clamp to the region.
         let body_start = cursor + len; // <= region.len(), guaranteed by read_size_vint
-        let end = match body_start.checked_add(sz) {
-            Some(e) => e.min(region.len()),
-            None => region.len(),
-        };
-        &region[body_start..end]
+        match body_start.checked_add(sz) {
+            Some(e) if e <= region.len() => &region[body_start..e],
+            _ => return DocTypeResult::Truncated,
+        }
     } else {
         &region[cursor + len..]
     };
@@ -95,9 +121,15 @@ fn find_doc_type(region: &[u8]) -> Option<DocType> {
     // Walk the header's child elements looking for DocType.
     let mut off = 0usize;
     while off < data.len() {
-        let (id_len, id) = read_id_vint(&data[off..])?;
+        let (id_len, id) = match read_id_vint(&data[off..]) {
+            Some(x) => x,
+            None => return DocTypeResult::Truncated,
+        };
         let after_id = off + id_len;
-        let (esz_len, esz) = read_size_vint(&data[after_id..])?;
+        let (esz_len, esz) = match read_size_vint(&data[after_id..]) {
+            Some(x) => x,
+            None => return DocTypeResult::Truncated,
+        };
         let value_start = after_id + esz_len;
         let value_end = match esz {
             Some(sz) => {
@@ -105,15 +137,18 @@ fn find_doc_type(region: &[u8]) -> Option<DocType> {
                 // extends past it (or overflows) is malformed.
                 match value_start.checked_add(sz) {
                     Some(end) if end <= data.len() => end,
-                    _ => return None,
+                    _ => return DocTypeResult::Truncated,
                 }
             }
             None => data.len(),
         };
         if id == ID_DOC_TYPE {
             let value = &data[value_start..value_end];
-            let text = core::str::from_utf8(value).ok()?;
-            return Some(match text {
+            let text = match core::str::from_utf8(value) {
+                Ok(t) => t,
+                Err(_) => return DocTypeResult::Absent,
+            };
+            return DocTypeResult::Found(match text {
                 DOC_TYPE_WEBM => DocType::Webm,
                 DOC_TYPE_MATROSKA => DocType::Matroska,
                 _ => DocType::Other,
@@ -121,7 +156,7 @@ fn find_doc_type(region: &[u8]) -> Option<DocType> {
         }
         off = value_end;
     }
-    None
+    DocTypeResult::Absent
 }
 
 /// Read an EBML **element-ID** VINT: the whole encoded value including the

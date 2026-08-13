@@ -4,7 +4,7 @@
 //! Confidences below are what the crate actually measures on the real fixtures,
 //! not assumed: FLV/WAV/Ogg/ASF are magic-only `STRONG` (192); the three
 //! elementary-stream fixtures each chain enough frames/NALs for `LATTICE_STRONG`
-//! (144). Fixture paths are workspace-relative (joined to `CARGO_MANIFEST_DIR`).
+//! (128). Fixture paths are workspace-relative (joined to `CARGO_MANIFEST_DIR`).
 
 use container_probe::{Confidence, Format, Probe};
 use std::fs;
@@ -72,7 +72,7 @@ fn asf_is_asf() {
 }
 
 // ---------------------------------------------------------------------------
-// Elementary streams (LATTICE_STRONG, 144, by length chaining).
+// Elementary streams (LATTICE_STRONG, 128, by length chaining).
 // ---------------------------------------------------------------------------
 
 #[test]

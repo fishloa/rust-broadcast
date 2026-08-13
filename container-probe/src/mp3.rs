@@ -88,7 +88,17 @@ pub(crate) fn probe(data: &[u8], limit: usize) -> Outcome {
         });
     }
     if longest == 0 {
-        // No valid MP3 frame header anywhere -> nothing to build on.
+        // No valid MP3 frame header was examined. That only rules MP3 out when
+        // the region *was* long enough to have carried one: a leading ID3v2 tag
+        // whose declared length extends past the region means the audio frames
+        // begin beyond what the caller supplied, so the prober ran out of data
+        // before it ever reached a frame position — `Insufficient`, not `None`
+        // (the shared `Insufficient` vs `Unknown` decision).
+        if let Some(skip) = id3_skip(region)
+            && skip > region.len()
+        {
+            return Outcome::Insufficient(core::cmp::max(skip, region.len() + 1));
+        }
         return Outcome::None;
     }
     // A partial chain of 1..=(WEAK-1) frames: `Insufficient` only when it ended
@@ -130,18 +140,32 @@ fn longest_mp3_chain(data: &[u8]) -> (usize, bool, usize, usize) {
             let mut p = i;
             let mut run = 0usize;
             let mut truncated = false;
-            while let Some(l) = mp3_frame_len(data, p) {
-                run += 1;
-                if run >= MP3_MIN_CHAIN_STRONG {
-                    return (run, false, i, first_len);
+            loop {
+                match mp3_frame_len(data, p) {
+                    Some(l) => {
+                        run += 1;
+                        if run >= MP3_MIN_CHAIN_STRONG {
+                            return (run, false, i, first_len);
+                        }
+                        if p + l > n {
+                            // The frame's body extends past the buffer: a genuine
+                            // truncation (the stream was cut mid-frame).
+                            truncated = true;
+                            break;
+                        }
+                        p += l;
+                    }
+                    None => {
+                        // No valid header at `p`. If a full header could not have
+                        // been read here (the region ended within it), the chain
+                        // ran out of data rather than being ruled out — the next
+                        // frame's header is simply not fully visible yet.
+                        if p + MP3_HEADER_LEN > n {
+                            truncated = true;
+                        }
+                        break;
+                    }
                 }
-                if p + l > n {
-                    // The frame's body extends past the buffer: a genuine
-                    // truncation (the stream was cut mid-frame).
-                    truncated = true;
-                    break;
-                }
-                p += l;
             }
             if run > best || (run == best && truncated) {
                 best = run;

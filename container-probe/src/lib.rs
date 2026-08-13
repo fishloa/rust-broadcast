@@ -576,6 +576,33 @@ enum Outcome {
     None,
 }
 
+/// The single shared decision every prober must make: is "no match" a *proof of
+/// non-membership* — or merely the walk *running off the end of the supplied
+/// region* mid-structure?
+///
+/// This is the whole `Insufficient` vs `Unknown` contract in one place. The
+/// [`Probe::Unknown`] branch means "stop, more bytes will not help", which is
+/// only ever true when the prober examined data it *fully saw* and that data is
+/// invalid for the format. If the prober would have kept walking had the buffer
+/// been longer, it has proven nothing and must answer [`Outcome::Insufficient`]
+/// with `need` — a lower bound on bytes that could change the verdict.
+///
+/// `ran_out` signals which of the two happened: `true` when the prober stopped
+/// because the region ended mid-structure (→ [`Outcome::Insufficient`], "read
+/// more"), `false` when it examined the data and ruled the format out
+/// (→ [`Outcome::None`], "stop"). Re-deciding this judgement separately in
+/// each of the twelve probers is what let the contract break repeatedly at
+/// different lengths on different formats; it lives here so the only question a
+/// prober answers is the factual one — "did I run out of bytes?" — never the
+/// policy one.
+pub(crate) fn ran_out_or_ruled_out(ran_out: bool, need: usize) -> Outcome {
+    if ran_out {
+        Outcome::Insufficient(need)
+    } else {
+        Outcome::None
+    }
+}
+
 /// A registered prober. Each prober is a pure function over a slice read no
 /// further than `limit` bytes.
 type Prober = fn(&[u8], limit: usize) -> Outcome;

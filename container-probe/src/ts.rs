@@ -160,9 +160,20 @@ pub(crate) fn probe(data: &[u8], limit: usize) -> Outcome {
         None => {
             // No lane reached the weak threshold.
             if best_observed_run == 0 {
-                // No sync byte anywhere in the region — nothing to build on,
-                // and more bytes will not help.
-                return Outcome::None;
+                // No sync byte anywhere in the region. That only proves "not
+                // TS" if the region was long enough that a real TS *must* have
+                // shown a sync: a TS stream syncs at least once every smallest
+                // stride (188 bytes), so a region of `TS_PACKET_SIZE` bytes or
+                // more with no sync byte at all can never be TS. A region
+                // shorter than one packet has simply not examined a full packet
+                // yet — e.g. `ts_midpacket_phase.ts` holds its first `0x47` at
+                // offset 111, so every prefix `16..=111` contains no sync but is
+                // still a prefix of a genuine TS. That is `Insufficient`, not
+                // `None`: the shared `Insufficient` vs `Unknown` decision.
+                return crate::ran_out_or_ruled_out(
+                    region.len() < TS_PACKET_SIZE,
+                    need_at_least(region.len()),
+                );
             }
             // A coherent partial lattice exists (>= 1 sync). It is
             // `Insufficient` only if the region is too short to have proven

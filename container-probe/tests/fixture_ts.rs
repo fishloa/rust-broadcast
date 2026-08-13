@@ -26,17 +26,14 @@ const LATTICE_STRONG: Confidence = Confidence::LATTICE_STRONG;
 /// # Mutation proof
 ///
 /// Removing the 192 stride from `TS_STRIDES` (and dropping the array length to
-/// 3) breaks this test. Re-measured after the confidence/coverage fix, the
-/// file is then `Unknown`:
+/// 3) breaks this test. Re-measured after the confidence/coverage fix and the
+/// round-3 `Insufficient`-contract fix, the file then probes:
 /// ```
-/// assertion `left == right` failed: probe mismatch
-///   left: Unknown
-///   right: Identified { format: MpegTs, confidence: Confidence(144),
-///          detail: Ts { stride: 192, phase: 4 } }
+/// probe mismatch: Insufficient { need_at_least: 83098 }
 /// ```
 /// because no remaining stride's lattice reaches the weak threshold. (Earlier
-/// this surfaced as `Insufficient { need_at_least: 55484 }`, before defects 1-2
-/// changed the no-candidate branch.) The stride was restored.
+/// revisions surfaced first `Unknown`, then `Insufficient { need_at_least: 55484 }`,
+/// as the no-candidate branch changed.) The stride was restored.
 #[test]
 fn m2ts_192_stride() {
     let p = probe_fixture("fixtures/container-probe/m2ts_192.m2ts");
@@ -51,16 +48,14 @@ fn m2ts_192_stride() {
 /// ever probed for each stride — makes this file fail to identify as TS,
 /// because the capture begins 111 bytes into a packet and there is no `0x47`
 /// at offset 0. Observed failure (re-measured after the confidence/coverage
-/// fix; with the loop collapsed to `for phase in 0..0`):
-/// `cargo test -p container-probe` panicked with
+/// fix and the round-3 `Insufficient`-contract fix; with the loop collapsed to
+/// `for phase in 0..0`):
 /// ```
-/// assertion `left == right` failed: probe mismatch
-///   left: Unknown
-///   right: Identified { format: MpegTs, confidence: Confidence(144),
-///          detail: Ts { stride: 188, phase: 111 } }
+/// probe mismatch: Insufficient { need_at_least: 66686 }
 /// ```
-/// (Earlier this mutation surfaced as `Insufficient { need_at_least: 65724 }`,
-/// before defects 1-2 changed the no-candidate branch.) The loop was restored.
+/// (Earlier this mutation surfaced first as `Unknown`, then as
+/// `Insufficient { need_at_least: 65724 }`, before the no-candidate branch
+/// changed.) The loop was restored.
 #[test]
 fn ts_midpacket_phase() {
     let p = probe_fixture("fixtures/container-probe/ts_midpacket_phase.ts");
