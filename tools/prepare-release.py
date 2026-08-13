@@ -180,6 +180,66 @@ def verify(pairs: list[tuple[str, str]]) -> int:
     return subprocess.call([sys.executable, str(ROOT / "tools" / "crates-io.py"), "check", *args])
 
 
+def restamp_dates(pairs: list[tuple[str, str]], apply: bool) -> int:
+    """Set every CHANGELOG heading and release-note `_Released_` line for this
+    wave to today.
+
+    A wave staged over several days ends up with headings dated whenever each
+    crate happened to be prepared -- this wave carried a mix of 2026-08-12 and
+    2026-08-13 while the code kept changing. Every one of those dates is a claim
+    about when the crate was PUBLISHED, and all of them were wrong, because
+    nothing had been published at all.
+
+    The dates are therefore not set when the changelog is cut; they are stamped
+    at sign-off, in one command, so they agree with each other and with reality.
+    Run this immediately before pushing the tags.
+    """
+    rc = 0
+    for crate, version in pairs:
+        ch = ROOT / crate / "CHANGELOG.md"
+        if ch.is_file():
+            text = ch.read_text()
+            pat = re.compile(rf"^## \[{re.escape(version)}\] - \d{{4}}-\d{{2}}-\d{{2}}\s*$", re.M)
+            m = pat.search(text)
+            if not m:
+                print(f"  {crate}: no dated `## [{version}]` heading to restamp")
+                rc = 1
+            else:
+                was = m.group(0).strip()
+                new = f"## [{version}] - {TODAY}"
+                if was == new:
+                    print(f"  {crate}: CHANGELOG already {TODAY}")
+                else:
+                    if apply:
+                        ch.write_text(pat.sub(new, text, count=1))
+                    print(f"  {crate}: CHANGELOG {was} -> {new}")
+        else:
+            print(f"  {crate}: NO CHANGELOG")
+            rc = 1
+
+        note = ROOT / "docs" / "release-notes" / f"{crate}-{version}.md"
+        if note.is_file():
+            text = note.read_text()
+            pat = re.compile(r"^_Released \d{4}-\d{2}-\d{2}\._\s*$", re.M)
+            m = pat.search(text)
+            if not m:
+                print(f"  {crate}: release note has no `_Released <date>._` line")
+                rc = 1
+            else:
+                was = m.group(0).strip()
+                new = f"_Released {TODAY}._"
+                if was == new:
+                    print(f"  {crate}: release note already {TODAY}")
+                else:
+                    if apply:
+                        note.write_text(pat.sub(new, text, count=1))
+                    print(f"  {crate}: note {was} -> {new}")
+        else:
+            print(f"  {crate}: NO release note docs/release-notes/{crate}-{version}.md")
+            rc = 1
+    return rc
+
+
 def main(argv: list[str]) -> int:
     args = argv[1:]
     if not args:
@@ -191,6 +251,10 @@ def main(argv: list[str]) -> int:
         mode, args = "check", args[1:]
     elif args[0] == "--verify":
         mode, args = "verify", args[1:]
+    elif args[0] == "--restamp":
+        mode, args = "restamp", args[1:]
+    elif args[0] == "--restamp-check":
+        mode, args = "restamp-check", args[1:]
 
     pairs: list[tuple[str, str]] = []
     for a in args:
@@ -201,6 +265,11 @@ def main(argv: list[str]) -> int:
 
     if mode == "verify":
         return verify(pairs)
+
+    if mode in ("restamp", "restamp-check"):
+        doing = mode == "restamp"
+        print(f"{'RESTAMPING' if doing else 'DRY RUN --'} release dates to {TODAY}\n")
+        return restamp_dates(pairs, doing)
 
     apply = mode == "apply"
     print(f"{'APPLYING' if apply else 'DRY RUN —'} release prep for {len(pairs)} crate(s)\n")

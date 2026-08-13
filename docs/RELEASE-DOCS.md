@@ -47,6 +47,23 @@ CLAUDE.md → "Releases are tag-driven"). One-time setup was completed in v7.4.0
 1. **CHANGELOG** — `[Unreleased]` → `## X.Y.Z — DATE` in every changed crate;
    lockstep crates with no functional change get a one-line "Lockstep release"
    entry.
+
+   **The date is stamped at sign-off, not when the section is cut.** A wave
+   staged over several days otherwise carries whatever date each crate happened
+   to be prepared on — the 2026-08 container-probe wave held a mix of `08-12`
+   and `08-13` while the code kept changing, and every one of those dates was a
+   claim about a publication that had not happened. Immediately before pushing
+   tags:
+
+   ```bash
+   # dry run — lists every CHANGELOG heading and release-note _Released_ line
+   python3 tools/prepare-release.py --restamp-check <crate>=<ver> [...]
+   # apply
+   python3 tools/prepare-release.py --restamp       <crate>=<ver> [...]
+   ```
+
+   It exits non-zero if any crate in the wave has no dated heading or no
+   release note, so a missing surface fails rather than being skipped quietly.
 2. **Release note** — `docs/release-notes/vX.Y.Z.md` (highlights, breaking
    changes + migration, PR/issue refs).
 3. **README coverage tables** — update each crate's coverage/feature table.
