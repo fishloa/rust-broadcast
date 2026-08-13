@@ -204,6 +204,35 @@ impl<'a> Parse<'a> for AtmosFrame<'a> {
         debug_assert!(br.is_byte_aligned());
 
         let mut offset = br.bits_read() / 8;
+        // `sub_element_count` is a Plex field read straight from the input, so
+        // it is attacker-controlled and unbounded. Reserving from it directly
+        // is an unbounded allocation: a crafted count made this ask the
+        // allocator for 0x37cbb80000 bytes (~240 GB), found by the CI fuzz run.
+        //
+        // Every sub-element consumes at least one byte of `body`, so the count
+        // can never exceed the bytes remaining. Reserve the smaller of the two
+        // — the parse still fails on the first out-of-bounds element, but it
+        // fails without trying to allocate first.
+        // `sub_element_count` is a Plex field read straight from the input, so
+        // it is attacker-controlled and effectively unbounded — Plex escalates
+        // 8 -> 16 -> 32 bits, so twelve bytes encode a count of 0x7FFF_FFFF.
+        //
+        // REJECT an impossible count rather than merely capping the reserve.
+        // Every sub-element consumes at least one byte of `body`, so a count
+        // exceeding the bytes remaining cannot describe this frame and the
+        // input is malformed. Capping alone would still be correct-ish, but it
+        // is untestable: `Vec::with_capacity(2^31)` SUCCEEDS under ordinary
+        // overcommit and only AddressSanitizer refuses it, so a cap can be
+        // verified by the fuzzer and by nothing else. An explicit error is
+        // observable, so it can carry a regression test.
+        let remaining = body.len().saturating_sub(offset);
+        if sub_element_count > remaining as u64 {
+            return Err(Error::InvalidValue {
+                field: "ATMOSFrame.SubElementCount",
+                value: sub_element_count,
+                reason: "exceeds the bytes remaining in the frame body",
+            });
+        }
         let mut elements = Vec::with_capacity(sub_element_count as usize);
         for _ in 0..sub_element_count {
             let (element, consumed) =
