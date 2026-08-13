@@ -64,6 +64,13 @@ pub(crate) fn probe(data: &[u8], limit: usize) -> Outcome {
         // guess at the more general format (the shared `Insufficient` vs
         // `Unknown` decision).
         DocTypeResult::Truncated => Outcome::Insufficient(region.len() + 1),
+        // EBML magic, but the header holds a structurally illegal element. No
+        // additional bytes can repair a byte already read, so this is
+        // `Unknown` ("stop"). Reporting it as `Insufficient` asked the caller
+        // for one more byte at every length without end — verified against a
+        // buffer of EBML magic followed by `0x00` padding, which answered
+        // `Insufficient(n + 1)` at n = 8, 64, 1024 and 65536.
+        DocTypeResult::Malformed => Outcome::None,
         // Magic at offset 0 but the header was fully walked and holds no
         // DocType. That is still unambiguous EBML (STRONG), just with no
         // DocType to name.
@@ -83,8 +90,35 @@ enum DocTypeResult {
     /// The walk ran off the end of the supplied region mid-structure, so the
     /// `DocType` could not yet be read.
     Truncated,
+    /// The walk hit a structurally **illegal** element — not a short read.
+    ///
+    /// Distinct from [`DocTypeResult::Truncated`] because the two demand
+    /// opposite answers, and conflating them produced an unbounded read loop.
+    /// A first VINT byte of `0x00` has eight leading zeros, so its width would
+    /// be 9; no legal VINT can start that way (RFC 8794 §4.1). Reporting that
+    /// as truncation made `probe` answer `Insufficient(region.len() + 1)` —
+    /// "read one more byte" — at *every* length, forever, on input that can
+    /// never become valid. A caller obeying the contract would read to EOF and
+    /// keep asking. That runaway is exactly what `Unknown` exists to stop.
+    Malformed,
     /// The region was fully walked and held no (or an unreadable) `DocType`.
     Absent,
+}
+
+/// The outcome of reading one VINT (RFC 8794 §4).
+///
+/// Three-way rather than `Option`, for the reason on
+/// [`DocTypeResult::Malformed`]: "the buffer ended" and "these bytes are not a
+/// VINT" are opposite events and an `Option` cannot tell them apart.
+#[derive(Debug, PartialEq, Eq)]
+enum VintRead<T> {
+    /// Decoded, consuming `width` bytes.
+    Ok(usize, T),
+    /// The region ended before the whole VINT was present — read more.
+    Truncated,
+    /// Structurally illegal, or a size unaddressable on this target. More
+    /// bytes cannot fix either.
+    Malformed,
 }
 
 /// Walk the EBML header element to read its `DocType`. See [`DocTypeResult`].
@@ -99,8 +133,9 @@ fn find_doc_type(region: &[u8]) -> DocTypeResult {
     // Read the EBML header element's size VINT. An empty or too-short tail is a
     // truncation, not an absence.
     let (len, size) = match read_size_vint(&region[cursor..]) {
-        Some(x) => x,
-        None => return DocTypeResult::Truncated,
+        VintRead::Ok(w, v) => (w, v),
+        VintRead::Truncated => return DocTypeResult::Truncated,
+        VintRead::Malformed => return DocTypeResult::Malformed,
     };
     // The header data runs for `size` bytes (or to region end when unknown).
     // A known `size` that extends past the region is a truncation: the header
@@ -112,7 +147,10 @@ fn find_doc_type(region: &[u8]) -> DocTypeResult {
         let body_start = cursor + len; // <= region.len(), guaranteed by read_size_vint
         match body_start.checked_add(sz) {
             Some(e) if e <= region.len() => &region[body_start..e],
-            _ => return DocTypeResult::Truncated,
+            // Body extends past the region: a longer buffer could contain it.
+            Some(_) => return DocTypeResult::Truncated,
+            // The end offset overflows `usize` and can never be indexed.
+            None => return DocTypeResult::Malformed,
         }
     } else {
         &region[cursor + len..]
@@ -122,22 +160,27 @@ fn find_doc_type(region: &[u8]) -> DocTypeResult {
     let mut off = 0usize;
     while off < data.len() {
         let (id_len, id) = match read_id_vint(&data[off..]) {
-            Some(x) => x,
-            None => return DocTypeResult::Truncated,
+            VintRead::Ok(w, v) => (w, v),
+            VintRead::Truncated => return DocTypeResult::Truncated,
+            VintRead::Malformed => return DocTypeResult::Malformed,
         };
         let after_id = off + id_len;
         let (esz_len, esz) = match read_size_vint(&data[after_id..]) {
-            Some(x) => x,
-            None => return DocTypeResult::Truncated,
+            VintRead::Ok(w, v) => (w, v),
+            VintRead::Truncated => return DocTypeResult::Truncated,
+            VintRead::Malformed => return DocTypeResult::Malformed,
         };
         let value_start = after_id + esz_len;
         let value_end = match esz {
             Some(sz) => {
-                // The value must lie within the header region; a size that
-                // extends past it (or overflows) is malformed.
+                // The value must lie within the header region. A body that
+                // extends past the region really is a short read — more bytes
+                // could contain it. An offset that *overflows* `usize` cannot
+                // be indexed at any length, so it is malformed.
                 match value_start.checked_add(sz) {
                     Some(end) if end <= data.len() => end,
-                    _ => return DocTypeResult::Truncated,
+                    Some(_) => return DocTypeResult::Truncated,
+                    None => return DocTypeResult::Malformed,
                 }
             }
             None => data.len(),
@@ -161,21 +204,32 @@ fn find_doc_type(region: &[u8]) -> DocTypeResult {
 
 /// Read an EBML **element-ID** VINT: the whole encoded value including the
 /// length-marker bit (RFC 8794 §4.2). Returns the encoded ID bytes and width.
-fn read_id_vint(b: &[u8]) -> Option<(usize, &[u8])> {
-    let width = vint_width(*b.first()?)?;
+fn read_id_vint(b: &[u8]) -> VintRead<&[u8]> {
+    let Some(&first) = b.first() else {
+        return VintRead::Truncated;
+    };
+    let Some(width) = vint_width(first) else {
+        // No legal VINT starts with this byte, and no number of extra bytes
+        // changes the FIRST byte. Malformed, never truncated.
+        return VintRead::Malformed;
+    };
     if b.len() < width {
-        return None;
+        return VintRead::Truncated;
     }
-    Some((width, &b[..width]))
+    VintRead::Ok(width, &b[..width])
 }
 
 /// Read an EBML **size** VINT, clearing the length-marker bit. Returns the
 /// width and the decoded value, or `None` for an all-ones "unknown" size.
-fn read_size_vint(b: &[u8]) -> Option<(usize, Option<usize>)> {
-    let first = *b.first()?;
-    let width = vint_width(first)?;
+fn read_size_vint(b: &[u8]) -> VintRead<Option<usize>> {
+    let Some(&first) = b.first() else {
+        return VintRead::Truncated;
+    };
+    let Some(width) = vint_width(first) else {
+        return VintRead::Malformed;
+    };
     if b.len() < width {
-        return None;
+        return VintRead::Truncated;
     }
     // Zero out the length-marker bit. For a width-`w` VINT the first byte
     // holds `w-1` leading zeros then the marker `1` (RFC 8794 §4.2), so the
@@ -199,12 +253,18 @@ fn read_size_vint(b: &[u8]) -> Option<(usize, Option<usize>)> {
     // "Unknown size": every payload bit set = this width's all-ones value.
     let max: u64 = (1u64 << bits) - 1;
     if v == max {
-        Some((width, None))
+        VintRead::Ok(width, None)
     } else {
         // A known size that does not fit a `usize` (possible only in the last
-        // two widths on a 32-bit target) cannot be addressed into a slice, so
-        // abort the element walk — the header is unreadable on this target.
-        Some((width, Some(usize::try_from(v).ok()?)))
+        // two widths on a 32-bit target) cannot be addressed into a slice. The
+        // header is unreadable on this target no matter how many more bytes
+        // arrive, so this is `Malformed`, not `Truncated` — reporting it as a
+        // short read would ask the caller to keep reading for a size that can
+        // never be indexed.
+        match usize::try_from(v) {
+            Ok(sz) => VintRead::Ok(width, Some(sz)),
+            Err(_) => VintRead::Malformed,
+        }
     }
 }
 
@@ -267,7 +327,9 @@ mod tests {
             // just first's low bits after the marker is cleared (0).
             let mut buf = [0u8; 8];
             buf[0] = first;
-            let (got_width, size) = read_size_vint(&buf).expect("width {width} must decode");
+            let VintRead::Ok(got_width, size) = read_size_vint(&buf) else {
+                panic!("width {width} must decode, got {:?}", read_size_vint(&buf))
+            };
             assert_eq!(got_width, width as usize);
             // The marker bit is cleared, so the value is 0 — a *known* size.
             assert_eq!(size, Some(0));
@@ -284,6 +346,64 @@ mod tests {
         match probe(region, region.len()) {
             Outcome::Insufficient(need) => assert_eq!(need, EBML_MAGIC.len()),
             other => panic!("3-byte EBML prefix must be Insufficient(4), got {other:?}"),
+        }
+    }
+
+    /// A buffer that can NEVER become valid must terminate: `Insufficient`
+    /// promises "more bytes could resolve this", so returning it at every
+    /// length is an unbounded read loop, not a conservative answer.
+    ///
+    /// EBML magic followed by `0x00` padding is the case. `0x00` has eight
+    /// leading zeros, so its VINT width would be 9 — no legal VINT starts that
+    /// way (RFC 8794 §4.1) and no suffix can change a byte already read. The
+    /// prober previously mapped that to `Truncated` and so answered
+    /// `Insufficient(n + 1)` — "just one more byte" — at n = 8, 64, 1024 and
+    /// 65536 alike. A caller obeying the contract reads to EOF and keeps
+    /// asking.
+    ///
+    /// The defect is only visible ACROSS growing lengths: at any single length
+    /// `Insufficient` looks perfectly reasonable, which is why no single-length
+    /// assertion caught it. This test therefore sweeps a geometric series and
+    /// requires termination.
+    ///
+    /// MUTATION VERIFIED: routing `DocTypeResult::Malformed` back to
+    /// `Outcome::Insufficient(region.len() + 1)` fails this at the first size.
+    #[test]
+    fn an_illegal_vint_marker_terminates_instead_of_asking_forever() {
+        for len in [8usize, 64, 1024, 65536] {
+            let mut buf = std::vec::Vec::with_capacity(len);
+            buf.extend_from_slice(&EBML_MAGIC);
+            buf.resize(len, 0x00);
+            match probe(&buf, buf.len()) {
+                Outcome::None => {}
+                Outcome::Insufficient(need) => panic!(
+                    "EBML magic + 0x00 padding can never become a valid header, so it must \
+                     be ruled out; at {len} bytes it instead asked for {need} -- a caller \
+                     obeying that reads forever"
+                ),
+                other => panic!("expected Outcome::None at {len} bytes, got {other:?}"),
+            }
+        }
+    }
+
+    /// The counterpart: a genuinely truncated *legal* header must still say
+    /// "read more", so the fix above did not simply turn EBML into "stop".
+    #[test]
+    fn a_truncated_legal_header_still_asks_for_more() {
+        let full = std::fs::read(std::format!(
+            "{}/../fixtures/mkv/h264_aac.mkv",
+            env!("CARGO_MANIFEST_DIR")
+        ))
+        .expect("fixture");
+        // Long enough to carry the magic, too short to reach DocType.
+        let prefix = &full[..12];
+        match probe(prefix, prefix.len()) {
+            Outcome::Insufficient(need) => assert!(
+                need > prefix.len(),
+                "need_at_least {need} must exceed the {} bytes supplied",
+                prefix.len()
+            ),
+            other => panic!("a truncated real MKV header must be Insufficient, got {other:?}"),
         }
     }
 }

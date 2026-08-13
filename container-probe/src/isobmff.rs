@@ -288,18 +288,6 @@ mod tests {
         }
     }
 
-    /// Finding 5 (32-bit target): a `largesize` that does not fit a `usize` on
-    /// this target must be **rejected** (`None`), never truncated with
-    /// `ls as usize`.
-    ///
-    /// Reverting `usize::try_from(ls).ok()?` to the original `ls as usize`
-    /// turns `0x1_0000_0008` into `eff == 8` on a 32-bit target, which slips
-    /// past the `eff > rem.len()` guard and lets the walk step *into the middle
-    /// of the size field* instead of rejecting the header. On a 64-bit target
-    /// `usize` is a `u64`, so `u64 as usize` is lossless and this bug cannot
-    /// manifest — which is exactly why this test is `cfg`-gated to 32-bit and
-    /// why the whole suite was green under the mutation on the (64-bit) audit
-    /// host.
     /// The 32-bit truncation decision, exercised **on any host**.
     ///
     /// A `#[cfg(target_pointer_width = "32")]` test would be the obvious way to
