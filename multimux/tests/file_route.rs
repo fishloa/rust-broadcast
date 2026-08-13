@@ -211,10 +211,28 @@ async fn file_route_loop_true_keeps_serving() {
     }
 }
 
+/// Sum the `#EXTINF:<seconds>,` durations of a rendered media playlist — the
+/// total media duration the served segments cover, used to prove a finite file
+/// serves its *entire* content (its tail segment included).
+fn total_extinf_secs(playlist: &str) -> f64 {
+    let mut total = 0.0;
+    for line in playlist.lines() {
+        if let Some(rest) = line.strip_prefix("#EXTINF:")
+            && let Some(comma) = rest.find(',')
+            && let Ok(secs) = rest[..comma].trim().parse::<f64>()
+        {
+            total += secs;
+        }
+    }
+    total
+}
+
 /// `loop: false` stops: after producing its segments, the playlist stops
 /// growing — the served set of segment URIs is unchanged across a bounded wait
 /// well past the file's duration (a `loop: true` route, by contrast, would keep
-/// adding new ones).
+/// adding new ones). Crucially, the finite file serves its **entire** content —
+/// the final partial segment (the tail) must be flushed when the driver ends,
+/// not silently dropped (which used to lose up to one `target_duration`).
 #[tokio::test]
 async fn file_route_loop_false_stops() {
     let bind = reserve_tcp_addr();
@@ -228,19 +246,40 @@ async fn file_route_loop_false_stops() {
     // *then* snapshot the served set.
     poll_until_extinf(&client, &playlist_url).await;
     tokio::time::sleep(Duration::from_secs(6)).await;
-    let t0 = segment_uris(
-        &client
-            .get(&playlist_url)
-            .send()
-            .await
-            .unwrap()
-            .text()
-            .await
-            .unwrap(),
-    );
+    let body = client
+        .get(&playlist_url)
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    let t0 = segment_uris(&body);
     assert!(
         !t0.is_empty(),
         "loop:false must serve the first pass's segments"
+    );
+
+    // The finite file must serve its WHOLE content: the total served media
+    // duration has to reach the file's own ~2.955 s (video PTS 133200 → 399600
+    // at 90 kHz), NOT stop ~one target_duration short of it (the un-flushed
+    // tail). A generous tolerance (one part, 100 ms) keeps this robust to
+    // segmenter boundary rounding while still catching the dropped tail.
+    //
+    // MUTATION VERIFIED, recorded verbatim: removing `run_file_source`'s
+    // `driver.finish()` + final `advance_route` (parking without flushing)
+    // makes this test FAIL with:
+    //
+    //     loop:false must serve the file's tail: served 2.000s, expected ~2.955s (a parked-but-healthy driver that skips the flush drops up to one target_duration)
+    //
+    // — the tail segment (~0.955 s, the partial final target_duration) is
+    // silently dropped. Restoring the flush (and a `touch`) makes it pass
+    // again.
+    let served = total_extinf_secs(&body);
+    assert!(
+        served >= 2.955 - 0.1,
+        "loop:false must serve the file's tail: served {served:.3}s, expected ~2.955s \
+         (a parked-but-healthy driver that skips the flush drops up to one target_duration)"
     );
 
     // Let the file's single pass fully drain (well past its ~3 s duration), then
@@ -322,6 +361,79 @@ async fn file_route_loop_true_paces_near_realtime() {
     assert!(
         elapsed <= Duration::from_secs(10),
         "segment cadence must not stall — {want} closed segments took {elapsed:?}"
+    );
+
+    server.abort();
+}
+
+/// Pacing survives the loop point (blocker 1's gap): the original cadence
+/// test ends at the 3rd segment, entirely inside pass 1, so a baseline that
+/// fails to advance past pass 1 (dumping the whole pass at ~300×) was never
+/// observed. The ~3 s fixture with a 0.5 s target makes ~6 segments per pass;
+/// this test measures the wall time between the 6th and 8th distinct segment
+/// (the boundary crossing into pass 2) and asserts it stays at realtime —
+/// a `pass_wall_start` that fails to advance would hand out all of pass 2 in
+/// one drain and close those segments ~instantly.
+///
+/// MUTATION VERIFIED, recorded verbatim: removing `FileIngestSession::refill`'s
+/// `pass_wall_start` advance makes this test FAIL with:
+///
+///     segments past the loop point must stay at roughly realtime, not dump all of pass 2 at once: segments 6→8 in 41ns
+///
+/// — pass 2 closes its segments in one drain (41 ns), the original ~300×
+/// behaviour restored from pass 2 onward. Restoring the advance (and a `touch`)
+/// makes it pass again.
+#[tokio::test]
+async fn file_route_loop_true_paces_past_first_pass() {
+    let bind = reserve_tcp_addr();
+    let config = file_config(bind, fixture_path(), true);
+    let server = tokio::spawn(serve_with_registry(config, SchemeRegistry::new()));
+    let client = reqwest::Client::new();
+    let playlist_url = format!("http://{bind}/cam/media.m3u8");
+
+    poll_until_extinf(&client, &playlist_url).await;
+
+    // Collect distinct segment URIs, recording the wall time the 6th and 8th
+    // appear (6 crosses the ~6-segment pass-1 boundary, 8 is firmly inside
+    // pass 2).
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut at_6: Option<tokio::time::Instant> = None;
+    let mut at_8: Option<tokio::time::Instant> = None;
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(20);
+    while seen.len() < 8 {
+        let body = client
+            .get(&playlist_url)
+            .send()
+            .await
+            .unwrap()
+            .text()
+            .await
+            .unwrap();
+        for u in segment_uris(&body) {
+            seen.insert(u);
+        }
+        if seen.len() >= 6 && at_6.is_none() {
+            at_6 = Some(tokio::time::Instant::now());
+        }
+        if seen.len() >= 8 && at_8.is_none() {
+            at_8 = Some(tokio::time::Instant::now());
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "must reach 8 distinct segments within the hang guard; only saw {seen:?}"
+        );
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    let at_6 = at_6.expect("6th segment observed");
+    let at_8 = at_8.expect("8th segment observed");
+
+    // Two pass-2 segments at realtime take ~1 s (2 × 0.5 s target); the
+    // un-advanced baseline closes them ~instantly. A 400 ms floor is a wide,
+    // deterministic lower bound that a pass-2 dump cannot meet.
+    let span = at_8 - at_6;
+    assert!(
+        span >= Duration::from_millis(400),
+        "segments past the loop point must stay at roughly realtime, not dump all of pass 2 at once: segments 6→8 in {span:?}"
     );
 
     server.abort();

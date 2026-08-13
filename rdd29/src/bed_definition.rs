@@ -178,13 +178,16 @@ impl<'a> Parse<'a> for BedDefinition1 {
         let channel_count = read_plex(&mut r, 4, "BedDefinition1.ChannelCount")?;
         // `channel_count` is a Plex field read from the input and is therefore
         // unbounded — see the same hazard in `atmos_frame.rs`. Each channel
-        // consumes at least one bit, so the count cannot exceed the bits left;
-        // reserve the smaller of the two rather than trusting the wire value.
-        // Same hazard and same reasoning as `ATMOSFrame.SubElementCount`:
-        // reject an impossible count rather than capping a reserve that
-        // overcommit would let succeed silently.
+        // consumes at least 15 bits (`Plex(4)` ChannelID + `Plex(8)`
+        // AudioDataID + 3 reserved bits), so `remaining_bits / 15` is the
+        // provable ceiling on the count, not the raw `remaining_bits`. Given
+        // the fewer bits, the reserve is the smaller of that ceiling and the
+        // wire claim — and an impossible ceiling is REJECTED rather than a
+        // reserve that overcommit would let succeed silently (the identical
+        // reasoning as `ATMOSFrame.SubElementCount`).
         let remaining_bits = r.bits_remaining() as u64;
-        if channel_count > remaining_bits {
+        let provable_ceiling = remaining_bits / 15;
+        if channel_count > provable_ceiling {
             return Err(Error::InvalidValue {
                 field: "BedDefinition1.ChannelCount",
                 value: channel_count,

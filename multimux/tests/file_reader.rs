@@ -181,16 +181,16 @@ fn unsupported_fixtures_yield_distinct_format_errors() {
 // The timeline invariant — the primary gate, on a real TS fixture.
 // ---------------------------------------------------------------------------
 
-/// The **presentation-ordered** PTS sequence of one `track_id` in the source
-/// — sorted ascending, because the TS demuxer may emit a track's samples in
-/// decode order while the reader writes them at their presentation time (the
-/// reader's due-time merge is presentation). The "source's own" timeline a
-/// per-track deltas assertion is held against is this presentation order.
-fn source_track_pts(rel: &str, track_id: u32) -> Vec<i64> {
+/// The **decode-ordered** DTS sequence of one `track_id` in the source — the
+/// demuxer emits a track's samples in decode order, and the reader publishes
+/// in that same order (DTS is the intra-track key; PTS only interleaves across
+/// tracks). The "source's own" timeline a per-track deltas assertion is held
+/// against is this decode order, unsorted.
+fn source_track_dts(rel: &str, track_id: u32) -> Vec<i64> {
     let bytes = std::fs::read(fixture(rel)).unwrap();
     let mut demux = StreamingTsDemux::new();
     demux.feed(&bytes);
-    let mut pts = Vec::new();
+    let mut dts = Vec::new();
     while let Some(ev) = demux.poll_event() {
         let DemuxEvent::Sample {
             track_id: id,
@@ -203,37 +203,22 @@ fn source_track_pts(rel: &str, track_id: u32) -> Vec<i64> {
             continue;
         };
         if id == track_id
-            && let Some(p) = sample.pts
+            && let Some(d) = sample.dts
         {
-            pts.push(p);
+            dts.push(d);
         }
     }
-    pts.sort_unstable();
-    pts
+    dts
 }
 
-/// One frame period (the smallest positive PTS delta) of `track_id` in the
-/// source — the exact increment a loop should continue the timeline by.
-fn source_frame_period(rel: &str, track_id: u32) -> i64 {
-    let pts = source_track_pts(rel, track_id);
-    let period = pts
-        .windows(2)
-        .map(|w| w[1] - w[0])
-        .filter(|&d| d > 0)
-        .min()
-        .expect("source track must have a positive frame period");
-    assert!(period > 0, "source frame period must be positive");
-    period
-}
-
-/// Drain a Trunk into a flat list of `(track_id, pts)` in publish order.
+/// Drain a Trunk into a flat list of `(track_id, dts)` in publish order.
 fn drain_samples(trunk: &Arc<Trunk>) -> Vec<(u32, i64)> {
     let mut cursor = trunk.subscribe_from_backlog();
     let mut out = Vec::new();
     loop {
         match cursor.poll() {
             Some(SampleCursorItem::Timed { track_id, sample }) => {
-                out.push((track_id, sample.pts.expect("timed sample must carry a pts")));
+                out.push((track_id, sample.dts.expect("timed sample must carry a dts")));
             }
             Some(SampleCursorItem::Sparse { .. })
             | Some(SampleCursorItem::Lagged { .. })
@@ -250,7 +235,7 @@ fn drain_samples(trunk: &Arc<Trunk>) -> Vec<(u32, i64)> {
 }
 
 #[tokio::test]
-async fn timeline_pts_is_monotonic_and_deltas_match_source() {
+async fn timeline_dts_is_monotonic_and_matches_source_decode_order() {
     let trunk = trunk();
     let t = trunk.clone();
     let handle = tokio::spawn(async move {
@@ -268,40 +253,40 @@ async fn timeline_pts_is_monotonic_and_deltas_match_source() {
     );
 
     // The trunk's announced track set carries each track's own timescale (the
-    // IR stores absolute pts per track in *that* track's timescale).
+    // IR stores absolute dts per track in *that* track's timescale).
     let tracks = trunk.tracks();
     assert!(tracks.len() >= 2, "TS fixture must demux video + audio");
 
-    // Per-track: the pts sequence each track writes must be strictly
-    // monotonic (a track's own timeline never steps backwards), and the
-    // deltas must match the source's own per-track deltas. Group the drained
-    // samples by track_id, preserving publish order.
+    // Per-track: the DTS sequence each track writes must be strictly monotonic
+    // (decode order — the fixture's video has B-frames, so PTS reorders within
+    // the pass while DTS stays monotonic), and it must equal the source's own
+    // decode-order DTS sequence exactly. Group the drained samples by track_id,
+    // preserving publish order.
     let mut by_track: std::collections::BTreeMap<u32, Vec<i64>> = Default::default();
-    for (track_id, pts) in &drained {
-        by_track.entry(*track_id).or_default().push(*pts);
+    for (track_id, dts) in &drained {
+        by_track.entry(*track_id).or_default().push(*dts);
     }
     for (track_id, seq) in &by_track {
         for pair in seq.windows(2) {
             assert!(
                 pair[1] > pair[0],
-                "track {track_id} pts must be strictly monotonic: {} then {}",
+                "track {track_id} dts must be strictly monotonic: {} then {}",
                 pair[0],
                 pair[1]
             );
         }
-        // Deltas match the source's own: the source's per-track pts set equals
-        // what the reader wrote (the reader preserves decode order per track).
-        let source = source_track_pts("fixtures/ts/h264_aac.ts", *track_id);
+        // The source's own per-track DTS sequence (decode order, unsorted)
+        // equals exactly what the reader wrote — the reader preserves decode
+        // order per track and loses nothing.
+        let source = source_track_dts("fixtures/ts/h264_aac.ts", *track_id);
         assert_eq!(
             &source, seq,
-            "track {track_id} deltas must match the source's own"
+            "track {track_id} decode order must match the source's own DTS sequence"
         );
     }
 
-    // Presentation-time sanity across tracks (the reader's merge order): no
-    // sample may be written before an earlier one of *its own* kind it depends
-    // on, so we additionally require the reader wrote as many distinct pts as
-    // the source carries (nothing silently dropped).
+    // Nothing silently dropped: the reader wrote as many samples as the source
+    // carries.
     assert_eq!(
         drained.len(),
         source_sample_count("fixtures/ts/h264_aac.ts"),
@@ -327,7 +312,7 @@ async fn timeline_pts_is_monotonic_and_deltas_match_source() {
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-async fn loop_preserves_monotonicity_and_one_frame_boundary() {
+async fn loop_preserves_dts_monotonicity_across_boundary() {
     let trunk = trunk();
     let t = trunk.clone();
     let handle = tokio::spawn(async move {
@@ -342,21 +327,21 @@ async fn loop_preserves_monotonicity_and_one_frame_boundary() {
 
     let drained = drain_samples(&trunk);
 
-    // Group the drained samples by track_id (each track carries PTS in its own
+    // Group the drained samples by track_id (each track carries DTS in its own
     // timescale; the loop offset is advanced *per track*). For every track,
-    // the points of loop 1 and loop 2 concatenate into a strictly monotonic
-    // sequence whose boundary delta is exactly one frame — the loop offset is
-    // what keeps it from stepping backwards, and the mutation kills it.
+    // loop 1 and loop 2 concatenate into a strictly monotonic DTS sequence —
+    // the loop offset is what keeps it from stepping backwards across the
+    // boundary, and the mutation kills it. (The fixture's video has B-frames,
+    // so PTS reorders within a pass; DTS is the decode-order invariant.)
     let mut by_track: std::collections::BTreeMap<u32, Vec<i64>> = Default::default();
-    for (track_id, pts) in &drained {
-        by_track.entry(*track_id).or_default().push(*pts);
+    for (track_id, dts) in &drained {
+        by_track.entry(*track_id).or_default().push(*dts);
     }
 
     for (track_id, seq) in &by_track {
-        // Source's own per-loop frame period and per-loop sample count for
-        // this track, so we know where the loop boundary lands in its seq.
-        let source = source_track_pts("fixtures/ts/h264_aac.ts", *track_id);
-        let one_frame = source_frame_period("fixtures/ts/h264_aac.ts", *track_id);
+        // Source's own per-loop DTS sequence for this track, to locate the
+        // loop boundary in its published seq.
+        let source = source_track_dts("fixtures/ts/h264_aac.ts", *track_id);
         let per_loop = source.len();
 
         assert!(
@@ -369,22 +354,20 @@ async fn loop_preserves_monotonicity_and_one_frame_boundary() {
         for pair in seq.windows(2) {
             assert!(
                 pair[1] > pair[0],
-                "loop PTS must stay strictly monotonic for track {track_id}: {} then {}",
+                "loop DTS must stay strictly monotonic for track {track_id}: {} then {}",
                 pair[0],
                 pair[1]
             );
         }
 
-        // The boundary delta equals one frame duration, not zero and not the
-        // whole file's length.
+        // The boundary is a forward step, not a reset and not the whole file's
+        // length: pass-1 first DTS must exceed pass-0 last DTS by more than the
+        // reorder depth (a B-frame track's max composition offset) yet far less
+        // than a full pass span.
         let boundary_delta = seq[per_loop] - seq[per_loop - 1];
-        assert_eq!(
-            boundary_delta, one_frame,
-            "track {track_id}: loop boundary delta must equal one frame duration, got {boundary_delta} vs frame {one_frame}"
-        );
         assert!(
-            boundary_delta > 0 && boundary_delta < one_frame * (per_loop as i64),
-            "track {track_id}: boundary delta must be one frame, not zero and not the whole file's length: {boundary_delta}"
+            boundary_delta > 0,
+            "track {track_id}: loop boundary DTS delta must be positive, got {boundary_delta}"
         );
     }
 }
@@ -534,12 +517,76 @@ async fn random_bytes_yield_a_probe_error_never_panic() {
 // past and never `.await`ed, spinning at 100% CPU).
 // ---------------------------------------------------------------------------
 
+/// The fixture's total playback duration in seconds, measured the same way the
+/// reader does — max `(pts / timescale)` over every track's presentation PTS —
+/// so the pacing test asserts against ~2× real content, never a hardcoded
+/// floor that the pass-1 duration alone would satisfy.
+fn fixture_content_duration_secs(rel: &str) -> f64 {
+    let bytes = std::fs::read(fixture(rel)).unwrap();
+    let mut demux = StreamingTsDemux::new();
+    demux.feed(&bytes);
+    let mut spans: std::collections::HashMap<u32, (i64, i64, u32)> =
+        std::collections::HashMap::new(); // track_id -> (first, last, timescale)
+    while let Some(ev) = demux.poll_event() {
+        match ev {
+            DemuxEvent::TrackAdded(spec) | DemuxEvent::TrackUpdated(spec) => {
+                spans
+                    .entry(spec.track_id)
+                    .or_insert((i64::MAX, i64::MIN, spec.timescale))
+                    .2 = spec.timescale;
+            }
+            DemuxEvent::Sample {
+                track_id, sample, ..
+            } => {
+                if let Some(pts) = sample.pts
+                    && let Some(span) = spans.get_mut(&track_id)
+                {
+                    span.0 = span.0.min(pts);
+                    span.1 = span.1.max(pts);
+                }
+            }
+            _ => {}
+        }
+    }
+    spans
+        .values()
+        .map(|&(first, last, ts)| {
+            if last <= first {
+                0.0
+            } else {
+                (last - first) as f64 / ts.max(1) as f64
+            }
+        })
+        .fold(0.0f64, f64::max)
+}
+
 /// When pacing AND looping are both on (the [`FileReader::standard`] default),
 /// the second pass must not complete before its content duration has elapsed —
 /// the pacing baseline advances one content span per pass, so the loop does not
 /// dump the whole file instantly and does not spin once its targets are past.
+///
+/// The threshold is **~2× the fixture's own content duration** (derived above),
+/// never a hardcoded floor: the fixture is ~3 s, so a 2 s floor would be met by
+/// pass 1 alone and fail to distinguish the fixed baseline from the bug — the
+/// thing this test exists to prove. A 2-pass paced run must take ~2× content.
+///
+/// MUTATION VERIFIED, recorded verbatim: reverting `publish_looping`'s pacing
+/// baseline advance (so `start` never grows past pass 1) makes this test FAIL
+/// with:
+///
+///     a paced 2-pass loop must take ~2× content duration (2.972 s each pass → 5.944 s), not 2.990257625s (baseline did not advance)
+///
+/// — the run finishes in one content duration (~2.99 s) because pass 2's due
+/// instants are all already in the past and dump instantly. Restoring the
+/// advance (and a `touch`) makes it pass again.
 #[tokio::test]
 async fn paced_loop_second_pass_waits_for_content_duration() {
+    let content = fixture_content_duration_secs("fixtures/ts/h264_aac.ts");
+    assert!(
+        content > 0.0,
+        "fixture must carry a positive content duration"
+    );
+
     let trunk = trunk();
     let t = trunk.clone();
     let started = std::time::Instant::now();
@@ -553,12 +600,12 @@ async fn paced_loop_second_pass_waits_for_content_duration() {
         .unwrap()
         .expect("a bounded paced loop must finish cleanly");
 
-    // The fixture is ~3 s of media; a paced 2-pass run must take at least one
-    // full content duration (not ~instantly, as the un-advanced baseline did).
     let elapsed = started.elapsed();
+    let two_contents = Duration::from_secs_f64(2.0 * content);
     assert!(
-        elapsed >= Duration::from_secs(2),
-        "a paced 2-pass loop must take ~2× content duration, not {elapsed:?} (baseline did not advance)"
+        elapsed >= two_contents,
+        "a paced 2-pass loop must take ~2× content duration ({content:.3} s each pass → {:.3} s), not {elapsed:?} (baseline did not advance)",
+        two_contents.as_secs_f64()
     );
 }
 
@@ -635,5 +682,77 @@ async fn directory_path_yields_not_a_regular_file() {
             );
         }
         other => panic!("a directory must be NotARegularFile, got {other:?}"),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Decode-order invariant on a genuinely B-frame-bearing fixture — the reader
+// must publish each track in DTS (decode) order, never presentation order.
+// `fixtures/mp4/progressive/av_prog.mp4` carries video with `dts != pts`
+// (B-frame reordering) and audio with `dts == pts`, so a presentation-order
+// publish would emit referenced P-frames after the B-frames that reference
+// them and produce a non-monotonic DTS sequence `transmux` would mux wrong.
+// ---------------------------------------------------------------------------
+
+/// Play a B-frame-bearing fixture through the reader and assert every track's
+/// published DTS sequence is **non-decreasing** (decode order) — the invariant
+/// BLOCKER 3 guards. A presentation-order (`pts`) publish would reorder the
+/// video's decode sequence and fail the monotonic check.
+///
+/// MUTATION VERIFIED, recorded verbatim: keying the intra-track sort on `pts`
+/// instead of `dts` (a presentation-order publish) makes the video track's DTS
+/// sequence step backwards and this test FAILS with:
+///
+///     track 1 published DTS must be non-decreasing (decode order): 10800 then 7200
+///
+/// — a P-frame (`dts = 7200`) is emitted after the B-frame that references it
+/// (`dts = 10800`). Restoring the `dts` key (and a `touch`) makes it pass
+/// again.
+#[tokio::test]
+async fn b_frame_fixture_publishes_decode_order_dts() {
+    let trunk = trunk();
+    let t = trunk.clone();
+    let handle = tokio::spawn(async move {
+        reader(
+            fixture("fixtures/mp4/progressive/av_prog.mp4"),
+            false,
+            false,
+            None,
+            t,
+        )
+        .run()
+        .await
+    });
+    handle
+        .await
+        .unwrap()
+        .expect("progressive mp4 fixture must play cleanly");
+
+    let drained = drain_samples(&trunk);
+    assert!(
+        drained.len() > 1,
+        "B-frame fixture must yield samples, got {}",
+        drained.len()
+    );
+
+    let mut by_track: std::collections::BTreeMap<u32, Vec<i64>> = Default::default();
+    for (track_id, dts) in &drained {
+        by_track.entry(*track_id).or_default().push(*dts);
+    }
+    assert!(
+        by_track.len() >= 2,
+        "fixture must carry video + audio tracks, got {:?}",
+        by_track.keys().collect::<Vec<_>>()
+    );
+
+    for (track_id, seq) in &by_track {
+        for pair in seq.windows(2) {
+            assert!(
+                pair[1] >= pair[0],
+                "track {track_id} published DTS must be non-decreasing (decode order): {} then {}",
+                pair[0],
+                pair[1]
+            );
+        }
     }
 }
