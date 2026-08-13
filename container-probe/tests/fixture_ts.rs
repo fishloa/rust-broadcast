@@ -244,40 +244,48 @@ fn annexb_is_not_ts() {
 // never a confident wrong answer, and must never panic.
 // ---------------------------------------------------------------------------
 
+/// Nothing has been ruled out yet, so the honest answer is "read more" — the
+/// 4 bytes of the shortest magic any prober needs.
 #[test]
 fn empty_slice() {
-    let p = probe(&[]);
-    assert!(
-        matches!(p, Probe::Unknown | Probe::Insufficient { .. }),
-        "got {p:?}"
-    );
+    match probe(&[]) {
+        Probe::Insufficient { need_at_least, .. } => assert_eq!(need_at_least, 4),
+        other => panic!("an empty slice must be Insufficient {{ 4 }}, got {other:?}"),
+    }
 }
 
+/// One arbitrary byte still cannot rule out a 4-byte magic.
 #[test]
 fn single_byte() {
-    let p = probe(&[0x42]);
-    assert!(
-        matches!(p, Probe::Unknown | Probe::Insufficient { .. }),
-        "got {p:?}"
-    );
+    match probe(&[0x42]) {
+        Probe::Insufficient { need_at_least, .. } => assert_eq!(need_at_least, 4),
+        other => panic!("a single byte must be Insufficient {{ 4 }}, got {other:?}"),
+    }
 }
 
+/// Eight zero bytes match no magic but are too short to rule out a structure
+/// that begins with a zero-valued box size, so the answer asks for ground not
+/// yet examined (the 8 supplied, plus one).
 #[test]
 fn eight_zero_bytes() {
-    let p = probe(&[0u8; 8]);
-    assert!(
-        matches!(p, Probe::Unknown | Probe::Insufficient { .. }),
-        "got {p:?}"
-    );
+    match probe(&[0u8; 8]) {
+        Probe::Insufficient { need_at_least, .. } => assert_eq!(need_at_least, 9),
+        other => panic!("eight zero bytes must be Insufficient {{ 9 }}, got {other:?}"),
+    }
 }
 
-/// 4096 bytes of `0xFF`. No sync bytes at all -> no seed -> `Unknown`.
+/// 4096 bytes of `0xFF`: no sync byte, no magic, and far more than any prober
+/// needs to decide. Every format is ruled out, so this is `Unknown` ("stop") —
+/// exactly, not "Unknown or Insufficient". The disjunction this replaces
+/// accepted whichever the code happened to return, while the doc comment above
+/// it already asserted `Unknown`; a guard that agrees with any answer cannot
+/// notice the two diverging.
 #[test]
 fn ff_bytes() {
     let p = probe(&[0xFFu8; 4096]);
     assert!(
-        matches!(p, Probe::Unknown | Probe::Insufficient { .. }),
-        "got {p:?}"
+        matches!(p, Probe::Unknown),
+        "4096 bytes of 0xFF rule out every format, so this must be Unknown, got {p:?}"
     );
 }
 

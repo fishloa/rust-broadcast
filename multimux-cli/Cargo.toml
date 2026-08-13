@@ -4,10 +4,15 @@ version      = "0.8.0"
 edition      = "2024"
 rust-version.workspace = true
 license      = "MIT OR Apache-2.0"
-description  = "CLI for multimux — a config-driven, multi-input/multi-output (RTSP/RTP/TS-UDP/TS-HTTP/SRT/HLS-pull/DASH-pull/Smooth-pull/RTMP -> LL-HLS/DASH/LL-DASH) just-in-time repackaging HTTP origin."
+description  = "CLI for multimux — a config-driven, multi-input/multi-output (RTSP/RTP/TS-UDP/TS-HTTP/SRT/HLS-pull/DASH-pull/Smooth-pull/RTMP/file -> LL-HLS/DASH/LL-DASH) just-in-time repackaging HTTP origin."
 repository   = "https://github.com/fishloa/rust-broadcast"
 keywords     = ["rtsp", "hls", "ll-hls", "cmaf", "origin"]
 categories   = ["multimedia", "command-line-utilities"]
+readme       = "README.md"
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
 
 [dependencies]
 multimux           = { path = "../multimux", version = "0.10" }

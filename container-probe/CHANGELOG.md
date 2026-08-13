@@ -14,6 +14,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `Identified { format, confidence, detail }`, `Ambiguous { candidates }`,
   `Insufficient { need_at_least }`, or `Unknown`. One-shot over a caller-owned
   byte slice; no IO, no state.
+
+  `need_at_least` is guaranteed to **exceed the bytes the probe examined**,
+  which is `min(len, budget)` — not `len`. That distinction is load-bearing:
+  `probe` never reads past `DEFAULT_BUDGET` however long the buffer, so a
+  caller that only grows the buffer can stall. See the crate root's "The loop
+  that terminates" for the loop that does not; `DEFAULT_BUDGET` is public so a
+  caller can implement it.
+
+  The guarantee is enforced centrally rather than trusted from each prober,
+  after two probers shipped it wrong. Reporting `region.len() + 1` looks like
+  strict progress but is not — `region.len()` saturates at the budget, so the
+  answer froze at 65537 and any larger buffer got `need_at_least <= supplied`,
+  a fixed point a conforming caller spins on forever. Reachable from a 12-byte
+  attacker-chosen prefix.
 - **Scored confidence model** — the `Confidence` tiers `CERTAIN` (240),
   `STRONG` (192), `STRUCTURAL` (160), `LATTICE_STRONG` (128), `LATTICE_WEAK`
   (96) and `HEURISTIC` (64). All probers always run; the highest score wins;

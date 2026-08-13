@@ -335,19 +335,34 @@ mod tests {
         assert_eq!(largesize_to_len(u64::MAX, 32), None);
     }
 
-    /// The value must also survive the real header path unclobbered on this
-    /// host, so the parameterised check above is wired to actual decoding.
+    /// The value must survive the real header path unclobbered.
+    ///
+    /// Asserted against a **literal**, not against `largesize_to_len`.
+    /// The previous revision of this test compared `decode_header(&header)` to
+    /// `largesize_to_len(0x1_0000_0008, usize::BITS)` — which is precisely the
+    /// call `decode_header` makes, so both sides moved together and the test
+    /// was a tautology. Replacing the body with the original defect
+    /// (`Some((size32, ls as usize))`) left the whole suite green: 43 passed,
+    /// 0 failed. A guard written against the implementation cannot detect the
+    /// implementation changing.
+    ///
+    /// Scope, stated honestly: this pins the decoded value end-to-end against a
+    /// literal, so it catches a clobber (a zero, a wrong field, `size32` used
+    /// in place of the largesize). It does **not** catch `ls as usize`, because
+    /// on a 64-bit host that cast is lossless — no test running here can. The
+    /// width-truncation half is proved by
+    /// `a_largesize_beyond_the_target_pointer_width_is_rejected`, which takes
+    /// the pointer width as a parameter and therefore bites on any host.
+    /// Between them the two cover the property; neither claims the other's.
     #[test]
     fn largesize_is_decoded_faithfully_through_decode_header() {
         let mut header = [0u8; 16];
         header[3] = SIZE_INDICATES_LARGESIZE as u8;
         header[8..].copy_from_slice(&0x1_0000_0008u64.to_be_bytes());
-        let expected =
-            largesize_to_len(0x1_0000_0008, usize::BITS).map(|len| (SIZE_INDICATES_LARGESIZE, len));
         assert_eq!(
             decode_header(&header),
-            expected,
-            "decode_header must agree with largesize_to_len on this target"
+            Some((SIZE_INDICATES_LARGESIZE, 0x1_0000_0008usize)),
+            "a largesize of 2^32+8 must reach the caller exactly, not clobbered"
         );
     }
 

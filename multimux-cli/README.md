@@ -1,8 +1,8 @@
 # multimux-cli
 
-CLI for `multimux` — a multi-input (RTSP/RTP/TS-UDP/TS-HTTP/HLS-pull),
-multi-output (LL-HLS/DASH/LL-DASH) just-in-time repackaging HTTP origin
-library.
+CLI for `multimux` — a multi-input (RTSP/RTP/TS-UDP/TS-HTTP/SRT/HLS-pull/
+DASH-pull/Smooth-pull/RTMP/file), multi-output (LL-HLS/DASH/LL-DASH)
+just-in-time repackaging HTTP origin library.
 
 ## Installation
 
@@ -33,7 +33,8 @@ multimux --config routes.json
 ```
 
 Point to a JSON file describing any number of routes — each an independent
-input (RTSP/RTP/TS-UDP/TS-HTTP/HLS-pull, with optional client-side auth) to
+input (RTSP/RTP/TS-UDP/TS-HTTP/SRT/HLS-pull/DASH-pull/Smooth-pull/RTMP/file,
+with optional client-side auth) to
 any set of outputs (LL-HLS/DASH/LL-DASH) — plus segmentation, window, bind,
 timeout, and shared output-auth parameters. A minimal two-camera example:
 

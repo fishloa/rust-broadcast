@@ -65,6 +65,40 @@
 //! - [`Probe::Unknown`] means **stop** — nothing matched and more bytes will not
 //!   help.
 //!
+//! ## The loop that terminates
+//!
+//! `need_at_least` is guaranteed to exceed the number of bytes the probe
+//! actually **examined**, which is `min(len, budget)` — not `len`. So a caller
+//! that only grows the buffer, while leaving [`probe`]'s fixed
+//! `DEFAULT_BUDGET` in place, can stall once the budget caps the read. Feed
+//! `need_at_least` back as the budget too:
+//!
+//! ```no_run
+//! # use container_probe::{probe_with_budget, Probe, DEFAULT_BUDGET};
+//! # fn read_at_least(_n: usize) -> Vec<u8> { Vec::new() }
+//! let mut buf = read_at_least(DEFAULT_BUDGET);
+//! let verdict = loop {
+//!     match probe_with_budget(&buf, buf.len()) {
+//!         Probe::Insufficient { need_at_least, .. } if need_at_least > buf.len() => {
+//!             let grown = read_at_least(need_at_least);
+//!             // EOF with nothing conclusive: stop. The probe cannot answer
+//!             // from this file, and no further read will change that.
+//!             if grown.len() <= buf.len() {
+//!                 break Probe::Unknown;
+//!             }
+//!             buf = grown;
+//!         }
+//!         other => break other,
+//!     }
+//! };
+//! # let _ = verdict;
+//! ```
+//!
+//! Passing `buf.len()` as the budget is what makes each turn examine ground the
+//! last one did not. The `grown.len() <= buf.len()` arm is the caller's own
+//! termination guarantee at EOF, and is not optional: the crate cannot know
+//! whether more bytes exist.
+//!
 //! # `no_std` + `alloc`
 //!
 //! The crate is `#![no_std]` and links only `alloc`. Its single runtime
@@ -536,10 +570,15 @@ const TIER_HEURISTIC: u8 = 64;
 /// Two candidates whose scores are within this gap are reported as
 /// `Probe::Ambiguous` rather than silently choosing one.
 const TIE_THRESHOLD: u8 = 16;
-/// Default byte budget for `probe` — comfortably above the worst case (a
+/// Default byte budget for [`probe`] — comfortably above the worst case (a
 /// 208-byte-stride TS lattice needing 8 confirmations plus a full phase
 /// search). Design §Performance.
-const DEFAULT_BUDGET: usize = 64 * 1024;
+///
+/// Public because a caller draining an [`Probe::Insufficient`] loop needs it:
+/// `probe` never examines more than this many bytes however long the buffer
+/// is, so growing the buffer alone can stall. See the crate-root "The loop
+/// that terminates".
+pub const DEFAULT_BUDGET: usize = 64 * 1024;
 
 /// The named tiers, exposed for tests. A prober assigns one of these (e.g.
 /// [`Confidence::LATTICE_STRONG`]).
@@ -601,6 +640,28 @@ pub(crate) fn ran_out_or_ruled_out(ran_out: bool, need: usize) -> Outcome {
     } else {
         Outcome::None
     }
+}
+
+/// Force a prober's `need_at_least` to exceed the bytes actually examined.
+///
+/// `Insufficient` promises the caller that reading more can change the answer.
+/// A `need` at or below `limit` breaks that promise: the caller re-probes,
+/// examines the same ground, gets the same answer, and never advances.
+///
+/// Enforced here, once, rather than trusted from twelve probers — the crate has
+/// shipped this defect twice, from two different probers, with a green suite
+/// both times.
+///
+/// A prober's own structural need is kept when it is larger; that is the more
+/// useful hint (it names the byte the structure actually reaches, so one read
+/// suffices instead of one-byte-at-a-time crawling).
+///
+/// This is a **backstop**. Every prober is currently expected to report a
+/// structural need, so in normal operation this returns `need` unchanged. It is
+/// separated out rather than inlined so it can be tested directly: a guard with
+/// no reachable failing input is a guard nobody can trust.
+fn normalise_need(need: usize, limit: usize) -> usize {
+    core::cmp::max(need, limit.saturating_add(1))
 }
 
 /// A registered prober. Each prober is a pure function over a slice read no
@@ -709,8 +770,25 @@ pub fn probe_with_budget(data: &[u8], budget: usize) -> Probe {
 
     match candidates.len() {
         0 => match need_more {
+            // `need_at_least` MUST exceed the bytes actually examined, or the
+            // contract is a lie and the documented caller loop never advances.
+            //
+            // This is enforced here, once, rather than trusted from twelve
+            // probers, because the crate has now shipped this defect twice from
+            // two different probers. `ebml` reported `region.len() + 1`, which
+            // looks like strict progress but is not: `limit` is capped at
+            // `budget`, so `region.len()` saturates at `DEFAULT_BUDGET` and the
+            // answer froze at 65537. Supplying more than that gave
+            // `need_at_least <= supplied` — a fixed point a caller obeying the
+            // contract spins on forever. `mp3`'s ID3 skip reached the same
+            // fixed point from an honest, structure-derived need that simply
+            // exceeded the budget.
+            //
+            // Normalising to `limit + 1` guarantees the number always asks for
+            // ground not yet examined. A prober's own structural need is kept
+            // when it is larger, since that is the more useful hint.
             Some(need) => Probe::Insufficient {
-                need_at_least: core::cmp::max(need, 1),
+                need_at_least: normalise_need(need, limit),
             },
             None => Probe::Unknown,
         },
@@ -754,6 +832,58 @@ fn probe_to_identify(candidates: &[Candidate]) -> Probe {
         format: top.format,
         confidence: top.confidence,
         detail: top.detail,
+    }
+}
+
+#[cfg(test)]
+mod need_normalisation {
+    use super::*;
+
+    /// A prober under-reporting its need must never reach the caller as a
+    /// promise that cannot be kept.
+    ///
+    /// The two shipped instances of this defect: `ebml` reported
+    /// `region.len() + 1`, which saturates at the budget and froze at 65537;
+    /// `mp3`'s ID3 skip reported an honest structural need that simply exceeded
+    /// the budget. Both left `need_at_least <= supplied` for a large enough
+    /// buffer — a fixed point.
+    ///
+    /// MUTATION VERIFIED: replacing the body with `need` fails the first case
+    /// below with `left: 10, right: 65537`.
+    #[test]
+    fn an_under_reported_need_is_raised_past_the_examined_bytes() {
+        // A prober that under-reports badly at a large limit.
+        assert_eq!(normalise_need(10, 65536), 65537);
+        // Exactly at the limit is still a fixed point, so it must be raised.
+        assert_eq!(normalise_need(4096, 4096), 4097);
+        // One past is already correct and must pass through untouched.
+        assert_eq!(normalise_need(4097, 4096), 4097);
+        // A larger structural need is the better hint and must be preserved,
+        // never clamped down to `limit + 1`.
+        assert_eq!(normalise_need(268_435_465, 65536), 268_435_465);
+        // Degenerate: zero need at zero limit must still ask for something.
+        assert_eq!(normalise_need(0, 0), 1);
+    }
+
+    /// The invariant, stated over a range rather than at points, so a future
+    /// formula that happens to satisfy the five cases above cannot pass.
+    #[test]
+    fn the_result_always_exceeds_the_limit() {
+        for limit in [0usize, 1, 4, 188, 4095, 4096, 65535, 65536, 131_072] {
+            for need in [0usize, 1, 4, 100, 65536, 65537, 1_000_000] {
+                let got = normalise_need(need, limit);
+                assert!(
+                    got > limit,
+                    "normalise_need({need}, {limit}) = {got}, which does not exceed the \
+                     {limit} bytes examined -- a caller would re-probe forever"
+                );
+                assert!(
+                    got >= need,
+                    "normalise_need({need}, {limit}) = {got} discarded the prober's \
+                     larger structural need {need}"
+                );
+            }
+        }
     }
 }
 

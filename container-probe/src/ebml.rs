@@ -63,7 +63,7 @@ pub(crate) fn probe(data: &[u8], limit: usize) -> Outcome {
         // demuxer — this must be `Insufficient` ("read more"), not a confident
         // guess at the more general format (the shared `Insufficient` vs
         // `Unknown` decision).
-        DocTypeResult::Truncated => Outcome::Insufficient(region.len() + 1),
+        DocTypeResult::Truncated(need) => Outcome::Insufficient(need),
         // EBML magic, but the header holds a structurally illegal element. No
         // additional bytes can repair a byte already read, so this is
         // `Unknown` ("stop"). Reporting it as `Insufficient` asked the caller
@@ -89,7 +89,7 @@ enum DocTypeResult {
     Found(DocType),
     /// The walk ran off the end of the supplied region mid-structure, so the
     /// `DocType` could not yet be read.
-    Truncated,
+    Truncated(usize),
     /// The walk hit a structurally **illegal** element — not a short read.
     ///
     /// Distinct from [`DocTypeResult::Truncated`] because the two demand
@@ -134,7 +134,11 @@ fn find_doc_type(region: &[u8]) -> DocTypeResult {
     // truncation, not an absence.
     let (len, size) = match read_size_vint(&region[cursor..]) {
         VintRead::Ok(w, v) => (w, v),
-        VintRead::Truncated => return DocTypeResult::Truncated,
+        // The size VINT itself is cut short. The most it can be is
+        // `VINT_MAX_WIDTH` bytes, so that is the structural need.
+        VintRead::Truncated => {
+            return DocTypeResult::Truncated(cursor.saturating_add(VINT_MAX_WIDTH));
+        }
         VintRead::Malformed => return DocTypeResult::Malformed,
     };
     // The header data runs for `size` bytes (or to region end when unknown).
@@ -147,8 +151,11 @@ fn find_doc_type(region: &[u8]) -> DocTypeResult {
         let body_start = cursor + len; // <= region.len(), guaranteed by read_size_vint
         match body_start.checked_add(sz) {
             Some(e) if e <= region.len() => &region[body_start..e],
-            // Body extends past the region: a longer buffer could contain it.
-            Some(_) => return DocTypeResult::Truncated,
+            // Body extends past the region: a longer buffer could contain it,
+            // and we know EXACTLY how long -- the element declared it. Reporting
+            // the declared end is what makes the caller's next read land past
+            // the data, instead of advancing one byte at a time.
+            Some(e) => return DocTypeResult::Truncated(e),
             // The end offset overflows `usize` and can never be indexed.
             None => return DocTypeResult::Malformed,
         }
@@ -161,13 +168,17 @@ fn find_doc_type(region: &[u8]) -> DocTypeResult {
     while off < data.len() {
         let (id_len, id) = match read_id_vint(&data[off..]) {
             VintRead::Ok(w, v) => (w, v),
-            VintRead::Truncated => return DocTypeResult::Truncated,
+            VintRead::Truncated => {
+                return DocTypeResult::Truncated(region.len().saturating_add(VINT_MAX_WIDTH));
+            }
             VintRead::Malformed => return DocTypeResult::Malformed,
         };
         let after_id = off + id_len;
         let (esz_len, esz) = match read_size_vint(&data[after_id..]) {
             VintRead::Ok(w, v) => (w, v),
-            VintRead::Truncated => return DocTypeResult::Truncated,
+            VintRead::Truncated => {
+                return DocTypeResult::Truncated(region.len().saturating_add(VINT_MAX_WIDTH));
+            }
             VintRead::Malformed => return DocTypeResult::Malformed,
         };
         let value_start = after_id + esz_len;
@@ -179,7 +190,12 @@ fn find_doc_type(region: &[u8]) -> DocTypeResult {
                 // be indexed at any length, so it is malformed.
                 match value_start.checked_add(sz) {
                     Some(end) if end <= data.len() => end,
-                    Some(_) => return DocTypeResult::Truncated,
+                    // Again the element declares its own length: report the
+                    // absolute offset that end sits at, so one read suffices.
+                    Some(end) => {
+                        let body_base = region.len().saturating_sub(data.len());
+                        return DocTypeResult::Truncated(body_base.saturating_add(end));
+                    }
                     None => return DocTypeResult::Malformed,
                 }
             }
