@@ -181,6 +181,14 @@ jobs:
       # So: a bounded smoke run of every target. `-runs` (not a time budget)
       # keeps this deterministic and reproducible; it is a regression gate, not
       # a fuzzing campaign. A real campaign belongs in a scheduled job.
+      # Seeds are generated, never committed: fuzz/corpus/ is gitignored, so the
+      # generator is what gets reviewed. Without seeds, libFuzzer starting from
+      # empty essentially never synthesises a valid MXF key or EBML magic, so a
+      # format-detection target would smoke-test its "nothing matched" exit and
+      # not its probers. Best-effort: a clone without the fixtures skips them.
+      - name: Seed fuzz corpora from tracked fixtures
+        run: python3 fuzz/seed-corpus.py
+
       - name: Smoke-run every fuzz target
         working-directory: fuzz
         run: |
