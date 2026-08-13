@@ -264,13 +264,19 @@ fn single_byte() {
 }
 
 /// Eight zero bytes match no magic but are too short to rule out a structure
-/// that begins with a zero-valued box size, so the answer asks for ground not
-/// yet examined (the 8 supplied, plus one).
+/// beginning with a zero-valued box size, so the answer asks for ground not yet
+/// examined.
+///
+/// The figure is 13, not 9: no prober can name a structural need here, so the
+/// answer comes from the geometric floor (`limit + limit/2 + 1`). An
+/// arithmetic `limit + 1` also satisfies "more than examined" and is what this
+/// asserted before — but it converges in O(n) reads, which terminates and
+/// crawls. The exact number matters less than which growth class it belongs to.
 #[test]
 fn eight_zero_bytes() {
     match probe(&[0u8; 8]) {
-        Probe::Insufficient { need_at_least, .. } => assert_eq!(need_at_least, 9),
-        other => panic!("eight zero bytes must be Insufficient {{ 9 }}, got {other:?}"),
+        Probe::Insufficient { need_at_least, .. } => assert_eq!(need_at_least, 13),
+        other => panic!("eight zero bytes must be Insufficient {{ 13 }}, got {other:?}"),
     }
 }
 

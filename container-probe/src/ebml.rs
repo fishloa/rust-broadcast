@@ -144,58 +144,63 @@ fn find_doc_type(region: &[u8]) -> DocTypeResult {
     // The header data runs for `size` bytes (or to region end when unknown).
     // A known `size` that extends past the region is a truncation: the header
     // body the DocType lives in is not fully present.
-    let data = if let Some(sz) = size {
-        // `cursor + len + sz` cannot be trusted to fit a `usize` in one
-        // addition on every target: it is the attacker-controlled `size`, so
-        // add it checked (as line 92 does) and clamp to the region.
-        let body_start = cursor + len; // <= region.len(), guaranteed by read_size_vint
+    // Absolute offset of the header body within `region`, and whether the
+    // parent DECLARED its own length. Both matter and neither can be recovered
+    // from a sub-slice: a previous revision derived the base as
+    // `region.len() - data.len()`, which is only correct when the body happens
+    // to run to the region end. When the body was fully present and shorter,
+    // every reported need came out length-relative (`len + 194`), so the
+    // caller's read grew linearly with the file instead of landing on the
+    // structure -- 1361 turns over 256 KiB.
+    let body_start = cursor + len; // <= region.len(), guaranteed by read_size_vint
+    let (data, bounded) = if let Some(sz) = size {
+        // `body_start + sz` is attacker-controlled, so add it checked.
         match body_start.checked_add(sz) {
-            Some(e) if e <= region.len() => &region[body_start..e],
+            // Body fully present. The parent's declared end is authoritative
+            // from here on: a child that overruns it is malformed, not short.
+            Some(e) if e <= region.len() => (&region[body_start..e], true),
             // Body extends past the region: a longer buffer could contain it,
-            // and we know EXACTLY how long -- the element declared it. Reporting
-            // the declared end is what makes the caller's next read land past
-            // the data, instead of advancing one byte at a time.
+            // and the element declared exactly how long. Report that absolute
+            // end so one read suffices.
             Some(e) => return DocTypeResult::Truncated(e),
             // The end offset overflows `usize` and can never be indexed.
             None => return DocTypeResult::Malformed,
         }
     } else {
-        &region[cursor + len..]
+        // Unknown size: the body runs to the end of what we were given, so the
+        // region boundary is a truncation boundary, not a declared one.
+        (&region[body_start..], false)
     };
 
-    // Walk the header's child elements looking for DocType.
+    // Walk the header's child elements looking for DocType. `off` is relative
+    // to `data`; `body_start + off` is the absolute offset in `region`.
     let mut off = 0usize;
     while off < data.len() {
         let (id_len, id) = match read_id_vint(&data[off..]) {
             VintRead::Ok(w, v) => (w, v),
-            VintRead::Truncated => {
-                return DocTypeResult::Truncated(region.len().saturating_add(VINT_MAX_WIDTH));
-            }
+            VintRead::Truncated => return cut_short(bounded, body_start, off),
             VintRead::Malformed => return DocTypeResult::Malformed,
         };
         let after_id = off + id_len;
         let (esz_len, esz) = match read_size_vint(&data[after_id..]) {
             VintRead::Ok(w, v) => (w, v),
-            VintRead::Truncated => {
-                return DocTypeResult::Truncated(region.len().saturating_add(VINT_MAX_WIDTH));
-            }
+            VintRead::Truncated => return cut_short(bounded, body_start, after_id),
             VintRead::Malformed => return DocTypeResult::Malformed,
         };
         let value_start = after_id + esz_len;
         let value_end = match esz {
             Some(sz) => {
-                // The value must lie within the header region. A body that
-                // extends past the region really is a short read — more bytes
-                // could contain it. An offset that *overflows* `usize` cannot
-                // be indexed at any length, so it is malformed.
                 match value_start.checked_add(sz) {
                     Some(end) if end <= data.len() => end,
-                    // Again the element declares its own length: report the
-                    // absolute offset that end sits at, so one read suffices.
-                    Some(end) => {
-                        let body_base = region.len().saturating_sub(data.len());
-                        return DocTypeResult::Truncated(body_base.saturating_add(end));
+                    // Overruns the body. If the parent declared its length, the
+                    // child cannot legally exceed it and no further bytes can
+                    // make it legal -- malformed. If the length was unknown,
+                    // the body was clipped by the region, so this is a genuine
+                    // short read and the declared end is the structural need.
+                    Some(end) if !bounded => {
+                        return DocTypeResult::Truncated(body_start.saturating_add(end));
                     }
+                    Some(_) => return DocTypeResult::Malformed,
                     None => return DocTypeResult::Malformed,
                 }
             }
@@ -216,6 +221,25 @@ fn find_doc_type(region: &[u8]) -> DocTypeResult {
         off = value_end;
     }
     DocTypeResult::Absent
+}
+
+/// A VINT cut short inside the header body.
+///
+/// `bounded` says whether the parent declared its own length. If it did, the
+/// element is truncated by a boundary the file itself set, so no further bytes
+/// can complete it -- that is malformed. If not, the body was clipped by the
+/// region and this is a genuine short read; the need is the absolute offset of
+/// the cut VINT plus its maximum width.
+fn cut_short(bounded: bool, body_start: usize, off: usize) -> DocTypeResult {
+    if bounded {
+        DocTypeResult::Malformed
+    } else {
+        DocTypeResult::Truncated(
+            body_start
+                .saturating_add(off)
+                .saturating_add(VINT_MAX_WIDTH),
+        )
+    }
 }
 
 /// Read an EBML **element-ID** VINT: the whole encoded value including the

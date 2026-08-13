@@ -661,7 +661,27 @@ pub(crate) fn ran_out_or_ruled_out(ran_out: bool, need: usize) -> Outcome {
 /// separated out rather than inlined so it can be tested directly: a guard with
 /// no reachable failing input is a guard nobody can trust.
 fn normalise_need(need: usize, limit: usize) -> usize {
-    core::cmp::max(need, limit.saturating_add(1))
+    core::cmp::max(need, geometric_floor(limit))
+}
+
+/// The smallest answer a prober with **no structural need** may give.
+///
+/// Half again as much as was examined, plus one. Strictly greater than `limit`,
+/// so the caller always advances, and *geometric*, so a caller that cannot name
+/// a structure still converges in O(log n) reads rather than O(n).
+///
+/// The arithmetic alternative is what shipped and had to be undone: every
+/// prober computed `max(structural_floor, have + unit)`, and once `have`
+/// overtook the floor the second term won, growing by one unit per turn —
+/// `+4` for Annex B, `+188` for TS. The documented caller loop then reached
+/// 36 bytes of a 256 KiB file after twelve reads. Terminating and useless are
+/// different things, and only a turn-count bound tells them apart.
+///
+/// Over-asking is safe for a lower bound because the caller clamps to EOF and
+/// re-probes what it actually got: a file shorter than this figure is probed
+/// whole on the next turn, so nothing that was decidable becomes undecidable.
+fn geometric_floor(limit: usize) -> usize {
+    limit.saturating_add(limit / 2).saturating_add(1)
 }
 
 /// A registered prober. Each prober is a pure function over a slice read no
@@ -852,14 +872,16 @@ mod need_normalisation {
     /// below with `left: 10, right: 65537`.
     #[test]
     fn an_under_reported_need_is_raised_past_the_examined_bytes() {
-        // A prober that under-reports badly at a large limit.
-        assert_eq!(normalise_need(10, 65536), 65537);
+        // A prober that under-reports badly at a large limit is raised to the
+        // geometric floor (limit + limit/2 + 1), not merely to limit + 1: an
+        // arithmetic bump converges in O(n) reads, which terminates but crawls.
+        assert_eq!(normalise_need(10, 65536), 98_305);
         // Exactly at the limit is still a fixed point, so it must be raised.
-        assert_eq!(normalise_need(4096, 4096), 4097);
-        // One past is already correct and must pass through untouched.
-        assert_eq!(normalise_need(4097, 4096), 4097);
+        assert_eq!(normalise_need(4096, 4096), 6145);
+        // Just past the limit still crawls, so it is raised too.
+        assert_eq!(normalise_need(4097, 4096), 6145);
         // A larger structural need is the better hint and must be preserved,
-        // never clamped down to `limit + 1`.
+        // never clamped down to the floor.
         assert_eq!(normalise_need(268_435_465, 65536), 268_435_465);
         // Degenerate: zero need at zero limit must still ask for something.
         assert_eq!(normalise_need(0, 0), 1);
@@ -876,6 +898,15 @@ mod need_normalisation {
                     got > limit,
                     "normalise_need({need}, {limit}) = {got}, which does not exceed the \
                      {limit} bytes examined -- a caller would re-probe forever"
+                );
+                // Geometric, not merely greater: an answer of `limit + 1` still
+                // converges in O(n) reads. Growth must be multiplicative so a
+                // caller that cannot name a structure still finishes in O(log n).
+                assert!(
+                    got >= limit + limit / 2,
+                    "normalise_need({need}, {limit}) = {got} grows arithmetically; \
+                     the floor must be at least 1.5x the bytes examined or the \
+                     documented caller loop crawls"
                 );
                 assert!(
                     got >= need,

@@ -1,74 +1,109 @@
-//! `Insufficient` must always ask for ground not yet examined.
+//! `Insufficient` must ask for ground not yet examined, and must converge.
 //!
-//! The crate has shipped the opposite defect twice, from two different probers,
-//! and a green suite both times. `Probe::Insufficient { need_at_least }` tells a
-//! caller "read more"; if `need_at_least` does not exceed what the probe
-//! actually looked at, the caller re-probes, gets the same answer, and spins
-//! forever on an input that can never resolve.
+//! The crate has shipped a non-converging `Insufficient` twice, from two
+//! different probers, with a green suite both times.
+//! `Probe::Insufficient { need_at_least }` tells a caller "read more"; if the
+//! answer does not advance, the caller re-probes forever.
 //!
-//! # Why the earlier guards missed it
+//! # This file's own history, because it is the point
 //!
-//! The invariant *was* asserted — `tests/no_panic_on_arbitrary_input.rs`
-//! checks `need_at_least > data.len()` — but never at a length where it bites.
-//! The largest buffer it feeds is 8 KiB, and the bug only appears **past the
-//! probe budget**: `probe` examines `min(len, DEFAULT_BUDGET)` bytes, so a
-//! prober reporting `region.len() + 1` freezes at `DEFAULT_BUDGET + 1` and any
-//! longer buffer satisfies `need_at_least <= supplied`.
-//!
-//! Two observed fixed points, both from a handful of attacker-chosen bytes:
+//! The first version of this test **guarded nothing**. An audit reverted the
+//! `ebml` fix — it passed. It neutered `normalise_need` to the identity — it
+//! passed. Two of its four "adversarial" inputs never reached the code path at
+//! all (`isobmff-huge-largesize` was `Identified` at every length ≥188;
+//! `ts-single-sync` was `Unknown` at every length ≥4096), so they asserted
+//! nothing about `Insufficient`. And its loop contained
 //!
 //! ```text
-//! EBML  1A 45 DF A3 01 FF FF FF FF FF FF FE + 0x00 padding
-//!         65536 -> Insufficient { 65537 }
-//!         65537 -> Insufficient { 65537 }   <-- need == supplied
-//!        131072 -> Insufficient { 65537 }   <-- need <  supplied
-//!
-//! MP3   "ID3" 04 00 00 7F 7F 7F 7F + padding
-//!         65537 -> Insufficient { 268435465 }
-//!     300000000 -> Insufficient { 268435465 }
+//! let next = need_at_least.min(file.len());
+//! if next <= have { break Probe::Unknown; }   // <-- swallows the bug
 //! ```
 //!
-//! So the guard here sweeps lengths that **straddle the budget**, which is the
-//! only place the defect lives, and asserts the invariant against the bytes
-//! *examined* (`min(len, budget)`) rather than the bytes supplied.
+//! where `next <= have` *is* the fixed-point condition. The test broke out of
+//! the very failure it existed to detect and called it success.
+//!
+//! So this version enforces three things the first did not:
+//!
+//! 1. **Every input must actually reach `Insufficient`** at some length. An
+//!    input that never triggers the path cannot witness a defect in it, and
+//!    silently contributes nothing.
+//! 2. **No swallowing.** A need that fails to advance is the failure, asserted
+//!    directly — not a `break`.
+//! 3. **Convergence, not merely termination.** A need derived from the buffer
+//!    length rather than the structure still terminates, one byte at a time;
+//!    over 256 KiB that was 1361 turns. The turn budget is therefore tight and
+//!    scaled to the structure, so linear crawling fails.
 
 use container_probe::{DEFAULT_BUDGET, Probe, probe_with_budget};
 
-/// Buffers that are structurally undecidable on purpose: each is a valid-looking
-/// header prefix declaring far more data than follows, which is exactly what
-/// drives a prober to say "read more".
+/// Inputs that must drive some prober to say "read more".
+///
+/// Each is checked below to actually do so; a seed that stops reaching the
+/// path is a failure of this file, not a silent pass.
 fn adversarial_inputs() -> Vec<(&'static str, Vec<u8>)> {
-    let mut out: Vec<(&'static str, Vec<u8>)> = Vec::new();
-
-    // EBML magic + a size VINT declaring a huge header body.
-    let mut ebml = vec![
-        0x1A, 0x45, 0xDF, 0xA3, 0x01, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFE,
-    ];
-    ebml.resize(4096, 0x00);
-    out.push(("ebml-huge-declared-header", ebml));
-
-    // ID3v2.4 header declaring a ~268 MB tag (syncsafe 0x7F7F7F7F).
-    let mut id3 = vec![b'I', b'D', b'3', 0x04, 0x00, 0x00, 0x7F, 0x7F, 0x7F, 0x7F];
-    id3.resize(4096, 0x00);
-    out.push(("id3-268mb-declared-tag", id3));
-
-    // ISOBMFF `ftyp` whose largesize declares far more than is present.
-    let mut mp4 = vec![0x00, 0x00, 0x00, 0x01, b'f', b't', b'y', b'p'];
-    mp4.extend_from_slice(&0x0000_0000_7FFF_FFFFu64.to_be_bytes());
-    mp4.resize(4096, 0x00);
-    out.push(("isobmff-huge-largesize", mp4));
-
-    // A lone TS sync byte with nothing to confirm a lattice.
-    let mut ts = vec![0x47u8];
-    ts.resize(4096, 0x00);
-    out.push(("ts-single-sync", ts));
-
-    out
+    vec![
+        // EBML magic + a size VINT declaring a header body far larger than the
+        // buffer. Genuinely truncated: the declared end is the structural need.
+        (
+            "ebml-declared-body-past-region",
+            vec![
+                0x1A, 0x45, 0xDF, 0xA3, 0x01, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFE,
+            ],
+        ),
+        // ID3v2.4 declaring a ~268 MB tag: an honest structural need that
+        // exceeds the probe budget.
+        (
+            "id3-268mb-declared-tag",
+            vec![b'I', b'D', b'3', 0x04, 0x00, 0x00, 0x7F, 0x7F, 0x7F, 0x7F],
+        ),
+        // A single TS sync byte: too little to confirm or rule out a lattice.
+        ("ts-single-sync", vec![0x47]),
+        // ISOBMFF box header cut mid-largesize.
+        (
+            "isobmff-cut-largesize",
+            vec![0x00, 0x00, 0x00, 0x01, b'f', b't', b'y', b'p', 0x00, 0x00],
+        ),
+    ]
 }
 
-/// Lengths chosen to straddle the probe budget, which is where the defect lives.
-fn probe_lengths() -> Vec<usize> {
-    vec![
+/// Pad `seed` to `len` with zeros.
+fn at(seed: &[u8], len: usize) -> Vec<u8> {
+    let mut b = seed.to_vec();
+    b.resize(len, 0x00);
+    b
+}
+
+/// Precondition for everything else here: each seed must reach `Insufficient`
+/// at *some* length, or it is dead weight that cannot witness a defect.
+///
+/// This is the guard the first version of this file lacked, and it is why half
+/// its inputs were inert without anyone noticing.
+#[test]
+fn every_adversarial_input_actually_reaches_insufficient() {
+    for (name, seed) in adversarial_inputs() {
+        let reached = [seed.len().max(1), 64, 1024, 4096, DEFAULT_BUDGET]
+            .into_iter()
+            .any(|len| {
+                matches!(
+                    probe_with_budget(&at(&seed, len), len),
+                    Probe::Insufficient { .. }
+                )
+            });
+        assert!(
+            reached,
+            "{name} never probes Insufficient at any tested length, so it cannot \
+             witness a defect in the Insufficient contract — it is inert, and an \
+             inert input makes every other assertion in this file vacuous for it"
+        );
+    }
+}
+
+/// `need_at_least` must always exceed the bytes **examined** — which is
+/// `min(len, budget)`, not `len`. Swept across the budget boundary, the only
+/// place the fixed point lived.
+#[test]
+fn need_at_least_always_exceeds_the_bytes_examined() {
+    let lengths = [
         1,
         188,
         4096,
@@ -76,34 +111,21 @@ fn probe_lengths() -> Vec<usize> {
         DEFAULT_BUDGET,
         DEFAULT_BUDGET + 1,
         DEFAULT_BUDGET * 2,
-        DEFAULT_BUDGET * 4,
-    ]
-}
-
-/// `need_at_least` must always exceed the bytes examined — for every
-/// adversarial input, at every length, at both the default and a matched budget.
-#[test]
-fn need_at_least_always_exceeds_the_bytes_examined() {
+    ];
     let mut failures: Vec<String> = Vec::new();
 
     for (name, seed) in adversarial_inputs() {
-        for len in probe_lengths() {
-            let mut buf = seed.clone();
-            buf.resize(len, 0x00);
-
-            // Both the fixed default budget and a caller-matched budget: the
-            // first is what `probe` uses, the second is the documented
-            // terminating loop.
+        for len in lengths {
+            let buf = at(&seed, len);
             for budget in [DEFAULT_BUDGET, buf.len()] {
                 let examined = core::cmp::min(buf.len(), budget);
                 if let Probe::Insufficient { need_at_least, .. } = probe_with_budget(&buf, budget)
                     && need_at_least <= examined
                 {
                     failures.push(format!(
-                        "  {name}: len={len} budget={budget} examined={examined} \
-                         -> Insufficient {{ need_at_least: {need_at_least} }} — does not \
-                         exceed the bytes examined, so a caller re-probes to the same \
-                         answer forever"
+                        "  {name}: len={len} budget={budget} examined={examined} -> \
+                         need_at_least={need_at_least}, which does not exceed the bytes \
+                         examined; a caller re-probes to the same answer forever"
                     ));
                 }
             }
@@ -117,38 +139,69 @@ fn need_at_least_always_exceeds_the_bytes_examined() {
     );
 }
 
-/// The documented caller loop must actually terminate on adversarial input.
+/// The documented caller loop must **converge**, not merely finish.
 ///
-/// This is the end-to-end statement of the invariant above: follow the loop the
-/// crate root documents, cap the iterations, and require it to finish. A bound
-/// is the assertion — an unbounded loop would hang the test run rather than
-/// fail it, which is a test that cannot fail by never returning.
+/// Every turn must strictly advance, and the number of turns must stay tiny —
+/// a structural need lands on the answer in a handful of reads, whereas a need
+/// derived from the buffer length crawls. The tight budget is the assertion
+/// that distinguishes them; a generous one would pass for both.
 #[test]
-fn the_documented_caller_loop_terminates() {
-    const MAX_TURNS: usize = 64;
+fn the_documented_caller_loop_converges() {
+    // The bound is derived, not guessed, and its job is to separate geometric
+    // convergence from arithmetic crawling over this file size:
+    //
+    //   1.5x growth from 1 byte  ->   31 turns   (what the crate must do)
+    //   arithmetic +188 (TS)     -> 1394 turns
+    //   arithmetic +4  (Annex B) -> 65536 turns
+    //
+    // 48 clears the first with margin and rejects both of the others outright.
+    // A generous bound (say 5000) would pass the TS crawl, and a bound tuned to
+    // today's exact turn count would fail on any harmless future change — the
+    // point is the growth *class*, not the count.
+    const MAX_TURNS: usize = 48;
+    const FILE_LEN: usize = DEFAULT_BUDGET * 4;
 
     for (name, seed) in adversarial_inputs() {
-        // The "file" the caller is reading from: finite, as every real one is.
-        let mut file = seed.clone();
-        file.resize(DEFAULT_BUDGET * 4, 0x00);
-
+        let file = at(&seed, FILE_LEN);
         let mut have = 1usize;
         let mut turns = 0usize;
+
         let verdict = loop {
             turns += 1;
             assert!(
                 turns <= MAX_TURNS,
-                "{name}: the documented loop did not terminate within {MAX_TURNS} turns \
-                 (stuck asking for more at {have} bytes) — this is the unbounded read \
-                 loop the invariant exists to prevent"
+                "{name}: the documented loop had not converged after {MAX_TURNS} turns \
+                 (at {have} of {FILE_LEN} bytes). A need derived from the buffer length \
+                 rather than the structure terminates but crawls; that is the defect."
             );
 
-            let buf = &file[..have.min(file.len())];
+            let buf = &file[..have];
             match probe_with_budget(buf, buf.len()) {
                 Probe::Insufficient { need_at_least, .. } => {
-                    // Grow as instructed; stop at EOF, per the documented loop.
+                    // NOT a `break`. A need that fails to advance is the fixed
+                    // point this file exists to catch, so assert it directly —
+                    // breaking here is how the previous version passed while
+                    // the bug was live.
+                    assert!(
+                        need_at_least > have,
+                        "{name}: at {have} bytes the probe asked for {need_at_least} — \
+                         no advance, so the caller loops forever on this input"
+                    );
+                    // Clamp to EOF and probe the WHOLE file before giving up.
+                    // Breaking here on `need >= file.len()` would be wrong: the
+                    // floor deliberately over-asks when no structure can be
+                    // named, so a need past EOF does not mean the file is
+                    // undecidable — only that we have not yet looked at all of
+                    // it. Give up only when a full-file probe still says
+                    // Insufficient.
                     let next = need_at_least.min(file.len());
                     if next <= have {
+                        assert_eq!(
+                            have,
+                            file.len(),
+                            "{name}: stopped advancing at {have} without having read the \
+                             whole {FILE_LEN}-byte file"
+                        );
                         break Probe::Unknown;
                     }
                     have = next;
@@ -157,9 +210,6 @@ fn the_documented_caller_loop_terminates() {
             }
         };
 
-        // Any terminal answer is acceptable here — the property under test is
-        // termination, not which verdict. Asserting a specific verdict would
-        // make this a weaker duplicate of the prefix sweep.
         assert!(
             !matches!(verdict, Probe::Insufficient { .. }),
             "{name}: loop exited still Insufficient"

@@ -106,11 +106,16 @@ pub(crate) fn probe(data: &[u8], limit: usize) -> Outcome {
             None => {
                 // A trailing header that cannot be read: the region ended
                 // mid-box-header. Not clean, and not a ruling-out — the missing
-                // bytes could have completed a valid box. A full header needs
-                // BOX_HEADER_MIN_SIZE bytes past the current offset.
+                // bytes could have completed a valid box.
+                //
+                // The need is the END of the header being read, absolutely: 8
+                // bytes normally, but 16 when `size32 == 1`, because the
+                // `largesize` field is part of the header. Reporting 8 for a
+                // largesize header asks for bytes that still leave it unreadable,
+                // so the caller comes straight back.
                 clean = false;
                 ran_out = true;
-                ran_out_need = offset.saturating_add(BOX_HEADER_MIN_SIZE);
+                ran_out_need = offset.saturating_add(header_len_required(rem));
                 break;
             }
         };
@@ -163,7 +168,12 @@ pub(crate) fn probe(data: &[u8], limit: usize) -> Outcome {
         //    mid-header) -> `ran_out`, a truncation, so "give me more";
         //  - the first box header was read but declared an impossible size
         //    (smaller than its own header) -> a definitive rejection (`None`).
-        return crate::ran_out_or_ruled_out(ran_out, need_at_least(region.len()));
+        // Structural, not length-relative: `ran_out_need` is the end of the
+        // header the walk was cut short in (8 bytes normally, 16 for a
+        // `largesize` header). The previous `need_at_least(region.len())` was
+        // `supplied + 8`, so the answer grew with the buffer instead of naming
+        // the header, and a caller advanced 8 bytes per read.
+        return crate::ran_out_or_ruled_out(ran_out, ran_out_need);
     }
 
     // True only when the walk consumed every byte the caller supplied — the
@@ -204,17 +214,17 @@ pub(crate) fn probe(data: &[u8], limit: usize) -> Outcome {
         // for more bytes; if a box size was outright invalid, the file is ruled
         // out (`None`). This is the shared `Insufficient` vs `Unknown` decision
         // — see `crate::ran_out_or_ruled_out`.
-        let need = core::cmp::max(ran_out_need, region.len() + BOX_HEADER_MIN_SIZE);
-        return crate::ran_out_or_ruled_out(ran_out, need);
+        // The STRUCTURAL need, not a length-relative one. This previously took
+        // `max(ran_out_need, region.len() + BOX_HEADER_MIN_SIZE)`, and that
+        // second term dominates: it grows with whatever was supplied, so the
+        // documented caller loop advanced 8 bytes per turn and had reached only
+        // 36 of 262144 bytes after 12 reads. Strict progress is guaranteed
+        // centrally by `crate::normalise_need`, so bounding it here is both
+        // unnecessary and destructive of the useful answer.
+        return crate::ran_out_or_ruled_out(ran_out, ran_out_need);
     };
 
     Outcome::Match(Evidence { confidence, detail })
-}
-
-/// A lower bound on bytes that could resolve the verdict: enough to complete
-/// the box the walk was cut short in, and strictly more than what was supplied.
-fn need_at_least(have: usize) -> usize {
-    have.saturating_add(BOX_HEADER_MIN_SIZE)
 }
 
 /// Decode a box header at the front of `rem`: the raw `u32` size and the
@@ -223,6 +233,22 @@ fn need_at_least(have: usize) -> usize {
 ///
 /// The effective length is the `largesize` when `size == 1`, `0`
 /// (end-of-file) when `size == 0`, else the 32-bit `size` itself.
+/// Bytes required to read the box header at the start of `rem`.
+///
+/// A normal header is [`BOX_HEADER_MIN_SIZE`]; a `size32 == 1` header carries a
+/// 64-bit `largesize` and is [`BOX_HEADER_LARGESIZE_SIZE`]. Reporting the
+/// smaller figure for a largesize header asks the caller for bytes that still
+/// leave the header unreadable, so it returns immediately for more.
+fn header_len_required(rem: &[u8]) -> usize {
+    if rem.len() >= 4 {
+        let size32 = u32::from_be_bytes([rem[0], rem[1], rem[2], rem[3]]);
+        if size32 == SIZE_INDICATES_LARGESIZE {
+            return BOX_HEADER_LARGESIZE_SIZE;
+        }
+    }
+    BOX_HEADER_MIN_SIZE
+}
+
 /// Convert a 64-bit `largesize` to an addressable length, or reject it.
 ///
 /// A `largesize` that does not fit a `usize` cannot be addressed into a slice
@@ -288,6 +314,47 @@ mod tests {
         match probe(region, region.len()) {
             Outcome::Insufficient(need) => assert_eq!(need, BOX_HEADER_MIN_SIZE),
             other => panic!("7-byte ISOBMFF prefix must be Insufficient(8), got {other:?}"),
+        }
+    }
+
+    /// The ran-out need must be **structural** — derived from the box being
+    /// read — not from how many bytes happened to be supplied.
+    ///
+    /// Tested at the prober, not through `probe`, because the harness's
+    /// `normalise_need` floor masks it end-to-end: an audit reverted this very
+    /// fix and the whole-crate suite stayed green. A guard has to be applied
+    /// where the value is produced, or the layer above it hides the defect.
+    ///
+    /// MUTATION VERIFIED: restoring
+    /// `max(ran_out_need, region.len() + BOX_HEADER_MIN_SIZE)` makes the need
+    /// track the supplied length (`len + 8`) instead of the header, failing the
+    /// second case with `left: 1008, right: 16`.
+    #[test]
+    fn the_ran_out_need_is_structural_not_length_relative() {
+        // A `size32 == 1` header is 16 bytes, so it is genuinely CUT for any
+        // length in 8..=15 — and for every one of those the answer is the same
+        // 16, because what completes the header is a property of the header,
+        // not of how much happened to be supplied.
+        //
+        // Padding beyond 15 does NOT extend this case and must not be tested
+        // here: at >=16 bytes the largesize is readable, reads as 0, and a box
+        // smaller than its own header is definitively invalid. That is
+        // `Unknown`, correctly, and an earlier draft of this test asserted
+        // `Insufficient` there and was simply wrong about the code.
+        for len in BOX_HEADER_MIN_SIZE..BOX_HEADER_LARGESIZE_SIZE {
+            let mut buf = std::vec![0u8; len];
+            buf[3] = SIZE_INDICATES_LARGESIZE as u8;
+            buf[4..8].copy_from_slice(&TYPE_FTYP);
+            match probe(&buf, buf.len()) {
+                Outcome::Insufficient(need) => assert_eq!(
+                    need, BOX_HEADER_LARGESIZE_SIZE,
+                    "at {len} bytes the need must be the 16 the largesize header \
+                     requires, not a figure that tracks the {len} supplied"
+                ),
+                other => panic!(
+                    "a cut largesize header at {len} bytes must be Insufficient, got {other:?}"
+                ),
+            }
         }
     }
 
