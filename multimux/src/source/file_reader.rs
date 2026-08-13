@@ -179,6 +179,15 @@ pub enum FileReaderError {
     /// a backwards timestamp.
     #[error("loop offset overflow applying per-track PTS offset")]
     OffsetOverflow,
+    /// A sample's presentation time (or the pacing baseline derived from it)
+    /// is not representable as a wall-clock [`Duration`] — non-finite,
+    /// negative (after the file-start anchor is subtracted), or overflowing a
+    /// 64-bit [`std::time::Instant`]. Reachable from a version-1 `tfdt`
+    /// `baseMediaDecodeTime` (64-bit) with a small timescale; surfaced as a
+    /// structured error rather than a [`Duration::from_secs_f64`] /
+    /// `Instant::checked_add` panic.
+    #[error("sample pacing time is not representable as a wall-clock duration: {value}")]
+    PacingOverflow { value: f64 },
 }
 
 /// A structured document used only by a [`FileReader`] to decide where one
@@ -525,7 +534,11 @@ impl FileReader {
             // and never spins with every target already in the past.
             advance_offsets(&mut offsets, &pass_ranges)?;
             if let Some(start) = &mut start {
-                *start += Duration::from_secs_f64(pass_duration_secs);
+                *start = start
+                    .checked_add(secs_to_duration(pass_duration_secs)?)
+                    .ok_or(FileReaderError::PacingOverflow {
+                        value: pass_duration_secs,
+                    })?;
             }
             if done {
                 break;
@@ -548,6 +561,12 @@ struct PublishItem {
     /// timescale, so the written absolute-PTS sequence is strictly monotonic
     /// for a sane source (the invariant the timeline tests assert).
     due_seconds: f64,
+    /// The sample's **absolute decode** time in seconds, `dts / timescale`
+    /// (falling back to `pts` when `dts` is absent). Intra-track samples are
+    /// emitted in this order — decode order, so a B-frame reference is always
+    /// published before the B-frame that will reference it, regardless of the
+    /// presentation-time reorder.
+    decode_seconds: f64,
 }
 
 /// A parsed file: the per-track samples plus their specs, prepared for
@@ -560,14 +579,22 @@ struct ParsedFile {
 
 impl ParsedFile {
     /// Build the playout structure: per-track metadata (`PassRange`), a flat
-    /// presentation-order merge of all samples across all tracks sorted by
-    /// **absolute** presentation time (so the trunk receives samples in
-    /// natural cadence and the absolute-PTS sequence is monotonic), and a
-    /// `TrackSpec` list for the trunk's track set.
+    /// **decode-ordered per track, presentation-interleaved across tracks**
+    /// merge of all samples, and a `TrackSpec` list for the trunk's track set.
+    ///
+    /// Two distinct orderings coexist and are deliberately NOT collapsed into
+    /// one sort key:
+    /// * **within a track** samples are emitted in decode order (`dts`, falling
+    ///   back to `pts`), so a B-frame reference is always published before the
+    ///   B-frame that references it — a global presentation sort would emit the
+    ///   referencing B-frame before its P-frame reference and break `trun`
+    ///   decode.
+    /// * **across tracks** the merge is interleaved by presentation time
+    ///   (`pts`), the natural wall-clock cadence.
     fn build_playout(&self) -> (Vec<TrackSpec>, Vec<PublishItem>, Vec<PassRange>) {
         let specs: Vec<TrackSpec> = self.tracks.iter().map(|t| t.spec.clone()).collect();
 
-        let mut order: Vec<PublishItem> = Vec::new();
+        let mut per_track: Vec<std::collections::VecDeque<PublishItem>> = Vec::new();
         let mut ranges: Vec<PassRange> = Vec::new();
 
         for (ti, track) in self.tracks.iter().enumerate() {
@@ -588,6 +615,7 @@ impl ParsedFile {
                     span_secs: 0.0,
                     frame_secs: 0.0,
                 });
+                per_track.push(std::collections::VecDeque::new());
                 continue;
             }
             pres_pts.sort_unstable();
@@ -624,28 +652,64 @@ impl ParsedFile {
                 frame_secs: frame as f64 * timescale_secs,
             });
 
-            for s in &track.samples {
-                let Some(pts) = s.pts else { continue };
-                order.push(PublishItem {
-                    track_ref: ti,
-                    sample: s.clone(),
-                    due_seconds: pts as f64 / timescale,
-                });
-            }
+            // This track's timed samples, in decode order (`dts`, falling back
+            // to `pts`). Keeping this intra-track order is what lets the
+            // multi-way merge below interleave by presentation time *without*
+            // ever reordering a track's own decode sequence.
+            let mut mine: Vec<(f64, f64, Sample)> = track
+                .samples
+                .iter()
+                .filter_map(|s| {
+                    let pts = s.pts?;
+                    let dts = s.dts.or(s.pts)?;
+                    Some((dts as f64 / timescale, pts as f64 / timescale, s.clone()))
+                })
+                .collect();
+            mine.sort_by(|a, b| a.0.total_cmp(&b.0));
+            per_track.push(
+                mine.into_iter()
+                    .map(|(decode_seconds, due_seconds, sample)| PublishItem {
+                        track_ref: ti,
+                        sample,
+                        due_seconds,
+                        decode_seconds,
+                    })
+                    .collect(),
+            );
         }
 
-        // Presentation order across tracks: smallest **absolute** presentation
-        // time first (in seconds — comparable across differing track
-        // timescales), breaking ties stably by track index then order.
-        // `due_seconds` can be negative from a version-1 `ctts` composition
-        // offset, so order by `total_cmp` — a total order correct across zero
-        // and signs (`.to_bits()` is only monotonic for non-negatives and
-        // would invert negative magnitudes).
-        order.sort_by(|a, b| {
-            a.due_seconds
-                .total_cmp(&b.due_seconds)
-                .then(a.track_ref.cmp(&b.track_ref))
-        });
+        // Multi-way merge across tracks, keyed by presentation time (`pts`) —
+        // the cross-track interleave. Each track's samples are already in
+        // decode order, and taking from the front of each queue preserves that
+        // within-track decode order: the only freedom is *which* track emits
+        // next, decided by the smallest due presentation time (ties broken by
+        // track index, then decode time). `due_seconds` can be negative from a
+        // version-1 `ctts` composition offset, so compare with `total_cmp` — a
+        // total order correct across zero and signs.
+        let mut order: Vec<PublishItem> = Vec::new();
+        loop {
+            let mut best: Option<usize> = None;
+            for (ti, q) in per_track.iter().enumerate() {
+                let Some(front) = q.front() else { continue };
+                let better = match best {
+                    None => true,
+                    Some(bi) => {
+                        let b = &per_track[bi].front().expect("best queue has a front");
+                        front
+                            .due_seconds
+                            .total_cmp(&b.due_seconds)
+                            .then(front.track_ref.cmp(&b.track_ref))
+                            .then(front.decode_seconds.total_cmp(&b.decode_seconds))
+                            .is_lt()
+                    }
+                };
+                if better {
+                    best = Some(ti);
+                }
+            }
+            let Some(bi) = best else { break };
+            order.push(per_track[bi].pop_front().expect("best queue has a front"));
+        }
 
         (specs, order, ranges)
     }
@@ -904,7 +968,12 @@ async fn publish_one_pass(
             // the loop point — the looped content plays at its natural cadence
             // rather than dumping the whole file at once.
             let secs = (item.due_seconds - file_start_secs).max(0.0);
-            let due = start + Duration::from_secs_f64(secs);
+            let delta = secs_to_duration(secs)?;
+            let due = start
+                .checked_add(delta)
+                .ok_or(FileReaderError::PacingOverflow {
+                    value: item.due_seconds,
+                })?;
             let now = std::time::Instant::now();
             if due > now {
                 tokio::time::sleep(due - now).await;
@@ -929,7 +998,25 @@ async fn publish_one_pass(
             sample,
         );
     }
+    // Yield once per pass so a `pace: false` + `loop_file: true` reader (the
+    // public `with_pace(false)` builder with the default `max_loops: None`)
+    // does not busy-spin its worker forever: with pacing off there is no
+    // sleep inside the loop, so without this `.await` the pass-boundary is a
+    // zero-cost hot loop. A single yield keeps the task fair while preserving
+    // the un-paced "write as fast as possible" contract.
+    tokio::task::yield_now().await;
     Ok(())
+}
+
+/// Convert a non-negative seconds value into a wall-clock [`Duration`] without
+/// panicking — `Duration::from_secs_f64` panics on a non-finite, negative, or
+/// overflowing input, and `pts as f64 / timescale` is unbounded for a
+/// version-1 `tfdt` 64-bit `baseMediaDecodeTime` with a small timescale.
+///
+/// Returns [`FileReaderError::PacingOverflow`] rather than allow any of those
+/// panics to reach a paced run.
+fn secs_to_duration(value: f64) -> Result<Duration, FileReaderError> {
+    Duration::try_from_secs_f64(value).map_err(|_| FileReaderError::PacingOverflow { value })
 }
 
 /// Advance each track's accumulated PTS offset by `span + one frame` so the
@@ -1085,7 +1172,15 @@ impl FileIngestSession {
     fn next_due(&self) -> Option<std::time::Instant> {
         let rel = self.queue.front()?.2;
         let base = self.pass_wall_start?;
-        Some(base + Duration::from_secs_f64(rel))
+        // `rel` is a non-negative within-pass media time, but its magnitude is
+        // unbounded (version-1 `tfdt` is 64-bit); a non-representable value
+        // clamps to "due now" so the controller does not sleep past forever,
+        // and the actual failure surfaces through `poll`'s pacing path.
+        let dur = secs_to_duration(rel).ok()?;
+        base.checked_add(dur).or_else(|| {
+            // Overflow → due immediately (never a panic, never sleeps forever).
+            std::time::Instant::now().checked_sub(Duration::ZERO)
+        })
     }
 
     /// Refill the queue from the already-parsed content, applying the current
@@ -1094,6 +1189,27 @@ impl FileIngestSession {
     /// is re-demuxed and the queue's capacity is reused, so memory is bounded
     /// at the file's own sample count no matter how many passes happen.
     fn refill(&mut self) -> Result<(), FileReaderError> {
+        // Advance the pass's wall-clock baseline by one pass's worth of media
+        // time *before* queueing the next pass, the same way `publish_looping`
+        // advances its `start` — derived from the same `PassRange` data, not a
+        // second mechanism. Without this, from pass 2 on every queued sample's
+        // within-pass time is already behind `base.elapsed()`, so `poll` hands
+        // out the whole pass in one drain and `next_due()` returns a past
+        // instant — the original ~300× behaviour, restored from pass 2 onward.
+        let pass_duration_secs = self
+            .ranges
+            .iter()
+            .map(|r| r.span_secs + r.frame_secs)
+            .fold(0.0f64, f64::max);
+        if self.pace
+            && let Some(base) = &mut self.pass_wall_start
+        {
+            *base = base
+                .checked_add(secs_to_duration(pass_duration_secs)?)
+                .ok_or(FileReaderError::PacingOverflow {
+                    value: pass_duration_secs,
+                })?;
+        }
         self.queue.clear();
         for item in &self.order {
             let mut sample = item.sample.clone();
@@ -1154,8 +1270,12 @@ impl Stage for FileIngestSession {
             // controller sleeps until `next_due` and feeds again).
             let rel = self.queue.front()?.2;
             let base = self.pass_wall_start?;
-            if base.elapsed() < Duration::from_secs_f64(rel) {
-                return None;
+            // `rel` is unbounded (see `next_due`); a non-representable value
+            // is treated as "elapsed" so the sample is emitted rather than
+            // panicked over or held forever.
+            match secs_to_duration(rel) {
+                Ok(dur) if base.elapsed() < dur => return None,
+                Ok(_) | Err(_) => {}
             }
         }
         self.queue
@@ -1260,10 +1380,16 @@ pub(crate) async fn run_file_source(
         crate::source::advance_route(&driver, route_handle, &mut progress);
 
         if driver.session().drained() {
-            // Finite, non-looping file has fully run: stop the drive loop
-            // cleanly and park (zero CPU) holding the trunk so the served
-            // segments remain servable until shutdown — no 100 Hz spin, no
-            // supervisor re-serve of the same finite asset.
+            // Finite, non-looping file has fully run. Signal end-of-input so
+            // the segmenter FLUSHES its tail — the segmenter's `flush()` is
+            // gated on `!driver.health().is_running()`, which only becomes
+            // true once the driver is `Ended`, so without this a parked-but
+            // healthy driver would silently drop up to one `target_duration`
+            // of media. `driver.finish()` sets `Ended`, then one more
+            // `advance_route` drains the final segment before we park (zero
+            // CPU) holding the trunk so the served segments stay servable.
+            driver.finish();
+            crate::source::advance_route(&driver, route_handle, &mut progress);
             std::future::pending::<()>().await;
         }
 
@@ -1301,55 +1427,55 @@ mod loop_tests {
         reader.read_probe_demux().await.expect("demux fixture")
     }
 
-    /// Drive a session's `poll` until `None`, collecting the PTS of every
-    /// sample (skipping the program/established events).
-    fn drain_pts(sess: &mut FileIngestSession) -> Vec<(u32, i64)> {
-        let mut pts = Vec::new();
+    /// Drive a session's `poll` until `None`, collecting the DTS of every
+    /// sample (skipping the program/established events). DTS (decode time) is
+    /// the intra-track key the reader emits in — decode order — so it is the
+    /// timestamp whose monotonicity the loop offset must preserve.
+    fn drain_dts(sess: &mut FileIngestSession) -> Vec<(u32, i64)> {
+        let mut dts = Vec::new();
         while let Some(ev) = sess.poll() {
             if let SessionEvent::Sample {
                 track_id, sample, ..
             } = ev
-                && let Some(p) = sample.pts
+                && let Some(d) = sample.dts
             {
-                pts.push((track_id, p));
+                dts.push((track_id, d));
             }
         }
-        pts
+        dts
     }
 
-    /// The loop offset keeps each track's published PTS strictly monotonic
-    /// across the loop point — no reset to zero, no backwards step.
+    /// The loop offset keeps each track's published **DTS** strictly monotonic
+    /// across the loop point — no reset to zero, no backwards step — which is
+    /// the decode-order invariant a B-frame track (this fixture's video has
+    /// `dts != pts`) depends on: the decoder consumes in DTS order, so a reset
+    /// at the loop point would corrupt every frame that reorders.
     ///
-    /// (The file's audio and video carry different timescales, so raw PTS are
+    /// (The file's audio and video carry different timescales, so raw DTS are
     /// not comparable across tracks; the monotonic invariant is therefore held
     /// per track, which is exactly the property the offset exists to preserve.)
     ///
     /// MUTATION PROOF, recorded verbatim: removing the per-track PTS offset on
-    /// refill (`sample.pts = Some(p)` instead of `Some(p + off)` in
+    /// refill (`sample.dts = Some(d)` instead of `Some(d + off)` in
     /// `FileIngestSession::refill`) makes each pass restart at the file's own
-    /// per-track first PTS, so a track's pass-1 first sits at or below its own
-    /// pass-0 last — and this test FAILS with:
-    ///
-    ///     PTS must be strictly monotonic across the loop point (track 2): 195315 then 64243
-    ///
-    /// (audio track 2's pass-0 last PTS 195315 is followed by its unoffset
-    /// pass-1 first PTS 64243 — a backwards step). Restoring the offset (and
-    /// a `touch`) makes it pass again.
+    /// per-track first DTS, so a track's pass-1 first sits at or below its own
+    /// pass-0 last — and this test FAILS with a backwards DTS step across the
+    /// loop point. Restoring the offset (and a `touch`) makes it pass again.
     #[tokio::test]
-    async fn loop_refill_keeps_pts_monotonic_across_loop_point() {
+    async fn loop_refill_keeps_dts_monotonic_across_loop_point() {
         let parsed = demux_fixture().await;
         let mut sess = FileIngestSession::new(parsed, ProgramId(0), true, false)
             .expect("fixture must have playable samples");
 
         // Pass the one-time setup gate, then collect pass 0's samples.
         let _ = sess.feed((), broadcast_common::Timestamp::from_nanos(0));
-        let _setup = drain_pts(&mut sess);
-        let pass0 = drain_pts(&mut sess);
+        let _setup = drain_dts(&mut sess);
+        let pass0 = drain_dts(&mut sess);
         assert!(!pass0.is_empty(), "pass 0 must emit samples");
 
         // Trigger the loop refill (pass 1, offset advanced) and collect it.
         let _ = sess.feed((), broadcast_common::Timestamp::from_nanos(0));
-        let pass1 = drain_pts(&mut sess);
+        let pass1 = drain_dts(&mut sess);
         assert_eq!(
             pass0.len(),
             pass1.len(),
@@ -1361,14 +1487,14 @@ mod loop_tests {
         let both: Vec<(u32, i64)> = pass0.into_iter().chain(pass1).collect();
         let mut by_track: std::collections::HashMap<u32, Vec<i64>> =
             std::collections::HashMap::new();
-        for (track_id, p) in &both {
-            by_track.entry(*track_id).or_default().push(*p);
+        for (track_id, d) in &both {
+            by_track.entry(*track_id).or_default().push(*d);
         }
         for (track_id, seq) in &by_track {
             for pair in seq.windows(2) {
                 assert!(
                     pair[1] > pair[0],
-                    "PTS must be strictly monotonic across the loop point (track {track_id}): {} then {}",
+                    "DTS must be strictly monotonic across the loop point (track {track_id}): {} then {}",
                     pair[0],
                     pair[1]
                 );
@@ -1382,12 +1508,12 @@ mod loop_tests {
         let mut sess = FileIngestSession::new(parsed, ProgramId(0), false, false)
             .expect("fixture must have playable samples");
         let _ = sess.feed((), broadcast_common::Timestamp::from_nanos(0));
-        let _setup = drain_pts(&mut sess);
-        let pass0 = drain_pts(&mut sess);
+        let _setup = drain_dts(&mut sess);
+        let pass0 = drain_dts(&mut sess);
         assert!(!pass0.is_empty());
         // A further feed must not refill (loop is off); poll stays empty.
         let _ = sess.feed((), broadcast_common::Timestamp::from_nanos(0));
-        assert_eq!(drain_pts(&mut sess).len(), 0, "loop:false must not refill");
+        assert_eq!(drain_dts(&mut sess).len(), 0, "loop:false must not refill");
     }
 
     /// The queue's length after a refill equals its length after the first
@@ -1404,12 +1530,12 @@ mod loop_tests {
 
         // Pass the setup gate once.
         let _ = sess.feed((), broadcast_common::Timestamp::from_nanos(0));
-        let _ = drain_pts(&mut sess);
-        let _ = drain_pts(&mut sess);
+        let _ = drain_dts(&mut sess);
+        let _ = drain_dts(&mut sess);
 
         // Run several passes; after each refill the queue is the same size.
         for _ in 0..5 {
-            let _ = drain_pts(&mut sess); // drain the current pass
+            let _ = drain_dts(&mut sess); // drain the current pass
             let _ = sess.feed((), broadcast_common::Timestamp::from_nanos(0)); // refill for next
             let after = sess.queue.len();
             assert_eq!(
