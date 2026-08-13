@@ -8,9 +8,11 @@ description  = "Multi-input (RTSP/RTP/TS-UDP/TS-HTTP/SRT/HLS-pull/DASH-pull/Smoo
 repository   = "https://github.com/fishloa/rust-broadcast"
 keywords     = ["rtsp", "hls", "ll-hls", "cmaf", "origin"]
 categories   = ["multimedia", "network-programming"]
+readme       = "README.md"
 
 [package.metadata.docs.rs]
 all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
 
 [dependencies]
 # Floor is 0.23.1, not 0.23: `push::rtmp` uses

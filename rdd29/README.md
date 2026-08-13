@@ -18,6 +18,14 @@ RDD 29 defines a frame-based bitstream carrying, per frame, a single
 - **[`AudioDataDlc`]** — one track's audio-essence pointer + opaque payload
   (§2.4/§4.5).
 
+Alongside those, the **`distance`** module (§3.2) decodes the relative-distance
+coding used by the object position and spread fields (`ObjectPosX`/`ObjectPosY`/
+`ObjectPosZ`/`ObjectSpread`) into derived, read-only views. The raw `u16` wire
+code stays the round-tripped source of truth — these helpers never feed back
+into parsing or serialization, so the byte-exact round trip is unaffected. They
+use only shifts and core `f64` arithmetic (no `libm`, no `std` transcendentals),
+so they behave identically under `no_std`.
+
 See `docs/rdd29.md` for the curated SMPTE RDD 29:2019 §1-§5 transcription
 this crate implements field-for-field (fetched directly from
 `pub.smpte.org/pub/rdd29/rdd29-2019.pdf`), including the "Scope decisions"

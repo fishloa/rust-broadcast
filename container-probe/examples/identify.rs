@@ -48,9 +48,16 @@ fn detail_text(detail: &Detail) -> String {
 }
 
 fn main() {
-    let path = std::env::args()
-        .nth(1)
-        .unwrap_or_else(|| "fixtures/container-probe/m2ts_192.m2ts".to_string());
+    let path = std::env::args().nth(1).unwrap_or_else(|| {
+        // Absolute, via CARGO_MANIFEST_DIR: a bare relative path only resolves
+        // when the example happens to be run from the workspace root, so it
+        // turns "wrong working directory" into "fixture missing".
+        concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../fixtures/container-probe/m2ts_192.m2ts"
+        )
+        .to_string()
+    });
     let data = match std::fs::read(&path) {
         Ok(d) => d,
         Err(e) => {

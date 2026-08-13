@@ -4,6 +4,25 @@ All notable changes to `multimux-cli` will be documented in this file.
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-08-13
+
+### Changed
+
+- Build against `multimux` 0.10 (was 0.9), which adds the `file` input scheme —
+  a local media file as a route source, identified with `container-probe`,
+  paced to wall clock, with optional looping.
+
+  Minor rather than patch **because the caret epoch moved**. A published 0.7.x
+  requiring `multimux ^0.9` alongside a 0.7.y requiring `^0.10` would put two
+  incompatible epochs in one compatibility bucket, so a `cargo update` within
+  `0.7` could silently change which `multimux` a consumer resolves. Every
+  published bucket stays epoch-pure (`docs/RELEASE-AUDIT.md` §2). The rule is
+  machine-checked by `tools/check-published-dep-consistency.py`, which is what
+  caught this: the bump was missed when the rest of the wave was staged.
+
+  No CLI surface changed — same flags, same config schema. `file` routes are
+  configured through `--config`, which hands routes to `multimux` unaltered.
+
 ## [0.7.0] - 2026-08-11
 
 ### Changed
