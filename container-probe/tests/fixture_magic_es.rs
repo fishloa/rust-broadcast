@@ -150,14 +150,22 @@ fn suppression_mxf_carries_annexb_start_codes() {
 ///
 /// # Mutation proof (mutation #5 — disable `suppress_elementary_streams`)
 ///
-/// Without suppression this buffer's TS lattice (MpegTs 144) and ADTS chain
-/// (AdtsAac 144) tie within `TIE_THRESHOLD`, producing `Ambiguous` — the exact
-/// failure the rule exists to prevent. Observed failure with suppression
-/// disabled:
+/// Without suppression this buffer's TS lattice and ADTS chain both score
+/// `LATTICE_STRONG` — an exact tie, well inside `TIE_THRESHOLD` — producing
+/// `Ambiguous`, the precise failure the rule exists to prevent. Observed with
+/// the `retain` in `suppress_elementary_streams` removed:
+///
+/// ```text
+/// synthetic TS+ADTS must be MpegTs under suppression, got Ambiguous { candidates: [
+///     Candidate { format: AdtsAac, confidence: Confidence(128), detail: None },
+///     Candidate { format: MpegTs, confidence: Confidence(128),
+///                 detail: Ts { stride: 188, phase: 0 } }] }
 /// ```
-/// synthetic TS+ADTS must be MpegTs under suppression, got
-/// Ambiguous { candidates: [AdtsAac 144, MpegTs 144] }
-/// ```
+///
+/// This transcript was **re-captured** after `TIER_LATTICE_STRONG` moved
+/// 144 -> 128 for tier spacing; the `144` it previously quoted had rotted into
+/// a record of a run that no longer happens. A mutation proof is evidence, so
+/// it is re-run when the code under it moves, never hand-edited to match.
 #[test]
 fn suppression_synthetic_ts_carrying_adts() {
     let data = synthetic_ts_carrying_adts(32);

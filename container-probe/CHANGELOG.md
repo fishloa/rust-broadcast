@@ -15,10 +15,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `Insufficient { need_at_least }`, or `Unknown`. One-shot over a caller-owned
   byte slice; no IO, no state.
 - **Scored confidence model** — the `Confidence` tiers `CERTAIN` (240),
-  `STRONG` (192), `STRUCTURAL` (160), `LATTICE_STRONG` (144), `LATTICE_WEAK`
+  `STRONG` (192), `STRUCTURAL` (160), `LATTICE_STRONG` (128), `LATTICE_WEAK`
   (96) and `HEURISTIC` (64). All probers always run; the highest score wins;
   two candidates within `TIE_THRESHOLD` (16) yield `Ambiguous`, never an
   arbitrary pick.
+
+  Every adjacent pair of tiers is at least 32 apart — strictly more than
+  `TIE_THRESHOLD` — so two candidates sitting on *different* tiers can never be
+  reported as tied; only a genuine same-tier tie yields `Ambiguous`. That
+  spacing is an invariant rather than an accident of the chosen numbers, and
+  the `adjacent_tiers_are_further_apart_than_the_tie_threshold` unit test fails
+  if a tier is later added or moved so that neighbours can collide.
 - **Detected formats** — MPEG-2 TS (188/192/204/208-byte stride lattice),
   ISOBMFF (box-chain walk), Matroska and WebM (EBML magic + `DocType`), MXF
   (partition-pack key + BER length), MPEG-PS (pack header marker bits), FLV,

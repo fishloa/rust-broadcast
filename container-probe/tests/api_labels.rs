@@ -88,3 +88,55 @@ fn detail_names() {
     write!(&mut s, "{}", Detail::None).expect("fmt");
     assert_eq!(s, "None");
 }
+
+/// Finding 9: the FLV, MXF and MPEG-PS probers now report what they already
+/// decoded, rather than `Detail::None` — a caller must not have to re-walk the
+/// header to recover flags the prober read.
+#[test]
+fn flv_mxf_mpegps_report_detail() {
+    // FLV: TypeFlags + DataOffset.
+    let flv = container_probe::probe(&fixture("fixtures/flv/av.flv"));
+    match flv {
+        Probe::Identified { detail, .. } => match detail {
+            Detail::Flv {
+                has_audio,
+                has_video,
+                data_offset,
+                ..
+            } => {
+                assert!(has_video, "av.flv carries video tags");
+                assert!(has_audio, "av.flv carries audio tags");
+                assert!(data_offset >= 9);
+            }
+            other => panic!("FLV must report Detail::Flv, got {other:?}"),
+        },
+        other => panic!("av.flv must identify, got {other:?}"),
+    }
+
+    // MXF: PartitionKind byte.
+    let mxf = container_probe::probe(&fixture("fixtures/mxf/op1a_mpeg2_pcm.mxf"));
+    match mxf {
+        Probe::Identified { detail, .. } => match detail {
+            Detail::Mxf { partition_kind, .. } => {
+                assert!(
+                    (0x02..=0x04).contains(&partition_kind),
+                    "partition kind {partition_kind:#x} must be Header/Body/Footer"
+                );
+            }
+            other => panic!("MXF must report Detail::Mxf, got {other:?}"),
+        },
+        other => panic!("mxf must identify, got {other:?}"),
+    }
+
+    // MPEG-PS: structural marker bits validated.
+    let ps = container_probe::probe(&fixture("fixtures/ps/h264_ac3.ps"));
+    match ps {
+        Probe::Identified { detail, .. } => match detail {
+            Detail::MpegPs {
+                structurally_valid, ..
+            } => assert!(structurally_valid, "h264_ac3.ps markers validate"),
+            other => panic!("MPEG-PS must report Detail::MpegPs, got {other:?}"),
+        },
+        other => panic!("h264_ac3.ps must identify, got {other:?}"),
+    }
+}

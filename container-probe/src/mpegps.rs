@@ -8,7 +8,7 @@
 //!
 //! - Start code **plus** valid marker bits -> `STRUCTURAL`.
 //! - Start code alone with marker bits that do not validate -> `HEURISTIC`.
-//! - `Detail::None`.
+//! - `Detail::MpegPs { structurally_valid }`.
 
 use crate::{Confidence, Detail, Evidence, Outcome};
 
@@ -53,14 +53,14 @@ pub(crate) fn probe(data: &[u8], limit: usize) -> Outcome {
         return Outcome::None;
     }
 
-    let detail = Detail::None;
+    let structurally_valid = markers_valid(region);
     Outcome::Match(Evidence {
-        confidence: if markers_valid(region) {
+        confidence: if structurally_valid {
             Confidence::STRUCTURAL
         } else {
             Confidence::HEURISTIC
         },
-        detail,
+        detail: Detail::MpegPs { structurally_valid },
     })
 }
 

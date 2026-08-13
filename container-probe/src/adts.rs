@@ -49,7 +49,7 @@ pub(crate) fn probe(data: &[u8], limit: usize) -> Outcome {
         return Outcome::Insufficient(ADTS_HEADER_LEN);
     }
 
-    let longest = longest_adts_chain(region);
+    let (longest, truncated, anchor, frame_len) = longest_adts_chain(region);
 
     if longest >= ADTS_MIN_CHAIN_STRONG {
         return Outcome::Match(Evidence {
@@ -63,7 +63,35 @@ pub(crate) fn probe(data: &[u8], limit: usize) -> Outcome {
             detail: Detail::None,
         });
     }
-    Outcome::None
+    if longest == 0 {
+        // No valid ADTS frame header anywhere in the region — nothing to build
+        // on, and more bytes will not help.
+        return Outcome::None;
+    }
+    // A non-empty chain short of the weak threshold: a partial chain of
+    // 1..=(WEAK-1) valid frames. `Insufficient` only when the chain ended
+    // because the buffer ran out mid-frame (`truncated`) — a longer buffer
+    // could still confirm it (a truncated stream read a few bytes at a time).
+    // When it ended because the next header failed to validate within the
+    // region, more bytes will not change that: the frame is a scattered
+    // syncword inside some other payload. This mirrors the TS prober's
+    // `could_prove` distinction.
+    if truncated {
+        Outcome::Insufficient(need_at_least(anchor, frame_len, region.len()))
+    } else {
+        Outcome::None
+    }
+}
+
+/// A lower bound on bytes that could resolve the verdict to `LATTICE_WEAK`:
+/// enough room at the observed frame size for [`ADTS_MIN_CHAIN_WEAK`] frames
+/// from the chain's anchor, and strictly more than the caller already holds
+/// (so "supply more" always exceeds what was supplied).
+fn need_at_least(anchor: usize, frame_len: usize, have: usize) -> usize {
+    core::cmp::max(
+        anchor.saturating_add(ADTS_MIN_CHAIN_WEAK.saturating_mul(frame_len)),
+        have.saturating_add(frame_len),
+    )
 }
 
 /// `true` if a valid ADTS frame header sits at `i`, and if so the
@@ -87,36 +115,51 @@ fn adts_frame_len(data: &[u8], i: usize) -> Option<usize> {
     Some(frame_len)
 }
 
-/// The length of the longest chain of valid ADTS frames linked by their own
-/// `frame_length` fields anywhere in `data`. Bounded: a chain that reaches
+/// The longest chain of valid ADTS frames linked by their own `frame_length`
+/// fields anywhere in `data`, together with whether that chain ended by running
+/// off the end of the buffer (`truncated`) rather than hitting an invalid next
+/// header, plus the chain's anchor offset and first-frame length (used to size
+/// the `Insufficient` hint). Bounded: a chain that reaches
 /// [`ADTS_MIN_CHAIN_STRONG`] short-circuits to that value, so no buffer forces
 /// more than a bounded number of link steps.
-fn longest_adts_chain(data: &[u8]) -> usize {
+fn longest_adts_chain(data: &[u8]) -> (usize, bool, usize, usize) {
     let mut best = 0usize;
+    let mut best_truncated = false;
+    let mut best_anchor = 0usize;
+    let mut best_frame_len = 0usize;
     let n = data.len();
     let mut i = 0usize;
     while i < n {
-        if adts_frame_len(data, i).is_some() {
+        if let Some(first_len) = adts_frame_len(data, i) {
             // Count the chain anchored at `i`.
             let mut p = i;
             let mut run = 0usize;
+            let mut truncated = false;
             while let Some(l) = adts_frame_len(data, p) {
                 run += 1;
                 if run >= ADTS_MIN_CHAIN_STRONG {
-                    return run; // strong reached; no need to measure further
+                    return (run, false, i, first_len); // strong reached; stop early
+                }
+                if p + l > n {
+                    // The frame's body extends past the buffer: a genuine
+                    // truncation (the stream was cut mid-frame).
+                    truncated = true;
+                    break;
                 }
                 p += l;
-                if p <= i {
-                    break; // zero/non-forward length guard
-                }
             }
-            best = best.max(run);
+            if run > best || (run == best && truncated) {
+                best = run;
+                best_truncated = truncated;
+                best_anchor = i;
+                best_frame_len = first_len;
+            }
             i += 1;
         } else {
             i += 1;
         }
     }
-    best
+    (best, best_truncated, best_anchor, best_frame_len)
 }
 
 /// Count the number of valid ADTS frame headers anywhere in `data` — used by

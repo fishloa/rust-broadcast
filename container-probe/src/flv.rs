@@ -59,7 +59,11 @@ pub(crate) fn probe(data: &[u8], limit: usize) -> Outcome {
 
     Outcome::Match(Evidence {
         confidence: Confidence::STRONG,
-        detail: Detail::None,
+        detail: Detail::Flv {
+            has_audio: type_flags & TYPE_FLAG_AUDIO != 0,
+            has_video: type_flags & TYPE_FLAG_VIDEO != 0,
+            data_offset: data_offset as u32,
+        },
     })
 }
 

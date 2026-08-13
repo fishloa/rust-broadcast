@@ -206,7 +206,7 @@ fn corpus_sweep() {
                     ));
                 }
             }
-            Probe::Ambiguous { candidates } => {
+            Probe::Ambiguous { candidates, .. } => {
                 ambiguous.push(format!(
                     "{rel_str}: ambiguous between {:?}",
                     candidates.iter().map(|c| c.format).collect::<Vec<_>>()

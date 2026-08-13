@@ -30,6 +30,18 @@ fn detail_text(detail: &Detail) -> String {
             format!("ISOBMFF: major brand '{brand}', {boxes_walked} boxes chained, {layout} layout")
         }
         Detail::Ebml { doc_type, .. } => format!("EBML: DocType {doc_type}"),
+        Detail::Flv {
+            has_audio,
+            has_video,
+            data_offset,
+            ..
+        } => format!("FLV: audio={has_audio}, video={has_video}, data offset={data_offset}"),
+        Detail::Mxf { partition_kind, .. } => {
+            format!("MXF: partition kind 0x{partition_kind:02X}")
+        }
+        Detail::MpegPs {
+            structurally_valid, ..
+        } => format!("MPEG-PS: structural marker bits {structurally_valid}"),
         Detail::None => "no format-specific detail".into(),
         _ => "unknown detail".into(),
     }
@@ -62,7 +74,7 @@ fn main() {
                 detail_text(&detail)
             );
         }
-        Probe::Ambiguous { candidates } => {
+        Probe::Ambiguous { candidates, .. } => {
             println!("{path}: ambiguous; candidates by score:");
             for c in &candidates {
                 println!(
@@ -73,7 +85,7 @@ fn main() {
                 );
             }
         }
-        Probe::Insufficient { need_at_least } => {
+        Probe::Insufficient { need_at_least, .. } => {
             println!(
                 "{path}: not enough bytes to decide — supply at least {need_at_least} bytes (read more), then probe again"
             );
