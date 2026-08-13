@@ -59,5 +59,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Tests** — real-fixture verdict tests for every format, a whole-repository
   corpus sweep asserting zero false positives and zero ambiguous results, a
   constant drift guard against `mpeg-ts`/`mpeg-ps`/`st377-1`, mutation proofs
-  for every detection discriminator, and a `fuzz/` target registered by the
-  orchestrator.
+  for the detection discriminators that guard a *verdict* (the chain
+  thresholds, the `forbidden_zero_bit` check, the ISOBMFF `largesize` width
+  decision, and the TS all-sync rejection), and a `fuzz/` target registered by
+  the orchestrator. Not every internal guard is mutation-proven: the ran-out
+  decision each prober makes is covered by the exhaustive prefix sweep instead.

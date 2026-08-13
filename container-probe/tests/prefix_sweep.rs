@@ -242,8 +242,9 @@ fn no_prefix_of_a_real_file_is_ever_unknown() {
     }
 
     assert!(
-        skipped.len() < REAL_FILES.len(),
-        "every fixture was missing — the sweep proved nothing. Missing: {skipped:?}"
+        skipped.is_empty(),
+        "fixtures missing from the repository — the sweep must be exhausting, \
+         not silently reduced. Missing: {skipped:?}"
     );
     assert!(
         failures.is_empty(),
@@ -291,8 +292,11 @@ fn no_prefix_of_a_real_file_is_identified_as_another_format() {
     }
 
     assert!(
-        checked > 0,
-        "no fixtures present — the sweep proved nothing"
+        checked == REAL_FILES.len(),
+        "{} of {} fixtures were missing — the sweep must confirm every real file, \
+         not a subset (checked {checked})",
+        REAL_FILES.len() - checked,
+        REAL_FILES.len()
     );
     assert!(
         failures.is_empty(),
@@ -333,8 +337,11 @@ fn every_real_file_identifies_in_full() {
     }
 
     assert!(
-        checked > 0,
-        "no fixtures present — the sweep proved nothing"
+        checked == REAL_FILES.len(),
+        "{} of {} fixtures were missing — the sweep must confirm every real file, \
+         not a subset (checked {checked})",
+        REAL_FILES.len() - checked,
+        REAL_FILES.len()
     );
     assert!(
         failures.is_empty(),

@@ -77,8 +77,17 @@ pub(crate) fn probe(data: &[u8], limit: usize) -> Outcome {
         });
     }
     if chain == 0 {
-        // No valid NAL header (either no start code at offset 0, or the first
-        // NAL header was invalid) -> nothing to build on.
+        // No valid NAL header, for one of three reasons:
+        //  - `truncated`: a start code was present at offset 0 but its NAL
+        //    header byte lay past the region end (a buffer that is exactly a
+        //    bare `00 00 01` / `00 00 00 01` start code). The stream was cut
+        //    off mid-start-code, so this proves nothing — ask for more bytes,
+        //    don't stop.
+        //  - no start code at offset 0, or the first NAL header was invalid
+        //    within the region supplied -> nothing to build on (`None`).
+        if truncated {
+            return Outcome::Insufficient(need_at_least(region.len()));
+        }
         return Outcome::None;
     }
     // A partial chain of 1..=(WEAK-1) NAL units. `Insufficient` only when the
@@ -229,6 +238,40 @@ mod tests {
         match probe(region, region.len()) {
             Outcome::Insufficient(need) => assert_eq!(need, ANNEXB_MIN_LEN),
             other => panic!("3-byte Annex B prefix must be Insufficient(4), got {other:?}"),
+        }
+    }
+
+    /// The `i + sc >= n` ran-out guard in [`annexb_nal_chain`] (round 4).
+    ///
+    /// A buffer that is exactly a start code — `00 00 01` or `00 00 00 01` —
+    /// with no NAL header byte after it is a *truncation*: the stream was cut
+    /// off before its first NAL header, so the walk must report `truncated`,
+    /// never "ruled out". `valid_nal` can only return `false` there (there is
+    /// no header byte to read), so without the guard the result flips to
+    /// `(0, false)` — which the caller reads as `None` ("stop").
+    ///
+    /// Observed under the mutation (the `if i + sc >= n` block deleted):
+    /// ```
+    /// assertion `left == right` failed
+    ///   left: (0, false)
+    ///  right: (0, true)
+    /// ```
+    #[test]
+    fn start_code_with_no_nal_header_is_truncation_not_rejection() {
+        assert_eq!(annexb_nal_chain(&[0x00, 0x00, 0x01]), (0, true));
+        assert_eq!(annexb_nal_chain(&[0x00, 0x00, 0x00, 0x01]), (0, true));
+    }
+
+    /// A bare start code with no NAL header reaches `probe` with `chain == 0`
+    /// *and* `truncated == true`; the prober must honour its own ran-out flag
+    /// and answer `Insufficient` rather than `None`. `None` ("stop") would tell
+    /// a streaming caller to give up on a 4-byte read that cannot prove
+    /// anything yet.
+    #[test]
+    fn bare_start_code_probes_insufficient() {
+        match probe(&[0x00, 0x00, 0x00, 0x01], 4) {
+            Outcome::Insufficient(_) => {}
+            other => panic!("bare start code must be Insufficient, got {other:?}"),
         }
     }
 }

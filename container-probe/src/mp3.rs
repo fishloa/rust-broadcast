@@ -312,4 +312,34 @@ mod tests {
             other => panic!("3-byte MP3 prefix must be Insufficient(4), got {other:?}"),
         }
     }
+
+    /// The ID3-skip `Insufficient` path (round 4): a leading ID3v2 tag whose
+    /// declared length extends past the supplied region means the audio frames
+    /// begin beyond what the caller read, so the prober must ask for more bytes
+    /// rather than ruling MP3 out (`None`, "stop") — there was no frame position
+    /// to examine yet.
+    ///
+    /// The buffer below is an exact 10-byte ID3v2 header (version 2.4, no
+    /// footer) whose syncsafe size declares a 127-byte tag + 10-byte header =
+    /// 137 bytes total — far more than the 10 bytes supplied. `id3_skip` returns
+    /// 137, `longest_mp3_chain` finds no frame (its scan starts past the region
+    /// end), and the prober must answer `Insufficient(137)`.
+    ///
+    /// Observed under the mutation (the `if let Some(skip) … Insufficient` block
+    /// deleted):
+    /// ```
+    /// ID3 tag longer than the region must be Insufficient, got None
+    /// ```
+    #[test]
+    fn id3_tag_longer_than_the_region_is_insufficient() {
+        // ID3v2.4 header, 127-byte syncsafe tag size: skip = 10 + 127 = 137.
+        let data = [
+            b'I', b'D', b'3', 0x04, 0x00, 0x00, // "ID3", v2.4, flags=0
+            0x00, 0x00, 0x00, 0x7F, // syncsafe size = 127
+        ];
+        match probe(&data, data.len()) {
+            Outcome::Insufficient(need) => assert_eq!(need, 137),
+            other => panic!("ID3 tag longer than the region must be Insufficient, got {other:?}"),
+        }
+    }
 }

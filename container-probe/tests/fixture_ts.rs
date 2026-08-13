@@ -424,8 +424,8 @@ fn tiny_ts_fixtures_below_the_weak_threshold_are_insufficient() {
 fn all_sync_bytes() {
     let p = probe(&[0x47u8; 4096]);
     assert!(
-        matches!(p, Probe::Unknown | Probe::Insufficient { .. }),
-        "got {p:?} — all-sync input must not be flagged as TS"
+        matches!(p, Probe::Unknown),
+        "got {p:?} — a full all-sync input must be ruled out, not flagged as TS"
     );
 }
 

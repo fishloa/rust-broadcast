@@ -9,7 +9,9 @@
 //! - `>= 8` confirmations -> [`crate::Confidence::LATTICE_STRONG`].
 //! - `3..=7` -> [`crate::Confidence::LATTICE_WEAK`].
 //! - `1..=2` on a consistent lattice too short to reach 8 -> `Insufficient`.
-//! - no sync at all -> no match (`Unknown`).
+//! - no sync at all -> no match, but only `Unknown` once the region is a full
+//!   packet or more: a region shorter than one packet has not examined a full
+//!   packet yet, so it answers `Insufficient` ("read more") instead.
 //!
 //! The phase scan is what handles a capture beginning mid-packet — the case
 //! today's fixed-offset implementation fails. A cheap precondition (no
@@ -85,7 +87,14 @@ pub(crate) fn probe(data: &[u8], limit: usize) -> Outcome {
     // `0x47` is "G", and a continuous run with no packet content to fill the
     // lanes is the pathological TS-shaped case, not a real stream. Real files
     // always contain non-sync payload bytes.
-    if !region.is_empty() && region.iter().all(|&b| b == TS_SYNC_BYTE) {
+    //
+    // This rejection only fires once the region is a full packet or more: a
+    // sub-packet all-`0x47` region is a *truncated* read — it cannot yet have
+    // shown the payload bytes a real packet holds, and it is at least as
+    // plausible a TS prefix as any other byte pattern. Routing it through the
+    // lattice (as every other short region does) yields `Insufficient`, not
+    // `Unknown`, so a streaming caller is told "read more" rather than "stop".
+    if region.len() >= TS_PACKET_SIZE && region.iter().all(|&b| b == TS_SYNC_BYTE) {
         return Outcome::None;
     }
 
@@ -232,6 +241,56 @@ fn need_at_least(have: usize) -> usize {
         TS_PACKET_SIZE * TS_CONFIRM_FOR_STRONG,
         have + TS_PACKET_SIZE,
     )
+}
+
+#[cfg(test)]
+mod all_sync {
+    //! The uniform-`0x47` rejection guard: a short all-sync region is a
+    //! *truncated* read and must answer `Insufficient`, exactly as a short
+    //! region of any other single byte does — a sub-packet all-`0x47` buffer is
+    //! at least as plausible a TS prefix as a sub-packet all-`'A'` buffer.
+
+    use super::*;
+
+    /// A 187-byte all-`0x47` region (one byte short of a full packet) must be
+    /// `Insufficient`, not `Unknown`: it has not examined a full packet yet, and
+    /// `0x47` is a *more* plausible TS prefix than `'A'`, so "stop" would be
+    /// backwards. Before the guard was length-capped, `probe(&[0x47; 187])`
+    /// returned `Unknown` while `probe(&[b'A'; 187])` returned `Insufficient`.
+    ///
+    /// Observed under the mutation (the `region.len() >= TS_PACKET_SIZE`
+    /// condition removed, so the guard fires on any length):
+    /// ```
+    /// all-0x47 sub-packet region must be Insufficient, got None
+    /// ```
+    #[test]
+    fn all_sync_sub_packet_region_is_insufficient() {
+        match probe(&[TS_SYNC_BYTE; TS_PACKET_SIZE - 1], TS_PACKET_SIZE - 1) {
+            Outcome::Insufficient(_) => {}
+            other => panic!("all-0x47 sub-packet region must be Insufficient, got {other:?}"),
+        }
+    }
+
+    /// The same length of any other byte is `Insufficient` too — the two cases
+    /// are now consistent.
+    #[test]
+    fn non_sync_sub_packet_region_is_insufficient() {
+        match probe(&[b'A'; TS_PACKET_SIZE - 1], TS_PACKET_SIZE - 1) {
+            Outcome::Insufficient(_) => {}
+            other => panic!("all-'A' sub-packet region must be Insufficient, got {other:?}"),
+        }
+    }
+
+    /// A large all-`0x47` buffer (a full packet or more) is still rejected:
+    /// every lane would score a false lattice, and no real stream is a uniform
+    /// run of one byte.
+    #[test]
+    fn all_sync_full_region_is_still_rejected() {
+        match probe(&[TS_SYNC_BYTE; 4096], 4096) {
+            Outcome::None => {}
+            other => panic!("4096-byte all-0x47 region must be None, got {other:?}"),
+        }
+    }
 }
 
 #[cfg(test)]

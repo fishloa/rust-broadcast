@@ -140,12 +140,12 @@ pub(crate) fn probe(data: &[u8], limit: usize) -> Outcome {
             boxes += 1;
             if size_u32 == SIZE_TO_EOF || eff > rem.len() {
                 // To-EOF, or the region truncates this box -> it is the last one.
-                // A `size == 0` box is valid-to-EOF (not truncated); a box whose
-                // declared size exceeds the region ran out of data mid-body.
-                if size_u32 != SIZE_TO_EOF {
-                    ran_out = true;
-                    ran_out_need = offset.saturating_add(eff);
-                }
+                // Both keep the chain clean: a `size == 0` box is valid-to-EOF by
+                // spec, and a box whose declared size exceeds the region is a
+                // clean truncation at the region end (its header was valid, so it
+                // is counted and the walk ends on a Match). This path therefore
+                // deliberately never sets `ran_out` — asking for more bytes here
+                // would contradict the "count the truncated final box" rule above.
                 break;
             }
             offset += eff;
@@ -156,10 +156,13 @@ pub(crate) fn probe(data: &[u8], limit: usize) -> Outcome {
     }
 
     if boxes == 0 {
-        // Nothing walked: the chain never even started, so the first box header
-        // itself cannot be read. That is a truncation (ran out), not a proof of
-        // non-membership — the leading type was already pinned as a legal box
-        // type above, so "could not read the first box" means "give me more".
+        // Nothing walked: the chain never even started. The leading type was
+        // already pinned as a legal box type above, so these two outcomes remain
+        // and are decided by `ran_out`:
+        //  - the first box *header* could not be read (the region ended
+        //    mid-header) -> `ran_out`, a truncation, so "give me more";
+        //  - the first box header was read but declared an impossible size
+        //    (smaller than its own header) -> a definitive rejection (`None`).
         return crate::ran_out_or_ruled_out(ran_out, need_at_least(region.len()));
     }
 
