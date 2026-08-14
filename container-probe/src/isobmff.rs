@@ -317,6 +317,43 @@ mod tests {
         }
     }
 
+    /// The **second** ran-out return (the `clean == false` verdict path) must
+    /// be structural too.
+    ///
+    /// There are two ran-out returns in this prober. An audit found only one of
+    /// them guarded — this is the other, and it is the same site the previous
+    /// round's commit said it had missed and then reinstated unguarded.
+    ///
+    /// MUTATION VERIFIED: restoring
+    /// `max(ran_out_need, region.len() + BOX_HEADER_MIN_SIZE)` at line 224
+    /// makes the need track the buffer, giving `[16, 17, 18, ...]`.
+    #[test]
+    fn the_verdict_path_need_does_not_track_the_buffer_length() {
+        // A legal leading box type whose header is cut short: the walk never
+        // completes a box, so the chain is not clean and `ran_out` is set.
+        // One COMPLETE 8-byte `ftyp` box, then a second box header cut short.
+        // That gives `boxes == 1` with `ran_out` set and the chain not clean,
+        // which is the verdict path — the `boxes == 0` return is reached only
+        // when no box completes at all, and is covered separately above.
+        let mut seen = std::vec::Vec::new();
+        for len in 9..BOX_HEADER_MIN_SIZE * 2 {
+            let mut buf = std::vec![0u8; len];
+            buf[3] = BOX_HEADER_MIN_SIZE as u8; // first box: size 8, header only
+            buf[4..8].copy_from_slice(&TYPE_FTYP);
+            if let Outcome::Insufficient(need) = probe(&buf, buf.len()) {
+                seen.push(need);
+            }
+        }
+        assert!(
+            seen.len() >= 2,
+            "seed must reach Insufficient at 2+ lengths, got {seen:?}"
+        );
+        assert!(
+            seen.windows(2).all(|w| w[0] == w[1]),
+            "the verdict-path need must not grow with the buffer, got {seen:?}"
+        );
+    }
+
     /// The ran-out need must be **structural** — derived from the box being
     /// read — not from how many bytes happened to be supplied.
     ///

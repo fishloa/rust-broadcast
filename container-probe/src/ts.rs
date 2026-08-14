@@ -179,10 +179,7 @@ pub(crate) fn probe(data: &[u8], limit: usize) -> Outcome {
                 // offset 111, so every prefix `16..=111` contains no sync but is
                 // still a prefix of a genuine TS. That is `Insufficient`, not
                 // `None`: the shared `Insufficient` vs `Unknown` decision.
-                return crate::ran_out_or_ruled_out(
-                    region.len() < TS_PACKET_SIZE,
-                    need_at_least(region.len()),
-                );
+                return crate::ran_out_or_ruled_out(region.len() < TS_PACKET_SIZE, need_at_least());
             }
             // A coherent partial lattice exists (>= 1 sync). It is
             // `Insufficient` only if the region is too short to have proven
@@ -196,7 +193,7 @@ pub(crate) fn probe(data: &[u8], limit: usize) -> Outcome {
             if could_prove {
                 return Outcome::None;
             }
-            return Outcome::Insufficient(need_at_least(region.len()));
+            return Outcome::Insufficient(need_at_least());
         }
     };
 
@@ -236,11 +233,14 @@ pub(crate) fn probe(data: &[u8], limit: usize) -> Outcome {
 /// `probe_with_budget(&ten_mb_ts, 64)` examined only 64 bytes, so its
 /// `need_at_least` must answer "supply more than 64", never "supply more than
 /// 10 000 000" — the budget, not the buffer, was the constraint.
-fn need_at_least(have: usize) -> usize {
-    core::cmp::max(
-        TS_PACKET_SIZE * TS_CONFIRM_FOR_STRONG,
-        have + TS_PACKET_SIZE,
-    )
+fn need_at_least() -> usize {
+    // Structural only. The `max(..., have + TS_PACKET_SIZE)` this replaces made
+    // the answer track the buffer: once `have` overtook the floor it grew 188
+    // bytes a turn, so a caller crossed a 256 KiB file in 1394 reads. Strict
+    // progress and geometric convergence are guaranteed centrally by
+    // `crate::normalise_need`, so bounding it here added nothing and destroyed
+    // the only useful part of the answer.
+    TS_PACKET_SIZE * TS_CONFIRM_FOR_STRONG
 }
 
 #[cfg(test)]
@@ -251,6 +251,42 @@ mod all_sync {
     //! at least as plausible a TS prefix as a sub-packet all-`'A'` buffer.
 
     use super::*;
+
+    /// A prober's `need_at_least` must be **structural** -- a property of what
+    /// it is looking for, not of how many bytes it happened to be given.
+    ///
+    /// Asserted at the prober, because `crate::normalise_need`'s floor masks it
+    /// end-to-end: an audit reverted the equivalent fix in another prober and
+    /// the whole-crate suite stayed green. A guard has to sit where the value
+    /// is produced, or the layer above hides the defect.
+    ///
+    /// MUTATION VERIFIED: restoring `max(FLOOR, have + UNIT)` makes the need
+    /// grow with the buffer and fails this with a non-constant list.
+    #[test]
+    fn the_ran_out_need_does_not_track_the_buffer_length() {
+        let mut seen: std::vec::Vec<usize> = std::vec::Vec::new();
+        for len in [4usize, 64, 200, 700, 1400] {
+            let buf = {
+                let mut b = std::vec![0x47u8];
+                b.resize(len, 0x00);
+                b
+            };
+            if let Outcome::Insufficient(need) = probe(&buf, buf.len()) {
+                seen.push(need);
+            }
+        }
+        assert!(
+            seen.len() >= 2,
+            "the seed must reach Insufficient at two or more lengths, else this \
+             guard proves nothing (got {seen:?})"
+        );
+        assert!(
+            seen.windows(2).all(|w| w[0] == w[1]),
+            "need_at_least must be identical at every length short of the \
+             structure it names, got {seen:?} -- a value that grows with the \
+             buffer makes the caller crawl"
+        );
+    }
 
     /// A 187-byte all-`0x47` region (one byte short of a full packet) must be
     /// `Insufficient`, not `Unknown`: it has not examined a full packet yet, and

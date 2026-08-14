@@ -84,6 +84,7 @@ pub(crate) fn probe(data: &[u8], limit: usize) -> Outcome {
 }
 
 /// The outcome of walking the EBML header for its `DocType`.
+#[derive(Debug, PartialEq, Eq)]
 enum DocTypeResult {
     /// A `DocType` element was read.
     Found(DocType),
@@ -152,6 +153,13 @@ fn find_doc_type(region: &[u8]) -> DocTypeResult {
     // every reported need came out length-relative (`len + 194`), so the
     // caller's read grew linearly with the file instead of landing on the
     // structure -- 1361 turns over 256 KiB.
+    // NOTE: with the `bounded` rule below, this equals the old
+    // `region.len() - data.len()` derivation in every *reachable* case (that
+    // one is wrong only when the body is fully present and shorter than the
+    // region, which now returns `Malformed` before any `Truncated`). It is kept
+    // because a base carried explicitly is correct by construction, whereas the
+    // other was correct by coincidence — and the coincidence is exactly what
+    // broke when the body was short.
     let body_start = cursor + len; // <= region.len(), guaranteed by read_size_vint
     let (data, bounded) = if let Some(sz) = size {
         // `body_start + sz` is attacker-controlled, so add it checked.
@@ -386,6 +394,71 @@ mod tests {
         match probe(region, region.len()) {
             Outcome::Insufficient(need) => assert_eq!(need, EBML_MAGIC.len()),
             other => panic!("3-byte EBML prefix must be Insufficient(4), got {other:?}"),
+        }
+    }
+
+    /// A child element that overruns a body whose parent DECLARED its length
+    /// is illegal, not short — so the answer is "stop", never "read more".
+    ///
+    /// The parent's size VINT sets the boundary, so no quantity of further
+    /// bytes can make the child fit. Reporting truncation here asks the caller
+    /// to keep reading for something that can never arrive.
+    ///
+    /// MUTATION VERIFIED: making `cut_short` ignore `bounded`, or routing the
+    /// over-running child back to `Truncated`, makes this `Insufficient` and
+    /// fails with "got Insufficient".
+    #[test]
+    fn a_child_overrunning_a_declared_body_is_ruled_out_not_truncated() {
+        // 1A 45 DF A3 | 8A (header body = 10 bytes) | 42 82 (DocType id)
+        // 40 C8 (size VINT, width 2, value 200) — 200 bytes cannot fit the
+        // 10-byte body the parent declared.
+        let mut buf = std::vec![0x1A, 0x45, 0xDF, 0xA3, 0x8A, 0x42, 0x82, 0x40, 0xC8];
+        buf.resize(300, 0x00);
+        assert_eq!(
+            find_doc_type(&buf),
+            DocTypeResult::Malformed,
+            "a child declaring 200 bytes inside a declared 10-byte body is illegal; \
+             more bytes cannot make it legal, so this must not be a truncation"
+        );
+    }
+
+    /// A truncated body reports the offset the element DECLARED, not a figure
+    /// derived from how many bytes happened to be supplied.
+    ///
+    /// The need must be identical at every buffer length short of the declared
+    /// end — that is what makes a caller's next read land past the structure
+    /// instead of crawling toward it.
+    ///
+    /// MUTATION VERIFIED: reporting `region.len() + 1` instead of the declared
+    /// end fails with `left: Truncated(13), right: Truncated(112)`.
+    ///
+    /// What this does NOT prove — stated because a previous commit claimed it
+    /// did: reverting `body_start` to `region.len() - data.len()` leaves this
+    /// (and the whole suite) green. That derivation is wrong only when the
+    /// header body is *fully present and shorter than the region*, and after
+    /// the `bounded` rule that case no longer reaches a `Truncated` return at
+    /// all — a child overrunning a declared body is now `Malformed`. The
+    /// remaining path runs only when the size is unknown, where the body
+    /// extends to the region end and the two derivations are equal by
+    /// construction. So `body_start` is currently **unobservable**: it is kept
+    /// because it is correct by construction rather than by coincidence, and
+    /// it is deliberately not claimed as mutation-proven.
+    #[test]
+    fn a_truncated_body_reports_its_declared_end_not_the_buffer_length() {
+        // 1A 45 DF A3 | 01 00 00 00 00 00 00 64 — an 8-byte size VINT holding
+        // 100, so the body starts at 12 and its declared end is 112.
+        let seed = std::vec![
+            0x1A, 0x45, 0xDF, 0xA3, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x64
+        ];
+        for len in [12usize, 16, 32, 64, 100, 111] {
+            let mut buf = seed.clone();
+            buf.resize(len, 0x00);
+            assert_eq!(
+                find_doc_type(&buf),
+                DocTypeResult::Truncated(112),
+                "at {len} bytes the need must stay the declared end (112), not track \
+                 the {len} supplied"
+            );
         }
     }
 

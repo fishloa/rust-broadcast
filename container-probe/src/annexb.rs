@@ -86,7 +86,7 @@ pub(crate) fn probe(data: &[u8], limit: usize) -> Outcome {
         //  - no start code at offset 0, or the first NAL header was invalid
         //    within the region supplied -> nothing to build on (`None`).
         if truncated {
-            return Outcome::Insufficient(need_at_least(region.len()));
+            return Outcome::Insufficient(need_at_least());
         }
         return Outcome::None;
     }
@@ -96,7 +96,7 @@ pub(crate) fn probe(data: &[u8], limit: usize) -> Outcome {
     // a NAL header failed to validate within the region, more bytes will not
     // change that: the start codes were payload noise.
     if truncated {
-        Outcome::Insufficient(need_at_least(region.len()))
+        Outcome::Insufficient(need_at_least())
     } else {
         Outcome::None
     }
@@ -105,8 +105,11 @@ pub(crate) fn probe(data: &[u8], limit: usize) -> Outcome {
 /// A lower bound on bytes that could resolve the verdict to `LATTICE_WEAK`: at
 /// least [`ANNEXB_MIN_NALS_WEAK`] minimal NAL units, and strictly more than the
 /// caller already holds (so "supply more" always exceeds what was supplied).
-fn need_at_least(have: usize) -> usize {
-    core::cmp::max(ANNEXB_MIN_NALS_WEAK * ANNEXB_MIN_LEN, have + ANNEXB_MIN_LEN)
+fn need_at_least() -> usize {
+    // Structural only — see the note in `ts::need_at_least`. The dropped
+    // `have + ANNEXB_MIN_LEN` term grew 4 bytes a turn, which is 65 536 reads
+    // across a 256 KiB file.
+    ANNEXB_MIN_NALS_WEAK * ANNEXB_MIN_LEN
 }
 
 /// Length (in bytes) of the start code at `i`, or `0` if none. A 4-byte start
@@ -205,6 +208,42 @@ fn annexb_nal_chain(data: &[u8]) -> (usize, bool) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A prober's `need_at_least` must be **structural** -- a property of what
+    /// it is looking for, not of how many bytes it happened to be given.
+    ///
+    /// Asserted at the prober, because `crate::normalise_need`'s floor masks it
+    /// end-to-end: an audit reverted the equivalent fix in another prober and
+    /// the whole-crate suite stayed green. A guard has to sit where the value
+    /// is produced, or the layer above hides the defect.
+    ///
+    /// MUTATION VERIFIED: restoring `max(FLOOR, have + UNIT)` makes the need
+    /// grow with the buffer and fails this with a non-constant list.
+    #[test]
+    fn the_ran_out_need_does_not_track_the_buffer_length() {
+        let mut seen: std::vec::Vec<usize> = std::vec::Vec::new();
+        for len in [4usize, 8, 16, 24] {
+            let buf = {
+                let mut b = std::vec![0x00, 0x00, 0x00, 0x01, 0x67];
+                b.resize(len, 0x00);
+                b
+            };
+            if let Outcome::Insufficient(need) = probe(&buf, buf.len()) {
+                seen.push(need);
+            }
+        }
+        assert!(
+            seen.len() >= 2,
+            "the seed must reach Insufficient at two or more lengths, else this \
+             guard proves nothing (got {seen:?})"
+        );
+        assert!(
+            seen.windows(2).all(|w| w[0] == w[1]),
+            "need_at_least must be identical at every length short of the \
+             structure it names, got {seen:?} -- a value that grows with the \
+             buffer makes the caller crawl"
+        );
+    }
 
     fn fixture_bytes(rel: &str) -> std::vec::Vec<u8> {
         std::fs::read(std::format!("{}/../{}", env!("CARGO_MANIFEST_DIR"), rel))

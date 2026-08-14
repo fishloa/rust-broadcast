@@ -804,7 +804,7 @@ pub fn probe_with_budget(data: &[u8], budget: usize) -> Probe {
             // fixed point from an honest, structure-derived need that simply
             // exceeded the budget.
             //
-            // Normalising to `limit + 1` guarantees the number always asks for
+            // Normalising to a geometric floor guarantees the number always asks for
             // ground not yet examined. A prober's own structural need is kept
             // when it is larger, since that is the more useful hint.
             Some(need) => Probe::Insufficient {
