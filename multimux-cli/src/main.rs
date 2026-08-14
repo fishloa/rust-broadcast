@@ -1,5 +1,5 @@
 //! CLI for the `multimux` multi-input (RTSP/RTP, SRT, TS-UDP, TS-HTTP,
-//! HLS-pull, DASH-pull, Smooth-pull, RTMP; WHIP not yet wired), multi-output
+//! HLS-pull, DASH-pull, Smooth-pull, RTMP, file; WHIP not yet wired), multi-output
 //! (LL-HLS/DASH/LL-DASH/Smooth/TS-HLS/DVR + SRT/RTMP/RTSP push) just-in-time
 //! repackaging HTTP origin and relay/gateway.
 //!
