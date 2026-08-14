@@ -45,8 +45,10 @@ use rdd29::{AtmosFrame, BedDefinition1};
 /// sanitizer's figure.
 ///
 /// MUTATION VERIFIED: reverting `atmos_frame.rs` to
-/// `Vec::with_capacity(sub_element_count as usize)` makes this test abort the
-/// process with a memory-allocation failure.
+/// `Vec::with_capacity(sub_element_count as usize)` makes this test fail —
+/// the reserve succeeds under overcommit, the parse loop hits the first
+/// (absent) sub-element, and the error is a `Bits` out-of-bounds on
+/// `ElementID` rather than the expected `InvalidValue` on `SubElementCount`.
 #[test]
 fn a_huge_plex_sub_element_count_does_not_reserve() {
     let data: [u8; 12] = [

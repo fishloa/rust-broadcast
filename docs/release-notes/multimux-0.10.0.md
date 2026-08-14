@@ -79,7 +79,7 @@ tagging it, and a reader cannot tell a stale count from a wrong one.
 Two mutation proofs, each confirmed applied before being trusted:
 
 - Removing the loop refill offset fails the monotonicity test with a real
-  backwards jump — `195315 then 64243`.
+  backwards jump — `399600 then 133200`.
 - Removing `advance_route` leaves the route ingesting but never serving — no
   `#EXTINF:` appears in the fetched playlist.
 

@@ -194,8 +194,8 @@ def restamp_dates(pairs: list[tuple[str, str]], apply: bool) -> int:
     at sign-off, in one command, so they agree with each other and with reality.
     Run this immediately before pushing the tags.
 
-    NOTE the character class: `[ \t]*$`, never `\s*$`. Under `re.MULTILINE`,
-    `\s` matches newlines, so `\s*$` swallows the blank line that follows the
+    NOTE the character class: `[ \\t]*$`, never `\\s*$`. Under `re.MULTILINE`,
+    `\\s` matches newlines, so `\\s*$` swallows the blank line that follows the
     heading and silently reflows the document -- observed on the first real run
     of this function, which glued "### Changed" onto the version heading in five
     files at once.

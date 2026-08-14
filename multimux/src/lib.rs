@@ -6,9 +6,10 @@
 //! SRT, HLS pull, DASH pull, Smooth pull, RTMP push, and a local media **file**
 //! ([`config::InputSpec::File`], issue #748) — and serve each
 //! ingested stream as any combination of [`output::OutputKind`]: Low-Latency
-//! HLS, DASH, or LL-DASH, from one in-process tokio + axum HTTP origin. One
-//! ingest, many outputs, no per-output re-mux. Muxing only — samples are
-//! never transcoded.
+//! HLS, DASH, LL-DASH, Smooth Streaming, classic TS-HLS, catch-up/VOD, and
+//! SRT/RTMP/RTSP push re-egress — from one in-process tokio + axum HTTP
+//! origin. One ingest, many outputs, no per-output re-mux. Muxing only —
+//! samples are never transcoded.
 //!
 //! Every input runs on **one** ingest architecture: `media-plane`'s ingress
 //! contracts (`Dialer` for the eight that dial out, `Listener` for RTMP's

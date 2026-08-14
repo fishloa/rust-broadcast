@@ -8,12 +8,16 @@ transcoded. Every route (one ingest → its served outputs) is independent —
 a single instance can serve dozens of unrelated cameras/feeds side by side.
 
 ```text
-  RTSP  ─┐                                          ┌─▶  LL-HLS   (media.m3u8 + parts, fMP4)
-  RTP   ─┤                                          │
-  TS/UDP─┼─▶  ingest  ─▶  transmux (depay/segment) ──┼─▶  DASH     (manifest.mpd, fMP4)
-  TS/HTTP┤                     one route =                ├─▶  LL-DASH  (manifest-ll.mpd, fMP4)
-  HLS-pull┘          one ingest, one container,            ├─▶  Smooth   (Manifest, fMP4)
-                        N same-container outputs            └─▶  TS-HLS   (media.m3u8, classic .ts)
+  RTSP   ─┐                                          ┌─▶  LL-HLS   (media.m3u8 + parts, fMP4)
+  RTP    ─┤                                          ├─▶  DASH     (manifest.mpd, fMP4)
+  TS/UDP ─┤                                          ├─▶  LL-DASH  (manifest-ll.mpd, fMP4)
+  TS/HTTP─┼─▶  ingest  ─▶  transmux (depay/segment) ──┼─▶  Smooth   (Manifest, fMP4)
+  SRT    ─┤         one route = one ingest,           ├─▶  TS-HLS   (media.m3u8, classic .ts)
+  HLS-pull┤         one container, N outputs          ├─▶  catch-up (catchup.m3u8, DVR archive)
+  DASH-pull┤                                          ├─▶  SRT push
+  Smooth  ─┤                                          ├─▶  RTMP push
+  RTMP   ─┤                                          └─▶  RTSP push
+  file   ─┘
 ```
 
 ## Inputs
@@ -63,6 +67,9 @@ unaffected):
 | `"smooth"` | Microsoft Smooth Streaming (MS-SSTR), fMP4/CMAF | `Manifest` |
 | `"ts_hls"` | Classic HLS, whole MPEG-2 TS media segments (RFC 8216 §3, no `#EXT-X-MAP`, no low-latency parts) | `master.m3u8` + `media.m3u8` (or the configured `playlist_name`) |
 | `"catchup"` | Catch-up / time-shift / VOD-from-live over the route's DVR archive (requires `dvr.enabled: true` — see [Catch-up / VOD-from-live](#catch-up--vod-from-live)) | `catchup.m3u8` + `vod/p{N}.m3u8` |
+| `"srt_push"` | Push re-egress: relay ingested media to a downstream SRT listener, via `srt-runtime` | `url` required |
+| `"rtmp_push"` | Push re-egress: relay to a downstream RTMP server (FLV), via `rtmp-runtime` | `url` required |
+| `"rtsp_push"` | Push re-egress: relay to a downstream RTSP server (ANNOUNCE/RECORD), via `rtsp-runtime` | `url` required |
 
 `"llhls"`/`"dash"`/`"ll_dash"`/`"smooth"` all read the exact same segmented CMAF —
 ingest-once, many-outputs, no per-output re-mux — so a route can enable more
@@ -393,10 +400,6 @@ mutually exclusive — pass one or the other.
 ## v1 limits (still out of scope)
 
 - Per-viewer sessions, server-side ad insertion, manifest rewrites.
-- VOD / catch-up serving over the DVR archive (disk spill and retention
-  itself landed — see [DVR recording](#dvr-recording) above — but nothing
-  yet serves a manifest/playback session against the archived periods;
-  issue #900).
 - Trick-play.
 
 Additional documented limits inherited from the underlying streaming

@@ -61,7 +61,10 @@ the reverse-proxy deployment) and served endpoint table.
 - `--name <NAME>` — served stream name/URL path (requires `--rtsp`)
 - `--outputs <LIST>` — comma-separated output kinds for the quick start (`llhls`, `dash`; default `llhls`)
 - `--dash` — shorthand for `--outputs llhls,dash`
-- `--bind <ADDR>` — HTTP origin bind address (default: `127.0.0.1:8080`)
+- `--srt-push <URL>` — relay ingested media to a downstream SRT listener (repeatable)
+- `--rtmp-push <URL>` — relay ingested media to a downstream RTMP server (repeatable)
+- `--rtsp-push <URL>` — relay ingested media to a downstream RTSP server (repeatable)
+- `--bind <ADDR>` — HTTP origin bind address (default: `0.0.0.0:8080`)
 - `--target-duration <SECS>` — full-segment target duration (default: `4.0`)
 - `--part-ms <MS>` — LL-HLS part target in milliseconds (default: `500`)
 - `--window <N>` — rolling window depth: full segments in RAM (default: `3`)
