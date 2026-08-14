@@ -856,6 +856,140 @@ fn probe_to_identify(candidates: &[Candidate]) -> Probe {
 }
 
 #[cfg(test)]
+mod no_length_relative_needs {
+    //! The class-closing guard: **no** prober may derive `need_at_least` from
+    //! how many bytes it was handed.
+    //!
+    //! Four consecutive audit rounds each found a different prober doing this,
+    //! because each round's fix was applied to whichever prober the auditor had
+    //! probed and then claimed for the class. Hand-written per-prober tests
+    //! repeat that mistake by construction: they cover the probers someone
+    //! thought of. This walks [`PROBERS`] itself, so a prober added later is
+    //! covered the day it is registered.
+    //!
+    //! The property: for a fixed seed padded to increasing lengths, any prober
+    //! that answers `Insufficient` at two or more of those lengths must give
+    //! the *same* number every time. The need names a structure, and the
+    //! structure does not move because the caller supplied more zeros. A need
+    //! that grows with the buffer still terminates -- and crawls, at one unit
+    //! per read.
+
+    use super::*;
+    use alloc::vec;
+    use alloc::vec::Vec;
+
+    /// Seeds chosen to drive different probers into their "read more" path:
+    /// a leading magic or sync that commits the prober to looking further,
+    /// followed by nothing that resolves it.
+    fn seeds() -> Vec<(&'static str, Vec<u8>)> {
+        vec![
+            ("ts-sync", vec![0x47]),
+            (
+                "ebml-magic",
+                vec![
+                    0x1A, 0x45, 0xDF, 0xA3, 0x01, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFE,
+                ],
+            ),
+            (
+                "isobmff-largesize",
+                vec![0x00, 0x00, 0x00, 0x01, b'f', b't', b'y', b'p'],
+            ),
+            ("adts-sync", vec![0xFF, 0xF1, 0x4C, 0x80, 0x22, 0x3F, 0xFC]),
+            ("mp3-sync", vec![0xFF, 0xFB, 0x90, 0x64]),
+            (
+                "id3",
+                vec![b'I', b'D', b'3', 0x04, 0x00, 0x00, 0x00, 0x00, 0x10, 0x00],
+            ),
+            ("annexb-startcode", vec![0x00, 0x00, 0x00, 0x01, 0x67]),
+            ("riff", vec![b'R', b'I', b'F', b'F']),
+            ("ogg", vec![b'O', b'g', b'g']),
+            (
+                "mxf-key",
+                vec![0x06, 0x0E, 0x2B, 0x34, 0x02, 0x05, 0x01, 0x01],
+            ),
+            ("ps-startcode", vec![0x00, 0x00, 0x01, 0xBA]),
+            ("flv", vec![b'F', b'L', b'V']),
+            (
+                "asf-guid",
+                vec![0x30, 0x26, 0xB2, 0x75, 0x8E, 0x66, 0xCF, 0x11],
+            ),
+        ]
+    }
+
+    #[test]
+    fn no_prober_derives_its_need_from_the_buffer_length() {
+        // Short lengths are load-bearing, not padding. Most probers answer
+        // `Insufficient(CONST)` only while the region is SHORTER than the
+        // constant they need (a 16-byte MXF key, a 12-byte RIFF header), so a
+        // length set that starts at 4 never reaches them at two lengths and the
+        // guard goes blind on 7 of 12 probers. The per-prober coverage
+        // assertion below is what surfaced that.
+        let lengths = [
+            1usize, 2, 3, 5, 6, 7, 10, 12, 14, 15, 20, 64, 256, 1024, 4096,
+        ];
+        let mut failures: Vec<alloc::string::String> = Vec::new();
+        let mut exercised = 0usize;
+        let mut covered: Vec<&Format> = Vec::new();
+
+        for (format, prober) in PROBERS {
+            for (seed_name, seed) in seeds() {
+                let mut seen: Vec<(usize, usize)> = Vec::new();
+                for len in lengths {
+                    if len < seed.len() {
+                        continue;
+                    }
+                    let mut buf = seed.clone();
+                    buf.resize(len, 0x00);
+                    if let Outcome::Insufficient(need) = prober(&buf, buf.len()) {
+                        seen.push((len, need));
+                    }
+                }
+                if seen.len() < 2 {
+                    continue;
+                }
+                exercised += 1;
+                covered.push(format);
+                let first = seen[0].1;
+                if seen.iter().any(|(_, n)| *n != first) {
+                    failures.push(alloc::format!(
+                        "  {:?} on seed {seed_name}: {seen:?} -- the need moves with the \
+                         buffer length, so a caller advances one unit per read",
+                        format
+                    ));
+                }
+            }
+        }
+
+        // Per-prober coverage, NOT an aggregate count. The first version of
+        // this test asserted `exercised >= 6` across all pairs and was vacuous
+        // for exactly the probers it was written for: reverting `ts` and `adts`
+        // to length-relative needs left it green, because those two never
+        // reached `Insufficient` at two lengths and other pairs made the total
+        // look healthy. An aggregate threshold hides a per-prober hole -- which
+        // is the same mistake as fixing one prober and claiming the class.
+        let missed: Vec<&Format> = PROBERS
+            .iter()
+            .map(|(f, _)| f)
+            .filter(|f| !covered.contains(f))
+            .collect();
+        assert!(
+            missed.is_empty(),
+            "no seed drives {missed:?} to Insufficient at two or more lengths, so this \
+             guard cannot see a length-relative need in {} of {} probers. Add a seed \
+             that reaches them rather than lowering the bar.",
+            missed.len(),
+            PROBERS.len()
+        );
+        let _ = exercised;
+        assert!(
+            failures.is_empty(),
+            "a prober's need_at_least must name a structure, not the buffer:\n{}",
+            failures.join("\n")
+        );
+    }
+}
+
+#[cfg(test)]
 mod need_normalisation {
     use super::*;
 

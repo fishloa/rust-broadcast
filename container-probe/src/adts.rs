@@ -77,7 +77,7 @@ pub(crate) fn probe(data: &[u8], limit: usize) -> Outcome {
     // syncword inside some other payload. This mirrors the TS prober's
     // `could_prove` distinction.
     if truncated {
-        Outcome::Insufficient(need_at_least(anchor, frame_len, region.len()))
+        Outcome::Insufficient(need_at_least(anchor, frame_len))
     } else {
         Outcome::None
     }
@@ -87,11 +87,14 @@ pub(crate) fn probe(data: &[u8], limit: usize) -> Outcome {
 /// enough room at the observed frame size for [`ADTS_MIN_CHAIN_WEAK`] frames
 /// from the chain's anchor, and strictly more than the caller already holds
 /// (so "supply more" always exceeds what was supplied).
-fn need_at_least(anchor: usize, frame_len: usize, have: usize) -> usize {
-    core::cmp::max(
-        anchor.saturating_add(ADTS_MIN_CHAIN_WEAK.saturating_mul(frame_len)),
-        have.saturating_add(frame_len),
-    )
+fn need_at_least(anchor: usize, frame_len: usize) -> usize {
+    // Structural only: where the weak-threshold chain would END, measured from
+    // the anchor the chain actually started at. The dropped
+    // `max(..., have + frame_len)` term made the answer track the buffer, so
+    // once `have` overtook the floor it grew one frame per turn -- the same
+    // crawl removed from `ts`/`annexb`/`isobmff`. Strict progress and geometric
+    // convergence are guaranteed centrally by `crate::normalise_need`.
+    anchor.saturating_add(ADTS_MIN_CHAIN_WEAK.saturating_mul(frame_len))
 }
 
 /// `true` if a valid ADTS frame header sits at `i`, and if so the
@@ -325,6 +328,65 @@ mod tests {
     /// cannot prove the top of the field is decoded correctly. Here we encode a
     /// `frame_len` that *needs* those two high bits and assert it decodes back
     /// byte-exactly.
+    /// The truncated-chain need is exactly "the anchor plus a weak chain's
+    /// worth of frames" — a structural value, pinned.
+    ///
+    /// Asserted at the prober: through the public `probe` the harness's
+    /// geometric floor dominates at these lengths (190 bytes yields 286, which
+    /// is `geometric_floor(190)`, not the prober's 256), so an end-to-end
+    /// assertion would pin the floor rather than this formula.
+    ///
+    /// Scope, stated because the surrounding commits over-claimed twice: this
+    /// pins the FORMULA (a change to `ADTS_MIN_CHAIN_WEAK * frame_len` fails
+    /// it). It does **not** prove the removed `max(..., have + frame_len)` term
+    /// was a live defect, and that term is in fact unobservable here — measured,
+    /// not assumed. `Insufficient` requires a truncated chain shorter than
+    /// `ADTS_MIN_CHAIN_WEAK`, which bounds `have` below `WEAK * frame_len`, so
+    /// `have + frame_len` can never overtake the floor. Ending exactly on a
+    /// frame boundary gives `Unknown` (the chain ended cleanly) and one header
+    /// later the chain reaches the threshold and `Identified`. The term was
+    /// dead weight; it is removed because it misleads, not because it bit.
+    #[test]
+    fn the_truncated_chain_need_is_the_structural_value() {
+        const F: usize = 64;
+        let encode = |frame_len: u16| -> [u8; 6] {
+            [
+                0xFF,
+                0xF1,
+                0x00,
+                ((frame_len >> 11) & 0x03) as u8,
+                ((frame_len >> 3) & 0xFF) as u8,
+                (((frame_len & 0x07) as u8) << 5),
+            ]
+        };
+        let mut full = alloc::vec::Vec::new();
+        for _ in 0..5 {
+            full.extend_from_slice(&encode(F as u16));
+            full.resize(full.len() + (F - ADTS_HEADER_LEN), 0x00);
+        }
+
+        let mut seen = alloc::vec::Vec::new();
+        for len in [F + 8, 2 * F, 2 * F + 40, 3 * F - 8] {
+            let buf = &full[..len];
+            if let Outcome::Insufficient(need) = probe(buf, buf.len()) {
+                seen.push((len, need));
+            }
+        }
+        assert!(
+            seen.len() >= 3,
+            "the seed must reach the truncated-chain Insufficient at three or more \
+             lengths, else this proves nothing (got {seen:?})"
+        );
+        for (len, need) in &seen {
+            assert_eq!(
+                *need,
+                ADTS_MIN_CHAIN_WEAK * F,
+                "at {len} bytes the need must be the anchor plus \
+                 {ADTS_MIN_CHAIN_WEAK} frames of {F}"
+            );
+        }
+    }
+
     #[test]
     fn large_frame_length_round_trips() {
         // Encode `frame_len` the same way the fixtures do (ISO/IEC 13818-7

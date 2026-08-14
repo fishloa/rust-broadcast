@@ -97,7 +97,11 @@ pub(crate) fn probe(data: &[u8], limit: usize) -> Outcome {
         if let Some(skip) = id3_skip(region)
             && skip > region.len()
         {
-            return Outcome::Insufficient(core::cmp::max(skip, region.len() + 1));
+            // The ID3 skip target is itself the structural need: the first
+            // frame cannot start before it. The dropped `region.len() + 1`
+            // term only mattered when the skip was already behind us, which
+            // `normalise_need` now handles centrally.
+            return Outcome::Insufficient(skip);
         }
         return Outcome::None;
     }
@@ -106,7 +110,7 @@ pub(crate) fn probe(data: &[u8], limit: usize) -> Outcome {
     // an invalid next header is a scattered frame and will not become an MP3
     // stream by reading further. Mirrors the TS prober's `could_prove`.
     if truncated {
-        Outcome::Insufficient(need_at_least(anchor, frame_len, region.len()))
+        Outcome::Insufficient(need_at_least(anchor, frame_len))
     } else {
         Outcome::None
     }
@@ -115,11 +119,9 @@ pub(crate) fn probe(data: &[u8], limit: usize) -> Outcome {
 /// A lower bound on bytes that could resolve the verdict to `LATTICE_WEAK`:
 /// room at the observed frame size for [`MP3_MIN_CHAIN_WEAK`] frames from the
 /// chain's anchor, and strictly more than the caller already holds.
-fn need_at_least(anchor: usize, frame_len: usize, have: usize) -> usize {
-    core::cmp::max(
-        anchor.saturating_add(MP3_MIN_CHAIN_WEAK.saturating_mul(frame_len)),
-        have.saturating_add(frame_len),
-    )
+fn need_at_least(anchor: usize, frame_len: usize) -> usize {
+    // Structural only -- see the note in `adts::need_at_least`.
+    anchor.saturating_add(MP3_MIN_CHAIN_WEAK.saturating_mul(frame_len))
 }
 
 /// The longest chain of valid MPEG-1 Layer III frames linked by their own
