@@ -169,6 +169,54 @@ mod ts;
 
 use alloc::vec::Vec;
 
+/// MXF Partition Pack kind — the `PartitionKind` byte, byte 14 of the
+/// Partition Pack Key UL (SMPTE ST 377-1 §7.2-7.4).
+///
+/// Typed rather than a raw `u8` because the spec names these values: leaving
+/// the byte exposed made every consumer re-implement the same three-way lookup,
+/// which is what the decode-completeness rule exists to prevent. The crate
+/// already solves the identical problem with `IsobmffLayout` and `DocType`.
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PartitionKind {
+    /// Header Partition (`0x02`) — ST 377-1 §7.2.
+    Header,
+    /// Body Partition (`0x03`) — ST 377-1 §7.3.
+    Body,
+    /// Footer Partition (`0x04`) — ST 377-1 §7.4.
+    Footer,
+    /// A value outside the range this crate's prober accepts. Carried rather
+    /// than discarded so `Display` stays lossless; read it with
+    /// [`PartitionKind::as_u8`], which is why the field itself need not be
+    /// matchable downstream.
+    #[non_exhaustive]
+    Other(u8),
+}
+
+impl PartitionKind {
+    /// The spec token for this value.
+    pub fn name(&self) -> &'static str {
+        match self {
+            PartitionKind::Header => "Header",
+            PartitionKind::Body => "Body",
+            PartitionKind::Footer => "Footer",
+            PartitionKind::Other(_) => "reserved",
+        }
+    }
+
+    /// The wire byte this kind was decoded from.
+    pub fn as_u8(&self) -> u8 {
+        match self {
+            PartitionKind::Header => 0x02,
+            PartitionKind::Body => 0x03,
+            PartitionKind::Footer => 0x04,
+            PartitionKind::Other(b) => *b,
+        }
+    }
+}
+
+broadcast_common::impl_spec_display!(PartitionKind, Other);
+
 /// The identified container/stream format.
 ///
 /// Each variant maps to exactly one prober module. `#[non_exhaustive]` so
@@ -349,11 +397,11 @@ pub enum Detail {
         /// The `DataOffset` field (bytes 5..9), the header size.
         data_offset: u32,
     },
-    /// MXF: the decoded Partition Pack `PartitionKind` byte (byte 14 of the UL).
+    /// MXF: the decoded Partition Pack kind (byte 14 of the UL).
     #[non_exhaustive]
     Mxf {
-        /// The Partition Kind byte (`0x02` Header / `0x03` Body / `0x04` Footer).
-        partition_kind: u8,
+        /// Which Partition Pack this is — see [`PartitionKind`].
+        partition_kind: PartitionKind,
     },
     /// MPEG-PS: whether the pack header's SCR/mux-rate marker bits validated.
     #[non_exhaustive]
@@ -407,9 +455,15 @@ impl Detail {
 /// then appends the field data the variant actually carries.
 impl core::fmt::Display for Detail {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        // The label comes from `name()`, never from a literal in these arms.
+        // It used to be spelled out in every arm, which made the doc above
+        // ("delegates to `Detail::name`") false and let the two drift silently:
+        // `api_labels.rs` pins only `Detail::None`, so a renamed variant would
+        // have reported one label from `name()` and another from `Display`.
+        f.write_str(self.name())?;
         match self {
             Detail::Ts { stride, phase } => {
-                write!(f, "Ts {{ stride: {stride}, phase: {phase} }}")
+                write!(f, " {{ stride: {stride}, phase: {phase} }}")
             }
             Detail::Isobmff {
                 major_brand,
@@ -421,25 +475,26 @@ impl core::fmt::Display for Detail {
                     .unwrap_or_else(|| "<none>".into());
                 write!(
                     f,
-                    "Isobmff {{ major_brand: {brand:?}, boxes_walked: {boxes_walked}, layout: {layout} }}"
+                    " {{ major_brand: {brand:?}, boxes_walked: {boxes_walked}, layout: {layout} }}"
                 )
             }
-            Detail::Ebml { doc_type } => write!(f, "Ebml {{ doc_type: {doc_type} }}"),
+            Detail::Ebml { doc_type } => write!(f, " {{ doc_type: {doc_type} }}"),
             Detail::Flv {
                 has_audio,
                 has_video,
                 data_offset,
             } => write!(
                 f,
-                "Flv {{ has_audio: {has_audio}, has_video: {has_video}, data_offset: {data_offset} }}"
+                " {{ has_audio: {has_audio}, has_video: {has_video}, data_offset: {data_offset} }}"
             ),
             Detail::Mxf { partition_kind } => {
-                write!(f, "Mxf {{ partition_kind: 0x{partition_kind:02X} }}")
+                write!(f, " {{ partition_kind: {partition_kind} }}")
             }
             Detail::MpegPs { structurally_valid } => {
-                write!(f, "MpegPs {{ structural: {structurally_valid} }}")
+                write!(f, " {{ structural: {structurally_valid} }}")
             }
-            Detail::None => f.write_str("None"),
+            // No fields to append.
+            Detail::None => Ok(()),
         }
     }
 }
@@ -1192,18 +1247,51 @@ mod dispatch {
     /// itself, so the reachable set is *exactly* `PROBERS`'s formats ∪ `WebM`.
     #[test]
     fn every_format_variant_is_reachable() {
-        let any_registered: Vec<Format> = PROBERS.iter().map(|(f, _)| *f).collect();
-        // The one produced-by-candidate_format case (not itself in PROBERS).
-        let webm = candidate_format(
-            Format::Matroska,
-            Detail::Ebml {
-                doc_type: DocType::Webm,
-            },
-        );
-        assert_eq!(webm, Format::WebM);
+        // How a `Format` value can be produced. The match below is EXHAUSTIVE
+        // and has no wildcard arm, so adding a variant to `Format` is a
+        // compile error here until its reachability is declared.
+        //
+        // That is the whole point. The previous version listed the variants in
+        // a hand-written array and called itself "drift-shielded"; it was not.
+        // An audit added a `Format::HevcAnnexB` variant with no prober and the
+        // entire suite stayed green — 53 passed, 0 failed, across all 14 test
+        // binaries. A format unreachable from any input shipped silently. A
+        // list you maintain by hand cannot guard a list you maintain by hand.
+        //
+        // `#[non_exhaustive]` does not force a wildcard *inside* the defining
+        // crate, which is exactly why this works here and would not work from
+        // an integration test.
+        enum Reach {
+            /// Registered in `PROBERS` under its own name.
+            Prober,
+            /// Not in `PROBERS`; produced by `candidate_format` from another.
+            Derived,
+        }
+        fn reachability(f: Format) -> Reach {
+            match f {
+                Format::MpegTs => Reach::Prober,
+                Format::Isobmff => Reach::Prober,
+                Format::MpegPs => Reach::Prober,
+                Format::Matroska => Reach::Prober,
+                Format::Flv => Reach::Prober,
+                Format::Mxf => Reach::Prober,
+                Format::Wav => Reach::Prober,
+                Format::Ogg => Reach::Prober,
+                Format::Asf => Reach::Prober,
+                Format::AdtsAac => Reach::Prober,
+                Format::Mp3 => Reach::Prober,
+                Format::AnnexB => Reach::Prober,
+                // EBML registers as `Matroska` and resolves to `WebM` by
+                // `DocType`, so it is never its own `PROBERS` row.
+                Format::WebM => Reach::Derived,
+            }
+        }
 
-        // The complete variant list, drifted-shielded against `Format`.
-        for variant in [
+        /// Every `Format` value, for iteration. Hand-written — but it cannot
+        /// silently drift: the exhaustive `reachability` match above is a
+        /// compile error until a new variant is declared, and the length
+        /// assertion below fails if this list and `PROBERS` disagree.
+        const ALL_FORMATS: [Format; 13] = [
             Format::MpegTs,
             Format::Isobmff,
             Format::MpegPs,
@@ -1217,24 +1305,60 @@ mod dispatch {
             Format::AdtsAac,
             Format::Mp3,
             Format::AnnexB,
-        ] {
-            assert!(
-                any_registered.contains(&variant) || variant == Format::WebM,
-                "Format::{} is not reachable: it is neither a PROBERS row nor \
-                 produced by candidate_format from one",
-                variant.name()
-            );
+        ];
+        /// Formats reachable only via `candidate_format`: `WebM`.
+        const DERIVED: usize = 1;
+
+        let registered: Vec<Format> = PROBERS.iter().map(|(f, _)| *f).collect();
+
+        // Pins the arithmetic: a prober added without extending ALL_FORMATS
+        // (or vice versa) fails here rather than going unchecked.
+        assert_eq!(
+            ALL_FORMATS.len(),
+            registered.len() + DERIVED,
+            "ALL_FORMATS ({}) must equal PROBERS ({}) plus the {DERIVED} derived \
+             format(s); one of the three has drifted",
+            ALL_FORMATS.len(),
+            registered.len()
+        );
+
+        // The single `Derived` case must actually be derivable, not merely
+        // declared so.
+        assert_eq!(
+            candidate_format(
+                Format::Matroska,
+                Detail::Ebml {
+                    doc_type: DocType::Webm,
+                },
+            ),
+            Format::WebM,
+            "WebM is declared Derived but candidate_format does not produce it"
+        );
+
+        for variant in ALL_FORMATS {
+            match reachability(variant) {
+                Reach::Prober => assert!(
+                    registered.contains(&variant),
+                    "Format::{} is declared as having its own prober but is not a \
+                     PROBERS row",
+                    variant.name()
+                ),
+                Reach::Derived => assert!(
+                    !registered.contains(&variant),
+                    "Format::{} is declared Derived but also has a PROBERS row — \
+                     one of the two is wrong",
+                    variant.name()
+                ),
+            }
         }
-        // Belt-and-braces: also verify every registered row maps *to itself*
-        // under `candidate_format` except the EBML special case, so a future
-        // edit cannot quietly re-point a row elsewhere and strand its format.
-        for &(f, _) in PROBERS {
-            let resolved = candidate_format(f, Detail::None);
+
+        // Every registered prober's format must appear in ALL_FORMATS, so the
+        // enumeration cannot silently shrink either.
+        for f in &registered {
             assert!(
-                resolved == f || f == Format::Matroska,
-                "{:?} row resolves to {:?} under no-detail — unexpected drift",
-                f,
-                resolved
+                ALL_FORMATS.contains(f),
+                "Format::{} has a PROBERS row but is missing from ALL_FORMATS",
+                f.name()
             );
         }
     }

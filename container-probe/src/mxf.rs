@@ -31,7 +31,22 @@ const MXF_KEY_STRUCTURE_KIND: u8 = 0x01;
 /// Byte 14 of the UL carries the Partition Kind (`PartitionKind`), one of
 /// `0x02` Header / `0x03` Body / `0x04` Footer (SMPTE ST 377-1 §7.2-7.4).
 const MXF_PARTITION_KIND_HEADER: u8 = 0x02;
+const MXF_PARTITION_KIND_BODY: u8 = 0x03;
 const MXF_PARTITION_KIND_FOOTER: u8 = 0x04;
+/// Byte 14 of the UL -> [`crate::PartitionKind`] (SMPTE ST 377-1 §7.2-7.4).
+///
+/// The prober only accepts `0x02..=0x04` before it reaches here, so `Other` is
+/// unreachable today; it exists so the type stays lossless if that validation
+/// ever widens, rather than silently mapping an unknown byte onto Header.
+fn partition_kind_from_byte(b: u8) -> crate::PartitionKind {
+    match b {
+        MXF_PARTITION_KIND_HEADER => crate::PartitionKind::Header,
+        MXF_PARTITION_KIND_BODY => crate::PartitionKind::Body,
+        MXF_PARTITION_KIND_FOOTER => crate::PartitionKind::Footer,
+        other => crate::PartitionKind::Other(other),
+    }
+}
+
 /// Length of the full Partition Pack Key UL: 16 bytes (SMPTE ST 377-1 §7.1).
 const UL_KEY_LEN: usize = 16;
 /// The low-7-bits mask of a BER length tag byte (ITU-T X.690 §8.1.3 / ST 377-1
@@ -63,7 +78,7 @@ pub(crate) fn probe(data: &[u8], limit: usize) -> Outcome {
     let ber = &region[UL_KEY_LEN..];
 
     let detail = Detail::Mxf {
-        partition_kind: region[13],
+        partition_kind: partition_kind_from_byte(region[13]),
     };
     if is_partition_pack_key(region) && ber_length_well_formed(ber) {
         Outcome::Match(Evidence {

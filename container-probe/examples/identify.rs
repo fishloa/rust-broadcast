@@ -37,7 +37,10 @@ fn detail_text(detail: &Detail) -> String {
             ..
         } => format!("FLV: audio={has_audio}, video={has_video}, data offset={data_offset}"),
         Detail::Mxf { partition_kind, .. } => {
-            format!("MXF: partition kind 0x{partition_kind:02X}")
+            format!(
+                "MXF: {partition_kind} partition (0x{:02X})",
+                partition_kind.as_u8()
+            )
         }
         Detail::MpegPs {
             structurally_valid, ..

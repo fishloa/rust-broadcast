@@ -688,27 +688,36 @@ impl ParsedFile {
         // total order correct across zero and signs.
         let mut order: Vec<PublishItem> = Vec::new();
         loop {
-            let mut best: Option<usize> = None;
+            // Carry the winning key alongside the index rather than re-reading
+            // `front()` on the current best. The re-read needed an `.expect()`
+            // to restate an invariant the loop had already established, and a
+            // production `.expect()` is a panic-class exception however sound
+            // its argument (RELEASE-AUDIT §3 G). Keeping the key makes the
+            // invariant structural: there is nothing left to assert.
+            let mut best: Option<(usize, f64, usize, f64)> = None;
             for (ti, q) in per_track.iter().enumerate() {
                 let Some(front) = q.front() else { continue };
-                let better = match best {
+                let key = (ti, front.due_seconds, front.track_ref, front.decode_seconds);
+                let better = match &best {
                     None => true,
-                    Some(bi) => {
-                        let b = &per_track[bi].front().expect("best queue has a front");
-                        front
-                            .due_seconds
-                            .total_cmp(&b.due_seconds)
-                            .then(front.track_ref.cmp(&b.track_ref))
-                            .then(front.decode_seconds.total_cmp(&b.decode_seconds))
-                            .is_lt()
-                    }
+                    Some((_, due, tref, dec)) => key
+                        .1
+                        .total_cmp(due)
+                        .then(key.2.cmp(tref))
+                        .then(key.3.total_cmp(dec))
+                        .is_lt(),
                 };
                 if better {
-                    best = Some(ti);
+                    best = Some(key);
                 }
             }
-            let Some(bi) = best else { break };
-            order.push(per_track[bi].pop_front().expect("best queue has a front"));
+            let Some((bi, ..)) = best else { break };
+            // `bi` indexed a queue whose `front()` succeeded this pass, so
+            // `pop_front` cannot be `None`; handled rather than asserted.
+            let Some(item) = per_track[bi].pop_front() else {
+                break;
+            };
+            order.push(item);
         }
 
         (specs, order, ranges)

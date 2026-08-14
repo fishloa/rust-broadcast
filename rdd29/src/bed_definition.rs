@@ -7,6 +7,14 @@
 
 use alloc::vec::Vec;
 
+/// Minimum bits one channel description occupies: `Plex(4)` ChannelID +
+/// `Plex(8)` AudioDataID + 3 reserved bits (SMPTE RDD 29:2019 §4.3).
+///
+/// Used only as the provable ceiling on `ChannelCount` — a count implying more
+/// channels than the remaining bits could describe is rejected, per the
+/// unbounded-allocation fix.
+const BITS_PER_CHANNEL_DESCRIPTION: u64 = 4 + 8 + 3;
+
 use broadcast_common::bits::{BitReader, BitWriter};
 use broadcast_common::{Parse, Serialize};
 
@@ -178,15 +186,15 @@ impl<'a> Parse<'a> for BedDefinition1 {
         let channel_count = read_plex(&mut r, 4, "BedDefinition1.ChannelCount")?;
         // `channel_count` is a Plex field read from the input and is therefore
         // unbounded — see the same hazard in `atmos_frame.rs`. Each channel
-        // consumes at least 15 bits (`Plex(4)` ChannelID + `Plex(8)`
-        // AudioDataID + 3 reserved bits), so `remaining_bits / 15` is the
+        // consumes at least `BITS_PER_CHANNEL_DESCRIPTION` bits, so that
+        // divisor gives the
         // provable ceiling on the count, not the raw `remaining_bits`. Given
         // the fewer bits, the reserve is the smaller of that ceiling and the
         // wire claim — and an impossible ceiling is REJECTED rather than a
         // reserve that overcommit would let succeed silently (the identical
         // reasoning as `ATMOSFrame.SubElementCount`).
         let remaining_bits = r.bits_remaining() as u64;
-        let provable_ceiling = remaining_bits / 15;
+        let provable_ceiling = remaining_bits / BITS_PER_CHANNEL_DESCRIPTION;
         if channel_count > provable_ceiling {
             return Err(Error::InvalidValue {
                 field: "BedDefinition1.ChannelCount",

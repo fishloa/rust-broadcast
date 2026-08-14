@@ -7,7 +7,7 @@
 //!   its fields instead of collapsing to `"Ts"`.
 //! - `major_brand_str()` exposes the registered ISOBMFF brand as a string.
 
-use container_probe::{Confidence, Detail, Probe};
+use container_probe::{Confidence, Detail, PartitionKind, Probe};
 use std::fmt::Write;
 use std::fs;
 
@@ -118,10 +118,20 @@ fn flv_mxf_mpegps_report_detail() {
     match mxf {
         Probe::Identified { detail, .. } => match detail {
             Detail::Mxf { partition_kind, .. } => {
+                // Typed now: assert the decoded kind, not a raw byte range.
+                // The previous `(0x02..=0x04).contains(&partition_kind)` is the
+                // lookup every consumer had to re-implement — the exact thing
+                // the decode-completeness rule forbids.
                 assert!(
-                    (0x02..=0x04).contains(&partition_kind),
-                    "partition kind {partition_kind:#x} must be Header/Body/Footer"
+                    matches!(
+                        partition_kind,
+                        PartitionKind::Header | PartitionKind::Body | PartitionKind::Footer
+                    ),
+                    "a real MXF fixture must decode to a named partition kind, got \
+                     {partition_kind:?}"
                 );
+                assert_eq!(partition_kind.name(), "Header");
+                assert_eq!(partition_kind.to_string(), "Header");
             }
             other => panic!("MXF must report Detail::Mxf, got {other:?}"),
         },
