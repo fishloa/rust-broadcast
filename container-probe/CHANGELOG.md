@@ -28,6 +28,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   answer froze at 65537 and any larger buffer got `need_at_least <= supplied`,
   a fixed point a conforming caller spins on forever. Reachable from a 12-byte
   attacker-chosen prefix.
+
+  The answer is also required to **converge**, not merely to advance. Where a
+  prober can name a structural need it reports that — the offset the element
+  itself declares — and where none can be named the floor grows geometrically
+  rather than by a fixed step. An arithmetic step satisfies "more than
+  examined" and still crawls: at `+4` bytes a turn (Annex B) a caller needed
+  65 536 reads to cross a 256 KiB file, and at `+188` (TS) 1 394. Terminating
+  and usable are different properties, and only a bound on the number of reads
+  distinguishes them.
 - **Scored confidence model** — the `Confidence` tiers `CERTAIN` (240),
   `STRONG` (192), `STRUCTURAL` (160), `LATTICE_STRONG` (128), `LATTICE_WEAK`
   (96) and `HEURISTIC` (64). All probers always run; the highest score wins;

@@ -3,6 +3,16 @@
 ## [Unreleased]
 
 ## [0.10.0] - 2026-08-12
+
+### Fixed
+
+- **Crate description and README understated the output set.** Both advertised
+  `LL-HLS/DASH/LL-DASH` while `OutputKind` has shipped `Smooth`, `TsHls`,
+  `Catchup`, `SrtPush`, `RtmpPush`, `RtspPush` and `Custom` for several
+  releases; the 0.10.0 release note already listed TS-HLS, so the crates.io
+  description was the surface that disagreed. Corrected everywhere the set is
+  named (crate description, workspace README, `multimux-cli`'s description and
+  README).
 ### Added
 - **`InputSpec::File { path, loop }` — stream a media file as a route input**
   (issue #748). Point a route at a file on disk and it is served through the
