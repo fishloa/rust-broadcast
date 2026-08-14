@@ -1,6 +1,6 @@
 # multimux-cli 0.8.0
 
-_Released 2026-08-13._
+_Released 2026-08-14._
 
 Minor. No CLI surface change; the version moves because its `multimux`
 dependency crossed a caret epoch.

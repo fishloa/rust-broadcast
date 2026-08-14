@@ -33,8 +33,20 @@ CLAUDE.md → "Releases are tag-driven"). One-time setup was completed in v7.4.0
 - **Cargo.toml discoverability metadata**, audited each release: `description`
   (keyword-rich — it's the search-result line), `keywords` (≤5),
   `categories` (crates.io fixed list: `parser-implementations`, `encoding`,
-  `no-std`, `multimedia::encoding`), `repository`, `documentation`, `license`,
-  `readme`, `rust-version`.
+  `no-std`, `multimedia::encoding`), `repository`, `license`, `readme`,
+  `rust-version`.
+
+  **`documentation` is deliberately NOT in that list.** It used to be, and no
+  crate in this workspace has ever set it — 0 of 58, across every release — so
+  the requirement was pure audit noise: it failed every crate, every time, and
+  was ignored accordingly. A rule nothing satisfies teaches readers to skip the
+  list.
+
+  It is dropped rather than enforced because it would buy nothing. crates.io
+  links docs.rs automatically when `documentation` is absent, and docs.rs *is*
+  where every crate here publishes. The field earns its place only when docs
+  live somewhere else — a hand-written book, a vendor portal. If a crate ever
+  does that, set it on that crate and say why.
 
 ### 3. GitHub — source of truth + release record
 - **Workspace `README.md`**: architecture map, the crate table, the spec-grounding

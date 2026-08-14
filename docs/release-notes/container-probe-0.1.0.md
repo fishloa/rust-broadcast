@@ -1,6 +1,6 @@
 # container-probe 0.1.0
 
-_Released 2026-08-12._
+_Released 2026-08-14._
 
 First release. `container-probe` identifies the container format of a byte
 prefix — a file's leading bytes, a network read — and reports what it learned

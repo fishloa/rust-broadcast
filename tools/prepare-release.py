@@ -193,13 +193,19 @@ def restamp_dates(pairs: list[tuple[str, str]], apply: bool) -> int:
     The dates are therefore not set when the changelog is cut; they are stamped
     at sign-off, in one command, so they agree with each other and with reality.
     Run this immediately before pushing the tags.
+
+    NOTE the character class: `[ \t]*$`, never `\s*$`. Under `re.MULTILINE`,
+    `\s` matches newlines, so `\s*$` swallows the blank line that follows the
+    heading and silently reflows the document -- observed on the first real run
+    of this function, which glued "### Changed" onto the version heading in five
+    files at once.
     """
     rc = 0
     for crate, version in pairs:
         ch = ROOT / crate / "CHANGELOG.md"
         if ch.is_file():
             text = ch.read_text()
-            pat = re.compile(rf"^## \[{re.escape(version)}\] - \d{{4}}-\d{{2}}-\d{{2}}\s*$", re.M)
+            pat = re.compile(rf"^## \[{re.escape(version)}\] - \d{{4}}-\d{{2}}-\d{{2}}[ \t]*$", re.M)
             m = pat.search(text)
             if not m:
                 print(f"  {crate}: no dated `## [{version}]` heading to restamp")
@@ -220,7 +226,7 @@ def restamp_dates(pairs: list[tuple[str, str]], apply: bool) -> int:
         note = ROOT / "docs" / "release-notes" / f"{crate}-{version}.md"
         if note.is_file():
             text = note.read_text()
-            pat = re.compile(r"^_Released \d{4}-\d{2}-\d{2}\._\s*$", re.M)
+            pat = re.compile(r"^_Released \d{4}-\d{2}-\d{2}\._[ \t]*$", re.M)
             m = pat.search(text)
             if not m:
                 print(f"  {crate}: release note has no `_Released <date>._` line")

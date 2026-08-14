@@ -1,6 +1,6 @@
 # multimux 0.10.0
 
-_Released 2026-08-12._
+_Released 2026-08-14._
 
 Minor, additive. A multimux route can now take a **media file** as its input and
 stream it through every existing output.

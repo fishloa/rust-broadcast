@@ -1,6 +1,6 @@
 # broadcast-hls 0.2.1
 
-_Released 2026-08-12._
+_Released 2026-08-14._
 
 Patch. One fix, no API change.
 
