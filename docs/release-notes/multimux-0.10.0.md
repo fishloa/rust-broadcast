@@ -69,8 +69,12 @@ reading if scheduled playout is ever revisited.
 
 ## Verification
 
-459 multimux tests; the full workspace suite is green at 6,829 tests with all
-six CI gates passing.
+The full workspace suite and all six CI gates are green.
+
+Deliberately without a test count: an audit measured this note's previous
+figure (6,829) against a real run (6,922) and found it stale. A number that
+changes on every commit is a claim that rots between writing the note and
+tagging it, and a reader cannot tell a stale count from a wrong one.
 
 Two mutation proofs, each confirmed applied before being trusted:
 

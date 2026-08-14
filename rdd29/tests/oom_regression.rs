@@ -14,9 +14,12 @@
 //! of `0x7FFF_FFFF`. `Vec::with_capacity` then reserved that many elements.
 //!
 //! Every sub-element consumes at least one byte of the body, so the count can
-//! never legitimately exceed the bytes remaining. The parser now reserves the
-//! smaller of the two. `BedDefinition1.ChannelCount` had the identical hazard
-//! and the identical fix.
+//! never legitimately exceed the bytes remaining, so the parser **rejects** an
+//! impossible count outright rather than capping the reserve -- capping is
+//! untestable here, because `Vec::with_capacity(2^31)` succeeds under ordinary
+//! overcommit and only a sanitizer notices. `BedDefinition1.ChannelCount` had
+//! the identical hazard and the identical fix, with its own ceiling of
+//! `remaining_bits / 15` (a channel description costs at least 15 bits).
 //!
 //! These inputs are malformed and must fail to parse — the point is that they
 //! fail *without attempting the allocation first*. A test process that

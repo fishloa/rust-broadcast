@@ -856,30 +856,48 @@ fn probe_to_identify(candidates: &[Candidate]) -> Probe {
 }
 
 #[cfg(test)]
-mod no_length_relative_needs {
-    //! The class-closing guard: **no** prober may derive `need_at_least` from
-    //! how many bytes it was handed.
+mod sampled_prober_needs {
+    //! A **sampled** check that a prober's `need_at_least` does not move with
+    //! the buffer, over the seeds and lengths below.
     //!
-    //! Four consecutive audit rounds each found a different prober doing this,
-    //! because each round's fix was applied to whichever prober the auditor had
-    //! probed and then claimed for the class. Hand-written per-prober tests
-    //! repeat that mistake by construction: they cover the probers someone
-    //! thought of. This walks [`PROBERS`] itself, so a prober added later is
-    //! covered the day it is registered.
+    //! # What this does and does not prove
     //!
-    //! The property: for a fixed seed padded to increasing lengths, any prober
-    //! that answers `Insufficient` at two or more of those lengths must give
-    //! the *same* number every time. The need names a structure, and the
-    //! structure does not move because the caller supplied more zeros. A need
-    //! that grows with the buffer still terminates -- and crawls, at one unit
-    //! per read.
+    //! An earlier revision of this module was called
+    //! `no_length_relative_needs` and its commit said it "closed the class
+    //! across all 12 probers". An audit measured it: reverting five probers to
+    //! length-relative needs one at a time, it caught **two** — `annexb` and
+    //! `isobmff`. It missed `ts`, `adts` and `mp3`, which were the very sites
+    //! that commit set out to protect. The seeds and lengths simply do not
+    //! reach the branch where those needs are computed.
+    //!
+    //! It is kept because two is more than none, and renamed because a test
+    //! whose name asserts a closure it does not deliver is worse than no test:
+    //! it is what persuaded the author the class was closed.
+    //!
+    //! # Where the real guarantee lives
+    //!
+    //! Convergence does **not** depend on any prober being well behaved.
+    //! [`normalise_need`] raises every answer to a geometric floor, so the
+    //! documented caller loop converges in O(log n) reads no matter what a
+    //! prober reports — measured end to end: for a buffer of n bytes the public
+    //! API returns exactly `geometric_floor(n)` whenever a prober under-asks.
+    //! The guarantee is proved by `tests/insufficient_terminates.rs` (the loop
+    //! itself, bounded turns, over adversarial seeds) and by
+    //! `mod need_normalisation` (the floor's own algebra).
+    //!
+    //! A prober's need is therefore a **hint**: a better one saves a round
+    //! trip, a worse one cannot cause a crawl. For a chain walker the hint
+    //! legitimately grows as the walk advances — `isobmff` reports the end of
+    //! the box header it stopped in, which moves with how many boxes it got
+    //! through. That is progress, not a defect, and no invariant here forbids
+    //! it.
 
     use super::*;
     use alloc::vec;
     use alloc::vec::Vec;
 
-    /// Seeds chosen to drive different probers into their "read more" path:
-    /// a leading magic or sync that commits the prober to looking further,
+    /// Seeds chosen to drive different probers into their "read more" path: a
+    /// leading magic or sync that commits the prober to looking further,
     /// followed by nothing that resolves it.
     fn seeds() -> Vec<(&'static str, Vec<u8>)> {
         vec![
@@ -895,7 +913,27 @@ mod no_length_relative_needs {
                 vec![0x00, 0x00, 0x00, 0x01, b'f', b't', b'y', b'p'],
             ),
             ("adts-sync", vec![0xFF, 0xF1, 0x4C, 0x80, 0x22, 0x3F, 0xFC]),
+            // Mixed frame lengths (7, then 8191): a uniform-frame seed cannot
+            // expose an ADTS need computed from the buffer.
+            (
+                "adts-mixed",
+                vec![
+                    0xFF, 0xF1, 0x00, 0x00, 0x00, 0xE0, 0x00, 0xFF, 0xF1, 0x00, 0x03, 0xFF, 0xE0,
+                    0x00,
+                ],
+            ),
             ("mp3-sync", vec![0xFF, 0xFB, 0x90, 0x64]),
+            // MPEG-1 Layer III, 44100 Hz, frame 1 at 32 kbps (104 bytes) then
+            // frame 2 at 320 kbps (1044). Same reason as `adts-mixed`: a
+            // uniform-bitrate seed cannot expose a need computed from the
+            // buffer, because the bound that hides it uses the first frame's
+            // length while truncation is set by the last.
+            ("mp3-mixed-bitrate", {
+                let mut v = vec![0xFF, 0xFB, 0x10, 0x00];
+                v.resize(104, 0x00);
+                v.extend_from_slice(&[0xFF, 0xFB, 0xE0, 0x00]);
+                v
+            }),
             (
                 "id3",
                 vec![b'I', b'D', b'3', 0x04, 0x00, 0x00, 0x00, 0x00, 0x10, 0x00],
@@ -917,7 +955,7 @@ mod no_length_relative_needs {
     }
 
     #[test]
-    fn no_prober_derives_its_need_from_the_buffer_length() {
+    fn sampled_prober_needs_do_not_move_with_the_buffer() {
         // Short lengths are load-bearing, not padding. Most probers answer
         // `Insufficient(CONST)` only while the region is SHORTER than the
         // constant they need (a 16-byte MXF key, a 12-byte RIFF header), so a
@@ -925,7 +963,13 @@ mod no_length_relative_needs {
         // guard goes blind on 7 of 12 probers. The per-prober coverage
         // assertion below is what surfaced that.
         let lengths = [
-            1usize, 2, 3, 5, 6, 7, 10, 12, 14, 15, 20, 64, 256, 1024, 4096,
+            1usize, 2, 3, 5, 6, 7, 10, 12, 14, 15, 20, 64, 256, 1024,
+            // 1400 sits in the only window where a TS need computed as
+            // `have + TS_PACKET_SIZE` overtakes the 1504-byte structural floor
+            // while the prober still answers Insufficient. Without a length in
+            // (1316, 1504) that revert is invisible -- an audit measured this
+            // guard catching 2 of 5 probers, and this gap was one of the three.
+            1400, 4096,
         ];
         let mut failures: Vec<alloc::string::String> = Vec::new();
         let mut exercised = 0usize;
@@ -983,7 +1027,8 @@ mod no_length_relative_needs {
         let _ = exercised;
         assert!(
             failures.is_empty(),
-            "a prober's need_at_least must name a structure, not the buffer:\n{}",
+            "a prober's need moved with the buffer at a SAMPLED length (this check is \
+             sampled, not exhaustive -- see the module docs):\n{}",
             failures.join("\n")
         );
     }

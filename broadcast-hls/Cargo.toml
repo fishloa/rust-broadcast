@@ -17,8 +17,11 @@ all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
 
 [dependencies]
-# Floored at 9.2: `cenc::CencScheme` (which `cenc_ext_x_key` takes, shared with
-# `transmux`) and `hex::hex_encode` landed there — issue #878.
+# API floor is 9.2 — `cenc::CencScheme` (which `cenc_ext_x_key` takes, shared
+# with `transmux`) and `hex::hex_encode` landed there, issue #878. The pin below
+# is 9.3, deliberately above that floor: it tracks the current published line so
+# the whole workspace resolves one `broadcast-common`, and 9.2 vs 9.3 is the
+# same caret bucket, so this is not an epoch change.
 broadcast-common = { path = "../broadcast-common", version = "9.3", default-features = false }
 thiserror  = { version = "2", default-features = false }
 serde      = { version = "1", optional = true, default-features = false, features = ["derive", "alloc"] }

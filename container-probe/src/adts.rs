@@ -336,16 +336,27 @@ mod tests {
     /// is `geometric_floor(190)`, not the prober's 256), so an end-to-end
     /// assertion would pin the floor rather than this formula.
     ///
-    /// Scope, stated because the surrounding commits over-claimed twice: this
-    /// pins the FORMULA (a change to `ADTS_MIN_CHAIN_WEAK * frame_len` fails
-    /// it). It does **not** prove the removed `max(..., have + frame_len)` term
-    /// was a live defect, and that term is in fact unobservable here — measured,
-    /// not assumed. `Insufficient` requires a truncated chain shorter than
-    /// `ADTS_MIN_CHAIN_WEAK`, which bounds `have` below `WEAK * frame_len`, so
-    /// `have + frame_len` can never overtake the floor. Ending exactly on a
-    /// frame boundary gives `Unknown` (the chain ended cleanly) and one header
-    /// later the chain reaches the threshold and `Identified`. The term was
-    /// dead weight; it is removed because it misleads, not because it bit.
+    /// Scope. This pins the FORMULA: a change to
+    /// `ADTS_MIN_CHAIN_WEAK * frame_len` fails it.
+    ///
+    /// A previous revision of this comment claimed the removed
+    /// `max(..., have + frame_len)` term was *unobservable*. **That claim was
+    /// false**, and the argument behind it was wrong in a specific way worth
+    /// recording: it bounded `have` by `WEAK * frame_len` using the FIRST
+    /// frame's length, while `truncated` is set by the LAST frame's declared
+    /// length. A chain whose frames differ in size breaks the bound. Fourteen
+    /// bytes suffice — frame 1 of length 7, frame 2 declaring 8191:
+    ///
+    /// ```text
+    /// FF F1 00 00 00 E0 00 FF F1 00 03 FF E0 00   (zero-padded)
+    /// shipped:      Insufficient(28) at every n in 14..=8000
+    /// with the term: 28, 37, 71, 207, 1007, 4007, 8007
+    /// ```
+    ///
+    /// That input is now a seed in `insufficient_terminates.rs`. The lesson is
+    /// not about ADTS: "I could not construct an input" is not evidence that
+    /// none exists, and it should never have been written into a doc comment as
+    /// though it were.
     #[test]
     fn the_truncated_chain_need_is_the_structural_value() {
         const F: usize = 64;

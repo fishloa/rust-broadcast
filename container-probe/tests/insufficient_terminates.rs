@@ -58,6 +58,17 @@ fn adversarial_inputs() -> Vec<(&'static str, Vec<u8>)> {
         ),
         // A single TS sync byte: too little to confirm or rule out a lattice.
         ("ts-single-sync", vec![0x47]),
+        // Two ADTS frames of VERY different declared lengths (7, then 8191).
+        // A uniform-frame seed cannot expose a need computed from the buffer:
+        // the bound that hides it uses the FIRST frame's length while
+        // truncation is set by the LAST. This shape was constructed by an audit
+        // specifically to disprove a claim that no such input existed.
+        (
+            "adts-mixed-frame-lengths",
+            vec![
+                0xFF, 0xF1, 0x00, 0x00, 0x00, 0xE0, 0x00, 0xFF, 0xF1, 0x00, 0x03, 0xFF, 0xE0, 0x00,
+            ],
+        ),
         // ISOBMFF box header cut mid-largesize.
         (
             "isobmff-cut-largesize",
