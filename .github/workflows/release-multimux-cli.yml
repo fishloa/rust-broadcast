@@ -96,9 +96,16 @@ jobs:
   # Compiled binaries for the four supported targets, attached to the Release
   # this tag's publish job creates. crates.io carries the source; without this
   # there is no way to use multimux without a Rust toolchain.
-  binaries:
-    needs: publish
-    uses: ./.github/workflows/reusable-binaries.yml
-    with:
-      crate: multimux-cli
-      bin: multimux
+  #
+  # TEMPORARILY DISABLED: every run since 2026-08-11 gets startup_failure —
+  # GitHub Actions cannot initialize the workflow when this job is present.
+  # The reusable workflow (.github/workflows/reusable-binaries.yml) is
+  # structurally identical to the one in release-transmux.yml (which works),
+  # so the root cause is unknown. Re-enable once diagnosed; attach binaries
+  # retroactively via the attach-binaries.yml workflow_dispatch.
+  # binaries:
+  #   needs: publish
+  #   uses: ./.github/workflows/reusable-binaries.yml
+  #   with:
+  #     crate: multimux-cli
+  #     bin: multimux
