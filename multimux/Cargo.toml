@@ -67,7 +67,7 @@ bytes             = "1"
 # `SignedUrlKeySet`, added in 0.2.1 (#747). A `"0.2"` bound admits 0.2.0,
 # which lacks them — multimux 0.8.0 shipped with that understated bound and
 # fails to compile against a lock that pins 0.2.0 (hit for real while
-# bumping acap-multimux).
+# bumping axis-origin, née acap-multimux).
 broadcast-auth    = { path = "../broadcast-auth", version = "0.3" }
 sdp-types         = "0.1"
 tokio             = { version = "1", features = ["rt-multi-thread", "net", "io-util", "macros", "time", "sync", "signal"] }
