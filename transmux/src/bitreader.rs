@@ -128,19 +128,50 @@ impl BitReader {
     /// H.264 §9.1: leadingZeroBits (count of zero bits before the first 1-bit),
     /// then read that many bits as the unsigned value `codeNum`.
     pub fn read_ue(&mut self, what: &'static str) -> Result<u64> {
-        let mut leading_zero_bits: u32 = 0;
-        while self.has_bits(1) && self.read_bits(1, what)? == 0 {
-            leading_zero_bits += 1;
+        // H.264 §9.1 / H.265 §9.2.2: a `ue(v)` is a leadingZeroBits run
+        // terminated by a 1-bit — with no bits left there is no codeNum to
+        // decode, so EOF must be an error. Returning `Ok(0)` here (the
+        // pre-fix behaviour) does not consume anything, so every caller that
+        // loops on the decoded value (`sps.rs`'s SPS walk) never terminates:
+        // a ~20-byte hostile SPS hung the demuxer.
+        if !self.has_bits(1) {
+            return Err(Error::BufferTooShort {
+                need: self.bit_pos + 1,
+                have: self.data.len() * 8,
+                what,
+            });
         }
-        if leading_zero_bits > 0 && !self.has_bits(leading_zero_bits as usize) {
+        let mut leading_zero_bits: u32 = 0;
+        while self.read_bits(1, what)? == 0 {
+            leading_zero_bits += 1;
+            // H.264 §9.1 / H.265 §9.2.2 bound codeNum (leadingZeroBits ≤ 32);
+            // a longer run is not a valid `ue(v)` and must never reach a
+            // caller's loop count or shift.
+            if leading_zero_bits > 32 {
+                return Err(Error::InvalidValue {
+                    field: what,
+                    value: leading_zero_bits as u64,
+                    reason: "ue(v) with more than 32 leading zero bits",
+                });
+            }
+            if !self.has_bits(1) {
+                return Err(Error::BufferTooShort {
+                    need: self.bit_pos + 1,
+                    have: self.data.len() * 8,
+                    what,
+                });
+            }
+        }
+        // The loop exits just past the terminating 1-bit; the
+        // `leading_zero_bits` info bits must still be present. (With a
+        // leading run of zero this check is trivially true and the result is
+        // codeNum 0, matching §9.1.)
+        if !self.has_bits(leading_zero_bits as usize) {
             return Err(Error::BufferTooShort {
                 need: self.bit_pos + leading_zero_bits as usize,
                 have: self.data.len() * 8,
                 what,
             });
-        }
-        if leading_zero_bits == 0 {
-            return Ok(0);
         }
         let info = self.read_bits(leading_zero_bits as usize, what)?;
         Ok((1u64 << leading_zero_bits) - 1 + info)
@@ -162,6 +193,7 @@ impl BitReader {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::vec;
 
     #[test]
     fn unescape_removes_emulation_prevention_bytes() {
@@ -199,5 +231,36 @@ mod tests {
 
         let mut r = BitReader::from_rbsp(&[0x60], "test").unwrap();
         assert_eq!(r.read_se("test").unwrap(), -1);
+    }
+
+    /// H.264 §9.1: `ue(v)` is a leadingZeroBits run terminated by a 1-bit —
+    /// with no bits left there is no codeNum to decode, so EOF must be `Err`.
+    /// Pre-fix it returned `Ok(0)` **without consuming anything**, and every
+    /// caller that loops on a decoded count (`sps.rs`'s
+    /// `num_ref_frames_in_pic_order_cnt_cycle`) spun forever — the ~20-byte
+    /// SPS demux hang.
+    #[test]
+    fn read_ue_at_eof_is_error() {
+        // Eight 1-bits: eight `ue(v) == 0`, then the reader is empty.
+        let mut r = BitReader::from_rbsp(&[0xFF], "test").unwrap();
+        for _ in 0..8 {
+            assert_eq!(r.read_ue("test").unwrap(), 0);
+        }
+        assert!(r.read_ue("ue at EOF").is_err());
+    }
+
+    /// H.264 §9.1 / H.265 §9.2.2 bound `leadingZeroBits` (codeNum < 2^33):
+    /// more than 32 leading zeros cannot be a valid `ue(v)`. Pre-fix this
+    /// decoded "fine" to ~2^41, handing callers like an SPS cycle-count loop
+    /// an absurd iteration budget.
+    #[test]
+    fn read_ue_beyond_32_leading_zeros_is_error() {
+        // 40 leading zero bits, then a 1-bit and 40 info bits — enough tail
+        // (88 bits) that the pre-fix reader returned `Ok(~2^41)` rather than
+        // hitting EOF.
+        let mut rbsp = vec![0x00u8; 5];
+        rbsp.extend_from_slice(&[0xFFu8; 6]);
+        let mut r = BitReader::from_rbsp(&rbsp, "test").unwrap();
+        assert!(r.read_ue("huge ue").is_err());
     }
 }

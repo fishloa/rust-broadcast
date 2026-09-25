@@ -32,6 +32,35 @@ pub(crate) fn is_high_profile(profile_idc: u8) -> bool {
     H264_HIGH_PROFILES.contains(&profile_idc)
 }
 
+/// Narrow a `read_ue` result to `u8` only after checking it against the
+/// field's spec-bounded maximum. A raw `as u8` silently truncates hostile
+/// wire values, which then feed dimension/loop arithmetic.
+fn ue_to_u8(v: u64, spec_max: u64, field: &'static str) -> Result<u8> {
+    if v > spec_max {
+        return Err(Error::InvalidValue {
+            field,
+            value: v,
+            reason: "out of spec range",
+        });
+    }
+    u8::try_from(v).map_err(|_| Error::InvalidValue {
+        field,
+        value: v,
+        reason: "does not fit in u8",
+    })
+}
+
+/// `bit_depth_*_minus8` → bit depth, checked end to end (never a raw
+/// `read_ue(..)? as u8 + 8`, which overflowed for hostile values).
+fn ue_bit_depth(minus8: u64, spec_max: u64, field: &'static str) -> Result<u8> {
+    let minus8 = ue_to_u8(minus8, spec_max, field)?;
+    minus8.checked_add(8).ok_or(Error::InvalidValue {
+        field,
+        value: minus8 as u64,
+        reason: "bit depth overflow",
+    })
+}
+
 /// Computed SubWidthC / SubHeightC from `chroma_format_idc`
 /// (ITU-T H.264 Table 6-1).
 fn sub_width_c(chroma_format_idc: u8) -> u32 {
@@ -127,14 +156,26 @@ pub fn decode_avc_sps(sps_bytes: &[u8]) -> Result<AvcSpsInfo> {
     // High-profile branch
     let (chroma_format_idc, separate_colour_plane, bit_depth_luma, bit_depth_chroma) =
         if is_high_profile(profile_idc) {
-            let chroma_format_idc = r.read_ue("chroma_format_idc")? as u8;
+            // H.264 §7.4.2.1: chroma_format_idc shall be 0..=3.
+            let chroma_format_idc =
+                ue_to_u8(r.read_ue("chroma_format_idc")?, 3, "chroma_format_idc")?;
             let separate_colour_plane = if chroma_format_idc == 3 {
                 r.read_flag("separate_colour_plane_flag")?
             } else {
                 false
             };
-            let bit_depth_luma_minus8 = r.read_ue("bit_depth_luma_minus8")? as u8;
-            let bit_depth_chroma_minus8 = r.read_ue("bit_depth_chroma_minus8")? as u8;
+            // H.264 §7.4.2.1: bit_depth_luma_minus8 / bit_depth_chroma_minus8
+            // shall be 0..=6 (max bit depth 14).
+            let bit_depth_luma = ue_bit_depth(
+                r.read_ue("bit_depth_luma_minus8")?,
+                6,
+                "bit_depth_luma_minus8",
+            )?;
+            let bit_depth_chroma = ue_bit_depth(
+                r.read_ue("bit_depth_chroma_minus8")?,
+                6,
+                "bit_depth_chroma_minus8",
+            )?;
             let _ = r.read_flag("qpprime_y_zero_transform_bypass_flag")?;
             let scaling_matrix_present = r.read_flag("seq_scaling_matrix_present_flag")?;
             if scaling_matrix_present {
@@ -162,8 +203,8 @@ pub fn decode_avc_sps(sps_bytes: &[u8]) -> Result<AvcSpsInfo> {
             (
                 chroma_format_idc,
                 separate_colour_plane,
-                bit_depth_luma_minus8 + 8,
-                bit_depth_chroma_minus8 + 8,
+                bit_depth_luma,
+                bit_depth_chroma,
             )
         } else {
             (1, false, 8, 8)
@@ -180,6 +221,17 @@ pub fn decode_avc_sps(sps_bytes: &[u8]) -> Result<AvcSpsInfo> {
         let _ = r.read_se("offset_for_non_ref_pic")?;
         let _ = r.read_se("offset_for_top_to_bottom_field")?;
         let num_ref_frames = r.read_ue("num_ref_frames_in_pic_order_cnt_cycle")?;
+        // H.264 §7.4.2.1: num_ref_frames_in_pic_order_cnt_cycle shall be
+        // 0..=255. Unbounded, this loop is the ~20-byte-SPS demux hang: a
+        // hostile count spins on `read_se` (which used to return Ok(0) at
+        // EOF without consuming) for billions of iterations.
+        if num_ref_frames > 255 {
+            return Err(Error::InvalidValue {
+                field: "num_ref_frames_in_pic_order_cnt_cycle",
+                value: num_ref_frames,
+                reason: "out of range 0..=255 (H.264 §7.4.2.1)",
+            });
+        }
         for _ in 0..num_ref_frames {
             let _ = r.read_se("offset_for_ref_frame[i]")?;
         }
@@ -434,7 +486,8 @@ pub fn decode_hevc_sps(sps_bytes: &[u8]) -> Result<HevcSpsInfo> {
     // sps_seq_parameter_set_id — ue(v)
     let _ = r.read_ue("sps_seq_parameter_set_id")?;
     // chroma_format_idc — ue(v)
-    let chroma_format_idc = r.read_ue("chroma_format_idc")? as u8;
+    // H.265 §7.4.3.2 / Table 6-1: chroma_format_idc shall be 0..=3.
+    let chroma_format_idc = ue_to_u8(r.read_ue("chroma_format_idc")?, 3, "chroma_format_idc")?;
     if chroma_format_idc == 3 {
         let _ = r.read_flag("separate_colour_plane_flag")?;
     }
@@ -455,9 +508,19 @@ pub fn decode_hevc_sps(sps_bytes: &[u8]) -> Result<HevcSpsInfo> {
     };
 
     // bit_depth_luma_minus8 — ue(v)
-    let bit_depth_luma_minus8 = r.read_ue("bit_depth_luma_minus8")? as u8;
+    // H.265 §7.4.3.2: bit_depth_luma/chroma_minus8 shall be 0..=8 (bit depth
+    // up to 16 for Main16); checked conversion, never a raw `as u8 + 8`.
+    let bit_depth_luma = ue_bit_depth(
+        r.read_ue("bit_depth_luma_minus8")?,
+        8,
+        "bit_depth_luma_minus8",
+    )?;
     // bit_depth_chroma_minus8 — ue(v)
-    let bit_depth_chroma_minus8 = r.read_ue("bit_depth_chroma_minus8")? as u8;
+    let bit_depth_chroma = ue_bit_depth(
+        r.read_ue("bit_depth_chroma_minus8")?,
+        8,
+        "bit_depth_chroma_minus8",
+    )?;
 
     // Compute cropped dimensions.
     let sub_width_c = match chroma_format_idc {
@@ -489,8 +552,8 @@ pub fn decode_hevc_sps(sps_bytes: &[u8]) -> Result<HevcSpsInfo> {
         general_constraint_indicator_flags,
         general_level_idc,
         chroma_format_idc,
-        bit_depth_luma: bit_depth_luma_minus8 + 8,
-        bit_depth_chroma: bit_depth_chroma_minus8 + 8,
+        bit_depth_luma,
+        bit_depth_chroma,
         width: width as u32,
         height: height as u32,
         num_units_in_tick,
@@ -591,6 +654,17 @@ fn parse_hevc_sps_to_vui_timing_inner(
 
     // num_short_term_ref_pic_sets  ue(v)
     let num_short_term = r.read_ue("num_short_term_ref_pic_sets")?;
+    // H.265 §7.4.3.2: num_short_term_ref_pic_sets shall be 0..=64; an
+    // unbounded value here is the same CPU-hang class as the AVC POC-cycle
+    // loop (the VUI walk swallows this Err, so the SPS decode still returns,
+    // just without timing).
+    if num_short_term > 64 {
+        return Err(Error::InvalidValue {
+            field: "num_short_term_ref_pic_sets",
+            value: num_short_term,
+            reason: "out of range 0..=64 (H.265 §7.4.3.2)",
+        });
+    }
     // st_ref_pic_set() — §7.3.7.  Only supports the non-inter-predicted form; any
     // SPS with inter_ref_pic_set_prediction_flag causes a conservative bail to None.
     let mut prev_num_delta_pocs: u64 = 0;
@@ -1349,5 +1423,203 @@ mod tests {
             );
         }
         // If it returns Err, that is also correct — no panic is the invariant here.
+    }
+
+    // -------------------------------------------------------------------
+    // Hostile SPS field bounds (P0 batch B, item 5)
+    // -------------------------------------------------------------------
+
+    use alloc::vec;
+    use alloc::vec::Vec;
+
+    /// Minimal MSB-first bit writer for hand-built SPS RBSPs in these tests.
+    struct BitSink {
+        bytes: Vec<u8>,
+        cur: u8,
+        nbits: u32,
+    }
+
+    impl BitSink {
+        fn new() -> Self {
+            Self {
+                bytes: Vec::new(),
+                cur: 0,
+                nbits: 0,
+            }
+        }
+        fn bit(&mut self, b: bool) {
+            if b {
+                self.cur |= 1 << (7 - self.nbits);
+            }
+            self.nbits += 1;
+            if self.nbits == 8 {
+                self.bytes.push(self.cur);
+                self.cur = 0;
+                self.nbits = 0;
+            }
+        }
+        fn bits(&mut self, v: u64, n: u32) {
+            for i in (0..n).rev() {
+                self.bit((v >> i) & 1 == 1);
+            }
+        }
+        /// `ue(v)` encoder — the exact inverse of `BitReader::read_ue`
+        /// (H.264 §9.1).
+        fn ue(&mut self, v: u64) {
+            let code = v + 1;
+            let len = 64 - code.leading_zeros();
+            for _ in 0..len - 1 {
+                self.bit(false);
+            }
+            self.bits(code, len);
+        }
+        /// Write a value with exactly 32 leading zero bits (ue value
+        /// `0xFFFF_FFFF`): past every spec bound above, yet inside the
+        /// reader's ≤32-zero cap — so these tests exercise the *SPS-level*
+        /// checks, not the bitreader cap.
+        fn ue_huge(&mut self) {
+            for _ in 0..32 {
+                self.bit(false);
+            }
+            self.bit(true);
+            for _ in 0..32 {
+                self.bit(false);
+            }
+        }
+        fn finish(mut self) -> Vec<u8> {
+            if self.nbits > 0 {
+                self.bytes.push(self.cur);
+            }
+            self.bytes
+        }
+    }
+
+    /// `num_ref_frames_in_pic_order_cnt_cycle = 2^32-1` as the last field of
+    /// an otherwise-plausible SPS must return `Err` promptly. Pre-fix this
+    /// test would never finish: the loop spun ~4.3 billion times on a
+    /// `read_se` that returned `Ok(0)` at EOF without consuming anything —
+    /// exactly the permanent demux hang from the field reports.
+    #[test]
+    fn avc_sps_huge_poc_cycle_count_is_rejected() {
+        let mut nal = vec![0x67u8, 66, 0x00, 30]; // nal hdr, profile 66 (no high branch)
+        let mut s = BitSink::new();
+        s.ue(0); // seq_parameter_set_id
+        s.ue(0); // log2_max_frame_num_minus4
+        s.ue(1); // pic_order_cnt_type = 1
+        s.bit(false); // delta_pic_order_always_zero_flag
+        s.bit(true); // offset_for_non_ref_pic se(0)
+        s.bit(true); // offset_for_top_to_bottom_field se(0)
+        s.ue_huge(); // num_ref_frames_in_pic_order_cnt_cycle = 2^32-1 > 255
+        nal.extend(s.finish());
+
+        let err =
+            decode_avc_sps(&nal).expect_err("H.264 §7.4.2.1 bounds the cycle count to 0..=255");
+        assert!(
+            matches!(
+                err,
+                Error::InvalidValue {
+                    field: "num_ref_frames_in_pic_order_cnt_cycle",
+                    ..
+                }
+            ),
+            "{err:?}"
+        );
+    }
+
+    /// `chroma_format_idc > 3` (H.264 §7.4.2.1) must be `Err`, not a silently
+    /// truncated `as u8`.
+    #[test]
+    fn avc_sps_chroma_format_idc_above_3_is_rejected() {
+        let mut nal = vec![0x67u8, 100, 0x00, 30]; // High profile → chroma branch
+        let mut s = BitSink::new();
+        s.ue(0); // seq_parameter_set_id
+        s.ue(4); // chroma_format_idc — out of range
+        nal.extend(s.finish());
+
+        let err = decode_avc_sps(&nal).expect_err("chroma_format_idc shall be 0..=3");
+        assert!(
+            matches!(
+                err,
+                Error::InvalidValue {
+                    field: "chroma_format_idc",
+                    ..
+                }
+            ),
+            "{err:?}"
+        );
+    }
+
+    /// `bit_depth_luma_minus8 > 6` (H.264 §7.4.2.1) must be `Err`; pre-fix it
+    /// was `as u8 + 8`, which overflowed (debug panic / release wrap) for
+    /// values ≥ 248 and mis-computed the bit depth for anything > 6.
+    #[test]
+    fn avc_sps_bit_depth_minus8_above_6_is_rejected() {
+        let mut nal = vec![0x67u8, 100, 0x00, 30];
+        let mut s = BitSink::new();
+        s.ue(0); // seq_parameter_set_id
+        s.ue(1); // chroma_format_idc
+        s.ue(7); // bit_depth_luma_minus8 — out of range (max 6)
+        nal.extend(s.finish());
+
+        let err = decode_avc_sps(&nal).expect_err("bit_depth_luma_minus8 shall be 0..=6");
+        assert!(
+            matches!(
+                err,
+                Error::InvalidValue {
+                    field: "bit_depth_luma_minus8",
+                    ..
+                }
+            ),
+            "{err:?}"
+        );
+    }
+
+    /// HEVC analogue: `num_short_term_ref_pic_sets = 2^32-1` (H.265 §7.4.3.2
+    /// bounds it to 0..=64). Pre-fix the VUI walk looped ~4.3 billion times
+    /// on EOF `Ok(0)` reads; post-fix the bound makes the error-swallowing
+    /// wrapper return promptly with no timing.
+    #[test]
+    fn hevc_sps_huge_short_term_ref_pic_set_count_terminates_promptly() {
+        let mut nal = vec![0x42u8, 0x01]; // NAL header (nal_unit_type=33)
+        let mut s = BitSink::new();
+        s.bits(0, 4); // sps_video_parameter_set_id u(4)
+        s.bits(0, 3); // sps_max_sub_layers_minus1 u(3) = 0
+        s.bit(false); // sps_temporal_id_nesting_flag
+        // profile_tier_level(1, 0): general_* only.
+        s.bits(0, 2); // general_profile_space
+        s.bit(false); // general_tier_flag
+        s.bits(1, 5); // general_profile_idc
+        s.bits(0, 32); // general_profile_compatibility_flags
+        s.bits(0xE0_00_00_00_00_00, 48); // general_constraint_indicator_flags
+        s.bits(93, 8); // general_level_idc
+        s.ue(0); // sps_seq_parameter_set_id
+        s.ue(1); // chroma_format_idc
+        s.ue(16); // pic_width_in_luma_samples
+        s.ue(16); // pic_height_in_luma_samples
+        s.bit(false); // conformance_window_flag
+        s.ue(2); // bit_depth_luma_minus8 (10-bit)
+        s.ue(2); // bit_depth_chroma_minus8
+        // parse_hevc_sps_to_vui_timing_inner resumes here:
+        s.ue(3); // log2_max_pic_order_cnt_lsb_minus4
+        s.bit(false); // sps_sub_layer_ordering_info_present_flag
+        s.ue(0); // sps_max_dec_pic_buffering_minus1[0]
+        s.ue(0); // sps_max_num_reorder_pics[0]
+        s.ue(0); // sps_max_latency_increase_plus1[0]
+        s.ue(0); // log2_min_luma_coding_block_size_minus3
+        s.ue(3); // log2_diff_max_min_luma_coding_block_size
+        s.ue(0); // log2_min_luma_transform_block_size_minus2
+        s.ue(3); // log2_diff_max_min_luma_transform_block_size
+        s.ue(1); // max_transform_hierarchy_depth_inter
+        s.ue(1); // max_transform_hierarchy_depth_intra
+        s.bit(false); // scaling_list_enabled_flag
+        s.bit(false); // amp_enabled_flag
+        s.bit(false); // sample_adaptive_offset_enabled_flag
+        s.bit(false); // pcm_enabled_flag
+        s.ue_huge(); // num_short_term_ref_pic_sets = 2^32-1 > 64
+        nal.extend(s.finish());
+
+        let info = decode_hevc_sps(&nal)
+            .expect("mandatory fields parse; the bounded VUI walk error is swallowed");
+        assert_eq!(info.fps, None);
     }
 }

@@ -579,6 +579,16 @@ fn sample_size(stsz: &SampleSizeBox, index: usize) -> Result<usize> {
 fn expand_stts(stts: &TimeToSampleBox, total_samples: usize) -> Result<Vec<u32>> {
     let mut out = Vec::with_capacity(total_samples);
     for entry in &stts.entries {
+        // A wire `sample_count` is untrusted: a run longer than the slots
+        // left can never be valid, so reject it before pushing rather than
+        // after the loop — a ~100-byte file declaring 0xFFFFFFFF here used
+        // to push ~17 GB first (r04-C5). Same error as the mismatch case
+        // below.
+        if entry.sample_count as usize > total_samples - out.len() {
+            return Err(Error::InvalidInput(
+                "stts sample count does not match chunk layout",
+            ));
+        }
         for _ in 0..entry.sample_count {
             out.push(entry.sample_delta);
         }
@@ -600,6 +610,13 @@ fn expand_ctts(ctts: Option<&CompositionOffsetBox>, total_samples: usize) -> Res
     };
     let mut out = Vec::with_capacity(total_samples);
     for entry in &ctts.entries {
+        // Same r04-C5 bound as `expand_stts`: reject an over-long run before
+        // pushing, not after the loop.
+        if entry.sample_count as usize > total_samples - out.len() {
+            return Err(Error::InvalidInput(
+                "ctts sample count does not match chunk layout",
+            ));
+        }
         for _ in 0..entry.sample_count {
             out.push(entry.sample_offset);
         }

@@ -654,7 +654,7 @@ fn demux_protected(file: &[u8]) -> Result<Media> {
             collect_fragment_samples(file, track_id)?
         } else {
             // Sample byte layout from stsz + stsc + stco (contiguous chunks).
-            let sizes = stsz_sizes(stbl)?;
+            let sizes = stsz_sizes(stbl, file.len())?;
             let sample_offsets = sample_file_offsets(stbl, &sizes)?;
 
             let mut samples = Vec::with_capacity(sizes.len());
@@ -987,7 +987,14 @@ fn mdhd_timescale(mdhd: &[u8]) -> Option<u32> {
 }
 
 /// Read per-sample sizes from `stsz` (`sample_size == 0` → per-sample table).
-fn stsz_sizes(stbl: &[u8]) -> Result<Vec<usize>> {
+///
+/// `file_len` bounds the declared `sample_count`: no sample occupies fewer
+/// than one byte of the file (ISO/IEC 14496-12 §8.7.3), so a count above it
+/// is wire-hostile and must be rejected before anything allocates — this
+/// used to run `Vec::with_capacity(count)` ahead of every length check, and
+/// with `sample_size != 0` the push loop was entirely unbounded (r05-C4:
+/// a ~200-byte file aborted the process on a multi-GB request).
+fn stsz_sizes(stbl: &[u8], file_len: usize) -> Result<Vec<usize>> {
     let stsz = find_box(stbl, b"stsz").ok_or(Error::UnexpectedBox { expected: "stsz" })?;
     let base = BOX_HEADER_MIN_SIZE + FULL_HDR;
     let need = base + 8;
@@ -1006,21 +1013,36 @@ fn stsz_sizes(stbl: &[u8]) -> Result<Vec<usize>> {
         stsz[base + 6],
         stsz[base + 7],
     ]) as usize;
-    let mut sizes = Vec::with_capacity(count);
+    if count > file_len {
+        return Err(Error::BufferTooShort {
+            need: count,
+            have: file_len,
+            what: "stsz sample_count vs file length",
+        });
+    }
+    let mut sizes;
     if sample_size != 0 {
+        sizes = Vec::with_capacity(count);
         for _ in 0..count {
             sizes.push(sample_size as usize);
         }
     } else {
         let table = base + 8;
-        let end = table + count * 4;
-        if stsz.len() < end {
+        // Checked arithmetic (`count * 4` wrapped on 32-bit targets), and
+        // the table length is verified before any allocation.
+        let table_bytes = count.checked_mul(4).ok_or(Error::BufferTooShort {
+            need: usize::MAX,
+            have: stsz.len(),
+            what: "stsz sample_size table",
+        })?;
+        if table_bytes > stsz.len() - table {
             return Err(Error::BufferTooShort {
-                need: end,
+                need: table.saturating_add(table_bytes),
                 have: stsz.len(),
                 what: "stsz sample_size table",
             });
         }
+        sizes = Vec::with_capacity(count);
         for i in 0..count {
             let o = table + i * 4;
             sizes.push(
@@ -1055,15 +1077,23 @@ fn sample_file_offsets(stbl: &[u8], sizes: &[usize]) -> Result<Vec<usize>> {
         stco[sc_base + 2],
         stco[sc_base + 3],
     ]) as usize;
-    let mut chunk_offsets = Vec::with_capacity(chunk_count);
     let co_table = sc_base + 4;
-    if stco.len() < co_table + chunk_count * 4 {
+    // Bound and verify before allocating (r05-C4 — capacity came from the
+    // wire count ahead of this check pre-fix): checked arithmetic, compared
+    // against the bytes actually present.
+    let co_bytes = chunk_count.checked_mul(4).ok_or(Error::BufferTooShort {
+        need: usize::MAX,
+        have: stco.len(),
+        what: "stco chunk offsets",
+    })?;
+    if co_bytes > stco.len() - co_table {
         return Err(Error::BufferTooShort {
-            need: co_table + chunk_count * 4,
+            need: co_table.saturating_add(co_bytes),
             have: stco.len(),
             what: "stco chunk offsets",
         });
     }
+    let mut chunk_offsets = Vec::with_capacity(chunk_count);
     for i in 0..chunk_count {
         let o = co_table + i * 4;
         chunk_offsets
@@ -1085,9 +1115,15 @@ fn sample_file_offsets(stbl: &[u8], sizes: &[usize]) -> Result<Vec<usize>> {
         stsc[sc_base + 3],
     ]) as usize;
     let sc_table = sc_base + 4;
-    if stsc.len() < sc_table + entry_count * 12 {
+    // Same checked-before-allocate discipline as `stco` above (r05-C4).
+    let sc_bytes = entry_count.checked_mul(12).ok_or(Error::BufferTooShort {
+        need: usize::MAX,
+        have: stsc.len(),
+        what: "stsc entries",
+    })?;
+    if sc_bytes > stsc.len() - sc_table {
         return Err(Error::BufferTooShort {
-            need: sc_table + entry_count * 12,
+            need: sc_table.saturating_add(sc_bytes),
             have: stsc.len(),
             what: "stsc entries",
         });
