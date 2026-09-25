@@ -2,7 +2,8 @@
 //!
 //! See individual modules for documentation: the [`Parse`] / [`Serialize`]
 //! traits every wire type implements, the MPEG-2 [`crc32_mpeg2`] CRC, the
-//! [`bcd`] / [`time`] / [`hex`] codecs, the [`mux`] container-mux traits, the
+//! [`bcd`] / [`time`] / [`hex`] codecs, the [`len`] range-checked wire-field
+//! narrowing those serializers use, the [`mux`] container-mux traits, the
 //! [`cenc`] Common Encryption scheme identity those traits protect with, and
 //! the [`ts_dup`] ITU-T H.222.0 §2.4.3.3 legal-duplicate-packet check shared
 //! by `dvb-conformance`, `media-doctor` and `ts-fix`.
@@ -68,6 +69,7 @@ pub mod cenc;
 pub mod clock33;
 pub mod crc32_mpeg2;
 pub mod hex;
+pub mod len;
 pub mod mux;
 pub mod stage;
 pub mod time;

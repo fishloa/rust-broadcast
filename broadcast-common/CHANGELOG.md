@@ -2,6 +2,23 @@
 
 ## [Unreleased]
 
+### Added
+- **`len`** — `FieldOverflow` + the `fit_bits`/`fit_u8`/`fit_u16`/`fit_u24`/
+  `fit_u32` helpers, for serializers to reject, not truncate, oversized
+  length/count fields: the comparison happens before any narrowing, so a
+  value an `as u16` would silently wrap (e.g. 65 540 → 4) is returned as a
+  `FieldOverflow { field, value, max }` the caller maps into its own error
+  type instead of emitting a corrupt frame; see #1129.
+- **`Serialize::try_to_bytes`** — allocates and serializes like `to_bytes`
+  but returns the serializer's error instead of panicking, truncating to the
+  byte count actually written; prefer it for hand-built values that can
+  violate a wire constraint (#1143).
+- **`clock33::{add, add_signed, signed_distance}`** — modular arithmetic on
+  the 33-bit PTS/DTS clock: `(a + b) mod 2^33` (e.g. SCTE-35 `pts_time` +
+  `pts_adjustment`), a signed-delta variant always landing in `[0, 2^33)`,
+  and the shortest signed distance between two samples in `(-2^32, 2^32]`;
+  inputs at or above the modulus are reduced first (#1137).
+
 ## [9.3.0] - 2026-08-11
 
 ### Added
