@@ -51,4 +51,99 @@ pub trait Serialize {
             .expect("serialize_into must succeed when buffer is exactly serialized_len()");
         v
     }
+
+    /// Allocate a `Vec` and serialize into it, returning the serializer's error instead of
+    /// panicking. Prefer this over [`to_bytes`](Self::to_bytes) for any value that was not
+    /// obtained by parsing (hand-built values can violate a wire constraint).
+    fn try_to_bytes(&self) -> Result<Vec<u8>, Self::Error> {
+        let mut v = alloc::vec![0u8; self.serialized_len()];
+        let written = self.serialize_into(&mut v)?;
+        // A serializer that writes fewer bytes than it promised must not
+        // leave trailing zeros in the result.
+        if written != v.len() {
+            v.truncate(written);
+        }
+        Ok(v)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use core::fmt;
+
+    #[derive(Debug, PartialEq)]
+    struct TestError;
+
+    impl fmt::Display for TestError {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            f.write_str("test serializer error")
+        }
+    }
+
+    /// Minimal `Serialize` impl whose `serialize_into` fails when `fail` is set.
+    struct Flagged {
+        fail: bool,
+        written: usize,
+    }
+
+    impl Serialize for Flagged {
+        type Error = TestError;
+
+        fn serialized_len(&self) -> usize {
+            4
+        }
+
+        fn serialize_into(&self, buf: &mut [u8]) -> Result<usize, Self::Error> {
+            if self.fail {
+                return Err(TestError);
+            }
+            let n = self.written.min(buf.len());
+            buf[..n].copy_from_slice(&[1, 2, 3, 4][..n]);
+            Ok(n)
+        }
+    }
+
+    #[test]
+    fn try_to_bytes_returns_serializer_error() {
+        assert_eq!(
+            Flagged {
+                fail: true,
+                written: 0
+            }
+            .try_to_bytes(),
+            Err(TestError)
+        );
+    }
+
+    #[test]
+    #[should_panic]
+    fn to_bytes_panics_where_try_to_bytes_errors() {
+        let _ = Flagged {
+            fail: true,
+            written: 0,
+        }
+        .to_bytes();
+    }
+
+    #[test]
+    fn try_to_bytes_truncates_when_serializer_writes_less_than_promised() {
+        // serialized_len is 4 but only 3 bytes are written: no trailing zero.
+        let v = Flagged {
+            fail: false,
+            written: 3,
+        }
+        .try_to_bytes()
+        .unwrap();
+        assert_eq!(v, vec![1, 2, 3]);
+    }
+
+    #[test]
+    fn try_to_bytes_happy_path_matches_to_bytes() {
+        let ok = Flagged {
+            fail: false,
+            written: 4,
+        };
+        assert_eq!(ok.try_to_bytes().unwrap(), ok.to_bytes());
+    }
 }

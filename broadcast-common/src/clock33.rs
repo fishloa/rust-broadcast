@@ -88,6 +88,45 @@ pub fn wrapping_forward_distance(from: u64, to: u64) -> u64 {
     to.wrapping_sub(from) % WRAP_33BIT
 }
 
+/// `(a + b) mod 2^33` — e.g. an SCTE-35 `pts_time` shifted by its
+/// `pts_adjustment`: `add(WRAP_33BIT - 1, 1) == 0`, and inputs at or above
+/// the modulus are reduced first, so `add(WRAP_33BIT + 3, 0) == 3`.
+#[must_use]
+pub fn add(a: u64, b: u64) -> u64 {
+    let a = a % WRAP_33BIT;
+    let b = b % WRAP_33BIT;
+    // Each reduced operand is < 2^33, so the sum cannot overflow a u64.
+    (a + b) % WRAP_33BIT
+}
+
+/// `(a + delta) mod 2^33` where `delta` may be negative; the result is always
+/// in `[0, 2^33)` — e.g. stepping five ticks back past zero wraps forward:
+/// `add_signed(5, -10) == WRAP_33BIT - 5`.
+#[must_use]
+pub fn add_signed(a: u64, delta: i64) -> u64 {
+    // i128 intermediates: `delta` alone can be `i64::MIN`, and the sum must
+    // not wrap before the Euclidean reduction.
+    let sum = i128::from(a % WRAP_33BIT) + i128::from(delta);
+    let reduced = sum.rem_euclid(i128::from(WRAP_33BIT));
+    u64::try_from(reduced).expect("rem_euclid result is below 2^33")
+}
+
+/// The shortest signed distance from `from` to `to` on the 2^33 circle, in
+/// `(-2^32, 2^32]` — e.g. crossing the wrap forward reads as a small positive
+/// step, `signed_distance(WRAP_33BIT - 10, 5) == 15`, while stepping back
+/// across it reads negative, `signed_distance(5, WRAP_33BIT - 10) == -15`.
+#[must_use]
+pub fn signed_distance(from: u64, to: u64) -> i64 {
+    let forward = wrapping_forward_distance(from % WRAP_33BIT, to % WRAP_33BIT);
+    if forward <= WRAP_33BIT_HALF {
+        i64::try_from(forward).expect("forward distance is at most 2^32")
+    } else {
+        let back = WRAP_33BIT - forward;
+        // `back` is in `[1, 2^32)` here, so the negation cannot overflow.
+        -i64::try_from(back).expect("backward distance is below 2^32")
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -147,5 +186,54 @@ mod tests {
         let d = wrapping_forward_distance(105, 100);
         assert_eq!(d, WRAP_33BIT - 5);
         assert!(d > WRAP_33BIT_HALF);
+    }
+
+    #[test]
+    fn add_wraps_at_modulus() {
+        assert_eq!(add(WRAP_33BIT - 1, 1), 0);
+        assert_eq!(add(WRAP_33BIT - 10, 20), 10);
+    }
+
+    #[test]
+    fn add_reduces_inputs_at_or_above_the_modulus() {
+        assert_eq!(add(WRAP_33BIT + 3, 0), 3);
+    }
+
+    #[test]
+    fn add_signed_negative_delta_wraps_below_zero() {
+        assert_eq!(add_signed(5, -10), WRAP_33BIT - 5);
+    }
+
+    #[test]
+    fn add_signed_extreme_deltas_stay_in_range() {
+        for delta in [i64::MIN, i64::MAX] {
+            let got = add_signed(0, delta);
+            assert!(
+                got < WRAP_33BIT,
+                "add_signed(0, {delta}) = {got} escaped [0, 2^33)"
+            );
+        }
+    }
+
+    #[test]
+    fn signed_distance_matches_doc_examples() {
+        assert_eq!(signed_distance(WRAP_33BIT - 10, 5), 15);
+        assert_eq!(signed_distance(5, WRAP_33BIT - 10), -15);
+    }
+
+    #[test]
+    fn signed_distance_half_range_boundary_is_positive() {
+        // The range is (-2^32, 2^32]: exactly half the modulus reads as +2^32,
+        // one tick past it flips to the negative shortest path.
+        assert_eq!(signed_distance(0, WRAP_33BIT_HALF), WRAP_33BIT_HALF as i64);
+        assert_eq!(
+            signed_distance(0, WRAP_33BIT_HALF + 1),
+            -((WRAP_33BIT_HALF - 1) as i64)
+        );
+    }
+
+    #[test]
+    fn signed_distance_reduces_inputs_at_or_above_the_modulus() {
+        assert_eq!(signed_distance(WRAP_33BIT + 5, WRAP_33BIT + 8), 3);
     }
 }
