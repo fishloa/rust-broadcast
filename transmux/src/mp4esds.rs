@@ -814,7 +814,19 @@ impl EsdsBox {
                 reason: "expected 'esds'",
             });
         }
-        let body = &data[header.header_size()..header.size as usize];
+        // ISO/IEC 14496-12 §4.2: size == 0 means the box extends to the end of
+        // the enclosing data; a declared size past `data` is rejected (r04-C4).
+        let end = match header.size {
+            0 => data.len(),
+            size => usize::try_from(size).unwrap_or(usize::MAX),
+        };
+        let body = data
+            .get(header.header_size()..end)
+            .ok_or(Error::BufferTooShort {
+                need: end,
+                have: data.len(),
+                what: "esds box body",
+            })?;
         Self::parse_body(body)
     }
 
@@ -849,7 +861,16 @@ impl EsdsBox {
             });
         }
         let (size, _) = parse_varint(payload, &mut cursor)?;
-        let es_body = &payload[cursor..cursor + size];
+        // The varint size is wire-controlled; bound it before slicing (r04-C4).
+        let es_end = cursor
+            .checked_add(size)
+            .filter(|&end| end <= payload.len())
+            .ok_or(Error::BufferTooShort {
+                need: cursor.saturating_add(size),
+                have: payload.len(),
+                what: "ES_Descriptor body",
+            })?;
+        let es_body = &payload[cursor..es_end];
         let es_descriptor = ESDescriptor::parse(es_body)?;
 
         Ok(Self { es_descriptor })
@@ -1048,5 +1069,36 @@ mod tests {
         dc.object_type_indication = ObjectTypeIndication(0x21); // AVC
         let mutated = es2.to_bytes();
         assert_ne!(mutated, original, "mutating OTI must change bytes");
+    }
+
+    // r04-C4: an ES_Descriptor whose varint size exceeds the remaining payload
+    // used to slice past the end; must be Err, not panic.
+    #[test]
+    fn rejects_oversized_es_descriptor_size() {
+        // FullBox version/flags + tag 0x03 + 4-byte expanded varint 0x0FFF_FFFF,
+        // with no body bytes following.
+        #[rustfmt::skip]
+        let body: Vec<u8> = [
+            0x00, 0x00, 0x00, 0x00, // FullBox version/flags
+            TAG_ES_DESCRIPTOR, 0xFF, 0xFF, 0xFF, 0x7F,
+        ]
+        .to_vec();
+        let err = EsdsBox::parse_body(&body).expect_err("oversized ES_Descriptor size must fail");
+        assert!(
+            matches!(err, Error::BufferTooShort { .. }),
+            "expected BufferTooShort, got {err:?}"
+        );
+    }
+
+    // r04-C4: ISO/IEC 14496-12 §4.2 — size == 0 means the box extends to the
+    // end of the enclosing data; a well-formed size-0 esds must parse the same
+    // as its explicit-size twin (used to slice [8..0] and panic).
+    #[test]
+    fn parses_size_zero_box_as_rest_of_buffer() {
+        let explicit = EsdsBox::parse_box(REAL_ESDS_BOX_AAC).expect("explicit-size twin parses");
+        let mut zeroed = REAL_ESDS_BOX_AAC.to_vec();
+        zeroed[..4].copy_from_slice(&0u32.to_be_bytes());
+        let to_eof = EsdsBox::parse_box(&zeroed).expect("size-0 esds parses as rest-of-buffer");
+        assert_eq!(to_eof, explicit);
     }
 }

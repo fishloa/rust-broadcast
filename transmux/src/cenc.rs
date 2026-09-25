@@ -498,10 +498,17 @@ impl ProtectionSystemSpecificHeaderBox {
                 bytes[offset + 3],
             ]) as usize;
             offset += 4;
-            let kid_needed = kid_count * 16;
-            if bytes.len() < offset + kid_needed {
+            // KID_count is wire-controlled: checked arithmetic before the
+            // length check so no wrap past it and no huge allocation (r05-C3).
+            let kid_needed = kid_count
+                .checked_mul(16)
+                .ok_or(Error::InvalidInput("pssh KID_count overflows the body"))?;
+            let kid_end = offset
+                .checked_add(kid_needed)
+                .ok_or(Error::InvalidInput("pssh KID_count overflows the body"))?;
+            if bytes.len() < kid_end {
                 return Err(Error::BufferTooShort {
-                    need: offset + kid_needed,
+                    need: kid_end,
                     have: bytes.len(),
                     what: "pssh KIDs",
                 });
@@ -511,7 +518,16 @@ impl ProtectionSystemSpecificHeaderBox {
                 kid.copy_from_slice(&bytes[offset + i * 16..offset + (i + 1) * 16]);
                 kids.push(kid);
             }
-            offset += kid_needed;
+            offset = kid_end;
+        }
+        // A v1 body can end right after the KID table, leaving no DataSize
+        // field to read (r05-C3).
+        if bytes.len() < offset + 4 {
+            return Err(Error::BufferTooShort {
+                need: offset + 4,
+                have: bytes.len(),
+                what: "pssh DataSize",
+            });
         }
         let data_size = u32::from_be_bytes([
             bytes[offset],
@@ -520,14 +536,17 @@ impl ProtectionSystemSpecificHeaderBox {
             bytes[offset + 3],
         ]) as usize;
         offset += 4;
-        if bytes.len() < offset + data_size {
+        let data_end = offset
+            .checked_add(data_size)
+            .ok_or(Error::InvalidInput("pssh DataSize overflows the body"))?;
+        if bytes.len() < data_end {
             return Err(Error::BufferTooShort {
-                need: offset + data_size,
+                need: data_end,
                 have: bytes.len(),
                 what: "pssh Data",
             });
         }
-        let data = bytes[offset..offset + data_size].to_vec();
+        let data = bytes[offset..data_end].to_vec();
         Ok(Self {
             version,
             system_id,
@@ -1146,7 +1165,14 @@ impl<'a> Parse<'a> for ProtectionSchemeInfoBox {
             });
         }
         let frma_sz = u32::from_be_bytes([body[0], body[1], body[2], body[3]]) as usize;
-        let original_format = OriginalFormatBox::parse(&body[0..frma_sz])?;
+        // The declared frma size is wire-controlled; bound it before slicing
+        // (r05-C2).
+        let frma_bytes = body.get(..frma_sz).ok_or(Error::BufferTooShort {
+            need: frma_sz,
+            have: body.len(),
+            what: "sinf (frma)",
+        })?;
+        let original_format = OriginalFormatBox::parse(frma_bytes)?;
 
         let mut off = frma_sz;
         let mut scheme_type = None;
@@ -1159,19 +1185,30 @@ impl<'a> Parse<'a> for ProtectionSchemeInfoBox {
             if sz < 8 {
                 break;
             }
-            let end = (off + sz).min(body.len());
+            // A declared size past the buffer ends parsing here rather than
+            // wrapping on a narrow target (r05-C2).
+            let Some(box_end) = off.checked_add(sz) else {
+                break;
+            };
+            let end = box_end.min(body.len());
             let boxtype = [body[off + 4], body[off + 5], body[off + 6], body[off + 7]];
             match &boxtype {
                 b"schm" => {
+                    // A schm needs its FullBox version/flags present before
+                    // they are read (r05-C2).
+                    let full_end = off + BOX_HDR + FULL_HDR;
+                    if sz < BOX_HDR + FULL_HDR || end < full_end {
+                        return Err(Error::BufferTooShort {
+                            need: full_end,
+                            have: body.len(),
+                            what: "sinf (schm)",
+                        });
+                    }
+                    let full = &body[off + BOX_HDR..full_end];
                     scheme_type = Some(SchemeTypeBox::parse_body(
-                        &body[off + BOX_HDR + FULL_HDR..end],
-                        body[off + BOX_HDR],
-                        u32::from_be_bytes([
-                            0,
-                            body[off + BOX_HDR + 1],
-                            body[off + BOX_HDR + 2],
-                            body[off + BOX_HDR + 3],
-                        ]),
+                        &body[full_end..end],
+                        full[0],
+                        u32::from_be_bytes([0, full[1], full[2], full[3]]),
                     )?);
                 }
                 b"schi" => {
@@ -1184,7 +1221,7 @@ impl<'a> Parse<'a> for ProtectionSchemeInfoBox {
                     });
                 }
             }
-            off += sz;
+            off = box_end;
         }
         Ok(Self {
             original_format,
@@ -1459,6 +1496,75 @@ mod tests {
         assert!(
             matches!(err, Error::BufferTooShort { .. } | Error::InvalidInput(_)),
             "{err:?}"
+        );
+    }
+
+    // r05-C2: a `frma` child claiming size 0x1000 inside a 40-byte `sinf` used
+    // to slice `&body[0..0x1000]`; must be Err, not panic.
+    #[test]
+    fn rejects_hostile_frma_size() {
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(&40u32.to_be_bytes());
+        bytes.extend_from_slice(b"sinf");
+        bytes.extend_from_slice(&0x1000u32.to_be_bytes());
+        bytes.extend_from_slice(b"frma");
+        while bytes.len() < 40 {
+            bytes.push(0);
+        }
+        let err = ProtectionSchemeInfoBox::parse(&bytes)
+            .expect_err("a frma size beyond the sinf body must be rejected");
+        assert!(
+            matches!(err, Error::BufferTooShort { .. }),
+            "expected BufferTooShort, got {err:?}"
+        );
+    }
+
+    // r05-C2: a header-only (8-byte) `schm` at the end of `sinf` has no
+    // version/flags bytes; must be Err, not panic.
+    #[test]
+    fn rejects_header_only_schm() {
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(&28u32.to_be_bytes());
+        bytes.extend_from_slice(b"sinf");
+        bytes.extend_from_slice(&12u32.to_be_bytes());
+        bytes.extend_from_slice(b"frma");
+        bytes.extend_from_slice(b"encv");
+        bytes.extend_from_slice(&8u32.to_be_bytes());
+        bytes.extend_from_slice(b"schm");
+        let err = ProtectionSchemeInfoBox::parse(&bytes)
+            .expect_err("a schm without FullBox header must be rejected");
+        assert!(
+            matches!(err, Error::BufferTooShort { .. }),
+            "expected BufferTooShort, got {err:?}"
+        );
+    }
+
+    // r05-C3: a 20-byte v1 `pssh` body (SystemID + KID_count = 0) carries no
+    // DataSize field; must be Err, not panic.
+    #[test]
+    fn rejects_pssh_v1_missing_data_size() {
+        let mut body = vec![0u8; 16]; // SystemID
+        body.extend_from_slice(&0u32.to_be_bytes()); // KID_count = 0
+        let err = ProtectionSystemSpecificHeaderBox::parse_body(&body, 1)
+            .expect_err("a v1 pssh without DataSize must be rejected");
+        assert!(
+            matches!(err, Error::BufferTooShort { .. }),
+            "expected BufferTooShort, got {err:?}"
+        );
+    }
+
+    // r05-C3: KID_count = 0xFFFFFFFF must be Err from the length check before
+    // any allocation (kid_count * 16 is checked arithmetic).
+    #[test]
+    fn rejects_pssh_v1_hostile_kid_count() {
+        let mut body = vec![0u8; 16]; // SystemID
+        body.extend_from_slice(&0xFFFF_FFFFu32.to_be_bytes());
+        body.extend_from_slice(b"xxxx");
+        let err = ProtectionSystemSpecificHeaderBox::parse_body(&body, 1)
+            .expect_err("a hostile KID_count must be rejected");
+        assert!(
+            matches!(err, Error::BufferTooShort { .. } | Error::InvalidInput(_)),
+            "expected BufferTooShort/InvalidInput, got {err:?}"
         );
     }
 }
