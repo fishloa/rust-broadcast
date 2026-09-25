@@ -40,6 +40,7 @@ use broadcast_common::{Encrypt, Unpackage};
 use bytes::Bytes;
 use transmux::{
     CencEncryptor, CencScheme, CodecConfig, ConstantIvSenc, EncryptConfig, IvGen, SubsamplePolicy,
+    Track,
 };
 use transmux::{Media, TsDemux};
 
@@ -613,4 +614,148 @@ fn cbcs_pattern_component_too_large_errors() {
         matches!(err, transmux::Error::InvalidInput(_)),
         "expected InvalidInput, got {err:?}"
     );
+}
+
+// ---------------------------------------------------------------------------
+// Atomicity of a rejected call (r05-C5)
+// ---------------------------------------------------------------------------
+
+/// One 4-byte-length-prefixed NAL, as an AVC [`Sample`] expects.
+fn lp_nal(payload: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(4 + payload.len());
+    out.extend_from_slice(&(payload.len() as u32).to_be_bytes());
+    out.extend_from_slice(payload);
+    out
+}
+
+/// An AVC track spec — the same minimal shape `tests/splice.rs` builds.
+fn avc_spec(track_id: u32) -> transmux::TrackSpec {
+    let record = transmux::AVCDecoderConfigurationRecord {
+        configuration_version: 1,
+        profile_indication: 66,
+        profile_compatibility: 0,
+        level_indication: 30,
+        length_size_minus_one: 3,
+        sps: vec![transmux::AvcSps(vec![0x67, 0x42, 0x00, 0x1e])],
+        pps: vec![transmux::AvcPps(vec![0x68, 0xce, 0x3c, 0x80])],
+        chroma_format: None,
+        bit_depth_luma_minus8: None,
+        bit_depth_chroma_minus8: None,
+        sps_ext: vec![],
+    };
+    transmux::TrackSpec::new(
+        track_id,
+        90_000,
+        CodecConfig::Avc {
+            config: transmux::AVCConfigurationBox::new(record),
+            width: 16,
+            height: 16,
+        },
+    )
+}
+
+/// A synthetic AVC `Media`: `valid_count` well-formed length-prefixed samples
+/// followed by one sample whose 4-byte NAL length prefix declares far more
+/// bytes than the sample holds — the shape that made the mid-loop
+/// `nal_subsamples(..)?` in `CencEncryptor::encrypt` fail *after* earlier
+/// samples had already been keystreamed in place.
+fn avc_media(valid_count: usize, with_bad_sample: bool) -> Media {
+    let mut samples: Vec<transmux::Sample> = (0..valid_count)
+        .map(|i| {
+            let body = lp_nal(
+                &[0x65, i as u8]
+                    .into_iter()
+                    .chain(0..40)
+                    .collect::<Vec<u8>>(),
+            );
+            transmux::Sample::new(
+                body,
+                Some(i as i64 * 100),
+                Some(i as i64 * 100),
+                Some(100),
+                i == 0,
+            )
+        })
+        .collect();
+    if with_bad_sample {
+        // Declares a 512-byte NAL but carries only 8 payload bytes.
+        let mut bad = vec![0x00, 0x00, 0x02, 0x00];
+        bad.extend_from_slice(&[0x41; 8]);
+        samples.push(transmux::Sample::new(
+            bad,
+            Some(valid_count as i64 * 100),
+            Some(valid_count as i64 * 100),
+            Some(100),
+            false,
+        ));
+    }
+    Media::new(vec![Track::new(avc_spec(1), samples)], 90_000)
+}
+
+/// Every sample's bytes of every track, in (track, sample) order.
+fn snapshot_all(media: &Media) -> Vec<Bytes> {
+    media
+        .tracks
+        .iter()
+        .flat_map(|t| t.samples.iter().map(|s| s.data.clone()))
+        .collect()
+}
+
+/// **A rejected `encrypt` must be atomic** (the method's own docs promise it):
+/// a sample whose NAL length prefix overruns the sample must leave every
+/// *other* sample byte-identical and no `Track::encryption` populated — not
+/// samples `0..k` silently ciphertext with an `Err` returned. And because the
+/// call was rejected, the [`IvGen::Counter`] state must be exactly as it was:
+/// a later successful call on the *same* instance must hand out precisely the
+/// IVs a brand-new instance would (a failed call may neither consume nor skip
+/// counter state — reusing an IV under the same key is a two-time pad).
+#[test]
+fn rejected_encrypt_leaves_media_and_counter_untouched() {
+    let mut media = avc_media(4, true);
+    let pristine = avc_media(4, true);
+    let before = snapshot_all(&media);
+
+    let err = CencEncryptor::new(KEY_A)
+        .encrypt(&mut media, &cenc_cfg())
+        .expect_err("a sample whose NAL length prefix overruns must be rejected");
+    assert!(
+        matches!(err, transmux::Error::BufferTooShort { .. })
+            || matches!(err, transmux::Error::InvalidInput(_)),
+        "expected a buffer/input error, got {err:?}"
+    );
+
+    // The whole point of the fix: no earlier sample was touched.
+    assert_eq!(
+        snapshot_all(&media),
+        before,
+        "a rejected encrypt must leave every sample byte-identical"
+    );
+    assert_eq!(snapshot_all(&media), snapshot_all(&pristine));
+    for track in &media.tracks {
+        assert!(
+            track.encryption.is_none(),
+            "a rejected encrypt must not populate Track::encryption"
+        );
+    }
+
+    // The counter survived the failed call: the same instance, on fresh valid
+    // media, produces exactly the IVs a brand-new one does.
+    let mut used_encryptor = CencEncryptor::new(KEY_A);
+    let mut good_used = avc_media(4, false);
+    used_encryptor
+        .encrypt(&mut good_used, &cenc_cfg())
+        .expect("valid media must encrypt after a rejected call");
+
+    let mut fresh = CencEncryptor::new(KEY_A);
+    let mut good_fresh = avc_media(4, false);
+    fresh
+        .encrypt(&mut good_fresh, &cenc_cfg())
+        .expect("valid media must encrypt");
+
+    assert_eq!(
+        all_recorded_ivs(&good_used),
+        all_recorded_ivs(&good_fresh),
+        "a rejected call must not consume or skip IvGen::Counter state"
+    );
+    assert_eq!(used_encryptor.next_counter(), fresh.next_counter());
 }

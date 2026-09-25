@@ -12,6 +12,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   bodies with an error instead of panicking.
 - Bound sample-table, sample-group and SPS field counts by the input actually present, so a
   malformed file is rejected instead of allocating or looping without limit.
+- RTMP chunk reassembly starts a fresh message on every fmt 0/1/2 chunk header instead of
+  carrying over bytes from an incomplete previous message.
+- `CencEncryptor::encrypt` validates every sample before encrypting any, so a rejected call leaves
+  the media and the IV counter untouched, as documented.
 
 ## [0.24.1] - 2026-08-30
 

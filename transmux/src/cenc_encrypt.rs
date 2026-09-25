@@ -295,14 +295,18 @@ impl Encrypt for CencEncryptor {
     ///    resolves the *exact* IV every sample of `media` will use (in
     ///    (track, sample) order, continuously across tracks); a final
     ///    internal check rejects that plan outright if it contains any
-    ///    duplicate. Only a plan that passes is ever handed to the cipher —
+    ///    duplicate. The same planning phase also walks every sample's NAL
+    ///    structure into its subsample map (`plan_subsamples`),
+    ///    so a malformed length prefix is rejected here too — never mid-cipher.
+    ///    Only a plan that passes is ever handed to the cipher —
     ///    the same values, not a value recomputed afterwards that could
     ///    drift from what was checked.
     /// 2. **Cipher from the validated plan.** The main loop consumes
     ///    `plan[track][sample]` directly to build each
     ///    [`crate::cenc::SampleEncryptionEntry`] and to seed the cipher core —
-    ///    it never calls IV resolution again, so there is no path by which
-    ///    the recorded IV can differ from the one the uniqueness check saw.
+    ///    it never calls IV resolution or sample-structure walking again, so
+    ///    nothing that depends on a sample's contents can fail once the first
+    ///    byte has been written.
     ///
     /// A configuration this rejects — at either phase — leaves `media`
     /// byte-identical to its input: no track's samples are touched, and no
@@ -329,6 +333,16 @@ impl Encrypt for CencEncryptor {
                 if p.0 > CBCS_PATTERN_MAX || p.1 > CBCS_PATTERN_MAX {
                     return Err(Error::InvalidInput(
                         "cbcs pattern block counts must each be 0..=15",
+                    ));
+                }
+                // The cipher core's `crypt_byte_block == 0 && skip_byte_block != 0`
+                // precondition folded into this up-front check (see
+                // `cenc_crypto::cbcs_sample`): rejecting it here keeps the
+                // cipher loop free of any config-dependent failure too, not
+                // just content-dependent ones.
+                if p.0 == 0 && p.1 != 0 {
+                    return Err(Error::InvalidInput(
+                        "cbcs pattern crypt_byte_block=0 with nonzero skip leaves data unprotected",
                     ));
                 }
                 p
@@ -368,18 +382,29 @@ impl Encrypt for CencEncryptor {
         let plan = self.plan_sample_ivs(media, &cfg.iv, cfg.constant_iv_senc)?;
         assert_ivs_unique(&plan, &cfg.iv, cfg.constant_iv_senc)?;
 
-        for (track, track_ivs) in media.tracks.iter_mut().zip(plan.iter()) {
-            let nal_codec = nal_codec_for(&track.spec.config);
+        // Walk every sample's NAL structure into its subsample map *now*,
+        // before a single byte is written. This was the last content-dependent
+        // failure left inside the cipher loop: a bad length prefix on sample
+        // `k` used to return `Err` after samples `0..k` had already been
+        // keystreamed in place, contradicting this method's documented promise.
+        let subsample_plan = Self::plan_subsamples(media, cfg.subsample)?;
+
+        for ((track, track_ivs), track_subs) in
+            media.tracks.iter_mut().zip(plan).zip(subsample_plan)
+        {
             let sample_count = track.samples.len();
             let mut entries = Vec::with_capacity(sample_count);
 
-            for (sample, iv) in track.samples.iter_mut().zip(track_ivs.iter()) {
-                let subsamples = match (cfg.subsample, nal_codec) {
-                    (SubsamplePolicy::Video, Some(codec)) => nal_subsamples(codec, &sample.data)?,
-                    _ => Vec::new(),
-                };
+            // Consume the two validated plans by value — the exact IVs and
+            // subsample maps planned above, moved into their entries (never
+            // recomputed), so nothing here can fail on a sample's contents.
+            for (sample, (iv, subsamples)) in track
+                .samples
+                .iter_mut()
+                .zip(track_ivs.into_iter().zip(track_subs))
+            {
                 let entry = SampleEncryptionEntry {
-                    initialization_vector: iv.clone(),
+                    initialization_vector: iv,
                     subsamples,
                 };
 
@@ -405,6 +430,7 @@ impl Encrypt for CencEncryptor {
                 entries.push(entry);
             }
 
+            debug_assert_eq!(entries.len(), sample_count);
             track.encryption = Some(TrackEncryption {
                 scheme: cfg.scheme,
                 tenc: tenc.clone(),
@@ -513,6 +539,41 @@ impl CencEncryptor {
             plan.push(track_ivs);
         }
         Ok(plan)
+    }
+
+    /// Build the **entire** planned subsample-map sequence for `media`, in
+    /// (track, sample) order — the exact maps [`Encrypt::encrypt`] will go on
+    /// to record and cipher with, computed *before* it ciphers anything.
+    ///
+    /// This is what makes a rejection on malformed NAL data atomic: walking
+    /// each sample's length prefixes used to happen inside the cipher loop, so
+    /// a bad prefix on sample `k` returned `Err` after samples `0..k` had
+    /// already been keystreamed in place — leaving `media` half-encrypted and
+    /// contradicting that method's documented promise. Computing every map up
+    /// front moves the last content-dependent failure out of the cipher loop:
+    /// once planning succeeds, nothing there can fail on what a sample
+    /// contains.
+    fn plan_subsamples(
+        media: &Media,
+        subsample: SubsamplePolicy,
+    ) -> Result<Vec<Vec<Vec<SubSampleEntry>>>> {
+        media
+            .tracks
+            .iter()
+            .map(|track| {
+                let nal_codec = nal_codec_for(&track.spec.config);
+                track
+                    .samples
+                    .iter()
+                    .map(|sample| match (subsample, nal_codec) {
+                        (SubsamplePolicy::Video, Some(codec)) => {
+                            nal_subsamples(codec, &sample.data)
+                        }
+                        _ => Ok(Vec::new()),
+                    })
+                    .collect()
+            })
+            .collect()
     }
 
     /// Resolve the per-sample `senc` IV for `idx` — the sample's index within
