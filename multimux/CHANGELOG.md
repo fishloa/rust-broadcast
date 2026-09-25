@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+- WHIP input and WHEP output pass the offer's `a=fingerprint` to the media transport, so the
+  DTLS peer is authenticated (webrtc-runtime 0.2.0); an offer without a fingerprint is rejected.
+
 ### Added
 - **DASH SCTE-35 inband event signalling** (issue #969). MPD now declares
   `<InbandEventStream schemeIdUri="urn:scte:scte35:2013:bin">`, and served

@@ -4,6 +4,12 @@ All notable changes to this crate will be documented in this file.
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-09-25
+
+### Security
+Fixes GHSA-48qq-7p78-2jvj: the DTLS peer certificate was never verified. Upgrade if you use
+the `media` feature.
+
 ### Changed (breaking)
 - `media::MediaTransportConfig` has a new required field `remote_fingerprint` (the remote SDP's
   `a=fingerprint`). The DTLS handshake now fails unless the peer's certificate matches it, the
