@@ -61,6 +61,18 @@ const MAX_TIMESTAMP: u64 = 0xFFFF_FFFF;
 /// exchange and is equal to 120 milliseconds.").
 const TSBPD_DELAY_MIN_MS: u64 = 120;
 
+/// A bound on how many sequence numbers one too-late skip may walk past a
+/// gap. Not a spec rule — a safety cap against an adversarial or corrupt
+/// sequence-number layout causing unbounded work in `release_ready`
+/// (mirrors `arq::receiver`'s `MAX_GAP_EXPANSION`).
+const MAX_TLPKT_SKIP_SPAN: u32 = 1 << 16;
+
+/// A bound on how many not-yet-reached DROPREQ ranges are remembered.
+/// Not a spec rule — memory back-pressure against a peer flooding DROPREQs;
+/// once reached, further gaps are cleared by the too-late skip instead.
+#[cfg(feature = "tokio")]
+const MAX_SKIPS: usize = 1024;
+
 /// Outcome of one [`TsbpdScheduler::tick`] call.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 #[non_exhaustive]
@@ -69,7 +81,9 @@ pub struct TickOutcome {
     /// increasing order — each at or after its `PktTsbpdTime`.
     pub delivered: Vec<u32>,
     /// Sequence numbers dropped because their play time was already past the
-    /// too-late threshold upon arrival (or before `tick` could release them).
+    /// too-late threshold upon arrival (or before `tick` could release them),
+    /// or skipped as unrecoverable when a gap's earliest buffered successor
+    /// went too late (§4.6, rule 21).
     pub dropped: Vec<u32>,
 }
 
@@ -121,6 +135,10 @@ pub struct TsbpdScheduler {
     /// The highest sequence number ever fed — used to detect monotonically
     /// increasing deliveries when no gaps remain.
     highest_fed: Option<u32>,
+    /// DROPREQ ranges (§3.2.9) the delivery cursor has not reached yet, as
+    /// inclusive `(first, last)` pairs. `release_ready` jumps the cursor past
+    /// them on arrival; pruned once passed.
+    pending_skips: Vec<(u32, u32)>,
 }
 
 impl TsbpdScheduler {
@@ -166,6 +184,7 @@ impl TsbpdScheduler {
             next_release: initial_seq,
             buffer: BTreeMap::new(),
             highest_fed: None,
+            pending_skips: Vec::new(),
         }
     }
 
@@ -217,10 +236,7 @@ impl TsbpdScheduler {
             let drop_before = now_us.saturating_sub(self.tlpktdrop_threshold_us);
             if pkt_tsbpd_time < drop_before {
                 // Packet is too late — drop it immediately.
-                let mut outcome = TickOutcome {
-                    dropped: alloc::vec![seq_number],
-                    ..TickOutcome::default()
-                };
+                let mut dropped = alloc::vec![seq_number];
                 // Advance past the dropped sequence if it's the next
                 // expected, so the queue doesn't stall.
                 if seq_number == self.next_release {
@@ -230,9 +246,11 @@ impl TsbpdScheduler {
                 self.buffer.remove(&seq_number);
                 // Try to release any now-unblocked packets that are also
                 // too-late (the receiver-buffer read pseudocode, rule 21:
-                // "Drop packets which buffer position number is less than i").
-                outcome.delivered = self.release_ready(now_us);
-                return outcome;
+                // "Drop packets which buffer position number is less than
+                // i").
+                let (delivered, mut later_dropped) = self.release_ready(now_us);
+                dropped.append(&mut later_dropped);
+                return TickOutcome { delivered, dropped };
             }
         }
 
@@ -244,10 +262,8 @@ impl TsbpdScheduler {
             self.buffer.insert(seq_number, pkt_tsbpd_time);
         }
 
-        TickOutcome {
-            delivered: self.release_ready(now_us),
-            dropped: Vec::new(),
-        }
+        let (delivered, dropped) = self.release_ready(now_us);
+        TickOutcome { delivered, dropped }
     }
 
     /// Advance the virtual clock and release/drop packets whose time has
@@ -259,25 +275,30 @@ impl TsbpdScheduler {
     /// passed the threshold are dropped instead.
     pub fn tick(&mut self, now: Duration) -> TickOutcome {
         let now_us = now.as_micros() as u64;
-        TickOutcome {
-            delivered: self.release_ready(now_us),
-            dropped: Vec::new(), // drops only happen on feed_data (immediate
-                                 // drop on arrival) or implicitly here for
-                                 // buffered packets past the drop threshold
-                                 // — handled by release_ready.
-        }
+        let (delivered, dropped) = self.release_ready(now_us);
+        TickOutcome { delivered, dropped }
     }
 
     /// Release all packets that are ready for delivery in sequence order.
     ///
     /// Walks forward from `self.next_release` while the next packet is
     /// present in the buffer AND its `PktTsbpdTime ≤ now_us`. Returns the
-    /// released sequence numbers. If too-late drop is enabled, packets
-    /// whose scheduled play time is already past
+    /// released sequence numbers plus those dropped as too late. If too-late
+    /// drop is enabled, packets whose scheduled play time is already past
     /// `(now_us - TLPKTDROP_THRESHOLD)` are dropped instead of delivered
     /// (matching the receiver-buffer read pseudocode, rule 21: "if
     /// T_NOW < PktTsbpdTime: continue;" / "Drop packets which buffer
     /// position number is less than i;" / "Deliver packet ...").
+    ///
+    /// With too-late drop enabled, a *missing* head-of-line packet is also
+    /// skipped as soon as the earliest buffered successor's play time has
+    /// arrived: that successor is then delivered (or dropped only if it is in
+    /// turn past its own too-late threshold), while the missing positions
+    /// before it are reported dropped (§4.6; rule 21's "Drop packets which
+    /// buffer position number is less than i" / "Deliver packet with the
+    /// buffer position i"). With too-late drop disabled the scheduler keeps
+    /// waiting for the gap indefinitely, preserving reliable in-order
+    /// delivery.
     ///
     /// The logic here follows the pseudocode from
     /// `specs/rules/srt-tsbpd.md` rule 21 (L2693-2715):
@@ -293,48 +314,139 @@ impl TsbpdScheduler {
     ///     pos = i + 1;
     /// }
     /// ```
-    fn release_ready(&mut self, now_us: u64) -> Vec<u32> {
+    fn release_ready(&mut self, now_us: u64) -> (Vec<u32>, Vec<u32>) {
         let mut delivered = Vec::new();
+        let mut dropped = Vec::new();
 
         loop {
-            if !self.buffer.contains_key(&self.next_release) {
-                break; // gap — wait for the missing packet
-            }
-
-            let tsbpd_time = self.buffer[&self.next_release];
-
-            if now_us < tsbpd_time {
-                break; // not yet time
-            }
-
-            // Too-late drop check: if PktTsbpdTime is so far in the past
-            // that it's past the drop threshold, drop instead of deliver.
-            if self.tlpktdrop_enabled {
-                let drop_before = now_us.saturating_sub(self.tlpktdrop_threshold_us);
-                if tsbpd_time < drop_before {
-                    // Drop this packet and any others before the skip point.
-                    // The receiver-buffer pseudocode says "Drop packets
-                    // which buffer position number is less than i" — i.e.
-                    // we drop the packet at position i and advance past it.
-                    // (rule 21, L2693-2715)
-                    self.buffer.remove(&self.next_release);
-                    self.next_release = seq::seq_next(self.next_release);
-                    continue;
+            if let Some(&tsbpd_time) = self.buffer.get(&self.next_release) {
+                if now_us < tsbpd_time {
+                    break; // not yet time
                 }
+
+                // Too-late drop check: if PktTsbpdTime is so far in the past
+                // that it's past the drop threshold, drop instead of deliver.
+                if self.tlpktdrop_enabled {
+                    let drop_before = now_us.saturating_sub(self.tlpktdrop_threshold_us);
+                    if tsbpd_time < drop_before {
+                        // Drop this packet and any others before the skip
+                        // point. The receiver-buffer pseudocode says "Drop
+                        // packets which buffer position number is less than
+                        // i" — i.e. we drop the packet at position i and
+                        // advance past it. (rule 21, L2693-2715)
+                        self.buffer.remove(&self.next_release);
+                        dropped.push(self.next_release);
+                        self.next_release = seq::seq_next(self.next_release);
+                        continue;
+                    }
+                }
+
+                // Deliver.
+                self.buffer.remove(&self.next_release);
+                delivered.push(self.next_release);
+                self.next_release = seq::seq_next(self.next_release);
+                continue;
             }
 
-            // Deliver.
-            self.buffer.remove(&self.next_release);
-            delivered.push(self.next_release);
-            self.next_release = seq::seq_next(self.next_release);
+            // Gap at `next_release`. A DROPREQ (§3.2.9) the sender already
+            // announced for this range: those packets are gone by its own
+            // admission — jump past them immediately, in any delivery mode.
+            if let Some(pos) = self
+                .pending_skips
+                .iter()
+                .position(|&(f, l)| seq::seq_in_closed_range(self.next_release, f, l))
+            {
+                let (_, last) = self.pending_skips.remove(pos);
+                self.next_release = seq::seq_next(last);
+                continue;
+            }
+
+            // Too-late drop disabled → wait for the missing packet
+            // (reliable delivery).
+            if !self.tlpktdrop_enabled {
+                break;
+            }
+
+            // §4.6 / rule 21 pseudocode: `i = next_avail()` — the first
+            // buffered packet at or after the cursor. If its play time has
+            // not arrived, keep waiting (a retransmission of the missing one
+            // could still make it). Once it HAS arrived, drop the missing
+            // positions before `i` and let the loop deliver `i` itself — it
+            // is dropped only if it is in turn past its own too-late
+            // threshold, via the branch above.
+            let Some((&skip_to, &skip_time)) = self
+                .buffer
+                .range(self.next_release..)
+                .chain(self.buffer.range(..self.next_release))
+                .next()
+            else {
+                break;
+            };
+            if now_us < skip_time {
+                break; // T_NOW < PktTsbpdTime(i) — keep waiting
+            }
+            // Defensive bound against an adversarial sequence-number layout
+            // (mirrors `arq::receiver`'s `MAX_GAP_EXPANSION`): a skip span
+            // this large means the buffered timestamps cannot be trusted to
+            // describe one contiguous live stream — wait rather than walk.
+            if seq::seq_diff(skip_to, self.next_release) as u64 > u64::from(MAX_TLPKT_SKIP_SPAN) {
+                break;
+            }
+            // Drop everything before the skip point (rule 21: "Drop packets
+            // which buffer position number is less than i") — including any
+            // buffered entries whose play time has already been overtaken.
+            let mut s = self.next_release;
+            while s != skip_to {
+                self.buffer.remove(&s);
+                dropped.push(s);
+                s = seq::seq_next(s);
+            }
+            self.next_release = skip_to;
         }
 
-        delivered
+        (delivered, dropped)
     }
 
     /// The next sequence number expected for release.
     pub fn next_release(&self) -> u32 {
         self.next_release
+    }
+
+    /// Mark the inclusive circular range `first..=last` as permanently
+    /// unavailable — the peer sent a DROPREQ (§3.2.9) announcing it will
+    /// never deliver those packets.
+    ///
+    /// Any buffered entries inside the range are discarded (the sender has
+    /// given up on them; delivering them late would break message integrity),
+    /// and when the delivery cursor reaches the range it jumps past it: if
+    /// `next_release` is already inside, immediately; otherwise the range is
+    /// recorded so [`Self::tick`]/[`Self::feed_data`] skip it the moment the
+    /// cursor arrives — unblocking everything behind the gap without waiting
+    /// for the too-late threshold. A `last` preceding `first` is a malformed
+    /// (empty) range and ignored.
+    //
+    // The DROPREQ consumer lives in the tokio adapter (`crate::io`); the
+    // engine core itself never receives packets, so it is gated accordingly.
+    #[cfg(feature = "tokio")]
+    pub(crate) fn skip_range(&mut self, first: u32, last: u32) {
+        if seq::seq_diff(last, first) < 0 {
+            // `last` precedes `first` — a malformed DROPREQ range; ignoring
+            // it is safer than treating every sequence as skipped.
+            return;
+        }
+        self.buffer
+            .retain(|&s, _| !seq::seq_in_closed_range(s, first, last));
+        // Ranges the cursor has already passed are dead weight — prune them.
+        self.pending_skips
+            .retain(|&(_, l)| !seq::seq_lt(l, self.next_release));
+        if seq::seq_in_closed_range(self.next_release, first, last) {
+            self.next_release = seq::seq_next(last);
+        } else if seq::seq_lt(self.next_release, first) && self.pending_skips.len() < MAX_SKIPS {
+            // Ahead of the cursor: remember it so `release_ready` jumps the
+            // gap when it gets there. Bounded by `MAX_SKIPS`; a peer that
+            // floods DROPREQs beyond that is served by the too-late skip.
+            self.pending_skips.push((first, last));
+        }
     }
 
     /// Number of packets currently buffered and awaiting their play time.
@@ -405,10 +517,13 @@ mod tests {
     #[test]
     fn out_of_order_arrival() {
         let mut s = sched();
-        // Packet 1 arrives out of order before packet 0.
+        // Packet 1 arrives out of order before packet 0 — fed well before its
+        // play time, so it buffers waiting for the gap (at the play time
+        // itself rule 21 would skip the gap; see
+        // `gap_skip_delivers_successor_at_its_play_time`).
         let ts = 10_000u32;
         let pkt1_tsbpd = TIME_BASE + 10_000 + DELAY_MS * 1000;
-        let outcome = s.feed_data(1, ts, Duration::from_micros(pkt1_tsbpd));
+        let outcome = s.feed_data(1, ts, Duration::ZERO);
         assert!(outcome.delivered.is_empty());
         assert_eq!(s.buffered_count(), 1);
 
@@ -441,72 +556,37 @@ mod tests {
 
     #[test]
     fn too_late_drop_buffered() {
-        // Packets 1 and 2 arrive on time but stall on gap (packet 0
-        // missing). Clock advances far past their play times; when packet
-        // 0 arrives at a time when only packet 0 is on time, release_ready
-        // delivers 0, then drops 1 and 2 (too late).
+        // Packets 1 and 2 arrive while packet 0 is missing. At packet 1's
+        // play time the gap is skipped and packet 1 delivered (§4.6 / rule
+        // 21); a buffered packet that itself goes past its too-late threshold
+        // — here packet 2, starved of ticks between the two clock jumps — is
+        // dropped instead.
         let mut s = TsbpdScheduler::new(0, TIME_BASE, DELAY_MS, 0, true, None);
 
-        // Feed packets 1 and 2 at their scheduled play times — they buffer.
-        s.feed_data(
-            1,
-            10_000,
-            Duration::from_micros(TIME_BASE + 10_000 + DELAY_MS * 1000),
-        );
-        s.feed_data(
-            2,
-            20_000,
-            Duration::from_micros(TIME_BASE + 20_000 + DELAY_MS * 1000),
-        );
+        // Feed packets 1 and 2 well before their play times — they buffer.
+        s.feed_data(1, 10_000, Duration::ZERO);
+        s.feed_data(2, 20_000, Duration::ZERO);
         assert_eq!(s.buffered_count(), 2);
 
-        // Advance clock far past the drop threshold for 1 and 2.
+        // At packet 1's play time the missing packet 0 is reported dropped
+        // and packet 1 delivered — not thrown away with the gap.
         let pkt1_tsbpd = TIME_BASE + 10_000 + DELAY_MS * 1000;
+        let outcome = s.tick(Duration::from_micros(pkt1_tsbpd));
+        assert_eq!(outcome.delivered, vec![1]);
+        assert_eq!(outcome.dropped, vec![0]);
+
+        // Packet 2 is now left sitting past its too-late threshold.
+        let pkt2_tsbpd = TIME_BASE + 20_000 + DELAY_MS * 1000;
         let threshold = (DELAY_MS * 5).div_ceil(4) * 1000;
-        let far_future = Duration::from_micros(pkt1_tsbpd + threshold + 1);
-
-        // Tick advances past the threshold but can't release without 0.
-        let outcome = s.tick(far_future);
+        let outcome = s.tick(Duration::from_micros(pkt2_tsbpd + threshold + 1));
         assert!(outcome.delivered.is_empty());
-        assert!(outcome.dropped.is_empty()); // tick doesn't drop
+        assert_eq!(outcome.dropped, vec![2]);
 
-        // Now feed packet 0 (on time — at or near its play time).
-        let pkt0_tsbpd = TIME_BASE + DELAY_MS * 1000;
-        // Packet 0's play time is pkt0_tsbpd = 42_120_000.
-        // far_future = pkt1_tsbpd + 150_001 = 42_130_001 + 150_001.
-        // pkt0_tsbpd (42_120_000) < far_future - threshold
-        //   = 42_280_002 - 150_000 = 42_130_002. So 42_120_000 < 42_130_002
-        // → yes, pkt0 is ALSO past threshold at this far_future.
-        //
-        // So we need to feed pkt0 at a time that is AFTER its play time
-        // but BEFORE the threshold boundary. Let's use: now = pkt0_tsbpd + 1.
-        // Drop check: pkt0_tsbpd < (pkt0_tsbpd + 1) - threshold? No, because
-        // pkt0_tsbpd + 1 - threshold is way in the past (threshold >> 1).
-        //
-        // Actually the immediate-drop in feed_data checks:
-        // pkt_tsbpd_time < now_us - drop_threshold_us
-        // which for pkt0 at just-after-play-time is:
-        // 42_120_000 < 42_120_001 - 150_000 = 41_970_001? No!
-        // 42_120_000 < 41_970_001 is false. So pkt0 is NOT dropped.
-        //
-        // But then release_ready will advance. After delivering 0,
-        // next_release = 1. Packet 1's tsbpd = 42_130_000.
-        // drop_before = 42_120_001 - 150_000 = 41_970_001.
-        // 42_130_000 < 41_970_001? NO. So pkt1 is not dropped either.
-        //
-        // We need much more time to pass. Let's advance 10× the threshold.
-        //
-        // OK let's just make this simpler: feed packet 0 at a time well
-        // past everything, accepting it too will be dropped (immediate
-        // drop path), and check that all advance.
-        let very_far = Duration::from_micros(pkt0_tsbpd + threshold * 10);
-        let outcome = s.feed_data(0, 0, very_far);
-        // Packet 0 is dropped on arrival (too late).
+        // A late duplicate of the skipped packet 0 is a no-op — the cursor
+        // has already advanced past it.
+        let outcome = s.feed_data(0, 0, Duration::from_micros(pkt2_tsbpd + threshold * 10));
         assert!(outcome.delivered.is_empty());
-        // next_release advances past 0, 1, 2.
         assert_eq!(s.next_release(), 3);
-        // Buffered 1 and 2 are presumably dropped when release_ready
-        // walks through them (called at the end of feed_data).
         assert_eq!(s.buffered_count(), 0);
     }
 
@@ -585,7 +665,12 @@ mod tests {
 
     #[test]
     fn gap_blocks_delivery() {
-        let mut s = sched();
+        // Reliable mode (too-late drop disabled): a gap blocks delivery no
+        // matter how far the clock advances — every payload must arrive.
+        // With too-late drop enabled the gap is instead skipped at the
+        // successor's play time (§4.6 / rule 21); see
+        // `gap_skip_delivers_successor_at_its_play_time`.
+        let mut s = TsbpdScheduler::new(0, TIME_BASE, DELAY_MS, 0, false, None);
         // Feed packets 1 and 2 but not 0.
         s.feed_data(
             1,
@@ -604,6 +689,34 @@ mod tests {
         let outcome = s.tick(Duration::from_micros(TIME_BASE + 100_000 + DELAY_MS * 1000));
         assert!(outcome.delivered.is_empty());
         assert!(s.has_gap());
+    }
+
+    #[test]
+    fn gap_skip_delivers_successor_at_its_play_time() {
+        // §4.6 / rule 21: when the first buffered packet after a gap reaches
+        // its play time, the missing positions before it are dropped and IT
+        // is delivered — not thrown away with the gap.
+        let mut s = sched(); // too-late drop enabled
+        s.feed_data(1, 10_000, Duration::ZERO);
+        s.feed_data(2, 20_000, Duration::ZERO);
+        assert_eq!(s.buffered_count(), 2);
+
+        let pkt1_tsbpd = TIME_BASE + 10_000 + DELAY_MS * 1000;
+        let outcome = s.tick(Duration::from_micros(pkt1_tsbpd));
+        assert_eq!(
+            outcome.delivered,
+            vec![1],
+            "the successor must be delivered at its play time"
+        );
+        assert_eq!(
+            outcome.dropped,
+            vec![0],
+            "the missing packet must be reported as dropped"
+        );
+
+        let pkt2_tsbpd = TIME_BASE + 20_000 + DELAY_MS * 1000;
+        let outcome = s.tick(Duration::from_micros(pkt2_tsbpd));
+        assert_eq!(outcome.delivered, vec![2]);
     }
 
     #[test]

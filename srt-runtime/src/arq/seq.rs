@@ -67,6 +67,18 @@ pub fn seq_geq(a: u32, b: u32) -> bool {
     seq_diff(a, b) >= 0
 }
 
+/// `seq` lies within the inclusive circular range `first..=last`, walking
+/// forward from `first`. A `last` that precedes `first` in circular order is
+/// an empty (malformed) range and never matches.
+pub fn seq_in_closed_range(seq: u32, first: u32, last: u32) -> bool {
+    let span = seq_diff(last, first);
+    if span < 0 {
+        return false;
+    }
+    let offset = seq_diff(seq, first);
+    offset >= 0 && offset <= span
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -106,6 +118,21 @@ mod tests {
         for (a, b) in [(0u32, 0u32), (5, 100), (SEQ_NUMBER_MASK, 3), (12345, 12340)] {
             assert_eq!(seq_diff(a, b), -seq_diff(b, a));
         }
+    }
+
+    #[test]
+    fn closed_range_membership_walks_forward_from_first() {
+        assert!(seq_in_closed_range(5, 5, 10));
+        assert!(seq_in_closed_range(10, 5, 10));
+        assert!(seq_in_closed_range(7, 5, 10));
+        assert!(!seq_in_closed_range(4, 5, 10));
+        assert!(!seq_in_closed_range(11, 5, 10));
+        // A `last` before `first` is a malformed (empty) range.
+        assert!(!seq_in_closed_range(7, 10, 5));
+        // Wrap-safe: the range straddles the 31-bit boundary.
+        assert!(seq_in_closed_range(SEQ_NUMBER_MASK, SEQ_NUMBER_MASK - 2, 1));
+        assert!(seq_in_closed_range(0, SEQ_NUMBER_MASK - 2, 1));
+        assert!(!seq_in_closed_range(2, SEQ_NUMBER_MASK - 2, 1));
     }
 
     #[test]

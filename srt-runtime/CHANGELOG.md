@@ -6,6 +6,19 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+- The tokio adapter (`io::SrtSocket`, `io::SrtListener`) now refuses encrypted connections:
+  a `HandshakeConfig` with `crypto` set is rejected before any I/O, an incoming handshake that
+  requests encryption is rejected, and encrypted data packets are never delivered. The sans-IO
+  engines still negotiate keys; the adapter will support encryption once its data path does.
+- Too-late packet drop is now enabled by default in the tokio adapter (live mode).
+
+### Fixed
+- The tokio adapter handles DROPREQ and caps its receive staging buffer at the flow window, so a
+  loss the sender will not retransmit no longer stalls delivery or grows memory.
+- `SrtListener` bounds the number of in-progress handshakes and expires them on a timer, even
+  under continuous traffic.
+
 ## [0.4.0] - 2026-08-11
 
 ### Fixed

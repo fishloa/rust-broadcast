@@ -54,15 +54,19 @@ use tokio::net::UdpSocket;
 use tokio::sync::mpsc;
 use tokio::time::Instant;
 
+use crate::arq::seq::{seq_diff, seq_in_closed_range};
 use crate::arq::{Receiver as ArqReceiver, Sender as ArqSender};
 use crate::caller::{CallerHandshake, CallerHandshakeState};
 use crate::error::{Error, Result};
-use crate::handshake_sm::{HandshakeConfig, HandshakeOutput, derive_cookie};
+use crate::handshake_sm::{self, HandshakeConfig, HandshakeOutput, RejectionReason, derive_cookie};
 use crate::listener::{ListenerHandshake, ListenerHandshakeState};
 use crate::livecc::{LiveCC, MaxBwConfig};
 use crate::packet::misc::KeepAlivePacket;
-use crate::packet::{ControlPacket, DataPacket, SrtPacket};
-use crate::tsbpd::TsbpdScheduler;
+use crate::packet::{
+    ControlPacket, DataPacket, DropReqPacket, EncryptionField, EncryptionKeyField,
+    HandshakeExtensionFlags, HandshakeExtensions, HandshakePacket, SEQ_NUMBER_MASK, SrtPacket,
+};
+use crate::tsbpd::{TickOutcome, TsbpdScheduler};
 
 // ===========================================================================
 // Constants
@@ -76,18 +80,27 @@ const MAX_DATAGRAM: usize = 1500;
 const TICK_INTERVAL_MS: u64 = 2;
 /// Default TSBPD drift (zero when no estimate available).
 const DEFAULT_DRIFT_US: u64 = 0;
-/// TLPKTDROP (`draft-sharabayko-srt-01` §4.6) is **disabled** in this
-/// adapter: it exists to *discard* packets that could not be recovered in
-/// time, which is the exact opposite of the reliable, lossless in-order
-/// delivery `SrtSocket::recv` promises. With it off, the TSBPD scheduler
-/// waits for the ARQ layer's NAK-driven retransmission instead of skipping a
-/// gap — so every payload is delivered, in order. (A live/latency-bounded
-/// mode that re-enables drop is a future follow-up.)
-const DEFAULT_TLPKT_DROP_ENABLED: bool = false;
+/// TLPKTDROP (`draft-sharabayko-srt-01` §4.6) is **enabled** in this
+/// adapter: the default mode is live (latency-bounded) delivery, where a
+/// packet that could not be recovered inside its play-time window is
+/// discarded rather than stalling everything behind it. With it on, the
+/// TSBPD scheduler releases later packets past an unrecoverable gap once the
+/// next available packet reaches its play time (rule 21) instead of waiting
+/// forever for a retransmission that may never come — one loss must not
+/// freeze delivery or grow memory.
+const DEFAULT_TLPKT_DROP_ENABLED: bool = true;
 /// Default max bandwidth (1 Gbps).
 const DEFAULT_MAX_BW: MaxBwConfig = MaxBwConfig::Set(125_000_000);
 /// Handshake timeout.
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(5);
+/// Upper bound on concurrently in-progress listener handshakes. Every new
+/// source address that sends an INDUCTION allocates a [`PendingListener`]
+/// entry; without a cap, a flood of (possibly spoofed) handshake packets from
+/// many sources exhausts memory before any of them times out.
+const MAX_PENDING: usize = 1024;
+/// How often [`SrtListener::accept`] drives pending-handshake expiry and
+/// retransmits, independent of receive activity.
+const PENDING_TICK_INTERVAL: Duration = Duration::from_millis(100);
 
 // ===========================================================================
 // Outbound queue
@@ -148,20 +161,33 @@ pub struct SrtSocket {
 
 impl SrtSocket {
     /// Connect to a remote SRT peer as a Caller.
+    ///
+    /// # Encryption
+    /// A [`HandshakeConfig`] with `crypto` set is refused with
+    /// [`Error::InvalidField`] before any network I/O: this adapter's data
+    /// path does not encrypt, so an encrypted connection must not be
+    /// silently downgraded to plaintext. The sans-IO engines still negotiate
+    /// keys; the adapter will support encryption once its data path does.
     pub async fn connect<A: tokio::net::ToSocketAddrs>(
         remote_addr: A,
         config: HandshakeConfig,
     ) -> Result<Self> {
+        refuse_crypto(&config)?;
         let local = "0.0.0.0:0".parse::<std::net::SocketAddr>().unwrap();
         Self::connect_from(local, remote_addr, config).await
     }
 
     /// Connect from a specific local address.
+    ///
+    /// # Encryption
+    /// Like [`Self::connect`], refuses a `crypto`-enabled
+    /// [`HandshakeConfig`] with [`Error::InvalidField`] before any I/O.
     pub async fn connect_from<A: tokio::net::ToSocketAddrs>(
         local_addr: std::net::SocketAddr,
         remote_addr: A,
         config: HandshakeConfig,
     ) -> Result<Self> {
+        refuse_crypto(&config)?;
         let socket = UdpSocket::bind(local_addr)
             .await
             .map_err(|e| io_err("bind", e))?;
@@ -247,6 +273,7 @@ impl SrtSocket {
                                     tsbpd_time_base,
                                     tsbpd_delay_ms,
                                     epoch,
+                                    config.max_flow_window_size,
                                 );
                                 return Ok(conn);
                             }
@@ -307,6 +334,7 @@ impl SrtSocket {
         tsbpd_time_base: u64,
         tsbpd_delay_ms: u64,
         epoch: Instant,
+        max_flow_window: u32,
     ) -> Self {
         let (to_driver, app_out) = mpsc::unbounded_channel::<Vec<u8>>();
         let (deliver, from_driver) = mpsc::unbounded_channel::<Vec<u8>>();
@@ -333,6 +361,7 @@ impl SrtSocket {
             next_send_seq: our_initial_seq,
             epoch,
             staged: std::collections::BTreeMap::new(),
+            max_flow_window,
             outbound: VecDeque::new(),
             deliver,
             peer_shutdown: false,
@@ -414,6 +443,10 @@ struct Driver {
 
     // Staging: seq → payload bytes, released to `deliver` by TSBPD/ARQ.
     staged: std::collections::BTreeMap<u32, Vec<u8>>,
+
+    // Negotiated maximum flow window (§3.2.1): the cap on how far ahead of
+    // the delivery cursor a packet may be staged.
+    max_flow_window: u32,
 
     // Outbound datagram queue (data paced, control not).
     outbound: VecDeque<OutboundPacket>,
@@ -505,6 +538,23 @@ impl Driver {
 
         match packet {
             SrtPacket::Data(d) => {
+                // The adapter never decrypts, so a ciphertext packet must not
+                // reach the application (§3.1 `KK`, §6): drop it before ARQ
+                // or TSBPD see it (acknowledging data we can never deliver
+                // would be worse than dropping it).
+                if d.key_flag != EncryptionKeyField::NotEncrypted {
+                    return Ok(());
+                }
+
+                // Flow-window overflow guard (§3.2.1): a packet further
+                // ahead of the delivery cursor than the negotiated maximum
+                // flow window can never be released in this connection's
+                // lifetime — staging it would let an unrecoverable gap grow
+                // memory without bound, so drop it instead.
+                if seq_diff(d.seq_number, self.tsbpd.next_release()) > self.max_flow_window as i32 {
+                    return Ok(());
+                }
+
                 // The ARQ receiver drives *reliability* only: loss detection
                 // and the resulting NAK (rules 4, 14) plus the ACK point.
                 // Application delivery is the TSBPD scheduler's job — it is
@@ -523,14 +573,12 @@ impl Driver {
 
                 // TSBPD is the sole delivery cursor: it releases packets in
                 // strict sequence order, waiting for a NAK-recovered gap to
-                // be filled rather than skipping it (TLPKTDROP disabled — see
+                // be filled — until the next available packet reaches its
+                // play time, at which point live mode skips the unrecoverable
+                // gap and delivers that packet (see
                 // `DEFAULT_TLPKT_DROP_ENABLED`).
                 let tsbpd_out = self.tsbpd.feed_data(d.seq_number, d.timestamp, now);
-                for &seq in &tsbpd_out.delivered {
-                    if let Some(payload) = self.staged.remove(&seq) {
-                        let _ = self.deliver.send(payload);
-                    }
-                }
+                self.release(&tsbpd_out);
             }
             SrtPacket::Control(ref c) => match c {
                 ControlPacket::Ack(ack) => {
@@ -549,6 +597,9 @@ impl Driver {
                 ControlPacket::AckAck(ackack) => {
                     self.receiver.on_ackack(ackack, now);
                 }
+                ControlPacket::DropReq(d) => {
+                    self.handle_dropreq(d, now);
+                }
                 ControlPacket::KeepAlive(_) => {
                     let pkt = ControlPacket::KeepAlive(KeepAlivePacket {
                         timestamp: self.elapsed_us(),
@@ -566,6 +617,43 @@ impl Driver {
         }
 
         Ok(())
+    }
+
+    /// Handle a DROPREQ (§3.2.9): the peer announces it will never deliver
+    /// sequence numbers `first..=last`. Tell the ARQ receiver to stop NAKing
+    /// them and advance its ack point, tell the TSBPD scheduler to skip them
+    /// for delivery purposes, discard anything already staged inside the
+    /// range (the sender has given up on the message they belonged to), then
+    /// drive one release pass so whatever the gap was blocking becomes
+    /// deliverable immediately.
+    fn handle_dropreq(&mut self, d: &DropReqPacket, now: Duration) {
+        let first = d.first_seq & SEQ_NUMBER_MASK;
+        let last = d.last_seq & SEQ_NUMBER_MASK;
+        if seq_diff(last, first) < 0 {
+            // `last` precedes `first` — malformed range; nothing sane to skip.
+            return;
+        }
+        self.receiver.skip_range(first, last);
+        self.tsbpd.skip_range(first, last);
+        self.staged
+            .retain(|&s, _| !seq_in_closed_range(s, first, last));
+
+        let tsbpd_out = self.tsbpd.tick(now);
+        self.release(&tsbpd_out);
+    }
+
+    /// Apply one TSBPD outcome to `staged` and the application channel:
+    /// deliver the released payloads, and purge anything the scheduler dropped
+    /// as too-late/skipped so a lost packet cannot leak its staged bytes.
+    fn release(&mut self, outcome: &TickOutcome) {
+        for &seq in &outcome.delivered {
+            if let Some(payload) = self.staged.remove(&seq) {
+                let _ = self.deliver.send(payload);
+            }
+        }
+        for &seq in &outcome.dropped {
+            self.staged.remove(&seq);
+        }
     }
 
     fn tick_engines(&mut self) {
@@ -593,11 +681,7 @@ impl Driver {
         }
 
         let tsbpd_out = self.tsbpd.tick(now);
-        for &seq in &tsbpd_out.delivered {
-            if let Some(payload) = self.staged.remove(&seq) {
-                let _ = self.deliver.send(payload);
-            }
-        }
+        self.release(&tsbpd_out);
     }
 
     fn elapsed(&self) -> Duration {
@@ -660,10 +744,18 @@ struct PendingListener {
 
 impl SrtListener {
     /// Bind an SRT listener on `addr`.
+    ///
+    /// # Encryption
+    /// A [`HandshakeConfig`] with `crypto` set is refused with
+    /// [`Error::InvalidField`] before any network I/O, and a peer whose
+    /// CONCLUSION requests encryption (a Key Material extension or a
+    /// non-zero `Encryption Field`) is rejected — this adapter's data path
+    /// does not encrypt, so an encrypted connection must never be accepted.
     pub async fn bind<A: tokio::net::ToSocketAddrs>(
         addr: A,
         config: HandshakeConfig,
     ) -> Result<Self> {
+        refuse_crypto(&config)?;
         let socket = UdpSocket::bind(addr).await.map_err(|e| io_err("bind", e))?;
         Ok(SrtListener {
             udp: Arc::new(socket),
@@ -680,25 +772,49 @@ impl SrtListener {
         self.udp.local_addr().map_err(|e| io_err("local_addr", e))
     }
 
+    /// Whether this listener has its own crypto config (feature-gated: with
+    /// the `crypto` feature compiled out there is no such field, and the
+    /// adapter can never accept an encrypted connection).
+    fn local_crypto_enabled(&self) -> bool {
+        #[cfg(feature = "crypto")]
+        {
+            self.config.crypto.is_some()
+        }
+        #[cfg(not(feature = "crypto"))]
+        {
+            false
+        }
+    }
+
     /// Accept the next incoming SRT connection.
     pub async fn accept(&mut self) -> Result<SrtSocket> {
+        // Clone the `Arc` so the RX future borrows a *local*, leaving both
+        // select arms free to borrow `self` mutably in their handlers.
+        let udp = Arc::clone(&self.udp);
         let mut buf = [0u8; MAX_DATAGRAM];
+        // Pending-handshake expiry runs on its own timer, independent of
+        // receive activity: with the previous `timeout(100ms, recv_from)`
+        // pattern, `tick_pending` only ran while the socket sat idle, so a
+        // steady trickle of traffic from *other* sources kept every stalled
+        // entry alive forever.
+        let mut ticker = tokio::time::interval(PENDING_TICK_INTERVAL);
 
         loop {
             if let Some(conn) = self.drain_completed() {
                 return conn;
             }
 
-            let n = tokio::time::timeout(Duration::from_millis(100), self.udp.recv_from(&mut buf))
-                .await;
-
-            match n {
-                Ok(Ok((len, src))) => {
-                    let _ = self.handle_datagram(src, &buf[..len]);
-                    self.flush_for_peer(src).await?;
+            tokio::select! {
+                r = udp.recv_from(&mut buf) => {
+                    match r {
+                        Ok((len, src)) => {
+                            let _ = self.handle_datagram(src, &buf[..len]);
+                            self.flush_for_peer(src).await?;
+                        }
+                        Err(e) => return Err(io_err("recv_from", e)),
+                    }
                 }
-                Ok(Err(e)) => return Err(io_err("recv_from", e)),
-                Err(_) => {
+                _ = ticker.tick() => {
                     self.tick_pending();
                     self.flush_all().await?;
                 }
@@ -717,9 +833,53 @@ impl SrtListener {
             _ => return Ok(()),
         };
 
+        // A peer that asks for encryption is refused, never accepted: this
+        // adapter's data path never applies the negotiated SEK (§6.1.5), so
+        // accepting would silently exchange plaintext (or deliver a peer's
+        // ciphertext to the application as if it were TS). With the `crypto`
+        // feature the sans-IO engine already rejects a Key Material
+        // *extension* (`(None, Some(km))` → `REJ_UNSECURE`, see
+        // `listener.rs`); this adapter-level check covers a non-zero
+        // `Encryption Field` (§3.2.1, Table 2) on any handshake and the
+        // `KMREQ` extension-flag bit on a CONCLUSION (on an INDUCTION that
+        // 16-bit field is the legacy UDT socket-type value, not the Table 3
+        // bitmask — see `handshake_sm::INDUCTION_LEGACY_SOCKET_TYPE`).
+        if !self.local_crypto_enabled()
+            && let ControlPacket::Handshake(hp) = &ctrl
+        {
+            let asks_cipher = hp.encryption_field != EncryptionField::NoEncryption;
+            let asks_kmreq = hp.handshake_type == crate::packet::HandshakeType::Conclusion
+                && hp.extension_field.kmreq();
+            if asks_cipher || asks_kmreq {
+                // Refuse before allocating handshake state for the
+                // source; `own_socket_id` is 0 because no socket was ever
+                // assigned to this refused connection.
+                let rejection = build_encryption_rejection(hp, 0, &self.config)?;
+                self.outbound_queue
+                    .entry(src)
+                    .or_default()
+                    .push_back(rejection);
+                self.pending.remove(&src);
+                return Ok(());
+            }
+        }
+
         let is_new = !self.pending.contains_key(&src);
 
         if is_new {
+            // Pending state is bounded: a new source can only be admitted
+            // after expired entries have been reaped, and even then only if
+            // room remains — otherwise the source is ignored (§4.3.1.1's SYN
+            // Cookie keeps unverified callers from allocating resources in
+            // the first place; this caps what a verified-looking flood can
+            // hold).
+            if self.pending.len() >= MAX_PENDING {
+                self.tick_pending();
+                if self.pending.len() >= MAX_PENDING {
+                    return Ok(());
+                }
+            }
+
             let peer_isn = match &ctrl {
                 ControlPacket::Handshake(hp) => hp.initial_seq_number,
                 _ => return Ok(()),
@@ -810,6 +970,10 @@ impl SrtListener {
         }
         for addr in to_remove {
             self.pending.remove(&addr);
+            // A timed-out peer will never see another packet: drop its queued
+            // handshake bytes too, so `outbound_queue` cannot grow per-source
+            // without bound under a flood.
+            self.outbound_queue.remove(&addr);
         }
     }
 
@@ -849,6 +1013,7 @@ impl SrtListener {
             tsbpd_time_base,
             tsbpd_delay_ms,
             epoch,
+            self.config.max_flow_window_size,
         );
         Some(Ok(conn))
     }
@@ -877,6 +1042,57 @@ impl SrtListener {
 // ===========================================================================
 // Helpers
 // ===========================================================================
+
+/// Builds a Handshake rejection packet (`Handshake Type` = `1000 + code`,
+/// §4.3 Table 7) refusing an encryption request with
+/// [`RejectionReason::Unsecure`] ("password required or unexpected", code
+/// 1011) — the same wire shape `listener.rs` emits for its own rejections.
+/// The adapter needs it because a peer can advertise encryption via the
+/// `Encryption Field` / `KMREQ` flag bits without ever sending a Key Material
+/// extension block for the engine to notice.
+fn build_encryption_rejection(
+    hp: &HandshakePacket<'_>,
+    own_socket_id: u32,
+    config: &HandshakeConfig,
+) -> Result<Vec<u8>> {
+    let hp_out = HandshakePacket {
+        timestamp: 0,
+        dest_socket_id: hp.srt_socket_id,
+        version: handshake_sm::HANDSHAKE_VERSION_5,
+        encryption_field: EncryptionField::NoEncryption,
+        extension_field: HandshakeExtensionFlags(0),
+        initial_seq_number: 0,
+        mtu: config.mtu,
+        max_flow_window_size: config.max_flow_window_size,
+        handshake_type: RejectionReason::Unsecure.to_handshake_type(),
+        srt_socket_id: own_socket_id,
+        syn_cookie: 0,
+        peer_ip: config.local_ip,
+        extensions: HandshakeExtensions(&[]),
+    };
+    handshake_sm::build_bytes(hp_out)
+}
+
+/// Refuses a [`HandshakeConfig`] that asks for payload encryption.
+///
+/// The sans-IO handshake engines implement the §6.1.5 Key Material exchange,
+/// but this adapter's data path never applies the negotiated SEK — it would
+/// send and receive plaintext while the caller believed the stream was
+/// encrypted (and deliver a peer's ciphertext as if it were TS). Until the
+/// data path is wired, an encrypted connection is refused up front instead.
+fn refuse_crypto(config: &HandshakeConfig) -> Result<()> {
+    #[cfg(feature = "crypto")]
+    if config.crypto.is_some() {
+        return Err(Error::InvalidField {
+            what: "crypto",
+            reason: "payload encryption is not yet supported by the tokio adapter; \
+                     the sans-IO engines negotiate keys but io.rs would send plaintext",
+        });
+    }
+    #[cfg(not(feature = "crypto"))]
+    let _ = config;
+    Ok(())
+}
 
 /// Maps an OS I/O failure to a structured [`Error::Io`], preserving the
 /// `std::io::ErrorKind` (bind failures are then distinguishable from
@@ -1021,5 +1237,351 @@ mod isn_tests {
                 ..
             }
         ));
+    }
+}
+
+// ===========================================================================
+// Adapter security tests (r08-SRT-C2 / C6 / C7)
+// ===========================================================================
+
+#[cfg(all(test, feature = "tokio"))]
+mod adapter_tests {
+    use super::*;
+    #[cfg(feature = "crypto")]
+    use crate::handshake_sm::CryptoConfig;
+    use crate::packet::{
+        DropReqPacket, EncryptionKeyField, HandshakeExtensionFlags, HandshakeExtensions,
+        HandshakePacket, PacketPosition,
+    };
+
+    const PEER: &str = "10.0.0.1:9999";
+    /// TSBPD latency used by the test drivers (the spec minimum, §4.5.1).
+    const LATENCY_MS: u64 = 120;
+
+    fn peer_addr() -> std::net::SocketAddr {
+        PEER.parse().unwrap()
+    }
+
+    /// A `Driver` wired to a throwaway bound socket and an unbounded delivery
+    /// channel, with the same engine defaults `spawn` uses — so `ingress`,
+    /// `tick_engines` and `staged` can be driven directly without a live
+    /// handshake.
+    async fn test_driver(max_flow_window: u32) -> (Driver, mpsc::UnboundedReceiver<Vec<u8>>) {
+        let udp = Arc::new(UdpSocket::bind("127.0.0.1:0").await.unwrap());
+        let (deliver, rx) = mpsc::unbounded_channel();
+        let driver = Driver {
+            udp,
+            peer_addr: peer_addr(),
+            peer_socket_id: 1,
+            sender: ArqSender::new(1),
+            receiver: ArqReceiver::new(1, 0),
+            tsbpd: TsbpdScheduler::new(0, 0, LATENCY_MS, DEFAULT_DRIFT_US, true, None),
+            livecc: LiveCC::new(DEFAULT_MAX_BW),
+            next_message_number: 1,
+            next_send_seq: 0,
+            epoch: Instant::now(),
+            staged: std::collections::BTreeMap::new(),
+            outbound: VecDeque::new(),
+            deliver,
+            peer_shutdown: false,
+            max_flow_window,
+        };
+        (driver, rx)
+    }
+
+    fn data_bytes(seq: u32, timestamp: u32, payload: &[u8]) -> Vec<u8> {
+        let dp = DataPacket {
+            seq_number: seq,
+            position: PacketPosition::Solo,
+            in_order: true,
+            key_flag: EncryptionKeyField::NotEncrypted,
+            retransmitted: false,
+            message_number: seq,
+            timestamp,
+            dest_socket_id: 1,
+            data: payload,
+        };
+        let mut buf = alloc::vec![0u8; dp.serialized_len()];
+        dp.serialize_into(&mut buf).expect("serialize data");
+        buf
+    }
+
+    fn encrypted_data_bytes(seq: u32, timestamp: u32, payload: &[u8]) -> Vec<u8> {
+        let mut buf = data_bytes(seq, timestamp, payload);
+        // Flip the `KK` field of word 1 from `00b` to `01b` (even key).
+        let word1 = u32::from_be_bytes([buf[4], buf[5], buf[6], buf[7]]);
+        let word1 = (word1 & !(0b11 << 27)) | (u32::from(EncryptionKeyField::Even.to_bits()) << 27);
+        buf[4..8].copy_from_slice(&word1.to_be_bytes());
+        buf
+    }
+
+    fn dropreq_bytes(first: u32, last: u32) -> Vec<u8> {
+        let pkt = ControlPacket::DropReq(DropReqPacket {
+            message_number: 0,
+            timestamp: 0,
+            dest_socket_id: 1,
+            first_seq: first,
+            last_seq: last,
+        });
+        let mut buf = alloc::vec![0u8; pkt.serialized_len()];
+        pkt.serialize_into(&mut buf).expect("serialize dropreq");
+        buf
+    }
+
+    fn induction_bytes(socket_id: u32) -> Vec<u8> {
+        let hp = HandshakePacket {
+            timestamp: 0,
+            dest_socket_id: 0,
+            version: crate::handshake_sm::HANDSHAKE_VERSION_4,
+            encryption_field: crate::packet::EncryptionField::NoEncryption,
+            extension_field: HandshakeExtensionFlags(
+                crate::handshake_sm::INDUCTION_LEGACY_SOCKET_TYPE,
+            ),
+            initial_seq_number: 0,
+            mtu: 1500,
+            max_flow_window_size: 8192,
+            handshake_type: crate::packet::HandshakeType::Induction,
+            srt_socket_id: socket_id,
+            syn_cookie: 0,
+            peer_ip: [0; 4],
+            extensions: HandshakeExtensions(&[]),
+        };
+        let pkt = ControlPacket::Handshake(hp);
+        let mut buf = alloc::vec![0u8; pkt.serialized_len()];
+        pkt.serialize_into(&mut buf).expect("serialize induction");
+        buf
+    }
+
+    fn drain_deliveries(rx: &mut mpsc::UnboundedReceiver<Vec<u8>>) -> Vec<Vec<u8>> {
+        let mut out = Vec::new();
+        while let Ok(payload) = rx.try_recv() {
+            out.push(payload);
+        }
+        out
+    }
+
+    // -----------------------------------------------------------------------
+    // Item 1 — refuse encryption in the tokio adapter
+    // -----------------------------------------------------------------------
+
+    #[cfg(feature = "crypto")]
+    fn crypto_config() -> HandshakeConfig {
+        HandshakeConfig {
+            crypto: Some(CryptoConfig {
+                passphrase: b"test-passphrase".to_vec(),
+                salt: [0x11u8; crate::crypto::SALT_LEN],
+                sek: vec![0x22u8; 16],
+            }),
+            ..HandshakeConfig::default()
+        }
+    }
+
+    #[cfg(feature = "crypto")]
+    #[tokio::test]
+    async fn connect_with_crypto_is_refused_before_any_io() {
+        // A bound UDP socket stands in for the "peer": a refused connection
+        // must not emit even the INDUCTION datagram.
+        let peer_socket = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let peer_addr = peer_socket.local_addr().unwrap();
+
+        let result = tokio::time::timeout(
+            Duration::from_millis(2_000),
+            SrtSocket::connect(peer_addr, crypto_config()),
+        )
+        .await
+        .expect("crypto refusal must return immediately, not run the handshake");
+
+        let err = result.expect_err("crypto-enabled connect must be refused");
+        assert!(
+            matches!(err, Error::InvalidField { what: "crypto", .. }),
+            "expected InvalidField {{ what: \"crypto\" }}, got {err:?}"
+        );
+
+        let mut buf = [0u8; 64];
+        assert!(
+            tokio::time::timeout(Duration::from_millis(200), peer_socket.recv_from(&mut buf))
+                .await
+                .is_err(),
+            "a refused connect must send nothing to the peer"
+        );
+    }
+
+    #[cfg(feature = "crypto")]
+    #[tokio::test]
+    async fn bind_with_crypto_is_refused() {
+        let err = SrtListener::bind("127.0.0.1:0", crypto_config())
+            .await
+            .expect_err("crypto-enabled bind must be refused");
+        assert!(
+            matches!(err, Error::InvalidField { what: "crypto", .. }),
+            "expected InvalidField {{ what: \"crypto\" }}, got {err:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn encrypted_data_packet_is_never_staged_or_delivered() {
+        let (mut driver, mut rx) = test_driver(8192).await;
+        let ts = 0u32;
+        // The unencrypted packet at seq 0 is staged normally.
+        driver
+            .ingress(&data_bytes(0, ts, b"plain"))
+            .expect("ingress plain");
+        // An encrypted packet (KK != 0) must never reach `staged` or the app.
+        driver
+            .ingress(&encrypted_data_bytes(1, ts, b"ciphertext"))
+            .expect("ingress encrypted");
+
+        assert!(
+            !driver.staged.contains_key(&1),
+            "a KK != 0 data packet must never be staged"
+        );
+        let delivered = drain_deliveries(&mut rx);
+        assert!(
+            delivered.iter().all(|p| p != b"ciphertext"),
+            "ciphertext must never be delivered to the application"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Item 2 — one loss must not freeze delivery or grow memory
+    // -----------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn delivery_resumes_after_permanent_loss_once_latency_passes() {
+        let (mut driver, mut rx) = test_driver(8192).await;
+        let ts0 = driver.elapsed().as_micros().min(u128::from(u32::MAX)) as u32;
+
+        // seq 1 is lost and never retransmitted.
+        for seq in [0u32, 2, 3] {
+            driver
+                .ingress(&data_bytes(seq, ts0, &[seq as u8]))
+                .expect("ingress");
+        }
+        assert!(
+            drain_deliveries(&mut rx).is_empty(),
+            "play time not yet due"
+        );
+
+        // §4.6 / rule 21: at the successor's play time (one latency after
+        // send) the gap is skipped and packets 2 and 3 are DELIVERED — not
+        // thrown away with the lost packet. Poll ticks like the driver task
+        // would, finishing well inside the too-late threshold window.
+        let mut delivered = Vec::new();
+        for _ in 0..40 {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+            driver.tick_engines();
+            delivered.extend(drain_deliveries(&mut rx));
+            if delivered.len() >= 3 {
+                break;
+            }
+        }
+        let seqs: Vec<u8> = delivered.iter().map(|p| p[0]).collect();
+        assert_eq!(
+            seqs,
+            vec![0, 2, 3],
+            "the gap must be skipped at the successor's play time and its \
+             packets delivered (live mode, §4.6/rule 21)"
+        );
+    }
+
+    #[tokio::test]
+    async fn dropreq_unblocks_delivery_immediately() {
+        let (mut driver, mut rx) = test_driver(8192).await;
+        let ts0 = driver.elapsed().as_micros().min(u128::from(u32::MAX)) as u32;
+
+        for seq in [0u32, 2, 3] {
+            driver
+                .ingress(&data_bytes(seq, ts0, &[seq as u8]))
+                .expect("ingress");
+        }
+        assert!(
+            drain_deliveries(&mut rx).is_empty(),
+            "play time not yet due"
+        );
+
+        // The peer announces it will never send seq 1.
+        driver
+            .ingress(&dropreq_bytes(1, 1))
+            .expect("ingress dropreq");
+
+        tokio::time::sleep(Duration::from_millis(140)).await;
+        driver.tick_engines();
+
+        let delivered = drain_deliveries(&mut rx);
+        let seqs: Vec<u8> = delivered.iter().map(|p| p[0]).collect();
+        assert_eq!(seqs, vec![0, 2, 3], "DROPREQ must unblock the gap");
+    }
+
+    #[tokio::test]
+    async fn staged_never_exceeds_the_flow_window() {
+        const WINDOW: u32 = 64;
+        let (mut driver, mut rx) = test_driver(WINDOW).await;
+        let ts = 0u32;
+
+        // seq 0 is the delivery cursor and never arrives; feed window+100
+        // packets past the gap.
+        for seq in 1..=(WINDOW + 100) {
+            driver
+                .ingress(&data_bytes(seq, ts, &[seq as u8]))
+                .expect("ingress");
+            assert!(
+                driver.staged.len() as u32 <= WINDOW,
+                "staged grew to {} past a gap (window {WINDOW})",
+                driver.staged.len()
+            );
+        }
+        drain_deliveries(&mut rx);
+    }
+
+    // -----------------------------------------------------------------------
+    // Item 3 — bound listener pending state
+    // -----------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn listener_pending_is_capped_under_a_source_flood() {
+        let mut listener = SrtListener::bind("127.0.0.1:0", HandshakeConfig::default())
+            .await
+            .expect("bind");
+
+        for i in 0..5000u32 {
+            let src = std::net::SocketAddr::from(([198, 18, (i >> 8) as u8, i as u8], 40_000));
+            let _ = listener.handle_datagram(src, &induction_bytes(i));
+        }
+
+        assert!(
+            listener.pending.len() <= 1024,
+            "pending grew to {} — must be capped at MAX_PENDING",
+            listener.pending.len()
+        );
+    }
+
+    #[tokio::test]
+    async fn pending_entries_expire_while_other_sources_keep_sending() {
+        let config = HandshakeConfig {
+            retransmit_after_ticks: 1,
+            max_retries: 2,
+            ..HandshakeConfig::default()
+        };
+        let mut listener = SrtListener::bind("127.0.0.1:0", config)
+            .await
+            .expect("bind");
+
+        let stalling_src = std::net::SocketAddr::from(([203, 0, 113, 1], 1234));
+        listener
+            .handle_datagram(stalling_src, &induction_bytes(7))
+            .expect("first induction");
+
+        // Continuous traffic from *other* sources must not keep the stalling
+        // entry alive: the timer-driven tick expires it.
+        for i in 0..10u32 {
+            let src = std::net::SocketAddr::from(([198, 51, (i >> 8) as u8, i as u8], 40_000));
+            let _ = listener.handle_datagram(src, &induction_bytes(100 + i));
+            listener.tick_pending();
+        }
+
+        assert!(
+            !listener.pending.contains_key(&stalling_src),
+            "a stalled handshake must expire even under continuous traffic"
+        );
     }
 }
