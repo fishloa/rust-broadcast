@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.24.2] - 2026-09-25
+
+### Security
+Fixes for ten advisories: GHSA-q6vr-4pp5-mcfv, GHSA-3554-x4jf-7frw, GHSA-2mg2-jj9h-c5vr,
+GHSA-6vc8-3c25-4c9w, GHSA-643q-pgwj-8v2h, GHSA-c722-96gr-hgq2, GHSA-gmmr-7cqm-5p32,
+GHSA-9m92-jr3c-4cq7, GHSA-j76h-pqjr-p54h, GHSA-mq46-69j5-7gqj. Upgrade if transmux parses or
+encrypts untrusted input.
+
+### Fixed
+- Reject malformed KLV BER lengths, `esds` descriptor sizes, `sinf` child boxes and `pssh` v1
+  bodies with an error instead of panicking.
+- Bound sample-table, sample-group and SPS field counts by the input actually present, so a
+  malformed file is rejected instead of allocating or looping without limit.
+- RTMP chunk reassembly starts a fresh message on every fmt 0/1/2 chunk header instead of
+  carrying over bytes from an incomplete previous message.
+- `CencEncryptor::encrypt` validates every sample before encrypting any, so a rejected call leaves
+  the media and the IV counter untouched, as documented.
+
 ## [0.24.1] - 2026-08-30
 
 ### Fixed

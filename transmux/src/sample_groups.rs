@@ -368,6 +368,20 @@ impl SampleGroupDescriptionBox {
         } else {
             1
         };
+        // Bound `entry_count` by the bytes actually present: every entry
+        // consumes at least `sgpd_min_entry_len`, so a count whose minimum
+        // footprint exceeds the body is wire-hostile, not something to
+        // iterate over (r05-C10 — `bounded_entry_count` below only capped
+        // the initial *capacity*, while the loop still ran `entry_count`
+        // times pushing empty entries).
+        let entry_min_footprint = entry_count.saturating_mul(sgpd_min_entry_len);
+        if entry_min_footprint > body.len() - c {
+            return Err(Error::BufferTooShort {
+                need: c.saturating_add(entry_min_footprint),
+                have: body.len(),
+                what: "sgpd entries",
+            });
+        }
         let mut entries = Vec::with_capacity(bounded_entry_count(
             body.len().saturating_sub(c),
             sgpd_min_entry_len,
@@ -396,8 +410,22 @@ impl SampleGroupDescriptionBox {
                 if grouping_type == GROUPING_TYPE_ROLL {
                     2
                 } else {
-                    // unknown v0: consume all remaining as one entry
-                    body.len() - c
+                    // unknown v0: consume all remaining as one entry. A
+                    // zero-length blob would not advance `c`, so every later
+                    // iteration of a hostile `entry_count` pushed another
+                    // empty entry — ~4.3 G `Vec` headers from a 24-byte box
+                    // (r05-C10). No legitimate group description is empty,
+                    // and the bounds check below reports this same error for
+                    // a truncated entry.
+                    let rest = body.len() - c;
+                    if rest == 0 {
+                        return Err(Error::BufferTooShort {
+                            need: c + 1,
+                            have: body.len(),
+                            what: "sgpd entry body",
+                        });
+                    }
+                    rest
                 }
             };
             if body.len() < c + entry_len {

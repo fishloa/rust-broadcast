@@ -235,14 +235,16 @@ impl<'a> Parse<'a> for KlvItem {
         key.copy_from_slice(&bytes[..UNIVERSAL_LABEL_LEN]);
         let (len, consumed) = ber_length(&bytes[UNIVERSAL_LABEL_LEN..])?;
         let value_start = UNIVERSAL_LABEL_LEN + consumed;
-        let value_end = value_start + len;
-        if bytes.len() < value_end {
-            return Err(Error::BufferTooShort {
-                need: value_end,
+        // The BER length is wire-controlled up to `usize::MAX`; bound the end
+        // before slicing (r04-C3).
+        let value_end = value_start
+            .checked_add(len)
+            .filter(|&end| end <= bytes.len())
+            .ok_or(Error::BufferTooShort {
+                need: value_start.saturating_add(len),
                 have: bytes.len(),
                 what: "KLV item value",
-            });
-        }
+            })?;
         Ok(Self {
             key,
             value: bytes[value_start..value_end].to_vec(),
@@ -322,14 +324,16 @@ fn parse_local_set_items(mut body: &[u8]) -> Result<Vec<LocalSetItem>> {
         let (tag, tag_len) = ber_oid(body)?;
         let (val_len, len_len) = ber_length(&body[tag_len..])?;
         let value_start = tag_len + len_len;
-        let value_end = value_start + val_len;
-        if body.len() < value_end {
-            return Err(Error::BufferTooShort {
-                need: value_end,
+        // The BER length is wire-controlled up to `usize::MAX`; bound the end
+        // before slicing (r04-C3).
+        let value_end = value_start
+            .checked_add(val_len)
+            .filter(|&end| end <= body.len())
+            .ok_or(Error::BufferTooShort {
+                need: value_start.saturating_add(val_len),
                 have: body.len(),
                 what: "KLV Local Set item value",
-            });
-        }
+            })?;
         items.push(LocalSetItem {
             tag,
             value: body[value_start..value_end].to_vec(),
@@ -550,5 +554,36 @@ mod tests {
             let enc = encode_ber_oid(tag);
             assert_eq!(ber_oid(&enc).unwrap(), (tag, enc.len()));
         }
+    }
+
+    // r04-C3: a long-form BER length of 8×0xFF makes `value_start + len`
+    // overflow; KlvItem::parse must return Err, not panic.
+    #[test]
+    fn rejects_hostile_ber_length() {
+        let mut bytes = UAS_LS_KEY.to_vec();
+        bytes.push(0x88);
+        bytes.extend_from_slice(&[0xFFu8; 8]);
+        let err = KlvItem::parse(&bytes).expect_err("hostile BER length must be rejected");
+        assert!(
+            matches!(err, Error::BufferTooShort { .. }),
+            "expected BufferTooShort, got {err:?}"
+        );
+    }
+
+    // r04-C3: the same hostile length inside a Local Set item reaches
+    // parse_local_set_items via UasLocalSet::parse; must be Err, not panic.
+    #[test]
+    fn rejects_local_set_hostile_ber_length() {
+        // Inner value: tag 2 (BER-OID) + long-form BER length 8×0xFF.
+        let mut value = vec![TAG_PRECISION_TIMESTAMP as u8, 0x88];
+        value.extend_from_slice(&[0xFFu8; 8]);
+        let mut packet = UAS_LS_KEY.to_vec();
+        packet.extend_from_slice(&encode_ber_length(value.len()));
+        packet.extend_from_slice(&value);
+        let err = UasLocalSet::parse(&packet).expect_err("hostile inner BER length must fail");
+        assert!(
+            matches!(err, Error::BufferTooShort { .. }),
+            "expected BufferTooShort, got {err:?}"
+        );
     }
 }

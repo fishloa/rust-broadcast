@@ -123,13 +123,20 @@ const KEY: [u8; 16] = [
     0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F, 0x10,
 ];
 
-/// Re-measured 2026-07-27 (second time same day — see below) against
+/// Re-measured 2026-09-25 (was 68 / 3_392 / 51) against
 /// `fixtures/ts/h264/main.ts` (post-refactor, `Sample.data: Bytes`), via
 /// `cargo test -p transmux --all-features --locked --test alloc_measurement
 /// -- --nocapture`, run twice with identical results both times (thread-local
 /// counters, see module doc). If a legitimate change moves these, re-run the
 /// gate, update the consts + this comment's date, and paste the new numbers
 /// into the PR/report — don't just widen the tolerance.
+///
+/// The 2026-09-25 move (68 / 3_392 / 51 → 57 / 4_040 / 40) is the r05-C5
+/// atomicity fix in `cenc_encrypt.rs`: every sample's subsample map is now
+/// computed in the planning phase (`plan_subsamples`, one extra nested
+/// `Vec`) so a malformed NAL prefix rejects the call before any byte is
+/// written, and the cipher loop moves the planned IVs into their entries
+/// instead of cloning them — fewer allocs (57 vs 68), slightly more bytes.
 ///
 /// This moved up again from the same-day measurement (51 / 2_888 / 34) after
 /// the adversarial-review follow-up fix (F1: validate the *planned*
@@ -149,9 +156,9 @@ const KEY: [u8; 16] = [
 /// `encrypt()` call, not a regression. Tightening these to `assert_eq!` (the
 /// original T2 story) is what caught both drifts: the previous "<= 2x"
 /// tolerance band would have silently absorbed them.
-const CENC_MEASURED_ALLOCS: usize = 68;
-const CENC_MEASURED_ALLOC_BYTES: usize = 3_392;
-const CENC_MEASURED_DEALLOCS: usize = 51;
+const CENC_MEASURED_ALLOCS: usize = 57;
+const CENC_MEASURED_ALLOC_BYTES: usize = 4_040;
+const CENC_MEASURED_DEALLOCS: usize = 40;
 // NOTE: the three pinned metrics (allocs/alloc_bytes/deallocs) are asserted
 // with `assert_eq!` below, not a tolerance band. A tolerance multiple (e.g.
 // "within 2x") is wide enough that short-circuiting `CencEncryptor::encrypt`
@@ -209,7 +216,7 @@ fn cenc_encrypt_allocation_count_over_real_fixture() {
     // allocate far less than the payload it encrypts. A per-sample full
     // payload copy would allocate ~total_payload bytes (~100%); the measured
     // in-place rewrite bookkeeping (subsample-map Vecs, IV Vecs) on this
-    // fixture is 2888/22927 ≈ 12.6% — a quarter of the payload gives ~2x
+    // fixture is 4040/22927 ≈ 17.6% — a quarter of the payload gives ~1.4x
     // headroom over that measured ratio (tolerating platform/measurement
     // jitter) while still catching a copy regression by a wide margin (which
     // would land at or above 100%, not 25%).
@@ -239,14 +246,15 @@ fn cenc_encrypt_allocation_count_over_real_fixture() {
     );
 }
 
-/// Re-measured 2026-07-27 (second time same day) against
+/// Re-measured 2026-09-25 (was 68 / 3_392 / 51; the r05-C5 planning-phase
+/// subsample walk — see the `cenc` consts above) against
 /// `fixtures/ts/h264/main.ts` (post-refactor, `Sample.data: Bytes`) the same
 /// way as the `cenc` consts above — same plan-then-cipher (F1) rationale for
-/// the move from 51/2_888/34, which itself had moved from 48/2216/31 for the
-/// 76b9325d IV-uniqueness fix.
-const CBCS_MEASURED_ALLOCS: usize = 68;
-const CBCS_MEASURED_ALLOC_BYTES: usize = 3_392;
-const CBCS_MEASURED_DEALLOCS: usize = 51;
+/// the earlier move from 51/2_888/34, which itself had moved from 48/2216/31
+/// for the 76b9325d IV-uniqueness fix.
+const CBCS_MEASURED_ALLOCS: usize = 57;
+const CBCS_MEASURED_ALLOC_BYTES: usize = 4_040;
+const CBCS_MEASURED_DEALLOCS: usize = 40;
 
 /// Same measurement for `cbcs` (AES-CBC pattern) — a different code path
 /// through `cenc_crypto::cbcs_sample` with its own subsample walk.
@@ -281,8 +289,8 @@ fn cbcs_encrypt_allocation_count_over_real_fixture() {
     );
 
     // See the `cenc` test above for the rationale on each assertion (same
-    // fixture/measured ratio: 2888/22927 ≈ 12.6%, so a quarter of the payload
-    // gives the same ~2x headroom).
+    // fixture/measured ratio: 4040/22927 ≈ 17.6%, so a quarter of the payload
+    // gives the same ~1.4x headroom).
     assert!(
         alloc_bytes < total_payload / 4,
         "cbcs encrypt allocated {alloc_bytes} bytes over a {total_payload}-byte payload \

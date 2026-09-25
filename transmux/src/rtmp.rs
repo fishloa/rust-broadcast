@@ -1027,7 +1027,10 @@ pub fn read_chunks(mut input: &[u8]) -> Result<Vec<Message>, RtmpError> {
                     message_stream_id: p.message_stream_id,
                     timestamp: p.timestamp.wrapping_add(ext_ts.unwrap_or(mh.timestamp)),
                     extended: ext_present,
-                    partial: p.partial,
+                    // fmt 1 starts a NEW message (§5.3.1.2.2): any bytes still
+                    // buffered from an incomplete earlier message on this csid
+                    // belong to that aborted message, never to this one.
+                    partial: Vec::new(),
                 }
             }
             2 => {
@@ -1038,7 +1041,8 @@ pub fn read_chunks(mut input: &[u8]) -> Result<Vec<Message>, RtmpError> {
                     message_stream_id: p.message_stream_id,
                     timestamp: p.timestamp.wrapping_add(ext_ts.unwrap_or(mh.timestamp)),
                     extended: ext_present,
-                    partial: p.partial,
+                    // fmt 2 starts a NEW message too (§5.3.1.2.3).
+                    partial: Vec::new(),
                 }
             }
             _ => {
@@ -1053,8 +1057,17 @@ pub fn read_chunks(mut input: &[u8]) -> Result<Vec<Message>, RtmpError> {
         };
 
         // How many payload bytes are in this chunk: the remainder of the message,
-        // capped at the current chunk size.
-        let remaining = cx.message_length - cx.partial.len();
+        // capped at the current chunk size. `partial` can only be non-empty here
+        // for a fmt-3 continuation (fmt 0/1/2 reset it above), where each chunk
+        // takes at most `remaining`, so `len <= message_length` holds — but the
+        // length is wire-declared, so don't let a hostile stream underflow it.
+        let remaining = cx.message_length.checked_sub(cx.partial.len()).ok_or(
+            RtmpError::IncompleteMessage {
+                csid: bh.csid,
+                declared: cx.message_length,
+                collected: cx.partial.len(),
+            },
+        )?;
         let take = core::cmp::min(chunk_size, remaining);
         if input.len() < off + take {
             return Err(RtmpError::Truncated {
@@ -1362,5 +1375,74 @@ mod tests {
         let (parsed, n) = AmfValue::parse(&out).unwrap();
         assert_eq!(parsed, obj);
         assert_eq!(n, out.len());
+    }
+
+    /// §5.3.1.2: fmt 0/1/2 chunk headers each START a new message; only fmt 3
+    /// continues one. A stale `partial` from an incomplete earlier message on
+    /// the same csid must never be merged into (or underflow) the new message.
+    #[test]
+    fn fmt1_header_starts_a_fresh_message_on_the_same_csid() {
+        // fmt-0 chunk: csid 3, declared length 200, but only its first
+        // 128-byte chunk is fed — the message stays incomplete on this csid.
+        let mut input = Vec::new();
+        BasicHeader { fmt: 0, csid: 3 }.write_into(&mut input);
+        MessageHeader {
+            timestamp: 0,
+            message_length: 200,
+            message_type_id: msg_type::VIDEO,
+            message_stream_id: 1,
+        }
+        .write_into(0, &mut input);
+        let first_chunk: Vec<u8> = (0..DEFAULT_CHUNK_SIZE).map(|i| i as u8).collect();
+        input.extend_from_slice(&first_chunk);
+
+        // fmt-1 chunk on the same csid: a NEW message of 10 bytes.
+        let second_body: Vec<u8> = (0xF0u8..0xF0 + 10).collect();
+        BasicHeader { fmt: 1, csid: 3 }.write_into(&mut input);
+        MessageHeader {
+            timestamp: 7,
+            message_length: second_body.len() as u32,
+            message_type_id: msg_type::VIDEO,
+            message_stream_id: 0,
+        }
+        .write_into(1, &mut input);
+        input.extend_from_slice(&second_body);
+
+        let msgs = read_chunks(&input).expect("fmt-1 must start a new message");
+        assert_eq!(
+            msgs.len(),
+            1,
+            "only the complete 10-byte message may be emitted"
+        );
+        assert_eq!(msgs[0].body, second_body);
+        assert!(
+            msgs.iter().all(|m| m.body.len() != 256),
+            "the stale fmt-0 partial must not be merged into the new message"
+        );
+    }
+
+    /// Regression guard for the reset above: a normal message split across a
+    /// fmt-0 chunk + a fmt-3 continuation (the only form that continues a
+    /// message, §5.3.1.2.4) must still reassemble byte-exactly.
+    #[test]
+    fn fmt3_continuation_still_reassembles_a_split_message() {
+        let body: Vec<u8> = (0..200u32).map(|i| (i % 251) as u8).collect();
+        let mut input = Vec::new();
+        BasicHeader { fmt: 0, csid: 3 }.write_into(&mut input);
+        MessageHeader {
+            timestamp: 0,
+            message_length: body.len() as u32,
+            message_type_id: msg_type::VIDEO,
+            message_stream_id: 1,
+        }
+        .write_into(0, &mut input);
+        input.extend_from_slice(&body[..DEFAULT_CHUNK_SIZE]);
+        // fmt-3 carries no header fields at all (§5.3.1.2.4).
+        BasicHeader { fmt: 3, csid: 3 }.write_into(&mut input);
+        input.extend_from_slice(&body[DEFAULT_CHUNK_SIZE..]);
+
+        let msgs = read_chunks(&input).expect("fmt-3 must continue the message");
+        assert_eq!(msgs.len(), 1);
+        assert_eq!(msgs[0].body, body);
     }
 }
