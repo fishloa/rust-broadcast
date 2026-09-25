@@ -6,7 +6,7 @@ use std::time::{Duration, Instant};
 
 use broadcast_common::{Parse, Serialize};
 use bytes::BytesMut;
-use rtc_dtls::config::{ConfigBuilder, HandshakeConfig};
+use rtc_dtls::config::{ClientAuthType, ConfigBuilder, HandshakeConfig, VerifyPeerCertificateFn};
 use rtc_dtls::crypto::Certificate;
 use rtc_dtls::endpoint::{Endpoint as DtlsEndpoint, EndpointEvent};
 use rtc_dtls::extension::extension_use_srtp::SrtpProtectionProfile;
@@ -17,6 +17,7 @@ use rtc_ice::candidate::candidate_server_reflexive::CandidateServerReflexiveConf
 use rtc_ice::candidate::{CandidateConfig, CandidateType, unmarshal_candidate};
 use rtc_ice::mdns::MulticastDnsMode;
 use rtc_shared::crypto::KeyingMaterialExporter;
+use rtc_shared::error::Error as SharedError;
 use rtc_shared::{EcnCodepoint, TaggedBytesMut, TransportContext, TransportProtocol};
 use rtc_srtp::context::Context as SrtpContext;
 use rtc_srtp::protection_profile::ProtectionProfile;
@@ -90,6 +91,119 @@ const OFFERED_SRTP_PROFILE: SrtpProtectionProfile =
 /// The label used to export SRTP keying material from a completed DTLS
 /// handshake (RFC 5764 §4.2).
 const SRTP_KEYING_MATERIAL_LABEL: &str = "EXTRACTOR-dtls_srtp";
+
+// ---------------------------------------------------------------------------
+// SDP certificate fingerprint (RFC 8122 §5) — the identity WebRTC actually
+// authenticates peers with, in place of a CA chain (RFC 5764 §5 "Identity
+// Checks"). See the `media` module doc.
+// ---------------------------------------------------------------------------
+
+/// The hash-function token for the SHA-256 fingerprint (RFC 8122 §5,
+/// RFC 8827 §5). SHA-256 is the one mandatory-to-implement algorithm
+/// (RFC 8827 §6.5), so it is the only token accepted here.
+const FINGERPRINT_HASH_TOKEN: &str = "sha-256";
+
+/// The SHA-256 digest length in bytes — also the number of colon-separated
+/// hex bytes an `a=fingerprint:sha-256` value carries (RFC 8122 §5).
+const FINGERPRINT_LEN: usize = 32;
+
+/// Parses an SDP `a=fingerprint` attribute *value* (`"sha-256 AB:CD:…"`,
+/// RFC 8122 §5) into its raw digest: the hash-function token (case-
+/// insensitive, and only [`FINGERPRINT_HASH_TOKEN`] is accepted — SHA-256
+/// is mandatory per RFC 8827 §6.5), then exactly 32 colon-separated hex
+/// bytes (case-insensitive). Anything else is an `Err` describing why.
+fn parse_fingerprint_value(value: &str) -> Result<[u8; FINGERPRINT_LEN], String> {
+    let mut parts = value.split_whitespace();
+    let token = parts.next().unwrap_or_default();
+    if !token.eq_ignore_ascii_case(FINGERPRINT_HASH_TOKEN) {
+        return Err(format!(
+            "remote_fingerprint {value:?} must use the {FINGERPRINT_HASH_TOKEN} hash function \
+             (RFC 8122 §5, RFC 8827 §6.5)"
+        ));
+    }
+    let Some(hex) = parts.next() else {
+        return Err(format!(
+            "remote_fingerprint {value:?} has no digest after the {FINGERPRINT_HASH_TOKEN} token"
+        ));
+    };
+    if parts.next().is_some() {
+        return Err(format!("remote_fingerprint {value:?} has trailing data"));
+    }
+    let bytes: Vec<&str> = hex.split(':').collect();
+    if bytes.len() != FINGERPRINT_LEN {
+        return Err(format!(
+            "remote_fingerprint digest must be exactly {FINGERPRINT_LEN} colon-separated hex \
+             bytes, got {}",
+            bytes.len()
+        ));
+    }
+    let mut digest = [0u8; FINGERPRINT_LEN];
+    for (slot, part) in digest.iter_mut().zip(&bytes) {
+        if part.len() != 2 {
+            return Err(format!(
+                "remote_fingerprint digest byte {part:?} is not exactly two hex digits"
+            ));
+        }
+        *slot = u8::from_str_radix(part, 16)
+            .map_err(|e| format!("remote_fingerprint digest byte {part:?}: {e}"))?;
+    }
+    Ok(digest)
+}
+
+/// Equality of two digests without an early-exit loop: fold the XOR of every
+/// byte pair into one accumulator and test it only at the end, so the time
+/// taken cannot reveal how many leading bytes of a guess were right.
+fn digests_equal(a: &[u8], b: &[u8]) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    let mut accumulator = 0u8;
+    for (x, y) in a.iter().zip(b) {
+        accumulator |= x ^ y;
+    }
+    accumulator == 0
+}
+
+/// True iff `peer_certs` is non-empty and the SHA-256 of its leaf
+/// certificate (`peer_certs[0]`, RFC 8122 §4: the fingerprint is of the
+/// leaf, the chain follows it) equals `expected`. An empty list fails —
+/// there is nothing to authenticate against.
+fn peer_cert_fingerprint_ok(peer_certs: &[Vec<u8>], expected: &[u8; FINGERPRINT_LEN]) -> bool {
+    peer_certs
+        .first()
+        .is_some_and(|leaf| digests_equal(&Sha256::digest(leaf), expected))
+}
+
+/// Read the remote SDP's DTLS certificate fingerprint: the value of its
+/// first `a=fingerprint:` line (RFC 8122 §5), e.g. `"sha-256 AB:CD:…"`.
+///
+/// Media-level sections are searched before session-level lines: a bundled
+/// offer signals the fingerprint per `m=` section and those are the ones a
+/// peer actually commits to, so a media-level value wins when both exist
+/// (the attribute is legal at either level, RFC 8866 §5.13). Returns `None`
+/// only when the SDP carries no `a=fingerprint` anywhere — callers must
+/// then reject the session rather than build a transport that could never
+/// be verified. Pair with [`MediaTransportConfig::remote_fingerprint`],
+/// which validates the returned value's shape at construction time.
+pub fn parse_remote_fingerprint(sdp: &str) -> Option<String> {
+    let mut media_level: Option<String> = None;
+    let mut session_level: Option<String> = None;
+    let mut in_media = false;
+    for line in sdp.lines() {
+        if let Some(value) = line.strip_prefix("a=fingerprint:") {
+            if in_media {
+                if media_level.is_none() {
+                    media_level = Some(value.trim().to_string());
+                }
+            } else if session_level.is_none() {
+                session_level = Some(value.trim().to_string());
+            }
+        } else if line.starts_with("m=") {
+            in_media = true;
+        }
+    }
+    media_level.or(session_level)
+}
 
 // ---------------------------------------------------------------------------
 // Key lifetime / rekey (issue #948 item 3) — RFC 3711 §8.2/§9.2, RFC 5764
@@ -202,6 +316,11 @@ pub struct MediaTransportConfig {
     /// *offer's* `a=setup` value (RFC 8842 §4.1), never a role either side
     /// actually settles into once the answer picks a concrete side.
     pub local_setup: SetupRole,
+    /// The remote peer's DTLS certificate fingerprint from its SDP
+    /// `a=fingerprint` attribute (RFC 8122 §5), e.g. `"sha-256 AB:CD:…"`.
+    /// The DTLS handshake is rejected unless the peer's leaf certificate
+    /// hashes to exactly this value.
+    pub remote_fingerprint: String,
     /// A STUN server to gather a server-reflexive candidate from, if any
     /// (RFC 8445 §5.1.1.2). `None` gathers a host candidate only.
     pub stun_server: Option<SocketAddr>,
@@ -273,6 +392,11 @@ pub enum MediaEvent {
 pub struct MediaTransport {
     local_addr: SocketAddr,
     local_fingerprint: String,
+    /// The parsed [`MediaTransportConfig::remote_fingerprint`] digest: the
+    /// SHA-256 the peer's leaf certificate must hash to (RFC 8122 §5,
+    /// RFC 5764 §5). Checked in the DTLS verify callback and re-checked on
+    /// every handshake completion before any SRTP key is derived.
+    remote_fingerprint_digest: [u8; FINGERPRINT_LEN],
     local_setup: SetupRole,
     ice: IceAgent,
     dtls: DtlsEndpoint,
@@ -286,6 +410,12 @@ pub struct MediaTransport {
     /// down that association and, for [`SetupRole::Active`], redial a
     /// fresh one.
     dtls_peer: Option<SocketAddr>,
+    /// The remote address of the selected ICE candidate pair (RFC 8445
+    /// §6.2.1), recorded from the same `SelectedCandidatePairChange` event
+    /// that starts an Active-role dial. DTLS is accepted only from this
+    /// address — see [`Self::handle_dtls_datagram`]. `None` until ICE
+    /// selects a pair, which means all DTLS datagrams are dropped.
+    selected_pair_addr: Option<SocketAddr>,
     srtp_read: Option<SrtpContext>,
     srtp_write: Option<SrtpContext>,
     /// RFC 3711 §9.2 packet counters for the *current* `srtp_write`/
@@ -316,11 +446,16 @@ impl MediaTransport {
     ///
     /// # Errors
     ///
-    /// Returns [`Error::Media`] if `config.local_setup` is
-    /// [`SetupRole::ActPass`] (never a role a concrete transport can be
-    /// built with — see [`MediaTransportConfig::local_setup`]), or if
-    /// certificate generation or ICE/DTLS setup fails.
+    /// Returns [`Error::Media`] if `config.remote_fingerprint` is not a
+    /// well-formed SHA-256 SDP fingerprint (RFC 8122 §5 — see
+    /// [`parse_remote_fingerprint`] for producing one from an SDP body), if
+    /// `config.local_setup` is [`SetupRole::ActPass`] (never a role a
+    /// concrete transport can be built with — see
+    /// [`MediaTransportConfig::local_setup`]), or if certificate generation
+    /// or ICE/DTLS setup fails.
     pub fn new(config: MediaTransportConfig) -> Result<Self, Error> {
+        let remote_fingerprint_digest =
+            parse_fingerprint_value(&config.remote_fingerprint).map_err(Error::Media)?;
         if config.local_setup == SetupRole::ActPass {
             return Err(Error::Media(
                 "local_setup ActPass is only valid as an SDP offer's a=setup value; the \
@@ -329,10 +464,27 @@ impl MediaTransport {
                     .to_string(),
             ));
         }
-        let is_client = config.local_setup == SetupRole::Active;
 
+        // Generates a fresh self-signed certificate — WebRTC authenticates
+        // peers by the SDP-signalled fingerprint (RFC 8122), not a CA chain,
+        // so self-signed is the norm.
         let certificate = Certificate::generate_self_signed(vec!["localhost".to_string()])
             .map_err(|e| Error::Media(format!("generate self-signed certificate: {e}")))?;
+        Self::with_certificate(config, remote_fingerprint_digest, certificate)
+    }
+
+    /// The shared construction body. Split out from [`Self::new`] only so a
+    /// test can supply the certificate (and thereby give a peer pair each
+    /// other's genuine fingerprint before construction — impossible through
+    /// the public API, since `new` generates the certificate itself); see
+    /// the loopback tests in the test module.
+    fn with_certificate(
+        config: MediaTransportConfig,
+        remote_fingerprint_digest: [u8; FINGERPRINT_LEN],
+        certificate: Certificate,
+    ) -> Result<Self, Error> {
+        let is_client = config.local_setup == SetupRole::Active;
+
         let local_fingerprint = sha256_fingerprint(certificate.certificate[0].as_ref());
 
         let agent_config = AgentConfig {
@@ -370,16 +522,37 @@ impl MediaTransport {
 
         // RFC 5764 §4.1: is_client picks which handshake role rtc-dtls
         // builds this config for. `remote_addr: None` — this cut never sets
-        // an explicit `server_name`, so `ConfigBuilder::build` would fall
-        // back to a remote IP-derived name, but `with_insecure_skip_verify`
-        // above means server_name is never actually checked either way (see
-        // the module doc: WebRTC authenticates by the SDP-signalled
-        // fingerprint, RFC 8122, not a CA chain / hostname).
+        // an explicit `server_name`. `with_insecure_skip_verify(true)` only
+        // disables CA-chain verification (WebRTC has none — peers are
+        // authenticated by the SDP-signalled fingerprint, RFC 8122 §5 /
+        // RFC 5764 §5); the actual identity check is the verify callback
+        // below, which runs for both roles regardless of that flag and
+        // accepts only a leaf certificate hashing to the configured
+        // remote-fingerprint digest.
+        let expected_remote_digest = remote_fingerprint_digest;
+        let verify_peer_certificate: VerifyPeerCertificateFn = Arc::new(move |certs, _chains| {
+            if peer_cert_fingerprint_ok(certs, &expected_remote_digest) {
+                Ok(())
+            } else {
+                Err(SharedError::ErrInvalidCertificate)
+            }
+        });
+        let builder = ConfigBuilder::default()
+            .with_certificates(vec![certificate])
+            .with_srtp_protection_profiles(vec![OFFERED_SRTP_PROFILE])
+            .with_insecure_skip_verify(true)
+            .with_verify_peer_certificate(Some(verify_peer_certificate));
+        // The passive/server role must REQUIRE a client certificate: the
+        // fingerprint check is the only authentication either side gets, so
+        // without a client certificate there would be nothing to verify and
+        // an anonymous peer could complete the handshake.
+        let builder = if is_client {
+            builder
+        } else {
+            builder.with_client_auth(ClientAuthType::RequireAnyClientCert)
+        };
         let handshake_config = Arc::new(
-            ConfigBuilder::default()
-                .with_certificates(vec![certificate])
-                .with_srtp_protection_profiles(vec![OFFERED_SRTP_PROFILE])
-                .with_insecure_skip_verify(true)
+            builder
                 .build(is_client, None)
                 .map_err(|e| Error::Media(format!("build dtls handshake config: {e}")))?,
         );
@@ -410,11 +583,13 @@ impl MediaTransport {
         Ok(Self {
             local_addr: config.local_addr,
             local_fingerprint,
+            remote_fingerprint_digest,
             local_setup: config.local_setup,
             ice,
             dtls,
             dtls_client_config,
             dtls_peer: None,
+            selected_pair_addr: None,
             srtp_read: None,
             srtp_write: None,
             write_rtp_count: 0,
@@ -571,6 +746,12 @@ impl MediaTransport {
 
         while let Some(evt) = Protocol::poll_event(&mut self.ice) {
             if let IceAgentEvent::SelectedCandidatePairChange(_, remote) = &evt {
+                // RFC 5764 §5's identity check is only meaningful against
+                // the peer ICE actually nominated: record its address as
+                // the sole source DTLS will be accepted from (see
+                // `handle_dtls_datagram`), then dial if this side is the
+                // DTLS client.
+                self.selected_pair_addr = Some(remote.addr());
                 self.maybe_start_active_dtls(remote.addr())?;
             }
             if let Some(mapped) = map_ice_event(evt) {
@@ -607,6 +788,16 @@ impl MediaTransport {
         data: &[u8],
         events: &mut Vec<MediaEvent>,
     ) -> Result<(), Error> {
+        // Accept DTLS only from the remote address of the selected ICE
+        // candidate pair (RFC 8445 §6.2.1). Before any pair is selected —
+        // and from any other address afterwards — drop the datagram with no
+        // event: an off-path sender must not be able to open a DTLS
+        // association on this port at all, let alone complete one and have
+        // its SRTP keys installed (RFC 5764 §5's "establish a DTLS
+        // association ... with the ICE-authenticated peer").
+        if self.selected_pair_addr != Some(peer) {
+            return Ok(());
+        }
         let dtls_events = self
             .dtls
             .read(now, peer, None::<EcnCodepoint>, BytesMut::from(data))
@@ -689,11 +880,46 @@ impl MediaTransport {
         }
     }
 
+    /// Install the SRTP keys of a just-completed DTLS association, after
+    /// two guards on top of the handshake itself:
+    ///
+    /// - Defence in depth for RFC 5764 §5 / RFC 8122 §5: re-check the
+    ///   association's stored peer certificate against the configured
+    ///   remote-fingerprint digest before deriving any key from it, even
+    ///   though the verify callback already ran during the handshake.
+    /// - Once SRTP keys are installed for a peer, a `HandshakeComplete`
+    ///   from a *different* address never replaces them: this method
+    ///   returns [`Error::Media`] and installs nothing (the caller sees the
+    ///   failure; the live session's keys are untouched). Rekeying is the
+    ///   supported way to fresh keys for the same peer — [`Self::rekey`]
+    ///   clears the write context first, which re-opens this path for that
+    ///   address. A second association completing at a different address is
+    ///   by construction not the peer of the live one, so its keys must not
+    ///   silently hijack the session (the SRTP contexts would otherwise be
+    ///   swapped and the real peer's media would start failing
+    ///   authentication).
     fn on_dtls_handshake_complete(&mut self, peer: SocketAddr) -> Result<(), Error> {
-        self.dtls_peer = Some(peer);
         let state = self.dtls.get_connection_state(peer).ok_or_else(|| {
             Error::Media("dtls handshake completed but no connection state for peer".to_string())
         })?;
+
+        if !peer_cert_fingerprint_ok(&state.peer_certificates, &self.remote_fingerprint_digest) {
+            return Err(Error::Media(
+                "dtls handshake completed but the peer certificate does not match the \
+                 configured remote_fingerprint: no SRTP keys installed"
+                    .to_string(),
+            ));
+        }
+
+        if self.srtp_write.is_some() && self.dtls_peer != Some(peer) {
+            return Err(Error::Media(format!(
+                "ignoring dtls handshake completed from {peer}: srtp keys are already installed \
+                 for {:?} and are never replaced by another association",
+                self.dtls_peer
+            )));
+        }
+
+        self.dtls_peer = Some(peer);
 
         let srtp_profile = to_srtp_profile(state.srtp_protection_profile())?;
         let key_len = srtp_profile.key_len();
@@ -992,6 +1218,14 @@ mod tests {
         );
     }
 
+    /// A well-formed SHA-256 fingerprint (RFC 8122 §5) that matches no
+    /// certificate any test generates — the placeholder for configs whose
+    /// handshake is never expected to complete, or which swap in each
+    /// peer's real digest via same-module access (see the loopback tests).
+    const DUMMY_REMOTE_FINGERPRINT: &str = "sha-256 \
+00:11:22:33:44:55:66:77:88:99:aa:bb:cc:dd:ee:ff:00:11:22:33:44:55:66:77:88:\
+99:aa:bb:cc:dd:ee:ff";
+
     fn test_config(local_setup: SetupRole) -> MediaTransportConfig {
         // RFC 8445 §5.3: ufrag >= 24 bits (4 chars), pwd >= 128 bits (22
         // chars) of ICE-char. `rtc-ice` enforces the ufrag minimum at
@@ -1008,7 +1242,72 @@ mod tests {
             is_controlling: false,
             local_setup,
             stun_server: None,
+            remote_fingerprint: DUMMY_REMOTE_FINGERPRINT.into(),
         }
+    }
+
+    #[test]
+    fn new_rejects_malformed_remote_fingerprint() {
+        for bad in ["md5 00:11", "sha-256 00:11", "", "sha-256"] {
+            let mut cfg = test_config(SetupRole::Passive);
+            cfg.remote_fingerprint = bad.to_string();
+            match MediaTransport::new(cfg) {
+                Err(Error::Media(_)) => {}
+                Err(other) => panic!("expected Error::Media for {bad:?}, got {other:?}"),
+                Ok(_) => panic!("remote_fingerprint {bad:?} must be rejected by new()"),
+            }
+        }
+    }
+
+    #[test]
+    fn parse_fingerprint_value_accepts_case_insensitive_sha256() {
+        // Bite test: drop the `eq_ignore_ascii_case` (exact match) or the
+        // per-byte `from_str_radix`, and one of these arms fails.
+        let expected = [
+            0xab, 0xcd, 0xef, 0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xaa,
+            0xbb, 0xcc, 0xdd, 0xee, 0xff, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09,
+            0x0a, 0x0b, 0x0c, 0x0d,
+        ];
+        let upper = "SHA-256 AB:CD:EF:00:11:22:33:44:55:66:77:88:99:AA:BB:CC:\
+                     DD:EE:FF:01:02:03:04:05:06:07:08:09:0A:0B:0C:0D";
+        let lower = upper.to_ascii_lowercase();
+        assert_eq!(parse_fingerprint_value(upper).unwrap(), expected);
+        assert_eq!(parse_fingerprint_value(&lower).unwrap(), expected);
+
+        // Rejections: wrong token, missing digest, wrong byte count,
+        // non-hex digits.
+        for bad in [
+            "md5 AB:CD",
+            "sha-256",
+            "sha-256 AB:CD",
+            "sha-256 AB:CD:",
+            "sha-256 ABCD",
+            "sha-256 ZZ:CD:EF:00:11:22:33:44:55:66:77:88:99:AA:BB:CC:\
+             DD:EE:FF:01:02:03:04:05:06:07:08:09:0A:0B:0C:0D",
+        ] {
+            assert!(
+                parse_fingerprint_value(bad).is_err(),
+                "{bad:?} must be rejected"
+            );
+        }
+    }
+
+    #[test]
+    fn digests_equal_is_length_strict_and_orderly() {
+        let a = [1u8; 32];
+        assert!(digests_equal(&a, &[1u8; 32]));
+        assert!(!digests_equal(&a, &[2u8; 32]));
+        assert!(!digests_equal(&a, &[1u8; 31]));
+    }
+
+    #[test]
+    fn parse_remote_fingerprint_media_beats_session() {
+        let sdp = "v=0\r\na=fingerprint:sha-256 AA\r\nm=audio 9 RTP/AVP\r\n\
+                   a=fingerprint:sha-256 BB\r\n";
+        assert_eq!(parse_remote_fingerprint(sdp).as_deref(), Some("sha-256 BB"));
+        let sdp = "v=0\r\na=fingerprint:sha-256 AA \r\nm=audio 9 RTP/AVP\r\n";
+        assert_eq!(parse_remote_fingerprint(sdp).as_deref(), Some("sha-256 AA"));
+        assert_eq!(parse_remote_fingerprint("v=0\r\n"), None);
     }
 
     #[test]
@@ -1556,6 +1855,225 @@ mod tests {
         match &events[0] {
             MediaEvent::Rtp(rtp) => assert_eq!(rtp.sequence_number, 0),
             other => panic!("expected MediaEvent::Rtp, got {other:?}"),
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // DTLS peer-certificate fingerprint verification (RFC 8122 §5, RFC 5764
+    // §5). These two run the real handshake between two `MediaTransport`s in
+    // process. They live here rather than in `tests/dtls_fingerprint.rs`
+    // because a certificate is generated inside `MediaTransport::new`, so
+    // through the public API alone side A can only learn B's fingerprint by
+    // constructing B — and vice versa, one of them necessarily holds a stale
+    // value; these tests pre-generate both certificates and build through
+    // the private `with_certificate`. Everything observable from outside
+    // (wrong-fingerprint rejection, malformed fingerprints at `new`, the
+    // address gate) is covered there.
+    // -----------------------------------------------------------------------
+
+    fn reserve_loopback_addr() -> SocketAddr {
+        let socket = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
+        let addr = socket.local_addr().unwrap();
+        drop(socket);
+        addr
+    }
+
+    /// The candidate-attribute body `unmarshal_candidate` expects (the SDP
+    /// line minus its `a=` prefix).
+    fn host_candidate_line(addr: SocketAddr) -> String {
+        format!("1 1 udp 2130706431 {} {} typ host", addr.ip(), addr.port())
+    }
+
+    struct LoopbackPair {
+        a: MediaTransport,
+        b: MediaTransport,
+        a_addr: SocketAddr,
+        b_addr: SocketAddr,
+    }
+
+    /// Two transports wired together in-process with each other's genuine
+    /// fingerprint: A is the DTLS client + ICE controlling agent, B the
+    /// server + controlled — the same role split as a WHIP publisher facing
+    /// this crate's passive ingest side. Both certificates are pre-generated
+    /// so each side can be constructed already holding the other's real
+    /// digest (the verify closure captures it at construction time).
+    fn loopback_pair() -> LoopbackPair {
+        let a_addr = reserve_loopback_addr();
+        let b_addr = reserve_loopback_addr();
+        let cert_a = Certificate::generate_self_signed(vec!["localhost".to_string()]).unwrap();
+        let cert_b = Certificate::generate_self_signed(vec!["localhost".to_string()]).unwrap();
+        let fp_a = sha256_fingerprint(cert_a.certificate[0].as_ref());
+        let fp_b = sha256_fingerprint(cert_b.certificate[0].as_ref());
+        let mut a = MediaTransport::with_certificate(
+            MediaTransportConfig {
+                local_addr: a_addr,
+                local_ice_ufrag: "loopa0ufrag".into(),
+                local_ice_pwd: "loopa-ice-password-0000000".into(),
+                remote_ice_ufrag: "loopb0ufrag".into(),
+                remote_ice_pwd: "loopb-ice-password-0000000".into(),
+                is_controlling: true,
+                local_setup: SetupRole::Active,
+                stun_server: None,
+                remote_fingerprint: format!("sha-256 {fp_b}"),
+            },
+            parse_fingerprint_value(&format!("sha-256 {fp_b}")).unwrap(),
+            cert_a,
+        )
+        .unwrap();
+        let mut b = MediaTransport::with_certificate(
+            MediaTransportConfig {
+                local_addr: b_addr,
+                local_ice_ufrag: "loopb0ufrag".into(),
+                local_ice_pwd: "loopb-ice-password-0000000".into(),
+                remote_ice_ufrag: "loopa0ufrag".into(),
+                remote_ice_pwd: "loopa-ice-password-0000000".into(),
+                is_controlling: false,
+                local_setup: SetupRole::Passive,
+                stun_server: None,
+                remote_fingerprint: format!("sha-256 {fp_a}"),
+            },
+            parse_fingerprint_value(&format!("sha-256 {fp_a}")).unwrap(),
+            cert_b,
+        )
+        .unwrap();
+        a.add_remote_candidate(&host_candidate_line(b_addr))
+            .unwrap();
+        b.add_remote_candidate(&host_candidate_line(a_addr))
+            .unwrap();
+        LoopbackPair {
+            a,
+            b,
+            a_addr,
+            b_addr,
+        }
+    }
+
+    /// Pump datagrams between the pair until both report
+    /// `DtlsHandshakeComplete` (panicking after `budget`), recording every
+    /// DTLS-band datagram A sent — its first is the ClientHello, reused by
+    /// the address-gate test.
+    fn pump_until_both_complete(pair: &mut LoopbackPair, budget: Duration) -> Vec<Vec<u8>> {
+        let deadline = Instant::now() + budget;
+        let mut a_dtls_datagrams = Vec::new();
+        let (mut a_done, mut b_done) = (false, false);
+        while Instant::now() < deadline && !(a_done && b_done) {
+            let now = Instant::now();
+            let mut progressed = false;
+            while let Some(dgram) = pair.a.poll_transmit() {
+                if dgram.bytes.first().is_some_and(|&b| (20..=63).contains(&b)) {
+                    a_dtls_datagrams.push(dgram.bytes.clone());
+                }
+                for event in pair
+                    .b
+                    .handle_datagram(now, pair.a_addr, &dgram.bytes)
+                    .expect("B feed")
+                {
+                    if matches!(event, MediaEvent::DtlsHandshakeComplete) {
+                        b_done = true;
+                    }
+                }
+                progressed = true;
+            }
+            while let Some(dgram) = pair.b.poll_transmit() {
+                for event in pair
+                    .a
+                    .handle_datagram(now, pair.b_addr, &dgram.bytes)
+                    .expect("A feed")
+                {
+                    if matches!(event, MediaEvent::DtlsHandshakeComplete) {
+                        a_done = true;
+                    }
+                }
+                progressed = true;
+            }
+            pair.a.handle_timeout(now);
+            pair.b.handle_timeout(now);
+            if !progressed {
+                std::thread::sleep(Duration::from_millis(2));
+            }
+        }
+        assert!(
+            a_done && b_done,
+            "two MediaTransports holding each other's real fingerprint must complete the DTLS handshake"
+        );
+        a_dtls_datagrams
+    }
+
+    #[test]
+    fn dtls_accepts_matching_fingerprint() {
+        let mut pair = loopback_pair();
+        pump_until_both_complete(&mut pair, Duration::from_secs(8));
+
+        // The happy path still works end to end: media flows in both
+        // directions under the keys the completed handshake installed.
+        let protected = pair.a.encrypt_rtp(&rtp_test_packet(7)).unwrap();
+        let events = pair
+            .b
+            .handle_datagram(Instant::now(), pair.a_addr, &protected)
+            .unwrap();
+        assert!(
+            matches!(&events[..], [MediaEvent::Rtp(rtp)] if rtp.sequence_number == 7),
+            "B must decrypt A's RTP: {events:?}"
+        );
+
+        let protected = pair.b.encrypt_rtp(&rtp_test_packet(8)).unwrap();
+        let events = pair
+            .a
+            .handle_datagram(Instant::now(), pair.b_addr, &protected)
+            .unwrap();
+        assert!(
+            matches!(&events[..], [MediaEvent::Rtp(rtp)] if rtp.sequence_number == 8),
+            "A must decrypt B's RTP: {events:?}"
+        );
+    }
+
+    #[test]
+    fn dtls_from_non_selected_address_is_ignored() {
+        let mut pair = loopback_pair();
+        let a_dtls_datagrams = pump_until_both_complete(&mut pair, Duration::from_secs(8));
+        assert!(!a_dtls_datagrams.is_empty());
+        let intruder_addr: SocketAddr = "127.0.0.1:59999".parse().unwrap();
+
+        // A DTLS ClientHello from an address that is not the selected ICE
+        // pair's produces no event, and nothing is ever sent back to it.
+        let events = pair
+            .a
+            .handle_datagram(Instant::now(), intruder_addr, &a_dtls_datagrams[0])
+            .unwrap();
+        assert!(
+            events.is_empty(),
+            "DTLS from a non-selected address must produce no events"
+        );
+        while let Some(dgram) = pair.a.poll_transmit() {
+            assert_ne!(
+                dgram.peer, intruder_addr,
+                "must not answer DTLS at a non-selected address"
+            );
+        }
+
+        // The SRTP keys are unchanged: the real peer's media still decrypts.
+        let protected = pair.b.encrypt_rtp(&rtp_test_packet(9)).unwrap();
+        let events = pair
+            .a
+            .handle_datagram(Instant::now(), pair.b_addr, &protected)
+            .unwrap();
+        assert!(
+            matches!(&events[..], [MediaEvent::Rtp(rtp)] if rtp.sequence_number == 9),
+            "media from the real peer must still decrypt afterwards: {events:?}"
+        );
+
+        // And before any pair is selected at all, DTLS datagrams are dropped
+        // too — a fresh transport never even starts an association.
+        let mut fresh = MediaTransport::new(test_config(SetupRole::Passive)).unwrap();
+        let events = fresh
+            .handle_datagram(Instant::now(), pair.b_addr, &a_dtls_datagrams[0])
+            .unwrap();
+        assert!(events.is_empty());
+        while let Some(dgram) = fresh.poll_transmit() {
+            assert_ne!(
+                dgram.peer, pair.b_addr,
+                "no association may start before ICE selects a pair"
+            );
         }
     }
 }

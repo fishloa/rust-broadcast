@@ -20,9 +20,25 @@
 //! SDP itself is out of scope here, exactly as it is in `whip`/`whep`: the
 //! caller extracts `a=ice-ufrag`/`a=ice-pwd`/`a=fingerprint`/`a=candidate`
 //! from the negotiated SDP and passes the values in through
-//! [`MediaTransportConfig`]; [`MediaTransport::local_fingerprint`] and the
-//! candidates gathered via [`MediaEvent::LocalCandidateGathered`] are what
-//! the caller feeds back into its own SDP answer / Trickle-ICE fragment.
+//! [`MediaTransportConfig`] ([`parse_remote_fingerprint`] reads the
+//! fingerprint out of an SDP body); [`MediaTransport::local_fingerprint`]
+//! and the candidates gathered via [`MediaEvent::LocalCandidateGathered`]
+//! are what the caller feeds back into its own SDP answer / Trickle-ICE
+//! fragment.
+//!
+//! # Peer identity (RFC 5764 §5, RFC 8122 §5)
+//!
+//! WebRTC authenticates peers by the certificate fingerprint signalled in
+//! SDP, not a CA chain, so [`MediaTransportConfig::remote_fingerprint`] is
+//! mandatory and enforced three ways: the DTLS verify callback accepts only
+//! a peer leaf certificate hashing to that digest (and the passive role
+//! requires a client certificate at all), DTLS datagrams are accepted only
+//! from the remote address of the selected ICE candidate pair — so an
+//! off-path sender cannot even open an association, let alone one whose
+//! keys would be installed — and every completed handshake is re-checked
+//! against the digest before any SRTP key is derived. Once a session's SRTP
+//! keys are installed, a second association completing at another address
+//! never replaces them (see [`MediaTransport`]'s handshake-completion path).
 //!
 //! # Demultiplexing a single UDP flow
 //!
@@ -79,4 +95,5 @@ mod transport;
 
 pub use transport::{
     Datagram, DecryptedRtp, MediaEvent, MediaTransport, MediaTransportConfig, SetupRole,
+    parse_remote_fingerprint,
 };
