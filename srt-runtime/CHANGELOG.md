@@ -6,6 +6,12 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-09-25
+
+### Security
+Fixes GHSA-28hg-fc5v-m865, GHSA-gjm5-23jf-293p and GHSA-r6hf-93jv-c3wc. Upgrade if you use the
+tokio adapter (`io::SrtSocket` / `io::SrtListener`).
+
 ### Changed
 - The tokio adapter (`io::SrtSocket`, `io::SrtListener`) now refuses encrypted connections:
   a `HandshakeConfig` with `crypto` set is rejected before any I/O, an incoming handshake that
@@ -18,6 +24,11 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   loss the sender will not retransmit no longer stalls delivery or grows memory.
 - `SrtListener` bounds the number of in-progress handshakes and expires them on a timer, even
   under continuous traffic.
+- `tsbpd::TsbpdScheduler` with too-late drop enabled no longer waits forever on a missing
+  packet: per the receiver-buffer read rule (§4.6), once the next buffered packet's play time
+  arrives the gap is skipped and that packet delivered, and `TickOutcome::dropped` now reports
+  the skipped sequence numbers from both `feed_data` and `tick`. With too-late drop disabled the
+  scheduler still waits for the gap (reliable in-order delivery).
 
 ## [0.4.0] - 2026-08-11
 
