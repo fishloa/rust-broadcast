@@ -112,8 +112,10 @@ impl ServerSession {
         self
     }
 
-    /// Replaces the id source with a counter starting at `seed` — predictable
-    /// ids, for tests only.
+    /// Replaces the id source with a counter starting at `seed`. For
+    /// deterministic tests only: the ids it yields are predictable, so it
+    /// must never be used for a server that accepts real connections.
+    #[doc(hidden)]
     pub fn with_session_seed(mut self, seed: u64) -> Self {
         let mut next = seed;
         self.session_ids = Box::new(move || {

@@ -12,7 +12,8 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   §3.4); `impl Default for ServerSession` is removed and `Debug` is now
   hand-written. `io::AsyncRtspServer::accept`/`accept_tls` supply the OS RNG
   (new optional `getrandom` dependency under the `tokio` feature).
-  `with_session_seed` keeps its signature but is documented as test-only.
+  `with_session_seed` keeps its signature but is now `#[doc(hidden)]` and
+  documented as for deterministic tests only.
 
 ### Fixed
 - `ServerSession` ids are 64 random bits rendered as 16 hex digits instead of
