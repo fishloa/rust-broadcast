@@ -6,6 +6,26 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.6.1] - 2026-09-26
+
+### Security
+Fixes GHSA-fjrp-rx2c-c9pw.
+
+### Fixed
+- `chunk::ChunkAssembler` reassembled a chunked message by cloning the whole
+  accumulated payload on every continuation chunk and compacting its input
+  buffer once per chunk, so a message split into many small chunks (e.g. an
+  8 MiB message at a 1-byte chunk size, reachable via an early, pre-`connect`
+  Set Chunk Size) cost O(message_length²/chunk_size) instead of
+  O(message_length). Each chunk's bytes are now appended in place to the
+  owning chunk stream's own persistent buffer (never cloned), and the
+  consumed prefix of the input buffer is compacted once per assembled
+  message rather than once per chunk. `set_chunk_size` still accepts any
+  peer-announced value from `1..=MAX_CHUNK_SIZE` unchanged (a peer's own
+  chosen chunk size must be honoured exactly, or every later chunk boundary
+  is misparsed) — this fix is the reassembly algorithm, not a stricter
+  chunk-size floor.
+
 ## [0.6.0] - 2026-08-11
 
 ### Changed
