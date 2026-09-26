@@ -167,22 +167,81 @@ mod tests {
             }),
         ];
         for pkt in cases {
-            let mut buf = [0u8; 16];
+            // 20, not 16: `serialize_into` now emits libsrt's 4-byte zero
+            // pad on these CIF-less types (see `control::LIBSRT_CIF_PAD_LEN`).
+            let mut buf = [0u8; 20];
             let n = pkt.serialize_into(&mut buf).unwrap();
-            assert_eq!(n, 16);
+            assert_eq!(n, 20);
+            assert_eq!(&buf[16..20], &[0, 0, 0, 0]);
             let parsed = ControlPacket::parse(&buf).unwrap();
+            assert_eq!(parsed, pkt);
+        }
+    }
+
+    /// A peer (e.g. real libsrt — see `tests/libsrt_fixtures.rs`) may also
+    /// send these types with the pure-spec empty CIF instead of the pad;
+    /// both shapes parse to the same value.
+    #[test]
+    fn keepalive_congestion_shutdown_ackack_peererror_accept_empty_cif() {
+        let cases: Vec<ControlPacket> = alloc::vec![
+            ControlPacket::KeepAlive(KeepAlivePacket {
+                timestamp: 1,
+                dest_socket_id: 2
+            }),
+            ControlPacket::CongestionWarning(CongestionWarningPacket {
+                timestamp: 3,
+                dest_socket_id: 4
+            }),
+            ControlPacket::Shutdown(ShutdownPacket {
+                timestamp: 5,
+                dest_socket_id: 6
+            }),
+            ControlPacket::AckAck(AckAckPacket {
+                ack_number: 9,
+                timestamp: 7,
+                dest_socket_id: 8
+            }),
+            ControlPacket::PeerError(PeerErrorPacket {
+                error_code: PEER_ERROR_FILE_SYSTEM,
+                timestamp: 11,
+                dest_socket_id: 12
+            }),
+        ];
+        for pkt in cases {
+            let mut buf = [0u8; 16];
+            let n = pkt.serialized_len().min(16);
+            // Build the 16-byte (no-pad) header manually: reuse the padded
+            // serialization, then truncate the pad off before re-parsing.
+            let mut padded = alloc::vec![0u8; pkt.serialized_len()];
+            pkt.serialize_into(&mut padded).unwrap();
+            buf[..n].copy_from_slice(&padded[..n]);
+            let parsed = ControlPacket::parse(&buf[..n]).unwrap();
             assert_eq!(parsed, pkt);
         }
     }
 
     #[test]
     fn keepalive_rejects_trailing_bytes() {
+        // Neither 0 (pure spec) nor 4 (libsrt's pad, §control::LIBSRT_CIF_PAD_LEN):
+        // 1 stray byte must still be rejected.
         let mut buf = [0u8; 17];
         buf[0] = 0x80; // F=1
         buf[1] = 0x01; // control type = 1 (KEEPALIVE)
         assert!(matches!(
             ControlPacket::parse(&buf),
             Err(Error::UnexpectedTrailingBytes { .. })
+        ));
+    }
+
+    #[test]
+    fn keepalive_rejects_nonzero_pad() {
+        let mut buf = [0u8; 20];
+        buf[0] = 0x80; // F=1
+        buf[1] = 0x01; // control type = 1 (KEEPALIVE)
+        buf[19] = 0x01; // non-zero byte in the 4-byte pad
+        assert!(matches!(
+            ControlPacket::parse(&buf),
+            Err(Error::ReservedFieldNotZero { .. })
         ));
     }
 }

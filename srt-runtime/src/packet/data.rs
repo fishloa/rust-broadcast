@@ -12,8 +12,34 @@ use super::{Error, Result, SEQ_NUMBER_MASK, SRT_HEADER_LEN, be32, put_be32};
 
 /// Bit width of the Message Number field (§3.1).
 const MESSAGE_NUMBER_BITS: u32 = 26;
-/// Mask for the 26-bit Message Number field (§3.1).
-const MESSAGE_NUMBER_MASK: u32 = (1 << MESSAGE_NUMBER_BITS) - 1;
+/// Mask for the 26-bit Message Number field (§3.1). `pub(crate)` so
+/// `io::Driver` can wrap its own message-number counter at the same
+/// boundary [`next_message_number`] uses (issue #1062).
+pub(crate) const MESSAGE_NUMBER_MASK: u32 = (1 << MESSAGE_NUMBER_BITS) - 1;
+
+/// The next Message Number after `n`, wrapping at the 26-bit boundary
+/// (`draft-sharabayko-srt-01` §3.1) back to `0` — analogous to
+/// `crate::arq::seq::seq_next` for the 31-bit Packet Sequence Number.
+///
+/// A plain `u32::wrapping_add(1)` (which this replaces, issue #1062) only
+/// wraps at 2^32: once a long-lived sender's message counter passed
+/// `MESSAGE_NUMBER_MASK` (after ~67 million messages), [`DataPacket::serialize_into`]
+/// started returning `Error::FieldTooWide` for every packet, and every caller
+/// that assumed that could only fail on a too-small buffer (`.expect("buffer
+/// sized from serialized_len")` in `arq::sender`) panicked.
+///
+/// `cfg`-gated on `tokio`: its only caller, `io::Driver::send_one`, lives
+/// entirely behind that feature (unlike `arq::seq::seq_next`'s equivalent
+/// for the sequence number, which `arq::sender` also uses unconditionally) —
+/// gated rather than left to warn as dead code under `--no-default-features`.
+#[cfg(feature = "tokio")]
+pub(crate) fn next_message_number(n: u32) -> u32 {
+    // Mask `n` down first: it is always already in range in practice (every
+    // caller only ever feeds back a value this function returned), but doing
+    // so here too means a stray out-of-range input can't push `n + 1` out of
+    // range either.
+    ((n & MESSAGE_NUMBER_MASK) + 1) & MESSAGE_NUMBER_MASK
+}
 
 /// `PP` (Packet Position Flag) wire values (§3.1).
 const PP_MIDDLE: u8 = 0b00;
@@ -250,6 +276,32 @@ impl<'a> DataPacket<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    #[cfg(feature = "tokio")]
+    fn next_message_number_wraps_at_26_bits() {
+        assert_eq!(next_message_number(0), 1);
+        assert_eq!(
+            next_message_number(MESSAGE_NUMBER_MASK - 1),
+            MESSAGE_NUMBER_MASK
+        );
+        // The actual boundary (issue #1062): one past the max 26-bit value
+        // must wrap to 0, not silently produce an out-of-range value that
+        // later fails `DataPacket::serialize_into`'s `FieldTooWide` check.
+        assert_eq!(next_message_number(MESSAGE_NUMBER_MASK), 0);
+        assert_eq!(next_message_number(0), 1);
+    }
+
+    #[test]
+    #[cfg(feature = "tokio")]
+    fn next_message_number_result_always_serializes() {
+        // Every value this function can ever produce must fit the 26-bit
+        // field — this is the actual invariant the panic bug violated.
+        for start in [0, 1, MESSAGE_NUMBER_MASK - 2, MESSAGE_NUMBER_MASK] {
+            let n = next_message_number(start);
+            assert!(n <= MESSAGE_NUMBER_MASK, "start={start:#x} -> {n:#x}");
+        }
+    }
 
     fn sample() -> DataPacket<'static> {
         DataPacket {

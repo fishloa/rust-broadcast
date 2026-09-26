@@ -212,14 +212,37 @@ fn check_reserved_u32(what: &'static str, v: u32) -> Result<()> {
     Ok(())
 }
 
-fn check_no_cif(what: &'static str, cif: &[u8]) -> Result<()> {
-    if !cif.is_empty() {
-        return Err(Error::UnexpectedTrailingBytes {
-            what,
-            extra: cif.len(),
-        });
+/// Bytes libsrt appends to a control packet type whose CIF the spec documents
+/// as absent (Keep-Alive §3.2.3, Congestion Warning §3.2.6, Shutdown §3.2.7,
+/// ACKACK §3.2.8, Peer Error §3.2.10). libsrt's `CPacket::pack` always calls
+/// `m_PacketVector[PV_DATA].set(&m_extra_pad, 4)` for these types — its own
+/// comment says why: "control info field should be none but writev does not
+/// allow this" (`packet.cpp`, `CPacket::pack`, e.g. the `UMSG_KEEPALIVE` arm)
+/// — and `m_extra_pad` is a zero-initialized member, so the 4 bytes are
+/// always zero on the wire. Confirmed against a real `srt-live-transmit`
+/// 1.5.5 KEEPALIVE/ACKACK capture (`tests/fixtures/libsrt_*.bin`).
+const LIBSRT_CIF_PAD_LEN: usize = 4;
+
+/// Accept either the pure-spec empty CIF or libsrt's 4-byte zero pad (see
+/// [`LIBSRT_CIF_PAD_LEN`]); reject anything else. A non-zero 4-byte value is
+/// rejected the same way a defined reserved field is (`ReservedFieldNotZero`)
+/// — nothing defines those bits, so a peer setting them to something else is
+/// not a shape this crate recognizes.
+fn check_no_cif_or_libsrt_pad(what: &'static str, cif: &[u8]) -> Result<()> {
+    match cif.len() {
+        0 => Ok(()),
+        LIBSRT_CIF_PAD_LEN => {
+            let value = be32(cif, 0);
+            if value != 0 {
+                return Err(Error::ReservedFieldNotZero {
+                    what,
+                    value: u64::from(value),
+                });
+            }
+            Ok(())
+        }
+        extra => Err(Error::UnexpectedTrailingBytes { what, extra }),
     }
-    Ok(())
 }
 
 impl<'a> ControlPacket<'a> {
@@ -264,7 +287,7 @@ impl<'a> ControlPacket<'a> {
             ControlType::KeepAlive => {
                 check_reserved_u16("Subtype", subtype)?;
                 check_reserved_u32("Type-specific Information", type_specific_info)?;
-                check_no_cif("keep-alive CIF", cif)?;
+                check_no_cif_or_libsrt_pad("keep-alive CIF", cif)?;
                 ControlPacket::KeepAlive(KeepAlivePacket {
                     timestamp,
                     dest_socket_id,
@@ -287,7 +310,7 @@ impl<'a> ControlPacket<'a> {
             ControlType::CongestionWarning => {
                 check_reserved_u16("Subtype", subtype)?;
                 check_reserved_u32("Type-specific Information", type_specific_info)?;
-                check_no_cif("congestion warning CIF", cif)?;
+                check_no_cif_or_libsrt_pad("congestion warning CIF", cif)?;
                 ControlPacket::CongestionWarning(CongestionWarningPacket {
                     timestamp,
                     dest_socket_id,
@@ -296,7 +319,7 @@ impl<'a> ControlPacket<'a> {
             ControlType::Shutdown => {
                 check_reserved_u16("Subtype", subtype)?;
                 check_reserved_u32("Type-specific Information", type_specific_info)?;
-                check_no_cif("shutdown CIF", cif)?;
+                check_no_cif_or_libsrt_pad("shutdown CIF", cif)?;
                 ControlPacket::Shutdown(ShutdownPacket {
                     timestamp,
                     dest_socket_id,
@@ -304,7 +327,7 @@ impl<'a> ControlPacket<'a> {
             }
             ControlType::AckAck => {
                 check_reserved_u16("Subtype", subtype)?;
-                check_no_cif("ACKACK CIF", cif)?;
+                check_no_cif_or_libsrt_pad("ACKACK CIF", cif)?;
                 ControlPacket::AckAck(AckAckPacket {
                     ack_number: type_specific_info,
                     timestamp,
@@ -322,7 +345,7 @@ impl<'a> ControlPacket<'a> {
             }
             ControlType::PeerError => {
                 check_reserved_u16("Subtype", subtype)?;
-                check_no_cif("peer error CIF", cif)?;
+                check_no_cif_or_libsrt_pad("peer error CIF", cif)?;
                 ControlPacket::PeerError(PeerErrorPacket {
                     error_code: type_specific_info,
                     timestamp,
@@ -413,11 +436,15 @@ impl<'a> ControlPacket<'a> {
     fn cif_len(&self) -> usize {
         match self {
             ControlPacket::Handshake(h) => h.cif_len(),
+            // Emit libsrt's 4-byte zero pad (see `LIBSRT_CIF_PAD_LEN`) so
+            // packets we send take the exact shape a real libsrt peer sends
+            // and expects on this wire, not just the pure-spec empty CIF our
+            // own parser also still accepts.
             ControlPacket::KeepAlive(_)
             | ControlPacket::CongestionWarning(_)
             | ControlPacket::Shutdown(_)
             | ControlPacket::AckAck(_)
-            | ControlPacket::PeerError(_) => 0,
+            | ControlPacket::PeerError(_) => LIBSRT_CIF_PAD_LEN,
             ControlPacket::Ack(a) => a.cif_len(),
             ControlPacket::Nak(n) => n.cif_len(),
             ControlPacket::DropReq(d) => d.cif_len(),
@@ -461,7 +488,9 @@ impl<'a> ControlPacket<'a> {
             | ControlPacket::CongestionWarning(_)
             | ControlPacket::Shutdown(_)
             | ControlPacket::AckAck(_)
-            | ControlPacket::PeerError(_) => {}
+            | ControlPacket::PeerError(_) => {
+                cif.fill(0);
+            }
             ControlPacket::Ack(a) => {
                 a.write_cif(cif)?;
             }

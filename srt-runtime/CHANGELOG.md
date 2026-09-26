@@ -14,6 +14,37 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - A Key Material message's `Salt` over 1020 bytes (`SLen/4` past the 8-bit field's 255 max) no
   longer shifts into the reserved `Resv3` bits — `serialize_into` now rejects it instead of
   emitting a misframed message with `Ok` (#1129).
+- Keep-Alive/Congestion Warning/Shutdown/ACKACK/Peer Error control packets now accept the 4-byte
+  zero pad a real libsrt peer always appends to these types, instead of rejecting them as
+  `UnexpectedTrailingBytes`; we now emit that same pad ourselves for wire compatibility (#1060).
+- The async adapter's `flush_outbound` no longer `tokio::time::sleep`s per DATA packet for LiveCC
+  pacing — a real sleep, even for a sub-millisecond computed period, blocked for tokio's real
+  timer resolution and capped throughput at roughly 1000 pkt/s regardless of the configured
+  `MAX_BW`, while also stalling RX for the same window. Replaced with a token-bucket schedule
+  serviced by its own non-blocking `select!` arm (#1061).
+- The 31-bit Packet Sequence Number and 26-bit Message Number counters now wrap at their own wire
+  field width instead of at `u32::MAX` — the old `wrapping_add(1)` let both counters walk past
+  their field width (after ~20 h of continuous sending, or immediately with a high initial
+  sequence number; after ~67 million messages), after which every packet's
+  `DataPacket::serialize_into` returned `Error::FieldTooWide` and panicked the
+  `.expect("buffer sized from serialized_len")` call sites in `arq::sender` that assumed only a
+  too-small buffer could fail (#1062).
+- The wire `Timestamp` field (and its receiver-side `TsbpdScheduler` handling) now wraps modulo
+  `2^32` microseconds (~71.58 min) instead of clamping at `u32::MAX` on the sender side, and now
+  correctly *un*wraps a real wraparound into an always-increasing value on the receiver side
+  instead of naively widening the raw `u32` to `u64` — the old behavior made every packet sent (or
+  received from a peer) after that point look impossibly far in the past, so Too-Late-Packet-Drop
+  discarded it forever (#1063).
+- `SrtListener` no longer shares its bound socket's `recv_from` across `accept()` and every
+  accepted connection's driver task, which could hand one connection's datagram to a completely
+  different task (silently lost for its rightful recipient) whenever more than one connection (or
+  a pending handshake) was active at once. A single routing pump now demultiplexes every inbound
+  datagram by source address to the right connection (#1029).
+- The Rendezvous cookie contest (`RendezvousHandshake::resolve_role`) now matches libsrt's actual
+  `CUDT::backwardCompatibleCookieContest` semantics (a signed 32-bit difference, with a documented
+  tie-break at the exact halfway point) instead of a plain unsigned `own_cookie > peer_cookie`
+  compare, which disagreed with a real libsrt peer for roughly a quarter of all cookie pairs —
+  whenever exactly one of the two cookies had its top bit set (#1064).
 
 ## [0.4.1] - 2026-09-25
 

@@ -59,12 +59,26 @@ pub const NAK_INTERVAL_FLOOR: Duration = Duration::from_millis(20);
 
 /// Convert a [`Duration`] to the wire `Timestamp` field's microsecond
 /// `u32` (`draft-sharabayko-srt-01` §3: "microseconds elapsed since the SRT
-/// connection was established"), clamping rather than panicking if `now`
-/// has advanced past `u32::MAX` microseconds (about 71.5 minutes) since the
-/// caller's epoch — a wrapping/rebasing timestamp policy is a caller
-/// concern, not curated in `specs/rules/srt-arq.md`.
+/// connection was established"), **wrapping** modulo `2^32` once `d` exceeds
+/// `u32::MAX` microseconds (about 71.58 minutes) since the caller's epoch —
+/// not clamping to `u32::MAX`.
+///
+/// A clamp (this function's pre-#1063 behavior) makes every packet sent
+/// after that point carry the *same* fixed timestamp forever, instead of one
+/// that keeps counting up (mod 2^32) the way the field is defined. A real
+/// peer's `PktTsbpdTime` formula (`TsbpdTimeBase + PKT_TIMESTAMP + ...`,
+/// `specs/rules/srt-tsbpd.md` rule 9) would then compute the same constant
+/// play time for every such packet — which the peer's receiver clock keeps
+/// advancing past, so every packet after the clamp point looks
+/// arbitrarily-far too late and gets Too-Late-Packet-Dropped. The receiving
+/// side of the same problem — correctly *un*wrapping a peer's wrapped
+/// timestamp back into an always-increasing value for `PktTsbpdTime`
+/// purposes — is `crate::tsbpd::TsbpdScheduler`'s `unwrap_timestamp`, not
+/// this function (this one only ever produces an in-range wire value; it
+/// does not need to remember any wrap-count itself, so plain truncation of
+/// the microsecond count into 32 bits is exactly "mod 2^32").
 pub(crate) fn duration_to_wire_us(d: Duration) -> u32 {
-    d.as_micros().min(u128::from(u32::MAX)) as u32
+    d.as_micros() as u32
 }
 
 /// `NAKInterval = max((RTT + 4 * RTTVar) / 2, 20 ms)` (`specs/rules/srt-arq.md`

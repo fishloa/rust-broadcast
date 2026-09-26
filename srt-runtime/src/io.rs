@@ -54,13 +54,14 @@ use tokio::net::UdpSocket;
 use tokio::sync::mpsc;
 use tokio::time::Instant;
 
-use crate::arq::seq::{seq_diff, seq_in_closed_range};
+use crate::arq::seq::{seq_diff, seq_in_closed_range, seq_next};
 use crate::arq::{Receiver as ArqReceiver, Sender as ArqSender};
 use crate::caller::{CallerHandshake, CallerHandshakeState};
 use crate::error::{Error, Result};
 use crate::handshake_sm::{self, HandshakeConfig, HandshakeOutput, RejectionReason, derive_cookie};
 use crate::listener::{ListenerHandshake, ListenerHandshakeState};
 use crate::livecc::{LiveCC, MaxBwConfig};
+use crate::packet::data::next_message_number;
 use crate::packet::misc::KeepAlivePacket;
 use crate::packet::{
     ControlPacket, DataPacket, DropReqPacket, EncryptionField, EncryptionKeyField,
@@ -74,6 +75,20 @@ use crate::tsbpd::{TickOutcome, TsbpdScheduler};
 
 /// Maximum UDP datagram size.
 const MAX_DATAGRAM: usize = 1500;
+
+/// Shared per-socket demultiplexing table (issue #1029): maps a peer address
+/// to the channel that feeds *that* connection's [`Driver`]. A
+/// [`SrtListener`]'s single bound socket is used by every connection it has
+/// accepted, so — unlike a [`SrtSocket::connect`]'s own dedicated,
+/// unshared socket — the listener needs exactly one task reading the socket
+/// and routing each datagram by source address, never one `recv_from` call
+/// per connection racing another's on the same socket (see the module doc
+/// on [`SrtListener`]).
+type RouteTable = Arc<
+    std::sync::Mutex<
+        std::collections::HashMap<std::net::SocketAddr, mpsc::UnboundedSender<Vec<u8>>>,
+    >,
+>;
 /// Interval on which the driver task ticks the timer-based engine work (ACK,
 /// NAK, retransmit, TSBPD release). Small enough that loss recovery is prompt
 /// on a low-latency link, large enough not to busy-spin.
@@ -272,9 +287,19 @@ impl SrtSocket {
                                 let epoch = Instant::now();
                                 let tsbpd_delay_ms = u64::from(config.latency_ms);
                                 let tsbpd_time_base = 0u64;
+                                // This socket is exclusively this connection's
+                                // own (bound fresh in `connect_from`, never
+                                // shared) — no demux table needed, just a
+                                // forwarder task unifying it with the same
+                                // `Driver::rx` path a listener-accepted
+                                // connection uses (issue #1029).
+                                let rx =
+                                    spawn_dedicated_socket_forwarder(Arc::clone(&socket), peer);
                                 let conn = SrtSocket::spawn(
                                     socket,
                                     peer,
+                                    rx,
+                                    None,
                                     config.initial_seq_number,
                                     peer_isn,
                                     params.peer_socket_id,
@@ -336,6 +361,8 @@ impl SrtSocket {
     fn spawn(
         udp: Arc<UdpSocket>,
         peer_addr: std::net::SocketAddr,
+        rx: mpsc::UnboundedReceiver<Vec<u8>>,
+        route_cleanup: Option<(RouteTable, std::net::SocketAddr)>,
         our_initial_seq: u32,
         peer_initial_seq: u32,
         peer_socket_id: u32,
@@ -351,6 +378,8 @@ impl SrtSocket {
             udp,
             peer_addr,
             peer_socket_id,
+            rx,
+            route_cleanup,
             // `dest_socket_id` on every outgoing DATA/ACKACK/NAK/ACK packet
             // must be the peer's negotiated SRT Socket ID, not its ISN — the
             // two are unrelated values (§3).
@@ -371,6 +400,7 @@ impl SrtSocket {
             staged: std::collections::BTreeMap::new(),
             max_flow_window,
             outbound: VecDeque::new(),
+            next_data_send_at: None,
             deliver,
             peer_shutdown: false,
         };
@@ -433,6 +463,22 @@ struct Driver {
     peer_addr: std::net::SocketAddr,
     peer_socket_id: u32,
 
+    // Inbound datagrams for *this* connection only (issue #1029). Fed by
+    // exactly one upstream demultiplexer: a per-connection forwarder task
+    // reading a dedicated socket ([`SrtSocket::connect_from`]), or the
+    // [`SrtListener`]'s single shared-socket routing pump. Never
+    // `udp.recv_from` directly — that would race every other task reading
+    // the same socket for whichever datagram arrives next, handing some of
+    // this connection's own traffic to a different connection (or the
+    // listener's own accept loop) at random.
+    rx: mpsc::UnboundedReceiver<Vec<u8>>,
+    // For a listener-accepted connection: the shared route table and this
+    // connection's key to remove from it when the driver exits normally, so
+    // a later reconnect from the same peer address gets a fresh route
+    // instead of being silently swallowed by a stale entry. `None` for a
+    // `SrtSocket::connect`ed connection (no shared table to clean up).
+    route_cleanup: Option<(RouteTable, std::net::SocketAddr)>,
+
     // ARQ
     sender: ArqSender,
     receiver: ArqReceiver,
@@ -459,6 +505,22 @@ struct Driver {
     // Outbound datagram queue (data paced, control not).
     outbound: VecDeque<OutboundPacket>,
 
+    // Token-bucket pacing schedule (issue #1061): the earliest time the next
+    // DATA packet may go out. `None` means no DATA packet is currently
+    // pacing-blocked (the queue is empty of DATA, or was last drained with
+    // room to spare). Advanced by `LiveCC::on_ack_received()`'s period each
+    // time a DATA packet is actually sent, *from whichever is later of the
+    // previous schedule slot or now* — so a burst that arrives after this
+    // connection was otherwise idle (RX/tick-bound) sends immediately
+    // instead of being penalized for the gap, while a sustained flood is
+    // still throttled to the configured rate. This replaces a real
+    // `tokio::time::sleep` per DATA packet in `flush_outbound`, which — even
+    // at a sub-millisecond computed period — actually blocked for
+    // tokio's real timer resolution (>= ~1 ms), capping throughput at
+    // roughly 1000 pkt/s regardless of the configured MAX_BW, and blocked
+    // the same `run()` iteration's RX processing while it slept.
+    next_data_send_at: Option<Instant>,
+
     // Delivered payloads flowing back to the application handle.
     deliver: mpsc::UnboundedSender<Vec<u8>>,
 
@@ -470,10 +532,6 @@ impl Driver {
     /// tick — the tick arm is what keeps retransmit/ACK/NAK progressing when
     /// neither peer is actively sending application data.
     async fn run(mut self, mut app_out: mpsc::UnboundedReceiver<Vec<u8>>) {
-        // Clone the `Arc` so the RX future borrows a *local*, leaving the
-        // other select arms free to borrow `self` mutably.
-        let udp = Arc::clone(&self.udp);
-        let mut buf = [0u8; MAX_DATAGRAM];
         let mut ticker = tokio::time::interval(Duration::from_millis(TICK_INTERVAL_MS));
         ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         let mut app_open = true;
@@ -487,6 +545,12 @@ impl Driver {
         let mut shutting_down = false;
 
         loop {
+            // How long until the DATA packet currently at the front of the
+            // outbound queue (if any) is allowed to go out. `None` disables
+            // this `select!` arm entirely — pacing never blocks RX/app/tick
+            // when nothing is pacing-throttled (issue #1061).
+            let pacing_wait = self.next_paced_send_wait();
+
             tokio::select! {
                 // Application handed us a payload to send.
                 maybe = app_out.recv(), if app_open => {
@@ -501,21 +565,28 @@ impl Driver {
                         }
                     }
                 }
-                // A datagram arrived from the network.
-                r = udp.recv_from(&mut buf) => {
-                    match r {
-                        Ok((len, src)) if src == self.peer_addr => {
-                            // A malformed/foreign datagram is ignored, not fatal.
-                            let _ = self.ingress(&buf[..len]);
+                // A datagram for this connection, already demultiplexed by
+                // the upstream forwarder/router (issue #1029) — never a
+                // shared `udp.recv_from` racing another task for the same
+                // socket.
+                maybe = self.rx.recv() => {
+                    match maybe {
+                        Some(bytes) => {
+                            // A malformed datagram is ignored, not fatal.
+                            let _ = self.ingress(&bytes);
                         }
-                        Ok(_) => {} // datagram from another peer; ignore.
-                        Err(_) => break, // socket error — end the task.
+                        None => break, // upstream demux/forwarder is gone.
                     }
                 }
                 // Periodic timers: retransmit, ACK, NAK, TSBPD release.
                 _ = ticker.tick() => {
                     self.tick_engines();
                 }
+                // The pacing schedule caught up to the front of the queue —
+                // wake up to flush it. A plain `select!` arm, not a serial
+                // `.await` after the fact, so RX/app/tick keep being
+                // serviced for the whole wait rather than only after it.
+                _ = tokio::time::sleep(pacing_wait.unwrap_or(Duration::ZERO)), if pacing_wait.is_some() => {}
             }
 
             if self.flush_outbound().await.is_err() {
@@ -524,6 +595,14 @@ impl Driver {
             if self.peer_shutdown || shutting_down {
                 break;
             }
+        }
+        // Remove this connection's entry from the listener's shared route
+        // table (if any) so a later reconnect from the same peer address
+        // gets a fresh route rather than being silently swallowed by a
+        // stale one (issue #1029). No-op for a `SrtSocket::connect`ed
+        // connection (`route_cleanup` is `None` — its socket is unshared).
+        if let Some((routes, addr)) = &self.route_cleanup {
+            routes.lock().unwrap().remove(addr);
         }
         // Dropping `self.deliver` here closes the channel, so the handle's
         // `recv` returns `None` (clean shutdown / task ended).
@@ -535,8 +614,18 @@ impl Driver {
         let bytes = self
             .sender
             .on_data(self.next_send_seq, self.next_message_number, payload, now);
-        self.next_send_seq = self.next_send_seq.wrapping_add(1);
-        self.next_message_number = self.next_message_number.wrapping_add(1);
+        // Wrap at the wire field's own bit width (31 bits for the sequence
+        // number, 26 for the message number — `draft-sharabayko-srt-01`
+        // §3.1), not at `u32::MAX`: a plain `wrapping_add(1)` let both
+        // counters walk past their field width (~20 h of continuous sending
+        // for the sequence number, or immediately with a high initial value;
+        // ~67 million messages for the message number), after which every
+        // subsequent `DataPacket::serialize_into` returned
+        // `Error::FieldTooWide` and panicked the `.expect("buffer sized from
+        // serialized_len")` call sites in `arq::sender` that assumed only a
+        // too-small buffer could fail (issue #1062).
+        self.next_send_seq = seq_next(self.next_send_seq);
+        self.next_message_number = next_message_number(self.next_message_number);
         self.outbound.push_back(OutboundPacket::data(bytes));
     }
 
@@ -696,22 +785,70 @@ impl Driver {
         Instant::now().duration_since(self.epoch)
     }
 
+    /// The Keep-Alive/ACKACK/etc. control-packet wire `Timestamp` — wraps
+    /// modulo `2^32` past ~71.58 minutes, matching `arq::duration_to_wire_us`
+    /// (issue #1063; a clamp here made every control packet after that point
+    /// carry the exact same wire timestamp forever).
     fn elapsed_us(&self) -> u32 {
-        self.elapsed().as_micros().min(u128::from(u32::MAX)) as u32
+        crate::arq::duration_to_wire_us(self.elapsed())
     }
 
+    /// How long until the DATA packet at the front of the outbound queue
+    /// (if any) is next allowed to go out — `None` if there is nothing
+    /// pacing-blocked right now (queue empty, front is a control packet, or
+    /// a DATA packet's slot has already arrived). Drives the `run()` loop's
+    /// pacing `select!` arm (issue #1061): by construction, `flush_outbound`
+    /// always drains everything currently due before returning, so a `Some`
+    /// here is always a genuine future deadline, never one already past.
+    fn next_paced_send_wait(&self) -> Option<Duration> {
+        if !matches!(self.outbound.front(), Some(item) if item.is_data) {
+            return None;
+        }
+        let deadline = self.next_data_send_at?;
+        Some(deadline.saturating_duration_since(Instant::now()))
+    }
+
+    /// Send every outbound item that is due right now, in order, without
+    /// blocking on the pacing delay itself (issue #1061).
+    ///
+    /// `specs/rules/srt-livecc.md` §5.1.2: `PKT_SND_PERIOD` paces DATA
+    /// packets only — control feedback (ACK/NAK/ACKACK/Keep-Alive) must go
+    /// out immediately, or loss recovery (which rides on that same control
+    /// traffic) would be throttled right along with the data it is meant to
+    /// unblock.
+    ///
+    /// DATA packets are scheduled against `next_data_send_at`, a token-bucket
+    /// style deadline rather than a per-packet `tokio::time::sleep`: a real
+    /// sleep, even for a sub-millisecond computed period, actually blocks for
+    /// tokio's real timer resolution (documented as coarse — at least
+    /// roughly a millisecond on this host) — capping throughput at roughly
+    /// 1000 pkt/s regardless of the configured `MAX_BW`, and (since the old
+    /// code awaited it serially inside this function, called from every
+    /// `run()` iteration) stalling RX/app-send processing for that same
+    /// window. The schedule advances from whichever is later of the
+    /// previous deadline or now, so a connection that was genuinely idle
+    /// (or RX/tick-bound, not pacing-bound) for a while does not have to
+    /// "pay back" that gap — it sends immediately and only then resumes
+    /// pacing at the configured rate — while a sustained flood is still
+    /// throttled to it.
     async fn flush_outbound(&mut self) -> Result<()> {
-        while let Some(item) = self.outbound.pop_front() {
-            // `specs/rules/srt-livecc.md` §5.1.2: `PKT_SND_PERIOD` paces DATA
-            // packets only — control feedback (ACK/NAK/ACKACK/Keep-Alive)
-            // must go out immediately, or loss recovery (which rides on
-            // that same control traffic) would be throttled right along
-            // with the data it is meant to unblock.
+        while let Some(item) = self.outbound.front() {
             if item.is_data {
-                let period = self.livecc.on_ack_received();
-                if period > Duration::ZERO {
-                    tokio::time::sleep(period).await;
+                let now = Instant::now();
+                if let Some(deadline) = self.next_data_send_at
+                    && now < deadline
+                {
+                    // Not yet due — leave it (and everything behind it, to
+                    // preserve send order) queued for a later pass.
+                    break;
                 }
+            }
+            let item = self.outbound.pop_front().expect("front() just matched");
+            if item.is_data {
+                let now = Instant::now();
+                let period = self.livecc.on_ack_received();
+                let base = self.next_data_send_at.filter(|&t| t > now).unwrap_or(now);
+                self.next_data_send_at = Some(base + period);
             }
             self.udp
                 .send_to(&item.bytes, self.peer_addr)
@@ -722,11 +859,58 @@ impl Driver {
     }
 }
 
+/// Spawn the forwarder task for a connection with its own **dedicated,
+/// unshared** socket (a [`SrtSocket::connect`]ed caller): reads that socket
+/// directly (no demux table needed — nothing else ever reads it) and
+/// forwards only datagrams from `peer`, matching the filtering
+/// `Driver::run`'s old direct-`recv_from` arm used to do inline (issue
+/// #1029; see the module doc on [`SrtListener`] for the shared-socket case,
+/// which needs actual demultiplexing, not just this filter).
+fn spawn_dedicated_socket_forwarder(
+    udp: Arc<UdpSocket>,
+    peer: std::net::SocketAddr,
+) -> mpsc::UnboundedReceiver<Vec<u8>> {
+    let (tx, rx) = mpsc::unbounded_channel();
+    tokio::spawn(async move {
+        let mut buf = [0u8; MAX_DATAGRAM];
+        loop {
+            match udp.recv_from(&mut buf).await {
+                Ok((len, src)) if src == peer => {
+                    if tx.send(buf[..len].to_vec()).is_err() {
+                        break; // Driver is gone.
+                    }
+                }
+                Ok(_) => {} // datagram from another peer; ignore.
+                Err(_) => break,
+            }
+        }
+    });
+    rx
+}
+
 // ===========================================================================
 // SrtListener
 // ===========================================================================
 
 /// An SRT listener that accepts incoming Caller connections.
+///
+/// # One socket, many connections (issue #1029)
+///
+/// Every connection this listener accepts shares its single bound socket —
+/// unlike [`SrtSocket::connect`], which binds a fresh, unshared socket per
+/// connection. `recv_from` on a shared socket delivers each datagram to
+/// whichever waiting caller happens to be polled next, *not* whichever
+/// caller the datagram is actually addressed to: if both this listener's own
+/// `accept` loop and one or more accepted connections' driver tasks each
+/// called `recv_from` on the same socket, a datagram belonging to one
+/// connection could be handed to a completely different one (which would
+/// then just discard it as foreign), silently losing it for its rightful
+/// recipient. So exactly one task ever calls `recv_from` on `udp`: the
+/// routing pump spawned once in [`SrtListener::bind`]. It demultiplexes by
+/// source address into `routes` (one entry per accepted connection, feeding
+/// that connection's `Driver::rx`) — anything not yet in `routes` goes to
+/// `unrouted_rx`, which is `accept`'s own input (candidate new connections'
+/// handshake traffic).
 #[derive(Debug)]
 pub struct SrtListener {
     udp: Arc<UdpSocket>,
@@ -739,6 +923,13 @@ pub struct SrtListener {
     cookie_secret: u64,
     pending: std::collections::HashMap<std::net::SocketAddr, PendingListener>,
     outbound_queue: std::collections::HashMap<std::net::SocketAddr, VecDeque<Vec<u8>>>,
+    /// Shared demux table the routing pump task consults for every inbound
+    /// datagram; `drain_completed` registers a new entry for each freshly
+    /// accepted connection.
+    routes: RouteTable,
+    /// Datagrams the routing pump could not match to any entry in `routes`
+    /// — candidate new-connection (handshake) traffic, `accept`'s own input.
+    unrouted_rx: mpsc::UnboundedReceiver<(std::net::SocketAddr, Vec<u8>)>,
 }
 
 #[derive(Debug)]
@@ -769,13 +960,18 @@ impl SrtListener {
         config: HandshakeConfig,
     ) -> Result<Self> {
         refuse_crypto(&config)?;
-        let socket = UdpSocket::bind(addr).await.map_err(|e| io_err("bind", e))?;
+        let socket = Arc::new(UdpSocket::bind(addr).await.map_err(|e| io_err("bind", e))?);
+        let routes: RouteTable = Arc::new(std::sync::Mutex::new(std::collections::HashMap::new()));
+        let (unrouted_tx, unrouted_rx) = mpsc::unbounded_channel();
+        spawn_listener_routing_pump(Arc::clone(&socket), Arc::clone(&routes), unrouted_tx);
         Ok(SrtListener {
-            udp: Arc::new(socket),
+            udp: socket,
             config,
             cookie_secret: random_u64(),
             pending: std::collections::HashMap::new(),
             outbound_queue: std::collections::HashMap::new(),
+            routes,
+            unrouted_rx,
         })
     }
 
@@ -800,10 +996,6 @@ impl SrtListener {
 
     /// Accept the next incoming SRT connection.
     pub async fn accept(&mut self) -> Result<SrtSocket> {
-        // Clone the `Arc` so the RX future borrows a *local*, leaving both
-        // select arms free to borrow `self` mutably in their handlers.
-        let udp = Arc::clone(&self.udp);
-        let mut buf = [0u8; MAX_DATAGRAM];
         // Pending-handshake expiry runs on its own timer, independent of
         // receive activity: with the previous `timeout(100ms, recv_from)`
         // pattern, `tick_pending` only ran while the socket sat idle, so a
@@ -817,13 +1009,22 @@ impl SrtListener {
             }
 
             tokio::select! {
-                r = udp.recv_from(&mut buf) => {
+                // Candidate new-connection traffic the routing pump could
+                // not match to an already-accepted connection (issue #1029)
+                // — never a direct `udp.recv_from` racing every accepted
+                // connection's own driver task for the same socket.
+                r = self.unrouted_rx.recv() => {
                     match r {
-                        Ok((len, src)) => {
-                            let _ = self.handle_datagram(src, &buf[..len]);
+                        Some((src, bytes)) => {
+                            let _ = self.handle_datagram(src, &bytes);
                             self.flush_for_peer(src).await?;
                         }
-                        Err(e) => return Err(io_err("recv_from", e)),
+                        None => {
+                            return Err(Error::Io {
+                                kind: std::io::ErrorKind::BrokenPipe,
+                                context: "listener routing pump ended",
+                            });
+                        }
                     }
                 }
                 _ = ticker.tick() => {
@@ -1030,10 +1231,19 @@ impl SrtListener {
         let tsbpd_time_base = 0;
         let epoch = Instant::now();
 
+        // Register this connection's own route in the shared demux table
+        // (issue #1029) *before* handing off to its driver task — the
+        // routing pump must never see a datagram from `addr` land in
+        // `unrouted_rx` again once this connection exists.
+        let (tx, rx) = mpsc::unbounded_channel();
+        self.routes.lock().unwrap().insert(addr, tx);
+
         // Share the listener's Arc<UdpSocket> with the connection's driver.
         let conn = SrtSocket::spawn(
             Arc::clone(&self.udp),
             addr,
+            rx,
+            Some((Arc::clone(&self.routes), addr)),
             our_initial_seq,
             peer_initial_seq,
             peer_socket_id,
@@ -1064,6 +1274,47 @@ impl SrtListener {
         }
         Ok(())
     }
+}
+
+/// Spawn the single task that ever calls `recv_from` on a [`SrtListener`]'s
+/// shared socket, demultiplexing every datagram by source address (issue
+/// #1029): a `routes` hit forwards to that connection's `Driver::rx`, a miss
+/// forwards to `unrouted_tx` (the listener's own `accept` input). This is
+/// what makes it safe for the listener's `accept` loop and every accepted
+/// connection's driver task to run concurrently without racing each other
+/// for the same socket's `recv_from`.
+fn spawn_listener_routing_pump(
+    udp: Arc<UdpSocket>,
+    routes: RouteTable,
+    unrouted_tx: mpsc::UnboundedSender<(std::net::SocketAddr, Vec<u8>)>,
+) {
+    tokio::spawn(async move {
+        let mut buf = [0u8; MAX_DATAGRAM];
+        loop {
+            let (len, src) = match udp.recv_from(&mut buf).await {
+                Ok(v) => v,
+                Err(_) => break, // socket error — end the pump.
+            };
+            let route = routes.lock().unwrap().get(&src).cloned();
+            match route {
+                Some(tx) => {
+                    // The connection's driver may have already exited (and
+                    // will remove its own entry on the way out, see
+                    // `Driver::run`) — a `send` racing that removal just
+                    // finds no receiver; drop the datagram, nothing to do.
+                    let _ = tx.send(buf[..len].to_vec());
+                }
+                None => {
+                    // The listener itself may be gone (dropped without a
+                    // final `accept`); nothing more this pump can do then
+                    // either.
+                    if unrouted_tx.send((src, buf[..len].to_vec())).is_err() {
+                        break;
+                    }
+                }
+            }
+        }
+    });
 }
 
 // ===========================================================================
@@ -1357,10 +1608,17 @@ mod adapter_tests {
     async fn test_driver(max_flow_window: u32) -> (Driver, mpsc::UnboundedReceiver<Vec<u8>>) {
         let udp = Arc::new(UdpSocket::bind("127.0.0.1:0").await.unwrap());
         let (deliver, rx) = mpsc::unbounded_channel();
+        // These tests drive `ingress`/`tick_engines` directly, never
+        // `Driver::run`'s select loop, so the inbound-datagram channel is
+        // never actually read from — an unused sender/no route cleanup is
+        // fine here.
+        let (_datagram_tx, datagram_rx) = mpsc::unbounded_channel();
         let driver = Driver {
             udp,
             peer_addr: peer_addr(),
             peer_socket_id: 1,
+            rx: datagram_rx,
+            route_cleanup: None,
             sender: ArqSender::new(1),
             receiver: ArqReceiver::new(1, 0),
             tsbpd: TsbpdScheduler::new(0, 0, LATENCY_MS, DEFAULT_DRIFT_US, true, None),
@@ -1370,6 +1628,7 @@ mod adapter_tests {
             epoch: Instant::now(),
             staged: std::collections::BTreeMap::new(),
             outbound: VecDeque::new(),
+            next_data_send_at: None,
             deliver,
             peer_shutdown: false,
             max_flow_window,
@@ -1528,6 +1787,53 @@ mod adapter_tests {
             delivered.iter().all(|p| p != b"ciphertext"),
             "ciphertext must never be delivered to the application"
         );
+    }
+
+    // -----------------------------------------------------------------------
+    // Issue #1062 — sequence/message-number wrap must not panic
+    // -----------------------------------------------------------------------
+
+    /// Pre-fix, `send_one` incremented both counters with a plain
+    /// `u32::wrapping_add(1)` (wraps at `u32::MAX`, not the wire field's own
+    /// bit width). Starting both counters two steps below their real 31-bit
+    /// (sequence) / 26-bit (message number) boundaries and sending four
+    /// packets crosses both wraps; pre-fix this panicked inside
+    /// `DataPacket::serialize_into`'s `.expect("buffer sized from
+    /// serialized_len")` call sites in `arq::sender` with `FieldTooWide`
+    /// (verified via a copied pre-fix `io.rs`, `git show HEAD:srt-runtime/src/io.rs`,
+    /// never `git stash` — shared worktree — swapped back immediately after:
+    /// `panicked ... buffer sized from serialized_len: FieldTooWide { what:
+    /// "Packet Sequence Number", value: 2147483648, bits: 31 }`).
+    #[tokio::test]
+    async fn send_one_wraps_seq_and_message_number_without_panicking() {
+        let (mut driver, _rx) = test_driver(8192).await;
+        driver.next_send_seq = SEQ_NUMBER_MASK - 1;
+        driver.next_message_number = crate::packet::data::MESSAGE_NUMBER_MASK - 1;
+
+        // Four sends: seq goes MASK-1, MASK, 0, 1 (wrapping at 2^31); message
+        // number the same shape one bit width narrower (2^26). Each call
+        // re-derives the wire bytes through the exact `serialize_into` path
+        // the panic was in — reaching here without panicking is the test.
+        for _ in 0..4 {
+            driver.send_one(b"payload");
+        }
+
+        assert_eq!(
+            driver.next_send_seq, 2,
+            "sequence number must wrap at 2^31, not 2^32"
+        );
+        assert_eq!(
+            driver.next_message_number, 2,
+            "message number must wrap at 2^26, not 2^32"
+        );
+
+        // Every enqueued DATA packet must itself carry a legal (in-range)
+        // seq/message number — not just the counter that produced it.
+        for item in &driver.outbound {
+            let dp = DataPacket::parse(&item.bytes).expect("parse enqueued data packet");
+            assert!(dp.seq_number <= SEQ_NUMBER_MASK);
+            assert!(dp.message_number <= crate::packet::data::MESSAGE_NUMBER_MASK);
+        }
     }
 
     // -----------------------------------------------------------------------

@@ -139,6 +139,11 @@ pub struct TsbpdScheduler {
     /// inclusive `(first, last)` pairs. `release_ready` jumps the cursor past
     /// them on arrival; pruned once passed.
     pending_skips: Vec<(u32, u32)>,
+    /// The current reference point for unwrapping the 32-bit wire timestamp
+    /// into an always-increasing microsecond value (issue #1063): the most
+    /// recently *advanced-to* raw timestamp and the absolute value it was
+    /// unwrapped to. `None` until the first packet.
+    ts_unwrap_reference: Option<(u32, u64)>,
 }
 
 impl TsbpdScheduler {
@@ -185,6 +190,7 @@ impl TsbpdScheduler {
             buffer: BTreeMap::new(),
             highest_fed: None,
             pending_skips: Vec::new(),
+            ts_unwrap_reference: None,
         }
     }
 
@@ -200,8 +206,46 @@ impl TsbpdScheduler {
     /// - `PKT_TIMESTAMP` is in µs (§3.1).
     /// - `TsbpdDelay` is in ms (rule 10), converted to µs by ×1000.
     /// - `Drift` is in µs (rule 9).
-    fn pkt_tsbpd_time(&self, pkt_timestamp: u32) -> u64 {
-        self.tsbpd_time_base + u64::from(pkt_timestamp) + self.tsbpd_delay_ms * 1000 + self.drift_us
+    fn pkt_tsbpd_time(&self, unwrapped_pkt_timestamp_us: u64) -> u64 {
+        self.tsbpd_time_base
+            + unwrapped_pkt_timestamp_us
+            + self.tsbpd_delay_ms * 1000
+            + self.drift_us
+    }
+
+    /// Extend a packet's raw 32-bit wire timestamp into an always-increasing
+    /// microsecond value, correctly spanning a real wraparound past `2^32`
+    /// microseconds (~71.58 minutes, `specs/rules/srt-tsbpd.md` rule 15) —
+    /// without this, `pkt_tsbpd_time` fed the raw value straight through, so
+    /// every packet after a wrap computed a `PktTsbpdTime` far in the past
+    /// (the field dropped back near 0) and got Too-Late-Packet-Dropped
+    /// forever (issue #1063).
+    ///
+    /// Mirrors `arq::seq::seq_diff` (signed circular distance) one bit wider:
+    /// the shortest signed delta from the current reference's raw value to
+    /// `raw`, added to the reference's absolute value. Correct as long as
+    /// consecutive *reference advances* stay within +/-2^31 us (~35.79 min)
+    /// of each other — true for any stream whose packets keep arriving more
+    /// often than that. The reference only ever advances forward (to the
+    /// highest absolute value produced so far); an out-of-order/retransmitted
+    /// packet earlier than the current reference is still unwrapped
+    /// correctly against it, it just doesn't move the reference.
+    fn unwrap_timestamp(&mut self, raw: u32) -> u64 {
+        let Some((ref_raw, ref_abs)) = self.ts_unwrap_reference else {
+            self.ts_unwrap_reference = Some((raw, u64::from(raw)));
+            return u64::from(raw);
+        };
+        let mut delta = i64::from(raw) - i64::from(ref_raw);
+        if delta < -(1i64 << 31) {
+            delta += 1i64 << 32;
+        } else if delta >= (1i64 << 31) {
+            delta -= 1i64 << 32;
+        }
+        let abs = (i64::try_from(ref_abs).unwrap_or(i64::MAX) + delta).max(0) as u64;
+        if abs > ref_abs {
+            self.ts_unwrap_reference = Some((raw, abs));
+        }
+        abs
     }
 
     /// Feed a received data packet's sequence number and timestamp.
@@ -219,7 +263,8 @@ impl TsbpdScheduler {
     ///   used to decide whether `PktTsbpdTime ≤ now`).
     pub fn feed_data(&mut self, seq_number: u32, pkt_timestamp: u32, now: Duration) -> TickOutcome {
         let now_us = now.as_micros() as u64;
-        let pkt_tsbpd_time = self.pkt_tsbpd_time(pkt_timestamp);
+        let unwrapped_ts = self.unwrap_timestamp(pkt_timestamp);
+        let pkt_tsbpd_time = self.pkt_tsbpd_time(unwrapped_ts);
 
         // Track highest fed (monotonic, for detecting when delivery advances
         // with no gap).
@@ -482,7 +527,7 @@ mod tests {
         // PktTsbpdTime = TsbpdTimeBase + PKT_TIMESTAMP + TsbpdDelay_us + Drift
         let ts = 5000u32;
         let expected = TIME_BASE + u64::from(ts) + DELAY_MS * 1000;
-        assert_eq!(s.pkt_tsbpd_time(ts), expected);
+        assert_eq!(s.pkt_tsbpd_time(u64::from(ts)), expected);
     }
 
     #[test]
@@ -611,14 +656,19 @@ mod tests {
 
     #[test]
     fn timestamp_wrap_smoke() {
-        // Test that the scheduler handles the 32-bit timestamp wrapping
-        // naturally via u64 arithmetic — timestamps near the 32-bit max
-        // and small timestamps after the wrap produce correctly-ordered
-        // play times.
+        // Issue #1063: a real wraparound of the 32-bit wire timestamp
+        // (`past_wrap` arriving after `near_wrap`, having actually wrapped
+        // past `2^32` microseconds) must unwrap to an ever-*increasing*
+        // absolute time — not the raw numeric value, which drops back near
+        // 0 and would make `past_wrap`'s `PktTsbpdTime` look far in the
+        // *past* relative to `near_wrap`'s (the pre-fix bug: every packet
+        // after a real wrap computed a play time the receiver's clock had
+        // already passed, so Too-Late-Packet-Drop discarded it forever).
         let mut s = TsbpdScheduler::new(0, TIME_BASE, DELAY_MS, 0, false, None);
         // A timestamp near the 32-bit max value.
         let near_wrap: u32 = 0xFFFF_FF00u32;
-        // A timestamp that wrapped past 0.
+        // The same clock, 756 us later, having wrapped past 0
+        // (`0x1_0000_0000 - 0xFFFF_FF00 + 500 = 256 + 500 = 756`).
         let past_wrap: u32 = 500;
 
         let outcome = s.feed_data(0, near_wrap, Duration::ZERO);
@@ -628,16 +678,63 @@ mod tests {
         assert!(outcome.delivered.is_empty());
         assert_eq!(s.buffered_count(), 2);
 
-        // In u64 arithmetic, both timestamps are extended to u64, so
-        // near_wrap (0xFFFF_FF00 = 4_294_967_040) is a much larger number
-        // than past_wrap (500).
+        // Correctly unwrapped: pkt1 (the later, post-wrap packet) must have
+        // a LARGER PktTsbpdTime than pkt0 — the opposite of naively
+        // widening the raw u32 to u64, which pre-fix made pkt0
+        // (4_294_967_040 + ...) look larger than pkt1 (500 + ...).
         let pkt0_tsbpd = TIME_BASE + u64::from(near_wrap) + DELAY_MS * 1000;
-        let pkt1_tsbpd = TIME_BASE + u64::from(past_wrap) + DELAY_MS * 1000;
-        assert!(pkt0_tsbpd > pkt1_tsbpd);
+        let pkt1_tsbpd = pkt0_tsbpd + 756;
+        assert!(pkt1_tsbpd > pkt0_tsbpd);
 
         // Tick past both play times — both should be delivered in order.
-        let outcome = s.tick(Duration::from_micros(pkt0_tsbpd));
+        let outcome = s.tick(Duration::from_micros(pkt1_tsbpd));
         assert_eq!(outcome.delivered, vec![0, 1]);
+    }
+
+    #[test]
+    fn unwrap_timestamp_stays_monotonic_across_many_wraps() {
+        // A longer-lived connection wraps the 32-bit timestamp every
+        // ~71.58 min. Simulate one by walking the raw wire value forward in
+        // realistic, sub-half-range steps (1 real second each, `wrapping_add`
+        // so it genuinely rolls over at `u32::MAX` the way the wire field
+        // does) through more than two full wraps, and confirm the unwrapped
+        // absolute value strictly increases by exactly one step every time
+        // — never resetting or going backward at either wrap boundary.
+        let mut s = TsbpdScheduler::new(0, TIME_BASE, DELAY_MS, 0, false, None);
+        const STEP: u32 = 1_000_000; // 1 second in microseconds
+        let iterations = (u64::from(u32::MAX) / u64::from(STEP)) * 2 + 10; // > 2 wraps
+
+        let mut raw: u32 = 0;
+        let mut expected_abs = u64::from(raw);
+        let mut prev_abs = s.unwrap_timestamp(raw);
+        assert_eq!(prev_abs, expected_abs);
+
+        for _ in 0..iterations {
+            raw = raw.wrapping_add(STEP);
+            expected_abs += u64::from(STEP);
+            let abs = s.unwrap_timestamp(raw);
+            assert_eq!(abs, expected_abs, "raw={raw:#x}");
+            assert!(abs > prev_abs, "prev={prev_abs} abs={abs}");
+            prev_abs = abs;
+        }
+    }
+
+    #[test]
+    fn unwrap_timestamp_handles_reordered_packet_without_moving_reference() {
+        // An out-of-order/retransmitted packet earlier than the current
+        // reference must still unwrap correctly against it, and must not
+        // itself move the reference backward.
+        let mut s = TsbpdScheduler::new(0, TIME_BASE, DELAY_MS, 0, false, None);
+        let a = s.unwrap_timestamp(10_000);
+        let b = s.unwrap_timestamp(20_000); // reference advances to here
+        let reordered = s.unwrap_timestamp(15_000); // arrives late, between a and b
+        assert_eq!(a, 10_000);
+        assert_eq!(b, 20_000);
+        assert_eq!(reordered, 15_000);
+        // Reference must still be at `b` (20_000), not `reordered`: the next
+        // packet close to `b` unwraps relative to `b`, not `reordered`.
+        let next = s.unwrap_timestamp(20_500);
+        assert_eq!(next, 20_500);
     }
 
     #[test]
@@ -647,7 +744,7 @@ mod tests {
         let ts = 0u32;
         // The computed PktTsbpdTime should use 120 ms, not 10 ms.
         let expected = TIME_BASE + u64::from(ts) + TSBPD_DELAY_MIN_MS * 1000;
-        assert_eq!(s.pkt_tsbpd_time(ts), expected);
+        assert_eq!(s.pkt_tsbpd_time(u64::from(ts)), expected);
     }
 
     #[test]

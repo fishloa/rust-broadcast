@@ -214,8 +214,12 @@ fn drop_chain_after_gap_fill() {
 }
 
 // ---------------------------------------------------------------------------
-// 6. Timestamp wrap near MAX_TIMESTAMP: the scheduler uses u64 arithmetic,
-//    so wrapped timestamps produce correctly-ordered play times.
+// 6. Timestamp wrap near MAX_TIMESTAMP (issue #1063): a real wraparound must
+//    unwrap to an ever-*increasing* absolute value, so the packet that
+//    arrived after the wrap gets the *later* play time — the opposite of
+//    naively widening the raw u32 to u64 (which drops the post-wrap value
+//    back near 0 and made every such packet look far too late, so
+//    Too-Late-Packet-Drop discarded it forever).
 // ---------------------------------------------------------------------------
 #[test]
 fn timestamp_wrap_handling() {
@@ -223,7 +227,8 @@ fn timestamp_wrap_handling() {
 
     // Packet just before the 32-bit wrap.
     let near_wrap: u32 = 0xFFFF_FF00u32;
-    // Packet just after the wrap.
+    // The same clock, 756 us later, having wrapped past 0
+    // (`0x1_0000_0000 - 0xFFFF_FF00 + 500 = 256 + 500 = 756`).
     let after_wrap: u32 = 500;
 
     feed(&mut sched, 0, near_wrap, 0);
@@ -232,23 +237,58 @@ fn timestamp_wrap_handling() {
     // Both are buffered.
     assert_eq!(sched.buffered_count(), 2);
 
-    // PktTsbpdTime in u64 — the 32-bit timestamps are extended losslessly.
-    // The pre-wrap timestamp (0xFFFF_FF00 ≈ 4.3B) is naturally larger than
-    // the post-wrap one (500) in u64, so pkt0 has a later play time.
+    // Correctly unwrapped: pkt1 (the later, post-wrap packet) has the LATER
+    // play time, not the earlier one a naive u32->u64 widening would give it.
     let tsbpd0 = TIME_BASE_US + near_wrap as u64 + DELAY_US;
-    let tsbpd1 = TIME_BASE_US + after_wrap as u64 + DELAY_US;
-    assert!(
-        tsbpd0 > tsbpd1,
-        "pre-wrap packet has later play time in u64"
-    );
+    let tsbpd1 = tsbpd0 + 756;
+    assert!(tsbpd1 > tsbpd0, "post-wrap packet has the later play time");
 
-    // Release both by ticking at pkt0's play time.
-    let out = tick_to(&mut sched, tsbpd0);
+    // Release both by ticking at pkt1's (the later) play time.
+    let out = tick_to(&mut sched, tsbpd1);
     assert_eq!(
         out.delivered,
         vec![0, 1],
         "wrapped timestamps must deliver in sequence order"
     );
+}
+
+// ---------------------------------------------------------------------------
+// 6b. Timestamp wrap WITH Too-Late-Packet-Drop enabled (issue #1063): this is
+//     the actual real-world symptom — "libsrt drops everything after ~71.6
+//     min" — which a plain u32->u64 widening produces because a genuinely
+//     on-time packet just after the wrap computes a `PktTsbpdTime` far in
+//     the *past* relative to how far the receiver's own clock has actually
+//     advanced by then, so `feed_data`'s "already too late on arrival" check
+//     (rule 17-18) fires for every packet after the wrap, forever.
+// ---------------------------------------------------------------------------
+#[test]
+fn timestamp_wrap_with_drop_enabled_does_not_drop_on_time_packets() {
+    let mut sched = TsbpdScheduler::new(ISN, 0, DELAY_MS, 0, true, None);
+
+    let near_wrap: u32 = 0xFFFF_FF00u32; // ~71.58 min in
+    let after_wrap: u32 = 500; // 756 us later, wrapped past 0
+
+    let pkt0_tsbpd = u64::from(near_wrap) + DELAY_US;
+    // Feed pkt0 slightly before its own play time (a normal, on-time
+    // arrival) — must not be dropped.
+    let now0 = pkt0_tsbpd - 50_000;
+    let out0 = feed(&mut sched, 0, near_wrap, now0);
+    assert!(
+        out0.dropped.is_empty(),
+        "pkt0 (pre-wrap) must not be dropped"
+    );
+
+    // pkt1 arrives 756 us of *real* time later (matching how far its own
+    // wrapped timestamp actually advanced) — also a normal, on-time arrival.
+    let now1 = now0 + 756;
+    let out1 = feed(&mut sched, 1, after_wrap, now1);
+    assert!(
+        out1.dropped.is_empty(),
+        "pkt1 (just after the wrap, arriving on time) must not be dropped — \
+         this is the pre-fix symptom: every packet after a real 32-bit \
+         timestamp wrap looked impossibly far too late and was dropped forever"
+    );
+    assert_eq!(sched.buffered_count(), 2);
 }
 
 // ---------------------------------------------------------------------------
