@@ -114,8 +114,17 @@ impl<'a> Parse<'a> for SingleOperationMessage<'a> {
         let message_number = bytes[10];
         let dpi_pid_index = u16::from_be_bytes([bytes[11], bytes[12]]);
 
+        // messageSize must be at least HEADER_LEN (ANSI/SCTE 104 2023 §8.2.2).
+        if (message_size as usize) < HEADER_LEN {
+            return Err(Error::BufferTooShort {
+                need: HEADER_LEN,
+                have: message_size as usize,
+                what: "messageSize too small",
+            });
+        }
+
         let body_start = HEADER_LEN;
-        let body_len = (message_size as usize).saturating_sub(HEADER_LEN);
+        let body_len = (message_size as usize) - HEADER_LEN;
         if bytes.len() < body_start + body_len {
             return Err(Error::BufferTooShort {
                 need: body_start + body_len,
@@ -143,7 +152,7 @@ impl<'a> Parse<'a> for SingleOperationMessage<'a> {
 impl Serialize for SingleOperationMessage<'_> {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        self.message_size as usize
+        HEADER_LEN + self.data.body_len()
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();
@@ -153,8 +162,12 @@ impl Serialize for SingleOperationMessage<'_> {
                 have: buf.len(),
             });
         }
+        let message_size = u16::try_from(need).map_err(|_| Error::InvalidValue {
+            field: "messageSize",
+            reason: "message exceeds the 16-bit messageSize field",
+        })?;
         buf[0..2].copy_from_slice(&self.op_id.to_be_bytes());
-        buf[2..4].copy_from_slice(&self.message_size.to_be_bytes());
+        buf[2..4].copy_from_slice(&message_size.to_be_bytes());
         buf[4..6].copy_from_slice(&self.result.to_be_bytes());
         buf[6..8].copy_from_slice(&self.result_extension.to_be_bytes());
         buf[8] = self.protocol_version;
@@ -170,6 +183,7 @@ impl Serialize for SingleOperationMessage<'_> {
 mod tests {
     use super::*;
     use crate::operations::GeneralResponse;
+    use alloc::vec;
 
     #[test]
     fn round_trip_general_response() {
@@ -187,6 +201,44 @@ mod tests {
         let back = SingleOperationMessage::parse(&bytes).unwrap();
         assert_eq!(msg, back);
         assert!(matches!(back.data, AnySingleOperation::GeneralResponse(_)));
+    }
+
+    #[test]
+    fn rejects_undersized_message() {
+        // Exact 13-byte message from the finding: messageSize=5 < HEADER_LEN(13)
+        let bad_msg = [
+            0x00u8, 0x00, 0x00, 0x05, 0xFF, 0xFF, 0xFF, 0xFF, 0x00, 0x01, 0x07, 0x00, 0x00,
+        ];
+        let result = SingleOperationMessage::parse(&bad_msg);
+        assert!(
+            result.is_err(),
+            "parse should reject messageSize < HEADER_LEN"
+        );
+    }
+
+    #[test]
+    fn serialized_len_never_panics() {
+        // Create a valid message and serialize it.
+        let msg = SingleOperationMessage::new_request(
+            0x0001,
+            0,
+            1,
+            7,
+            0,
+            AnySingleOperation::InitRequest(crate::operations::InitRequest),
+        );
+        let bytes = msg.to_bytes();
+
+        // Verify the message round-trips.
+        let back = SingleOperationMessage::parse(&bytes).unwrap();
+
+        // Re-serialize should never panic, even if message_size was corrupted.
+        let mut buf = vec![0u8; 1000];
+        let len = back
+            .serialize_into(&mut buf)
+            .expect("serialize should not panic");
+        assert_eq!(len, bytes.len());
+        assert_eq!(&buf[..len], bytes.as_slice());
     }
 
     #[test]
