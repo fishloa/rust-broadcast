@@ -406,3 +406,98 @@ fn decodes_tsduck_compiled_dts_descriptors() {
         "DTS-Neural descriptor not decoded from TSDuck PMT"
     );
 }
+
+/// W4 spec-misread regressions (issues #1004, #1005, #1006, #1053): a PMT
+/// compiled by TSDuck's `tstabcomp` carrying content_labelling_descriptor
+/// (33-bit time-base values, both with and without the bit-32 carry set),
+/// m4mux_timing_descriptor (8-byte body per Table 2-82), metadata_STD_descriptor
+/// (22-bit fields with reserved bits set to 1), and a J2K_video_descriptor with
+/// `extended_capability_flag` set (exercising the still_mode/interlaced-before-
+/// colour-params field order of Table 2-101). Expected values are read
+/// directly off the raw compiled bytes (see the fixture's `.xml`), not derived
+/// from our own serializer.
+#[test]
+fn decodes_tsduck_compiled_w4_spec_misread_descriptors() {
+    use dvb_si::descriptors::content_time_base_indicator::ContentTimeBaseIndicator;
+
+    let data = fixture("tsduck-w4-spec-misread-pmt.bin");
+    let pmt = PmtSection::parse(&data).expect("TSDuck PMT section must parse");
+
+    let mut seen_content_labeling_stc = false;
+    let mut seen_content_labeling_npt = false;
+    let mut seen_flex_mux_timing = false;
+    let mut seen_metadata_std = false;
+    let mut seen_j2k_extended = false;
+
+    for stream in &pmt.streams {
+        for desc in stream.es_info.iter() {
+            match desc.expect("descriptor must parse") {
+                AnyDescriptor::ContentLabeling(d) => {
+                    match d.content_time_base_indicator {
+                        ContentTimeBaseIndicator::Stc => {
+                            seen_content_labeling_stc = true;
+                            let tb = d.time_base.expect("time_base present for indicator 1");
+                            // Raw bytes: FE 00 00 00 01 | FE 00 00 00 02 — reserved(7)='1111111',
+                            // value bit0=0, so value = 1 / 2, not the pre-fix
+                            // (byte0<<25|...) misread that would yield huge numbers.
+                            assert_eq!(tb.content_time_base_value, 1);
+                            assert_eq!(tb.metadata_time_base_value, 2);
+                        }
+                        ContentTimeBaseIndicator::Npt => {
+                            seen_content_labeling_npt = true;
+                            let tb = d.time_base.expect("time_base present for indicator 2");
+                            // Raw bytes: FF 00 00 00 01 | FF FF FF FF FF — bit-32 carry set
+                            // (byte0 low bit = 1), so value = 2^32 + 1 / 2^33 - 1.
+                            assert_eq!(tb.content_time_base_value, 4_294_967_297);
+                            assert_eq!(tb.metadata_time_base_value, 8_589_934_591);
+                            assert_eq!(d.content_id, Some(42));
+                        }
+                        _ => {}
+                    }
+                }
+                AnyDescriptor::FlexMuxTiming(d) => {
+                    seen_flex_mux_timing = true;
+                    assert_eq!(d.fcr_es_id, 0x0001);
+                    assert_eq!(d.fcr_resolution, 305_419_896);
+                    assert_eq!(d.fcr_length, 5);
+                    assert_eq!(d.fmx_rate_length, 30);
+                }
+                AnyDescriptor::MetadataStd(d) => {
+                    seen_metadata_std = true;
+                    // Raw bytes: C0 00 01 | C0 00 02 | C0 00 03 — reserved bits '11'
+                    // ahead of each 22-bit value; pre-fix code folded them in and
+                    // decoded 12,582,913 instead of 1.
+                    assert_eq!(d.metadata_input_leak_rate, 1);
+                    assert_eq!(d.metadata_buffer_size, 2);
+                    assert_eq!(d.metadata_output_leak_rate, 3);
+                }
+                AnyDescriptor::J2kVideo(d) if d.extended_capability_flag => {
+                    seen_j2k_extended = true;
+                    assert!(d.still_mode, "still_mode misread from wrong byte position");
+                    assert!(!d.interlaced_video);
+                    let ext = d.extended_capability.expect("extended_capability present");
+                    assert_eq!(ext.colour_primaries, 1);
+                    assert_eq!(ext.transfer_characteristics, 2);
+                    assert_eq!(ext.matrix_coefficients, 3);
+                    assert!(ext.video_full_range_flag);
+                }
+                _ => {}
+            }
+        }
+    }
+
+    assert!(
+        seen_content_labeling_stc,
+        "content_labelling_descriptor (STC) not decoded"
+    );
+    assert!(
+        seen_content_labeling_npt,
+        "content_labelling_descriptor (NPT) not decoded"
+    );
+    assert!(seen_flex_mux_timing, "m4mux_timing_descriptor not decoded");
+    assert!(seen_metadata_std, "metadata_STD_descriptor not decoded");
+    assert!(
+        seen_j2k_extended,
+        "extended-capability J2K_video_descriptor not decoded"
+    );
+}

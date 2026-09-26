@@ -61,23 +61,24 @@ pub struct ContentLabelingDescriptor<'a> {
     pub private_data: &'a [u8],
 }
 
+// Table 2-83: `reserved(7) | value(33)` per group — the reserved bits are the
+// TOP 7 bits of the first byte, and the 33-bit value's MSB is bit 0 of that
+// same byte, followed by 4 full bytes (32 more bits).
 fn read_33bit(bytes: &[u8], pos: usize) -> u64 {
-    // 33 bits = 4 bytes + 1 bit, laid out across 5 bytes: byte[0..3] full,
-    // byte[4] top bit is the MSB, bottom 7 bits reserved.
-    ((bytes[pos] as u64) << 25)
-        | ((bytes[pos + 1] as u64) << 17)
-        | ((bytes[pos + 2] as u64) << 9)
-        | ((bytes[pos + 3] as u64) << 1)
-        | ((bytes[pos + 4] >> 7) as u64)
+    ((u64::from(bytes[pos]) & 0x01) << 32)
+        | u64::from(u32::from_be_bytes([
+            bytes[pos + 1],
+            bytes[pos + 2],
+            bytes[pos + 3],
+            bytes[pos + 4],
+        ]))
 }
 
 fn write_33bit(buf: &mut [u8], pos: usize, value: u64) {
     let v = value & 0x1_FFFF_FFFF;
-    buf[pos] = ((v >> 25) & 0xFF) as u8;
-    buf[pos + 1] = ((v >> 17) & 0xFF) as u8;
-    buf[pos + 2] = ((v >> 9) & 0xFF) as u8;
-    buf[pos + 3] = ((v >> 1) & 0xFF) as u8;
-    buf[pos + 4] = ((v & 0x01) as u8) << 7;
+    // Reserved 7 bits written as 1s (crate convention for `reserved` bslbf).
+    buf[pos] = 0xFE | ((v >> 32) as u8 & 0x01);
+    buf[pos + 1..pos + 5].copy_from_slice(&(v as u32).to_be_bytes());
 }
 
 impl<'a> Parse<'a> for ContentLabelingDescriptor<'a> {

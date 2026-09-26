@@ -65,6 +65,42 @@
   (`dvb-si/tests/serializer_length_truncation.rs`) that fails CI if the
   literal unchecked pattern (`<expr>.len() as u8/u16/u32`) reappears
   anywhere under `src/descriptors/` outside a `#[cfg(test)]` module.
+- `content_labeling_descriptor`'s 33-bit `content_time_base_value` /
+  `metadata_time_base_value` were read/written from the wrong bit position
+  (Table 2-83 is `reserved(7) | value(33)`; a conformant `FE 00 00 00 01`
+  decoded as `8522825728` instead of `1`) (#1004).
+  Verified against a `tstabcomp`-compiled PMT fixture
+  (`fixtures/dvb-si/tsduck-w4-spec-misread-pmt.{xml,bin}`).
+- `J2K_video_descriptor`'s extended-capability body had `still_mode`/
+  `interlaced_video` positioned after the colour parameters and stripe/
+  block/mdm sub-blocks instead of directly after the stripe/block/mdm flags
+  byte (Table 2-101), misreading every field that follows for any real
+  descriptor with `extended_capability_flag = 1` (#1005). Same TSDuck
+  fixture as above.
+- `Metadata_STD_descriptor`'s 22-bit `metadata_input_leak_rate` /
+  `metadata_buffer_size` / `metadata_output_leak_rate` fields folded their 2
+  leading reserved bits into the value (a conformant `C0 00 01` decoded as
+  `12,582,913` instead of `1`) (#1006). Same TSDuck fixture as above.
+- `FlexMuxTiming_descriptor`'s body length was 10 instead of the spec's 8
+  (Table 2-82: `FCR_ES_ID`(16) + `FCRResolution`(32) + `FCRLength`(8) +
+  `FmxRateLength`(8) = 64 bits), rejecting every conformant descriptor and,
+  on serialize, writing `descriptor_length = 10` while only filling 8 body
+  bytes, leaking 2 stale caller bytes into the wire output (#1053). Same
+  TSDuck fixture as above.
+- `collect::SectionSetCollector` and `collect::EitCollector` counted
+  **completed** entries against their partial-key cap forever, so once the
+  map filled with completed sets a new distinct key silently got `Ok(None)`
+  — indistinguishable from "still collecting" — with no signal that
+  capacity, not incompleteness, was the reason (#1002). A new key at
+  capacity now evicts the least-recently-touched existing key instead
+  (`evicted_for_capacity()` / `sections_evicted_for_capacity()` /
+  `schedules_evicted_for_capacity()` expose the eviction counts).
+  `epg::EpgStore`'s default/`with_max_services` now derive the underlying
+  collector's logical-key cap from `max_services` (`* 17`, one
+  present/following key plus up to 16 schedule table_ids per service) so
+  the two caps no longer silently contradict each other (the collector's
+  independent 256-key default used to exhaust long before `max_services`
+  (1024) did).
 
 ## [10.1.0] - 2026-09-26
 

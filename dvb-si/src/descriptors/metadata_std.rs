@@ -24,15 +24,18 @@ pub struct MetadataStdDescriptor {
     pub metadata_output_leak_rate: u32,
 }
 
-/// Extract a 22-bit uimsbf from a 3-byte slice (top 2 bits reserved/zero).
+/// Extract a 22-bit uimsbf from a 3-byte slice; Table 2-91 puts 2 reserved
+/// bits ahead of each 22-bit field (top 2 bits of the first byte), which
+/// must be masked off, not folded into the value.
 fn read_u22(bytes: &[u8]) -> u32 {
-    ((bytes[0] as u32) << 16) | ((bytes[1] as u32) << 8) | (bytes[2] as u32)
+    (((bytes[0] & 0x3F) as u32) << 16) | ((bytes[1] as u32) << 8) | (bytes[2] as u32)
 }
 
-/// Write a 22-bit value into a 3-byte slice (top 2 bits zero).
+/// Write a 22-bit value into a 3-byte slice; the 2 reserved bits ahead of it
+/// are written as 1s (crate convention for `reserved` bslbf).
 fn write_u22(val: u32, buf: &mut [u8]) {
     let masked = val & 0x003F_FFFF;
-    buf[0] = ((masked >> 16) & 0x3F) as u8;
+    buf[0] = 0xC0 | ((masked >> 16) & 0x3F) as u8;
     buf[1] = ((masked >> 8) & 0xFF) as u8;
     buf[2] = (masked & 0xFF) as u8;
 }
@@ -146,8 +149,9 @@ mod tests {
     }
 
     #[test]
-    fn serialize_round_trip_zero_upper_bits() {
-        // Ensure top 2 bits of each 3-byte group are zero on serialization
+    fn serialize_round_trip_masks_input_and_sets_reserved_bits() {
+        // An over-range value must be masked to 22 bits, and the 2 reserved
+        // bits ahead of it (Table 2-91) must be written as 1s, not folded in.
         let d = MetadataStdDescriptor {
             metadata_input_leak_rate: 0xFFFF_FFFF, // test mask
             metadata_buffer_size: 0xFFFF_FFFF,
@@ -155,10 +159,37 @@ mod tests {
         };
         let mut buf = vec![0u8; d.serialized_len()];
         d.serialize_into(&mut buf).unwrap();
+        assert_eq!(
+            buf[HEADER_LEN] & 0xC0,
+            0xC0,
+            "reserved bits before leak_rate"
+        );
+        assert_eq!(
+            buf[HEADER_LEN + 3] & 0xC0,
+            0xC0,
+            "reserved bits before buffer_size"
+        );
+        assert_eq!(
+            buf[HEADER_LEN + 6] & 0xC0,
+            0xC0,
+            "reserved bits before output_leak_rate"
+        );
         let reparsed = MetadataStdDescriptor::parse(&buf).unwrap();
         assert_eq!(reparsed.metadata_input_leak_rate, 0x003F_FFFF);
         assert_eq!(reparsed.metadata_buffer_size, 0x003F_FFFF);
         assert_eq!(reparsed.metadata_output_leak_rate, 0x003F_FFFF);
+    }
+
+    /// Regression for issue #1006: a conformant descriptor with reserved
+    /// bits set to 1 (`0xC0 00 01 ...`) must decode leak_rate to 1, not
+    /// 12,582,913 (the old code folded the reserved bits into the value).
+    #[test]
+    fn parse_masks_reserved_bits_ahead_of_value() {
+        let bytes = [TAG, 9, 0xC0, 0x00, 0x01, 0xC0, 0x00, 0x02, 0xC0, 0x00, 0x03];
+        let d = MetadataStdDescriptor::parse(&bytes).unwrap();
+        assert_eq!(d.metadata_input_leak_rate, 1);
+        assert_eq!(d.metadata_buffer_size, 2);
+        assert_eq!(d.metadata_output_leak_rate, 3);
     }
 
     #[test]

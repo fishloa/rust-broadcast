@@ -587,6 +587,28 @@ mod tests {
         round_trip(&d);
     }
 
+    /// Regression for issue #1054: `write_selector` used to `.expect()` on a
+    /// body serializer's `Err`, so an `ExtensionDescriptor` wrapping a body
+    /// that legitimately rejects an over-range value (16 protection
+    /// `component_tag`s vs. the 4-bit `component_count` field) panicked
+    /// instead of returning `Err`. `write_selector` now propagates via `?`.
+    #[test]
+    fn serialize_propagates_body_overflow_instead_of_panicking() {
+        let tags = [0u8; 16];
+        let d = ExtensionDescriptor {
+            tag_extension: 0x18,
+            body: ExtensionBody::ProtectionMessage(ProtectionMessage {
+                reserved: 0x0F,
+                component_tags: &tags,
+            }),
+        };
+        let mut buf = [0u8; 32];
+        assert!(matches!(
+            d.serialize_into(&mut buf),
+            Err(Error::FieldOverflow(_))
+        ));
+    }
+
     #[test]
     fn serialize_rejects_too_small_buffer() {
         let d = ExtensionDescriptor {

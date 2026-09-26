@@ -91,3 +91,23 @@ real, permissively-licensed subtitle file.
 | `teletext/teletext_subtitle_synthetic.txt` | **Synthetic.** No DVB VBI-teletext-bearing capture was found anywhere in this workspace's `fixtures/` tree, and ETSI EN 300 706 has no worked byte-level page example in its annexes to lift verbatim (see the file's own header comment for the full search/derivation note and the page-888 subtitle plan). Bytes are constructed with `timed-metadata`'s own verified `encode_hamming_8_4`/`encode_odd_parity` (exhaustive round-trip + bit-error tests). Issue #666. | 2026 | Own work — MIT OR Apache-2.0 |
 | `sub/cap.vtt` | **Synthetic.** A small hand/tool-authored plain WebVTT sample (2 cues, `WEBVTT` signature only, no settings/NOTE/REGION), committed as part of `transmux`'s fMP4 gap-tier fixture prep (commit `9ab617f5`) and reused here for the WebVTT<->SRT round trip. | 2026 | Own work — MIT OR Apache-2.0 |
 | `sub/sintel-en.srt` | **Real.** The official English dialogue subtitles for *Sintel* (Blender Foundation's 2010 "Durian" open movie) — 26 cues, real punctuation/ellipses and a genuine multi-line cue, non-round timestamps. Fetched verbatim (byte-for-byte, no edits) from Wikimedia Commons' `TimedText:Sintel_movie_4K.webm.en.srt` page (`https://commons.wikimedia.org/w/index.php?title=TimedText:Sintel_movie_4K.webm.en.srt&action=raw`), the official English-subtitle companion track of `File:Sintel_movie_4K.webm` (`https://commons.wikimedia.org/wiki/File:Sintel_movie_4K.webm`, `oldid=1212979998`). That media file's licence, per its Commons `imageinfo` `extmetadata` (`LicenseShortName: CC BY 3.0`, `LicenseUrl: https://creativecommons.org/licenses/by/3.0`) and its own licence-template rendering ("This file is licensed under the Creative Commons Attribution 3.0 Unported license. Attribution: © copyright Blender Foundation \| www.sintel.org"), is **CC BY 3.0** — permissive, attribution-only, no share-alike/copyleft term. Commons' `TimedText:` namespace subtitle pages are treated as part of the associated CC-licensed media file (a straightforward timing/transcription of that film's own released dialogue, not a separately-copyrighted work); this specific transcription's only Commons revision was created 2015-10-10 by user `Wardsegers`. Attribution: © Blender Foundation, `www.sintel.org` / `durian.blender.org`. Issue #931 (`caption-convert` real-fixture gap). | 2010 (film) / 2015 (Commons transcription) / 2026 (fetched) | CC BY 3.0 (© Blender Foundation) |
+
+## W4 spec-misread descriptor fixture (`fixtures/dvb-si/`)
+
+Independent-oracle fixture for the W4 spec-misread wave (issue #1131, C1/C2/C3/C4
+in issues #1004/#1053/#1005/#1006): a PMT compiled by TSDuck `tstabcomp` 3.44
+(`tstabcomp -c tsduck-w4-spec-misread-pmt.xml -o tsduck-w4-spec-misread-pmt.bin`,
+synthetic hand-authored XML source, no third-party stream data), carrying a
+`content_labelling_descriptor` (STC and NPT indicators, exercising the 33-bit
+time-base bit layout including the bit-32 carry case), an `m4mux_timing_descriptor`
+(FlexMuxTiming, 8-byte body), a `metadata_STD_descriptor` (22-bit fields with
+reserved bits set), and a `J2K_video_descriptor` with `extended_capability_flag`
+set. Expected field values are read directly off the compiled bytes (verified
+against `tstabcomp -d`'s own decompile), not derived from our own serializer —
+see `dvb-si/tests/tsduck_interop.rs`'s
+`decodes_tsduck_compiled_w4_spec_misread_descriptors`.
+
+| File | Source | Date | Licence |
+|---|---|---|---|
+| `tsduck-w4-spec-misread-pmt.xml` | Hand-authored TSDuck XML source (synthetic field values only). | 2026-09 | Own work — MIT OR Apache-2.0 |
+| `tsduck-w4-spec-misread-pmt.bin` | Compiled from the above with `tstabcomp -c` (TSDuck 3.44-4676). | 2026-09 | Own work — MIT OR Apache-2.0 |
