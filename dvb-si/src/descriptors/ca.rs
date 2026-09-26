@@ -85,8 +85,7 @@ impl Serialize for CaDescriptor<'_> {
                 have: buf.len(),
             });
         }
-        buf[0] = TAG;
-        buf[1] = (len - HEADER_LEN) as u8;
+        crate::descriptors::write_descriptor_header(buf, TAG, len - HEADER_LEN)?;
         buf[2] = (self.ca_system_id >> 8) as u8;
         buf[3] = (self.ca_system_id & 0xFF) as u8;
         // ca_pid with reserved upper 3 bits set to 1

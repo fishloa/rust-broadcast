@@ -98,6 +98,12 @@ pub enum Error {
         /// The byte actually read at position 0.
         found: u8,
     },
+
+    /// A serializer's length or count value did not fit its wire field.
+    /// Returned instead of silently narrowing (`as u8`/`as u16`/masking),
+    /// which would emit a misframed section (see #1129).
+    #[error(transparent)]
+    FieldOverflow(#[from] broadcast_common::len::FieldOverflow),
 }
 
 impl From<mpeg_ts::Error> for Error {

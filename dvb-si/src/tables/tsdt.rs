@@ -104,10 +104,10 @@ impl Serialize for TsdtSection<'_> {
             });
         }
 
-        let section_length: u16 = (len - MIN_HEADER_LEN) as u16;
+        let section_length = len - MIN_HEADER_LEN;
         buf[0] = TABLE_ID;
-        buf[1] = super::SECTION_B1_FLAGS_PSI | ((section_length >> 8) as u8 & 0x0F);
-        buf[2] = (section_length & 0xFF) as u8;
+        buf[1] = super::SECTION_B1_FLAGS_PSI;
+        super::write_section_length(buf, section_length)?;
         buf[3..5].copy_from_slice(&self.table_id_extension.to_be_bytes());
         buf[5] = 0xC0 | ((self.version_number & 0x1F) << 1) | u8::from(self.current_next_indicator);
         buf[6] = self.section_number;
@@ -241,5 +241,42 @@ mod tests {
             TsdtSection::parse(&buf).unwrap_err(),
             Error::SectionLengthOverflow { .. }
         ));
+    }
+
+    /// section_length is 12 bits (max 4095 = EXTENSION_HEADER_LEN(5) +
+    /// descriptors + CRC_LEN(4), so 4086 is the largest loop that fits).
+    #[test]
+    fn serialize_rejects_descriptor_loop_exceeding_section_length() {
+        let raw = vec![0xAAu8; 4087];
+        let tsdt = TsdtSection {
+            table_id_extension: 1,
+            version_number: 0,
+            current_next_indicator: true,
+            section_number: 0,
+            last_section_number: 0,
+            descriptors: DescriptorLoop::from(raw.as_slice()),
+        };
+        let mut buf = vec![0u8; tsdt.serialized_len()];
+        assert!(matches!(
+            tsdt.serialize_into(&mut buf).unwrap_err(),
+            Error::FieldOverflow(_)
+        ));
+    }
+
+    #[test]
+    fn serialize_accepts_descriptor_loop_at_section_length_boundary() {
+        let raw = vec![0xAAu8; 4086];
+        let tsdt = TsdtSection {
+            table_id_extension: 1,
+            version_number: 0,
+            current_next_indicator: true,
+            section_number: 0,
+            last_section_number: 0,
+            descriptors: DescriptorLoop::from(raw.as_slice()),
+        };
+        let mut buf = vec![0u8; tsdt.serialized_len()];
+        tsdt.serialize_into(&mut buf).expect("boundary fits");
+        let reparsed = TsdtSection::parse(&buf).expect("reparse");
+        assert_eq!(tsdt.descriptors.raw(), reparsed.descriptors.raw());
     }
 }

@@ -52,8 +52,7 @@ impl Serialize for NetworkNameDescriptor<'_> {
             });
         }
 
-        buf[0] = TAG;
-        buf[1] = self.network_name.len() as u8;
+        crate::descriptors::write_descriptor_header(buf, TAG, self.network_name.len())?;
         buf[HEADER_LEN..need].copy_from_slice(self.network_name.raw());
 
         Ok(need)
@@ -158,5 +157,38 @@ mod tests {
         let raw: Vec<u8> = vec![TAG, 0x07, b'F', b'R', b'A', b'N', b'C', b'E', b'2'];
         let desc = NetworkNameDescriptor::parse(&raw).unwrap();
         assert_eq!(desc.serialized_len() - 2, { desc.network_name.raw().len() });
+    }
+
+    /// The `descriptor_length` header is an 8-bit field (#1129): a network
+    /// name at exactly the 255-byte boundary still serializes and round-trips.
+    #[test]
+    fn serialize_at_max_descriptor_length_round_trips() {
+        let name = vec![b'X'; 255];
+        let desc = NetworkNameDescriptor {
+            network_name: DvbText::new(&name),
+        };
+        let mut buf = vec![0u8; desc.serialized_len()];
+        let written = desc.serialize_into(&mut buf).unwrap();
+        assert_eq!(written, buf.len());
+        assert_eq!(buf[1], 255);
+        let reparsed = NetworkNameDescriptor::parse(&buf).unwrap();
+        assert_eq!(desc, reparsed);
+    }
+
+    /// A network name one byte over the 8-bit `descriptor_length` field must
+    /// return `Err`, never silently wrap `256 as u8 == 0` into a misframed
+    /// descriptor (the pre-fix behaviour for #1129).
+    #[test]
+    fn serialize_rejects_descriptor_length_overflow() {
+        let name = vec![b'X'; 256];
+        let desc = NetworkNameDescriptor {
+            network_name: DvbText::new(&name),
+        };
+        let mut buf = vec![0u8; desc.serialized_len()];
+        let err = desc.serialize_into(&mut buf).unwrap_err();
+        assert!(
+            matches!(err, Error::FieldOverflow(_)),
+            "expected FieldOverflow, got {err:?}"
+        );
     }
 }

@@ -175,7 +175,7 @@ impl Serialize for Ac4<'_> {
             p += 1;
         }
         if let Some(t) = self.toc {
-            buf[p] = t.len() as u8;
+            buf[p] = broadcast_common::len::fit_u8(t.len(), "ac4_toc_len")?;
             p += 1;
             buf[p..p + t.len()].copy_from_slice(t);
             p += t.len();

@@ -245,8 +245,7 @@ impl Serialize for TransportProtocolDescriptor<'_> {
                 have: buf.len(),
             });
         }
-        buf[0] = TAG;
-        buf[1] = body_len as u8;
+        crate::descriptors::write_descriptor_header(buf, TAG, body_len)?;
         buf[2..4].copy_from_slice(&self.protocol_id.to_be_bytes());
         buf[4] = self.transport_protocol_label;
         buf[5..5 + self.selector_bytes.len()].copy_from_slice(self.selector_bytes);

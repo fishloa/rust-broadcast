@@ -147,24 +147,13 @@ impl Serialize for ContainerSection<'_> {
             });
         }
 
-        let section_length = (len - HEADER_LEN) as u16;
-        if section_length > 0x0FFF {
-            return Err(Error::SectionLengthOverflow {
-                declared: section_length as usize,
-                available: 0x0FFF,
-            });
-        }
-
         // Byte 0: table_id.
         buf[0] = TABLE_ID;
         // Byte 1: section_syntax_indicator(1)=1 | private_indicator(1)
         //         | reserved(2)=11 | private_section_length[11:8](4).
-        buf[1] = 0x80
-            | (u8::from(self.private_indicator) << 6)
-            | 0x30
-            | ((section_length >> 8) as u8 & 0x0F);
+        buf[1] = 0x80 | (u8::from(self.private_indicator) << 6) | 0x30;
         // Byte 2: private_section_length[7:0].
-        buf[2] = (section_length & 0xFF) as u8;
+        super::write_section_length(buf, len - HEADER_LEN)?;
 
         // Extension header.
         buf[3..5].copy_from_slice(&self.container_id.to_be_bytes());
@@ -327,6 +316,46 @@ mod tests {
             ContainerSection::parse(&buf).unwrap_err(),
             Error::SectionLengthOverflow { .. }
         ));
+    }
+
+    /// private_section_length is 12 bits (max 4095 =
+    /// EXTENSION_HEADER_LEN(5) + container_data + CRC_LEN(4), so 4086 is
+    /// the largest container_data that fits).
+    #[test]
+    fn serialize_rejects_container_data_exceeding_section_length() {
+        let data = vec![0xAAu8; 4087];
+        let c = ContainerSection {
+            private_indicator: false,
+            container_id: 1,
+            version_number: 0,
+            current_next_indicator: true,
+            section_number: 0,
+            last_section_number: 0,
+            container_data: &data,
+        };
+        let mut buf = vec![0u8; c.serialized_len()];
+        assert!(matches!(
+            c.serialize_into(&mut buf).unwrap_err(),
+            Error::FieldOverflow(_)
+        ));
+    }
+
+    #[test]
+    fn serialize_accepts_container_data_at_section_length_boundary() {
+        let data = vec![0xAAu8; 4086];
+        let c = ContainerSection {
+            private_indicator: false,
+            container_id: 1,
+            version_number: 0,
+            current_next_indicator: true,
+            section_number: 0,
+            last_section_number: 0,
+            container_data: &data,
+        };
+        let mut buf = vec![0u8; c.serialized_len()];
+        c.serialize_into(&mut buf).expect("boundary fits");
+        let reparsed = ContainerSection::parse(&buf).expect("reparse");
+        assert_eq!(c, reparsed);
     }
 
     #[cfg(feature = "serde")]

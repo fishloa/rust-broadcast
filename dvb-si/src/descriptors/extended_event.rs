@@ -164,8 +164,7 @@ impl Serialize for ExtendedEventDescriptor<'_> {
                 have: buf.len(),
             });
         }
-        buf[0] = TAG;
-        buf[1] = (len - HEADER_LEN) as u8;
+        crate::descriptors::write_descriptor_header(buf, TAG, len - HEADER_LEN)?;
         buf[2] = ((self.descriptor_number & 0x0F) << 4) | (self.last_descriptor_number & 0x0F);
         buf[3..6].copy_from_slice(&self.language_code.0);
 
@@ -174,21 +173,22 @@ impl Serialize for ExtendedEventDescriptor<'_> {
             .iter()
             .map(|i| 1 + i.description.len() + 1 + i.value.len())
             .sum();
-        buf[6] = items_bytes as u8;
+        buf[6] = broadcast_common::len::fit_u8(items_bytes, "length_of_items")?;
 
         let mut pos = 7;
         for item in &self.items {
-            buf[pos] = item.description.len() as u8;
+            buf[pos] =
+                broadcast_common::len::fit_u8(item.description.len(), "item_description_length")?;
             let d_start = pos + 1;
             let d_end = d_start + item.description.len();
             buf[d_start..d_end].copy_from_slice(item.description.raw());
-            buf[d_end] = item.value.len() as u8;
+            buf[d_end] = broadcast_common::len::fit_u8(item.value.len(), "item_length")?;
             let v_start = d_end + 1;
             let v_end = v_start + item.value.len();
             buf[v_start..v_end].copy_from_slice(item.value.raw());
             pos = v_end;
         }
-        buf[pos] = self.text.len() as u8;
+        buf[pos] = broadcast_common::len::fit_u8(self.text.len(), "text_length")?;
         buf[pos + 1..pos + 1 + self.text.len()].copy_from_slice(self.text.raw());
         Ok(len)
     }

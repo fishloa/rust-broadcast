@@ -28,7 +28,10 @@ const CRC_LEN: usize = 4;
 /// Per-service fixed header: service_id(16) + reserved(1)/running_status(3)/
 /// service_descriptors_length(12) = 2 + 2 bytes.
 const SERVICE_HEADER_LEN: usize = 4;
-/// Maximum value of the 12-bit service_descriptors_length field.
+/// Maximum value of the 12-bit service_descriptors_length field. Only used
+/// by the boundary test below; production code routes the guard through
+/// `broadcast_common::len::fit_bits`.
+#[cfg(test)]
 const MAX_SERVICE_DESC_LEN: usize = 0x0FFF;
 const MIN_SECTION_LEN: usize =
     MIN_HEADER_LEN + EXTENSION_HEADER_LEN + DESC_LOOP_LEN_FIELD + CRC_LEN;
@@ -188,16 +191,6 @@ impl Serialize for SitSection<'_> {
     }
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
-        // Reject over-range service descriptor loops up front — never truncate.
-        // service_descriptors_length is a 12-bit field (max 0x0FFF).
-        for svc in &self.services {
-            if svc.descriptors.len() > MAX_SERVICE_DESC_LEN {
-                return Err(Error::SectionLengthOverflow {
-                    declared: svc.descriptors.len(),
-                    available: MAX_SERVICE_DESC_LEN,
-                });
-            }
-        }
         let len = self.serialized_len();
         if buf.len() < len {
             return Err(Error::OutputBufferTooSmall {
@@ -205,19 +198,22 @@ impl Serialize for SitSection<'_> {
                 have: buf.len(),
             });
         }
-        let section_length = (len - MIN_HEADER_LEN) as u16;
         buf[0] = TABLE_ID;
-        buf[1] = super::SECTION_B1_FLAGS_DVB | ((section_length >> 8) as u8 & 0x0F);
-        buf[2] = (section_length & 0xFF) as u8;
+        buf[1] = super::SECTION_B1_FLAGS_DVB;
+        super::write_section_length(buf, len - MIN_HEADER_LEN)?;
         buf[3..5].copy_from_slice(&self.table_id_extension.to_be_bytes());
         buf[5] = 0xC0 | ((self.version_number & 0x1F) << 1) | u8::from(self.current_next_indicator);
         buf[6] = self.section_number;
         buf[7] = self.last_section_number;
 
         let dl_pos = MIN_HEADER_LEN + EXTENSION_HEADER_LEN;
-        let ti_len = self.transmission_info_descriptors.len() as u16;
-        buf[dl_pos] = 0xF0 | ((ti_len >> 8) as u8 & 0x0F);
-        buf[dl_pos + 1] = (ti_len & 0xFF) as u8;
+        let ti_len = broadcast_common::len::fit_bits(
+            self.transmission_info_descriptors.len() as u64,
+            12,
+            "transmission_info_loop_length",
+        )?;
+        buf[dl_pos] = 0xF0 | ((ti_len >> 8) as u8);
+        buf[dl_pos + 1] = ti_len as u8;
         let ti_start = dl_pos + DESC_LOOP_LEN_FIELD;
         let ti_end = ti_start + self.transmission_info_descriptors.len();
         buf[ti_start..ti_end].copy_from_slice(self.transmission_info_descriptors.raw());
@@ -225,10 +221,16 @@ impl Serialize for SitSection<'_> {
         let mut pos = ti_end;
         for svc in &self.services {
             buf[pos..pos + 2].copy_from_slice(&svc.service_id.to_be_bytes());
-            let dll = svc.descriptors.len() as u16;
+            // service_descriptors_length is a 12-bit field (max 0x0FFF, see
+            // MAX_SERVICE_DESC_LEN below).
+            let dll = broadcast_common::len::fit_bits(
+                svc.descriptors.len() as u64,
+                12,
+                "service_descriptors_length",
+            )?;
             // reserved_future_use(1) emitted as 1 (§5.1 convention) | running_status(3) | len_hi(4)
-            buf[pos + 2] = 0x80 | (svc.running_status.to_u8() << 4) | ((dll >> 8) as u8 & 0x0F);
-            buf[pos + 3] = (dll & 0xFF) as u8;
+            buf[pos + 2] = 0x80 | (svc.running_status.to_u8() << 4) | ((dll >> 8) as u8);
+            buf[pos + 3] = dll as u8;
             let desc_start = pos + SERVICE_HEADER_LEN;
             let desc_end = desc_start + svc.descriptors.len();
             buf[desc_start..desc_end].copy_from_slice(svc.descriptors.raw());
@@ -423,7 +425,7 @@ mod tests {
         let mut buf = vec![0u8; sit.serialized_len()];
         assert!(matches!(
             sit.serialize_into(&mut buf).unwrap_err(),
-            Error::SectionLengthOverflow { .. }
+            Error::FieldOverflow(_)
         ));
     }
 
@@ -446,6 +448,46 @@ mod tests {
             SitSection::parse(&buf).unwrap_err(),
             Error::SectionLengthOverflow { .. }
         ));
+    }
+
+    /// section_length is 12 bits (max 4095 = EXTENSION_HEADER_LEN(5) +
+    /// DESC_LOOP_LEN_FIELD(2) + ti_desc + CRC(4), so 4084 is the largest
+    /// transmission_info loop that fits with no services).
+    #[test]
+    fn serialize_rejects_transmission_info_exceeding_section_length() {
+        let desc = vec![0xAAu8; 4085];
+        let sit = SitSection {
+            table_id_extension: 1,
+            version_number: 0,
+            current_next_indicator: true,
+            section_number: 0,
+            last_section_number: 0,
+            transmission_info_descriptors: DescriptorLoop::new(&desc),
+            services: vec![],
+        };
+        let mut buf = vec![0u8; sit.serialized_len()];
+        assert!(matches!(
+            sit.serialize_into(&mut buf).unwrap_err(),
+            Error::FieldOverflow(_)
+        ));
+    }
+
+    #[test]
+    fn serialize_accepts_transmission_info_at_section_length_boundary() {
+        let desc = vec![0xAAu8; 4084];
+        let sit = SitSection {
+            table_id_extension: 1,
+            version_number: 0,
+            current_next_indicator: true,
+            section_number: 0,
+            last_section_number: 0,
+            transmission_info_descriptors: DescriptorLoop::new(&desc),
+            services: vec![],
+        };
+        let mut buf = vec![0u8; sit.serialized_len()];
+        sit.serialize_into(&mut buf).expect("boundary fits");
+        let reparsed = SitSection::parse(&buf).expect("reparse");
+        assert_eq!(sit, reparsed);
     }
 
     #[cfg(feature = "serde")]

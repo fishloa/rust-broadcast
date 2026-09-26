@@ -6,9 +6,6 @@ impl<'a> ExtensionBodyDef<'a> for ProtectionMessage<'a> {
     const NAME: &'static str = "PROTECTION_MESSAGE";
 }
 
-/// Largest `component_count` the 4-bit field can carry.
-const MAX_COMPONENT_COUNT: usize = 0x0F;
-
 /// protection_message body (Table 40, §9.3.3): the list of protected
 /// `component_tag`s. `component_count` is a 4-bit field, so at most 15 tags.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -53,12 +50,6 @@ impl Serialize for ProtectionMessage<'_> {
         1 + self.component_tags.len()
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
-        if self.component_tags.len() > MAX_COMPONENT_COUNT {
-            return Err(Error::ValueOutOfRange {
-                field: "protection_message component_count",
-                reason: "more than 15 component_tags (4-bit field)",
-            });
-        }
         let len = self.serialized_len();
         if buf.len() < len {
             return Err(Error::OutputBufferTooSmall {
@@ -66,7 +57,12 @@ impl Serialize for ProtectionMessage<'_> {
                 have: buf.len(),
             });
         }
-        buf[0] = ((self.reserved & 0x0F) << 4) | (self.component_tags.len() as u8 & 0x0F);
+        let component_count = broadcast_common::len::fit_bits(
+            self.component_tags.len() as u64,
+            4,
+            "component_count",
+        )? as u8;
+        buf[0] = ((self.reserved & 0x0F) << 4) | component_count;
         buf[1..len].copy_from_slice(self.component_tags);
         Ok(len)
     }
@@ -116,7 +112,7 @@ mod tests {
         let mut buf = [0u8; 32];
         assert!(matches!(
             pm.serialize_into(&mut buf),
-            Err(Error::ValueOutOfRange { .. })
+            Err(Error::FieldOverflow(_))
         ));
     }
 }

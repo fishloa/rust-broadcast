@@ -100,35 +100,20 @@ impl Serialize for MultilingualComponentDescriptor<'_> {
     }
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
-        for e in &self.entries {
-            if e.text.len() > u8::MAX as usize {
-                return Err(Error::InvalidDescriptor {
-                    tag: TAG,
-                    reason: "text exceeds 255 bytes (text_length is 8-bit)",
-                });
-            }
-        }
         let len = self.serialized_len();
         let body = len - HEADER_LEN;
-        if body > u8::MAX as usize {
-            return Err(Error::InvalidDescriptor {
-                tag: TAG,
-                reason: "multilingual_component_descriptor body exceeds 255 bytes",
-            });
-        }
         if buf.len() < len {
             return Err(Error::OutputBufferTooSmall {
                 need: len,
                 have: buf.len(),
             });
         }
-        buf[0] = TAG;
-        buf[1] = body as u8;
+        crate::descriptors::write_descriptor_header(buf, TAG, body)?;
         buf[HEADER_LEN] = self.component_tag;
         let mut pos = HEADER_LEN + COMPONENT_TAG_LEN;
         for e in &self.entries {
             buf[pos..pos + LANG_LEN].copy_from_slice(&e.language_code.0);
-            buf[pos + LANG_LEN] = e.text.len() as u8;
+            buf[pos + LANG_LEN] = broadcast_common::len::fit_u8(e.text.len(), "text_length")?;
             let text_start = pos + LANG_LEN + TEXT_LEN_FIELD;
             buf[text_start..text_start + e.text.len()].copy_from_slice(e.text.raw());
             pos = text_start + e.text.len();
@@ -252,7 +237,7 @@ mod tests {
         };
         let mut buf = vec![0u8; d.serialized_len()];
         let err = d.serialize_into(&mut buf).unwrap_err();
-        assert!(matches!(err, Error::InvalidDescriptor { tag: TAG, .. }));
+        assert!(matches!(err, Error::FieldOverflow(_)));
     }
 
     #[cfg(feature = "serde")]

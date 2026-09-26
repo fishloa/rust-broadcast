@@ -294,10 +294,9 @@ impl Serialize for DownloadableFontInfoSection<'_> {
                 have: buf.len(),
             });
         }
-        let section_length = (len - SECTION_LENGTH_PREFIX) as u16;
         buf[0] = TABLE_ID;
-        buf[1] = super::SECTION_B1_FLAGS_DVB | ((section_length >> 8) as u8 & 0x0F);
-        buf[2] = (section_length & 0xFF) as u8;
+        buf[1] = super::SECTION_B1_FLAGS_DVB;
+        super::write_section_length(buf, len - SECTION_LENGTH_PREFIX)?;
         // font_id_extension(9) | font_id(7); spec mandates extension all-zero.
         let id_word = ((self.font_id_extension & 0x01FF) << 7) | (self.font_id as u16 & 0x7F);
         buf[3..5].copy_from_slice(&id_word.to_be_bytes());
@@ -561,5 +560,54 @@ mod tests {
             DownloadableFontInfoSection::parse(&buf).unwrap_err(),
             Error::SectionLengthOverflow { .. }
         ));
+    }
+
+    /// section_length is 12 bits (max 4095 = 9 + loop_bytes, see
+    /// SECTION_LENGTH_PREFIX/HEADER_LEN/CRC_LEN); each StyleWeight entry is
+    /// 2 bytes, so 2043 entries (4086 bytes) is the boundary and 2044
+    /// (4088 bytes) must be rejected.
+    #[test]
+    fn serialize_rejects_font_info_loop_exceeding_section_length() {
+        let section = DownloadableFontInfoSection {
+            font_id_extension: 0,
+            font_id: 1,
+            version_number: 0,
+            current_next_indicator: true,
+            section_number: 0,
+            last_section_number: 0,
+            font_info: (0..2044)
+                .map(|_| FontInfo::StyleWeight {
+                    style: 1,
+                    weight: 1,
+                })
+                .collect(),
+        };
+        let mut buf = vec![0u8; section.serialized_len()];
+        assert!(matches!(
+            section.serialize_into(&mut buf).unwrap_err(),
+            Error::FieldOverflow(_)
+        ));
+    }
+
+    #[test]
+    fn serialize_accepts_font_info_loop_at_section_length_boundary() {
+        let section = DownloadableFontInfoSection {
+            font_id_extension: 0,
+            font_id: 1,
+            version_number: 0,
+            current_next_indicator: true,
+            section_number: 0,
+            last_section_number: 0,
+            font_info: (0..2043)
+                .map(|_| FontInfo::StyleWeight {
+                    style: 1,
+                    weight: 1,
+                })
+                .collect(),
+        };
+        let mut buf = vec![0u8; section.serialized_len()];
+        section.serialize_into(&mut buf).expect("boundary fits");
+        let reparsed = DownloadableFontInfoSection::parse(&buf).expect("reparse");
+        assert_eq!(section, reparsed);
     }
 }

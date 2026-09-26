@@ -332,8 +332,7 @@ impl Serialize for Ac3Descriptor<'_> {
                 have: buf.len(),
             });
         }
-        buf[0] = TAG;
-        buf[1] = (len - HEADER_LEN) as u8;
+        crate::descriptors::write_descriptor_header(buf, TAG, len - HEADER_LEN)?;
         let mut flags: u8 = 0;
         if self.component_type.is_some() {
             flags |= FLAG_COMPONENT_TYPE;

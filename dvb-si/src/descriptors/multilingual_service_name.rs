@@ -135,18 +135,20 @@ impl Serialize for MultilingualServiceNameDescriptor<'_> {
                 have: buf.len(),
             });
         }
-        buf[0] = TAG;
-        buf[1] = body as u8;
+        crate::descriptors::write_descriptor_header(buf, TAG, body)?;
         let mut pos = HEADER_LEN;
         for e in &self.entries {
             buf[pos..pos + LANG_LEN].copy_from_slice(&e.language_code.0);
             pos += LANG_LEN;
-            buf[pos] = e.service_provider_name.len() as u8;
+            buf[pos] = broadcast_common::len::fit_u8(
+                e.service_provider_name.len(),
+                "service_provider_name_length",
+            )?;
             pos += LEN_FIELD;
             buf[pos..pos + e.service_provider_name.len()]
                 .copy_from_slice(e.service_provider_name.raw());
             pos += e.service_provider_name.len();
-            buf[pos] = e.service_name.len() as u8;
+            buf[pos] = broadcast_common::len::fit_u8(e.service_name.len(), "service_name_length")?;
             pos += LEN_FIELD;
             buf[pos..pos + e.service_name.len()].copy_from_slice(e.service_name.raw());
             pos += e.service_name.len();

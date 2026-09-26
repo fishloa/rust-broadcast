@@ -94,8 +94,7 @@ impl Serialize for XaitLocationDescriptor {
                 have: buf.len(),
             });
         }
-        buf[0] = TAG;
-        buf[1] = BODY_LEN as u8;
+        crate::descriptors::write_descriptor_header(buf, TAG, BODY_LEN)?;
         buf[2..4].copy_from_slice(&self.xait_original_network_id.to_be_bytes());
         buf[4..6].copy_from_slice(&self.xait_service_id.to_be_bytes());
         buf[6] = ((self.xait_version_number & VERSION_MAX) << 3)

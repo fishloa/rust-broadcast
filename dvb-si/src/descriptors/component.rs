@@ -82,8 +82,7 @@ impl Serialize for ComponentDescriptor<'_> {
                 have: buf.len(),
             });
         }
-        buf[0] = TAG;
-        buf[1] = (len - HEADER_LEN) as u8;
+        crate::descriptors::write_descriptor_header(buf, TAG, len - HEADER_LEN)?;
         // High nibble = stream_content_ext, low nibble = stream_content (§6.2.8).
         buf[HEADER_LEN] =
             (self.stream_content_ext << 4) | (self.stream_content & STREAM_CONTENT_MASK);

@@ -304,21 +304,9 @@ impl Serialize for SsuIdSelector<'_> {
             .iter()
             .map(|e| SSU_OUI_FIXED_LEN + e.selector.len())
             .sum();
-        if oui_body > u8::MAX as usize {
-            return Err(Error::InvalidDescriptor {
-                tag: TAG,
-                reason: "SSU OUI loop exceeds 255 bytes (OUI_data_length field overflow)",
-            });
-        }
-        buf[0] = oui_body as u8;
+        buf[0] = broadcast_common::len::fit_u8(oui_body, "OUI_data_length")?;
         let mut pos = SSU_OUI_DATA_LENGTH_LEN;
         for e in &self.oui_entries {
-            if e.selector.len() > u8::MAX as usize {
-                return Err(Error::InvalidDescriptor {
-                    tag: TAG,
-                    reason: "SSU OUI entry selector exceeds 255 bytes",
-                });
-            }
             buf[pos..pos + 3].copy_from_slice(&e.oui);
             buf[pos + 3] = e.update_type.to_u8() & SSU_UPDATE_TYPE_MASK; // reserved=0 | update_type
             let uvf_bit: u8 = if e.update_versioning_flag {
@@ -327,7 +315,7 @@ impl Serialize for SsuIdSelector<'_> {
                 0
             };
             buf[pos + 4] = uvf_bit | (e.update_version & SSU_UPDATE_VERSION_MASK);
-            buf[pos + 5] = e.selector.len() as u8;
+            buf[pos + 5] = broadcast_common::len::fit_u8(e.selector.len(), "selector_length")?;
             pos += SSU_OUI_FIXED_LEN;
             buf[pos..pos + e.selector.len()].copy_from_slice(e.selector);
             pos += e.selector.len();
@@ -405,8 +393,7 @@ impl Serialize for DataBroadcastIdDescriptor<'_> {
                 have: buf.len(),
             });
         }
-        buf[0] = TAG;
-        buf[1] = body as u8;
+        crate::descriptors::write_descriptor_header(buf, TAG, body)?;
         buf[HEADER_LEN..HEADER_LEN + ID_LEN].copy_from_slice(&self.data_broadcast_id.to_be_bytes());
         buf[HEADER_LEN + ID_LEN..len].copy_from_slice(self.id_selector);
         Ok(len)

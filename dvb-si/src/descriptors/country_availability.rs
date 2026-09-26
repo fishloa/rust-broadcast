@@ -93,8 +93,7 @@ impl Serialize for CountryAvailabilityDescriptor {
                 reason: "country_availability_descriptor body exceeds 255 bytes",
             });
         }
-        buf[0] = TAG;
-        buf[1] = body_len as u8;
+        crate::descriptors::write_descriptor_header(buf, TAG, body_len)?;
         // reserved_future_use bits emitted as 1s (EN 300 468 §5.1).
         let flag_bit = if self.country_availability_flag {
             AVAILABILITY_FLAG_MASK

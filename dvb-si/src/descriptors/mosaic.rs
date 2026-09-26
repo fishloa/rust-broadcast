@@ -30,9 +30,6 @@ const GRID_HEADER_LEN: usize = 1;
 const CELL_FIXED_LEN: usize = 3; // 2 id/presentation bytes + elementary_cell_field_length
 /// Maximum body length expressible in the 8-bit `descriptor_length` field.
 const MAX_BODY_LEN: usize = u8::MAX as usize;
-/// Maximum elementary_cell_field_length (8-bit field).
-const MAX_ELEM_FIELD: usize = u8::MAX as usize;
-
 const ENTRY_POINT_MASK: u8 = 0x80; // header bit 7
 const ELEM_CELL_ID_MASK: u8 = 0x3F; // low 6 bits
 
@@ -298,8 +295,7 @@ impl Serialize for MosaicDescriptor {
                 reason: "mosaic_descriptor body exceeds 255 bytes",
             });
         }
-        buf[0] = TAG;
-        buf[1] = body_len as u8;
+        crate::descriptors::write_descriptor_header(buf, TAG, body_len)?;
         // grid header: reserved bit (bit 3) emitted as 1 (§5.1).
         buf[2] = if self.mosaic_entry_point {
             ENTRY_POINT_MASK
@@ -310,18 +306,14 @@ impl Serialize for MosaicDescriptor {
             | (self.num_vertical_cells & 0x07);
         let mut pos = HEADER_LEN + GRID_HEADER_LEN;
         for cell in &self.logical_cells {
-            // 8-bit elementary_cell_field_length: error on over-range.
-            if cell.elementary_cell_ids.len() > MAX_ELEM_FIELD {
-                return Err(Error::InvalidDescriptor {
-                    tag: TAG,
-                    reason: "elementary_cell_field exceeds 255 entries (8-bit length field)",
-                });
-            }
             // byte0: logical_cell_id(6) | top 2 reserved bits emitted 1s.
             buf[pos] = ((cell.logical_cell_id & 0x3F) << 2) | 0x03;
             // byte1: 5 reserved bits emitted 1s | presentation_info(3).
             buf[pos + 1] = 0xF8 | (cell.presentation_info & 0x07);
-            buf[pos + 2] = cell.elementary_cell_ids.len() as u8;
+            buf[pos + 2] = broadcast_common::len::fit_u8(
+                cell.elementary_cell_ids.len(),
+                "elementary_cell_field_length",
+            )?;
             pos += CELL_FIXED_LEN;
             for &id in &cell.elementary_cell_ids {
                 // reserved(2) emitted 1s | elementary_cell_id(6).

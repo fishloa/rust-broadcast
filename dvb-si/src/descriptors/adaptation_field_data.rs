@@ -91,8 +91,7 @@ impl Serialize for AdaptationFieldDataDescriptor {
                 have: buf.len(),
             });
         }
-        buf[0] = TAG;
-        buf[1] = BODY_LEN as u8;
+        crate::descriptors::write_descriptor_header(buf, TAG, BODY_LEN)?;
         buf[HEADER_LEN] = self.adaptation_field_data_identifier;
         Ok(len)
     }

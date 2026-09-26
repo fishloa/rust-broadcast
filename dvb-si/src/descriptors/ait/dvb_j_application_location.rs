@@ -112,14 +112,17 @@ impl Serialize for DvbJApplicationLocationDescriptor<'_> {
                 have: buf.len(),
             });
         }
-        buf[0] = TAG;
-        buf[1] = body_len as u8;
+        crate::descriptors::write_descriptor_header(buf, TAG, body_len)?;
         let mut pos = HEADER_LEN;
-        buf[pos] = self.base_directory.len() as u8;
+        buf[pos] =
+            broadcast_common::len::fit_u8(self.base_directory.len(), "base_directory_length")?;
         pos += 1;
         buf[pos..pos + self.base_directory.len()].copy_from_slice(self.base_directory.raw());
         pos += self.base_directory.len();
-        buf[pos] = self.classpath_extension.len() as u8;
+        buf[pos] = broadcast_common::len::fit_u8(
+            self.classpath_extension.len(),
+            "classpath_extension_length",
+        )?;
         pos += 1;
         buf[pos..pos + self.classpath_extension.len()]
             .copy_from_slice(self.classpath_extension.raw());

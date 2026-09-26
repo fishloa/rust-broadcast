@@ -50,8 +50,7 @@ impl Serialize for DefaultAuthorityDescriptor<'_> {
                 have: buf.len(),
             });
         }
-        buf[0] = TAG;
-        buf[1] = self.default_authority.raw().len() as u8;
+        crate::descriptors::write_descriptor_header(buf, TAG, self.default_authority.raw().len())?;
         buf[HEADER_LEN..len].copy_from_slice(self.default_authority.raw());
         Ok(len)
     }

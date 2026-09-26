@@ -85,34 +85,20 @@ impl Serialize for MultilingualBouquetNameDescriptor<'_> {
     }
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
-        for e in &self.entries {
-            if e.bouquet_name.len() > u8::MAX as usize {
-                return Err(Error::InvalidDescriptor {
-                    tag: TAG,
-                    reason: "bouquet_name exceeds 255 bytes (name_length is 8-bit)",
-                });
-            }
-        }
         let len = self.serialized_len();
         let body = len - HEADER_LEN;
-        if body > u8::MAX as usize {
-            return Err(Error::InvalidDescriptor {
-                tag: TAG,
-                reason: "multilingual_bouquet_name_descriptor body exceeds 255 bytes",
-            });
-        }
         if buf.len() < len {
             return Err(Error::OutputBufferTooSmall {
                 need: len,
                 have: buf.len(),
             });
         }
-        buf[0] = TAG;
-        buf[1] = body as u8;
+        crate::descriptors::write_descriptor_header(buf, TAG, body)?;
         let mut pos = HEADER_LEN;
         for e in &self.entries {
             buf[pos..pos + LANG_LEN].copy_from_slice(&e.language_code.0);
-            buf[pos + LANG_LEN] = e.bouquet_name.len() as u8;
+            buf[pos + LANG_LEN] =
+                broadcast_common::len::fit_u8(e.bouquet_name.len(), "bouquet_name_length")?;
             let name_start = pos + LANG_LEN + NAME_LEN_FIELD;
             buf[name_start..name_start + e.bouquet_name.len()]
                 .copy_from_slice(e.bouquet_name.raw());
@@ -227,7 +213,7 @@ mod tests {
         };
         let mut buf = vec![0u8; d.serialized_len()];
         let err = d.serialize_into(&mut buf).unwrap_err();
-        assert!(matches!(err, Error::InvalidDescriptor { tag: TAG, .. }));
+        assert!(matches!(err, Error::FieldOverflow(_)));
     }
 
     #[cfg(feature = "serde")]

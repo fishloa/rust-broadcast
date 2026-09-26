@@ -210,15 +210,14 @@ impl Serialize for ContentIdentifierDescriptor<'_> {
                 have: buf.len(),
             });
         }
-        buf[0] = TAG;
-        buf[1] = (len - HEADER_LEN) as u8;
+        crate::descriptors::write_descriptor_header(buf, TAG, len - HEADER_LEN)?;
         let mut pos = HEADER_LEN;
         for entry in &self.entries {
             let header = (entry.crid_type.to_u8() << 2) & CRID_TYPE_MASK;
             match &entry.location {
                 CridLocation::Inline(data) => {
                     buf[pos] = header;
-                    buf[pos + 1] = data.len() as u8;
+                    buf[pos + 1] = broadcast_common::len::fit_u8(data.len(), "crid_length")?;
                     buf[pos + 2..pos + 2 + data.len()].copy_from_slice(data);
                     pos += 2 + data.len();
                 }

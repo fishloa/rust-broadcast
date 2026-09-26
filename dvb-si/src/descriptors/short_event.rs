@@ -84,14 +84,13 @@ impl Serialize for ShortEventDescriptor<'_> {
                 have: buf.len(),
             });
         }
-        buf[0] = TAG;
-        buf[1] = (len - HEADER_LEN) as u8;
+        crate::descriptors::write_descriptor_header(buf, TAG, len - HEADER_LEN)?;
         buf[2..5].copy_from_slice(&self.language_code.0);
-        buf[5] = self.event_name.len() as u8;
+        buf[5] = broadcast_common::len::fit_u8(self.event_name.len(), "event_name_length")?;
         let n_start = 6;
         let n_end = n_start + self.event_name.len();
         buf[n_start..n_end].copy_from_slice(self.event_name.raw());
-        buf[n_end] = self.text.len() as u8;
+        buf[n_end] = broadcast_common::len::fit_u8(self.text.len(), "text_length")?;
         let t_start = n_end + 1;
         buf[t_start..t_start + self.text.len()].copy_from_slice(self.text.raw());
         Ok(len)

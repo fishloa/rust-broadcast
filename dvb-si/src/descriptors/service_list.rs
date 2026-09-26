@@ -76,8 +76,7 @@ impl Serialize for ServiceListDescriptor {
                 have: buf.len(),
             });
         }
-        buf[0] = TAG;
-        buf[1] = (len - HEADER_LEN) as u8;
+        crate::descriptors::write_descriptor_header(buf, TAG, len - HEADER_LEN)?;
         let mut offset = HEADER_LEN;
         for entry in &self.entries {
             buf[offset..offset + 2].copy_from_slice(&entry.service_id.to_be_bytes());

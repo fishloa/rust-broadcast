@@ -216,23 +216,12 @@ impl Serialize for MpeIfecSection<'_> {
             });
         }
 
-        let section_length = (len - HEADER_LEN) as u16;
-        if section_length > 0x0FFF {
-            return Err(Error::SectionLengthOverflow {
-                declared: section_length as usize,
-                available: 0x0FFF,
-            });
-        }
-
         // Byte 0: table_id.
         buf[0] = TABLE_ID;
         // Byte 1: section_syntax_indicator(1)=1 | private_indicator(1)
         //         | reserved(2)=11 | section_length[11:8](4).
-        buf[1] = 0x80
-            | (u8::from(self.private_indicator) << 6)
-            | 0x30
-            | ((section_length >> 8) as u8 & 0x0F);
-        buf[2] = (section_length & 0xFF) as u8;
+        buf[1] = 0x80 | (u8::from(self.private_indicator) << 6) | 0x30;
+        super::write_section_length(buf, len - HEADER_LEN)?;
 
         // Extension header.
         buf[3] = self.burst_number;
@@ -429,6 +418,60 @@ mod tests {
             MpeIfecSection::parse(&buf).unwrap_err(),
             Error::SectionLengthOverflow { .. }
         ));
+    }
+
+    /// section_length is 12 bits (max 4095 = EXTENSION_HEADER_LEN(5) +
+    /// RTP_LEN(4) + ifec_data + CRC_LEN(4), so 4082 is the largest
+    /// ifec_data that fits).
+    #[test]
+    fn serialize_rejects_ifec_data_exceeding_section_length() {
+        let ifec_data = vec![0xAAu8; 4083];
+        let mpe_ifec = MpeIfecSection {
+            private_indicator: false,
+            burst_number: 0,
+            ifec_burst_size: 0,
+            version: 0,
+            current_next_indicator: true,
+            section_number: 0,
+            last_section_number: 0,
+            real_time_parameters: RealTimeParameters {
+                delta_t: 0,
+                mpe_boundary: false,
+                frame_boundary: false,
+                prev_burst_size: 0,
+            },
+            ifec_data: &ifec_data,
+        };
+        let mut buf = vec![0u8; mpe_ifec.serialized_len()];
+        assert!(matches!(
+            mpe_ifec.serialize_into(&mut buf).unwrap_err(),
+            Error::FieldOverflow(_)
+        ));
+    }
+
+    #[test]
+    fn serialize_accepts_ifec_data_at_section_length_boundary() {
+        let ifec_data = vec![0xAAu8; 4082];
+        let mpe_ifec = MpeIfecSection {
+            private_indicator: false,
+            burst_number: 0,
+            ifec_burst_size: 0,
+            version: 0,
+            current_next_indicator: true,
+            section_number: 0,
+            last_section_number: 0,
+            real_time_parameters: RealTimeParameters {
+                delta_t: 0,
+                mpe_boundary: false,
+                frame_boundary: false,
+                prev_burst_size: 0,
+            },
+            ifec_data: &ifec_data,
+        };
+        let mut buf = vec![0u8; mpe_ifec.serialized_len()];
+        mpe_ifec.serialize_into(&mut buf).expect("boundary fits");
+        let reparsed = MpeIfecSection::parse(&buf).expect("reparse");
+        assert_eq!(mpe_ifec, reparsed);
     }
 
     #[cfg(feature = "serde")]

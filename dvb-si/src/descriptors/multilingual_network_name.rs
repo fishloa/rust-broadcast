@@ -107,12 +107,12 @@ impl Serialize for MultilingualNetworkNameDescriptor<'_> {
                 have: buf.len(),
             });
         }
-        buf[0] = TAG;
-        buf[1] = body as u8;
+        crate::descriptors::write_descriptor_header(buf, TAG, body)?;
         let mut pos = HEADER_LEN;
         for e in &self.entries {
             buf[pos..pos + LANG_LEN].copy_from_slice(&e.language_code.0);
-            buf[pos + LANG_LEN] = e.network_name.len() as u8;
+            buf[pos + LANG_LEN] =
+                broadcast_common::len::fit_u8(e.network_name.len(), "network_name_length")?;
             let name_start = pos + LANG_LEN + NAME_LEN_FIELD;
             buf[name_start..name_start + e.network_name.len()]
                 .copy_from_slice(e.network_name.raw());

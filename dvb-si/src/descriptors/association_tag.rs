@@ -181,26 +181,19 @@ impl Serialize for AssociationTagDescriptor<'_> {
                 reason: "association_tag_descriptor body exceeds 255 bytes",
             });
         }
-        if self.selector.len() > u8::MAX as usize {
-            return Err(Error::InvalidDescriptor {
-                tag: TAG,
-                reason: "association_tag_descriptor selector exceeds 255 bytes",
-            });
-        }
         if buf.len() < total {
             return Err(Error::OutputBufferTooSmall {
                 need: total,
                 have: buf.len(),
             });
         }
-        buf[0] = TAG;
-        buf[1] = body_len as u8;
+        crate::descriptors::write_descriptor_header(buf, TAG, body_len)?;
         let mut pos = HEADER_LEN;
         buf[pos..pos + ASSOCIATION_TAG_LEN].copy_from_slice(&self.association_tag.to_be_bytes());
         pos += ASSOCIATION_TAG_LEN;
         buf[pos..pos + USE_LEN].copy_from_slice(&self.usage.to_be_bytes());
         pos += USE_LEN;
-        buf[pos] = self.selector.len() as u8;
+        buf[pos] = broadcast_common::len::fit_u8(self.selector.len(), "selector_length")?;
         pos += SELECTOR_LENGTH_LEN;
         buf[pos..pos + self.selector.len()].copy_from_slice(self.selector);
         pos += self.selector.len();

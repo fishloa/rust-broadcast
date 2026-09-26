@@ -358,19 +358,19 @@ impl Serialize for ImageIcon<'_> {
                     p += 1;
                 }
                 // icon_type_length + run
-                buf[p] = f.icon_type.len() as u8;
+                buf[p] = broadcast_common::len::fit_u8(f.icon_type.len(), "icon_type_length")?;
                 p += 1;
                 buf[p..p + f.icon_type.len()].copy_from_slice(f.icon_type.raw());
                 p += f.icon_type.len();
                 // Payload
                 match &f.payload {
                     IconLocation::Data(d) => {
-                        buf[p] = d.len() as u8;
+                        buf[p] = broadcast_common::len::fit_u8(d.len(), "icon_data_length")?;
                         p += 1;
                         buf[p..p + d.len()].copy_from_slice(d);
                     }
                     IconLocation::Url(u) => {
-                        buf[p] = u.len() as u8;
+                        buf[p] = broadcast_common::len::fit_u8(u.len(), "icon_url_length")?;
                         p += 1;
                         buf[p..p + u.len()].copy_from_slice(u.raw());
                     }
@@ -378,7 +378,7 @@ impl Serialize for ImageIcon<'_> {
                 }
             }
             ImageIconBody::Continuation { icon_data } => {
-                buf[p] = icon_data.len() as u8;
+                buf[p] = broadcast_common::len::fit_u8(icon_data.len(), "icon_data_length")?;
                 p += 1;
                 buf[p..p + icon_data.len()].copy_from_slice(icon_data);
             }

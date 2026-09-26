@@ -83,8 +83,7 @@ impl Serialize for ParentalRatingDescriptor {
                 have: buf.len(),
             });
         }
-        buf[0] = TAG;
-        buf[1] = (len - HEADER_LEN) as u8;
+        crate::descriptors::write_descriptor_header(buf, TAG, len - HEADER_LEN)?;
         for (i, entry) in self.entries.iter().enumerate() {
             let entry_start = HEADER_LEN + i * ENTRY_LEN;
             buf[entry_start..entry_start + 3].copy_from_slice(&entry.country_code.0);

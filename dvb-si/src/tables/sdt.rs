@@ -200,13 +200,12 @@ impl Serialize for SdtSection<'_> {
                 have: buf.len(),
             });
         }
-        let section_length: u16 = (len - MIN_HEADER_LEN) as u16;
         buf[0] = match self.kind {
             SdtKind::Actual => TABLE_ID_ACTUAL,
             SdtKind::Other => TABLE_ID_OTHER,
         };
-        buf[1] = super::SECTION_B1_FLAGS_DVB | ((section_length >> 8) as u8 & 0x0F);
-        buf[2] = (section_length & 0xFF) as u8;
+        buf[1] = super::SECTION_B1_FLAGS_DVB;
+        super::write_section_length(buf, len - MIN_HEADER_LEN)?;
         buf[3..5].copy_from_slice(&self.transport_stream_id.to_be_bytes());
         buf[5] = 0xC0 | ((self.version_number & 0x1F) << 1) | u8::from(self.current_next_indicator);
         buf[6] = self.section_number;
@@ -221,11 +220,15 @@ impl Serialize for SdtSection<'_> {
                 | (u8::from(svc.eit_schedule_flag) << 1)
                 | u8::from(svc.eit_present_following_flag);
             buf[pos + 2] = flags;
-            let dll = svc.descriptors.len() as u16;
+            let dll = broadcast_common::len::fit_bits(
+                svc.descriptors.len() as u64,
+                12,
+                "descriptors_loop_length",
+            )?;
             buf[pos + 3] = (svc.running_status.to_u8() << 5)
                 | (u8::from(svc.free_ca_mode) << 4)
-                | ((dll >> 8) as u8 & 0x0F);
-            buf[pos + 4] = (dll & 0xFF) as u8;
+                | ((dll >> 8) as u8);
+            buf[pos + 4] = dll as u8;
             let desc_start = pos + SERVICE_HEADER_LEN;
             buf[desc_start..desc_start + svc.descriptors.len()]
                 .copy_from_slice(svc.descriptors.raw());
@@ -436,6 +439,63 @@ mod tests {
             SdtSection::parse(&buf).unwrap_err(),
             Error::SectionLengthOverflow { .. }
         ));
+    }
+
+    /// section_length is 12 bits (max 4095 = EXTENSION_HEADER_LEN(5) +
+    /// POST_EXTENSION_LEN(3) + SERVICE_HEADER_LEN(5) + descriptors +
+    /// CRC(4), so 4078 is the largest single-service descriptor loop that
+    /// fits).
+    #[test]
+    fn serialize_rejects_service_descriptors_exceeding_section_length() {
+        let desc = vec![0xAAu8; 4079];
+        let sdt = SdtSection {
+            kind: SdtKind::Actual,
+            transport_stream_id: 1,
+            version_number: 0,
+            current_next_indicator: true,
+            section_number: 0,
+            last_section_number: 0,
+            original_network_id: 0x20,
+            services: vec![SdtService {
+                service_id: 1,
+                eit_schedule_flag: false,
+                eit_present_following_flag: false,
+                running_status: RunningStatus::Undefined,
+                free_ca_mode: false,
+                descriptors: DescriptorLoop::new(&desc),
+            }],
+        };
+        let mut buf = vec![0u8; sdt.serialized_len()];
+        assert!(matches!(
+            sdt.serialize_into(&mut buf).unwrap_err(),
+            Error::FieldOverflow(_)
+        ));
+    }
+
+    #[test]
+    fn serialize_accepts_service_descriptors_at_section_length_boundary() {
+        let desc = vec![0xAAu8; 4078];
+        let sdt = SdtSection {
+            kind: SdtKind::Actual,
+            transport_stream_id: 1,
+            version_number: 0,
+            current_next_indicator: true,
+            section_number: 0,
+            last_section_number: 0,
+            original_network_id: 0x20,
+            services: vec![SdtService {
+                service_id: 1,
+                eit_schedule_flag: false,
+                eit_present_following_flag: false,
+                running_status: RunningStatus::Undefined,
+                free_ca_mode: false,
+                descriptors: DescriptorLoop::new(&desc),
+            }],
+        };
+        let mut buf = vec![0u8; sdt.serialized_len()];
+        sdt.serialize_into(&mut buf).expect("boundary fits");
+        let reparsed = SdtSection::parse(&buf).expect("reparse");
+        assert_eq!(sdt, reparsed);
     }
 
     #[test]

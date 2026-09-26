@@ -32,12 +32,6 @@ const BYTE0_RESERVED: u8 = 0xC0;
 const BYTE1_RESERVED: u8 = 0x80;
 const BYTE2_RESERVED: u8 = 0x80;
 
-const MAX_COUNTRY_PREFIX: usize = 0x03;
-const MAX_INTL_AREA: usize = 0x07;
-const MAX_OPERATOR: usize = 0x03;
-const MAX_NATIONAL_AREA: usize = 0x07;
-const MAX_CORE_NUMBER: usize = 0x0F;
-
 /// Telephone Descriptor.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
@@ -135,19 +129,30 @@ impl Serialize for TelephoneDescriptor<'_> {
                 have: buf.len(),
             });
         }
-        if self.country_prefix.raw().len() > MAX_COUNTRY_PREFIX
-            || self.international_area_code.raw().len() > MAX_INTL_AREA
-            || self.operator_code.raw().len() > MAX_OPERATOR
-            || self.national_area_code.raw().len() > MAX_NATIONAL_AREA
-            || self.core_number.raw().len() > MAX_CORE_NUMBER
-        {
-            return Err(Error::InvalidDescriptor {
-                tag: TAG,
-                reason: "telephone char-field exceeds its length-field capacity",
-            });
-        }
-        buf[0] = TAG;
-        buf[1] = (len - HEADER_LEN) as u8;
+        crate::descriptors::write_descriptor_header(buf, TAG, len - HEADER_LEN)?;
+        let country_prefix_len = broadcast_common::len::fit_bits(
+            self.country_prefix.raw().len() as u64,
+            2,
+            "country_prefix",
+        )? as u8;
+        let intl_area_len = broadcast_common::len::fit_bits(
+            self.international_area_code.raw().len() as u64,
+            3,
+            "international_area_code",
+        )? as u8;
+        let operator_code_len = broadcast_common::len::fit_bits(
+            self.operator_code.raw().len() as u64,
+            2,
+            "operator_code",
+        )? as u8;
+        let national_area_len = broadcast_common::len::fit_bits(
+            self.national_area_code.raw().len() as u64,
+            3,
+            "national_area_code",
+        )? as u8;
+        let core_number_len =
+            broadcast_common::len::fit_bits(self.core_number.raw().len() as u64, 4, "core_number")?
+                as u8;
         buf[2] = BYTE0_RESERVED
             | if self.foreign_availability {
                 FOREIGN_AVAIL_MASK
@@ -155,13 +160,9 @@ impl Serialize for TelephoneDescriptor<'_> {
                 0
             }
             | (self.connection_type & CONNECTION_TYPE_MASK);
-        buf[3] = BYTE1_RESERVED
-            | ((self.country_prefix.raw().len() as u8 & 0x03) << 5)
-            | ((self.international_area_code.raw().len() as u8 & 0x07) << 2)
-            | (self.operator_code.raw().len() as u8 & 0x03);
-        buf[4] = BYTE2_RESERVED
-            | ((self.national_area_code.raw().len() as u8 & 0x07) << 4)
-            | (self.core_number.raw().len() as u8 & 0x0F);
+        buf[3] =
+            BYTE1_RESERVED | (country_prefix_len << 5) | (intl_area_len << 2) | operator_code_len;
+        buf[4] = BYTE2_RESERVED | (national_area_len << 4) | core_number_len;
         let mut pos = HEADER_LEN + FIXED_LEN;
         for field in [
             self.country_prefix.raw(),
@@ -296,7 +297,7 @@ mod tests {
         let mut buf = vec![0u8; d.serialized_len()];
         assert!(matches!(
             d.serialize_into(&mut buf).unwrap_err(),
-            Error::InvalidDescriptor { tag: TAG, .. }
+            Error::FieldOverflow(_)
         ));
     }
 

@@ -720,19 +720,22 @@ impl Serialize for PmtSection<'_> {
             });
         }
 
-        let section_length: u16 = (len - MIN_HEADER_LEN) as u16;
         buf[0] = TABLE_ID;
-        buf[1] = super::SECTION_B1_FLAGS_PSI | ((section_length >> 8) as u8 & 0x0F);
-        buf[2] = (section_length & 0xFF) as u8;
+        buf[1] = super::SECTION_B1_FLAGS_PSI;
+        super::write_section_length(buf, len - MIN_HEADER_LEN)?;
         buf[3..5].copy_from_slice(&self.program_number.to_be_bytes());
         buf[5] = 0xC0 | ((self.version_number & 0x1F) << 1) | u8::from(self.current_next_indicator);
         buf[6] = self.section_number;
         buf[7] = self.last_section_number;
         buf[8] = 0xE0 | ((self.pcr_pid >> 8) as u8 & 0x1F);
         buf[9] = (self.pcr_pid & 0xFF) as u8;
-        let pil = self.program_info.len() as u16;
-        buf[10] = 0xF0 | ((pil >> 8) as u8 & 0x0F);
-        buf[11] = (pil & 0xFF) as u8;
+        let pil = broadcast_common::len::fit_bits(
+            self.program_info.len() as u64,
+            12,
+            "program_info_length",
+        )?;
+        buf[10] = 0xF0 | ((pil >> 8) as u8);
+        buf[11] = pil as u8;
 
         let prog_info_start =
             MIN_HEADER_LEN + EXTENSION_HEADER_LEN + PCR_PID_LEN + PROG_INFO_LEN_BYTES;
@@ -744,9 +747,10 @@ impl Serialize for PmtSection<'_> {
             buf[pos] = stream.stream_type.to_u8();
             buf[pos + 1] = 0xE0 | ((stream.elementary_pid >> 8) as u8 & 0x1F);
             buf[pos + 2] = (stream.elementary_pid & 0xFF) as u8;
-            let esl = stream.es_info.len() as u16;
-            buf[pos + 3] = 0xF0 | ((esl >> 8) as u8 & 0x0F);
-            buf[pos + 4] = (esl & 0xFF) as u8;
+            let esl =
+                broadcast_common::len::fit_bits(stream.es_info.len() as u64, 12, "es_info_length")?;
+            buf[pos + 3] = 0xF0 | ((esl >> 8) as u8);
+            buf[pos + 4] = esl as u8;
             let es_start = pos + STREAM_HEADER_LEN;
             buf[es_start..es_start + stream.es_info.len()].copy_from_slice(stream.es_info.raw());
             pos = es_start + stream.es_info.len();
@@ -940,6 +944,73 @@ mod tests {
         assert!(matches!(
             PmtSection::parse(&buf).unwrap_err(),
             Error::SectionLengthOverflow { .. }
+        ));
+    }
+
+    /// section_length is 12 bits (max 4095 = EXTENSION_HEADER_LEN(5) +
+    /// PCR_PID_LEN(2) + PROG_INFO_LEN_BYTES(2) + program_info + CRC(4), so
+    /// 4082 is the largest program_info loop that fits with no streams).
+    #[test]
+    fn serialize_rejects_program_info_exceeding_section_length() {
+        let pi = vec![0xAAu8; 4083];
+        let pmt = PmtSection {
+            program_number: 1,
+            version_number: 0,
+            current_next_indicator: true,
+            section_number: 0,
+            last_section_number: 0,
+            pcr_pid: 0x100,
+            program_info: DescriptorLoop::new(&pi),
+            streams: vec![],
+        };
+        let mut buf = vec![0u8; pmt.serialized_len()];
+        assert!(matches!(
+            pmt.serialize_into(&mut buf).unwrap_err(),
+            Error::FieldOverflow(_)
+        ));
+    }
+
+    #[test]
+    fn serialize_accepts_program_info_at_section_length_boundary() {
+        let pi = vec![0xAAu8; 4082];
+        let pmt = PmtSection {
+            program_number: 1,
+            version_number: 0,
+            current_next_indicator: true,
+            section_number: 0,
+            last_section_number: 0,
+            pcr_pid: 0x100,
+            program_info: DescriptorLoop::new(&pi),
+            streams: vec![],
+        };
+        let mut buf = vec![0u8; pmt.serialized_len()];
+        pmt.serialize_into(&mut buf).expect("boundary fits");
+        let reparsed = PmtSection::parse(&buf).expect("reparse");
+        assert_eq!(pmt.program_info.raw(), reparsed.program_info.raw());
+    }
+
+    /// Same 12-bit field, this time on a stream's es_info_length.
+    #[test]
+    fn serialize_rejects_es_info_exceeding_section_length() {
+        let es = vec![0xAAu8; 4078];
+        let pmt = PmtSection {
+            program_number: 1,
+            version_number: 0,
+            current_next_indicator: true,
+            section_number: 0,
+            last_section_number: 0,
+            pcr_pid: 0x100,
+            program_info: DescriptorLoop::new(&[]),
+            streams: vec![PmtStream {
+                stream_type: StreamType::from_u8(0x02),
+                elementary_pid: 0x101,
+                es_info: DescriptorLoop::new(&es),
+            }],
+        };
+        let mut buf = vec![0u8; pmt.serialized_len()];
+        assert!(matches!(
+            pmt.serialize_into(&mut buf).unwrap_err(),
+            Error::FieldOverflow(_)
         ));
     }
 

@@ -271,21 +271,12 @@ impl Serialize for MpeDatagramSection<'_> {
             });
         }
 
-        let section_length = (len - HEADER_LEN) as u16;
-        if section_length > 0x0FFF {
-            return Err(Error::SectionLengthOverflow {
-                declared: section_length as usize,
-                available: 0x0FFF,
-            });
-        }
-
         buf[0] = TABLE_ID;
         // Byte 1: SSI(1) | private(1) | reserved(2)=11 | section_length[11:8].
         buf[1] = (u8::from(self.section_syntax_indicator) << 7)
             | (u8::from(self.private_indicator) << 6)
-            | 0x30 // reserved bits set to 1
-            | ((section_length >> 8) as u8 & 0x0F);
-        buf[2] = (section_length & 0xFF) as u8;
+            | 0x30; // reserved bits set to 1
+        super::write_section_length(buf, len - HEADER_LEN)?;
 
         // MAC scatter: byte 3 = MAC_6 (mac_address[5]), byte 4 = MAC_5.
         buf[3] = self.mac_address.0[5];
@@ -674,5 +665,55 @@ mod tests {
             MpeDatagramSection::parse(&buf).unwrap_err(),
             Error::SectionLengthOverflow { .. }
         ));
+    }
+
+    /// section_length is 12 bits (max 4095 = EXTENSION_LEN(9) + payload +
+    /// CRC_LEN(4), so 4082 is the largest payload that fits).
+    #[test]
+    fn serialize_rejects_payload_exceeding_section_length() {
+        let payload = vec![0xAAu8; 4083];
+        let mpe = MpeDatagramSection {
+            section_syntax_indicator: true,
+            private_indicator: false,
+            mac_address: MacAddress([0; 6]),
+            payload_scrambling_control: 0,
+            address_scrambling_control: 0,
+            llc_snap_flag: false,
+            current_next_indicator: true,
+            section_number: 0,
+            last_section_number: 0,
+            payload: &payload,
+            checksum: Checksum([0; 4]),
+        };
+        let mut buf = vec![0u8; mpe.serialized_len()];
+        assert!(matches!(
+            mpe.serialize_into(&mut buf).unwrap_err(),
+            Error::FieldOverflow(_)
+        ));
+    }
+
+    #[test]
+    fn serialize_accepts_payload_at_section_length_boundary() {
+        let payload = vec![0xAAu8; 4082];
+        let mpe = MpeDatagramSection {
+            section_syntax_indicator: true,
+            private_indicator: false,
+            mac_address: MacAddress([0; 6]),
+            payload_scrambling_control: 0,
+            address_scrambling_control: 0,
+            llc_snap_flag: false,
+            current_next_indicator: true,
+            section_number: 0,
+            last_section_number: 0,
+            payload: &payload,
+            checksum: Checksum([0; 4]),
+        };
+        let mut buf = vec![0u8; mpe.serialized_len()];
+        mpe.serialize_into(&mut buf).expect("boundary fits");
+        let reparsed = MpeDatagramSection::parse(&buf).expect("reparse");
+        // SSI=1 recomputes the CRC trailer, so compare everything except the
+        // placeholder `checksum` field (ignored on the SSI=1 path).
+        assert_eq!(mpe.payload, reparsed.payload);
+        assert_eq!(mpe.mac_address, reparsed.mac_address);
     }
 }

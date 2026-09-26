@@ -155,7 +155,7 @@ impl Serialize for UriLinkage<'_> {
             });
         }
         buf[0] = self.uri_linkage_type.to_u8();
-        buf[1] = self.uri.len() as u8;
+        buf[1] = broadcast_common::len::fit_u8(self.uri.len(), "uri_length")?;
         let mut p = 2;
         buf[p..p + self.uri.len()].copy_from_slice(self.uri.raw());
         p += self.uri.len();

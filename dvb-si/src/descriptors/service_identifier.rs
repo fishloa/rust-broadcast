@@ -58,8 +58,11 @@ impl Serialize for ServiceIdentifierDescriptor<'_> {
                 have: buf.len(),
             });
         }
-        buf[0] = TAG;
-        buf[1] = self.textual_service_identifier.raw().len() as u8;
+        crate::descriptors::write_descriptor_header(
+            buf,
+            TAG,
+            self.textual_service_identifier.raw().len(),
+        )?;
         buf[HEADER_LEN..len].copy_from_slice(self.textual_service_identifier.raw());
         Ok(len)
     }

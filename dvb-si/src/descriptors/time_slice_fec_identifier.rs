@@ -131,8 +131,7 @@ impl Serialize for TimeSliceFecIdentifierDescriptor<'_> {
                 have: buf.len(),
             });
         }
-        buf[0] = TAG;
-        buf[1] = (FIXED_LEN + self.id_selector.len()) as u8;
+        crate::descriptors::write_descriptor_header(buf, TAG, FIXED_LEN + self.id_selector.len())?;
         // reserved_for_future_use(2) emitted as 1s.
         buf[2] = (u8::from(self.time_slicing) << 7)
             | ((self.mpe_fec & MPE_FEC_MAX) << 5)

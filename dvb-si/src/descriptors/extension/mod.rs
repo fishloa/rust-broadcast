@@ -289,18 +289,21 @@ macro_rules! declare_extension_bodies {
             }
 
             /// Write the selector bytes into `out` (assumed `>= selector_len()`).
-            fn write_selector(&self, out: &mut [u8]) {
+            ///
+            /// `out` being large enough only guarantees the *total* length is
+            /// right; an inner per-field length/count that does not fit its own
+            /// wire width (e.g. a sub-field narrower than 8 bits) still surfaces
+            /// as `Err` here rather than a panic or a silently masked value.
+            fn write_selector(&self, out: &mut [u8]) -> Result<()> {
                 match self {
                     $(
                         ExtensionBody::$variant(b) => {
-                            // `ExtensionDescriptor::serialize_into` sizes `out` from
-                            // `selector_len()`, so `serialize_into` cannot fail.
-                            b.serialize_into(out)
-                                .expect("caller pre-sizes out to selector_len");
+                            b.serialize_into(out)?;
                         }
                     )+
                     ExtensionBody::Raw(s) => out[..s.len()].copy_from_slice(s),
                 }
+                Ok(())
             }
         }
 
@@ -518,11 +521,10 @@ impl Serialize for ExtensionDescriptor<'_> {
                 reason: "descriptor_length exceeds 255 bytes",
             });
         }
-        buf[0] = TAG;
-        buf[1] = body_len as u8;
+        crate::descriptors::write_descriptor_header(buf, TAG, body_len)?;
         buf[HEADER_LEN] = self.tag_extension;
         self.body
-            .write_selector(&mut buf[HEADER_LEN + TAG_EXTENSION_LEN..len]);
+            .write_selector(&mut buf[HEADER_LEN + TAG_EXTENSION_LEN..len])?;
         Ok(len)
     }
 }

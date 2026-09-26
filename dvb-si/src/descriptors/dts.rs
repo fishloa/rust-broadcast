@@ -313,8 +313,11 @@ impl Serialize for DtsDescriptor<'_> {
                 have: buf.len(),
             });
         }
-        buf[0] = TAG;
-        buf[1] = (FIXED_LEN + self.additional_info.len()) as u8;
+        crate::descriptors::write_descriptor_header(
+            buf,
+            TAG,
+            FIXED_LEN + self.additional_info.len(),
+        )?;
         let packed: u64 = ((u64::from(self.sample_rate_code) & 0x0F) << 36)
             | ((u64::from(self.bit_rate_code) & 0x3F) << 30)
             | ((u64::from(self.nblks) & 0x7F) << 23)

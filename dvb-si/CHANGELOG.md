@@ -2,6 +2,70 @@
 
 ## [Unreleased]
 
+### Changed (breaking)
+- Table and carousel/BIOP serializers now return an error, instead of
+  silently truncating, when a length or count value does not fit its wire
+  field (#1129). `dvb_si::Error` gained a new `FieldOverflow` variant
+  (`#[error(transparent)]` over `broadcast_common::len::FieldOverflow`).
+- `broadcast-common` requirement raised to `9.4` (same epoch) for the new
+  `broadcast_common::len` helpers.
+
+### Fixed
+- 17 table serializers (pat, cat, tsdt, pmt, nit, bat, sdt, ait, int, sit,
+  dsmcc, st, rst, downloadable_font_info, protection_message, eit, plus the
+  narrowed inner loops in cit/rct) wrote a 12-bit `section_length` (or a
+  nested loop length) with no range check, so an oversized body wrapped mod
+  4096 and was written with a valid CRC over bytes the header didn't cover
+  (#1129, #1001).
+- 8 more serializers (cit, container, mpe, mpe_fec, mpe_ifec, rnt, tot, unt)
+  guarded `section_length` by casting to `u16` *before* comparing against
+  the 12-bit maximum, so a body of 65 536+ bytes wrapped the guard itself
+  and bypassed it; the compare now happens in `usize` before any narrowing
+  (#1129).
+- Nested 8-bit/6-bit length and count fields in RCT (`uri_length`,
+  `number_items`, `promotional_text_length`, `link_info_length`,
+  `number_of_links`) and CIT (`unique_string_length`) silently truncated
+  with no guard at all (#1129, #1003).
+- `carousel::biop`'s `FileMessage`/`StreamMessage`/`StreamEventMessage`
+  serializers cast `messageSize`/`messageBody_length` to `u32` with no
+  check, inconsistent with `DirectoryMessage`'s guarded equivalent; several
+  BIOP IOR profile length fields (`NameComponent`, `ServiceLocation`,
+  `TaggedProfile`, `IOR`) had the same gap (#1129).
+- Added a shared `dvb_si::tables::write_section_length` helper that every
+  table serializer now routes its outer `section_length` write through, so
+  the guard cannot be forgotten again for a future table.
+- ~80 descriptor serializers (starting from the `network_name_descriptor`
+  template) wrote the outer 8-bit `descriptor_length` header byte with no
+  range check, so a body over 255 bytes wrapped mod 256 and misframed the
+  rest of the descriptor loop (#1129). Added a shared
+  `dvb_si::descriptors::write_descriptor_header` helper (tag + checked 8-bit
+  length) that every descriptor serializer now routes its header write
+  through.
+- Nested per-field lengths and counts inside descriptor bodies had the same
+  gap and are now range-checked before narrowing, including several
+  bit-packed sub-byte fields that previously masked an over-range value
+  instead of rejecting it: `audio_preselection`'s `num_preselections` (5
+  bits), `num_aux_component_tags` (3 bits) and `future_extension_length` (5
+  bits); `target_region_name`'s `region_name_length` (6 bits);
+  `vvc_subpictures`'s `number_of_vvc_subpictures` (6 bits);
+  `protection_message`'s `component_count` (4 bits); `telephone`'s five
+  packed char-field lengths (2/3/2/3/4 bits); and the
+  `num_channel_bonds_minus_one` (1 bit) field shared by
+  `s2x_satellite_delivery_system` and `s2xv2_satellite_delivery_system`.
+  Plain 8-bit/16-bit fields across `short_event`, `extended_event`,
+  `service`, `metadata`, `metadata_pointer`, `content_labeling`,
+  `content_identifier`, `data_broadcast`, `data_broadcast_id`, `mosaic`,
+  `carousel_identifier`, `nordig`, `cell_list`/`cell_frequency_link`,
+  `t2_delivery_system`, `cpcm_delivery_signalling`, `image_icon`,
+  `ttml_subtitling`, `ac4`, `uri_linkage`, `video_depth_range`, the
+  `multilingual_*_name`/`component` descriptors, and the AIT descriptors
+  (`simple_application_boundary`, `dvb_j_application`,
+  `dvb_j_application_location`, `application_name`) had the same gap.
+- Added a source-scan regression test
+  (`dvb-si/tests/serializer_length_truncation.rs`) that fails CI if the
+  literal unchecked pattern (`<expr>.len() as u8/u16/u32`) reappears
+  anywhere under `src/descriptors/` outside a `#[cfg(test)]` module.
+
 ## [10.1.0] - 2026-09-26
 
 ### Security

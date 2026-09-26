@@ -256,17 +256,9 @@ impl Serialize for EitSection<'_> {
                 have: buf.len(),
             });
         }
-        let section_length_usize = len - MIN_HEADER_LEN;
-        if section_length_usize > 0x0FFF {
-            return Err(Error::SectionLengthOverflow {
-                declared: section_length_usize,
-                available: 0x0FFF,
-            });
-        }
-        let section_length: u16 = section_length_usize as u16;
         buf[0] = self.table_id;
-        buf[1] = super::SECTION_B1_FLAGS_DVB | ((section_length >> 8) as u8 & 0x0F);
-        buf[2] = (section_length & 0xFF) as u8;
+        buf[1] = super::SECTION_B1_FLAGS_DVB;
+        super::write_section_length(buf, len - MIN_HEADER_LEN)?;
         buf[3..5].copy_from_slice(&self.service_id.to_be_bytes());
         buf[5] = 0xC0 | ((self.version_number & 0x1F) << 1) | u8::from(self.current_next_indicator);
         buf[6] = self.section_number;
@@ -281,11 +273,15 @@ impl Serialize for EitSection<'_> {
             buf[pos..pos + 2].copy_from_slice(&ev.event_id.to_be_bytes());
             buf[pos + 2..pos + 7].copy_from_slice(&ev.start_time_raw);
             buf[pos + 7..pos + 10].copy_from_slice(&ev.duration_raw);
-            let dll = ev.descriptors.len() as u16;
+            let dll = broadcast_common::len::fit_bits(
+                ev.descriptors.len() as u64,
+                12,
+                "descriptors_loop_length",
+            )?;
             buf[pos + 10] = (ev.running_status.to_u8() << 5)
                 | (u8::from(ev.free_ca_mode) << 4)
-                | ((dll >> 8) as u8 & 0x0F);
-            buf[pos + 11] = (dll & 0xFF) as u8;
+                | ((dll >> 8) as u8);
+            buf[pos + 11] = dll as u8;
             let desc_start = pos + EVENT_HEADER_LEN;
             buf[desc_start..desc_start + ev.descriptors.len()]
                 .copy_from_slice(ev.descriptors.raw());
@@ -754,6 +750,71 @@ mod tests {
             EitSection::parse(&buf).unwrap_err(),
             Error::SectionLengthOverflow { .. }
         ));
+    }
+
+    /// section_length is 12 bits (max 4095 = EXTENSION_HEADER_LEN(5) +
+    /// POST_EXTENSION_LEN(6) + EVENT_HEADER_LEN(12) + descriptors +
+    /// CRC_LEN(4), so 4068 is the largest single-event descriptor loop that
+    /// fits).
+    #[test]
+    fn serialize_rejects_event_descriptors_exceeding_section_length() {
+        let desc = vec![0xAAu8; 4069];
+        let eit = EitSection {
+            kind: EitKind::PresentFollowingActual,
+            table_id: TABLE_ID_PF_ACTUAL,
+            service_id: 1,
+            version_number: 0,
+            current_next_indicator: true,
+            section_number: 0,
+            last_section_number: 0,
+            transport_stream_id: 1,
+            original_network_id: 1,
+            segment_last_section_number: 0,
+            last_table_id: TABLE_ID_PF_ACTUAL,
+            events: vec![EitEvent {
+                event_id: 1,
+                start_time_raw: [0; 5],
+                duration_raw: [0; 3],
+                running_status: RunningStatus::Undefined,
+                free_ca_mode: false,
+                descriptors: DescriptorLoop::new(&desc),
+            }],
+        };
+        let mut buf = vec![0u8; eit.serialized_len()];
+        assert!(matches!(
+            eit.serialize_into(&mut buf).unwrap_err(),
+            Error::FieldOverflow(_)
+        ));
+    }
+
+    #[test]
+    fn serialize_accepts_event_descriptors_at_section_length_boundary() {
+        let desc = vec![0xAAu8; 4068];
+        let eit = EitSection {
+            kind: EitKind::PresentFollowingActual,
+            table_id: TABLE_ID_PF_ACTUAL,
+            service_id: 1,
+            version_number: 0,
+            current_next_indicator: true,
+            section_number: 0,
+            last_section_number: 0,
+            transport_stream_id: 1,
+            original_network_id: 1,
+            segment_last_section_number: 0,
+            last_table_id: TABLE_ID_PF_ACTUAL,
+            events: vec![EitEvent {
+                event_id: 1,
+                start_time_raw: [0; 5],
+                duration_raw: [0; 3],
+                running_status: RunningStatus::Undefined,
+                free_ca_mode: false,
+                descriptors: DescriptorLoop::new(&desc),
+            }],
+        };
+        let mut buf = vec![0u8; eit.serialized_len()];
+        eit.serialize_into(&mut buf).expect("boundary fits");
+        let reparsed = EitSection::parse(&buf).expect("reparse");
+        assert_eq!(eit, reparsed);
     }
 
     #[test]

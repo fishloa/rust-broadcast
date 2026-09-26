@@ -62,8 +62,7 @@ impl Serialize for FmcDescriptor {
                 have: buf.len(),
             });
         }
-        buf[0] = TAG;
-        buf[1] = (len - HEADER_LEN) as u8;
+        crate::descriptors::write_descriptor_header(buf, TAG, len - HEADER_LEN)?;
         for (i, &(es_id, fmc)) in self.entries.iter().enumerate() {
             let off = HEADER_LEN + i * 3;
             buf[off..off + 2].copy_from_slice(&es_id.to_be_bytes());

@@ -357,17 +357,9 @@ impl Serialize for UntSection<'_> {
             });
         }
 
-        let section_length = (len - HEADER_LEN) as u16;
-        if section_length > 0x0FFF {
-            return Err(Error::SectionLengthOverflow {
-                declared: section_length as usize,
-                available: 0x0FFF,
-            });
-        }
         buf[0] = TABLE_ID;
-        buf[1] =
-            super::SECTION_B1_FLAGS_DVB | ((section_length >> 8) as u8 & LENGTH_HIGH_NIBBLE_MASK);
-        buf[2] = (section_length & 0xFF) as u8;
+        buf[1] = super::SECTION_B1_FLAGS_DVB;
+        super::write_section_length(buf, len - HEADER_LEN)?;
 
         buf[OFFSET_ACTION_TYPE] = self.action_type.to_u8();
         buf[OFFSET_OUI_HASH] = self.oui_hash;
@@ -381,10 +373,13 @@ impl Serialize for UntSection<'_> {
         buf[OFFSET_OUI + 2] = (self.oui & 0xFF) as u8;
         buf[OFFSET_PROCESSING_ORDER] = self.processing_order;
 
-        let cdl = self.common_descriptors.len() as u16;
-        buf[OFFSET_COMMON_DESC_LEN] =
-            RESERVED_NIBBLE | ((cdl >> 8) as u8 & LENGTH_HIGH_NIBBLE_MASK);
-        buf[OFFSET_COMMON_DESC_LEN + 1] = (cdl & 0xFF) as u8;
+        let cdl = broadcast_common::len::fit_bits(
+            self.common_descriptors.len() as u64,
+            12,
+            "common_descriptors_length",
+        )?;
+        buf[OFFSET_COMMON_DESC_LEN] = RESERVED_NIBBLE | ((cdl >> 8) as u8);
+        buf[OFFSET_COMMON_DESC_LEN + 1] = cdl as u8;
 
         let common_start = OFFSET_COMMON_DESC_LEN + COMMON_DESC_LEN_FIELD;
         let common_end = common_start + self.common_descriptors.len();
@@ -402,22 +397,30 @@ impl Serialize for UntSection<'_> {
                 .iter()
                 .map(|(t, o)| DESC_LOOP_LEN_FIELD + t.len() + DESC_LOOP_LEN_FIELD + o.len())
                 .sum();
-            buf[pos..pos + PLATFORM_LOOP_LEN_FIELD]
-                .copy_from_slice(&(inner_len as u16).to_be_bytes());
+            let inner_len = broadcast_common::len::fit_u16(inner_len, "platform_loop_length")?;
+            buf[pos..pos + PLATFORM_LOOP_LEN_FIELD].copy_from_slice(&inner_len.to_be_bytes());
             pos += PLATFORM_LOOP_LEN_FIELD;
 
             for (target_descriptors, operational_descriptors) in &platform.target_operational_pairs
             {
-                let tl = target_descriptors.len() as u16;
-                buf[pos] = RESERVED_NIBBLE | ((tl >> 8) as u8 & 0x0F);
-                buf[pos + 1] = (tl & 0xFF) as u8;
+                let tl = broadcast_common::len::fit_bits(
+                    target_descriptors.len() as u64,
+                    12,
+                    "target_descriptors_length",
+                )?;
+                buf[pos] = RESERVED_NIBBLE | ((tl >> 8) as u8);
+                buf[pos + 1] = tl as u8;
                 pos += DESC_LOOP_LEN_FIELD;
                 buf[pos..pos + target_descriptors.len()].copy_from_slice(target_descriptors.raw());
                 pos += target_descriptors.len();
 
-                let ol = operational_descriptors.len() as u16;
-                buf[pos] = RESERVED_NIBBLE | ((ol >> 8) as u8 & 0x0F);
-                buf[pos + 1] = (ol & 0xFF) as u8;
+                let ol = broadcast_common::len::fit_bits(
+                    operational_descriptors.len() as u64,
+                    12,
+                    "operational_descriptors_length",
+                )?;
+                buf[pos] = RESERVED_NIBBLE | ((ol >> 8) as u8);
+                buf[pos + 1] = ol as u8;
                 pos += DESC_LOOP_LEN_FIELD;
                 buf[pos..pos + operational_descriptors.len()]
                     .copy_from_slice(operational_descriptors.raw());
@@ -710,6 +713,52 @@ mod tests {
             UntSection::parse(&buf).unwrap_err(),
             Error::SectionLengthOverflow { .. }
         ));
+    }
+
+    /// section_length is 12 bits (max 4095 = FIXED_BODY_LEN(9) +
+    /// COMMON_DESC_LEN_FIELD(2) + common_desc + CRC_LEN(4), so 4080 is the
+    /// largest common_descriptors loop that fits with no platforms).
+    #[test]
+    fn serialize_rejects_common_descriptors_exceeding_section_length() {
+        let desc = vec![0xAAu8; 4081];
+        let unt = UntSection {
+            action_type: UntActionType::SystemSoftwareUpdate,
+            oui_hash: 0,
+            version_number: 0,
+            current_next_indicator: true,
+            section_number: 0,
+            last_section_number: 0,
+            oui: 0,
+            processing_order: 0,
+            common_descriptors: DescriptorLoop::new(&desc),
+            platforms: vec![],
+        };
+        let mut buf = vec![0u8; unt.serialized_len()];
+        assert!(matches!(
+            unt.serialize_into(&mut buf).unwrap_err(),
+            Error::FieldOverflow(_)
+        ));
+    }
+
+    #[test]
+    fn serialize_accepts_common_descriptors_at_section_length_boundary() {
+        let desc = vec![0xAAu8; 4080];
+        let unt = UntSection {
+            action_type: UntActionType::SystemSoftwareUpdate,
+            oui_hash: 0,
+            version_number: 0,
+            current_next_indicator: true,
+            section_number: 0,
+            last_section_number: 0,
+            oui: 0,
+            processing_order: 0,
+            common_descriptors: DescriptorLoop::new(&desc),
+            platforms: vec![],
+        };
+        let mut buf = vec![0u8; unt.serialized_len()];
+        unt.serialize_into(&mut buf).expect("boundary fits");
+        let reparsed = UntSection::parse(&buf).expect("reparse");
+        assert_eq!(unt, reparsed);
     }
 
     #[test]

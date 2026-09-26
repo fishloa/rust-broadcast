@@ -71,8 +71,7 @@ impl Serialize for CaIdentifierDescriptor {
                 reason: "CA_identifier_descriptor body exceeds 255 bytes",
             });
         }
-        buf[0] = TAG;
-        buf[1] = body_len as u8;
+        crate::descriptors::write_descriptor_header(buf, TAG, body_len)?;
         let mut pos = HEADER_LEN;
         for caid in &self.ca_system_ids {
             buf[pos..pos + ENTRY_LEN].copy_from_slice(&caid.to_be_bytes());

@@ -324,8 +324,7 @@ impl Serialize for MetadataDescriptor<'_> {
                 have: buf.len(),
             });
         }
-        buf[0] = TAG;
-        buf[1] = (len - HEADER_LEN) as u8;
+        crate::descriptors::write_descriptor_header(buf, TAG, len - HEADER_LEN)?;
 
         buf[HEADER_LEN] = (self.metadata_application_format >> 8) as u8;
         buf[HEADER_LEN + 1] = self.metadata_application_format as u8;
@@ -355,7 +354,7 @@ impl Serialize for MetadataDescriptor<'_> {
         pos += 1;
 
         if let Some(si) = self.service_identification {
-            buf[pos] = si.len() as u8;
+            buf[pos] = broadcast_common::len::fit_u8(si.len(), "service_identification_length")?;
             pos += 1;
             buf[pos..pos + si.len()].copy_from_slice(si);
             pos += si.len();
@@ -363,13 +362,17 @@ impl Serialize for MetadataDescriptor<'_> {
 
         match &self.decoder_config {
             DecoderConfig::InDescriptor(d) => {
-                buf[pos] = d.decoder_config.len() as u8;
+                buf[pos] =
+                    broadcast_common::len::fit_u8(d.decoder_config.len(), "decoder_config_length")?;
                 pos += 1;
                 buf[pos..pos + d.decoder_config.len()].copy_from_slice(d.decoder_config);
                 pos += d.decoder_config.len();
             }
             DecoderConfig::DsmccCarousel(d) => {
-                buf[pos] = d.dec_config_identification.len() as u8;
+                buf[pos] = broadcast_common::len::fit_u8(
+                    d.dec_config_identification.len(),
+                    "dec_config_identification_length",
+                )?;
                 pos += 1;
                 buf[pos..pos + d.dec_config_identification.len()]
                     .copy_from_slice(d.dec_config_identification);
@@ -380,7 +383,7 @@ impl Serialize for MetadataDescriptor<'_> {
                 pos += 1;
             }
             DecoderConfig::ReservedData(d) => {
-                buf[pos] = d.data.len() as u8;
+                buf[pos] = broadcast_common::len::fit_u8(d.data.len(), "private_data_byte_length")?;
                 pos += 1;
                 buf[pos..pos + d.data.len()].copy_from_slice(d.data);
                 pos += d.data.len();

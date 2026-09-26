@@ -156,10 +156,10 @@ impl Serialize for CatSection<'_> {
                 have: buf.len(),
             });
         }
-        let section_length = (len - MIN_HEADER_LEN) as u16;
+        let section_length = len - MIN_HEADER_LEN;
         buf[0] = TABLE_ID;
-        buf[1] = super::SECTION_B1_FLAGS_PSI | ((section_length >> 8) as u8 & 0x0F);
-        buf[2] = (section_length & 0xFF) as u8;
+        buf[1] = super::SECTION_B1_FLAGS_PSI;
+        super::write_section_length(buf, section_length)?;
         // table_id_extension is reserved for the CAT — conventionally 0xFFFF.
         buf[3] = 0xFF;
         buf[4] = 0xFF;
@@ -324,6 +324,43 @@ mod tests {
         assert_eq!(loop_.len(), 1);
         assert_eq!(loop_[0]["ca"]["ca_system_id"], 0x0500);
         assert_eq!(loop_[0]["ca"]["ca_pid"], 0x0050);
+    }
+
+    /// section_length is 12 bits (max 4095). A descriptor loop that pushes
+    /// the section past that must be rejected, not silently wrapped.
+    #[test]
+    fn serialize_rejects_descriptor_loop_exceeding_section_length() {
+        let raw = vec![0xAAu8; 4091]; // + 9 header/crc bytes > 4095
+        let cat = CatSection {
+            version_number: 0,
+            current_next_indicator: true,
+            section_number: 0,
+            last_section_number: 0,
+            descriptors: DescriptorLoop::from(raw.as_slice()),
+        };
+        let mut buf = vec![0u8; cat.serialized_len()];
+        assert!(matches!(
+            cat.serialize_into(&mut buf).unwrap_err(),
+            Error::FieldOverflow(_)
+        ));
+    }
+
+    #[test]
+    fn serialize_accepts_descriptor_loop_at_section_length_boundary() {
+        // section_length = EXTENSION_HEADER_LEN(5) + loop_len + CRC_LEN(4);
+        // 4086 is the largest loop that keeps it at the 12-bit max, 4095.
+        let raw = vec![0xAAu8; 4086];
+        let cat = CatSection {
+            version_number: 0,
+            current_next_indicator: true,
+            section_number: 0,
+            last_section_number: 0,
+            descriptors: DescriptorLoop::from(raw.as_slice()),
+        };
+        let mut buf = vec![0u8; cat.serialized_len()];
+        cat.serialize_into(&mut buf).expect("boundary fits");
+        let reparsed = CatSection::parse(&buf).expect("reparse");
+        assert_eq!(cat.descriptors.raw(), reparsed.descriptors.raw());
     }
 
     #[test]

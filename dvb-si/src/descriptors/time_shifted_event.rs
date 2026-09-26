@@ -65,8 +65,7 @@ impl Serialize for TimeShiftedEventDescriptor {
                 have: buf.len(),
             });
         }
-        buf[0] = TAG;
-        buf[1] = BODY_LEN as u8;
+        crate::descriptors::write_descriptor_header(buf, TAG, BODY_LEN)?;
         buf[2..4].copy_from_slice(&self.reference_service_id.to_be_bytes());
         buf[4..6].copy_from_slice(&self.reference_event_id.to_be_bytes());
         Ok(len)

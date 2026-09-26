@@ -229,8 +229,7 @@ impl Serialize for SubtitlingDescriptor {
                 have: buf.len(),
             });
         }
-        buf[0] = TAG;
-        buf[1] = (self.entries.len() * ENTRY_LEN) as u8;
+        crate::descriptors::write_descriptor_header(buf, TAG, self.entries.len() * ENTRY_LEN)?;
         let mut pos = HEADER_LEN;
         for e in &self.entries {
             buf[pos..pos + 3].copy_from_slice(&e.language_code.0);

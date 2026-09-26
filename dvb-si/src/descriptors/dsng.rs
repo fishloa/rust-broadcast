@@ -56,8 +56,7 @@ impl Serialize for DsngDescriptor<'_> {
                 have: buf.len(),
             });
         }
-        buf[0] = TAG;
-        buf[1] = self.bytes.len() as u8;
+        crate::descriptors::write_descriptor_header(buf, TAG, self.bytes.len())?;
         buf[HEADER_LEN..len].copy_from_slice(self.bytes);
         Ok(len)
     }

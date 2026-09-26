@@ -65,8 +65,7 @@ impl Serialize for IodDescriptor<'_> {
                 have: buf.len(),
             });
         }
-        buf[0] = TAG;
-        buf[1] = (len - HEADER_LEN) as u8;
+        crate::descriptors::write_descriptor_header(buf, TAG, len - HEADER_LEN)?;
         buf[HEADER_LEN] = self.scope_of_iod_label;
         buf[HEADER_LEN + 1] = self.iod_label;
         buf[HEADER_LEN + FIXED_LEN..len].copy_from_slice(self.initial_object_descriptor);

@@ -94,8 +94,7 @@ impl Serialize for VbiTeletextDescriptor {
                 have: buf.len(),
             });
         }
-        buf[0] = TAG;
-        buf[1] = body_len as u8;
+        crate::descriptors::write_descriptor_header(buf, TAG, body_len)?;
         let mut pos = HEADER_LEN;
         for e in &self.entries {
             buf[pos..pos + LANG_LEN].copy_from_slice(&e.language_code.0);

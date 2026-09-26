@@ -552,8 +552,12 @@ impl Serialize for S2XSatelliteDeliverySystem<'_> {
             p += 1;
         }
         if self.s2x_mode == S2XMode::S2XChannelBonding {
-            // reserved_zero_future_use(7) | num_channel_bonds_minus_one(1)
-            buf[p] = (self.channel_bonds.len() as u8).saturating_sub(1) & 0x01;
+            // reserved_zero_future_use(7) | num_channel_bonds_minus_one(1). Wraps to
+            // u64::MAX for a zero-length list, which `fit_bits` rejects rather than
+            // masking to 0.
+            let minus_one = (self.channel_bonds.len() as u64).wrapping_sub(1);
+            buf[p] =
+                broadcast_common::len::fit_bits(minus_one, 1, "num_channel_bonds_minus_one")? as u8;
             p += 1;
             for bond in &self.channel_bonds {
                 write_channel_common(
