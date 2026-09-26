@@ -14,7 +14,8 @@
 //! [`TokioClientConfig::auth`] takes a [`broadcast_auth::Credentials`] — the
 //! same shared scheme-agnostic model `rtsp-runtime` and `multimux`'s HTTP
 //! input adapters (`source::http_auth`) use (issue #663 P3b/P3c). Basic
-//! (RFC 7617) and Bearer (RFC 6750) are pre-applied on every request via
+//! (RFC 7617) and Bearer (RFC 6750) are pre-applied on every request to the
+//! playlist URL's origin (scheme + host + port, RFC 6454) via
 //! reqwest's own request-builder helpers (`RequestBuilder::basic_auth`/
 //! `bearer_auth`) — no challenge round-trip needed. Digest (RFC 7616) is not
 //! something reqwest supports natively: the first request for a given
@@ -26,6 +27,10 @@
 //! accepted (RFC 7616 §3.3's `nc` advances across those calls), so a live
 //! pull doesn't round-trip a fresh challenge on every single fetch.
 //!
+//! Credentials of any scheme go only to that origin: a playlist naming a
+//! resource on another host (a CDN, say) gets that request sent bare, and a
+//! `401` from such a host is not answered.
+//!
 //! # Error recovery
 //!
 //! - A **resource** (init/part/segment) fetch that keeps failing is retried
@@ -34,7 +39,9 @@
 //!   called and the adapter moves on — the sans-IO core un-marks that
 //!   resource as "requested", so the *next* playlist reload naturally
 //!   re-requests it (see `engine.rs`'s `on_error` docs). One flaky fetch
-//!   never stalls the whole client.
+//!   never stalls the whole client. A `4xx` answer (other than `408`/`429`)
+//!   is not retried — e.g. RFC 8216bis §6.2.6's `404` for a stale preload
+//!   hint — and goes straight to `on_error`.
 //! - A **playlist** reload has no such fallback in the sans-IO core — unlike
 //!   a resource, [`crate::client::HlsClient::on_error`] with `None` does not
 //!   re-queue anything (there is no "next reload" to fall back to; the
@@ -129,7 +136,8 @@ pub struct TokioClientConfig {
     pub retry_backoff: Duration,
     /// Ceiling the doubled [`Self::retry_backoff`] is capped at.
     pub max_retry_backoff: Duration,
-    /// Optional auth attached to every request (see the module docs).
+    /// Optional auth attached to every request to the playlist URL's origin
+    /// (see the module docs).
     pub auth: Option<Credentials>,
 }
 
@@ -186,6 +194,9 @@ pub struct TokioClient {
     http: Client,
     config: TokioClientConfig,
     playlist_url: String,
+    /// `playlist_url` parsed, for the same-origin check on credentials;
+    /// `None` if it does not parse, in which case no credentials are sent.
+    playlist_origin_url: Option<reqwest::Url>,
     stats: TokioClientStats,
     last_preload_hint_url: Option<String>,
     ended: bool,
@@ -228,6 +239,7 @@ impl TokioClient {
             core: HlsClient::new(playlist_url.clone()),
             http,
             config,
+            playlist_origin_url: reqwest::Url::parse(&playlist_url).ok(),
             playlist_url,
             stats: TokioClientStats::default(),
             last_preload_hint_url: None,
@@ -360,6 +372,9 @@ impl TokioClient {
         method: &str,
         uri: &str,
     ) -> reqwest::RequestBuilder {
+        if !self.is_playlist_origin(uri) {
+            return req;
+        }
         match &self.config.auth {
             Some(Credentials::Basic { username, password }) => {
                 req.basic_auth(username, Some(password))
@@ -394,6 +409,9 @@ impl TokioClient {
         req: reqwest::RequestBuilder,
         response: reqwest::Response,
     ) -> Result<reqwest::Response, TokioError> {
+        if !self.is_playlist_origin(uri) {
+            return Ok(response);
+        }
         let Some(creds @ Credentials::Digest { .. }) = self.config.auth.clone() else {
             return Ok(response);
         };
@@ -415,6 +433,15 @@ impl TokioClient {
                 url: uri.to_string(),
                 source,
             })
+    }
+
+    /// Whether `url` has the same origin (scheme, host, port — RFC 6454 §4)
+    /// as the configured playlist URL; only such requests carry credentials.
+    fn is_playlist_origin(&self, url: &str) -> bool {
+        match (&self.playlist_origin_url, reqwest::Url::parse(url)) {
+            (Some(playlist), Ok(url)) => playlist.origin() == url.origin(),
+            _ => false,
+        }
     }
 
     async fn fetch_bytes(
@@ -486,6 +513,7 @@ impl TokioClient {
                 .await
             {
                 Ok(bytes) => return Ok(bytes),
+                Err(source) if !is_retryable(&source) => return Err(source),
                 Err(source) => {
                     last_err = Some(source);
                     tokio::time::sleep(backoff).await;
@@ -494,6 +522,20 @@ impl TokioClient {
             }
         }
         Err(last_err.expect("loop runs at least once (max_resource_retries.max(1))"))
+    }
+}
+
+/// Whether a failed resource fetch is worth retrying: everything except a
+/// `4xx` that repeating the same request cannot change (`408 Request Timeout`
+/// and `429 Too Many Requests` are transient, RFC 9110 §15.5.9 / RFC 6585 §4).
+fn is_retryable(err: &TokioError) -> bool {
+    match err {
+        TokioError::Status { status, .. } => {
+            !status.is_client_error()
+                || *status == StatusCode::REQUEST_TIMEOUT
+                || *status == StatusCode::TOO_MANY_REQUESTS
+        }
+        _ => true,
     }
 }
 
@@ -591,6 +633,33 @@ mod tests {
             .get(reqwest::header::RANGE)
             .expect("Range header must be present");
         assert_eq!(header, "bytes=10-29");
+    }
+
+    #[test]
+    fn client_errors_other_than_408_and_429_are_not_retried() {
+        let status = |status| TokioError::Status {
+            url: "http://h/x".into(),
+            status,
+        };
+        assert!(!is_retryable(&status(StatusCode::NOT_FOUND)));
+        assert!(!is_retryable(&status(StatusCode::FORBIDDEN)));
+        assert!(is_retryable(&status(StatusCode::REQUEST_TIMEOUT)));
+        assert!(is_retryable(&status(StatusCode::TOO_MANY_REQUESTS)));
+        assert!(is_retryable(&status(StatusCode::SERVICE_UNAVAILABLE)));
+    }
+
+    #[test]
+    fn credentials_origin_check_compares_scheme_host_and_port() {
+        let client = TokioClient::new("http://origin.example:8080/live/index.m3u8").unwrap();
+        assert!(client.is_playlist_origin("http://origin.example:8080/seg0.ts"));
+        assert!(client.is_playlist_origin("HTTP://Origin.Example:8080/a/b.ts"));
+        assert!(!client.is_playlist_origin("http://other.example:8080/seg0.ts"));
+        assert!(!client.is_playlist_origin("https://origin.example:8080/seg0.ts"));
+        assert!(!client.is_playlist_origin("http://origin.example/seg0.ts"));
+        assert!(!client.is_playlist_origin("not a url"));
+        // A default port written out is the same origin.
+        let client = TokioClient::new("https://origin.example/live/index.m3u8").unwrap();
+        assert!(client.is_playlist_origin("https://origin.example:443/seg0.ts"));
     }
 
     // Security-blocker regression (pre-release audit): `TokioClientConfig`

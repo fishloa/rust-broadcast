@@ -61,3 +61,8 @@ serde = ["dep:serde"]
 # the core (`client/engine.rs`) stays IO-free regardless of this feature;
 # enabling it only adds the `client::tokio_client` module alongside it.
 tokio = ["std", "dep:tokio", "dep:reqwest", "dep:broadcast-auth"]
+
+[dev-dependencies]
+# Loopback mock HTTP servers for `tests/tokio_client_auth.rs` (tokio is
+# already a dependency; these are features only).
+tokio             = { version = "1", features = ["net", "io-util", "rt", "macros"] }
