@@ -7,11 +7,53 @@
 //!   the KPERM permutation.
 //! - **Stream cipher seed** (`expand_stream`): produces a nibble-swapped copy
 //!   of the control word for LFSR initialization.
+use core::sync::atomic::{Ordering, compiler_fence};
+
 use super::tables::KPERM;
 
 /// An 8-byte DVB-CSA control word.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+///
+/// Not `Copy` — a `Copy` value can be duplicated on the stack without the
+/// compiler's knowledge, and none of those copies would be zeroed by this
+/// type's [`Drop`] impl. Clone explicitly where a second owned copy is
+/// genuinely needed. The public field stays public (the fuzz target and
+/// external callers construct this with tuple-struct syntax,
+/// `ControlWord(bytes)`, and no call site reads it back out other than
+/// through the methods below), so it carries no confidentiality guarantee on
+/// its own — treat any `ControlWord` value itself as sensitive regardless.
+#[derive(Clone, PartialEq, Eq)]
 pub struct ControlWord(pub [u8; 8]);
+
+/// Redacted: never print control word bytes (a derived `Debug` would — a
+/// `tracing::debug!`/`dbg!`/panic message of a value holding a `ControlWord`
+/// would then write the live control word to logs).
+impl core::fmt::Debug for ControlWord {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_tuple("ControlWord").field(&"<redacted>").finish()
+    }
+}
+
+/// Zero the control word's bytes on drop so it does not linger in freed
+/// memory. `write_volatile` (rather than a plain assignment, which the
+/// optimizer may prove dead and elide since the buffer is about to be
+/// deallocated) plus a `compiler_fence` keep the zeroing from being reordered
+/// or removed around the drop.
+impl Drop for ControlWord {
+    fn drop(&mut self) {
+        zeroize_bytes(&mut self.0);
+    }
+}
+
+/// Overwrite every byte of `buf` with `0`, in a way the optimizer cannot
+/// prove is dead and drop (see [`Drop for ControlWord`](ControlWord)).
+fn zeroize_bytes(buf: &mut [u8; 8]) {
+    for b in buf.iter_mut() {
+        // SAFETY: `b` is a valid, aligned `&mut u8` for the duration of the
+        // write; `write_volatile` never invalidates the pointer.
+        unsafe { core::ptr::write_volatile(b, 0) };
+    }
+    compiler_fence(Ordering::SeqCst);
+}
 
 impl ControlWord {
     /// Create a `ControlWord` from 8 bytes.
@@ -81,5 +123,27 @@ mod tests {
         let sch = cw.expand_block();
         // Just verify first and last round key bytes are non-zero
         assert!(sch.iter().any(|&b| b != 0));
+    }
+
+    /// W-CSA-4: `Debug` must never print the control word's bytes.
+    #[test]
+    fn debug_redacts_control_word_bytes() {
+        let cw = ControlWord::from_bytes([0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88]);
+        let out = format!("{cw:?}");
+        assert!(
+            !out.contains(&format!("{:?}", cw.0)),
+            "Debug output must not contain the control word's array representation: {out}"
+        );
+        assert!(out.contains("<redacted>"));
+    }
+
+    /// W-CSA-4: `ControlWord` cannot safely assert its *own* storage is zero
+    /// after drop (reading freed/moved-from memory is undefined behavior),
+    /// so this pins the private zeroing helper directly on a plain buffer.
+    #[test]
+    fn zeroize_bytes_clears_every_byte() {
+        let mut buf = [0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88];
+        zeroize_bytes(&mut buf);
+        assert_eq!(buf, [0u8; 8]);
     }
 }

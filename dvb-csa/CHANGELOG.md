@@ -7,7 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.2.0] - 2026-08-11
+### Changed (breaking)
+- `ControlWord` no longer implements `Copy` (`Clone` is kept). A `Copy` value can be duplicated
+  on the stack without the type's `Drop` zeroing every copy, so a caller can no longer rely on
+  the compiler to hand out implicit duplicates — clone explicitly where a second owned value is
+  needed. Every in-crate call site (lib, tests, examples, benches) already borrowed `&ControlWord`
+  or used a single owned value, so this needed no call-site changes beyond the type definition.
+
+### Fixed
+- `ControlWord`'s `Debug` impl is now hand-written and prints a redacted placeholder instead of
+  the control word's bytes.
+- `ControlWord` now zeroes its 8 bytes on `Drop` (via a per-byte volatile write plus a compiler
+  fence), so a dropped value does not linger readable in freed memory.
 
 ### Changed
 - `ts::ts_payload_mut` now decodes `adaptation_field_control` via
