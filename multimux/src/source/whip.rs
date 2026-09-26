@@ -99,7 +99,8 @@ use transmux::{
 };
 
 use webrtc_runtime::media::{
-    Datagram, MediaEvent, MediaTransport, MediaTransportConfig, SetupRole, parse_remote_fingerprint,
+    Datagram, MAX_REMOTE_CANDIDATES, MediaEvent, MediaTransport, MediaTransportConfig, SetupRole,
+    parse_remote_fingerprint,
 };
 
 use crate::error::{MultimuxError, Result};
@@ -627,6 +628,7 @@ async fn handle_whip_connection(
         is_controlling: false,
         local_setup: SetupRole::Passive,
         stun_server: None,
+        max_remote_candidates: MAX_REMOTE_CANDIDATES,
     })
     .map_err(|e| MultimuxError::Connect {
         reason: format!("whip: build media transport: {e}"),
@@ -1370,6 +1372,7 @@ m=audio 9 UDP/TLS/RTP/SAVPF 111\r\na=ice-ufrag:x\r\na=ice-pwd:xxxxxxxxxxxxxxxxxx
                     // `MediaTransport::new` accepts — i.e. a well-formed
                     // fingerprint. See `OFFER_FINGERPRINT`.
                     remote_fingerprint: OFFER_FINGERPRINT.into(),
+                    max_remote_candidates: MAX_REMOTE_CANDIDATES,
                 })
                 .unwrap(),
             )),

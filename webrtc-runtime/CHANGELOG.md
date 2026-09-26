@@ -25,6 +25,15 @@ the `media` feature.
   `a=fingerprint`). The DTLS handshake now fails unless the peer's certificate matches it, the
   passive role requires a client certificate, DTLS is accepted only from the ICE-selected
   address, and an established session's SRTP keys cannot be replaced by another association.
+- `media::MediaTransportConfig` has a new required field `max_remote_candidates`.
+  `media::MediaTransport::add_remote_candidate` previously admitted an unbounded number of
+  remote ICE candidates; a caller (e.g. a WHIP offer or a trickle ICE fragment) that supplied a
+  very large number of candidates aimed at arbitrary IP/port pairs could make the transport
+  originate an unbounded number of STUN connectivity checks. RFC 8445 §6.1.2.5 requires this
+  cap to be configurable, so every constructor must now supply a value; pass the new
+  `MAX_REMOTE_CANDIDATES` constant (100, the spec's own recommended default) unless a stricter
+  cap is wanted. Candidates past the configured cap are rejected with `Error::Media`, never
+  silently dropped.
 
 ### Added
 - `parse_remote_fingerprint(sdp)` to read `a=fingerprint` from an SDP body.

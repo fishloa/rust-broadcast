@@ -111,7 +111,8 @@ use transmux::pipeline::{CodecConfig, Sample, TrackSpec};
 use transmux::{DEFAULT_AUDIO_PT, DEFAULT_MTU, RtpPacketiser, VIDEO_CLOCK_RATE};
 
 use webrtc_runtime::media::{
-    Datagram, MediaEvent, MediaTransport, MediaTransportConfig, SetupRole, parse_remote_fingerprint,
+    Datagram, MAX_REMOTE_CANDIDATES, MediaEvent, MediaTransport, MediaTransportConfig, SetupRole,
+    parse_remote_fingerprint,
 };
 use webrtc_runtime::whep::{content_type, status};
 
@@ -593,6 +594,7 @@ async fn handle_whep_connection(
         is_controlling: false,
         local_setup: setup_role,
         stun_server: None,
+        max_remote_candidates: MAX_REMOTE_CANDIDATES,
     })
     .map_err(|e| MultimuxError::Connect {
         reason: format!("whep: build media transport: {e}"),

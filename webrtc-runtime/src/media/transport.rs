@@ -107,6 +107,18 @@ const FINGERPRINT_HASH_TOKEN: &str = "sha-256";
 /// hex bytes an `a=fingerprint:sha-256` value carries (RFC 8122 §5).
 const FINGERPRINT_LEN: usize = 32;
 
+/// The recommended cap on the number of remote ICE candidates one
+/// [`MediaTransport`] admits (RFC 8445 §6.1.2.4-6.1.2.5: 100 candidate pairs
+/// per checklist set, "specifically to bound" the amplification-style issue
+/// in §19.5.1). The spec requires this limit be configurable, so it is not
+/// hardcoded: it is only the default a caller passes as
+/// [`MediaTransportConfig::max_remote_candidates`]. `rtc-ice` 0.20.0 has no
+/// pair cap of its own, so it is enforced here on remote candidates instead:
+/// since local candidates are the small, fixed set this crate gathers per
+/// transport (host + at most one server-reflexive candidate), bounding
+/// remote candidates bounds the pair count too.
+pub const MAX_REMOTE_CANDIDATES: usize = 100;
+
 /// Parses an SDP `a=fingerprint` attribute *value* (`"sha-256 AB:CD:…"`,
 /// RFC 8122 §5) into its raw digest: the hash-function token (case-
 /// insensitive, and only [`FINGERPRINT_HASH_TOKEN`] is accepted — SHA-256
@@ -324,6 +336,12 @@ pub struct MediaTransportConfig {
     /// A STUN server to gather a server-reflexive candidate from, if any
     /// (RFC 8445 §5.1.1.2). `None` gathers a host candidate only.
     pub stun_server: Option<SocketAddr>,
+    /// The cap on remote ICE candidates [`MediaTransport::add_remote_candidate`]
+    /// admits before it starts rejecting further ones (RFC 8445 §6.1.2.5,
+    /// which requires a configurable, enforced limit — see
+    /// [`MAX_REMOTE_CANDIDATES`] for the recommended default and the
+    /// amplification concern it bounds).
+    pub max_remote_candidates: usize,
 }
 
 /// An RTP packet decrypted from an inbound SRTP packet (RFC 3711), with its
@@ -441,6 +459,14 @@ pub struct MediaTransport {
     /// [`Self::purge_expired_retired_key`].
     retired_srtp_read: Option<(SrtpContext, Instant)>,
     gather: Option<StunGather>,
+    /// Remote candidates admitted so far via [`Self::add_remote_candidate`],
+    /// capped at [`Self::max_remote_candidates`]. `rtc-ice`'s `IceAgent`
+    /// keeps its own remote-candidate list privately (no public getter), so
+    /// this is the only place that count is observable from here.
+    remote_candidate_count: usize,
+    /// This transport's copy of [`MediaTransportConfig::max_remote_candidates`]
+    /// (RFC 8445 §6.1.2.5's configurable cap).
+    max_remote_candidates: usize,
 }
 
 impl MediaTransport {
@@ -607,6 +633,8 @@ impl MediaTransport {
             read_rtcp_count: 0,
             retired_srtp_read: None,
             gather,
+            remote_candidate_count: 0,
+            max_remote_candidates: config.max_remote_candidates,
         })
     }
 
@@ -624,9 +652,28 @@ impl MediaTransport {
 
     /// Add a remote ICE candidate (the candidate-attribute body, e.g. from
     /// `a=candidate:<this>` in the remote's SDP or a Trickle-ICE fragment).
+    ///
+    /// # Errors
+    ///
+    /// Also returns [`Error::Media`] once
+    /// [`MediaTransportConfig::max_remote_candidates`] remote candidates
+    /// have already been admitted (RFC 8445 §6.1.2.5) — every candidate past
+    /// the cap is rejected, never silently dropped.
     pub fn add_remote_candidate(&mut self, candidate: &str) -> Result<(), Error> {
+        if self.remote_candidate_count >= self.max_remote_candidates {
+            let cap = self.max_remote_candidates;
+            return Err(Error::Media(format!(
+                "remote candidate count exceeds the {cap}-candidate cap (RFC 8445 §6.1.2.5)"
+            )));
+        }
         let c = unmarshal_candidate(candidate)
             .map_err(|e| Error::Media(format!("unmarshal remote candidate {candidate:?}: {e}")))?;
+        // Counted here, before the `rtc-ice` call: this bounds the number of
+        // candidates handed to the agent's connectivity-check machinery
+        // regardless of whether the agent itself treats one as a duplicate
+        // or otherwise filters it (`rtc-ice` 0.20.0 keeps its own remote
+        // candidate list privately, so this is the only cap available).
+        self.remote_candidate_count += 1;
         self.ice
             .add_remote_candidate(c)
             .map_err(|e| Error::Media(format!("add remote candidate: {e}")))?;
@@ -1256,6 +1303,7 @@ mod tests {
             local_setup,
             stun_server: None,
             remote_fingerprint: DUMMY_REMOTE_FINGERPRINT.into(),
+            max_remote_candidates: MAX_REMOTE_CANDIDATES,
         }
     }
 
@@ -1353,6 +1401,78 @@ mod tests {
             mt.dtls_client_config.is_none(),
             "Passive role must never dial out, so it must retain no client handshake config"
         );
+    }
+
+    #[test]
+    fn add_remote_candidate_enforces_max_cap() {
+        // RFC 8445 §6.1.2.5: the candidate-pair cap MUST be enforced. Feed
+        // more than MAX_REMOTE_CANDIDATES distinct, well-formed host
+        // candidate lines and check every one past the cap is rejected, and
+        // that the transport's admitted count never exceeds the cap.
+        let mut mt =
+            MediaTransport::new(test_config(SetupRole::Passive)).expect("Passive role must build");
+
+        let extra = 5;
+        let mut accepted = 0usize;
+        let mut rejected = 0usize;
+        for i in 0..(MAX_REMOTE_CANDIDATES + extra) {
+            // Distinct port per candidate so none is treated as a duplicate
+            // by the ICE agent itself (which would otherwise mask the cap).
+            let port = 10_000 + i as u16;
+            let line = format!("1 1 udp 2130706431 127.0.0.1 {port} typ host");
+            match mt.add_remote_candidate(&line) {
+                Ok(()) => accepted += 1,
+                Err(Error::Media(_)) => rejected += 1,
+                Err(other) => panic!("unexpected error variant: {other:?}"),
+            }
+        }
+
+        assert_eq!(
+            accepted, MAX_REMOTE_CANDIDATES,
+            "exactly MAX_REMOTE_CANDIDATES candidates must be admitted"
+        );
+        assert_eq!(
+            rejected, extra,
+            "every candidate past the cap must be rejected, not silently dropped"
+        );
+        assert_eq!(
+            mt.remote_candidate_count, MAX_REMOTE_CANDIDATES,
+            "the transport's admitted remote-candidate count must never exceed the cap"
+        );
+    }
+
+    #[test]
+    fn add_remote_candidate_honours_a_smaller_configured_cap() {
+        // RFC 8445 §6.1.2.5 requires the limit to be configurable, not just
+        // a fixed default: a caller that sets a stricter
+        // `max_remote_candidates` than [`MAX_REMOTE_CANDIDATES`] must have
+        // it enforced, not silently widened back to the default.
+        let mut config = test_config(SetupRole::Passive);
+        let small_cap = 3;
+        config.max_remote_candidates = small_cap;
+        let mut mt = MediaTransport::new(config).expect("Passive role must build");
+
+        let mut accepted = 0usize;
+        let mut rejected = 0usize;
+        for i in 0..(small_cap + 2) {
+            let port = 20_000 + i as u16;
+            let line = format!("1 1 udp 2130706431 127.0.0.1 {port} typ host");
+            match mt.add_remote_candidate(&line) {
+                Ok(()) => accepted += 1,
+                Err(Error::Media(_)) => rejected += 1,
+                Err(other) => panic!("unexpected error variant: {other:?}"),
+            }
+        }
+
+        assert_eq!(
+            accepted, small_cap,
+            "exactly the configured cap must be admitted, not MAX_REMOTE_CANDIDATES"
+        );
+        assert_eq!(
+            rejected, 2,
+            "every candidate past the configured cap must be rejected"
+        );
+        assert_eq!(mt.remote_candidate_count, small_cap);
     }
 
     // -----------------------------------------------------------------------
@@ -1960,6 +2080,7 @@ mod tests {
                 local_setup: SetupRole::Active,
                 stun_server: None,
                 remote_fingerprint: format!("sha-256 {fp_b}"),
+                max_remote_candidates: MAX_REMOTE_CANDIDATES,
             },
             parse_fingerprint_value(&format!("sha-256 {fp_b}")).unwrap(),
             cert_a,
@@ -1976,6 +2097,7 @@ mod tests {
                 local_setup: SetupRole::Passive,
                 stun_server: None,
                 remote_fingerprint: format!("sha-256 {fp_a}"),
+                max_remote_candidates: MAX_REMOTE_CANDIDATES,
             },
             parse_fingerprint_value(&format!("sha-256 {fp_a}")).unwrap(),
             cert_b,

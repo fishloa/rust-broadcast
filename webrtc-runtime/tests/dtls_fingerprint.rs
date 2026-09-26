@@ -27,7 +27,8 @@ use std::net::{SocketAddr, UdpSocket};
 use std::time::{Duration, Instant};
 
 use webrtc_runtime::media::{
-    MediaEvent, MediaTransport, MediaTransportConfig, SetupRole, parse_remote_fingerprint,
+    MAX_REMOTE_CANDIDATES, MediaEvent, MediaTransport, MediaTransportConfig, SetupRole,
+    parse_remote_fingerprint,
 };
 
 /// A syntactically valid SHA-256 SDP fingerprint value (RFC 8122 §5: the
@@ -76,6 +77,7 @@ fn config(
         // needs a *matching* fingerprint — see the module doc for why that
         // is impossible through the public API alone.
         remote_fingerprint: WRONG_FP.to_string(),
+        max_remote_candidates: MAX_REMOTE_CANDIDATES,
     }
 }
 
