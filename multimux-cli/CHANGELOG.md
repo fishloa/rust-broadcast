@@ -4,6 +4,12 @@ All notable changes to `multimux-cli` will be documented in this file.
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-09-26
+
+### Changed
+- Built on `multimux` 0.11.0, which carries WHIP/WHEP, push-output and RTP-input security
+  fixes; see its release note. No CLI changes.
+
 ## [0.8.0] - 2026-08-14
 
 ### Changed

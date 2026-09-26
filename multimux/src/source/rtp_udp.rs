@@ -122,6 +122,10 @@ pub struct RtpUdpIngestSession {
     pt_to_track: HashMap<u8, u32>,
     pending: std::collections::VecDeque<SessionEvent>,
     announced: bool,
+    /// Packets dropped for failing depayload (malformed RTP header, CSRC
+    /// overflow, …) — counted rather than failing the session (issue
+    /// r07-C8).
+    depay_dropped: u64,
 }
 
 impl RtpUdpIngestSession {
@@ -141,7 +145,13 @@ impl RtpUdpIngestSession {
             pt_to_track,
             pending: std::collections::VecDeque::from(vec![SessionEvent::Established]),
             announced: false,
+            depay_dropped: 0,
         }
+    }
+
+    /// Total packets dropped so far for failing depayload.
+    pub fn depay_dropped(&self) -> u64 {
+        self.depay_dropped
     }
 
     /// The single program this session ever announces: the SDP-declared
@@ -163,10 +173,12 @@ impl RtpUdpIngestSession {
 impl Stage for RtpUdpIngestSession {
     type In<'a> = &'a [u8];
     type Out = SessionEvent;
-    /// A malformed/unroutable datagram is silently ignored (mirrors the
+    /// A malformed/unroutable datagram is silently dropped (mirrors the
     /// pre-5a session's "unrouted payload type -> ignored" handling) — a
-    /// depayload failure from a routed track is the only real error case,
-    /// so this uses the crate's own error type rather than `Infallible`.
+    /// depayload failure from a routed track is also just a dropped packet
+    /// (issue r07-C8), so `feed` never actually returns `Err` today; this
+    /// crate's own error type is kept rather than `Infallible` since a
+    /// future genuinely-fatal condition may still need one.
     type Error = MultimuxError;
 
     fn feed(&mut self, input: &[u8], _now: Timestamp) -> core::result::Result<(), MultimuxError> {
@@ -176,12 +188,14 @@ impl Stage for RtpUdpIngestSession {
         else {
             return Ok(());
         };
-        let samples =
-            self.depacketiser
-                .push(track_id, input)
-                .map_err(|e| MultimuxError::Depay {
-                    reason: e.to_string(),
-                })?;
+        let samples = match self.depacketiser.push(track_id, input) {
+            Ok(samples) => samples,
+            Err(e) => {
+                self.depay_dropped += 1;
+                tracing::debug!(track_id, error = %e, "rtp/udp depayload failed; dropping packet");
+                return Ok(());
+            }
+        };
         for sample in samples {
             self.pending.push_back(SessionEvent::Sample {
                 program: ProgramId(0),
@@ -256,11 +270,30 @@ pub async fn bind(route: &RtpUdpRoute) -> Result<UdpSocket> {
     bind_udp(&route.addr, route.multicast_group.as_deref()).await
 }
 
+/// A driver no longer running (issue r07-C8) becomes a terminal error here,
+/// rather than the receive loop silently continuing to feed a session that
+/// will never make progress again — so the caller's supervisor reconnects
+/// instead of `/readyz` reporting a dead route as `Live` forever. Pulled out
+/// of [`recv_and_feed`] so the classification itself is directly testable
+/// without needing a real socket or a genuinely-failed session.
+fn terminal_error_if_not_running(
+    health: &media_plane::ingress::HealthState<MultimuxError>,
+) -> Option<MultimuxError> {
+    if health.is_running() {
+        return None;
+    }
+    Some(MultimuxError::Connect {
+        reason: format!("rtp/udp session ended: {health:?}"),
+    })
+}
+
 /// Reads one datagram from `socket` (bounded by `read_timeout`) and feeds it
-/// to `driver`. See `ts_udp::recv_and_feed` — identical shape, this
-/// session's own `Stage::Error` is `MultimuxError` rather than `Infallible`
-/// (a depayload failure is a real per-packet error here), so a feed error
-/// surfaces as `HealthState::Failed`, not just an I/O-layer error.
+/// to `driver`. See `ts_udp::recv_and_feed` — identical shape, plus a
+/// post-feed health check (issue r07-C8): a depayload failure no longer
+/// fails the session (dropped and logged instead, in `RtpUdpIngestSession::
+/// feed`), but this is still the one place that notices if the driver ends
+/// up not running for some other reason and turns that into the terminal
+/// error the caller's supervisor reconnects on.
 pub async fn recv_and_feed(
     socket: &UdpSocket,
     buf: &mut [u8],
@@ -277,6 +310,9 @@ pub async fn recv_and_feed(
             reason: format!("udp recv: {e}"),
         })?;
     driver.feed(&buf[..n], now);
+    if let Some(e) = terminal_error_if_not_running(driver.health()) {
+        return Err(e);
+    }
     Ok(())
 }
 
@@ -451,6 +487,93 @@ mod tests {
         assert_eq!(
             first_ptr, second_ptr,
             "a second feed must not re-announce (and thus replace) program 0's Trunk"
+        );
+    }
+
+    /// Flips the RTP version field (header byte 0, top two bits — RFC 3550
+    /// §5.1) from the required `2` to `1`, keeping the payload-type byte
+    /// (and everything else) intact so the packet still routes to the same
+    /// track — exactly the malformed-but-routable datagram issue r07-C8
+    /// describes.
+    fn with_invalid_rtp_version(mut pkt: Vec<u8>) -> Vec<u8> {
+        pkt[0] = (pkt[0] & 0x3F) | 0x40; // version=1, csrc_count/padding/extension bits kept 0
+        pkt
+    }
+
+    /// PRE-FIX FAILURE OBSERVED: `assert!(matches!(driver.health(),
+    /// HealthState::Live), ..)` panicked after the malformed packet with
+    /// `Failed(Depay { reason: "invalid rtp_version: must be 2 (value:
+    /// 0x1)" })` — the old code mapped the depayload error straight to
+    /// `Err`, and `IngestDriver::feed` turns that into a permanent freeze
+    /// (`feed` becomes a no-op once `!health.is_running()`), so the two
+    /// packets fed afterward were silently dropped instead of depayloaded.
+    #[test]
+    fn malformed_packet_is_dropped_and_the_session_keeps_running() {
+        let mut dialer = RtpUdpDialer::new(sdp_body());
+        let session = dialer.dial().unwrap();
+        let mut driver = IngestDriver::new(
+            session,
+            trunk_config(),
+            handshake(),
+            media_plane::DEFAULT_MAX_PROGRAMS,
+        );
+
+        let idr = rtp_packet(1, 1000, true, &[0x65, 0xAA]);
+        driver.feed(&idr, Timestamp::ZERO);
+        assert!(matches!(driver.health(), HealthState::Live));
+        let mut cursor = driver.trunk(ProgramId(0)).unwrap().subscribe();
+
+        // The malformed packet's header never parses far enough to reach
+        // sequence-number admission at all (`push` rejects it before
+        // `SeqState::admit` runs), so it never occupies a real sequence
+        // slot; `non1` below continues the sequence right where `idr` left
+        // off (seq 2, not 3) so the dropped datagram leaves no reorder-buffer
+        // hole for the depacketiser's own (unrelated) gap logic to open.
+        let malformed = with_invalid_rtp_version(rtp_packet(99, 4000, true, &[0x41, 0xBB]));
+        driver.feed(&malformed, Timestamp::from_nanos(1));
+        assert!(
+            matches!(driver.health(), HealthState::Live),
+            "a malformed datagram must not fail the session: {:?}",
+            driver.health()
+        );
+
+        let non1 = rtp_packet(2, 4000, true, &[0x41, 0xBB]);
+        driver.feed(&non1, Timestamp::from_nanos(2));
+        let non2 = rtp_packet(3, 7000, true, &[0x41, 0xCC]);
+        driver.feed(&non2, Timestamp::from_nanos(3));
+
+        let mut samples_seen = 0usize;
+        while cursor.poll().is_some() {
+            samples_seen += 1;
+        }
+        assert!(
+            samples_seen >= 2,
+            "packets fed after the malformed datagram must still be depayloaded and delivered"
+        );
+    }
+
+    /// [`terminal_error_if_not_running`] is the one piece of new decision
+    /// logic issue r07-C8's second half adds: `recv_and_feed`'s own
+    /// health check, not the machinery that gets a driver into a terminal
+    /// state (already `media_plane::ingress`'s job) — so it is tested
+    /// directly against every `HealthState` variant, without needing to
+    /// force an actual driver failure end to end.
+    #[test]
+    fn terminal_error_if_not_running_covers_every_health_state() {
+        assert!(terminal_error_if_not_running(&HealthState::Establishing).is_none());
+        assert!(terminal_error_if_not_running(&HealthState::Live).is_none());
+        assert!(terminal_error_if_not_running(&HealthState::Ended).is_some());
+        assert!(
+            terminal_error_if_not_running(&HealthState::Failed(MultimuxError::Depay {
+                reason: "boom".to_string(),
+            }))
+            .is_some()
+        );
+        assert!(
+            terminal_error_if_not_running(&HealthState::HandshakeTimedOut {
+                deadline: Timestamp::ZERO,
+            })
+            .is_some()
         );
     }
 

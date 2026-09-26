@@ -733,6 +733,17 @@ async fn serve_with_registry_impl(
     let cancel = tokio_util::sync::CancellationToken::new();
     let mut supervisor_handles: Vec<(String, tokio::task::JoinHandle<()>)> = Vec::new();
 
+    // Resolved once, ahead of the per-route loop, so `spawn_whep_outputs`
+    // gates viewers with the same `Verifier` `AppState::output_auth` holds
+    // (issue r07-C11) — previously this was only built after every route's
+    // WHEP listener had already been spawned unauthenticated.
+    let output_auth: Option<Arc<Verifier>> = config
+        .output_auth
+        .as_ref()
+        .map(|spec| resolve_verifier(spec, OUTPUT_AUTH_REALM, &registry))
+        .transpose()?
+        .map(Arc::new);
+
     for route in &config.routes {
         let store = Arc::new(
             RouteHandle::new(target_duration_secs, part_target_ms, config.window_segments)
@@ -760,7 +771,8 @@ async fn serve_with_registry_impl(
         for h in push_handles {
             supervisor_handles.push((route.name.clone(), h));
         }
-        let whep_handles = spawn_whep_outputs(route, Arc::clone(&store), &cancel);
+        let whep_handles =
+            spawn_whep_outputs(route, Arc::clone(&store), &cancel, output_auth.clone());
         for h in whep_handles {
             supervisor_handles.push((route.name.clone(), h));
         }
@@ -772,9 +784,8 @@ async fn serve_with_registry_impl(
     }
 
     let mut app_state = AppState::new(streams).with_limits(HttpLimits::from(&config));
-    if let Some(output_auth) = &config.output_auth {
-        let verifier = resolve_verifier(output_auth, OUTPUT_AUTH_REALM, &registry)?;
-        app_state = app_state.with_output_auth(Arc::new(verifier));
+    if let Some(verifier) = output_auth {
+        app_state = app_state.with_output_auth(verifier);
     }
     let state = Arc::new(app_state);
     let listener = tokio::net::TcpListener::bind(config.bind.as_str()).await?;
@@ -926,6 +937,7 @@ fn spawn_whep_outputs(
     route: &crate::config::Route,
     store: Arc<RouteHandle>,
     cancel: &tokio_util::sync::CancellationToken,
+    output_auth: Option<Arc<Verifier>>,
 ) -> Vec<tokio::task::JoinHandle<()>> {
     let mut handles = Vec::new();
     for kind in &route.outputs {
@@ -933,10 +945,11 @@ fn spawn_whep_outputs(
             let route_cfg = crate::output::whep::WhepRoute::new(listen.clone());
             let store = Arc::clone(&store);
             let cancel = cancel.clone();
+            let output_auth = output_auth.clone();
             handles.push(tokio::spawn(async move {
                 let trunk = store.await_first_trunk().await;
                 tracing::info!(listen = %route_cfg.listen(), "WHEP egress starting");
-                crate::output::whep::run_whep(&route_cfg, trunk, cancel).await;
+                crate::output::whep::run_whep(&route_cfg, trunk, cancel, output_auth).await;
             }));
         }
     }
@@ -949,8 +962,9 @@ fn spawn_whep_outputs(
     route: &crate::config::Route,
     store: Arc<RouteHandle>,
     cancel: &tokio_util::sync::CancellationToken,
+    output_auth: Option<Arc<Verifier>>,
 ) -> Vec<tokio::task::JoinHandle<()>> {
-    let _ = (route, store, cancel);
+    let _ = (route, store, cancel, output_auth);
     Vec::new()
 }
 
