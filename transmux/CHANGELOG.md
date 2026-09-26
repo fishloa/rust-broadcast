@@ -13,6 +13,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   previously-infallible builders (`transmux::rtmp::write_chunks`, `MessageHeader::write_into`,
   `OutTag::write_into`, `HevcNalUnit`/`HevcNalArray::serialize_into`, `drm::playready_pro`/
   `playready_pssh`) now return `Result` for the same reason.
+- `cenc::SampleAuxInfoSizesBox` and `init_segment::SampleSizeBox` gain a `sample_count: u32`
+  field. Previously the uniform-size form (`default_sample_info_size`/`sample_size != 0`) derived
+  the wire `sample_count` from the always-empty per-sample table, so it silently collapsed to 0 on
+  every parse -> serialize round trip of a real whole-sample-protected or constant-bitrate track
+  (#1013, #1018).
+- `init_segment::Mp4aSampleEntry` gains a `codec_type: [u8; 4]` field recording the real sample
+  entry four-CC (`mp4a` or `enca`); serialize previously hard-coded `mp4a`, silently re-labelling a
+  CENC-protected (`enca`) audio track as clear (#1017).
 
 ### Fixed
 - `avcC`/`hvcC` NALU-array serializers no longer silently wrap `numOfSequenceParameterSets`
@@ -36,6 +44,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   narrowed (#1129).
 - `trun`/`stsz`/`dref`/`stsc`/`stco`/`co64`/`stss`/`stsd` box `sample_count`/`entry_count` fields
   are now range-checked before narrowing to their 32-bit wire field (#1129).
+- `mvhd`/`tkhd` version-1 (64-bit `creation_time`/`modification_time`/`duration`) boxes now use
+  the correct size and field offsets: `mvhd` v1 is 120 bytes, not 124, with `next_track_id` at
+  byte 116 (#1015); `tkhd` v1's `duration`/`layer`/`alternate_group`/`volume`/`matrix` were read 4
+  bytes early (#1016). Previously a real v1 `mvhd`/`tkhd` (produced whenever a duration in movie-
+  timescale ticks exceeds `u32::MAX`) failed to parse or was silently misframed on serialize.
+- H.264 SAMPLE-AES encryption no longer encrypts a NAL's final block when exactly 16 bytes of the
+  eligible region remain; the HLS SAMPLE-AES spec (§3.2, `docs/drm/hls-sample-aes.md`) leaves that
+  trailing block clear (`bytes_remaining() > 16`, strictly greater) (#1014).
+- The E-AC-3 `dec3` (`EC3SpecificBox`) serializer no longer under-sizes a substream that has
+  dependent substreams (`num_dep_sub > 0`): such a substream is 4 bytes on the wire (the extra
+  `chan_loc(9)` field), not always 3, so re-serializing a 7.1 E-AC-3 init segment no longer
+  panics/misframes (#1055).
 
 ## [0.24.2] - 2026-09-25
 

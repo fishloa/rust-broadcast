@@ -963,12 +963,14 @@ fn build_cenc_fragment_boxes(p: &FragmentProtection<'_>) -> Result<Option<CencFr
         .first()
         .copied()
         .filter(|first| sizes.iter().all(|s| s == first));
+    let sample_count = broadcast_common::len::fit_u32(sizes.len(), "saiz sample_count")?;
     let saiz = crate::cenc::SampleAuxInfoSizesBox {
         version: 0,
         flags: 0,
         aux_info_type: None,
         aux_info_type_parameter: None,
         default_sample_info_size: uniform.unwrap_or(0),
+        sample_count,
         sample_info_sizes: if uniform.is_some() { Vec::new() } else { sizes },
     };
     let saio = crate::cenc::SampleAuxInfoOffsetsBox {

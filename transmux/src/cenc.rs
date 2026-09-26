@@ -616,6 +616,13 @@ impl Serialize for ProtectionSystemSpecificHeaderBox {
 // ---------------------------------------------------------------------------
 
 /// Sample Auxiliary Information Sizes Box (`saiz`) — §8.7.8.
+///
+/// `sample_count` (wire `unsigned int(32)`) is carried explicitly: unlike
+/// `sample_info_sizes.len()`, it does not collapse to 0 when
+/// `default_sample_info_size != 0` (the uniform-size form, where the wire
+/// carries a count but no per-sample table). Round-tripping a uniform-size
+/// `saiz` through `sample_info_sizes.len()` alone silently declared every
+/// such box "0 samples of aux info" (issue #1013).
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct SampleAuxInfoSizesBox {
@@ -624,6 +631,7 @@ pub struct SampleAuxInfoSizesBox {
     pub aux_info_type: Option<u32>,
     pub aux_info_type_parameter: Option<u32>,
     pub default_sample_info_size: u8,
+    pub sample_count: u32,
     pub sample_info_sizes: Vec<u8>,
 }
 
@@ -669,14 +677,15 @@ impl SampleAuxInfoSizesBox {
         }
         let default_size = bytes[offset];
         offset += 1;
-        let sample_count = u32::from_be_bytes([
+        let sample_count_wire = u32::from_be_bytes([
             bytes[offset],
             bytes[offset + 1],
             bytes[offset + 2],
             bytes[offset + 3],
-        ]) as usize;
+        ]);
         offset += 4;
         let sample_info_sizes = if default_size == 0 {
+            let sample_count = sample_count_wire as usize;
             if bytes.len() < offset + sample_count {
                 return Err(Error::BufferTooShort {
                     need: offset + sample_count,
@@ -694,6 +703,7 @@ impl SampleAuxInfoSizesBox {
             aux_info_type,
             aux_info_type_parameter,
             default_sample_info_size: default_size,
+            sample_count: sample_count_wire,
             sample_info_sizes,
         })
     }
@@ -742,9 +752,14 @@ impl Serialize for SampleAuxInfoSizesBox {
         }
         buf[c] = self.default_sample_info_size;
         c += 1;
-        let sample_count =
-            broadcast_common::len::fit_u32(self.sample_info_sizes.len(), "sample_count")?;
-        buf[c..c + 4].copy_from_slice(&sample_count.to_be_bytes());
+        if self.default_sample_info_size == 0
+            && self.sample_info_sizes.len() != self.sample_count as usize
+        {
+            return Err(Error::InvalidInput(
+                "saiz: sample_info_sizes.len() must equal sample_count when default_sample_info_size == 0",
+            ));
+        }
+        buf[c..c + 4].copy_from_slice(&self.sample_count.to_be_bytes());
         c += 4;
         if self.default_sample_info_size == 0 {
             buf[c..c + self.sample_info_sizes.len()].copy_from_slice(&self.sample_info_sizes);

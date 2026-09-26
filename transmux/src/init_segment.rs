@@ -149,7 +149,12 @@ impl<'a> Parse<'a> for MovieHeaderBox {
                 next_track_id: u32::from_be_bytes([bytes[104], bytes[105], bytes[106], bytes[107]]),
             })
         } else {
-            let need = 124;
+            // v1 body (ISO/IEC 14496-12 §8.2.2.2): the 8-byte creation/
+            // modification_time + duration widening (+12 bytes over v0) is
+            // the ONLY size change — `pre_defined[6]` still ends at byte 116,
+            // so `next_track_id` sits at `116..120` and the whole box is
+            // **120** bytes, not 124 (issue #1015).
+            let need = 120;
             if bytes.len() < need {
                 return Err(Error::BufferTooShort {
                     need,
@@ -186,7 +191,7 @@ impl<'a> Parse<'a> for MovieHeaderBox {
                     i32::from_be_bytes([bytes[84], bytes[85], bytes[86], bytes[87]]),
                     i32::from_be_bytes([bytes[88], bytes[89], bytes[90], bytes[91]]),
                 ],
-                next_track_id: u32::from_be_bytes([bytes[120], bytes[121], bytes[122], bytes[123]]),
+                next_track_id: u32::from_be_bytes([bytes[116], bytes[117], bytes[118], bytes[119]]),
             })
         }
     }
@@ -195,7 +200,8 @@ impl<'a> Parse<'a> for MovieHeaderBox {
 impl Serialize for MovieHeaderBox {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        if self.version == 0 { 108 } else { 124 }
+        // v1 is 120 bytes, not 124 — see the parse-side comment above (#1015).
+        if self.version == 0 { 108 } else { 120 }
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();
@@ -325,10 +331,15 @@ impl<'a> Parse<'a> for TrackHeaderBox {
                     what: "tkhd v1",
                 });
             }
+            // v1 body (ISO/IEC 14496-12 §8.3.2): track_ID(32) + a single
+            // 32-bit `reserved` (not 8) sit between modification_time and
+            // duration, so duration starts at byte 36, not 40 — every field
+            // from `duration` on was previously read 4 bytes early
+            // (issue #1016).
             let ct = u64::from_be_bytes(bytes[12..20].try_into().unwrap());
             let mt = u64::from_be_bytes(bytes[20..28].try_into().unwrap());
             let tid = u32::from_be_bytes([bytes[28], bytes[29], bytes[30], bytes[31]]);
-            let dur = u64::from_be_bytes(bytes[40..48].try_into().unwrap());
+            let dur = u64::from_be_bytes(bytes[36..44].try_into().unwrap());
             Ok(Self {
                 version: 1,
                 flags,
@@ -336,10 +347,10 @@ impl<'a> Parse<'a> for TrackHeaderBox {
                 modification_time: mt,
                 track_id: tid,
                 duration: dur,
-                layer: i16::from_be_bytes([bytes[48], bytes[49]]),
-                alternate_group: i16::from_be_bytes([bytes[50], bytes[51]]),
-                volume: i16::from_be_bytes([bytes[52], bytes[53]]),
-                matrix: matrix_from_bytes(&bytes[56..92]),
+                layer: i16::from_be_bytes([bytes[52], bytes[53]]),
+                alternate_group: i16::from_be_bytes([bytes[54], bytes[55]]),
+                volume: i16::from_be_bytes([bytes[56], bytes[57]]),
+                matrix: matrix_from_bytes(&bytes[60..96]),
                 width: u32::from_be_bytes([bytes[96], bytes[97], bytes[98], bytes[99]]),
                 height: u32::from_be_bytes([bytes[100], bytes[101], bytes[102], bytes[103]]),
             })
@@ -1045,12 +1056,19 @@ impl Serialize for SampleToChunkBox {
 /// Sample Size Box (`stsz`) — §8.7.3.
 /// If `sample_size > 0`, all samples have that uniform size and the entries vec
 /// is empty. If `sample_size == 0`, entries contains per-sample sizes.
+///
+/// `sample_count` (wire `unsigned int(32)`) is carried explicitly for the
+/// same reason as `SampleAuxInfoSizesBox::sample_count` (issue #1013): when
+/// `sample_size != 0` the wire count is real but `entries` stays empty, so
+/// `entries.len()` alone cannot stand in for it without collapsing every
+/// uniform-size track to "0 samples" on re-serialize (issue #1018).
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct SampleSizeBox {
     pub version: u8,
     pub flags: u32,
     pub sample_size: u32,
+    pub sample_count: u32,
     pub entries: Vec<u32>,
 }
 
@@ -1097,6 +1115,7 @@ impl<'a> Parse<'a> for SampleSizeBox {
             version: ver,
             flags,
             sample_size,
+            sample_count: count as u32,
             entries,
         })
     }
@@ -1113,6 +1132,11 @@ impl Serialize for SampleSizeBox {
         BOX_HDR + FULL_HDR + 8 + count * 4
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
+        if self.sample_size == 0 && self.entries.len() != self.sample_count as usize {
+            return Err(Error::InvalidInput(
+                "stsz: entries.len() must equal sample_count when sample_size == 0",
+            ));
+        }
         let count = if self.sample_size == 0 {
             self.entries.len()
         } else {
@@ -1137,8 +1161,7 @@ impl Serialize for SampleSizeBox {
         c += 3;
         buf[c..c + 4].copy_from_slice(&self.sample_size.to_be_bytes());
         c += 4;
-        let sample_count = broadcast_common::len::fit_u32(count, "sample_count")?;
-        buf[c..c + 4].copy_from_slice(&sample_count.to_be_bytes());
+        buf[c..c + 4].copy_from_slice(&self.sample_count.to_be_bytes());
         c += 4;
         for &sz in &self.entries {
             buf[c..c + 4].copy_from_slice(&sz.to_be_bytes());
@@ -1434,6 +1457,12 @@ impl Serialize for SyncSampleBox {
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct Mp4aSampleEntry {
+    /// The FourCC of this sample entry — `mp4a`, or `enca` when the track is
+    /// CENC-protected (the `sinf` child then carries the real codec under
+    /// `frma`). Previously hard-coded to `mp4a` on serialize, which silently
+    /// re-labelled a protected audio track as clear on any parse -> serialize
+    /// round trip (issue #1017).
+    pub codec_type: [u8; 4],
     pub data_reference_index: u16,
     pub channelcount: u16,
     pub samplesize: u16,
@@ -1914,6 +1943,8 @@ impl<'a> Parse<'a> for Mp4aSampleEntry {
                 what: "mp4a",
             });
         }
+        let mut codec_type = [0u8; 4];
+        codec_type.copy_from_slice(&bytes[4..8]);
         let body = &bytes[8..];
         let dri = u16::from_be_bytes([body[6], body[7]]);
         let chan = u16::from_be_bytes([body[16], body[17]]);
@@ -1938,6 +1969,7 @@ impl<'a> Parse<'a> for Mp4aSampleEntry {
             off += sz;
         }
         Ok(Self {
+            codec_type,
             data_reference_index: dri,
             channelcount: chan,
             samplesize: samp_sz,
@@ -1967,7 +1999,7 @@ impl Serialize for Mp4aSampleEntry {
         let mut c = 0usize;
         buf[c..c + 4].copy_from_slice(&(need as u32).to_be_bytes());
         c += 4;
-        buf[c..c + 4].copy_from_slice(b"mp4a");
+        buf[c..c + 4].copy_from_slice(&self.codec_type);
         c += 4;
         // SampleEntry: reserved(6) + data_reference_index(2)
         c += 6;
@@ -3516,15 +3548,25 @@ mod tests {
 
     #[test]
     fn stsz_uniform_round_trip() {
+        // Uniform sample_size (constant-size samples): the wire still
+        // carries a real sample_count even though `entries` stays empty
+        // (issue #1018) — a real MP4Box/ffmpeg-produced fixture asserting
+        // this against an independent oracle lives in
+        // `tests/cenc_saiz_stsz_v1_boxes.rs`.
         let s = SampleSizeBox {
             version: 0,
             flags: 0,
             sample_size: 512,
+            sample_count: 88,
             entries: alloc::vec![],
         };
         let bytes = s.to_bytes();
         let parsed = SampleSizeBox::parse(&bytes).unwrap();
         assert_eq!(parsed, s);
+        assert_eq!(
+            parsed.sample_count, 88,
+            "uniform stsz must keep its real sample_count"
+        );
     }
 
     #[test]

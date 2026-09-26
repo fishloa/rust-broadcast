@@ -552,11 +552,13 @@ impl Ec3SpecificBox {
     }
 }
 
-fn ec3_substream_serialized_len(_sub: &Ec3Substream) -> usize {
-    // fscod(2)+bsid(5)+reserved(1)+asvc(1)+bsmod(3)+acmod(3)+lfeon(1)+reserved(3)+num_dep_sub(4)
-    // + chan_loc(9) if num_dep_sub>0 else reserved(1)
-    // = 23 bits + (9 or 1) → 24 bits = 3 bytes per substream
-    3
+fn ec3_substream_serialized_len(sub: &Ec3Substream) -> usize {
+    // ETSI TS 102 366 §F.6.1: fscod(2)+bsid(5)+reserved(1)+asvc(1)+bsmod(3)+
+    // acmod(3)+lfeon(1)+reserved(3)+num_dep_sub(4) = 23 bits, then
+    // + chan_loc(9) when num_dep_sub>0 (32 bits = 4 bytes) else
+    // + reserved(1) (24 bits = 3 bytes). A dependent substream (7.1 content
+    // signalled via chan_loc) is 4 bytes, not always 3 (issue #1055).
+    if sub.num_dep_sub > 0 { 4 } else { 3 }
 }
 
 impl<'a> Parse<'a> for Ec3SpecificBox {
@@ -633,8 +635,13 @@ impl<'a> Parse<'a> for Ec3SpecificBox {
 impl Serialize for Ec3SpecificBox {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        // 2 bytes header (data_rate+num_ind_sub) + 3 bytes per substream
-        2 + self.substreams.len() * 3
+        // 2 bytes header (data_rate+num_ind_sub) + 3 or 4 bytes per substream
+        // (4 when it has dependent substreams — see `ec3_substream_serialized_len`).
+        2 + self
+            .substreams
+            .iter()
+            .map(ec3_substream_serialized_len)
+            .sum::<usize>()
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();
@@ -854,6 +861,64 @@ mod tests {
         let n = box1.serialize_into(&mut buf).unwrap();
         assert_eq!(n, DEC3_ORACLE.len());
         assert_eq!(&buf[..], &DEC3_ORACLE[..], "dec3 round-trip mismatch");
+    }
+
+    /// #1055: a substream with `num_dep_sub > 0` is 32 bits (4 bytes) on the
+    /// wire, not 24 (3 bytes) — ETSI TS 102 366 §F.6.1 (transcribed at
+    /// `docs/codec/ac3-eac3-mp4.md` §F.6.1): the per-substream syntax is
+    /// `fscod(2) bsid(5) reserved(1) asvc(1) bsmod(3) acmod(3) lfeon(1)
+    /// reserved(3) num_dep_sub(4)` = 23 bits, then `chan_loc(9)` when
+    /// `num_dep_sub > 0` (32 bits total) or `reserved(1)` otherwise (24 bits
+    /// total).
+    ///
+    /// No real 7.1 E-AC-3 (dependent-substream) fixture could be produced
+    /// locally: ffmpeg's native `eac3` encoder only supports up to 5.1/6
+    /// channels (independent substreams only, confirmed via
+    /// `ffmpeg -h encoder=eac3` and a failed 8-channel encode attempt), and
+    /// no other E-AC-3 encoder is available in this environment. Per the W4
+    /// fixture-first rule's fallback, the oracle here is the spec's own
+    /// worked bit layout above, hand-encoded independently of this crate's
+    /// writer (not derived by calling `serialize_into`).
+    const DEC3_DEP_SUB_ORACLE: [u8; 6] = [0x06, 0x00, 0x60, 0x02, 0x02, 0x05];
+
+    #[test]
+    fn dec3_dependent_substream_round_trip() {
+        // Pre-fix, `ec3_substream_serialized_len` always returned 3, so
+        // `serialized_len()` under-counted this 6-byte box as 5 (caught by
+        // the assertion below) — and had that under-sized buffer been used
+        // as-is, `serialize_into` would write the 9-bit `chan_loc` field
+        // past the end of a real (larger, real-world) box, out of bounds.
+        // Confirmed by temporarily reverting
+        // `ec3_substream_serialized_len` to always return 3: this test then
+        // fails at the `serialized_len()` assertion (5 != 6) rather than
+        // passing.
+        let box1 = Ec3SpecificBox::parse(&DEC3_DEP_SUB_ORACLE).unwrap();
+        assert_eq!(box1.data_rate, 192);
+        assert_eq!(box1.num_ind_sub, 0);
+        assert_eq!(box1.substreams.len(), 1);
+        let s0 = &box1.substreams[0];
+        assert_eq!(s0.fscod, 1);
+        assert_eq!(s0.bsid, 16);
+        assert!(!s0.asvc);
+        assert_eq!(s0.bsmod, 0);
+        assert_eq!(s0.acmod, 1);
+        assert!(!s0.lfeon);
+        assert_eq!(s0.num_dep_sub, 1, "one dependent substream");
+        assert_eq!(s0.chan_loc, Some(0b0_0000_0101), "9-bit chan_loc");
+
+        assert_eq!(
+            box1.serialized_len(),
+            DEC3_DEP_SUB_ORACLE.len(),
+            "serialized_len must count the 4th chan_loc byte for a dependent substream"
+        );
+        let mut buf = vec![0u8; box1.serialized_len()];
+        let n = box1.serialize_into(&mut buf).unwrap();
+        assert_eq!(n, DEC3_DEP_SUB_ORACLE.len());
+        assert_eq!(
+            &buf[..],
+            &DEC3_DEP_SUB_ORACLE[..],
+            "dec3 dependent-substream round-trip mismatch"
+        );
     }
 
     #[test]

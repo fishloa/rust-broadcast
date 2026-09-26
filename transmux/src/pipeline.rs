@@ -287,6 +287,7 @@ fn build_trak(t: &TrackSpec) -> Result<TrackBox> {
             let n = esds.serialize_into(&mut esds_full)?;
             let esds_opaque = OpaqueBox::new(*b"esds", esds_full[8..n].to_vec());
             let entry = SampleEntryVariant::Mp4a(Box::new(Mp4aSampleEntry {
+                codec_type: *b"mp4a",
                 data_reference_index: 1,
                 channelcount: *channel_count,
                 samplesize: *sample_size,
@@ -587,6 +588,7 @@ fn build_trak(t: &TrackSpec) -> Result<TrackBox> {
             let n = esds.serialize_into(&mut esds_full)?;
             let esds_opaque = OpaqueBox::new(*b"esds", esds_full[8..n].to_vec());
             let entry = SampleEntryVariant::Mp4a(Box::new(Mp4aSampleEntry {
+                codec_type: *b"mp4a",
                 data_reference_index: 1,
                 channelcount: *channel_count,
                 samplesize: *sample_size,
@@ -684,6 +686,7 @@ fn build_trak(t: &TrackSpec) -> Result<TrackBox> {
                 version: 0,
                 flags: 0,
                 sample_size: 0,
+                sample_count: 0,
                 entries: vec![],
             }),
             StblChild::Stco(ChunkOffsetBox {
