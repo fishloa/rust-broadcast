@@ -436,12 +436,15 @@ impl ClientSession {
             return Ok(None);
         }
 
-        // Preserve method-specific headers (Accept/Transport/Range) before we
-        // drop the old pending entry, then issue a new request with a fresh CSeq.
-        let extra = self.replay_extra(&method, cseq);
+        // Preserve the original body and every non-hop-by-hop header (e.g.
+        // Content-Type for an ANNOUNCE's SDP, Accept/Transport/Range for a
+        // SETUP/PLAY) before we drop the old pending entry, then issue a new
+        // request with a fresh CSeq. RFC 2326 §10.3 requires the retried
+        // ANNOUNCE to carry the same SDP body as the original.
+        let (body, extra) = self.replay_extra(cseq);
         self.pending.remove(&cseq);
         let new_cseq = self.next_cseq;
-        let request = self.assemble(method.clone(), &uri, new_cseq, &[], &extra)?;
+        let request = self.assemble(method.clone(), &uri, new_cseq, &body, &extra)?;
         let bytes = serialize(&Message::from(request.clone()))?;
         self.next_cseq += 1;
         self.pending.insert(
@@ -460,18 +463,29 @@ impl ClientSession {
         }))
     }
 
-    /// Re-derive method-specific headers (e.g. Accept/Transport) for an auth
-    /// replay from the previously-sent request.
-    fn replay_extra(&self, _method: &Method, old_cseq: u32) -> Vec<(headers::HeaderName, String)> {
-        let mut extra = Vec::new();
-        if let Some(p) = self.pending.get(&old_cseq) {
-            for name in [headers::ACCEPT, headers::TRANSPORT, headers::RANGE] {
-                if let Some(v) = header_value(p.request.header(&name)) {
-                    extra.push((name, v.to_string()));
-                }
-            }
-        }
-        extra
+    /// Re-derives the body and every replayable header (e.g. Content-Type,
+    /// Accept/Transport/Range) for an auth replay from the previously-sent
+    /// request. `CSeq`, `Session` and `Authorization` are excluded because
+    /// `assemble` sets them itself for the retry, and `Content-Length` is
+    /// excluded because `RequestBuilder::build` recomputes it from `body`.
+    fn replay_extra(&self, old_cseq: u32) -> (Vec<u8>, Vec<(headers::HeaderName, String)>) {
+        let Some(p) = self.pending.get(&old_cseq) else {
+            return (Vec::new(), Vec::new());
+        };
+        let hop_by_hop = [
+            headers::CSEQ,
+            headers::SESSION,
+            headers::AUTHORIZATION,
+            headers::USER_AGENT,
+            headers::CONTENT_LENGTH,
+        ];
+        let extra = p
+            .request
+            .headers()
+            .filter(|(name, _)| !hop_by_hop.iter().any(|h| h == *name))
+            .map(|(name, value)| (name.clone(), value.as_str().to_string()))
+            .collect();
+        (p.request.body().clone(), extra)
     }
 }
 
@@ -570,6 +584,51 @@ mod tests {
         c.handle_data(&wire("RTSP/1.0 200 OK\nCSeq: 2\nSession: 42\n\n"))
             .unwrap();
         assert_eq!(c.state(), SessionState::Recording);
+    }
+
+    // Regression (audit run-09 C1): a 401 auth retry must replay the ORIGINAL
+    // request body and Content-Type, not an empty body. Before the fix, the
+    // retried ANNOUNCE carried `Content-Length: 0` and no SDP, so an
+    // authenticated ANNOUNCE could never reach a real server (RFC 2326 §10.3).
+    #[test]
+    fn auth_retry_replays_original_body_and_content_type() {
+        fn wire(s: &str) -> Vec<u8> {
+            s.replace('\n', "\r\n").into_bytes()
+        }
+        let mut c = ClientSession::new().with_credentials(Credentials::new("admin", "12345"));
+        let sdp = "v=0\r\no=- 0 0 IN IP4 0.0.0.0\r\ns=Test\r\n";
+        let first = c.announce("rtsp://h/s", sdp).unwrap();
+        assert!(String::from_utf8_lossy(&first).contains("CSeq: 1"));
+
+        let events = c
+            .handle_data(&wire(
+                "RTSP/1.0 401 Unauthorized\nCSeq: 1\nWWW-Authenticate: Digest realm=\"cam\",nonce=\"abc123\",qop=\"auth\"\n\n",
+            ))
+            .unwrap();
+        let retry = events
+            .into_iter()
+            .find_map(|e| match e {
+                ClientEvent::AuthRetry { request, .. } => Some(request),
+                _ => None,
+            })
+            .expect("expected an AuthRetry event");
+        let retry = String::from_utf8_lossy(&retry);
+
+        assert!(retry.contains("ANNOUNCE rtsp://h/s"), "{retry}");
+        assert!(retry.contains("Authorization: Digest "), "{retry}");
+        assert!(
+            retry.contains("Content-Type: application/sdp"),
+            "Content-Type dropped on auth retry: {retry}"
+        );
+        assert!(
+            retry.contains(sdp),
+            "SDP body dropped on auth retry: {retry}"
+        );
+        let expected_len = format!("Content-Length: {}", sdp.len());
+        assert!(
+            retry.contains(&expected_len),
+            "expected {expected_len:?} in: {retry}"
+        );
     }
 
     // Security-blocker regression (pre-release audit): `ClientSession`
