@@ -35,10 +35,15 @@ async fn t2mi_stream_matches_sync_oracle() {
     let path = t2mi_fixture_path();
     let data = std::fs::read(path).expect("colombia-capital-t2mi.ts fixture not found");
 
-    // Detect the T2-MI PID from the pump stats — we try 0x0006 (common default).
-    const T2MI_PID: u16 = 0x0006;
+    // The T2-MI PID for this fixture (see dvb-t2mi/tests/real_capture.rs,
+    // which uses the same file and PID).
+    const T2MI_PID: u16 = 0x0040;
 
     let oracle = t2mi_sync_oracle(&data, T2MI_PID);
+    assert!(
+        !oracle.is_empty(),
+        "oracle produced no events — wrong PID or empty fixture?"
+    );
 
     let cursor = std::io::Cursor::new(data.clone());
     let stream = T2miEventStream::new(cursor, T2MI_PID);
@@ -76,6 +81,88 @@ async fn t2mi_stream_matches_sync_oracle() {
             "event[{i}] packet_type mismatch"
         );
         assert_eq!(got.bytes(), want.bytes(), "event[{i}] bytes mismatch");
+    }
+}
+
+// ── test 1b: one-byte-at-a-time stress test (issue #1036) ────────────────────
+//
+// `std::io::Cursor`'s `poll_read` always fills as much of the destination
+// buffer as is available, and `T2miEventStream`'s read buffer
+// (`TS_PACKET_SIZE * 7` = 1316 bytes) is itself an exact multiple of 188 —
+// so every Cursor-backed read in test 1 above lands exactly on a packet
+// boundary and never exercises a trailing partial packet at all. A reader
+// that returns short reads of an unrelated size is required to hit that
+// path; mirrors `differential.rs`'s `OneByteAtATime` for `SectionStream`,
+// which already carries partial packets correctly.
+struct OneByteAtATime {
+    data: Vec<u8>,
+    pos: usize,
+}
+
+impl tokio::io::AsyncRead for OneByteAtATime {
+    fn poll_read(
+        mut self: Pin<&mut Self>,
+        _cx: &mut std::task::Context<'_>,
+        buf: &mut tokio::io::ReadBuf<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        if self.pos >= self.data.len() {
+            return std::task::Poll::Ready(Ok(())); // EOF
+        }
+        buf.put_slice(&self.data[self.pos..self.pos + 1]);
+        self.pos += 1;
+        std::task::Poll::Ready(Ok(()))
+    }
+}
+
+#[tokio::test]
+async fn t2mi_stream_one_byte_at_a_time_matches_oracle() {
+    let path = t2mi_fixture_path();
+    let data = std::fs::read(path).expect("colombia-capital-t2mi.ts fixture not found");
+    const T2MI_PID: u16 = 0x0040;
+    let oracle = t2mi_sync_oracle(&data, T2MI_PID);
+    assert!(
+        !oracle.is_empty(),
+        "oracle produced no events — fixture empty?"
+    );
+
+    let reader = OneByteAtATime {
+        data: data.clone(),
+        pos: 0,
+    };
+    let stream = T2miEventStream::new(reader, T2MI_PID);
+
+    // HANG GUARD (issue #807): in-memory, one byte at a time is slower than
+    // the bulk cursor case above but still normally sub-second even for a
+    // whole T2-MI fixture; generous rather than a timing claim.
+    let async_events = tokio::time::timeout(Duration::from_secs(60), async {
+        let mut events = Vec::new();
+        let mut stream = stream;
+        loop {
+            let item = std::future::poll_fn(|cx| Pin::new(&mut stream).poll_next(cx)).await;
+            match item {
+                Some(ev) => events.push(ev),
+                None => break,
+            }
+        }
+        events
+    })
+    .await
+    .expect("hang guard (issue #807) fired: one-byte-at-a-time stream never completed within 60s");
+
+    assert_eq!(
+        async_events.len(),
+        oracle.len(),
+        "one-byte reader: T2-MI event count mismatch async={} oracle={}",
+        async_events.len(),
+        oracle.len()
+    );
+    for (i, (got, want)) in async_events.iter().zip(oracle.iter()).enumerate() {
+        assert_eq!(
+            got.packet_type(),
+            want.packet_type(),
+            "event[{i}] packet_type"
+        );
+        assert_eq!(got.bytes(), want.bytes(), "event[{i}] bytes");
     }
 }
 

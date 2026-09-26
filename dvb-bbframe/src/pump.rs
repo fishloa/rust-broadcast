@@ -168,6 +168,8 @@ impl BbframePump {
             carry_over.header_parse_failures += s.header_parse_failures;
             carry_over.mode_mismatches += s.mode_mismatches;
             carry_over.partial_discards += s.partial_discards;
+            carry_over.nm_upl_invalid += s.nm_upl_invalid;
+            carry_over.crc8_mismatches += s.crc8_mismatches;
         }
         BbframePumpStats {
             header_parse_failures: self.stats.header_parse_failures,

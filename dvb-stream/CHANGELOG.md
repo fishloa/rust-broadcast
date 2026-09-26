@@ -2,6 +2,15 @@
 
 ## [Unreleased]
 
+### Fixed
+- `T2miEventStream::feed_buf` discarded any trailing partial TS packet at
+  the end of every read (unconditionally setting `filled = 0`), unlike its
+  sibling `SectionStream` which already carries the partial over. Any read
+  boundary that didn't land on a 188-byte packet boundary silently lost
+  data. Partial bytes are now carried over to the next read, matching
+  `SectionStream` (#1036).
+
+
 ## [0.5.0] - 2026-08-11
 
 ### Changed

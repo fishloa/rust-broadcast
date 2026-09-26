@@ -686,3 +686,382 @@ fn regen_psi_preserves_non_pat_packets() {
         );
     }
 }
+
+// ── Regression: continuity_counter, version_number, network_pid (#1037) ──────
+
+/// Find every PAT packet (PID 0x0000) in a TS stream, in order.
+fn find_all_pat_packets(ts: &[u8]) -> Vec<&[u8]> {
+    ts.chunks_exact(188)
+        .filter(|pkt| pid_from_packet(pkt) == PAT_PID)
+        .collect()
+}
+
+/// Extract the 4-bit continuity_counter from a TS packet header (byte 3, low nibble).
+fn continuity_counter(pkt: &[u8]) -> u8 {
+    pkt[3] & 0x0F
+}
+
+/// Build the synthetic 2-program TS (as `build_two_program_ts`) but with a
+/// `network_pid` entry (`program_number == 0`, ISO/IEC 13818-1 §2.4.4.3) in
+/// the original PAT — the entry `rebuild_pat` cannot derive from any PMT.
+fn build_two_program_ts_with_nit(cycles: usize, network_pid: u16) -> Vec<u8> {
+    let pat = PatSection {
+        transport_stream_id: 1,
+        version_number: 0,
+        current_next_indicator: true,
+        section_number: 0,
+        last_section_number: 0,
+        entries: vec![
+            PatEntry {
+                program_number: 0,
+                pid: network_pid,
+            },
+            PatEntry {
+                program_number: 1,
+                pid: PMT1_PID,
+            },
+            PatEntry {
+                program_number: 2,
+                pid: PMT2_PID,
+            },
+        ],
+    };
+    let pat_section_bytes = serialize_pat(&pat);
+    let mut pat_pktz = SectionPacketiser::new(PAT_PID);
+    let pat_pkts = pat_pktz.packetise(&[&pat_section_bytes]);
+
+    let pmt1 = PmtSection::new(
+        1,
+        0,
+        true,
+        0,
+        0,
+        P1_PCR_PID,
+        DescriptorLoop::new(&[]),
+        vec![
+            PmtStream {
+                stream_type: StreamType::Mpeg2Video,
+                elementary_pid: P1_VIDEO_PID,
+                es_info: DescriptorLoop::new(&[]),
+            },
+            PmtStream {
+                stream_type: StreamType::Mpeg2Audio,
+                elementary_pid: P1_AUDIO_PID,
+                es_info: DescriptorLoop::new(&[]),
+            },
+        ],
+    );
+    let pmt1_section_bytes = serialize_pmt(&pmt1);
+    let mut pmt1_pktz = SectionPacketiser::new(PMT1_PID);
+    let pmt1_pkts = pmt1_pktz.packetise(&[&pmt1_section_bytes]);
+
+    let pmt2 = PmtSection::new(
+        2,
+        0,
+        true,
+        0,
+        0,
+        P2_PCR_PID,
+        DescriptorLoop::new(&[]),
+        vec![
+            PmtStream {
+                stream_type: StreamType::Mpeg2Video,
+                elementary_pid: P2_VIDEO_PID,
+                es_info: DescriptorLoop::new(&[]),
+            },
+            PmtStream {
+                stream_type: StreamType::Mpeg2Audio,
+                elementary_pid: P2_AUDIO_PID,
+                es_info: DescriptorLoop::new(&[]),
+            },
+        ],
+    );
+    let pmt2_section_bytes = serialize_pmt(&pmt2);
+    let mut pmt2_pktz = SectionPacketiser::new(PMT2_PID);
+    let pmt2_pkts = pmt2_pktz.packetise(&[&pmt2_section_bytes]);
+
+    let mut stream: Vec<u8> = Vec::new();
+    for pkt in &pat_pkts {
+        stream.extend_from_slice(pkt);
+    }
+    for pkt in &pmt1_pkts {
+        stream.extend_from_slice(pkt);
+    }
+    for pkt in &pmt2_pkts {
+        stream.extend_from_slice(pkt);
+    }
+    for i in 0..cycles {
+        let cc = (i as u8) & 0x0F;
+        for pkt in &pat_pkts {
+            stream.extend_from_slice(pkt);
+        }
+        for pkt in &pmt1_pkts {
+            stream.extend_from_slice(pkt);
+        }
+        for pkt in &pmt2_pkts {
+            stream.extend_from_slice(pkt);
+        }
+        stream.extend_from_slice(&dummy_es_packet(P1_VIDEO_PID, cc));
+        stream.extend_from_slice(&dummy_es_packet(P2_VIDEO_PID, cc));
+        stream.extend_from_slice(&null_packet());
+    }
+    stream
+}
+
+/// Regression: the pre-fix code created a fresh `SectionPacketiser` (CC=0)
+/// on every single regenerated PAT emission — see `emit_regen_pat`'s old
+/// `let mut packetiser = SectionPacketiser::new(PAT_PID);` inside the
+/// per-call body. A real receiver treats a PID whose continuity_counter
+/// never advances as a stall/duplicate, not a healthy repeating PAT cycle.
+#[test]
+fn regen_pat_continuity_counter_increments_across_cycles() {
+    let ts = build_two_program_ts(6);
+    let output = run(&ts, |b| b.regen_psi());
+
+    let pats = find_all_pat_packets(&output);
+    assert!(
+        pats.len() >= 4,
+        "expected several regenerated PAT packets, got {}",
+        pats.len()
+    );
+
+    let ccs: Vec<u8> = pats.iter().map(|p| continuity_counter(p)).collect();
+    for w in ccs.windows(2) {
+        let expected = (w[0] + 1) & 0x0F;
+        assert_eq!(
+            w[1], expected,
+            "continuity_counter must increment by 1 mod 16 across regenerated \
+             PAT packets, got sequence {ccs:?}"
+        );
+    }
+}
+
+/// version_number (ISO/IEC 13818-1 §2.4.4.4) must stay constant while the
+/// discovered program mapping does not change — a real PAT is not supposed
+/// to bump version on every repeated, unchanged cycle.
+#[test]
+fn regen_pat_version_number_stable_when_mapping_unchanged() {
+    let ts = build_two_program_ts(6);
+    let output = run(&ts, |b| b.regen_psi());
+
+    let pats = find_all_pat_packets(&output);
+    assert!(pats.len() >= 4);
+
+    let versions: Vec<u8> = pats
+        .iter()
+        .map(|p| {
+            parse_pat_from_packet(p)
+                .expect("regen PAT parses")
+                .version_number
+        })
+        .collect();
+    assert!(
+        versions.iter().all(|&v| v == versions[0]),
+        "version_number must not change while the mapping is unchanged, got {versions:?}"
+    );
+}
+
+/// version_number must bump by exactly 1 the first time the discovered
+/// mapping changes (a third program's PMT appears mid-stream), then stay
+/// stable again across the following unchanged repeats.
+#[test]
+fn regen_pat_version_number_bumps_once_when_mapping_changes() {
+    // Phase 1: 2-program mapping, repeated 3 times.
+    let phase1 = build_two_program_ts(3);
+
+    // Phase 2: a 3rd program (PMT on a fresh PID) is added, repeated 3 times.
+    const PMT3_PID: u16 = 0x0300;
+    const P3_PCR_PID: u16 = 0x0301;
+    let pmt3 = PmtSection::new(
+        3,
+        0,
+        true,
+        0,
+        0,
+        P3_PCR_PID,
+        DescriptorLoop::new(&[]),
+        vec![PmtStream {
+            stream_type: StreamType::Mpeg2Video,
+            elementary_pid: P3_PCR_PID,
+            es_info: DescriptorLoop::new(&[]),
+        }],
+    );
+    let pmt3_section_bytes = serialize_pmt(&pmt3);
+    let mut pmt3_pktz = SectionPacketiser::new(PMT3_PID);
+    let pmt3_pkts = pmt3_pktz.packetise(&[&pmt3_section_bytes]);
+
+    let pat3 = PatSection {
+        transport_stream_id: 1,
+        version_number: 1,
+        current_next_indicator: true,
+        section_number: 0,
+        last_section_number: 0,
+        entries: vec![
+            PatEntry {
+                program_number: 1,
+                pid: PMT1_PID,
+            },
+            PatEntry {
+                program_number: 2,
+                pid: PMT2_PID,
+            },
+            PatEntry {
+                program_number: 3,
+                pid: PMT3_PID,
+            },
+        ],
+    };
+    let pat3_bytes = serialize_pat(&pat3);
+    let mut pat3_pktz = SectionPacketiser::new(PAT_PID);
+    let pat3_pkts = pat3_pktz.packetise(&[&pat3_bytes]);
+
+    // Reuse phase1's PMT1/PMT2 bytes by re-deriving them the same way
+    // build_two_program_ts does, so PMT PIDs/content match phase 1 exactly.
+    let pmt1 = PmtSection::new(
+        1,
+        0,
+        true,
+        0,
+        0,
+        P1_PCR_PID,
+        DescriptorLoop::new(&[]),
+        vec![
+            PmtStream {
+                stream_type: StreamType::Mpeg2Video,
+                elementary_pid: P1_VIDEO_PID,
+                es_info: DescriptorLoop::new(&[]),
+            },
+            PmtStream {
+                stream_type: StreamType::Mpeg2Audio,
+                elementary_pid: P1_AUDIO_PID,
+                es_info: DescriptorLoop::new(&[]),
+            },
+        ],
+    );
+    let pmt1_bytes = serialize_pmt(&pmt1);
+    let mut pmt1_pktz = SectionPacketiser::new(PMT1_PID);
+    let pmt2 = PmtSection::new(
+        2,
+        0,
+        true,
+        0,
+        0,
+        P2_PCR_PID,
+        DescriptorLoop::new(&[]),
+        vec![
+            PmtStream {
+                stream_type: StreamType::Mpeg2Video,
+                elementary_pid: P2_VIDEO_PID,
+                es_info: DescriptorLoop::new(&[]),
+            },
+            PmtStream {
+                stream_type: StreamType::Mpeg2Audio,
+                elementary_pid: P2_AUDIO_PID,
+                es_info: DescriptorLoop::new(&[]),
+            },
+        ],
+    );
+    let pmt2_bytes = serialize_pmt(&pmt2);
+    let mut pmt2_pktz = SectionPacketiser::new(PMT2_PID);
+
+    let mut phase2 = Vec::new();
+    for _ in 0..3 {
+        for pkt in &pat3_pkts {
+            phase2.extend_from_slice(pkt);
+        }
+        for pkt in &pmt1_pktz.packetise(&[&pmt1_bytes]) {
+            phase2.extend_from_slice(pkt);
+        }
+        for pkt in &pmt2_pktz.packetise(&[&pmt2_bytes]) {
+            phase2.extend_from_slice(pkt);
+        }
+        for pkt in &pmt3_pkts {
+            phase2.extend_from_slice(pkt);
+        }
+    }
+
+    let mut ts = phase1;
+    ts.extend_from_slice(&phase2);
+
+    let output = run(&ts, |b| b.regen_psi());
+    let pats = find_all_pat_packets(&output);
+    let parsed: Vec<PatSection> = pats
+        .iter()
+        .map(|p| parse_pat_from_packet(p).expect("regen PAT parses"))
+        .collect();
+
+    // Split by mapping size: 2-program entries (phase 1) vs 3-program (phase 2).
+    let phase1_versions: Vec<u8> = parsed
+        .iter()
+        .filter(|p| p.entries.len() == 2)
+        .map(|p| p.version_number)
+        .collect();
+    let phase2_versions: Vec<u8> = parsed
+        .iter()
+        .filter(|p| p.entries.len() == 3)
+        .map(|p| p.version_number)
+        .collect();
+
+    assert!(!phase1_versions.is_empty(), "expected some 2-program PATs");
+    assert!(!phase2_versions.is_empty(), "expected some 3-program PATs");
+    assert!(
+        phase1_versions.iter().all(|&v| v == phase1_versions[0]),
+        "phase-1 (unchanged 2-program) versions must be stable: {phase1_versions:?}"
+    );
+    assert!(
+        phase2_versions.iter().all(|&v| v == phase2_versions[0]),
+        "phase-2 (unchanged 3-program) versions must be stable: {phase2_versions:?}"
+    );
+    assert_eq!(
+        phase2_versions[0],
+        (phase1_versions[0] + 1) % 32,
+        "version_number must bump by exactly 1 when the mapping first changes \
+         (phase1={:?} phase2={:?})",
+        phase1_versions,
+        phase2_versions
+    );
+}
+
+/// Regression: `rebuild_pat` only derived entries from parsed PMT sections,
+/// so a `network_pid` entry (`program_number == 0`) in the *original* PAT —
+/// which no PMT carries — was silently dropped from every regenerated PAT.
+#[test]
+fn regen_pat_preserves_network_pid_entry() {
+    const NIT_PID: u16 = 0x0010;
+    let ts = build_two_program_ts_with_nit(4, NIT_PID);
+
+    // Sanity: the original PAT really does carry the network_pid entry.
+    let orig_pat_pkt = find_pat_packet(&ts).expect("original stream must have PAT");
+    let orig_pat = parse_pat_from_packet(orig_pat_pkt).expect("original PAT must parse");
+    assert!(
+        orig_pat
+            .entries
+            .iter()
+            .any(|e| e.program_number == 0 && e.pid == NIT_PID),
+        "test precondition: original PAT must carry a network_pid entry"
+    );
+
+    let output = run(&ts, |b| b.regen_psi());
+    let regen_pat_pkt = find_pat_packet(&output).expect("output must have a regenerated PAT");
+    let regen_pat = parse_pat_from_packet(regen_pat_pkt).expect("regen PAT must parse");
+
+    assert!(
+        regen_pat
+            .entries
+            .iter()
+            .any(|e| e.program_number == 0 && e.pid == NIT_PID),
+        "regenerated PAT must preserve the network_pid entry from the original \
+         PAT (not derivable from any PMT), got entries {:?}",
+        regen_pat.entries
+    );
+    // Programs must still be present too.
+    assert_eq!(
+        regen_pat
+            .entries
+            .iter()
+            .filter(|e| e.program_number != 0)
+            .count(),
+        2,
+        "regenerated PAT must still list both programs alongside the network_pid entry"
+    );
+}

@@ -1674,6 +1674,36 @@ fn buffer_error_trips_on_tbsys_overflow() {
 }
 
 #[test]
+fn buffer_error_absent_when_large_section_paced_realistically() {
+    // Regression for issue #1035 (C-CONF-1): the section's total length
+    // (>512 bytes) exceeds TBsys's capacity as a lump sum, but its bytes
+    // arrive one TS packet (~184 bytes) at a time with enough spacing for
+    // TBsys to drain between them (H.222.0 §2.4.2.3) — a receiver never
+    // holds more than a couple of packets' worth in flight, so Buffer_error
+    // must NOT fire. The pre-fix code fed the *whole* reassembled section's
+    // length at the single instant it finished reassembling, which
+    // overflowed regardless of how realistically the packets were paced.
+    let mut monitor = ConformanceMonitor::new();
+    acquire_sync(&mut monitor);
+
+    let section = build_large_pat_section();
+    let section_len = section.len();
+    assert!(
+        section_len > 512,
+        "test precondition: section {section_len} bytes > TBsys 512 bytes as a lump sum"
+    );
+
+    let packets = packetise_section(PID_PAT, &section);
+    // 2 ms/packet: TBsys drains 250 bytes between packets (125 000 bytes/s
+    // leak rate), well ahead of each ~184-byte packet payload.
+    let events = feed_all(&mut monitor, &packets, ms(1), ms(2));
+    assert!(
+        !has_indicator(&events, Indicator::BufferError),
+        "a >512-byte section paced at realistic TS packet spacing must not overflow TBsys"
+    );
+}
+
+#[test]
 fn buffer_error_absent_on_small_sections() {
     let mut monitor = ConformanceMonitor::new();
     acquire_sync(&mut monitor);

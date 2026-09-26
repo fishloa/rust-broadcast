@@ -80,12 +80,33 @@ pub(crate) struct PsiRegenOp {
     /// transport_stream_id hint, copied from the original PAT if one is seen.
     /// Not derivable from PMTs, so absent a PAT we fall back to 0.
     transport_stream_id: Option<u16>,
+    /// network_pid hint (the PAT entry with `program_number == 0`,
+    /// ISO/IEC 13818-1 §2.4.4.3), copied from the original PAT if one carries
+    /// one. Not derivable from PMTs, so a regenerated PAT would otherwise
+    /// silently drop this entry.
+    network_pid: Option<u16>,
+    /// Whether an original PAT section has already been successfully parsed
+    /// for hints — guards against re-parsing every single PAT slot forever
+    /// when the original PAT genuinely carries no network_pid entry.
+    pat_hints_observed: bool,
     /// Whether any PAT slot (PID 0x0000) has been seen.  If so we replace slots
     /// in-position; if not (fully stripped) we early-emit on PMT-cycle wrap.
     seen_pat_slot: bool,
     /// Whether a regenerated PAT has already been emitted (so the stripped-PAT
     /// early-emit path fires at most once).
     emitted_pat: bool,
+    /// Persistent packetiser for the regenerated PAT (PID 0x0000): reused
+    /// across every emission so `continuity_counter` increments normally
+    /// instead of restarting at 0 on each PAT slot.
+    pat_packetiser: SectionPacketiser,
+    /// 5-bit `version_number` of the last-built PAT section (ISO/IEC 13818-1
+    /// §2.4.4.4): bumped only when the discovered mapping actually changes,
+    /// not on every re-emission of an unchanged mapping.
+    version_number: u8,
+    /// The program-number→PID entries of the last PAT actually built, used to
+    /// detect a real mapping change and decide whether to bump
+    /// `version_number`. `None` before the first build.
+    last_entries: Option<Vec<PatEntry>>,
 }
 
 impl PsiRegenOp {
@@ -94,8 +115,13 @@ impl PsiRegenOp {
             pmt_programs: BTreeMap::new(),
             pmt_reasm: BTreeMap::new(),
             transport_stream_id: None,
+            network_pid: None,
+            pat_hints_observed: false,
             seen_pat_slot: false,
             emitted_pat: false,
+            pat_packetiser: SectionPacketiser::new(PAT_PID),
+            version_number: 0,
+            last_entries: None,
         }
     }
 
@@ -120,9 +146,11 @@ impl PsiRegenOp {
         payload.get(1 + pointer).copied()
     }
 
-    /// Observe the original PAT only to capture the transport_stream_id hint.
-    fn observe_pat_tsid(&mut self, payload: &[u8], pusi: bool) {
-        if self.transport_stream_id.is_some() {
+    /// Observe the original PAT only to capture hints not derivable from the
+    /// PMT scan: the `transport_stream_id` and the `network_pid` entry
+    /// (`program_number == 0`, ISO/IEC 13818-1 §2.4.4.3).
+    fn observe_pat_hints(&mut self, payload: &[u8], pusi: bool) {
+        if self.pat_hints_observed {
             return;
         }
         let section = if pusi {
@@ -139,6 +167,12 @@ impl PsiRegenOp {
         };
         if let Ok(pat) = PatSection::parse(section) {
             self.transport_stream_id = Some(pat.transport_stream_id);
+            self.network_pid = pat
+                .entries
+                .iter()
+                .find(|e| e.program_number == dvb_si::tables::pat::PROGRAM_NUMBER_NIT)
+                .map(|e| e.pid);
+            self.pat_hints_observed = true;
         }
     }
 
@@ -178,28 +212,54 @@ impl PsiRegenOp {
         cycle_wrapped
     }
 
-    /// Build a regenerated PAT section from the PMT-derived mapping.
-    ///
-    /// Returns `None` if no programs have been discovered yet.
-    fn rebuild_pat(&self) -> Option<Vec<u8>> {
+    /// Build the PAT entries for the current mapping: the PMT-derived
+    /// program entries plus the original PAT's `network_pid` entry
+    /// (`program_number == 0`), if one was observed — ISO/IEC 13818-1
+    /// §2.4.4.3. Returns `None` if no programs have been discovered yet.
+    fn current_entries(&self) -> Option<Vec<PatEntry>> {
         if self.pmt_programs.is_empty() {
             return None;
         }
 
-        let entries: Vec<PatEntry> = self
-            .pmt_programs
-            .iter()
-            .map(|(&program_number, &pmt_pid)| PatEntry {
-                program_number,
-                pid: pmt_pid,
-            })
-            .collect();
+        let mut entries: Vec<PatEntry> = Vec::with_capacity(self.pmt_programs.len() + 1);
+        if let Some(pid) = self.network_pid {
+            entries.push(PatEntry {
+                program_number: dvb_si::tables::pat::PROGRAM_NUMBER_NIT,
+                pid,
+            });
+        }
+        entries.extend(
+            self.pmt_programs
+                .iter()
+                .map(|(&program_number, &pmt_pid)| PatEntry {
+                    program_number,
+                    pid: pmt_pid,
+                }),
+        );
+        Some(entries)
+    }
+
+    /// Build a regenerated PAT section from the PMT-derived mapping, bumping
+    /// `version_number` (mod 32, ISO/IEC 13818-1 §2.4.4.4) only when the
+    /// entries actually differ from the last section built — not on every
+    /// re-emission of an unchanged mapping.
+    ///
+    /// Returns `None` if no programs have been discovered yet.
+    fn rebuild_pat(&mut self) -> Option<Vec<u8>> {
+        let entries = self.current_entries()?;
+
+        if self.last_entries.as_ref() != Some(&entries) {
+            if self.last_entries.is_some() {
+                self.version_number = (self.version_number + 1) % 32;
+            }
+            self.last_entries = Some(entries.clone());
+        }
 
         let pat = PatSection {
             // transport_stream_id is not derivable from PMTs; use the hint from
             // the original PAT if one was seen, else 0.
             transport_stream_id: self.transport_stream_id.unwrap_or(0),
-            version_number: 0,
+            version_number: self.version_number,
             current_next_indicator: true,
             section_number: 0,
             last_section_number: 0,
@@ -211,11 +271,12 @@ impl PsiRegenOp {
         Some(buf)
     }
 
-    /// Emit a regenerated PAT (packetised onto PID 0x0000), if a mapping exists.
+    /// Emit a regenerated PAT (packetised onto PID 0x0000), if a mapping
+    /// exists. Reuses `self.pat_packetiser` so `continuity_counter`
+    /// increments across every emission instead of restarting at 0.
     fn emit_regen_pat(&mut self, out: &mut dyn FnMut(&[u8])) {
         if let Some(section) = self.rebuild_pat() {
-            let mut packetiser = SectionPacketiser::new(PAT_PID);
-            for pkt in packetiser.packetise(&[&section]) {
+            for pkt in self.pat_packetiser.packetise(&[&section]) {
                 out(&pkt);
             }
             self.emitted_pat = true;
@@ -241,8 +302,9 @@ impl Op for PsiRegenOp {
         if pid == PAT_PID {
             self.seen_pat_slot = true;
             if let Some((payload, pusi)) = Self::ts_payload_and_pusi(packet) {
-                // Use the original PAT only as a transport_stream_id hint.
-                self.observe_pat_tsid(payload, pusi);
+                // Use the original PAT only for hints not derivable from the
+                // PMT scan (transport_stream_id, network_pid).
+                self.observe_pat_hints(payload, pusi);
             }
             self.emit_regen_pat(out);
             return;

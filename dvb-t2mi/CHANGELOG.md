@@ -2,6 +2,15 @@
 
 ## [Unreleased]
 
+### Fixed
+- `inner_ts::InnerTsRecovery` (used by `dvb-tools t2mi --inner` without
+  `--plp`) ran every PLP's BBFrames through one shared `CarryOverExtractor`,
+  so a user packet split across a BBFrame boundary was corrupted (merged
+  with, or replaced by, another PLP's data) whenever a different PLP's frame
+  arrived before the split completed. Carry-over state is now keyed per PLP,
+  mirroring `dvb_bbframe::pump::BbframePump` (#1034).
+
+
 ### Changed (breaking)
 - Serializers now return an error, instead of silently truncating, when a
   length or count does not fit its wire field (#1129).

@@ -2,6 +2,19 @@
 
 ## [Unreleased]
 
+### Fixed
+- `--regen-psi` (`PsiRegenOp`): every regenerated PAT packet was built with a
+  fresh `SectionPacketiser`, so `continuity_counter` restarted at 0 on every
+  emission instead of incrementing across the PAT's repeat cycle; `PAT`
+  `version_number` was hardcoded to 0 forever, even when the discovered
+  program mapping changed; and the original PAT's `network_pid` entry
+  (`program_number == 0`, ISO/IEC 13818-1 §2.4.4.3) — not derivable from any
+  PMT — was silently dropped from the regenerated PAT. The packetiser is now
+  reused across emissions, `version_number` bumps only when the mapping
+  actually changes, and the `network_pid` entry is preserved from the
+  original PAT when present (#1037).
+
+
 ## [0.5.0] - 2026-08-11
 
 ### Added
