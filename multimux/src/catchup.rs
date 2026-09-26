@@ -322,7 +322,11 @@ pub(crate) fn render_playlist(
         .iter()
         .map(|s| broadcast_hls::MediaSegment {
             uri: format!("catchup/seg-{}.{ext}", s.seq),
-            duration: s.duration_secs,
+            // `duration_secs` is always `duration_ns as f64 / NANOS_PER_SEC`
+            // (issue #1140): finite and non-negative for any real
+            // segment duration.
+            duration: broadcast_hls::DecimalSeconds::new(s.duration_secs)
+                .expect("duration_ns / NANOS_PER_SEC is finite, >= 0"),
             discontinuous: s.discontinuous,
             ..Default::default()
         })

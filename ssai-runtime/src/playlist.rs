@@ -24,7 +24,7 @@ use crate::error::{Error, Result};
 use alloc::format;
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
-use broadcast_hls::MediaPlaylist;
+use broadcast_hls::{AttrValue, MediaPlaylist, parse_attribute_list, render_attribute_list};
 
 /// `CLASS` value for an Interstitial `EXT-X-DATERANGE` (Appendix D §D.2).
 pub const INTERSTITIAL_CLASS: &str = "com.apple.hls.interstitial";
@@ -80,23 +80,59 @@ impl InterstitialDateRange {
     /// `X-RESUME-OFFSET`, `X-PLAYOUT-LIMIT`, `X-SNAP`, `X-RESTRICT`) so
     /// [`Self::parse_tag_line`] round-trips. Built solely from the typed
     /// fields above — no stored source span is echoed.
-    pub fn to_tag_line(&self) -> String {
-        let mut out = String::from(TAG);
-        out.push_str(&format!("ID=\"{}\"", self.id));
-        out.push_str(&format!(",CLASS=\"{INTERSTITIAL_CLASS}\""));
-        out.push_str(&format!(",START-DATE=\"{}\"", self.start_date));
+    ///
+    /// Every attribute value goes through [`AttrValue::quoted`]/[`bare`]
+    /// (issue #1140 / audit r14-SSAI-W1) before
+    /// [`broadcast_hls::render_attribute_list`] renders it: `id`,
+    /// `start_date` and the asset URI/list are frequently supplied (directly
+    /// or indirectly) by an [`crate::decision::AdDecisionProvider`] — a
+    /// third-party ad-decision service — so a `"`, CR or LF in any of them
+    /// is rejected here rather than terminating the attribute list and
+    /// injecting arbitrary tag lines into the session playlist. `duration`/
+    /// `resume_offset`/`playout_limit` must also be finite and non-negative
+    /// (audit r14-SSAI-W4) — `Error::InvalidDuration` otherwise.
+    ///
+    /// [`bare`]: AttrValue::bare
+    pub fn to_tag_line(&self) -> Result<String> {
+        let mut attrs = alloc::vec![
+            (String::from("ID"), AttrValue::quoted(self.id.clone())?),
+            (
+                String::from("CLASS"),
+                AttrValue::quoted(INTERSTITIAL_CLASS)?,
+            ),
+            (
+                String::from("START-DATE"),
+                AttrValue::quoted(self.start_date.clone())?,
+            ),
+        ];
         if let Some(d) = self.duration {
-            out.push_str(&format!(",DURATION={}", fmt_f64(d)));
+            attrs.push((
+                String::from("DURATION"),
+                AttrValue::bare(fmt_checked_secs("DURATION", d)?)?,
+            ));
         }
         match &self.asset {
-            AssetSource::Uri(uri) => out.push_str(&format!(",X-ASSET-URI=\"{uri}\"")),
-            AssetSource::List(uri) => out.push_str(&format!(",X-ASSET-LIST=\"{uri}\"")),
+            AssetSource::Uri(uri) => {
+                attrs.push((String::from("X-ASSET-URI"), AttrValue::quoted(uri.clone())?));
+            }
+            AssetSource::List(uri) => {
+                attrs.push((
+                    String::from("X-ASSET-LIST"),
+                    AttrValue::quoted(uri.clone())?,
+                ));
+            }
         }
         if let Some(v) = self.resume_offset {
-            out.push_str(&format!(",X-RESUME-OFFSET={}", fmt_f64(v)));
+            attrs.push((
+                String::from("X-RESUME-OFFSET"),
+                AttrValue::bare(fmt_checked_secs("X-RESUME-OFFSET", v)?)?,
+            ));
         }
         if let Some(v) = self.playout_limit {
-            out.push_str(&format!(",X-PLAYOUT-LIMIT={}", fmt_f64(v)));
+            attrs.push((
+                String::from("X-PLAYOUT-LIMIT"),
+                AttrValue::bare(fmt_checked_secs("X-PLAYOUT-LIMIT", v)?)?,
+            ));
         }
         if !self.snap.is_empty() {
             let list = self
@@ -105,7 +141,7 @@ impl InterstitialDateRange {
                 .map(SnapMode::name)
                 .collect::<Vec<_>>()
                 .join(",");
-            out.push_str(&format!(",X-SNAP=\"{list}\""));
+            attrs.push((String::from("X-SNAP"), AttrValue::quoted(list)?));
         }
         if !self.restrict.is_empty() {
             let list = self
@@ -114,9 +150,17 @@ impl InterstitialDateRange {
                 .map(RestrictMode::name)
                 .collect::<Vec<_>>()
                 .join(",");
-            out.push_str(&format!(",X-RESTRICT=\"{list}\""));
+            attrs.push((String::from("X-RESTRICT"), AttrValue::quoted(list)?));
         }
-        out
+        // `render_attribute_list` always prefixes each entry with `,`
+        // (broadcast-hls's convention for appending to an already-started
+        // attribute list); build the whole list through it and drop the
+        // single leading comma rather than special-casing the first entry.
+        let mut body = String::new();
+        render_attribute_list(&mut body, &attrs);
+        let mut out = String::from(TAG);
+        out.push_str(body.trim_start_matches(','));
+        Ok(out)
     }
 
     /// Parse one `#EXT-X-DATERANGE:` line with
@@ -129,32 +173,35 @@ impl InterstitialDateRange {
             .strip_prefix(TAG)
             .ok_or_else(|| Error::TagParse("missing #EXT-X-DATERANGE: prefix".to_string()))?;
 
-        let mut id = None;
-        let mut class_ok = false;
-        let mut start_date = None;
-        let mut duration = None;
-        let mut uri = None;
-        let mut list = None;
-        let mut resume_offset = None;
-        let mut playout_limit = None;
-        let mut snap = Vec::new();
-        let mut restrict = Vec::new();
+        // The shared workspace tokenizer (issue #1140 T12): `attrs` values
+        // already have their surrounding `"` stripped for quoted attributes.
+        let (attrs, _quoted) = parse_attribute_list(body);
 
-        for (k, v) in split_attrs(body) {
-            match k {
-                "ID" => id = Some(unquote(v)),
-                "CLASS" => class_ok = unquote(v) == INTERSTITIAL_CLASS,
-                "START-DATE" => start_date = Some(unquote(v)),
-                "DURATION" => duration = Some(parse_f64(v)?),
-                "X-ASSET-URI" => uri = Some(unquote(v)),
-                "X-ASSET-LIST" => list = Some(unquote(v)),
-                "X-RESUME-OFFSET" => resume_offset = Some(parse_f64(v)?),
-                "X-PLAYOUT-LIMIT" => playout_limit = Some(parse_f64(v)?),
-                "X-SNAP" => snap = parse_snap_list(&unquote(v)),
-                "X-RESTRICT" => restrict = parse_restrict_list(&unquote(v)),
-                _ => {} // extension attributes ignored (spec-extensible)
-            }
-        }
+        let id = attrs.get("ID").cloned();
+        let class_ok = attrs.get("CLASS").map(String::as_str) == Some(INTERSTITIAL_CLASS);
+        let start_date = attrs.get("START-DATE").cloned();
+        let duration = attrs
+            .get("DURATION")
+            .map(|v| parse_checked_secs("DURATION", v))
+            .transpose()?;
+        let uri = attrs.get("X-ASSET-URI").cloned();
+        let list = attrs.get("X-ASSET-LIST").cloned();
+        let resume_offset = attrs
+            .get("X-RESUME-OFFSET")
+            .map(|v| parse_checked_secs("X-RESUME-OFFSET", v))
+            .transpose()?;
+        let playout_limit = attrs
+            .get("X-PLAYOUT-LIMIT")
+            .map(|v| parse_checked_secs("X-PLAYOUT-LIMIT", v))
+            .transpose()?;
+        let snap = attrs
+            .get("X-SNAP")
+            .map(|v| parse_snap_list(v))
+            .unwrap_or_default();
+        let restrict = attrs
+            .get("X-RESTRICT")
+            .map(|v| parse_restrict_list(v))
+            .unwrap_or_default();
 
         if !class_ok {
             return Err(Error::TagParse(
@@ -185,36 +232,56 @@ impl InterstitialDateRange {
 /// [`MediaPlaylist::extra_tags`] — the per-session playlist for one viewer.
 /// `base` is otherwise untouched: SSAI needs no per-viewer copy of the media
 /// itself (issue #929 design decision), only of this one tag line.
+///
+/// Fallible (issue #1140 / audit r14-SSAI-W1): an ad-decision-supplied value
+/// that fails [`InterstitialDateRange::to_tag_line`]'s validation is an
+/// error from this entry point, not a line silently dropped or injected.
 pub fn render_session_playlist(
     base: &MediaPlaylist,
     active: Option<&InterstitialDateRange>,
-) -> MediaPlaylist {
+) -> Result<MediaPlaylist> {
     let mut out = base.clone();
     if let Some(dr) = active {
-        out.extra_tags.push(dr.to_tag_line());
+        out.extra_tags.push(dr.to_tag_line()?);
     }
-    out
+    Ok(out)
 }
 
-fn fmt_f64(v: f64) -> String {
-    // Integer-valued numbers render without a trailing ".0", matching the
-    // spec examples (`X-RESUME-OFFSET=0`). Avoid f64::fract() (std-only
-    // intrinsic in no_std); use a cast comparison instead.
+/// Format a non-negative, finite seconds value without a trailing `.0`,
+/// matching the spec examples (`X-RESUME-OFFSET=0`). Avoid `f64::fract()`
+/// (std-only intrinsic in `no_std`); use a cast comparison instead.
+///
+/// Rejects NaN/infinite/negative `v` (issue #1140 / audit r14-SSAI-W4):
+/// `NaN as i64 == 0` and `NaN != 0.0`, so an unchecked version of this
+/// function rendered `DURATION=NaN` — syntax the §4.2 grammar has no
+/// notation for.
+fn fmt_checked_secs(what: &'static str, v: f64) -> Result<String> {
+    if !v.is_finite() || v < 0.0 {
+        return Err(Error::InvalidDuration { what, value: v });
+    }
     let trunc = v as i64;
-    if v == trunc as f64 {
+    Ok(if v == trunc as f64 {
         format!("{trunc}")
     } else {
         format!("{v}")
+    })
+}
+
+/// Parse a decimal-floating-point seconds attribute, rejecting a
+/// NaN/infinite/negative value at parse time (issue #1140 / audit
+/// r14-SSAI-W4) rather than letting it reach [`fmt_checked_secs`] on the
+/// next render.
+fn parse_checked_secs(what: &'static str, v: &str) -> Result<f64> {
+    let parsed: f64 = v
+        .parse()
+        .map_err(|_| Error::TagParse(format!("bad number: {v}")))?;
+    if !parsed.is_finite() || parsed < 0.0 {
+        return Err(Error::InvalidDuration {
+            what,
+            value: parsed,
+        });
     }
-}
-
-fn unquote(v: &str) -> String {
-    v.trim_matches('"').to_string()
-}
-
-fn parse_f64(v: &str) -> Result<f64> {
-    v.parse::<f64>()
-        .map_err(|_| Error::TagParse(format!("bad number: {v}")))
+    Ok(parsed)
 }
 
 fn parse_snap_list(v: &str) -> Vec<SnapMode> {
@@ -237,41 +304,11 @@ fn parse_restrict_list(v: &str) -> Vec<RestrictMode> {
         .collect()
 }
 
-/// Split `K=V,K=V` honouring quoted values (commas inside quotes are not
-/// separators) — the same algorithm `timed-metadata::daterange` uses for the
-/// base `EXT-X-DATERANGE` tag; duplicated here rather than shared because
-/// this module parses a different attribute set (the interstitial `X-`
-/// attributes, not `SCTE35-*`) and pulling in `timed-metadata` only for this
-/// ~20-line helper would be a heavier dependency than keeping it local.
-fn split_attrs(body: &str) -> Vec<(&str, &str)> {
-    let mut pairs = Vec::new();
-    let bytes = body.as_bytes();
-    let (mut start, mut in_q) = (0usize, false);
-    let mut i = 0;
-    while i <= bytes.len() {
-        let at_end = i == bytes.len();
-        let c = if at_end { b',' } else { bytes[i] };
-        match c {
-            b'"' => in_q = !in_q,
-            b',' if !in_q => {
-                let field = &body[start..i];
-                if let Some(eq) = field.find('=') {
-                    pairs.push((&field[..eq], &field[eq + 1..]));
-                }
-                start = i + 1;
-            }
-            _ => {}
-        }
-        i += 1;
-    }
-    pairs
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use alloc::vec;
-    use broadcast_hls::MediaSegment;
+    use broadcast_hls::{DecimalSeconds, MediaSegment};
 
     fn sample() -> InterstitialDateRange {
         InterstitialDateRange {
@@ -289,7 +326,7 @@ mod tests {
     #[test]
     fn tag_line_matches_the_spec_example_shape() {
         // Appendix D §D.6 example, reproduced with this crate's own types.
-        let line = sample().to_tag_line();
+        let line = sample().to_tag_line().unwrap();
         assert!(line.starts_with(TAG));
         assert!(line.contains(r#"CLASS="com.apple.hls.interstitial""#));
         assert!(line.contains(r#"X-ASSET-URI="http://example.com/ad1.m3u8""#));
@@ -300,7 +337,7 @@ mod tests {
     #[test]
     fn tag_line_round_trips() {
         let dr = sample();
-        let line = dr.to_tag_line();
+        let line = dr.to_tag_line().unwrap();
         let back = InterstitialDateRange::parse_tag_line(&line).unwrap();
         assert_eq!(back, dr);
     }
@@ -317,7 +354,7 @@ mod tests {
             snap: vec![SnapMode::Out, SnapMode::In],
             restrict: Vec::new(),
         };
-        let line = dr.to_tag_line();
+        let line = dr.to_tag_line().unwrap();
         assert!(line.contains(r#"X-ASSET-LIST="http://example.com/adv.json""#));
         assert!(line.contains(r#"X-SNAP="OUT,IN""#));
         let back = InterstitialDateRange::parse_tag_line(&line).unwrap();
@@ -330,23 +367,86 @@ mod tests {
     #[test]
     fn mutating_a_field_changes_the_output() {
         let base = sample();
-        let base_line = base.to_tag_line();
+        let base_line = base.to_tag_line().unwrap();
 
         let mut mutated = base.clone();
         mutated.id = "different-id".to_string();
-        assert_ne!(mutated.to_tag_line(), base_line);
+        assert_ne!(mutated.to_tag_line().unwrap(), base_line);
 
         let mut mutated = base.clone();
         mutated.resume_offset = Some(5.0);
-        assert_ne!(mutated.to_tag_line(), base_line);
+        assert_ne!(mutated.to_tag_line().unwrap(), base_line);
 
         let mut mutated = base.clone();
         mutated.restrict = vec![RestrictMode::Skip];
-        assert_ne!(mutated.to_tag_line(), base_line);
+        assert_ne!(mutated.to_tag_line().unwrap(), base_line);
 
         let mut mutated = base;
         mutated.asset = AssetSource::Uri("http://example.com/different.m3u8".to_string());
-        assert_ne!(mutated.to_tag_line(), base_line);
+        assert_ne!(mutated.to_tag_line().unwrap(), base_line);
+    }
+
+    /// Audit r14-SSAI-W1: a `"`, CR or LF in an ad-decision-supplied value
+    /// (here `X-ASSET-URI`) must be rejected, not injected into the
+    /// playlist as a broken attribute list or an extra tag line.
+    #[test]
+    fn to_tag_line_rejects_injection_in_asset_uri() {
+        let mut dr = sample();
+        dr.asset = AssetSource::Uri("http://example.com/ad1.m3u8\"\r\n#EXT-X-ENDLIST".to_string());
+        assert!(matches!(
+            dr.to_tag_line().unwrap_err(),
+            Error::HlsAttrValue(_)
+        ));
+    }
+
+    #[test]
+    fn to_tag_line_rejects_injection_in_id() {
+        let mut dr = sample();
+        dr.id = "ad\"1".to_string();
+        assert!(matches!(
+            dr.to_tag_line().unwrap_err(),
+            Error::HlsAttrValue(_)
+        ));
+    }
+
+    /// Audit r14-SSAI-W4: NaN/infinite/negative durations must be rejected,
+    /// never rendered as the bare token `NaN`/`inf`/a negative number.
+    #[test]
+    fn to_tag_line_rejects_non_finite_and_negative_durations() {
+        for bad in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY, -1.0] {
+            let mut dr = sample();
+            dr.duration = Some(bad);
+            let err = dr.to_tag_line().unwrap_err();
+            assert!(
+                matches!(err, Error::InvalidDuration { .. }),
+                "duration {bad} should be rejected, got {err:?}"
+            );
+
+            let mut dr = sample();
+            dr.resume_offset = Some(bad);
+            assert!(matches!(
+                dr.to_tag_line().unwrap_err(),
+                Error::InvalidDuration { .. }
+            ));
+
+            let mut dr = sample();
+            dr.playout_limit = Some(bad);
+            assert!(matches!(
+                dr.to_tag_line().unwrap_err(),
+                Error::InvalidDuration { .. }
+            ));
+        }
+    }
+
+    #[test]
+    fn parse_rejects_non_finite_duration() {
+        let line = "#EXT-X-DATERANGE:ID=\"x\",CLASS=\"com.apple.hls.interstitial\",\
+                     START-DATE=\"2020-01-01T00:00:00Z\",X-ASSET-URI=\"http://x/a.m3u8\",\
+                     DURATION=nan";
+        assert!(matches!(
+            InterstitialDateRange::parse_tag_line(line).unwrap_err(),
+            Error::InvalidDuration { .. }
+        ));
     }
 
     #[test]
@@ -382,14 +482,14 @@ mod tests {
             ..Default::default()
         };
         base.segments.push(MediaSegment {
-            duration: 6.0,
+            duration: DecimalSeconds::new(6.0).unwrap(),
             uri: "main.ts".to_string(),
             ..Default::default()
         });
 
         let dr = sample();
-        let with_break = render_session_playlist(&base, Some(&dr));
-        let without_break = render_session_playlist(&base, None);
+        let with_break = render_session_playlist(&base, Some(&dr)).unwrap();
+        let without_break = render_session_playlist(&base, None).unwrap();
 
         assert!(with_break.to_m3u8().contains("X-ASSET-URI"));
         assert!(!without_break.to_m3u8().contains("X-ASSET-URI"));

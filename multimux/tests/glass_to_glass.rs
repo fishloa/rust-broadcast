@@ -40,7 +40,7 @@ use axum::Router;
 use axum::response::IntoResponse;
 use axum::routing::get;
 
-use broadcast_hls::{MapTag, MediaPlaylist, MediaSegment};
+use broadcast_hls::{DecimalSeconds, MapTag, MediaPlaylist, MediaSegment};
 use hls_runtime::client::Output;
 use hls_runtime::client::tokio_client::TokioClient;
 use multimux::origin::{AppState, router};
@@ -337,7 +337,10 @@ async fn non_ll_origin_plays_via_full_segment_fallback_over_http() {
             discontinuity_sequence: 0,
             segments: vec![MediaSegment {
                 uri: "seg1.m4s".to_string(),
-                duration: seg1.duration,
+                // The segmenter's own computed duration over real sample
+                // timestamps — always finite and non-negative (issue #1140).
+                duration: DecimalSeconds::new(seg1.duration)
+                    .expect("segmenter duration is finite, >= 0"),
                 discontinuous: false,
                 parts: vec![],
                 byte_range: None,

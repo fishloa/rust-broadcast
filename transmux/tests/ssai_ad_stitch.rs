@@ -75,7 +75,7 @@ fn daterange_carries_the_real_cue_verbatim() {
         "DATERANGE must carry the exact bytes extracted from the TS PID"
     );
 
-    let tag_line = demo.daterange.to_tag_line();
+    let tag_line = demo.daterange.to_tag_line().unwrap();
     assert!(
         demo.m3u8.contains(&tag_line),
         "rendered playlist must contain the exact DATERANGE tag line:\n{tag_line}\n---\n{}",

@@ -76,8 +76,8 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use broadcast_hls::{
-    AttrValue, CencScheme, IFrameVariant, LowLatencyConfig, MasterPlaylist, MediaPlaylist,
-    MediaSegment, PartSpec, Variant, cenc_ext_x_key,
+    AttrValue, CencScheme, DecimalSeconds, IFrameVariant, LowLatencyConfig, MasterPlaylist,
+    MediaPlaylist, MediaSegment, PartSpec, Variant, cenc_ext_x_key,
 };
 use serde_json::Value;
 use transmux::cli::{Opts, Output, OutputFormat, run_bytes};
@@ -584,7 +584,7 @@ fn origin_multivariant_shape_validates_clean() {
         target_duration: 6,
         segments: vec![MediaSegment {
             uri: "seg0.ts".into(),
-            duration: 6.0,
+            duration: DecimalSeconds::new(6.0).unwrap(),
             ..Default::default()
         }],
         endlist: true,
@@ -638,7 +638,7 @@ fn origin_variant_quoted_group_attrs_validates_clean() {
         target_duration: 6,
         segments: vec![MediaSegment {
             uri: "seg0.ts".into(),
-            duration: 6.0,
+            duration: DecimalSeconds::new(6.0).unwrap(),
             ..Default::default()
         }],
         endlist: true,
@@ -731,7 +731,7 @@ fn origin_variant_unknown_quoted_attr_round_trips_and_validates_clean() {
         target_duration: 6,
         segments: vec![MediaSegment {
             uri: "seg0.ts".into(),
-            duration: 6.0,
+            duration: DecimalSeconds::new(6.0).unwrap(),
             ..Default::default()
         }],
         endlist: true,
@@ -803,7 +803,7 @@ fn origin_iframe_variant_shape_validates_clean() {
         iframes_only: true,
         segments: vec![MediaSegment {
             uri: "iframe0.ts".into(),
-            duration: 6.0,
+            duration: DecimalSeconds::new(6.0).unwrap(),
             byte_range: Some(broadcast_hls::ByteRange {
                 length: 4096,
                 offset: Some(0),
@@ -837,7 +837,7 @@ fn origin_iframe_variant_shape_validates_clean() {
         target_duration: 6,
         segments: vec![MediaSegment {
             uri: "seg0.ts".into(),
-            duration: 6.0,
+            duration: DecimalSeconds::new(6.0).unwrap(),
             ..Default::default()
         }],
         endlist: true,
@@ -864,27 +864,27 @@ fn origin_low_latency_shape_validates_clean() {
         target_duration: 4,
         segments: vec![MediaSegment {
             uri: "seg0.ts".into(),
-            duration: 4.0,
+            duration: DecimalSeconds::new(4.0).unwrap(),
             parts: vec![
                 PartSpec {
                     uri: "seg0.0.m4s".into(),
-                    duration: 1.0,
+                    duration: DecimalSeconds::new(1.0).unwrap(),
                     independent: true,
                     ..Default::default()
                 },
                 PartSpec {
                     uri: "seg0.1.m4s".into(),
-                    duration: 1.0,
+                    duration: DecimalSeconds::new(1.0).unwrap(),
                     ..Default::default()
                 },
                 PartSpec {
                     uri: "seg0.2.m4s".into(),
-                    duration: 1.0,
+                    duration: DecimalSeconds::new(1.0).unwrap(),
                     ..Default::default()
                 },
                 PartSpec {
                     uri: "seg0.3.m4s".into(),
-                    duration: 1.0,
+                    duration: DecimalSeconds::new(1.0).unwrap(),
                     ..Default::default()
                 },
             ],
@@ -892,8 +892,8 @@ fn origin_low_latency_shape_validates_clean() {
         }],
         endlist: true,
         low_latency: Some(LowLatencyConfig {
-            part_target: 1.0,
-            part_hold_back: 3.0,
+            part_target: DecimalSeconds::new(1.0).unwrap(),
+            part_hold_back: DecimalSeconds::new(3.0).unwrap(),
             can_block_reload: true,
             ..LowLatencyConfig::default()
         }),
@@ -927,6 +927,7 @@ fn origin_encrypted_shape_validates_clean() {
     let dir = scratch_dir("origin-encrypted");
 
     let key_tag = cenc_ext_x_key(CencScheme::Cbcs, &[0xab; 16], "https://key.example/k")
+        .expect("valid key_uri")
         .expect("cbcs always yields an EXT-X-KEY tag");
 
     let playlist = MediaPlaylist {
@@ -935,7 +936,7 @@ fn origin_encrypted_shape_validates_clean() {
         extra_tags: vec![key_tag],
         segments: vec![MediaSegment {
             uri: "seg0.m4s".into(),
-            duration: 6.0,
+            duration: DecimalSeconds::new(6.0).unwrap(),
             ..Default::default()
         }],
         endlist: true,
@@ -945,4 +946,113 @@ fn origin_encrypted_shape_validates_clean() {
 
     let findings = run_validator(&dir, "out.m3u8", true, 5);
     assert_zero_errors(&findings, "origin encrypted (cbcs) shape");
+}
+
+/// A rendered SSAI Interstitial `EXT-X-DATERANGE` (Appendix D §D.2, issue
+/// #929) — through `ssai_runtime::playlist::InterstitialDateRange::to_tag_line`
+/// itself, not a hand-typed approximation of its output (issue #1140).
+/// `#EXT-X-PROGRAM-DATE-TIME` is present (RFC 8216bis §4.4.5.1 requires at
+/// least one wherever `EXT-X-DATERANGE` appears — r14-SSAI-W3 flagged its
+/// absence as a separate, still-open gap in `ssai-runtime` itself).
+#[test]
+fn ssai_interstitial_daterange_validates_clean() {
+    skip_unless_validator_available!();
+
+    use ssai_runtime::decision::{AssetSource, RestrictMode};
+    use ssai_runtime::playlist::InterstitialDateRange;
+
+    let dir = scratch_dir("ssai-interstitial");
+
+    let interstitial = InterstitialDateRange {
+        id: "break-1".to_string(),
+        start_date: "2026-08-09T19:25:10.000Z".to_string(),
+        duration: Some(20.0),
+        asset: AssetSource::Uri("https://ads.example.com/creative-123.m3u8".to_string()),
+        resume_offset: Some(0.0),
+        playout_limit: None,
+        snap: Vec::new(),
+        restrict: vec![RestrictMode::Skip, RestrictMode::Jump],
+    };
+    let tag_line = interstitial
+        .to_tag_line()
+        .expect("valid interstitial attributes");
+
+    let playlist = MediaPlaylist {
+        version: 7,
+        target_duration: 6,
+        extra_tags: vec![
+            "#EXT-X-PROGRAM-DATE-TIME:2026-08-09T19:25:04.000Z".to_string(),
+            tag_line,
+        ],
+        segments: vec![MediaSegment {
+            uri: "main0.ts".into(),
+            duration: DecimalSeconds::new(6.0).unwrap(),
+            ..Default::default()
+        }],
+        endlist: true,
+        ..Default::default()
+    };
+    fs::write(dir.join("out.m3u8"), playlist.to_m3u8()).expect("write out.m3u8");
+
+    let findings = run_validator(&dir, "out.m3u8", true, 5);
+    assert_zero_errors_ignoring(&findings, "ssai interstitial DATERANGE", |f| {
+        // A SHOULD-level recommendation (an `_HLS_interstitial_id` query
+        // param on the asset URI), not a MUST-level conformance defect —
+        // out of scope for `AssetSource::Uri`'s plain-URI model.
+        f.comment.contains("_HLS_interstitial_id")
+    });
+}
+
+/// A base `EXT-X-DATERANGE` (`timed_metadata::daterange::DateRange`)
+/// carrying unknown attributes — a quoted-string (`X-COM-EXAMPLE-AD-ID`)
+/// and a bare/hex one (`X-FOO`) — preserved through `extra_attrs` (issue
+/// #1140 / audit r12-TM-W4) and rendered via the crate's own
+/// `to_tag_line`, not a hand-typed approximation.
+#[test]
+fn daterange_with_unknown_attrs_validates_clean() {
+    skip_unless_validator_available!();
+
+    use timed_metadata::daterange::{DateRange, Scte35Attr, Scte35Cue};
+
+    let dir = scratch_dir("daterange-unknown-attrs");
+
+    let daterange = DateRange {
+        id: "2002".to_string(),
+        start_date: "2026-08-09T19:25:04.000Z".to_string(),
+        class: None,
+        duration: None,
+        planned_duration: Some(24.0),
+        scte35: Some(Scte35Attr {
+            cue: Scte35Cue::Out,
+            raw: vec![0xFC, 0x30, 0x21],
+        }),
+        extra_attrs: vec![
+            (
+                "X-COM-EXAMPLE-AD-ID".to_string(),
+                AttrValue::quoted("ad-42").unwrap(),
+            ),
+            ("X-FOO".to_string(), AttrValue::bare("0x1A").unwrap()),
+        ],
+    };
+    let tag_line = daterange.to_tag_line().expect("valid DATERANGE attributes");
+
+    let playlist = MediaPlaylist {
+        version: 7,
+        target_duration: 6,
+        extra_tags: vec![
+            "#EXT-X-PROGRAM-DATE-TIME:2026-08-09T19:25:04.000Z".to_string(),
+            tag_line,
+        ],
+        segments: vec![MediaSegment {
+            uri: "main0.ts".into(),
+            duration: DecimalSeconds::new(6.0).unwrap(),
+            ..Default::default()
+        }],
+        endlist: true,
+        ..Default::default()
+    };
+    fs::write(dir.join("out.m3u8"), playlist.to_m3u8()).expect("write out.m3u8");
+
+    let findings = run_validator(&dir, "out.m3u8", true, 5);
+    assert_zero_errors(&findings, "DATERANGE with unknown attributes");
 }

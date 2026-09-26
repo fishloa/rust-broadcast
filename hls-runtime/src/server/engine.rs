@@ -75,7 +75,9 @@ use std::num::NonZeroUsize;
 use std::sync::{Arc, Mutex};
 
 use broadcast_common::Timestamp;
-use broadcast_hls::{LowLatencyConfig, MediaPlaylist, MediaSegment, OpenSegment, PartSpec};
+use broadcast_hls::{
+    DecimalSeconds, LowLatencyConfig, MediaPlaylist, MediaSegment, OpenSegment, PartSpec,
+};
 use bytes::Bytes;
 use media_plane::egress::{AwaitPolicy, CachePolicy, EgressResponse, ServedEgress};
 use media_plane::trunk::{PartEntry, SegmentCursor, SegmentCursorItem, SegmentEntry, Trunk};
@@ -683,7 +685,11 @@ impl HlsOrigin {
             .iter()
             .map(|s| MediaSegment {
                 uri: format!("seg-{track_id}-{}.{ext}", s.sequence_number),
-                duration: s.duration_secs,
+                // `duration_secs` is always `Duration::as_secs_f64()`
+                // (issue #1140): a `std::time::Duration` can never be
+                // negative or non-finite.
+                duration: DecimalSeconds::new(s.duration_secs)
+                    .expect("Duration::as_secs_f64 is finite, >= 0"),
                 discontinuous: s.discontinuous,
                 parts: Vec::new(),
                 ..Default::default()
@@ -698,7 +704,10 @@ impl HlsOrigin {
                             "part-{track_id}-{}.{}.{ext}",
                             p.segment_number, p.part_index
                         ),
-                        duration: p.duration.as_secs_f64(),
+                        // `p.duration` is a `std::time::Duration`: always
+                        // finite and non-negative (issue #1140).
+                        duration: DecimalSeconds::new(p.duration.as_secs_f64())
+                            .expect("Duration::as_secs_f64 is finite, >= 0"),
                         independent: p.independent,
                         ..Default::default()
                     })
@@ -742,7 +751,15 @@ impl HlsOrigin {
             for seg in &window.segments {
                 for entry in self.trunk.events_in_segment(seg.sequence_number) {
                     if let Ok(dr) = timeline.to_daterange(&entry.event) {
-                        extra_tags.push(dr.to_tag_line());
+                        // Same treatment as `to_daterange` above (issue #1140):
+                        // an event whose id/attributes can't be rendered as a
+                        // valid DATERANGE (e.g. `"`/CR/LF from an upstream
+                        // segmentation_upid, or a non-finite duration) is
+                        // skipped for this window rather than corrupting the
+                        // playlist or aborting the whole render.
+                        if let Ok(tag) = dr.to_tag_line() {
+                            extra_tags.push(tag);
+                        }
                     }
                 }
             }
@@ -751,10 +768,16 @@ impl HlsOrigin {
             let part_target_ms = self
                 .part_target_ms
                 .expect("low_latency_enabled implies Some");
-            let part_target = f64::from(part_target_ms) / 1000.0;
+            // `part_target_ms: u32` / 1000.0 (issue #1140): always finite
+            // and non-negative, as is the product with the positive
+            // `PART_HOLD_BACK_MULTIPLIER` constant.
+            let part_target = DecimalSeconds::new(f64::from(part_target_ms) / 1000.0)
+                .expect("u32 / 1000.0 is finite, >= 0");
+            let part_hold_back = DecimalSeconds::new(part_target.get() * PART_HOLD_BACK_MULTIPLIER)
+                .expect("finite, >= 0 times a positive constant is finite, >= 0");
             LowLatencyConfig {
                 part_target,
-                part_hold_back: part_target * PART_HOLD_BACK_MULTIPLIER,
+                part_hold_back,
                 preload_hint_part: next_part_hint,
                 ..Default::default()
             }

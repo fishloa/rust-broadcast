@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 ### Changed (breaking)
+- **New checked newtypes `DecimalSeconds`/`SignedDecimalSeconds` replace
+  `f64`/`Option<f64>` on every public duration field** (issue #1140,
+  coordinator follow-up to BH-W4/T12): `MediaSegment::duration`,
+  `PartSpec::duration`, `StartPoint::time_offset`,
+  `LowLatencyConfig::part_target`/`part_hold_back`/`can_skip_until`/
+  `hold_back`. Each is validated once at construction —
+  `DecimalSeconds::new`/`SignedDecimalSeconds::new` (`-> Result<Self,
+  Error>`, new `Error::InvalidDecimalSeconds`/`InvalidSignedDecimalSeconds`
+  variants) reject NaN/infinite (and, for the unsigned form, negative)
+  values; `get()` reads the validated `f64` back. This closes the last gap
+  BH-W4's parser-side fix left open: a struct built directly (bypassing
+  `MediaPlaylist::parse`) could still hold a NaN/inf/negative duration,
+  which the (necessarily infallible) `to_m3u8` renderer previously had to
+  silently clamp to `"0"` rather than reject — the same
+  never-silently-mangle discipline `AttrValue` already applies to quoted
+  strings, now applied to decimals. `effective_part_hold_back()` returns
+  `DecimalSeconds`, not `f64`. `AttrValue` gains hand-written
+  `Serialize`/`Deserialize` (feature `serde`) that goes through
+  `quoted`/`bare` on deserialize, so a downstream crate's `#[derive(...)]`
+  struct holding `Vec<(String, AttrValue)>` can't deserialize an
+  unvalidated value either.
 - **Every `extra_attrs: Vec<(String, String)>` field is now
   `Vec<(String, AttrValue)>`, and `AttrValue` is now an opaque struct**
   (issue #1045 / audit BH-C1, T12): quoting is recorded losslessly from
@@ -38,11 +59,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     a line/attribute-list-injection vector without ever letting an
     invalid value exist. Rendering (`to_m3u8`) stays infallible — the
     checks live entirely in the `AttrValue` constructors, so a value that
-    reaches rendering is already known-valid; `push_extra_attrs`'s
-    signature is unchanged, and callers across the workspace
-    (`hls-runtime`, `multimux`, `ssai-runtime`, `transmux`,
+    reaches rendering is already known-valid; the attribute-list renderer's
+    signature is unchanged (see below for its rename), and callers across
+    the workspace (`hls-runtime`, `multimux`, `ssai-runtime`, `transmux`,
     `media-doctor`) are unaffected since they only ever populate
     `extra_attrs` from parsed values or `Vec::new()`.
+- **The private attribute-list tokenizer/renderer are now one public
+  API — `parse_attribute_list`/`render_attribute_list`** (issue #1140,
+  audit T12/r14-SSAI-O1): `ssai-runtime` and `timed-metadata` each carried
+  their own copy of the quoted-comma-honouring splitter, and both
+  `ssai-runtime`'s interstitial `DATERANGE` and `timed-metadata`'s base
+  `DATERANGE` hand-formatted `,NAME="VALUE"` with no validation of the
+  interpolated content — an injection vector when that content is
+  ad-decision-service or upstream-SCTE-35-`segmentation_upid` data. Both
+  crates now build a `Vec<(String, AttrValue)>` and call
+  `render_attribute_list`, so a `"`/CR/LF in any value is rejected before
+  it ever reaches the wire, not just for attributes this crate models.
+  (Renamed from the former private `parse_attr_list`/`push_extra_attrs`.)
+- **`cenc_ext_x_key` now returns `Result<Option<String>>`** (was
+  `Option<String>`): `key_uri` is validated through `AttrValue::quoted`
+  and rendered through `render_attribute_list` instead of hand-formatting
+  the tag (issue #1140 / audit r05-W10 — the sibling copy in `transmux`'s
+  `ExtXKey::to_tag` had the same bug; both now share this validation
+  discipline), so a `"`/CR/LF in a key-server URL is now `Err` instead of
+  producing a malformed or injectable tag line.
+- **`EXTINF`/`PART-TARGET`/`PART-HOLD-BACK`/`CAN-SKIP-UNTIL`/`HOLD-BACK`/
+  `EXT-X-PART DURATION`/`TIME-OFFSET` now parse a strict RFC 8216bis §4.2
+  decimal-floating-point grammar** (issue #1140 / audit BH-W4), rejecting
+  `nan`/`inf`/`infinity`/exponent notation/a leading `+`/an out-of-place
+  `-` that `f64::from_str` alone accepts but the spec does not.
+  `#EXTINF:nan,` previously parsed `Ok` into a NaN duration that a
+  downstream range check silently treated as in-range, or that panicked a
+  later `Duration::from_secs_f64`. `format_secs`/`format_extinf` also now
+  clamp a non-finite or negative value to `"0"` rather than ever emitting
+  `"NaN"`/`"inf"`/a stray `-`, for the (parser-unreachable) case of a
+  struct built directly with an invalid `f64` field.
 
 ## [0.2.1] - 2026-08-14
 ### Fixed

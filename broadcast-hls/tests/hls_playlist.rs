@@ -7,7 +7,8 @@
 //! topologically highest one.
 
 use broadcast_hls::{
-    CencScheme, MasterPlaylist, MediaPlaylist, MediaSegment, Variant, cenc_ext_x_key,
+    CencScheme, DecimalSeconds, MasterPlaylist, MediaPlaylist, MediaSegment, Variant,
+    cenc_ext_x_key,
 };
 
 #[test]
@@ -20,21 +21,21 @@ fn media_playlist_rfc_valid() {
         segments: vec![
             MediaSegment {
                 uri: "seg0.m4s".into(),
-                duration: 9.009,
+                duration: DecimalSeconds::new(9.009).unwrap(),
                 discontinuous: false,
                 parts: vec![],
                 ..Default::default()
             },
             MediaSegment {
                 uri: "seg1.m4s".into(),
-                duration: 9.009,
+                duration: DecimalSeconds::new(9.009).unwrap(),
                 discontinuous: false,
                 parts: vec![],
                 ..Default::default()
             },
             MediaSegment {
                 uri: "seg2.m4s".into(),
-                duration: 3.003,
+                duration: DecimalSeconds::new(3.003).unwrap(),
                 discontinuous: false,
                 parts: vec![],
                 ..Default::default()
@@ -131,6 +132,7 @@ fn cbcs_emits_ext_x_key_sample_aes() {
         &TEST_KID,
         "https://keyserver.example.com/key",
     )
+    .expect("valid key_uri")
     .expect("cbcs must emit an EXT-X-KEY tag");
     assert_eq!(
         tag,
@@ -148,7 +150,7 @@ fn cbcs_emits_ext_x_key_sample_aes() {
         discontinuity_sequence: 0,
         segments: vec![MediaSegment {
             uri: "seg0.m4s".into(),
-            duration: 6.0,
+            duration: DecimalSeconds::new(6.0).unwrap(),
             discontinuous: false,
             parts: vec![],
             ..Default::default()
@@ -179,7 +181,7 @@ fn cenc_ctr_emits_no_ext_x_key() {
             &TEST_KID,
             "https://keyserver.example.com/key"
         ),
-        None,
+        Ok(None),
         "cenc (CTR) must not produce an HLS EXT-X-KEY tag"
     );
 }

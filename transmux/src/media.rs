@@ -37,7 +37,7 @@ use core::marker::PhantomData;
 use broadcast_common::{Package, Parse, Unpackage};
 
 use crate::ac3::{Ac3SpecificBox, Ec3SpecificBox};
-use broadcast_hls::{ByteRange, MapTag, MediaPlaylist, MediaSegment};
+use broadcast_hls::{ByteRange, DecimalSeconds, MapTag, MediaPlaylist, MediaSegment};
 
 use crate::ac4::Ac4SpecificBox;
 use crate::box_types::{BOX_HEADER_MIN_SIZE, parse_box};
@@ -590,7 +590,11 @@ impl Package for HlsPackager {
                 extra_attrs: Vec::new(),
             }),
             uri,
-            duration,
+            // `presentation_span_secs` is `(hi - lo).max(0.0)` or `0.0`
+            // (issue #1140): always finite (a bounded division of finite
+            // sample timestamps by a non-zero timescale) and non-negative
+            // by construction.
+            duration: DecimalSeconds::new(duration).expect("presentation span is finite, >= 0"),
             discontinuous: false,
             parts: vec![],
             ..Default::default()

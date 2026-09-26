@@ -636,7 +636,11 @@ mod tests {
         for (i, segment) in seg.take_ready_segments().into_iter().enumerate() {
             media_segments.push(MediaSegment {
                 uri: format!("seg{i}.m4s"),
-                duration: segment.duration,
+                // Test fixture: `segment.duration` is the segmenter's own
+                // computed duration over synthetic sample timestamps —
+                // always finite and non-negative (issue #1140).
+                duration: broadcast_hls::DecimalSeconds::new(segment.duration)
+                    .expect("segmenter duration is finite, >= 0"),
                 discontinuous: false,
                 parts: Vec::new(),
                 byte_range: None,

@@ -41,5 +41,8 @@ fn main() {
         event.duration.map(|d| d.as_seconds_f64())
     );
     println!();
-    println!("{}", daterange.to_tag_line());
+    println!(
+        "{}",
+        daterange.to_tag_line().expect("valid DATERANGE attributes")
+    );
 }

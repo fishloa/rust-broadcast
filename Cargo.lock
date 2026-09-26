@@ -1984,6 +1984,7 @@ dependencies = [
  "scte35-splice",
  "serde",
  "serde_json",
+ "ssai-runtime",
  "thiserror 2.0.19",
  "timed-metadata",
  "transmux",
@@ -3786,6 +3787,7 @@ name = "timed-metadata"
 version = "0.5.0"
 dependencies = [
  "broadcast-common",
+ "broadcast-hls",
  "cc-data",
  "chrono",
  "dvb-vbi",

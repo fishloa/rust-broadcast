@@ -3,7 +3,7 @@ use crate::anchor::TimeAnchor;
 use crate::daterange::{DateRange, Scte35Attr, Scte35Cue};
 use crate::error::{Error, Result};
 use crate::event::{EventKind, SourcePayload, TimedEvent};
-use alloc::string::ToString;
+use alloc::{string::ToString, vec::Vec};
 
 /// Convert a SCTE-35-sourced [`TimedEvent`] to a [`DateRange`].
 ///
@@ -46,6 +46,7 @@ pub fn scte35_to_daterange(ev: &TimedEvent, anchor: &TimeAnchor) -> Result<DateR
         duration: None,
         planned_duration,
         scte35: Some(Scte35Attr { cue, raw }),
+        extra_attrs: Vec::new(),
     })
 }
 

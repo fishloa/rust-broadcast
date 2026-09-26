@@ -147,7 +147,9 @@ pub mod amf0 {
 // ---------------------------------------------------------------------------
 
 /// Errors specific to RTMP transport framing (Adobe RTMP 1.0).
-#[derive(Debug, PartialEq, Eq)]
+// No longer `Eq` (only `PartialEq`): `RtmpError::Flv` wraps `FlvError`,
+// which lost `Eq` for the same reason (issue #1140 T12 cascade).
+#[derive(Debug, PartialEq)]
 #[non_exhaustive]
 pub enum RtmpError {
     /// A buffer ended before a field could be read.

@@ -2,6 +2,15 @@
 
 ## [Unreleased]
 
+### Added
+- `mediastreamvalidator_oracle.rs` (issue #1140): two new cases validate a
+  real rendered SSAI Interstitial `EXT-X-DATERANGE`
+  (`ssai_runtime::playlist::InterstitialDateRange::to_tag_line`) and a real
+  base `EXT-X-DATERANGE` carrying unknown attributes
+  (`timed_metadata::daterange::DateRange::extra_attrs`) against Apple's
+  independent HLS conformance tool — both validate clean. New dev-dependency:
+  `ssai-runtime` (path, default-features = false).
+
 ### Fixed
 - `Scte35Check` no longer only inspects the conventional PID `0x01F0` for
   SCTE-35 `splice_info_section`s — it now discovers the real cue PID(s) from

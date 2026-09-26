@@ -18,6 +18,10 @@ rustdoc-args = ["--cfg", "docsrs"]
 scte35-splice = { path = "../scte35-splice", version = "2.1", default-features = false }
 mp4-emsg      = { path = "../mp4-emsg",      version = "0.4", default-features = false }
 broadcast-common    = { path = "../broadcast-common",    version = "9.3", default-features = false }
+# The shared HLS attribute-list tokenizer/renderer (issue #1140 T12):
+# `daterange.rs` used to carry its own copy of the quoted-comma splitter and
+# hand-format `,NAME="VALUE"` with no validation of interpolated content.
+broadcast-hls = { path = "../broadcast-hls", version = "0.2", default-features = false }
 cc-data       = { path = "../cc-data",       version = "0.5", default-features = false, optional = true }
 dvb-vbi       = { path = "../dvb-vbi",       version = "0.4", default-features = false, optional = true }
 thiserror     = { version = "2", default-features = false }
@@ -34,8 +38,8 @@ transmux = { path = "../transmux", default-features = false }
 
 [features]
 default = ["std", "serde", "chrono"]
-std     = ["scte35-splice/std", "mp4-emsg/std", "chrono?/std", "serde?/std", "cc-data?/std", "dvb-vbi?/std"]
-serde   = ["dep:serde", "scte35-splice/serde", "mp4-emsg/serde", "cc-data?/serde", "dvb-vbi?/serde"]
+std     = ["scte35-splice/std", "mp4-emsg/std", "chrono?/std", "serde?/std", "cc-data?/std", "dvb-vbi?/std", "broadcast-hls/std"]
+serde   = ["dep:serde", "scte35-splice/serde", "mp4-emsg/serde", "cc-data?/serde", "dvb-vbi?/serde", "broadcast-hls/serde"]
 chrono  = ["dep:chrono", "chrono/alloc"]
 # CEA-608/708 -> WebVTT cue extraction (`webvtt::Cea608CueExtractor` /
 # `Cea708CueExtractor`), layered on `cc-data`'s decode-only 608/708 model.

@@ -5,10 +5,13 @@
 //! prefix.
 use crate::error::{Error, Result};
 use alloc::{
+    collections::{BTreeMap, BTreeSet},
     format,
     string::{String, ToString},
+    vec,
     vec::Vec,
 };
+use broadcast_hls::{AttrValue, parse_attribute_list, render_attribute_list};
 
 /// Which SCTE-35 attribute carries the splice on a DATERANGE.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -68,6 +71,12 @@ pub struct DateRange {
     pub planned_duration: Option<f64>,
     /// SCTE-35 attribute, if present.
     pub scte35: Option<Scte35Attr>,
+    /// Every other attribute (e.g. a caller's own `X-COM-EXAMPLE-AD-ID`, or
+    /// `END-DATE`/`END-ON-NEXT`) not modeled as a typed field above,
+    /// preserved losslessly for round-trip (issue #1140 / audit
+    /// r12-TM-W4 — previously dropped on parse). Sorted by name on parse
+    /// (deterministic); rendered after the fixed-order fields above.
+    pub extra_attrs: Vec<(String, AttrValue)>,
 }
 
 // DateRange carries f64 fields, so it is `PartialEq` only (no `Eq`). Tests
@@ -79,23 +88,61 @@ impl DateRange {
     /// Serialize to a single `#EXT-X-DATERANGE:` line. Attribute order is fixed
     /// (ID, START-DATE, CLASS, DURATION, PLANNED-DURATION, SCTE35-*) so that
     /// `parse_tag_line` round-trips byte-identically.
-    pub fn to_tag_line(&self) -> String {
-        let mut out = String::from(TAG);
-        out.push_str(&format!("ID=\"{}\"", self.id));
-        out.push_str(&format!(",START-DATE=\"{}\"", self.start_date));
+    ///
+    /// Every attribute value goes through [`AttrValue::quoted`]/[`bare`] and
+    /// is rendered with the shared [`broadcast_hls::render_attribute_list`]
+    /// (issue #1140 / audit r12-TM-W4): `id`/`class` are frequently sourced
+    /// from an upstream SCTE-35 segmentation descriptor's
+    /// `segmentation_upid` (caller/network data), so a `"`, CR or LF in
+    /// either is rejected here rather than breaking the attribute list.
+    /// `duration`/`planned_duration` must also be finite and non-negative —
+    /// `Error::InvalidDuration` otherwise (NaN previously rendered as the
+    /// bare token `NaN`).
+    ///
+    /// [`bare`]: AttrValue::bare
+    pub fn to_tag_line(&self) -> Result<String> {
+        let mut attrs = vec![
+            (String::from("ID"), AttrValue::quoted(self.id.clone())?),
+            (
+                String::from("START-DATE"),
+                AttrValue::quoted(self.start_date.clone())?,
+            ),
+        ];
         if let Some(c) = &self.class {
-            out.push_str(&format!(",CLASS=\"{c}\""));
+            attrs.push((String::from("CLASS"), AttrValue::quoted(c.clone())?));
         }
         if let Some(d) = self.duration {
-            out.push_str(&format!(",DURATION={}", fmt_f64(d)));
+            attrs.push((
+                String::from("DURATION"),
+                AttrValue::bare(checked_fmt_f64("DURATION", d)?)?,
+            ));
         }
         if let Some(d) = self.planned_duration {
-            out.push_str(&format!(",PLANNED-DURATION={}", fmt_f64(d)));
+            attrs.push((
+                String::from("PLANNED-DURATION"),
+                AttrValue::bare(checked_fmt_f64("PLANNED-DURATION", d)?)?,
+            ));
         }
         if let Some(s) = &self.scte35 {
-            out.push_str(&format!(",{}=0x{}", s.cue.attr_key(), to_hex_upper(&s.raw)));
+            // A hex token this crate itself formats, never caller-freeform
+            // text, so `bare` cannot fail.
+            attrs.push((
+                String::from(s.cue.attr_key()),
+                AttrValue::bare(format!("0x{}", to_hex_upper(&s.raw)))?,
+            ));
         }
-        out
+        // Unknown attributes preserved from parse (or set programmatically)
+        // — already validated `AttrValue`s, so nothing to check here.
+        attrs.extend(self.extra_attrs.iter().cloned());
+        // `render_attribute_list` always prefixes each entry with `,`
+        // (broadcast-hls's convention for appending to an already-started
+        // attribute list); build the whole list through it and drop the
+        // single leading comma rather than special-casing the first entry.
+        let mut body = String::new();
+        render_attribute_list(&mut body, &attrs);
+        let mut out = String::from(TAG);
+        out.push_str(body.trim_start_matches(','));
+        Ok(out)
     }
 
     /// Parse one `#EXT-X-DATERANGE:` line.
@@ -110,55 +157,116 @@ impl DateRange {
             duration: None,
             planned_duration: None,
             scte35: None,
+            extra_attrs: Vec::new(),
         };
-        let mut seen_id = false;
-        for (k, v) in split_attrs(body) {
-            match k {
-                "ID" => {
-                    dr.id = unquote(v);
-                    seen_id = true;
-                }
-                "START-DATE" => dr.start_date = unquote(v),
-                "CLASS" => dr.class = Some(unquote(v)),
-                "DURATION" => dr.duration = Some(parse_f64(v)?),
-                "PLANNED-DURATION" => dr.planned_duration = Some(parse_f64(v)?),
-                "SCTE35-OUT" => {
-                    dr.scte35 = Some(Scte35Attr {
-                        cue: Scte35Cue::Out,
-                        raw: parse_hex(v)?,
-                    })
-                }
-                "SCTE35-IN" => {
-                    dr.scte35 = Some(Scte35Attr {
-                        cue: Scte35Cue::In,
-                        raw: parse_hex(v)?,
-                    })
-                }
-                "SCTE35-CMD" => {
-                    dr.scte35 = Some(Scte35Attr {
-                        cue: Scte35Cue::Cmd,
-                        raw: parse_hex(v)?,
-                    })
-                }
-                _ => {} // unknown attributes ignored (spec-extensible)
-            }
-        }
-        if !seen_id {
+        // The shared workspace tokenizer (issue #1140 T12): quoted values
+        // already have their surrounding `"` stripped.
+        let (map, quoted) = parse_attribute_list(body);
+        if let Some(v) = map.get("ID") {
+            dr.id = v.clone();
+        } else {
             return Err(Error::AttrParse("DATERANGE missing ID".to_string()));
         }
+        if let Some(v) = map.get("START-DATE") {
+            dr.start_date = v.clone();
+        }
+        if let Some(v) = map.get("CLASS") {
+            dr.class = Some(v.clone());
+        }
+        if let Some(v) = map.get("DURATION") {
+            dr.duration = Some(parse_checked_f64("DURATION", v)?);
+        }
+        if let Some(v) = map.get("PLANNED-DURATION") {
+            dr.planned_duration = Some(parse_checked_f64("PLANNED-DURATION", v)?);
+        }
+        if let Some(v) = map.get("SCTE35-OUT") {
+            dr.scte35 = Some(Scte35Attr {
+                cue: Scte35Cue::Out,
+                raw: parse_hex(v)?,
+            });
+        } else if let Some(v) = map.get("SCTE35-IN") {
+            dr.scte35 = Some(Scte35Attr {
+                cue: Scte35Cue::In,
+                raw: parse_hex(v)?,
+            });
+        } else if let Some(v) = map.get("SCTE35-CMD") {
+            dr.scte35 = Some(Scte35Attr {
+                cue: Scte35Cue::Cmd,
+                raw: parse_hex(v)?,
+            });
+        }
+        // Every other attribute (X-*, END-DATE, END-ON-NEXT, …) is kept
+        // losslessly, not dropped (issue #1140 / audit r12-TM-W4).
+        dr.extra_attrs = filter_extra_attrs(&map, &quoted)?;
         Ok(dr)
     }
 }
 
-fn fmt_f64(v: f64) -> String {
+/// From an already-parsed attribute map, collect every attribute whose name
+/// is not one of `DateRange`'s typed fields into a `Vec<(name, AttrValue)>`,
+/// sorted by name for deterministic serialization (same pattern as
+/// `broadcast_hls`'s own `filter_extra_attrs` — issue #1140 / audit
+/// r12-TM-W4). `quoted` decides [`AttrValue::quoted`] vs. [`AttrValue::bare`]
+/// per entry: the recorded wire form, not a guess.
+fn filter_extra_attrs(
+    map: &BTreeMap<String, String>,
+    quoted: &BTreeSet<String>,
+) -> Result<Vec<(String, AttrValue)>> {
+    const KNOWN: &[&str] = &[
+        "ID",
+        "START-DATE",
+        "CLASS",
+        "DURATION",
+        "PLANNED-DURATION",
+        "SCTE35-OUT",
+        "SCTE35-IN",
+        "SCTE35-CMD",
+    ];
+    map.iter()
+        .filter(|(k, _)| !KNOWN.contains(&k.as_str()))
+        .map(|(k, v)| {
+            let value = if quoted.contains(k) {
+                AttrValue::quoted(v.clone())?
+            } else {
+                AttrValue::bare(v.clone())?
+            };
+            Ok((k.clone(), value))
+        })
+        .collect()
+}
+
+/// Format a non-negative, finite seconds value, rejecting NaN/infinite/
+/// negative `v` (issue #1140 / audit r13-BH-W4-class): an unchecked format
+/// would render `DURATION=NaN`, syntax the §4.2 grammar has no notation
+/// for.
+fn checked_fmt_f64(what: &'static str, v: f64) -> Result<String> {
+    if !v.is_finite() || v < 0.0 {
+        return Err(Error::InvalidDuration { what, value: v });
+    }
     // Integer-valued durations render without a trailing ".0" to match common output.
     // Avoid f64::fract() (std-only intrinsic in no_std); use cast comparison instead.
     let trunc = v as i64;
-    if v == trunc as f64 {
+    Ok(if v == trunc as f64 {
         format!("{trunc}")
     } else {
         format!("{v}")
+    })
+}
+
+/// Parse a decimal-floating-point seconds attribute, rejecting a
+/// NaN/infinite/negative value at parse time rather than letting it reach
+/// [`checked_fmt_f64`] on the next render.
+fn parse_checked_f64(what: &'static str, v: &str) -> Result<f64> {
+    let parsed: f64 = v
+        .parse()
+        .map_err(|_| Error::AttrParse(format!("bad number: {v}")))?;
+    if !parsed.is_finite() || parsed < 0.0 {
+        return Err(Error::InvalidDuration {
+            what,
+            value: parsed,
+        });
     }
+    Ok(parsed)
 }
 
 fn to_hex_upper(b: &[u8]) -> String {
@@ -167,15 +275,6 @@ fn to_hex_upper(b: &[u8]) -> String {
         s.push_str(&format!("{byte:02X}"));
     }
     s
-}
-
-fn unquote(v: &str) -> String {
-    v.trim_matches('"').to_string()
-}
-
-fn parse_f64(v: &str) -> Result<f64> {
-    v.parse::<f64>()
-        .map_err(|_| Error::AttrParse(format!("bad number: {v}")))
 }
 
 fn parse_hex(v: &str) -> Result<Vec<u8>> {
@@ -195,31 +294,6 @@ fn parse_hex(v: &str) -> Result<Vec<u8>> {
         .collect()
 }
 
-/// Split `K=V,K=V` honouring quoted values (commas inside quotes are not separators).
-fn split_attrs(body: &str) -> Vec<(&str, &str)> {
-    let mut pairs = Vec::new();
-    let bytes = body.as_bytes();
-    let (mut start, mut in_q) = (0usize, false);
-    let mut i = 0;
-    while i <= bytes.len() {
-        let at_end = i == bytes.len();
-        let c = if at_end { b',' } else { bytes[i] };
-        match c {
-            b'"' => in_q = !in_q,
-            b',' if !in_q => {
-                let field = &body[start..i];
-                if let Some(eq) = field.find('=') {
-                    pairs.push((&field[..eq], &field[eq + 1..]));
-                }
-                start = i + 1;
-            }
-            _ => {}
-        }
-        i += 1;
-    }
-    pairs
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -236,22 +310,97 @@ mod tests {
                 cue: Scte35Cue::Out,
                 raw: vec![0xFC, 0x30, 0x21],
             }),
+            extra_attrs: Vec::new(),
         }
     }
 
     #[test]
     fn tag_round_trips_byte_identical() {
         let dr = sample();
-        let line = dr.to_tag_line();
+        let line = dr.to_tag_line().unwrap();
         assert!(line.starts_with("#EXT-X-DATERANGE:"));
         assert!(line.contains("SCTE35-OUT=0xFC3021"));
         let back = DateRange::parse_tag_line(&line).unwrap();
         assert_eq!(back, dr);
     }
 
+    /// Audit r12-TM-W4 (issue #1140): an unknown quoted-string attribute
+    /// (`X-COM-EXAMPLE-AD-ID`) and an unknown bare/hex attribute (`X-FOO`)
+    /// must survive parse -> render byte-identically, not be dropped.
+    #[test]
+    fn unknown_attributes_round_trip_byte_identical() {
+        let mut dr = sample();
+        dr.extra_attrs = vec![
+            (
+                "X-COM-EXAMPLE-AD-ID".to_string(),
+                AttrValue::quoted("ad-42").unwrap(),
+            ),
+            ("X-FOO".to_string(), AttrValue::bare("0x1A").unwrap()),
+        ];
+        let line = dr.to_tag_line().unwrap();
+        assert!(line.contains(r#"X-COM-EXAMPLE-AD-ID="ad-42""#));
+        assert!(line.contains("X-FOO=0x1A"));
+        let back = DateRange::parse_tag_line(&line).unwrap();
+        assert_eq!(back, dr, "unknown attributes must round-trip");
+        assert_eq!(back.extra_attrs, dr.extra_attrs);
+    }
+
     #[test]
     fn cue_labels() {
         assert_eq!(Scte35Cue::Out.name(), "out");
         assert_eq!(alloc::format!("{}", Scte35Cue::In), "in");
+    }
+
+    /// Audit r12-TM-W4: a `"`, CR or LF in `ID` (frequently sourced from an
+    /// upstream `segmentation_upid`) must be rejected, not injected into
+    /// the DATERANGE attribute list.
+    #[test]
+    fn to_tag_line_rejects_injection_in_id() {
+        let mut dr = sample();
+        dr.id = "2002\"\r\n#EXT-X-ENDLIST".to_string();
+        assert!(matches!(
+            dr.to_tag_line().unwrap_err(),
+            Error::HlsAttrValue(_)
+        ));
+    }
+
+    #[test]
+    fn to_tag_line_rejects_injection_in_class() {
+        let mut dr = sample();
+        dr.class = Some("ad\"break".to_string());
+        assert!(matches!(
+            dr.to_tag_line().unwrap_err(),
+            Error::HlsAttrValue(_)
+        ));
+    }
+
+    /// Audit r13-BH-W4-class: NaN/infinite/negative durations must be
+    /// rejected, never rendered as the bare token `NaN`/`inf`.
+    #[test]
+    fn to_tag_line_rejects_non_finite_and_negative_durations() {
+        for bad in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY, -1.0] {
+            let mut dr = sample();
+            dr.duration = Some(bad);
+            assert!(matches!(
+                dr.to_tag_line().unwrap_err(),
+                Error::InvalidDuration { .. }
+            ));
+
+            let mut dr = sample();
+            dr.planned_duration = Some(bad);
+            assert!(matches!(
+                dr.to_tag_line().unwrap_err(),
+                Error::InvalidDuration { .. }
+            ));
+        }
+    }
+
+    #[test]
+    fn parse_rejects_non_finite_duration() {
+        let line = "#EXT-X-DATERANGE:ID=\"x\",START-DATE=\"2020-01-01T00:00:00Z\",DURATION=nan";
+        assert!(matches!(
+            DateRange::parse_tag_line(line).unwrap_err(),
+            Error::InvalidDuration { .. }
+        ));
     }
 }

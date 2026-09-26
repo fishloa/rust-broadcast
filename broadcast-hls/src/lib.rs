@@ -248,15 +248,34 @@ pub const CENC_KEYFORMATVERSIONS: &str = "1";
 /// Box default KID (`tenc.default_kid`, ISO/IEC 14496-12 §8.12.1 — the
 /// `transmux` crate's `cenc::TrackEncryptionBox::default_kid` /
 /// `media::TrackEncryption::tenc::default_kid`).
-pub fn cenc_ext_x_key(scheme: CencScheme, kid: &[u8; 16], key_uri: &str) -> Option<String> {
+///
+/// `Ok(None)` for [`CencScheme::Cenc`] (see above); `Err` if `key_uri`
+/// cannot be represented as a quoted-string (`"`, CR or LF — RFC 8216 §4.2;
+/// issue #1140 / audit r05-W10: a key-server URL assembled from request
+/// data previously went straight into the tag unvalidated, an
+/// attribute-list-injection vector).
+pub fn cenc_ext_x_key(scheme: CencScheme, kid: &[u8; 16], key_uri: &str) -> Result<Option<String>> {
     if scheme != CencScheme::Cbcs {
-        return None;
+        return Ok(None);
     }
-    Some(format!(
-        "#EXT-X-KEY:METHOD=SAMPLE-AES,URI=\"{key_uri}\",KEYFORMAT=\"{CENC_KEYFORMAT}\",\
-         KEYFORMATVERSIONS=\"{CENC_KEYFORMATVERSIONS}\",KEYID=0x{}",
-        hex_encode(kid)
-    ))
+    let mut s = String::from("#EXT-X-KEY:METHOD=SAMPLE-AES");
+    let attrs = [
+        (String::from("URI"), AttrValue::quoted(key_uri)?),
+        (
+            String::from("KEYFORMAT"),
+            AttrValue::quoted(CENC_KEYFORMAT)?,
+        ),
+        (
+            String::from("KEYFORMATVERSIONS"),
+            AttrValue::quoted(CENC_KEYFORMATVERSIONS)?,
+        ),
+        (
+            String::from("KEYID"),
+            AttrValue::bare(format!("0x{}", hex_encode(kid)))?,
+        ),
+    ];
+    render_attribute_list(&mut s, &attrs);
+    Ok(Some(s))
 }
 
 /// A byte sub-range into a resource.
@@ -398,7 +417,7 @@ pub struct PartSpec {
     /// The part URI (e.g. `"seg0.1.m4s"`).
     pub uri: String,
     /// The part duration in seconds (e.g. `0.334`).
-    pub duration: f64,
+    pub duration: DecimalSeconds,
     /// If `true`, render `,INDEPENDENT=YES` — the part begins with an
     /// independently decodable frame (a sync sample). RFC 8216bis §4.4.4.9.
     pub independent: bool,
@@ -460,7 +479,7 @@ pub struct StartPoint {
     /// `TIME-OFFSET` — signed seconds from the start of the Playlist
     /// (positive) or from the end of the last Media Segment (negative).
     /// REQUIRED.
-    pub time_offset: f64,
+    pub time_offset: SignedDecimalSeconds,
     /// `PRECISE` — if `true`, a client should not render samples before
     /// `time_offset` within the segment it lands in. Absence on the wire
     /// means `false` (RFC 8216bis §4.4.2.2).
@@ -681,7 +700,7 @@ pub struct MediaSegment {
     /// The segment URI (e.g. `"seg0.m4s"`).
     pub uri: String,
     /// The segment duration in seconds (e.g. `9.009`).
-    pub duration: f64,
+    pub duration: DecimalSeconds,
     /// If `true`, emit `#EXT-X-DISCONTINUITY` immediately before this
     /// segment's `#EXTINF` line — RFC 8216 §4.3.4.3.
     pub discontinuous: bool,
@@ -797,11 +816,11 @@ pub struct MediaPlaylist {
 pub struct LowLatencyConfig {
     /// Part-target duration in seconds — the `PART-TARGET` of `#EXT-X-PART-INF`
     /// (RFC 8216bis §4.4.3.7). Typically 0.2–0.5 s.
-    pub part_target: f64,
+    pub part_target: DecimalSeconds,
     /// `PART-HOLD-BACK` in seconds — the `#EXT-X-SERVER-CONTROL` attribute
     /// (RFC 8216bis §4.4.3.8). MUST be at least `3 × part_target`; the renderer
     /// raises it to that floor if a smaller value is supplied.
-    pub part_hold_back: f64,
+    pub part_hold_back: DecimalSeconds,
     /// URI of the next, not-yet-available part or map — rendered as
     /// `#EXT-X-PRELOAD-HINT:TYPE=<...>,URI="<uri>"` (RFC 8216bis §4.4.5.3). When
     /// `None`, no preload hint is emitted (e.g. an ended playlist).
@@ -822,7 +841,7 @@ pub struct LowLatencyConfig {
     /// `CAN-SKIP-UNTIL` attribute of `#EXT-X-SERVER-CONTROL` (RFC 8216bis
     /// §4.4.3.8) — the Skip Boundary in seconds, advertising support for
     /// Playlist Delta Updates (`#EXT-X-SKIP`). `None` omits the attribute.
-    pub can_skip_until: Option<f64>,
+    pub can_skip_until: Option<DecimalSeconds>,
     /// `CAN-BLOCK-RELOAD` attribute of `#EXT-X-SERVER-CONTROL` (RFC 8216bis
     /// §4.4.3.8) — whether the server supports Blocking Playlist Reload
     /// (RFC 8216bis §6.2.5.2). `to_m3u8` renders the actual value
@@ -852,7 +871,7 @@ pub struct LowLatencyConfig {
     /// [`LowLatencyConfig`] is present; for a non-LL-HLS playlist with a
     /// custom hold-back, set this on a playlist that also carries the
     /// `#EXT-X-PART-INF` and `#EXT-X-SERVER-CONTROL` tags.
-    pub hold_back: Option<f64>,
+    pub hold_back: Option<DecimalSeconds>,
     /// `CAN-SKIP-DATERANGES` attribute of `#EXT-X-SERVER-CONTROL`
     /// (RFC 8216bis §4.4.3.8) — enumerated-string `YES` if the server can
     /// produce Playlist Delta Updates (§6.2.5.1) that skip older
@@ -865,13 +884,11 @@ pub struct LowLatencyConfig {
 impl LowLatencyConfig {
     /// The `PART-HOLD-BACK` value actually rendered: at least `3 × part_target`
     /// per RFC 8216bis §4.4.3.8, even if [`Self::part_hold_back`] is smaller.
-    pub fn effective_part_hold_back(&self) -> f64 {
-        let floor = 3.0 * self.part_target;
-        if self.part_hold_back < floor {
-            floor
-        } else {
-            self.part_hold_back
-        }
+    pub fn effective_part_hold_back(&self) -> DecimalSeconds {
+        let floor = 3.0 * self.part_target.get();
+        // `floor` and `self.part_hold_back.get()` are both finite and
+        // non-negative, so their max is too.
+        DecimalSeconds::new_unchecked(self.part_hold_back.get().max(floor))
     }
 }
 
@@ -886,8 +903,8 @@ impl Default for LowLatencyConfig {
     /// `false`/absent-means-NO), independent of this `Default` impl.
     fn default() -> Self {
         Self {
-            part_target: 0.0,
-            part_hold_back: 0.0,
+            part_target: DecimalSeconds::ZERO,
+            part_hold_back: DecimalSeconds::ZERO,
             preload_hint_part: None,
             preload_hint_type: PreloadHintType::default(),
             preload_hint_byte_range_start: None,
@@ -995,7 +1012,7 @@ fn bump_version(v: &mut Option<u8>, n: u8) {
 /// [`MediaPlaylist`] stores the numeric duration, not its original lexical
 /// form — and this crate would re-render it as `4`. The claim is about the
 /// playlist this crate emits, which is the one a client will actually read.
-fn is_fractional_duration(duration: f64) -> bool {
+fn is_fractional_duration(duration: DecimalSeconds) -> bool {
     format_extinf(duration).contains('.')
 }
 
@@ -1033,7 +1050,7 @@ fn scan_tag_lines_for_version(tags: &[String]) -> Option<u8> {
     let mut v: Option<u8> = None;
     for tag in tags {
         if let Some(rest) = tag.strip_prefix("#EXT-X-KEY:") {
-            let (attrs, _quoted) = parse_attr_list(rest);
+            let (attrs, _quoted) = parse_attribute_list(rest);
             if attrs.contains_key("IV") {
                 bump_version(&mut v, VERSION_KEY_IV);
             }
@@ -1054,11 +1071,11 @@ fn scan_tag_lines_for_version(tags: &[String]) -> Option<u8> {
             // kept because a caller may still hand-push a verbatim tag line
             // into `extra_tags`, and `bump_version` is a max, so the two
             // paths cannot double-count or disagree.
-            if parse_attr_list(rest).0.contains_key("QUERYPARAM") {
+            if parse_attribute_list(rest).0.contains_key("QUERYPARAM") {
                 bump_version(&mut v, VERSION_DEFINE_QUERYPARAM);
             }
         } else if let Some(rest) = tag.strip_prefix("#EXT-X-MEDIA:") {
-            let (attrs, _quoted) = parse_attr_list(rest);
+            let (attrs, _quoted) = parse_attribute_list(rest);
             if let Some(instream_id) = attrs.get("INSTREAM-ID") {
                 if instream_id.starts_with("SERVICE") {
                     bump_version(&mut v, VERSION_MEDIA_SERVICE_INSTREAM_ID);
@@ -1073,7 +1090,7 @@ fn scan_tag_lines_for_version(tags: &[String]) -> Option<u8> {
         // Row 12 applies to ANY attribute-bearing tag, not just the three
         // handled above — scan every tag's attribute keys uniformly.
         if let Some(colon) = tag.find(':')
-            && parse_attr_list(&tag[colon + 1..])
+            && parse_attribute_list(&tag[colon + 1..])
                 .0
                 .keys()
                 .any(|k| k.starts_with("REQ-"))
@@ -1421,14 +1438,14 @@ impl MediaPlaylist {
                     s.push_str(",CAN-SKIP-DATERANGES=YES");
                 }
             }
-            push_extra_attrs(&mut s, &ll.sc_extra_attrs);
+            render_attribute_list(&mut s, &ll.sc_extra_attrs);
             s.push('\n');
             // #EXT-X-PART-INF — the part-target duration.
             s.push_str(&format!(
                 "#EXT-X-PART-INF:PART-TARGET={}",
                 format_secs(ll.part_target),
             ));
-            push_extra_attrs(&mut s, &ll.pi_extra_attrs);
+            render_attribute_list(&mut s, &ll.pi_extra_attrs);
             s.push('\n');
         }
 
@@ -1445,7 +1462,7 @@ impl MediaPlaylist {
                     skip.recently_removed_daterange_ids.join("\t")
                 ));
             }
-            push_extra_attrs(&mut s, &skip.extra_attrs);
+            render_attribute_list(&mut s, &skip.extra_attrs);
             s.push('\n');
         }
 
@@ -1543,7 +1560,7 @@ impl MediaPlaylist {
             if let Some(len) = ll.preload_hint_byte_range_length {
                 s.push_str(&format!(",BYTERANGE-LENGTH={len}"));
             }
-            push_extra_attrs(&mut s, &ll.ph_extra_attrs);
+            render_attribute_list(&mut s, &ll.ph_extra_attrs);
             s.push('\n');
         }
 
@@ -1556,7 +1573,7 @@ impl MediaPlaylist {
             if let Some(lp) = rr.last_part {
                 s.push_str(&format!(",LAST-PART={lp}"));
             }
-            push_extra_attrs(&mut s, &rr.extra_attrs);
+            render_attribute_list(&mut s, &rr.extra_attrs);
             s.push('\n');
         }
 
@@ -1599,11 +1616,11 @@ impl MediaPlaylist {
         let mut playlist_type: Option<PlaylistType> = None;
 
         // Low-Latency HLS accumulators.
-        let mut part_target: Option<f64> = None;
-        let mut part_hold_back: Option<f64> = None;
-        let mut can_skip_until: Option<f64> = None;
+        let mut part_target: Option<DecimalSeconds> = None;
+        let mut part_hold_back: Option<DecimalSeconds> = None;
+        let mut can_skip_until: Option<DecimalSeconds> = None;
         let mut can_skip_dateranges = false;
-        let mut hold_back: Option<f64> = None;
+        let mut hold_back: Option<DecimalSeconds> = None;
         // RFC 8216bis §4.4.3.8: absent CAN-BLOCK-RELOAD (or an absent
         // #EXT-X-SERVER-CONTROL tag entirely) means the server does NOT
         // support Blocking Playlist Reload — default false, not the
@@ -1624,7 +1641,7 @@ impl MediaPlaylist {
         let mut pending_discontinuous = false;
         let mut pending_byte_range: Option<ByteRange> = None;
         let mut pending_parts: Vec<PartSpec> = Vec::new();
-        let mut pending_duration: Option<f64> = None;
+        let mut pending_duration: Option<DecimalSeconds> = None;
         // §4.4.4.7/§4.4.4.8 per-segment state (issue #872): GAP applies only
         // to the next segment; BITRATE carries forward like MAP.
         let mut pending_gap = false;
@@ -1685,7 +1702,7 @@ impl MediaPlaylist {
             } else if let Some(rest) = line.strip_prefix("#EXT-X-BYTERANGE:") {
                 pending_byte_range = Some(ByteRange::parse(rest, line_no, line)?);
             } else if let Some(rest) = line.strip_prefix("#EXT-X-MAP:") {
-                let (attrs, quoted) = parse_attr_list(rest);
+                let (attrs, quoted) = parse_attribute_list(rest);
                 let uri = require_attr(&attrs, "URI", line_no, line, "EXT-X-MAP")?;
                 let byte_range = match attrs.get("BYTERANGE") {
                     Some(v) => Some(ByteRange::parse(v, line_no, line)?),
@@ -1699,27 +1716,34 @@ impl MediaPlaylist {
                 });
             } else if let Some(rest) = line.strip_prefix("#EXTINF:") {
                 let dur_str = rest.split(',').next().unwrap_or(rest);
-                pending_duration = Some(parse_decimal(dur_str, line_no, line, "EXTINF duration")?);
+                pending_duration = Some(parse_decimal_seconds(
+                    dur_str,
+                    line_no,
+                    line,
+                    "EXTINF duration",
+                )?);
             } else if let Some(rest) = line.strip_prefix("#EXT-X-PART-INF:") {
-                let (attrs, quoted) = parse_attr_list(rest);
+                let (attrs, quoted) = parse_attribute_list(rest);
                 if let Some(v) = attrs.get("PART-TARGET") {
-                    part_target = Some(parse_decimal(v, line_no, line, "PART-TARGET")?);
+                    part_target = Some(parse_decimal_seconds(v, line_no, line, "PART-TARGET")?);
                 }
                 pi_extra_attrs.extend(filter_extra_attrs(&attrs, &["PART-TARGET"], &quoted)?);
                 saw_ll_tag = true;
             } else if let Some(rest) = line.strip_prefix("#EXT-X-SERVER-CONTROL:") {
-                let (attrs, quoted) = parse_attr_list(rest);
+                let (attrs, quoted) = parse_attribute_list(rest);
                 if let Some(v) = attrs.get("PART-HOLD-BACK") {
-                    part_hold_back = Some(parse_decimal(v, line_no, line, "PART-HOLD-BACK")?);
+                    part_hold_back =
+                        Some(parse_decimal_seconds(v, line_no, line, "PART-HOLD-BACK")?);
                 }
                 if let Some(v) = attrs.get("CAN-SKIP-UNTIL") {
-                    can_skip_until = Some(parse_decimal(v, line_no, line, "CAN-SKIP-UNTIL")?);
+                    can_skip_until =
+                        Some(parse_decimal_seconds(v, line_no, line, "CAN-SKIP-UNTIL")?);
                 }
                 can_skip_dateranges =
                     attrs.get("CAN-SKIP-DATERANGES").map(String::as_str) == Some("YES");
                 can_block_reload = attrs.get("CAN-BLOCK-RELOAD").map(String::as_str) == Some("YES");
                 if let Some(v) = attrs.get("HOLD-BACK") {
-                    hold_back = Some(parse_decimal(v, line_no, line, "HOLD-BACK")?);
+                    hold_back = Some(parse_decimal_seconds(v, line_no, line, "HOLD-BACK")?);
                 }
                 sc_extra_attrs.extend(filter_extra_attrs(
                     &attrs,
@@ -1734,14 +1758,15 @@ impl MediaPlaylist {
                 )?);
                 saw_ll_tag = true;
             } else if let Some(rest) = line.strip_prefix("#EXT-X-PART:") {
-                let (attrs, quoted) = parse_attr_list(rest);
+                let (attrs, quoted) = parse_attribute_list(rest);
                 let uri = require_attr(&attrs, "URI", line_no, line, "EXT-X-PART")?;
                 let duration_str = attrs.get("DURATION").ok_or_else(|| Error::HlsParse {
                     line_no,
                     line: line.to_string(),
                     reason: "EXT-X-PART missing required DURATION attribute".to_string(),
                 })?;
-                let duration = parse_decimal(duration_str, line_no, line, "EXT-X-PART DURATION")?;
+                let duration =
+                    parse_decimal_seconds(duration_str, line_no, line, "EXT-X-PART DURATION")?;
                 let independent = attrs.get("INDEPENDENT").map(String::as_str) == Some("YES");
                 let gap = attrs.get("GAP").map(String::as_str) == Some("YES");
                 let byte_range = match attrs.get("BYTERANGE") {
@@ -1763,7 +1788,7 @@ impl MediaPlaylist {
                 });
                 saw_ll_tag = true;
             } else if let Some(rest) = line.strip_prefix("#EXT-X-PRELOAD-HINT:") {
-                let (attrs, quoted) = parse_attr_list(rest);
+                let (attrs, quoted) = parse_attribute_list(rest);
                 preload_hint_type = match attrs.get("TYPE").map(String::as_str) {
                     Some("MAP") => PreloadHintType::Map,
                     _ => PreloadHintType::Part,
@@ -1790,7 +1815,7 @@ impl MediaPlaylist {
                 )?);
                 saw_ll_tag = true;
             } else if let Some(rest) = line.strip_prefix("#EXT-X-RENDITION-REPORT:") {
-                let (attrs, quoted) = parse_attr_list(rest);
+                let (attrs, quoted) = parse_attribute_list(rest);
                 let uri = require_attr(&attrs, "URI", line_no, line, "EXT-X-RENDITION-REPORT")?;
                 let last_msn = match attrs.get("LAST-MSN") {
                     Some(v) => parse_decimal(v, line_no, line, "LAST-MSN")?,
@@ -1809,7 +1834,7 @@ impl MediaPlaylist {
                     extra_attrs,
                 });
             } else if let Some(rest) = line.strip_prefix("#EXT-X-SKIP:") {
-                let (attrs, quoted) = parse_attr_list(rest);
+                let (attrs, quoted) = parse_attribute_list(rest);
                 let skipped_segments_str =
                     require_attr(&attrs, "SKIPPED-SEGMENTS", line_no, line, "EXT-X-SKIP")?;
                 let skipped_segments =
@@ -1907,8 +1932,8 @@ impl MediaPlaylist {
             all_extra.extend(pi_extra_attrs.iter().cloned());
             all_extra.extend(ph_extra_attrs.iter().cloned());
             Some(LowLatencyConfig {
-                part_target: part_target.unwrap_or(0.0),
-                part_hold_back: part_hold_back.unwrap_or(0.0),
+                part_target: part_target.unwrap_or(DecimalSeconds::ZERO),
+                part_hold_back: part_hold_back.unwrap_or(DecimalSeconds::ZERO),
                 preload_hint_part,
                 preload_hint_type,
                 preload_hint_byte_range_start,
@@ -1966,7 +1991,7 @@ fn push_part_line(s: &mut String, part: &PartSpec) {
     if part.gap {
         s.push_str(",GAP=YES");
     }
-    push_extra_attrs(s, &part.extra_attrs);
+    render_attribute_list(s, &part.extra_attrs);
     s.push('\n');
 }
 
@@ -1977,7 +2002,7 @@ fn push_map_line(s: &mut String, map: &MapTag) {
     if let Some(br) = &map.byte_range {
         s.push_str(&format!(",BYTERANGE=\"{}\"", br.render()));
     }
-    push_extra_attrs(s, &map.extra_attrs);
+    render_attribute_list(s, &map.extra_attrs);
     s.push('\n');
 }
 
@@ -1990,17 +2015,17 @@ fn push_define_line(s: &mut String, def: &Define) {
             extra_attrs,
         } => {
             s.push_str(&format!("#EXT-X-DEFINE:NAME=\"{name}\",VALUE=\"{value}\""));
-            push_extra_attrs(s, extra_attrs);
+            render_attribute_list(s, extra_attrs);
             s.push('\n');
         }
         Define::Import { name, extra_attrs } => {
             s.push_str(&format!("#EXT-X-DEFINE:IMPORT=\"{name}\""));
-            push_extra_attrs(s, extra_attrs);
+            render_attribute_list(s, extra_attrs);
             s.push('\n');
         }
         Define::QueryParam { name, extra_attrs } => {
             s.push_str(&format!("#EXT-X-DEFINE:QUERYPARAM=\"{name}\""));
-            push_extra_attrs(s, extra_attrs);
+            render_attribute_list(s, extra_attrs);
             s.push('\n');
         }
     }
@@ -2009,7 +2034,7 @@ fn push_define_line(s: &mut String, def: &Define) {
 /// Parse an `#EXT-X-DEFINE:<attribute-list>` value (RFC 8216bis §4.4.2.3):
 /// exactly one of `NAME` (+ required `VALUE`), `IMPORT`, `QUERYPARAM`.
 fn parse_define(rest: &str, line_no: usize, line: &str) -> Result<Define> {
-    let (attrs, quoted) = parse_attr_list(rest);
+    let (attrs, quoted) = parse_attribute_list(rest);
     let present = [
         attrs.contains_key("NAME"),
         attrs.contains_key("IMPORT"),
@@ -2058,7 +2083,7 @@ fn parse_define(rest: &str, line_no: usize, line: &str) -> Result<Define> {
 /// recorded from the actual on-wire token at parse time, so quoting
 /// round-trips losslessly — including for an attribute this crate has never
 /// heard of (issue #1045 / audit BH-C1). A plain `String` alone cannot
-/// represent this: `parse_attr_list` must strip the surrounding `"` either
+/// represent this: `parse_attribute_list` must strip the surrounding `"` either
 /// way to recover a quoted value's content, so by the time the value
 /// reaches `extra_attrs` the two forms are indistinguishable unless
 /// recorded explicitly.
@@ -2072,7 +2097,7 @@ fn parse_define(rest: &str, line_no: usize, line: &str) -> Result<Define> {
 /// rendering (`to_m3u8`) infallible without ever letting an invalid value
 /// exist in the first place; parsing constructs through the same checks
 /// (a value read off the wire can never fail them — see the module docs on
-/// `parse_attr_list`/`filter_extra_attrs`).
+/// `parse_attribute_list`/`filter_extra_attrs`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AttrValue {
     value: String,
@@ -2171,6 +2196,47 @@ impl AttrValue {
     }
 }
 
+/// `serde` support for [`AttrValue`] (issue #1140: `timed-metadata`'s
+/// `DateRange::extra_attrs` needs to derive `Serialize`/`Deserialize`
+/// through it). A blind field-derive would let an untrusted JSON payload
+/// deserialize an `AttrValue` whose content was never checked by
+/// [`AttrValue::quoted`]/[`AttrValue::bare`] — exactly the injection this
+/// type exists to prevent — so `Deserialize` is hand-written to go through
+/// those constructors instead.
+#[cfg(feature = "serde")]
+impl serde::Serialize for AttrValue {
+    fn serialize<S: serde::Serializer>(
+        &self,
+        serializer: S,
+    ) -> core::result::Result<S::Ok, S::Error> {
+        use serde::ser::SerializeStruct;
+        let mut s = serializer.serialize_struct("AttrValue", 2)?;
+        s.serialize_field("value", &self.value)?;
+        s.serialize_field("quoted", &self.quoted)?;
+        s.end()
+    }
+}
+
+#[cfg(feature = "serde")]
+impl<'de> serde::Deserialize<'de> for AttrValue {
+    fn deserialize<D: serde::Deserializer<'de>>(
+        deserializer: D,
+    ) -> core::result::Result<Self, D::Error> {
+        #[derive(serde::Deserialize)]
+        struct Raw {
+            value: String,
+            quoted: bool,
+        }
+        let raw = Raw::deserialize(deserializer)?;
+        if raw.quoted {
+            AttrValue::quoted(raw.value)
+        } else {
+            AttrValue::bare(raw.value)
+        }
+        .map_err(serde::de::Error::custom)
+    }
+}
+
 /// The RFC 8216bis §4.4.6.2 / §4.4.6.2.1 attribute-value *kind* for an
 /// attribute name this crate does not model as a typed struct field —
 /// used only by [`AttrValue::for_attr`]'s programmatic-construction
@@ -2205,17 +2271,28 @@ fn known_attr_value_kind(name: &str) -> Option<AttrValueKind> {
     }
 }
 
-/// Append `,NAME=VALUE` (or `,NAME="VALUE"`) for each extra attribute.
-/// Sorted by name (already sorted on parse via `filter_extra_attrs`, kept
-/// sorted here for programmatic construction).
+/// Append `,NAME=VALUE` (or `,NAME="VALUE"`) for each attribute in an HLS
+/// `<attribute-list>` (RFC 8216bis §4.2), in the given order, with no
+/// leading tag prefix and no trailing newline.
+///
+/// This is the single attribute-list renderer for the workspace (issue
+/// #1140 T12): `ssai-runtime` and `timed-metadata` each used to hand-format
+/// `,NAME="VALUE"` themselves with no validation of the interpolated
+/// content — an injection vector when that content comes from outside the
+/// crate (a third-party ad-decision service, a caller-assembled
+/// `DATERANGE`). Both now build a `Vec<(String, AttrValue)>` and call this
+/// function instead.
 ///
 /// Quoting is exactly what [`AttrValue`] records — no guessing at render
 /// time, and infallible: an [`AttrValue`] can only ever hold content valid
 /// for its kind (RFC 8216 §4.2's forbidden `"`/CR/LF in a quoted-string,
 /// or `,`/`"`/CR/LF/whitespace in a bare value, are rejected at
 /// construction — [`AttrValue::quoted`]/[`AttrValue::bare`], issue #1045
-/// T12) — so there is nothing left to validate or sanitize here.
-fn push_extra_attrs(s: &mut String, attrs: &[(String, AttrValue)]) {
+/// T12) — so there is nothing left to validate or sanitize here. A caller
+/// assembling attributes from external data MUST go through those
+/// constructors (or [`AttrValue::for_attr`]) first; this function itself
+/// cannot fail.
+pub fn render_attribute_list(s: &mut String, attrs: &[(String, AttrValue)]) {
     for (name, value) in attrs {
         s.push(',');
         s.push_str(name);
@@ -2239,15 +2316,15 @@ fn push_start_line(s: &mut String, start: &StartPoint) {
     if start.precise {
         s.push_str(",PRECISE=YES");
     }
-    push_extra_attrs(s, &start.extra_attrs);
+    render_attribute_list(s, &start.extra_attrs);
     s.push('\n');
 }
 
 /// Parse the `#EXT-X-START:<attribute-list>` value.
 fn parse_start(rest: &str, line_no: usize, line: &str) -> Result<StartPoint> {
-    let (attrs, quoted) = parse_attr_list(rest);
+    let (attrs, quoted) = parse_attribute_list(rest);
     let time_offset_str = require_attr(&attrs, "TIME-OFFSET", line_no, line, "EXT-X-START")?;
-    let time_offset = parse_decimal(&time_offset_str, line_no, line, "TIME-OFFSET")?;
+    let time_offset = parse_signed_decimal_seconds(&time_offset_str, line_no, line, "TIME-OFFSET")?;
     let precise = attrs.get("PRECISE").map(String::as_str) == Some("YES");
     let extra_attrs = filter_extra_attrs(&attrs, &["TIME-OFFSET", "PRECISE"], &quoted)?;
     Ok(StartPoint {
@@ -2274,13 +2351,13 @@ fn push_session_data_line(s: &mut String, sd: &SessionData) {
     if let Some(lang) = &sd.language {
         s.push_str(&format!(",LANGUAGE=\"{lang}\""));
     }
-    push_extra_attrs(s, &sd.extra_attrs);
+    render_attribute_list(s, &sd.extra_attrs);
     s.push('\n');
 }
 
 /// Parse an `#EXT-X-SESSION-DATA:<attribute-list>` value.
 fn parse_session_data(rest: &str, line_no: usize, line: &str) -> Result<SessionData> {
-    let (attrs, quoted) = parse_attr_list(rest);
+    let (attrs, quoted) = parse_attribute_list(rest);
     let data_id = require_attr(&attrs, "DATA-ID", line_no, line, "EXT-X-SESSION-DATA")?;
     let value = attrs.get("VALUE");
     let uri = attrs.get("URI");
@@ -2340,14 +2417,14 @@ fn push_session_key_line(s: &mut String, sk: &SessionKey) {
     if let Some(kfv) = &sk.keyformatversions {
         s.push_str(&format!(",KEYFORMATVERSIONS=\"{kfv}\""));
     }
-    push_extra_attrs(s, &sk.extra_attrs);
+    render_attribute_list(s, &sk.extra_attrs);
     s.push('\n');
 }
 
 /// Parse an `#EXT-X-SESSION-KEY:<attribute-list>` value (same attribute set
 /// as `#EXT-X-KEY`, RFC 8216bis §4.4.4.4, except METHOD MUST NOT be NONE).
 fn parse_session_key(rest: &str, line_no: usize, line: &str) -> Result<SessionKey> {
-    let (attrs, quoted) = parse_attr_list(rest);
+    let (attrs, quoted) = parse_attribute_list(rest);
     let method_str = require_attr(&attrs, "METHOD", line_no, line, "EXT-X-SESSION-KEY")?;
     let method = match method_str.as_str() {
         "NONE" => {
@@ -2419,12 +2496,16 @@ fn parse_iv(s: &str, line_no: usize, line: &str) -> Result<[u8; 16]> {
 
 /// Format a possibly-negative seconds value (RFC 8216bis §4.2
 /// signed-decimal-floating-point — `#EXT-X-START`'s `TIME-OFFSET`), reusing
-/// [`format_secs`] for the magnitude.
-fn format_signed_secs(v: f64) -> String {
+/// [`format_secs`] for the magnitude. Infallible: [`SignedDecimalSeconds`]
+/// is always finite (issue #1140 T12/BH-W4), so there is no non-finite
+/// case left to guard against.
+fn format_signed_secs(v: SignedDecimalSeconds) -> String {
+    let v = v.get();
     if v < 0.0 {
-        format!("-{}", format_secs(-v))
+        // Safe: `-v` of a finite negative value is finite and non-negative.
+        format!("-{}", format_secs(DecimalSeconds::new_unchecked(-v)))
     } else {
-        format_secs(v)
+        format_secs(DecimalSeconds::new_unchecked(v))
     }
 }
 
@@ -2443,7 +2524,11 @@ fn format_signed_secs(v: f64) -> String {
 /// finer than 1 ms: `2.00004` rendered as `2`. Caught by round-tripping the
 /// real Apple `fixtures/hls/real/` playlists (issue #872), which no
 /// hand-made 3-decimal fixture could have surfaced.
-fn format_secs(v: f64) -> String {
+fn format_secs(v: DecimalSeconds) -> String {
+    // Infallible (issue #1140 T12/BH-W4): `DecimalSeconds` is always finite
+    // and non-negative, so there is no NaN/inf/negative case left to guard
+    // against here — the validation lives entirely at construction.
+    let v = v.get();
     let millis = (v * 1000.0 + 0.5) as u64;
     let whole = millis / 1000;
     let frac = millis % 1000;
@@ -2490,7 +2575,9 @@ fn format_secs(v: f64) -> String {
 ///    [`format_secs`]. A hardcoded `{:.3}` alone loses real-world precision —
 ///    Apple's BipBop playlists carry `#EXTINF:9.9766`, which would render
 ///    back as `9.977` (issue #882).
-fn format_extinf(v: f64) -> String {
+fn format_extinf(v: DecimalSeconds) -> String {
+    // Infallible, same reasoning as `format_secs` (issue #1140 T12/BH-W4).
+    let v = v.get();
     if let Some(whole) = whole_seconds(v) {
         return format!("{whole}");
     }
@@ -2538,17 +2625,185 @@ fn parse_decimal<T: core::str::FromStr>(
     })
 }
 
-/// Split an HLS `<attribute-list>` (RFC 8216 §4.2: comma-separated
+/// Validate an RFC 8216bis §4.2 `decimal-floating-point` (or
+/// `decimal-integer`) token's *lexical form* before handing it to
+/// `f64::from_str`: `-`? (if `signed`) `[0-9]+` (`.` `[0-9]+`)? — nothing
+/// else. `f64::from_str` alone is far more permissive than the spec (it
+/// also accepts `nan`, `inf`, `infinity`, a leading `+`, and exponent
+/// notation, none of which §4.2 allows) and would otherwise let
+/// `#EXTINF:nan,` (audit BH-W4) parse successfully into a NaN duration
+/// that a downstream range check (`x < lo || x > hi`) silently treats as
+/// in-range, or that panics `Duration::from_secs_f64` later. Only
+/// `TIME-OFFSET` accepts a sign, per §4.4.2.2.
+fn is_valid_decimal_token(s: &str, signed: bool) -> bool {
+    let s = s.strip_prefix('-').filter(|_| signed).unwrap_or(s);
+    let (int_part, frac_part) = match s.split_once('.') {
+        Some((i, f)) => (i, Some(f)),
+        None => (s, None),
+    };
+    if int_part.is_empty() || !int_part.bytes().all(|b| b.is_ascii_digit()) {
+        return false;
+    }
+    match frac_part {
+        Some(f) => !f.is_empty() && f.bytes().all(|b| b.is_ascii_digit()),
+        None => true,
+    }
+}
+
+/// A validated RFC 8216bis §4.2 `decimal-floating-point` seconds value:
+/// always finite and non-negative. The field type for every unsigned
+/// duration attribute this crate models (`EXTINF`, `PART-TARGET`,
+/// `PART-HOLD-BACK`, `CAN-SKIP-UNTIL`, `HOLD-BACK`, `EXT-X-PART`
+/// `DURATION`) — issue #1140 T12/BH-W4: previously a directly-constructed
+/// `f64` field could hold NaN/infinite/negative, and the (necessarily
+/// infallible) `to_m3u8` renderer clamped it to `"0"` rather than ever
+/// emitting invalid syntax. With the value validated at construction, no
+/// invalid value can exist for the renderer to have to defend against.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct DecimalSeconds(f64);
+
+impl DecimalSeconds {
+    /// `0.0` — always valid; the natural default.
+    pub const ZERO: Self = Self(0.0);
+
+    /// Validate `value`: finite and non-negative, or
+    /// [`Error::InvalidDecimalSeconds`].
+    pub fn new(value: f64) -> Result<Self> {
+        if value.is_finite() && value >= 0.0 {
+            Ok(Self(value))
+        } else {
+            Err(Error::InvalidDecimalSeconds(value))
+        }
+    }
+
+    /// The validated seconds value.
+    #[must_use]
+    pub fn get(self) -> f64 {
+        self.0
+    }
+
+    /// Construct without re-validating — only for a value already known
+    /// valid (this module's own strict-grammar parse, or a literal/`ZERO`).
+    fn new_unchecked(value: f64) -> Self {
+        debug_assert!(value.is_finite() && value >= 0.0, "{value} must be valid");
+        Self(value)
+    }
+}
+
+impl Default for DecimalSeconds {
+    fn default() -> Self {
+        Self::ZERO
+    }
+}
+
+impl core::fmt::Display for DecimalSeconds {
+    /// Delegates to `f64`'s own `Display` (not `format_secs`, which is
+    /// this crate's specific §4.2 wire-syntax renderer) — for a caller
+    /// that just wants to print the value.
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        core::fmt::Display::fmt(&self.0, f)
+    }
+}
+
+/// As [`DecimalSeconds`], but signed — the one field RFC 8216bis allows to
+/// be negative (`TIME-OFFSET`, §4.4.2.2: negative means "from the end of
+/// the last Media Segment").
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SignedDecimalSeconds(f64);
+
+impl SignedDecimalSeconds {
+    /// `0.0` — always valid.
+    pub const ZERO: Self = Self(0.0);
+
+    /// Validate `value`: finite, or [`Error::InvalidSignedDecimalSeconds`].
+    pub fn new(value: f64) -> Result<Self> {
+        if value.is_finite() {
+            Ok(Self(value))
+        } else {
+            Err(Error::InvalidSignedDecimalSeconds(value))
+        }
+    }
+
+    /// The validated seconds value.
+    #[must_use]
+    pub fn get(self) -> f64 {
+        self.0
+    }
+
+    /// Construct without re-validating — only for a value already known
+    /// valid.
+    fn new_unchecked(value: f64) -> Self {
+        debug_assert!(value.is_finite(), "{value} must be finite");
+        Self(value)
+    }
+}
+
+impl core::fmt::Display for SignedDecimalSeconds {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        core::fmt::Display::fmt(&self.0, f)
+    }
+}
+
+/// Parse an RFC 8216bis §4.2 decimal-floating-point seconds value
+/// (`EXTINF`, `PART`/`PART-INF`/`SERVER-CONTROL` durations — all
+/// non-negative) with the strict lexical grammar [`is_valid_decimal_token`]
+/// checks, rather than `f64::from_str`'s much wider grammar (issue #1140 /
+/// audit BH-W4).
+fn parse_decimal_seconds(
+    s: &str,
+    line_no: usize,
+    line: &str,
+    what: &str,
+) -> Result<DecimalSeconds> {
+    let t = s.trim();
+    if !is_valid_decimal_token(t, false) {
+        return Err(Error::HlsParse {
+            line_no,
+            line: line.to_string(),
+            reason: format!(
+                "{what} value {s:?} is not a valid non-negative decimal-floating-point number"
+            ),
+        });
+    }
+    // The grammar above accepts only finite, non-negative values.
+    parse_decimal::<f64>(t, line_no, line, what).map(DecimalSeconds::new_unchecked)
+}
+
+/// As [`parse_decimal_seconds`], but also accepts a leading `-` — used only
+/// for `#EXT-X-START`'s `TIME-OFFSET` (RFC 8216bis §4.4.2.2, which allows a
+/// negative offset from the end of the playlist).
+fn parse_signed_decimal_seconds(
+    s: &str,
+    line_no: usize,
+    line: &str,
+    what: &str,
+) -> Result<SignedDecimalSeconds> {
+    let t = s.trim();
+    if !is_valid_decimal_token(t, true) {
+        return Err(Error::HlsParse {
+            line_no,
+            line: line.to_string(),
+            reason: format!("{what} value {s:?} is not a valid decimal-floating-point number"),
+        });
+    }
+    parse_decimal::<f64>(t, line_no, line, what).map(SignedDecimalSeconds::new_unchecked)
+}
+
+/// Split an HLS `<attribute-list>` (RFC 8216bis §4.2: comma-separated
 /// `AttributeName=AttributeValue` pairs, where a quoted-string value may
 /// itself contain commas) into a name → value map, plus the set of names
-/// whose value was written as a quoted-string on the wire (issue #1045 /
-/// audit BH-C1 — [`filter_extra_attrs`] uses this to build a lossless
-/// [`AttrValue`] per unmodeled attribute). Quoted values are returned with
+/// whose value was written as a quoted-string on the wire.
+///
+/// This is the single attribute-list tokenizer for the workspace (issue
+/// #1140 T12): `ssai-runtime` and `timed-metadata` each carried their own
+/// copy of this exact honour-quoted-commas algorithm (audit r14-SSAI-O1);
+/// both now call this function instead. Quoted values are returned with
 /// their surrounding `"` stripped; unquoted (enumerated-string / decimal)
 /// values are returned as-is — named/typed attribute extraction (every
-/// `require_attr`/`.get(...)` call site) reads only the value map, exactly
-/// as before this issue.
-fn parse_attr_list(s: &str) -> (BTreeMap<String, String>, BTreeSet<String>) {
+/// `require_attr`/`.get(...)` call site) reads only the value map (issue
+/// #1045 / audit BH-C1 — `filter_extra_attrs` uses the quoted-name set to
+/// build a lossless [`AttrValue`] per unmodeled attribute).
+pub fn parse_attribute_list(s: &str) -> (BTreeMap<String, String>, BTreeSet<String>) {
     let mut map = BTreeMap::new();
     let mut quoted_keys = BTreeSet::new();
     let bytes = s.as_bytes();
@@ -2596,7 +2851,7 @@ fn parse_attr_list(s: &str) -> (BTreeMap<String, String>, BTreeSet<String>) {
 
 /// From an already-parsed attribute map, collect every attribute whose name
 /// is not in `known` into a `Vec<(name, AttrValue)>`, sorted by name for
-/// deterministic serialization. `quoted` (from [`parse_attr_list`]) decides
+/// deterministic serialization. `quoted` (from [`parse_attribute_list`]) decides
 /// [`AttrValue::quoted`] vs. [`AttrValue::bare`] per entry — the recorded
 /// wire form, not a guess (issue #1045 / audit BH-C1).
 ///
@@ -2775,7 +3030,7 @@ impl MasterPlaylist {
             if let Some(pid) = &cs.pathway_id {
                 s.push_str(&format!(",PATHWAY-ID=\"{pid}\""));
             }
-            push_extra_attrs(&mut s, &cs.extra_attrs);
+            render_attribute_list(&mut s, &cs.extra_attrs);
             s.push('\n');
         }
 
@@ -2787,7 +3042,7 @@ impl MasterPlaylist {
             if let Some((w, h)) = var.resolution {
                 s.push_str(&format!(",RESOLUTION={w}x{h}"));
             }
-            push_extra_attrs(&mut s, &var.extra_attrs);
+            render_attribute_list(&mut s, &var.extra_attrs);
             s.push('\n');
             s.push_str(&var.uri);
             s.push('\n');
@@ -2806,7 +3061,7 @@ impl MasterPlaylist {
             if let Some((w, h)) = iv.resolution {
                 s.push_str(&format!(",RESOLUTION={w}x{h}"));
             }
-            push_extra_attrs(&mut s, &iv.extra_attrs);
+            render_attribute_list(&mut s, &iv.extra_attrs);
             s.push_str(&format!(",URI=\"{}\"\n", iv.uri));
         }
 
@@ -2857,7 +3112,7 @@ impl MasterPlaylist {
             } else if let Some(rest) = line.strip_prefix("#EXT-X-VERSION:") {
                 version = parse_decimal(rest, line_no, line, "EXT-X-VERSION")?;
             } else if let Some(rest) = line.strip_prefix("#EXT-X-STREAM-INF:") {
-                let (attrs, quoted) = parse_attr_list(rest);
+                let (attrs, quoted) = parse_attribute_list(rest);
                 let bandwidth_str =
                     require_attr(&attrs, "BANDWIDTH", line_no, line, "EXT-X-STREAM-INF")?;
                 let bandwidth = parse_decimal(&bandwidth_str, line_no, line, "BANDWIDTH")?;
@@ -2870,7 +3125,7 @@ impl MasterPlaylist {
                     filter_extra_attrs(&attrs, &["BANDWIDTH", "CODECS", "RESOLUTION"], &quoted)?;
                 pending_stream_inf = Some((bandwidth, codecs, resolution, extra_attrs));
             } else if let Some(rest) = line.strip_prefix("#EXT-X-I-FRAME-STREAM-INF:") {
-                let (attrs, quoted) = parse_attr_list(rest);
+                let (attrs, quoted) = parse_attribute_list(rest);
                 let bandwidth_str = require_attr(
                     &attrs,
                     "BANDWIDTH",
@@ -2908,7 +3163,7 @@ impl MasterPlaylist {
             } else if let Some(rest) = line.strip_prefix("#EXT-X-SESSION-KEY:") {
                 session_keys.push(parse_session_key(rest, line_no, line)?);
             } else if let Some(rest) = line.strip_prefix("#EXT-X-CONTENT-STEERING:") {
-                let (attrs, quoted) = parse_attr_list(rest);
+                let (attrs, quoted) = parse_attribute_list(rest);
                 let server_uri = require_attr(
                     &attrs,
                     "SERVER-URI",
@@ -3095,12 +3350,13 @@ fn parse_resolution(v: &str, line_no: usize, line: &str) -> Result<(u32, u32)> {
 ///
 /// # Example
 /// ```
-/// use broadcast_hls::{mark_init_discontinuities, MediaSegment};
+/// use broadcast_hls::{mark_init_discontinuities, DecimalSeconds, MediaSegment};
 /// let init_a = b"moov_a" as &[u8];
 /// let init_b = b"moov_b" as &[u8];
-/// let mut seg0 = MediaSegment { uri: "s0.m4s".into(), duration: 5.0, discontinuous: false, parts: vec![], ..Default::default() };
-/// let mut seg1 = MediaSegment { uri: "s1.m4s".into(), duration: 5.0, discontinuous: false, parts: vec![], ..Default::default() };
-/// let mut seg2 = MediaSegment { uri: "s2.m4s".into(), duration: 5.0, discontinuous: false, parts: vec![], ..Default::default() };
+/// let five_secs = DecimalSeconds::new(5.0).unwrap();
+/// let mut seg0 = MediaSegment { uri: "s0.m4s".into(), duration: five_secs, discontinuous: false, parts: vec![], ..Default::default() };
+/// let mut seg1 = MediaSegment { uri: "s1.m4s".into(), duration: five_secs, discontinuous: false, parts: vec![], ..Default::default() };
+/// let mut seg2 = MediaSegment { uri: "s2.m4s".into(), duration: five_secs, discontinuous: false, parts: vec![], ..Default::default() };
 /// let mut entries: Vec<(&[u8], &mut MediaSegment)> = vec![
 ///     (init_a, &mut seg0),
 ///     (init_b, &mut seg1),
@@ -3135,7 +3391,7 @@ mod tests {
     fn seg(uri: &str, duration: f64) -> MediaSegment {
         MediaSegment {
             uri: uri.into(),
-            duration,
+            duration: DecimalSeconds::new(duration).unwrap(),
             discontinuous: false,
             parts: vec![],
             ..Default::default()
@@ -3145,7 +3401,7 @@ mod tests {
     fn seg_disc(uri: &str, duration: f64) -> MediaSegment {
         MediaSegment {
             uri: uri.into(),
-            duration,
+            duration: DecimalSeconds::new(duration).unwrap(),
             discontinuous: true,
             parts: vec![],
             ..Default::default()
@@ -3316,7 +3572,10 @@ mod tests {
         assert!(!out.contains("#EXT-X-VERSION"), "{out}");
         // ...and it still re-parses to the identical f64.
         let reparsed = MediaPlaylist::parse(&out).expect("round-trip parse");
-        assert_eq!(reparsed.segments[0].duration, 9.0);
+        assert_eq!(
+            reparsed.segments[0].duration,
+            DecimalSeconds::new(9.0).unwrap()
+        );
     }
 
     /// The renderer and the §8 row-3 predicate must never disagree about
@@ -3346,7 +3605,7 @@ mod tests {
             );
             // Bit-exact round-trip of the duration itself.
             let reparsed = MediaPlaylist::parse(&out).expect("round-trip parse");
-            assert_eq!(reparsed.segments[0].duration, duration, "{out}");
+            assert_eq!(reparsed.segments[0].duration.get(), duration, "{out}");
         }
     }
 
@@ -3369,19 +3628,90 @@ mod tests {
         );
         assert_eq!(
             MediaPlaylist::parse(&out).unwrap().segments[0].duration,
-            9.9766,
+            DecimalSeconds::new(9.9766).unwrap(),
             "duration must survive a round trip bit-exactly"
         );
 
         // The ms-granular common case keeps its historical compact form.
-        assert_eq!(format_secs(0.334), "0.334");
-        assert_eq!(format_secs(1.5), "1.5");
-        assert_eq!(format_secs(6.0), "6");
+        assert_eq!(format_secs(DecimalSeconds::new(0.334).unwrap()), "0.334");
+        assert_eq!(format_secs(DecimalSeconds::new(1.5).unwrap()), "1.5");
+        assert_eq!(format_secs(DecimalSeconds::new(6.0).unwrap()), "6");
         // ...and the sub-ms case is now lossless rather than rounded to it.
-        assert_eq!(format_secs(2.00004), "2.00004");
-        assert_eq!(format_secs(4.00008), "4.00008");
-        assert_eq!(format_signed_secs(-10.5), "-10.5");
-        assert_eq!(format_signed_secs(-2.00004), "-2.00004");
+        assert_eq!(
+            format_secs(DecimalSeconds::new(2.00004).unwrap()),
+            "2.00004"
+        );
+        assert_eq!(
+            format_secs(DecimalSeconds::new(4.00008).unwrap()),
+            "4.00008"
+        );
+        assert_eq!(
+            format_signed_secs(SignedDecimalSeconds::new(-10.5).unwrap()),
+            "-10.5"
+        );
+        assert_eq!(
+            format_signed_secs(SignedDecimalSeconds::new(-2.00004).unwrap()),
+            "-2.00004"
+        );
+    }
+
+    /// Audit BH-W4 (issue #1140): `f64::from_str` is far more permissive
+    /// than RFC 8216bis §4.2's decimal-floating-point grammar — it also
+    /// accepts `nan`/`inf`/`infinity`, a leading `+`, and exponent
+    /// notation. `#EXTINF:nan,` previously parsed `Ok` into a NaN duration.
+    #[test]
+    fn extinf_and_ll_hls_durations_reject_non_conformant_decimal_tokens() {
+        for bad in ["nan", "inf", "-inf", "infinity", "1e10", "+3", "-5", ""] {
+            let pl = format!("#EXTM3U\n#EXTINF:{bad},\nmain.ts\n");
+            assert!(
+                MediaPlaylist::parse(&pl).is_err(),
+                "EXTINF:{bad} must be rejected"
+            );
+        }
+        // TIME-OFFSET is the one signed field; it still rejects nan/inf/exponent.
+        for bad in ["nan", "inf", "1e5"] {
+            let pl = format!("#EXTM3U\n#EXT-X-TARGETDURATION:6\n#EXT-X-START:TIME-OFFSET={bad}\n");
+            assert!(
+                MediaPlaylist::parse(&pl).is_err(),
+                "TIME-OFFSET={bad} must be rejected"
+            );
+        }
+        // A conformant negative TIME-OFFSET is still accepted.
+        let pl = "#EXTM3U\n#EXT-X-TARGETDURATION:6\n#EXT-X-START:TIME-OFFSET=-12.5\n";
+        assert_eq!(
+            MediaPlaylist::parse(pl).unwrap().start.unwrap().time_offset,
+            SignedDecimalSeconds::new(-12.5).unwrap()
+        );
+    }
+
+    /// Coordinator follow-up to BH-W4/T12 (issue #1140): a NaN/inf/negative
+    /// value must never *exist* as a `DecimalSeconds` in the first place —
+    /// no silent renderer-side clamp, exactly the same discipline as
+    /// `AttrValue`. `DecimalSeconds::new` rejects it at construction, so a
+    /// bad value can never reach `format_secs`/`format_extinf` at all.
+    #[test]
+    fn decimal_seconds_rejects_non_finite_and_negative() {
+        for bad in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY, -1.0] {
+            assert!(
+                DecimalSeconds::new(bad).is_err(),
+                "DecimalSeconds::new({bad}) must be rejected"
+            );
+        }
+        // A finite, non-negative value round-trips through get() unchanged.
+        assert_eq!(DecimalSeconds::new(6.0).unwrap().get(), 6.0);
+    }
+
+    /// As above, for the signed field (`TIME-OFFSET`): only NaN/inf are
+    /// rejected, since a negative value is legitimate there.
+    #[test]
+    fn signed_decimal_seconds_rejects_non_finite_but_allows_negative() {
+        for bad in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            assert!(
+                SignedDecimalSeconds::new(bad).is_err(),
+                "SignedDecimalSeconds::new({bad}) must be rejected"
+            );
+        }
+        assert_eq!(SignedDecimalSeconds::new(-6.0).unwrap().get(), -6.0);
     }
 
     /// A whole real-shaped LL-HLS playlist built from RFC 8216bis §9.11's
@@ -3396,25 +3726,25 @@ mod tests {
             target_duration: 4,
             segments: vec![MediaSegment {
                 uri: "fileSequence271.mp4".into(),
-                duration: 4.00008,
+                duration: DecimalSeconds::new(4.00008).unwrap(),
                 parts: vec![
                     PartSpec {
                         uri: "filePart271.0.mp4".into(),
-                        duration: 2.00004,
+                        duration: DecimalSeconds::new(2.00004).unwrap(),
                         independent: true,
                         ..Default::default()
                     },
                     PartSpec {
                         uri: "filePart271.1.mp4".into(),
-                        duration: 0.50001,
+                        duration: DecimalSeconds::new(0.50001).unwrap(),
                         ..Default::default()
                     },
                 ],
                 ..Default::default()
             }],
             low_latency: Some(LowLatencyConfig {
-                part_target: 2.00002,
-                part_hold_back: 6.00006,
+                part_target: DecimalSeconds::new(2.00002).unwrap(),
+                part_hold_back: DecimalSeconds::new(6.00006).unwrap(),
                 ..Default::default()
             }),
             ..Default::default()
@@ -3514,8 +3844,8 @@ mod tests {
 
     fn ll_config() -> LowLatencyConfig {
         LowLatencyConfig {
-            part_target: 0.5,
-            part_hold_back: 1.5,
+            part_target: DecimalSeconds::new(0.5).unwrap(),
+            part_hold_back: DecimalSeconds::new(1.5).unwrap(),
             preload_hint_part: None,
             ..Default::default()
         }
@@ -3530,11 +3860,11 @@ mod tests {
             discontinuity_sequence: 0,
             segments: vec![MediaSegment {
                 uri: "seg-1-4.m4s".into(),
-                duration: 4.0,
+                duration: DecimalSeconds::new(4.0).unwrap(),
                 discontinuous: false,
                 parts: vec![PartSpec {
                     uri: "part-1-1.m4s".into(),
-                    duration: 0.5,
+                    duration: DecimalSeconds::new(0.5).unwrap(),
                     independent: true,
                     ..Default::default()
                 }],
@@ -3562,7 +3892,7 @@ mod tests {
             discontinuity_sequence: 0,
             segments: vec![MediaSegment {
                 uri: "seg-1-4.m4s".into(),
-                duration: 4.0,
+                duration: DecimalSeconds::new(4.0).unwrap(),
                 discontinuous: false,
                 parts: vec![],
                 ..Default::default()
@@ -3573,7 +3903,7 @@ mod tests {
             iframes_only: false,
             open_segment: Some(OpenSegment::new(vec![PartSpec {
                 uri: "part-1-5.0.m4s".into(),
-                duration: 0.5,
+                duration: DecimalSeconds::new(0.5).unwrap(),
                 independent: true,
                 ..Default::default()
             }])),
@@ -3631,7 +3961,7 @@ mod tests {
             iframes_only: false,
             open_segment: Some(OpenSegment::new(vec![PartSpec {
                 uri: "part-1-5.0.m4s".into(),
-                duration: 0.5,
+                duration: DecimalSeconds::new(0.5).unwrap(),
                 independent: true,
                 ..Default::default()
             }])),
@@ -3677,7 +4007,7 @@ mod tests {
             discontinuity_sequence: 0,
             segments: vec![MediaSegment {
                 uri: "seg-1-4.m4s".into(),
-                duration: 4.0,
+                duration: DecimalSeconds::new(4.0).unwrap(),
                 discontinuous: false,
                 parts: vec![],
                 ..Default::default()
@@ -3688,7 +4018,7 @@ mod tests {
             iframes_only: false,
             open_segment: Some(OpenSegment::new(vec![PartSpec {
                 uri: "part-1-5.0.m4s".into(),
-                duration: 0.5,
+                duration: DecimalSeconds::new(0.5).unwrap(),
                 independent: true,
                 ..Default::default()
             }])),
@@ -3768,7 +4098,7 @@ mod tests {
             open_segment: Some(
                 OpenSegment::new(vec![PartSpec {
                     uri: "part-1-1.0.m4s".into(),
-                    duration: 0.5,
+                    duration: DecimalSeconds::new(0.5).unwrap(),
                     independent: true,
                     ..Default::default()
                 }])
@@ -3797,13 +4127,13 @@ mod tests {
 
     fn ll_config_full() -> LowLatencyConfig {
         LowLatencyConfig {
-            part_target: 0.5,
-            part_hold_back: 1.5, // already at the 3x floor: idempotent through render.
+            part_target: DecimalSeconds::new(0.5).unwrap(),
+            part_hold_back: DecimalSeconds::new(1.5).unwrap(), // already at the 3x floor: idempotent through render.
             preload_hint_part: Some("part-9.2.m4s".into()),
             preload_hint_type: PreloadHintType::Part,
             preload_hint_byte_range_start: Some(0),
             preload_hint_byte_range_length: Some(1000),
-            can_skip_until: Some(24.0),
+            can_skip_until: Some(DecimalSeconds::new(24.0).unwrap()),
             can_block_reload: true,
             hold_back: None,
             can_skip_dateranges: false,
@@ -3828,12 +4158,12 @@ mod tests {
             discontinuity_sequence: 0,
             segments: vec![MediaSegment {
                 uri: "seg-9.m4s".into(),
-                duration: 4.0,
+                duration: DecimalSeconds::new(4.0).unwrap(),
                 discontinuous: false,
                 parts: vec![
                     PartSpec {
                         uri: "part-9.0.m4s".into(),
-                        duration: 0.5,
+                        duration: DecimalSeconds::new(0.5).unwrap(),
                         independent: true,
                         byte_range: None,
                         gap: false,
@@ -3841,7 +4171,7 @@ mod tests {
                     },
                     PartSpec {
                         uri: "part-9.1.m4s".into(),
-                        duration: 0.5,
+                        duration: DecimalSeconds::new(0.5).unwrap(),
                         independent: false,
                         byte_range: Some(ByteRange {
                             length: 500,
@@ -3863,7 +4193,7 @@ mod tests {
             open_segment: Some(
                 OpenSegment::new(vec![PartSpec {
                     uri: "part-10.0.m4s".into(),
-                    duration: 0.5,
+                    duration: DecimalSeconds::new(0.5).unwrap(),
                     independent: true,
                     byte_range: None,
                     gap: true,
@@ -3904,7 +4234,7 @@ mod tests {
             segments: vec![
                 MediaSegment {
                     uri: "media.ts".into(),
-                    duration: 10.0,
+                    duration: DecimalSeconds::new(10.0).unwrap(),
                     discontinuous: false,
                     parts: vec![],
                     byte_range: Some(ByteRange {
@@ -3916,7 +4246,7 @@ mod tests {
                 },
                 MediaSegment {
                     uri: "media.ts".into(),
-                    duration: 10.0,
+                    duration: DecimalSeconds::new(10.0).unwrap(),
                     discontinuous: false,
                     parts: vec![],
                     // No offset: continues immediately after the previous
@@ -3967,7 +4297,7 @@ mod tests {
             discontinuity_sequence: 0,
             independent_segments: true,
             start: Some(StartPoint {
-                time_offset: 5.5,
+                time_offset: SignedDecimalSeconds::new(5.5).unwrap(),
                 precise: false,
                 extra_attrs: Vec::new(),
             }),
@@ -3979,20 +4309,20 @@ mod tests {
             segments: vec![
                 MediaSegment {
                     uri: "seg0.ts".into(),
-                    duration: 10.0,
+                    duration: DecimalSeconds::new(10.0).unwrap(),
                     bitrate: Some(2000),
                     ..Default::default()
                 },
                 MediaSegment {
                     uri: "seg1.ts".into(),
-                    duration: 10.0,
+                    duration: DecimalSeconds::new(10.0).unwrap(),
                     gap: true,
                     bitrate: Some(2000),
                     ..Default::default()
                 },
                 MediaSegment {
                     uri: "seg2.ts".into(),
-                    duration: 10.0,
+                    duration: DecimalSeconds::new(10.0).unwrap(),
                     bitrate: Some(1800),
                     ..Default::default()
                 },
@@ -4127,7 +4457,7 @@ s0.m4s\n";
             version: 11,
             independent_segments: true,
             start: Some(StartPoint {
-                time_offset: -10.5,
+                time_offset: SignedDecimalSeconds::new(-10.5).unwrap(),
                 precise: true,
                 extra_attrs: Vec::new(),
             }),
@@ -4317,7 +4647,7 @@ fileSequence1997.mp4\n";
         assert_eq!(skip.skipped_segments, 996);
         assert_eq!(skip.recently_removed_daterange_ids, vec!["ad-1", "ad-2"]);
         let ll = pl.low_latency.as_ref().expect("LL config must be present");
-        assert_eq!(ll.can_skip_until, Some(24.0));
+        assert_eq!(ll.can_skip_until, Some(DecimalSeconds::new(24.0).unwrap()));
         assert!(!pl.endlist);
     }
 
@@ -4381,12 +4711,12 @@ seg0.mp4\n";
             discontinuity_sequence: 0,
             segments: vec![MediaSegment {
                 uri: "seg0.mp4".into(),
-                duration: 4.0,
+                duration: DecimalSeconds::new(4.0).unwrap(),
                 ..Default::default()
             }],
             low_latency: Some(LowLatencyConfig {
-                part_target: 0.5,
-                part_hold_back: 1.5,
+                part_target: DecimalSeconds::new(0.5).unwrap(),
+                part_hold_back: DecimalSeconds::new(1.5).unwrap(),
                 can_block_reload: false,
                 ..Default::default()
             }),
@@ -4773,19 +5103,19 @@ v300/index.m3u8\n";
             media_sequence: 100,
             segments: vec![MediaSegment {
                 uri: "seg-1-100.m4s".into(),
-                duration: 4.0,
+                duration: DecimalSeconds::new(4.0).unwrap(),
                 ..Default::default()
             }],
             open_segment: Some(OpenSegment::new(vec![PartSpec {
                 uri: "part-1-101.0.m4s".into(),
-                duration: 0.5,
+                duration: DecimalSeconds::new(0.5).unwrap(),
                 independent: true,
                 ..Default::default()
             }])),
             extra_tags: vec!["#EXT-X-MAP:URI=\"init-1.mp4\"".into()],
             low_latency: Some(LowLatencyConfig {
-                part_target: 0.5,
-                part_hold_back: 1.5,
+                part_target: DecimalSeconds::new(0.5).unwrap(),
+                part_hold_back: DecimalSeconds::new(1.5).unwrap(),
                 ..Default::default()
             }),
             iframes_only: false,
@@ -4852,6 +5182,7 @@ v300/index.m3u8\n";
     #[test]
     fn named_case_5_sample_aes_renders_5() {
         let tag = cenc_ext_x_key(CencScheme::Cbcs, &[0xab; 16], "https://k.example/key")
+            .expect("valid key_uri")
             .expect("cbcs must emit an EXT-X-KEY tag");
         let mut pl = base_media_playlist();
         pl.extra_tags = vec![tag];
@@ -4904,8 +5235,8 @@ seg0.m4s\n";
             media_sequence: 0,
             segments: vec![],
             low_latency: Some(LowLatencyConfig {
-                part_target: 0.5,
-                part_hold_back: 1.5,
+                part_target: DecimalSeconds::new(0.5).unwrap(),
+                part_hold_back: DecimalSeconds::new(1.5).unwrap(),
                 can_skip_until: None,
                 can_skip_dateranges: true,
                 can_block_reload: true,
@@ -4933,7 +5264,11 @@ seg0.m4s\n";
 seg0.m4s\n";
         let pl = MediaPlaylist::parse(text).expect("parse must succeed");
         let ll = pl.low_latency.as_ref().expect("must have low_latency");
-        assert_eq!(ll.hold_back, Some(12.0), "HOLD-BACK=12.0 must parse");
+        assert_eq!(
+            ll.hold_back,
+            Some(DecimalSeconds::new(12.0).unwrap()),
+            "HOLD-BACK=12.0 must parse"
+        );
         let round = pl.to_m3u8();
         // format_secs renders 12.0 as "12" (no trailing zero).
         assert!(
@@ -4947,7 +5282,7 @@ seg0.m4s\n";
             .expect("must have low_latency on reparse");
         assert_eq!(
             re_ll.hold_back,
-            Some(12.0),
+            Some(DecimalSeconds::new(12.0).unwrap()),
             "HOLD-BACK must survive round trip"
         );
     }
@@ -4961,12 +5296,12 @@ seg0.m4s\n";
             media_sequence: 0,
             segments: vec![MediaSegment {
                 uri: "seg0.m4s".into(),
-                duration: 4.0,
+                duration: DecimalSeconds::new(4.0).unwrap(),
                 ..Default::default()
             }],
             low_latency: Some(LowLatencyConfig {
-                part_target: 0.5,
-                part_hold_back: 1.5,
+                part_target: DecimalSeconds::new(0.5).unwrap(),
+                part_hold_back: DecimalSeconds::new(1.5).unwrap(),
                 hold_back: None,
                 can_block_reload: true,
                 ..Default::default()
@@ -5036,7 +5371,7 @@ seg0.m4s\n";
         let ll = pl.low_latency.as_ref().expect("must have low_latency");
 
         // Typed attributes survive.
-        assert_eq!(ll.hold_back, Some(12.0));
+        assert_eq!(ll.hold_back, Some(DecimalSeconds::new(12.0).unwrap()));
         assert!(ll.can_skip_dateranges);
 
         // REQ-VIDEO from PART-INF → pi_extra_attrs.
@@ -5072,7 +5407,7 @@ seg0.m4s\n";
             .low_latency
             .as_ref()
             .expect("must have low_latency on reparse");
-        assert_eq!(re_ll.hold_back, Some(12.0));
+        assert_eq!(re_ll.hold_back, Some(DecimalSeconds::new(12.0).unwrap()));
         assert!(re_ll.can_skip_dateranges);
         assert!(re_ll.sc_extra_attrs.iter().any(|(k, _)| k == "REQ-LATENCY"));
         assert!(re_ll.pi_extra_attrs.iter().any(|(k, _)| k == "REQ-VIDEO"));

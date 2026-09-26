@@ -8,7 +8,7 @@
 //! cargo run -p ssai-runtime --example session_playlist
 //! ```
 use broadcast_common::Parse;
-use broadcast_hls::{MediaPlaylist, MediaSegment};
+use broadcast_hls::{DecimalSeconds, MediaPlaylist, MediaSegment};
 use mp4_emsg::{EmsgBox, PresentationTime};
 use scte35_splice::SpliceInfoSection;
 use scte35_splice::commands::AnyCommand;
@@ -91,13 +91,15 @@ fn main() {
         ..Default::default()
     };
     base.segments.push(MediaSegment {
-        duration: 6.0,
+        duration: DecimalSeconds::new(6.0).unwrap(),
         uri: "main0.ts".to_string(),
         ..Default::default()
     });
 
-    let rendered_for_this_viewer = render_session_playlist(&base, Some(&dr));
-    let rendered_for_everyone_else = render_session_playlist(&base, None);
+    let rendered_for_this_viewer =
+        render_session_playlist(&base, Some(&dr)).expect("valid interstitial attributes");
+    let rendered_for_everyone_else =
+        render_session_playlist(&base, None).expect("valid interstitial attributes");
 
     println!("\n--- viewer-42's rendered playlist (in the break) ---");
     println!("{}", rendered_for_this_viewer.to_m3u8());

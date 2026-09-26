@@ -36,6 +36,24 @@ pub enum Error {
     /// v0 `presentation_time_delta` overflowed u32.
     #[error("presentation_time_delta value {0} exceeds u32 max")]
     EmsgDeltaOverflow(u64),
+    /// A `DATERANGE` attribute value (`ID`, `CLASS`, or a `SCTE35-*` hex
+    /// token) could not be represented as an RFC 8216 §4.2 quoted-string —
+    /// contains `"`, CR or LF (issue #1140 / audit r12-TM-W4): these values
+    /// are frequently sourced from an upstream SCTE-35 segmentation
+    /// descriptor's `segmentation_upid`, which is caller/network data, not
+    /// this crate's own.
+    #[error(transparent)]
+    HlsAttrValue(#[from] broadcast_hls::Error),
+    /// `DURATION`/`PLANNED-DURATION` was NaN, infinite, or negative (issue
+    /// #1140 / audit r13-BH-W4-class). RFC 8216 decimal-floating-point is
+    /// non-negative and finite.
+    #[error("{what} must be a finite, non-negative number of seconds, got {value}")]
+    InvalidDuration {
+        /// Which attribute failed (`"DURATION"` or `"PLANNED-DURATION"`).
+        what: &'static str,
+        /// The offending value.
+        value: f64,
+    },
 }
 
 /// Crate result alias.

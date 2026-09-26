@@ -16,6 +16,11 @@
 //! 3 video segments (matching the shape of the real ffmpeg oracle
 //! `fixtures/dash/manifest.mpd`, which SegmentTimeline-addresses the same
 //! source: 3 equal 90000-tick video segments, several unequal audio ones).
+//!
+//! Uses `ConstantIvSenc` (the `cenc` feature): gate the whole file on it, or
+//! `--no-default-features --features std` (which excludes `cenc`) fails to
+//! compile this test rather than skipping it.
+#![cfg(feature = "cenc")]
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;

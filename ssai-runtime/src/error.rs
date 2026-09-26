@@ -39,6 +39,26 @@ pub enum Error {
     /// An Interstitial `EXT-X-DATERANGE` tag line failed to parse.
     #[error("interstitial DATERANGE parse: {0}")]
     TagParse(String),
+    /// An attribute value supplied by the [`crate::decision::AdDecisionProvider`]
+    /// (a `URI`, an `ID`, or any other ad-server-controlled string) could not
+    /// be represented as an RFC 8216 §4.2 quoted-string — contains `"`, CR or
+    /// LF (issue #1140 / audit r14-SSAI-W1): rendering an ad-decision
+    /// response straight into the playlist without validation let a `"` or
+    /// a newline in, e.g., an ad URI terminate the attribute list and inject
+    /// arbitrary tag lines into every viewer's session playlist.
+    #[error(transparent)]
+    HlsAttrValue(#[from] broadcast_hls::Error),
+    /// A `DURATION`/`X-RESUME-OFFSET`/`X-PLAYOUT-LIMIT` value was NaN,
+    /// infinite, or negative (issue #1140 / audit r14-SSAI-W4). RFC 8216
+    /// decimal-floating-point is non-negative and finite; `NaN as i64 == 0`
+    /// let a NaN duration render as the bare token `NaN`.
+    #[error("{what} must be a finite, non-negative number of seconds, got {value}")]
+    InvalidDuration {
+        /// Which attribute failed (`"DURATION"`, `"X-RESUME-OFFSET"`, …).
+        what: &'static str,
+        /// The offending value.
+        value: f64,
+    },
 }
 
 /// Crate result alias.

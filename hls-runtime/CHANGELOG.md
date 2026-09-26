@@ -7,6 +7,15 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+- `server::engine`'s DATERANGE-per-window render now follows
+  `timed-metadata::daterange::DateRange::to_tag_line`'s new fallible
+  signature (issue #1140): an event whose DATERANGE can't be rendered as a
+  valid attribute list (e.g. a `"`/CR/LF from an upstream
+  `segmentation_upid`, or a non-finite duration) is skipped for that
+  window, the same treatment already given to a `to_daterange` failure,
+  rather than the crate failing to build.
+
 ## [0.7.0] - 2026-08-16
 
 ### Security

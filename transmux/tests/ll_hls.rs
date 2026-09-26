@@ -9,7 +9,7 @@
 //!    non-low-latency playlist is asserted to carry NONE of them (opt-in);
 //!  - a part's sample set is reconstructed and compared to `build_media_segment`.
 
-use broadcast_hls::{LowLatencyConfig, MediaPlaylist, MediaSegment, PartSpec};
+use broadcast_hls::{DecimalSeconds, LowLatencyConfig, MediaPlaylist, MediaSegment, PartSpec};
 use transmux::ll_hls::LlHlsSegmenter;
 use transmux::{
     AVCConfigurationBox, AVCDecoderConfigurationRecord, CodecConfig, DecoderConfigDescriptor,
@@ -219,7 +219,10 @@ fn independent_flag_tracks_sync_first_sample() {
         .enumerate()
         .map(|(i, p)| PartSpec {
             uri: format!("seg1.{i}.m4s"),
-            duration: p.duration,
+            // The segmenter's own computed part duration (issue #1140):
+            // always finite and non-negative.
+            duration: DecimalSeconds::new(p.duration)
+                .expect("segmenter part duration is finite, >= 0"),
             independent: p.independent,
             ..Default::default()
         })
@@ -231,7 +234,7 @@ fn independent_flag_tracks_sync_first_sample() {
         discontinuity_sequence: 0,
         segments: vec![MediaSegment {
             uri: "seg1.m4s".into(),
-            duration: 1.0,
+            duration: DecimalSeconds::new(1.0).unwrap(),
             discontinuous: false,
             parts: parts_spec,
             ..Default::default()
@@ -239,8 +242,8 @@ fn independent_flag_tracks_sync_first_sample() {
         endlist: false,
         extra_tags: vec![],
         low_latency: Some(LowLatencyConfig {
-            part_target: 0.334,
-            part_hold_back: 1.002,
+            part_target: DecimalSeconds::new(0.334).unwrap(),
+            part_hold_back: DecimalSeconds::new(1.002).unwrap(),
             preload_hint_part: None,
             ..Default::default()
         }),
@@ -281,21 +284,21 @@ fn playlist_low_latency_directives_present_and_opt_in() {
     let parts = vec![
         PartSpec {
             uri: "seg0.0.m4s".into(),
-            duration: 0.334,
+            duration: DecimalSeconds::new(0.334).unwrap(),
             independent: true,
             ..Default::default()
         },
         PartSpec {
             uri: "seg0.1.m4s".into(),
-            duration: 0.334,
+            duration: DecimalSeconds::new(0.334).unwrap(),
             independent: false,
             ..Default::default()
         },
     ];
     let ll = LowLatencyConfig {
-        part_target: 0.334,
+        part_target: DecimalSeconds::new(0.334).unwrap(),
         // Deliberately too small; renderer must raise to 3 x 0.334 = 1.002.
-        part_hold_back: 0.5,
+        part_hold_back: DecimalSeconds::new(0.5).unwrap(),
         preload_hint_part: Some("seg0.2.m4s".into()),
         ..Default::default()
     };
@@ -306,7 +309,7 @@ fn playlist_low_latency_directives_present_and_opt_in() {
         discontinuity_sequence: 0,
         segments: vec![MediaSegment {
             uri: "seg0.m4s".into(),
-            duration: 1.0,
+            duration: DecimalSeconds::new(1.0).unwrap(),
             discontinuous: false,
             parts,
             ..Default::default()
@@ -326,14 +329,14 @@ fn playlist_low_latency_directives_present_and_opt_in() {
         "PART-INF must carry PART-TARGET=0.334:\n{m3u8}"
     );
     // #EXT-X-SERVER-CONTROL with PART-HOLD-BACK >= 3 x part-target.
-    let effective = ll.effective_part_hold_back();
+    let effective = ll.effective_part_hold_back().get();
     assert!((effective - 1.002).abs() < 1e-6, "PHB floor = 3 x 0.334");
     assert!(
         m3u8.contains("#EXT-X-SERVER-CONTROL:CAN-BLOCK-RELOAD=YES,PART-HOLD-BACK=1.002\n"),
         "SERVER-CONTROL must carry CAN-BLOCK-RELOAD + raised PART-HOLD-BACK:\n{m3u8}"
     );
     assert!(
-        effective >= 3.0 * ll.part_target,
+        effective >= 3.0 * ll.part_target.get(),
         "PART-HOLD-BACK >= 3x part-target"
     );
     // #EXT-X-PART lines for the parts.
@@ -599,7 +602,9 @@ fn zero_anchor_timescale_does_not_render_inf_or_nan_into_playlist() {
         .enumerate()
         .map(|(i, p)| PartSpec {
             uri: format!("seg1.{i}.m4s"),
-            duration: p.duration,
+            // Same reasoning as above: segmenter-computed, finite, >= 0.
+            duration: DecimalSeconds::new(p.duration)
+                .expect("segmenter part duration is finite, >= 0"),
             independent: p.independent,
             ..Default::default()
         })
@@ -612,7 +617,10 @@ fn zero_anchor_timescale_does_not_render_inf_or_nan_into_playlist() {
         discontinuity_sequence: 0,
         segments: vec![MediaSegment {
             uri: "seg1.m4s".into(),
-            duration: seg1_duration,
+            // The segmenter's own computed segment duration (issue #1140):
+            // always finite and non-negative.
+            duration: DecimalSeconds::new(seg1_duration)
+                .expect("segmenter duration is finite, >= 0"),
             discontinuous: false,
             parts: parts_spec,
             ..Default::default()
@@ -620,8 +628,13 @@ fn zero_anchor_timescale_does_not_render_inf_or_nan_into_playlist() {
         endlist: false,
         extra_tags: vec![],
         low_latency: Some(LowLatencyConfig {
-            part_target: seg.part_target_secs(),
-            part_hold_back: 3.0 * seg.part_target_secs(),
+            // `part_target_secs` divides a `u64` tick count by a
+            // `.max(1)`-guarded timescale (issue #1140): always finite
+            // and non-negative.
+            part_target: DecimalSeconds::new(seg.part_target_secs())
+                .expect("part_target_secs is finite, >= 0"),
+            part_hold_back: DecimalSeconds::new(3.0 * seg.part_target_secs())
+                .expect("part_target_secs is finite, >= 0"),
             preload_hint_part: None,
             ..Default::default()
         }),

@@ -145,7 +145,7 @@ fn aes128_full_segment_padded_round_trip() {
 fn ext_x_key_exact_strings() {
     let sae = ExtXKey::fairplay_sample_aes("skd://asset-42");
     assert_eq!(
-        sae.to_tag(),
+        sae.to_tag().unwrap(),
         "#EXT-X-KEY:METHOD=SAMPLE-AES,URI=\"skd://asset-42\",\
          KEYFORMAT=\"com.apple.streamingkeydelivery\",KEYFORMATVERSIONS=\"1\""
     );
@@ -158,13 +158,10 @@ fn ext_x_key_exact_strings() {
         ],
     );
     assert_eq!(
-        aes.to_tag(),
+        aes.to_tag().unwrap(),
         "#EXT-X-KEY:METHOD=AES-128,URI=\"https://keyserver.example.com/key\",\
          IV=0x00000000000000000000000000000001"
     );
-
-    // Display == to_tag.
-    assert_eq!(format!("{aes}"), aes.to_tag());
 
     // IV-when-absent = media sequence number as u128 BE.
     let iv = iv_from_sequence_number(7);

@@ -8,6 +8,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed (breaking)
+- **`sample_aes::ExtXKey::to_tag` now returns `Result<String>`** (was
+  `String`), and the inherent `Display` impl for `ExtXKey` is removed
+  (issue #1140 / audit r05-W10, T12): `uri`/`keyformat`/
+  `keyformatversions` are caller-supplied (often assembled from a
+  key-server request) and previously went straight into the tag with no
+  validation, so a `"`, CR or LF in any of them terminated the attribute
+  list and injected arbitrary playlist tags. `to_tag` now builds through
+  `broadcast_hls::AttrValue`'s checked constructors and the shared
+  `broadcast_hls::render_attribute_list` (the single workspace attribute
+  renderer this issue introduced), returning the new
+  `Error::HlsAttrValue` for an invalid value instead.
 - Serializers now return an error, instead of silently truncating, when a length, count, or
   offset does not fit its wire field (#1129). `Error` gains a new `FieldOverflow` variant; several
   previously-infallible builders (`transmux::rtmp::write_chunks`, `MessageHeader::write_into`,
