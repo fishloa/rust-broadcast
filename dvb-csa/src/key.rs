@@ -8,10 +8,54 @@
 //! - **Stream cipher seed** (`expand_stream`): produces a nibble-swapped copy
 //!   of the control word for LFSR initialization.
 use super::tables::KPERM;
+use crate::zeroize::zeroize;
 
 /// An 8-byte DVB-CSA control word.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+///
+/// Not `Copy` — a `Copy` value can be duplicated on the stack without the
+/// compiler's knowledge, and none of those copies would be zeroed by this
+/// type's [`Drop`] impl. Clone explicitly where a second owned copy is
+/// genuinely needed. The public field stays public (the fuzz target and
+/// external callers construct this with tuple-struct syntax,
+/// `ControlWord(bytes)`, and no call site reads it back out other than
+/// through the methods below), so it carries no confidentiality guarantee on
+/// its own — treat any `ControlWord` value itself as sensitive regardless.
+#[derive(Clone)]
 pub struct ControlWord(pub [u8; 8]);
+
+/// Redacted: never print control word bytes (a derived `Debug` would — a
+/// `tracing::debug!`/`dbg!`/panic message of a value holding a `ControlWord`
+/// would then write the live control word to logs).
+impl core::fmt::Debug for ControlWord {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_tuple("ControlWord").field(&"<redacted>").finish()
+    }
+}
+
+/// Constant-time: folds XOR over all 8 bytes rather than a derived
+/// `PartialEq`'s byte-at-a-time short-circuit, which would turn control-word
+/// comparison into a timing oracle (an early mismatch returns faster than a
+/// near-match).
+impl PartialEq for ControlWord {
+    fn eq(&self, other: &Self) -> bool {
+        let mut diff = 0u8;
+        for i in 0..self.0.len() {
+            diff |= self.0[i] ^ other.0[i];
+        }
+        diff == 0
+    }
+}
+
+impl Eq for ControlWord {}
+
+/// Zero the control word's bytes on drop so it does not linger in freed
+/// memory. See [`crate::zeroize`] for why `write_volatile` + a
+/// `compiler_fence`, rather than a plain assignment, are needed here.
+impl Drop for ControlWord {
+    fn drop(&mut self) {
+        zeroize(&mut self.0);
+    }
+}
 
 impl ControlWord {
     /// Create a `ControlWord` from 8 bytes.
@@ -20,7 +64,12 @@ impl ControlWord {
     }
 
     /// Expand the control word into 56 block-cipher round-key bytes.
-    pub fn expand_block(&self) -> [u8; 56] {
+    ///
+    /// `pub(crate)`: this is a raw key schedule, trivially usable to
+    /// scramble/descramble without ever holding the control word itself, so
+    /// it stays internal to the crate's own cipher plumbing rather than
+    /// being exposed as a second, unaudited way to hand out key material.
+    pub(crate) fn expand_block(&self) -> [u8; 56] {
         let cw_u64 = u64::from_le_bytes(self.0);
 
         let mut k = [0u64; 7];
@@ -43,7 +92,9 @@ impl ControlWord {
     ///
     /// Each byte has its high and low nibbles swapped:
     /// `cws[i] = (cw[i] >> 4) | (cw[i] << 4)`
-    pub fn expand_stream(&self) -> [u8; 8] {
+    ///
+    /// `pub(crate)` for the same reason as [`expand_block`](Self::expand_block).
+    pub(crate) fn expand_stream(&self) -> [u8; 8] {
         let mut cws = [0u8; 8];
         for (i, out) in cws.iter_mut().enumerate() {
             *out = self.0[i].rotate_left(4);
@@ -81,5 +132,37 @@ mod tests {
         let sch = cw.expand_block();
         // Just verify first and last round key bytes are non-zero
         assert!(sch.iter().any(|&b| b != 0));
+    }
+
+    /// W-CSA-4: `Debug` must never print the control word's bytes.
+    #[test]
+    fn debug_redacts_control_word_bytes() {
+        let cw = ControlWord::from_bytes([0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88]);
+        let out = format!("{cw:?}");
+        assert!(
+            !out.contains(&format!("{:?}", cw.0)),
+            "Debug output must not contain the control word's array representation: {out}"
+        );
+        assert!(out.contains("<redacted>"));
+    }
+
+    /// W-CSA-4: equality must not short-circuit on the first differing byte.
+    /// This can't observe timing directly, but it does pin that every byte
+    /// position is actually compared (a `return false` on the first mismatch
+    /// would still pass a test that only tried differing-at-byte-0 cases).
+    #[test]
+    fn partial_eq_detects_a_difference_at_every_byte_position() {
+        let base = [0x10, 0x20, 0x30, 0x40, 0x50, 0x60, 0x70, 0x80];
+        let cw = ControlWord::from_bytes(base);
+        assert_eq!(cw, ControlWord::from_bytes(base));
+        for i in 0..base.len() {
+            let mut other = base;
+            other[i] ^= 0x01;
+            assert_ne!(
+                cw,
+                ControlWord::from_bytes(other),
+                "byte {i} difference must be detected"
+            );
+        }
     }
 }

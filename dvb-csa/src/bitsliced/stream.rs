@@ -14,6 +14,7 @@ use super::circuits::{
     CDEF_OUT_BITS, STREAM_SBOX_OUT_BITS, stream_b_sel, stream_cdef, stream_out, stream_sboxes,
 };
 use super::{BITS_PER_BYTE, BLOCK_BITS, BLOCK_BYTES, Word};
+use crate::zeroize::zeroize;
 
 /// Bits in a nibble — the shift registers advance one nibble per round.
 const NIBBLE_BITS: usize = 4;
@@ -61,11 +62,25 @@ const F_BASE: usize = 8;
 const C_BIT: usize = 12;
 
 /// The bitsliced DVB-CSA2 stream cipher.
+///
+/// Not `Copy` (every field is LFSR state seeded from the control word,
+/// broadcast across every lane; see [`Drop for
+/// BitslicedStream`](BitslicedStream)).
 pub(super) struct BitslicedStream {
     a: [Word; A_BITS],
     b: [Word; B_BITS],
     pqzyx: [Word; PQZYX_BITS],
     cfed: [Word; CFED_BITS],
+}
+
+/// Zero every register on drop — see [`crate::zeroize`].
+impl Drop for BitslicedStream {
+    fn drop(&mut self) {
+        zeroize(&mut self.a);
+        zeroize(&mut self.b);
+        zeroize(&mut self.pqzyx);
+        zeroize(&mut self.cfed);
+    }
 }
 
 /// Expand a key word into lane masks — the control word is shared by every

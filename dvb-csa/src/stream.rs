@@ -4,6 +4,7 @@
 //! Uses two 40-bit shift registers (A, B) with sboxes, CFED chain,
 //! and output table STREAM_OUT.
 use super::tables::{STREAM_CDEF, STREAM_OUT, STREAM_SBOX};
+use crate::zeroize::zeroize;
 
 /// Nibble from shift register at position n (nibble index)
 fn nbget(r: u64, n: u64) -> u64 {
@@ -11,11 +12,24 @@ fn nbget(r: u64, n: u64) -> u64 {
 }
 
 /// The DVB-CSA2 stream cipher.
+///
+/// Not `Copy` (every field is LFSR state seeded from the control word; see
+/// [`Drop for StreamCipher`](StreamCipher)).
 pub(crate) struct StreamCipher {
     a: u64,
     b: u64,
     pqzyx: u32,
     cfed: u32,
+}
+
+/// Zero every register on drop — see [`crate::zeroize`].
+impl Drop for StreamCipher {
+    fn drop(&mut self) {
+        zeroize(core::slice::from_mut(&mut self.a));
+        zeroize(core::slice::from_mut(&mut self.b));
+        zeroize(core::slice::from_mut(&mut self.pqzyx));
+        zeroize(core::slice::from_mut(&mut self.cfed));
+    }
 }
 
 impl StreamCipher {

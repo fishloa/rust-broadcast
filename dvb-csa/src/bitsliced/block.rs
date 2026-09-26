@@ -9,6 +9,7 @@
 //! selected bit-words rather than a XOR against data.
 use super::circuits::{PERM_BIT, block_sbox};
 use super::{BITS_PER_BYTE, BLOCK_BITS, BLOCK_BYTES, Word};
+use crate::zeroize::zeroize;
 
 /// Rounds in the DVB-CSA2 block cipher; one round key byte each.
 const ROUNDS: usize = 56;
@@ -19,8 +20,18 @@ type ByteSlice = [Word; BITS_PER_BYTE];
 type BlockSlice = [ByteSlice; BLOCK_BYTES];
 
 /// The bitsliced DVB-CSA2 block cipher, initialised with 56 round-key bytes.
+///
+/// Not `Copy` (holds key-derived round-key bytes shared by every lane; see
+/// [`Drop for BitslicedBlock`](BitslicedBlock)).
 pub(super) struct BitslicedBlock {
     sch: [u8; ROUNDS],
+}
+
+/// Zero the round-key schedule on drop — see [`crate::zeroize`].
+impl Drop for BitslicedBlock {
+    fn drop(&mut self) {
+        zeroize(&mut self.sch);
+    }
 }
 
 /// Apply the block cipher's `PERM` permutation to a sliced byte.
