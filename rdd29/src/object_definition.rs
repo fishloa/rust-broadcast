@@ -521,7 +521,11 @@ impl<'a> ObjectDefinition1<'a> {
     ) -> Result<AudioDescription<'a>> {
         debug_assert!(r.is_byte_aligned());
         let flag_start = r.bits_read() / 8;
-        let flag_byte = bytes[flag_start];
+        let flag_byte = *bytes.get(flag_start).ok_or(Error::BufferTooShort {
+            need: flag_start + 1,
+            have: bytes.len(),
+            what: "ObjectDefinition1.AudioDescription",
+        })?;
         r.skip_bits(8).ctx("ObjectDefinition1.AudioDescription")?;
         let text =
             if flag_byte & AUDIO_DESCRIPTION_TEXT_FOLLOWS != 0 {
