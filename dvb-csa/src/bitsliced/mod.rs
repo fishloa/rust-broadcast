@@ -64,6 +64,7 @@ mod circuits;
 mod stream;
 
 use crate::key::ControlWord;
+use crate::zeroize::Zeroizing;
 use block::BitslicedBlock;
 use stream::BitslicedStream;
 
@@ -226,7 +227,11 @@ fn scramble_group(cw: &ControlWord, payloads: &mut [&mut [u8]]) {
     if g.max_blocks == 0 {
         return;
     }
-    let bc = BitslicedBlock::new(cw.expand_block());
+    // Wrapped so the local copy `expand_block()` leaves on this function's
+    // stack is zeroed when it goes out of scope, in addition to the copy
+    // `BitslicedBlock` separately zeroizes on its own drop.
+    let sch = Zeroizing(cw.expand_block());
+    let bc = BitslicedBlock::new(sch.0);
     let mut m = [0 as Word; LANES];
 
     // Phase 1 — block cipher, reverse CBC. Sequential within a payload, so the
@@ -265,7 +270,8 @@ fn descramble_group(cw: &ControlWord, payloads: &mut [&mut [u8]]) {
     if g.max_blocks == 0 {
         return;
     }
-    let bc = BitslicedBlock::new(cw.expand_block());
+    let sch = Zeroizing(cw.expand_block());
+    let bc = BitslicedBlock::new(sch.0);
 
     // Phase 1 — stream cipher over bytes 8.., seeded from the still-encrypted
     // first block of each payload.
@@ -317,7 +323,8 @@ fn stream_xor(cw: &ControlWord, payloads: &mut [&mut [u8]], g: &Group) {
     gather(payloads, &first, &mut iv);
     transpose(&mut iv);
 
-    let mut sc = BitslicedStream::new(&cw.expand_stream(), &iv);
+    let cws = Zeroizing(cw.expand_stream());
+    let mut sc = BitslicedStream::new(&cws.0, &iv);
 
     let mut ks = [0 as Word; LANES];
     let mut done = 0;

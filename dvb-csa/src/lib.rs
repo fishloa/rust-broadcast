@@ -88,6 +88,7 @@ pub mod key;
 mod stream;
 mod tables;
 pub mod ts;
+mod zeroize;
 
 pub use csa::{descramble, scramble};
 pub use error::Error;

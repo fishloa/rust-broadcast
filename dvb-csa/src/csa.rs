@@ -16,6 +16,7 @@
 use crate::block::BlockCipher;
 use crate::key::ControlWord;
 use crate::stream::StreamCipher;
+use crate::zeroize::Zeroizing;
 
 /// Scramble (encrypt) `data` in-place with the given control word.
 ///
@@ -26,9 +27,13 @@ pub fn scramble(cw: &ControlWord, data: &mut [u8]) {
         return;
     }
 
-    let sch = cw.expand_block();
-    let cws = cw.expand_stream();
-    let bc = BlockCipher::new(sch);
+    // Wrapped so the local copy `expand_block`/`expand_stream` leaves on this
+    // function's stack is zeroed when it goes out of scope, in addition to
+    // the copy `BlockCipher`/`StreamCipher` separately zeroizes on their own
+    // drop (see `crate::zeroize`).
+    let sch = Zeroizing(cw.expand_block());
+    let cws = Zeroizing(cw.expand_stream());
+    let bc = BlockCipher::new(sch.0);
 
     let nblocks = len / 8;
 
@@ -46,7 +51,7 @@ pub fn scramble(cw: &ControlWord, data: &mut [u8]) {
 
     // Phase 2: Stream cipher XOR bytes 8..len
     let iv: [u8; 8] = data[0..8].try_into().unwrap();
-    let mut sc = StreamCipher::new(&cws, &iv);
+    let mut sc = StreamCipher::new(&cws.0, &iv);
     sc.xor_stream(&mut data[8..]);
 }
 
@@ -59,13 +64,13 @@ pub fn descramble(cw: &ControlWord, data: &mut [u8]) {
         return;
     }
 
-    let sch = cw.expand_block();
-    let cws = cw.expand_stream();
-    let bc = BlockCipher::new(sch);
+    let sch = Zeroizing(cw.expand_block());
+    let cws = Zeroizing(cw.expand_stream());
+    let bc = BlockCipher::new(sch.0);
 
     // Phase 1: Stream cipher XOR bytes 8..len (using encrypted first block as IV)
     let iv: [u8; 8] = data[0..8].try_into().unwrap();
-    let mut sc = StreamCipher::new(&cws, &iv);
+    let mut sc = StreamCipher::new(&cws.0, &iv);
     sc.xor_stream(&mut data[8..]);
 
     // Phase 2: Block cipher, forward CBC undo
