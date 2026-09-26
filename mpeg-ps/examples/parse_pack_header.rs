@@ -8,7 +8,7 @@ use mpeg_ps::PackHeader;
 
 fn main() {
     // A minimal pack header (from the fixture pattern):
-    // start_code 0x000001BA, SCR=0, mux_rate=0x03363B, reserved=0x1F, stuffing=0
+    // start_code 0x000001BA, SCR=0, mux_rate=0x10CD8E, reserved=0x1F, stuffing=0
     let bytes = [
         0x00, 0x00, 0x01, 0xBA, 0x44, 0x00, 0x04, 0x00, 0x04, 0x01, 0x43, 0x36, 0x3B, 0xF8,
     ];

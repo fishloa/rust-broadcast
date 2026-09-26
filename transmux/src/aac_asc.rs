@@ -394,6 +394,27 @@ fn asc_get_aot(bytes: &[u8], bit: &mut usize) -> Option<u8> {
 
 /// Bit-decode the ASC to detect explicit SBR/PS signaling.
 fn detect_heaac_signaling(bytes: &[u8]) -> Option<HeAacSignaling> {
+    let (core_aot, sbr_present, ps_present) = detect_heaac_core(bytes)?;
+    let effective_aot = if ps_present {
+        AOT_PS
+    } else if sbr_present {
+        AOT_SBR
+    } else {
+        core_aot
+    };
+    Some(HeAacSignaling {
+        sbr_present,
+        ps_present,
+        effective_aot,
+    })
+}
+
+/// Bit-decode the ASC and return `(core_aot, sbr_present, ps_present)`. The
+/// core AOT is what an ADTS `profile` field must be derived from (C2, #1008):
+/// with explicit hierarchical signaling (`audioObjectType == 5`/`29`) the
+/// *first* AOT read is the extension type, not the codec's actual profile —
+/// the real core AOT follows the extension sampling-rate field.
+fn detect_heaac_core(bytes: &[u8]) -> Option<(u8, bool, bool)> {
     let mut bit = 0usize;
     let mut aot = asc_get_aot(bytes, &mut bit)?;
     let mut sbr_present = false;
@@ -452,18 +473,7 @@ fn detect_heaac_signaling(bytes: &[u8]) -> Option<HeAacSignaling> {
         }
     }
 
-    let effective_aot = if ps_present {
-        AOT_PS
-    } else if sbr_present {
-        AOT_SBR
-    } else {
-        aot
-    };
-    Some(HeAacSignaling {
-        sbr_present,
-        ps_present,
-        effective_aot,
-    })
+    Some((aot, sbr_present, ps_present))
 }
 
 impl Parse<'_> for AudioSpecificConfig {
@@ -594,6 +604,13 @@ impl Serialize for AudioSpecificConfig {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct AdtsHeader {
+    /// `protection_absent` (1 bit): `true` = no `adts_error_check()` CRC
+    /// follows the fixed+variable header; `false` = a 16-bit `crc_check`
+    /// (2 bytes) is present before the raw data block(s) — ISO/IEC 13818-7
+    /// §6.2, `adts_frame()`. C11 (#1012): this was not read at all, so a
+    /// CRC-protected ADTS frame's header was always treated as 7 bytes wide
+    /// instead of 9, leaving the 2 CRC bytes inside the "sample" data.
+    pub protection_absent: bool,
     pub profile: u8,
     pub sampling_frequency_index: u8,
     pub channel_configuration: u8,
@@ -635,6 +652,7 @@ pub fn parse_adts_header(bytes: &[u8]) -> Result<AdtsHeader> {
     }
     let (b2, b3, b4, b5, b6) = (bytes[2], bytes[3], bytes[4], bytes[5], bytes[6]);
     Ok(AdtsHeader {
+        protection_absent: (bytes[1] & 0x01) != 0,
         profile: (b2 >> 6) & 3,
         sampling_frequency_index: (b2 >> 2) & 0x0F,
         channel_configuration: ((b2 & 1) << 2) | ((b3 >> 6) & 3),
@@ -660,8 +678,35 @@ impl AudioSpecificConfig {
                 reason: "exceeds ADTS 13-bit frame_length maximum (8191)",
             });
         }
+        if self.sampling_frequency_index == SamplingFrequencyIndex::Escape {
+            return Err(Error::InvalidValue {
+                field: "sampling_frequency_index",
+                value: self.sampling_frequency_index.raw() as u64,
+                reason: "escape (explicit rate) is not representable in ADTS's 4-bit field",
+            });
+        }
+        // C2 (#1008): with explicit hierarchical HE-AAC/HE-AACv2 signaling
+        // (`audioObjectType == 5`/`29`), the ASC's *first* AOT is the SBR/PS
+        // extension type, not the codec's actual core profile — the real
+        // core AOT follows the extension sfi. `self.audio_object_type` is
+        // that first AOT, so it must not be used directly as the ADTS
+        // `profile` source; decode the core AOT the same way `heaac_signaling`
+        // does. ADTS `profile` (2 bits, `= AOT - 1`) can only represent core
+        // AOT 1..=4 (Main/LC/SSR/LTP); anything else is rejected rather than
+        // silently wrapped into an unrelated profile.
+        let bytes = self.to_bytes();
+        let core_aot = detect_heaac_core(&bytes)
+            .map(|(aot, _, _)| aot)
+            .unwrap_or(self.audio_object_type.raw());
+        if !(1..=4).contains(&core_aot) {
+            return Err(Error::InvalidValue {
+                field: "audio_object_type",
+                value: core_aot as u64,
+                reason: "core AOT is not representable in ADTS's 2-bit profile field (must be Main/LC/SSR/LTP, 1..=4)",
+            });
+        }
         Ok(build_adts_header(
-            self.audio_object_type.raw().saturating_sub(1),
+            core_aot - 1,
             self.sampling_frequency_index.raw(),
             self.channel_configuration.raw(),
             frame_len,

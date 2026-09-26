@@ -100,6 +100,36 @@ const SIMPLE_BLOCK: u32 = 0xA3;
 const BLOCK_GROUP: u32 = 0xA0;
 /// `Block` (BlockGroup child; block layout, no keyframe flag).
 const BLOCK: u32 = 0xA1;
+/// `SeekHead` master element (Segment child; not decoded — see
+/// `SEGMENT_LEVEL_IDS`).
+const SEEK_HEAD: u32 = 0x114D_9B74;
+/// `Cues` master element (Segment child; not decoded).
+const CUES: u32 = 0x1C53_BB6B;
+/// `Tags` master element (Segment child; not decoded).
+const TAGS: u32 = 0x1254_C367;
+/// `Chapters` master element (Segment child; not decoded).
+const CHAPTERS: u32 = 0x1043_A770;
+/// `Attachments` master element (Segment child; not decoded).
+const ATTACHMENTS: u32 = 0x1941_A469;
+/// Every element ID this crate recognizes as a direct `Segment` child,
+/// decoded or not. Used only to terminate an **unknown-size** Segment child
+/// early (C10, #1011): RFC 8794 §6.2 / the Matroska DTD end an unknown-size
+/// element at the first element that is not its own descendant, so any of
+/// these appearing while walking one is itself a fresh Segment-level sibling,
+/// never a valid child of the element still open — most commonly the next
+/// `Cluster`, since live encoders (browser `MediaRecorder`, `ffmpeg -f webm
+/// -live 1`, OBS) write every Cluster unknown-size.
+const SEGMENT_LEVEL_IDS: &[u32] = &[
+    INFO,
+    TRACKS,
+    CLUSTER,
+    SEEK_HEAD,
+    CUES,
+    TAGS,
+    CHAPTERS,
+    ATTACHMENTS,
+];
+
 /// `ReferenceBlock` (BlockGroup child; present ⇒ the Block references another
 /// block ⇒ not a random-access point). Its absence marks the Block a keyframe.
 const REFERENCE_BLOCK: u32 = 0xFB;
@@ -282,7 +312,7 @@ impl<'a> WebmDemux<'a> {
         blocks: &mut Vec<RawBlock>,
     ) -> Result<()> {
         let mut r = EbmlReader::new(body);
-        while let Some((id, child)) = r.next_element()? {
+        while let Some((id, child)) = r.next_element_bounded(SEGMENT_LEVEL_IDS)? {
             match id {
                 INFO => Self::walk_info(child, timestamp_scale_ns)?,
                 TRACKS => Self::walk_tracks(child, tracks)?,
@@ -862,8 +892,27 @@ impl<'a> EbmlReader<'a> {
     ///
     /// An element is `ID (VINT, marker kept) | size (VINT, marker stripped) |
     /// body[size]`. An "unknown size" (all-ones data bits) element runs to the
-    /// end of the enclosing buffer (used for live Segment/Cluster).
+    /// end of the enclosing buffer. No sibling-boundary IDs are known at this
+    /// call site, so this is only correct when nothing can legitimately follow
+    /// the element within `self.buf` (top-level EBML/Segment scanning, and any
+    /// context where an unknown-size child isn't expected to have a sibling in
+    /// the same buffer) — [`Self::next_element_bounded`] is the fix for the
+    /// case where it can (C10, #1011).
     fn next_element(&mut self) -> Result<Option<(u32, &'a [u8])>> {
+        self.next_element_bounded(&[])
+    }
+
+    /// Like [`Self::next_element`], but an **unknown-size** element's body
+    /// ends at the first later position that decodes as a valid EBML element
+    /// header whose ID is in `boundary_ids`, instead of running to the end of
+    /// `self.buf` (C10, #1011: a live-written Cluster is unknown-size, and
+    /// without a boundary its "body" silently swallowed every later Cluster
+    /// in the Segment). `boundary_ids` should list every element ID valid at
+    /// the *caller's own* nesting level (e.g. [`SEGMENT_LEVEL_IDS`] when
+    /// walking a Segment's children) — RFC 8794 §6.2 ends an unknown-size
+    /// element at the first element that is not one of its own descendants,
+    /// and any of those sibling IDs reappearing can only mean that.
+    fn next_element_bounded(&mut self, boundary_ids: &[u32]) -> Result<Option<(u32, &'a [u8])>> {
         if self.pos >= self.buf.len() {
             return Ok(None);
         }
@@ -875,7 +924,7 @@ impl<'a> EbmlReader<'a> {
             .ok_or(Error::InvalidInput("webm: truncated element size"))?;
         let body_start = self.pos + id_len + size_len;
         let body_end = if unknown {
-            self.buf.len()
+            find_sibling_boundary(self.buf, body_start, boundary_ids).unwrap_or(self.buf.len())
         } else {
             let end = body_start + size as usize;
             if end > self.buf.len() {
@@ -891,6 +940,35 @@ impl<'a> EbmlReader<'a> {
         self.pos = body_end;
         Ok(Some((id, body)))
     }
+}
+
+/// Scan `buf[from..]` for the first byte offset that decodes as a valid EBML
+/// element header (ID + size, with the size either "unknown" itself or fully
+/// in-bounds) whose ID is a member of `boundary_ids`. Returns `None` if
+/// `boundary_ids` is empty or no such position exists before the end of
+/// `buf`. Used only to bound an **unknown-size** element (C10, #1011); a
+/// well-formed stream's element headers don't occur by chance inside coded
+/// media, but a byte-for-byte match plus a structurally valid trailing size
+/// field makes a false positive exceedingly unlikely, and is the same class
+/// of resync heuristic real Matroska demuxers use for unknown-size Clusters.
+fn find_sibling_boundary(buf: &[u8], from: usize, boundary_ids: &[u32]) -> Option<usize> {
+    if boundary_ids.is_empty() {
+        return None;
+    }
+    let mut p = from;
+    while p < buf.len() {
+        if let Some((id, id_len)) = read_element_id(&buf[p..])
+            && boundary_ids.contains(&id)
+            && let Some((size, size_len, unknown)) = read_element_size(&buf[p + id_len..])
+        {
+            let body_start = p + id_len + size_len;
+            if unknown || body_start + size as usize <= buf.len() {
+                return Some(p);
+            }
+        }
+        p += 1;
+    }
+    None
 }
 
 /// Read an EBML **element ID** (VINT with the length-marker bits *kept*).

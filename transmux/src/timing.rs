@@ -692,9 +692,9 @@ pub struct SegmentIndexBox {
 impl SegmentIndexBox {
     /// Parse the body of a sidx box (after the 8-byte BoxHeader).
     pub fn parse_body(body: &[u8]) -> Result<Self> {
-        if body.len() < FULLBOX_EXTRA_SIZE + 4 + 4 + 4 + 2 {
+        if body.len() < FULLBOX_EXTRA_SIZE + 4 + 4 + 4 + 4 {
             return Err(Error::BufferTooShort {
-                need: FULLBOX_EXTRA_SIZE + 4 + 4 + 4 + 2,
+                need: FULLBOX_EXTRA_SIZE + 4 + 4 + 4 + 4,
                 have: body.len(),
                 what: "sidx body",
             });
@@ -737,16 +737,21 @@ impl SegmentIndexBox {
             c += 8;
             (ept, fo)
         };
-        if body.len() < c + 2 {
+        if body.len() < c + 4 {
             return Err(Error::BufferTooShort {
-                need: c + 2,
+                need: c + 4,
                 have: body.len(),
                 what: "sidx reserved+count",
             });
         }
-        let _reserved = body[c] >> 4; // 16-bit field: reserved(16)
-        let reference_count = u16::from_be_bytes([body[c], body[c + 1]]) as usize;
-        c += 2;
+        // ISO/IEC 14496-12 §8.16.3.2 (Table): `reserved(16) = 0` comes BEFORE
+        // `reference_count(16)`, not folded into it — before this fix, parse
+        // read `reference_count` from the `reserved` field's own 2 bytes,
+        // so every conformant sidx (`reserved == 0`) parsed as
+        // `reference_count == 0` (C9, #1010).
+        let _reserved = u16::from_be_bytes([body[c], body[c + 1]]);
+        let reference_count = u16::from_be_bytes([body[c + 2], body[c + 3]]) as usize;
+        c += 4;
 
         let mut references = Vec::with_capacity(bounded_entry_count(
             body.len().saturating_sub(c),
@@ -828,7 +833,7 @@ impl Serialize for SegmentIndexBox {
             + 4  // timescale
             + time_size // earliest_presentation_time
             + time_size // first_offset
-            + 2  // reserved(16) + reference_count(16)
+            + 4  // reserved(16) + reference_count(16)
             + self.references.len() * 12 // each ref: 4+4+4
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
@@ -872,6 +877,12 @@ impl Serialize for SegmentIndexBox {
             buf[c..c + 8].copy_from_slice(&self.first_offset.to_be_bytes());
             c += 8;
         }
+        // reserved(16) = 0, THEN reference_count(16) (see the parse-side
+        // comment) — before the fix, this wrote only `reference_count` at
+        // the position a reader expects `reserved`, and never wrote
+        // `reference_count`'s own bytes at all.
+        buf[c..c + 2].copy_from_slice(&0u16.to_be_bytes());
+        c += 2;
         let reference_count =
             broadcast_common::len::fit_u16(self.references.len(), "reference_count")?;
         buf[c..c + 2].copy_from_slice(&reference_count.to_be_bytes());
@@ -1135,6 +1146,42 @@ mod tests {
     // -----------------------------------------------------------------------
     // sidx unit tests
     // -----------------------------------------------------------------------
+
+    /// C9 (#1010): a real `sidx` box from `MP4Box -dash` (onDemand profile),
+    /// extracted verbatim from `in_dashinit.mp4` — see
+    /// `fixtures/mp4/GENERATE.md`. Oracle: GPAC's own `MP4Box -diso` XML dump
+    /// of the same file (`reference_ID=1`, `timescale=12800`, 2 references).
+    /// Before the fix, parse read `reference_count == 0` (mistaking the
+    /// `reserved` field's bytes for it) and returned zero references; every
+    /// sidx this type serialized was 2 bytes short of a conformant one.
+    #[test]
+    fn sidx_real_fixture_oracle() {
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../fixtures/mp4/sidx_real.bin");
+        let data = std::fs::read(path).expect("fixtures/mp4/sidx_real.bin must exist");
+
+        let sidx = SegmentIndexBox::parse(&data).expect("parse real sidx");
+        assert_eq!(sidx.version, 0);
+        assert_eq!(sidx.reference_id, 1);
+        assert_eq!(sidx.timescale, 12800);
+        assert_eq!(sidx.earliest_presentation_time, 0);
+        assert_eq!(sidx.first_offset, 0);
+        assert_eq!(
+            sidx.references.len(),
+            2,
+            "MP4Box -diso oracle: 2 <Reference> entries"
+        );
+        assert_eq!(sidx.references[0].referenced_size, 11401);
+        assert_eq!(sidx.references[0].subsegment_duration, 12800);
+        assert_eq!(sidx.references[0].starts_with_sap, 1);
+        assert_eq!(sidx.references[0].sap_type, 1);
+        assert_eq!(sidx.references[1].referenced_size, 10306);
+        assert_eq!(sidx.references[1].subsegment_duration, 12800);
+
+        // Byte-exact round-trip against the real fixture bytes.
+        let mut out = alloc::vec![0u8; sidx.serialized_len()];
+        let n = sidx.serialize_into(&mut out).unwrap();
+        assert_eq!(&out[..n], &data[..], "byte-exact round-trip vs real sidx");
+    }
 
     #[test]
     fn sidx_round_trip_v0() {

@@ -51,8 +51,17 @@ use crate::annexb::iter_annexb_nals;
 use crate::avc_config::{AVCConfigurationBox, AVCDecoderConfigurationRecord};
 use crate::error::{Error, Result};
 use crate::media::{Media, Track};
+use crate::mp4esds::{
+    DecoderConfigDescriptor, ESDescriptor, EsdsBox, ObjectTypeIndication, SLConfigDescriptor,
+    StreamType as EsdsStreamType,
+};
+use crate::mpeg_legacy::Mpeg2SeqHeader;
 use crate::nalu_types::{AvcPps, AvcSps};
 use crate::pipeline::{CodecConfig, Sample, TrackSpec};
+use crate::ts_demux::{
+    ESDS_VIDEO_ES_ID, MPEG2_PICTURE_START_CODE, OTI_MPEG2_VIDEO_MAIN, SL_CONFIG_PREDEFINED_MP4,
+    STREAM_TYPE_VISUAL, mpeg2_is_sync,
+};
 
 // ── stream_id → codec (ISO/IEC 13818-1 Table 2-22) ──────────────────────────
 
@@ -102,7 +111,11 @@ const DEFAULT_FRAME_DURATION: i128 = 3600;
 /// `tests/label_coverage.rs` policy).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Codec {
-    H264,
+    /// A `stream_id` in the video range (Table 2-22, 0xE0-0xEF). This range
+    /// carries H.264 *or* MPEG-2 video (or other video codecs this demuxer
+    /// doesn't support) indistinguishably by `stream_id` alone — the actual
+    /// codec is decided by probing the reassembled ES (C6, #1009).
+    Video,
     Ac3,
 }
 
@@ -111,7 +124,7 @@ impl Codec {
     /// does not carry it (skipped, never fatal).
     fn from_stream_id(stream_id: u8) -> Option<Self> {
         match stream_id {
-            STREAM_ID_VIDEO_LO..=STREAM_ID_VIDEO_HI => Some(Codec::H264),
+            STREAM_ID_VIDEO_LO..=STREAM_ID_VIDEO_HI => Some(Codec::Video),
             STREAM_ID_PRIVATE_1 => Some(Codec::Ac3),
             _ => None,
         }
@@ -197,7 +210,7 @@ impl<'a> PsDemux<'a> {
                         }
                         &pes.payload[PRIVATE1_AC3_HEADER_LEN..]
                     }
-                    Codec::H264 => pes.payload,
+                    Codec::Video => pes.payload,
                 };
                 if payload.is_empty() {
                     continue;
@@ -230,7 +243,15 @@ impl<'a> PsDemux<'a> {
         for sid in &order {
             let es = &streams[sid];
             let built = match es.codec {
-                Codec::H264 => build_h264_track(es, track_id),
+                // C6 (#1009): probe the reassembled ES rather than assuming
+                // every 0xE0-0xEF `stream_id` is H.264 — a MPEG-2 sequence
+                // header (`0x000001B3`, ISO/IEC 13818-2 §6.2.2.1) is
+                // structural evidence no H.264 NAL stream can produce by
+                // chance, so it is checked first.
+                Codec::Video if Mpeg2SeqHeader::find(&es.es_bytes).is_ok() => {
+                    build_mpeg2_track(es, track_id)
+                }
+                Codec::Video => build_h264_track(es, track_id),
                 Codec::Ac3 => build_ac3_track(es, track_id),
             };
             if let Some(track) = built {
@@ -310,6 +331,37 @@ fn split_access_units(data: &[u8]) -> Vec<(usize, usize)> {
         } else {
             data.len()
         };
+        ranges.push((start, end));
+    }
+    ranges
+}
+
+/// Split a reassembled MPEG-2 video byte stream into access units at every
+/// `picture_start_code` (ISO/IEC 13818-2 §6.2.3, `0x00000100`) — MPEG-2 has no
+/// AUD equivalent, so a new picture is the only reliable per-AU boundary (C6,
+/// #1009). Bytes before the first picture (the `sequence_header()` and any
+/// `extension`/`user_data`) are attached to the first AU, same convention as
+/// [`split_access_units`].
+fn split_mpeg2_pictures(data: &[u8]) -> Vec<(usize, usize)> {
+    let codes = start_code_positions(data);
+    let mut starts: Vec<usize> = Vec::new();
+    for &pos in &codes {
+        if pos + 3 < data.len() && data[pos + 3] == MPEG2_PICTURE_START_CODE {
+            starts.push(pos);
+        }
+    }
+    if starts.is_empty() {
+        return if data.is_empty() {
+            Vec::new()
+        } else {
+            alloc::vec![(0, data.len())]
+        };
+    }
+    let mut ranges: Vec<(usize, usize)> = Vec::with_capacity(starts.len());
+    let n = starts.len();
+    for i in 0..n {
+        let start = if i == 0 { 0 } else { starts[i] };
+        let end = if i + 1 < n { starts[i + 1] } else { data.len() };
         ranges.push((start, end));
     }
     ranges
@@ -477,6 +529,90 @@ fn build_h264_track(es: &ElementaryStream, track_id: u32) -> Option<Track> {
                 config,
                 width: 0,
                 height: 0,
+            },
+        ),
+        samples,
+        anchor,
+    ))
+}
+
+/// Recover MPEG-2 video config (picture geometry from `sequence_header()`) and
+/// build one raw sample per picture (C6, #1009). Returns `None` if no
+/// `picture_start_code` is found (skip, never fatal) — the sequence header
+/// itself was already confirmed present by the caller.
+fn build_mpeg2_track(es: &ElementaryStream, track_id: u32) -> Option<Track> {
+    let seq = Mpeg2SeqHeader::find(&es.es_bytes).ok()?;
+    let ranges = split_mpeg2_pictures(&es.es_bytes);
+    if ranges.is_empty() {
+        return None;
+    }
+    let stamped = assign_stamps(&ranges, &es.stamps);
+
+    let mut units: Vec<AccessUnit> = Vec::with_capacity(ranges.len());
+    for (i, &(start, end)) in ranges.iter().enumerate() {
+        units.push(AccessUnit {
+            data: es.es_bytes[start..end].to_vec(),
+            pts: stamped[i].0,
+            dts: stamped[i].1,
+        });
+    }
+
+    // `esds` carrying the MPEG-2 Main Visual object type (ISO/IEC 14496-1
+    // Table 5, `OTI_MPEG2_VIDEO_MAIN` = 0x61) — the same construction
+    // `ts_demux`'s `ConfigProbe::Mpeg2Video` uses for the TS input side.
+    let esds = EsdsBox::new(ESDescriptor {
+        es_id: ESDS_VIDEO_ES_ID,
+        stream_dependence_flag: false,
+        url_flag: false,
+        ocr_stream_flag: false,
+        stream_priority: 0,
+        depends_on_es_id: None,
+        url: None,
+        ocr_es_id: None,
+        decoder_config: Some(DecoderConfigDescriptor {
+            object_type_indication: ObjectTypeIndication(OTI_MPEG2_VIDEO_MAIN),
+            stream_type: EsdsStreamType(STREAM_TYPE_VISUAL),
+            up_stream: false,
+            buffer_size_db: 0,
+            max_bitrate: 0,
+            avg_bitrate: 0,
+            decoder_specific_info: None,
+        }),
+        sl_config: Some(SLConfigDescriptor {
+            body: alloc::vec![SL_CONFIG_PREDEFINED_MP4],
+        }),
+    });
+
+    let dts = interpolate_dts(&units);
+    let pts = interpolate_pts(&units, &dts);
+    let mut order: Vec<usize> = (0..units.len()).collect();
+    order.sort_by_key(|&i| dts[i]);
+
+    let samples: Vec<Sample> = order
+        .iter()
+        .enumerate()
+        .map(|(pos, &i)| {
+            let dur = frame_duration(&order, &dts, pos);
+            let is_sync = mpeg2_is_sync(&units[i].data);
+            Sample::new(
+                units[i].data.clone(),
+                Some(to_ticks(dts[i])),
+                Some(to_ticks(pts[i])),
+                Some(dur),
+                is_sync,
+            )
+        })
+        .collect();
+
+    let anchor = order.first().map(|&i| dts[i].max(0) as u64).unwrap_or(0);
+    Some(Track::new_at(
+        TrackSpec::new(
+            track_id,
+            VIDEO_TIMESCALE,
+            CodecConfig::Mpeg2Video {
+                esds,
+                width: seq.width,
+                height: seq.height,
             },
         ),
         samples,

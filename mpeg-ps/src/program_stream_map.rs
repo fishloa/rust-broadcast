@@ -127,11 +127,22 @@ impl<'a> Parse<'a> for ProgramStreamMap<'a> {
         }
 
         let program_stream_info_length = u16::from_be_bytes([b[8], b[9]]) as usize;
-        let elementary_stream_map_length = u16::from_be_bytes([b[10], b[11]]) as usize;
 
         let info_start = PREFIX_LEN + 4; // after flags(1)+reserved(1)+prog_info_len(2)
         let info_end = info_start + program_stream_info_length;
-        // es_map_len field is 2 bytes before es data
+
+        // Table 2-41 order: program_stream_info_length(16), descriptor()×N,
+        // THEN elementary_stream_map_length(16) — the length field follows
+        // the program descriptor loop, not the reverse (#1050).
+        if crc_data_end < info_end + 2 {
+            return Err(Error::MapLengthOverflow {
+                map_length,
+                available: b.len().saturating_sub(PREFIX_LEN),
+            });
+        }
+        let elementary_stream_map_length =
+            u16::from_be_bytes([b[info_end], b[info_end + 1]]) as usize;
+
         let es_start = info_end + 2; // after elementary_stream_map_length(2)
         let es_end = es_start + elementary_stream_map_length;
 
@@ -330,13 +341,16 @@ impl Serialize for ProgramStreamMap<'_> {
             "program_stream_map.elementary_stream_map_length",
         )?;
         buf[8..10].copy_from_slice(&prog_info_len_u16.to_be_bytes());
-        buf[10..12].copy_from_slice(&es_loop_len_u16.to_be_bytes());
 
-        // program_stream_info descriptors
-        buf[12..12 + prog_info_len].copy_from_slice(self.program_stream_info);
+        // program_stream_info descriptors (Table 2-41: the program descriptor
+        // loop comes immediately after program_stream_info_length, at byte
+        // 10, BEFORE elementary_stream_map_length — #1050)
+        buf[10..10 + prog_info_len].copy_from_slice(self.program_stream_info);
 
-        // elementary stream loop
-        let es_start = 12 + prog_info_len;
+        // elementary_stream_map_length, then the elementary stream loop
+        let es_len_start = 10 + prog_info_len;
+        buf[es_len_start..es_len_start + 2].copy_from_slice(&es_loop_len_u16.to_be_bytes());
+        let es_start = es_len_start + 2;
         buf[es_start..es_start + es_loop_len].copy_from_slice(&es_loop_data);
 
         // CRC-32 over everything before it
@@ -512,6 +526,59 @@ mod tests {
         psm.serialize_into(&mut buf).unwrap();
         let parsed = ProgramStreamMap::parse(&buf).unwrap();
         assert_eq!(parsed.program_stream_info.len(), 1012);
+    }
+
+    /// #1050 regression: a conformant PSM with a non-empty program
+    /// descriptor loop. TSDuck cannot generate PS, and the committed
+    /// ffmpeg fixture (`fixtures/mpeg-ps/ffmpeg-mpeg2-ps.mpg`) carries no
+    /// PSM at all (VOB/MPEG-PS from ffmpeg's muxer omits it), so this is
+    /// hand-built directly from ISO/IEC 13818-1 Table 2-41's field order —
+    /// the oracle: `program_stream_info_length(16)`, `descriptor()×N`,
+    /// THEN `elementary_stream_map_length(16)`, `stream_map()×N`, `CRC_32`.
+    /// Before the fix, parse took the program loop's first descriptor
+    /// bytes (tag=0x05 'C'=0x43 here) as `elementary_stream_map_length`
+    /// (0x0543 = 1347), which overflows the buffer and fails with
+    /// `MapLengthOverflow` instead of parsing the one ES entry.
+    #[test]
+    fn psm_with_nonempty_program_descriptor_loop() {
+        // One program-level registration descriptor (tag 0x05, len 4, "TEST").
+        let prog_descriptor: &[u8] = &[0x05, 0x04, b'T', b'E', b'S', b'T'];
+        let entries = vec![EsMapEntry {
+            stream_type: 0x02, // MPEG-2 video
+            elementary_stream_id: 0xE0,
+            stream_id_extension: None,
+            descriptors: &[],
+        }];
+
+        let psm = ProgramStreamMap {
+            current_next_indicator: true,
+            single_extension_stream_flag: false,
+            version: 5,
+            program_stream_info: prog_descriptor,
+            elementary_stream_map: entries,
+            crc: 0,
+        };
+
+        let mut buf = vec![0u8; psm.serialized_len()];
+        psm.serialize_into(&mut buf).unwrap();
+
+        // Table 2-41 byte layout check: the program descriptor loop (6 bytes)
+        // sits at buf[10..16], directly after program_stream_info_length;
+        // elementary_stream_map_length sits at buf[16..18], AFTER it.
+        assert_eq!(&buf[10..16], prog_descriptor);
+        let es_map_len = u16::from_be_bytes([buf[16], buf[17]]);
+        assert_eq!(es_map_len, 4, "one ES entry: stream_type+id+info_len(0)");
+
+        let parsed = ProgramStreamMap::parse(&buf).unwrap();
+        assert_eq!(parsed.program_stream_info, prog_descriptor);
+        assert_eq!(parsed.elementary_stream_map.len(), 1);
+        assert_eq!(parsed.elementary_stream_map[0].stream_type, 0x02);
+        assert_eq!(parsed.elementary_stream_map[0].elementary_stream_id, 0xE0);
+
+        // Byte-exact round-trip
+        let mut out2 = vec![0u8; parsed.serialized_len()];
+        parsed.serialize_into(&mut out2).unwrap();
+        assert_eq!(&out2[..], &buf[..]);
     }
 
     #[test]

@@ -317,6 +317,18 @@ fn heaac_v1_sbr_signaling_and_esds_round_trip() {
     let an = asc.serialize_into(&mut ab).unwrap();
     ab.truncate(an);
     assert_eq!(ab.as_slice(), asc_bytes.as_slice(), "ASC v1 round-trip");
+
+    // C2 (#1008): the real fixture uses backward-compatible (trailing sync
+    // extension) signaling, so its top-level audioObjectType is already the
+    // core AAC-LC codec (2) — to_adts_header must emit ADTS profile 1 (LC),
+    // matching ffprobe's classification of this exact file (`profile=HE-AAC`,
+    // codec_name=aac; MP4Box: "AAC LC (AOT=2 backward compatible)").
+    let adts = asc.to_adts_header(200).unwrap();
+    let parsed_adts = transmux::parse_adts_header(&adts).unwrap();
+    assert_eq!(
+        parsed_adts.profile, 1,
+        "ADTS profile must be LC (AOT 2 - 1)"
+    );
 }
 
 #[test]
@@ -348,6 +360,87 @@ fn heaac_v2_ps_signaling_and_esds_round_trip() {
     let an = asc.serialize_into(&mut ab).unwrap();
     ab.truncate(an);
     assert_eq!(ab.as_slice(), asc_bytes.as_slice(), "ASC v2 round-trip");
+
+    // C2 (#1008): same as v1 — real-world backward-compatible signaling has
+    // core AOT 2 (LC) at the top, so this fixture alone can't reach the buggy
+    // hierarchical-AOT branch, but it does confirm the fix doesn't regress
+    // the (far more common) backward-compatible path.
+    let adts = asc.to_adts_header(200).unwrap();
+    let parsed_adts = transmux::parse_adts_header(&adts).unwrap();
+    assert_eq!(
+        parsed_adts.profile, 1,
+        "ADTS profile must be LC (AOT 2 - 1)"
+    );
+}
+
+/// C2 (#1008): explicit **hierarchical** SBR/PS signaling — `audioObjectType
+/// == 5` (SBR) or `29` (PS) at the TOP of the ASC, ISO/IEC 14496-3 §1.6.2.1 +
+/// Amd 1/2, transcribed in `transmux/docs/codec/heaac-asc.md`. Before the fix,
+/// `to_adts_header` used `self.audio_object_type.raw()` directly: AOT 5 gives
+/// `(5-1)&3 == 0` and AOT 29 gives `(29-1)&3 == 0` — both silently become ADTS
+/// profile 0 (AAC **Main**) instead of the actual core codec.
+///
+/// No local tool emits this exact wire form: macOS AudioToolbox (`aac_at`,
+/// used for `fixtures/ts/heaac/heaac_v{1,2}.mp4` above) only ever writes the
+/// backward-compatible (trailing sync-extension) form, and `libfdk_aac` isn't
+/// built into this ffmpeg. Per the workspace fixture-first rule, these bytes
+/// are hand-built directly from the cited spec table's field order/widths
+/// (not from our own serializer), with a plain AAC-LC core (AOT 2) and a
+/// disabled GASpecificConfig tail (`frameLengthFlag`/`dependsOnCoreCoder`/
+/// `extensionFlag` all 0) so no encoder-specific extension bits are guessed.
+#[test]
+fn heaac_explicit_hierarchical_adts_profile_is_core_aot_not_extension_aot() {
+    // aot(5)=5 sfi(4)=3(48000) cv(4)=2(stereo) ext_sfi(4)=6(24000) core_aot(5)=2(LC) GASpecificConfig(3)=0
+    let sbr_bytes: [u8; 4] = [0x29, 0x93, 0x08, 0x00];
+    let asc = AudioSpecificConfig::parse(&sbr_bytes).unwrap();
+    assert_eq!(
+        asc.audio_object_type.raw(),
+        5,
+        "top-level AOT is the SBR extension type"
+    );
+    let adts = asc.to_adts_header(200).unwrap();
+    let parsed = transmux::parse_adts_header(&adts).unwrap();
+    assert_eq!(
+        parsed.profile, 1,
+        "core AOT is AAC-LC (2) -> ADTS profile 1, not Main (0)"
+    );
+
+    // aot(5)=29 sfi(4)=3(48000) cv(4)=2(stereo) ext_sfi(4)=6(24000) core_aot(5)=2(LC) GASpecificConfig(3)=0
+    let ps_bytes: [u8; 4] = [0xe9, 0x93, 0x08, 0x00];
+    let asc = AudioSpecificConfig::parse(&ps_bytes).unwrap();
+    assert_eq!(
+        asc.audio_object_type.raw(),
+        29,
+        "top-level AOT is the PS extension type"
+    );
+    let adts = asc.to_adts_header(200).unwrap();
+    let parsed = transmux::parse_adts_header(&adts).unwrap();
+    assert_eq!(
+        parsed.profile, 1,
+        "core AOT is AAC-LC (2) -> ADTS profile 1, not Main (0)"
+    );
+}
+
+/// C2 (#1008): a core AOT that ADTS cannot express (outside 1..=4, e.g.
+/// ER AAC LD = 23) must be rejected, not silently wrapped into an unrelated
+/// profile (`(23-1)&3 == 2` would previously have emitted AAC-SSR).
+#[test]
+fn heaac_hierarchical_with_unrepresentable_core_aot_is_rejected() {
+    // aot(5)=5 sfi(4)=3 cv(4)=2 ext_sfi(4)=6 core_aot(5)=23(ER AAC LD) GASpecificConfig(3)=0
+    let bytes: [u8; 4] = [0x29, 0x93, 0x5c, 0x00];
+    let asc = AudioSpecificConfig::parse(&bytes).unwrap();
+    assert!(asc.to_adts_header(200).is_err());
+}
+
+/// C2 (#1008): `sampling_frequency_index == Escape` is a 24-bit explicit
+/// rate, forbidden in ADTS's 4-bit field — must be rejected, not copied in
+/// as the literal escape value `0xF`.
+#[test]
+fn heaac_escape_sampling_frequency_is_rejected_for_adts() {
+    let mut asc = AudioSpecificConfig::parse(&[0x12, 0x08]).unwrap();
+    asc.sampling_frequency_index = transmux::SamplingFrequencyIndex::Escape;
+    asc.sampling_frequency = Some(48000);
+    assert!(asc.to_adts_header(200).is_err());
 }
 
 #[test]
