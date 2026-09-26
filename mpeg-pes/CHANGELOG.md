@@ -2,6 +2,19 @@
 
 ## [Unreleased]
 
+### Changed
+- Requires `broadcast-common` 9.4 (`broadcast_common::len`). A new
+  `Error::FieldOverflow` variant is added.
+
+### Fixed
+- `PesExtension::serialize_into` wrote `pack_field_length` and
+  `PES_extension_field_length` with unchecked `as u8` casts, wrapping to a
+  short length for data over 255 bytes while the full data was still copied
+  after it (#1129). Unreachable via the public `PesPacket` API today (a
+  pre-existing `PesHeader::optional_len` check already rejects the same
+  oversized case first), fixed as defense-in-depth for the same reason
+  `scte35-splice`'s `write_header` was.
+
 ## [0.4.0] - 2026-08-11
 
 ### Changed

@@ -96,7 +96,7 @@ impl Serialize for TimeDescriptor {
                 reason: "exceeds 48-bit range",
             });
         }
-        header::write_header(buf, TAG, self.identifier, BODY_LEN);
+        header::write_header(buf, TAG, self.identifier, BODY_LEN)?;
         let s = self.tai_seconds;
         buf[HEADER_LEN] = (s >> 40) as u8;
         buf[HEADER_LEN + 1] = (s >> 32) as u8;

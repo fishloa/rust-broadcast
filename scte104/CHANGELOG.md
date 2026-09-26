@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- Requires `broadcast-common` 9.4 (`broadcast_common::len`).
+
+### Fixed
+- `MultipleOperationMessage::new` accumulated `message_size` in raw `u16`
+  arithmetic, panicking in a debug build (`attempt to add with overflow`) or
+  silently wrapping in release for large operation bodies; `serialize_into`
+  now recomputes the true size in `usize` and rejects it, instead of trusting
+  a stale or wrapped `message_size`, when it does not fit the 16-bit wire
+  field (#1129).
+- `num_ops`, `operation.data_length`, `dtmf_length`,
+  `segmentation_upid_length`, `service_count`, `number_of_DPI_PIDs`, and the
+  injector component-list audio/data counts were written with unchecked
+  `as u8`/`as u16` casts, wrapping to a small value for 256+ items or 64
+  Ki+ bytes while every item was still serialized (#1129).
+
 ## [0.4.1] - 2026-09-26
 
 ### Security

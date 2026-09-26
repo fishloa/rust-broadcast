@@ -2,6 +2,31 @@
 
 ## [Unreleased]
 
+### Changed (breaking)
+- Serializers now return an error, instead of silently truncating, when a
+  length, count, or out-of-range field value does not fit its wire field
+  (#1129). Requires `broadcast-common` 9.4 (`broadcast_common::len`). A new
+  `Error::FieldOverflow` variant is added (the enum is `#[non_exhaustive]`,
+  but this is still a behavior change worth calling out for a crate at
+  2.x): `splice_descriptor::header::write_header` now returns `Result<()>`
+  instead of `()`.
+
+### Fixed
+- `SpliceInfoSection::serialize_into` narrowed `section_length` with `as u16`
+  before the `> 4093` range check, and narrowed `splice_command_length`/
+  `descriptor_loop_length` with unchecked `as u16` casts, so a command body or
+  descriptor loop of 64 KiB or more silently wrapped into a short, misframed
+  section instead of erroring (#1129).
+- `SpliceSchedule`/`SpliceInsert` component and event counts, and the
+  `AnySpliceDescriptor::Unknown` and generic `splice_descriptor()` header
+  `descriptor_length`, were written with unchecked `as u8` casts, wrapping to
+  0 for 256+ items while all items were still serialized (#1129).
+- `SpliceTime`/`BreakDuration`/`SegmentationDescriptor` component
+  `pts_offset`/`segmentation_duration`, and the DVB-TA compact `pts_time`/
+  `duration` fields, silently masked an out-of-range 33-bit/40-bit value on
+  serialize instead of erroring, unlike `SpliceInfoSection`'s own
+  `pts_adjustment` check (#1129).
+
 ## [2.1.0] - 2026-08-11
 
 ### Changed

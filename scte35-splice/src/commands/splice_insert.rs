@@ -243,7 +243,10 @@ impl Serialize for SpliceInsert {
                 pos += st.serialize_into(&mut buf[pos..])?;
             }
         } else {
-            buf[pos] = self.components.len() as u8;
+            buf[pos] = broadcast_common::len::fit_u8(
+                self.components.len(),
+                "splice_insert.component_count",
+            )?;
             pos += 1;
             for c in &self.components {
                 buf[pos] = c.component_tag;
@@ -310,6 +313,26 @@ mod tests {
             avails_expected: 4,
             ..Default::default()
         });
+    }
+
+    /// SC-W3 (#1129): `component_count` is an 8-bit field but used to be
+    /// written with `self.components.len() as u8`, which wraps for 256+
+    /// components while all of them are still serialized.
+    #[test]
+    fn over_255_components_rejected_not_wrapped() {
+        let cmd = SpliceInsert {
+            splice_event_id: 1,
+            program_splice_flag: false,
+            splice_immediate_flag: true,
+            components: (0..256)
+                .map(|i| SpliceInsertComponent {
+                    component_tag: i as u8,
+                    splice_time: None,
+                })
+                .collect(),
+            ..Default::default()
+        };
+        assert!(cmd.try_to_bytes().is_err());
     }
 
     #[test]

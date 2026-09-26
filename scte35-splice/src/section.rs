@@ -307,13 +307,16 @@ impl Serialize for SpliceInfoSection<'_> {
         }
 
         // section_length counts the bytes after byte 2 up to and including CRC.
-        let section_length = (need - 3) as u16;
-        if section_length > 4093 {
+        // Compare in usize BEFORE narrowing to u16: a body of 64 KiB or more
+        // must be rejected, not silently wrapped (#1129).
+        let section_length_usize = need - 3;
+        if section_length_usize > 4093 {
             return Err(Error::InvalidValue {
                 field: "splice_info_section.section_length",
                 reason: "exceeds 4093",
             });
         }
+        let section_length = section_length_usize as u16;
 
         buf[0] = TABLE_ID;
         // section_syntax_indicator=0, private_indicator=0, sap_type(2),
@@ -334,13 +337,24 @@ impl Serialize for SpliceInfoSection<'_> {
         // payload region (after splice_command_length byte at index 12).
         match (&self.clear, self.encrypted_payload) {
             (Some(c), _) => {
-                let scl = c.command.body_len() as u16;
+                // splice_command_length is a 12-bit field; check before
+                // narrowing so a body of 4096 bytes or more is rejected
+                // instead of wrapping (#1129).
+                let scl = broadcast_common::len::fit_bits(
+                    c.command.body_len() as u64,
+                    12,
+                    "splice_info_section.splice_command_length",
+                )? as u16;
                 buf[11] = (((self.tier & 0x0F) as u8) << 4) | ((scl >> 8) as u8 & 0x0F);
                 buf[12] = (scl & 0xFF) as u8;
                 buf[13] = c.command.command_type();
                 let mut pos = 14;
                 pos += c.command.serialize_body_into(&mut buf[pos..])?;
-                let dll = c.descriptor_loop.len() as u16;
+                // descriptor_loop_length is a 16-bit field; same reasoning.
+                let dll = broadcast_common::len::fit_u16(
+                    c.descriptor_loop.len(),
+                    "splice_info_section.descriptor_loop_length",
+                )?;
                 buf[pos] = (dll >> 8) as u8;
                 buf[pos + 1] = (dll & 0xFF) as u8;
                 pos += 2;
@@ -371,5 +385,90 @@ impl Serialize for SpliceInfoSection<'_> {
         let crc = broadcast_common::crc32_mpeg2::compute(&buf[..crc_pos]);
         buf[crc_pos..need].copy_from_slice(&crc.to_be_bytes());
         Ok(need)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::commands::AnyCommand;
+    use crate::commands::PrivateCommand;
+
+    /// SC-C1 (#1129): a `private_bytes` payload of 64 KiB or more used to
+    /// narrow `need - 3` to `u16` BEFORE the `> 4093` range check, so the
+    /// wrapped value slipped past the guard and `serialize_into` returned
+    /// `Ok` with a misframed `section_length`. Confirmed pre-fix: this
+    /// exact case returned `Ok(65_560)` with `section_length` wrapped to 21.
+    #[test]
+    fn section_length_overflow_is_rejected_not_wrapped() {
+        let private_bytes = alloc::vec![0u8; 65_536];
+        let section = SpliceInfoSection::new_clear(
+            AnyCommand::PrivateCommand(PrivateCommand {
+                identifier: 0x4355_4549,
+                private_bytes: &private_bytes,
+            }),
+            &[],
+        );
+        let mut buf = alloc::vec![0u8; section.serialized_len()];
+        assert!(
+            section.serialize_into(&mut buf).is_err(),
+            "an oversized body must be rejected, not silently wrapped into a short section_length"
+        );
+    }
+
+    /// The boundary: a body whose `section_length` is exactly 4093 still
+    /// serializes and round-trips.
+    #[test]
+    fn section_length_at_boundary_round_trips() {
+        // need = 13 (header through splice_command_length) + 1 (command_type)
+        // + scl (4-byte identifier + private_bytes) + 2 (dll) + 0
+        // (descriptor_loop) + 4 (CRC) = 20 + scl.
+        // section_length = need - 3 = 17 + scl. Want section_length == 4093
+        // => scl == 4076 => private_len == 4076 - 4 (identifier) == 4072.
+        let private_len = 4072;
+        let private_bytes = alloc::vec![0xAB_u8; private_len];
+        let section = SpliceInfoSection::new_clear(
+            AnyCommand::PrivateCommand(PrivateCommand {
+                identifier: 0x4355_4549,
+                private_bytes: &private_bytes,
+            }),
+            &[],
+        );
+        assert_eq!(section.serialized_len() - 3, 4093);
+        let bytes = section.to_bytes();
+        let back = SpliceInfoSection::parse(&bytes).unwrap();
+        assert_eq!(back.to_bytes(), bytes);
+    }
+
+    /// SC-C1: `splice_command_length` is a 12-bit field; a command body of
+    /// 4096 bytes or more used to be narrowed with `as u16` with no check.
+    #[test]
+    fn splice_command_length_overflow_is_rejected() {
+        let private_bytes = alloc::vec![0u8; 4093]; // + 4-byte identifier = 4097 > 0xFFF
+        let section = SpliceInfoSection::new_clear(
+            AnyCommand::PrivateCommand(PrivateCommand {
+                identifier: 0x4355_4549,
+                private_bytes: &private_bytes,
+            }),
+            &[],
+        );
+        let mut buf = alloc::vec![0u8; section.serialized_len()];
+        assert!(section.serialize_into(&mut buf).is_err());
+    }
+
+    /// SC-C1: `descriptor_loop_length` is a 16-bit field; a loop of 64 KiB or
+    /// more used to be narrowed with `as u16` with no check.
+    #[test]
+    fn descriptor_loop_length_overflow_is_rejected() {
+        let descriptor_loop = alloc::vec![0u8; 65_536];
+        let section = SpliceInfoSection::new_clear(
+            AnyCommand::PrivateCommand(PrivateCommand {
+                identifier: 0x4355_4549,
+                private_bytes: &[],
+            }),
+            &descriptor_loop,
+        );
+        let mut buf = alloc::vec![0u8; section.serialized_len()];
+        assert!(section.serialize_into(&mut buf).is_err());
     }
 }

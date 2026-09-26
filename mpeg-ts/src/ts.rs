@@ -910,7 +910,10 @@ impl<'a> AdaptationField<'a> {
             cursor += 1;
         }
         if let Some(tpd) = self.transport_private_data {
-            buf[cursor] = tpd.len() as u8;
+            buf[cursor] = broadcast_common::len::fit_u8(
+                tpd.len(),
+                "adaptation_field.transport_private_data_length",
+            )?;
             cursor += 1;
             buf[cursor..cursor + tpd.len()].copy_from_slice(tpd);
             cursor += tpd.len();
@@ -1958,6 +1961,27 @@ mod tests {
         assert_eq!(written, len);
         let decoded = AdaptationField::parse(&buf).expect("parse round-trip");
         assert_eq!(decoded, original);
+    }
+
+    /// W10 (#1129): `transport_private_data_length` is an 8-bit field but
+    /// used to be written with `tpd.len() as u8`, wrapping to a short length
+    /// while the full data was still copied after it.
+    #[test]
+    fn transport_private_data_over_255_bytes_rejected_not_wrapped() {
+        let data = vec![0u8; 256];
+        let af = AdaptationField {
+            discontinuity_indicator: false,
+            random_access_indicator: false,
+            elementary_stream_priority_indicator: false,
+            pcr: None,
+            opcr: None,
+            splice_countdown: None,
+            transport_private_data: Some(&data),
+            extension: None,
+            stuffing_len: 0,
+        };
+        let mut buf = vec![0u8; af.serialized_len()];
+        assert!(af.serialize_into(&mut buf).is_err());
     }
 
     /// Known-bytes test: flags=0x30 (discontinuity + PCR), known PCR vector.

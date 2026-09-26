@@ -66,7 +66,7 @@ fn main() {
 
     // ── 3) set_continuity_counter on a packet ──────────────────────────────
     let mut cc_raw: [u8; TS_PACKET_SIZE] =
-        OwnedTsPacket::serialize_with_payload(0x0200, true, 0, &[]);
+        OwnedTsPacket::serialize_with_payload(0x0200, true, 0, &[]).unwrap();
     let orig_cc = TsPacket::parse(&cc_raw).unwrap().header.continuity_counter;
     OwnedTsPacket::set_continuity_counter(&mut cc_raw, 15);
     let new_cc = TsPacket::parse(&cc_raw).unwrap().header.continuity_counter;
@@ -100,12 +100,9 @@ fn main() {
     );
 
     // ── 6) Round-trip an OwnedTsPacket ──────────────────────────────────────
-    let owned = OwnedTsPacket::parse(OwnedTsPacket::serialize_with_payload(
-        0x0100,
-        true,
-        3,
-        &[0xAA, 0xBB],
-    ))
+    let owned = OwnedTsPacket::parse(
+        OwnedTsPacket::serialize_with_payload(0x0100, true, 3, &[0xAA, 0xBB]).unwrap(),
+    )
     .unwrap();
     assert_eq!(owned.pid, 0x0100);
     assert_eq!(owned.continuity_counter, 3);

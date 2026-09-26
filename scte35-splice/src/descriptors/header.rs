@@ -67,8 +67,13 @@ pub fn descriptor_body<'a>(
 
 /// Write a splice_descriptor header into `buf`. `body_len` is the length of the
 /// bytes following the identifier; `descriptor_length` is `4 + body_len`.
-pub fn write_header(buf: &mut [u8], tag: u8, identifier: u32, body_len: usize) {
+///
+/// Checks `4 + body_len` fits the 8-bit `descriptor_length` field before
+/// narrowing, rather than silently wrapping (#1129) — a defense-in-depth
+/// check even where a caller already validates its own body length.
+pub fn write_header(buf: &mut [u8], tag: u8, identifier: u32, body_len: usize) -> Result<()> {
     buf[0] = tag;
-    buf[1] = (4 + body_len) as u8;
+    buf[1] = broadcast_common::len::fit_u8(4 + body_len, "splice_descriptor.descriptor_length")?;
     buf[2..6].copy_from_slice(&identifier.to_be_bytes());
+    Ok(())
 }

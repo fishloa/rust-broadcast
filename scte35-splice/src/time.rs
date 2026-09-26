@@ -75,6 +75,11 @@ impl SpliceTime {
     pub const LEN_NO_TIME: usize = 1;
 
     /// A `splice_time()` carrying an explicit 33-bit `pts_time` (ticks).
+    ///
+    /// `pts_time` wraps modulo `2^33` (matching [`pts_add_wrapping`]'s
+    /// carry-ignored policy), so the result always serializes; construct
+    /// [`SpliceTime`] directly and let [`Serialize::serialize_into`] reject an
+    /// out-of-range value instead, if wrapping is not what the caller wants.
     #[must_use]
     pub fn with_pts(pts_time: u64) -> Self {
         Self {
@@ -153,7 +158,12 @@ impl Serialize for SpliceTime {
         }
         match self.pts_time {
             Some(pts) => {
-                let pts = pts & PTS_MAX;
+                if pts > PTS_MAX {
+                    return Err(Error::InvalidValue {
+                        field: "splice_time.pts_time",
+                        reason: "exceeds 33-bit range",
+                    });
+                }
                 // time_specified_flag=1, 6 reserved bits = 1, top pts bit.
                 buf[0] = 0x80 | 0x7E | ((pts >> 32) as u8 & 0x01);
                 buf[1] = (pts >> 24) as u8;
@@ -239,7 +249,13 @@ impl Serialize for BreakDuration {
                 have: buf.len(),
             });
         }
-        let d = self.duration & PTS_MAX;
+        if self.duration > PTS_MAX {
+            return Err(Error::InvalidValue {
+                field: "break_duration.duration",
+                reason: "exceeds 33-bit range",
+            });
+        }
+        let d = self.duration;
         // auto_return, 6 reserved bits = 1, top duration bit.
         buf[0] = (u8::from(self.auto_return) << 7) | 0x7E | ((d >> 32) as u8 & 0x01);
         buf[1] = (d >> 24) as u8;
@@ -308,6 +324,28 @@ mod tests {
         let st = SpliceTime::with_pts(PTS_MAX);
         let bytes = st.to_bytes();
         assert_eq!(SpliceTime::parse(&bytes).unwrap().pts_time, Some(PTS_MAX));
+    }
+
+    /// SC-W4 (#1129): `SpliceTime::serialize_into` used to mask `pts_time`
+    /// with `& PTS_MAX` instead of erroring, while
+    /// `SpliceInfoSection::serialize_into` rejects an out-of-range
+    /// `pts_adjustment` — the two paths disagreed. Confirmed pre-fix: a
+    /// `pts_time` of `1 << 33` serialized as PTS 0 with `Ok`.
+    #[test]
+    fn splice_time_over_33_bits_is_rejected_not_masked() {
+        let st = SpliceTime {
+            pts_time: Some(1u64 << 33),
+        };
+        assert!(st.try_to_bytes().is_err());
+    }
+
+    #[test]
+    fn break_duration_over_33_bits_is_rejected_not_masked() {
+        let bd = BreakDuration {
+            auto_return: false,
+            duration: 1u64 << 33,
+        };
+        assert!(bd.try_to_bytes().is_err());
     }
 
     #[test]

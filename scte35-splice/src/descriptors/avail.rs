@@ -67,7 +67,7 @@ impl Serialize for AvailDescriptor {
                 have: buf.len(),
             });
         }
-        header::write_header(buf, TAG, self.identifier, 4);
+        header::write_header(buf, TAG, self.identifier, 4)?;
         buf[HEADER_LEN..need].copy_from_slice(&self.provider_avail_id.to_be_bytes());
         Ok(need)
     }

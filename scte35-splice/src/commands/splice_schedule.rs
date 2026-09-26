@@ -211,7 +211,10 @@ impl SpliceScheduleEvent {
             buf[*pos..*pos + 4].copy_from_slice(&self.utc_splice_time.unwrap_or(0).to_be_bytes());
             *pos += 4;
         } else {
-            buf[*pos] = self.components.len() as u8;
+            buf[*pos] = broadcast_common::len::fit_u8(
+                self.components.len(),
+                "splice_schedule.component_count",
+            )?;
             *pos += 1;
             for c in &self.components {
                 buf[*pos] = c.component_tag;
@@ -277,7 +280,7 @@ impl Serialize for SpliceSchedule {
                 have: buf.len(),
             });
         }
-        buf[0] = self.events.len() as u8;
+        buf[0] = broadcast_common::len::fit_u8(self.events.len(), "splice_schedule.splice_count")?;
         let mut pos = 1;
         for ev in &self.events {
             ev.serialize_at(buf, &mut pos)?;
@@ -306,6 +309,37 @@ mod tests {
     #[test]
     fn round_trip_empty_schedule() {
         rt(&SpliceSchedule::default());
+    }
+
+    /// SC-W3 (#1129): `splice_count` is an 8-bit field but used to be written
+    /// with `self.events.len() as u8`, wrapping to 0 for 256 events while all
+    /// 256 were still serialized — a receiver would see an empty schedule
+    /// followed by trailing garbage. Confirmed pre-fix: returned `Ok` with
+    /// `buf[0] == 0`.
+    #[test]
+    fn over_255_events_rejected_not_wrapped() {
+        let events = (0..256)
+            .map(|i| SpliceScheduleEvent {
+                splice_event_id: i,
+                splice_event_cancel_indicator: true,
+                ..Default::default()
+            })
+            .collect();
+        let sched = SpliceSchedule { events };
+        assert!(sched.try_to_bytes().is_err());
+    }
+
+    /// The boundary: exactly 255 events still serializes and round-trips.
+    #[test]
+    fn exactly_255_events_round_trips() {
+        let events = (0..255)
+            .map(|i| SpliceScheduleEvent {
+                splice_event_id: i,
+                splice_event_cancel_indicator: true,
+                ..Default::default()
+            })
+            .collect();
+        rt(&SpliceSchedule { events });
     }
 
     #[test]

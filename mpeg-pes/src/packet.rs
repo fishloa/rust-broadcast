@@ -413,7 +413,8 @@ impl<'a> PesExtension<'a> {
             cursor += 16;
         }
         if let Some(ph) = self.pack_header {
-            buf[cursor] = ph.len() as u8;
+            buf[cursor] =
+                broadcast_common::len::fit_u8(ph.len(), "PES_extension.pack_field_length")?;
             cursor += 1;
             buf[cursor..cursor + ph.len()].copy_from_slice(ph);
             cursor += ph.len();
@@ -434,7 +435,10 @@ impl<'a> PesExtension<'a> {
             cursor += 2;
         }
         if let Some(ef) = self.pes_extension_field {
-            buf[cursor] = ef.len() as u8;
+            buf[cursor] = broadcast_common::len::fit_u8(
+                ef.len(),
+                "PES_extension.PES_extension_field_length",
+            )?;
             cursor += 1;
             buf[cursor..cursor + ef.len()].copy_from_slice(ef);
             cursor += ef.len();
@@ -1188,6 +1192,47 @@ mod tests {
         let pkt = PesPacket::parse(&bytes).unwrap();
         let decoded_ext = pkt.header.unwrap().pes_extension.unwrap();
         assert_eq!(decoded_ext.p_std_buffer, Some(pstd));
+    }
+
+    /// W10 (#1129): `pack_field_length` is an 8-bit field but used to be
+    /// written with `ph.len() as u8`, wrapping to a short length while the
+    /// full data was still copied after it. Calls the private
+    /// `PesExtension::serialize_into` directly (this test module is a
+    /// descendant of its defining module) so the assertion isolates this
+    /// specific cast: reaching it via the public `PesPacket` API is also
+    /// blocked by `PesHeader::optional_len`'s pre-existing `opt_len > 255`
+    /// check, since a `pack_header` this size necessarily makes the whole
+    /// optional-fields region exceed 255 bytes too.
+    #[test]
+    fn pack_header_over_255_bytes_rejected_not_wrapped() {
+        let data = alloc::vec![0u8; 256];
+        let ext = PesExtension {
+            pes_private_data: None,
+            pack_header: Some(&data),
+            program_packet_sequence_counter: None,
+            p_std_buffer: None,
+            pes_extension_field: None,
+        };
+        let mut buf = vec![0u8; ext.serialized_len()];
+        assert!(ext.serialize_into(&mut buf).is_err());
+    }
+
+    /// W10 (#1129): `PES_extension_field_length` is an 8-bit field but used
+    /// to be written with `ef.len() as u8`, wrapping the same way. See the
+    /// note on `pack_header_over_255_bytes_rejected_not_wrapped` above about
+    /// calling the private method directly.
+    #[test]
+    fn pes_extension_field_over_255_bytes_rejected_not_wrapped() {
+        let data = alloc::vec![0u8; 256];
+        let ext = PesExtension {
+            pes_private_data: None,
+            pack_header: None,
+            program_packet_sequence_counter: None,
+            p_std_buffer: None,
+            pes_extension_field: Some(&data),
+        };
+        let mut buf = vec![0u8; ext.serialized_len()];
+        assert!(ext.serialize_into(&mut buf).is_err());
     }
 
     /// PesExtension with private data (16 bytes).

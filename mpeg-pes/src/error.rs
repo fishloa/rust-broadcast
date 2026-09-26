@@ -30,4 +30,8 @@ pub enum Error {
     /// (an 8-bit field) — cannot be serialized.
     #[error("optional_fields too large to serialize: {0} bytes (max 255)")]
     OptionalFieldsTooLarge(usize),
+    /// A length or count field's value does not fit its wire field
+    /// (see `broadcast_common::len`, #1129).
+    #[error(transparent)]
+    FieldOverflow(#[from] broadcast_common::len::FieldOverflow),
 }

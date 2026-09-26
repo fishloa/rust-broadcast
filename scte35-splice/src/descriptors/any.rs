@@ -111,7 +111,10 @@ macro_rules! declare_splice_descriptors {
                             });
                         }
                         buf[0] = *tag;
-                        buf[1] = body.len() as u8;
+                        buf[1] = broadcast_common::len::fit_u8(
+                            body.len(),
+                            "splice_descriptor.descriptor_length",
+                        )?;
                         buf[2..need].copy_from_slice(body);
                         Ok(need)
                     }
@@ -239,6 +242,19 @@ mod tests {
             out.extend_from_slice(&b);
         }
         assert_eq!(out, loop_bytes);
+    }
+
+    /// SC-W3 (#1129): `AnySpliceDescriptor::Unknown`'s `descriptor_length`
+    /// used to be written with `body.len() as u8`, wrapping for a body of
+    /// 256 bytes or more.
+    #[test]
+    fn unknown_descriptor_over_255_body_bytes_rejected_not_wrapped() {
+        let d = AnySpliceDescriptor::Unknown {
+            tag: 0xEE,
+            body: &[0u8; 256],
+        };
+        let mut buf = vec![0u8; d.serialized_len()];
+        assert!(d.serialize_into(&mut buf).is_err());
     }
 
     #[test]

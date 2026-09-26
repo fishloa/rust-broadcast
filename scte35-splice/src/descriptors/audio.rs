@@ -113,7 +113,7 @@ impl Serialize for AudioDescriptor {
             });
         }
         let body_len = 1 + self.components.len() * COMPONENT_LEN;
-        header::write_header(buf, TAG, self.identifier, body_len);
+        header::write_header(buf, TAG, self.identifier, body_len)?;
         // 4-bit audio_count, 4 reserved bits = 1.
         buf[HEADER_LEN] = ((self.components.len() as u8) << 4) | 0x0F;
         let mut pos = HEADER_LEN + 1;
