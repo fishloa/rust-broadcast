@@ -10,7 +10,7 @@ use alloc::vec::Vec;
 use core::time::Duration;
 
 use crate::pid::well_known;
-use crate::ts::{CC_MASK, SECTION_LENGTH_HI_MASK, TS_PACKET_SIZE, TsHeader};
+use crate::ts::{CC_MASK, TS_PACKET_SIZE, TsHeader};
 
 /// Maximum data bytes in a PUSI=1 packet (188 − 4 header − 1 pointer_field). §2.4.4.
 const PUSI_PAYLOAD_CAP: usize = 183;
@@ -99,14 +99,24 @@ impl SectionPacketiser {
 
             if let Some(ns) = next_start {
                 let diff = ns.saturating_sub(pos);
-                if diff <= PUSI_PAYLOAD_CAP {
+                // W1 (#1074): `diff == PUSI_PAYLOAD_CAP` (183) must NOT take the
+                // PUSI branch — a pointer_field of 183 would claim a section
+                // starts after all 183 payload bytes, i.e. not within this
+                // packet at all (H.222.0 §2.4.4 requires PUSI=1 to mean a
+                // section genuinely starts here). The non-PUSI branch's cap
+                // must in turn be bounded by `diff`, not just the fixed
+                // 184-byte payload size, or a continuation packet at this same
+                // boundary copies one byte past the next section's start —
+                // the reassembler then silently drops it (it only takes what
+                // completes the in-progress section), corrupting the next one.
+                if diff < PUSI_PAYLOAD_CAP {
                     pusi = true;
                     pointer_field = diff as u8;
                     cap = PUSI_PAYLOAD_CAP;
                 } else {
                     pusi = false;
                     pointer_field = 0;
-                    cap = PAYLOAD_CAP;
+                    cap = PAYLOAD_CAP.min(diff);
                 }
             } else {
                 pusi = false;
@@ -405,10 +415,7 @@ impl Default for SiMux {
 fn split_sections(data: &[u8]) -> Vec<&[u8]> {
     let mut result = Vec::new();
     let mut pos = 0;
-    while pos + 3 <= data.len() {
-        let section_length =
-            (((data[pos + 1] & SECTION_LENGTH_HI_MASK) as usize) << 8) | (data[pos + 2] as usize);
-        let end = pos + 3 + section_length;
+    while let Some(end) = crate::ts::section_total_len(&data[pos..]).map(|len| pos + len) {
         if end > data.len() {
             break;
         }
@@ -1029,6 +1036,41 @@ mod tests {
         assert_eq!(s1.len(), PUSI_PAYLOAD_CAP);
 
         let s2 = build_section(0x52, &[0xB1, 0xB2]);
+        assert_round_trip(&[s1, s2]);
+    }
+
+    #[test]
+    fn continuation_packet_never_overshoots_next_section_start() {
+        // First section is 366 bytes total: it fills the first (PUSI) packet's
+        // 183-byte payload exactly, then the *second* packet (a continuation,
+        // starting at pos=183) is exactly 183 bytes short of the next
+        // section's start (183 + 183 = 366) — the mid-stream analogue of
+        // `round_trip_section_ends_exactly_at_boundary` above, which only
+        // exercises the boundary at pos=0.
+        let body1 = vec![0xA5; 366 - 3];
+        let s1 = build_section(0x50, &body1);
+        assert_eq!(s1.len(), 366);
+        let s2 = build_section(0x52, &[0xB1, 0xB2, 0xB3]);
+
+        let mut packetiser = SectionPacketiser::new(0x0100);
+        let packets = packetiser.packetise(&[s1.as_slice(), s2.as_slice()]);
+
+        for pkt_raw in &packets {
+            let pkt = TsPacket::parse(pkt_raw).expect("parse generated packet");
+            let payload = pkt.payload.expect("payload present");
+            if pkt.header.pusi {
+                let pointer = payload[0] as usize;
+                // W1 (#1074): pre-fix this was 183 — a pointer_field pointing
+                // past the packet's own payload, so no section byte actually
+                // starts within it.
+                assert!(
+                    pointer < PUSI_PAYLOAD_CAP,
+                    "pointer_field {pointer} leaves no room for a section to \
+                     start within this packet (H.222.0 §2.4.4)"
+                );
+            }
+        }
+
         assert_round_trip(&[s1, s2]);
     }
 

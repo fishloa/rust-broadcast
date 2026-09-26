@@ -71,4 +71,21 @@ pub enum Error {
     /// (see `broadcast_common::len`, #1129).
     #[error(transparent)]
     FieldOverflow(#[from] broadcast_common::len::FieldOverflow),
+
+    /// `Section::payload` did not match what `section_length` implies (see
+    /// `Section::serialize_into`, #1074 W5). Serializing a hand-built
+    /// `Section` whose fields disagree used to index past `serialized_len()`
+    /// and panic (or write the CRC over payload bytes) instead of erroring.
+    #[error(
+        "section payload is {actual} bytes but section_length ({section_length}) implies {expected}"
+    )]
+    SectionPayloadLengthMismatch {
+        /// `section_length` field the caller set.
+        section_length: u16,
+        /// Payload length `section_length` implies (accounting for the
+        /// extension header + CRC on long-form sections).
+        expected: usize,
+        /// Actual `payload.len()`.
+        actual: usize,
+    },
 }

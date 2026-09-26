@@ -25,6 +25,44 @@
   continuity counter), so two tables on a shared PID stay CC-continuous
   (#1000). Verified against TSDuck's own `tsp -P tables`/`tsanalyze`
   (`mpeg-ts/tests/tsduck_simux_oracle.rs`).
+- `SectionPacketiser::packetise_into` could set PUSI=1 with `pointer_field ==
+  183` when a section's tail exactly filled a packet's PUSI payload capacity
+  — a pointer past the packet's own payload, wrongly claiming a section
+  starts within it (H.222.0 §2.4.4). A related bound was also missing: a
+  non-PUSI continuation packet at the same boundary could copy one byte past
+  the next section's start, which the reassembler then silently dropped,
+  corrupting that next section (#1074).
+- `Section::serialize_into` indexed its output buffer by `payload.len()`
+  while sizing it from the independently-settable `section_length` field;
+  a hand-edited `Section` whose two disagreed could panic with an
+  out-of-bounds slice index (oversized payload) or silently emit a
+  short/misframed section with a wrong CRC (undersized payload). Now
+  validated up front and rejected with a new `Error::SectionPayloadLengthMismatch`
+  (#1074).
+- `TsPacket::parse` silently `.min()`-truncated an adaptation field whose
+  declared `adaptation_field_length` didn't fit the packet, while
+  `OwnedTsPacket::adaptation_field` already rejected the same bytes as
+  `None` — two views of one wire format disagreeing on a malformed AF.
+  `TsPacket::parse` now also rejects it (#1074).
+- `OwnedTsPacket::set_pcr` only checked `adaptation_field_length >= 1`
+  (room for the flags byte), not `>= 1 + 6` (room for the PCR itself); a
+  malformed adaptation field with the PCR flag set but too short a declared
+  length let it write 6 PCR bytes at a fixed offset, spilling past the
+  declared adaptation field into the payload. Now requires
+  `adaptation_field_length >= 7` (#1074).
+
+### Changed
+- `mux::split_sections`, `SectionReassembler`'s two internal section-length
+  reads, and `Section::parse` shared one duplicated 12-bit `section_length`
+  decode; extracted to a single `ts::section_total_len` helper (#1074).
+- `extract_ts_payload` re-implemented the adaptation-field-skip walk that
+  `TsPacket::parse` already does, with its own `adaptation_field_control`
+  bit mask; both now share one `adaptation_field_skip` helper, and
+  `extract_ts_payload` reuses `TsHeader::parse` instead of re-deriving the
+  flag bits from the raw header byte (#1074).
+- Named several bit-field masks in `section.rs`'s and `ts.rs`'s
+  adaptation-field-extension code that were previously inline hex literals
+  (#1074).
 
 ## [0.4.1] - 2026-09-26
 

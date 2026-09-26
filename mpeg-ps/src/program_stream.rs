@@ -12,34 +12,36 @@ use broadcast_common::{Parse, Serialize};
 
 use crate::Result;
 use crate::pack_header::{PACK_START_CODE, PackHeader};
-use crate::system_header::{SYSTEM_HEADER_START_CODE, SystemHeader};
+use crate::program_stream_map::{MAP_STREAM_ID, ProgramStreamMap};
+use crate::system_header::{
+    PREFIX_LEN as SYSTEM_HEADER_PREFIX_LEN, SYSTEM_HEADER_START_CODE, SystemHeader,
+};
 
 /// `MPEG_program_end_code` — `0x000001B9`.
 const PROGRAM_END_CODE: u32 = 0x0000_01B9;
 
 /// A single pack within a Program Stream: a `pack_header()`, optionally a
-/// `system_header()`, followed by zero or more PES packets.
+/// `system_header()`, an optional Program Stream Map, and zero or more PES
+/// packets.
 #[derive(Debug, Clone)]
 pub struct Pack<'a> {
     /// The pack header (SCR, program_mux_rate, stuffing).
     pub pack_header: PackHeader<'a>,
     /// The optional system header (only in the first pack of a compliant stream).
     pub system_header: Option<SystemHeader>,
-    /// Parsed PES packets within this pack.
+    /// The Program Stream Map (`stream_id 0xBC`), if one appears in this
+    /// pack — `stream_type → elementary_stream_id` mapping (Table 2-41). If
+    /// more than one PSM packet appears (a version-change re-announcement),
+    /// this holds the last one.
+    ///
+    /// W5 (#1119): PSM packets used to be handed to `mpeg_pes::PesPacket::parse`
+    /// like any other PES and returned as an opaque, un-mapped PES packet —
+    /// so a consumer had no way to learn `stream_type` per elementary
+    /// stream and had to guess the codec from `stream_id` alone.
+    pub psm: Option<ProgramStreamMap<'a>>,
+    /// Parsed PES packets within this pack (PSM packets are not included
+    /// here — see [`psm`](Self::psm)).
     pub pes_packets: Vec<mpeg_pes::PesPacket<'a>>,
-}
-
-/// Scans forward for the next pack_start_code or program_end_code boundary.
-fn find_next_boundary(b: &[u8], from: usize) -> Option<usize> {
-    let mut i = from;
-    while i + 4 <= b.len() {
-        let word = u32::from_be_bytes([b[i], b[i + 1], b[i + 2], b[i + 3]]);
-        if word == PACK_START_CODE || word == PROGRAM_END_CODE {
-            return Some(i);
-        }
-        i += 1;
-    }
-    None
 }
 
 /// Parses a single pack from the start of `b`.
@@ -67,57 +69,97 @@ pub fn parse_pack(b: &[u8]) -> Result<(Option<Pack<'_>>, usize)> {
     let hdr_len = pack_header.header_len();
     let rest = &b[hdr_len..];
 
-    // Find the next pack boundary or end_code to limit PES parsing
-    let boundary = find_next_boundary(rest, 0);
-
     // Check for optional system header (before any PES)
-    let (system_header, pes_start, _sh_len) = if rest.len() >= 4 {
+    let (system_header, pes_start) = if rest.len() >= 4 {
         let maybe_sh = u32::from_be_bytes([rest[0], rest[1], rest[2], rest[3]]);
         if maybe_sh == SYSTEM_HEADER_START_CODE {
             let sh = SystemHeader::parse(rest)?;
-            let slen = sh.serialized_len();
-            (Some(sh), slen, slen)
+            // W2 (#1119): PES data starts after the *wire* `header_length`
+            // (Table 2-40), not after however many bytes the re-serialized
+            // stream-bound loop happens to occupy. A conformant
+            // `header_length` may declare trailing bytes past the loop
+            // (the loop ends at the first byte whose MSB is 0, which the
+            // encoder is free to pad with reserved bytes); starting PES
+            // parsing early there feeds PES data into the system-header
+            // parser's leftover bytes instead.
+            let header_length = u16::from_be_bytes([rest[4], rest[5]]) as usize;
+            (Some(sh), SYSTEM_HEADER_PREFIX_LEN + header_length)
         } else {
-            (None, 0, 0)
+            (None, 0)
         }
     } else {
-        (None, 0, 0)
+        (None, 0)
     };
 
     let pes_data = &rest[pes_start..];
-    // `boundary` is an offset within `rest`; convert to an offset within `pes_data`.
-    // If the boundary falls at or before `pes_start` (e.g. a new pack_start_code that
-    // appears inside what we parsed as a system-header), clamp to 0 so we yield no PES
-    // data rather than underflowing.
-    let pes_end = boundary.map_or(pes_data.len(), |b| {
-        b.saturating_sub(pes_start).min(pes_data.len())
-    });
+    let (pes_packets, psm, pes_consumed) = parse_pes_loop(pes_data)?;
 
-    // Parse PES packets up to the boundary
-    let (pes_packets, _pes_consumed) = parse_pes_loop(&pes_data[..pes_end])?;
-
-    let consumed = hdr_len + pes_start + _pes_consumed;
+    let consumed = hdr_len + pes_start + pes_consumed;
     Ok((
         Some(Pack {
             pack_header,
             system_header,
+            psm,
             pes_packets,
         }),
         consumed,
     ))
 }
 
-fn parse_pes_loop(data: &[u8]) -> Result<(Vec<mpeg_pes::PesPacket<'_>>, usize)> {
+/// Parse PES packets from `data` until a `pack_start_code`/`program_end_code`
+/// or non-PES-start bytes are found — always checked exactly at the boundary
+/// right after a previously-consumed *whole* PES packet, never scanned for
+/// mid-payload.
+///
+/// W3 (#1119): the caller used to pre-scan the whole buffer byte-by-byte for
+/// the next `000001BA`/`000001B9`, including inside PES payloads. Several
+/// private/audio stream types (AC-3, LPCM, DVD subpictures carried as
+/// `private_stream_1`) are not start-code-emulation-free, so a chance
+/// `00 00 01 BA` inside real payload bytes truncated the PES loop early,
+/// leaving the last real PES packet's tail unparsed and the whole pack
+/// (and, via `parse_all_packs`, the whole stream) rejected with a spurious
+/// `BufferTooShort`/`Err`. Checking for the boundary only right after a
+/// fully-parsed PES packet (by its own declared `PES_packet_length`) cannot
+/// see mid-payload emulation at all.
+fn parse_pes_loop(
+    data: &[u8],
+) -> Result<(
+    Vec<mpeg_pes::PesPacket<'_>>,
+    Option<ProgramStreamMap<'_>>,
+    usize,
+)> {
     use crate::error::Error;
 
     let mut packets = Vec::new();
+    let mut psm = None;
     let mut pos = 0;
 
-    while pos + 6 <= data.len()
-        && data[pos] == 0x00
-        && data[pos + 1] == 0x00
-        && data[pos + 2] == 0x01
-    {
+    loop {
+        if pos + 4 <= data.len() {
+            let word = u32::from_be_bytes([data[pos], data[pos + 1], data[pos + 2], data[pos + 3]]);
+            if word == PACK_START_CODE || word == PROGRAM_END_CODE {
+                break;
+            }
+        }
+        if !(pos + 6 <= data.len()
+            && data[pos] == 0x00
+            && data[pos + 1] == 0x00
+            && data[pos + 2] == 0x01)
+        {
+            break;
+        }
+        // W5 (#1119): a Program Stream Map (`stream_id 0xBC`) is a distinct
+        // self-delimiting structure (Table 2-41, with its own CRC-32
+        // trailer, not a `PES_packet_length`) — route it to
+        // `ProgramStreamMap::parse` instead of `mpeg_pes::PesPacket::parse`,
+        // which had no way to make sense of its layout and returned it as
+        // an opaque, un-mapped PES packet.
+        if data[pos + 3] == MAP_STREAM_ID {
+            let map = ProgramStreamMap::parse(&data[pos..])?;
+            pos += map.serialized_len();
+            psm = Some(map);
+            continue;
+        }
         match mpeg_pes::PesPacket::parse(&data[pos..]) {
             Ok(pkt) => {
                 let pkt_len = pkt.serialized_len();
@@ -128,7 +170,7 @@ fn parse_pes_loop(data: &[u8]) -> Result<(Vec<mpeg_pes::PesPacket<'_>>, usize)> 
         }
     }
 
-    Ok((packets, pos))
+    Ok((packets, psm, pos))
 }
 
 /// Iterate over all packs in a Program Stream buffer.
@@ -157,6 +199,120 @@ pub fn parse_all_packs(b: &[u8]) -> Result<(Vec<Pack<'_>>, &[u8])> {
 #[cfg(test)]
 mod tests {
     use super::parse_pack;
+    use crate::program_stream_map::{EsMapEntry, ProgramStreamMap};
+    use alloc::{vec, vec::Vec};
+    use broadcast_common::Serialize;
+
+    /// W5 (#1119): a PSM (`stream_id 0xBC`) within a pack must be surfaced
+    /// via `Pack::psm`, typed (`stream_type` per elementary stream), not
+    /// folded into `pes_packets` as an opaque, un-mapped PES packet.
+    #[test]
+    fn psm_is_surfaced_not_folded_into_pes_packets() {
+        let psm = ProgramStreamMap {
+            current_next_indicator: true,
+            single_extension_stream_flag: false,
+            version: 1,
+            program_stream_info: &[],
+            elementary_stream_map: vec![EsMapEntry {
+                stream_type: 0x02, // MPEG-2 video
+                elementary_stream_id: 0xE0,
+                stream_id_extension: None,
+                descriptors: &[],
+            }],
+            crc: 0,
+        };
+        let mut psm_bytes = vec![0u8; psm.serialized_len()];
+        psm.serialize_into(&mut psm_bytes).unwrap();
+
+        let mut b: Vec<u8> = vec![
+            0x00, 0x00, 0x01, 0xBA, 0x44, 0x00, 0x04, 0x00, 0x04, 0x01, 0x43, 0x36, 0x3B, 0xF8,
+        ];
+        b.extend_from_slice(&psm_bytes);
+        // One PES packet after the PSM.
+        b.extend_from_slice(&[
+            0x00, 0x00, 0x01, 0xE0, 0x00, 0x0A, 0x80, 0x80, 0x05, 0x21, 0x00, 0x01, 0x00, 0x01,
+            0xAA, 0xBB,
+        ]);
+
+        let (pack_opt, consumed) = parse_pack(&b).unwrap();
+        let pack = pack_opt.expect("not an end code");
+        let parsed_psm = pack.psm.expect("PSM must be surfaced on Pack::psm");
+        assert_eq!(parsed_psm.elementary_stream_map.len(), 1);
+        assert_eq!(parsed_psm.elementary_stream_map[0].stream_type, 0x02);
+        assert_eq!(
+            pack.pes_packets.len(),
+            1,
+            "the PSM must not appear (again, mis-typed) in pes_packets"
+        );
+        assert_eq!(consumed, b.len());
+    }
+
+    /// W2 (#1119): PES data must start after the system header's *wire*
+    /// `header_length` (Table 2-40), not after its re-serialized length.
+    /// A `header_length` of 8 (6-byte fixed body + 2 reserved padding bytes,
+    /// both MSB=0 so the `while (nextbits()=='1')` stream-bound loop parses
+    /// 0 entries) is 2 bytes longer than the 6-byte fixed body the loop
+    /// itself accounts for — the re-serialized length was used instead,
+    /// starting PES parsing 2 bytes early, inside the declared header.
+    #[test]
+    fn system_header_wire_length_used_for_pes_start_not_reserialized_length() {
+        // Pack header, byte-identical to `pack_header::pack_header_round_trip_fixture_pattern`
+        // (14 bytes, stuffing_length=0).
+        let mut b: Vec<u8> = vec![
+            0x00, 0x00, 0x01, 0xBA, 0x44, 0x00, 0x04, 0x00, 0x04, 0x01, 0x43, 0x36, 0x3B, 0xF8,
+        ];
+        // System header: header_length = 8 (2 bytes more than the 6-byte
+        // fixed body its own loop consumes).
+        b.extend_from_slice(&[
+            0x00, 0x00, 0x01, 0xBB, // system_header_start_code
+            0x00, 0x08, // header_length = 8
+            0x80, 0x00, 0x01, 0x00, 0x20, 0x00, // 6-byte fixed body, 0 stream bounds
+            0x00, 0x00, // 2 reserved padding bytes (MSB=0)
+        ]);
+        // A minimal PES packet (stream_id 0xE0, PES_packet_length=0x0A, PTS-only, 2 payload bytes).
+        b.extend_from_slice(&[
+            0x00, 0x00, 0x01, 0xE0, 0x00, 0x0A, 0x80, 0x80, 0x05, 0x21, 0x00, 0x01, 0x00, 0x01,
+            0xAA, 0xBB,
+        ]);
+
+        let (pack_opt, consumed) = parse_pack(&b).unwrap();
+        let pack = pack_opt.expect("not an end code");
+        assert!(pack.system_header.is_some());
+        assert_eq!(
+            pack.pes_packets.len(),
+            1,
+            "PES must be found starting after the full declared header_length"
+        );
+        assert_eq!(consumed, b.len());
+    }
+
+    /// W3 (#1119): a stray `000001BA` inside a PES packet's own (declared,
+    /// bounded) payload must not truncate the pack — `pack_start_code`/
+    /// `program_end_code` are only ever checked right after a fully-parsed
+    /// PES packet, never scanned for mid-payload.
+    #[test]
+    fn stray_pack_start_code_inside_pes_payload_does_not_truncate() {
+        let mut b: Vec<u8> = vec![
+            0x00, 0x00, 0x01, 0xBA, 0x44, 0x00, 0x04, 0x00, 0x04, 0x01, 0x43, 0x36, 0x3B, 0xF8,
+        ];
+        // One PES packet, PES_packet_length=0x0E (14): flags(2)+hdl(1)+PTS(5)+
+        // payload(6), where the payload embeds a stray `00 00 01 BA` at its
+        // midpoint — plausible in start-code-emulation-bearing streams (AC-3,
+        // LPCM, DVD subpicture `private_stream_1`).
+        b.extend_from_slice(&[
+            0x00, 0x00, 0x01, 0xE0, 0x00, 0x0E, 0x80, 0x80, 0x05, 0x21, 0x00, 0x01, 0x00, 0x01,
+            0xAA, 0x00, 0x00, 0x01, 0xBA, 0xBB,
+        ]);
+
+        let (pack_opt, consumed) = parse_pack(&b).unwrap();
+        let pack = pack_opt.expect("not an end code");
+        assert_eq!(
+            pack.pes_packets.len(),
+            1,
+            "the one PES packet must parse in full, not truncate at the embedded 000001BA"
+        );
+        assert_eq!(consumed, b.len(), "the whole PES packet must be consumed");
+    }
 
     /// Regression: a system_header whose serialized length (`pes_start`) is
     /// greater than the offset of the next boundary found in `rest` caused

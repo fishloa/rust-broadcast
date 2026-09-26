@@ -139,8 +139,22 @@ impl Serialize for PackHeader<'_> {
         // byte 13: reserved(5) + stuffing(3)
         buf[13] = (self.reserved & 0x1F) << 3 | (self.stuffing_length & 0x07);
 
-        // stuffing bytes
-        buf[FIXED_LEN..len].fill(0xFF);
+        // stuffing bytes: `stuffing_byte` is spec-fixed `0xFF` (Table 2-39),
+        // but parse does not reject a non-conformant value (it stores
+        // whatever bytes are present in `self.stuffing`) — write them back
+        // verbatim rather than always `0xFF`, so a hand-built or
+        // non-strictly-conformant-but-parseable `PackHeader` still
+        // round-trips byte-identically (#1119 W8). `stuffing_length` and
+        // `stuffing` are independently-settable public fields; validate they
+        // agree before indexing by one and copying a slice sized by the
+        // other.
+        if self.stuffing.len() != self.stuffing_length as usize {
+            return Err(Error::StuffingLengthMismatch {
+                declared: self.stuffing_length,
+                actual: self.stuffing.len(),
+            });
+        }
+        buf[FIXED_LEN..len].copy_from_slice(self.stuffing);
 
         Ok(len)
     }
@@ -241,5 +255,48 @@ mod tests {
         let mut out = vec![0u8; h.serialized_len()];
         h.serialize_into(&mut out).unwrap();
         assert_eq!(&out[..], &b[..]);
+    }
+
+    /// W8 (#1119): serialize used to always write stuffing bytes as `0xFF`
+    /// regardless of `self.stuffing`, even though `parse` already captured
+    /// the actual bytes present. Non-`0xFF` stuffing (non-conformant to the
+    /// spec's fixed `stuffing_byte`, but not rejected by `parse` either)
+    /// must still round-trip byte-identically.
+    #[test]
+    fn non_0xff_stuffing_round_trips_byte_identically() {
+        let bytes = vec![
+            0x00, 0x00, 0x01, 0xBA, 0x44, 0x00, 0x04, 0x00, 0x04, 0x01, 0x00, 0x01, 0x0F,
+            0x03, // reserved=0, stuffing_length=3
+            0xAB, 0xCD, 0xEF, // non-0xFF stuffing
+        ];
+        let h = PackHeader::parse(&bytes).unwrap();
+        assert_eq!(h.stuffing, &[0xAB, 0xCD, 0xEF]);
+
+        let mut out = vec![0u8; h.serialized_len()];
+        h.serialize_into(&mut out).unwrap();
+        assert_eq!(&out[..], &bytes[..]);
+    }
+
+    /// W8 (#1119): `stuffing_length` and `stuffing` are independently
+    /// settable public fields; serialize must reject a mismatch rather than
+    /// panic on the length-mismatched `copy_from_slice`.
+    #[test]
+    fn serialize_rejects_stuffing_length_mismatch() {
+        let bytes = vec![
+            0x00, 0x00, 0x01, 0xBA, 0x44, 0x00, 0x04, 0x00, 0x04, 0x01, 0x00, 0x01, 0x0F, 0x03,
+            0xFF, 0xFF, 0xFF,
+        ];
+        let mut h = PackHeader::parse(&bytes).unwrap();
+        h.stuffing = &[0xFF, 0xFF]; // 2 bytes, but stuffing_length still says 3
+
+        let mut out = vec![0u8; h.serialized_len()];
+        let err = h.serialize_into(&mut out).unwrap_err();
+        assert!(matches!(
+            err,
+            Error::StuffingLengthMismatch {
+                declared: 3,
+                actual: 2
+            }
+        ));
     }
 }
