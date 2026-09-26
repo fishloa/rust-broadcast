@@ -1,6 +1,6 @@
 [package]
 name         = "rist-runtime"
-version      = "0.1.1"
+version      = "0.2.0"
 edition      = "2024"
 description  = "RIST Simple Profile (VSF TR-06-1:2020) RTCP message types: Generic NACK (RFC 4585), Range NACK, RTT Echo, and compound packet builders."
 license      = "MIT OR Apache-2.0"

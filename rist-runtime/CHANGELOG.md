@@ -4,6 +4,11 @@ All notable changes to this crate will be documented in this file.
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-09-26
+
+### Security
+Fixes GHSA-w4f3-953h-6jfm, GHSA-q5vp-jg67-2xp9.
+
 ### Changed (breaking)
 - `arq::Sender::on_range_nack`/`on_generic_nack` now take an additional
   `now: Duration` parameter (matching how the rest of this sans-IO crate
