@@ -1,6 +1,6 @@
 [package]
 name    = "ttml-subtitle"
-version = "0.2.0"
+version = "0.2.1"
 edition = "2024"
 description = "TTML2 / IMSC 1.1 timed-text subtitle parser — W3C TTML2 + IMSC 1.1 profile validation."
 license      = "MIT OR Apache-2.0"

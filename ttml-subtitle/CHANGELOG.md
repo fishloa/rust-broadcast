@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-09-26
+
+### Security
+Fixes GHSA-9gp9-h275-mjjh.
+
+### Fixed
+- `parse_span_element` and `parse_metadata_element` now enforce a maximum nesting depth of 64 levels to prevent stack overflow on deeply nested span/metadata elements.
+- `Document::to_xml` no longer recurses per nesting level when serializing `<span>`/`<metadata>`/`<ebuttm:documentMetadata>` trees (and the namespace-usage scan that runs before it), so a document built directly through the struct API with very deep nesting no longer overflows the stack. Output is unchanged for all existing documents.
+
 ## [0.2.0] - 2026-08-11
 
 ### Changed

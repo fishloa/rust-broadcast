@@ -50,6 +50,11 @@ pub const NS_SMPTE: &str = "http://www.smpte-ra.org/schemas/2052-1/2010/smpte-tt
 /// XML namespace: `http://www.w3.org/XML/1998/namespace`
 pub const NS_XML: &str = "http://www.w3.org/XML/1998/namespace";
 
+// ─── Nesting limits ────────────────────────────────────────────────
+
+/// Maximum nesting depth for span/metadata elements to prevent stack overflow.
+const MAX_NESTING_DEPTH: usize = 64;
+
 // ─── IMSC Profile Designators ──────────────────────────────────────
 
 /// IMSC 1.1 Text Profile designator — IMSC 1.1 §8.1.
@@ -1387,6 +1392,17 @@ fn parse_p_element(node: roxmltree::Node<'_, '_>) -> Result<PElement> {
 }
 
 fn parse_span_element(node: roxmltree::Node<'_, '_>) -> Result<SpanElement> {
+    parse_span_element_impl(node, 0)
+}
+
+fn parse_span_element_impl(node: roxmltree::Node<'_, '_>, depth: usize) -> Result<SpanElement> {
+    if depth >= MAX_NESTING_DEPTH {
+        return Err(Error::ConstraintViolation {
+            constraint: "Span nesting depth limit".to_string(),
+            detail: "Span element nesting exceeds maximum depth of 64".to_string(),
+        });
+    }
+
     let mut content: Vec<InlineContent> = Vec::new();
     let mut metadata = Vec::new();
     let mut animations = Vec::new();
@@ -1409,13 +1425,19 @@ fn parse_span_element(node: roxmltree::Node<'_, '_>) -> Result<SpanElement> {
 
             match (name, ns) {
                 ("span", Some(NS_TT)) => {
-                    content.push(InlineContent::Span(Box::new(parse_span_element(child)?)));
+                    content.push(InlineContent::Span(Box::new(parse_span_element_impl(
+                        child,
+                        depth + 1,
+                    )?)));
                 }
                 ("br", Some(NS_TT)) => {
                     content.push(InlineContent::Br(Box::new(parse_br_element(child)?)));
                 }
                 ("metadata", Some(NS_TT)) => {
-                    metadata.push(MetadataChild::Metadata(parse_metadata_element(child)?));
+                    metadata.push(MetadataChild::Metadata(parse_metadata_element_impl(
+                        child,
+                        depth + 1,
+                    )?));
                 }
                 ("set", Some(NS_TT)) => {
                     animations.push(AnimationChild::Set(parse_set_element(child)?));
@@ -1522,6 +1544,20 @@ fn parse_image_element(node: roxmltree::Node<'_, '_>) -> Result<ImageElement> {
 }
 
 fn parse_metadata_element(node: roxmltree::Node<'_, '_>) -> Result<MetadataElement> {
+    parse_metadata_element_impl(node, 0)
+}
+
+fn parse_metadata_element_impl(
+    node: roxmltree::Node<'_, '_>,
+    depth: usize,
+) -> Result<MetadataElement> {
+    if depth >= MAX_NESTING_DEPTH {
+        return Err(Error::ConstraintViolation {
+            constraint: "Metadata nesting depth limit".to_string(),
+            detail: "Metadata element nesting exceeds maximum depth of 64".to_string(),
+        });
+    }
+
     let mut children = Vec::new();
 
     for child in node.children() {
@@ -1533,7 +1569,10 @@ fn parse_metadata_element(node: roxmltree::Node<'_, '_>) -> Result<MetadataEleme
 
         match (name, ns) {
             ("metadata", Some(NS_TT)) => {
-                children.push(MetadataChild::Metadata(parse_metadata_element(child)?));
+                children.push(MetadataChild::Metadata(parse_metadata_element_impl(
+                    child,
+                    depth + 1,
+                )?));
             }
             ("title", Some(NS_TTM)) => {
                 children.push(MetadataChild::TtmTitle(parse_ttm_text(child)?));
@@ -2011,53 +2050,62 @@ fn div_ns_needed(div: &DivElement, ns: &str) -> bool {
 }
 
 fn inline_ns_needed(item: &InlineContent, ns: &str) -> bool {
-    match item {
-        InlineContent::Text(_) => false,
-        InlineContent::Span(span) => {
-            if style_ns_needed(&span.style_attributes, ns) {
-                return true;
-            }
-            for (an, _) in span.other_attributes.keys() {
-                if an == ns {
+    // Iterative (explicit stack), not recursive: a `<span>` chain built via
+    // the struct API can nest far deeper than `MAX_NESTING_DEPTH` (which only
+    // bounds `Document::parse_str`), and this walks every level.
+    let mut stack: Vec<&InlineContent> = alloc::vec![item];
+    while let Some(item) = stack.pop() {
+        match item {
+            InlineContent::Text(_) => {}
+            InlineContent::Span(span) => {
+                if style_ns_needed(&span.style_attributes, ns) {
                     return true;
                 }
-            }
-            for child in &span.content {
-                if inline_ns_needed(child, ns) {
-                    return true;
+                for (an, _) in span.other_attributes.keys() {
+                    if an == ns {
+                        return true;
+                    }
+                }
+                for child in &span.content {
+                    stack.push(child);
                 }
             }
-            false
+            InlineContent::Br(_) => {}
         }
-        InlineContent::Br(_) => false,
     }
+    false
 }
 
 fn meta_ns_needed(meta: &MetadataChild, ns: &str) -> bool {
-    match meta {
-        MetadataChild::Metadata(m) => {
-            for c in &m.children {
-                if meta_ns_needed(c, ns) {
-                    return true;
+    // Iterative (explicit stack) for the same reason as `inline_ns_needed`:
+    // `<metadata>`/`<ebuttm:documentMetadata>` nesting is unbounded once
+    // built through the struct API.
+    let mut stack: Vec<&MetadataChild> = alloc::vec![meta];
+    while let Some(meta) = stack.pop() {
+        match meta {
+            MetadataChild::Metadata(m) => {
+                for c in &m.children {
+                    stack.push(c);
                 }
             }
-            false
-        }
-        MetadataChild::EbuttmDocumentMetadata(eb) => {
-            if ns == NS_EBUTTM {
+            MetadataChild::EbuttmDocumentMetadata(eb) => {
+                if ns == NS_EBUTTM {
+                    return true;
+                }
+                for c in &eb.children {
+                    stack.push(c);
+                }
+            }
+            MetadataChild::EbuttmConformsToStandard(_) if ns == NS_EBUTTM => {
                 return true;
             }
-            for c in &eb.children {
-                if meta_ns_needed(c, ns) {
-                    return true;
-                }
+            MetadataChild::IttmAltText(_) if ns == NS_ITTM => {
+                return true;
             }
-            false
+            _ => {}
         }
-        MetadataChild::EbuttmConformsToStandard(_) => ns == NS_EBUTTM,
-        MetadataChild::IttmAltText(_) => ns == NS_ITTM,
-        _ => false,
     }
+    false
 }
 
 fn style_ns_needed(attrs: &StyleAttributes, ns: &str) -> bool {
@@ -2281,38 +2329,53 @@ fn serialize_p_element(p: &PElement, buf: &mut String, indent: usize) {
 }
 
 fn serialize_inline_content(content: &InlineContent, buf: &mut String) {
-    match content {
-        InlineContent::Text(text) => {
-            buf.push_str(&xml_escape(text));
-        }
-        InlineContent::Span(span) => {
-            buf.push_str("<span");
-            serialize_common_timing_attrs(
-                buf,
-                span.begin.as_deref(),
-                span.dur.as_deref(),
-                span.end.as_deref(),
-                span.time_container.as_deref(),
-            );
-            serialize_opt_attr(buf, "region", &span.region);
-            serialize_opt_attr(buf, "style", &span.style);
-            serialize_opt_attr(buf, "animate", &span.animate);
-            serialize_style_attrs(&span.style_attributes, buf);
-            serialize_opt_attr(buf, "xml:id", &span.xml_id);
-            serialize_opt_attr(buf, "xml:lang", &span.xml_lang);
+    // Iterative (explicit stack), not recursive: a `<span>` chain built via
+    // the struct API can nest far deeper than `MAX_NESTING_DEPTH` (which only
+    // bounds `Document::parse_str`), and a recursive walk of it would
+    // overflow the stack.
+    enum Frame<'a> {
+        Node(&'a InlineContent),
+        CloseSpan,
+    }
 
-            if span.content.is_empty() {
-                buf.push_str("/>");
-            } else {
-                buf.push('>');
-                for item in &span.content {
-                    serialize_inline_content(item, buf);
+    let mut stack: Vec<Frame> = alloc::vec![Frame::Node(content)];
+    while let Some(frame) = stack.pop() {
+        match frame {
+            Frame::Node(InlineContent::Text(text)) => {
+                buf.push_str(&xml_escape(text));
+            }
+            Frame::Node(InlineContent::Span(span)) => {
+                buf.push_str("<span");
+                serialize_common_timing_attrs(
+                    buf,
+                    span.begin.as_deref(),
+                    span.dur.as_deref(),
+                    span.end.as_deref(),
+                    span.time_container.as_deref(),
+                );
+                serialize_opt_attr(buf, "region", &span.region);
+                serialize_opt_attr(buf, "style", &span.style);
+                serialize_opt_attr(buf, "animate", &span.animate);
+                serialize_style_attrs(&span.style_attributes, buf);
+                serialize_opt_attr(buf, "xml:id", &span.xml_id);
+                serialize_opt_attr(buf, "xml:lang", &span.xml_lang);
+
+                if span.content.is_empty() {
+                    buf.push_str("/>");
+                } else {
+                    buf.push('>');
+                    stack.push(Frame::CloseSpan);
+                    for item in span.content.iter().rev() {
+                        stack.push(Frame::Node(item));
+                    }
                 }
+            }
+            Frame::Node(InlineContent::Br(_br)) => {
+                buf.push_str("<br/>");
+            }
+            Frame::CloseSpan => {
                 buf.push_str("</span>");
             }
-        }
-        InlineContent::Br(_br) => {
-            buf.push_str("<br/>");
         }
     }
 }
@@ -2353,79 +2416,109 @@ fn serialize_image_element(image: &ImageElement, buf: &mut String, indent: usize
 }
 
 fn serialize_metadata_child(child: &MetadataChild, buf: &mut String, indent: usize) {
-    let ind = "  ".repeat(indent);
-    match child {
-        MetadataChild::Metadata(m) => {
-            buf.push_str(&format!("{}<metadata>\n", ind));
-            for c in &m.children {
-                serialize_metadata_child(c, buf, indent + 1);
+    // Iterative (explicit stack), not recursive: `<metadata>` and
+    // `<ebuttm:documentMetadata>` can nest far deeper than
+    // `MAX_NESTING_DEPTH` (which only bounds `Document::parse_str`) when
+    // built via the struct API, and a recursive walk of it would overflow
+    // the stack.
+    enum Frame<'a> {
+        Node(&'a MetadataChild, usize),
+        CloseMetadata(usize),
+        CloseEbuttm(usize),
+    }
+
+    let mut stack: Vec<Frame> = alloc::vec![Frame::Node(child, indent)];
+    while let Some(frame) = stack.pop() {
+        match frame {
+            Frame::Node(MetadataChild::Metadata(m), depth) => {
+                let ind = "  ".repeat(depth);
+                buf.push_str(&format!("{}<metadata>\n", ind));
+                stack.push(Frame::CloseMetadata(depth));
+                for c in m.children.iter().rev() {
+                    stack.push(Frame::Node(c, depth + 1));
+                }
             }
-            buf.push_str(&format!("{}</metadata>\n", ind));
-        }
-        MetadataChild::TtmTitle(t) => {
-            buf.push_str(&format!(
-                "{}<ttm:title>{}</ttm:title>\n",
-                ind,
-                xml_escape(&t.text)
-            ));
-        }
-        MetadataChild::TtmDesc(t) => {
-            buf.push_str(&format!(
-                "{}<ttm:desc>{}</ttm:desc>\n",
-                ind,
-                xml_escape(&t.text)
-            ));
-        }
-        MetadataChild::TtmCopyright(t) => {
-            buf.push_str(&format!(
-                "{}<ttm:copyright>{}</ttm:copyright>\n",
-                ind,
-                xml_escape(&t.text)
-            ));
-        }
-        MetadataChild::TtmAgent(a) => {
-            buf.push_str(&format!("{}<ttm:agent", ind));
-            serialize_opt_attr(buf, "type", &a.type_);
-            buf.push_str(">\n");
-            for name in &a.names {
+            Frame::Node(MetadataChild::TtmTitle(t), depth) => {
+                let ind = "  ".repeat(depth);
                 buf.push_str(&format!(
-                    "{}<ttm:name>{}</ttm:name>\n",
-                    "  ".repeat(indent + 1),
-                    xml_escape(&name.text)
+                    "{}<ttm:title>{}</ttm:title>\n",
+                    ind,
+                    xml_escape(&t.text)
                 ));
             }
-            buf.push_str(&format!("{}</ttm:agent>\n", ind));
-        }
-        MetadataChild::TtmItem(item) => {
-            serialize_ttm_item(item, buf, indent);
-        }
-        MetadataChild::TtmName(n) => {
-            buf.push_str(&format!(
-                "{}<ttm:name>{}</ttm:name>\n",
-                ind,
-                xml_escape(&n.text)
-            ));
-        }
-        MetadataChild::EbuttmDocumentMetadata(eb) => {
-            buf.push_str(&format!("{}<ebuttm:documentMetadata>\n", ind));
-            for c in &eb.children {
-                serialize_metadata_child(c, buf, indent + 1);
+            Frame::Node(MetadataChild::TtmDesc(t), depth) => {
+                let ind = "  ".repeat(depth);
+                buf.push_str(&format!(
+                    "{}<ttm:desc>{}</ttm:desc>\n",
+                    ind,
+                    xml_escape(&t.text)
+                ));
             }
-            buf.push_str(&format!("{}</ebuttm:documentMetadata>\n", ind));
-        }
-        MetadataChild::EbuttmConformsToStandard(cs) => {
-            buf.push_str(&format!(
-                "{}<ebuttm:conformsToStandard>{}</ebuttm:conformsToStandard>\n",
-                ind,
-                xml_escape(&cs.text)
-            ));
-        }
-        MetadataChild::IttmAltText(alt) => {
-            buf.push_str(&format!(
-                "{}<ittm:altText>{}</ittm:altText>\n",
-                ind,
-                xml_escape(&alt.text)
-            ));
+            Frame::Node(MetadataChild::TtmCopyright(t), depth) => {
+                let ind = "  ".repeat(depth);
+                buf.push_str(&format!(
+                    "{}<ttm:copyright>{}</ttm:copyright>\n",
+                    ind,
+                    xml_escape(&t.text)
+                ));
+            }
+            Frame::Node(MetadataChild::TtmAgent(a), depth) => {
+                let ind = "  ".repeat(depth);
+                buf.push_str(&format!("{}<ttm:agent", ind));
+                serialize_opt_attr(buf, "type", &a.type_);
+                buf.push_str(">\n");
+                for name in &a.names {
+                    buf.push_str(&format!(
+                        "{}<ttm:name>{}</ttm:name>\n",
+                        "  ".repeat(depth + 1),
+                        xml_escape(&name.text)
+                    ));
+                }
+                buf.push_str(&format!("{}</ttm:agent>\n", ind));
+            }
+            Frame::Node(MetadataChild::TtmItem(item), depth) => {
+                serialize_ttm_item(item, buf, depth);
+            }
+            Frame::Node(MetadataChild::TtmName(n), depth) => {
+                let ind = "  ".repeat(depth);
+                buf.push_str(&format!(
+                    "{}<ttm:name>{}</ttm:name>\n",
+                    ind,
+                    xml_escape(&n.text)
+                ));
+            }
+            Frame::Node(MetadataChild::EbuttmDocumentMetadata(eb), depth) => {
+                let ind = "  ".repeat(depth);
+                buf.push_str(&format!("{}<ebuttm:documentMetadata>\n", ind));
+                stack.push(Frame::CloseEbuttm(depth));
+                for c in eb.children.iter().rev() {
+                    stack.push(Frame::Node(c, depth + 1));
+                }
+            }
+            Frame::Node(MetadataChild::EbuttmConformsToStandard(cs), depth) => {
+                let ind = "  ".repeat(depth);
+                buf.push_str(&format!(
+                    "{}<ebuttm:conformsToStandard>{}</ebuttm:conformsToStandard>\n",
+                    ind,
+                    xml_escape(&cs.text)
+                ));
+            }
+            Frame::Node(MetadataChild::IttmAltText(alt), depth) => {
+                let ind = "  ".repeat(depth);
+                buf.push_str(&format!(
+                    "{}<ittm:altText>{}</ittm:altText>\n",
+                    ind,
+                    xml_escape(&alt.text)
+                ));
+            }
+            Frame::CloseMetadata(depth) => {
+                let ind = "  ".repeat(depth);
+                buf.push_str(&format!("{}</metadata>\n", ind));
+            }
+            Frame::CloseEbuttm(depth) => {
+                let ind = "  ".repeat(depth);
+                buf.push_str(&format!("{}</ebuttm:documentMetadata>\n", ind));
+            }
         }
     }
 }
@@ -2771,5 +2864,253 @@ fn parse_style_attributes(node: roxmltree::Node<'_, '_>) -> StyleAttributes {
             .map(|s| s.to_string()),
         ebutts_multi_row_align: attribute_value(&node, NS_EBUTTS, "multiRowAlign")
             .map(|s| s.to_string()),
+    }
+}
+
+#[cfg(test)]
+mod serializer_nesting_tests {
+    use super::*;
+
+    /// Build a chain of `depth` nested `<span>` elements around a leaf text
+    /// node, iteratively (no recursion), so the *construction* of the
+    /// fixture never itself risks overflowing the stack.
+    fn build_nested_spans(depth: usize) -> SpanElement {
+        let mut span = SpanElement {
+            content: alloc::vec![InlineContent::Text("leaf".to_string())],
+            ..Default::default()
+        };
+        for _ in 0..depth.saturating_sub(1) {
+            span = SpanElement {
+                content: alloc::vec![InlineContent::Span(Box::new(span))],
+                ..Default::default()
+            };
+        }
+        span
+    }
+
+    fn wrap_in_document(span: SpanElement) -> Document {
+        let p = PElement {
+            content: alloc::vec![InlineContent::Span(Box::new(span))],
+            ..Default::default()
+        };
+        let div = DivElement {
+            paragraphs: alloc::vec![p],
+            ..Default::default()
+        };
+        let body = BodyElement {
+            divs: alloc::vec![div],
+            ..Default::default()
+        };
+        Document {
+            tt: TtElement {
+                body: Some(body),
+                ..Default::default()
+            },
+            xml_declaration: None,
+        }
+    }
+
+    /// A document built directly through the struct API (not via
+    /// `Document::parse_str`, which caps nesting at `MAX_NESTING_DEPTH`) can
+    /// carry spans nested far deeper than any parser would accept. The
+    /// serializer must still not blow the stack on it.
+    #[test]
+    fn serialize_100_000_nested_spans_does_not_overflow() {
+        const DEPTH: usize = 100_000;
+        let doc = wrap_in_document(build_nested_spans(DEPTH));
+        let xml = doc.to_xml();
+        // The compiler-derived `Drop` for a `Box<SpanElement>` chain this deep
+        // recurses just like the old serializer did, and is a separate,
+        // pre-existing issue from the one under test here (serialization);
+        // skip it so this test isolates the serializer's own stack use.
+        core::mem::forget(doc);
+        assert!(xml.starts_with("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"));
+        assert!(xml.trim_end().ends_with("</tt>"));
+        assert_eq!(xml.matches("<span").count(), DEPTH);
+    }
+
+    // ─── Old recursive implementations, kept ONLY to prove the iterative
+    // rewrite above is behaviourally identical on ordinary (shallow) input.
+    // Not used outside these tests, and not shipped in non-test builds.
+
+    fn serialize_inline_content_recursive(content: &InlineContent, buf: &mut String) {
+        match content {
+            InlineContent::Text(text) => {
+                buf.push_str(&xml_escape(text));
+            }
+            InlineContent::Span(span) => {
+                buf.push_str("<span");
+                serialize_common_timing_attrs(
+                    buf,
+                    span.begin.as_deref(),
+                    span.dur.as_deref(),
+                    span.end.as_deref(),
+                    span.time_container.as_deref(),
+                );
+                serialize_opt_attr(buf, "region", &span.region);
+                serialize_opt_attr(buf, "style", &span.style);
+                serialize_opt_attr(buf, "animate", &span.animate);
+                serialize_style_attrs(&span.style_attributes, buf);
+                serialize_opt_attr(buf, "xml:id", &span.xml_id);
+                serialize_opt_attr(buf, "xml:lang", &span.xml_lang);
+
+                if span.content.is_empty() {
+                    buf.push_str("/>");
+                } else {
+                    buf.push('>');
+                    for item in &span.content {
+                        serialize_inline_content_recursive(item, buf);
+                    }
+                    buf.push_str("</span>");
+                }
+            }
+            InlineContent::Br(_br) => {
+                buf.push_str("<br/>");
+            }
+        }
+    }
+
+    fn serialize_metadata_child_recursive(child: &MetadataChild, buf: &mut String, indent: usize) {
+        let ind = "  ".repeat(indent);
+        match child {
+            MetadataChild::Metadata(m) => {
+                buf.push_str(&format!("{}<metadata>\n", ind));
+                for c in &m.children {
+                    serialize_metadata_child_recursive(c, buf, indent + 1);
+                }
+                buf.push_str(&format!("{}</metadata>\n", ind));
+            }
+            MetadataChild::TtmTitle(t) => {
+                buf.push_str(&format!(
+                    "{}<ttm:title>{}</ttm:title>\n",
+                    ind,
+                    xml_escape(&t.text)
+                ));
+            }
+            MetadataChild::TtmDesc(t) => {
+                buf.push_str(&format!(
+                    "{}<ttm:desc>{}</ttm:desc>\n",
+                    ind,
+                    xml_escape(&t.text)
+                ));
+            }
+            MetadataChild::TtmCopyright(t) => {
+                buf.push_str(&format!(
+                    "{}<ttm:copyright>{}</ttm:copyright>\n",
+                    ind,
+                    xml_escape(&t.text)
+                ));
+            }
+            MetadataChild::TtmAgent(a) => {
+                buf.push_str(&format!("{}<ttm:agent", ind));
+                serialize_opt_attr(buf, "type", &a.type_);
+                buf.push_str(">\n");
+                for name in &a.names {
+                    buf.push_str(&format!(
+                        "{}<ttm:name>{}</ttm:name>\n",
+                        "  ".repeat(indent + 1),
+                        xml_escape(&name.text)
+                    ));
+                }
+                buf.push_str(&format!("{}</ttm:agent>\n", ind));
+            }
+            MetadataChild::TtmItem(item) => {
+                serialize_ttm_item(item, buf, indent);
+            }
+            MetadataChild::TtmName(n) => {
+                buf.push_str(&format!(
+                    "{}<ttm:name>{}</ttm:name>\n",
+                    ind,
+                    xml_escape(&n.text)
+                ));
+            }
+            MetadataChild::EbuttmDocumentMetadata(eb) => {
+                buf.push_str(&format!("{}<ebuttm:documentMetadata>\n", ind));
+                for c in &eb.children {
+                    serialize_metadata_child_recursive(c, buf, indent + 1);
+                }
+                buf.push_str(&format!("{}</ebuttm:documentMetadata>\n", ind));
+            }
+            MetadataChild::EbuttmConformsToStandard(cs) => {
+                buf.push_str(&format!(
+                    "{}<ebuttm:conformsToStandard>{}</ebuttm:conformsToStandard>\n",
+                    ind,
+                    xml_escape(&cs.text)
+                ));
+            }
+            MetadataChild::IttmAltText(alt) => {
+                buf.push_str(&format!(
+                    "{}<ittm:altText>{}</ittm:altText>\n",
+                    ind,
+                    xml_escape(&alt.text)
+                ));
+            }
+        }
+    }
+
+    /// For an ordinary, shallowly-nested `<span>` tree (mixing Text/Span/Br,
+    /// including a few levels of nesting), the new iterative walk must
+    /// produce byte-identical output to the old recursive one.
+    #[test]
+    fn iterative_span_serialization_matches_old_recursive_output() {
+        let span = SpanElement {
+            content: alloc::vec![
+                InlineContent::Text("a".to_string()),
+                InlineContent::Span(Box::new(SpanElement {
+                    content: alloc::vec![
+                        InlineContent::Text("b".to_string()),
+                        InlineContent::Br(Box::default()),
+                        InlineContent::Span(Box::new(build_nested_spans(5))),
+                    ],
+                    ..Default::default()
+                })),
+                InlineContent::Text("c".to_string()),
+            ],
+            ..Default::default()
+        };
+        let content = InlineContent::Span(Box::new(span));
+
+        let mut new_buf = String::new();
+        serialize_inline_content(&content, &mut new_buf);
+        let mut old_buf = String::new();
+        serialize_inline_content_recursive(&content, &mut old_buf);
+        assert_eq!(new_buf, old_buf);
+        assert!(!new_buf.is_empty());
+    }
+
+    /// Same equivalence check for `<metadata>`/`<ebuttm:documentMetadata>`
+    /// nesting.
+    #[test]
+    fn iterative_metadata_serialization_matches_old_recursive_output() {
+        let meta = MetadataChild::Metadata(MetadataElement {
+            children: alloc::vec![
+                MetadataChild::TtmTitle(TtmTextElement {
+                    text: "title".to_string(),
+                    ..Default::default()
+                }),
+                MetadataChild::EbuttmDocumentMetadata(EbuttmElement {
+                    children: alloc::vec![MetadataChild::EbuttmConformsToStandard(
+                        EbuttmTextElement {
+                            text: "std".to_string(),
+                        }
+                    )],
+                }),
+                MetadataChild::Metadata(MetadataElement {
+                    children: alloc::vec![MetadataChild::TtmDesc(TtmTextElement {
+                        text: "nested desc".to_string(),
+                        ..Default::default()
+                    })],
+                    ..Default::default()
+                }),
+            ],
+            ..Default::default()
+        });
+
+        let mut new_buf = String::new();
+        serialize_metadata_child(&meta, &mut new_buf, 0);
+        let mut old_buf = String::new();
+        serialize_metadata_child_recursive(&meta, &mut old_buf, 0);
+        assert_eq!(new_buf, old_buf);
+        assert!(!new_buf.is_empty());
     }
 }
