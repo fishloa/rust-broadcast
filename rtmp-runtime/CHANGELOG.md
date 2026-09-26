@@ -6,6 +6,11 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.6.1] - 2026-09-26
+
+### Security
+Fixes GHSA-fjrp-rx2c-c9pw.
+
 ### Fixed
 - `chunk::ChunkAssembler` reassembled a chunked message by cloning the whole
   accumulated payload on every continuation chunk and compacting its input

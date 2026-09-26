@@ -3176,7 +3176,7 @@ dependencies = [
 
 [[package]]
 name = "rtmp-runtime"
-version = "0.6.0"
+version = "0.6.1"
 dependencies = [
  "broadcast-common",
  "log",
