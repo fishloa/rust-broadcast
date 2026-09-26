@@ -124,13 +124,29 @@ pub fn parse_webvtt(input: &str) -> Result<ParsedWebVtt, Error> {
         lines.next();
     }
 
+    // W3C WebVTT SS4.1: the file's optional header text is every line
+    // directly following the signature line up to the first blank line
+    // (e.g. a `Kind:`/`Language:` hint some encoders emit, or any other
+    // free-form header text). This crate's `Cue` model cannot carry it, so
+    // skip whatever is left of the header block here (flagging `lossy`)
+    // instead of letting it fall into the cue-block grouper below, where a
+    // header line that isn't `X-TIMESTAMP-MAP` and doesn't start a
+    // NOTE/STYLE/REGION block was previously misread as a cue identifier
+    // with no timing line after it and failed the *whole* document (issue
+    // #1109, reopens #974).
+    let mut header_lossy = false;
+    while lines.peek().is_some_and(|line| !line.is_empty()) {
+        lines.next();
+        header_lossy = true;
+    }
+
     // Group the remaining lines into blank-line-delimited blocks. This
     // walks `lines()` directly (rather than rejoining collected lines and
     // re-splitting on `"\n\n"`) so a block's position -- first, last, or
     // preceded/followed by any number of blank lines -- never changes how
     // it is delimited.
     let mut cues = Vec::new();
-    let mut lossy = false;
+    let mut lossy = header_lossy;
     let mut current: Vec<&str> = Vec::new();
 
     let mut flush = |current: &mut Vec<&str>| -> Result<(), Error> {

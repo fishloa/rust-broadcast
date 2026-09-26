@@ -4,6 +4,16 @@ All notable changes to this crate. Format: [Keep a Changelog](https://keepachang
 
 ## [Unreleased]
 
+### Fixed
+- **#1109** (reopens #974): `parse_webvtt` failed the *whole document* when
+  the `WEBVTT` header contained any line other than `X-TIMESTAMP-MAP`
+  (e.g. a `Kind:`/`Language:` metadata hint some encoders emit) — the line
+  fell into the cue-block grouper and was misread as a cue identifier with
+  no timing line after it. Now the entire header block (every line
+  directly after the signature up to the first blank line, per W3C WebVTT
+  SS4.1) is skipped and the document is flagged `lossy`, matching how any
+  other unrepresentable construct is already handled.
+
 ## [0.1.1] - 2026-08-30
 
 ### Fixed

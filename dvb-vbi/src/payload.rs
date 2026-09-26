@@ -84,10 +84,13 @@ const MONO_LINE_OFFSET: u8 = 0b0001_1111;
 ///
 /// Note for any caller that *does* decode these bytes against EN 300 706
 /// (e.g. `timed-metadata`'s Teletext extractor): EN 300 706 transmits each
-/// byte LSB-first (§7.1.2/§8.1/§8.2's `bslbf` fields), so each byte here, as
-/// ordinarily assembled MSB-first, is the bit-reversal of the value the EN
-/// 300 706 tables (Hamming-8/4, odd parity, character codes) are written
-/// against — reverse each byte (`u8::reverse_bits`) before applying them.
+/// byte LSB-first (§7.1.2/§8.1/§8.2's `bslbf` fields; carried over DVB per
+/// the EN 300 472 backward-compatible Teletext framing, EN 301 775 §4.10),
+/// so each byte here, as ordinarily assembled MSB-first, is the
+/// bit-reversal of the value the EN 300 706 tables (Hamming-8/4, odd
+/// parity, character codes) are written against. Use
+/// [`txt_data_block_logical`](TeletextDataField::txt_data_block_logical)
+/// to get the bytes in that logical order rather than reversing manually.
 /// [`FRAMING_CODE_EBU`] (`0xE4`) is `reverse_bits(0x27)`, the spec's own
 /// framing_code constant, and is the proof of this wire order.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -120,6 +123,18 @@ impl TeletextDataField {
     /// Bytes this data field occupies (the `data_unit_length`).
     pub fn serialized_len(&self) -> usize {
         TELETEXT_FIELD_LEN
+    }
+
+    /// `txt_data_block` with each byte bit-reversed into EN 300 706's own
+    /// logical bit order (§7.1.2/§8.1/§8.2 — each byte is transmitted
+    /// LSB-first, carried unchanged over DVB per EN 300 472 / EN 301 775
+    /// §4.10). Apply EN 300 706 tables (Hamming-8/4, odd parity, character
+    /// codes) to these bytes, not to [`txt_data_block`](Self::txt_data_block)
+    /// directly. [`FRAMING_CODE_EBU`] (`0xE4`) is `reverse_bits(0x27)`, the
+    /// spec's own framing_code constant, and is the proof of this wire
+    /// order.
+    pub fn txt_data_block_logical(&self) -> [u8; TXT_DATA_BLOCK_LEN] {
+        self.txt_data_block.map(u8::reverse_bits)
     }
 
     /// Parse exactly one Teletext data field from `data` (`data` must be the
@@ -162,6 +177,12 @@ impl TeletextDataField {
 ///
 /// The `vps_data_block` (13 bytes) is bytes 3..=15 of an EN 300 231 VPS line,
 /// excluding the run-in and start-code byte (§4.6.2).
+///
+/// Unlike [`TeletextDataField`], this crate does not vendor EN 300 231 (out
+/// of scope, §4.6.2: "opaque here") and EN 301 775 §4.6.2 itself makes no
+/// bit-order claim beyond "data bits inserted in the order they appear in
+/// the VBI" — so no logical-order accessor is provided; there is no cited
+/// source for a reversal.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct VpsDataField {
@@ -214,6 +235,12 @@ impl VpsDataField {
 /// Byte layout (24 bits): byte0 = shared header, then 14 `wss_data_block` bits
 /// followed by a 2-bit `reserved_future_use` `11` tail. So byte1 holds wss bits
 /// `[13:6]` and byte2 holds wss bits `[5:0]` then the 2-bit RFU tail.
+///
+/// Unlike [`TeletextDataField`], no bit-reversal applies here: EN 301 775
+/// §4.7.2 states "WSS bit 0 corresponds to the left-most bit of
+/// `wss_data_block`, so data bits are inserted in the PES packet in the same
+/// order they appear in the VBI" — `wss_data_block` is already in logical
+/// (EN 300 294) order.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct WssDataField {
@@ -274,6 +301,12 @@ impl WssDataField {
 
 /// Closed Captioning data field — ETSI EN 301 775 §4.8.1, Table 10
 /// (`data_unit_id` `0xC5`).
+///
+/// Unlike [`TeletextDataField`], no bit-reversal applies here: EN 301 775
+/// §4.8.2 states "CC bit b0 of character one corresponds to the left-most
+/// bit of `closed_captioning_data_block`, so data bits are inserted in the
+/// PES packet in the same order they appear in the VBI" — already in
+/// logical (EIA-608) order.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct ClosedCaptioningDataField {
@@ -789,6 +822,49 @@ mod tests {
         expected.extend_from_slice(&block);
         assert_eq!(unit.data_unit_length(), TELETEXT_DATA_UNIT_LENGTH as usize);
         unit_round_trip(&unit, &expected);
+    }
+
+    // Finding VB-W1 (issue #1106): `txt_data_block_logical()` must undo the
+    // EN 300 706 LSB-first wire order. Oracle: the spec's own worked
+    // example, already relied on for `FRAMING_CODE_EBU` — the canonical
+    // EN 300 706 framing_code byte 0x27 is carried on the wire as its
+    // bit-reversal 0xE4.
+    #[test]
+    fn txt_data_block_logical_undoes_lsb_first_wire_order() {
+        assert_eq!(
+            0x27u8.reverse_bits(),
+            FRAMING_CODE_EBU,
+            "spec worked example: 0x27 reversed is the wire's FRAMING_CODE_EBU"
+        );
+
+        let mut block = [0u8; TXT_DATA_BLOCK_LEN];
+        block[0] = 0xE4; // wire byte
+        block[1] = 0x27; // wire byte (bit-reversal of the other's logical value)
+        let field = TeletextDataField {
+            header: LineHeader::new(true, 7),
+            framing_code: FRAMING_CODE_EBU,
+            txt_data_block: block,
+        };
+        let logical = field.txt_data_block_logical();
+        assert_eq!(
+            logical[0], 0x27,
+            "0xE4 wire byte decodes to spec value 0x27"
+        );
+        assert_eq!(
+            logical[1], 0xE4,
+            "0x27 wire byte decodes to spec value 0xE4"
+        );
+
+        // Reversing twice recovers the original wire bytes exactly.
+        let re_wire: [u8; TXT_DATA_BLOCK_LEN] = logical.map(u8::reverse_bits);
+        assert_eq!(
+            re_wire, block,
+            "raw txt_data_block is untouched by the accessor"
+        );
+        assert_eq!(
+            field.txt_data_block, block,
+            "raw wire access still available"
+        );
     }
 
     #[test]

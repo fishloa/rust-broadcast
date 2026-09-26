@@ -4,6 +4,11 @@ All notable changes to this crate. Format: [Keep a Changelog](https://keepachang
 
 ## [Unreleased]
 
+### Changed
+- `webvtt::teletext` now calls `dvb_vbi::TeletextDataField::txt_data_block_logical()`
+  instead of its own private `.map(u8::reverse_bits)` (issue #1106); no
+  behaviour change, same bytes.
+
 ### Fixed
 - **#1039**: `TimedEvent::from_scte35` ignored `splice_info_section`'s
   `pts_adjustment`, so every derived `MediaTime`/DATERANGE `START-DATE` was
