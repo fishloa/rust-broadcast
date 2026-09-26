@@ -37,7 +37,7 @@ pub const MAX_CHUNK_SIZE: u32 = 16 * 1024 * 1024;
 
 /// Largest total `message_length` (§5.3.1.2) [`ChunkAssembler`] will begin
 /// buffering for a single reassembled message: 8 MiB. `message_length` is a
-/// fully attacker-controlled 24-bit wire field (max ~16 MiB); real RTMP
+/// fully peer-supplied 24-bit wire field (max ~16 MiB); real RTMP
 /// audio/video/command messages are always far smaller than this (a single
 /// compressed video frame, even a keyframe, is normally well under 1 MiB),
 /// so this is a generous ceiling that still bounds worst-case allocation
@@ -698,6 +698,12 @@ pub struct ChunkAssembler {
     /// a complete chunk (partial basic header, message header, extended
     /// timestamp, or payload slice).
     pending: Vec<u8>,
+    /// How many bytes at the front of `pending` have already been consumed
+    /// by chunks parsed earlier in the current [`Self::next_message`] call,
+    /// but not yet physically dropped. Dropping them is deferred to one
+    /// [`Self::compact`] per `next_message` return rather than done per
+    /// chunk — see `compact`'s doc for why that matters.
+    cursor: usize,
 }
 
 impl Default for ChunkAssembler {
@@ -714,14 +720,26 @@ impl ChunkAssembler {
             chunk_size: DEFAULT_CHUNK_SIZE,
             csids: HashMap::new(),
             pending: Vec::new(),
+            cursor: 0,
         }
     }
 
     /// Update the chunk size in effect for subsequent chunks (called on
-    /// receipt of a Set Chunk Size protocol control message, §5.4.1). Floored
-    /// at 1 (a chunk size of 0 would never make progress splitting payload)
-    /// and capped at [`MAX_CHUNK_SIZE`], matching
-    /// [`ChunkWriter::set_chunk_size`]'s floor/cap.
+    /// receipt of a Set Chunk Size protocol control message, §5.4.1). Per
+    /// `docs/rtmp.md` §3's transcription of §5.4.1 ("Default max chunk size
+    /// is 128; SHOULD be ≥ 128, MUST be ≥ 1"), 128 is only a `SHOULD` for a
+    /// *sender* choosing what to announce — a peer that announces (and
+    /// then frames its own chunks at) a smaller value is still wire-legal,
+    /// and this side must parse at whatever size the peer actually
+    /// announced or every later chunk boundary is misparsed. So this only
+    /// enforces the hard `MUST >= 1` floor (a chunk size of 0 would never
+    /// make progress splitting payload) and caps at [`MAX_CHUNK_SIZE`] (a
+    /// defensive ceiling, not a spec limit — see its own doc). The wire's
+    /// reserved top bit and the `== 0` case are already rejected earlier, at
+    /// [`crate::message::ProtocolControl::from_payload`]'s parse of the Set
+    /// Chunk Size message itself, before a value ever reaches here; the
+    /// floor below is this method's own defensive backstop for any other
+    /// caller.
     pub fn set_chunk_size(&mut self, n: u32) {
         self.chunk_size = n.clamp(1, MAX_CHUNK_SIZE);
     }
@@ -771,57 +789,93 @@ impl ChunkAssembler {
     /// be a non-final chunk of the same in-progress message — until either a
     /// full message is assembled or the buffered bytes run out.
     ///
+    /// Each chunk's payload bytes are appended in place to that csid's own
+    /// persistent [`CsidState::payload`] buffer (never cloned), and the
+    /// consumed prefix of `pending` is only physically dropped once, when
+    /// this call returns (see [`Self::compact`]) — not once per chunk. A
+    /// message split across many small chunks (e.g. an 8 MiB message at a
+    /// 1-byte chunk size) used to cost O(`message_length`^2 /
+    /// `chunk_size`) — clone the whole accumulated payload on every
+    /// continuation chunk, and shift the rest of `pending` down on every
+    /// chunk's drain — and now costs O(`message_length`).
+    ///
     /// # Errors
     /// Same as [`push`](Self::push).
     pub(crate) fn next_message(&mut self) -> Result<Option<Message>> {
         loop {
-            match Self::try_parse_one(&self.pending, &self.csids, self.chunk_size) {
+            match Self::try_parse_one(
+                &self.pending[self.cursor..],
+                &mut self.csids,
+                self.chunk_size,
+            ) {
                 Ok(Some(parsed)) => {
-                    self.pending.drain(..parsed.consumed);
-                    let state = self.csids.entry(parsed.csid).or_default();
-                    state.timestamp = parsed.timestamp;
-                    state.timestamp_delta = parsed.timestamp_delta;
-                    state.message_length = parsed.message_length;
-                    state.message_type_id = parsed.message_type_id;
-                    state.message_stream_id = parsed.message_stream_id;
-                    state.extended = parsed.extended;
-                    state.initialized = true;
-                    if parsed.payload.len() as u32 == parsed.message_length {
-                        state.payload.clear();
+                    self.cursor += parsed.consumed;
+                    // Safe to unwrap: `try_parse_one` always commits (inserts
+                    // or updates) `parsed.csid`'s entry before returning
+                    // `Ok(Some(_))`.
+                    let complete = {
+                        let state = self.csids.get(&parsed.csid).expect("just committed above");
+                        state.payload.len() as u32 == state.message_length
+                    };
+                    if complete {
+                        let state = self.csids.get_mut(&parsed.csid).expect("checked above");
                         state.in_progress = false;
-                        return Ok(Some(Message {
+                        let payload = core::mem::take(&mut state.payload);
+                        let msg = Message {
                             chunk_stream_id: parsed.csid,
-                            timestamp: parsed.timestamp,
-                            message_type_id: parsed.message_type_id,
-                            message_stream_id: parsed.message_stream_id,
-                            payload: parsed.payload,
-                        }));
+                            timestamp: state.timestamp,
+                            message_type_id: state.message_type_id,
+                            message_stream_id: state.message_stream_id,
+                            payload,
+                        };
+                        self.compact();
+                        return Ok(Some(msg));
                     }
-                    state.payload = parsed.payload;
-                    state.in_progress = true;
                     // This chunk only partially filled its message (or
                     // belongs to a different, interleaved csid) — keep
-                    // looping to try the next chunk in `pending`.
+                    // looping to try the next chunk already in `pending`.
                 }
-                Ok(None) => return Ok(None),
-                Err(e) => return Err(e),
+                Ok(None) => {
+                    self.compact();
+                    return Ok(None);
+                }
+                Err(e) => {
+                    self.compact();
+                    return Err(e);
+                }
             }
+        }
+    }
+
+    /// Physically drop the front `self.cursor` bytes of `pending` (the
+    /// prefix already consumed by chunks parsed earlier in this call) and
+    /// reset the cursor to 0. Called once per [`Self::next_message`]
+    /// return, never per chunk inside its loop: a `Vec::drain` from the
+    /// front is O(remaining length), so doing it once per *chunk* while a
+    /// single message was still being reassembled out of many small chunks
+    /// was, independently of the payload-clone cost, itself enough to make
+    /// reassembly quadratic in the chunk count.
+    fn compact(&mut self) {
+        if self.cursor > 0 {
+            self.pending.drain(..self.cursor);
+            self.cursor = 0;
         }
     }
 
     /// Attempt to parse exactly one chunk (basic header + message header +
     /// any extended timestamp + its payload slice) from the front of `buf`,
-    /// resolving it against the existing per-csid `states` without mutating
-    /// them. Returns:
-    /// - `Ok(Some(_))` — a full chunk was parsed; `consumed` bytes should be
-    ///   dropped from the front of the caller's buffer and the returned
-    ///   resolved fields committed to that csid's state.
+    /// committing its resolved header fields and payload bytes directly into
+    /// the owning csid's entry in `states`. Returns:
+    /// - `Ok(Some(_))` — a full chunk was parsed and committed; `consumed`
+    ///   bytes should be dropped from the front of the caller's buffer
+    ///   (batched — see [`Self::compact`] — not per chunk).
     /// - `Ok(None)` — not enough bytes yet for a full chunk (structurally
-    ///   plausible so far); caller should wait for more input.
-    /// - `Err(_)` — structurally invalid input.
+    ///   plausible so far); caller should wait for more input. `states` is
+    ///   left untouched.
+    /// - `Err(_)` — structurally invalid input. `states` is left untouched.
     fn try_parse_one(
         buf: &[u8],
-        states: &HashMap<u32, CsidState>,
+        states: &mut HashMap<u32, CsidState>,
         chunk_size: u32,
     ) -> Result<Option<ParsedChunk>> {
         let bh = match BasicHeader::parse(buf) {
@@ -842,7 +896,20 @@ impl ChunkAssembler {
             _ => 1,
         };
 
-        let existing = states.get(&bh.chunk_stream_id);
+        // Extract just the small, `Copy` header-inheritance fields (never
+        // the payload itself — that would clone the whole accumulated
+        // buffer just to *read* it) so this immutable peek at `states` ends
+        // before the mutable commit further down needs it.
+        let existing = states.get(&bh.chunk_stream_id).map(|s| ExistingHeader {
+            timestamp: s.timestamp,
+            timestamp_delta: s.timestamp_delta,
+            message_length: s.message_length,
+            message_type_id: s.message_type_id,
+            message_stream_id: s.message_stream_id,
+            extended: s.extended,
+            in_progress: s.in_progress,
+            accumulated_len: s.payload.len(),
+        });
 
         // Remote-DoS guard: a flood of chunks opening distinct, previously
         // unseen csids would otherwise grow `states` without bound (one
@@ -988,7 +1055,7 @@ impl ChunkAssembler {
             _ => unreachable!("MessageHeader::parse always returns the variant for its Fmt"),
         };
 
-        // Remote-DoS guard: `message_length` is a fully attacker-controlled
+        // Remote-DoS guard: `message_length` is a fully peer-supplied
         // 24-bit wire field (Type 0/1 headers set it directly; Type 2/3
         // inherit an already-checked value). Reject before any payload
         // buffer for this message is allocated — see `MAX_MESSAGE_LEN`'s
@@ -1002,7 +1069,7 @@ impl ChunkAssembler {
         let already_accumulated = if starts_new {
             0
         } else {
-            existing.map(|s| s.payload.len()).unwrap_or(0)
+            existing.map(|s| s.accumulated_len).unwrap_or(0)
         };
         let remaining_needed =
             (resolved.message_length as usize).saturating_sub(already_accumulated);
@@ -1012,33 +1079,56 @@ impl ChunkAssembler {
             return Ok(None);
         }
 
-        // No `Vec::with_capacity(resolved.message_length)` here: that would
-        // pre-reserve up to `MAX_MESSAGE_LEN` bytes off a single attacker-
-        // supplied header field, before a single payload byte has actually
-        // arrived. The payload instead grows incrementally via
-        // `extend_from_slice` below, chunk by chunk, as real bytes show up —
-        // pre-reserving the claimed length buys almost nothing since the
-        // data arrives in `chunk_size` pieces anyway.
-        let mut payload = if starts_new {
-            Vec::new()
-        } else {
-            existing.map(|s| s.payload.clone()).unwrap_or_default()
-        };
-        payload.extend_from_slice(&buf[consumed..consumed + take]);
+        // Commit: append this chunk's bytes directly into the owning
+        // csid's own persistent payload buffer — no
+        // `Vec::with_capacity(resolved.message_length)` (that would
+        // pre-reserve up to `MAX_MESSAGE_LEN` bytes off a single peer-
+        // supplied header field before a single payload byte has actually
+        // arrived) and, critically, no clone of the bytes already
+        // accumulated (the previous version built a brand-new Vec by
+        // cloning the whole in-progress payload on every continuation
+        // chunk, which is what made reassembly O(`message_length`^2 /
+        // `chunk_size`)).
+        let state = states.entry(bh.chunk_stream_id).or_default();
+        state.timestamp = resolved.timestamp;
+        state.timestamp_delta = resolved.timestamp_delta;
+        state.message_length = resolved.message_length;
+        state.message_type_id = resolved.message_type_id;
+        state.message_stream_id = resolved.message_stream_id;
+        state.extended = resolved.extended;
+        state.initialized = true;
+        if starts_new {
+            state.payload.clear();
+        }
+        state
+            .payload
+            .extend_from_slice(&buf[consumed..consumed + take]);
+        #[cfg(test)]
+        record_payload_bytes_copied_for_test(take);
+        state.in_progress = state.payload.len() as u32 != state.message_length;
         consumed += take;
 
         Ok(Some(ParsedChunk {
             csid: bh.chunk_stream_id,
             consumed,
-            timestamp: resolved.timestamp,
-            timestamp_delta: resolved.timestamp_delta,
-            message_length: resolved.message_length,
-            message_type_id: resolved.message_type_id,
-            message_stream_id: resolved.message_stream_id,
-            extended: resolved.extended,
-            payload,
         }))
     }
+}
+
+/// The small, `Copy` subset of [`CsidState`] a chunk's header-inheritance
+/// resolution needs to read — deliberately excludes `payload` itself
+/// (`accumulated_len` carries only its *length*) so reading it never clones
+/// the accumulated buffer.
+#[derive(Clone, Copy)]
+struct ExistingHeader {
+    timestamp: u32,
+    timestamp_delta: u32,
+    message_length: u32,
+    message_type_id: u8,
+    message_stream_id: u32,
+    extended: bool,
+    in_progress: bool,
+    accumulated_len: usize,
 }
 
 /// Header fields resolved for one chunk, after applying `fmt`-specific
@@ -1052,18 +1142,14 @@ struct ResolvedHeader {
     extended: bool,
 }
 
-/// One fully-parsed chunk (header resolved + its payload slice taken),
-/// ready to be committed to the owning [`ChunkAssembler`]'s per-csid state.
+/// Outcome of one [`ChunkAssembler::try_parse_one`] call: its header fields
+/// and payload bytes have already been committed to the owning csid's
+/// [`CsidState`] by the time this is returned — the caller only needs
+/// `consumed` (to advance its read cursor) and `csid` (to look the state
+/// back up and check for message completion).
 struct ParsedChunk {
     csid: u32,
     consumed: usize,
-    timestamp: u32,
-    timestamp_delta: u32,
-    message_length: u32,
-    message_type_id: u8,
-    message_stream_id: u32,
-    extended: bool,
-    payload: Vec<u8>,
 }
 
 // ── ChunkWriter (outbound, §5.3) ─────────────────────────────────────────
@@ -1173,6 +1259,32 @@ fn write_serialized<T: Serialize<Error = RtmpError>>(out: &mut Vec<u8>, item: &T
         .serialize_into(&mut out[start..])
         .expect("valid chunk_stream_id (2..=65599) is a ChunkWriter::write precondition");
     out.truncate(start + n);
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Total payload bytes [`ChunkAssembler::try_parse_one`] has appended
+    /// via `extend_from_slice` on this thread since the last reset — a
+    /// test-only instrumentation hook so a regression test can assert
+    /// reassembly does O(message length) work directly, rather than
+    /// inferring it from wall-clock time (see
+    /// `reassembling_an_8mib_message_at_the_floor_chunk_size_is_linear_not_quadratic`).
+    static PAYLOAD_BYTES_COPIED_FOR_TEST: core::cell::Cell<usize> = const { core::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
+fn record_payload_bytes_copied_for_test(n: usize) {
+    PAYLOAD_BYTES_COPIED_FOR_TEST.with(|c| c.set(c.get() + n));
+}
+
+#[cfg(test)]
+fn reset_payload_bytes_copied_for_test() {
+    PAYLOAD_BYTES_COPIED_FOR_TEST.with(|c| c.set(0));
+}
+
+#[cfg(test)]
+fn payload_bytes_copied_for_test() -> usize {
+    PAYLOAD_BYTES_COPIED_FOR_TEST.with(core::cell::Cell::get)
 }
 
 #[cfg(test)]
@@ -2140,6 +2252,65 @@ mod tests {
         ));
     }
 
+    /// A peer that announces a chunk size below 128 (wire-legal — §5.4.1
+    /// only recommends `SHOULD >= 128` for a *sender* choosing what to
+    /// announce, the hard floor is `MUST >= 1`) must be parsed at exactly
+    /// that size: this crate does not get to unilaterally decide the peer
+    /// under-chunked and reinterpret its bytes at a larger boundary,
+    /// because the peer already framed every subsequent chunk at the size
+    /// it announced. Regression for a prior version of this fix that
+    /// clamped an incoming announcement up to a 128-byte floor, which would
+    /// have misparsed exactly this stream.
+    #[test]
+    fn assembler_honours_a_peer_announced_chunk_size_below_128() {
+        let mut assembler = ChunkAssembler::new();
+        assembler.set_chunk_size(64);
+        assert_eq!(
+            assembler.chunk_size, 64,
+            "the announced size must not be clamped up"
+        );
+
+        let payload: Vec<u8> = (0u32..150).map(|i| (i % 251) as u8).collect();
+        let mut input = Vec::new();
+        write_serialized(
+            &mut input,
+            &BasicHeader {
+                fmt: Fmt::Type0,
+                chunk_stream_id: 12,
+            },
+        );
+        write_serialized(
+            &mut input,
+            &MessageHeader::Type0 {
+                timestamp: 0,
+                message_length: payload.len() as u32,
+                message_type_id: 8,
+                message_stream_id: 0,
+            },
+        );
+        input.extend_from_slice(&payload[0..64]);
+        write_serialized(
+            &mut input,
+            &BasicHeader {
+                fmt: Fmt::Type3,
+                chunk_stream_id: 12,
+            },
+        );
+        input.extend_from_slice(&payload[64..128]);
+        write_serialized(
+            &mut input,
+            &BasicHeader {
+                fmt: Fmt::Type3,
+                chunk_stream_id: 12,
+            },
+        );
+        input.extend_from_slice(&payload[128..]);
+
+        let out = assembler.push(&input).unwrap();
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].payload, payload);
+    }
+
     #[test]
     fn assembler_set_chunk_size_zero_is_floored_to_one() {
         let mut assembler = ChunkAssembler::new();
@@ -2223,7 +2394,7 @@ mod tests {
         // Mutation check: a Type 0 header claims a ~16 MiB message_length
         // (the max a 24-bit field can encode) but only ever supplies a
         // single default-chunk-size (128-byte) slice of payload after it —
-        // exactly the shape of the excessive-allocation DoS (attacker never
+        // exactly the shape of the excessive-allocation DoS (the peer never
         // has to send anywhere near the claimed length). Without the
         // MAX_MESSAGE_LEN cap this used to `Vec::with_capacity(message_length)`
         // (~16 MiB) right here and return `Ok(vec![])` (message merely
@@ -2333,5 +2504,54 @@ mod tests {
         let mut writer = ChunkWriter::new();
         writer.set_chunk_size(u32::MAX);
         assert_eq!(writer.chunk_size, MAX_CHUNK_SIZE);
+    }
+
+    /// r08-RTMP-C1 regression: reassembling a large message split into many
+    /// small physical chunks (here, chunk size 1 — the wire's own hard
+    /// floor, `MUST >= 1`, and the shape the original finding used) must do
+    /// O(`message_length`) total payload-copying work, not
+    /// O(`message_length`^2 / `chunk_size`). Measured directly via the
+    /// `#[cfg(test)]` byte-copy hook rather than a wall-clock bound (a
+    /// wall-clock bound is inherently flaky under load; this one instead
+    /// asserts the exact quantity the fix changes).
+    ///
+    /// Pre-fix, at `MAX_MESSAGE_LEN` (8 MiB) split into 1-byte chunks
+    /// (~8.4 million of them), the old "clone the whole accumulated payload
+    /// on every continuation chunk" code would have copied on the order of
+    /// `sum(1, 2, ..., 8 MiB) ~= 8MiB^2 / 2` bytes — many terabytes, not
+    /// safely runnable here (would allocate far beyond a reasonable test
+    /// budget). A *smaller*-scale version of this same shape was run
+    /// directly against the pre-fix code (64 KiB / 256 KiB at chunk size 1)
+    /// and confirmed the quadratic blowup (wall-clock time scaled ~11x for
+    /// a 4x size increase) before this fix landed; see brief/PR notes.
+    #[test]
+    fn reassembling_an_8mib_message_at_chunk_size_one_is_linear_not_quadratic() {
+        let payload: Vec<u8> = (0..MAX_MESSAGE_LEN).map(|i| (i % 251) as u8).collect();
+        let original = msg(10, 0, 9, 1, payload.clone());
+
+        let mut writer = ChunkWriter::new();
+        writer.set_chunk_size(1);
+        let bytes = writer.write(&original);
+
+        let mut assembler = ChunkAssembler::new();
+        assembler.set_chunk_size(1);
+
+        reset_payload_bytes_copied_for_test();
+        let out = assembler.push(&bytes).unwrap();
+        let copied = payload_bytes_copied_for_test();
+
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].payload, payload);
+
+        // Generous (4x message length) but already far below what the old
+        // quadratic code would have copied (~4 million x message length at
+        // this size/chunk_size) — this bound is only reachable by O(n)
+        // reassembly.
+        assert!(
+            copied <= payload.len() * 4,
+            "copied {copied} bytes reassembling a {}-byte message at chunk \
+             size 1 — quadratic behaviour crept back in",
+            payload.len()
+        );
     }
 }
