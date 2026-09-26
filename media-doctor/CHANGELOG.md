@@ -2,6 +2,21 @@
 
 ## [Unreleased]
 
+### Fixed
+- `Scte35Check` no longer only inspects the conventional PID `0x01F0` for
+  SCTE-35 `splice_info_section`s — it now discovers the real cue PID(s) from
+  the PMT (`stream_type 0x86`), as `watch.rs` already did, falling back to
+  `0x01F0` only when the stream carries no PSI at all. Any real capture whose
+  cue PID isn't `0x01F0` previously got zero SCTE-35 findings. Verified
+  against a real TSDuck-built fixture whose cue is on PID `0x0150` (issue
+  #1046).
+- `codec_common::collect_pmt_streams` now dedups by elementary PID (latest
+  PMT generation wins) instead of recording one entry per PMT repetition —
+  a PMT repeats roughly every 100 ms, so the previous list, and every
+  `.contains()` scan over it in `codec_signalling`/`param_sets`/`interlace`,
+  grew (and were scanned) once per repetition rather than once per declared
+  PID, quadratic in stream length (issue #1069).
+
 ## [0.8.0] - 2026-08-11
 
 ### Fixed

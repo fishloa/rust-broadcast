@@ -214,9 +214,14 @@ pub fn serialize_owned_set(
         .map(|i| LocalSetItem {
             tag: i.tag,
             value: i.value.as_slice(),
+            ..Default::default()
         })
         .collect();
-    let set = LocalSet { key, items };
+    let set = LocalSet {
+        key,
+        items,
+        ..Default::default()
+    };
     set.serialize_into(buf)
 }
 
@@ -229,7 +234,13 @@ pub fn owned_set_serialized_len(key: UlBytes, owned_items: &[LocalSetOwnedItem])
         .map(|i| LocalSetItem {
             tag: i.tag,
             value: i.value.as_slice(),
+            ..Default::default()
         })
         .collect();
-    LocalSet { key, items }.serialized_len()
+    LocalSet {
+        key,
+        items,
+        ..Default::default()
+    }
+    .serialized_len()
 }

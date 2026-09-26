@@ -547,6 +547,139 @@ fn lra_case_4_five_tones_music_box() {
     );
 }
 
+// `lra_case_1`..`lra_case_4` above ARE the EBU Tech 3342 Table 1 "minimum
+// requirements" test signals verbatim (checked against `docs/tech3342-lra.md`,
+// coordinator review of issue #1051): case 1 = two 20 s tones 10 dB apart
+// (LRA 10±1 LU), case 2 = 5 dB apart (5±1 LU), case 3 = 20 dB apart
+// (20±1 LU), case 4 = five 20 s tone segments (15±1 LU) — all already
+// implemented and passing above.
+//
 // Cases 5–6 require authentic programme files (NLR/WLR) —
-// not implementable without the EBU reference WAV files.
+// not implementable without the EBU reference WAV files (Tech 3342 §4:
+// "available for download from the EBU Technical website", not
+// synthesizable — they're real commercial/movie-genre recordings, not test
+// tones). `lra_case_5`/`lra_case_6` below are a DIFFERENT, additional
+// synthetic cross-check against ffmpeg's independent `ebur128` (not a
+// substitute for cases 5/6 — see their own doc comments).
 // SKIP: no fixture available.
+
+// =====================================================================
+// Programme-material LRA oracle (issue #1051 / audit LOUD-C1)
+// =====================================================================
+//
+// The steady-tone cases above (`lra_case_1`..`lra_case_4`) cannot expose a
+// meter that computes LRA from 400 ms momentary blocks instead of 3 s
+// short-term values: a steady tone's 400 ms and 3 s loudness are identical,
+// so the two computations agree by construction. `programme_dynamic.wav`
+// (see `tests/fixtures/README.md` for exact provenance/generation command)
+// alternates every 0.5 s between -20 dBFS and -35 dBFS — fast enough that a
+// 3 s window almost always sees close to the same blend of both levels
+// (narrow spread, correct LRA close to 0 LU) while a 400 ms window sits
+// much closer to one pure level (wide spread, badly inflated LRA if that's
+// what LRA is computed from). ffmpeg's own `ebur128` filter — independent
+// of both our renderer and our own checker — reports `LRA: 0.2 LU` on this
+// exact file.
+
+/// Minimal canonical-PCM `.wav` reader (RIFF/`fmt `/`data` chunks only,
+/// 16-bit signed integer samples) — just enough to read the fixture above.
+/// Not a general-purpose WAV reader (e.g. no `WAVE_FORMAT_EXTENSIBLE`,
+/// no non-16-bit formats); the crate has no WAV-parsing dependency to reuse
+/// and none is added for one test fixture.
+fn read_wav_mono_s16le(path: &std::path::Path) -> (Vec<f32>, u32) {
+    let bytes = std::fs::read(path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
+    assert_eq!(&bytes[0..4], b"RIFF", "not a RIFF file");
+    assert_eq!(&bytes[8..12], b"WAVE", "not a WAVE file");
+
+    let mut pos = 12usize;
+    let mut sample_rate = 0u32;
+    let mut channels = 0u16;
+    let mut bits_per_sample = 0u16;
+    let mut data: &[u8] = &[];
+
+    while pos + 8 <= bytes.len() {
+        let chunk_id = &bytes[pos..pos + 4];
+        let chunk_size = u32::from_le_bytes(bytes[pos + 4..pos + 8].try_into().unwrap()) as usize;
+        let body_start = pos + 8;
+        let body_end = (body_start + chunk_size).min(bytes.len());
+        let body = &bytes[body_start..body_end];
+        match chunk_id {
+            b"fmt " => {
+                channels = u16::from_le_bytes(body[2..4].try_into().unwrap());
+                sample_rate = u32::from_le_bytes(body[4..8].try_into().unwrap());
+                bits_per_sample = u16::from_le_bytes(body[14..16].try_into().unwrap());
+            }
+            b"data" => data = body,
+            _ => {}
+        }
+        // Chunks are word-aligned: an odd-sized chunk has one pad byte.
+        pos = body_start + chunk_size + (chunk_size % 2);
+    }
+
+    assert_eq!(channels, 1, "fixture must be mono");
+    assert_eq!(bits_per_sample, 16, "fixture must be 16-bit PCM");
+    assert!(sample_rate > 0, "no fmt chunk found");
+    assert!(!data.is_empty(), "no data chunk found");
+
+    let samples = data
+        .chunks_exact(2)
+        .map(|b| i16::from_le_bytes([b[0], b[1]]) as f32 / 32_768.0)
+        .collect();
+    (samples, sample_rate)
+}
+
+/// The fixture's LRA per this crate vs. ffmpeg's independently-computed
+/// `ebur128` LRA (`0.2 LU`, recorded in `tests/fixtures/README.md`). A
+/// meter computing LRA from 400 ms blocks instead of 3 s short-term values
+/// was measured (pre-fix) at several times ffmpeg's value on this exact
+/// file — nowhere near the tolerance below.
+#[test]
+fn lra_case_5_programme_dynamic_matches_ffmpeg_oracle() {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/programme_dynamic.wav");
+    let (samples, sample_rate) = read_wav_mono_s16le(&path);
+
+    let mut meter = LoudnessMeter::new(sample_rate, ChannelLayout::Mono).unwrap();
+    for &s in &samples {
+        meter.push_f32(&[s]).unwrap();
+    }
+    meter.finish();
+    let lra = meter.loudness_range();
+
+    const FFMPEG_LRA: f64 = 0.2;
+    const TOLERANCE_LRA_ORACLE: f64 = 0.5;
+    assert!(
+        (lra - FFMPEG_LRA).abs() <= TOLERANCE_LRA_ORACLE,
+        "programme_dynamic.wav: LRA={lra}, ffmpeg ebur128 reports {FFMPEG_LRA} ±{TOLERANCE_LRA_ORACLE} LU"
+    );
+}
+
+/// A second, slower-moving (segment-scale, not 400 ms-scale) programme
+/// signal, checked to a tighter ±0.1 LU against ffmpeg's own `ebur128`
+/// (coordinator review of issue #1051 — see `tests/fixtures/README.md` for
+/// exact provenance/generation and why 0.1 LU is a meaningful bound against
+/// a 1-decimal-printed oracle value). Four 10 s segments at -30/-20/-25/-15
+/// dBFS; ffmpeg reports `LRA: 15.0 LU` on this exact file.
+#[test]
+fn lra_case_6_programme_segments_matches_ffmpeg_oracle_tightly() {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/programme_segments.wav");
+    let (samples, sample_rate) = read_wav_mono_s16le(&path);
+
+    let mut meter = LoudnessMeter::new(sample_rate, ChannelLayout::Mono).unwrap();
+    for &s in &samples {
+        meter.push_f32(&[s]).unwrap();
+    }
+    meter.finish();
+    let lra = meter.loudness_range();
+
+    // ffmpeg prints LRA to one decimal place (`15.0`), so its printed value
+    // can already be up to ±0.05 LU from the true underlying value from
+    // rounding alone; ±0.1 LU absorbs that plus ordinary cross-
+    // implementation numerical differences while staying a tight check.
+    const FFMPEG_LRA: f64 = 15.0;
+    const TOLERANCE_LRA_ORACLE: f64 = 0.1;
+    assert!(
+        (lra - FFMPEG_LRA).abs() <= TOLERANCE_LRA_ORACLE,
+        "programme_segments.wav: LRA={lra}, ffmpeg ebur128 reports {FFMPEG_LRA} ±{TOLERANCE_LRA_ORACLE} LU"
+    );
+}

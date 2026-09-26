@@ -6,6 +6,42 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Fixed
+- **Loudness Range (LRA) was computed from 400 ms momentary blocks instead
+  of 3 s short-term values** (EBU Tech 3342 defines it over the latter,
+  sampled at ≥10 Hz). 400 ms loudness has far higher variance on real
+  programme material than 3 s loudness, so LRA came out badly inflated on
+  anything but a steady tone (the existing compliance tests only used
+  steady tones, so they couldn't see it). Verified against ffmpeg's own
+  `ebur128` filter on a synthetic fast-alternating-level fixture: ffmpeg
+  reports `LRA: 0.2 LU`, this crate previously reported `~15 LU` on the
+  identical file (issue #1051). Also cross-checked against a second,
+  slower-moving (segment-scale) synthetic programme signal to a tighter
+  ±0.1 LU (ffmpeg reports `LRA: 15.0 LU`), and confirmed the existing
+  `lra_case_1`..`lra_case_4` compliance tests already are the EBU Tech 3342
+  Table 1 "minimum requirements" signals verbatim (cases 5/6 need the
+  EBU's own real-programme reference files, not synthesizable).
+- **Both meters buffered every sample for the whole measurement** —
+  `LoudnessMeter` stored one `f64` of weighted power per sample frame
+  (~1.4 GB/hour at 48 kHz) and only analysed it in `finish()`;
+  `TruePeakMeter` stored every raw sample and rebuilt a 4×-oversampled
+  `Vec` from scratch on every `finish()`/`current_level()` call (~5.5 GB/hour
+  per channel, and quadratic if polled live). Both are now streaming:
+  `LoudnessMeter` accumulates 100 ms sub-blocks (O(duration), not
+  O(sample count) — about 36 000 `f64`s/hour, not 172 million) plus two
+  small fixed-size sliding-window rings (bounded to each window's sample
+  count) for exact per-sample momentary/short-term maxima;
+  `TruePeakMeter` keeps only a 12-sample shift register and a running max.
+  `current_level()` is now an O(1) read instead of an O(N)-with-a-4N-
+  allocation reprocess. Verified to still match the existing EBU Tech 3341
+  compliance vectors exactly (including the per-sample-aligned Max M/Max S
+  cases) — momentary/short-term maxima and true-peak levels are unchanged,
+  computed the same way, just incrementally rather than from a full buffer
+  (issue #1072).
+- `TruePeakMeter::finish()` now also flushes an 11-sample zero tail through
+  the FIR before taking the final max: the filter is causal, so the last
+  few real samples' true nearest interpolated peak position can fall after
+  them, and previously that contribution was never evaluated.
 
 ## [0.3.0] - 2026-08-11
 

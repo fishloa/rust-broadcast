@@ -6,6 +6,54 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Fixed
+- `op1a::Op1aQualifier`'s byte-15 bit mapping was off by one against SMPTE
+  ST 378M §6.4: bit 0 is an always-set marker (every real encoder sets it),
+  not a semantic flag, so `external_essence`/`non_streamable`/`multi_track`
+  are bits 1/2/3 (`0x02`/`0x04`/`0x08`), not 0/1/2. Verified against the
+  crate's own real `ffmpeg`-muxed fixture: its qualifier byte `0x09` (marker
+  + multi-track, matching its actual one-Essence-Container two-track
+  layout) was previously decoded as external-essence + single-track — both
+  wrong (issue #1048).
+
+### Changed (breaking)
+- **`KlvItem`, `PartitionPack`, `PrimerPack`, `RandomIndexPack`, `LocalSet`
+  and `LocalSetItem` now round-trip byte-identically, including a
+  non-minimal (fixed-width long-form) BER length token** (issue #1047 /
+  audit MX-C1). Previously every serializer here always re-emitted the
+  canonical *minimal* BER length form on `serialize_into`, even when the
+  original file used a longer, fixed-width one — `docs/st377-1.md` §6.3.4
+  permits any valid form, and real encoders routinely use a fixed width so
+  a pack can be rewritten in place (e.g. Open -> Closed) without shifting
+  every later absolute offset. Measured directly against the crate's real
+  `ffmpeg`-muxed fixture: **all 25** of its Partition Packs and 2 of its 27
+  Header Metadata Sets use a non-minimal length token; none of them
+  reproduced their original bytes on reserialize before this fix, and all
+  of them do now.
+  - Each of these six types gained a new public `len_size: BerLength`
+    field, recording the on-wire length-field width found on parse
+    (`BerLength::Fixed(width)`) or defaulting to `BerLength::Minimal` (the
+    old canonical behaviour) for a freshly built value — so existing code
+    that only ever builds values programmatically sees no behaviour
+    change, but any exhaustive struct-literal construction of these types
+    needs the new field (or `..Default::default()`).
+  - `PartialEq`/`Eq` for all six types now compare every field EXCEPT
+    `len_size`, which is a serialization-*form* preference, not part of a
+    value's logical identity — so the project's "parse -> serialize ->
+    parse gives an equal value" round-trip convention stays meaningful (a
+    freshly-built `Minimal` value and the same value reparsed, which always
+    carries the concrete `Fixed` width it found, still compare equal).
+  - New `BerLength` enum + `ber::{ber_length_size_for, encode_ber_length_as}`
+    helpers; new `Error::FixedBerLengthTooSmall` (only reachable by
+    constructing/mutating a value into an inconsistent state, never by
+    re-serializing a value as parsed).
+  - `tests/fixture_real_op1a.rs`'s round-trip assertions now compare
+    against the item's TRUE original bytes at its offset, not against
+    `KlvItem::to_bytes()`'s own (previously always re-canonicalized)
+    output — the prior baseline could never disagree with a further
+    re-canonicalization, so it never actually exercised this bug. A new
+    `real_fixture_non_minimal_ber_lengths_round_trip_byte_identically` test
+    quantifies and verifies the fix directly.
 
 ## [0.3.0] - 2026-08-11
 

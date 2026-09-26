@@ -194,6 +194,7 @@ mod tests {
         let set = LocalSet {
             key,
             items: Vec::new(),
+            ..Default::default()
         };
         let bytes = set.to_bytes();
         assert!(matches!(

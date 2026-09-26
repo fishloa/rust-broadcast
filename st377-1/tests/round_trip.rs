@@ -281,7 +281,8 @@ fn op1a_full_qualifier_round_trip() {
         .with_multi_track();
     let ul = st377_1::op1a::op1a_ul(q);
     assert!(st377_1::op1a::is_op1a(&ul));
-    assert_eq!(ul[14], 0x07);
+    // marker (0x01) + external (0x02) + non-streamable (0x04) + multi-track (0x08).
+    assert_eq!(ul[14], 0x0F);
 }
 
 // ── Full OP1a structure round-trip ──────────────────────────────────────
@@ -289,8 +290,8 @@ fn op1a_full_qualifier_round_trip() {
 #[test]
 fn full_op1a_structure_builds_and_round_trips() {
     use st377_1::{
-        ContentStorage, EssenceContainerData, Identification, PartitionKind, PartitionPack,
-        PartitionStatus, Preface, PrimerPack, RandomIndexPack, VERSION_1_3,
+        BerLength, ContentStorage, EssenceContainerData, Identification, PartitionKind,
+        PartitionPack, PartitionStatus, Preface, PrimerPack, RandomIndexPack, VERSION_1_3,
     };
 
     // -- Build the complete metadata graph --
@@ -491,6 +492,7 @@ fn full_op1a_structure_builds_and_round_trips() {
         body_sid: 0,
         operational_pattern: op_pattern,
         essence_containers: vec![ec_label],
+        len_size: BerLength::Minimal,
     };
     assert_round_trip(&header_pp);
 
@@ -510,6 +512,7 @@ fn full_op1a_structure_builds_and_round_trips() {
         body_sid: 0,
         operational_pattern: op_pattern,
         essence_containers: vec![ec_label],
+        len_size: BerLength::Minimal,
     };
     assert_round_trip(&footer_pp);
 
@@ -521,6 +524,7 @@ fn full_op1a_structure_builds_and_round_trips() {
                 0x00, 0x00,
             ],
         )],
+        len_size: BerLength::Minimal,
     };
     assert_round_trip(&primer);
 
@@ -535,6 +539,7 @@ fn full_op1a_structure_builds_and_round_trips() {
                 byte_offset: 9999,
             },
         ],
+        len_size: BerLength::Minimal,
     };
     assert_round_trip(&rip);
 }

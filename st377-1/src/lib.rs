@@ -57,10 +57,26 @@
 //!
 //! [`op1a`] plus [`MaterialPackage`]/[`SourcePackage`]/[`TimelineTrack`]/
 //! [`EventTrack`]/[`StaticTrack`]/[`Sequence`]/[`SourceClip`]/
-//! [`TimecodeComponent`]/[`FillerComponent`] parse and byte-losslessly
+//! [`TimecodeComponent`]/[`FillerComponent`] parse and *value*-losslessly
 //! round-trip every OP1a Header Metadata Set this crate types (see
 //! `docs/st378-op1a.md`), and are validated against a real `ffmpeg`-muxed
-//! OP1a file in `tests/fixture_real_op1a.rs`. Two things this does **not**
+//! OP1a file in `tests/fixture_real_op1a.rs`. [`PartitionPack`],
+//! [`PrimerPack`], [`RandomIndexPack`], [`LocalSet`] and [`KlvItem`] ALSO
+//! round-trip **byte-identically** (issue #1047): each stores the on-wire
+//! BER length-field width it was parsed with ([`BerLength`]) and reproduces
+//! it exactly on serialize, rather than always re-canonicalizing to the
+//! shortest form that fits — real encoders routinely use a longer,
+//! fixed-width form instead (`docs/st377-1.md` §6.3.4 permits any form; a
+//! fixed width lets a pack be rewritten in place, e.g. Open -> Closed,
+//! without shifting every later absolute offset). Measured directly
+//! against the real fixture: a clear majority of its top-level items
+//! (including all 25 Partition Packs) use a non-minimal length token, and
+//! every one of them now reproduces its exact original bytes
+//! (`tests/fixture_real_op1a.rs`'s
+//! `real_fixture_non_minimal_ber_lengths_round_trip_byte_identically`
+//! quantifies and verifies this). `len_size` defaults to
+//! [`BerLength::Minimal`] for a freshly built value, so canonical
+//! minimal-form output is unaffected. Two more things this does **not**
 //! add up to:
 //!
 //! - **No Essence Descriptor type.** `docs/st378-op1a.md`'s minimum OP1a
@@ -106,7 +122,7 @@
 //!
 //! ```
 //! use broadcast_common::{Parse, Serialize};
-//! use st377_1::{PartitionKind, PartitionPack, PartitionStatus};
+//! use st377_1::{BerLength, PartitionKind, PartitionPack, PartitionStatus};
 //!
 //! let pack = PartitionPack {
 //!     kind: PartitionKind::Header,
@@ -124,6 +140,7 @@
 //!     body_sid: 0,
 //!     operational_pattern: [0u8; 16],
 //!     essence_containers: Vec::new(),
+//!     len_size: BerLength::Minimal,
 //! };
 //! let bytes = pack.to_bytes();
 //! assert_eq!(PartitionPack::parse(&bytes).unwrap(), pack);
@@ -164,6 +181,7 @@ mod timecode_component;
 mod track;
 mod types;
 
+pub use ber::BerLength;
 pub use content_storage::ContentStorage;
 pub use error::{Error, Result};
 pub use essence_container_data::EssenceContainerData;

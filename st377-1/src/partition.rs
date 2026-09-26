@@ -8,7 +8,7 @@ use alloc::vec::Vec;
 
 use broadcast_common::{Parse, Serialize};
 
-use crate::ber::{ber_length_size, decode_ber_length, encode_ber_length};
+use crate::ber::{BerLength, ber_length_size_for, decode_ber_length, encode_ber_length_as};
 use crate::error::{Error, Result};
 use crate::types::{UlBytes, parse_uid_batch, serialize_uid_batch, ul_bytes_from_prefix};
 
@@ -123,7 +123,11 @@ broadcast_common::impl_spec_display!(PartitionStatus);
 /// The Partition Pack — SMPTE ST 377-1:2019 §7.1, Table 4 (Key) + Table 5
 /// (Value). Covers the Header/Body/Footer variants (§7.2-7.4); which one a
 /// given instance is lives in `kind`.
-#[derive(Debug, Clone, PartialEq, Eq)]
+///
+/// `PartialEq`/`Eq` compare every field except `len_size`, a serialization-
+/// *form* preference rather than part of the Partition's logical value —
+/// see [`crate::KlvItem`]'s doc for why (issue #1047 / audit MX-C1).
+#[derive(Debug, Clone)]
 pub struct PartitionPack {
     /// Which kind of Partition this is (Table 4 byte 14).
     pub kind: PartitionKind,
@@ -160,7 +164,37 @@ pub struct PartitionPack {
     pub operational_pattern: UlBytes,
     /// Batch of Essence Container ULs used in/referenced by this file.
     pub essence_containers: Vec<UlBytes>,
+    /// The on-wire BER length-field width (issue #1047 / audit MX-C1) —
+    /// [`BerLength::Minimal`] for a freshly built value, or the exact
+    /// width `parse` found on the wire, so `serialize_into`
+    /// reproduces the original length token exactly. Real MXF encoders
+    /// commonly use a longer, fixed-width form so the pack can be
+    /// rewritten in place (e.g. Open -> Closed) without shifting every
+    /// later absolute offset (`docs/st377-1.md` §6.3.4).
+    pub len_size: BerLength,
 }
+
+impl PartialEq for PartitionPack {
+    fn eq(&self, other: &Self) -> bool {
+        self.kind == other.kind
+            && self.status == other.status
+            && self.major_version == other.major_version
+            && self.minor_version == other.minor_version
+            && self.kag_size == other.kag_size
+            && self.this_partition == other.this_partition
+            && self.previous_partition == other.previous_partition
+            && self.footer_partition == other.footer_partition
+            && self.header_byte_count == other.header_byte_count
+            && self.index_byte_count == other.index_byte_count
+            && self.index_sid == other.index_sid
+            && self.body_offset == other.body_offset
+            && self.body_sid == other.body_sid
+            && self.operational_pattern == other.operational_pattern
+            && self.essence_containers == other.essence_containers
+    }
+}
+
+impl Eq for PartitionPack {}
 
 impl PartitionPack {
     /// Build the 16-byte Key for `kind`/`status` (Table 4/6/7/8).
@@ -234,8 +268,8 @@ impl<'a> Parse<'a> for PartitionPack {
         let key: UlBytes = ul_bytes_from_prefix(bytes);
         let (kind, status) = Self::parse_key(&key)?;
 
-        let (len, len_size) = decode_ber_length(&bytes[16..])?;
-        let value_start = 16 + len_size;
+        let (len, len_token_size) = decode_ber_length(&bytes[16..])?;
+        let value_start = 16 + len_token_size;
         let len = len as usize;
         let value_end = value_start.checked_add(len).ok_or(Error::BufferTooShort {
             need: usize::MAX,
@@ -304,6 +338,7 @@ impl<'a> Parse<'a> for PartitionPack {
             body_sid,
             operational_pattern,
             essence_containers,
+            len_size: BerLength::fixed_from_consumed(len_token_size),
         })
     }
 }
@@ -314,7 +349,7 @@ impl Serialize for PartitionPack {
     fn serialized_len(&self) -> usize {
         let value_len =
             2 + 2 + 4 + 8 + 8 + 8 + 8 + 8 + 4 + 8 + 4 + 16 + 8 + self.essence_containers.len() * 16;
-        16 + ber_length_size(value_len as u64) + value_len
+        16 + ber_length_size_for(value_len as u64, self.len_size) + value_len
     }
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
@@ -334,7 +369,7 @@ impl Serialize for PartitionPack {
         buf[0..16].copy_from_slice(&Self::key(self.kind, self.status));
         let batch = serialize_uid_batch(&self.essence_containers);
         let value_len = 2 + 2 + 4 + 8 + 8 + 8 + 8 + 8 + 4 + 8 + 4 + 16 + batch.len();
-        let len_size = encode_ber_length(value_len as u64, &mut buf[16..])?;
+        let len_size = encode_ber_length_as(value_len as u64, self.len_size, &mut buf[16..])?;
         let mut pos = 16 + len_size;
 
         buf[pos..pos + 2].copy_from_slice(&self.major_version.to_be_bytes());
@@ -388,7 +423,42 @@ mod tests {
             body_sid: 1,
             operational_pattern: [0xAA; 16],
             essence_containers: alloc::vec![[0xBBu8; 16]],
+            len_size: BerLength::Minimal,
         }
+    }
+
+    /// Issue #1047 (audit MX-C1): a Partition Pack parsed with a
+    /// non-minimal (fixed-width long-form) length token must reproduce
+    /// that exact token on re-serialize.
+    #[test]
+    fn non_minimal_length_token_round_trips_byte_identical() {
+        let pp = sample(PartitionKind::Header, PartitionStatus::ClosedComplete);
+        let minimal_len = pp.serialized_len();
+        let value_len = minimal_len - 16 - 1; // 1-byte short-form for this value_len
+        assert!(value_len <= 0x7F, "sample() must still fit short form");
+
+        // Same fields, but force a non-minimal 3-byte long-form length
+        // token (0x82 hi lo) instead of the 1-byte short form.
+        let mut original = alloc::vec::Vec::new();
+        original.extend_from_slice(&PartitionPack::key(pp.kind, pp.status));
+        original.push(0x82);
+        original.extend_from_slice(&(value_len as u16).to_be_bytes());
+        let mut rest = alloc::vec![0u8; minimal_len];
+        pp.serialize_into(&mut rest).unwrap();
+        original.extend_from_slice(&rest[minimal_len - value_len..]);
+
+        let parsed = PartitionPack::parse(&original).unwrap();
+        assert_eq!(
+            parsed.len_size,
+            BerLength::Fixed(core::num::NonZeroU8::new(3).unwrap())
+        );
+
+        let mut out = alloc::vec![0u8; parsed.serialized_len()];
+        parsed.serialize_into(&mut out).unwrap();
+        assert_eq!(
+            out, original,
+            "must reproduce the exact non-minimal length token on re-serialize"
+        );
     }
 
     #[test]

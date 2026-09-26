@@ -13,9 +13,10 @@ use std::fs;
 use std::path::Path;
 
 // `Define`/`SessionDataContent` are data-carrying ADTs (each variant holds
-// caller-supplied `String`s, not a fixed spec token to label), not
+// a caller-supplied `String`, not a fixed spec token to label), not
 // spec/field label enums — the documented SKIP category for such types
-// (issue #872).
+// (issue #872). `AttrValue` (issue #1045) is a `pub struct`, not a `pub
+// enum`, so this scanner never sees it at all — no SKIP entry needed.
 const SKIP: &[&str] = &["Error", "Define", "SessionDataContent"];
 
 fn read_rs(dir: &Path, out: &mut Vec<String>) {

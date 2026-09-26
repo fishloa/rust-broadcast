@@ -17,9 +17,11 @@
 use alloc::collections::btree_map::{BTreeMap, Entry};
 
 use broadcast_common::Parse;
+use dvb_si::tables::pmt::StreamType;
 
 use crate::Diagnostic;
 use crate::Report;
+use crate::diagnostics::codec_common::{collect_pmt_streams, pids_with_stream_type};
 use crate::report::{Finding, Location, Severity};
 use mpeg_ts::ts::SectionReassembler;
 use mpeg_ts::ts::{TS_PACKET_SIZE, TsPacket};
@@ -58,13 +60,32 @@ struct Scte35PidState {
 #[derive(Debug, Clone, Copy)]
 pub struct Scte35Check;
 
-/// PID on which SCTE-35 splice_info_section messages are typically carried.
+/// Conventional PID SCTE-35 is *commonly* carried on — but never guaranteed:
+/// ANSI/SCTE 35 assigns no fixed PID, the PMT declares the real one with
+/// `stream_type 0x86` (or a `registration_descriptor` for `"CUEI"`). Used
+/// only as a fallback (see [`Diagnostic::run`]) when the stream carries no
+/// PSI at all to discover a PID from (issue #1046 / audit MD-C1).
 const SCTE35_PID: u16 = 0x01F0;
 
 impl Diagnostic for Scte35Check {
     fn run(&self, ts: &[u8], report: &mut Report) {
         let n_packets = ts.len() / TS_PACKET_SIZE;
         let mut pid_states: BTreeMap<u16, Scte35PidState> = BTreeMap::new();
+
+        // Discover the real SCTE-35 PID(s) from the PMT (`stream_type
+        // 0x86`, ANSI/SCTE 35 §8.1), the same source `watch.rs` uses —
+        // instead of the old hard-coded `SCTE35_PID`, which missed every
+        // real capture that (correctly) carries its cue elsewhere, and would
+        // misparse unrelated PES on `0x01F0` as SCTE-35 garbage on streams
+        // that happen to use that PID for something else.
+        let declared = collect_pmt_streams(ts);
+        let mut scte35_pids = pids_with_stream_type(&declared, StreamType::Scte35);
+        if declared.is_empty() {
+            // No PSI at all to discover a PID from (e.g. a minimal
+            // synthetic fixture with no PAT/PMT) — fall back to the
+            // conventional PID rather than watching nothing.
+            scte35_pids.push(SCTE35_PID);
+        }
 
         for i in 0..n_packets {
             let offset = i * TS_PACKET_SIZE;
@@ -76,8 +97,9 @@ impl Diagnostic for Scte35Check {
 
             let pid = pkt.header.pid;
 
-            // Only watch the SCTE-35 PID.
-            if pid != SCTE35_PID {
+            // Only watch PID(s) the PMT declares as SCTE-35 (or the
+            // fallback above).
+            if !scte35_pids.contains(&pid) {
                 continue;
             }
 

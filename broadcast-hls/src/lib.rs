@@ -204,6 +204,7 @@ mod error;
 pub use error::{Error, Result};
 
 use alloc::collections::BTreeMap;
+use alloc::collections::BTreeSet;
 use alloc::format;
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
@@ -324,7 +325,7 @@ pub struct MapTag {
     pub byte_range: Option<ByteRange>,
     /// Unmodeled attributes, retained so `REQ-` prefixed names can fire
     /// RFC 8216bis §8 row 12. Sorted by name on parse (deterministic).
-    pub extra_attrs: Vec<(String, String)>,
+    pub extra_attrs: Vec<(String, AttrValue)>,
 }
 
 /// `TYPE` attribute of `#EXT-X-PRELOAD-HINT` (RFC 8216bis §4.4.5.3).
@@ -367,7 +368,7 @@ pub struct RenditionReport {
     pub last_part: Option<u64>,
     /// Unmodeled attributes, retained so `REQ-` prefixed names can fire
     /// RFC 8216bis §8 row 12. Sorted by name on parse (deterministic).
-    pub extra_attrs: Vec<(String, String)>,
+    pub extra_attrs: Vec<(String, AttrValue)>,
 }
 
 /// `#EXT-X-SKIP` (RFC 8216bis §4.4.5.2) — present on a Playlist Delta Update
@@ -382,7 +383,7 @@ pub struct SkipInfo {
     pub recently_removed_daterange_ids: Vec<String>,
     /// Unmodeled attributes, retained so `REQ-` prefixed names can fire
     /// RFC 8216bis §8 row 12. Sorted by name on parse (deterministic).
-    pub extra_attrs: Vec<(String, String)>,
+    pub extra_attrs: Vec<(String, AttrValue)>,
 }
 
 /// A single partial segment ("part") of a [`MediaSegment`] — RFC 8216bis
@@ -411,7 +412,7 @@ pub struct PartSpec {
     pub gap: bool,
     /// Unmodeled attributes, retained so `REQ-` prefixed names can fire
     /// RFC 8216bis §8 row 12. Sorted by name on parse (deterministic).
-    pub extra_attrs: Vec<(String, String)>,
+    pub extra_attrs: Vec<(String, AttrValue)>,
 }
 
 /// An in-progress (open) LL-HLS segment: its parts are known and being served,
@@ -466,7 +467,7 @@ pub struct StartPoint {
     pub precise: bool,
     /// Unmodeled attributes, retained so `REQ-` prefixed names can fire
     /// RFC 8216bis §8 row 12. Sorted by name on parse (deterministic).
-    pub extra_attrs: Vec<(String, String)>,
+    pub extra_attrs: Vec<(String, AttrValue)>,
 }
 
 /// A single `#EXT-X-DEFINE` variable declaration (RFC 8216bis §4.4.2.3).
@@ -484,7 +485,7 @@ pub enum Define {
         value: String,
         /// Unmodeled attributes, retained so `REQ-` prefixed names can fire
         /// RFC 8216bis §8 row 12. Sorted by name on parse (deterministic).
-        extra_attrs: Vec<(String, String)>,
+        extra_attrs: Vec<(String, AttrValue)>,
     },
     /// `IMPORT` form — imports a Variable of the same name from the parent
     /// Multivariant Playlist. The spec says this **MUST NOT** occur in a
@@ -498,7 +499,7 @@ pub enum Define {
         name: String,
         /// Unmodeled attributes, retained so `REQ-` prefixed names can fire
         /// RFC 8216bis §8 row 12. Sorted by name on parse (deterministic).
-        extra_attrs: Vec<(String, String)>,
+        extra_attrs: Vec<(String, AttrValue)>,
     },
     /// `QUERYPARAM` form — imports a Variable from the query parameter of
     /// the same name in the Playlist's own URI.
@@ -507,7 +508,7 @@ pub enum Define {
         name: String,
         /// Unmodeled attributes, retained so `REQ-` prefixed names can fire
         /// RFC 8216bis §8 row 12. Sorted by name on parse (deterministic).
-        extra_attrs: Vec<(String, String)>,
+        extra_attrs: Vec<(String, AttrValue)>,
     },
 }
 
@@ -601,7 +602,7 @@ pub struct SessionData {
     pub language: Option<String>,
     /// Unmodeled attributes, retained so `REQ-` prefixed names can fire
     /// RFC 8216bis §8 row 12. Sorted by name on parse (deterministic).
-    pub extra_attrs: Vec<(String, String)>,
+    pub extra_attrs: Vec<(String, AttrValue)>,
 }
 
 /// `METHOD` attribute shared by `#EXT-X-KEY`/`#EXT-X-SESSION-KEY`
@@ -656,7 +657,7 @@ pub struct SessionKey {
     pub keyformatversions: Option<String>,
     /// Unmodeled attributes, retained so `REQ-` prefixed names can fire
     /// RFC 8216bis §8 row 12. Sorted by name on parse (deterministic).
-    pub extra_attrs: Vec<(String, String)>,
+    pub extra_attrs: Vec<(String, AttrValue)>,
 }
 
 /// `#EXT-X-CONTENT-STEERING` (RFC 8216bis §4.4.6.6) — a pointer to a Content
@@ -671,7 +672,7 @@ pub struct ContentSteering {
     pub pathway_id: Option<String>,
     /// Unmodeled attributes, retained so `REQ-` prefixed names can fire
     /// RFC 8216bis §8 row 12. Sorted by name on parse (deterministic).
-    pub extra_attrs: Vec<(String, String)>,
+    pub extra_attrs: Vec<(String, AttrValue)>,
 }
 
 /// A single media segment in a media playlist.
@@ -835,13 +836,13 @@ pub struct LowLatencyConfig {
     /// Unmodeled attributes from `#EXT-X-SERVER-CONTROL`,
     /// `#EXT-X-PART-INF`, and `#EXT-X-PRELOAD-HINT`, retained so `REQ-`
     /// prefixed names can fire RFC 8216bis §8 row 12. Sorted by name on parse (deterministic).
-    pub extra_attrs: Vec<(String, String)>,
+    pub extra_attrs: Vec<(String, AttrValue)>,
     /// Unmodeled attributes from `#EXT-X-SERVER-CONTROL` only.
-    pub sc_extra_attrs: Vec<(String, String)>,
+    pub sc_extra_attrs: Vec<(String, AttrValue)>,
     /// Unmodeled attributes from `#EXT-X-PART-INF` only.
-    pub pi_extra_attrs: Vec<(String, String)>,
+    pub pi_extra_attrs: Vec<(String, AttrValue)>,
     /// Unmodeled attributes from `#EXT-X-PRELOAD-HINT` only.
-    pub ph_extra_attrs: Vec<(String, String)>,
+    pub ph_extra_attrs: Vec<(String, AttrValue)>,
     /// `HOLD-BACK` attribute of `#EXT-X-SERVER-CONTROL` (RFC 8216bis
     /// §4.4.3.8) — the server-recommended minimum distance from the live
     /// edge for clients NOT playing in Low-Latency Mode. `None` means the
@@ -1032,7 +1033,7 @@ fn scan_tag_lines_for_version(tags: &[String]) -> Option<u8> {
     let mut v: Option<u8> = None;
     for tag in tags {
         if let Some(rest) = tag.strip_prefix("#EXT-X-KEY:") {
-            let attrs = parse_attr_list(rest);
+            let (attrs, _quoted) = parse_attr_list(rest);
             if attrs.contains_key("IV") {
                 bump_version(&mut v, VERSION_KEY_IV);
             }
@@ -1053,11 +1054,11 @@ fn scan_tag_lines_for_version(tags: &[String]) -> Option<u8> {
             // kept because a caller may still hand-push a verbatim tag line
             // into `extra_tags`, and `bump_version` is a max, so the two
             // paths cannot double-count or disagree.
-            if parse_attr_list(rest).contains_key("QUERYPARAM") {
+            if parse_attr_list(rest).0.contains_key("QUERYPARAM") {
                 bump_version(&mut v, VERSION_DEFINE_QUERYPARAM);
             }
         } else if let Some(rest) = tag.strip_prefix("#EXT-X-MEDIA:") {
-            let attrs = parse_attr_list(rest);
+            let (attrs, _quoted) = parse_attr_list(rest);
             if let Some(instream_id) = attrs.get("INSTREAM-ID") {
                 if instream_id.starts_with("SERVICE") {
                     bump_version(&mut v, VERSION_MEDIA_SERVICE_INSTREAM_ID);
@@ -1073,6 +1074,7 @@ fn scan_tag_lines_for_version(tags: &[String]) -> Option<u8> {
         // handled above — scan every tag's attribute keys uniformly.
         if let Some(colon) = tag.find(':')
             && parse_attr_list(&tag[colon + 1..])
+                .0
                 .keys()
                 .any(|k| k.starts_with("REQ-"))
         {
@@ -1099,8 +1101,9 @@ fn any_typed_req_attr(
     variants: &[Variant],
     iframes: &[IFrameVariant],
 ) -> bool {
-    let extra_attr_is_req =
-        |attrs: &[(String, String)]| -> bool { attrs.iter().any(|(k, _)| k.starts_with("REQ-")) };
+    let extra_attr_is_req = |attrs: &[(String, AttrValue)]| -> bool {
+        attrs.iter().any(|(k, _)| k.starts_with("REQ-"))
+    };
     if start.is_some_and(|s| extra_attr_is_req(&s.extra_attrs)) {
         return true;
     }
@@ -1142,8 +1145,9 @@ fn any_media_typed_req_attr(
     skip: Option<&SkipInfo>,
     low_latency: Option<&LowLatencyConfig>,
 ) -> bool {
-    let extra_attr_is_req =
-        |attrs: &[(String, String)]| -> bool { attrs.iter().any(|(k, _)| k.starts_with("REQ-")) };
+    let extra_attr_is_req = |attrs: &[(String, AttrValue)]| -> bool {
+        attrs.iter().any(|(k, _)| k.starts_with("REQ-"))
+    };
     if segments.iter().any(|s| {
         s.map
             .as_ref()
@@ -1610,9 +1614,9 @@ impl MediaPlaylist {
         let mut preload_hint_byte_range_start: Option<u64> = None;
         let mut preload_hint_byte_range_length: Option<u64> = None;
         let mut saw_ll_tag = false;
-        let mut sc_extra_attrs: Vec<(String, String)> = Vec::new();
-        let mut pi_extra_attrs: Vec<(String, String)> = Vec::new();
-        let mut ph_extra_attrs: Vec<(String, String)> = Vec::new();
+        let mut sc_extra_attrs: Vec<(String, AttrValue)> = Vec::new();
+        let mut pi_extra_attrs: Vec<(String, AttrValue)> = Vec::new();
+        let mut ph_extra_attrs: Vec<(String, AttrValue)> = Vec::new();
 
         // Per-segment pending state, reset each time a bare URI line closes
         // a segment.
@@ -1681,13 +1685,13 @@ impl MediaPlaylist {
             } else if let Some(rest) = line.strip_prefix("#EXT-X-BYTERANGE:") {
                 pending_byte_range = Some(ByteRange::parse(rest, line_no, line)?);
             } else if let Some(rest) = line.strip_prefix("#EXT-X-MAP:") {
-                let attrs = parse_attr_list(rest);
+                let (attrs, quoted) = parse_attr_list(rest);
                 let uri = require_attr(&attrs, "URI", line_no, line, "EXT-X-MAP")?;
                 let byte_range = match attrs.get("BYTERANGE") {
                     Some(v) => Some(ByteRange::parse(v, line_no, line)?),
                     None => None,
                 };
-                let extra_attrs = filter_extra_attrs(&attrs, &["URI", "BYTERANGE"]);
+                let extra_attrs = filter_extra_attrs(&attrs, &["URI", "BYTERANGE"], &quoted)?;
                 current_map = Some(MapTag {
                     uri,
                     byte_range,
@@ -1697,14 +1701,14 @@ impl MediaPlaylist {
                 let dur_str = rest.split(',').next().unwrap_or(rest);
                 pending_duration = Some(parse_decimal(dur_str, line_no, line, "EXTINF duration")?);
             } else if let Some(rest) = line.strip_prefix("#EXT-X-PART-INF:") {
-                let attrs = parse_attr_list(rest);
+                let (attrs, quoted) = parse_attr_list(rest);
                 if let Some(v) = attrs.get("PART-TARGET") {
                     part_target = Some(parse_decimal(v, line_no, line, "PART-TARGET")?);
                 }
-                pi_extra_attrs.extend(filter_extra_attrs(&attrs, &["PART-TARGET"]));
+                pi_extra_attrs.extend(filter_extra_attrs(&attrs, &["PART-TARGET"], &quoted)?);
                 saw_ll_tag = true;
             } else if let Some(rest) = line.strip_prefix("#EXT-X-SERVER-CONTROL:") {
-                let attrs = parse_attr_list(rest);
+                let (attrs, quoted) = parse_attr_list(rest);
                 if let Some(v) = attrs.get("PART-HOLD-BACK") {
                     part_hold_back = Some(parse_decimal(v, line_no, line, "PART-HOLD-BACK")?);
                 }
@@ -1726,10 +1730,11 @@ impl MediaPlaylist {
                         "HOLD-BACK",
                         "CAN-SKIP-DATERANGES",
                     ],
-                ));
+                    &quoted,
+                )?);
                 saw_ll_tag = true;
             } else if let Some(rest) = line.strip_prefix("#EXT-X-PART:") {
-                let attrs = parse_attr_list(rest);
+                let (attrs, quoted) = parse_attr_list(rest);
                 let uri = require_attr(&attrs, "URI", line_no, line, "EXT-X-PART")?;
                 let duration_str = attrs.get("DURATION").ok_or_else(|| Error::HlsParse {
                     line_no,
@@ -1746,7 +1751,8 @@ impl MediaPlaylist {
                 let extra_attrs = filter_extra_attrs(
                     &attrs,
                     &["URI", "DURATION", "INDEPENDENT", "GAP", "BYTERANGE"],
-                );
+                    &quoted,
+                )?;
                 pending_parts.push(PartSpec {
                     uri,
                     duration,
@@ -1757,7 +1763,7 @@ impl MediaPlaylist {
                 });
                 saw_ll_tag = true;
             } else if let Some(rest) = line.strip_prefix("#EXT-X-PRELOAD-HINT:") {
-                let attrs = parse_attr_list(rest);
+                let (attrs, quoted) = parse_attr_list(rest);
                 preload_hint_type = match attrs.get("TYPE").map(String::as_str) {
                     Some("MAP") => PreloadHintType::Map,
                     _ => PreloadHintType::Part,
@@ -1780,10 +1786,11 @@ impl MediaPlaylist {
                 ph_extra_attrs.extend(filter_extra_attrs(
                     &attrs,
                     &["TYPE", "URI", "BYTERANGE-START", "BYTERANGE-LENGTH"],
-                ));
+                    &quoted,
+                )?);
                 saw_ll_tag = true;
             } else if let Some(rest) = line.strip_prefix("#EXT-X-RENDITION-REPORT:") {
-                let attrs = parse_attr_list(rest);
+                let (attrs, quoted) = parse_attr_list(rest);
                 let uri = require_attr(&attrs, "URI", line_no, line, "EXT-X-RENDITION-REPORT")?;
                 let last_msn = match attrs.get("LAST-MSN") {
                     Some(v) => parse_decimal(v, line_no, line, "LAST-MSN")?,
@@ -1793,7 +1800,8 @@ impl MediaPlaylist {
                     Some(v) => Some(parse_decimal(v, line_no, line, "LAST-PART")?),
                     None => None,
                 };
-                let extra_attrs = filter_extra_attrs(&attrs, &["URI", "LAST-MSN", "LAST-PART"]);
+                let extra_attrs =
+                    filter_extra_attrs(&attrs, &["URI", "LAST-MSN", "LAST-PART"], &quoted)?;
                 rendition_reports.push(RenditionReport {
                     uri,
                     last_msn,
@@ -1801,7 +1809,7 @@ impl MediaPlaylist {
                     extra_attrs,
                 });
             } else if let Some(rest) = line.strip_prefix("#EXT-X-SKIP:") {
-                let attrs = parse_attr_list(rest);
+                let (attrs, quoted) = parse_attr_list(rest);
                 let skipped_segments_str =
                     require_attr(&attrs, "SKIPPED-SEGMENTS", line_no, line, "EXT-X-SKIP")?;
                 let skipped_segments =
@@ -1818,7 +1826,8 @@ impl MediaPlaylist {
                 let extra_attrs = filter_extra_attrs(
                     &attrs,
                     &["SKIPPED-SEGMENTS", "RECENTLY-REMOVED-DATERANGES"],
-                );
+                    &quoted,
+                )?;
                 skip = Some(SkipInfo {
                     skipped_segments,
                     recently_removed_daterange_ids,
@@ -1893,7 +1902,7 @@ impl MediaPlaylist {
         }
 
         let low_latency = if saw_ll_tag {
-            let mut all_extra: Vec<(String, String)> = Vec::new();
+            let mut all_extra: Vec<(String, AttrValue)> = Vec::new();
             all_extra.extend(sc_extra_attrs.iter().cloned());
             all_extra.extend(pi_extra_attrs.iter().cloned());
             all_extra.extend(ph_extra_attrs.iter().cloned());
@@ -2000,7 +2009,7 @@ fn push_define_line(s: &mut String, def: &Define) {
 /// Parse an `#EXT-X-DEFINE:<attribute-list>` value (RFC 8216bis §4.4.2.3):
 /// exactly one of `NAME` (+ required `VALUE`), `IMPORT`, `QUERYPARAM`.
 fn parse_define(rest: &str, line_no: usize, line: &str) -> Result<Define> {
-    let attrs = parse_attr_list(rest);
+    let (attrs, quoted) = parse_attr_list(rest);
     let present = [
         attrs.contains_key("NAME"),
         attrs.contains_key("IMPORT"),
@@ -2018,14 +2027,14 @@ fn parse_define(rest: &str, line_no: usize, line: &str) -> Result<Define> {
     }
     if let Some(name) = attrs.get("NAME") {
         let value = require_attr(&attrs, "VALUE", line_no, line, "EXT-X-DEFINE")?;
-        let extra_attrs = filter_extra_attrs(&attrs, &["NAME", "VALUE"]);
+        let extra_attrs = filter_extra_attrs(&attrs, &["NAME", "VALUE"], &quoted)?;
         Ok(Define::Name {
             name: name.clone(),
             value,
             extra_attrs,
         })
     } else if let Some(name) = attrs.get("IMPORT") {
-        let extra_attrs = filter_extra_attrs(&attrs, &["IMPORT"]);
+        let extra_attrs = filter_extra_attrs(&attrs, &["IMPORT"], &quoted)?;
         Ok(Define::Import {
             name: name.clone(),
             extra_attrs,
@@ -2035,26 +2044,188 @@ fn parse_define(rest: &str, line_no: usize, line: &str) -> Result<Define> {
             .get("QUERYPARAM")
             .expect("exactly one of the three checked above")
             .clone();
-        let extra_attrs = filter_extra_attrs(&attrs, &["QUERYPARAM"]);
+        let extra_attrs = filter_extra_attrs(&attrs, &["QUERYPARAM"], &quoted)?;
         Ok(Define::QueryParam { name, extra_attrs })
     }
 }
 
-/// Append `,NAME=VALUE` (or `,NAME="VALUE"` for values containing special
-/// characters) for each extra attribute. Sorted by name (already sorted on
-/// parse via `filter_extra_attrs`, kept sorted here for programmatic
-/// construction).
-fn push_extra_attrs(s: &mut String, attrs: &[(String, String)]) {
+/// The wire representation of one attribute-list value (RFC 8216 §4.2):
+/// whether it was written as a **quoted-string** or a **bare** token
+/// (enumerated-string / decimal-integer / decimal-floating-point).
+///
+/// `extra_attrs` (every attribute this crate does not model as a typed
+/// struct field) stores one of these per entry instead of a plain `String`,
+/// recorded from the actual on-wire token at parse time, so quoting
+/// round-trips losslessly — including for an attribute this crate has never
+/// heard of (issue #1045 / audit BH-C1). A plain `String` alone cannot
+/// represent this: `parse_attr_list` must strip the surrounding `"` either
+/// way to recover a quoted value's content, so by the time the value
+/// reaches `extra_attrs` the two forms are indistinguishable unless
+/// recorded explicitly.
+///
+/// Opaque by construction (issue #1045 T12, coordinator review): a value
+/// that cannot be represented in its requested kind (a quoted-string
+/// containing `"`/CR/LF, or a bare value containing a character that would
+/// require quoting) is rejected by [`Self::quoted`]/[`Self::bare`] rather
+/// than silently mangled (e.g. percent-encoded) or emitted raw — cf. #1129
+/// ("never silently wrap/mangle an over-range value"). This keeps
+/// rendering (`to_m3u8`) infallible without ever letting an invalid value
+/// exist in the first place; parsing constructs through the same checks
+/// (a value read off the wire can never fail them — see the module docs on
+/// `parse_attr_list`/`filter_extra_attrs`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AttrValue {
+    value: String,
+    quoted: bool,
+}
+
+impl AttrValue {
+    /// Build a quoted-string attribute value (RFC 8216 §4.2). Rejects a
+    /// value containing `"`, CR or LF — a quoted-string must never contain
+    /// any of them.
+    pub fn quoted(value: impl Into<String>) -> Result<Self> {
+        let value = value.into();
+        if value.contains('"') || value.contains('\r') || value.contains('\n') {
+            return Err(Error::InvalidAttrValue {
+                value,
+                kind: "a quoted-string",
+            });
+        }
+        Ok(Self {
+            value,
+            quoted: true,
+        })
+    }
+
+    /// Build a bare enumerated-string/decimal attribute value. Rejects a
+    /// value containing `,`, `"`, CR, LF or whitespace, any of which would
+    /// require quoting.
+    pub fn bare(value: impl Into<String>) -> Result<Self> {
+        let value = value.into();
+        if value.contains(',')
+            || value.contains('"')
+            || value.contains('\r')
+            || value.contains('\n')
+            || value.contains(char::is_whitespace)
+        {
+            return Err(Error::InvalidAttrValue {
+                value,
+                kind: "a bare value",
+            });
+        }
+        Ok(Self {
+            value,
+            quoted: false,
+        })
+    }
+
+    /// The value's content, with wire quoting (if any) already stripped.
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.value
+    }
+
+    /// Whether this value renders quoted (`"<content>"`) or bare.
+    #[must_use]
+    pub fn is_quoted(&self) -> bool {
+        self.quoted
+    }
+
+    /// Build an [`AttrValue`] for a **programmatically constructed**
+    /// attribute (e.g. assembling a fresh [`Variant`] rather than parsing
+    /// one), choosing [`Self::quoted`] or [`Self::bare`] from a static
+    /// table of known RFC 8216bis quoted-string attribute names
+    /// (§4.4.6.2 / §4.4.6.2.1 — spec text at
+    /// `specs/ietf_draft_pantos_hls_rfc8216bis.txt` lines 2637-2980) for a
+    /// recognized name, falling back to sniffing the value's content for
+    /// one this crate doesn't recognize (a non-`,`/`"`/whitespace/
+    /// non-empty value is left unquoted). Prefer calling
+    /// [`Self::quoted`]/[`Self::bare`] directly when the correct kind is
+    /// already known — this is a convenience for the common case, not the
+    /// source of truth (parsing always records the true wire form). Fails
+    /// exactly when the chosen constructor would (the value contains a
+    /// character forbidden for that kind).
+    pub fn for_attr(name: &str, value: impl Into<String>) -> Result<Self> {
+        let value = value.into();
+        match known_attr_value_kind(name) {
+            Some(AttrValueKind::Quoted) => Self::quoted(value),
+            Some(AttrValueKind::QuotedUnless(bare)) => {
+                if value == bare {
+                    Self::bare(value)
+                } else {
+                    Self::quoted(value)
+                }
+            }
+            None => {
+                if value.is_empty()
+                    || value.contains(',')
+                    || value.contains('"')
+                    || value.contains(char::is_whitespace)
+                {
+                    Self::quoted(value)
+                } else {
+                    Self::bare(value)
+                }
+            }
+        }
+    }
+}
+
+/// The RFC 8216bis §4.4.6.2 / §4.4.6.2.1 attribute-value *kind* for an
+/// attribute name this crate does not model as a typed struct field —
+/// used only by [`AttrValue::for_attr`]'s programmatic-construction
+/// convenience (issue #1045 / audit BH-C1); parsing never consults this,
+/// since it records the true wire form directly.
+enum AttrValueKind {
+    /// Always a quoted-string.
+    Quoted,
+    /// A quoted-string, *unless* the value is exactly this bare enumerated
+    /// token (case-sensitive) — e.g. `CLOSED-CAPTIONS=NONE`.
+    QuotedUnless(&'static str),
+}
+
+/// Known quoted-string attributes not modeled as typed fields on
+/// [`Variant`]/[`IFrameVariant`] (`#EXT-X-STREAM-INF` / `#EXT-X-I-FRAME-
+/// STREAM-INF`). Extend this list if a future unmodeled attribute is added
+/// elsewhere; an attribute absent from it falls back to content-sniffing in
+/// [`AttrValue::for_attr`].
+fn known_attr_value_kind(name: &str) -> Option<AttrValueKind> {
+    match name {
+        "AUDIO"
+        | "VIDEO"
+        | "SUBTITLES"
+        | "PATHWAY-ID"
+        | "STABLE-VARIANT-ID"
+        | "STABLE-RENDITION-ID"
+        | "SUPPLEMENTAL-CODECS"
+        | "REQ-VIDEO-LAYOUT"
+        | "ALLOWED-CPC" => Some(AttrValueKind::Quoted),
+        "CLOSED-CAPTIONS" => Some(AttrValueKind::QuotedUnless("NONE")),
+        _ => None,
+    }
+}
+
+/// Append `,NAME=VALUE` (or `,NAME="VALUE"`) for each extra attribute.
+/// Sorted by name (already sorted on parse via `filter_extra_attrs`, kept
+/// sorted here for programmatic construction).
+///
+/// Quoting is exactly what [`AttrValue`] records — no guessing at render
+/// time, and infallible: an [`AttrValue`] can only ever hold content valid
+/// for its kind (RFC 8216 §4.2's forbidden `"`/CR/LF in a quoted-string,
+/// or `,`/`"`/CR/LF/whitespace in a bare value, are rejected at
+/// construction — [`AttrValue::quoted`]/[`AttrValue::bare`], issue #1045
+/// T12) — so there is nothing left to validate or sanitize here.
+fn push_extra_attrs(s: &mut String, attrs: &[(String, AttrValue)]) {
     for (name, value) in attrs {
         s.push(',');
         s.push_str(name);
         s.push('=');
-        if value.contains(',') || value.contains('"') || value.contains(char::is_whitespace) {
+        if value.is_quoted() {
             s.push('"');
-            s.push_str(value);
+            s.push_str(value.as_str());
             s.push('"');
         } else {
-            s.push_str(value);
+            s.push_str(value.as_str());
         }
     }
 }
@@ -2074,11 +2245,11 @@ fn push_start_line(s: &mut String, start: &StartPoint) {
 
 /// Parse the `#EXT-X-START:<attribute-list>` value.
 fn parse_start(rest: &str, line_no: usize, line: &str) -> Result<StartPoint> {
-    let attrs = parse_attr_list(rest);
+    let (attrs, quoted) = parse_attr_list(rest);
     let time_offset_str = require_attr(&attrs, "TIME-OFFSET", line_no, line, "EXT-X-START")?;
     let time_offset = parse_decimal(&time_offset_str, line_no, line, "TIME-OFFSET")?;
     let precise = attrs.get("PRECISE").map(String::as_str) == Some("YES");
-    let extra_attrs = filter_extra_attrs(&attrs, &["TIME-OFFSET", "PRECISE"]);
+    let extra_attrs = filter_extra_attrs(&attrs, &["TIME-OFFSET", "PRECISE"], &quoted)?;
     Ok(StartPoint {
         time_offset,
         precise,
@@ -2109,7 +2280,7 @@ fn push_session_data_line(s: &mut String, sd: &SessionData) {
 
 /// Parse an `#EXT-X-SESSION-DATA:<attribute-list>` value.
 fn parse_session_data(rest: &str, line_no: usize, line: &str) -> Result<SessionData> {
-    let attrs = parse_attr_list(rest);
+    let (attrs, quoted) = parse_attr_list(rest);
     let data_id = require_attr(&attrs, "DATA-ID", line_no, line, "EXT-X-SESSION-DATA")?;
     let value = attrs.get("VALUE");
     let uri = attrs.get("URI");
@@ -2145,7 +2316,7 @@ fn parse_session_data(rest: &str, line_no: usize, line: &str) -> Result<SessionD
         SessionDataContent::Value(_) => &["DATA-ID", "VALUE", "LANGUAGE"],
         SessionDataContent::Uri { .. } => &["DATA-ID", "URI", "FORMAT", "LANGUAGE"],
     };
-    let extra_attrs = filter_extra_attrs(&attrs, known);
+    let extra_attrs = filter_extra_attrs(&attrs, known, &quoted)?;
     Ok(SessionData {
         data_id,
         content,
@@ -2176,7 +2347,7 @@ fn push_session_key_line(s: &mut String, sk: &SessionKey) {
 /// Parse an `#EXT-X-SESSION-KEY:<attribute-list>` value (same attribute set
 /// as `#EXT-X-KEY`, RFC 8216bis §4.4.4.4, except METHOD MUST NOT be NONE).
 fn parse_session_key(rest: &str, line_no: usize, line: &str) -> Result<SessionKey> {
-    let attrs = parse_attr_list(rest);
+    let (attrs, quoted) = parse_attr_list(rest);
     let method_str = require_attr(&attrs, "METHOD", line_no, line, "EXT-X-SESSION-KEY")?;
     let method = match method_str.as_str() {
         "NONE" => {
@@ -2209,7 +2380,8 @@ fn parse_session_key(rest: &str, line_no: usize, line: &str) -> Result<SessionKe
     let extra_attrs = filter_extra_attrs(
         &attrs,
         &["METHOD", "URI", "IV", "KEYFORMAT", "KEYFORMATVERSIONS"],
-    );
+        &quoted,
+    )?;
     Ok(SessionKey {
         method,
         uri,
@@ -2368,11 +2540,17 @@ fn parse_decimal<T: core::str::FromStr>(
 
 /// Split an HLS `<attribute-list>` (RFC 8216 §4.2: comma-separated
 /// `AttributeName=AttributeValue` pairs, where a quoted-string value may
-/// itself contain commas) into a name → value map. Quoted values are
-/// returned with their surrounding `"` stripped; unquoted (enumerated-string
-/// / decimal) values are returned as-is.
-fn parse_attr_list(s: &str) -> BTreeMap<String, String> {
+/// itself contain commas) into a name → value map, plus the set of names
+/// whose value was written as a quoted-string on the wire (issue #1045 /
+/// audit BH-C1 — [`filter_extra_attrs`] uses this to build a lossless
+/// [`AttrValue`] per unmodeled attribute). Quoted values are returned with
+/// their surrounding `"` stripped; unquoted (enumerated-string / decimal)
+/// values are returned as-is — named/typed attribute extraction (every
+/// `require_attr`/`.get(...)` call site) reads only the value map, exactly
+/// as before this issue.
+fn parse_attr_list(s: &str) -> (BTreeMap<String, String>, BTreeSet<String>) {
     let mut map = BTreeMap::new();
+    let mut quoted_keys = BTreeSet::new();
     let bytes = s.as_bytes();
     let len = bytes.len();
     let mut i = 0;
@@ -2404,6 +2582,7 @@ fn parse_attr_list(s: &str) -> BTreeMap<String, String> {
                 i += 1; // skip closing '"'
             }
             map.insert(key.to_string(), value.to_string());
+            quoted_keys.insert(key.to_string());
         } else {
             let value_start = i;
             while i < len && bytes[i] != b',' {
@@ -2412,17 +2591,37 @@ fn parse_attr_list(s: &str) -> BTreeMap<String, String> {
             map.insert(key.to_string(), s[value_start..i].to_string());
         }
     }
-    map
+    (map, quoted_keys)
 }
 
 /// From an already-parsed attribute map, collect every attribute whose name
-/// is not in `known` into a `Vec<(name, value)>`, sorted by name for
-/// deterministic serialization.
-fn filter_extra_attrs(attrs: &BTreeMap<String, String>, known: &[&str]) -> Vec<(String, String)> {
+/// is not in `known` into a `Vec<(name, AttrValue)>`, sorted by name for
+/// deterministic serialization. `quoted` (from [`parse_attr_list`]) decides
+/// [`AttrValue::quoted`] vs. [`AttrValue::bare`] per entry — the recorded
+/// wire form, not a guess (issue #1045 / audit BH-C1).
+///
+/// Fallible because [`AttrValue::quoted`]/[`AttrValue::bare`] validate their
+/// content (issue #1045 T12); in practice this can only fail for a
+/// malformed *bare* token whose text happens to contain `"` or whitespace
+/// (a bare token's own scan stops at the next `,`, so it can hold those; a
+/// quoted token's content can never contain an unescaped `"`, and neither
+/// form can span a CR/LF since input is split into lines first).
+fn filter_extra_attrs(
+    attrs: &BTreeMap<String, String>,
+    known: &[&str],
+    quoted: &BTreeSet<String>,
+) -> Result<Vec<(String, AttrValue)>> {
     attrs
         .iter()
         .filter(|(k, _)| !known.contains(&k.as_str()))
-        .map(|(k, v)| (k.clone(), v.clone()))
+        .map(|(k, v)| {
+            let value = if quoted.contains(k) {
+                AttrValue::quoted(v.clone())?
+            } else {
+                AttrValue::bare(v.clone())?
+            };
+            Ok((k.clone(), value))
+        })
         .collect()
 }
 
@@ -2456,7 +2655,7 @@ pub struct Variant {
     pub uri: String,
     /// Unmodeled attributes, retained so `REQ-` prefixed names can fire
     /// RFC 8216bis §8 row 12. Sorted by name on parse (deterministic).
-    pub extra_attrs: Vec<(String, String)>,
+    pub extra_attrs: Vec<(String, AttrValue)>,
 }
 
 /// An I-frame-only rendition entry for a master playlist — RFC 8216 §4.3.4.2
@@ -2479,7 +2678,7 @@ pub struct IFrameVariant {
     pub uri: String,
     /// Unmodeled attributes, retained so `REQ-` prefixed names can fire
     /// RFC 8216bis §8 row 12. Sorted by name on parse (deterministic).
-    pub extra_attrs: Vec<(String, String)>,
+    pub extra_attrs: Vec<(String, AttrValue)>,
 }
 
 /// A master playlist (`#EXTM3U` / `#EXT-X-STREAM-INF` / ...).
@@ -2530,7 +2729,7 @@ pub struct MasterPlaylist {
 
 /// A parsed but not-yet-closed `#EXT-X-STREAM-INF` — `(bandwidth, codecs,
 /// resolution)` — awaiting the URI line that turns it into a [`Variant`].
-type PendingStreamInf = (u32, String, Option<(u32, u32)>, Vec<(String, String)>);
+type PendingStreamInf = (u32, String, Option<(u32, u32)>, Vec<(String, AttrValue)>);
 
 impl MasterPlaylist {
     /// Render this master playlist as an RFC 8216 `#EXTM3U` string.
@@ -2658,7 +2857,7 @@ impl MasterPlaylist {
             } else if let Some(rest) = line.strip_prefix("#EXT-X-VERSION:") {
                 version = parse_decimal(rest, line_no, line, "EXT-X-VERSION")?;
             } else if let Some(rest) = line.strip_prefix("#EXT-X-STREAM-INF:") {
-                let attrs = parse_attr_list(rest);
+                let (attrs, quoted) = parse_attr_list(rest);
                 let bandwidth_str =
                     require_attr(&attrs, "BANDWIDTH", line_no, line, "EXT-X-STREAM-INF")?;
                 let bandwidth = parse_decimal(&bandwidth_str, line_no, line, "BANDWIDTH")?;
@@ -2668,10 +2867,10 @@ impl MasterPlaylist {
                     None => None,
                 };
                 let extra_attrs =
-                    filter_extra_attrs(&attrs, &["BANDWIDTH", "CODECS", "RESOLUTION"]);
+                    filter_extra_attrs(&attrs, &["BANDWIDTH", "CODECS", "RESOLUTION"], &quoted)?;
                 pending_stream_inf = Some((bandwidth, codecs, resolution, extra_attrs));
             } else if let Some(rest) = line.strip_prefix("#EXT-X-I-FRAME-STREAM-INF:") {
-                let attrs = parse_attr_list(rest);
+                let (attrs, quoted) = parse_attr_list(rest);
                 let bandwidth_str = require_attr(
                     &attrs,
                     "BANDWIDTH",
@@ -2686,8 +2885,11 @@ impl MasterPlaylist {
                     None => None,
                 };
                 let uri = require_attr(&attrs, "URI", line_no, line, "EXT-X-I-FRAME-STREAM-INF")?;
-                let extra_attrs =
-                    filter_extra_attrs(&attrs, &["BANDWIDTH", "CODECS", "RESOLUTION", "URI"]);
+                let extra_attrs = filter_extra_attrs(
+                    &attrs,
+                    &["BANDWIDTH", "CODECS", "RESOLUTION", "URI"],
+                    &quoted,
+                )?;
                 iframe_variants.push(IFrameVariant {
                     bandwidth,
                     codecs,
@@ -2706,7 +2908,7 @@ impl MasterPlaylist {
             } else if let Some(rest) = line.strip_prefix("#EXT-X-SESSION-KEY:") {
                 session_keys.push(parse_session_key(rest, line_no, line)?);
             } else if let Some(rest) = line.strip_prefix("#EXT-X-CONTENT-STEERING:") {
-                let attrs = parse_attr_list(rest);
+                let (attrs, quoted) = parse_attr_list(rest);
                 let server_uri = require_attr(
                     &attrs,
                     "SERVER-URI",
@@ -2715,7 +2917,8 @@ impl MasterPlaylist {
                     "EXT-X-CONTENT-STEERING",
                 )?;
                 let pathway_id = attrs.get("PATHWAY-ID").cloned();
-                let extra_attrs = filter_extra_attrs(&attrs, &["SERVER-URI", "PATHWAY-ID"]);
+                let extra_attrs =
+                    filter_extra_attrs(&attrs, &["SERVER-URI", "PATHWAY-ID"], &quoted)?;
                 content_steering = Some(ContentSteering {
                     server_uri,
                     pathway_id,
@@ -4236,7 +4439,9 @@ s0.m4s\n\
 #EXTINF:4.000,\n\
 seg.m4s\n";
         let err = MediaPlaylist::parse(text).expect_err("EXT-X-PART without DURATION must error");
-        let Error::HlsParse { reason, .. } = err;
+        let Error::HlsParse { reason, .. } = err else {
+            panic!("expected Error::HlsParse, got {err:?}")
+        };
         assert!(reason.contains("DURATION"), "{reason}");
     }
 
@@ -4788,7 +4993,9 @@ v300/index.m3u8\n\
 #EXT-X-SESSION-KEY:METHOD=NONE,URI=\"https://k.example/key\"\n";
         let err = MasterPlaylist::parse(text)
             .expect_err("EXT-X-SESSION-KEY with METHOD=NONE must be rejected");
-        let Error::HlsParse { reason, .. } = err;
+        let Error::HlsParse { reason, .. } = err else {
+            panic!("expected Error::HlsParse, got {err:?}")
+        };
         assert!(reason.contains("NONE"), "error must mention NONE: {reason}");
     }
 
@@ -4836,7 +5043,7 @@ seg0.m4s\n";
         assert!(
             ll.pi_extra_attrs
                 .iter()
-                .any(|(k, v)| k == "REQ-VIDEO" && v == "720p"),
+                .any(|(k, v)| k == "REQ-VIDEO" && v.as_str() == "720p"),
             "REQ-VIDEO must survive in pi_extra_attrs"
         );
 
@@ -4844,7 +5051,7 @@ seg0.m4s\n";
         assert!(
             ll.sc_extra_attrs
                 .iter()
-                .any(|(k, v)| k == "REQ-LATENCY" && v == "ultra-low"),
+                .any(|(k, v)| k == "REQ-LATENCY" && v.as_str() == "ultra-low"),
             "REQ-LATENCY must survive in sc_extra_attrs"
         );
 

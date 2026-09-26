@@ -76,8 +76,8 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use broadcast_hls::{
-    CencScheme, IFrameVariant, LowLatencyConfig, MasterPlaylist, MediaPlaylist, MediaSegment,
-    PartSpec, Variant, cenc_ext_x_key,
+    AttrValue, CencScheme, IFrameVariant, LowLatencyConfig, MasterPlaylist, MediaPlaylist,
+    MediaSegment, PartSpec, Variant, cenc_ext_x_key,
 };
 use serde_json::Value;
 use transmux::cli::{Opts, Output, OutputFormat, run_bytes};
@@ -616,6 +616,176 @@ fn origin_multivariant_shape_validates_clean() {
 
     let findings = run_validator(&dir, "master.m3u8", true, 5);
     assert_zero_errors(&findings, "origin multivariant shape");
+}
+
+/// Unmodeled RFC 8216bis quoted-string `#EXT-X-STREAM-INF` attributes
+/// (`AUDIO`/`SUBTITLES`/`CLOSED-CAPTIONS`) that round-trip through
+/// `Variant::extra_attrs` (issue #1045 / audit BH-C1). Each of these MUST
+/// byte-wise match the `GROUP-ID` of a real `#EXT-X-MEDIA` tag elsewhere in
+/// the Multivariant Playlist (spec text: "matched using a byte-for-byte
+/// comparison") — an independent, real-world proof that the quoting bug is
+/// not cosmetic: `AUDIO=aud1` (bare) fails to associate with
+/// `GROUP-ID="aud1"` under a strict parser, exactly like the real
+/// `bipbop-fmp4-hevc` fixture's `AUDIO="a1"` did before the fix.
+#[test]
+fn origin_variant_quoted_group_attrs_validates_clean() {
+    skip_unless_validator_available!();
+
+    let dir = scratch_dir("origin-quoted-group-attrs");
+
+    let leaf = MediaPlaylist {
+        version: 3,
+        target_duration: 6,
+        segments: vec![MediaSegment {
+            uri: "seg0.ts".into(),
+            duration: 6.0,
+            ..Default::default()
+        }],
+        endlist: true,
+        ..Default::default()
+    };
+    fs::write(dir.join("hi.m3u8"), leaf.to_m3u8()).expect("write hi.m3u8");
+    fs::write(dir.join("audio.m3u8"), leaf.to_m3u8()).expect("write audio.m3u8");
+    fs::write(dir.join("sub.m3u8"), leaf.to_m3u8()).expect("write sub.m3u8");
+
+    let master = MasterPlaylist {
+        extra_tags: vec![
+            "#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID=\"aud1\",NAME=\"English\",DEFAULT=YES,\
+             AUTOSELECT=YES,URI=\"audio.m3u8\""
+                .to_string(),
+            "#EXT-X-MEDIA:TYPE=SUBTITLES,GROUP-ID=\"sub1\",NAME=\"English\",DEFAULT=YES,\
+             AUTOSELECT=YES,URI=\"sub.m3u8\""
+                .to_string(),
+            "#EXT-X-MEDIA:TYPE=CLOSED-CAPTIONS,GROUP-ID=\"cc1\",NAME=\"English\",DEFAULT=YES,\
+             AUTOSELECT=YES,INSTREAM-ID=\"CC1\""
+                .to_string(),
+        ],
+        variants: vec![Variant {
+            bandwidth: 2_560_000,
+            codecs: "avc1.64001f,mp4a.40.2".into(),
+            resolution: Some((1280, 720)),
+            uri: "hi.m3u8".into(),
+            extra_attrs: vec![
+                (
+                    "AUDIO".to_string(),
+                    AttrValue::for_attr("AUDIO", "aud1").expect("known-good literal"),
+                ),
+                (
+                    "CLOSED-CAPTIONS".to_string(),
+                    AttrValue::for_attr("CLOSED-CAPTIONS", "cc1").expect("known-good literal"),
+                ),
+                (
+                    "SUBTITLES".to_string(),
+                    AttrValue::for_attr("SUBTITLES", "sub1").expect("known-good literal"),
+                ),
+            ],
+        }],
+        ..Default::default()
+    };
+    fs::write(dir.join("master.m3u8"), master.to_m3u8()).expect("write master.m3u8");
+
+    let findings = run_validator(&dir, "master.m3u8", true, 5);
+    assert_zero_errors(
+        &findings,
+        "origin quoted AUDIO/SUBTITLES/CLOSED-CAPTIONS group attrs",
+    );
+    // `assert_zero_errors` alone doesn't bite here: the validator classifies
+    // the pre-fix "AUDIO=aud1"/"CLOSED-CAPTIONS=cc1"/"SUBTITLES=sub1"
+    // (unquoted) defect at `errorRequirementLevel: 4` (below the `<= 1`
+    // threshold `Finding::is_error` gates on), not as a `MUST`-level error —
+    // but it is unambiguous, independent, oracle-confirmed evidence of the
+    // exact bug (verified by calibration: `AUDIO: missing quotes` /
+    // `CLOSED-CAPTIONS: missing quotes or illegal value` / `SUBTITLES:
+    // missing quotes`, one per unquoted attribute, on the unfixed renderer).
+    let quote_findings: Vec<&Finding> = findings
+        .iter()
+        .filter(|f| f.comment.contains("missing quotes"))
+        .collect();
+    assert!(
+        quote_findings.is_empty(),
+        "mediastreamvalidator reported missing-quotes finding(s) on a rendered \
+         #EXT-X-STREAM-INF (AUDIO/CLOSED-CAPTIONS/SUBTITLES must render quoted \
+         per RFC 8216bis §4.4.6.2 — issue #1045):\n{}",
+        quote_findings
+            .iter()
+            .map(|f| f.to_string())
+            .collect::<Vec<_>>()
+            .join("\n"),
+    );
+}
+
+/// A private `X-`-prefixed quoted-string attribute — unknown to
+/// `broadcast-hls`'s known-attribute table — must keep its quotes exactly
+/// through a real render, and the resulting playlist must still validate
+/// clean (issue #1045: `AttrValue` now records the true wire quoting
+/// directly, so an unrecognized attribute name is no longer a special
+/// case that loses quoting).
+#[test]
+fn origin_variant_unknown_quoted_attr_round_trips_and_validates_clean() {
+    skip_unless_validator_available!();
+
+    let dir = scratch_dir("origin-unknown-quoted-attr");
+
+    let leaf = MediaPlaylist {
+        version: 3,
+        target_duration: 6,
+        segments: vec![MediaSegment {
+            uri: "seg0.ts".into(),
+            duration: 6.0,
+            ..Default::default()
+        }],
+        endlist: true,
+        ..Default::default()
+    };
+    fs::write(dir.join("hi.m3u8"), leaf.to_m3u8()).expect("write hi.m3u8");
+
+    let master = MasterPlaylist {
+        variants: vec![Variant {
+            bandwidth: 2_560_000,
+            codecs: "avc1.64001f,mp4a.40.2".into(),
+            resolution: Some((1280, 720)),
+            uri: "hi.m3u8".into(),
+            extra_attrs: vec![(
+                "X-CUSTOM-LABEL".to_string(),
+                AttrValue::quoted("some value, with a comma").expect("known-good literal"),
+            )],
+        }],
+        ..Default::default()
+    };
+    let rendered = master.to_m3u8();
+    fs::write(dir.join("master.m3u8"), &rendered).expect("write master.m3u8");
+
+    let stream_inf_line = rendered
+        .lines()
+        .find(|l| l.starts_with("#EXT-X-STREAM-INF:"))
+        .expect("rendered output must contain a #EXT-X-STREAM-INF line");
+    assert!(
+        stream_inf_line.contains("X-CUSTOM-LABEL=\"some value, with a comma\""),
+        "unknown quoted attribute must round-trip byte-exact, got:\n{stream_inf_line}"
+    );
+
+    let reparsed = MasterPlaylist::parse(&rendered).expect("rendered output must re-parse");
+    assert_eq!(
+        reparsed.variants[0].extra_attrs,
+        master.variants[0].extra_attrs
+    );
+
+    let findings = run_validator(&dir, "master.m3u8", true, 5);
+    assert_zero_errors(&findings, "origin unknown quoted attribute");
+    let quote_findings: Vec<&Finding> = findings
+        .iter()
+        .filter(|f| f.comment.contains("missing quotes"))
+        .collect();
+    assert!(
+        quote_findings.is_empty(),
+        "mediastreamvalidator reported missing-quotes finding(s) on an unknown \
+         quoted attribute (issue #1045):\n{}",
+        quote_findings
+            .iter()
+            .map(|f| f.to_string())
+            .collect::<Vec<_>>()
+            .join("\n"),
+    );
 }
 
 /// I-frame-only trick-play rendition entries (`#EXT-X-I-FRAME-STREAM-INF`) in

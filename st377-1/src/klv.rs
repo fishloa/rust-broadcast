@@ -14,18 +14,55 @@ use alloc::vec::Vec;
 
 use broadcast_common::{Parse, Serialize};
 
-use crate::ber::{ber_length_size, decode_ber_length, encode_ber_length};
+use crate::ber::{BerLength, ber_length_size_for, decode_ber_length, encode_ber_length_as};
 use crate::error::{Error, Result};
 use crate::types::{UlBytes, ul_bytes_from_prefix};
 
 /// A single KLV triplet: a 16-byte Key, a BER-encoded Length, and the Value
 /// bytes it describes (`docs/st377-1.md` §6.3).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+///
+/// `PartialEq`/`Eq` compare only `key`/`value` — `len_size` is a
+/// serialization-*form* preference (which on-wire BER width to reproduce),
+/// not part of the item's logical value, so two items differing only in
+/// `len_size` (e.g. a freshly-built `Minimal` one vs. the same item
+/// reparsed, which always carries the concrete `Fixed` width it found)
+/// still compare equal — the project-wide "parse -> serialize -> parse
+/// gives an equal value" round-trip check stays meaningful. Byte-identity
+/// (which DOES depend on `len_size`) is asserted separately, directly on
+/// the serialized bytes (issue #1047 / audit MX-C1).
+#[derive(Debug, Clone, Copy, Default)]
 pub struct KlvItem<'a> {
     /// The 16-byte Key.
     pub key: UlBytes,
     /// The Value bytes (borrowed from the input).
     pub value: &'a [u8],
+    /// The on-wire BER length-field width (issue #1047 / audit MX-C1) —
+    /// [`BerLength::Minimal`] (the default) for a freshly built value, or
+    /// the exact width [`Self::parse_prefix`] found on the wire, so
+    /// `serialize_into` reproduces the original length token exactly
+    /// rather than always re-canonicalizing it.
+    pub len_size: BerLength,
+}
+
+impl PartialEq for KlvItem<'_> {
+    fn eq(&self, other: &Self) -> bool {
+        self.key == other.key && self.value == other.value
+    }
+}
+
+impl Eq for KlvItem<'_> {}
+
+impl<'a> KlvItem<'a> {
+    /// Build a freshly-constructed item that serializes with the
+    /// canonical minimal BER length form (`len_size: BerLength::Minimal`).
+    #[must_use]
+    pub fn new(key: UlBytes, value: &'a [u8]) -> Self {
+        Self {
+            key,
+            value,
+            len_size: BerLength::Minimal,
+        }
+    }
 }
 
 /// The KLV Fill item key (§6.3.3), matching byte 8 (the version number) as
@@ -57,8 +94,8 @@ impl<'a> KlvItem<'a> {
             });
         }
         let key: UlBytes = ul_bytes_from_prefix(bytes);
-        let (len, len_size) = decode_ber_length(&bytes[16..])?;
-        let value_start = 16 + len_size;
+        let (len, len_token_size) = decode_ber_length(&bytes[16..])?;
+        let value_start = 16 + len_token_size;
         let len = usize::try_from(len).map_err(|_| Error::BufferTooShort {
             need: usize::MAX,
             have: bytes.len(),
@@ -80,6 +117,7 @@ impl<'a> KlvItem<'a> {
             KlvItem {
                 key,
                 value: &bytes[value_start..value_end],
+                len_size: BerLength::fixed_from_consumed(len_token_size),
             },
             value_end,
         ))
@@ -106,7 +144,7 @@ impl Serialize for KlvItem<'_> {
     type Error = Error;
 
     fn serialized_len(&self) -> usize {
-        16 + ber_length_size(self.value.len() as u64) + self.value.len()
+        16 + ber_length_size_for(self.value.len() as u64, self.len_size) + self.value.len()
     }
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
@@ -119,7 +157,8 @@ impl Serialize for KlvItem<'_> {
             });
         }
         buf[..16].copy_from_slice(&self.key);
-        let len_size = encode_ber_length(self.value.len() as u64, &mut buf[16..])?;
+        let len_size =
+            encode_ber_length_as(self.value.len() as u64, self.len_size, &mut buf[16..])?;
         let value_start = 16 + len_size;
         buf[value_start..value_start + self.value.len()].copy_from_slice(self.value);
         Ok(total)
@@ -162,47 +201,49 @@ mod tests {
 
     #[test]
     fn klv_item_round_trip_short_form() {
-        let item = KlvItem {
-            key: [0xAAu8; 16],
-            value: &[1, 2, 3, 4],
-        };
+        // Built with `len_size: BerLength::Minimal` (via `new`); a
+        // reparsed item always carries `BerLength::Fixed(..)` (the width
+        // it actually found on the wire) instead, even when that width is
+        // numerically the same as what Minimal would have chosen — so the
+        // round-trip check here compares key/value, not the whole struct
+        // (see `ber_module::preserves_non_minimal_length_round_trip` for
+        // the width-preservation check itself).
+        let item = KlvItem::new([0xAAu8; 16], &[1, 2, 3, 4]);
         let mut buf = alloc::vec![0u8; item.serialized_len()];
         item.serialize_into(&mut buf).unwrap();
         assert_eq!(buf.len(), 16 + 1 + 4);
-        assert_eq!(KlvItem::parse(&buf).unwrap(), item);
+        let reparsed = KlvItem::parse(&buf).unwrap();
+        assert_eq!(reparsed.key, item.key);
+        assert_eq!(reparsed.value, item.value);
     }
 
     #[test]
     fn klv_item_round_trip_long_form() {
         let value = alloc::vec![0x42u8; 200];
-        let item = KlvItem {
-            key: [0xBBu8; 16],
-            value: &value,
-        };
+        let item = KlvItem::new([0xBBu8; 16], &value);
         let mut buf = alloc::vec![0u8; item.serialized_len()];
         item.serialize_into(&mut buf).unwrap();
         assert_eq!(buf.len(), 16 + 2 + 200);
-        assert_eq!(KlvItem::parse(&buf).unwrap(), item);
+        let reparsed = KlvItem::parse(&buf).unwrap();
+        assert_eq!(reparsed.key, item.key);
+        assert_eq!(reparsed.value, item.value);
     }
 
     #[test]
     fn walk_multiple_items() {
-        let a = KlvItem {
-            key: [1u8; 16],
-            value: &[10, 20],
-        };
-        let b = KlvItem {
-            key: [2u8; 16],
-            value: &[30, 40, 50],
-        };
+        let a = KlvItem::new([1u8; 16], &[10, 20]);
+        let b = KlvItem::new([2u8; 16], &[30, 40, 50]);
         let mut buf = Vec::new();
         buf.extend(a.to_bytes());
         buf.extend(b.to_bytes());
 
         let items = collect_klv_items(&buf).unwrap();
         assert_eq!(items.len(), 2);
-        assert_eq!(items[0], (0, a));
-        assert_eq!(items[1].1, b);
+        assert_eq!(items[0].0, 0);
+        assert_eq!(items[0].1.key, a.key);
+        assert_eq!(items[0].1.value, a.value);
+        assert_eq!(items[1].1.key, b.key);
+        assert_eq!(items[1].1.value, b.value);
     }
 
     #[test]
@@ -226,5 +267,43 @@ mod tests {
             KlvItem::parse(&[0u8; 10]),
             Err(Error::BufferTooShort { .. })
         ));
+    }
+
+    /// Issue #1047 (audit MX-C1): a non-minimal (fixed-width long-form)
+    /// on-wire length token must round-trip byte-identically, not get
+    /// silently re-canonicalized to the shortest form that fits.
+    #[test]
+    fn non_minimal_length_token_round_trips_byte_identical() {
+        // Hand-built KLV: key + `0x82 00 04` (long form, 2 following
+        // bytes, value 4) — canonical minimal form for value 4 is the
+        // 1-byte short form `0x04`, so this is deliberately non-minimal.
+        let mut original = alloc::vec![0xAAu8; 16];
+        original.extend_from_slice(&[0x82, 0x00, 0x04]);
+        original.extend_from_slice(&[1, 2, 3, 4]);
+
+        let item = KlvItem::parse(&original).unwrap();
+        assert_eq!(
+            item.len_size,
+            BerLength::Fixed(core::num::NonZeroU8::new(3).unwrap()),
+            "parse must record the true 3-byte on-wire length-token width"
+        );
+
+        let mut out = alloc::vec![0u8; item.serialized_len()];
+        item.serialize_into(&mut out).unwrap();
+        assert_eq!(
+            out, original,
+            "re-serializing a parsed item must reproduce its exact original bytes, \
+             including a non-minimal length token"
+        );
+    }
+
+    /// A freshly-built item (`len_size: BerLength::Minimal`, the `new()`
+    /// default) still serializes with the canonical minimal form.
+    #[test]
+    fn freshly_built_item_uses_minimal_form() {
+        let item = KlvItem::new([0xAAu8; 16], &[1, 2, 3, 4]);
+        assert_eq!(item.len_size, BerLength::Minimal);
+        let bytes = item.to_bytes();
+        assert_eq!(&bytes[16..17], &[0x04], "value 4 must use short form");
     }
 }

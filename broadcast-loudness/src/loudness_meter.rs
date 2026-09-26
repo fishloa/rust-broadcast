@@ -2,7 +2,42 @@
 //!
 //! Provides momentary (400 ms), short‑term (3 s), and integrated (gated)
 //! loudness in LUFS, plus Loudness Range (LRA) per EBU Tech 3342.
+//!
+//! ## Streaming, bounded memory (issue #1072 / audit LOUD-C2)
+//!
+//! Earlier versions stored one `f64` of weighted power per **sample
+//! frame** for the whole measurement (~1.4 GB/hour at 48 kHz), re-scanned
+//! in full on `finish()`. This meter now keeps two independent, bounded
+//! pieces of state instead, chosen per what each result actually needs:
+//!
+//! - **Integrated loudness + LRA** — samples accumulate into 100 ms energy
+//!   sub-blocks (a fixed handful of running totals, O(1) per sample); a
+//!   small ring of the last 30 completed sub-blocks (bounded, never grows)
+//!   derives one 400 ms gating-block LKFS value and, once at least 3 s have
+//!   elapsed, one 3 s short-term LKFS value every 100 ms step. Only those
+//!   derived values are retained (`gating_blocks`/`short_term_blocks`) —
+//!   about 36 000 `f64`s/hour, not 172 million, and independent of sample
+//!   rate. This 100 ms grid is exactly what BS.1770-5's own 75%-overlap
+//!   gating blocks, and Tech 3342's "≥10 Hz" short-term sampling, specify.
+//! - **Max momentary / max short-term** — Tech 3341 §Table 1 cases 9-14
+//!   test the exact, continuously-slid maximum (not merely sampled every
+//!   100 ms), so these use [`SlidingWindowMax`]: an exact circular-buffer
+//!   sliding window sized to its own fixed window length (0.4 s / 3 s
+//!   worth of samples — a constant multiple of the sample rate, never of
+//!   measurement duration), updated in O(1) amortized per sample.
+//!
+//! ## LRA from short-term values, not momentary blocks (issue #1051 / audit
+//! LOUD-C1)
+//!
+//! EBU Tech 3342 defines Loudness Range over the distribution of
+//! **short-term (3 s window)** loudness values, sampled at ≥10 Hz — NOT the
+//! 400 ms gating blocks BS.1770-5's own integrated-loudness gating uses.
+//! [`LoudnessMeter::loudness_range`] is computed from the 3 s
+//! `short_term_blocks` history above; [`LoudnessMeter::integrated_lufs`]
+//! uses the 400 ms `gating_blocks` history, which is the correct input for
+//! integrated loudness (unaffected by this fix).
 
+use alloc::collections::VecDeque;
 use alloc::vec::Vec;
 
 use crate::channel_layout::ChannelLayout;
@@ -14,17 +49,18 @@ const ABSOLUTE_GATE: f64 = -70.0;
 /// —10 LU relative gating threshold (ITU‑R BS.1770‑5 §Annex 1, eq. 6).
 const RELATIVE_GATE: f64 = -10.0;
 
-/// Gating block duration in seconds (ITU‑R BS.1770‑5 §Annex 1).
-const GATING_BLOCK_S: f64 = 0.4;
+/// Sub-block / step duration in seconds: the 100 ms common denominator of
+/// the 400 ms momentary window (4 sub-blocks) and the 3 s short-term
+/// window (30 sub-blocks), and BS.1770-5's own 75%-overlap 400 ms gating
+/// block step (issue #1072).
+const SUB_BLOCK_S: f64 = 0.1;
 
-/// Overlap fraction (75%) of gating blocks (ITU‑R BS.1770‑5 §Annex 1).
-const GATING_OVERLAP: f64 = 0.75;
+/// Momentary / BS.1770-5 gating-block window, in sub-blocks (400 ms).
+const MOMENTARY_SUB_BLOCKS: usize = 4;
 
-/// Momentary window duration in seconds (EBU Tech 3341 §2.2.1).
-const MOMENTARY_S: f64 = 0.4;
-
-/// Short‑term window duration in seconds (EBU Tech 3341 §2.2.2).
-const SHORT_TERM_S: f64 = 3.0;
+/// Short-term window, in sub-blocks (3 s) — EBU Tech 3341 §2.2.2 / the
+/// input EBU Tech 3342 LRA is defined over (issue #1051).
+const SHORT_TERM_SUB_BLOCKS: usize = 30;
 
 /// The constant —0.691 in BS.1770‑5 eq. (2), cancelling the K‑weighting
 /// gain for a 997 Hz tone.
@@ -81,10 +117,89 @@ impl ChannelFilter {
     }
 }
 
-/// A pre‑computed gating block loudness value (for the integrated measurement).
+/// Exact sliding-window maximum tracker: an `O(window_samples)` circular
+/// buffer of raw per-frame weighted power plus a running sum, giving the
+/// exact per-SAMPLE-aligned sliding-window mean (matching what a full
+/// re-scan of the raw samples would find) at `O(1)` amortized cost per
+/// pushed sample.
+///
+/// This is deliberately kept separate from the 100 ms sub-block history
+/// used for integrated loudness/LRA (BS.1770-5's own gating blocks are
+/// defined on a fixed 100 ms grid, so grid alignment is correct there) —
+/// `Max M`/`Max S` (EBU Tech 3341 cases 9-14) are specified and tested
+/// against the true continuous sliding maximum, which a 100 ms-grid
+/// approximation under-reports whenever the loudest window isn't aligned
+/// to that grid. Memory is bounded by `window_samples` (a fixed multiple
+/// of the sample rate), never by measurement duration (issue #1072).
+#[derive(Debug, Clone)]
+struct SlidingWindowMax {
+    /// Circular buffer, length `window_samples`.
+    ring: Vec<f64>,
+    window_samples: usize,
+    write_pos: usize,
+    filled: usize,
+    running_sum: f64,
+    max_lkfs: f64,
+}
+
+impl SlidingWindowMax {
+    fn new(window_samples: usize) -> Self {
+        let window_samples = window_samples.max(1);
+        Self {
+            ring: alloc::vec![0.0; window_samples],
+            window_samples,
+            write_pos: 0,
+            filled: 0,
+            running_sum: 0.0,
+            max_lkfs: f64::NEG_INFINITY,
+        }
+    }
+
+    fn reset(&mut self) {
+        for v in &mut self.ring {
+            *v = 0.0;
+        }
+        self.write_pos = 0;
+        self.filled = 0;
+        self.running_sum = 0.0;
+        self.max_lkfs = f64::NEG_INFINITY;
+    }
+
+    /// Fold one new sample's weighted power in, evicting the oldest once
+    /// the ring is full, and update the running max if this window is now
+    /// (still) fully populated.
+    fn push(&mut self, weighted_power: f64) {
+        let outgoing = self.ring[self.write_pos];
+        self.ring[self.write_pos] = weighted_power;
+        self.write_pos = (self.write_pos + 1) % self.window_samples;
+
+        if self.filled < self.window_samples {
+            self.running_sum += weighted_power;
+            self.filled += 1;
+            if self.filled == self.window_samples {
+                self.update_max();
+            }
+        } else {
+            self.running_sum += weighted_power - outgoing;
+            self.update_max();
+        }
+    }
+
+    fn update_max(&mut self) {
+        let lkfs = mean_sq_to_lkfs(self.running_sum / self.window_samples as f64);
+        if lkfs > self.max_lkfs {
+            self.max_lkfs = lkfs;
+        }
+    }
+}
+
+/// A pre‑computed block loudness value — either a 400 ms gating block (for
+/// the integrated measurement) or a 3 s short-term value (for LRA); the two
+/// histories are the same shape, kept as separate `Vec`s (see
+/// [`LoudnessMeter::gating_blocks`] / `short_term_blocks`).
 #[derive(Debug, Clone, Copy)]
-struct GatingBlock {
-    /// Loudness in LKFS of this 400 ms block.
+struct LkfsSample {
+    /// Loudness in LKFS of this block/window.
     lkfs: f64,
 }
 
@@ -97,10 +212,14 @@ struct GatingBlock {
 ///
 /// ```text
 /// input samples → K‑weighting → channel weighting → mean square
-///   → gating blocks (400 ms, 75% overlap)
-///   → momentary (sliding 400 ms), short‑term (sliding 3 s)
-///   → integrated (gated: absolute then relative)
+///   → 100 ms sub-blocks → a bounded 30-entry ring
+///   → gating blocks (400 ms = 4 sub-blocks, 75% overlap) → integrated, max momentary
+///   → short-term values (3 s = 30 sub-blocks) → max short-term, LRA
 /// ```
+///
+/// See the module docs for why this is streaming/bounded rather than
+/// buffering every sample (issue #1072) and why LRA is computed from the
+/// short-term history rather than the gating-block one (issue #1051).
 #[derive(Debug, Clone)]
 pub struct LoudnessMeter {
     sample_rate: u32,
@@ -113,12 +232,38 @@ pub struct LoudnessMeter {
     /// The K‑weighting biquad coefficients (derived for `sample_rate`).
     coeffs: BiquadCoeffsPair,
 
-    /// Buffer of K‑weighted, channel‑weighted sample energies.
-    /// Each entry is the sum-of-squares (weighted) for one sample frame.
-    weighted_power: Vec<f64>,
+    /// Samples per 100 ms sub-block.
+    sub_block_samples: usize,
+    /// Weighted-power sum accumulating for the sub-block in progress.
+    current_sub_block_sum: f64,
+    /// Sample frames accumulated into `current_sub_block_sum` so far.
+    current_sub_block_count: usize,
 
-    /// Gating block loudness values (computed on `finish()`).
-    gating_blocks: Vec<GatingBlock>,
+    /// Ring of the last up to [`SHORT_TERM_SUB_BLOCKS`] completed
+    /// sub-blocks' mean-square energy — bounded, never grows past that
+    /// capacity. The momentary/gating window is the mean of its last
+    /// [`MOMENTARY_SUB_BLOCKS`] entries; the short-term window is the mean
+    /// of all of it once full.
+    sub_block_ring: VecDeque<f64>,
+
+    /// One 400 ms gating-block LKFS value per completed 100 ms step —
+    /// drives integrated loudness. O(duration / 100 ms), not O(sample
+    /// count).
+    gating_blocks: Vec<LkfsSample>,
+
+    /// One 3 s short-term LKFS value per completed 100 ms step (once at
+    /// least 3 s have elapsed) — drives LRA (issue #1051). Same bound as
+    /// `gating_blocks`.
+    short_term_blocks: Vec<LkfsSample>,
+
+    /// Exact per-sample sliding-window max tracker for the 400 ms
+    /// momentary window (bounded to `0.4 * sample_rate` samples — see
+    /// [`SlidingWindowMax`]).
+    momentary_max: SlidingWindowMax,
+
+    /// Exact per-sample sliding-window max tracker for the 3 s short-term
+    /// window (bounded to `3.0 * sample_rate` samples).
+    short_term_max: SlidingWindowMax,
 
     /// Integrated loudness result (computed on `finish()`).
     integrated: f64,
@@ -126,10 +271,10 @@ pub struct LoudnessMeter {
     /// Loudness range result (computed on `finish()`).
     lra: f64,
 
-    /// Maximum momentary loudness.
+    /// Maximum momentary loudness (cached from `momentary_max` on `finish()`).
     max_momentary: f64,
 
-    /// Maximum short‑term loudness.
+    /// Maximum short‑term loudness (cached from `short_term_max` on `finish()`).
     max_short_term: f64,
 
     /// Whether `finish()` has been called.
@@ -159,6 +304,11 @@ impl LoudnessMeter {
         let (stage1, stage2) = k_weighting_coeffs(sample_rate);
         let coeffs = BiquadCoeffsPair { stage1, stage2 };
         let channel_count = layout.channel_count();
+        let sub_block_samples = ((SUB_BLOCK_S * f64::from(sample_rate)) as usize).max(1);
+        let momentary_window_samples =
+            ((MOMENTARY_SUB_BLOCKS as f64 * SUB_BLOCK_S * f64::from(sample_rate)) as usize).max(1);
+        let short_term_window_samples =
+            ((SHORT_TERM_SUB_BLOCKS as f64 * SUB_BLOCK_S * f64::from(sample_rate)) as usize).max(1);
         Ok(Self {
             sample_rate,
             layout,
@@ -167,8 +317,14 @@ impl LoudnessMeter {
                 .map(|_| ChannelFilter::new(stage1, stage2))
                 .collect(),
             coeffs,
-            weighted_power: Vec::new(),
+            sub_block_samples,
+            current_sub_block_sum: 0.0,
+            current_sub_block_count: 0,
+            sub_block_ring: VecDeque::with_capacity(SHORT_TERM_SUB_BLOCKS),
             gating_blocks: Vec::new(),
+            short_term_blocks: Vec::new(),
+            momentary_max: SlidingWindowMax::new(momentary_window_samples),
+            short_term_max: SlidingWindowMax::new(short_term_window_samples),
             integrated: f64::NEG_INFINITY,
             lra: 0.0,
             max_momentary: f64::NEG_INFINITY,
@@ -183,14 +339,73 @@ impl LoudnessMeter {
         for f in &mut self.filters {
             *f = ChannelFilter::new(self.coeffs.stage1, self.coeffs.stage2);
         }
-        self.weighted_power.clear();
+        self.current_sub_block_sum = 0.0;
+        self.current_sub_block_count = 0;
+        self.sub_block_ring.clear();
         self.gating_blocks.clear();
+        self.short_term_blocks.clear();
+        self.momentary_max.reset();
+        self.short_term_max.reset();
         self.integrated = f64::NEG_INFINITY;
         self.lra = 0.0;
         self.max_momentary = f64::NEG_INFINITY;
         self.max_short_term = f64::NEG_INFINITY;
         self.finished = false;
         self.frame_count = 0;
+    }
+
+    /// Fold one sample frame's K-weighted, channel-weighted power into (a)
+    /// the exact sliding-window max trackers (O(1) amortized, bounded to
+    /// each window's fixed sample count — issue #1072) and (b) the 100 ms
+    /// sub-block accumulator, completing it (see
+    /// [`Self::complete_sub_block`]) once `sub_block_samples` frames have
+    /// been folded in. No per-sample storage proportional to measurement
+    /// duration.
+    fn accumulate_sub_block(&mut self, weighted_power: f64) {
+        self.momentary_max.push(weighted_power);
+        self.short_term_max.push(weighted_power);
+
+        self.current_sub_block_sum += weighted_power;
+        self.current_sub_block_count += 1;
+        if self.current_sub_block_count >= self.sub_block_samples {
+            self.complete_sub_block();
+        }
+    }
+
+    /// Finalize the in-progress sub-block into the bounded ring (evicting
+    /// the oldest once past [`SHORT_TERM_SUB_BLOCKS`]), then derive any
+    /// gating-block (400 ms) / short-term (3 s) value it newly completes.
+    /// A no-op if nothing has accumulated. Called from `finish()` too, to
+    /// flush a final partial sub-block (whatever samples it has).
+    fn complete_sub_block(&mut self) {
+        if self.current_sub_block_count == 0 {
+            return;
+        }
+        let mean_sq = self.current_sub_block_sum / self.current_sub_block_count as f64;
+        self.current_sub_block_sum = 0.0;
+        self.current_sub_block_count = 0;
+
+        self.sub_block_ring.push_back(mean_sq);
+        if self.sub_block_ring.len() > SHORT_TERM_SUB_BLOCKS {
+            self.sub_block_ring.pop_front();
+        }
+
+        let n = self.sub_block_ring.len();
+        if n >= MOMENTARY_SUB_BLOCKS {
+            let sum: f64 = self
+                .sub_block_ring
+                .iter()
+                .rev()
+                .take(MOMENTARY_SUB_BLOCKS)
+                .sum();
+            let lkfs = mean_sq_to_lkfs(sum / MOMENTARY_SUB_BLOCKS as f64);
+            self.gating_blocks.push(LkfsSample { lkfs });
+        }
+        if n >= SHORT_TERM_SUB_BLOCKS {
+            let sum: f64 = self.sub_block_ring.iter().sum();
+            let lkfs = mean_sq_to_lkfs(sum / SHORT_TERM_SUB_BLOCKS as f64);
+            self.short_term_blocks.push(LkfsSample { lkfs });
+        }
     }
 
     /// Push one frame of planar f32 samples.
@@ -224,7 +439,7 @@ impl LoudnessMeter {
             let filtered = self.filters[i].process(sample_f64);
             sum_sq += weight * filtered * filtered;
         }
-        self.weighted_power.push(sum_sq);
+        self.accumulate_sub_block(sum_sq);
         self.frame_count += 1;
         Ok(())
     }
@@ -256,7 +471,7 @@ impl LoudnessMeter {
             let filtered = self.filters[i].process(sample);
             sum_sq += weight * filtered * filtered;
         }
-        self.weighted_power.push(sum_sq);
+        self.accumulate_sub_block(sum_sq);
         self.frame_count += 1;
         Ok(())
     }
@@ -306,7 +521,7 @@ impl LoudnessMeter {
                 let f = self.filters[1].process(r_f64);
                 sum_sq += weight_r * f * f;
             }
-            self.weighted_power.push(sum_sq);
+            self.accumulate_sub_block(sum_sq);
         }
         self.frame_count += left.len();
         Ok(())
@@ -323,28 +538,14 @@ impl LoudnessMeter {
         }
         self.finished = true;
 
-        // --- Compute gating blocks ---
-        let gating_block_samples = ((GATING_BLOCK_S * self.sample_rate as f64) as usize).max(1);
-        let step_samples = ((gating_block_samples as f64 * (1.0 - GATING_OVERLAP)) as usize).max(1);
+        // Flush a final partial sub-block (fewer than `sub_block_samples`
+        // frames), so its contribution isn't silently dropped — the last
+        // gating/short-term step this produces is fully computed from the
+        // ring exactly like every other one.
+        self.complete_sub_block();
 
-        let mut block_idx = 0usize;
-        loop {
-            let start = block_idx * step_samples;
-            let end = (start + gating_block_samples).min(self.weighted_power.len());
-            if end - start < gating_block_samples / 2 {
-                break;
-            }
-            let n = end - start;
-            if n == 0 {
-                break;
-            }
-            let mean_sq: f64 = self.weighted_power[start..end].iter().sum::<f64>() / n as f64;
-            let lkfs = mean_sq_to_lkfs(mean_sq);
-            self.gating_blocks.push(GatingBlock { lkfs });
-            block_idx += 1;
-        }
-
-        // --- Integrated loudness (two‑stage gating) ---
+        // --- Integrated loudness (two‑stage gating), from the 400 ms
+        // gating-block history ---
         // Stage 1: absolute gate at —70 LKFS
         let abs_gated: Vec<f64> = self
             .gating_blocks
@@ -374,35 +575,16 @@ impl LoudnessMeter {
         };
         self.integrated = integrated;
 
-        // --- LRA (EBU Tech 3342) ---
-        self.lra = compute_lra(&self.gating_blocks);
+        // --- LRA (EBU Tech 3342), from the 3 s short-term history
+        // (issue #1051 — NOT the 400 ms gating-block history) ---
+        self.lra = compute_lra(&self.short_term_blocks);
 
-        // --- Max momentary and max short‑term ---
-        self.max_momentary = self.compute_max_sliding(MOMENTARY_S);
-        self.max_short_term = self.compute_max_sliding(SHORT_TERM_S);
-    }
-
-    /// Compute the maximum loudness over a sliding window of `window_s` seconds.
-    /// Uses an incremental running mean (O(N) complexity).
-    fn compute_max_sliding(&self, window_s: f64) -> f64 {
-        let window_samples = ((window_s * self.sample_rate as f64) as usize).max(1);
-        let n = self.weighted_power.len();
-        if n == 0 || n < window_samples {
-            return f64::NEG_INFINITY;
-        }
-        // Initial window sum
-        let mut window_sum: f64 = self.weighted_power[..window_samples].iter().sum();
-        let mut max_lkfs = mean_sq_to_lkfs(window_sum / window_samples as f64);
-        // Slide the window
-        for i in 1..=(n - window_samples) {
-            window_sum -= self.weighted_power[i - 1];
-            window_sum += self.weighted_power[i + window_samples - 1];
-            let lkfs = mean_sq_to_lkfs(window_sum / window_samples as f64);
-            if lkfs > max_lkfs {
-                max_lkfs = lkfs;
-            }
-        }
-        max_lkfs
+        // --- Max momentary and max short‑term: read from the exact
+        // per-sample sliding-window trackers (updated incrementally on
+        // every pushed sample — see `accumulate_sub_block`/
+        // `SlidingWindowMax`), not the 100 ms-grid block histories above.
+        self.max_momentary = self.momentary_max.max_lkfs;
+        self.max_short_term = self.short_term_max.max_lkfs;
     }
 
     // ---- Query methods ----
@@ -468,20 +650,16 @@ fn mean_of_lkfs(values: &[f64]) -> f64 {
 
 /// Compute Loudness Range per EBU Tech 3342.
 ///
-/// Input: gating‑block loudness values (from short‑term 3 s windows per the spec).
-/// The algorithm:
+/// Input: short‑term (3 s sliding window) loudness values, sampled at
+/// 10 Hz (issue #1051 — NOT 400 ms momentary/gating blocks, which have
+/// far higher variance on real programme material and badly inflate LRA;
+/// see the module docs). The algorithm:
 /// 1. Absolute gate: keep blocks ≥ —70 LUFS.
 /// 2. Compute absolute‑gated integrated loudness.
 /// 3. Relative gate: keep blocks ≥ (integrated —20 LU).
 /// 4. Compute 10th and 95th percentiles of the distribution.
 /// 5. LRA = 95th percentile — 10th percentile.
-fn compute_lra(blocks: &[GatingBlock]) -> f64 {
-    // Collect short‑term equivalent: we use the gating blocks themselves.
-    // Per Tech 3342, the input is 3 s sliding‑window loudness levels.
-    // Our gating blocks are 400 ms — for now we use them directly,
-    // which is more granular than the spec requires. This is equivalent
-    // to the spec's reference implementation when block rate ≥ 10 Hz.
-
+fn compute_lra(blocks: &[LkfsSample]) -> f64 {
     // Absolute gate
     let abs_gated: Vec<f64> = blocks
         .iter()
@@ -525,8 +703,54 @@ fn compute_lra(blocks: &[GatingBlock]) -> f64 {
 
 #[cfg(test)]
 mod tests {
-    use super::LoudnessMeter;
+    use super::{LoudnessMeter, SHORT_TERM_SUB_BLOCKS};
     use crate::channel_layout::ChannelLayout;
+
+    /// Issue #1072 (audit LOUD-C2): the bounded ring/tracker state must
+    /// never grow with sample RATE or sample COUNT, only with measurement
+    /// duration — a 2 s measurement at 192 kHz must carry the exact same
+    /// bounded-collection sizes as one at 48 kHz, even though it folds in
+    /// 4x as many raw samples.
+    #[test]
+    fn state_is_bounded_by_duration_not_sample_rate_or_count() {
+        for &sample_rate in &[48_000u32, 192_000] {
+            let mut meter = LoudnessMeter::new(sample_rate, ChannelLayout::Mono).unwrap();
+            let duration_s = 2.0;
+            let n = (duration_s * sample_rate as f64) as usize;
+            for i in 0..n {
+                let t = i as f64 / sample_rate as f64;
+                let v = (0.1 * (2.0 * core::f64::consts::PI * 1000.0 * t).sin()) as f32;
+                meter.push_f32(&[v]).unwrap();
+            }
+
+            // The sub-block ring and both sliding-window rings are
+            // fixed-capacity, never reallocated to grow with input size.
+            assert!(
+                meter.sub_block_ring.len() <= SHORT_TERM_SUB_BLOCKS,
+                "sample_rate {sample_rate}: sub_block_ring grew past its {SHORT_TERM_SUB_BLOCKS}-entry cap"
+            );
+            assert_eq!(
+                meter.momentary_max.ring.len(),
+                meter.momentary_max.window_samples,
+                "sample_rate {sample_rate}: momentary ring is not fixed-size"
+            );
+            assert_eq!(
+                meter.short_term_max.ring.len(),
+                meter.short_term_max.window_samples,
+                "sample_rate {sample_rate}: short-term ring is not fixed-size"
+            );
+
+            // The per-100ms-step histories grow with DURATION (~20 entries
+            // for a 2 s measurement), never with sample count — 192 kHz's
+            // 4x the raw samples must NOT produce 4x the entries.
+            assert!(
+                meter.gating_blocks.len() <= 25,
+                "sample_rate {sample_rate}: gating_blocks scaled with sample count \
+                 ({} entries for a 2 s measurement)",
+                meter.gating_blocks.len()
+            );
+        }
+    }
 
     #[test]
     fn stereo_1khz_minus_23_lufs_is_minus_23() {
