@@ -11,6 +11,7 @@ fix for anything already on `^0.4` (including multimux 0.10).
 | GHSA-28hg-fc5v-m865 | A `HandshakeConfig` with `crypto` set negotiated keys, but the adapter's data path never used them: payloads went out in plaintext, and a peer's encrypted payloads reached the application undecrypted. |
 | GHSA-gjm5-23jf-293p | Too-late packet drop was off and DROPREQ was ignored. One packet the sender would never retransmit stalled delivery permanently, while the staging buffer grew at the stream bitrate. |
 | GHSA-r6hf-93jv-c3wc | `SrtListener` kept a pending-handshake entry for every source address with no limit, and those entries expired only when the socket went quiet. |
+| GHSA-7346-x8wq-2rgr | The tokio adapter reused a fixed/default Initial Sequence Number and handed out sequential (or full 32-bit range, including values libsrt never allocates) SRT Socket IDs instead of generating fresh random values per connection — predictable ISNs/Socket IDs make off-path packet injection and connection tracking easier. |
 
 ## Behaviour changes
 
@@ -31,6 +32,14 @@ fix for anything already on `^0.4` (including multimux 0.10).
 - **`tsbpd::TsbpdScheduler`**: with too-late drop enabled, the public engine now applies the
   same gap-skip rule, and `TickOutcome::dropped` reports skipped sequence numbers from both
   `feed_data` and `tick`. With too-late drop disabled it still waits for the gap.
+- **Random ISN and Socket ID per connection.** The tokio adapter (`io::SrtSocket::connect`/
+  `connect_from`, `io::SrtListener`) now draws a fresh Initial Sequence Number and SRT Socket ID
+  for every connection from the OS RNG (`getrandom`, enabled only by the `tokio` feature), instead
+  of reusing a fixed/default ISN and handing out sequential Socket IDs. Generated Socket IDs are
+  folded into the `1..=0x3FFF_FFFF` range libsrt itself allocates from, so a value with the
+  group-id marker bit or the top bit set (which reads back negative in libsrt's signed `int`) is
+  never produced. The sans-IO handshake engines are unchanged and still caller-driven on both
+  values; only the tokio adapter's own choice of what to hand them was fixed.
 
 ## Testing
 

@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-09-26
+
+### Security
+Fixes GHSA-f4mf-69xv-w6rp. Upgrade if a `ControlWord`'s lifetime in memory matters to your threat
+model (e.g. the process handles multiple subscribers' keys, or memory can be inspected after a
+crash/core dump).
+
 ### Changed (breaking)
 - `ControlWord` no longer implements `Copy` (`Clone` is kept). A `Copy` value can be duplicated
   on the stack without the type's `Drop` zeroing every copy, so a caller can no longer rely on

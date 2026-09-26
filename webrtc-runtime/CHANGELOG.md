@@ -4,30 +4,12 @@ All notable changes to this crate will be documented in this file.
 
 ## [Unreleased]
 
-### Added
-- `media::MediaEvent::RtcpUnsupported(rtcp_packet::Error)`: an inbound SRTCP packet that
-  decrypted and authenticated but is not an RFC 3550 §6 compound `rtcp-packet` decodes (e.g.
-  RFC 4585 PLI/NACK/REMB feedback, which is most of what a browser receiver sends).
-
-### Fixed
-- `MediaTransport::handle_datagram` no longer returns `Err` for such a packet. It passed SRTCP
-  authentication, so it is a genuine packet from the peer, not a transport error. It also now
-  counts toward the RFC 3711 key-lifetime read counter.
-- `media::MediaTransport::add_remote_candidate`'s cap on remote ICE candidates
-  (RFC 8445 §6.1.2.5) could be bypassed entirely: an authenticated STUN Binding
-  Request from a source address the transport didn't already recognize made
-  the ICE agent create its own peer-reflexive remote candidate, uncounted by
-  the cap. Since the remote peer already knows the negotiated ICE
-  ufrag/password, it could grow the remote-candidate (and pair) count without
-  bound by sending from many source ports (RFC 8445 §19.5.1). New STUN
-  source addresses are now checked against the same configured cap before
-  being handed to the ICE agent; an address already admitted keeps working.
-
 ## [0.2.0] - 2026-09-25
 
 ### Security
-Fixes GHSA-48qq-7p78-2jvj: the DTLS peer certificate was never verified. Upgrade if you use
-the `media` feature.
+Fixes GHSA-48qq-7p78-2jvj (the DTLS peer certificate was never verified) and
+GHSA-89f2-5m24-r6m7 (the remote-ICE-candidate cap could be bypassed via STUN peer-reflexive
+candidates). Upgrade if you use the `media` feature.
 
 ### Changed (breaking)
 - `media::MediaTransportConfig` has a new required field `remote_fingerprint` (the remote SDP's
@@ -46,6 +28,23 @@ the `media` feature.
 
 ### Added
 - `parse_remote_fingerprint(sdp)` to read `a=fingerprint` from an SDP body.
+- `media::MediaEvent::RtcpUnsupported(rtcp_packet::Error)`: an inbound SRTCP packet that
+  decrypted and authenticated but is not an RFC 3550 §6 compound `rtcp-packet` decodes (e.g.
+  RFC 4585 PLI/NACK/REMB feedback, which is most of what a browser receiver sends).
+
+### Fixed
+- `MediaTransport::handle_datagram` no longer returns `Err` for such a packet. It passed SRTCP
+  authentication, so it is a genuine packet from the peer, not a transport error. It also now
+  counts toward the RFC 3711 key-lifetime read counter.
+- `media::MediaTransport::add_remote_candidate`'s cap on remote ICE candidates
+  (RFC 8445 §6.1.2.5) could be bypassed entirely: an authenticated STUN Binding
+  Request from a source address the transport didn't already recognize made
+  the ICE agent create its own peer-reflexive remote candidate, uncounted by
+  the cap. Since the remote peer already knows the negotiated ICE
+  ufrag/password, it could grow the remote-candidate (and pair) count without
+  bound by sending from many source ports (RFC 8445 §19.5.1). New STUN
+  source addresses are now checked against the same configured cap before
+  being handed to the ICE agent; an address already admitted keeps working.
 
 ## [0.1.0] - 2026-08-11
 

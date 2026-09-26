@@ -6,6 +6,12 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-09-26
+
+### Security
+Fixes GHSA-3rw9-cq7p-4v47. Upgrade if you run `ServerSession`/`io::AsyncRtspServer` against
+clients you do not control.
+
 ### Changed (breaking)
 - `ServerSession::new` now takes the `Session` id source,
   `impl FnMut() -> u64 + Send + 'static`, which must be a CSPRNG (RFC 2326

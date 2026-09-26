@@ -7,6 +7,12 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-08-16
+
+### Security
+Fixes GHSA-grg8-55qr-gxgf. Upgrade if you use `client::tokio_client::TokioClient` with
+`TokioClientConfig::auth` set.
+
 ### Fixed
 - `TokioClient` sends `TokioClientConfig::auth` credentials (Basic, Bearer,
   and Digest challenge answers) only to the playlist URL's origin (scheme +
@@ -15,8 +21,6 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `TokioClient` no longer retries a resource fetch answered with a `4xx`
   other than `408`/`429` (e.g. a `404` for a stale preload hint); it goes to
   `HlsClient::on_error` at once instead of after the full backoff.
-
-## [0.7.0] - 2026-08-16
 
 ### Added
 - `server::HlsOrigin` now renders SCTE-35 cues published to the trunk's

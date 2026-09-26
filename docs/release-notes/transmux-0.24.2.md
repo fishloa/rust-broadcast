@@ -20,6 +20,8 @@ regression test that fails against 0.24.1.
 | GHSA-643q-pgwj-8v2h | H.264/H.265 SPS | `read_ue` returned 0 at end of data, so a ~20-byte SPS could loop effectively forever; out-of-range fields overflowed |
 | GHSA-6vc8-3c25-4c9w | RTMP chunk reader | a fmt 1/2 header after an incomplete message carried stale bytes into the new one and underflowed its length |
 | GHSA-mq46-69j5-7gqj | `CencEncryptor::encrypt` | a sample rejected mid-call left earlier samples encrypted with the IV counter unchanged, so a retry reused IVs |
+| GHSA-59ph-4f24-q79x | `KeyMap`/`CencEncryptor`/`CencDecryptor`/`cli::Args`/`cli::CliError::BadKey` | derived `Debug` printed raw content key bytes (`KeyMap`, `CencEncryptor`, `CencDecryptor`) or the raw `<KID>:<key>` CLI argument (`cli::Args`, `BadKey`) — a log line or crash report at debug/trace level could leak key material |
+| GHSA-v965-v82c-2f8x | `progressive_demux` `stsc` expansion | a chunk-run entry's `first_chunk` was iterated to as written, up to `u32::MAX`, instead of being clamped to the track's actual chunk count — a malformed file could cost billions of loop iterations per entry |
 
 ## Behaviour changes
 
@@ -39,6 +41,13 @@ is unaffected:
   sample. A rejected call leaves the media byte-identical and the IV counter unchanged, as the
   method's documentation already promised.
 - **RTMP:** fmt 0, 1 and 2 chunk headers each start a fresh message (RTMP 1.0 §5.3.1.2).
+- **Content keys no longer print via `Debug`.** `KeyMap`, `CencEncryptor` and `CencDecryptor` now
+  hand-write `Debug` instead of deriving it: content key bytes are redacted (KIDs, which are not
+  secret, still print), and `CencDecryptor` summarizes the protected file by length rather than
+  dumping its bytes. `cli::Args` hand-writes `Debug` so a `--key <KID>:<key>` argument prints only
+  its KID half, and `cli::CliError::BadKey` now stores an already-redacted form of the offending
+  argument (the KID half if it parsed, otherwise just its length), so neither its `Display` nor
+  its derived `Debug` can print key hex.
 
 ## Testing
 
