@@ -1165,18 +1165,33 @@ fn random_u64() -> u64 {
     u64::from_ne_bytes(bytes)
 }
 
+/// The largest SRT Socket ID this adapter will ever generate.
+///
+/// `draft-sharabayko-srt-01` §3/§4.3.1.1 gives the wire field only as "32
+/// bits" (this crate's own `specs/ietf_draft_sharabayko_srt_01.txt`, e.g. its
+/// Handshake Packet description — no transcription in this crate's `docs/`
+/// narrows that range further; there is no `docs/` directory at all yet). A
+/// real libsrt peer, though, only ever *allocates* an ID in `1..=`
+/// [`MAX_SRT_SOCKET_ID`]: libsrt's `CUDTUnited::generateSocketID`
+/// (`srtcore/core.cpp`) masks a freshly drawn 32-bit value down with `&
+/// 0x3FFFFFFF` before use — bit 30 (`0x40000000`) is libsrt's own "this ID
+/// names a socket group, not a plain socket" marker, and bit 31 would make
+/// the ID negative when read back as libsrt's signed C `int`. Generating
+/// outside that range is wire-legal per the draft but not a value any real
+/// SRT implementation would ever send or expect, so this adapter matches
+/// libsrt's allocation range rather than exercising the full 32 bits.
+const MAX_SRT_SOCKET_ID: u32 = 0x3FFF_FFFF;
+
 /// A random SRT Socket ID for a new connection, drawn from the same
-/// OS-seeded source as [`random_u64`]. Never `0` — that value marks "no
-/// socket assigned" elsewhere in this adapter (see
-/// [`build_encryption_rejection`]'s `own_socket_id` argument for a refused,
-/// pre-handshake peer) and is reserved for that meaning here too.
+/// OS-seeded source as [`random_u64`], in `1..=`[`MAX_SRT_SOCKET_ID`] (see
+/// its doc). Never `0` — that value marks "no socket assigned" elsewhere in
+/// this adapter (see [`build_encryption_rejection`]'s `own_socket_id`
+/// argument for a refused, pre-handshake peer) and is reserved for that
+/// meaning here too — the `% MAX_SRT_SOCKET_ID` reduction followed by `+ 1`
+/// makes both guarantees (never `0`, never above the cap) hold by
+/// construction, with no retry loop needed.
 fn random_socket_id() -> u32 {
-    loop {
-        let candidate = random_u64() as u32;
-        if candidate != 0 {
-            return candidate;
-        }
-    }
+    (random_u64() as u32 % MAX_SRT_SOCKET_ID) + 1
 }
 
 /// A random Initial Sequence Number in the legal 31-bit SRT sequence-number
@@ -1187,6 +1202,28 @@ fn random_socket_id() -> u32 {
 /// unpredictable per connection, same as the Socket ID above.
 fn random_isn() -> u32 {
     (random_u64() as u32) & SEQ_NUMBER_MASK
+}
+
+#[cfg(test)]
+mod socket_id_tests {
+    use super::*;
+
+    /// Bite test: run against the unfixed `random_socket_id` (a bare
+    /// `random_u64() as u32`, only ever excluding `0`) and this fails —
+    /// values above `MAX_SRT_SOCKET_ID` come up immediately (bit 31 alone is
+    /// set on ~50% of draws). Fixed, every draw is folded into
+    /// `1..=MAX_SRT_SOCKET_ID` by construction.
+    #[test]
+    fn random_socket_id_stays_in_the_libsrt_allocation_range() {
+        for _ in 0..10_000 {
+            let id = random_socket_id();
+            assert!(id != 0, "socket id must never be 0");
+            assert!(
+                id <= MAX_SRT_SOCKET_ID,
+                "socket id {id:#010x} exceeds the libsrt allocation range {MAX_SRT_SOCKET_ID:#010x}"
+            );
+        }
+    }
 }
 
 async fn resolve_one<A: tokio::net::ToSocketAddrs>(addr: A) -> Result<std::net::SocketAddr> {

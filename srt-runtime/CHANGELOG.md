@@ -15,6 +15,10 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   adapter's randomness (this and the existing cookie-secret derivation) now comes from the OS
   source via an optional `getrandom` dependency, enabled only by the `tokio` feature, rather than
   `std::collections::hash_map::RandomState` — the `no_std` sans-IO core stays dependency-free.
+- The tokio adapter's generated SRT Socket IDs could land anywhere in the full 32-bit range,
+  including values a real libsrt peer never allocates (its group-id marker bit set, or its top bit
+  set, which reads back negative in libsrt's signed `int`). Generated Socket IDs are now folded
+  into the same `1..=0x3FFF_FFFF` range libsrt itself allocates from.
 
 ## [0.4.1] - 2026-09-25
 

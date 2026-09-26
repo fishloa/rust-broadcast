@@ -20,6 +20,12 @@ use tokio::net::UdpSocket;
 /// generated ISN must never set the reserved top bit.
 const ISN_UPPER_BOUND: u32 = 0x7FFF_FFFF;
 
+/// The largest SRT Socket ID a real libsrt peer ever allocates — see
+/// `srt-runtime/src/io.rs`'s `MAX_SRT_SOCKET_ID` doc for the citation
+/// (libsrt's `CUDTUnited::generateSocketID` masks with `& 0x3FFFFFFF`; bit 30
+/// is its group-id marker, bit 31 would make the id negative).
+const SOCKET_ID_UPPER_BOUND: u32 = 0x3FFF_FFFF;
+
 /// Fires `SrtSocket::connect` at a bound-but-silent UDP socket, captures the
 /// INDUCTION handshake packet it sends (the Caller's own Socket ID and ISN
 /// are both carried in that first packet), then aborts the connect task
@@ -68,6 +74,14 @@ async fn two_connects_use_different_socket_ids_and_isns() {
         assert!(
             isn <= ISN_UPPER_BOUND,
             "generated ISN {isn:#010x} exceeds the legal 31-bit range"
+        );
+    }
+
+    for socket_id in [socket_id_a, socket_id_b] {
+        assert!(socket_id != 0, "generated socket id must never be 0");
+        assert!(
+            socket_id <= SOCKET_ID_UPPER_BOUND,
+            "generated socket id {socket_id:#010x} exceeds the libsrt allocation range"
         );
     }
 }
