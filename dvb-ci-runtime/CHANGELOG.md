@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **`managed::REQUERY_DEFAULT` (the entitlement re-query cadence's default)
+  is now `Duration::ZERO` (disabled), was 10s.** The periodic re-query is
+  opt-in now: call `Driver::set_requery_interval` explicitly to enable it.
+  No CAM this crate has been verified against actually answers the `query`
+  half (`stack.rs`'s `descramble` already documents a live AlphaCrypt never
+  replying to `query` at all), so it stayed off by default until that is
+  confirmed on real hardware (issue #1032).
+
+### Fixed
+- `CaDescrambler::feed_ts` no longer hangs on the real `ciM` data-plane
+  device: `LinuxCiDataDevice::open` now opens `O_NONBLOCK`, so the drain loop
+  sees `WouldBlock` (mapped to "no more data") instead of blocking forever on
+  a second read (issue #1066).
+- The periodic entitlement re-query (`Driver::set_requery_interval`) no
+  longer sends `list_management = only/first` + `cmd_id = query` on a
+  timer — per EN 50221 §8.4.3.4/§8.4.3.5 that replaces the active programme
+  list and bars descrambling until an `ok_descrambling` that was never sent,
+  silently stopping descrambling ~`interval` after it started. The resend is
+  now a `list_management = update` pair: `cmd_id = query` (to still solicit
+  a fresh `ca_pmt_reply` from a CAM that answers it) immediately followed,
+  unconditionally, by `cmd_id = ok_descrambling` (so descrambling is never
+  left barred even when the CAM never answers the query) (issue #1032).
+- `Driver::add_service` and the entitlement re-query now CAID-filter the
+  `ca_pmt` they send to the CAM's advertised CAIDs (once known), matching the
+  filter the raw `descramble` path already applied — previously they sent
+  every `CA_descriptor` unfiltered, which a CICAM rejects outright when it
+  carries a `CA_system_id` the CAM doesn't support (issue #1067).
+
 ## [0.16.0] - 2026-08-11
 
 ### Changed

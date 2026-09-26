@@ -22,7 +22,17 @@ use dvb_si::tables::pmt::PmtSection;
 /// Default entitlement re-query cadence (#763 Task 5's `Resource::tick`-driven
 /// refresh; `Duration::ZERO` disables it). Set on [`ManagedCa::new`] so the
 /// field is in place before the re-query timer is wired up.
-pub const REQUERY_DEFAULT: Duration = Duration::from_secs(10);
+///
+/// **`Duration::ZERO` (opt-in, since #1032).** The feature was on by default
+/// at 10s until #1032: the timer's `query` half (EN 50221 §8.4.3.5) is
+/// needed to elicit a fresh `ca_pmt_reply`, but `stack.rs`'s `descramble`
+/// already documents that a live AlphaCrypt/Irdeto module never answers
+/// `query` at all — so on the one CAM this crate has verified against, the
+/// query half is a no-op and the feature delivers nothing a host doesn't
+/// already get from spontaneous `ca_pmt_reply`s. Call
+/// [`Driver::set_requery_interval`](crate::driver::Driver::set_requery_interval)
+/// explicitly once re-query is verified against your own CAM.
+pub const REQUERY_DEFAULT: Duration = Duration::ZERO;
 
 /// Sentinel `PCR_PID` value meaning "no PCR carried for this programme" (ISO/IEC
 /// 13818-1 §2.4.4.8, Table 2-33's `PCR_PID` field). A `ManagedService` whose
@@ -91,14 +101,14 @@ pub struct ManagedService {
     /// paired with it for the Task 5 transition diff.
     pub(crate) last_descrambling_ok: bool,
     /// The exact `ca_pmt` bytes sent by [`Driver::add_service`](crate::driver::Driver::add_service)
-    /// to start descrambling — `cmd_id = ok_descrambling` (EN 50221 §8.4.3.4
-    /// Table 25). Kept for the add_service oracle test to assert what was
-    /// actually sent; per EN 50221 §8.4.3.5, `ok_descrambling` solicits **no**
-    /// `ca_pmt_reply`, so this is *not* what the #765 re-query timer resends —
-    /// `Driver::requery_tick` rebuilds a fresh `query`-variant `ca_pmt` per
-    /// tick from [`pmt_raw`](Self::pmt_raw), with `list_management`
-    /// recomputed against the *current* active set each time (not frozen at
-    /// this service's `add_service` time).
+    /// to start descrambling — `list_management = only`/`add`,
+    /// `cmd_id = ok_descrambling` (EN 50221 §8.4.3.4 Table 25). Kept for the
+    /// add_service oracle test to assert what was actually sent; this is
+    /// *not* what the #765/#1032 re-query timer resends —
+    /// `Driver::requery_tick` rebuilds a fresh `list_management = update`
+    /// `query`/`ok_descrambling` pair (#1032) per tick from
+    /// [`pmt_raw`](Self::pmt_raw), against the *current* active set each
+    /// time (not frozen at this service's `add_service` time).
     pub(crate) built_ca_pmt: Vec<u8>,
     /// The owned raw PMT section bytes this service was built from (#763
     /// Task 6), kept so [`Driver::remove_service`](crate::driver::Driver::remove_service)
@@ -297,6 +307,20 @@ impl ManagedCa {
     pub(crate) fn set_cam_caids(&mut self, caids: BTreeSet<u16>) {
         self.cam_caids = caids;
         self.recompute_emm_pids();
+    }
+
+    /// The CAM's advertised CAID set (last `Notification::CaInfo`), for a
+    /// caller that must CAID-filter a `ca_pmt` before sending it (#1067) —
+    /// mirrors `CiStack`'s existing filter on the raw `descramble` path
+    /// (`dvb_ci::builder::build_ca_pmt_for_caids`, whose own doc cites: "a
+    /// CICAM rejects a `ca_pmt` carrying a `CA_descriptor` for a
+    /// `CA_system_id` it does not support, declining even the streams it
+    /// could descramble"). Empty means no `ca_info` has been observed yet —
+    /// the caller falls back to sending every `CA_descriptor` unfiltered,
+    /// same as `CiStack::build_ca_pmt_bytes`.
+    #[must_use]
+    pub(crate) fn cam_caids(&self) -> &BTreeSet<u16> {
+        &self.cam_caids
     }
 
     /// `emm_pids` = `cat_emm_pids` ∩ `cam_caids`, deduped and sorted by PID
