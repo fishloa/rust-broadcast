@@ -28,11 +28,10 @@ use srt_runtime::handshake_sm::HandshakeConfig;
 use srt_runtime::io::{SrtListener, SrtSocket};
 use srt_runtime::packet::SrtPacket;
 
-const CALLER_ISN: u32 = 500;
-const LISTENER_ISN: u32 = 1000;
 const NUM_PAYLOADS: usize = 40;
 /// Drop every `DROP_MODULUS`-th first-time DATA packet (by sequence offset
-/// from `CALLER_ISN`), but only within the first `DROP_WINDOW` payloads —
+/// from the first DATA packet the relay observes), but only within the
+/// first `DROP_WINDOW` payloads —
 /// leaving a "settle" tail of real sends after the last drop so the
 /// caller's send path (which drains inbound NAKs from within
 /// `SrtSocket::send`, see `io.rs`'s `drive_send`) gets several more chances
@@ -58,6 +57,11 @@ async fn run_relay(
     let mut caller_addr: Option<SocketAddr> = None;
     let mut buf_from_caller = [0u8; 2048];
     let mut buf_from_listener = [0u8; 2048];
+    // The Caller's actual ISN is generated randomly by `io.rs` (SRT-W11
+    // fix), so it cannot be known in advance — learn it from the first
+    // first-time DATA packet the relay observes and compute the drop
+    // window relative to that.
+    let mut base_seq: Option<u32> = None;
 
     loop {
         tokio::select! {
@@ -68,7 +72,8 @@ async fn run_relay(
 
                 let drop_seq = match SrtPacket::parse(bytes) {
                     Ok(SrtPacket::Data(d)) if !d.retransmitted => {
-                        let idx = d.seq_number.wrapping_sub(CALLER_ISN) as usize;
+                        let base = *base_seq.get_or_insert(d.seq_number);
+                        let idx = d.seq_number.wrapping_sub(base) as usize;
                         if idx < DROP_WINDOW && idx % DROP_MODULUS == DROP_REMAINDER {
                             Some(d.seq_number)
                         } else {
@@ -103,10 +108,10 @@ async fn loss_recovery_through_io_layer() {
     tokio::time::timeout(TEST_TIMEOUT, async {
         // --- Real listener ---
         let listener_bind_addr = "127.0.0.1:0".parse::<SocketAddr>().unwrap();
-        let listener_config = HandshakeConfig {
-            initial_seq_number: LISTENER_ISN,
-            ..HandshakeConfig::default()
-        };
+        // `initial_seq_number` is generated randomly per connection by
+        // `io.rs` regardless of what `HandshakeConfig` carries (SRT-W11
+        // fix), so the default is as good as any explicit value here.
+        let listener_config = HandshakeConfig::default();
         let mut listener = SrtListener::bind(listener_bind_addr, listener_config)
             .await
             .expect("listener bind");
@@ -133,10 +138,7 @@ async fn loss_recovery_through_io_layer() {
         ));
 
         // --- Caller connects THROUGH the relay, not directly to the listener ---
-        let caller_config = HandshakeConfig {
-            initial_seq_number: CALLER_ISN,
-            ..HandshakeConfig::default()
-        };
+        let caller_config = HandshakeConfig::default();
         let jh = tokio::spawn(async move { listener.accept().await.expect("listener accept") });
         let mut caller = SrtSocket::connect(relay_addr, caller_config)
             .await

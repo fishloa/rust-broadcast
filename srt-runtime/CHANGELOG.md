@@ -6,6 +6,16 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+- The tokio adapter (`io::SrtSocket::connect`/`connect_from`, `io::SrtListener`) now generates a
+  fresh, random Initial Sequence Number and SRT Socket ID for every connection instead of reusing
+  a fixed/default `HandshakeConfig::initial_seq_number` for both, or handing out sequential Socket
+  IDs. The sans-IO handshake engines were already caller-driven on both values (unchanged, still
+  no `pub` API change); only the tokio adapter's own choice of what to hand them was fixed. The
+  adapter's randomness (this and the existing cookie-secret derivation) now comes from the OS
+  source via an optional `getrandom` dependency, enabled only by the `tokio` feature, rather than
+  `std::collections::hash_map::RandomState` — the `no_std` sans-IO core stays dependency-free.
+
 ## [0.4.1] - 2026-09-25
 
 ### Security
