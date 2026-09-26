@@ -34,10 +34,11 @@ use broadcast_auth::{AuthResult, Credentials, RequestContext, Verifier};
 /// credentials it demands them for.
 ///
 /// Digest carries no `nonce` field (unlike the pre-#724 hand-rolled version):
-/// [`Verifier::new`] generates its own fresh random nonce at construction and
-/// holds it for the verifier's whole lifetime (its own module docs' caveat),
-/// which is exactly what a real client answering a real challenge needs —
-/// the mock server's nonce value itself is never asserted on by any test.
+/// [`Verifier`] issues a fresh, time-limited nonce on every challenge (see
+/// its "Nonce handling" module doc) rather than one fixed nonce for the
+/// verifier's whole lifetime, which is exactly what a real client answering a
+/// real challenge needs — the mock server's nonce value itself is never
+/// asserted on by any test.
 pub(crate) enum MockAuthScheme {
     /// HTTP Basic (RFC 7617).
     Basic { username: String, password: String },
@@ -76,9 +77,10 @@ impl MockAuthScheme {
 ///
 /// Builds `scheme`'s [`Verifier`] exactly once (wrapped in an `Arc` so axum's
 /// `State` extractor can cheaply clone the handle per request) — a Digest
-/// verifier's server nonce is generated at construction and must stay stable
-/// across the challenge and the client's follow-up retry, so this must not
-/// rebuild a fresh `Verifier` (and therefore a fresh nonce) on every request.
+/// verifier's nonce secret is generated at construction and must stay stable
+/// across every challenge and the client's follow-up retry, so this must not
+/// rebuild a fresh `Verifier` (and therefore a fresh secret) on every
+/// request.
 pub(crate) fn require_auth(router: Router, scheme: MockAuthScheme) -> Router {
     let verifier = Arc::new(scheme.into_verifier());
     router.layer(middleware::from_fn_with_state(verifier, auth_gate))
@@ -100,9 +102,12 @@ async fn auth_gate(State(verifier): State<Arc<Verifier>>, req: Request, next: Ne
     if verifier.verify(&ctx) == AuthResult::Ok {
         return next.run(req).await;
     }
+    // `challenge_for` (not `challenge`): matches the real production gate
+    // (`crate::origin::output_auth_gate`) this mock stands in for, so an
+    // expired nonce is answered `stale=true` here too.
     (
         StatusCode::UNAUTHORIZED,
-        [(header::WWW_AUTHENTICATE, verifier.challenge())],
+        [(header::WWW_AUTHENTICATE, verifier.challenge_for(&ctx))],
         Body::empty(),
     )
         .into_response()

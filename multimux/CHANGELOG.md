@@ -8,6 +8,17 @@
   NACK, REMB), which it cannot. Any SRTCP packet that authenticates now counts. A datagram that
   fails authentication still does not. Needs `webrtc-runtime`'s new
   `MediaEvent::RtcpUnsupported`.
+- A route now rejects a second, concurrent RTMP/WHIP publisher instead of letting it silently
+  take over (or freeze, once the first disconnects) the program the route is already receiving
+  from. The rejected connection's own session is reaped normally by its listener's usual
+  timeout/error handling; once the active publisher's session ends, the route accepts a new one
+  for that program again (a legitimate reconnect, or a backup encoder taking over).
+- Output-auth and admin-auth Digest challenges now use `broadcast_auth::Verifier::challenge_for`
+  instead of `challenge`, so a request that correctly answers an expired nonce gets a fresh
+  challenge carrying `stale=true` (RFC 7616 §3.3) rather than being silently re-prompted for
+  credentials.
+- Config docs for `InputSpec::Rtmp`/`Whip`/`Srt` now say plainly when an ingest listener runs
+  with no authentication at all, and a startup log line warns for each such route.
 
 ## [0.11.0] - 2026-09-26
 

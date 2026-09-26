@@ -1110,12 +1110,13 @@ fn read_one(
 /// `crate::source::rtmp::ProgressBySession`.
 type ProgressBySession = HashMap<SessionId, DriverProgress>;
 
-/// Publishes session `id`'s progress and, if that left it terminal, reaps
-/// it — mirrors `crate::source::rtmp::report_and_maybe_reap` exactly
-/// (`WhipIngestSession::Stage::In` being `&[u8]` doesn't change this half:
-/// [`ListenDriver::feed`] itself already does the reap-on-terminal step for
-/// the actual feed call in [`run_whip`]'s loop, but the accept/timeout paths
-/// still need the same driver/reap access this helper wraps).
+/// Publishes session `id`'s progress and, if that left it terminal, releases
+/// whatever it published (`crate::source::release_route`) and reaps it —
+/// mirrors `crate::source::rtmp::report_and_maybe_reap` exactly (the feed
+/// call in [`run_whip`]'s loop goes through `driver_mut`/`IngestDriver::feed`
+/// rather than `ListenDriver::feed`'s own `&[u8]`-pinned convenience wrapper,
+/// specifically so a terminal session is never removed before this helper's
+/// release-then-reap sequence runs for it).
 fn report_and_maybe_reap(
     driver: &mut ListenDriver<WhipListener>,
     id: SessionId,
@@ -1125,6 +1126,9 @@ fn report_and_maybe_reap(
 ) -> bool {
     if let Some(d) = driver.driver(id) {
         crate::source::advance_route(d, route_handle, progress.entry(id).or_default());
+        if !d.health().is_running() {
+            crate::source::release_route(d, route_handle);
+        }
     }
     let reaped = driver.reap_if_terminal(id).is_some();
     if reaped {
@@ -1197,8 +1201,16 @@ pub async fn run_whip(
                 let now = Timestamp::from_instant(start, Instant::now());
                 match outcome {
                     ReadOutcome::Events(events) => {
-                        for wire in &events {
-                            driver.feed(id, wire, now);
+                        // Fed via `driver_mut`/`IngestDriver::feed`, not
+                        // `ListenDriver::feed` — that convenience wrapper
+                        // removes a session that goes terminal as a *result*
+                        // of this feed before `report_and_maybe_reap` below
+                        // ever runs, which would skip its release-then-reap
+                        // sequence for this session.
+                        if let Some(d) = driver.driver_mut(id) {
+                            for wire in &events {
+                                d.feed(wire, now);
+                            }
                         }
                         let reaped =
                             report_and_maybe_reap(&mut driver, id, route_handle, &mut progress, &active_sessions);

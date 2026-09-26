@@ -161,6 +161,14 @@ pub enum InputSpec {
         auth: Option<AuthSpec>,
     },
     /// Accept an inbound RTMP push publisher (issue #738).
+    ///
+    /// `stream_key` is this route's only ingest authentication: leaving it
+    /// `None` means **anyone who can reach `listen` may publish** (and, since
+    /// a route only ever serves its first live publisher — see
+    /// `crate::route::RouteHandle::publish_program` — the first connection to
+    /// publish wins the route). A startup log line warns when a route is
+    /// wired up this way; set `stream_key` for any listener reachable outside
+    /// a trusted network.
     Rtmp {
         /// `host:port` to bind the RTMP listen socket to (e.g.
         /// `"0.0.0.0:1935"`, the IANA-assigned RTMP port).
@@ -171,7 +179,10 @@ pub enum InputSpec {
         app: Option<String>,
         /// If set, the publisher's `publish` stream key must match exactly
         /// (enforced by the RTMP session itself — a mismatch never reaches
-        /// this crate as a `Publish`/`Media` event).
+        /// this crate as a `Publish`/`Media` event, and the session is closed
+        /// after a few mismatched attempts — see `rtmp_runtime::server`).
+        /// `None` means this ingest listener requires no authentication at
+        /// all — see this variant's own doc.
         #[serde(default)]
         stream_key: Option<String>,
     },
@@ -183,6 +194,13 @@ pub enum InputSpec {
     /// in behind this crate's own `whip` Cargo feature, which (unlike this
     /// crate's default build) needs rustc >= 1.88 — see `Cargo.toml`'s
     /// `whip` feature doc.
+    ///
+    /// This cut exposes **no ingest authentication at all**: any `POST` to
+    /// `listen` may publish (only the first, per-route — see
+    /// `crate::route::RouteHandle::publish_program`). A startup log line
+    /// warns every time this input kind is wired up, unconditionally; only
+    /// run it behind a trusted network or a fronting proxy that adds auth
+    /// until this crate grows a WHIP Bearer-token config knob.
     #[cfg(feature = "whip")]
     Whip {
         /// `host:port` to bind the WHIP publish HTTP endpoint to (e.g.
@@ -200,7 +218,9 @@ pub enum InputSpec {
     /// Encrypted SRT (`draft-sharabayko-srt-01` §6) is **out of scope**:
     /// [`srt_runtime::io`] does not yet apply the SEK to decrypt DATA
     /// payloads, so no passphrase field is exposed here — see
-    /// [`crate::source::srt`]'s module doc.
+    /// [`crate::source::srt`]'s module doc. In listener mode this means
+    /// **any Caller may publish** (only the first, per-route); a startup log
+    /// line warns every time a listener-mode SRT route is wired up.
     Srt {
         /// Listener bind address (e.g. `"0.0.0.0:9000"`) — mutually
         /// exclusive with `remote`.
@@ -414,8 +434,13 @@ pub enum OutputAuthSpec {
         /// Account password.
         password: String,
     },
-    /// HTTP Digest (RFC 7616) — a fresh server nonce is generated once per
-    /// process (see `broadcast_auth::Verifier`'s nonce-handling caveat).
+    /// HTTP Digest (RFC 7616) — a fresh, time-limited nonce is issued on
+    /// every challenge and an expired one is answered `stale=true` so a
+    /// compliant client retries without re-prompting (see
+    /// `broadcast_auth::Verifier`'s "Nonce handling" module doc, and
+    /// `crate::origin::output_auth_gate`/`crate::origin::admin::admin_auth_gate`,
+    /// which challenge via `Verifier::challenge_for`, not `Verifier::challenge`,
+    /// specifically so an expired nonce gets `stale=true`).
     Digest {
         /// Account username.
         username: String,

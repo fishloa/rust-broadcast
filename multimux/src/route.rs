@@ -672,6 +672,16 @@ pub struct RouteHandle {
     /// [`Self::publish_program`] — used by push output tasks that need to
     /// discover a `Trunk` to subscribe to (issue #744).
     program_notify: tokio::sync::Notify,
+    /// Which `Trunk` currently holds publish rights for each `ProgramId` —
+    /// deliberately tracked separately from [`Self::programs`] (issue W7: a
+    /// route must reject a second concurrent publisher rather than let it
+    /// take over or freeze the one it is already serving). Kept apart so a
+    /// publisher's own disconnect ([`Self::release_program`]) never disturbs
+    /// [`Self::programs`]' already-served content — a route with no live
+    /// publisher stays resolvable with whatever it last served, exactly as
+    /// before this check existed; only a *new* [`Self::publish_program`]
+    /// call for the same `ProgramId` is affected by this map at all.
+    active_publisher: RwLock<HashMap<ProgramId, Arc<Trunk>>>,
 }
 
 impl RouteHandle {
@@ -692,6 +702,7 @@ impl RouteHandle {
             name: DEFAULT_ROUTE_NAME.to_string(),
             dvr_config: None,
             program_notify: tokio::sync::Notify::new(),
+            active_publisher: RwLock::new(HashMap::new()),
         }
     }
 
@@ -776,11 +787,47 @@ impl RouteHandle {
     /// itself keeps one stable `Trunk` per `ProgramId` for the life of a
     /// session (a repeat `NewProgram` for an already-known program does not
     /// mint a second `Trunk`), so in practice this is called once per program
-    /// with a stable `Arc`, then repeatedly as a harmless idempotent check.  A
-    /// call with a **different** `Arc` for an already-registered `ProgramId`
-    /// rebuilds the bundle over the new `Trunk` (unusual — no caller in this
-    /// crate does it today — but a rebind, not silently ignored).
+    /// with a stable `Arc`, then repeatedly as a harmless idempotent check.
+    ///
+    /// A call with a **different** `Arc` while `active_publisher` still holds
+    /// a *different* `Trunk` for this `program` — not yet freed by
+    /// [`Self::release_program`] — is a second, concurrent publisher trying
+    /// to take over a program this route is already actively receiving from —
+    /// rejected, not bound: [`Self::programs`]' existing entry (and the
+    /// publisher behind it) is left exactly as it was, and the rejected
+    /// caller's own session is expected to be reaped once its driver-level
+    /// admission loop notices it never got published (see
+    /// `crate::source::report_driver_progress`, whose `Listener`-backed
+    /// callers cap concurrent admission at `Listener::max_sessions` but do not
+    /// themselves limit *this* route to one active publisher — this check is
+    /// what does). Once the active publisher's session ends,
+    /// [`Self::release_program`] frees `active_publisher`'s slot (**not**
+    /// `programs`' — see that field's own doc), so a *subsequent*
+    /// `publish_program` call — a legitimate reconnect, or a backup encoder
+    /// taking over from a primary that just died — rebuilds `programs`' entry
+    /// over the new `Trunk`, exactly like the plain, no-rival case.
     pub fn publish_program(&self, program: ProgramId, trunk: Arc<Trunk>) {
+        {
+            let mut active = self
+                .active_publisher
+                .write()
+                .expect("RouteHandle::active_publisher lock poisoned");
+            match active.get(&program) {
+                Some(owner) if Arc::ptr_eq(owner, &trunk) => {}
+                Some(_) => {
+                    tracing::warn!(
+                        route = %self.name,
+                        ?program,
+                        "rejecting a second concurrent publisher for this program — \
+                         this route is already receiving from another connection"
+                    );
+                    return;
+                }
+                None => {
+                    active.insert(program, Arc::clone(&trunk));
+                }
+            }
+        }
         let mut programs = self
             .programs
             .write()
@@ -802,6 +849,34 @@ impl RouteHandle {
         );
         programs.insert(program, serving);
         self.program_notify.notify_waiters();
+    }
+
+    /// Release `program`'s [`Self::active_publisher`] slot, if (and only if)
+    /// it still holds exactly `trunk` — the counterpart to
+    /// [`Self::publish_program`]'s rejection of a second concurrent
+    /// publisher, called once a driver-backed session that owned `trunk` has
+    /// been reaped (see `crate::source::release_route`). Deliberately does
+    /// **not** touch [`Self::programs`]: the route keeps serving whatever
+    /// that publisher last produced (exactly as it would have before this
+    /// active-publisher check existed — a disconnected publisher's content
+    /// was never un-served just because the connection ended), only a
+    /// *future* [`Self::publish_program`] call is affected, letting a new
+    /// publisher for the same `program` bind instead of being rejected. A
+    /// no-op when `program`'s slot is already free, or held by a different
+    /// `Trunk` (this session lost the take-over race in `publish_program`
+    /// and so never held it) — so a caller may call this speculatively,
+    /// exactly like [`Self::publish_program`].
+    pub fn release_program(&self, program: ProgramId, trunk: &Arc<Trunk>) {
+        let mut active = self
+            .active_publisher
+            .write()
+            .expect("RouteHandle::active_publisher lock poisoned");
+        let still_owned = active
+            .get(&program)
+            .is_some_and(|owner| Arc::ptr_eq(owner, trunk));
+        if still_owned {
+            active.remove(&program);
+        }
     }
 
     /// Wait until at least one program is published on this route, then return
@@ -1148,6 +1223,87 @@ mod program_registry_tests {
         assert_eq!(Arc::as_ptr(&first.trunk()), Arc::as_ptr(&trunk_a));
         assert_eq!(Arc::as_ptr(&second.trunk()), Arc::as_ptr(&trunk_b));
         assert_ne!(Arc::as_ptr(&first.trunk()), Arc::as_ptr(&second.trunk()));
+    }
+
+    /// Coverage for issue W7 (second concurrent publisher takes over/freezes
+    /// a route): once program 1 is bound to `trunk_a`, a second
+    /// `publish_program` call for the same `ProgramId` with a *different*
+    /// `Arc` (a second, still-live connection publishing concurrently) must
+    /// be rejected outright — the route keeps serving `trunk_a`, not
+    /// silently rebound to `trunk_b`.
+    #[test]
+    fn publish_program_rejects_a_second_concurrent_publisher() {
+        let route = RouteHandle::new(4.0, 500, 4);
+        let trunk_a = test_trunk();
+        let trunk_b = test_trunk();
+        route.publish_program(ProgramId(1), Arc::clone(&trunk_a));
+        route.publish_program(ProgramId(1), Arc::clone(&trunk_b));
+
+        match route.resolve_program(ProgramId(1)) {
+            ProgramResolution::Found(resolved) => {
+                assert_eq!(
+                    Arc::as_ptr(&resolved.trunk()),
+                    Arc::as_ptr(&trunk_a),
+                    "a second concurrent publisher must not take over the route"
+                );
+            }
+            _ => panic!("expected ProgramResolution::Found (the first publisher's binding)"),
+        }
+    }
+
+    /// `release_program` is the counterpart a reaped session's own
+    /// driver-backed source calls: once the first publisher's session has
+    /// genuinely ended and released its binding, a *new* publisher (a
+    /// reconnect, or a backup encoder taking over) may then bind — this is
+    /// what stops the second-publisher rejection above from also permanently
+    /// wedging the route after the first publisher legitimately disconnects.
+    #[test]
+    fn release_program_then_publish_lets_a_new_publisher_take_over() {
+        let route = RouteHandle::new(4.0, 500, 4);
+        let trunk_a = test_trunk();
+        let trunk_b = test_trunk();
+        route.publish_program(ProgramId(1), Arc::clone(&trunk_a));
+
+        route.release_program(ProgramId(1), &trunk_a);
+        route.publish_program(ProgramId(1), Arc::clone(&trunk_b));
+
+        match route.resolve_program(ProgramId(1)) {
+            ProgramResolution::Found(resolved) => {
+                assert_eq!(
+                    Arc::as_ptr(&resolved.trunk()),
+                    Arc::as_ptr(&trunk_b),
+                    "a new publisher must be able to bind once the old one released"
+                );
+            }
+            _ => panic!("expected ProgramResolution::Found (the new publisher's binding)"),
+        }
+    }
+
+    /// `release_program` must be a no-op for a `Trunk` that lost the
+    /// take-over race in `publish_program` and so was never actually bound —
+    /// otherwise a rejected session's own eventual reap could release the
+    /// *surviving* publisher's binding out from under it.
+    #[test]
+    fn release_program_is_a_noop_for_a_rejected_publisher() {
+        let route = RouteHandle::new(4.0, 500, 4);
+        let trunk_a = test_trunk();
+        let trunk_b = test_trunk();
+        route.publish_program(ProgramId(1), Arc::clone(&trunk_a));
+        route.publish_program(ProgramId(1), Arc::clone(&trunk_b)); // rejected
+
+        route.release_program(ProgramId(1), &trunk_b);
+
+        match route.resolve_program(ProgramId(1)) {
+            ProgramResolution::Found(resolved) => {
+                assert_eq!(
+                    Arc::as_ptr(&resolved.trunk()),
+                    Arc::as_ptr(&trunk_a),
+                    "releasing a trunk that was never actually bound must not \
+                     evict the surviving publisher"
+                );
+            }
+            _ => panic!("expected ProgramResolution::Found (still trunk_a)"),
+        }
     }
 
     fn video_spec(track_id: u32) -> TrackSpec {
