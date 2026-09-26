@@ -15,6 +15,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   track's actual chunk count before iterating, instead of iterating the wire `first_chunk` value
   directly (an out-of-range `first_chunk`, up to `u32::MAX`, could cost billions of loop
   iterations per entry).
+- `cli::Args` now implements `Debug` by hand: `--key` entries are redacted to their (non-secret)
+  KID half instead of being printed as the raw `<KID>:<key>` argument.
+- `cli::CliError::BadKey` now carries an already-redacted form of the offending `--key` argument
+  (the KID half if it parsed, otherwise just the argument's length) instead of the raw string, so
+  neither its `Display` nor its derived `Debug` can print key hex.
 
 ## [0.24.2] - 2026-09-25
 

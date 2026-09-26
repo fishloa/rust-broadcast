@@ -164,7 +164,7 @@ broadcast_common::impl_spec_display!(OutputFormat);
 
 /// An any-to-any media container packager: autodetect the input container, run
 /// it through the neutral hub IR, and write the chosen output format.
-#[derive(Debug, clap::Parser)]
+#[derive(clap::Parser)]
 #[command(name = "transmux", version, about, long_about = None)]
 pub struct Args {
     /// Input media file (the container is autodetected from its leading bytes).
@@ -217,6 +217,48 @@ pub struct Args {
     #[cfg(feature = "cenc")]
     #[arg(long = "key", value_name = "KID:KEY")]
     pub keys: Vec<String>,
+}
+
+/// Hand-written: a derived `Debug` would print `keys` (raw `<KID>:<key>`
+/// strings) verbatim, so a `dbg!`/panic message of `Args` would write
+/// content keys to logs. Every other field is printed as-is; `keys` is
+/// printed with each entry redacted down to its KID half via
+/// [`redact_key_spec`] (a KID is not secret, the key half is).
+impl fmt::Debug for Args {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let mut d = f.debug_struct("Args");
+        d.field("in_positional", &self.in_positional)
+            .field("input", &self.input)
+            .field("output", &self.output)
+            .field("format", &self.format)
+            .field("segment_duration", &self.segment_duration)
+            .field("ll", &self.ll)
+            .field("tracks", &self.tracks);
+        #[cfg(feature = "cenc")]
+        {
+            d.field("decrypt", &self.decrypt);
+            let redacted_keys: Vec<String> = self.keys.iter().map(|s| redact_key_spec(s)).collect();
+            d.field("keys", &redacted_keys);
+        }
+        d.finish()
+    }
+}
+
+/// Redact a raw `--key` argument down to its (non-secret) KID half:
+/// `<kid-hex>:<redacted>` when the argument's first `:`-separated field
+/// parses as 32 hex characters, or just the argument's length otherwise.
+/// Never returns the key half, and never the original string verbatim —
+/// even a malformed argument (bad KID half) could still carry a decodable
+/// key half after the `:`.
+#[cfg_attr(not(feature = "cenc"), allow(dead_code))]
+fn redact_key_spec(spec: &str) -> String {
+    let kid_part = spec.split_once(':').map(|(k, _)| k).unwrap_or(spec);
+    let is_kid_hex = kid_part.len() == 32 && kid_part.bytes().all(|b| b.is_ascii_hexdigit());
+    if is_kid_hex {
+        format!("{kid_part}:<redacted>")
+    } else {
+        format!("<{}-byte argument>", spec.len())
+    }
 }
 
 /// clap `ValueEnum` mirror of [`OutputFormat`] (kebab-case flag values).
@@ -272,7 +314,9 @@ pub enum CliError {
     UndeterminedFormat,
     /// The requested track-ID selection left no tracks.
     NoTracksSelected,
-    /// A `--key` argument was malformed.
+    /// A `--key` argument was malformed. Carries [`redact_key_spec`]'s
+    /// output, never the raw argument — the key half must never reach an
+    /// error message, `Display`, or (this enum derives `Debug`) a `dbg!`.
     BadKey(String),
 }
 
@@ -295,7 +339,7 @@ impl fmt::Display for CliError {
                 write!(f, "the --tracks selection matched no tracks in the input")
             }
             CliError::BadKey(s) => {
-                write!(f, "invalid --key {s:?}: expected <32-hex-KID>:<32-hex-key>")
+                write!(f, "invalid --key ({s}): expected <32-hex-KID>:<32-hex-key>")
             }
         }
     }
@@ -666,9 +710,9 @@ fn decrypt_input(input: &[u8], container: Container, keys: &[String]) -> CliResu
 fn parse_key(spec: &str) -> CliResult<([u8; 16], [u8; 16])> {
     let (kid_hex, key_hex) = spec
         .split_once(':')
-        .ok_or_else(|| CliError::BadKey(spec.to_string()))?;
-    let kid = parse_hex16(kid_hex).ok_or_else(|| CliError::BadKey(spec.to_string()))?;
-    let key = parse_hex16(key_hex).ok_or_else(|| CliError::BadKey(spec.to_string()))?;
+        .ok_or_else(|| CliError::BadKey(redact_key_spec(spec)))?;
+    let kid = parse_hex16(kid_hex).ok_or_else(|| CliError::BadKey(redact_key_spec(spec)))?;
+    let key = parse_hex16(key_hex).ok_or_else(|| CliError::BadKey(redact_key_spec(spec)))?;
     Ok((kid, key))
 }
 
@@ -684,4 +728,77 @@ fn parse_hex16(s: &str) -> Option<[u8; 16]> {
         *byte = u8::from_str_radix(&s[i * 2..i * 2 + 2], 16).ok()?;
     }
     Some(out)
+}
+
+#[cfg(all(test, feature = "cenc"))]
+mod key_redaction_tests {
+    //! W8/W-CSA-4 adversarial review: `CliError::BadKey` must never carry the
+    //! key half of a malformed `--key` argument, through any of the three
+    //! ways `parse_key` can reject one.
+    use super::*;
+
+    const KID_HEX: &str = "0102030405060708090a0b0c0d0e0f10";
+    const KEY_HEX: &str = "aabbccddeeff00112233445566778899";
+
+    #[test]
+    fn missing_separator_reports_length_only() {
+        // No `:` at all — `kid_part` (the whole string) is not 32 hex chars.
+        let spec = format!("{KID_HEX}{KEY_HEX}");
+        let err = parse_key(&spec).unwrap_err();
+        let display = format!("{err}");
+        let debug = format!("{err:?}");
+        assert!(
+            !display.contains(KEY_HEX),
+            "Display leaked key hex: {display}"
+        );
+        assert!(!debug.contains(KEY_HEX), "Debug leaked key hex: {debug}");
+        assert!(
+            !display.contains(KID_HEX),
+            "no separator means no verified KID half either"
+        );
+    }
+
+    #[test]
+    fn malformed_kid_half_reports_length_only() {
+        // KID half is present but not valid hex — must not fall back to
+        // printing the raw string (which would still carry the key half).
+        let spec = format!("not-32-hex-chars:{KEY_HEX}");
+        let err = parse_key(&spec).unwrap_err();
+        let display = format!("{err}");
+        let debug = format!("{err:?}");
+        assert!(
+            !display.contains(KEY_HEX),
+            "Display leaked key hex: {display}"
+        );
+        assert!(!debug.contains(KEY_HEX), "Debug leaked key hex: {debug}");
+    }
+
+    #[test]
+    fn malformed_key_half_still_redacts_and_keeps_the_kid() {
+        // KID half is valid; only the key half is malformed. The KID is not
+        // secret and may appear; the (malformed) key half must not.
+        let bad_key_half = "not-32-hex-chars-either";
+        let spec = format!("{KID_HEX}:{bad_key_half}");
+        let err = parse_key(&spec).unwrap_err();
+        let display = format!("{err}");
+        let debug = format!("{err:?}");
+        assert!(
+            !display.contains(bad_key_half),
+            "Display leaked the key half: {display}"
+        );
+        assert!(
+            !debug.contains(bad_key_half),
+            "Debug leaked the key half: {debug}"
+        );
+        assert!(
+            display.contains(KID_HEX),
+            "the KID half is not secret: {display}"
+        );
+    }
+
+    #[test]
+    fn well_formed_key_parses_without_going_through_bad_key() {
+        let spec = format!("{KID_HEX}:{KEY_HEX}");
+        assert!(parse_key(&spec).is_ok());
+    }
 }
