@@ -13,6 +13,15 @@ All notable changes to this crate will be documented in this file.
 - `MediaTransport::handle_datagram` no longer returns `Err` for such a packet. It passed SRTCP
   authentication, so it is a genuine packet from the peer, not a transport error. It also now
   counts toward the RFC 3711 key-lifetime read counter.
+- `media::MediaTransport::add_remote_candidate`'s cap on remote ICE candidates
+  (RFC 8445 §6.1.2.5) could be bypassed entirely: an authenticated STUN Binding
+  Request from a source address the transport didn't already recognize made
+  the ICE agent create its own peer-reflexive remote candidate, uncounted by
+  the cap. Since the remote peer already knows the negotiated ICE
+  ufrag/password, it could grow the remote-candidate (and pair) count without
+  bound by sending from many source ports (RFC 8445 §19.5.1). New STUN
+  source addresses are now checked against the same configured cap before
+  being handed to the ICE agent; an address already admitted keeps working.
 
 ## [0.2.0] - 2026-09-25
 
@@ -25,6 +34,15 @@ the `media` feature.
   `a=fingerprint`). The DTLS handshake now fails unless the peer's certificate matches it, the
   passive role requires a client certificate, DTLS is accepted only from the ICE-selected
   address, and an established session's SRTP keys cannot be replaced by another association.
+- `media::MediaTransportConfig` has a new required field `max_remote_candidates`.
+  `media::MediaTransport::add_remote_candidate` previously admitted an unbounded number of
+  remote ICE candidates; a caller (e.g. a WHIP offer or a trickle ICE fragment) that supplied a
+  very large number of candidates aimed at arbitrary IP/port pairs could make the transport
+  originate an unbounded number of STUN connectivity checks. RFC 8445 §6.1.2.5 requires this
+  cap to be configurable, so every constructor must now supply a value; pass the new
+  `MAX_REMOTE_CANDIDATES` constant (100, the spec's own recommended default) unless a stricter
+  cap is wanted. Candidates past the configured cap are rejected with `Error::Media`, never
+  silently dropped.
 
 ### Added
 - `parse_remote_fingerprint(sdp)` to read `a=fingerprint` from an SDP body.

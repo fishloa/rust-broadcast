@@ -33,7 +33,8 @@ use std::net::{TcpListener, UdpSocket};
 use std::time::{Duration, Instant};
 
 use webrtc_runtime::media::{
-    MediaEvent, MediaTransport, MediaTransportConfig, SetupRole, parse_remote_fingerprint,
+    MAX_REMOTE_CANDIDATES, MediaEvent, MediaTransport, MediaTransportConfig, SetupRole,
+    parse_remote_fingerprint,
 };
 
 /// The WHIP-lite signalling port this smoke test listens on.
@@ -172,6 +173,7 @@ fn main() {
         local_setup: SetupRole::Passive,
         stun_server: None,
         remote_fingerprint,
+        max_remote_candidates: MAX_REMOTE_CANDIDATES,
     })
     .expect("build media transport");
     println!(

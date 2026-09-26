@@ -1,5 +1,6 @@
 //! [`MediaTransport`] — see the `media` module doc for the full picture.
 
+use std::collections::HashSet;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -106,6 +107,18 @@ const FINGERPRINT_HASH_TOKEN: &str = "sha-256";
 /// The SHA-256 digest length in bytes — also the number of colon-separated
 /// hex bytes an `a=fingerprint:sha-256` value carries (RFC 8122 §5).
 const FINGERPRINT_LEN: usize = 32;
+
+/// The recommended cap on the number of remote ICE candidates one
+/// [`MediaTransport`] admits (RFC 8445 §6.1.2.4-6.1.2.5: 100 candidate pairs
+/// per checklist set, "specifically to bound" the amplification-style issue
+/// in §19.5.1). The spec requires this limit be configurable, so it is not
+/// hardcoded: it is only the default a caller passes as
+/// [`MediaTransportConfig::max_remote_candidates`]. `rtc-ice` 0.20.0 has no
+/// pair cap of its own, so it is enforced here on remote candidates instead:
+/// since local candidates are the small, fixed set this crate gathers per
+/// transport (host + at most one server-reflexive candidate), bounding
+/// remote candidates bounds the pair count too.
+pub const MAX_REMOTE_CANDIDATES: usize = 100;
 
 /// Parses an SDP `a=fingerprint` attribute *value* (`"sha-256 AB:CD:…"`,
 /// RFC 8122 §5) into its raw digest: the hash-function token (case-
@@ -324,6 +337,12 @@ pub struct MediaTransportConfig {
     /// A STUN server to gather a server-reflexive candidate from, if any
     /// (RFC 8445 §5.1.1.2). `None` gathers a host candidate only.
     pub stun_server: Option<SocketAddr>,
+    /// The cap on remote ICE candidates [`MediaTransport::add_remote_candidate`]
+    /// admits before it starts rejecting further ones (RFC 8445 §6.1.2.5,
+    /// which requires a configurable, enforced limit — see
+    /// [`MAX_REMOTE_CANDIDATES`] for the recommended default and the
+    /// amplification concern it bounds).
+    pub max_remote_candidates: usize,
 }
 
 /// An RTP packet decrypted from an inbound SRTP packet (RFC 3711), with its
@@ -441,6 +460,33 @@ pub struct MediaTransport {
     /// [`Self::purge_expired_retired_key`].
     retired_srtp_read: Option<(SrtpContext, Instant)>,
     gather: Option<StunGather>,
+    /// Remote candidates admitted so far via [`Self::add_remote_candidate`],
+    /// capped at [`Self::max_remote_candidates`]. `rtc-ice`'s `IceAgent`
+    /// keeps its own remote-candidate list privately (no public getter), so
+    /// this is the only place that count is observable from here.
+    remote_candidate_count: usize,
+    /// This transport's copy of [`MediaTransportConfig::max_remote_candidates`]
+    /// (RFC 8445 §6.1.2.5's configurable cap).
+    max_remote_candidates: usize,
+    /// Every distinct remote `SocketAddr` already counted toward
+    /// [`Self::max_remote_candidates`]: the address of each explicitly added
+    /// remote candidate ([`Self::add_remote_candidate`]) plus every new STUN
+    /// source address [`Self::handle_stun_datagram`] has let through to the
+    /// ICE agent.
+    ///
+    /// `rtc-ice` 0.20.0 creates its own peer-reflexive remote candidate (and
+    /// a new candidate pair) for *every* authenticated STUN Binding Request
+    /// from a source address it does not already recognize — see
+    /// `agent::mod::handle_inbound`'s `remote_candidate_index.is_none()`
+    /// branch — entirely bypassing `add_remote_candidate`'s own cap, since
+    /// that path is never called. RFC 8445 §19.5.1's amplification concern
+    /// applies directly: the peer is untrusted (any WHEP viewer) and knows
+    /// ice-ufrag/ice-pwd from the negotiated SDP, so it can authenticate as
+    /// many Binding Requests as it likes from as many source ports as it
+    /// likes. Since `rtc-ice` keeps its remote-candidate list private (no
+    /// public getter), gating new source addresses here, before they ever
+    /// reach the agent, is the only enforcement point available.
+    known_remote_addrs: HashSet<SocketAddr>,
 }
 
 impl MediaTransport {
@@ -607,6 +653,9 @@ impl MediaTransport {
             read_rtcp_count: 0,
             retired_srtp_read: None,
             gather,
+            remote_candidate_count: 0,
+            max_remote_candidates: config.max_remote_candidates,
+            known_remote_addrs: HashSet::new(),
         })
     }
 
@@ -624,9 +673,29 @@ impl MediaTransport {
 
     /// Add a remote ICE candidate (the candidate-attribute body, e.g. from
     /// `a=candidate:<this>` in the remote's SDP or a Trickle-ICE fragment).
+    ///
+    /// # Errors
+    ///
+    /// Also returns [`Error::Media`] once
+    /// [`MediaTransportConfig::max_remote_candidates`] remote candidates
+    /// have already been admitted (RFC 8445 §6.1.2.5) — every candidate past
+    /// the cap is rejected, never silently dropped.
     pub fn add_remote_candidate(&mut self, candidate: &str) -> Result<(), Error> {
+        if self.remote_candidate_count >= self.max_remote_candidates {
+            let cap = self.max_remote_candidates;
+            return Err(Error::Media(format!(
+                "remote candidate count exceeds the {cap}-candidate cap (RFC 8445 §6.1.2.5)"
+            )));
+        }
         let c = unmarshal_candidate(candidate)
             .map_err(|e| Error::Media(format!("unmarshal remote candidate {candidate:?}: {e}")))?;
+        // Counted here, before the `rtc-ice` call: this bounds the number of
+        // candidates handed to the agent's connectivity-check machinery
+        // regardless of whether the agent itself treats one as a duplicate
+        // or otherwise filters it (`rtc-ice` 0.20.0 keeps its own remote
+        // candidate list privately, so this is the only cap available).
+        self.remote_candidate_count += 1;
+        self.known_remote_addrs.insert(c.addr());
         self.ice
             .add_remote_candidate(c)
             .map_err(|e| Error::Media(format!("add remote candidate: {e}")))?;
@@ -738,6 +807,20 @@ impl MediaTransport {
                 events.push(MediaEvent::LocalCandidateGathered(candidate));
             }
             return Ok(());
+        }
+
+        // RFC 8445 §19.5.1 / §6.1.2.5: gate new source addresses against
+        // the same cap `add_remote_candidate` enforces, before the datagram
+        // ever reaches the ICE agent — see `known_remote_addrs`'s doc for
+        // why this is the only place that can be done. An address already
+        // admitted (an explicit candidate or a previously admitted STUN
+        // source) keeps working unconditionally; only a *new* source
+        // address is subject to the cap.
+        if !self.known_remote_addrs.contains(&peer) {
+            if self.known_remote_addrs.len() >= self.max_remote_candidates {
+                return Ok(());
+            }
+            self.known_remote_addrs.insert(peer);
         }
 
         let tagged = TaggedBytesMut {
@@ -1256,6 +1339,7 @@ mod tests {
             local_setup,
             stun_server: None,
             remote_fingerprint: DUMMY_REMOTE_FINGERPRINT.into(),
+            max_remote_candidates: MAX_REMOTE_CANDIDATES,
         }
     }
 
@@ -1353,6 +1437,78 @@ mod tests {
             mt.dtls_client_config.is_none(),
             "Passive role must never dial out, so it must retain no client handshake config"
         );
+    }
+
+    #[test]
+    fn add_remote_candidate_enforces_max_cap() {
+        // RFC 8445 §6.1.2.5: the candidate-pair cap MUST be enforced. Feed
+        // more than MAX_REMOTE_CANDIDATES distinct, well-formed host
+        // candidate lines and check every one past the cap is rejected, and
+        // that the transport's admitted count never exceeds the cap.
+        let mut mt =
+            MediaTransport::new(test_config(SetupRole::Passive)).expect("Passive role must build");
+
+        let extra = 5;
+        let mut accepted = 0usize;
+        let mut rejected = 0usize;
+        for i in 0..(MAX_REMOTE_CANDIDATES + extra) {
+            // Distinct port per candidate so none is treated as a duplicate
+            // by the ICE agent itself (which would otherwise mask the cap).
+            let port = 10_000 + i as u16;
+            let line = format!("1 1 udp 2130706431 127.0.0.1 {port} typ host");
+            match mt.add_remote_candidate(&line) {
+                Ok(()) => accepted += 1,
+                Err(Error::Media(_)) => rejected += 1,
+                Err(other) => panic!("unexpected error variant: {other:?}"),
+            }
+        }
+
+        assert_eq!(
+            accepted, MAX_REMOTE_CANDIDATES,
+            "exactly MAX_REMOTE_CANDIDATES candidates must be admitted"
+        );
+        assert_eq!(
+            rejected, extra,
+            "every candidate past the cap must be rejected, not silently dropped"
+        );
+        assert_eq!(
+            mt.remote_candidate_count, MAX_REMOTE_CANDIDATES,
+            "the transport's admitted remote-candidate count must never exceed the cap"
+        );
+    }
+
+    #[test]
+    fn add_remote_candidate_honours_a_smaller_configured_cap() {
+        // RFC 8445 §6.1.2.5 requires the limit to be configurable, not just
+        // a fixed default: a caller that sets a stricter
+        // `max_remote_candidates` than [`MAX_REMOTE_CANDIDATES`] must have
+        // it enforced, not silently widened back to the default.
+        let mut config = test_config(SetupRole::Passive);
+        let small_cap = 3;
+        config.max_remote_candidates = small_cap;
+        let mut mt = MediaTransport::new(config).expect("Passive role must build");
+
+        let mut accepted = 0usize;
+        let mut rejected = 0usize;
+        for i in 0..(small_cap + 2) {
+            let port = 20_000 + i as u16;
+            let line = format!("1 1 udp 2130706431 127.0.0.1 {port} typ host");
+            match mt.add_remote_candidate(&line) {
+                Ok(()) => accepted += 1,
+                Err(Error::Media(_)) => rejected += 1,
+                Err(other) => panic!("unexpected error variant: {other:?}"),
+            }
+        }
+
+        assert_eq!(
+            accepted, small_cap,
+            "exactly the configured cap must be admitted, not MAX_REMOTE_CANDIDATES"
+        );
+        assert_eq!(
+            rejected, 2,
+            "every candidate past the configured cap must be rejected"
+        );
+        assert_eq!(mt.remote_candidate_count, small_cap);
     }
 
     // -----------------------------------------------------------------------
@@ -1943,6 +2099,14 @@ mod tests {
     /// so each side can be constructed already holding the other's real
     /// digest (the verify closure captures it at construction time).
     fn loopback_pair() -> LoopbackPair {
+        loopback_pair_with_max_remote(MAX_REMOTE_CANDIDATES)
+    }
+
+    /// Same as [`loopback_pair`], but with both sides'
+    /// [`MediaTransportConfig::max_remote_candidates`] set to `cap` instead
+    /// of the default — for tests that need to exhaust a small cap (e.g.
+    /// the STUN-source-address one below).
+    fn loopback_pair_with_max_remote(cap: usize) -> LoopbackPair {
         let a_addr = reserve_loopback_addr();
         let b_addr = reserve_loopback_addr();
         let cert_a = Certificate::generate_self_signed(vec!["localhost".to_string()]).unwrap();
@@ -1960,6 +2124,7 @@ mod tests {
                 local_setup: SetupRole::Active,
                 stun_server: None,
                 remote_fingerprint: format!("sha-256 {fp_b}"),
+                max_remote_candidates: cap,
             },
             parse_fingerprint_value(&format!("sha-256 {fp_b}")).unwrap(),
             cert_a,
@@ -1976,6 +2141,7 @@ mod tests {
                 local_setup: SetupRole::Passive,
                 stun_server: None,
                 remote_fingerprint: format!("sha-256 {fp_a}"),
+                max_remote_candidates: cap,
             },
             parse_fingerprint_value(&format!("sha-256 {fp_a}")).unwrap(),
             cert_b,
@@ -2120,5 +2286,112 @@ mod tests {
                 "no association may start before ICE selects a pair"
             );
         }
+    }
+
+    // -----------------------------------------------------------------------
+    // Remote-candidate cap vs. `rtc-ice`'s own peer-reflexive candidate
+    // creation. RFC 8445 §19.5.1 / §6.1.2.5: `rtc-ice` 0.20.0 authenticates
+    // (USERNAME + MESSAGE-INTEGRITY) and admits a STUN Binding Request from
+    // *any* source address, creating a new peer-reflexive remote candidate
+    // for one it doesn't already recognize — entirely bypassing
+    // `add_remote_candidate`'s own cap, since that method is never called
+    // for it. The untrusted peer (any WHEP viewer) already knows
+    // ice-ufrag/ice-pwd from the negotiated SDP, so it can authenticate as
+    // many requests as it likes from as many source ports as it likes.
+    // -----------------------------------------------------------------------
+
+    /// Build an authenticated STUN Binding Request (RFC 8489 §7.3, class
+    /// `CLASS_REQUEST`) exactly as `rtc-ice`'s own inbound check
+    /// (`agent::mod::handle_inbound`'s `assert_inbound_username` /
+    /// `assert_inbound_message_integrity`) verifies one: USERNAME
+    /// `"{local_ufrag}:{remote_ufrag}"` (the receiving side's own ufrag,
+    /// then the ufrag it was configured to expect from its peer) and
+    /// MESSAGE-INTEGRITY keyed with the receiving side's local ICE
+    /// password — the two credentials an SDP-holding peer already has.
+    fn authenticated_binding_request(
+        local_ufrag: &str,
+        remote_ufrag: &str,
+        local_pwd: &str,
+    ) -> Vec<u8> {
+        use rtc_stun::attributes::ATTR_USERNAME;
+        use rtc_stun::fingerprint::FINGERPRINT;
+        use rtc_stun::integrity::MessageIntegrity;
+        use rtc_stun::message::{BINDING_REQUEST, Message, TransactionId};
+        use rtc_stun::textattrs::Username;
+
+        let username = format!("{local_ufrag}:{remote_ufrag}");
+        let mut msg = Message::new();
+        msg.build(&[
+            Box::new(BINDING_REQUEST),
+            Box::new(TransactionId::new()),
+            Box::new(Username::new(ATTR_USERNAME, username)),
+            Box::new(MessageIntegrity::new_short_term_integrity(
+                local_pwd.to_string(),
+            )),
+            Box::new(FINGERPRINT),
+        ])
+        .expect("build authenticated stun binding request");
+        msg.raw
+    }
+
+    #[test]
+    fn stun_from_new_addresses_is_capped_and_original_peer_still_flows() {
+        // Bite test: run this against the unfixed code (no
+        // `known_remote_addrs` gate in `handle_stun_datagram`) and it fails.
+        // `pair.b.ice.get_remote_candidates_stats()` is `rtc-ice`'s own
+        // public stats accessor — it walks the agent's private
+        // `remote_candidates` list directly, so it observes the *real*
+        // peer-reflexive-candidate growth this fix is supposed to stop, not
+        // just this crate's own bookkeeping. Pre-fix, this reached 11 (1
+        // explicit + 10 authenticated peer-reflexive admissions), not
+        // `small_cap`.
+        let small_cap = 3;
+        let mut pair = loopback_pair_with_max_remote(small_cap);
+        pump_until_both_complete(&mut pair, Duration::from_secs(8));
+
+        // B already knows exactly one remote candidate (A's host address,
+        // added by `loopback_pair_with_max_remote`).
+        assert_eq!(pair.b.ice.get_remote_candidates_stats().len(), 1);
+        assert_eq!(pair.b.known_remote_addrs.len(), 1);
+
+        // Any WHEP viewer already knows B's ufrag/pwd (both are plain SDP
+        // attributes) and B's expected remote ufrag (ditto) — but not a real
+        // ICE candidate address: ten new local UDP sockets stand in for ten
+        // distinct, never-negotiated source ports.
+        let new_source_request = authenticated_binding_request(
+            "loopb0ufrag",
+            "loopa0ufrag",
+            "loopb-ice-password-0000000",
+        );
+        for _ in 0..10 {
+            let new_source_addr = reserve_loopback_addr();
+            pair.b
+                .handle_datagram(Instant::now(), new_source_addr, &new_source_request)
+                .expect("a capped-and-dropped datagram must not error");
+        }
+
+        let remote_candidates = pair.b.ice.get_remote_candidates_stats().len();
+        assert!(
+            remote_candidates <= small_cap,
+            "at most {small_cap} remote candidates may ever be tracked by the agent, got {remote_candidates}"
+        );
+        assert!(
+            pair.b.known_remote_addrs.len() <= small_cap,
+            "at most {small_cap} remote candidates may ever be tracked, got {}",
+            pair.b.known_remote_addrs.len()
+        );
+
+        // Media from the original, legitimate peer must still flow — the
+        // cap must reject only the new/unauthorized addresses, not disturb
+        // the already-established session.
+        let protected = pair.a.encrypt_rtp(&rtp_test_packet(42)).unwrap();
+        let events = pair
+            .b
+            .handle_datagram(Instant::now(), pair.a_addr, &protected)
+            .unwrap();
+        assert!(
+            matches!(&events[..], [MediaEvent::Rtp(rtp)] if rtp.sequence_number == 42),
+            "original peer's media must still flow after the flood of new-source requests: {events:?}"
+        );
     }
 }
