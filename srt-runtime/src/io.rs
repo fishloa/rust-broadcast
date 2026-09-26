@@ -44,7 +44,7 @@
 //! `tokio` feature, the crate stays `no_std`+`alloc` and nothing in this
 //! module is compiled.
 
-use std::hash::{BuildHasher, Hash, Hasher};
+use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 
 use alloc::collections::VecDeque;
@@ -194,7 +194,15 @@ impl SrtSocket {
         let peer = resolve_one(remote_addr).await?;
         let socket = Arc::new(socket);
 
-        let own_socket_id = config.initial_seq_number;
+        // Both this Caller's own Socket ID and its ISN must be freshly
+        // generated per connection, not carried over from `config` (whose
+        // `initial_seq_number` a caller may leave at its `0` default) —
+        // `draft-sharabayko-srt-01` §3/§4.3.1.1 expects both random, and a
+        // fixed or predictable pair lets an off-path party that knows the
+        // 4-tuple guess a live connection's wire identifiers outright.
+        let own_socket_id = random_socket_id();
+        let mut config = config;
+        config.initial_seq_number = random_isn();
         let mut hs = CallerHandshake::new(own_socket_id, config.clone());
 
         // Send INDUCTION.
@@ -723,7 +731,6 @@ impl Driver {
 pub struct SrtListener {
     udp: Arc<UdpSocket>,
     config: HandshakeConfig,
-    next_socket_id: u32,
     /// Per-listener secret input to [`derive_cookie`] (`draft-sharabayko-srt-01`
     /// §4.3.1.1: "a cookie that is crafted based on host, port and current
     /// time"). Generated once at [`SrtListener::bind`] so every SYN Cookie
@@ -740,6 +747,12 @@ struct PendingListener {
     params: Option<HandshakeOutput>,
     /// The peer's ISN, extracted from the INDUCTION handshake packet.
     peer_initial_seq: u32,
+    /// This listener's own ISN for this connection, generated once when the
+    /// entry was created and echoed back here (rather than re-read from
+    /// `self.config` at completion) so it is guaranteed to be the exact
+    /// value the [`ListenerHandshake`] was constructed with — see
+    /// [`SrtListener::handle_datagram`].
+    our_initial_seq: u32,
 }
 
 impl SrtListener {
@@ -760,7 +773,6 @@ impl SrtListener {
         Ok(SrtListener {
             udp: Arc::new(socket),
             config,
-            next_socket_id: 1,
             cookie_secret: random_u64(),
             pending: std::collections::HashMap::new(),
             outbound_queue: std::collections::HashMap::new(),
@@ -885,8 +897,18 @@ impl SrtListener {
                 _ => return Ok(()),
             };
 
-            let own_socket_id = self.next_socket_id;
-            self.next_socket_id = self.next_socket_id.wrapping_add(1);
+            // Both this connection's own Socket ID and its ISN must be
+            // freshly generated, not a predictable incrementing counter
+            // (Socket ID) or the listener-wide `config.initial_seq_number`
+            // reused for every accepted peer (ISN) — `draft-sharabayko-srt-01`
+            // §3/§4.3.1.1 expects both random per connection, and either a
+            // fixed or a sequential value lets an off-path party that
+            // observed one accepted connection predict the next one's wire
+            // identifiers.
+            let own_socket_id = random_socket_id();
+            let our_initial_seq = random_isn();
+            let mut per_conn_config = self.config.clone();
+            per_conn_config.initial_seq_number = our_initial_seq;
             // §4.3.1.1: "a cookie that is crafted based on host, port and
             // current time with 1 minute accuracy" — `derive_cookie` mixes
             // exactly those inputs (`crate::handshake_sm`'s existing,
@@ -896,13 +918,14 @@ impl SrtListener {
             let peer_key = addr_to_u64(&src);
             let time_bucket = unix_time_bucket();
             let syn_cookie = derive_cookie(peer_key, time_bucket, self.cookie_secret);
-            let hs = ListenerHandshake::new(own_socket_id, syn_cookie, self.config.clone());
+            let hs = ListenerHandshake::new(own_socket_id, syn_cookie, per_conn_config);
             self.pending.insert(
                 src,
                 PendingListener {
                     handshake: hs,
                     params: None,
                     peer_initial_seq: peer_isn,
+                    our_initial_seq,
                 },
             );
         }
@@ -998,7 +1021,11 @@ impl SrtListener {
             .negotiated()
             .expect("filtered to Connected state")
             .peer_socket_id;
-        let our_initial_seq = self.config.initial_seq_number;
+        // The exact ISN this listener generated for `entry` at INDUCTION
+        // time (`handle_datagram`) — not `self.config.initial_seq_number`,
+        // which is the listener-wide template and no longer carries the
+        // per-connection value once randomized.
+        let our_initial_seq = entry.our_initial_seq;
         let tsbpd_delay_ms = u64::from(self.config.latency_ms);
         let tsbpd_time_base = 0;
         let epoch = Instant::now();
@@ -1127,15 +1154,76 @@ fn unix_time_bucket() -> u32 {
     (secs / 60) as u32
 }
 
-/// A per-process/per-listener random `u64`, used as `derive_cookie`'s
-/// `secret` input. Sourced from `std::collections::hash_map::RandomState`
-/// (the standard library's own OS-seeded randomness, already used internally
-/// for `HashMap` DoS resistance) rather than pulling in a `rand` dependency
-/// for one seed value.
+/// A random `u64` from the OS randomness source (`getrandom`), used as
+/// `derive_cookie`'s `secret` input and to draw the per-connection Socket ID
+/// and ISN (SRT-W11). `getrandom::getrandom` never returns a partially-filled
+/// buffer — any failure is a `panic`, matching `HandshakeConfig`'s own
+/// no-fallible-construction convention elsewhere in this adapter.
 fn random_u64() -> u64 {
-    std::collections::hash_map::RandomState::new()
-        .build_hasher()
-        .finish()
+    let mut bytes = [0u8; 8];
+    getrandom::getrandom(&mut bytes).expect("OS randomness source");
+    u64::from_ne_bytes(bytes)
+}
+
+/// The largest SRT Socket ID this adapter will ever generate.
+///
+/// `draft-sharabayko-srt-01` §3/§4.3.1.1 gives the wire field only as "32
+/// bits" (this crate's own `specs/ietf_draft_sharabayko_srt_01.txt`, e.g. its
+/// Handshake Packet description — no transcription in this crate's `docs/`
+/// narrows that range further; there is no `docs/` directory at all yet). A
+/// real libsrt peer, though, only ever *allocates* an ID in `1..=`
+/// [`MAX_SRT_SOCKET_ID`]: libsrt's `CUDTUnited::generateSocketID`
+/// (`srtcore/core.cpp`) masks a freshly drawn 32-bit value down with `&
+/// 0x3FFFFFFF` before use — bit 30 (`0x40000000`) is libsrt's own "this ID
+/// names a socket group, not a plain socket" marker, and bit 31 would make
+/// the ID negative when read back as libsrt's signed C `int`. Generating
+/// outside that range is wire-legal per the draft but not a value any real
+/// SRT implementation would ever send or expect, so this adapter matches
+/// libsrt's allocation range rather than exercising the full 32 bits.
+const MAX_SRT_SOCKET_ID: u32 = 0x3FFF_FFFF;
+
+/// A random SRT Socket ID for a new connection, drawn from the same
+/// OS-seeded source as [`random_u64`], in `1..=`[`MAX_SRT_SOCKET_ID`] (see
+/// its doc). Never `0` — that value marks "no socket assigned" elsewhere in
+/// this adapter (see [`build_encryption_rejection`]'s `own_socket_id`
+/// argument for a refused, pre-handshake peer) and is reserved for that
+/// meaning here too — the `% MAX_SRT_SOCKET_ID` reduction followed by `+ 1`
+/// makes both guarantees (never `0`, never above the cap) hold by
+/// construction, with no retry loop needed.
+fn random_socket_id() -> u32 {
+    (random_u64() as u32 % MAX_SRT_SOCKET_ID) + 1
+}
+
+/// A random Initial Sequence Number in the legal 31-bit SRT sequence-number
+/// range (`SEQ_NUMBER_MASK`, §3) for a new connection. Every new Caller
+/// connect and every new accepted Listener connection must draw a fresh
+/// value here rather than reuse a fixed/default `HandshakeConfig::initial_seq_number`
+/// (SRT-W11): `draft-sharabayko-srt-01` §3/§4.3.1.1 expects the ISN
+/// unpredictable per connection, same as the Socket ID above.
+fn random_isn() -> u32 {
+    (random_u64() as u32) & SEQ_NUMBER_MASK
+}
+
+#[cfg(test)]
+mod socket_id_tests {
+    use super::*;
+
+    /// Bite test: run against the unfixed `random_socket_id` (a bare
+    /// `random_u64() as u32`, only ever excluding `0`) and this fails —
+    /// values above `MAX_SRT_SOCKET_ID` come up immediately (bit 31 alone is
+    /// set on ~50% of draws). Fixed, every draw is folded into
+    /// `1..=MAX_SRT_SOCKET_ID` by construction.
+    #[test]
+    fn random_socket_id_stays_in_the_libsrt_allocation_range() {
+        for _ in 0..10_000 {
+            let id = random_socket_id();
+            assert!(id != 0, "socket id must never be 0");
+            assert!(
+                id <= MAX_SRT_SOCKET_ID,
+                "socket id {id:#010x} exceeds the libsrt allocation range {MAX_SRT_SOCKET_ID:#010x}"
+            );
+        }
+    }
 }
 
 async fn resolve_one<A: tokio::net::ToSocketAddrs>(addr: A) -> Result<std::net::SocketAddr> {

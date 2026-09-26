@@ -3560,6 +3560,7 @@ dependencies = [
  "aes-kw",
  "broadcast-common",
  "ctr",
+ "getrandom 0.2.17",
  "hmac",
  "pbkdf2",
  "serde",

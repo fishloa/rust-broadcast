@@ -223,3 +223,30 @@ fn listener_rejects_a_caller_with_the_wrong_cookie() {
         panic!("expected a handshake packet");
     }
 }
+
+/// The engine itself must never silently override an ISN a caller injects
+/// via [`HandshakeConfig::initial_seq_number`] — proves the randomization a
+/// caller (e.g. the tokio adapter, `io.rs`) layers on top happens strictly
+/// above this engine, not inside it, so an engine caller retains exact
+/// control of the value it hands in.
+#[test]
+fn caller_handshake_emits_the_configured_isn_exactly() {
+    const CONFIGURED_ISN: u32 = 0x1234_5678;
+
+    let config = HandshakeConfig {
+        initial_seq_number: CONFIGURED_ISN,
+        ..HandshakeConfig::default()
+    };
+    let mut caller = CallerHandshake::new(CALLER_SOCKET_ID, config);
+    let induction = caller.start().expect("caller start");
+
+    let parsed = ControlPacket::parse(&induction).expect("parse induction bytes");
+    if let ControlPacket::Handshake(hp) = parsed {
+        assert_eq!(
+            hp.initial_seq_number, CONFIGURED_ISN,
+            "the engine must emit exactly the caller-configured ISN"
+        );
+    } else {
+        panic!("expected a handshake packet");
+    }
+}
