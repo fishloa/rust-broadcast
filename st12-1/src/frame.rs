@@ -1,9 +1,22 @@
 //! The LTC codeword — SMPTE ST 12-1:2014 §9. See `st12-1/docs/st12-1.md` for
 //! the curated spec transcription this module implements field-for-field.
 
+use broadcast_common::bcd::bcd_to_decimal;
 use broadcast_common::{Parse, Serialize};
 
 use crate::error::{Error, Result};
+
+/// Fold a tens/units BCD digit pair into a decimal value, rejecting a units
+/// nibble above 9 (not a legal BCD digit, §9.2.1) — reuses
+/// `broadcast_common::bcd`'s generic 2-nibble decoder. `tens` here is only
+/// 2-3 bits wide on the wire (always `<= 7`, so always a legal digit); `units`
+/// is the full 4-bit nibble the wire actually carries, `0x0..=0xF` (S12-W1,
+/// #1117).
+fn bcd_field(field: &'static str, tens: u8, units: u8) -> Result<u8> {
+    bcd_to_decimal(u64::from(tens) << 4 | u64::from(units), 2)
+        .map(|v| v as u8)
+        .ok_or(Error::InvalidBcdDigit { field, tens, units })
+}
 
 // ---------------------------------------------------------------------------
 // Named constants (no magic numbers) — ST 12-1 §9.2/Tables 2-5
@@ -333,10 +346,10 @@ impl<'a> Parse<'a> for LtcFrame {
         let user_bits_8 = bytes[7] >> 4;
 
         let frame = Self {
-            hours: hours_tens * 10 + hours_units,
-            minutes: minutes_tens * 10 + minutes_units,
-            seconds: seconds_tens * 10 + seconds_units,
-            frames: frame_tens * 10 + frame_units,
+            hours: bcd_field("hours", hours_tens, hours_units)?,
+            minutes: bcd_field("minutes", minutes_tens, minutes_units)?,
+            seconds: bcd_field("seconds", seconds_tens, seconds_units)?,
+            frames: bcd_field("frames", frame_tens, frame_units)?,
             drop_frame_flag,
             color_frame_flag,
             flag_bit_27,
@@ -432,6 +445,29 @@ mod tests {
         let mut out = [0u8; FRAME_LEN];
         f.serialize_into(&mut out).unwrap();
         assert_eq!(LtcFrame::parse(&out).unwrap(), f);
+    }
+
+    /// S12-W1 (audit issue #1117): a frame_units nibble of `0xF` (not a legal
+    /// BCD digit, 0-9) with frame_tens `0` folds to `frames = 15`, which
+    /// passes `frames <= 29` and reserializes to a DIFFERENT wire pattern
+    /// (units nibble 5, tens nibble 1) — a round-trip asymmetry. Observed
+    /// pre-fix: `LtcFrame::parse` returned `Ok(LtcFrame { frames: 15, .. })`,
+    /// and re-serializing gave `[0x05, 0x01, ..]` for bytes 0/1, not the
+    /// original `[0x0F, 0x00, ..]`.
+    #[test]
+    fn rejects_bcd_units_digit_above_9() {
+        let mut bytes = [0u8; FRAME_LEN];
+        bytes[0] = 0x0F; // frame_units = 15 (invalid BCD digit)
+        bytes[8] = SYNC_WORD[0];
+        bytes[9] = SYNC_WORD[1];
+        assert!(matches!(
+            LtcFrame::parse(&bytes),
+            Err(Error::InvalidBcdDigit {
+                field: "frames",
+                tens: 0,
+                units: 0x0F,
+            })
+        ));
     }
 
     #[test]

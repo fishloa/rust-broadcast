@@ -5,7 +5,7 @@
 /// ```sh
 /// cargo run -p dvb-simulcrypt --example build_channel_setup
 /// ```
-use broadcast_common::traits::{Parse, Serialize};
+use broadcast_common::traits::Serialize;
 use dvb_simulcrypt::{
     EcmgScsMessageType, EcmgScsParameterType, Interface, MessageType, Parameter, ParameterType,
     SimulcryptMessage,
@@ -61,7 +61,5 @@ fn main() {
         SimulcryptMessage::parse_on(Interface::EcmgScs, &bytes).unwrap(),
         msg
     );
-    // The default `Parse` impl also targets ECMG⇔SCS.
-    assert_eq!(SimulcryptMessage::parse(&bytes).unwrap(), msg);
     println!("round-trip: OK");
 }

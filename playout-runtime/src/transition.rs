@@ -61,6 +61,21 @@ impl TransitionPlan {
     /// declared start, rebasing to before the join instant) — this crate
     /// never silently produces a timeline instant that doesn't correspond to
     /// the input.
+    ///
+    /// # `source_pts` must already be unwrapped (PLAY-W2, #1126)
+    ///
+    /// `pts_rebase_offset` is fixed once, at [`Self::plan`], from
+    /// `to.source_start_pts`. If `to` is a live or long-running source whose
+    /// own PTS numbering wraps mid-entry (e.g. a 33-bit MPEG PTS every
+    /// ~26.5 h) and `source_pts` here is the *raw, wrapped* value, the
+    /// result is off by the wrap modulus — silently landing far from the
+    /// true timeline position ("the right thing at the wrong timestamp",
+    /// exactly what this module's own doc warns against). This crate has no
+    /// way to detect that from a single `source_pts` value: `rebase` is
+    /// pure, with no memory of previously-seen values to compare against.
+    /// The caller must unroll any source-clock wrap *before* calling this
+    /// (`transmux::Timeline` already does exactly this for 33-bit MPEG PTS)
+    /// so every `source_pts` passed here is monotonic within the entry.
     #[must_use]
     pub fn rebase(&self, source_pts: u64) -> Option<u64> {
         let rebased = i128::from(source_pts) + self.pts_rebase_offset;

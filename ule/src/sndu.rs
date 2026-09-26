@@ -196,6 +196,16 @@ impl<'a> Sndu<'a> {
                 bits: 15,
             });
         }
+        // D=1 with Length=0x7FFF is the reserved End Indicator (0xFFFF on the
+        // wire, §6), not a real SNDU header — every receiver (including this
+        // crate's own `ts::maybe_finish`) stops the packet there (ULE-W2,
+        // #1120).
+        if self.d_bit() && length == END_INDICATOR_LENGTH as usize {
+            return Err(Error::InvalidLength {
+                length: length as u16,
+                reason: "D=1 with Length=0x7FFF is the reserved End Indicator, not a real SNDU",
+            });
+        }
 
         // Base Type field is always derived from the payload chain.
         let base_type = self.payload.base_type();
@@ -345,6 +355,27 @@ mod tests {
     fn end_indicator_detected() {
         assert!(is_end_indicator(&[0xFF, 0xFF, 0xFF]));
         assert!(!is_end_indicator(&[0x00, 0x10]));
+    }
+
+    /// ULE-W2 (audit issue #1120): `D=1` with `Length=0x7FFF` is the reserved
+    /// End Indicator (`0xFFFF` on the wire, §6) — a real SNDU header must
+    /// never collide with it. Observed pre-fix: `serialize_into` returned
+    /// `Ok`, and the first two wire bytes were exactly `END_INDICATOR`
+    /// (`0xFFFF`), which every receiver (including this crate's own
+    /// `ts::maybe_finish`) treats as "no further SNDUs in this packet" —
+    /// silently truncating the packet at this SNDU.
+    #[test]
+    fn rejects_length_colliding_with_the_end_indicator() {
+        // D=1 (no NPA), so length_field() = pdu.len() + CRC_LEN. Need
+        // length_field() == END_INDICATOR_LENGTH (0x7FFF).
+        let pdu = vec![0u8; usize::from(END_INDICATOR_LENGTH) - CRC_LEN];
+        let sndu = Sndu::new(TypeField::EtherType(0x0800), None, &pdu);
+        assert_eq!(sndu.length_field(), usize::from(END_INDICATOR_LENGTH));
+        let mut out = vec![0u8; sndu.serialized_len()];
+        assert!(matches!(
+            sndu.serialize_into(&mut out),
+            Err(Error::InvalidLength { .. })
+        ));
     }
 
     // type_field() accessor returns the chain's base type, which is the value

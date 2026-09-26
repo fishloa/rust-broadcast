@@ -68,13 +68,27 @@ pub struct ScheduleEntry {
     pub id: String,
     /// What kind of content this entry is.
     pub kind: EntryKind,
-    /// The channel-timeline instant (caller's clock unit — SCTE-35 cues use
-    /// 90 kHz ticks, so that's the natural choice) this entry is scheduled to
-    /// start at.
+    /// The channel-timeline instant this entry is scheduled to start at, in
+    /// the caller's clock unit.
+    ///
+    /// [`Schedule`]/[`crate::transition::TransitionPlan`] themselves never
+    /// interpret this unit — the rebase arithmetic is unit-agnostic. But if
+    /// this value (via [`crate::transition::TransitionPlan::rebase`]) ends up
+    /// passed to [`crate::scte35::build_splice_insert`] to emit a SCTE-35 cue,
+    /// it **must** already be 90 kHz ticks: `splice_time()`/`break_duration()`
+    /// are fixed 90 kHz fields (ANSI/SCTE 35 2023r1 §9.8.1/§9.8.2), and
+    /// `build_splice_insert` passes its inputs straight through with no unit
+    /// conversion or validation — a 27 MHz, millisecond, or nanosecond
+    /// channel clock produces a technically well-formed but silently
+    /// wrong-by-a-fixed-factor cue (PLAY-W1, #1126). Convert with
+    /// `scte35_splice::time::duration_to_ticks`/`ticks_to_duration` first if
+    /// the channel clock isn't already 90 kHz.
     pub planned_start: u64,
     /// The PTS value the source's own first presented sample carries, in the
-    /// same clock unit. Needed to compute the PTS-rebase offset at the
-    /// transition into this entry — see [`crate::transition`].
+    /// same clock unit as [`Self::planned_start`] (and subject to the same
+    /// 90 kHz requirement before it reaches [`crate::scte35`]). Needed to
+    /// compute the PTS-rebase offset at the transition into this entry — see
+    /// [`crate::transition`].
     pub source_start_pts: u64,
     /// Codec-config identity, for discontinuity detection at the transition
     /// into this entry.

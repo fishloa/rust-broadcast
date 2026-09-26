@@ -40,6 +40,23 @@ pub enum Error {
         /// The field being decoded.
         field: &'static str,
     },
+    /// A `Plex`-coded symbol escalated to a wider container than the value
+    /// needed: it would have fit in the previous (narrower) escalation
+    /// level's direct range, so a minimal encoder would never have produced
+    /// this escape sequence (RDD 29 §3.4 "smallest container possible"). A
+    /// non-minimal encoding is accepted-and-rewritten-differently by a naive
+    /// decoder, breaking the byte-exact round-trip invariant (RD-W2, #1114).
+    #[error(
+        "Plex-coded field {field} escalated to a {width}-bit container for value {value}, which fits narrower"
+    )]
+    NonMinimalPlex {
+        /// The field being decoded.
+        field: &'static str,
+        /// The value read at the (too-wide) escalation level.
+        value: u64,
+        /// The escalation level's width in bits.
+        width: u32,
+    },
     /// A field value did not fit its wire bit-width, or a derived count
     /// (e.g. `ElementSize` vs. actual body length) was inconsistent.
     #[error("field {field} value {value} invalid: {reason}")]

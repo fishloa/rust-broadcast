@@ -51,4 +51,18 @@ pub enum Error {
         /// The offending value.
         value: u8,
     },
+    /// A time-address field's units nibble held a value above 9: not a legal
+    /// BCD digit (§9.2.1), so the tens/units split does not correspond to any
+    /// real encoded value (S12-W1, #1117).
+    #[error(
+        "field {field} units digit {units:#X} invalid: BCD digit must be 0-9 (tens digit {tens})"
+    )]
+    InvalidBcdDigit {
+        /// The offending field name (`hours`/`minutes`/`seconds`/`frames`).
+        field: &'static str,
+        /// The field's tens digit (always `0..=9` given its bit width).
+        tens: u8,
+        /// The offending units nibble, `0x0..=0xF`.
+        units: u8,
+    },
 }

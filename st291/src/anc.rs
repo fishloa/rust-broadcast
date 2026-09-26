@@ -60,6 +60,28 @@ pub const STUFFING_BYTE: u8 = 0xFF;
 /// 33-bit PTS mask.
 const PTS_MASK: u64 = (1 << 33) - 1;
 
+// Byte 6 (Table 2): `'10'`(2, bits 7:6) marker + `PES_scrambling_control`
+// (2, bits 5:4, fixed `'00'`) + `PES_priority`(1, bit 3, bslbf) +
+// `data_alignment_indicator`(1, bit 2, fixed `'1'`) + `copyright`(1, bit 1,
+// bslbf) + `original_or_copy`(1, bit 0, bslbf) (S291-W4, #1116).
+/// Selects the three fixed sub-fields of byte 6: the `'10'` marker, the
+/// `PES_scrambling_control`, and `data_alignment_indicator`.
+const BYTE6_FIXED_MASK: u8 = 0b1011_0100;
+/// Expected value under [`BYTE6_FIXED_MASK`]: `'10'` + `'00'` + `'1'`.
+const BYTE6_FIXED_VALUE: u8 = 0b1000_0100;
+/// `PES_scrambling_control` field (bits 5:4).
+const BYTE6_SCRAMBLING_MASK: u8 = 0b0011_0000;
+/// `PES_priority` bit (bit 3).
+const BYTE6_PES_PRIORITY_BIT: u8 = 0b0000_1000;
+/// `copyright` bit (bit 1).
+const BYTE6_COPYRIGHT_BIT: u8 = 0b0000_0010;
+/// `original_or_copy` bit (bit 0).
+const BYTE6_ORIGINAL_OR_COPY_BIT: u8 = 0b0000_0001;
+/// Byte 7's six flag bits after `PTS_DTS_flags` (Table 2, all fixed `'0'`):
+/// `ESCR_flag`/`ES_rate_flag`/`DSM_trick_mode_flag`/
+/// `additional_copy_info_flag`/`PES_CRC_flag`/`PES_extension_flag`.
+const BYTE7_ZERO_FLAGS_MASK: u8 = 0b0011_1111;
+
 // Field widths (bits) of the per-ANC-packet **placement** (Table 2); the
 // content field widths (DID/SDID/data_count/user_data_word/checksum) live in
 // `crate::anc_content` since they are shared with the RTP transport.
@@ -172,10 +194,20 @@ impl AncPacket {
     }
 
     /// Read one record starting at the byte boundary `r` is currently on.
+    ///
+    /// # Errors
+    /// [`Error::BadFixedBits`] if the leading `'000000'` field (Table 2) is
+    /// nonzero, or the trailing byte-alignment padding is not all `'1'` bits
+    /// (S291-W3, #1116) — either would otherwise parse `Ok` and reserialize
+    /// to different bytes, since the writer always emits the canonical
+    /// values.
     fn read_from(r: &mut BitReader<'_>) -> Result<Self> {
-        // '000000' leading bits are ignored (reserved); we do not enforce them
-        // zero — ST 2038 fixes them but a tolerant reader skips.
-        r.skip_bits(W_LEADING_ZEROS as usize)?;
+        // '000000' leading bits (Table 2) are fixed, like every other fixed
+        // pattern this crate validates.
+        let leading = r.read_bits(W_LEADING_ZEROS)?;
+        if leading != 0 {
+            return Err(Error::BadFixedBits("ANC record leading '000000' bits"));
+        }
         let c_not_y_channel_flag = r.read_bool()?;
         let line_number = r.read_bits(W_LINE_NUMBER)? as u16;
         let horizontal_offset = r.read_bits(W_HORIZONTAL_OFFSET)? as u16;
@@ -186,8 +218,16 @@ impl AncPacket {
             user_data_words,
             checksum,
         } = AncContent::read_from(r)?;
-        // Consume the '1' padding up to the byte boundary.
-        r.align_to_byte();
+        // The '1' padding up to the byte boundary (§4.2) is fixed too — note
+        // '1', not '0' (contrast the RFC 8331 `word_align`, which is '0').
+        let pad = (8 - r.bits_read() % 8) % 8;
+        if pad > 0 {
+            let pad_value = r.read_bits(pad as u32)?;
+            let all_ones = (1u64 << pad) - 1;
+            if pad_value != all_ones {
+                return Err(Error::BadFixedBits("ANC record byte-alignment '1' padding"));
+            }
+        }
         Ok(Self {
             c_not_y_channel_flag,
             line_number,
@@ -266,18 +306,14 @@ impl AncDataPacket {
         let pes_packet_length = usize::from(u16::from_be_bytes([b[4], b[5]]));
 
         // Byte 6: '10'(2) + PES_scrambling_control(2)='00' + PES_priority(1) +
-        // data_alignment_indicator(1)='1' + copyright(1) + original_or_copy(1).
-        // ST 2038 Table 2: scrambling shall be '00', alignment shall be '1'.
-        // Mask: bits[7:6]='10' (0x80), bits[5:4]=scrambling (0x30),
-        //       bit[2]=data_alignment_indicator (0x04).
-        // Expected fixed pattern: bits[7:6]=0b10, bits[5:4]=0b00, bit[2]=1
-        //   → (f1 & 0xB4) == 0x84 checks '10'(marker) + '00'(scrambling) + '1'(align).
+        // data_alignment_indicator(1)='1' + copyright(1) + original_or_copy(1)
+        // (ST 2038 Table 2).
         let f1 = b[6];
-        if (f1 & 0xB4) != 0x84 {
-            if (f1 >> 6) != 0b10 {
+        if (f1 & BYTE6_FIXED_MASK) != BYTE6_FIXED_VALUE {
+            if (f1 >> 6) != (BYTE6_FIXED_VALUE >> 6) {
                 return Err(Error::BadFixedBits("PES '10' marker"));
             }
-            if (f1 & 0x30) != 0x00 {
+            if (f1 & BYTE6_SCRAMBLING_MASK) != 0x00 {
                 return Err(Error::BadFixedBits(
                     "PES_scrambling_control shall be '00' (ST 2038 Table 2)",
                 ));
@@ -287,15 +323,21 @@ impl AncDataPacket {
                 "data_alignment_indicator shall be '1' (ST 2038 Table 2)",
             ));
         }
-        let pes_priority = f1 & 0x08 != 0;
-        let copyright = f1 & 0x02 != 0;
-        let original_or_copy = f1 & 0x01 != 0;
+        let pes_priority = f1 & BYTE6_PES_PRIORITY_BIT != 0;
+        let copyright = f1 & BYTE6_COPYRIGHT_BIT != 0;
+        let original_or_copy = f1 & BYTE6_ORIGINAL_OR_COPY_BIT != 0;
 
-        // Byte 7: PTS_DTS_flags(2) + 6 zero flags.
+        // Byte 7: PTS_DTS_flags(2) + 6 zero flags (Table 2, all fixed '0';
+        // S291-W3/S291-W4, #1116).
         let f2 = b[7];
         let pts_dts_flags = (f2 >> 6) & 0x03;
         if pts_dts_flags != PTS_DTS_FLAGS_PTS_ONLY {
             return Err(Error::BadPtsDtsFlags(pts_dts_flags));
+        }
+        if f2 & BYTE7_ZERO_FLAGS_MASK != 0 {
+            return Err(Error::BadFixedBits(
+                "ESCR/ES_rate/DSM_trick_mode/additional_copy_info/PES_CRC/PES_extension flags shall be 0 (ST 2038 Table 2)",
+            ));
         }
 
         // Byte 8: PES_header_data_length == 0x05.
@@ -395,11 +437,10 @@ impl AncDataPacket {
 
         // Byte 6: '10' + scrambling '00' + priority + data_alignment '1' +
         // copyright + original_or_copy.
-        buf[6] = 0x80
-            | (u8::from(self.pes_priority) << 3)
-            | 0x04 // data_alignment_indicator = '1' (Table 2)
-            | (u8::from(self.copyright) << 1)
-            | u8::from(self.original_or_copy);
+        buf[6] = BYTE6_FIXED_VALUE
+            | (u8::from(self.pes_priority) * BYTE6_PES_PRIORITY_BIT)
+            | (u8::from(self.copyright) * BYTE6_COPYRIGHT_BIT)
+            | (u8::from(self.original_or_copy) * BYTE6_ORIGINAL_OR_COPY_BIT);
         // Byte 7: PTS_DTS_flags '10', all other flags 0.
         buf[7] = PTS_DTS_FLAGS_PTS_ONLY << 6;
         // Byte 8: PES_header_data_length.
@@ -773,5 +814,79 @@ mod tests {
         let mut out = vec![0u8; p.serialized_len()];
         p.serialize_into(&mut out).unwrap();
         assert_eq!(AncDataPacket::parse(&out).unwrap(), p);
+    }
+
+    /// A single ANC packet (2 UDWs), no stuffing, for the S291-W3 fixed-bit
+    /// regression tests below: the exact same layout as
+    /// `hand_computed_wire_bytes`, so the payload offsets are known.
+    fn single_packet_bytes() -> Vec<u8> {
+        let p = AncDataPacket {
+            pes_priority: false,
+            copyright: false,
+            original_or_copy: false,
+            pts: 0,
+            anc_packets: vec![AncPacket {
+                c_not_y_channel_flag: false,
+                line_number: 9,
+                horizontal_offset: 0,
+                did: 0x161,
+                sdid: 0x101,
+                data_count: 0x002,
+                user_data_words: vec![0x2CF, 0x101],
+                checksum: 0x233,
+            }],
+            stuffing_bytes: 0,
+        };
+        let mut out = vec![0u8; p.serialized_len()];
+        p.serialize_into(&mut out).unwrap();
+        // 30 (placement) + 60 (content) = 90 bits = 12 payload bytes (6 bits
+        // of '1' padding at the end); sanity-check that assumption holds.
+        assert_eq!(out.len(), PES_HEADER_LEN + 12);
+        out
+    }
+
+    /// S291-W3 (audit issue #1116): the leading `'000000'` bits (ST 2038
+    /// Table 2) were skipped, not validated, so a corrupt packet with a
+    /// nonzero leading bit parsed `Ok` and reserialized to different bytes
+    /// (round-trip asymmetry). Observed pre-fix: `AncDataPacket::parse`
+    /// returned `Ok`, and `parsed.to_bytes() != corrupted_bytes` (the
+    /// serializer always writes the canonical `'000000'`).
+    #[test]
+    fn rejects_nonzero_leading_bits() {
+        let mut bytes = single_packet_bytes();
+        bytes[PES_HEADER_LEN] |= 0x80; // top bit of the '000000' field
+        assert!(matches!(
+            AncDataPacket::parse(&bytes),
+            Err(Error::BadFixedBits(_))
+        ));
+    }
+
+    /// S291-W3 (audit issue #1116): the trailing `'1'`-bit byte-alignment
+    /// padding (ST 2038 §4.2) was skipped via `align_to_byte()`, not
+    /// validated, so a corrupt packet with a `'0'` padding bit parsed `Ok`
+    /// with the same round-trip asymmetry as the leading bits.
+    #[test]
+    fn rejects_non_one_padding_bits() {
+        let mut bytes = single_packet_bytes();
+        let last = bytes.len() - 1;
+        bytes[last] &= 0xFE; // clear the last bit: part of the '1' padding
+        assert!(matches!(
+            AncDataPacket::parse(&bytes),
+            Err(Error::BadFixedBits(_))
+        ));
+    }
+
+    /// S291-W3 (audit issue #1116): byte 7's six flag bits after
+    /// `PTS_DTS_flags` (`ESCR_flag`/`ES_rate_flag`/`DSM_trick_mode_flag`/
+    /// `additional_copy_info_flag`/`PES_CRC_flag`/`PES_extension_flag`, all
+    /// fixed `'0'` per Table 2) were entirely ignored.
+    #[test]
+    fn rejects_nonzero_byte7_flags() {
+        let mut bytes = single_packet_bytes();
+        bytes[7] |= 0x01; // PES_extension_flag, fixed '0'
+        assert!(matches!(
+            AncDataPacket::parse(&bytes),
+            Err(Error::BadFixedBits(_))
+        ));
     }
 }

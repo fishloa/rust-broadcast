@@ -13,7 +13,7 @@ use alloc::vec::Vec;
 
 use roxmltree::Node;
 
-use crate::error::Result;
+use crate::error::{Error, Result};
 use crate::parse::{children, opt_attr_bool, opt_attr_f64, own_text, req_attr_u64, require_attr};
 use crate::serialize::{push_indent, write_num_attr, write_opt_bool_attr, write_opt_num_attr};
 
@@ -48,9 +48,23 @@ pub struct ReportingLocator {
 
 impl ReportingLocator {
     fn parse(node: Node<'_, '_>) -> Result<Self> {
+        let proportion = opt_attr_f64(node, LOCATOR_ELEMENT, "proportion")?;
+        // Documented range `(0.0, 1.0]` (clause 10.2.1.0), never checked
+        // (MABR-W3, #1121): `parse_f64` already rejects NaN/infinity, but not
+        // an out-of-range finite value like `0.0` or `1.5`.
+        if let Some(p) = proportion
+            && !(p > 0.0 && p <= 1.0)
+        {
+            return Err(Error::InvalidAttribute {
+                element: LOCATOR_ELEMENT,
+                attr: "proportion",
+                value: alloc::format!("{p}"),
+                reason: "must be in the range (0.0, 1.0]",
+            });
+        }
         Ok(ReportingLocator {
             uri: own_text(node),
-            proportion: opt_attr_f64(node, LOCATOR_ELEMENT, "proportion")?,
+            proportion,
             period: require_attr(node, LOCATOR_ELEMENT, "period")?,
             random_delay: req_attr_u64(node, LOCATOR_ELEMENT, "randomDelay")?,
             report_session_running_events: opt_attr_bool(

@@ -36,6 +36,11 @@ pub const H_TYPE_TIMESTAMP: u8 = 0x01;
 /// IANA value `0x100` → `H-Type` byte `0x00`, `H-LEN` 1..=5.
 pub const H_TYPE_EXT_PADDING: u8 = 0x00;
 
+/// Minimum legal `H-LEN` for an Optional extension header (RFC 4326 §5).
+const OPTIONAL_H_LEN_MIN: u8 = 1;
+/// Maximum legal `H-LEN` for an Optional extension header (RFC 4326 §5).
+const OPTIONAL_H_LEN_MAX: u8 = 5;
+
 /// Typed H-Type for a Mandatory extension header (`H-LEN = 0`, RFC 4326 §5).
 ///
 /// Mandatory H-Types and Optional H-Types are separate IANA registries; value
@@ -232,6 +237,40 @@ impl ExtensionHeader {
         }
     }
 
+    /// Validate this header's invariants (ULE-W1, #1120):
+    ///
+    /// - Optional: `h_len` must be `1..=5` (`0` is Mandatory's own space;
+    ///   `6`/`7` are not a legal Optional length — RFC 4326 §5 defines only
+    ///   `1..=5`, and encoding one via [`TypeField::to_u16`]'s
+    ///   `(h_len & 0x07) << 8` would additionally produce a raw value
+    ///   `>= 0x0600`, which [`TypeField::from_u16`] decodes back as an
+    ///   `EtherType`, not a Next-Header), and `body.len()` must equal exactly
+    ///   `2 * h_len - 2` — the length `h_len` itself declares
+    ///   (`Self::wire_len`/the serializer both trust `h_len`, so a
+    ///   mismatching `body` misframes the chain, and `h_len == 0` underflows
+    ///   computing `wire_len() - 2`).
+    /// - Mandatory: always `Ok(())` (no such invariant applies).
+    ///
+    /// # Errors
+    /// [`Error::InvalidExtensionHeader`] if an Optional header's `h_len`/
+    /// `body` are inconsistent.
+    pub fn validate(&self) -> Result<()> {
+        if let ExtensionHeader::Optional { h_len, body, .. } = self {
+            if !(OPTIONAL_H_LEN_MIN..=OPTIONAL_H_LEN_MAX).contains(h_len) {
+                return Err(Error::InvalidExtensionHeader {
+                    reason: "Optional header h_len must be 1..=5",
+                });
+            }
+            let expected_body_len = 2 * usize::from(*h_len) - 2;
+            if body.len() != expected_body_len {
+                return Err(Error::InvalidExtensionHeader {
+                    reason: "Optional header body.len() must equal 2*h_len-2",
+                });
+            }
+        }
+        Ok(())
+    }
+
     /// Total wire length of this header *including* its 2-byte introducing Type
     /// field.
     pub fn wire_len(&self) -> usize {
@@ -331,9 +370,15 @@ impl<'a> PayloadChain<'a> {
         // i.e. for N headers: Σ bodyᵢ + N·2 (each body is followed by a 2-byte
         // Type field, the last being `final_type`) + pdu. With zero headers the
         // chain content is just the PDU (`final_type` is the base Type).
+        // `wire_len()` already includes the 2-byte Type field; summing it
+        // directly (rather than `(wire_len() - 2) + 2`) avoids an underflow
+        // panic for a malformed `Optional { h_len: 0, .. }` header, whose
+        // `wire_len()` is `0` (ULE-W1, #1120) — `serialize_into` separately
+        // rejects such a header via `ExtensionHeader::validate` before
+        // trusting this length for anything.
         let mut n = 0usize;
         for h in &self.headers {
-            n += (h.wire_len() - 2) + 2;
+            n += h.wire_len();
         }
         n + self.pdu.len()
     }
@@ -350,7 +395,19 @@ impl<'a> PayloadChain<'a> {
 
     /// Serialize the chain into `out`, starting *after* the base header's Type
     /// field. Returns the number of bytes written.
+    ///
+    /// # Errors
+    /// [`Error::InvalidExtensionHeader`] if any header fails
+    /// [`ExtensionHeader::validate`] (checked before any bytes are written),
+    /// or is a Mandatory header that is not the chain terminator.
     pub fn serialize_into(&self, out: &mut [u8]) -> Result<usize> {
+        // Validate every header BEFORE writing any bytes (ULE-W1, #1120): an
+        // inconsistent `h_len`/`body` would otherwise either misframe the
+        // chain (wrong `body.len()` used for both sizing and writing) or, for
+        // `h_len == 0`, have already underflowed inside `serialized_len()`.
+        for h in &self.headers {
+            h.validate()?;
+        }
         let need = self.serialized_len();
         if out.len() < need {
             return Err(Error::OutputBufferTooSmall {
@@ -579,5 +636,101 @@ mod tests {
                 "optional H_TYPE constant 0x{raw:02X} label mismatch"
             );
         }
+    }
+
+    /// ULE-W1 (audit issue #1120): `body.len()` longer than `h_len` declares
+    /// (`2*h_len-2` bytes). Observed pre-fix: `chain.serialized_len()` sized
+    /// the output buffer from `h_len` alone (trusting it over `body.len()`),
+    /// so `serialize_into` panicked slicing `out[off..off+body.len()]` past
+    /// the end of that too-small buffer.
+    #[test]
+    fn rejects_body_longer_than_h_len_declares() {
+        let bad = ExtensionHeader::Optional {
+            h_len: 2, // declares body.len() should be 2*2-2 = 2
+            h_type: H_TYPE_EXT_PADDING,
+            body: alloc::vec![0xAAu8; 10], // far more than 2
+        };
+        let chain = PayloadChain {
+            headers: alloc::vec![bad],
+            final_type: TypeField::EtherType(0x0800),
+            pdu: &[],
+        };
+        let mut buf = alloc::vec![0u8; chain.serialized_len()];
+        assert!(matches!(
+            chain.serialize_into(&mut buf),
+            Err(Error::InvalidExtensionHeader { .. })
+        ));
+    }
+
+    /// ULE-W1 (audit issue #1120): `body.len()` shorter than `h_len` declares.
+    /// Observed pre-fix: `serialize_into` returned `Ok`, but the bytes
+    /// written did not match what `h_len` promises a receiver — the
+    /// following Type field landed 2 bytes earlier than a receiver walking
+    /// `2*h_len` bytes per header would expect, misframing the rest of the
+    /// chain (a round-trip asymmetry, not a panic, for this sub-case).
+    #[test]
+    fn rejects_body_shorter_than_h_len_declares() {
+        let bad = ExtensionHeader::Optional {
+            h_len: 3, // declares body.len() should be 2*3-2 = 4
+            h_type: H_TYPE_TIMESTAMP,
+            body: alloc::vec![0xAAu8, 0xBB], // only 2
+        };
+        let chain = PayloadChain {
+            headers: alloc::vec![bad],
+            final_type: TypeField::EtherType(0x0800),
+            pdu: &[0x01, 0x02],
+        };
+        let mut buf = alloc::vec![0u8; chain.serialized_len()];
+        assert!(matches!(
+            chain.serialize_into(&mut buf),
+            Err(Error::InvalidExtensionHeader { .. })
+        ));
+    }
+
+    /// ULE-W1 (audit issue #1120): `h_len == 0` for an `Optional` header (`0`
+    /// is Mandatory's own space). Observed pre-fix: `chain.serialized_len()`
+    /// itself panicked computing `wire_len() - 2` (`0 - 2`, a `usize`
+    /// underflow) — before `serialize_into` was ever reached.
+    #[test]
+    fn rejects_optional_header_with_h_len_zero() {
+        let bad = ExtensionHeader::Optional {
+            h_len: 0,
+            h_type: H_TYPE_EXT_PADDING,
+            body: alloc::vec![],
+        };
+        let chain = PayloadChain {
+            headers: alloc::vec![bad],
+            final_type: TypeField::EtherType(0x0800),
+            pdu: &[],
+        };
+        // `serialized_len()` itself must not panic post-fix.
+        let mut buf = alloc::vec![0u8; chain.serialized_len() + 16];
+        assert!(matches!(
+            chain.serialize_into(&mut buf),
+            Err(Error::InvalidExtensionHeader { .. })
+        ));
+    }
+
+    /// ULE-W1 (audit issue #1120): `h_len` of `6`/`7` is not a legal Optional
+    /// length — RFC 4326 §5 defines only `1..=5` — and would additionally
+    /// encode (via `TypeField::to_u16`) to a raw value `>= 0x0600`, which
+    /// decodes back as an `EtherType`, not a Next-Header at all.
+    #[test]
+    fn rejects_optional_header_with_h_len_six() {
+        let bad = ExtensionHeader::Optional {
+            h_len: 6,
+            h_type: H_TYPE_EXT_PADDING,
+            body: alloc::vec![0u8; 10], // 2*6-2 = 10, internally "consistent"
+        };
+        let chain = PayloadChain {
+            headers: alloc::vec![bad],
+            final_type: TypeField::EtherType(0x0800),
+            pdu: &[],
+        };
+        let mut buf = alloc::vec![0u8; chain.serialized_len()];
+        assert!(matches!(
+            chain.serialize_into(&mut buf),
+            Err(Error::InvalidExtensionHeader { .. })
+        ));
     }
 }

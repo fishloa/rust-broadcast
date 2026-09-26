@@ -13,7 +13,9 @@ use broadcast_common::bits::{BitReader, BitWriter};
 use crate::error::{BitResultExt, Error, Result};
 use crate::frame_rate::FrameRate;
 use crate::plex::{plex_bits, read_plex, write_plex};
-use crate::util::{expect_fully_consumed, read_reserved, write_reserved};
+use crate::util::{
+    expect_fully_consumed, read_align_bits, read_reserved, write_align_bits, write_reserved,
+};
 
 /// Number of known zones (§5.4.5 Table 8 has 9 rows, IDs `0`-`8`).
 pub const MAX_KNOWN_ZONES: usize = 9;
@@ -365,10 +367,16 @@ pub struct ObjectDefinition1<'a> {
     pub pan_sub_blocks: Vec<PanSubBlock>,
     /// `AudioDescription` (§4.4).
     pub audio_description: AudioDescription<'a>,
+    /// The raw `AlignBits` byte-alignment padding value between the
+    /// pan-sub-block loop and `AudioDescription` (`0` if already aligned).
+    /// RDD 29 gives this field no documented value, so it is preserved
+    /// verbatim rather than forced to zero (RD-W2, #1114) —
+    /// [`ObjectDefinition1::new`] sets it to `0`.
+    pub align_bits: u8,
 }
 
 impl<'a> ObjectDefinition1<'a> {
-    /// Build a new `ObjectDefinition1`.
+    /// Build a new `ObjectDefinition1`, with `align_bits` `0`.
     ///
     /// # Errors
     /// [`Error::InvalidValue`] if `pan_sub_blocks` is non-empty and its
@@ -395,6 +403,7 @@ impl<'a> ObjectDefinition1<'a> {
             audio_data_id,
             pan_sub_blocks,
             audio_description,
+            align_bits: 0,
         })
     }
 
@@ -438,7 +447,7 @@ impl<'a> ObjectDefinition1<'a> {
             pan_sub_blocks.push(PanSubBlock { pan });
         }
 
-        r.align_to_byte();
+        let align_bits = read_align_bits(&mut r, "ObjectDefinition1.AlignBits")?;
         let audio_description = Self::parse_audio_description(bytes, &mut r)?;
 
         read_reserved(
@@ -454,6 +463,7 @@ impl<'a> ObjectDefinition1<'a> {
             audio_data_id,
             pan_sub_blocks,
             audio_description,
+            align_bits,
         })
     }
 
@@ -571,6 +581,43 @@ impl<'a> ObjectDefinition1<'a> {
         }
         bits
     }
+
+    /// Reject states `serialize_into` cannot express on the wire, even
+    /// though the public fields permit constructing them directly (bypassing
+    /// [`Self::new`]/[`AudioDescription::with_text`]'s own checks) — RD-W1,
+    /// #1114.
+    fn validate_for_serialize(&self) -> Result<()> {
+        if let Some(first) = self.pan_sub_blocks.first()
+            && first.pan.is_none()
+        {
+            return Err(Error::InvalidValue {
+                field: "ObjectDefinition1.pan_sub_blocks[0]",
+                value: 0,
+                reason: "sub-block 0 always carries pan info (PanInfoExists is implied 1)",
+            });
+        }
+        for (i, sb) in self.pan_sub_blocks.iter().enumerate() {
+            if let Some(info) = &sb.pan
+                && info.decor_coef_prefix.reads_coef() != info.decor_coef.is_some()
+            {
+                return Err(Error::InvalidValue {
+                    field: "ObjectDefinition1.pan_sub_blocks[i].decor_coef",
+                    value: i as u64,
+                    reason: "decor_coef must be Some iff decor_coef_prefix reads a coefficient \
+                             (CoefFollows/Reserved)",
+                });
+            }
+        }
+        let text_follows = self.audio_description.flag_byte & AUDIO_DESCRIPTION_TEXT_FOLLOWS != 0;
+        if text_follows != self.audio_description.text.is_some() {
+            return Err(Error::InvalidValue {
+                field: "ObjectDefinition1.audio_description",
+                value: u64::from(self.audio_description.flag_byte),
+                reason: "text must be Some iff flag_byte's 0x80 bit is set",
+            });
+        }
+        Ok(())
+    }
 }
 
 impl Serialize for ObjectDefinition1<'_> {
@@ -593,6 +640,7 @@ impl Serialize for ObjectDefinition1<'_> {
     }
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
+        self.validate_for_serialize()?;
         let need = self.serialized_len();
         if buf.len() < need {
             return Err(Error::BufferTooShort {
@@ -631,10 +679,7 @@ impl Serialize for ObjectDefinition1<'_> {
             }
         }
 
-        w.align_to_byte().map_err(|source| Error::Bits {
-            what: "ObjectDefinition1.AlignBits",
-            source,
-        })?;
+        write_align_bits(&mut w, self.align_bits, "ObjectDefinition1.AlignBits")?;
         w.write_bits(u64::from(self.audio_description.flag_byte), 8)
             .ctx("ObjectDefinition1.AudioDescription")?;
         if let Some(text) = self.audio_description.text {
@@ -826,5 +871,151 @@ mod tests {
         obj.pan_sub_blocks[0].pan.as_mut().unwrap().pos_x ^= 0xFFFF;
         let mutated = obj.to_bytes();
         assert_ne!(original, mutated, "flipping pos_x must change wire bytes");
+    }
+
+    /// RD-W1 (audit issue #1114): `decor_coef_prefix` claims `CoefFollows`
+    /// (so a parser reads an `ObjectDecorCoef` byte) but `decor_coef` is
+    /// `None` (so nothing gets written) — bypassing the validating `new()`
+    /// via the public fields. Observed pre-fix: `serialize_into` returned
+    /// `Ok`, silently omitting the byte a parser of the resulting bytes would
+    /// unconditionally try to read, misframing everything after it.
+    #[test]
+    fn rejects_coef_follows_without_a_coef_value() {
+        let mut info = full_pan_info();
+        info.decor_coef_prefix = DecorCoefPrefix::CoefFollows;
+        info.decor_coef = None;
+        let obj = ObjectDefinition1 {
+            meta_id: 0,
+            audio_data_id: 0,
+            pan_sub_blocks: alloc::vec![PanSubBlock { pan: Some(info) }],
+            audio_description: AudioDescription::none(),
+            align_bits: 0,
+        };
+        let mut buf = alloc::vec![0u8; obj.serialized_len()];
+        assert!(matches!(
+            obj.serialize_into(&mut buf),
+            Err(Error::InvalidValue { .. })
+        ));
+    }
+
+    /// RD-W1 (audit issue #1114): the reverse mismatch — `NoDecorrelation`
+    /// (no coef byte on the wire) but `decor_coef` is `Some`, which would
+    /// write a stray byte a parser never expects.
+    #[test]
+    fn rejects_no_decorrelation_with_a_coef_value() {
+        let mut info = full_pan_info();
+        info.decor_coef_prefix = DecorCoefPrefix::NoDecorrelation;
+        info.decor_coef = Some(1);
+        let obj = ObjectDefinition1 {
+            meta_id: 0,
+            audio_data_id: 0,
+            pan_sub_blocks: alloc::vec![PanSubBlock { pan: Some(info) }],
+            audio_description: AudioDescription::none(),
+            align_bits: 0,
+        };
+        let mut buf = alloc::vec![0u8; obj.serialized_len()];
+        assert!(matches!(
+            obj.serialize_into(&mut buf),
+            Err(Error::InvalidValue { .. })
+        ));
+    }
+
+    /// RD-W1 (audit issue #1114): `flag_byte` says text follows (`0x80` set)
+    /// but `text` is `None` — bypassing `AudioDescription::with_text`'s
+    /// invariant via the public fields. Observed pre-fix: `serialize_into`
+    /// returned `Ok`, writing no terminator, so the parser reads the next
+    /// field's bytes (`Reserved(final)`) as text until it (or the buffer)
+    /// runs out.
+    #[test]
+    fn rejects_text_follows_flag_without_text() {
+        let obj = ObjectDefinition1 {
+            meta_id: 0,
+            audio_data_id: 0,
+            pan_sub_blocks: alloc::vec![PanSubBlock {
+                pan: Some(minimal_pan_info())
+            }],
+            audio_description: AudioDescription {
+                flag_byte: AUDIO_DESCRIPTION_TEXT_FOLLOWS,
+                text: None,
+            },
+            align_bits: 0,
+        };
+        let mut buf = alloc::vec![0u8; obj.serialized_len()];
+        assert!(matches!(
+            obj.serialize_into(&mut buf),
+            Err(Error::InvalidValue { .. })
+        ));
+    }
+
+    /// RD-W1 (audit issue #1114): the reverse mismatch — no `0x80` bit, but
+    /// `text` is `Some`, which would silently drop the text from the wire.
+    #[test]
+    fn rejects_text_present_without_the_flag_bit() {
+        let obj = ObjectDefinition1 {
+            meta_id: 0,
+            audio_data_id: 0,
+            pan_sub_blocks: alloc::vec![PanSubBlock {
+                pan: Some(minimal_pan_info())
+            }],
+            audio_description: AudioDescription {
+                flag_byte: 0,
+                text: Some(b"oops"),
+            },
+            align_bits: 0,
+        };
+        let mut buf = alloc::vec![0u8; obj.serialized_len()];
+        assert!(matches!(
+            obj.serialize_into(&mut buf),
+            Err(Error::InvalidValue { .. })
+        ));
+    }
+
+    /// RD-W1 (audit issue #1114): sub-block 0's `pan == None`, bypassing
+    /// `new()`'s check via the public fields (`new()` alone cannot protect
+    /// against this — see the module's field-mutation tests, which mutate
+    /// fields post-construction the same way).
+    #[test]
+    fn rejects_leading_sub_block_without_pan_info_via_serialize() {
+        let obj = ObjectDefinition1 {
+            meta_id: 0,
+            audio_data_id: 0,
+            pan_sub_blocks: alloc::vec![PanSubBlock { pan: None }],
+            audio_description: AudioDescription::none(),
+            align_bits: 0,
+        };
+        let mut buf = alloc::vec![0u8; obj.serialized_len()];
+        assert!(matches!(
+            obj.serialize_into(&mut buf),
+            Err(Error::InvalidValue { .. })
+        ));
+    }
+
+    /// RD-W2 (audit issue #1114): RDD 29 gives `AlignBits` no documented
+    /// value (same "no fixed value given" category as `st337`'s `Pf`), so a
+    /// real producer's non-zero padding must round-trip byte-exactly. This
+    /// `sample(Fps120)` configuration needs exactly 5 padding bits.
+    #[test]
+    fn nonzero_align_bits_round_trip() {
+        let mut obj = sample(FrameRate::Fps120);
+        obj.align_bits = 0b10101; // fits in 5 bits
+        let bytes = obj.to_bytes();
+        let parsed = ObjectDefinition1::parse_with_frame_rate(&bytes, FrameRate::Fps120).unwrap();
+        assert_eq!(parsed, obj);
+        assert_eq!(
+            parsed.to_bytes(),
+            bytes,
+            "AlignBits must round-trip byte-exactly"
+        );
+    }
+
+    #[test]
+    fn align_bits_too_wide_for_the_padding_is_rejected() {
+        let mut obj = sample(FrameRate::Fps120);
+        obj.align_bits = 0b100000; // this configuration needs only 5 bits
+        let mut buf = alloc::vec![0u8; obj.serialized_len()];
+        assert!(matches!(
+            obj.serialize_into(&mut buf),
+            Err(Error::InvalidValue { .. })
+        ));
     }
 }

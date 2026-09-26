@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed (breaking)
+- `BedDefinition1`/`ObjectDefinition1` gained a new `align_bits: u8` field
+  (#1114): RDD 29 gives its `AlignBits` byte-alignment padding no documented
+  value (unlike this crate's other reserved fields, which all carry an
+  explicit "set to X"), so it is now preserved verbatim instead of being
+  discarded on parse and forced to zero on serialize — the same "no fixed
+  value given" treatment already used for `st337`'s `Pf`. `BedDefinition1::
+  new`/`ObjectDefinition1::new` set it to `0`.
+
+### Fixed
+- `read_plex` now rejects a non-minimally-encoded `Plex` escape (a value that
+  fits the previous, narrower escalation level's direct range) with the new
+  `Error::NonMinimalPlex`, instead of silently accepting it and reserializing
+  different bytes (#1114).
+- `ObjectDefinition1::serialize_into` now rejects, instead of silently
+  misframing the output for: a pan sub-block whose `decor_coef_prefix`/
+  `decor_coef` are inconsistent; an `AudioDescription` whose `flag_byte`
+  `0x80` bit disagrees with whether `text` is present; and sub-block 0's
+  `pan` being `None` (previously only `ObjectDefinition1::new` checked the
+  last one, not `serialize_into` itself, so the public fields could still
+  bypass it) (#1114).
+- `AtmosFrame::serialize_into` now rejects an `ObjectDefinition1` sub-element
+  whose `pan_sub_blocks.len()` does not match the frame's own
+  `frame_rate.num_pan_sub_blocks()` (#1114).
+
 ## [0.3.2] - 2026-09-26
 
 ### Security

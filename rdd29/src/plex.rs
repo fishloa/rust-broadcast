@@ -30,6 +30,21 @@ pub(crate) fn read_plex(
         let value = r.read_bits(width).ctx(field)?;
         let all_ones = all_ones_for_width(width);
         if value != all_ones {
+            // A value reached by escalating must not fit the previous
+            // (narrower) level's direct range — else `write_plex`'s
+            // "smallest container possible" rule would never have escalated
+            // this far, and re-serializing this value gives different bytes
+            // than were read (RD-W2, #1114).
+            if width > start_width {
+                let prev_max_direct = all_ones_for_width(width / 2) - 1;
+                if value <= prev_max_direct {
+                    return Err(Error::NonMinimalPlex {
+                        field,
+                        value,
+                        width,
+                    });
+                }
+            }
             return Ok(value);
         }
         if width >= 32 {
@@ -157,6 +172,26 @@ mod tests {
         let mut w = BitWriter::new(&mut buf);
         let err = write_plex(&mut w, PLEX_MAX_VALUE + 1, 8, "test").unwrap_err();
         assert!(matches!(err, Error::InvalidValue { .. }));
+    }
+
+    #[test]
+    fn rejects_non_minimal_plex_escalation() {
+        // RD-W2 (audit issue #1114): `0xFF 0x00 0x05` escalates Plex(8) to a
+        // 16-bit container to encode 5, which fits directly in the 8-bit
+        // container's direct range (max_direct = 0xFE). Observed pre-fix:
+        // `read_plex` returned `Ok(5)`, while `write_plex(5, 8, ..)` produces
+        // the single byte `0x05` — parse(x).to_bytes() != x for this input.
+        let buf = [0xFFu8, 0x00, 0x05];
+        let mut r = BitReader::new(&buf);
+        let err = read_plex(&mut r, 8, "test").unwrap_err();
+        assert!(matches!(
+            err,
+            Error::NonMinimalPlex {
+                field: "test",
+                value: 5,
+                width: 16,
+            }
+        ));
     }
 
     #[test]
