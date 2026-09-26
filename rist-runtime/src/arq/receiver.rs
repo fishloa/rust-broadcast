@@ -36,23 +36,66 @@ use super::ArqConfig;
 use super::rtt::RttEstimator;
 use super::seq;
 
-/// Maximum forward sequence-number gap [`Receiver::feed`] will treat as
-/// ordinary packet loss and backfill with [`MissingState`] entries (#978).
-///
-/// TR-06-1 doesn't bound how far ahead a genuinely-lost run of packets can
-/// be, but an *unauthenticated* RTP sequence number lets a spoofed packet
-/// claim any gap up to the full 16-bit space: filling every skipped
-/// sequence number one `BTreeMap` entry at a time turns one forged packet
-/// (`seq = highest + 0x8000`) into ~32K allocations. A gap this wide is
-/// never ordinary loss — normal loss is bounded by the receiver buffer
-/// depth, which is orders of magnitude smaller — so beyond this threshold
-/// [`Receiver::feed`] treats the arrival as a stream reset instead: drop
-/// whatever was being tracked and resynchronise on the new sequence number,
-/// rather than backfilling the gap. **Implementation policy**, not a
+/// Baseline forward sequence-number gap [`Receiver`] will treat as ordinary
+/// packet loss and backfill with [`MissingState`] entries (#978), under
+/// TR-06-1 Appendix B's own suggested default receiver buffer (1000 ms).
+/// [`Receiver::max_gap`] scales this baseline by the receiver's actually
+/// configured [`ArqConfig::receiver_buffer`] (see [`derive_max_gap`]) rather
+/// than applying it literally — a fixed 512 was found to be too small for a
+/// legitimate high-bitrate burst (a burst longer than ~270 ms at 20 Mbit/s
+/// already exceeds it, per r08-RIST-C2). **Implementation policy**, not a
 /// TR-06-1 number — chosen as a generous multiple of Appendix B's suggested
 /// default buffer depth in packets at a plausible bitrate, not a literal
 /// transcription.
-const MAX_GAP: u16 = 512;
+const BASE_MAX_GAP: u16 = 512;
+
+/// Number of consecutive sequence numbers, each exactly continuing the one
+/// before it, [`Receiver::feed`] requires before committing a jump beyond
+/// [`Receiver::max_gap`] as a genuine stream resynchronisation (r08-RIST-C2).
+/// An *unauthenticated* RTP sequence number lets one spoofed/forged packet
+/// claim any position in the 16-bit space; requiring it to be immediately
+/// followed by this many more packets that exactly continue it makes a
+/// single forged packet inert (it is simply dropped as an unconfirmed
+/// candidate) while a genuine resynchronised sender satisfies it within a
+/// handful of packets. **Implementation policy** — TR-06-1 does not specify
+/// a confirmation count.
+const RESYNC_CONFIRM_COUNT: u32 = 3;
+
+/// Derive a [`Receiver`]'s [`Receiver::max_gap`] ceiling from its configured
+/// [`ArqConfig::receiver_buffer`]: [`BASE_MAX_GAP`] scaled proportionally to
+/// how the configured buffer compares to Appendix B's own suggested default
+/// (1000 ms), so a receiver configured to ride out a longer burst gets a
+/// proportionally larger gap ceiling before an out-of-range jump is treated
+/// as a resync candidate rather than ordinary tracked loss. Clamped to never
+/// fall below [`BASE_MAX_GAP`] (a very small configured buffer still gets at
+/// least the original ceiling) and never to exceed `u16::MAX` (the largest
+/// gap [`seq::seq_diff`] can ever report).
+fn derive_max_gap(receiver_buffer: Duration) -> u16 {
+    let default_ms = ArqConfig::appendix_b_defaults()
+        .receiver_buffer
+        .as_millis()
+        .max(1);
+    let scaled = u128::from(BASE_MAX_GAP).saturating_mul(receiver_buffer.as_millis()) / default_ms;
+    scaled.clamp(u128::from(BASE_MAX_GAP), u128::from(u16::MAX)) as u16
+}
+
+/// State of an in-progress, not-yet-confirmed resynchronisation candidate
+/// (r08-RIST-C2): a run of consecutive sequence numbers seen beyond
+/// [`Receiver::max_gap`], not yet acted on until it reaches
+/// [`RESYNC_CONFIRM_COUNT`].
+#[derive(Debug, Clone, Copy)]
+struct PendingResync {
+    /// The first sequence number of the candidate run — where the receiver
+    /// will resynchronise to if/when this candidate is confirmed.
+    base: u16,
+    /// The next sequence number that must arrive to extend this candidate;
+    /// anything else drops it (in favour of a fresh candidate, if the
+    /// non-matching arrival is itself still beyond `max_gap`).
+    next_needed: u16,
+    /// Consecutive matching arrivals so far, including the one that opened
+    /// the candidate.
+    count: u32,
+}
 
 /// Outcome of one [`Receiver::feed`] call.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -126,18 +169,31 @@ pub struct Receiver {
     /// Highest sequence number ever received — bookkeeping to detect newly
     /// opened gaps, not itself a spec-named field.
     highest_received: Option<u16>,
+    /// This receiver's forward-gap ceiling (r08-RIST-C2): derived once at
+    /// construction time from `config.receiver_buffer` (see
+    /// [`derive_max_gap`]) since `ArqConfig` itself has no packet-count
+    /// field to carry this — a `pub(crate)` field here instead, so the
+    /// public `ArqConfig` surface is unchanged.
+    pub(crate) max_gap: u16,
+    /// An in-progress, not-yet-confirmed resynchronisation candidate, if
+    /// the most recent out-of-range arrival hasn't yet reached
+    /// [`RESYNC_CONFIRM_COUNT`].
+    pending_resync: Option<PendingResync>,
     rtt: RttEstimator,
 }
 
 impl Receiver {
     /// A fresh receiver with no packets observed yet.
     pub fn new(config: ArqConfig) -> Self {
+        let max_gap = derive_max_gap(config.receiver_buffer);
         Receiver {
             config,
             next_expected: None,
             received_ahead: BTreeSet::new(),
             missing: BTreeMap::new(),
             highest_received: None,
+            max_gap,
+            pending_resync: None,
             rtt: RttEstimator::new(),
         }
     }
@@ -179,26 +235,28 @@ impl Receiver {
                 // seq_gt above guarantees seq_diff is in (0, SEQ_HALF], so
                 // this always fits in a u16 — the cast is not lossy.
                 let gap = seq::seq_diff(seq_number, highest) as u16;
-                if gap > MAX_GAP {
-                    // #978: an unauthenticated jump this large is far more
-                    // likely a spoofed/forged packet than genuine loss —
-                    // resync instead of backfilling ~`gap` MissingState
-                    // entries for a run that (if real) massively exceeds any
-                    // plausible receiver-buffer depth.
-                    self.missing.clear();
-                    self.received_ahead.clear();
-                    self.next_expected = Some(seq_number);
-                } else {
-                    let mut s = seq::seq_next(highest);
-                    while s != seq_number {
-                        self.missing.entry(s).or_insert(MissingState {
-                            first_missing_at: now,
-                            promoted_at: None,
-                            requests_sent: 0,
-                            next_request_due: None,
-                        });
-                        s = seq::seq_next(s);
-                    }
+                if gap > self.max_gap {
+                    // r08-RIST-C2: a jump this large is handled by the
+                    // resync-candidate path below, which requires
+                    // RESYNC_CONFIRM_COUNT consecutive confirmations before
+                    // acting — never resync (or blackhole the stream) on
+                    // one arrival alone.
+                    return self.feed_resync_candidate(seq_number);
+                }
+                // A genuine forward-progressing arrival within the gap
+                // ceiling — any stale, unconfirmed resync candidate from an
+                // earlier one-off out-of-range arrival is no longer
+                // relevant.
+                self.pending_resync = None;
+                let mut s = seq::seq_next(highest);
+                while s != seq_number {
+                    self.missing.entry(s).or_insert(MissingState {
+                        first_missing_at: now,
+                        promoted_at: None,
+                        requests_sent: 0,
+                        next_request_due: None,
+                    });
+                    s = seq::seq_next(s);
                 }
                 self.highest_received = Some(seq_number);
             }
@@ -225,6 +283,54 @@ impl Receiver {
         // retransmission, or one arriving after its gap was already given
         // up on) — nothing further to do.
 
+        DeliveryOutcome { delivered }
+    }
+
+    /// Handle one arrival whose forward gap from `highest_received` exceeds
+    /// [`Self::max_gap`] (r08-RIST-C2): extend or (re)start the
+    /// [`PendingResync`] candidate, and only actually resynchronise once it
+    /// reaches [`RESYNC_CONFIRM_COUNT`] consecutive confirmations. Until
+    /// then the arrival is an unconfirmed candidate — dropped, exactly like
+    /// a genuinely bogus outlier, so a single spoofed packet cannot
+    /// blackhole the stream.
+    fn feed_resync_candidate(&mut self, seq_number: u16) -> DeliveryOutcome {
+        match &mut self.pending_resync {
+            Some(p) if p.next_needed == seq_number => {
+                p.count += 1;
+                p.next_needed = seq::seq_next(seq_number);
+            }
+            _ => {
+                self.pending_resync = Some(PendingResync {
+                    base: seq_number,
+                    next_needed: seq::seq_next(seq_number),
+                    count: 1,
+                });
+            }
+        }
+
+        let candidate = *self.pending_resync.as_ref().expect("just set above");
+        if candidate.count < RESYNC_CONFIRM_COUNT {
+            return DeliveryOutcome::default();
+        }
+
+        // Confirmed: the whole run from `base` to `seq_number` arrived
+        // consecutively by construction of the matching above, so it is
+        // now cumulatively deliverable in one go.
+        self.pending_resync = None;
+        self.missing.clear();
+        self.received_ahead.clear();
+        self.highest_received = Some(seq_number);
+        self.next_expected = Some(seq::seq_next(seq_number));
+
+        let mut delivered = Vec::new();
+        let mut s = candidate.base;
+        loop {
+            delivered.push(s);
+            if s == seq_number {
+                break;
+            }
+            s = seq::seq_next(s);
+        }
         DeliveryOutcome { delivered }
     }
 
@@ -669,83 +775,174 @@ mod tests {
         );
     }
 
-    /// #978 regression: a gap right at the `MAX_GAP` boundary (`gap ==
-    /// MAX_GAP`, not yet over it) is still tracked as ordinary loss — one
-    /// `MissingState` per skipped seq, no reset.
+    /// #978 regression: a gap right at the receiver's `max_gap` boundary
+    /// (`gap == max_gap`, not yet over it) is still tracked as ordinary
+    /// loss — one `MissingState` per skipped seq, no resync candidate.
     #[test]
     fn a_gap_at_the_max_gap_boundary_is_still_tracked_as_ordinary_loss() {
         let mut r = Receiver::new(cfg());
         r.feed(0, Duration::ZERO);
-        let jump = seq::seq_add(0, MAX_GAP); // gap == MAX_GAP exactly
+        let max_gap = r.max_gap;
+        let jump = seq::seq_add(0, max_gap); // gap == max_gap exactly
         let out = r.feed(jump, Duration::ZERO);
         assert!(out.delivered.is_empty());
-        assert_eq!(r.missing_count(), usize::from(MAX_GAP - 1));
+        assert_eq!(r.missing_count(), usize::from(max_gap - 1));
         assert_eq!(r.next_expected(), Some(1));
     }
 
-    /// One past the boundary (`gap == MAX_GAP + 1`) flips to the reset path.
+    /// r08-RIST-C2 regression: one past the boundary (`gap == max_gap + 1`)
+    /// must NOT resync on a single packet — it only opens an unconfirmed
+    /// resync candidate, which is dropped (not delivered, no missing
+    /// entries, `next_expected`/`highest_received` untouched) until
+    /// `RESYNC_CONFIRM_COUNT` consecutive continuations arrive.
     #[test]
-    fn one_past_the_max_gap_boundary_resets_instead() {
+    fn one_past_the_max_gap_boundary_starts_an_unconfirmed_candidate_not_a_reset() {
         let mut r = Receiver::new(cfg());
         r.feed(0, Duration::ZERO);
-        let jump = seq::seq_add(0, MAX_GAP + 1); // gap == MAX_GAP + 1
+        let max_gap = r.max_gap;
+        let jump = seq::seq_add(0, max_gap + 1); // gap == max_gap + 1
         let out = r.feed(jump, Duration::ZERO);
+        assert!(
+            out.delivered.is_empty(),
+            "unconfirmed candidate must not deliver"
+        );
         assert_eq!(r.missing_count(), 0);
-        assert_eq!(out.delivered, alloc::vec![jump]);
-        assert_eq!(r.next_expected(), Some(seq::seq_next(jump)));
+        // Stream position is untouched by the mere candidate.
+        assert_eq!(r.next_expected(), Some(1));
+
+        // The opening candidate feed above already counts as 1; up to (but
+        // not including) the RESYNC_CONFIRM_COUNT-th continuation, still
+        // unconfirmed.
+        for i in 1..(RESYNC_CONFIRM_COUNT - 1) {
+            let out = r.feed(seq::seq_add(jump, i as u16), Duration::ZERO);
+            assert!(out.delivered.is_empty());
+        }
+        assert_eq!(r.next_expected(), Some(1));
+
+        // The RESYNC_CONFIRM_COUNT-th consecutive continuation confirms:
+        // the whole run is delivered at once and the stream resyncs.
+        let last = seq::seq_add(jump, (RESYNC_CONFIRM_COUNT - 1) as u16);
+        let confirmed = r.feed(last, Duration::ZERO);
+        assert_eq!(confirmed.delivered.len(), RESYNC_CONFIRM_COUNT as usize);
+        assert_eq!(confirmed.delivered[0], jump);
+        assert_eq!(*confirmed.delivered.last().unwrap(), last);
+        assert_eq!(r.next_expected(), Some(seq::seq_next(last)));
     }
 
-    /// #978 regression: a forged packet claiming a sequence number far ahead
-    /// of `highest` (e.g. `highest + 5000`) must not backfill tens of
-    /// thousands of `MissingState` entries — it is treated as a stream
-    /// reset instead, so `missing_count` stays bounded regardless of how
-    /// large the claimed jump is. (5000 rather than the full 0x8000/half-
-    /// space jump used elsewhere in the crate's docs: exactly half the
-    /// 16-bit sequence space is the wrap-ambiguity boundary of
-    /// `seq::seq_diff` itself — irrelevant to this DoS fix.)
+    /// r08-RIST-C2 regression: a 3000-packet loss burst is still ordinary
+    /// tracked loss (not a resync) when the receiver is configured with a
+    /// buffer wide enough to cover it — a fixed 512-packet ceiling would
+    /// have wrongly resynced (and so never NACKed) a burst this size.
     #[test]
-    fn a_sequence_jump_past_max_gap_resets_instead_of_flooding_missing() {
+    fn a_large_burst_within_a_wide_enough_window_is_still_nacked_as_ordinary_loss() {
+        let mut wide_cfg = cfg();
+        // 6x Appendix B's default (1000ms) -> max_gap scales to 6x too.
+        wide_cfg.receiver_buffer = Duration::from_millis(6000);
+        let mut r = Receiver::new(wide_cfg);
+        assert!(
+            r.max_gap >= 3000,
+            "max_gap = {} did not scale enough to cover the burst",
+            r.max_gap
+        );
+
+        r.feed(0, Duration::ZERO);
+        let jump = seq::seq_add(0, 3000); // a 3000-packet loss burst
+        let out = r.feed(jump, Duration::ZERO);
+        assert!(out.delivered.is_empty());
+        assert_eq!(r.missing_count(), 2999);
+        assert_eq!(r.next_expected(), Some(1));
+
+        // It is genuinely NACK-eligible: ticking past reorder_section
+        // promotes the whole burst.
+        let promote_at = wide_cfg.reorder_section + Duration::from_millis(1);
+        let ticked = r.tick(promote_at);
+        assert_eq!(ticked.promoted.len(), 2999);
+    }
+
+    /// r08-RIST-C2 regression: one spoofed far-ahead packet must not
+    /// blackhole the stream — the legitimate next-expected packet must
+    /// still be deliverable normally right after it, proving the spoof was
+    /// dropped as an unconfirmed candidate rather than resetting
+    /// `next_expected`.
+    #[test]
+    fn one_spoofed_far_ahead_packet_does_not_blackhole_the_stream() {
         let mut r = Receiver::new(cfg());
         r.feed(0, Duration::ZERO);
         r.feed(1, Duration::ZERO);
         r.feed(2, Duration::ZERO); // seq 0,1,2 delivered, nothing missing
 
-        // Forged/spoofed packet: seq jumps by far more than MAX_GAP.
+        // Forged/spoofed packet: seq jumps by far more than max_gap, and is
+        // never followed up (a real spoof is a one-off, not a sustained
+        // stream).
         let forged = seq::seq_add(2, 5000);
-        let out = r.feed(forged, Duration::ZERO);
-
-        // No amplification: `missing` was NOT backfilled with ~32K entries.
+        let spoof_out = r.feed(forged, Duration::ZERO);
         assert!(
-            r.missing_count() <= usize::from(MAX_GAP),
-            "missing_count() = {} — sequence jump was not capped",
-            r.missing_count()
+            spoof_out.delivered.is_empty(),
+            "unconfirmed spoof must not deliver"
         );
-        assert_eq!(r.missing_count(), 0);
+        assert_eq!(
+            r.missing_count(),
+            0,
+            "spoof must not backfill MissingState entries"
+        );
+        // Crucially: the stream position is untouched by the single spoof.
+        assert_eq!(r.next_expected(), Some(3));
 
-        // Resynchronised on the new sequence number rather than treating it
-        // as a delivery gap.
-        assert_eq!(out.delivered, alloc::vec![forged]);
-        assert_eq!(r.next_expected(), Some(seq::seq_next(forged)));
+        // The genuine next packet still arrives and delivers normally —
+        // the stream was never blackholed/reset by the spoof.
+        let genuine = r.feed(3, Duration::ZERO);
+        assert_eq!(genuine.delivered, alloc::vec![3]);
+        assert_eq!(r.next_expected(), Some(4));
     }
 
-    /// The reset also clears any previously-buffered out-of-order packets —
-    /// they're irrelevant once the stream has resynchronised past them.
+    /// A confirmed resync (unlike a lone unconfirmed candidate) does clear
+    /// any previously-buffered out-of-order packets — they're irrelevant
+    /// once the stream has genuinely resynchronised past them.
     #[test]
-    fn sequence_reset_clears_previously_buffered_received_ahead() {
+    fn a_confirmed_resync_clears_previously_buffered_received_ahead() {
         let mut r = Receiver::new(cfg());
         r.feed(0, Duration::ZERO);
         r.feed(2, Duration::ZERO); // seq 1 missing, seq 2 buffered ahead
         assert_eq!(r.missing_count(), 1);
 
-        let forged = seq::seq_add(2, 5000);
-        r.feed(forged, Duration::ZERO);
+        let base = seq::seq_add(2, 5000);
+        for i in 0..RESYNC_CONFIRM_COUNT {
+            r.feed(seq::seq_add(base, i as u16), Duration::ZERO);
+        }
+        let last = seq::seq_add(base, (RESYNC_CONFIRM_COUNT - 1) as u16);
         assert_eq!(r.missing_count(), 0);
-        assert_eq!(r.next_expected(), Some(seq::seq_next(forged)));
+        assert_eq!(r.next_expected(), Some(seq::seq_next(last)));
 
         // Confirm `received_ahead` was really cleared, not just `missing`:
-        // feeding the old buffered seq 2 again must not spuriously delivered
+        // feeding the old buffered seq 2 again must not spuriously deliver
         // anything since it's now far behind `next_expected`.
         let out = r.feed(2, Duration::ZERO);
         assert!(out.delivered.is_empty());
+    }
+
+    /// r08-RIST-C2: a resync candidate run that wraps the 16-bit sequence
+    /// space (`0xFFFF` -> `0`) is confirmed and delivered correctly.
+    #[test]
+    fn resync_confirmation_handles_16bit_wraparound() {
+        let mut r = Receiver::new(cfg());
+        assert_eq!(RESYNC_CONFIRM_COUNT, 3, "test assumes the current constant");
+        // `seq::seq_diff` picks the *shorter* circular direction between two
+        // sequence numbers, so a candidate must be a genuinely forward gap
+        // from `highest` (not just numerically close to the 0xFFFF/0
+        // boundary) to take the resync-candidate path at all. 0xFDE6 is
+        // exactly 600 "before" 0xFFFE in the forward direction — comfortably
+        // past the default max_gap (512) — so the jump to 0xFFFE opens a
+        // candidate, and its RESYNC_CONFIRM_COUNT-confirmed run then
+        // genuinely crosses the 0xFFFF -> 0 wrap.
+        let highest: u16 = 0xFFFEu16.wrapping_sub(600); // 0xFDE6
+        r.feed(highest, Duration::ZERO);
+
+        let base = 0xFFFEu16;
+        for i in 0..RESYNC_CONFIRM_COUNT {
+            r.feed(seq::seq_add(base, i as u16), Duration::ZERO);
+        }
+        // base=0xFFFE, +1=0xFFFF, +2 wraps to 0 (RESYNC_CONFIRM_COUNT == 3).
+        assert_eq!(r.next_expected(), Some(1));
+        assert_eq!(r.missing_count(), 0);
     }
 }

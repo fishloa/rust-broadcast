@@ -4,6 +4,33 @@ All notable changes to this crate will be documented in this file.
 
 ## [Unreleased]
 
+### Changed (breaking)
+- `arq::Sender::on_range_nack`/`on_generic_nack` now take an additional
+  `now: Duration` parameter (matching how the rest of this sans-IO crate
+  already threads the clock) and require `&mut self` instead of `&self`,
+  needed to fix the response-amplification issue below.
+
+### Fixed
+- `arq::Sender::on_range_nack`/`on_generic_nack` returned one retransmission
+  per expanded sequence number with no deduplication across a NACK's ranges
+  and no cap on the total response, so one small NACK repeating the same
+  range across its (up to 16) ranges could still trigger a disproportionate
+  volume of retransmitted payload — the earlier O(log n) lookup fix bounded
+  lookup *cost* but not response *size*. Both methods now deduplicate + cap
+  the response at the sender's buffered-packet count, and rate-limit any
+  single sequence number to at most one retransmission per
+  `MIN_RETRANSMIT_INTERVAL`.
+- `arq::Receiver::feed` used a fixed 512-packet forward-gap ceiling
+  (`MAX_GAP`) before treating a jump as a stream resync: too small for a
+  legitimate high-bitrate loss burst (never NACKed past ~270 ms at
+  20 Mbit/s), and one spoofed/forged far-ahead packet reset the whole
+  stream immediately, discarding genuine tracked loss and buffered
+  out-of-order packets. The ceiling now scales with the receiver's
+  configured `receiver_buffer`, and a jump beyond it only resynchronises
+  once confirmed by `RESYNC_CONFIRM_COUNT` consecutive packets continuing
+  from the new position — an unconfirmed one-off jump is dropped as an
+  outlier instead of resetting the stream.
+
 ## [0.1.1] - 2026-08-30
 
 ### Fixed
