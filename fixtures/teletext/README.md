@@ -91,3 +91,5 @@ tsp -I file teletext_subtitle_boxed.ts -P teletext --pid 0x0101 \
 (`--pid` explicit, matching the PMT's declared PID; the plugin also finds it
 automatically via the PMT's `teletext_descriptor` with `--service` or no PID
 option at all — verified to produce the same output.)
+
+All files here are generated from synthetic input (hand-authored page text and TSDuck-compiled PSI); released under the workspace licence.
