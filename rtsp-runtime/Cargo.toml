@@ -29,13 +29,16 @@ tokio         = { version = "1", optional = true, features = ["net", "io-util", 
 tokio-rustls  = { version = "0.26", optional = true }
 rustls        = { version = "0.23", optional = true }
 webpki-roots  = { version = "0.26", optional = true }
+# OS random source for the tokio adapter's `Session` ids (the sans-IO core
+# takes ids from the caller). 0.2.17 is already in the workspace lock.
+getrandom     = { version = "0.2", optional = true }
 
 [features]
 default = []
 # Derive serde on the public wire/event types.
 serde = ["dep:serde"]
 # Real-socket client + server IO over the sans-IO core (pulls tokio).
-tokio = ["dep:tokio"]
+tokio = ["dep:tokio", "dep:getrandom"]
 # `rtsps://` (RTSP over TLS) on top of the tokio adapter.
 tls   = ["tokio", "dep:tokio-rustls", "dep:rustls", "dep:webpki-roots"]
 

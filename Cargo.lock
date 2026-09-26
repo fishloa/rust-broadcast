@@ -3202,6 +3202,7 @@ name = "rtsp-runtime"
 version = "0.6.0"
 dependencies = [
  "broadcast-auth",
+ "getrandom 0.2.17",
  "log",
  "rtsp-types",
  "rustls",
