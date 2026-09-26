@@ -53,15 +53,17 @@ fn canned_playlist() -> String {
         Duration::from_millis(500),
         true,
     ));
-    writer.publish_segment(SegmentEntry::new(
-        vec![0x02; 32],
-        1,
-        Duration::from_secs(1),
-        Timestamp::from_nanos(0),
-        SegmentMeta {
-            discontinuous: false,
-        },
-    ));
+    writer
+        .publish_segment(SegmentEntry::new(
+            vec![0x02; 32],
+            1,
+            Duration::from_secs(1),
+            Timestamp::from_nanos(0),
+            SegmentMeta {
+                discontinuous: false,
+            },
+        ))
+        .unwrap();
     writer.publish_part(PartEntry::new(
         vec![0x03; 16],
         2,

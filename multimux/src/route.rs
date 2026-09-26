@@ -120,6 +120,7 @@ use bytes::Bytes;
 use hls_runtime::server::{Container, HlsOrigin};
 use media_plane::trunk::{
     PartEntry, SegmentCursor, SegmentCursorItem, SegmentEntry, SegmentWriter, TrunkConfig,
+    TryPublishSegmentError,
 };
 use media_plane::{ProgramId, Trunk};
 use transmux::TrackSpec;
@@ -523,6 +524,19 @@ impl ProgramServing {
         }
     }
 
+    /// Non-blocking: uses [`SegmentWriter::try_publish_segment`], never the
+    /// blocking [`SegmentWriter::publish_segment`] (issue #1082's T7
+    /// finding — this can run on a shared tokio worker thread same as
+    /// `crate::source::segment::ProgramSegmenter`, which must never park
+    /// one on a stalled `ArchiveOverrun::StallIngest` DVR pin). Unlike that
+    /// type, this path has no retry queue of its own: a segment that
+    /// cannot go through right now (or whose `sequence_number` turns out
+    /// non-monotonic) is logged and **dropped**, not queued — this is the
+    /// test/fallback direct-write path for a `Trunk` with no real
+    /// `ProgramSegmenter` running on it (see this struct's own doc), not
+    /// the production ingest pipeline, so losing one segment here is far
+    /// preferable to adding queueing machinery a real caller never
+    /// exercises.
     fn add_segment(&self, info: transmux::ll_hls::SegmentInfo) {
         let duration = Duration::from_secs_f64(info.duration);
         let start_ns = self.next_timeline_ns.fetch_add(
@@ -530,7 +544,7 @@ impl ProgramServing {
             Ordering::SeqCst,
         );
         let published = self.with_segment_writer(|writer| {
-            writer.publish_segment(SegmentEntry::new(
+            writer.try_publish_segment(SegmentEntry::new(
                 info.bytes,
                 info.segment_seq,
                 duration,
@@ -538,13 +552,30 @@ impl ProgramServing {
                 transmux::SegmentMeta {
                     discontinuous: false,
                 },
-            ));
+            ))
         });
-        if published.is_none() {
-            tracing::warn!(
-                "RouteHandle::add_segment: this program's Trunk segment writer is unavailable \
-                 (already taken by a real ProgramSegmenter?)"
-            );
+        match published {
+            None => {
+                tracing::warn!(
+                    "RouteHandle::add_segment: this program's Trunk segment writer is unavailable \
+                     (already taken by a real ProgramSegmenter?)"
+                );
+            }
+            Some(Err(TryPublishSegmentError::WouldStall(_))) => {
+                tracing::warn!(
+                    "RouteHandle::add_segment: dropped segment {} — would need to block for a \
+                     StallIngest pin to catch up",
+                    info.segment_seq
+                );
+            }
+            Some(Err(other)) => {
+                tracing::warn!(
+                    ?other,
+                    "RouteHandle::add_segment: dropped segment {}",
+                    info.segment_seq
+                );
+            }
+            Some(Ok(())) => {}
         }
     }
 

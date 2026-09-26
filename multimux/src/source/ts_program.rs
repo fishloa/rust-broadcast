@@ -626,15 +626,17 @@ mod tests {
         }
         let mut segments_published = 0usize;
         for segment in seg.take_ready_segments() {
-            segment_writer.publish_segment(SegmentEntry::new(
-                segment.bytes,
-                segment.segment_seq,
-                StdDuration::from_secs_f64(segment.duration),
-                Timestamp::ZERO,
-                SegmentMeta {
-                    discontinuous: false,
-                },
-            ));
+            segment_writer
+                .publish_segment(SegmentEntry::new(
+                    segment.bytes,
+                    segment.segment_seq,
+                    StdDuration::from_secs_f64(segment.duration),
+                    Timestamp::ZERO,
+                    SegmentMeta {
+                        discontinuous: false,
+                    },
+                ))
+                .unwrap();
             segments_published += 1;
         }
 

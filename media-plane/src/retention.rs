@@ -463,7 +463,7 @@ impl<S: SegmentSink> RetentionDriver<S> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::trunk::TrunkConfig;
+    use crate::trunk::{NonMonotonicSequenceNumber, TrunkConfig};
     use std::num::NonZeroUsize;
     use std::sync::mpsc;
     use std::thread;
@@ -538,7 +538,7 @@ mod tests {
             .expect("Tiered must build a driver");
 
         let handed_off_at = Timestamp::from_nanos(1_000_000_000);
-        writer.publish_segment(segment_entry(1));
+        writer.publish_segment(segment_entry(1)).unwrap();
         driver.drive(handed_off_at);
 
         assert_eq!(driver.sink.offered, vec![1]);
@@ -584,7 +584,7 @@ mod tests {
         // Every one of these calls returns (does not block) even though the
         // sink attached via `driver` never accepts anything.
         for seq in 1..=8u32 {
-            writer.publish_segment(segment_entry(seq));
+            writer.publish_segment(segment_entry(seq)).unwrap();
         }
         assert_eq!(trunk.segment_len(), 4, "hot ring still obeys its own cap");
 
@@ -624,7 +624,7 @@ mod tests {
 
         // Flood: 10 segments, always-Busy sink.
         for seq in 1..=10u32 {
-            writer.publish_segment(segment_entry(seq));
+            writer.publish_segment(segment_entry(seq)).unwrap();
         }
         driver.drive(Timestamp::from_nanos(0));
 
@@ -681,9 +681,9 @@ mod tests {
 
         // Segment log capacity 2: publishing 3 before the driver ever
         // drives evicts seq 1 out from under the pin.
-        writer.publish_segment(segment_entry(1));
-        writer.publish_segment(segment_entry(2));
-        writer.publish_segment(segment_entry(3));
+        writer.publish_segment(segment_entry(1)).unwrap();
+        writer.publish_segment(segment_entry(2)).unwrap();
+        writer.publish_segment(segment_entry(3)).unwrap();
 
         driver.drive(Timestamp::from_nanos(0));
 
@@ -734,12 +734,12 @@ mod tests {
         // Capacity 1: publishing the first segment fills the log; a second
         // publish would need to evict it, which StallIngest refuses to do
         // until the driver consumes the first.
-        writer.publish_segment(segment_entry(1));
+        writer.publish_segment(segment_entry(1)).unwrap();
 
         let (done_tx, done_rx) = mpsc::channel();
         let blocked_writer = Arc::clone(&writer);
         let handle = thread::spawn(move || {
-            blocked_writer.publish_segment(segment_entry(2));
+            blocked_writer.publish_segment(segment_entry(2)).unwrap();
             done_tx.send(()).unwrap();
         });
 
@@ -820,8 +820,8 @@ mod tests {
         let mut driver = RetentionDriver::new(&trunk, retention, ScriptedSink::new(false))
             .expect("Tiered must build a driver");
 
-        writer.publish_segment(segment_entry(1));
-        writer.publish_segment(segment_entry(2)); // evicts seq 1's pin -> Terminate fires
+        writer.publish_segment(segment_entry(1)).unwrap();
+        writer.publish_segment(segment_entry(2)).unwrap(); // evicts seq 1's pin -> Terminate fires
         driver.drive(Timestamp::from_nanos(0));
         assert!(driver.terminated, "Terminate must have fired");
 
@@ -864,7 +864,7 @@ mod tests {
         let mut driver = RetentionDriver::new(&trunk, retention, ScriptedSink::new(false))
             .expect("Tiered must build a driver");
 
-        writer.publish_segment(segment_entry(1));
+        writer.publish_segment(segment_entry(1)).unwrap();
 
         // Produced, but this driver's `drive` has not run yet: still Hot.
         assert_eq!(
@@ -904,8 +904,8 @@ mod tests {
         let mut driver = RetentionDriver::new(&trunk, retention, ScriptedSink::new(false))
             .expect("Tiered must build a driver");
 
-        writer.publish_segment(segment_entry(1));
-        writer.publish_segment(segment_entry(2)); // evicts seq 1's pin -> Gap fires
+        writer.publish_segment(segment_entry(1)).unwrap();
+        writer.publish_segment(segment_entry(2)).unwrap(); // evicts seq 1's pin -> Gap fires
 
         driver.drive(Timestamp::from_nanos(0));
 
@@ -914,6 +914,66 @@ mod tests {
             driver.locate(1, Timestamp::from_nanos(0)),
             SegmentLocation::Evicted,
             "gapped before hand-off: genuinely gone, not Hot or Cold"
+        );
+    }
+
+    /// Adversarial-review finding: after a `SegmentWriter` re-issue, a
+    /// restarted segmenter that (incorrectly) renumbers from 1 again would
+    /// make every query keyed on `sequence_number` alone (`locate` included)
+    /// resolve ambiguously against the OLD round's ledger for that same
+    /// number. The root fix closes this at the source instead of patching
+    /// every downstream query: `publish_segment` now rejects a
+    /// `sequence_number` that is not strictly greater than the last one
+    /// published, so the dangerous reuse can never reach `locate`'s ledger
+    /// at all — a correctly re-issued writer resumes from
+    /// `SegmentWriter::next_sequence_number`, which `locate` then resolves
+    /// completely normally (produced, not yet drained: `Hot`).
+    ///
+    /// MUTATION VERIFIED: reverting `SegmentWriter::publish_segment`'s
+    /// monotonicity check (allowing `w2.publish_segment(segment_entry(1))`
+    /// to succeed again) makes this test's `unwrap_err()` panic instead —
+    /// confirming the rejection is what actually prevents the reuse, not
+    /// merely documented. Recompiled and re-run to confirm the failure,
+    /// then reverted.
+    #[test]
+    fn segment_writer_reissue_rejects_reused_numbers_and_resumes_from_next_sequence_number() {
+        let trunk = Trunk::new(TrunkConfig::new(nz(10), nz(10), nz(8), nz(8), nz(8)));
+        let retention = Retention::Tiered {
+            on_overrun: ArchiveOverrun::Gap,
+            cold_window: Duration::from_secs(10),
+        };
+        let mut driver = RetentionDriver::new(&trunk, retention, ScriptedSink::new(false)).unwrap();
+        {
+            let w = trunk.segment_writer().unwrap();
+            for s in 1..=5u32 {
+                w.publish_segment(segment_entry(s)).unwrap();
+            }
+        } // dropped: re-issuable.
+        driver.drive(Timestamp::from_nanos(0));
+
+        let w2 = trunk.segment_writer().unwrap();
+
+        // A restarted segmenter renumbering from 1 again is rejected
+        // outright, not silently accepted with a stale/ambiguous ledger.
+        let err = w2.publish_segment(segment_entry(1)).unwrap_err();
+        assert_eq!(
+            err,
+            NonMonotonicSequenceNumber {
+                attempted: 1,
+                last_published: Some(5),
+            }
+        );
+
+        // The correct resumption point, and what a correctly re-issued
+        // writer must use instead:
+        assert_eq!(w2.next_sequence_number(), 6);
+        w2.publish_segment(segment_entry(6)).unwrap();
+
+        let loc = driver.locate(6, Timestamp::from_nanos(0));
+        assert_eq!(
+            loc,
+            SegmentLocation::Hot,
+            "produced but not yet drained by this driver: still Hot, got {loc:?}"
         );
     }
 }

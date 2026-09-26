@@ -1140,15 +1140,17 @@ mod tests {
         moof.extend_from_slice(b"moof");
         moof.extend_from_slice(&[0u8; 8]);
         moof.extend_from_slice(&[0u8; 5]);
-        writer.publish_segment(SegmentEntry::new(
-            bytes::Bytes::from(moof),
-            0,
-            Duration::from_secs(1),
-            broadcast_common::Timestamp::from_nanos(0),
-            transmux::SegmentMeta {
-                discontinuous: false,
-            },
-        ));
+        writer
+            .publish_segment(SegmentEntry::new(
+                bytes::Bytes::from(moof),
+                0,
+                Duration::from_secs(1),
+                broadcast_common::Timestamp::from_nanos(0),
+                transmux::SegmentMeta {
+                    discontinuous: false,
+                },
+            ))
+            .unwrap();
         recorder.poll_and_persist(None).expect("persist truncated");
 
         // The assertion is simply that this returns rather than panicking.
@@ -1185,7 +1187,7 @@ mod tests {
 
         let entry = dummy_segment(1, 0xAB);
         let expected_bytes = entry.bytes.clone();
-        writer.publish_segment(entry);
+        writer.publish_segment(entry).unwrap();
         recorder
             .poll_and_persist(Some(init_bytes))
             .expect("persist segment");
@@ -1241,7 +1243,7 @@ mod tests {
         let expected: Vec<bytes::Bytes> = segments.iter().map(|s| s.bytes.clone()).collect();
 
         for seg in &segments {
-            writer.publish_segment(seg.clone());
+            writer.publish_segment(seg.clone()).unwrap();
         }
         recorder
             .poll_and_persist(Some(init))
@@ -1327,7 +1329,9 @@ mod tests {
 
         for seq in 1..=3 {
             let payload = vec![seq as u8; 32];
-            writer.publish_segment(moof_segment_entry(seq, &payload));
+            writer
+                .publish_segment(moof_segment_entry(seq, &payload))
+                .unwrap();
         }
         recorder.poll_and_persist(Some(init)).expect("persist");
 
@@ -1372,7 +1376,7 @@ mod tests {
         recorder
             .poll_and_persist(Some(init_a))
             .expect("poll init A");
-        writer.publish_segment(dummy_segment(1, 0xAA));
+        writer.publish_segment(dummy_segment(1, 0xAA)).unwrap();
         recorder
             .poll_and_persist(Some(init_a))
             .expect("persist seg 1");
@@ -1382,7 +1386,7 @@ mod tests {
         recorder
             .poll_and_persist(Some(init_b))
             .expect("poll init B");
-        writer.publish_segment(dummy_segment(2, 0xBB));
+        writer.publish_segment(dummy_segment(2, 0xBB)).unwrap();
         recorder
             .poll_and_persist(Some(init_b))
             .expect("persist seg 2");
@@ -1457,7 +1461,9 @@ mod tests {
                 .expect("poll init");
             for seq_offset in 0..2 {
                 let seq = (i * 2 + seq_offset) as u32 + 1;
-                writer.publish_segment(dummy_segment(seq, seq as u8));
+                writer
+                    .publish_segment(dummy_segment(seq, seq as u8))
+                    .unwrap();
             }
             recorder
                 .poll_and_persist(Some(period_init))
@@ -1498,9 +1504,9 @@ mod tests {
         let init = b"INIT";
         recorder.poll_and_persist(Some(init)).expect("poll init");
 
-        writer.publish_segment(dummy_segment(1, 0xAA));
-        writer.publish_segment(dummy_segment(2, 0xBB));
-        writer.publish_segment(dummy_segment(3, 0xCC));
+        writer.publish_segment(dummy_segment(1, 0xAA)).unwrap();
+        writer.publish_segment(dummy_segment(2, 0xBB)).unwrap();
+        writer.publish_segment(dummy_segment(3, 0xCC)).unwrap();
 
         recorder.poll_and_persist(Some(init)).expect("persist");
 
@@ -1806,7 +1812,7 @@ mod tests {
             DvrRecorder::new("hardcap".to_string(), cfg, ".ts", &trunk).expect("recorder");
 
         // Open period 0 (TS: lazily, on the first segment).
-        writer.publish_segment(dummy_segment(1, 0xAA));
+        writer.publish_segment(dummy_segment(1, 0xAA)).unwrap();
         recorder.poll_and_persist(None).expect("persist seg 1");
         let p0_path = tmp.join("hardcap").join("p0.ts");
         assert!(p0_path.exists(), "period 0 must exist");
@@ -1816,7 +1822,7 @@ mod tests {
         // at all — so only the hard cap can cause the roll below.
         recorder.period_opened_at = Some(SystemTime::now() - Duration::from_secs(3));
 
-        writer.publish_segment(dummy_segment(2, 0xBB));
+        writer.publish_segment(dummy_segment(2, 0xBB)).unwrap();
         recorder
             .poll_and_persist(None)
             .expect("persist seg 2 — hard cap must roll first");
@@ -1964,7 +1970,7 @@ mod tests {
         );
 
         // Open period 0 by publishing a segment (TS: lazy start_period).
-        writer.publish_segment(dummy_segment(1, 0xAA));
+        writer.publish_segment(dummy_segment(1, 0xAA)).unwrap();
         recorder.poll_and_persist(None).expect("persist seg 1");
         assert!(
             tmp.join("tf1").join("p0.ts").exists(),

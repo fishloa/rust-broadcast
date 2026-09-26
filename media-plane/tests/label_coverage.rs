@@ -104,6 +104,8 @@ const SKIP: &[&str] = &[
     // Data-carrying ADT (a timed-metadata event plus its anchor, or a
     // `Lagged`/gap variant with its own data).
     "EventCursorItem",
+    // Structured `thiserror` error enum — no spec label.
+    "TryPublishSegmentError",
 ];
 
 fn read_rs(dir: &Path, out: &mut Vec<String>) {

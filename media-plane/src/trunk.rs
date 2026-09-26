@@ -570,6 +570,7 @@ use std::time::{Duration, Instant};
 use broadcast_common::stage::Timestamp;
 use bytes::Bytes;
 use event_listener::{Event, EventListener, Listener};
+use thiserror::Error;
 use timed_metadata::{MediaTime, PTS_HZ, TimeAnchor, TimedEvent};
 use transmux::{Sample, SegmentMeta, TrackSpec};
 
@@ -1487,6 +1488,19 @@ impl Trunk {
     /// for instead — a sample's payload is already [`bytes::Bytes`], so
     /// fan-out beyond this one cursor is a refcount bump the relay performs
     /// itself, not something this type needs to do for you.
+    ///
+    /// # A cursor created in the gap between a writer drop and its re-issue
+    /// never sees a spurious `Discontinuity`
+    ///
+    /// [`SampleCursorItem::Discontinuity`] reports a writer hand-off
+    /// **relative to what this specific cursor could have observed
+    /// continuity across**, not merely "any hand-off recorded after this
+    /// call": one recorded at or before this cursor's own starting position
+    /// on both classes (nothing was published on either ring between this
+    /// `subscribe` call and the hand-off) is consumed silently — reporting
+    /// it would mean a cursor's *very first* `poll` ever is a spurious
+    /// "discontinuity" from data it never had any continuity with in the
+    /// first place.
     pub fn subscribe(self: &Arc<Self>) -> SampleCursor {
         let state = self.lock_state();
         SampleCursor {
@@ -1494,6 +1508,8 @@ impl Trunk {
             timed_consumed: state.timed.published,
             sparse_consumed: state.sparse.published,
             handovers_consumed: state.handovers.published,
+            subscribe_timed_at: state.timed.published,
+            subscribe_sparse_at: state.sparse.published,
         }
     }
 
@@ -1550,6 +1566,8 @@ impl Trunk {
             timed_consumed: state.timed.base,
             sparse_consumed: state.sparse.base,
             handovers_consumed: state.handovers.base,
+            subscribe_timed_at: state.timed.base,
+            subscribe_sparse_at: state.sparse.base,
         }
     }
 
@@ -1700,26 +1718,31 @@ impl Trunk {
     pub fn events_in_segment(&self, segment_number: u32) -> Vec<EventEntry> {
         let state = self.lock_state();
         let log = &state.events;
-        // `.rev()`: a reused `segment_number` (wraparound, or a restarted
-        // segmenter) can leave more than one entry in `segment_starts` with
-        // the same number — the most recently recorded one is the boundary
-        // that is actually still current; a plain front-to-back `.find`
-        // would resolve to whichever one happened to be pushed first,
-        // silently returning a stale boundary once the number repeats.
-        let Some(&(_, start)) = log
+        // `rposition`: a reused `segment_number` (wraparound, or a
+        // restarted segmenter) can leave more than one entry in
+        // `segment_starts` with the same number — the most recently
+        // recorded one is the boundary that is actually still current; a
+        // plain front-to-back search would resolve to whichever one
+        // happened to be pushed first, silently returning a stale boundary
+        // once the number repeats.
+        let Some(chosen_idx) = log
             .segment_starts
             .iter()
-            .rev()
-            .find(|(n, _)| *n == segment_number)
+            .rposition(|(n, _)| *n == segment_number)
         else {
             return Vec::new();
         };
-        let end = log
-            .segment_starts
-            .iter()
-            .rev()
-            .find(|(n, _)| *n == segment_number + 1)
-            .map(|&(_, s)| s.0);
+        let start = log.segment_starts[chosen_idx].1;
+        // The end boundary is the first start recorded AFTER the CHOSEN
+        // occurrence above — positionally, not by looking up
+        // `segment_number + 1`. `segment_starts` is append-ordered
+        // (chronological), so the very next entry is always this
+        // occurrence's true close, regardless of what number it carries;
+        // looking it up by number instead can find a stale, chronologically
+        // EARLIER entry once numbers repeat (e.g. segment 2's start from a
+        // previous round, before segment 1 was reused) and invert the
+        // range into one nothing can ever fall inside.
+        let end = log.segment_starts.get(chosen_idx + 1).map(|&(_, s)| s.0);
         log.entries
             .iter()
             .filter(|e| match e.anchor {
@@ -1748,10 +1771,18 @@ impl Trunk {
     /// including after its parent segment has closed.
     pub fn part_bytes(&self, segment_number: u32, part_index: u32) -> Option<Bytes> {
         let state = self.lock_state();
+        // `.rev()`: a `SegmentWriter` re-issue can reuse a `segment_number`
+        // (see `NonMonotonicSequenceNumber`'s own doc for why
+        // `publish_segment` now rejects this, but `publish_part` itself
+        // places no such restriction on an in-progress segment's parts) —
+        // the most recently published entry for this `(segment_number,
+        // part_index)` pair is the current one; a front-to-back `.find`
+        // would return a stale part from an earlier round instead.
         state
             .parts
             .entries
             .iter()
+            .rev()
             .find(|p| p.segment_number == segment_number && p.part_index == part_index)
             .map(|p| p.bytes.clone())
     }
@@ -1763,13 +1794,27 @@ impl Trunk {
     /// cursor.
     pub fn parts_in_segment(&self, segment_number: u32) -> Vec<PartEntry> {
         let state = self.lock_state();
-        state
+        // Collect from the back, stopping at the first non-matching entry:
+        // isolates the CURRENT contiguous run of this `segment_number`'s
+        // parts. A part ring never interleaves two different segments'
+        // parts (every part of one segment is published before the next
+        // segment's first), so this is exactly "every part published so
+        // far under this number" even when a `SegmentWriter` re-issue
+        // reused it — a stale, older run of the same number, if still
+        // resident, sits BEFORE this boundary and is correctly excluded,
+        // unlike a plain `.filter()` over the whole ring (which would
+        // return both runs mixed together, over-counting the open
+        // segment's real part count).
+        let mut collected: Vec<PartEntry> = state
             .parts
             .entries
             .iter()
-            .filter(|p| p.segment_number == segment_number)
+            .rev()
+            .take_while(|p| p.segment_number == segment_number)
             .cloned()
-            .collect()
+            .collect();
+        collected.reverse();
+        collected
     }
 
     /// Diagnostic: entries currently resident in the live-part log. Never
@@ -2060,6 +2105,47 @@ const STALL_INGEST_MAX_WAIT: Duration = Duration::from_secs(30);
 #[cfg(test)]
 const STALL_INGEST_MAX_WAIT: Duration = Duration::from_secs(2);
 
+/// [`SegmentWriter::publish_segment`]/[`SegmentWriter::try_publish_segment`]
+/// reject a `sequence_number` that is not strictly greater than the last one
+/// this `Trunk` accepted — segment numbers are monotonic across every
+/// `SegmentWriter` a `Trunk` ever issues, including after a re-issue
+/// following a drop (see [`Trunk::segment_writer`]): an HLS media sequence
+/// number must never go backwards, and every query keyed on `sequence_number`
+/// alone ([`Trunk::part_bytes`]/[`Trunk::parts_in_segment`]/
+/// [`Trunk::events_in_segment`]/[`crate::retention::RetentionDriver::locate`])
+/// would otherwise resolve ambiguously (or, before those were hardened with
+/// `.rev()`/positional lookups, silently stale) the instant a restarted
+/// segmenter numbered from `1` again. See [`SegmentWriter::next_sequence_number`]
+/// for the number a re-issued writer must resume from instead.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
+#[non_exhaustive]
+#[error(
+    "segment sequence_number {attempted} is not greater than the last \
+     published one ({last_published:?}) — sequence numbers are monotonic \
+     across writer re-issues; see SegmentWriter::next_sequence_number"
+)]
+pub struct NonMonotonicSequenceNumber {
+    /// The rejected `sequence_number`.
+    pub attempted: u32,
+    /// The last `sequence_number` this `Trunk` accepted, if any.
+    pub last_published: Option<u32>,
+}
+
+/// The failure half of [`SegmentWriter::try_publish_segment`].
+#[derive(Debug, Clone, Error)]
+#[non_exhaustive]
+pub enum TryPublishSegmentError {
+    /// Publishing right now would need to block (an
+    /// [`ArchiveOverrun::StallIngest`] pin has not caught up) — hands the
+    /// entry straight back rather than blocking or losing it.
+    #[error("would need to block for an ArchiveOverrun::StallIngest pin to catch up")]
+    WouldStall(SegmentEntry),
+    /// `sequence_number` was not monotonic — see
+    /// [`NonMonotonicSequenceNumber`].
+    #[error(transparent)]
+    NonMonotonic(#[from] NonMonotonicSequenceNumber),
+}
+
 pub struct SegmentWriter {
     trunk: Arc<Trunk>,
 }
@@ -2100,8 +2186,22 @@ impl SegmentWriter {
     /// (bare-`_HLS_msn` blocking-reload's condition), even on the
     /// `StallIngest` path — a waiter is woken only after the entry has
     /// actually landed, never merely because a pin released.
-    pub fn publish_segment(&self, entry: SegmentEntry) {
+    ///
+    /// # Errors
+    ///
+    /// Rejects (before touching anything else) a `sequence_number` that is
+    /// not strictly greater than the last one accepted — see
+    /// [`NonMonotonicSequenceNumber`] and [`Self::next_sequence_number`].
+    pub fn publish_segment(&self, entry: SegmentEntry) -> Result<(), NonMonotonicSequenceNumber> {
         let mut state = self.trunk.lock_state();
+        if let Some(last) = state.segments.entries.back().map(|e| e.sequence_number)
+            && entry.sequence_number <= last
+        {
+            return Err(NonMonotonicSequenceNumber {
+                attempted: entry.sequence_number,
+                last_published: Some(last),
+            });
+        }
         let deadline = Instant::now() + STALL_INGEST_MAX_WAIT;
         loop {
             if state.segments.entries.len() < state.segments.capacity {
@@ -2164,6 +2264,58 @@ impl SegmentWriter {
         state.segments.push(entry);
         drop(state);
         self.trunk.progress.notify(usize::MAX);
+        Ok(())
+    }
+
+    /// The `sequence_number` a fresh or re-issued [`SegmentWriter`] must
+    /// resume numbering from: the last one this `Trunk` accepted, plus one
+    /// — or `1` (the first number, matching [`transmux::Segmenter`]'s own
+    /// 1-based numbering) if this `Trunk` has never accepted a segment at
+    /// all. A restarted segmenter that numbers from `1` again instead of
+    /// calling this is exactly what [`NonMonotonicSequenceNumber`] exists to
+    /// reject.
+    pub fn next_sequence_number(&self) -> u32 {
+        self.trunk
+            .lock_state()
+            .segments
+            .entries
+            .back()
+            .map(|e| e.sequence_number.saturating_add(1))
+            .unwrap_or(1)
+    }
+
+    /// Force every [`ArchiveOverrun::StallIngest`] pin currently blocking
+    /// eviction of the oldest resident segment to give up — terminated
+    /// exactly as [`Self::publish_segment`]'s own bounded wait would once
+    /// `STALL_INGEST_MAX_WAIT` elapses (see that constant's doc: the same
+    /// [`ArchiveOverrun::Terminate`] signal, reused, not a silent `Gap`
+    /// downgrade), but callable proactively and **never blocks**.
+    ///
+    /// This is for a caller tracking its *own* elapsed wait on a queued
+    /// backlog rather than a single blocking call — e.g. a non-blocking
+    /// retry loop built on [`Self::try_publish_segment`] that has been
+    /// retrying the same entry for its own bounded duration and wants to
+    /// force the same give-up decision [`Self::publish_segment`] would have
+    /// made by now, before retrying once more. A no-op (returns `0`) if
+    /// nothing is currently blocking. Returns the number of pins
+    /// terminated.
+    pub fn expire_stalled_pins(&self) -> usize {
+        let mut state = self.trunk.lock_state();
+        if state.segments.entries.len() < state.segments.capacity {
+            return 0;
+        }
+        let oldest = state.segments.base;
+        let mut count = 0;
+        for pin in state.segments.pins.values_mut() {
+            if !pin.terminated
+                && pin.consumed <= oldest
+                && pin.policy == ArchiveOverrun::StallIngest
+            {
+                pin.terminated = true;
+                count += 1;
+            }
+        }
+        count
     }
 
     /// Non-blocking alternative to [`Self::publish_segment`] for the one
@@ -2196,24 +2348,50 @@ impl SegmentWriter {
     /// [`Self::publish_segment`] (including the [`ArchiveOverrun::Gap`]/
     /// [`ArchiveOverrun::Terminate`] handling and the wake on success), and
     /// an `Ok(())` result is indistinguishable from what
-    /// [`Self::publish_segment`] would have done.
-    pub fn try_publish_segment(&self, entry: SegmentEntry) -> Result<(), SegmentEntry> {
+    /// [`Self::publish_segment`] would have done. Also rejects a
+    /// non-monotonic `sequence_number` — see [`NonMonotonicSequenceNumber`].
+    ///
+    /// A [`ArchiveOverrun::Terminate`] pin is marked terminated only when an
+    /// eviction actually happens: this call decides in two passes — first
+    /// whether eviction can proceed at all (any [`ArchiveOverrun::StallIngest`]
+    /// pin still blocking it), and only once that dry run says yes does it
+    /// apply `Terminate`'s side effect and evict. A single-pass version that
+    /// mutated `Terminate` pins while *also* discovering a blocking
+    /// `StallIngest` pin would mark a pin terminated for an eviction that,
+    /// because of that other pin, never actually happened this call.
+    pub fn try_publish_segment(&self, entry: SegmentEntry) -> Result<(), TryPublishSegmentError> {
         let mut state = self.trunk.lock_state();
+        if let Some(last) = state.segments.entries.back().map(|e| e.sequence_number)
+            && entry.sequence_number <= last
+        {
+            return Err(TryPublishSegmentError::NonMonotonic(
+                NonMonotonicSequenceNumber {
+                    attempted: entry.sequence_number,
+                    last_published: Some(last),
+                },
+            ));
+        }
         if state.segments.entries.len() >= state.segments.capacity {
             let oldest = state.segments.base;
-            let mut must_wait = false;
-            for pin in state.segments.pins.values_mut() {
-                if pin.terminated || pin.consumed > oldest {
-                    continue;
-                }
-                match pin.policy {
-                    ArchiveOverrun::Gap => {}
-                    ArchiveOverrun::Terminate => pin.terminated = true,
-                    ArchiveOverrun::StallIngest => must_wait = true,
-                }
-            }
+            // Dry run: would eviction be blocked? No pin is mutated yet.
+            let must_wait = state.segments.pins.values().any(|pin| {
+                !pin.terminated
+                    && pin.consumed <= oldest
+                    && pin.policy == ArchiveOverrun::StallIngest
+            });
             if must_wait {
-                return Err(entry);
+                return Err(TryPublishSegmentError::WouldStall(entry));
+            }
+            // Committed to evicting: now apply `Terminate`'s side effect for
+            // real (`Gap` needs no action either way — see
+            // `Self::publish_segment`'s identical comment).
+            for pin in state.segments.pins.values_mut() {
+                if !pin.terminated
+                    && pin.consumed <= oldest
+                    && pin.policy == ArchiveOverrun::Terminate
+                {
+                    pin.terminated = true;
+                }
             }
         }
         state.segments.push(entry);
@@ -2332,8 +2510,26 @@ pub enum SampleCursorItem {
     /// as reset, the same "resynchronise before trusting derived state"
     /// contract [`SampleCursorItem::Degraded`] documents, but without any
     /// data having been lost — nothing was evicted, the writer itself was
-    /// simply replaced.
+    /// simply replaced. Never reported for a handover this cursor could not
+    /// have observed any continuity across in the first place — see
+    /// [`Trunk::subscribe`]'s own doc on that.
     Discontinuity,
+    /// This cursor fell more than `WRITER_HANDOVER_LOG_CAPACITY` writer
+    /// hand-offs behind: the specific `WriterHandover` marker(s) this
+    /// cursor missed are gone (that backlog is bounded, unlike the
+    /// `Timed`/`Sparse` rings themselves), so the exact position(s) a
+    /// [`SampleCursorItem::Discontinuity`] would have been reported at are
+    /// no longer known. **Not** the same signal as `Discontinuity` — this
+    /// is a *loss* report (deliberately distinct from `Lagged`/`Degraded`
+    /// too, which are about the `Timed`/`Sparse` rings specifically, not
+    /// this bookkeeping): `skipped` writer hand-offs happened and cannot be
+    /// individually reported, but no actual sample data was lost because of
+    /// it.
+    HandoversLagged {
+        /// Exact count of `WriterHandover` markers evicted since this
+        /// cursor's last successful check of that log.
+        skipped: u64,
+    },
 }
 
 /// A subscribed reader of a [`Trunk`]'s sample ring. Obtained via
@@ -2355,6 +2551,16 @@ pub struct SampleCursor {
     /// `sparse_consumed`, against [`WriterHandoverLog`] instead of a
     /// `ClassLog`.
     handovers_consumed: u64,
+    /// This cursor's own `timed_consumed`/`sparse_consumed` at the moment it
+    /// subscribed — fixed for the cursor's whole lifetime. A
+    /// `WriterHandover` recorded at or before this position represents a
+    /// writer replacement this cursor could not have observed any
+    /// continuity across (it never read anything from before that point),
+    /// so it is consumed silently rather than reported as
+    /// [`SampleCursorItem::Discontinuity`] — see [`Trunk::subscribe`]'s doc.
+    subscribe_timed_at: u64,
+    /// The `Sparse`-class equivalent of `subscribe_timed_at`.
+    subscribe_sparse_at: u64,
 }
 
 impl SampleCursor {
@@ -2369,13 +2575,28 @@ impl SampleCursor {
     /// # Merge order across the two retention classes
     ///
     /// A pending `Timed` lag report is checked first, then a pending
-    /// `Sparse` lag report, then a ready `Sparse` sample, then a ready
-    /// `Timed` sample. This gives **no cross-class chronological interleave
-    /// guarantee** (see the [module docs](self) for why that is not
-    /// something anything downstream needs) — only that, within each
-    /// class, entries are returned in the exact order
-    /// [`TrunkWriter::publish`] produced them, with no duplication and no
-    /// unreported loss.
+    /// `Sparse` lag report, then a pending writer hand-off, then a ready
+    /// `Sparse` sample, then a ready `Timed` sample. This gives **no
+    /// cross-class chronological interleave guarantee** (see the
+    /// [module docs](self) for why that is not something anything
+    /// downstream needs) — only that, within each class, entries are
+    /// returned in the exact order [`TrunkWriter::publish`] produced them,
+    /// with no duplication and no unreported loss.
+    ///
+    /// # Neither class ever delivers the new writer's data ahead of the
+    /// other's still-pending `Discontinuity`
+    ///
+    /// A pending `WriterHandover` gates **both** classes independently on
+    /// its own per-class position: once this cursor's progress on a class
+    /// reaches that handover's recorded position for it, that class's data
+    /// from the *new* writer is held back — not served — until the
+    /// `Discontinuity` itself can fire (i.e. until the *other* class has
+    /// also caught up). Without this, a writer replacement that published
+    /// only to one class (e.g. a `Sparse` cue with no new `Timed` sample
+    /// yet) could let that class's new-writer item overtake the old
+    /// writer's still-undelivered `Timed` backlog and the `Discontinuity`
+    /// itself, handing a consumer post-handover data before it had even
+    /// been told the handover happened.
     pub fn poll(&mut self) -> Option<SampleCursorItem> {
         let state = self.trunk.lock_state();
 
@@ -2389,53 +2610,77 @@ impl SampleCursor {
             self.sparse_consumed = state.sparse.base;
             return Some(SampleCursorItem::Degraded { skipped });
         }
-
-        // A pending writer hand-off: report it once this cursor's own
-        // progress on *both* rings has caught up to the position it was
-        // recorded at (everything the old writer published has been
-        // delivered), never before — see `WriterHandover`'s own doc for why
-        // this positions the report exactly between the two writers' data
-        // rather than merely at "some point after the reconnect".
         if self.handovers_consumed < state.handovers.base {
             // Fell behind the (small, fixed) handover backlog itself: the
-            // specific `WriterHandover` marker is gone, so this cursor can
-            // no longer report the discontinuity at its exact position —
-            // but it must not silently catch up and say nothing, which
+            // specific `WriterHandover` marker(s) are gone, so this cursor
+            // can no longer report the discontinuity at its exact position
+            // — but it must not silently catch up and say nothing, which
             // would hide a real writer hand-off as if it never happened.
-            // Reuse `Lagged` (this crate's existing "you fell behind,
-            // resynchronise" signal) rather than inventing a second one —
-            // see `WRITER_HANDOVER_LOG_CAPACITY`'s doc.
+            // Its own distinct loss variant, not `Lagged`/`Degraded` (those
+            // are about the `Timed`/`Sparse` rings) — see
+            // `WRITER_HANDOVER_LOG_CAPACITY`'s doc.
             let skipped = state.handovers.base - self.handovers_consumed;
             self.handovers_consumed = state.handovers.base;
-            return Some(SampleCursorItem::Lagged { skipped });
+            return Some(SampleCursorItem::HandoversLagged { skipped });
         }
-        if self.handovers_consumed < state.handovers.published {
+
+        // The oldest still-unreported handover, if any — used both to
+        // decide whether it can fire yet (below) and, further down, to
+        // gate new-writer data on EITHER class from overtaking it (see
+        // this method's own doc).
+        let mut pending_handover = if self.handovers_consumed < state.handovers.published {
             let idx = (self.handovers_consumed - state.handovers.base) as usize;
-            if let Some(&handover) = state.handovers.entries.get(idx)
-                && self.timed_consumed >= handover.timed_at
-                && self.sparse_consumed >= handover.sparse_at
+            state.handovers.entries.get(idx).copied()
+        } else {
+            None
+        };
+        while let Some(handover) = pending_handover {
+            if !(self.timed_consumed >= handover.timed_at
+                && self.sparse_consumed >= handover.sparse_at)
             {
-                self.handovers_consumed += 1;
+                break;
+            }
+            self.handovers_consumed += 1;
+            if handover.timed_at > self.subscribe_timed_at
+                || handover.sparse_at > self.subscribe_sparse_at
+            {
                 return Some(SampleCursorItem::Discontinuity);
+            }
+            // Suppressed (see `Trunk::subscribe`'s doc): this cursor started
+            // at or after this exact hand-off, so it never had continuity
+            // to lose across it. Check the next pending one, if any — a
+            // back-to-back reconnect with no data published in between can
+            // stack more than one such suppressed marker.
+            pending_handover = if self.handovers_consumed < state.handovers.published {
+                let idx = (self.handovers_consumed - state.handovers.base) as usize;
+                state.handovers.entries.get(idx).copied()
+            } else {
+                None
+            };
+        }
+
+        let sparse_blocked = pending_handover.is_some_and(|h| self.sparse_consumed >= h.sparse_at);
+        if !sparse_blocked {
+            let sparse_idx = (self.sparse_consumed - state.sparse.base) as usize;
+            if let Some((track_id, sample)) = state.sparse.entries.get(sparse_idx) {
+                self.sparse_consumed += 1;
+                return Some(SampleCursorItem::Sparse {
+                    track_id: *track_id,
+                    sample: sample.clone(),
+                });
             }
         }
 
-        let sparse_idx = (self.sparse_consumed - state.sparse.base) as usize;
-        if let Some((track_id, sample)) = state.sparse.entries.get(sparse_idx) {
-            self.sparse_consumed += 1;
-            return Some(SampleCursorItem::Sparse {
-                track_id: *track_id,
-                sample: sample.clone(),
-            });
-        }
-
-        let timed_idx = (self.timed_consumed - state.timed.base) as usize;
-        if let Some((track_id, sample)) = state.timed.entries.get(timed_idx) {
-            self.timed_consumed += 1;
-            return Some(SampleCursorItem::Timed {
-                track_id: *track_id,
-                sample: sample.clone(),
-            });
+        let timed_blocked = pending_handover.is_some_and(|h| self.timed_consumed >= h.timed_at);
+        if !timed_blocked {
+            let timed_idx = (self.timed_consumed - state.timed.base) as usize;
+            if let Some((track_id, sample)) = state.timed.entries.get(timed_idx) {
+                self.timed_consumed += 1;
+                return Some(SampleCursorItem::Timed {
+                    track_id: *track_id,
+                    sample: sample.clone(),
+                });
+            }
         }
 
         None
@@ -3167,7 +3412,7 @@ mod tests {
         // Both are simultaneously live and independently usable — not merely
         // both `Some` a moment apart.
         samples.publish(1, RetentionClass::Timed, sample(1, 4));
-        segments.publish_segment(segment_entry(1, 1));
+        segments.publish_segment(segment_entry(1, 1)).unwrap();
         assert_eq!(trunk.timed_len(), 1);
         assert_eq!(trunk.segment_len(), 1);
     }
@@ -3229,7 +3474,7 @@ mod tests {
         // ...then publishes the segment (and one live part of it) derived
         // from exactly those samples — through the OTHER writer.
         segmenter.publish_part(part_entry(0xAB, 1, 0));
-        segmenter.publish_segment(segment_entry(0xAA, 1));
+        segmenter.publish_segment(segment_entry(0xAA, 1)).unwrap();
 
         // Read both back through the segment/part log's own query surface —
         // proving the publish actually reached the shared Trunk, not just a
@@ -3282,7 +3527,9 @@ mod tests {
         let writer = trunk.segment_writer().unwrap();
 
         for i in 0u32..5 {
-            writer.publish_segment(segment_entry(i as u8, i + 1));
+            writer
+                .publish_segment(segment_entry(i as u8, i + 1))
+                .unwrap();
         }
 
         for cursor in [&mut c1, &mut c2, &mut c3] {
@@ -3316,7 +3563,9 @@ mod tests {
         // cursor, so this simply completes (same reasoning as
         // `slow_reader_lags_but_writer_completes_regardless`).
         for i in 0u32..1024 {
-            writer.publish_segment(segment_entry((i % 256) as u8, i + 1));
+            writer
+                .publish_segment(segment_entry((i % 256) as u8, i + 1))
+                .unwrap();
         }
         assert_eq!(
             trunk.segment_len(),
@@ -3351,8 +3600,8 @@ mod tests {
         let writer = Arc::new(trunk.segment_writer().unwrap());
 
         // Fill the segment log's capacity (2) without any eviction yet.
-        writer.publish_segment(segment_entry(1, 1));
-        writer.publish_segment(segment_entry(2, 2));
+        writer.publish_segment(segment_entry(1, 1)).unwrap();
+        writer.publish_segment(segment_entry(2, 2)).unwrap();
 
         // A third publish must evict the oldest (seq 1), which `archive`'s
         // pin has not yet consumed — with `StallIngest`, this call blocks.
@@ -3363,7 +3612,7 @@ mod tests {
         let (done_tx, done_rx) = mpsc::channel();
         let blocked_writer = Arc::clone(&writer);
         let handle = thread::spawn(move || {
-            blocked_writer.publish_segment(segment_entry(3, 3));
+            blocked_writer.publish_segment(segment_entry(3, 3)).unwrap();
             done_tx.send(()).unwrap();
         });
 
@@ -3430,7 +3679,9 @@ mod tests {
         let writer = trunk.segment_writer().unwrap();
 
         for i in 0u32..50_000 {
-            writer.publish_segment(segment_entry((i % 256) as u8, i + 1));
+            writer
+                .publish_segment(segment_entry((i % 256) as u8, i + 1))
+                .unwrap();
             assert!(
                 trunk.segment_len() <= 4,
                 "segment log exceeded its cap mid-flood despite an un-acking pinning cursor"
@@ -3457,7 +3708,9 @@ mod tests {
         // polling: with `Gap`, eviction proceeds unconditionally, so this
         // never blocks.
         for i in 0u32..5 {
-            writer.publish_segment(segment_entry(i as u8, i + 1));
+            writer
+                .publish_segment(segment_entry(i as u8, i + 1))
+                .unwrap();
         }
         assert_eq!(trunk.segment_len(), 2);
 
@@ -3491,12 +3744,12 @@ mod tests {
         let mut archive = trunk.pin_segments(ArchiveOverrun::StallIngest);
         let writer = Arc::new(trunk.segment_writer().unwrap());
 
-        writer.publish_segment(segment_entry(1, 1)); // fills capacity-1 log
+        writer.publish_segment(segment_entry(1, 1)).unwrap(); // fills capacity-1 log
 
         let (done_tx, done_rx) = mpsc::channel();
         let blocked_writer = Arc::clone(&writer);
         let handle = thread::spawn(move || {
-            blocked_writer.publish_segment(segment_entry(2, 2));
+            blocked_writer.publish_segment(segment_entry(2, 2)).unwrap();
             done_tx.send(()).unwrap();
         });
 
@@ -3536,7 +3789,9 @@ mod tests {
         // Publish past capacity without archive ever polling: `Terminate`
         // never blocks (like `Gap`), so this completes.
         for i in 0u32..5 {
-            writer.publish_segment(segment_entry(i as u8, i + 1));
+            writer
+                .publish_segment(segment_entry(i as u8, i + 1))
+                .unwrap();
         }
         assert_eq!(trunk.segment_len(), 2, "writer unblocked despite Terminate");
 
@@ -3552,7 +3807,7 @@ mod tests {
 
         // The log itself is unaffected: publishing continues to work, and a
         // fresh cursor still sees ordinary segment log behaviour.
-        writer.publish_segment(segment_entry(9, 6));
+        writer.publish_segment(segment_entry(9, 6)).unwrap();
         assert_eq!(trunk.segment_len(), 2);
     }
 
@@ -3575,15 +3830,17 @@ mod tests {
         let mut c3 = trunk.subscribe_segments();
         let writer = trunk.segment_writer().unwrap();
 
-        writer.publish_segment(SegmentEntry::new(
-            Bytes::from(vec![0xCDu8; 65536]),
-            1,
-            Duration::from_secs(2),
-            Timestamp::from_nanos(0),
-            SegmentMeta {
-                discontinuous: false,
-            },
-        ));
+        writer
+            .publish_segment(SegmentEntry::new(
+                Bytes::from(vec![0xCDu8; 65536]),
+                1,
+                Duration::from_secs(2),
+                Timestamp::from_nanos(0),
+                SegmentMeta {
+                    discontinuous: false,
+                },
+            ))
+            .unwrap();
 
         let i1 = c1.poll().unwrap();
         let i2 = c2.poll().unwrap();
@@ -4426,7 +4683,7 @@ mod tests {
         let bg_writer = Arc::clone(&writer);
         thread::spawn(move || {
             bg_writer.publish_part(part_entry(1, 1, 0));
-            bg_writer.publish_segment(segment_entry(2, 1));
+            bg_writer.publish_segment(segment_entry(2, 1)).unwrap();
             done_tx.send(()).unwrap();
         });
 
@@ -4518,7 +4775,7 @@ mod tests {
         let writer = trunk.segment_writer().unwrap();
 
         writer.publish_part(part_entry(0xAB, 1, 0));
-        writer.publish_segment(segment_entry(1, 1));
+        writer.publish_segment(segment_entry(1, 1)).unwrap();
 
         // The part a client just watched roll into a closed segment is
         // still `Some` — the same answer as before the close.
@@ -4722,7 +4979,7 @@ mod tests {
     ///
     /// MUTATION VERIFIED: changing `try_publish_segment`'s
     /// `if must_wait { return Err(entry); }` to instead call
-    /// `self.publish_segment(entry); return Ok(());` (falling back to the
+    /// `self.publish_segment(entry).unwrap(); return Ok(());` (falling back to the
     /// blocking path) was run once on this single-threaded test and, as
     /// expected, never returned — confirmed by wrapping the call in a
     /// `thread::spawn` + bounded `recv_timeout`, which timed out instead of
@@ -4746,10 +5003,10 @@ mod tests {
         // immediately as `Err`, not block — there is no other thread on
         // this test that could ever drain it.
         let entry2 = match writer.try_publish_segment(segment_entry(2, 2)) {
-            Err(entry) => entry,
-            Ok(()) => panic!(
+            Err(TryPublishSegmentError::WouldStall(entry)) => entry,
+            other => panic!(
                 "must report WouldStall (Err) instead of silently evicting \
-                 the un-consumed seq 1"
+                 the un-consumed seq 1: {other:?}"
             ),
         };
         assert_eq!(
@@ -4785,7 +5042,7 @@ mod tests {
         // A pin that is never, ever drained on this single thread.
         let mut cursor = trunk.pin_segments(ArchiveOverrun::StallIngest);
 
-        writer.publish_segment(segment_entry(1, 1));
+        writer.publish_segment(segment_entry(1, 1)).unwrap();
 
         // This call would block forever pre-fix (nothing ever drains the
         // pin above); post-fix it returns once the test-sized
@@ -4798,7 +5055,7 @@ mod tests {
         let writer = Arc::new(writer);
         let bg_writer = Arc::clone(&writer);
         let handle = thread::spawn(move || {
-            bg_writer.publish_segment(segment_entry(2, 2));
+            bg_writer.publish_segment(segment_entry(2, 2)).unwrap();
             done_tx.send(()).unwrap();
         });
         done_rx
@@ -4889,6 +5146,46 @@ mod tests {
         );
     }
 
+    /// Adversarial-review finding: a writer hand-off gates BOTH classes on
+    /// its own per-class position, not just whichever class happens to
+    /// reach it first — otherwise a `Sparse`-only publish from the new
+    /// writer can overtake the old writer's still-undelivered `Timed`
+    /// backlog and the `Discontinuity` itself, because the `Sparse` axis
+    /// alone was already "caught up" (nothing was published to it before
+    /// the hand-off, so its own threshold is trivially satisfied).
+    ///
+    /// MUTATION VERIFIED: reverting `SampleCursor::poll`'s `sparse_blocked`/
+    /// `timed_blocked` gating (serve `Sparse` unconditionally once ready,
+    /// the pre-fix shape) makes this test's final assertion fail: `seq` is
+    /// `["A-timed", "B-sparse", "DISC"]` instead of the expected
+    /// `["A-timed", "DISC", "B-sparse"]` — B's sparse item is delivered
+    /// *before* the Discontinuity that should have preceded it. Recompiled
+    /// and re-run to confirm the failure, then reverted.
+    #[test]
+    fn discontinuity_gates_both_classes_not_just_the_one_that_catches_up_first() {
+        let trunk = Trunk::new(TrunkConfig::new(nz(10), nz(10), nz(4), nz(8), nz(8)));
+        let mut cursor = trunk.subscribe();
+        {
+            let a = trunk.writer().expect("first take succeeds");
+            a.publish(1, RetentionClass::Timed, sample(0xAA, 4));
+        }
+        let b = trunk
+            .writer()
+            .expect("re-issue after the first writer was dropped must succeed");
+        b.publish(2, RetentionClass::Sparse, sample(0xBB, 4));
+
+        let mut seq = Vec::new();
+        while let Some(it) = cursor.poll() {
+            seq.push(match it {
+                SampleCursorItem::Timed { .. } => "A-timed",
+                SampleCursorItem::Sparse { .. } => "B-sparse",
+                SampleCursorItem::Discontinuity => "DISC",
+                other => panic!("unexpected item: {other:?}"),
+            });
+        }
+        assert_eq!(seq, vec!["A-timed", "DISC", "B-sparse"], "got {seq:?}");
+    }
+
     /// The segment+parts ring group's counterpart: a non-pinning
     /// `SegmentCursor`, never resubscribed, keeps reading segments across a
     /// `SegmentWriter` drop + re-issue, in sequence order. (No
@@ -4907,15 +5204,15 @@ mod tests {
 
         {
             let writer_a = trunk.segment_writer().expect("first take succeeds");
-            writer_a.publish_segment(segment_entry(0xAA, 1));
-            writer_a.publish_segment(segment_entry(0xAB, 2));
+            writer_a.publish_segment(segment_entry(0xAA, 1)).unwrap();
+            writer_a.publish_segment(segment_entry(0xAB, 2)).unwrap();
         } // A dropped here.
 
         let writer_b = trunk
             .segment_writer()
             .expect("re-issue after the first segment writer was dropped must succeed");
-        writer_b.publish_segment(segment_entry(0xBA, 3));
-        writer_b.publish_segment(segment_entry(0xBB, 4));
+        writer_b.publish_segment(segment_entry(0xBA, 3)).unwrap();
+        writer_b.publish_segment(segment_entry(0xBB, 4)).unwrap();
 
         for expected_seq in 1..=4u32 {
             match cursor.poll() {
@@ -4951,18 +5248,19 @@ mod tests {
     /// More than `WRITER_HANDOVER_LOG_CAPACITY` hand-offs happen while a
     /// subscribed cursor never polls: the specific `WriterHandover` markers
     /// this cursor missed are gone (the backlog is bounded), but that must
-    /// surface as ordinary `Lagged`, not vanish silently.
+    /// surface as `HandoversLagged`, not vanish silently.
     ///
     /// MUTATION VERIFIED (scratch copy, restored after): reverting
     /// `SampleCursor::poll`'s handover-backlog-overflow arm from
-    /// `return Some(SampleCursorItem::Lagged { skipped })` back to the
-    /// pre-fix silent catch-up (`self.handovers_consumed = state.handovers.base;`
-    /// with no `return`) makes this test's first assertion fail: `poll()`
-    /// returns the first `Timed` sample directly, with no `Lagged` report
-    /// at all, instead of the expected `Lagged { skipped: 4 }`. Compiled,
-    /// run, confirmed failing, then reverted.
+    /// `return Some(SampleCursorItem::HandoversLagged { skipped })` back to
+    /// the pre-fix silent catch-up (`self.handovers_consumed =
+    /// state.handovers.base;` with no `return`) makes this test's first
+    /// assertion fail: `poll()` returns the first `Timed` sample directly,
+    /// with no loss report at all, instead of the expected
+    /// `HandoversLagged { skipped: 4 }`. Compiled, run, confirmed failing,
+    /// then reverted.
     #[test]
-    fn handover_backlog_overflow_reports_lagged_not_silence() {
+    fn handover_backlog_overflow_reports_handovers_lagged_not_silence() {
         // Timed/Sparse rings sized so they never themselves evict anything
         // across this test — the only overflow exercised here is the
         // (much smaller, fixed) handover backlog.
@@ -4981,10 +5279,12 @@ mod tests {
         let expected_skipped = (pushes - WRITER_HANDOVER_LOG_CAPACITY) as u64;
 
         match cursor.poll() {
-            Some(SampleCursorItem::Lagged { skipped }) => {
+            Some(SampleCursorItem::HandoversLagged { skipped }) => {
                 assert_eq!(skipped, expected_skipped);
             }
-            other => panic!("expected Lagged {{ skipped: {expected_skipped} }}, got {other:?}"),
+            other => {
+                panic!("expected HandoversLagged {{ skipped: {expected_skipped} }}, got {other:?}")
+            }
         }
 
         // The remaining, still-resident handovers (the newest
@@ -5004,5 +5304,156 @@ mod tests {
             timed_count, total_takes,
             "every published sample must still be delivered"
         );
+    }
+
+    // --- Adversarial-review round 2 findings (retained, monotonic --------
+    // --- sequence numbers, positional boundaries) -------------------------
+
+    /// `Trunk::part_bytes` must resolve a reused `(segment_number,
+    /// part_index)` pair to the MOST RECENT entry, not a stale one from an
+    /// earlier `SegmentWriter` round — `publish_part` itself places no
+    /// monotonicity restriction on an in-progress segment's parts (only
+    /// `publish_segment` rejects a non-monotonic `sequence_number`), so this
+    /// is a real, currently-reachable case at the `Trunk` API level.
+    ///
+    /// MUTATION VERIFIED: reverting `part_bytes`'s `.iter().rev().find(..)`
+    /// back to a plain front-to-back `.iter().find(..)` makes the final
+    /// assertion fail: `part_bytes(1, 0)` returns `b"old"` instead of the
+    /// expected `b"new"`. Recompiled and re-run to confirm the failure,
+    /// then reverted.
+    #[test]
+    fn part_bytes_reused_segment_number_returns_the_most_recent() {
+        let trunk = Trunk::new(TrunkConfig::new(nz(4), nz(4), nz(4), nz(8), nz(8)));
+        {
+            let w = trunk.segment_writer().unwrap();
+            w.publish_part(PartEntry::new(
+                Bytes::from_static(b"old"),
+                1,
+                0,
+                Duration::from_millis(200),
+                true,
+            ));
+        }
+        let w2 = trunk.segment_writer().unwrap();
+        w2.publish_part(PartEntry::new(
+            Bytes::from_static(b"new"),
+            1,
+            0,
+            Duration::from_millis(200),
+            true,
+        ));
+        assert_eq!(trunk.part_bytes(1, 0).unwrap().as_ref(), b"new");
+    }
+
+    /// `Trunk::events_in_segment` for a currently-OPEN reused segment number
+    /// must not be hidden by a stale, chronologically-earlier "next
+    /// boundary" found by matching on `segment_number + 1` — segment 2's
+    /// start from a previous round predates the reused segment 1's start,
+    /// so looking it up by number inverts the range into one nothing can
+    /// ever fall inside.
+    ///
+    /// MUTATION VERIFIED: reverting `events_in_segment`'s positional
+    /// `segment_starts.get(chosen_idx + 1)` end-boundary lookup back to
+    /// searching by number (`.rev().find(|(n, _)| *n == segment_number + 1)`)
+    /// makes the assertion fail: `events_in_segment(1).len()` is `0` instead
+    /// of the expected `1` — the stale segment-2 boundary (start 90_000)
+    /// inverts the range against the reused segment-1 start (200_000).
+    /// Recompiled and re-run to confirm the failure, then reverted.
+    #[test]
+    fn events_in_open_reused_segment_not_hidden_by_a_stale_next_boundary() {
+        let trunk = Trunk::new(TrunkConfig::new(nz(4), nz(4), nz(4), nz(8), nz(8)));
+        let writer = trunk.writer().unwrap();
+        let sw = trunk.segment_writer().unwrap();
+        sw.note_segment_start(1, MediaTime(0));
+        sw.note_segment_start(2, MediaTime(90_000));
+        sw.note_segment_start(1, MediaTime(200_000)); // reused, seg 2 not yet re-noted
+        writer.publish_event(
+            basic_event(7),
+            EventAnchor::Segment {
+                segment_number: 1,
+                delta: 1_500,
+            },
+        );
+        assert_eq!(
+            trunk.events_in_segment(1).len(),
+            1,
+            "open reused segment 1 must contain the event"
+        );
+    }
+
+    /// `SegmentWriter::try_publish_segment` must mark an
+    /// `ArchiveOverrun::Terminate` pin terminated only when an eviction
+    /// actually happens THIS call — not merely because the pin scan
+    /// happened to consider it while a *different* pin (`StallIngest`)
+    /// forced the whole call to return `Err` without evicting anything at
+    /// all.
+    ///
+    /// MUTATION VERIFIED: reverting `try_publish_segment` to its pre-fix
+    /// single-pass shape (scan pins once, apply `Terminate`'s side effect
+    /// unconditionally, THEN check `must_wait` and possibly return `Err`)
+    /// makes the final assertion fail: `term.poll()` returns
+    /// `Some(SegmentCursorItem::Terminated)` instead of the expected
+    /// `Some(SegmentCursorItem::Segment(_))` — the `Terminate` pin was
+    /// marked terminated for an eviction of seq 2 that never actually
+    /// happened (the call returned `Err` because of the `StallIngest` pin),
+    /// so it can no longer read seq 1, which is still genuinely resident.
+    /// Recompiled and re-run to confirm the failure, then reverted.
+    #[test]
+    fn try_publish_segment_does_not_terminate_a_pin_for_an_eviction_that_never_happened() {
+        let trunk = Trunk::new(TrunkConfig::new(nz(10), nz(10), nz(1), nz(8), nz(8)));
+        let w = trunk.segment_writer().unwrap();
+        let _stall = trunk.pin_segments(ArchiveOverrun::StallIngest);
+        let mut term = trunk.pin_segments(ArchiveOverrun::Terminate);
+        w.try_publish_segment(segment_entry(1, 1))
+            .expect("room for the first segment");
+        assert!(w.try_publish_segment(segment_entry(2, 2)).is_err());
+        // seq 1 is still resident; the Terminate pin must still read it —
+        // it must not have been marked terminated for an eviction that,
+        // because of the StallIngest pin, never actually happened.
+        assert_eq!(trunk.segment_len(), 1);
+        let it = term.poll();
+        assert!(
+            matches!(it, Some(SegmentCursorItem::Segment(_))),
+            "got {it:?}"
+        );
+    }
+
+    /// `SegmentWriter::expire_stalled_pins` lets a caller with its own
+    /// non-blocking retry queue force the same give-up decision
+    /// `publish_segment`'s bounded wait would eventually make, without ever
+    /// blocking — the mechanism `multimux::ProgramSegmenter`'s bounded
+    /// pending-segment queue needs (issue #1082's T7/T6 findings).
+    #[test]
+    fn expire_stalled_pins_terminates_on_demand_without_blocking() {
+        let trunk = Trunk::new(TrunkConfig::new(nz(10), nz(10), nz(1), nz(8), nz(8)));
+        let w = trunk.segment_writer().unwrap();
+        let mut stall = trunk.pin_segments(ArchiveOverrun::StallIngest);
+
+        // A no-op: nothing has even been published yet, so nothing can be
+        // blocking eviction.
+        assert_eq!(w.expire_stalled_pins(), 0);
+
+        w.publish_segment(segment_entry(1, 1)).unwrap();
+
+        // Fills capacity; a second entry would need to evict seq 1, which
+        // the never-drained `stall` pin blocks — `try_publish_segment`
+        // reports it non-blockingly rather than actually stalling.
+        assert!(w.try_publish_segment(segment_entry(2, 2)).is_err());
+
+        // Force the give-up decision on demand, without blocking:
+        assert_eq!(
+            w.expire_stalled_pins(),
+            1,
+            "exactly the one blocking StallIngest pin must be terminated"
+        );
+        assert!(
+            matches!(stall.poll(), Some(SegmentCursorItem::Terminated)),
+            "the pin's cursor must see Terminated, exactly ArchiveOverrun::Terminate's own signal"
+        );
+
+        // The retry now succeeds, without this thread ever having blocked.
+        w.try_publish_segment(segment_entry(2, 2))
+            .expect("must succeed once the blocking pin has been terminated");
+        assert_eq!(trunk.last_closed_segment(), Some(2));
     }
 }

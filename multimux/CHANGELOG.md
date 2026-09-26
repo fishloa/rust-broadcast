@@ -9,8 +9,31 @@
   stalled `ArchiveOverrun::StallIngest` DVR pin could park that worker for
   seconds, starving every other task scheduled on it. Now uses the
   non-blocking `SegmentWriter::try_publish_segment`, queuing anything that
-  cannot go through yet and retrying it (in order) on the next call
-  (media-plane issue #1082, T7).
+  cannot go through yet and retrying it (in order) on every `pump`/`flush`
+  call (not only when something new is ready to publish), so a backlog
+  keeps draining on an otherwise-idle tick and the tail is not lost at end
+  of stream. The pending queue also holds live parts, not just segments, so
+  a later segment's parts can never appear before an earlier segment still
+  stuck in it (media-plane issue #1082, T7).
+- The pending-publish queue above is now bounded: once its oldest entry has
+  waited 30 seconds, or the queue reaches 8 entries (whichever comes first
+  — a hard cap so memory stays bounded even for a pin that never advances
+  at all), the blocking `ArchiveOverrun::StallIngest` pin is force-expired
+  (`SegmentWriter::expire_stalled_pins`, terminated the same way the
+  blocking path's own bound already does) and draining retried immediately
+  — a DVR disk error whose pin never advances no longer freezes live output
+  past that bound (media-plane issue #1082, T6/T7).
+- `RouteHandle::add_segment` now uses `SegmentWriter::try_publish_segment`
+  instead of the blocking `SegmentWriter::publish_segment` — this is a
+  test/fallback direct-write path with no retry queue of its own, so a
+  segment that cannot go through right now is logged and dropped rather
+  than blocking the calling thread (media-plane issue #1082, T7).
+- `ProgramSegmenter`'s fMP4 path now seeds its sequence numbering from
+  `SegmentWriter::next_sequence_number` instead of always starting at `1`
+  — `publish_segment` now rejects a non-monotonic `sequence_number`
+  (media-plane issue #1082), which a `Trunk` that already has segments
+  from an earlier `SegmentWriter` (dropped and re-issued) would otherwise
+  trigger.
 
 ## [0.11.0] - 2026-09-26
 

@@ -77,15 +77,17 @@ fn main() {
         Duration::from_millis(500),
         false,
     ));
-    writer.publish_segment(SegmentEntry::new(
-        vec![0x03; 32],
-        1,
-        Duration::from_secs(1),
-        Timestamp::from_nanos(0),
-        SegmentMeta {
-            discontinuous: false,
-        },
-    ));
+    writer
+        .publish_segment(SegmentEntry::new(
+            vec![0x03; 32],
+            1,
+            Duration::from_secs(1),
+            Timestamp::from_nanos(0),
+            SegmentMeta {
+                discontinuous: false,
+            },
+        ))
+        .unwrap();
 
     // Segment 2 is still open, with only its first part landed so far.
     writer.publish_part(PartEntry::new(

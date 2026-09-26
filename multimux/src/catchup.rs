@@ -545,7 +545,7 @@ mod tests {
         let init = b"REAL_INIT";
         recorder.poll_and_persist(Some(init)).expect("poll init");
         for (seq, byte) in [(1u32, 0xAAu8), (2, 0xBB), (3, 0xCC)] {
-            writer.publish_segment(dummy_segment(seq, byte));
+            writer.publish_segment(dummy_segment(seq, byte)).unwrap();
         }
         recorder.poll_and_persist(Some(init)).expect("persist");
 
@@ -592,7 +592,7 @@ mod tests {
             .expect("recorder");
         let init = b"INIT";
         recorder.poll_and_persist(Some(init)).expect("poll init");
-        writer.publish_segment(dummy_segment(1, 0x11));
+        writer.publish_segment(dummy_segment(1, 0x11)).unwrap();
         recorder.poll_and_persist(Some(init)).expect("persist");
 
         let dir = archive_dir(&recorder_cfg(&tmp), "find");
@@ -640,7 +640,7 @@ mod tests {
                 .expect("recorder");
         let init = b"INIT";
         recorder.poll_and_persist(Some(init)).expect("poll init");
-        writer.publish_segment(dummy_segment(1, 0x11));
+        writer.publish_segment(dummy_segment(1, 0x11)).unwrap();
         recorder.poll_and_persist(Some(init)).expect("persist");
 
         let dir = archive_dir(&recorder_cfg(&tmp), "corrupt");
