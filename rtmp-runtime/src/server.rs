@@ -418,7 +418,12 @@ impl ServerSession {
             self.bytes_acked = self.bytes_received;
             let seq = self.bytes_received as u32;
             let ack_msg = ProtocolControl::Acknowledgement(seq).to_message();
-            out.extend_from_slice(&self.writer.write(&ack_msg));
+            out.extend_from_slice(
+                &self
+                    .writer
+                    .write(&ack_msg)
+                    .expect("an Acknowledgement control message (4 bytes) never exceeds the 24-bit message_length field"),
+            );
         }
     }
 
@@ -483,8 +488,7 @@ impl ServerSession {
         match command.name.as_str() {
             "connect" => self.handle_connect(command, msg, out, events),
             "releaseStream" | "FCPublish" => {
-                self.reply_result(command, msg, vec![Amf0Value::Undefined], out);
-                Ok(())
+                self.reply_result(command, msg, vec![Amf0Value::Undefined], out)
             }
             "createStream" => self.handle_create_stream(command, msg, out),
             "publish" => self.handle_publish(command, msg, out, events),
@@ -547,17 +551,17 @@ impl ServerSession {
         self.state = State::Connected;
 
         let window_ack = ProtocolControl::WindowAckSize(self.config.window_ack_size).to_message();
-        out.extend_from_slice(&self.writer.write(&window_ack));
+        out.extend_from_slice(&self.writer.write(&window_ack)?);
 
         let peer_bandwidth = ProtocolControl::SetPeerBandwidth {
             ack_window_size: self.config.peer_bandwidth,
             limit_type: LimitType::Dynamic,
         }
         .to_message();
-        out.extend_from_slice(&self.writer.write(&peer_bandwidth));
+        out.extend_from_slice(&self.writer.write(&peer_bandwidth)?);
 
         let set_chunk_size = ProtocolControl::SetChunkSize(self.config.chunk_size).to_message();
-        out.extend_from_slice(&self.writer.write(&set_chunk_size));
+        out.extend_from_slice(&self.writer.write(&set_chunk_size)?);
         self.writer.set_chunk_size(self.config.chunk_size);
 
         let result = Command {
@@ -584,7 +588,7 @@ impl ServerSession {
                 ]),
             ],
         };
-        out.extend_from_slice(&self.writer.write(&self.command_message(msg, &result)));
+        out.extend_from_slice(&self.writer.write(&self.command_message(msg, &result))?);
 
         events.push(ServerEvent::Connected { app });
         Ok(())
@@ -618,7 +622,7 @@ impl ServerSession {
             transaction_id: command.transaction_id,
             arguments: vec![Amf0Value::Null, Amf0Value::Number(f64::from(stream_id))],
         };
-        out.extend_from_slice(&self.writer.write(&self.command_message(msg, &result)));
+        out.extend_from_slice(&self.writer.write(&self.command_message(msg, &result))?);
         Ok(())
     }
 
@@ -690,13 +694,13 @@ impl ServerSession {
                     ]),
                 ],
             };
-            out.extend_from_slice(&self.writer.write(&self.command_message(msg, &on_status)));
+            out.extend_from_slice(&self.writer.write(&self.command_message(msg, &on_status))?);
             // No Publish/Media events; state unchanged (not Publishing).
             return Ok(());
         }
 
         let stream_begin = UserControl::StreamBegin(stream_id).to_message();
-        out.extend_from_slice(&self.writer.write(&stream_begin));
+        out.extend_from_slice(&self.writer.write(&stream_begin)?);
 
         let on_status = Command {
             name: "onStatus".to_string(),
@@ -716,7 +720,7 @@ impl ServerSession {
                 ]),
             ],
         };
-        out.extend_from_slice(&self.writer.write(&self.command_message(msg, &on_status)));
+        out.extend_from_slice(&self.writer.write(&self.command_message(msg, &on_status))?);
 
         self.state = State::Publishing;
         events.push(ServerEvent::Publish {
@@ -736,13 +740,14 @@ impl ServerSession {
         msg: &Message,
         arguments: Vec<Amf0Value>,
         out: &mut Vec<u8>,
-    ) {
+    ) -> Result<()> {
         let result = Command {
             name: "_result".to_string(),
             transaction_id: command.transaction_id,
             arguments,
         };
-        out.extend_from_slice(&self.writer.write(&self.command_message(msg, &result)));
+        out.extend_from_slice(&self.writer.write(&self.command_message(msg, &result))?);
+        Ok(())
     }
 
     /// Wrap `command` in a [`Message`] on [`COMMAND_CHUNK_STREAM_ID`],
@@ -878,17 +883,17 @@ mod tests {
             ),
         ])];
         let msg = command_message(CLIENT_CSID, 0, "connect", 1.0, args);
-        ChunkWriter::new().write(&msg)
+        ChunkWriter::new().write(&msg).unwrap()
     }
 
     fn connect_bytes_no_args() -> Vec<u8> {
         let msg = command_message(CLIENT_CSID, 0, "connect", 1.0, vec![]);
-        ChunkWriter::new().write(&msg)
+        ChunkWriter::new().write(&msg).unwrap()
     }
 
     fn create_stream_bytes() -> Vec<u8> {
         let msg = command_message(CLIENT_CSID, 0, "createStream", 2.0, vec![Amf0Value::Null]);
-        ChunkWriter::new().write(&msg)
+        ChunkWriter::new().write(&msg).unwrap()
     }
 
     fn publish_bytes(stream_id: u32, stream_key: &str) -> Vec<u8> {
@@ -898,7 +903,7 @@ mod tests {
             Amf0Value::String("live".to_string()),
         ];
         let msg = command_message(CLIENT_CSID, stream_id, "publish", 3.0, args);
-        ChunkWriter::new().write(&msg)
+        ChunkWriter::new().write(&msg).unwrap()
     }
 
     fn av_bytes(
@@ -915,7 +920,7 @@ mod tests {
             message_stream_id: stream_id,
             payload,
         };
-        ChunkWriter::new().write(&msg)
+        ChunkWriter::new().write(&msg).unwrap()
     }
 
     /// Decode every reassembled [`Message`] out of a reply byte stream.
@@ -1094,7 +1099,7 @@ mod tests {
             Amf0Value::String("nonprivate".to_string()),
         )])];
         let msg = command_message(CLIENT_CSID, 0, "connect", 1.0, args);
-        let bytes = ChunkWriter::new().write(&msg);
+        let bytes = ChunkWriter::new().write(&msg).unwrap();
 
         let err = session.handle_data(&bytes).unwrap_err();
         assert!(
@@ -1120,7 +1125,7 @@ mod tests {
             ),
         ])];
         let msg = command_message(CLIENT_CSID, 0, "connect", 1.0, args);
-        let bytes = ChunkWriter::new().write(&msg);
+        let bytes = ChunkWriter::new().write(&msg).unwrap();
 
         let err = session.handle_data(&bytes).unwrap_err();
         assert!(
@@ -1240,7 +1245,7 @@ mod tests {
             vec![Amf0Value::Null, Amf0Value::Number(1.0)],
         );
         let (_out, events) = session
-            .handle_data(&ChunkWriter::new().write(&delete_stream))
+            .handle_data(&ChunkWriter::new().write(&delete_stream).unwrap())
             .unwrap();
         assert_eq!(events, vec![ServerEvent::Eof]);
 
@@ -1582,7 +1587,7 @@ mod tests {
             message_stream_id: 0,
             payload: vec![0xFF, 0xFF, 0xFF, 0xFF],
         };
-        let bytes = ChunkWriter::new().write(&bogus);
+        let bytes = ChunkWriter::new().write(&bogus).unwrap();
         let err = session.handle_data(&bytes).unwrap_err();
         assert!(matches!(
             err,
@@ -1660,8 +1665,9 @@ mod tests {
         let (mut session, _out, _events) = publish_flow(ServerConfig::default(), "testkey");
 
         const NEW_CHUNK_SIZE: u32 = 4096;
-        let set_chunk_size_bytes =
-            ChunkWriter::new().write(&ProtocolControl::SetChunkSize(NEW_CHUNK_SIZE).to_message());
+        let set_chunk_size_bytes = ChunkWriter::new()
+            .write(&ProtocolControl::SetChunkSize(NEW_CHUNK_SIZE).to_message())
+            .unwrap();
 
         // A video payload bigger than the *default* 128-byte chunk size but
         // written by a client-side writer already using the new size, so it
@@ -1670,13 +1676,15 @@ mod tests {
         let big_payload = vec![0x17u8; 300];
         let mut client_writer = ChunkWriter::new();
         client_writer.set_chunk_size(NEW_CHUNK_SIZE);
-        let video_bytes = client_writer.write(&Message {
-            chunk_stream_id: 6,
-            timestamp: 0,
-            message_type_id: msg_type::VIDEO,
-            message_stream_id: 1,
-            payload: big_payload.clone(),
-        });
+        let video_bytes = client_writer
+            .write(&Message {
+                chunk_stream_id: 6,
+                timestamp: 0,
+                message_type_id: msg_type::VIDEO,
+                message_stream_id: 1,
+                payload: big_payload.clone(),
+            })
+            .unwrap();
 
         let mut combined = set_chunk_size_bytes;
         combined.extend_from_slice(&video_bytes);

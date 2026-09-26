@@ -695,11 +695,12 @@ struct OutTag {
 }
 
 impl OutTag {
-    fn write_into(&self, out: &mut Vec<u8>) {
-        let data_size = self.body.len();
+    fn write_into(&self, out: &mut Vec<u8>) -> core::result::Result<(), FlvError> {
+        let data_size = broadcast_common::len::fit_u24(self.body.len(), "DataSize")
+            .map_err(Error::FieldOverflow)?;
         let start = out.len();
         out.push(self.tag_type);
-        out.extend_from_slice(&(data_size as u32).to_be_bytes()[1..]); // UI24
+        out.extend_from_slice(&data_size.to_be_bytes()[1..]); // UI24
         let ts = self.timestamp;
         out.push((ts >> 16) as u8);
         out.push((ts >> 8) as u8);
@@ -709,6 +710,7 @@ impl OutTag {
         out.extend_from_slice(&self.body);
         let tag_size = (out.len() - start) as u32;
         out.extend_from_slice(&tag_size.to_be_bytes()); // PreviousTagSize
+        Ok(())
     }
 }
 
@@ -1007,7 +1009,7 @@ impl Package for FlvMux {
             timestamp: 0,
             body: meta,
         }
-        .write_into(&mut out);
+        .write_into(&mut out)?;
 
         // --- Sequence-header tags ---
         if let Some(vt) = video
@@ -1018,7 +1020,7 @@ impl Package for FlvMux {
                 timestamp: 0,
                 body,
             }
-            .write_into(&mut out);
+            .write_into(&mut out)?;
         }
         let sound_type = audio.map(audio_sound_type).unwrap_or(SOUND_TYPE_STEREO);
         if let Some(at) = audio
@@ -1029,7 +1031,7 @@ impl Package for FlvMux {
                 timestamp: 0,
                 body,
             }
-            .write_into(&mut out);
+            .write_into(&mut out)?;
         }
 
         // --- Interleaved A/V type-1 tags, ordered by DTS ---
@@ -1078,7 +1080,7 @@ impl Package for FlvMux {
         // Stable sort by DTS, tie-broken by original emission order.
         items.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)));
         for (_, _, tag) in &items {
-            tag.write_into(&mut out);
+            tag.write_into(&mut out)?;
         }
 
         Ok(out)
@@ -1247,5 +1249,44 @@ mod tests {
         assert_eq!(audio_tag_header_byte(SOUND_TYPE_STEREO), 0xAF);
         // mono: 1010_11_1_0 = 0xAE.
         assert_eq!(audio_tag_header_byte(SOUND_TYPE_MONO), 0xAE);
+    }
+
+    /// A 16 MiB (2^24) tag body cannot fit the 24-bit `DataSize` field
+    /// (#1129): unfixed, `(data_size as u32).to_be_bytes()[1..]` silently
+    /// keeps only the low 24 bits.
+    #[test]
+    fn oversized_tag_body_errors() {
+        let tag = OutTag {
+            tag_type: tag_type::VIDEO,
+            timestamp: 0,
+            body: alloc::vec![0u8; 1 << 24],
+        };
+        let mut out = Vec::new();
+        let err = tag.write_into(&mut out).unwrap_err();
+        assert!(
+            matches!(
+                err,
+                FlvError::Codec(Error::FieldOverflow(broadcast_common::len::FieldOverflow {
+                    field: "DataSize",
+                    ..
+                }))
+            ),
+            "expected FieldOverflow for DataSize, got {err:?}"
+        );
+    }
+
+    /// The boundary: exactly (2^24 - 1) bytes still writes and round-trips
+    /// the DataSize field.
+    #[test]
+    fn max_tag_body_round_trips() {
+        let tag = OutTag {
+            tag_type: tag_type::VIDEO,
+            timestamp: 0,
+            body: alloc::vec![0xAAu8; (1 << 24) - 1],
+        };
+        let mut out = Vec::new();
+        tag.write_into(&mut out).unwrap();
+        let data_size = ((out[1] as u32) << 16) | ((out[2] as u32) << 8) | out[3] as u32;
+        assert_eq!(data_size, (1 << 24) - 1);
     }
 }

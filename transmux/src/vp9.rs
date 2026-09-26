@@ -137,7 +137,10 @@ impl Serialize for Vp9ConfigurationBox {
         r[3] = self.colour_primaries;
         r[4] = self.transfer_characteristics;
         r[5] = self.matrix_coefficients;
-        let size = self.codec_initialization_data.len() as u16;
+        let size = broadcast_common::len::fit_u16(
+            self.codec_initialization_data.len(),
+            "codecIntializationDataSize",
+        )?;
         r[6..8].copy_from_slice(&size.to_be_bytes());
         r[VPCC_RECORD_FIXED..VPCC_RECORD_FIXED + self.codec_initialization_data.len()]
             .copy_from_slice(&self.codec_initialization_data);
@@ -198,5 +201,54 @@ impl Serialize for Vp9SampleEntry {
         c += 4;
         c += self.config.serialize_into(&mut buf[c..])?;
         Ok(c)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn config(codec_initialization_data: Vec<u8>) -> Vp9ConfigurationBox {
+        Vp9ConfigurationBox {
+            version: 1,
+            flags: 0,
+            profile: 0,
+            level: 10,
+            bit_depth: 8,
+            chroma_subsampling: 1,
+            video_full_range_flag: false,
+            colour_primaries: 2,
+            transfer_characteristics: 2,
+            matrix_coefficients: 2,
+            codec_initialization_data,
+        }
+    }
+
+    /// `codec_initialization_data` of 65 536 bytes cannot fit the 16-bit
+    /// `codecIntializationDataSize` field (#1129): unfixed, `(len as u16)`
+    /// silently wrapped 65536 to 0.
+    #[test]
+    fn oversized_init_data_length_errors() {
+        let cfg = config(alloc::vec![0u8; 65536]);
+        let err = cfg.try_to_bytes().unwrap_err();
+        assert!(
+            matches!(
+                err,
+                Error::FieldOverflow(broadcast_common::len::FieldOverflow {
+                    field: "codecIntializationDataSize",
+                    ..
+                })
+            ),
+            "expected FieldOverflow for codecIntializationDataSize, got {err:?}"
+        );
+    }
+
+    /// The boundary: exactly 65 535 bytes (u16::MAX) still round-trips.
+    #[test]
+    fn max_init_data_length_round_trips() {
+        let cfg = config(alloc::vec![0xABu8; 65535]);
+        let bytes = cfg.try_to_bytes().unwrap();
+        let parsed = Vp9ConfigurationBox::parse(&bytes).unwrap();
+        assert_eq!(parsed.codec_initialization_data.len(), 65535);
     }
 }

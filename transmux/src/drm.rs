@@ -175,35 +175,43 @@ fn utf16le_bytes(s: &str) -> Vec<u8> {
 ///
 /// `kids` are CENC big-endian UUID key-ids; the WRMHEADER stores them in
 /// PlayReady LE-GUID layout.
-pub fn playready_pro(kids: &[[u8; 16]], la_url: Option<&str>) -> Vec<u8> {
+///
+/// # Errors
+/// Returns [`Error::FieldOverflow`] if the encoded WRMHEADER value is 64 KiB
+/// (2^16) or larger — the record's `value length` is a 16-bit field (#1129).
+pub fn playready_pro(kids: &[[u8; 16]], la_url: Option<&str>) -> Result<Vec<u8>> {
     let wrm = playready_wrmheader(kids, la_url);
     let value = utf16le_bytes(&wrm);
     let record_count: u16 = 1;
     // total = 4 (length) + 2 (count) + 2 (type) + 2 (value length) + value
     let total_len = 4 + 2 + 2 + 2 + value.len();
+    let value_len = broadcast_common::len::fit_u16(value.len(), "PRO record value length")?;
     let mut out = Vec::with_capacity(total_len);
     out.extend_from_slice(&(total_len as u32).to_le_bytes());
     out.extend_from_slice(&record_count.to_le_bytes());
     out.extend_from_slice(&PRO_RECORD_TYPE_HEADER.to_le_bytes());
-    out.extend_from_slice(&(value.len() as u16).to_le_bytes());
+    out.extend_from_slice(&value_len.to_le_bytes());
     out.extend_from_slice(&value);
-    out
+    Ok(out)
 }
 
 /// Assemble a complete PlayReady `pssh` box (version 0).
 ///
 /// `kids` are CENC big-endian UUID key-ids; the `Data` payload is the PRO from
 /// [`playready_pro`]. docs/drm/pssh.md §2–3.
+///
+/// # Errors
+/// See [`playready_pro`].
 pub fn playready_pssh(
     kids: &[[u8; 16]],
     la_url: Option<&str>,
-) -> ProtectionSystemSpecificHeaderBox {
-    ProtectionSystemSpecificHeaderBox {
+) -> Result<ProtectionSystemSpecificHeaderBox> {
+    Ok(ProtectionSystemSpecificHeaderBox {
         version: 0,
         system_id: PLAYREADY_SYSTEM_ID,
         kids: Vec::new(),
-        data: playready_pro(kids, la_url),
-    }
+        data: playready_pro(kids, la_url)?,
+    })
 }
 
 // ---------------------------------------------------------------------------

@@ -148,7 +148,8 @@ impl Serialize for TimeToSampleBox {
         buf[c + 2] = fb[2];
         buf[c + 3] = fb[3];
         c += 4;
-        buf[c..c + 4].copy_from_slice(&(self.entries.len() as u32).to_be_bytes());
+        let entry_count = broadcast_common::len::fit_u32(self.entries.len(), "entry_count")?;
+        buf[c..c + 4].copy_from_slice(&entry_count.to_be_bytes());
         c += 4;
         for entry in &self.entries {
             buf[c..c + 4].copy_from_slice(&entry.sample_count.to_be_bytes());
@@ -286,7 +287,8 @@ impl Serialize for CompositionOffsetBox {
         buf[c + 2] = fb[2];
         buf[c + 3] = fb[3];
         c += 4;
-        buf[c..c + 4].copy_from_slice(&(self.entries.len() as u32).to_be_bytes());
+        let entry_count = broadcast_common::len::fit_u32(self.entries.len(), "entry_count")?;
+        buf[c..c + 4].copy_from_slice(&entry_count.to_be_bytes());
         c += 4;
         for entry in &self.entries {
             buf[c..c + 4].copy_from_slice(&entry.sample_count.to_be_bytes());
@@ -606,12 +608,28 @@ impl Serialize for EditListBox {
         buf[c + 2] = fb[2];
         buf[c + 3] = fb[3];
         c += 4;
-        buf[c..c + 4].copy_from_slice(&(self.entries.len() as u32).to_be_bytes());
+        let entry_count = broadcast_common::len::fit_u32(self.entries.len(), "entry_count")?;
+        buf[c..c + 4].copy_from_slice(&entry_count.to_be_bytes());
         c += 4;
         for entry in &self.entries {
             if self.version == 0 {
-                buf[c..c + 4].copy_from_slice(&(entry.segment_duration as u32).to_be_bytes());
-                buf[c + 4..c + 8].copy_from_slice(&(entry.media_time as u32).to_be_bytes());
+                let segment_duration = broadcast_common::len::fit_bits(
+                    entry.segment_duration,
+                    32,
+                    "segment_duration",
+                )? as u32;
+                // `media_time` is signed (-1 = empty edit, §8.6.6): version 0
+                // stores it as i32, so the check is range membership, not an
+                // unsigned bit-width fit.
+                let media_time = i32::try_from(entry.media_time).map_err(|_| {
+                    Error::FieldOverflow(broadcast_common::len::FieldOverflow {
+                        field: "media_time",
+                        value: entry.media_time as u64,
+                        max: i64::from(i32::MAX) as u64,
+                    })
+                })?;
+                buf[c..c + 4].copy_from_slice(&segment_duration.to_be_bytes());
+                buf[c + 4..c + 8].copy_from_slice(&(media_time as u32).to_be_bytes());
                 c += 8;
             } else {
                 buf[c..c + 8].copy_from_slice(&entry.segment_duration.to_be_bytes());
@@ -837,9 +855,16 @@ impl Serialize for SegmentIndexBox {
         buf[c..c + 4].copy_from_slice(&self.timescale.to_be_bytes());
         c += 4;
         if self.version == 0 {
-            buf[c..c + 4].copy_from_slice(&(self.earliest_presentation_time as u32).to_be_bytes());
+            let ept = broadcast_common::len::fit_bits(
+                self.earliest_presentation_time,
+                32,
+                "earliest_presentation_time",
+            )? as u32;
+            buf[c..c + 4].copy_from_slice(&ept.to_be_bytes());
             c += 4;
-            buf[c..c + 4].copy_from_slice(&(self.first_offset as u32).to_be_bytes());
+            let first_offset =
+                broadcast_common::len::fit_bits(self.first_offset, 32, "first_offset")? as u32;
+            buf[c..c + 4].copy_from_slice(&first_offset.to_be_bytes());
             c += 4;
         } else {
             buf[c..c + 8].copy_from_slice(&self.earliest_presentation_time.to_be_bytes());
@@ -847,17 +872,26 @@ impl Serialize for SegmentIndexBox {
             buf[c..c + 8].copy_from_slice(&self.first_offset.to_be_bytes());
             c += 8;
         }
-        buf[c..c + 2].copy_from_slice(&(self.references.len() as u16).to_be_bytes());
+        let reference_count =
+            broadcast_common::len::fit_u16(self.references.len(), "reference_count")?;
+        buf[c..c + 2].copy_from_slice(&reference_count.to_be_bytes());
         c += 2;
         for r in &self.references {
-            let raw_ref = ((r.reference_type as u32) << 31) | (r.referenced_size & 0x7FFF_FFFF);
+            let referenced_size = broadcast_common::len::fit_bits(
+                u64::from(r.referenced_size),
+                31,
+                "referenced_size",
+            )? as u32;
+            let raw_ref = ((r.reference_type as u32) << 31) | referenced_size;
             buf[c..c + 4].copy_from_slice(&raw_ref.to_be_bytes());
             c += 4;
             buf[c..c + 4].copy_from_slice(&r.subsegment_duration.to_be_bytes());
             c += 4;
-            let raw_sap = ((r.starts_with_sap as u32) << 31)
-                | ((r.sap_type as u32) << 28)
-                | (r.sap_delta_time & 0x0FFF_FFFF);
+            let sap_delta_time =
+                broadcast_common::len::fit_bits(u64::from(r.sap_delta_time), 28, "sap_delta_time")?
+                    as u32;
+            let raw_sap =
+                ((r.starts_with_sap as u32) << 31) | ((r.sap_type as u32) << 28) | sap_delta_time;
             buf[c..c + 4].copy_from_slice(&raw_sap.to_be_bytes());
             c += 4;
         }
@@ -1133,6 +1167,84 @@ mod tests {
         let bytes = b.to_bytes();
         let parsed = SegmentIndexBox::parse(&bytes).unwrap();
         assert_eq!(parsed, b);
+    }
+
+    /// A version-0 sidx with `earliest_presentation_time` past `u32::MAX`
+    /// cannot fit that form's 32-bit field (#1129): unfixed,
+    /// `(value as u32)` silently truncated it.
+    #[test]
+    fn sidx_v0_oversized_earliest_presentation_time_errors() {
+        let b = SegmentIndexBox {
+            version: 0,
+            flags: 0,
+            reference_id: 1,
+            timescale: 90000,
+            earliest_presentation_time: u64::from(u32::MAX) + 1,
+            first_offset: 0,
+            references: vec![],
+        };
+        let err = b.try_to_bytes().unwrap_err();
+        assert!(
+            matches!(
+                err,
+                Error::FieldOverflow(broadcast_common::len::FieldOverflow {
+                    field: "earliest_presentation_time",
+                    ..
+                })
+            ),
+            "expected FieldOverflow for earliest_presentation_time, got {err:?}"
+        );
+    }
+
+    /// The boundary: exactly `u32::MAX` still round-trips in version 0.
+    #[test]
+    fn sidx_v0_max_earliest_presentation_time_round_trips() {
+        let b = SegmentIndexBox {
+            version: 0,
+            flags: 0,
+            reference_id: 1,
+            timescale: 90000,
+            earliest_presentation_time: u64::from(u32::MAX),
+            first_offset: 0,
+            references: vec![],
+        };
+        let bytes = b.try_to_bytes().unwrap();
+        let parsed = SegmentIndexBox::parse(&bytes).unwrap();
+        assert_eq!(parsed.earliest_presentation_time, u64::from(u32::MAX));
+    }
+
+    /// A `referenced_size` past the 31-bit field's max cannot be masked
+    /// without error (#1129): unfixed, `& 0x7FFF_FFFF` silently kept only
+    /// the low 31 bits.
+    #[test]
+    fn sidx_reference_oversized_referenced_size_errors() {
+        let b = SegmentIndexBox {
+            version: 0,
+            flags: 0,
+            reference_id: 1,
+            timescale: 90000,
+            earliest_presentation_time: 0,
+            first_offset: 0,
+            references: vec![SidxReference {
+                reference_type: 0,
+                referenced_size: 1 << 31,
+                subsegment_duration: 1000,
+                starts_with_sap: 1,
+                sap_type: 1,
+                sap_delta_time: 0,
+            }],
+        };
+        let err = b.try_to_bytes().unwrap_err();
+        assert!(
+            matches!(
+                err,
+                Error::FieldOverflow(broadcast_common::len::FieldOverflow {
+                    field: "referenced_size",
+                    ..
+                })
+            ),
+            "expected FieldOverflow for referenced_size, got {err:?}"
+        );
     }
 
     #[test]

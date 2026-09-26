@@ -174,7 +174,8 @@ impl Serialize for MHADecoderConfigurationRecord {
         buf[0] = self.configuration_version;
         buf[1] = self.mpegh3da_profile_level_indication;
         buf[2] = self.reference_channel_layout;
-        let config_len = self.mpegh3da_config.len() as u16;
+        let config_len =
+            broadcast_common::len::fit_u16(self.mpegh3da_config.len(), "mpegh3daConfigLength")?;
         buf[3..5].copy_from_slice(&config_len.to_be_bytes());
         buf[5..need].copy_from_slice(&self.mpegh3da_config);
         Ok(need)
@@ -352,6 +353,49 @@ pub(crate) fn find_mpegh3da_config(data: &[u8]) -> Option<&[u8]> {
         .into_iter()
         .find(|p| p.packet_type == MHAS_PACTYP_MPEGH3DACFG)
         .map(|p| p.payload)
+}
+
+#[cfg(test)]
+mod mhac_record_tests {
+    use super::*;
+
+    fn record(config_len: usize) -> MHADecoderConfigurationRecord {
+        MHADecoderConfigurationRecord {
+            configuration_version: 1,
+            mpegh3da_profile_level_indication: 0x0B,
+            reference_channel_layout: 2,
+            mpegh3da_config: alloc::vec![0x5Au8; config_len],
+        }
+    }
+
+    /// A 65 536-byte `mpegh3daConfig` cannot fit the 16-bit
+    /// `mpegh3daConfigLength` field (#1129): unfixed, `(len as u16)` wraps
+    /// 65536 down to 0 while the full-length payload is still copied,
+    /// misframing the record with `Ok`.
+    #[test]
+    fn oversized_config_length_errors() {
+        let rec = record(65536);
+        let err = rec.try_to_bytes().unwrap_err();
+        assert!(
+            matches!(
+                err,
+                Error::FieldOverflow(broadcast_common::len::FieldOverflow {
+                    field: "mpegh3daConfigLength",
+                    ..
+                })
+            ),
+            "expected FieldOverflow for mpegh3daConfigLength, got {err:?}"
+        );
+    }
+
+    /// The boundary: exactly 65 535 bytes (u16::MAX) still round-trips.
+    #[test]
+    fn max_config_length_round_trips() {
+        let rec = record(65535);
+        let bytes = rec.try_to_bytes().unwrap();
+        let re = MHADecoderConfigurationRecord::parse(&bytes).unwrap();
+        assert_eq!(re.mpegh3da_config.len(), 65535);
+    }
 }
 
 #[cfg(test)]

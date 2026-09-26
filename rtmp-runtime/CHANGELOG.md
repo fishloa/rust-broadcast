@@ -6,6 +6,17 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed (breaking)
+- `chunk::ChunkWriter::write` now returns `Result<Vec<u8>, RtmpError>` instead of `Vec<u8>`.
+  `Error` gains a new `FieldOverflow` variant.
+
+### Fixed
+- `ChunkWriter::write` no longer silently truncates a 16 MiB+ (2^24) message body's 24-bit
+  `message_length` field while still writing every payload byte, which misframed every later
+  message on the chunk stream (#1129).
+- AMF0 Object/ECMA-array key lengths and ECMA-array/strict-array/long-string counts are now
+  range-checked instead of silently truncated (#1129).
+
 ## [0.6.1] - 2026-09-26
 
 ### Security

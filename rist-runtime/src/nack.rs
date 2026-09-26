@@ -201,7 +201,7 @@ impl Serialize for GenericNack {
         }
 
         // Header: V=2, P=0, FMT=1.
-        let length_field = (len / WORD_LEN - 1) as u16;
+        let length_field = broadcast_common::len::fit_u16(len / WORD_LEN - 1, "RTCP length")?;
         buf[0] = (RTCP_VERSION << 6) | FMT_GENERIC_NACK;
         buf[1] = PT_RTPFB;
         buf[2..4].copy_from_slice(&length_field.to_be_bytes());
@@ -398,6 +398,47 @@ impl Serialize for RangeNack {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 65 534 FCI entries push the RTCP `length` field (words - 1) to 65 536,
+    /// past its 16-bit wire max (#1129): unfixed, `(len / WORD_LEN - 1) as
+    /// u16` silently wrapped, misframing the packet with `Ok`.
+    #[test]
+    fn generic_nack_oversized_length_field_errors() {
+        let nack = GenericNack {
+            ssrc_sender: 1,
+            ssrc_media: 2,
+            nacks: alloc::vec![NackFci { pid: 0, blp: 0 }; 65534],
+        };
+        let mut buf = alloc::vec![0u8; nack.serialized_len()];
+        let err = nack.serialize_into(&mut buf).unwrap_err();
+        assert!(
+            matches!(
+                err,
+                Error::FieldOverflow(broadcast_common::len::FieldOverflow {
+                    field: "RTCP length",
+                    ..
+                })
+            ),
+            "expected FieldOverflow for RTCP length, got {err:?}"
+        );
+    }
+
+    /// The boundary: exactly 65 533 FCI entries (`length` field = 65535,
+    /// u16::MAX) still serializes and round-trips.
+    #[test]
+    fn generic_nack_max_length_field_round_trips() {
+        let nack = GenericNack {
+            ssrc_sender: 1,
+            ssrc_media: 2,
+            nacks: alloc::vec![NackFci { pid: 7, blp: 0xAB }; 65533],
+        };
+        let mut buf = alloc::vec![0u8; nack.serialized_len()];
+        nack.serialize_into(&mut buf).unwrap();
+        let length_field = u16::from_be_bytes([buf[2], buf[3]]);
+        assert_eq!(length_field, u16::MAX);
+        let parsed = GenericNack::parse(&buf).unwrap();
+        assert_eq!(parsed.nacks.len(), 65533);
+    }
 
     #[test]
     fn nack_fci_single() {

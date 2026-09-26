@@ -242,7 +242,7 @@ impl ClientSession {
             message_stream_id: self.stream_id.unwrap_or(1),
             payload: data.to_vec(),
         };
-        Ok(self.writer.write(&msg))
+        self.writer.write(&msg)
     }
 
     /// Encode a video message (type 9). Only valid in `Publishing` state.
@@ -259,7 +259,7 @@ impl ClientSession {
             message_stream_id: self.stream_id.unwrap_or(1),
             payload: data.to_vec(),
         };
-        Ok(self.writer.write(&msg))
+        self.writer.write(&msg)
     }
 
     /// Encode a metadata message (`@setDataFrame`/`onMetaData`, type 18).
@@ -280,7 +280,7 @@ impl ClientSession {
             message_stream_id: self.stream_id.unwrap_or(1),
             payload,
         };
-        Ok(self.writer.write(&msg))
+        self.writer.write(&msg)
     }
 
     /// Whether the session has reached `Publishing` state.
@@ -360,11 +360,15 @@ impl ClientSession {
         let mut out = Vec::new();
 
         let set_chunk_size = ProtocolControl::SetChunkSize(self.config.chunk_size);
-        out.extend_from_slice(&self.writer.write(&set_chunk_size.to_message()));
+        out.extend_from_slice(&self.writer.write(&set_chunk_size.to_message()).expect(
+            "a small internal AMF0 command message never exceeds the 24-bit message_length field",
+        ));
         self.writer.set_chunk_size(self.config.chunk_size);
 
         let window_ack = ProtocolControl::WindowAckSize(self.config.window_ack_size);
-        out.extend_from_slice(&self.writer.write(&window_ack.to_message()));
+        out.extend_from_slice(&self.writer.write(&window_ack.to_message()).expect(
+            "a small internal AMF0 command message never exceeds the 24-bit message_length field",
+        ));
 
         let msg = Message {
             chunk_stream_id: COMMAND_CHUNK_STREAM_ID,
@@ -373,7 +377,9 @@ impl ClientSession {
             message_stream_id: 0,
             payload: cmd.to_body(),
         };
-        out.extend_from_slice(&self.writer.write(&msg));
+        out.extend_from_slice(&self.writer.write(&msg).expect(
+            "a small internal AMF0 command message never exceeds the 24-bit message_length field",
+        ));
         out
     }
 
@@ -394,7 +400,9 @@ impl ClientSession {
             message_stream_id: 0,
             payload: cmd.to_body(),
         };
-        self.writer.write(&msg)
+        self.writer.write(&msg).expect(
+            "a small internal AMF0 command message never exceeds the 24-bit message_length field",
+        )
     }
 
     fn build_publish(&mut self) -> Vec<u8> {
@@ -416,7 +424,9 @@ impl ClientSession {
             message_stream_id: self.stream_id.unwrap_or(1),
             payload: cmd.to_body(),
         };
-        self.writer.write(&msg)
+        self.writer.write(&msg).expect(
+            "a small internal AMF0 command message never exceeds the 24-bit message_length field",
+        )
     }
 
     fn dispatch_message(
@@ -438,7 +448,7 @@ impl ClientSession {
                 } => {
                     self.ack_threshold = ack_window_size;
                     let ack = ProtocolControl::WindowAckSize(ack_window_size);
-                    out.extend_from_slice(&self.writer.write(&ack.to_message()));
+                    out.extend_from_slice(&self.writer.write(&ack.to_message())?);
                 }
                 _ => {}
             }
@@ -526,7 +536,12 @@ impl ClientSession {
         if self.bytes_received.wrapping_sub(self.bytes_acked) >= u64::from(self.ack_threshold) {
             let seq = (self.bytes_received & 0xFFFF_FFFF) as u32;
             let ack = ProtocolControl::Acknowledgement(seq);
-            out.extend_from_slice(&self.writer.write(&ack.to_message()));
+            out.extend_from_slice(
+                &self
+                    .writer
+                    .write(&ack.to_message())
+                    .expect("an Acknowledgement control message (4 bytes) never exceeds the 24-bit message_length field"),
+            );
             self.bytes_acked = self.bytes_received;
         }
     }
@@ -817,7 +832,7 @@ mod tests {
             message_stream_id: 0,
             payload: error_cmd.to_body(),
         };
-        let bytes = ChunkWriter::new().write(&msg);
+        let bytes = ChunkWriter::new().write(&msg).unwrap();
 
         let (_, events) = client.handle_data(&bytes).unwrap();
         assert!(

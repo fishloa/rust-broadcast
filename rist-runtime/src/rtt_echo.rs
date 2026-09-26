@@ -227,7 +227,7 @@ impl Serialize for RttEcho {
         }
 
         // Header: V=2, P=0, Subtype.
-        let length_field = (len / WORD_LEN - 1) as u16;
+        let length_field = broadcast_common::len::fit_u16(len / WORD_LEN - 1, "RTCP length")?;
         buf[0] = (RTCP_VERSION << 6) | self.kind.subtype();
         buf[1] = PT_APP;
         buf[2..4].copy_from_slice(&length_field.to_be_bytes());
@@ -257,6 +257,51 @@ impl Serialize for RttEcho {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 262 124 bytes of padding push the RTCP `length` field to 65 536, past
+    /// its 16-bit wire max (#1129): unfixed, `(len / WORD_LEN - 1) as u16`
+    /// silently wrapped, misframing the packet with `Ok`.
+    #[test]
+    fn oversized_length_field_errors() {
+        let echo = RttEcho {
+            kind: RttEchoKind::Request,
+            ssrc_media: 1,
+            timestamp: 0,
+            processing_delay_us: 0,
+            padding: alloc::vec![0u8; 262_124],
+        };
+        let mut buf = alloc::vec![0u8; echo.serialized_len()];
+        let err = echo.serialize_into(&mut buf).unwrap_err();
+        assert!(
+            matches!(
+                err,
+                Error::FieldOverflow(broadcast_common::len::FieldOverflow {
+                    field: "RTCP length",
+                    ..
+                })
+            ),
+            "expected FieldOverflow for RTCP length, got {err:?}"
+        );
+    }
+
+    /// The boundary: padding sized so the `length` field is exactly
+    /// u16::MAX still serializes and round-trips.
+    #[test]
+    fn max_length_field_round_trips() {
+        let echo = RttEcho {
+            kind: RttEchoKind::Request,
+            ssrc_media: 1,
+            timestamp: 0,
+            processing_delay_us: 0,
+            padding: alloc::vec![0xAAu8; 262_120],
+        };
+        let mut buf = alloc::vec![0u8; echo.serialized_len()];
+        echo.serialize_into(&mut buf).unwrap();
+        let length_field = u16::from_be_bytes([buf[2], buf[3]]);
+        assert_eq!(length_field, u16::MAX);
+        let parsed = RttEcho::parse(&buf).unwrap();
+        assert_eq!(parsed.padding.len(), 262_120);
+    }
 
     #[test]
     fn rtt_echo_request_no_padding() {

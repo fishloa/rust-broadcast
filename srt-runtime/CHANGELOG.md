@@ -6,6 +6,15 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed (breaking)
+- `KeyMaterial::serialize_into` now returns `Error::FieldTooWide` instead of silently
+  truncating, when a length does not fit its wire field (#1129).
+
+### Fixed
+- A Key Material message's `Salt` over 1020 bytes (`SLen/4` past the 8-bit field's 255 max) no
+  longer shifts into the reserved `Resv3` bits — `serialize_into` now rejects it instead of
+  emitting a misframed message with `Ok` (#1129).
+
 ## [0.4.1] - 2026-09-25
 
 ### Security

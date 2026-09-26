@@ -1194,6 +1194,13 @@ impl ChunkWriter {
     /// first chunk carrying up to `chunk_size` payload bytes, then Type 3
     /// continuation chunks for the remainder.
     ///
+    /// # Errors
+    /// Returns [`RtmpError::FieldOverflow`] if `msg.payload` is 16 MiB
+    /// (2^24) or larger — `message_length` is a UI24 field (§5.3.1.2) and
+    /// cannot represent it (#1129: unfixed, `payload.len() as u32` then the
+    /// UI24 writer silently kept only the low 24 bits, misframing every
+    /// later message on the chunk stream).
+    ///
     /// # Panics
     /// If `msg.chunk_stream_id` is outside the basic header's encodable
     /// range (2..=65599) — the same precondition [`BasicHeader::serialize_into`]
@@ -1201,10 +1208,9 @@ impl ChunkWriter {
     /// satisfies this (`BasicHeader::parse` never yields one outside the
     /// range), so a `Message` round-tripped from the assembler never panics
     /// here; callers building a `Message` from scratch must respect it.
-    #[must_use]
-    pub fn write(&mut self, msg: &Message) -> Vec<u8> {
+    pub fn write(&mut self, msg: &Message) -> Result<Vec<u8>> {
         let chunk_size = (self.chunk_size as usize).max(1);
-        let message_length = msg.payload.len() as u32;
+        let message_length = broadcast_common::len::fit_u24(msg.payload.len(), "message_length")?;
         let extended = needs_extended_timestamp(msg.timestamp);
 
         let mut out = Vec::with_capacity(TYPE0_LEN + msg.payload.len() + 16);
@@ -1241,7 +1247,7 @@ impl ChunkWriter {
             offset += take;
         }
 
-        out
+        Ok(out)
     }
 }
 
@@ -1797,12 +1803,48 @@ mod tests {
     fn writer_assembler_round_trip_small_message_single_chunk() {
         let original = msg(4, 1000, 9, 1, vec![0xAB; 50]);
         let mut writer = ChunkWriter::new();
-        let bytes = writer.write(&original);
+        let bytes = writer.write(&original).unwrap();
 
         let mut assembler = ChunkAssembler::new();
         let out = assembler.push(&bytes).unwrap();
         assert_eq!(out.len(), 1, "one message must come back out");
         assert_eq!(out[0], original);
+    }
+
+    /// A 16 MiB (2^24) payload cannot fit the 24-bit `message_length` field
+    /// (#1129): unfixed, `payload.len() as u32` then the UI24 writer kept
+    /// only the low 24 bits, silently misframing the chunk stream with `Ok`.
+    #[test]
+    fn write_oversized_payload_errors() {
+        let original = msg(4, 0, 9, 1, vec![0xABu8; 1 << 24]);
+        let err = ChunkWriter::new().write(&original).unwrap_err();
+        assert!(
+            matches!(
+                err,
+                RtmpError::FieldOverflow(broadcast_common::len::FieldOverflow {
+                    field: "message_length",
+                    ..
+                })
+            ),
+            "expected FieldOverflow for message_length, got {err:?}"
+        );
+    }
+
+    /// The boundary: exactly (2^24 - 1) bytes still writes and reassembles.
+    #[test]
+    fn write_max_payload_message_length_field_is_exact() {
+        // ChunkAssembler has its own, separate 8 MiB reassembly cap
+        // (MAX_MESSAGE_LEN) below this field's 16 MiB wire max, so this
+        // checks the written header bytes directly rather than
+        // round-tripping through the assembler.
+        let payload = vec![0xCDu8; (1 << 24) - 1];
+        let original = msg(4, 0, 9, 1, payload.clone());
+        let bytes = ChunkWriter::new().write(&original).unwrap();
+
+        // BasicHeader (1 byte, csid 4) + timestamp (3 bytes) precede
+        // message_length (3 bytes, §5.3.1.2.1).
+        let message_length = read_u24_be(&bytes[4..7]);
+        assert_eq!(message_length, (1 << 24) - 1);
     }
 
     #[test]
@@ -1811,7 +1853,7 @@ mod tests {
         // (128 + 128 + 44): Type 0 first chunk, two Type 3 continuations.
         let original = msg(6, 5000, 9, 42, (0u8..=255).cycle().take(300).collect());
         let mut writer = ChunkWriter::new();
-        let bytes = writer.write(&original);
+        let bytes = writer.write(&original).unwrap();
 
         // Sanity: verify the byte stream really contains 3 chunks (1 basic
         // header for csid 6 is 1 byte; Type 0 header is TYPE0_LEN; then 128
@@ -1978,7 +2020,7 @@ mod tests {
 
         let first = msg(csid, 100, 8, 1, vec![0xAA; 10]);
         let mut writer = ChunkWriter::new();
-        let first_bytes = writer.write(&first);
+        let first_bytes = writer.write(&first).unwrap();
         let out = assembler.push(&first_bytes).unwrap();
         assert_eq!(out, vec![first]);
 
@@ -2030,7 +2072,7 @@ mod tests {
         // extended timestamp" edge.
         let original = msg(8, EXTENDED_TIMESTAMP_MARKER + 12345, 9, 2, vec![0x7E; 300]);
         let mut writer = ChunkWriter::new();
-        let bytes = writer.write(&original);
+        let bytes = writer.write(&original).unwrap();
 
         // Sanity: the first chunk's basic header + Type0 header must be
         // TYPE0_LEN + 4 (extended) bytes, and each Type 3 continuation
@@ -2066,7 +2108,7 @@ mod tests {
     fn assembler_partial_feed_split_mid_header_no_drop_or_duplicate() {
         let original = msg(9, 42, 8, 3, vec![0x11; 200]);
         let mut writer = ChunkWriter::new();
-        let bytes = writer.write(&original);
+        let bytes = writer.write(&original).unwrap();
 
         // Split at an arbitrary offset that lands inside the Type 0 header
         // (byte 3 of 11), well before any payload.
@@ -2085,7 +2127,7 @@ mod tests {
     fn assembler_partial_feed_split_mid_payload_no_drop_or_duplicate() {
         let original = msg(10, 42, 8, 3, vec![0x22; 300]);
         let mut writer = ChunkWriter::new();
-        let bytes = writer.write(&original);
+        let bytes = writer.write(&original).unwrap();
 
         // Split partway through the first (128-byte) payload chunk.
         let split_at = 1 + TYPE0_LEN + 60;
@@ -2101,7 +2143,7 @@ mod tests {
     fn assembler_partial_feed_byte_at_a_time_never_drops_or_duplicates() {
         let original = msg(11, 7, 9, 4, vec![0x33; 260]);
         let mut writer = ChunkWriter::new();
-        let bytes = writer.write(&original);
+        let bytes = writer.write(&original).unwrap();
 
         let mut assembler = ChunkAssembler::new();
         let mut collected = Vec::new();
@@ -2159,7 +2201,7 @@ mod tests {
     fn assembler_truncated_input_never_panics_across_many_split_points() {
         let original = msg(12, 99, 8, 5, vec![0x44; 400]);
         let mut writer = ChunkWriter::new();
-        let bytes = writer.write(&original);
+        let bytes = writer.write(&original).unwrap();
 
         // Feed every possible byte-prefix of the stream to a fresh
         // assembler each time: none may panic, and any that do parse fully
@@ -2531,7 +2573,7 @@ mod tests {
 
         let mut writer = ChunkWriter::new();
         writer.set_chunk_size(1);
-        let bytes = writer.write(&original);
+        let bytes = writer.write(&original).unwrap();
 
         let mut assembler = ChunkAssembler::new();
         assembler.set_chunk_size(1);

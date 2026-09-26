@@ -123,7 +123,7 @@ impl Serialize for FlacSpecificBox {
         let mut off = FULL_HDR;
         for b in &self.blocks {
             buf[off] = ((b.last as u8) << 7) | (b.block_type & 0x7F);
-            let len = b.data.len() as u32;
+            let len = broadcast_common::len::fit_u24(b.data.len(), "METADATA_BLOCK_LENGTH")?;
             let lb = len.to_be_bytes();
             buf[off + 1..off + 4].copy_from_slice(&lb[1..]);
             off += METADATA_BLOCK_HDR;
@@ -131,5 +131,55 @@ impl Serialize for FlacSpecificBox {
             off += b.data.len();
         }
         Ok(need)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A metadata block of 16 MiB (2^24) cannot fit the 24-bit
+    /// `METADATA_BLOCK_LENGTH` field (#1129, W17): unfixed, `len as u32` then
+    /// the UI24 writer kept only the low 24 bits, silently truncating the
+    /// declared block length while the full-length payload was still copied.
+    #[test]
+    fn oversized_block_length_errors() {
+        let flac = FlacSpecificBox {
+            version: 0,
+            flags: 0,
+            blocks: alloc::vec![FlacMetadataBlock {
+                last: true,
+                block_type: BLOCK_TYPE_STREAMINFO,
+                data: alloc::vec![0u8; 1 << 24],
+            }],
+        };
+        let err = flac.try_to_bytes().unwrap_err();
+        assert!(
+            matches!(
+                err,
+                Error::FieldOverflow(broadcast_common::len::FieldOverflow {
+                    field: "METADATA_BLOCK_LENGTH",
+                    ..
+                })
+            ),
+            "expected FieldOverflow for METADATA_BLOCK_LENGTH, got {err:?}"
+        );
+    }
+
+    /// The boundary: exactly (2^24 - 1) bytes still round-trips.
+    #[test]
+    fn max_block_length_round_trips() {
+        let flac = FlacSpecificBox {
+            version: 0,
+            flags: 0,
+            blocks: alloc::vec![FlacMetadataBlock {
+                last: true,
+                block_type: BLOCK_TYPE_STREAMINFO,
+                data: alloc::vec![0xABu8; (1 << 24) - 1],
+            }],
+        };
+        let bytes = flac.try_to_bytes().unwrap();
+        let parsed = FlacSpecificBox::parse(&bytes).unwrap();
+        assert_eq!(parsed.blocks[0].data.len(), (1 << 24) - 1);
     }
 }

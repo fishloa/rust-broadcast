@@ -339,7 +339,8 @@ fn write_pairs(pairs: &[(String, Amf0Value)], buf: &mut [u8]) -> Result<usize> {
                 "amf0 object key output",
             ));
         }
-        buf[offset..offset + U16_LEN].copy_from_slice(&(k.len() as u16).to_be_bytes());
+        let key_len = broadcast_common::len::fit_u16(k.len(), "amf0 object key length")?;
+        buf[offset..offset + U16_LEN].copy_from_slice(&key_len.to_be_bytes());
         buf[offset + U16_LEN..offset + key_total].copy_from_slice(k.as_bytes());
         offset += key_total;
         offset += v.serialize_into(&mut buf[offset..])?;
@@ -415,7 +416,8 @@ impl Serialize for Amf0Value {
             }
             Amf0Value::LongString(s) => {
                 marker_byte[0] = marker::LONG_STRING;
-                body[..U32_LEN].copy_from_slice(&(s.len() as u32).to_be_bytes());
+                let len = broadcast_common::len::fit_u32(s.len(), "amf0 long string length")?;
+                body[..U32_LEN].copy_from_slice(&len.to_be_bytes());
                 body[U32_LEN..].copy_from_slice(s.as_bytes());
             }
             Amf0Value::Object(pairs) => {
@@ -426,12 +428,15 @@ impl Serialize for Amf0Value {
             Amf0Value::Undefined => marker_byte[0] = marker::UNDEFINED,
             Amf0Value::EcmaArray(pairs) => {
                 marker_byte[0] = marker::ECMA_ARRAY;
-                body[..U32_LEN].copy_from_slice(&(pairs.len() as u32).to_be_bytes());
+                let count = broadcast_common::len::fit_u32(pairs.len(), "amf0 ECMA array count")?;
+                body[..U32_LEN].copy_from_slice(&count.to_be_bytes());
                 write_pairs(pairs, &mut body[U32_LEN..])?;
             }
             Amf0Value::StrictArray(values) => {
                 marker_byte[0] = marker::STRICT_ARRAY;
-                body[..U32_LEN].copy_from_slice(&(values.len() as u32).to_be_bytes());
+                let count =
+                    broadcast_common::len::fit_u32(values.len(), "amf0 strict array count")?;
+                body[..U32_LEN].copy_from_slice(&count.to_be_bytes());
                 let mut offset = U32_LEN;
                 for v in values {
                     offset += v.serialize_into(&mut body[offset..])?;
@@ -552,6 +557,33 @@ mod tests {
     fn boolean_round_trips() {
         round_trip(&Amf0Value::Boolean(true));
         round_trip(&Amf0Value::Boolean(false));
+    }
+
+    /// An Object key of 65 536 bytes cannot fit its 16-bit length prefix
+    /// (#1129): unfixed, `(k.len() as u16)` silently wrapped 65536 to 0
+    /// while the full key bytes were still written, misframing the object.
+    #[test]
+    fn object_oversized_key_length_errors() {
+        let key = "k".repeat(65536);
+        let value = Amf0Value::Object(vec![(key, Amf0Value::Null)]);
+        let err = value.try_to_bytes().unwrap_err();
+        assert!(
+            matches!(
+                err,
+                RtmpError::FieldOverflow(broadcast_common::len::FieldOverflow {
+                    field: "amf0 object key length",
+                    ..
+                })
+            ),
+            "expected FieldOverflow for amf0 object key length, got {err:?}"
+        );
+    }
+
+    /// The boundary: exactly 65 535 bytes (u16::MAX) still round-trips.
+    #[test]
+    fn object_max_key_length_round_trips() {
+        let key = "k".repeat(65535);
+        round_trip(&Amf0Value::Object(vec![(key, Amf0Value::Null)]));
     }
 
     #[test]

@@ -4,6 +4,15 @@ All notable changes to this crate will be documented in this file.
 
 ## [Unreleased]
 
+### Changed (breaking)
+- Serializers now return an error, instead of silently truncating, when a length or count does
+  not fit its wire field (#1129). `Error` gains a new `FieldOverflow` variant.
+
+### Fixed
+- `GenericNack`/`RttEcho` no longer silently truncate the RTCP `length` field (16 bits) when the
+  packet's word count exceeds it — the FCI/padding is still fully written, so the old code
+  emitted a misframed packet with `Ok` (#1129).
+
 ## [0.2.0] - 2026-09-26
 
 ### Security

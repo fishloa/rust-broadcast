@@ -220,6 +220,13 @@ pub enum Error {
         cap: usize,
     },
 
+    /// A length or count did not fit the wire field it is written to (#1129):
+    /// a serializer that narrowed a `usize` with `as u8`/`as u16`/`as u32` (or
+    /// masked it) would have silently wrapped and emitted a misframed box or
+    /// section; this is returned instead.
+    #[error(transparent)]
+    FieldOverflow(#[from] broadcast_common::len::FieldOverflow),
+
     /// The input needs a feature this crate does not implement yet.
     ///
     /// Distinct from [`Error::UnsupportedCodec`]/[`Error::UnsupportedCencScheme`]

@@ -521,11 +521,14 @@ impl Serialize for SampleGroupDescriptionBox {
             buf[c..c + 4].copy_from_slice(&effective_dl.to_be_bytes());
             c += 4;
         }
-        buf[c..c + 4].copy_from_slice(&(self.entries.len() as u32).to_be_bytes());
+        let entry_count = broadcast_common::len::fit_u32(self.entries.len(), "entry_count")?;
+        buf[c..c + 4].copy_from_slice(&entry_count.to_be_bytes());
         c += 4;
         for entry in &self.entries {
             if per_entry_prefix {
-                buf[c..c + 4].copy_from_slice(&(entry.wire_len() as u32).to_be_bytes());
+                let description_length =
+                    broadcast_common::len::fit_u32(entry.wire_len(), "description_length")?;
+                buf[c..c + 4].copy_from_slice(&description_length.to_be_bytes());
                 c += 4;
             }
             match entry {
@@ -729,7 +732,8 @@ impl Serialize for SampleToGroupBox {
             buf[c..c + 4].copy_from_slice(&gtp.to_be_bytes());
             c += 4;
         }
-        buf[c..c + 4].copy_from_slice(&(self.entries.len() as u32).to_be_bytes());
+        let entry_count = broadcast_common::len::fit_u32(self.entries.len(), "entry_count")?;
+        buf[c..c + 4].copy_from_slice(&entry_count.to_be_bytes());
         c += 4;
         for entry in &self.entries {
             buf[c..c + 4].copy_from_slice(&entry.sample_count.to_be_bytes());
@@ -944,19 +948,26 @@ impl Serialize for SubSampleInformationBox {
         buf[c + 2] = fb[2];
         buf[c + 3] = fb[3];
         c += 4;
-        buf[c..c + 4].copy_from_slice(&(self.entries.len() as u32).to_be_bytes());
+        let entry_count = broadcast_common::len::fit_u32(self.entries.len(), "entry_count")?;
+        buf[c..c + 4].copy_from_slice(&entry_count.to_be_bytes());
         c += 4;
         for entry in &self.entries {
             buf[c..c + 4].copy_from_slice(&entry.sample_delta.to_be_bytes());
             c += 4;
-            buf[c..c + 2].copy_from_slice(&(entry.subsamples.len() as u16).to_be_bytes());
+            let subsample_count =
+                broadcast_common::len::fit_u16(entry.subsamples.len(), "subsample_count")?;
+            buf[c..c + 2].copy_from_slice(&subsample_count.to_be_bytes());
             c += 2;
             for ss in &entry.subsamples {
                 if self.version == 1 {
                     buf[c..c + 4].copy_from_slice(&ss.subsample_size.to_be_bytes());
                     c += 4;
                 } else {
-                    buf[c..c + 2].copy_from_slice(&(ss.subsample_size as u16).to_be_bytes());
+                    let subsample_size = broadcast_common::len::fit_u16(
+                        ss.subsample_size as usize,
+                        "subsample_size",
+                    )?;
+                    buf[c..c + 2].copy_from_slice(&subsample_size.to_be_bytes());
                     c += 2;
                 }
                 buf[c] = ss.subsample_priority;
@@ -1159,5 +1170,96 @@ mod tests {
         let bytes = b.to_bytes();
         let parsed = SubSampleInformationBox::parse(&bytes).unwrap();
         assert_eq!(parsed, b);
+    }
+
+    fn subsample(size: u32) -> SubSampleDescriptor {
+        SubSampleDescriptor {
+            subsample_size: size,
+            subsample_priority: 0,
+            discardable: 0,
+            codec_specific_parameters: 0,
+        }
+    }
+
+    /// A version-0 `subsample_size` past `u16::MAX` cannot fit its wire field
+    /// (#1129): unfixed, `(ss.subsample_size as u16)` silently truncated it.
+    #[test]
+    fn subs_v0_oversized_subsample_size_errors() {
+        let subs = SubSampleInformationBox {
+            version: 0,
+            flags: 0,
+            entries: alloc::vec![SubsEntry {
+                sample_delta: 1,
+                subsamples: alloc::vec![subsample(65536)],
+            }],
+        };
+        let err = subs.try_to_bytes().unwrap_err();
+        assert!(
+            matches!(
+                err,
+                Error::FieldOverflow(broadcast_common::len::FieldOverflow {
+                    field: "subsample_size",
+                    ..
+                })
+            ),
+            "expected FieldOverflow for subsample_size, got {err:?}"
+        );
+    }
+
+    /// The boundary: exactly `u16::MAX` still round-trips in version 0.
+    #[test]
+    fn subs_v0_max_subsample_size_round_trips() {
+        let subs = SubSampleInformationBox {
+            version: 0,
+            flags: 0,
+            entries: alloc::vec![SubsEntry {
+                sample_delta: 1,
+                subsamples: alloc::vec![subsample(65535)],
+            }],
+        };
+        let bytes = subs.try_to_bytes().unwrap();
+        let parsed = SubSampleInformationBox::parse(&bytes).unwrap();
+        assert_eq!(parsed.entries[0].subsamples[0].subsample_size, 65535);
+    }
+
+    /// An entry with more than 65 535 subsamples cannot fit the 16-bit
+    /// `subsample_count` field (#1129): unfixed, `.len() as u16` wrapped.
+    #[test]
+    fn subs_oversized_subsample_count_errors() {
+        let subs = SubSampleInformationBox {
+            version: 1,
+            flags: 0,
+            entries: alloc::vec![SubsEntry {
+                sample_delta: 1,
+                subsamples: (0..65536).map(|_| subsample(1)).collect(),
+            }],
+        };
+        let err = subs.try_to_bytes().unwrap_err();
+        assert!(
+            matches!(
+                err,
+                Error::FieldOverflow(broadcast_common::len::FieldOverflow {
+                    field: "subsample_count",
+                    ..
+                })
+            ),
+            "expected FieldOverflow for subsample_count, got {err:?}"
+        );
+    }
+
+    /// The boundary: exactly 65 535 subsamples still round-trips.
+    #[test]
+    fn subs_max_subsample_count_round_trips() {
+        let subs = SubSampleInformationBox {
+            version: 1,
+            flags: 0,
+            entries: alloc::vec![SubsEntry {
+                sample_delta: 1,
+                subsamples: (0..65535).map(|_| subsample(1)).collect(),
+            }],
+        };
+        let bytes = subs.try_to_bytes().unwrap();
+        let parsed = SubSampleInformationBox::parse(&bytes).unwrap();
+        assert_eq!(parsed.entries[0].subsamples.len(), 65535);
     }
 }

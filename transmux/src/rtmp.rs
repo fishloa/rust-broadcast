@@ -196,6 +196,10 @@ pub enum RtmpError {
     },
     /// FLV routing of the reassembled A/V bodies failed.
     Flv(FlvError),
+    /// A length or count did not fit the wire field it is written to (#1129):
+    /// a chunk `message_length` or FLV `DataSize` (both UI24) that would have
+    /// silently wrapped past 16 MiB.
+    FieldOverflow(broadcast_common::len::FieldOverflow),
 }
 
 impl fmt::Display for RtmpError {
@@ -243,6 +247,7 @@ impl fmt::Display for RtmpError {
                 "RTMP incomplete message on csid {csid}: declared {declared}, collected {collected}"
             ),
             RtmpError::Flv(e) => write!(f, "RTMP FLV routing: {e}"),
+            RtmpError::FieldOverflow(e) => write!(f, "RTMP {e}"),
         }
     }
 }
@@ -253,6 +258,12 @@ impl std::error::Error for RtmpError {}
 impl From<FlvError> for RtmpError {
     fn from(e: FlvError) -> Self {
         RtmpError::Flv(e)
+    }
+}
+
+impl From<broadcast_common::len::FieldOverflow> for RtmpError {
+    fn from(e: broadcast_common::len::FieldOverflow) -> Self {
+        RtmpError::FieldOverflow(e)
     }
 }
 
@@ -924,10 +935,16 @@ pub struct Message {
 ///
 /// The first chunk of each message uses fmt 0 (full header); continuation chunks
 /// use fmt 3. Returns the serialized chunk bytes.
-pub fn write_chunks(messages: &[Message], chunk_size: usize) -> Vec<u8> {
+///
+/// # Errors
+///
+/// Returns [`RtmpError::FieldOverflow`] if a message body is 16 MiB (2^24) or
+/// larger — `message_length` is a UI24 field (§5.3.1.2) and cannot represent it.
+pub fn write_chunks(messages: &[Message], chunk_size: usize) -> Result<Vec<u8>, RtmpError> {
     let chunk_size = chunk_size.max(1);
     let mut out = Vec::new();
     for m in messages {
+        let message_length = broadcast_common::len::fit_u24(m.body.len(), "message_length")?;
         let mut body_off = 0;
         let mut first = true;
         loop {
@@ -936,7 +953,7 @@ pub fn write_chunks(messages: &[Message], chunk_size: usize) -> Vec<u8> {
             if first {
                 let mh = MessageHeader {
                     timestamp: m.timestamp,
-                    message_length: m.body.len() as u32,
+                    message_length,
                     message_type_id: m.message_type_id,
                     message_stream_id: m.message_stream_id,
                 };
@@ -955,7 +972,7 @@ pub fn write_chunks(messages: &[Message], chunk_size: usize) -> Vec<u8> {
             }
         }
     }
-    out
+    Ok(out)
 }
 
 /// Per-csid decode state carried across chunks (§5.3.1.2 inheritance).
@@ -1138,7 +1155,16 @@ const FLV_TAG_SCRIPT: u8 = msg_type::DATA_AMF0;
 /// Build an FLV byte stream from A/V (and script) tag bodies with timestamps.
 /// `(tag_type, timestamp_ms, body)` — the body is exactly an FLV tag payload
 /// (which for A/V equals the RTMP message body).
-fn build_flv(tags: &[(u8, u32, Vec<u8>)], has_video: bool, has_audio: bool) -> Vec<u8> {
+///
+/// # Errors
+///
+/// Returns [`RtmpError::FieldOverflow`] if a tag body is 16 MiB (2^24) or
+/// larger — `DataSize` is a UI24 field (§E.4.1) and cannot represent it.
+fn build_flv(
+    tags: &[(u8, u32, Vec<u8>)],
+    has_video: bool,
+    has_audio: bool,
+) -> Result<Vec<u8>, RtmpError> {
     let mut out = Vec::new();
     out.extend_from_slice(&FLV_SIGNATURE);
     out.push(FLV_VERSION);
@@ -1155,7 +1181,8 @@ fn build_flv(tags: &[(u8, u32, Vec<u8>)], has_video: bool, has_audio: bool) -> V
     for (tag_type, ts, body) in tags {
         let start = out.len();
         out.push(*tag_type);
-        write_u24(&mut out, body.len() as u32);
+        let data_size = broadcast_common::len::fit_u24(body.len(), "DataSize")?;
+        write_u24(&mut out, data_size);
         // Timestamp UI24 + extended high byte.
         out.push((*ts >> 16) as u8);
         out.push((*ts >> 8) as u8);
@@ -1166,7 +1193,7 @@ fn build_flv(tags: &[(u8, u32, Vec<u8>)], has_video: bool, has_audio: bool) -> V
         let tag_size = (out.len() - start) as u32;
         out.extend_from_slice(&tag_size.to_be_bytes());
     }
-    out
+    Ok(out)
 }
 
 /// Walk an FLV byte stream into `(tag_type, timestamp_ms, body)` tags (§E.4.1).
@@ -1257,7 +1284,7 @@ impl<'a> Unpackage for RtmpDemux<'a> {
                 _ => { /* control / command / user-control — not media */ }
             }
         }
-        let flv = build_flv(&tags, has_video, has_audio);
+        let flv = build_flv(&tags, has_video, has_audio)?;
         let mut demux = FlvDemux::new();
         demux.unpackage(&flv).map_err(RtmpError::Flv)
     }
@@ -1334,7 +1361,7 @@ impl Package for RtmpMux {
                 body,
             });
         }
-        Ok(write_chunks(&messages, self.chunk_size))
+        write_chunks(&messages, self.chunk_size)
     }
 }
 
@@ -1444,5 +1471,79 @@ mod tests {
         let msgs = read_chunks(&input).expect("fmt-3 must continue the message");
         assert_eq!(msgs.len(), 1);
         assert_eq!(msgs[0].body, body);
+    }
+
+    /// A 16 MiB (2^24) message body cannot fit the 24-bit `message_length`
+    /// field (#1129): unfixed, `m.body.len() as u32` then `write_u24` kept
+    /// only the low 24 bits, silently misframing the chunk header.
+    #[test]
+    fn write_chunks_oversized_body_errors() {
+        let messages = alloc::vec![Message {
+            csid: 4,
+            message_type_id: msg_type::VIDEO,
+            message_stream_id: 1,
+            timestamp: 0,
+            body: alloc::vec![0u8; 1 << 24],
+        }];
+        let err = write_chunks(&messages, DEFAULT_CHUNK_SIZE).unwrap_err();
+        assert!(
+            matches!(
+                err,
+                RtmpError::FieldOverflow(broadcast_common::len::FieldOverflow {
+                    field: "message_length",
+                    ..
+                })
+            ),
+            "expected FieldOverflow for message_length, got {err:?}"
+        );
+    }
+
+    /// The boundary: exactly (2^24 - 1) bytes still writes and reassembles.
+    /// A `Set Chunk Size` control message ahead of it raises the reader's
+    /// reassembly size to match (§5.4.1), so this is a single chunk on the
+    /// wire (the field-width boundary under test, not the unrelated
+    /// chunk-splitting loop).
+    #[test]
+    fn write_chunks_max_body_round_trips() {
+        let body = alloc::vec![0xAAu8; (1 << 24) - 1];
+        let big_chunk_size = body.len();
+        let messages = alloc::vec![
+            Message {
+                csid: 2,
+                message_type_id: msg_type::SET_CHUNK_SIZE,
+                message_stream_id: 0,
+                timestamp: 0,
+                body: ProtocolControl::SetChunkSize(big_chunk_size as u32).to_body(),
+            },
+            Message {
+                csid: 4,
+                message_type_id: msg_type::VIDEO,
+                message_stream_id: 1,
+                timestamp: 0,
+                body: body.clone(),
+            },
+        ];
+        let wire = write_chunks(&messages, big_chunk_size).unwrap();
+        let msgs = read_chunks(&wire).unwrap();
+        assert_eq!(msgs.len(), 2);
+        assert_eq!(msgs[1].body, body);
+    }
+
+    /// The same UI24 `DataSize` overflow, via the FLV bridge `build_flv`
+    /// (unpackage path).
+    #[test]
+    fn build_flv_oversized_tag_errors() {
+        let tags = alloc::vec![(FLV_TAG_VIDEO, 0u32, alloc::vec![0u8; 1 << 24])];
+        let err = build_flv(&tags, true, false).unwrap_err();
+        assert!(
+            matches!(
+                err,
+                RtmpError::FieldOverflow(broadcast_common::len::FieldOverflow {
+                    field: "DataSize",
+                    ..
+                })
+            ),
+            "expected FieldOverflow for DataSize, got {err:?}"
+        );
     }
 }

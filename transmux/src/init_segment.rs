@@ -847,7 +847,8 @@ impl Serialize for DataReferenceBox {
         let fb = self.flags.to_be_bytes();
         buf[c..c + 3].copy_from_slice(&fb[1..]);
         c += 3;
-        buf[c..c + 4].copy_from_slice(&(self.entries.len() as u32).to_be_bytes());
+        let entry_count = broadcast_common::len::fit_u32(self.entries.len(), "entry_count")?;
+        buf[c..c + 4].copy_from_slice(&entry_count.to_be_bytes());
         c += 4;
         for entry in &self.entries {
             c += entry.serialize_into(&mut buf[c..])?;
@@ -1024,7 +1025,8 @@ impl Serialize for SampleToChunkBox {
         let fb = self.flags.to_be_bytes();
         buf[c..c + 3].copy_from_slice(&fb[1..]);
         c += 3;
-        buf[c..c + 4].copy_from_slice(&(self.entries.len() as u32).to_be_bytes());
+        let entry_count = broadcast_common::len::fit_u32(self.entries.len(), "entry_count")?;
+        buf[c..c + 4].copy_from_slice(&entry_count.to_be_bytes());
         c += 4;
         for entry in &self.entries {
             buf[c..c + 4].copy_from_slice(&entry.first_chunk.to_be_bytes());
@@ -1135,7 +1137,8 @@ impl Serialize for SampleSizeBox {
         c += 3;
         buf[c..c + 4].copy_from_slice(&self.sample_size.to_be_bytes());
         c += 4;
-        buf[c..c + 4].copy_from_slice(&(count as u32).to_be_bytes());
+        let sample_count = broadcast_common::len::fit_u32(count, "sample_count")?;
+        buf[c..c + 4].copy_from_slice(&sample_count.to_be_bytes());
         c += 4;
         for &sz in &self.entries {
             buf[c..c + 4].copy_from_slice(&sz.to_be_bytes());
@@ -1221,7 +1224,8 @@ impl Serialize for ChunkOffsetBox {
         let fb = self.flags.to_be_bytes();
         buf[c..c + 3].copy_from_slice(&fb[1..]);
         c += 3;
-        buf[c..c + 4].copy_from_slice(&(self.entries.len() as u32).to_be_bytes());
+        let entry_count = broadcast_common::len::fit_u32(self.entries.len(), "entry_count")?;
+        buf[c..c + 4].copy_from_slice(&entry_count.to_be_bytes());
         c += 4;
         for entry in &self.entries {
             buf[c..c + 4].copy_from_slice(&entry.to_be_bytes());
@@ -1314,7 +1318,8 @@ impl Serialize for ChunkLargeOffsetBox {
         let fb = self.flags.to_be_bytes();
         buf[c..c + 3].copy_from_slice(&fb[1..]);
         c += 3;
-        buf[c..c + 4].copy_from_slice(&(self.entries.len() as u32).to_be_bytes());
+        let entry_count = broadcast_common::len::fit_u32(self.entries.len(), "entry_count")?;
+        buf[c..c + 4].copy_from_slice(&entry_count.to_be_bytes());
         c += 4;
         for entry in &self.entries {
             buf[c..c + 8].copy_from_slice(&entry.to_be_bytes());
@@ -1404,7 +1409,8 @@ impl Serialize for SyncSampleBox {
         let fb = self.flags.to_be_bytes();
         buf[c..c + 3].copy_from_slice(&fb[1..]);
         c += 3;
-        buf[c..c + 4].copy_from_slice(&(self.entries.len() as u32).to_be_bytes());
+        let entry_count = broadcast_common::len::fit_u32(self.entries.len(), "entry_count")?;
+        buf[c..c + 4].copy_from_slice(&entry_count.to_be_bytes());
         c += 4;
         for entry in &self.entries {
             buf[c..c + 4].copy_from_slice(&entry.to_be_bytes());
@@ -2163,7 +2169,8 @@ impl Serialize for SampleDescriptionBox {
         let fb = self.flags.to_be_bytes();
         buf[c..c + 3].copy_from_slice(&fb[1..]);
         c += 3;
-        buf[c..c + 4].copy_from_slice(&(self.entries.len() as u32).to_be_bytes());
+        let entry_count = broadcast_common::len::fit_u32(self.entries.len(), "entry_count")?;
+        buf[c..c + 4].copy_from_slice(&entry_count.to_be_bytes());
         c += 4;
         for e in &self.entries {
             c += match e {

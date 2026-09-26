@@ -69,7 +69,7 @@ fn extract_attr(xml: &str, attr: &str) -> String {
 #[test]
 fn playready_pro_structure_parses_back() {
     let la = "https://la.example.com/rights";
-    let pro = playready_pro(&[KID_A], Some(la));
+    let pro = playready_pro(&[KID_A], Some(la)).unwrap();
 
     // u32 LE length == buffer length.
     let declared_len = u32::from_le_bytes([pro[0], pro[1], pro[2], pro[3]]) as usize;
@@ -99,7 +99,7 @@ fn playready_pro_structure_parses_back() {
     assert!(wrm.contains(&expected_value), "KID VALUE present");
 
     // Mutating a KID changes the output bytes.
-    let pro2 = playready_pro(&[KID_B], Some(la));
+    let pro2 = playready_pro(&[KID_B], Some(la)).unwrap();
     assert_ne!(pro, pro2);
 }
 
@@ -231,7 +231,7 @@ fn widevine_pssh_box_round_trip() {
 
 #[test]
 fn playready_pssh_box_round_trip() {
-    let pssh = playready_pssh(&[KID_A, KID_B], Some("https://la.example.com"));
+    let pssh = playready_pssh(&[KID_A, KID_B], Some("https://la.example.com")).unwrap();
     let bytes = pssh.to_vec().unwrap();
 
     let size = u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) as usize;

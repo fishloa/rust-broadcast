@@ -7,6 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed (breaking)
+- Serializers now return an error, instead of silently truncating, when a length, count, or
+  offset does not fit its wire field (#1129). `Error` gains a new `FieldOverflow` variant; several
+  previously-infallible builders (`transmux::rtmp::write_chunks`, `MessageHeader::write_into`,
+  `OutTag::write_into`, `HevcNalUnit`/`HevcNalArray::serialize_into`, `drm::playready_pro`/
+  `playready_pssh`) now return `Result` for the same reason.
+
+### Fixed
+- `avcC`/`hvcC` NALU-array serializers no longer silently wrap `numOfSequenceParameterSets`
+  (5-bit), `numOfArrays`/`numOfPictureParameterSets`/`numOfSequenceParameterSetExt` (8-bit), or a
+  NALU/config length (16-bit) past their field width while still emitting every entry (#1129).
+- `mhaC` (`mpegh3daConfigLength`), `vpcC` (`codecIntializationDataSize`), `dfLa` (24-bit
+  `METADATA_BLOCK_LENGTH`, issue-run W17), and `esds` (`URLstring` length) config records now
+  reject an oversized field instead of misframing (#1129).
+- RTMP `ChunkWriter`/FLV muxer no longer silently truncate a 24-bit `message_length`/`DataSize`
+  past 16 MiB, and AMF0 object/ECMA-array key/string/count fields are range-checked (#1129).
+- CENC `senc` (`sample_count`, `subsample_count`), `saio` (`entry_count`, v0 32-bit offset),
+  `saiz` (`sample_count`), `pssh` (`KID_count`, `DataSize`), `tenc` (`default_constant_IV_size`),
+  and the `subs`/`sgpd`/`sbgp` sample-group boxes' `entry_count`/`subsample_count`/
+  `subsample_size` fields are now range-checked (#1129).
+- The PMT `section_length` is now bounded to 1021 bytes (§2.4.4.4) and returns
+  `Error::BufferCapExceeded` instead of masking the 12-bit field and emitting an out-of-spec or
+  (past 4095 bytes) wrapped section (#1129).
+- `sidx`'s version-0 `earliest_presentation_time`/`first_offset` (32-bit) and its per-reference
+  31-bit `referenced_size`/28-bit `sap_delta_time`, and `elst`'s version-0
+  `segment_duration`/`media_time` (32-bit), are now range-checked instead of silently masked or
+  narrowed (#1129).
+- `trun`/`stsz`/`dref`/`stsc`/`stco`/`co64`/`stss`/`stsd` box `sample_count`/`entry_count` fields
+  are now range-checked before narrowing to their 32-bit wire field (#1129).
+
 ## [0.24.2] - 2026-09-25
 
 ### Security

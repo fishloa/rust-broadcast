@@ -278,13 +278,17 @@ impl Serialize for AVCDecoderConfigurationRecord {
         cursor += 1;
 
         // reserved(3) + numOfSequenceParameterSets(5): reserved bits = all-ones
-        let num_sps = self.sps.len();
-        buf[cursor] = 0xE0 | ((num_sps as u8) & 0x1F);
+        let num_sps = broadcast_common::len::fit_bits(
+            self.sps.len() as u64,
+            5,
+            "numOfSequenceParameterSets",
+        )?;
+        buf[cursor] = 0xE0 | (num_sps as u8);
         cursor += 1;
 
         // SPS array
         for sps in &self.sps {
-            let len = sps.0.len() as u16;
+            let len = broadcast_common::len::fit_u16(sps.0.len(), "sps NALU length")?;
             buf[cursor..cursor + 2].copy_from_slice(&len.to_be_bytes());
             cursor += 2;
             buf[cursor..cursor + sps.0.len()].copy_from_slice(&sps.0);
@@ -292,13 +296,13 @@ impl Serialize for AVCDecoderConfigurationRecord {
         }
 
         // numOfPictureParameterSets
-        let num_pps = self.pps.len();
-        buf[cursor] = num_pps as u8;
+        let num_pps = broadcast_common::len::fit_u8(self.pps.len(), "numOfPictureParameterSets")?;
+        buf[cursor] = num_pps;
         cursor += 1;
 
         // PPS array
         for pps in &self.pps {
-            let len = pps.0.len() as u16;
+            let len = broadcast_common::len::fit_u16(pps.0.len(), "pps NALU length")?;
             buf[cursor..cursor + 2].copy_from_slice(&len.to_be_bytes());
             cursor += 2;
             buf[cursor..cursor + pps.0.len()].copy_from_slice(&pps.0);
@@ -320,13 +324,14 @@ impl Serialize for AVCDecoderConfigurationRecord {
             cursor += 1;
 
             // numOfSequenceParameterSetExt
-            let num_sps_ext = self.sps_ext.len();
-            buf[cursor] = num_sps_ext as u8;
+            let num_sps_ext =
+                broadcast_common::len::fit_u8(self.sps_ext.len(), "numOfSequenceParameterSetExt")?;
+            buf[cursor] = num_sps_ext;
             cursor += 1;
 
             // SPSExt array
             for sps_ext in &self.sps_ext {
-                let len = sps_ext.0.len() as u16;
+                let len = broadcast_common::len::fit_u16(sps_ext.0.len(), "sps_ext NALU length")?;
                 buf[cursor..cursor + 2].copy_from_slice(&len.to_be_bytes());
                 cursor += 2;
                 buf[cursor..cursor + sps_ext.0.len()].copy_from_slice(&sps_ext.0);
@@ -704,5 +709,85 @@ mod tests {
             ),
             "0 SPS must be a structured InvalidValue error, not silently accepted: {err:?}"
         );
+    }
+
+    fn base_record(sps: Vec<AvcSps>) -> AVCDecoderConfigurationRecord {
+        AVCDecoderConfigurationRecord {
+            configuration_version: 1,
+            profile_indication: 0x42,
+            profile_compatibility: 0,
+            level_indication: 0x1F,
+            length_size_minus_one: 3,
+            sps,
+            pps: alloc::vec![],
+            chroma_format: None,
+            bit_depth_luma_minus8: None,
+            bit_depth_chroma_minus8: None,
+            sps_ext: alloc::vec![],
+        }
+    }
+
+    /// An SPS NALU of 65 536 bytes cannot fit the 16-bit `len` prefix
+    /// (#1129): on the unfixed code this wrapped to 0 with `Ok` (see
+    /// `prefix_test_oversized_sps_wraps_silently_unfixed`, observed pre-fix:
+    /// `len_prefix == 0`, no error). Fixed code must reject it instead.
+    #[test]
+    fn oversized_sps_nalu_length_errors() {
+        let rec = base_record(alloc::vec![AvcSps(alloc::vec![0xAAu8; 65536])]);
+        let err = rec.try_to_bytes().unwrap_err();
+        assert!(
+            matches!(
+                err,
+                Error::FieldOverflow(broadcast_common::len::FieldOverflow {
+                    field: "sps NALU length",
+                    ..
+                })
+            ),
+            "expected FieldOverflow for sps NALU length, got {err:?}"
+        );
+    }
+
+    /// The boundary: exactly 65 535 bytes (u16::MAX) still serializes and
+    /// round-trips.
+    #[test]
+    fn max_sps_nalu_length_round_trips() {
+        let rec = base_record(alloc::vec![AvcSps(alloc::vec![0xAAu8; 65535])]);
+        let bytes = rec.try_to_bytes().unwrap();
+        let len_prefix = u16::from_be_bytes([bytes[6], bytes[7]]);
+        assert_eq!(len_prefix, 65535);
+        let parsed = AVCDecoderConfigurationRecord::parse(&bytes).unwrap();
+        assert_eq!(parsed.sps[0].0.len(), 65535);
+    }
+
+    /// A 32-entry SPS array cannot fit the 5-bit `numOfSequenceParameterSets`
+    /// field (max 31, #1129): the unfixed code masked with `& 0x1F`, so 32
+    /// wrapped to a written count of 0 while all 32 entries were still
+    /// emitted (misframed output with `Ok`).
+    #[test]
+    fn too_many_sps_entries_errors() {
+        let sps: Vec<AvcSps> = (0..32).map(|_| AvcSps(alloc::vec![0x67])).collect();
+        let rec = base_record(sps);
+        let err = rec.try_to_bytes().unwrap_err();
+        assert!(
+            matches!(
+                err,
+                Error::FieldOverflow(broadcast_common::len::FieldOverflow {
+                    field: "numOfSequenceParameterSets",
+                    ..
+                })
+            ),
+            "expected FieldOverflow for numOfSequenceParameterSets, got {err:?}"
+        );
+    }
+
+    /// The boundary: exactly 31 SPS entries (max for a 5-bit field) still
+    /// serializes and round-trips.
+    #[test]
+    fn max_sps_entries_round_trips() {
+        let sps: Vec<AvcSps> = (0..31).map(|_| AvcSps(alloc::vec![0x67])).collect();
+        let rec = base_record(sps);
+        let bytes = rec.try_to_bytes().unwrap();
+        let parsed = AVCDecoderConfigurationRecord::parse(&bytes).unwrap();
+        assert_eq!(parsed.sps.len(), 31);
     }
 }

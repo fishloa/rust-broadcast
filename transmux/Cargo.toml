@@ -13,7 +13,7 @@ readme       = "README.md"
 [dependencies]
 # Floored at 9.2: `cenc::CencScheme` and `hex::hex_encode` (the definitions this
 # crate re-exports, shared with `broadcast-hls` — issue #878) landed there.
-broadcast-common = { path = "../broadcast-common", version = "9.3", default-features = false }
+broadcast-common = { path = "../broadcast-common", version = "9.4", default-features = false }
 thiserror  = { version = "2", default-features = false }
 serde      = { version = "1", default-features = false, features = ["derive", "alloc"], optional = true }
 # HLS (M3U8) playlist syntax (issue #878): the `ts_hls`/`ll_hls` segmenters
