@@ -27,7 +27,8 @@ use std::fs;
 use std::path::Path;
 
 use broadcast_hls::{
-    EncryptionMethod, MasterPlaylist, MediaPlaylist, PlaylistType, SessionDataContent,
+    DecimalSeconds, EncryptionMethod, MasterPlaylist, MediaPlaylist, PlaylistType,
+    SessionDataContent,
 };
 
 /// All 32 tags RFC 8216bis §4.4 defines, per `docs/playlist-tags.md`'s "Tag
@@ -215,13 +216,17 @@ fn typed_tags_populate_their_struct_field_on_parse() {
         .low_latency
         .as_ref()
         .expect("EXT-X-PART-INF/SERVER-CONTROL must set low_latency");
-    assert_eq!(ll.part_target, 0.5, "EXT-X-PART-INF");
+    assert_eq!(
+        ll.part_target,
+        DecimalSeconds::new(0.5).unwrap(),
+        "EXT-X-PART-INF"
+    );
     assert!(ll.can_block_reload, "EXT-X-SERVER-CONTROL");
 
     // §4.4.4 Media Segment Tags.
     assert_eq!(mp.segments.len(), 1, "exactly one segment expected");
     let seg = &mp.segments[0];
-    assert_eq!(seg.duration, 6.0, "EXTINF");
+    assert_eq!(seg.duration, DecimalSeconds::new(6.0).unwrap(), "EXTINF");
     assert_eq!(
         seg.byte_range.map(|br| (br.length, br.offset)),
         Some((1000, Some(0))),

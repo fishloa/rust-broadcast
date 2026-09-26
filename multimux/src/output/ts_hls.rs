@@ -286,12 +286,12 @@ mod tests {
             segments: vec![
                 broadcast_hls::MediaSegment {
                     uri: "seg-1-1.ts".to_string(),
-                    duration: 4.2,
+                    duration: broadcast_hls::DecimalSeconds::new(4.2).unwrap(),
                     ..Default::default()
                 },
                 broadcast_hls::MediaSegment {
                     uri: "seg-1-2.ts".to_string(),
-                    duration: 4.2,
+                    duration: broadcast_hls::DecimalSeconds::new(4.2).unwrap(),
                     ..Default::default()
                 },
             ],

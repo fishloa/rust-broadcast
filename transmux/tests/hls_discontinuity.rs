@@ -14,7 +14,7 @@
 //! 4. **Placement** — the tag immediately precedes `#EXTINF` (and any
 //!    `EXT-X-MAP`-like prefix), never appears after it.
 
-use broadcast_hls::{MediaPlaylist, MediaSegment, mark_init_discontinuities};
+use broadcast_hls::{DecimalSeconds, MediaPlaylist, MediaSegment, mark_init_discontinuities};
 use transmux::{
     AVCConfigurationBox, AVCDecoderConfigurationRecord, CodecConfig, Sample, SegmentMeta,
     Segmenter, TrackSpec,
@@ -111,21 +111,21 @@ fn autodetect_init_change_marks_discontinuity() {
 
     let mut seg0 = MediaSegment {
         uri: "s0.m4s".into(),
-        duration: 1.0,
+        duration: DecimalSeconds::new(1.0).unwrap(),
         discontinuous: false,
         parts: vec![],
         ..Default::default()
     };
     let mut seg1 = MediaSegment {
         uri: "s1.m4s".into(),
-        duration: 1.0,
+        duration: DecimalSeconds::new(1.0).unwrap(),
         discontinuous: false,
         parts: vec![],
         ..Default::default()
     };
     let mut seg2 = MediaSegment {
         uri: "s2.m4s".into(),
-        duration: 1.0,
+        duration: DecimalSeconds::new(1.0).unwrap(),
         discontinuous: false,
         parts: vec![],
         ..Default::default()
@@ -194,21 +194,21 @@ fn autodetect_init_change_marks_discontinuity() {
     // --- Negative case: all-identical init produces no tag ---
     let mut seg_x = MediaSegment {
         uri: "x0.m4s".into(),
-        duration: 1.0,
+        duration: DecimalSeconds::new(1.0).unwrap(),
         discontinuous: false,
         parts: vec![],
         ..Default::default()
     };
     let mut seg_y = MediaSegment {
         uri: "x1.m4s".into(),
-        duration: 1.0,
+        duration: DecimalSeconds::new(1.0).unwrap(),
         discontinuous: false,
         parts: vec![],
         ..Default::default()
     };
     let mut seg_z = MediaSegment {
         uri: "x2.m4s".into(),
-        duration: 1.0,
+        duration: DecimalSeconds::new(1.0).unwrap(),
         discontinuous: false,
         parts: vec![],
         ..Default::default()
@@ -328,7 +328,7 @@ fn explicit_mark_discontinuity_bites() {
         .enumerate()
         .map(|(i, (_bytes, meta))| MediaSegment {
             uri: format!("s{i}.m4s"),
-            duration: 1.0,
+            duration: DecimalSeconds::new(1.0).unwrap(),
             discontinuous: meta.discontinuous,
             parts: vec![],
             ..Default::default()
@@ -413,7 +413,7 @@ fn discontinuity_sequence_increments_as_segments_roll_off() {
 
     let seg = |uri: &str| MediaSegment {
         uri: uri.into(),
-        duration: 6.0,
+        duration: DecimalSeconds::new(6.0).unwrap(),
         discontinuous: false,
         parts: vec![],
         ..Default::default()
@@ -472,28 +472,28 @@ fn discontinuity_tag_placement_immediately_before_extinf() {
         segments: vec![
             MediaSegment {
                 uri: "s0.m4s".into(),
-                duration: 6.0,
+                duration: DecimalSeconds::new(6.0).unwrap(),
                 discontinuous: false,
                 parts: vec![],
                 ..Default::default()
             },
             MediaSegment {
                 uri: "s1.m4s".into(),
-                duration: 6.0,
+                duration: DecimalSeconds::new(6.0).unwrap(),
                 discontinuous: true,
                 parts: vec![],
                 ..Default::default()
             },
             MediaSegment {
                 uri: "s2.m4s".into(),
-                duration: 6.0,
+                duration: DecimalSeconds::new(6.0).unwrap(),
                 discontinuous: false,
                 parts: vec![],
                 ..Default::default()
             },
             MediaSegment {
                 uri: "s3.m4s".into(),
-                duration: 6.0,
+                duration: DecimalSeconds::new(6.0).unwrap(),
                 discontinuous: true,
                 parts: vec![],
                 ..Default::default()

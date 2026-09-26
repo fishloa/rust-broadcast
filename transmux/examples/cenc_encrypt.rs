@@ -157,11 +157,12 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     //    `broadcast_common::CencScheme`.
     let key_uri = "https://keyserver.example.com/key";
     match cenc_ext_x_key(encryption.scheme, &encryption.tenc.default_kid, key_uri) {
-        Some(tag) => println!("--- HLS signalling ---\n{tag}"),
-        None => println!(
+        Ok(Some(tag)) => println!("--- HLS signalling ---\n{tag}"),
+        Ok(None) => println!(
             "--- HLS signalling ---\n{} has no HLS key tag (DASH-only)",
             encryption.scheme.name()
         ),
+        Err(e) => println!("--- HLS signalling ---\ninvalid key_uri: {e}"),
     }
 
     Ok(())

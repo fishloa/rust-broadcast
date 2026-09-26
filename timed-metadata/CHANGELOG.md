@@ -4,6 +4,34 @@ All notable changes to this crate. Format: [Keep a Changelog](https://keepachang
 
 ## [Unreleased]
 
+### Changed (breaking)
+- **`daterange::DateRange::to_tag_line` now returns `Result<String>`**
+  (was `String`) — issue #1140 / audit r12-TM-W4 (T12): `ID`, `CLASS` and
+  the `SCTE35-*` hex token are now built through
+  `broadcast_hls::AttrValue`'s checked constructors and rendered via the
+  new shared `broadcast_hls::render_attribute_list`, instead of
+  hand-formatting `,NAME="VALUE"` with no validation. `ID`/`CLASS` are
+  frequently sourced from an upstream SCTE-35 segmentation descriptor's
+  `segmentation_upid` (network data, not this crate's own), so a `"`, CR
+  or LF in either previously broke the attribute list; it is now `Err`.
+  `DURATION`/`PLANNED-DURATION` are also rejected (the new
+  `Error::InvalidDuration`) if NaN, infinite, or negative, both on parse
+  and on render. The crate's own quoted-comma attribute splitter is
+  replaced by the shared `broadcast_hls::parse_attribute_list` (the same
+  tokenizer `ssai-runtime` now also uses — audit r14-SSAI-O1 found this
+  algorithm duplicated three times across the workspace). New dependency:
+  `broadcast-hls` (path, default-features = false).
+- **`daterange::DateRange` gains a new public field
+  `extra_attrs: Vec<(String, AttrValue)>`** (coordinator follow-up to
+  r12-TM-W4): `parse_tag_line` previously dropped every attribute it
+  didn't model (`X-*` caller extensions, `END-DATE`, `END-ON-NEXT`, …) —
+  the other half of TM-W4's "lossy round-trip" finding. Unknown
+  attributes are now preserved (sorted by name, same pattern as
+  `broadcast_hls`'s own `extra_attrs` fields) and rendered back after the
+  fixed-order fields, so a real `EXT-X-DATERANGE` with unrecognized
+  attributes now round-trips byte-identically instead of losing them
+  silently.
+
 ### Fixed
 - **#1039**: `TimedEvent::from_scte35` ignored `splice_info_section`'s
   `pts_adjustment`, so every derived `MediaTime`/DATERANGE `START-DATE` was

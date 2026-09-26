@@ -28,12 +28,14 @@
 //! do the work. The whole module is gated on the `sample-aes` feature; the
 //! default `no_std` core build carries no crypto.
 
-use alloc::string::String;
+use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 
 use aes::cipher::{
     BlockDecryptMut, BlockEncryptMut, KeyIvInit, block_padding::Pkcs7, generic_array::GenericArray,
 };
+
+use broadcast_hls::AttrValue;
 
 use crate::error::{Error, Result};
 
@@ -409,7 +411,8 @@ pub fn iv_from_sequence_number(media_sequence: u128) -> [u8; BLOCK_LEN] {
 
 /// An `EXT-X-KEY` tag (RFC 8216 §4.3.2.4, `docs/drm/hls-sample-aes.md` §9).
 ///
-/// Renders to the tag line via [`Display`](core::fmt::Display) / [`to_tag`](ExtXKey::to_tag).
+/// Renders to the tag line via [`to_tag`](ExtXKey::to_tag), which validates
+/// `uri`/`keyformat`/`keyformatversions` (issue #1140).
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct ExtXKey {
@@ -455,33 +458,35 @@ impl ExtXKey {
     /// Render the `#EXT-X-KEY:...` tag line (RFC 8216 §4.3.2.4). Attribute order
     /// is `METHOD`, `URI`, `IV`, `KEYFORMAT`, `KEYFORMATVERSIONS`; absent
     /// optional attributes are omitted.
-    pub fn to_tag(&self) -> String {
+    ///
+    /// Builds the attribute list through `broadcast_hls`'s checked
+    /// `AttrValue` constructors and shared [`broadcast_hls::render_attribute_list`]
+    /// renderer, rather than hand-formatting `,NAME="VALUE"` (issue #1140 /
+    /// audit r05-W10): `uri`/`keyformat`/`keyformatversions` are
+    /// caller-supplied (often assembled from a key-server request), so a
+    /// `"`, CR or LF in any of them previously terminated the attribute and
+    /// injected arbitrary playlist tags. Returns
+    /// [`Error::HlsAttrValue`] instead.
+    pub fn to_tag(&self) -> Result<String> {
         let mut s = String::from("#EXT-X-KEY:METHOD=");
         s.push_str(self.method.name());
-        s.push_str(",URI=\"");
-        s.push_str(&self.uri);
-        s.push('"');
+        let mut attrs = alloc::vec![("URI".to_string(), AttrValue::quoted(&self.uri)?)];
         if let Some(iv) = self.iv {
-            s.push_str(",IV=");
-            s.push_str(&format_iv(&iv));
+            // A hex token this crate itself formats (`format_iv`), never
+            // caller-freeform text, so `bare` cannot fail.
+            attrs.push(("IV".to_string(), AttrValue::bare(format_iv(&iv))?));
         }
         if let Some(ref kf) = self.keyformat {
-            s.push_str(",KEYFORMAT=\"");
-            s.push_str(kf);
-            s.push('"');
+            attrs.push(("KEYFORMAT".to_string(), AttrValue::quoted(kf.clone())?));
         }
         if let Some(ref kfv) = self.keyformatversions {
-            s.push_str(",KEYFORMATVERSIONS=\"");
-            s.push_str(kfv);
-            s.push('"');
+            attrs.push((
+                "KEYFORMATVERSIONS".to_string(),
+                AttrValue::quoted(kfv.clone())?,
+            ));
         }
-        s
-    }
-}
-
-impl core::fmt::Display for ExtXKey {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        f.write_str(&self.to_tag())
+        broadcast_hls::render_attribute_list(&mut s, &attrs);
+        Ok(s)
     }
 }
 
@@ -711,7 +716,7 @@ mod tests {
     fn ext_x_key_tag_strings() {
         let sample_aes = ExtXKey::fairplay_sample_aes("skd://asset-42");
         assert_eq!(
-            sample_aes.to_tag(),
+            sample_aes.to_tag().unwrap(),
             "#EXT-X-KEY:METHOD=SAMPLE-AES,URI=\"skd://asset-42\",\
              KEYFORMAT=\"com.apple.streamingkeydelivery\",KEYFORMATVERSIONS=\"1\""
         );
@@ -724,10 +729,18 @@ mod tests {
             ],
         );
         assert_eq!(
-            aes.to_tag(),
+            aes.to_tag().unwrap(),
             "#EXT-X-KEY:METHOD=AES-128,URI=\"https://keyserver.example.com/key\",\
              IV=0xaaaaaaaaaaaaaaaabbbbbbbbbbbbbbbb"
         );
+    }
+
+    /// Audit r05-W10: a `"` in the key URI must be rejected, not injected
+    /// into the attribute list.
+    #[test]
+    fn to_tag_rejects_injection_in_uri() {
+        let key = ExtXKey::fairplay_sample_aes("skd://asset\"\r\n#EXT-X-ENDLIST");
+        assert!(key.to_tag().is_err());
     }
 
     #[test]

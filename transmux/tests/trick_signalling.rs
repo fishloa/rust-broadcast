@@ -26,7 +26,9 @@ use std::fs;
 use std::path::PathBuf;
 
 use broadcast_common::{Package, Unpackage};
-use broadcast_hls::{IFrameVariant, MasterPlaylist, MediaPlaylist, MediaSegment, Variant};
+use broadcast_hls::{
+    DecimalSeconds, IFrameVariant, MasterPlaylist, MediaPlaylist, MediaSegment, Variant,
+};
 use transmux::avc_config::{AVCConfigurationBox, AVCDecoderConfigurationRecord};
 use transmux::dash::{DashPackager, TRICKMODE_SCHEME, TrickModeAdaptationSet, TrickModeRepr};
 use transmux::media::{Fmp4Demux, Track};
@@ -148,7 +150,7 @@ fn iframes_only_opt_in() {
             discontinuity_sequence: 0,
             segments: vec![MediaSegment {
                 uri: "iframe0.m4s".into(),
-                duration: 4.0,
+                duration: DecimalSeconds::new(4.0).unwrap(),
                 discontinuous: false,
                 parts: vec![],
                 ..Default::default()

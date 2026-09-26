@@ -4,6 +4,29 @@ All notable changes to this crate. Format: [Keep a Changelog](https://keepachang
 
 ## [Unreleased]
 
+### Changed (breaking)
+- **`InterstitialDateRange::to_tag_line` now returns `Result<String>`**
+  (was `String`), and `render_session_playlist` now returns
+  `Result<MediaPlaylist>` (was `MediaPlaylist`) — issue #1140 / audit
+  r14-SSAI-W1/W4/O1 (T12):
+  - Every attribute value (`ID`, `START-DATE`, the `X-ASSET-URI`/
+    `X-ASSET-LIST` from an `AdDecisionProvider` — typically a third-party
+    ad server — plus `X-SNAP`/`X-RESTRICT`) now goes through
+    `broadcast_hls::AttrValue`'s checked constructors and the shared
+    `broadcast_hls::render_attribute_list`, instead of hand-formatting
+    `,NAME="VALUE"` with no validation. A `"`, CR or LF in an ad-decision
+    value previously terminated the attribute list and injected arbitrary
+    tag lines into every viewer's session playlist; it is now `Err` from
+    the rendering entry point.
+  - `DURATION`/`X-RESUME-OFFSET`/`X-PLAYOUT-LIMIT` are now rejected (the
+    new `Error::InvalidDuration`) if NaN, infinite, or negative, both on
+    parse and on render — previously `NaN as i64 == 0` let a NaN duration
+    render as the bare token `NaN`.
+  - The module's own quoted-comma attribute splitter is replaced by the
+    shared `broadcast_hls::parse_attribute_list` (the same tokenizer
+    `timed-metadata` now also uses — audit r14-SSAI-O1 found the same
+    algorithm duplicated three times across the workspace).
+
 ## [0.1.0] - 2026-08-11
 
 ### Added

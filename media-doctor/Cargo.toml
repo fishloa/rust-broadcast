@@ -47,6 +47,11 @@ cli     = ["dep:clap", "dep:thiserror", "std"]
 # no `clap`); Cargo unifies the two requirements for test builds only, same
 # pattern as `rtmp-runtime`'s dev-dependency on `transmux`.
 transmux = { path = "../transmux", version = "0.24", default-features = false, features = ["cli"] }
+# Real SSAI Interstitial `EXT-X-DATERANGE` rendering (issue #1140): the
+# oracle test renders through `ssai-runtime`'s own
+# `InterstitialDateRange::to_tag_line`, not a hand-typed approximation of
+# its output. Test-only: the library itself has no ssai-runtime dependency.
+ssai-runtime = { path = "../ssai-runtime", default-features = false }
 
 [package.metadata.docs.rs]
 all-features = true

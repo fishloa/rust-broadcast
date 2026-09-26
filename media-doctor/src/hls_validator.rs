@@ -116,7 +116,7 @@ fn validate_media_playlist(pl: &broadcast_hls::MediaPlaylist, report: &mut Repor
     // Duration (with exceptions: INDEPENDENT=YES, GAP=YES, followed by GAP=YES,
     // or final part of a parent segment).
     if let Some(ref ll) = pl.low_latency {
-        let part_target = ll.part_target;
+        let part_target = ll.part_target.get();
         if part_target > 0.0 {
             let lower = part_target * HLS_PART_DURATION_MIN_FRACTION;
             let upper = part_target;
@@ -131,7 +131,7 @@ fn validate_media_playlist(pl: &broadcast_hls::MediaPlaylist, report: &mut Repor
                         && !part.gap
                         && !is_last_of_seg
                         && !next_is_gap
-                        && (part.duration < lower || part.duration > upper)
+                        && (part.duration.get() < lower || part.duration.get() > upper)
                     {
                         report.push(Finding::new(
                             Severity::Error,

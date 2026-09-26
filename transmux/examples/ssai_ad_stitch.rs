@@ -64,7 +64,7 @@ use std::fs;
 use std::path::PathBuf;
 
 use broadcast_common::{Serialize, Unpackage};
-use broadcast_hls::{MediaPlaylist, MediaSegment};
+use broadcast_hls::{DecimalSeconds, MediaPlaylist, MediaSegment};
 use mpeg_ts::ts::{SectionReassembler, TS_PACKET_SIZE, TsPacket};
 use scte35_splice::SpliceInfoSection;
 use scte35_splice::commands::{AnyCommand, SpliceInsert};
@@ -468,21 +468,27 @@ pub fn run() -> Result<Demo, Box<dyn Error>> {
         segments: vec![
             MediaSegment {
                 uri: "seg-1-1.m4s".to_string(),
-                duration: video_seg_secs[0],
+                // `range_duration(..) / timescale` (issue #1140): finite, >= 0.
+                duration: DecimalSeconds::new(video_seg_secs[0])
+                    .expect("segment duration is finite, >= 0"),
                 discontinuous: false,
                 parts: vec![],
                 ..Default::default()
             },
             MediaSegment {
                 uri: "seg-1-2.m4s".to_string(),
-                duration: video_seg_secs[1],
+                // `range_duration(..) / timescale` (issue #1140): finite, >= 0.
+                duration: DecimalSeconds::new(video_seg_secs[1])
+                    .expect("segment duration is finite, >= 0"),
                 discontinuous: true,
                 parts: vec![],
                 ..Default::default()
             },
             MediaSegment {
                 uri: "seg-1-3.m4s".to_string(),
-                duration: video_seg_secs[2],
+                // `range_duration(..) / timescale` (issue #1140): finite, >= 0.
+                duration: DecimalSeconds::new(video_seg_secs[2])
+                    .expect("segment duration is finite, >= 0"),
                 discontinuous: true,
                 parts: vec![],
                 ..Default::default()
@@ -491,7 +497,7 @@ pub fn run() -> Result<Demo, Box<dyn Error>> {
         endlist: true,
         extra_tags: vec![
             "#EXT-X-MAP:URI=\"init-1.mp4\"".to_string(),
-            daterange.to_tag_line(),
+            daterange.to_tag_line()?,
         ],
         low_latency: None,
         iframes_only: false,
@@ -594,7 +600,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     }
     println!();
     println!("--- EXT-X-DATERANGE ---");
-    println!("{}", demo.daterange.to_tag_line());
+    println!("{}", demo.daterange.to_tag_line()?);
     println!();
     println!("--- HLS media playlist (video) ---");
     println!("{}", demo.m3u8);

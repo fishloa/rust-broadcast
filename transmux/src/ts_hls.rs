@@ -72,7 +72,7 @@ use alloc::vec;
 use alloc::vec::Vec;
 
 use broadcast_common::{Demand, Package, Stage, Timestamp};
-use broadcast_hls::{MediaPlaylist, MediaSegment};
+use broadcast_hls::{DecimalSeconds, MediaPlaylist, MediaSegment};
 
 use crate::error::{Error, Result};
 use crate::media::{Media, Track};
@@ -231,7 +231,9 @@ impl Package for TsHlsPackager {
             }
             playlist_segments.push(MediaSegment {
                 uri: format!("{}{}.ts", self.uri_prefix, i),
-                duration,
+                // Same proof as the streaming path above: finite, >= 0.
+                duration: DecimalSeconds::new(duration)
+                    .expect("segment_duration_secs is finite, >= 0"),
                 discontinuous: false,
                 parts: vec![],
                 ..Default::default()
@@ -496,7 +498,7 @@ pub struct TsSegment {
 #[derive(Debug, Clone)]
 struct WindowEntry {
     uri: String,
-    duration: f64,
+    duration: DecimalSeconds,
     discontinuous: bool,
 }
 
@@ -1045,7 +1047,10 @@ impl StreamingTsHlsSegmenter {
         let uri = format!("{}{}.ts", self.uri_prefix, sequence);
         self.window_segments.push_back(WindowEntry {
             uri: uri.clone(),
-            duration,
+            // `segment_duration_secs` divides a `u64` tick count by a
+            // `u64.max(1)` timescale (issue #1140): always finite and
+            // non-negative.
+            duration: DecimalSeconds::new(duration).expect("segment_duration_secs is finite, >= 0"),
             discontinuous,
         });
         self.total_segments += 1;

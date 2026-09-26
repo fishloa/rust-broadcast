@@ -16,7 +16,9 @@
 //! - a non-LL playlist (no PART tags at all) still plays via the full-segment
 //!   fallback path.
 
-use broadcast_hls::{LowLatencyConfig, MapTag, MediaPlaylist, MediaSegment, OpenSegment, PartSpec};
+use broadcast_hls::{
+    DecimalSeconds, LowLatencyConfig, MapTag, MediaPlaylist, MediaSegment, OpenSegment, PartSpec,
+};
 use hls_runtime::client::{Action, HlsClient, Output, ResourceId};
 use transmux::ll_hls::{LlHlsSegmenter, PartInfo, SegmentInfo};
 use transmux::{
@@ -83,7 +85,9 @@ fn abs_uri(relative: &str) -> String {
 fn part_spec(p: &PartInfo) -> PartSpec {
     PartSpec {
         uri: part_uri(p),
-        duration: p.duration,
+        // Test fixture data: every `PartInfo::duration` literal in this
+        // file is a small positive constant (issue #1140).
+        duration: DecimalSeconds::new(p.duration).expect("fixture duration is finite, >= 0"),
         independent: p.independent,
         byte_range: None,
         gap: false,
@@ -113,7 +117,9 @@ impl PlaylistBuilder<'_> {
             .enumerate()
             .map(|(i, (info, parts))| MediaSegment {
                 uri: segment_uri(info),
-                duration: info.duration,
+                // Test fixture data: see `part_spec` above.
+                duration: DecimalSeconds::new(info.duration)
+                    .expect("fixture duration is finite, >= 0"),
                 discontinuous: false,
                 parts: parts.iter().map(part_spec).collect(),
                 byte_range: None,
@@ -157,8 +163,12 @@ impl PlaylistBuilder<'_> {
             endlist: self.endlist,
             extra_tags: vec![],
             low_latency: Some(LowLatencyConfig {
-                part_target: self.part_target_secs,
-                part_hold_back: 3.0 * self.part_target_secs,
+                // Test fixture data: `part_target_secs` is a small positive
+                // constant in every case this file builds (issue #1140).
+                part_target: DecimalSeconds::new(self.part_target_secs)
+                    .expect("fixture part_target_secs is finite, >= 0"),
+                part_hold_back: DecimalSeconds::new(3.0 * self.part_target_secs)
+                    .expect("fixture part_target_secs is finite, >= 0"),
                 preload_hint_part,
                 ..Default::default()
             }),
@@ -509,11 +519,11 @@ fn can_block_reload_no_yields_non_blocking_reload_with_backoff() {
         discontinuity_sequence: 0,
         segments: vec![MediaSegment {
             uri: "seg0.m4s".to_string(),
-            duration: 1.0,
+            duration: DecimalSeconds::new(1.0).unwrap(),
             discontinuous: false,
             parts: vec![PartSpec {
                 uri: "seg0.0.m4s".to_string(),
-                duration: 1.0,
+                duration: DecimalSeconds::new(1.0).unwrap(),
                 independent: true,
                 byte_range: None,
                 gap: false,
@@ -531,8 +541,8 @@ fn can_block_reload_no_yields_non_blocking_reload_with_backoff() {
         endlist: false,
         extra_tags: vec![],
         low_latency: Some(LowLatencyConfig {
-            part_target: 0.5,
-            part_hold_back: 1.5,
+            part_target: DecimalSeconds::new(0.5).unwrap(),
+            part_hold_back: DecimalSeconds::new(1.5).unwrap(),
             can_block_reload: false,
             ..Default::default()
         }),
@@ -603,7 +613,9 @@ fn non_ll_playlist_plays_via_full_segment_fallback() {
         discontinuity_sequence: 0,
         segments: vec![MediaSegment {
             uri: "seg1.m4s".to_string(),
-            duration: seg1_info.duration,
+            // Test fixture data: see `part_spec` above.
+            duration: DecimalSeconds::new(seg1_info.duration)
+                .expect("fixture duration is finite, >= 0"),
             discontinuous: false,
             parts: vec![],
             byte_range: None,

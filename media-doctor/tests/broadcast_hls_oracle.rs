@@ -11,7 +11,7 @@
 //! governing rule: a cross-crate test may never live in a crate that
 //! sits below one of its own dependencies).
 
-use broadcast_hls::{MediaPlaylist, MediaSegment};
+use broadcast_hls::{DecimalSeconds, MediaPlaylist, MediaSegment};
 use media_doctor::Report;
 
 #[test]
@@ -24,21 +24,21 @@ fn broadcast_hls_media_playlist_validates_clean() {
         segments: vec![
             MediaSegment {
                 uri: "seg0.m4s".into(),
-                duration: 9.009,
+                duration: DecimalSeconds::new(9.009).unwrap(),
                 discontinuous: false,
                 parts: vec![],
                 ..Default::default()
             },
             MediaSegment {
                 uri: "seg1.m4s".into(),
-                duration: 9.009,
+                duration: DecimalSeconds::new(9.009).unwrap(),
                 discontinuous: false,
                 parts: vec![],
                 ..Default::default()
             },
             MediaSegment {
                 uri: "seg2.m4s".into(),
-                duration: 3.003,
+                duration: DecimalSeconds::new(3.003).unwrap(),
                 discontinuous: false,
                 parts: vec![],
                 ..Default::default()
@@ -74,7 +74,7 @@ fn broadcast_hls_playlist_invalid_target_duration_reported() {
         discontinuity_sequence: 0,
         segments: vec![MediaSegment {
             uri: "long.m4s".into(),
-            duration: 15.0,
+            duration: DecimalSeconds::new(15.0).unwrap(),
             discontinuous: false,
             parts: vec![],
             ..Default::default()

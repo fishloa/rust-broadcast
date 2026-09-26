@@ -8,7 +8,11 @@ pub type Result<T> = core::result::Result<T, Error>;
 
 /// Error variants that [`crate::MediaPlaylist::parse`]/[`crate::MasterPlaylist::parse`]
 /// can return.
-#[derive(Debug, Error, PartialEq, Eq)]
+///
+/// No longer `Eq` (only `PartialEq`): [`Error::InvalidDecimalSeconds`]/
+/// [`Error::InvalidSignedDecimalSeconds`] carry the offending `f64`, which
+/// has no `Eq` impl (NaN != NaN).
+#[derive(Debug, Error, PartialEq)]
 #[non_exhaustive]
 pub enum Error {
     /// An HLS playlist (`.m3u8`, RFC 8216bis) tag could not be parsed —
@@ -42,4 +46,17 @@ pub enum Error {
         /// value"`.
         kind: &'static str,
     },
+
+    /// [`crate::DecimalSeconds::new`] rejected a NaN, infinite, or negative
+    /// value (issue #1140 T12/BH-W4): RFC 8216bis §4.2 decimal-floating-point
+    /// is non-negative and finite. Rejected at construction rather than
+    /// silently clamped, so a bad value can never reach a renderer.
+    #[error("{0} is not a finite, non-negative decimal-floating-point number of seconds")]
+    InvalidDecimalSeconds(f64),
+
+    /// [`crate::SignedDecimalSeconds::new`] rejected a NaN or infinite value
+    /// (issue #1140 T12/BH-W4) — the one signed decimal-floating-point field
+    /// (`TIME-OFFSET`) still requires finiteness.
+    #[error("{0} is not a finite decimal-floating-point number of seconds")]
+    InvalidSignedDecimalSeconds(f64),
 }

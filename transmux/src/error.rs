@@ -10,7 +10,10 @@ pub type Result<T> = core::result::Result<T, Error>;
 ///
 /// Spec references inside `#[error(...)]` strings quote clauses from
 /// ISO/IEC 14496-12:2015 (§4.2) where applicable.
-#[derive(Debug, Error, PartialEq, Eq)]
+// No longer `Eq` (only `PartialEq`): `Error::HlsAttrValue` wraps
+// `broadcast_hls::Error`, which itself carries a non-`Eq` `f64` (issue
+// #1140 T12 decimal validation).
+#[derive(Debug, Error, PartialEq)]
 #[non_exhaustive]
 pub enum Error {
     /// Input buffer was shorter than the smallest valid encoding for the type.
@@ -241,4 +244,13 @@ pub enum Error {
     /// went wrong (issue #990).
     #[error("unsupported feature: {0}")]
     UnsupportedFeature(&'static str),
+
+    /// An `#EXT-X-KEY` attribute value (`URI`/`KEYFORMAT`/`KEYFORMATVERSIONS`,
+    /// [`ExtXKey::to_tag`](crate::sample_aes::ExtXKey::to_tag)) could not be
+    /// represented as an RFC 8216 §4.2 quoted-string (contains `"`, CR or
+    /// LF) — issue #1140 / audit r05-W10: a key-server URL assembled from
+    /// request data previously went straight into the tag unvalidated, an
+    /// attribute-list-injection vector.
+    #[error(transparent)]
+    HlsAttrValue(#[from] broadcast_hls::Error),
 }

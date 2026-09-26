@@ -74,7 +74,7 @@
 use std::fs;
 use std::path::PathBuf;
 
-use broadcast_hls::{MasterPlaylist, MediaPlaylist};
+use broadcast_hls::{MasterPlaylist, MediaPlaylist, SignedDecimalSeconds};
 
 /// `fixtures/hls/`, resolved from this crate's own manifest dir — never a
 /// bare relative path (that depends on the caller's cwd).
@@ -392,7 +392,7 @@ fn handbuilt_fixtures_expose_the_872_tags_as_typed_data() {
         .expect("must parse");
     assert!(mv.independent_segments, "EXT-X-INDEPENDENT-SEGMENTS");
     let start = mv.start.expect("EXT-X-START must be typed");
-    assert_eq!(start.time_offset, -10.5);
+    assert_eq!(start.time_offset, SignedDecimalSeconds::new(-10.5).unwrap());
     assert!(start.precise, "PRECISE=YES must be typed");
     assert_eq!(mv.defines.len(), 2, "both EXT-X-DEFINEs must be typed");
     assert!(matches!(&mv.defines[0], Define::Name { name, .. } if name == "base"));

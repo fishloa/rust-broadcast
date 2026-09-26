@@ -46,7 +46,7 @@ use axum::response::IntoResponse;
 use axum::routing::get;
 use serde_json::Value;
 
-use broadcast_hls::{MapTag, MediaPlaylist, MediaSegment};
+use broadcast_hls::{DecimalSeconds, MapTag, MediaPlaylist, MediaSegment};
 use hls_runtime::client::Output;
 use hls_runtime::client::tokio_client::TokioClient;
 use hls_runtime::server::DEFAULT_TRACK_ID;
@@ -491,7 +491,10 @@ async fn non_ll_full_segment_path_also_decodes() {
         discontinuity_sequence: 0,
         segments: vec![MediaSegment {
             uri: "seg1.m4s".to_string(),
-            duration: seg1.duration,
+            // The segmenter's own computed duration over real sample
+            // timestamps — always finite and non-negative (issue #1140).
+            duration: DecimalSeconds::new(seg1.duration)
+                .expect("segmenter duration is finite, >= 0"),
             discontinuous: false,
             parts: vec![],
             byte_range: None,
