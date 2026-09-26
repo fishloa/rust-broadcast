@@ -686,16 +686,10 @@ impl<'a> NameComponent<'a> {
                 have: end,
                 what: "CosNaming id_length",
             })?;
-        let id_len = u32::from_be_bytes(*bid) as usize;
         let id_start = pos + NAMING_FIELD_LEN;
-        if id_start + id_len > end {
-            return Err(Error::SectionLengthOverflow {
-                declared: id_len,
-                available: end - id_start,
-            });
-        }
-        let id = &bytes[id_start..id_start + id_len];
-        let kind_pos = id_start + id_len;
+        let id_range = super::span(id_start, u32::from_be_bytes(*bid), end)?;
+        let id = &bytes[id_range.clone()];
+        let kind_pos = id_range.end;
         let (bkind, _) =
             bytes[kind_pos..end]
                 .split_first_chunk::<4>()
@@ -704,16 +698,10 @@ impl<'a> NameComponent<'a> {
                     have: end,
                     what: "CosNaming kind_length",
                 })?;
-        let kind_len = u32::from_be_bytes(*bkind) as usize;
         let kind_start = kind_pos + NAMING_FIELD_LEN;
-        if kind_start + kind_len > end {
-            return Err(Error::SectionLengthOverflow {
-                declared: kind_len,
-                available: end - kind_start,
-            });
-        }
-        let kind = &bytes[kind_start..kind_start + kind_len];
-        Ok((NameComponent { id, kind }, kind_start + kind_len))
+        let kind_range = super::span(kind_start, u32::from_be_bytes(*bkind), end)?;
+        let kind = &bytes[kind_range.clone()];
+        Ok((NameComponent { id, kind }, kind_range.end))
     }
 
     /// Serialize one CosNaming name component with 32-bit length prefixes.
@@ -886,16 +874,10 @@ impl<'a> ServiceLocation<'a> {
                 have: end,
                 what: "ServiceLocation initialContext_length",
             })?;
-        let ic_len = u32::from_be_bytes(*bic) as usize;
         cur += INITIAL_CONTEXT_LEN_FIELD;
-        if cur + ic_len > end {
-            return Err(Error::SectionLengthOverflow {
-                declared: ic_len,
-                available: end - cur,
-            });
-        }
-        let initial_context = &bytes[cur..cur + ic_len];
-        cur += ic_len;
+        let ic_range = super::span(cur, u32::from_be_bytes(*bic), end)?;
+        let initial_context = &bytes[ic_range.clone()];
+        cur = ic_range.end;
         Ok((
             ServiceLocation {
                 service_domain,
@@ -988,15 +970,9 @@ impl<'a> LiteOptionsProfileBody<'a> {
                 reason: "first component must be TAG_ServiceLocation (0x49534F46)",
             });
         }
-        let comp0_len = u32::from_be_bytes([slch[4], slch[5], slch[6], slch[7]]) as usize;
+        let comp0_len_wire = u32::from_be_bytes([slch[4], slch[5], slch[6], slch[7]]);
         pos += SERVICE_LOCATION_COMP_HEADER_LEN;
-        let comp0_end = pos + comp0_len;
-        if comp0_end > end {
-            return Err(Error::SectionLengthOverflow {
-                declared: comp0_len,
-                available: end - pos,
-            });
-        }
+        let comp0_end = super::span(pos, comp0_len_wire, end)?.end;
         let (service_location, _) = ServiceLocation::parse_from(bytes, pos, comp0_end)?;
         pos = comp0_end;
 
@@ -1202,25 +1178,19 @@ impl<'a> Parse<'a> for Ior<'a> {
                     have: end,
                     what: "IOP::IOR fixed fields",
                 })?;
-        let type_id_length =
-            u32::from_be_bytes([ior_hdr[0], ior_hdr[1], ior_hdr[2], ior_hdr[3]]) as usize;
+        let type_id_length_wire =
+            u32::from_be_bytes([ior_hdr[0], ior_hdr[1], ior_hdr[2], ior_hdr[3]]);
         // DVB: only alias type_ids (N%4==0); reject non-conformant.
-        if !type_id_length.is_multiple_of(4) {
+        if !(type_id_length_wire as usize).is_multiple_of(4) {
             return Err(Error::ValueOutOfRange {
                 field: "IOR.type_id_length",
                 reason: "type_id_length must be a multiple of 4 (DVB alias type_ids only — \
                          non-aligned type_ids are not supported per TR 101 202 §4.7.3.1)",
             });
         }
-        let mut pos = 4;
-        if pos + type_id_length > end {
-            return Err(Error::SectionLengthOverflow {
-                declared: type_id_length,
-                available: end - pos,
-            });
-        }
-        let type_id = &bytes[pos..pos + type_id_length];
-        pos += type_id_length;
+        let type_id_range = super::span(4, type_id_length_wire, end)?;
+        let type_id = &bytes[type_id_range.clone()];
+        let mut pos = type_id_range.end;
 
         let (bpc, _) = bytes[pos..end]
             .split_first_chunk::<4>()
@@ -1242,15 +1212,10 @@ impl<'a> Parse<'a> for Ior<'a> {
                     what: "TaggedProfile header",
                 })?;
             let tag = u32::from_be_bytes([phdr[0], phdr[1], phdr[2], phdr[3]]);
-            let data_len = u32::from_be_bytes([phdr[4], phdr[5], phdr[6], phdr[7]]) as usize;
+            let data_len_wire = u32::from_be_bytes([phdr[4], phdr[5], phdr[6], phdr[7]]);
             pos += PROFILE_HEADER_LEN;
-            if pos + data_len > end {
-                return Err(Error::SectionLengthOverflow {
-                    declared: data_len,
-                    available: end - pos,
-                });
-            }
-            let profile_data = &bytes[pos..pos + data_len];
+            let data_range = super::span(pos, data_len_wire, end)?;
+            let profile_data = &bytes[data_range.clone()];
             let profile = match tag {
                 TAG_BIOP => TaggedProfile::Biop(BiopProfileBody::parse_from(profile_data)?),
                 TAG_LITE_OPTIONS => {
@@ -1262,7 +1227,7 @@ impl<'a> Parse<'a> for Ior<'a> {
                 },
             };
             profiles.push(profile);
-            pos += data_len;
+            pos = data_range.end;
         }
 
         Ok(Ior { type_id, profiles })
@@ -1430,6 +1395,93 @@ mod tests {
         assert!(
             json.contains("\"Biop\""),
             "JSON must contain Biop profile variant"
+        );
+    }
+
+    // ── 32-bit wire-length overflow guards ───────────────────────────────────
+    //
+    // `type_id_length`, `profile_data_length`, CosNaming `id_length`/
+    // `kind_length`, `initialContext_length` and the LiteOptions
+    // ServiceLocation component's data length are all 32-bit wire fields
+    // added to a cursor position. On a 32-bit target `cur + 0xFFFF_FFFF` can
+    // wrap `usize` instead of exceeding it, defeating the `> end` guard. On
+    // this (64-bit) host the addition itself cannot wrap, so these
+    // assertions already held pre-fix too — they pin the "returns Err, never
+    // panics" contract so `super::span` cannot regress back to unchecked
+    // arithmetic.
+
+    #[test]
+    fn ior_type_id_length_overflow_errors() {
+        let mut raw = sample_ior();
+        // type_id_length must stay a multiple of 4 to reach the overflow
+        // guard rather than the earlier `ValueOutOfRange` alignment check;
+        // 0xFFFF_FFFC (4294967292) is a multiple of 4.
+        raw[0..4].copy_from_slice(&0xFFFF_FFFCu32.to_be_bytes());
+        assert!(
+            Ior::parse(&raw).is_err(),
+            "type_id_length=0xFFFFFFFC must return Err, not panic"
+        );
+    }
+
+    #[test]
+    fn ior_profile_data_length_overflow_errors() {
+        let mut raw = sample_ior();
+        // profile_data_length (originally 0x00000028) at byte offset 16,
+        // after type_id_length(4)+type_id(4)+taggedProfiles_count(4)+profileId_tag(4).
+        assert_eq!(&raw[16..20], &[0x00, 0x00, 0x00, 0x28]);
+        raw[16..20].copy_from_slice(&0xFFFF_FFFFu32.to_be_bytes());
+        assert!(
+            Ior::parse(&raw).is_err(),
+            "profile_data_length=0xFFFFFFFF must return Err, not panic"
+        );
+    }
+
+    #[test]
+    fn name_component_32bit_oversized_id_length_errors() {
+        // id_length = 0xFFFFFFFF; far too little data follows.
+        let bytes: &[u8] = &[0xFF, 0xFF, 0xFF, 0xFF, 0x00, 0x00, 0x00, 0x00];
+        let end = bytes.len();
+        assert!(
+            NameComponent::parse_32bit(bytes, 0, end).is_err(),
+            "CosNaming id_length=0xFFFFFFFF must return Err, not panic"
+        );
+    }
+
+    #[test]
+    fn name_component_32bit_oversized_kind_length_errors() {
+        // id_length = 0 (empty id), then kind_length = 0xFFFFFFFF.
+        let bytes: &[u8] = &[
+            0x00, 0x00, 0x00, 0x00, // id_length = 0
+            0xFF, 0xFF, 0xFF, 0xFF, // kind_length = 0xFFFFFFFF
+        ];
+        let end = bytes.len();
+        assert!(
+            NameComponent::parse_32bit(bytes, 0, end).is_err(),
+            "CosNaming kind_length=0xFFFFFFFF must return Err, not panic"
+        );
+    }
+
+    #[test]
+    fn service_location_oversized_initial_context_length_errors() {
+        let mut bytes = vec![0x14u8]; // serviceDomain_length = 20
+        bytes.extend_from_slice(&[0u8; NSAP_ADDRESS_LEN]); // NSAP address (tolerant of content)
+        bytes.extend_from_slice(&0u32.to_be_bytes()); // nameComponents_count = 0
+        bytes.extend_from_slice(&0xFFFF_FFFFu32.to_be_bytes()); // initialContext_length
+        let end = bytes.len();
+        assert!(
+            ServiceLocation::parse_from(&bytes, 0, end).is_err(),
+            "initialContext_length=0xFFFFFFFF must return Err, not panic"
+        );
+    }
+
+    #[test]
+    fn lite_options_profile_body_oversized_service_location_length_errors() {
+        let mut bytes = vec![0x00u8, 0x01]; // byte_order=0, component_count=1
+        bytes.extend_from_slice(&TAG_SERVICE_LOCATION.to_be_bytes());
+        bytes.extend_from_slice(&0xFFFF_FFFFu32.to_be_bytes()); // component_data_length
+        assert!(
+            LiteOptionsProfileBody::parse_from(&bytes).is_err(),
+            "ServiceLocation component_data_length=0xFFFFFFFF must return Err, not panic"
         );
     }
 }

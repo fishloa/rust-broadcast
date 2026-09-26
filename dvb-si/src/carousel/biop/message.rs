@@ -313,14 +313,9 @@ fn parse_biop_header(bytes: &[u8]) -> Result<(&[u8], [u8; 4], usize, usize)> {
         });
     }
     // bhdr[7] = message_type (must be 0x00 per DVB)
-    let message_size = u32::from_be_bytes([bhdr[8], bhdr[9], bhdr[10], bhdr[11]]) as usize;
-    let end = BIOP_HEADER_LEN + message_size;
-    if total < end {
-        return Err(Error::SectionLengthOverflow {
-            declared: message_size,
-            available: total - BIOP_HEADER_LEN,
-        });
-    }
+    let message_size_wire = u32::from_be_bytes([bhdr[8], bhdr[9], bhdr[10], bhdr[11]]);
+    let end = super::span(BIOP_HEADER_LEN, message_size_wire, total)?.end;
+    let message_size = message_size_wire as usize;
     let mut pos = BIOP_HEADER_LEN;
 
     // objectKey_length (1 byte) + objectKey_data
@@ -525,15 +520,9 @@ impl<'a> DirectoryMessage<'a> {
                 have: end,
                 what: "DirectoryMessage messageBody_length",
             })?;
-        let body_len = u32::from_be_bytes(*bbl) as usize;
+        let body_len_wire = u32::from_be_bytes(*bbl);
         cur += MESSAGE_BODY_LEN_FIELD;
-        let body_end = cur + body_len;
-        if body_end > end {
-            return Err(Error::SectionLengthOverflow {
-                declared: body_len,
-                available: end - cur,
-            });
-        }
+        let body_end = super::span(cur, body_len_wire, end)?.end;
 
         // bindings_count (2 bytes)
         let (bbc, _) =
@@ -740,15 +729,9 @@ impl<'a> FileMessage<'a> {
                 have: end,
                 what: "FileMessage messageBody_length",
             })?;
-        let body_len = u32::from_be_bytes(*bfbl) as usize;
+        let body_len_wire = u32::from_be_bytes(*bfbl);
         cur += MESSAGE_BODY_LEN_FIELD;
-        let body_end = cur + body_len;
-        if body_end > end {
-            return Err(Error::SectionLengthOverflow {
-                declared: body_len,
-                available: end - cur,
-            });
-        }
+        let body_end = super::span(cur, body_len_wire, end)?.end;
 
         // content_length (4 bytes) + content_data
         let (bfcl, _) =
@@ -759,15 +742,10 @@ impl<'a> FileMessage<'a> {
                     have: body_end,
                     what: "FileMessage content_length",
                 })?;
-        let content_len = u32::from_be_bytes(*bfcl) as usize;
+        let content_len_wire = u32::from_be_bytes(*bfcl);
         cur += FILE_CONTENT_LEN_FIELD;
-        if cur + content_len > body_end {
-            return Err(Error::SectionLengthOverflow {
-                declared: content_len,
-                available: body_end - cur,
-            });
-        }
-        let content = &bytes[cur..cur + content_len];
+        let content_range = super::span(cur, content_len_wire, body_end)?;
+        let content = &bytes[content_range];
 
         Ok(FileMessage {
             object_key,
@@ -1037,15 +1015,9 @@ impl<'a> StreamMessage<'a> {
                 have: end,
                 what: "StreamMessage messageBody_length",
             })?;
-        let body_len = u32::from_be_bytes(*bsmbl) as usize;
+        let body_len_wire = u32::from_be_bytes(*bsmbl);
         cur += MESSAGE_BODY_LEN_FIELD;
-        let body_end = cur + body_len;
-        if body_end > end {
-            return Err(Error::SectionLengthOverflow {
-                declared: body_len,
-                available: end - cur,
-            });
-        }
+        let body_end = super::span(cur, body_len_wire, end)?.end;
 
         // taps_count (1 byte)
         if cur + STREAM_TAPS_COUNT_FIELD > body_end {
@@ -1277,15 +1249,9 @@ impl<'a> StreamEventMessage<'a> {
                 have: end,
                 what: "StreamEventMessage messageBody_length",
             })?;
-        let body_len = u32::from_be_bytes(*bsebl) as usize;
+        let body_len_wire = u32::from_be_bytes(*bsebl);
         cur += MESSAGE_BODY_LEN_FIELD;
-        let body_end = cur + body_len;
-        if body_end > end {
-            return Err(Error::SectionLengthOverflow {
-                declared: body_len,
-                available: end - cur,
-            });
-        }
+        let body_end = super::span(cur, body_len_wire, end)?.end;
 
         // taps_count (1 byte)
         if cur + STREAM_TAPS_COUNT_FIELD > body_end {
@@ -1790,14 +1756,32 @@ pub struct CompressedModuleDescriptor<'a> {
     pub body: &'a [u8],
 }
 
-/// Decompress a zlib-encoded module payload.
+/// Ceiling on the decompressed size of a `compressed_module_descriptor`
+/// payload (TR 101 202 §4.6.6.10 / EN 301 192 §10.2.11), used by
+/// [`decompress_zlib`]. 64 MiB is generously above any real DSM-CC carousel
+/// module — broadcast object-carousel delivery is MTU/bandwidth-bound, so a
+/// module anywhere near this size is not a realistic broadcast — while still
+/// bounding the allocation a corrupt or oversized zlib stream can force.
+#[cfg(feature = "flate2")]
+pub const MAX_DECOMPRESSED_MODULE_SIZE: usize = 64 * 1024 * 1024;
+
+/// Decompress a zlib-encoded module payload, stopping once the output would
+/// exceed `max_len` bytes.
 ///
 /// Uses [`flate2`](https://crates.io/crates/flate2) (optional feature `flate2`).
-/// Returns the decompressed bytes, or an error if the zlib stream is invalid.
+/// Reads through `std::io::Read::take` with a `max_len.saturating_add(1)` cap (not a
+/// plain `+ 1`, which would overflow `u64` if `max_len == usize::MAX` on a
+/// 64-bit target) so a stream that would inflate past `max_len` is caught
+/// after reading one byte beyond the limit, rather than after allocating the
+/// full (potentially many-gigabyte) output. `max_len == usize::MAX` is
+/// therefore an effectively unbounded call — the full decompressed data is
+/// returned. Returns an error if the zlib stream is invalid, or if the
+/// decompressed output exceeds `max_len`.
 #[cfg(feature = "flate2")]
-pub fn decompress_zlib(data: &[u8]) -> Result<Vec<u8>> {
+pub fn decompress_zlib_bounded(data: &[u8], max_len: usize) -> Result<Vec<u8>> {
     use std::io::Read;
-    let mut decoder = flate2::read::ZlibDecoder::new(data);
+    let limit = (max_len as u64).saturating_add(1);
+    let mut decoder = flate2::read::ZlibDecoder::new(data).take(limit);
     let mut out = Vec::new();
     decoder
         .read_to_end(&mut out)
@@ -1809,7 +1793,27 @@ pub fn decompress_zlib(data: &[u8]) -> Result<Vec<u8>> {
                 "zlib decompression failed"
             },
         })?;
+    if out.len() > max_len {
+        // Reading stops at `max_len + 1`, so the true decompressed size is never known.
+        return Err(Error::ReservedBitsViolation {
+            field: "compressed_module_descriptor body",
+            reason: "zlib output exceeds the decompressed-size limit",
+        });
+    }
     Ok(out)
+}
+
+/// Decompress a zlib-encoded module payload.
+///
+/// Uses [`flate2`](https://crates.io/crates/flate2) (optional feature `flate2`).
+/// Bounded by [`MAX_DECOMPRESSED_MODULE_SIZE`] — see
+/// [`decompress_zlib_bounded`] for the general form (e.g. when a
+/// `carousel_identifier_descriptor`'s declared `OriginalSize` is available
+/// and should be used as a tighter cap). Returns the decompressed bytes, or
+/// an error if the zlib stream is invalid or the output exceeds the cap.
+#[cfg(feature = "flate2")]
+pub fn decompress_zlib(data: &[u8]) -> Result<Vec<u8>> {
+    decompress_zlib_bounded(data, MAX_DECOMPRESSED_MODULE_SIZE)
 }
 
 // ── ServiceGatewayInfo ────────────────────────────────────────────────────────
@@ -2137,6 +2141,46 @@ mod tests {
 
         let decompressed = decompress_zlib(&compressed).unwrap();
         assert_eq!(decompressed.as_slice(), original.as_slice());
+    }
+
+    #[cfg(feature = "flate2")]
+    #[test]
+    fn decompress_zlib_bounded_usize_max_is_unbounded() {
+        use flate2::{Compression, write::ZlibEncoder};
+        use std::io::Write;
+
+        let original = b"Hello, compressed BIOP world! ".repeat(10);
+        let mut encoder = ZlibEncoder::new(Vec::new(), Compression::default());
+        encoder.write_all(&original).unwrap();
+        let compressed = encoder.finish().unwrap();
+
+        // `max_len = usize::MAX` must not overflow the internal `Take` limit
+        // and must return the full decompressed data, not an empty result.
+        let decompressed = decompress_zlib_bounded(&compressed, usize::MAX).unwrap();
+        assert_eq!(decompressed.as_slice(), original.as_slice());
+    }
+
+    #[cfg(feature = "flate2")]
+    #[test]
+    fn decompress_zlib_bounded_exact_boundary() {
+        use flate2::{Compression, write::ZlibEncoder};
+        use std::io::Write;
+
+        let original = vec![0x5Au8; 1000];
+        let mut encoder = ZlibEncoder::new(Vec::new(), Compression::default());
+        encoder.write_all(&original).unwrap();
+        let compressed = encoder.finish().unwrap();
+
+        // Output of exactly `max_len` bytes is Ok.
+        let ok = decompress_zlib_bounded(&compressed, original.len()).unwrap();
+        assert_eq!(ok, original);
+
+        // Output one byte over `max_len` is Err.
+        let err = decompress_zlib_bounded(&compressed, original.len() - 1);
+        assert!(
+            err.is_err(),
+            "output exceeding max_len by exactly 1 byte must return Err"
+        );
     }
 
     // ── StreamMessage tests ───────────────────────────────────────────────────
@@ -2521,5 +2565,203 @@ mod tests {
             }
             other => panic!("expected Directory, got {other:?}"),
         }
+    }
+
+    // ── 32-bit wire-length overflow guards ───────────────────────────────────
+    //
+    // `messageBody_length` (and FileMessage's `content_length`, and the BIOP
+    // header's `message_size`) are 32-bit wire fields added to a cursor
+    // position. On a 32-bit target, `cur + 0xFFFF_FFFF` can wrap `usize`
+    // rather than exceed it, defeating the `> end` bounds check. These tests
+    // pin the "returns Err, never panics" contract for every such site; on
+    // this (64-bit) host the addition cannot itself wrap, so the assertions
+    // already held pre-fix too (see the crate CLAUDE.md note on 32-bit-only
+    // panics) — they guard the fixed `super::span` helper against regressing
+    // back to unchecked arithmetic.
+
+    #[test]
+    fn directory_message_oversized_body_length_errors() {
+        let msg = BiopMessage::Directory(DirectoryMessage {
+            object_kind: *b"dir\0",
+            object_key: &[0x01],
+            object_info: &[],
+            service_context: vec![],
+            bindings: vec![],
+        });
+        let mut buf = vec![0u8; msg.serialized_len()];
+        msg.serialize_into(&mut buf).unwrap();
+
+        // messageBody_length offset = BIOP header(12) + objectKey_length(1)
+        // + objectKey_data(1, key=[0x01]) + objectKind_length(4)
+        // + objectKind_data(4) + objectInfo_length(2) + objectInfo_data(0)
+        // + serviceContextList_count(1) + entries(0).
+        let off = 12 + 1 + 1 + 4 + 4 + 2 + 1;
+        assert_eq!(
+            u32::from_be_bytes(buf[off..off + 4].try_into().unwrap()),
+            BINDINGS_COUNT_FIELD as u32,
+            "sanity: with zero bindings, messageBody_length must equal bindings_count field size"
+        );
+        buf[off..off + 4].copy_from_slice(&0xFFFF_FFFFu32.to_be_bytes());
+        assert!(
+            BiopMessage::parse_at(&buf).is_err(),
+            "messageBody_length=0xFFFFFFFF must return Err, not panic"
+        );
+    }
+
+    #[test]
+    fn file_message_oversized_body_length_errors() {
+        let content: &[u8] = b"Hello, BIOP!";
+        let msg = sample_file_message(&[0x01], content);
+        let mut buf = vec![0u8; msg.serialized_len()];
+        msg.serialize_into(&mut buf).unwrap();
+
+        // messageBody_length offset = BIOP header(12) + objectKey_length(1)
+        // + objectKey_data(1) + objectKind_length(4) + objectKind_data(4)
+        // + objectInfo_length(2) + objectInfo_data(FILE_CONTENT_SIZE_LEN=8)
+        // + serviceContextList_count(1) + entries(0).
+        let off = 12 + 1 + 1 + 4 + 4 + 2 + 8 + 1;
+        let expected_body_len = (FILE_CONTENT_LEN_FIELD + content.len()) as u32;
+        assert_eq!(
+            u32::from_be_bytes(buf[off..off + 4].try_into().unwrap()),
+            expected_body_len,
+            "sanity: computed messageBody_length offset must match the wire value"
+        );
+        buf[off..off + 4].copy_from_slice(&0xFFFF_FFFFu32.to_be_bytes());
+        assert!(
+            BiopMessage::parse_at(&buf).is_err(),
+            "messageBody_length=0xFFFFFFFF must return Err, not panic"
+        );
+    }
+
+    #[test]
+    fn file_message_oversized_content_length_errors() {
+        let content: &[u8] = b"Hello, BIOP!";
+        let msg = sample_file_message(&[0x01], content);
+        let mut buf = vec![0u8; msg.serialized_len()];
+        msg.serialize_into(&mut buf).unwrap();
+
+        // content_length immediately follows messageBody_length (both 4 bytes).
+        let body_len_off = 12 + 1 + 1 + 4 + 4 + 2 + 8 + 1;
+        let off = body_len_off + MESSAGE_BODY_LEN_FIELD;
+        assert_eq!(
+            u32::from_be_bytes(buf[off..off + 4].try_into().unwrap()),
+            content.len() as u32,
+            "sanity: computed content_length offset must match the wire value"
+        );
+        buf[off..off + 4].copy_from_slice(&0xFFFF_FFFFu32.to_be_bytes());
+        assert!(
+            BiopMessage::parse_at(&buf).is_err(),
+            "content_length=0xFFFFFFFF must return Err, not panic"
+        );
+    }
+
+    #[test]
+    fn stream_message_oversized_body_length_errors() {
+        use crate::carousel::biop::ior::Tap;
+        let msg = BiopMessage::Stream(StreamMessage {
+            object_key: &[0xAB],
+            stream_info: DsmStreamInfo {
+                description: b"vid",
+                duration_seconds: 0,
+                duration_microseconds: 0,
+                audio: 1,
+                video: 1,
+                data: 0,
+            },
+            object_info_extra: &[],
+            service_context: vec![],
+            taps: vec![Tap {
+                id: 0,
+                use_: 0x0018,
+                association_tag: 0x0047,
+                selector: &[],
+            }],
+        });
+        let mut buf = vec![0u8; msg.serialized_len()];
+        msg.serialize_into(&mut buf).unwrap();
+
+        // Same layout as `stream_message_byte_anchor`: messageBody_length at [38..42].
+        let off = 38;
+        assert_eq!(
+            &buf[off..off + 4],
+            &[0x00, 0x00, 0x00, 0x08],
+            "sanity: messageBody_length offset must match the byte anchor"
+        );
+        buf[off..off + 4].copy_from_slice(&0xFFFF_FFFFu32.to_be_bytes());
+        assert!(
+            BiopMessage::parse_at(&buf).is_err(),
+            "messageBody_length=0xFFFFFFFF must return Err, not panic"
+        );
+    }
+
+    #[test]
+    fn stream_event_message_oversized_body_length_errors() {
+        let msg = BiopMessage::StreamEvent(StreamEventMessage {
+            object_key: &[0xCD],
+            stream_info: DsmStreamInfo {
+                description: &[],
+                duration_seconds: 0,
+                duration_microseconds: 0,
+                audio: 0,
+                video: 0,
+                data: 0,
+            },
+            event_names: vec![b"foo".as_ref(), b"bar".as_ref()],
+            object_info_extra: &[],
+            service_context: vec![],
+            taps: vec![],
+            event_ids: vec![1, 2],
+        });
+        let mut buf = vec![0u8; msg.serialized_len()];
+        msg.serialize_into(&mut buf).unwrap();
+
+        // Same layout as `stream_event_message_byte_anchor`: messageBody_length at [45..49].
+        let off = 45;
+        assert_eq!(
+            &buf[off..off + 4],
+            &[0x00, 0x00, 0x00, 0x06],
+            "sanity: messageBody_length offset must match the byte anchor"
+        );
+        buf[off..off + 4].copy_from_slice(&0xFFFF_FFFFu32.to_be_bytes());
+        assert!(
+            BiopMessage::parse_at(&buf).is_err(),
+            "messageBody_length=0xFFFFFFFF must return Err, not panic"
+        );
+    }
+
+    #[test]
+    fn biop_header_oversized_message_size_errors() {
+        let content: &[u8] = b"Hello, BIOP!";
+        let msg = sample_file_message(&[0x01], content);
+        let mut buf = vec![0u8; msg.serialized_len()];
+        msg.serialize_into(&mut buf).unwrap();
+
+        // message_size is the BIOP header's own 32-bit length (bytes [8..12]).
+        buf[8..12].copy_from_slice(&0xFFFF_FFFFu32.to_be_bytes());
+        assert!(
+            BiopMessage::parse_at(&buf).is_err(),
+            "message_size=0xFFFFFFFF must return Err, not panic"
+        );
+    }
+
+    #[cfg(feature = "flate2")]
+    #[test]
+    fn decompress_zlib_bounded_rejects_oversized_output() {
+        use flate2::{Compression, write::ZlibEncoder};
+        use std::io::Write;
+
+        // ~1 MiB of zeros compresses to a tiny stream but inflates far past a
+        // small cap; the bounded reader must stop and error rather than
+        // allocate the full output.
+        let original = vec![0u8; 1024 * 1024];
+        let mut encoder = ZlibEncoder::new(Vec::new(), Compression::default());
+        encoder.write_all(&original).unwrap();
+        let compressed = encoder.finish().unwrap();
+
+        let result = decompress_zlib_bounded(&compressed, 1024);
+        assert!(
+            result.is_err(),
+            "decompressed output exceeding max_len must return Err"
+        );
     }
 }

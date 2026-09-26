@@ -58,6 +58,29 @@ pub const BYTE_ORDER_BIG_ENDIAN: u8 = 0x00;
 /// TR 101 202 §4.6.6.10.
 pub const COMPRESSED_MODULE_DESCRIPTOR_TAG: u8 = 0x09;
 
+/// Computes the wire-derived byte range `[pos, pos+len)`, bounded by `end`.
+///
+/// Every length field this guards (`messageBody_length`, `objectInfo_length`,
+/// `content_length`, `type_id_length`, `profile_data_length`, CosNaming
+/// `id_length`/`kind_length`, `initialContext_length`, …) is a 32-bit wire
+/// value per TR 101 202 §4.7.3/4.7.4/4.7.5; a plain `pos + len` can wrap
+/// `usize` on a 32-bit target when `len` is near `u32::MAX`, after which the
+/// `> end` guard would wrongly pass. `checked_add` makes that impossible.
+pub(super) fn span(
+    pos: usize,
+    len: u32,
+    end: usize,
+) -> crate::error::Result<core::ops::Range<usize>> {
+    let len = len as usize;
+    pos.checked_add(len)
+        .filter(|&stop| stop <= end)
+        .map(|stop| pos..stop)
+        .ok_or(crate::error::Error::SectionLengthOverflow {
+            declared: len,
+            available: end.saturating_sub(pos),
+        })
+}
+
 pub mod fs;
 pub mod ior;
 pub mod message;
@@ -71,3 +94,28 @@ pub use message::{
     Binding, BiopMessage, CompressedModuleDescriptor, DirectoryMessage, DsmStreamInfo, FileMessage,
     ModuleInfo, ServiceContext, ServiceGatewayInfo, StreamEventMessage, StreamMessage,
 };
+
+#[cfg(test)]
+mod tests {
+    use super::span;
+
+    #[test]
+    fn span_ok_within_bounds() {
+        assert_eq!(span(10, 5, 20).unwrap(), 10..15);
+        assert_eq!(span(0, 0, 0).unwrap(), 0..0);
+    }
+
+    #[test]
+    fn span_rejects_len_past_end() {
+        assert!(span(10, 11, 20).is_err());
+    }
+
+    /// `pos` alone (not just `pos + len`) can sit near `usize::MAX` — this is
+    /// the case a plain `pos + len` addition can overflow/panic on a 64-bit
+    /// host too (unlike a 32-bit-wire-length site, where `pos` is a small
+    /// cursor and only `len` is large): `checked_add` must still catch it.
+    #[test]
+    fn span_rejects_pos_plus_len_overflowing_usize() {
+        assert!(span(usize::MAX - 1, 4, usize::MAX).is_err());
+    }
+}

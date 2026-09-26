@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+## [10.1.0] - 2026-09-26
+Lockstep minor alongside `dvb-si` 10.1.0; no source changes in this crate.
+
 ## [10.0.1] - 2026-08-30
 Lockstep patch alongside `dvb-si` 10.0.1; no source changes in this crate.
 
