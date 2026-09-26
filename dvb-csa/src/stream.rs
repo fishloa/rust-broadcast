@@ -22,7 +22,7 @@ pub(crate) struct StreamCipher {
     cfed: u32,
 }
 
-/// Zero every register on drop — see [`crate::zeroize`].
+/// Zero every register on drop — see the `zeroize` module.
 impl Drop for StreamCipher {
     fn drop(&mut self) {
         zeroize(core::slice::from_mut(&mut self.a));

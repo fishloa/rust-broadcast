@@ -73,7 +73,7 @@ pub(super) struct BitslicedStream {
     cfed: [Word; CFED_BITS],
 }
 
-/// Zero every register on drop — see [`crate::zeroize`].
+/// Zero every register on drop — see the `zeroize` module.
 impl Drop for BitslicedStream {
     fn drop(&mut self) {
         zeroize(&mut self.a);

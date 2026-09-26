@@ -27,7 +27,7 @@ pub(super) struct BitslicedBlock {
     sch: [u8; ROUNDS],
 }
 
-/// Zero the round-key schedule on drop — see [`crate::zeroize`].
+/// Zero the round-key schedule on drop — see the `zeroize` module.
 impl Drop for BitslicedBlock {
     fn drop(&mut self) {
         zeroize(&mut self.sch);

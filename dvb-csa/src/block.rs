@@ -15,7 +15,7 @@ pub(crate) struct BlockCipher {
     sch: [u8; 56],
 }
 
-/// Zero the round-key schedule on drop — see [`crate::zeroize`].
+/// Zero the round-key schedule on drop — see the `zeroize` module.
 impl Drop for BlockCipher {
     fn drop(&mut self) {
         zeroize(&mut self.sch);

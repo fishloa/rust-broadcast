@@ -673,11 +673,11 @@ pub struct RouteHandle {
     /// discover a `Trunk` to subscribe to (issue #744).
     program_notify: tokio::sync::Notify,
     /// Which `Trunk` currently holds publish rights for each `ProgramId` —
-    /// deliberately tracked separately from [`Self::programs`] (issue W7: a
+    /// deliberately tracked separately from `programs` (issue W7: a
     /// route must reject a second concurrent publisher rather than let it
     /// take over or freeze the one it is already serving). Kept apart so a
     /// publisher's own disconnect ([`Self::release_program`]) never disturbs
-    /// [`Self::programs`]' already-served content — a route with no live
+    /// `programs`' already-served content — a route with no live
     /// publisher stays resolvable with whatever it last served, exactly as
     /// before this check existed; only a *new* [`Self::publish_program`]
     /// call for the same `ProgramId` is affected by this map at all.
@@ -793,7 +793,7 @@ impl RouteHandle {
     /// a *different* `Trunk` for this `program` — not yet freed by
     /// [`Self::release_program`] — is a second, concurrent publisher trying
     /// to take over a program this route is already actively receiving from —
-    /// rejected, not bound: [`Self::programs`]' existing entry (and the
+    /// rejected, not bound: `programs`' existing entry (and the
     /// publisher behind it) is left exactly as it was, and the rejected
     /// caller's own session is expected to be reaped once its driver-level
     /// admission loop notices it never got published (see
@@ -851,12 +851,12 @@ impl RouteHandle {
         self.program_notify.notify_waiters();
     }
 
-    /// Release `program`'s [`Self::active_publisher`] slot, if (and only if)
+    /// Release `program`'s `active_publisher` slot, if (and only if)
     /// it still holds exactly `trunk` — the counterpart to
     /// [`Self::publish_program`]'s rejection of a second concurrent
     /// publisher, called once a driver-backed session that owned `trunk` has
     /// been reaped (see `crate::source::release_route`). Deliberately does
-    /// **not** touch [`Self::programs`]: the route keeps serving whatever
+    /// **not** touch `programs`: the route keeps serving whatever
     /// that publisher last produced (exactly as it would have before this
     /// active-publisher check existed — a disconnected publisher's content
     /// was never un-served just because the connection ended), only a
@@ -934,7 +934,7 @@ impl RouteHandle {
 
     /// Resolve `program` against this route's registry — the egress side's
     /// read (see [`ProgramResolution`] for why this returns a three-way enum
-    /// rather than `Option<Arc<ProgramServing>>`, and [`Self::programs`]'s
+    /// rather than `Option<Arc<ProgramServing>>`, and `programs`'s
     /// own doc for why the lock is a `RwLock`). Every migrated egress call
     /// site resolves through `crate::http::resolve_route_program`, which
     /// wraps this.

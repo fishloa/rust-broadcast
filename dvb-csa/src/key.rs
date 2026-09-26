@@ -49,7 +49,7 @@ impl PartialEq for ControlWord {
 impl Eq for ControlWord {}
 
 /// Zero the control word's bytes on drop so it does not linger in freed
-/// memory. See [`crate::zeroize`] for why `write_volatile` + a
+/// memory. See the `zeroize` module for why `write_volatile` + a
 /// `compiler_fence`, rather than a plain assignment, are needed here.
 impl Drop for ControlWord {
     fn drop(&mut self) {

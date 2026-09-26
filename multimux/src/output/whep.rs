@@ -1379,6 +1379,7 @@ m=audio 9 UDP/TLS/RTP/SAVPF 111\r\na=ice-ufrag:x\r\na=ice-pwd:xxxxxxxxxxxxxxxxxx
             is_controlling: false,
             local_setup: SetupRole::Passive,
             stun_server: None,
+            max_remote_candidates: MAX_REMOTE_CANDIDATES,
             remote_fingerprint: OFFER_FINGERPRINT.into(),
         })
         .unwrap();
@@ -1567,6 +1568,7 @@ m=audio 9 UDP/TLS/RTP/SAVPF 111\r\na=ice-ufrag:x\r\na=ice-pwd:xxxxxxxxxxxxxxxxxx
             is_controlling: false,
             local_setup: SetupRole::Passive,
             stun_server: None,
+            max_remote_candidates: MAX_REMOTE_CANDIDATES,
             remote_fingerprint: OFFER_FINGERPRINT.into(),
         })
         .unwrap();

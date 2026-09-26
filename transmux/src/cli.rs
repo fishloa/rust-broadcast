@@ -223,7 +223,7 @@ pub struct Args {
 /// strings) verbatim, so a `dbg!`/panic message of `Args` would write
 /// content keys to logs. Every other field is printed as-is; `keys` is
 /// printed with each entry redacted down to its KID half via
-/// [`redact_key_spec`] (a KID is not secret, the key half is).
+/// `redact_key_spec` (a KID is not secret, the key half is).
 impl fmt::Debug for Args {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let mut d = f.debug_struct("Args");
@@ -314,7 +314,7 @@ pub enum CliError {
     UndeterminedFormat,
     /// The requested track-ID selection left no tracks.
     NoTracksSelected,
-    /// A `--key` argument was malformed. Carries [`redact_key_spec`]'s
+    /// A `--key` argument was malformed. Carries `redact_key_spec`'s
     /// output, never the raw argument — the key half must never reach an
     /// error message, `Display`, or (this enum derives `Debug`) a `dbg!`.
     BadKey(String),
