@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.2] - 2026-09-26
+
+### Security
+Fixes GHSA-6w6c-9736-x7gr.
+
 ### Fixed
 - `ObjectDefinition1::parse` now bounds-checks before indexing the audio description flag byte, preventing panic on truncated input.
 - The `rdd29` fuzz target now checks that a parsed `AtmosFrame` reserializes to the original input bytes (not just to a stable canonical form), so it can catch a parser that silently drops or normalizes input; the real-fixture round trip in `tests/fixture_eac3.rs` already checks the same property deterministically in CI.
