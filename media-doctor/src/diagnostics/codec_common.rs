@@ -33,7 +33,17 @@ pub(crate) struct DeclaredStream {
 }
 
 /// Walk `ts` following PAT → every PMT, returning every elementary stream
-/// declared across all programs (in PMT wire order, PAT-discovery order).
+/// declared, one entry per PID.
+///
+/// A PMT repeats on the air (typically about every 100 ms — ISO/IEC
+/// 13818-1 §2.4.4.2's PSI repetition-rate advice), so a stream's PID list is
+/// walked far more than once end to end; without deduping, both this
+/// function's own `Vec` and every caller's `.contains()` scan over it grow
+/// linearly with repetitions rather than with the number of actually
+/// declared PIDs — quadratic overall (issue #1069 / audit MD-C2). Dedup by
+/// elementary PID, keeping the latest PMT generation seen for that PID (a
+/// version bump legitimately changes a PID's declared `stream_type`, and the
+/// most recent one is authoritative); returned in PID order.
 ///
 /// Malformed/unparseable PAT or PMT sections are skipped rather than
 /// propagated — a codec check degrades to "nothing declared" on a broken PSI
@@ -45,7 +55,7 @@ pub(crate) fn collect_pmt_streams(ts: &[u8]) -> Vec<DeclaredStream> {
     reassemblers.entry(dvb_si::tables::pat::PID).or_default();
 
     let mut pmt_pids: Vec<u16> = Vec::new();
-    let mut declared: Vec<DeclaredStream> = Vec::new();
+    let mut declared: BTreeMap<u16, StreamType> = BTreeMap::new();
 
     for i in 0..n_packets {
         let offset = i * TS_PACKET_SIZE;
@@ -78,10 +88,7 @@ pub(crate) fn collect_pmt_streams(ts: &[u8]) -> Vec<DeclaredStream> {
                 }
             } else if let Ok(pmt) = PmtSection::parse(&section) {
                 for stream in &pmt.streams {
-                    declared.push(DeclaredStream {
-                        pid: stream.elementary_pid,
-                        stream_type: stream.stream_type,
-                    });
+                    declared.insert(stream.elementary_pid, stream.stream_type);
                 }
             }
         }
@@ -92,6 +99,9 @@ pub(crate) fn collect_pmt_streams(ts: &[u8]) -> Vec<DeclaredStream> {
     }
 
     declared
+        .into_iter()
+        .map(|(pid, stream_type)| DeclaredStream { pid, stream_type })
+        .collect()
 }
 
 /// Elementary-stream PIDs among `streams` matching `stream_type`, in PMT wire
@@ -263,5 +273,63 @@ pub(crate) mod tests {
         let len = pes_bytes.len().min(TS_PACKET_SIZE - 4);
         pkt[4..4 + len].copy_from_slice(&pes_bytes[..len]);
         pkt
+    }
+}
+
+#[cfg(test)]
+mod dedup_tests {
+    use super::tests::build_pat_pmt_ts;
+    use super::*;
+    use dvb_si::tables::pmt::StreamType;
+
+    /// A real PMT repeats on the air about every 100 ms (issue #1069 / audit
+    /// MD-C2): concatenating the SAME PAT+PMT generation `N` times mirrors
+    /// that repetition. `collect_pmt_streams` must record each declared PID
+    /// **once**, not once per repetition — the un-deduped Vec is what made
+    /// `pids_with_stream_type`'s `Vec` (and every `.contains()` scan over it)
+    /// grow without bound over stream length.
+    #[test]
+    fn repeated_pmt_generations_are_deduped() {
+        let one_generation = build_pat_pmt_ts(&[(0x0101, StreamType::H264)]);
+        let mut ts = Vec::new();
+        for _ in 0..50 {
+            ts.extend_from_slice(&one_generation);
+        }
+
+        let declared = collect_pmt_streams(&ts);
+        assert_eq!(
+            declared,
+            alloc::vec![DeclaredStream {
+                pid: 0x0101,
+                stream_type: StreamType::H264,
+            }],
+            "50 repetitions of the same PMT generation must dedup to exactly \
+             one declared stream, got {} entries: {declared:?}",
+            declared.len(),
+        );
+    }
+
+    /// A PMT version change mid-stream (e.g. a PID's `stream_type` changed
+    /// across a version bump) must leave the LATEST declaration standing,
+    /// not both — otherwise a caller like `Scte35Check`/`CodecSignallingCheck`
+    /// would treat a PID as two stream types at once.
+    #[test]
+    fn later_pmt_generation_overrides_earlier_declaration_for_same_pid() {
+        let first = build_pat_pmt_ts(&[(0x0101, StreamType::H264)]);
+        let second = build_pat_pmt_ts(&[(0x0101, StreamType::Hevc)]);
+        let mut ts = Vec::new();
+        ts.extend_from_slice(&first);
+        ts.extend_from_slice(&second);
+
+        let declared = collect_pmt_streams(&ts);
+        assert_eq!(
+            declared,
+            alloc::vec![DeclaredStream {
+                pid: 0x0101,
+                stream_type: StreamType::Hevc,
+            }],
+            "the later PMT generation's stream_type must win for a repeated \
+             PID, got {declared:?}",
+        );
     }
 }

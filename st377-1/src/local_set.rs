@@ -16,7 +16,7 @@ use alloc::vec::Vec;
 
 use broadcast_common::{Parse, Serialize};
 
-use crate::ber::{ber_length_size, decode_ber_length, encode_ber_length};
+use crate::ber::{BerLength, ber_length_size_for, decode_ber_length, encode_ber_length_as};
 use crate::error::{Error, Result};
 use crate::types::{UlBytes, ul_bytes_from_prefix};
 
@@ -289,25 +289,60 @@ impl core::fmt::Display for StructuralSetKind {
 }
 
 /// One `{local_tag, value}` item inside a [`LocalSet`] (Figure 8).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+///
+/// `PartialEq`/`Eq` compare only `tag`/`value` — `len_size` is a
+/// serialization-*form* preference, not part of the item's logical value
+/// (see [`crate::KlvItem`]'s doc; issue #1047 / audit MX-C1).
+#[derive(Debug, Clone, Copy, Default)]
 pub struct LocalSetItem<'a> {
     /// The item's 2-byte local tag.
     pub tag: u16,
     /// The item's value bytes (borrowed).
     pub value: &'a [u8],
+    /// The on-wire BER length-field width, when the parent
+    /// [`LocalSet::item_length_mode`] is [`ItemLengthMode::Ber`] —
+    /// [`BerLength::Minimal`] for a freshly built item, or the exact
+    /// width parsed from the wire. Meaningless (and ignored on serialize)
+    /// under [`ItemLengthMode::TwoByte`], where every item length is
+    /// always exactly 2 bytes with no ambiguity to preserve.
+    pub len_size: BerLength,
 }
+
+impl PartialEq for LocalSetItem<'_> {
+    fn eq(&self, other: &Self) -> bool {
+        self.tag == other.tag && self.value == other.value
+    }
+}
+
+impl Eq for LocalSetItem<'_> {}
 
 /// A Header Metadata Set encoded with MXF's "local set" framing (§9.3): a
 /// 16-byte Set Key identifying which Set this is (see
 /// [`StructuralSetKind`]), a BER Length, and a sequence of
 /// [`LocalSetItem`]s.
-#[derive(Debug, Clone, PartialEq, Eq)]
+///
+/// `PartialEq`/`Eq` compare only `key`/`items` — `len_size` is a
+/// serialization-*form* preference, not part of the Set's logical value
+/// (see [`crate::KlvItem`]'s doc; issue #1047 / audit MX-C1).
+#[derive(Debug, Clone, Default)]
 pub struct LocalSet<'a> {
     /// The Set Key (all 16 bytes, as found on the wire).
     pub key: UlBytes,
     /// The Set's items, in on-wire order.
     pub items: Vec<LocalSetItem<'a>>,
+    /// The on-wire BER length-field width of the Set's own outer envelope
+    /// — [`BerLength::Minimal`] for a freshly built value, or the exact
+    /// width `parse` found on the wire.
+    pub len_size: BerLength,
 }
+
+impl PartialEq for LocalSet<'_> {
+    fn eq(&self, other: &Self) -> bool {
+        self.key == other.key && self.items == other.items
+    }
+}
+
+impl Eq for LocalSet<'_> {}
 
 impl<'a> LocalSet<'a> {
     /// This Set's Kind (Table 17), from its Key's bytes 14/15.
@@ -383,8 +418,8 @@ impl<'a> LocalSet<'a> {
         let mode = ItemLengthMode::from_registry_designator_byte(key[5])
             .unwrap_or(ItemLengthMode::TwoByte);
 
-        let (len, len_size) = decode_ber_length(&bytes[16..])?;
-        let value_start = 16 + len_size;
+        let (len, len_token_size) = decode_ber_length(&bytes[16..])?;
+        let value_start = 16 + len_token_size;
         let len = usize::try_from(len).map_err(|_| Error::BufferTooShort {
             need: usize::MAX,
             have: bytes.len(),
@@ -447,11 +482,21 @@ impl<'a> LocalSet<'a> {
             items.push(LocalSetItem {
                 tag,
                 value: &rest[value_start..value_end],
+                // Only meaningful in Ber mode (TwoByte's 2-byte width has
+                // no ambiguity to preserve); harmless to record either way.
+                len_size: BerLength::fixed_from_consumed(item_len_size),
             });
             cursor = &rest[value_end..];
         }
 
-        Ok((LocalSet { key, items }, value_end))
+        Ok((
+            LocalSet {
+                key,
+                items,
+                len_size: BerLength::fixed_from_consumed(len_token_size),
+            },
+            value_end,
+        ))
     }
 }
 
@@ -482,11 +527,11 @@ impl Serialize for LocalSet<'_> {
             .map(|i| {
                 2 + match mode {
                     ItemLengthMode::TwoByte => 2,
-                    ItemLengthMode::Ber => ber_length_size(i.value.len() as u64),
+                    ItemLengthMode::Ber => ber_length_size_for(i.value.len() as u64, i.len_size),
                 } + i.value.len()
             })
             .sum();
-        16 + ber_length_size(items_len as u64) + items_len
+        16 + ber_length_size_for(items_len as u64, self.len_size) + items_len
     }
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
@@ -506,11 +551,11 @@ impl Serialize for LocalSet<'_> {
             .map(|i| {
                 2 + match mode {
                     ItemLengthMode::TwoByte => 2,
-                    ItemLengthMode::Ber => ber_length_size(i.value.len() as u64),
+                    ItemLengthMode::Ber => ber_length_size_for(i.value.len() as u64, i.len_size),
                 } + i.value.len()
             })
             .sum();
-        let len_size = encode_ber_length(items_len as u64, &mut buf[16..])?;
+        let len_size = encode_ber_length_as(items_len as u64, self.len_size, &mut buf[16..])?;
         let mut pos = 16 + len_size;
         for item in &self.items {
             buf[pos..pos + 2].copy_from_slice(&item.tag.to_be_bytes());
@@ -529,7 +574,11 @@ impl Serialize for LocalSet<'_> {
                     pos += 2;
                 }
                 ItemLengthMode::Ber => {
-                    pos += encode_ber_length(item.value.len() as u64, &mut buf[pos..])?;
+                    pos += encode_ber_length_as(
+                        item.value.len() as u64,
+                        item.len_size,
+                        &mut buf[pos..],
+                    )?;
                 }
             }
             buf[pos..pos + item.value.len()].copy_from_slice(item.value);
@@ -593,12 +642,15 @@ mod tests {
                 LocalSetItem {
                     tag: 0x3B02,
                     value: &[1, 2, 3, 4, 5, 6, 7, 8],
+                    ..Default::default()
                 },
                 LocalSetItem {
                     tag: 0x3B05,
                     value: &[0x01, 0x03],
+                    ..Default::default()
                 },
             ],
+            ..Default::default()
         };
         let mut buf = alloc::vec![0u8; set.serialized_len()];
         set.serialize_into(&mut buf).unwrap();
@@ -617,7 +669,9 @@ mod tests {
             items: alloc::vec![LocalSetItem {
                 tag: 0x3C01,
                 value: &big_value,
+                ..Default::default()
             }],
+            ..Default::default()
         };
         let mut buf = alloc::vec![0u8; set.serialized_len()];
         set.serialize_into(&mut buf).unwrap();
@@ -633,5 +687,58 @@ mod tests {
             LocalSet::parse_prefix(&bytes),
             Err(Error::KeyPrefixMismatch { .. })
         ));
+    }
+
+    /// Issue #1047 (audit MX-C1): a non-minimal outer-envelope BER length
+    /// token must round-trip byte-identically.
+    #[test]
+    fn non_minimal_outer_length_token_round_trips_byte_identical() {
+        let key = LocalSet::build_key(StructuralSetKind::Preface, ItemLengthMode::TwoByte);
+        // One item: tag(2) + len(2) + value(4) = 8 bytes, well within
+        // short form; force a non-minimal 2-byte long-form token instead.
+        let mut original = alloc::vec::Vec::new();
+        original.extend_from_slice(&key);
+        original.push(0x81);
+        original.push(8);
+        original.extend_from_slice(&0x3B02u16.to_be_bytes());
+        original.extend_from_slice(&4u16.to_be_bytes());
+        original.extend_from_slice(&[1, 2, 3, 4]);
+
+        let parsed = LocalSet::parse(&original).unwrap();
+        assert_eq!(
+            parsed.len_size,
+            BerLength::Fixed(core::num::NonZeroU8::new(2).unwrap())
+        );
+
+        let mut out = alloc::vec![0u8; parsed.serialized_len()];
+        parsed.serialize_into(&mut out).unwrap();
+        assert_eq!(out, original);
+    }
+
+    /// Same as above, but the non-minimal length is on an ITEM'S own
+    /// length token under [`ItemLengthMode::Ber`], not the outer envelope.
+    #[test]
+    fn non_minimal_item_length_token_round_trips_byte_identical() {
+        let key = LocalSet::build_key(StructuralSetKind::Identification, ItemLengthMode::Ber);
+        // Outer items_len = tag(2) + item-len-token(2, non-minimal) +
+        // value(4) = 8.
+        let mut original = alloc::vec::Vec::new();
+        original.extend_from_slice(&key);
+        original.push(8); // outer: minimal short form
+        original.extend_from_slice(&0x3C01u16.to_be_bytes());
+        original.push(0x81); // item length: long form, 1 following byte
+        original.push(4);
+        original.extend_from_slice(&[1, 2, 3, 4]);
+
+        let parsed = LocalSet::parse(&original).unwrap();
+        assert_eq!(parsed.items.len(), 1);
+        assert_eq!(
+            parsed.items[0].len_size,
+            BerLength::Fixed(core::num::NonZeroU8::new(2).unwrap())
+        );
+
+        let mut out = alloc::vec![0u8; parsed.serialized_len()];
+        parsed.serialize_into(&mut out).unwrap();
+        assert_eq!(out, original);
     }
 }

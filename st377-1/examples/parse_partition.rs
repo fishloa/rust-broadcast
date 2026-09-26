@@ -5,7 +5,7 @@
 //! Run with `cargo run -p st377-1 --example parse_partition`.
 
 use broadcast_common::{Parse, Serialize};
-use st377_1::{PartitionKind, PartitionPack, PartitionStatus};
+use st377_1::{BerLength, PartitionKind, PartitionPack, PartitionStatus};
 
 fn main() {
     let pack = PartitionPack {
@@ -29,6 +29,7 @@ fn main() {
             0x01, 0x00,
         ],
         essence_containers: vec![[0x11; 16]],
+        len_size: BerLength::Minimal,
     };
 
     let bytes = pack.to_bytes();

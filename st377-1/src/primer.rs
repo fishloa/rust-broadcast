@@ -8,7 +8,7 @@ use alloc::vec::Vec;
 
 use broadcast_common::{Parse, Serialize};
 
-use crate::ber::{ber_length_size, decode_ber_length, encode_ber_length};
+use crate::ber::{BerLength, ber_length_size_for, decode_ber_length, encode_ber_length_as};
 use crate::error::{Error, Result};
 use crate::types::{UlBytes, ul_bytes_from_prefix};
 
@@ -26,12 +26,27 @@ const LOCAL_TAG_ENTRY_LEN: u32 = 18;
 /// The Primer Pack — SMPTE ST 377-1:2019 §9.2, Tables 13-15: a Batch of
 /// `{local_tag: u16, uid: AUID}` entries, scoped to the single Partition
 /// that contains it (§9.2 — never accumulated across Partitions).
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+///
+/// `PartialEq`/`Eq` compare only `entries` — `len_size` is a
+/// serialization-*form* preference, not part of the Pack's logical value
+/// (see [`crate::KlvItem`]'s doc; issue #1047 / audit MX-C1).
+#[derive(Debug, Clone, Default)]
 pub struct PrimerPack {
     /// Every local-tag -> UL/UUID mapping in this Partition's Header
     /// Metadata.
     pub entries: Vec<(u16, UlBytes)>,
+    /// The on-wire BER length-field width — [`BerLength::Minimal`] for a
+    /// freshly built value, or the exact width `parse` found on the wire.
+    pub len_size: BerLength,
 }
+
+impl PartialEq for PrimerPack {
+    fn eq(&self, other: &Self) -> bool {
+        self.entries == other.entries
+    }
+}
+
+impl Eq for PrimerPack {}
 
 impl PrimerPack {
     /// Build the 16-byte Primer Pack Key (Table 13).
@@ -99,8 +114,8 @@ impl PrimerPack {
         let key: UlBytes = ul_bytes_from_prefix(bytes);
         Self::check_key(&key)?;
 
-        let (len, len_size) = decode_ber_length(&bytes[16..])?;
-        let value_start = 16 + len_size;
+        let (len, len_token_size) = decode_ber_length(&bytes[16..])?;
+        let value_start = 16 + len_token_size;
         let len = len as usize;
         let value_end = value_start.checked_add(len).ok_or(Error::BufferTooShort {
             need: usize::MAX,
@@ -138,7 +153,13 @@ impl PrimerPack {
             let uid: UlBytes = ul_bytes_from_prefix(&chunk[2..]);
             entries.push((tag, uid));
         }
-        Ok((PrimerPack { entries }, value_end))
+        Ok((
+            PrimerPack {
+                entries,
+                len_size: BerLength::fixed_from_consumed(len_token_size),
+            },
+            value_end,
+        ))
     }
 }
 
@@ -163,7 +184,7 @@ impl Serialize for PrimerPack {
 
     fn serialized_len(&self) -> usize {
         let value_len = 8 + self.entries.len() * 18;
-        16 + ber_length_size(value_len as u64) + value_len
+        16 + ber_length_size_for(value_len as u64, self.len_size) + value_len
     }
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
@@ -177,7 +198,7 @@ impl Serialize for PrimerPack {
         }
         buf[0..16].copy_from_slice(&Self::key());
         let value_len = 8 + self.entries.len() * 18;
-        let len_size = encode_ber_length(value_len as u64, &mut buf[16..])?;
+        let len_size = encode_ber_length_as(value_len as u64, self.len_size, &mut buf[16..])?;
         let mut pos = 16 + len_size;
         buf[pos..pos + 4].copy_from_slice(&(self.entries.len() as u32).to_be_bytes());
         pos += 4;
@@ -201,6 +222,7 @@ mod tests {
     fn primer_pack_round_trip() {
         let pack = PrimerPack {
             entries: alloc::vec![(0x3B02, [0xAAu8; 16]), (0x3B05, [0xBBu8; 16])],
+            ..Default::default()
         };
         let mut buf = alloc::vec![0u8; pack.serialized_len()];
         pack.serialize_into(&mut buf).unwrap();
@@ -217,6 +239,36 @@ mod tests {
         let mut buf = alloc::vec![0u8; pack.serialized_len()];
         pack.serialize_into(&mut buf).unwrap();
         assert_eq!(PrimerPack::parse(&buf).unwrap(), pack);
+    }
+
+    /// Issue #1047 (audit MX-C1): a non-minimal (fixed-width long-form) BER
+    /// length token must round-trip byte-identically.
+    #[test]
+    fn non_minimal_length_token_round_trips_byte_identical() {
+        let entries = alloc::vec![(0x3B02u16, [0xAAu8; 16])];
+        let value_len = 8 + entries.len() * 18; // 26, fits short form
+        assert!(value_len <= 0x7F);
+
+        let mut original = alloc::vec::Vec::new();
+        original.extend_from_slice(&PrimerPack::key());
+        original.push(0x81); // long form, 1 following byte
+        original.push(value_len as u8);
+        original.extend_from_slice(&(entries.len() as u32).to_be_bytes());
+        original.extend_from_slice(&LOCAL_TAG_ENTRY_LEN.to_be_bytes());
+        for (tag, uid) in &entries {
+            original.extend_from_slice(&tag.to_be_bytes());
+            original.extend_from_slice(uid);
+        }
+
+        let parsed = PrimerPack::parse(&original).unwrap();
+        assert_eq!(
+            parsed.len_size,
+            BerLength::Fixed(core::num::NonZeroU8::new(2).unwrap())
+        );
+
+        let mut out = alloc::vec![0u8; parsed.serialized_len()];
+        parsed.serialize_into(&mut out).unwrap();
+        assert_eq!(out, original);
     }
 
     #[test]

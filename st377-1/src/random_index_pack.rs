@@ -8,7 +8,7 @@ use alloc::vec::Vec;
 
 use broadcast_common::{Parse, Serialize};
 
-use crate::ber::{ber_length_size, decode_ber_length, encode_ber_length};
+use crate::ber::{BerLength, ber_length_size_for, decode_ber_length, encode_ber_length_as};
 use crate::error::{Error, Result};
 use crate::types::ul_bytes_from_prefix;
 
@@ -34,11 +34,26 @@ pub struct PartitionLocation {
 /// Footer), ascending `byte_offset` order, plus a trailing overall-length
 /// field (§12.2 Note 2) that lets a decoder seek from EOF directly to this
 /// Pack's own Key without a forward scan.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+///
+/// `PartialEq`/`Eq` compare only `partitions` — `len_size` is a
+/// serialization-*form* preference, not part of the Pack's logical value
+/// (see [`crate::KlvItem`]'s doc; issue #1047 / audit MX-C1).
+#[derive(Debug, Clone, Default)]
 pub struct RandomIndexPack {
     /// One entry per Partition in the file, ascending `byte_offset` order.
     pub partitions: Vec<PartitionLocation>,
+    /// The on-wire BER length-field width — [`BerLength::Minimal`] for a
+    /// freshly built value, or the exact width `parse` found on the wire.
+    pub len_size: BerLength,
 }
+
+impl PartialEq for RandomIndexPack {
+    fn eq(&self, other: &Self) -> bool {
+        self.partitions == other.partitions
+    }
+}
+
+impl Eq for RandomIndexPack {}
 
 impl RandomIndexPack {
     /// Build the 16-byte Random Index Pack Key (Table 29).
@@ -87,8 +102,8 @@ impl RandomIndexPack {
         let key: [u8; 16] = ul_bytes_from_prefix(bytes);
         Self::check_key(&key)?;
 
-        let (len, len_size) = decode_ber_length(&bytes[16..])?;
-        let value_start = 16 + len_size;
+        let (len, len_token_size) = decode_ber_length(&bytes[16..])?;
+        let value_start = 16 + len_token_size;
         let len = len as usize;
         let value_end = value_start.checked_add(len).ok_or(Error::BufferTooShort {
             need: usize::MAX,
@@ -143,7 +158,13 @@ impl RandomIndexPack {
             });
         }
 
-        Ok((RandomIndexPack { partitions }, value_end))
+        Ok((
+            RandomIndexPack {
+                partitions,
+                len_size: BerLength::fixed_from_consumed(len_token_size),
+            },
+            value_end,
+        ))
     }
 }
 
@@ -168,7 +189,7 @@ impl Serialize for RandomIndexPack {
 
     fn serialized_len(&self) -> usize {
         let value_len = self.partitions.len() * 12 + 4;
-        16 + ber_length_size(value_len as u64) + value_len
+        16 + ber_length_size_for(value_len as u64, self.len_size) + value_len
     }
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
@@ -182,7 +203,7 @@ impl Serialize for RandomIndexPack {
         }
         buf[0..16].copy_from_slice(&Self::key());
         let value_len = self.partitions.len() * 12 + 4;
-        let len_size = encode_ber_length(value_len as u64, &mut buf[16..])?;
+        let len_size = encode_ber_length_as(value_len as u64, self.len_size, &mut buf[16..])?;
         let mut pos = 16 + len_size;
         for p in &self.partitions {
             buf[pos..pos + 4].copy_from_slice(&p.body_sid.to_be_bytes());
@@ -217,6 +238,7 @@ mod tests {
                     byte_offset: 131072,
                 },
             ],
+            ..Default::default()
         };
         let mut buf = alloc::vec![0u8; rip.serialized_len()];
         rip.serialize_into(&mut buf).unwrap();
@@ -225,6 +247,39 @@ mod tests {
         // Trailing 4 bytes equal the RIP's own total length (§12.2 Note 2).
         let trailing_len = u32::from_be_bytes(buf[buf.len() - 4..].try_into().unwrap());
         assert_eq!(trailing_len as usize, buf.len());
+    }
+
+    /// Issue #1047 (audit MX-C1): a non-minimal BER length token must
+    /// round-trip byte-identically.
+    #[test]
+    fn non_minimal_length_token_round_trips_byte_identical() {
+        let partitions = alloc::vec![PartitionLocation {
+            body_sid: 1,
+            byte_offset: 100,
+        }];
+        let value_len = partitions.len() * 12 + 4; // 16, fits short form
+        assert!(value_len <= 0x7F);
+
+        let mut original = alloc::vec::Vec::new();
+        original.extend_from_slice(&RandomIndexPack::key());
+        original.push(0x81); // long form, 1 following byte
+        original.push(value_len as u8);
+        for p in &partitions {
+            original.extend_from_slice(&p.body_sid.to_be_bytes());
+            original.extend_from_slice(&p.byte_offset.to_be_bytes());
+        }
+        let total_len = 16 + 2 + value_len;
+        original.extend_from_slice(&(total_len as u32).to_be_bytes());
+
+        let parsed = RandomIndexPack::parse(&original).unwrap();
+        assert_eq!(
+            parsed.len_size,
+            BerLength::Fixed(core::num::NonZeroU8::new(2).unwrap())
+        );
+
+        let mut out = alloc::vec![0u8; parsed.serialized_len()];
+        parsed.serialize_into(&mut out).unwrap();
+        assert_eq!(out, original);
     }
 
     #[test]
@@ -242,6 +297,7 @@ mod tests {
                 body_sid: 1,
                 byte_offset: 100,
             }],
+            ..Default::default()
         };
         let mut buf = alloc::vec![0u8; rip.serialized_len()];
         rip.serialize_into(&mut buf).unwrap();

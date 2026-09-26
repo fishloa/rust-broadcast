@@ -12,14 +12,18 @@
 //! [`st377_1::StructuralSetKind`] (Table 17 — hand-written `Display` since
 //! its `Unknown` catch-all carries a 2-byte payload the
 //! `impl_spec_display!` macro's single-byte-payload form doesn't fit).
+//! [`st377_1::BerLength`] (issue #1047) is a sixth public enum but is on
+//! `SKIP` below — see its comment.
 
 use std::collections::BTreeSet;
 use std::fs;
 use std::path::Path;
 
 /// Enums that are intentionally **not** spec/field labels: the structured
-/// error type has no spec label.
-const SKIP: &[&str] = &["Error"];
+/// error type has no spec label. `BerLength` (issue #1047) is a
+/// serialization-*form* control (a data-carrying ADT — one variant carries
+/// the on-wire width), not a spec-defined named vocabulary.
+const SKIP: &[&str] = &["Error", "BerLength"];
 
 fn read_rs(dir: &Path, out: &mut Vec<String>) {
     for entry in fs::read_dir(dir).expect("read src dir") {

@@ -34,6 +34,19 @@ pub enum Error {
         /// Following-byte count found (or requested on serialize).
         bytes: usize,
     },
+    /// [`crate::ber::BerLength::Fixed`] requested a specific on-wire BER
+    /// length-token width that is too small to represent the length being
+    /// serialized (issue #1047). Not reachable by re-serializing a value
+    /// as parsed (its preserved width, by construction, already fit that
+    /// same length) — only by constructing or mutating a value into an
+    /// inconsistent state.
+    #[error("length {len} does not fit in the fixed BER width of {width} byte(s)")]
+    FixedBerLengthTooSmall {
+        /// The length that needed encoding.
+        len: u64,
+        /// The requested fixed total token width, in bytes.
+        width: u8,
+    },
     /// A KLV Key was not the expected 16 bytes ( §6.3.8 — MXF Keys and
     /// Universal Labels are always exactly 16 bytes; this only fires when
     /// a caller-supplied buffer is short, since [`crate::klv::KlvItem`]

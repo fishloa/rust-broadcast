@@ -26,4 +26,20 @@ pub enum Error {
         /// Human-readable explanation.
         reason: String,
     },
+
+    /// An attribute-list value cannot be represented as the requested
+    /// [`crate::AttrValue`] kind (issue #1045 T12): a quoted-string
+    /// containing `"`, CR or LF (RFC 8216 §4.2 forbids all three), or a
+    /// bare enumerated-string/decimal value containing a character that
+    /// would require quoting (`,`, `"`, CR, LF, or whitespace). Rejected at
+    /// construction rather than silently mangled (e.g. percent-encoded) or
+    /// rendered raw — cf. #1129.
+    #[error("attribute value {value:?} is not valid as {kind}")]
+    InvalidAttrValue {
+        /// The value that failed validation.
+        value: String,
+        /// Which kind was requested: `"a quoted-string"` or `"a bare
+        /// value"`.
+        kind: &'static str,
+    },
 }

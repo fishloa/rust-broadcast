@@ -3,11 +3,26 @@
 //!
 //! - Partition Packs, the Primer Pack, and the Random Index Pack — all
 //!   spec-fixed positional layouts, not "sets" — round-trip
-//!   **byte-identically** through their typed parsers.
+//!   **byte-identically** against the ORIGINAL captured bytes (issue #1047
+//!   / audit MX-C1): each of [`KlvItem`]/`PartitionPack`/`PrimerPack`/
+//!   `RandomIndexPack`/`LocalSet` now stores the on-wire BER length-field
+//!   width it was parsed with (`len_size`, a [`st377_1::BerLength`]) and
+//!   reproduces that exact width on `serialize_into`, rather than always
+//!   re-canonicalizing to the shortest form that fits. This matters
+//!   because real MXF encoders routinely write a longer, fixed-width form
+//!   (`docs/st377-1.md` §6.3.4 permits any valid BER form) so a pack can be
+//!   rewritten in place (e.g. Open -> Closed) without shifting every later
+//!   absolute offset — measured directly against this fixture: **all 25**
+//!   of its Partition Packs, and 2 of its 27 Header Metadata Sets, use a
+//!   non-minimal length token (`real_fixture_non_minimal_ber_lengths_round_
+//!   trip_byte_identically` below quantifies this precisely and asserts
+//!   every single one still reproduces its original bytes).
 //! - Every Header Metadata Set (a "local set" key, §9.3) round-trips
 //!   **byte-identically** through the generic [`LocalSet`] (an order-
-//!   preserving passthrough over the item list it parsed, so this is a
-//!   genuine byte-fidelity check against whatever a real encoder wrote).
+//!   preserving passthrough over the item list it parsed, including a
+//!   per-item [`st377_1::BerLength`] for the rarer `ItemLengthMode::Ber`
+//!   sets — none in this fixture, which is exclusively `TwoByte`, but
+//!   covered by an in-crate unit test).
 //! - If the set's [`StructuralSetKind`] additionally has a typed
 //!   representation in this crate ([`Preface`]/[`Identification`]/
 //!   [`ContentStorage`]/[`EssenceContainerData`]/[`MaterialPackage`]/
@@ -42,11 +57,12 @@
 //! out of scope for this crate regardless (never decoded).
 
 use broadcast_common::{Parse, Serialize};
+use st377_1::op1a::{Op1aQualifier, is_op1a};
 use st377_1::{
     ContentStorage, Error, EssenceContainerData, EventTrack, FillerComponent, Identification,
-    LocalSet, MaterialPackage, PartitionPack, Preface, PrimerPack, RandomIndexPack, Sequence,
-    SourceClip, SourcePackage, StaticTrack, StructuralSetKind, TimecodeComponent, TimelineTrack,
-    collect_klv_items, is_fill_item_key, is_local_set_key,
+    KlvItem, LocalSet, MaterialPackage, PartitionPack, Preface, PrimerPack, RandomIndexPack,
+    Sequence, SourceClip, SourcePackage, StaticTrack, StructuralSetKind, TimecodeComponent,
+    TimelineTrack, collect_klv_items, is_fill_item_key, is_local_set_key,
 };
 
 fn fixture_bytes() -> Vec<u8> {
@@ -80,6 +96,14 @@ where
     );
 }
 
+/// Compares every item against the TRUE original bytes at its offset
+/// (`&bytes[offset..offset + consumed]`), not a re-encoded baseline — see
+/// the module doc (issue #1047 / audit MX-C1). Previously this used
+/// `item.to_bytes()` as the comparison baseline, which is `KlvItem`'s OWN
+/// re-canonicalized encoding of the length token, so it could never
+/// disagree with a further re-canonicalization no matter what the source
+/// file actually wrote for a non-minimally-encoded item — it only ever
+/// caught a *field-content* regression, never the length-token-width loss.
 #[test]
 fn real_fixture_every_klv_item_round_trips_byte_identical() {
     let bytes = fixture_bytes();
@@ -91,15 +115,20 @@ fn real_fixture_every_klv_item_round_trips_byte_identical() {
 
     let mut header_metadata_sets_seen = 0usize;
 
-    for (i, (_offset, item)) in items.iter().enumerate() {
+    for (i, (offset, item)) in items.iter().enumerate() {
         if is_fill_item_key(&item.key) {
             continue;
         }
 
-        let klv = item.to_bytes();
+        // The TRUE original bytes for this item, re-derived from its
+        // on-wire length token (not `item.to_bytes()`, which is already
+        // re-canonicalized and so cannot expose a width-preservation bug).
+        let (_, consumed) = KlvItem::parse_prefix(&bytes[*offset..])
+            .unwrap_or_else(|e| panic!("item {i}: re-deriving consumed length failed: {e}"));
+        let klv = &bytes[*offset..*offset + consumed];
 
         if PartitionPack::is_partition_key(&item.key) {
-            let pp = PartitionPack::parse(&klv)
+            let pp = PartitionPack::parse(klv)
                 .unwrap_or_else(|e| panic!("item {i}: PartitionPack parse failed: {e}"));
             let mut out = vec![0u8; pp.serialized_len()];
             pp.serialize_into(&mut out)
@@ -112,7 +141,7 @@ fn real_fixture_every_klv_item_round_trips_byte_identical() {
         }
 
         if PrimerPack::is_primer_key(&item.key) {
-            let primer = PrimerPack::parse(&klv)
+            let primer = PrimerPack::parse(klv)
                 .unwrap_or_else(|e| panic!("item {i}: PrimerPack parse failed: {e}"));
             let mut out = vec![0u8; primer.serialized_len()];
             primer
@@ -126,7 +155,7 @@ fn real_fixture_every_klv_item_round_trips_byte_identical() {
         }
 
         if RandomIndexPack::is_rip_key(&item.key) {
-            let rip = RandomIndexPack::parse(&klv)
+            let rip = RandomIndexPack::parse(klv)
                 .unwrap_or_else(|e| panic!("item {i}: RandomIndexPack parse failed: {e}"));
             let mut out = vec![0u8; rip.serialized_len()];
             rip.serialize_into(&mut out)
@@ -149,7 +178,7 @@ fn real_fixture_every_klv_item_round_trips_byte_identical() {
         // byte-identically. No `if let ... else { skip }` — a failure here
         // fails the test.
         header_metadata_sets_seen += 1;
-        let set = LocalSet::parse(&klv).unwrap_or_else(|e| {
+        let set = LocalSet::parse(klv).unwrap_or_else(|e| {
             panic!(
                 "item {i}: local-set key {:02x?} failed to parse as LocalSet: {e}",
                 item.key
@@ -173,42 +202,42 @@ fn real_fixture_every_klv_item_round_trips_byte_identical() {
         // SourceClip/TimecodeComponent/FillerComponent) had zero real-world
         // byte coverage.
         match set.kind() {
-            StructuralSetKind::Preface => assert_typed_round_trip::<Preface>(&klv, i, "Preface"),
+            StructuralSetKind::Preface => assert_typed_round_trip::<Preface>(klv, i, "Preface"),
             StructuralSetKind::Identification => {
-                assert_typed_round_trip::<Identification>(&klv, i, "Identification");
+                assert_typed_round_trip::<Identification>(klv, i, "Identification");
             }
             StructuralSetKind::ContentStorage => {
-                assert_typed_round_trip::<ContentStorage>(&klv, i, "ContentStorage");
+                assert_typed_round_trip::<ContentStorage>(klv, i, "ContentStorage");
             }
             StructuralSetKind::EssenceContainerData => {
-                assert_typed_round_trip::<EssenceContainerData>(&klv, i, "EssenceContainerData");
+                assert_typed_round_trip::<EssenceContainerData>(klv, i, "EssenceContainerData");
             }
             StructuralSetKind::MaterialPackage => {
-                assert_typed_round_trip::<MaterialPackage>(&klv, i, "MaterialPackage");
+                assert_typed_round_trip::<MaterialPackage>(klv, i, "MaterialPackage");
             }
             StructuralSetKind::SourcePackage => {
-                assert_typed_round_trip::<SourcePackage>(&klv, i, "SourcePackage");
+                assert_typed_round_trip::<SourcePackage>(klv, i, "SourcePackage");
             }
             StructuralSetKind::TimelineTrack => {
-                assert_typed_round_trip::<TimelineTrack>(&klv, i, "TimelineTrack");
+                assert_typed_round_trip::<TimelineTrack>(klv, i, "TimelineTrack");
             }
             StructuralSetKind::EventTrackDm => {
-                assert_typed_round_trip::<EventTrack>(&klv, i, "EventTrack");
+                assert_typed_round_trip::<EventTrack>(klv, i, "EventTrack");
             }
             StructuralSetKind::StaticTrackDm => {
-                assert_typed_round_trip::<StaticTrack>(&klv, i, "StaticTrack");
+                assert_typed_round_trip::<StaticTrack>(klv, i, "StaticTrack");
             }
             StructuralSetKind::Sequence => {
-                assert_typed_round_trip::<Sequence>(&klv, i, "Sequence");
+                assert_typed_round_trip::<Sequence>(klv, i, "Sequence");
             }
             StructuralSetKind::SourceClip => {
-                assert_typed_round_trip::<SourceClip>(&klv, i, "SourceClip");
+                assert_typed_round_trip::<SourceClip>(klv, i, "SourceClip");
             }
             StructuralSetKind::TimecodeComponent => {
-                assert_typed_round_trip::<TimecodeComponent>(&klv, i, "TimecodeComponent");
+                assert_typed_round_trip::<TimecodeComponent>(klv, i, "TimecodeComponent");
             }
             StructuralSetKind::Filler => {
-                assert_typed_round_trip::<FillerComponent>(&klv, i, "FillerComponent");
+                assert_typed_round_trip::<FillerComponent>(klv, i, "FillerComponent");
             }
             // Essence Descriptors (F.*), DM/Application Metadata, and
             // private/dark extensions are identified-but-generic by design
@@ -227,4 +256,142 @@ fn real_fixture_every_klv_item_round_trips_byte_identical() {
         header_metadata_sets_seen >= 20,
         "expected at least 20 Header Metadata Sets in the real fixture, saw {header_metadata_sets_seen}"
     );
+}
+
+/// Real-fixture oracle for the OP1a qualifier byte (issue #1048 / audit
+/// MX-C2). The fixture's own Operational Pattern UL is `...01 01 09 00`
+/// (qualifier `0x09`), and its essence layout is independently known from
+/// the fixture's own name/provenance: ONE interleaved MPEG-2 video + PCM
+/// audio Essence Container (i.e. internal, streamable, but carrying more
+/// than one essence track) — so the correct decode is
+/// `external_essence() == false`, `non_streamable() == false`,
+/// `multi_track() == true`.
+#[test]
+fn real_fixture_op1a_qualifier_matches_actual_essence_layout() {
+    let bytes = fixture_bytes();
+    let items = collect_klv_items(&bytes).expect("collect KLV items from real fixture");
+
+    let header_partition = items
+        .iter()
+        .find_map(|(_offset, item)| {
+            if PartitionPack::is_partition_key(&item.key) {
+                PartitionPack::parse(&item.to_bytes()).ok()
+            } else {
+                None
+            }
+        })
+        .expect("fixture must contain at least one parseable Partition Pack");
+
+    assert!(
+        is_op1a(&header_partition.operational_pattern),
+        "fixture's Partition Pack operational_pattern must be an OP1a UL, got {:02x?}",
+        header_partition.operational_pattern
+    );
+    let qualifier_byte = header_partition.operational_pattern[14];
+    assert_eq!(
+        qualifier_byte, 0x09,
+        "fixture's known OP1a qualifier byte is 0x09 (verified directly against the file's \
+         bytes) — if this fails the fixture changed, not the crate"
+    );
+
+    let q = Op1aQualifier::from_byte(qualifier_byte);
+    assert!(
+        !q.external_essence(),
+        "fixture's essence is embedded in the file (internal), got external_essence()==true \
+         for qualifier byte 0x09"
+    );
+    assert!(
+        !q.non_streamable(),
+        "fixture is a single streamable Essence Container, got non_streamable()==true for \
+         qualifier byte 0x09"
+    );
+    assert!(
+        q.multi_track(),
+        "fixture interleaves MPEG-2 video + PCM audio in one Essence Container (2 tracks), \
+         got multi_track()==false for qualifier byte 0x09"
+    );
+}
+
+/// **Verifies the real fix, quantified against the real fixture** (issue
+/// #1047 / audit MX-C1): every serializer in this crate (`KlvItem`,
+/// `PartitionPack`, `PrimerPack`, `RandomIndexPack`, `LocalSet`) now stores
+/// the on-wire BER length-field width it was parsed with (`len_size`, a
+/// [`st377_1::BerLength`]) and reproduces that exact width on
+/// `serialize_into`, instead of always re-canonicalizing to the shortest
+/// form that fits. `docs/st377-1.md` §6.3.4 permits any valid BER form, and
+/// real encoders routinely write a longer, fixed-width one (e.g. so a pack
+/// can be rewritten in place without shifting every later absolute offset)
+/// — measured directly against this fixture, a clear majority of its
+/// top-level items do exactly that.
+///
+/// This walks every top-level KLV item generically via
+/// [`KlvItem::parse_prefix`] (independent of the more targeted typed checks
+/// in `real_fixture_every_klv_item_round_trips_byte_identical` above, which
+/// covers Partition Packs/Primer Pack/Random Index Pack/Header Metadata
+/// Sets specifically) and asserts, for EVERY item including Essence
+/// Container elements and Index Table segments this crate never decodes,
+/// that `KlvItem`'s own generic serializer reproduces the exact original
+/// bytes.
+#[test]
+fn real_fixture_non_minimal_ber_lengths_round_trip_byte_identically() {
+    let bytes = fixture_bytes();
+
+    let mut offset = 0usize;
+    let mut total_items = 0usize;
+    let mut non_minimal_items = 0usize;
+
+    while offset < bytes.len() {
+        let (item, consumed) = match KlvItem::parse_prefix(&bytes[offset..]) {
+            Ok(v) => v,
+            Err(_) => break, // end of well-formed top-level KLV framing
+        };
+        total_items += 1;
+        let original = &bytes[offset..offset + consumed];
+
+        // The TRUE on-wire length-token width: total consumed minus the
+        // 16-byte Key and the Value length itself.
+        let true_len_size = consumed - 16 - item.value.len();
+        let canonical_len_size = canonical_len_size_for(item.value.len());
+        if true_len_size != canonical_len_size {
+            non_minimal_items += 1;
+        }
+
+        assert_eq!(
+            item.to_bytes(),
+            original,
+            "item at offset {offset}: KlvItem must reproduce its exact original bytes \
+             (len_size = {:?})",
+            item.len_size
+        );
+
+        offset += consumed;
+    }
+
+    assert!(
+        total_items >= 190,
+        "expected roughly 200 top-level KLV items in the real fixture, saw {total_items}"
+    );
+    // The audit measured "174 of the first 200" non-minimal — assert a
+    // large majority (not the exact figure, so an unrelated fixture edit
+    // doesn't need to touch this test) to keep the finding's scale honest:
+    // this is a real, common-case fix, not a corner case.
+    assert!(
+        non_minimal_items > total_items / 2,
+        "expected a majority of top-level items to use a non-minimal BER length form, saw \
+         {non_minimal_items}/{total_items} — if this fixture no longer exercises the bug, \
+         pick/generate one that does"
+    );
+}
+
+/// [`crate::ber::ber_length_size`] isn't re-exported at the crate root (it's
+/// an internal helper), so this test-only copy computes the same canonical
+/// minimal BER length-token width from a value length, to independently
+/// cross-check `KlvItem`'s own re-encoding against the true on-wire width.
+fn canonical_len_size_for(value_len: usize) -> usize {
+    if value_len <= 0x7F {
+        1
+    } else {
+        let bytes_needed = (64 - (value_len as u64).leading_zeros()).div_ceil(8) as usize;
+        1 + bytes_needed
+    }
 }

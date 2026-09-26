@@ -6,6 +6,43 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Changed (breaking)
+- **Every `extra_attrs: Vec<(String, String)>` field is now
+  `Vec<(String, AttrValue)>`, and `AttrValue` is now an opaque struct**
+  (issue #1045 / audit BH-C1, T12): quoting is recorded losslessly from
+  the real wire token at parse time instead of being guessed on render
+  from a small table of known RFC 8216bis attribute names. Previously,
+  rendering an unmodeled quoted-string attribute (`AUDIO`, `VIDEO`,
+  `SUBTITLES`, `CLOSED-CAPTIONS` unless `NONE`, `PATHWAY-ID`,
+  `STABLE-VARIANT-ID`, `STABLE-RENDITION-ID`, `SUPPLEMENTAL-CODECS`,
+  `REQ-VIDEO-LAYOUT`, `ALLOWED-CPC`, or any attribute this crate hasn't
+  been taught about — e.g. a private `X-` extension) could silently drop
+  its surrounding `"`: `AUDIO="a1"` round-tripped to the invalid
+  `AUDIO=a1`, which a strict client (Apple `mediastreamvalidator`,
+  AVPlayer) rejects or misinterprets. Fixed for every attribute name, known
+  or not. Verified against a committed real Apple HLS fixture, a private
+  `X-` attribute, and `mediastreamvalidator` directly.
+  - `AttrValue` no longer exposes public `Quoted`/`Bare` variants.
+    Construct it through `AttrValue::quoted(s)` or `AttrValue::bare(s)`
+    (both `-> Result<Self, Error>`), or `AttrValue::for_attr(name, value)`
+    (a convenience choosing `quoted`/`bare` from the same known-name
+    table the old fix used, for a caller that doesn't already know the
+    correct kind — also fallible). Read a value back with `as_str()`/
+    `is_quoted()`.
+  - **T12**: a quoted value containing `"`, CR or LF (forbidden by RFC
+    8216 §4.2), or a bare value containing a character that would
+    require quoting (`,`, `"`, CR, LF, whitespace — reachable from
+    caller-supplied data, e.g. a third-party ad-decision service feeding
+    `ssai-runtime`) is now **rejected at construction** (`Err`) rather
+    than silently mangled (e.g. percent-encoded) or emitted raw, closing
+    a line/attribute-list-injection vector without ever letting an
+    invalid value exist. Rendering (`to_m3u8`) stays infallible — the
+    checks live entirely in the `AttrValue` constructors, so a value that
+    reaches rendering is already known-valid; `push_extra_attrs`'s
+    signature is unchanged, and callers across the workspace
+    (`hls-runtime`, `multimux`, `ssai-runtime`, `transmux`,
+    `media-doctor`) are unaffected since they only ever populate
+    `extra_attrs` from parsed values or `Vec::new()`.
 
 ## [0.2.1] - 2026-08-14
 ### Fixed

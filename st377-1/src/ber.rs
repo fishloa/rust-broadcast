@@ -11,6 +11,44 @@
 
 use crate::error::{Error, Result};
 
+/// The BER length-field width to serialize a value's length with (issue
+/// #1047 / audit MX-C1). `docs/st377-1.md` §6.3.4 permits any valid BER
+/// form for a length token; real MXF encoders routinely write a longer,
+/// fixed-width long form (rather than the shortest one that fits) so a
+/// pack can be rewritten in place later without shifting every later
+/// absolute offset. Every type that owns a top-level Key-Length-Value
+/// envelope (`KlvItem`, `PartitionPack`, `PrimerPack`, `RandomIndexPack`,
+/// `LocalSet`) stores one of these, set to `Fixed` from the on-wire width
+/// on parse so `serialize_into` reproduces it exactly, and defaulting to
+/// `Minimal` for a freshly built value.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[non_exhaustive]
+pub enum BerLength {
+    /// Always (re)compute the canonical minimal-width encoding for
+    /// whatever length is being serialized.
+    #[default]
+    Minimal,
+    /// Reproduce this specific on-wire total token width in bytes: `1` is
+    /// short form; `2..=9` is long form with `width - 1` following length
+    /// bytes.
+    Fixed(core::num::NonZeroU8),
+}
+
+impl BerLength {
+    /// Build a [`Self::Fixed`] from a length token's total consumed width
+    /// (as [`decode_ber_length`] returns it) — always in range since a
+    /// successful decode consumes at least 1 and at most 9 bytes.
+    #[must_use]
+    pub(crate) fn fixed_from_consumed(consumed: usize) -> Self {
+        Self::Fixed(core::num::NonZeroU8::new(consumed as u8).unwrap_or(
+            // Unreachable in practice (decode_ber_length never returns 0 or
+            // >9), but never panics even if that invariant is ever loosened.
+            core::num::NonZeroU8::MIN,
+        ))
+    }
+}
+
 /// Decode a BER length token at the start of `bytes`.
 ///
 /// Returns `(length, bytes_consumed_by_the_length_token_itself)`. Does not
@@ -83,6 +121,67 @@ pub fn encode_ber_length(len: u64, buf: &mut [u8]) -> Result<usize> {
         buf[1..size].copy_from_slice(&be[8 - following..]);
     }
     Ok(size)
+}
+
+/// The number of bytes [`encode_ber_length_as`] will write for `len` under
+/// `width` — [`ber_length_size`]`(len)` for [`BerLength::Minimal`], or the
+/// fixed width itself for [`BerLength::Fixed`] (issue #1047).
+#[must_use]
+pub fn ber_length_size_for(len: u64, width: BerLength) -> usize {
+    match width {
+        BerLength::Minimal => ber_length_size(len),
+        BerLength::Fixed(n) => usize::from(n.get()),
+    }
+}
+
+/// Encode `len` as a BER length into `buf`, using `width`'s specific
+/// on-wire form rather than always recomputing the canonical minimal one
+/// (issue #1047 / audit MX-C1 — preserves a real encoder's fixed-width
+/// long-form length token across parse -> serialize). Returns the number
+/// of bytes written (always [`ber_length_size_for`]`(len, width)`).
+///
+/// Errors (in addition to `BufferTooShort`, checked first): `Fixed(1)`
+/// (short form) when `len > 0x7F`, or `Fixed(n)` (long form, `n - 1`
+/// length bytes) when `len` doesn't fit in `n - 1` bytes — both
+/// [`Error::BerLengthTooLong`], since the requested fixed width cannot
+/// represent this length at all (never produced by parsing a
+/// well-formed file; only reachable by building/mutating a value by hand
+/// into an inconsistent state).
+pub fn encode_ber_length_as(len: u64, width: BerLength, buf: &mut [u8]) -> Result<usize> {
+    match width {
+        BerLength::Minimal => encode_ber_length(len, buf),
+        BerLength::Fixed(n) => {
+            let size = usize::from(n.get());
+            if buf.len() < size {
+                return Err(Error::BufferTooShort {
+                    need: size,
+                    have: buf.len(),
+                    what: "BER length output",
+                });
+            }
+            if size == 1 {
+                if len > 0x7F {
+                    return Err(Error::FixedBerLengthTooSmall {
+                        len,
+                        width: n.get(),
+                    });
+                }
+                buf[0] = len as u8;
+            } else {
+                let following = size - 1;
+                if following < 8 && len >= (1u64 << (following * 8)) {
+                    return Err(Error::FixedBerLengthTooSmall {
+                        len,
+                        width: n.get(),
+                    });
+                }
+                buf[0] = 0x80 | (following as u8);
+                let be = len.to_be_bytes();
+                buf[1..size].copy_from_slice(&be[8 - following..]);
+            }
+            Ok(size)
+        }
+    }
 }
 
 #[cfg(test)]
