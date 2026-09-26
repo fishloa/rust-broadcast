@@ -12,7 +12,9 @@
 
 use std::fs::{File, OpenOptions};
 use std::io::{self, Read, Write};
+use std::os::unix::fs::OpenOptionsExt;
 use std::os::unix::io::AsRawFd;
+use std::path::Path;
 use std::time::Duration;
 
 use crate::dataplane::{CiDataDevice, TS_PACKET_LEN};
@@ -202,14 +204,41 @@ pub struct LinuxCiDataDevice {
 }
 
 impl LinuxCiDataDevice {
-    /// Open `/dev/dvb/adapter{adapter}/ci{ci}`.
-    pub fn open(adapter: u32, ci: u32) -> io::Result<Self> {
-        let path = format!("/dev/dvb/adapter{adapter}/ci{ci}");
-        let file = OpenOptions::new().read(true).write(true).open(path)?;
+    /// Open `path` **non-blocking** (`O_NONBLOCK`) as a CI data-plane device.
+    ///
+    /// # Why non-blocking (#1066)
+    /// The kernel `ts_read()` on the real device sleeps
+    /// (`wait_event_interruptible`) until >=188 bytes are available; it never
+    /// returns `0` to signal "no more data right now" the way a mock's queue
+    /// does. [`CaDescrambler::feed_ts`](crate::descrambler::CaDescrambler::feed_ts)
+    /// loops `read` until it sees `0` to drain whatever the CAM has already
+    /// produced — on a *blocking* fd, the first call that drains the queue
+    /// blocks forever on the next read instead of returning, and the caller
+    /// can never feed more TS to unblock it (a permanent hang). Opening
+    /// `O_NONBLOCK` makes an empty read return `EWOULDBLOCK` immediately,
+    /// which [`read`](Self::read) maps to `Ok(0)` — the same "no more data"
+    /// signal the mock already gives, so the drain loop terminates. See
+    /// `tests::read_on_empty_device_returns_immediately_not_blocking` below,
+    /// which drives this exact function over a real blocking-capable FIFO.
+    fn open_path(path: &Path) -> io::Result<Self> {
+        let file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .custom_flags(libc::O_NONBLOCK)
+            .open(path)?;
         Ok(Self { file })
     }
 
-    /// Wrap an already-open CI data-plane device file.
+    /// Open `/dev/dvb/adapter{adapter}/ci{ci}` — see [`open_path`](Self::open_path).
+    pub fn open(adapter: u32, ci: u32) -> io::Result<Self> {
+        let path = format!("/dev/dvb/adapter{adapter}/ci{ci}");
+        Self::open_path(Path::new(&path))
+    }
+
+    /// Wrap an already-open CI data-plane device file. The caller is
+    /// responsible for having opened it `O_NONBLOCK` — see
+    /// [`open_path`](Self::open_path) for why a blocking fd here hangs
+    /// `feed_ts` (#1066).
     #[must_use]
     pub fn from_file(file: File) -> Self {
         Self { file }
@@ -243,5 +272,135 @@ impl CiDataDevice for LinuxCiDataDevice {
 
     fn poll(&mut self, timeout: Duration) -> io::Result<bool> {
         poll_readable(self.file.as_raw_fd(), timeout)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::ffi::CString;
+    use std::sync::mpsc;
+
+    /// Create a fresh FIFO (named pipe) under the OS temp dir and return its
+    /// path. `mkfifo` + a FIFO's blocking-read semantics are POSIX/Linux —
+    /// matching why this whole module compiles only under
+    /// `target_os = "linux"` (crate doc) — and, unlike a Unix socketpair
+    /// wrapped in a test-defined `CiDataDevice` (flagged in review as not
+    /// biting), opening the FIFO through [`LinuxCiDataDevice::open_path`]
+    /// drives the actual production `open`/`read` code under test.
+    fn make_fifo() -> std::path::PathBuf {
+        let path = std::env::temp_dir().join(format!(
+            "dvb-ci-runtime-c1-1066-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("system clock before UNIX_EPOCH")
+                .as_nanos()
+        ));
+        let c_path =
+            CString::new(path.to_string_lossy().into_owned()).expect("path has no interior NUL");
+        // SAFETY: `c_path` is a valid NUL-terminated C string for the
+        // duration of the call; `0o600` is a plain permission mode — no
+        // aliasing or lifetime hazard.
+        let r = unsafe { libc::mkfifo(c_path.as_ptr(), 0o600) };
+        assert_eq!(r, 0, "mkfifo failed: {}", io::Error::last_os_error());
+        path
+    }
+
+    /// #1066: `open_path` must open `O_NONBLOCK`, so an empty read
+    /// returns `Ok(0)` promptly instead of blocking forever — the real bug
+    /// was `CaDescrambler::feed_ts`'s drain loop hanging on its second
+    /// `read`. A FIFO opened `O_RDWR` blocks on an empty read exactly like
+    /// the real `ciM` character device unless `O_NONBLOCK` is set, so this
+    /// is a faithful (if not identical) stand-in, unlike a socketpair with
+    /// its own test-defined `CiDataDevice` impl, which never calls the
+    /// production `open`/`read` at all.
+    ///
+    /// Removing `.custom_flags(libc::O_NONBLOCK)` from `open_path` makes the
+    /// first `recv_timeout` below time out. Verified by hand: with that line
+    /// removed, `cargo test -p dvb-ci-runtime --all-features --locked
+    /// --target x86_64-unknown-linux-gnu` cannot be *run* on macOS at all
+    /// (this module only exists under `target_os = "linux"`, and macOS
+    /// cannot execute a Linux binary), so the removal was checked instead
+    /// with `cargo test -p dvb-ci-runtime --all-features --locked --target
+    /// x86_64-unknown-linux-gnu --no-run` (compiles either way) plus the
+    /// cross-clippy command from CLAUDE.md (lints clean either way — clippy
+    /// cannot see that the missing flag is a bug); real execution proof of
+    /// this specific assertion is Linux CI, which runs this test on every
+    /// push.
+    #[test]
+    fn read_on_empty_device_returns_immediately_not_blocking() {
+        let path = make_fifo();
+        let mut dev = LinuxCiDataDevice::open_path(&path).expect("open_path");
+        let mut writer = OpenOptions::new()
+            .write(true)
+            .open(&path)
+            .expect("open a second, writer-only handle on the same FIFO");
+
+        let (tx, rx) = mpsc::channel();
+        let (tx_go, rx_go) = mpsc::channel::<()>();
+        std::thread::spawn(move || {
+            let mut buf = [0u8; TS_PACKET_LEN];
+            let r0 = dev.read(&mut buf).map(|n| (n, buf));
+            if tx.send(r0).is_err() {
+                return;
+            }
+            if rx_go.recv().is_err() {
+                return;
+            }
+
+            let r1 = dev.read(&mut buf).map(|n| (n, buf));
+            if tx.send(r1).is_err() {
+                return;
+            }
+            if rx_go.recv().is_err() {
+                return;
+            }
+
+            let r2 = dev.read(&mut buf).map(|n| (n, buf));
+            let _ = tx.send(r2);
+        });
+
+        // 1: empty device (writer end open, no data written yet) — must
+        // return `Ok(0)` promptly, not block.
+        let first = rx.recv_timeout(Duration::from_secs(1));
+        let Ok(Ok((n0, _))) = first else {
+            // The reader thread may be stuck in a blocking `read`; write a
+            // byte so it can still unblock and exit, then fail.
+            let _ = writer.write_all(&[0u8; TS_PACKET_LEN]);
+            panic!(
+                "empty-device read did not return promptly (blocked past 1s) — \
+                 got {first:?}; this is the #1066 hang O_NONBLOCK fixes"
+            );
+        };
+        assert_eq!(n0, 0, "empty device must read 0 bytes");
+
+        // 2: write one full packet BEFORE letting the reader proceed, so
+        // there is no race between the write and the second `read`.
+        let mut packet = [0xAAu8; TS_PACKET_LEN];
+        packet[0] = 0x47; // MPEG-2 TS sync byte — realism only, not checked by read().
+        writer.write_all(&packet).expect("write one packet");
+        tx_go.send(()).expect("reader thread must still be alive");
+
+        let (n1, buf1) = rx
+            .recv_timeout(Duration::from_secs(1))
+            .expect("reader thread must respond promptly")
+            .expect("read must not error");
+        assert_eq!(n1, TS_PACKET_LEN, "must read exactly one packet's worth");
+        assert_eq!(
+            &buf1[..n1],
+            &packet[..],
+            "must read back the exact bytes written"
+        );
+
+        // 3: drained again — back to `Ok(0)`, not blocking.
+        tx_go.send(()).expect("reader thread must still be alive");
+        let (n2, _) = rx
+            .recv_timeout(Duration::from_secs(1))
+            .expect("empty-again read did not return promptly (blocked past 1s)")
+            .expect("read must not error");
+        assert_eq!(n2, 0, "device must read 0 again once drained");
+
+        let _ = std::fs::remove_file(&path);
     }
 }
