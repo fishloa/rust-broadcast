@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- Requires `broadcast-common` 9.4 (`broadcast_common::len`). A new
+  `Error::FieldOverflow` variant is added.
+
+### Fixed
+- `ProgramStreamMap::serialize_into`: `pseudo_descriptor_length` was written
+  as `1 + descriptors.len() as u8` — the cast happened before the add, so a
+  255-byte descriptor overflowed the addition (panicking in debug, wrapping
+  in release) instead of being checked (#1129).
+- `program_stream_map_length` (spec max 1018, Table 2-41),
+  `program_stream_info_length`, `elementary_stream_map_length`, and
+  `ES_info_length` were written with unchecked `as u16` casts (#1129).
+- `SystemHeader`'s `stream_loop_len` accumulated in `u16`, overflowing
+  (debug panic; an out-of-bounds buffer write in release, since
+  `serialized_len()` used the same wrapped value the stream loop then wrote
+  past) for more than 10 921 caller-constructed bounds. Now accumulated in
+  `usize`, with `serialize_into` separately rejecting a total that does not
+  fit the 16-bit `header_length` wire field (#1129).
+
 ## [0.4.0] - 2026-08-11
 
 ### Changed

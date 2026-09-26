@@ -124,19 +124,25 @@ impl InjectorComponentList {
     }
 
     /// Write into the front of `buf`; returns bytes written.
-    fn write_prefix(&self, buf: &mut [u8]) -> usize {
+    fn write_prefix(&self, buf: &mut [u8]) -> Result<usize> {
         let n_audio = self.audio_component_tags.len();
         let n_data = self.data_component_tags.len();
         buf[0] = self.video_component_tag;
-        buf[1] = n_audio as u8;
+        buf[1] = broadcast_common::len::fit_u8(
+            n_audio,
+            "injector_component_list.number_of_audio_components",
+        )?;
         let mut pos = 2;
         buf[pos..pos + n_audio].copy_from_slice(&self.audio_component_tags);
         pos += n_audio;
-        buf[pos] = n_data as u8;
+        buf[pos] = broadcast_common::len::fit_u8(
+            n_data,
+            "injector_component_list.number_of_data_components",
+        )?;
         pos += 1;
         buf[pos..pos + n_data].copy_from_slice(&self.data_component_tags);
         pos += n_data;
-        pos
+        Ok(pos)
     }
 }
 
@@ -237,11 +243,14 @@ impl ProvisioningService {
         len
     }
 
-    fn write_prefix(&self, buf: &mut [u8]) -> usize {
+    fn write_prefix(&self, buf: &mut [u8]) -> Result<usize> {
         buf[0..4].copy_from_slice(&self.injector_ip_address.to_be_bytes());
         buf[4..6].copy_from_slice(&self.injector_socket_number.to_be_bytes());
         buf[6..6 + SERVICE_NAME_LEN].copy_from_slice(&self.service_name);
-        buf[6 + SERVICE_NAME_LEN] = self.dpi_pids.len() as u8;
+        buf[6 + SERVICE_NAME_LEN] = broadcast_common::len::fit_u8(
+            self.dpi_pids.len(),
+            "provisioning_request_data.number_of_DPI_PIDs",
+        )?;
         let mut pos = 4 + 2 + SERVICE_NAME_LEN + 1;
         for entry in &self.dpi_pids {
             entry.write_one(&mut buf[pos..pos + DPI_PID_ENTRY_LEN]);
@@ -250,9 +259,9 @@ impl ProvisioningService {
         buf[pos] = self.component_mode;
         pos += 1;
         if let Some(list) = &self.injector_component_list {
-            pos += list.write_prefix(&mut buf[pos..]);
+            pos += list.write_prefix(&mut buf[pos..])?;
         }
-        pos
+        Ok(pos)
     }
 }
 
@@ -304,10 +313,13 @@ impl Serialize for ProvisioningRequest {
                 have: buf.len(),
             });
         }
-        buf[0] = self.services.len() as u8;
+        buf[0] = broadcast_common::len::fit_u8(
+            self.services.len(),
+            "provisioning_request_data.service_count",
+        )?;
         let mut pos = 1;
         for service in &self.services {
-            pos += service.write_prefix(&mut buf[pos..]);
+            pos += service.write_prefix(&mut buf[pos..])?;
         }
         Ok(pos)
     }
@@ -403,6 +415,69 @@ mod tests {
         assert_eq!(op, back);
         let b2 = back.to_bytes();
         assert_eq!(bytes, b2);
+    }
+
+    /// S4-W3 (#1129): `service_count` is an 8-bit field but used to be
+    /// written with `self.services.len() as u8`, wrapping to 0 for 256+
+    /// services.
+    #[test]
+    fn over_255_services_rejected_not_wrapped() {
+        let services = (0..256)
+            .map(|_| ProvisioningService {
+                injector_ip_address: 0,
+                injector_socket_number: 0,
+                service_name: sample_name("svc"),
+                dpi_pids: vec![],
+                component_mode: 0,
+                injector_component_list: None,
+            })
+            .collect();
+        let op = ProvisioningRequest { services };
+        assert!(op.try_to_bytes().is_err());
+    }
+
+    /// S4-W3 (#1129): `number_of_DPI_PIDs` used to be written with
+    /// `self.dpi_pids.len() as u8`, wrapping to 0 for 256+ entries.
+    #[test]
+    fn over_255_dpi_pids_rejected_not_wrapped() {
+        let op = ProvisioningRequest {
+            services: vec![ProvisioningService {
+                injector_ip_address: 0,
+                injector_socket_number: 0,
+                service_name: sample_name("svc"),
+                dpi_pids: (0..256)
+                    .map(|i| DpiPidEntry {
+                        dpi_pid_index: i,
+                        shared_pid: 0,
+                        event_id_compliance_flag: 0,
+                    })
+                    .collect(),
+                component_mode: 0,
+                injector_component_list: None,
+            }],
+        };
+        assert!(op.try_to_bytes().is_err());
+    }
+
+    /// S4-W3 (#1129): `injector_component_list`'s audio/data component
+    /// counts used to be written with `as u8`, wrapping for 256+ entries.
+    #[test]
+    fn over_255_audio_components_rejected_not_wrapped() {
+        let op = ProvisioningRequest {
+            services: vec![ProvisioningService {
+                injector_ip_address: 0,
+                injector_socket_number: 0,
+                service_name: sample_name("svc"),
+                dpi_pids: vec![],
+                component_mode: 1,
+                injector_component_list: Some(InjectorComponentList {
+                    video_component_tag: 0x10,
+                    audio_component_tags: alloc::vec![0u8; 256],
+                    data_component_tags: vec![],
+                }),
+            }],
+        };
+        assert!(op.try_to_bytes().is_err());
     }
 
     #[test]

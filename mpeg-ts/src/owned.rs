@@ -161,11 +161,20 @@ impl OwnedTsPacket {
         offset
     }
 
+    /// Maximum payload bytes a plain (no-adaptation-field) TS packet can carry:
+    /// 188 bytes minus the 4-byte header.
+    pub const MAX_PAYLOAD_LEN: usize = TS_PACKET_SIZE - 4;
+
     /// Build a 188-byte payload-only TS packet (no adaptation field).
     ///
     /// The packet is initialised to `0xFF` (MPEG-TS stuffing), the 4-byte header
-    /// is written via [`TsHeader::serialize_into`], then up to 184 bytes of
-    /// `payload` are copied starting at byte 4.  Any unfilled bytes remain `0xFF`.
+    /// is written via [`TsHeader::serialize_into`], then `payload` is copied
+    /// starting at byte 4. Any unfilled bytes remain `0xFF`.
+    ///
+    /// Returns [`Error::PayloadTooLarge`] if `payload` is longer than
+    /// [`MAX_PAYLOAD_LEN`](Self::MAX_PAYLOAD_LEN) (184 bytes) — the fixed
+    /// per-packet payload capacity would previously be silently truncated
+    /// (#1129).
     ///
     /// # Panics
     ///
@@ -176,7 +185,13 @@ impl OwnedTsPacket {
         pusi: bool,
         cc: u8,
         payload: &[u8],
-    ) -> [u8; TS_PACKET_SIZE] {
+    ) -> Result<[u8; TS_PACKET_SIZE]> {
+        if payload.len() > Self::MAX_PAYLOAD_LEN {
+            return Err(Error::PayloadTooLarge {
+                len: payload.len(),
+                max: Self::MAX_PAYLOAD_LEN,
+            });
+        }
         let mut pkt = [0xFFu8; TS_PACKET_SIZE];
         let hdr = TsHeader {
             tei: false,
@@ -185,14 +200,13 @@ impl OwnedTsPacket {
             scrambling: 0,
             has_adaptation: false,
             has_payload: true,
-            continuity_counter: cc & 0x0F,
+            continuity_counter: cc & CC_MASK,
         };
         // Cannot fail: buf is 188 bytes, need 4.
         hdr.serialize_into(&mut pkt)
             .expect("serialize TsHeader into 188-byte buf");
-        let copy_len = payload.len().min(184);
-        pkt[4..4 + copy_len].copy_from_slice(&payload[..copy_len]);
-        pkt
+        pkt[4..4 + payload.len()].copy_from_slice(payload);
+        Ok(pkt)
     }
 
     /// Build a 188-byte null packet (PID `0x1FFF`) with `0xFF`-stuffed payload.
@@ -214,7 +228,9 @@ impl OwnedTsPacket {
     /// ```
     #[must_use]
     pub fn null_packet(cc: u8) -> [u8; TS_PACKET_SIZE] {
+        // Cannot fail: an empty payload never exceeds MAX_PAYLOAD_LEN.
         Self::serialize_with_payload(NULL_PID, false, cc, &[])
+            .expect("empty payload always fits a TS packet")
     }
 
     /// Overwrite the `continuity_counter` field in `packet` without re-parsing.
@@ -227,7 +243,7 @@ impl OwnedTsPacket {
     /// ```
     /// use mpeg_ts::OwnedTsPacket;
     /// use mpeg_ts::ts::TsPacket;
-    /// let mut raw = OwnedTsPacket::serialize_with_payload(0x0100, false, 0, &[]);
+    /// let mut raw = OwnedTsPacket::serialize_with_payload(0x0100, false, 0, &[]).unwrap();
     /// OwnedTsPacket::set_continuity_counter(&mut raw, 7);
     /// let pkt = TsPacket::parse(&raw).unwrap();
     /// assert_eq!(pkt.header.continuity_counter, 7);
@@ -337,9 +353,9 @@ mod tests {
     #[test]
     fn owned_round_trip_and_payload_mut() {
         let payload = [0xAAu8; 184];
-        let mut pkt = OwnedTsPacket::parse(OwnedTsPacket::serialize_with_payload(
-            0x0100, true, 7, &payload,
-        ))
+        let mut pkt = OwnedTsPacket::parse(
+            OwnedTsPacket::serialize_with_payload(0x0100, true, 7, &payload).unwrap(),
+        )
         .unwrap();
         assert_eq!(pkt.pid, 0x0100);
         assert!(pkt.pusi);
@@ -351,10 +367,29 @@ mod tests {
         assert!(!pkt.discontinuity);
     }
 
+    /// W9 (#1129): `serialize_with_payload` used to silently truncate a
+    /// payload over 184 bytes (`payload.len().min(184)`) instead of
+    /// erroring, dropping data with no signal.
+    #[test]
+    fn oversized_payload_is_rejected_not_truncated() {
+        let payload = [0xAAu8; 185];
+        assert!(OwnedTsPacket::serialize_with_payload(0x0100, true, 0, &payload).is_err());
+    }
+
+    /// The boundary: exactly 184 bytes (the fixed payload capacity) still
+    /// serializes and round-trips.
+    #[test]
+    fn max_payload_len_round_trips() {
+        let payload = [0xBBu8; OwnedTsPacket::MAX_PAYLOAD_LEN];
+        let raw = OwnedTsPacket::serialize_with_payload(0x0100, true, 0, &payload).unwrap();
+        let pkt = OwnedTsPacket::parse(raw).unwrap();
+        assert_eq!(pkt.payload().unwrap(), &payload[..]);
+    }
+
     #[test]
     fn owned_scrambling_control_accessor() {
         let make = |scrambling_bits: u8| -> OwnedTsPacket {
-            let mut raw = OwnedTsPacket::serialize_with_payload(0x0100, false, 0, &[]);
+            let mut raw = OwnedTsPacket::serialize_with_payload(0x0100, false, 0, &[]).unwrap();
             // byte 3 bits [7:6] = scrambling
             raw[3] = (raw[3] & 0x3F) | (scrambling_bits << 6);
             OwnedTsPacket::parse(raw).unwrap()

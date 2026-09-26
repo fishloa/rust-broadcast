@@ -188,7 +188,7 @@ impl Serialize for DvbDasDescriptor<'_> {
                 reason: "upid too long: descriptor_length would overflow u8",
             });
         }
-        header::write_header(buf, TAG, self.identifier, body_len);
+        header::write_header(buf, TAG, self.identifier, body_len)?;
         buf[HEADER_LEN] = self.break_num;
         buf[HEADER_LEN + 1] = self.breaks_expected;
         // reserved nibble = 0xF (reserved bits set to 1 per crate policy), then

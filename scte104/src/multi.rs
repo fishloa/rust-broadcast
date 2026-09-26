@@ -53,13 +53,19 @@ impl<'a> MultipleOperationMessage<'a> {
         timestamp: Timestamp,
         operations: Vec<Operation<'a>>,
     ) -> Self {
-        let mut message_size = HEADER_LEN as u16;
-        message_size += timestamp.serialized_len() as u16;
+        // Accumulate in usize (never panics/wraps here, unlike raw u16 `+=`,
+        // #1129); `serialize_into` independently recomputes and validates
+        // this fits the wire field before it trusts the stored value.
+        let mut message_size: usize = HEADER_LEN;
+        message_size += timestamp.serialized_len();
         message_size += 1; // num_ops
         for op in &operations {
             message_size += 4; // opID(2) + data_length(2)
-            message_size += op.body_len() as u16;
+            message_size += op.body_len();
         }
+        // Saturate rather than wrap when it doesn't fit; `serialize_into`
+        // recomputes the true size and rejects it rather than trusting this.
+        let message_size = u16::try_from(message_size).unwrap_or(u16::MAX);
         Self {
             message_size,
             protocol_version,
@@ -171,7 +177,21 @@ impl Serialize for MultipleOperationMessage<'_> {
         self.message_size as usize
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
-        let need = self.serialized_len();
+        // Recompute the true size in usize rather than trusting the stored
+        // `message_size` field, which `new()` saturates (not wraps) when the
+        // real total does not fit u16 (#1129).
+        let mut actual_size: usize = HEADER_LEN + self.timestamp.serialized_len() + 1;
+        for op in &self.operations {
+            actual_size += 4 + op.body_len();
+        }
+        let message_size =
+            broadcast_common::len::fit_u16(actual_size, "multiple_operation_message.messageSize")?;
+
+        // Use the freshly-computed size, not `serialized_len()` (which
+        // trusts the stored `message_size` field), so a stale field can
+        // never make this buffer-size check pass when the real body does
+        // not fit.
+        let need = actual_size;
         if buf.len() < need {
             return Err(Error::OutputBufferTooSmall {
                 need,
@@ -179,7 +199,7 @@ impl Serialize for MultipleOperationMessage<'_> {
             });
         }
         buf[0..2].copy_from_slice(&RESERVED.to_be_bytes());
-        buf[2..4].copy_from_slice(&self.message_size.to_be_bytes());
+        buf[2..4].copy_from_slice(&message_size.to_be_bytes());
         buf[4] = self.protocol_version;
         buf[5] = self.as_index;
         buf[6] = self.message_number;
@@ -190,12 +210,15 @@ impl Serialize for MultipleOperationMessage<'_> {
         self.timestamp.serialize_into(&mut buf[pos..])?;
         pos += self.timestamp.serialized_len();
 
-        buf[pos] = self.operations.len() as u8;
+        buf[pos] = broadcast_common::len::fit_u8(
+            self.operations.len(),
+            "multiple_operation_message.num_ops",
+        )?;
         pos += 1;
 
         for op in &self.operations {
             buf[pos..pos + 2].copy_from_slice(&op.op_id.to_be_bytes());
-            let data_len = op.body_len() as u16;
+            let data_len = broadcast_common::len::fit_u16(op.body_len(), "operation.data_length")?;
             buf[pos + 2..pos + 4].copy_from_slice(&data_len.to_be_bytes());
             pos += 4;
             op.data
@@ -275,6 +298,67 @@ mod tests {
         let back = MultipleOperationMessage::parse(&bytes).unwrap();
         assert_eq!(msg, back);
         assert_eq!(back.operations.len(), 3);
+    }
+
+    /// S4-W2 (#1129): `new()` used to accumulate `message_size` in raw `u16`
+    /// arithmetic, panicking in debug builds (`attempt to add with
+    /// overflow`) or wrapping in release for a large operation body.
+    /// Confirmed pre-fix: this exact case panicked in a debug build.
+    #[test]
+    fn two_large_ops_do_not_panic_new() {
+        use crate::operations::proprietary_command::ProprietaryCommand;
+        let ops = vec![
+            Operation {
+                op_id: 0xFFFF,
+                data: AnyOperation::ProprietaryCommand(ProprietaryCommand {
+                    proprietary_id: 1,
+                    proprietary_command: 0,
+                    proprietary_data: &[0u8; 40_000],
+                }),
+            },
+            Operation {
+                op_id: 0xFFFF,
+                data: AnyOperation::ProprietaryCommand(ProprietaryCommand {
+                    proprietary_id: 1,
+                    proprietary_command: 0,
+                    proprietary_data: &[0u8; 40_000],
+                }),
+            },
+        ];
+        let _ = MultipleOperationMessage::new(0, 1, 1, 0, 0, Timestamp::None, ops);
+    }
+
+    #[test]
+    fn new_does_not_panic_on_oversized_body() {
+        use crate::operations::proprietary_command::ProprietaryCommand;
+        let ops = vec![Operation {
+            op_id: 0xFFFF,
+            data: AnyOperation::ProprietaryCommand(ProprietaryCommand {
+                proprietary_id: 1,
+                proprietary_command: 0,
+                proprietary_data: &[0u8; 70_000],
+            }),
+        }];
+        // Must not panic.
+        let msg = MultipleOperationMessage::new(0, 1, 1, 0, 0, Timestamp::None, ops);
+        // The real body does not fit u16, so serializing it must error
+        // rather than emit a misframed messageSize.
+        assert!(msg.try_to_bytes().is_err());
+    }
+
+    /// S4-W3 (#1129): `num_ops` is an 8-bit field but used to be written
+    /// with `self.operations.len() as u8`, wrapping to 0 for 256+ operations.
+    #[test]
+    fn over_255_operations_rejected_not_wrapped() {
+        use crate::operations::splice_null_request::SpliceNullRequest;
+        let ops: Vec<_> = (0..256)
+            .map(|_| Operation {
+                op_id: 0x0101,
+                data: AnyOperation::SpliceNullRequest(SpliceNullRequest),
+            })
+            .collect();
+        let msg = MultipleOperationMessage::new(0, 1, 1, 0, 0, Timestamp::None, ops);
+        assert!(msg.try_to_bytes().is_err());
     }
 
     #[test]

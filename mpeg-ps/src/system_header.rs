@@ -58,8 +58,15 @@ pub struct SystemHeader {
     pub std_buffer_bounds: Vec<StdBufferBound>,
 }
 
-fn stream_loop_len(system_header: &SystemHeader) -> u16 {
-    let mut len: u16 = 0;
+/// Bytes the stream loop occupies. Accumulated in `usize` (#1129): the
+/// previous `u16` accumulator overflowed for more than 10 921
+/// caller-constructed bounds, wrapping `header_length` and `serialized_len()`
+/// together so they stayed mutually consistent but both silently wrong,
+/// which then indexed past the (too-small) allocated buffer in
+/// `serialize_into`. `serialize_into` separately validates that this fits
+/// the 16-bit `header_length` wire field before writing it.
+fn stream_loop_len(system_header: &SystemHeader) -> usize {
+    let mut len: usize = 0;
     for b in &system_header.std_buffer_bounds {
         if b.stream_id_extension.is_some() {
             len += 6;
@@ -237,7 +244,7 @@ impl Serialize for SystemHeader {
     type Error = Error;
 
     fn serialized_len(&self) -> usize {
-        PREFIX_LEN + 6 + stream_loop_len(self) as usize
+        PREFIX_LEN + 6 + stream_loop_len(self)
     }
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
@@ -254,7 +261,10 @@ impl Serialize for SystemHeader {
         buf[0..4].copy_from_slice(&SYSTEM_HEADER_START_CODE.to_be_bytes());
 
         // header_length (bytes after this field)
-        let header_length = 6 + stream_loop_len(self);
+        let header_length = broadcast_common::len::fit_u16(
+            6 + stream_loop_len(self),
+            "system_header.header_length",
+        )?;
         buf[4..6].copy_from_slice(&header_length.to_be_bytes());
 
         let rate_bound = self.rate_bound & 0x3F_FFFF;
@@ -374,6 +384,101 @@ mod tests {
         let mut out2 = vec![0u8; h_mut.serialized_len()];
         h_mut.serialize_into(&mut out2).unwrap();
         assert_ne!(&out[..], &out2[..]);
+    }
+
+    /// MPS-W7 (#1129): `stream_loop_len` accumulated in `u16`, overflowing
+    /// (debug panic / release wrap) for more than 10 921 extension-form
+    /// bounds (6 bytes each: true total 66 006 bytes > `u16::MAX`). The old
+    /// accumulator's overflow point is the same 65 535 boundary the wire
+    /// field itself has, so the only fixable difference is *how* an
+    /// over-limit count fails: the old code panicked (arithmetic overflow in
+    /// debug; an out-of-bounds buffer write in release, because
+    /// `serialized_len()` used the same wrapped, too-small value the loop
+    /// then wrote past). The fix must return a controlled `Err` here
+    /// instead — never panic. Confirmed pre-fix: this exact case panicked
+    /// with "attempt to add with overflow".
+    #[test]
+    fn many_bounds_past_old_u16_overflow_point_errs_not_panics() {
+        let std_buffer_bounds = (0..11_000)
+            .map(|_| StdBufferBound {
+                stream_id: EXT_STREAM_ID,
+                stream_id_extension: Some(0x05),
+                buffer_bound_scale: false,
+                buffer_size_bound: 0,
+            })
+            .collect::<Vec<_>>();
+        let h = SystemHeader {
+            rate_bound: 0,
+            audio_bound: 0,
+            fixed_flag: false,
+            csps_flag: false,
+            system_audio_lock_flag: false,
+            system_video_lock_flag: false,
+            video_bound: 0,
+            packet_rate_restriction_flag: false,
+            std_buffer_bounds,
+        };
+        // Must not panic building the (correctly-sized-in-usize) buffer or
+        // writing into it; the real total exceeds u16::MAX so this is a
+        // controlled Err, not a silently wrapped Ok.
+        let mut buf = vec![0u8; h.serialized_len()];
+        assert!(h.serialize_into(&mut buf).is_err());
+    }
+
+    /// A bound count whose real `header_length` exceeds the 16-bit wire
+    /// field (`6 + 25_000*3 = 75_006 > 65_535`) must error rather than wrap.
+    #[test]
+    fn header_length_over_u16_is_rejected_not_wrapped() {
+        let std_buffer_bounds = (0..25_000)
+            .map(|_| StdBufferBound {
+                stream_id: 0xC0,
+                stream_id_extension: None,
+                buffer_bound_scale: false,
+                buffer_size_bound: 0,
+            })
+            .collect::<Vec<_>>();
+        let h = SystemHeader {
+            rate_bound: 0,
+            audio_bound: 0,
+            fixed_flag: false,
+            csps_flag: false,
+            system_audio_lock_flag: false,
+            system_video_lock_flag: false,
+            video_bound: 0,
+            packet_rate_restriction_flag: false,
+            std_buffer_bounds,
+        };
+        let mut buf = vec![0u8; h.serialized_len()];
+        assert!(h.serialize_into(&mut buf).is_err());
+    }
+
+    /// The boundary: a bound count whose `header_length` still fits u16
+    /// serializes and round-trips.
+    #[test]
+    fn many_bounds_within_u16_header_length_round_trips() {
+        let std_buffer_bounds = (0..1000)
+            .map(|_| StdBufferBound {
+                stream_id: 0xC0,
+                stream_id_extension: None,
+                buffer_bound_scale: false,
+                buffer_size_bound: 0x0100,
+            })
+            .collect::<Vec<_>>();
+        let h = SystemHeader {
+            rate_bound: 0,
+            audio_bound: 0,
+            fixed_flag: false,
+            csps_flag: false,
+            system_audio_lock_flag: false,
+            system_video_lock_flag: false,
+            video_bound: 0,
+            packet_rate_restriction_flag: false,
+            std_buffer_bounds,
+        };
+        let mut buf = vec![0u8; h.serialized_len()];
+        h.serialize_into(&mut buf).unwrap();
+        let back = SystemHeader::parse(&buf).unwrap();
+        assert_eq!(back.std_buffer_bounds.len(), 1000);
     }
 
     #[test]

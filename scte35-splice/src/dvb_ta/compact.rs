@@ -262,7 +262,13 @@ impl Serialize for CompactTimeSignal {
             | ((self.encryption_algorithm & 0x3F) << 1)
             | 0x01;
         buf[1] = self.cw_index;
-        let pts = self.pts_time & MASK_33;
+        if self.pts_time > MASK_33 {
+            return Err(Error::InvalidValue {
+                field: "compact_time_signal.pts_time",
+                reason: "exceeds 33-bit range",
+            });
+        }
+        let pts = self.pts_time;
         // byte2: 7 reserved bits = 1, top pts bit.
         buf[2] = 0xFE | ((pts >> 32) as u8 & 0x01);
         buf[3] = (pts >> 24) as u8;
@@ -270,7 +276,13 @@ impl Serialize for CompactTimeSignal {
         buf[5] = (pts >> 8) as u8;
         buf[6] = pts as u8;
         buf[7..11].copy_from_slice(&self.segmentation_event_id.to_be_bytes());
-        let dur = self.segmentation_duration & MASK_40;
+        if self.segmentation_duration > MASK_40 {
+            return Err(Error::InvalidValue {
+                field: "compact_time_signal.segmentation_duration",
+                reason: "exceeds 40-bit range",
+            });
+        }
+        let dur = self.segmentation_duration;
         buf[11] = (dur >> 32) as u8;
         buf[12] = (dur >> 24) as u8;
         buf[13] = (dur >> 16) as u8;
@@ -491,14 +503,26 @@ impl Serialize for CompactSpliceInsert {
             | ((self.encryption_algorithm & 0x3F) << 1)
             | 0x01;
         buf[1] = self.cw_index;
-        let pts = self.pts_time & MASK_33;
+        if self.pts_time > MASK_33 {
+            return Err(Error::InvalidValue {
+                field: "compact_splice_insert.pts_time",
+                reason: "exceeds 33-bit range",
+            });
+        }
+        let pts = self.pts_time;
         buf[2] = 0xFE | ((pts >> 32) as u8 & 0x01);
         buf[3] = (pts >> 24) as u8;
         buf[4] = (pts >> 16) as u8;
         buf[5] = (pts >> 8) as u8;
         buf[6] = pts as u8;
         buf[7..11].copy_from_slice(&self.splice_event_id.to_be_bytes());
-        let dur = self.duration & MASK_33;
+        if self.duration > MASK_33 {
+            return Err(Error::InvalidValue {
+                field: "compact_splice_insert.duration",
+                reason: "exceeds 33-bit range",
+            });
+        }
+        let dur = self.duration;
         buf[11] = 0xFE | ((dur >> 32) as u8 & 0x01);
         buf[12] = (dur >> 24) as u8;
         buf[13] = (dur >> 16) as u8;
@@ -560,6 +584,23 @@ mod tests {
         assert_eq!(back.to_bytes(), bytes);
     }
 
+    /// SC-W4 (#1129): `CompactTimeSignal::serialize_into` used to mask
+    /// `pts_time`/`segmentation_duration` with `& MASK_33`/`& MASK_40` instead
+    /// of validating them.
+    #[test]
+    fn time_signal_pts_over_33_bits_is_rejected_not_masked() {
+        let mut ts = sample_time_signal();
+        ts.pts_time = 1u64 << 33;
+        assert!(ts.try_to_bytes().is_err());
+    }
+
+    #[test]
+    fn time_signal_duration_over_40_bits_is_rejected_not_masked() {
+        let mut ts = sample_time_signal();
+        ts.segmentation_duration = 1u64 << 40;
+        assert!(ts.try_to_bytes().is_err());
+    }
+
     #[test]
     fn time_signal_hand_computed_prefix() {
         let mut ts = sample_time_signal();
@@ -618,6 +659,22 @@ mod tests {
             das,
             e_crc_32: None,
         }
+    }
+
+    /// SC-W4 (#1129): `CompactSpliceInsert::serialize_into` used to mask
+    /// `pts_time`/`duration` with `& MASK_33` instead of validating them.
+    #[test]
+    fn splice_insert_pts_over_33_bits_is_rejected_not_masked() {
+        let mut si = sample_splice_insert(None);
+        si.pts_time = 1u64 << 33;
+        assert!(si.try_to_bytes().is_err());
+    }
+
+    #[test]
+    fn splice_insert_duration_over_33_bits_is_rejected_not_masked() {
+        let mut si = sample_splice_insert(None);
+        si.duration = 1u64 << 33;
+        assert!(si.try_to_bytes().is_err());
     }
 
     #[test]

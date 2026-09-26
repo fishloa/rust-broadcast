@@ -61,7 +61,10 @@ impl Serialize for InsertDtmfDescriptor<'_> {
             });
         }
         buf[0] = self.pre_roll;
-        buf[1] = self.dtmf_chars.len() as u8;
+        buf[1] = broadcast_common::len::fit_u8(
+            self.dtmf_chars.len(),
+            "insert_DTMF_descriptor.dtmf_length",
+        )?;
         buf[2..2 + self.dtmf_chars.len()].copy_from_slice(self.dtmf_chars);
         Ok(need)
     }
@@ -99,6 +102,18 @@ mod tests {
         assert_eq!(bytes.len(), 2);
         let back = InsertDtmfDescriptor::parse(&bytes).unwrap();
         assert_eq!(op, back);
+    }
+
+    /// S4-W3 (#1129): `dtmf_length` is an 8-bit field but used to be written
+    /// with `self.dtmf_chars.len() as u8`, wrapping to 0 for 256+ chars.
+    #[test]
+    fn over_255_dtmf_chars_rejected_not_wrapped() {
+        let chars = alloc::vec![0x31u8; 256];
+        let op = InsertDtmfDescriptor {
+            pre_roll: 0,
+            dtmf_chars: &chars,
+        };
+        assert!(op.try_to_bytes().is_err());
     }
 
     #[test]

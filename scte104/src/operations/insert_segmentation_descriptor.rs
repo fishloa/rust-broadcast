@@ -123,7 +123,10 @@ impl Serialize for InsertSegmentationDescriptor<'_> {
         buf[4] = self.segmentation_event_cancel_indicator;
         buf[5..7].copy_from_slice(&self.duration.to_be_bytes());
         buf[7] = self.segmentation_upid_type;
-        buf[8] = self.segmentation_upid.len() as u8;
+        buf[8] = broadcast_common::len::fit_u8(
+            self.segmentation_upid.len(),
+            "insert_segmentation_descriptor.segmentation_upid_length",
+        )?;
         let upid_len = self.segmentation_upid.len();
         buf[9..9 + upid_len].copy_from_slice(self.segmentation_upid);
         let tail_off = 9 + upid_len;
@@ -187,6 +190,19 @@ mod tests {
         let bytes = op.to_bytes();
         let back = InsertSegmentationDescriptor::parse(&bytes).unwrap();
         assert_eq!(op, back);
+    }
+
+    /// S4-W3 (#1129): `segmentation_upid_length` is an 8-bit field but used
+    /// to be written with `self.segmentation_upid.len() as u8`, wrapping to
+    /// 0 for 256+ bytes while the whole upid was still serialized.
+    #[test]
+    fn over_255_upid_bytes_rejected_not_wrapped() {
+        let upid = alloc::vec![0xABu8; 256];
+        let op = InsertSegmentationDescriptor {
+            segmentation_upid: &upid,
+            ..InsertSegmentationDescriptor::default()
+        };
+        assert!(op.try_to_bytes().is_err());
     }
 
     #[test]

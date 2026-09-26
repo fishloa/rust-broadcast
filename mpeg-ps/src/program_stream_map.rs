@@ -209,7 +209,7 @@ fn parse_es_loop(data: &[u8], single_flag: bool) -> Result<Vec<EsMapEntry<'_>>> 
     Ok(entries)
 }
 
-fn serialize_es_loop(entries: &[OwnedEsMapEntry]) -> Vec<u8> {
+fn serialize_es_loop(entries: &[OwnedEsMapEntry]) -> Result<Vec<u8>> {
     let mut buf = Vec::new();
     for e in entries {
         buf.push(e.stream_type);
@@ -221,18 +221,26 @@ fn serialize_es_loop(entries: &[OwnedEsMapEntry]) -> Vec<u8> {
         } else {
             e.descriptors.len()
         };
+        let desc_len =
+            broadcast_common::len::fit_u16(desc_len, "elementary_stream_map.ES_info_length")?;
 
-        buf.extend_from_slice(&(desc_len as u16).to_be_bytes());
+        buf.extend_from_slice(&desc_len.to_be_bytes());
 
         if let Some(ext) = e.stream_id_extension {
             buf.push(0x00); // pseudo_descriptor_tag (any value)
-            buf.push(1 + e.descriptors.len() as u8); // pseudo_descriptor_length
+            // pseudo_descriptor_length: 8-bit field. Check in usize before
+            // narrowing — `1 + descriptors.len() as u8` used to overflow the
+            // cast's operand at exactly 255 (#1129).
+            buf.push(broadcast_common::len::fit_u8(
+                1 + e.descriptors.len(),
+                "elementary_stream_map.pseudo_descriptor_length",
+            )?);
             buf.push(0x80 | (ext & 0x7F)); // marker + extension
         }
 
         buf.extend_from_slice(&e.descriptors);
     }
-    buf
+    Ok(buf)
 }
 
 impl Serialize for ProgramStreamMap<'_> {
@@ -282,12 +290,24 @@ impl Serialize for ProgramStreamMap<'_> {
                     descriptors: e.descriptors.to_vec(),
                 })
                 .collect::<Vec<_>>(),
-        );
+        )?;
         let es_loop_len = es_loop_data.len();
 
         // map_length = flags(1) + reserved(1) + prog_info_len(2) + es_loop_len(2) + prog_info + es_loop
         let map_length = 6 + prog_info_len + es_loop_len;
-        buf[4..6].copy_from_slice(&(map_length as u16).to_be_bytes());
+        // program_stream_map_length max is 1018 (0x3FA) per Table 2-41 — checked
+        // in usize before any narrowing (#1129).
+        const MAP_LENGTH_MAX: u64 = 1018;
+        if map_length as u64 > MAP_LENGTH_MAX {
+            return Err(broadcast_common::len::FieldOverflow {
+                field: "program_stream_map.program_stream_map_length",
+                value: map_length as u64,
+                max: MAP_LENGTH_MAX,
+            }
+            .into());
+        }
+        let map_length = map_length as u16;
+        buf[4..6].copy_from_slice(&map_length.to_be_bytes());
 
         // flags: current_next(1) + single_extension(1) + reserved(1) + version(5)
         buf[6] = (u8::from(self.current_next_indicator) << 7)
@@ -297,10 +317,20 @@ impl Serialize for ProgramStreamMap<'_> {
         // reserved(7) + marker_bit(1)
         buf[7] = 0x7F | 0x01;
 
-        // program_stream_info_length
-        buf[8..10].copy_from_slice(&(prog_info_len as u16).to_be_bytes());
-        // elementary_stream_map_length
-        buf[10..12].copy_from_slice(&(es_loop_len as u16).to_be_bytes());
+        // program_stream_info_length and elementary_stream_map_length are
+        // both 16-bit fields; `map_length <= MAP_LENGTH_MAX` above already
+        // bounds each of them well under `u16::MAX`, but check explicitly
+        // rather than relying on that aggregate bound holding (#1129).
+        let prog_info_len_u16 = broadcast_common::len::fit_u16(
+            prog_info_len,
+            "program_stream_map.program_stream_info_length",
+        )?;
+        let es_loop_len_u16 = broadcast_common::len::fit_u16(
+            es_loop_len,
+            "program_stream_map.elementary_stream_map_length",
+        )?;
+        buf[8..10].copy_from_slice(&prog_info_len_u16.to_be_bytes());
+        buf[10..12].copy_from_slice(&es_loop_len_u16.to_be_bytes());
 
         // program_stream_info descriptors
         buf[12..12 + prog_info_len].copy_from_slice(self.program_stream_info);
@@ -424,6 +454,64 @@ mod tests {
         let mut out2 = vec![0u8; parsed.serialized_len()];
         parsed.serialize_into(&mut out2).unwrap();
         assert_eq!(&out2[..], &buf[..]);
+    }
+
+    /// MPS-W6 (#1129): `pseudo_descriptor_length` is `1 + descriptors.len()`,
+    /// written as `1 + (descriptors.len() as u8)` — the cast happened before
+    /// the add, so a 255-byte descriptor overflowed the `u8` addition
+    /// (panicking in debug, wrapping in release) rather than being checked.
+    #[test]
+    fn pseudo_descriptor_length_overflow_is_rejected_not_wrapped() {
+        let entries = vec![EsMapEntry {
+            stream_type: 0x06,
+            elementary_stream_id: 0xFD,
+            stream_id_extension: Some(0x01),
+            descriptors: &[0u8; 255],
+        }];
+        let psm = ProgramStreamMap {
+            current_next_indicator: true,
+            single_extension_stream_flag: false,
+            version: 0,
+            program_stream_info: &[],
+            elementary_stream_map: entries,
+            crc: 0,
+        };
+        let mut buf = vec![0u8; psm.serialized_len()];
+        assert!(psm.serialize_into(&mut buf).is_err());
+    }
+
+    /// MPS-W6 (#1129): `program_stream_map_length` (spec max 1018, Table
+    /// 2-41) was written unchecked with `as u16`.
+    #[test]
+    fn program_stream_map_length_over_spec_max_is_rejected() {
+        let psm = ProgramStreamMap {
+            current_next_indicator: true,
+            single_extension_stream_flag: false,
+            version: 0,
+            program_stream_info: &[0u8; 1019],
+            elementary_stream_map: vec![],
+            crc: 0,
+        };
+        let mut buf = vec![0u8; psm.serialized_len()];
+        assert!(psm.serialize_into(&mut buf).is_err());
+    }
+
+    /// The boundary: exactly the spec max still serializes and round-trips.
+    #[test]
+    fn program_stream_map_length_at_spec_max_round_trips() {
+        // map_length = 6 + prog_info_len + es_loop_len; want map_length == 1018.
+        let psm = ProgramStreamMap {
+            current_next_indicator: true,
+            single_extension_stream_flag: false,
+            version: 0,
+            program_stream_info: &[0u8; 1012],
+            elementary_stream_map: vec![],
+            crc: 0,
+        };
+        let mut buf = vec![0u8; psm.serialized_len()];
+        psm.serialize_into(&mut buf).unwrap();
+        let parsed = ProgramStreamMap::parse(&buf).unwrap();
+        assert_eq!(parsed.program_stream_info.len(), 1012);
     }
 
     #[test]

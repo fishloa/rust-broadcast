@@ -76,4 +76,9 @@ pub enum Error {
         /// Actual size.
         have: usize,
     },
+
+    /// A length or count field's value does not fit its wire field
+    /// (see `broadcast_common::len`, #1129).
+    #[error(transparent)]
+    FieldOverflow(#[from] broadcast_common::len::FieldOverflow),
 }

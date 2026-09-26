@@ -68,4 +68,9 @@ pub enum Error {
     /// PES packet parse error from `mpeg-pes`.
     #[error("PES parse error: {0}")]
     Pes(#[from] mpeg_pes::Error),
+
+    /// A length or count field's value does not fit its wire field
+    /// (see `broadcast_common::len`, #1129).
+    #[error(transparent)]
+    FieldOverflow(#[from] broadcast_common::len::FieldOverflow),
 }

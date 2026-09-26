@@ -91,7 +91,7 @@ impl Serialize for DtmfDescriptor {
                 reason: "more than 7 DTMF characters (3-bit count)",
             });
         }
-        header::write_header(buf, TAG, self.identifier, 2 + self.dtmf_chars.len());
+        header::write_header(buf, TAG, self.identifier, 2 + self.dtmf_chars.len())?;
         buf[HEADER_LEN] = self.preroll;
         // 3-bit dtmf_count, 5 reserved bits = 1.
         buf[HEADER_LEN + 1] = ((self.dtmf_chars.len() as u8) << 5) | 0x1F;

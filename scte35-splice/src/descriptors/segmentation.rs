@@ -414,7 +414,7 @@ impl Serialize for SegmentationDescriptor<'_> {
                 reason: "descriptor body exceeds 8-bit descriptor_length",
             });
         }
-        header::write_header(buf, TAG, self.identifier, body_len);
+        header::write_header(buf, TAG, self.identifier, body_len)?;
         let mut pos = HEADER_LEN;
 
         buf[pos..pos + 4].copy_from_slice(&self.segmentation_event_id.to_be_bytes());
@@ -447,11 +447,20 @@ impl Serialize for SegmentationDescriptor<'_> {
         pos += 1;
 
         if !self.program_segmentation_flag {
-            buf[pos] = self.components.len() as u8;
+            buf[pos] = broadcast_common::len::fit_u8(
+                self.components.len(),
+                "segmentation_descriptor.component_count",
+            )?;
             pos += 1;
             for c in &self.components {
                 buf[pos] = c.component_tag;
-                let o = c.pts_offset & ((1u64 << 33) - 1);
+                if c.pts_offset > crate::time::PTS_MAX {
+                    return Err(Error::InvalidValue {
+                        field: "segmentation_descriptor.component.pts_offset",
+                        reason: "exceeds 33-bit range",
+                    });
+                }
+                let o = c.pts_offset;
                 // 7 reserved bits = 1, then top pts_offset bit.
                 buf[pos + 1] = 0xFE | ((o >> 32) as u8 & 0x01);
                 buf[pos + 2] = (o >> 24) as u8;
@@ -463,7 +472,12 @@ impl Serialize for SegmentationDescriptor<'_> {
         }
 
         if let Some(d) = self.segmentation_duration {
-            let d = d & ((1u64 << 40) - 1);
+            if d > crate::time::DURATION_40_MAX {
+                return Err(Error::InvalidValue {
+                    field: "segmentation_descriptor.segmentation_duration",
+                    reason: "exceeds 40-bit range",
+                });
+            }
             buf[pos] = (d >> 32) as u8;
             buf[pos + 1] = (d >> 24) as u8;
             buf[pos + 2] = (d >> 16) as u8;
@@ -473,7 +487,10 @@ impl Serialize for SegmentationDescriptor<'_> {
         }
 
         buf[pos] = self.segmentation_upid_type.to_u8();
-        buf[pos + 1] = self.segmentation_upid.len() as u8;
+        buf[pos + 1] = broadcast_common::len::fit_u8(
+            self.segmentation_upid.len(),
+            "segmentation_descriptor.segmentation_upid_length",
+        )?;
         pos += 2;
         buf[pos..pos + self.segmentation_upid.len()].copy_from_slice(self.segmentation_upid);
         pos += self.segmentation_upid.len();
@@ -556,6 +573,41 @@ mod tests {
             segments_expected: 1,
             ..Default::default()
         });
+    }
+
+    /// SC-W4 (#1129): `pts_offset` used to be masked with `& ((1<<33)-1)`
+    /// instead of validated, silently accepting an out-of-range value.
+    #[test]
+    fn component_pts_offset_over_33_bits_is_rejected_not_masked() {
+        let d = SegmentationDescriptor {
+            segmentation_event_id: 1,
+            program_segmentation_flag: false,
+            components: vec![SegmentationComponent {
+                component_tag: 1,
+                pts_offset: 1u64 << 33,
+            }],
+            segmentation_type_id: SegmentationTypeId::ProgramStart,
+            segment_num: 1,
+            segments_expected: 1,
+            ..Default::default()
+        };
+        assert!(d.try_to_bytes().is_err());
+    }
+
+    /// SC-W4 (#1129): `segmentation_duration` used to be masked with
+    /// `& ((1<<40)-1)` instead of validated.
+    #[test]
+    fn segmentation_duration_over_40_bits_is_rejected_not_masked() {
+        let d = SegmentationDescriptor {
+            segmentation_event_id: 1,
+            program_segmentation_flag: true,
+            segmentation_duration: Some(1u64 << 40),
+            segmentation_type_id: SegmentationTypeId::ProgramStart,
+            segment_num: 1,
+            segments_expected: 1,
+            ..Default::default()
+        };
+        assert!(d.try_to_bytes().is_err());
     }
 
     #[test]

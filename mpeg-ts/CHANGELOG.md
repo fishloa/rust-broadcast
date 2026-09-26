@@ -2,6 +2,21 @@
 
 ## [Unreleased]
 
+### Changed (Breaking)
+- Requires `broadcast-common` 9.4 (`broadcast_common::len`).
+- `OwnedTsPacket::serialize_with_payload` now returns
+  `Result<[u8; TS_PACKET_SIZE], Error>` instead of `[u8; TS_PACKET_SIZE]`,
+  rejecting a payload over 184 bytes (the new
+  `OwnedTsPacket::MAX_PAYLOAD_LEN`) instead of silently truncating it (#1129).
+  A new `Error::PayloadTooLarge` variant is added.
+
+### Fixed
+- `OwnedTsPacket::serialize_with_payload` silently truncated a payload over
+  184 bytes (`payload.len().min(184)`) with no signal; it now errors (#1129).
+- `AdaptationField::serialize_into` wrote `transport_private_data_length`
+  with an unchecked `as u8` cast, wrapping to a short length for data over
+  255 bytes while the full data was still copied after it (#1129).
+
 ## [0.4.1] - 2026-09-26
 
 ### Security

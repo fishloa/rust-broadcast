@@ -56,4 +56,19 @@ pub enum Error {
         /// Bytes actually available after the header.
         available: usize,
     },
+
+    /// A payload was longer than a single TS packet's fixed payload capacity
+    /// (see `OwnedTsPacket::serialize_with_payload`, #1129).
+    #[error("payload {len} bytes exceeds the {max}-byte TS packet payload capacity")]
+    PayloadTooLarge {
+        /// The payload length that did not fit.
+        len: usize,
+        /// The maximum payload capacity.
+        max: usize,
+    },
+
+    /// A length or count field's value does not fit its wire field
+    /// (see `broadcast_common::len`, #1129).
+    #[error(transparent)]
+    FieldOverflow(#[from] broadcast_common::len::FieldOverflow),
 }
