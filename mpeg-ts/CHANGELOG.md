@@ -16,6 +16,15 @@
 - `AdaptationField::serialize_into` wrote `transport_private_data_length`
   with an unchecked `as u8` cast, wrapping to a short length for data over
   255 bytes while the full data was still copied after it (#1129).
+- `mux::SiMux` keyed its scheduler entries by PID alone, so two distinct
+  tables sharing a PID by spec (TDT/TOT on `0x0014`, SDT/BAT on `0x0011`,
+  EIT present/following vs. schedule sub-tables on `0x0012`) collided:
+  `upsert_tot` after `upsert_tdt` silently replaced the TDT entry and it
+  never appeared in the output. Entries are now keyed by `(pid, table_id)`,
+  and every entry on one PID shares a single `SectionPacketiser` (and so one
+  continuity counter), so two tables on a shared PID stay CC-continuous
+  (#1000). Verified against TSDuck's own `tsp -P tables`/`tsanalyze`
+  (`mpeg-ts/tests/tsduck_simux_oracle.rs`).
 
 ## [0.4.1] - 2026-09-26
 

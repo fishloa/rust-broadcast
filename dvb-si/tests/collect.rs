@@ -2,7 +2,9 @@ use broadcast_common::Serialize;
 use dvb_si::collect::{CollectError, CompletedEit, EitCollector, SectionSetCollector};
 use dvb_si::descriptors::AnyDescriptor;
 use dvb_si::descriptors::DescriptorLoop;
-use dvb_si::tables::eit::{EitKind, EitSection, TABLE_ID_SCHEDULE_ACTUAL_FIRST as EIT_50};
+use dvb_si::tables::eit::{
+    EitKind, EitSection, TABLE_ID_PF_ACTUAL, TABLE_ID_SCHEDULE_ACTUAL_FIRST as EIT_50,
+};
 use dvb_si::tables::nit::{NitKind, NitSection, NitTransportStream};
 use dvb_si::tables::pat::{PatEntry, PatSection};
 
@@ -24,6 +26,28 @@ fn nit_section(
     };
     let mut bytes = vec![0u8; nit.serialized_len()];
     nit.serialize_into(&mut bytes).unwrap();
+    bytes
+}
+
+/// One present/following EIT section for `service_id`, parameterized so a
+/// test can push distinct-key sections for many services.
+fn eit_pf_section(service_id: u16) -> Vec<u8> {
+    let eit = EitSection {
+        kind: EitKind::PresentFollowingActual,
+        table_id: TABLE_ID_PF_ACTUAL,
+        service_id,
+        version_number: 1,
+        current_next_indicator: true,
+        section_number: 0,
+        last_section_number: 0,
+        transport_stream_id: 0x2000,
+        original_network_id: 0x0001,
+        segment_last_section_number: 0,
+        last_table_id: TABLE_ID_PF_ACTUAL,
+        events: vec![],
+    };
+    let mut bytes = vec![0u8; eit.serialized_len()];
+    eit.serialize_into(&mut bytes).unwrap();
     bytes
 }
 
@@ -267,6 +291,53 @@ fn eit_collector_retain_logical_prunes_schedule_state() {
 
     assert_eq!(collector.section_set_len(), 0);
     assert_eq!(collector.schedule_len(), 0);
+}
+
+/// Regression for issue #1002: on a real DTH multiplex, EIT present/following
+/// alone can span far more than 256 services (the audit's cited scenario is
+/// 150). Once completed p/f section sets fill the sections-map cap, a naive
+/// "cap counts everything, nothing is ever freed" collector silently stops
+/// completing EPG for every later service with `Ok(None)` — indistinguishable
+/// from "still collecting". With LRU eviction, a new service's key evicts the
+/// least-recently-touched completed entry instead, and the eviction count
+/// says so.
+#[test]
+fn eit_collector_sections_cap_evicts_oldest_completed_service_instead_of_walling_off_new_ones() {
+    let mut collector = EitCollector::new().with_max_logical_keys(4);
+
+    // Fill the cap with 4 distinct services' p/f EITs, all completing.
+    for service_id in 0..4u16 {
+        let section = eit_pf_section(service_id);
+        assert!(
+            collector.push_section(&section).unwrap().is_some(),
+            "service {service_id} p/f completes immediately (single section)"
+        );
+    }
+    assert_eq!(collector.section_set_len(), 4);
+    assert_eq!(collector.sections_evicted_for_capacity(), 0);
+
+    // A 5th distinct service must NOT be silently dropped: it evicts the
+    // least-recently-touched (service 0) and still completes.
+    let section4 = eit_pf_section(4);
+    let completed = collector.push_section(&section4).unwrap();
+    assert!(
+        completed.is_some(),
+        "a new service beyond the cap must evict, not silently vanish into Ok(None)"
+    );
+    assert_eq!(
+        collector.section_set_len(),
+        4,
+        "cap is honored, not exceeded"
+    );
+    assert_eq!(collector.sections_evicted_for_capacity(), 1);
+
+    // Service 0 was evicted: feeding it again is a fresh key, not "already
+    // collected" — it must complete again rather than returning None.
+    let section0_again = eit_pf_section(0);
+    assert!(
+        collector.push_section(&section0_again).unwrap().is_some(),
+        "evicted service re-admits and completes like a brand-new key"
+    );
 }
 
 // A complete set is emitted exactly once: re-pushing already-present sections

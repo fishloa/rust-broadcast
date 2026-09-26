@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<tsduck>
+  <PMT version="1" current="true" service_id="0x0002" PCR_PID="0x0100">
+    <component elementary_PID="0x0110" stream_type="0x15">
+      <content_labelling_descriptor metadata_application_format="0x0010" content_time_base_indicator="1" content_time_base_value="1" metadata_time_base_value="2"/>
+    </component>
+    <component elementary_PID="0x0111" stream_type="0x15">
+      <content_labelling_descriptor metadata_application_format="0x0010" content_time_base_indicator="2" content_time_base_value="4,294,967,297" metadata_time_base_value="8,589,934,591" content_id="0x2A"/>
+    </component>
+    <component elementary_PID="0x0112" stream_type="0x1B">
+      <m4mux_timing_descriptor FCR_ES_ID="0x0001" FCRResolution="305,419,896" FCRLength="5" FmxRateLength="30"/>
+    </component>
+    <component elementary_PID="0x0113" stream_type="0x15">
+      <metadata_STD_descriptor metadata_input_leak_rate="1" metadata_buffer_size="2" metadata_output_leak_rate="3"/>
+    </component>
+    <component elementary_PID="0x0114" stream_type="0x21">
+      <J2K_video_descriptor profile_and_level="0x0102" horizontal_size="1,920" vertical_size="1,080" max_bit_rate="100,000,000" max_buffer_size="1,250,000" DEN_frame_rate="1" NUM_frame_rate="25" still_mode="true" interlaced_video="false" colour_primaries="1" transfer_characteristics="2" matrix_coefficients="3" video_full_range_flag="true"/>
+    </component>
+  </PMT>
+</tsduck>

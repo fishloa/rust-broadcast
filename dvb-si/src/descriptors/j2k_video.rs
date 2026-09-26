@@ -140,7 +140,7 @@ pub struct J2kVideoDescriptor<'a> {
 fn parse_extended_capability(
     body: &[u8],
     mut pos: usize,
-) -> Result<(J2kExtendedCapability, usize)> {
+) -> Result<(J2kExtendedCapability, bool, bool, usize)> {
     // stripe_flag(1) + block_flag(1) + mdm_flag(1) + reserved(5) = 1 byte
     if body.len() < pos + 1 {
         return Err(Error::InvalidDescriptor {
@@ -152,6 +152,20 @@ fn parse_extended_capability(
     let stripe_flag = (sb & 0x80) != 0;
     let block_flag = (sb & 0x40) != 0;
     let mdm_flag = (sb & 0x20) != 0;
+    pos += 1;
+
+    // Table 2-101: still_mode(1) | interlaced_video(1) | reserved(6) comes
+    // right after the stripe/block/mdm flags byte and BEFORE the colour
+    // parameters and any sub-blocks — not after them.
+    if body.len() < pos + 1 {
+        return Err(Error::InvalidDescriptor {
+            tag: TAG,
+            reason: "J2K_video_descriptor too short for still_mode/interlaced byte",
+        });
+    }
+    let sm_iv = body[pos];
+    let still_mode = (sm_iv & 0x80) != 0;
+    let interlaced_video = (sm_iv & 0x40) != 0;
     pos += 1;
 
     // colour_primaries(1) + transfer(1) + matrix(1) + video_full_range(1) + reserved(7) = 4 bytes
@@ -282,12 +296,16 @@ fn parse_extended_capability(
             block,
             mdm,
         },
+        still_mode,
+        interlaced_video,
         pos,
     ))
 }
 
 fn serialize_extended_capability(
     ext: &J2kExtendedCapability,
+    still_mode: bool,
+    interlaced_video: bool,
     buf: &mut [u8],
     mut pos: usize,
 ) -> usize {
@@ -302,6 +320,17 @@ fn serialize_extended_capability(
         sb |= 0x20;
     }
     buf[pos] = sb;
+    pos += 1;
+
+    // still_mode/interlaced_video precede the colour parameters here (Table 2-101).
+    let mut sm_iv = 0u8;
+    if still_mode {
+        sm_iv |= 0x80;
+    }
+    if interlaced_video {
+        sm_iv |= 0x40;
+    }
+    buf[pos] = sm_iv;
     pos += 1;
 
     buf[pos] = ext.colour_primaries;
@@ -352,7 +381,7 @@ fn serialize_extended_capability(
 }
 
 fn extended_capability_serialized_len(ext: &J2kExtendedCapability) -> usize {
-    let mut len: usize = 5; // flags(1) + colour_primaries(1) + transfer(1) + matrix(1) + vfr(1)
+    let mut len: usize = 6; // flags(1) + still_mode/interlaced(1) + colour_primaries(1) + transfer(1) + matrix(1) + vfr(1)
     if ext.stripe.is_some() {
         len += 3;
     }
@@ -397,35 +426,27 @@ impl<'a> Parse<'a> for J2kVideoDescriptor<'a> {
         let max_buffer_size = u32::from_be_bytes([body[14], body[15], body[16], body[17]]);
         let den_frame_rate = u16::from_be_bytes([body[18], body[19]]);
         let num_frame_rate = u16::from_be_bytes([body[20], body[21]]);
-        let mut pos = 22;
+        let pos = 22;
 
-        let (extended_capability, color_specification, mut pos) = if extended_capability_flag {
-            let (ext, new_pos) = parse_extended_capability(body, pos)?;
-            (Some(ext), None, new_pos)
-        } else {
-            // color_specification(1)
-            if body.len() < pos + 1 {
-                return Err(Error::InvalidDescriptor {
-                    tag: TAG,
-                    reason: "J2K_video_descriptor too short for color_specification",
-                });
-            }
-            let cs = body[pos];
-            pos += 1;
-            (None, Some(cs), pos)
-        };
-
-        // still_mode(1) | interlaced_video(1) | reserved(6) = 1 byte
-        if body.len() < pos + 1 {
-            return Err(Error::InvalidDescriptor {
-                tag: TAG,
-                reason: "J2K_video_descriptor too short for still_mode/interlaced byte",
-            });
-        }
-        let sm_iv = body[pos];
-        let still_mode = (sm_iv & 0x80) != 0;
-        let interlaced_video = (sm_iv & 0x40) != 0;
-        pos += 1;
+        let (extended_capability, color_specification, still_mode, interlaced_video, pos) =
+            if extended_capability_flag {
+                let (ext, still_mode, interlaced_video, new_pos) =
+                    parse_extended_capability(body, pos)?;
+                (Some(ext), None, still_mode, interlaced_video, new_pos)
+            } else {
+                // color_specification(1) then still_mode(1) | interlaced_video(1) | reserved(6)
+                if body.len() < pos + 2 {
+                    return Err(Error::InvalidDescriptor {
+                        tag: TAG,
+                        reason: "J2K_video_descriptor too short for color_specification/still_mode",
+                    });
+                }
+                let cs = body[pos];
+                let sm_iv = body[pos + 1];
+                let still_mode = (sm_iv & 0x80) != 0;
+                let interlaced_video = (sm_iv & 0x40) != 0;
+                (None, Some(cs), still_mode, interlaced_video, pos + 2)
+            };
 
         let private_data = &body[pos..];
 
@@ -451,11 +472,11 @@ impl Serialize for J2kVideoDescriptor<'_> {
     type Error = crate::error::Error;
 
     fn serialized_len(&self) -> usize {
-        let mut len: usize = HEADER_LEN + 23; // pre-flag fields(22) + still_mode byte(1)
+        let mut len: usize = HEADER_LEN + 22; // pre-flag fields
         if let Some(ref ext) = self.extended_capability {
-            len += extended_capability_serialized_len(ext);
+            len += extended_capability_serialized_len(ext); // includes still_mode/interlaced byte
         } else {
-            len += 1; // color_specification
+            len += 2; // color_specification(1) + still_mode/interlaced byte(1)
         }
         len += self.private_data.len();
         len
@@ -487,21 +508,27 @@ impl Serialize for J2kVideoDescriptor<'_> {
         let mut pos = HEADER_LEN + 22;
 
         if let Some(ref ext) = self.extended_capability {
-            pos = serialize_extended_capability(ext, buf, pos);
+            pos = serialize_extended_capability(
+                ext,
+                self.still_mode,
+                self.interlaced_video,
+                buf,
+                pos,
+            );
         } else if let Some(cs) = self.color_specification {
             buf[pos] = cs;
             pos += 1;
-        }
 
-        let mut sm_iv = 0u8;
-        if self.still_mode {
-            sm_iv |= 0x80;
+            let mut sm_iv = 0u8;
+            if self.still_mode {
+                sm_iv |= 0x80;
+            }
+            if self.interlaced_video {
+                sm_iv |= 0x40;
+            }
+            buf[pos] = sm_iv;
+            pos += 1;
         }
-        if self.interlaced_video {
-            sm_iv |= 0x40;
-        }
-        buf[pos] = sm_iv;
-        pos += 1;
 
         buf[pos..pos + self.private_data.len()].copy_from_slice(self.private_data);
         Ok(len)

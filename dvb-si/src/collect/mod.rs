@@ -31,14 +31,18 @@ pub use eit::*;
 pub use nit::*;
 pub use sdt::*;
 
-/// Default cap on the number of in-progress logical keys retained by
-/// [`SectionSetCollector`].
+/// Default cap on the number of logical keys (in-progress AND completed)
+/// retained by [`SectionSetCollector`].
 ///
 /// 256 concurrent collections is generous while bounding a hostile stream that
 /// rotates table_id / extension / current_next_indicator across PIDs to force
-/// unbounded map growth. The cap is applied to the partial-sections map. When
-/// the map is full, incoming sections for new keys are skipped until
-/// [`clear`](SectionSetCollector::clear) frees capacity.
+/// unbounded map growth. The cap is applied to the partial-sections map
+/// (which also holds completed entries, so a repeat/duplicate section for a
+/// finished set is still recognized). When the map is full, incoming
+/// sections for a *new* key evict the least-recently-touched existing key
+/// (see [`SectionSetCollector`]'s type-level docs) rather than being
+/// silently dropped; [`clear`](SectionSetCollector::clear) still frees all
+/// capacity at once for an application-defined boundary.
 pub const DEFAULT_MAX_PARTIAL_KEYS: usize = 256;
 
 /// Result alias for collection operations.
@@ -142,6 +146,10 @@ struct PartialSectionSet {
     slots: Vec<Option<Arc<[u8]>>>,
     filled: usize,
     emitted: bool,
+    /// The collector's `tick` at the last touch (push) of this key; `0` is a
+    /// sentinel meaning "never touched yet" (the collector's first real tick
+    /// is `1`), used to find and evict the least-recently-touched entry.
+    last_touch: u64,
 }
 
 impl PartialSectionSet {
@@ -152,11 +160,14 @@ impl PartialSectionSet {
             slots: vec![None; len],
             filled: 0,
             emitted: false,
+            last_touch: 0,
         }
     }
 
     fn reset(&mut self, meta: SectionSetMeta) {
+        let last_touch = self.last_touch;
         *self = Self::new(meta);
+        self.last_touch = last_touch;
     }
 
     fn insert(&mut self, section_number: u8, bytes: Arc<[u8]>) -> CollectResult<bool> {
@@ -204,17 +215,43 @@ impl PartialSectionSet {
 /// The constructor [`SectionSetCollector::new`] uses the default cap
 /// [`DEFAULT_MAX_PARTIAL_KEYS`]; the cap is configurable via
 /// [`with_max_partial_keys`](Self::with_max_partial_keys).
+///
+/// # Capacity: LRU eviction, not a permanent wall (issue #1002)
+///
+/// The cap bounds `partial`'s total entry count, including **completed**
+/// sets — a completed set is retained (so a repeat/duplicate section for it
+/// is recognized and does not re-emit) but a real network can complete far
+/// more distinct `(table_id, extension_id, current_next_indicator)` keys
+/// over time than the cap allows to stay in-progress simultaneously (EIT
+/// *other* alone can span 150+ services). Capping only entry *creation* and
+/// never evicting anything would eventually wall off every new key behind a
+/// permanently-full map of old, no-longer-interesting completed entries,
+/// with the caller seeing only silent `Ok(None)` and no way to tell "still
+/// collecting" apart from "capacity exhausted, this key will never
+/// complete". Instead, when a *new* key arrives at capacity, the
+/// **least-recently-touched** entry (by push, not by construction) is
+/// evicted to admit it — old, no-longer-fed keys naturally age out in
+/// favor of active ones. [`evicted_for_capacity`](Self::evicted_for_capacity)
+/// counts evictions, so a caller can detect this churn instead of it being
+/// invisible.
 #[derive(Debug)]
 pub struct SectionSetCollector {
     partial: BTreeMap<SectionSetKey, PartialSectionSet>,
+    /// `tick` at last touch → key, for O(log n) least-recently-touched lookup.
+    touch_order: BTreeMap<u64, SectionSetKey>,
+    tick: u64,
     max_partial_keys: usize,
+    evicted_for_capacity: u64,
 }
 
 impl Default for SectionSetCollector {
     fn default() -> Self {
         Self {
             partial: BTreeMap::new(),
+            touch_order: BTreeMap::new(),
+            tick: 0,
             max_partial_keys: DEFAULT_MAX_PARTIAL_KEYS,
+            evicted_for_capacity: 0,
         }
     }
 }
@@ -228,12 +265,42 @@ impl SectionSetCollector {
     }
 
     /// Replace the partial-key cap (default [`DEFAULT_MAX_PARTIAL_KEYS`]).
-    /// Sections for new keys are skipped when the map is full, until
-    /// [`clear`](Self::clear) frees capacity.
+    /// When a *new* key arrives at capacity, the least-recently-touched
+    /// existing key is evicted to admit it (see the type-level docs).
     #[must_use]
     pub fn with_max_partial_keys(mut self, max_partial_keys: usize) -> Self {
         self.max_partial_keys = max_partial_keys;
         self
+    }
+
+    /// Number of keys evicted so far to admit a new key at capacity. A
+    /// nonzero, growing count means the cap is genuinely too small for the
+    /// stream's distinct-key churn — raise it via
+    /// [`with_max_partial_keys`](Self::with_max_partial_keys).
+    #[must_use]
+    pub fn evicted_for_capacity(&self) -> u64 {
+        self.evicted_for_capacity
+    }
+
+    /// Record a touch of `key` at the current tick, evicting the
+    /// least-recently-touched entry first if `key` is new and the map is
+    /// already at capacity. Returns `false` only in the (should-be
+    /// unreachable) case that eviction could not free a slot.
+    fn touch_or_evict(&mut self, key: SectionSetKey) -> bool {
+        self.tick = self.tick.wrapping_add(1).max(1);
+        if !self.partial.contains_key(&key) && self.partial.len() >= self.max_partial_keys {
+            let oldest = self.touch_order.keys().next().copied();
+            match oldest {
+                Some(oldest_tick) => {
+                    if let Some(oldest_key) = self.touch_order.remove(&oldest_tick) {
+                        self.partial.remove(&oldest_key);
+                        self.evicted_for_capacity += 1;
+                    }
+                }
+                None => return false,
+            }
+        }
+        true
     }
 
     /// Push one complete section. Returns `Some` only when the logical section
@@ -290,10 +357,12 @@ impl SectionSetCollector {
         };
         let bytes: Arc<[u8]> = Arc::from(raw);
 
-        // Cap check: skip new keys when the map is full
-        if !self.partial.contains_key(&key) && self.partial.len() >= self.max_partial_keys {
+        // Cap check: evict the least-recently-touched key if `key` is new
+        // and the map is already full (see the type-level docs).
+        if !self.touch_or_evict(key) {
             return Ok(None);
         }
+        let now = self.tick;
 
         let partial = self
             .partial
@@ -306,6 +375,13 @@ impl SectionSetCollector {
             partial.reset(meta);
         }
 
+        // Re-touch: drop this key's old tick from touch_order (if any) before
+        // recording the new one, so touch_order never accumulates stale ticks
+        // for a key that keeps getting fed.
+        self.touch_order.remove(&partial.last_touch);
+        partial.last_touch = now;
+        self.touch_order.insert(now, key);
+
         partial.insert(section.section_number, bytes)?;
         let complete = partial.to_complete();
         if complete.is_some() {
@@ -317,6 +393,7 @@ impl SectionSetCollector {
     /// Drop all retained partial section sets.
     pub fn clear(&mut self) {
         self.partial.clear();
+        self.touch_order.clear();
     }
 
     /// Number of retained partial section-set states.
@@ -526,11 +603,17 @@ mod tests {
         assert_eq!(c.len(), 1);
     }
 
+    /// Regression for issue #1002: a completed (`emitted = true`) entry used
+    /// to count against the cap forever, so once the map filled with
+    /// completed keys, every later distinct key silently got `Ok(None)` with
+    /// no way to tell "still collecting" from "capacity exhausted, this will
+    /// never complete". A new key at capacity must now evict the
+    /// least-recently-touched entry (even a completed one) and succeed.
     #[test]
-    fn partial_keys_cap_skips_new_keys() {
+    fn new_key_beyond_cap_evicts_least_recently_touched_completed_entry() {
         let mut c = SectionSetCollector::new().with_max_partial_keys(3);
 
-        // Push sections for 3 distinct extension IDs — fills the cap.
+        // Push sections for 3 distinct extension IDs — fills the cap, all completed.
         for eid in 0..3u16 {
             let sec = min_section(eid);
             let result = c.push_section(&sec).unwrap();
@@ -540,14 +623,26 @@ mod tests {
             );
         }
         assert_eq!(c.len(), 3);
+        assert_eq!(c.evicted_for_capacity(), 0);
 
-        // Push a 4th distinct key — should be skipped (cap full).
+        // A 4th distinct key now EVICTS the least-recently-touched (eid 0),
+        // not silently vanishes into Ok(None).
         let sec4 = min_section(3);
         let result = c.push_section(&sec4).unwrap();
-        assert!(result.is_none(), "new key beyond cap must be skipped");
-        assert_eq!(c.len(), 3);
+        assert!(
+            result.is_some(),
+            "new key beyond cap must evict, not be skipped"
+        );
+        assert_eq!(c.len(), 3, "cap stays honored, not just grown");
+        assert_eq!(c.evicted_for_capacity(), 1);
 
-        // Clear frees space — 4th key can now enter.
+        // eid 0 is gone; feeding it again is treated as a brand-new key
+        // (re-completes from scratch) rather than "already known".
+        let sec0_again = min_section(0);
+        let result = c.push_section(&sec0_again).unwrap();
+        assert!(result.is_some(), "evicted key re-admits like a fresh one");
+
+        // Clear frees space too.
         c.clear();
         assert!(c.is_empty());
         let result = c.push_section(&sec4).unwrap();

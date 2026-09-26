@@ -200,14 +200,23 @@ pub const MIN_SECTION_INTERVAL: Duration = Duration::from_millis(25);
 
 /// Section-repetition scheduler that builds TS packets on a caller-supplied clock.
 ///
-/// Each entry is a PID + concatenated complete-section bytes + an emission
-/// interval. Call [`poll_into`](Self::poll_into) with monotonically-increasing
-/// `now` values to get 188-byte TS packets for every entry whose interval has
-/// elapsed since its last emission.
+/// Each entry is a PID + table_id + concatenated complete-section bytes + an
+/// emission interval. Call [`poll_into`](Self::poll_into) with
+/// monotonically-increasing `now` values to get 188-byte TS packets for every
+/// entry whose interval has elapsed since its last emission.
 ///
 /// The scheduler owns its section bytes — call [`upsert`](Self::upsert) to
-/// update them when SI changes. Continuity counters are continuous per-PID
-/// across poll cycles.
+/// update them when SI changes. Entries are keyed by `(pid, table_id)`, not
+/// PID alone: several distinct tables share a PID by spec (TDT/TOT both on
+/// `0x0014`, SDT/BAT both on `0x0011`, EIT present/following vs. schedule
+/// sub-tables on `0x0012`), and `table_id` — the first byte of `sections` —
+/// is exactly the field the spec uses to tell them apart, so `upsert_tot`
+/// cannot silently replace a previously-registered `upsert_tdt` entry.
+///
+/// All entries on the same PID share one [`SectionPacketiser`] (and so one
+/// continuity counter), created lazily the first time that PID emits — this
+/// is what keeps the continuity counter continuous per PID across table
+/// kinds, not just within one kind.
 ///
 /// # 25 ms floor
 ///
@@ -217,14 +226,37 @@ pub const MIN_SECTION_INTERVAL: Duration = Duration::from_millis(25);
 /// must ensure compliance.
 pub struct SiMux {
     entries: Vec<Entry>,
+    /// One packetiser per distinct PID, shared across every table_id on it.
+    packetisers: Vec<SectionPacketiser>,
 }
 
 struct Entry {
     pid: u16,
+    table_id: u8,
     sections: Vec<u8>,
     interval: Duration,
     last_emit: Option<Duration>,
-    packetiser: SectionPacketiser,
+}
+
+/// The dedupe/lookup key for an entry: the first byte of `sections` is
+/// `table_id` for every PSI/SI section (ISO/IEC 13818-1 §2.4.4.4 / EN 300 468
+/// §5.2). An empty `sections` (no section registered yet) has no real
+/// table_id; `0` is used as a sentinel and can only collide with another
+/// empty registration on the same PID, which is a caller no-op either way.
+fn table_id_of(sections: &[u8]) -> u8 {
+    sections.first().copied().unwrap_or(0)
+}
+
+/// Find the packetiser for `pid`, creating one (fresh continuity counter) if
+/// this is the first entry ever registered on that PID. A free function, not
+/// a method, so callers can hold `&mut entries` and this borrow concurrently.
+fn packetiser_for(packetisers: &mut Vec<SectionPacketiser>, pid: u16) -> &mut SectionPacketiser {
+    if let Some(idx) = packetisers.iter().position(|p| p.pid() == pid) {
+        &mut packetisers[idx]
+    } else {
+        packetisers.push(SectionPacketiser::new(pid));
+        packetisers.last_mut().expect("just pushed")
+    }
 }
 
 impl SiMux {
@@ -232,14 +264,18 @@ impl SiMux {
     pub fn new() -> Self {
         Self {
             entries: Vec::new(),
+            packetisers: Vec::new(),
         }
     }
 
     /// Register or replace the sections emitted on `pid` at `interval`.
     ///
     /// `sections` is the concatenated complete-section bytes for one emission
-    /// cycle. Re-calling for the same `pid` updates the bytes and interval
-    /// while preserving the continuity counter.
+    /// cycle; its first byte (`table_id`) plus `pid` is the dedupe key, so
+    /// re-calling for the same `(pid, table_id)` updates the bytes and
+    /// interval of that one table while preserving the PID's shared
+    /// continuity counter — a *different* table_id on the same `pid` (e.g.
+    /// TOT after TDT, both on `0x0014`) becomes a second, independent entry.
     ///
     /// # Panics (debug only)
     ///
@@ -251,16 +287,21 @@ impl SiMux {
             "interval {interval:?} is below the 25 ms minimum (EN 300 468 §5.1.4.1)"
         );
 
-        if let Some(entry) = self.entries.iter_mut().find(|e| e.pid == pid) {
+        let table_id = table_id_of(&sections);
+        if let Some(entry) = self
+            .entries
+            .iter_mut()
+            .find(|e| e.pid == pid && e.table_id == table_id)
+        {
             entry.sections = sections;
             entry.interval = interval;
         } else {
             self.entries.push(Entry {
                 pid,
+                table_id,
                 sections,
                 interval,
                 last_emit: None,
-                packetiser: SectionPacketiser::new(pid),
             });
         }
     }
@@ -322,6 +363,7 @@ impl SiMux {
         let before = out.len();
 
         let mut tmp = Vec::new();
+        let packetisers = &mut self.packetisers;
         for entry in &mut self.entries {
             let due = match entry.last_emit {
                 None => true,
@@ -330,7 +372,8 @@ impl SiMux {
             if due {
                 let refs = split_sections(&entry.sections);
                 if !refs.is_empty() {
-                    entry.packetiser.packetise_into(&refs, &mut tmp);
+                    let packetiser = packetiser_for(packetisers, entry.pid);
+                    packetiser.packetise_into(&refs, &mut tmp);
                     out.append(&mut tmp);
                 }
                 entry.last_emit = Some(now);
@@ -628,16 +671,17 @@ mod tests {
         assert!(n1000 > 0);
     }
 
-    // ── upsert replaces existing entry ───────────────────────────────────────
+    // ── upsert replaces existing entry (same pid + table_id only) ───────────
 
     #[test]
     fn upsert_updates_existing_entry() {
+        // Same table_id (0x42, SDT actual) both times: this is a genuine
+        // update of the same logical table, so it must replace, not add.
         let s1 = build_section(0x42, &[0xAA; 5]);
-        let s2 = build_section(0x46, &[0xBB; 10]);
+        let s2 = build_section(0x42, &[0xBB; 10]);
         let mut mux = SiMux::new();
 
         mux.upsert(0x0100, s1, Duration::from_millis(100));
-        // Replace sections on same PID
         mux.upsert(0x0100, s2.clone(), Duration::from_millis(200));
 
         let pkts = mux.poll(Duration::ZERO);
@@ -653,6 +697,78 @@ mod tests {
         let got: Vec<_> = core::iter::from_fn(|| reasm.pop_section()).collect();
         assert_eq!(got.len(), 1);
         assert_eq!(got[0].as_ref(), s2.as_slice());
+    }
+
+    // ── issue #1000: distinct table_ids sharing a PID must NOT collide ──────
+
+    /// Regression: `upsert_tdt` then `upsert_tot` (both PID 0x0014) used to
+    /// collide because entries were keyed by PID alone — the second call
+    /// silently replaced the first. Both table_ids must now come out, with a
+    /// continuous continuity counter across the shared PID.
+    #[test]
+    fn upsert_tdt_then_tot_both_emitted_with_continuous_cc() {
+        let tdt = build_section(0x70, &[0xAA; 5]); // TDT
+        let tot = build_section(0x73, &[0xBB; 8]); // TOT
+        let mut mux = SiMux::new();
+
+        mux.upsert_tdt(tdt.clone());
+        mux.upsert_tot(tot.clone());
+
+        let pkts = mux.poll(Duration::ZERO);
+        assert!(!pkts.is_empty());
+
+        let mut table_ids_seen = Vec::new();
+        let mut reasm = SectionReassembler::default();
+        let mut prev_cc: Option<u8> = None;
+        for raw in &pkts {
+            let pkt = TsPacket::parse(raw).unwrap();
+            assert_eq!(pkt.header.pid, well_known::TDT_TOT.value());
+            if let Some(prev) = prev_cc {
+                assert_eq!(
+                    pkt.header.continuity_counter,
+                    (prev + 1) & CC_MASK,
+                    "continuity counter must be continuous across table kinds on one PID"
+                );
+            }
+            prev_cc = Some(pkt.header.continuity_counter);
+            reasm.feed(pkt.payload.unwrap(), pkt.header.pusi);
+        }
+        while let Some(section) = reasm.pop_section() {
+            table_ids_seen.push(section.as_ref()[0]);
+        }
+
+        assert!(table_ids_seen.contains(&0x70), "TDT missing from output");
+        assert!(table_ids_seen.contains(&0x73), "TOT missing from output");
+    }
+
+    /// Same collision class for SDT actual (0x42) vs. BAT (0x4A), both on
+    /// PID 0x0011.
+    #[test]
+    fn upsert_sdt_and_bat_both_emitted() {
+        let sdt = build_section(0x42, &[0xCC; 5]);
+        let bat = build_section(0x4A, &[0xDD; 6]);
+        let mut mux = SiMux::new();
+
+        mux.upsert_sdt_actual(sdt.clone());
+        mux.upsert(
+            well_known::SDT_BAT.value(),
+            bat.clone(),
+            Duration::from_millis(1000),
+        );
+
+        let pkts = mux.poll(Duration::ZERO);
+        let mut table_ids_seen = Vec::new();
+        let mut reasm = SectionReassembler::default();
+        for raw in &pkts {
+            let pkt = TsPacket::parse(raw).unwrap();
+            reasm.feed(pkt.payload.unwrap(), pkt.header.pusi);
+        }
+        while let Some(section) = reasm.pop_section() {
+            table_ids_seen.push(section.as_ref()[0]);
+        }
+
+        assert!(table_ids_seen.contains(&0x42), "SDT actual missing");
+        assert!(table_ids_seen.contains(&0x4A), "BAT missing");
     }
 
     // ── convenience constructors ─────────────────────────────────────────────

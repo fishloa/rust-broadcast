@@ -14,17 +14,25 @@ use super::{
     SectionSetMeta,
 };
 
-/// Default cap on the number of in-progress logical keys (section sets +
-/// schedule ranges) retained by [`EitCollector`].
+/// Default cap on the number of logical keys (in-progress AND completed
+/// section sets + schedule ranges) retained by [`EitCollector`].
 ///
-/// 256 concurrent collections is generous — a real DVB network has at most a
-/// few dozen services per transponder — while bounding a hostile stream that
-/// rotates `original_network_id` / `transport_stream_id` / `service_id` (or
-/// `current_next_indicator`) to force unbounded map growth. The cap is applied
-/// independently to the sections map and the schedules map; each is limited to
-/// `max_logical_keys` entries. When a map is full, incoming sections for new
-/// keys are skipped until [`clear`](EitCollector::clear) or
-/// [`retain_logical`](EitCollector::retain_logical) frees capacity.
+/// 256 is a floor for standalone use of this collector, bounding a hostile
+/// stream that rotates `original_network_id` / `transport_stream_id` /
+/// `service_id` (or `current_next_indicator`) to force unbounded map growth —
+/// **not** a claim about real network size: EIT *other* (table_ids
+/// `0x4F`/`0x60..=0x6F`) covers the whole network, and each service can use
+/// one present/following key plus up to 16 schedule table_ids, so a
+/// multiplex with 150+ services can need thousands of keys (issue #1002). A
+/// caller with a realistic service count should size this explicitly — see
+/// [`crate::epg::EpgStore`], which derives it from `max_services`. The cap
+/// is applied independently to the sections map and the schedules map; each
+/// is limited to `max_logical_keys` entries. When a map is full, incoming
+/// sections for a *new* key evict the least-recently-touched existing key
+/// in that map (see [`EitCollector`]'s type-level docs) rather than being
+/// silently dropped; [`clear`](EitCollector::clear) or
+/// [`retain_logical`](EitCollector::retain_logical) still free capacity for
+/// an application-defined boundary.
 pub const DEFAULT_MAX_LOGICAL_KEYS: usize = 256;
 
 /// EIT-specific collector.
@@ -37,13 +45,23 @@ pub const DEFAULT_MAX_LOGICAL_KEYS: usize = 256;
 ///
 /// The collector is bounded by [`DEFAULT_MAX_LOGICAL_KEYS`] (configurable via
 /// [`with_max_logical_keys`](Self::with_max_logical_keys)). When the sections
-/// or schedules map is full, incoming sections for new keys are skipped until
-/// space frees — the same skip-until-space policy as
-/// [`crate::carousel::ModuleReassembler`].
+/// or schedules map is full, the new key evicts the least-recently-touched
+/// existing key in that same map (issue #1002) — a completed entry no
+/// longer holds capacity hostage forever; see the type-level docs on
+/// [`crate::collect::SectionSetCollector`] for the rationale, which applies
+/// identically here. [`sections_evicted_for_capacity`](Self::sections_evicted_for_capacity)
+/// and [`schedules_evicted_for_capacity`](Self::schedules_evicted_for_capacity)
+/// expose the eviction counts.
 #[derive(Debug)]
 pub struct EitCollector {
     sections: BTreeMap<EitSectionSetKey, PartialEitSectionSet>,
+    sections_touch_order: BTreeMap<u64, EitSectionSetKey>,
+    sections_tick: u64,
+    sections_evicted_for_capacity: u64,
     schedules: BTreeMap<EitLogicalKey, PartialEitSchedule>,
+    schedules_touch_order: BTreeMap<u64, EitLogicalKey>,
+    schedules_tick: u64,
+    schedules_evicted_for_capacity: u64,
     max_logical_keys: usize,
 }
 
@@ -51,7 +69,13 @@ impl Default for EitCollector {
     fn default() -> Self {
         Self {
             sections: BTreeMap::new(),
+            sections_touch_order: BTreeMap::new(),
+            sections_tick: 0,
+            sections_evicted_for_capacity: 0,
             schedules: BTreeMap::new(),
+            schedules_touch_order: BTreeMap::new(),
+            schedules_tick: 0,
+            schedules_evicted_for_capacity: 0,
             max_logical_keys: DEFAULT_MAX_LOGICAL_KEYS,
         }
     }
@@ -67,13 +91,28 @@ impl EitCollector {
 
     /// Replace the logical-key cap (default [`DEFAULT_MAX_LOGICAL_KEYS`]).
     /// The cap is applied independently to the sections and schedules maps.
-    /// Sections for new keys are skipped when the relevant map is full, until
-    /// [`clear`](Self::clear) or [`retain_logical`](Self::retain_logical)
-    /// frees capacity.
+    /// When a *new* key arrives at capacity, the least-recently-touched
+    /// existing key in that map is evicted to admit it (see the type-level
+    /// docs).
     #[must_use]
     pub fn with_max_logical_keys(mut self, max_logical_keys: usize) -> Self {
         self.max_logical_keys = max_logical_keys;
         self
+    }
+
+    /// Number of section-set keys evicted so far to admit a new key at
+    /// capacity. A nonzero, growing count means the cap is too small for the
+    /// stream's distinct-key churn.
+    #[must_use]
+    pub fn sections_evicted_for_capacity(&self) -> u64 {
+        self.sections_evicted_for_capacity
+    }
+
+    /// Number of schedule logical keys evicted so far to admit a new key at
+    /// capacity.
+    #[must_use]
+    pub fn schedules_evicted_for_capacity(&self) -> u64 {
+        self.schedules_evicted_for_capacity
     }
 
     /// Push one complete EIT section.
@@ -133,10 +172,19 @@ impl EitCollector {
         };
         let bytes: Arc<[u8]> = Arc::from(raw);
 
-        // Cap check: sections map
+        // Cap check: sections map — evict the least-recently-touched key if
+        // `key` is new and the map is already full (issue #1002).
+        self.sections_tick = self.sections_tick.wrapping_add(1).max(1);
         if !self.sections.contains_key(&key) && self.sections.len() >= self.max_logical_keys {
-            return Ok(None);
+            if let Some((&oldest_tick, &oldest_key)) = self.sections_touch_order.iter().next() {
+                self.sections_touch_order.remove(&oldest_tick);
+                self.sections.remove(&oldest_key);
+                self.sections_evicted_for_capacity += 1;
+            } else {
+                return Ok(None);
+            }
         }
+        let sections_now = self.sections_tick;
 
         let partial = self
             .sections
@@ -147,6 +195,9 @@ impl EitCollector {
         {
             partial.reset(meta);
         }
+        self.sections_touch_order.remove(&partial.last_touch);
+        partial.last_touch = sections_now;
+        self.sections_touch_order.insert(sections_now, key);
 
         partial.insert(eit.section_number, eit.segment_last_section_number, bytes)?;
         let complete = match partial.to_complete() {
@@ -173,12 +224,23 @@ impl EitCollector {
                     });
                 }
 
-                // Cap check: schedules map (before marking the section set emitted)
+                // Cap check: schedules map (before marking the section set
+                // emitted) — evict the least-recently-touched key if
+                // `logical_key` is new and the map is already full.
+                self.schedules_tick = self.schedules_tick.wrapping_add(1).max(1);
                 if !self.schedules.contains_key(&logical_key)
                     && self.schedules.len() >= self.max_logical_keys
                 {
-                    return Ok(None);
+                    match self.schedules_touch_order.iter().next() {
+                        Some((&oldest_tick, &oldest_key)) => {
+                            self.schedules_touch_order.remove(&oldest_tick);
+                            self.schedules.remove(&oldest_key);
+                            self.schedules_evicted_for_capacity += 1;
+                        }
+                        None => return Ok(None),
+                    }
                 }
+                let schedules_now = self.schedules_tick;
 
                 partial.emitted = true;
 
@@ -194,6 +256,10 @@ impl EitCollector {
                 if schedule.meta.last_table_id != schedule_meta.last_table_id {
                     schedule.reset(schedule_meta);
                 }
+                self.schedules_touch_order.remove(&schedule.last_touch);
+                schedule.last_touch = schedules_now;
+                self.schedules_touch_order
+                    .insert(schedules_now, logical_key);
                 schedule.insert(eit.table_id, complete);
                 if let Some(complete) = schedule.to_complete() {
                     schedule.emitted = true;
@@ -212,7 +278,9 @@ impl EitCollector {
     /// schedule state.
     pub fn clear(&mut self) {
         self.sections.clear();
+        self.sections_touch_order.clear();
         self.schedules.clear();
+        self.schedules_touch_order.clear();
     }
 
     /// Retain only logical EIT keys accepted by `keep`.
@@ -225,7 +293,18 @@ impl EitCollector {
         F: FnMut(&EitLogicalKey) -> bool,
     {
         self.sections.retain(|key, _| keep(&key.logical_key));
+        // Drop touch_order entries left dangling by the retain above — a
+        // stale entry pointing at a now-removed key would otherwise let a
+        // future capacity eviction "succeed" against a key that is already
+        // gone, silently leaving the map one over max_logical_keys.
+        let sections = &self.sections;
+        self.sections_touch_order
+            .retain(|_, key| sections.contains_key(key));
+
         self.schedules.retain(|key, _| keep(key));
+        let schedules = &self.schedules;
+        self.schedules_touch_order
+            .retain(|_, key| schedules.contains_key(key));
     }
 
     /// Number of retained EIT section-set states.
@@ -327,6 +406,10 @@ struct PartialEitSectionSet {
     /// so this map always gets populated for every segment that will ever
     /// exist, without waiting for 8 sections that will never arrive.
     segment_ends: BTreeMap<u8, u8>,
+    /// The collector's `sections_tick` at the last touch (push) of this key;
+    /// `0` is a sentinel meaning "never touched yet" (the first real tick is
+    /// `1`), used to find the least-recently-touched entry to evict.
+    last_touch: u64,
 }
 
 impl PartialEitSectionSet {
@@ -338,11 +421,14 @@ impl PartialEitSectionSet {
             filled: 0,
             emitted: false,
             segment_ends: BTreeMap::new(),
+            last_touch: 0,
         }
     }
 
     fn reset(&mut self, meta: EitSectionSetMeta) {
+        let last_touch = self.last_touch;
         *self = Self::new(meta);
+        self.last_touch = last_touch;
     }
 
     fn insert(
@@ -434,6 +520,9 @@ struct PartialEitSchedule {
     meta: EitScheduleMeta,
     table_sets: BTreeMap<u8, CompleteSectionSet>,
     emitted: bool,
+    /// The collector's `schedules_tick` at the last touch of this key; `0`
+    /// is a sentinel meaning "never touched yet".
+    last_touch: u64,
 }
 
 impl PartialEitSchedule {
@@ -442,11 +531,14 @@ impl PartialEitSchedule {
             meta,
             table_sets: BTreeMap::new(),
             emitted: false,
+            last_touch: 0,
         }
     }
 
     fn reset(&mut self, meta: EitScheduleMeta) {
+        let last_touch = self.last_touch;
         *self = Self::new(meta);
+        self.last_touch = last_touch;
     }
 
     fn insert(&mut self, table_id: u8, set: CompleteSectionSet) {

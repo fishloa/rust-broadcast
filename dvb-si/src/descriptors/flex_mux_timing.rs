@@ -10,7 +10,8 @@ use broadcast_common::{Parse, Serialize};
 /// Descriptor tag for FlexMuxTiming_descriptor.
 pub const TAG: u8 = 0x2C;
 const HEADER_LEN: usize = 2;
-const BODY_LEN: u8 = 10;
+// Table 2-82: FCR_ES_ID(16) + FCRResolution(32) + FCRLength(8) + FmxRateLength(8) = 64 bits = 8 bytes.
+const BODY_LEN: u8 = 8;
 
 /// FlexMuxTiming Descriptor.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -39,7 +40,7 @@ impl<'a> Parse<'a> for FlexMuxTimingDescriptor {
         if body.len() != BODY_LEN as usize {
             return Err(Error::InvalidDescriptor {
                 tag: TAG,
-                reason: "FlexMuxTiming_descriptor length must equal 10",
+                reason: "FlexMuxTiming_descriptor length must equal 8",
             });
         }
         Ok(Self {
@@ -86,9 +87,7 @@ mod tests {
 
     #[test]
     fn parse_extracts_fields() {
-        let bytes = [
-            TAG, 10, 0x00, 0x01, 0x12, 0x34, 0x56, 0x78, 0x05, 0x1E, 0, 0,
-        ];
+        let bytes = [TAG, 8, 0x00, 0x01, 0x12, 0x34, 0x56, 0x78, 0x05, 0x1E];
         let d = FlexMuxTimingDescriptor::parse(&bytes).unwrap();
         assert_eq!(d.fcr_es_id, 0x0001);
         assert_eq!(d.fcr_resolution, 0x12345678);
@@ -98,8 +97,7 @@ mod tests {
 
     #[test]
     fn parse_rejects_wrong_tag() {
-        let err =
-            FlexMuxTimingDescriptor::parse(&[0x02, 10, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]).unwrap_err();
+        let err = FlexMuxTimingDescriptor::parse(&[0x02, 8, 0, 0, 0, 0, 0, 0, 0, 0]).unwrap_err();
         assert!(matches!(err, Error::InvalidDescriptor { tag: 0x02, .. }));
     }
 
@@ -113,6 +111,27 @@ mod tests {
     fn parse_rejects_short_buffer() {
         let err = FlexMuxTimingDescriptor::parse(&[TAG, 11, 0, 0]).unwrap_err();
         assert!(matches!(err, Error::BufferTooShort { .. }));
+    }
+
+    /// Regression for issue #1053: the pre-fix BODY_LEN of 10 rejected every
+    /// conformant (8-byte body) descriptor and, on serialize, wrote
+    /// descriptor_length=10 while only filling 8 body bytes, leaking 2 stale
+    /// caller bytes into the wire output.
+    #[test]
+    fn serialize_writes_conformant_8_byte_body() {
+        let d = FlexMuxTimingDescriptor {
+            fcr_es_id: 0x0001,
+            fcr_resolution: 0x1234_5678,
+            fcr_length: 0x05,
+            fmx_rate_length: 0x1E,
+        };
+        assert_eq!(d.serialized_len(), 10); // HEADER_LEN(2) + BODY_LEN(8)
+        let mut buf = vec![0xFFu8; d.serialized_len()];
+        let written = d.serialize_into(&mut buf).unwrap();
+        assert_eq!(written, 10);
+        assert_eq!(buf[1], 8, "descriptor_length must be 8 per Table 2-82");
+        let reparsed = FlexMuxTimingDescriptor::parse(&buf).unwrap();
+        assert_eq!(reparsed, d);
     }
 
     #[test]

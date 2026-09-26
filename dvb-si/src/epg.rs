@@ -252,6 +252,19 @@ struct ServiceData {
 /// `transport_stream_id` / `original_network_id` to force unbounded map growth.
 pub const DEFAULT_MAX_SERVICES: usize = 1024;
 
+/// Sections-map keys one EIT service can occupy in the underlying
+/// [`crate::collect::EitCollector`]: one present/following key, plus up to 16
+/// schedule table_ids for one schedule kind (`table_id` `0x50..=0x5F` or
+/// `0x60..=0x6F`, ETSI EN 300 468 §5.1.3 Table 2 — 16 values each). This is
+/// the floor named by issue #1002's remediation; a stream carrying both
+/// actual and other schedule ranges can use up to double it.
+///
+/// [`EpgStore::with_max_services`] derives the collector's logical-key cap
+/// from this factor so the two caps never silently contradict each other —
+/// before this, the collector's independent 256-key default filled up (and
+/// walled off new services) long before `max_services` (1024) did.
+const EIT_LOGICAL_KEYS_PER_SERVICE: usize = 17;
+
 /// Default cap on events stored per service.
 ///
 /// 8192 events (~28 days of 5-minute-granularity schedule entries) is far
@@ -311,7 +324,9 @@ pub struct EpgStore {
 impl Default for EpgStore {
     fn default() -> Self {
         Self {
-            collector: crate::collect::EitCollector::default(),
+            collector: crate::collect::EitCollector::default().with_max_logical_keys(
+                DEFAULT_MAX_SERVICES.saturating_mul(EIT_LOGICAL_KEYS_PER_SERVICE),
+            ),
             cache: BTreeMap::new(),
             max_services: DEFAULT_MAX_SERVICES,
             max_events_per_service: DEFAULT_MAX_EVENTS_PER_SERVICE,
@@ -338,9 +353,19 @@ impl EpgStore {
     /// When the cap is reached, events for new services are skipped until
     /// [`retain_services`](Self::retain_services) or [`clear`](Self::clear)
     /// frees capacity.
+    ///
+    /// Also re-derives the underlying collector's logical-key cap as
+    /// `max_services * 17` (see `EIT_LOGICAL_KEYS_PER_SERVICE`), so the two
+    /// caps stay consistent (issue #1002) — call
+    /// [`with_collector_max_logical_keys`](Self::with_collector_max_logical_keys)
+    /// *after* this if you need a collector cap that does not follow
+    /// `max_services`.
     #[must_use]
     pub fn with_max_services(mut self, max_services: usize) -> Self {
         self.max_services = max_services;
+        self.collector = self
+            .collector
+            .with_max_logical_keys(max_services.saturating_mul(EIT_LOGICAL_KEYS_PER_SERVICE));
         self
     }
 
@@ -361,6 +386,18 @@ impl EpgStore {
     pub fn with_collector_max_logical_keys(mut self, max_logical_keys: usize) -> Self {
         self.collector = self.collector.with_max_logical_keys(max_logical_keys);
         self
+    }
+
+    /// Number of underlying collector section-set keys evicted so far to
+    /// admit a new key at capacity (see
+    /// [`crate::collect::EitCollector::sections_evicted_for_capacity`]). A
+    /// nonzero, growing count on a real feed means the collector's logical-key
+    /// cap (derived from `max_services`; see
+    /// [`with_max_services`](Self::with_max_services)) is too small for the
+    /// stream's distinct-service churn.
+    #[must_use]
+    pub fn collector_sections_evicted_for_capacity(&self) -> u64 {
+        self.collector.sections_evicted_for_capacity()
     }
 
     /// Feed one EIT section into the store.
@@ -1479,6 +1516,41 @@ mod tests {
         store.feed(&eit3).unwrap();
         assert_eq!(store.service_count(), 1);
         assert!(store.events(key300).is_some());
+    }
+
+    /// Regression for issue #1002: before the fix, `EpgStore::new()`'s
+    /// collector used the `EitCollector` default cap (256 logical keys),
+    /// entirely independent of `max_services` (1024) — "the two defaults
+    /// contradict each other". A DTH multiplex carrying EIT present/following
+    /// for 300 services needs only 300 collector keys (one each): well under
+    /// `max_services` (1024), but over the old, independent 256-key
+    /// collector default. The collector-level LRU fix (`collect::eit`) alone
+    /// would already keep every service's EPG data correct here (an evicted
+    /// collector key just re-admits), so the meaningful assertion for
+    /// *this* fix is that no eviction happens at all: the derived cap
+    /// (`max_services * 17` = 17,408) comfortably covers 300 keys, unlike the
+    /// old independent 256-key default.
+    #[test]
+    fn default_collector_cap_covers_300_synthetic_services_without_eviction() {
+        let mut store = EpgStore::new(); // default max_services = 1024
+        let desc = short_event_bytes(b"E", b"");
+        let sr = start_raw(2026, 6, 10, 10);
+
+        for service_id in 0..300u16 {
+            let eit = eit_pf_section(service_id, 1, 1, service_id, 0, sr, [1, 0, 0], &desc);
+            store.feed(&eit).unwrap();
+        }
+
+        assert_eq!(
+            store.service_count(),
+            300,
+            "every one of 300 distinct services must be collected under the default cap"
+        );
+        assert_eq!(
+            store.collector_sections_evicted_for_capacity(),
+            0,
+            "300 services must fit the derived cap without any eviction churn"
+        );
     }
 
     // ------------------------------------------------------------------
