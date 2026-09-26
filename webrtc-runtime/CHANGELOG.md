@@ -4,6 +4,19 @@ All notable changes to this crate will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+- `MediaEvent::RtcpUnsupported` was the outcome for nearly every real
+  browser SRTCP datagram (RFC 4585 PSFB/RTPFB feedback or RFC 3611 XR, most
+  of what a WebRTC peer sends), because `rtcp_packet::CompoundPacket::parse`
+  rejected the whole datagram on the unrecognized `PT` — discarding a
+  leading SR/RR's real stats along with the feedback, not just failing to
+  decode the feedback itself. Fixed upstream by `rtcp-packet` 0.4 (issue
+  #1071, `RtcpPacket::Unknown`); `decrypt_srtp` needed no logic change, but
+  `MediaEvent::RtcpUnsupported`'s doc comment is corrected (it no longer
+  names RTPFB/PSFB/XR as the typical cause) and WHEP liveness behavior is
+  unchanged — `multimux`'s `is_liveness_event` already treated both
+  `MediaEvent::Rtcp` and `MediaEvent::RtcpUnsupported` as proof of life.
+
 ## [0.2.0] - 2026-09-25
 
 ### Security

@@ -640,14 +640,122 @@ impl NormAckType {
 
 broadcast_common::impl_spec_display!(NormAckType, Reserved, Application);
 
-/// A NORM_CMD message (RFC 5740 §4.2.3): common header + sender word + an 8-bit
-/// `sub-type` selecting the body, then the sub-type-specific content (kept
-/// opaque, plus the extension chain).
+/// The sub-type-specific **fixed** body of a NORM_CMD message (RFC 5740
+/// §4.2.3, Figures 10-16): the bytes between the sub-type word and the
+/// (optional) header-extension chain.
 ///
-/// The fixed per-sub-type layouts (FLUSH/EOT/SQUELCH/CC/REPAIR_ADV/ACK_REQ/
-/// APPLICATION) live in `content`; the `sub_type` discriminant tells the caller
-/// how to interpret it. This keeps the variable, length-inferred regions
-/// (node lists, fec_payload_id, app content) opaque as the spec requires.
+/// This is distinct from `content` (the *variable*, length-inferred trailer:
+/// `acking_node_list`/`invalid_object_list`/`cc_node_list`/app content — none
+/// of it counts toward `hdr_len`). Getting the two confused — treating this
+/// fixed body as if it were extension bytes — misparses every real
+/// NORM_CMD(FLUSH)/(SQUELCH)/(CC) probe and writes a short `hdr_len` (#1070):
+/// FLUSH/SQUELCH carry `fec_payload_id` here (Figures 10/12, opaque, FEC-scheme
+/// dependent per `fec_id` — same convention as [`NormData::fec_payload_id`]),
+/// and CC carries the *fixed* `send_time_sec`/`send_time_usec` here (Figure 13)
+/// before its own, genuinely optional, extension chain.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
+pub enum NormCmdBody<'a> {
+    /// NORM_CMD(FLUSH) sub-type=1 (Figure 10).
+    Flush {
+        /// FEC Encoding ID; implies `fec_payload_id` size/format.
+        fec_id: u8,
+        /// Current logical transmit position (object).
+        object_transport_id: u16,
+        /// Current logical transmit position (block/symbol); opaque, size per
+        /// `fec_id`. Counts toward `hdr_len` (unlike `content`'s
+        /// `acking_node_list`).
+        fec_payload_id: &'a [u8],
+    },
+    /// NORM_CMD(EOT) sub-type=2 (Figure 11). The 24-bit `reserved` word MUST be
+    /// 0 and carries no meaning.
+    Eot,
+    /// NORM_CMD(SQUELCH) sub-type=3 (Figure 12).
+    Squelch {
+        /// FEC Encoding ID; implies `fec_payload_id` size/format.
+        fec_id: u8,
+        /// Start (earliest) of the sender's current repair window.
+        object_transport_id: u16,
+        /// Repair-window start; opaque, size per `fec_id`. Counts toward
+        /// `hdr_len` (unlike `content`'s `invalid_object_list`).
+        fec_payload_id: &'a [u8],
+    },
+    /// NORM_CMD(CC) sub-type=4 (Figure 13).
+    Cc {
+        /// Sender CC feedback round number.
+        cc_sequence: u16,
+        /// Timestamp seconds (since sender reference, usually 1970-01-01).
+        send_time_sec: u32,
+        /// Timestamp microseconds.
+        send_time_usec: u32,
+    },
+    /// NORM_CMD(REPAIR_ADV) sub-type=5 (Figure 14).
+    RepairAdv {
+        /// `NORM_REPAIR_ADV_FLAG_LIMIT` (0x01) etc.
+        flags: u8,
+    },
+    /// NORM_CMD(ACK_REQ) sub-type=6 (Figure 15).
+    AckReq {
+        /// Type of ack requested.
+        ack_type: NormAckType,
+        /// Sequenced id echoed back in the receiver's NORM_ACK.
+        ack_id: u8,
+    },
+    /// NORM_CMD(APPLICATION) sub-type=7 (Figure 16). The 24-bit `reserved`
+    /// word carries no meaning.
+    Application,
+    /// An unrecognized sub-type: the 3 raw bytes that followed it. Layout
+    /// unknown, so (unlike the defined sub-types above) no further fixed body
+    /// is assumed to precede the extension chain.
+    Other([u8; 3]),
+}
+
+impl<'a> NormCmdBody<'a> {
+    /// Bytes of this fixed body beyond the sub-type word itself (0 for every
+    /// variant except FLUSH/SQUELCH's `fec_payload_id` and CC's 8-byte
+    /// `send_time_sec`+`send_time_usec`).
+    fn extra_len(&self) -> usize {
+        match self {
+            NormCmdBody::Flush { fec_payload_id, .. }
+            | NormCmdBody::Squelch { fec_payload_id, .. } => fec_payload_id.len(),
+            NormCmdBody::Cc { .. } => 8,
+            _ => 0,
+        }
+    }
+
+    /// The sub-type word's trailing 3 bytes (reserved fields forced to 0 per
+    /// spec, never round-tripped from unstructured input).
+    fn head_bytes(&self) -> [u8; 3] {
+        match self {
+            NormCmdBody::Flush {
+                fec_id,
+                object_transport_id,
+                ..
+            }
+            | NormCmdBody::Squelch {
+                fec_id,
+                object_transport_id,
+                ..
+            } => {
+                let oti = object_transport_id.to_be_bytes();
+                [*fec_id, oti[0], oti[1]]
+            }
+            NormCmdBody::Eot | NormCmdBody::Application => [0, 0, 0],
+            NormCmdBody::Cc { cc_sequence, .. } => {
+                let seq = cc_sequence.to_be_bytes();
+                [0, seq[0], seq[1]]
+            }
+            NormCmdBody::RepairAdv { flags } => [*flags, 0, 0],
+            NormCmdBody::AckReq { ack_type, ack_id } => [0, ack_type.to_u8(), *ack_id],
+            NormCmdBody::Other(b) => *b,
+        }
+    }
+}
+
+/// A NORM_CMD message (RFC 5740 §4.2.3): common header + sender word + an
+/// 8-bit `sub-type` selecting the body ([`NormCmdBody`]), the sub-type's
+/// header-extension chain, then opaque, length-inferred `content`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct NormCmd<'a> {
@@ -655,23 +763,27 @@ pub struct NormCmd<'a> {
     pub common: NormCommonHeader,
     /// Shared sender word.
     pub sender: SenderWord,
-    /// The command sub-type.
+    /// The command sub-type. Kept alongside `body` (rather than derived) so
+    /// an unrecognized wire value round-trips even though `body` collapses it
+    /// to `NormCmdBody::Other`.
     pub sub_type: NormCmdType,
-    /// The 3 bytes that share the sub-type's first word (sub-type-specific:
-    /// e.g. fec_id+object_transport_id for FLUSH, reserved for EOT/APPLICATION,
-    /// reserved+cc_sequence for CC).
-    pub head: [u8; 3],
+    /// The sub-type-specific fixed body (RFC 5740 §4.2.3, Figures 10-16).
+    pub body: NormCmdBody<'a>,
     /// Header-extension chain (e.g. EXT_RATE in CC, EXT_CC in REPAIR_ADV).
     pub extensions: Vec<HeaderExtension<'a>>,
-    /// Remaining sub-type-specific content (fec_payload_id, node lists, etc.),
-    /// opaque to this layer.
+    /// Remaining sub-type-specific content (node lists, app content, etc.),
+    /// opaque to this layer; length-inferred, not part of `hdr_len`.
     pub content: &'a [u8],
 }
 
 impl<'a> NormCmd<'a> {
     fn header_bytes(&self) -> usize {
-        // common + sender + the sub-type word + extensions.
-        COMMON_HEADER_LEN + SENDER_WORD_LEN + WORD + ext::chain_len(&self.extensions)
+        // common + sender + the sub-type word + the fixed body + extensions.
+        COMMON_HEADER_LEN
+            + SENDER_WORD_LEN
+            + WORD
+            + self.body.extra_len()
+            + ext::chain_len(&self.extensions)
     }
 
     /// Total serialized length in bytes.
@@ -679,8 +791,10 @@ impl<'a> NormCmd<'a> {
         self.header_bytes() + self.content.len()
     }
 
-    /// Parse a NORM_CMD.
-    pub fn parse(data: &'a [u8]) -> Result<Self> {
+    /// Parse a NORM_CMD. `fec_payload_id_len` is the FEC-scheme-defined size
+    /// of `fec_payload_id` in bytes; consulted only for FLUSH/SQUELCH (any
+    /// other sub-type ignores it, matching [`NormData::parse`]'s convention).
+    pub fn parse(data: &'a [u8], fec_payload_id_len: usize) -> Result<Self> {
         let (common, hdr_len) = NormCommonHeader::parse(data)?;
         let sender = SenderWord::parse(&data[COMMON_HEADER_LEN..])?;
         let mut off = COMMON_HEADER_LEN + SENDER_WORD_LEN;
@@ -692,14 +806,69 @@ impl<'a> NormCmd<'a> {
             });
         }
         let sub_type = NormCmdType::from_u8(data[off]);
-        let head = [data[off + 1], data[off + 2], data[off + 3]];
+        let (b1, b2, b3) = (data[off + 1], data[off + 2], data[off + 3]);
         off += WORD;
+
+        let body = match sub_type {
+            NormCmdType::Flush | NormCmdType::Squelch => {
+                let fec_id = b1;
+                let object_transport_id = u16::from_be_bytes([b2, b3]);
+                if data.len() < off + fec_payload_id_len {
+                    return Err(Error::BufferTooShort {
+                        need: off + fec_payload_id_len,
+                        have: data.len(),
+                        what: "NORM_CMD(FLUSH/SQUELCH) fec_payload_id",
+                    });
+                }
+                let fec_payload_id = &data[off..off + fec_payload_id_len];
+                off += fec_payload_id_len;
+                if sub_type == NormCmdType::Flush {
+                    NormCmdBody::Flush {
+                        fec_id,
+                        object_transport_id,
+                        fec_payload_id,
+                    }
+                } else {
+                    NormCmdBody::Squelch {
+                        fec_id,
+                        object_transport_id,
+                        fec_payload_id,
+                    }
+                }
+            }
+            NormCmdType::Eot => NormCmdBody::Eot,
+            NormCmdType::Cc => {
+                if data.len() < off + 8 {
+                    return Err(Error::BufferTooShort {
+                        need: off + 8,
+                        have: data.len(),
+                        what: "NORM_CMD(CC) send_time_sec/send_time_usec",
+                    });
+                }
+                let cc_sequence = u16::from_be_bytes([b2, b3]);
+                let send_time_sec = u32::from_be_bytes(data[off..off + 4].try_into().unwrap());
+                let send_time_usec = u32::from_be_bytes(data[off + 4..off + 8].try_into().unwrap());
+                off += 8;
+                NormCmdBody::Cc {
+                    cc_sequence,
+                    send_time_sec,
+                    send_time_usec,
+                }
+            }
+            NormCmdType::RepairAdv => NormCmdBody::RepairAdv { flags: b1 },
+            NormCmdType::AckReq => NormCmdBody::AckReq {
+                ack_type: NormAckType::from_u8(b2),
+                ack_id: b3,
+            },
+            NormCmdType::Application => NormCmdBody::Application,
+            NormCmdType::Other(_) => NormCmdBody::Other([b1, b2, b3]),
+        };
 
         let header_end = hdr_len as usize * WORD;
         if header_end < off {
             return Err(Error::InconsistentLength {
                 length: hdr_len,
-                reason: "hdr_len smaller than the NORM_CMD fixed header",
+                reason: "hdr_len smaller than the NORM_CMD fixed header + fixed body",
             });
         }
         if data.len() < header_end {
@@ -715,7 +884,7 @@ impl<'a> NormCmd<'a> {
             common,
             sender,
             sub_type,
-            head,
+            body,
             extensions,
             content,
         })
@@ -730,7 +899,14 @@ impl<'a> NormCmd<'a> {
                 have: out.len(),
             });
         }
-        let words = self.header_bytes() / WORD;
+        let header_bytes = self.header_bytes();
+        if !header_bytes.is_multiple_of(WORD) {
+            return Err(Error::InvalidField {
+                what: "hdr_len",
+                reason: "NORM_CMD header length is not a multiple of 4 bytes",
+            });
+        }
+        let words = header_bytes / WORD;
         if words > u8::MAX as usize {
             return Err(Error::FieldTooWide {
                 what: "hdr_len",
@@ -741,8 +917,25 @@ impl<'a> NormCmd<'a> {
         let mut off = self.common.serialize_into(out, words as u8)?;
         off += self.sender.serialize_into(&mut out[off..])?;
         out[off] = self.sub_type.to_u8();
-        out[off + 1..off + 4].copy_from_slice(&self.head);
+        out[off + 1..off + 4].copy_from_slice(&self.body.head_bytes());
         off += WORD;
+        match &self.body {
+            NormCmdBody::Flush { fec_payload_id, .. }
+            | NormCmdBody::Squelch { fec_payload_id, .. } => {
+                out[off..off + fec_payload_id.len()].copy_from_slice(fec_payload_id);
+                off += fec_payload_id.len();
+            }
+            NormCmdBody::Cc {
+                send_time_sec,
+                send_time_usec,
+                ..
+            } => {
+                out[off..off + 4].copy_from_slice(&send_time_sec.to_be_bytes());
+                out[off + 4..off + 8].copy_from_slice(&send_time_usec.to_be_bytes());
+                off += 8;
+            }
+            _ => {}
+        }
         off += ext::serialize_chain(&self.extensions, &mut out[off..])?;
         out[off..off + self.content.len()].copy_from_slice(self.content);
         off += self.content.len();
@@ -989,7 +1182,7 @@ mod tests {
             common: common(NormMessageType::Cmd),
             sender: sender(),
             sub_type: NormCmdType::Eot,
-            head: [0, 0, 0], // reserved
+            body: NormCmdBody::Eot,
             extensions: vec![],
             content: &[],
         };
@@ -999,26 +1192,112 @@ mod tests {
         assert_eq!(out[1], 4);
         // sub-type byte sits right after sender word (offset 12).
         assert_eq!(out[12], 2);
-        let re = NormCmd::parse(&out).unwrap();
+        let re = NormCmd::parse(&out, 0).unwrap();
         assert_eq!(re, c);
         assert_eq!(re.sub_type, NormCmdType::Eot);
     }
 
+    /// r14-RMT-C1 (#1070): a real NORM_CMD(FLUSH) probe sets `hdr_len` to
+    /// **include** `fec_payload_id` (RFC 5740 §4.2.3 Figure 10: "hdr_len (no
+    /// ext) = 4 + size of fec_payload_id"), so `fec_payload_id` sits between
+    /// the sub-type word and any header-extension chain — it is fixed body,
+    /// not an extension. No local NORM tool/capture is available, so this
+    /// vector is derived from the spec's own worked FEC Payload ID example
+    /// (§4.2.1 Figure 5, fec_id=129: source_block_number/source_block_len/
+    /// encoding_symbol_id) rather than an independent tool.
+    ///
+    /// Before the fix, `NormCmd::parse` treated these 8 bytes as an
+    /// extension-chain slice; the first extension byte (`0x00`) decodes as a
+    /// variable-length HET with `HEL=0`, which `HeaderExtension::parse` rejects
+    /// (`HEL must be >= 1`) — so this exact wire shape was rejected outright.
     #[test]
-    fn norm_cmd_flush_with_content() {
-        // FLUSH: head = fec_id | object_transport_id(16); content = fec_payload_id.
-        let c = NormCmd {
-            common: common(NormMessageType::Cmd),
-            sender: sender(),
-            sub_type: NormCmdType::Flush,
-            head: [129, 0x00, 0x07], // fec_id=129, object_transport_id=7
-            extensions: vec![],
-            content: &[0, 0, 0, 1, 0, 5, 0, 2],
-        };
+    fn norm_cmd_flush_real_probe_hdr_len_includes_fec_payload_id() {
+        #[rustfmt::skip]
+        let buf: [u8; 28] = [
+            0x13, 0x06, 0x12, 0x34, 0xCA, 0xFE, 0xBA, 0xBE, // common: type=3(CMD), hdr_len=6
+            0x00, 0xFF, 0x40, 0xA5,                          // sender word
+            0x01, 0x81, 0x00, 0x07,                          // sub_type=1(FLUSH), fec_id=129, oti=7
+            0x00, 0x00, 0x00, 0x01, 0x00, 0x05, 0x00, 0x02,  // fec_payload_id (source_block_number=1, len=5, esi=2)
+            0xAA, 0xBB, 0xCC, 0xDD,                          // content: acking_node_list[0] (NormNodeId)
+        ];
+        let c = NormCmd::parse(&buf, 8).expect("conformant FLUSH probe must parse");
+        assert_eq!(c.sub_type, NormCmdType::Flush);
+        assert_eq!(
+            c.body,
+            NormCmdBody::Flush {
+                fec_id: 129,
+                object_transport_id: 7,
+                fec_payload_id: &[0x00, 0x00, 0x00, 0x01, 0x00, 0x05, 0x00, 0x02],
+            }
+        );
+        assert!(c.extensions.is_empty());
+        assert_eq!(c.content, &[0xAA, 0xBB, 0xCC, 0xDD]);
+
         let mut out = vec![0u8; c.serialized_len()];
         c.serialize_into(&mut out).unwrap();
-        let re = NormCmd::parse(&out).unwrap();
-        assert_eq!(re, c);
+        assert_eq!(out, buf, "byte-identical to the spec-derived FLUSH vector");
+    }
+
+    /// Same shape for NORM_CMD(SQUELCH) (Figure 12): `fec_payload_id` again
+    /// counts toward `hdr_len`, ahead of the (here absent) extension chain and
+    /// the `invalid_object_list` content.
+    #[test]
+    fn norm_cmd_squelch_real_probe_hdr_len_includes_fec_payload_id() {
+        #[rustfmt::skip]
+        let buf: [u8; 24] = [
+            0x13, 0x06, 0x12, 0x34, 0xCA, 0xFE, 0xBA, 0xBE, // common: type=3(CMD), hdr_len=6
+            0x00, 0xFF, 0x40, 0xA5,                          // sender word
+            0x03, 0x81, 0x00, 0x00,                          // sub_type=3(SQUELCH), fec_id=129, oti=0
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x05, 0x00, 0x00,  // fec_payload_id (repair-window start)
+        ];
+        let c = NormCmd::parse(&buf, 8).expect("conformant SQUELCH probe must parse");
+        assert_eq!(
+            c.body,
+            NormCmdBody::Squelch {
+                fec_id: 129,
+                object_transport_id: 0,
+                fec_payload_id: &[0x00, 0x00, 0x00, 0x00, 0x00, 0x05, 0x00, 0x00],
+            }
+        );
+        assert!(c.content.is_empty());
+
+        let mut out = vec![0u8; c.serialized_len()];
+        c.serialize_into(&mut out).unwrap();
+        assert_eq!(
+            out, buf,
+            "byte-identical to the spec-derived SQUELCH vector"
+        );
+    }
+
+    /// r14-RMT-C1 (#1070): NORM_CMD(CC) (Figure 13) carries a FIXED
+    /// `send_time_sec`/`send_time_usec` (8 bytes) between the sub-type word
+    /// and its (optional) extension chain — "hdr_len (no ext) = 6". Before the
+    /// fix these 8 bytes were misread as extension-chain bytes too.
+    #[test]
+    fn norm_cmd_cc_real_probe_hdr_len_includes_send_time() {
+        #[rustfmt::skip]
+        let buf: [u8; 24] = [
+            0x13, 0x06, 0x12, 0x34, 0xCA, 0xFE, 0xBA, 0xBE, // common: type=3(CMD), hdr_len=6
+            0x00, 0xFF, 0x40, 0xA5,                          // sender word
+            0x04, 0x00, 0x00, 0x2A,                          // sub_type=4(CC), reserved=0, cc_sequence=0x2A
+            0x66, 0x1A, 0x2B, 0x3C,                          // send_time_sec
+            0x00, 0x01, 0x86, 0xA0,                          // send_time_usec = 100000
+        ];
+        let c = NormCmd::parse(&buf, 0).expect("conformant CC probe must parse");
+        assert_eq!(
+            c.body,
+            NormCmdBody::Cc {
+                cc_sequence: 0x2A,
+                send_time_sec: 0x661A_2B3C,
+                send_time_usec: 100_000,
+            }
+        );
+        assert!(c.extensions.is_empty());
+        assert!(c.content.is_empty());
+
+        let mut out = vec![0u8; c.serialized_len()];
+        c.serialize_into(&mut out).unwrap();
+        assert_eq!(out, buf, "byte-identical to the spec-derived CC vector");
     }
 
     #[test]

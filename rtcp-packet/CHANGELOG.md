@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `RtcpPacket` gained a new variant, `Unknown { packet_type, count, payload }`,
+  for any `PT` outside the RFC 3550 §6 core set (200-204) — e.g. RTPFB=205/
+  PSFB=206 [RFC 4585] or XR=207 [RFC 3611]. Common-header framing only; the
+  body is opaque and round-trips byte-identical. `RtcpPacket` is already
+  `#[non_exhaustive]`, so this is additive, not breaking (#1071).
+
+### Fixed
+- `CompoundPacket`'s leading-packet rule now also accepts a leading
+  `RtcpPacket::Unknown` (an unrecognized `PT`), per RFC 5506 §3.4.2/§4.1
+  Reduced-Size RTCP; a leading SDES/BYE/APP is still rejected (#1071).
+- `CompoundPacket::parse` rejected the **whole** datagram — including a
+  perfectly valid leading SR/RR — the moment it walked into a packet whose
+  `PT` was outside 200-204, since `RtcpPacket::parse` returned `Err` for any
+  unrecognized type. A browser's WebRTC RTCP is mostly RFC 4585 PSFB/RTPFB
+  feedback (NACK/PLI/REMB/transport-cc) or RFC 3611 XR, so this discarded a
+  real peer's own SR/RR stats on nearly every datagram. Fixed by the new
+  `RtcpPacket::Unknown` variant above; see `tests/real_browser_fixture.rs`
+  for a real Chromium capture exercising exactly this shape (#1071).
+
 ## [0.3.1] - 2026-08-30
 
 ### Fixed

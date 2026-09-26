@@ -17,6 +17,7 @@
 //! re-serializing reproduces the vector byte-for-byte.
 
 use broadcast_common::{Parse, Serialize};
+use scte104::operations::insert_segmentation_descriptor::InsertSegmentationDescriptor;
 use scte104::operations::provisioning_request::{
     DpiPidEntry, InjectorComponentList, ProvisioningRequest, ProvisioningService,
 };
@@ -320,6 +321,76 @@ fn provisioning_request_typed_construction_matches_vector() {
         }],
     };
     assert_eq!(pr.to_bytes(), PROVISIONING_REQUEST_VECTOR);
+}
+
+// ── insert_segmentation_descriptor_request_data() — §9.8.7, Table 9-29
+//    (opID 0x010B) ────────────────────────────────────────────────────────
+//
+// r12-S4-C1 (#1068): Table 9-29 lists exactly 12 one-byte fields after
+// `segmentation_upid` (`segmentation_type_id` .. `sub_segments_expected`),
+// but the crate's `TAIL_LEN` was 13 — every conformant message, including
+// this minimal one, was one byte short of the demanded length and rejected
+// outright. No local SCTE-104 tool is available, so this vector is derived
+// directly from Table 9-29 itself (cited per-field below) rather than an
+// independent tool's output.
+//
+// segmentation_event_id=0x42, cancel_indicator=0, duration=3600 (0x0E10),
+// upid_type=1, upid_length=3, upid=[0x01,0x02,0x03], type_id=0x30 (program
+// start, informative), segment_num=1, segments_expected=5,
+// duration_extension_frames=0, delivery_not_restricted_flag=1,
+// web_delivery_allowed_flag=0, no_regional_blackout_flag=0,
+// archive_allowed_flag=1, device_restrictions=0, insert_sub_segment_info=0,
+// sub_segment_num=0, sub_segments_expected=0.
+#[rustfmt::skip]
+const INSERT_SEGMENTATION_DESCRIPTOR_VECTOR: [u8; 24] = [
+    0x00, 0x00, 0x00, 0x42, // segmentation_event_id
+    0x00,                   // segmentation_event_cancel_indicator
+    0x0E, 0x10,             // duration = 3600
+    0x01,                   // segmentation_upid_type
+    0x03,                   // segmentation_upid_length
+    0x01, 0x02, 0x03,       // segmentation_upid
+    0x30,                   // segmentation_type_id
+    0x01,                   // segment_num
+    0x05,                   // segments_expected
+    0x00,                   // duration_extension_frames
+    0x01,                   // delivery_not_restricted_flag
+    0x00,                   // web_delivery_allowed_flag
+    0x00,                   // no_regional_blackout_flag
+    0x01,                   // archive_allowed_flag
+    0x00,                   // device_restrictions
+    0x00,                   // insert_sub_segment_info
+    0x00,                   // sub_segment_num
+    0x00,                   // sub_segments_expected
+];
+
+#[test]
+fn insert_segmentation_descriptor_vector_parses_and_round_trips() {
+    let isd = InsertSegmentationDescriptor::parse(&INSERT_SEGMENTATION_DESCRIPTOR_VECTOR)
+        .expect("parse spec-derived Table 9-29 vector (a conformant message, not a corner case)");
+    assert_eq!(isd.segmentation_event_id, 0x42);
+    assert_eq!(isd.segmentation_event_cancel_indicator, 0);
+    assert_eq!(isd.duration, 3600);
+    assert_eq!(isd.segmentation_upid_type, 1);
+    assert_eq!(isd.segmentation_upid, &[0x01, 0x02, 0x03]);
+    assert_eq!(isd.segmentation_type_id, 0x30);
+    assert_eq!(isd.segment_num, 1);
+    assert_eq!(isd.segments_expected, 5);
+    assert_eq!(isd.duration_extension_frames, 0);
+    assert_eq!(isd.delivery_not_restricted_flag, 1);
+    assert_eq!(isd.web_delivery_allowed_flag, 0);
+    assert_eq!(isd.no_regional_blackout_flag, 0);
+    assert_eq!(isd.archive_allowed_flag, 1);
+    assert_eq!(isd.device_restrictions, 0);
+    assert_eq!(isd.insert_sub_segment_info, 0);
+    assert_eq!(isd.sub_segment_num, 0);
+    assert_eq!(isd.sub_segments_expected, 0);
+
+    let mut out = vec![0u8; isd.serialized_len()];
+    isd.serialize_into(&mut out).unwrap();
+    assert_eq!(
+        out, INSERT_SEGMENTATION_DESCRIPTOR_VECTOR,
+        "byte-identical to the Table 9-29 spec-derived vector"
+    );
 }
 
 // ── op_id / opID sanity against the typed dispatch (Table 8-3) ─────────────

@@ -401,13 +401,20 @@ pub enum MediaEvent {
     /// the workspace's own `rtcp-packet` crate.
     Rtcp(rtcp_packet::CompoundPacket),
     /// An inbound SRTCP packet that decrypted and **authenticated** under
-    /// the negotiated key (RFC 3711 §3.4), but whose plaintext is not an
-    /// RFC 3550 §6 compound `rtcp-packet` can parse — typically the
-    /// RFC 4585 RTPFB/PSFB feedback (NACK, PLI, REMB, transport-cc) or
-    /// RFC 3611 XR packets a browser receiver sends continuously. It is a
-    /// genuine packet from the authenticated peer (so, e.g., proof the peer
-    /// is still live), not a transport error; carries the parse error that
-    /// explains why it was not surfaced as [`MediaEvent::Rtcp`].
+    /// the negotiated key (RFC 3711 §3.4), but whose plaintext is not a
+    /// well-formed RFC 3550 §6 compound `rtcp-packet` can parse at all —
+    /// e.g. a bad version field, a truncated packet, or a leading
+    /// SDES/BYE/APP not preceded by a report. It is a genuine packet from
+    /// the authenticated peer (so, e.g., proof the peer is still live), not
+    /// a transport error; carries the parse error that explains why it was
+    /// not surfaced as [`MediaEvent::Rtcp`].
+    ///
+    /// This is now the **rare** case: the RFC 4585 RTPFB/PSFB feedback
+    /// (NACK, PLI, REMB, transport-cc) or RFC 3611 XR packets a browser
+    /// receiver sends continuously — including as the *only* packet in a
+    /// Reduced-Size RTCP datagram (RFC 5506 §4.1) — decode fine as
+    /// [`MediaEvent::Rtcp`] via `rtcp_packet::RtcpPacket::Unknown`, so an SR/RR
+    /// sharing that datagram is no longer discarded along with them (#1071).
     RtcpUnsupported(rtcp_packet::Error),
 }
 
@@ -1202,9 +1209,11 @@ fn decrypt_srtp(ctx: &mut SrtpContext, is_rtcp: bool, data: &[u8]) -> Result<Med
         let plaintext = ctx
             .decrypt_rtcp(data)
             .map_err(|e| Error::Media(format!("srtcp decrypt: {e}")))?;
-        // Authentication already passed above; a parse failure from here on
-        // is only "not a packet type this crate decodes", not a forged or
-        // corrupt datagram — see [`MediaEvent::RtcpUnsupported`].
+        // Authentication already passed above. `rtcp_packet::CompoundPacket`
+        // now decodes RFC 4585/3611 feedback (and RFC 5506 Reduced-Size RTCP)
+        // via `RtcpPacket::Unknown`, so a parse failure from here on means the
+        // plaintext genuinely isn't a well-formed RTCP compound packet, not a
+        // forged or corrupt datagram — see [`MediaEvent::RtcpUnsupported`].
         Ok(match rtcp_packet::CompoundPacket::parse(&plaintext) {
             Ok(compound) => MediaEvent::Rtcp(compound),
             Err(e) => MediaEvent::RtcpUnsupported(e),
@@ -1899,14 +1908,16 @@ mod tests {
         assert_eq!(mt.read_rtp_count, 1);
     }
 
-    /// A browser WHEP viewer's SRTCP is mostly RFC 4585 feedback that
-    /// `rtcp-packet` does not decode (here a PSFB PLI, RFC 4585 §6.3.1,
-    /// PT=206 FMT=1). Once it has authenticated it must surface as
-    /// `RtcpUnsupported` — a real packet from the peer — not as the `Err` a
-    /// forged/stray datagram gets (which multimux's WHEP silence timer
-    /// relies on to tell a live viewer from noise).
+    /// r14-RTCP-C1 (#1071): a browser WHEP viewer's SRTCP is mostly RFC 4585
+    /// feedback (here a bare PSFB PLI, RFC 4585 §6.3.1, PT=206 FMT=1, sent
+    /// alone as Reduced-Size RTCP per RFC 5506 §4.1) — `rtcp-packet` now
+    /// decodes it as `RtcpPacket::Unknown` inside `MediaEvent::Rtcp`, not
+    /// `RtcpUnsupported`, since `CompoundPacket` no longer requires an
+    /// unrecognized leading PT to be SR/RR. Still surfaces as an event, not
+    /// the `Err` a forged/stray datagram gets (which multimux's WHEP silence
+    /// timer relies on to tell a live viewer from noise).
     #[test]
-    fn authenticated_but_unparseable_srtcp_is_an_event_forged_is_an_error() {
+    fn authenticated_bare_feedback_srtcp_decodes_as_rtcp_unknown_forged_is_an_error() {
         const PLI: [u8; 12] = [
             0x81, 0xCE, 0x00, 0x02, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88,
         ];
@@ -1924,6 +1935,96 @@ mod tests {
         let events = mt
             .handle_datagram(Instant::now(), peer, &genuine)
             .expect("an authenticated feedback packet is not an error");
+        match &events[..] {
+            [MediaEvent::Rtcp(compound)] => {
+                assert_eq!(compound.packets.len(), 1);
+                match &compound.packets[0] {
+                    rtcp_packet::RtcpPacket::Unknown {
+                        packet_type,
+                        payload,
+                        ..
+                    } => {
+                        assert_eq!(*packet_type, 206);
+                        assert_eq!(payload, &[0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88]);
+                    }
+                    other => panic!("expected RtcpPacket::Unknown, got {other:?}"),
+                }
+            }
+            other => panic!("expected exactly one MediaEvent::Rtcp, got {other:?}"),
+        }
+        assert_eq!(mt.read_rtcp_count, 1);
+    }
+
+    /// r14-RTCP-C1 (#1071): before the fix, a compound packet carrying a real
+    /// SR immediately followed by RFC 4585 PSFB feedback failed
+    /// `CompoundPacket::parse` on the unrecognized PT and surfaced as
+    /// `RtcpUnsupported`, discarding the parsed SR along with it — the caller
+    /// never saw the sender's own stats, only proof of life. After the fix,
+    /// the SR is delivered intact and the PSFB packet decodes as
+    /// `RtcpPacket::Unknown`, both inside one `MediaEvent::Rtcp`.
+    #[test]
+    fn compound_sr_then_unrecognized_feedback_still_delivers_the_sr() {
+        #[rustfmt::skip]
+        const SR_THEN_PLI: [u8; 40] = [
+            0x80, 0xC8, 0x00, 0x06, // SR header: V=2, RC=0, PT=200, length=6
+            0x11, 0x22, 0x33, 0x44, // SSRC
+            0x00, 0x00, 0x00, 0x00, // NTP MSW
+            0x00, 0x00, 0x00, 0x00, // NTP LSW
+            0x00, 0x00, 0x00, 0x00, // RTP timestamp
+            0x00, 0x00, 0x00, 0x00, // packet_count
+            0x00, 0x00, 0x00, 0x00, // octet_count
+            // PSFB PLI (RFC 4585 §6.3.1, PT=206 FMT=1) immediately follows.
+            0x81, 0xCE, 0x00, 0x02, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88,
+        ];
+        let (mut mt, peer) = transport_with_completed_handshake(SetupRole::Passive);
+        let mut oracle = b3_srtp_context();
+        let genuine = oracle.encrypt_rtcp(&SR_THEN_PLI).unwrap().to_vec();
+
+        let events = mt
+            .handle_datagram(Instant::now(), peer, &genuine)
+            .expect("SR + unrecognized feedback must decrypt");
+        let compound = match &events[..] {
+            [MediaEvent::Rtcp(cp)] => cp,
+            other => panic!("expected exactly one MediaEvent::Rtcp, got {other:?}"),
+        };
+        assert_eq!(compound.packets.len(), 2);
+        match &compound.packets[0] {
+            rtcp_packet::RtcpPacket::SenderReport(sr) => assert_eq!(sr.ssrc, 0x1122_3344),
+            other => panic!("expected the SR to survive, got {other:?}"),
+        }
+        match &compound.packets[1] {
+            rtcp_packet::RtcpPacket::Unknown { packet_type, .. } => {
+                assert_eq!(*packet_type, 206);
+            }
+            other => panic!("expected the PSFB as Unknown, got {other:?}"),
+        }
+    }
+
+    /// `RtcpUnsupported` still exists for SRTCP that authenticates but is not
+    /// a *valid ordering* of RTCP packets — a lone SDES (a recognized RFC
+    /// 3550 §6 type, not SR/RR, and not `RtcpPacket::Unknown`) leading with no
+    /// preceding report — distinct from the now-decodable bare-feedback case
+    /// above. (A bad version field can't reach this path at all: the SRTP
+    /// layer itself validates the RTCP version before it will encrypt.)
+    #[test]
+    fn authenticated_but_genuinely_malformed_srtcp_is_rtcp_unsupported() {
+        // Lone SDES, SC=1, one empty chunk (SSRC + terminator + padding):
+        // V=2, PT=202, length=2 -> total_len=12 bytes (the SRTP layer
+        // requires a minimum RTCP length, so an empty SC=0 packet is too
+        // short to even reach the crypto layer, let alone this crate).
+        #[rustfmt::skip]
+        const LONE_SDES: [u8; 12] = [
+            0x81, 0xCA, 0x00, 0x02, // header: V=2, SC=1, PT=202, length=2
+            0x11, 0x22, 0x33, 0x44, // chunk SSRC
+            0x00, 0x00, 0x00, 0x00, // item-list terminator + padding
+        ];
+        let (mut mt, peer) = transport_with_completed_handshake(SetupRole::Passive);
+        let mut oracle = b3_srtp_context();
+        let genuine = oracle.encrypt_rtcp(&LONE_SDES).unwrap().to_vec();
+
+        let events = mt
+            .handle_datagram(Instant::now(), peer, &genuine)
+            .expect("an authenticated-but-malformed packet is not an error");
         assert!(
             matches!(&events[..], [MediaEvent::RtcpUnsupported(_)]),
             "expected exactly one RtcpUnsupported, got {events:?}"
