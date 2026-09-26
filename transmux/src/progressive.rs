@@ -159,11 +159,13 @@ fn build_stbl_children(
     chunk_offset: u64,
     use_co64: bool,
 ) -> Vec<StblChild> {
+    let stsz_entries: Vec<u32> = samples.iter().map(|s| s.data.len() as u32).collect();
     let stsz = SampleSizeBox {
         version: 0,
         flags: 0,
         sample_size: 0,
-        entries: samples.iter().map(|s| s.data.len() as u32).collect(),
+        sample_count: stsz_entries.len() as u32,
+        entries: stsz_entries,
     };
     // One chunk holding every sample of this track.
     let stsc = SampleToChunkBox {

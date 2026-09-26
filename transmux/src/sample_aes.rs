@@ -221,8 +221,12 @@ fn h264_transform_pattern(
     let mut offset = H264_CLEAR_PREFIX_LEN;
     while offset < nal.len() {
         let remaining = nal.len() - offset;
-        // Encrypt one 16-byte block only when a whole block remains.
-        if remaining >= BLOCK_LEN {
+        // Encrypt one 16-byte block only when MORE than a whole block
+        // remains (`docs/drm/hls-sample-aes.md` §3.2: `bytes_remaining() >
+        // 16`, strictly greater). A remainder of exactly 16 bytes is the
+        // trailing block and stays clear — using `>=` here encrypted it,
+        // corrupting the last 16 bytes of ~1/160 slice NALs (issue #1014).
+        if remaining > BLOCK_LEN {
             let block = &mut nal[offset..offset + BLOCK_LEN];
             if encrypt {
                 cbc_encrypt_blocks_in_place(key, iv, block);
@@ -593,6 +597,48 @@ mod tests {
             &enc_raw[192..200],
             &raw[192..200],
             "trailing <16 must be clear"
+        );
+
+        let dec = h264_decrypt_nal(&NIST_KEY, &NIST_IV, &enc);
+        assert_eq!(dec, nal, "H.264 NAL round-trip mismatch");
+    }
+
+    #[test]
+    fn h264_exact_16_byte_trailer_left_clear() {
+        // Oracle: `docs/drm/hls-sample-aes.md` §3.2 (transcribed from Apple's
+        // "MPEG-2 Stream Encryption Format for HTTP Live Streaming" §3.2),
+        // `while (bytes_remaining() > 0) { if (bytes_remaining() > 16) {
+        // encrypted_block } unencrypted_block [min(144, bytes_remaining())] }`
+        // — the comparison is strictly `> 16`, so a remainder of *exactly*
+        // 16 bytes at a block boundary is the trailing partial-block case
+        // and must stay clear. Issue #1014: this crate used `>= 16`, so it
+        // encrypted that last block instead (confirmed by temporarily
+        // reverting the fix to `>=`: `enc_raw[192..208]` then differs from
+        // `raw[192..208]` and the assertion below fails).
+        //
+        // Layout: 32 clear prefix + 16-byte encrypted block1 [32,48) +
+        // 144-byte skip [48,192) + exactly 16 bytes left [192,208) — the
+        // *second* loop iteration's `bytes_remaining()` is exactly 16 there,
+        // which is the case the spec leaves clear.
+        let mut nal = vec![0x65u8]; // type 5 (IDR slice)
+        nal.extend(core::iter::repeat_n(0xAAu8, 207)); // 1 + 207 = 208 bytes, no 00 00 0x runs
+        assert_eq!(nal.len(), 208);
+        assert!(h264_nal_is_encrypted(&nal));
+
+        let enc = h264_encrypt_nal(&NIST_KEY, &NIST_IV, &nal);
+        let raw = h264_unescape(&nal);
+        let enc_raw = h264_unescape(&enc);
+        assert_eq!(raw.len(), enc_raw.len());
+        assert_ne!(&enc_raw[32..48], &raw[32..48], "block1 must be encrypted");
+        assert_eq!(
+            &enc_raw[48..192],
+            &raw[48..192],
+            "144-byte skip region must be clear"
+        );
+        assert_eq!(
+            &enc_raw[192..208],
+            &raw[192..208],
+            "exact-16-byte trailer must stay clear (spec: bytes_remaining() > 16)"
         );
 
         let dec = h264_decrypt_nal(&NIST_KEY, &NIST_IV, &enc);
