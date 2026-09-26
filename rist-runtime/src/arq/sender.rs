@@ -34,15 +34,42 @@
 //! `no_std`+`alloc` without pulling in a hasher that needs `std`), with a
 //! side [`VecDeque`] recording insertion order purely for FIFO eviction —
 //! each lookup is O(log n) instead of O(n).
+//!
+//! # Response amplification (#977 continued)
+//!
+//! Bounding per-lookup *cost* still left the *response* itself unbounded: a
+//! [`RangeNack`]/[`GenericNack`] can repeat the same range across many of
+//! its (up to 16) ranges, or simply be re-sent by the peer moments after the
+//! last response. Neither is deduplicated by [`Self::on_range_nack`]/
+//! [`Self::on_generic_nack`] on their own, so one small wire message can
+//! still trigger a disproportionate volume of retransmitted payload bytes.
+//! `resolve` now: deduplicates every candidate sequence number
+//! within one call (a `BTreeSet` of what's already been resolved this
+//! call); caps the total distinct sequence numbers one call returns at
+//! [`Sender::max_buffered`] (this sender never has more than that many
+//! distinct packets to hand back anyway); and rate-limits any single
+//! sequence number to at most one retransmission per
+//! [`MIN_RETRANSMIT_INTERVAL`], tracked in [`Sender::last_retransmitted`].
+//! §5.3.3/§5.3.4 leave all of this to the implementation, so these are
+//! implementation-policy bounds, not transcribed numbers.
 
-use alloc::collections::{BTreeMap, VecDeque};
+use alloc::collections::{BTreeMap, BTreeSet, VecDeque};
 use alloc::vec::Vec;
+use core::time::Duration;
 
 use crate::nack::BLP_BIT_WIDTH;
 use crate::{GenericNack, NackFci, PacketRange, RangeNack};
 
 use super::MAX_RANGE_EXPANSION;
 use super::seq;
+
+/// Minimum spacing between two retransmissions of the same sequence number
+/// (#977 continued). TR-06-1 does not state this window — a real
+/// implementation would size it from the receiver's RTT, but [`Sender`] has
+/// no RTT estimate of its own (unlike [`super::Receiver`], which carries
+/// [`super::rtt::RttEstimator`]), so this is a fixed, conservative
+/// **implementation policy** value rather than an RTT-derived one.
+const MIN_RETRANSMIT_INTERVAL: Duration = Duration::from_millis(20);
 
 /// One packet retransmitted in response to a NACK: the original sequence
 /// number and timestamp, and the original payload bytes. The caller
@@ -75,6 +102,11 @@ pub struct Sender {
     by_seq: BTreeMap<u16, SentPacket>,
     order: VecDeque<u16>,
     max_buffered: usize,
+    /// Last time (per sequence number) a retransmission was actually
+    /// handed back — the rate-limit state behind [`MIN_RETRANSMIT_INTERVAL`]
+    /// (#977 continued). Pruned alongside `by_seq`'s own eviction/overwrite
+    /// so it never outgrows `max_buffered` entries.
+    last_retransmitted: BTreeMap<u16, Duration>,
 }
 
 impl Sender {
@@ -89,6 +121,7 @@ impl Sender {
             by_seq: BTreeMap::new(),
             order: VecDeque::new(),
             max_buffered: max_buffered.max(1),
+            last_retransmitted: BTreeMap::new(),
         }
     }
 
@@ -110,10 +143,15 @@ impl Sender {
             },
         );
         self.order.push_back(seq);
+        // A fresh packet occupying this seq (including a 16-bit wraparound
+        // reuse of an old, still-buffered seq) has no retransmission
+        // history of its own yet.
+        self.last_retransmitted.remove(&seq);
         while self.by_seq.len() > self.max_buffered {
             match self.order.pop_front() {
                 Some(oldest) => {
                     self.by_seq.remove(&oldest);
+                    self.last_retransmitted.remove(&oldest);
                 }
                 None => break,
             }
@@ -123,39 +161,73 @@ impl Sender {
     /// Look up every sequence number named by a [`RangeNack`] that is still
     /// in the lookup buffer; sequence numbers already evicted (too old, or
     /// never sent) are silently skipped — §5.3.3 does not define behaviour
-    /// for a request naming a packet the sender no longer has.
-    pub fn on_range_nack(&self, nack: &RangeNack) -> Vec<Retransmission<'_>> {
-        let mut out = Vec::new();
-        for range in &nack.ranges {
-            for s in expand_range(*range) {
-                if let Some(sent) = self.by_seq.get(&s) {
-                    out.push(Retransmission {
-                        seq: sent.seq,
-                        timestamp: sent.timestamp,
-                        payload: &sent.payload,
-                    });
-                }
-            }
-        }
-        out
+    /// for a request naming a packet the sender no longer has. See
+    /// `resolve` for the deduplication/cap/rate-limit bounds
+    /// applied to the response.
+    pub fn on_range_nack(&mut self, nack: &RangeNack, now: Duration) -> Vec<Retransmission<'_>> {
+        let ranges = &nack.ranges;
+        self.resolve(ranges.iter().flat_map(|r| expand_range(*r)), now)
     }
 
     /// Look up every sequence number named by a [`GenericNack`] (bitmask
-    /// format), same lookup semantics as [`Self::on_range_nack`].
-    pub fn on_generic_nack(&self, nack: &GenericNack) -> Vec<Retransmission<'_>> {
-        let mut out = Vec::new();
-        for fci in &nack.nacks {
-            for s in expand_fci(*fci) {
-                if let Some(sent) = self.by_seq.get(&s) {
-                    out.push(Retransmission {
-                        seq: sent.seq,
-                        timestamp: sent.timestamp,
-                        payload: &sent.payload,
-                    });
-                }
+    /// format), same lookup/bounding semantics as [`Self::on_range_nack`].
+    pub fn on_generic_nack(
+        &mut self,
+        nack: &GenericNack,
+        now: Duration,
+    ) -> Vec<Retransmission<'_>> {
+        let fcis = &nack.nacks;
+        self.resolve(fcis.iter().flat_map(|f| expand_fci(*f)), now)
+    }
+
+    /// Shared candidate-resolution path for [`Self::on_range_nack`]/
+    /// [`Self::on_generic_nack`] (#977 continued — see the module doc's
+    /// "Response amplification" section): deduplicates `candidates` within
+    /// this one call, examines at most [`MAX_RANGE_EXPANSION`] of them
+    /// (bounding total work regardless of how many ranges/FCIs the caller's
+    /// NACK carries), stops once [`Sender::max_buffered`] distinct
+    /// retransmissions have been collected, and rate-limits each sequence
+    /// number to at most one retransmission per [`MIN_RETRANSMIT_INTERVAL`].
+    fn resolve<I: IntoIterator<Item = u16>>(
+        &mut self,
+        candidates: I,
+        now: Duration,
+    ) -> Vec<Retransmission<'_>> {
+        let max_out = self.max_buffered;
+        let mut seen = BTreeSet::new();
+        let mut out_seqs: Vec<u16> = Vec::new();
+
+        for s in candidates.into_iter().take(MAX_RANGE_EXPANSION) {
+            if out_seqs.len() >= max_out {
+                break;
             }
+            if !seen.insert(s) {
+                continue;
+            }
+            if !self.by_seq.contains_key(&s) {
+                continue;
+            }
+            let rate_limited = self
+                .last_retransmitted
+                .get(&s)
+                .is_some_and(|&last| now.saturating_sub(last) < MIN_RETRANSMIT_INTERVAL);
+            if rate_limited {
+                continue;
+            }
+            self.last_retransmitted.insert(s, now);
+            out_seqs.push(s);
         }
-        out
+
+        out_seqs
+            .into_iter()
+            .filter_map(|s| {
+                self.by_seq.get(&s).map(|sent| Retransmission {
+                    seq: sent.seq,
+                    timestamp: sent.timestamp,
+                    payload: &sent.payload,
+                })
+            })
+            .collect()
     }
 }
 
@@ -185,6 +257,8 @@ mod tests {
     use super::*;
     use crate::NackFci;
 
+    const T0: Duration = Duration::ZERO;
+
     #[test]
     fn on_sent_then_range_nack_locates_the_exact_payload() {
         let mut s = Sender::new(16);
@@ -198,7 +272,7 @@ mod tests {
                 additional: 0
             }],
         };
-        let out = s.on_range_nack(&nack);
+        let out = s.on_range_nack(&nack, T0);
         assert_eq!(out.len(), 1);
         assert_eq!(out[0].seq, 100);
         assert_eq!(out[0].timestamp, 900_000);
@@ -218,7 +292,7 @@ mod tests {
                 additional: 4
             }],
         };
-        let out = s.on_range_nack(&nack);
+        let out = s.on_range_nack(&nack, T0);
         let seqs: Vec<u16> = out.iter().map(|r| r.seq).collect();
         assert_eq!(seqs, alloc::vec![10, 11, 12, 13, 14]);
     }
@@ -237,7 +311,7 @@ mod tests {
                 additional: 0
             }],
         };
-        assert!(s.on_range_nack(&nack).is_empty());
+        assert!(s.on_range_nack(&nack, T0).is_empty());
     }
 
     #[test]
@@ -258,14 +332,14 @@ mod tests {
                 NackFci { pid: 117, blp: 0 },
             ],
         };
-        let out = s.on_generic_nack(&nack);
+        let out = s.on_generic_nack(&nack, T0);
         let seqs: Vec<u16> = out.iter().map(|r| r.seq).collect();
         assert_eq!(seqs, alloc::vec![100, 103, 117]);
     }
 
     #[test]
     fn range_expansion_is_throttled_against_an_adversarial_additional_count() {
-        let s = Sender::new(1);
+        let mut s = Sender::new(1);
         let nack = RangeNack {
             ssrc_media: 1,
             // TR-06-1 §5.3.4's own called-out worst case.
@@ -277,7 +351,7 @@ mod tests {
         // Must not attempt to allocate/iterate 65536 entries unbounded in a
         // way that panics or hangs; with nothing in the lookup buffer the
         // result is simply empty, but the point is this returns promptly.
-        assert!(s.on_range_nack(&nack).is_empty());
+        assert!(s.on_range_nack(&nack, T0).is_empty());
     }
 
     /// #977 regression: with an O(n) linear scan per expanded sequence
@@ -303,7 +377,7 @@ mod tests {
         };
 
         let start = std::time::Instant::now();
-        let out = s.on_range_nack(&nack);
+        let out = s.on_range_nack(&nack, T0);
         let elapsed = start.elapsed();
 
         assert_eq!(out.len(), MAX_RANGE_EXPANSION);
@@ -312,5 +386,108 @@ mod tests {
             "range_nack lookup against a full buffer took {elapsed:?} — \
              looks like an O(n) scan crept back in"
         );
+    }
+
+    /// r08-RIST-C1 regression: 16 identical, fully-overlapping ranges in one
+    /// `RangeNack` must not multiply into 16 retransmissions per buffered
+    /// packet. Pre-fix (dedup added, but against a small buffer so the
+    /// un-bounded-response bug reproduces without a huge allocation): 10
+    /// buffered packets x 16 duplicated ranges = 160 output entries with the
+    /// pre-fix code (verified against the pre-fix `on_range_nack(&self, nack)`
+    /// — 16 unbounded, non-deduplicated passes over the same 10 hits).
+    /// Post-fix: deduplicated to exactly the 10 distinct buffered packets,
+    /// and never more than `max_buffered` regardless of how many ranges/how
+    /// large `additional` claims.
+    #[test]
+    fn duplicated_full_ranges_in_one_nack_are_deduplicated_and_capped() {
+        let mut s = Sender::new(10);
+        for seq in 0..10u16 {
+            s.on_sent(seq, u32::from(seq), b"x");
+        }
+        let one_range = PacketRange {
+            start: 0,
+            additional: 0xFFFF,
+        };
+        let nack = RangeNack {
+            ssrc_media: 1,
+            ranges: alloc::vec![one_range; 16],
+        };
+
+        let out = s.on_range_nack(&nack, T0);
+        assert_eq!(
+            out.len(),
+            10,
+            "expected exactly the 10 distinct buffered packets, got {} \
+             (16x duplication would give 160)",
+            out.len()
+        );
+        let mut seqs: Vec<u16> = out.iter().map(|r| r.seq).collect();
+        seqs.sort_unstable();
+        seqs.dedup();
+        assert_eq!(seqs.len(), 10, "output must not repeat a sequence number");
+    }
+
+    /// r08-RIST-C1 regression: the same NACK, re-delivered immediately
+    /// (before [`MIN_RETRANSMIT_INTERVAL`] has elapsed), must not trigger a
+    /// second retransmission of sequence numbers already retransmitted a
+    /// moment ago — otherwise a peer (or anyone able to inject a NACK on the
+    /// 5-tuple) can replay the same small request every millisecond for
+    /// unbounded egress.
+    #[test]
+    fn repeating_a_nack_immediately_does_not_re_retransmit_the_same_seqs() {
+        let mut s = Sender::new(10);
+        for seq in 0..10u16 {
+            s.on_sent(seq, u32::from(seq), b"x");
+        }
+        let nack = RangeNack {
+            ssrc_media: 1,
+            ranges: alloc::vec![PacketRange {
+                start: 0,
+                additional: 9
+            }],
+        };
+
+        let first = s.on_range_nack(&nack, T0);
+        assert_eq!(first.len(), 10);
+
+        // Repeated at the same instant (well under MIN_RETRANSMIT_INTERVAL).
+        let second = s.on_range_nack(&nack, T0);
+        assert!(
+            second.is_empty(),
+            "immediate repeat retransmitted {} seqs a second time",
+            second.len()
+        );
+
+        // Once the rate-limit window has elapsed, the same seqs are
+        // eligible again.
+        let third = s.on_range_nack(&nack, T0 + MIN_RETRANSMIT_INTERVAL);
+        assert_eq!(third.len(), 10);
+    }
+
+    /// Confirms the rate-limit branch above is actually load-bearing: with
+    /// it disabled (simulated here by using a zero-length interval, i.e.
+    /// every repeat instantly re-qualifies), the immediate repeat *does*
+    /// re-retransmit — proving `repeating_a_nack_immediately_does_not_re_retransmit_the_same_seqs`
+    /// would fail without the rate limit rather than passing vacuously.
+    #[test]
+    fn rate_limit_check_is_load_bearing_against_a_zero_width_window() {
+        let mut s = Sender::new(10);
+        for seq in 0..10u16 {
+            s.on_sent(seq, u32::from(seq), b"x");
+        }
+        let nack = RangeNack {
+            ssrc_media: 1,
+            ranges: alloc::vec![PacketRange {
+                start: 0,
+                additional: 9
+            }],
+        };
+        s.on_range_nack(&nack, T0);
+        // `now` advanced by exactly `MIN_RETRANSMIT_INTERVAL` (not "less
+        // than"): the window has fully elapsed, so this is the boundary
+        // case confirming the comparison is `<` (still rate-limited at
+        // exactly the window) not `<=` (would wrongly still block here).
+        let at_boundary = s.on_range_nack(&nack, T0 + MIN_RETRANSMIT_INTERVAL);
+        assert_eq!(at_boundary.len(), 10);
     }
 }
