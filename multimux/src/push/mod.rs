@@ -384,6 +384,11 @@ pub async fn drive_push<T: PushTransport>(
     /// track…") still reaches the log line below via `Display`.
     const UNSATISFIABLE: &str = "no track this output's container format can carry";
 
+    /// How long to back off before retrying [`Trunk::listen`] when every
+    /// waiter slot is already taken — keeps this loop from busy-spinning a
+    /// runtime worker in that case (issue r07-C2).
+    const NO_SLOT_BACKOFF: Duration = Duration::from_millis(50);
+
     let metrics = PushMetrics::default();
     let mut egress: Option<PushTransportEgress<T>> = None;
     let mut engine = ReconnectEngine::new(reconnect);
@@ -409,9 +414,13 @@ pub async fn drive_push<T: PushTransport>(
         }
 
         // Wait for samples, or a bounded wake-up, before draining — the
-        // 250 ms cap keeps cancellation / track-set changes noticed.
-        if let Some(listener) = trunk.listen() {
-            listener.wait_deadline(Instant::now() + Duration::from_millis(250));
+        // 250 ms cap keeps cancellation / track-set changes noticed. Both
+        // arms are real `.await`s so this never parks the runtime worker.
+        match trunk.listen() {
+            Some(listener) => {
+                let _ = tokio::time::timeout(Duration::from_millis(250), listener).await;
+            }
+            None => tokio::time::sleep(NO_SLOT_BACKOFF).await,
         }
 
         // Renegotiate if the track set changed since the last successful
@@ -580,6 +589,7 @@ pub async fn drive_push<T: PushTransport>(
 mod tests {
     use super::*;
     use crate::config::ReconnectPolicy;
+    use media_plane::trunk::TrunkConfig;
 
     fn policy(max_attempts: Option<u32>) -> ReconnectPolicy {
         ReconnectPolicy {
@@ -587,6 +597,102 @@ mod tests {
             max_backoff_ms: 30_000,
             max_attempts,
         }
+    }
+
+    /// A [`PushTransport`] whose `connect` always fails immediately (no real
+    /// I/O, no `.await` suspension) — used to keep `drive_push`'s loop body
+    /// free of any *other* async wait, so the test below isolates exactly
+    /// the `trunk.listen() == None` branch.
+    struct AlwaysFailsTransport;
+
+    #[derive(Debug, thiserror::Error)]
+    #[error("connect always fails")]
+    struct AlwaysFailsError;
+
+    #[async_trait::async_trait]
+    impl PushTransport for AlwaysFailsTransport {
+        type Config = ();
+        type Error = AlwaysFailsError;
+
+        async fn connect(_url: &str, _config: &Self::Config) -> Result<Self, Self::Error> {
+            Err(AlwaysFailsError)
+        }
+
+        async fn send(&mut self, _data: &[u8]) -> Result<(), Self::Error> {
+            Ok(())
+        }
+
+        fn close(&mut self) {}
+    }
+
+    fn nz(n: usize) -> std::num::NonZeroUsize {
+        std::num::NonZeroUsize::new(n).unwrap()
+    }
+
+    /// With every `Trunk` listener slot already held, `drive_push` must not
+    /// starve sibling tasks on a `current_thread` runtime.
+    ///
+    /// A sole waiter slot is held for the whole test so `trunk.listen()`
+    /// always returns `None` inside `drive_push`; `AlwaysFailsTransport`
+    /// keeps every other step in the loop free of a real `.await`
+    /// suspension (zero backoff means the retry-wait is skipped too), so
+    /// the only possible yield point is the `None` branch itself. A plain
+    /// OS thread flips `cancel` after a bounded real-time wait — sidesteps
+    /// needing the (possibly-starved) runtime to schedule the canceller —
+    /// so this test terminates even against the unfixed code, which
+    /// notices cancellation on its next loop pass without ever yielding to
+    /// the executor.
+    ///
+    /// PRE-FIX FAILURE OBSERVED: `sibling_progress.load() == 0` — the
+    /// counter task was never scheduled even once during the ~50ms window,
+    /// because the old code's `if let Some(listener) = trunk.listen() { .. }`
+    /// is a no-op when `listen()` returns `None`, and every other step
+    /// (failed connect, zero backoff) resolves without a real `.await`
+    /// suspension, so `drive_push`'s task never returns `Poll::Pending` and
+    /// the `current_thread` executor never gets to run the sibling task.
+    #[tokio::test(flavor = "current_thread")]
+    async fn drive_push_yields_when_no_listener_slot_is_free() {
+        let trunk = Trunk::new(TrunkConfig::new(nz(1), nz(1), nz(1), nz(1), nz(1)));
+        let _held_slot = trunk.listen().expect("the sole waiter slot is free here");
+
+        let sibling_progress = Arc::new(AtomicU64::new(0));
+        let sibling_progress_task = Arc::clone(&sibling_progress);
+        let sibling = tokio::spawn(async move {
+            loop {
+                sibling_progress_task.fetch_add(1, Ordering::Relaxed);
+                tokio::task::yield_now().await;
+            }
+        });
+
+        let cancel = CancellationToken::new();
+        let canceller = cancel.clone();
+        let canceller_thread = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(50));
+            canceller.cancel();
+        });
+
+        let reconnect = ReconnectPolicy {
+            initial_backoff_ms: 0,
+            max_backoff_ms: 0,
+            max_attempts: None,
+        };
+        drive_push::<AlwaysFailsTransport>(
+            trunk,
+            "push://unreachable".to_string(),
+            (),
+            PushFormat::Ts,
+            reconnect,
+            cancel,
+        )
+        .await;
+
+        canceller_thread.join().unwrap();
+        sibling.abort();
+        assert!(
+            sibling_progress.load(Ordering::Relaxed) > 10,
+            "sibling task starved while every listener slot was held: {}",
+            sibling_progress.load(Ordering::Relaxed)
+        );
     }
 
     #[test]

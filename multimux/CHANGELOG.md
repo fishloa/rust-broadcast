@@ -5,6 +5,13 @@
 ### Fixed
 - WHIP input and WHEP output pass the offer's `a=fingerprint` to the media transport, so the
   DTLS peer is authenticated (webrtc-runtime 0.2.0); an offer without a fingerprint is rejected.
+- Push outputs await the trunk listener instead of blocking a runtime worker, and back off when
+  every listener slot is taken.
+- An RTP/UDP route drops a malformed packet instead of failing, and a failed session now ends
+  the route so the supervisor reconnects it.
+- WHEP applies the configured output auth, ends sessions after 30 s without inbound traffic, and
+  WHIP/WHEP cap HTTP header and body size and time out slow requests; WHIP checks capacity before
+  allocating a session.
 
 ### Added
 - **DASH SCTE-35 inband event signalling** (issue #969). MPD now declares

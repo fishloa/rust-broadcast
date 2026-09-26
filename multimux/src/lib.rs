@@ -42,6 +42,8 @@ pub mod route;
 pub mod source;
 #[cfg(test)]
 pub(crate) mod testutil;
+#[cfg(any(feature = "whip", feature = "whep"))]
+mod webrtc_http;
 
 pub use error::{MultimuxError, Result};
 // Re-exported so an external crate wiring up a `crate::registry::SchemeRegistry`

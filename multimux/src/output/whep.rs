@@ -98,9 +98,10 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
+use broadcast_auth::{AuthResult, Verifier};
 use broadcast_common::Parse;
 use media_plane::trunk::{SampleCursorItem, Trunk};
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::io::AsyncWriteExt;
 use tokio::net::{TcpListener, TcpStream, UdpSocket};
 use tokio::sync::{Mutex as TokioMutex, mpsc};
 use tokio_util::sync::CancellationToken;
@@ -135,6 +136,14 @@ const ACCEPT_QUEUE_CAPACITY: usize = 32;
 /// Max UDP datagram this output reads in one `recv` — matches
 /// `crate::source::whip::MAX_UDP_DATAGRAM`.
 const MAX_UDP_DATAGRAM: usize = 65_536;
+
+/// Ends a WHEP session (freeing its `active_sessions` slot) once no inbound
+/// datagram — STUN, DTLS, or SRTP/RTCP, valid or not — has arrived for this
+/// long. RFC 7675 (ICE consent freshness) uses the same 30s figure for how
+/// long a live session may go without a fresh consent check before treating
+/// the peer as gone; a viewer that vanished (network loss, tab closed
+/// without a clean teardown) would otherwise hold its slot forever.
+const WHEP_INBOUND_SILENCE_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// A WHEP egress route: binds an HTTP listen socket and answers viewers
 /// against it. See the module doc.
@@ -185,45 +194,6 @@ struct AdmittedWhep {
     pt: u8,
     /// Fixed SSRC for this session's one outbound video stream.
     ssrc: u32,
-}
-
-/// Reads one HTTP/1.1 request (request line + `Content-Length` body) off
-/// `stream` — see `crate::source::whip::read_http_request`'s identical
-/// reasoning (no chunked transfer-encoding, no persistent-connection
-/// reuse: a WHEP viewer's POST is a single request/response).
-async fn read_http_request(stream: &mut TcpStream) -> std::io::Result<(String, Vec<u8>)> {
-    let mut buf = Vec::new();
-    let mut tmp = [0u8; 4096];
-    loop {
-        let n = stream.read(&mut tmp).await?;
-        if n == 0 {
-            return Ok((String::new(), Vec::new()));
-        }
-        buf.extend_from_slice(&tmp[..n]);
-        let Some(pos) = buf.windows(4).position(|w| w == b"\r\n\r\n") else {
-            continue;
-        };
-        let head = String::from_utf8_lossy(&buf[..pos]).to_string();
-        let mut lines = head.lines();
-        let request_line = lines.next().unwrap_or_default().to_string();
-        let content_length: usize = lines
-            .find_map(|l| {
-                l.to_ascii_lowercase()
-                    .strip_prefix("content-length:")
-                    .and_then(|v| v.trim().parse().ok())
-            })
-            .unwrap_or(0);
-        let body_start = pos + 4;
-        while buf.len() < body_start + content_length {
-            let n = stream.read(&mut tmp).await?;
-            if n == 0 {
-                break;
-            }
-            buf.extend_from_slice(&tmp[..n]);
-        }
-        let body_end = (body_start + content_length).min(buf.len());
-        return Ok((request_line, buf[body_start..body_end].to_vec()));
-    }
 }
 
 /// One parsed WHEP SDP offer — the viewer-side analogue of
@@ -437,26 +407,88 @@ fn rand_ssrc() -> u32 {
     (state.hash_one(Instant::now()) as u32) | 1
 }
 
-/// Handles one accepted TCP connection end-to-end: read the POST, parse and
-/// answer the offer against the route's real `Trunk` track, bind this
-/// session's own ephemeral media socket, build the [`MediaTransport`],
-/// write the `201 Created` response, and hand the negotiated session off to
-/// `tx`. An `OPTIONS` preflight gets a permissive CORS response and no
-/// session — see `crate::source::whip::handle_whip_connection`'s identical
-/// shape.
+/// Verifies one request against `output_auth`, exactly mirroring
+/// `crate::origin::output_auth_gate`'s own decision: `None` when
+/// `output_auth` isn't configured or the method is `OPTIONS` (a CORS
+/// preflight never carries the real request's credentials — see that
+/// function's own doc), the same `broadcast_auth::RequestContext`
+/// (method/URI/headers/peer address, no body — `output_auth_gate` never
+/// feeds one in either), and the same `401` + `WWW-Authenticate` challenge
+/// on anything other than `AuthResult::Ok` (default-deny, since
+/// `AuthResult` is `#[non_exhaustive]`). `Some(response)` is the full
+/// HTTP/1.1 response to write back and close; `None` means "authorized,
+/// proceed".
+fn check_output_auth(
+    output_auth: &Option<Arc<Verifier>>,
+    method: &str,
+    uri: &str,
+    headers: &[(String, String)],
+    peer_addr: Option<SocketAddr>,
+) -> Option<String> {
+    let verifier = output_auth.as_ref()?;
+    if method.eq_ignore_ascii_case("OPTIONS") {
+        return None;
+    }
+    let header_pairs: Vec<(&str, &str)> = headers
+        .iter()
+        .map(|(k, v)| (k.as_str(), v.as_str()))
+        .collect();
+    let mut ctx = broadcast_auth::RequestContext::new(method, uri).with_headers(&header_pairs);
+    if let Some(peer) = peer_addr {
+        ctx = ctx.with_peer_addr(peer);
+    }
+    match verifier.verify(&ctx) {
+        AuthResult::Ok => None,
+        _ => Some(format!(
+            "HTTP/1.1 401 Unauthorized\r\nWWW-Authenticate: {}\r\nContent-Length: 0\r\n\r\n",
+            verifier.challenge()
+        )),
+    }
+}
+
+/// Handles one accepted TCP connection end-to-end: read the POST, verify
+/// output auth, parse and answer the offer against the route's real `Trunk`
+/// track, bind this session's own ephemeral media socket, build the
+/// [`MediaTransport`], write the `201 Created` response, and hand the
+/// negotiated session off to `tx`. An `OPTIONS` preflight gets a permissive
+/// CORS response and no session — see
+/// `crate::source::whip::handle_whip_connection`'s identical shape.
 async fn handle_whep_connection(
     mut stream: TcpStream,
     trunk: &Trunk,
     tx: &mpsc::Sender<AdmittedWhep>,
     active_sessions: &Arc<AtomicUsize>,
     max_sessions: usize,
+    output_auth: &Option<Arc<Verifier>>,
 ) -> Result<()> {
-    let (request_line, body) =
-        read_http_request(&mut stream)
-            .await
-            .map_err(|e| MultimuxError::Connect {
+    let peer_addr = stream.peer_addr().ok();
+    let crate::webrtc_http::HttpRequest {
+        request_line,
+        headers,
+        body,
+    } = match crate::webrtc_http::read_http_request(&mut stream).await {
+        Ok(r) => r,
+        Err(crate::webrtc_http::ReadRequestError::HeadersTooLarge) => {
+            let resp = "HTTP/1.1 431 Request Header Fields Too Large\r\nContent-Length: 0\r\n\r\n";
+            let _ = stream.write_all(resp.as_bytes()).await;
+            return Ok(());
+        }
+        Err(crate::webrtc_http::ReadRequestError::BodyTooLarge) => {
+            let resp = "HTTP/1.1 413 Payload Too Large\r\nContent-Length: 0\r\n\r\n";
+            let _ = stream.write_all(resp.as_bytes()).await;
+            return Ok(());
+        }
+        Err(crate::webrtc_http::ReadRequestError::Timeout) => {
+            return Err(MultimuxError::Connect {
+                reason: "whep: read request: timed out".into(),
+            });
+        }
+        Err(crate::webrtc_http::ReadRequestError::Io(e)) => {
+            return Err(MultimuxError::Connect {
                 reason: format!("whep: read request: {e}"),
-            })?;
+            });
+        }
+    };
     if request_line.starts_with("OPTIONS") {
         let resp = "HTTP/1.1 204 No Content\r\n\
              Access-Control-Allow-Origin: *\r\n\
@@ -468,6 +500,17 @@ async fn handle_whep_connection(
     }
     if !request_line.starts_with("POST") {
         let resp = "HTTP/1.1 405 Method Not Allowed\r\nContent-Length: 0\r\n\r\n";
+        let _ = stream.write_all(resp.as_bytes()).await;
+        return Ok(());
+    }
+
+    // Output auth (issue r07-C11): verified before any work — same gate a
+    // GET on the media routes goes through, applied here since this raw
+    // listener has no axum middleware stack of its own.
+    let mut method_and_uri = request_line.split_whitespace();
+    let method = method_and_uri.next().unwrap_or_default();
+    let uri = method_and_uri.next().unwrap_or_default();
+    if let Some(resp) = check_output_auth(output_auth, method, uri, &headers, peer_addr) {
         let _ = stream.write_all(resp.as_bytes()).await;
         return Ok(());
     }
@@ -756,12 +799,34 @@ async fn send_sample(
 /// handshake has completed and a peer address is known — draining newly
 /// published `Trunk` samples for this session's track, packetising and
 /// sending each as SRTP. Returns when the socket errors, the session is
-/// cancelled, or the process is shutting down.
+/// cancelled, the process is shutting down, or [`WHEP_INBOUND_SILENCE_TIMEOUT`]
+/// elapses with no inbound datagram at all.
 async fn run_whep_session(
     admitted: AdmittedWhep,
     trunk: Arc<Trunk>,
     cancel: CancellationToken,
     active_sessions: Arc<AtomicUsize>,
+) {
+    run_whep_session_with_silence_timeout(
+        admitted,
+        trunk,
+        cancel,
+        active_sessions,
+        WHEP_INBOUND_SILENCE_TIMEOUT,
+    )
+    .await;
+}
+
+/// [`run_whep_session`], with the silence bound as a parameter rather than
+/// baked to [`WHEP_INBOUND_SILENCE_TIMEOUT`] (30s) — exists so a test can
+/// prove a session actually ends after a period of silence using a short
+/// real duration instead of waiting out the real constant.
+async fn run_whep_session_with_silence_timeout(
+    admitted: AdmittedWhep,
+    trunk: Arc<Trunk>,
+    cancel: CancellationToken,
+    active_sessions: Arc<AtomicUsize>,
+    silence_timeout: Duration,
 ) {
     let AdmittedWhep {
         socket,
@@ -780,6 +845,10 @@ async fn run_whep_session(
     let mut handshake_done = false;
     let mut next_seq: u16 = 0;
     let mut buf = vec![0u8; MAX_UDP_DATAGRAM];
+    // RFC 7675 consent-freshness bound (issue r07-C11) — updated on every
+    // inbound datagram, valid or not (an unauthenticated stray still proves
+    // *something* is reaching this socket; what matters here is silence).
+    let mut last_inbound = Instant::now();
 
     loop {
         if cancel.is_cancelled() {
@@ -787,6 +856,7 @@ async fn run_whep_session(
         }
         match tokio::time::timeout(SESSION_POLL_INTERVAL, socket.recv_from(&mut buf)).await {
             Ok(Ok((n, peer))) => {
+                last_inbound = Instant::now();
                 peer_addr = Some(peer);
                 let mut guard = media.lock().await;
                 match guard.handle_datagram(Instant::now(), peer, &buf[..n]) {
@@ -802,7 +872,21 @@ async fn run_whep_session(
                         }
                     }
                     Err(e) => {
-                        tracing::warn!(error = %e, "whep: datagram handling failed");
+                        // Post-handshake this socket accepts datagrams from
+                        // anyone (no source-address/ICE-pair check), so a
+                        // failure once live is an unauthenticated stray, not
+                        // a dead session — logged and skipped, matching
+                        // `crate::source::whip::read_one`'s identical
+                        // reasoning. Before the handshake ever completes,
+                        // though, this session can never make progress
+                        // again: end it now rather than waiting out the
+                        // full silence timeout.
+                        if handshake_done {
+                            tracing::debug!(error = %e, "whep: datagram handling failed");
+                        } else {
+                            tracing::warn!(error = %e, "whep: dtls setup failed; ending session");
+                            break;
+                        }
                     }
                 }
             }
@@ -811,6 +895,10 @@ async fn run_whep_session(
                 break;
             }
             Err(_) => {
+                if last_inbound.elapsed() >= silence_timeout {
+                    tracing::info!("whep: session ending after inbound silence timeout");
+                    break;
+                }
                 // Timeout: still drive ICE/DTLS timers (retransmits, etc.)
                 // before checking for new samples below.
                 let mut guard = media.lock().await;
@@ -844,7 +932,12 @@ async fn run_whep_session(
 /// egress driver spawned once per configured `OutputKind::Whep` output
 /// (`crate::origin::spawn_whep_outputs`) rather than a supervised ingest
 /// task. Returns once `cancel` fires or the listen socket fails.
-pub async fn run_whep(route: &WhepRoute, trunk: Arc<Trunk>, cancel: CancellationToken) {
+pub async fn run_whep(
+    route: &WhepRoute,
+    trunk: Arc<Trunk>,
+    cancel: CancellationToken,
+    output_auth: Option<Arc<Verifier>>,
+) {
     let listener = match TcpListener::bind(&route.listen).await {
         Ok(l) => l,
         Err(e) => {
@@ -870,10 +963,17 @@ pub async fn run_whep(route: &WhepRoute, trunk: Arc<Trunk>, cancel: Cancellation
                             let tx = admit_tx.clone();
                             let trunk = Arc::clone(&accept_trunk);
                             let active = Arc::clone(&accept_active);
+                            let output_auth = output_auth.clone();
                             tokio::spawn(async move {
-                                if let Err(e) =
-                                    handle_whep_connection(stream, &trunk, &tx, &active, max_sessions)
-                                        .await
+                                if let Err(e) = handle_whep_connection(
+                                    stream,
+                                    &trunk,
+                                    &tx,
+                                    &active,
+                                    max_sessions,
+                                    &output_auth,
+                                )
+                                .await
                                 {
                                     tracing::warn!(
                                         error = %e,
@@ -1074,6 +1174,185 @@ m=audio 9 UDP/TLS/RTP/SAVPF 111\r\na=ice-ufrag:x\r\na=ice-pwd:xxxxxxxxxxxxxxxxxx
         assert_eq!(
             u32::from_be_bytes([patched[4], patched[5], patched[6], patched[7]]),
             90_000
+        );
+    }
+
+    fn nz(n: usize) -> std::num::NonZeroUsize {
+        std::num::NonZeroUsize::new(n).unwrap()
+    }
+
+    fn empty_trunk() -> Arc<Trunk> {
+        Trunk::new(media_plane::trunk::TrunkConfig::new(
+            nz(4),
+            nz(4),
+            nz(4),
+            nz(4),
+            nz(4),
+        ))
+    }
+
+    fn basic_verifier(username: &str, password: &str) -> Arc<Verifier> {
+        Arc::new(Verifier::new(
+            broadcast_auth::Credentials::Basic {
+                username: username.to_string(),
+                password: password.to_string(),
+            },
+            "whep-test",
+        ))
+    }
+
+    /// PRE-FIX FAILURE OBSERVED: `run_whep`/`handle_whep_connection` had no
+    /// `output_auth` parameter at all — an unauthenticated `POST` reached
+    /// the offer parser unconditionally (the same response an authenticated
+    /// request would eventually get), so the assertion that it must
+    /// *instead* get a `401` failed immediately (the response started with
+    /// `HTTP/1.1 409`, the empty-trunk "no track yet" response, not `401`).
+    #[tokio::test]
+    async fn whep_output_auth_rejects_unauthenticated_and_accepts_authenticated() {
+        use base64::Engine as _;
+        use tokio::io::AsyncReadExt;
+
+        let verifier = basic_verifier("alice", "s3cret");
+        let trunk = empty_trunk();
+        let (tx, _rx) = mpsc::channel::<AdmittedWhep>(1);
+        let active_sessions = Arc::new(AtomicUsize::new(0));
+
+        // Unauthenticated request: must be 401, never reaching the offer
+        // parser at all.
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let mut client = TcpStream::connect(addr).await.unwrap();
+        let (server, _) = listener.accept().await.unwrap();
+        let request = format!(
+            "POST /whep HTTP/1.1\r\nContent-Length: {}\r\n\r\n{OFFER}",
+            OFFER.len()
+        );
+        client.write_all(request.as_bytes()).await.unwrap();
+        handle_whep_connection(
+            server,
+            &trunk,
+            &tx,
+            &active_sessions,
+            64,
+            &Some(Arc::clone(&verifier)),
+        )
+        .await
+        .expect("a rejected request is a normal 401 response, not a hard error");
+        let mut resp = Vec::new();
+        client.read_to_end(&mut resp).await.unwrap();
+        let resp = String::from_utf8_lossy(&resp);
+        assert!(
+            resp.starts_with("HTTP/1.1 401"),
+            "unauthenticated POST must be rejected: {resp}"
+        );
+        assert!(resp.contains("WWW-Authenticate"));
+
+        // Correctly authenticated request: must get past the auth gate (the
+        // empty trunk then answers 409 "no track yet" — the point under
+        // test is that it is *not* 401).
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let mut client = TcpStream::connect(addr).await.unwrap();
+        let (server, _) = listener.accept().await.unwrap();
+        let credential = base64::engine::general_purpose::STANDARD.encode("alice:s3cret");
+        let request = format!(
+            "POST /whep HTTP/1.1\r\nAuthorization: Basic {credential}\r\nContent-Length: {}\r\n\r\n{OFFER}",
+            OFFER.len()
+        );
+        client.write_all(request.as_bytes()).await.unwrap();
+        handle_whep_connection(server, &trunk, &tx, &active_sessions, 64, &Some(verifier))
+            .await
+            .expect("handle_whep_connection");
+        let mut resp = Vec::new();
+        client.read_to_end(&mut resp).await.unwrap();
+        let resp = String::from_utf8_lossy(&resp);
+        assert!(
+            !resp.starts_with("HTTP/1.1 401"),
+            "correctly authenticated POST must not be rejected: {resp}"
+        );
+    }
+
+    fn test_track_spec() -> TrackSpec {
+        TrackSpec::new(
+            1,
+            VIDEO_CLOCK_RATE,
+            CodecConfig::Avc {
+                config: transmux::AVCConfigurationBox::new(
+                    transmux::AVCDecoderConfigurationRecord {
+                        configuration_version: 1,
+                        profile_indication: 0x42,
+                        profile_compatibility: 0,
+                        level_indication: 0x1f,
+                        length_size_minus_one: 3,
+                        sps: Vec::new(),
+                        pps: Vec::new(),
+                        chroma_format: None,
+                        bit_depth_luma_minus8: None,
+                        bit_depth_chroma_minus8: None,
+                        sps_ext: Vec::new(),
+                    },
+                ),
+                width: 0,
+                height: 0,
+            },
+        )
+    }
+
+    async fn test_admitted_whep() -> AdmittedWhep {
+        let s = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
+        s.set_nonblocking(true).unwrap();
+        let media = MediaTransport::new(MediaTransportConfig {
+            local_addr: "127.0.0.1:0".parse().unwrap(),
+            local_ice_ufrag: rand_token(8),
+            local_ice_pwd: rand_token(24),
+            remote_ice_ufrag: rand_token(8),
+            remote_ice_pwd: rand_token(24),
+            is_controlling: false,
+            local_setup: SetupRole::Passive,
+            stun_server: None,
+            remote_fingerprint: OFFER_FINGERPRINT.into(),
+        })
+        .unwrap();
+        AdmittedWhep {
+            socket: Arc::new(UdpSocket::from_std(s).unwrap()),
+            media: Arc::new(TokioMutex::new(media)),
+            spec: test_track_spec(),
+            pt: 96,
+            ssrc: rand_ssrc(),
+        }
+    }
+
+    /// PRE-FIX FAILURE OBSERVED: `run_whep_session` had no silence bound at
+    /// all — a session with no inbound datagram ran forever, so
+    /// `active_sessions` never dropped back to 0 within any bounded wait;
+    /// asserting it reached 0 within `2 * silence_timeout` timed out
+    /// (the assertion below is what now catches that: the loop kept
+    /// running past the deadline with the counter still at 1).
+    #[tokio::test]
+    async fn whep_session_ends_after_inbound_silence_timeout() {
+        let admitted = test_admitted_whep().await;
+        let trunk = empty_trunk();
+        let cancel = CancellationToken::new();
+        let active_sessions = Arc::new(AtomicUsize::new(1));
+        let silence_timeout = Duration::from_millis(100);
+
+        let handle = tokio::spawn(run_whep_session_with_silence_timeout(
+            admitted,
+            trunk,
+            cancel,
+            Arc::clone(&active_sessions),
+            silence_timeout,
+        ));
+
+        tokio::time::timeout(silence_timeout * 10, handle)
+            .await
+            .expect("the session must end on its own within a few silence timeouts")
+            .expect("run_whep_session_with_silence_timeout must not panic");
+
+        assert_eq!(
+            active_sessions.load(Ordering::Relaxed),
+            0,
+            "a session with no inbound traffic must free its slot after the silence timeout"
         );
     }
 }
