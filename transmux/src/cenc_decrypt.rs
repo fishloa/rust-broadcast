@@ -74,6 +74,8 @@
 //! [`aes`], [`ctr`], and [`cbc`] crates for the block cipher and mode work.
 //! This module is gated on the `cenc` feature.
 
+use core::fmt;
+
 use alloc::collections::BTreeMap;
 use alloc::vec::Vec;
 
@@ -99,9 +101,22 @@ const KEY_LEN: usize = 16;
 ///
 /// The [`Decrypt::Keys`] material for [`CencDecryptor`]: each protected sample's
 /// KID (from `tenc.default_kid`) selects a 16-byte AES-128 content key.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Clone, Default, PartialEq, Eq)]
 pub struct KeyMap {
     keys: BTreeMap<[u8; KEY_LEN], [u8; KEY_LEN]>,
+}
+
+/// Manual `Debug`: lists the (non-secret) KIDs this map holds, never the
+/// content key bytes paired with them (a derived `Debug` over the
+/// `BTreeMap<kid, key>` would print both — a `tracing::debug!`/`dbg!`/panic
+/// message of a value holding a `KeyMap` would then write live content keys
+/// to logs).
+impl fmt::Debug for KeyMap {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("KeyMap")
+            .field("kids", &self.keys.keys().collect::<Vec<_>>())
+            .finish()
+    }
 }
 
 impl KeyMap {
@@ -160,13 +175,27 @@ struct TrackCrypto {
 /// if you already have a [`Media`] of the encrypted samples, call
 /// [`Decrypt::decrypt`] directly. The decryptor matches each track's samples to
 /// the recovered per-sample IV + subsample map by decode-order index.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct CencDecryptor {
     /// The whole protected fMP4 file (borrowing is avoided so the decryptor is
     /// `'static`-friendly for the trait impl; a `Vec` copy is acceptable here).
     file: Vec<u8>,
     /// Per-track crypto metadata, in `moov` track order.
     tracks: Vec<TrackCrypto>,
+}
+
+/// Manual `Debug`: prints the file's length rather than its bytes (this type
+/// never holds a content key — those are supplied out of band to
+/// [`Decrypt::decrypt`] as a [`KeyMap`] — but a derived `Debug` would still
+/// dump the whole protected file, megabytes of ciphertext, into any
+/// `tracing`/`dbg!`/panic message of a value holding one).
+impl fmt::Debug for CencDecryptor {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("CencDecryptor")
+            .field("file_len", &self.file.len())
+            .field("tracks", &self.tracks)
+            .finish()
+    }
 }
 
 impl CencDecryptor {
@@ -1337,5 +1366,53 @@ mod tests {
         let mut media = encrypted_media(99, &AUDIO_IV);
         let err = dec.decrypt(&mut media, &keys).unwrap_err();
         assert!(matches!(err, Error::InvalidInput(_)), "got {err:?}");
+    }
+
+    /// W8: `KeyMap`'s `Debug` must list KIDs (not secret) but never the
+    /// content key bytes paired with them.
+    #[test]
+    fn keymap_debug_redacts_key_bytes_but_shows_kids() {
+        let km = KeyMap::new().with_key(KID, KEY);
+        let out = alloc::format!("{km:?}");
+        assert!(
+            !out.contains(&alloc::format!("{KEY:?}")),
+            "Debug output must not contain the key's array representation: {out}"
+        );
+        assert!(
+            out.contains(&alloc::format!("{KID:?}")),
+            "KIDs are not secret and should still be visible: {out}"
+        );
+    }
+
+    /// W8: `CencDecryptor` never stores a content key (keys are supplied out
+    /// of band to [`Decrypt::decrypt`]), but its `Debug` must also never dump
+    /// the raw protected file bytes — pin that the output stays bounded
+    /// regardless of file size, rather than growing with it.
+    #[test]
+    fn decryptor_debug_does_not_dump_raw_file_bytes() {
+        let mut small = decryptor();
+        small.file = alloc::vec![0x42u8; 10];
+        let mut large = decryptor();
+        large.file = alloc::vec![0x42u8; 10_000];
+
+        let small_out = alloc::format!("{small:?}");
+        let large_out = alloc::format!("{large:?}");
+
+        assert!(!small_out.contains(&alloc::format!("{KEY:?}")));
+        assert!(!large_out.contains(&alloc::format!("{KEY:?}")));
+        // A derived `Debug` over `file: Vec<u8>` would make the 10_000-byte
+        // file's output roughly 1000x longer than the 10-byte file's; the
+        // manual impl instead prints only `file_len` (a handful of digits),
+        // so the two stay within a few characters of each other (both
+        // decryptors are otherwise identical).
+        let diff = large_out.len().abs_diff(small_out.len());
+        assert!(
+            diff < 20,
+            "Debug output must not scale with file size (it should print file_len, not the \
+             bytes): small={small_out} ({} chars), large={large_out} ({} chars)",
+            small_out.len(),
+            large_out.len()
+        );
+        assert!(large_out.contains("file_len"));
     }
 }

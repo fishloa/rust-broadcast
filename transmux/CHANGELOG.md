@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- `KeyMap`, `CencEncryptor` and `CencDecryptor` no longer derive `Debug`: a manual impl on each
+  now redacts content key bytes (KIDs, which are not secret, still print) and, for
+  `CencDecryptor`, summarizes the protected file by length instead of dumping its bytes.
+- `progressive_demux`'s `stsc` chunk-run expansion now clamps each entry's chunk range to the
+  track's actual chunk count before iterating, instead of iterating the wire `first_chunk` value
+  directly (an out-of-range `first_chunk`, up to `u32::MAX`, could cost billions of loop
+  iterations per entry).
+
 ## [0.24.2] - 2026-09-25
 
 ### Security

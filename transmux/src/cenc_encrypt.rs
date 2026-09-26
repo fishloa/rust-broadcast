@@ -45,6 +45,8 @@
 //!
 //! This module is gated on the `cenc` feature.
 
+use core::fmt;
+
 use alloc::collections::BTreeSet;
 use alloc::vec::Vec;
 
@@ -225,7 +227,6 @@ pub struct EncryptConfig {
 /// one legitimate case that looks like a fresh instance (recovering
 /// in-process state across e.g. a process restart, from a persisted
 /// `next_counter()`).
-#[derive(Debug)]
 pub struct CencEncryptor {
     /// The AES-128 content key every `encrypt` call on this instance uses.
     key: [u8; KEY_LEN],
@@ -233,6 +234,18 @@ pub struct CencEncryptor {
     /// running index described above. Unused (and unadvanced) by
     /// [`IvGen::Explicit`]/[`IvGen::Constant`] calls.
     next_counter: u64,
+}
+
+/// Manual `Debug`: redacts the bound content key (a derived `Debug` would
+/// print it verbatim — a `tracing::debug!`/`dbg!`/panic message of a value
+/// holding a `CencEncryptor` would then write the live content key to logs).
+impl fmt::Debug for CencEncryptor {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("CencEncryptor")
+            .field("key", &"<redacted>")
+            .field("next_counter", &self.next_counter)
+            .finish()
+    }
 }
 
 impl CencEncryptor {
@@ -876,6 +889,23 @@ mod tests {
                 iv
             })
             .collect()
+    }
+
+    /// W8: `CencEncryptor`'s `Debug` must never print the bound content key
+    /// (a derived `Debug` would — see this type's manual `impl fmt::Debug`).
+    #[test]
+    fn debug_redacts_content_key() {
+        let enc = CencEncryptor::new(KEY);
+        let out = alloc::format!("{enc:?}");
+        assert!(
+            !out.contains(&alloc::format!("{KEY:?}")),
+            "Debug output must not contain the key's array representation: {out}"
+        );
+        // Every individual key byte's decimal form would also be a giveaway
+        // if concatenated; check the exact array rendering is absent, and
+        // that the placeholder and the (non-secret) counter are present.
+        assert!(out.contains("<redacted>"));
+        assert!(out.contains("next_counter"));
     }
 
     #[test]
