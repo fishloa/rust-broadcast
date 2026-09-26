@@ -224,8 +224,18 @@ pub const MSG_ID_DOWNLOAD_CANCEL: u16 = 0x1005;
 /// 79/80/81): protocolDiscriminator + dsmccType + messageId + transactionId +
 /// reserved + adaptationLength + messageLength, plus the optional adaptation
 /// bytes (`adaptationType` + data, carried opaque).
+///
+/// Each of these message types (`DownloadInfoRequest`/`Response`/`Cancel`) is
+/// directly `Parse`-able on its own, with no outer `apdu_tag`/framing to
+/// dispatch on first — `messageId` is the *only* field distinguishing one
+/// from another (or from an unrelated DSM-CC message entirely), so
+/// `expected_message_id` is checked here rather than left to the caller.
+/// `protocolDiscriminator`/`dsmccType` are likewise checked: without it, any
+/// 12+ byte buffer parses as a "valid" message of whichever type happened to
+/// be asked for.
 fn parse_dsmcc_header<'a>(
     body: &'a [u8],
+    expected_message_id: u16,
     what: &'static str,
 ) -> Result<(u32, u8, &'a [u8], &'a [u8])> {
     // protocolDiscriminator(1) dsmccType(1) messageId(2) transactionId(4)
@@ -238,6 +248,25 @@ fn parse_dsmcc_header<'a>(
             what,
         });
     }
+    if body[0] != DSMCC_PROTOCOL_DISCRIMINATOR {
+        return Err(Error::InvalidObject {
+            what,
+            reason: "protocolDiscriminator is not MPEG-2 DSM-CC (0x11)",
+        });
+    }
+    if body[1] != DSMCC_TYPE_DOWNLOAD {
+        return Err(Error::InvalidObject {
+            what,
+            reason: "dsmccType is not U-N Download (0x03)",
+        });
+    }
+    let message_id = u16::from_be_bytes([body[2], body[3]]);
+    if message_id != expected_message_id {
+        return Err(Error::InvalidObject {
+            what,
+            reason: "messageId does not match this message type",
+        });
+    }
     let transaction_id = u32::from_be_bytes([body[4], body[5], body[6], body[7]]);
     let adaptation_length = body[9] as usize;
     if body.len() < HDR + adaptation_length {
@@ -245,6 +274,17 @@ fn parse_dsmcc_header<'a>(
             need: HDR + adaptation_length,
             have: body.len(),
             what,
+        });
+    }
+    let declared_message_length = u16::from_be_bytes([body[10], body[11]]) as usize;
+    // messageLength counts everything after the messageLength field itself
+    // (§6.7.5: adaptationType/adaptationDataBytes + the message body).
+    let actual_message_length = body.len() - HDR;
+    if declared_message_length != actual_message_length {
+        return Err(Error::LengthMismatch {
+            what,
+            declared: declared_message_length,
+            actual: actual_message_length,
         });
     }
     let adaptation = &body[HDR..HDR + adaptation_length];
@@ -300,7 +340,8 @@ impl<'a> Parse<'a> for DownloadInfoRequest<'a> {
     type Error = Error;
     fn parse(body: &'a [u8]) -> Result<Self> {
         let what = "DownloadInfoRequest";
-        let (transaction_id, _adapt_len, adaptation, rest) = parse_dsmcc_header(body, what)?;
+        let (transaction_id, _adapt_len, adaptation, rest) =
+            parse_dsmcc_header(body, MSG_ID_DOWNLOAD_INFO_REQUEST, what)?;
         // bufferSize(4) maximumBlockSize(2) compatibilityDescriptorLength(2).
         if rest.len() < 8 {
             return Err(Error::BufferTooShort {
@@ -429,7 +470,8 @@ impl<'a> Parse<'a> for DownloadInfoResponse<'a> {
     type Error = Error;
     fn parse(body: &'a [u8]) -> Result<Self> {
         let what = "DownloadInfoResponse";
-        let (transaction_id, _adapt_len, adaptation, rest) = parse_dsmcc_header(body, what)?;
+        let (transaction_id, _adapt_len, adaptation, rest) =
+            parse_dsmcc_header(body, MSG_ID_DOWNLOAD_INFO_RESPONSE, what)?;
         // downloadId(4) blockSize(2) windowSize(1) ackPeriod(1)
         // tCDownloadWindow(4) tCDownloadScenario(4) compatibilityDescriptorLength(2).
         const FIXED: usize = 4 + 2 + 1 + 1 + 4 + 4 + 2;
@@ -595,7 +637,8 @@ impl<'a> Parse<'a> for DownloadCancel<'a> {
     type Error = Error;
     fn parse(body: &'a [u8]) -> Result<Self> {
         let what = "DownloadCancel";
-        let (transaction_id, _adapt_len, adaptation, rest) = parse_dsmcc_header(body, what)?;
+        let (transaction_id, _adapt_len, adaptation, rest) =
+            parse_dsmcc_header(body, MSG_ID_DOWNLOAD_CANCEL, what)?;
         // downloadId(4) moduleId(2) blockNumber(2) downloadCancelReason(1) privateDataLength(2).
         const FIXED: usize = 4 + 2 + 2 + 1 + 2;
         if rest.len() < FIXED {
@@ -676,6 +719,7 @@ impl Serialize for DownloadCancel<'_> {
 /// `messageLength`. Returns `(download_id, adaptation, rest_after_adaptation)`.
 fn parse_dsmcc_data_header<'a>(
     body: &'a [u8],
+    expected_message_id: u16,
     what: &'static str,
 ) -> Result<(u32, &'a [u8], &'a [u8])> {
     // protocolDiscriminator(1) dsmccType(1) messageId(2) DownloadId(4)
@@ -688,6 +732,25 @@ fn parse_dsmcc_data_header<'a>(
             what,
         });
     }
+    if body[0] != DSMCC_PROTOCOL_DISCRIMINATOR {
+        return Err(Error::InvalidObject {
+            what,
+            reason: "protocolDiscriminator is not MPEG-2 DSM-CC (0x11)",
+        });
+    }
+    if body[1] != DSMCC_TYPE_DOWNLOAD {
+        return Err(Error::InvalidObject {
+            what,
+            reason: "dsmccType is not U-N Download (0x03)",
+        });
+    }
+    let message_id = u16::from_be_bytes([body[2], body[3]]);
+    if message_id != expected_message_id {
+        return Err(Error::InvalidObject {
+            what,
+            reason: "messageId does not match this message type",
+        });
+    }
     let download_id = u32::from_be_bytes([body[4], body[5], body[6], body[7]]);
     let adaptation_length = body[9] as usize;
     if body.len() < HDR + adaptation_length {
@@ -695,6 +758,15 @@ fn parse_dsmcc_data_header<'a>(
             need: HDR + adaptation_length,
             have: body.len(),
             what,
+        });
+    }
+    let declared_message_length = u16::from_be_bytes([body[10], body[11]]) as usize;
+    let actual_message_length = body.len() - HDR;
+    if declared_message_length != actual_message_length {
+        return Err(Error::LengthMismatch {
+            what,
+            declared: declared_message_length,
+            actual: actual_message_length,
         });
     }
     let adaptation = &body[HDR..HDR + adaptation_length];
@@ -742,7 +814,8 @@ impl<'a> Parse<'a> for DownloadDataRequest<'a> {
     type Error = Error;
     fn parse(body: &'a [u8]) -> Result<Self> {
         let what = "DownloadDataRequest";
-        let (download_id, adaptation, rest) = parse_dsmcc_data_header(body, what)?;
+        let (download_id, adaptation, rest) =
+            parse_dsmcc_data_header(body, MSG_ID_DOWNLOAD_DATA_REQUEST, what)?;
         // moduleId(2) blockNumber(2) downloadReason(1).
         const FIXED: usize = 5;
         if rest.len() < FIXED {
@@ -816,7 +889,8 @@ impl<'a> Parse<'a> for DownloadDataBlock<'a> {
     type Error = Error;
     fn parse(body: &'a [u8]) -> Result<Self> {
         let what = "DownloadDataBlock";
-        let (download_id, adaptation, rest) = parse_dsmcc_data_header(body, what)?;
+        let (download_id, adaptation, rest) =
+            parse_dsmcc_data_header(body, MSG_ID_DOWNLOAD_DATA_BLOCK, what)?;
         // moduleId(2) moduleVersion(1) reserved(1) blockNumber(2).
         const FIXED: usize = 6;
         if rest.len() < FIXED {
@@ -1026,6 +1100,92 @@ mod tests {
         let mut other = req.clone();
         other.buffer_size = 0x0002_0000;
         assert_ne!(bytes, other.to_bytes());
+    }
+
+    /// r10-W-13: `parse_dsmcc_header`/`parse_dsmcc_data_header` must check
+    /// `protocolDiscriminator`, `dsmccType`, `messageId` and `messageLength`
+    /// rather than skip straight past them. Each of these message types is
+    /// directly `Parse`-able with `messageId` the only field distinguishing
+    /// it from any other DSM-CC download message — pre-fix, feeding a
+    /// `DownloadCancel`'s own wire bytes into `DownloadInfoRequest::parse`
+    /// silently produced a (nonsensical) `DownloadInfoRequest` instead of
+    /// erroring.
+    #[test]
+    fn dsmcc_header_rejects_wrong_message_id() {
+        let cancel = DownloadCancel {
+            transaction_id: 1,
+            adaptation: &[],
+            download_id: 2,
+            module_id: 3,
+            block_number: 4,
+            download_cancel_reason: 5,
+            private_data: &[],
+        };
+        let cancel_bytes = cancel.to_bytes();
+        // Same header shape (parse_dsmcc_header), wrong messageId.
+        assert!(matches!(
+            DownloadInfoRequest::parse(&cancel_bytes),
+            Err(Error::InvalidObject { .. })
+        ));
+
+        let data_req = DownloadDataRequest {
+            download_id: 1,
+            adaptation: &[],
+            module_id: 2,
+            block_number: 3,
+            download_reason: 4,
+        };
+        let data_req_bytes = data_req.to_bytes();
+        // Same header shape (parse_dsmcc_data_header), wrong messageId.
+        assert!(matches!(
+            DownloadDataBlock::parse(&data_req_bytes),
+            Err(Error::InvalidObject { .. })
+        ));
+    }
+
+    #[test]
+    fn dsmcc_header_rejects_wrong_protocol_discriminator_and_type() {
+        let req = DownloadInfoRequest {
+            transaction_id: 1,
+            adaptation: &[],
+            buffer_size: 0,
+            maximum_block_size: 0,
+            compatibility_descriptor: &[0x00, 0x00],
+            private_data: &[0x00, 0x00],
+        };
+        let mut bytes = req.to_bytes();
+        bytes[0] = 0x12; // wrong protocolDiscriminator
+        assert!(matches!(
+            DownloadInfoRequest::parse(&bytes),
+            Err(Error::InvalidObject { .. })
+        ));
+
+        let mut bytes = req.to_bytes();
+        bytes[1] = 0x04; // wrong dsmccType
+        assert!(matches!(
+            DownloadInfoRequest::parse(&bytes),
+            Err(Error::InvalidObject { .. })
+        ));
+    }
+
+    #[test]
+    fn dsmcc_header_rejects_wrong_message_length() {
+        let req = DownloadInfoRequest {
+            transaction_id: 1,
+            adaptation: &[],
+            buffer_size: 0,
+            maximum_block_size: 0,
+            compatibility_descriptor: &[0x00, 0x00],
+            private_data: &[0x00, 0x00],
+        };
+        let mut bytes = req.to_bytes();
+        // messageLength is bytes[10..12]; corrupt it without changing the
+        // buffer's actual length.
+        bytes[11] ^= 0xFF;
+        assert!(matches!(
+            DownloadInfoRequest::parse(&bytes),
+            Err(Error::LengthMismatch { .. })
+        ));
     }
 
     #[test]

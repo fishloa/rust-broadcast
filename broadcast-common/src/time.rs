@@ -59,9 +59,15 @@ pub fn decode_mjd_bcd(raw: [u8; 5]) -> Option<MjdBcdDateTime> {
 
 /// Encode a [`MjdBcdDateTime`] to a 5-byte DVB UTC time.
 ///
-/// Returns `None` if any field is out of the representable range.
+/// Returns `None` if any field is out of the representable range. Hour/minute/
+/// second are range-checked against the same bounds [`decode_mjd_bcd`] enforces
+/// (0–23 / 0–59 / 0–59) — `to_bcd_byte` alone would accept e.g. `90` (it only
+/// rejects values above 99), producing bytes `decode_mjd_bcd` then rejects.
 #[must_use]
 pub fn encode_mjd_bcd(dt: MjdBcdDateTime) -> Option<[u8; 5]> {
+    if dt.hour > 23 || dt.minute > 59 || dt.second > 59 {
+        return None;
+    }
     let mjd = ymd_to_mjd_nogate(i32::from(dt.year), u32::from(dt.month), u32::from(dt.day))?;
     let [m0, m1] = mjd.to_be_bytes();
     Some([
@@ -73,11 +79,12 @@ pub fn encode_mjd_bcd(dt: MjdBcdDateTime) -> Option<[u8; 5]> {
     ])
 }
 
-/// Convert a 16-bit Modified Julian Date to `(year, month, day)`.
-///
-/// MJD→calendar per ETSI EN 300 468 Annex C. This is the dependency-free
-/// version of the chrono-gated [`mjd_to_ymd`].
-fn mjd_to_ymd_nogate(mjd: u16) -> Option<(u16, u8, u8)> {
+/// Shared floating-point core of the EN 300 468 Annex C MJD→calendar
+/// conversion, before range validation / integer narrowing. Both
+/// [`mjd_to_ymd_nogate`] and the chrono-gated [`mjd_to_ymd`] call this same
+/// arithmetic so the algorithm exists exactly once; each applies its own
+/// (different) post-processing to the raw result.
+fn mjd_to_ymd_core(mjd: u16) -> (i64, i64, i64) {
     let mjd = i64::from(mjd);
     let y_prime = ((mjd as f64 - 15_078.2) / 365.25) as i64;
     let m_prime = ((mjd as f64 - 14_956.1 - libm::floor(y_prime as f64 * 365.25)) / 30.6001) as i64;
@@ -88,6 +95,15 @@ fn mjd_to_ymd_nogate(mjd: u16) -> Option<(u16, u8, u8)> {
     let k = i64::from(m_prime == 14 || m_prime == 15);
     let y = y_prime + k + 1900;
     let m = m_prime - 1 - k * 12;
+    (y, m, d)
+}
+
+/// Convert a 16-bit Modified Julian Date to `(year, month, day)`.
+///
+/// MJD→calendar per ETSI EN 300 468 Annex C. This is the dependency-free
+/// version of the chrono-gated [`mjd_to_ymd`].
+fn mjd_to_ymd_nogate(mjd: u16) -> Option<(u16, u8, u8)> {
+    let (y, m, d) = mjd_to_ymd_core(mjd);
     let y_u16 = u16::try_from(y).ok()?;
     let m_u8 = u8::try_from(m).ok()?;
     let d_u8 = u8::try_from(d).ok()?;
@@ -95,6 +111,22 @@ fn mjd_to_ymd_nogate(mjd: u16) -> Option<(u16, u8, u8)> {
         return None;
     }
     Some((y_u16, m_u8, d_u8))
+}
+
+/// Shared floating-point core of the EN 300 468 Annex C calendar→MJD
+/// conversion, before range validation / narrowing to `u16`. Kept as the
+/// single copy of the algorithm ([`ymd_to_mjd_nogate`] and the chrono-gated
+/// [`ymd_to_mjd`] share it — the two callers currently apply identical
+/// validation, but this also gives a future divergent caller one place to
+/// call rather than a third hand-copy of the formula).
+fn ymd_to_mjd_core(year: i32, month: u32, day: u32) -> f64 {
+    let l = if month <= 2 { 1.0 } else { 0.0 };
+    let y = f64::from(year - 1900);
+    let m = f64::from(month);
+    14_956.0
+        + f64::from(day)
+        + libm::floor((y - l) * 365.25)
+        + libm::floor((m + 1.0 + l * 12.0) * 30.6001)
 }
 
 /// Convert a `(year, month, day)` date to a 16-bit Modified Julian Date.
@@ -105,13 +137,7 @@ fn ymd_to_mjd_nogate(year: i32, month: u32, day: u32) -> Option<u16> {
     if !(1..=12).contains(&month) || !(1..=31).contains(&day) {
         return None;
     }
-    let l = if month <= 2 { 1.0 } else { 0.0 };
-    let y = f64::from(year - 1900);
-    let m = f64::from(month);
-    let mjd = 14_956.0
-        + f64::from(day)
-        + libm::floor((y - l) * 365.25)
-        + libm::floor((m + 1.0 + l * 12.0) * 30.6001);
+    let mjd = ymd_to_mjd_core(year, month, day);
     if (0.0..=f64::from(u16::MAX)).contains(&mjd) {
         Some(mjd as u16)
     } else {
@@ -161,16 +187,7 @@ pub fn encode_bcd_duration(duration: Duration) -> Option<[u8; 3]> {
 #[cfg_attr(docsrs, doc(cfg(feature = "chrono")))]
 #[must_use]
 pub fn mjd_to_ymd(mjd: u16) -> (i32, u32, u32) {
-    let mjd = i64::from(mjd);
-    let y_prime = ((mjd as f64 - 15_078.2) / 365.25) as i64;
-    let m_prime = ((mjd as f64 - 14_956.1 - libm::floor(y_prime as f64 * 365.25)) / 30.6001) as i64;
-    let d = mjd
-        - 14_956
-        - libm::floor(y_prime as f64 * 365.25) as i64
-        - libm::floor(m_prime as f64 * 30.6001) as i64;
-    let k = i64::from(m_prime == 14 || m_prime == 15);
-    let y = y_prime + k + 1900;
-    let m = m_prime - 1 - k * 12;
+    let (y, m, d) = mjd_to_ymd_core(mjd);
     (y as i32, m as u32, d as u32)
 }
 
@@ -183,21 +200,7 @@ pub fn mjd_to_ymd(mjd: u16) -> (i32, u32, u32) {
 #[cfg_attr(docsrs, doc(cfg(feature = "chrono")))]
 #[must_use]
 pub fn ymd_to_mjd(year: i32, month: u32, day: u32) -> Option<u16> {
-    if !(1..=12).contains(&month) || !(1..=31).contains(&day) {
-        return None;
-    }
-    let l = if month <= 2 { 1.0 } else { 0.0 };
-    let y = f64::from(year - 1900);
-    let m = f64::from(month);
-    let mjd = 14_956.0
-        + f64::from(day)
-        + libm::floor((y - l) * 365.25)
-        + libm::floor((m + 1.0 + l * 12.0) * 30.6001);
-    if (0.0..=f64::from(u16::MAX)).contains(&mjd) {
-        Some(mjd as u16)
-    } else {
-        None
-    }
+    ymd_to_mjd_nogate(year, month, day)
 }
 
 /// Decode a 5-byte DVB UTC time (16-bit MJD + 24-bit BCD `HHMMSS`) to a
@@ -401,6 +404,34 @@ mod tests {
     fn mjd_bcd_rejects_invalid_bcd() {
         assert_eq!(decode_mjd_bcd([0xE4, 0x09, 0x1A, 0x34, 0x56]), None);
         assert_eq!(decode_mjd_bcd([0xE4, 0x09, 0x12, 0x75, 0x56]), None);
+    }
+
+    /// r01-W16: `encode_mjd_bcd` must reject hour/minute/second values that
+    /// `decode_mjd_bcd` rejects (0-23 / 0-59 / 0-59). Pre-fix, `encode_mjd_bcd`
+    /// only bottomed out at `to_bcd_byte`'s `<=99` check, so it happily
+    /// produced bytes for hour=90 that decode then refused: `encode_mjd_bcd`
+    /// returned `Some(_)` and the round-trip `decode_mjd_bcd(raw)` was `None`,
+    /// i.e. not the original value.
+    #[test]
+    fn mjd_bcd_encode_rejects_out_of_range_time_fields() {
+        let base = MjdBcdDateTime {
+            year: 2023,
+            month: 1,
+            day: 1,
+            hour: 0,
+            minute: 0,
+            second: 0,
+        };
+        assert_eq!(encode_mjd_bcd(MjdBcdDateTime { hour: 90, ..base }), None);
+        assert_eq!(encode_mjd_bcd(MjdBcdDateTime { hour: 24, ..base }), None);
+        assert_eq!(encode_mjd_bcd(MjdBcdDateTime { minute: 90, ..base }), None);
+        assert_eq!(encode_mjd_bcd(MjdBcdDateTime { minute: 60, ..base }), None);
+        assert_eq!(encode_mjd_bcd(MjdBcdDateTime { second: 90, ..base }), None);
+        assert_eq!(encode_mjd_bcd(MjdBcdDateTime { second: 60, ..base }), None);
+        // Boundary values remain accepted.
+        assert!(encode_mjd_bcd(MjdBcdDateTime { hour: 23, ..base }).is_some());
+        assert!(encode_mjd_bcd(MjdBcdDateTime { minute: 59, ..base }).is_some());
+        assert!(encode_mjd_bcd(MjdBcdDateTime { second: 59, ..base }).is_some());
     }
 
     #[test]

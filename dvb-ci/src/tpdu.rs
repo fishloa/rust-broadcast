@@ -350,6 +350,15 @@ impl<'a> Parse<'a> for ResponseTpdu<'a> {
             });
         }
         // bytes[data_end+2] = t_c_id (status), bytes[data_end+3] = SB_value.
+        // The status trailer names the same transport connection as the
+        // TPDU body's own leading t_c_id (bytes[start]) — a mismatch means
+        // this status is not actually reporting on this TPDU.
+        if bytes[data_end + 2] != bytes[start] {
+            return Err(Error::InvalidObject {
+                what: "R_TPDU status",
+                reason: "status t_c_id does not match the TPDU's t_c_id",
+            });
+        }
         Ok(Self {
             tag,
             t_c_id: bytes[start],
@@ -539,6 +548,29 @@ mod tests {
         assert_eq!(parsed, r);
         assert!(parsed.sb_value.data_available());
         assert_eq!(parsed.block, Some(DataBlock::Last));
+    }
+
+    /// r10-W-8: the status trailer's own `t_c_id` (`bytes[data_end+2]`) must
+    /// match the TPDU body's `t_c_id`, not merely be read past and dropped.
+    /// A status reporting on a different transport connection than the one
+    /// this TPDU's body names is not a well-formed R_TPDU.
+    #[test]
+    fn response_tpdu_rejects_mismatched_status_t_c_id() {
+        let r = ResponseTpdu {
+            tag: tags::DATA_LAST,
+            t_c_id: 1,
+            data: &[0x9F, 0x80, 0x30, 0x00],
+            sb_value: SbValue::new(true),
+            block: Some(DataBlock::Last),
+        };
+        let mut bytes = r.to_bytes();
+        let status_t_c_id_idx = bytes.len() - 2;
+        assert_eq!(bytes[status_t_c_id_idx], 1);
+        bytes[status_t_c_id_idx] = 2; // status now claims a different t_c_id
+        assert!(matches!(
+            ResponseTpdu::parse(&bytes),
+            Err(Error::InvalidObject { .. })
+        ));
     }
 
     #[test]

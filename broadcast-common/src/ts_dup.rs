@@ -69,6 +69,15 @@ const PCR_FIELD_START: usize = AF_FLAGS_BYTE + 1;
 /// H.222.0 §2.4.3.5.
 const PCR_FIELD_LEN: usize = 6;
 
+/// Minimum `adaptation_field_length` for a `PCR_flag`-bearing adaptation
+/// field: the flags byte itself (1) plus the 6-byte PCR field — H.222.0
+/// §2.4.3.4 Table 2-6 / §2.4.3.5. `adaptation_field_length` counts bytes
+/// after the length byte, starting with the flags byte, so a field that
+/// claims `PCR_flag` but declares fewer than this many bytes does not
+/// actually reach the PCR — whatever follows the flags byte within the
+/// packet is unrelated payload, not the PCR exception.
+const MIN_AF_LEN_WITH_PCR: u8 = 1 + PCR_FIELD_LEN as u8;
+
 /// Locate the PCR field's byte range within `pkt`, if one is present.
 ///
 /// Returns `None` when the packet carries no adaptation field, an empty
@@ -81,8 +90,8 @@ fn pcr_field_range(pkt: &[u8]) -> Option<(usize, usize)> {
     if pkt[AFC_BYTE] & ADAPTATION_FLAG == 0 {
         return None;
     }
-    let af_len = pkt[AF_LEN_BYTE] as usize;
-    if af_len == 0 {
+    let af_len = pkt[AF_LEN_BYTE];
+    if af_len < MIN_AF_LEN_WITH_PCR {
         return None;
     }
     if pkt[AF_FLAGS_BYTE] & PCR_FLAG == 0 {
@@ -256,6 +265,48 @@ mod tests {
         let a = payload_packet(0x0100, 0x10, 0xAB);
         let b = a;
         assert!(is_legal_duplicate_pair(&a, &b));
+    }
+
+    /// r01-W19: `pcr_field_range` must require `adaptation_field_length` to
+    /// actually reach the 6-byte PCR field (>= 7: flags byte + PCR), not just
+    /// check that the *packet* is long enough. Pre-fix, a packet whose
+    /// adaptation field claims `PCR_flag` but declares `adaptation_field_length
+    /// = 1` (no room for a PCR at all — this is itself a malformed/RFU-abusing
+    /// packet, but must not be trusted) still had `pcr_field_range` return
+    /// `Some(6..12)`, treating bytes 6..12 — which are unrelated payload
+    /// bytes past the 1-byte adaptation field — as PCR-exempt. Two packets
+    /// differing only in that payload region were then wrongly accepted as a
+    /// legal §2.4.3.3 duplicate pair.
+    #[test]
+    fn pcr_exemption_requires_af_len_to_reach_the_pcr_field() {
+        let pid = 0x0100;
+        let afc_cc = 0x10 | ADAPTATION_FLAG;
+        let mut a = [0xAAu8; 188];
+        a[0] = 0x47;
+        a[1] = ((pid >> 8) as u8) & 0x1F;
+        a[2] = (pid & 0xFF) as u8;
+        a[3] = afc_cc;
+        a[4] = 1; // adaptation_field_length: flags byte only, no room for PCR
+        a[5] = PCR_FLAG; // claims PCR_flag anyway
+        let mut b = a;
+        // Differ at byte 6 — real payload given af_len=1, NOT part of any
+        // legitimate PCR field.
+        b[6] = 0xBB;
+        assert!(
+            !is_legal_duplicate_pair(&a, &b),
+            "byte 6 differs outside any PCR field af_len=1 can cover; must not be exempted"
+        );
+
+        // Sanity: the same layout WITH a conformant af_len (>= 7) still
+        // treats that same byte range as the exempt PCR field.
+        let mut c = a;
+        c[4] = MIN_AF_LEN_WITH_PCR;
+        let mut d = c;
+        d[6] = 0xBB;
+        assert!(
+            is_legal_duplicate_pair(&c, &d),
+            "byte 6 IS the PCR field once af_len actually covers it"
+        );
     }
 
     #[test]

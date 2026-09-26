@@ -6,6 +6,17 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+- `Verifier::verify` now matches the `Basic`/`Digest`/`Bearer` auth-scheme
+  token case-insensitively (RFC 7235 §2.1: `auth-scheme` is a `token`), and
+  the Digest field-list parser now treats a `"…"` quoted field value as
+  opaque rather than splitting a literal comma inside it (#1087).
+- `check_digest` now rejects a request whose `qop` is not `auth` or whose
+  `algorithm` (when present) is not `MD5` — previously neither field's value
+  was checked before being hashed into the response formula, so a request
+  that mislabeled either but still matched this server's fixed `qop=auth`/
+  MD5 hash construction was accepted (#1087).
+
 ## [0.3.1] - 2026-09-26
 
 ### Security

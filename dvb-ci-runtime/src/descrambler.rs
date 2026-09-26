@@ -69,14 +69,23 @@ fn packet_pid(packet: &[u8]) -> u16 {
 }
 
 /// Keep only the packets in `scrambled` whose PID is in `allow`, concatenated
-/// in order.
+/// in order. Returns `(kept, bad_sync_count)`.
+///
+/// r10-W-22: a packet whose sync byte isn't `0x47` is **skipped**, not
+/// treated as reason to reject the whole batch — a live TS mux occasionally
+/// carries a bit-error-corrupted packet (satellite/terrestrial noise, a
+/// glitchy demux), and one bad packet among (typically) thousands is not
+/// evidence the *batch* is misaligned; only the caller's own `chunks_exact`
+/// slicing guarantees alignment here, per-packet corruption does not move
+/// it. `bad_sync_count` gives the caller visibility into how many were
+/// dropped, rather than silently discarding them with no signal at all.
 ///
 /// # Errors
 /// [`io::ErrorKind::InvalidInput`] if `scrambled` is not a whole number of
-/// [`TS_PACKET_LEN`]-byte packets, or if any packet's sync byte isn't `0x47`
-/// (misaligned input — filtering garbage would silently corrupt the PID
-/// read).
-fn filter_ts(scrambled: &[u8], allow: &BTreeSet<u16>) -> io::Result<Vec<u8>> {
+/// [`TS_PACKET_LEN`]-byte packets — that is a caller framing bug (the input
+/// itself isn't packet-aligned), distinct from one packet's payload being
+/// corrupted.
+fn filter_ts(scrambled: &[u8], allow: &BTreeSet<u16>) -> io::Result<(Vec<u8>, usize)> {
     if !scrambled.len().is_multiple_of(TS_PACKET_LEN) {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
@@ -84,18 +93,17 @@ fn filter_ts(scrambled: &[u8], allow: &BTreeSet<u16>) -> io::Result<Vec<u8>> {
         ));
     }
     let mut out = Vec::new();
+    let mut bad_sync_count = 0usize;
     for packet in scrambled.chunks_exact(TS_PACKET_LEN) {
         if packet[0] != TS_SYNC_BYTE {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "TS packet sync byte != 0x47 (misaligned input)",
-            ));
+            bad_sync_count += 1;
+            continue;
         }
         if allow.contains(&packet_pid(packet)) {
             out.extend_from_slice(packet);
         }
     }
-    Ok(out)
+    Ok((out, bad_sync_count))
 }
 
 /// Turnkey CAS descrambler (#763 Layer 2): a [`Driver`] (control plane, `caM`)
@@ -104,6 +112,9 @@ fn filter_ts(scrambled: &[u8], allow: &BTreeSet<u16>) -> io::Result<Vec<u8>> {
 pub struct CaDescrambler<D: CaDevice, C: CiDataDevice> {
     driver: Driver<D>,
     ci: C,
+    /// r10-W-22: running count of packets [`Self::feed_ts`] has skipped for
+    /// a bad sync byte (see [`Self::bad_sync_packets`]).
+    bad_sync_packets: u64,
 }
 
 impl<D: CaDevice, C: CiDataDevice> CaDescrambler<D, C> {
@@ -112,7 +123,22 @@ impl<D: CaDevice, C: CiDataDevice> CaDescrambler<D, C> {
     /// as needed before use).
     #[must_use]
     pub fn new(driver: Driver<D>, ci: C) -> Self {
-        Self { driver, ci }
+        Self {
+            driver,
+            ci,
+            bad_sync_packets: 0,
+        }
+    }
+
+    /// Total TS packets [`Self::feed_ts`] has skipped across its lifetime
+    /// for carrying a sync byte other than `0x47` (r10-W-22) — a live mux
+    /// occasionally has one, and `feed_ts` drops just that packet rather
+    /// than rejecting the whole batch; this counter is the caller's only
+    /// visibility into that happening, so a persistently climbing count is
+    /// worth surfacing (a flaky tuner/demux, not necessarily this crate).
+    #[must_use]
+    pub fn bad_sync_packets(&self) -> u64 {
+        self.bad_sync_packets
     }
 
     /// Add a service to the descrambled set (delegates to
@@ -137,14 +163,18 @@ impl<D: CaDevice, C: CiDataDevice> CaDescrambler<D, C> {
     /// only those packets to `ci0`, then drain and return all
     /// currently-available descrambled TS.
     ///
+    /// A packet with a bad sync byte (`!= 0x47`) is skipped, not treated as
+    /// grounds to reject the whole batch (r10-W-22) — see
+    /// [`Self::bad_sync_packets`] for the running count of how many.
+    ///
     /// # Errors
     /// [`io::ErrorKind::InvalidInput`] if `scrambled` is not a whole number
-    /// of [`TS_PACKET_LEN`]-byte packets or carries a misaligned packet
-    /// (sync byte != `0x47`); otherwise any I/O error from the underlying
-    /// [`CiDataDevice`].
+    /// of [`TS_PACKET_LEN`]-byte packets; otherwise any I/O error from the
+    /// underlying [`CiDataDevice`].
     pub fn feed_ts(&mut self, scrambled: &[u8]) -> io::Result<Vec<u8>> {
         let allow: BTreeSet<u16> = self.required_pids().into_iter().collect();
-        let kept = filter_ts(scrambled, &allow)?;
+        let (kept, bad_sync_count) = filter_ts(scrambled, &allow)?;
+        self.bad_sync_packets += bad_sync_count as u64;
         if !kept.is_empty() {
             self.ci.write(&kept)?;
         }
@@ -242,7 +272,7 @@ mod tests {
         scrambled.extend_from_slice(&p_200);
 
         let allow: BTreeSet<u16> = [0x100, 0x64].into_iter().collect();
-        let kept = filter_ts(&scrambled, &allow).unwrap();
+        let (kept, bad_sync) = filter_ts(&scrambled, &allow).unwrap();
 
         let mut expected = Vec::new();
         expected.extend_from_slice(&p_100);
@@ -251,13 +281,15 @@ mod tests {
             kept, expected,
             "0x200 must be dropped, the two allowed packets kept byte-exact and in order"
         );
+        assert_eq!(bad_sync, 0);
 
         // Bite: an empty allow-set drops everything — a reintroduced
         // no-filter passthrough would keep 0x200 and fail this.
         let empty: BTreeSet<u16> = BTreeSet::new();
-        assert!(filter_ts(&scrambled, &empty).unwrap().is_empty());
+        assert!(filter_ts(&scrambled, &empty).unwrap().0.is_empty());
 
-        // Unaligned input.
+        // Unaligned input is still a hard error (a caller framing bug, not
+        // a single corrupted packet).
         assert_eq!(
             filter_ts(&scrambled[..scrambled.len() - 1], &allow)
                 .unwrap_err()
@@ -265,12 +297,19 @@ mod tests {
             io::ErrorKind::InvalidInput
         );
 
-        // Misaligned sync byte.
+        // r10-W-22: a bad sync byte on ONE packet must not reject the whole
+        // batch — it's skipped (counted) and the OTHER, well-formed packets
+        // in the same batch are still kept.
         let mut bad = p_100.clone();
         bad[0] = 0x00;
+        let mut mixed = Vec::new();
+        mixed.extend_from_slice(&bad);
+        mixed.extend_from_slice(&p_64);
+        let (kept, bad_sync) = filter_ts(&mixed, &allow).unwrap();
+        assert_eq!(bad_sync, 1);
         assert_eq!(
-            filter_ts(&bad, &allow).unwrap_err().kind(),
-            io::ErrorKind::InvalidInput
+            kept, p_64,
+            "the well-formed packet after the bad one must still be kept"
         );
     }
 
@@ -346,6 +385,42 @@ mod tests {
             out, descrambled_script,
             "feed_ts must return the scripted descrambled TS read back from ci0"
         );
+    }
+
+    /// r10-W-22: a batch containing one bad-sync packet among otherwise
+    /// well-formed ones must still forward the good packets — pre-fix,
+    /// `feed_ts` returned `Err` for the whole batch and `ci0` never saw any
+    /// of it.
+    #[test]
+    fn feed_ts_skips_a_bad_sync_packet_and_keeps_the_rest_of_the_batch() {
+        let mut d = driver_with_sessions();
+        d.take_notifications();
+        let pmt_bytes = build_ca_pmt_fixture(1546);
+        let pmt = PmtSection::parse(&pmt_bytes).unwrap();
+        d.add_service(&pmt).unwrap();
+
+        let mut descrambler = descrambler_with(d, [Vec::new()]);
+        assert_eq!(descrambler.bad_sync_packets(), 0);
+
+        let mut bad = packet(0x100, 0x11);
+        bad[0] = 0x00; // corrupt sync byte
+        let good = packet(0x100, 0x33);
+        let mut scrambled = Vec::new();
+        scrambled.extend_from_slice(&bad);
+        scrambled.extend_from_slice(&good);
+
+        let out = descrambler.feed_ts(&scrambled);
+        assert!(out.is_ok(), "one bad packet must not fail the whole batch");
+        assert_eq!(
+            descrambler.ci().written_ts(),
+            good,
+            "the well-formed packet must still reach ci0"
+        );
+        assert_eq!(descrambler.bad_sync_packets(), 1);
+
+        // Feeding another bad packet accumulates the count.
+        descrambler.feed_ts(&bad).unwrap();
+        assert_eq!(descrambler.bad_sync_packets(), 2);
     }
 
     #[test]

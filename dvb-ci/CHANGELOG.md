@@ -62,6 +62,40 @@ versioning.
   (#1091, #1129).
 - `ci_ext::resource_manager_v2`'s `ModuleIdSend`/`ModuleIdCommand` no longer
   silently truncate `module_id` (6-bit) (#1091, #1129).
+- `length::decode` no longer accepts a `length_field_size` of 3 (the
+  crate's own `encode_into` caps values at `0xFFFF` — two length bytes —
+  and errors beyond that, so a decoded `length_field_size` of 3 was a value
+  `encode_into` could never reproduce). Non-minimal long forms (e.g.
+  `value = 5` sent as the 2-byte long form instead of the 1-byte short
+  form) are still accepted: real hardware sends them (see
+  `dvb-ci-runtime`'s `decodes_long_form_length_profile_reply`, #337) (#1091).
+- `objects::ca_pmt::write_info_block` (shared by the EN 50221 `ca_pmt` and
+  CI Plus `ci_plus::ca_support::MsCaPmt`) no longer fabricates
+  `CaPmtCmdId::OkDescrambling` when a non-empty `CA_descriptor` loop is
+  paired with `cmd_id: None`; it now returns `Error::InvalidObject` (#1091).
+- `tpdu::ResponseTpdu::parse` now validates the status trailer's own
+  `t_c_id` against the TPDU body's `t_c_id` instead of reading and
+  discarding it (#1091).
+- `objects::low_speed_comms::CommsCmd::serialize_into` now rejects a
+  `command_id`/`params` combination Table 52 does not allow (e.g.
+  `DisconnectOnChannel` paired with `CommsCmdParams::SetParams`) instead of
+  emitting a self-inconsistent APDU (#1091).
+- `ci_ext::software_download`'s DSM-CC header parsers (`parse_dsmcc_header`/
+  `parse_dsmcc_data_header`) now validate `protocolDiscriminator`,
+  `dsmccType`, `messageId` (against the message type being parsed) and
+  `messageLength`, instead of only reading `transactionId`/`adaptationLength`
+  and skipping past the rest — each of these DSM-CC messages is directly
+  `Parse`-able with no outer framing, so `messageId` alone previously let one
+  message type's bytes silently parse as a different one (#1091).
+- `ci_plus::content_control::SacMessage` gained `try_to_bytes`, returning the
+  serializer's error instead of `to_bytes`'s panic for a hand-built value
+  whose `datatype` value exceeds `u16::MAX` (#1091).
+- `ci_plus::low_speed_comms_v4::CommsIpConfigReply::serialize_into` now
+  rejects `ip_config`/`connection_state` disagreeing (i.e. `ip_config` is
+  `Some` under a state other than `Connected`, or `None` under `Connected`)
+  — `parse` only reads `ip_config` when `connection_state == Connected`, so
+  the other combination previously serialized bytes `parse` could not
+  reproduce (#1091).
 
 ## [0.8.1] - 2026-08-30
 

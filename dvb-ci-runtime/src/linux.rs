@@ -121,17 +121,42 @@ impl LinuxCaDevice {
     }
 }
 
+/// Largest legal kernel frame `[slot, connection_id, <TPDU>]` this device can
+/// deliver: the 2-byte link header, plus the largest TPDU EN 50221 Table 1
+/// can encode: `tpdu_tag`(1), `length_field`(up to 3 bytes total, its
+/// maximum-value long form: size_indicator plus 2 length bytes), and the
+/// `length_field`'s own max value, 65535, of `t_c_id` plus data (§7
+/// semantics: "length_field codes the length of all following fields", i.e.
+/// t_c_id + data — see `dvb-ci/docs/en_50221/apdu-coding.md`). r10-W-2: a
+/// 4096-byte scratch buffer silently truncated any larger TPDU and returned
+/// `Ok` with the truncated bytes as if they were the whole thing.
+const MAX_CA_FRAME: usize = 2 + 1 + 3 + 65_535;
+
 impl CaDevice for LinuxCaDevice {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         // Read one kernel frame `[slot, connection_id, <TPDU>]` into a scratch
         // buffer and hand the bare TPDU up. `poll` gates this, so it won't block;
         // `WouldBlock` is reported as "no data".
-        let mut frame = [0u8; 4096];
+        let mut frame = [0u8; MAX_CA_FRAME];
         let n = match self.file.read(&mut frame) {
             Ok(n) => n,
             Err(e) if e.kind() == io::ErrorKind::WouldBlock => return Ok(0),
             Err(e) => return Err(e),
         };
+        if n == frame.len() {
+            // A `read()` reports only how many bytes it actually copied,
+            // never "there was more" — a full buffer means we cannot tell
+            // whether the real frame was exactly this size or the driver
+            // handed us a larger one truncated to fit. Since `MAX_CA_FRAME`
+            // already covers every legal TPDU, treat a full read as a
+            // truncated (and therefore corrupt) frame rather than silently
+            // returning it as complete.
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "CA device frame filled the maximum-size scratch buffer; \
+                 it may have been truncated",
+            ));
+        }
         // Strip the 2-byte link header; anything shorter has no TPDU.
         let tpdu = frame.get(2..n).unwrap_or(&[]);
         let copy = tpdu.len().min(buf.len());
@@ -149,8 +174,14 @@ impl CaDevice for LinuxCaDevice {
     }
 
     fn reset(&mut self) -> io::Result<()> {
+        // r10-W-1: `libc::ioctl`'s request parameter is `libc::Ioctl`, which
+        // is `c_ulong` on glibc but `c_int` on musl/uclibc/Android — a
+        // hard-coded `as libc::c_ulong` fails to compile on those targets.
+        // `libc::Ioctl` picks the right width per target; the encoded
+        // request always fits in 32 bits, so the narrowing cast on
+        // musl/Android is lossless.
         // SAFETY: CA_RESET takes no argument; fd is a valid open CA device.
-        let r = unsafe { libc::ioctl(self.file.as_raw_fd(), CA_RESET as libc::c_ulong) };
+        let r = unsafe { libc::ioctl(self.file.as_raw_fd(), CA_RESET as libc::Ioctl) };
         if r < 0 {
             return Err(io::Error::last_os_error());
         }
@@ -170,18 +201,27 @@ impl CaDevice for LinuxCaDevice {
         let r = unsafe {
             libc::ioctl(
                 self.file.as_raw_fd(),
-                CA_GET_SLOT_INFO as libc::c_ulong,
+                CA_GET_SLOT_INFO as libc::Ioctl,
                 &mut si as *mut CaSlotInfo,
             )
         };
         if r < 0 {
-            // Some drivers (DD/cxd2099) return EINVAL for CA_GET_SLOT_INFO;
-            // presence shows via the TPDU handshake, so assume present+ready.
-            return Ok(SlotInfo {
-                num: self.slot,
-                module_ready: true,
-                module_present: true,
-            });
+            let err = io::Error::last_os_error();
+            // r10-W-3: only fall back for the specific errno the "doesn't
+            // implement CA_GET_SLOT_INFO" drivers (DD/cxd2099) return —
+            // EINVAL, or ENOTTY for a device node that doesn't support the
+            // ioctl at all; presence then shows via the TPDU handshake
+            // instead, so assume present+ready. Any OTHER error (EIO,
+            // ENODEV, EBADF, …) is a real fault and must be propagated, not
+            // masked as "the module is present and ready".
+            return match err.raw_os_error() {
+                Some(libc::EINVAL) | Some(libc::ENOTTY) => Ok(SlotInfo {
+                    num: self.slot,
+                    module_ready: true,
+                    module_present: true,
+                }),
+                _ => Err(err),
+            };
         }
         Ok(SlotInfo {
             num: si.num as u8,
@@ -401,6 +441,93 @@ mod tests {
             .expect("read must not error");
         assert_eq!(n2, 0, "device must read 0 again once drained");
 
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// r10-W-2: a kernel frame that exactly fills [`MAX_CA_FRAME`] must be
+    /// reported as an error (possible truncation), not silently accepted as
+    /// a complete TPDU. A regular file lets us stage exactly that many bytes
+    /// without needing real CI hardware.
+    #[test]
+    fn read_rejects_a_frame_that_fills_the_scratch_buffer() {
+        let path = std::env::temp_dir().join(format!(
+            "dvb-ci-runtime-w2-fullframe-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("system clock before UNIX_EPOCH")
+                .as_nanos()
+        ));
+        std::fs::write(&path, vec![0xAAu8; MAX_CA_FRAME]).expect("stage a MAX_CA_FRAME-byte file");
+        let file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(&path)
+            .expect("open the staged file");
+        let mut dev = LinuxCaDevice::from_file(file, 0);
+        let mut buf = [0u8; 8192];
+        let err = dev
+            .read(&mut buf)
+            .expect_err("a full-buffer read must error");
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// Sanity: an ordinary short frame still reads through unaffected.
+    #[test]
+    fn read_still_returns_short_frames_normally() {
+        let path = std::env::temp_dir().join(format!(
+            "dvb-ci-runtime-w2-shortframe-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("system clock before UNIX_EPOCH")
+                .as_nanos()
+        ));
+        // link header (slot, connection_id) + a 3-byte "TPDU".
+        std::fs::write(&path, [0x00, 0x01, 0xDE, 0xAD, 0xBE]).expect("stage a short file");
+        let file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(&path)
+            .expect("open the staged file");
+        let mut dev = LinuxCaDevice::from_file(file, 0);
+        let mut buf = [0u8; 16];
+        let n = dev.read(&mut buf).expect("short read must succeed");
+        assert_eq!(n, 3);
+        assert_eq!(&buf[..3], &[0xDE, 0xAD, 0xBE]);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// r10-W-3: `CA_GET_SLOT_INFO` returning `ENOTTY` (the driver — or, here,
+    /// a plain regular file standing in for one that doesn't support the
+    /// ioctl at all — has no CI-slot ioctl handling) must still fall back to
+    /// "present + ready", exactly as the documented EINVAL fallback did. A
+    /// regular file is a faithful stand-in: `ioctl` on a non-device fd
+    /// reliably returns `ENOTTY` on Linux, so this exercises the real
+    /// `libc::ioctl` call and its errno branch, not a mocked one.
+    #[test]
+    fn slot_info_falls_back_on_enotty() {
+        let path = std::env::temp_dir().join(format!(
+            "dvb-ci-runtime-w3-slotinfo-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("system clock before UNIX_EPOCH")
+                .as_nanos()
+        ));
+        let file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .open(&path)
+            .expect("create a regular file to stand in for the CA device");
+        let mut dev = LinuxCaDevice::from_file(file, 3);
+        let info = dev.slot_info().expect("ENOTTY must fall back, not error");
+        assert_eq!(info.num, 3);
+        assert!(info.module_present);
+        assert!(info.module_ready);
         let _ = std::fs::remove_file(&path);
     }
 }

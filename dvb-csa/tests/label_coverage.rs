@@ -1,8 +1,11 @@
 //! Drift-guard for the spec/field-enum label convention (issue #204).
 //!
-//! dvb-csa has no spec/field enums (it's a cipher, not a protocol) — only
-//! `Error`, which is always skipped. This test ensures any future pub enum
-//! gets the `name()` + `impl_spec_display!` treatment or is recorded in SKIP.
+//! dvb-csa's one spec/field enum is `ts::KeyParity` (which of control word
+//! (de)scrambles TS packet, ETSI TS 100 289 V1.1.1 §5.1 Table 1) — it has
+//! `name()` + a hand-written `Display` (this crate does not depend on
+//! `broadcast-common`, so `impl_spec_display!` isn't used). `Error` is
+//! always skipped. This test ensures any future pub enum gets the same
+//! treatment or is recorded in SKIP.
 
 use std::collections::BTreeSet;
 use std::fs;
@@ -125,20 +128,28 @@ fn every_public_spec_enum_has_a_display_impl() {
     );
 }
 
+/// Pinned set of non-skipped pub enums this crate is known to have, each
+/// already carrying `name()` + a `Display` impl (checked by the test
+/// above). A brand-new pub enum not in this set fails below, forcing a
+/// deliberate choice: add it here once labelled, or add it to `SKIP`.
+const EXPECTED_SPEC_ENUMS: &[&str] = &["KeyParity"];
+
 #[test]
 fn expected_spec_enum_set_has_not_silently_drifted() {
     let all = crate_src();
     let enums = all_pub_enums(&all);
-    let non_skip: Vec<_> = enums
+    let non_skip: BTreeSet<_> = enums
         .iter()
         .filter(|e| !SKIP.contains(&e.as_str()))
         .cloned()
         .collect();
+    let expected: BTreeSet<String> = EXPECTED_SPEC_ENUMS.iter().map(|s| s.to_string()).collect();
 
-    assert!(
-        non_skip.is_empty(),
-        "new public spec/field enum(s) appeared: {non_skip:?}\n\
-         Either add `name()` + `impl_spec_display!` and update this assertion, \
-         or add the enum to SKIP."
+    assert_eq!(
+        non_skip, expected,
+        "the set of labelled spec/field enum(s) changed.\n\
+         A new one: add `name()` + `impl_spec_display!`/`Display` and add it to \
+         EXPECTED_SPEC_ENUMS, or add it to SKIP if it is not a spec/field label.\n\
+         A removed one: drop it from EXPECTED_SPEC_ENUMS."
     );
 }

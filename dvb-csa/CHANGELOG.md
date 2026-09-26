@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed (breaking)
+- `ts::scramble_ts_packet`/`ts::descramble_ts_packet` take a new
+  `ts::KeyParity` (`Even`/`Odd`) parameter naming which control word `cw`
+  is. `scramble_ts_packet` now rejects a packet whose
+  `transport_scrambling_control` is not already `00` with
+  `Error::AlreadyScrambled` instead of blindly re-scrambling it and always
+  stamping `10` (even). `descramble_ts_packet` is now a no-op (`Ok(())`,
+  payload untouched) on an already-clear (`00`) packet instead of running
+  the cipher over it, and rejects a parity mismatch against the packet's
+  actual TSC bits with `Error::ParityMismatch` instead of silently
+  descrambling with the wrong control word (#1093).
+- `Error` gained `NoPayload` (adaptation-field-only / no-room-for-payload
+  packets) and the above `AlreadyScrambled`/`ParityMismatch` variants.
+  `ts_payload_mut`'s internal "no payload present" cases now report
+  `NoPayload` rather than a fabricated `BufferTooShort` — the 188-byte
+  buffer was never short; there was simply no payload to (de)scramble
+  (#1093).
+- Dropped the unused `broadcast-common` dependency (never referenced in
+  source), so this crate no longer tracks its epoch (#1093).
+
 ## [0.3.0] - 2026-09-26
 
 ### Security

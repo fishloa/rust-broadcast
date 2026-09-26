@@ -35,6 +35,62 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   filter the raw `descramble` path already applied — previously they sent
   every `CA_descriptor` unfiltered, which a CICAM rejects outright when it
   carries a `CA_system_id` the CAM doesn't support (issue #1067).
+- `linux::LinuxCaDevice`'s `CA_RESET`/`CA_GET_SLOT_INFO` ioctls now use
+  `libc::Ioctl` (the per-target request type: `c_ulong` on glibc, `c_int` on
+  musl/uclibc/Android) instead of a hard-coded `c_ulong`, which failed to
+  compile at all on musl (#1092).
+- `LinuxCaDevice::slot_info` now falls back to "present + ready" only on
+  `EINVAL`/`ENOTTY` (the documented "driver doesn't implement
+  `CA_GET_SLOT_INFO`" case); any other ioctl error (`EIO`, `ENODEV`, …) is
+  now propagated instead of being masked as a healthy slot (#1092).
+- `LinuxCaDevice::read` no longer silently truncates a kernel frame wider
+  than its 4096-byte scratch buffer and returns it as if it were the whole
+  TPDU; the buffer is now sized to the largest legal TPDU
+  (`MAX_CA_FRAME` = 65,539 bytes) and a still-full read is reported as
+  `io::ErrorKind::InvalidData` (#1092).
+- `Transport`'s `Active`-state poll cadence no longer sends another poll
+  (or data block) while a previously-sent C_TPDU is still awaiting its
+  reply — EN 50221's link is half-duplex — and that in-flight wait now has
+  its own reply timeout (`TransportError::ReplyTimeout`), matching the
+  timeout `Creating`'s `Create_T_C` already had (#1092).
+- `Transport::send_spdu` now rejects an SPDU longer than `MAX_SPDU_LEN`
+  (`TransportError::SpduTooLarge`) instead of queueing it and later
+  panicking deep inside `flush`/`tick` when the resulting `CommandTpdu`
+  failed to serialize (#1092).
+- `Transport::send_spdu`'s outbound queue is now capped
+  (`MAX_OUTBOUND_QUEUE`, `TransportError::OutboundQueueFull`) instead of
+  growing without limit when the caller enqueues faster than the
+  half-duplex link drains; the queue (and any in-flight reassembly) is also
+  cleared on a setup timeout / malformed frame / wrong-`t_c_id` frame,
+  instead of surviving stale into a later connection or chain (#1092).
+- `SessionLayer::alloc` now probes past any `session_nb` still open before
+  handing it out (relevant after the 65535-allocation wraparound), and a
+  module-chosen `session_nb` (from `open_session_response`/
+  `create_session_response`) that collides with an already-open, different
+  resource — or is `0`, the reserved value — is now rejected instead of
+  silently aliasing/overwriting the existing binding (#1092).
+- `CiStack`'s `Init` now clears the session table and cached CAM CAIDs (not
+  just the transport connection), and `Shutdown` — previously a complete
+  no-op — now resets the device and clears the same stack-level state, so a
+  later `Init` starts genuinely clean (#1092). Per-resource internal state
+  (e.g. an in-progress MMI dialogue) is not yet included in this reset;
+  `Resource` has no `reset()` hook, so this is a narrower fix than full
+  re-init, tracked as a follow-up.
+- `CaDescrambler::feed_ts` no longer rejects an entire TS batch because one
+  packet in it has a bad sync byte (a single bit-error-corrupted packet is
+  not evidence the whole batch is misaligned); the bad packet is now
+  skipped and counted (`CaDescrambler::bad_sync_packets`) instead (#1092).
+- `Driver::pump` now advances the stack's timers (reply timeout, poll
+  cadence, entitlement re-query) by the real wall-clock time elapsed since
+  the previous call, rather than trusting its `timeout` argument as if it
+  were a measurement — `timeout` is only how long that call's `poll` was
+  willing to wait, and could diverge from the real elapsed time in either
+  direction (`Driver::with_clock` overrides the clock source, e.g. for
+  tests) (#1092).
+- Fixed stale documentation: `lib.rs`'s roadmap no longer lists the
+  `host_control` resource as outstanding (it has been implemented since);
+  `stack.rs`'s module doc no longer describes the resource state machines
+  as still landing — all six are implemented (#1092).
 
 ## [0.16.0] - 2026-08-11
 
