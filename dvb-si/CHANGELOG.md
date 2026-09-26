@@ -102,6 +102,115 @@
   independent 256-key default used to exhaust long before `max_services`
   (1024) did).
 
+### Fixed (warning sweep, #1077)
+- `EitCollector`: a schedule range reset (a non-conformant "flapping
+  `last_table_id`" stream) dropped every other already-completed sub-table
+  from the schedule, which could then never complete again since those
+  sub-tables don't repeat under a new version. The reset now re-feeds
+  retained completed sets for the new range.
+- `collect::CompleteNit`/`CompleteBat`: `network_descriptors`/
+  `bouquet_descriptors` only reflected section 0's loop, though EN 300 468
+  §5.2.1/§5.2.2 give every section its own loop. `ParsedDescriptorLoop` now
+  merges every contributing section's loop (`raw()` returns `&[DescriptorLoop]`,
+  one per section — a breaking API change).
+- `text::decode_dvb_string`: ISO 8859-9 (Turkish) and 8859-11 (Thai) were
+  decoded via windows-1254/windows-874, which remap 0x80-0x9F to printable
+  characters where the true 8859-9/-11 tables (and DVB Annex A's own
+  0x86/0x87/0x8A control codes) leave that range as C1 controls. An
+  emphasis marker or CR/LF in Turkish/Thai text came out as a stray glyph
+  instead of being recognised.
+- `epg::extract_extended`/`EpgEvent`: a bilingual event's
+  `extended_event_descriptor` fragments (interleaved in wire order across
+  languages) were sorted by `descriptor_number` with no grouping by
+  language, mixing two languages' text into one string. Fragments are now
+  grouped by `ISO_639_language_code` first; `EpgEvent` gained
+  `extended_by_language: Vec<ExtendedEventLanguage>` (`extended_text`/
+  `extended_items` are now that list's first entry, not a language-blind
+  concatenation of all of them).
+- `epg::EpgStore`: `max_services`/`max_events_per_service` silently walled
+  off every new key/event once first hit, so a long-running store stopped
+  updating. Both caps now evict (least-recently-touched service; the
+  earliest-starting event) to admit a new key, exposed via
+  `services_evicted_for_capacity()`/`events_evicted_for_capacity()`.
+  `feed_sdt` also ignored `max_services` entirely; it now respects it.
+- `carousel::ModuleReassembler`: a completed module's slot was removed on
+  completion, so the next DII repeat (same version) recreated it and
+  reassembled + re-emitted the same module every carousel cycle. A
+  `(download_id, module_id) -> completed_version` record now suppresses
+  that. Added `retain`/`clear` to prune slots and records for a module
+  withdrawn from the carousel.
+- `carousel::biop::ior`: `ObjectLocation`/`ConnBinder`/`ServiceLocation`
+  components, and `BiopProfileBody`/`LiteOptionsProfileBody` bodies, silently
+  dropped trailing slack inside a declared length instead of rejecting it,
+  and `Ior::parse` didn't check that `taggedProfiles` consumed the whole
+  input. `Binding`/`ServiceGatewayInfo` used `ior.serialized_len()` as a
+  stand-in for "bytes consumed", which was only correct because of that
+  missing validation. Added `Ior::parse_at` (returns the real consumed
+  count) and used it at both call sites; slack is now rejected everywhere.
+- `demux::SiDemux`: a changed PAT added new PMT PIDs to the watch set but
+  never stopped watching one a programme no longer used, so a stale PMT
+  could still be emitted after its PID was reassigned. `follow_pat` now
+  diffs the old/new PMT PID sets (never touching a well-known SI PID or a
+  caller's explicit `.pid(...)`).
+- `dsmcc.rs`: `private_indicator` (independent of
+  `section_syntax_indicator`) was forced to 0 whenever SSI was true,
+  instead of round-tripping the parsed value.
+- `carousel::biop::message::ServiceGatewayInfo`: had no `Serialize` impl
+  (broke the crate-wide Parse/Serialize symmetry), and `to_bytes` panicked
+  on over-255 `service_context` entries and silently truncated an
+  over-65,535-byte `user_info`. Implemented `Serialize`; `to_bytes` now
+  returns `Result<Vec<u8>>` (breaking).
+- `tables::sat`: a beamhopping `plan_length` shorter than the fixed +
+  mode-specific fields already read moved the cursor backwards, so the next
+  loop iteration re-read part of the current plan's body as a fabricated
+  second plan. Now rejected.
+- `tables::pmt`/`tables::dsmcc`: removed the `PID = 0x0000` placeholder
+  constant — it equals the real PAT PID, so a caller filtering on it would
+  silently pick up PAT traffic (breaking).
+- `tables::protection_message`: a `Hash.hash` whose length disagreed with
+  `section_hash_length` was written verbatim, misframing every later hash
+  entry; `parse_certificate_collection` silently dropped bytes after the
+  last certificate. Both now rejected.
+- `tables::rct`: the descriptor loop in `LinkInfo`/`RctSection` accepted
+  trailing bytes between the loop and `link_info_length`/the CRC, silently
+  dropping them on re-serialize. Both now rejected. `DvbBinaryLocator` also
+  carried `identifier_type`/`inline_service` as separate fields alongside
+  `identifier`/`service`, a second source of truth a caller could set
+  inconsistently with the enum variant being serialized; both are now
+  derived (`identifier_type()`/`inline_service()` methods), and
+  `windows`/`identifier`/`scheduled_time_reliability` consistency is
+  validated at serialize (breaking: the two fields were removed from the
+  struct).
+- `tables::ait`: `ApplicationType::UserDefined` (documented for
+  `0x8000..=0xFFFF`) could never be produced by `from_u16`, since
+  `application_type` is a 15-bit wire field (bit 15 is the separate
+  `test_application_flag`) — and the serializer silently dropped bit 15 of
+  a directly-constructed out-of-range value instead of rejecting it.
+  Removed the unreachable variant (breaking) and added an explicit 15-bit
+  range check on serialize.
+- `tables::downloadable_font_info`: `FontInfo::LengthDelimited {
+  font_info_type: 0x00..=0x02, .. }` serialized those fixed-layout type
+  codes verbatim, so the result re-parsed as StyleWeight/FileUri/FontSize
+  instead. Now rejected.
+- `descriptors::ait::AitDescriptorLoop`'s serde impl silently dropped parse
+  errors from the sequence instead of surfacing them as
+  `{"parseError": ...}`, unlike `DescriptorLoop`'s own serde impl.
+- `descriptors::hierarchy::HierarchyType::from_u8` (public) panicked
+  (`unreachable!()`) for any value over 15; it now masks to the low 4 bits
+  instead.
+- `descriptors::ca::CaDescriptor`: `ca_pid` (a 13-bit field) was not
+  range-checked on serialize, so an out-of-range value (e.g. `0x2101`)
+  silently wrapped into a different, wrong PID (`0x0101`) instead of being
+  rejected.
+- `descriptors::data_broadcast_id::IdSelector::serialize_into_at` and
+  `descriptors::extension::dts_hd::SubstreamInfo::serialize_into` panicked
+  (out-of-bounds slice index) on a buffer too small for `pos +
+  serialized_len()`; both now return `Error::OutputBufferTooSmall`.
+- `descriptors::private_data_indicator`: corrected the module citation
+  (§2.6.22, which is actually `multiplex_buffer_utilization_descriptor` →
+  §2.6.28) and removed a re-exported DVB PDS-registry name lookup that
+  doesn't apply to this ISO/IEC 13818-1 field (breaking).
+
 ## [10.1.0] - 2026-09-26
 
 ### Security

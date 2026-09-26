@@ -3,6 +3,7 @@
 //! (`dvb-si/docs/text/iso_13818_6/module-reassembly.md`).
 
 use alloc::collections::BTreeMap;
+use alloc::collections::VecDeque;
 use alloc::vec;
 use alloc::vec::Vec;
 
@@ -95,6 +96,13 @@ pub const DEFAULT_MAX_SLOTS: usize = 16 * 1024;
 /// to recover from a wedged stream.
 pub struct ModuleReassembler {
     slots: BTreeMap<SlotKey, Slot>,
+    /// Last-completed `module_version` per module key, so a DII repeat with
+    /// an unchanged version does not recreate a slot and reassemble +
+    /// re-emit the same module every carousel cycle (r02-W6). Bounded FIFO
+    /// (`completed_order`), independent of `slots`, so a hostile stream
+    /// rotating `download_id`/`module_id` cannot grow this without bound.
+    completed: BTreeMap<SlotKey, u8>,
+    completed_order: VecDeque<SlotKey>,
     max_module_size: u32,
     max_total_bytes: usize,
     max_slots: usize,
@@ -128,6 +136,8 @@ impl ModuleReassembler {
     pub fn with_limits(max_module_size: u32, max_total_bytes: usize) -> Self {
         Self {
             slots: BTreeMap::new(),
+            completed: BTreeMap::new(),
+            completed_order: VecDeque::new(),
             max_module_size,
             max_total_bytes,
             max_slots: DEFAULT_MAX_SLOTS,
@@ -157,6 +167,15 @@ impl ModuleReassembler {
                 continue;
             }
             let key: SlotKey = (dii.download_id, m.module_id);
+            if self.completed.get(&key) == Some(&m.module_version) {
+                // Already reassembled and emitted this exact version — a
+                // carousel repeat of the DII must not recreate the slot and
+                // reassemble + re-emit the same module every cycle (r02-W6).
+                continue;
+            }
+            // Any remaining `completed` record here is for a stale version:
+            // this module has moved on to a version we haven't completed yet.
+            self.completed.remove(&key);
             if let Some(existing) = self.slots.get(&key) {
                 if existing.module_version == m.module_version {
                     continue; // carousel repeat — keep accumulated blocks
@@ -211,6 +230,7 @@ impl ModuleReassembler {
         }
         let slot = self.slots.remove(&key).expect("slot exists");
         self.total_bytes -= slot.data.len();
+        self.record_completed(key, slot.module_version);
         Some(Module {
             key: ModuleKey {
                 download_id: ddb.download_id,
@@ -219,6 +239,59 @@ impl ModuleReassembler {
             },
             data: slot.data,
         })
+    }
+
+    /// Record that `key` has been reassembled and emitted at `version`, so a
+    /// later DII repeat of the same version does not recreate the slot
+    /// (r02-W6). Bounded FIFO alongside `slots`: evicting the oldest record
+    /// when full only risks one redundant re-collection of that module on
+    /// its next DII repeat, never incorrect data.
+    fn record_completed(&mut self, key: SlotKey, version: u8) {
+        if !self.completed.contains_key(&key)
+            && self.completed.len() >= self.max_slots
+            && let Some(oldest) = self.completed_order.pop_front()
+        {
+            self.completed.remove(&oldest);
+        }
+        self.completed.insert(key, version);
+        self.completed_order.push_back(key);
+    }
+
+    /// Drop all in-progress slots and completed-version records.
+    pub fn clear(&mut self) {
+        self.slots.clear();
+        self.completed.clear();
+        self.completed_order.clear();
+        self.total_bytes = 0;
+    }
+
+    /// Retain only slots and completed-version records for module keys
+    /// (`download_id`, `module_id`) accepted by `keep`.
+    ///
+    /// The explicit pruning hook for a module withdrawn from the carousel
+    /// (r02-W6): the byte/slot-count budget alone never reclaims a slot
+    /// whose module stopped being announced, since it never completes and
+    /// nothing else evicts it. A caller that re-derives the announced set
+    /// from each DII (e.g. `note_dii`'s own `dii.modules`) can call this
+    /// once per DII cycle to drop anything no longer listed.
+    pub fn retain<F>(&mut self, mut keep: F)
+    where
+        F: FnMut(u32, u16) -> bool,
+    {
+        let mut freed = 0usize;
+        self.slots.retain(|&(download_id, module_id), slot| {
+            let keep = keep(download_id, module_id);
+            if !keep {
+                freed += slot.data.len();
+            }
+            keep
+        });
+        self.total_bytes -= freed;
+        self.completed
+            .retain(|&(download_id, module_id), _| keep(download_id, module_id));
+        let completed = &self.completed;
+        self.completed_order
+            .retain(|key| completed.contains_key(key));
     }
 
     /// Number of modules currently being collected.
@@ -345,6 +418,70 @@ mod tests {
         r.note_dii(&d); // carousel repeat
         let m = r.feed_ddb(&ddb(1, 1, 0, 1, &[3, 4])).expect("complete");
         assert_eq!(m.data, vec![1, 2, 3, 4]);
+    }
+
+    /// Regression for r02-W6: once a module has been reassembled and
+    /// emitted, the next DII repeat with the SAME `module_version` must not
+    /// recreate the slot and reassemble + re-emit the same module again.
+    #[test]
+    fn completed_module_is_not_re_emitted_on_dii_repeat() {
+        let mut r = ModuleReassembler::new();
+        let d = dii(1, 2, vec![module(1, 4, 0)]);
+        r.note_dii(&d);
+        assert!(r.feed_ddb(&ddb(1, 1, 0, 0, &[1, 2])).is_none());
+        let m = r.feed_ddb(&ddb(1, 1, 0, 1, &[3, 4])).expect("complete");
+        assert_eq!(m.data, vec![1, 2, 3, 4]);
+        assert_eq!(r.pending(), 0);
+
+        // Carousel repeat: same DII, same DDBs going round again.
+        r.note_dii(&d);
+        assert_eq!(
+            r.pending(),
+            0,
+            "a same-version DII repeat must not recreate a completed module's slot"
+        );
+        assert!(
+            r.feed_ddb(&ddb(1, 1, 0, 0, &[1, 2])).is_none(),
+            "a completed module's DDB repeats must not be re-collected"
+        );
+        assert!(r.feed_ddb(&ddb(1, 1, 0, 1, &[3, 4])).is_none());
+
+        // A genuine version bump restarts collection and re-emits.
+        r.note_dii(&dii(1, 2, vec![module(1, 4, 1)]));
+        assert_eq!(r.pending(), 1);
+        assert!(r.feed_ddb(&ddb(1, 1, 1, 0, &[9, 9])).is_none());
+        let m2 = r.feed_ddb(&ddb(1, 1, 1, 1, &[8, 8])).expect("complete");
+        assert_eq!(m2.data, vec![9, 9, 8, 8]);
+        assert_eq!(m2.key.module_version, 1);
+    }
+
+    /// Regression for r02-W6: `retain` prunes both in-progress slots and
+    /// completed-version records for a module no longer announced.
+    #[test]
+    fn retain_drops_slots_and_completed_records_for_withdrawn_modules() {
+        let mut r = ModuleReassembler::new();
+        r.note_dii(&dii(1, 2, vec![module(1, 4, 0), module(2, 2, 0)]));
+        let m = r.feed_ddb(&ddb(1, 1, 0, 0, &[1, 2]));
+        assert!(m.is_none());
+        let m = r
+            .feed_ddb(&ddb(1, 1, 0, 1, &[3, 4]))
+            .expect("module 1 complete");
+        assert_eq!(m.data, vec![1, 2, 3, 4]);
+        assert_eq!(r.pending(), 1); // module 2 still in progress
+
+        // Module 2 is withdrawn from the carousel; keep only module 1.
+        r.retain(|_, module_id| module_id == 1);
+        assert_eq!(
+            r.pending(),
+            0,
+            "module 2's in-progress slot must be dropped"
+        );
+        assert_eq!(r.pending_bytes(), 0);
+
+        // Module 1's completed-version record survives the retain, so a
+        // same-version DII repeat still does not re-collect it.
+        r.note_dii(&dii(1, 2, vec![module(1, 4, 0)]));
+        assert_eq!(r.pending(), 0);
     }
 
     #[test]

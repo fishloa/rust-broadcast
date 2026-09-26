@@ -554,6 +554,36 @@ fn decode_iso_8859(n: u8, bytes: &[u8]) -> String {
     #[cfg(feature = "std")]
     {
         use encoding_rs::*;
+        // `encoding_rs` (and the WHATWG label registry it implements) has no
+        // pure ISO/IEC 8859-9 or 8859-11 codec: web-compat routes both labels
+        // to windows-1254 / windows-874, which match the true 8859-9 / 8859-11
+        // GR range (0xA0-0xFF) byte-for-byte but remap 0x80-0x9F to printable
+        // characters, where DVB Annex A's single-byte tables leave that range
+        // as the C1 control set (§A.1's 0x86/0x87/0x8A emphasis/CR-LF codes
+        // live there, and `decode_dvb_string`'s post-filter only strips them
+        // in the C1 range) — so a Turkish/Thai emphasis marker or line break
+        // was coming out as a Windows-1252-style printable glyph instead of
+        // being recognised and stripped/converted. Every byte of these
+        // encodings decodes to exactly one code point (no multi-byte
+        // sequences, no BOM handling for a non-Unicode encoding), so decode
+        // then overwrite just the 0x80-0x9F positions with the raw C1 code
+        // point.
+        if n == 9 || n == 11 {
+            let encoding: &'static Encoding = if n == 9 { WINDOWS_1254 } else { WINDOWS_874 };
+            let (cow, _) = encoding.decode_without_bom_handling(bytes);
+            debug_assert_eq!(cow.chars().count(), bytes.len());
+            return bytes
+                .iter()
+                .zip(cow.chars())
+                .map(|(&b, c)| {
+                    if (0x80..=0x9F).contains(&b) {
+                        b as char
+                    } else {
+                        c
+                    }
+                })
+                .collect();
+        }
         let encoding: &'static Encoding = match n {
             2 => ISO_8859_2,
             3 => ISO_8859_3,
@@ -562,9 +592,7 @@ fn decode_iso_8859(n: u8, bytes: &[u8]) -> String {
             6 => ISO_8859_6,
             7 => ISO_8859_7,
             8 => ISO_8859_8,
-            9 => WINDOWS_1254,
             10 => ISO_8859_10,
-            11 => WINDOWS_874,
             13 => ISO_8859_13,
             14 => ISO_8859_14,
             15 => ISO_8859_15,
@@ -661,6 +689,39 @@ mod tests {
         // 0x8A in DVB text maps to CR/LF per Annex A.2 — render as space.
         let s = decode_dvb_string(&[0x00, b'A', 0x8A, b'B']);
         assert_eq!(s, "A B");
+    }
+
+    /// Regression for r02-W3: ISO/IEC 8859-9 (selector 9, Turkish) and
+    /// 8859-11 (selector 11, Thai) share ISO 8859's C1 control layout in
+    /// 0x80-0x9F, unlike the windows-1254/windows-874 codepages
+    /// `encoding_rs` maps those selectors to (which put printable
+    /// characters there instead). Previously an Annex A.2 CR/LF (0x8A) or
+    /// emphasis marker (0x86/0x87) in Turkish/Thai text decoded as a
+    /// Windows-125x glyph and leaked through `decode_dvb_string`'s
+    /// control-code filter untouched, instead of being recognised.
+    #[cfg(feature = "std")]
+    #[test]
+    fn decode_selector_9_and_11_treat_0x80_0x9f_as_c1_controls() {
+        // Selector 9 = ISO 8859-9: 0x8A must become a space (CR/LF), exactly
+        // like the plain-Latin (selector 0x00) case above — not the
+        // windows-1254 glyph at that byte (Š).
+        let s = decode_dvb_string(&[0x10, 0x00, 0x09, b'A', 0x8A, b'B']);
+        assert_eq!(s, "A B");
+        // 0x80 has no Annex A.2 meaning and must be stripped, not decoded as
+        // windows-1254's Euro sign.
+        let s = decode_dvb_string(&[0x10, 0x00, 0x09, b'A', 0x80, b'B']);
+        assert_eq!(s, "AB");
+
+        // Selector 11 = ISO 8859-11: same story against windows-874.
+        let s = decode_dvb_string(&[0x10, 0x00, 0x0B, b'A', 0x8A, b'B']);
+        assert_eq!(s, "A B");
+        let s = decode_dvb_string(&[0x10, 0x00, 0x0B, b'A', 0x80, b'B']);
+        assert_eq!(s, "AB");
+
+        // The GR range (0xA0-0xFF) is unaffected: selector 9's Turkish
+        // İ (dotted capital I) at 0xDD still decodes correctly.
+        let s = decode_dvb_string(&[0x10, 0x00, 0x09, 0xDD]);
+        assert_eq!(s, "İ");
     }
 
     #[test]

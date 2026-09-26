@@ -49,9 +49,14 @@ pub enum HierarchyType {
 impl HierarchyType {
     /// Construct from a raw byte; unknown values preserve the value
     /// for byte-identical round-trip.
+    ///
+    /// `hierarchy_type` is a 4-bit wire field; any value over 15 is masked
+    /// to its low 4 bits rather than panicking (r03-W4: this used to
+    /// `unreachable!()` on such a value, a public-API panic reachable by
+    /// any caller that passes an unmasked byte).
     #[must_use]
     pub fn from_u8(v: u8) -> Self {
-        match v {
+        match v & 0x0F {
             0 => Self::Reserved0,
             1 => Self::SpatialScalability,
             2 => Self::SnrScalability,
@@ -65,7 +70,7 @@ impl HierarchyType {
             10 => Self::AuxiliaryPictureLayer,
             v @ 11..=14 => Self::Reserved11To14(v),
             15 => Self::BaseLayerOrMvcBaseView,
-            _ => unreachable!("hierarchy_type is 4 bits (0–15)"),
+            _ => unreachable!("v & 0x0F is always <= 15"),
         }
     }
 
@@ -262,6 +267,16 @@ mod tests {
         d.serialize_into(&mut buf).unwrap();
         let reparsed = HierarchyDescriptor::parse(&buf).unwrap();
         assert_eq!(d, reparsed);
+    }
+
+    /// Regression for r03-W4: `from_u8` used to `unreachable!()` (panic) for
+    /// any value over 15, even though it's a public function a caller can
+    /// call with an unmasked byte.
+    #[test]
+    fn from_u8_masks_rather_than_panics_above_4_bits() {
+        for v in 16u8..=255 {
+            assert_eq!(HierarchyType::from_u8(v), HierarchyType::from_u8(v & 0x0F));
+        }
     }
 
     #[test]

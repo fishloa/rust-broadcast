@@ -16,17 +16,24 @@
 //! otherwise grow the cache without bound. Two caps apply:
 //!
 //! * **`max_services`** (default [`DEFAULT_MAX_SERVICES`]) — caps the number of
-//!   distinct [`ServiceKey`] entries. When the cap is reached, incoming events
-//!   for new services are skipped until a service is removed via
-//!   [`EpgStore::retain_services`] or [`EpgStore::clear`].
+//!   distinct [`ServiceKey`] entries. When the cap is reached, a *new* key
+//!   evicts the least-recently-touched existing service instead of being
+//!   skipped forever (r02-W5) — [`EpgStore::retain_services`] or
+//!   [`EpgStore::clear`] are still the explicit, application-defined way to
+//!   prune.
 //! * **`max_events_per_service`** (default [`DEFAULT_MAX_EVENTS_PER_SERVICE`]) —
 //!   caps the number of events stored per service. When a service's cap is
-//!   reached, new events (by `event_id`) are skipped; existing event_ids are
-//!   still updated on version churn.
+//!   reached, a *new* `event_id` evicts that service's earliest-starting
+//!   event (the one most likely already in the past) instead of being
+//!   skipped forever; existing event_ids are still updated in place on
+//!   version churn.
 //!
-//! The policy is *skip-until-space* — the same as
-//! [`crate::carousel::ModuleReassembler`] — so long-running consumers should
-//! call `retain_services` or `clear` periodically to free capacity.
+//! Both caps now evict rather than wall off new keys forever, so a
+//! long-running receiver keeps updating without needing to call
+//! `retain_services`/`clear` on a timer just to avoid going stale (r02-W5).
+//! [`EpgStore::services_evicted_for_capacity`] and
+//! [`EpgStore::events_evicted_for_capacity`] expose the eviction counts, the
+//! same shape as [`crate::collect::EitCollector`]'s.
 //!
 //! # Quickstart
 //!
@@ -153,6 +160,25 @@ pub struct ExtendedItem {
     pub item: String,
 }
 
+/// One language's grouped extended-event text/items (EN 300 468 §6.2.15).
+///
+/// [`ExtendedEventDescriptor`](crate::descriptors::extended_event::ExtendedEventDescriptor)
+/// fragments are grouped by `ISO_639_language_code` before concatenating by
+/// `descriptor_number` — a bilingual event's fragments of each language are
+/// interleaved in wire order, so sorting by `descriptor_number` alone (with
+/// no grouping) would mix the languages into one string.
+#[non_exhaustive]
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+pub struct ExtendedEventLanguage {
+    /// ISO 639 language code from the descriptor.
+    pub language_code: crate::text::LangCode,
+    /// Concatenated text for this language, sorted by `descriptor_number`.
+    pub text: String,
+    /// Accumulated items for this language, sorted by `descriptor_number`.
+    pub items: Vec<ExtendedItem>,
+}
+
 /// A content genre nibble triplet from a
 /// [`ContentDescriptor`](crate::descriptors::content::ContentDescriptor).
 #[non_exhaustive]
@@ -212,16 +238,26 @@ pub struct EpgEvent {
     pub event_name: Option<String>,
     /// Decoded short event text, if present and decodeable.
     pub event_text: Option<String>,
-    /// Concatenated extended event text from all
+    /// Concatenated extended event text for the first language encountered
+    /// (in wire order) among all
     /// [`ExtendedEventDescriptor`](crate::descriptors::extended_event::ExtendedEventDescriptor)
-    /// fragments, per EN 300 468 §6.2.15. Fragments are sorted by
-    /// `descriptor_number` and concatenated directly (no separator).
+    /// fragments, per EN 300 468 §6.2.15: that language's own fragments are
+    /// sorted by `descriptor_number` and concatenated directly (no
+    /// separator). A different language's fragments are never mixed in —
+    /// see [`extended_by_language`](Self::extended_by_language) for the
+    /// rest.
     pub extended_text: Option<String>,
-    /// Accumulated extended event items (description, value) from all
-    /// [`ExtendedEventDescriptor`](crate::descriptors::extended_event::ExtendedEventDescriptor)
-    /// fragments, sorted by `descriptor_number`.
+    /// Accumulated extended event items (description, value) for the same
+    /// first language as [`extended_text`](Self::extended_text), sorted by
+    /// `descriptor_number`.
     #[cfg_attr(feature = "serde", serde(default))]
     pub extended_items: Vec<ExtendedItem>,
+    /// Extended event text/items grouped by language, one entry per
+    /// distinct `ISO_639_language_code` seen, in first-seen wire order.
+    /// [`extended_text`](Self::extended_text)/[`extended_items`](Self::extended_items)
+    /// are this list's first entry.
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub extended_by_language: Vec<ExtendedEventLanguage>,
     /// Content genre entries from
     /// [`ContentDescriptor`](crate::descriptors::content::ContentDescriptor).
     #[cfg_attr(feature = "serde", serde(default))]
@@ -317,6 +353,13 @@ pub const DEFAULT_MAX_EVENTS_PER_SERVICE: usize = 8192;
 pub struct EpgStore {
     collector: crate::collect::EitCollector,
     cache: BTreeMap<ServiceKey, ServiceEpg>,
+    /// `services_tick` at the last touch (feed/feed_sdt) of each still-cached
+    /// service, used to find the least-recently-touched entry to evict when
+    /// `max_services` is full and a new key arrives.
+    services_touch_order: BTreeMap<u64, ServiceKey>,
+    services_tick: u64,
+    services_evicted_for_capacity: u64,
+    events_evicted_for_capacity: u64,
     max_services: usize,
     max_events_per_service: usize,
 }
@@ -328,6 +371,10 @@ impl Default for EpgStore {
                 DEFAULT_MAX_SERVICES.saturating_mul(EIT_LOGICAL_KEYS_PER_SERVICE),
             ),
             cache: BTreeMap::new(),
+            services_touch_order: BTreeMap::new(),
+            services_tick: 0,
+            services_evicted_for_capacity: 0,
+            events_evicted_for_capacity: 0,
             max_services: DEFAULT_MAX_SERVICES,
             max_events_per_service: DEFAULT_MAX_EVENTS_PER_SERVICE,
         }
@@ -339,6 +386,9 @@ struct ServiceEpg {
     service_name: Option<String>,
     /// Deduplicated by event_id. Latest version wins (later inserts overwrite).
     events: BTreeMap<u16, EpgEvent>,
+    /// The store's `services_tick` at the last touch of this service; `0` is
+    /// a sentinel meaning "never touched yet".
+    last_touch: u64,
 }
 
 impl EpgStore {
@@ -350,9 +400,9 @@ impl EpgStore {
     }
 
     /// Replace the service-count cap (default [`DEFAULT_MAX_SERVICES`]).
-    /// When the cap is reached, events for new services are skipped until
-    /// [`retain_services`](Self::retain_services) or [`clear`](Self::clear)
-    /// frees capacity.
+    /// When the cap is reached, a new service key evicts the
+    /// least-recently-touched existing service (see
+    /// [`services_evicted_for_capacity`](Self::services_evicted_for_capacity)).
     ///
     /// Also re-derives the underlying collector's logical-key cap as
     /// `max_services * 17` (see `EIT_LOGICAL_KEYS_PER_SERVICE`), so the two
@@ -370,9 +420,10 @@ impl EpgStore {
     }
 
     /// Replace the per-service event cap (default
-    /// [`DEFAULT_MAX_EVENTS_PER_SERVICE`]). When a service reaches its cap, new
-    /// events (by `event_id`) are skipped; existing event_ids are still updated
-    /// on version churn.
+    /// [`DEFAULT_MAX_EVENTS_PER_SERVICE`]). When a service reaches its cap, a
+    /// new `event_id` evicts that service's earliest-starting event (see
+    /// [`events_evicted_for_capacity`](Self::events_evicted_for_capacity));
+    /// existing event_ids are still updated in place on version churn.
     #[must_use]
     pub fn with_max_events_per_service(mut self, max_events_per_service: usize) -> Self {
         self.max_events_per_service = max_events_per_service;
@@ -400,6 +451,23 @@ impl EpgStore {
         self.collector.sections_evicted_for_capacity()
     }
 
+    /// Number of services evicted so far to admit a new service at
+    /// `max_services` capacity (r02-W5). A nonzero, growing count on a real
+    /// feed means the cap is too small for the stream's distinct-service
+    /// churn.
+    #[must_use]
+    pub fn services_evicted_for_capacity(&self) -> u64 {
+        self.services_evicted_for_capacity
+    }
+
+    /// Number of events evicted so far (each the earliest-starting event of
+    /// its service at the time) to admit a new `event_id` at
+    /// `max_events_per_service` capacity (r02-W5).
+    #[must_use]
+    pub fn events_evicted_for_capacity(&self) -> u64 {
+        self.events_evicted_for_capacity
+    }
+
     /// Feed one EIT section into the store.
     ///
     /// If a table becomes complete, its events are merged into the cache
@@ -422,27 +490,67 @@ impl EpgStore {
                     transport_stream_id: table.transport_stream_id,
                     service_id: table.service_id,
                 };
-                if self.cache.len() >= self.max_services && !self.cache.contains_key(&key) {
+                if !self.make_room_for_service(key) {
                     continue;
                 }
+                let now = self.services_tick;
                 let svc = self.cache.entry(key).or_default();
+                self.services_touch_order.remove(&svc.last_touch);
+                svc.last_touch = now;
+                self.services_touch_order.insert(now, key);
+
                 for event in &table.events {
-                    if svc.events.len() >= self.max_events_per_service
-                        && !svc.events.contains_key(&event.event_id)
+                    let epg_event = event_to_epg(event);
+                    if !svc.events.contains_key(&event.event_id)
+                        && svc.events.len() >= self.max_events_per_service
                     {
-                        continue;
+                        // Evict the earliest-starting event (the one most
+                        // likely already in the past) to admit a genuinely
+                        // new one, instead of silently refusing every event
+                        // past the first cap hit forever (r02-W5).
+                        let stale_id = svc
+                            .events
+                            .iter()
+                            .min_by(|(_, a), (_, b)| cmp_event_by_start(a, b))
+                            .map(|(&id, _)| id);
+                        match stale_id {
+                            Some(stale_id) => {
+                                svc.events.remove(&stale_id);
+                                self.events_evicted_for_capacity += 1;
+                            }
+                            None => continue,
+                        }
                     }
-                    svc.events.insert(event.event_id, event_to_epg(event));
+                    svc.events.insert(event.event_id, epg_event);
                 }
             }
         }
         Ok(())
     }
 
+    /// Get-or-create the cache entry for `key`, evicting the
+    /// least-recently-touched existing service first if the cache is full
+    /// and `key` is new (r02-W5). Returns `false` only when there is no
+    /// entry to evict (`max_services == 0`).
+    fn make_room_for_service(&mut self, key: ServiceKey) -> bool {
+        self.services_tick = self.services_tick.wrapping_add(1).max(1);
+        if !self.cache.contains_key(&key) && self.cache.len() >= self.max_services {
+            let Some((&oldest_tick, &oldest_key)) = self.services_touch_order.iter().next() else {
+                return false;
+            };
+            self.services_touch_order.remove(&oldest_tick);
+            self.cache.remove(&oldest_key);
+            self.services_evicted_for_capacity += 1;
+        }
+        true
+    }
+
     /// Feed completed SDT data to attach service names.
     ///
     /// Accepts a parsed [`crate::collect::CompleteSdt`] from a
-    /// [`crate::collect::SectionSetCollector`].
+    /// [`crate::collect::SectionSetCollector`]. Subject to the same
+    /// `max_services` cap as [`feed`](Self::feed) (r02-W5: previously this
+    /// method ignored the cap entirely).
     pub fn feed_sdt(&mut self, sdt: &crate::collect::CompleteSdt<'_>) {
         for svc in &sdt.services {
             let key = ServiceKey {
@@ -450,7 +558,14 @@ impl EpgStore {
                 transport_stream_id: sdt.transport_stream_id,
                 service_id: svc.service_id,
             };
+            if !self.make_room_for_service(key) {
+                continue;
+            }
+            let now = self.services_tick;
             let entry = self.cache.entry(key).or_default();
+            self.services_touch_order.remove(&entry.last_touch);
+            entry.last_touch = now;
+            self.services_touch_order.insert(now, key);
             entry.service_name = extract_service_name(svc.descriptors.descriptors());
         }
     }
@@ -571,6 +686,13 @@ impl EpgStore {
         F: FnMut(&ServiceKey) -> bool,
     {
         self.cache.retain(|key, _| keep(key));
+        // Drop touch_order entries left dangling by the retain above — a
+        // stale entry pointing at a now-removed key would otherwise let a
+        // future capacity eviction "succeed" against a key that is already
+        // gone, silently leaving the cache one over max_services.
+        let cache = &self.cache;
+        self.services_touch_order
+            .retain(|_, key| cache.contains_key(key));
         self.collector.retain_logical(|lk| {
             keep(&ServiceKey {
                 original_network_id: lk.original_network_id,
@@ -584,6 +706,7 @@ impl EpgStore {
     pub fn clear(&mut self) {
         self.collector.clear();
         self.cache.clear();
+        self.services_touch_order.clear();
     }
 }
 
@@ -622,7 +745,11 @@ fn cmp_event_by_start(a: &EpgEvent, b: &EpgEvent) -> core::cmp::Ordering {
 
 fn event_to_epg(e: &crate::collect::CompleteEitEvent<'_>) -> EpgEvent {
     let (event_name, event_text) = extract_short_event(e.descriptors.descriptors());
-    let (extended_text, extended_items) = extract_extended(e.descriptors.descriptors());
+    let extended_by_language = extract_extended(e.descriptors.descriptors());
+    let (extended_text, extended_items) = match extended_by_language.first() {
+        Some(first) => (Some(first.text.clone()), first.items.clone()),
+        None => (None, Vec::new()),
+    };
     let content_nibbles = extract_content(e.descriptors.descriptors());
     let ratings = extract_ratings(e.descriptors.descriptors());
     let crids = extract_crids(e.descriptors.descriptors());
@@ -637,6 +764,7 @@ fn event_to_epg(e: &crate::collect::CompleteEitEvent<'_>) -> EpgEvent {
         event_text,
         extended_text,
         extended_items,
+        extended_by_language,
         content_nibbles,
         ratings,
         crids,
@@ -663,57 +791,73 @@ struct ExtendedFragment {
     items: Vec<ExtendedItem>,
 }
 
+struct ExtendedLanguageGroup {
+    language_code: crate::text::LangCode,
+    fragments: Vec<ExtendedFragment>,
+}
+
+/// Group `extended_event_descriptor` fragments by `ISO_639_language_code`
+/// (EN 300 468 §6.2.15), in first-seen wire order, then sort each language's
+/// own fragments by `descriptor_number` and concatenate. A bilingual event
+/// interleaves both languages' fragments in wire order (fr#0, en#0, fr#1,
+/// en#1, ...) — grouping by language first is required so
+/// `descriptor_number` sorting never mixes two languages' text into one
+/// string (r02-W4).
 fn extract_extended(
     descriptors: &[crate::Result<crate::descriptors::AnyDescriptor<'_>>],
-) -> (Option<String>, Vec<ExtendedItem>) {
+) -> Vec<ExtendedEventLanguage> {
     use crate::descriptors::AnyDescriptor;
 
-    let mut fragments: Vec<ExtendedFragment> = descriptors
-        .iter()
-        .filter_map(|d| {
-            if let Ok(AnyDescriptor::ExtendedEvent(ee)) = d {
-                let text = ee.text.decode().into_owned();
-                let items: Vec<ExtendedItem> = ee
-                    .items
-                    .iter()
-                    .map(|i| ExtendedItem {
-                        description: i.description.decode().into_owned(),
-                        item: i.value.decode().into_owned(),
-                    })
-                    .collect();
-                if !text.is_empty() || !items.is_empty() {
-                    Some(ExtendedFragment {
-                        descriptor_number: ee.descriptor_number,
-                        text,
-                        items,
-                    })
-                } else {
-                    None
-                }
-            } else {
-                None
-            }
-        })
-        .collect();
+    let mut groups: Vec<ExtendedLanguageGroup> = Vec::new();
 
-    if fragments.is_empty() {
-        return (None, Vec::new());
+    for d in descriptors.iter() {
+        let Ok(AnyDescriptor::ExtendedEvent(ee)) = d else {
+            continue;
+        };
+        let text = ee.text.decode().into_owned();
+        let items: Vec<ExtendedItem> = ee
+            .items
+            .iter()
+            .map(|i| ExtendedItem {
+                description: i.description.decode().into_owned(),
+                item: i.value.decode().into_owned(),
+            })
+            .collect();
+        if text.is_empty() && items.is_empty() {
+            continue;
+        }
+        let fragment = ExtendedFragment {
+            descriptor_number: ee.descriptor_number,
+            text,
+            items,
+        };
+        match groups
+            .iter_mut()
+            .find(|group| group.language_code == ee.language_code)
+        {
+            Some(group) => group.fragments.push(fragment),
+            None => groups.push(ExtendedLanguageGroup {
+                language_code: ee.language_code,
+                fragments: vec![fragment],
+            }),
+        }
     }
 
-    // Sort by descriptor_number per EN 300 468 §6.2.15.
-    fragments.sort_by_key(|f| f.descriptor_number);
-
-    let extended_text: String = fragments.iter().map(|f| f.text.as_str()).collect();
-
-    let extended_items: Vec<ExtendedItem> = fragments.into_iter().flat_map(|f| f.items).collect();
-
-    let text = if extended_text.is_empty() {
-        None
-    } else {
-        Some(extended_text)
-    };
-
-    (text, extended_items)
+    groups
+        .into_iter()
+        .map(|mut group| {
+            // Sort by descriptor_number per EN 300 468 §6.2.15.
+            group.fragments.sort_by_key(|f| f.descriptor_number);
+            let text: String = group.fragments.iter().map(|f| f.text.as_str()).collect();
+            let items: Vec<ExtendedItem> =
+                group.fragments.into_iter().flat_map(|f| f.items).collect();
+            ExtendedEventLanguage {
+                language_code: group.language_code,
+                text,
+                items,
+            }
+        })
+        .collect()
 }
 
 fn extract_content(
@@ -982,6 +1126,7 @@ mod tests {
             event_text: None,
             extended_text: None,
             extended_items: Vec::new(),
+            extended_by_language: Vec::new(),
             content_nibbles: Vec::new(),
             ratings: Vec::new(),
             crids: Vec::new(),
@@ -1071,10 +1216,14 @@ mod tests {
             Ok(AnyDescriptor::ExtendedEvent(frag2)), // dn=0
         ];
 
-        let (text, items) = extract_extended(&descriptors);
+        let groups = extract_extended(&descriptors);
+        assert_eq!(groups.len(), 1, "single language collapses to one group");
+        let group = &groups[0];
+        assert_eq!(group.language_code, LangCode(*b"eng"));
+        let (text, items) = (Some(group.text.as_str()), group.items.as_slice());
 
         // Text concatenated in descriptor_number order: 0,1,2,3
-        assert_eq!(text.as_deref(), Some("brown foxThe quick jumps."));
+        assert_eq!(text, Some("brown foxThe quick jumps."));
 
         // Items accumulated in descriptor_number order: dn=0 ("Year"/"2026"),
         // dn=1 ("Genre"/"Thriller"), dn=2 ("Director"/"Alice"), dn=3 (none)
@@ -1102,6 +1251,58 @@ mod tests {
         );
     }
 
+    /// Regression for r02-W4: a bilingual event's `extended_event_descriptor`
+    /// fragments are interleaved in wire order (fr#0, en#0, fr#1, en#1).
+    /// Sorting by `descriptor_number` alone — with no grouping by
+    /// `ISO_639_language_code` — would mix the two languages' text into one
+    /// string.
+    #[test]
+    fn extended_text_groups_by_language_instead_of_interleaving() {
+        use crate::descriptors::AnyDescriptor;
+        use crate::descriptors::extended_event::ExtendedEventDescriptor;
+        use crate::text::{DvbText, LangCode};
+
+        fn frag(
+            lang: &[u8; 3],
+            dn: u8,
+            last_dn: u8,
+            text: &'static [u8],
+        ) -> ExtendedEventDescriptor<'static> {
+            ExtendedEventDescriptor {
+                descriptor_number: dn,
+                last_descriptor_number: last_dn,
+                language_code: LangCode(*lang),
+                items: vec![],
+                text: DvbText::new(text),
+            }
+        }
+
+        // Wire order: fr#0, en#0, fr#1, en#1.
+        let descriptors: Vec<crate::Result<AnyDescriptor<'_>>> = vec![
+            Ok(AnyDescriptor::ExtendedEvent(frag(
+                b"fra",
+                0,
+                1,
+                b"Bonjour ",
+            ))),
+            Ok(AnyDescriptor::ExtendedEvent(frag(b"eng", 0, 1, b"Hello "))),
+            Ok(AnyDescriptor::ExtendedEvent(frag(
+                b"fra",
+                1,
+                1,
+                b"le monde",
+            ))),
+            Ok(AnyDescriptor::ExtendedEvent(frag(b"eng", 1, 1, b"world"))),
+        ];
+
+        let groups = extract_extended(&descriptors);
+        assert_eq!(groups.len(), 2);
+        assert_eq!(groups[0].language_code, LangCode(*b"fra"));
+        assert_eq!(groups[0].text, "Bonjour le monde");
+        assert_eq!(groups[1].language_code, LangCode(*b"eng"));
+        assert_eq!(groups[1].text, "Hello world");
+    }
+
     // ------------------------------------------------------------------
     // now_and_next boundary correctness
     // ------------------------------------------------------------------
@@ -1125,6 +1326,7 @@ mod tests {
             event_text: None,
             extended_text: None,
             extended_items: vec![],
+            extended_by_language: Vec::new(),
             content_nibbles: vec![],
             ratings: vec![],
             crids: vec![],
@@ -1139,6 +1341,7 @@ mod tests {
             event_text: None,
             extended_text: None,
             extended_items: vec![],
+            extended_by_language: Vec::new(),
             content_nibbles: vec![],
             ratings: vec![],
             crids: vec![],
@@ -1208,6 +1411,7 @@ mod tests {
                 event_text: None,
                 extended_text: None,
                 extended_items: vec![],
+                extended_by_language: Vec::new(),
                 content_nibbles: vec![],
                 ratings: vec![],
                 crids: vec![],
@@ -1365,6 +1569,70 @@ mod tests {
         assert_eq!(store.service_count(), 1);
     }
 
+    /// Regression for r02-W5: `feed_sdt` used to insert into `cache` with no
+    /// `max_services` check at all, unlike `feed`/`feed_with_pid`. A stream
+    /// that rotates service_id via SDT alone (no EIT) could grow the cache
+    /// without bound.
+    #[test]
+    fn feed_sdt_respects_max_services_cap() {
+        use crate::collect::SectionSetCollector;
+
+        fn sdt_section(service_id: u16, name: &[u8]) -> Vec<u8> {
+            let svc_desc = {
+                let mut v = vec![0x48u8, (1 + 1 + name.len()) as u8];
+                v.push(0x01); // service_type = TV SD
+                v.push(0); // provider_name_length = 0
+                v.push(name.len() as u8);
+                v.extend_from_slice(name);
+                v
+            };
+            let dll = svc_desc.len() as u16;
+            let svc_entry_len = 5 + dll as usize;
+            let section_length: u16 = 5 + 3 + svc_entry_len as u16 + 4;
+            let mut buf = vec![0u8; 3 + section_length as usize];
+            buf[0] = 0x42;
+            buf[1] = 0xB0 | ((section_length >> 8) as u8 & 0x0F);
+            buf[2] = (section_length & 0xFF) as u8;
+            buf[3..5].copy_from_slice(&1u16.to_be_bytes()); // ts_id
+            buf[5] = 0xC1;
+            buf[6] = 0;
+            buf[7] = 0;
+            buf[8..10].copy_from_slice(&1u16.to_be_bytes()); // original_network_id
+            buf[10] = 0xFF;
+            let off = 11;
+            buf[off..off + 2].copy_from_slice(&service_id.to_be_bytes());
+            buf[off + 2] = 0xFC;
+            buf[off + 3] = ((dll >> 8) as u8) & 0x0F;
+            buf[off + 4] = (dll & 0xFF) as u8;
+            buf[off + 5..off + 5 + svc_desc.len()].copy_from_slice(&svc_desc);
+            let crc_off = buf.len() - 4;
+            let crc = broadcast_common::crc32_mpeg2::compute(&buf[..crc_off]);
+            buf[crc_off..].copy_from_slice(&crc.to_be_bytes());
+            buf
+        }
+
+        fn feed_one(store: &mut EpgStore, service_id: u16, name: &[u8]) {
+            let bytes = sdt_section(service_id, name);
+            let mut collector = SectionSetCollector::new();
+            let complete = collector.push_section(&bytes).unwrap().unwrap();
+            store.feed_sdt(&complete.sdt().unwrap());
+        }
+
+        let mut store = EpgStore::new().with_max_services(2);
+        feed_one(&mut store, 100, b"A");
+        feed_one(&mut store, 200, b"B");
+        assert_eq!(store.service_count(), 2);
+
+        // A 3rd distinct service via SDT alone must respect the cap too.
+        feed_one(&mut store, 300, b"C");
+        assert_eq!(
+            store.service_count(),
+            2,
+            "feed_sdt must respect max_services, not grow the cache unbounded"
+        );
+        assert_eq!(store.services_evicted_for_capacity(), 1);
+    }
+
     // ------------------------------------------------------------------
     // Version churn: bounded growth
     // ------------------------------------------------------------------
@@ -1448,6 +1716,7 @@ mod tests {
                     event_text: None,
                     extended_text: None,
                     extended_items: vec![],
+                    extended_by_language: Vec::new(),
                     content_nibbles: vec![],
                     ratings: vec![],
                     crids: vec![],
@@ -1471,12 +1740,23 @@ mod tests {
     // ------------------------------------------------------------------
 
     #[test]
-    fn max_services_capped() {
-        // Feed 3 distinct services with a cap of 2 — only the first 2 should
-        // be retained; the third is skipped until space frees.
+    fn max_services_capped_evicts_least_recently_touched() {
+        // Feed 3 distinct services with a cap of 2. Regression for r02-W5:
+        // the least-recently-touched service (100) must be evicted to admit
+        // the 3rd (300), not silently refused forever.
         let mut store = EpgStore::new().with_max_services(2);
 
         let desc = short_event_bytes(b"Test", b"");
+        let key100 = ServiceKey {
+            original_network_id: 1,
+            transport_stream_id: 1,
+            service_id: 100,
+        };
+        let key300 = ServiceKey {
+            original_network_id: 1,
+            transport_stream_id: 1,
+            service_id: 300,
+        };
 
         // Service 100
         let sr1 = start_raw(2026, 6, 10, 10);
@@ -1490,32 +1770,32 @@ mod tests {
         store.feed(&eit2).unwrap();
         assert_eq!(store.service_count(), 2);
 
-        // Service 300 — should be skipped (cap 2 already hit, new key)
+        // Service 300 — a new key at capacity evicts the least-recently
+        // touched service (100), instead of being rejected forever.
         let sr3 = start_raw(2026, 6, 10, 12);
         let eit3 = eit_pf_section(300, 1, 1, 5, 0, sr3, [1, 0, 0], &desc);
         store.feed(&eit3).unwrap();
         assert_eq!(
             store.service_count(),
             2,
-            "third service must be rejected when cap is full"
+            "cap holds at 2 after evicting to admit the 3rd"
         );
-
-        // Verify service 300 has no entry
-        let key300 = ServiceKey {
-            original_network_id: 1,
-            transport_stream_id: 1,
-            service_id: 300,
-        };
         assert!(
-            store.events(key300).is_none(),
-            "rejected service must not appear"
+            store.events(key100).is_none(),
+            "least-recently-touched service (100) must be evicted"
         );
+        assert!(
+            store.events(key300).is_some(),
+            "new service (300) must be admitted"
+        );
+        assert_eq!(store.services_evicted_for_capacity(), 1);
 
-        // Clearing frees space — service 300 can now be stored
+        // Re-touching service 200 (still present) does not evict it, and
+        // clearing still frees all capacity as before.
         store.clear();
-        store.feed(&eit3).unwrap();
+        store.feed(&eit1).unwrap();
         assert_eq!(store.service_count(), 1);
-        assert!(store.events(key300).is_some());
+        assert!(store.events(key100).is_some());
     }
 
     /// Regression for issue #1002: before the fix, `EpgStore::new()`'s
@@ -1558,9 +1838,10 @@ mod tests {
     // ------------------------------------------------------------------
 
     #[test]
-    fn max_events_per_service_capped() {
+    fn max_events_per_service_evicts_earliest_event() {
         // Feed 4 distinct event_ids into one service with a cap of 3.
-        // The 4th event must be skipped.
+        // Regression for r02-W5: the earliest-starting event (id 10) must be
+        // evicted to admit the 4th (id 40), not silently refused forever.
         let mut store = EpgStore::new().with_max_events_per_service(3);
 
         let desc = short_event_bytes(b"Test", b"");
@@ -1579,22 +1860,43 @@ mod tests {
             store.feed(&eit).unwrap();
         }
 
-        assert_eq!(store.event_count(), 3, "4th event must be skipped at cap 3");
+        assert_eq!(
+            store.event_count(),
+            3,
+            "cap holds at 3 after evicting to admit the 4th"
+        );
+        let ids: Vec<u16> = store
+            .events(key)
+            .unwrap()
+            .iter()
+            .map(|e| e.event_id)
+            .collect();
+        assert!(
+            !ids.contains(&10),
+            "earliest-starting event (id 10) must be evicted, got {ids:?}"
+        );
+        assert!(ids.contains(&40), "newest event (id 40) must be admitted");
+        assert_eq!(store.events_evicted_for_capacity(), 1);
 
-        // Version churn on existing event_id still works:
-        let sr_v2 = start_raw(2026, 6, 10, 15);
-        let eit_v2 = eit_pf_section(100, 1, 1, 10, 1, sr_v2, [1, 0, 0], &desc);
+        // Version churn on a still-present event_id works in place:
+        let sr_v2 = start_raw(2026, 6, 10, 20);
+        let eit_v2 = eit_pf_section(100, 1, 1, 40, 1, sr_v2, [1, 0, 0], &desc);
         store.feed(&eit_v2).unwrap();
         assert_eq!(
             store.event_count(),
             3,
             "version churn on existing event_id must not increase count"
         );
+        assert_eq!(
+            store.events_evicted_for_capacity(),
+            1,
+            "updating an existing event_id must not trigger another eviction"
+        );
 
         let evts = store.events(key).unwrap();
-        let ev10 = evts.iter().find(|e| e.event_id == 10).unwrap();
+        let ev40 = evts.iter().find(|e| e.event_id == 40).unwrap();
         assert_eq!(
-            ev10.event_name.as_deref(),
+            ev40.event_name.as_deref(),
             Some("Test"),
             "existing event updated"
         );
@@ -1628,6 +1930,7 @@ mod tests {
                 event_text: Some("Today's headlines".into()),
                 extended_text: None,
                 extended_items: vec![],
+                extended_by_language: Vec::new(),
                 content_nibbles: vec![ContentNibble {
                     level_1: 1,
                     level_2: 1,

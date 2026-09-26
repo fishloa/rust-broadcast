@@ -64,3 +64,7 @@ yoke     = ["dep:yoke"]
 # Off by default; without it the compressed module bytes are exposed raw.
 # flate2 requires std (it uses std::io internally).
 flate2   = ["dep:flate2", "std"]
+
+[[example]]
+name              = "list_services"
+required-features = ["ts"]

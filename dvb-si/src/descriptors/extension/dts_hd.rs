@@ -196,7 +196,14 @@ impl Serialize for SubstreamInfo {
         SUBSTREAM_HEADER_LEN + payload_len
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
-        let payload_len = self.serialized_len() - SUBSTREAM_HEADER_LEN;
+        let len = self.serialized_len();
+        if buf.len() < len {
+            return Err(Error::OutputBufferTooSmall {
+                need: len,
+                have: buf.len(),
+            });
+        }
+        let payload_len = len - SUBSTREAM_HEADER_LEN;
         let substream_length = payload_len;
         if substream_length > 0xFF {
             return Err(Error::ValueOutOfRange {
@@ -466,6 +473,34 @@ mod tests {
     use super::*;
     use crate::descriptors::extension::test_support::*;
     use crate::descriptors::extension::{ExtensionBody, ExtensionDescriptor};
+
+    /// Regression for r03-W17: `SubstreamInfo::serialize_into` used to write
+    /// `buf[0]` before checking the buffer was big enough, panicking
+    /// (out-of-bounds) on a short buffer instead of returning an error.
+    #[test]
+    fn substream_info_serialize_into_rejects_too_small_buffer() {
+        let s = SubstreamInfo {
+            channel_count: 2,
+            lfe_flag: false,
+            sampling_frequency: SamplingFrequency::from_u8(12),
+            sample_resolution: false,
+            reserved: 0,
+            assets: vec![AssetInfo {
+                asset_construction: 1,
+                vbr_flag: false,
+                post_encode_br_scaling_flag: false,
+                component_type_flag: false,
+                language_code_flag: false,
+                bit_rate_or_scaled: 0,
+                reserved: 0,
+                component_type: None,
+                iso_639_language_code: None,
+            }],
+        };
+        let mut buf = [0u8; 1]; // shorter than serialized_len()
+        let err = s.serialize_into(&mut buf).unwrap_err();
+        assert!(matches!(err, Error::OutputBufferTooSmall { .. }));
+    }
 
     #[test]
     fn decodes_sampling_frequency() {

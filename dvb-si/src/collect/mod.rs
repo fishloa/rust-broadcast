@@ -543,31 +543,53 @@ impl CompleteSectionSet {
 
 /// Parsed descriptor loop retaining the raw bytes and the typed descriptor
 /// results.
+///
+/// Usually backed by a single section's descriptor loop, but a table-wide
+/// loop that a spec allows to split across sections (e.g. NIT §5.2.1 / BAT
+/// §5.2.2's `network_descriptors_loop` / `bouquet_descriptors_loop`, one per
+/// section) is built by concatenating each section's loop internally:
+/// `raw()` then yields one entry per contributing section, in section
+/// order, and `descriptors()` is their concatenation in the same order.
 #[derive(Debug)]
 pub struct ParsedDescriptorLoop<'a> {
-    raw: DescriptorLoop<'a>,
+    raw: Vec<DescriptorLoop<'a>>,
     descriptors: Vec<crate::Result<AnyDescriptor<'a>>>,
 }
 
 impl<'a> ParsedDescriptorLoop<'a> {
     pub(crate) fn parse(raw: DescriptorLoop<'a>, registry: Option<&'a DescriptorRegistry>) -> Self {
-        let descriptors = match registry {
-            Some(registry) => registry.parse_loop(raw.raw()).collect(),
-            None => raw.iter().collect(),
-        };
+        Self::parse_all(core::iter::once(raw), registry)
+    }
+
+    /// Parse and concatenate descriptors from several raw descriptor loops,
+    /// in order, into one logical loop.
+    pub(crate) fn parse_all(
+        raws: impl IntoIterator<Item = DescriptorLoop<'a>>,
+        registry: Option<&'a DescriptorRegistry>,
+    ) -> Self {
+        let raw: Vec<DescriptorLoop<'a>> = raws.into_iter().collect();
+        let mut descriptors = Vec::new();
+        for loop_ in &raw {
+            match registry {
+                Some(registry) => descriptors.extend(registry.parse_loop(loop_.raw())),
+                None => descriptors.extend(loop_.iter()),
+            }
+        }
         Self { raw, descriptors }
     }
 
-    /// Raw descriptor-loop bytes.
+    /// Raw descriptor-loop bytes, one entry per contributing section (in
+    /// section order). Almost always a single entry.
     ///
-    /// Use `raw().iter_with_extensions(&desc_reg, &ext_reg)` to recover custom
-    /// extension bodies from a `Complete*` view.
+    /// Use `raw()[i].iter_with_extensions(&desc_reg, &ext_reg)` to recover
+    /// custom extension bodies from a `Complete*` view.
     #[must_use]
-    pub const fn raw(&self) -> DescriptorLoop<'a> {
-        self.raw
+    pub fn raw(&self) -> &[DescriptorLoop<'a>] {
+        &self.raw
     }
 
-    /// Typed descriptor parse results in wire order.
+    /// Typed descriptor parse results in wire order (concatenated across
+    /// every contributing section for a multi-section loop).
     pub fn descriptors(&self) -> &[crate::Result<AnyDescriptor<'a>>] {
         &self.descriptors
     }

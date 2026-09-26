@@ -88,9 +88,12 @@ impl Serialize for CaDescriptor<'_> {
         crate::descriptors::write_descriptor_header(buf, TAG, len - HEADER_LEN)?;
         buf[2] = (self.ca_system_id >> 8) as u8;
         buf[3] = (self.ca_system_id & 0xFF) as u8;
-        // ca_pid with reserved upper 3 bits set to 1
-        buf[4] = 0xE0 | ((self.ca_pid >> 8) as u8);
-        buf[5] = (self.ca_pid & 0xFF) as u8;
+        // ca_pid is a 13-bit field (upper 3 bits reserved, set to 1); an
+        // out-of-range value must be rejected rather than silently wrapped
+        // into a different, wrong PID (r03-W1, the #972 class).
+        let ca_pid = broadcast_common::len::fit_bits(self.ca_pid as u64, 13, "ca_pid")?;
+        buf[4] = 0xE0 | ((ca_pid >> 8) as u8);
+        buf[5] = (ca_pid & 0xFF) as u8;
         if !self.private_data.is_empty() {
             buf[HEADER_LEN + MIN_BODY_LEN..len].copy_from_slice(self.private_data);
         }
@@ -124,6 +127,24 @@ mod tests {
         assert_eq!(d.ca_system_id, 0x0500);
         assert_eq!(d.ca_pid, 0x0101);
         assert_eq!(d.private_data, &[0xAA, 0xBB]);
+    }
+
+    /// Regression for r03-W1 (the #972 class): a `ca_pid` over 13 bits must
+    /// be rejected, not silently wrapped into a different, wrong PID.
+    /// Previously `CaDescriptor { ca_pid: 0x2101, .. }` serialized to the
+    /// same bytes as `ca_pid: 0x0101`.
+    #[test]
+    fn serialize_rejects_ca_pid_over_13_bits() {
+        let d = CaDescriptor {
+            ca_system_id: 0x0500,
+            ca_pid: 0x2101,
+            private_data: &[],
+        };
+        let mut buf = vec![0u8; d.serialized_len()];
+        assert!(matches!(
+            d.serialize_into(&mut buf).unwrap_err(),
+            Error::FieldOverflow(_)
+        ));
     }
 
     #[test]

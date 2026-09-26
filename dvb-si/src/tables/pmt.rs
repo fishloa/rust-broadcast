@@ -11,9 +11,12 @@ use broadcast_common::{Parse, Serialize};
 
 /// PMT table_id (ISO/IEC 13818-1 Table 2-30).
 pub const TABLE_ID: u8 = 0x02;
-/// PMT PIDs are programme-specific and signalled via PAT; 0x0000 is a
-/// placeholder meaning "no well-known PID".
-pub const PID: u16 = 0x0000;
+// PMT PIDs are programme-specific and signalled via PAT — there is no
+// well-known PID to name here. A `PID` constant used to sit here as
+// `0x0000`, but that value equals the real PAT PID, so any caller filtering
+// on it would silently pick up PAT traffic instead (r02-W15). Removed
+// rather than fixed to a different placeholder: PMT and DSM-CC PIDs are
+// simply not signalled by a fixed constant.
 
 const MIN_HEADER_LEN: usize = 3;
 const EXTENSION_HEADER_LEN: usize = 5;

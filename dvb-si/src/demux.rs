@@ -76,7 +76,7 @@
 //! [`Stats::crc_failures`]; they are never emitted and never update the gate.
 //! TDT carries no CRC and is therefore never dropped for CRC reasons.
 
-use alloc::collections::{BTreeMap, VecDeque};
+use alloc::collections::{BTreeMap, BTreeSet, VecDeque};
 use alloc::vec::Vec;
 
 use bytes::Bytes;
@@ -312,6 +312,7 @@ impl SiDemuxBuilder {
     #[must_use]
     pub fn build(self) -> SiDemux {
         let mut pids: BTreeMap<Pid, SectionReassembler> = BTreeMap::new();
+        let mut protected_pids: BTreeSet<Pid> = BTreeSet::new();
         if self.dvb_si_pids {
             use mpeg_ts::pid::well_known as wk;
             for pid in [
@@ -325,10 +326,12 @@ impl SiDemuxBuilder {
                 wk::SAT,
             ] {
                 pids.entry(pid).or_default();
+                protected_pids.insert(pid);
             }
         }
         for p in self.extra_pids {
             pids.entry(p).or_default();
+            protected_pids.insert(p);
         }
         SiDemux {
             pids,
@@ -342,6 +345,8 @@ impl SiDemuxBuilder {
             stats: Stats::default(),
             scratch: Vec::new(),
             completed_scratch: Vec::new(),
+            protected_pids,
+            pmt_pids: BTreeSet::new(),
         }
     }
 }
@@ -360,6 +365,14 @@ pub struct SiDemux {
     stats: Stats,
     scratch: Vec<SectionEvent>,
     completed_scratch: Vec<Bytes>,
+    /// PIDs that must stay watched regardless of PAT churn: the well-known
+    /// DVB/MPEG-2 SI PIDs (if `dvb_si_pids`) and every caller-supplied
+    /// `.pid(...)`. `follow_pat`'s PAT-driven add/remove never touches these.
+    protected_pids: BTreeSet<Pid>,
+    /// PMT PIDs currently watched because the last-followed PAT named them,
+    /// so a later PAT version that drops a programme can stop watching its
+    /// PMT PID instead of leaving it watched forever (r02-W8).
+    pmt_pids: BTreeSet<Pid>,
 }
 
 impl SiDemux {
@@ -518,17 +531,31 @@ impl SiDemux {
     }
 
     /// Parse the PAT and register each programme's PMT PID with a fresh
-    /// reassembler. Parse failures are silently ignored — a malformed PAT that
-    /// nonetheless passed CRC is implausible, and we never panic.
+    /// reassembler, and stop watching a previously-followed PMT PID that
+    /// this PAT version no longer names (r02-W8) — unless it's also a
+    /// `protected_pid` (a well-known SI PID or a caller-supplied `.pid(...)`,
+    /// which `follow_pat` never touches). Parse failures are silently
+    /// ignored — a malformed PAT that nonetheless passed CRC is implausible,
+    /// and we never panic.
     fn follow_pat(&mut self, event: &SectionEvent) {
         use crate::tables::pat::PatSection;
         use broadcast_common::Parse;
         if let Ok(pat) = PatSection::parse(&event.bytes) {
-            for entry in &pat.entries {
-                if entry.program_number != 0 {
-                    self.pids.entry(Pid::new(entry.pid)).or_default();
+            let new_pmt_pids: BTreeSet<Pid> = pat
+                .entries
+                .iter()
+                .filter(|e| e.program_number != 0)
+                .map(|e| Pid::new(e.pid))
+                .collect();
+            for &pid in &new_pmt_pids {
+                self.pids.entry(pid).or_default();
+            }
+            for old_pid in self.pmt_pids.difference(&new_pmt_pids) {
+                if !self.protected_pids.contains(old_pid) {
+                    self.pids.remove(old_pid);
                 }
             }
+            self.pmt_pids = new_pmt_pids;
         }
     }
 }
@@ -662,6 +689,58 @@ mod tests {
             AnyTableSection::PmtSection(p) => assert_eq!(p.program_number, 1),
             other => panic!("expected PmtSection, got {other:?}"),
         }
+    }
+
+    /// Regression for r02-W8: a PAT version change that moves a programme's
+    /// PMT PID must stop watching the old PID, not leave it registered
+    /// forever.
+    #[test]
+    fn follow_pat_stops_watching_pmt_pid_dropped_by_a_later_pat_version() {
+        use crate::tables::AnyTableSection;
+        let mut demux = SiDemux::builder().build();
+
+        // v0: programme 1 -> PMT on 0x0100.
+        let pat_v0 = pat_section(0x0001, 0, &[(1, 0x0100)]);
+        demux.feed(&ts_packet(0x0000, &pat_v0)).for_each(drop);
+
+        // v1: programme 1 moves to PMT PID 0x0200.
+        let pat_v1 = pat_section(0x0001, 1, &[(1, 0x0200)]);
+        demux.feed(&ts_packet(0x0000, &pat_v1)).for_each(drop);
+
+        // A stale PMT still arriving on the old PID (0x0100) must no longer
+        // be watched/emitted.
+        let stale_pmt = pmt_section(1, 0, 0x0100);
+        let stale_evts: Vec<_> = demux.feed(&ts_packet(0x0100, &stale_pmt)).collect();
+        assert_eq!(stale_evts.len(), 0, "stale PMT PID must no longer emit");
+
+        // The new PMT PID (0x0200) is watched.
+        let new_pmt = pmt_section(1, 0, 0x0200);
+        let new_evts: Vec<_> = demux.feed(&ts_packet(0x0200, &new_pmt)).collect();
+        assert_eq!(new_evts.len(), 1, "new PMT PID must emit");
+        match new_evts[0].table_section().unwrap() {
+            AnyTableSection::PmtSection(p) => assert_eq!(p.program_number, 1),
+            other => panic!("expected PmtSection, got {other:?}"),
+        }
+    }
+
+    /// Regression for r02-W8: a PID watched for another reason (a
+    /// well-known SI PID, or a caller's explicit `.pid(...)`) must stay
+    /// watched even if it happens to coincide with a PMT PID a later PAT
+    /// version drops.
+    #[test]
+    fn follow_pat_never_drops_a_protected_pid() {
+        let mut demux = SiDemux::builder().pid(Pid::new(0x0100)).build();
+
+        let pat_v0 = pat_section(0x0001, 0, &[(1, 0x0100)]);
+        demux.feed(&ts_packet(0x0000, &pat_v0)).for_each(drop);
+        let pat_v1 = pat_section(0x0001, 1, &[(1, 0x0200)]);
+        demux.feed(&ts_packet(0x0000, &pat_v1)).for_each(drop);
+
+        // 0x0100 was also added explicitly via `.pid(...)`, so it must
+        // still be watched even though the PAT no longer names it.
+        let pmt = pmt_section(1, 0, 0x0100);
+        let evts: Vec<_> = demux.feed(&ts_packet(0x0100, &pmt)).collect();
+        assert_eq!(evts.len(), 1, "explicitly-added PID must stay watched");
     }
 
     #[test]

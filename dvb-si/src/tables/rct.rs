@@ -296,27 +296,53 @@ pub struct DvbLocatorWindows {
 }
 
 /// DVB binary locator (Table 31, §7.3.2.3.3).
+///
+/// `identifier_type` and `inline_service` are wire-level discriminants for
+/// `identifier`/`service` — rather than carry them as separate fields (a
+/// second source of truth that a caller could set inconsistently with the
+/// enum variant actually being serialized, r02-W17), they are derived from
+/// `identifier`/`service` at serialize time via
+/// [`identifier_type`](Self::identifier_type) /
+/// [`inline_service`](Self::inline_service).
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct DvbBinaryLocator {
-    /// `identifier_type` (2 bits, Table 32) — [`IdentifierType`].
-    pub identifier_type: IdentifierType,
     /// `scheduled_time_reliability`.
     pub scheduled_time_reliability: bool,
-    /// `inline_service`.
-    pub inline_service: bool,
     /// `start_date` (9 bits).
     pub start_date: u16,
-    /// Service identification (conditional on `inline_service`).
+    /// Service identification; also determines the wire `inline_service` bit.
     pub service: DvbLocatorService,
     /// `start_time` (16 bits).
     pub start_time: u16,
     /// `duration` (16 bits).
     pub duration: u16,
-    /// Event identifier (conditional on `identifier_type`).
+    /// Event identifier; also determines the wire `identifier_type` field.
     pub identifier: DvbLocatorIdentifier,
-    /// Time windows (present iff `identifier_type == 0 && scheduled_time_reliability == 1`).
+    /// Time windows. Must be `Some` iff `identifier` is
+    /// [`DvbLocatorIdentifier::None`] and `scheduled_time_reliability` is
+    /// `true` — [`serialize_into`](broadcast_common::Serialize::serialize_into)
+    /// rejects any other combination rather than silently miswriting it.
     pub windows: Option<DvbLocatorWindows>,
+}
+
+impl DvbBinaryLocator {
+    /// The wire `identifier_type` (Table 32), derived from `identifier`.
+    #[must_use]
+    pub const fn identifier_type(&self) -> IdentifierType {
+        match self.identifier {
+            DvbLocatorIdentifier::None => IdentifierType::None,
+            DvbLocatorIdentifier::EventId { .. } => IdentifierType::EventId,
+            DvbLocatorIdentifier::TvaIdEit { .. } => IdentifierType::TvaIdEit,
+            DvbLocatorIdentifier::TvaIdPes { .. } => IdentifierType::TvaIdPes,
+        }
+    }
+
+    /// The wire `inline_service` bit, derived from `service`.
+    #[must_use]
+    pub const fn inline_service(&self) -> bool {
+        matches!(self.service, DvbLocatorService::Full { .. })
+    }
 }
 
 fn locator_serialized_len(loc: &DvbBinaryLocator) -> usize {
@@ -567,9 +593,7 @@ fn parse_locator(data: &[u8]) -> Result<(DvbBinaryLocator, usize)> {
 
     Ok((
         DvbBinaryLocator {
-            identifier_type,
             scheduled_time_reliability,
-            inline_service,
             start_date,
             service,
             start_time,
@@ -581,10 +605,25 @@ fn parse_locator(data: &[u8]) -> Result<(DvbBinaryLocator, usize)> {
     ))
 }
 
-fn serialize_locator(loc: &DvbBinaryLocator, buf: &mut [u8]) -> usize {
-    let b0 = (loc.identifier_type.to_u8() << LOCATOR_ID_TYPE_SHIFT)
+fn serialize_locator(loc: &DvbBinaryLocator, buf: &mut [u8]) -> Result<usize> {
+    // `windows` has no independent wire flag: its presence is entirely
+    // implied by `identifier`/`scheduled_time_reliability`. Reject a
+    // constructed value that disagrees, rather than silently writing
+    // windows bytes that don't match what a reparse would derive (or
+    // omitting `windows` a reparse would expect) (r02-W17).
+    let windows_expected =
+        matches!(loc.identifier, DvbLocatorIdentifier::None) && loc.scheduled_time_reliability;
+    if loc.windows.is_some() != windows_expected {
+        return Err(Error::InvalidDescriptor {
+            tag: 0,
+            reason: "DvbBinaryLocator.windows must be Some iff identifier is None \
+                     and scheduled_time_reliability is true",
+        });
+    }
+
+    let b0 = (loc.identifier_type().to_u8() << LOCATOR_ID_TYPE_SHIFT)
         | (u8::from(loc.scheduled_time_reliability) << 5)
-        | (u8::from(loc.inline_service) << 4)
+        | (u8::from(loc.inline_service()) << 4)
         | LOCATOR_RESERVED_BITS
         | ((loc.start_date >> LOCATOR_START_DATE_HI_SHIFT) as u8 & LOCATOR_START_DATE_HI_MASK);
     buf[0] = b0;
@@ -636,7 +675,7 @@ fn serialize_locator(loc: &DvbBinaryLocator, buf: &mut [u8]) -> usize {
         buf[pos] = ((w.early_start_window & 0x07) << 5) | (w.late_end_window & 0x1F);
         pos += 1;
     }
-    pos
+    Ok(pos)
 }
 
 fn parse_link_info(data: &[u8], link_info_length: usize) -> Result<LinkInfo<'_>> {
@@ -754,6 +793,17 @@ fn parse_link_info(data: &[u8], link_info_length: usize) -> Result<LinkInfo<'_>>
             available: end.saturating_sub(desc_start),
         });
     }
+    // Reject bytes between the descriptor loop and `link_info_length`'s own
+    // end — silently dropping them would break the parse -> serialize
+    // byte-identity invariant (r02-W19), as AIT/EIT/SDT already reject the
+    // equivalent trailing slack.
+    if desc_end != end {
+        return Err(Error::BufferTooShort {
+            need: end - desc_end,
+            have: 0,
+            what: "RctSection link_info trailing bytes",
+        });
+    }
     let descriptors = DescriptorLoop::new(&data[desc_start..desc_end]);
 
     Ok(LinkInfo {
@@ -789,7 +839,7 @@ fn serialize_link_info(li: &LinkInfo, buf: &mut [u8]) -> Result<usize> {
         pos += uri.len();
     }
     if let Some(ref loc) = li.dvb_binary_locator {
-        let n = serialize_locator(loc, &mut buf[pos..]);
+        let n = serialize_locator(loc, &mut buf[pos..])?;
         pos += n;
     }
     let item_count = broadcast_common::len::fit_bits(li.items.len() as u64, 6, "number_items")?;
@@ -897,6 +947,17 @@ impl<'a> Parse<'a> for RctSection<'a> {
             return Err(Error::SectionLengthOverflow {
                 declared: descriptor_loop_length,
                 available: payload_end.saturating_sub(desc_start),
+            });
+        }
+        // Reject bytes between the descriptor loop and the CRC — silently
+        // dropping them would break the parse -> serialize byte-identity
+        // invariant (r02-W19), as AIT/EIT/SDT already reject the equivalent
+        // trailing slack.
+        if desc_end != payload_end {
+            return Err(Error::BufferTooShort {
+                need: payload_end - desc_end,
+                have: 0,
+                what: "RctSection trailing bytes after descriptor loop",
             });
         }
         let descriptors = DescriptorLoop::new(&bytes[desc_start..desc_end]);
@@ -1018,6 +1079,47 @@ mod tests {
         assert!(p.links.is_empty());
     }
 
+    /// Regression for r02-W19: a byte between the (declared-length)
+    /// descriptor loop and the CRC must be rejected, not silently dropped.
+    #[test]
+    fn parse_rejects_trailing_bytes_after_descriptor_loop() {
+        let rct = RctSection {
+            table_id_extension_flag: false,
+            service_id: 0x0064,
+            version_number: 3,
+            current_next_indicator: true,
+            section_number: 0,
+            last_section_number: 0,
+            year_offset: 0x07D3,
+            links: Vec::new(),
+            descriptors: DescriptorLoop::new(&[]),
+        };
+        let mut buf = vec![0u8; rct.serialized_len()];
+        rct.serialize_into(&mut buf).unwrap();
+
+        // Grow section_length by 1 and splice one extra, UNDECLARED byte in
+        // before the CRC — descriptor_loop_length stays 0, so this byte is
+        // not covered by the (empty) descriptor loop at all.
+        let crc_pos = buf.len() - CRC_LEN;
+        let mut section_length = (((buf[1] & 0x0F) as u16) << 8) | buf[2] as u16;
+        section_length += 1;
+        buf[1] = (buf[1] & 0xF0) | ((section_length >> 8) as u8 & 0x0F);
+        buf[2] = (section_length & 0xFF) as u8;
+
+        let mut spliced = buf[..crc_pos].to_vec();
+        spliced.push(0xEE); // the undeclared trailing byte
+        spliced.extend_from_slice(&[0, 0, 0, 0]);
+        let crc_start = spliced.len() - CRC_LEN;
+        let crc = broadcast_common::crc32_mpeg2::compute(&spliced[..crc_start]);
+        spliced[crc_start..].copy_from_slice(&crc.to_be_bytes());
+
+        let err = RctSection::parse(&spliced).unwrap_err();
+        assert!(
+            matches!(&err, Error::BufferTooShort { what, .. } if what.contains("trailing bytes after descriptor loop")),
+            "expected a trailing-bytes error, got {err:?}"
+        );
+    }
+
     #[test]
     fn parse_one_link_uri_only() {
         let li = LinkInfo {
@@ -1056,12 +1158,76 @@ mod tests {
         assert_eq!(p.links[0].media_uri.unwrap(), b"http://example.com");
     }
 
+    /// Regression for r02-W19: a byte between a link's own descriptor loop
+    /// and its declared `link_info_length` must be rejected, not silently
+    /// dropped.
+    #[test]
+    fn parse_rejects_trailing_bytes_inside_link_info() {
+        let li = LinkInfo {
+            link_type: LinkType::UriString,
+            how_related: HowRelated::Cs2005,
+            term_id: 0x123,
+            group_id: 0x5,
+            precedence: 0x9,
+            media_uri: Some(b"http://example.com"),
+            dvb_binary_locator: None,
+            items: Vec::new(),
+            default_icon_flag: false,
+            icon_id: 0,
+            descriptors: DescriptorLoop::new(&[]),
+        };
+        let rct = RctSection {
+            table_id_extension_flag: false,
+            service_id: 0x1234,
+            version_number: 7,
+            current_next_indicator: true,
+            section_number: 1,
+            last_section_number: 3,
+            year_offset: 2003,
+            links: vec![li],
+            descriptors: DescriptorLoop::new(&[]),
+        };
+        let mut buf = vec![0u8; rct.serialized_len()];
+        rct.serialize_into(&mut buf).unwrap();
+
+        // Link entry header starts right after the fixed post-extension
+        // header (MIN_HEADER_LEN + EXTENSION_HEADER_LEN + POST_EXT_FIXED_LEN).
+        let link_hdr_pos = MIN_HEADER_LEN + EXTENSION_HEADER_LEN + POST_EXT_FIXED_LEN;
+        let old_link_info_length =
+            (((buf[link_hdr_pos] & 0x0F) as usize) << 8) | buf[link_hdr_pos + 1] as usize;
+        let link_data_start = link_hdr_pos + LINK_ENTRY_HEADER_LEN;
+        let old_link_data_end = link_data_start + old_link_info_length;
+
+        // Grow link_info_length by 1 (so the link's own `end` boundary
+        // moves past its actual content) and section_length by 1, then
+        // splice one extra, undeclared byte in at the old boundary.
+        let new_link_info_length = old_link_info_length + 1;
+        buf[link_hdr_pos] = (buf[link_hdr_pos] & 0xF0) | ((new_link_info_length >> 8) as u8 & 0x0F);
+        buf[link_hdr_pos + 1] = (new_link_info_length & 0xFF) as u8;
+        let mut section_length = (((buf[1] & 0x0F) as u16) << 8) | buf[2] as u16;
+        section_length += 1;
+        buf[1] = (buf[1] & 0xF0) | ((section_length >> 8) as u8 & 0x0F);
+        buf[2] = (section_length & 0xFF) as u8;
+
+        let mut spliced = buf[..old_link_data_end].to_vec();
+        spliced.push(0xEE); // the undeclared trailing byte
+        spliced.extend_from_slice(&buf[old_link_data_end..buf.len() - CRC_LEN]);
+        spliced.extend_from_slice(&[0, 0, 0, 0]);
+        let crc_start = spliced.len() - CRC_LEN;
+        let crc = broadcast_common::crc32_mpeg2::compute(&spliced[..crc_start]);
+        spliced[crc_start..].copy_from_slice(&crc.to_be_bytes());
+
+        let err = RctSection::parse(&spliced).unwrap_err();
+        assert!(
+            matches!(&err, Error::BufferTooShort { what, .. } if what.contains("link_info trailing bytes")),
+            "expected a link_info trailing-bytes error, got {err:?}"
+        );
+    }
+
     #[test]
     fn parse_one_link_with_locator_and_items() {
         let loc = DvbBinaryLocator {
-            identifier_type: IdentifierType::EventId,
             scheduled_time_reliability: false,
-            inline_service: true,
             start_date: 0x0FF,
             service: DvbLocatorService::Full {
                 transport_stream_id: 0x1000,
@@ -1109,13 +1275,67 @@ mod tests {
         assert_eq!(p.links.len(), 1);
         assert_eq!(p.links[0].link_type, LinkType::BinaryLocator);
         let l = p.links[0].dvb_binary_locator.as_ref().unwrap();
-        assert_eq!(l.identifier_type, IdentifierType::EventId);
-        assert!(l.inline_service);
+        assert_eq!(l.identifier_type(), IdentifierType::EventId);
+        assert!(l.inline_service());
         assert_eq!(l.start_date, 0x0FF);
         assert_eq!(p.links[0].items.len(), 1);
         assert_eq!(p.links[0].items[0].language_code, LangCode(*b"eng"));
         assert!(p.links[0].default_icon_flag);
         assert_eq!(p.links[0].icon_id, 3);
+    }
+
+    /// Regression for r02-W17: `windows` has no independent wire flag — its
+    /// presence is entirely implied by `identifier == None &&
+    /// scheduled_time_reliability`. A constructed locator that disagrees
+    /// (here: `windows: Some(..)` with a non-`None` identifier) must be
+    /// rejected, not silently miswritten (previously there was no check at
+    /// all, since `identifier_type` was a separate, independently-settable
+    /// field).
+    #[test]
+    fn locator_serialize_rejects_windows_identifier_mismatch() {
+        let loc = DvbBinaryLocator {
+            scheduled_time_reliability: true,
+            start_date: 0,
+            service: DvbLocatorService::Triplet {
+                dvb_service_triplet_id: 0,
+            },
+            start_time: 0,
+            duration: 0,
+            identifier: DvbLocatorIdentifier::EventId { event_id: 1 },
+            windows: Some(DvbLocatorWindows {
+                early_start_window: 0,
+                late_end_window: 0,
+            }),
+        };
+        let li = LinkInfo {
+            link_type: LinkType::BinaryLocator,
+            how_related: HowRelated::Cs2007,
+            term_id: 0,
+            group_id: 0,
+            precedence: 0,
+            media_uri: None,
+            dvb_binary_locator: Some(loc),
+            items: Vec::new(),
+            default_icon_flag: false,
+            icon_id: 0,
+            descriptors: DescriptorLoop::new(&[]),
+        };
+        let rct = RctSection {
+            table_id_extension_flag: false,
+            service_id: 1,
+            version_number: 0,
+            current_next_indicator: true,
+            section_number: 0,
+            last_section_number: 0,
+            year_offset: 0,
+            links: vec![li],
+            descriptors: DescriptorLoop::new(&[]),
+        };
+        let mut buf = vec![0u8; rct.serialized_len()];
+        assert!(matches!(
+            rct.serialize_into(&mut buf).unwrap_err(),
+            Error::InvalidDescriptor { .. }
+        ));
     }
 
     #[test]

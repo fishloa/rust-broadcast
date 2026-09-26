@@ -434,7 +434,18 @@ impl<'a> BiopProfileBody<'a> {
                 available: end - pos,
             });
         }
-        let (object_location, _) = ObjectLocation::parse_from(bytes, pos, comp0_end)?;
+        let (object_location, consumed) = ObjectLocation::parse_from(bytes, pos, comp0_end)?;
+        // Reject slack inside `component_data_length` — a component whose
+        // fixed fields + `objectKey_data` end before `comp0_end` (padding or
+        // a vendor extension) would otherwise be silently dropped on
+        // re-serialise (r02-W7).
+        if consumed != comp0_end {
+            return Err(Error::BufferTooShort {
+                need: comp0_end - consumed,
+                have: 0,
+                what: "BIOP ObjectLocation trailing bytes after objectKey_data",
+            });
+        }
         pos = comp0_end;
 
         // Second component: ConnBinder
@@ -461,7 +472,17 @@ impl<'a> BiopProfileBody<'a> {
                 available: end - pos,
             });
         }
-        let (conn_binder, _) = ConnBinder::parse_from(bytes, pos, comp1_end)?;
+        let (conn_binder, consumed) = ConnBinder::parse_from(bytes, pos, comp1_end)?;
+        // Reject slack inside `component_data_length` — a ConnBinder
+        // component whose taps end before `comp1_end` would otherwise be
+        // silently dropped on re-serialise (r02-W7).
+        if consumed != comp1_end {
+            return Err(Error::BufferTooShort {
+                need: comp1_end - consumed,
+                have: 0,
+                what: "BIOP ConnBinder trailing bytes after taps",
+            });
+        }
         pos = comp1_end;
 
         // Remaining extra components
@@ -489,6 +510,18 @@ impl<'a> BiopProfileBody<'a> {
                 data: &bytes[pos..pos + data_len],
             });
             pos += data_len;
+        }
+
+        // Reject slack after the last liteComponent — `bytes` is already
+        // the exact `profile_data` slice bounded by `profile_data_length`,
+        // so anything left here would be silently dropped on re-serialise
+        // (r02-W7).
+        if pos != end {
+            return Err(Error::BufferTooShort {
+                need: end - pos,
+                have: 0,
+                what: "BIOP Profile Body trailing bytes after liteComponents",
+            });
         }
 
         Ok(BiopProfileBody {
@@ -979,7 +1012,16 @@ impl<'a> LiteOptionsProfileBody<'a> {
         let comp0_len_wire = u32::from_be_bytes([slch[4], slch[5], slch[6], slch[7]]);
         pos += SERVICE_LOCATION_COMP_HEADER_LEN;
         let comp0_end = super::span(pos, comp0_len_wire, end)?.end;
-        let (service_location, _) = ServiceLocation::parse_from(bytes, pos, comp0_end)?;
+        let (service_location, consumed) = ServiceLocation::parse_from(bytes, pos, comp0_end)?;
+        // Reject slack inside `component_data_length` (r02-W7), matching
+        // `BiopProfileBody`'s ObjectLocation/ConnBinder components above.
+        if consumed != comp0_end {
+            return Err(Error::BufferTooShort {
+                need: comp0_end - consumed,
+                have: 0,
+                what: "LiteOptions ServiceLocation trailing bytes",
+            });
+        }
         pos = comp0_end;
 
         // Extra components (8-bit length)
@@ -1007,6 +1049,15 @@ impl<'a> LiteOptionsProfileBody<'a> {
                 data: &bytes[pos..pos + data_len],
             });
             pos += data_len;
+        }
+
+        // Reject slack after the last liteComponent (r02-W7).
+        if pos != end {
+            return Err(Error::BufferTooShort {
+                need: end - pos,
+                have: 0,
+                what: "LiteOptions Profile Body trailing bytes after liteComponents",
+            });
         }
 
         Ok(LiteOptionsProfileBody {
@@ -1175,10 +1226,17 @@ impl<'a> Ior<'a> {
     }
 }
 
-impl<'a> Parse<'a> for Ior<'a> {
-    type Error = crate::error::Error;
-
-    fn parse(bytes: &'a [u8]) -> Result<Self> {
+impl<'a> Ior<'a> {
+    /// Parse an IOR from the *front* of `bytes`, returning the number of
+    /// bytes actually consumed — unlike [`Parse::parse`], `bytes` may
+    /// legitimately extend past the end of the IOR (a caller such as
+    /// [`super::message::Binding`] embeds an IOR followed by more fields and
+    /// has no separate length prefix for it). Used instead of
+    /// `ior.serialized_len()` as a post-hoc stand-in for "bytes consumed"
+    /// (r02-W7): that stand-in is only correct if the parsed IOR's own
+    /// wire form has no internal slack, which nothing enforced before this
+    /// fix made every profile body strict.
+    pub(crate) fn parse_at(bytes: &'a [u8]) -> Result<(Self, usize)> {
         let end = bytes.len();
         let (ior_hdr, _) =
             bytes
@@ -1240,7 +1298,23 @@ impl<'a> Parse<'a> for Ior<'a> {
             pos = data_range.end;
         }
 
-        Ok(Ior { type_id, profiles })
+        Ok((Ior { type_id, profiles }, pos))
+    }
+}
+
+impl<'a> Parse<'a> for Ior<'a> {
+    type Error = crate::error::Error;
+
+    fn parse(bytes: &'a [u8]) -> Result<Self> {
+        let (ior, pos) = Self::parse_at(bytes)?;
+        if pos != bytes.len() {
+            return Err(Error::BufferTooShort {
+                need: bytes.len() - pos,
+                have: 0,
+                what: "IOP::IOR trailing bytes after taggedProfiles",
+            });
+        }
+        Ok(ior)
     }
 }
 
@@ -1332,6 +1406,49 @@ mod tests {
         let mut out = vec![0u8; ior.serialized_len()];
         ior.serialize_into(&mut out).unwrap();
         assert_eq!(out, raw, "IOR round-trip byte-exact");
+    }
+
+    /// Regression for r02-W7: a BIOP ObjectLocation component whose
+    /// `component_data_length` is one byte longer than its fixed fields +
+    /// `objectKey_data` (padding, or a vendor extension) must be rejected —
+    /// previously the slack byte was silently dropped and every later field
+    /// in the enclosing structure would misparse.
+    #[test]
+    fn biop_profile_body_rejects_object_location_component_slack() {
+        let mut bytes: Vec<u8> = vec![BYTE_ORDER_BIG_ENDIAN, 0x02]; // liteComponents_count=2
+        bytes.extend_from_slice(&TAG_OBJECT_LOCATION.to_be_bytes());
+        bytes.push(0x0B); // comp0_len = 11: one byte more than the 10 below
+        bytes.extend_from_slice(&[0x00, 0x00, 0x00, 0xAB, 0x00, 0x01, 0x01, 0x00, 0x01, 0x01]); // 10 bytes: fixed(9) + key(1)
+        bytes.push(0xFF); // the declared slack byte
+        bytes.extend_from_slice(&TAG_CONN_BINDER.to_be_bytes());
+        bytes.push(0x01); // comp1_len = 1
+        bytes.push(0x00); // taps_count = 0
+
+        let err = BiopProfileBody::parse_from(&bytes).unwrap_err();
+        assert!(
+            matches!(&err, Error::BufferTooShort { what, .. } if what.contains("ObjectLocation trailing")),
+            "expected ObjectLocation trailing-bytes error, got {err:?}"
+        );
+    }
+
+    /// Regression for r02-W7: an `Ior::parse` whose `taggedProfiles` end
+    /// before the end of the input must be rejected, not silently accepted
+    /// with the trailing bytes dropped.
+    #[test]
+    fn ior_parse_rejects_trailing_bytes() {
+        let mut raw = sample_ior();
+        raw.push(0xEE);
+        let err = Ior::parse(&raw).unwrap_err();
+        assert!(
+            matches!(&err, Error::BufferTooShort { what, .. } if what.contains("IOR trailing bytes")),
+            "expected IOR trailing-bytes error, got {err:?}"
+        );
+        // `parse_at` on the other hand accepts it and reports the true
+        // consumed length, for a caller (Binding/ServiceGatewayInfo) that
+        // has more fields following the IOR.
+        let (ior, consumed) = Ior::parse_at(&raw).unwrap();
+        assert_eq!(consumed, raw.len() - 1);
+        assert_eq!(ior.type_id, b"srg\0");
     }
 
     #[test]

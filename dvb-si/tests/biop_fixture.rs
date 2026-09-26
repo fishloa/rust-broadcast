@@ -136,7 +136,7 @@ fn m6_sgi_oracle() {
     );
 
     // Byte-exact round-trip — the hardest gate.
-    let out = sgi.to_bytes();
+    let out = sgi.to_bytes().unwrap();
     assert_eq!(out.len(), 64, "SGI serialized length must be 64 bytes");
     assert_eq!(
         out.as_slice(),
@@ -315,7 +315,7 @@ fn sgi_round_trip() {
     };
 
     let sgi = ServiceGatewayInfo::parse(&raw).unwrap();
-    let out = sgi.to_bytes();
+    let out = sgi.to_bytes().unwrap();
     assert_eq!(out, raw, "SGI round-trip byte-exact");
 }
 
