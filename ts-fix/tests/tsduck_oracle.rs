@@ -99,13 +99,13 @@ fn run_regen_psi_to_temp_file() -> std::path::PathBuf {
     }
     engine.finish(|pkt| output.extend_from_slice(pkt));
 
+    // A per-process counter, not a timestamp: parallel tests read the clock
+    // within one tick (macOS reports microseconds) and collided.
+    static NEXT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
     let out_path = std::env::temp_dir().join(format!(
         "ts-fix-tsduck-oracle-{}-{}.ts",
         std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
+        NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
     ));
     std::fs::write(&out_path, &output).expect("write regen_psi output to temp file");
     out_path
