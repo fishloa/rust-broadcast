@@ -1,5 +1,6 @@
 //! [`MediaTransport`] — see the `media` module doc for the full picture.
 
+use std::collections::HashSet;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -467,6 +468,25 @@ pub struct MediaTransport {
     /// This transport's copy of [`MediaTransportConfig::max_remote_candidates`]
     /// (RFC 8445 §6.1.2.5's configurable cap).
     max_remote_candidates: usize,
+    /// Every distinct remote `SocketAddr` already counted toward
+    /// [`Self::max_remote_candidates`]: the address of each explicitly added
+    /// remote candidate ([`Self::add_remote_candidate`]) plus every new STUN
+    /// source address [`Self::handle_stun_datagram`] has let through to the
+    /// ICE agent.
+    ///
+    /// `rtc-ice` 0.20.0 creates its own peer-reflexive remote candidate (and
+    /// a new candidate pair) for *every* authenticated STUN Binding Request
+    /// from a source address it does not already recognize — see
+    /// `agent::mod::handle_inbound`'s `remote_candidate_index.is_none()`
+    /// branch — entirely bypassing `add_remote_candidate`'s own cap, since
+    /// that path is never called. RFC 8445 §19.5.1's amplification concern
+    /// applies directly: the peer is untrusted (any WHEP viewer) and knows
+    /// ice-ufrag/ice-pwd from the negotiated SDP, so it can authenticate as
+    /// many Binding Requests as it likes from as many source ports as it
+    /// likes. Since `rtc-ice` keeps its remote-candidate list private (no
+    /// public getter), gating new source addresses here, before they ever
+    /// reach the agent, is the only enforcement point available.
+    known_remote_addrs: HashSet<SocketAddr>,
 }
 
 impl MediaTransport {
@@ -635,6 +655,7 @@ impl MediaTransport {
             gather,
             remote_candidate_count: 0,
             max_remote_candidates: config.max_remote_candidates,
+            known_remote_addrs: HashSet::new(),
         })
     }
 
@@ -674,6 +695,7 @@ impl MediaTransport {
         // or otherwise filters it (`rtc-ice` 0.20.0 keeps its own remote
         // candidate list privately, so this is the only cap available).
         self.remote_candidate_count += 1;
+        self.known_remote_addrs.insert(c.addr());
         self.ice
             .add_remote_candidate(c)
             .map_err(|e| Error::Media(format!("add remote candidate: {e}")))?;
@@ -785,6 +807,20 @@ impl MediaTransport {
                 events.push(MediaEvent::LocalCandidateGathered(candidate));
             }
             return Ok(());
+        }
+
+        // RFC 8445 §19.5.1 / §6.1.2.5: gate new source addresses against
+        // the same cap `add_remote_candidate` enforces, before the datagram
+        // ever reaches the ICE agent — see `known_remote_addrs`'s doc for
+        // why this is the only place that can be done. An address already
+        // admitted (an explicit candidate or a previously admitted STUN
+        // source) keeps working unconditionally; only a *new* source
+        // address is subject to the cap.
+        if !self.known_remote_addrs.contains(&peer) {
+            if self.known_remote_addrs.len() >= self.max_remote_candidates {
+                return Ok(());
+            }
+            self.known_remote_addrs.insert(peer);
         }
 
         let tagged = TaggedBytesMut {
@@ -2063,6 +2099,14 @@ mod tests {
     /// so each side can be constructed already holding the other's real
     /// digest (the verify closure captures it at construction time).
     fn loopback_pair() -> LoopbackPair {
+        loopback_pair_with_max_remote(MAX_REMOTE_CANDIDATES)
+    }
+
+    /// Same as [`loopback_pair`], but with both sides'
+    /// [`MediaTransportConfig::max_remote_candidates`] set to `cap` instead
+    /// of the default — for tests that need to exhaust a small cap (e.g.
+    /// the STUN-source-address one below).
+    fn loopback_pair_with_max_remote(cap: usize) -> LoopbackPair {
         let a_addr = reserve_loopback_addr();
         let b_addr = reserve_loopback_addr();
         let cert_a = Certificate::generate_self_signed(vec!["localhost".to_string()]).unwrap();
@@ -2080,7 +2124,7 @@ mod tests {
                 local_setup: SetupRole::Active,
                 stun_server: None,
                 remote_fingerprint: format!("sha-256 {fp_b}"),
-                max_remote_candidates: MAX_REMOTE_CANDIDATES,
+                max_remote_candidates: cap,
             },
             parse_fingerprint_value(&format!("sha-256 {fp_b}")).unwrap(),
             cert_a,
@@ -2097,7 +2141,7 @@ mod tests {
                 local_setup: SetupRole::Passive,
                 stun_server: None,
                 remote_fingerprint: format!("sha-256 {fp_a}"),
-                max_remote_candidates: MAX_REMOTE_CANDIDATES,
+                max_remote_candidates: cap,
             },
             parse_fingerprint_value(&format!("sha-256 {fp_a}")).unwrap(),
             cert_b,
@@ -2242,5 +2286,112 @@ mod tests {
                 "no association may start before ICE selects a pair"
             );
         }
+    }
+
+    // -----------------------------------------------------------------------
+    // Remote-candidate cap vs. `rtc-ice`'s own peer-reflexive candidate
+    // creation. RFC 8445 §19.5.1 / §6.1.2.5: `rtc-ice` 0.20.0 authenticates
+    // (USERNAME + MESSAGE-INTEGRITY) and admits a STUN Binding Request from
+    // *any* source address, creating a new peer-reflexive remote candidate
+    // for one it doesn't already recognize — entirely bypassing
+    // `add_remote_candidate`'s own cap, since that method is never called
+    // for it. The untrusted peer (any WHEP viewer) already knows
+    // ice-ufrag/ice-pwd from the negotiated SDP, so it can authenticate as
+    // many requests as it likes from as many source ports as it likes.
+    // -----------------------------------------------------------------------
+
+    /// Build an authenticated STUN Binding Request (RFC 8489 §7.3, class
+    /// `CLASS_REQUEST`) exactly as `rtc-ice`'s own inbound check
+    /// (`agent::mod::handle_inbound`'s `assert_inbound_username` /
+    /// `assert_inbound_message_integrity`) verifies one: USERNAME
+    /// `"{local_ufrag}:{remote_ufrag}"` (the receiving side's own ufrag,
+    /// then the ufrag it was configured to expect from its peer) and
+    /// MESSAGE-INTEGRITY keyed with the receiving side's local ICE
+    /// password — the two credentials an SDP-holding peer already has.
+    fn authenticated_binding_request(
+        local_ufrag: &str,
+        remote_ufrag: &str,
+        local_pwd: &str,
+    ) -> Vec<u8> {
+        use rtc_stun::attributes::ATTR_USERNAME;
+        use rtc_stun::fingerprint::FINGERPRINT;
+        use rtc_stun::integrity::MessageIntegrity;
+        use rtc_stun::message::{BINDING_REQUEST, Message, TransactionId};
+        use rtc_stun::textattrs::Username;
+
+        let username = format!("{local_ufrag}:{remote_ufrag}");
+        let mut msg = Message::new();
+        msg.build(&[
+            Box::new(BINDING_REQUEST),
+            Box::new(TransactionId::new()),
+            Box::new(Username::new(ATTR_USERNAME, username)),
+            Box::new(MessageIntegrity::new_short_term_integrity(
+                local_pwd.to_string(),
+            )),
+            Box::new(FINGERPRINT),
+        ])
+        .expect("build authenticated stun binding request");
+        msg.raw
+    }
+
+    #[test]
+    fn stun_from_new_addresses_is_capped_and_original_peer_still_flows() {
+        // Bite test: run this against the unfixed code (no
+        // `known_remote_addrs` gate in `handle_stun_datagram`) and it fails.
+        // `pair.b.ice.get_remote_candidates_stats()` is `rtc-ice`'s own
+        // public stats accessor — it walks the agent's private
+        // `remote_candidates` list directly, so it observes the *real*
+        // peer-reflexive-candidate growth this fix is supposed to stop, not
+        // just this crate's own bookkeeping. Pre-fix, this reached 11 (1
+        // explicit + 10 authenticated peer-reflexive admissions), not
+        // `small_cap`.
+        let small_cap = 3;
+        let mut pair = loopback_pair_with_max_remote(small_cap);
+        pump_until_both_complete(&mut pair, Duration::from_secs(8));
+
+        // B already knows exactly one remote candidate (A's host address,
+        // added by `loopback_pair_with_max_remote`).
+        assert_eq!(pair.b.ice.get_remote_candidates_stats().len(), 1);
+        assert_eq!(pair.b.known_remote_addrs.len(), 1);
+
+        // Any WHEP viewer already knows B's ufrag/pwd (both are plain SDP
+        // attributes) and B's expected remote ufrag (ditto) — but not a real
+        // ICE candidate address: ten new local UDP sockets stand in for ten
+        // distinct, never-negotiated source ports.
+        let new_source_request = authenticated_binding_request(
+            "loopb0ufrag",
+            "loopa0ufrag",
+            "loopb-ice-password-0000000",
+        );
+        for _ in 0..10 {
+            let new_source_addr = reserve_loopback_addr();
+            pair.b
+                .handle_datagram(Instant::now(), new_source_addr, &new_source_request)
+                .expect("a capped-and-dropped datagram must not error");
+        }
+
+        let remote_candidates = pair.b.ice.get_remote_candidates_stats().len();
+        assert!(
+            remote_candidates <= small_cap,
+            "at most {small_cap} remote candidates may ever be tracked by the agent, got {remote_candidates}"
+        );
+        assert!(
+            pair.b.known_remote_addrs.len() <= small_cap,
+            "at most {small_cap} remote candidates may ever be tracked, got {}",
+            pair.b.known_remote_addrs.len()
+        );
+
+        // Media from the original, legitimate peer must still flow — the
+        // cap must reject only the new/unauthorized addresses, not disturb
+        // the already-established session.
+        let protected = pair.a.encrypt_rtp(&rtp_test_packet(42)).unwrap();
+        let events = pair
+            .b
+            .handle_datagram(Instant::now(), pair.a_addr, &protected)
+            .unwrap();
+        assert!(
+            matches!(&events[..], [MediaEvent::Rtp(rtp)] if rtp.sequence_number == 42),
+            "original peer's media must still flow after the flood of new-source requests: {events:?}"
+        );
     }
 }
