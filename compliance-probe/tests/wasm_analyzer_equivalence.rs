@@ -4,9 +4,9 @@
 //! # Why this test exists
 //!
 //! Two independent tools in this repository run ETSI TR 101 290 over the same
-//! fixture and report **different total event counts** — 876 here, 911 there.
+//! fixture and report **different total event counts** — 876 here, 921 there.
 //! That is exactly the shape of an under-reporting defect in a compliance
-//! probe (a probe that silently misses 35 events is indistinguishable from a
+//! probe (a probe that silently misses 45 events is indistinguishable from a
 //! clean stream), so the difference is pinned here as an executable fact
 //! rather than left as prose anyone can rationalise.
 //!
@@ -33,7 +33,7 @@
 //!
 //! At that implied rate the T-STD system transport buffer TBsys (512 bytes,
 //! draining at 1 Mbit/s per ISO/IEC 13818-1 §2.4.2.4) cannot possibly keep
-//! up, so it overflows — and *every one* of the 35 extra events is
+//! up, so it overflows — and *every one* of the 45 extra events is
 //! `Buffer_error` (TR 101 290 Table 5.0c indicator 3.3). Nothing else
 //! differs.
 //!
@@ -41,6 +41,11 @@
 //!
 //! `Continuity_count_error` — the structural finding about this stream — is
 //! **876 at every clock rate tested**, from a frozen clock to 2 ms/packet.
+//! TBsys is fed per TS packet as the bytes arrive (#1035), so `Buffer_error`
+//! falls monotonically with the assumed packet interval and is zero from
+//! 100 µs/packet. The fixture is an SI-only extract, so at a full-multiplex
+//! interval such as 40 µs/packet its SI is far denser than in any real
+//! multiplex, and 3.3 correctly still fires there.
 //! It is clock-independent, and the two tools agree on it exactly. What is
 //! clock-dependent is precisely the T-STD buffer-model indicator, which is
 //! a statement about *arrival timing* and therefore cannot be answered
@@ -158,7 +163,7 @@ fn fixture_carries_no_pcr_so_the_analyzer_clock_degenerates() {
     );
 }
 
-/// Reproduce the WASM analyzer's reading **exactly**: 911 total, and the
+/// Reproduce the WASM analyzer's reading **exactly**: 921 total, and the
 /// per-indicator split showing where every one of those events comes from.
 #[test]
 fn reproduces_the_wasm_analyzer_reading_exactly() {
@@ -166,11 +171,11 @@ fn reproduces_the_wasm_analyzer_reading_exactly() {
 
     assert_eq!(
         total(&acc),
-        911,
+        921,
         "must reproduce the demo WASM analyzer's total exactly; got {acc:?}"
     );
     assert_eq!(acc.get("Continuity_count_error").copied(), Some(876));
-    assert_eq!(acc.get("Buffer_error").copied(), Some(35));
+    assert_eq!(acc.get("Buffer_error").copied(), Some(45));
     assert_eq!(
         acc.len(),
         2,
@@ -185,9 +190,11 @@ fn reproduces_the_wasm_analyzer_reading_exactly() {
 #[test]
 fn under_a_real_arrival_clock_the_only_difference_is_the_tstd_buffer_indicator() {
     let data = fixture();
-    // 40 µs/packet ≈ 37.6 Mbit/s — a full-multiplex rate, and what
-    // `examples/fixture_report.rs` uses.
-    let real = run_fixed_rate(&data, 40_000);
+    // 100 µs/packet: the fixture is an SI-only extract, so this interval
+    // gives its SI an arrival rate TBsys can drain. At a full-multiplex
+    // 40 µs/packet the extract's SI is implausibly dense and 3.3 fires
+    // (see the decay test below).
+    let real = run_fixed_rate(&data, 100_000);
     let analyzer = run_wasm_analyzer_clock(&data);
 
     assert_eq!(total(&real), 876);
@@ -208,7 +215,7 @@ fn under_a_real_arrival_clock_the_only_difference_is_the_tstd_buffer_indicator()
     }
     assert_eq!(
         diff,
-        vec![("Buffer_error", 35)],
+        vec![("Buffer_error", 45)],
         "the whole cross-tool gap must be the T-STD buffer indicator and \
          nothing else — any other entry here is a real indicator-logic \
          divergence, not a clock artefact"
@@ -244,9 +251,11 @@ fn tstd_buffer_error_decays_as_the_assumed_arrival_rate_becomes_realistic() {
     let data = fixture();
     let frozen = run_fixed_rate(&data, 0);
     let slow = run_fixed_rate(&data, 10_000);
+    let multiplex = run_fixed_rate(&data, 40_000);
     let realistic = run_fixed_rate(&data, 100_000);
 
-    assert_eq!(frozen.get("Buffer_error").copied(), Some(35));
-    assert_eq!(slow.get("Buffer_error").copied(), Some(29));
+    assert_eq!(frozen.get("Buffer_error").copied(), Some(45));
+    assert_eq!(slow.get("Buffer_error").copied(), Some(44));
+    assert_eq!(multiplex.get("Buffer_error").copied(), Some(42));
     assert_eq!(realistic.get("Buffer_error").copied(), None);
 }
