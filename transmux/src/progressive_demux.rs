@@ -522,10 +522,12 @@ fn expand_stsc(stsc: &SampleToChunkBox, num_chunks: usize) -> Vec<u32> {
             .get(i + 1)
             .map(|next| next.first_chunk as usize)
             .unwrap_or(num_chunks + 1);
-        for chunk in start..end {
-            if chunk >= 1 && chunk <= num_chunks {
-                table[chunk - 1] = entry.samples_per_chunk;
-            }
+        // Clamp to the actual chunk count before iterating: `first_chunk` is
+        // a wire `u32` and an out-of-range run (e.g. `0xFFFF_FFFF`) would
+        // otherwise spin the loop up to ~4.29 billion times per entry with
+        // nothing for the bounds check inside to skip early.
+        for chunk in start.max(1)..end.min(num_chunks + 1) {
+            table[chunk - 1] = entry.samples_per_chunk;
         }
     }
     table
@@ -648,6 +650,7 @@ fn expand_stss(stss: Option<&SyncSampleBox>, total_samples: usize) -> Vec<bool> 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::init_segment::StscEntry;
 
     /// `ProgressiveDemux::new(0)` must be rejected outright: a zero cap can
     /// never accept a byte, so a `Stage` built from it would be permanently
@@ -746,5 +749,52 @@ mod tests {
         let found = find_stbl_child(&children, b"stsc", stsc_variant, stsc_reparse_err)
             .expect("a non-matching Opaque box must not be treated as this box's error");
         assert!(found.is_none());
+    }
+
+    // -----------------------------------------------------------------------
+    // expand_stsc (W22)
+    // -----------------------------------------------------------------------
+
+    /// An oversized `first_chunk` (up to the wire `u32` max) must not make
+    /// `expand_stsc` iterate the unclamped `[first_chunk, next.first_chunk)`
+    /// range: before the fix, `first_chunk: 1` alternating with
+    /// `first_chunk: 0xFFFF_FFFF` cost ~4.29 billion loop spins per such
+    /// entry, for a `num_chunks` no bigger than a small real fixture's actual
+    /// chunk count. This asserts the call returns promptly (this test would
+    /// not complete in any reasonable time pre-fix, so it is not run against
+    /// the unfixed code).
+    #[test]
+    fn expand_stsc_clamps_oversized_first_chunk_entries() {
+        let stsc = SampleToChunkBox {
+            version: 0,
+            flags: 0,
+            entries: alloc::vec![
+                StscEntry {
+                    first_chunk: 1,
+                    samples_per_chunk: 2,
+                    sample_description_index: 1,
+                },
+                StscEntry {
+                    first_chunk: 0xFFFF_FFFF,
+                    samples_per_chunk: 3,
+                    sample_description_index: 1,
+                },
+                StscEntry {
+                    first_chunk: 1,
+                    samples_per_chunk: 4,
+                    sample_description_index: 1,
+                },
+                StscEntry {
+                    first_chunk: 0xFFFF_FFFF,
+                    samples_per_chunk: 5,
+                    sample_description_index: 1,
+                },
+            ],
+        };
+        // A chunk count sized like a small real fixture (this file's other
+        // stbl-child tests use single-digit chunk counts).
+        let num_chunks = 4;
+        let table = expand_stsc(&stsc, num_chunks);
+        assert_eq!(table.len(), num_chunks);
     }
 }

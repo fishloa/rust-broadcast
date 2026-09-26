@@ -298,3 +298,32 @@ fn args_parse_representative_argv() {
     // The command builds (so --help/--version are wired) without panic.
     Args::command().debug_assert();
 }
+
+// --------------------------------------------------------------------------
+// 6. Debug of `Args` never prints key hex (adversarial review finding on the
+//    W8/W-CSA-4 wave). The `CliError::BadKey` redaction path is exercised by
+//    a unit test inside `src/cli.rs` (it needs the private `parse_key`).
+// --------------------------------------------------------------------------
+
+#[cfg(feature = "cenc")]
+#[test]
+fn args_debug_redacts_key_hex_but_keeps_the_kid() {
+    use clap::Parser;
+
+    let kid_hex = "0102030405060708090a0b0c0d0e0f10";
+    let key_hex = "aabbccddeeff00112233445566778899";
+    let spec = format!("{kid_hex}:{key_hex}");
+
+    let a = Args::try_parse_from(["transmux", "in.mp4", "-o", "out.cmaf", "--key", &spec])
+        .expect("well-formed --key must parse");
+    let out = format!("{a:?}");
+
+    assert!(
+        !out.contains(key_hex),
+        "Debug of Args must not contain the key half: {out}"
+    );
+    assert!(
+        out.contains(kid_hex),
+        "the KID half is not secret and should still appear: {out}"
+    );
+}
