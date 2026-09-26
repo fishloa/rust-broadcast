@@ -1,6 +1,6 @@
 [package]
 name    = "webrtc-runtime"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 description = "Sans-IO WHIP (RFC 9725) + WHEP (draft-ietf-wish-whep) HTTP signalling engine — SDP offer/answer, Trickle ICE, ICE restart, session lifecycle. No IO adapter; caller drives HTTP."
 license      = "MIT OR Apache-2.0"
@@ -109,4 +109,11 @@ required-features = ["media"]
 # ICE/DTLS/SRTP session. Same gating pattern as the two vector tests above.
 [[test]]
 name              = "whip_smoke_pcap_stun"
+required-features = ["media"]
+
+# DTLS peer-certificate fingerprint verification tests (RFC 8122 §5 /
+# RFC 5764 §5 identity checks). Same gating pattern as the three media test
+# files above.
+[[test]]
+name              = "dtls_fingerprint"
 required-features = ["media"]

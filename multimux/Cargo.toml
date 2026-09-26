@@ -115,7 +115,7 @@ futures-util      = { version = "0.3", default-features = false, features = ["st
 # on it (feature off) never pulls `webrtc-runtime`'s own `media` feature —
 # only `multimux`'s `whip`/`whep` features below turn that on. See this
 # crate's `rust-version` note on those features for why the split matters.
-webrtc-runtime    = { path = "../webrtc-runtime", version = "0.1", optional = true, default-features = false }
+webrtc-runtime    = { path = "../webrtc-runtime", version = "0.2", optional = true, default-features = false }
 # WHEP output (`output::whep`, issue #743) only: builds the typed
 # `rtp_packet::RtpPacket` values `webrtc_runtime::media::MediaTransport::
 # encrypt_rtp` requires — see that method's own signature. Unlike

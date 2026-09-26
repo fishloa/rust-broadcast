@@ -32,7 +32,9 @@ use std::io::{Read, Write};
 use std::net::{TcpListener, UdpSocket};
 use std::time::{Duration, Instant};
 
-use webrtc_runtime::media::{MediaEvent, MediaTransport, MediaTransportConfig, SetupRole};
+use webrtc_runtime::media::{
+    MediaEvent, MediaTransport, MediaTransportConfig, SetupRole, parse_remote_fingerprint,
+};
 
 /// The WHIP-lite signalling port this smoke test listens on.
 const SIGNALLING_PORT: u16 = 8787;
@@ -127,10 +129,8 @@ fn main() {
         .unwrap_or("")
         .trim()
         .to_string();
-    let remote_fingerprint = sdp_line(&offer_sdp, "a=fingerprint:")
-        .unwrap_or("")
-        .trim()
-        .to_string();
+    let remote_fingerprint = parse_remote_fingerprint(&offer_sdp)
+        .unwrap_or_else(|| panic!("[smoke] offer has no a=fingerprint; refusing to publish"));
     let mid = sdp_line(&offer_sdp, "a=mid:")
         .unwrap_or("0")
         .trim()
@@ -171,6 +171,7 @@ fn main() {
         is_controlling: false,
         local_setup: SetupRole::Passive,
         stun_server: None,
+        remote_fingerprint,
     })
     .expect("build media transport");
     println!(

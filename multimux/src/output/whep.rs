@@ -110,7 +110,7 @@ use transmux::pipeline::{CodecConfig, Sample, TrackSpec};
 use transmux::{DEFAULT_AUDIO_PT, DEFAULT_MTU, RtpPacketiser, VIDEO_CLOCK_RATE};
 
 use webrtc_runtime::media::{
-    Datagram, MediaEvent, MediaTransport, MediaTransportConfig, SetupRole,
+    Datagram, MediaEvent, MediaTransport, MediaTransportConfig, SetupRole, parse_remote_fingerprint,
 };
 use webrtc_runtime::whep::{content_type, status};
 
@@ -232,6 +232,11 @@ async fn read_http_request(stream: &mut TcpStream) -> std::io::Result<(String, V
 struct ParsedWhepOffer {
     remote_ufrag: String,
     remote_pwd: String,
+    /// The offer's `a=fingerprint` value (RFC 8122 §5) — required; without
+    /// it there is nothing to authenticate the peer's DTLS certificate
+    /// against (RFC 5764 §5), so an offer lacking one is rejected like any
+    /// other malformed offer.
+    remote_fingerprint: String,
     mid: String,
     candidates: Vec<String>,
     /// The offer's `a=setup` value (`"active"`/`"passive"`/`"actpass"`), if
@@ -274,6 +279,9 @@ fn parse_whep_offer(offer: &str) -> Result<ParsedWhepOffer> {
     let remote_pwd = sdp_attr_anywhere(offer, "a=ice-pwd:").ok_or_else(|| MultimuxError::Sdp {
         reason: "whep: offer has no a=ice-pwd".into(),
     })?;
+    let remote_fingerprint = parse_remote_fingerprint(offer).ok_or_else(|| MultimuxError::Sdp {
+        reason: "whep: offer has no a=fingerprint".into(),
+    })?;
     let mid = media
         .get_first_attribute_value("mid")
         .ok()
@@ -306,6 +314,7 @@ fn parse_whep_offer(offer: &str) -> Result<ParsedWhepOffer> {
     Ok(ParsedWhepOffer {
         remote_ufrag,
         remote_pwd,
+        remote_fingerprint,
         mid,
         candidates,
         setup,
@@ -521,6 +530,7 @@ async fn handle_whep_connection(
         local_ice_pwd: local_ice_pwd.clone(),
         remote_ice_ufrag: parsed.remote_ufrag.clone(),
         remote_ice_pwd: parsed.remote_pwd.clone(),
+        remote_fingerprint: parsed.remote_fingerprint.clone(),
         is_controlling: false,
         local_setup: setup_role,
         stun_server: None,
@@ -917,6 +927,13 @@ pub async fn run_whep(route: &WhepRoute, trunk: Arc<Trunk>, cancel: Cancellation
 mod tests {
     use super::*;
 
+    /// A well-formed SHA-256 SDP fingerprint (RFC 8122 §5) — the shape
+    /// `MediaTransport::new` validates; see `crate::source::whip`'s
+    /// identical `OFFER_FINGERPRINT`.
+    const OFFER_FINGERPRINT: &str = "sha-256 \
+00:11:22:33:44:55:66:77:88:99:aa:bb:cc:dd:ee:ff:00:11:22:33:44:55:66:77:88:\
+99:aa:bb:cc:dd:ee:ff";
+
     const OFFER: &str = "v=0\r\n\
 o=- 0 0 IN IP4 127.0.0.1\r\n\
 s=-\r\n\
@@ -925,7 +942,8 @@ m=video 9 UDP/TLS/RTP/SAVPF 96\r\n\
 c=IN IP4 0.0.0.0\r\n\
 a=ice-ufrag:abcd\r\n\
 a=ice-pwd:abcdefghijklmnopqrstuvwx\r\n\
-a=fingerprint:sha-256 00:11\r\n\
+a=fingerprint:sha-256 00:11:22:33:44:55:66:77:88:99:aa:bb:cc:dd:ee:ff:\
+00:11:22:33:44:55:66:77:88:99:aa:bb:cc:dd:ee:ff\r\n\
 a=setup:actpass\r\n\
 a=mid:0\r\n\
 a=rtcp-mux\r\n\
@@ -939,9 +957,23 @@ a=candidate:1 1 udp 2130706431 10.0.0.5 54321 typ host\r\n";
         assert_eq!(parsed.payload_type, 96);
         assert_eq!(parsed.remote_ufrag, "abcd");
         assert_eq!(parsed.remote_pwd, "abcdefghijklmnopqrstuvwx");
+        assert_eq!(parsed.remote_fingerprint, OFFER_FINGERPRINT);
         assert_eq!(parsed.mid, "0");
         assert_eq!(parsed.candidates.len(), 1);
         assert_eq!(parsed.setup.as_deref(), Some("actpass"));
+    }
+
+    /// RFC 5764 §5 / RFC 8122 §5: an offer with no `a=fingerprint` gives
+    /// nothing to authenticate the peer's DTLS certificate against —
+    /// rejected like any other malformed offer, never admitted unverified.
+    #[test]
+    fn rejects_offer_with_no_fingerprint() {
+        let offer = OFFER.replace(
+            "a=fingerprint:sha-256 00:11:22:33:44:55:66:77:88:99:aa:bb:cc:dd:ee:ff:\
+00:11:22:33:44:55:66:77:88:99:aa:bb:cc:dd:ee:ff\r\n",
+            "",
+        );
+        assert!(parse_whep_offer(&offer).is_err());
     }
 
     #[test]

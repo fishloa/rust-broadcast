@@ -4,6 +4,21 @@ All notable changes to this crate will be documented in this file.
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-09-25
+
+### Security
+Fixes GHSA-48qq-7p78-2jvj: the DTLS peer certificate was never verified. Upgrade if you use
+the `media` feature.
+
+### Changed (breaking)
+- `media::MediaTransportConfig` has a new required field `remote_fingerprint` (the remote SDP's
+  `a=fingerprint`). The DTLS handshake now fails unless the peer's certificate matches it, the
+  passive role requires a client certificate, DTLS is accepted only from the ICE-selected
+  address, and an established session's SRTP keys cannot be replaced by another association.
+
+### Added
+- `parse_remote_fingerprint(sdp)` to read `a=fingerprint` from an SDP body.
+
 ## [0.1.0] - 2026-08-11
 
 ### Fixed
