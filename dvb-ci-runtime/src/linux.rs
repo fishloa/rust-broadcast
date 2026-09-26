@@ -229,7 +229,7 @@ impl LinuxCiDataDevice {
         Ok(Self { file })
     }
 
-    /// Open `/dev/dvb/adapter{adapter}/ci{ci}` — see [`open_path`](Self::open_path).
+    /// Open `/dev/dvb/adapter{adapter}/ci{ci}` — see `open_path`.
     pub fn open(adapter: u32, ci: u32) -> io::Result<Self> {
         let path = format!("/dev/dvb/adapter{adapter}/ci{ci}");
         Self::open_path(Path::new(&path))
@@ -237,7 +237,7 @@ impl LinuxCiDataDevice {
 
     /// Wrap an already-open CI data-plane device file. The caller is
     /// responsible for having opened it `O_NONBLOCK` — see
-    /// [`open_path`](Self::open_path) for why a blocking fd here hangs
+    /// `open_path` for why a blocking fd here hangs
     /// `feed_ts` (#1066).
     #[must_use]
     pub fn from_file(file: File) -> Self {
@@ -286,7 +286,7 @@ mod tests {
     /// matching why this whole module compiles only under
     /// `target_os = "linux"` (crate doc) — and, unlike a Unix socketpair
     /// wrapped in a test-defined `CiDataDevice` (flagged in review as not
-    /// biting), opening the FIFO through [`LinuxCiDataDevice::open_path`]
+    /// biting), opening the FIFO through `LinuxCiDataDevice::open_path`
     /// drives the actual production `open`/`read` code under test.
     fn make_fifo() -> std::path::PathBuf {
         let path = std::env::temp_dir().join(format!(

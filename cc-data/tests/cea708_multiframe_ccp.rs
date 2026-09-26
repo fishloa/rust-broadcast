@@ -12,6 +12,7 @@
 //! calls the way a real decoder receives one CCP across several video
 //! frames' `cc_data()` (CEA-708 §4/§5: a CCP is not required to fit in one
 //! access unit).
+#![cfg(feature = "decode")]
 use cc_data::decode::Cea708Decoder;
 use cc_data::{CcTriplet, CcType};
 
