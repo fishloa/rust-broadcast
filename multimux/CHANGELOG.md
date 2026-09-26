@@ -2,6 +2,16 @@
 
 ## [Unreleased]
 
+### Fixed
+- `ProgramSegmenter` no longer calls the blocking `SegmentWriter::publish_segment`
+  from `pump`/`flush`, which run synchronously on whatever thread the owning
+  async ingest task is scheduled on (a shared tokio worker in production): a
+  stalled `ArchiveOverrun::StallIngest` DVR pin could park that worker for
+  seconds, starving every other task scheduled on it. Now uses the
+  non-blocking `SegmentWriter::try_publish_segment`, queuing anything that
+  cannot go through yet and retrying it (in order) on the next call
+  (media-plane issue #1082, T7).
+
 ## [0.11.0] - 2026-09-26
 
 ### Security

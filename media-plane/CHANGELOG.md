@@ -7,6 +7,54 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `SegmentWriter::try_publish_segment` — non-blocking alternative to
+  `SegmentWriter::publish_segment` for the one case that can stall
+  (`ArchiveOverrun::StallIngest`); returns the entry back on `Err` instead
+  of blocking or losing it (issue #1082).
+- `SampleCursorItem::Discontinuity` — reported once, positioned between a
+  dropped `TrunkWriter`'s last sample and its replacement's first, when the
+  write handle is re-issued after a source reconnect (`SampleCursorItem` is
+  `#[non_exhaustive]`, so this is additive) (issue #1082).
+
+### Fixed
+- `RetentionDriver::locate` no longer reports a produced-but-not-yet-drained
+  segment as `Evicted` — it compared against `Trunk::last_closed_segment`
+  (which reports anything ever produced) instead of this driver's own
+  pin-drain progress, so a segment still resident and pin-protected in the
+  hot ring, simply not yet looked at by `drive`, was reported gone (issue #1056).
+- A `TrunkWriter`/`SegmentWriter` can now be re-issued after being dropped —
+  previously the write-handle slot was never released, so a source
+  reconnect permanently orphaned every already-subscribed `SampleCursor`
+  (nothing would ever publish into their rings again). A re-issue past the
+  first is reported in-band to existing cursors as a new
+  `SampleCursorItem::Discontinuity`, positioned exactly between the old
+  writer's last sample and the new writer's first (issue #1082).
+- Replaced 25+ `.expect("... poisoned")` call sites in `trunk.rs` (including
+  one in a `Drop` impl) with a poison-recovering lock helper: a panic in one
+  consumer while it held the trunk's state lock no longer poisons every
+  later writer/reader call on the same `Trunk` (issue #1082).
+- `SegmentWriter::publish_segment`'s `ArchiveOverrun::StallIngest` block is
+  now bounded, and a new `SegmentWriter::try_publish_segment` never blocks
+  at all — previously an unconditional `Condvar::wait` could deadlock a
+  caller whose own thread also drives the `RetentionDriver` that would
+  release the pin (issue #1082). If the bound elapses, the still-blocking
+  pin is now **terminated** (`ArchiveOverrun::Terminate`'s own signal,
+  reused) rather than silently falling back to ordinary `Gap` loss, which
+  would have hidden that a pinned DVR consumer's stronger guarantee was
+  broken (issue #1082).
+- A cursor that falls more than `WRITER_HANDOVER_LOG_CAPACITY` writer
+  hand-offs behind now reports it as ordinary `Lagged` instead of silently
+  catching up and losing the discontinuity report entirely (issue #1082).
+- `EventLog`'s segment-boundary lookups (`try_resolve`'s `Segment` arm and
+  `Trunk::events_in_segment`) now resolve a reused `segment_number` against
+  its most recently recorded boundary instead of a stale, earlier one with
+  the same number (issue #1082).
+- `IngestDriver::feed`/`IngestDriver::finish` now drain queued
+  `SessionEvent`s before entering `HealthState::Failed` on error, instead of
+  dropping events the session had already queued as part of the same call
+  that ultimately failed it (issue #1082).
+
 ## [0.4.1] - 2026-08-16
 
 ### Added
