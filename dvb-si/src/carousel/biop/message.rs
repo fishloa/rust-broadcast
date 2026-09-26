@@ -1769,7 +1769,7 @@ pub const MAX_DECOMPRESSED_MODULE_SIZE: usize = 64 * 1024 * 1024;
 /// exceed `max_len` bytes.
 ///
 /// Uses [`flate2`](https://crates.io/crates/flate2) (optional feature `flate2`).
-/// Reads through [`Read::take`] with a `max_len.saturating_add(1)` cap (not a
+/// Reads through `std::io::Read::take` with a `max_len.saturating_add(1)` cap (not a
 /// plain `+ 1`, which would overflow `u64` if `max_len == usize::MAX` on a
 /// 64-bit target) so a stream that would inflate past `max_len` is caught
 /// after reading one byte beyond the limit, rather than after allocating the
