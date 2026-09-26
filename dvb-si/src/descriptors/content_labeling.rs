@@ -263,8 +263,7 @@ impl Serialize for ContentLabelingDescriptor<'_> {
                 have: buf.len(),
             });
         }
-        buf[0] = TAG;
-        buf[1] = (len - HEADER_LEN) as u8;
+        crate::descriptors::write_descriptor_header(buf, TAG, len - HEADER_LEN)?;
 
         buf[HEADER_LEN] = (self.metadata_application_format >> 8) as u8;
         buf[HEADER_LEN + 1] = self.metadata_application_format as u8;
@@ -283,7 +282,8 @@ impl Serialize for ContentLabelingDescriptor<'_> {
         pos += 1;
 
         if let Some(rec) = self.content_reference_id_record {
-            buf[pos] = rec.len() as u8;
+            buf[pos] =
+                broadcast_common::len::fit_u8(rec.len(), "content_reference_id_record_length")?;
             pos += 1;
             buf[pos..pos + rec.len()].copy_from_slice(rec);
             pos += rec.len();
@@ -304,7 +304,10 @@ impl Serialize for ContentLabelingDescriptor<'_> {
         }
 
         if let Some(ref assoc) = self.time_base_association {
-            buf[pos] = assoc.data.len() as u8;
+            buf[pos] = broadcast_common::len::fit_u8(
+                assoc.data.len(),
+                "content_time_base_association_data_length",
+            )?;
             pos += 1;
             buf[pos..pos + assoc.data.len()].copy_from_slice(assoc.data);
             pos += assoc.data.len();

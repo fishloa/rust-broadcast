@@ -529,8 +529,11 @@ impl Serialize for S2Xv2SatelliteDeliverySystem<'_> {
         }
         // Conditional: channel bond loop.
         if self.channel_bond == 1 {
-            // reserved(7)=0 | num_channel_bonds_minus_one(1).
-            let n = self.secondary_delivery_system_ids.len().saturating_sub(1) as u8 & 0x01;
+            // reserved(7)=0 | num_channel_bonds_minus_one(1). Wraps to u64::MAX for a
+            // zero-length list, which `fit_bits` rejects rather than masking to 0.
+            let minus_one = (self.secondary_delivery_system_ids.len() as u64).wrapping_sub(1);
+            let n =
+                broadcast_common::len::fit_bits(minus_one, 1, "num_channel_bonds_minus_one")? as u8;
             buf[p] = n;
             p += 1;
             for &id in &self.secondary_delivery_system_ids {

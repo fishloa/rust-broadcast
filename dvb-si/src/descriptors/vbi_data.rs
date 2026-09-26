@@ -149,8 +149,7 @@ impl Serialize for VbiDataDescriptor<'_> {
                 reason: "VBI_data_descriptor body exceeds 255 bytes",
             });
         }
-        buf[0] = TAG;
-        buf[1] = body_len as u8;
+        crate::descriptors::write_descriptor_header(buf, TAG, body_len)?;
         let mut pos = HEADER_LEN;
         for e in &self.entries {
             let svc_len = match &e.service_descriptor {

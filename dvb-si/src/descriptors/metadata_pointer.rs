@@ -225,8 +225,7 @@ impl Serialize for MetadataPointerDescriptor<'_> {
                 have: buf.len(),
             });
         }
-        buf[0] = TAG;
-        buf[1] = (len - HEADER_LEN) as u8;
+        crate::descriptors::write_descriptor_header(buf, TAG, len - HEADER_LEN)?;
 
         buf[HEADER_LEN] = (self.metadata_application_format >> 8) as u8;
         buf[HEADER_LEN + 1] = self.metadata_application_format as u8;
@@ -256,7 +255,7 @@ impl Serialize for MetadataPointerDescriptor<'_> {
         pos += 1;
 
         if let Some(rec) = self.metadata_locator_record {
-            buf[pos] = rec.len() as u8;
+            buf[pos] = broadcast_common::len::fit_u8(rec.len(), "metadata_locator_record_length")?;
             pos += 1;
             buf[pos..pos + rec.len()].copy_from_slice(rec);
             pos += rec.len();

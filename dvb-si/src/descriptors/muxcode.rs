@@ -52,8 +52,7 @@ impl Serialize for MuxcodeDescriptor<'_> {
                 have: buf.len(),
             });
         }
-        buf[0] = TAG;
-        buf[1] = self.mux_code_table_entries.len() as u8;
+        crate::descriptors::write_descriptor_header(buf, TAG, self.mux_code_table_entries.len())?;
         buf[HEADER_LEN..len].copy_from_slice(self.mux_code_table_entries);
         Ok(len)
     }

@@ -87,8 +87,7 @@ impl Serialize for ExternalApplicationAuthorisationDescriptor {
                 have: buf.len(),
             });
         }
-        buf[0] = TAG;
-        buf[1] = (self.entries.len() * ENTRY_LEN) as u8;
+        crate::descriptors::write_descriptor_header(buf, TAG, self.entries.len() * ENTRY_LEN)?;
         let mut pos = HEADER_LEN;
         for e in &self.entries {
             buf[pos..pos + 4].copy_from_slice(&e.identifier.organisation_id.to_be_bytes());

@@ -58,8 +58,7 @@ impl Serialize for SimpleApplicationLocationDescriptor<'_> {
                 have: buf.len(),
             });
         }
-        buf[0] = TAG;
-        buf[1] = body_len as u8;
+        crate::descriptors::write_descriptor_header(buf, TAG, body_len)?;
         buf[HEADER_LEN..len].copy_from_slice(self.initial_path_bytes.raw());
         Ok(len)
     }

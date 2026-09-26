@@ -92,8 +92,7 @@ impl Serialize for ServiceAvailabilityDescriptor {
                 have: buf.len(),
             });
         }
-        buf[0] = TAG;
-        buf[1] = body_len as u8;
+        crate::descriptors::write_descriptor_header(buf, TAG, body_len)?;
         // reserved 7 bits emitted as 1s (§5.1).
         let mut flags = RESERVED_MASK;
         if self.availability_flag {

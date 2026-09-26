@@ -365,8 +365,7 @@ impl Serialize for ContentDescriptor {
                 have: buf.len(),
             });
         }
-        buf[0] = TAG;
-        buf[1] = (len - HEADER_LEN) as u8;
+        crate::descriptors::write_descriptor_header(buf, TAG, len - HEADER_LEN)?;
         let mut pos = HEADER_LEN;
         for entry in &self.entries {
             buf[pos] = (entry.nibble_1 << 4) | entry.nibble_2;

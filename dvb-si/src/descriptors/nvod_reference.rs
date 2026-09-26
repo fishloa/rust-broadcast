@@ -89,8 +89,7 @@ impl Serialize for NvodReferenceDescriptor {
                 reason: "NVOD_reference_descriptor body exceeds 255 bytes",
             });
         }
-        buf[0] = TAG;
-        buf[1] = body_len as u8;
+        crate::descriptors::write_descriptor_header(buf, TAG, body_len)?;
         let mut pos = HEADER_LEN;
         for e in &self.entries {
             buf[pos..pos + 2].copy_from_slice(&e.transport_stream_id.to_be_bytes());

@@ -78,8 +78,7 @@ impl Serialize for FmxBufferSizeDescriptor<'_> {
                 have: buf.len(),
             });
         }
-        buf[0] = TAG;
-        buf[1] = (len - HEADER_LEN) as u8;
+        crate::descriptors::write_descriptor_header(buf, TAG, len - HEADER_LEN)?;
         let mut off = HEADER_LEN;
         buf[off..off + self.default_flex_mux_buffer_descriptor.len()]
             .copy_from_slice(self.default_flex_mux_buffer_descriptor);

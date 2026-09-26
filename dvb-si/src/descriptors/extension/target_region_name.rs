@@ -153,7 +153,9 @@ impl Serialize for TargetRegionName<'_> {
         let mut pos = 2 * ISO_639_LEN;
         for region in &self.regions {
             let raw = region.region_name.raw();
-            buf[pos] = ((region.region_depth & 0x03) << 6) | (raw.len() as u8 & 0x3F);
+            let region_name_length =
+                broadcast_common::len::fit_bits(raw.len() as u64, 6, "region_name_length")? as u8;
+            buf[pos] = ((region.region_depth & 0x03) << 6) | region_name_length;
             pos += 1;
             buf[pos..pos + raw.len()].copy_from_slice(raw);
             pos += raw.len();
@@ -246,5 +248,36 @@ mod tests {
         let mut buf = vec![0u8; d.serialized_len()];
         d.serialize_into(&mut buf).unwrap();
         assert_eq!(buf, bytes);
+    }
+
+    /// `region_name_length` is a 6-bit field (max 63, #1129): 63 bytes still
+    /// serialize; 64 must be rejected instead of silently wrapping the length.
+    #[test]
+    fn region_name_length_boundary() {
+        let make = |len: usize| TargetRegionName {
+            country_code: LangCode(*b"ABC"),
+            iso_639_language_code: LangCode(*b"DEF"),
+            regions: vec![TargetRegionNameEntry {
+                region_depth: 0,
+                region_name: DvbText::new(&VEC_63[..len]),
+                primary_region_code: 0,
+                secondary_region_code: None,
+                tertiary_region_code: None,
+            }],
+        };
+        const VEC_63: [u8; 64] = [b'x'; 64];
+
+        let ok = make(63);
+        let mut buf = vec![0u8; ok.serialized_len()];
+        ok.serialize_into(&mut buf).unwrap();
+        assert_eq!(buf[2 * ISO_639_LEN] & 0x3F, 63);
+
+        let over = make(64);
+        let mut buf = vec![0u8; over.serialized_len()];
+        let err = over.serialize_into(&mut buf).unwrap_err();
+        assert!(
+            matches!(err, Error::FieldOverflow(_)),
+            "expected FieldOverflow, got {err:?}"
+        );
     }
 }

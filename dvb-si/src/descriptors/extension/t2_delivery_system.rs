@@ -568,7 +568,10 @@ impl Serialize for T2DeliverySystem {
                 buf[p..p + 2].copy_from_slice(&cell.cell_id.to_be_bytes());
                 p += 2;
                 if tfs {
-                    let freq_len = (cell.centre_frequencies.len() * 4) as u8;
+                    let freq_len = broadcast_common::len::fit_u8(
+                        cell.centre_frequencies.len() * 4,
+                        "frequency_loop_length",
+                    )?;
                     buf[p] = freq_len;
                     p += 1;
                     for &freq in &cell.centre_frequencies {
@@ -580,7 +583,10 @@ impl Serialize for T2DeliverySystem {
                     buf[p..p + 4].copy_from_slice(&freq.to_be_bytes());
                     p += 4;
                 }
-                let subcell_len = (cell.subcells.len() * 5) as u8;
+                let subcell_len = broadcast_common::len::fit_u8(
+                    cell.subcells.len() * 5,
+                    "subcell_info_loop_length",
+                )?;
                 buf[p] = subcell_len;
                 p += 1;
                 for sc in &cell.subcells {

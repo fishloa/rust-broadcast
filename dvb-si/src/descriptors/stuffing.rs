@@ -63,8 +63,7 @@ impl Serialize for StuffingDescriptor<'_> {
                 reason: "stuffing_descriptor body exceeds 255 bytes",
             });
         }
-        buf[0] = TAG;
-        buf[1] = self.stuffing_bytes.len() as u8;
+        crate::descriptors::write_descriptor_header(buf, TAG, self.stuffing_bytes.len())?;
         buf[HEADER_LEN..len].copy_from_slice(self.stuffing_bytes);
         Ok(len)
     }

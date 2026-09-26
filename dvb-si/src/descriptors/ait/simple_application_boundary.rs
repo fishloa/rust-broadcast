@@ -101,12 +101,14 @@ impl Serialize for SimpleApplicationBoundaryDescriptor<'_> {
                 have: buf.len(),
             });
         }
-        buf[0] = TAG;
-        buf[1] = body_len as u8;
-        buf[2] = self.boundary_extensions.len() as u8;
+        crate::descriptors::write_descriptor_header(buf, TAG, body_len)?;
+        buf[2] = broadcast_common::len::fit_u8(
+            self.boundary_extensions.len(),
+            "boundary_extension_count",
+        )?;
         let mut pos = HEADER_LEN + COUNT_LEN;
         for e in &self.boundary_extensions {
-            buf[pos] = e.len() as u8;
+            buf[pos] = broadcast_common::len::fit_u8(e.len(), "boundary_extension_length")?;
             buf[pos + 1..pos + 1 + e.len()].copy_from_slice(e);
             pos += 1 + e.len();
         }

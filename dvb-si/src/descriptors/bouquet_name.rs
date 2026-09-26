@@ -46,8 +46,7 @@ impl Serialize for BouquetNameDescriptor<'_> {
             });
         }
 
-        buf[0] = TAG;
-        buf[1] = self.bouquet_name.len() as u8;
+        crate::descriptors::write_descriptor_header(buf, TAG, self.bouquet_name.len())?;
         buf[HEADER_LEN..need].copy_from_slice(self.bouquet_name.raw());
 
         Ok(need)

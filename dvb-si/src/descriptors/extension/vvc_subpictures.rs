@@ -132,9 +132,14 @@ impl Serialize for VvcSubpictures<'_> {
         }
         // byte 0: default_service_mode(1) | service_description_present(1) | number_of_vvc_subpictures(6)
         let service_description_present = self.service_description.is_some();
+        let number_of_vvc_subpictures = broadcast_common::len::fit_bits(
+            self.subpictures.len() as u64,
+            6,
+            "number_of_vvc_subpictures",
+        )? as u8;
         buf[0] = (u8::from(self.default_service_mode) << 7)
             | (u8::from(service_description_present) << 6)
-            | (self.subpictures.len() as u8 & 0x3F);
+            | number_of_vvc_subpictures;
         let mut p = 1;
         for sp in &self.subpictures {
             buf[p] = sp.component_tag;
@@ -144,7 +149,7 @@ impl Serialize for VvcSubpictures<'_> {
         buf[p] = self.processing_mode & 0x07;
         p += 1;
         if let Some(text) = &self.service_description {
-            buf[p] = text.len() as u8;
+            buf[p] = broadcast_common::len::fit_u8(text.len(), "service_description_length")?;
             p += 1;
             buf[p..p + text.len()].copy_from_slice(text.raw());
         }
@@ -278,5 +283,36 @@ mod tests {
         assert!(json.contains("\"tag_extension\":35"));
         assert!(json.contains("\"vvcSubpictures\""));
         assert!(json.contains("\"service_description\":\"Hi\""));
+    }
+
+    /// `number_of_vvc_subpictures` is a 6-bit field (max 63, #1129): 63
+    /// entries still serialize; 64 must be rejected instead of silently
+    /// wrapping the count.
+    #[test]
+    fn number_of_vvc_subpictures_boundary() {
+        let make = |n: usize| VvcSubpictures {
+            default_service_mode: false,
+            subpictures: (0..n)
+                .map(|_| VvcSubpicture {
+                    component_tag: 0,
+                    vvc_subpicture_id: 0,
+                })
+                .collect(),
+            processing_mode: 0,
+            service_description: None,
+        };
+
+        let ok = make(63);
+        let mut buf = vec![0u8; ok.serialized_len()];
+        ok.serialize_into(&mut buf).unwrap();
+        assert_eq!(buf[0] & 0x3F, 63);
+
+        let over = make(64);
+        let mut buf = vec![0u8; over.serialized_len()];
+        let err = over.serialize_into(&mut buf).unwrap_err();
+        assert!(
+            matches!(err, Error::FieldOverflow(_)),
+            "expected FieldOverflow, got {err:?}"
+        );
     }
 }

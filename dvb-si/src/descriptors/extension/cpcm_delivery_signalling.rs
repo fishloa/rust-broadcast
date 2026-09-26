@@ -664,11 +664,12 @@ impl Serialize for CpcmUsi {
             pos += CPCM_DATE_TIME_LEN;
         }
         if self.export_controlled_cps {
-            buf[pos] = self.cps_vectors.len() as u8;
+            buf[pos] = broadcast_common::len::fit_u8(self.cps_vectors.len(), "cps_vector_count")?;
             pos += 1;
             for entry in &self.cps_vectors {
                 buf[pos] = entry.c_and_r_regime_mask;
-                let vlen = entry.cps_vector.len() as u16;
+                let vlen =
+                    broadcast_common::len::fit_u16(entry.cps_vector.len(), "cps_vector_length")?;
                 buf[pos + 1..pos + 3].copy_from_slice(&vlen.to_be_bytes());
                 pos += CPS_ENTRY_HDR_LEN;
                 buf[pos..pos + entry.cps_vector.len()].copy_from_slice(&entry.cps_vector);

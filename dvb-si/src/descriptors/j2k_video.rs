@@ -469,8 +469,7 @@ impl Serialize for J2kVideoDescriptor<'_> {
                 have: buf.len(),
             });
         }
-        buf[0] = TAG;
-        buf[1] = (len - HEADER_LEN) as u8;
+        crate::descriptors::write_descriptor_header(buf, TAG, len - HEADER_LEN)?;
 
         // extended_capability_flag(1) | profile_and_level(15)
         let mut b01 = self.profile_and_level & 0x7FFF;

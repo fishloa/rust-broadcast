@@ -901,8 +901,7 @@ impl Serialize for LinkageDescriptor<'_> {
                 have: buf.len(),
             });
         }
-        buf[0] = TAG;
-        buf[1] = (len - HEADER_LEN) as u8;
+        crate::descriptors::write_descriptor_header(buf, TAG, len - HEADER_LEN)?;
         let bs = HEADER_LEN;
         buf[bs..bs + 2].copy_from_slice(&self.transport_stream_id.to_be_bytes());
         buf[bs + 2..bs + 4].copy_from_slice(&self.original_network_id.to_be_bytes());

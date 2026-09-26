@@ -73,8 +73,7 @@ impl Serialize for EcmRepetitionRateDescriptor<'_> {
                 have: buf.len(),
             });
         }
-        buf[0] = TAG;
-        buf[1] = (FIXED_LEN + self.private_data.len()) as u8;
+        crate::descriptors::write_descriptor_header(buf, TAG, FIXED_LEN + self.private_data.len())?;
         buf[2..4].copy_from_slice(&self.ca_system_id.to_be_bytes());
         buf[4..6].copy_from_slice(&self.ecm_repetition_rate.to_be_bytes());
         buf[HEADER_LEN + FIXED_LEN..len].copy_from_slice(self.private_data);

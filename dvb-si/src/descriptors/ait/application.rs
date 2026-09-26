@@ -202,8 +202,7 @@ impl Serialize for ApplicationDescriptor {
                 have: buf.len(),
             });
         }
-        buf[0] = TAG;
-        buf[1] = body_len as u8;
+        crate::descriptors::write_descriptor_header(buf, TAG, body_len)?;
         buf[2] = profiles_length as u8;
         let mut pos = 3;
         for p in &self.profiles {

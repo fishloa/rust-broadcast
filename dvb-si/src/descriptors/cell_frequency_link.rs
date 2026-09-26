@@ -170,14 +170,6 @@ impl Serialize for CellFrequencyLinkDescriptor {
                 reason: "cell_frequency_link_descriptor body exceeds 255 bytes",
             });
         }
-        for e in &self.entries {
-            if e.subcells.len() * SUBCELL_LEN > u8::MAX as usize {
-                return Err(Error::InvalidDescriptor {
-                    tag: TAG,
-                    reason: "subcell_info_loop_length exceeds 255 bytes",
-                });
-            }
-        }
         let len = self.serialized_len();
         if buf.len() < len {
             return Err(Error::OutputBufferTooSmall {
@@ -185,13 +177,15 @@ impl Serialize for CellFrequencyLinkDescriptor {
                 have: buf.len(),
             });
         }
-        buf[0] = TAG;
-        buf[1] = body_len as u8;
+        crate::descriptors::write_descriptor_header(buf, TAG, body_len)?;
         let mut pos = HEADER_LEN;
         for e in &self.entries {
             buf[pos..pos + 2].copy_from_slice(&e.cell_id.to_be_bytes());
             buf[pos + 2..pos + 6].copy_from_slice(&e.frequency.to_be_bytes());
-            buf[pos + 6] = (e.subcells.len() * SUBCELL_LEN) as u8;
+            buf[pos + 6] = broadcast_common::len::fit_u8(
+                e.subcells.len() * SUBCELL_LEN,
+                "subcell_info_loop_length",
+            )?;
             pos += OUTER_FIXED_LEN;
             for sc in &e.subcells {
                 buf[pos] = sc.cell_id_extension;

@@ -275,14 +275,13 @@ impl Serialize for ServiceDescriptor<'_> {
                 have: buf.len(),
             });
         }
-        buf[0] = TAG;
-        buf[1] = (len - HEADER_LEN) as u8;
+        crate::descriptors::write_descriptor_header(buf, TAG, len - HEADER_LEN)?;
         buf[2] = self.service_type.to_u8();
-        buf[3] = self.provider_name.len() as u8;
+        buf[3] = broadcast_common::len::fit_u8(self.provider_name.len(), "provider_name_length")?;
         let p_start = 4;
         let p_end = p_start + self.provider_name.len();
         buf[p_start..p_end].copy_from_slice(self.provider_name.raw());
-        buf[p_end] = self.service_name.len() as u8;
+        buf[p_end] = broadcast_common::len::fit_u8(self.service_name.len(), "service_name_length")?;
         let s_start = p_end + 1;
         buf[s_start..s_start + self.service_name.len()].copy_from_slice(self.service_name.raw());
         Ok(len)

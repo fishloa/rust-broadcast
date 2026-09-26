@@ -90,8 +90,7 @@ impl Serialize for NordigLogicalChannelV1 {
                 have: buf.len(),
             });
         }
-        buf[0] = TAG_V1;
-        buf[1] = ((len - V1_HEADER_LEN) / V1_ENTRY_LEN * V1_ENTRY_LEN) as u8;
+        crate::descriptors::write_descriptor_header(buf, TAG_V1, len - V1_HEADER_LEN)?;
         let mut offset = V1_HEADER_LEN;
         for entry in &self.entries {
             buf[offset..offset + 2].copy_from_slice(&entry.service_id.to_be_bytes());
@@ -259,19 +258,22 @@ impl Serialize for NordigLogicalChannelV2 {
                 have: buf.len(),
             });
         }
-        buf[0] = TAG_V2;
-        buf[1] = (len - V2_HEADER_LEN) as u8;
+        crate::descriptors::write_descriptor_header(buf, TAG_V2, len - V2_HEADER_LEN)?;
         let mut offset = V2_HEADER_LEN;
         for cl in &self.channel_lists {
             buf[offset] = cl.channel_list_id;
-            buf[offset + 1] = cl.channel_list_name.len() as u8;
+            buf[offset + 1] = broadcast_common::len::fit_u8(
+                cl.channel_list_name.len(),
+                "channel_list_name_length",
+            )?;
             offset += 2;
             buf[offset..offset + cl.channel_list_name.len()].copy_from_slice(&cl.channel_list_name);
             offset += cl.channel_list_name.len();
             buf[offset..offset + 3].copy_from_slice(&cl.country_code.0);
             offset += 3;
             let desc_len = V2_SERVICE_ENTRY_LEN * cl.services.len();
-            buf[offset] = desc_len as u8;
+            buf[offset] =
+                broadcast_common::len::fit_u8(desc_len, "channel_list_descriptor_length")?;
             offset += 1;
             for svc in &cl.services {
                 buf[offset..offset + 2].copy_from_slice(&svc.service_id.to_be_bytes());

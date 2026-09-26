@@ -224,8 +224,7 @@ impl Serialize for FrequencyListDescriptor {
 
         let body_length = CODING_BYTE_LEN + self.centre_frequencies_bcd.len() * ENTRY_LEN;
 
-        buf[0] = TAG;
-        buf[1] = body_length as u8;
+        crate::descriptors::write_descriptor_header(buf, TAG, body_length)?;
         buf[HEADER_LEN] = RESERVED_BITS_MASK | coding_type_bits;
 
         let mut offset = HEADER_LEN + CODING_BYTE_LEN;

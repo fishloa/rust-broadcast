@@ -196,7 +196,12 @@ impl Serialize for AudioPreselection<'_> {
                 have: buf.len(),
             });
         }
-        buf[0] = ((self.preselections.len() as u8) & 0x1F) << 3;
+        let num_preselections = broadcast_common::len::fit_bits(
+            self.preselections.len() as u64,
+            5,
+            "num_preselections",
+        )? as u8;
+        buf[0] = num_preselections << 3;
         let mut p = 1;
         for s in &self.preselections {
             buf[p] = ((s.preselection_id & 0x1F) << 3) | (s.audio_rendering_indication & 0x07);
@@ -218,13 +223,22 @@ impl Serialize for AudioPreselection<'_> {
                 p += 1;
             }
             if let Some(tags) = s.aux_component_tags {
-                buf[p] = ((tags.len() as u8) & 0x07) << 5;
+                let num_aux_component_tags = broadcast_common::len::fit_bits(
+                    tags.len() as u64,
+                    3,
+                    "num_aux_component_tags",
+                )? as u8;
+                buf[p] = num_aux_component_tags << 5;
                 p += 1;
                 buf[p..p + tags.len()].copy_from_slice(tags);
                 p += tags.len();
             }
             if let Some(ext) = s.future_extension {
-                buf[p] = ext.len() as u8 & 0x1F;
+                buf[p] = broadcast_common::len::fit_bits(
+                    ext.len() as u64,
+                    5,
+                    "future_extension_length",
+                )? as u8;
                 p += 1;
                 buf[p..p + ext.len()].copy_from_slice(ext);
                 p += ext.len();
@@ -349,5 +363,42 @@ mod tests {
             other => panic!("expected AudioPreselection, got {other:?}"),
         }
         round_trip(&d);
+    }
+
+    fn minimal_preselection() -> Preselection<'static> {
+        Preselection {
+            preselection_id: 0,
+            audio_rendering_indication: 0,
+            audio_description: false,
+            spoken_subtitles: false,
+            dialogue_enhancement: false,
+            interactivity_enabled: false,
+            language_code: None,
+            message_id: None,
+            aux_component_tags: None,
+            future_extension: None,
+        }
+    }
+
+    /// `num_preselections` is a 5-bit field (max 31, #1129): 31 entries still
+    /// serialize; 32 must be rejected instead of silently wrapping the count.
+    #[test]
+    fn num_preselections_boundary() {
+        let ok = AudioPreselection {
+            preselections: (0..31).map(|_| minimal_preselection()).collect(),
+        };
+        let mut buf = vec![0u8; ok.serialized_len()];
+        ok.serialize_into(&mut buf).unwrap();
+        assert_eq!(buf[0] >> 3, 31);
+
+        let over = AudioPreselection {
+            preselections: (0..32).map(|_| minimal_preselection()).collect(),
+        };
+        let mut buf = vec![0u8; over.serialized_len()];
+        let err = over.serialize_into(&mut buf).unwrap_err();
+        assert!(
+            matches!(err, Error::FieldOverflow(_)),
+            "expected FieldOverflow, got {err:?}"
+        );
     }
 }

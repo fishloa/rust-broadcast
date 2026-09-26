@@ -158,24 +158,6 @@ impl Serialize for TtmlSubtitling<'_> {
             + self.reserved_tail.len()
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
-        // dvb_ttml_profile_count is a 4-bit field; font_ids count is 8-bit.
-        // Reject over-long inputs rather than silently wrapping the count.
-        if self.dvb_ttml_profiles.len() > 0x0F {
-            return Err(Error::ValueOutOfRange {
-                field: "dvb_ttml_profiles",
-                reason: "more than 15 profiles (dvb_ttml_profile_count is 4 bits)",
-            });
-        }
-        if self
-            .font_ids
-            .as_ref()
-            .is_some_and(|ids| ids.len() > u8::MAX as usize)
-        {
-            return Err(Error::ValueOutOfRange {
-                field: "font_ids",
-                reason: "more than 255 font_ids (font_id_count is 8 bits)",
-            });
-        }
         let len = self.serialized_len();
         if buf.len() < len {
             return Err(Error::OutputBufferTooSmall {
@@ -188,9 +170,14 @@ impl Serialize for TtmlSubtitling<'_> {
         buf[ISO_639_LEN] = ((self.subtitle_purpose & 0x3F) << 2) | (self.tts_suitability & 0x03);
         // byte 4: essential_font_usage_flag(1) | qualifier_present_flag(1)
         //         | reserved_zero_future_use(2) | dvb_ttml_profile_count(4)
+        let dvb_ttml_profile_count = broadcast_common::len::fit_bits(
+            self.dvb_ttml_profiles.len() as u64,
+            4,
+            "dvb_ttml_profile_count",
+        )? as u8;
         buf[ISO_639_LEN + 1] = (if self.font_ids.is_some() { 0x80 } else { 0 })
             | (if self.qualifier.is_some() { 0x40 } else { 0 })
-            | (self.dvb_ttml_profiles.len() as u8 & 0x0F);
+            | dvb_ttml_profile_count;
 
         let mut pos = TTML_FIXED_LEN;
 
@@ -206,7 +193,7 @@ impl Serialize for TtmlSubtitling<'_> {
 
         // conditional font-id loop
         if let Some(ids) = &self.font_ids {
-            buf[pos] = ids.len() as u8;
+            buf[pos] = broadcast_common::len::fit_u8(ids.len(), "font_id_count")?;
             pos += 1;
             for &id in ids {
                 buf[pos] = id & 0x7F;
@@ -216,7 +203,7 @@ impl Serialize for TtmlSubtitling<'_> {
 
         // text run
         let raw = self.text.raw();
-        buf[pos] = raw.len() as u8;
+        buf[pos] = broadcast_common::len::fit_u8(raw.len(), "text_length")?;
         pos += 1;
         buf[pos..pos + raw.len()].copy_from_slice(raw);
         pos += raw.len();

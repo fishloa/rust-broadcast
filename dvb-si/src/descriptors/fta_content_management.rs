@@ -162,8 +162,7 @@ impl Serialize for FtaContentManagementDescriptor {
         if self.do_not_apply_revocation {
             flags |= DO_NOT_APPLY_REVOCATION_MASK;
         }
-        buf[0] = TAG;
-        buf[1] = BODY_LEN as u8;
+        crate::descriptors::write_descriptor_header(buf, TAG, BODY_LEN)?;
         buf[HEADER_LEN] = flags;
         Ok(len)
     }

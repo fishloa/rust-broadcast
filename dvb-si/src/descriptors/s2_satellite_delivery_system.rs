@@ -241,8 +241,7 @@ impl Serialize for S2SatelliteDeliverySystemDescriptor {
                 have: buf.len(),
             });
         }
-        buf[0] = TAG;
-        buf[1] = (len - HEADER_LEN) as u8;
+        crate::descriptors::write_descriptor_header(buf, TAG, len - HEADER_LEN)?;
 
         let mut flags = FLAG_RESERVED_BITS | (self.ts_gs_mode.to_u8() & TS_GS_MODE_MASK);
         if self.scrambling_sequence_selector {

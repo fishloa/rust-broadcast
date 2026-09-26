@@ -291,8 +291,7 @@ impl Serialize for CarouselIdentifierDescriptor<'_> {
             });
         }
 
-        buf[0] = TAG;
-        buf[1] = body_len as u8;
+        crate::descriptors::write_descriptor_header(buf, TAG, body_len)?;
         buf[HEADER_LEN..HEADER_LEN + CAROUSEL_ID_LEN]
             .copy_from_slice(&self.carousel_id.to_be_bytes());
         buf[HEADER_LEN + CAROUSEL_ID_LEN] = self.format.format_id();
@@ -310,12 +309,6 @@ impl Serialize for CarouselIdentifierDescriptor<'_> {
                 timeout,
                 object_key,
             } => {
-                if object_key.len() > u8::MAX as usize {
-                    return Err(Error::InvalidDescriptor {
-                        tag: TAG,
-                        reason: "FormatId=0x01 ObjectKeyData exceeds 255 bytes",
-                    });
-                }
                 buf[pos] = *module_version;
                 pos += FS1_MODULE_VERSION_LEN;
                 buf[pos..pos + FS1_MODULE_ID_LEN].copy_from_slice(&module_id.to_be_bytes());
@@ -330,7 +323,7 @@ impl Serialize for CarouselIdentifierDescriptor<'_> {
                 pos += FS1_ORIGINAL_SIZE_LEN;
                 buf[pos] = *timeout;
                 pos += FS1_TIMEOUT_LEN;
-                buf[pos] = object_key.len() as u8;
+                buf[pos] = broadcast_common::len::fit_u8(object_key.len(), "ObjectKeyDataLength")?;
                 pos += FS1_OBJECT_KEY_LENGTH_LEN;
                 buf[pos..pos + object_key.len()].copy_from_slice(object_key);
                 pos += object_key.len();

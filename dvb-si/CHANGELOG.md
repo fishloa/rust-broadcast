@@ -34,6 +34,37 @@
 - Added a shared `dvb_si::tables::write_section_length` helper that every
   table serializer now routes its outer `section_length` write through, so
   the guard cannot be forgotten again for a future table.
+- ~80 descriptor serializers (starting from the `network_name_descriptor`
+  template) wrote the outer 8-bit `descriptor_length` header byte with no
+  range check, so a body over 255 bytes wrapped mod 256 and misframed the
+  rest of the descriptor loop (#1129). Added a shared
+  `dvb_si::descriptors::write_descriptor_header` helper (tag + checked 8-bit
+  length) that every descriptor serializer now routes its header write
+  through.
+- Nested per-field lengths and counts inside descriptor bodies had the same
+  gap and are now range-checked before narrowing, including several
+  bit-packed sub-byte fields that previously masked an over-range value
+  instead of rejecting it: `audio_preselection`'s `num_preselections` (5
+  bits), `num_aux_component_tags` (3 bits) and `future_extension_length` (5
+  bits); `target_region_name`'s `region_name_length` (6 bits);
+  `vvc_subpictures`'s `number_of_vvc_subpictures` (6 bits);
+  `protection_message`'s `component_count` (4 bits); `telephone`'s five
+  packed char-field lengths (2/3/2/3/4 bits); and the
+  `num_channel_bonds_minus_one` (1 bit) field shared by
+  `s2x_satellite_delivery_system` and `s2xv2_satellite_delivery_system`.
+  Plain 8-bit/16-bit fields across `short_event`, `extended_event`,
+  `service`, `metadata`, `metadata_pointer`, `content_labeling`,
+  `content_identifier`, `data_broadcast`, `data_broadcast_id`, `mosaic`,
+  `carousel_identifier`, `nordig`, `cell_list`/`cell_frequency_link`,
+  `t2_delivery_system`, `cpcm_delivery_signalling`, `image_icon`,
+  `ttml_subtitling`, `ac4`, `uri_linkage`, `video_depth_range`, the
+  `multilingual_*_name`/`component` descriptors, and the AIT descriptors
+  (`simple_application_boundary`, `dvb_j_application`,
+  `dvb_j_application_location`, `application_name`) had the same gap.
+- Added a source-scan regression test
+  (`dvb-si/tests/serializer_length_truncation.rs`) that fails CI if the
+  literal unchecked pattern (`<expr>.len() as u8/u16/u32`) reappears
+  anywhere under `src/descriptors/` outside a `#[cfg(test)]` module.
 
 ## [10.1.0] - 2026-09-26
 

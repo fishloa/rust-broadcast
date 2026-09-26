@@ -124,46 +124,27 @@ impl Serialize for DataBroadcastDescriptor<'_> {
     }
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
-        if self.selector.len() > u8::MAX as usize {
-            return Err(Error::InvalidDescriptor {
-                tag: TAG,
-                reason: "selector exceeds 255 bytes (selector_length is 8-bit)",
-            });
-        }
-        if self.text.len() > u8::MAX as usize {
-            return Err(Error::InvalidDescriptor {
-                tag: TAG,
-                reason: "text exceeds 255 bytes (text_length is 8-bit)",
-            });
-        }
         let len = self.serialized_len();
         let body = len - HEADER_LEN;
-        if body > u8::MAX as usize {
-            return Err(Error::InvalidDescriptor {
-                tag: TAG,
-                reason: "data_broadcast_descriptor body exceeds 255 bytes",
-            });
-        }
         if buf.len() < len {
             return Err(Error::OutputBufferTooSmall {
                 need: len,
                 have: buf.len(),
             });
         }
-        buf[0] = TAG;
-        buf[1] = body as u8;
+        crate::descriptors::write_descriptor_header(buf, TAG, body)?;
         let mut pos = HEADER_LEN;
         buf[pos..pos + ID_LEN].copy_from_slice(&self.data_broadcast_id.to_be_bytes());
         pos += ID_LEN;
         buf[pos] = self.component_tag;
         pos += COMPONENT_TAG_LEN;
-        buf[pos] = self.selector.len() as u8;
+        buf[pos] = broadcast_common::len::fit_u8(self.selector.len(), "selector_length")?;
         pos += SELECTOR_LEN_FIELD;
         buf[pos..pos + self.selector.len()].copy_from_slice(self.selector);
         pos += self.selector.len();
         buf[pos..pos + LANG_LEN].copy_from_slice(&self.language_code.0);
         pos += LANG_LEN;
-        buf[pos] = self.text.len() as u8;
+        buf[pos] = broadcast_common::len::fit_u8(self.text.len(), "text_length")?;
         pos += TEXT_LEN_FIELD;
         buf[pos..pos + self.text.len()].copy_from_slice(self.text.raw());
         Ok(len)
@@ -313,7 +294,7 @@ mod tests {
         };
         let mut buf = vec![0u8; d.serialized_len()];
         let err = d.serialize_into(&mut buf).unwrap_err();
-        assert!(matches!(err, Error::InvalidDescriptor { tag: TAG, .. }));
+        assert!(matches!(err, Error::FieldOverflow(_)));
     }
 
     #[test]
@@ -330,7 +311,7 @@ mod tests {
         };
         let mut buf = vec![0u8; d.serialized_len()];
         let err = d.serialize_into(&mut buf).unwrap_err();
-        assert!(matches!(err, Error::InvalidDescriptor { tag: TAG, .. }));
+        assert!(matches!(err, Error::FieldOverflow(_)));
     }
 
     #[cfg(feature = "serde")]

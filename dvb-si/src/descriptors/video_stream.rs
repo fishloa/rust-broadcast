@@ -206,8 +206,7 @@ impl Serialize for VideoStreamDescriptor {
                 have: buf.len(),
             });
         }
-        buf[0] = TAG;
-        buf[1] = (len - HEADER_LEN) as u8;
+        crate::descriptors::write_descriptor_header(buf, TAG, len - HEADER_LEN)?;
         let b0 = ((self.multiple_frame_rate_flag as u8) << 7)
             | (self.frame_rate_code.to_u8() << 3)
             | ((self.mpeg_1_only_flag as u8) << 2)

@@ -128,6 +128,24 @@ pub use data_stream_alignment::DataStreamAlignmentDescriptor;
 pub use private_data_indicator::PrivateDataIndicatorDescriptor;
 pub use registration::RegistrationDescriptor;
 
+/// Write a descriptor's 2-byte header — `tag` then a range-checked 8-bit
+/// `descriptor_length` — into `buf[0..2]`.
+///
+/// `buf` must already be known to hold at least `2 + body_len` bytes (callers
+/// check this via `serialized_len()` before calling). Returns
+/// [`Error::FieldOverflow`](crate::Error::FieldOverflow) instead of silently
+/// narrowing (`as u8`) a `body_len` that does not fit the 8-bit field, which
+/// would otherwise emit a misframed descriptor loop (#1129).
+pub(crate) fn write_descriptor_header(
+    buf: &mut [u8],
+    tag: u8,
+    body_len: usize,
+) -> crate::Result<()> {
+    buf[0] = tag;
+    buf[1] = broadcast_common::len::fit_u8(body_len, "descriptor_length")?;
+    Ok(())
+}
+
 pub(crate) fn descriptor_body<'a>(
     bytes: &'a [u8],
     tag: u8,
@@ -178,4 +196,31 @@ pub(crate) fn encode_bcd_field(value: u64, nibbles: u8, field: &'static str) -> 
         field,
         reason: "value exceeds the BCD field width",
     })
+}
+
+#[cfg(test)]
+mod header_tests {
+    use super::write_descriptor_header;
+
+    /// Boundary: a 255-byte body is the largest an 8-bit `descriptor_length`
+    /// can hold, and must still serialize.
+    #[test]
+    fn write_descriptor_header_accepts_max_body_len() {
+        let mut buf = [0u8; 2];
+        write_descriptor_header(&mut buf, 0x40, 255).unwrap();
+        assert_eq!(buf, [0x40, 255]);
+    }
+
+    /// A 256-byte body does not fit the 8-bit field and must return `Err`
+    /// rather than wrapping `256 as u8 == 0` into a misframed descriptor
+    /// (#1129) — this is the template bug every descriptor serializer had.
+    #[test]
+    fn write_descriptor_header_rejects_body_len_over_255() {
+        let mut buf = [0u8; 2];
+        let err = write_descriptor_header(&mut buf, 0x40, 256).unwrap_err();
+        assert!(
+            matches!(err, crate::Error::FieldOverflow(_)),
+            "expected FieldOverflow, got {err:?}"
+        );
+    }
 }

@@ -62,8 +62,7 @@ impl Serialize for AuxiliaryVideoStreamDescriptor<'_> {
                 have: buf.len(),
             });
         }
-        buf[0] = TAG;
-        buf[1] = (len - HEADER_LEN) as u8;
+        crate::descriptors::write_descriptor_header(buf, TAG, len - HEADER_LEN)?;
         buf[HEADER_LEN] = self.aux_video_codedstreamtype;
         buf[HEADER_LEN + FIXED_LEN..len].copy_from_slice(self.si_rbsp);
         Ok(len)

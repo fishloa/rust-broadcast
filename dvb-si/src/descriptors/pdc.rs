@@ -119,8 +119,7 @@ impl Serialize for PdcDescriptor {
                 have: buf.len(),
             });
         }
-        buf[0] = TAG;
-        buf[1] = BODY_LEN as u8;
+        crate::descriptors::write_descriptor_header(buf, TAG, BODY_LEN)?;
         // Reserved 4 bits emitted as 1s.
         let raw = RESERVED_BITS | (self.programme_identification_label & PIL_MASK);
         buf[HEADER_LEN] = (raw >> 16) as u8;

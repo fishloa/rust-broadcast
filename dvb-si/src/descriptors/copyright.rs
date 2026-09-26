@@ -64,8 +64,7 @@ impl Serialize for CopyrightDescriptor<'_> {
                 have: buf.len(),
             });
         }
-        buf[0] = TAG;
-        buf[1] = (len - HEADER_LEN) as u8;
+        crate::descriptors::write_descriptor_header(buf, TAG, len - HEADER_LEN)?;
         buf[HEADER_LEN..HEADER_LEN + COPYRIGHT_ID_LEN]
             .copy_from_slice(&self.copyright_identifier.to_be_bytes());
         buf[HEADER_LEN + COPYRIGHT_ID_LEN..len].copy_from_slice(self.additional_copyright_info);

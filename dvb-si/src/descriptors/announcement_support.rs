@@ -352,8 +352,7 @@ impl Serialize for AnnouncementSupportDescriptor {
                 have: buf.len(),
             });
         }
-        buf[0] = TAG;
-        buf[1] = body_len as u8;
+        crate::descriptors::write_descriptor_header(buf, TAG, body_len)?;
         buf[HEADER_LEN..HEADER_LEN + INDICATOR_LEN]
             .copy_from_slice(&self.announcement_support_indicator.to_be_bytes());
         let mut pos = HEADER_LEN + INDICATOR_LEN;

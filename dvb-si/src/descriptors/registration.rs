@@ -70,8 +70,7 @@ impl Serialize for RegistrationDescriptor<'_> {
                 have: buf.len(),
             });
         }
-        buf[0] = TAG;
-        buf[1] = (len - HEADER_LEN) as u8;
+        crate::descriptors::write_descriptor_header(buf, TAG, len - HEADER_LEN)?;
         buf[HEADER_LEN..HEADER_LEN + FORMAT_IDENTIFIER_LEN]
             .copy_from_slice(&self.format_identifier);
         buf[HEADER_LEN + FORMAT_IDENTIFIER_LEN..len]
