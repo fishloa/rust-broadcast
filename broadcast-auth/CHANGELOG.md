@@ -6,6 +6,21 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+- Digest `Verifier`: nonces are now issued per challenge as `issue-time ‖ salt ‖
+  HMAC-SHA256` under a per-verifier random secret and expire after
+  `DIGEST_NONCE_LIFETIME` (300 s); the highest `nc` per `(nonce, cnonce)` is
+  tracked (bounded by `DIGEST_NC_TRACK_CAP`) and a repeated or lower `nc` is
+  rejected, so a captured `Authorization` header no longer verifies twice
+  (RFC 7616 §3.3/§3.4). `Verifier::challenge` therefore returns a different
+  nonce on every call.
+
+### Added
+- `Verifier::challenge_for(&RequestContext)`: the challenge for a rejected
+  request, carrying `stale=true` when only the Digest nonce had expired.
+- `Verifier::with_clock`: replace the clock nonce ages are measured against.
+- `DIGEST_NONCE_LIFETIME`, `DIGEST_NC_TRACK_CAP` (crate root).
+
 ## [0.3.0] - 2026-08-11
 
 ### Changed
