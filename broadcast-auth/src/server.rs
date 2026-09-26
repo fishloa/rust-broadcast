@@ -65,20 +65,42 @@
 //!   `WWW-Authenticate` round-trip a client could answer for a query-string
 //!   token.
 //!
-//! # Nonce handling (replay caveat)
+//! # Nonce handling (RFC 7616 §3.3 / §5.4)
 //!
-//! A [`Verifier`] built for `Digest` generates one random nonce at
-//! construction time and reuses it for the verifier's entire lifetime — it
-//! does not rotate per-challenge or track consumed `(nonce, nc)` pairs. This
-//! is the "simple server nonce" the design spec calls out as acceptable: it
-//! is enough to stop a passive credential-sniffing attacker (the password
-//! itself is never sent), but — unlike a nonce-tracking implementation — it
-//! does **not** detect a replayed exact request (identical `nc`/`cnonce`)
-//! within the verifier's lifetime. Rebuild the `Verifier` (e.g. on process
-//! restart) to rotate the nonce.
+//! A `Digest` [`Verifier`] issues a fresh nonce on every
+//! [`Verifier::challenge`] call: `issue-time ‖ issue-sequence ‖
+//! HMAC-SHA256(secret, issue-time ‖ issue-sequence)`, hex-encoded, where
+//! `secret` is drawn from the OS RNG once per verifier. A nonce is accepted
+//! only if its HMAC checks out and it is younger than
+//! [`DIGEST_NONCE_LIFETIME`]. Expiry is absolute; a correctly answered but
+//! expired nonce is reported via [`Verifier::challenge_for`], whose challenge
+//! then carries `stale=true`, so a compliant client retries with the new
+//! nonce without re-prompting (RFC 7616 §3.3). Callers should answer a `401`
+//! with [`Verifier::challenge_for`] rather than [`Verifier::challenge`].
+//!
+//! Replay: for each `(nonce, cnonce)` pair the verifier keeps the highest
+//! `nc` accepted plus a bitmap of the [`NC_WINDOW`] values below it (the
+//! RFC 4303 §3.4.3 anti-replay window), so requests pipelined on one pair may
+//! arrive out of order, but no `nc` is accepted twice and one more than
+//! [`NC_WINDOW`] below the highest is refused. At most
+//! [`DIGEST_NC_TRACK_CAP`] pairs are tracked by default
+//! ([`Verifier::with_digest_nc_capacity`] changes it); past that the
+//! least-recently-used pair is dropped, and any pair not in the table whose
+//! nonce was issued no later than a dropped live one is answered as stale, so
+//! a dropped pair can never be replayed.
+//!
+//! The verifier's clock defaults to [`SystemTime::now`] and can be replaced
+//! with [`Verifier::with_clock`]; a clock that steps backwards is clamped to
+//! the latest nonce issue time seen.
+
+use std::collections::{BTreeMap, HashMap};
+use std::sync::Mutex;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use base64::Engine;
+use hmac::{Hmac, Mac};
 use md5::{Digest as _, Md5};
+use sha2::Sha256;
 
 use crate::credentials::Credentials;
 use crate::request::RequestContext;
@@ -97,8 +119,8 @@ pub enum AuthResult {
 }
 
 /// Per-scheme state a [`Verifier`] holds — mirrors [`Credentials`] but adds
-/// the realm (Basic/Digest) and the one server nonce (Digest) generated at
-/// construction (see the module docs' nonce-handling caveat).
+/// the realm (Basic/Digest) and the nonce secret + `nc` tracker (Digest; see
+/// the module docs' nonce handling).
 enum VerifierScheme {
     Basic {
         username: String,
@@ -109,7 +131,7 @@ enum VerifierScheme {
         username: String,
         password: String,
         realm: String,
-        nonce: String,
+        nonces: DigestNonces,
     },
     Bearer {
         token: String,
@@ -133,6 +155,260 @@ enum VerifierScheme {
 /// [`Credentials`] (RFC 7235 origin-side auth) — see the module docs.
 pub struct Verifier {
     scheme: VerifierScheme,
+    clock: Clock,
+}
+
+/// The time source a [`Verifier`] reads nonce ages from.
+type Clock = Box<dyn Fn() -> SystemTime + Send + Sync>;
+
+/// How long an issued Digest nonce is accepted, measured from issue (RFC 7616
+/// §5.4 leaves the lifetime to the server). An older nonce is refused, and
+/// [`Verifier::challenge_for`] answers it with `stale=true` so the client
+/// retries silently with a fresh nonce.
+pub const DIGEST_NONCE_LIFETIME: Duration = Duration::from_secs(3600);
+
+/// Default number of `(nonce, cnonce)` pairs a Digest [`Verifier`] tracks
+/// (see [`Verifier::with_digest_nc_capacity`]). Each tracked pair costs about
+/// 128 bytes (a 32-byte key hash stored twice, 28 bytes of counters, and
+/// hash-map/B-tree overhead), so the default is roughly 8 MiB at most.
+pub const DIGEST_NC_TRACK_CAP: usize = 65_536;
+
+/// Width of the per-pair `nc` anti-replay window: how far below the highest
+/// accepted `nc` a not-yet-seen `nc` is still accepted (RFC 4303 §3.4.3).
+pub const NC_WINDOW: u32 = u64::BITS;
+
+/// Bytes of per-verifier HMAC key drawn from the OS RNG.
+const NONCE_SECRET_LEN: usize = 32;
+/// Bytes of the big-endian issue time (seconds since the Unix epoch).
+const NONCE_TIME_LEN: usize = 8;
+/// Bytes of the big-endian per-verifier issue sequence number, so every
+/// challenge gets a distinct nonce and nonces are totally ordered by issue.
+const NONCE_SEQ_LEN: usize = 8;
+/// Bytes of HMAC-SHA256 output.
+const NONCE_MAC_LEN: usize = 32;
+/// Bytes of the decoded nonce.
+const NONCE_LEN: usize = NONCE_TIME_LEN + NONCE_SEQ_LEN + NONCE_MAC_LEN;
+/// RFC 7616 §3.4: `nc-value = 8LHEX`.
+const NC_HEX_LEN: usize = 8;
+
+/// Digest nonce secret plus the per-`(nonce, cnonce)` `nc` table.
+struct DigestNonces {
+    secret: [u8; NONCE_SECRET_LEN],
+    seen: Mutex<NcTable>,
+}
+
+/// SHA-256 of `nonce ‖ cnonce` (the nonce has a fixed length, so this is
+/// unambiguous) — keeps table entries small whatever the client sends.
+type PairKey = [u8; 32];
+
+/// When and in which order a nonce was issued.
+#[derive(Clone, Copy)]
+struct NonceStamp {
+    time: u64,
+    seq: u64,
+}
+
+struct NcEntry {
+    stamp: NonceStamp,
+    /// Highest `nc` accepted.
+    highest: u32,
+    /// Bit `i` set: `highest - 1 - i` has been accepted.
+    window: u64,
+    /// Key into [`NcTable::lru`].
+    last_used: u64,
+}
+
+impl NcEntry {
+    /// Accepts `nc` if it has not been seen and is within the window.
+    fn accept(&mut self, nc: u32) -> bool {
+        if nc > self.highest {
+            let shift = nc - self.highest;
+            let old_highest = 1u64.checked_shl(shift - 1).unwrap_or(0);
+            self.window = self.window.checked_shl(shift).unwrap_or(0) | old_highest;
+            self.highest = nc;
+            return true;
+        }
+        let below = self.highest - nc;
+        if below == 0 || below > NC_WINDOW {
+            return false;
+        }
+        let bit = 1u64 << (below - 1);
+        if self.window & bit != 0 {
+            return false;
+        }
+        self.window |= bit;
+        true
+    }
+}
+
+struct NcTable {
+    entries: HashMap<PairKey, NcEntry>,
+    /// Use order → key; the first entry is the least recently used.
+    lru: BTreeMap<u64, PairKey>,
+    next_use: u64,
+    capacity: usize,
+    /// Nonces with a lower issue sequence are accepted only for pairs still
+    /// in `entries` — raised when a live pair had to be dropped.
+    floor_seq: u64,
+    next_seq: u64,
+    latest_issue_time: u64,
+}
+
+/// What a Digest `Authorization` header amounts to, before any `nc` is
+/// recorded.
+enum DigestCheck {
+    /// Correct response on a live nonce.
+    Accept {
+        key: PairKey,
+        stamp: NonceStamp,
+        nc: u32,
+    },
+    /// Correct response, but the nonce is past its lifetime or its pair was
+    /// dropped from the table.
+    Stale,
+    /// Anything else.
+    Reject,
+}
+
+fn pair_key(nonce: &str, cnonce: &str) -> PairKey {
+    let mut hash = Sha256::new();
+    hash.update(nonce.as_bytes());
+    hash.update(cnonce.as_bytes());
+    hash.finalize().into()
+}
+
+impl DigestNonces {
+    fn new() -> Self {
+        DigestNonces {
+            secret: rand::random(),
+            seen: Mutex::new(NcTable {
+                entries: HashMap::new(),
+                lru: BTreeMap::new(),
+                next_use: 0,
+                capacity: DIGEST_NC_TRACK_CAP,
+                floor_seq: 0,
+                next_seq: 0,
+                latest_issue_time: 0,
+            }),
+        }
+    }
+
+    fn table(&self) -> std::sync::MutexGuard<'_, NcTable> {
+        self.seen.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    fn set_capacity(&self, capacity: usize) {
+        self.table().capacity = capacity.max(1);
+    }
+
+    /// `clock_secs`, clamped so it never runs behind a nonce already issued.
+    fn now(&self, clock_secs: u64) -> u64 {
+        clock_secs.max(self.table().latest_issue_time)
+    }
+
+    fn mac(&self, signed: &[u8]) -> Hmac<Sha256> {
+        let mut mac = <Hmac<Sha256> as Mac>::new_from_slice(&self.secret)
+            .expect("HMAC accepts a key of any length");
+        mac.update(signed);
+        mac
+    }
+
+    /// A fresh nonce issued now (`clock_secs`, clamped as in [`Self::now`]).
+    fn issue(&self, clock_secs: u64) -> String {
+        let (time, seq) = {
+            let mut table = self.table();
+            let time = clock_secs.max(table.latest_issue_time);
+            table.latest_issue_time = time;
+            let seq = table.next_seq;
+            table.next_seq = seq.wrapping_add(1);
+            (time, seq)
+        };
+        let mut raw = [0u8; NONCE_LEN];
+        raw[..NONCE_TIME_LEN].copy_from_slice(&time.to_be_bytes());
+        raw[NONCE_TIME_LEN..NONCE_TIME_LEN + NONCE_SEQ_LEN].copy_from_slice(&seq.to_be_bytes());
+        let tag = self
+            .mac(&raw[..NONCE_TIME_LEN + NONCE_SEQ_LEN])
+            .finalize()
+            .into_bytes();
+        raw[NONCE_TIME_LEN + NONCE_SEQ_LEN..].copy_from_slice(&tag);
+        hex(&raw)
+    }
+
+    /// The issue stamp of `nonce` if this verifier minted it, else `None`.
+    fn issued_at(&self, nonce: &str) -> Option<NonceStamp> {
+        let raw = unhex::<NONCE_LEN>(nonce)?;
+        let (signed, tag) = raw.split_at(NONCE_TIME_LEN + NONCE_SEQ_LEN);
+        self.mac(signed).verify_slice(tag).ok()?;
+        let mut time = [0u8; NONCE_TIME_LEN];
+        time.copy_from_slice(&raw[..NONCE_TIME_LEN]);
+        let mut seq = [0u8; NONCE_SEQ_LEN];
+        seq.copy_from_slice(&raw[NONCE_TIME_LEN..NONCE_TIME_LEN + NONCE_SEQ_LEN]);
+        Some(NonceStamp {
+            time: u64::from_be_bytes(time),
+            seq: u64::from_be_bytes(seq),
+        })
+    }
+
+    fn is_expired(issued: u64, now_secs: u64) -> bool {
+        now_secs.saturating_sub(issued) >= DIGEST_NONCE_LIFETIME.as_secs()
+    }
+
+    /// Records `nc` for `key`; `false` when it was already seen, falls below
+    /// the window, or the pair can no longer be tracked.
+    fn record(&self, key: PairKey, stamp: NonceStamp, nc: u32, now_secs: u64) -> bool {
+        let mut guard = self.table();
+        let table = &mut *guard;
+        let use_id = table.next_use;
+        table.next_use += 1;
+        if let Some(entry) = table.entries.get_mut(&key) {
+            if !entry.accept(nc) {
+                return false;
+            }
+            table.lru.remove(&entry.last_used);
+            entry.last_used = use_id;
+            table.lru.insert(use_id, key);
+            return true;
+        }
+        while table.entries.len() >= table.capacity {
+            let Some((_, victim)) = table.lru.pop_first() else {
+                break;
+            };
+            if let Some(dropped) = table.entries.remove(&victim)
+                && !Self::is_expired(dropped.stamp.time, now_secs)
+            {
+                table.floor_seq = table.floor_seq.max(dropped.stamp.seq.saturating_add(1));
+            }
+        }
+        if stamp.seq < table.floor_seq {
+            return false;
+        }
+        table.entries.insert(
+            key,
+            NcEntry {
+                stamp,
+                highest: nc,
+                window: 0,
+                last_used: use_id,
+            },
+        );
+        table.lru.insert(use_id, key);
+        true
+    }
+
+    /// Whether an untracked pair under a nonce with `stamp` would be refused
+    /// because a live pair issued no earlier was dropped.
+    fn below_floor(&self, key: &PairKey, stamp: NonceStamp) -> bool {
+        let table = self.table();
+        stamp.seq < table.floor_seq && !table.entries.contains_key(key)
+    }
+}
+
+fn unix_secs(t: SystemTime) -> u64 {
+    t.duration_since(UNIX_EPOCH).map_or(0, |d| d.as_secs())
+}
+
+fn default_clock() -> Clock {
+    Box::new(SystemTime::now)
 }
 
 impl Verifier {
@@ -141,9 +417,9 @@ impl Verifier {
     /// no realm parameter in this crate's minimal challenge, see
     /// [`Self::challenge`]).
     ///
-    /// For `Credentials::Digest`, a fresh random server nonce is generated
-    /// now and held for this verifier's whole lifetime (see the module
-    /// docs' nonce-handling caveat).
+    /// For `Credentials::Digest`, a random nonce-signing secret is generated
+    /// now; every [`Self::challenge`] then issues a fresh, time-limited nonce
+    /// (see the module docs' nonce handling).
     pub fn new(credentials: Credentials, realm: impl Into<String>) -> Self {
         let realm = realm.into();
         let scheme = match credentials {
@@ -156,11 +432,35 @@ impl Verifier {
                 username,
                 password,
                 realm,
-                nonce: generate_nonce(),
+                nonces: DigestNonces::new(),
             },
             Credentials::Bearer { token } => VerifierScheme::Bearer { token },
         };
-        Verifier { scheme }
+        Verifier {
+            scheme,
+            clock: default_clock(),
+        }
+    }
+
+    /// Replaces the clock Digest nonce ages are measured against (default
+    /// [`SystemTime::now`]) — for sans-IO drivers and tests.
+    pub fn with_clock(mut self, clock: impl Fn() -> SystemTime + Send + Sync + 'static) -> Self {
+        self.clock = Box::new(clock);
+        self
+    }
+
+    fn now_secs(&self) -> u64 {
+        unix_secs((self.clock)())
+    }
+
+    /// Sets how many `(nonce, cnonce)` pairs a Digest verifier tracks
+    /// (default [`DIGEST_NC_TRACK_CAP`], minimum 1; see the module docs).
+    /// No effect on other schemes.
+    pub fn with_digest_nc_capacity(self, capacity: usize) -> Self {
+        if let VerifierScheme::Digest { nonces, .. } = &self.scheme {
+            nonces.set_capacity(capacity);
+        }
+        self
     }
 
     /// Builds a verifier for the reverse-proxy forwarded-auth scheme (see the
@@ -178,6 +478,7 @@ impl Verifier {
                 user_header: user_header.into(),
                 forwarded_for_header,
             },
+            clock: default_clock(),
         }
     }
 
@@ -187,6 +488,7 @@ impl Verifier {
     pub fn signed_url(keys: SignedUrlKeySet) -> Self {
         Verifier {
             scheme: VerifierScheme::SignedUrl { keys },
+            clock: default_clock(),
         }
     }
 
@@ -196,11 +498,56 @@ impl Verifier {
     /// `Forwarded` (built via [`Self::forwarded`]) has no real RFC 7235
     /// challenge (a direct client cannot answer it — see the module docs);
     /// this just names the scheme for diagnostics.
+    ///
+    /// For Digest every call issues a fresh nonce; prefer
+    /// [`Self::challenge_for`] when the rejected request is at hand, so an
+    /// expired nonce is flagged `stale=true`.
     pub fn challenge(&self) -> String {
+        self.render_challenge(false)
+    }
+
+    /// Like [`Self::challenge`], but for the request that [`Self::verify`]
+    /// just rejected: when that request answered a Digest challenge
+    /// correctly and only its nonce had expired, the new challenge carries
+    /// `stale=true` (RFC 7616 §3.3) so the client retries without
+    /// re-prompting for credentials. Identical to [`Self::challenge`] for
+    /// every other scheme and outcome.
+    pub fn challenge_for(&self, ctx: &RequestContext<'_>) -> String {
+        let stale = match &self.scheme {
+            VerifierScheme::Digest {
+                username,
+                password,
+                realm,
+                nonces,
+            } => ctx.header("authorization").is_some_and(|header| {
+                matches!(
+                    check_digest(
+                        header,
+                        username,
+                        password,
+                        realm,
+                        nonces,
+                        ctx.method,
+                        ctx.uri,
+                        nonces.now(self.now_secs()),
+                    ),
+                    DigestCheck::Stale
+                )
+            }),
+            _ => false,
+        };
+        self.render_challenge(stale)
+    }
+
+    fn render_challenge(&self, stale: bool) -> String {
         match &self.scheme {
             VerifierScheme::Basic { realm, .. } => format!("Basic realm=\"{realm}\""),
-            VerifierScheme::Digest { realm, nonce, .. } => {
-                format!("Digest realm=\"{realm}\", nonce=\"{nonce}\", qop=\"auth\", algorithm=MD5")
+            VerifierScheme::Digest { realm, nonces, .. } => {
+                let nonce = nonces.issue(self.now_secs());
+                let stale = if stale { ", stale=true" } else { "" };
+                format!(
+                    "Digest realm=\"{realm}\", nonce=\"{nonce}\", qop=\"auth\", algorithm=MD5{stale}"
+                )
             }
             VerifierScheme::Bearer { .. } => "Bearer".to_string(),
             VerifierScheme::Forwarded { .. } => "Forwarded".to_string(),
@@ -241,11 +588,15 @@ impl Verifier {
                 username,
                 password,
                 realm,
-                nonce,
+                nonces,
             } => ctx.header("authorization").is_some_and(|header| {
-                verify_digest(
-                    header, username, password, realm, nonce, ctx.method, ctx.uri,
-                )
+                let now = nonces.now(self.now_secs());
+                match check_digest(
+                    header, username, password, realm, nonces, ctx.method, ctx.uri, now,
+                ) {
+                    DigestCheck::Accept { key, stamp, nc } => nonces.record(key, stamp, nc, now),
+                    DigestCheck::Stale | DigestCheck::Reject => false,
+                }
             }),
             VerifierScheme::Forwarded { user_header, .. } => verify_forwarded(ctx, user_header),
             VerifierScheme::SignedUrl { keys } => signed_url::verify(ctx, keys),
@@ -322,9 +673,10 @@ fn verify_bearer(header: &str, token: &str) -> bool {
 const MAX_DIGEST_FIELDS: usize = 64;
 
 /// RFC 7616 §3.4.1: parse the `Digest` `Authorization` header's
-/// `key=value`/`key="value"` fields, independently recompute the expected
-/// `response`, and compare in constant time — `qop=auth`/`algorithm=MD5`
-/// only (the one shape every client in this workspace answers).
+/// `key=value`/`key="value"` fields, check the nonce was minted by `nonces`,
+/// independently recompute the expected `response`, and compare in constant
+/// time — `qop=auth`/`algorithm=MD5` only (the one shape every client in this
+/// workspace answers). Records nothing; the caller records an accepted `nc`.
 ///
 /// `HA2` is computed over the client's own claimed `uri` field (the
 /// `digest-uri-value` RFC 7616 §3.4.1 defines HA2 over) — not `request_uri` —
@@ -338,22 +690,24 @@ const MAX_DIGEST_FIELDS: usize = 64;
 /// Rejects outright (without building the field map) a header carrying more
 /// than [`MAX_DIGEST_FIELDS`] comma-separated fields — see that constant's
 /// docs.
-fn verify_digest(
+#[allow(clippy::too_many_arguments)]
+fn check_digest(
     header: &str,
     username: &str,
     password: &str,
     realm: &str,
-    nonce: &str,
+    nonces: &DigestNonces,
     method: &str,
     request_uri: &str,
-) -> bool {
+    now_secs: u64,
+) -> DigestCheck {
     let Some(rest) = header.strip_prefix("Digest ") else {
-        return false;
+        return DigestCheck::Reject;
     };
     if rest.split(',').count() > MAX_DIGEST_FIELDS {
-        return false;
+        return DigestCheck::Reject;
     }
-    let mut fields = std::collections::HashMap::new();
+    let mut fields = HashMap::new();
     for part in rest.split(',') {
         let part = part.trim();
         let Some((key, value)) = part.split_once('=') else {
@@ -363,25 +717,47 @@ fn verify_digest(
     }
     let get = |k: &str| fields.get(k).copied().unwrap_or_default();
 
-    if get("username") != username || get("realm") != realm || get("nonce") != nonce {
-        return false;
+    if get("username") != username || get("realm") != realm {
+        return DigestCheck::Reject;
     }
+    let nonce = get("nonce");
+    let Some(stamp) = nonces.issued_at(nonce) else {
+        return DigestCheck::Reject;
+    };
     let client_uri = get("uri");
     if !digest_uri_matches(client_uri, request_uri) {
-        return false;
+        return DigestCheck::Reject;
     }
-    let nc = get("nc");
+    let nc_text = get("nc");
     let cnonce = get("cnonce");
     let qop = get("qop");
     let client_response = get("response");
-    if nc.is_empty() || cnonce.is_empty() || client_response.is_empty() {
-        return false;
+    if cnonce.is_empty() || client_response.is_empty() {
+        return DigestCheck::Reject;
     }
+    let Some(nc) = parse_nc(nc_text) else {
+        return DigestCheck::Reject;
+    };
 
     let ha1 = md5_hex(format!("{username}:{realm}:{password}"));
     let ha2 = md5_hex(format!("{method}:{client_uri}"));
-    let expected_response = md5_hex(format!("{ha1}:{nonce}:{nc}:{cnonce}:{qop}:{ha2}"));
-    constant_time_eq(expected_response.as_bytes(), client_response.as_bytes())
+    let expected_response = md5_hex(format!("{ha1}:{nonce}:{nc_text}:{cnonce}:{qop}:{ha2}"));
+    if !constant_time_eq(expected_response.as_bytes(), client_response.as_bytes()) {
+        return DigestCheck::Reject;
+    }
+    let key = pair_key(nonce, cnonce);
+    if DigestNonces::is_expired(stamp.time, now_secs) || nonces.below_floor(&key, stamp) {
+        return DigestCheck::Stale;
+    }
+    DigestCheck::Accept { key, stamp, nc }
+}
+
+/// RFC 7616 §3.4: `nc` is exactly eight hex digits.
+fn parse_nc(nc: &str) -> Option<u32> {
+    if nc.len() != NC_HEX_LEN || !nc.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return None;
+    }
+    u32::from_str_radix(nc, 16).ok()
 }
 
 /// RFC 7616 §3.4.1's SHOULD-check: does the client's claimed Digest `uri`
@@ -444,11 +820,26 @@ fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
         == 0
 }
 
-/// A fresh 128-bit random server nonce, lowercase-hex encoded — see the
-/// module docs' nonce-handling caveat.
-fn generate_nonce() -> String {
-    let bytes: [u8; 16] = rand::random();
+/// Lowercase hex of `bytes`.
+fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+/// Decodes exactly `N` bytes of hex, or `None`.
+fn unhex<const N: usize>(text: &str) -> Option<[u8; N]> {
+    let text = text.as_bytes();
+    if text.len() != N * 2 {
+        return None;
+    }
+    let mut out = [0u8; N];
+    for (byte, pair) in out.iter_mut().zip(text.chunks_exact(2)) {
+        if !pair.iter().all(u8::is_ascii_hexdigit) {
+            return None;
+        }
+        let pair = core::str::from_utf8(pair).ok()?;
+        *byte = u8::from_str_radix(pair, 16).ok()?;
+    }
+    Some(out)
 }
 
 #[cfg(test)]
@@ -522,7 +913,7 @@ mod tests {
     }
 
     #[test]
-    fn digest_nonce_is_stable_across_repeated_challenge_calls() {
+    fn digest_challenges_issue_distinct_nonces() {
         let v = Verifier::new(
             Credentials::Digest {
                 username: "admin".into(),
@@ -530,11 +921,7 @@ mod tests {
             },
             REALM,
         );
-        assert_eq!(
-            v.challenge(),
-            v.challenge(),
-            "nonce must not rotate per-call"
-        );
+        assert_ne!(v.challenge(), v.challenge());
     }
 
     // --- round trip: a client's respond() to challenge() must verify() Ok ---
@@ -953,6 +1340,272 @@ mod tests {
             verify_auth(&v, Some(&huge), "DESCRIBE", "rtsp://cam/live"),
             AuthResult::Unauthorized,
             "oversized Digest header must not be accepted"
+        );
+    }
+
+    fn digest_verifier_at(now: std::sync::Arc<std::sync::atomic::AtomicU64>) -> Verifier {
+        Verifier::new(
+            Credentials::Digest {
+                username: "admin".into(),
+                password: "12345".into(),
+            },
+            REALM,
+        )
+        .with_clock(move || {
+            UNIX_EPOCH + Duration::from_secs(now.load(std::sync::atomic::Ordering::SeqCst))
+        })
+    }
+
+    fn digest_header(challenge: &str, uri: &str) -> String {
+        respond(
+            challenge,
+            &RequestContext::new("GET", uri),
+            Credentials::new("admin", "12345"),
+        )
+        .unwrap()
+    }
+
+    /// Rewrites the `nc` and `response` fields of a Digest header as a client
+    /// would for its `nc`-th request under the same nonce + cnonce.
+    fn with_nc(header: &str, nc: u32, uri: &str) -> String {
+        let field = |name: &str| {
+            let start = header.find(&format!("{name}=")).unwrap() + name.len() + 1;
+            let rest = &header[start..];
+            let rest = rest.trim_start_matches('"');
+            let end = rest.find(['"', ',']).unwrap_or(rest.len());
+            rest[..end].to_string()
+        };
+        let (nonce, cnonce, old_nc, old_resp) = (
+            field("nonce"),
+            field("cnonce"),
+            field("nc"),
+            field("response"),
+        );
+        let nc = format!("{nc:08x}");
+        let ha1 = md5_hex(format!("admin:{REALM}:12345"));
+        let ha2 = md5_hex(format!("GET:{uri}"));
+        let resp = md5_hex(format!("{ha1}:{nonce}:{nc}:{cnonce}:auth:{ha2}"));
+        header
+            .replace(&format!("nc={old_nc}"), &format!("nc={nc}"))
+            .replace(&old_resp, &resp)
+    }
+
+    #[test]
+    fn digest_increasing_nc_is_accepted_and_repeated_nc_rejected() {
+        let now = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(1_000_000));
+        let v = digest_verifier_at(now);
+        let uri = "/stream/index.m3u8";
+        let first = digest_header(&v.challenge(), uri);
+        assert_eq!(verify_auth(&v, Some(&first), "GET", uri), AuthResult::Ok);
+        let second = with_nc(&first, 2, uri);
+        assert_eq!(verify_auth(&v, Some(&second), "GET", uri), AuthResult::Ok);
+        let third = with_nc(&first, 3, uri);
+        assert_eq!(verify_auth(&v, Some(&third), "GET", uri), AuthResult::Ok);
+        assert_eq!(
+            verify_auth(&v, Some(&second), "GET", uri),
+            AuthResult::Unauthorized,
+            "an nc already accepted must be rejected"
+        );
+    }
+
+    #[test]
+    fn digest_expired_nonce_is_rejected_with_stale_challenge() {
+        let now = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(1_000_000));
+        let v = digest_verifier_at(now.clone());
+        let uri = "/stream/index.m3u8";
+        let header = digest_header(&v.challenge(), uri);
+        now.fetch_add(
+            DIGEST_NONCE_LIFETIME.as_secs(),
+            std::sync::atomic::Ordering::SeqCst,
+        );
+        assert_eq!(
+            verify_auth(&v, Some(&header), "GET", uri),
+            AuthResult::Unauthorized
+        );
+        let headers = [("authorization", header.as_str())];
+        let ctx = RequestContext::new("GET", uri).with_headers(&headers);
+        let challenge = v.challenge_for(&ctx);
+        assert!(challenge.ends_with(", stale=true"), "got: {challenge}");
+        // The fresh nonce from that challenge verifies.
+        let retry = digest_header(&challenge, uri);
+        assert_eq!(verify_auth(&v, Some(&retry), "GET", uri), AuthResult::Ok);
+        // A wrong password on an expired nonce is not stale.
+        let wrong = respond(
+            &v.challenge(),
+            &RequestContext::new("GET", uri),
+            Credentials::new("admin", "WRONG"),
+        )
+        .unwrap();
+        now.fetch_add(
+            DIGEST_NONCE_LIFETIME.as_secs(),
+            std::sync::atomic::Ordering::SeqCst,
+        );
+        let headers = [("authorization", wrong.as_str())];
+        let ctx = RequestContext::new("GET", uri).with_headers(&headers);
+        assert!(!v.challenge_for(&ctx).contains("stale"));
+    }
+
+    #[test]
+    fn digest_nonce_with_wrong_mac_is_rejected() {
+        let v = Verifier::new(
+            Credentials::Digest {
+                username: "admin".into(),
+                password: "12345".into(),
+            },
+            REALM,
+        );
+        let uri = "/stream/index.m3u8";
+        let challenge = v.challenge();
+        let start = challenge.find("nonce=\"").unwrap() + "nonce=\"".len();
+        let nonce = &challenge[start..start + NONCE_LEN * 2];
+        // Flip the last hex digit of the MAC, keeping the timestamp + salt.
+        let last = nonce.as_bytes()[nonce.len() - 1];
+        let flipped = if last == b'0' { '1' } else { '0' };
+        let forged_nonce = format!("{}{flipped}", &nonce[..nonce.len() - 1]);
+        let forged = challenge.replace(nonce, &forged_nonce);
+        let header = digest_header(&forged, uri);
+        assert!(header.contains(&forged_nonce));
+        assert_eq!(
+            verify_auth(&v, Some(&header), "GET", uri),
+            AuthResult::Unauthorized
+        );
+        // A nonce from a different verifier (different secret) is rejected too.
+        let other = Verifier::new(
+            Credentials::Digest {
+                username: "admin".into(),
+                password: "12345".into(),
+            },
+            REALM,
+        );
+        let header = digest_header(&other.challenge(), uri);
+        assert_eq!(
+            verify_auth(&v, Some(&header), "GET", uri),
+            AuthResult::Unauthorized
+        );
+    }
+
+    #[test]
+    fn digest_out_of_order_nc_within_window_is_accepted_once() {
+        let now = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(1_000_000));
+        let v = digest_verifier_at(now);
+        let uri = "/stream/part.m4s";
+        let first = digest_header(&v.challenge(), uri);
+        assert_eq!(verify_auth(&v, Some(&first), "GET", uri), AuthResult::Ok);
+        let nc = |n| with_nc(&first, n, uri);
+        // 6 overtakes 5 in flight: both are fresh.
+        assert_eq!(verify_auth(&v, Some(&nc(6)), "GET", uri), AuthResult::Ok);
+        assert_eq!(verify_auth(&v, Some(&nc(5)), "GET", uri), AuthResult::Ok);
+        assert_eq!(
+            verify_auth(&v, Some(&nc(5)), "GET", uri),
+            AuthResult::Unauthorized,
+            "nc 5 a second time is a replay"
+        );
+        assert_eq!(
+            verify_auth(&v, Some(&nc(6)), "GET", uri),
+            AuthResult::Unauthorized
+        );
+        // Jump ahead; the oldest value the window still holds is accepted,
+        // one further below is refused.
+        let top = 200;
+        assert_eq!(verify_auth(&v, Some(&nc(top)), "GET", uri), AuthResult::Ok);
+        assert_eq!(
+            verify_auth(&v, Some(&nc(top - NC_WINDOW - 1)), "GET", uri),
+            AuthResult::Unauthorized,
+            "an nc 65 below the highest is outside the window"
+        );
+        assert_eq!(
+            verify_auth(&v, Some(&nc(top - NC_WINDOW)), "GET", uri),
+            AuthResult::Ok
+        );
+    }
+
+    #[test]
+    fn digest_nc_table_evicts_least_recently_used_pair() {
+        let now = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(1_000_000));
+        let v = digest_verifier_at(now).with_digest_nc_capacity(4);
+        let uri = "/s";
+        let headers: Vec<String> = (0..4).map(|_| digest_header(&v.challenge(), uri)).collect();
+        for h in &headers {
+            assert_eq!(verify_auth(&v, Some(h), "GET", uri), AuthResult::Ok);
+        }
+        // Pair 0 is the oldest issued but stays in use.
+        assert_eq!(
+            verify_auth(&v, Some(&with_nc(&headers[0], 2, uri)), "GET", uri),
+            AuthResult::Ok
+        );
+        let newcomer = digest_header(&v.challenge(), uri);
+        assert_eq!(verify_auth(&v, Some(&newcomer), "GET", uri), AuthResult::Ok);
+        let VerifierScheme::Digest { nonces, .. } = &v.scheme else {
+            unreachable!()
+        };
+        assert_eq!(nonces.table().entries.len(), 4);
+        // Pair 0 was not the one dropped: its replay window is intact.
+        assert_eq!(
+            verify_auth(&v, Some(&with_nc(&headers[0], 2, uri)), "GET", uri),
+            AuthResult::Unauthorized
+        );
+        assert_eq!(
+            verify_auth(&v, Some(&with_nc(&headers[0], 3, uri)), "GET", uri),
+            AuthResult::Ok
+        );
+        // Pair 1 (least recently used) was dropped: its replay is refused and
+        // answered as stale so the client picks up a fresh nonce.
+        let replay = with_nc(&headers[1], 2, uri);
+        assert_eq!(
+            verify_auth(&v, Some(&replay), "GET", uri),
+            AuthResult::Unauthorized
+        );
+        let hdrs = [("authorization", replay.as_str())];
+        let ctx = RequestContext::new("GET", uri).with_headers(&hdrs);
+        let challenge = v.challenge_for(&ctx);
+        assert!(challenge.ends_with(", stale=true"), "got: {challenge}");
+        let retry = digest_header(&challenge, uri);
+        assert_eq!(verify_auth(&v, Some(&retry), "GET", uri), AuthResult::Ok);
+    }
+
+    #[test]
+    fn digest_clock_stepping_back_does_not_backdate_nonces() {
+        let start = 1_000_000;
+        let now = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(start));
+        let v = digest_verifier_at(now.clone());
+        let uri = "/s";
+        let before = digest_header(&v.challenge(), uri);
+        // Step the clock back by more than a nonce lifetime.
+        now.store(
+            start - 2 * DIGEST_NONCE_LIFETIME.as_secs(),
+            std::sync::atomic::Ordering::SeqCst,
+        );
+        let during = digest_header(&v.challenge(), uri);
+        assert_eq!(verify_auth(&v, Some(&during), "GET", uri), AuthResult::Ok);
+        assert_eq!(verify_auth(&v, Some(&before), "GET", uri), AuthResult::Ok);
+        // When the clock returns, the nonce issued meanwhile is still young.
+        now.store(
+            start + DIGEST_NONCE_LIFETIME.as_secs() - 1,
+            std::sync::atomic::Ordering::SeqCst,
+        );
+        let again = with_nc(&during, 2, uri);
+        assert_eq!(verify_auth(&v, Some(&again), "GET", uri), AuthResult::Ok);
+    }
+
+    #[test]
+    fn digest_replayed_request_is_rejected() {
+        let v = Verifier::new(
+            Credentials::Digest {
+                username: "admin".into(),
+                password: "12345".into(),
+            },
+            REALM,
+        );
+        let ctx = RequestContext::new("GET", "/stream/index.m3u8");
+        let header = respond(&v.challenge(), &ctx, Credentials::new("admin", "12345")).unwrap();
+        assert_eq!(
+            verify_auth(&v, Some(&header), "GET", "/stream/index.m3u8"),
+            AuthResult::Ok
+        );
+        assert_eq!(
+            verify_auth(&v, Some(&header), "GET", "/stream/index.m3u8"),
+            AuthResult::Unauthorized,
+            "same nonce + nc + cnonce must not verify twice"
         );
     }
 
