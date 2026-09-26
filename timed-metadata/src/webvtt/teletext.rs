@@ -434,13 +434,10 @@ impl PageAssembler {
     pub(crate) fn push(&mut self, field: &dvb_vbi::TeletextDataField) {
         // EN 300 706 transmits each byte of the magazine/packet address and
         // data block LSB-first (§7.1.2/§8.1/§8.2's "bslbf" fields, EN 301 775
-        // §4.5), so `txt_data_block` as carried by `dvb_vbi` (an ordinarily
-        // MSB-first assembled byte) is the bit-reversal of the spec's own
-        // byte value: `dvb_vbi::FRAMING_CODE_EBU` (`0xE4`) is
-        // `reverse_bits(0x27)`, the spec's own framing_code constant, which
-        // proves the wire byte order. Reverse before running Hamming-8/4 /
-        // odd-parity decode, which both assume the spec's bit order directly.
-        let block: [u8; 42] = field.txt_data_block.map(u8::reverse_bits);
+        // §4.5) — `txt_data_block_logical()` undoes that wire order; run
+        // Hamming-8/4 / odd-parity decode (which assume the spec's bit order
+        // directly) against its output, not the raw `txt_data_block`.
+        let block: [u8; 42] = field.txt_data_block_logical();
         let block = &block;
         let Some(addr) = decode_packet_address(block[0], block[1]) else {
             return;
