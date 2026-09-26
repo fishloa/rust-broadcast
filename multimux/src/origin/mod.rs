@@ -355,7 +355,12 @@ async fn output_auth_gate(
         AuthResult::Ok => next.run(req).await,
         AuthResult::Unauthorized => {
             let mut resp = StatusCode::UNAUTHORIZED.into_response();
-            if let Ok(value) = HeaderValue::from_str(&verifier.challenge()) {
+            // `challenge_for` (not `challenge`): an expired nonce must be
+            // answered with its own fresh nonce carrying `stale=true` (RFC
+            // 7616 §3.3), which only `challenge_for` can tell from any other
+            // Unauthorized cause — it re-inspects the caller's own `ctx`, the
+            // same request `verify` just rejected.
+            if let Ok(value) = HeaderValue::from_str(&verifier.challenge_for(&ctx)) {
                 resp.headers_mut().insert(header::WWW_AUTHENTICATE, value);
             }
             resp
@@ -1150,6 +1155,15 @@ fn spawn_ingest(
             // `config.validate()` (called at the top of `serve_with_registry`)
             // already enforced exactly one of `listen`/`remote` is `Some`.
             let is_listener = listen.is_some();
+            if is_listener {
+                // See `InputSpec::Srt`'s own doc: no passphrase field exists
+                // yet, so a listener-mode route accepts any Caller.
+                tracing::warn!(
+                    route = %name,
+                    "SRT ingest listener is running with no passphrase/auth of any kind — \
+                     any caller that can reach this port may publish"
+                );
+            }
             let mut srt_route = match (listen, remote) {
                 (Some(l), None) => {
                     crate::source::srt::SrtRoute::new_listener(name.clone(), l.clone())
@@ -1281,6 +1295,15 @@ fn spawn_ingest(
             app,
             stream_key,
         } => {
+            if stream_key.is_none() {
+                // See `InputSpec::Rtmp`'s own doc: with no `stream_key`, this
+                // listener authenticates nobody.
+                tracing::warn!(
+                    route = %name,
+                    "RTMP ingest listener is running with no stream_key configured — \
+                     any publisher that can reach this port may publish"
+                );
+            }
             let route_cfg = Arc::new(
                 crate::source::rtmp::RtmpRoute::new(name.clone(), listen.clone())
                     .with_app(app.clone())
@@ -1310,6 +1333,13 @@ fn spawn_ingest(
         }
         #[cfg(feature = "whip")]
         crate::config::InputSpec::Whip { listen } => {
+            // See `InputSpec::Whip`'s own doc: this cut has no auth knob at
+            // all, so every WHIP ingest listener is unconditionally open.
+            tracing::warn!(
+                route = %name,
+                "WHIP ingest listener is running with no authentication of any kind — \
+                 any publisher that can reach this endpoint may publish"
+            );
             let route_cfg = Arc::new(
                 crate::source::whip::WhipRoute::new(name.clone(), listen.clone())
                     .with_timeouts(timeouts),
@@ -2403,6 +2433,71 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(resp.status(), axum::http::StatusCode::UNAUTHORIZED);
+    }
+
+    /// Biting test for `output_auth_gate` switching from `Verifier::challenge`
+    /// to `Verifier::challenge_for`: a request that correctly answers a
+    /// Digest nonce which has since expired must `401` with a
+    /// `WWW-Authenticate` that carries `stale=true` (RFC 7616 §3.3), not a
+    /// bare fresh challenge — using `challenge()` here (as this middleware
+    /// did before) would drop `stale=true`, and a compliant client only
+    /// retries silently (without re-prompting for credentials) when it sees
+    /// that flag. Drives the real production `output_auth_gate` middleware
+    /// with a `Verifier::with_clock`-controlled clock, exactly like
+    /// `broadcast_auth::server`'s own
+    /// `digest_expired_nonce_is_rejected_with_stale_challenge` unit test.
+    #[tokio::test]
+    async fn output_auth_digest_expired_nonce_gets_stale_challenge() {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+        let now = Arc::new(AtomicU64::new(
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_secs(),
+        ));
+        let clock_now = Arc::clone(&now);
+        let verifier = Verifier::new(
+            Credentials::Digest {
+                username: "admin".into(),
+                password: "hunter2".into(),
+            },
+            OUTPUT_AUTH_REALM,
+        )
+        .with_clock(move || UNIX_EPOCH + Duration::from_secs(clock_now.load(Ordering::SeqCst)));
+
+        let challenge = verifier.challenge();
+        let authorization = respond(
+            &challenge,
+            &RequestContext::new("GET", "/cam1/master.m3u8"),
+            Credentials::new("admin", "hunter2"),
+        )
+        .unwrap();
+
+        // Advance the clock past the nonce lifetime before the client's
+        // (otherwise-correct) answer ever reaches the server.
+        now.fetch_add(
+            broadcast_auth::DIGEST_NONCE_LIFETIME.as_secs() + 1,
+            Ordering::SeqCst,
+        );
+
+        let app = app_with_output_auth(verifier);
+        let resp = app
+            .oneshot(get_with_auth("/cam1/master.m3u8", &authorization))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), axum::http::StatusCode::UNAUTHORIZED);
+        let challenge = resp
+            .headers()
+            .get(axum::http::header::WWW_AUTHENTICATE)
+            .expect("401 must carry WWW-Authenticate")
+            .to_str()
+            .unwrap();
+        assert!(
+            challenge.ends_with(", stale=true"),
+            "expired-but-correctly-answered nonce must be flagged stale: {challenge}"
+        );
     }
 
     /// Biting test: with Bearer `output_auth` configured, a request with no

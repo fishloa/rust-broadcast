@@ -685,7 +685,10 @@ async fn admin_auth_gate(
         AuthResult::Ok => next.run(req).await,
         _ => {
             let mut resp = StatusCode::UNAUTHORIZED.into_response();
-            if let Ok(value) = HeaderValue::from_str(&verifier.challenge()) {
+            // `challenge_for` (not `challenge`): an expired nonce must be
+            // answered with its own fresh nonce carrying `stale=true` (RFC
+            // 7616 §3.3) — see `super::output_auth_gate`'s identical call.
+            if let Ok(value) = HeaderValue::from_str(&verifier.challenge_for(&ctx)) {
                 resp.headers_mut().insert(header::WWW_AUTHENTICATE, value);
             }
             resp

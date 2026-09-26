@@ -569,9 +569,11 @@ fn read_one(
 
 /// Publishes session `id`'s progress (registry + segmenters, via the
 /// [`crate::source::advance_route`] facade) and, if that left it terminal,
-/// reaps it — the per-session equivalent of every other driver-backed
-/// source's single-`IngestDriver` "feed, advance, check `is_running`"
-/// sequence, reassembled from
+/// releases whatever it published (`crate::source::release_route` — see
+/// `RouteHandle::publish_program`'s doc on the second-concurrent-publisher
+/// rejection this is the counterpart to) and reaps it — the per-session
+/// equivalent of every other driver-backed source's single-`IngestDriver`
+/// "feed, advance, check `is_running`" sequence, reassembled from
 /// [`ListenDriver::driver`]/[`ListenDriver::reap_if_terminal`] because
 /// [`ListenDriver::feed`]'s `&[u8]`-pinned convenience wrapper doesn't fit
 /// [`RtmpIngestSession`]'s `Stage::In` (see the module doc).
@@ -583,6 +585,9 @@ fn report_and_maybe_reap(
 ) -> bool {
     if let Some(d) = driver.driver(id) {
         crate::source::advance_route(d, route_handle, progress.entry(id).or_default());
+        if !d.health().is_running() {
+            crate::source::release_route(d, route_handle);
+        }
     }
     let reaped = driver.reap_if_terminal(id).is_some();
     if reaped {

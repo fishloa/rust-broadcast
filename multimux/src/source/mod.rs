@@ -368,6 +368,37 @@ pub fn advance_route<S: media_plane::ingress::IngestSession>(
     route_handle.drain_dvr();
 }
 
+/// Release every program `driver` published from `route_handle`'s registry —
+/// [`advance_route`]'s unpublish-side counterpart, called once a
+/// `Listener`-backed session (RTMP/WHIP/SRT push ingest, admitted
+/// concurrently up to `Listener::max_sessions`) has been reaped. Without
+/// this, [`crate::route::RouteHandle::publish_program`]'s rejection of a
+/// second concurrent publisher (issue: a route must not let a later
+/// publisher silently take over or freeze the one it is already serving)
+/// would also block every *legitimate* reconnect or backup take-over after
+/// the first publisher's session ends, since its `Trunk` would stay
+/// registered forever. Only removes a program still bound to `driver`'s own
+/// `Trunk` (by pointer — see [`crate::route::RouteHandle::release_program`]),
+/// so a session that itself lost the take-over race (and so was never
+/// bound) releases nothing when it is reaped, and a program a newer
+/// publisher has since taken over is left alone.
+///
+/// A caller (every `Listener`-backed in-tree `run_*`, or an external
+/// [`crate::registry::SchemeRegistry`] `Custom` factory driving its own
+/// concurrent sessions) calls this once per session, right before that
+/// session's driver is reaped — see `crate::source::rtmp::report_and_maybe_reap`
+/// for the in-tree shape.
+pub fn release_route<S: media_plane::ingress::IngestSession>(
+    driver: &media_plane::ingress::IngestDriver<S>,
+    route_handle: &crate::route::RouteHandle,
+) {
+    for program in driver.programs() {
+        if let Some(trunk) = driver.trunk(program) {
+            route_handle.release_program(program, trunk);
+        }
+    }
+}
+
 #[cfg(test)]
 mod driver_progress_tests {
     //! Coverage for [`report_driver_progress`] — the shared ingest-side
