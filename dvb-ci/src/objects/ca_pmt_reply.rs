@@ -100,8 +100,6 @@ pub struct CaPmtReply {
 
 const REPLY_PREFIX: usize = 4; // program_number(2) + version/cni/flag/enable(2)
 const ES_LEN: usize = 3; // reserved/elem_pid(2) + flag/enable(1)
-/// Maximum value the 13-bit `elementary_PID` field can hold.
-const MAX_PID: u16 = 0x1FFF;
 
 impl<'a> Parse<'a> for CaPmtReply {
     type Error = Error;
@@ -164,25 +162,28 @@ impl Serialize for CaPmtReply {
         super::apdu_len(REPLY_PREFIX + self.streams.len() * ES_LEN)
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
+        super::fit_bits(
+            u64::from(self.version_number),
+            5,
+            "ca_pmt_reply version_number",
+        )?;
         for s in &self.streams {
-            if s.elementary_pid > MAX_PID {
-                return Err(Error::InvalidObject {
-                    what: "ca_pmt_reply ES elementary_PID",
-                    reason: "exceeds 13-bit PID range (0x1FFF)",
-                });
-            }
+            super::fit_bits(
+                u64::from(s.elementary_pid),
+                13,
+                "ca_pmt_reply ES elementary_PID",
+            )?;
         }
         let body = REPLY_PREFIX + self.streams.len() * ES_LEN;
         let mut pos = super::write_apdu_header(tag::CA_PMT_REPLY, body, buf)?;
         buf[pos..pos + 2].copy_from_slice(&self.program_number.to_be_bytes());
-        // reserved(2)='11', version(5), current_next(1).
-        buf[pos + 2] =
-            0xC0 | ((self.version_number & 0x1F) << 1) | u8::from(self.current_next_indicator);
+        // reserved(2)='11', version(5), current_next(1). Range-checked above.
+        buf[pos + 2] = 0xC0 | (self.version_number << 1) | u8::from(self.current_next_indicator);
         buf[pos + 3] = encode_enable_byte(self.ca_enable);
         pos += REPLY_PREFIX;
         for s in &self.streams {
-            // reserved(3)='111', elementary_PID(13).
-            buf[pos] = 0xE0 | ((s.elementary_pid >> 8) as u8 & 0x1F);
+            // reserved(3)='111', elementary_PID(13). Range-checked above.
+            buf[pos] = 0xE0 | (s.elementary_pid >> 8) as u8;
             buf[pos + 1] = s.elementary_pid as u8;
             buf[pos + 2] = encode_enable_byte(s.ca_enable);
             pos += ES_LEN;
@@ -194,7 +195,7 @@ impl Serialize for CaPmtReply {
 /// Encode a `CA_enable_flag` + 7-bit `CA_enable`/reserved byte. When absent the
 /// flag is 0 and the 7 reserved bits are set (`0x7F`) per the reserved-bit
 /// convention.
-fn encode_enable_byte(enable: Option<CaEnable>) -> u8 {
+pub(crate) fn encode_enable_byte(enable: Option<CaEnable>) -> u8 {
     match enable {
         Some(e) => 0x80 | (e.to_u8() & 0x7F),
         None => 0x7F,
@@ -269,6 +270,37 @@ mod tests {
         };
         let err = r.serialize_into(&mut [0u8; 32]).unwrap_err();
         assert!(matches!(err, Error::InvalidObject { .. }));
+    }
+
+    #[test]
+    fn oversized_version_number_is_rejected_not_wrapped() {
+        // Before the fix, 0x20 (exceeds 5 bits) silently wrapped to 0x00 in
+        // the version_number field and returned Ok.
+        let r = CaPmtReply {
+            program_number: 1,
+            version_number: 0x20,
+            current_next_indicator: true,
+            ca_enable: None,
+            streams: Vec::new(),
+        };
+        let mut buf = [0u8; 16];
+        assert!(matches!(
+            r.serialize_into(&mut buf),
+            Err(Error::InvalidObject { .. })
+        ));
+    }
+
+    #[test]
+    fn max_version_number_still_serializes_and_round_trips() {
+        let r = CaPmtReply {
+            program_number: 1,
+            version_number: 0x1F, // the 5-bit maximum
+            current_next_indicator: true,
+            ca_enable: None,
+            streams: Vec::new(),
+        };
+        let bytes = r.to_bytes();
+        assert_eq!(CaPmtReply::parse(&bytes).unwrap(), r);
     }
 
     #[test]

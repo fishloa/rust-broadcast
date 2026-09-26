@@ -132,6 +132,11 @@ impl Serialize for FileSystemOffer<'_> {
         objects::apdu_len(OFFER_PREFIX + self.domain_identifier.len())
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
+        objects::fit_bits(
+            self.domain_identifier.len() as u64,
+            8,
+            "FileSystemOffer DomainIdentifierLength",
+        )?;
         let body_len = OFFER_PREFIX + self.domain_identifier.len();
         let pos = objects::write_apdu_header(tag::FILE_SYSTEM_OFFER, body_len, buf)?;
         buf[pos] = self.domain_identifier.len() as u8;
@@ -397,5 +402,30 @@ mod tests {
             FileRetrievalApdu::parse(&[0x9F, 0x94, 0x7E, 0x00]),
             Err(Error::UnexpectedApduTag { .. })
         ));
+    }
+
+    #[test]
+    fn oversized_domain_identifier_is_rejected_not_wrapped() {
+        // 256 bytes silently wrapped DomainIdentifierLength (u8) to 0 before
+        // the fix.
+        let big = alloc::vec![0x61u8; 256];
+        let offer = FileSystemOffer {
+            domain_identifier: &big,
+        };
+        let mut buf = alloc::vec![0u8; 300];
+        assert!(matches!(
+            offer.serialize_into(&mut buf),
+            Err(Error::InvalidObject { .. })
+        ));
+    }
+
+    #[test]
+    fn max_domain_identifier_still_serializes_and_round_trips() {
+        let data = alloc::vec![0x61u8; 255];
+        let offer = FileSystemOffer {
+            domain_identifier: &data,
+        };
+        let bytes = offer.to_bytes();
+        assert_eq!(FileSystemOffer::parse(&bytes).unwrap(), offer);
     }
 }

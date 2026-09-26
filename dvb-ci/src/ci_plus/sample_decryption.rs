@@ -109,6 +109,16 @@ impl Serialize for SdInfoReply {
         )
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
+        objects::fit_bits(
+            self.drm_system_ids.len() as u64,
+            8,
+            "sd_info_reply number_of_DRM_system_ids",
+        )?;
+        objects::fit_bits(
+            self.drm_uuids.len() as u64,
+            8,
+            "sd_info_reply number_of_DRM_UUIDs",
+        )?;
         let body_len = 1 + self.drm_system_ids.len() * 2 + 1 + self.drm_uuids.len() * DRM_UUID_LEN;
         let pos = objects::write_apdu_header(tag::SD_INFO_REPLY, body_len, buf)?;
         let mut w = Writer::new(&mut buf[pos..]);
@@ -162,6 +172,14 @@ impl<'a> DrmMetadataRecord<'a> {
     }
     fn body_len(&self) -> usize {
         METADATA_FIXED + self.drm_metadata.len()
+    }
+    fn validate(&self) -> Result<()> {
+        objects::fit_bits(
+            self.drm_metadata.len() as u64,
+            16,
+            "drm_metadata drm_metadata_length",
+        )?;
+        Ok(())
     }
     fn write_into(&self, w: &mut Writer<'_>) {
         w.u8(self.drm_metadata_source);
@@ -258,6 +276,47 @@ impl<'a> SamplePayload<'a> {
         }
     }
 
+    /// Range-check every length/count/PID field before [`Self::write_into`]
+    /// writes them, so an oversized value is rejected rather than silently
+    /// wrapped (see `docs/w3-rules.md`).
+    fn validate(&self) -> Result<()> {
+        match self {
+            Self::Ts(records) => {
+                objects::fit_bits(
+                    records.len() as u64,
+                    8,
+                    "sd_start/sd_update number_of_metadata_records",
+                )?;
+                for rec in records {
+                    rec.validate()?;
+                }
+            }
+            Self::Tracks(tracks) => {
+                objects::fit_bits(
+                    tracks.len() as u64,
+                    8,
+                    "sd_start/sd_update number_of_Sample_Tracks",
+                )?;
+                for track in tracks {
+                    objects::fit_bits(
+                        u64::from(track.track_pid),
+                        13,
+                        "sd_start/sd_update track_PID",
+                    )?;
+                    objects::fit_bits(
+                        track.records.len() as u64,
+                        8,
+                        "sd_start/sd_update number_of_metadata_records",
+                    )?;
+                    for rec in &track.records {
+                        rec.validate()?;
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
     fn write_into(&self, w: &mut Writer<'_>) {
         match self {
             Self::Ts(records) => {
@@ -269,8 +328,9 @@ impl<'a> SamplePayload<'a> {
             Self::Tracks(tracks) => {
                 w.u8(tracks.len() as u8);
                 for track in tracks {
-                    // reserved(3)='000' + track_PID(13).
-                    w.u16(track.track_pid & TRACK_PID_MASK);
+                    // reserved(3)='000' + track_PID(13). Range-checked by
+                    // validate(), so no mask is needed to fit the field.
+                    w.u16(track.track_pid);
                     w.u8(track.records.len() as u8);
                     for rec in &track.records {
                         rec.write_into(w);
@@ -323,6 +383,7 @@ impl Serialize for SdStart<'_> {
         objects::apdu_len(SD_START_FIXED + self.payload.body_len())
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
+        self.payload.validate()?;
         let body_len = SD_START_FIXED + self.payload.body_len();
         let pos = objects::write_apdu_header(tag::SD_START, body_len, buf)?;
         let mut w = Writer::new(&mut buf[pos..]);
@@ -536,6 +597,7 @@ impl Serialize for SdUpdate<'_> {
         objects::apdu_len(SD_UPDATE_FIXED + self.payload.body_len())
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
+        self.payload.validate()?;
         let body_len = SD_UPDATE_FIXED + self.payload.body_len();
         let pos = objects::write_apdu_header(tag::SD_UPDATE, body_len, buf)?;
         let mut w = Writer::new(&mut buf[pos..]);
@@ -945,6 +1007,76 @@ mod tests {
         assert!(matches!(
             SampleDecryptionApdu::parse(&[0x9F, 0x98, 0x7E, 0x00]),
             Err(Error::UnexpectedApduTag { .. })
+        ));
+    }
+
+    #[test]
+    fn oversized_track_pid_is_rejected_not_wrapped() {
+        // Before the fix, 0x2100 (exceeds 13 bits) silently wrapped to wire PID
+        // 0x0100 and returned Ok.
+        let s = SdStart {
+            lts_id: 0,
+            program_number: 0,
+            payload: SamplePayload::Tracks(alloc::vec![SampleTrack {
+                track_pid: 0x2100,
+                records: Vec::new(),
+            }]),
+        };
+        let mut buf = [0u8; 64];
+        assert!(matches!(
+            s.serialize_into(&mut buf),
+            Err(Error::InvalidObject { .. })
+        ));
+    }
+
+    #[test]
+    fn max_track_pid_still_serializes_and_round_trips() {
+        let s = SdStart {
+            lts_id: 0,
+            program_number: 0,
+            payload: SamplePayload::Tracks(alloc::vec![SampleTrack {
+                track_pid: 0x1FFF,
+                records: Vec::new(),
+            }]),
+        };
+        let bytes = s.to_bytes();
+        assert_eq!(SdStart::parse(&bytes).unwrap(), s);
+    }
+
+    #[test]
+    fn oversized_metadata_length_is_rejected_not_wrapped() {
+        // A 65 536-byte drm_metadata body exceeds the 16-bit
+        // drm_metadata_length field.
+        let big = alloc::vec![0u8; 65_536];
+        let s = SdStart {
+            lts_id: 0,
+            program_number: 0,
+            payload: SamplePayload::Ts(alloc::vec![DrmMetadataRecord {
+                drm_metadata_source: 0,
+                drm_system_id: 0,
+                drm_uuid: UUID_A,
+                drm_metadata: &big,
+            }]),
+        };
+        let mut buf = alloc::vec![0u8; 65_600];
+        assert!(matches!(
+            s.serialize_into(&mut buf),
+            Err(Error::InvalidObject { .. })
+        ));
+    }
+
+    #[test]
+    fn oversized_drm_system_id_count_is_rejected_not_wrapped() {
+        // 256 entries silently wrapped number_of_DRM_system_ids (u8) to 0
+        // before the fix.
+        let r = SdInfoReply {
+            drm_system_ids: (0..256).map(|i| i as u16).collect(),
+            drm_uuids: Vec::new(),
+        };
+        let mut buf = alloc::vec![0u8; 4096];
+        assert!(matches!(
+            r.serialize_into(&mut buf),
+            Err(Error::InvalidObject { .. })
         ));
     }
 }

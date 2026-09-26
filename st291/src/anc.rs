@@ -405,7 +405,7 @@ impl AncDataPacket {
         // Byte 8: PES_header_data_length.
         buf[8] = ANC_PES_HEADER_DATA_LENGTH;
         // Bytes 9..14: PTS field.
-        buf[9..14].copy_from_slice(&write_pts(self.pts));
+        buf[9..14].copy_from_slice(&write_pts(self.pts)?);
 
         // Payload: ANC records (each byte-aligned), then 0xFF stuffing.
         let mut pos = PES_HEADER_LEN;
@@ -444,15 +444,24 @@ fn read_pts(b: &[u8]) -> Result<u64> {
 }
 
 /// Encode a 33-bit PTS into the 5-byte ST 2038 PTS field (prefix `'0010'`).
-fn write_pts(pts: u64) -> [u8; 5] {
-    let ts = pts & PTS_MASK;
-    [
+///
+/// [`Error::FieldTooWide`] if `pts` exceeds the 33-bit field.
+fn write_pts(pts: u64) -> Result<[u8; 5]> {
+    if pts > PTS_MASK {
+        return Err(Error::FieldTooWide {
+            what: "PTS",
+            value: pts as u32,
+            bits: 33,
+        });
+    }
+    let ts = pts;
+    Ok([
         (PTS_PREFIX << 4) | ((((ts >> 30) & 0x07) as u8) << 1) | 0x01,
         ((ts >> 22) & 0xFF) as u8,
         ((((ts >> 15) & 0x7F) as u8) << 1) | 0x01,
         ((ts >> 7) & 0xFF) as u8,
         (((ts & 0x7F) as u8) << 1) | 0x01,
-    ]
+    ])
 }
 
 #[cfg(test)]
@@ -495,8 +504,27 @@ mod tests {
     #[test]
     fn pts_round_trip() {
         for ts in [0u64, 1, 90_000, 0x1_2345_6789, PTS_MASK] {
-            assert_eq!(read_pts(&write_pts(ts)).unwrap(), ts, "ts={ts:#x}");
+            assert_eq!(read_pts(&write_pts(ts).unwrap()).unwrap(), ts, "ts={ts:#x}");
         }
+    }
+
+    #[test]
+    fn oversized_pts_is_rejected_not_masked() {
+        // Before the fix, a PTS of 2^33 silently masked to 0 and returned Ok.
+        let result = write_pts(PTS_MASK + 1);
+        assert!(matches!(
+            result,
+            Err(Error::FieldTooWide {
+                what: "PTS",
+                bits: 33,
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn max_pts_still_serializes_and_round_trips() {
+        assert_eq!(read_pts(&write_pts(PTS_MASK).unwrap()).unwrap(), PTS_MASK);
     }
 
     #[test]

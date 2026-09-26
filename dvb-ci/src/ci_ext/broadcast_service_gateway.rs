@@ -285,11 +285,17 @@ impl Serialize for EitSectionAck<'_> {
                     reason: "event descriptors loop longer than 4095 bytes",
                 });
             }
+            objects::fit_bits(
+                u64::from(e.running_status),
+                3,
+                "EITSectionAck event running_status",
+            )?;
             buf[pos..pos + 2].copy_from_slice(&e.event_id.to_be_bytes());
             buf[pos + 2..pos + 7].copy_from_slice(&e.start_time);
             buf[pos + 7..pos + 10].copy_from_slice(&e.duration);
             let dll = e.descriptors.len() as u16;
-            buf[pos + 10] = ((e.running_status & 0x07) << 5)
+            // running_status range-checked above.
+            buf[pos + 10] = (e.running_status << 5)
                 | (u8::from(e.free_ca_mode) << 4)
                 | ((dll >> 8) as u8 & 0x0F);
             buf[pos + 11] = dll as u8;
@@ -488,5 +494,46 @@ mod tests {
             BroadcastServiceGatewayApdu::ServiceGateway(ServiceGatewayApdu::ServiceDescAck(_))
         ));
         assert_eq!(parsed.to_bytes(), sda);
+    }
+
+    #[test]
+    fn oversized_event_running_status_is_rejected_not_wrapped() {
+        // Before the fix, 0x0A (exceeds 3 bits) silently wrapped to 0x02 in
+        // the event's running_status field and returned Ok.
+        let e = EitEvent {
+            event_id: 1,
+            start_time: [0; 5],
+            duration: [0; 3],
+            running_status: 0x0A,
+            free_ca_mode: false,
+            descriptors: &[],
+        };
+        let ack = EitSectionAck {
+            response_code: EitResponseCode::SectionFound,
+            events: alloc::vec![e],
+        };
+        let mut buf = [0u8; 64];
+        assert!(matches!(
+            ack.serialize_into(&mut buf),
+            Err(Error::InvalidObject { .. })
+        ));
+    }
+
+    #[test]
+    fn max_event_running_status_still_serializes_and_round_trips() {
+        let e = EitEvent {
+            event_id: 1,
+            start_time: [0; 5],
+            duration: [0; 3],
+            running_status: 0x07, // the 3-bit maximum
+            free_ca_mode: false,
+            descriptors: &[],
+        };
+        let ack = EitSectionAck {
+            response_code: EitResponseCode::SectionFound,
+            events: alloc::vec![e],
+        };
+        let bytes = ack.to_bytes();
+        assert_eq!(EitSectionAck::parse(&bytes).unwrap(), ack);
     }
 }

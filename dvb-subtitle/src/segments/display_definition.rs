@@ -148,7 +148,7 @@ impl Serialize for DisplayDefinitionSegment {
         buf[0] = 0x0F; // sync_byte
         buf[1] = SEGMENT_TYPE;
         buf[2..4].copy_from_slice(&self.page_id.to_be_bytes());
-        let seg_len = (len - HEADER_LEN) as u16;
+        let seg_len = crate::segments::check_segment_length(len - HEADER_LEN)?;
         buf[4..6].copy_from_slice(&seg_len.to_be_bytes());
 
         // Fixed body byte 0: version(4b) | window_flag(1b) | reserved(3b)

@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed (breaking)
+- Serializers now return an error, instead of silently truncating, when a
+  segment body exceeds the generic segment header's 16-bit `segment_length`
+  field (#1129).
+
+### Fixed
+- Every segment type's `serialize_into` (`object_data`, `region_composition`,
+  `page_composition`, `clut_definition`, `alternative_clut`,
+  `disparity_signalling`, `display_definition`, `stuffing`, and the `Unknown`
+  fallback in `any`) no longer silently wraps `segment_length` to a smaller
+  value for a body of 64 KiB or more; each now returns `Error::SegmentTooLarge`
+  instead (#1108, #1129).
+
 ## [0.4.0] - 2026-08-11
 
 ### Changed

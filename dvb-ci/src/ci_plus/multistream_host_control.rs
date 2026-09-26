@@ -350,9 +350,11 @@ impl Serialize for TuneIpReq<'_> {
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let sll = self.service_location_data.len();
+        objects::fit_bits(sll as u64, 12, "tune_ip_req service_location_length")?;
         let body_len = TUNE_IP_PREFIX + sll;
         let pos = objects::write_apdu_header(tag::TUNE_IP_REQ, body_len, buf)?;
-        let mut byte0 = (sll >> 8) as u8 & SLL_HI_MASK;
+        // service_location_length(12) high nibble. Range-checked above.
+        let mut byte0 = (sll >> 8) as u8;
         match self.mode {
             HostControlMode::MultiStream => {
                 if self.background_tune {
@@ -490,9 +492,11 @@ impl Serialize for TunerStatusReply {
         objects::apdu_len(1 + self.dsds.len() * DSD_ENTRY_LEN)
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
+        objects::fit_bits(self.dsds.len() as u64, 7, "tuner_status_reply num_dsd")?;
         let body_len = 1 + self.dsds.len() * DSD_ENTRY_LEN;
         let mut pos = objects::write_apdu_header(tag::TUNER_STATUS_REPLY, body_len, buf)?;
-        let mut byte0 = self.dsds.len() as u8 & NUM_DSD_MASK;
+        // num_dsd(7). Range-checked above.
+        let mut byte0 = self.dsds.len() as u8;
         if self.ip_tune_capable {
             byte0 |= IP_TUNE_CAPABLE_BIT;
         }
@@ -819,6 +823,62 @@ mod tests {
                 HostControlMode::MultiStream
             ),
             Err(Error::UnexpectedApduTag { .. })
+        ));
+    }
+
+    #[test]
+    fn oversized_service_location_length_is_rejected_not_wrapped() {
+        // Before the fix, a 4096-byte service_location_data body silently
+        // wrapped the 12-bit service_location_length field to 0.
+        let big = alloc::vec![0u8; 4096];
+        let req = TuneIpReq {
+            mode: HostControlMode::MultiStream,
+            background_tune: false,
+            tune_quietly: false,
+            keep_app_running: false,
+            service_location_data: &big,
+        };
+        let mut buf = alloc::vec![0u8; 4200];
+        assert!(matches!(
+            req.serialize_into(&mut buf),
+            Err(Error::InvalidObject { .. })
+        ));
+    }
+
+    #[test]
+    fn max_service_location_length_still_serializes_and_round_trips() {
+        let data = alloc::vec![0xABu8; 0x0FFF];
+        let req = TuneIpReq {
+            mode: HostControlMode::MultiStream,
+            background_tune: false,
+            tune_quietly: false,
+            keep_app_running: false,
+            service_location_data: &data,
+        };
+        let bytes = req.to_bytes();
+        assert_eq!(
+            TuneIpReq::parse_mode(&bytes, HostControlMode::MultiStream).unwrap(),
+            req
+        );
+    }
+
+    #[test]
+    fn oversized_num_dsd_is_rejected_not_wrapped() {
+        // 128 entries silently wrapped num_dsd (7-bit) to 0 before the fix.
+        let reply = TunerStatusReply {
+            ip_tune_capable: false,
+            dsds: (0..128)
+                .map(|_| TunerStatusDsd {
+                    connected: false,
+                    delivery_system_descriptor_tag: 0,
+                    descriptor_tag_extension: None,
+                })
+                .collect(),
+        };
+        let mut buf = alloc::vec![0u8; 1024];
+        assert!(matches!(
+            reply.serialize_into(&mut buf),
+            Err(Error::InvalidObject { .. })
         ));
     }
 }

@@ -386,6 +386,11 @@ impl Serialize for ServiceDescAck<'_> {
                 reason: "descriptors loop longer than 4095 bytes",
             });
         }
+        objects::fit_bits(
+            u64::from(self.running_status),
+            3,
+            "ServiceDescAck running_status",
+        )?;
         let body_len = SERVICE_DESC_ACK_PREFIX + self.descriptors.len();
         let mut pos = objects::write_apdu_header(tag::SERVICE_DESC_ACK, body_len, buf)?;
         buf[pos..pos + 2].copy_from_slice(&self.service.original_network_id.to_be_bytes());
@@ -396,7 +401,8 @@ impl Serialize for ServiceDescAck<'_> {
             | u8::from(self.eit_present_following_flag);
         let loop_len = self.descriptors.len() as u16;
         // running_status(3), free_CA_mode(1), descriptors_loop_length(12).
-        buf[pos + 5] = ((self.running_status & 0x07) << 5)
+        // running_status range-checked above.
+        buf[pos + 5] = (self.running_status << 5)
             | (u8::from(self.free_ca_mode) << 4)
             | ((loop_len >> 8) as u8 & 0x0F);
         buf[pos + 6] = loop_len as u8;
@@ -808,5 +814,44 @@ mod tests {
         let parsed = ServiceGatewayApdu::parse(&gs).unwrap();
         assert!(matches!(parsed, ServiceGatewayApdu::GetServiceAck(_)));
         assert_eq!(parsed.to_bytes(), gs);
+    }
+
+    #[test]
+    fn oversized_running_status_is_rejected_not_wrapped() {
+        // Before the fix, 0x0A (exceeds 3 bits) silently wrapped to 0x02 in
+        // the running_status field and returned Ok.
+        let ack = ServiceDescAck {
+            service: ServiceReference {
+                original_network_id: 1,
+                service_id: 1,
+            },
+            eit_schedule_flag: false,
+            eit_present_following_flag: false,
+            running_status: 0x0A,
+            free_ca_mode: false,
+            descriptors: &[],
+        };
+        let mut buf = [0u8; 32];
+        assert!(matches!(
+            ack.serialize_into(&mut buf),
+            Err(Error::InvalidObject { .. })
+        ));
+    }
+
+    #[test]
+    fn max_running_status_still_serializes_and_round_trips() {
+        let ack = ServiceDescAck {
+            service: ServiceReference {
+                original_network_id: 1,
+                service_id: 1,
+            },
+            eit_schedule_flag: false,
+            eit_present_following_flag: false,
+            running_status: 0x07, // the 3-bit maximum
+            free_ca_mode: false,
+            descriptors: &[],
+        };
+        let bytes = ack.to_bytes();
+        assert_eq!(ServiceDescAck::parse(&bytes).unwrap(), ack);
     }
 }

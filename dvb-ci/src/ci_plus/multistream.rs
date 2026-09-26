@@ -157,13 +157,17 @@ impl Serialize for PidSelectReq {
         objects::apdu_len(2 + self.pids.len() * PID_ENTRY_LEN)
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
+        objects::fit_bits(self.pids.len() as u64, 8, "PID_select_req num_PID")?;
+        for entry in &self.pids {
+            objects::fit_bits(u64::from(entry.pid), 13, "PID_select_req PID")?;
+        }
         let body_len = 2 + self.pids.len() * PID_ENTRY_LEN;
         let mut pos = objects::write_apdu_header(tag::PID_SELECT_REQ, body_len, buf)?;
         buf[pos] = self.lts_id;
         buf[pos + 1] = self.pids.len() as u8;
         pos += 2;
         for entry in &self.pids {
-            let mut hi = (entry.pid >> 8) as u8 & (PID_MASK >> 8) as u8;
+            let mut hi = (entry.pid >> 8) as u8;
             if entry.critical_for_descrambling {
                 hi |= CRITICAL_FLAG_BIT;
             }
@@ -251,6 +255,10 @@ impl Serialize for PidSelectReply {
         objects::apdu_len(3 + self.pids.len() * PID_ENTRY_LEN)
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
+        objects::fit_bits(self.pids.len() as u64, 8, "PID_select_reply num_PID")?;
+        for entry in &self.pids {
+            objects::fit_bits(u64::from(entry.pid), 13, "PID_select_reply PID")?;
+        }
         let body_len = 3 + self.pids.len() * PID_ENTRY_LEN;
         let mut pos = objects::write_apdu_header(tag::PID_SELECT_REPLY, body_len, buf)?;
         buf[pos] = self.lts_id;
@@ -262,7 +270,7 @@ impl Serialize for PidSelectReply {
         buf[pos + 2] = self.pids.len() as u8;
         pos += 3;
         for entry in &self.pids {
-            let mut hi = (entry.pid >> 8) as u8 & (PID_MASK >> 8) as u8;
+            let mut hi = (entry.pid >> 8) as u8;
             if entry.pid_selected {
                 hi |= PID_SELECTED_FLAG_BIT;
             }
@@ -458,5 +466,72 @@ mod tests {
         let parsed = MultistreamApdu::parse(&reply).unwrap();
         assert!(matches!(parsed, MultistreamApdu::PidSelectReply(_)));
         assert_eq!(parsed.to_bytes(), reply);
+    }
+
+    #[test]
+    fn oversized_req_pid_is_rejected_not_wrapped() {
+        // Before the fix, 0x2064 (exceeds 13 bits) silently wrapped to wire PID
+        // 0x0064 and returned Ok.
+        let req = PidSelectReq {
+            lts_id: 0,
+            pids: alloc::vec![PidSelectRequest {
+                critical_for_descrambling: false,
+                pid: 0x2064,
+            }],
+        };
+        let mut buf = [0u8; 32];
+        assert!(matches!(
+            req.serialize_into(&mut buf),
+            Err(Error::InvalidObject { .. })
+        ));
+    }
+
+    #[test]
+    fn max_req_pid_still_serializes_and_round_trips() {
+        let req = PidSelectReq {
+            lts_id: 0,
+            pids: alloc::vec![PidSelectRequest {
+                critical_for_descrambling: false,
+                pid: 0x1FFF,
+            }],
+        };
+        let bytes = req.to_bytes();
+        assert_eq!(PidSelectReq::parse(&bytes).unwrap(), req);
+    }
+
+    #[test]
+    fn oversized_num_pid_req_is_rejected_not_wrapped() {
+        // 256 entries silently wrapped num_PID (u8) to 0 before the fix.
+        let req = PidSelectReq {
+            lts_id: 0,
+            pids: (0..256)
+                .map(|_| PidSelectRequest {
+                    critical_for_descrambling: false,
+                    pid: 0x0100,
+                })
+                .collect(),
+        };
+        let mut buf = alloc::vec![0u8; 4096];
+        assert!(matches!(
+            req.serialize_into(&mut buf),
+            Err(Error::InvalidObject { .. })
+        ));
+    }
+
+    #[test]
+    fn oversized_reply_pid_is_rejected_not_wrapped() {
+        let reply = PidSelectReply {
+            lts_id: 0,
+            pid_selection: false,
+            pids: alloc::vec![PidSelectedEntry {
+                pid_selected: false,
+                pid: 0x2064,
+            }],
+        };
+        let mut buf = [0u8; 32];
+        assert!(matches!(
+            reply.serialize_into(&mut buf),
+            Err(Error::InvalidObject { .. })
+        ));
     }
 }

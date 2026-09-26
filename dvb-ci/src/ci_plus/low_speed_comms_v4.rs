@@ -238,6 +238,11 @@ impl Serialize for CommsInfoReply {
         objects::apdu_len(INFO_REPLY_BODY)
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
+        objects::fit_bits(
+            u64::from(self.input_delivery_pid),
+            13,
+            "comms_info_reply inputDeliveryPID",
+        )?;
         let pos = objects::write_apdu_header(tag::COMMS_INFO_REPLY, INFO_REPLY_BODY, buf)?;
         buf[pos] = self.lts_id;
         // reserved(7)='0000000' + status(1).
@@ -245,9 +250,8 @@ impl Serialize for CommsInfoReply {
         buf[pos + 2..pos + 2 + IP_ADDR_LEN].copy_from_slice(&self.source_ip_address);
         let p = pos + 2 + IP_ADDR_LEN;
         buf[p..p + 2].copy_from_slice(&self.source_port.to_be_bytes());
-        // reserved(3)='000' + inputDeliveryPID(13).
-        buf[p + 2..p + 4]
-            .copy_from_slice(&(self.input_delivery_pid & INPUT_DELIVERY_PID_MASK).to_be_bytes());
+        // reserved(3)='000' + inputDeliveryPID(13). Range-checked above.
+        buf[p + 2..p + 4].copy_from_slice(&self.input_delivery_pid.to_be_bytes());
         Ok(pos + INFO_REPLY_BODY)
     }
 }
@@ -403,6 +407,13 @@ impl Serialize for CommsIpConfigReply {
         objects::apdu_len(self.body_len())
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
+        if let Some(c) = &self.ip_config {
+            objects::fit_bits(
+                c.dns_server_addresses.len() as u64,
+                8,
+                "comms_IP_config_reply num_DNS_servers",
+            )?;
+        }
         let body_len = self.body_len();
         let mut pos = objects::write_apdu_header(tag::COMMS_IP_CONFIG_REPLY, body_len, buf)?;
         // connection_state(2) << 6 + reserved(6)='000000'.
@@ -984,6 +995,58 @@ mod tests {
         assert!(matches!(
             LscV4Apdu::parse(&cb),
             Err(Error::UnexpectedApduTag { .. })
+        ));
+    }
+
+    #[test]
+    fn oversized_input_delivery_pid_is_rejected_not_wrapped() {
+        // Before the fix, 0x2064 (exceeds 13 bits) silently wrapped to wire PID
+        // 0x0064 and returned Ok.
+        let reply = CommsInfoReply {
+            lts_id: 0,
+            status: false,
+            source_ip_address: [0; IP_ADDR_LEN],
+            source_port: 0,
+            input_delivery_pid: 0x2064,
+        };
+        let mut buf = [0u8; 32];
+        assert!(matches!(
+            reply.serialize_into(&mut buf),
+            Err(Error::InvalidObject { .. })
+        ));
+    }
+
+    #[test]
+    fn max_input_delivery_pid_still_serializes_and_round_trips() {
+        let reply = CommsInfoReply {
+            lts_id: 0,
+            status: false,
+            source_ip_address: [0; IP_ADDR_LEN],
+            source_port: 0,
+            input_delivery_pid: 0x1FFF,
+        };
+        let bytes = reply.to_bytes();
+        assert_eq!(CommsInfoReply::parse(&bytes).unwrap(), reply);
+    }
+
+    #[test]
+    fn oversized_num_dns_servers_is_rejected_not_wrapped() {
+        // 256 entries silently wrapped num_DNS_servers (u8) to 0 before the fix.
+        let r = CommsIpConfigReply {
+            connection_state: ConnectionState::Connected,
+            physical_address: [0; MAC_LEN],
+            ip_config: Some(IpConfig {
+                ip_address: IP_A,
+                network_mask: IP_A,
+                default_gateway: IP_A,
+                dhcp_server_address: IP_A,
+                dns_server_addresses: (0..256).map(|_| IP_A).collect(),
+            }),
+        };
+        let mut buf = alloc::vec![0u8; 8192];
+        assert!(matches!(
+            r.serialize_into(&mut buf),
+            Err(Error::InvalidObject { .. })
         ));
     }
 }
