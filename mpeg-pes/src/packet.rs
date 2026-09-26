@@ -226,6 +226,27 @@ pub struct PStdBuffer {
     pub size: u16,
 }
 
+/// `PES_extension_field()` payload, present when `PES_extension_flag_2` is set
+/// (ISO/IEC 13818-1 §2.4.3.7, Table 2-21).
+///
+/// The field itself is `marker_bit(1) + PES_extension_field_length(7)`
+/// (handled by [`PesExtension`]'s parse/serialize) followed by these bytes.
+/// The first byte is `stream_id_extension_flag`(1) + 7 more bits that are
+/// `stream_id_extension` when the flag is `0`, or `reserved`(6)+
+/// `tref_extension_flag`(1) when the flag is `1`; the TREF sub-fields or
+/// reserved padding that can follow are not decoded further and stay opaque.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+pub struct PesExtensionField<'a> {
+    /// `stream_id_extension_flag`.
+    pub stream_id_extension_flag: bool,
+    /// The low 7 bits of the `stream_id_extension` byte (see struct docs for
+    /// how to interpret them against `stream_id_extension_flag`).
+    pub low_bits: u8,
+    /// Bytes following the `stream_id_extension` byte (opaque per spec).
+    pub rest: &'a [u8],
+}
+
 /// Typed PES header extension sub-structure
 /// (ISO/IEC 13818-1 §2.4.3.7, Table 2-21, `PES_extension_flag = 1`).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -239,8 +260,8 @@ pub struct PesExtension<'a> {
     pub program_packet_sequence_counter: Option<ProgramPacketSequenceCounter>,
     /// P-STD buffer sub-field.
     pub p_std_buffer: Option<PStdBuffer>,
-    /// PES extension field bytes (opaque per spec).
-    pub pes_extension_field: Option<&'a [u8]>,
+    /// `PES_extension_field()` payload, if `PES_extension_flag_2` is set.
+    pub pes_extension_field: Option<PesExtensionField<'a>>,
 }
 
 impl<'a> PesExtension<'a> {
@@ -330,20 +351,34 @@ impl<'a> PesExtension<'a> {
         };
 
         let pes_extension_field = if flags & 0x01 != 0 {
-            let ext_len = *data.get(cursor).ok_or(Error::BufferTooShort {
+            let len_byte = *data.get(cursor).ok_or(Error::BufferTooShort {
                 need: cursor + 1,
                 have: data.len(),
                 what: "PES_extension_field_length",
-            })? as usize;
+            })?;
+            // Table 2-21: marker_bit(1) + PES_extension_field_length(7), not a
+            // plain 8-bit length (issue #1052) — the high bit is a marker,
+            // not part of the count.
+            let ext_len = (len_byte & 0x7F) as usize;
             cursor += 1;
             let end = cursor + ext_len;
-            let slice = data.get(cursor..end).ok_or(Error::BufferTooShort {
+            let field_bytes = data.get(cursor..end).ok_or(Error::BufferTooShort {
                 need: end,
                 have: data.len(),
                 what: "PES_extension_field",
             })?;
             cursor = end;
-            Some(slice)
+            // First byte: stream_id_extension_flag(1) + 7 more bits (Table 2-21).
+            let (sie_byte, rest) = field_bytes.split_first().ok_or(Error::BufferTooShort {
+                need: 1,
+                have: 0,
+                what: "PES_extension_field.stream_id_extension byte",
+            })?;
+            Some(PesExtensionField {
+                stream_id_extension_flag: (sie_byte & 0x80) != 0,
+                low_bits: sie_byte & 0x7F,
+                rest,
+            })
         } else {
             None
         };
@@ -373,8 +408,9 @@ impl<'a> PesExtension<'a> {
         if self.p_std_buffer.is_some() {
             n += 2;
         }
-        if let Some(ef) = self.pes_extension_field {
-            n += 1 + ef.len();
+        if let Some(ef) = &self.pes_extension_field {
+            // length byte + stream_id_extension byte + trailing bytes.
+            n += 1 + 1 + ef.rest.len();
         }
         n
     }
@@ -434,14 +470,21 @@ impl<'a> PesExtension<'a> {
             buf[cursor + 1] = (ps.size & 0xFF) as u8;
             cursor += 2;
         }
-        if let Some(ef) = self.pes_extension_field {
-            buf[cursor] = broadcast_common::len::fit_u8(
-                ef.len(),
+        if let Some(ef) = &self.pes_extension_field {
+            let field_len = 1 + ef.rest.len(); // stream_id_extension byte + rest
+            // Table 2-21: the length is 7 bits, not 8 (issue #1052) — the high
+            // bit written below is `marker_bit`, always 1.
+            let checked = broadcast_common::len::fit_bits(
+                field_len as u64,
+                7,
                 "PES_extension.PES_extension_field_length",
             )?;
+            buf[cursor] = 0x80 | (checked as u8);
             cursor += 1;
-            buf[cursor..cursor + ef.len()].copy_from_slice(ef);
-            cursor += ef.len();
+            buf[cursor] = ((ef.stream_id_extension_flag as u8) << 7) | (ef.low_bits & 0x7F);
+            cursor += 1;
+            buf[cursor..cursor + ef.rest.len()].copy_from_slice(ef.rest);
+            cursor += ef.rest.len();
         }
         Ok(cursor)
     }
@@ -1220,19 +1263,27 @@ mod tests {
     /// W10 (#1129): `PES_extension_field_length` is an 8-bit field but used
     /// to be written with `ef.len() as u8`, wrapping the same way. See the
     /// note on `pack_header_over_255_bytes_rejected_not_wrapped` above about
-    /// calling the private method directly.
+    /// calling the private method directly. Post-#1052 the field is 7 bits
+    /// (max 127), so this now also covers the narrower ceiling.
     #[test]
-    fn pes_extension_field_over_255_bytes_rejected_not_wrapped() {
+    fn pes_extension_field_over_127_bytes_rejected_not_wrapped() {
         let data = alloc::vec![0u8; 256];
         let ext = PesExtension {
             pes_private_data: None,
             pack_header: None,
             program_packet_sequence_counter: None,
             p_std_buffer: None,
-            pes_extension_field: Some(&data),
+            pes_extension_field: Some(PesExtensionField {
+                stream_id_extension_flag: false,
+                low_bits: 0,
+                rest: &data,
+            }),
         };
         let mut buf = vec![0u8; ext.serialized_len()];
-        assert!(ext.serialize_into(&mut buf).is_err());
+        assert!(matches!(
+            ext.serialize_into(&mut buf).unwrap_err(),
+            Error::FieldOverflow(_)
+        ));
     }
 
     /// PesExtension with private data (16 bytes).
