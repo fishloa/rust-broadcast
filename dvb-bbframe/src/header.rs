@@ -344,6 +344,38 @@ impl Serialize for Bbheader {
             });
         }
 
+        // `parse` rejects `dfl > DFL_MAX_BITS`; enforce the same bound on the
+        // way out so a mutated/constructed header never serializes into
+        // something its own parser refuses.
+        if self.dfl > DFL_MAX_BITS {
+            return Err(Error::DflOutOfRange {
+                dfl: self.dfl,
+                max: DFL_MAX_BITS,
+            });
+        }
+
+        // NM carries `upl`/`sync` on the wire; HEM carries `issy_in_header`
+        // (repurposing those same byte positions). A field the declared mode
+        // doesn't emit would otherwise be silently dropped instead of erroring.
+        match self.mode {
+            Mode::Normal => {
+                if self.issy_in_header.is_some() {
+                    return Err(Error::InconsistentBbheaderMode {
+                        mode: self.mode,
+                        reason: "issy_in_header is Some but mode is Normal (NM has no header ISSY)",
+                    });
+                }
+            }
+            Mode::HighEfficiency => {
+                if self.upl != 0 || self.sync != 0 {
+                    return Err(Error::InconsistentBbheaderMode {
+                        mode: self.mode,
+                        reason: "upl/sync are non-zero but mode is HighEfficiency (HEM repurposes those bytes for ISSY)",
+                    });
+                }
+            }
+        }
+
         let ma = <[u8; 2]>::from(self.matype);
         buf[0] = ma[0];
         buf[1] = ma[1];
@@ -1055,5 +1087,209 @@ mod tests {
                 have: small.len(),
             }
         );
+    }
+
+    #[test]
+    fn serialize_into_rejects_dfl_out_of_range() {
+        // W-BB-2: DFL exceeding DFL_MAX_BITS must be rejected on serialize,
+        // not silently serialized into something the parser refuses.
+        let mut hdr = Bbheader {
+            matype: Matype {
+                ts_gs: TsGs::Ts,
+                sis: true,
+                ccm: true,
+                issyi: false,
+                npd: false,
+                ext: 0,
+                isi: 0x00,
+            },
+            upl: 0,
+            sync: 0,
+            dfl: DFL_MAX_BITS + 1,
+            syncd: 0,
+            mode: Mode::Normal,
+            issy_in_header: None,
+        };
+
+        let mut buf = [0u8; BBHEADER_LEN];
+        let err = hdr.serialize_into(&mut buf).unwrap_err();
+        assert_eq!(
+            err,
+            Error::DflOutOfRange {
+                dfl: DFL_MAX_BITS + 1,
+                max: DFL_MAX_BITS,
+            }
+        );
+
+        // Verify the parser also rejects it (round-trip invariant).
+        hdr.dfl = DFL_MAX_BITS + 100;
+        let err = hdr.serialize_into(&mut buf).unwrap_err();
+        match err {
+            Error::DflOutOfRange { dfl, max } => {
+                assert_eq!(dfl, DFL_MAX_BITS + 100);
+                assert_eq!(max, DFL_MAX_BITS);
+            }
+            _ => panic!("expected DflOutOfRange, got {err}"),
+        }
+    }
+
+    #[test]
+    fn serialize_into_rejects_normal_mode_with_issy_in_header() {
+        // W-BB-2: Normal Mode (NM) does not carry ISSY in the header.
+        // If issy_in_header is Some, serialization would silently drop it.
+        // Must error instead.
+        let hdr = Bbheader {
+            matype: Matype {
+                ts_gs: TsGs::Ts,
+                sis: true,
+                ccm: true,
+                issyi: false,
+                npd: false,
+                ext: 0,
+                isi: 0x00,
+            },
+            upl: 0,
+            sync: 0,
+            dfl: 16000,
+            syncd: 0,
+            mode: Mode::Normal,
+            issy_in_header: Some([1, 2, 3]),
+        };
+
+        let mut buf = [0u8; BBHEADER_LEN];
+        let err = hdr.serialize_into(&mut buf).unwrap_err();
+        match err {
+            Error::InconsistentBbheaderMode { mode, reason } => {
+                assert_eq!(mode, Mode::Normal);
+                assert!(reason.contains("issy_in_header"));
+                assert!(reason.contains("Normal"));
+            }
+            _ => panic!("expected InconsistentBbheaderMode, got {err}"),
+        }
+    }
+
+    #[test]
+    fn serialize_into_rejects_hem_with_nonzero_upl_or_sync() {
+        // W-BB-2: High Efficiency Mode (HEM) repurposes UPL/SYNC byte positions
+        // for ISSY. If upl or sync are non-zero, serialization would either
+        // silently drop them or corrupt the ISSY. Must error instead.
+
+        // Test with upl != 0
+        let hdr_upl = Bbheader {
+            matype: Matype {
+                ts_gs: TsGs::Ts,
+                sis: true,
+                ccm: true,
+                issyi: true,
+                npd: false,
+                ext: 0,
+                isi: 0x00,
+            },
+            upl: 1024, // Non-zero: will be dropped or misplaced
+            sync: 0,
+            dfl: 16000,
+            syncd: 0,
+            mode: Mode::HighEfficiency,
+            issy_in_header: Some([0, 0, 0]),
+        };
+
+        let mut buf = [0u8; BBHEADER_LEN];
+        let err = hdr_upl.serialize_into(&mut buf).unwrap_err();
+        match err {
+            Error::InconsistentBbheaderMode { mode, reason } => {
+                assert_eq!(mode, Mode::HighEfficiency);
+                assert!(reason.contains("upl/sync"));
+                assert!(reason.contains("HighEfficiency"));
+            }
+            _ => panic!("expected InconsistentBbheaderMode for upl!=0, got {err}"),
+        }
+
+        // Test with sync != 0
+        let hdr_sync = Bbheader {
+            matype: Matype {
+                ts_gs: TsGs::Ts,
+                sis: true,
+                ccm: true,
+                issyi: true,
+                npd: false,
+                ext: 0,
+                isi: 0x00,
+            },
+            upl: 0,
+            sync: 0x42, // Non-zero: will be dropped or misplaced
+            dfl: 16000,
+            syncd: 0,
+            mode: Mode::HighEfficiency,
+            issy_in_header: Some([0, 0, 0]),
+        };
+
+        let err = hdr_sync.serialize_into(&mut buf).unwrap_err();
+        match err {
+            Error::InconsistentBbheaderMode { mode, reason } => {
+                assert_eq!(mode, Mode::HighEfficiency);
+                assert!(reason.contains("upl/sync"));
+            }
+            _ => panic!("expected InconsistentBbheaderMode for sync!=0, got {err}"),
+        }
+    }
+
+    #[test]
+    fn serialize_hem_with_zero_upl_and_sync_succeeds() {
+        // W-BB-2: HEM with upl=0 and sync=0 is valid (those fields don't carry
+        // on the wire in HEM). Should serialize and round-trip correctly.
+        let orig = Bbheader {
+            matype: Matype {
+                ts_gs: TsGs::Ts,
+                sis: true,
+                ccm: true,
+                issyi: true,
+                npd: false,
+                ext: 0,
+                isi: 0x00,
+            },
+            upl: 0,
+            sync: 0,
+            dfl: 24000,
+            syncd: 512,
+            mode: Mode::HighEfficiency,
+            issy_in_header: Some([0xAA, 0xBB, 0xCC]),
+        };
+
+        let v = <Bbheader as Serialize>::to_bytes(&orig);
+        let parsed = <Bbheader as Parse>::parse(&v).unwrap();
+        assert_eq!(parsed.mode, Mode::HighEfficiency);
+        assert_eq!(parsed.dfl, 24000);
+        assert_eq!(parsed.syncd, 512);
+        assert_eq!(parsed.issy_in_header, Some([0xAA, 0xBB, 0xCC]));
+    }
+
+    #[test]
+    fn serialize_normal_mode_with_none_issy_succeeds() {
+        // W-BB-2: NM with issy_in_header=None is valid and should round-trip.
+        let orig = Bbheader {
+            matype: Matype {
+                ts_gs: TsGs::Ts,
+                sis: true,
+                ccm: true,
+                issyi: false,
+                npd: false,
+                ext: 0,
+                isi: 0x00,
+            },
+            upl: 1024,
+            sync: 0x47,
+            dfl: 32000,
+            syncd: 256,
+            mode: Mode::Normal,
+            issy_in_header: None,
+        };
+
+        let v = <Bbheader as Serialize>::to_bytes(&orig);
+        let parsed = <Bbheader as Parse>::parse(&v).unwrap();
+        assert_eq!(parsed.mode, Mode::Normal);
+        assert_eq!(parsed.upl, 1024);
+        assert_eq!(parsed.sync, 0x47);
+        assert_eq!(parsed.dfl, 32000);
+        assert_eq!(parsed.syncd, 256);
     }
 }

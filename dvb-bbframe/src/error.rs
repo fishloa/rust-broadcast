@@ -63,6 +63,17 @@ pub enum Error {
         /// Maximum allowed DFL.
         max: u16,
     },
+
+    /// A field that the declared [`crate::header::Mode`] does not carry on the
+    /// wire (NM-only `upl`/`sync`, or HEM-only `issy_in_header`) was non-default,
+    /// so `serialize_into` would silently drop it (EN 302 755 §5.1.7 Table 1).
+    #[error("BBHEADER field inconsistent with mode {mode}: {reason}")]
+    InconsistentBbheaderMode {
+        /// The declared mode.
+        mode: crate::header::Mode,
+        /// Which field was inconsistent and why.
+        reason: &'static str,
+    },
 }
 
 #[cfg(test)]
