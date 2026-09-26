@@ -229,7 +229,33 @@ fn complete_nit_exposes_typed_descriptors() {
         nit.network_descriptors.descriptors().first(),
         Some(Ok(AnyDescriptor::NetworkName(_)))
     ));
-    assert_eq!(nit.network_descriptors.raw().raw(), &network_name);
+    assert_eq!(nit.network_descriptors.raw()[0].raw(), &network_name);
+}
+
+/// Regression for r02-W2: EN 300 468 §5.2.1 gives every NIT section its own
+/// `network_descriptors_loop`; a name/linkage split across sections must not
+/// be dropped from the completed view (previously only section 0's loop was
+/// kept).
+#[test]
+fn complete_nit_merges_network_descriptors_from_every_section() {
+    let section0_desc = [0x40, 0x02, b'A', b'B']; // network_name_descriptor
+    let section1_desc = [0x4A, 0x03, 0x00, 0x00, 0x00]; // linkage_descriptor-shaped bytes
+    let section0 = nit_section(0, 1, &section0_desc, vec![]);
+    let section1 = nit_section(1, 1, &section1_desc, vec![]);
+
+    let mut collector = SectionSetCollector::new();
+    assert!(collector.push_section(&section0).unwrap().is_none());
+    let complete_set = collector
+        .push_section(&section1)
+        .unwrap()
+        .expect("both NIT sections complete the set");
+    let nit = complete_set.nit().unwrap();
+
+    let raw = nit.network_descriptors.raw();
+    assert_eq!(raw.len(), 2);
+    assert_eq!(raw[0].raw(), &section0_desc);
+    assert_eq!(raw[1].raw(), &section1_desc);
+    assert_eq!(nit.network_descriptors.descriptors().len(), 2);
 }
 
 #[test]
@@ -274,6 +300,43 @@ fn eit_schedule_collector_allows_per_table_id_versions() {
 
     let versions: Vec<_> = schedule.table_versions().collect();
     assert_eq!(versions, [(EIT_50, 4), (EIT_50 + 1, 5)]);
+}
+
+/// Regression for the "flapping `last_table_id`" schedule-reset warning
+/// (r02-W1): a non-conformant stream where one schedule sub-table bumps
+/// `last_table_id` (widening the range) on a version change, while a
+/// sibling sub-table that already completed under the old range keeps its
+/// old version and never repeats. The schedule must retain that sibling's
+/// already-completed section set across the range reset instead of losing
+/// it forever.
+#[test]
+fn eit_schedule_reset_retains_already_completed_table_ids() {
+    let mut collector = EitCollector::new();
+
+    // Range 50..=51 completes and is emitted.
+    let section50_v4 = eit_schedule_section_with_version(EIT_50, EIT_50 + 1, 4);
+    let section51 = eit_schedule_section_with_version(EIT_50 + 1, EIT_50 + 1, 4);
+    assert!(collector.push_section(&section50_v4).unwrap().is_none());
+    assert!(collector.push_section(&section51).unwrap().is_some());
+
+    // Table 50 bumps version and widens the range to 50..=52. Table 51 is
+    // unchanged (same version, already emitted) and will not repeat.
+    let section50_v5 = eit_schedule_section_with_version(EIT_50, EIT_50 + 2, 5);
+    assert!(collector.push_section(&section50_v5).unwrap().is_none());
+
+    // Table 52 completes the widened range.
+    let section52 = eit_schedule_section_with_version(EIT_50 + 2, EIT_50 + 2, 4);
+    let completed = collector
+        .push_section(&section52)
+        .unwrap()
+        .expect("widened schedule range completes using the retained table 51 set");
+    let CompletedEit::Schedule(schedule) = completed else {
+        panic!("expected completed schedule EIT");
+    };
+    assert_eq!(schedule.first_table_id(), EIT_50);
+    assert_eq!(schedule.last_table_id(), EIT_50 + 2);
+    let table_ids: Vec<_> = schedule.table_versions().map(|(id, _)| id).collect();
+    assert_eq!(table_ids, [EIT_50, EIT_50 + 1, EIT_50 + 2]);
 }
 
 #[test]

@@ -249,12 +249,44 @@ impl EitCollector {
                     first_table_id,
                     last_table_id: eit.last_table_id,
                 };
+
+                // A schedule range reset (this section's `last_table_id`
+                // differs from what the schedule previously tracked, a
+                // non-conformant "flapping `last_table_id`" stream) used to
+                // drop every other table_id's already-completed section set.
+                // Those sub-tables are already marked `emitted` and won't
+                // repeat under a new version, so the schedule could never
+                // complete again. Snapshot them here (ignoring `emitted`)
+                // before the reset so they can be re-fed.
+                let retained_table_sets: Vec<(u8, CompleteSectionSet)> =
+                    if self.schedules.get(&logical_key).is_some_and(|existing| {
+                        existing.meta.last_table_id != schedule_meta.last_table_id
+                    }) {
+                        (first_table_id..=schedule_meta.last_table_id)
+                            .filter(|&table_id| table_id != eit.table_id)
+                            .filter_map(|table_id| {
+                                self.sections
+                                    .get(&EitSectionSetKey {
+                                        logical_key,
+                                        table_id,
+                                    })
+                                    .and_then(PartialEitSectionSet::snapshot)
+                                    .map(|set| (table_id, set))
+                            })
+                            .collect()
+                    } else {
+                        Vec::new()
+                    };
+
                 let schedule = self
                     .schedules
                     .entry(logical_key)
                     .or_insert_with(|| PartialEitSchedule::new(schedule_meta));
                 if schedule.meta.last_table_id != schedule_meta.last_table_id {
                     schedule.reset(schedule_meta);
+                    for (table_id, set) in retained_table_sets {
+                        schedule.insert(table_id, set);
+                    }
                 }
                 self.schedules_touch_order.remove(&schedule.last_touch);
                 schedule.last_touch = schedules_now;
@@ -491,7 +523,19 @@ impl PartialEitSectionSet {
     }
 
     fn to_complete(&self) -> Option<CompleteSectionSet> {
-        if !self.complete() || self.emitted {
+        if self.emitted {
+            return None;
+        }
+        self.snapshot()
+    }
+
+    /// Build a [`CompleteSectionSet`] from this section set's slots if
+    /// complete, regardless of whether it has already been emitted once.
+    ///
+    /// Used to re-feed an already-completed sub-table into a
+    /// [`PartialEitSchedule`] whose range just reset, without losing it.
+    fn snapshot(&self) -> Option<CompleteSectionSet> {
+        if !self.complete() {
             return None;
         }
 

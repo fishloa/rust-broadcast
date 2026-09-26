@@ -349,6 +349,20 @@ impl Serialize for DownloadableFontInfoSection<'_> {
                     font_info_type,
                     info,
                 } => {
+                    // 0x00..=0x02 belong to the fixed layouts above; writing
+                    // them here would re-parse as StyleWeight/FileUri/
+                    // FontSize instead of LengthDelimited (r02-W21).
+                    if matches!(
+                        *font_info_type,
+                        FONT_INFO_TYPE_STYLE_WEIGHT
+                            | FONT_INFO_TYPE_FILE_URI
+                            | FONT_INFO_TYPE_FONT_SIZE
+                    ) {
+                        return Err(Error::ValueOutOfRange {
+                            field: "font_info_type",
+                            reason: "0x00..=0x02 are fixed-layout types, not LengthDelimited",
+                        });
+                    }
                     guard_u8(info.len())?;
                     buf[pos] = *font_info_type;
                     buf[pos + 1] = info.len() as u8;
@@ -560,6 +574,41 @@ mod tests {
             DownloadableFontInfoSection::parse(&buf).unwrap_err(),
             Error::SectionLengthOverflow { .. }
         ));
+    }
+
+    /// Regression for r02-W21: `FontInfo::LengthDelimited { font_info_type:
+    /// 0x00..=0x02, .. }` must be rejected on serialize, not written verbatim
+    /// — those type codes belong to the fixed StyleWeight/FileUri/FontSize
+    /// layouts and would re-parse as one of those instead of
+    /// LengthDelimited.
+    #[test]
+    fn serialize_rejects_length_delimited_with_fixed_layout_type_code() {
+        for bad_type in [
+            FONT_INFO_TYPE_STYLE_WEIGHT,
+            FONT_INFO_TYPE_FILE_URI,
+            FONT_INFO_TYPE_FONT_SIZE,
+        ] {
+            let section = DownloadableFontInfoSection {
+                font_id_extension: 0,
+                font_id: 1,
+                version_number: 0,
+                current_next_indicator: true,
+                section_number: 0,
+                last_section_number: 0,
+                font_info: vec![FontInfo::LengthDelimited {
+                    font_info_type: bad_type,
+                    info: b"x",
+                }],
+            };
+            let mut buf = vec![0u8; section.serialized_len()];
+            assert!(
+                matches!(
+                    section.serialize_into(&mut buf).unwrap_err(),
+                    Error::ValueOutOfRange { .. }
+                ),
+                "font_info_type {bad_type:#04x} must be rejected"
+            );
+        }
     }
 
     /// section_length is 12 bits (max 4095 = 9 + loop_bytes, see

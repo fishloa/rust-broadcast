@@ -257,8 +257,8 @@ mod tests {
     fn serialize_rejects_application_type_over_range() {
         let d = ApplicationSignallingDescriptor {
             entries: vec![ApplicationSignallingEntry {
-                // UserDefined(0x8000) → to_u16() = 0x8000 > APPLICATION_TYPE_MAX
-                application_type: ApplicationType::UserDefined(0x8000),
+                // Reserved(0x8000) → to_u16() = 0x8000 > APPLICATION_TYPE_MAX
+                application_type: ApplicationType::Reserved(0x8000),
                 ait_version_number: 0,
             }],
         };

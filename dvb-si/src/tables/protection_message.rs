@@ -358,6 +358,16 @@ fn parse_certificate_collection(body: &[u8]) -> Result<ProtectionMessageBody<'_>
         certificates.push(&body[cert_start..cert_end]);
         pos = cert_end;
     }
+    // Reject trailing bytes after the last certificate (r02-W18): silently
+    // dropping them would break the parse -> serialize byte-identity
+    // invariant.
+    if pos != body.len() {
+        return Err(Error::BufferTooShort {
+            need: body.len() - pos,
+            have: 0,
+            what: "ProtectionMessageSection::CertificateCollection trailing bytes",
+        });
+    }
     Ok(ProtectionMessageBody::CertificateCollection { certificates })
 }
 
@@ -437,6 +447,16 @@ impl ProtectionMessageBody<'_> {
                         return Err(Error::SectionLengthOverflow {
                             declared: h.reference.len(),
                             available: 0x0F,
+                        });
+                    }
+                    // Every hash entry is exactly `section_hash_length`
+                    // bytes on the wire (the parser slices it that way
+                    // unconditionally) — a different length here would
+                    // misframe every later entry (r02-W18).
+                    if h.hash.len() != *section_hash_length as usize {
+                        return Err(Error::ValueOutOfRange {
+                            field: "Hash.hash",
+                            reason: "length must equal section_hash_length",
                         });
                     }
                     buf[pos] = (h.reference_type.to_u8() << 4) | (h.reference.len() as u8 & 0x0F);
@@ -705,6 +725,40 @@ mod tests {
         sec.serialize_into(&mut buf).unwrap();
         let re = ProtectionMessageSection::parse(&buf).unwrap();
         assert_eq!(sec, re);
+    }
+
+    /// Regression for r02-W18: a `Hash.hash` whose length disagrees with
+    /// `section_hash_length` must be rejected, not written verbatim (which
+    /// would misframe every later hash entry on re-parse).
+    #[test]
+    fn serialize_rejects_hash_length_disagreeing_with_section_hash_length() {
+        let bytes = build_section(0x0042, 5, &auth_body());
+        let mut sec = ProtectionMessageSection::parse(&bytes).unwrap();
+        match &mut sec.body {
+            ProtectionMessageBody::AuthenticationMessage { hashes, .. } => {
+                hashes[0].hash = &[0xAA, 0xBB]; // section_hash_length is 4
+            }
+            other => panic!("expected AuthenticationMessage, got {other:?}"),
+        }
+        let mut buf = vec![0u8; sec.serialized_len()];
+        assert!(matches!(
+            sec.serialize_into(&mut buf).unwrap_err(),
+            Error::ValueOutOfRange { .. }
+        ));
+    }
+
+    /// Regression for r02-W18: bytes left over after the last certificate in
+    /// a `CertificateCollection` body must be rejected, not silently
+    /// dropped.
+    #[test]
+    fn parse_certificate_collection_rejects_trailing_bytes() {
+        let mut body = cert_body();
+        body.push(0xFF); // one byte past the last certificate
+        let bytes = build_section(CERTIFICATE_COLLECTION_EXTENSION, 0, &body);
+        assert!(matches!(
+            ProtectionMessageSection::parse(&bytes).unwrap_err(),
+            Error::BufferTooShort { .. }
+        ));
     }
 
     #[test]

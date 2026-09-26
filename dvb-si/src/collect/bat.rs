@@ -26,7 +26,10 @@ pub struct CompleteBat<'a> {
     pub version_number: u8,
     /// current_next_indicator bit.
     pub current_next_indicator: bool,
-    /// Bouquet descriptors from section 0.
+    /// Bouquet descriptors, concatenated across every section that carries a
+    /// `bouquet_descriptors_loop` (EN 300 468 §5.2.2: each section has its
+    /// own loop, so a bouquet name/linkage split across sections is not
+    /// lost).
     pub bouquet_descriptors: ParsedDescriptorLoop<'a>,
     /// Transport-stream loop entries from all sections in wire order.
     pub transport_streams: Vec<CompleteBatTransportStream<'a>>,
@@ -57,7 +60,10 @@ impl<'a> CompleteBat<'a> {
             bouquet_id: first.bouquet_id,
             version_number: first.version_number,
             current_next_indicator: first.current_next_indicator,
-            bouquet_descriptors: ParsedDescriptorLoop::parse(first.bouquet_descriptors, registry),
+            bouquet_descriptors: ParsedDescriptorLoop::parse_all(
+                sections.iter().map(|section| section.bouquet_descriptors),
+                registry,
+            ),
             transport_streams,
         })
     }

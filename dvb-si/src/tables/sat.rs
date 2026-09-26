@@ -1392,6 +1392,17 @@ fn sat_body_parse(sat_table_id: u8, data: &[u8]) -> Result<SatBody> {
                         BeamhoppingMode::Reserved(raw)
                     }
                 };
+                // A `plan_length` shorter than the fixed + mode-specific
+                // fields already consumed would move the cursor BACKWARDS,
+                // re-reading part of this plan's own body as the next plan
+                // (r02-W14) — reject it instead.
+                if r.bits_consumed() > plan_end_bits {
+                    return Err(Error::BufferTooShort {
+                        need: r.bits_consumed() - plan_end_bits,
+                        have: 0,
+                        what: "SatSection Beamhopping plan_length shorter than plan fields",
+                    });
+                }
                 r.bit_pos = plan_end_bits;
                 plans.push(BeamhoppingPlan {
                     beamhopping_time_plan_id,
@@ -1957,6 +1968,50 @@ mod tests {
         let mut buf2 = vec![0u8; sat.serialized_len()];
         sat.serialize_into(&mut buf2).unwrap();
         assert_eq!(bytes, buf2, "byte-exact re-serialize");
+    }
+
+    /// Regression for r02-W14: a `plan_length` shorter than the fixed +
+    /// mode-specific fields the plan actually carries must be rejected, not
+    /// silently accepted with the cursor moved backwards into the plan's
+    /// own body (which would then be misread as a second, fabricated plan).
+    #[test]
+    fn beamhopping_plan_length_shorter_than_fields_is_rejected() {
+        let body = SatBody::BeamhoppingTimePlan(BeamhoppingTimePlanBody {
+            plans: vec![BeamhoppingPlan {
+                beamhopping_time_plan_id: 0xDEAD_BEEF,
+                time_plan_mode: TimePlanMode::DwellOnTime,
+                time_of_application_base: 0x0000_AAAA_AAAA,
+                time_of_application_ext: 0x100,
+                cycle_duration_base: 0x0000_5555_5555,
+                cycle_duration_ext: 0x080,
+                mode: BeamhoppingMode::Mode0 {
+                    dwell_duration_base: 0x0000_1111_1111,
+                    dwell_duration_ext: 0x111,
+                    on_time_base: 0x0000_2222_2222,
+                    on_time_ext: 0x222,
+                },
+            }],
+        });
+        let mut bytes = build_sat(3, 0, &body);
+
+        // Locate `beamhopping_time_plan_id` (0xDEADBEEF) on the wire; the
+        // next 16 bits are `reserved(4)` + `plan_length(12)`.
+        let marker = [0xDEu8, 0xAD, 0xBE, 0xEF];
+        let id_pos = bytes
+            .windows(4)
+            .position(|w| w == marker)
+            .expect("beamhopping_time_plan_id marker found");
+        let plan_length_pos = id_pos + 4;
+        // Zero the plan_length (keep the top reserved nibble as-is): far
+        // shorter than the fixed+Mode0 fields that actually follow.
+        bytes[plan_length_pos] &= 0xF0;
+        bytes[plan_length_pos + 1] = 0x00;
+
+        let err = SatSection::parse(&bytes).unwrap_err();
+        assert!(
+            matches!(err, Error::BufferTooShort { what, .. } if what.contains("plan_length")),
+            "expected a plan_length error, got {err:?}"
+        );
     }
 
     #[test]

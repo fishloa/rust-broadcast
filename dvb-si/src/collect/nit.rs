@@ -28,7 +28,10 @@ pub struct CompleteNit<'a> {
     pub version_number: u8,
     /// current_next_indicator bit.
     pub current_next_indicator: bool,
-    /// Network-wide descriptors from section 0.
+    /// Network-wide descriptors, concatenated across every section that
+    /// carries a `network_descriptors_loop` (EN 300 468 §5.2.1: each section
+    /// has its own loop, so a network name/linkage split across sections is
+    /// not lost).
     pub network_descriptors: ParsedDescriptorLoop<'a>,
     /// Transport-stream loop entries from all sections in wire order.
     pub transport_streams: Vec<CompleteNitTransportStream<'a>>,
@@ -60,10 +63,10 @@ impl<'a> CompleteNit<'a> {
             network_id: first.network_id,
             version_number: first.version_number,
             current_next_indicator: first.current_next_indicator,
-            // The network descriptor loop is carried in section 0; completed
-            // sets are stored in section-number order, so `first` is
-            // authoritative for table-wide descriptors.
-            network_descriptors: ParsedDescriptorLoop::parse(first.network_descriptors, registry),
+            network_descriptors: ParsedDescriptorLoop::parse_all(
+                sections.iter().map(|section| section.network_descriptors),
+                registry,
+            ),
             transport_streams,
         })
     }

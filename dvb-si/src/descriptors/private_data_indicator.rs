@@ -1,10 +1,14 @@
-//! Private Data Indicator Descriptor — ISO/IEC 13818-1 §2.6.22 (tag 0x0F).
+//! Private Data Indicator Descriptor — ISO/IEC 13818-1 §2.6.28 (tag 0x0F).
 //!
-//! Carries a 4-byte private data specifier that identifies the organization
-//! or entity that defined the private data carried in the associated stream.
+//! Carries a 4-byte `private_data_indicator` field whose semantics are
+//! defined by the user (§2.6.28 gives it no registry of its own — unlike
+//! DVB's own `private_data_specifier_descriptor`, tag 0x5F, whose value
+//! space [`crate::descriptors::private_data_specifier::private_data_specifier_name`]
+//! resolves. This module used to re-export that lookup for this field too
+//! (r03-W16), which is semantically wrong: a 13818-1 `private_data_indicator`
+//! is not drawn from the DVB PDS registry).
 
 use super::descriptor_body;
-pub use super::private_data_specifier::private_data_specifier_name;
 use crate::error::{Error, Result};
 use broadcast_common::{Parse, Serialize};
 

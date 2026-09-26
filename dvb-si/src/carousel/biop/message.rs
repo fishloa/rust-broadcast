@@ -180,11 +180,13 @@ impl<'a> Binding<'a> {
         let binding_type = BindingType::from_u8(bytes[cur]);
         cur += BINDING_TYPE_FIELD;
 
-        // IOR — parse the remainder using Ior::parse which reads from position 0
-        // of a slice; we need to slice from cur to end.
+        // IOR — `parse_at` reads from the front of `ior_slice` and reports
+        // exactly how many bytes it consumed; using `ior.serialized_len()`
+        // as a stand-in for that (as this used to) is only correct if the
+        // parsed IOR's wire form has no internal slack anywhere, which
+        // `Ior::parse_at` now enforces at every level (r02-W7).
         let ior_slice = &bytes[cur..end];
-        let ior = Ior::parse(ior_slice)?;
-        let ior_len = ior.serialized_len();
+        let (ior, ior_len) = Ior::parse_at(ior_slice)?;
         cur += ior_len;
 
         // objectInfo_length (2 bytes)
@@ -1845,8 +1847,11 @@ impl<'a> ServiceGatewayInfo<'a> {
     /// Parse the DSI `privateData` bytes as a ServiceGatewayInfo.
     pub fn parse(bytes: &'a [u8]) -> Result<Self> {
         let end = bytes.len();
-        let ior = Ior::parse(bytes)?;
-        let mut pos = ior.serialized_len();
+        // `parse_at` reports exactly how many bytes the IOR consumed —
+        // `bytes` continues past it with downloadTaps/serviceContext/
+        // userInfo, so `Ior::parse` (which requires full consumption)
+        // cannot be used here (r02-W7).
+        let (ior, mut pos) = Ior::parse_at(bytes)?;
 
         // downloadTaps: count(1) + taps (raw, count × variable)
         // We preserve the entire block raw: start at pos (count byte), walk past taps.
@@ -1898,27 +1903,51 @@ impl<'a> ServiceGatewayInfo<'a> {
 
     /// Serialize to an owned byte vector.  The result MUST equal the original
     /// `dsi.private_data` bytes byte-for-byte.
-    pub fn to_bytes(&self) -> Vec<u8> {
-        let len = self.ior.serialized_len()
+    ///
+    /// # Errors
+    ///
+    /// Returns an error instead of panicking or silently truncating when
+    /// `service_context` has more than 255 entries or an entry over 65,535
+    /// bytes, or `user_info` is over 65,535 bytes (r02-W11).
+    pub fn to_bytes(&self) -> Result<Vec<u8>> {
+        let mut buf = vec![0u8; self.serialized_len()];
+        self.serialize_into(&mut buf)?;
+        Ok(buf)
+    }
+}
+
+impl<'a> Serialize for ServiceGatewayInfo<'a> {
+    type Error = Error;
+
+    fn serialized_len(&self) -> usize {
+        self.ior.serialized_len()
             + self.download_taps.len()
             + service_context_list_len(&self.service_context)
             + SGI_USER_INFO_LEN_FIELD
-            + self.user_info.len();
-        let mut buf = vec![0u8; len];
-        let mut pos = 0;
-        let written = self
-            .ior
-            .serialize_into(&mut buf[pos..])
-            .expect("IOR serialize");
-        pos += written;
+            + self.user_info.len()
+    }
+
+    fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
+        let len = self.serialized_len();
+        if buf.len() < len {
+            return Err(Error::OutputBufferTooSmall {
+                need: len,
+                have: buf.len(),
+            });
+        }
+        let mut pos = self.ior.serialize_into(buf)?;
         buf[pos..pos + self.download_taps.len()].copy_from_slice(self.download_taps);
         pos += self.download_taps.len();
-        pos += write_service_context_list(&mut buf[pos..], &self.service_context)
-            .expect("serviceContext fits");
-        buf[pos..pos + 2].copy_from_slice(&(self.user_info.len() as u16).to_be_bytes());
+        pos += write_service_context_list(&mut buf[pos..], &self.service_context)?;
+        let user_info_len = broadcast_common::len::fit_u16(
+            self.user_info.len(),
+            "ServiceGatewayInfo userInfo length",
+        )?;
+        buf[pos..pos + 2].copy_from_slice(&user_info_len.to_be_bytes());
         pos += SGI_USER_INFO_LEN_FIELD;
         buf[pos..pos + self.user_info.len()].copy_from_slice(self.user_info);
-        buf
+        pos += self.user_info.len();
+        Ok(pos)
     }
 }
 
@@ -2115,9 +2144,34 @@ mod tests {
         assert_eq!(tap.timeout(), Some(0xFFFFFFFF));
 
         // Byte-exact round-trip
-        let out = sgi.to_bytes();
+        let out = sgi.to_bytes().unwrap();
         assert_eq!(out.len(), 64, "SGI serialized length");
         assert_eq!(out.as_slice(), raw, "SGI byte-exact round-trip");
+    }
+
+    /// Regression for r02-W11: `ServiceGatewayInfo::to_bytes` used to panic
+    /// (`.expect("serviceContext fits")`) when `service_context` had more
+    /// than 255 entries; it must return an error instead.
+    #[test]
+    fn service_gateway_info_to_bytes_errors_instead_of_panicking_on_oversized_service_context() {
+        let ior = crate::carousel::biop::ior::Ior {
+            type_id: b"srg\0",
+            profiles: vec![],
+        };
+        let service_context = (0..=u8::MAX as usize + 1)
+            .map(|i| ServiceContext {
+                context_id: i as u32,
+                data: &[],
+            })
+            .collect();
+        let sgi = ServiceGatewayInfo {
+            ior,
+            download_taps: &[0x00],
+            service_context,
+            user_info: &[],
+        };
+        let err = sgi.to_bytes().unwrap_err();
+        assert!(matches!(err, Error::SectionLengthOverflow { .. }));
     }
 
     #[cfg(feature = "serde")]

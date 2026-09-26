@@ -250,16 +250,51 @@ impl<'a> AitDescriptorLoop<'a> {
 
 #[cfg(feature = "serde")]
 impl serde::Serialize for AitDescriptorLoop<'_> {
+    /// Serializes as a sequence of the typed walk: each `Ok(d)` becomes the
+    /// [`AnyAitDescriptor`] (camelCase external tagging), and each `Err(e)`
+    /// becomes a `{"parseError": "<Display>"}` map — parse errors are
+    /// surfaced, never silently dropped (r03-W13, matching
+    /// [`DescriptorLoop`](crate::descriptors::DescriptorLoop)'s serde impl).
     fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
-        use alloc::vec::Vec;
-        let items: Vec<crate::error::Result<AnyAitDescriptor<'_>>> = self.iter().collect();
-        s.collect_seq(items.into_iter().filter_map(|r| r.ok()))
+        struct Entry<'a>(crate::error::Result<AnyAitDescriptor<'a>>);
+        impl serde::Serialize for Entry<'_> {
+            fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+                match &self.0 {
+                    Ok(d) => d.serialize(s),
+                    Err(e) => {
+                        use serde::ser::SerializeMap;
+                        let mut m = s.serialize_map(Some(1))?;
+                        m.serialize_entry("parseError", &e.to_string())?;
+                        m.end()
+                    }
+                }
+            }
+        }
+        s.collect_seq(self.iter().map(Entry))
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Regression for r03-W13: a parse error inside the loop must be
+    /// surfaced in the serde output (as `{"parseError": ...}`), not
+    /// silently dropped from the sequence.
+    #[cfg(feature = "serde")]
+    #[test]
+    fn serde_surfaces_parse_errors_instead_of_dropping_them() {
+        // tag=application_usage(0x16), declared length=0xFF, but no bytes
+        // follow — a malformed entry that must parse as an Err, not be
+        // silently skipped.
+        let buf = alloc::vec![0x16, 0xFF];
+        let loop_ = AitDescriptorLoop::new(&buf);
+        let json = serde_json::to_string(&loop_).unwrap();
+        assert!(
+            json.contains("parseError"),
+            "expected a surfaced parseError, got {json}"
+        );
+    }
 
     #[test]
     fn walk_ait_loop_yields_typed_variants() {

@@ -17,8 +17,9 @@ use broadcast_common::{Parse, Serialize};
 pub const TABLE_ID_FIRST: u8 = 0x3A;
 /// Last table_id in the DSM-CC section range (inclusive).
 pub const TABLE_ID_LAST: u8 = 0x3F;
-/// DSM-CC has no well-known PID.
-pub const PID: u16 = 0x0000;
+// DSM-CC has no well-known PID. A `PID` constant used to sit here as
+// `0x0000`, but that value equals the real PAT PID, so any caller filtering
+// on it would silently pick up PAT traffic instead (r02-W15) — removed.
 
 const MIN_HEADER_LEN: usize = 3;
 const EXTENSION_HEADER_LEN: usize = 5;
@@ -153,11 +154,14 @@ impl Serialize for DsmccSection<'_> {
 
         let section_length = len - MIN_HEADER_LEN;
         buf[0] = self.table_id;
-        buf[1] = if self.section_syntax_indicator {
-            super::SECTION_B1_FLAGS_PSI
-        } else {
-            (u8::from(self.private_indicator) << 6) | super::SECTION_B1_RESERVED_HI
-        };
+        // `private_indicator` is parsed independently of
+        // `section_syntax_indicator` (both are just bits of byte 1) and must
+        // round-trip the same way — unlike PAT/PMT/etc, DSM-CC sections can
+        // have SSI=1 with `private_indicator` set (r02-W9: this used to
+        // silently force it to 0 whenever SSI was true).
+        buf[1] = (u8::from(self.section_syntax_indicator) << 7)
+            | (u8::from(self.private_indicator) << 6)
+            | super::SECTION_B1_RESERVED_HI;
         super::write_section_length(buf, section_length)?;
         buf[3..5].copy_from_slice(&self.extension_id.to_be_bytes());
         buf[5] = 0xC0 | ((self.version_number & 0x1F) << 1) | u8::from(self.current_next_indicator);
@@ -241,6 +245,29 @@ mod tests {
     fn parse_rejects_short_buffer() {
         let err = DsmccSection::parse(&[0x3B, 0x00]).unwrap_err();
         assert!(matches!(err, Error::BufferTooShort { .. }));
+    }
+
+    /// Regression for r02-W9: `private_indicator` is an independent bit of
+    /// byte 1 from `section_syntax_indicator` and must round-trip even when
+    /// SSI=1 — previously the serializer forced it to 0 whenever SSI was
+    /// true, dropping a set `private_indicator` on re-serialize.
+    #[test]
+    fn private_indicator_round_trips_when_ssi_is_true() {
+        let mut bytes = build_dsmcc(0x3B, 0x1234, 5, &[0xAB]);
+        bytes[1] |= 0x40; // set private_indicator (SSI stays 1)
+        let sec = DsmccSection::parse(&bytes).expect("parse");
+        assert!(sec.section_syntax_indicator);
+        assert!(sec.private_indicator);
+
+        let mut out = vec![0u8; sec.serialized_len()];
+        sec.serialize_into(&mut out).unwrap();
+        assert_eq!(
+            out[1] & 0x40,
+            0x40,
+            "private_indicator bit must be set in the serialized byte 1 when SSI=1"
+        );
+        let reparsed = DsmccSection::parse(&out).expect("reparse");
+        assert!(reparsed.private_indicator);
     }
 
     #[test]

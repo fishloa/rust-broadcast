@@ -119,10 +119,16 @@ pub enum ApplicationType {
     HbbTv,
     /// 0x0011 — OIPF DAE.
     OipfDae,
-    /// Other values below `0x8000` — reserved for DVB use.
+    /// Any other value. `application_type` is a 15-bit wire field (bit 15 of
+    /// its containing 16-bit word is the separate `test_application_flag`),
+    /// so every representable value fits in `0x0000..=0x7FFF` — a `>=
+    /// 0x8000` value can only arise from a caller constructing one directly,
+    /// never from [`from_u16`](Self::from_u16) (r02-W20: this used to be
+    /// split into a `Reserved`/`UserDefined` pair at the 0x8000 boundary,
+    /// but the wire field can never carry a value on the `UserDefined` side
+    /// of that boundary, so the split was unreachable in one direction and
+    /// silently truncated in the other on serialize).
     Reserved(u16),
-    /// `0x8000`..`0xFFFF` — user defined.
-    UserDefined(u16),
 }
 
 impl ApplicationType {
@@ -134,8 +140,7 @@ impl ApplicationType {
             0x0002 => Self::DvbHtml,
             0x0010 => Self::HbbTv,
             0x0011 => Self::OipfDae,
-            v @ 0x0000..0x8000 => Self::Reserved(v),
-            _ => Self::UserDefined(v),
+            v => Self::Reserved(v),
         }
     }
 
@@ -147,7 +152,7 @@ impl ApplicationType {
             Self::DvbHtml => 0x0002,
             Self::HbbTv => 0x0010,
             Self::OipfDae => 0x0011,
-            Self::Reserved(v) | Self::UserDefined(v) => v,
+            Self::Reserved(v) => v,
         }
     }
 
@@ -160,11 +165,10 @@ impl ApplicationType {
             Self::HbbTv => "HbbTV",
             Self::OipfDae => "OIPF DAE",
             Self::Reserved(_) => "Reserved",
-            Self::UserDefined(_) => "User Defined",
         }
     }
 }
-broadcast_common::impl_spec_display!(ApplicationType, Reserved, UserDefined);
+broadcast_common::impl_spec_display!(ApplicationType, Reserved);
 
 /// 48-bit application identifier: organisation_id + application_id.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -391,11 +395,18 @@ impl Serialize for AitSection<'_> {
             });
         }
 
-        let app_type_raw = self.application_type.to_u16();
+        // 15-bit field: reject rather than silently drop bit 15 of a
+        // constructed `ApplicationType::Reserved(v)` with `v >= 0x8000`
+        // (r02-W20).
+        let app_type_raw = broadcast_common::len::fit_bits(
+            self.application_type.to_u16() as u64,
+            15,
+            "application_type",
+        )?;
         buf[0] = TABLE_ID;
         buf[1] = super::SECTION_B1_FLAGS_DVB;
         super::write_section_length(buf, len - MIN_HEADER_LEN)?;
-        buf[3] = (u8::from(self.test_application_flag) << 7) | ((app_type_raw >> 8) as u8 & 0x7F);
+        buf[3] = (u8::from(self.test_application_flag) << 7) | ((app_type_raw >> 8) as u8);
         buf[4] = (app_type_raw & 0xFF) as u8;
         buf[5] = 0xC0 | ((self.version_number & 0x1F) << 1) | u8::from(self.current_next_indicator);
         buf[6] = self.section_number;
@@ -737,6 +748,27 @@ mod tests {
                 "ApplicationType round-trip failed for {at:#06x}"
             );
         }
+    }
+
+    /// Regression for r02-W20: `application_type` is a 15-bit wire field.
+    /// `from_u16`/`to_u16` can never produce a value `>= 0x8000` on their
+    /// own (verified above), but a caller can still construct
+    /// `ApplicationType::Reserved(0x8000)` directly — `serialize_into` must
+    /// reject that instead of silently dropping bit 15.
+    #[test]
+    fn ait_serialize_rejects_application_type_over_15_bits() {
+        let sec = AitSection {
+            application_type: ApplicationType::Reserved(0x8000),
+            test_application_flag: false,
+            version_number: 0,
+            current_next_indicator: true,
+            section_number: 0,
+            last_section_number: 0,
+            common_descriptors: DescriptorLoop::new(&[]),
+            applications: vec![],
+        };
+        let mut buf = vec![0u8; sec.serialized_len()];
+        assert!(sec.serialize_into(&mut buf).is_err());
     }
 
     #[test]
