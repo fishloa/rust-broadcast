@@ -56,8 +56,9 @@ pub struct InsertSegmentationDescriptor<'a> {
 
 /// The minimum fixed-size portion before the variable `segmentation_upid`.
 pub const FIXED_LEN: usize = 7;
-/// The fixed-size portion after `segmentation_upid`.
-pub const TAIL_LEN: usize = 13;
+/// The fixed-size portion after `segmentation_upid` — the 12 one-byte fields
+/// `segmentation_type_id` through `sub_segments_expected` (§9.8.7, Table 9-29).
+pub const TAIL_LEN: usize = 12;
 
 impl<'a> Parse<'a> for InsertSegmentationDescriptor<'a> {
     type Error = Error;

@@ -2,8 +2,10 @@
 //!
 //! Typed, symmetric [`Parse`]/[`Serialize`] for every RTCP packet type: SR
 //! (§6.4.1, PT 200), RR (§6.4.2, PT 201), SDES (§6.5, PT 202), BYE (§6.6, PT
-//! 203), APP (§6.7, PT 204), the [`RtcpPacket`] dispatch enum, and
-//! [`CompoundPacket`] (§6.1: a `Vec` of packets that must start with SR/RR).
+//! 203), APP (§6.7, PT 204), any other PT via `RtcpPacket::Unknown` (RFC 5506
+//! §4.1 Reduced-Size RTCP), the [`RtcpPacket`] dispatch enum, and
+//! [`CompoundPacket`] (§6.1: a `Vec` of packets that must start with SR/RR,
+//! or an unrecognized-PT packet per RFC 5506).
 //!
 //! This crate implements exactly the wire structures described in the
 //! curated spec transcription at `rtcp-packet/docs/rtcp.md` (fetched
@@ -35,7 +37,10 @@
 //! - **APP** (§6.7, PT 204): subtype (in the RC field), SSRC, 4-byte ASCII
 //!   name, application-dependent data (32-bit aligned).
 //! - **[`CompoundPacket`]** (§6.1): a sequence of RTCP packets that **must**
-//!   begin with an SR or RR.
+//!   begin with an SR or RR, or (RFC 5506 §4.1) an unrecognized-PT packet.
+//! - **`RtcpPacket::Unknown`**: any PT outside 200-204 (e.g. RTPFB=205/
+//!   PSFB=206 [RFC 4585], XR=207 [RFC 3611]) — common-header framing only,
+//!   body opaque, round-trips byte-identical.
 //!
 //! # Reserved-bit / version policy
 //!
@@ -1099,6 +1104,20 @@ pub enum RtcpPacket {
     Bye(Bye),
     /// An Application-defined packet (PT 204).
     App(App),
+    /// A packet type outside the RFC 3550 §6 core set (e.g. RTPFB=205/
+    /// PSFB=206 [RFC 4585], XR=207 [RFC 3611]): common header framing is
+    /// generic to every RTCP packet, so this parses instead of rejecting
+    /// the whole datagram, keeping the body opaque and round-tripping it
+    /// byte-identical (RFC 5506 §4.1: Reduced-Size RTCP "allows any RTCP
+    /// packet type"; #1071).
+    Unknown {
+        /// The `PT` byte.
+        packet_type: u8,
+        /// The header's 5-bit `RC`/`SC`/subtype field, meaning unknown here.
+        count: u8,
+        /// The body after the common header, opaque (unknown layout).
+        payload: Vec<u8>,
+    },
 }
 
 impl RtcpPacket {
@@ -1110,6 +1129,7 @@ impl RtcpPacket {
             RtcpPacket::SourceDescription(_) => RtcpPacketType::SourceDescription,
             RtcpPacket::Bye(_) => RtcpPacketType::Bye,
             RtcpPacket::App(_) => RtcpPacketType::App,
+            RtcpPacket::Unknown { packet_type, .. } => RtcpPacketType::Unknown(*packet_type),
         }
     }
 
@@ -1119,7 +1139,8 @@ impl RtcpPacket {
     }
 
     /// Whether this packet is a report (SR or RR) — the only valid *first*
-    /// packet of a compound packet (RFC 3550 §6.1).
+    /// packet of a **full** compound packet (RFC 3550 §6.1). Reduced-Size
+    /// RTCP (RFC 5506 §4.1) relaxes this; see [`CompoundPacket::parse`].
     fn is_report(&self) -> bool {
         matches!(
             self,
@@ -1145,12 +1166,20 @@ impl<'a> Parse<'a> for RtcpPacket {
             }
             RtcpPacketType::Bye => RtcpPacket::Bye(Bye::parse(bytes)?),
             RtcpPacketType::App => RtcpPacket::App(App::parse(bytes)?),
-            RtcpPacketType::Unknown(pt) => {
-                return Err(Error::InvalidValue {
-                    field: "rtcp_pt",
-                    value: pt as u64,
-                    reason: "not an RFC 3550 §6 core packet type",
-                });
+            RtcpPacketType::Unknown(packet_type) => {
+                let total = hdr.total_len();
+                if bytes.len() < total {
+                    return Err(Error::BufferTooShort {
+                        need: total,
+                        have: bytes.len(),
+                        what: "RTCP packet (unrecognized PT)",
+                    });
+                }
+                RtcpPacket::Unknown {
+                    packet_type,
+                    count: hdr.count,
+                    payload: bytes[RTCP_HEADER_LEN..total].to_vec(),
+                }
             }
         })
     }
@@ -1166,6 +1195,7 @@ impl Serialize for RtcpPacket {
             RtcpPacket::SourceDescription(p) => p.serialized_len(),
             RtcpPacket::Bye(p) => p.serialized_len(),
             RtcpPacket::App(p) => p.serialized_len(),
+            RtcpPacket::Unknown { payload, .. } => RTCP_HEADER_LEN + payload.len(),
         }
     }
 
@@ -1176,6 +1206,37 @@ impl Serialize for RtcpPacket {
             RtcpPacket::SourceDescription(p) => p.serialize_into(buf),
             RtcpPacket::Bye(p) => p.serialize_into(buf),
             RtcpPacket::App(p) => p.serialize_into(buf),
+            RtcpPacket::Unknown {
+                packet_type,
+                count,
+                payload,
+            } => {
+                let len = RTCP_HEADER_LEN + payload.len();
+                if buf.len() < len {
+                    return Err(Error::OutputBufferTooSmall {
+                        need: len,
+                        have: buf.len(),
+                    });
+                }
+                if !len.is_multiple_of(WORD_LEN) {
+                    return Err(Error::InvalidValue {
+                        field: "unknown_payload_len",
+                        value: payload.len() as u64,
+                        reason: "RTCP packet payload must be 32-bit aligned",
+                    });
+                }
+                if *count > RTCP_COUNT_MASK {
+                    return Err(Error::InvalidValue {
+                        field: "unknown_count",
+                        value: *count as u64,
+                        reason: "exceeds 5-bit RC/SC field",
+                    });
+                }
+                let hdr = CommonHeader::new(*count, *packet_type, length_words_minus_one(len)?);
+                hdr.write(&mut buf[0..RTCP_HEADER_LEN]);
+                buf[RTCP_HEADER_LEN..len].copy_from_slice(payload);
+                Ok(len)
+            }
         }
     }
 }
@@ -1186,11 +1247,17 @@ impl Serialize for RtcpPacket {
 
 /// A compound RTCP packet (RFC 3550 §6.1): a sequence of RTCP packets sent in a
 /// single lower-layer datagram. The first packet **must** be a report (SR or
-/// RR); this is validated on both parse and serialize.
+/// RR) — or, per RFC 5506 §4.1's Reduced-Size RTCP ("allows any RTCP packet
+/// type"; #1071), a packet type this crate cannot itself frame as a recognized
+/// non-report RFC 3550 §6 type (i.e. [`RtcpPacket::Unknown`], such as
+/// RTPFB=205/PSFB=206 [RFC 4585] or XR=207 [RFC 3611]). A leading SDES/BYE/APP
+/// is still rejected: that ordering is checkable from bytes alone and RFC 5506
+/// does not license it. This is validated on both parse and serialize.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct CompoundPacket {
-    /// The constituent packets, in wire order (first is SR/RR).
+    /// The constituent packets, in wire order (first is SR/RR, or an
+    /// unrecognized-PT Reduced-Size RTCP packet).
     pub packets: Vec<RtcpPacket>,
 }
 
@@ -1202,14 +1269,18 @@ impl CompoundPacket {
         Ok(cp)
     }
 
-    /// Enforce RFC 3550 §6.1: a compound packet must start with SR or RR.
+    /// Enforce RFC 3550 §6.1: a compound packet must start with SR or RR —
+    /// relaxed per RFC 5506 §3.4.2 ("the payload type numbers for the
+    /// (first) RTCP in the lower-layer datagram may differ from 200 or 201
+    /// (SR or RR)") to also accept a leading packet of unrecognized PT.
     fn check_leading_report(&self) -> Result<()> {
         match self.packets.first() {
-            Some(p) if p.is_report() => Ok(()),
+            Some(p) if p.is_report() || matches!(p, RtcpPacket::Unknown { .. }) => Ok(()),
             Some(_) => Err(Error::InvalidValue {
                 field: "rtcp_compound",
                 value: self.packets[0].packet_type().pt() as u64,
-                reason: "compound packet must begin with SR or RR (RFC 3550 §6.1)",
+                reason: "compound packet must begin with SR, RR, or an unrecognized-PT \
+                         Reduced-Size RTCP packet (RFC 3550 §6.1 / RFC 5506 §4.1)",
             }),
             None => Err(Error::InvalidInput("empty RTCP compound packet")),
         }

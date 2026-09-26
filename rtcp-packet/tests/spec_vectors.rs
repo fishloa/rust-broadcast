@@ -3,15 +3,17 @@
 //!
 //! ## Provenance
 //!
-//! `rtcp-packet` has no real captured RTCP traffic to draw a fixture from:
-//! unlike `rtp-packet` (whose `tests/fixtures/rtp_simple.bin` was captured by
-//! running this workspace's own `transmux::RtpPacketiser`), transmux's RTCP
-//! module (`transmux::rtcp`, pre-extraction) was never wired to a hub
-//! `Package`/`Unpackage` spoke — it's a standalone codec with no producer in
-//! this repo, and no live network/pcap access is reachable from this
-//! sandboxed environment. Per the project's documented fallback
-//! (`docs/CRATE-ACCEPTANCE.md` §3 — "no real capture exists, gate is the
-//! biting round-trip"), every byte vector below is **computed directly from
+//! `rtcp-packet` had no real captured RTCP traffic to draw a fixture from
+//! when this file was written: unlike `rtp-packet` (whose
+//! `tests/fixtures/rtp_simple.bin` was captured by running this workspace's
+//! own `transmux::RtpPacketiser`), transmux's RTCP module (`transmux::rtcp`,
+//! pre-extraction) was never wired to a hub `Package`/`Unpackage` spoke — a
+//! standalone codec with no producer in this repo, and no live network/pcap
+//! access was reachable from that sandboxed environment. That gap is now
+//! closed for the compound-packet path by `tests/real_browser_fixture.rs`
+//! (a real Chromium `RTCPeerConnection`'s RTCP, captured via
+//! `multimux`'s `whep_egress` browser test — see #1071); every byte vector
+//! below remains **computed directly from
 //! the RFC 3550 §6 bit diagrams** (`rtcp-packet/docs/rtcp.md`) with a
 //! standalone script, independently of this crate's own serializer — so a
 //! bug that made `serialize`/`parse` agree with each other but disagree with

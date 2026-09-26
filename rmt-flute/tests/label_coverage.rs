@@ -18,6 +18,9 @@ use std::path::Path;
 const SKIP: &[&str] = &[
     // structured error type
     "Error",
+    // data-carrying ADT (per-sub-type NORM_CMD fixed body), not a spec/field
+    // label — `NormCmdType` (its discriminant) already carries the label.
+    "NormCmdBody",
 ];
 
 fn read_rs(dir: &Path, out: &mut Vec<String>) {

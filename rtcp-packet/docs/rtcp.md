@@ -6,6 +6,11 @@ for `rtcp-packet` — cite it, not the raw RFC text, from module docs.
 Source: [RFC 3550](https://www.rfc-editor.org/rfc/rfc3550.txt), "RTP: A
 Transport Protocol for Real-Time Applications" (free IETF RFC), §6.
 
+Also transcribed: [RFC 5506](https://www.rfc-editor.org/rfc/rfc5506.txt),
+"Support for Reduced-Size Real-Time Transport Control Protocol (RTCP):
+Opportunities and Consequences" (free IETF RFC, updates RFC 3550), §3.4.2 and
+§4.1 — see "Reduced-Size RTCP and the leading-SR/RR rule" below.
+
 ## §6.1 — RTCP Packet Format (common header + compound packet)
 
 Every RTCP packet begins with a fixed part similar to RTP data packets,
@@ -27,6 +32,30 @@ Compound packet rules (§6.1):
   this crate enforces).
 - **BYE or APP**: MAY follow in any order; BYE SHOULD be the last packet sent
   for a given SSRC/CSRC; packet types MAY appear more than once.
+
+### Reduced-Size RTCP and the leading-SR/RR rule (RFC 5506 §3.4.2, §4.1)
+
+RFC 5506 defines **Reduced-Size RTCP**, used with AVPF/SAVPF feedback (RFC
+4585/5124), which deviates from the §6.1 compound-packet rules above:
+
+- §4.1 ("Definition of Reduced-Size RTCP"): a Reduced-Size RTCP packet
+  "contains one or more RTCP packet(s)" and "allows any RTCP packet type;
+  however, see Section 4.2.1" — i.e. it is **not** required to start with
+  SR/RR the way a full/minimal compound packet is.
+- §3.4.2 ("Packet Validation") names the practical consequence for a
+  receiver's header verification: "the header verification must take into
+  account that the payload type numbers for the (first) RTCP in the
+  lower-layer datagram may differ from 200 or 201 (SR or RR)" — e.g. PT 205
+  (RTPFB) or 206 (PSFB, RFC 4585) or 207 (XR, RFC 3611) leading the datagram.
+
+This crate cannot itself distinguish "Reduced-Size RTCP" from "full compound
+RTCP" from bytes alone (that is signaled out-of-band via SDP `a=rtcp-rsize`,
+§5) or detect a genuinely malformed leading SDES/BYE/APP from bytes alone
+either — so [`CompoundPacket`]'s leading-packet check accepts SR/RR **or**
+any packet type outside the RFC 3550 §6 core set (`RtcpPacket::Unknown`),
+matching the §3.4.2 sentence above, while still rejecting a leading
+SDES/BYE/APP (a checkable-from-bytes ordering violation, not something RFC
+5506 licenses).
 
 This crate's [`CompoundPacket`] enforces only the wire-structural
 constraint that is actually checkable from bytes alone: the first packet
@@ -247,6 +276,8 @@ discipline rather than silently glossed over)
 
 Each packet type above maps to a struct with symmetric `Parse`/`Serialize`
 (byte-identical round-trip for every field this crate decodes, per the
-caveats above); [`RtcpPacket`] dispatches on the header `PT` byte;
-[`CompoundPacket`] is a `Vec<RtcpPacket>` enforcing the §6.1 leading-SR/RR
-rule on both parse and construction.
+caveats above); [`RtcpPacket`] dispatches on the header `PT` byte, with an
+`Unknown { packet_type, count, payload }` variant (opaque body) for any PT
+outside 200-204 per RFC 5506 §4.1; [`CompoundPacket`] is a `Vec<RtcpPacket>`
+enforcing the §6.1 leading-SR/RR rule, relaxed per RFC 5506 §3.4.2 to also
+accept a leading unrecognized-PT packet, on both parse and construction.

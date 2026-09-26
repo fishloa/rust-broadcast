@@ -8,6 +8,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed (breaking)
+- `NormCmd::parse` now takes a `fec_payload_id_len: usize` parameter (the
+  FEC-scheme-defined size of `fec_payload_id`, unused outside FLUSH/SQUELCH),
+  matching `NormData::parse`'s existing convention. `NormCmd`'s `head`/
+  `content`-only representation is replaced by a typed `body: NormCmdBody<'a>`
+  field, one variant per sub-type (#1070).
+
+### Fixed
+- `NormCmd` (NORM_CMD, RFC 5740 §4.2.3) parsed FLUSH/SQUELCH's `fec_payload_id`
+  and CC's fixed `send_time_sec`/`send_time_usec` as if they were
+  header-extension bytes, instead of the sub-type's own fixed body ahead of
+  the (genuinely optional) extension chain. A conformant sender's `hdr_len`
+  includes that fixed body ("hdr_len (no ext) = 4 + size of fec_payload_id"
+  for FLUSH/SQUELCH, "= 6" for CC — Figures 10/12/13), so real probes in that
+  exact, spec-conformant shape were rejected outright (`HeaderExtension`
+  parsing rejects `HEL=0`), and a value constructed with those bytes in
+  `content` instead of the fixed body wrote a short `hdr_len` on serialize
+  (#1070).
+
 ## [0.5.0] - 2026-08-11
 
 ### Fixed

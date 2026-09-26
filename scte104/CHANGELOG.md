@@ -11,6 +11,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Requires `broadcast-common` 9.4 (`broadcast_common::len`).
 
 ### Fixed
+- `insert_segmentation_descriptor_request_data()`'s `TAIL_LEN` (the fixed
+  region after `segmentation_upid`) was 13 bytes; Table 9-29 lists exactly 12
+  one-byte fields there (`segmentation_type_id` .. `sub_segments_expected`),
+  so every conformant message — not just an edge case — was rejected as one
+  byte short (#1068).
 - `MultipleOperationMessage::new` accumulated `message_size` in raw `u16`
   arithmetic, panicking in a debug build (`attempt to add with overflow`) or
   silently wrapping in release for large operation bodies; `serialize_into`
