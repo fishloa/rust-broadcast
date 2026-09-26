@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+## [10.1.0] - 2026-09-26
+
+### Security
+Fixes GHSA-hxv4-gqm8-whw6 and GHSA-h6j8-r8j3-36xg.
+
 ### Added
 - `carousel::biop::message::MAX_DECOMPRESSED_MODULE_SIZE` (64 MiB) and
   `decompress_zlib_bounded(data, max_len)`, a general form of

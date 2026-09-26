@@ -976,7 +976,7 @@ checksum = "92773504d58c093f6de2459af4af33faa518c13451eb8f2b5698ed3d36e7c813"
 
 [[package]]
 name = "dvb-bbframe"
-version = "10.0.1"
+version = "10.1.0"
 dependencies = [
  "broadcast-common",
  "criterion",
@@ -1012,7 +1012,7 @@ dependencies = [
 
 [[package]]
 name = "dvb-conformance"
-version = "10.0.1"
+version = "10.1.0"
 dependencies = [
  "broadcast-common",
  "dvb-si",
@@ -1042,7 +1042,7 @@ dependencies = [
 
 [[package]]
 name = "dvb-si"
-version = "10.0.1"
+version = "10.1.0"
 dependencies = [
  "broadcast-common",
  "bytes",
@@ -1097,7 +1097,7 @@ dependencies = [
 
 [[package]]
 name = "dvb-t2mi"
-version = "10.0.1"
+version = "10.1.0"
 dependencies = [
  "broadcast-common",
  "bytes",
@@ -1115,7 +1115,7 @@ dependencies = [
 
 [[package]]
 name = "dvb-tools"
-version = "10.0.1"
+version = "10.1.0"
 dependencies = [
  "clap",
  "dvb-si",
