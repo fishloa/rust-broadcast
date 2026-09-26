@@ -20,7 +20,7 @@ tools/dvb-si-audit/out/
 *.rmeta
 
 # fetch-on-demand broadcast captures (tools/fetch-test-streams.sh) — never committed
-/.test-streams/
+/.test-streams
 
 # wasm-pack build output for the browser demo (generated; not committed)
 /demo/pkg/
