@@ -229,6 +229,30 @@ impl BoxHeader {
             has_largesize,
         }
     }
+
+    /// The header for a box carrying `payload_len` bytes after its header
+    /// (ISO/IEC 14496-12:2015 §4.2): the compact 32-bit `size` when the whole
+    /// box fits, else `size = 1` + 64-bit `largesize`, whose extra 8 header
+    /// bytes count toward the size. The single place a box writer should
+    /// derive its header length and `size` from.
+    pub(crate) fn for_payload(
+        box_type: BoxType,
+        usertype: Option<[u8; UUID_TYPE_SIZE]>,
+        payload_len: u64,
+    ) -> Self {
+        let uuid = if box_type.is(b"uuid") {
+            UUID_TYPE_SIZE as u64
+        } else {
+            0
+        };
+        let compact = (BOX_HEADER_MIN_SIZE as u64 + uuid).saturating_add(payload_len);
+        let size = if compact > u32::MAX as u64 {
+            compact.saturating_add(LARGESIZE_SIZE as u64)
+        } else {
+            compact
+        };
+        Self::new(size, box_type, usertype)
+    }
 }
 
 impl<'a> Parse<'a> for BoxHeader {

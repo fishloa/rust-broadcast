@@ -78,6 +78,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   dependent substreams (`num_dep_sub > 0`): such a substream is 4 bytes on the wire (the extra
   `chan_loc(9)` field), not always 3, so re-serializing a 7.1 E-AC-3 init segment no longer
   panics/misframes (#1055).
+- `TsMux` and `ProgressiveMux` now take each sample's timing from the IR's own `dts`/`pts` on one
+  origin shared by every track, instead of rebuilding every track from zero as a sum of
+  durations; inter-track start offsets and gaps survive, and `ProgressiveMux` places each track
+  on the movie timeline with an `elst` (#1020).
+- `Media::trim` measures its window on one origin for all tracks and starts the non-anchor tracks
+  at the anchor's snapped keyframe, and `Repackage` keeps each track's start offset in its first
+  `tfdt`, so audio no longer plays early by the keyframe snap distance (#1021).
+- `SmoothPackager` writes `trun` sample durations and composition offsets, and the `c@t`/`tfxd`
+  times, in the 10 MHz manifest `TimeScale` instead of the track's media timescale (#1022).
+- `HlsPackager` emits one `#EXTINF` covering the presentation span of all tracks instead of one
+  sequential entry per track, and the CLI's `-f hls` writes the single segment it names (#1023).
+- `ProgressiveMux` (and the Smooth fragment builder) derive the `mdat` header length from the
+  payload size, so chunk offsets are no longer 8 bytes early once the `mdat` needs a 64-bit
+  `largesize` header (#1019).
 
 ## [0.24.2] - 2026-09-25
 

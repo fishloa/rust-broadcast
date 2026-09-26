@@ -241,9 +241,11 @@ fn fragment_c_timeline() {
             .sum();
         let ts = track.spec.timescale.max(1) as u64;
         let expected = (media_ticks * 10_000_000 + ts / 2) / ts;
-        assert_eq!(
-            sum_d, expected,
-            "sum of c@d must equal the track total duration ({})",
+        // The fragments tile the track's timeline from its (rounded) absolute
+        // start, so the sum may differ from the rounded total by one tick.
+        assert!(
+            sum_d.abs_diff(expected) <= 1,
+            "sum of c@d {sum_d} must equal the track total duration {expected} ({})",
             si.stream_type
         );
 
@@ -368,7 +370,12 @@ fn lossless_round_trip_video() {
     // Build a fragmented-MP4 file: the CMAF init segment + every video
     // fragment's moof+mdat concatenated (drop the per-fragment styp so
     // Fmp4Demux sees a clean moov + moof/mdat stream).
-    let specs = vec![vid.spec.clone()];
+    // Smooth has no init segment: the client builds the track timescale from
+    // the manifest `TimeScale` (10 MHz), so the fragments' `trun` values are
+    // read in that timescale (issue #1022).
+    let mut spec = vid.spec.clone();
+    spec.timescale = 10_000_000;
+    let specs = vec![spec];
     let mut file = build_init_segment(&specs, media.movie_timescale).expect("init segment");
 
     for frag in out.fragments.iter().filter(|f| f.track_id == vid_id) {
@@ -397,7 +404,11 @@ fn lossless_round_trip_video() {
             a.data, b.data,
             "coded NAL payload byte-identical at sample {i}"
         );
-        assert_eq!(a.duration, b.duration, "duration preserved at sample {i}");
+        let ts = u64::from(vid.spec.timescale);
+        let in_10mhz = a
+            .duration
+            .map(|d| ((u64::from(d) * 10_000_000 + ts / 2) / ts) as u32);
+        assert_eq!(in_10mhz, b.duration, "duration preserved at sample {i}");
         assert_eq!(
             a.flags.is_sync, b.flags.is_sync,
             "sync flag preserved at sample {i}"

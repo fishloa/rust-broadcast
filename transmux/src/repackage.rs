@@ -17,9 +17,11 @@
 //!   preceding random-access point on the segmentation anchor track (see
 //!   [`Media::trim`] for the exact rule), so the output opens on a keyframe as
 //!   CMAF requires (ISO/IEC 23000-19 §7.3.2.3: a CMAF Track's first media
-//!   sample must be an IDR/SAP). Output decode times are re-based to zero: the
-//!   IR carries only the retained samples and the muxers emit
-//!   `base_media_decode_time = 0` for the first segment.
+//!   sample must be an IDR/SAP); every other track then starts from that same
+//!   snapped instant, so audio and video stay aligned. Window times are on one
+//!   decode-time origin common to every track (the earliest first-sample
+//!   `dts`), and the resegmented output keeps each track's offset from that
+//!   origin in its first `tfdt`.
 //! - **resegment** — feed the (optionally selected/trimmed) IR through
 //!   [`Segmenter`] at a new target segment duration to produce fresh CMAF init +
 //!   media segments cut on the anchor track's keyframes.
@@ -35,7 +37,7 @@ use alloc::vec::Vec;
 use broadcast_common::Unpackage;
 
 use crate::error::{Error, Result};
-use crate::media::{Fmp4Demux, Media, Track};
+use crate::media::{Fmp4Demux, Media, TimelineOrigin, Track, relative_decode_times};
 use crate::pipeline::TrackSpec;
 use crate::segmenter::{Segmenter, choose_anchor};
 
@@ -60,39 +62,30 @@ fn anchor_index(media: &Media) -> Result<usize> {
 }
 
 /// The composition (presentation) time of each sample of a track, in that
-/// track's media timescale, from a zero decode-time base. Element `i` is
-/// `dts[i] + composition_offset[i]`, where `dts[i]` is the sample's own
-/// absolute [`Sample::dts`](crate::pipeline::Sample::dts) — rebased so the
-/// *first* sample with a known `dts` sits at zero — falling back to a
-/// duration-accumulated reconstruction only for a sample that genuinely
-/// carries no timestamp.
+/// track's media timescale, on the decode-time `origin` common to every track
+/// of the [`Media`]. Element `i` is `dts[i] + composition_offset[i]`, where
+/// `dts[i]` is the sample's own absolute
+/// [`Sample::dts`](crate::pipeline::Sample::dts) shifted by the origin —
+/// falling back to a duration-accumulated reconstruction only for a track
+/// that carries no timestamp at all.
 ///
 /// Reading each sample's real `dts` (issue #993) rather than only ever
 /// accumulating `duration` matters whenever the two can diverge: a
 /// discontinuity/gap between fragments, a dropped or duplicated sample the
 /// duration sum doesn't reflect, or ordinary sub-tick rounding between a
-/// track's nominal per-sample duration and its measured decode-time deltas
-/// (e.g. an AAC frame's 1024-sample duration rescaled from a 90 kHz PES
-/// clock). A pure duration-accumulated reconstruction silently drifts from
-/// the real timeline in all of these cases, which — for [`Media::trim`] in
-/// particular — can shift which samples the window boundary actually
-/// selects.
+/// track's nominal per-sample duration and its measured decode-time deltas.
+/// One origin for every track (issue #1021) keeps a trim window at the same
+/// instant on every track: a per-track rebase would move a track that starts
+/// later than the others by its start offset.
 ///
 /// Returned as `i64` because `composition_offset` is signed and may push an
 /// early sample's presentation time slightly negative.
-fn presentation_times(track: &Track) -> Vec<i64> {
-    let mut out = Vec::with_capacity(track.samples.len());
-    // Rebase onto the first sample's own absolute dts (when any sample
-    // carries one) so the window semantics documented above stay zero-based
-    // regardless of the source's real (typically non-zero) absolute dts.
-    let base = track.samples.iter().find_map(|s| s.dts).unwrap_or(0);
-    let mut running_dts: i64 = 0;
-    for s in &track.samples {
-        let sample_dts = s.dts.map(|d| d - base).unwrap_or(running_dts);
-        out.push(sample_dts + s.composition_offset() as i64);
-        running_dts = sample_dts + s.duration.unwrap_or(0) as i64;
-    }
-    out
+fn presentation_times(track: &Track, origin: &TimelineOrigin) -> Vec<i64> {
+    relative_decode_times(track, origin)
+        .into_iter()
+        .zip(&track.samples)
+        .map(|(dts, s)| dts + s.composition_offset() as i64)
+        .collect()
 }
 
 /// Convert a window edge given in the movie timescale to a track's media
@@ -104,6 +97,14 @@ fn rescale_floor(ticks: u64, from_timescale: u32, to_timescale: u32) -> i64 {
     }
     // (ticks * to) / from, in 128-bit to avoid overflow on large timescales.
     ((ticks as u128 * to_timescale as u128) / from_timescale as u128) as i64
+}
+
+/// Convert a signed tick count between timescales, rounding down.
+fn rescale_signed_floor(ticks: i64, from_timescale: u32, to_timescale: u32) -> i64 {
+    if from_timescale == 0 || from_timescale == to_timescale {
+        return ticks;
+    }
+    (ticks as i128 * to_timescale as i128).div_euclid(from_timescale as i128) as i64
 }
 
 /// Greatest common divisor (Euclid) — used to build a common tick base across
@@ -171,19 +172,20 @@ impl Media {
     ///
     /// For each track the window is rescaled into that track's media timescale
     /// and every sample whose composition (presentation) time — decode time +
-    /// `composition_offset`, from a zero base — lies in `[start, end)` is kept.
+    /// `composition_offset`, measured from the earliest first-sample decode
+    /// time across all tracks — lies in `[start, end)` is kept.
     ///
     /// To satisfy the CMAF constraint that a track opens on a random-access
     /// point (ISO/IEC 23000-19 §7.3.2.3), the **anchor** track (`anchor_index`:
     /// first video track, else the first anchor-capable track) is back-trimmed:
     /// the first sample it keeps is the nearest sync sample at or before the
-    /// first sample the raw window would select. All other tracks keep exactly
-    /// the samples inside the window (audio frames are all sync samples, so
-    /// their first kept sample is already a random-access point).
+    /// first sample the raw window would select. Every other track's lower
+    /// edge moves back to that sync sample's presentation time, so the tracks
+    /// stay aligned (audio frames are all sync samples, so their first kept
+    /// sample is already a random-access point); upper edges stay at `end`.
     ///
-    /// Output decode times are implicitly re-based to zero — the returned IR
-    /// carries only the retained samples in order, and the muxers emit
-    /// `base_media_decode_time = 0` for the first output segment.
+    /// The returned tracks keep their samples' absolute timestamps, with each
+    /// [`Track::start_decode_time`] set to its first kept sample's `dts`.
     ///
     /// # Errors
     /// [`Error::InvalidInput`] if `start >= end`, the media has no tracks, the
@@ -197,32 +199,46 @@ impl Media {
             return Err(Error::InvalidInput("trim: media has no tracks"));
         }
         let anchor = anchor_index(self)?;
+        let origin = TimelineOrigin::of(&self.tracks);
+
+        // The anchor first: its window start snaps back to a sync sample, and
+        // every other track then starts from that same instant (issue #1021).
+        let anchor_track = &self.tracks[anchor];
+        let anchor_ts = anchor_track.spec.timescale;
+        let anchor_pts = presentation_times(anchor_track, &origin);
+        let anchor_lo = rescale_floor(start, self.movie_timescale, anchor_ts);
+        let anchor_hi = rescale_floor(end, self.movie_timescale, anchor_ts);
+        let snapped = anchor_pts
+            .iter()
+            .position(|&p| p >= anchor_lo && p < anchor_hi)
+            .map(|mut idx| {
+                while idx > 0 && !anchor_track.samples[idx].flags.is_sync {
+                    idx -= 1;
+                }
+                idx
+            });
 
         let mut out_tracks = Vec::with_capacity(self.tracks.len());
         let mut kept_any = false;
         for (ti, track) in self.tracks.iter().enumerate() {
             let ts = track.spec.timescale;
-            let lo = rescale_floor(start, self.movie_timescale, ts);
+            let pts = presentation_times(track, &origin);
             let hi = rescale_floor(end, self.movie_timescale, ts);
-            let pts = presentation_times(track);
-
-            // First sample whose presentation time is in [lo, hi): the raw
-            // window lower edge. `last_in` is the exclusive upper index.
-            let first_in = pts.iter().position(|&p| p >= lo && p < hi);
+            let start_idx = if ti == anchor {
+                snapped
+            } else {
+                // Lower edge = the snapped anchor start, else the raw window.
+                let lo = match snapped {
+                    Some(idx) => rescale_signed_floor(anchor_pts[idx], anchor_ts, ts),
+                    None => rescale_floor(start, self.movie_timescale, ts),
+                };
+                pts.iter().position(|&p| p >= lo && p < hi)
+            };
             let mut kept = Vec::new();
-            if let Some(mut start_idx) = first_in {
-                // Anchor: snap the start back to the preceding sync sample so the
-                // output opens on a random-access point.
-                if ti == anchor {
-                    while start_idx > 0 && !track.samples[start_idx].flags.is_sync {
-                        start_idx -= 1;
-                    }
-                }
-                for s in &track.samples[start_idx..] {
+            if let Some(start_idx) = start_idx {
+                for (s, &p) in track.samples[start_idx..].iter().zip(&pts[start_idx..]) {
                     // Stop once presentation time reaches the window's upper edge.
-                    // (Samples are appended in decode order; use their own pts.)
-                    let idx = start_idx + kept.len();
-                    if pts[idx] >= hi {
+                    if p >= hi {
                         break;
                     }
                     kept.push(s.clone());
@@ -231,7 +247,8 @@ impl Media {
             if !kept.is_empty() {
                 kept_any = true;
             }
-            out_tracks.push(Track::new(track.spec.clone(), kept));
+            let first_dts = kept.iter().find_map(|s| s.dts).unwrap_or(0).max(0) as u64;
+            out_tracks.push(Track::new_at(track.spec.clone(), kept, first_dts));
         }
         if !kept_any {
             return Err(Error::InvalidInput(
@@ -345,6 +362,18 @@ impl Repackage {
         let specs: Vec<TrackSpec> = media.tracks.iter().map(|t| t.spec.clone()).collect();
         let movie_timescale = media.movie_timescale;
         let mut seg = Segmenter::new(specs, movie_timescale, self.target_duration_secs)?;
+        // Each track's first `tfdt` is its first decode time on the origin
+        // common to all tracks, so a track starting later keeps that offset
+        // (issue #1021) instead of every track restarting at 0.
+        let origin = TimelineOrigin::of(&media.tracks);
+        let mut dts = alloc::vec![0u128; media.tracks.len()];
+        for (ti, track) in media.tracks.iter().enumerate() {
+            let first = relative_decode_times(track, &origin)
+                .first()
+                .map_or(0, |&t| t.max(0) as u64);
+            seg.set_start_decode_time(track.spec.track_id, first)?;
+            dts[ti] = u128::from(first);
+        }
         let init_segment = seg.init_segment()?;
         let mut seg_ready: Vec<Vec<u8>> = Vec::new();
 
@@ -364,7 +393,6 @@ impl Repackage {
             .iter()
             .map(|t| t.spec.timescale as u64)
             .fold(1u64, lcm);
-        let mut dts = alloc::vec![0u128; media.tracks.len()];
         loop {
             // Pick the track with a remaining sample of the smallest normalised
             // decode time (ties: lowest track index for determinism).
