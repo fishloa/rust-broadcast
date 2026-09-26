@@ -56,6 +56,19 @@ broadcast_common::impl_spec_display!(BreakEdge);
 /// `break_duration_ticks`, if given, sets `break_duration().duration` with
 /// `auto_return = true` (the splicer returns to the network feed on its own
 /// once the duration elapses — §9.7.3).
+///
+/// # Units (mandatory — PLAY-W1, #1126)
+///
+/// `requested_pts`, every entry of `candidates`, `max_delta_ticks` and
+/// `break_duration_ticks` **must** already be counts of 90 kHz ticks:
+/// `splice_time()`/`break_duration()` are fixed 90 kHz fields (ANSI/SCTE 35
+/// 2023r1 §9.8.1/§9.8.2), and this function passes every one of these values
+/// straight through to [`SpliceTime::with_pts`]/[`BreakDuration`] with no
+/// unit conversion or validation. Passing a channel clock in any other unit
+/// (27 MHz, milliseconds, nanoseconds, …) produces a structurally valid cue
+/// that is silently wrong by that unit's fixed conversion factor. Convert
+/// with `scte35_splice::time::duration_to_ticks` first if the channel clock
+/// isn't already 90 kHz.
 pub fn build_splice_insert(
     edge: BreakEdge,
     splice_event_id: u32,

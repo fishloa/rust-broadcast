@@ -153,6 +153,30 @@ impl<'a> AtmosFrame<'a> {
         }
         bytes
     }
+
+    /// Reject an [`AnyElement::ObjectDefinition1`] sub-element whose
+    /// `pan_sub_blocks.len()` does not match this frame's own
+    /// `frame_rate.num_pan_sub_blocks()` (RD-W1, #1114). `ObjectDefinition1`
+    /// alone cannot check this itself — it doesn't own `frame_rate` — so a
+    /// mismatch would otherwise serialize `Ok` bytes that
+    /// [`Self::parse`]/`ObjectDefinition1::parse_with_frame_rate` (driven by
+    /// this same frame's `FrameRate`) walks the wrong number of pan-sub-block
+    /// loop iterations against.
+    fn validate_pan_sub_block_counts(&self) -> Result<()> {
+        let expected = usize::from(self.frame_rate.num_pan_sub_blocks()?);
+        for (i, e) in self.elements.iter().enumerate() {
+            if let AnyElement::ObjectDefinition1(obj) = e
+                && obj.pan_sub_blocks.len() != expected
+            {
+                return Err(Error::InvalidValue {
+                    field: "ATMOSFrame.elements[i].pan_sub_blocks",
+                    value: i as u64,
+                    reason: "pan_sub_blocks.len() must equal frame_rate.num_pan_sub_blocks()",
+                });
+            }
+        }
+        Ok(())
+    }
 }
 
 impl<'a> Parse<'a> for AtmosFrame<'a> {
@@ -259,6 +283,7 @@ impl Serialize for AtmosFrame<'_> {
     }
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
+        self.validate_pan_sub_block_counts()?;
         let body_len = self.body_len();
         let need = element_header_len(ELEMENT_ID_ATMOS_FRAME, body_len) + body_len;
         if buf.len() < need {
@@ -393,6 +418,25 @@ mod tests {
 
         let err = AtmosFrame::parse(&bytes).unwrap_err();
         assert!(matches!(err, Error::UnexpectedElementId { .. }));
+    }
+
+    /// RD-W1 (audit issue #1114): nothing cross-checked an
+    /// `ObjectDefinition1` sub-element's `pan_sub_blocks.len()` against the
+    /// frame's own `frame_rate.num_pan_sub_blocks()` (`ObjectDefinition1`
+    /// alone can't: it doesn't own `frame_rate`). Observed pre-fix:
+    /// `serialize_into` returned `Ok`, producing bytes that
+    /// `parse_with_frame_rate` (driven by the SAME frame's `FrameRate`) would
+    /// walk the wrong number of pan-sub-block loop iterations against.
+    #[test]
+    fn rejects_pan_sub_block_count_mismatched_with_frame_rate() {
+        let mut frame = sample_frame();
+        // Fps96 needs 2 pan sub-blocks (Table 7); the object still has 8.
+        frame.frame_rate = FrameRate::Fps96;
+        let mut buf = alloc::vec![0u8; frame.serialized_len()];
+        assert!(matches!(
+            frame.serialize_into(&mut buf),
+            Err(Error::InvalidValue { .. })
+        ));
     }
 
     #[test]

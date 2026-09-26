@@ -24,7 +24,7 @@
 
 use alloc::vec::Vec;
 
-use broadcast_common::traits::{Parse, Serialize};
+use broadcast_common::traits::Serialize;
 
 use crate::error::{Error, Result};
 use crate::registry::{Interface, MessageType, ParameterType};
@@ -121,8 +121,33 @@ impl<'a> SimulcryptMessage<'a> {
         self.parameters.iter().find(|p| p.ptype == ptype)
     }
 
+    /// The total wire length ([`HEADER_LEN`] + `message_length`) this buffer's
+    /// header declares, or `None` if `bytes` is shorter than the header
+    /// itself.
+    ///
+    /// A caller framing a TCP stream (the transport TS 103 197 assumes) uses
+    /// this to tell "read more" from "malformed" before calling
+    /// [`Self::parse_on`]: `None`, or `Some(n)` with `n > bytes.len()`, means
+    /// buffer more bytes and try again; `Some(n)` with `n <= bytes.len()`
+    /// means the frame is complete and `bytes[..n]` can be handed to
+    /// `parse_on`. Without this, `parse_on`'s
+    /// [`Error::InvalidMessageLength`] cannot be told apart from a genuinely
+    /// malformed `message_length` — on a stream, a short body is simply the
+    /// normal resting state after a partial read (W-SC-2, #1098).
+    #[must_use]
+    pub fn frame_len(bytes: &[u8]) -> Option<usize> {
+        if bytes.len() < HEADER_LEN {
+            return None;
+        }
+        let message_length = u16::from_be_bytes([bytes[3], bytes[4]]) as usize;
+        Some(HEADER_LEN + message_length)
+    }
+
     /// Parse a message off the wire, decoding `message_type`/`parameter_type`
     /// against the given [`Interface`] (the connection's interface).
+    ///
+    /// A stream-framing caller should call [`Self::frame_len`] first to know
+    /// how many bytes to buffer; this always expects a complete frame.
     ///
     /// # Errors
     /// Returns [`Error::BufferTooShort`] if the header or a TLV header is
@@ -186,17 +211,6 @@ impl<'a> SimulcryptMessage<'a> {
             message_type,
             parameters,
         })
-    }
-}
-
-impl<'a> Parse<'a> for SimulcryptMessage<'a> {
-    type Error = Error;
-
-    /// Parse against the ECMG⇔SCS interface by default. Most callers should
-    /// use [`SimulcryptMessage::parse_on`] with the connection's interface;
-    /// this `Parse` impl exists to satisfy the workspace-wide trait contract.
-    fn parse(bytes: &'a [u8]) -> Result<Self> {
-        Self::parse_on(Interface::EcmgScs, bytes)
     }
 }
 

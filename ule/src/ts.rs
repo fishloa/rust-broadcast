@@ -98,10 +98,10 @@ impl UleReceiver {
                         self.reset();
                         // Fall through: still process the new SNDUs after pp_region[pp..].
                     } else {
-                        self.feed_continuation(&pp_region[..pp], &mut out);
+                        self.feed_continuation(&pp_region[..pp], true, &mut out);
                     }
                 } else {
-                    self.feed_continuation(&pp_region[..pp], &mut out);
+                    self.feed_continuation(&pp_region[..pp], true, &mut out);
                 }
             } else {
                 // Idle: bytes before the pointer belong to no SNDU; skip them.
@@ -112,9 +112,13 @@ impl UleReceiver {
             // Walk packed SNDUs starting at the pointer.
             self.walk_new_sndus(&pp_region[pp..], &mut out);
         } else {
-            // PUSI=0: pure continuation of the SNDU in progress.
+            // PUSI=0: pure continuation of the SNDU in progress. RFC 4326
+            // §6/§7: an SNDU may only start in a PUSI=1 packet (located by
+            // the Payload Pointer), so any leftover bytes after this
+            // continuation completes the partial must not be walked as a new
+            // packed SNDU (ULE-W4, #1120) — `allow_packing = false`.
             if self.in_reassembly() {
-                self.feed_continuation(payload, &mut out);
+                self.feed_continuation(payload, false, &mut out);
             }
             // else: a continuation with nothing in progress — discard (idle).
         }
@@ -125,9 +129,14 @@ impl UleReceiver {
     /// completes. `chunk` is consumed fully (a continuation never starts a new
     /// SNDU — packing only happens at a PUSI=1 pointer or right after a
     /// completed SNDU within the same packet, handled by `walk_new_sndus`).
-    fn feed_continuation(&mut self, chunk: &[u8], out: &mut Vec<Vec<u8>>) {
+    ///
+    /// `allow_packing` gates whether leftover bytes after the partial
+    /// completes may be walked as further packed SNDUs (only legitimate
+    /// within a PUSI=1 packet's Payload-Pointer region) — see
+    /// [`Self::maybe_finish`].
+    fn feed_continuation(&mut self, chunk: &[u8], allow_packing: bool, out: &mut Vec<Vec<u8>>) {
         self.partial.extend_from_slice(chunk);
-        self.maybe_finish(out);
+        self.maybe_finish(allow_packing, out);
     }
 
     /// Walk a region that begins at an SNDU start (a packing region): parse the
@@ -138,12 +147,13 @@ impl UleReceiver {
             if region.is_empty() {
                 return;
             }
-            // End Indicator / padding: no more SNDUs in this packet.
-            if region[0] == PADDING_BYTE {
-                // Either a 0xFFFF End Indicator or stray 0xFF stuffing.
-                if is_end_indicator(region) {
-                    // remainder is padding; nothing buffered.
-                }
+            // End Indicator / padding: no more SNDUs in this packet. Only the
+            // 2-byte `0xFFFF` End Indicator, or a single trailing `0xFF` byte
+            // too short to start any SNDU header, are unambiguous padding —
+            // `region[0] == 0xFF` alone is NOT: a legal `D=1` SNDU with
+            // `Length` in `0x7F00..=0x7FFE` also starts with `0xFF` (ULE-W3,
+            // #1120), and must instead be parsed as a real header below.
+            if is_end_indicator(region) || (region[0] == PADDING_BYTE && region.len() == 1) {
                 return;
             }
             if region.len() < BASE_HEADER_LEN {
@@ -175,7 +185,13 @@ impl UleReceiver {
     }
 
     /// If the buffered partial now holds a complete SNDU, emit it and clear.
-    fn maybe_finish(&mut self, out: &mut Vec<Vec<u8>>) {
+    ///
+    /// `allow_packing = false` (a PUSI=0 continuation) rejects a non-padding
+    /// leftover after the SNDU completes instead of walking it as a new
+    /// packed SNDU: RFC 4326 §6/§7 only lets an SNDU start where the Payload
+    /// Pointer of a PUSI=1 packet says one does — never mid-continuation
+    /// (ULE-W4, #1120).
+    fn maybe_finish(&mut self, allow_packing: bool, out: &mut Vec<Vec<u8>>) {
         if self.expected == 0 && self.partial.len() >= BASE_HEADER_LEN {
             // We had buffered only a fragment of the header; now compute length.
             let first = u16::from_be_bytes([self.partial[0], self.partial[1]]);
@@ -188,9 +204,20 @@ impl UleReceiver {
             let rest: Vec<u8> = self.partial[total..].to_vec();
             self.partial.clear();
             self.expected = 0;
-            // Any bytes past the completed SNDU are a packed follow-on SNDU.
             if !rest.is_empty() {
-                self.walk_new_sndus(&rest, out);
+                if allow_packing {
+                    // Bytes past the completed SNDU are a packed follow-on
+                    // SNDU (only reached via the PUSI=1 pointer-region path).
+                    self.walk_new_sndus(&rest, out);
+                } else if rest.iter().all(|&b| b == PADDING_BYTE) {
+                    // Genuine trailing padding (including the 0xFFFF End
+                    // Indicator) after a PUSI=0 continuation: nothing more to
+                    // do, already idle.
+                } else {
+                    // Non-padding leftover in a PUSI=0 packet: not a legal
+                    // SNDU start. Discard and return to the Idle State.
+                    self.reset();
+                }
             }
         }
     }
@@ -364,6 +391,86 @@ mod tests {
         assert!(
             done3.is_empty(),
             "post-fix: idle receiver must discard the continuation (partial was reset)"
+        );
+    }
+
+    /// ULE-W3 (audit issue #1120): a legal `D=1` SNDU with `Length` in
+    /// `0x7F00..=0x7FFE` also has first byte `0xFF` — the receiver must not
+    /// treat that alone as padding. Observed pre-fix: `push` returned no
+    /// completed SNDUs (expected — a real one this large spans many
+    /// packets), but `rx.in_reassembly()` was `false`, meaning the 4 header
+    /// bytes were silently discarded as "padding" rather than buffered; the
+    /// rest of that packet's continuation would then desync every following
+    /// packing decision. Only the genuine 2-byte `0xFFFF` End Indicator (or a
+    /// single trailing `0xFF` byte too short for any header) may stop the
+    /// walk.
+    #[test]
+    fn leading_0xff_that_is_not_the_end_indicator_is_not_padding() {
+        // D=1, Length=0x7F00 -> first u16 = 0x8000 | 0x7F00 = 0xFF00.
+        // First byte 0xFF, second byte 0x00 -- NOT the 0xFFFF End Indicator.
+        let region = [0xFFu8, 0x00, 0x08, 0x00];
+        let mut payload = alloc::vec![0x00u8]; // PP = 0
+        payload.extend_from_slice(&region);
+
+        let mut rx = UleReceiver::new();
+        let done = rx.push(&payload, true);
+        assert!(done.is_empty(), "a header this large cannot complete yet");
+        assert!(
+            rx.in_reassembly(),
+            "the 4 header bytes must be buffered as a real (if huge) SNDU start, not discarded as padding"
+        );
+    }
+
+    /// The genuine 2-byte End Indicator still stops the walk.
+    #[test]
+    fn genuine_end_indicator_still_stops_the_walk() {
+        let payload = [0x00u8, 0xFF, 0xFF]; // PP=0, then 0xFFFF End Indicator.
+        let mut rx = UleReceiver::new();
+        let done = rx.push(&payload, true);
+        assert!(done.is_empty());
+        assert!(!rx.in_reassembly(), "the End Indicator carries no SNDU");
+    }
+
+    /// A single trailing `0xFF` byte (too short for any header) is padding.
+    #[test]
+    fn single_trailing_0xff_byte_is_padding() {
+        let payload = [0x00u8, 0xFF]; // PP=0, then one padding byte.
+        let mut rx = UleReceiver::new();
+        let done = rx.push(&payload, true);
+        assert!(done.is_empty());
+        assert!(!rx.in_reassembly());
+    }
+
+    /// ULE-W4 (audit issue #1120): non-padding bytes left over after a
+    /// PUSI=0 continuation completes the partial SNDU must not be walked as
+    /// a new packed SNDU — RFC 4326 §6/§7 only lets an SNDU start where a
+    /// PUSI=1 packet's Payload Pointer says one does. Observed pre-fix: the
+    /// leftover 4 bytes `[0x00, 0x01, 0x02, 0x03]` (decoding as a bogus
+    /// `Length=1` header) were buffered as a NEW partial SNDU
+    /// (`rx.in_reassembly()` became `true` again right after the real SNDU
+    /// was emitted), corrupting every subsequent packing decision on the
+    /// stream.
+    #[test]
+    fn trailing_garbage_after_pusi0_completion_is_not_a_new_sndu() {
+        let sndu = make_sndu(&[0x11u8; 10]);
+
+        let mut rx = UleReceiver::new();
+        // Packet 1: PUSI=1, PP=0, first half of the SNDU.
+        let split = sndu.len() / 2;
+        let mut p1 = alloc::vec![0x00u8];
+        p1.extend_from_slice(&sndu[..split]);
+        assert!(rx.push(&p1, true).is_empty());
+        assert!(rx.in_reassembly());
+
+        // Packet 2: PUSI=0, rest of the SNDU + non-padding trailing garbage.
+        let mut p2 = sndu[split..].to_vec();
+        p2.extend_from_slice(&[0x00, 0x01, 0x02, 0x03]);
+        let done = rx.push(&p2, false);
+
+        assert_eq!(done, alloc::vec![sndu], "the real SNDU must still emit");
+        assert!(
+            !rx.in_reassembly(),
+            "trailing garbage after a PUSI=0 completion must not start a new partial SNDU"
         );
     }
 }

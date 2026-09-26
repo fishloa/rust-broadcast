@@ -17,7 +17,7 @@ use roxmltree::Document;
 
 use crate::error::{Error, Result};
 use crate::gateway::{ConfigurationMacro, MulticastGatewayConfigurationTransportSession};
-use crate::parse::{child, children, require_attr};
+use crate::parse::{child, children, is_baseline_namespace, require_attr};
 use crate::reporting::MulticastGatewaySessionReporting;
 use crate::serialize::{write_attr, write_opt_attr};
 use crate::session::MulticastSession;
@@ -34,6 +34,36 @@ struct CommonRoot {
     gateway_config_transport_sessions: Vec<MulticastGatewayConfigurationTransportSession>,
     sessions: Vec<MulticastSession>,
     reporting: Option<MulticastGatewaySessionReporting>,
+}
+
+/// The baseline namespace a document with the given `@schemaVersion` must
+/// declare (Annex A Table A.0-1): version `1` is the 2019 namespace; every
+/// other (i.e. `2`, "current", and any future) version is the 2024
+/// namespace. Previously `to_xml` always emitted the 2024 namespace
+/// regardless of `schema_version`, so re-emitting a parsed `schemaVersion="1"`
+/// document produced a contradictory `xmlns="...:2024"` with
+/// `schemaVersion="1"` (MABR-W2, #1121).
+fn namespace_for_schema_version(schema_version: u32) -> &'static str {
+    if schema_version == 1 {
+        crate::parse::NS_MULTICAST_SESSION_CONFIGURATION_2019
+    } else {
+        crate::parse::NS_MULTICAST_SESSION_CONFIGURATION_2024
+    }
+}
+
+/// Reject a root element that isn't `expected` in a recognized MABR baseline
+/// namespace (2019 or 2024). Previously only the local name was checked, so
+/// a `<MulticastServerConfiguration>` in any other (or no) namespace was
+/// silently accepted (MABR-W1, #1121).
+fn check_root(root: roxmltree::Node<'_, '_>, expected: &'static str) -> Result<()> {
+    if root.tag_name().name() != expected || !is_baseline_namespace(root.tag_name().namespace()) {
+        return Err(Error::UnexpectedRoot(alloc::format!(
+            "{} (namespace {:?})",
+            root.tag_name().name(),
+            root.tag_name().namespace()
+        )));
+    }
+    Ok(())
 }
 
 fn parse_common_root(node: roxmltree::Node<'_, '_>, element: &'static str) -> Result<CommonRoot> {
@@ -116,9 +146,7 @@ impl MulticastServerConfiguration {
     pub fn parse_str(xml: &str) -> Result<Self> {
         let doc = Document::parse(xml).map_err(|e| Error::XmlParse(e.to_string()))?;
         let root = doc.root_element();
-        if root.tag_name().name() != ROOT_SERVER {
-            return Err(Error::UnexpectedRoot(root.tag_name().name().into()));
-        }
+        check_root(root, ROOT_SERVER)?;
         let common = parse_common_root(root, ROOT_SERVER)?;
         let mut macros = Vec::new();
         for n in children(root, SERVER_MACRO_ELEMENT) {
@@ -145,7 +173,7 @@ impl MulticastServerConfiguration {
         write_attr(
             &mut out,
             "xmlns",
-            crate::parse::NS_MULTICAST_SESSION_CONFIGURATION_2024,
+            namespace_for_schema_version(self.schema_version),
         );
         write_attr(&mut out, "xmlns:xsi", crate::parse::NS_XSI);
         write_common_root(
@@ -199,9 +227,7 @@ impl MulticastGatewayConfiguration {
     pub fn parse_str(xml: &str) -> Result<Self> {
         let doc = Document::parse(xml).map_err(|e| Error::XmlParse(e.to_string()))?;
         let root = doc.root_element();
-        if root.tag_name().name() != ROOT_GATEWAY {
-            return Err(Error::UnexpectedRoot(root.tag_name().name().into()));
-        }
+        check_root(root, ROOT_GATEWAY)?;
         let common = parse_common_root(root, ROOT_GATEWAY)?;
         Ok(MulticastGatewayConfiguration {
             schema_version: common.schema_version,
@@ -223,7 +249,7 @@ impl MulticastGatewayConfiguration {
         write_attr(
             &mut out,
             "xmlns",
-            crate::parse::NS_MULTICAST_SESSION_CONFIGURATION_2024,
+            namespace_for_schema_version(self.schema_version),
         );
         write_attr(&mut out, "xmlns:xsi", crate::parse::NS_XSI);
         write_common_root(

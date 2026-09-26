@@ -20,7 +20,9 @@ use broadcast_common::{Parse, Serialize};
 
 use crate::error::{Error, Result};
 use crate::plex::{plex_bits, read_plex, write_plex};
-use crate::util::{expect_fully_consumed, read_reserved, write_reserved};
+use crate::util::{
+    expect_fully_consumed, read_align_bits, read_reserved, write_align_bits, write_reserved,
+};
 
 /// The 4-bit `ChannelID` field (§5.3.3 Table 6): the nominal loudspeaker a
 /// bed channel is assigned to.
@@ -161,13 +163,24 @@ pub struct BedDefinition1 {
     /// The bed's channels, in wire order. `ChannelCount` (§5.3.2) is
     /// `channels.len()`, not stored separately.
     pub channels: Vec<BedChannel>,
+    /// The raw `AlignBits` byte-alignment padding value (`0` if the fields
+    /// above already land on a byte boundary). RDD 29 gives this field no
+    /// documented value (unlike this element's other reserved fields), so it
+    /// is preserved verbatim rather than forced to zero (RD-W2, #1114) —
+    /// [`BedDefinition1::new`] sets it to `0`.
+    pub align_bits: u8,
 }
 
 impl BedDefinition1 {
-    /// Build a new `BedDefinition1` from its channels.
+    /// Build a new `BedDefinition1` from its channels, with `align_bits`
+    /// `0`.
     #[must_use]
     pub fn new(meta_id: u32, channels: Vec<BedChannel>) -> Self {
-        Self { meta_id, channels }
+        Self {
+            meta_id,
+            channels,
+            align_bits: 0,
+        }
     }
 }
 
@@ -224,7 +237,7 @@ impl<'a> Parse<'a> for BedDefinition1 {
             RESERVED_TRAILER_1,
             "BedDefinition1.Reserved(trailer1)",
         )?;
-        r.align_to_byte();
+        let align_bits = read_align_bits(&mut r, "BedDefinition1.AlignBits")?;
         read_reserved(
             &mut r,
             8,
@@ -238,7 +251,11 @@ impl<'a> Parse<'a> for BedDefinition1 {
             "BedDefinition1.Reserved(trailer3)",
         )?;
         expect_fully_consumed(&r, "BedDefinition1")?;
-        Ok(Self { meta_id, channels })
+        Ok(Self {
+            meta_id,
+            channels,
+            align_bits,
+        })
     }
 }
 
@@ -307,10 +324,7 @@ impl Serialize for BedDefinition1 {
             RESERVED_TRAILER_1,
             "BedDefinition1.Reserved(trailer1)",
         )?;
-        w.align_to_byte().map_err(|source| Error::Bits {
-            what: "BedDefinition1.AlignBits",
-            source,
-        })?;
+        write_align_bits(&mut w, self.align_bits, "BedDefinition1.AlignBits")?;
         write_reserved(
             &mut w,
             8,
@@ -388,5 +402,39 @@ mod tests {
         let mutated = bed.to_bytes();
         assert_ne!(original[0], mutated[0]);
         assert_eq!(&original[1..], &mutated[1..]);
+    }
+
+    /// RD-W2 (audit issue #1114): RDD 29 gives `AlignBits` no documented
+    /// value, so a real producer's non-zero padding must round-trip
+    /// byte-exactly rather than being silently zeroed. Observed pre-fix (no
+    /// `align_bits` field existed): a real fixture with the corresponding
+    /// byte flipped still parsed `Ok` to the identical `BedDefinition1`
+    /// (`Reserved`/`ChannelID`/etc. all unaffected — the flipped bits were
+    /// dropped, not decoded into anything), but `parsed.to_bytes()` zeroed
+    /// them back out, differing from the input bytes.
+    #[test]
+    fn nonzero_align_bits_round_trip() {
+        let mut bed = sample();
+        bed.align_bits = 0b1010; // this fixture needs exactly 4 padding bits
+        let bytes = bed.to_bytes();
+        let parsed = BedDefinition1::parse(&bytes).unwrap();
+        assert_eq!(parsed, bed);
+        assert_eq!(
+            parsed.to_bytes(),
+            bytes,
+            "AlignBits must round-trip byte-exactly"
+        );
+    }
+
+    #[test]
+    fn align_bits_too_wide_for_the_padding_is_rejected() {
+        let mut bed = sample();
+        // This fixture needs exactly 4 padding bits (0..=0xF); 0x10 doesn't fit.
+        bed.align_bits = 0x10;
+        let mut buf = alloc::vec![0u8; bed.serialized_len()];
+        assert!(matches!(
+            bed.serialize_into(&mut buf),
+            Err(Error::InvalidValue { .. })
+        ));
     }
 }

@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Documentation
+- `BurstPreamble::length_code` and the `burst` module doc now explain, in
+  rustdoc-visible text (not just the excluded `docs/` tree), why this crate
+  always interprets `length_code` as bits (ST 337's own literal text) even
+  though a real IEC 61937 E-AC-3 capture writes it as a byte count, and why
+  the wire byte order is little-endian-per-16-bit-word (#1118). No behaviour
+  change — see `docs/st337.md` scope decision 4, already in place.
+
 ## [0.3.0] - 2026-08-11
 
 ### Changed

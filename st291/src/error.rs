@@ -91,6 +91,18 @@ pub enum Error {
         /// ANC packets.
         computed: usize,
     },
+    /// [`crate::anc_content::AncContent::verify_checksum`] found the stored
+    /// `Checksum_Word` did not match the ST 291-1 computation over the
+    /// current `did`/`sdid`/`data_count`/`user_data_words` (see
+    /// `docs/anc_packet_291.md` "Checksum_Word computation").
+    #[error("Checksum_Word mismatch: stored {stored:#05X}, computed {computed:#05X}")]
+    ChecksumMismatch {
+        /// The `Checksum_Word` actually stored in the content.
+        stored: u16,
+        /// The value ST 291-1's checksum computation gives for the other
+        /// fields.
+        computed: u16,
+    },
     /// Underlying bit reader/writer error.
     #[error("bit stream error: {0}")]
     Bits(BitError),

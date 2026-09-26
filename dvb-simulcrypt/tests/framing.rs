@@ -1,7 +1,7 @@
 //! Biting round-trip, multi-parameter boundary, field-mutation, and
 //! enum-value-drift tests for the SimulCrypt generic message framing.
 
-use broadcast_common::traits::{Parse, Serialize};
+use broadcast_common::traits::Serialize;
 use dvb_simulcrypt::{
     CpSigMessageType, CpSigParameterType, DataType, EcmgErrorStatus, EcmgScsMessageType,
     EcmgScsParameterType, EmmgErrorStatus, EmmgMuxMessageType, EmmgMuxParameterType, Interface,
@@ -231,9 +231,48 @@ fn emmg_data_provision_round_trip_and_scoping() {
     );
 }
 
-/// The default `Parse` impl targets ECMG⇔SCS.
+/// PRE-FIX PROBE (W-SC-1, audit issue #1098): the blanket `Parse` impl always
+/// decoded against ECMG⇔SCS regardless of the message's actual interface.
+/// Uncomment to observe the mislabelling this test pins before the fix:
+/// `SimulcryptMessage::parse` (defaulting to ECMG⇔SCS) decodes an EMMG/PDG⇔MUX
+/// `data_provision` (0x0211) as the ECMG⇔SCS `Reserved(0x0211)` catch-all
+/// instead of `EmmgPdgMux(DataProvision)`.
+/// ```text
+/// let msg = SimulcryptMessage::new(
+///     Interface::EmmgPdgMux.protocol_version(),
+///     MessageType::EmmgPdgMux(EmmgMuxMessageType::DataProvision),
+///     vec![],
+/// );
+/// let bytes = msg.to_bytes();
+/// assert_eq!(
+///     SimulcryptMessage::parse(&bytes).unwrap().message_type,
+///     MessageType::EcmgScs(EcmgScsMessageType::Reserved(0x0211)), // WRONG
+/// );
+/// ```
+/// The fix removes the generic `Parse` impl entirely (a breaking change of
+/// the 0.x public API, #1098) so a caller must go through
+/// [`SimulcryptMessage::parse_on`] with the connection's real [`Interface`],
+/// which decodes correctly:
 #[test]
-fn default_parse_targets_ecmg() {
+fn parse_on_requires_and_honours_the_real_interface() {
+    let msg = SimulcryptMessage::new(
+        Interface::EmmgPdgMux.protocol_version(),
+        MessageType::EmmgPdgMux(EmmgMuxMessageType::DataProvision),
+        vec![],
+    );
+    let bytes = msg.to_bytes();
+    let decoded = SimulcryptMessage::parse_on(Interface::EmmgPdgMux, &bytes).unwrap();
+    assert_eq!(
+        decoded.message_type,
+        MessageType::EmmgPdgMux(EmmgMuxMessageType::DataProvision)
+    );
+}
+
+/// W-SC-2 (audit issue #1098): `SimulcryptMessage::frame_len` lets a
+/// TCP-stream caller tell "read more" from "malformed" before `parse_on`
+/// itself would only ever say `InvalidMessageLength` for both.
+#[test]
+fn frame_len_distinguishes_incomplete_from_complete() {
     let v = [0x00u8, 0x2A];
     let msg = SimulcryptMessage::new(
         0x03,
@@ -244,7 +283,24 @@ fn default_parse_targets_ecmg() {
         )],
     );
     let bytes = msg.to_bytes();
-    assert_eq!(SimulcryptMessage::parse(&bytes).unwrap(), msg);
+    let total = bytes.len();
+
+    // Fewer bytes than the header itself: cannot even read message_length.
+    assert_eq!(SimulcryptMessage::frame_len(&bytes[..4]), None);
+
+    // Header present, body still incomplete: frame_len reports the full
+    // length, which exceeds what a streaming caller currently holds -- "read
+    // more", not "malformed".
+    let partial = &bytes[..total - 1];
+    assert_eq!(SimulcryptMessage::frame_len(partial), Some(total));
+    assert!(SimulcryptMessage::frame_len(partial).unwrap() > partial.len());
+    // Calling parse_on on that same incomplete buffer errors, which is
+    // exactly the ambiguous case frame_len resolves for the caller.
+    assert!(SimulcryptMessage::parse_on(Interface::EcmgScs, partial).is_err());
+
+    // Full frame present: frame_len matches exactly, and parse_on succeeds.
+    assert_eq!(SimulcryptMessage::frame_len(&bytes), Some(total));
+    assert!(SimulcryptMessage::parse_on(Interface::EcmgScs, &bytes).is_ok());
 }
 
 // ---------------------------------------------------------------------------

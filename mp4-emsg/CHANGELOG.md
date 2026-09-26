@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- `EmsgBox::serialize_into` now rejects `scheme_id_uri`/`value` containing an
+  embedded NUL byte with `Error::InvalidString` (#1104). Previously it wrote
+  the byte verbatim, which silently misframed the box on reparse (the
+  null-terminated string ended early and every following field shifted).
+
+### Added
+- `EmsgBox::parse_with_flags`/`serialize_into_with_flags` (#1104): preserve a
+  non-conformant non-zero `flags` value byte-exactly. The plain
+  `parse`/`serialize_into` pair is unchanged and still always reads/writes 0.
+
 ## [0.4.0] - 2026-08-11
 
 ### Changed

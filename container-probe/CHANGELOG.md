@@ -5,6 +5,14 @@ All notable changes to `container-probe` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- ADTS chain walker: a chain ending exactly at a frame boundary, or with only
+  a partial next header visible at the buffer end, now reports `Insufficient`
+  rather than `None`, mirroring the MP3 prober's identical branch (#1076).
+
 ## [0.1.0] - 2026-08-14
 
 ### Added

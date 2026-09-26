@@ -31,19 +31,42 @@ pub const NS_EXTENSIBILITY_2024: &str = "urn:dvb:metadata:Extensibility:2024";
 /// `xsi:type` attribute namespace (W3C XML Schema instance).
 pub const NS_XSI: &str = "http://www.w3.org/2001/XMLSchema-instance";
 
-/// The first element child with the given local name, if any.
-pub(crate) fn child<'a, 'i>(node: Node<'a, 'i>, name: &str) -> Option<Node<'a, 'i>> {
-    node.children()
-        .find(|n| n.is_element() && n.tag_name().name() == name)
+/// `true` if `ns` is a recognized MABR baseline namespace (2019 or 2024,
+/// Annex A.0-1) — the two schema-version namespaces share every
+/// element/attribute local name, so [`child`]/[`children`] match `(namespace,
+/// local name)`, not local name alone. A node outside these (including no
+/// namespace at all) is an Annex A.1 private/implementation extension and
+/// must be skipped wherever it appears, not matched onto a baseline element
+/// that happens to reuse the same local name (MABR-W1, #1121).
+pub(crate) fn is_baseline_namespace(ns: Option<&str>) -> bool {
+    matches!(
+        ns,
+        Some(NS_MULTICAST_SESSION_CONFIGURATION_2024)
+            | Some(NS_MULTICAST_SESSION_CONFIGURATION_2019)
+    )
 }
 
-/// All element children with the given local name, in document order.
+/// The first baseline-namespaced element child with the given local name, if
+/// any.
+pub(crate) fn child<'a, 'i>(node: Node<'a, 'i>, name: &str) -> Option<Node<'a, 'i>> {
+    node.children().find(|n| {
+        n.is_element()
+            && n.tag_name().name() == name
+            && is_baseline_namespace(n.tag_name().namespace())
+    })
+}
+
+/// All baseline-namespaced element children with the given local name, in
+/// document order.
 pub(crate) fn children<'a, 'i>(
     node: Node<'a, 'i>,
     name: &'a str,
 ) -> impl Iterator<Item = Node<'a, 'i>> {
-    node.children()
-        .filter(move |n| n.is_element() && n.tag_name().name() == name)
+    node.children().filter(move |n| {
+        n.is_element()
+            && n.tag_name().name() == name
+            && is_baseline_namespace(n.tag_name().namespace())
+    })
 }
 
 /// Trimmed text content of a named child element, if that child is present.
@@ -55,8 +78,22 @@ pub(crate) fn child_text(node: Node<'_, '_>, name: &str) -> Option<String> {
 /// its attributes) — used for leaf elements whose value is a URI/string
 /// (`PresentationManifestLocator`, `ReportingLocator`, `ResourceLocator`,
 /// `BaseURL`, the macro elements). An empty element yields `""`.
+///
+/// Concatenates every direct text-node child rather than using
+/// [`Node::text`], which returns only the *first* one: a comment or CDATA
+/// section between two text runs (e.g. `<BaseURL>a<!-- x -->b</BaseURL>`)
+/// would otherwise silently truncate the value at the comment (MABR-W4,
+/// #1121).
 pub(crate) fn own_text(node: Node<'_, '_>) -> String {
-    node.text().unwrap_or("").trim().to_string()
+    let mut s = String::new();
+    for child in node.children() {
+        if child.is_text()
+            && let Some(t) = child.text()
+        {
+            s.push_str(t);
+        }
+    }
+    s.trim().to_string()
 }
 
 /// An unprefixed (no-namespace) attribute's raw string value — every MABR
@@ -184,10 +221,23 @@ pub(crate) fn parse_f64(
     attr_name: &'static str,
     value: &str,
 ) -> Result<f64> {
-    value
+    let parsed = value
         .trim()
         .parse::<f64>()
-        .map_err(|_| invalid(element, attr_name, value, "expected a decimal number"))
+        .map_err(|_| invalid(element, attr_name, value, "expected a decimal number"))?;
+    // `f64::from_str` accepts "NaN"/"inf"/"infinity", none of which is a
+    // valid `xs:decimal`/`xs:double` lexical form, and `NaN != NaN` would
+    // break the documented parse -> to_xml -> parse round trip (MABR-W3,
+    // #1121).
+    if !parsed.is_finite() {
+        return Err(invalid(
+            element,
+            attr_name,
+            value,
+            "must be a finite decimal number (NaN/infinity are not valid xs:decimal)",
+        ));
+    }
+    Ok(parsed)
 }
 
 pub(crate) fn req_attr_u32(

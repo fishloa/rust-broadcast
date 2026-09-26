@@ -4,6 +4,18 @@
 //! implements field-for-field, and `st337/docs/st337-PROVENANCE.md` for the
 //! real-fixture / `ffmpeg -f spdif` cross-check that verified the constants
 //! and bit layout below against real running software.
+//!
+//! # Byte order
+//!
+//! `Pa`-`Pf` and `burst_payload` are each carried on the wire as this crate's
+//! `&[u8]`, **little-endian per 16-bit word** (e.g. [`SYNC_WORD_PA`]'s
+//! `0xF872` serializes as `[0x72, 0xF8]`). Nothing in ST 337's own text
+//! mandates an endianness for a byte-array representation of what is
+//! logically a 16-bit-word stream (`ffmpeg -f spdif`'s real IEC 61937 burst
+//! output uses this exact convention — `docs/st337-PROVENANCE.md` — so this
+//! crate adopts the verified real-world one rather than inventing one). A
+//! big-endian-per-word carriage (which this crate has not observed in
+//! practice) fails with [`Error::InvalidSync`].
 
 use broadcast_common::{Parse, Serialize};
 
@@ -187,12 +199,28 @@ pub struct BurstPreamble {
     /// `data_stream_number` — 3-bit stream tag, `0..=7` (§7.2.4.6). `0` is
     /// the main audio service; `7` is reserved for the time-stamp data type.
     pub data_stream_number: u8,
-    /// `Pd` — `length_code`, the raw wire value: the number of bits in
+    /// `Pd` — `length_code`, the raw wire value: the number of **bits** in
     /// `burst_payload`, **plus** 32 when [`Self::extended`] is `Some` (`Pe`
-    /// and `Pf`'s bits are counted here too — §7.2.5/Table 6). Stored
-    /// verbatim (not recomputed) so a parsed burst re-serializes
-    /// byte-identically even from an otherwise-unremarkable real capture;
-    /// [`Burst::new`] computes it for you from a payload length.
+    /// and `Pf`'s bits are counted here too — §7.2.5/Table 6, "The
+    /// `length_code` shall indicate the length of the `burst_payload` in
+    /// bits"). Stored verbatim (not recomputed) so a parsed burst
+    /// re-serializes byte-identically even from an otherwise-unremarkable
+    /// real capture; [`Burst::new`] computes it for you from a payload
+    /// length.
+    ///
+    /// This crate always interprets `length_code` as bits, per this literal
+    /// spec text, for every `data_type`. A real IEC 61937 (the *consumer*
+    /// analog of this professional spec — §8/Annex A/B) E-AC-3 capture was
+    /// independently cross-checked (`ffmpeg -f spdif`) and writes `Pd` as the
+    /// wrapped frame's **byte** count instead, for that data type — a
+    /// documented quirk of IEC 61937's own "Burst-info" definition, not of ST
+    /// 337 or of this crate. This crate does not have a truthful,
+    /// independently-verified per-`data_type` table saying which other IEC
+    /// 61937 data types share that quirk (SMPTE ST 338, which defines the
+    /// `data_type` → codec mapping, was not available to verify — see
+    /// [`Self::data_type`]'s doc), so it does not guess one; a caller
+    /// consuming IEC 61937 streams (rather than genuine ST 337) must apply
+    /// any bits-vs-bytes correction itself, per `data_type`.
     pub length_code: u16,
     /// `Pe`/`Pf`, present iff the six-word preamble is used. Required to be
     /// `Some` exactly when `data_type ==` [`EXTENDED_DATA_TYPE_MARKER`] —

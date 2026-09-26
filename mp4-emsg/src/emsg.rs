@@ -160,7 +160,22 @@ impl<'a> EmsgBox<'a> {
 
     /// Parse an `emsg` box from the start of `data`. Requires the full box
     /// (`size` bytes) to be present; trailing bytes beyond `size` are ignored.
+    ///
+    /// Discards the box's `flags` (spec-mandated 0; see [`Self::parse_with_flags`]
+    /// to preserve a non-conformant non-zero value, EM-W2 / #1104).
     pub fn parse(data: &'a [u8]) -> Result<Self> {
+        Self::parse_with_flags(data).map(|(emsg, _flags)| emsg)
+    }
+
+    /// Parse an `emsg` box from the start of `data`, also returning the raw
+    /// 24-bit `flags` field.
+    ///
+    /// `flags` is mandated 0 (DASH-IF Part 10 / ISO `FullBox` for `emsg`), so
+    /// [`Self::serialize_into`] always writes 0 back; a caller that must
+    /// round-trip a non-conformant box byte-exactly should keep the value
+    /// this returns and pass it to [`Self::serialize_into_with_flags`]
+    /// instead (EM-W2, #1104).
+    pub fn parse_with_flags(data: &'a [u8]) -> Result<(Self, u32)> {
         if data.len() < FULLBOX_HEADER_LEN {
             return Err(Error::BufferTooShort {
                 need: FULLBOX_HEADER_LEN,
@@ -175,8 +190,9 @@ impl<'a> EmsgBox<'a> {
             return Err(Error::NotEmsg { found: box_type });
         }
         let version = data[8];
-        // flags = data[9..12]; mandated 0, but parsed permissively (some muxers
-        // are sloppy) — not stored since it is recomputed as 0 on serialize.
+        // flags = data[9..12]; mandated 0, but parsed permissively (some
+        // muxers are sloppy) and handed back to the caller alongside `Self`.
+        let flags = u32::from_be_bytes([0, data[9], data[10], data[11]]);
 
         if (size as usize) < FULLBOX_HEADER_LEN {
             return Err(Error::InvalidSize {
@@ -196,10 +212,11 @@ impl<'a> EmsgBox<'a> {
         // The box body region is [FULLBOX_HEADER_LEN, size).
         let body = &data[FULLBOX_HEADER_LEN..size as usize];
 
-        match version {
+        let emsg = match version {
             EmsgVersion::SegmentRelative => Self::parse_v0(body),
             EmsgVersion::RepresentationRelative => Self::parse_v1(body),
-        }
+        }?;
+        Ok((emsg, flags))
     }
 
     /// version 0 body: scheme\0 value\0 timescale u32 ptd u32 dur u32 id u32
@@ -268,7 +285,38 @@ impl<'a> EmsgBox<'a> {
 
     /// Serialize the box into `out`, recomputing the `size` field and writing
     /// `flags = 0`. Returns the number of bytes written.
+    ///
+    /// # Errors
+    /// As [`Self::serialize_into_with_flags`] (with `flags = 0`, which always
+    /// fits), plus [`Error::InvalidString`] if `scheme_id_uri` or `value`
+    /// contains an embedded NUL byte (valid UTF-8, but it would silently
+    /// misframe the null-terminated wire string on reparse — EM-W1, #1104).
     pub fn serialize_into(&self, out: &mut [u8]) -> Result<usize> {
+        self.serialize_into_with_flags(EMSG_FLAGS, out)
+    }
+
+    /// Serialize the box into `out` with an explicit 24-bit `flags` value
+    /// instead of the spec-mandated 0, so a box parsed with
+    /// [`Self::parse_with_flags`] can be round-tripped byte-exactly even if
+    /// it carried a non-conformant non-zero value (EM-W2, #1104).
+    ///
+    /// # Errors
+    /// Returns [`Error::OutputBufferTooSmall`] if `out` is too small,
+    /// [`Error::FieldTooWide`] if the total size does not fit in `u32` or
+    /// `flags` does not fit in 24 bits, and [`Error::InvalidString`] if
+    /// `scheme_id_uri` or `value` contains an embedded NUL byte.
+    pub fn serialize_into_with_flags(&self, flags: u32, out: &mut [u8]) -> Result<usize> {
+        const FLAGS_MAX: u32 = 0x00FF_FFFF;
+        if flags > FLAGS_MAX {
+            return Err(Error::FieldTooWide {
+                what: "flags",
+                value: u64::from(flags),
+                bits: 24,
+            });
+        }
+        reject_interior_nul(self.scheme_id_uri, "scheme_id_uri")?;
+        reject_interior_nul(self.value, "value")?;
+
         let total = self.serialized_len();
         if out.len() < total {
             return Err(Error::OutputBufferTooSmall {
@@ -288,10 +336,8 @@ impl<'a> EmsgBox<'a> {
         out[0..U32_LEN].copy_from_slice(&(total as u32).to_be_bytes());
         out[4..8].copy_from_slice(&EMSG_BOX_TYPE);
         out[8] = self.version().to_u8();
-        // flags = 0 (3 bytes).
-        out[9] = 0;
-        out[10] = 0;
-        out[11] = 0;
+        let flag_bytes = flags.to_be_bytes();
+        out[9..12].copy_from_slice(&flag_bytes[1..4]);
 
         let mut off = FULLBOX_HEADER_LEN;
         match self.presentation_time {
@@ -350,6 +396,19 @@ fn parse_cstr<'a>(data: &'a [u8], field: &'static str) -> Result<(&'a str, &'a [
         reason: "invalid UTF-8",
     })?;
     Ok((s, &data[term + 1..]))
+}
+
+/// Reject a string carrying an embedded NUL byte (valid UTF-8, but not a
+/// legal wire value for a null-terminated field: it would end the string
+/// early on reparse and shift every field after it — EM-W1, #1104).
+fn reject_interior_nul(s: &str, field: &'static str) -> Result<()> {
+    if s.as_bytes().contains(&STRING_TERMINATOR) {
+        return Err(Error::InvalidString {
+            field,
+            reason: "contains an embedded NUL byte, which would misframe the wire string",
+        });
+    }
+    Ok(())
 }
 
 /// Write `s` followed by a null terminator at `off`; returns the new offset.
@@ -574,6 +633,97 @@ mod tests {
         assert!(matches!(
             EmsgBox::parse(&data),
             Err(Error::InvalidString { .. })
+        ));
+    }
+
+    /// EM-W1 (audit issue #1104): pre-fix, `serialize_into` wrote an embedded
+    /// NUL in `value` verbatim (it is valid UTF-8), producing a wire string
+    /// that terminates early on reparse — observed pre-fix: `b.to_vec()`
+    /// returned `Ok`, and reparsing gave `value == "a"`, silently dropping
+    /// `"\0b"` and shifting every field after it. The fix rejects the value
+    /// at serialize time instead.
+    #[test]
+    fn rejects_embedded_nul_in_value() {
+        let b = EmsgBox {
+            scheme_id_uri: "urn:example:scheme",
+            value: "a\0b",
+            timescale: 1,
+            presentation_time: PresentationTime::Delta(0),
+            event_duration: 0,
+            id: 0,
+            message_data: &[],
+        };
+        assert!(matches!(
+            b.to_vec(),
+            Err(Error::InvalidString { field: "value", .. })
+        ));
+    }
+
+    #[test]
+    fn rejects_embedded_nul_in_scheme_id_uri() {
+        let b = EmsgBox {
+            scheme_id_uri: "urn:example:\0scheme",
+            value: "",
+            timescale: 1,
+            presentation_time: PresentationTime::Delta(0),
+            event_duration: 0,
+            id: 0,
+            message_data: &[],
+        };
+        assert!(matches!(
+            b.to_vec(),
+            Err(Error::InvalidString {
+                field: "scheme_id_uri",
+                ..
+            })
+        ));
+    }
+
+    /// EM-W2 (audit issue #1104): a non-zero `flags` value now round-trips
+    /// byte-exactly through the `_with_flags` pair, while the plain
+    /// `parse`/`serialize_into` pair keeps its documented "flags is always 0"
+    /// behaviour (no change for existing callers that don't need it).
+    #[test]
+    fn flags_round_trip_with_the_with_flags_api() {
+        let b = EmsgBox {
+            scheme_id_uri: "urn:example:scheme",
+            value: "v",
+            timescale: 1,
+            presentation_time: PresentationTime::Delta(0),
+            event_duration: 0,
+            id: 0,
+            message_data: &[],
+        };
+        let flags = 0x00_A5_5A;
+        let mut out = vec![0u8; b.serialized_len()];
+        b.serialize_into_with_flags(flags, &mut out).unwrap();
+        assert_eq!(&out[9..12], &[0x00, 0xA5, 0x5A]);
+
+        let (reparsed, got_flags) = EmsgBox::parse_with_flags(&out).unwrap();
+        assert_eq!(got_flags, flags);
+        assert_eq!(reparsed, b);
+
+        // The plain API still always writes/discards 0.
+        assert_eq!(EmsgBox::parse(&out).unwrap(), b);
+        let plain = b.to_vec().unwrap();
+        assert_eq!(&plain[9..12], &[0, 0, 0]);
+    }
+
+    #[test]
+    fn flags_over_24_bits_rejected() {
+        let b = EmsgBox {
+            scheme_id_uri: "urn:example:scheme",
+            value: "",
+            timescale: 1,
+            presentation_time: PresentationTime::Delta(0),
+            event_duration: 0,
+            id: 0,
+            message_data: &[],
+        };
+        let mut out = vec![0u8; b.serialized_len()];
+        assert!(matches!(
+            b.serialize_into_with_flags(0x0100_0000, &mut out),
+            Err(Error::FieldTooWide { what: "flags", .. })
         ));
     }
 

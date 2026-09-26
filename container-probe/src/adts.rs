@@ -138,18 +138,35 @@ fn longest_adts_chain(data: &[u8]) -> (usize, bool, usize, usize) {
             let mut p = i;
             let mut run = 0usize;
             let mut truncated = false;
-            while let Some(l) = adts_frame_len(data, p) {
-                run += 1;
-                if run >= ADTS_MIN_CHAIN_STRONG {
-                    return (run, false, i, first_len); // strong reached; stop early
+            loop {
+                match adts_frame_len(data, p) {
+                    Some(l) => {
+                        run += 1;
+                        if run >= ADTS_MIN_CHAIN_STRONG {
+                            return (run, false, i, first_len); // strong reached; stop early
+                        }
+                        if p + l > n {
+                            // The frame's body extends past the buffer: a
+                            // genuine truncation (the stream was cut
+                            // mid-frame).
+                            truncated = true;
+                            break;
+                        }
+                        p += l;
+                    }
+                    None => {
+                        // No valid header at `p`. If a full header could not
+                        // have been read here (the region ended within it, or
+                        // exactly at it), the chain ran out of data rather
+                        // than being ruled out — the next frame's header is
+                        // simply not fully visible yet. Mirrors mp3.rs's
+                        // identical branch (W11, audit issue #1076).
+                        if p + ADTS_HEADER_LEN > n {
+                            truncated = true;
+                        }
+                        break;
+                    }
                 }
-                if p + l > n {
-                    // The frame's body extends past the buffer: a genuine
-                    // truncation (the stream was cut mid-frame).
-                    truncated = true;
-                    break;
-                }
-                p += l;
             }
             if run > best || (run == best && truncated) {
                 best = run;
@@ -260,7 +277,7 @@ mod tests {
     ///
     /// A genuine TS file carries a *single* valid ADTS frame somewhere in its
     /// payload (the model counts a longest ADTS chain of 1), so with the real
-    /// `ADTS_MIN_CHAIN_WEAK = 4` the ADTS prober returns `None`. If that
+    /// `ADTS_MIN_CHAIN_WEAK = 4` the ADTS prober does not `Match`. If that
     /// threshold is dropped to 1 (raw frame counting), the same file is
     /// misidentified — the false positive the chaining rule exists to prevent.
     /// Observed under the mutation (`ADTS_MIN_CHAIN_WEAK = 1`):
@@ -268,6 +285,16 @@ mod tests {
     /// h264_aac.ts must NOT match ADTS at the real threshold,
     ///   got Match(Evidence { confidence: Confidence(96), detail: None })
     /// ```
+    ///
+    /// The chain of 1 in this fixture happens to end with only a partial next
+    /// header visible before the file's own EOF, so since the W11 fix (audit
+    /// issue #1076, mirroring `mp3.rs`) the per-format prober correctly
+    /// answers `Insufficient` rather than `None` here — "more bytes could
+    /// still confirm it" is honestly true of this exact byte region; it is the
+    /// caller's EOF handling (`lib.rs`'s "read more, but you're at EOF" rule)
+    /// that turns this into a final `Unknown`, not this low-level function.
+    /// Either answer is "not a confident match", which is what this test
+    /// pins.
     #[test]
     fn chain_threshold_keeps_a_container_out() {
         let data = fixture_bytes("fixtures/ts/h264_aac.ts");
@@ -276,7 +303,7 @@ mod tests {
             "container must carry ADTS frames"
         );
         match probe(&data, data.len()) {
-            Outcome::None => {}
+            Outcome::None | Outcome::Insufficient(_) => {}
             other => panic!("h264_aac.ts must NOT match ADTS at the real threshold, got {other:?}"),
         }
     }
@@ -422,6 +449,52 @@ mod tests {
                 decoded,
                 "13-bit frame_length {frame_len} must round-trip exactly"
             );
+        }
+    }
+
+    /// W11 (audit issue #1076): a chain that ends exactly at a frame boundary,
+    /// or with only a partial next header visible, must be `Insufficient` (more
+    /// bytes could still confirm it) rather than `None` (never will). This
+    /// mirrors `mp3.rs`'s `None => { if p + MP3_HEADER_LEN > n { truncated =
+    /// true } }` branch, which ADTS's chain walker lacked.
+    #[test]
+    fn chain_ending_at_frame_boundary_is_insufficient() {
+        const F: usize = 64;
+        let encode = |frame_len: u16| -> [u8; 6] {
+            [
+                0xFF,
+                0xF1,
+                0x00,
+                ((frame_len >> 11) & 0x03) as u8,
+                ((frame_len >> 3) & 0xFF) as u8,
+                (((frame_len & 0x07) as u8) << 5),
+            ]
+        };
+        let mut one_frame = alloc::vec::Vec::new();
+        one_frame.extend_from_slice(&encode(F as u16));
+        one_frame.resize(F, 0x00);
+
+        // Case 1: the buffer ends exactly on the frame boundary (no bytes of
+        // a next header at all).
+        match probe(&one_frame, one_frame.len()) {
+            Outcome::Insufficient(_) => {}
+            other => panic!(
+                "a single complete ADTS frame ending exactly at the buffer end \
+                 must be Insufficient (a longer buffer could still confirm the \
+                 chain), got {other:?}"
+            ),
+        }
+
+        // Case 2: 3 bytes of a second header follow (a partial header near the
+        // buffer end), one short of the 6 the decoder needs.
+        let mut partial_next = one_frame.clone();
+        partial_next.extend_from_slice(&[0xFF, 0xF1, 0x00]);
+        match probe(&partial_next, partial_next.len()) {
+            Outcome::Insufficient(_) => {}
+            other => panic!(
+                "a chain ending in a partial next header must be Insufficient, \
+                 got {other:?}"
+            ),
         }
     }
 
