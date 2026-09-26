@@ -201,7 +201,7 @@ impl Serialize for TrackEncryptionBox {
         buf[c..c + 16].copy_from_slice(&self.default_kid);
         c += 16;
         if let Some(ref iv) = self.default_constant_iv {
-            buf[c] = iv.len() as u8;
+            buf[c] = broadcast_common::len::fit_u8(iv.len(), "default_constant_IV_size")?;
             c += 1;
             buf[c..c + iv.len()].copy_from_slice(iv);
             c += iv.len();
@@ -412,13 +412,16 @@ impl Serialize for SampleEncryptionBox {
         let fb = self.flags.to_be_bytes();
         buf[c..c + 3].copy_from_slice(&fb[1..]);
         c += 3;
-        buf[c..c + 4].copy_from_slice(&(self.entries.len() as u32).to_be_bytes());
+        let sample_count = broadcast_common::len::fit_u32(self.entries.len(), "sample_count")?;
+        buf[c..c + 4].copy_from_slice(&sample_count.to_be_bytes());
         c += 4;
         for e in &self.entries {
             buf[c..c + e.initialization_vector.len()].copy_from_slice(&e.initialization_vector);
             c += e.initialization_vector.len();
             if (self.flags & SENC_FLAG_USE_SUBSAMPLE_ENCRYPTION) != 0 {
-                buf[c..c + 2].copy_from_slice(&(e.subsamples.len() as u16).to_be_bytes());
+                let subsample_count =
+                    broadcast_common::len::fit_u16(e.subsamples.len(), "subsample_count")?;
+                buf[c..c + 2].copy_from_slice(&subsample_count.to_be_bytes());
                 c += 2;
                 for s in &e.subsamples {
                     buf[c..c + 2].copy_from_slice(&s.bytes_of_clear_data.to_be_bytes());
@@ -591,14 +594,16 @@ impl Serialize for ProtectionSystemSpecificHeaderBox {
         buf[c..c + 16].copy_from_slice(&self.system_id);
         c += 16;
         if self.version > 0 {
-            buf[c..c + 4].copy_from_slice(&(self.kids.len() as u32).to_be_bytes());
+            let kid_count = broadcast_common::len::fit_u32(self.kids.len(), "KID_count")?;
+            buf[c..c + 4].copy_from_slice(&kid_count.to_be_bytes());
             c += 4;
             for kid in &self.kids {
                 buf[c..c + 16].copy_from_slice(kid);
                 c += 16;
             }
         }
-        buf[c..c + 4].copy_from_slice(&(self.data.len() as u32).to_be_bytes());
+        let data_size = broadcast_common::len::fit_u32(self.data.len(), "DataSize")?;
+        buf[c..c + 4].copy_from_slice(&data_size.to_be_bytes());
         c += 4;
         buf[c..c + self.data.len()].copy_from_slice(&self.data);
         c += self.data.len();
@@ -737,7 +742,8 @@ impl Serialize for SampleAuxInfoSizesBox {
         }
         buf[c] = self.default_sample_info_size;
         c += 1;
-        let sample_count = self.sample_info_sizes.len() as u32;
+        let sample_count =
+            broadcast_common::len::fit_u32(self.sample_info_sizes.len(), "sample_count")?;
         buf[c..c + 4].copy_from_slice(&sample_count.to_be_bytes());
         c += 4;
         if self.default_sample_info_size == 0 {
@@ -896,11 +902,13 @@ impl Serialize for SampleAuxInfoOffsetsBox {
             buf[c..c + 4].copy_from_slice(&param.to_be_bytes());
             c += 4;
         }
-        buf[c..c + 4].copy_from_slice(&(self.offsets.len() as u32).to_be_bytes());
+        let entry_count = broadcast_common::len::fit_u32(self.offsets.len(), "entry_count")?;
+        buf[c..c + 4].copy_from_slice(&entry_count.to_be_bytes());
         c += 4;
         if self.version == 0 {
             for &off in &self.offsets {
-                buf[c..c + 4].copy_from_slice(&(off as u32).to_be_bytes());
+                let off32 = broadcast_common::len::fit_bits(off, 32, "offset")? as u32;
+                buf[c..c + 4].copy_from_slice(&off32.to_be_bytes());
                 c += 4;
             }
         } else {
@@ -1566,5 +1574,104 @@ mod tests {
             matches!(err, Error::BufferTooShort { .. } | Error::InvalidInput(_)),
             "expected BufferTooShort/InvalidInput, got {err:?}"
         );
+    }
+
+    /// A `senc` entry with more than 65 535 subsamples cannot fit the 16-bit
+    /// `subsample_count` field (#1129): unfixed, `.len() as u16` wraps 65536
+    /// down to 0 while all 65536 subsample pairs are still written.
+    #[test]
+    fn senc_oversized_subsample_count_errors() {
+        let senc = SampleEncryptionBox {
+            version: 0,
+            flags: SENC_FLAG_USE_SUBSAMPLE_ENCRYPTION,
+            per_sample_iv_size: 8,
+            entries: alloc::vec![SampleEncryptionEntry {
+                initialization_vector: alloc::vec![0u8; 8],
+                subsamples: (0..65536)
+                    .map(|_| SubSampleEntry {
+                        bytes_of_clear_data: 1,
+                        bytes_of_protected_data: 1,
+                    })
+                    .collect(),
+            }],
+        };
+        let err = senc.try_to_bytes().unwrap_err();
+        assert!(
+            matches!(
+                err,
+                Error::FieldOverflow(broadcast_common::len::FieldOverflow {
+                    field: "subsample_count",
+                    ..
+                })
+            ),
+            "expected FieldOverflow for subsample_count, got {err:?}"
+        );
+    }
+
+    /// The boundary: exactly 65 535 subsamples still round-trips.
+    #[test]
+    fn senc_max_subsample_count_round_trips() {
+        let senc = SampleEncryptionBox {
+            version: 0,
+            flags: SENC_FLAG_USE_SUBSAMPLE_ENCRYPTION,
+            per_sample_iv_size: 8,
+            entries: alloc::vec![SampleEncryptionEntry {
+                initialization_vector: alloc::vec![0u8; 8],
+                subsamples: (0..65535)
+                    .map(|_| SubSampleEntry {
+                        bytes_of_clear_data: 1,
+                        bytes_of_protected_data: 1,
+                    })
+                    .collect(),
+            }],
+        };
+        let bytes = senc.try_to_bytes().unwrap();
+        let parsed = SampleEncryptionBox::parse_body(
+            &bytes[BOX_HDR + FULL_HDR..],
+            senc.version,
+            senc.flags,
+            senc.per_sample_iv_size,
+        )
+        .unwrap();
+        assert_eq!(parsed.entries[0].subsamples.len(), 65535);
+    }
+
+    /// A `saio` version-0 offset past `u32::MAX` cannot fit the 32-bit
+    /// wire field (#1129): unfixed, `(off as u32)` silently truncated it.
+    #[test]
+    fn saio_v0_oversized_offset_errors() {
+        let saio = SampleAuxInfoOffsetsBox {
+            version: 0,
+            flags: 0,
+            aux_info_type: None,
+            aux_info_type_parameter: None,
+            offsets: alloc::vec![u64::from(u32::MAX) + 1],
+        };
+        let err = saio.try_to_bytes().unwrap_err();
+        assert!(
+            matches!(
+                err,
+                Error::FieldOverflow(broadcast_common::len::FieldOverflow {
+                    field: "offset",
+                    ..
+                })
+            ),
+            "expected FieldOverflow for offset, got {err:?}"
+        );
+    }
+
+    /// The boundary: exactly `u32::MAX` still round-trips in version 0.
+    #[test]
+    fn saio_v0_max_offset_round_trips() {
+        let saio = SampleAuxInfoOffsetsBox {
+            version: 0,
+            flags: 0,
+            aux_info_type: None,
+            aux_info_type_parameter: None,
+            offsets: alloc::vec![u64::from(u32::MAX)],
+        };
+        let bytes = saio.try_to_bytes().unwrap();
+        let parsed = SampleAuxInfoOffsetsBox::parse_box(&bytes).unwrap();
+        assert_eq!(parsed.offsets, alloc::vec![u64::from(u32::MAX)]);
     }
 }

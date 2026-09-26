@@ -108,8 +108,8 @@ impl Serialize for HevcNalUnit {
                 have: buf.len(),
             });
         }
-        let len = self.0.len();
-        buf[..2].copy_from_slice(&(len as u16).to_be_bytes());
+        let len = broadcast_common::len::fit_u16(self.0.len(), "nalUnitLength")?;
+        buf[..2].copy_from_slice(&len.to_be_bytes());
         buf[2..need].copy_from_slice(&self.0);
         Ok(need)
     }
@@ -166,8 +166,8 @@ impl Serialize for HevcNalArray {
         cursor += 1;
 
         // numNalus as u16
-        let count = self.nalus.len();
-        buf[cursor..cursor + 2].copy_from_slice(&(count as u16).to_be_bytes());
+        let count = broadcast_common::len::fit_u16(self.nalus.len(), "numNalus")?;
+        buf[cursor..cursor + 2].copy_from_slice(&count.to_be_bytes());
         cursor += 2;
 
         for nalu in &self.nalus {
@@ -175,5 +175,71 @@ impl Serialize for HevcNalArray {
         }
 
         Ok(cursor)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A NAL unit of 65 536 bytes cannot fit `HevcNalUnit`'s 16-bit
+    /// `nalUnitLength` field (#1129): unfixed, `(len as u16)` silently
+    /// wrapped 65536 to 0 while the full-length payload was still copied.
+    #[test]
+    fn hevc_nal_unit_oversized_length_errors() {
+        let nalu = HevcNalUnit(alloc::vec![0xAAu8; 65536]);
+        let err = nalu.try_to_bytes().unwrap_err();
+        assert!(
+            matches!(
+                err,
+                Error::FieldOverflow(broadcast_common::len::FieldOverflow {
+                    field: "nalUnitLength",
+                    ..
+                })
+            ),
+            "expected FieldOverflow for nalUnitLength, got {err:?}"
+        );
+    }
+
+    /// The boundary: exactly 65 535 bytes (u16::MAX) still round-trips.
+    #[test]
+    fn hevc_nal_unit_max_length_round_trips() {
+        let nalu = HevcNalUnit(alloc::vec![0xAAu8; 65535]);
+        let bytes = nalu.try_to_bytes().unwrap();
+        assert_eq!(u16::from_be_bytes([bytes[0], bytes[1]]), 65535);
+    }
+
+    /// 65 536 NAL units in one array cannot fit `HevcNalArray`'s 16-bit
+    /// `numNalus` field (#1129): unfixed, `.len() as u16` wrapped.
+    #[test]
+    fn hevc_nal_array_oversized_count_errors() {
+        let arr = HevcNalArray {
+            array_completeness: false,
+            nal_unit_type: 33,
+            nalus: (0..65536).map(|_| HevcNalUnit(alloc::vec![0x42])).collect(),
+        };
+        let err = arr.try_to_bytes().unwrap_err();
+        assert!(
+            matches!(
+                err,
+                Error::FieldOverflow(broadcast_common::len::FieldOverflow {
+                    field: "numNalus",
+                    ..
+                })
+            ),
+            "expected FieldOverflow for numNalus, got {err:?}"
+        );
+    }
+
+    /// The boundary: exactly 65 535 NAL units still round-trips.
+    #[test]
+    fn hevc_nal_array_max_count_round_trips() {
+        let arr = HevcNalArray {
+            array_completeness: false,
+            nal_unit_type: 33,
+            nalus: (0..65535).map(|_| HevcNalUnit(alloc::vec![0x42])).collect(),
+        };
+        let bytes = arr.try_to_bytes().unwrap();
+        assert_eq!(u16::from_be_bytes([bytes[1], bytes[2]]), 65535);
     }
 }

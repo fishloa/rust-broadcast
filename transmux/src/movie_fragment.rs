@@ -634,7 +634,8 @@ impl Serialize for TrackFragmentRunBox {
         buf[c + 2] = fb[2];
         buf[c + 3] = fb[3];
         c += 4;
-        buf[c..c + 4].copy_from_slice(&(self.samples.len() as u32).to_be_bytes());
+        let sample_count = broadcast_common::len::fit_u32(self.samples.len(), "sample_count")?;
+        buf[c..c + 4].copy_from_slice(&sample_count.to_be_bytes());
         c += 4;
         if self.tr_flags & TRUN_DATA_OFFSET_PRESENT != 0 {
             buf[c..c + 4].copy_from_slice(&self.data_offset.unwrap_or(0).to_be_bytes());

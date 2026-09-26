@@ -157,7 +157,8 @@ fn multi_chunk_reassembly_spans_and_interleaves() {
             },
         ],
         CHUNK,
-    );
+    )
+    .unwrap();
     let re = read_chunks(&out).unwrap();
     assert_eq!(re.len(), 2);
     assert_eq!(re[0].body, video_body, "writer→reader preserves video body");
@@ -315,7 +316,7 @@ fn rtmp_demux_matches_flv_demux() {
     );
 
     // Chunk everything, then RtmpDemux → IR.
-    let wire = write_chunks(&messages, CHUNK);
+    let wire = write_chunks(&messages, CHUNK).unwrap();
     let mut rtmp_demux = RtmpDemux::new();
     let rtmp_media = rtmp_demux.unpackage(&wire).expect("RTMP → IR");
 

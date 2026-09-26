@@ -767,7 +767,7 @@ impl Serialize for ESDescriptor {
 
         // URL
         if let Some(ref u) = self.url {
-            buf[cursor] = u.len() as u8;
+            buf[cursor] = broadcast_common::len::fit_u8(u.len(), "URLstring length")?;
             cursor += 1;
             buf[cursor..cursor + u.len()].copy_from_slice(u.as_bytes());
             cursor += u.len();
@@ -1069,6 +1069,69 @@ mod tests {
         dc.object_type_indication = ObjectTypeIndication(0x21); // AVC
         let mutated = es2.to_bytes();
         assert_ne!(mutated, original, "mutating OTI must change bytes");
+    }
+
+    fn es_descriptor_with_url(url: alloc::string::String) -> ESDescriptor {
+        ESDescriptor {
+            es_id: 2,
+            stream_dependence_flag: false,
+            url_flag: true,
+            ocr_stream_flag: false,
+            stream_priority: 0,
+            depends_on_es_id: None,
+            url: Some(url),
+            ocr_es_id: None,
+            decoder_config: Some(DecoderConfigDescriptor {
+                object_type_indication: ObjectTypeIndication(0x40),
+                stream_type: StreamType(5),
+                up_stream: false,
+                buffer_size_db: 0,
+                max_bitrate: 24576000,
+                avg_bitrate: 24576005,
+                decoder_specific_info: Some(DecoderSpecificInfo {
+                    data: vec![0x12, 0x08, 0x56, 0xe5, 0x00],
+                }),
+            }),
+            sl_config: Some(SLConfigDescriptor { body: vec![0x02] }),
+        }
+    }
+
+    /// A `URLstring` of 256 bytes cannot fit the 8-bit `URLlength` field
+    /// (#1129): unfixed, `(u.len() as u8)` wraps 256 to 0 while the full
+    /// URL bytes are still written, misframing the descriptor.
+    #[test]
+    fn oversized_url_length_errors() {
+        let es = es_descriptor_with_url("x".repeat(256));
+        let err = es.try_to_bytes().unwrap_err();
+        assert!(
+            matches!(
+                err,
+                Error::FieldOverflow(broadcast_common::len::FieldOverflow {
+                    field: "URLstring length",
+                    ..
+                })
+            ),
+            "expected FieldOverflow for URLstring length, got {err:?}"
+        );
+    }
+
+    /// The boundary: exactly 255 bytes (u8::MAX) still round-trips.
+    #[test]
+    fn max_url_length_round_trips() {
+        // Checks the written `URLlength` byte directly: a full `parse()`
+        // round-trip through `ESDescriptor` at this size hits an unrelated,
+        // pre-existing sub-descriptor size-accounting issue (reproduces even
+        // with a 100-byte URL, so it is not this fix's concern) — this test
+        // is only about the URLlength field this fix touches.
+        let url = "x".repeat(255);
+        let es = es_descriptor_with_url(url.clone());
+        let bytes = es.try_to_bytes().unwrap();
+        let url_bytes = url.as_bytes();
+        let pos = bytes
+            .windows(url_bytes.len())
+            .position(|w| w == url_bytes)
+            .expect("URL bytes present in output");
+        assert_eq!(bytes[pos - 1], 255, "URLlength byte must be exactly 255");
     }
 
     // r04-C4: an ES_Descriptor whose varint size exceeds the remaining payload

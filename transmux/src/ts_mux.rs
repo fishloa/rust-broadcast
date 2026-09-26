@@ -101,6 +101,13 @@ const CRC32_LEN: usize = 4;
 const SECTION_SYNTAX_FLAGS_HI: u8 = 0xB0;
 /// Mask for the low 4 bits of the 12-bit `section_length` high byte.
 const SECTION_LENGTH_HI_MASK: u8 = 0x0F;
+/// Maximum `section_length` this crate accepts (§2.4.4.8): the 12-bit wire
+/// field can encode up to 4095, but §2.4.4.4 additionally bounds every
+/// section other than the private/DSM-CC forms to 1021 bytes, so a PMT past
+/// this — about 20 audio tracks with language/AC-3/DVB descriptors — is
+/// rejected rather than emitting an out-of-spec section or, past 4095,
+/// silently wrapping the length field.
+const MAX_SECTION_LENGTH: usize = 0x3FD;
 /// `version_number`(5)=0 | `current_next_indicator`(1)=1, with the two leading
 /// reserved bits set to 1 (`11` per the spec reserved convention) → 0xC1.
 const VERSION_CURRENT_NEXT: u8 = 0xC1;
@@ -723,11 +730,11 @@ pub(crate) fn mux_tracks_at(
 
     // ── 2. Build the PSI (PAT + PMT) and packetise it first (PUSI order) ──
     let mut out: Vec<u8> = Vec::new();
-    let pat = build_pat_section(PMT_PID);
+    let pat = build_pat_section(PMT_PID)?;
     for pkt in packetise_section(PAT_PID, &pat) {
         out.extend_from_slice(&pkt);
     }
-    let pmt = build_pmt_section(pcr_pid, &plans);
+    let pmt = build_pmt_section(pcr_pid, &plans)?;
     for pkt in packetise_section(PMT_PID, &pmt) {
         out.extend_from_slice(&pkt);
     }
@@ -1000,7 +1007,7 @@ fn append_param_sets(out: &mut Vec<u8>, sps_pps: &[Vec<u8>]) {
 
 /// Build a PAT section (one program → `pmt_pid`) with its trailing CRC_32.
 /// ISO/IEC 13818-1 §2.4.4.3.
-fn build_pat_section(pmt_pid: u16) -> Vec<u8> {
+fn build_pat_section(pmt_pid: u16) -> Result<Vec<u8>> {
     // table_body: transport_stream_id(2) + version/cni(1) + section_number(1) +
     // last_section_number(1) + one program-loop entry (program_number(2) +
     // reserved/program_map_PID(2)).
@@ -1025,7 +1032,7 @@ fn build_pat_section(pmt_pid: u16) -> Vec<u8> {
 /// descriptor (issue #576) or an audio track's language (issue #775) after a
 /// re-mux. `program_info` stays empty (no program-level descriptors are
 /// modelled).
-fn build_pmt_section(pcr_pid: u16, plans: &[EsPlan]) -> Vec<u8> {
+fn build_pmt_section(pcr_pid: u16, plans: &[EsPlan]) -> Result<Vec<u8>> {
     let mut body = Vec::new();
     // table_id_extension = program_number, then version/cni + section numbers.
     body.extend_from_slice(&PROGRAM_NUMBER.to_be_bytes());
@@ -1055,10 +1062,23 @@ fn build_pmt_section(pcr_pid: u16, plans: &[EsPlan]) -> Vec<u8> {
 /// Prepend the long-form section header (`table_id` + `section_length`) to a
 /// table body and append the trailing CRC_32, yielding a complete PSI section.
 /// ISO/IEC 13818-1 §2.4.4.1.
-fn finish_section(table_id: u8, body: Vec<u8>) -> Vec<u8> {
+///
+/// # Errors
+///
+/// Returns [`Error::BufferCapExceeded`] if `body.len() + CRC32_LEN` exceeds
+/// [`MAX_SECTION_LENGTH`] — checked before narrowing, so a PMT this large
+/// never silently wraps the 12-bit `section_length` field (past 4095) or
+/// emits an out-of-spec section (1022..=4095, §2.4.4.4).
+fn finish_section(table_id: u8, body: Vec<u8>) -> Result<Vec<u8>> {
     // section_length counts everything after the 3-byte prefix, i.e. the body
     // (which already includes table_id_extension etc.) plus the 4-byte CRC.
     let section_length = body.len() + CRC32_LEN;
+    if section_length > MAX_SECTION_LENGTH {
+        return Err(Error::BufferCapExceeded {
+            what: "PSI section_length",
+            cap: MAX_SECTION_LENGTH,
+        });
+    }
     let mut section = Vec::with_capacity(3 + section_length);
     section.push(table_id);
     section.push(SECTION_SYNTAX_FLAGS_HI | ((section_length >> 8) as u8 & SECTION_LENGTH_HI_MASK));
@@ -1066,7 +1086,7 @@ fn finish_section(table_id: u8, body: Vec<u8>) -> Vec<u8> {
     section.extend_from_slice(&body);
     let crc = crc32_mpeg2::compute(&section);
     section.extend_from_slice(&crc.to_be_bytes());
-    section
+    Ok(section)
 }
 
 /// Packetise one complete PSI section into 188-byte TS packets on `pid`.
@@ -1389,7 +1409,7 @@ mod tests {
 
     #[test]
     fn pat_section_crc_is_valid() {
-        let pat = build_pat_section(PMT_PID);
+        let pat = build_pat_section(PMT_PID).unwrap();
         // CRC over the whole section (incl. its own trailing CRC) must be 0 for a
         // valid MPEG-2 section (crc32_mpeg2 residue property).
         assert_eq!(crc32_mpeg2::compute(&pat), 0);
@@ -1407,7 +1427,7 @@ mod tests {
             hevc_vps_sps_pps: Vec::new(),
             descriptors: Vec::new(),
         }];
-        let pmt = build_pmt_section(ES_PID_BASE, &plans);
+        let pmt = build_pmt_section(ES_PID_BASE, &plans).unwrap();
         assert_eq!(crc32_mpeg2::compute(&pmt), 0);
         assert_eq!(pmt[0], TABLE_ID_PMT);
     }
@@ -1429,7 +1449,7 @@ mod tests {
             hevc_vps_sps_pps: Vec::new(),
             descriptors: descriptors.clone(),
         }];
-        let pmt = build_pmt_section(ES_PID_BASE, &plans);
+        let pmt = build_pmt_section(ES_PID_BASE, &plans).unwrap();
         assert_eq!(crc32_mpeg2::compute(&pmt), 0);
         // Locate the ES_info bytes: body starts at offset 8 (section header),
         // program_info_length is 0, so the ES loop starts right after the
@@ -1448,7 +1468,7 @@ mod tests {
 
     #[test]
     fn section_packets_are_whole_and_pusi() {
-        let pat = build_pat_section(PMT_PID);
+        let pat = build_pat_section(PMT_PID).unwrap();
         let pkts = packetise_section(PAT_PID, &pat);
         assert_eq!(pkts.len(), 1);
         // sync byte + PUSI bit.
@@ -1614,5 +1634,60 @@ mod tests {
                  got {other:?} — a truncated loop would be a malformed PMT"
             ),
         }
+    }
+
+    /// One ES entry with a large-but-in-cap `ES_info` loop pushes the PMT's
+    /// overall `section_length` (fixed 9 bytes + this entry's 5-byte header +
+    /// descriptors + 4-byte trailing CRC) to 1022 — one past the §2.4.4.4 cap
+    /// of 1021 (#1129). Unfixed, `finish_section` masked the 12-bit field
+    /// (`& SECTION_LENGTH_HI_MASK`) and returned `Ok` with an out-of-spec (and,
+    /// past 4095, wrapped) section.
+    #[test]
+    fn pmt_section_length_past_1021_errors() {
+        let plans = alloc::vec![EsPlan {
+            pid: ES_PID_BASE,
+            stream_id: StreamId(0),
+            kind: EsKind::Data {
+                stream_type: 0x06,
+                carriage: DataCarriage::Pes,
+            },
+            asc: None,
+            avc_sps_pps: Vec::new(),
+            hevc_vps_sps_pps: Vec::new(),
+            descriptors: alloc::vec![0u8; 1004],
+        }];
+        let err = build_pmt_section(ES_PID_BASE, &plans).unwrap_err();
+        assert!(
+            matches!(
+                err,
+                Error::BufferCapExceeded {
+                    what: "PSI section_length",
+                    cap: MAX_SECTION_LENGTH,
+                }
+            ),
+            "expected BufferCapExceeded for PSI section_length, got {err:?}"
+        );
+    }
+
+    /// The boundary: a PMT whose `section_length` is exactly 1021 (the
+    /// §2.4.4.4 maximum) still builds and CRCs cleanly.
+    #[test]
+    fn pmt_section_length_at_1021_succeeds() {
+        let plans = alloc::vec![EsPlan {
+            pid: ES_PID_BASE,
+            stream_id: StreamId(0),
+            kind: EsKind::Data {
+                stream_type: 0x06,
+                carriage: DataCarriage::Pes,
+            },
+            asc: None,
+            avc_sps_pps: Vec::new(),
+            hevc_vps_sps_pps: Vec::new(),
+            descriptors: alloc::vec![0u8; 1003],
+        }];
+        let pmt = build_pmt_section(ES_PID_BASE, &plans).unwrap();
+        let section_length = (((pmt[1] & SECTION_LENGTH_HI_MASK) as usize) << 8) | pmt[2] as usize;
+        assert_eq!(section_length, MAX_SECTION_LENGTH);
+        assert_eq!(crc32_mpeg2::compute(&pmt), 0);
     }
 }

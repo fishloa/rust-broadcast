@@ -354,7 +354,7 @@ impl Serialize for HEVCDecoderConfigurationRecord {
         cursor += 1;
 
         // numOfArrays
-        buf[cursor] = self.arrays.len() as u8;
+        buf[cursor] = broadcast_common::len::fit_u8(self.arrays.len(), "numOfArrays")?;
         cursor += 1;
 
         // NAL arrays
@@ -364,16 +364,16 @@ impl Serialize for HEVCDecoderConfigurationRecord {
             buf[cursor] = first_byte;
             cursor += 1;
 
-            let num = arr.nalus.len();
-            buf[cursor..cursor + 2].copy_from_slice(&(num as u16).to_be_bytes());
+            let num = broadcast_common::len::fit_u16(arr.nalus.len(), "numNalus")?;
+            buf[cursor..cursor + 2].copy_from_slice(&num.to_be_bytes());
             cursor += 2;
 
             for nalu in &arr.nalus {
-                let len = nalu.0.len();
-                buf[cursor..cursor + 2].copy_from_slice(&(len as u16).to_be_bytes());
+                let len = broadcast_common::len::fit_u16(nalu.0.len(), "nalUnitLength")?;
+                buf[cursor..cursor + 2].copy_from_slice(&len.to_be_bytes());
                 cursor += 2;
-                buf[cursor..cursor + len].copy_from_slice(&nalu.0);
-                cursor += len;
+                buf[cursor..cursor + nalu.0.len()].copy_from_slice(&nalu.0);
+                cursor += nalu.0.len();
             }
         }
 
@@ -699,5 +699,89 @@ mod tests {
         assert_eq!(re.constant_frame_rate, 1);
         assert_eq!(re.parallelism_type, 2);
         assert_eq!(re.chroma_format_idc, 2);
+    }
+
+    fn record_with_arrays(arrays: Vec<HevcNalArray>) -> HEVCDecoderConfigurationRecord {
+        let body = make_minimal_hvcc_body();
+        let mut record = HEVCDecoderConfigurationRecord::parse(&body).unwrap();
+        record.arrays = arrays;
+        record
+    }
+
+    /// A NAL unit of 65 536 bytes cannot fit the 16-bit `nalUnitLength`
+    /// field (#1129): unfixed, `(len as u16)` wraps 65536 to 0, and the
+    /// full-length payload is still copied — a misframed record with `Ok`.
+    #[test]
+    fn oversized_nalu_length_errors() {
+        let record = record_with_arrays(vec![HevcNalArray {
+            array_completeness: true,
+            nal_unit_type: 32,
+            nalus: vec![HevcNalUnit(vec![0xAAu8; 65536])],
+        }]);
+        let err = record.try_to_bytes().unwrap_err();
+        assert!(
+            matches!(
+                err,
+                Error::FieldOverflow(broadcast_common::len::FieldOverflow {
+                    field: "nalUnitLength",
+                    ..
+                })
+            ),
+            "expected FieldOverflow for nalUnitLength, got {err:?}"
+        );
+    }
+
+    /// The boundary: exactly 65 535 bytes (u16::MAX) still round-trips.
+    #[test]
+    fn max_nalu_length_round_trips() {
+        let record = record_with_arrays(vec![HevcNalArray {
+            array_completeness: true,
+            nal_unit_type: 32,
+            nalus: vec![HevcNalUnit(vec![0xAAu8; 65535])],
+        }]);
+        let bytes = record.try_to_bytes().unwrap();
+        let re = HEVCDecoderConfigurationRecord::parse(&bytes).unwrap();
+        assert_eq!(re.arrays[0].nalus[0].0.len(), 65535);
+    }
+
+    /// 256 arrays cannot fit the 8-bit `numOfArrays` field (#1129): unfixed,
+    /// `.len() as u8` wraps 256 to 0 while all 256 arrays are still written.
+    #[test]
+    fn too_many_arrays_errors() {
+        let arrays: Vec<HevcNalArray> = (0..256)
+            .map(|_| HevcNalArray {
+                array_completeness: false,
+                nal_unit_type: 33,
+                nalus: vec![HevcNalUnit(vec![0x42])],
+            })
+            .collect();
+        let record = record_with_arrays(arrays);
+        let err = record.try_to_bytes().unwrap_err();
+        assert!(
+            matches!(
+                err,
+                Error::FieldOverflow(broadcast_common::len::FieldOverflow {
+                    field: "numOfArrays",
+                    ..
+                })
+            ),
+            "expected FieldOverflow for numOfArrays, got {err:?}"
+        );
+    }
+
+    /// The boundary: exactly 255 arrays (max for an 8-bit field) round-trips.
+    #[test]
+    fn max_arrays_round_trips() {
+        let arrays: Vec<HevcNalArray> = (0..255)
+            .map(|_| HevcNalArray {
+                array_completeness: false,
+                nal_unit_type: 33,
+                nalus: vec![HevcNalUnit(vec![0x42])],
+            })
+            .collect();
+        let record = record_with_arrays(arrays);
+        let bytes = record.try_to_bytes().unwrap();
+        let re = HEVCDecoderConfigurationRecord::parse(&bytes).unwrap();
+        assert_eq!(re.arrays.len(), 255);
     }
 }

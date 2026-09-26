@@ -440,6 +440,16 @@ impl<'a> KeyMaterial<'a> {
                 reason: "length must be a whole number of 4-byte words",
             });
         }
+        // `SLen/4` is an 8-bit wire field (§3.2.2): a salt over 1020 bytes
+        // would otherwise shift into the reserved `Resv3` bits, misframing
+        // the message with `Ok` (#1129). Checked in `usize` before the
+        // 8-bit field is packed below.
+        broadcast_common::len::fit_bits((self.salt.len() / 4) as u64, 8, "Salt length / 4 (SLen)")
+            .map_err(|e| Error::FieldTooWide {
+                what: e.field,
+                value: e.value,
+                bits: 8,
+            })?;
         if !matches!(self.x_sek.len(), 16 | 24 | 32) {
             return Err(Error::InvalidKeyMaterial {
                 field: "xSEK",
@@ -586,5 +596,53 @@ mod tests {
             km.serialize_into(&mut buf),
             Err(Error::InvalidKeyMaterial { .. })
         ));
+    }
+
+    /// A salt of 1024 bytes (`SLen/4` = 256) cannot fit the 8-bit `SLen`
+    /// wire field (max 255, i.e. 1020 bytes; #1129): unfixed, `(slen4 as u8)`
+    /// (well, the packed `u32` word) wraps 256 to 0 and shifts into the
+    /// reserved `Resv3` bits, misframing the message with `Ok`.
+    #[test]
+    fn oversized_salt_length_errors() {
+        let salt = alloc::vec![0xAAu8; 1024];
+        let km = KeyMaterial {
+            kk: KmKeyFlag::Even,
+            keki: 0,
+            cipher: Cipher::AesCtr,
+            auth: KmAuth::None,
+            se: StreamEncapsulation::MpegTsSrt,
+            salt: &salt,
+            icv: [0; 8],
+            x_sek: &[0xEE; 16],
+            o_sek: None,
+        };
+        let mut buf = alloc::vec![0u8; km.serialized_len()];
+        let err = km.serialize_into(&mut buf).unwrap_err();
+        assert!(
+            matches!(err, Error::FieldTooWide { bits: 8, .. }),
+            "expected FieldTooWide(bits=8) for SLen, got {err:?}"
+        );
+    }
+
+    /// The boundary: exactly 1020 bytes (`SLen/4` = 255, the 8-bit max)
+    /// still serializes and round-trips.
+    #[test]
+    fn max_salt_length_round_trips() {
+        let salt = alloc::vec![0xAAu8; 1020];
+        let km = KeyMaterial {
+            kk: KmKeyFlag::Even,
+            keki: 0,
+            cipher: Cipher::AesCtr,
+            auth: KmAuth::None,
+            se: StreamEncapsulation::MpegTsSrt,
+            salt: &salt,
+            icv: [0; 8],
+            x_sek: &[0xEE; 16],
+            o_sek: None,
+        };
+        let mut buf = alloc::vec![0u8; km.serialized_len()];
+        km.serialize_into(&mut buf).unwrap();
+        let parsed = KeyMaterial::parse(&buf).unwrap();
+        assert_eq!(parsed.salt, salt.as_slice());
     }
 }

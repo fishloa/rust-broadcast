@@ -46,4 +46,11 @@ pub enum RtmpError {
         /// What is unsupported.
         what: &'static str,
     },
+
+    /// A length or count did not fit the wire field it is written to
+    /// (#1129): a serializer that narrowed a `usize` with `as u32` (then
+    /// packed it into a 24-bit field) would have silently wrapped and
+    /// emitted a misframed chunk stream; this is returned instead.
+    #[error(transparent)]
+    FieldOverflow(#[from] broadcast_common::len::FieldOverflow),
 }

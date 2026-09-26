@@ -95,4 +95,11 @@ pub enum Error {
     /// An error from the underlying `rtcp-packet` crate.
     #[error(transparent)]
     Rtcp(#[from] rtcp_packet::Error),
+
+    /// A length or count did not fit the wire field it is written to
+    /// (#1129): a serializer that narrowed a `usize` with `as u16` (or
+    /// similar) would have silently wrapped and emitted a misframed packet;
+    /// this is returned instead.
+    #[error(transparent)]
+    FieldOverflow(#[from] broadcast_common::len::FieldOverflow),
 }
