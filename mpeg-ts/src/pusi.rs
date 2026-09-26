@@ -17,6 +17,11 @@
 
 use alloc::vec::Vec;
 
+/// Default maximum accumulated unit size. PES packets with `PES_packet_length == 0` are unbounded
+/// per ISO/IEC 13818-1 §2.4.3.7, so this practical default of 16 MiB prevents memory exhaustion
+/// while accommodating large payloads (e.g., I-frames).
+pub const DEFAULT_MAX_UNIT_SIZE: usize = 16 * 1024 * 1024;
+
 /// Generic PUSI-delimited payload reassembler.
 ///
 /// Accumulates payload bytes across consecutive TS packets sharing the same
@@ -48,16 +53,30 @@ pub struct PusiReassembler {
     buf: Vec<u8>,
     /// `true` once at least one byte has been appended.
     started: bool,
+    /// Maximum allowed unit size; units exceeding this are discarded.
+    max_unit_size: usize,
 }
 
 impl PusiReassembler {
-    /// Create a new reassembler for the given `pid`.
+    /// Create a new reassembler for the given `pid` using the default maximum unit size.
     #[inline]
     pub fn new(pid: u16) -> Self {
         Self {
             pid,
             buf: Vec::new(),
             started: false,
+            max_unit_size: DEFAULT_MAX_UNIT_SIZE,
+        }
+    }
+
+    /// Create a new reassembler with a custom maximum unit size.
+    #[inline]
+    pub fn with_max_unit_size(pid: u16, max: usize) -> Self {
+        Self {
+            pid,
+            buf: Vec::new(),
+            started: false,
+            max_unit_size: max,
         }
     }
 
@@ -96,7 +115,20 @@ impl PusiReassembler {
             return None;
         }
 
-        // Non-PUSI: append to the in-progress unit.
+        // Non-PUSI: append to the in-progress unit only if started.
+        // Ignore all non-PUSI payloads before the first PUSI.
+        if !self.started {
+            return None;
+        }
+
+        // Check if adding this payload would exceed the cap.
+        if self.buf.len().saturating_add(payload.len()) > self.max_unit_size {
+            // Unit exceeds the cap; discard it and reset for the next PUSI.
+            self.buf.clear();
+            self.started = false;
+            return None;
+        }
+
         self.buf.extend_from_slice(payload);
         None
     }
@@ -118,6 +150,7 @@ impl PusiReassembler {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::vec;
 
     /// A synthetic "box" larger than a single TS payload (184 bytes).
     /// We use a valid big-endian size prefix so the test is realistic.
@@ -208,5 +241,84 @@ mod tests {
         assert!(reasm.push(pid, true, b"single-packet-emsg").is_none());
         let flushed = reasm.flush();
         assert_eq!(flushed.as_deref(), Some(b"single-packet-emsg".as_slice()));
+    }
+
+    #[test]
+    fn ignores_payload_before_first_pusi() {
+        let pid = 0x0004u16;
+        let mut reasm = PusiReassembler::new(pid);
+
+        // Feed non-PUSI payloads before any PUSI — these should be ignored.
+        assert!(reasm.push(pid, false, b"junk1").is_none());
+        assert!(reasm.push(pid, false, b"junk2").is_none());
+
+        // First PUSI starts a new unit.
+        assert!(reasm.push(pid, true, b"real-data").is_none());
+
+        let flushed = reasm.flush();
+        // The flushed unit must be exactly "real-data", not "junk1junk2real-data".
+        assert_eq!(flushed.as_deref(), Some(b"real-data".as_slice()));
+    }
+
+    #[test]
+    fn caps_buffer_at_default_max_unit_size() {
+        let pid = 0x0004u16;
+        let mut reasm = PusiReassembler::new(pid);
+
+        // Start with PUSI.
+        assert!(reasm.push(pid, true, &[0u8; 10]).is_none());
+
+        // Verify the default cap is DEFAULT_MAX_UNIT_SIZE.
+        assert_eq!(reasm.max_unit_size, DEFAULT_MAX_UNIT_SIZE);
+
+        // Flush and verify.
+        let flushed = reasm.flush();
+        assert_eq!(flushed.as_deref(), Some(&[0u8; 10][..]));
+    }
+
+    #[test]
+    fn custom_cap_discards_oversized_unit() {
+        let pid = 0x0004u16;
+        let custom_cap = 1000usize;
+        let mut reasm = PusiReassembler::with_max_unit_size(pid, custom_cap);
+
+        // Start with PUSI.
+        assert!(reasm.push(pid, true, &[0u8; 10]).is_none());
+
+        // Try to feed enough non-PUSI continuation to exceed the custom cap.
+        let chunk = vec![0x42u8; 600];
+        reasm.push(pid, false, &chunk);
+
+        // The second chunk should trigger the cap check and reset.
+        reasm.push(pid, false, &chunk);
+
+        // A new PUSI returns None (prior oversized unit was discarded).
+        let completed = reasm.push(pid, true, b"new-unit");
+        assert!(completed.is_none());
+
+        // Flush the final unit.
+        let flushed = reasm.flush();
+        assert_eq!(flushed.as_deref(), Some(b"new-unit".as_slice()));
+    }
+
+    #[test]
+    fn one_mib_unit_reassembles_with_default_cap() {
+        let pid = 0x0004u16;
+        let mut reasm = PusiReassembler::new(pid);
+        let unit_size = 1024 * 1024usize;
+
+        // Start with PUSI.
+        assert!(reasm.push(pid, true, &[0u8; 10000]).is_none());
+
+        // Feed 1 MiB in chunks, well within the default 16 MiB cap.
+        let chunk = vec![0xAB; 256 * 1024];
+        for _ in 0..3 {
+            reasm.push(pid, false, &chunk);
+        }
+
+        // Flush and verify the unit is complete.
+        let flushed = reasm.flush();
+        assert!(flushed.is_some());
+        assert!(flushed.as_ref().unwrap().len() > unit_size / 2);
     }
 }
