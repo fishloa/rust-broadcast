@@ -2,6 +2,21 @@
 
 ## [Unreleased]
 
+### Fixed
+- `carousel::biop::message::decompress_zlib` now caps decompressed output at
+  a new `MAX_DECOMPRESSED_MODULE_SIZE` (64 MiB) instead of reading a
+  `compressed_module_descriptor` zlib stream to completion unconditionally —
+  a small compressed stream of highly repetitive bytes could previously force
+  an allocation orders of magnitude larger than the input. Added an additive
+  `decompress_zlib_bounded(data, max_len)` for callers that have a tighter,
+  descriptor-declared size to enforce.
+- BIOP/IOR wire-length arithmetic (`carousel/biop/message.rs`,
+  `carousel/biop/ior.rs`) now adds 32-bit wire-declared lengths to a cursor
+  via checked addition instead of plain `+`. On a 32-bit target an oversized
+  length (e.g. `messageBody_length = 0xFFFFFFFF`) could wrap `usize` rather
+  than exceed it, defeating the bounds check that followed; 64-bit targets
+  were not affected. Oversized lengths now return `Error::SectionLengthOverflow`.
+
 ## [10.0.1] - 2026-08-30
 
 ### Fixed

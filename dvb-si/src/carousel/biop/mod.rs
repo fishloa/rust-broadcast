@@ -58,6 +58,29 @@ pub const BYTE_ORDER_BIG_ENDIAN: u8 = 0x00;
 /// TR 101 202 §4.6.6.10.
 pub const COMPRESSED_MODULE_DESCRIPTOR_TAG: u8 = 0x09;
 
+/// Computes the wire-derived byte range `[pos, pos+len)`, bounded by `end`.
+///
+/// Every length field this guards (`messageBody_length`, `objectInfo_length`,
+/// `content_length`, `type_id_length`, `profile_data_length`, CosNaming
+/// `id_length`/`kind_length`, `initialContext_length`, …) is a 32-bit wire
+/// value per TR 101 202 §4.7.3/4.7.4/4.7.5; a plain `pos + len` can wrap
+/// `usize` on a 32-bit target when `len` is near `u32::MAX`, after which the
+/// `> end` guard would wrongly pass. `checked_add` makes that impossible.
+pub(super) fn span(
+    pos: usize,
+    len: u32,
+    end: usize,
+) -> crate::error::Result<core::ops::Range<usize>> {
+    let len = len as usize;
+    pos.checked_add(len)
+        .filter(|&stop| stop <= end)
+        .map(|stop| pos..stop)
+        .ok_or(crate::error::Error::SectionLengthOverflow {
+            declared: len,
+            available: end.saturating_sub(pos),
+        })
+}
+
 pub mod fs;
 pub mod ior;
 pub mod message;
