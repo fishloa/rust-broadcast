@@ -92,6 +92,12 @@ const FIRST_STREAM_ID: u32 = 1;
 /// convention" section.
 const COMMAND_CHUNK_STREAM_ID: u32 = 3;
 
+/// Number of `publish` attempts with a mismatched stream key tolerated on one
+/// connection before the session is closed. `expected_stream_key` is the only
+/// secret in the ingest path, and one TCP connection can otherwise retry
+/// `publish` with a new guess indefinitely; this bounds the guesses.
+const MAX_FAILED_PUBLISH_ATTEMPTS: u32 = 3;
+
 /// `fmsVer` value advertised in the `connect` `_result` Properties object
 /// (§7.2.1). Not spec-mandated — a conventional placeholder value (the
 /// pattern used by reference server implementations), since real clients
@@ -275,6 +281,27 @@ pub struct ServerSession {
     /// Whether the FLV file header has already been prefixed to a `Media`
     /// event (only the very first one gets it).
     flv_header_sent: bool,
+    /// Count of `publish` attempts so far on this connection whose stream
+    /// key did not match `config.expected_stream_key`. Once this reaches
+    /// [`MAX_FAILED_PUBLISH_ATTEMPTS`], the session is closed.
+    failed_publish_attempts: u32,
+}
+
+/// Constant-time byte-slice equality for the `publish` stream-key check.
+/// `expected_stream_key` is the only secret in the ingest path; comparing it
+/// with `==`/`!=` short-circuits at the first differing byte, which leaks the
+/// length of the matching prefix through timing. Lengths themselves are not
+/// secret (RTMP already reveals them on the wire), so only the fixed-width
+/// fold needs to run in constant time.
+fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    let mut diff: u8 = 0;
+    for (x, y) in a.iter().zip(b.iter()) {
+        diff |= x ^ y;
+    }
+    diff == 0
 }
 
 impl ServerSession {
@@ -296,6 +323,7 @@ impl ServerSession {
             bytes_received: 0,
             bytes_acked: 0,
             flv_header_sent: false,
+            failed_publish_attempts: 0,
         }
     }
 
@@ -603,7 +631,10 @@ impl ServerSession {
     /// *and* a stream was actually allocated by a preceding `createStream`
     /// (`created_stream_id.is_some()`) — this rejects `publish` before
     /// `connect`, `publish` before `createStream`, and `publish` after
-    /// [`State::Closed`].
+    /// [`State::Closed`]. Also [`RtmpError::UnexpectedState`] once this
+    /// connection has already exhausted [`MAX_FAILED_PUBLISH_ATTEMPTS`]
+    /// mismatched-key attempts — the session is closed at that point and the
+    /// caller must not keep driving it (see [`ServerSession::handle_data`]).
     fn handle_publish(
         &mut self,
         command: &Command,
@@ -614,6 +645,12 @@ impl ServerSession {
         if self.state != State::Connected || self.created_stream_id.is_none() {
             return Err(RtmpError::UnexpectedState {
                 what: "publish received before a successful connect+createStream (or after the session was closed)",
+            });
+        }
+        if self.failed_publish_attempts >= MAX_FAILED_PUBLISH_ATTEMPTS {
+            self.state = State::Closed;
+            return Err(RtmpError::UnexpectedState {
+                what: "publish rejected too many times on this connection (stream key mismatch); session closed",
             });
         }
         let app = self
@@ -632,8 +669,9 @@ impl ServerSession {
         let stream_id = msg.message_stream_id;
 
         if let Some(expected) = &self.config.expected_stream_key
-            && expected != &stream_key
+            && !constant_time_eq(expected.as_bytes(), stream_key.as_bytes())
         {
+            self.failed_publish_attempts += 1;
             let on_status = Command {
                 name: "onStatus".to_string(),
                 transaction_id: 0.0,
@@ -1413,6 +1451,71 @@ mod tests {
             events2.is_empty(),
             "no Media may be emitted after a rejected publish"
         );
+    }
+
+    #[test]
+    fn stream_key_match_still_publishes_with_key_configured() {
+        let config = ServerConfig {
+            expected_stream_key: Some("rightkey".to_string()),
+            ..ServerConfig::default()
+        };
+        let (_session, _out, events) = publish_flow(config, "rightkey");
+        assert!(
+            events.contains(&ServerEvent::Publish {
+                app: "live".to_string(),
+                stream_key: "rightkey".to_string(),
+                stream_id: 1,
+            }),
+            "a stream key matching expected_stream_key must still publish"
+        );
+    }
+
+    #[test]
+    fn too_many_failed_publish_attempts_closes_the_session() {
+        let config = ServerConfig {
+            expected_stream_key: Some("rightkey".to_string()),
+            ..ServerConfig::default()
+        };
+        let mut session = ServerSession::new(config);
+        session.handle_data(&build_c0_c1()).unwrap();
+        session.handle_data(&build_c2()).unwrap();
+        session.handle_data(&connect_bytes("live")).unwrap();
+        session.handle_data(&create_stream_bytes()).unwrap();
+
+        for attempt in 1..=MAX_FAILED_PUBLISH_ATTEMPTS {
+            let (_out, events) = session.handle_data(&publish_bytes(1, "wrongkey")).unwrap_or_else(|e| {
+                panic!("attempt {attempt} of {MAX_FAILED_PUBLISH_ATTEMPTS} must still be rejected, not error out: {e}")
+            });
+            assert!(
+                !events
+                    .iter()
+                    .any(|e| matches!(e, ServerEvent::Publish { .. })),
+                "attempt {attempt} must not publish"
+            );
+        }
+
+        // The attempt beyond MAX_FAILED_PUBLISH_ATTEMPTS must end the
+        // session instead of replying BadName again.
+        let err = session
+            .handle_data(&publish_bytes(1, "wrongkey"))
+            .expect_err("the attempt beyond MAX_FAILED_PUBLISH_ATTEMPTS must close the session");
+        assert!(matches!(err, RtmpError::UnexpectedState { .. }));
+
+        // The session stays closed even for the correct key.
+        let err = session
+            .handle_data(&publish_bytes(1, "rightkey"))
+            .expect_err(
+                "publish must be rejected once the session was closed for too many failures",
+            );
+        assert!(matches!(err, RtmpError::UnexpectedState { .. }));
+    }
+
+    #[test]
+    fn constant_time_eq_matches_naive_equality() {
+        assert!(constant_time_eq(b"rightkey", b"rightkey"));
+        assert!(!constant_time_eq(b"rightkey", b"wrongkey"));
+        assert!(!constant_time_eq(b"short", b"muchlonger"));
+        assert!(constant_time_eq(b"", b""));
     }
 
     // ── Ack accounting ────────────────────────────────────────────────────

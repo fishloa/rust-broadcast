@@ -6,6 +6,13 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+- `publish`'s stream-key check now compares in constant time instead of a
+  plain `!=`, so a mismatch cannot be distinguished by comparison timing.
+- A connection is now closed after `MAX_FAILED_PUBLISH_ATTEMPTS` (3)
+  `publish` attempts with a mismatched stream key, instead of allowing
+  unlimited retries on the same connection.
+
 ## [0.6.1] - 2026-09-26
 
 ### Security
