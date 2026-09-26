@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-09-26
+
+### Security
+Fixes GHSA-74gr-mvr4-2qp8.
+
 ### Fixed
 - `PusiReassembler` now ignores non-PUSI payloads until the first PUSI is received (ISO/IEC 13818-1 §2.4.3.2), preventing unrelated bytes from being prepended to reassembled units.
 - `PusiReassembler` enforces a 65536-byte cap on accumulated unit size; units exceeding this are discarded and reassembly restarts at the next PUSI boundary.
