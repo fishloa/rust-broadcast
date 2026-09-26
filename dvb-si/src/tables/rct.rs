@@ -771,7 +771,7 @@ fn parse_link_info(data: &[u8], link_info_length: usize) -> Result<LinkInfo<'_>>
     })
 }
 
-fn serialize_link_info(li: &LinkInfo, buf: &mut [u8]) -> usize {
+fn serialize_link_info(li: &LinkInfo, buf: &mut [u8]) -> Result<usize> {
     let lt = li.link_type.to_u8();
     let hr = li.how_related.to_u8();
     buf[0] =
@@ -782,7 +782,8 @@ fn serialize_link_info(li: &LinkInfo, buf: &mut [u8]) -> usize {
 
     let mut pos = 4;
     if let Some(uri) = li.media_uri {
-        buf[pos] = uri.len() as u8;
+        let uri_len = broadcast_common::len::fit_u8(uri.len(), "media_uri_length")?;
+        buf[pos] = uri_len;
         pos += 1;
         buf[pos..pos + uri.len()].copy_from_slice(uri);
         pos += uri.len();
@@ -791,24 +792,31 @@ fn serialize_link_info(li: &LinkInfo, buf: &mut [u8]) -> usize {
         let n = serialize_locator(loc, &mut buf[pos..]);
         pos += n;
     }
-    buf[pos] = ITEM_RFU_MASK | (li.items.len() as u8 & ITEM_COUNT_MASK);
+    let item_count = broadcast_common::len::fit_bits(li.items.len() as u64, 6, "number_items")?;
+    buf[pos] = ITEM_RFU_MASK | item_count as u8;
     pos += 1;
     for item in &li.items {
+        let text_len =
+            broadcast_common::len::fit_u8(item.promotional_text.len(), "promotional_text_length")?;
         buf[pos..pos + 3].copy_from_slice(&item.language_code.0);
-        buf[pos + 3] = item.promotional_text.len() as u8;
+        buf[pos + 3] = text_len;
         pos += 4;
         buf[pos..pos + item.promotional_text.len()].copy_from_slice(item.promotional_text.raw());
         pos += item.promotional_text.len();
     }
-    let dll = li.descriptors.len() as u16;
+    let dll = broadcast_common::len::fit_bits(
+        li.descriptors.len() as u64,
+        12,
+        "icon_descriptors_length",
+    )?;
     buf[pos] = u8::from(li.default_icon_flag) << 7
         | ((li.icon_id & 0x07) << ICON_ID_SHIFT)
-        | ((dll >> 8) as u8 & ICON_DESC_LEN_HI_MASK);
-    buf[pos + 1] = (dll & 0xFF) as u8;
+        | ((dll >> 8) as u8);
+    buf[pos + 1] = dll as u8;
     pos += 2;
     buf[pos..pos + li.descriptors.len()].copy_from_slice(li.descriptors.raw());
     pos += li.descriptors.len();
-    pos
+    Ok(pos)
 }
 
 impl<'a> Parse<'a> for RctSection<'a> {
@@ -933,51 +941,43 @@ impl Serialize for RctSection<'_> {
             });
         }
 
-        let section_length_usize = len - MIN_HEADER_LEN;
-        if section_length_usize > 0x0FFF {
-            return Err(Error::SectionLengthOverflow {
-                declared: section_length_usize,
-                available: 0x0FFF,
-            });
-        }
-        let section_length = section_length_usize as u16;
         buf[0] = TABLE_ID;
         let tief_bit: u8 = if self.table_id_extension_flag {
             0x40
         } else {
             0x00
         };
-        buf[1] = super::SECTION_B1_SSI
-            | tief_bit
-            | super::SECTION_B1_RESERVED_HI
-            | ((section_length >> 8) as u8 & 0x0F);
-        buf[2] = (section_length & 0xFF) as u8;
+        buf[1] = super::SECTION_B1_SSI | tief_bit | super::SECTION_B1_RESERVED_HI;
+        super::write_section_length(buf, len - MIN_HEADER_LEN)?;
 
         buf[3..5].copy_from_slice(&self.service_id.to_be_bytes());
         buf[5] = 0xC0 | ((self.version_number & 0x1F) << 1) | u8::from(self.current_next_indicator);
         buf[6] = self.section_number;
         buf[7] = self.last_section_number;
         buf[8..10].copy_from_slice(&self.year_offset.to_be_bytes());
-        if self.links.len() > u8::MAX as usize {
-            return Err(Error::SectionLengthOverflow {
-                declared: self.links.len(),
-                available: u8::MAX as usize,
-            });
-        }
-        buf[10] = self.links.len() as u8;
+        let link_count = broadcast_common::len::fit_u8(self.links.len(), "number_of_links")?;
+        buf[10] = link_count;
 
         let mut pos = MIN_HEADER_LEN + EXTENSION_HEADER_LEN + POST_EXT_FIXED_LEN;
         for li in &self.links {
-            let li_body_len = link_info_serialized_len(li) as u16;
-            buf[pos] = 0xF0 | ((li_body_len >> 8) as u8 & 0x0F);
-            buf[pos + 1] = (li_body_len & 0xFF) as u8;
+            let li_body_len = broadcast_common::len::fit_bits(
+                link_info_serialized_len(li) as u64,
+                12,
+                "link_info_length",
+            )?;
+            buf[pos] = 0xF0 | ((li_body_len >> 8) as u8);
+            buf[pos + 1] = li_body_len as u8;
             pos += LINK_ENTRY_HEADER_LEN;
-            pos += serialize_link_info(li, &mut buf[pos..]);
+            pos += serialize_link_info(li, &mut buf[pos..])?;
         }
 
-        let dll = self.descriptors.len() as u16;
-        buf[pos] = 0xF0 | ((dll >> 8) as u8 & 0x0F);
-        buf[pos + 1] = (dll & 0xFF) as u8;
+        let dll = broadcast_common::len::fit_bits(
+            self.descriptors.len() as u64,
+            12,
+            "descriptors_length",
+        )?;
+        buf[pos] = 0xF0 | ((dll >> 8) as u8);
+        buf[pos + 1] = dll as u8;
         pos += DESC_LOOP_LEN_FIELD;
         buf[pos..pos + self.descriptors.len()].copy_from_slice(self.descriptors.raw());
         pos += self.descriptors.len();
@@ -1214,6 +1214,124 @@ mod tests {
         assert!(matches!(
             RctSection::parse(&buf).unwrap_err(),
             Error::SectionLengthOverflow { .. }
+        ));
+    }
+
+    /// section_length is 12 bits (max 4095 = EXTENSION_HEADER_LEN(5) +
+    /// POST_EXT_FIXED_LEN(3, incl. the link-count byte) +
+    /// DESC_LOOP_LEN_FIELD(2) + descriptors + CRC_LEN(4), so 4081 is the
+    /// largest trailing descriptor loop that fits with no links).
+    #[test]
+    fn serialize_rejects_trailing_descriptors_exceeding_section_length() {
+        let desc = vec![0xAAu8; 4082];
+        let rct = RctSection {
+            table_id_extension_flag: false,
+            service_id: 1,
+            version_number: 0,
+            current_next_indicator: true,
+            section_number: 0,
+            last_section_number: 0,
+            year_offset: 2000,
+            links: vec![],
+            descriptors: DescriptorLoop::new(&desc),
+        };
+        let mut buf = vec![0u8; rct.serialized_len()];
+        assert!(matches!(
+            rct.serialize_into(&mut buf).unwrap_err(),
+            Error::FieldOverflow(_)
+        ));
+    }
+
+    #[test]
+    fn serialize_accepts_trailing_descriptors_at_section_length_boundary() {
+        let desc = vec![0xAAu8; 4081];
+        let rct = RctSection {
+            table_id_extension_flag: false,
+            service_id: 1,
+            version_number: 0,
+            current_next_indicator: true,
+            section_number: 0,
+            last_section_number: 0,
+            year_offset: 2000,
+            links: vec![],
+            descriptors: DescriptorLoop::new(&desc),
+        };
+        let mut buf = vec![0u8; rct.serialized_len()];
+        rct.serialize_into(&mut buf).expect("boundary fits");
+        let reparsed = RctSection::parse(&buf).expect("reparse");
+        assert_eq!(rct, reparsed);
+    }
+
+    /// promotional_text_length is an 8-bit field; 256 must be rejected, not
+    /// wrapped to 0.
+    #[test]
+    fn serialize_rejects_promotional_text_exceeding_8_bit_length() {
+        let text = vec![b'a'; 256];
+        let rct = RctSection {
+            table_id_extension_flag: false,
+            service_id: 1,
+            version_number: 0,
+            current_next_indicator: true,
+            section_number: 0,
+            last_section_number: 0,
+            year_offset: 2000,
+            links: vec![LinkInfo {
+                link_type: LinkType::from_u8(0x03),
+                how_related: HowRelated::from_u8(0),
+                term_id: 0,
+                group_id: 0,
+                precedence: 0,
+                media_uri: None,
+                dvb_binary_locator: None,
+                items: vec![LinkItem {
+                    language_code: LangCode(*b"eng"),
+                    promotional_text: DvbText::new(&text),
+                }],
+                default_icon_flag: false,
+                icon_id: 0,
+                descriptors: DescriptorLoop::new(&[]),
+            }],
+            descriptors: DescriptorLoop::new(&[]),
+        };
+        let mut buf = vec![0u8; rct.serialized_len()];
+        assert!(matches!(
+            rct.serialize_into(&mut buf).unwrap_err(),
+            Error::FieldOverflow(_)
+        ));
+    }
+
+    /// number_of_links is an 8-bit field; 256 links must be rejected, not
+    /// wrapped to 0.
+    #[test]
+    fn serialize_rejects_link_count_exceeding_8_bit_length() {
+        let link = LinkInfo {
+            link_type: LinkType::from_u8(0x03),
+            how_related: HowRelated::from_u8(0),
+            term_id: 0,
+            group_id: 0,
+            precedence: 0,
+            media_uri: None,
+            dvb_binary_locator: None,
+            items: vec![],
+            default_icon_flag: false,
+            icon_id: 0,
+            descriptors: DescriptorLoop::new(&[]),
+        };
+        let rct = RctSection {
+            table_id_extension_flag: false,
+            service_id: 1,
+            version_number: 0,
+            current_next_indicator: true,
+            section_number: 0,
+            last_section_number: 0,
+            year_offset: 2000,
+            links: core::iter::repeat_with(|| link.clone()).take(256).collect(),
+            descriptors: DescriptorLoop::new(&[]),
+        };
+        let mut buf = vec![0u8; rct.serialized_len()];
+        assert!(matches!(
+            rct.serialize_into(&mut buf).unwrap_err(),
+            Error::FieldOverflow(_)
         ));
     }
 

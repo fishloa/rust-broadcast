@@ -134,8 +134,8 @@ impl Serialize for TdtSection {
             });
         }
         buf[0] = TABLE_ID;
-        buf[1] = super::SECTION_B1_FLAGS_SHORT | ((UTC_TIME_LEN as u16 >> 8) as u8 & 0x0F);
-        buf[2] = UTC_TIME_LEN as u8;
+        buf[1] = super::SECTION_B1_FLAGS_SHORT;
+        super::write_section_length(buf, UTC_TIME_LEN)?;
         buf[3..8].copy_from_slice(&self.utc_time_raw);
         Ok(len)
     }

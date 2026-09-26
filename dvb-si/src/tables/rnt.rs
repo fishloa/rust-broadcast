@@ -405,16 +405,9 @@ impl Serialize for RntSection<'_> {
             });
         }
 
-        let section_length = (len - HEADER_LEN) as u16;
-        if section_length > 0x0FFF {
-            return Err(Error::SectionLengthOverflow {
-                declared: section_length as usize,
-                available: 0x0FFF,
-            });
-        }
         buf[0] = TABLE_ID;
-        buf[1] = super::SECTION_B1_FLAGS_DVB | ((section_length >> 8) as u8 & 0x0F);
-        buf[2] = (section_length & 0xFF) as u8;
+        buf[1] = super::SECTION_B1_FLAGS_DVB;
+        super::write_section_length(buf, len - HEADER_LEN)?;
 
         buf[3..5].copy_from_slice(&self.context_id.to_be_bytes());
         buf[5] = 0xC0 | ((self.version_number & 0x1F) << 1) | u8::from(self.current_next_indicator);
@@ -422,10 +415,14 @@ impl Serialize for RntSection<'_> {
         buf[7] = self.last_section_number;
         buf[8] = self.context_id_type.to_u8();
 
-        let cdl = self.common_descriptors.len() as u16;
+        let cdl = broadcast_common::len::fit_bits(
+            self.common_descriptors.len() as u64,
+            12,
+            "common_descriptors_length",
+        )?;
         let cdl_pos = HEADER_LEN + EXTENSION_HEADER_LEN;
-        buf[cdl_pos] = RESERVED_NIBBLE | ((cdl >> 8) as u8 & 0x0F);
-        buf[cdl_pos + 1] = (cdl & 0xFF) as u8;
+        buf[cdl_pos] = RESERVED_NIBBLE | ((cdl >> 8) as u8);
+        buf[cdl_pos + 1] = cdl as u8;
 
         let cd_start = cdl_pos + COMMON_DESC_LEN_FIELD;
         let cd_end = cd_start + self.common_descriptors.len();
@@ -434,46 +431,49 @@ impl Serialize for RntSection<'_> {
         let mut pos = cd_end;
         for rp in &self.resolution_providers {
             let rp_body_len = resolution_provider_serialized_len(rp);
-            let rp_info_length = rp_body_len as u16;
-            buf[pos] = RESERVED_NIBBLE | ((rp_info_length >> 8) as u8 & 0x0F);
-            buf[pos + 1] = (rp_info_length & 0xFF) as u8;
+            let rp_info_length = broadcast_common::len::fit_bits(
+                rp_body_len as u64,
+                12,
+                "resolution_provider_loop_length",
+            )?;
+            buf[pos] = RESERVED_NIBBLE | ((rp_info_length >> 8) as u8);
+            buf[pos + 1] = rp_info_length as u8;
             pos += RP_INFO_LEN_FIELD;
 
-            if rp.name.len() > u8::MAX as usize {
-                return Err(Error::ValueOutOfRange {
-                    field: "resolution_provider_name_length",
-                    reason: "exceeds 255 bytes",
-                });
-            }
-            buf[pos] = rp.name.len() as u8;
+            let rp_name_len =
+                broadcast_common::len::fit_u8(rp.name.len(), "resolution_provider_name_length")?;
+            buf[pos] = rp_name_len;
             pos += RP_NAME_LEN_FIELD;
             buf[pos..pos + rp.name.len()].copy_from_slice(rp.name.raw());
             pos += rp.name.len();
 
-            let rdl = rp.descriptors.len() as u16;
-            buf[pos] = RESERVED_NIBBLE | ((rdl >> 8) as u8 & 0x0F);
-            buf[pos + 1] = (rdl & 0xFF) as u8;
+            let rdl = broadcast_common::len::fit_bits(
+                rp.descriptors.len() as u64,
+                12,
+                "resolution_provider_descriptors_length",
+            )?;
+            buf[pos] = RESERVED_NIBBLE | ((rdl >> 8) as u8);
+            buf[pos + 1] = rdl as u8;
             pos += RP_DESC_LEN_FIELD;
             buf[pos..pos + rp.descriptors.len()].copy_from_slice(rp.descriptors.raw());
             pos += rp.descriptors.len();
 
             for ca in &rp.crid_authorities {
-                if ca.name.len() > u8::MAX as usize {
-                    return Err(Error::ValueOutOfRange {
-                        field: "crid_authority_name_length",
-                        reason: "exceeds 255 bytes",
-                    });
-                }
-                buf[pos] = ca.name.len() as u8;
+                let ca_name_len =
+                    broadcast_common::len::fit_u8(ca.name.len(), "crid_authority_name_length")?;
+                buf[pos] = ca_name_len;
                 pos += CA_NAME_LEN_FIELD;
                 buf[pos..pos + ca.name.len()].copy_from_slice(ca.name.raw());
                 pos += ca.name.len();
 
-                let adl = ca.descriptors.len() as u16;
-                buf[pos] = 0xC0
-                    | ((ca.crid_authority_policy.to_u8() & 0x03) << 4)
-                    | ((adl >> 8) as u8 & 0x0F);
-                buf[pos + 1] = (adl & 0xFF) as u8;
+                let adl = broadcast_common::len::fit_bits(
+                    ca.descriptors.len() as u64,
+                    12,
+                    "crid_authority_descriptors_length",
+                )?;
+                buf[pos] =
+                    0xC0 | ((ca.crid_authority_policy.to_u8() & 0x03) << 4) | ((adl >> 8) as u8);
+                buf[pos + 1] = adl as u8;
                 pos += CA_HEADER_LEN;
                 buf[pos..pos + ca.descriptors.len()].copy_from_slice(ca.descriptors.raw());
                 pos += ca.descriptors.len();
@@ -663,6 +663,49 @@ mod tests {
             RntSection::parse(&buf).unwrap_err(),
             Error::SectionLengthOverflow { .. }
         ));
+    }
+
+    /// section_length is 12 bits (max 4095 = EXTENSION_HEADER_LEN(6) +
+    /// COMMON_DESC_LEN_FIELD(2) + common_desc + CRC_LEN(4), so 4083 is the
+    /// largest common_descriptors loop that fits with no resolution
+    /// providers).
+    #[test]
+    fn serialize_rejects_common_descriptors_exceeding_section_length() {
+        let desc = vec![0xAAu8; 4084];
+        let rnt = RntSection {
+            context_id: 1,
+            version_number: 0,
+            current_next_indicator: true,
+            section_number: 0,
+            last_section_number: 0,
+            context_id_type: ContextIdType::BouquetId,
+            common_descriptors: DescriptorLoop::new(&desc),
+            resolution_providers: vec![],
+        };
+        let mut buf = vec![0u8; rnt.serialized_len()];
+        assert!(matches!(
+            rnt.serialize_into(&mut buf).unwrap_err(),
+            Error::FieldOverflow(_)
+        ));
+    }
+
+    #[test]
+    fn serialize_accepts_common_descriptors_at_section_length_boundary() {
+        let desc = vec![0xAAu8; 4083];
+        let rnt = RntSection {
+            context_id: 1,
+            version_number: 0,
+            current_next_indicator: true,
+            section_number: 0,
+            last_section_number: 0,
+            context_id_type: ContextIdType::BouquetId,
+            common_descriptors: DescriptorLoop::new(&desc),
+            resolution_providers: vec![],
+        };
+        let mut buf = vec![0u8; rnt.serialized_len()];
+        rnt.serialize_into(&mut buf).expect("boundary fits");
+        let reparsed = RntSection::parse(&buf).expect("reparse");
+        assert_eq!(rnt, reparsed);
     }
 
     #[test]

@@ -236,26 +236,14 @@ impl Serialize for CitSection<'_> {
                 have: buf.len(),
             });
         }
-        if self.prepend_strings.len() > u8::MAX as usize {
-            return Err(Error::SectionLengthOverflow {
-                declared: self.prepend_strings.len(),
-                available: u8::MAX as usize,
-            });
-        }
+        let prepend_strings_len =
+            broadcast_common::len::fit_u8(self.prepend_strings.len(), "prepend_string_count")?;
 
-        let section_length = (len - HEADER_LEN) as u16;
-        if section_length > 0x0FFF {
-            return Err(Error::SectionLengthOverflow {
-                declared: section_length as usize,
-                available: 0x0FFF,
-            });
-        }
         buf[0] = TABLE_ID;
         buf[1] = super::SECTION_B1_SSI
             | (u8::from(self.private_indicator) << 6)
-            | super::SECTION_B1_RESERVED_HI
-            | ((section_length >> 8) as u8 & 0x0F);
-        buf[2] = (section_length & 0xFF) as u8;
+            | super::SECTION_B1_RESERVED_HI;
+        super::write_section_length(buf, len - HEADER_LEN)?;
 
         buf[3..5].copy_from_slice(&self.service_id.to_be_bytes());
         buf[5] = 0xC0 | ((self.version_number & 0x1F) << 1) | u8::from(self.current_next_indicator);
@@ -263,7 +251,7 @@ impl Serialize for CitSection<'_> {
         buf[7] = self.last_section_number;
         buf[8..10].copy_from_slice(&self.transport_stream_id.to_be_bytes());
         buf[10..12].copy_from_slice(&self.original_network_id.to_be_bytes());
-        buf[12] = self.prepend_strings.len() as u8;
+        buf[12] = prepend_strings_len;
 
         let ps_start = HEADER_LEN + EXTENSION_LEN;
         let ps_end = ps_start + self.prepend_strings.len();
@@ -271,9 +259,11 @@ impl Serialize for CitSection<'_> {
 
         let mut pos = ps_end;
         for entry in &self.crid_entries {
+            let unique_string_len =
+                broadcast_common::len::fit_u8(entry.unique_string.len(), "unique_string_length")?;
             buf[pos..pos + 2].copy_from_slice(&entry.crid_ref.to_be_bytes());
             buf[pos + 2] = entry.prepend_string_index;
-            buf[pos + 3] = entry.unique_string.len() as u8;
+            buf[pos + 3] = unique_string_len;
             pos += CRID_ENTRY_FIXED_LEN;
             buf[pos..pos + entry.unique_string.len()].copy_from_slice(&entry.unique_string);
             pos += entry.unique_string.len();
@@ -485,6 +475,91 @@ mod tests {
             CitSection::parse(&buf).unwrap_err(),
             Error::SectionLengthOverflow { .. }
         ));
+    }
+
+    /// section_length is 12 bits (max 4095). Before the fix, the guard cast
+    /// to u16 before comparing, so a 65 536+ byte body wrapped the check
+    /// itself and returned `Ok` with a declared length of 78 (see the pre-fix
+    /// observation in the story notes: 65 617 bytes total, wrapped to 78).
+    #[test]
+    fn serialize_rejects_crid_loop_exceeding_section_length_even_past_65536_bytes() {
+        let crid_entries: Vec<CridEntry> = (0..16_400u32)
+            .map(|i| CridEntry {
+                crid_ref: (i % 65536) as u16,
+                prepend_string_index: 0xFF,
+                unique_string: DvbText::new(&[]),
+            })
+            .collect();
+        let cit = CitSection {
+            private_indicator: false,
+            service_id: 1,
+            version_number: 0,
+            current_next_indicator: true,
+            section_number: 0,
+            last_section_number: 0,
+            transport_stream_id: 1,
+            original_network_id: 1,
+            prepend_strings: DvbText::new(&[]),
+            crid_entries,
+        };
+        let mut buf = vec![0u8; cit.serialized_len()];
+        assert!(matches!(
+            cit.serialize_into(&mut buf).unwrap_err(),
+            Error::FieldOverflow(_)
+        ));
+    }
+
+    /// unique_string_length is an 8-bit field (max 255); 256 must be
+    /// rejected, not wrapped to 0.
+    #[test]
+    fn serialize_rejects_unique_string_exceeding_8_bit_length() {
+        let long = vec![b'a'; 256];
+        let cit = CitSection {
+            private_indicator: false,
+            service_id: 1,
+            version_number: 0,
+            current_next_indicator: true,
+            section_number: 0,
+            last_section_number: 0,
+            transport_stream_id: 1,
+            original_network_id: 1,
+            prepend_strings: DvbText::new(&[]),
+            crid_entries: vec![CridEntry {
+                crid_ref: 1,
+                prepend_string_index: 0xFF,
+                unique_string: DvbText::new(&long),
+            }],
+        };
+        let mut buf = vec![0u8; cit.serialized_len()];
+        assert!(matches!(
+            cit.serialize_into(&mut buf).unwrap_err(),
+            Error::FieldOverflow(_)
+        ));
+    }
+
+    #[test]
+    fn serialize_accepts_unique_string_at_8_bit_boundary() {
+        let s = vec![b'a'; 255];
+        let cit = CitSection {
+            private_indicator: false,
+            service_id: 1,
+            version_number: 0,
+            current_next_indicator: true,
+            section_number: 0,
+            last_section_number: 0,
+            transport_stream_id: 1,
+            original_network_id: 1,
+            prepend_strings: DvbText::new(&[]),
+            crid_entries: vec![CridEntry {
+                crid_ref: 1,
+                prepend_string_index: 0xFF,
+                unique_string: DvbText::new(&s),
+            }],
+        };
+        let mut buf = vec![0u8; cit.serialized_len()];
+        cit.serialize_into(&mut buf).expect("boundary fits");
+        let reparsed = CitSection::parse(&buf).expect("reparse");
+        assert_eq!(cit, reparsed);
     }
 
     #[test]

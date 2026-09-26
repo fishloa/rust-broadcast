@@ -207,23 +207,12 @@ impl Serialize for MpeFecSection<'_> {
             });
         }
 
-        let section_length = (len - HEADER_LEN) as u16;
-        if section_length > 0x0FFF {
-            return Err(Error::SectionLengthOverflow {
-                declared: section_length as usize,
-                available: 0x0FFF,
-            });
-        }
-
         // Byte 0: table_id.
         buf[0] = TABLE_ID;
         // Byte 1: section_syntax_indicator(1)=1 | private_indicator(1)
         //         | reserved(2)=11 | section_length[11:8](4).
-        buf[1] = 0x80
-            | (u8::from(self.private_indicator) << 6)
-            | 0x30
-            | ((section_length >> 8) as u8 & 0x0F);
-        buf[2] = (section_length & 0xFF) as u8;
+        buf[1] = 0x80 | (u8::from(self.private_indicator) << 6) | 0x30;
+        super::write_section_length(buf, len - HEADER_LEN)?;
 
         // Extension header.
         buf[3] = self.padding_columns;
@@ -409,6 +398,56 @@ mod tests {
             MpeFecSection::parse(&buf).unwrap_err(),
             Error::SectionLengthOverflow { .. }
         ));
+    }
+
+    /// section_length is 12 bits (max 4095 = EXTENSION_HEADER_LEN(5) +
+    /// RTP_LEN(4) + rs_data + CRC_LEN(4), so 4082 is the largest rs_data
+    /// that fits).
+    #[test]
+    fn serialize_rejects_rs_data_exceeding_section_length() {
+        let rs_data = vec![0xAAu8; 4083];
+        let mpe_fec = MpeFecSection {
+            private_indicator: false,
+            padding_columns: 0,
+            current_next_indicator: true,
+            section_number: 0,
+            last_section_number: 0,
+            real_time_parameters: RealTimeParameters {
+                delta_t: 0,
+                table_boundary: false,
+                frame_boundary: false,
+                address: 0,
+            },
+            rs_data: &rs_data,
+        };
+        let mut buf = vec![0u8; mpe_fec.serialized_len()];
+        assert!(matches!(
+            mpe_fec.serialize_into(&mut buf).unwrap_err(),
+            Error::FieldOverflow(_)
+        ));
+    }
+
+    #[test]
+    fn serialize_accepts_rs_data_at_section_length_boundary() {
+        let rs_data = vec![0xAAu8; 4082];
+        let mpe_fec = MpeFecSection {
+            private_indicator: false,
+            padding_columns: 0,
+            current_next_indicator: true,
+            section_number: 0,
+            last_section_number: 0,
+            real_time_parameters: RealTimeParameters {
+                delta_t: 0,
+                table_boundary: false,
+                frame_boundary: false,
+                address: 0,
+            },
+            rs_data: &rs_data,
+        };
+        let mut buf = vec![0u8; mpe_fec.serialized_len()];
+        mpe_fec.serialize_into(&mut buf).expect("boundary fits");
+        let reparsed = MpeFecSection::parse(&buf).expect("reparse");
+        assert_eq!(mpe_fec, reparsed);
     }
 
     #[cfg(feature = "serde")]

@@ -713,10 +713,13 @@ impl<'a> NameComponent<'a> {
                 have: buf.len(),
             });
         }
-        buf[0..4].copy_from_slice(&(self.id.len() as u32).to_be_bytes());
+        let id_len = broadcast_common::len::fit_u32(self.id.len(), "NameComponent id_length")?;
+        buf[0..4].copy_from_slice(&id_len.to_be_bytes());
         buf[4..4 + self.id.len()].copy_from_slice(self.id);
         let kind_pos = 4 + self.id.len();
-        buf[kind_pos..kind_pos + 4].copy_from_slice(&(self.kind.len() as u32).to_be_bytes());
+        let kind_len =
+            broadcast_common::len::fit_u32(self.kind.len(), "NameComponent kind_length")?;
+        buf[kind_pos..kind_pos + 4].copy_from_slice(&kind_len.to_be_bytes());
         buf[kind_pos + 4..kind_pos + 4 + self.kind.len()].copy_from_slice(self.kind);
         Ok(len)
     }
@@ -900,14 +903,17 @@ impl<'a> ServiceLocation<'a> {
         self.service_domain
             .serialize_into_buf(&mut buf[1..1 + NSAP_ADDRESS_LEN])?;
         let mut pos = SERVICE_DOMAIN_LEN_FIELD + NSAP_ADDRESS_LEN;
-        buf[pos..pos + 4].copy_from_slice(&(self.path.len() as u32).to_be_bytes());
+        let path_count =
+            broadcast_common::len::fit_u32(self.path.len(), "ServiceLocation path count")?;
+        buf[pos..pos + 4].copy_from_slice(&path_count.to_be_bytes());
         pos += NAMING_COUNT_LEN;
         for nc in &self.path {
             let written = nc.serialize_32bit(&mut buf[pos..])?;
             pos += written;
         }
         let ic_len = self.initial_context.len();
-        buf[pos..pos + 4].copy_from_slice(&(ic_len as u32).to_be_bytes());
+        let ic_len_u32 = broadcast_common::len::fit_u32(ic_len, "initialContext_length")?;
+        buf[pos..pos + 4].copy_from_slice(&ic_len_u32.to_be_bytes());
         pos += INITIAL_CONTEXT_LEN_FIELD;
         buf[pos..pos + ic_len].copy_from_slice(self.initial_context);
         pos += ic_len;
@@ -1035,9 +1041,12 @@ impl<'a> LiteOptionsProfileBody<'a> {
         let mut pos = LITE_OPTIONS_BODY_FIXED_LEN;
 
         // ServiceLocation component (32-bit data length)
-        let sl_data_len = self.service_location.serialized_len();
+        let sl_data_len = broadcast_common::len::fit_u32(
+            self.service_location.serialized_len(),
+            "ServiceLocation data length",
+        )?;
         buf[pos..pos + 4].copy_from_slice(&TAG_SERVICE_LOCATION.to_be_bytes());
-        buf[pos + 4..pos + 8].copy_from_slice(&(sl_data_len as u32).to_be_bytes());
+        buf[pos + 4..pos + 8].copy_from_slice(&sl_data_len.to_be_bytes());
         pos += SERVICE_LOCATION_COMP_HEADER_LEN;
         let written = self.service_location.serialize_into_buf(&mut buf[pos..])?;
         pos += written;
@@ -1107,8 +1116,9 @@ impl TaggedProfile<'_> {
             Self::LiteOptions(l) => (TAG_LITE_OPTIONS, l.serialized_len()),
             Self::Unknown { tag, data } => (*tag, data.len()),
         };
+        let data_len_u32 = broadcast_common::len::fit_u32(data_len, "TaggedProfile data length")?;
         buf[0..4].copy_from_slice(&tag.to_be_bytes());
-        buf[4..8].copy_from_slice(&(data_len as u32).to_be_bytes());
+        buf[4..8].copy_from_slice(&data_len_u32.to_be_bytes());
         let pos = PROFILE_HEADER_LEN;
         match self {
             Self::Biop(b) => {
@@ -1260,10 +1270,13 @@ impl Serialize for Ior<'_> {
                 reason: "type_id_length must be a multiple of 4 (DVB alias type_ids only)",
             });
         }
-        buf[0..4].copy_from_slice(&(self.type_id.len() as u32).to_be_bytes());
+        let type_id_len = broadcast_common::len::fit_u32(self.type_id.len(), "IOR type_id_length")?;
+        buf[0..4].copy_from_slice(&type_id_len.to_be_bytes());
         buf[4..4 + self.type_id.len()].copy_from_slice(self.type_id);
         let mut pos = 4 + self.type_id.len();
-        buf[pos..pos + 4].copy_from_slice(&(self.profiles.len() as u32).to_be_bytes());
+        let profiles_count =
+            broadcast_common::len::fit_u32(self.profiles.len(), "IOR taggedProfiles_count")?;
+        buf[pos..pos + 4].copy_from_slice(&profiles_count.to_be_bytes());
         pos += 4;
         for profile in &self.profiles {
             let written = profile.serialize_into_buf(&mut buf[pos..])?;

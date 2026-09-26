@@ -179,6 +179,25 @@ pub(crate) fn check_section_length(
     Ok(total)
 }
 
+/// Write a checked 12-bit `section_length` into `buf[1..3]`, preserving
+/// whatever flag bits the caller already wrote into the top nibble of
+/// `buf[1]` (set `buf[1]` to the section's flags constant, bottom nibble
+/// zero, immediately before calling this).
+///
+/// `body_len` is the value carried in `section_length`: the byte count
+/// from just after this field to the end of the section, CRC included
+/// where present (ISO/IEC 13818-1 §2.4.4.10 / ETSI EN 300 468 §5.1.1).
+/// Returns `Err(FieldOverflow)` instead of silently wrapping when
+/// `body_len` exceeds the 12-bit field (max 4095) — see #1129: every
+/// table serializer must route its outer `section_length` write through
+/// this one helper so the guard cannot be forgotten again.
+pub(crate) fn write_section_length(buf: &mut [u8], body_len: usize) -> crate::Result<()> {
+    let fitted = broadcast_common::len::fit_bits(body_len as u64, 12, "section_length")?;
+    buf[1] = (buf[1] & 0xF0) | ((fitted >> 8) as u8);
+    buf[2] = fitted as u8;
+    Ok(())
+}
+
 pub mod any;
 pub use any::AnyTableSection;
 

@@ -784,16 +784,13 @@ impl<'a> FileMessage<'a> {
                 have: buf.len(),
             });
         }
-        write_biop_header(buf, inner_len as u32);
+        write_biop_header(
+            buf,
+            broadcast_common::len::fit_u32(inner_len, "messageSize")?,
+        );
         let mut pos = BIOP_HEADER_LEN;
 
-        if self.object_key.len() > u8::MAX as usize {
-            return Err(Error::SectionLengthOverflow {
-                declared: self.object_key.len(),
-                available: u8::MAX as usize,
-            });
-        }
-        buf[pos] = self.object_key.len() as u8;
+        buf[pos] = broadcast_common::len::fit_u8(self.object_key.len(), "objectKey_length")?;
         pos += OBJECT_KEY_LEN_FIELD;
         buf[pos..pos + self.object_key.len()].copy_from_slice(self.object_key);
         pos += self.object_key.len();
@@ -806,13 +803,8 @@ impl<'a> FileMessage<'a> {
 
         // objectInfo: ContentSize(8) + extra
         let obj_info_total = FILE_CONTENT_SIZE_LEN + self.object_info_extra.len();
-        if obj_info_total > u16::MAX as usize {
-            return Err(Error::SectionLengthOverflow {
-                declared: obj_info_total,
-                available: u16::MAX as usize,
-            });
-        }
-        buf[pos..pos + 2].copy_from_slice(&(obj_info_total as u16).to_be_bytes());
+        let obj_info_total = broadcast_common::len::fit_u16(obj_info_total, "objectInfo_length")?;
+        buf[pos..pos + 2].copy_from_slice(&obj_info_total.to_be_bytes());
         pos += OBJECT_INFO_LEN_FIELD;
         buf[pos..pos + 8].copy_from_slice(&self.content_size.to_be_bytes());
         pos += FILE_CONTENT_SIZE_LEN;
@@ -824,9 +816,12 @@ impl<'a> FileMessage<'a> {
 
         // messageBody
         let body_len = FILE_CONTENT_LEN_FIELD + self.content.len();
-        buf[pos..pos + 4].copy_from_slice(&(body_len as u32).to_be_bytes());
+        let body_len = broadcast_common::len::fit_u32(body_len, "messageBody_length")?;
+        buf[pos..pos + 4].copy_from_slice(&body_len.to_be_bytes());
         pos += MESSAGE_BODY_LEN_FIELD;
-        buf[pos..pos + 4].copy_from_slice(&(self.content.len() as u32).to_be_bytes());
+        let content_len =
+            broadcast_common::len::fit_u32(self.content.len(), "File_content_length")?;
+        buf[pos..pos + 4].copy_from_slice(&content_len.to_be_bytes());
         pos += FILE_CONTENT_LEN_FIELD;
         buf[pos..pos + self.content.len()].copy_from_slice(self.content);
 
@@ -1081,7 +1076,10 @@ impl<'a> StreamMessage<'a> {
                 have: buf.len(),
             });
         }
-        write_biop_header(buf, inner_len as u32);
+        write_biop_header(
+            buf,
+            broadcast_common::len::fit_u32(inner_len, "messageSize")?,
+        );
         let mut pos = BIOP_HEADER_LEN;
 
         // objectKey
@@ -1125,8 +1123,8 @@ impl<'a> StreamMessage<'a> {
         pos += write_service_context_list(&mut buf[pos..], &self.service_context)?;
 
         // messageBody_length
-        let bl = self.body_len();
-        buf[pos..pos + 4].copy_from_slice(&(bl as u32).to_be_bytes());
+        let bl = broadcast_common::len::fit_u32(self.body_len(), "messageBody_length")?;
+        buf[pos..pos + 4].copy_from_slice(&bl.to_be_bytes());
         pos += MESSAGE_BODY_LEN_FIELD;
 
         // taps_count
@@ -1364,7 +1362,10 @@ impl<'a> StreamEventMessage<'a> {
                 have: buf.len(),
             });
         }
-        write_biop_header(buf, inner_len as u32);
+        write_biop_header(
+            buf,
+            broadcast_common::len::fit_u32(inner_len, "messageSize")?,
+        );
         let mut pos = BIOP_HEADER_LEN;
 
         // objectKey
@@ -1430,8 +1431,8 @@ impl<'a> StreamEventMessage<'a> {
         pos += write_service_context_list(&mut buf[pos..], &self.service_context)?;
 
         // messageBody_length
-        let bl = self.body_len();
-        buf[pos..pos + 4].copy_from_slice(&(bl as u32).to_be_bytes());
+        let bl = broadcast_common::len::fit_u32(self.body_len(), "messageBody_length")?;
+        buf[pos..pos + 4].copy_from_slice(&bl.to_be_bytes());
         pos += MESSAGE_BODY_LEN_FIELD;
 
         // taps_count

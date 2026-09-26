@@ -116,12 +116,11 @@ impl Serialize for RstSection {
                 have: buf.len(),
             });
         }
-        let section_length = (len - HEADER_LEN) as u16;
         buf[0] = TABLE_ID;
         // section_syntax_indicator=0 (short form), reserved_future_use=1,
         // reserved=11, section_length high nibble.
-        buf[1] = super::SECTION_B1_FLAGS_SHORT | ((section_length >> 8) as u8 & 0x0F);
-        buf[2] = (section_length & 0xFF) as u8;
+        buf[1] = super::SECTION_B1_FLAGS_SHORT;
+        super::write_section_length(buf, len - HEADER_LEN)?;
         let mut off = HEADER_LEN;
         for e in &self.entries {
             buf[off..off + 2].copy_from_slice(&e.transport_stream_id.to_be_bytes());
@@ -252,6 +251,33 @@ mod tests {
     fn table_trait_constants() {
         assert_eq!(TABLE_ID, 0x71);
         assert_eq!(PID, 0x0013);
+    }
+
+    /// section_length is 12 bits (max 4095); ENTRY_LEN(9) * 455 = 4095
+    /// exactly, so 456 entries (4104 bytes) must be rejected, not wrapped.
+    #[test]
+    fn serialize_rejects_entries_exceeding_12_bit_section_length() {
+        let entries: Vec<RstEntry> = (0..456u32)
+            .map(|i| entry((i % 65536) as u16, 0, 0, 0, RunningStatus::Undefined))
+            .collect();
+        let rst = RstSection { entries };
+        let mut buf = vec![0u8; rst.serialized_len()];
+        assert!(matches!(
+            rst.serialize_into(&mut buf).unwrap_err(),
+            Error::FieldOverflow(_)
+        ));
+    }
+
+    #[test]
+    fn serialize_accepts_entries_at_12_bit_boundary() {
+        let entries: Vec<RstEntry> = (0..455u32)
+            .map(|i| entry((i % 65536) as u16, 0, 0, 0, RunningStatus::Undefined))
+            .collect();
+        let rst = RstSection { entries };
+        let mut buf = vec![0u8; rst.serialized_len()];
+        rst.serialize_into(&mut buf).expect("boundary fits");
+        let re = RstSection::parse(&buf).expect("reparse");
+        assert_eq!(rst, re);
     }
 
     #[cfg(feature = "serde")]

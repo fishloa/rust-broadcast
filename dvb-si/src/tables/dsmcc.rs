@@ -151,14 +151,14 @@ impl Serialize for DsmccSection<'_> {
             });
         }
 
-        let section_length: u16 = (len - MIN_HEADER_LEN) as u16;
+        let section_length = len - MIN_HEADER_LEN;
         buf[0] = self.table_id;
         buf[1] = if self.section_syntax_indicator {
             super::SECTION_B1_FLAGS_PSI
         } else {
             (u8::from(self.private_indicator) << 6) | super::SECTION_B1_RESERVED_HI
-        } | ((section_length >> 8) as u8 & 0x0F);
-        buf[2] = (section_length & 0xFF) as u8;
+        };
+        super::write_section_length(buf, section_length)?;
         buf[3..5].copy_from_slice(&self.extension_id.to_be_bytes());
         buf[5] = 0xC0 | ((self.version_number & 0x1F) << 1) | u8::from(self.current_next_indicator);
         buf[6] = self.section_number;
@@ -350,5 +350,50 @@ mod tests {
             DsmccSection::parse(&buf).unwrap_err(),
             Error::SectionLengthOverflow { .. }
         ));
+    }
+
+    /// section_length is 12 bits (max 4095 = EXTENSION_HEADER_LEN(5) +
+    /// payload + CRC_LEN(4), so 4086 is the largest payload that fits).
+    #[test]
+    fn serialize_rejects_payload_exceeding_section_length() {
+        let payload = vec![0xAAu8; 4087];
+        let sec = DsmccSection {
+            table_id: 0x3B,
+            section_syntax_indicator: true,
+            private_indicator: false,
+            extension_id: 1,
+            version_number: 0,
+            current_next_indicator: true,
+            section_number: 0,
+            last_section_number: 0,
+            payload: &payload,
+            checksum: [0; 4],
+        };
+        let mut buf = vec![0u8; sec.serialized_len()];
+        assert!(matches!(
+            sec.serialize_into(&mut buf).unwrap_err(),
+            Error::FieldOverflow(_)
+        ));
+    }
+
+    #[test]
+    fn serialize_accepts_payload_at_section_length_boundary() {
+        let payload = vec![0xAAu8; 4086];
+        let sec = DsmccSection {
+            table_id: 0x3B,
+            section_syntax_indicator: true,
+            private_indicator: false,
+            extension_id: 1,
+            version_number: 0,
+            current_next_indicator: true,
+            section_number: 0,
+            last_section_number: 0,
+            payload: &payload,
+            checksum: [0; 4],
+        };
+        let mut buf = vec![0u8; sec.serialized_len()];
+        sec.serialize_into(&mut buf).expect("boundary fits");
+        let reparsed = DsmccSection::parse(&buf).expect("reparse");
+        assert_eq!(sec, reparsed);
     }
 }

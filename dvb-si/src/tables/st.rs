@@ -107,10 +107,8 @@ impl Serialize for StSection {
 
         // Byte 1: SSI=0, reserved_future_use='1', reserved='11', upper nibble of
         // section_length. Top nibble 0b0111 = 0x70, matching DIT/RST/TDT/TOT.
-        buf[1] = super::SECTION_B1_FLAGS_SHORT | ((self.payload.len() >> 8) as u8 & 0x0F);
-
-        // Byte 2: section_length low byte
-        buf[2] = (self.payload.len() & 0xFF) as u8;
+        buf[1] = super::SECTION_B1_FLAGS_SHORT;
+        super::write_section_length(buf, self.payload.len())?;
 
         // Payload: stuffing bytes
         buf[HEADER_LEN..len].copy_from_slice(&self.payload);
@@ -269,5 +267,26 @@ mod tests {
     fn new_constructor() {
         let st = StSection::new(vec![0x00]);
         assert_eq!(st.len(), 1);
+    }
+
+    /// section_length is 12 bits (max 4095); a payload larger than that must
+    /// be rejected, not wrapped.
+    #[test]
+    fn serialize_rejects_payload_exceeding_12_bit_section_length() {
+        let st = StSection::new(vec![0u8; 4096]);
+        let mut buf = vec![0u8; st.serialized_len()];
+        assert!(matches!(
+            st.serialize_into(&mut buf).unwrap_err(),
+            Error::FieldOverflow(_)
+        ));
+    }
+
+    #[test]
+    fn serialize_accepts_payload_at_12_bit_boundary() {
+        let st = StSection::new(vec![0u8; 4095]);
+        let mut buf = vec![0u8; st.serialized_len()];
+        st.serialize_into(&mut buf).expect("boundary fits");
+        let re = StSection::parse(&buf).expect("reparse");
+        assert_eq!(st, re);
     }
 }

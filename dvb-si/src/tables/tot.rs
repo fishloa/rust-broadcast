@@ -165,22 +165,19 @@ impl Serialize for TotSection<'_> {
                 have: buf.len(),
             });
         }
-        let section_length = (len - HEADER_LEN) as u16;
-        if section_length > 0x0FFF {
-            return Err(Error::SectionLengthOverflow {
-                declared: section_length as usize,
-                available: 0x0FFF,
-            });
-        }
         buf[0] = TABLE_ID;
         // §5.2.6: section_syntax_indicator SHALL be 0 for the TOT (despite the
         // trailing CRC_32). 0x70 = SSI(0) | reserved_future_use(1) | reserved(11).
-        buf[1] = super::SECTION_B1_FLAGS_SHORT | ((section_length >> 8) as u8 & 0x0F);
-        buf[2] = (section_length & 0xFF) as u8;
+        buf[1] = super::SECTION_B1_FLAGS_SHORT;
+        super::write_section_length(buf, len - HEADER_LEN)?;
         buf[3..8].copy_from_slice(&self.utc_time_raw);
-        let dl = self.descriptors.len() as u16;
-        buf[8] = 0xF0 | ((dl >> 8) as u8 & 0x0F);
-        buf[9] = (dl & 0xFF) as u8;
+        let dl = broadcast_common::len::fit_bits(
+            self.descriptors.len() as u64,
+            12,
+            "descriptors_loop_length",
+        )?;
+        buf[8] = 0xF0 | ((dl >> 8) as u8);
+        buf[9] = dl as u8;
         let d_end = 10 + self.descriptors.len();
         buf[10..d_end].copy_from_slice(self.descriptors.raw());
         let crc_pos = len - CRC_LEN;
@@ -269,5 +266,35 @@ mod tests {
             TotSection::parse(&buf).unwrap_err(),
             Error::SectionLengthOverflow { .. }
         ));
+    }
+
+    /// section_length is 12 bits (max 4095 = UTC_TIME_LEN(5) +
+    /// DESC_LOOP_LEN_FIELD(2) + descriptors + CRC_LEN(4), so 4084 is the
+    /// largest descriptor loop that fits).
+    #[test]
+    fn serialize_rejects_descriptors_exceeding_section_length() {
+        let desc = vec![0xAAu8; 4085];
+        let tot = TotSection {
+            utc_time_raw: [0xE4, 0x09, 0x12, 0x34, 0x56],
+            descriptors: DescriptorLoop::new(&desc),
+        };
+        let mut buf = vec![0u8; tot.serialized_len()];
+        assert!(matches!(
+            tot.serialize_into(&mut buf).unwrap_err(),
+            Error::FieldOverflow(_)
+        ));
+    }
+
+    #[test]
+    fn serialize_accepts_descriptors_at_section_length_boundary() {
+        let desc = vec![0xAAu8; 4084];
+        let tot = TotSection {
+            utc_time_raw: [0xE4, 0x09, 0x12, 0x34, 0x56],
+            descriptors: DescriptorLoop::new(&desc),
+        };
+        let mut buf = vec![0u8; tot.serialized_len()];
+        tot.serialize_into(&mut buf).expect("boundary fits");
+        let reparsed = TotSection::parse(&buf).expect("reparse");
+        assert_eq!(tot.descriptors.raw(), reparsed.descriptors.raw());
     }
 }

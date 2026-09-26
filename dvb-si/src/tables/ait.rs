@@ -391,20 +391,23 @@ impl Serialize for AitSection<'_> {
             });
         }
 
-        let section_length: u16 = (len - MIN_HEADER_LEN) as u16;
         let app_type_raw = self.application_type.to_u16();
         buf[0] = TABLE_ID;
-        buf[1] = super::SECTION_B1_FLAGS_DVB | ((section_length >> 8) as u8 & 0x0F);
-        buf[2] = (section_length & 0xFF) as u8;
+        buf[1] = super::SECTION_B1_FLAGS_DVB;
+        super::write_section_length(buf, len - MIN_HEADER_LEN)?;
         buf[3] = (u8::from(self.test_application_flag) << 7) | ((app_type_raw >> 8) as u8 & 0x7F);
         buf[4] = (app_type_raw & 0xFF) as u8;
         buf[5] = 0xC0 | ((self.version_number & 0x1F) << 1) | u8::from(self.current_next_indicator);
         buf[6] = self.section_number;
         buf[7] = self.last_section_number;
 
-        let cdl = self.common_descriptors.len() as u16;
-        buf[8] = 0xF0 | ((cdl >> 8) as u8 & 0x0F);
-        buf[9] = (cdl & 0xFF) as u8;
+        let cdl = broadcast_common::len::fit_bits(
+            self.common_descriptors.len() as u64,
+            12,
+            "common_descriptors_length",
+        )?;
+        buf[8] = 0xF0 | ((cdl >> 8) as u8);
+        buf[9] = cdl as u8;
 
         let common_desc_start = MIN_HEADER_LEN + EXTENSION_HEADER_LEN + COMMON_DESC_LEN_BYTES;
         buf[common_desc_start..common_desc_start + self.common_descriptors.len()]
@@ -416,18 +419,22 @@ impl Serialize for AitSection<'_> {
             .iter()
             .map(|a| APP_HEADER_LEN + a.descriptors.len())
             .sum();
-        let apl = app_bytes as u16;
-        buf[app_loop_start] = 0xF0 | ((apl >> 8) as u8 & 0x0F);
-        buf[app_loop_start + 1] = (apl & 0xFF) as u8;
+        let apl = broadcast_common::len::fit_bits(app_bytes as u64, 12, "application_loop_length")?;
+        buf[app_loop_start] = 0xF0 | ((apl >> 8) as u8);
+        buf[app_loop_start + 1] = apl as u8;
 
         let mut pos = app_loop_start + APP_LOOP_LEN_BYTES;
         for app in &self.applications {
             buf[pos..pos + 4].copy_from_slice(&app.identifier.organisation_id.to_be_bytes());
             buf[pos + 4..pos + 6].copy_from_slice(&app.identifier.application_id.to_be_bytes());
             buf[pos + 6] = app.control_code.to_u8();
-            let adl = app.descriptors.len() as u16;
-            buf[pos + 7] = 0xF0 | ((adl >> 8) as u8 & 0x0F);
-            buf[pos + 8] = (adl & 0xFF) as u8;
+            let adl = broadcast_common::len::fit_bits(
+                app.descriptors.len() as u64,
+                12,
+                "application_descriptors_loop_length",
+            )?;
+            buf[pos + 7] = 0xF0 | ((adl >> 8) as u8);
+            buf[pos + 8] = adl as u8;
             let desc_start = pos + APP_HEADER_LEN;
             buf[desc_start..desc_start + app.descriptors.len()]
                 .copy_from_slice(app.descriptors.raw());
@@ -647,6 +654,49 @@ mod tests {
             AitSection::parse(&buf).unwrap_err(),
             Error::SectionLengthOverflow { .. }
         ));
+    }
+
+    /// section_length is 12 bits (max 4095 = EXTENSION_HEADER_LEN(5) +
+    /// COMMON_DESC_LEN_BYTES(2) + common_desc + APP_LOOP_LEN_BYTES(2) +
+    /// CRC(4), so 4082 is the largest common_descriptors loop that fits
+    /// with no applications).
+    #[test]
+    fn serialize_rejects_common_descriptors_exceeding_section_length() {
+        let desc = vec![0xAAu8; 4083];
+        let ait = AitSection {
+            application_type: ApplicationType::from_u16(0x0010),
+            test_application_flag: false,
+            version_number: 0,
+            current_next_indicator: true,
+            section_number: 0,
+            last_section_number: 0,
+            common_descriptors: DescriptorLoop::new(&desc),
+            applications: vec![],
+        };
+        let mut buf = vec![0u8; ait.serialized_len()];
+        assert!(matches!(
+            ait.serialize_into(&mut buf).unwrap_err(),
+            Error::FieldOverflow(_)
+        ));
+    }
+
+    #[test]
+    fn serialize_accepts_common_descriptors_at_section_length_boundary() {
+        let desc = vec![0xAAu8; 4082];
+        let ait = AitSection {
+            application_type: ApplicationType::from_u16(0x0010),
+            test_application_flag: false,
+            version_number: 0,
+            current_next_indicator: true,
+            section_number: 0,
+            last_section_number: 0,
+            common_descriptors: DescriptorLoop::new(&desc),
+            applications: vec![],
+        };
+        let mut buf = vec![0u8; ait.serialized_len()];
+        ait.serialize_into(&mut buf).expect("boundary fits");
+        let reparsed = AitSection::parse(&buf).expect("reparse");
+        assert_eq!(ait, reparsed);
     }
 
     #[test]

@@ -2,6 +2,39 @@
 
 ## [Unreleased]
 
+### Changed (breaking)
+- Table and carousel/BIOP serializers now return an error, instead of
+  silently truncating, when a length or count value does not fit its wire
+  field (#1129). `dvb_si::Error` gained a new `FieldOverflow` variant
+  (`#[error(transparent)]` over `broadcast_common::len::FieldOverflow`).
+- `broadcast-common` requirement raised to `9.4` (same epoch) for the new
+  `broadcast_common::len` helpers.
+
+### Fixed
+- 17 table serializers (pat, cat, tsdt, pmt, nit, bat, sdt, ait, int, sit,
+  dsmcc, st, rst, downloadable_font_info, protection_message, eit, plus the
+  narrowed inner loops in cit/rct) wrote a 12-bit `section_length` (or a
+  nested loop length) with no range check, so an oversized body wrapped mod
+  4096 and was written with a valid CRC over bytes the header didn't cover
+  (#1129, #1001).
+- 8 more serializers (cit, container, mpe, mpe_fec, mpe_ifec, rnt, tot, unt)
+  guarded `section_length` by casting to `u16` *before* comparing against
+  the 12-bit maximum, so a body of 65 536+ bytes wrapped the guard itself
+  and bypassed it; the compare now happens in `usize` before any narrowing
+  (#1129).
+- Nested 8-bit/6-bit length and count fields in RCT (`uri_length`,
+  `number_items`, `promotional_text_length`, `link_info_length`,
+  `number_of_links`) and CIT (`unique_string_length`) silently truncated
+  with no guard at all (#1129, #1003).
+- `carousel::biop`'s `FileMessage`/`StreamMessage`/`StreamEventMessage`
+  serializers cast `messageSize`/`messageBody_length` to `u32` with no
+  check, inconsistent with `DirectoryMessage`'s guarded equivalent; several
+  BIOP IOR profile length fields (`NameComponent`, `ServiceLocation`,
+  `TaggedProfile`, `IOR`) had the same gap (#1129).
+- Added a shared `dvb_si::tables::write_section_length` helper that every
+  table serializer now routes its outer `section_length` write through, so
+  the guard cannot be forgotten again for a future table.
+
 ## [10.1.0] - 2026-09-26
 
 ### Security

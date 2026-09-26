@@ -506,10 +506,9 @@ impl Serialize for ProtectionMessageSection<'_> {
                 have: buf.len(),
             });
         }
-        let section_length = (len - SECTION_LENGTH_PREFIX) as u16;
         buf[0] = TABLE_ID;
-        buf[1] = super::SECTION_B1_FLAGS_DVB | ((section_length >> 8) as u8 & 0x0F);
-        buf[2] = (section_length & 0xFF) as u8;
+        buf[1] = super::SECTION_B1_FLAGS_DVB;
+        super::write_section_length(buf, len - SECTION_LENGTH_PREFIX)?;
         buf[3..5].copy_from_slice(&self.table_id_extension.to_be_bytes());
         // reserved(2)=11, version_number(5), current_next_indicator(1).
         buf[5] = 0xC0 | ((self.version_number & 0x1F) << 1) | u8::from(self.current_next_indicator);
@@ -748,6 +747,44 @@ mod tests {
             ProtectionMessageSection::parse(&buf).unwrap_err(),
             Error::SectionLengthOverflow { .. }
         ));
+    }
+
+    /// section_length is 12 bits (max 4095 = HEADER_LEN(8) -
+    /// SECTION_LENGTH_PREFIX(3) + body_len + CRC_LEN(4), so 4086 is the
+    /// largest Raw body that fits).
+    #[test]
+    fn serialize_rejects_raw_body_exceeding_section_length() {
+        let raw = vec![0xAAu8; 4087];
+        let sec = ProtectionMessageSection {
+            table_id_extension: 0x0200, // outside AUTH and CERTIFICATE_COLLECTION ranges
+            version_number: 0,
+            current_next_indicator: true,
+            section_number: 0,
+            last_section_number: 0,
+            body: ProtectionMessageBody::Raw(&raw),
+        };
+        let mut buf = vec![0u8; sec.serialized_len()];
+        assert!(matches!(
+            sec.serialize_into(&mut buf).unwrap_err(),
+            Error::FieldOverflow(_)
+        ));
+    }
+
+    #[test]
+    fn serialize_accepts_raw_body_at_section_length_boundary() {
+        let raw = vec![0xAAu8; 4086];
+        let sec = ProtectionMessageSection {
+            table_id_extension: 0x0200,
+            version_number: 0,
+            current_next_indicator: true,
+            section_number: 0,
+            last_section_number: 0,
+            body: ProtectionMessageBody::Raw(&raw),
+        };
+        let mut buf = vec![0u8; sec.serialized_len()];
+        sec.serialize_into(&mut buf).expect("boundary fits");
+        let reparsed = ProtectionMessageSection::parse(&buf).expect("reparse");
+        assert_eq!(sec, reparsed);
     }
 
     #[test]

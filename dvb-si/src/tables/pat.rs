@@ -129,12 +129,11 @@ impl Serialize for PatSection {
             });
         }
 
-        let section_length: u16 =
-            (EXTENSION_HEADER_LEN + self.entries.len() * ENTRY_LEN + CRC_LEN) as u16;
+        let section_length = EXTENSION_HEADER_LEN + self.entries.len() * ENTRY_LEN + CRC_LEN;
 
         buf[0] = TABLE_ID;
-        buf[1] = super::SECTION_B1_FLAGS_PSI | ((section_length >> 8) as u8 & 0x0F);
-        buf[2] = (section_length & 0xFF) as u8;
+        buf[1] = super::SECTION_B1_FLAGS_PSI;
+        super::write_section_length(buf, section_length)?;
         buf[3..5].copy_from_slice(&self.transport_stream_id.to_be_bytes());
         buf[5] = 0xC0 | ((self.version_number & 0x1F) << 1) | u8::from(self.current_next_indicator);
         buf[6] = self.section_number;
@@ -287,6 +286,54 @@ mod tests {
         let mut buf = vec![0u8; pat.serialized_len()];
         pat.serialize_into(&mut buf).unwrap();
         let reparsed = PatSection::parse(&buf).unwrap();
+        assert_eq!(pat, reparsed);
+    }
+
+    /// section_length is 12 bits (max 4095). 1021 entries is the largest
+    /// program loop that still fits (section_length 4093); 1022 pushes it to
+    /// 4097 and must be rejected, not silently wrapped.
+    #[test]
+    fn serialize_rejects_program_loop_exceeding_section_length() {
+        let entries: Vec<PatEntry> = (0..1022u32)
+            .map(|i| PatEntry {
+                program_number: (i % u16::MAX as u32) as u16,
+                pid: 0x0100,
+            })
+            .collect();
+        let pat = PatSection {
+            transport_stream_id: 1,
+            version_number: 0,
+            current_next_indicator: true,
+            section_number: 0,
+            last_section_number: 0,
+            entries,
+        };
+        let mut buf = vec![0u8; pat.serialized_len()];
+        assert!(matches!(
+            pat.serialize_into(&mut buf).unwrap_err(),
+            Error::FieldOverflow(_)
+        ));
+    }
+
+    #[test]
+    fn serialize_accepts_program_loop_at_section_length_boundary() {
+        let entries: Vec<PatEntry> = (0..1021u32)
+            .map(|i| PatEntry {
+                program_number: (i % u16::MAX as u32) as u16,
+                pid: 0x0100,
+            })
+            .collect();
+        let pat = PatSection {
+            transport_stream_id: 1,
+            version_number: 0,
+            current_next_indicator: true,
+            section_number: 0,
+            last_section_number: 0,
+            entries,
+        };
+        let mut buf = vec![0u8; pat.serialized_len()];
+        pat.serialize_into(&mut buf).expect("boundary fits");
+        let reparsed = PatSection::parse(&buf).expect("reparse");
         assert_eq!(pat, reparsed);
     }
 
