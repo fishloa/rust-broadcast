@@ -113,7 +113,7 @@ pub use authenticator::{Authenticator, respond};
 pub use credentials::Credentials;
 pub use error::{Error, Result};
 pub use request::RequestContext;
-pub use server::{AuthResult, DIGEST_NC_TRACK_CAP, DIGEST_NONCE_LIFETIME, Verifier};
+pub use server::{AuthResult, DIGEST_NC_TRACK_CAP, DIGEST_NONCE_LIFETIME, NC_WINDOW, Verifier};
 pub use signed_url::SignedUrlKeySet;
 
 #[cfg(test)]

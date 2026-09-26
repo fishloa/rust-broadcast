@@ -68,19 +68,32 @@
 //! # Nonce handling (RFC 7616 §3.3 / §5.4)
 //!
 //! A `Digest` [`Verifier`] issues a fresh nonce on every
-//! [`Verifier::challenge`] call: `issue-time ‖ salt ‖ HMAC-SHA256(secret,
-//! issue-time ‖ salt)`, hex-encoded, where `secret` is drawn from the OS RNG
-//! once per verifier. A nonce is accepted only if its HMAC checks out and it
-//! is younger than [`DIGEST_NONCE_LIFETIME`]; a correctly answered but expired
-//! nonce is reported via [`Verifier::challenge_for`], which then carries
-//! `stale=true` so the client retries with the new nonce without re-prompting.
-//! The highest `nc` accepted for each `(nonce, cnonce)` pair is remembered
-//! (at most [`DIGEST_NC_TRACK_CAP`] pairs, expired ones evicted first) and a
-//! request whose `nc` does not exceed it is rejected, so a captured
-//! `Authorization` header cannot be replayed. The verifier's clock defaults
-//! to [`SystemTime::now`] and can be replaced with [`Verifier::with_clock`].
+//! [`Verifier::challenge`] call: `issue-time ‖ issue-sequence ‖
+//! HMAC-SHA256(secret, issue-time ‖ issue-sequence)`, hex-encoded, where
+//! `secret` is drawn from the OS RNG once per verifier. A nonce is accepted
+//! only if its HMAC checks out and it is younger than
+//! [`DIGEST_NONCE_LIFETIME`]. Expiry is absolute; a correctly answered but
+//! expired nonce is reported via [`Verifier::challenge_for`], whose challenge
+//! then carries `stale=true`, so a compliant client retries with the new
+//! nonce without re-prompting (RFC 7616 §3.3). Callers should answer a `401`
+//! with [`Verifier::challenge_for`] rather than [`Verifier::challenge`].
+//!
+//! Replay: for each `(nonce, cnonce)` pair the verifier keeps the highest
+//! `nc` accepted plus a bitmap of the [`NC_WINDOW`] values below it (the
+//! RFC 4303 §3.4.3 anti-replay window), so requests pipelined on one pair may
+//! arrive out of order, but no `nc` is accepted twice and one more than
+//! [`NC_WINDOW`] below the highest is refused. At most
+//! [`DIGEST_NC_TRACK_CAP`] pairs are tracked by default
+//! ([`Verifier::with_digest_nc_capacity`] changes it); past that the
+//! least-recently-used pair is dropped, and any pair not in the table whose
+//! nonce was issued no later than a dropped live one is answered as stale, so
+//! a dropped pair can never be replayed.
+//!
+//! The verifier's clock defaults to [`SystemTime::now`] and can be replaced
+//! with [`Verifier::with_clock`]; a clock that steps backwards is clamped to
+//! the latest nonce issue time seen.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::sync::Mutex;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -148,143 +161,245 @@ pub struct Verifier {
 /// The time source a [`Verifier`] reads nonce ages from.
 type Clock = Box<dyn Fn() -> SystemTime + Send + Sync>;
 
-/// How long an issued Digest nonce is accepted (RFC 7616 §5.4 leaves the
-/// lifetime to the server). An older nonce is answered with `stale=true`.
-pub const DIGEST_NONCE_LIFETIME: Duration = Duration::from_secs(300);
+/// How long an issued Digest nonce is accepted, measured from issue (RFC 7616
+/// §5.4 leaves the lifetime to the server). An older nonce is refused, and
+/// [`Verifier::challenge_for`] answers it with `stale=true` so the client
+/// retries silently with a fresh nonce.
+pub const DIGEST_NONCE_LIFETIME: Duration = Duration::from_secs(3600);
 
-/// Most `(nonce, cnonce)` pairs whose highest `nc` a Digest [`Verifier`]
-/// remembers at once; past this, expired pairs are evicted first, then the
-/// oldest-issued ones.
-pub const DIGEST_NC_TRACK_CAP: usize = 4096;
+/// Default number of `(nonce, cnonce)` pairs a Digest [`Verifier`] tracks
+/// (see [`Verifier::with_digest_nc_capacity`]). Each tracked pair costs about
+/// 128 bytes (a 32-byte key hash stored twice, 28 bytes of counters, and
+/// hash-map/B-tree overhead), so the default is roughly 8 MiB at most.
+pub const DIGEST_NC_TRACK_CAP: usize = 65_536;
+
+/// Width of the per-pair `nc` anti-replay window: how far below the highest
+/// accepted `nc` a not-yet-seen `nc` is still accepted (RFC 4303 §3.4.3).
+pub const NC_WINDOW: u32 = u64::BITS;
 
 /// Bytes of per-verifier HMAC key drawn from the OS RNG.
 const NONCE_SECRET_LEN: usize = 32;
 /// Bytes of the big-endian issue time (seconds since the Unix epoch).
 const NONCE_TIME_LEN: usize = 8;
-/// Bytes of per-challenge random salt, so two challenges in the same second
-/// still get distinct nonces.
-const NONCE_SALT_LEN: usize = 8;
+/// Bytes of the big-endian per-verifier issue sequence number, so every
+/// challenge gets a distinct nonce and nonces are totally ordered by issue.
+const NONCE_SEQ_LEN: usize = 8;
 /// Bytes of HMAC-SHA256 output.
 const NONCE_MAC_LEN: usize = 32;
 /// Bytes of the decoded nonce.
-const NONCE_LEN: usize = NONCE_TIME_LEN + NONCE_SALT_LEN + NONCE_MAC_LEN;
+const NONCE_LEN: usize = NONCE_TIME_LEN + NONCE_SEQ_LEN + NONCE_MAC_LEN;
 /// RFC 7616 §3.4: `nc-value = 8LHEX`.
 const NC_HEX_LEN: usize = 8;
 
-/// Digest nonce secret plus the per-`(nonce, cnonce)` highest-`nc` table.
+/// Digest nonce secret plus the per-`(nonce, cnonce)` `nc` table.
 struct DigestNonces {
     secret: [u8; NONCE_SECRET_LEN],
     seen: Mutex<NcTable>,
 }
 
-#[derive(Default)]
+/// SHA-256 of `nonce ‖ cnonce` (the nonce has a fixed length, so this is
+/// unambiguous) — keeps table entries small whatever the client sends.
+type PairKey = [u8; 32];
+
+/// When and in which order a nonce was issued.
+#[derive(Clone, Copy)]
+struct NonceStamp {
+    time: u64,
+    seq: u64,
+}
+
+struct NcEntry {
+    stamp: NonceStamp,
+    /// Highest `nc` accepted.
+    highest: u32,
+    /// Bit `i` set: `highest - 1 - i` has been accepted.
+    window: u64,
+    /// Key into [`NcTable::lru`].
+    last_used: u64,
+}
+
+impl NcEntry {
+    /// Accepts `nc` if it has not been seen and is within the window.
+    fn accept(&mut self, nc: u32) -> bool {
+        if nc > self.highest {
+            let shift = nc - self.highest;
+            let old_highest = 1u64.checked_shl(shift - 1).unwrap_or(0);
+            self.window = self.window.checked_shl(shift).unwrap_or(0) | old_highest;
+            self.highest = nc;
+            return true;
+        }
+        let below = self.highest - nc;
+        if below == 0 || below > NC_WINDOW {
+            return false;
+        }
+        let bit = 1u64 << (below - 1);
+        if self.window & bit != 0 {
+            return false;
+        }
+        self.window |= bit;
+        true
+    }
+}
+
 struct NcTable {
-    /// `(nonce, cnonce)` → (nonce issue time in seconds, highest accepted `nc`).
-    entries: HashMap<(String, String), (u64, u32)>,
-    /// Nonces issued before this time (seconds) are accepted only for pairs
-    /// still in `entries` — set when a live pair had to be evicted.
-    floor: u64,
+    entries: HashMap<PairKey, NcEntry>,
+    /// Use order → key; the first entry is the least recently used.
+    lru: BTreeMap<u64, PairKey>,
+    next_use: u64,
+    capacity: usize,
+    /// Nonces with a lower issue sequence are accepted only for pairs still
+    /// in `entries` — raised when a live pair had to be dropped.
+    floor_seq: u64,
+    next_seq: u64,
+    latest_issue_time: u64,
 }
 
 /// What a Digest `Authorization` header amounts to, before any `nc` is
 /// recorded.
 enum DigestCheck {
-    /// Correct response on a live nonce with a fresh `nc`.
+    /// Correct response on a live nonce.
     Accept {
-        key: (String, String),
-        issued: u64,
+        key: PairKey,
+        stamp: NonceStamp,
         nc: u32,
     },
-    /// Correct response, but the nonce is past its lifetime.
+    /// Correct response, but the nonce is past its lifetime or its pair was
+    /// dropped from the table.
     Stale,
     /// Anything else.
     Reject,
+}
+
+fn pair_key(nonce: &str, cnonce: &str) -> PairKey {
+    let mut hash = Sha256::new();
+    hash.update(nonce.as_bytes());
+    hash.update(cnonce.as_bytes());
+    hash.finalize().into()
 }
 
 impl DigestNonces {
     fn new() -> Self {
         DigestNonces {
             secret: rand::random(),
-            seen: Mutex::new(NcTable::default()),
+            seen: Mutex::new(NcTable {
+                entries: HashMap::new(),
+                lru: BTreeMap::new(),
+                next_use: 0,
+                capacity: DIGEST_NC_TRACK_CAP,
+                floor_seq: 0,
+                next_seq: 0,
+                latest_issue_time: 0,
+            }),
         }
     }
 
-    fn mac(&self, time_and_salt: &[u8]) -> Hmac<Sha256> {
+    fn table(&self) -> std::sync::MutexGuard<'_, NcTable> {
+        self.seen.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    fn set_capacity(&self, capacity: usize) {
+        self.table().capacity = capacity.max(1);
+    }
+
+    /// `clock_secs`, clamped so it never runs behind a nonce already issued.
+    fn now(&self, clock_secs: u64) -> u64 {
+        clock_secs.max(self.table().latest_issue_time)
+    }
+
+    fn mac(&self, signed: &[u8]) -> Hmac<Sha256> {
         let mut mac = <Hmac<Sha256> as Mac>::new_from_slice(&self.secret)
             .expect("HMAC accepts a key of any length");
-        mac.update(time_and_salt);
+        mac.update(signed);
         mac
     }
 
-    /// A fresh nonce issued at `now_secs`.
-    fn issue(&self, now_secs: u64) -> String {
+    /// A fresh nonce issued now (`clock_secs`, clamped as in [`Self::now`]).
+    fn issue(&self, clock_secs: u64) -> String {
+        let (time, seq) = {
+            let mut table = self.table();
+            let time = clock_secs.max(table.latest_issue_time);
+            table.latest_issue_time = time;
+            let seq = table.next_seq;
+            table.next_seq = seq.wrapping_add(1);
+            (time, seq)
+        };
         let mut raw = [0u8; NONCE_LEN];
-        raw[..NONCE_TIME_LEN].copy_from_slice(&now_secs.to_be_bytes());
-        let salt: [u8; NONCE_SALT_LEN] = rand::random();
-        raw[NONCE_TIME_LEN..NONCE_TIME_LEN + NONCE_SALT_LEN].copy_from_slice(&salt);
+        raw[..NONCE_TIME_LEN].copy_from_slice(&time.to_be_bytes());
+        raw[NONCE_TIME_LEN..NONCE_TIME_LEN + NONCE_SEQ_LEN].copy_from_slice(&seq.to_be_bytes());
         let tag = self
-            .mac(&raw[..NONCE_TIME_LEN + NONCE_SALT_LEN])
+            .mac(&raw[..NONCE_TIME_LEN + NONCE_SEQ_LEN])
             .finalize()
             .into_bytes();
-        raw[NONCE_TIME_LEN + NONCE_SALT_LEN..].copy_from_slice(&tag);
+        raw[NONCE_TIME_LEN + NONCE_SEQ_LEN..].copy_from_slice(&tag);
         hex(&raw)
     }
 
-    /// The issue time of `nonce` if this verifier minted it, else `None`.
-    fn issued_at(&self, nonce: &str) -> Option<u64> {
+    /// The issue stamp of `nonce` if this verifier minted it, else `None`.
+    fn issued_at(&self, nonce: &str) -> Option<NonceStamp> {
         let raw = unhex::<NONCE_LEN>(nonce)?;
-        let (signed, tag) = raw.split_at(NONCE_TIME_LEN + NONCE_SALT_LEN);
+        let (signed, tag) = raw.split_at(NONCE_TIME_LEN + NONCE_SEQ_LEN);
         self.mac(signed).verify_slice(tag).ok()?;
         let mut time = [0u8; NONCE_TIME_LEN];
         time.copy_from_slice(&raw[..NONCE_TIME_LEN]);
-        Some(u64::from_be_bytes(time))
+        let mut seq = [0u8; NONCE_SEQ_LEN];
+        seq.copy_from_slice(&raw[NONCE_TIME_LEN..NONCE_TIME_LEN + NONCE_SEQ_LEN]);
+        Some(NonceStamp {
+            time: u64::from_be_bytes(time),
+            seq: u64::from_be_bytes(seq),
+        })
     }
 
     fn is_expired(issued: u64, now_secs: u64) -> bool {
         now_secs.saturating_sub(issued) >= DIGEST_NONCE_LIFETIME.as_secs()
     }
 
-    /// Records `nc` for `key` if it exceeds the highest seen so far; `false`
-    /// when it does not (a repeated or reordered request).
-    fn record(&self, key: (String, String), issued: u64, nc: u32, now_secs: u64) -> bool {
-        let mut table = self.seen.lock().unwrap_or_else(|e| e.into_inner());
-        if let Some((_, highest)) = table.entries.get_mut(&key) {
-            if nc <= *highest {
+    /// Records `nc` for `key`; `false` when it was already seen, falls below
+    /// the window, or the pair can no longer be tracked.
+    fn record(&self, key: PairKey, stamp: NonceStamp, nc: u32, now_secs: u64) -> bool {
+        let mut guard = self.table();
+        let table = &mut *guard;
+        let use_id = table.next_use;
+        table.next_use += 1;
+        if let Some(entry) = table.entries.get_mut(&key) {
+            if !entry.accept(nc) {
                 return false;
             }
-            *highest = nc;
+            table.lru.remove(&entry.last_used);
+            entry.last_used = use_id;
+            table.lru.insert(use_id, key);
             return true;
         }
-        if issued < table.floor {
-            return false;
-        }
-        if table.entries.len() >= DIGEST_NC_TRACK_CAP {
-            table
-                .entries
-                .retain(|_, (t, _)| !Self::is_expired(*t, now_secs));
-        }
-        if table.entries.len() >= DIGEST_NC_TRACK_CAP
-            && let Some((oldest_key, oldest)) = table
-                .entries
-                .iter()
-                .min_by_key(|(_, (t, _))| *t)
-                .map(|(k, (t, _))| (k.clone(), *t))
-        {
-            table.entries.remove(&oldest_key);
-            table.floor = table.floor.max(oldest.saturating_add(1));
-            if issued < table.floor {
-                return false;
+        while table.entries.len() >= table.capacity {
+            let Some((_, victim)) = table.lru.pop_first() else {
+                break;
+            };
+            if let Some(dropped) = table.entries.remove(&victim)
+                && !Self::is_expired(dropped.stamp.time, now_secs)
+            {
+                table.floor_seq = table.floor_seq.max(dropped.stamp.seq.saturating_add(1));
             }
         }
-        table.entries.insert(key, (issued, nc));
+        if stamp.seq < table.floor_seq {
+            return false;
+        }
+        table.entries.insert(
+            key,
+            NcEntry {
+                stamp,
+                highest: nc,
+                window: 0,
+                last_used: use_id,
+            },
+        );
+        table.lru.insert(use_id, key);
         true
     }
 
-    /// Whether an untracked pair under a nonce issued at `issued` would be
-    /// refused because live pairs of that age were evicted.
-    fn below_floor(&self, key: &(String, String), issued: u64) -> bool {
-        let table = self.seen.lock().unwrap_or_else(|e| e.into_inner());
-        issued < table.floor && !table.entries.contains_key(key)
+    /// Whether an untracked pair under a nonce with `stamp` would be refused
+    /// because a live pair issued no earlier was dropped.
+    fn below_floor(&self, key: &PairKey, stamp: NonceStamp) -> bool {
+        let table = self.table();
+        stamp.seq < table.floor_seq && !table.entries.contains_key(key)
     }
 }
 
@@ -336,6 +451,16 @@ impl Verifier {
 
     fn now_secs(&self) -> u64 {
         unix_secs((self.clock)())
+    }
+
+    /// Sets how many `(nonce, cnonce)` pairs a Digest verifier tracks
+    /// (default [`DIGEST_NC_TRACK_CAP`], minimum 1; see the module docs).
+    /// No effect on other schemes.
+    pub fn with_digest_nc_capacity(self, capacity: usize) -> Self {
+        if let VerifierScheme::Digest { nonces, .. } = &self.scheme {
+            nonces.set_capacity(capacity);
+        }
+        self
     }
 
     /// Builds a verifier for the reverse-proxy forwarded-auth scheme (see the
@@ -404,7 +529,7 @@ impl Verifier {
                         nonces,
                         ctx.method,
                         ctx.uri,
-                        self.now_secs(),
+                        nonces.now(self.now_secs()),
                     ),
                     DigestCheck::Stale
                 )
@@ -465,11 +590,11 @@ impl Verifier {
                 realm,
                 nonces,
             } => ctx.header("authorization").is_some_and(|header| {
-                let now = self.now_secs();
+                let now = nonces.now(self.now_secs());
                 match check_digest(
                     header, username, password, realm, nonces, ctx.method, ctx.uri, now,
                 ) {
-                    DigestCheck::Accept { key, issued, nc } => nonces.record(key, issued, nc, now),
+                    DigestCheck::Accept { key, stamp, nc } => nonces.record(key, stamp, nc, now),
                     DigestCheck::Stale | DigestCheck::Reject => false,
                 }
             }),
@@ -596,7 +721,7 @@ fn check_digest(
         return DigestCheck::Reject;
     }
     let nonce = get("nonce");
-    let Some(issued) = nonces.issued_at(nonce) else {
+    let Some(stamp) = nonces.issued_at(nonce) else {
         return DigestCheck::Reject;
     };
     let client_uri = get("uri");
@@ -620,11 +745,11 @@ fn check_digest(
     if !constant_time_eq(expected_response.as_bytes(), client_response.as_bytes()) {
         return DigestCheck::Reject;
     }
-    let key = (nonce.to_owned(), cnonce.to_owned());
-    if DigestNonces::is_expired(issued, now_secs) || nonces.below_floor(&key, issued) {
+    let key = pair_key(nonce, cnonce);
+    if DigestNonces::is_expired(stamp.time, now_secs) || nonces.below_floor(&key, stamp) {
         return DigestCheck::Stale;
     }
-    DigestCheck::Accept { key, issued, nc }
+    DigestCheck::Accept { key, stamp, nc }
 }
 
 /// RFC 7616 §3.4: `nc` is exactly eight hex digits.
@@ -1279,7 +1404,7 @@ mod tests {
         assert_eq!(
             verify_auth(&v, Some(&second), "GET", uri),
             AuthResult::Unauthorized,
-            "nc lower than the highest seen must be rejected"
+            "an nc already accepted must be rejected"
         );
     }
 
@@ -1360,34 +1485,106 @@ mod tests {
     }
 
     #[test]
-    fn digest_nc_table_stays_bounded_and_evicted_pairs_are_stale() {
+    fn digest_out_of_order_nc_within_window_is_accepted_once() {
         let now = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(1_000_000));
-        let v = digest_verifier_at(now.clone());
-        let uri = "/s";
+        let v = digest_verifier_at(now);
+        let uri = "/stream/part.m4s";
         let first = digest_header(&v.challenge(), uri);
         assert_eq!(verify_auth(&v, Some(&first), "GET", uri), AuthResult::Ok);
-        now.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-        for _ in 0..DIGEST_NC_TRACK_CAP {
-            let h = digest_header(&v.challenge(), uri);
-            assert_eq!(verify_auth(&v, Some(&h), "GET", uri), AuthResult::Ok);
+        let nc = |n| with_nc(&first, n, uri);
+        // 6 overtakes 5 in flight: both are fresh.
+        assert_eq!(verify_auth(&v, Some(&nc(6)), "GET", uri), AuthResult::Ok);
+        assert_eq!(verify_auth(&v, Some(&nc(5)), "GET", uri), AuthResult::Ok);
+        assert_eq!(
+            verify_auth(&v, Some(&nc(5)), "GET", uri),
+            AuthResult::Unauthorized,
+            "nc 5 a second time is a replay"
+        );
+        assert_eq!(
+            verify_auth(&v, Some(&nc(6)), "GET", uri),
+            AuthResult::Unauthorized
+        );
+        // Jump ahead; the oldest value the window still holds is accepted,
+        // one further below is refused.
+        let top = 200;
+        assert_eq!(verify_auth(&v, Some(&nc(top)), "GET", uri), AuthResult::Ok);
+        assert_eq!(
+            verify_auth(&v, Some(&nc(top - NC_WINDOW - 1)), "GET", uri),
+            AuthResult::Unauthorized,
+            "an nc 65 below the highest is outside the window"
+        );
+        assert_eq!(
+            verify_auth(&v, Some(&nc(top - NC_WINDOW)), "GET", uri),
+            AuthResult::Ok
+        );
+    }
+
+    #[test]
+    fn digest_nc_table_evicts_least_recently_used_pair() {
+        let now = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(1_000_000));
+        let v = digest_verifier_at(now).with_digest_nc_capacity(4);
+        let uri = "/s";
+        let headers: Vec<String> = (0..4).map(|_| digest_header(&v.challenge(), uri)).collect();
+        for h in &headers {
+            assert_eq!(verify_auth(&v, Some(h), "GET", uri), AuthResult::Ok);
         }
+        // Pair 0 is the oldest issued but stays in use.
+        assert_eq!(
+            verify_auth(&v, Some(&with_nc(&headers[0], 2, uri)), "GET", uri),
+            AuthResult::Ok
+        );
+        let newcomer = digest_header(&v.challenge(), uri);
+        assert_eq!(verify_auth(&v, Some(&newcomer), "GET", uri), AuthResult::Ok);
         let VerifierScheme::Digest { nonces, .. } = &v.scheme else {
             unreachable!()
         };
+        assert_eq!(nonces.table().entries.len(), 4);
+        // Pair 0 was not the one dropped: its replay window is intact.
         assert_eq!(
-            nonces.seen.lock().unwrap().entries.len(),
-            DIGEST_NC_TRACK_CAP
+            verify_auth(&v, Some(&with_nc(&headers[0], 2, uri)), "GET", uri),
+            AuthResult::Unauthorized
         );
-        // The oldest pair was evicted: its replay must not verify, and the
-        // next challenge tells the client to retry with a fresh nonce.
-        let replay = with_nc(&first, 2, uri);
+        assert_eq!(
+            verify_auth(&v, Some(&with_nc(&headers[0], 3, uri)), "GET", uri),
+            AuthResult::Ok
+        );
+        // Pair 1 (least recently used) was dropped: its replay is refused and
+        // answered as stale so the client picks up a fresh nonce.
+        let replay = with_nc(&headers[1], 2, uri);
         assert_eq!(
             verify_auth(&v, Some(&replay), "GET", uri),
             AuthResult::Unauthorized
         );
-        let headers = [("authorization", replay.as_str())];
-        let ctx = RequestContext::new("GET", uri).with_headers(&headers);
-        assert!(v.challenge_for(&ctx).ends_with(", stale=true"));
+        let hdrs = [("authorization", replay.as_str())];
+        let ctx = RequestContext::new("GET", uri).with_headers(&hdrs);
+        let challenge = v.challenge_for(&ctx);
+        assert!(challenge.ends_with(", stale=true"), "got: {challenge}");
+        let retry = digest_header(&challenge, uri);
+        assert_eq!(verify_auth(&v, Some(&retry), "GET", uri), AuthResult::Ok);
+    }
+
+    #[test]
+    fn digest_clock_stepping_back_does_not_backdate_nonces() {
+        let start = 1_000_000;
+        let now = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(start));
+        let v = digest_verifier_at(now.clone());
+        let uri = "/s";
+        let before = digest_header(&v.challenge(), uri);
+        // Step the clock back by more than a nonce lifetime.
+        now.store(
+            start - 2 * DIGEST_NONCE_LIFETIME.as_secs(),
+            std::sync::atomic::Ordering::SeqCst,
+        );
+        let during = digest_header(&v.challenge(), uri);
+        assert_eq!(verify_auth(&v, Some(&during), "GET", uri), AuthResult::Ok);
+        assert_eq!(verify_auth(&v, Some(&before), "GET", uri), AuthResult::Ok);
+        // When the clock returns, the nonce issued meanwhile is still young.
+        now.store(
+            start + DIGEST_NONCE_LIFETIME.as_secs() - 1,
+            std::sync::atomic::Ordering::SeqCst,
+        );
+        let again = with_nc(&during, 2, uri);
+        assert_eq!(verify_auth(&v, Some(&again), "GET", uri), AuthResult::Ok);
     }
 
     #[test]
