@@ -327,7 +327,8 @@ const HVCC_MIN_SPATIAL_SEGMENTATION_UNSPEC: u16 = 0;
 /// `esds` `objectTypeIndication` for MPEG-4 Audio (ISO/IEC 14496-1 Table 5).
 const OTI_MPEG4_AUDIO: u8 = 0x40;
 /// `esds` `objectTypeIndication` for MPEG-2 Main Visual (ISO/IEC 14496-1 Table 5).
-const OTI_MPEG2_VIDEO_MAIN: u8 = 0x61;
+/// `pub(crate)`: also used by `ps_demux` (C6, #1009) to build the same `esds`.
+pub(crate) const OTI_MPEG2_VIDEO_MAIN: u8 = 0x61;
 /// `esds` `objectTypeIndication` for MPEG-1 Audio, ISO/IEC 11172-3 (Table 5).
 const OTI_MPEG1_AUDIO: u8 = 0x6B;
 /// `esds` `objectTypeIndication` for MPEG-2 Audio, ISO/IEC 13818-3 (Table 5).
@@ -335,14 +336,17 @@ const OTI_MPEG2_AUDIO: u8 = 0x69;
 /// `esds` `streamType` for an AudioStream (ISO/IEC 14496-1 Table 6).
 const STREAM_TYPE_AUDIO: u8 = 0x05;
 /// `esds` `streamType` for a VisualStream (ISO/IEC 14496-1 Table 6).
-const STREAM_TYPE_VISUAL: u8 = 0x04;
+/// `pub(crate)`: also used by `ps_demux` (C6, #1009).
+pub(crate) const STREAM_TYPE_VISUAL: u8 = 0x04;
 /// `esds` `ES_ID` assigned to the single audio elementary stream.
 const ESDS_ES_ID: u16 = 1;
 /// `esds` `ES_ID` assigned to the single video elementary stream.
-const ESDS_VIDEO_ES_ID: u16 = 2;
+/// `pub(crate)`: also used by `ps_demux` (C6, #1009).
+pub(crate) const ESDS_VIDEO_ES_ID: u16 = 2;
 /// `SLConfigDescriptor` predefined body for MP4 file SL packaging
 /// (ISO/IEC 14496-1 §7.3.2.3 — `predefined = 0x02`).
-const SL_CONFIG_PREDEFINED_MP4: u8 = 0x02;
+/// `pub(crate)`: also used by `ps_demux` (C6, #1009).
+pub(crate) const SL_CONFIG_PREDEFINED_MP4: u8 = 0x02;
 
 /// Audio sample size in bits carried in the sample entry (PCM-equivalent; 16).
 const AUDIO_SAMPLE_SIZE_BITS: u16 = 16;
@@ -374,9 +378,11 @@ const AAC_SAMPLES_PER_FRAME: u32 = 1024;
 const ADTS_HEADER_SIZE: usize = 7;
 
 /// MPEG-2 video `picture_start_code` (0x00000100) — ISO/IEC 13818-2 §6.2.3.
-const MPEG2_PICTURE_START_CODE: u8 = 0x00;
+/// `pub(crate)`: also used by `ps_demux` (C6, #1009) to split/flag MPEG-2
+/// pictures the same way this module does.
+pub(crate) const MPEG2_PICTURE_START_CODE: u8 = 0x00;
 /// `picture_coding_type` value for an intra-coded (I) picture — §6.3.9 Table 6-12.
-const MPEG2_PICTURE_CODING_TYPE_I: u8 = 0x01;
+pub(crate) const MPEG2_PICTURE_CODING_TYPE_I: u8 = 0x01;
 
 /// 33-bit PTS/DTS modulus, for wrap-around unrolling (§2.4.3.7, 90 kHz clock).
 /// Alias for [`broadcast_common::clock33::WRAP_33BIT`] — the actual
@@ -528,7 +534,7 @@ fn rescale_to_track(anchor_90k: i128, timescale: u32) -> i64 {
 /// Whether an MPEG-2 video access unit is a random-access point: it carries a
 /// `sequence_header()` (0x000001B3) or its `picture_header()` codes an I-frame
 /// (`picture_coding_type == 1`) — ISO/IEC 13818-2 §6.2.2.1 / §6.3.9.
-fn mpeg2_is_sync(au: &[u8]) -> bool {
+pub(crate) fn mpeg2_is_sync(au: &[u8]) -> bool {
     let mut i = 0usize;
     while i + 4 <= au.len() {
         if au[i] == 0x00 && au[i + 1] == 0x00 && au[i + 2] == 0x01 {
@@ -607,12 +613,16 @@ fn find_adts_sync(data: &[u8]) -> Option<(usize, AdtsHeader)> {
     None
 }
 
-/// Split a concatenated ADTS payload into individual frames (header + raw
-/// data). Resyncs to the next frame boundary on a bad sync (see
-/// [`find_adts_sync`]); stops once no further sync is found or a frame would
-/// run past the end of `payload`, so a partial tail does not lose earlier
-/// frames.
-fn split_adts_frames(payload: &[u8]) -> Vec<&[u8]> {
+/// Split a concatenated ADTS payload into individual frames (whole frame
+/// bytes — fixed+variable header, the CRC when present, and the raw data
+/// block(s) — plus that frame's parsed [`AdtsHeader`]). Resyncs to the next
+/// frame boundary on a bad sync (see [`find_adts_sync`]); stops once no
+/// further sync is found or a frame would run past the end of `payload`, so
+/// a partial tail does not lose earlier frames. `frame_length` (ISO/IEC
+/// 13818-7 §6.2) already spans the whole frame including any CRC, so this
+/// boundary-finding needs no change for C11 (#1012) — only the caller's
+/// fixed 7-byte strip did.
+fn split_adts_frames(payload: &[u8]) -> Vec<(&[u8], AdtsHeader)> {
     let mut frames = Vec::new();
     let mut off = 0usize;
     while off + ADTS_HEADER_SIZE <= payload.len() {
@@ -624,10 +634,30 @@ fn split_adts_frames(payload: &[u8]) -> Vec<&[u8]> {
         if frame_len < ADTS_HEADER_SIZE || off + frame_len > payload.len() {
             break;
         }
-        frames.push(&payload[off..off + frame_len]);
+        frames.push((&payload[off..off + frame_len], hdr));
         off += frame_len;
     }
     frames
+}
+
+/// `adts_error_check()`'s `crc_check` (ISO/IEC 13818-7 §6.2): a 16-bit CRC
+/// immediately after the fixed+variable header when `protection_absent ==
+/// 0`.
+const ADTS_CRC_SIZE: usize = 2;
+
+/// Bytes to strip from the front of a whole ADTS frame to reach its raw
+/// audio payload: the header, plus the 2-byte CRC when present (C11,
+/// #1012). For `number_of_raw_data_blocks_in_frame > 0` with a CRC present,
+/// the spec also inserts one CRC per raw data block between them
+/// (`adts_header_error_check()` / `adts_raw_data_block_error_check()`) —
+/// those are not removed; only the single header-level CRC is, matching the
+/// documented, intentionally-partial fix for the rare multi-block+CRC case.
+fn adts_header_len(hdr: &AdtsHeader) -> usize {
+    if hdr.protection_absent {
+        ADTS_HEADER_SIZE
+    } else {
+        ADTS_HEADER_SIZE + ADTS_CRC_SIZE
+    }
 }
 
 /// Convert an ADTS `sampling_frequency_index` to Hz (ISO/IEC 14496-3 Table 1.16).
@@ -1413,18 +1443,22 @@ fn emit_audio_au(
     };
     match kind {
         AudioKind::Aac => {
-            for frame in split_adts_frames(au_data) {
-                if frame.len() > ADTS_HEADER_SIZE {
+            for (frame, hdr) in split_adts_frames(au_data) {
+                // C11 (#1012): strip the CRC (if present) along with the
+                // header, and scale duration by the number of raw data
+                // blocks this one ADTS frame actually carries — a frame
+                // with `number_of_raw_data_blocks_in_frame == n` codes
+                // `n + 1` blocks of `AAC_SAMPLES_PER_FRAME` samples each,
+                // not one.
+                let header_len = adts_header_len(&hdr);
+                let duration = AAC_SAMPLES_PER_FRAME * (hdr.num_raw_data_blocks as u32 + 1);
+                if frame.len() > header_len {
                     events.push_back(DemuxEvent::Sample {
                         track_id,
-                        sample: audio_sample(
-                            frame[ADTS_HEADER_SIZE..].to_vec(),
-                            AAC_SAMPLES_PER_FRAME,
-                            elapsed,
-                        ),
+                        sample: audio_sample(frame[header_len..].to_vec(), duration, elapsed),
                     });
                 }
-                elapsed += AAC_SAMPLES_PER_FRAME as u64;
+                elapsed += duration as u64;
             }
         }
         AudioKind::Ac3 => {
@@ -4106,6 +4140,165 @@ mod tests {
             "resync must recover most real AAC frames across misaligned \
              chunks (got {recovered} of {} real frames)",
             audio.samples.len()
+        );
+    }
+
+    /// Loads the real AudioSpecificConfig recovered from `fixtures/ts/h264_aac.ts`
+    /// plus its real per-frame AAC payloads, for building real (but
+    /// re-headered) ADTS test frames — same real source `adts_resyncs_across_pes_boundaries`
+    /// uses.
+    fn real_aac_asc_and_samples() -> (AudioSpecificConfig, Vec<Vec<u8>>) {
+        let mut path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        path.push("..");
+        path.push("fixtures");
+        path.push("ts");
+        path.push("h264_aac.ts");
+        let ts_bytes =
+            std::fs::read(&path).unwrap_or_else(|e| panic!("read fixture {}: {e}", path.display()));
+        let mut demux = TsDemux::new();
+        let media = demux.demux(&ts_bytes).expect("demux h264_aac.ts");
+        let audio = media
+            .tracks
+            .into_iter()
+            .find(|t| matches!(t.config(), CodecConfig::Aac { .. }))
+            .expect("h264_aac.ts has an AAC track");
+        let esds = match audio.config() {
+            CodecConfig::Aac { esds, .. } => esds.clone(),
+            _ => unreachable!(),
+        };
+        let dsi = esds
+            .es_descriptor
+            .decoder_config
+            .as_ref()
+            .and_then(|dc| dc.decoder_specific_info.as_ref())
+            .expect("AAC esds carries a DecoderSpecificInfo")
+            .clone();
+        let asc = AudioSpecificConfig::parse(&dsi.data).expect("parse real AudioSpecificConfig");
+        let samples: Vec<Vec<u8>> = audio.samples.iter().map(|s| s.data.to_vec()).collect();
+        (asc, samples)
+    }
+
+    /// C11 (#1012): a CRC-protected ADTS frame (`protection_absent == 0`) is
+    /// 9 bytes of header (fixed+variable header, 7, plus `adts_error_check()`'s
+    /// 16-bit `crc_check`, 2 — ISO/IEC 13818-7 §6.2) before the raw data
+    /// block. No local tool can generate a real CRC-protected ADTS stream:
+    /// ffmpeg's `adts` muxer has no CRC-write option (`ffmpeg -h muxer=adts`
+    /// lists none) and always emits `protection_absent = 1`; TSDuck doesn't
+    /// encode audio at all. Per the fixture-first rule, this is hand-built
+    /// directly from that spec clause's field layout, using the crate's own
+    /// spec-cited `build_adts_header`/`parse_adts_header` for every OTHER
+    /// field (profile/sfi/channels/frame_length) and only overriding
+    /// `protection_absent` — the real payload bytes are the genuine captured
+    /// AAC frames from `fixtures/ts/h264_aac.ts`.
+    ///
+    /// Before the fix, `emit_audio_au` always stripped a fixed 7 bytes, so
+    /// the emitted sample began with the 2 CRC bytes glued in front of the
+    /// real payload — this test's oracle is the exact real payload bytes
+    /// before they were wrapped, so that leak is directly visible as a
+    /// length/content mismatch.
+    #[test]
+    fn adts_crc_protected_frame_strips_crc_not_sample_data() {
+        let (asc, samples) = real_aac_asc_and_samples();
+        assert!(samples.len() >= 2, "fixture must carry several AAC frames");
+
+        let mut events: VecDeque<DemuxEvent> = VecDeque::new();
+        let mut anchor = AudioAnchor::default();
+        let mut dts_uw: i128 = 0;
+        for payload in samples.iter().take(5) {
+            // ADTS_CRC_SIZE(2) accounted in frame_length, per §6.2's
+            // frame_length = "length of this ADTS frame including headers
+            // and error_check in bytes".
+            let frame_len = (ADTS_HEADER_SIZE + ADTS_CRC_SIZE + payload.len()) as u16;
+            let mut header = asc.to_adts_header(frame_len).expect("build ADTS header");
+            header[1] &= !0x01; // protection_absent = 0 (CRC present)
+            let mut au = header.to_vec();
+            au.extend_from_slice(&[0x00, 0x00]); // crc_check (value irrelevant here)
+            au.extend_from_slice(payload);
+
+            emit_audio_au(
+                &AudioKind::Aac,
+                44_100,
+                &mut anchor,
+                &au,
+                dts_uw as u64 as i128,
+                dts_uw,
+                1,
+                &mut events,
+            );
+            dts_uw += AAC_SAMPLES_PER_FRAME as i128;
+        }
+
+        let emitted: Vec<Vec<u8>> = events
+            .iter()
+            .filter_map(|e| match e {
+                DemuxEvent::Sample { sample, .. } => Some(sample.data.to_vec()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(emitted.len(), 5, "one sample per CRC-protected ADTS frame");
+        for (i, (got, want)) in emitted.iter().zip(samples.iter().take(5)).enumerate() {
+            assert_eq!(
+                got, want,
+                "sample {i}: CRC bytes must not leak into (or truncate) the real payload"
+            );
+        }
+    }
+
+    /// C11 (#1012): `number_of_raw_data_blocks_in_frame > 0` (a legal,
+    /// if rare, ADTS encoding — several AAC frames packed into one ADTS
+    /// frame) must scale the emitted sample's duration by the number of
+    /// raw data blocks, not always assume one. Same real-data provenance
+    /// and same "no local tool" note as the CRC test above (ffmpeg's own
+    /// AAC encoders never emit `number_of_raw_data_blocks_in_frame > 0`
+    /// either); two real captured AAC frames are concatenated into a single
+    /// ADTS frame's raw-data area to build a real (if hand-assembled at the
+    /// framing level) 2-block frame.
+    #[test]
+    fn adts_multi_raw_data_block_duration_is_multiplied() {
+        let (asc, samples) = real_aac_asc_and_samples();
+        assert!(samples.len() >= 2, "fixture must carry several AAC frames");
+
+        let mut combined = samples[0].clone();
+        combined.extend_from_slice(&samples[1]);
+        let frame_len = (ADTS_HEADER_SIZE + combined.len()) as u16;
+        let mut header = asc.to_adts_header(frame_len).expect("build ADTS header");
+        header[6] |= 0x01; // number_of_raw_data_blocks_in_frame = 1 (2 blocks)
+        let mut au = header.to_vec();
+        au.extend_from_slice(&combined);
+
+        let mut events: VecDeque<DemuxEvent> = VecDeque::new();
+        let mut anchor = AudioAnchor::default();
+        emit_audio_au(
+            &AudioKind::Aac,
+            44_100,
+            &mut anchor,
+            &au,
+            0,
+            0,
+            1,
+            &mut events,
+        );
+
+        let emitted: Vec<(Vec<u8>, Option<u32>)> = events
+            .iter()
+            .filter_map(|e| match e {
+                DemuxEvent::Sample { sample, .. } => Some((sample.data.to_vec(), sample.duration)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            emitted.len(),
+            1,
+            "the whole 2-raw-data-block frame is one emitted sample"
+        );
+        assert_eq!(
+            emitted[0].0, combined,
+            "both raw data blocks' real bytes must be present, undamaged"
+        );
+        assert_eq!(
+            emitted[0].1,
+            Some(AAC_SAMPLES_PER_FRAME * 2),
+            "duration must be (num_raw_data_blocks + 1) * AAC_SAMPLES_PER_FRAME, not just 1024"
         );
     }
 

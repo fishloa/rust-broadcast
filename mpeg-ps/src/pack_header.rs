@@ -61,14 +61,14 @@ impl<'a> Parse<'a> for PackHeader<'a> {
 
         let scr = scr::read_scr_field(&b[4..10], "SCR")?;
 
-        // Bytes 10..13 (Table 2-39):
-        // byte 10: '01'(2) | mux[21:16](6)
-        // byte 11: mux[15:8](8)
-        // byte 12: mux[7:0](8) — includes the 2 marker bits at bits[1:0]
+        // Bytes 10..13 (Table 2-39, ISO/IEC 13818-1 §2.5.3.3): unlike the SCR
+        // field, there is no `'01'` prefix before `program_mux_rate` — the
+        // field is the TOP 22 bits of bytes 10..12, followed by the 2 marker
+        // bits in byte 12 bits[1:0]:
+        // byte 10: mux[21:14](8)
+        // byte 11: mux[13:6](8)
+        // byte 12: mux[5:0](6, bits[7:2]) | marker_bit(2, bits[1:0])
         // byte 13: reserved(5, bits[7:3]) | stuffing(3, bits[2:0])
-        //
-        // The 22-bit mux_rate spans the bottom 22 bits of the 3 bytes.
-        // Top 2 bits of byte10 are '01' prefix (like SCR).
 
         // Validate marker bits at byte12[1:0]
         if b[12] & 0x03 != 0x03 {
@@ -76,8 +76,7 @@ impl<'a> Parse<'a> for PackHeader<'a> {
         }
 
         let program_mux_rate =
-            ((u32::from(b[10] & 0x3F) << 16) | (u32::from(b[11]) << 8) | u32::from(b[12]))
-                & 0x3F_FFFF;
+            (u32::from(b[10]) << 14) | (u32::from(b[11]) << 6) | (u32::from(b[12]) >> 2);
 
         if program_mux_rate == 0 {
             return Err(Error::ZeroMuxRate);
@@ -128,14 +127,15 @@ impl Serialize for PackHeader<'_> {
         // SCR field (6 bytes)
         buf[4..10].copy_from_slice(&scr::write_scr_field(self.scr));
 
-        // program_mux_rate: 22 bits across 3 bytes
+        // program_mux_rate: 22 bits across bytes 10..12, no '01' prefix
+        // (Table 2-39; see the parse-side comment above).
         let mux = self.program_mux_rate & 0x3F_FFFF;
-        // byte 10: '01' prefix + mux[21:16]
-        buf[10] = 0x40 | ((mux >> 16) & 0x3F) as u8;
-        // byte 11: mux[15:8]
-        buf[11] = ((mux >> 8) & 0xFF) as u8;
-        // byte 12: mux[7:0] (incl. markers at bits[1:0])
-        buf[12] = (mux & 0xFF) as u8;
+        // byte 10: mux[21:14]
+        buf[10] = (mux >> 14) as u8;
+        // byte 11: mux[13:6]
+        buf[11] = (mux >> 6) as u8;
+        // byte 12: mux[5:0] + marker bits (always '11') at bits[1:0]
+        buf[12] = (((mux & 0x3F) as u8) << 2) | 0x03;
         // byte 13: reserved(5) + stuffing(3)
         buf[13] = (self.reserved & 0x1F) << 3 | (self.stuffing_length & 0x07);
 
@@ -153,7 +153,12 @@ mod tests {
 
     #[test]
     fn pack_header_round_trip_fixture_pattern() {
-        // Match the fixture pattern: SCR=0, mux_rate=0x03363B, reserved=0x1F, stuffing=0
+        // Byte-for-byte the real fixture's first pack header (fixtures/mpeg-ps/
+        // ffmpeg-mpeg2-ps.mpg, bytes 0..14): SCR=0, reserved=0x1F, stuffing=0.
+        // mux = (0x43<<14)|(0x36<<6)|(0x3B>>2) = 0x10CD8E (Table 2-39, no '01'
+        // prefix before program_mux_rate — see the parse-side comment), which
+        // matches this same fixture's system_header.rate_bound (0x10CD8E,
+        // cross-checked in `real_fixture_walk` / see mpeg-ps/tests/fixture_ps.rs).
         let bytes = vec![
             0x00, 0x00, 0x01, 0xBA, 0x44, 0x00, 0x04, 0x00, 0x04, 0x01, // SCR=0
             0x43, 0x36, 0x3B, 0xF8, // mux + reserved + stuffing
@@ -166,7 +171,7 @@ mod tests {
                 extension: 0,
             }
         );
-        assert_eq!(h.program_mux_rate, 0x03363B);
+        assert_eq!(h.program_mux_rate, 0x10CD8E);
         assert_eq!(h.stuffing_length, 0);
         assert_eq!(h.reserved, 0x1F);
         assert!(h.stuffing.is_empty());
@@ -188,8 +193,9 @@ mod tests {
     #[test]
     fn pack_header_round_trip_with_stuffing() {
         let bytes = vec![
-            0x00, 0x00, 0x01, 0xBA, 0x44, 0x00, 0x04, 0x00, 0x04, 0x01, 0x40, 0x00, 0x43,
-            0x03, // mux=0x43 (LSBs=markers), reserved=0, stuffing=3
+            0x00, 0x00, 0x01, 0xBA, 0x44, 0x00, 0x04, 0x00, 0x04, 0x01, 0x00, 0x01,
+            0x0F, // mux=0x43: byte10=mux[21:14], byte11=mux[13:6], byte12=mux[5:0]<<2|markers
+            0x03, // reserved=0, stuffing=3
             0xFF, 0xFF, 0xFF,
         ];
         let h = PackHeader::parse(&bytes).unwrap();
@@ -226,7 +232,7 @@ mod tests {
         let mut b = vec![0u8; 14];
         b[0..4].copy_from_slice(&PACK_START_CODE.to_be_bytes());
         b[4..10].copy_from_slice(&scr_enc);
-        b[10..14].copy_from_slice(&[0x40, 0x00, 0x43, 0x00]); // mux=0x43
+        b[10..14].copy_from_slice(&[0x00, 0x01, 0x0F, 0x00]); // mux=0x43
 
         let h = PackHeader::parse(&b).unwrap();
         assert_eq!(h.scr, scr);

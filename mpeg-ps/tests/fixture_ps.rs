@@ -63,6 +63,15 @@ fn real_fixture_walk() {
             "pack {i}: mux_rate is zero"
         );
 
+        // Oracle cross-check (issue #1049): H.222.0 requires rate_bound to be
+        // an upper bound on program_mux_rate across all packs; ffmpeg emits a
+        // constant-rate PS where every pack's mux_rate equals the system
+        // header's rate_bound exactly.
+        assert_eq!(
+            pack.pack_header.program_mux_rate, sh.rate_bound,
+            "pack {i}: program_mux_rate must match system_header.rate_bound"
+        );
+
         // Byte-exact round-trip each pack header
         let orig_bytes = &data[offset..offset + pack.pack_header.serialized_len()];
         let mut round = vec![0u8; pack.pack_header.serialized_len()];

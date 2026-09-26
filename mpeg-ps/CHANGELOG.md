@@ -12,6 +12,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `Error::FieldOverflow` variant is added.
 
 ### Fixed
+- `PackHeader` `program_mux_rate` (Table 2-39): parse/serialize assumed a `'01'` marker prefix
+  before the 22-bit field, the same layout the SCR field uses — Table 2-39 has no such prefix, so
+  every real pack header's `program_mux_rate` was read 5.2x too small (and the two trailing marker
+  bits were folded into the value), and every mux_rate this crate serialized emitted a forced bit
+  in the marker position and failed re-parse (#1049).
+- `ProgramStreamMap`: `elementary_stream_map_length` was read from (and written at) a fixed offset
+  immediately after `program_stream_info_length`, before the program descriptor loop — Table 2-41
+  places it AFTER that loop. Any conformant PSM with a non-empty program descriptor loop
+  misparsed the first descriptor's bytes as the ES map length, and every PSM this crate serialized
+  with program descriptors was non-conformant (#1050).
 - `ProgramStreamMap::serialize_into`: `pseudo_descriptor_length` was written
   as `1 + descriptors.len() as u8` — the cast happened before the add, so a
   255-byte descriptor overflowed the addition (panicking in debug, wrapping

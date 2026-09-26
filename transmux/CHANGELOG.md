@@ -15,6 +15,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `playready_pssh`) now return `Result` for the same reason.
 
 ### Fixed
+- `AudioSpecificConfig::to_adts_header` no longer emits ADTS profile 0 (AAC Main) for HE-AAC /
+  HE-AAC v2 explicit hierarchical signaling (`audioObjectType` 5/29): it now decodes the core AOT
+  the same way `heaac_signaling` does, rejects a core AOT ADTS's 2-bit `profile` field can't
+  represent (anything outside 1..=4), and rejects `sampling_frequency_index == Escape` instead of
+  copying the forbidden `0xF` into ADTS (#1008).
+- `PsDemux` no longer misidentifies MPEG-2 video as H.264 for every `stream_id` in the video range
+  (0xE0-0xEF): it now probes the reassembled elementary stream for a MPEG-2 `sequence_header()`
+  before falling back to the H.264 SPS/PPS path, and MPEG-2 video now comes out as
+  `CodecConfig::Mpeg2Video` with real picture geometry instead of a garbage `avc1` track built
+  from MPEG-2 slice start codes misread as an AUD/SPS/PPS (#1009).
+- `SegmentIndexBox` (`sidx`) parse/serialize now read/write the 16-bit `reserved` field before
+  `reference_count`, per ISO/IEC 14496-12 §8.16.3.2 — every conformant sidx previously parsed with
+  `reference_count == 0` (its `reserved` bytes misread as the count), and every sidx this crate
+  serialized was 2 bytes short of a conformant one (#1010).
+- `WebmDemux` no longer loses every Cluster after the first when Clusters are written
+  unknown-size (live/recorded WebM from a browser `MediaRecorder`, `ffmpeg -f webm -live 1`, or
+  OBS): an unknown-size Segment child now terminates at the next Segment-level sibling element
+  (RFC 8794 §6.2), not at the end of the buffer (#1011).
+- `TsDemux` no longer leaves the 2 `crc_check` bytes of a CRC-protected ADTS frame
+  (`protection_absent == 0`) inside the emitted AAC sample, and an ADTS frame with
+  `number_of_raw_data_blocks_in_frame > 0` now gets a duration scaled by the number of raw data
+  blocks it actually carries instead of always `1024` samples (#1012).
 - `avcC`/`hvcC` NALU-array serializers no longer silently wrap `numOfSequenceParameterSets`
   (5-bit), `numOfArrays`/`numOfPictureParameterSets`/`numOfSequenceParameterSetExt` (8-bit), or a
   NALU/config length (16-bit) past their field width while still emitting every entry (#1129).
