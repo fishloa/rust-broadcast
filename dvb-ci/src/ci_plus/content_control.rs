@@ -420,12 +420,31 @@ impl<'a> SacMessage<'a> {
     }
 
     /// Serialize the datatype loop to a `Vec`.
+    ///
+    /// # Panics
+    /// Panics if `serialize_into` errors on a buffer of exactly
+    /// `serialized_len()` bytes — which happens only for a hand-built
+    /// `SacMessage` carrying a datatype `value` longer than `u16::MAX`
+    /// (`Error::LengthTooLarge`; a value parsed from the wire can never be
+    /// that long, since its own length prefix is 16 bits). Prefer
+    /// [`try_to_bytes`](Self::try_to_bytes) whenever that's possible.
     #[must_use]
     pub fn to_bytes(&self) -> Vec<u8> {
         let mut buf = alloc::vec![0u8; self.serialized_len()];
         let n = self.serialize_into(&mut buf).expect("buffer sized exactly");
         debug_assert_eq!(n, buf.len());
         buf
+    }
+
+    /// Serialize the datatype loop to a `Vec`, returning the serializer's
+    /// error instead of panicking (r10-W-14) — prefer this over
+    /// [`to_bytes`](Self::to_bytes) for a hand-built value that might
+    /// violate a wire constraint (e.g. `value.len() > u16::MAX`).
+    pub fn try_to_bytes(&self) -> Result<Vec<u8>> {
+        let mut buf = alloc::vec![0u8; self.serialized_len()];
+        let n = self.serialize_into(&mut buf)?;
+        buf.truncate(n);
+        Ok(buf)
     }
 }
 
@@ -486,6 +505,25 @@ impl Serialize for ContentControlApdu {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// r10-W-14: a hand-built `SacMessage` whose datatype `value` exceeds
+    /// `u16::MAX` (the 16-bit `datatype_length` cannot represent it) must
+    /// report `Error::LengthTooLarge` through `try_to_bytes`, not panic
+    /// through `to_bytes`'s `.expect(...)` on the serializer's error.
+    #[test]
+    fn try_to_bytes_reports_oversized_value_instead_of_panicking() {
+        let oversized = alloc::vec![0u8; u16::MAX as usize + 1];
+        let msg = SacMessage {
+            datatypes: alloc::vec![SacDatatype {
+                datatype_id: DatatypeId::UriMessage,
+                value: &oversized,
+            }],
+        };
+        assert!(matches!(
+            msg.try_to_bytes(),
+            Err(Error::LengthTooLarge(n)) if n == oversized.len()
+        ));
+    }
 
     #[test]
     fn cc_pin_reply_bound_round_trips_and_bites() {

@@ -75,8 +75,8 @@
 //! discovers and engages an installed CAM: `ci-probe list` / `info` /
 //! `descramble <pmt>` / `mmi`, with `--trace` for an annotated link dump.
 //!
-//! Roadmap: the `host_control` resource and a differential test harness against
-//! an external reference.
+//! Roadmap: a differential test harness against an external reference (the
+//! `host_control` resource has since landed — see [`resource::HostControl`]).
 //!
 //! # Example
 //!

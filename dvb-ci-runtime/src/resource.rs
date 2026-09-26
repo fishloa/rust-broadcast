@@ -46,12 +46,24 @@ fn to_menu(m: &Menu<'_>) -> MmiMenu {
     }
 }
 
-pub(crate) fn ser<S: Serialize>(s: &S) -> Vec<u8> {
+/// r10-W-20: `serialize_into` failing here used to be swallowed into a
+/// silently-empty `Vec` — which then went out to real CI hardware as an
+/// empty APDU, indistinguishable from a deliberate zero-length one, rather
+/// than surfacing the failure at all. Panicking is louder and safer than
+/// silently corrupting the wire exchange; a buffer sized to
+/// `serialized_len()` only fails to serialize for a value that itself
+/// violates a wire constraint (e.g. a length/count/PID out of range — see
+/// `broadcast_common::len::fit_bits`), which every caller here is expected
+/// to have already validated before constructing the value.
+pub(crate) fn ser<S: Serialize>(s: &S) -> Vec<u8>
+where
+    S::Error: core::fmt::Debug,
+{
     let mut b = vec![0u8; s.serialized_len()];
-    match s.serialize_into(&mut b) {
-        Ok(n) => b.truncate(n),
-        Err(_) => b.clear(),
-    }
+    let n = s
+        .serialize_into(&mut b)
+        .expect("value must satisfy every wire constraint of its own type");
+    b.truncate(n);
     b
 }
 

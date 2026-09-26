@@ -642,10 +642,48 @@ impl core::fmt::Debug for Verifier {
     }
 }
 
+/// RFC 7235 §2.1: `auth-scheme` is a `token`, and tokens are matched
+/// case-insensitively — a client sending `digest realm=…` or `BASIC …` is
+/// answering the challenge just as validly as one that echoes the exact
+/// case this crate renders in [`Verifier::render_challenge`]. Returns what
+/// follows `scheme` and its separating space, still in the client's
+/// original case (only the scheme token itself is case-folded).
+fn strip_scheme<'a>(header: &'a str, scheme: &str) -> Option<&'a str> {
+    let head = header.get(..scheme.len())?;
+    if !head.eq_ignore_ascii_case(scheme) {
+        return None;
+    }
+    header[scheme.len()..].strip_prefix(' ')
+}
+
+/// Split a Digest `Authorization` header's field list on top-level commas
+/// (RFC 7616 §3.4.1 `auth-param`), treating a `"…"` quoted-string span as
+/// opaque — a literal comma inside a quoted value (e.g. `realm="Region,
+/// East"`) is part of that value, not a field separator. No backslash-escape
+/// handling: none of the values this crate itself renders or expects back
+/// (`realm`/`nonce`/`opaque`/`uri`/…) ever contain a literal `"`.
+fn split_digest_fields(s: &str) -> Vec<&str> {
+    let mut out = Vec::new();
+    let mut start = 0usize;
+    let mut in_quotes = false;
+    for (i, c) in s.char_indices() {
+        match c {
+            '"' => in_quotes = !in_quotes,
+            ',' if !in_quotes => {
+                out.push(&s[start..i]);
+                start = i + c.len_utf8();
+            }
+            _ => {}
+        }
+    }
+    out.push(&s[start..]);
+    out
+}
+
 /// RFC 7617 §2: decode the base64 payload and compare, in constant time,
 /// against `"{username}:{password}"`.
 fn verify_basic(header: &str, username: &str, password: &str) -> bool {
-    let Some(encoded) = header.strip_prefix("Basic ") else {
+    let Some(encoded) = strip_scheme(header, "Basic") else {
         return false;
     };
     let Ok(decoded) = base64::engine::general_purpose::STANDARD.decode(encoded.trim()) else {
@@ -657,7 +695,7 @@ fn verify_basic(header: &str, username: &str, password: &str) -> bool {
 
 /// RFC 6750 §2.1: compare the bearer token, in constant time.
 fn verify_bearer(header: &str, token: &str) -> bool {
-    let Some(sent) = header.strip_prefix("Bearer ") else {
+    let Some(sent) = strip_scheme(header, "Bearer") else {
         return false;
     };
     constant_time_eq(sent.trim().as_bytes(), token.as_bytes())
@@ -701,14 +739,15 @@ fn check_digest(
     request_uri: &str,
     now_secs: u64,
 ) -> DigestCheck {
-    let Some(rest) = header.strip_prefix("Digest ") else {
+    let Some(rest) = strip_scheme(header, "Digest") else {
         return DigestCheck::Reject;
     };
-    if rest.split(',').count() > MAX_DIGEST_FIELDS {
+    let parts = split_digest_fields(rest);
+    if parts.len() > MAX_DIGEST_FIELDS {
         return DigestCheck::Reject;
     }
     let mut fields = HashMap::new();
-    for part in rest.split(',') {
+    for part in parts {
         let part = part.trim();
         let Some((key, value)) = part.split_once('=') else {
             continue;
@@ -733,6 +772,20 @@ fn check_digest(
     let qop = get("qop");
     let client_response = get("response");
     if cnonce.is_empty() || client_response.is_empty() {
+        return DigestCheck::Reject;
+    }
+    // This module doc / the rendered challenge only ever offer `qop="auth"`,
+    // `algorithm=MD5` (see the module-level "Verification per scheme" doc) —
+    // reject anything else outright rather than silently hashing whatever
+    // the client sent through the qop=auth formula below (RFC 7616 §3.4.1
+    // also defines `qop=auth-int` and `algorithm=*-sess` variants, which use
+    // a *different* HA1/HA2 construction this crate does not implement).
+    // `algorithm` defaults to `MD5` when absent (RFC 7616 §3.3).
+    if qop != "auth" {
+        return DigestCheck::Reject;
+    }
+    let algorithm = get("algorithm");
+    if !algorithm.is_empty() && !algorithm.eq_ignore_ascii_case("MD5") {
         return DigestCheck::Reject;
     }
     let Some(nc) = parse_nc(nc_text) else {
@@ -1388,6 +1441,153 @@ mod tests {
         header
             .replace(&format!("nc={old_nc}"), &format!("nc={nc}"))
             .replace(&old_resp, &resp)
+    }
+
+    // --- r09-W2: scheme token must be matched case-insensitively (RFC 7235
+    // §2.1: auth-scheme is a `token`) ---
+
+    #[test]
+    fn basic_scheme_is_matched_case_insensitively() {
+        let v = Verifier::new(
+            Credentials::Basic {
+                username: "admin".into(),
+                password: "12345".into(),
+            },
+            REALM,
+        );
+        let header = respond(
+            &v.challenge(),
+            &RequestContext::new("GET", "/stream"),
+            Credentials::new("admin", "12345"),
+        )
+        .unwrap();
+        assert!(header.starts_with("Basic "));
+        let lower = header.replacen("Basic ", "basic ", 1);
+        assert_eq!(
+            verify_auth(&v, Some(&lower), "GET", "/stream"),
+            AuthResult::Ok,
+            "lower-case scheme token must verify identically to the canonical case"
+        );
+    }
+
+    #[test]
+    fn bearer_scheme_is_matched_case_insensitively() {
+        let v = Verifier::new(Credentials::bearer("mytoken123"), REALM);
+        let header = respond(
+            &v.challenge(),
+            &RequestContext::new("GET", "/stream"),
+            Credentials::bearer("mytoken123"),
+        )
+        .unwrap();
+        assert!(header.starts_with("Bearer "));
+        let mixed = header.replacen("Bearer ", "BEARER ", 1);
+        assert_eq!(
+            verify_auth(&v, Some(&mixed), "GET", "/stream"),
+            AuthResult::Ok,
+            "mixed-case scheme token must verify identically to the canonical case"
+        );
+    }
+
+    #[test]
+    fn digest_scheme_is_matched_case_insensitively() {
+        let now = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(1_000_000));
+        let v = digest_verifier_at(now);
+        let uri = "/stream/index.m3u8";
+        let header = digest_header(&v.challenge(), uri);
+        assert!(header.starts_with("Digest "));
+        let lower = header.replacen("Digest ", "digest ", 1);
+        assert_eq!(
+            verify_auth(&v, Some(&lower), "GET", uri),
+            AuthResult::Ok,
+            "lower-case scheme token must verify identically to the canonical case"
+        );
+    }
+
+    /// r09-W2: a quoted field value containing a literal comma must not be
+    /// split into two bogus fields. Uses the `uri` field specifically (not
+    /// `realm`) because `uri` is checked for exact equivalence against the
+    /// request ([`digest_uri_matches`]) — the naive `header.split(',')` this
+    /// replaced would truncate `uri` at the embedded comma, and the
+    /// truncated value provably does NOT match the (untruncated)
+    /// `request_uri`, so the defect bites rather than passing by
+    /// coincidence.
+    #[test]
+    fn digest_field_parser_respects_quoted_commas() {
+        let now = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(1_000_000));
+        let v = digest_verifier_at(now);
+        let uri = "/stream/a,b/index.m3u8";
+        let header = digest_header(&v.challenge(), uri);
+        assert!(header.contains(&format!("uri=\"{uri}\"")));
+        assert_eq!(
+            verify_auth(&v, Some(&header), "GET", uri),
+            AuthResult::Ok,
+            "a comma inside the quoted uri field must not fragment the field list"
+        );
+    }
+
+    // --- r09-W3: qop/algorithm must be validated, not merely hashed ---
+
+    /// Pre-fix, `check_digest` never inspected the `algorithm` field's
+    /// value — it hashed with plain MD5 regardless, so a request that
+    /// *claims* an algorithm this server does not implement (and for which
+    /// the real RFC 7616 HA1 construction differs, e.g. `MD5-sess`) was
+    /// silently accepted anyway. Splicing a false `algorithm=SHA-256` label
+    /// onto an otherwise-valid MD5-computed header must now be rejected.
+    #[test]
+    fn digest_rejects_unsupported_algorithm_label() {
+        let now = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(1_000_000));
+        let v = digest_verifier_at(now);
+        let uri = "/stream/index.m3u8";
+        let header = digest_header(&v.challenge(), uri);
+        assert!(header.contains("algorithm=MD5"));
+        let relabeled = header.replacen("algorithm=MD5", "algorithm=SHA-256", 1);
+        assert_eq!(
+            verify_auth(&v, Some(&relabeled), "GET", uri),
+            AuthResult::Unauthorized,
+            "a header claiming an unimplemented algorithm must not verify"
+        );
+    }
+
+    /// Same defect for `qop`: pre-fix, the `qop` field's value was hashed
+    /// verbatim into the response formula without checking it was `auth` —
+    /// this server only ever implements the `qop=auth` construction (no
+    /// `auth-int` entity-body hashing). A client that labels its request
+    /// `qop=auth-int` but computes `response` with this server's plain
+    /// `qop=auth` formula (substituting the literal string `auth-int` for
+    /// the `qop` slot, since that is all the formula does with the field)
+    /// must be rejected — recomputing `response` to match is what makes
+    /// this bite instead of merely observing an incidental hash mismatch.
+    #[test]
+    fn digest_rejects_non_auth_qop() {
+        let now = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(1_000_000));
+        let v = digest_verifier_at(now);
+        let uri = "/stream/index.m3u8";
+        let header = digest_header(&v.challenge(), uri);
+        let field = |name: &str| {
+            let start = header.find(&format!("{name}=")).unwrap() + name.len() + 1;
+            let rest = &header[start..];
+            let rest = rest.trim_start_matches('"');
+            let end = rest.find(['"', ',']).unwrap_or(rest.len());
+            rest[..end].to_string()
+        };
+        let (nonce, cnonce, nc, response) = (
+            field("nonce"),
+            field("cnonce"),
+            field("nc"),
+            field("response"),
+        );
+        let ha1 = md5_hex(format!("admin:{REALM}:12345"));
+        let ha2 = md5_hex(format!("GET:{uri}"));
+        let recomputed = md5_hex(format!("{ha1}:{nonce}:{nc}:{cnonce}:auth-int:{ha2}"));
+        let relabeled = header
+            .replacen("qop=auth", "qop=auth-int", 1)
+            .replace(&response, &recomputed);
+        assert_eq!(
+            verify_auth(&v, Some(&relabeled), "GET", uri),
+            AuthResult::Unauthorized,
+            "a header claiming qop=auth-int must not verify even when response \
+             was (mis)computed with the qop=auth formula"
+        );
     }
 
     #[test]

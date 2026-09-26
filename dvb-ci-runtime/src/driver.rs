@@ -5,7 +5,7 @@
 
 use std::collections::BTreeSet;
 use std::io;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use broadcast_common::Serialize;
 use dvb_ci::builder::{build_ca_pmt, build_ca_pmt_for_caids};
@@ -36,6 +36,16 @@ const MMI_CARD_ABSENT_KEYWORDS: &[&str] = &[
 /// [`MMI_CARD_ABSENT_KEYWORDS`].
 const MMI_CARD_PRESENT_KEYWORDS: &[&str] = &["entitlement", "card valid", "subscription active"];
 
+/// Clock source for [`Driver::pump`]'s elapsed-time measurement (r10-W-21).
+/// A boxed closure (not a bare `fn` pointer) so a test's [`Driver::with_clock`]
+/// can capture mutable state to simulate a jump of arbitrary size in one call,
+/// which real wall-clock time cannot do deterministically.
+type Clock = Box<dyn Fn() -> Instant>;
+
+fn default_clock() -> Clock {
+    Box::new(Instant::now)
+}
+
 /// Drives a [`CaDevice`] with the [`CiStack`].
 pub struct Driver<D: CaDevice> {
     device: D,
@@ -61,6 +71,13 @@ pub struct Driver<D: CaDevice> {
     /// The slot's managed CAS-layer state (#763 Layer 1) — active services
     /// built via [`add_service`](Self::add_service).
     managed: ManagedCa,
+    /// Wall-clock time of the start of the previous [`Self::pump`] call
+    /// (r10-W-21). `None` before the first call — that call's `timeout`
+    /// argument is used as-is, since there is no previous call to measure
+    /// from.
+    last_pump: Option<Instant>,
+    /// Clock source for [`Self::pump`] — see [`Clock`]/[`Self::with_clock`].
+    clock: Clock,
 }
 
 impl<D: CaDevice> Driver<D> {
@@ -77,7 +94,18 @@ impl<D: CaDevice> Driver<D> {
             last_caids: None,
             last_descrambling_ok: None,
             managed: ManagedCa::new(),
+            last_pump: None,
+            clock: default_clock(),
         }
+    }
+
+    /// Override [`Self::pump`]'s clock source (r10-W-21) — `Instant::now`
+    /// by default. A test uses this to simulate an arbitrary elapsed jump
+    /// deterministically, in place of a real sleep.
+    #[must_use]
+    pub fn with_clock(mut self, clock: impl Fn() -> Instant + 'static) -> Self {
+        self.clock = Box::new(clock);
+        self
     }
 
     /// The slot's managed CAS-layer state (#763 Layer 1) — the active
@@ -373,6 +401,22 @@ impl<D: CaDevice> Driver<D> {
     /// edge is caught between reads — see [`Notification::HotPlug`] carrying
     /// [`HotPlug::CamPresent`]/[`CamRemoved`](HotPlug::CamRemoved) (#726).
     pub fn pump(&mut self, timeout: Duration) -> io::Result<bool> {
+        // r10-W-21: advance the stack's timers by the REAL wall-clock time
+        // since the previous call, not by `timeout` — `timeout` is only how
+        // long THIS call's `poll` was willing to wait; the actual elapsed
+        // time can be far less (poll returns as soon as the device is
+        // readable, or a signal interrupts it early) or far more (the
+        // caller's own loop didn't call `pump` again promptly). Using
+        // `timeout` as if it were the measurement let the reply-timeout/poll
+        // cadence drift out of sync with real time in either direction.
+        // `None` (first call) has no previous point to measure from, so
+        // `timeout` is used as a reasonable initial estimate, same as before.
+        let now = (self.clock)();
+        let elapsed = self
+            .last_pump
+            .map_or(timeout, |prev| now.saturating_duration_since(prev));
+        self.last_pump = Some(now);
+
         self.run(vec![Action::QuerySlot])?;
         if self.device.poll(timeout)? {
             let n = self.device.read(&mut self.buf)?;
@@ -383,9 +427,9 @@ impl<D: CaDevice> Driver<D> {
                 return Ok(true);
             }
         }
-        let actions = self.stack.handle(Event::Tick { elapsed: timeout });
+        let actions = self.stack.handle(Event::Tick { elapsed });
         self.run(actions)?;
-        self.requery_tick(timeout)?;
+        self.requery_tick(elapsed)?;
         Ok(false)
     }
 
@@ -676,6 +720,31 @@ pub(crate) mod tests {
         b
     }
 
+    /// A manually-advanced fake clock for [`Driver::with_clock`] (r10-W-21):
+    /// `pump`'s elapsed-time measurement is now real wall-clock time, so a
+    /// test that wants to simulate "N of simulated time passed" in one
+    /// `pump` call (rather than actually sleeping) advances this by that
+    /// same `N` immediately before the call.
+    #[derive(Clone)]
+    pub(crate) struct TestClock(std::rc::Rc<std::cell::Cell<Instant>>);
+
+    impl TestClock {
+        pub(crate) fn new() -> Self {
+            Self(std::rc::Rc::new(std::cell::Cell::new(Instant::now())))
+        }
+
+        /// Advance the simulated clock by `d`.
+        pub(crate) fn advance(&self, d: Duration) {
+            self.0.set(self.0.get() + d);
+        }
+
+        /// The `Fn() -> Instant` closure to pass to [`Driver::with_clock`].
+        pub(crate) fn as_fn(&self) -> impl Fn() -> Instant + 'static {
+            let cell = self.0.clone();
+            move || cell.get()
+        }
+    }
+
     /// Wrap an SPDU as a module→host `T_Data_Last` R_TPDU (+ trailing T_SB,
     /// data_available clear) on transport connection `tcid`.
     fn r_data(tcid: u8, spdu: &[u8]) -> Vec<u8> {
@@ -926,12 +995,51 @@ pub(crate) mod tests {
     fn reads_reply_then_polls_on_pump() {
         // Script the module accepting the connection.
         let dev = MockCaDevice::new([vec![tags::C_T_C_REPLY, 0x01, 0x01]]);
-        let mut d = Driver::new(dev);
+        let clock = TestClock::new();
+        let mut d = Driver::new(dev).with_clock(clock.as_fn());
         d.init().unwrap();
         // first pump reads the C_T_C_Reply (activates the connection)
         assert!(d.pump(Duration::from_millis(100)).unwrap());
+        // r10-W-21: `pump` now measures real (simulated, via TestClock)
+        // elapsed time rather than trusting the `timeout` argument, so the
+        // test advances the clock by the same amount `timeout` used to
+        // stand in for.
+        clock.advance(Duration::from_millis(100));
         // next pump has nothing to read → ticks → emits a poll write
         assert!(!d.pump(Duration::from_millis(100)).unwrap());
+        let last = d.device().ops.last().unwrap();
+        assert!(matches!(last, DeviceOp::Write(w) if w.first() == Some(&tags::DATA_LAST)));
+    }
+
+    /// r10-W-21: `pump`'s stack-clock advance must reflect real (here,
+    /// simulated) elapsed time, not the `timeout` argument on its own —
+    /// pre-fix, calling `pump(1s)` twice back-to-back with almost no real
+    /// time between them still advanced the stack's clock by a full second
+    /// each time, exactly as if a full second really had passed.
+    #[test]
+    fn pump_advances_the_stack_clock_by_real_elapsed_time_not_by_timeout() {
+        let dev = MockCaDevice::new([vec![tags::C_T_C_REPLY, 0x01, 0x01]]);
+        let clock = TestClock::new();
+        let mut d = Driver::new(dev).with_clock(clock.as_fn());
+        d.init().unwrap();
+        assert!(d.pump(Duration::from_secs(1)).unwrap());
+
+        // Only 1ms of (simulated) real time actually passed, even though
+        // `timeout` claims a full second — nowhere near the 100ms poll
+        // cadence, so no poll write should go out.
+        clock.advance(Duration::from_millis(1));
+        assert!(!d.pump(Duration::from_secs(1)).unwrap());
+        assert!(
+            d.device().ops.last().is_none_or(|op| !matches!(
+                op,
+                DeviceOp::Write(w) if w.first() == Some(&tags::DATA_LAST)
+            )),
+            "must not poll after only 1ms of real elapsed time, regardless of the 1s `timeout` argument"
+        );
+
+        // Now really cross the poll interval.
+        clock.advance(Duration::from_millis(100));
+        assert!(!d.pump(Duration::from_secs(1)).unwrap());
         let last = d.device().ops.last().unwrap();
         assert!(matches!(last, DeviceOp::Write(w) if w.first() == Some(&tags::DATA_LAST)));
     }
@@ -1643,7 +1751,8 @@ pub(crate) mod tests {
         use broadcast_common::Parse;
         use dvb_ci::objects::ca_info::CaInfo;
 
-        let mut d = driver_with_sessions();
+        let clock = TestClock::new();
+        let mut d = driver_with_sessions().with_clock(clock.as_fn());
         // #1032: re-query is opt-in (REQUERY_DEFAULT = Duration::ZERO) —
         // enable it explicitly to exercise the timer.
         d.set_requery_interval(Duration::from_secs(10));
@@ -1655,6 +1764,7 @@ pub(crate) mod tests {
         // documented fallback (no CAID info to filter against yet).
         d.add_service(&pmt).unwrap();
         d.device_mut().inbound.push_back(sb());
+        clock.advance(Duration::from_millis(10));
         d.pump(Duration::from_millis(10)).unwrap();
 
         // The CAM's ca_info now arrives, advertising only Viaccess (0x0500).
@@ -1707,6 +1817,7 @@ pub(crate) mod tests {
             count_apdu_on_session(&d, CA_SESSION, &unfiltered_query);
         let sends_unfiltered_ok_before = count_apdu_on_session(&d, CA_SESSION, &unfiltered_ok);
 
+        clock.advance(Duration::from_secs(11));
         d.pump(Duration::from_secs(11)).unwrap();
         feed(&mut d, sb());
 
@@ -1983,7 +2094,8 @@ pub(crate) mod tests {
         use broadcast_common::Parse;
         use dvb_ci::objects::ca_pmt_reply::CaEnable;
 
-        let mut d = driver_with_sessions();
+        let clock = TestClock::new();
+        let mut d = driver_with_sessions().with_clock(clock.as_fn());
         // #1032: re-query is opt-in (REQUERY_DEFAULT = Duration::ZERO) —
         // enable it explicitly to exercise the timer.
         d.set_requery_interval(Duration::from_secs(10));
@@ -1993,6 +2105,7 @@ pub(crate) mod tests {
         let pmt = PmtSection::parse(&pmt_bytes).unwrap();
         d.add_service(&pmt).unwrap();
         d.device_mut().inbound.push_back(sb());
+        clock.advance(Duration::from_millis(10));
         d.pump(Duration::from_millis(10)).unwrap();
         d.take_notifications();
 
@@ -2045,6 +2158,7 @@ pub(crate) mod tests {
         // is written across the module's next two `T_SB`s (the #337
         // one-write-per-turn rule), same as any other queued host write in
         // this test suite.
+        clock.advance(Duration::from_secs(11));
         d.pump(Duration::from_secs(11)).unwrap();
         all_notes.extend(d.take_notifications());
         feed(&mut d, sb());
@@ -2273,7 +2387,8 @@ pub(crate) mod tests {
     fn requery_timer_resends_every_active_service_not_just_one() {
         use broadcast_common::Parse;
 
-        let mut d = driver_with_sessions();
+        let clock = TestClock::new();
+        let mut d = driver_with_sessions().with_clock(clock.as_fn());
         // #1032: re-query is opt-in (REQUERY_DEFAULT = Duration::ZERO) —
         // enable it explicitly to exercise the timer.
         d.set_requery_interval(Duration::from_secs(10));
@@ -2285,12 +2400,14 @@ pub(crate) mod tests {
         let pmt1 = PmtSection::parse(&pmt1_bytes).unwrap();
         d.add_service(&pmt1).unwrap();
         d.device_mut().inbound.push_back(sb());
+        clock.advance(Duration::from_millis(10));
         d.pump(Duration::from_millis(10)).unwrap();
 
         let pmt2_bytes = build_ca_pmt_fixture(1547);
         let pmt2 = PmtSection::parse(&pmt2_bytes).unwrap();
         d.add_service(&pmt2).unwrap();
         d.device_mut().inbound.push_back(sb());
+        clock.advance(Duration::from_millis(10));
         d.pump(Duration::from_millis(10)).unwrap();
         d.take_notifications();
 
@@ -2325,6 +2442,7 @@ pub(crate) mod tests {
         // iterates the whole active set), but EN 50221's half-duplex link
         // (the #337 one-write-per-turn rule) only lets one out per turn —
         // feed enough `T_SB` acks to flush all four queued writes.
+        clock.advance(Duration::from_secs(11));
         d.pump(Duration::from_secs(11)).unwrap();
         feed(&mut d, sb());
         feed(&mut d, sb());
@@ -2358,7 +2476,8 @@ pub(crate) mod tests {
     fn requery_after_remove_resends_only_the_surviving_service() {
         use broadcast_common::Parse;
 
-        let mut d = driver_with_sessions();
+        let clock = TestClock::new();
+        let mut d = driver_with_sessions().with_clock(clock.as_fn());
         // #1032: re-query is opt-in (REQUERY_DEFAULT = Duration::ZERO) —
         // enable it explicitly to exercise the timer.
         d.set_requery_interval(Duration::from_secs(10));
@@ -2368,17 +2487,20 @@ pub(crate) mod tests {
         let pmt1 = PmtSection::parse(&pmt1_bytes).unwrap();
         d.add_service(&pmt1).unwrap();
         d.device_mut().inbound.push_back(sb());
+        clock.advance(Duration::from_millis(10));
         d.pump(Duration::from_millis(10)).unwrap();
 
         let pmt2_bytes = build_ca_pmt_fixture_distinct_pids(1547);
         let pmt2 = PmtSection::parse(&pmt2_bytes).unwrap();
         d.add_service(&pmt2).unwrap();
         d.device_mut().inbound.push_back(sb());
+        clock.advance(Duration::from_millis(10));
         d.pump(Duration::from_millis(10)).unwrap();
 
         // Remove 1546: 1547 is now the SOLE survivor.
         d.remove_service(1546).unwrap();
         d.device_mut().inbound.push_back(sb());
+        clock.advance(Duration::from_millis(10));
         d.pump(Duration::from_millis(10)).unwrap();
         d.take_notifications();
 
@@ -2410,6 +2532,7 @@ pub(crate) mod tests {
             count_apdu_on_session(&d, CA_SESSION, &expected_removed_query);
         let sends_removed_ok_before = count_apdu_on_session(&d, CA_SESSION, &expected_removed_ok);
 
+        clock.advance(Duration::from_secs(11));
         d.pump(Duration::from_secs(11)).unwrap();
         feed(&mut d, sb());
 

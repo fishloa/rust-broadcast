@@ -1,5 +1,6 @@
-//! The CI protocol stack — composes the transport + session layers (and, as
-//! they land, the resource state machines) into one sans-IO core.
+//! The CI protocol stack — composes the transport + session layers and the
+//! resource state machines (Resource Manager, application_information,
+//! conditional_access, date_time, mmi, host_control) into one sans-IO core.
 //!
 //! [`CiStack::handle`] is the pure entry point: feed it an [`Event`], get back
 //! the [`Action`]s the driver must perform. No I/O, threads, or clock here.
@@ -23,12 +24,21 @@ use dvb_ci::resource::{
 use dvb_si::tables::pmt::PmtSection;
 
 /// Serialize an APDU object to owned bytes (buffer is sized exactly).
-fn ser_apdu<S: Serialize>(s: &S) -> Vec<u8> {
+///
+/// r10-W-20: previously matched (not `expect`ed), silently emitting an
+/// empty `Vec` on a serialize error — which then went out to real CI
+/// hardware as an indistinguishable-from-deliberate empty APDU rather than
+/// surfacing the failure at all. Panicking is louder and safer than
+/// silently corrupting the wire exchange.
+fn ser_apdu<S: Serialize>(s: &S) -> Vec<u8>
+where
+    S::Error: core::fmt::Debug,
+{
     let mut b = vec![0u8; s.serialized_len()];
-    match s.serialize_into(&mut b) {
-        Ok(n) => b.truncate(n),
-        Err(_) => b.clear(),
-    }
+    let n = s
+        .serialize_into(&mut b)
+        .expect("value must satisfy every wire constraint of its own type");
+    b.truncate(n);
     b
 }
 
@@ -108,6 +118,16 @@ impl CiStack {
     pub fn handle(&mut self, event: Event<'_>) -> Vec<Action> {
         match event {
             Event::Host(HostRequest::Init) => {
+                // r10-W-19: rebuild every piece of stack-level state Init
+                // is responsible for, not just the transport connection —
+                // otherwise a stale session table / cached CAIDs from
+                // whatever was connected before survive into the new
+                // handshake (a `session_nb` the old CAM had open could
+                // alias one a newly-inserted CAM later opens for a
+                // DIFFERENT resource, since `SessionLayer` has no way to
+                // know the old binding is stale).
+                self.session = SessionLayer::new();
+                self.cam_caids = Vec::new();
                 let mut actions = vec![Action::Reset, Action::QuerySlot];
                 let out = self.transport.init();
                 actions.extend(self.emit_transport(out));
@@ -158,7 +178,18 @@ impl CiStack {
                 });
                 self.send_to_resource(MMI, &apdu)
             }
-            Event::Host(HostRequest::Shutdown) => Vec::new(),
+            Event::Host(HostRequest::Shutdown) => {
+                // r10-W-19: previously a complete no-op — this is the
+                // symmetric teardown to `Init`'s build-up, so a later
+                // `Init` starts genuinely clean rather than compounding
+                // onto whatever this shutdown should have cleared out
+                // (stale sessions, cached CAIDs, an `Active` transport
+                // connection the module no longer expects to hear from).
+                self.transport = Transport::new(1);
+                self.session = SessionLayer::new();
+                self.cam_caids = Vec::new();
+                vec![Action::Reset]
+            }
         }
     }
 
@@ -402,6 +433,62 @@ mod tests {
         assert_eq!(a[0], Action::Reset);
         assert_eq!(a[1], Action::QuerySlot);
         assert!(matches!(&a[2], Action::Write(w) if w[0] == tpdu_tags::CREATE_T_C));
+    }
+
+    /// r10-W-19: `Shutdown` was previously a complete no-op — it must now
+    /// reset the device and clear every piece of stack-level state `Init`
+    /// builds up (session table, cached CAIDs, the transport connection).
+    #[test]
+    fn shutdown_resets_device_and_clears_stack_state() {
+        let mut s = CiStack::new();
+        s.handle(Event::Host(HostRequest::Init));
+        s.handle(Event::Readable(&[tpdu_tags::C_T_C_REPLY, 0x01, 0x01]));
+        let osr = ser(&OpenSessionRequest {
+            resource: RESOURCE_MANAGER,
+        });
+        s.handle(Event::Readable(&r_data(1, &osr)));
+        assert!(!s.session.is_empty(), "precondition: a session is open");
+        assert_eq!(s.transport.state(), crate::transport::TcState::Active);
+
+        let actions = s.handle(Event::Host(HostRequest::Shutdown));
+        assert_eq!(actions, vec![Action::Reset]);
+        assert!(
+            s.session.is_empty(),
+            "Shutdown must clear the session table"
+        );
+        assert_eq!(
+            s.transport.state(),
+            crate::transport::TcState::Idle,
+            "Shutdown must tear down the transport connection"
+        );
+    }
+
+    /// r10-W-19: `Init` must rebuild the session table and cached CAIDs,
+    /// not just the transport — otherwise a session_nb the PREVIOUS module
+    /// had open (never explicitly closed, e.g. a hot-plug swap) survives
+    /// into the new handshake and could alias whatever the new module
+    /// opens under the same number for a different resource.
+    #[test]
+    fn init_clears_stale_session_state_from_a_previous_connection() {
+        let mut s = CiStack::new();
+        s.handle(Event::Host(HostRequest::Init));
+        s.handle(Event::Readable(&[tpdu_tags::C_T_C_REPLY, 0x01, 0x01]));
+        let osr = ser(&OpenSessionRequest {
+            resource: RESOURCE_MANAGER,
+        });
+        s.handle(Event::Readable(&r_data(1, &osr)));
+        assert!(
+            !s.session.is_empty(),
+            "precondition: a stale session is open"
+        );
+
+        // Re-init (e.g. a hot-plug re-handshake) without an intervening
+        // Shutdown — the stale state must still not survive.
+        s.handle(Event::Host(HostRequest::Init));
+        assert!(
+            s.session.is_empty(),
+            "Init must not inherit the previous connection's session table"
+        );
     }
 
     #[test]

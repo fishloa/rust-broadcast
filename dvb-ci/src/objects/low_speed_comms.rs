@@ -333,6 +333,31 @@ impl CommsCmd<'_> {
             CommsCmdParams::None => 0,
         }
     }
+
+    /// Whether `params`'s shape is the one [`CommsCmd::parse`] would itself
+    /// produce for `command_id` (Table 52: the parameter shape is keyed by
+    /// `comms_command_id`). `Disconnect_on_Channel`/`Enquire_Status`, and any
+    /// `Reserved` id, all carry no parameters, so all three pair with
+    /// `CommsCmdParams::None`.
+    fn params_match_command_id(&self) -> bool {
+        matches!(
+            (self.command_id, &self.params),
+            (
+                CommsCommandId::ConnectOnChannel,
+                CommsCmdParams::Connect { .. }
+            ) | (CommsCommandId::SetParams, CommsCmdParams::SetParams { .. })
+                | (
+                    CommsCommandId::GetNextBuffer,
+                    CommsCmdParams::GetNextBuffer { .. }
+                )
+                | (
+                    CommsCommandId::DisconnectOnChannel
+                        | CommsCommandId::EnquireStatus
+                        | CommsCommandId::Reserved(_),
+                    CommsCmdParams::None
+                )
+        )
+    }
 }
 
 impl Serialize for CommsCmd<'_> {
@@ -341,6 +366,19 @@ impl Serialize for CommsCmd<'_> {
         super::apdu_len(self.body_len())
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
+        // r10-W-9: `command_id` and `params` are independently public fields
+        // — a hand-built value can name one command_id while carrying a
+        // different variant's parameters. That combination has no
+        // consistent wire encoding (a receiver dispatches the parameter
+        // shape purely from `command_id`, per Table 52), so reject it here
+        // rather than emit bytes this crate's own `parse` could not
+        // reproduce.
+        if !self.params_match_command_id() {
+            return Err(Error::InvalidObject {
+                what: "comms_cmd",
+                reason: "params do not match command_id (Table 52)",
+            });
+        }
         let body_len = self.body_len();
         let mut pos = super::write_apdu_header(tag::COMMS_CMD, body_len, buf)?;
         buf[pos] = self.command_id.to_u8();
@@ -720,6 +758,34 @@ mod tests {
         let bytes = d.to_bytes();
         assert_eq!(bytes, [0x9F, 0x8C, 0x00, 0x01, 0x02]);
         assert_eq!(CommsCmd::parse(&bytes).unwrap(), d);
+    }
+
+    /// r10-W-9: a hand-built `CommsCmd` whose `command_id` and `params`
+    /// disagree (Table 52 keys the parameter shape by `command_id`, so this
+    /// combination has no consistent wire encoding) must be rejected by
+    /// `serialize_into`, not silently emit a self-inconsistent APDU.
+    #[test]
+    fn comms_cmd_rejects_mismatched_command_id_and_params() {
+        let mismatched = CommsCmd {
+            command_id: CommsCommandId::DisconnectOnChannel,
+            params: CommsCmdParams::SetParams {
+                buffer_size: 10,
+                timeout: 5,
+            },
+        };
+        assert!(matches!(
+            mismatched.serialize_into(&mut [0u8; 32]),
+            Err(Error::InvalidObject { .. })
+        ));
+
+        let mismatched = CommsCmd {
+            command_id: CommsCommandId::SetParams,
+            params: CommsCmdParams::None,
+        };
+        assert!(matches!(
+            mismatched.serialize_into(&mut [0u8; 32]),
+            Err(Error::InvalidObject { .. })
+        ));
     }
 
     #[test]

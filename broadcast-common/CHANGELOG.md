@@ -19,6 +19,22 @@
   and the shortest signed distance between two samples in `(-2^32, 2^32]`;
   inputs at or above the modulus are reduced first (#1137).
 
+### Fixed
+- **`time::encode_mjd_bcd`** — now rejects `hour > 23` / `minute > 59` /
+  `second > 59` (matching the ranges `decode_mjd_bcd` enforces); previously
+  it only bottomed out at `to_bcd_byte`'s `<= 99` check, so it could encode
+  a value `decode_mjd_bcd` then refused to decode back (#1073).
+- **`time`** — the MJD↔calendar conversion algorithm (EN 300 468 Annex C)
+  existed as two independent hand-copies (the dependency-free `_nogate`
+  helpers and the `chrono`-gated public functions); both now share one
+  `mjd_to_ymd_core`/`ymd_to_mjd_core` implementation so the two can no
+  longer silently drift apart (#1073).
+- **`ts_dup::is_legal_duplicate_pair`** — the PCR exemption now requires
+  `adaptation_field_length >= 7` (flags byte + 6-byte PCR), not just that
+  the packet buffer is long enough; a packet whose adaptation field claims
+  `PCR_flag` but declares too little length no longer has trailing payload
+  bytes wrongly treated as the exempt PCR field (#1073).
+
 ## [9.3.0] - 2026-08-11
 
 ### Added

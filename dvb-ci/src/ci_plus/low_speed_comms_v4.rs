@@ -407,6 +407,19 @@ impl Serialize for CommsIpConfigReply {
         objects::apdu_len(self.body_len())
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
+        // r10-W-15: `parse` only reads `ip_config` back out when
+        // `connection_state == Connected` (Table 80) — it does not consume
+        // trailing bytes otherwise. So a hand-built value carrying
+        // `ip_config: Some(_)` under any other `connection_state` (or
+        // `None` while claiming `Connected`) would serialize bytes that
+        // `parse` cannot reproduce; reject the mismatch instead.
+        let is_connected = self.connection_state.to_u8() == CONNECTION_STATE_CONNECTED;
+        if is_connected != self.ip_config.is_some() {
+            return Err(Error::InvalidObject {
+                what: "comms_IP_config_reply",
+                reason: "ip_config must be present iff connection_state == Connected",
+            });
+        }
         if let Some(c) = &self.ip_config {
             objects::fit_bits(
                 c.dns_server_addresses.len() as u64,
@@ -905,6 +918,42 @@ mod tests {
             c.dns_server_addresses.pop();
         }
         assert_ne!(bytes, other.to_bytes());
+    }
+
+    /// r10-W-15: `connection_state` and `ip_config` are independently public
+    /// fields, but `parse` only reads `ip_config` back out when
+    /// `connection_state == Connected` (Table 80). A hand-built value with
+    /// either mismatch must be rejected by `serialize_into`, not silently
+    /// emit bytes `parse` cannot reproduce.
+    #[test]
+    fn ip_config_reply_rejects_state_ip_config_mismatch() {
+        // Disconnected but claims an ip_config.
+        let r = CommsIpConfigReply {
+            connection_state: ConnectionState::Disconnected,
+            physical_address: [0; MAC_LEN],
+            ip_config: Some(IpConfig {
+                ip_address: IP_A,
+                network_mask: IP_B,
+                default_gateway: IP_A,
+                dhcp_server_address: IP_B,
+                dns_server_addresses: Vec::new(),
+            }),
+        };
+        assert!(matches!(
+            r.serialize_into(&mut alloc::vec![0u8; 128]),
+            Err(Error::InvalidObject { .. })
+        ));
+
+        // Connected but has no ip_config.
+        let r = CommsIpConfigReply {
+            connection_state: ConnectionState::Connected,
+            physical_address: [0; MAC_LEN],
+            ip_config: None,
+        };
+        assert!(matches!(
+            r.serialize_into(&mut alloc::vec![0u8; 128]),
+            Err(Error::InvalidObject { .. })
+        ));
     }
 
     #[test]

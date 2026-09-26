@@ -340,9 +340,19 @@ pub(crate) fn write_info_block(
             have: buf.len(),
         });
     }
-    // cmd_id defaults to ok_descrambling if a descriptor block exists without an
-    // explicit id (shouldn't occur via the builder, but keeps serialize total).
-    buf[0] = cmd_id.unwrap_or(CaPmtCmdId::OkDescrambling).to_u8();
+    // Table 25: `ca_pmt_cmd_id` is present exactly when the info block is
+    // (`program_info_length`/`ES_info_length != 0`, which is why `len > 0`
+    // here). A caller that hand-builds a non-empty descriptor loop without a
+    // `cmd_id` has an object the wire format cannot express — reject it
+    // rather than fabricate a command the caller never chose (previously
+    // silently defaulted to `OkDescrambling`).
+    let Some(cmd_id) = cmd_id else {
+        return Err(Error::InvalidObject {
+            what: "ca_pmt info block",
+            reason: "CA_descriptor loop present without a ca_pmt_cmd_id",
+        });
+    };
+    buf[0] = cmd_id.to_u8();
     buf[1..len].copy_from_slice(descriptors);
     Ok(len)
 }
@@ -366,6 +376,49 @@ mod tests {
             0xE0 | ((pid >> 8) as u8 & 0x1F),
             pid as u8,
         ]
+    }
+
+    /// r10-W-6: a non-empty `CA_descriptor` loop with no `cmd_id` must be
+    /// rejected, not silently serialized under a fabricated
+    /// `OkDescrambling`. Table 25 ties `ca_pmt_cmd_id`'s presence to a
+    /// non-zero info-block length, so this combination has no valid wire
+    /// encoding at all.
+    #[test]
+    fn missing_cmd_id_with_descriptors_is_rejected() {
+        let desc = sample_ca_descriptor(0x0500, 0x0100);
+        let pmt = CaPmt {
+            list_management: CaPmtListManagement::Only,
+            program_number: 0x1234,
+            version_number: 5,
+            current_next_indicator: true,
+            cmd_id: None,
+            program_ca_descriptors: &desc,
+            streams: Vec::new(),
+        };
+        assert!(matches!(
+            pmt.try_to_bytes(),
+            Err(Error::InvalidObject { .. })
+        ));
+
+        // Same defect at ES level.
+        let pmt = CaPmt {
+            list_management: CaPmtListManagement::Only,
+            program_number: 0x1234,
+            version_number: 5,
+            current_next_indicator: true,
+            cmd_id: Some(CaPmtCmdId::OkDescrambling),
+            program_ca_descriptors: &[],
+            streams: alloc::vec![CaPmtStream {
+                stream_type: 0x02,
+                elementary_pid: 0x0101,
+                cmd_id: None,
+                ca_descriptors: &desc,
+            }],
+        };
+        assert!(matches!(
+            pmt.try_to_bytes(),
+            Err(Error::InvalidObject { .. })
+        ));
     }
 
     #[test]

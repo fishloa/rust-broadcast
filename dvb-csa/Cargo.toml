@@ -15,7 +15,6 @@ all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
 
 [dependencies]
-broadcast-common = { path = "../broadcast-common", version = "9.3", default-features = false }
 thiserror        = { version = "2", default-features = false }
 # TS header / adaptation-field-control decode for locating the payload to
 # (de)scramble (ISO/IEC 13818-1 §2.4.3.3/§2.4.3.4) — reuses `TsHeader::parse`
@@ -31,7 +30,7 @@ rand      = "0.9"
 
 [features]
 default   = ["std"]
-std       = ["broadcast-common/std", "thiserror/std", "mpeg-ts/std"]
+std       = ["thiserror/std", "mpeg-ts/std"]
 # Bitsliced batch fast path (`dvb_csa::bitsliced`). Additive: off by default.
 bitsliced = []
 

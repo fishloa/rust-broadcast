@@ -17,14 +17,20 @@ use dvb_ci::spdu::{
     OpenSessionResponse, SessionNumber, SessionStatus, tags,
 };
 
-fn ser<S: Serialize>(s: &S) -> Vec<u8> {
+/// r10-W-20: previously matched (not `expect`ed) specifically to avoid a
+/// `Debug` bound, silently emitting an empty `Vec` on error — which then
+/// went out to real CI hardware as an indistinguishable-from-deliberate
+/// empty SPDU rather than surfacing the failure at all. Panicking is
+/// louder and safer than silently corrupting the wire exchange.
+fn ser<S: Serialize>(s: &S) -> Vec<u8>
+where
+    S::Error: core::fmt::Debug,
+{
     let mut b = vec![0u8; s.serialized_len()];
-    // The buffer is sized to `serialized_len()`, so serialization cannot fail;
-    // matched (not `expect`ed) to avoid a `Debug` bound on `S::Error`.
-    match s.serialize_into(&mut b) {
-        Ok(n) => b.truncate(n),
-        Err(_) => b.clear(),
-    }
+    let n = s
+        .serialize_into(&mut b)
+        .expect("value must satisfy every wire constraint of its own type");
+    b.truncate(n);
     b
 }
 
@@ -82,10 +88,27 @@ impl SessionLayer {
         self.sessions.is_empty()
     }
 
+    /// r10-W-18: probe past any `session_nb` still in `self.sessions` —
+    /// `next` wraps around after 65535 allocations (a long-running slot with
+    /// enough session churn, e.g. repeated MMI dialogues, can reach this),
+    /// and without the probe a wrapped-around number could alias a session
+    /// that is still open, silently corrupting its `resource_of` mapping.
     fn alloc(&mut self) -> u16 {
-        let nb = self.next;
-        self.next = self.next.checked_add(1).filter(|&n| n != 0).unwrap_or(1);
-        nb
+        let start = self.next;
+        loop {
+            let nb = self.next;
+            self.next = self.next.checked_add(1).filter(|&n| n != 0).unwrap_or(1);
+            if !self.sessions.contains_key(&nb) {
+                return nb;
+            }
+            // Every one of the 65535 representable numbers is in use — an
+            // exhaustion this extreme is not realistic for one CI slot's
+            // handful of concurrent resource sessions, but return the
+            // original candidate rather than loop forever.
+            if self.next == start {
+                return nb;
+            }
+        }
     }
 
     /// Open a session to a **module-provided** resource (host-initiated):
@@ -114,6 +137,31 @@ impl SessionLayer {
         ser(&CloseSessionRequest { session_nb })
     }
 
+    /// Bind a module-chosen `session_nb` to `resource` (from
+    /// `open_session_response`/`create_session_response`), returning
+    /// whether the binding is now in effect.
+    ///
+    /// r10-W-18: `session_nb` is the MODULE's own choice, not ours — a
+    /// misbehaving (or hostile) module reusing a number already bound to a
+    /// DIFFERENT resource would otherwise silently alias that resource's
+    /// session, misrouting its APDUs from then on. `0` is also rejected: it
+    /// is the reserved value `alloc` never hands out. Re-asserting the SAME
+    /// resource on an already-open `session_nb` is treated as an idempotent
+    /// success, not a collision (a module may legitimately repeat its own
+    /// prior response).
+    fn try_bind_module_chosen(&mut self, session_nb: u16, resource: ResourceId) -> bool {
+        if session_nb == 0 {
+            return false;
+        }
+        match self.sessions.get(&session_nb) {
+            Some(&existing) => existing == resource,
+            None => {
+                self.sessions.insert(session_nb, resource);
+                true
+            }
+        }
+    }
+
     /// Handle one inbound SPDU. `provides` answers "does the host provide this
     /// resource?" for an incoming `open_session_request`.
     pub fn on_spdu(&mut self, spdu: &[u8], provides: impl Fn(ResourceId) -> bool) -> SessionOut {
@@ -140,20 +188,26 @@ impl SessionLayer {
             }
             // Module's reply to our open_session_request (host opened a
             // module-provided resource); the module assigns the session_nb.
+            // r10-W-18: the assignment is not trusted blindly — see
+            // `try_bind_module_chosen`.
             Some(tags::OPEN_SESSION_RESPONSE)
                 if let Ok(resp) = OpenSessionResponse::parse(spdu)
                     && resp.status == SessionStatus::Ok =>
             {
-                self.sessions.insert(resp.session_nb, resp.resource);
-                out.opened.push((resp.session_nb, resp.resource));
+                out.opened.extend(
+                    self.try_bind_module_chosen(resp.session_nb, resp.resource)
+                        .then_some((resp.session_nb, resp.resource)),
+                );
             }
             // (Legacy) module's reply to a create_session, if any module uses it.
             Some(tags::CREATE_SESSION_RESPONSE)
                 if let Ok(resp) = CreateSessionResponse::parse(spdu)
                     && resp.status == SessionStatus::Ok =>
             {
-                self.sessions.insert(resp.session_nb, resp.resource);
-                out.opened.push((resp.session_nb, resp.resource));
+                out.opened.extend(
+                    self.try_bind_module_chosen(resp.session_nb, resp.resource)
+                        .then_some((resp.session_nb, resp.resource)),
+                );
             }
             // Peer closes a session.
             Some(tags::CLOSE_SESSION_REQUEST) if let Ok(req) = CloseSessionRequest::parse(spdu) => {
@@ -237,6 +291,78 @@ mod tests {
         let out = s.on_spdu(&resp, |_| false);
         assert_eq!(out.opened, vec![(1, APPLICATION_INFORMATION)]);
         assert_eq!(s.resource_of(1), Some(APPLICATION_INFORMATION));
+    }
+
+    /// r10-W-18: a module-chosen `session_nb` that already maps to a
+    /// DIFFERENT resource must be rejected, not silently overwritten —
+    /// otherwise a misbehaving module aliases an existing session and its
+    /// APDUs are misrouted from then on.
+    #[test]
+    fn module_chosen_session_nb_colliding_with_a_different_resource_is_rejected() {
+        let mut s = SessionLayer::new();
+        // Session 1 is already RESOURCE_MANAGER (opened via the ordinary path).
+        let open = ser(&OpenSessionRequest {
+            resource: RESOURCE_MANAGER,
+        });
+        let opened = s.on_spdu(&open, provides_rm).opened;
+        let nb = opened[0].0;
+        assert_eq!(s.resource_of(nb), Some(RESOURCE_MANAGER));
+
+        // The module now claims that SAME session_nb for a totally
+        // different resource via create_session_response.
+        let colliding = ser(&CreateSessionResponse {
+            status: SessionStatus::Ok,
+            resource: APPLICATION_INFORMATION,
+            session_nb: nb,
+        });
+        let out = s.on_spdu(&colliding, |_| false);
+        assert!(
+            out.opened.is_empty(),
+            "a colliding module-chosen session_nb must not be reported as opened"
+        );
+        assert_eq!(
+            s.resource_of(nb),
+            Some(RESOURCE_MANAGER),
+            "the original binding must survive the collision attempt"
+        );
+    }
+
+    /// r10-W-18: `session_nb = 0` is reserved (`alloc` never hands it out)
+    /// and must never be accepted as a module-chosen binding.
+    #[test]
+    fn module_chosen_session_nb_zero_is_rejected() {
+        let mut s = SessionLayer::new();
+        let resp = ser(&OpenSessionResponse {
+            status: SessionStatus::Ok,
+            resource: APPLICATION_INFORMATION,
+            session_nb: 0,
+        });
+        let out = s.on_spdu(&resp, |_| false);
+        assert!(out.opened.is_empty());
+        assert_eq!(s.resource_of(0), None);
+    }
+
+    /// r10-W-18: `alloc` must skip any `session_nb` still open, even across
+    /// the 65535 wraparound — otherwise a long-running slot with enough
+    /// session churn eventually reissues a number that aliases a session
+    /// that never closed.
+    #[test]
+    fn alloc_probes_past_a_still_open_session_across_wraparound() {
+        let mut s = SessionLayer::new();
+        // Force the allocator right up to the wraparound boundary.
+        s.next = 65535;
+        let first = s.alloc();
+        assert_eq!(first, 65535);
+        s.sessions.insert(first, APPLICATION_INFORMATION);
+        // Next candidate would be `65535 -> checked_add overflows -> 1`.
+        // Occupy 1 directly (as if it were opened earlier and never closed).
+        s.sessions.insert(1, RESOURCE_MANAGER);
+        let second = s.alloc();
+        assert_ne!(
+            second, 1,
+            "alloc must not hand out a session_nb that is still open"
+        );
+        assert_eq!(s.resource_of(1), Some(RESOURCE_MANAGER), "untouched");
     }
 
     #[test]

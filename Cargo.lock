@@ -1024,7 +1024,6 @@ dependencies = [
 name = "dvb-csa"
 version = "0.3.0"
 dependencies = [
- "broadcast-common",
  "criterion",
  "mpeg-ts",
  "rand 0.9.5",

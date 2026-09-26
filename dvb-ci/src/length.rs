@@ -38,10 +38,15 @@ pub fn decode(bytes: &[u8]) -> Result<(usize, usize)> {
         // which the spec forbids.
         return Err(Error::InvalidLength("indefinite length form not allowed"));
     }
-    if n > 3 {
-        // Spec caps lengths at 65535 (three bytes); refuse anything wider so the
-        // value cannot overflow a sane buffer expectation.
-        return Err(Error::InvalidLength("length_field_size exceeds 3 bytes"));
+    if n > 2 {
+        // "Any length up to 65535 can be encoded by three bytes" (module doc)
+        // means three bytes TOTAL: the size-indicator byte plus at most 2
+        // length bytes — not 2 subsequent to a size-indicator that itself
+        // implies a 4-byte total. `encode_into` never emits `n > 2` (it caps
+        // values at 0xFFFF, [`Error::LengthTooLarge`] beyond that), so
+        // accepting a wider form here would parse a value `encode_into`
+        // could never reproduce.
+        return Err(Error::InvalidLength("length_field_size exceeds 2 bytes"));
     }
     if bytes.len() < 1 + n {
         return Err(Error::BufferTooShort {
@@ -54,6 +59,16 @@ pub fn decode(bytes: &[u8]) -> Result<(usize, usize)> {
     for &b in &bytes[1..1 + n] {
         value = (value << 8) | b as usize;
     }
+    // Non-minimal long forms (e.g. `value = 5` sent as the 2-byte long form
+    // rather than the 1-byte short form) are deliberately still accepted:
+    // real hardware captures use them (`dvb-ci-runtime`'s
+    // `decodes_long_form_length_profile_reply`, issue #337, `82 00 09` for
+    // value 9) — a decoder that rejected them would reject real CAM
+    // traffic. `parse -> serialize` of a *higher-level* object (which
+    // stores only the decoded value, not the original form) then legally
+    // re-encodes it minimally; that is a value-preserving, not
+    // byte-preserving, round trip for this one low-level field, same as
+    // any lenient-parse/canonical-serialize codec.
     Ok((value, 1 + n))
 }
 
@@ -156,6 +171,31 @@ mod tests {
         assert!(decode(&[0x84, 0, 0, 0, 0]).is_err()); // 4 length bytes
         assert!(decode(&[]).is_err());
         assert!(decode(&[0x82, 0x12]).is_err()); // truncated long form
+    }
+
+    /// r10-W-4: `encode_into` never produces a 3-subsequent-byte long form
+    /// (it caps at `n = 2`, `LengthTooLarge` beyond `0xFFFF`), so a decode
+    /// that accepts one parses a value `encode_into` cannot reproduce —
+    /// pre-fix, `decode` accepted `n` up to 3.
+    #[test]
+    fn rejects_three_length_bytes_form() {
+        // size_indicator=1, length_field_size=3, value = 0x000100 = 256.
+        assert!(decode(&[0x83, 0x00, 0x01, 0x00]).is_err());
+    }
+
+    /// A non-minimal long form (`encode_into` would have used a shorter
+    /// form for the same value) must still decode — real hardware sends
+    /// these (see `dvb-ci-runtime`'s `decodes_long_form_length_profile_reply`,
+    /// issue #337: `82 00 09` for value 9, which `encode_into` would encode
+    /// as the 1-byte short form `09`). Rejecting them would reject real CAM
+    /// traffic; only the *value* round-trips, not necessarily these exact
+    /// bytes, matching any lenient-parse/canonical-serialize codec.
+    #[test]
+    fn non_minimal_long_forms_still_decode() {
+        assert_eq!(decode(&[0x81, 0x05]).unwrap(), (5, 2));
+        assert_eq!(decode(&[0x82, 0x00, 0x09]).unwrap(), (9, 3));
+        assert_eq!(decode(&[0x81, 0x80]).unwrap(), (0x80, 2));
+        assert_eq!(decode(&[0x82, 0x01, 0x00]).unwrap(), (0x100, 3));
     }
 
     #[test]
