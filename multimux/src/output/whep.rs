@@ -478,6 +478,16 @@ async fn handle_whep_connection(
             let _ = stream.write_all(resp.as_bytes()).await;
             return Ok(());
         }
+        Err(crate::webrtc_http::ReadRequestError::BadRequest) => {
+            let resp = "HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\n\r\n";
+            let _ = stream.write_all(resp.as_bytes()).await;
+            return Ok(());
+        }
+        Err(crate::webrtc_http::ReadRequestError::LengthRequired) => {
+            let resp = "HTTP/1.1 411 Length Required\r\nContent-Length: 0\r\n\r\n";
+            let _ = stream.write_all(resp.as_bytes()).await;
+            return Ok(());
+        }
         Err(crate::webrtc_http::ReadRequestError::Timeout) => {
             return Err(MultimuxError::Connect {
                 reason: "whep: read request: timed out".into(),
@@ -539,13 +549,19 @@ async fn handle_whep_connection(
     // `max_sessions`): reject before answering, not after — an admitted
     // session that never gets read is a leaked socket/ICE agent for no
     // benefit.
-    let prev = active_sessions.fetch_add(1, Ordering::SeqCst);
-    if prev >= max_sessions {
-        active_sessions.fetch_sub(1, Ordering::SeqCst);
+    //
+    // `slot` is an RAII guard (issue r07-C11 follow-up): every `?` between
+    // here and the successful `tx.send` below releases it automatically on
+    // drop, so a client that resets the connection mid-setup can no longer
+    // leak the reservation forever. `slot.disarm()` right before returning
+    // `Ok` hands the slot's lifetime off to the admitted session —
+    // `run_whep_session`'s own `active_sessions.fetch_sub` at the end of its
+    // loop is the new owner from that point on.
+    let Some(slot) = crate::webrtc_http::SessionSlot::acquire(active_sessions, max_sessions) else {
         let resp = "HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\n\r\n";
         let _ = stream.write_all(resp.as_bytes()).await;
         return Ok(());
-    }
+    };
 
     // See `crate::source::whip::handle_whip_connection`'s identical
     // "advertise the signalling connection's own local address" reasoning.
@@ -578,11 +594,8 @@ async fn handle_whep_connection(
         local_setup: setup_role,
         stun_server: None,
     })
-    .map_err(|e| {
-        active_sessions.fetch_sub(1, Ordering::SeqCst);
-        MultimuxError::Connect {
-            reason: format!("whep: build media transport: {e}"),
-        }
+    .map_err(|e| MultimuxError::Connect {
+        reason: format!("whep: build media transport: {e}"),
     })?;
 
     for raw in &parsed.candidates {
@@ -624,9 +637,14 @@ async fn handle_whep_connection(
         pt: parsed.payload_type,
         ssrc: rand_ssrc(),
     };
-    if tx.send(admitted).await.is_err() {
-        active_sessions.fetch_sub(1, Ordering::SeqCst);
+    if tx.send(admitted).await.is_ok() {
+        // Ownership of the slot passes to the admitted session's own
+        // `run_whep_session` loop from here — it decrements the same
+        // counter once, when the session ends.
+        slot.disarm();
     }
+    // If the send failed (channel closed), `slot` drops here and releases
+    // the slot itself — nothing else will ever drive this session.
     Ok(())
 }
 
@@ -793,6 +811,21 @@ async fn send_sample(
     }
 }
 
+/// Whether one [`MediaEvent`] proves the far end is actually still there
+/// (issue r07-C11 follow-up), for [`run_whep_session`]'s own
+/// `last_inbound` reset: a decrypted RTP or RTCP packet (the far end's
+/// decoder/receiver-report machinery is live, RFC 3550 §6.2), or the
+/// one-time DTLS handshake completion. Deliberately excludes
+/// `IceStateChanged`/`LocalCandidateGathered` — real, `Ok`-returning ICE
+/// bookkeeping that says nothing about whether the far end is still
+/// decoding anything.
+fn is_liveness_event(event: &MediaEvent) -> bool {
+    matches!(
+        event,
+        MediaEvent::Rtp(_) | MediaEvent::Rtcp(_) | MediaEvent::DtlsHandshakeComplete
+    )
+}
+
 /// Drives one admitted viewer's media session for its whole lifetime:
 /// alternates between servicing inbound ICE/DTLS-SRTP datagrams (draining
 /// [`MediaTransport::poll_transmit`] after each) and — once the DTLS
@@ -800,7 +833,8 @@ async fn send_sample(
 /// published `Trunk` samples for this session's track, packetising and
 /// sending each as SRTP. Returns when the socket errors, the session is
 /// cancelled, the process is shutting down, or [`WHEP_INBOUND_SILENCE_TIMEOUT`]
-/// elapses with no inbound datagram at all.
+/// elapses with no *authenticated* inbound datagram (see the loop's own
+/// `last_inbound` doc for what that means here).
 async fn run_whep_session(
     admitted: AdmittedWhep,
     trunk: Arc<Trunk>,
@@ -845,9 +879,21 @@ async fn run_whep_session_with_silence_timeout(
     let mut handshake_done = false;
     let mut next_seq: u16 = 0;
     let mut buf = vec![0u8; MAX_UDP_DATAGRAM];
-    // RFC 7675 consent-freshness bound (issue r07-C11) — updated on every
-    // inbound datagram, valid or not (an unauthenticated stray still proves
-    // *something* is reaching this socket; what matters here is silence).
+    // RFC 7675 consent-freshness bound (issue r07-C11) — updated only when
+    // `handle_datagram` returns `Ok` *and* [`is_liveness_event`] accepts at
+    // least one of the produced events (a decrypted RTP/RTCP packet, or the
+    // DTLS handshake-complete event). Neither `Ok` alone nor "produced some
+    // event" is that signal: after the webrtc-runtime 0.2.0 change, a DTLS
+    // datagram from any address other than the ICE-selected pair returns
+    // `Ok(())` with no events, but ordinary ICE bookkeeping (consent
+    // binding requests/responses, a gathered candidate, an ICE connection
+    // state transition) legitimately returns `Ok` *with* events too —
+    // `MediaEvent::IceStateChanged`/`LocalCandidateGathered`, neither of
+    // which says the far end is still decoding anything. A live viewer's
+    // decoder sends SRTCP receiver reports every few seconds (RFC 3550
+    // §6.2), so "decrypted an RTP/RTCP packet" (or the one-time handshake
+    // completion) is the actual liveness signal; STUN consent checks alone
+    // deliberately do not count, matching or not.
     let mut last_inbound = Instant::now();
 
     loop {
@@ -856,11 +902,13 @@ async fn run_whep_session_with_silence_timeout(
         }
         match tokio::time::timeout(SESSION_POLL_INTERVAL, socket.recv_from(&mut buf)).await {
             Ok(Ok((n, peer))) => {
-                last_inbound = Instant::now();
                 peer_addr = Some(peer);
                 let mut guard = media.lock().await;
                 match guard.handle_datagram(Instant::now(), peer, &buf[..n]) {
                     Ok(events) => {
+                        if events.iter().any(is_liveness_event) {
+                            last_inbound = Instant::now();
+                        }
                         if events
                             .iter()
                             .any(|e| matches!(e, MediaEvent::DtlsHandshakeComplete))
@@ -953,6 +1001,12 @@ pub async fn run_whep(
     let accept_trunk = Arc::clone(&trunk);
     let accept_cancel = cancel.clone();
     let accept_active = Arc::clone(&active_sessions);
+    // Caps per-connection tasks in flight — see
+    // `crate::source::whip::WhipRoute::ensure_infra`'s identical
+    // `accept_semaphore` reasoning.
+    let accept_semaphore = Arc::new(tokio::sync::Semaphore::new(
+        crate::webrtc_http::MAX_PENDING_HTTP_CONNECTIONS,
+    ));
     tokio::spawn(async move {
         loop {
             tokio::select! {
@@ -964,7 +1018,12 @@ pub async fn run_whep(
                             let trunk = Arc::clone(&accept_trunk);
                             let active = Arc::clone(&accept_active);
                             let output_auth = output_auth.clone();
+                            let permit = Arc::clone(&accept_semaphore)
+                                .acquire_owned()
+                                .await
+                                .expect("accept_semaphore is never closed");
                             tokio::spawn(async move {
+                                let _permit = permit;
                                 if let Err(e) = handle_whep_connection(
                                     stream,
                                     &trunk,
@@ -1354,5 +1413,301 @@ m=audio 9 UDP/TLS/RTP/SAVPF 111\r\na=ice-ufrag:x\r\na=ice-pwd:xxxxxxxxxxxxxxxxxx
             0,
             "a session with no inbound traffic must free its slot after the silence timeout"
         );
+    }
+
+    fn trunk_with_avc_track() -> Arc<Trunk> {
+        let trunk = empty_trunk();
+        trunk.writer().unwrap().set_tracks(vec![test_track_spec()]);
+        trunk
+    }
+
+    /// PRE-FIX FAILURE OBSERVED: with the manual `fetch_add`/`fetch_sub`
+    /// this replaced (no decrement on any `?` between the capacity check
+    /// and the successful `tx.send`), this assertion failed with
+    /// `active_sessions.load() == 1` — the malformed-fingerprint failure
+    /// left the reserved slot permanently held. The `SessionSlot` guard
+    /// fixes every `?` on that path at once (`local_addr`, `UdpSocket::bind`,
+    /// `MediaTransport::new`, the answer `write_all`), not just the one this
+    /// specific test happens to exercise.
+    #[tokio::test]
+    async fn capacity_slot_is_released_when_media_transport_build_fails() {
+        let offer = OFFER.replace(
+            "a=fingerprint:sha-256 00:11:22:33:44:55:66:77:88:99:aa:bb:cc:dd:ee:ff:\
+00:11:22:33:44:55:66:77:88:99:aa:bb:cc:dd:ee:ff\r\n",
+            "a=fingerprint:sha-256 00:11\r\n",
+        );
+        let trunk = trunk_with_avc_track();
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let mut client = TcpStream::connect(addr).await.unwrap();
+        let (server, _) = listener.accept().await.unwrap();
+        let request = format!(
+            "POST /whep HTTP/1.1\r\nContent-Length: {}\r\n\r\n{offer}",
+            offer.len()
+        );
+        client.write_all(request.as_bytes()).await.unwrap();
+
+        let (tx, _rx) = mpsc::channel::<AdmittedWhep>(1);
+        let active_sessions = Arc::new(AtomicUsize::new(0));
+        let result = handle_whep_connection(server, &trunk, &tx, &active_sessions, 4, &None).await;
+        assert!(
+            result.is_err(),
+            "a malformed fingerprint must surface as an error, not a 201"
+        );
+        assert_eq!(
+            active_sessions.load(Ordering::SeqCst),
+            0,
+            "the capacity slot must be released when setup fails after it was reserved"
+        );
+    }
+
+    /// A session admitted successfully hands its slot off to the
+    /// admitted-session channel's receiver, which decrements the counter
+    /// exactly once when it later reaps that session — never twice.
+    #[tokio::test]
+    async fn capacity_slot_is_decremented_exactly_once_after_a_normal_session() {
+        let trunk = trunk_with_avc_track();
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let mut client = TcpStream::connect(addr).await.unwrap();
+        let (server, _) = listener.accept().await.unwrap();
+        let request = format!(
+            "POST /whep HTTP/1.1\r\nContent-Length: {}\r\n\r\n{OFFER}",
+            OFFER.len()
+        );
+        client.write_all(request.as_bytes()).await.unwrap();
+
+        let (tx, mut rx) = mpsc::channel::<AdmittedWhep>(1);
+        let active_sessions = Arc::new(AtomicUsize::new(0));
+        handle_whep_connection(server, &trunk, &tx, &active_sessions, 4, &None)
+            .await
+            .expect("a well-formed offer is admitted");
+        assert_eq!(
+            active_sessions.load(Ordering::SeqCst),
+            1,
+            "the slot stays reserved for the live session"
+        );
+
+        // Stands in for `run_whep_session`'s own decrement once the session
+        // ends — the one place that owns the slot from here on.
+        let _admitted = rx.recv().await.expect("the session was admitted");
+        active_sessions.fetch_sub(1, Ordering::SeqCst);
+        assert_eq!(
+            active_sessions.load(Ordering::SeqCst),
+            0,
+            "exactly one decrement must bring the counter back to 0 — no leak, no double-release"
+        );
+    }
+
+    /// Builds a STUN Binding Request (RFC 5389 §6) carrying a `USERNAME`
+    /// attribute (§15.3, `"{local_ufrag}:{remote_ufrag}"`) and, if
+    /// `integrity` is `Some`, a syntactically-complete but wrong
+    /// `MESSAGE-INTEGRITY` attribute (§15.4: type `0x0008`, a 20-byte
+    /// HMAC-SHA1 that is simply never the real one) — real enough for the
+    /// ICE agent to recognize as addressed to it, wrong enough to fail
+    /// authentication either way.
+    fn stun_binding_request(username: &[u8], integrity: bool) -> Vec<u8> {
+        let mut pkt = Vec::new();
+        pkt.extend_from_slice(&[0x00, 0x01]); // Binding Request
+        let username_attr_len = 4 + username.len().div_ceil(4) * 4;
+        let total_attr_len = if integrity {
+            username_attr_len + 4 + 20
+        } else {
+            username_attr_len
+        };
+        pkt.extend_from_slice(&(total_attr_len as u16).to_be_bytes());
+        pkt.extend_from_slice(&[0x21, 0x12, 0xA4, 0x42]); // magic cookie
+        pkt.extend_from_slice(&[0u8; 12]); // transaction id
+        pkt.extend_from_slice(&[0x00, 0x06]); // USERNAME
+        pkt.extend_from_slice(&(username.len() as u16).to_be_bytes());
+        pkt.extend_from_slice(username);
+        while pkt.len() % 4 != 0 {
+            pkt.push(0);
+        }
+        if integrity {
+            pkt.extend_from_slice(&[0x00, 0x08, 0x00, 0x14]); // MESSAGE-INTEGRITY, len 20
+            pkt.extend_from_slice(&[0xEE; 20]); // wrong HMAC-SHA1
+        }
+        pkt
+    }
+
+    /// PINS real `webrtc-runtime` behavior this crate's fix relies on
+    /// (issue r07-C11 follow-up) — a coordinator review asked whether a
+    /// STUN message that fails message-integrity is "swallowed as `Ok`" by
+    /// the ICE agent the same way an off-pair DTLS datagram is. It is not:
+    /// both a `USERNAME`-only request (missing the required
+    /// `MESSAGE-INTEGRITY` attribute entirely) and one carrying a
+    /// syntactically complete but wrong `MESSAGE-INTEGRITY` come back as
+    /// `Err`, handled by `run_whep_session`'s *existing*, already-correct
+    /// pre-handshake-failure-is-fatal path — never by the `Ok(events)`
+    /// branch [`is_liveness_event`] guards. Only a datagram in the DTLS
+    /// content-type band from an address that isn't the ICE-selected pair
+    /// is the confirmed `Ok(())`-with-no-event case (`handle_dtls_datagram`
+    /// says so directly), which is why the sibling test below drives its
+    /// stray traffic with that shape (and a plain out-of-range byte)
+    /// instead of a forged STUN message.
+    #[test]
+    fn stun_integrity_failures_surface_as_err_not_ok() {
+        let mut media = MediaTransport::new(MediaTransportConfig {
+            local_addr: "127.0.0.1:0".parse().unwrap(),
+            local_ice_ufrag: "localuf01".into(),
+            local_ice_pwd: "local-ice-password-000000".into(),
+            remote_ice_ufrag: "remoteuf01".into(),
+            remote_ice_pwd: "remote-ice-password-00000".into(),
+            is_controlling: false,
+            local_setup: SetupRole::Passive,
+            stun_server: None,
+            remote_fingerprint: OFFER_FINGERPRINT.into(),
+        })
+        .unwrap();
+        let from: SocketAddr = "127.0.0.1:9".parse().unwrap();
+        let username = b"localuf01:remoteuf01";
+
+        assert!(
+            media
+                .handle_datagram(Instant::now(), from, &stun_binding_request(username, false))
+                .is_err(),
+            "a Binding Request missing MESSAGE-INTEGRITY entirely must be Err"
+        );
+        assert!(
+            media
+                .handle_datagram(Instant::now(), from, &stun_binding_request(username, true))
+                .is_err(),
+            "a Binding Request with a wrong MESSAGE-INTEGRITY must be Err"
+        );
+    }
+
+    /// Pins [`is_liveness_event`]'s exact decision — the fix this round
+    /// makes — deterministically, against hand-constructed events, rather
+    /// than relying only on the integration test's ability to provoke the
+    /// right event shape from a real transport. `MediaEvent::Rtcp` isn't
+    /// exercised here (building one needs a real `rtcp_packet::
+    /// CompoundPacket`, which would add a new direct dependency this crate
+    /// doesn't otherwise need); `Rtp`/`DtlsHandshakeComplete` and the two
+    /// ICE-bookkeeping variants cover the actual decision boundary.
+    #[test]
+    fn is_liveness_event_matches_only_rtp_rtcp_and_handshake_complete() {
+        let rtp = MediaEvent::Rtp(webrtc_runtime::media::DecryptedRtp {
+            marker: false,
+            payload_type: 96,
+            sequence_number: 1,
+            timestamp: 0,
+            ssrc: 1,
+            csrc: Vec::new(),
+            payload: vec![0xAA],
+        });
+        assert!(is_liveness_event(&rtp), "a decrypted RTP packet counts");
+        assert!(
+            is_liveness_event(&MediaEvent::DtlsHandshakeComplete),
+            "the one-time handshake completion counts"
+        );
+        assert!(
+            !is_liveness_event(&MediaEvent::IceStateChanged("connected".into())),
+            "an ICE connection-state transition alone must not count"
+        );
+        assert!(
+            !is_liveness_event(&MediaEvent::LocalCandidateGathered(
+                "1 1 udp 2130706431 127.0.0.1 9 typ srflx".into()
+            )),
+            "gathering a local candidate alone must not count"
+        );
+    }
+
+    /// A datagram from a third party — never the session's real (and here,
+    /// never-established) peer — must not keep the session alive. Sent
+    /// continuously for `3 * silence_timeout`, concurrently with the
+    /// session task itself (started at the same instant, so a bug that
+    /// treats either shape as liveness would need the *whole* spam window
+    /// plus another `silence_timeout` to end — well past `assert_bound`
+    /// below): a DTLS Handshake content-type byte (`handle_dtls_datagram`
+    /// rejects any address but the selected pair with `Ok(())`, no event —
+    /// this session never even ran ICE, so `selected_pair_addr` is always
+    /// `None`) and a plain out-of-range byte (no defined meaning in any
+    /// demux band, silently ignored). See
+    /// `stun_integrity_failures_surface_as_err_not_ok` for why a forged
+    /// STUN message isn't in this rotation: it surfaces as `Err`, which
+    /// (correctly, and not what this test is about) already ends a
+    /// pre-handshake session immediately via the sibling branch.
+    ///
+    /// PRE-FIX FAILURE OBSERVED (round 3): reverting `is_liveness_event`'s
+    /// call site back to round 2's `!events.is_empty()` did **not** make
+    /// this test fail — confirming, empirically, that neither stray shape
+    /// here ever produced a non-empty `Ok` event set even under that
+    /// broader condition (both are the same `Ok(())`/silently-ignored
+    /// cases either way). The real round-2 gap (`IceStateChanged`/
+    /// `LocalCandidateGathered` from *genuine* ICE bookkeeping counting as
+    /// liveness) is not reachable by any datagram an outside party can
+    /// forge — see this test's own doc for the two shapes that were tried
+    /// and ruled out. `is_liveness_event`'s own unit tests below pin the
+    /// exact decision this round's fix makes, deterministically.
+    #[tokio::test]
+    async fn stray_datagrams_from_another_address_do_not_extend_the_silence_timeout() {
+        let admitted = test_admitted_whep().await;
+        let session_addr = admitted.socket.local_addr().unwrap();
+        let trunk = empty_trunk();
+        let cancel = CancellationToken::new();
+        let active_sessions = Arc::new(AtomicUsize::new(1));
+        let silence_timeout = Duration::from_millis(200);
+        // Comfortably more than the correct end time (~`silence_timeout`)
+        // and comfortably less than what a bug extending life via the spam
+        // would need (`spam_duration + silence_timeout`) — see this test's
+        // own doc.
+        let assert_bound = Duration::from_millis(400);
+        let spam_duration = silence_timeout * 3;
+
+        let handle = tokio::spawn(run_whep_session_with_silence_timeout(
+            admitted,
+            trunk,
+            cancel,
+            Arc::clone(&active_sessions),
+            silence_timeout,
+        ));
+
+        // Random bytes whose first byte falls outside every demux range
+        // (STUN <=1, DTLS 20..=63, RTP/RTCP 128..=191) — "no defined
+        // meaning", silently ignored.
+        const RANDOM_BYTES: &[u8] = &[0x05, 0xAA, 0xBB, 0xCC];
+        // A DTLS Handshake content-type byte (RFC 6347 §4.1): always
+        // rejected — this session never selected any pair, let alone one
+        // at the stray socket's address.
+        const DTLS_LOOKING: &[u8] = &[0x16, 0x00, 0, 0, 0, 0, 0, 0];
+
+        // Spams concurrently with the session task above (both started at
+        // the same instant) rather than before awaiting it — the whole
+        // point is that `assert_bound` below is too tight for a bug that
+        // extends life on each stray to still finish in time.
+        let spam = tokio::spawn(async move {
+            let stray_std = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
+            stray_std.set_nonblocking(true).unwrap();
+            let stray = UdpSocket::from_std(stray_std).unwrap();
+            let deadline = Instant::now() + spam_duration;
+            let mut i: u32 = 0;
+            while Instant::now() < deadline {
+                let payload = if i.is_multiple_of(2) {
+                    RANDOM_BYTES
+                } else {
+                    DTLS_LOOKING
+                };
+                let _ = stray.send_to(payload, session_addr).await;
+                i = i.wrapping_add(1);
+                tokio::time::sleep(Duration::from_millis(15)).await;
+            }
+        });
+
+        tokio::time::timeout(assert_bound, handle)
+            .await
+            .expect(
+                "the session must end within assert_bound despite continued stray traffic from \
+                 another address",
+            )
+            .expect("run_whep_session_with_silence_timeout must not panic");
+
+        assert_eq!(
+            active_sessions.load(Ordering::Relaxed),
+            0,
+            "stray datagrams from another address must not keep a session alive past its \
+             silence timeout"
+        );
+        spam.abort();
     }
 }

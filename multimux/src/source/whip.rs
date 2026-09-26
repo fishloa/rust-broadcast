@@ -259,13 +259,30 @@ impl WhipRoute {
                 let (tx, rx) = mpsc::channel(ACCEPT_QUEUE_CAPACITY);
                 let active_sessions = Arc::new(AtomicUsize::new(0));
                 let accept_active = Arc::clone(&active_sessions);
+                // Caps per-connection tasks in flight (issue r07-C11 follow-up):
+                // without this, a flood of TCP connections that never send a
+                // byte spawns one task each, unbounded, well before
+                // `max_sessions`/`SessionSlot` ever gets a chance to refuse
+                // anything (those only run *inside* the spawned task).
+                let accept_semaphore = Arc::new(tokio::sync::Semaphore::new(
+                    crate::webrtc_http::MAX_PENDING_HTTP_CONNECTIONS,
+                ));
                 tokio::spawn(async move {
                     loop {
                         match listener.accept().await {
                             Ok((stream, _peer)) => {
                                 let tx = tx.clone();
                                 let active = Arc::clone(&accept_active);
+                                // Waits for a free slot rather than spawning
+                                // past the cap — the accept loop itself
+                                // stalls, so the OS backlog absorbs the
+                                // burst instead of this process's task set.
+                                let permit = Arc::clone(&accept_semaphore)
+                                    .acquire_owned()
+                                    .await
+                                    .expect("accept_semaphore is never closed");
                                 tokio::spawn(async move {
+                                    let _permit = permit;
                                     if let Err(e) =
                                         handle_whip_connection(stream, &tx, &active, max_sessions)
                                             .await
@@ -514,6 +531,16 @@ async fn handle_whip_connection(
             let _ = stream.write_all(resp.as_bytes()).await;
             return Ok(());
         }
+        Err(crate::webrtc_http::ReadRequestError::BadRequest) => {
+            let resp = "HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\n\r\n";
+            let _ = stream.write_all(resp.as_bytes()).await;
+            return Ok(());
+        }
+        Err(crate::webrtc_http::ReadRequestError::LengthRequired) => {
+            let resp = "HTTP/1.1 411 Length Required\r\nContent-Length: 0\r\n\r\n";
+            let _ = stream.write_all(resp.as_bytes()).await;
+            return Ok(());
+        }
         Err(crate::webrtc_http::ReadRequestError::Timeout) => {
             return Err(MultimuxError::Connect {
                 reason: "whip: read request: timed out".into(),
@@ -548,13 +575,20 @@ async fn handle_whip_connection(
     // after — `ListenDriver`'s own `max_sessions` cap only takes effect once
     // an admitted session reaches `poll_accept`, by which point that work
     // already ran for nothing, same as `crate::output::whep`'s own check.
-    let prev = active_sessions.fetch_add(1, Ordering::SeqCst);
-    if prev >= max_sessions {
-        active_sessions.fetch_sub(1, Ordering::SeqCst);
+    //
+    // `slot` is an RAII guard (issue r07-C11 follow-up): every `?` between
+    // here and the successful `tx.send` below releases it automatically on
+    // drop, so a client that resets the connection (or any other mid-setup
+    // failure) can no longer leak the reservation forever. `slot.disarm()`
+    // right before the function returns `Ok` is what hands the slot's
+    // lifetime off to the admitted session — `report_and_maybe_reap` is the
+    // new owner from that point on, and decrements the same counter exactly
+    // once when the session is reaped.
+    let Some(slot) = crate::webrtc_http::SessionSlot::acquire(active_sessions, max_sessions) else {
         let resp = "HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\n\r\n";
         let _ = stream.write_all(resp.as_bytes()).await;
         return Ok(());
-    }
+    };
 
     // The IP to advertise as this session's ICE host candidate: not
     // `0.0.0.0` (unreachable — that would be the address on the wire if the
@@ -594,11 +628,8 @@ async fn handle_whip_connection(
         local_setup: SetupRole::Passive,
         stun_server: None,
     })
-    .map_err(|e| {
-        active_sessions.fetch_sub(1, Ordering::SeqCst);
-        MultimuxError::Connect {
-            reason: format!("whip: build media transport: {e}"),
-        }
+    .map_err(|e| MultimuxError::Connect {
+        reason: format!("whip: build media transport: {e}"),
     })?;
 
     for raw in &parsed.candidates {
@@ -642,7 +673,14 @@ async fn handle_whip_connection(
             clock_rate: parsed.clock_rate,
         }],
     };
-    let _ = tx.send(admitted).await;
+    if tx.send(admitted).await.is_ok() {
+        // Ownership of the slot passes to the admitted session from here —
+        // `report_and_maybe_reap` decrements the same counter once, when
+        // `run_whip` reaps it.
+        slot.disarm();
+    }
+    // If the send failed (channel closed), `slot` drops here and releases
+    // the slot itself — nothing else will ever reap this session.
     Ok(())
 }
 
@@ -1419,6 +1457,92 @@ m=audio 9 UDP/TLS/RTP/SAVPF 111\r\na=ice-ufrag:x\r\na=ice-pwd:xxxxxxxxxxxxxxxxxx
         assert!(
             matches!(rx.try_recv(), Err(mpsc::error::TryRecvError::Empty)),
             "a route at capacity must never admit a session"
+        );
+    }
+
+    /// PRE-FIX FAILURE OBSERVED: before the `SessionSlot` RAII guard,
+    /// `handle_whip_connection` only decremented `active_sessions` on the
+    /// *specific* `MediaTransport::new` failure via a hand-written
+    /// `map_err` closure — reverting that closure back to a plain
+    /// `.map_err(|e| MultimuxError::Connect { .. })?` (no decrement) leaves
+    /// `active_sessions.load() == 1` after this test's connection resets
+    /// instead of returning to `0`; every *other* `?` on the way there
+    /// (`local_addr`, `UdpSocket::bind`, the answer `write_all`) had no
+    /// decrement at all even before that. The guard fixes all of them at
+    /// once because it doesn't matter which `?` fires.
+    #[tokio::test]
+    async fn capacity_slot_is_released_when_media_transport_build_fails() {
+        // A syntactically-present but too-short digest: `parse_whip_offer`
+        // doesn't validate the fingerprint's shape (only that one exists),
+        // so this reaches `MediaTransport::new`, which does validate it and
+        // fails — after the capacity slot has already been reserved.
+        let offer = OFFER.replace(
+            "a=fingerprint:sha-256 00:11:22:33:44:55:66:77:88:99:aa:bb:cc:dd:ee:ff:\
+00:11:22:33:44:55:66:77:88:99:aa:bb:cc:dd:ee:ff\r\n",
+            "a=fingerprint:sha-256 00:11\r\n",
+        );
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let mut client = TcpStream::connect(addr).await.unwrap();
+        let (server, _) = listener.accept().await.unwrap();
+        let request = format!(
+            "POST /whip HTTP/1.1\r\nContent-Length: {}\r\n\r\n{offer}",
+            offer.len()
+        );
+        client.write_all(request.as_bytes()).await.unwrap();
+
+        let (tx, _rx) = mpsc::channel::<AdmittedWhip>(1);
+        let active_sessions = Arc::new(AtomicUsize::new(0));
+        let result = handle_whip_connection(server, &tx, &active_sessions, 4).await;
+        assert!(
+            result.is_err(),
+            "a malformed fingerprint must surface as an error, not a 201"
+        );
+        assert_eq!(
+            active_sessions.load(Ordering::SeqCst),
+            0,
+            "the capacity slot must be released when setup fails after it was reserved"
+        );
+    }
+
+    /// A session that is admitted successfully hands its slot off to the
+    /// admitted-session channel's receiver, which decrements the counter
+    /// exactly once when it later reaps that session — never twice (the
+    /// guard must not *also* decrement on drop after a successful
+    /// `disarm()`).
+    #[tokio::test]
+    async fn capacity_slot_is_decremented_exactly_once_after_a_normal_session() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let mut client = TcpStream::connect(addr).await.unwrap();
+        let (server, _) = listener.accept().await.unwrap();
+        let request = format!(
+            "POST /whip HTTP/1.1\r\nContent-Length: {}\r\n\r\n{}",
+            OFFER.len(),
+            OFFER
+        );
+        client.write_all(request.as_bytes()).await.unwrap();
+
+        let (tx, mut rx) = mpsc::channel::<AdmittedWhip>(1);
+        let active_sessions = Arc::new(AtomicUsize::new(0));
+        handle_whip_connection(server, &tx, &active_sessions, 4)
+            .await
+            .expect("a well-formed offer is admitted");
+        assert_eq!(
+            active_sessions.load(Ordering::SeqCst),
+            1,
+            "the slot stays reserved for the live session"
+        );
+
+        // Stands in for `report_and_maybe_reap`'s own decrement once
+        // `run_whip`'s driver reaps this session — the one place that owns
+        // the slot from here on.
+        let _admitted = rx.recv().await.expect("the session was admitted");
+        active_sessions.fetch_sub(1, Ordering::SeqCst);
+        assert_eq!(
+            active_sessions.load(Ordering::SeqCst),
+            0,
+            "exactly one decrement must bring the counter back to 0 — no leak, no double-release"
         );
     }
 }
