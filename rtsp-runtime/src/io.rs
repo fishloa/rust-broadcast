@@ -364,9 +364,14 @@ pub struct AsyncRtspServer<S> {
 }
 
 impl AsyncRtspServer<TcpStream> {
-    /// Wraps an accepted plain-TCP connection with a fresh [`ServerSession`].
+    /// Wraps an accepted plain-TCP connection with a fresh [`ServerSession`]
+    /// whose `Session` ids come from the OS random source.
+    ///
+    /// # Panics
+    ///
+    /// When the OS random source is unavailable.
     pub fn accept(stream: TcpStream) -> Self {
-        Self::with_stream(stream, ServerSession::new())
+        Self::with_stream(stream, ServerSession::new(os_session_id))
     }
 
     /// Wraps an accepted plain-TCP connection with a pre-configured session.
@@ -388,8 +393,15 @@ impl AsyncRtspServer<tokio_rustls::server::TlsStream<TcpStream>> {
             .accept(stream)
             .await
             .map_err(|e| io_err("TLS handshake", e))?;
-        Ok(Self::with_stream(tls, ServerSession::new()))
+        Ok(Self::with_stream(tls, ServerSession::new(os_session_id)))
     }
+}
+
+/// A `Session` id value from the OS random source (RFC 2326 §3.4).
+fn os_session_id() -> u64 {
+    let mut bytes = [0u8; 8];
+    getrandom::getrandom(&mut bytes).expect("OS random source unavailable");
+    u64::from_ne_bytes(bytes)
 }
 
 impl<S> AsyncRtspServer<S>

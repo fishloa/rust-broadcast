@@ -288,7 +288,7 @@ fn gate5_transport_round_trip_bites() {
 
 #[test]
 fn gate6_server_transitions_bite() {
-    let mut s = ServerSession::new();
+    let mut s = ServerSession::new(rand_ish_ids());
 
     // SETUP -> 200 with Session + Transport, Init -> Ready.
     let (resp, events) = s
@@ -319,7 +319,7 @@ fn gate6_server_transitions_bite() {
     assert_eq!(s.state(), SessionState::Playing);
 
     // Fresh session: PLAY in Init -> 455, state unchanged.
-    let mut fresh = ServerSession::new();
+    let mut fresh = ServerSession::new(rand_ish_ids());
     let (resp, events) = fresh
         .handle_request(&wire("PLAY rtsp://h/s RTSP/1.0\nCSeq: 1\n\n"))
         .unwrap();
@@ -402,4 +402,11 @@ fn auth_response_value(events: &[ClientEvent]) -> String {
         .trim_start_matches("Authorization:")
         .trim()
         .to_string()
+}
+
+/// A per-session id source standing in for a random one in these tests.
+fn rand_ish_ids() -> impl FnMut() -> u64 + Send + 'static {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static NEXT: AtomicU64 = AtomicU64::new(0x9e37_79b9_7f4a_7c15);
+    || NEXT.fetch_add(0x2545_f491_4f6c_dd1d, Ordering::Relaxed)
 }

@@ -6,6 +6,27 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed (breaking)
+- `ServerSession::new` now takes the `Session` id source,
+  `impl FnMut() -> u64 + Send + 'static`, which must be a CSPRNG (RFC 2326
+  §3.4); `impl Default for ServerSession` is removed and `Debug` is now
+  hand-written. `io::AsyncRtspServer::accept`/`accept_tls` supply the OS RNG
+  (new optional `getrandom` dependency under the `tokio` feature).
+  `with_session_seed` keeps its signature but is now `#[doc(hidden)]` and
+  documented as for deterministic tests only.
+
+### Fixed
+- `ServerSession` ids are 64 random bits rendered as 16 hex digits instead of
+  the fixed counter `305419896`, so separate connections no longer share ids.
+- A request whose `Session` header names another id, or a
+  `PLAY`/`PAUSE`/`RECORD`/`TEARDOWN` carrying none once a session exists, is
+  answered `454 Session Not Found` (RFC 2326 §11.3.2, §12.37) instead of `200`.
+- The SETUP reply's `Transport` header carries only the chosen (first) spec
+  rather than every offered one (§12.39); `negotiated_transport()` and
+  `ServerEvent::SessionSetup` hold that single spec.
+- An unparseable `Transport` header on SETUP is answered `461 Unsupported
+  Transport` instead of returning `Err` (which dropped the connection).
+
 ## [0.6.0] - 2026-08-11
 
 ### Changed
