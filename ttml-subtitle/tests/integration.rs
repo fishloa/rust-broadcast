@@ -595,3 +595,67 @@ fn reject_frame_metric_without_frame_rate() {
         result.errors
     );
 }
+
+// ─── Nesting depth limit tests ───────────────────────────────────────
+
+#[test]
+fn rejects_deeply_nested_spans_exceeding_limit() {
+    // Generate XML with 65 nested spans (exceeds MAX_NESTING_DEPTH=64).
+    let mut xml = String::from(
+        r#"<?xml version="1.0" encoding="UTF-8"?>
+<tt xmlns="http://www.w3.org/ns/ttml" xml:lang="en">
+  <body>
+    <div>
+      <p>"#,
+    );
+    for _ in 0..65 {
+        xml.push_str("<span>");
+    }
+    xml.push_str("text");
+    for _ in 0..65 {
+        xml.push_str("</span>");
+    }
+    xml.push_str(
+        r#"
+      </p>
+    </div>
+  </body>
+</tt>"#,
+    );
+    let result = Document::parse_str(&xml);
+    assert!(
+        result.is_err(),
+        "Parse should reject 65 nested spans (exceeds limit of 64)"
+    );
+}
+
+#[test]
+fn accepts_shallowly_nested_spans_within_limit() {
+    // Generate XML with exactly 64 nested spans (at the limit).
+    let mut xml = String::from(
+        r#"<?xml version="1.0" encoding="UTF-8"?>
+<tt xmlns="http://www.w3.org/ns/ttml" xml:lang="en">
+  <body>
+    <div>
+      <p>"#,
+    );
+    for _ in 0..64 {
+        xml.push_str("<span>");
+    }
+    xml.push_str("text");
+    for _ in 0..64 {
+        xml.push_str("</span>");
+    }
+    xml.push_str(
+        r#"
+      </p>
+    </div>
+  </body>
+</tt>"#,
+    );
+    let result = Document::parse_str(&xml);
+    assert!(
+        result.is_ok(),
+        "Parse should accept 64 nested spans (within limit)"
+    );
+}
