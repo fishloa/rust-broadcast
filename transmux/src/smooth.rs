@@ -45,7 +45,7 @@ use broadcast_common::{Parse, Serialize};
 use crate::aac_asc::AudioSpecificConfig;
 use crate::box_types::{BoxHeader, BoxType, UUID_TYPE_SIZE};
 use crate::error::{Error, Result};
-use crate::media::{Media, Track};
+use crate::media::{Media, TimelineOrigin, Track, relative_decode_times};
 use crate::movie_fragment::{
     MovieFragmentBox, MovieFragmentHeaderBox, TFHD_DEFAULT_BASE_IS_MOOF, TRUN_DATA_OFFSET_PRESENT,
     TRUN_SAMPLE_COMPOSITION_TIME_OFFSET_PRESENT, TRUN_SAMPLE_DURATION_PRESENT,
@@ -322,10 +322,17 @@ impl SmoothPackager {
     /// Segment one track into Smooth fragments and resolve its manifest info.
     ///
     /// Cuts the track keyframe-aligned into fragments; for each, builds the
-    /// `moof`+`tfxd`+`mdat` bytes and records the `c` timing.
+    /// `moof`+`tfxd`+`mdat` bytes and records the `c` timing. Every time and
+    /// duration — `c@t`/`c@d`, `tfxd`, and the `trun` sample durations and
+    /// composition offsets — is in [`SMOOTH_TIMESCALE`]: a client builds the
+    /// track's timescale from the manifest (Smooth has no init segment), so
+    /// media-timescale `trun` values would play 111x/208x too short (issue
+    /// #1022). Times are the samples' own decode times on the `origin` common
+    /// to every track, so inter-track offsets survive.
     fn build_track(
         &self,
         track: &Track,
+        origin: &TimelineOrigin,
         next_seq: &mut u32,
         fragments_out: &mut Vec<SmoothFragment>,
     ) -> Result<StreamInfo> {
@@ -333,20 +340,19 @@ impl SmoothPackager {
         let (stream_type, fourcc, codec_private_data, width, height, sampling_rate, channels) =
             resolve_codec(&track.spec.config)?;
 
+        let timeline = smooth_timeline(track, origin, media_timescale)?;
+
         // Segment keyframe-aligned into groups of samples.
         let groups = segment_samples(&track.samples, media_timescale, self.target_duration_secs);
 
         let mut fragment_timings = Vec::with_capacity(groups.len());
-        let mut media_decode_time = 0u64; // in the media timescale
         let mut total_bytes = 0u64;
-        let mut total_media_ticks = 0u64;
 
-        for group in &groups {
-            let group_media_dur: u64 = group.iter().map(|s| s.duration.unwrap_or(0) as u64).sum();
-            let start_smooth = Self::to_smooth_ticks(media_decode_time, media_timescale);
-            let dur_smooth =
-                Self::to_smooth_ticks(media_decode_time + group_media_dur, media_timescale)
-                    - start_smooth;
+        for range in groups {
+            let group = &track.samples[range.clone()];
+            let times = &timeline[range];
+            let start_smooth = times.first().map_or(0, |t| t.start);
+            let dur_smooth: u64 = times.iter().map(|t| u64::from(t.duration)).sum();
 
             let data = build_smooth_fragment(
                 track.spec.track_id,
@@ -354,6 +360,7 @@ impl SmoothPackager {
                 start_smooth,
                 dur_smooth,
                 group,
+                times,
             )?;
 
             for s in group.iter() {
@@ -371,8 +378,6 @@ impl SmoothPackager {
                 duration: dur_smooth,
             });
             *next_seq += 1;
-            media_decode_time += group_media_dur;
-            total_media_ticks += group_media_dur;
         }
 
         let total_duration: u64 = fragment_timings.iter().map(|f| f.duration).sum();
@@ -382,9 +387,9 @@ impl SmoothPackager {
         let bitrate = {
             let bits_ts = total_bytes
                 .saturating_mul(8)
-                .saturating_mul(media_timescale as u64);
-            (bits_ts + total_media_ticks / 2)
-                .checked_div(total_media_ticks)
+                .saturating_mul(SMOOTH_TIMESCALE);
+            (bits_ts + total_duration / 2)
+                .checked_div(total_duration)
                 .unwrap_or(0)
         }
         .max(1);
@@ -494,9 +499,10 @@ impl broadcast_common::Package for SmoothPackager {
         // Per-track sequence numbering, 1-based (each track's fragments count
         // up independently, as Smooth fragment responses are addressed by
         // start time within a StreamIndex).
+        let origin = TimelineOrigin::of(&media.tracks);
         for track in &media.tracks {
             let mut next_seq = 1u32;
-            streams.push(self.build_track(track, &mut next_seq, &mut fragments)?);
+            streams.push(self.build_track(track, &origin, &mut next_seq, &mut fragments)?);
         }
         let manifest = self.render_manifest(&streams);
         Ok(SmoothOutput {
@@ -601,7 +607,11 @@ fn asc_sampling_rate(asc: AudioSpecificConfig) -> Option<u32> {
 /// Mirrors the [`Segmenter`](crate::segmenter::Segmenter) anchor-cut policy
 /// applied to a single track: every group after the first begins on a
 /// random-access point, no sample is dropped or reordered.
-fn segment_samples(samples: &[Sample], media_timescale: u32, target_secs: u32) -> Vec<&[Sample]> {
+fn segment_samples(
+    samples: &[Sample],
+    media_timescale: u32,
+    target_secs: u32,
+) -> Vec<core::ops::Range<usize>> {
     let mut groups = Vec::new();
     if samples.is_empty() {
         return groups;
@@ -613,14 +623,80 @@ fn segment_samples(samples: &[Sample], media_timescale: u32, target_secs: u32) -
     for (i, s) in samples.iter().enumerate() {
         // Cut before this sample when it is a keyframe past the target.
         if i > start && s.flags.is_sync && acc_dur >= target_ticks {
-            groups.push(&samples[start..i]);
+            groups.push(start..i);
             start = i;
             acc_dur = 0;
         }
         acc_dur += s.duration.unwrap_or(0) as u64;
     }
-    groups.push(&samples[start..]);
+    groups.push(start..samples.len());
     groups
+}
+
+/// One sample's timing in [`SMOOTH_TIMESCALE`] ticks.
+#[derive(Debug, Clone, Copy)]
+struct SmoothSampleTime {
+    /// Decode time on the common origin.
+    start: u64,
+    /// Decode duration: up to the next sample's decode time (so the `trun`
+    /// durations of a fragment sum exactly to its `c@d`, with no per-sample
+    /// rounding drift), the last sample's own duration.
+    duration: u32,
+    /// Composition offset (`pts - dts`).
+    composition_offset: i32,
+}
+
+/// Rescale a track's per-sample decode times, durations and composition
+/// offsets to [`SMOOTH_TIMESCALE`].
+fn smooth_timeline(
+    track: &Track,
+    origin: &TimelineOrigin,
+    media_timescale: u32,
+) -> Result<Vec<SmoothSampleTime>> {
+    let times = relative_decode_times(track, origin);
+    let starts: Vec<u64> = times
+        .iter()
+        .map(|&t| SmoothPackager::to_smooth_ticks(t.max(0) as u64, media_timescale))
+        .collect();
+    track
+        .samples
+        .iter()
+        .enumerate()
+        .map(|(i, s)| {
+            let start = starts[i];
+            let own_end = SmoothPackager::to_smooth_ticks(
+                (times[i].max(0) as u64).saturating_add(u64::from(s.duration.unwrap_or(0))),
+                media_timescale,
+            );
+            let end = match starts.get(i + 1) {
+                Some(&next) if next >= start => next,
+                _ => own_end,
+            };
+            let duration = u32::try_from(end - start).map_err(|_| Error::InvalidValue {
+                field: "trun sample_duration",
+                value: end - start,
+                reason: "exceeds 32 bits in the 10 MHz Smooth timescale",
+            })?;
+            let cto = to_smooth_signed(i64::from(s.composition_offset()), media_timescale);
+            let composition_offset = i32::try_from(cto).map_err(|_| Error::InvalidValue {
+                field: "trun sample_composition_time_offset",
+                value: cto.unsigned_abs(),
+                reason: "exceeds 32 bits in the 10 MHz Smooth timescale",
+            })?;
+            Ok(SmoothSampleTime {
+                start,
+                duration,
+                composition_offset,
+            })
+        })
+        .collect()
+}
+
+/// Signed round-to-nearest rescale of `ticks` to [`SMOOTH_TIMESCALE`].
+fn to_smooth_signed(ticks: i64, media_timescale: u32) -> i64 {
+    let magnitude = SmoothPackager::to_smooth_ticks(ticks.unsigned_abs(), media_timescale);
+    let v = i64::try_from(magnitude).unwrap_or(i64::MAX);
+    if ticks < 0 { -v } else { v }
 }
 
 /// Build one self-contained Smooth fragment: `styp` + `moof`(`mfhd` `traf`(
@@ -635,6 +711,7 @@ fn build_smooth_fragment(
     start_smooth: u64,
     dur_smooth: u64,
     samples: &[Sample],
+    times: &[SmoothSampleTime],
 ) -> Result<Vec<u8>> {
     let styp = SegmentTypeBox {
         major_brand: STYP_MAJOR_BRAND,
@@ -642,11 +719,12 @@ fn build_smooth_fragment(
         compatible_brands: alloc::vec![STYP_MAJOR_BRAND, *b"msix"],
     };
 
-    let any_cts = samples.iter().any(|s| s.composition_offset() != 0);
+    let any_cts = times.iter().any(|t| t.composition_offset != 0);
     let trun_samples: Vec<TrunSample> = samples
         .iter()
-        .map(|s| TrunSample {
-            sample_duration: Some(s.duration.unwrap_or(0)),
+        .zip(times)
+        .map(|(s, t)| TrunSample {
+            sample_duration: Some(t.duration),
             sample_size: Some(s.data.len() as u32),
             sample_flags: Some(if s.flags.is_sync {
                 SAMPLE_FLAGS_SYNC
@@ -654,7 +732,7 @@ fn build_smooth_fragment(
                 SAMPLE_FLAGS_NON_SYNC
             }),
             sample_composition_time_offset: if any_cts {
-                Some(s.composition_offset())
+                Some(t.composition_offset)
             } else {
                 None
             },
@@ -706,8 +784,16 @@ fn build_smooth_fragment(
     let tfxd_len = tfxd.serialized_len();
     // moof size with tfxd added into the single traf.
     let moof_size = moof.serialized_len() + tfxd_len;
-    let mdat_start = moof_size + 8; // +8 for the mdat box header
-    moof.traf[0].trun[0].data_offset = Some(mdat_start as i32);
+    let mdat_payload_len: u64 = samples.iter().map(|s| s.data.len() as u64).sum();
+    let mdat_header =
+        BoxHeader::for_payload(BoxType::from_bytes(*b"mdat"), None, mdat_payload_len).header_size();
+    let mdat_start = moof_size + mdat_header;
+    let data_offset = i32::try_from(mdat_start).map_err(|_| Error::InvalidValue {
+        field: "trun data_offset",
+        value: mdat_start as u64,
+        reason: "moof too large for the signed 32-bit trun data_offset",
+    })?;
+    moof.traf[0].trun[0].data_offset = Some(data_offset);
 
     // Serialize the moof (without tfxd), then splice the tfxd in at the end of
     // the traf and patch the two container sizes (moof, traf).
@@ -760,11 +846,17 @@ fn splice_tfxd_into_traf(moof: &[u8], tfxd: &TfxdBox) -> Result<Vec<u8>> {
     // The traf is the last child (mfhd then traf), so the tfxd goes at the end.
     out.extend_from_slice(&tfxd_bytes);
 
-    // Patch moof size (bytes [0..4]).
-    let new_moof_size = out.len() as u32;
+    // Patch moof and traf sizes; both were written in the compact 32-bit form,
+    // which has no room for a `largesize` (§4.2), so a size past u32 is refused.
+    let too_big = |size: usize| Error::InvalidValue {
+        field: "moof/traf box size",
+        value: size as u64,
+        reason: "exceeds the 32-bit box size of the serialized moof",
+    };
+    let new_moof_size = u32::try_from(out.len()).map_err(|_| too_big(out.len()))?;
     out[0..4].copy_from_slice(&new_moof_size.to_be_bytes());
-    // Patch traf size.
-    let new_traf_size = (old_traf_size + tfxd_bytes.len()) as u32;
+    let traf_size = old_traf_size + tfxd_bytes.len();
+    let new_traf_size = u32::try_from(traf_size).map_err(|_| too_big(traf_size))?;
     out[traf_off..traf_off + 4].copy_from_slice(&new_traf_size.to_be_bytes());
     Ok(out)
 }

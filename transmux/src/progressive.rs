@@ -8,7 +8,10 @@
 //! counterpart to the fragmented [`crate::media::CmafMux`].
 //!
 //! Sample tables are derived directly from the sample stream (§8.6/§8.7):
-//! decode durations are run-length coded into `stts` (§8.6.1.2); composition
+//! decode deltas — each sample's own `dts` to the next, so a gap survives —
+//! are run-length coded into `stts` (§8.6.1.2); each track is placed on the
+//! movie timeline, relative to the earliest track, by an `elst` (§8.6.6)
+//! whenever it starts later or opens with a composition lead-in; composition
 //! offsets go into `ctts` (§8.6.1.3) only when some sample has a non-zero
 //! offset; per-sample byte sizes fill `stsz` (§8.7.3); a single-chunk-per-track
 //! `stsc` (§8.7.4) maps samples to chunks; each track's chunk byte offset lands
@@ -33,15 +36,18 @@ use alloc::vec::Vec;
 
 use broadcast_common::{Package, Parse, Serialize};
 
+use crate::box_types::{BoxHeader, BoxType};
 use crate::error::{Error, Result};
 use crate::init_segment::{
-    ChunkLargeOffsetBox, ChunkOffsetBox, MovieBox, SampleSizeBox, SampleToChunkBox, StblChild,
-    StscEntry, SyncSampleBox,
+    ChunkLargeOffsetBox, ChunkOffsetBox, EditBox, MovieBox, SampleSizeBox, SampleToChunkBox,
+    StblChild, StscEntry, SyncSampleBox,
 };
-use crate::media::Media;
+use crate::media::{Media, TimelineOrigin, Track, relative_decode_times};
 use crate::pipeline::{Sample, build_init_segment};
 use crate::segments::{FileTypeBox, MediaDataBox};
-use crate::timing::{CompositionOffsetBox, CttsEntry, SttsEntry, TimeToSampleBox};
+use crate::timing::{
+    CompositionOffsetBox, CttsEntry, EditListBox, EditListEntry, SttsEntry, TimeToSampleBox,
+};
 
 /// Default movie timescale used when a [`Media`] does not specify one.
 const DEFAULT_MOVIE_TIMESCALE: u32 = 1000;
@@ -49,10 +55,14 @@ const DEFAULT_MOVIE_TIMESCALE: u32 = 1000;
 const FTYP_MAJOR_BRAND: [u8; 4] = *b"isom";
 /// `ftyp` minor version.
 const FTYP_MINOR_VERSION: u32 = 512;
-/// Byte size of the plain (32-bit) `mdat` box header (`size` + `type`).
-const MDAT_HEADER_LEN: usize = 8;
+/// The `mdat` box type (ISO/IEC 14496-12:2015 §8.1.1).
+const MDAT_TYPE: [u8; 4] = *b"mdat";
 /// The `default_sample_description_index` referenced by the single `stsd` entry.
 const SAMPLE_DESCRIPTION_INDEX: u32 = 1;
+/// `elst` `media_time` of an empty edit (ISO/IEC 14496-12:2015 §8.6.6).
+const ELST_EMPTY_EDIT: i64 = -1;
+/// `elst` `media_rate_integer` for normal-speed playback (§8.6.6).
+const ELST_NORMAL_RATE: i16 = 1;
 
 /// Package a [`Media`] into a single-file, non-fragmented `.mp4`.
 ///
@@ -72,15 +82,32 @@ impl ProgressiveMux {
     }
 }
 
-/// Run-length code a per-sample decode-duration list into `stts` entries
-/// (ISO/IEC 14496-12:2015 §8.6.1.2): consecutive equal durations collapse into a
+/// Each sample's decode delta (§8.6.1.2): the gap to the next sample's decode
+/// time, so a gap in the IR's own `dts` timeline is kept; the last sample (and
+/// any sample whose next decode time goes backwards or is unknown) uses its own
+/// duration.
+fn decode_deltas(samples: &[Sample], times: &[i64]) -> Vec<u32> {
+    samples
+        .iter()
+        .enumerate()
+        .map(|(i, s)| {
+            let own = s.duration.unwrap_or(0);
+            match (times.get(i), times.get(i + 1)) {
+                (Some(&now), Some(&next)) if next >= now => {
+                    u32::try_from(next - now).unwrap_or(own)
+                }
+                _ => own,
+            }
+        })
+        .collect()
+}
+
+/// Run-length code a per-sample decode-delta list into `stts` entries
+/// (ISO/IEC 14496-12:2015 §8.6.1.2): consecutive equal deltas collapse into a
 /// single `(sample_count, sample_delta)` run.
-fn build_stts(samples: &[Sample]) -> TimeToSampleBox {
+fn build_stts(deltas: &[u32]) -> TimeToSampleBox {
     let mut entries: Vec<SttsEntry> = Vec::new();
-    for s in samples {
-        // A sample with no known duration contributes a `0` delta — exactly the
-        // value the pre-2c mandatory `u32` field carried for it.
-        let delta = s.duration.unwrap_or(0);
+    for &delta in deltas {
         match entries.last_mut() {
             Some(last) if last.sample_delta == delta => last.sample_count += 1,
             _ => entries.push(SttsEntry {
@@ -156,6 +183,7 @@ fn build_stss(samples: &[Sample]) -> Option<SyncSampleBox> {
 fn build_stbl_children(
     stsd: StblChild,
     samples: &[Sample],
+    deltas: &[u32],
     chunk_offset: u64,
     use_co64: bool,
 ) -> Vec<StblChild> {
@@ -178,7 +206,7 @@ fn build_stbl_children(
 
     let mut children = vec![
         stsd,
-        StblChild::Stts(build_stts(samples)),
+        StblChild::Stts(build_stts(deltas)),
         StblChild::Stsc(stsc),
         StblChild::Stsz(stsz),
     ];
@@ -276,7 +304,8 @@ impl Package for ProgressiveMux {
             find_top_box(&init, b"moov").ok_or(Error::UnexpectedBox { expected: "moov" })?;
         let mut moov = MovieBox::parse(moov_bytes)?;
         moov.mvex = None; // not a fragmented movie
-        set_track_durations(&mut moov, media, movie_timescale);
+        let timings = track_timings(media, movie_timescale);
+        apply_track_timings(&mut moov, &timings);
 
         // The mdat payload layout: each track's samples are concatenated in
         // track order into a single chunk; record each chunk's byte offset
@@ -296,6 +325,7 @@ impl Package for ProgressiveMux {
             compatible_brands: vec![*b"isom", *b"iso2", *b"mp41", *b"avc1"],
         };
         let ftyp_len = ftyp.serialized_len();
+        let mdat_len = mdat_payload.len() as u64;
         let mdat = MediaDataBox { data: mdat_payload };
 
         // Compute the absolute file offset of the mdat *payload* under each box
@@ -316,10 +346,11 @@ impl Package for ProgressiveMux {
         let mut use_co64 = false;
         let (moov_out, mdat_payload_offset) = loop {
             // Provisional moov size: build tables with the current co64 decision.
-            let provisional = self.assemble_moov(
+            let provisional = assemble_moov(
                 &mut moov.clone(),
                 &stsds,
-                media,
+                &media.tracks,
+                &timings,
                 &rel_chunk_offsets,
                 // Provisional payload offset only affects offset values, not the
                 // box structure once co64-vs-stco is fixed; pass 0 for sizing.
@@ -329,25 +360,20 @@ impl Package for ProgressiveMux {
             let moov_size = provisional.len();
 
             // Absolute mdat payload offset under the chosen ordering.
-            let mdat_payload_offset = if self.faststart {
-                (ftyp_len + moov_size + MDAT_HEADER_LEN) as u64
-            } else {
-                (ftyp_len + MDAT_HEADER_LEN) as u64
-            };
+            let mdat_payload_offset =
+                mdat_payload_offset(ftyp_len as u64, moov_size as u64, mdat_len, self.faststart);
 
             // Does any track's absolute chunk offset need 64-bit offsets?
-            let needs_co64 = rel_chunk_offsets
-                .iter()
-                .any(|&rel| mdat_payload_offset + rel > u32::MAX as u64);
-            if needs_co64 && !use_co64 {
+            if needs_co64(mdat_payload_offset, &rel_chunk_offsets) && !use_co64 {
                 use_co64 = true;
                 continue;
             }
 
-            let moov_out = self.assemble_moov(
+            let moov_out = assemble_moov(
                 &mut moov.clone(),
                 &stsds,
-                media,
+                &media.tracks,
+                &timings,
                 &rel_chunk_offsets,
                 mdat_payload_offset,
                 use_co64,
@@ -358,11 +384,13 @@ impl Package for ProgressiveMux {
 
         // Verify the payload offset we baked into the tables matches the actual
         // layout (guards the two-pass arithmetic).
-        let actual_payload_offset = if self.faststart {
-            (ftyp_len + moov_out.len() + MDAT_HEADER_LEN) as u64
-        } else {
-            (ftyp_len + MDAT_HEADER_LEN) as u64
-        };
+        let actual_payload_offset = ftyp_len as u64
+            + if self.faststart {
+                moov_out.len() as u64
+            } else {
+                0
+            }
+            + (mdat.serialized_len() - mdat.data.len()) as u64;
         debug_assert_eq!(actual_payload_offset, mdat_payload_offset);
 
         // Emit ftyp, then moov/mdat in the requested order.
@@ -384,57 +412,189 @@ impl Package for ProgressiveMux {
     }
 }
 
-impl ProgressiveMux {
-    /// Fill each track's `stbl` with the full sample tables and serialise the
-    /// resulting `moov`. `mdat_payload_offset` is the absolute file offset of the
-    /// mdat payload; per-track chunk offsets are `mdat_payload_offset + rel`.
-    fn assemble_moov(
-        &self,
-        moov: &mut MovieBox,
-        stsds: &[StblChild],
-        media: &Media,
-        rel_chunk_offsets: &[u64],
-        mdat_payload_offset: u64,
-        use_co64: bool,
-    ) -> Result<Vec<u8>> {
-        for (i, track) in media.tracks.iter().enumerate() {
-            let abs_offset = mdat_payload_offset + rel_chunk_offsets[i];
-            let children =
-                build_stbl_children(stsds[i].clone(), &track.samples, abs_offset, use_co64);
-            set_track_stbl(moov, i, children)?;
-        }
-        let mut buf = vec![0u8; moov.serialized_len()];
-        let n = moov.serialize_into(&mut buf)?;
-        buf.truncate(n);
-        Ok(buf)
-    }
+/// Absolute file offset of the `mdat` payload: after `ftyp` (and `moov` under
+/// faststart) and the `mdat` header, whose length depends on the payload size
+/// (16 bytes once the box needs `largesize`, §4.2 — issue #1019).
+fn mdat_payload_offset(
+    ftyp_len: u64,
+    moov_len: u64,
+    mdat_payload_len: u64,
+    faststart: bool,
+) -> u64 {
+    let before = if faststart {
+        ftyp_len + moov_len
+    } else {
+        ftyp_len
+    };
+    let header = BoxHeader::for_payload(BoxType::from_bytes(MDAT_TYPE), None, mdat_payload_len);
+    before + header.header_size() as u64
 }
 
-/// Set the `mvhd` and per-track `tkhd`/`mdhd` durations from the sample stream
-/// so the file reports a real duration (a non-fragmented movie carries its
-/// duration in the header boxes, not in `trun`s).
-fn set_track_durations(moov: &mut MovieBox, media: &Media, movie_timescale: u32) {
+/// Whether any chunk's absolute offset needs the 64-bit `co64` (§8.7.5).
+fn needs_co64(mdat_payload_offset: u64, rel_chunk_offsets: &[u64]) -> bool {
+    rel_chunk_offsets
+        .iter()
+        .any(|&rel| mdat_payload_offset.saturating_add(rel) > u64::from(u32::MAX))
+}
+
+/// Fill each track's `stbl` with the full sample tables and serialise the
+/// resulting `moov`. `mdat_payload_offset` is the absolute file offset of the
+/// mdat payload; per-track chunk offsets are `mdat_payload_offset + rel`.
+fn assemble_moov(
+    moov: &mut MovieBox,
+    stsds: &[StblChild],
+    tracks: &[Track],
+    timings: &[TrackTiming],
+    rel_chunk_offsets: &[u64],
+    mdat_payload_offset: u64,
+    use_co64: bool,
+) -> Result<Vec<u8>> {
+    for (i, track) in tracks.iter().enumerate() {
+        let abs_offset = mdat_payload_offset + rel_chunk_offsets[i];
+        let children = build_stbl_children(
+            stsds[i].clone(),
+            &track.samples,
+            &timings[i].deltas,
+            abs_offset,
+            use_co64,
+        );
+        set_track_stbl(moov, i, children)?;
+    }
+    let mut buf = vec![0u8; moov.serialized_len()];
+    let n = moov.serialize_into(&mut buf)?;
+    buf.truncate(n);
+    Ok(buf)
+}
+
+/// One track's progressive timing: its `stts` decode deltas, its media
+/// duration, and the edit list that places it on the movie timeline.
+struct TrackTiming {
+    deltas: Vec<u32>,
+    /// `mdhd.duration`: Σ decode deltas, in the media timescale.
+    media_duration: u64,
+    /// `tkhd.duration`: the presentation length on the movie timeline
+    /// (including a leading empty edit), in the movie timescale.
+    presentation_duration: u64,
+    edts: Option<EditBox>,
+}
+
+/// Build every track's [`TrackTiming`] over one origin common to all tracks
+/// (issue #1020): each track's decode times are its samples' own `dts`, and
+/// an `elst` (ISO/IEC 14496-12:2015 §8.6.6) delays a track that starts after
+/// the earliest one by an empty edit and skips its composition lead-in, so the
+/// inter-track offsets of the IR survive into the file.
+fn track_timings(media: &Media, movie_timescale: u32) -> Vec<TrackTiming> {
+    let origin = TimelineOrigin::of(&media.tracks);
+    let mts = i128::from(movie_timescale.max(1));
+    let to_movie = |ticks: i64, ts: u32| (ticks as i128 * mts).div_euclid(i128::from(ts.max(1)));
+
+    struct Span {
+        times: Vec<i64>,
+        /// (first presentation, presentation end), media timescale.
+        pres: Option<(i64, i64)>,
+    }
+    let spans: Vec<Span> = media
+        .tracks
+        .iter()
+        .map(|t| {
+            let times = relative_decode_times(t, &origin);
+            let pres = t.samples.iter().zip(&times).fold(None, |acc, (s, &d)| {
+                let p = d.saturating_add(i64::from(s.composition_offset()));
+                let e = p.saturating_add(i64::from(s.duration.unwrap_or(0)));
+                Some(match acc {
+                    None => (p, e),
+                    Some((lo, hi)) => (p.min(lo), e.max(hi)),
+                })
+            });
+            Span { times, pres }
+        })
+        .collect();
+    let movie_start = media
+        .tracks
+        .iter()
+        .zip(&spans)
+        .filter_map(|(t, sp)| sp.pres.map(|(p, _)| to_movie(p, t.timescale())))
+        .min()
+        .unwrap_or(0);
+
+    media
+        .tracks
+        .iter()
+        .zip(spans)
+        .map(|(track, sp)| {
+            let ts = track.timescale();
+            let deltas = decode_deltas(&track.samples, &sp.times);
+            let media_duration: u64 = deltas.iter().map(|&d| u64::from(d)).sum();
+            let plain_duration = (i128::from(media_duration) * mts / i128::from(ts.max(1))) as u64;
+            let (Some((pres_start, pres_end)), Some(&first_dts)) = (sp.pres, sp.times.first())
+            else {
+                return TrackTiming {
+                    deltas,
+                    media_duration,
+                    presentation_duration: plain_duration,
+                    edts: None,
+                };
+            };
+            let empty = (to_movie(pres_start, ts) - movie_start).max(0) as u64;
+            let media_time = (pres_start - first_dts).max(0);
+            let segment_duration =
+                (to_movie(pres_end, ts) - to_movie(pres_start, ts)).max(0) as u64;
+            if empty == 0 && media_time == 0 {
+                return TrackTiming {
+                    deltas,
+                    media_duration,
+                    presentation_duration: plain_duration,
+                    edts: None,
+                };
+            }
+            let mut entries = Vec::with_capacity(2);
+            if empty > 0 {
+                entries.push(EditListEntry {
+                    segment_duration: empty,
+                    media_time: ELST_EMPTY_EDIT,
+                    media_rate_integer: ELST_NORMAL_RATE,
+                    media_rate_fraction: 0,
+                });
+            }
+            entries.push(EditListEntry {
+                segment_duration,
+                media_time,
+                media_rate_integer: ELST_NORMAL_RATE,
+                media_rate_fraction: 0,
+            });
+            // Version 1 carries 64-bit fields; version 0 only 32-bit (§8.6.6).
+            let wide = entries.iter().any(|e| {
+                u32::try_from(e.segment_duration).is_err() || i32::try_from(e.media_time).is_err()
+            });
+            TrackTiming {
+                deltas,
+                media_duration,
+                presentation_duration: empty.saturating_add(segment_duration),
+                edts: Some(EditBox {
+                    elst: Some(EditListBox {
+                        version: u8::from(wide),
+                        flags: 0,
+                        entries,
+                    }),
+                    opaque: Vec::new(),
+                }),
+            }
+        })
+        .collect()
+}
+
+/// Set the `mvhd` and per-track `tkhd`/`mdhd` durations and `edts` from the
+/// resolved timings (a non-fragmented movie carries its duration in the
+/// header boxes, not in `trun`s).
+fn apply_track_timings(moov: &mut MovieBox, timings: &[TrackTiming]) {
     let mut max_movie_duration = 0u64;
-    for (i, track) in media.tracks.iter().enumerate() {
-        let media_duration: u64 = track
-            .samples
-            .iter()
-            .map(|s| s.duration.unwrap_or(0) as u64)
-            .sum();
-        let ts = if track.timescale() == 0 {
-            1
-        } else {
-            track.timescale()
-        } as u64;
-        // Duration in movie-timescale units (for mvhd/tkhd).
-        let movie_duration = media_duration * movie_timescale as u64 / ts;
-        if movie_duration > max_movie_duration {
-            max_movie_duration = movie_duration;
-        }
+    for (i, timing) in timings.iter().enumerate() {
+        max_movie_duration = max_movie_duration.max(timing.presentation_duration);
         if let Some(trak) = moov.tracks.get_mut(i) {
-            trak.tkhd.duration = movie_duration;
+            trak.tkhd.duration = timing.presentation_duration;
+            trak.edts = timing.edts.clone();
             if let Some(mdhd) = trak.mdia.as_mut().and_then(|m| m.mdhd.as_mut()) {
-                mdhd.duration = media_duration;
+                mdhd.duration = timing.media_duration;
             }
         }
     }
@@ -461,4 +621,29 @@ fn find_top_box<'a>(data: &'a [u8], fourcc: &[u8; 4]) -> Option<&'a [u8]> {
         offset += consumed;
     }
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// ISO/IEC 14496-12:2015 §4.2: a box whose size does not fit 32 bits is
+    /// written `size = 1` + 64-bit `largesize`, a 16-byte header. Driven with a
+    /// synthetic payload length, no 4 GiB allocation.
+    #[test]
+    fn mdat_payload_offset_accounts_for_largesize_header() {
+        let fits = u64::from(u32::MAX) - 8; // 8 + payload == u32::MAX
+        let over = fits + 1; // 8 + payload == u32::MAX + 1
+        assert_eq!(mdat_payload_offset(24, 1000, fits, true), 24 + 1000 + 8);
+        assert_eq!(mdat_payload_offset(24, 1000, fits, false), 24 + 8);
+        assert_eq!(mdat_payload_offset(24, 1000, over, true), 24 + 1000 + 16);
+        assert_eq!(mdat_payload_offset(24, 1000, over, false), 24 + 16);
+    }
+
+    #[test]
+    fn co64_chosen_once_an_offset_exceeds_u32() {
+        let base = 1024;
+        assert!(!needs_co64(base, &[0, u64::from(u32::MAX) - base]));
+        assert!(needs_co64(base, &[0, u64::from(u32::MAX) - base + 1]));
+    }
 }

@@ -103,4 +103,9 @@ inject the `tfxd` `uuid` box into the `traf`.
 - Per track → a `StreamIndex` + `QualityLevel` (FourCC H264/AACL, CodecPrivateData
   from the SPS/PPS or ASC already available via `avc_config`/`aac_asc`).
 - Per segment → a Smooth fragment (`moof`+`tfxd`+`mdat`) + a `c` manifest entry.
-- TimeScale 10_000_000 (Smooth default); convert IR timestamps accordingly.
+- TimeScale 10_000_000 (Smooth default); convert IR timestamps accordingly —
+  **including the fragment's own `trun` sample durations and composition
+  offsets**, not only `c@t`/`c@d`/`tfxd`. Smooth carries no init segment, so the
+  client builds the track's `mdhd` timescale from the stream's `TimeScale`
+  (see "Init-segment synthesis" above; `multimux`'s Smooth-pull does exactly
+  this) and reads every `trun` value in it (issue #1022).

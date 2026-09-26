@@ -528,18 +528,16 @@ fn package(media: &Media, opts: &Opts) -> CliResult<Output> {
         }
         OutputFormat::Ts => Ok(Output::Bytes(TsMux::new().package(media)?)),
         OutputFormat::Hls => {
-            // CMAF-HLS: a media playlist plus the init+media CMAF segment it maps
-            // each track to. HlsPackager emits `{prefix}{track_id}.m4s` URIs; we
-            // supply one CMAF artifact per playlist so referenced segments exist.
+            // CMAF-HLS: a media playlist whose single segment is the one
+            // multi-track init+media CMAF artifact; emit it under the URI the
+            // playlist names so it resolves.
             let media = filter_for_bmff_mux(media)?;
             let text = HlsPackager::default().package(&media)?;
             let cmaf = CmafMux::new(1).package(&media)?;
-            // The default HlsPackager names segments `seg{track_id}.m4s`; emit the
-            // combined CMAF under each referenced name so the playlist resolves.
-            let segments = media
-                .tracks
-                .iter()
-                .map(|t| (format!("seg{}.m4s", t.spec.track_id), cmaf.clone()))
+            let segments = text
+                .lines()
+                .filter(|l| !l.is_empty() && !l.starts_with('#'))
+                .map(|uri| (uri.to_string(), cmaf.clone()))
                 .collect();
             Ok(Output::Manifest { text, segments })
         }

@@ -75,7 +75,7 @@ use mpeg_ts::ts::{Pcr, TS_PACKET_SIZE, TsHeader};
 use crate::aac_asc::AudioSpecificConfig;
 use crate::annexb::{iter_length_prefixed_nals, length_prefixed_to_annexb};
 use crate::error::{Error, Result};
-use crate::media::{Media, Track};
+use crate::media::{Media, TimelineOrigin, Track, relative_decode_times};
 use crate::mp4esds::EsdsBox;
 use crate::nal::{NalCodec, nal_unit_type};
 use crate::pipeline::{CodecConfig, DataCarriage, Sample};
@@ -688,18 +688,23 @@ fn hevc_parameter_sets(
 /// PAT (PID `0x0000`) + PMT, then the DTS-interleaved PES packets for the
 /// per-track `samples` (`samples[i]` is the sample slice for `tracks[i]`).
 ///
-/// The PSI is (re)emitted at the start of every call, so each invocation yields
-/// an independently decodable stream — this is what lets the classic-HLS
-/// segmenter build one call per `.ts` segment, each opening with PAT/PMT
-/// (ISO/IEC 13818-1 §2.4.4 PSI repetition). `TsMux` calls it once over the whole
-/// input with a zero base DTS.
+/// Each sample is stamped from its own absolute [`Sample::dts`]/[`Sample::pts`],
+/// shifted by one origin common to every track (the earliest first-sample
+/// DTS), so inter-track offsets and gaps survive (issue #1020). `TsMux` calls
+/// it once over the whole input.
 pub(crate) fn mux_tracks(tracks: &[Track], samples: &[&[Sample]]) -> Result<Vec<u8>> {
-    let zero = alloc::vec![0u64; tracks.len()];
-    mux_tracks_at(tracks, samples, &zero)
+    let origin = TimelineOrigin::of(tracks);
+    let times: Vec<Vec<i64>> = tracks
+        .iter()
+        .map(|t| relative_decode_times(t, &origin))
+        .collect();
+    let times: Vec<&[i64]> = times.iter().map(Vec::as_slice).collect();
+    mux_tracks_timed(tracks, samples, &times)
 }
 
 /// Like [`mux_tracks`], but each track's first sample is stamped at decode time
-/// `base_dts_ticks[track_idx]` (in that track's own timescale) instead of 0.
+/// `base_dts_ticks[track_idx]` (in that track's own timescale) and every later
+/// one at the running sum of the previous samples' durations.
 ///
 /// The classic-HLS segmenter uses this so each segment's PES timestamps continue
 /// the previous segment's timeline: concatenating the segments then yields one
@@ -711,8 +716,35 @@ pub(crate) fn mux_tracks_at(
     samples: &[&[Sample]],
     base_dts_ticks: &[u64],
 ) -> Result<Vec<u8>> {
-    debug_assert_eq!(tracks.len(), samples.len());
     debug_assert_eq!(tracks.len(), base_dts_ticks.len());
+    let times: Vec<Vec<i64>> = samples
+        .iter()
+        .zip(base_dts_ticks)
+        .map(|(ss, &base)| {
+            let mut t = i64::try_from(base).unwrap_or(i64::MAX);
+            ss.iter()
+                .map(|s| {
+                    let now = t;
+                    t = t.saturating_add(i64::from(s.duration.unwrap_or(0)));
+                    now
+                })
+                .collect()
+        })
+        .collect();
+    let times: Vec<&[i64]> = times.iter().map(Vec::as_slice).collect();
+    mux_tracks_timed(tracks, samples, &times)
+}
+
+/// The shared body of [`mux_tracks`] / [`mux_tracks_at`]: `dts_ticks[i][j]` is
+/// the decode time of `samples[i][j]` in `tracks[i]`'s timescale, relative to
+/// the stream's origin (negative values clamp to the origin).
+fn mux_tracks_timed(
+    tracks: &[Track],
+    samples: &[&[Sample]],
+    dts_ticks: &[&[i64]],
+) -> Result<Vec<u8>> {
+    debug_assert_eq!(tracks.len(), samples.len());
+    debug_assert_eq!(tracks.len(), dts_ticks.len());
 
     // ── 1. Plan the elementary streams (PID + stream_type + framing) ──
     let (plans, planned_idx) = plan_elementary_streams(tracks)?;
@@ -745,27 +777,25 @@ pub(crate) fn mux_tracks_at(
     for (plan, &track_idx) in plans.iter().zip(&planned_idx) {
         let track = &tracks[track_idx];
         let ts_scale = track.spec.timescale.max(1) as u64;
-        // in the track's own timescale, seeded from the caller's base DTS.
-        let mut dts_ticks_local: u64 = base_dts_ticks[track_idx];
+        // Interleave keys only ever grow within one track, so the global sort
+        // never reorders a track's own packets (issue #576).
+        let mut last_key: u64 = 0;
         let mut cc: u8 = 0;
         // Section-carried Data samples are already whole PSI/private
         // sections (issue #576) — packetised directly, never PES-wrapped.
         // The packetiser's own continuity_counter (independent of `cc`
         // above, which only tracks the PES path) persists across samples.
         let mut section_packetiser = SectionPacketiser::new(plan.pid);
-        for sample in samples[track_idx] {
+        for (sample, &dts_local) in samples[track_idx].iter().zip(dts_ticks[track_idx]) {
             // Rescale the sample's decode/composition time to the 90 kHz TS
             // clock. composition_offset is (pts − dts) in the track scale.
+            let dts_ticks_local = dts_local.max(0) as u64;
             let dts90 = rescale(dts_ticks_local, ts_scale) + PCR_LEAD_TICKS;
-            // The interleave key: monotonic by construction (`dts_ticks_local`
-            // only ever grows), UNLIKE `dts90` — which wraps at the 33-bit
-            // field per §2.4.3.7, so using it to order packets would reorder
-            // a single track's own packets against each other once its
-            // cumulative decode time (however implausible the recovered
-            // per-sample durations) crosses that wrap point (issue #576: an
-            // opaque Data(Pes) track's recovered durations are exactly the
-            // kind of untrusted input that can do this).
-            let sort_key = rescale_for_ordering(dts_ticks_local, ts_scale);
+            // The interleave key is NOT wrapped at the 33-bit field (§2.4.3.7)
+            // the way `dts90` is, so a long track's own packets never reorder
+            // against each other past the wrap point.
+            let sort_key = rescale_for_ordering(dts_ticks_local, ts_scale).max(last_key);
+            last_key = sort_key;
 
             if plan.kind.is_section_carried() {
                 for pkt in section_packetiser.packetise(&[&sample.data[..]]) {
@@ -780,7 +810,7 @@ pub(crate) fn mux_tracks_at(
                 // known (§0 invariant), falling back to `0` — identical to
                 // the old stored field's value for every real (non-`None`)
                 // sample this muxer ever sees.
-                let pts_local = dts_ticks_local as i64 + sample.composition_offset() as i64;
+                let pts_local = dts_local.max(0) + sample.composition_offset() as i64;
                 let pts90 = rescale_signed(pts_local, ts_scale) + PCR_LEAD_TICKS;
                 let es_payload = build_es_payload(plan, sample)?;
                 let carry_pcr = plan.pid == pcr_pid;
@@ -795,8 +825,6 @@ pub(crate) fn mux_tracks_at(
                     &mut tagged,
                 );
             }
-
-            dts_ticks_local += sample.duration.unwrap_or(0) as u64;
         }
     }
 

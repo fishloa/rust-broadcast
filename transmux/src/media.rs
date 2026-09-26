@@ -389,13 +389,110 @@ impl Package for CmafMux {
 }
 
 // ---------------------------------------------------------------------------
+// Shared output timeline (issues #1020-#1023)
+// ---------------------------------------------------------------------------
+
+/// The common decode-time origin of a set of tracks: the earliest first-sample
+/// [`Sample::dts`] across them, compared across timescales exactly.
+///
+/// Every [`Sample::dts`] is absolute in its own track's timescale, so one
+/// shift applied to every track keeps inter-track offsets and gaps intact —
+/// which a per-track rebase (or a per-track `Σ duration` from zero) loses.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct TimelineOrigin {
+    ticks: i64,
+    timescale: u32,
+}
+
+impl TimelineOrigin {
+    /// The origin of `tracks`; `0` when no sample carries a `dts`.
+    pub(crate) fn of<'t>(tracks: impl IntoIterator<Item = &'t Track>) -> Self {
+        let mut best: Option<(i64, u32)> = None;
+        for t in tracks {
+            let Some(d) = t.samples.iter().find_map(|s| s.dts) else {
+                continue;
+            };
+            let ts = t.spec.timescale.max(1);
+            let earlier = match best {
+                None => true,
+                Some((bd, bts)) => (d as i128) * (bts as i128) < (bd as i128) * (ts as i128),
+            };
+            if earlier {
+                best = Some((d, ts));
+            }
+        }
+        let (ticks, timescale) = best.unwrap_or((0, 1));
+        Self { ticks, timescale }
+    }
+
+    /// The origin expressed in `timescale` ticks, rounded down.
+    pub(crate) fn in_timescale(&self, timescale: u32) -> i64 {
+        let n = self.ticks as i128 * timescale.max(1) as i128;
+        let v = n.div_euclid(self.timescale.max(1) as i128);
+        v.clamp(i64::MIN as i128, i64::MAX as i128) as i64
+    }
+}
+
+/// Each sample's decode time relative to `origin`, in the track's own
+/// timescale: the sample's own absolute `dts`, falling back to the previous
+/// sample's time + duration only for a track that carries no `dts` at all
+/// (section-carried data), which then starts at the origin.
+pub(crate) fn relative_decode_times(track: &Track, origin: &TimelineOrigin) -> Vec<i64> {
+    let base = origin.in_timescale(track.spec.timescale);
+    let mut out = Vec::with_capacity(track.samples.len());
+    let mut next: i64 = 0;
+    for s in &track.samples {
+        let t = match s.dts {
+            Some(d) => d.saturating_sub(base),
+            None => next,
+        };
+        out.push(t);
+        next = t.saturating_add(i64::from(s.duration.unwrap_or(0)));
+    }
+    out
+}
+
+/// Presentation span of `tracks` in seconds: from the earliest sample
+/// presentation time to the latest presentation end, over one common origin.
+fn presentation_span_secs(tracks: &[&Track]) -> f64 {
+    let origin = TimelineOrigin::of(tracks.iter().copied());
+    let mut span: Option<(f64, f64)> = None;
+    for t in tracks {
+        let ts = f64::from(t.spec.timescale.max(1));
+        for (s, dts) in t.samples.iter().zip(relative_decode_times(t, &origin)) {
+            let pts = (dts + i64::from(s.composition_offset())) as f64 / ts;
+            let end = pts + f64::from(s.duration.unwrap_or(0)) / ts;
+            span = Some(match span {
+                None => (pts, end),
+                Some((lo, hi)) => (lo.min(pts), hi.max(end)),
+            });
+        }
+    }
+    span.map_or(0.0, |(lo, hi)| (hi - lo).max(0.0))
+}
+
+/// `secs` rounded up to whole seconds, without the std-only `f64::ceil`.
+fn ceil_secs(secs: f64) -> u32 {
+    let whole = secs as u32; // truncates toward zero; `secs` is non-negative
+    if (whole as f64) < secs {
+        whole.saturating_add(1)
+    } else {
+        whole
+    }
+}
+
+// ---------------------------------------------------------------------------
 // HlsPackager — Package<Output = String>
 // ---------------------------------------------------------------------------
 
 /// Render an RFC 8216 media playlist describing a [`Media`].
 ///
-/// Each track's total duration (sum of sample durations ÷ timescale) becomes a
-/// single `#EXTINF` segment entry pointing at `{uri_prefix}{track_id}.m4s`.
+/// The whole `Media` is one multi-track CMAF segment (the [`CmafMux`] output),
+/// so the playlist carries a single `#EXTINF` entry whose duration is the
+/// presentation span across every timed track, pointing at
+/// `{uri_prefix}{track_id}.m4s` named after the first timed track. Segments in
+/// a media playlist play one after another (RFC 8216 §3), so one entry per
+/// track would play the content once per track.
 #[derive(Debug, Clone)]
 pub struct HlsPackager {
     /// `#EXT-X-VERSION`.
@@ -468,50 +565,36 @@ impl Package for HlsPackager {
             build_init_segment(&specs, movie_timescale)?.len() as u64
         };
 
-        let mut segments = Vec::with_capacity(kept.len());
-        // Target duration is the ceiling of the longest track's duration in
-        // whole seconds, computed with integer ceil-division so no std-only
-        // float intrinsic (`f64::ceil`) is needed in `no_std`.
-        let mut target_secs = 0u32;
-        for t in kept {
-            let ticks: u64 = t
-                .samples
-                .iter()
-                .map(|s| s.duration.unwrap_or(0) as u64)
-                .sum();
-            let ts = if t.spec.timescale == 0 {
-                1
-            } else {
-                t.spec.timescale
-            } as u64;
-            let ceil_secs = ticks.div_ceil(ts) as u32;
-            if ceil_secs > target_secs {
-                target_secs = ceil_secs;
-            }
-            let uri = format!("{}{}.m4s", self.uri_prefix, t.spec.track_id);
-            segments.push(MediaSegment {
-                map: Some(MapTag {
-                    uri: uri.clone(),
-                    byte_range: Some(ByteRange {
-                        length: init_len,
-                        offset: Some(0),
-                    }),
-                    extra_attrs: Vec::new(),
-                }),
-                uri,
-                duration: ticks as f64 / ts as f64,
-                discontinuous: false,
-                parts: vec![],
-                ..Default::default()
-            });
-        }
-        if segments.is_empty() {
+        let Some(first) = kept.first() else {
             return Err(Error::InvalidInput(
                 "cannot package a Media whose every track is timestamp-less \
                  (section-carried): an HLS media playlist needs at least one \
                  segment with a real EXTINF duration",
             ));
-        }
+        };
+        // One segment for the one multi-track CMAF artifact: RFC 8216 §3 plays
+        // a media playlist's segments one after another, so a per-track entry
+        // would repeat the content once per track.
+        let duration = presentation_span_secs(&kept);
+        // EXTINF rounded to the nearest integer must not exceed the target
+        // duration (RFC 8216 §4.3.3.1); the ceiling always satisfies that.
+        let target_secs = ceil_secs(duration);
+        let uri = format!("{}{}.m4s", self.uri_prefix, first.spec.track_id);
+        let segments = vec![MediaSegment {
+            map: Some(MapTag {
+                uri: uri.clone(),
+                byte_range: Some(ByteRange {
+                    length: init_len,
+                    offset: Some(0),
+                }),
+                extra_attrs: Vec::new(),
+            }),
+            uri,
+            duration,
+            discontinuous: false,
+            parts: vec![],
+            ..Default::default()
+        }];
         let playlist = MediaPlaylist {
             version: self.version,
             target_duration: target_secs,
