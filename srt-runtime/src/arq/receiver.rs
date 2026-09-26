@@ -260,6 +260,41 @@ impl Receiver {
             self.rtt.update(elapsed(now, sent_at));
         }
     }
+
+    /// Handle a peer's DROPREQ (`draft-sharabayko-srt-01` §3.2.9): the sender
+    /// has given up on delivering the inclusive sequence range
+    /// `first..=last`, so they will never arrive.
+    ///
+    /// Without this, loss detection would NAK those numbers forever and the
+    /// cumulative ack point (`next_expected`) would stall below the gap for
+    /// the life of the connection. The range is removed from the loss list
+    /// (stop asking) and the out-of-order set (the sender has given up on
+    /// them, so anything they unblocked can no longer be delivered in order),
+    /// and when the range covers `next_expected` the ack point jumps to the
+    /// sequence after `last`. A `last` preceding `first` is a malformed
+    /// (empty) range and ignored.
+    //
+    // The DROPREQ consumer lives in the tokio adapter (`crate::io`); the
+    // engine core itself never receives packets, so it is gated accordingly.
+    #[cfg(feature = "tokio")]
+    pub(crate) fn skip_range(&mut self, first: u32, last: u32) {
+        if seq::seq_diff(last, first) < 0 {
+            return;
+        }
+        self.loss_list
+            .retain(|s| !seq::seq_in_closed_range(*s, first, last));
+        self.out_of_order
+            .retain(|s| !seq::seq_in_closed_range(*s, first, last));
+        if seq::seq_in_closed_range(self.next_expected, first, last) {
+            self.next_expected = seq::seq_next(last);
+        }
+        // Anything at or beyond the new ack point that was already received
+        // is now cumulatively deliverable — drain it exactly like `feed_data`
+        // does when a gap is filled.
+        while self.out_of_order.remove(&self.next_expected) {
+            self.next_expected = seq::seq_next(self.next_expected);
+        }
+    }
 }
 
 /// `now - since`, clamped to zero rather than panicking on a non-monotonic
