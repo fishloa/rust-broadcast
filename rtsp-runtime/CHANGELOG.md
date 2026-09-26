@@ -6,6 +6,12 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+- `ClientSession`'s 401 auth retry (#1065) now replays the original request's body and every
+  non-hop-by-hop header (`Content-Type` included), instead of an empty body with
+  `Content-Length: 0`. An authenticated `ANNOUNCE` (RFC 2326 §10.3) previously lost its SDP on
+  retry, so a push to any Digest- or Basic-challenging server always failed after the first 401.
+
 ## [0.7.0] - 2026-09-26
 
 ### Security

@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+### Fixed
+- The RTSP push transport (#1025) now targets the configured push URL instead of a hard-coded
+  `rtsp://localhost/push`, checks every response status, writes the `AuthRetry` bytes rtsp-runtime
+  computes on a 401 (previously dropped, so an authenticated push always failed even after
+  rtsp-runtime's own retry-body fix), sends interleaved data as RTP (RFC 2250 §2, MP2T/90000)
+  instead of raw unframed TS bytes, and advertises a spec-valid SDP (session-level `c=` line,
+  matching `a=control`) for the single SETUP/interleaved channel it actually uses.
+
 ## [0.11.0] - 2026-09-26
 
 ### Security
