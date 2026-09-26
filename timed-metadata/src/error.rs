@@ -21,6 +21,12 @@ pub enum Error {
     /// `EXT-X-DATERANGE` tag could not be parsed.
     #[error("DATERANGE parse: {0}")]
     AttrParse(String),
+    /// A SCTE-35-sourced event has no `id` (e.g. a `time_signal` cue with no
+    /// `segmentation_descriptor`), so it cannot be given a `DATERANGE` `ID`
+    /// (RFC 8216bis §4.4.5.1 requires unique IDs; emitting `ID=""` would
+    /// silently collide across cues).
+    #[error("SCTE-35 event has no id; cannot produce a DATERANGE ID")]
+    MissingEventId,
     /// emsg ↔ SegmentTiming `timescale` mismatch.
     #[error("emsg timescale ({emsg}) does not match SegmentTiming timescale ({timing})")]
     EmsgTimescaleMismatch { emsg: u32, timing: u32 },

@@ -9,6 +9,17 @@
 # timed-metadata/src/webvtt/teletext.rs) -- not a captured broadcast stream.
 # See timed-metadata/docs/teletext-subtitles.md for the full spec citations.
 #
+# CORRECTED for issue #1041 (TM-C3): the 42-byte txt_data_block portion of
+# each line below is now stored bit-reversed (each byte run through
+# reverse_bits) relative to the encoder's own canonical output, matching
+# real DVB wire capture order -- EN 300 706 transmits each byte LSB-first
+# (§8.1/§8.2), so a normally MSB-first-assembled PES byte is the
+# bit-reversal of the spec's own value (proof: dvb_vbi::FRAMING_CODE_EBU
+# 0xE4 == reverse_bits(0x27), the spec's own framing_code). The
+# header_byte + framing_code (first 2 bytes of each line) are untouched --
+# `dvb_vbi::FRAMING_CODE_EBU` is already defined in wire order. Regenerated
+# by bit-reversing only the txt_data_block bytes of the previous fixture.
+#
 # Generated for rust-broadcast issue #666 (timed-metadata webvtt module).
 # Format: one packet per non-comment line:
 #   <pts_90k_ticks> <hex 44-byte TeletextDataField wire>
@@ -20,7 +31,7 @@
 # row 20 "HELLO WORLD" at pts=3000; row 22 "THIS IS A TEST" at pts=6000
 # (two-row subtitle now showing); a second header (erase, same page) at
 # pts=30000 clears the page (subtitle disappears -> cue closes).
-0 e7e41515d0d015d015d015152020202020202020202020202020202020202020202020202020202020202020
-3000 e7e4158cc8454c4c4f20574f524cc42020202020202020202020202020202020202020202020202020202020
-6000 e7e4159b54c849d32049d320c1205445d3542020202020202020202020202020202020202020202020202020
-30000 e7e41515d0d015d015d015152020202020202020202020202020202020202020202020202020202020202020
+0 e7e4a8a80b0ba80ba80ba8a80404040404040404040404040404040404040404040404040404040404040404
+3000 e7e4a83113a23232f204eaf24a32230404040404040404040404040404040404040404040404040404040404
+6000 e7e4a8d92a1392cb0492cb0483042aa2cb2a0404040404040404040404040404040404040404040404040404
+30000 e7e4a8a80b0ba80ba80ba8a80404040404040404040404040404040404040404040404040404040404040404

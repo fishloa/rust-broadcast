@@ -34,8 +34,13 @@ pub fn scte35_to_daterange(ev: &TimedEvent, anchor: &TimeAnchor) -> Result<DateR
 
     let planned_duration = ev.duration.map(|d| d.as_seconds_f64());
 
+    // A `time_signal` cue with no (uncancelled) segmentation descriptor has
+    // no id (see `TimedEvent::from_scte35`); every DATERANGE needs a unique
+    // ID (RFC 8216bis §4.4.5.1), so error rather than emit `ID=""`.
+    let id = ev.id.ok_or(Error::MissingEventId)?;
+
     Ok(DateRange {
-        id: ev.id.map(|i| i.to_string()).unwrap_or_default(),
+        id: id.to_string(),
         start_date,
         class: None,
         duration: None,

@@ -4,6 +4,39 @@ All notable changes to this crate. Format: [Keep a Changelog](https://keepachang
 
 ## [Unreleased]
 
+### Fixed
+- **#1039**: `TimedEvent::from_scte35` ignored `splice_info_section`'s
+  `pts_adjustment`, so every derived `MediaTime`/DATERANGE `START-DATE` was
+  off by that adjustment (SCTE 35 §9.6.1). Every `pts_time` is now shifted
+  through `broadcast_common::clock33::add` before use.
+- **#1040**: a `time_signal()` cue (the dominant modern SCTE-35 form) lost
+  its time, id and kind entirely — `from_scte35` only read `splice_insert`.
+  It now reads `TimeSignal.splice_time.pts_time` and takes id/kind/duration
+  from the cue's first (uncancelled) `segmentation_descriptor`.
+  `scte35_to_daterange` now errors instead of emitting `ID=""` for a cue
+  with no id (RFC 8216bis §4.4.5.1 requires unique IDs). Only the
+  segmentation types that actually leave/return to network programming for
+  ad insertion (Table 23's `Break`, `Provider`/`DistributorAdvertisement`,
+  `Provider`/`DistributorPlacementOpportunity` — **not** the `Overlay`
+  variants, which composite over the network feed rather than break away
+  from it — and `Provider`/`DistributorAdBlock`) map to
+  `BreakStart`/`BreakEnd`; credits, promos, unscheduled/alternate content,
+  overlay placement opportunities, and `NetworkStart`/`NetworkEnd` map to
+  `Unspecified` (id/time/duration are still populated) so a consumer that
+  splices ads on `BreakStart` cannot mistake one of those for an ad avail.
+- **#1041**: the Teletext decoder ran Hamming-8/4 and odd-parity FEC
+  directly on `dvb_vbi::TeletextDataField::txt_data_block` bytes without
+  reversing them first. EN 300 706 transmits each byte LSB-first, so a real
+  DVB Teletext stream decoded to garbage or produced no cues at all. Bytes
+  are now bit-reversed before FEC decode; the fixture
+  (`fixtures/teletext/teletext_subtitle_synthetic.txt`) is regenerated in
+  the corrected (wire) bit order. Independently verified against TSDuck
+  3.44's own Teletext demux (`tsp -P teletext`) over a from-scratch real
+  PAT/PMT/PES TS fixture (`fixtures/teletext/teletext_subtitle_boxed.ts`,
+  `tests/webvtt_teletext_tsduck_oracle.rs`).
+- A cancelled `splice_insert` (`splice_event_cancel_indicator == true`) was
+  classified as `BreakEnd` (spurious `SCTE35-IN`); it is now `Unspecified`.
+
 ## [0.5.0] - 2026-08-11
 
 ### Changed

@@ -297,10 +297,13 @@ impl Cea708CueExtractor {
 /// row1[3] = parity(b'I');
 /// for b in row1.iter_mut().skip(4) { *b = parity(0x20); }
 ///
-/// let field = |block| TeletextDataField {
+/// // EN 300 706 transmits each byte LSB-first, so a real wire capture (what
+/// // `TeletextDataField` carries) is the bit-reversal of these
+/// // spec-canonical bytes -- reverse each one to build a realistic field.
+/// let field = |block: [u8; 42]| TeletextDataField {
 ///     header: LineHeader::new(true, 0),
 ///     framing_code: FRAMING_CODE_EBU,
-///     txt_data_block: block,
+///     txt_data_block: block.map(u8::reverse_bits),
 /// };
 ///
 /// let mut ex = TeletextCueExtractor::new(8, 0x88);

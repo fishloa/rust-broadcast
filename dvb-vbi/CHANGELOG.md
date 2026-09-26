@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- Documented (issue #1041) that `TeletextDataField::txt_data_block` bytes
+  are carried in ordinary (MSB-first) byte order, which is the
+  bit-reversal of the EN 300 706 byte values any Teletext decoder (e.g.
+  `timed-metadata`) runs Hamming-8/4 / odd-parity against — no code change,
+  this crate never decodes EN 300 706 itself.
+
 ## [0.4.0] - 2026-08-11
 
 ### Changed

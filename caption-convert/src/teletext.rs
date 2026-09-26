@@ -110,10 +110,13 @@ mod tests {
     }
 
     fn field(block: [u8; 42]) -> TeletextDataField {
+        // `hamming`/`parity` above build the spec-canonical (EN 300 706) byte
+        // values; EN 300 706 transmits each byte LSB-first, so reverse each
+        // one to build a realistic wire-order `txt_data_block` (issue #1041).
         TeletextDataField {
             header: LineHeader::new(true, 0),
             framing_code: FRAMING_CODE_EBU,
-            txt_data_block: block,
+            txt_data_block: block.map(u8::reverse_bits),
         }
     }
 

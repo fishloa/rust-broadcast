@@ -444,7 +444,12 @@ impl Cea708Decoder {
     /// Feed the decoder the 708 (DTVCC) triplets of a [`crate::CcData`].
     ///
     /// A `cc_type == Dtvcc708Start` triplet begins a new Caption Channel Packet;
-    /// `Dtvcc708Data` triplets continue it. Invalid triplets are skipped.
+    /// `Dtvcc708Data` triplets continue it. Invalid triplets are skipped. A CCP
+    /// is not required to fit in one call (CEA-708 §4/§5: a `cc_data()` access
+    /// unit typically carries far fewer DTVCC bytes than a full CCP), so the
+    /// partial packet buffer is kept across calls and only decoded once it is
+    /// complete (its declared `packet_size_code` worth of bytes has arrived)
+    /// or a new packet starts.
     pub fn push_triplets<'a, I>(&mut self, triplets: I)
     where
         I: IntoIterator<Item = &'a CcTriplet>,
@@ -455,26 +460,59 @@ impl Cea708Decoder {
             }
             match t.cc_type {
                 CcType::Dtvcc708Start => {
-                    // a new CCP starts; flush any complete prior packet
+                    // A new CCP starts; flush whatever the previous one
+                    // accumulated first (§5.1) rather than silently merging
+                    // it with the new packet's bytes.
                     self.flush_packet();
                     self.packet.clear();
                     self.packet.push(t.cc_data_1);
                     self.packet.push(t.cc_data_2);
                 }
                 CcType::Dtvcc708Data => {
+                    if self.packet.is_empty() {
+                        // Data with no open packet (e.g. the Start triplet
+                        // was lost, or right after a reset): a lone Data
+                        // byte pair is not a valid CCP header, so it must
+                        // not seed one (§4) -- drop it instead of decoding
+                        // it as a header on the next flush.
+                        continue;
+                    }
                     self.packet.push(t.cc_data_1);
                     self.packet.push(t.cc_data_2);
                 }
                 _ => {}
             }
         }
-        self.flush_packet();
+        // Flush only once the buffered bytes form a complete CCP; a partial
+        // packet is left in the buffer for the next call. This is the fix
+        // for issue #1042: the previous unconditional flush here decoded
+        // (and cleared) every still-partial CCP at the end of every single
+        // call, destroying any packet that spanned more than one call.
+        if self.packet_is_complete() {
+            self.flush_packet();
+        }
     }
 
     /// Feed one complete Caption Channel Packet (the CCP header byte followed by
     /// its data bytes). Useful for testing / when packets are pre-assembled.
     pub fn push_packet(&mut self, ccp: &[u8]) {
         self.decode_packet(ccp);
+    }
+
+    /// Whether the accumulated packet buffer holds a full CCP: the header
+    /// byte plus its declared `data_size` bytes (§5, the same accounting
+    /// `decode_packet` uses).
+    fn packet_is_complete(&self) -> bool {
+        let Some(&header) = self.packet.first() else {
+            return false;
+        };
+        let size_code = header & 0x3F;
+        let data_size = if size_code == 0 {
+            PACKET_SIZE_ZERO_DATA
+        } else {
+            (size_code as usize) * 2 - 1
+        };
+        self.packet.len() > data_size
     }
 
     /// Flush the accumulated packet buffer if it forms a complete CCP.

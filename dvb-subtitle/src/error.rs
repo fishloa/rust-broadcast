@@ -41,4 +41,9 @@ pub enum Error {
     /// Segment length too large for parsed data.
     #[error("segment too large to serialize: segment_length oversized")]
     SegmentTooLarge,
+    /// A field value did not fit its wire width (#1129/#1044): compared
+    /// before narrowing, so an over-range value is rejected instead of
+    /// silently masked/wrapped.
+    #[error(transparent)]
+    FieldOverflow(#[from] broadcast_common::len::FieldOverflow),
 }

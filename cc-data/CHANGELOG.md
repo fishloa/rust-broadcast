@@ -11,6 +11,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **#1042**: `Cea708Decoder::push_triplets` unconditionally decoded and
+  cleared the partial Caption Channel Packet buffer at the end of every
+  call, destroying any CCP spanning more than one `cc_data()` access unit
+  (CEA-708 §4/§5) — the common case, since a CCP is typically 32-128 bytes
+  and one frame carries far fewer DTVCC bytes. The buffer is now kept
+  across calls and only decoded once it is complete or a new packet starts.
+- **#1043**: CEA-608 field-2 Miscellaneous Control Code pairs (first byte
+  `0x15`/CC3, `0x1D`/CC4 — CTA-608-E §8.4 a/b) were never recognised; the
+  fold only matched field-1's `0x14`/`0x1C`. RCL/EOC/EDM/RU2-4/CR and the
+  rest of the misc-control set are now recognised on field 2.
+
 ## [0.5.0] - 2026-08-11
 
 ### Changed
