@@ -2,6 +2,21 @@
 
 ## [Unreleased]
 
+### Fixed
+- Normal-Mode user-packet extraction (`NmTsIter`/`up_iter`/
+  `CarryOverExtractor::feed_nm`/`feed_nm_into`) always cut every 188 bytes,
+  ignoring `UPL`; a real off-air capture with ISSYI=1 (190-byte stride) was
+  misframed after the first UP, and NPD/DNP framing was never accounted for
+  either. The per-UP stride is now derived from `UPL`/ISSYI/NPD per EN 302
+  755 §5.1.8 (new `packet::nm_stride_bytes`), and the per-UP CRC-8 chain (EN
+  302 755 §5.1.6) is now checked, exposed via new `CarryOverStats` fields
+  `nm_upl_invalid` and `crc8_mismatches` (#1033).
+
+### Changed (breaking)
+- `packet::NmTsIter::new` now takes an explicit `stride: usize` (previously
+  assumed a fixed 188 bytes) — part of the #1033 fix above.
+
+
 ## [10.1.0] - 2026-09-26
 Lockstep minor alongside `dvb-si` 10.1.0; no source changes in this crate.
 

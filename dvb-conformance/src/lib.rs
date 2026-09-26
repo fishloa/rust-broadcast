@@ -953,6 +953,10 @@ impl ConformanceMonitor {
         // ── Step 6: Section reassembly — PAT ─────────────────────────────
         if pid == PID_PAT && header.has_payload {
             if let Some(payload) = packet.payload {
+                // TBsys (indicator 3.3) is fed per TS packet, as bytes
+                // physically arrive — not once with the whole section's
+                // length once it has fully reassembled (issue #1035).
+                self.feed_tbsys_bytes(payload.len() as u64, pid, t);
                 self.pat_reassembler.feed(payload, header.pusi);
             }
             self.pat_timer.last_seen = t;
@@ -964,10 +968,14 @@ impl ConformanceMonitor {
 
         // ── Step 6b: Section reassembly — PMT PIDs ───────────────────────
         if self.pmt_trackings.contains_key(&pid) && header.has_payload {
-            if let Some(payload) = packet.payload
-                && let Some(tracking) = self.pmt_trackings.get_mut(&pid)
-            {
-                tracking.reassembler.feed(payload, header.pusi);
+            if let Some(payload) = packet.payload {
+                // TBsys (indicator 3.3) is fed per TS packet, as bytes
+                // physically arrive — not once with the whole section's
+                // length once it has fully reassembled (issue #1035).
+                self.feed_tbsys_bytes(payload.len() as u64, pid, t);
+                if let Some(tracking) = self.pmt_trackings.get_mut(&pid) {
+                    tracking.reassembler.feed(payload, header.pusi);
+                }
             }
             let sections: Vec<_> = if let Some(tracking) = self.pmt_trackings.get_mut(&pid) {
                 tracking.timer.last_seen = t;
@@ -989,10 +997,14 @@ impl ConformanceMonitor {
             && self.si_reassemblies.contains_key(&pid)
             && header.has_payload
         {
-            if let Some(payload) = packet.payload
-                && let Some(si_ra) = self.si_reassemblies.get_mut(&pid)
-            {
-                si_ra.reassembler.feed(payload, header.pusi);
+            if let Some(payload) = packet.payload {
+                // TBsys (indicator 3.3) is fed per TS packet, as bytes
+                // physically arrive — not once with the whole section's
+                // length once it has fully reassembled (issue #1035).
+                self.feed_tbsys_bytes(payload.len() as u64, pid, t);
+                if let Some(si_ra) = self.si_reassemblies.get_mut(&pid) {
+                    si_ra.reassembler.feed(payload, header.pusi);
+                }
             }
             let sections: Vec<_> = if let Some(si_ra) = self.si_reassemblies.get_mut(&pid) {
                 core::iter::from_fn(|| si_ra.reassembler.pop_section()).collect()
@@ -1240,19 +1252,14 @@ impl ConformanceMonitor {
     /// TR 101 290 v1.4.1 Table 5.0b indicator 2.2 — CRC_error.
     ///
     /// On any tracked PID, if a completed long-form section has a CRC
-    /// mismatch, emit `CrcError`. Also feeds section bytes into TBsys
-    /// for T-STD Buffer_error tracking (indicator 3.3).
+    /// mismatch, emit `CrcError`. TBsys `Buffer_error` tracking (indicator
+    /// 3.3) is fed separately, per TS packet, not here — see
+    /// [`feed_tbsys_bytes`](Self::feed_tbsys_bytes).
     fn check_crc_for_section(&mut self, section_bytes: &[u8], pid: u16, t: Duration) {
         let section = match Section::parse(section_bytes) {
             Ok(s) => s,
             Err(_) => return,
         };
-
-        // Feed section bytes into TBsys for T-STD buffer tracking
-        // (ISO/IEC 13818-1 §2.4.2.3: PSI sections pass through TBsys
-        // before entering Bsys). TBsys has 512 bytes capacity and drains
-        // at 1 Mbit/s. Overflow fires Buffer_error (3.3).
-        self.feed_tbsys_section_bytes(section_bytes, pid, t);
 
         // validate_crc returns Ok for short-form sections (no CRC to check).
         if let Err(mpeg_ts::error::Error::CrcMismatch { .. }) = section.validate_crc(section_bytes)
@@ -1269,34 +1276,42 @@ impl ConformanceMonitor {
         }
     }
 
-    /// Feed PSI section bytes into TBsys and check for overflow.
+    /// Feed one TS packet's payload byte count into TBsys and check for
+    /// overflow.
     ///
     /// TBsys (ISO/IEC 13818-1 §2.4.2.3): 512-byte transport buffer for system
-    /// information. Receives PSI section bytes from the well-known SI/PSI PIDs.
-    /// Drains at 1 Mbit/s (125 000 bytes/s). Overflow fires Buffer_error (3.3).
-    fn feed_tbsys_section_bytes(&mut self, section_bytes: &[u8], pid: u16, t: Duration) {
-        let section_len = section_bytes.len() as u64;
-
+    /// information. Receives PSI/SI payload bytes from the well-known SI/PSI
+    /// PIDs *as each TS packet carrying them arrives* — a section spans many
+    /// packets, and TBsys must drain between them, not receive the whole
+    /// section's length in one instant (issue #1035). Drains at 1 Mbit/s
+    /// (125 000 bytes/s). Overflow fires Buffer_error (3.3).
+    fn feed_tbsys_bytes(&mut self, n_bytes: u64, pid: u16, t: Duration) {
         // Drain TBsys to current time using the fixed 1 Mbit/s leak rate.
         self.tstd.drain_tb_sys(t);
 
-        // Check if adding these section bytes would overflow TBsys.
-        // TBsys has 512 bytes capacity at 1 Mbit/s drain.
-        if self.tstd.tb_sys.would_overflow(section_len, t) {
+        // Check if adding this packet's payload bytes would overflow TBsys.
+        // TBsys has 512 bytes capacity at 1 Mbit/s drain. Checked (and fed)
+        // per TS packet, not per whole reassembled section: the bytes of a
+        // long section physically arrive one 184-byte payload at a time,
+        // draining continuously in between (H.222.0 §2.4.2.3) — feeding the
+        // full section length in one instant would flag `Buffer_error` on
+        // any legally-paced section over 512 bytes, which every long-form
+        // SDT/NIT/EIT section routinely is.
+        if self.tstd.tb_sys.would_overflow(n_bytes, t) {
             self.emit(
                 Indicator::BufferError,
                 Some(pid),
                 t,
                 format!(
-                    "TBsys overflow on PID 0x{pid:04X}: section {section_len} bytes exceeds {} byte capacity at 1 Mbit/s drain",
+                    "TBsys overflow on PID 0x{pid:04X}: {n_bytes} bytes exceeds {} byte capacity at 1 Mbit/s drain",
                     tstd::TB_SYS_SIZE,
                 ),
             );
         }
 
-        // Feed the section bytes into TBsys regardless (the buffer
+        // Feed the packet's payload bytes into TBsys regardless (the buffer
         // model tracks occupancy for empty-interval and delay checks).
-        let _overflow = self.tstd.tb_sys.feed(section_len, t);
+        let _overflow = self.tstd.tb_sys.feed(n_bytes, t);
 
         // Indicator 3.9: TBsys empty at least once per second?
         if self.tstd.tb_sys.check_empty_interval(t) && !self.tstd.tb_sys_empty_reported {
@@ -2108,10 +2123,12 @@ impl ConformanceMonitor {
         let packet_bytes = ts_packet.len() as u64;
 
         if is_si_pid && header.has_payload {
-            // TBsys is fed at section-completion time (see
-            // `feed_tbsys_section_bytes` called from `check_crc_for_section`).
-            // The per-packet path only drains TBsys and does empty/delay
-            // checks, which are also done at section-completion.
+            // TBsys is fed per TS packet, at reassembly time in `feed`'s
+            // sections 6/6b/6c (see `feed_tbsys_bytes`, issue #1035) — as
+            // each packet's payload physically arrives, not once with a
+            // whole section's length when it finishes reassembling. This
+            // branch is a no-op: the drain above already keeps TBsys current
+            // for the empty/delay checks performed inside `feed_tbsys_bytes`.
         }
 
         // ── TBn: per-PID buffers for all non-SI, non-null PIDs ──────────

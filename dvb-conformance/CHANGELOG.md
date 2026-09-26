@@ -2,6 +2,17 @@
 
 ## [Unreleased]
 
+### Fixed
+- TR 101 290 indicator 3.3 (`Buffer_error`): the T-STD `TBsys` model fed a
+  whole reassembled PSI/SI section's byte length in one instant, at
+  section-completion time, so any legally-paced section over 512 bytes
+  (routine for SDT/NIT/EIT) raised a false `Buffer_error` regardless of how
+  the bytes were actually spread across TS packets. `TBsys` is now fed per
+  TS packet, as each packet's payload physically arrives (ISO/IEC 13818-1
+  §2.4.2.3), so it drains correctly between packets instead of receiving
+  the whole section at once (#1035).
+
+
 ## [10.1.0] - 2026-09-26
 Lockstep minor alongside `dvb-si` 10.1.0; no source changes in this crate.
 

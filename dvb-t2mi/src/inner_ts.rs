@@ -30,19 +30,31 @@ use dvb_bbframe::packet::{CarryOverExtractor, NM_UP_SIZE};
 use crate::payload::AnyPayload;
 use crate::pump::{Stats, T2miPump};
 
+/// Every DVB-T2 PLP id fits in a byte (EN 302 755 MATYPE-2 / TS 102 773
+/// `plp_id`); one [`CarryOverExtractor`] slot per possible id.
+const MAX_PLPS: usize = 256;
+
 /// Recovers the inner MPEG-TS carried inside a T2-MI stream.
 ///
 /// Feed outer 188-byte TS packets from the T2-MI PID with [`feed`](Self::feed);
 /// each call returns the inner TS packets recovered from that input packet
 /// (often empty — a BBFrame spans several T2-MI packets). The driver owns the
-/// pump, the carry-over extractor, and the NM/HEM mode handling.
+/// pump, one carry-over extractor **per PLP**, and the NM/HEM mode handling.
+///
+/// A T2-MI stream time-multiplexes independent PLPs, each with its own
+/// SYNCD/carry-over chain (EN 302 755 §5.1.7: "ISI ... has the same meaning
+/// as PLP_ID"), so carry-over state is keyed by `plp_id` — mirroring
+/// [`dvb_bbframe::pump::BbframePump`] — rather than shared across PLPs: a
+/// user packet split across a BBFrame boundary would otherwise be corrupted
+/// by any other PLP's frame arriving before the split completes (issue
+/// #1034).
 ///
 /// Normal Mode and High-Efficiency Mode (without Null-Packet-Deletion) frames
 /// are recovered; HEM frames with `MATYPE.NPD` set are skipped (DNP-byte
 /// reinsertion is not modelled by the extractor) rather than mis-decoded.
 pub struct InnerTsRecovery {
     pump: T2miPump,
-    extractor: CarryOverExtractor,
+    extractors: [Option<CarryOverExtractor>; MAX_PLPS],
     out: Vec<[u8; NM_UP_SIZE]>,
     up_buf: Vec<[u8; NM_UP_SIZE]>,
     target_plp: Option<u8>,
@@ -68,7 +80,7 @@ impl InnerTsRecovery {
     fn build(t2mi_pid: u16, target_plp: Option<u8>) -> Self {
         Self {
             pump: T2miPump::new(t2mi_pid),
-            extractor: CarryOverExtractor::new(),
+            extractors: core::array::from_fn(|_| None),
             out: Vec::new(),
             up_buf: Vec::new(),
             target_plp,
@@ -104,18 +116,14 @@ impl InnerTsRecovery {
                 Err(_) => continue,
             };
             let data_field = &bb.bbframe[BBHEADER_LEN..];
+            let extractor =
+                self.extractors[bb.plp_id as usize].get_or_insert_with(CarryOverExtractor::new);
             match hdr.mode {
                 Mode::Normal => {
-                    self.extractor
-                        .feed_nm_into(&header_bytes, data_field, &mut self.up_buf);
+                    extractor.feed_nm_into(&header_bytes, data_field, &mut self.up_buf);
                 }
                 Mode::HighEfficiency if !hdr.matype.npd => {
-                    self.extractor.feed_hem_into(
-                        &header_bytes,
-                        data_field,
-                        false,
-                        &mut self.up_buf,
-                    );
+                    extractor.feed_hem_into(&header_bytes, data_field, false, &mut self.up_buf);
                 }
                 // HEM with NPD, or any future mode: skip (not recoverable here).
                 _ => continue,

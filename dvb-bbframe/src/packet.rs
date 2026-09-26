@@ -1,11 +1,23 @@
 //! User packet extraction from BBFrame data fields.
 //!
-//! Supports Normal Mode (NM, 188-byte stride) and High Efficiency Mode
+//! Supports Normal Mode (NM, variable stride) and High Efficiency Mode
 //! (HEM, 187-byte stride) per EN 302 755 §5.1.8.
 //!
-//! In NM the first byte of each user packet in the data field is a CRC-8
-//! that replaces the original sync byte (0x47). In HEM the sync byte is
-//! simply absent and must be prepended.
+//! In NM the first byte of each transmitted UP chunk is the CRC-8 of the
+//! *previous* UP (see [`nm_stride_bytes`]) and replaces the original sync
+//! byte (0x47). In HEM the sync byte is simply absent and must be prepended.
+//!
+//! ## NM stride (UPL/ISSYI/NPD)
+//!
+//! For Transport Stream input, EN 302 755 §5.1.8 ("Normal Mode, GFPS and TS",
+//! figure 5) transmits each UP as `CRC-8 (1 byte) + original UP without its
+//! sync byte (187 bytes) + ISSY (0, 2 or 3 bytes, when ISSYI=1) + DNP (0 or 1
+//! byte, when NPD=1)`. The clause's own bit-count walk of the BBHEADER's
+//! `UPL` field (O-UPL=1504 bits, +16/+24 for ISSY, -8 for the removed sync
+//! byte, +8 for DNP when active, +8 for CRC-8) shows the transmitted UPL
+//! already equals this stride in bits, so [`nm_stride_bytes`] reads the
+//! stride back from `UPL` directly rather than a fixed 188-byte assumption —
+//! a fixed stride corrupts framing whenever ISSYI or NPD is active.
 //!
 //! ## SYNCD handling
 //!
@@ -14,14 +26,18 @@
 //! byte of the first user packet (HEM).  Callers typically prepend any
 //! carry-over from the previous BBFrame and pass the result plus SYNCD.
 //!
-//! ## NPD/DNP reinsertion (HEM only)
+//! ## NPD/DNP
 //!
-//! When NPD is active (`matype.npd == true`), each transmitted user
-//! packet is followed by a 1-byte DNP counter. The [`HemTsIter`] skips
-//! these DNP bytes automatically.
+//! When NPD is active (`matype.npd == true`), each transmitted user packet is
+//! followed by a 1-byte DNP counter. [`HemTsIter`] and the NM stride
+//! computation both account for this extra byte so framing stays aligned;
+//! neither actually reinserts the deleted null packets into the recovered TS
+//! (a capability gap tracked separately via [`CarryOverStats::npd_unsupported`]
+//! for the HEM carry-over path).
 
 use alloc::vec::Vec;
 
+use crate::crc::crc8;
 use crate::header::{BBHEADER_LEN, Bbheader, Mode};
 
 /// User packet size in Normal Mode (188 bytes = full MPEG-2 TS packet).
@@ -30,27 +46,87 @@ pub const NM_UP_SIZE: usize = 188;
 /// User packet size in High Efficiency Mode (187 bytes = TS minus sync byte).
 pub const HEM_UP_SIZE: usize = 187;
 
+/// Longest ISSY field (long form / BUFS-TTO signalling, EN 302 755 Annex C).
+const NM_ISSY_MAX_LEN: usize = 3;
+
+/// DNP counter length when NPD is active (EN 302 755 §5.1.5/§5.1.8).
+const NM_DNP_LEN: usize = 1;
+
+/// Largest possible NM per-UP stride: CRC-8 + 187-byte UP + long ISSY + DNP.
+const NM_MAX_STRIDE: usize = NM_UP_SIZE + NM_ISSY_MAX_LEN + NM_DNP_LEN;
+
 /// MPEG-2 sync byte that CRC-8 replaces in NM.
 pub const TS_SYNC_BYTE: u8 = 0x47;
+
+/// Derive the Normal-Mode per-UP stride (bytes) from a parsed BBHEADER, for
+/// Transport Stream input — EN 302 755 §5.1.8 ("Normal Mode, GFPS and TS").
+///
+/// The transmitted UP is `CRC-8 (1) + original UP minus sync (187) + ISSY (0,
+/// 2 or 3, per MATYPE ISSYI) + DNP (0 or 1, per MATYPE NPD)`; the clause's bit
+/// walk shows this is exactly what the final `UPL` field (in bits) counts, so
+/// the stride is read back from `UPL` rather than re-derived from the ISSYI/
+/// NPD flags alone (the ISSY short/long form is signalled inside the ISSY
+/// field itself, not in the header).
+///
+/// Returns `None` when `UPL` is zero/not byte-aligned, shorter than a bare
+/// `CRC-8 + 187-byte UP`, or implies an ISSY byte count that cannot occur
+/// (anything other than 0 with ISSYI=0, or 2/3 with ISSYI=1) — the frame is
+/// then treated as unsupported/malformed rather than mis-framed at a fixed
+/// stride.
+#[must_use]
+pub fn nm_stride_bytes(hdr: &Bbheader) -> Option<usize> {
+    let upl = hdr.upl;
+    if upl == 0 || !upl.is_multiple_of(8) {
+        return None;
+    }
+    let stride = (upl / 8) as usize;
+    let extra = stride.checked_sub(NM_UP_SIZE)?;
+    let dnp_len = usize::from(hdr.matype.npd);
+    let issy_len = extra.checked_sub(dnp_len)?;
+    let issy_ok = if hdr.matype.issyi {
+        issy_len == 2 || issy_len == 3
+    } else {
+        issy_len == 0
+    };
+    if !issy_ok {
+        return None;
+    }
+    Some(stride)
+}
 
 /// Iterator over NM TS user packets.
 ///
 /// Each item is a `[u8; 188]` with the sync byte restored to 0x47,
-/// replacing the CRC-8 byte that occupies position 0 in the data field.
+/// replacing the CRC-8 byte that occupies position 0 in the data field. Any
+/// trailing ISSY/DNP bytes included in `stride` (see [`nm_stride_bytes`]) are
+/// skipped, not copied into the packet.
+///
+/// This is the lean, no-BBHEADER-overhead iterator: it trusts the caller's
+/// `stride` and does not verify the per-UP CRC-8. [`up_iter`] derives `stride`
+/// from a [`Bbheader`]; for CRC-8-verified, carry-over-aware extraction with
+/// diagnostics use [`CarryOverExtractor`] instead.
 #[derive(Clone, Copy)]
 #[cfg_attr(feature = "yoke", derive(yoke::Yokeable))]
 pub struct NmTsIter<'a> {
     data: &'a [u8],
     pos: usize,
+    stride: usize,
 }
 
 impl<'a> NmTsIter<'a> {
     /// Create a new NM TS user packet iterator.
     ///
-    /// `data` is the full data field (after skipping SYNCD bytes if
-    /// already aligned). The iterator starts at byte 0 of `data`.
-    pub fn new(data: &'a [u8]) -> Self {
-        Self { data, pos: 0 }
+    /// `data` is the full data field (after skipping SYNCD bytes if already
+    /// aligned). The iterator starts at byte 0 of `data`. `stride` is the
+    /// per-UP byte stride (see [`nm_stride_bytes`]); a `stride` of 0 makes the
+    /// iterator yield nothing, so a caller unable to determine a valid stride
+    /// can pass 0 instead of guessing.
+    pub fn new(data: &'a [u8], stride: usize) -> Self {
+        Self {
+            data,
+            pos: 0,
+            stride,
+        }
     }
 
     /// Return the unconsumed tail of the data field.
@@ -63,19 +139,22 @@ impl Iterator for NmTsIter<'_> {
     type Item = [u8; NM_UP_SIZE];
 
     fn next(&mut self) -> Option<Self::Item> {
-        if self.pos + NM_UP_SIZE > self.data.len() {
+        if self.stride == 0 || self.pos + self.stride > self.data.len() {
             return None;
         }
         let mut pkt = [0u8; NM_UP_SIZE];
         pkt[0] = TS_SYNC_BYTE; // Replace CRC-8 byte with sync byte
         pkt[1..].copy_from_slice(&self.data[self.pos + 1..self.pos + NM_UP_SIZE]);
-        self.pos += NM_UP_SIZE;
+        self.pos += self.stride;
         Some(pkt)
     }
 
     fn size_hint(&self) -> (usize, Option<usize>) {
+        if self.stride == 0 {
+            return (0, Some(0));
+        }
         let remaining = self.data.len().saturating_sub(self.pos);
-        let count = remaining / NM_UP_SIZE;
+        let count = remaining / self.stride;
         (count, Some(count))
     }
 }
@@ -167,9 +246,16 @@ impl Iterator for UpIter<'_> {
 /// Returns either an NM or HEM iterator depending on the detected mode.
 /// The caller must handle SYNCD alignment before calling this — typically
 /// by skipping `syncd / 8` bytes at the start of the data field.
+///
+/// For NM, the stride is derived from `UPL`/ISSYI/NPD via [`nm_stride_bytes`];
+/// when that isn't a valid stride (see its docs) the returned iterator yields
+/// nothing rather than mis-framing at a fixed 188 bytes.
 pub fn up_iter<'a>(data: &'a [u8], bbheader: &Bbheader) -> UpIter<'a> {
     match bbheader.mode {
-        Mode::Normal => UpIter::Normal(NmTsIter::new(data)),
+        Mode::Normal => {
+            let stride = nm_stride_bytes(bbheader).unwrap_or(0);
+            UpIter::Normal(NmTsIter::new(data, stride))
+        }
         Mode::HighEfficiency => UpIter::HighEfficiency(HemTsIter::new(data, bbheader.matype.npd)),
     }
 }
@@ -183,10 +269,17 @@ pub fn up_iter<'a>(data: &'a [u8], bbheader: &Bbheader) -> UpIter<'a> {
 ///
 /// Diagnostic counters are accumulated and exposed via [`stats`](CarryOverExtractor::stats).
 pub struct CarryOverExtractor {
-    /// Partial TS packet being assembled (sync byte position 0).
-    buf: [u8; NM_UP_SIZE],
+    /// Partial TS packet being assembled (sync byte position 0). Sized for
+    /// the longest possible NM stride (CRC-8 + UP + ISSY + DNP); HEM only
+    /// ever fills the first `HEM_UP_SIZE + 1` bytes of it.
+    buf: [u8; NM_MAX_STRIDE],
     /// Bytes already written into `buf`.
     pos: usize,
+    /// Rolling NM UP-level CRC-8 chain state: the CRC-8 computed over the
+    /// last fully-assembled NM UP's content, checked against the next UP's
+    /// leading (CRC) byte. `None` when no chain is established yet, or right
+    /// after a resync (`partial_discards`) breaks it.
+    nm_crc_state: Option<u8>,
     /// Diagnostic counters (see [`CarryOverStats`]).
     stats: CarryOverStats,
 }
@@ -194,8 +287,9 @@ pub struct CarryOverExtractor {
 impl Default for CarryOverExtractor {
     fn default() -> Self {
         Self {
-            buf: [0u8; NM_UP_SIZE],
+            buf: [0u8; NM_MAX_STRIDE],
             pos: 0,
+            nm_crc_state: None,
             stats: CarryOverStats::default(),
         }
     }
@@ -225,6 +319,15 @@ pub struct CarryOverStats {
     /// Carried-over partial user packets discarded on a SYNCD/stride mismatch
     /// (the extractor resynchronised at the frame's SYNCD).
     pub partial_discards: u64,
+    /// NM frames whose `UPL` (adjusted for ISSYI/NPD per EN 302 755 §5.1.8)
+    /// did not yield a valid per-UP stride — see [`nm_stride_bytes`]. The
+    /// frame is skipped rather than mis-framed at a fixed 188-byte stride.
+    pub nm_upl_invalid: u64,
+    /// NM UP-level CRC-8 mismatches (EN 302 755 §5.1.6): the CRC-8 carried as
+    /// the leading byte of a transmitted UP (the *previous* UP's trailer, per
+    /// §5.1.8 figure 5) did not match the recomputed CRC-8 of that previous
+    /// UP's content. Diagnostic only — the packet is still emitted.
+    pub crc8_mismatches: u64,
 }
 
 impl CarryOverExtractor {
@@ -312,7 +415,7 @@ impl CarryOverExtractor {
                 if self.pos == stride + 1 {
                     // UP is now complete.
                     self.buf[0] = TS_SYNC_BYTE;
-                    out.push(self.buf);
+                    out.push(self.buf[..NM_UP_SIZE].try_into().expect("188 bytes"));
                     self.pos = 0;
                 }
             }
@@ -328,7 +431,7 @@ impl CarryOverExtractor {
             if syncd_bytes == need && data.len() >= need {
                 self.buf[self.pos..self.pos + need].copy_from_slice(&data[..need]);
                 self.buf[0] = TS_SYNC_BYTE;
-                out.push(self.buf);
+                out.push(self.buf[..NM_UP_SIZE].try_into().expect("188 bytes"));
                 self.pos = 0;
             } else {
                 // Stride mismatch — discard partial and resync to syncd.
@@ -343,7 +446,7 @@ impl CarryOverExtractor {
             // HEM: 187 bytes of UP, prepend sync byte.
             self.buf[0] = TS_SYNC_BYTE;
             self.buf[1..1 + stride].copy_from_slice(&data[i..i + stride]);
-            out.push(self.buf);
+            out.push(self.buf[..NM_UP_SIZE].try_into().expect("188 bytes"));
             i += stride;
         }
 
@@ -358,8 +461,11 @@ impl CarryOverExtractor {
         }
     }
 
-    /// Feed an NM BBFrame. Stride=188, `byte[0]` of each UP is the CRC-8 of
-    /// the previous UP and gets replaced with 0x47.
+    /// Feed an NM BBFrame. The per-UP stride is derived from `UPL`/ISSYI/NPD
+    /// (see [`nm_stride_bytes`]); `byte[0]` of each transmitted UP is the
+    /// CRC-8 of the previous UP (EN 302 755 §5.1.8 figure 5) and gets
+    /// replaced with 0x47 after being checked against the recomputed CRC-8 —
+    /// see [`CarryOverStats::crc8_mismatches`].
     pub fn feed_nm(
         &mut self,
         bbheader_bytes: &[u8; BBHEADER_LEN],
@@ -393,7 +499,15 @@ impl CarryOverExtractor {
             return;
         }
 
-        let stride = NM_UP_SIZE;
+        let stride = match nm_stride_bytes(&hdr) {
+            Some(s) => s,
+            None => {
+                // UPL/ISSYI/NPD don't describe a valid stride — skip this
+                // frame rather than mis-frame it at a fixed 188 bytes.
+                self.stats.nm_upl_invalid += 1;
+                return;
+            }
+        };
         // SYNCD=0xFFFF (65535) means "no UP starts in the DATA FIELD" — the
         // entire data field is a continuation of the carried-over partial UP.
         // EN 302 755 Table 2.
@@ -414,9 +528,7 @@ impl CarryOverExtractor {
                 self.buf[self.pos..self.pos + take].copy_from_slice(&data[..take]);
                 self.pos += take;
                 if self.pos == stride {
-                    // UP is now complete.
-                    self.buf[0] = TS_SYNC_BYTE; // replace CRC-8 with sync byte
-                    out.push(self.buf);
+                    self.finish_nm_up(stride, out);
                     self.pos = 0;
                 }
             }
@@ -428,22 +540,22 @@ impl CarryOverExtractor {
             let need = stride - self.pos;
             if syncd_bytes == need && data.len() >= need {
                 self.buf[self.pos..self.pos + need].copy_from_slice(&data[..need]);
-                self.buf[0] = TS_SYNC_BYTE; // replace CRC-8 with sync byte
-                out.push(self.buf);
+                self.finish_nm_up(stride, out);
                 self.pos = 0;
             } else {
-                // Stride mismatch — discard partial and resync to syncd.
+                // Stride mismatch — discard partial and resync to syncd. The
+                // CRC-8 chain no longer correlates across the gap.
                 self.stats.partial_discards += 1;
                 self.pos = 0;
+                self.nm_crc_state = None;
             }
         }
 
         // Extract complete UPs at stride.
         let mut i = syncd_bytes;
         while i + stride <= data.len() {
-            self.buf.copy_from_slice(&data[i..i + stride]);
-            self.buf[0] = TS_SYNC_BYTE; // replace CRC-8 with sync byte
-            out.push(self.buf);
+            self.buf[..stride].copy_from_slice(&data[i..i + stride]);
+            self.finish_nm_up(stride, out);
             i += stride;
         }
 
@@ -456,6 +568,30 @@ impl CarryOverExtractor {
             self.pos = 0;
         }
     }
+
+    /// Finish one fully-buffered NM UP of `stride` bytes in `self.buf`:
+    /// check the leading CRC-8 byte (the previous UP's trailer, EN 302 755
+    /// §5.1.8 figure 5) against the CRC-8 recomputed from that previous UP's
+    /// content when a chain is established, emit the reconstructed 188-byte
+    /// TS packet (sync byte restored, any ISSY/DNP trailer dropped), then
+    /// extend the chain with this UP's own CRC-8 for the next call.
+    fn finish_nm_up(&mut self, stride: usize, out: &mut Vec<[u8; NM_UP_SIZE]>) {
+        let raw_crc_byte = self.buf[0];
+        if let Some(expected) = self.nm_crc_state
+            && raw_crc_byte != expected
+        {
+            self.stats.crc8_mismatches += 1;
+        }
+        // CRC-8 covers the UPL-8 bits of the UP after sync-byte removal (EN
+        // 302 755 §5.1.6), i.e. everything in this stride after the leading
+        // CRC-8 byte: the 187-byte UP plus any ISSY/DNP trailer.
+        self.nm_crc_state = Some(crc8(&self.buf[1..stride]));
+
+        let mut pkt = [0u8; NM_UP_SIZE];
+        pkt[0] = TS_SYNC_BYTE; // replace CRC-8 with sync byte
+        pkt[1..].copy_from_slice(&self.buf[1..NM_UP_SIZE]);
+        out.push(pkt);
+    }
 }
 
 #[cfg(test)]
@@ -463,6 +599,8 @@ mod tests {
     use super::*;
     use crate::header::{Bbheader, Matype, Mode, TsGs};
 
+    /// Plain NM header: ISSYI=0, NPD=0, so UPL=188*8=1504 and the stride is
+    /// the bare `CRC-8 + 187-byte UP` (EN 302 755 §5.1.8 figure 5).
     fn make_nm_header(syncd: u16) -> Bbheader {
         Bbheader {
             matype: Matype {
@@ -474,7 +612,7 @@ mod tests {
                 ext: 0,
                 isi: 0,
             },
-            upl: 0,
+            upl: (NM_UP_SIZE * 8) as u16,
             sync: 0x47,
             dfl: 0,
             syncd,
@@ -552,6 +690,114 @@ mod tests {
         let pkts: Vec<_> = up_iter(&data, &_hdr).collect();
 
         assert_eq!(pkts.len(), 1); // Only one complete UP
+    }
+
+    #[test]
+    fn nm_stride_reflects_issyi_and_npd() {
+        // ISSYI=1 (short form, 2 bytes), NPD=0 → 188+2=190.
+        let mut hdr = make_nm_header(0);
+        hdr.matype.issyi = true;
+        hdr.upl = 190 * 8;
+        assert_eq!(nm_stride_bytes(&hdr), Some(190));
+
+        // ISSYI=1 (long form, 3 bytes), NPD=1 → 188+3+1=192.
+        hdr.matype.npd = true;
+        hdr.upl = 192 * 8;
+        assert_eq!(nm_stride_bytes(&hdr), Some(192));
+
+        // ISSYI=0, NPD=1 → 188+1=189.
+        hdr.matype.issyi = false;
+        hdr.upl = 189 * 8;
+        assert_eq!(nm_stride_bytes(&hdr), Some(189));
+    }
+
+    #[test]
+    fn nm_stride_rejects_upl_inconsistent_with_matype() {
+        // ISSYI=0 but UPL implies a 1-byte "ISSY" (no such length exists).
+        let mut hdr = make_nm_header(0);
+        hdr.upl = 189 * 8;
+        assert_eq!(nm_stride_bytes(&hdr), None);
+
+        // ISSYI=1 but UPL implies a 4-byte ISSY (only 2 or 3 exist).
+        hdr.matype.issyi = true;
+        hdr.upl = 192 * 8;
+        assert_eq!(nm_stride_bytes(&hdr), None);
+
+        // UPL shorter than a bare CRC-8 + 187-byte UP.
+        hdr.matype.issyi = false;
+        hdr.upl = 100 * 8;
+        assert_eq!(nm_stride_bytes(&hdr), None);
+
+        // UPL not byte-aligned, or zero.
+        hdr.upl = 1;
+        assert_eq!(nm_stride_bytes(&hdr), None);
+        hdr.upl = 0;
+        assert_eq!(nm_stride_bytes(&hdr), None);
+    }
+
+    #[test]
+    fn nm_invalid_upl_bumps_stat_not_fixed_188_stride() {
+        // BUG (#1033): a header whose UPL doesn't describe a valid stride
+        // must be skipped, not silently mis-framed at a hardcoded 188 bytes.
+        let mut hdr = make_nm_header(0);
+        hdr.upl = 1; // not byte-aligned
+        hdr.dfl = (NM_UP_SIZE * 8) as u16;
+        let header_bytes = hdr.serialize();
+
+        let mut extractor = CarryOverExtractor::new();
+        let pkts = extractor.feed_nm(&header_bytes, &[0xAAu8; NM_UP_SIZE]);
+        assert!(pkts.is_empty());
+        assert_eq!(extractor.stats().nm_upl_invalid, 1);
+    }
+
+    #[test]
+    fn nm_crc8_mismatch_detected_across_two_ups() {
+        // Two back-to-back plain (no ISSY/DNP) UPs. The second UP's leading
+        // byte should be crc8 of the first UP's 187-byte content; corrupt it
+        // and confirm the mismatch is flagged (but the packet is still
+        // emitted — diagnostic only).
+        let up_a = [0x11u8; NM_UP_SIZE - 1];
+        let up_b = [0x22u8; NM_UP_SIZE - 1];
+        let correct_crc = crc8(&up_a);
+
+        let mut data = Vec::with_capacity(NM_UP_SIZE * 2);
+        data.push(0xEE); // first UP's leading byte: no predecessor, unchecked
+        data.extend_from_slice(&up_a);
+        data.push(correct_crc ^ 0x01); // deliberately wrong
+        data.extend_from_slice(&up_b);
+
+        let mut hdr = make_nm_header(0);
+        hdr.dfl = (data.len() * 8) as u16;
+        let header_bytes = hdr.serialize();
+        let mut extractor = CarryOverExtractor::new();
+        let pkts = extractor.feed_nm(&header_bytes, &data);
+
+        assert_eq!(pkts.len(), 2);
+        assert_eq!(&pkts[0][1..], &up_a[..]);
+        assert_eq!(&pkts[1][1..], &up_b[..]);
+        assert_eq!(extractor.stats().crc8_mismatches, 1);
+    }
+
+    #[test]
+    fn nm_crc8_matches_when_correct() {
+        let up_a = [0x33u8; NM_UP_SIZE - 1];
+        let up_b = [0x44u8; NM_UP_SIZE - 1];
+        let correct_crc = crc8(&up_a);
+
+        let mut data = Vec::with_capacity(NM_UP_SIZE * 2);
+        data.push(0xEE);
+        data.extend_from_slice(&up_a);
+        data.push(correct_crc);
+        data.extend_from_slice(&up_b);
+
+        let mut hdr = make_nm_header(0);
+        hdr.dfl = (data.len() * 8) as u16;
+        let header_bytes = hdr.serialize();
+        let mut extractor = CarryOverExtractor::new();
+        let pkts = extractor.feed_nm(&header_bytes, &data);
+
+        assert_eq!(pkts.len(), 2);
+        assert_eq!(extractor.stats().crc8_mismatches, 0);
     }
 
     #[test]
@@ -634,7 +880,7 @@ mod tests {
     fn nm_remaining_returns_unconsumed_tail() {
         let data = vec![0xAA; NM_UP_SIZE * 2 + 50];
         let _hdr = make_nm_header(0);
-        let mut iter = NmTsIter::new(&data);
+        let mut iter = NmTsIter::new(&data, NM_UP_SIZE);
 
         let _p1 = iter.next().unwrap();
         let _p2 = iter.next().unwrap();
@@ -806,7 +1052,7 @@ mod tests {
     #[test]
     fn remaining_safe_when_pos_equals_len() {
         let data = vec![0xAA; NM_UP_SIZE];
-        let mut iter = NmTsIter::new(&data);
+        let mut iter = NmTsIter::new(&data, NM_UP_SIZE);
         let _p = iter.next().unwrap();
         // pos == data.len() — must not panic
         let remaining = iter.remaining();
@@ -822,6 +1068,7 @@ mod tests {
         let iter = NmTsIter {
             data: &data,
             pos: 20,
+            stride: NM_UP_SIZE,
         };
         let remaining = iter.remaining();
         assert!(remaining.is_empty());

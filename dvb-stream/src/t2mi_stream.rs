@@ -126,7 +126,17 @@ impl<R: AsyncRead + Unpin> T2miEventStream<R> {
             }
         }
 
-        self.filled = 0;
+        // If the tail was not a full packet, preserve the partial bytes for
+        // the next read instead of discarding them (issue #1036) — mirrors
+        // `SectionStream::feed_buf`.
+        let aligned_end = start + (data[start..].len() / TS_PACKET_SIZE) * TS_PACKET_SIZE;
+        let remainder = &data[aligned_end..];
+        if !remainder.is_empty() {
+            self.buf[..remainder.len()].copy_from_slice(remainder);
+            self.filled = remainder.len();
+        } else {
+            self.filled = 0;
+        }
     }
 }
 
