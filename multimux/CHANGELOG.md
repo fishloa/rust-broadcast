@@ -2,6 +2,16 @@
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-09-26
+
+### Security
+Fixes GHSA-6cpc-jqv3-qcj3, GHSA-c5v7-p4jv-2fhc and GHSA-jwfh-m4vx-fhwx, and picks up
+GHSA-48qq-7p78-2jvj (webrtc-runtime 0.2.0) for WHIP/WHEP.
+
+### Changed (breaking)
+- Requires `hls-runtime` 0.7 (was 0.6) and, with the `whip`/`whep` features, `webrtc-runtime`
+  0.2 (was 0.1).
+
 ### Fixed
 - WHIP input and WHEP output pass the offer's `a=fingerprint` to the media transport, so the
   DTLS peer is authenticated (webrtc-runtime 0.2.0); an offer without a fingerprint is rejected.
@@ -12,6 +22,10 @@
 - WHEP applies the configured output auth, ends sessions after 30 s without inbound traffic, and
   WHIP/WHEP cap HTTP header and body size and time out slow requests; WHIP checks capacity before
   allocating a session.
+- The WHIP/WHEP session-capacity slot is released on every failure path after it is reserved;
+  both accept loops cap concurrent connections; chunked transfer-encoding is refused (411) and an
+  unparseable `Content-Length` is a 400; the WHEP silence timer resets only on RTP, RTCP or a
+  completed DTLS handshake.
 
 ### Added
 - **DASH SCTE-35 inband event signalling** (issue #969). MPD now declares
