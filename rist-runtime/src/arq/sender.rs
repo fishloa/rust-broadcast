@@ -43,7 +43,7 @@
 //! last response. Neither is deduplicated by [`Self::on_range_nack`]/
 //! [`Self::on_generic_nack`] on their own, so one small wire message can
 //! still trigger a disproportionate volume of retransmitted payload bytes.
-//! [`Self::resolve`] now: deduplicates every candidate sequence number
+//! `resolve` now: deduplicates every candidate sequence number
 //! within one call (a `BTreeSet` of what's already been resolved this
 //! call); caps the total distinct sequence numbers one call returns at
 //! [`Sender::max_buffered`] (this sender never has more than that many
@@ -162,7 +162,7 @@ impl Sender {
     /// in the lookup buffer; sequence numbers already evicted (too old, or
     /// never sent) are silently skipped — §5.3.3 does not define behaviour
     /// for a request naming a packet the sender no longer has. See
-    /// [`Self::resolve`] for the deduplication/cap/rate-limit bounds
+    /// `resolve` for the deduplication/cap/rate-limit bounds
     /// applied to the response.
     pub fn on_range_nack(&mut self, nack: &RangeNack, now: Duration) -> Vec<Retransmission<'_>> {
         let ranges = &nack.ranges;
