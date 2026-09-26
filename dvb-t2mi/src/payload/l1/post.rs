@@ -884,7 +884,14 @@ fn push_framed_block<F>(out: &mut Vec<u8>, bit_len: usize, write: F) -> crate::e
 where
     F: FnOnce(&mut BitWriter<'_>) -> crate::error::Result<()>,
 {
-    out.extend_from_slice(&(bit_len as u16).to_be_bytes());
+    let bit_len_field =
+        broadcast_common::len::fit_u16(bit_len, "framed_block bit_len").map_err(|_| {
+            crate::Error::ReservedBitsViolation {
+                field: "framed_block bit_len",
+                reason: "Must be in range 0..=65535 (16-bit field)",
+            }
+        })?;
+    out.extend_from_slice(&bit_len_field.to_be_bytes());
     let start = out.len();
     out.resize(start + bit_len.div_ceil(8), 0);
     let mut w = BitWriter::new(&mut out[start..]);
@@ -1135,5 +1142,24 @@ mod tests {
         let framed = post.to_l1_current_framed().unwrap();
         let parsed = parse_l1_post_from_framed(&framed, 2, true).unwrap();
         assert_eq!(post, parsed);
+    }
+
+    #[test]
+    fn oversized_bit_len_is_rejected_not_wrapped() {
+        // Before the fix, a bit_len of 65 536+ (exceeds the 16-bit
+        // framed-block length field) silently wrapped and returned Ok.
+        let mut out = Vec::new();
+        let result = push_framed_block(&mut out, 65_536, |_w| Ok(()));
+        assert!(matches!(
+            result,
+            Err(crate::Error::ReservedBitsViolation { .. })
+        ));
+    }
+
+    #[test]
+    fn max_bit_len_still_serializes() {
+        let mut out = Vec::new();
+        push_framed_block(&mut out, 0xFFFF, |_w| Ok(())).unwrap();
+        assert_eq!(&out[0..2], &[0xFF, 0xFF]);
     }
 }

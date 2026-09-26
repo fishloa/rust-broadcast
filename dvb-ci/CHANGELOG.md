@@ -6,6 +6,63 @@ versioning.
 
 ## [Unreleased]
 
+### Changed (breaking)
+- Serializers now return an error, instead of silently truncating, when a
+  length, count or PID does not fit its wire field (#1129).
+
+### Fixed
+- `objects::ca_pmt::CaPmt::serialize_into` no longer silently truncates
+  `version_number` (5-bit), `program_info_length`/`ES_info_length` (12-bit) or
+  `elementary_pid` (13-bit); each is now rejected with `Error::InvalidObject`
+  when out of range — the host→CAM direction the earlier `#972` PID fix
+  (`ca_pmt_reply`/`replace`) missed (#1091, #1129).
+- `objects::ca_pmt_reply::CaPmtReply::serialize_into` no longer silently
+  truncates `version_number` (5-bit) (#1091, #1129).
+- `objects::mmi_display::DisplayReply`'s graphics-characteristics serializer no
+  longer silently truncates `aspect_ratio_information` (4-bit),
+  `graphics_relation_to_video` (3-bit), `display_bytes` (12-bit),
+  `number_pixel_depths` (4-bit, derived from the pixel-depth entry count), or a
+  pixel-depth entry's `display_depth`/`pixels_per_byte` (3-bit each) (#1091,
+  #1129).
+- `ci_plus::ca_support` (the CI Plus multi-stream `ca_pmt`/`ca_pmt_reply`
+  variant) inherited the `ca_pmt`/`ca_pmt_reply` length-truncation bugs from a
+  verbatim copy of their helpers, and had not received the `#972` PID fix
+  applied to its EN 50221 siblings. The four shared helpers
+  (`info_block_len`/`parse_cmd_and_descriptors`/`write_info_block` in
+  `objects::ca_pmt`, `encode_enable_byte` in `objects::ca_pmt_reply`) are now
+  `pub(crate)` and reused by `ci_plus::ca_support` instead of duplicated, and
+  `MsCaPmt`/`MsCaPmtReply::serialize_into` now range-check `PMT_PID`,
+  `version_number`, `program_info_length`/`ES_info_length` and
+  `elementary_pid` (#1091, #1129).
+- `ci_plus::multistream::{PidSelectReq, PidSelectReply}::serialize_into` no
+  longer silently truncate `num_PID` (8-bit) or a PID entry (13-bit) (#1091,
+  #1129).
+- `ci_plus::sample_decryption`'s `SdInfoReply`, `SdStart`/`SdUpdate` payload
+  (`SamplePayload`) and `DrmMetadataRecord` no longer silently truncate
+  `number_of_DRM_system_ids`/`number_of_DRM_UUIDs` (8-bit),
+  `number_of_metadata_records`/`number_of_Sample_Tracks` (8-bit), `track_PID`
+  (13-bit), or `drm_metadata_length` (16-bit) (#1091, #1129).
+- `ci_plus::multistream_host_control`'s `TuneIpReq`/`TunerStatusReply` no
+  longer silently truncate `service_location_length` (12-bit) or `num_dsd`
+  (7-bit) (#1091, #1129).
+- `ci_plus::low_speed_comms_v4`'s `CommsInfoReply`/`CommsIpConfigReply` no
+  longer silently truncate `inputDeliveryPID` (13-bit) or `num_DNS_servers`
+  (8-bit) (#1091, #1129).
+- `ci_plus::file_retrieval::FileSystemOffer::serialize_into` no longer
+  silently truncates `DomainIdentifierLength` (8-bit) (#1091, #1129).
+- `ci_ext::software_download`'s DSM-CC `DownloadInfoRequest`/
+  `DownloadInfoResponse`/`DownloadCancel`/`DownloadDataRequest`/
+  `DownloadDataBlock` no longer silently truncate `adaptationLength` (8-bit),
+  `messageLength` (16-bit) or `privateDataLength` (16-bit) — a `DownloadDataBlock`
+  with a 64 KiB+ block used to get a wrapped `messageLength` and `Ok` (#1091,
+  #1129).
+- `ci_ext::service_gateway::ServiceDescAck` and
+  `ci_ext::broadcast_service_gateway::EitSectionAck`'s per-event
+  `running_status` (3-bit) is no longer silently truncated on serialize
+  (#1091, #1129).
+- `ci_ext::resource_manager_v2`'s `ModuleIdSend`/`ModuleIdCommand` no longer
+  silently truncate `module_id` (6-bit) (#1091, #1129).
+
 ## [0.8.1] - 2026-08-30
 
 ### Fixed

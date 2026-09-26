@@ -258,7 +258,9 @@ fn write_dsmcc_header(
     transaction_id: u32,
     adaptation: &[u8],
     message_length: usize,
-) -> usize {
+) -> Result<usize> {
+    objects::fit_bits(adaptation.len() as u64, 8, "DSM-CC adaptationLength")?;
+    objects::fit_bits(message_length as u64, 16, "DSM-CC messageLength")?;
     buf[0] = DSMCC_PROTOCOL_DISCRIMINATOR;
     buf[1] = DSMCC_TYPE_DOWNLOAD;
     buf[2..4].copy_from_slice(&message_id.to_be_bytes());
@@ -267,7 +269,7 @@ fn write_dsmcc_header(
     buf[9] = adaptation.len() as u8;
     buf[10..12].copy_from_slice(&(message_length as u16).to_be_bytes());
     buf[12..12 + adaptation.len()].copy_from_slice(adaptation);
-    12 + adaptation.len()
+    Ok(12 + adaptation.len())
 }
 
 /// `DownloadInfoRequest()` (Table 79) — client (host) → server. The
@@ -362,13 +364,18 @@ impl Serialize for DownloadInfoRequest<'_> {
         }
         // messageLength = everything after the messageLength field itself.
         let message_length = total - 12;
+        objects::fit_bits(
+            self.private_data.len() as u64,
+            16,
+            "DownloadInfoRequest privateDataLength",
+        )?;
         let mut pos = write_dsmcc_header(
             buf,
             MSG_ID_DOWNLOAD_INFO_REQUEST,
             self.transaction_id,
             self.adaptation,
             message_length,
-        );
+        )?;
         buf[pos..pos + 4].copy_from_slice(&self.buffer_size.to_be_bytes());
         pos += 4;
         buf[pos..pos + 2].copy_from_slice(&self.maximum_block_size.to_be_bytes());
@@ -527,13 +534,18 @@ impl Serialize for DownloadInfoResponse<'_> {
             });
         }
         let message_length = total - 12;
+        objects::fit_bits(
+            self.private_data.len() as u64,
+            16,
+            "DownloadInfoResponse privateDataLength",
+        )?;
         let mut pos = write_dsmcc_header(
             buf,
             MSG_ID_DOWNLOAD_INFO_RESPONSE,
             self.transaction_id,
             self.adaptation,
             message_length,
-        );
+        )?;
         buf[pos..pos + 4].copy_from_slice(&self.download_id.to_be_bytes());
         pos += 4;
         buf[pos..pos + 2].copy_from_slice(&self.block_size.to_be_bytes());
@@ -632,13 +644,18 @@ impl Serialize for DownloadCancel<'_> {
             });
         }
         let message_length = total - 12;
+        objects::fit_bits(
+            self.private_data.len() as u64,
+            16,
+            "DownloadCancel privateDataLength",
+        )?;
         let mut pos = write_dsmcc_header(
             buf,
             MSG_ID_DOWNLOAD_CANCEL,
             self.transaction_id,
             self.adaptation,
             message_length,
-        );
+        )?;
         buf[pos..pos + 4].copy_from_slice(&self.download_id.to_be_bytes());
         pos += 4;
         buf[pos..pos + 2].copy_from_slice(&self.module_id.to_be_bytes());
@@ -690,7 +707,9 @@ fn write_dsmcc_data_header(
     download_id: u32,
     adaptation: &[u8],
     message_length: usize,
-) -> usize {
+) -> Result<usize> {
+    objects::fit_bits(adaptation.len() as u64, 8, "DSM-CC adaptationLength")?;
+    objects::fit_bits(message_length as u64, 16, "DSM-CC messageLength")?;
     buf[0] = DSMCC_PROTOCOL_DISCRIMINATOR;
     buf[1] = DSMCC_TYPE_DOWNLOAD;
     buf[2..4].copy_from_slice(&message_id.to_be_bytes());
@@ -699,7 +718,7 @@ fn write_dsmcc_data_header(
     buf[9] = adaptation.len() as u8;
     buf[10..12].copy_from_slice(&(message_length as u16).to_be_bytes());
     buf[12..12 + adaptation.len()].copy_from_slice(adaptation);
-    12 + adaptation.len()
+    Ok(12 + adaptation.len())
 }
 
 /// `DownloadDataRequest()` (Table 82) — client (host) → server.
@@ -762,7 +781,7 @@ impl Serialize for DownloadDataRequest<'_> {
             self.download_id,
             self.adaptation,
             message_length,
-        );
+        )?;
         buf[pos..pos + 2].copy_from_slice(&self.module_id.to_be_bytes());
         pos += 2;
         buf[pos..pos + 2].copy_from_slice(&self.block_number.to_be_bytes());
@@ -838,7 +857,7 @@ impl Serialize for DownloadDataBlock<'_> {
             self.download_id,
             self.adaptation,
             message_length,
-        );
+        )?;
         buf[pos..pos + 2].copy_from_slice(&self.module_id.to_be_bytes());
         pos += 2;
         buf[pos] = self.module_version;
@@ -1152,5 +1171,83 @@ mod tests {
         let parsed = DownloadApdu::parse(&uar).unwrap();
         assert!(matches!(parsed, DownloadApdu::UserAuthResult(_)));
         assert_eq!(parsed.to_bytes(), uar);
+    }
+
+    #[test]
+    fn oversized_block_data_wraps_message_length_before_fix_rejected_after() {
+        // A 65 536-byte block_data body makes messageLength (the u16
+        // DSM-CC field) exceed 0xFFFF; before the fix this wrapped and
+        // returned Ok.
+        let big = alloc::vec![0u8; 65_536];
+        let block = DownloadDataBlock {
+            download_id: 1,
+            adaptation: &[],
+            module_id: 1,
+            module_version: 0,
+            block_number: 0,
+            block_data: &big,
+        };
+        let mut buf = alloc::vec![0u8; 65_600];
+        assert!(matches!(
+            block.serialize_into(&mut buf),
+            Err(Error::InvalidObject { .. })
+        ));
+    }
+
+    #[test]
+    fn max_message_length_still_serializes_and_round_trips() {
+        // messageLength = 12 (fixed part after the length field) + block_data.
+        let data = alloc::vec![0xABu8; 0xFFFF - 12 - 6];
+        let block = DownloadDataBlock {
+            download_id: 1,
+            adaptation: &[],
+            module_id: 1,
+            module_version: 0,
+            block_number: 0,
+            block_data: &data,
+        };
+        let bytes = block.to_bytes();
+        assert_eq!(DownloadDataBlock::parse(&bytes).unwrap(), block);
+    }
+
+    #[test]
+    fn oversized_adaptation_is_rejected_not_wrapped() {
+        // 256 bytes silently wrapped adaptationLength (u8) to 0 before the fix.
+        let big = alloc::vec![0xCDu8; 256];
+        let compat = [0x00, 0x02, 0x00, 0x00];
+        let req = DownloadInfoRequest {
+            transaction_id: 1,
+            adaptation: &big,
+            buffer_size: 1,
+            maximum_block_size: 2,
+            compatibility_descriptor: &compat,
+            private_data: &[],
+        };
+        let mut buf = alloc::vec![0u8; 512];
+        assert!(matches!(
+            req.serialize_into(&mut buf),
+            Err(Error::InvalidObject { .. })
+        ));
+    }
+
+    #[test]
+    fn oversized_private_data_is_rejected_not_wrapped() {
+        // A 65 536-byte private_data body exceeds the 16-bit
+        // privateDataLength field.
+        let big = alloc::vec![0u8; 65_536];
+        let compat = [0x00, 0x02, 0x00, 0x00];
+        let req = DownloadInfoRequest {
+            transaction_id: 1,
+            adaptation: &[],
+            buffer_size: 1,
+            maximum_block_size: 2,
+            compatibility_descriptor: &compat,
+            private_data: &big,
+        };
+        let mut buf = alloc::vec![0u8; 65_600];
+        assert!(matches!(
+            req.serialize_into(&mut buf),
+            Err(Error::InvalidObject { .. })
+        ));
     }
 }

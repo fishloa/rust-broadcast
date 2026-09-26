@@ -26,8 +26,11 @@
 //! any value still round-trips via the full enum).
 
 use crate::error::{Error, Result};
-use crate::objects::ca_pmt::{CaPmtCmdId, CaPmtListManagement};
-use crate::objects::ca_pmt_reply::CaEnable;
+use crate::objects;
+use crate::objects::ca_pmt::{
+    CaPmtCmdId, CaPmtListManagement, info_block_len, parse_cmd_and_descriptors, write_info_block,
+};
+use crate::objects::ca_pmt_reply::{CaEnable, encode_enable_byte};
 use crate::tag::{ApduTag, CA_PMT, CA_PMT_REPLY};
 use alloc::vec::Vec;
 use broadcast_common::{Parse, Serialize};
@@ -89,57 +92,6 @@ pub struct MsCaPmt<'a> {
 const MS_CA_PMT_PREFIX: usize = 1 + 1 + 2 + 2 + 1 + 2;
 // Per-ES: stream_type(1) + reserved/elem_pid(2) + reserved/ES_info_length(2).
 const MS_ES_PREFIX: usize = 5;
-
-fn info_block_len(cmd_id: Option<CaPmtCmdId>, descriptors: &[u8]) -> usize {
-    if cmd_id.is_some() || !descriptors.is_empty() {
-        1 + descriptors.len()
-    } else {
-        0
-    }
-}
-
-fn parse_cmd_and_descriptors<'a>(
-    body: &'a [u8],
-    pos: &mut usize,
-    info_length: usize,
-    what: &'static str,
-) -> Result<(Option<CaPmtCmdId>, &'a [u8])> {
-    if info_length == 0 {
-        return Ok((None, &body[..0]));
-    }
-    let end = *pos + info_length;
-    if end > body.len() {
-        return Err(Error::LengthMismatch {
-            what,
-            declared: info_length,
-            actual: body.len().saturating_sub(*pos),
-        });
-    }
-    let cmd_id = CaPmtCmdId::from_u8(body[*pos]);
-    let descriptors = &body[*pos + 1..end];
-    *pos = end;
-    Ok((Some(cmd_id), descriptors))
-}
-
-fn write_info_block(
-    cmd_id: Option<CaPmtCmdId>,
-    descriptors: &[u8],
-    buf: &mut [u8],
-) -> Result<usize> {
-    let len = info_block_len(cmd_id, descriptors);
-    if len == 0 {
-        return Ok(0);
-    }
-    if buf.len() < len {
-        return Err(Error::OutputBufferTooSmall {
-            need: len,
-            have: buf.len(),
-        });
-    }
-    buf[0] = cmd_id.unwrap_or(CaPmtCmdId::OkDescrambling).to_u8();
-    buf[1..len].copy_from_slice(descriptors);
-    Ok(len)
-}
 
 impl<'a> Parse<'a> for MsCaPmt<'a> {
     type Error = Error;
@@ -218,23 +170,40 @@ impl Serialize for MsCaPmt<'_> {
         crate::objects::apdu_len(body)
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
+        objects::fit_bits(u64::from(self.pmt_pid), 13, "ms ca_pmt PMT_PID")?;
+        objects::fit_bits(
+            u64::from(self.version_number),
+            5,
+            "ms ca_pmt version_number",
+        )?;
         let program_info_length = info_block_len(self.cmd_id, self.program_ca_descriptors);
+        objects::fit_bits(
+            program_info_length as u64,
+            12,
+            "ms ca_pmt program_info_length",
+        )?;
         let mut body = MS_CA_PMT_PREFIX + program_info_length;
         for s in &self.streams {
-            body += MS_ES_PREFIX + info_block_len(s.cmd_id, s.ca_descriptors);
+            objects::fit_bits(
+                u64::from(s.elementary_pid),
+                13,
+                "ms ca_pmt ES elementary_PID",
+            )?;
+            let es_info_length = info_block_len(s.cmd_id, s.ca_descriptors);
+            objects::fit_bits(es_info_length as u64, 12, "ms ca_pmt ES_info_length")?;
+            body += MS_ES_PREFIX + es_info_length;
         }
         let mut pos = crate::objects::write_apdu_header(CA_PMT, body, buf)?;
         buf[pos] = self.lts_id;
         buf[pos + 1] = self.list_management.to_u8();
         buf[pos + 2..pos + 4].copy_from_slice(&self.program_number.to_be_bytes());
-        // reserved(3)='111', PMT_PID(13).
-        buf[pos + 4] = 0xE0 | ((self.pmt_pid >> 8) as u8 & 0x1F);
+        // reserved(3)='111', PMT_PID(13). Range-checked above.
+        buf[pos + 4] = 0xE0 | (self.pmt_pid >> 8) as u8;
         buf[pos + 5] = self.pmt_pid as u8;
-        // reserved(2)='11', version(5), current_next(1).
-        buf[pos + 6] =
-            0xC0 | ((self.version_number & 0x1F) << 1) | u8::from(self.current_next_indicator);
-        // reserved(4)='1111', program_info_length(12).
-        buf[pos + 7] = 0xF0 | ((program_info_length >> 8) as u8 & 0x0F);
+        // reserved(2)='11', version(5), current_next(1). Range-checked above.
+        buf[pos + 6] = 0xC0 | (self.version_number << 1) | u8::from(self.current_next_indicator);
+        // reserved(4)='1111', program_info_length(12). Range-checked above.
+        buf[pos + 7] = 0xF0 | (program_info_length >> 8) as u8;
         buf[pos + 8] = program_info_length as u8;
         pos += MS_CA_PMT_PREFIX;
         pos += write_info_block(self.cmd_id, self.program_ca_descriptors, &mut buf[pos..])?;
@@ -242,9 +211,10 @@ impl Serialize for MsCaPmt<'_> {
         for s in &self.streams {
             let es_info_length = info_block_len(s.cmd_id, s.ca_descriptors);
             buf[pos] = s.stream_type;
-            buf[pos + 1] = 0xE0 | ((s.elementary_pid >> 8) as u8 & 0x1F);
+            // reserved(3)='111', elementary_PID(13). Range-checked above.
+            buf[pos + 1] = 0xE0 | (s.elementary_pid >> 8) as u8;
             buf[pos + 2] = s.elementary_pid as u8;
-            buf[pos + 3] = 0xF0 | ((es_info_length >> 8) as u8 & 0x0F);
+            buf[pos + 3] = 0xF0 | (es_info_length >> 8) as u8;
             buf[pos + 4] = es_info_length as u8;
             pos += MS_ES_PREFIX;
             pos += write_info_block(s.cmd_id, s.ca_descriptors, &mut buf[pos..])?;
@@ -290,14 +260,6 @@ pub struct MsCaPmtReply {
 // LTS_id(1) + program_number(2) + reserved/version/cni(1) + flag/enable(1).
 const MS_REPLY_PREFIX: usize = 1 + 2 + 1 + 1;
 const MS_REPLY_ES_LEN: usize = 3; // reserved/elem_pid(2) + flag/enable(1)
-
-/// Encode a `CA_enable_flag` + 7-bit `CA_enable`/reserved byte (absent → `0x7F`).
-fn encode_enable_byte(enable: Option<CaEnable>) -> u8 {
-    match enable {
-        Some(e) => 0x80 | (e.to_u8() & 0x7F),
-        None => 0x7F,
-    }
-}
 
 impl<'a> Parse<'a> for MsCaPmtReply {
     type Error = Error;
@@ -362,17 +324,29 @@ impl Serialize for MsCaPmtReply {
         crate::objects::apdu_len(MS_REPLY_PREFIX + self.streams.len() * MS_REPLY_ES_LEN)
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
+        objects::fit_bits(
+            u64::from(self.version_number),
+            5,
+            "ms ca_pmt_reply version_number",
+        )?;
+        for s in &self.streams {
+            objects::fit_bits(
+                u64::from(s.elementary_pid),
+                13,
+                "ms ca_pmt_reply ES elementary_PID",
+            )?;
+        }
         let body = MS_REPLY_PREFIX + self.streams.len() * MS_REPLY_ES_LEN;
         let mut pos = crate::objects::write_apdu_header(CA_PMT_REPLY, body, buf)?;
         buf[pos] = self.lts_id;
         buf[pos + 1..pos + 3].copy_from_slice(&self.program_number.to_be_bytes());
-        // reserved(2)='11', version(5), current_next(1).
-        buf[pos + 3] =
-            0xC0 | ((self.version_number & 0x1F) << 1) | u8::from(self.current_next_indicator);
+        // reserved(2)='11', version(5), current_next(1). Range-checked above.
+        buf[pos + 3] = 0xC0 | (self.version_number << 1) | u8::from(self.current_next_indicator);
         buf[pos + 4] = encode_enable_byte(self.ca_enable);
         pos += MS_REPLY_PREFIX;
         for s in &self.streams {
-            buf[pos] = 0xE0 | ((s.elementary_pid >> 8) as u8 & 0x1F);
+            // reserved(3)='111', elementary_PID(13). Range-checked above.
+            buf[pos] = 0xE0 | (s.elementary_pid >> 8) as u8;
             buf[pos + 1] = s.elementary_pid as u8;
             buf[pos + 2] = encode_enable_byte(s.ca_enable);
             pos += MS_REPLY_ES_LEN;
@@ -602,6 +576,65 @@ mod tests {
         assert!(matches!(
             CaSupportApdu::parse(&rb).unwrap(),
             CaSupportApdu::CaPmtReply(_)
+        ));
+    }
+
+    #[test]
+    fn oversized_pmt_pid_is_rejected_not_wrapped() {
+        // Before the fix, 0x2064 (exceeds 13 bits) silently wrapped to wire PID
+        // 0x0064 and returned Ok.
+        let pmt = MsCaPmt {
+            lts_id: 0,
+            list_management: CaPmtListManagement::Only,
+            program_number: 1,
+            pmt_pid: 0x2064,
+            version_number: 0,
+            current_next_indicator: true,
+            cmd_id: None,
+            program_ca_descriptors: &[],
+            streams: Vec::new(),
+        };
+        let mut buf = [0u8; 32];
+        assert!(matches!(
+            pmt.serialize_into(&mut buf),
+            Err(Error::InvalidObject { .. })
+        ));
+    }
+
+    #[test]
+    fn max_pmt_pid_still_serializes_and_round_trips() {
+        let pmt = MsCaPmt {
+            lts_id: 0,
+            list_management: CaPmtListManagement::Only,
+            program_number: 1,
+            pmt_pid: 0x1FFF,
+            version_number: 0,
+            current_next_indicator: true,
+            cmd_id: None,
+            program_ca_descriptors: &[],
+            streams: Vec::new(),
+        };
+        let bytes = pmt.to_bytes();
+        assert_eq!(MsCaPmt::parse(&bytes).unwrap(), pmt);
+    }
+
+    #[test]
+    fn oversized_reply_elementary_pid_is_rejected_not_wrapped() {
+        let reply = MsCaPmtReply {
+            lts_id: 0,
+            program_number: 1,
+            version_number: 0,
+            current_next_indicator: true,
+            ca_enable: None,
+            streams: alloc::vec![MsCaPmtReplyStream {
+                elementary_pid: 0x2064,
+                ca_enable: None,
+            }],
+        };
+        let mut buf = [0u8; 32];
+        assert!(matches!(
+            reply.serialize_into(&mut buf),
+            Err(Error::InvalidObject { .. })
         ));
     }
 }

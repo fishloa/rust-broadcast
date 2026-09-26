@@ -108,7 +108,7 @@ macro_rules! declare_segments {
                         buf[0] = 0x0F;
                         buf[1] = *segment_type;
                         buf[2..4].copy_from_slice(&page_id.to_be_bytes());
-                        let seg_len = data.len() as u16;
+                        let seg_len = crate::segments::check_segment_length(data.len())?;
                         buf[4..6].copy_from_slice(&seg_len.to_be_bytes());
                         buf[6..len].copy_from_slice(data);
                         Ok(len)

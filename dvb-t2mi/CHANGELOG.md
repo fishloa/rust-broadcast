@@ -2,6 +2,25 @@
 
 ## [Unreleased]
 
+### Changed (breaking)
+- Serializers now return an error, instead of silently truncating, when a
+  length or count does not fit its wire field (#1129).
+
+### Fixed
+- `packet::Header::serialize_into` no longer silently wraps an out-of-range
+  `superframe_idx` (4-bit field) to 0; it now rejects it with
+  `ReservedBitsViolation` (#1095, #1129).
+- `payload::individual_addressing`'s per-function bodies (`ace_gain`,
+  `ace_maximal_extension`, `ace_clipping_threshold`, `miso_group` rfu,
+  `tr_papr` rfu1/`tr_clipping_threshold`/rfu2/`number_of_iterations`,
+  `tx_sig_fef_seq_num` rfu1/`seq_num_1`/rfu2/`seq_num_2`/rfu3,
+  `tx_sig_aux_stream_tx_id`/rfu, `rf_idx`/`frequency` rfu) no longer silently
+  mask an out-of-range field on serialize; each is now rejected with
+  `ReservedBitsViolation` (#1095, #1129).
+- `payload::l1::post`'s framed-block writer no longer silently wraps a
+  16-bit-or-larger bit-length into the 16-bit framed-block length field; it
+  now rejects it with `ReservedBitsViolation` (#1095, #1129).
+
 ## [10.1.0] - 2026-09-26
 Lockstep minor alongside `dvb-si` 10.1.0; no source changes in this crate.
 

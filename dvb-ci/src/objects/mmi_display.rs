@@ -381,24 +381,56 @@ impl DisplayReply {
         })
     }
 
-    fn write_graphics(g: &GraphicsCharacteristics, buf: &mut [u8]) -> usize {
+    fn write_graphics(g: &GraphicsCharacteristics, buf: &mut [u8]) -> Result<usize> {
+        super::fit_bits(
+            u64::from(g.aspect_ratio_information),
+            4,
+            "display_reply aspect_ratio_information",
+        )?;
+        super::fit_bits(
+            u64::from(g.graphics_relation_to_video),
+            3,
+            "display_reply graphics_relation_to_video",
+        )?;
+        super::fit_bits(
+            u64::from(g.display_bytes),
+            12,
+            "display_reply display_bytes",
+        )?;
+        let n = super::fit_bits(
+            g.depths.len() as u64,
+            4,
+            "display_reply number_pixel_depths",
+        )? as u8;
+        for d in &g.depths {
+            super::fit_bits(
+                u64::from(d.display_depth),
+                3,
+                "display_reply pixel_depth display_depth",
+            )?;
+            super::fit_bits(
+                u64::from(d.pixels_per_byte),
+                3,
+                "display_reply pixel_depth pixels_per_byte",
+            )?;
+        }
+
         buf[0..2].copy_from_slice(&g.display_horizontal_size.to_be_bytes());
         buf[2..4].copy_from_slice(&g.display_vertical_size.to_be_bytes());
-        buf[4] = ((g.aspect_ratio_information & 0x0F) << 4)
-            | ((g.graphics_relation_to_video & 0x07) << 1)
+        buf[4] = (g.aspect_ratio_information << 4)
+            | (g.graphics_relation_to_video << 1)
             | u8::from(g.multiple_depths);
-        let n = g.depths.len() as u8 & 0x0F;
         buf[5] = (g.display_bytes >> 4) as u8;
         buf[6] = (((g.display_bytes & 0x0F) as u8) << 4) | (g.composition_buffer_bytes >> 4);
         buf[7] = ((g.composition_buffer_bytes & 0x0F) << 4) | (g.object_cache_bytes >> 4);
         buf[8] = ((g.object_cache_bytes & 0x0F) << 4) | n;
         let mut pos = GFX_FIXED;
         for d in &g.depths {
-            buf[pos] = ((d.display_depth & 0x07) << 5) | ((d.pixels_per_byte & 0x07) << 2);
+            buf[pos] = (d.display_depth << 5) | (d.pixels_per_byte << 2);
             buf[pos + 1] = d.region_overhead;
             pos += 2;
         }
-        pos
+        Ok(pos)
     }
 
     fn body_len(&self) -> usize {
@@ -457,7 +489,7 @@ impl Serialize for DisplayReply {
         pos += 1;
         match &self.body {
             DisplayReplyBody::Graphics(g) => {
-                pos += Self::write_graphics(g, &mut buf[pos..]);
+                pos += Self::write_graphics(g, &mut buf[pos..])?;
             }
             DisplayReplyBody::CharacterTables(t) => {
                 buf[pos..pos + t.len()].copy_from_slice(t);
@@ -1262,6 +1294,72 @@ mod tests {
             gg.depths[0].region_overhead = 0xFF;
         }
         assert_ne!(bytes, other.to_bytes());
+    }
+
+    fn base_graphics() -> GraphicsCharacteristics {
+        GraphicsCharacteristics {
+            display_horizontal_size: 720,
+            display_vertical_size: 576,
+            aspect_ratio_information: 0,
+            graphics_relation_to_video: 0,
+            multiple_depths: false,
+            display_bytes: 0,
+            composition_buffer_bytes: 0,
+            object_cache_bytes: 0,
+            depths: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn oversized_display_bytes_is_rejected_not_wrapped() {
+        // Before the fix, 0x1000 (13 bits) silently wrapped to 0 in the 12-bit
+        // display_bytes field and returned Ok.
+        let mut g = base_graphics();
+        g.display_bytes = 0x1000;
+        let dr = DisplayReply {
+            reply_id: DisplayReplyId::ListGraphicOverlayCharacteristics,
+            body: DisplayReplyBody::Graphics(g),
+        };
+        let mut buf = [0u8; 32];
+        assert!(matches!(
+            dr.serialize_into(&mut buf),
+            Err(Error::InvalidObject { .. })
+        ));
+    }
+
+    #[test]
+    fn max_display_bytes_still_serializes_and_round_trips() {
+        let mut g = base_graphics();
+        g.display_bytes = 0x0FFF; // the 12-bit maximum
+        let dr = DisplayReply {
+            reply_id: DisplayReplyId::ListGraphicOverlayCharacteristics,
+            body: DisplayReplyBody::Graphics(g),
+        };
+        let bytes = dr.to_bytes();
+        assert_eq!(DisplayReply::parse(&bytes).unwrap(), dr);
+    }
+
+    #[test]
+    fn too_many_pixel_depths_is_rejected_not_wrapped() {
+        // 16 entries silently wrapped number_pixel_depths (4-bit) to 0 before
+        // the fix, while still emitting all 16 entries' worth of data.
+        let mut g = base_graphics();
+        g.depths = (0..16)
+            .map(|_| PixelDepth {
+                display_depth: 0,
+                pixels_per_byte: 0,
+                region_overhead: 0,
+            })
+            .collect();
+        let dr = DisplayReply {
+            reply_id: DisplayReplyId::ListGraphicOverlayCharacteristics,
+            body: DisplayReplyBody::Graphics(g),
+        };
+        let mut buf = alloc::vec![0u8; 128];
+        assert!(matches!(
+            dr.serialize_into(&mut buf),
+            Err(Error::InvalidObject { .. })
+        ));
     }
 
     #[test]

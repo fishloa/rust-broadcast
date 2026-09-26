@@ -242,7 +242,7 @@ impl<'a> Parse<'a> for CaPmt<'a> {
 /// Read an `info_length`-byte block at `*pos`: when non-zero it starts with a
 /// `ca_pmt_cmd_id` byte followed by `info_length - 1` descriptor bytes. Advances
 /// `*pos` past the block.
-fn parse_cmd_and_descriptors<'a>(
+pub(crate) fn parse_cmd_and_descriptors<'a>(
     body: &'a [u8],
     pos: &mut usize,
     info_length: usize,
@@ -267,7 +267,7 @@ fn parse_cmd_and_descriptors<'a>(
 
 /// Wire length of an info block (cmd_id + descriptors), or 0 when neither is
 /// present.
-fn info_block_len(cmd_id: Option<CaPmtCmdId>, descriptors: &[u8]) -> usize {
+pub(crate) fn info_block_len(cmd_id: Option<CaPmtCmdId>, descriptors: &[u8]) -> usize {
     if cmd_id.is_some() || !descriptors.is_empty() {
         1 + descriptors.len()
     } else {
@@ -286,20 +286,25 @@ impl Serialize for CaPmt<'_> {
     }
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
+        super::fit_bits(u64::from(self.version_number), 5, "ca_pmt version_number")?;
         let program_info_length = info_block_len(self.cmd_id, self.program_ca_descriptors);
+        super::fit_bits(program_info_length as u64, 12, "ca_pmt program_info_length")?;
         let mut body = CA_PMT_PREFIX + program_info_length;
         for s in &self.streams {
-            body += ES_PREFIX + info_block_len(s.cmd_id, s.ca_descriptors);
+            super::fit_bits(u64::from(s.elementary_pid), 13, "ca_pmt ES elementary_PID")?;
+            let es_info_length = info_block_len(s.cmd_id, s.ca_descriptors);
+            super::fit_bits(es_info_length as u64, 12, "ca_pmt ES_info_length")?;
+            body += ES_PREFIX + es_info_length;
         }
         let mut pos = super::write_apdu_header(tag::CA_PMT, body, buf)?;
 
         buf[pos] = self.list_management.to_u8();
         buf[pos + 1..pos + 3].copy_from_slice(&self.program_number.to_be_bytes());
-        // reserved(2)='11', version(5), current_next(1).
-        buf[pos + 3] =
-            0xC0 | ((self.version_number & 0x1F) << 1) | u8::from(self.current_next_indicator);
-        // reserved(4)='1111', program_info_length(12).
-        buf[pos + 4] = 0xF0 | ((program_info_length >> 8) as u8 & 0x0F);
+        // reserved(2)='11', version(5), current_next(1). version_number was
+        // range-checked above, so no mask is needed to fit the field.
+        buf[pos + 3] = 0xC0 | (self.version_number << 1) | u8::from(self.current_next_indicator);
+        // reserved(4)='1111', program_info_length(12). Range-checked above.
+        buf[pos + 4] = 0xF0 | (program_info_length >> 8) as u8;
         buf[pos + 5] = program_info_length as u8;
         pos += CA_PMT_PREFIX;
         pos += write_info_block(self.cmd_id, self.program_ca_descriptors, &mut buf[pos..])?;
@@ -307,11 +312,11 @@ impl Serialize for CaPmt<'_> {
         for s in &self.streams {
             let es_info_length = info_block_len(s.cmd_id, s.ca_descriptors);
             buf[pos] = s.stream_type;
-            // reserved(3)='111', elementary_PID(13).
-            buf[pos + 1] = 0xE0 | ((s.elementary_pid >> 8) as u8 & 0x1F);
+            // reserved(3)='111', elementary_PID(13). Range-checked above.
+            buf[pos + 1] = 0xE0 | (s.elementary_pid >> 8) as u8;
             buf[pos + 2] = s.elementary_pid as u8;
-            // reserved(4)='1111', ES_info_length(12).
-            buf[pos + 3] = 0xF0 | ((es_info_length >> 8) as u8 & 0x0F);
+            // reserved(4)='1111', ES_info_length(12). Range-checked above.
+            buf[pos + 3] = 0xF0 | (es_info_length >> 8) as u8;
             buf[pos + 4] = es_info_length as u8;
             pos += ES_PREFIX;
             pos += write_info_block(s.cmd_id, s.ca_descriptors, &mut buf[pos..])?;
@@ -320,7 +325,7 @@ impl Serialize for CaPmt<'_> {
     }
 }
 
-fn write_info_block(
+pub(crate) fn write_info_block(
     cmd_id: Option<CaPmtCmdId>,
     descriptors: &[u8],
     buf: &mut [u8],
@@ -443,5 +448,89 @@ mod tests {
         let parsed = CaPmt::parse(&bytes).unwrap();
         assert_eq!(parsed, pmt);
         assert!(parsed.streams[0].cmd_id.is_none());
+    }
+
+    #[test]
+    fn oversized_elementary_pid_is_rejected_not_wrapped() {
+        // Before the fix this silently wrapped 0x2100 to wire PID 0x0100 and
+        // returned Ok; now it must be rejected.
+        let pmt = CaPmt {
+            list_management: CaPmtListManagement::Only,
+            program_number: 1,
+            version_number: 0,
+            current_next_indicator: true,
+            cmd_id: None,
+            program_ca_descriptors: &[],
+            streams: alloc::vec![CaPmtStream {
+                stream_type: 0x02,
+                elementary_pid: 0x2100, // exceeds the 13-bit field (max 0x1FFF)
+                cmd_id: None,
+                ca_descriptors: &[],
+            }],
+        };
+        let mut buf = [0u8; 64];
+        assert!(matches!(
+            pmt.serialize_into(&mut buf),
+            Err(Error::InvalidObject { .. })
+        ));
+    }
+
+    #[test]
+    fn max_pid_still_serializes_and_round_trips() {
+        let pmt = CaPmt {
+            list_management: CaPmtListManagement::Only,
+            program_number: 1,
+            version_number: 0,
+            current_next_indicator: true,
+            cmd_id: None,
+            program_ca_descriptors: &[],
+            streams: alloc::vec![CaPmtStream {
+                stream_type: 0x02,
+                elementary_pid: 0x1FFF, // the 13-bit maximum
+                cmd_id: None,
+                ca_descriptors: &[],
+            }],
+        };
+        let bytes = pmt.to_bytes();
+        assert_eq!(CaPmt::parse(&bytes).unwrap(), pmt);
+    }
+
+    #[test]
+    fn oversized_program_info_length_is_rejected() {
+        // A program_info block of 4096+ bytes exceeds the 12-bit
+        // program_info_length field (max 0x0FFF).
+        let big = alloc::vec![0u8; 4096];
+        let pmt = CaPmt {
+            list_management: CaPmtListManagement::Only,
+            program_number: 1,
+            version_number: 0,
+            current_next_indicator: true,
+            cmd_id: Some(CaPmtCmdId::OkDescrambling),
+            program_ca_descriptors: &big,
+            streams: Vec::new(),
+        };
+        let mut buf = alloc::vec![0u8; 4200];
+        assert!(matches!(
+            pmt.serialize_into(&mut buf),
+            Err(Error::InvalidObject { .. })
+        ));
+    }
+
+    #[test]
+    fn oversized_version_number_is_rejected() {
+        let pmt = CaPmt {
+            list_management: CaPmtListManagement::Only,
+            program_number: 1,
+            version_number: 0x20, // exceeds the 5-bit field (max 0x1F)
+            current_next_indicator: true,
+            cmd_id: None,
+            program_ca_descriptors: &[],
+            streams: Vec::new(),
+        };
+        let mut buf = [0u8; 16];
+        assert!(matches!(
+            pmt.serialize_into(&mut buf),
+            Err(Error::InvalidObject { .. })
+        ));
     }
 }

@@ -677,7 +677,7 @@ impl Serialize for ObjectDataSegment<'_> {
         buf[0] = 0x0F;
         buf[1] = SEGMENT_TYPE;
         buf[2..4].copy_from_slice(&self.page_id.to_be_bytes());
-        let seg_len = (len - HEADER_LEN) as u16;
+        let seg_len = crate::segments::check_segment_length(len - HEADER_LEN)?;
         buf[4..6].copy_from_slice(&seg_len.to_be_bytes());
 
         buf[6..8].copy_from_slice(&self.object_id.to_be_bytes());
@@ -887,5 +887,26 @@ mod tests {
             }
             _ => panic!(),
         }
+    }
+
+    #[test]
+    fn oversized_segment_is_rejected_not_wrapped() {
+        // Before the fix, a 64 KiB+ body silently wrapped segment_length and
+        // returned Ok.
+        let big = alloc::vec![0u8; 65_536];
+        let seg = ObjectDataSegment {
+            page_id: 1,
+            object_id: 1,
+            object_version_number: 0,
+            object_coding_method: ObjectCodingMethod::ProgressivePixels,
+            non_modifying_colour_flag: false,
+            payload: ObjectDataPayload::ProgressivePixels(ProgressivePixelBlock {
+                bitmap_width: 1,
+                bitmap_height: 1,
+                compressed_data: &big,
+            }),
+        };
+        let mut buf = alloc::vec![0u8; 65_600];
+        assert_eq!(seg.serialize_into(&mut buf), Err(Error::SegmentTooLarge));
     }
 }

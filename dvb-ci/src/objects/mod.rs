@@ -100,6 +100,34 @@ pub(crate) fn serialize_empty_apdu(tag: ApduTag, buf: &mut [u8]) -> Result<usize
     write_apdu_header(tag, 0, buf)
 }
 
+/// Range-check `value` against a `bits`-wide wire field before it is narrowed
+/// and written, mapping the shared [`broadcast_common::len::FieldOverflow`]
+/// (which compares before narrowing) into this crate's [`Error::InvalidObject`]
+/// so a length/count/PID that does not fit is rejected instead of silently
+/// wrapped. `what` names the object and field (e.g. `"ca_pmt ES elementary_PID"`)
+/// for both the `FieldOverflow` and the resulting error.
+pub(crate) fn fit_bits(value: u64, bits: u32, what: &'static str) -> Result<u64> {
+    broadcast_common::len::fit_bits(value, bits, what).map_err(|_| Error::InvalidObject {
+        what,
+        reason: overflow_reason(bits),
+    })
+}
+
+/// Static "why" text for [`fit_bits`], keyed by field width — every width this
+/// crate's wire fields actually use.
+const fn overflow_reason(bits: u32) -> &'static str {
+    match bits {
+        4 => "exceeds 4-bit range (0x0F)",
+        5 => "exceeds 5-bit range (0x1F)",
+        7 => "exceeds 7-bit range (0x7F)",
+        8 => "exceeds 8-bit range (0xFF)",
+        12 => "exceeds 12-bit range (0x0FFF)",
+        13 => "exceeds 13-bit PID range (0x1FFF)",
+        16 => "exceeds 16-bit range (0xFFFF)",
+        _ => "exceeds field width",
+    }
+}
+
 /// serde helper: serialize a borrowed `&[u8]` field as a byte sequence.
 #[cfg(feature = "serde")]
 pub(crate) mod bytes_serde {

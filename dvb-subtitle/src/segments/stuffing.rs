@@ -72,7 +72,7 @@ impl Serialize for StuffingSegment<'_> {
         buf[0] = 0x0F;
         buf[1] = SEGMENT_TYPE;
         buf[2..4].copy_from_slice(&self.page_id.to_be_bytes());
-        let seg_len = self.data.len() as u16;
+        let seg_len = crate::segments::check_segment_length(self.data.len())?;
         buf[4..6].copy_from_slice(&seg_len.to_be_bytes());
         buf[6..len].copy_from_slice(self.data);
         Ok(len)

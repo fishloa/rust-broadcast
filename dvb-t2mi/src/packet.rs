@@ -238,10 +238,16 @@ impl broadcast_common::Serialize for Header {
                 reason: "Must be in range 0..=7 (3-bit field)",
             });
         }
+        if self.superframe_idx > 0x0F {
+            return Err(Error::ReservedBitsViolation {
+                field: "superframe_idx",
+                reason: "Must be in range 0..=15 (4-bit field)",
+            });
+        }
 
         buf[0] = self.packet_type.into();
         buf[1] = self.packet_count;
-        buf[2] = (self.superframe_idx & 0x0F) << 4 | (self.t2mi_stream_id & 0x07);
+        buf[2] = (self.superframe_idx << 4) | self.t2mi_stream_id;
         buf[3] = 0; // RFU = 0
         let len_be = self.payload_len_bits.to_be_bytes();
         buf[4] = len_be[0];
@@ -484,6 +490,38 @@ mod tests {
         let mut buf = [0u8; HEADER_LEN];
         let result = hdr.serialize_into(&mut buf);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn serialize_rejects_superframe_idx_above_15() {
+        // Before the fix, 16 (exceeds the 4-bit field) silently wrapped to 0
+        // in the superframe_idx nibble and returned Ok.
+        let hdr = Header {
+            packet_type: PacketType::BasebandFrame,
+            packet_count: 0,
+            superframe_idx: 16,
+            t2mi_stream_id: 0,
+            payload_len_bits: 0,
+        };
+        let mut buf = [0u8; HEADER_LEN];
+        assert!(matches!(
+            hdr.serialize_into(&mut buf),
+            Err(crate::Error::ReservedBitsViolation { .. })
+        ));
+    }
+
+    #[test]
+    fn max_superframe_idx_still_serializes_and_round_trips() {
+        let hdr = Header {
+            packet_type: PacketType::BasebandFrame,
+            packet_count: 0,
+            superframe_idx: 15, // the 4-bit maximum
+            t2mi_stream_id: 0,
+            payload_len_bits: 0,
+        };
+        let mut buf = [0u8; HEADER_LEN];
+        hdr.serialize_into(&mut buf).unwrap();
+        assert_eq!(Header::parse(&buf).unwrap(), hdr);
     }
 
     #[test]

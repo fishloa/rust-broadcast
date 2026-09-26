@@ -212,9 +212,10 @@ impl Serialize for ModuleIdSend {
         objects::apdu_len(MODULE_ID_SEND_BODY)
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
+        objects::fit_bits(u64::from(self.module_id), 6, "module_id_send module_id")?;
         let pos = objects::write_apdu_header(tag::MODULE_ID_SEND, MODULE_ID_SEND_BODY, buf)?;
-        // reserved(2)='00', module_id(6).
-        buf[pos] = self.module_id & 0x3F;
+        // reserved(2)='00', module_id(6). Range-checked above.
+        buf[pos] = self.module_id;
         Ok(pos + MODULE_ID_SEND_BODY)
     }
 }
@@ -247,9 +248,11 @@ impl Serialize for ModuleIdCommand {
         objects::apdu_len(MODULE_ID_COMMAND_BODY)
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
+        objects::fit_bits(u64::from(self.module_id), 6, "module_id_command module_id")?;
         let pos = objects::write_apdu_header(tag::MODULE_ID_COMMAND, MODULE_ID_COMMAND_BODY, buf)?;
         buf[pos] = self.command.to_u8();
-        buf[pos + 1] = self.module_id & 0x3F;
+        // reserved(2)='00', module_id(6). Range-checked above.
+        buf[pos + 1] = self.module_id;
         Ok(pos + MODULE_ID_COMMAND_BODY)
     }
 }
@@ -400,5 +403,37 @@ mod tests {
         assert!(matches!(parsed, ResourceManagerV2Apdu::ModuleIdCommand(_)));
         // dispatch enum round-trips.
         assert_eq!(parsed.to_bytes(), mic);
+    }
+
+    #[test]
+    fn oversized_module_id_send_is_rejected_not_wrapped() {
+        // Before the fix, 0x43 (exceeds 6 bits) silently wrapped to 0x03 in
+        // the module_id field and returned Ok.
+        let m = ModuleIdSend { module_id: 0x43 };
+        let mut buf = [0u8; 16];
+        assert!(matches!(
+            m.serialize_into(&mut buf),
+            Err(Error::InvalidObject { .. })
+        ));
+    }
+
+    #[test]
+    fn max_module_id_send_still_serializes_and_round_trips() {
+        let m = ModuleIdSend { module_id: 0x3F }; // the 6-bit maximum
+        let bytes = m.to_bytes();
+        assert_eq!(ModuleIdSend::parse(&bytes).unwrap(), m);
+    }
+
+    #[test]
+    fn oversized_module_id_command_is_rejected_not_wrapped() {
+        let m = ModuleIdCommand {
+            command: ModuleIdCommandKind::SetModuleId,
+            module_id: 0x43,
+        };
+        let mut buf = [0u8; 16];
+        assert!(matches!(
+            m.serialize_into(&mut buf),
+            Err(Error::InvalidObject { .. })
+        ));
     }
 }

@@ -516,21 +516,77 @@ fn try_parse_typed_body(
 
 // ── Private body serialize helpers ─────────────────────────────────────────
 
-fn serialize_ace_papr(body: &AcePaprBody, buf: &mut [u8]) {
-    buf[0] = (body.ace_gain & 0x1F) << 3 | (body.ace_maximal_extension & 0x07);
-    buf[1] = (body.ace_clipping_threshold & 0x7F) << 1 | if body.rfu { 1 } else { 0 };
+/// Range-check `value` against a `bits`-wide wire field before it is narrowed
+/// and written, so a value that does not fit is rejected instead of silently
+/// wrapped (see `docs/w3-rules.md`).
+fn check_bits(value: u64, bits: u32, field: &'static str) -> Result<(), crate::error::Error> {
+    broadcast_common::len::fit_bits(value, bits, field)
+        .map(|_| ())
+        .map_err(|_| crate::Error::ReservedBitsViolation {
+            field,
+            reason: range_reason(bits),
+        })
 }
 
-fn serialize_miso_group(body: &MisoGroupBody, buf: &mut [u8]) {
-    buf[0] = if body.miso_group { 0x80 } else { 0x00 } | (body.rfu & 0x7F);
+/// Static "why" text for [`check_bits`], keyed by field width — every width
+/// this module's bit-packed bodies actually use.
+const fn range_reason(bits: u32) -> &'static str {
+    match bits {
+        3 => "Must be in range 0..=7 (3-bit field)",
+        4 => "Must be in range 0..=15 (4-bit field)",
+        5 => "Must be in range 0..=31 (5-bit field)",
+        7 => "Must be in range 0..=127 (7-bit field)",
+        10 => "Must be in range 0..=1023 (10-bit field)",
+        12 => "Must be in range 0..=4095 (12-bit field)",
+        14 => "Must be in range 0..=16383 (14-bit field)",
+        20 => "Must be in range 0..=1048575 (20-bit field)",
+        24 => "Must be in range 0..=16777215 (24-bit field)",
+        _ => "value exceeds field width",
+    }
 }
 
-fn serialize_tr_papr(body: &TrPaprBody, buf: &mut [u8]) {
-    buf[0] = (body.rfu1 & 0x0F) << 4 | ((body.tr_clipping_threshold >> 8) as u8 & 0x0F);
+fn serialize_ace_papr(body: &AcePaprBody, buf: &mut [u8]) -> Result<(), crate::error::Error> {
+    check_bits(u64::from(body.ace_gain), 5, "ace_gain")?;
+    check_bits(
+        u64::from(body.ace_maximal_extension),
+        3,
+        "ace_maximal_extension",
+    )?;
+    check_bits(
+        u64::from(body.ace_clipping_threshold),
+        7,
+        "ace_clipping_threshold",
+    )?;
+    buf[0] = body.ace_gain << 3 | body.ace_maximal_extension;
+    buf[1] = body.ace_clipping_threshold << 1 | if body.rfu { 1 } else { 0 };
+    Ok(())
+}
+
+fn serialize_miso_group(body: &MisoGroupBody, buf: &mut [u8]) -> Result<(), crate::error::Error> {
+    check_bits(u64::from(body.rfu), 7, "miso_group rfu")?;
+    buf[0] = if body.miso_group { 0x80 } else { 0x00 } | body.rfu;
+    Ok(())
+}
+
+fn serialize_tr_papr(body: &TrPaprBody, buf: &mut [u8]) -> Result<(), crate::error::Error> {
+    check_bits(u64::from(body.rfu1), 4, "tr_papr rfu1")?;
+    check_bits(
+        u64::from(body.tr_clipping_threshold),
+        12,
+        "tr_clipping_threshold",
+    )?;
+    check_bits(u64::from(body.rfu2), 14, "tr_papr rfu2")?;
+    check_bits(
+        u64::from(body.number_of_iterations),
+        10,
+        "number_of_iterations",
+    )?;
+    buf[0] = (body.rfu1 << 4) | (body.tr_clipping_threshold >> 8) as u8;
     buf[1] = (body.tr_clipping_threshold & 0xFF) as u8;
     buf[2] = (body.rfu2 >> 6) as u8;
-    buf[3] = ((body.rfu2 & 0x3F) as u8) << 2 | ((body.number_of_iterations >> 8) as u8 & 0x03);
+    buf[3] = ((body.rfu2 & 0x3F) as u8) << 2 | (body.number_of_iterations >> 8) as u8;
     buf[4] = (body.number_of_iterations & 0xFF) as u8;
+    Ok(())
 }
 
 fn serialize_l1_ace_papr(body: &L1AcePaprBody, buf: &mut [u8]) {
@@ -538,27 +594,45 @@ fn serialize_l1_ace_papr(body: &L1AcePaprBody, buf: &mut [u8]) {
     buf[2..4].copy_from_slice(&body.rfu.to_be_bytes());
 }
 
-fn serialize_tx_sig_fef_seq_num(body: &TxSigFefSeqNumBody, buf: &mut [u8]) {
-    buf[0] = (body.rfu1 & 0x1F) << 3 | (body.seq_num_1 & 0x07);
-    buf[1] = (body.rfu2 & 0x1F) << 3 | (body.seq_num_2 & 0x07);
+fn serialize_tx_sig_fef_seq_num(
+    body: &TxSigFefSeqNumBody,
+    buf: &mut [u8],
+) -> Result<(), crate::error::Error> {
+    check_bits(u64::from(body.rfu1), 5, "tx_sig_fef_seq_num rfu1")?;
+    check_bits(u64::from(body.seq_num_1), 3, "seq_num_1")?;
+    check_bits(u64::from(body.rfu2), 5, "tx_sig_fef_seq_num rfu2")?;
+    check_bits(u64::from(body.seq_num_2), 3, "seq_num_2")?;
+    check_bits(u64::from(body.rfu3), 24, "tx_sig_fef_seq_num rfu3")?;
+    buf[0] = (body.rfu1 << 3) | body.seq_num_1;
+    buf[1] = (body.rfu2 << 3) | body.seq_num_2;
     buf[2] = ((body.rfu3 >> 16) & 0xFF) as u8;
     buf[3] = ((body.rfu3 >> 8) & 0xFF) as u8;
     buf[4] = (body.rfu3 & 0xFF) as u8;
+    Ok(())
 }
 
-fn serialize_tx_sig_aux_stream_tx_id(body: &TxSigAuxStreamTxIdBody, buf: &mut [u8]) {
+fn serialize_tx_sig_aux_stream_tx_id(
+    body: &TxSigAuxStreamTxIdBody,
+    buf: &mut [u8],
+) -> Result<(), crate::error::Error> {
+    check_bits(u64::from(body.tx_sig_aux_tx_id), 12, "tx_sig_aux_tx_id")?;
+    check_bits(u64::from(body.rfu), 20, "tx_sig_aux_stream_tx_id rfu")?;
     buf[0] = ((body.tx_sig_aux_tx_id >> 4) & 0xFF) as u8;
     buf[1] = ((body.tx_sig_aux_tx_id & 0x0F) as u8) << 4 | ((body.rfu >> 16) & 0x0F) as u8;
     buf[2] = ((body.rfu >> 8) & 0xFF) as u8;
     buf[3] = (body.rfu & 0xFF) as u8;
+    Ok(())
 }
 
-fn serialize_frequency(body: &FrequencyBody, buf: &mut [u8]) {
-    buf[0] = (body.rf_idx & 0x07) << 5 | ((body.frequency >> 27) & 0x1F) as u8;
+fn serialize_frequency(body: &FrequencyBody, buf: &mut [u8]) -> Result<(), crate::error::Error> {
+    check_bits(u64::from(body.rf_idx), 3, "rf_idx")?;
+    check_bits(u64::from(body.rfu), 5, "frequency rfu")?;
+    buf[0] = (body.rf_idx << 5) | ((body.frequency >> 27) & 0x1F) as u8;
     buf[1] = ((body.frequency >> 19) & 0xFF) as u8;
     buf[2] = ((body.frequency >> 11) & 0xFF) as u8;
     buf[3] = ((body.frequency >> 3) & 0xFF) as u8;
-    buf[4] = ((body.frequency & 0x07) as u8) << 5 | (body.rfu & 0x1F);
+    buf[4] = ((body.frequency & 0x07) as u8) << 5 | body.rfu;
+    Ok(())
 }
 
 fn body_serialized_len(body: &FunctionBody<'_>) -> usize {
@@ -574,39 +648,42 @@ fn body_serialized_len(body: &FunctionBody<'_>) -> usize {
     }
 }
 
-fn serialize_body_into(body: &FunctionBody<'_>, buf: &mut [u8]) -> usize {
+fn serialize_body_into(
+    body: &FunctionBody<'_>,
+    buf: &mut [u8],
+) -> Result<usize, crate::error::Error> {
     match body {
         FunctionBody::AcePapr(b) => {
-            serialize_ace_papr(b, buf);
-            ACE_PAPR_BODY_LEN
+            serialize_ace_papr(b, buf)?;
+            Ok(ACE_PAPR_BODY_LEN)
         }
         FunctionBody::MisoGroup(b) => {
-            serialize_miso_group(b, buf);
-            MISO_GROUP_BODY_LEN
+            serialize_miso_group(b, buf)?;
+            Ok(MISO_GROUP_BODY_LEN)
         }
         FunctionBody::TrPapr(b) => {
-            serialize_tr_papr(b, buf);
-            TR_PAPR_BODY_LEN
+            serialize_tr_papr(b, buf)?;
+            Ok(TR_PAPR_BODY_LEN)
         }
         FunctionBody::L1AcePapr(b) => {
             serialize_l1_ace_papr(b, buf);
-            L1_ACE_PAPR_BODY_LEN
+            Ok(L1_ACE_PAPR_BODY_LEN)
         }
         FunctionBody::TxSigFefSeqNum(b) => {
-            serialize_tx_sig_fef_seq_num(b, buf);
-            TX_SIG_FEF_SEQ_NUM_BODY_LEN
+            serialize_tx_sig_fef_seq_num(b, buf)?;
+            Ok(TX_SIG_FEF_SEQ_NUM_BODY_LEN)
         }
         FunctionBody::TxSigAuxStreamTxId(b) => {
-            serialize_tx_sig_aux_stream_tx_id(b, buf);
-            TX_SIG_AUX_STREAM_TX_ID_BODY_LEN
+            serialize_tx_sig_aux_stream_tx_id(b, buf)?;
+            Ok(TX_SIG_AUX_STREAM_TX_ID_BODY_LEN)
         }
         FunctionBody::Frequency(b) => {
-            serialize_frequency(b, buf);
-            FREQUENCY_BODY_LEN
+            serialize_frequency(b, buf)?;
+            Ok(FREQUENCY_BODY_LEN)
         }
         FunctionBody::Raw(bytes) => {
             buf[..bytes.len()].copy_from_slice(bytes);
-            bytes.len()
+            Ok(bytes.len())
         }
     }
 }
@@ -804,7 +881,7 @@ impl Serialize for IndividualAddressingPayload<'_> {
                 buf[pos + 1] = body_len as u8;
                 pos += FUNC_HEADER_LEN;
 
-                let written = serialize_body_into(&func.body, &mut buf[pos..]);
+                let written = serialize_body_into(&func.body, &mut buf[pos..])?;
                 debug_assert_eq!(written, body_len);
                 pos += body_len;
             }
@@ -975,7 +1052,7 @@ mod tests {
             rfu: 0,
         };
         let mut func_bytes = [0u8; FREQUENCY_BODY_LEN];
-        serialize_frequency(&freq_body, &mut func_bytes);
+        serialize_frequency(&freq_body, &mut func_bytes).unwrap();
 
         let func_loop_len = (FUNC_HEADER_LEN + func_bytes.len()) as u8;
         let mut tx_loop = vec![0x00, 0x07, func_loop_len, 0x17, FREQUENCY_BODY_LEN as u8];
@@ -1251,9 +1328,72 @@ mod tests {
             rfu: true,
         };
         let mut buf = [0u8; ACE_PAPR_BODY_LEN];
-        serialize_ace_papr(&body, &mut buf);
+        serialize_ace_papr(&body, &mut buf).unwrap();
         let parsed = parse_ace_papr(&buf).unwrap();
         assert_eq!(body, parsed);
+    }
+
+    #[test]
+    fn oversized_ace_gain_is_rejected_not_wrapped() {
+        // Before the fix, 0x20 (exceeds 5 bits) silently wrapped to 0x00 in
+        // the ace_gain field and returned Ok.
+        let body = AcePaprBody {
+            ace_gain: 0x20,
+            ace_maximal_extension: 0,
+            ace_clipping_threshold: 0,
+            rfu: false,
+        };
+        let mut buf = [0u8; ACE_PAPR_BODY_LEN];
+        assert!(matches!(
+            serialize_ace_papr(&body, &mut buf),
+            Err(crate::Error::ReservedBitsViolation { .. })
+        ));
+    }
+
+    #[test]
+    fn max_ace_gain_still_serializes_and_round_trips() {
+        let body = AcePaprBody {
+            ace_gain: 0x1F, // the 5-bit maximum
+            ace_maximal_extension: 0,
+            ace_clipping_threshold: 0,
+            rfu: false,
+        };
+        let mut buf = [0u8; ACE_PAPR_BODY_LEN];
+        serialize_ace_papr(&body, &mut buf).unwrap();
+        assert_eq!(parse_ace_papr(&buf).unwrap(), body);
+    }
+
+    #[test]
+    fn oversized_tr_clipping_threshold_is_rejected_not_wrapped() {
+        // Before the fix, 0x1000 (exceeds 12 bits) silently wrapped to 0 in
+        // the tr_clipping_threshold field and returned Ok.
+        let body = TrPaprBody {
+            rfu1: 0,
+            tr_clipping_threshold: 0x1000,
+            rfu2: 0,
+            number_of_iterations: 0,
+        };
+        let mut buf = [0u8; TR_PAPR_BODY_LEN];
+        assert!(matches!(
+            serialize_tr_papr(&body, &mut buf),
+            Err(crate::Error::ReservedBitsViolation { .. })
+        ));
+    }
+
+    #[test]
+    fn oversized_rf_idx_is_rejected_not_wrapped() {
+        // Before the fix, 8 (exceeds 3 bits) silently wrapped to 0 in the
+        // rf_idx field and returned Ok.
+        let body = FrequencyBody {
+            rf_idx: 8,
+            frequency: 0,
+            rfu: 0,
+        };
+        let mut buf = [0u8; FREQUENCY_BODY_LEN];
+        assert!(matches!(
+            serialize_frequency(&body, &mut buf),
+            Err(crate::Error::ReservedBitsViolation { .. })
+        ));
     }
 
     #[test]
@@ -1265,7 +1405,7 @@ mod tests {
             number_of_iterations: 0x3FF,
         };
         let mut buf = [0u8; TR_PAPR_BODY_LEN];
-        serialize_tr_papr(&body, &mut buf);
+        serialize_tr_papr(&body, &mut buf).unwrap();
         let parsed = parse_tr_papr(&buf).unwrap();
         assert_eq!(body, parsed);
     }
@@ -1278,7 +1418,7 @@ mod tests {
             rfu: 0x1F,
         };
         let mut buf = [0u8; FREQUENCY_BODY_LEN];
-        serialize_frequency(&body, &mut buf);
+        serialize_frequency(&body, &mut buf).unwrap();
         let parsed = parse_frequency(&buf).unwrap();
         assert_eq!(body, parsed);
     }
@@ -1290,7 +1430,7 @@ mod tests {
             rfu: 0xFFFFF,
         };
         let mut buf = [0u8; TX_SIG_AUX_STREAM_TX_ID_BODY_LEN];
-        serialize_tx_sig_aux_stream_tx_id(&body, &mut buf);
+        serialize_tx_sig_aux_stream_tx_id(&body, &mut buf).unwrap();
         let parsed = parse_tx_sig_aux_stream_tx_id(&buf).unwrap();
         assert_eq!(body, parsed);
     }
