@@ -381,6 +381,15 @@ pub enum MediaEvent {
     /// A decrypted inbound RTCP compound packet (RFC 3550 §6.1), parsed by
     /// the workspace's own `rtcp-packet` crate.
     Rtcp(rtcp_packet::CompoundPacket),
+    /// An inbound SRTCP packet that decrypted and **authenticated** under
+    /// the negotiated key (RFC 3711 §3.4), but whose plaintext is not an
+    /// RFC 3550 §6 compound `rtcp-packet` can parse — typically the
+    /// RFC 4585 RTPFB/PSFB feedback (NACK, PLI, REMB, transport-cc) or
+    /// RFC 3611 XR packets a browser receiver sends continuously. It is a
+    /// genuine packet from the authenticated peer (so, e.g., proof the peer
+    /// is still live), not a transport error; carries the parse error that
+    /// explains why it was not surfaced as [`MediaEvent::Rtcp`].
+    RtcpUnsupported(rtcp_packet::Error),
 }
 
 /// The ICE + DTLS-SRTP media transport for one peer connection.
@@ -1110,9 +1119,13 @@ fn decrypt_srtp(ctx: &mut SrtpContext, is_rtcp: bool, data: &[u8]) -> Result<Med
         let plaintext = ctx
             .decrypt_rtcp(data)
             .map_err(|e| Error::Media(format!("srtcp decrypt: {e}")))?;
-        let compound = rtcp_packet::CompoundPacket::parse(&plaintext)
-            .map_err(|e| Error::Media(format!("rtcp parse: {e}")))?;
-        Ok(MediaEvent::Rtcp(compound))
+        // Authentication already passed above; a parse failure from here on
+        // is only "not a packet type this crate decodes", not a forged or
+        // corrupt datagram — see [`MediaEvent::RtcpUnsupported`].
+        Ok(match rtcp_packet::CompoundPacket::parse(&plaintext) {
+            Ok(compound) => MediaEvent::Rtcp(compound),
+            Err(e) => MediaEvent::RtcpUnsupported(e),
+        })
     } else {
         let plaintext = ctx
             .decrypt_rtp(data)
@@ -1728,6 +1741,38 @@ mod tests {
             "must decrypt to exactly one MediaEvent::Rtp"
         );
         assert_eq!(mt.read_rtp_count, 1);
+    }
+
+    /// A browser WHEP viewer's SRTCP is mostly RFC 4585 feedback that
+    /// `rtcp-packet` does not decode (here a PSFB PLI, RFC 4585 §6.3.1,
+    /// PT=206 FMT=1). Once it has authenticated it must surface as
+    /// `RtcpUnsupported` — a real packet from the peer — not as the `Err` a
+    /// forged/stray datagram gets (which multimux's WHEP silence timer
+    /// relies on to tell a live viewer from noise).
+    #[test]
+    fn authenticated_but_unparseable_srtcp_is_an_event_forged_is_an_error() {
+        const PLI: [u8; 12] = [
+            0x81, 0xCE, 0x00, 0x02, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88,
+        ];
+        let (mut mt, peer) = transport_with_completed_handshake(SetupRole::Passive);
+
+        let mut forger = other_srtp_context();
+        let forged = forger.encrypt_rtcp(&PLI).unwrap().to_vec();
+        assert!(
+            mt.handle_datagram(Instant::now(), peer, &forged).is_err(),
+            "SRTCP under the wrong key must still fail authentication"
+        );
+
+        let mut oracle = b3_srtp_context();
+        let genuine = oracle.encrypt_rtcp(&PLI).unwrap().to_vec();
+        let events = mt
+            .handle_datagram(Instant::now(), peer, &genuine)
+            .expect("an authenticated feedback packet is not an error");
+        assert!(
+            matches!(&events[..], [MediaEvent::RtcpUnsupported(_)]),
+            "expected exactly one RtcpUnsupported, got {events:?}"
+        );
+        assert_eq!(mt.read_rtcp_count, 1);
     }
 
     #[test]

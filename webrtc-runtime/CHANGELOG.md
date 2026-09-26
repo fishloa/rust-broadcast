@@ -4,6 +4,16 @@ All notable changes to this crate will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+- `media::MediaEvent::RtcpUnsupported(rtcp_packet::Error)`: an inbound SRTCP packet that
+  decrypted and authenticated but is not an RFC 3550 §6 compound `rtcp-packet` decodes (e.g.
+  RFC 4585 PLI/NACK/REMB feedback, which is most of what a browser receiver sends).
+
+### Fixed
+- `MediaTransport::handle_datagram` no longer returns `Err` for such a packet. It passed SRTCP
+  authentication, so it is a genuine packet from the peer, not a transport error. It also now
+  counts toward the RFC 3711 key-lifetime read counter.
+
 ## [0.2.0] - 2026-09-25
 
 ### Security

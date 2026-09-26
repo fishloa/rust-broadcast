@@ -814,15 +814,23 @@ async fn send_sample(
 /// Whether one [`MediaEvent`] proves the far end is actually still there
 /// (issue r07-C11 follow-up), for [`run_whep_session`]'s own
 /// `last_inbound` reset: a decrypted RTP or RTCP packet (the far end's
-/// decoder/receiver-report machinery is live, RFC 3550 §6.2), or the
-/// one-time DTLS handshake completion. Deliberately excludes
+/// decoder/receiver-report machinery is live, RFC 3550 §6.2) — including
+/// an authenticated SRTCP packet `rtcp-packet` can't decode
+/// (`RtcpUnsupported`: the RFC 4585 PLI/NACK/REMB feedback that is most of
+/// what a real browser viewer sends; excluding it ended every real viewer's
+/// session after 30s) — or the one-time DTLS handshake completion. A
+/// datagram failing SRTP/SRTCP authentication is an `Err`, never an event,
+/// so a stray still cannot count. Deliberately excludes
 /// `IceStateChanged`/`LocalCandidateGathered` — real, `Ok`-returning ICE
 /// bookkeeping that says nothing about whether the far end is still
 /// decoding anything.
 fn is_liveness_event(event: &MediaEvent) -> bool {
     matches!(
         event,
-        MediaEvent::Rtp(_) | MediaEvent::Rtcp(_) | MediaEvent::DtlsHandshakeComplete
+        MediaEvent::Rtp(_)
+            | MediaEvent::Rtcp(_)
+            | MediaEvent::RtcpUnsupported(_)
+            | MediaEvent::DtlsHandshakeComplete
     )
 }
 

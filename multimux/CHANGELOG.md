@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+### Fixed
+- A WHEP viewer's session no longer ends after 30 seconds. The silence timer counted only
+  RTCP that `rtcp-packet` could decode, but a browser viewer sends RFC 4585 feedback (PLI,
+  NACK, REMB), which it cannot. Any SRTCP packet that authenticates now counts. A datagram that
+  fails authentication still does not. Needs `webrtc-runtime`'s new
+  `MediaEvent::RtcpUnsupported`.
+
 ## [0.11.0] - 2026-09-26
 
 ### Security
