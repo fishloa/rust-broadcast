@@ -207,20 +207,30 @@ impl RegionObjectEntry {
         }
     }
 
-    fn serialize_into(&self, buf: &mut [u8]) {
+    fn serialize_into(&self, buf: &mut [u8]) -> Result<()> {
         buf[0..2].copy_from_slice(&self.object_id.to_be_bytes());
         let hpos = self.object_horizontal_position;
         let vpos = self.object_vertical_position;
+        // EN 300 743 Table 11 (docs/tables/en_300_743/11-region-composition-segment.md:29-33):
+        // both object_horizontal_position and object_vertical_position are
+        // 12-bit uimsbf fields; range-check before narrowing so a value that
+        // does not fit is rejected instead of silently masked (#1129/#1044).
+        broadcast_common::len::fit_bits(u64::from(hpos), 12, "object_horizontal_position")?;
+        broadcast_common::len::fit_bits(u64::from(vpos), 12, "object_vertical_position")?;
         buf[2] = (self.object_type.to_bits() << 6)
             | (self.object_provider_flag.to_bits() << 4)
             | ((hpos >> 8) as u8 & 0x0F);
         buf[3] = hpos as u8;
-        buf[4] = ((vpos >> 8) as u8 & 0x0F) << 4; // upper nibble of vpos, lower nibble reserved=0
+        // reserved(4) then the top 4 bits of vpos, i.e. reserved is the HIGH
+        // nibble and vpos's top bits are the LOW nibble — the mirror of
+        // `parse`'s `(bytes[4] & 0x0F) << 8`.
+        buf[4] = (vpos >> 8) as u8 & 0x0F;
         buf[5] = vpos as u8;
         if let (Some(fg), Some(bg)) = (self.foreground_pixel_code, self.background_pixel_code) {
             buf[6] = fg;
             buf[7] = bg;
         }
+        Ok(())
     }
 }
 
@@ -464,7 +474,7 @@ impl Serialize for RegionCompositionSegment {
 
         let mut off = HEADER_LEN + FIXED_LEN;
         for obj in &self.objects {
-            obj.serialize_into(&mut buf[off..]);
+            obj.serialize_into(&mut buf[off..])?;
             off += obj.serialized_len();
         }
         Ok(len)
@@ -529,5 +539,74 @@ mod tests {
         assert_ne!(out2, bytes);
         let reparse = RegionCompositionSegment::parse(&out2).unwrap();
         assert_eq!(reparse.objects[0].foreground_pixel_code, Some(0xCC));
+    }
+
+    /// Issue #1044: `object_vertical_position >= 0x100` (>= 256) must
+    /// round-trip. EN 300 743 Table 11 (`docs/tables/en_300_743/11-region-composition-segment.md:32-33`):
+    /// byte 4 of the object entry is `reserved(4)` then the *top 4 bits* of
+    /// the 12-bit `object_vertical_position` — the same split `parse` already
+    /// uses (`(bytes[4] & 0x0F) << 8 | bytes[5]`). Every existing round-trip
+    /// fixture keeps `vpos < 256` (a single byte), so this is the first test
+    /// to exercise the top nibble.
+    #[test]
+    fn round_trip_object_vertical_position_above_one_byte() {
+        let mut seg = RegionCompositionSegment::parse(&[
+            0x0F, 0x11, 0x00, 0x01, 0x00, 0x16, 0x01, 0x88, 0x02, 0xCF, 0x00, 0x8F, 0x18, 0x03,
+            0x00, 0x00, 0x00, 0x01, 0x00, 0x0A, 0x00, 0x0A, 0x00, 0x02, 0x10, 0x14, 0x00, 0x14,
+        ])
+        .unwrap();
+        // 900 (0x384): the bottom-of-a-1080-line-frame subtitle position from
+        // the audit's failure scenario.
+        seg.objects[1].object_vertical_position = 0x384;
+
+        let out = seg.to_bytes();
+        // object index 1 is the last (and, per the fixture, fg/bg-less 6-byte)
+        // entry in the loop, so its `object_vertical_position` bytes are the
+        // final 2 bytes of the whole serialized segment. They must be
+        // `reserved(0) | vpos[11:8]` = 0x03 (not 0x30 — that would put the
+        // position's top nibble into the reserved high nibble, the exact
+        // bug) then `vpos[7:0]` = 0x84.
+        let n = out.len();
+        assert_eq!(
+            out[n - 2],
+            0x03,
+            "vpos top nibble must land in the low nibble of byte 4, not the reserved high nibble"
+        );
+        assert_eq!(out[n - 1], 0x84);
+
+        let reparsed = RegionCompositionSegment::parse(&out).unwrap();
+        assert_eq!(
+            reparsed.objects[1].object_vertical_position, 0x384,
+            "byte-exact round-trip of a vertical position >= 256"
+        );
+    }
+
+    /// Issue #1044/#1129: `object_vertical_position`/`object_horizontal_position`
+    /// are 12-bit fields (EN 300 743 Table 11); a value over `0x0FFF` must be
+    /// rejected, not silently masked to a wrong (wrapped) position.
+    #[test]
+    fn oversized_object_position_is_rejected_not_masked() {
+        let mut seg = RegionCompositionSegment::parse(&[
+            0x0F, 0x11, 0x00, 0x01, 0x00, 0x16, 0x01, 0x88, 0x02, 0xCF, 0x00, 0x8F, 0x18, 0x03,
+            0x00, 0x00, 0x00, 0x01, 0x00, 0x0A, 0x00, 0x0A, 0x00, 0x02, 0x10, 0x14, 0x00, 0x14,
+        ])
+        .unwrap();
+        let mut buf = alloc::vec![0u8; 64];
+
+        seg.objects[1].object_vertical_position = 0x1000; // 13 bits, one over max
+        assert!(matches!(
+            seg.serialize_into(&mut buf),
+            Err(Error::FieldOverflow(_))
+        ));
+
+        seg.objects[1].object_vertical_position = 0x0FFF; // the 12-bit maximum
+        seg.objects[1].object_horizontal_position = 0x1000;
+        assert!(matches!(
+            seg.serialize_into(&mut buf),
+            Err(Error::FieldOverflow(_))
+        ));
+
+        seg.objects[1].object_horizontal_position = 0x0FFF; // both at max: OK
+        assert!(seg.serialize_into(&mut buf).is_ok());
     }
 }

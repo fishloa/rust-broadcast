@@ -432,7 +432,16 @@ impl PageAssembler {
     }
 
     pub(crate) fn push(&mut self, field: &dvb_vbi::TeletextDataField) {
-        let block = &field.txt_data_block;
+        // EN 300 706 transmits each byte of the magazine/packet address and
+        // data block LSB-first (§7.1.2/§8.1/§8.2's "bslbf" fields, EN 301 775
+        // §4.5), so `txt_data_block` as carried by `dvb_vbi` (an ordinarily
+        // MSB-first assembled byte) is the bit-reversal of the spec's own
+        // byte value: `dvb_vbi::FRAMING_CODE_EBU` (`0xE4`) is
+        // `reverse_bits(0x27)`, the spec's own framing_code constant, which
+        // proves the wire byte order. Reverse before running Hamming-8/4 /
+        // odd-parity decode, which both assume the spec's bit order directly.
+        let block: [u8; 42] = field.txt_data_block.map(u8::reverse_bits);
+        let block = &block;
         let Some(addr) = decode_packet_address(block[0], block[1]) else {
             return;
         };
@@ -803,10 +812,14 @@ mod tests {
     }
 
     pub(super) fn field_from_block(block: [u8; 42], line: u8) -> dvb_vbi::TeletextDataField {
+        // `build_header_block`/`build_row_block` produce the spec's own
+        // (canonical) byte values via `encode_hamming_8_4`/`encode_odd_parity`;
+        // reverse each bit to emulate the LSB-first wire bytes `push` now
+        // un-reverses, so these tests exercise the real wire path.
         dvb_vbi::TeletextDataField {
             header: dvb_vbi::LineHeader::new(true, line % 24),
             framing_code: dvb_vbi::FRAMING_CODE_EBU,
-            txt_data_block: block,
+            txt_data_block: block.map(u8::reverse_bits),
         }
     }
 }

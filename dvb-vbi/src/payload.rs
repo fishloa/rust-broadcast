@@ -81,6 +81,15 @@ const MONO_LINE_OFFSET: u8 = 0b0001_1111;
 /// The `txt_data_block` (42 bytes) is the EN 300 706 magazine_and_packet_address
 /// and data_block following the clock-run-in/framing-code; EN 300 706 decoding
 /// is out of scope, so it is held opaquely.
+///
+/// Note for any caller that *does* decode these bytes against EN 300 706
+/// (e.g. `timed-metadata`'s Teletext extractor): EN 300 706 transmits each
+/// byte LSB-first (§7.1.2/§8.1/§8.2's `bslbf` fields), so each byte here, as
+/// ordinarily assembled MSB-first, is the bit-reversal of the value the EN
+/// 300 706 tables (Hamming-8/4, odd parity, character codes) are written
+/// against — reverse each byte (`u8::reverse_bits`) before applying them.
+/// [`FRAMING_CODE_EBU`] (`0xE4`) is `reverse_bits(0x27)`, the spec's own
+/// framing_code constant, and is the proof of this wire order.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct TeletextDataField {

@@ -11,8 +11,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Serializers now return an error, instead of silently truncating, when a
   segment body exceeds the generic segment header's 16-bit `segment_length`
   field (#1129).
+- `RegionCompositionSegment`'s object-entry serializer now returns
+  `Error::FieldOverflow` (`#[from] broadcast_common::len::FieldOverflow`)
+  instead of silently masking, when `object_horizontal_position` or
+  `object_vertical_position` (both 12-bit fields, EN 300 743 Table 11)
+  exceeds `0x0FFF` (#1044/#1129).
 
 ### Fixed
+- **#1044**: `RegionCompositionSegment`'s object-entry serializer wrote
+  `object_vertical_position`'s top nibble into the reserved high nibble of
+  byte 4 instead of the low nibble (EN 300 743 Table 11: `reserved(4)` then
+  the 12-bit position), silently corrupting the position for any object at
+  `object_vertical_position >= 256`.
 - Every segment type's `serialize_into` (`object_data`, `region_composition`,
   `page_composition`, `clut_definition`, `alternative_clut`,
   `disparity_signalling`, `display_definition`, `stuffing`, and the `Unknown`

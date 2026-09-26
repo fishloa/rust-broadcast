@@ -446,13 +446,28 @@ impl Cea608Decoder {
     fn handle_control(&mut self, field2: bool, b1: u8, b2: u8) {
         // Determine data channel from the first byte. For field 1: 0x10–0x17 =
         // C1, 0x18–0x1F = C2. For field 2: same first-byte split selects C1/C2
-        // but maps to CC3/CC4.
-        let c2 = b1 >= 0x18;
-        let base1 = if c2 { b1 - 0x08 } else { b1 }; // fold C2 onto C1 range
+        // for every category EXCEPT Miscellaneous Control Codes, which use a
+        // shifted pair of their own on field 2 (CTA-608-E §8.4 a/b, cited in
+        // `docs/decode/cea608-decode.md`): field-1 `0x14`(C1)/`0x1C`(C2) become
+        // field-2 `0x15`(C1/CC3)/`0x1D`(C2/CC4). That shift only applies to
+        // misc-control's own 2nd-byte range (`0x20`-`0x2F`); `0x15`/`0x1D` with
+        // a 2nd byte outside it (e.g. a PAC row byte, `0x40`-`0x7F`) is not
+        // misc-control and folds the ordinary way (issue #1043 — the previous
+        // fold recognised only field-1's `0x14`/`0x1C`, so field-2 misc-control
+        // pairs never matched and were silently dropped).
+        let field2_misc = field2 && (0x20..=0x2F).contains(&b2) && matches!(b1, 0x15 | 0x1D);
+        let c2 = if field2_misc { b1 == 0x1D } else { b1 >= 0x18 };
+        let base1 = if field2_misc {
+            0x14
+        } else if c2 {
+            b1 - 0x08 // fold C2 onto C1 range
+        } else {
+            b1
+        };
         let ch = self.channel_for(field2, c2);
 
-        // Misc control: first byte 0x14 (C1) / 0x15 (field-2 offset of 0x14).
-        // After folding C2→C1 (base1) we compare on the C1 first byte.
+        // Misc control: first byte 0x14 (C1) / 0x1C (C2), or the field-2
+        // `field2_misc` fold above.
         if base1 == 0x14 && (0x20..=0x2F).contains(&b2) {
             self.misc_control(ch, b2);
             return;
@@ -959,12 +974,27 @@ mod tests {
         assert_eq!(dec.mode(Cea608Channel::Cc1), Cea608Mode::None);
     }
 
-    /// Field 2 → CC3.
+    /// Field 2 → CC3. CTA-608-E §8.4(a): field-2 misc-control's own first
+    /// byte is `0x15` (the `0x14`→`0x15` shift), not the field-1 `0x14` byte
+    /// (issue #1043 — the previous version of this test used `0x14` on
+    /// field 2, which happened to pass for the wrong reason: `0x14` is not a
+    /// valid field-2 misc-control byte at all, so it exercised no real code
+    /// path distinct from field 1's).
     #[test]
     fn field2_cc3() {
         let mut dec = Cea608Decoder::new();
-        dec.push_pair(true, par(0x14), par(0x29)); // RDC field 2 ch1 → CC3
+        dec.push_pair(true, par(0x15), par(0x29)); // RDC field 2 ch1 (0x15) → CC3
         assert_eq!(dec.mode(Cea608Channel::Cc3), Cea608Mode::PaintOn);
+    }
+
+    /// Field 2, data channel 2 → CC4. CTA-608-E §8.4(b): the `0x1C`→`0x1D`
+    /// shift (issue #1043).
+    #[test]
+    fn field2_cc4() {
+        let mut dec = Cea608Decoder::new();
+        dec.push_pair(true, par(0x1D), par(0x29)); // RDC field 2 ch2 (0x1D) → CC4
+        assert_eq!(dec.mode(Cea608Channel::Cc4), Cea608Mode::PaintOn);
+        assert_eq!(dec.mode(Cea608Channel::Cc3), Cea608Mode::None);
     }
 
     /// XDS on field 2 is detected and skipped (no caption output).
