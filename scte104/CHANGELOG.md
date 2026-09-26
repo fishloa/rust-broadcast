@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- `SingleOperationMessage::parse` now rejects messages with `messageSize < 13` (HEADER_LEN, per ANSI/SCTE 104 2023 §8.2.2).
+- `SingleOperationMessage::serialize_into` computes message size from fields instead of trusting the stored value, preventing panics on malformed input.
+
 ## [0.4.0] - 2026-08-11
 
 ### Changed
