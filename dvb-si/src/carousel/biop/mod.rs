@@ -94,3 +94,28 @@ pub use message::{
     Binding, BiopMessage, CompressedModuleDescriptor, DirectoryMessage, DsmStreamInfo, FileMessage,
     ModuleInfo, ServiceContext, ServiceGatewayInfo, StreamEventMessage, StreamMessage,
 };
+
+#[cfg(test)]
+mod tests {
+    use super::span;
+
+    #[test]
+    fn span_ok_within_bounds() {
+        assert_eq!(span(10, 5, 20).unwrap(), 10..15);
+        assert_eq!(span(0, 0, 0).unwrap(), 0..0);
+    }
+
+    #[test]
+    fn span_rejects_len_past_end() {
+        assert!(span(10, 11, 20).is_err());
+    }
+
+    /// `pos` alone (not just `pos + len`) can sit near `usize::MAX` — this is
+    /// the case a plain `pos + len` addition can overflow/panic on a 64-bit
+    /// host too (unlike a 32-bit-wire-length site, where `pos` is a small
+    /// cursor and only `len` is large): `checked_add` must still catch it.
+    #[test]
+    fn span_rejects_pos_plus_len_overflowing_usize() {
+        assert!(span(usize::MAX - 1, 4, usize::MAX).is_err());
+    }
+}

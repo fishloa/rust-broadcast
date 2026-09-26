@@ -1769,15 +1769,19 @@ pub const MAX_DECOMPRESSED_MODULE_SIZE: usize = 64 * 1024 * 1024;
 /// exceed `max_len` bytes.
 ///
 /// Uses [`flate2`](https://crates.io/crates/flate2) (optional feature `flate2`).
-/// Reads through [`Read::take`] with a `max_len + 1` cap so a stream that
-/// would inflate past `max_len` is caught after reading one byte beyond the
-/// limit, rather than after allocating the full (potentially many-gigabyte)
-/// output. Returns an error if the zlib stream is invalid, or if the
+/// Reads through [`Read::take`] with a `max_len.saturating_add(1)` cap (not a
+/// plain `+ 1`, which would overflow `u64` if `max_len == usize::MAX` on a
+/// 64-bit target) so a stream that would inflate past `max_len` is caught
+/// after reading one byte beyond the limit, rather than after allocating the
+/// full (potentially many-gigabyte) output. `max_len == usize::MAX` is
+/// therefore an effectively unbounded call — the full decompressed data is
+/// returned. Returns an error if the zlib stream is invalid, or if the
 /// decompressed output exceeds `max_len`.
 #[cfg(feature = "flate2")]
 pub fn decompress_zlib_bounded(data: &[u8], max_len: usize) -> Result<Vec<u8>> {
     use std::io::Read;
-    let mut decoder = flate2::read::ZlibDecoder::new(data).take(max_len as u64 + 1);
+    let limit = (max_len as u64).saturating_add(1);
+    let mut decoder = flate2::read::ZlibDecoder::new(data).take(limit);
     let mut out = Vec::new();
     decoder
         .read_to_end(&mut out)
@@ -1790,9 +1794,10 @@ pub fn decompress_zlib_bounded(data: &[u8], max_len: usize) -> Result<Vec<u8>> {
             },
         })?;
     if out.len() > max_len {
-        return Err(Error::SectionLengthOverflow {
-            declared: out.len(),
-            available: max_len,
+        // Reading stops at `max_len + 1`, so the true decompressed size is never known.
+        return Err(Error::ReservedBitsViolation {
+            field: "compressed_module_descriptor body",
+            reason: "zlib output exceeds the decompressed-size limit",
         });
     }
     Ok(out)
@@ -2136,6 +2141,46 @@ mod tests {
 
         let decompressed = decompress_zlib(&compressed).unwrap();
         assert_eq!(decompressed.as_slice(), original.as_slice());
+    }
+
+    #[cfg(feature = "flate2")]
+    #[test]
+    fn decompress_zlib_bounded_usize_max_is_unbounded() {
+        use flate2::{Compression, write::ZlibEncoder};
+        use std::io::Write;
+
+        let original = b"Hello, compressed BIOP world! ".repeat(10);
+        let mut encoder = ZlibEncoder::new(Vec::new(), Compression::default());
+        encoder.write_all(&original).unwrap();
+        let compressed = encoder.finish().unwrap();
+
+        // `max_len = usize::MAX` must not overflow the internal `Take` limit
+        // and must return the full decompressed data, not an empty result.
+        let decompressed = decompress_zlib_bounded(&compressed, usize::MAX).unwrap();
+        assert_eq!(decompressed.as_slice(), original.as_slice());
+    }
+
+    #[cfg(feature = "flate2")]
+    #[test]
+    fn decompress_zlib_bounded_exact_boundary() {
+        use flate2::{Compression, write::ZlibEncoder};
+        use std::io::Write;
+
+        let original = vec![0x5Au8; 1000];
+        let mut encoder = ZlibEncoder::new(Vec::new(), Compression::default());
+        encoder.write_all(&original).unwrap();
+        let compressed = encoder.finish().unwrap();
+
+        // Output of exactly `max_len` bytes is Ok.
+        let ok = decompress_zlib_bounded(&compressed, original.len()).unwrap();
+        assert_eq!(ok, original);
+
+        // Output one byte over `max_len` is Err.
+        let err = decompress_zlib_bounded(&compressed, original.len() - 1);
+        assert!(
+            err.is_err(),
+            "output exceeding max_len by exactly 1 byte must return Err"
+        );
     }
 
     // ── StreamMessage tests ───────────────────────────────────────────────────
