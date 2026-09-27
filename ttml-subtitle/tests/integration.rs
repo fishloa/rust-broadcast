@@ -357,6 +357,67 @@ fn reject_image_profile_with_text_content() {
     );
 }
 
+// TT-W3 (#1108): the validator implements only a handful of checks — these
+// two are real bugs the audit found in what IS implemented, not "claims"
+// fixes.
+
+#[test]
+fn validator_rejects_malformed_time_expression() {
+    let xml = r#"<?xml version="1.0" encoding="UTF-8"?>
+<tt xmlns="http://www.w3.org/ns/ttml" ttp:contentProfiles="http://www.w3.org/ns/ttml/profile/imsc1.1/text"
+    xmlns:ttp="http://www.w3.org/ns/ttml#parameter">
+  <body>
+    <div>
+      <p begin="garbage" end="1s">hi</p>
+    </div>
+  </body>
+</tt>"#;
+    let doc = Document::parse_str(xml).unwrap();
+    let validator =
+        validation::Validator::new(validation::Profile::Text, validation::ImscVersion::V1_1);
+    let result = validator.validate(&doc);
+    // Pre-fix, `begin="garbage"` was never run through
+    // `time::parse_time_expression`, so this validated as `true`.
+    assert!(!result.valid, "malformed begin= must be rejected");
+    assert!(
+        result
+            .errors
+            .iter()
+            .any(|e| e.constraint.contains("12.3.1")),
+        "should cite §12.3.1, got: {:?}",
+        result.errors
+    );
+}
+
+#[test]
+fn validator_checks_frame_usage_on_body_with_no_div() {
+    // `<body>` itself carries a frame-term begin, but has no `<div>` at all.
+    let xml = r#"<?xml version="1.0" encoding="UTF-8"?>
+<tt xmlns="http://www.w3.org/ns/ttml" ttp:contentProfiles="http://www.w3.org/ns/ttml/profile/imsc1.1/text"
+    xmlns:ttp="http://www.w3.org/ns/ttml#parameter">
+  <body begin="10f"/>
+</tt>"#;
+    let doc = Document::parse_str(xml).unwrap();
+    let validator =
+        validation::Validator::new(validation::Profile::Text, validation::ImscVersion::V1_1);
+    let result = validator.validate(&doc);
+    // Pre-fix, the check for `body`'s own begin/dur/end lived inside `for
+    // div in &body.divs`, so it never ran when there were zero divs, and
+    // this document (frame term used, no ttp:frameRate) validated as `true`.
+    assert!(
+        !result.valid,
+        "frame term on body with no div must still require ttp:frameRate"
+    );
+    assert!(
+        result
+            .errors
+            .iter()
+            .any(|e| e.constraint.contains("7.12.7")),
+        "should cite §7.12.7, got: {:?}",
+        result.errors
+    );
+}
+
 // ─── Time expression exhaustive tests ─────────────────────────────
 
 #[test]
@@ -392,6 +453,48 @@ fn time_expression_exhaustive_fixture_form() {
             "time expression round-trip failed: '{expr}' → '{formatted}'"
         );
     }
+}
+
+// TT-W4 (#1108): default tickRate (§7.2.11).
+
+#[test]
+fn tick_rate_defaults_to_1_when_no_frame_rate_specified() {
+    let xml = r#"<?xml version="1.0" encoding="UTF-8"?>
+<tt xmlns="http://www.w3.org/ns/ttml">
+  <body><div><p begin="0s" end="1s">hi</p></div></body>
+</tt>"#;
+    let doc = Document::parse_str(xml).unwrap();
+    let ctx = doc.tt.time_context();
+    // Pre-fix this was 30 (frame_rate's OWN default) * 1 (sub_frame_rate's
+    // own default) = 30, even though no `ttp:frameRate` was ever specified.
+    assert_eq!(ctx.tick_rate, 1);
+}
+
+#[test]
+fn tick_rate_uses_effective_frame_rate_with_multiplier() {
+    let xml = r#"<?xml version="1.0" encoding="UTF-8"?>
+<tt xmlns="http://www.w3.org/ns/ttml" xmlns:ttp="http://www.w3.org/ns/ttml#parameter"
+    ttp:frameRate="30" ttp:frameRateMultiplier="1000 1001" ttp:subFrameRate="2">
+  <body><div><p begin="0s" end="1s">hi</p></div></body>
+</tt>"#;
+    let doc = Document::parse_str(xml).unwrap();
+    let ctx = doc.tt.time_context();
+    // effective frame rate = 30 * 1000 / 1001 = 29 (integer division);
+    // tick_rate = 29 * 2 = 58. Pre-fix, the multiplier was parsed but never
+    // used here, so this came out as 30 * 2 = 60 instead.
+    assert_eq!(ctx.tick_rate, 58);
+}
+
+#[test]
+fn tick_rate_explicit_value_still_wins() {
+    let xml = r#"<?xml version="1.0" encoding="UTF-8"?>
+<tt xmlns="http://www.w3.org/ns/ttml" xmlns:ttp="http://www.w3.org/ns/ttml#parameter"
+    ttp:tickRate="10000">
+  <body><div><p begin="0s" end="1s">hi</p></div></body>
+</tt>"#;
+    let doc = Document::parse_str(xml).unwrap();
+    let ctx = doc.tt.time_context();
+    assert_eq!(ctx.tick_rate, 10_000);
 }
 
 #[test]

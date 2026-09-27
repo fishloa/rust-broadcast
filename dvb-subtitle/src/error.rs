@@ -46,4 +46,27 @@ pub enum Error {
     /// silently masked/wrapped.
     #[error(transparent)]
     FieldOverflow(#[from] broadcast_common::len::FieldOverflow),
+    /// A `DisparityRegion` had 0 or more than 4 subregions — the wire
+    /// `number_of_subregions_minus_1` field (Table 29) is 2 bits, so only
+    /// 1..=4 subregions are representable.
+    #[error("invalid subregion count: {0} (must be 1..=4)")]
+    InvalidSubregionCount(usize),
+    /// A `Subregion`'s `subregion_horizontal_position`/`subregion_width`
+    /// presence didn't match the region's subregion count (Table 29: both
+    /// are present for every subregion when, and only when, the region has
+    /// more than one).
+    #[error("subregion position presence inconsistent with subregion count")]
+    SubregionPositionMismatch,
+    /// A repeating-entry loop (Table 31's CLUT entry loop; Table 21's page
+    /// composition region loop) had leftover bytes that don't form a whole
+    /// entry, where the spec's own loop condition never leaves a remainder.
+    #[error("{extra} trailing byte(s) in {what}: not a whole entry ({entry_len} bytes each)")]
+    TrailingEntryBytes {
+        /// What loop this was (e.g. `"alternative_CLUT_segment entries"`).
+        what: &'static str,
+        /// The fixed size of one entry.
+        entry_len: usize,
+        /// How many bytes were left over.
+        extra: usize,
+    },
 }

@@ -9,8 +9,49 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Changed (breaking)
 - `chunk::ChunkWriter::write` now returns `Result<Vec<u8>, RtmpError>` instead of `Vec<u8>`.
   `Error` gains a new `FieldOverflow` variant.
+- **#1108 (RTMP-W7)**: `ServerSession`/`ClientSession` gain a new `peer_bandwidth: Option<u32>`
+  field, tracking `SetPeerBandwidth`'s declared value separately from `ack_threshold` (see Fixed,
+  below). `ClientSession` also gains `advertised_window_ack_size: u32`.
+- **#1108 (RTMP-W1)**: `chunk::ChunkAssembler` gains a new `pub fn abort(&mut self, csid: u32)`,
+  and `io::RtmpConnection` gains a new private `pending_write` field (both additive).
+- **#1108 (RTMP-W6)**: `server::ServerEvent` gains a new `Unsupported { message_type_id: u8 }`
+  variant (additive; the enum is `#[non_exhaustive]`).
 
 ### Fixed
+- **#1108 (RTMP-W2)**: `Abort` (§5.4.2) was accepted and silently ignored, so a csid's
+  `in_progress` flag stayed set after the sender discarded its partial message — the next Type 3
+  chunk that started a genuinely new message on that csid was instead appended to the stale
+  aborted payload as a continuation. `ChunkAssembler::abort` now clears the csid's in-progress
+  state, and both sessions call it on `Abort`.
+- **#1108 (RTMP-W3)**: a Type 1/2 chunk header arriving while a message was already in progress
+  on that csid (a header interleaved mid-message, rather than at a message boundary) silently
+  reset the csid's state and discarded the in-flight bytes instead of erroring. Now rejected with
+  `Malformed`.
+- **#1108 (RTMP-W6)**: an AMF3-encoded command (message type 17 — a leading format-marker byte,
+  then an otherwise-ordinary AMF0 command body) got no reply at all; the server now decodes it
+  exactly like an AMF0 command. Aggregate(22)/Data-AMF3(15)/Shared-Object(16/19) messages (still
+  out of scope to decode — see the crate's non-goals) now surface a
+  `ServerEvent::Unsupported { message_type_id }` event instead of being silently dropped with no
+  signal at all.
+- **#1108 (RTMP-W7)**: `SetPeerBandwidth` (§5.4.5, limits OUR outbound bandwidth) was misapplied
+  as the ack threshold (§5.4.4's `WindowAckSize` job — how often WE acknowledge inbound bytes),
+  overwriting `ack_threshold` with an unrelated value and echoing it back as our own advertised
+  window. Now tracked separately in `peer_bandwidth`; the client replies with its OWN configured
+  window size, only when it actually changed from what it last advertised.
+- **#1108 (RTMP-W8)**: the client never answered a User Control `PingRequest` (event 6 —
+  FMS/Wowza liveness probe), so a server probing this way got no `PingResponse` and could drop
+  the publisher. It now replies with `PingResponse`.
+- **#1108 (RTMP-W10)**: `RtmpConnection::next_events` was not cancel-safe on its write half —
+  `handle_data` had already consumed the input and advanced the session's state before
+  `write_all(&reply)` (itself a cancellation point) confirmed the reply was sent, so a caller
+  wrapping this in `tokio::time::timeout`/`select!` could lose part of the protocol reply while
+  the session believed it had gone out. The reply is now recorded in a new `pending_write` field
+  synchronously (no await point) before any write attempt, flushed one `write` call at a time
+  (never `write_all`, whose own partial-write count isn't recoverable after cancellation) so a
+  cancelled flush leaves exactly the unsent remainder for the next call to retry.
+- **#1108 (RTMP-W11)**: the C0/S0 version byte was parsed and discarded, so an RTMPE peer
+  (version 6) or garbage was accepted here and only surfaced later as a confusing chunk-parse
+  error. Both handshake sides now reject a version other than 3 with `Malformed`.
 - `ChunkWriter::write` no longer silently truncates a 16 MiB+ (2^24) message body's 24-bit
   `message_length` field while still writing every payload byte, which misframed every later
   message on the chunk stream (#1129).

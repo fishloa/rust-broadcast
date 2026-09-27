@@ -19,9 +19,11 @@ pub const FIXED_LEN: usize = 2;
 pub struct DisparityShiftUpdateSequence {
     /// Interval duration in 90kHz STC units (24-bit).
     pub interval_duration: u32,
-    /// Number of division periods (≥1).
-    pub division_period_count: u8,
-    /// Interval count + disparity shift integer pairs.
+    /// Interval count + disparity shift integer pairs. `division_period_count`
+    /// (Table 30) is exactly this list's length — "the number of ... time
+    /// intervals within the following ... 'for' loop" — so it is derived on
+    /// serialize rather than stored (#1108/DS-W3: a stored count could
+    /// diverge from the data it's supposed to describe).
     pub intervals: alloc::vec::Vec<DisparityShiftInterval>,
 }
 
@@ -40,18 +42,19 @@ impl DisparityShiftUpdateSequence {
         1 + 3 + 1 + self.intervals.len() * 2
     }
 
-    fn serialize_into(&self, buf: &mut [u8]) {
+    fn serialize_into(&self, buf: &mut [u8]) -> Result<()> {
         let body_len = 3 + 1 + self.intervals.len() * 2;
-        buf[0] = body_len as u8;
+        buf[0] = broadcast_common::len::fit_u8(body_len, "disparity_shift_update_sequence_length")?;
         buf[1] = (self.interval_duration >> 16) as u8;
         buf[2] = (self.interval_duration >> 8) as u8;
         buf[3] = self.interval_duration as u8;
-        buf[4] = self.division_period_count;
+        buf[4] = broadcast_common::len::fit_u8(self.intervals.len(), "division_period_count")?;
         for (i, interval) in self.intervals.iter().enumerate() {
             let off = 5 + i * 2;
             buf[off] = interval.interval_count;
             buf[off + 1] = interval.disparity_shift_integer as u8;
         }
+        Ok(())
     }
 
     fn parse(bytes: &[u8]) -> Result<(Self, usize)> {
@@ -92,7 +95,6 @@ impl DisparityShiftUpdateSequence {
         Ok((
             DisparityShiftUpdateSequence {
                 interval_duration: dur,
-                division_period_count: count,
                 intervals,
             },
             total,
@@ -131,7 +133,18 @@ impl Subregion {
             .map_or(0, |u| u.serialized_len())
     }
 
-    fn serialize_into(&self, buf: &mut [u8]) {
+    /// `has_pos` comes from the *region*, not this subregion (Table 29: the
+    /// position fields are present for every subregion in a region, or none
+    /// of them, per `number_of_subregions_minus_1`) — see DisparityRegion::
+    /// serialize_into. Errors if this subregion's stored `Option`s disagree
+    /// with that (#1108/DS-W3): writing this subregion's own state instead
+    /// could silently misframe the following subregions/regions.
+    fn serialize_into(&self, buf: &mut [u8], has_pos: bool) -> Result<()> {
+        let stored_has_pos =
+            self.subregion_horizontal_position.is_some() && self.subregion_width.is_some();
+        if stored_has_pos != has_pos {
+            return Err(Error::SubregionPositionMismatch);
+        }
         let mut off = 0;
         if let (Some(h), Some(w)) = (self.subregion_horizontal_position, self.subregion_width) {
             buf[0..2].copy_from_slice(&h.to_be_bytes());
@@ -142,8 +155,9 @@ impl Subregion {
         buf[off + 1] = (self.subregion_disparity_shift_fractional << 4) | (self.reserved & 0x0F);
         off += 2;
         if let Some(ref seq) = self.update_sequence {
-            seq.serialize_into(&mut buf[off..]);
+            seq.serialize_into(&mut buf[off..])?;
         }
+        Ok(())
     }
 }
 
@@ -170,17 +184,29 @@ impl DisparityRegion {
             .sum::<usize>()
     }
 
-    fn serialize_into(&self, buf: &mut [u8]) {
-        let num = self.subregions.len().saturating_sub(1) as u8;
+    fn serialize_into(&self, buf: &mut [u8]) -> Result<()> {
+        let count = self.subregions.len();
+        // number_of_subregions_minus_1 is 2 bits (Table 29): only 1..=4
+        // subregions are representable. Pre-fix, `as u8` + `& 0x03` silently
+        // wrapped an out-of-range count instead of rejecting it (#1108/DS-W3).
+        if count == 0 || count > 4 {
+            return Err(Error::InvalidSubregionCount(count));
+        }
+        let num = (count - 1) as u8;
         buf[0] = self.region_id;
         buf[1] = (u8::from(self.update_sequence_region_flag) << 7)
             | (self.reserved_flags & 0x7C)
             | (num & 0x03);
+        // Position fields are present for every subregion, or none, per
+        // whether the region itself has more than one (Table 29's
+        // `if (number_of_subregions_minus_1 > 0)` guards the whole `for` body).
+        let has_pos = count > 1;
         let mut off = 2;
         for sub in &self.subregions {
-            sub.serialize_into(&mut buf[off..]);
+            sub.serialize_into(&mut buf[off..], has_pos)?;
             off += sub.serialized_len();
         }
+        Ok(())
     }
 }
 
@@ -214,6 +240,9 @@ impl<'a> Parse<'a> for DisparitySignallingSegment {
                 have: bytes.len(),
                 what: "disparity_signalling_segment",
             });
+        }
+        if bytes[0] != crate::pes_data_field::SYNC_BYTE {
+            return Err(Error::BadSyncByte(bytes[0]));
         }
         if bytes[1] != SEGMENT_TYPE {
             return Err(Error::UnknownSegmentType(bytes[1]));
@@ -252,8 +281,16 @@ impl<'a> Parse<'a> for DisparitySignallingSegment {
 
         let mut regions = alloc::vec::Vec::new();
         while pos < body.len() {
+            // Table 29's region loop is `while (processed_length <
+            // segment_length)` with no stuffing provision, so 1 leftover
+            // byte means the segment is malformed, not that it should be
+            // silently dropped (#1108/DS-W6: this used to just `break`).
             if pos + 2 > body.len() {
-                break;
+                return Err(Error::BufferTooShort {
+                    need: pos + 2,
+                    have: body.len(),
+                    what: "disparity_signalling_segment region header",
+                });
             }
             let region_id = body[pos];
             pos += 1;
@@ -365,11 +402,11 @@ impl Serialize for DisparitySignallingSegment {
 
         let mut off = HEADER_LEN + FIXED_LEN;
         if let Some(ref seq) = self.page_update_sequence {
-            seq.serialize_into(&mut buf[off..]);
+            seq.serialize_into(&mut buf[off..])?;
             off += seq.serialized_len();
         }
         for region in &self.regions {
-            region.serialize_into(&mut buf[off..]);
+            region.serialize_into(&mut buf[off..])?;
             off += region.serialized_len();
         }
         Ok(len)
@@ -402,6 +439,32 @@ mod tests {
         assert_ne!(out2, bytes);
         let reparse = DisparitySignallingSegment::parse(&out2).unwrap();
         assert_eq!(reparse.regions[0].region_id, 5);
+    }
+
+    /// DS-W2 (#1108): sync_byte wasn't checked by any typed segment parser.
+    #[test]
+    fn rejects_bad_sync_byte() {
+        let bytes = [
+            0x00, 0x15, 0x00, 0x01, 0x00, 0x06, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00,
+        ];
+        assert!(matches!(
+            DisparitySignallingSegment::parse(&bytes),
+            Err(Error::BadSyncByte(0x00))
+        ));
+    }
+
+    /// DS-W6 (#1108): Table 29's region loop has no stuffing provision, so a
+    /// single leftover byte after the last complete region is now rejected,
+    /// not silently dropped via a bare `break`.
+    #[test]
+    fn rejects_trailing_partial_region() {
+        let bytes = [
+            0x0F, 0x15, 0x00, 0x01, 0x00, 0x07, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0xFF,
+        ];
+        assert!(matches!(
+            DisparitySignallingSegment::parse(&bytes),
+            Err(Error::BufferTooShort { .. })
+        ));
     }
 
     #[test]
@@ -437,7 +500,7 @@ mod tests {
         assert!(seg.update_sequence_page_flag);
         assert_eq!(seg.page_default_disparity_shift, 5);
         let seq = seg.page_update_sequence.as_ref().unwrap();
-        assert_eq!(seq.division_period_count, 2);
+        assert_eq!(seq.intervals.len(), 2);
         assert_eq!(seg.regions.len(), 1);
         assert_eq!(seg.regions[0].region_id, 1);
         assert!(seg.regions[0].update_sequence_region_flag);
@@ -452,5 +515,110 @@ mod tests {
         assert_ne!(out2, bytes);
         let reparse = DisparitySignallingSegment::parse(&out2).unwrap();
         assert_eq!(reparse.dss_version_number, 3);
+    }
+
+    /// DS-W3 (#1108): `division_period_count` is now derived from
+    /// `intervals.len()`, so appending an interval must grow the on-wire
+    /// count byte and re-parse with the new interval intact.
+    #[test]
+    fn division_period_count_tracks_intervals_len() {
+        let bytes = [
+            0x0F, 0x15, 0x00, 0x01, 0x00, 0x0B, 0x88, 0x05, 0x08, 0x00, 0x00, 0x0A, 0x02, 0x01,
+            0x10, 0x03, 0x20,
+        ];
+        let seg = DisparitySignallingSegment::parse(&bytes).unwrap();
+        let mut seg2 = seg.clone();
+        seg2.page_update_sequence
+            .as_mut()
+            .unwrap()
+            .intervals
+            .push(DisparityShiftInterval {
+                interval_count: 5,
+                disparity_shift_integer: -1,
+            });
+        let out2 = seg2.to_bytes();
+        assert_ne!(out2, bytes);
+        // division_period_count is body[4] of the update sequence, which
+        // starts right after the 8-byte fixed header (offset HEADER_LEN+FIXED_LEN).
+        let seq_off = HEADER_LEN + FIXED_LEN;
+        assert_eq!(
+            out2[seq_off + 4],
+            3,
+            "division_period_count must track intervals.len()"
+        );
+        let reparse = DisparitySignallingSegment::parse(&out2).unwrap();
+        assert_eq!(reparse.page_update_sequence.unwrap().intervals.len(), 3);
+    }
+
+    /// DS-W3 (#1108): `number_of_subregions_minus_1` is 2 bits (Table 29), so
+    /// 0 or more than 4 subregions must be rejected, not silently wrapped by
+    /// `as u8 & 0x03`.
+    #[test]
+    fn rejects_out_of_range_subregion_count() {
+        let region = DisparityRegion {
+            region_id: 1,
+            update_sequence_region_flag: false,
+            reserved_flags: 0,
+            subregions: alloc::vec::Vec::new(),
+        };
+        let mut buf = [0u8; 16];
+        assert!(matches!(
+            region.serialize_into(&mut buf),
+            Err(Error::InvalidSubregionCount(0))
+        ));
+
+        let sub = Subregion {
+            subregion_horizontal_position: None,
+            subregion_width: None,
+            subregion_disparity_shift_integer: 0,
+            subregion_disparity_shift_fractional: 0,
+            reserved: 0,
+            update_sequence: None,
+        };
+        let region5 = DisparityRegion {
+            region_id: 1,
+            update_sequence_region_flag: false,
+            reserved_flags: 0,
+            subregions: alloc::vec![sub; 5],
+        };
+        let mut buf = [0u8; 64];
+        assert!(matches!(
+            region5.serialize_into(&mut buf),
+            Err(Error::InvalidSubregionCount(5))
+        ));
+    }
+
+    /// DS-W3 (#1108): a region with 2+ subregions requires the position
+    /// fields present on ALL of them (Table 29); one subregion disagreeing
+    /// with the others must be rejected, not silently misframed.
+    #[test]
+    fn rejects_inconsistent_subregion_position() {
+        let with_pos = Subregion {
+            subregion_horizontal_position: Some(10),
+            subregion_width: Some(20),
+            subregion_disparity_shift_integer: 0,
+            subregion_disparity_shift_fractional: 0,
+            reserved: 0,
+            update_sequence: None,
+        };
+        let without_pos = Subregion {
+            subregion_horizontal_position: None,
+            subregion_width: None,
+            subregion_disparity_shift_integer: 0,
+            subregion_disparity_shift_fractional: 0,
+            reserved: 0,
+            update_sequence: None,
+        };
+        let region = DisparityRegion {
+            region_id: 1,
+            update_sequence_region_flag: false,
+            reserved_flags: 0,
+            subregions: alloc::vec![with_pos, without_pos],
+        };
+        let mut buf = [0u8; 32];
+        assert!(matches!(
+            region.serialize_into(&mut buf),
+            Err(Error::SubregionPositionMismatch)
+        ));
     }
 }

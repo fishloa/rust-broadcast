@@ -2,18 +2,41 @@
 //!
 //! Validation is separate from parsing: parse a document, then ask
 //! "is this valid Text Profile?" or "is this valid Image Profile?"
-//! The validator checks:
 //!
-//! - Feature/Extension disposition table (159 rows, `imsc11-profiles.md` §5)
-//! - §7.12 "must reject" structural constraints
-//! - §8 Text Profile provisions
-//! - §9 Image Profile provisions
+//! ### What is actually checked (#1108/TT-W3)
+//!
+//! This is a **partial** validator, not the full Feature/Extension
+//! disposition table (159 rows, `imsc11-profiles.md` §5) its earlier module
+//! doc claimed. `valid: true` means only that the checks below passed — it
+//! is not a certification of full IMSC conformance. Implemented:
+//!
+//! - §7.9: the document claims the profile being validated against, via
+//!   `ttp:contentProfiles`/`ttp:profile`.
+//! - §7.12.4/§7.12.5: `ittp:aspectRatio`/`ttp:displayAspectRatio` mutual
+//!   exclusion.
+//! - §7.12.7 (IMSC 1.1 only): `ttp:frameRate` required when a frame term is
+//!   used in a `body`/`div`/`p`/`img` `begin`/`dur`/`end` (not `span`).
+//! - §7.12.1.3: at most 4 regions in `<layout>`.
+//! - §8.4.11: `tts:textShadow` has at most 4 shadow values (Text Profile).
+//! - §9.4.1: no `<p>` in an Image Profile `<div>` (`<span>`/`<br>` are not
+//!   separately checked, since they can only appear inside a `<p>`).
+//! - §12.3.1: every `body`/`div`/`p`/`img` `begin`/`dur`/`end` is a
+//!   well-formed `<time-expression>` (via [`crate::time::parse_time_expression`]).
+//!
+//! **Not** checked (report the specific claim instead of assuming coverage
+//! when using this validator): §7.12.1.2 region overlap/extent-past-RCR,
+//! §7.12.6 extent-root, any `<region>`-level constraint (`validate_region`
+//! is a stub — opacity/display/visibility/showBackground, §8.4.2/§9.4.2
+//! `tts:extent` requirements), the Image Profile §9.4.4 `<image>` src/type/
+//! extent requirements, §9.4.5 `smpte:backgroundImage`, and `<span>`-level
+//! timing/frame-usage.
 //!
 //! ### Design
 //!
 //! The validator walks the parsed document tree and reports every
 //! violation it finds, rather than stopping at the first error.
-//! This gives callers a complete picture of non-conformance.
+//! This gives callers a complete picture of non-conformance, for the
+//! checks that are actually implemented.
 
 extern crate alloc;
 
@@ -149,6 +172,41 @@ impl Validator {
         }
         if let Some(ref body) = doc.tt.body {
             self.validate_body(body);
+            // §12.3.1: every begin/dur/end must actually be a well-formed
+            // <time-expression> (#1108/TT-W3: this was never checked here —
+            // `begin="garbage"` validated). Scoped to body/div/p/img, the
+            // same set `body_has_frame_usage` already walks; span-level
+            // timing is a documented gap (see the module doc).
+            let ctx = doc.tt.time_context();
+            self.validate_time_expr(body.begin.as_deref(), &ctx);
+            self.validate_time_expr(body.dur.as_deref(), &ctx);
+            self.validate_time_expr(body.end.as_deref(), &ctx);
+            for div in &body.divs {
+                self.validate_time_expr(div.begin.as_deref(), &ctx);
+                self.validate_time_expr(div.dur.as_deref(), &ctx);
+                self.validate_time_expr(div.end.as_deref(), &ctx);
+                for p in &div.paragraphs {
+                    self.validate_time_expr(p.begin.as_deref(), &ctx);
+                    self.validate_time_expr(p.dur.as_deref(), &ctx);
+                    self.validate_time_expr(p.end.as_deref(), &ctx);
+                }
+                for img in &div.images {
+                    self.validate_time_expr(img.begin.as_deref(), &ctx);
+                    self.validate_time_expr(img.dur.as_deref(), &ctx);
+                    self.validate_time_expr(img.end.as_deref(), &ctx);
+                }
+            }
+        }
+    }
+
+    fn validate_time_expr(&mut self, expr: Option<&str>, ctx: &crate::time::TimeContext) {
+        if let Some(e) = expr
+            && crate::time::parse_time_expression(e, ctx).is_err()
+        {
+            self.err(
+                "IMSC §12.3.1",
+                format!("'{e}' is not a well-formed time-expression"),
+            );
         }
     }
 
@@ -180,8 +238,7 @@ impl Validator {
             );
         }
 
-        // §7.12.6: extent-root — if any px unit used, tts:extent must be on tt
-        // Full px scan requires tree walk; simplified: check if extent is present when likely needed
+        // §7.12.6 (extent-root) is NOT checked here — see the module doc.
         if self.version == ImscVersion::V1_1 {
             // §7.12.7: frameRate required if frame terms used
             // Check if any time expr uses 'f' metric or clock-time with frames
@@ -192,12 +249,8 @@ impl Validator {
                 );
             }
         }
-
-        // Image Profile constraints
-        if self.profile == Profile::Image {
-            // §9.4.4: image must have src, type, tts:extent
-            // §9.4.1: no p/span/br elements
-        }
+        // Image Profile §9.4.1 is checked in `validate_div_image_constraints`;
+        // §9.4.4 is NOT checked — see the module doc.
     }
 
     fn claims_text_profile(&self, tt: &TtElement) -> bool {
@@ -259,10 +312,22 @@ impl Validator {
     }
 
     fn body_has_frame_usage(body: &BodyElement) -> bool {
+        // Checked once, outside the `div` loop (#1108/TT-W3): this used to
+        // be inside `for div in &body.divs`, so a document with `<body
+        // begin="...">` but no `<div>` at all never had `body`'s own
+        // begin/dur/end inspected.
+        if Self::time_expr_has_frame(body.begin.as_deref())
+            || Self::time_expr_has_frame(body.dur.as_deref())
+            || Self::time_expr_has_frame(body.end.as_deref())
+        {
+            return true;
+        }
         for div in &body.divs {
-            if Self::time_expr_has_frame(body.begin.as_deref())
-                || Self::time_expr_has_frame(body.dur.as_deref())
-                || Self::time_expr_has_frame(body.end.as_deref())
+            // `div`'s own timing (this loop previously covered only `p`/
+            // `img`, never `div` itself).
+            if Self::time_expr_has_frame(div.begin.as_deref())
+                || Self::time_expr_has_frame(div.dur.as_deref())
+                || Self::time_expr_has_frame(div.end.as_deref())
             {
                 return true;
             }
@@ -316,20 +381,18 @@ impl Validator {
             );
         }
 
-        // §7.12.1.2: regions must not extend beyond RCR, no two overlap
-        // (full coordinate intersection check requires computed style resolution)
-
-        // §7.12.2 / §7.12.3: altText mutual exclusion
+        // §7.12.1.2 (region overlap/extent-past-RCR) and §7.12.2/§7.12.3
+        // (altText mutual exclusion) are NOT checked — see the module doc.
         for region in &layout.regions {
             self.validate_region(region);
         }
     }
 
-    fn validate_region(&mut self, _region: &RegionElement) {
-        // §7.12.1.1: presented region definition (opacity, display, visibility, showBackground)
-        // §8.4.2: Text Profile: tts:extent required on region, must use px/%/rw/rh
-        // §9.4.2: Image Profile: tts:extent required on region, must use px only
-    }
+    /// A stub: no per-region check is implemented yet (§7.12.1.1 presented
+    /// region definition, §8.4.2/§9.4.2 `tts:extent` requirements) — see the
+    /// module doc. Kept as a call site so a future check has somewhere to
+    /// go without re-threading the region loop.
+    fn validate_region(&mut self, _region: &RegionElement) {}
 
     fn validate_body(&mut self, body: &BodyElement) {
         // Image Profile §9.4.1: no p/span/br elements
@@ -359,9 +422,7 @@ impl Validator {
             );
         }
 
-        // §9.2.2: at most one div per presented region, which must be a presented image
-        // §9.4.4: image constraints (src, type, tts:extent required)
-        // §9.4.5: smpte:backgroundImage constraints
+        // §9.2.2, §9.4.4 and §9.4.5 are NOT checked — see the module doc.
     }
 
     fn validate_div_text_constraints(&mut self, div: &DivElement) {

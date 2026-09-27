@@ -62,13 +62,20 @@ pub struct TimeContext {
 
 impl Default for TimeContext {
     fn default() -> Self {
+        // Assumes `ttp:frameRate` IS specified (as its own default, 30fps;
+        // §7.2.6), so §7.2.11's tickRate default is the effective frame
+        // rate (here, frame_rate * 1:1 multiplier) x sub_frame_rate — kept
+        // as an expression, not a second hardcoded literal, so it can't
+        // drift from `frame_rate`/`sub_frame_rate` above (#1108/TT-W4).
+        let frame_rate = 30;
+        let sub_frame_rate = 1;
         Self {
             time_base: TimeBase::Media,
-            frame_rate: 30,
+            frame_rate,
             frame_rate_multiplier_numerator: 1,
             frame_rate_multiplier_denominator: 1,
-            sub_frame_rate: 1,
-            tick_rate: 30, // effective frame rate × sub-frame rate
+            sub_frame_rate,
+            tick_rate: frame_rate * sub_frame_rate,
             drop_mode: DropMode::NonDrop,
             marker_mode: MarkerMode::Discontinuous,
             clock_mode: ClockMode::Utc,
@@ -261,8 +268,12 @@ pub enum WallclockForm {
         hours: u8,
         /// Minutes [0, 59].
         minutes: u8,
-        /// Seconds [0, 60].
-        seconds: u8,
+        /// Seconds [0, 60] — `None` for the `hhmm-time` form (no seconds
+        /// component at all), distinct from an explicit `:00` (#1108/TT-W5:
+        /// this used to collapse both to `0` at parse time, so `format_time_
+        /// expression` always re-inserted `:00` even when the source had
+        /// only `hh:mm`, breaking that form's round-trip).
+        seconds: Option<u8>,
         /// Fractional seconds.
         fraction: Option<String>,
     },
@@ -380,6 +391,15 @@ fn parse_clock_time(input: &str, ctx: &TimeContext) -> Result<TimeExpression, cr
     }
 
     if parts.len() == 4 {
+        // Grammar: `seconds ( fraction | ":" frames (...)? )?` — a
+        // seconds-fraction and a frames term are mutually exclusive
+        // (#1108/TT-W5: this was previously accepted as both, producing a
+        // `ClockTime` with both `fraction` and `frames` set).
+        if fraction.is_some() {
+            return Err(err(
+                "fractional seconds and a frames term are mutually exclusive",
+            ));
+        }
         // Has frames component
         let frames_part = parts[3];
 
@@ -414,6 +434,12 @@ fn parse_clock_time(input: &str, ctx: &TimeContext) -> Result<TimeExpression, cr
                 (frames_part, None)
             };
 
+        // Grammar: `frames : <digit><digit> | <digit><digit><digit>+` — at
+        // least 2 digits (#1108/TT-W5: a single digit, e.g. `"5"`, was
+        // previously accepted).
+        if frames_str.len() < 2 {
+            return Err(err("frames must be at least 2 digits"));
+        }
         let frames: u32 = parse_digits(frames_str, "frames", &err)?;
         // Validate frames range
         let effective_frame_rate = if ctx.frame_rate > 0 {
@@ -523,11 +549,21 @@ fn parse_wallclock_time(
         return Err(err("wallclock-time is an error when timeBase is not clock"));
     }
 
-    // Extract content between "wallclock(" and ")"
+    // Extract content between "wallclock(" and ")". Uses `find` (the FIRST
+    // ')') rather than `rfind`, and then requires it to be the last
+    // non-whitespace character: `rfind` alone accepted trailing junk after
+    // the closing paren (e.g. `"wallclock(10:00)junk"`) by silently
+    // discarding it instead of rejecting the expression (#1108/TT-W5).
     let rest = &input["wallclock(".len()..];
     let rest = rest.trim_start(); // <lwsp>?
-    let rest = if let Some(close_pos) = rest.rfind(')') {
-        rest[..close_pos].trim_end() // <lwsp>?
+    let rest = if let Some(close_pos) = rest.find(')') {
+        let (content, trailing) = (&rest[..close_pos], &rest[close_pos + 1..]);
+        if !trailing.trim().is_empty() {
+            return Err(err(
+                "unexpected content after wallclock-time closing parenthesis",
+            ));
+        }
+        content.trim_end() // <lwsp>?
     } else {
         return Err(err("wallclock-time missing closing parenthesis"));
     };
@@ -569,29 +605,12 @@ fn parse_wallclock_datetime(
         return Err(err("date must have exactly 3 components: YYYY-MM-DD"));
     }
 
-    if date_components[0].len() != 4 {
-        return Err(err("years must be exactly 4 digits"));
-    }
-    let years: u16 = date_components[0]
-        .parse()
-        .map_err(|_| err("invalid years"))?;
-
-    if date_components[1].len() != 2 {
-        return Err(err("months must be exactly 2 digits"));
-    }
-    let months: u8 = date_components[1]
-        .parse()
-        .map_err(|_| err("invalid months"))?;
+    let years: u16 = parse_digits_exact(date_components[0], 4, "years", err)?;
+    let months: u8 = parse_digits_exact(date_components[1], 2, "months", err)?;
     if !(1..=12).contains(&months) {
         return Err(err("months must be in [1, 12]"));
     }
-
-    if date_components[2].len() != 2 {
-        return Err(err("days must be exactly 2 digits"));
-    }
-    let days: u8 = date_components[2]
-        .parse()
-        .map_err(|_| err("invalid days"))?;
+    let days: u8 = parse_digits_exact(date_components[2], 2, "days", err)?;
     if !(1..=31).contains(&days) {
         return Err(err("days must be in [1, 31]"));
     }
@@ -606,7 +625,7 @@ fn parse_wallclock_datetime(
             days,
             hours,
             minutes,
-            seconds: seconds.unwrap_or(0),
+            seconds,
             fraction,
         },
     })
@@ -621,29 +640,12 @@ fn parse_wallclock_date(
         return Err(err("date must have exactly 3 components: YYYY-MM-DD"));
     }
 
-    if date_components[0].len() != 4 {
-        return Err(err("years must be exactly 4 digits"));
-    }
-    let years: u16 = date_components[0]
-        .parse()
-        .map_err(|_| err("invalid years"))?;
-
-    if date_components[1].len() != 2 {
-        return Err(err("months must be exactly 2 digits"));
-    }
-    let months: u8 = date_components[1]
-        .parse()
-        .map_err(|_| err("invalid months"))?;
+    let years: u16 = parse_digits_exact(date_components[0], 4, "years", err)?;
+    let months: u8 = parse_digits_exact(date_components[1], 2, "months", err)?;
     if !(1..=12).contains(&months) {
         return Err(err("months must be in [1, 12]"));
     }
-
-    if date_components[2].len() != 2 {
-        return Err(err("days must be exactly 2 digits"));
-    }
-    let days: u8 = date_components[2]
-        .parse()
-        .map_err(|_| err("invalid days"))?;
+    let days: u8 = parse_digits_exact(date_components[2], 2, "days", err)?;
     if !(1..=31).contains(&days) {
         return Err(err("days must be in [1, 31]"));
     }
@@ -685,18 +687,12 @@ fn parse_wallclock_time_components(
         ));
     }
 
-    if parts[0].len() != 2 {
-        return Err(err("wallclock hours must be exactly 2 digits"));
-    }
-    let hours: u8 = parts[0].parse().map_err(|_| err("invalid hours"))?;
+    let hours: u8 = parse_digits_exact(parts[0], 2, "wallclock hours", err)?;
     if hours > 23 {
         return Err(err("wallclock hours must be in [0, 23]"));
     }
 
-    if parts[1].len() != 2 {
-        return Err(err("wallclock minutes must be exactly 2 digits"));
-    }
-    let minutes: u8 = parts[1].parse().map_err(|_| err("invalid minutes"))?;
+    let minutes: u8 = parse_digits_exact(parts[1], 2, "wallclock minutes", err)?;
     if minutes > 59 {
         return Err(err("wallclock minutes must be in [0, 59]"));
     }
@@ -713,10 +709,7 @@ fn parse_wallclock_time_components(
             (parts[2], None)
         };
 
-        if secs_str.len() != 2 {
-            return Err(err("wallclock seconds must be exactly 2 digits"));
-        }
-        let seconds: u8 = secs_str.parse().map_err(|_| err("invalid seconds"))?;
+        let seconds: u8 = parse_digits_exact(secs_str, 2, "wallclock seconds", err)?;
         if seconds > 60 {
             return Err(err("wallclock seconds must be in [0, 60]"));
         }
@@ -737,6 +730,24 @@ fn parse_digits<T: core::str::FromStr>(
     }
     s.parse::<T>()
         .map_err(|_| err(&format!("{name} value too large")))
+}
+
+/// Like [`parse_digits`], but also requires exactly `len` characters
+/// (#1108/TT-W5). Several fixed-width grammar fields (wallclock hours/
+/// minutes/seconds, date-time years/months/days) previously checked
+/// `s.len() == len` and then called `T::from_str` directly: Rust's integer
+/// `FromStr` accepts a leading `+` (valid even for unsigned types), so e.g.
+/// `"+1"` passed a `len == 2` check and parsed as `1`.
+fn parse_digits_exact<T: core::str::FromStr>(
+    s: &str,
+    len: usize,
+    name: &str,
+    err: &impl Fn(&str) -> crate::error::Error,
+) -> Result<T, crate::error::Error> {
+    if s.len() != len {
+        return Err(err(&format!("{name} must be exactly {len} digits")));
+    }
+    parse_digits(s, name, err)
 }
 
 fn parse_digits_u8(
@@ -802,12 +813,16 @@ pub fn format_time_expression(expr: &TimeExpression) -> String {
                     fraction,
                 } => {
                     let mut s = format!(
-                        "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}",
-                        years, months, days, hours, minutes, seconds
+                        "{:04}-{:02}-{:02}T{:02}:{:02}",
+                        years, months, days, hours, minutes
                     );
-                    if let Some(frac) = fraction {
-                        s.push('.');
-                        s.push_str(frac);
+                    if let Some(secs) = seconds {
+                        s.push(':');
+                        s.push_str(&format!("{:02}", secs));
+                        if let Some(frac) = fraction {
+                            s.push('.');
+                            s.push_str(frac);
+                        }
                     }
                     s
                 }
@@ -1012,6 +1027,64 @@ mod tests {
         };
         // frames term is error when timeBase=clock
         assert!(parse_time_expression("01:02:03:20", &ctx).is_err());
+    }
+
+    // TT-W5 (#1108): the clock-time/wallclock-time grammar was too lenient.
+
+    #[test]
+    fn clock_time_rejects_fraction_and_frames_together() {
+        // Grammar: `seconds ( fraction | ":" frames (...)? )?` — mutually
+        // exclusive.
+        assert!(parse_time_expression("00:00:01.5:10", &default_ctx()).is_err());
+    }
+
+    #[test]
+    fn clock_time_rejects_single_digit_frames() {
+        // Grammar: `frames : <digit><digit> | <digit><digit><digit>+`.
+        assert!(parse_time_expression("00:00:01:5", &default_ctx()).is_err());
+        parse_time_expression("00:00:01:05", &default_ctx()).unwrap();
+    }
+
+    #[test]
+    fn wallclock_rejects_trailing_junk_after_paren() {
+        let ctx = TimeContext {
+            time_base: TimeBase::Clock,
+            ..default_ctx()
+        };
+        assert!(parse_time_expression("wallclock(10:00)junk", &ctx).is_err());
+        // A valid expression with no junk still parses.
+        parse_time_expression("wallclock(10:00)", &ctx).unwrap();
+    }
+
+    #[test]
+    fn wallclock_rejects_signed_fields() {
+        let ctx = TimeContext {
+            time_base: TimeBase::Clock,
+            ..default_ctx()
+        };
+        // "+1" is 2 characters, so pre-fix this passed the length check and
+        // `u8::from_str` (which accepts a leading '+') parsed it as 1.
+        assert!(parse_time_expression("wallclock(+1:00)", &ctx).is_err());
+    }
+
+    #[test]
+    fn wallclock_datetime_hhmm_form_round_trips_without_seconds() {
+        let ctx = TimeContext {
+            time_base: TimeBase::Clock,
+            ..default_ctx()
+        };
+        let expr = parse_time_expression("wallclock(2020-01-01T10:30)", &ctx).unwrap();
+        if let TimeExpression::WallclockTime {
+            form: WallclockForm::DateTime { seconds, .. },
+        } = &expr
+        {
+            assert_eq!(*seconds, None);
+        } else {
+            panic!("expected WallclockTime::DateTime");
+        }
+        // Pre-fix, `seconds` was collapsed to `Some(0)`/`0` at parse time,
+        // so formatting always re-inserted ":00" even for the hhmm-time form.
+        assert_eq!(format_time_expression(&expr), "wallclock(2020-01-01T10:30)");
     }
 
     #[test]

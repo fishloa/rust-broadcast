@@ -121,7 +121,36 @@ pub struct PixelDataSubBlock<'a> {
     pub data: &'a [u8],
 }
 
-impl PixelDataSubBlock<'_> {
+impl<'a> PixelDataSubBlock<'a> {
+    /// Decode this sub-block's pixel runs (Tables 22-26), if it is a
+    /// 2/4/8-bit pixel-data code string — `None` for a map-table or
+    /// end-of-line sub-block, neither of which is an RLE token stream.
+    ///
+    /// Yields typed [`PixelRun`]s instead of exposing `data` as raw RLE
+    /// bytes for the caller to decode itself (#1108/DS-W5). `data` (the
+    /// undecoded token stream, including any trailing byte-alignment
+    /// stuffing) is kept as-is alongside this, since round-tripping the
+    /// segment byte-exact depends on preserving it verbatim.
+    #[must_use]
+    pub fn runs(&self) -> Option<PixelRunIter<'a>> {
+        let depth = match self.data_type {
+            DataType::CodeString2Bit => CodeStringDepth::Two,
+            DataType::CodeString4Bit => CodeStringDepth::Four,
+            DataType::CodeString8Bit => CodeStringDepth::Eight,
+            DataType::MapTable2To4
+            | DataType::MapTable2To8
+            | DataType::MapTable4To8
+            | DataType::EndOfLine
+            | DataType::Reserved(_) => return None,
+        };
+        Some(PixelRunIter {
+            data: self.data,
+            bitpos: 0,
+            depth,
+            done: false,
+        })
+    }
+
     fn serialized_len(&self) -> usize {
         1 + self.data.len()
     }
@@ -151,8 +180,13 @@ pub struct InterlacedPixelsData<'a> {
     /// Bottom-field pixel-data sub-blocks.
     #[cfg_attr(feature = "serde", serde(borrow))]
     pub bottom_sub_blocks: alloc::vec::Vec<PixelDataSubBlock<'a>>,
-    /// Stuffing byte if present.
-    pub stuffing_byte: Option<u8>,
+    /// Trailing `8_stuff_bits` (Table 17/19): normally 0 or 1 byte per the
+    /// spec's own `stuffing_length` formula, but kept as a slice rather than
+    /// `Option<u8>` because the spec itself notes some legacy encoders don't
+    /// follow that (#1108/DS-W6) — 2+ trailing bytes are preserved for a
+    /// byte-exact round-trip instead of being silently dropped.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub stuffing: &'a [u8],
 }
 
 /// A progressive pixel block (Table 27, coding method 0x02).
@@ -176,10 +210,11 @@ pub enum ObjectDataPayload<'a> {
     /// Interlaced/bitmap pixel data.
     #[cfg_attr(feature = "serde", serde(borrow))]
     InterlacedPixels(InterlacedPixelsData<'a>),
-    /// Character string.
+    /// Character string. `number_of_codes` (Table 20) is derived from
+    /// `character_codes.len()` on serialize, rather than stored — a stored
+    /// count could diverge from the data it's supposed to describe (#1108/
+    /// DS-W3).
     Characters {
-        /// Number of character codes.
-        number_of_codes: u8,
         /// Character codes (16-bit each).
         character_codes: alloc::vec::Vec<u16>,
     },
@@ -213,6 +248,258 @@ pub struct ObjectDataSegment<'a> {
     /// The payload data.
     #[cfg_attr(feature = "serde", serde(borrow))]
     pub payload: ObjectDataPayload<'a>,
+}
+
+/// One decoded run from a 2/4/8-bit pixel-data code string (Tables 22-26):
+/// `run_length` (>= 1) consecutive pixels painted with CLUT entry `pixel_code`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PixelRun {
+    /// The CLUT entry index for this run.
+    pub pixel_code: u8,
+    /// How many consecutive pixels carry `pixel_code`.
+    pub run_length: u32,
+}
+
+/// Bit depth of a pixel-data code string (Tables 22, 24, 26).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CodeStringDepth {
+    Two,
+    Four,
+    Eight,
+}
+
+/// A lazy decoder over one 2/4/8-bit pixel-data code string's RLE pixel runs
+/// (Tables 22-26), returned by [`PixelDataSubBlock::runs`]. Stops at the
+/// string's `end_of_string_signal`, or at the data boundary if that comes
+/// first (never reads past the sub-block's own `data`).
+#[derive(Debug, Clone)]
+pub struct PixelRunIter<'a> {
+    data: &'a [u8],
+    bitpos: usize,
+    depth: CodeStringDepth,
+    done: bool,
+}
+
+impl PixelRunIter<'_> {
+    /// Read `n` (<= 8) bits starting at bit offset `bp`, big-endian,
+    /// zero-padded past the end of `data` (never panics/reads out of bounds).
+    fn bits(&self, bp: usize, n: usize) -> u8 {
+        let byte_idx = bp / 8;
+        let bit_idx = bp % 8;
+        if byte_idx >= self.data.len() {
+            return 0;
+        }
+        if bit_idx + n <= 8 {
+            (self.data[byte_idx] >> (8 - bit_idx - n)) & ((1u16 << n) - 1) as u8
+        } else {
+            let first_bits = 8 - bit_idx;
+            let v1 = ((self.data[byte_idx] & ((1u8 << first_bits) - 1)) as u16) << (n - first_bits);
+            let v2 = if byte_idx + 1 < self.data.len() {
+                (self.data[byte_idx + 1] >> (8 - (n - first_bits))) as u16
+            } else {
+                0
+            };
+            (v1 | v2) as u8
+        }
+    }
+
+    /// Table 22/23.
+    fn next_2bit(&mut self) -> Option<PixelRun> {
+        let b2 = self.bits(self.bitpos, 2);
+        self.bitpos += 2;
+        if b2 != 0 {
+            return Some(PixelRun {
+                pixel_code: b2,
+                run_length: 1,
+            });
+        }
+        let s1 = self.bits(self.bitpos, 1);
+        self.bitpos += 1;
+        if s1 == 1 {
+            let n = self.bits(self.bitpos, 3);
+            self.bitpos += 3;
+            let code = self.bits(self.bitpos, 2);
+            self.bitpos += 2;
+            return Some(PixelRun {
+                pixel_code: code,
+                run_length: u32::from(n) + 3,
+            });
+        }
+        let s2 = self.bits(self.bitpos, 1);
+        self.bitpos += 1;
+        if s2 == 1 {
+            return Some(PixelRun {
+                pixel_code: 0,
+                run_length: 1,
+            });
+        }
+        let s3 = self.bits(self.bitpos, 2);
+        self.bitpos += 2;
+        match s3 {
+            0b01 => Some(PixelRun {
+                pixel_code: 0,
+                run_length: 2,
+            }),
+            0b10 => {
+                let n = self.bits(self.bitpos, 4);
+                self.bitpos += 4;
+                let code = self.bits(self.bitpos, 2);
+                self.bitpos += 2;
+                Some(PixelRun {
+                    pixel_code: code,
+                    run_length: u32::from(n) + 12,
+                })
+            }
+            0b11 => {
+                let n = self.bits(self.bitpos, 8);
+                self.bitpos += 8;
+                let code = self.bits(self.bitpos, 2);
+                self.bitpos += 2;
+                Some(PixelRun {
+                    pixel_code: code,
+                    run_length: u32::from(n) + 29,
+                })
+            }
+            _ => {
+                // 0b00: end_of_string.
+                self.done = true;
+                None
+            }
+        }
+    }
+
+    /// Table 24/25.
+    fn next_4bit(&mut self) -> Option<PixelRun> {
+        let b4 = self.bits(self.bitpos, 4);
+        self.bitpos += 4;
+        if b4 != 0 {
+            return Some(PixelRun {
+                pixel_code: b4,
+                run_length: 1,
+            });
+        }
+        let s1 = self.bits(self.bitpos, 1);
+        self.bitpos += 1;
+        if s1 == 0 {
+            let n3 = self.bits(self.bitpos, 3);
+            self.bitpos += 3;
+            if n3 == 0 {
+                self.done = true;
+                return None;
+            }
+            return Some(PixelRun {
+                pixel_code: 0,
+                run_length: u32::from(n3) + 2,
+            });
+        }
+        let s2 = self.bits(self.bitpos, 1);
+        self.bitpos += 1;
+        if s2 == 0 {
+            let n2 = self.bits(self.bitpos, 2);
+            self.bitpos += 2;
+            let code = self.bits(self.bitpos, 4);
+            self.bitpos += 4;
+            return Some(PixelRun {
+                pixel_code: code,
+                run_length: u32::from(n2) + 4,
+            });
+        }
+        let s3 = self.bits(self.bitpos, 2);
+        self.bitpos += 2;
+        match s3 {
+            0b00 => Some(PixelRun {
+                pixel_code: 0,
+                run_length: 1,
+            }),
+            0b01 => Some(PixelRun {
+                pixel_code: 0,
+                run_length: 2,
+            }),
+            0b10 => {
+                let n = self.bits(self.bitpos, 4);
+                self.bitpos += 4;
+                let code = self.bits(self.bitpos, 4);
+                self.bitpos += 4;
+                Some(PixelRun {
+                    pixel_code: code,
+                    run_length: u32::from(n) + 9,
+                })
+            }
+            _ => {
+                // 0b11
+                let n = self.bits(self.bitpos, 8);
+                self.bitpos += 8;
+                let code = self.bits(self.bitpos, 4);
+                self.bitpos += 4;
+                Some(PixelRun {
+                    pixel_code: code,
+                    run_length: u32::from(n) + 25,
+                })
+            }
+        }
+    }
+
+    /// Table 26. Always byte-aligned, so this indexes `data` directly rather
+    /// than going through the bit reader.
+    fn next_8bit(&mut self) -> Option<PixelRun> {
+        let pos = self.bitpos / 8;
+        if pos >= self.data.len() {
+            self.done = true;
+            return None;
+        }
+        let b0 = self.data[pos];
+        if b0 != 0 {
+            self.bitpos += 8;
+            return Some(PixelRun {
+                pixel_code: b0,
+                run_length: 1,
+            });
+        }
+        if pos + 1 >= self.data.len() {
+            self.done = true;
+            return None;
+        }
+        let b1 = self.data[pos + 1];
+        if (b1 >> 7) & 1 == 0 {
+            let rl = b1 & 0x7F;
+            self.bitpos += 16;
+            if rl == 0 {
+                self.done = true;
+                return None;
+            }
+            return Some(PixelRun {
+                pixel_code: 0,
+                run_length: u32::from(rl),
+            });
+        }
+        // switch_1 == 1: run_length_3-127 + 8-bit pixel-code.
+        if pos + 2 >= self.data.len() {
+            self.done = true;
+            return None;
+        }
+        let rl = b1 & 0x7F;
+        let code = self.data[pos + 2];
+        self.bitpos += 24;
+        Some(PixelRun {
+            pixel_code: code,
+            run_length: u32::from(rl),
+        })
+    }
+}
+
+impl Iterator for PixelRunIter<'_> {
+    type Item = PixelRun;
+
+    fn next(&mut self) -> Option<PixelRun> {
+        if self.done {
+            return None;
+        }
+        match self.depth {
+            CodeStringDepth::Two => self.next_2bit(),
+            CodeStringDepth::Four => self.next_4bit(),
+            CodeStringDepth::Eight => self.next_8bit(),
+        }
+    }
 }
 
 /// Scan a 2-bit/pixel_code_string to find its end marker and total byte length.
@@ -456,6 +743,9 @@ impl<'a> Parse<'a> for ObjectDataSegment<'a> {
                 what: "object_data_segment",
             });
         }
+        if bytes[0] != crate::pes_data_field::SYNC_BYTE {
+            return Err(Error::BadSyncByte(bytes[0]));
+        }
         if bytes[1] != SEGMENT_TYPE {
             return Err(Error::UnknownSegmentType(bytes[1]));
         }
@@ -519,30 +809,19 @@ impl<'a> Parse<'a> for ObjectDataSegment<'a> {
                     });
                 }
 
-                // stuffing_length = segment_length - 7 - top_len - bottom_len
-                // computed as: segment_length - (HEADER_LEN + FIXED_LEN + INTERLACE_LEN_LEN + top_len + bottom_len - HEADER_LEN - FIXED_LEN)?
-                // simpler: stuffing = segment_length - 7 - top_len - bottom_len
-                // 7 = 3 (fixed) + 4 (interlace lens)
-                let stuffing_length = segment_length
-                    .wrapping_sub(7)
-                    .wrapping_sub(top_len)
-                    .wrapping_sub(bottom_len);
-
-                let mut stuffing_byte = None;
-                if stuffing_length == 1 {
-                    if bottom_end + 1 > payload_data.len() {
-                        return Err(Error::BufferTooShort {
-                            need: bottom_end + 1,
-                            have: payload_data.len(),
-                            what: "stuffing byte",
-                        });
-                    }
-                    if payload_data[bottom_end] != 0x00 {
-                        return Err(Error::BadStuffingByte(payload_data[bottom_end]));
-                    }
-                    stuffing_byte = Some(payload_data[bottom_end]);
-                    let _ = stuffing_byte;
-                    // Use the actual field length check
+                // stuffing_length (Table 18) = segment_length - 7 - top_len -
+                // bottom_len (7 = FIXED_LEN + INTERLACE_LEN_LEN); this is
+                // exactly `payload_data.len() - bottom_end`, since
+                // `payload_data` was already sliced to `segment_length -
+                // FIXED_LEN`. The spec says "shall be either zero or one",
+                // but notes some legacy encoders don't follow that — so
+                // whatever trailing bytes remain are captured (not just the
+                // first one) to keep the round-trip byte-exact (#1108/DS-W6).
+                let stuffing = &payload_data[bottom_end..];
+                if let Some(&b) = stuffing.first()
+                    && b != 0x00
+                {
+                    return Err(Error::BadStuffingByte(b));
                 }
 
                 let top_sub_blocks = parse_pixel_sub_blocks(
@@ -563,7 +842,7 @@ impl<'a> Parse<'a> for ObjectDataSegment<'a> {
                 ObjectDataPayload::InterlacedPixels(InterlacedPixelsData {
                     top_sub_blocks,
                     bottom_sub_blocks,
-                    stuffing_byte,
+                    stuffing,
                 })
             }
             0x01 => {
@@ -589,7 +868,6 @@ impl<'a> Parse<'a> for ObjectDataSegment<'a> {
                     codes.push(u16::from_be_bytes([payload_data[ci], payload_data[ci + 1]]));
                 }
                 ObjectDataPayload::Characters {
-                    number_of_codes: number_of_codes as u8,
                     character_codes: codes,
                 }
             }
@@ -649,10 +927,7 @@ impl Serialize for ObjectDataSegment<'_> {
                         .iter()
                         .map(|s| s.serialized_len())
                         .sum();
-                    INTERLACE_LEN_LEN
-                        + top_len
-                        + bottom_len
-                        + if ip.stuffing_byte.is_some() { 1 } else { 0 }
+                    INTERLACE_LEN_LEN + top_len + bottom_len + ip.stuffing.len()
                 }
                 ObjectDataPayload::Characters {
                     character_codes, ..
@@ -688,16 +963,15 @@ impl Serialize for ObjectDataSegment<'_> {
         let mut off = HEADER_LEN + FIXED_LEN;
         match &self.payload {
             ObjectDataPayload::InterlacedPixels(ip) => {
-                let top_len: u16 = ip
-                    .top_sub_blocks
-                    .iter()
-                    .map(|s| s.serialized_len() as u16)
-                    .sum();
-                let bottom_len: u16 = ip
+                let top_len: usize = ip.top_sub_blocks.iter().map(|s| s.serialized_len()).sum();
+                let bottom_len: usize = ip
                     .bottom_sub_blocks
                     .iter()
-                    .map(|s| s.serialized_len() as u16)
+                    .map(|s| s.serialized_len())
                     .sum();
+                let top_len = broadcast_common::len::fit_u16(top_len, "top_field_data_length")?;
+                let bottom_len =
+                    broadcast_common::len::fit_u16(bottom_len, "bottom_field_data_length")?;
                 buf[off..off + 2].copy_from_slice(&top_len.to_be_bytes());
                 buf[off + 2..off + 4].copy_from_slice(&bottom_len.to_be_bytes());
                 off += INTERLACE_LEN_LEN;
@@ -709,16 +983,11 @@ impl Serialize for ObjectDataSegment<'_> {
                     sub.serialize_into(&mut buf[off..]);
                     off += sub.serialized_len();
                 }
-                if ip.stuffing_byte.is_some() {
-                    buf[off] = 0x00;
-                    off += 1;
-                }
+                buf[off..off + ip.stuffing.len()].copy_from_slice(ip.stuffing);
+                off += ip.stuffing.len();
             }
-            ObjectDataPayload::Characters {
-                number_of_codes,
-                character_codes,
-            } => {
-                buf[off] = *number_of_codes;
+            ObjectDataPayload::Characters { character_codes } => {
+                buf[off] = broadcast_common::len::fit_u8(character_codes.len(), "number_of_codes")?;
                 off += 1;
                 for code in character_codes {
                     buf[off..off + 2].copy_from_slice(&code.to_be_bytes());
@@ -728,7 +997,10 @@ impl Serialize for ObjectDataSegment<'_> {
             ObjectDataPayload::ProgressivePixels(pp) => {
                 buf[off..off + 2].copy_from_slice(&pp.bitmap_width.to_be_bytes());
                 buf[off + 2..off + 4].copy_from_slice(&pp.bitmap_height.to_be_bytes());
-                let clen = pp.compressed_data.len() as u16;
+                let clen = broadcast_common::len::fit_u16(
+                    pp.compressed_data.len(),
+                    "compressed_data_length",
+                )?;
                 buf[off + 4..off + 6].copy_from_slice(&clen.to_be_bytes());
                 off += PROGRESSIVE_HEADER_LEN;
                 buf[off..off + pp.compressed_data.len()].copy_from_slice(pp.compressed_data);
@@ -778,6 +1050,43 @@ mod tests {
         assert_eq!(reparse.object_id, 20);
     }
 
+    /// DS-W6 (#1108): stuffing_length (Table 18) is "either zero or one" per
+    /// spec, but the spec itself notes legacy encoders may not follow that.
+    /// Pre-fix, only exactly 1 trailing byte was captured (as
+    /// `stuffing_byte: Option<u8>`); 2+ were silently dropped, so a segment
+    /// with 2 trailing stuffing bytes didn't round-trip byte-exact.
+    #[test]
+    fn preserves_multi_byte_stuffing() {
+        let bytes = [
+            0x0F, 0x13, 0x00, 0x01, 0x00, 0x09, // header, segment_length=9
+            0x00, 0x0A, 0x00, // object_id=10, version/method/flags=0 (Pixels)
+            0x00, 0x00, 0x00, 0x00, // top_len=0, bottom_len=0
+            0x00, 0x00, // 2 trailing stuffing bytes
+        ];
+        let seg = ObjectDataSegment::parse(&bytes).unwrap();
+        match &seg.payload {
+            ObjectDataPayload::InterlacedPixels(ip) => {
+                assert_eq!(ip.stuffing, &[0x00, 0x00]);
+            }
+            _ => panic!("expected InterlacedPixels"),
+        }
+        let out = seg.to_bytes();
+        assert_eq!(out, bytes, "2 trailing stuffing bytes must round-trip");
+    }
+
+    /// DS-W2 (#1108): sync_byte wasn't checked by any typed segment parser.
+    #[test]
+    fn rejects_bad_sync_byte() {
+        let bytes = [
+            0x00, 0x13, 0x00, 0x01, 0x00, 0x0A, 0x00, 0x0A, 0x00, 0x00, 0x03, 0x00, 0x00, 0xF0,
+            0x10, 0x0A,
+        ];
+        assert!(matches!(
+            ObjectDataSegment::parse(&bytes),
+            Err(Error::BadSyncByte(0x00))
+        ));
+    }
+
     #[test]
     fn round_trip_multiple_sub_blocks() {
         // Top field: map-table(0x20) + end-of-line(0xF0) + 4-bit code string
@@ -810,11 +1119,117 @@ mod tests {
                 assert_eq!(ip.top_sub_blocks[1].data_type, DataType::EndOfLine);
                 assert_eq!(ip.top_sub_blocks[2].data_type, DataType::CodeString4Bit);
                 assert_eq!(ip.top_sub_blocks[2].data.len(), 4);
+                // DS-W5 (#1108): the pixel data is also available as typed
+                // runs, not just the raw RLE bytes. Cross-check that the
+                // decoder consumes exactly as many bits as the (separately
+                // tested, framing-critical) scanner does, on the same real
+                // fixture bytes: the two must never disagree about where the
+                // code string ends.
+                let sub = &ip.top_sub_blocks[2];
+                let scanned_len = scan_4bit_code_string(sub.data);
+                let mut it = sub.runs().expect("code string sub-block has runs()");
+                let mut iterations = 0;
+                while it.next().is_some() {
+                    iterations += 1;
+                    assert!(iterations < 1_000, "runaway iterator");
+                }
+                assert_eq!(it.bitpos.div_ceil(8), scanned_len);
             }
             _ => panic!("expected InterlacedPixels"),
         }
         let out = seg.to_bytes();
         assert_eq!(out, bytes);
+    }
+
+    /// DS-W5 (#1108): map-table and end-of-line sub-blocks aren't RLE token
+    /// streams, so `runs()` must say so rather than misdecoding fixed-size
+    /// table bytes as a code string.
+    #[test]
+    fn runs_is_none_for_non_code_string_data_types() {
+        let map = PixelDataSubBlock {
+            data_type: DataType::MapTable2To4,
+            data: &[0x00, 0x00],
+        };
+        assert!(map.runs().is_none());
+        let eol = PixelDataSubBlock {
+            data_type: DataType::EndOfLine,
+            data: &[],
+        };
+        assert!(eol.runs().is_none());
+    }
+
+    /// DS-W5 (#1108): exact decode of a hand-computed 2-bit/pixel_code_string
+    /// (Table 22/23) covering the non-zero direct code and the
+    /// run_length_3-10 + switch_3 branches, per §7.2.5.2.1.
+    #[test]
+    fn pixel_run_iter_2bit_exact() {
+        // "10" (direct code 2, run 1) then "00 0 0 00" (2-bit_zero, s1=0,
+        // s2=0, s3=00 -> end_of_string): 0b1000_0000 = 0x80.
+        let direct = PixelDataSubBlock {
+            data_type: DataType::CodeString2Bit,
+            data: &[0x80],
+        };
+        let mut it = direct.runs().unwrap();
+        assert_eq!(
+            it.next(),
+            Some(PixelRun {
+                pixel_code: 2,
+                run_length: 1
+            })
+        );
+        assert_eq!(it.next(), None);
+
+        // "00" (2-bit_zero) "1" (s1=1) "101" (run_length field = 5 -> 5+3=8)
+        // "11" (pixel_code=3): 0b0011_0111 = 0x37.
+        let run = PixelDataSubBlock {
+            data_type: DataType::CodeString2Bit,
+            data: &[0x37],
+        };
+        let mut it = run.runs().unwrap();
+        assert_eq!(
+            it.next(),
+            Some(PixelRun {
+                pixel_code: 3,
+                run_length: 8
+            })
+        );
+    }
+
+    /// DS-W5 (#1108): exact decode of a hand-computed 8-bit/pixel_code_string
+    /// (Table 26): a direct code, a colour-0 run, another direct code, then
+    /// the end_of_string_signal.
+    #[test]
+    fn pixel_run_iter_8bit_exact() {
+        let data = [0x05, 0x00, 0x03, 0x2A, 0x00, 0x00];
+        let sub = PixelDataSubBlock {
+            data_type: DataType::CodeString8Bit,
+            data: &data,
+        };
+        let mut it = sub.runs().unwrap();
+        assert_eq!(
+            it.next(),
+            Some(PixelRun {
+                pixel_code: 5,
+                run_length: 1
+            })
+        );
+        assert_eq!(
+            it.next(),
+            Some(PixelRun {
+                pixel_code: 0,
+                run_length: 3
+            })
+        );
+        assert_eq!(
+            it.next(),
+            Some(PixelRun {
+                pixel_code: 0x2A,
+                run_length: 1
+            })
+        );
+        assert_eq!(it.next(), None);
+        // scan_8bit_code_string must agree on the consumed length.
+        assert_eq!(scan_8bit_code_string(&data), it.bitpos.div_ceil(8));
     }
 
     #[test]
@@ -825,12 +1240,8 @@ mod tests {
         let seg = ObjectDataSegment::parse(&bytes).unwrap();
         assert_eq!(seg.object_coding_method, ObjectCodingMethod::Characters);
         match &seg.payload {
-            ObjectDataPayload::Characters {
-                number_of_codes,
-                character_codes,
-                ..
-            } => {
-                assert_eq!(*number_of_codes, 2);
+            ObjectDataPayload::Characters { character_codes } => {
+                assert_eq!(character_codes.len(), 2);
                 assert_eq!(character_codes[0], 0x0041);
                 assert_eq!(character_codes[1], 0x0042);
             }
@@ -839,16 +1250,28 @@ mod tests {
         let out = seg.to_bytes();
         assert_eq!(out, bytes);
 
-        // Biting test
+        // Biting test: `number_of_codes` (Table 20) is derived from
+        // `character_codes.len()`, not stored (#1108/DS-W3), so appending a
+        // code must grow the on-wire count byte, and the result must
+        // re-parse to the same, now-3-code, list.
         let mut seg2 = seg.clone();
-        if let ObjectDataPayload::Characters {
-            number_of_codes, ..
-        } = &mut seg2.payload
-        {
-            *number_of_codes = 1;
+        if let ObjectDataPayload::Characters { character_codes } = &mut seg2.payload {
+            character_codes.push(0x0043);
         }
         let out2 = seg2.to_bytes();
         assert_ne!(out2, bytes);
+        assert_eq!(
+            out2[HEADER_LEN + FIXED_LEN],
+            3,
+            "wire number_of_codes must track the new length"
+        );
+        let reparse = ObjectDataSegment::parse(&out2).unwrap();
+        match &reparse.payload {
+            ObjectDataPayload::Characters { character_codes } => {
+                assert_eq!(character_codes.as_slice(), &[0x0041, 0x0042, 0x0043]);
+            }
+            _ => panic!("expected Characters"),
+        }
     }
 
     #[test]

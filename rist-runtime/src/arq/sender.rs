@@ -117,10 +117,20 @@ impl Sender {
     /// itself measure a sending rate to enforce, so this packet-count cap
     /// is **implementation policy**, not a transcription of that relation.
     pub fn new(max_buffered: usize) -> Self {
+        // #1108/RIST-W1: `seq` is a `u16` (65 536 values). At `max_buffered
+        // >= 32 768` (half the sequence space), a wrapped seq that's due
+        // for eviction can still be within the *unwrapped* window of a
+        // newer same-numbered entry — `by_seq.insert` then overwrites the
+        // OLDER generation's entry in place (instead of evicting it via
+        // `order`), so `by_seq.len()` stops growing, eviction never runs
+        // again, and `order` gains a duplicate `u16` on every send,
+        // forever. Clamped strictly below half the sequence space so two
+        // live generations of the same `seq` can never coexist.
+        let max_buffered = max_buffered.clamp(1, (1 << 15) - 1);
         Sender {
             by_seq: BTreeMap::new(),
             order: VecDeque::new(),
-            max_buffered: max_buffered.max(1),
+            max_buffered,
             last_retransmitted: BTreeMap::new(),
         }
     }
@@ -259,6 +269,30 @@ mod tests {
 
     const T0: Duration = Duration::ZERO;
 
+    /// RIST-W1 (#1108): requesting `max_buffered >= 32768` (half the
+    /// sequence space) used to leak memory and break eviction once `seq`
+    /// wrapped — `by_seq.insert` overwrote the older same-`seq` entry in
+    /// place rather than through `order`'s eviction path, so
+    /// `by_seq.len()` stopped growing (looking "fine") while `order` kept
+    /// gaining a duplicate `u16` on every send, forever. `Sender::new`
+    /// clamps the request; this sends across 3 full 16-bit wraps and
+    /// checks the buffer never exceeds the clamp at any point.
+    #[test]
+    fn max_buffered_is_clamped_and_survives_multiple_seq_wraps() {
+        const REQUESTED: usize = usize::MAX;
+        const CLAMP: usize = (1 << 15) - 1;
+        let mut s = Sender::new(REQUESTED);
+        for i in 0..3 * u32::from(u16::MAX) {
+            let seq = i as u16; // wraps every 65536 sends, 3 times over
+            s.on_sent(seq, i, b"x");
+            assert!(
+                s.buffered_count() <= CLAMP,
+                "buffered_count {} exceeded the clamp {CLAMP} at i={i}",
+                s.buffered_count()
+            );
+        }
+    }
+
     #[test]
     fn on_sent_then_range_nack_locates_the_exact_payload() {
         let mut s = Sender::new(16);
@@ -356,17 +390,23 @@ mod tests {
 
     /// #977 regression: with an O(n) linear scan per expanded sequence
     /// number, a full-depth buffer plus an adversarial `additional = 0xFFFF`
-    /// RangeNack multiplies into ~4.3 billion comparisons (65536 lookups x
-    /// a 65536-deep buffer) — that would take many seconds to minutes, not
-    /// the sub-second bound asserted below. With the `BTreeMap` index each
-    /// lookup is O(log n), so the whole call stays fast even at this depth.
+    /// RangeNack multiplies into billions of comparisons — that would take
+    /// many seconds to minutes, not the sub-second bound asserted below.
+    /// With the `BTreeMap` index each lookup is O(log n), so the whole call
+    /// stays fast even at this depth.
+    ///
+    /// Requests `MAX_RANGE_EXPANSION` (65536) as `max_buffered`, but
+    /// RIST-W1 (#1108) clamps that to `FULL_DEPTH` (below half the 16-bit
+    /// sequence space — see `Sender::new`'s doc), so the buffer is actually
+    /// `FULL_DEPTH`-deep, not 65536.
     #[test]
     fn range_nack_lookup_stays_fast_against_a_full_depth_buffer() {
+        const FULL_DEPTH: usize = (1 << 15) - 1;
         let mut s = Sender::new(MAX_RANGE_EXPANSION);
         for seq in 0..=u16::MAX {
             s.on_sent(seq, u32::from(seq), b"x");
         }
-        assert_eq!(s.buffered_count(), MAX_RANGE_EXPANSION);
+        assert_eq!(s.buffered_count(), FULL_DEPTH);
 
         let nack = RangeNack {
             ssrc_media: 1,
@@ -380,7 +420,7 @@ mod tests {
         let out = s.on_range_nack(&nack, T0);
         let elapsed = start.elapsed();
 
-        assert_eq!(out.len(), MAX_RANGE_EXPANSION);
+        assert_eq!(out.len(), FULL_DEPTH);
         assert!(
             elapsed < std::time::Duration::from_secs(2),
             "range_nack lookup against a full buffer took {elapsed:?} — \

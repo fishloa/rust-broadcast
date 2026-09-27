@@ -397,7 +397,17 @@ impl Receiver {
             })
             .map(|(&s, _)| s)
             .collect();
-        due_seqs.sort_unstable();
+        // #1108/RIST-W2: `sort_unstable()` (and `BTreeMap`'s own iteration
+        // order, above) is numeric, not circular. Across a 16-bit seq
+        // wrap, the newest losses (0, 1, ...) sort before the older, more
+        // urgent ones (65534, ...), so `cap_ranges` below — which keeps
+        // only the numerically FIRST `MAX_RANGE_ENTRIES` ranges — pushed
+        // out the oldest losses instead of the newest, and they aged out
+        // unrequested. Sort by circular distance from `next_expected`
+        // (the oldest edge of the receive window) instead, so the oldest
+        // losses sort first and survive the cap.
+        let reference = self.next_expected.unwrap_or(0);
+        due_seqs.sort_unstable_by_key(|&s| seq::seq_diff(s, reference));
 
         let due = cap_ranges(coalesce_ranges(&due_seqs), MAX_RANGE_ENTRIES);
         let requested_seqs = expand_ranges(&due);
@@ -723,6 +733,74 @@ mod tests {
         r.tick(Duration::ZERO); // promotes all 20 gaps immediately
         let due = r.tick(c.fallback_retransmission_interval()).due;
         assert_eq!(due.len(), MAX_RANGE_ENTRIES);
+    }
+
+    /// RIST-W2 (#1108): due-request ordering must be wrap-aware. Opens 20
+    /// isolated gaps straddling the 16-bit seq wrap: 10 "old" gaps just
+    /// after `next_expected` (65501, 65503, ..., 65519 — the most urgent,
+    /// oldest losses, closest to the FIFO's blocked front) and 10 "new"
+    /// gaps just after the wrap (1, 3, ..., 19 — newer, less urgent).
+    /// With only `MAX_RANGE_ENTRIES` (16) due slots per tick, numeric
+    /// sorting would put the numerically-small "new" gaps first and evict
+    /// 4 of the "old" ones; circular-distance sorting must keep all 10
+    /// "old" gaps (closest to `next_expected`) and only 6 of the "new".
+    #[test]
+    fn due_ordering_is_wrap_aware_and_keeps_the_oldest_losses() {
+        let mut c = cfg();
+        c.reorder_section = Duration::ZERO;
+        let mut r = Receiver::new(c);
+        r.feed(65500, Duration::ZERO); // next_expected -> 65501
+
+        // Segment 1: 20 slots (10 isolated gaps + 10 fed) right after
+        // next_expected — unambiguously large seq values (65501-65520ish),
+        // the "old", most urgent losses.
+        let mut old_gaps = Vec::new();
+        let mut seq_number = 65501u16;
+        for i in 0..20 {
+            if i % 2 == 0 {
+                old_gaps.push(seq_number);
+            } else {
+                r.feed(seq_number, Duration::ZERO);
+            }
+            seq_number = seq_number.wrapping_add(1);
+        }
+        assert_eq!(old_gaps.len(), 10);
+
+        // Segment 2: purely-fed buffer, long enough to carry `seq_number`
+        // well past the 65535/0 wrap before the next gap segment starts.
+        for _ in 0..30 {
+            r.feed(seq_number, Duration::ZERO);
+            seq_number = seq_number.wrapping_add(1);
+        }
+        assert!(
+            seq_number < 100,
+            "buffer segment must cross the wrap into small seq values, got {seq_number}"
+        );
+
+        // Segment 3: 20 more slots (10 isolated gaps + 10 fed), now at
+        // unambiguously small seq values — the "new", less urgent losses.
+        let mut new_gaps = Vec::new();
+        for i in 0..20 {
+            if i % 2 == 0 {
+                new_gaps.push(seq_number);
+            } else {
+                r.feed(seq_number, Duration::ZERO);
+            }
+            seq_number = seq_number.wrapping_add(1);
+        }
+        assert_eq!(new_gaps.len(), 10);
+
+        r.tick(Duration::ZERO); // promotes all 20 gaps immediately
+        let due = r.tick(c.fallback_retransmission_interval()).due;
+        assert_eq!(due.len(), MAX_RANGE_ENTRIES);
+
+        let due_seqs = expand_ranges(&due);
+        for old in &old_gaps {
+            assert!(
+                due_seqs.contains(old),
+                "old gap {old} (closest to next_expected) must survive the cap, got {due_seqs:?}"
+            );
+        }
     }
 
     #[test]

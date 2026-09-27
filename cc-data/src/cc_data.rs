@@ -90,6 +90,12 @@ pub struct CcTriplet {
 pub struct CcData {
     /// `process_cc_data_flag` — when `true`, the cc_data is to be processed.
     pub process_cc_data_flag: bool,
+    /// The byte after `cc_count`, Table B.9's `reserved (set to "1111 1111")`.
+    /// Real streams (this byte is `em_data` in the ATSC A/53 lineage this
+    /// syntax is shared with) don't always hold `0xFF` here, so it is
+    /// preserved verbatim rather than assumed, to keep the round-trip
+    /// byte-exact. Construct with `0xFF` to match Table B.9's own default.
+    pub reserved_byte1: u8,
     /// The caption constructs (`cc_count` is `triplets.len()`).
     pub triplets: Vec<CcTriplet>,
 }
@@ -117,8 +123,18 @@ impl<'a> Parse<'a> for CcData {
                 what: "cc_data header",
             });
         }
+        // byte0 bit7 = reserved(set to "1"), bit5 = zero_bit(set to "0").
+        if b[0] & 0xA0 != 0x80 {
+            return Err(Error::InvalidFixedBits {
+                what: "reserved/zero_bit",
+                got: b[0] & 0xA0,
+                expected: 0x80,
+                mask: 0xA0,
+            });
+        }
         let process_cc_data_flag = (b[0] >> 6) & 0x01 != 0;
         let cc_count = usize::from(b[0] & 0x1F);
+        let reserved_byte1 = b[1];
         let total = 2 + cc_count * 3 + 1; // header + triplets + marker
         if b.len() < total {
             return Err(Error::BufferTooShort {
@@ -131,7 +147,15 @@ impl<'a> Parse<'a> for CcData {
         let mut pos = 2;
         for _ in 0..cc_count {
             let flags = b[pos];
-            // one_bit(1) | reserved(4) | cc_valid(1) | cc_type(2)
+            // one_bit(1) | reserved(4, set to "1111") | cc_valid(1) | cc_type(2)
+            if flags & 0xF8 != 0xF8 {
+                return Err(Error::InvalidFixedBits {
+                    what: "one_bit/reserved",
+                    got: flags & 0xF8,
+                    expected: 0xF8,
+                    mask: 0xF8,
+                });
+            }
             triplets.push(CcTriplet {
                 cc_valid: (flags >> 2) & 0x01 != 0,
                 cc_type: CcType::from_bits(flags),
@@ -140,8 +164,17 @@ impl<'a> Parse<'a> for CcData {
             });
             pos += 3;
         }
+        if b[pos] != FF {
+            return Err(Error::InvalidFixedBits {
+                what: "marker_bits",
+                got: b[pos],
+                expected: FF,
+                mask: 0xFF,
+            });
+        }
         Ok(CcData {
             process_cc_data_flag,
+            reserved_byte1,
             triplets,
         })
     }
@@ -166,7 +199,7 @@ impl Serialize for CcData {
         // reserved=1, process_cc_data_flag, zero_bit=0, cc_count
         let cc_count = self.triplets.len() as u8 & 0x1F;
         buf[0] = 0x80 | (u8::from(self.process_cc_data_flag) << 6) | cc_count;
-        buf[1] = FF;
+        buf[1] = self.reserved_byte1;
         let mut pos = 2;
         for t in &self.triplets {
             // one_bit=1, reserved=1111, cc_valid, cc_type
@@ -196,6 +229,7 @@ mod tests {
     fn sample() -> CcData {
         CcData {
             process_cc_data_flag: true,
+            reserved_byte1: FF,
             triplets: alloc::vec![
                 tr(true, CcType::Dtvcc708Start, 0xC1, 0x02),
                 tr(true, CcType::Ntsc608Field1, 0x94, 0x2C),
@@ -236,6 +270,7 @@ mod tests {
     fn empty_round_trip() {
         let cc = CcData {
             process_cc_data_flag: false,
+            reserved_byte1: FF,
             triplets: alloc::vec![],
         };
         let bytes = cc.to_bytes();
@@ -244,9 +279,64 @@ mod tests {
     }
 
     #[test]
+    fn reserved_byte1_round_trips_verbatim() {
+        // A real-world (ATSC-lineage) stream where byte 1 after cc_count isn't
+        // 0xFF: pre-fix, parse discarded it and serialize always wrote 0xFF,
+        // so this round-trip was NOT byte-exact (bytes[1] silently changed).
+        let mut cc = sample();
+        cc.reserved_byte1 = 0x3A;
+        let bytes = cc.to_bytes();
+        assert_eq!(bytes[1], 0x3A);
+        let reparsed = CcData::parse(&bytes).unwrap();
+        assert_eq!(reparsed.reserved_byte1, 0x3A);
+        assert_eq!(reparsed, cc);
+    }
+
+    #[test]
+    fn parse_rejects_bad_header_fixed_bits() {
+        let mut bytes = sample().to_bytes();
+        bytes[0] &= !0x80; // clear the "reserved=1" bit
+        assert!(matches!(
+            CcData::parse(&bytes),
+            Err(Error::InvalidFixedBits {
+                what: "reserved/zero_bit",
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn parse_rejects_bad_triplet_fixed_bits() {
+        let mut bytes = sample().to_bytes();
+        bytes[2] &= !0x80; // clear the triplet's "one_bit=1"
+        assert!(matches!(
+            CcData::parse(&bytes),
+            Err(Error::InvalidFixedBits {
+                what: "one_bit/reserved",
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn parse_rejects_bad_marker_bits() {
+        let mut bytes = sample().to_bytes();
+        let last = bytes.len() - 1;
+        bytes[last] = 0x00;
+        assert!(matches!(
+            CcData::parse(&bytes),
+            Err(Error::InvalidFixedBits {
+                what: "marker_bits",
+                ..
+            })
+        ));
+    }
+
+    #[test]
     fn serialize_rejects_over_31_triplets() {
         let cc = CcData {
             process_cc_data_flag: true,
+            reserved_byte1: FF,
             triplets: alloc::vec![tr(true, CcType::Ntsc608Field1, 0, 0); 32],
         };
         let mut buf = [0u8; 200];

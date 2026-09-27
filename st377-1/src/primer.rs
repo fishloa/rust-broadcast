@@ -116,7 +116,14 @@ impl PrimerPack {
 
         let (len, len_token_size) = decode_ber_length(&bytes[16..])?;
         let value_start = 16 + len_token_size;
-        let len = len as usize;
+        // #1108/MX-W1: `len` is a 64-bit BER length; a bare `as usize`
+        // truncates it on a 32-bit target instead of rejecting an
+        // over-range value.
+        let len = usize::try_from(len).map_err(|_| Error::BufferTooShort {
+            need: usize::MAX,
+            have: bytes.len(),
+            what: "Primer Pack value (length exceeds platform usize)",
+        })?;
         let value_end = value_start.checked_add(len).ok_or(Error::BufferTooShort {
             need: usize::MAX,
             have: bytes.len(),
@@ -140,18 +147,42 @@ impl PrimerPack {
         let count = u32::from_be_bytes([v[0], v[1], v[2], v[3]]);
         let item_len = u32::from_be_bytes([v[4], v[5], v[6], v[7]]);
         let body = &v[8..];
-        if item_len != LOCAL_TAG_ENTRY_LEN || body.len() != count as usize * 18 {
+        // #1108/MX-W1: `count as usize * 18` wraps on a 32-bit target for a
+        // large enough `count`, which could make an attacker-chosen count
+        // spuriously equal `body.len()` and then abort the process at
+        // `Vec::with_capacity(count as usize)`. `checked_mul` rejects the
+        // overflow instead, and the allocation below is sized from the
+        // already-bounded `body.len()`, never from the untrusted `count`.
+        let entry_len = LOCAL_TAG_ENTRY_LEN as usize;
+        let expected_len = (count as usize).checked_mul(entry_len);
+        if item_len != LOCAL_TAG_ENTRY_LEN || expected_len != Some(body.len()) {
             return Err(Error::InvalidBatchHeader {
                 count,
                 item_len,
                 buffer_len: body.len(),
             });
         }
-        let mut entries = Vec::with_capacity(count as usize);
+        let mut entries = Vec::with_capacity(body.len() / entry_len);
         for chunk in body.chunks_exact(18) {
             let tag = u16::from_be_bytes([chunk[0], chunk[1]]);
             let uid: UlBytes = ul_bytes_from_prefix(&chunk[2..]);
             entries.push((tag, uid));
+        }
+        // #1108/MX-W4: each local tag (and, by construction, the UL it
+        // resolves to) must be unique within the Primer — `resolve_ul`/
+        // `resolve_tag`'s linear scan silently returns the first match on a
+        // duplicate otherwise. O(n^2) is fine: a Primer's entry count is
+        // bounded by the local tags actually used in this Partition's
+        // Header Metadata (KB-scale, per the crate's own doc comments).
+        for i in 0..entries.len() {
+            for j in (i + 1)..entries.len() {
+                if entries[i].0 == entries[j].0 {
+                    return Err(Error::DuplicatePrimerTag(entries[i].0));
+                }
+                if entries[i].1 == entries[j].1 {
+                    return Err(Error::DuplicatePrimerUl(entries[i].0, entries[j].0));
+                }
+            }
         }
         Ok((
             PrimerPack {
@@ -278,6 +309,39 @@ mod tests {
         assert!(matches!(
             PrimerPack::parse(&bytes),
             Err(Error::KeyPrefixMismatch { .. })
+        ));
+    }
+
+    /// MX-W4 (#1108): each local tag must be unique within a Primer;
+    /// `resolve_tag`'s linear scan silently returned the first match on a
+    /// duplicate, and parse never rejected one.
+    #[test]
+    fn rejects_duplicate_primer_tag() {
+        let pack = PrimerPack {
+            entries: alloc::vec![(0x3B02, [0xAAu8; 16]), (0x3B02, [0xBBu8; 16])],
+            ..Default::default()
+        };
+        let mut buf = alloc::vec![0u8; pack.serialized_len()];
+        pack.serialize_into(&mut buf).unwrap();
+        assert!(matches!(
+            PrimerPack::parse(&buf),
+            Err(Error::DuplicatePrimerTag(0x3B02))
+        ));
+    }
+
+    /// MX-W4 (#1108): two different local tags must not resolve to the same
+    /// UL/UUID.
+    #[test]
+    fn rejects_duplicate_primer_ul() {
+        let pack = PrimerPack {
+            entries: alloc::vec![(0x3B02, [0xAAu8; 16]), (0x3B05, [0xAAu8; 16])],
+            ..Default::default()
+        };
+        let mut buf = alloc::vec![0u8; pack.serialized_len()];
+        pack.serialize_into(&mut buf).unwrap();
+        assert!(matches!(
+            PrimerPack::parse(&buf),
+            Err(Error::DuplicatePrimerUl(0x3B02, 0x3B05))
         ));
     }
 }

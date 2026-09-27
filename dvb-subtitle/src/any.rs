@@ -39,6 +39,24 @@ macro_rules! declare_segments {
                 /// The segment body bytes (starting after the 4-byte sync_byte+segment_type+page_id+segment_length header).
                 data: &$lt [u8],
             },
+            /// Segment with a *recognized* segment_type whose typed parse
+            /// returned `Err` (distinct from [`Self::Unknown`], whose
+            /// segment_type has no typed implementation at all — issue
+            /// #1108/DS-W1: a bug that makes every real instance of a typed
+            /// parser fail could otherwise hide as `Unknown` passthrough and
+            /// still round-trip byte-exact). Re-serializes the raw bytes
+            /// verbatim, same as `Unknown`.
+            Malformed {
+                /// The raw segment_type byte.
+                segment_type: u8,
+                /// The page_id from the segment header.
+                page_id: u16,
+                /// The segment body bytes (same slicing as `Unknown::data`).
+                data: &$lt [u8],
+                /// Why the typed parse failed.
+                #[cfg_attr(feature = "serde", serde(skip))]
+                err: crate::error::Error,
+            },
         }
 
         $(
@@ -56,7 +74,8 @@ macro_rules! declare_segments {
             /// Diagnostic name of the contained segment — the type's
             /// [`SegmentDef::NAME`](crate::traits::SegmentDef::NAME)
             /// (`"PAGE_COMPOSITION"`, `"OBJECT_DATA"`, …); `"UNKNOWN"` for
-            /// [`AnySegment::Unknown`].
+            /// [`AnySegment::Unknown`], `"MALFORMED"` for
+            /// [`AnySegment::Malformed`].
             #[must_use]
             pub fn name(&self) -> &'static str {
                 match self {
@@ -65,6 +84,7 @@ macro_rules! declare_segments {
                             <$($path)::+ as crate::traits::SegmentDef>::NAME,
                     )+
                     Self::Unknown { .. } => "UNKNOWN",
+                    Self::Malformed { .. } => "MALFORMED",
                 }
             }
 
@@ -72,7 +92,8 @@ macro_rules! declare_segments {
             ///
             /// `None` means no typed implementation exists for `segment_type` (the
             /// caller turns that into [`AnySegment::Unknown`]). `Some(Err)`
-            /// is a typed parse failure for a recognized segment_type.
+            /// is a typed parse failure for a recognized segment_type (the
+            /// caller turns that into [`AnySegment::Malformed`]).
             pub(crate) fn dispatch(segment_type: u8, full: &$lt [u8]) -> Option<crate::Result<Self>> {
                 match segment_type {
                     $(
@@ -88,6 +109,7 @@ macro_rules! declare_segments {
                         Self::$variant(s) => s.serialized_len(),
                     )+
                     Self::Unknown { data, .. } => (6 + data.len()),
+                    Self::Malformed { data, .. } => (6 + data.len()),
                 }
             }
 
@@ -97,23 +119,38 @@ macro_rules! declare_segments {
                         Self::$variant(s) => s.serialize_into(buf),
                     )+
                     Self::Unknown { segment_type, page_id, data } => {
-                        let len = 6 + data.len();
-                        if buf.len() < len {
-                            return Err(crate::error::Error::BufferTooShort {
-                                need: len,
-                                have: buf.len(),
-                                what: "Unknown segment serialize",
-                            });
-                        }
-                        buf[0] = 0x0F;
-                        buf[1] = *segment_type;
-                        buf[2..4].copy_from_slice(&page_id.to_be_bytes());
-                        let seg_len = crate::segments::check_segment_length(data.len())?;
-                        buf[4..6].copy_from_slice(&seg_len.to_be_bytes());
-                        buf[6..len].copy_from_slice(data);
-                        Ok(len)
+                        Self::serialize_raw_segment(*segment_type, *page_id, data, buf, "Unknown segment serialize")
+                    }
+                    Self::Malformed { segment_type, page_id, data, .. } => {
+                        Self::serialize_raw_segment(*segment_type, *page_id, data, buf, "Malformed segment serialize")
                     }
                 }
+            }
+
+            /// Shared raw re-serialization for `Unknown`/`Malformed`, both of
+            /// which round-trip their body bytes verbatim.
+            fn serialize_raw_segment(
+                segment_type: u8,
+                page_id: u16,
+                data: &[u8],
+                buf: &mut [u8],
+                what: &'static str,
+            ) -> crate::Result<usize> {
+                let len = 6 + data.len();
+                if buf.len() < len {
+                    return Err(crate::error::Error::BufferTooShort {
+                        need: len,
+                        have: buf.len(),
+                        what,
+                    });
+                }
+                buf[0] = crate::pes_data_field::SYNC_BYTE;
+                buf[1] = segment_type;
+                buf[2..4].copy_from_slice(&page_id.to_be_bytes());
+                let seg_len = crate::segments::check_segment_length(data.len())?;
+                buf[4..6].copy_from_slice(&seg_len.to_be_bytes());
+                buf[6..len].copy_from_slice(data);
+                Ok(len)
             }
         }
 

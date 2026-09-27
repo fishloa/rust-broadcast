@@ -349,6 +349,9 @@ impl<'a> Parse<'a> for RegionCompositionSegment {
                 what: "region_composition_segment",
             });
         }
+        if bytes[0] != crate::pes_data_field::SYNC_BYTE {
+            return Err(Error::BadSyncByte(bytes[0]));
+        }
         if bytes[1] != SEGMENT_TYPE {
             return Err(Error::UnknownSegmentType(bytes[1]));
         }
@@ -516,6 +519,19 @@ mod tests {
         assert_ne!(out2, bytes);
         let reparse = RegionCompositionSegment::parse(&out2).unwrap();
         assert_eq!(reparse.region_width, 1280);
+    }
+
+    /// DS-W2 (#1108): sync_byte wasn't checked by any typed segment parser.
+    #[test]
+    fn rejects_bad_sync_byte() {
+        let bytes = [
+            0x00, 0x11, 0x00, 0x01, 0x00, 0x16, 0x01, 0x88, 0x02, 0xCF, 0x00, 0x8F, 0x18, 0x03,
+            0x00, 0x00, 0x00, 0x01, 0x00, 0x0A, 0x00, 0x0A, 0x00, 0x02, 0x10, 0x14, 0x00, 0x14,
+        ];
+        assert!(matches!(
+            RegionCompositionSegment::parse(&bytes),
+            Err(Error::BadSyncByte(0x00))
+        ));
     }
 
     #[test]

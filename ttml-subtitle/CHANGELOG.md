@@ -7,6 +7,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed (breaking)
+- **#1108 (TT-W5)**: `WallclockForm::DateTime.seconds` is now `Option<u8>`
+  (was `u8`), to preserve the `hhmm-time`-vs-`hhmmss-time` distinction
+  (`date-time`'s `wall-time` grammar allows omitting seconds) so
+  `format_time_expression` doesn't reinsert a `:00` that wasn't in the
+  source.
+
+### Fixed
+- **#1108 (TT-W4)**: the default `ttp:tickRate` (§7.2.11) always multiplied
+  the (possibly-defaulted-to-30) frame rate by the sub-frame rate, instead
+  of defaulting to 1 tick/second when no `ttp:frameRate` was actually
+  specified, and ignored `ttp:frameRateMultiplier` when computing the
+  effective frame rate. The multiply is now also a checked/saturating `u64`
+  computation instead of an unchecked `u32` one.
+- **#1108 (TT-W5)**: the clock-time and wallclock-time grammars (§12.3.1)
+  were too lenient: a seconds-fraction and a `:frames` term were both
+  accepted together (grammar makes them mutually exclusive), a single-digit
+  `frames` term was accepted (grammar requires >= 2 digits),
+  `"wallclock(10:00)junk"` was accepted (trailing content after the closing
+  paren was silently discarded via `rfind` instead of rejected), and
+  2-digit wallclock hours/minutes/seconds accepted a leading `+` (Rust's
+  `u8::from_str` allows it; the grammar doesn't).
+- **#1108 (TT-W3)**: the profile validator's module doc claimed the full
+  159-row Feature/Extension disposition table and full §8/§9 provisions;
+  it now documents exactly the (much smaller) set of checks actually
+  implemented. Two real bugs in that implemented subset are also fixed:
+  `body_has_frame_usage`'s check of `<body>`'s own `begin`/`dur`/`end` was
+  nested inside the `<div>` loop, so it never ran on a `<body>` with no
+  `<div>` at all (now also covers `<div>`'s own timing); and
+  `begin`/`dur`/`end` values are now run through
+  `time::parse_time_expression` (§12.3.1), so `begin="garbage"` is rejected
+  instead of validating.
+
 ## [0.2.1] - 2026-09-26
 
 ### Security

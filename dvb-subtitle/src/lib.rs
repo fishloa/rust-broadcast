@@ -70,7 +70,7 @@ pub use segments::display_definition::DisplayDefinitionSegment;
 pub use segments::end_of_display_set::EndOfDisplaySetSegment;
 pub use segments::object_data::{
     DataType, InterlacedPixelsData, ObjectCodingMethod, ObjectDataPayload, ObjectDataSegment,
-    PixelDataSubBlock, ProgressivePixelBlock,
+    PixelDataSubBlock, PixelRun, PixelRunIter, ProgressivePixelBlock,
 };
 pub use segments::page_composition::{PageCompositionSegment, PageRegionEntry, PageState};
 pub use segments::region_composition::{

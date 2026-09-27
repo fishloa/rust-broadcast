@@ -372,11 +372,19 @@ impl LoudnessMeter {
         }
     }
 
-    /// Finalize the in-progress sub-block into the bounded ring (evicting
-    /// the oldest once past [`SHORT_TERM_SUB_BLOCKS`]), then derive any
-    /// gating-block (400 ms) / short-term (3 s) value it newly completes.
-    /// A no-op if nothing has accumulated. Called from `finish()` too, to
-    /// flush a final partial sub-block (whatever samples it has).
+    /// Finalize a *full* in-progress sub-block into the bounded ring
+    /// (evicting the oldest once past [`SHORT_TERM_SUB_BLOCKS`]), then
+    /// derive any gating-block (400 ms) / short-term (3 s) value it newly
+    /// completes. Called once per `sub_block_samples` frames from
+    /// `accumulate_sub_block`, so `current_sub_block_count` is always
+    /// exactly `sub_block_samples` here — never partial (#1108/LOUD-W2:
+    /// `finish()` used to flush a leftover PARTIAL sub-block through this
+    /// same path, averaging fewer-than-`sub_block_samples` frames as if
+    /// they were a full 100 ms and feeding that into the 400 ms/3 s
+    /// windows on equal footing with genuinely complete sub-blocks, which
+    /// biases the last up-to-3 gating/short-term values of every
+    /// measurement — BS.1770-5 gating uses complete blocks only.
+    /// `finish()` now discards that remainder instead of flushing it).
     fn complete_sub_block(&mut self) {
         if self.current_sub_block_count == 0 {
             return;
@@ -476,16 +484,27 @@ impl LoudnessMeter {
         Ok(())
     }
 
-    /// Push interleaved stereo f32 samples.
+    /// Push two planar (not interleaved) f32 channel buffers for a
+    /// **stereo** (2-channel) layout.
     ///
-    /// `left` and `right` must have equal length.
-    pub fn push_interleaved_f32(
+    /// `left` and `right` must have equal length. Returns
+    /// [`crate::Error::ChannelMismatch`] if the configured
+    /// [`crate::ChannelLayout`] isn't exactly 2 channels (#1108/LOUD-W1):
+    /// pre-fix, calling this on e.g. a `Mono` layout indexed `self.
+    /// filters[1]`, a 1-element `Vec`, and panicked.
+    pub fn push_stereo_planar_f32(
         &mut self,
         left: &[f32],
         right: &[f32],
     ) -> Result<(), crate::Error> {
         if self.finished {
             return Err(crate::Error::Finished);
+        }
+        if self.layout.channel_count() != 2 {
+            return Err(crate::Error::ChannelMismatch {
+                expected: 2,
+                got: self.layout.channel_count(),
+            });
         }
         if left.len() != right.len() {
             return Err(crate::Error::ChannelMismatch {
@@ -538,11 +557,16 @@ impl LoudnessMeter {
         }
         self.finished = true;
 
-        // Flush a final partial sub-block (fewer than `sub_block_samples`
-        // frames), so its contribution isn't silently dropped — the last
-        // gating/short-term step this produces is fully computed from the
-        // ring exactly like every other one.
-        self.complete_sub_block();
+        // #1108/LOUD-W2: a final in-progress sub-block with fewer than
+        // `sub_block_samples` frames is discarded, not flushed — BS.1770-5
+        // gating uses complete 400 ms blocks (built from complete 100 ms
+        // sub-blocks); averaging a short remainder as if it were a full
+        // sub-block and feeding it into the 400 ms/3 s windows on equal
+        // footing with genuinely complete ones biased the last up-to-3
+        // gating/short-term values of every measurement. See
+        // `complete_sub_block`'s doc comment.
+        self.current_sub_block_sum = 0.0;
+        self.current_sub_block_count = 0;
 
         // --- Integrated loudness (two‑stage gating), from the 400 ms
         // gating-block history ---
@@ -767,10 +791,81 @@ mod tests {
             right[i] = val;
         }
         let mut meter = LoudnessMeter::new(sample_rate, ChannelLayout::Stereo).unwrap();
-        meter.push_interleaved_f32(&left, &right).unwrap();
+        meter.push_stereo_planar_f32(&left, &right).unwrap();
         meter.finish();
         let lufs = meter.integrated_lufs();
         assert!((lufs - (-23.0)).abs() < 0.2, "got {lufs}, expected -23.0");
+    }
+
+    /// LOUD-W1 (#1108): calling `push_stereo_planar_f32` on a non-stereo
+    /// layout used to panic (`Mono` has a 1-element `self.filters`, and
+    /// this indexed `self.filters[1]` unconditionally); it now returns
+    /// `ChannelMismatch`.
+    #[test]
+    fn push_stereo_planar_rejects_non_stereo_layout() {
+        let mut meter = LoudnessMeter::new(48_000, ChannelLayout::Mono).unwrap();
+        let samples = [0.1f32, 0.2, 0.3];
+        let err = meter
+            .push_stereo_planar_f32(&samples, &samples)
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            crate::Error::ChannelMismatch {
+                expected: 2,
+                got: 1
+            }
+        ));
+    }
+
+    /// LOUD-W2 (#1108): a final, in-progress sub-block with fewer than
+    /// `sub_block_samples` frames must be discarded on `finish()`, not
+    /// averaged as if it were a full sub-block and folded into the last
+    /// gating-block window on equal footing with complete sub-blocks.
+    /// Appending a short (partial-sub-block) burst at a very different
+    /// level must not move `integrated_lufs()` at all, since it's
+    /// discarded outright — pre-fix, it was flushed and biased the last
+    /// gating-block value.
+    #[test]
+    fn trailing_partial_sub_block_does_not_affect_integrated_loudness() {
+        let sample_rate = 48_000u32;
+        let tone_amplitude = 10.0f64.powf(-23.0 / 20.0) as f32;
+        // 700 ms = exactly 7 complete 100 ms sub-blocks; no remainder.
+        let n_base = (0.7 * f64::from(sample_rate)) as usize;
+        let make_tone = |n: usize, amp: f32, freq: f64| -> Vec<f32> {
+            (0..n)
+                .map(|i| {
+                    let t = i as f64 / f64::from(sample_rate);
+                    (f64::from(amp) * (2.0 * core::f64::consts::PI * freq * t).sin()) as f32
+                })
+                .collect()
+        };
+        let base = make_tone(n_base, tone_amplitude, 1000.0);
+
+        let mut meter_a = LoudnessMeter::new(sample_rate, ChannelLayout::Stereo).unwrap();
+        meter_a.push_stereo_planar_f32(&base, &base).unwrap();
+        meter_a.finish();
+        let baseline_lufs = meter_a.integrated_lufs();
+
+        // Same 700 ms, plus a 20 ms burst at a much louder level (partial
+        // sub-block — 20 ms << the 100 ms sub_block_samples threshold).
+        let loud_amplitude = 10.0f64.powf(-3.0 / 20.0) as f32;
+        let n_tail = (0.02 * f64::from(sample_rate)) as usize;
+        let tail = make_tone(n_tail, loud_amplitude, 1000.0);
+        let mut left = base.clone();
+        let mut right = base.clone();
+        left.extend_from_slice(&tail);
+        right.extend_from_slice(&tail);
+
+        let mut meter_b = LoudnessMeter::new(sample_rate, ChannelLayout::Stereo).unwrap();
+        meter_b.push_stereo_planar_f32(&left, &right).unwrap();
+        meter_b.finish();
+        let with_tail_lufs = meter_b.integrated_lufs();
+
+        assert!(
+            (with_tail_lufs - baseline_lufs).abs() < 1e-9,
+            "a discarded partial trailing sub-block must not change integrated_lufs: \
+             baseline={baseline_lufs}, with_tail={with_tail_lufs}"
+        );
     }
 
     #[test]
@@ -792,7 +887,7 @@ mod tests {
             right[i] = val;
         }
         let mut meter = LoudnessMeter::new(sample_rate, ChannelLayout::Stereo).unwrap();
-        meter.push_interleaved_f32(&left, &right).unwrap();
+        meter.push_stereo_planar_f32(&left, &right).unwrap();
         meter.finish();
         let lufs = meter.integrated_lufs();
         assert!(
@@ -843,7 +938,7 @@ mod tests {
         }
 
         let mut meter = LoudnessMeter::new(sample_rate, ChannelLayout::Stereo).unwrap();
-        meter.push_interleaved_f32(&left, &right).unwrap();
+        meter.push_stereo_planar_f32(&left, &right).unwrap();
         meter.finish();
         let lufs = meter.integrated_lufs();
         assert!(
@@ -937,7 +1032,9 @@ mod tests {
     #[test]
     fn rejects_non_finite_in_interleaved_f32() {
         let mut meter = LoudnessMeter::new(48_000, ChannelLayout::Stereo).unwrap();
-        let err = meter.push_interleaved_f32(&[0.5], &[f32::NAN]).unwrap_err();
+        let err = meter
+            .push_stereo_planar_f32(&[0.5], &[f32::NAN])
+            .unwrap_err();
         let msg = format!("{err}");
         assert!(msg.contains("non-finite"), "got: {msg}");
     }

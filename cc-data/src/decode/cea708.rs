@@ -220,6 +220,10 @@ pub struct Window {
     pub underline: bool,
     /// Pen edge type.
     pub edge_type: EdgeType,
+    /// Pen edge colour (SPC parm3, §8.10.5.10) — distinct from the window's
+    /// `border_color` (SWA parm2, §8.10.5.8): the edge is drawn around each
+    /// glyph per `edge_type`, the border is drawn around the whole window.
+    pub edge_color: Color,
     /// Pen foreground colour.
     pub fg_color: Color,
     /// Pen foreground opacity.
@@ -265,6 +269,7 @@ impl Window {
             italics: false,
             underline: false,
             edge_type: EdgeType::None,
+            edge_color: Color::BLACK,
             fg_color: Color::WHITE,
             fg_opacity: Opacity::Solid,
             bg_color: Color::BLACK,
@@ -356,16 +361,19 @@ impl Window {
         self.pen_col = col.min(self.cols());
     }
 
-    /// The window's visible text, rows joined with `\n`, trailing blank rows
-    /// trimmed and per-row trailing spaces removed.
+    /// The window's visible text, non-empty rows joined with `\n`, per-row
+    /// trailing spaces removed. Blank rows (interior or trailing) are dropped
+    /// entirely rather than emitted as an empty line: a run of them would
+    /// otherwise produce consecutive `\n`s, which downstream consumers (e.g.
+    /// `timed-metadata`'s WebVTT cue writer) read as a cue-block terminator.
     #[must_use]
     pub fn text(&self) -> String {
-        // Trim trailing per-row spaces; keep interior blank rows as newlines but
-        // drop trailing blank rows.
-        let mut lines: Vec<&str> = self.rows.iter().map(|r| r.trim_end()).collect();
-        while lines.last().is_some_and(|l| l.is_empty()) {
-            lines.pop();
-        }
+        let lines: Vec<&str> = self
+            .rows
+            .iter()
+            .map(|r| r.trim_end())
+            .filter(|l| !l.is_empty())
+            .collect();
         lines.join("\n")
     }
 }
@@ -872,8 +880,8 @@ impl Cea708Decoder {
             w.fg_color = Color::new((p1 >> 4) & 0x03, (p1 >> 2) & 0x03, p1 & 0x03);
             w.bg_opacity = Opacity::from_bits((p2 >> 6) & 0x03);
             w.bg_color = Color::new((p2 >> 4) & 0x03, (p2 >> 2) & 0x03, p2 & 0x03);
-            // p3 = edge colour
-            w.border_color = Color::new((p3 >> 4) & 0x03, (p3 >> 2) & 0x03, p3 & 0x03);
+            // p3 = edge colour (the pen's own edge, not the window border).
+            w.edge_color = Color::new((p3 >> 4) & 0x03, (p3 >> 2) & 0x03, p3 & 0x03);
         }
         TOTAL
     }

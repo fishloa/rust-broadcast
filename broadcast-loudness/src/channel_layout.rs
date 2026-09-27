@@ -45,7 +45,16 @@ impl ChannelLayout {
     #[must_use]
     pub fn weight(&self, index: usize) -> f64 {
         match self {
-            Self::Mono => 1.0,
+            // #1108/LOUD-W1: was `1.0` unconditionally, so any caller that
+            // indexed a second (non-existent) channel of a Mono layout got
+            // a nonzero weight for it instead of 0.0.
+            Self::Mono => {
+                if index == 0 {
+                    1.0
+                } else {
+                    0.0
+                }
+            }
             Self::Stereo => {
                 match index {
                     0 => 1.0, // L
@@ -81,3 +90,20 @@ impl ChannelLayout {
 }
 
 impl_spec_display!(ChannelLayout);
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// LOUD-W1 (#1108): `Mono.weight(i)` used to return `1.0` for EVERY
+    /// index, not just 0 — a caller indexing a second channel of a Mono
+    /// layout (e.g. the pre-fix `push_interleaved_f32` unconditionally
+    /// indexing channel 1) got a nonzero weight for a channel that doesn't
+    /// exist.
+    #[test]
+    fn mono_weight_is_zero_past_channel_0() {
+        assert_eq!(ChannelLayout::Mono.weight(0), 1.0);
+        assert_eq!(ChannelLayout::Mono.weight(1), 0.0);
+        assert_eq!(ChannelLayout::Mono.weight(5), 0.0);
+    }
+}

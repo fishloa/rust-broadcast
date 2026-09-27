@@ -371,8 +371,11 @@ impl Serialize for RangeNack {
             });
         }
 
-        // Header: V=2, P=0, Subtype=0.
-        let length_field = (len / WORD_LEN - 1) as u16;
+        // Header: V=2, P=0, Subtype=0. Provably fits u16 given the
+        // `MAX_RANGE_ENTRIES` check above, but checked via `fit_u16` anyway
+        // (#1108/RIST-W4) rather than relying on that invariant never
+        // changing out from under this cast.
+        let length_field = broadcast_common::len::fit_u16(len / WORD_LEN - 1, "RTCP length")?;
         buf[0] = (RTCP_VERSION << 6) | SUBTYPE_RANGE_NACK;
         buf[1] = PT_APP;
         buf[2..4].copy_from_slice(&length_field.to_be_bytes());
