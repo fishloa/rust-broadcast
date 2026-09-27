@@ -263,8 +263,23 @@ impl CallerHandshake {
 
         let hp_out = HandshakePacket {
             timestamp: 0,
-            // §4.3.1.2: the socket ID previously received in the induction phase.
-            dest_socket_id: self.peer_socket_id,
+            // libsrt's real Caller sends `0` here, not the Listener's Socket
+            // ID it just captured — verified against `srtcore/core.cpp`
+            // v1.5.5, `CUDT::processAsyncConnectRequest`:
+            // `reqpkt.set_id(!m_config.bRendezvous ? 0 : m_ConnRes.m_iID)`
+            // (the synchronous `startConnect` path reaches the same `0` by
+            // never re-`set_id`ing its request packet for the non-rendezvous
+            // case). A Caller-Listener handshake is not yet an established
+            // connection the Listener's single multiplexed socket can look
+            // up by Socket ID — that only starts mattering once the
+            // handshake completes and the negotiated `peer_socket_id` (the
+            // field *inside* this same packet, not the header) is used to
+            // tag subsequent DATA/control. Sending our captured
+            // `peer_socket_id` here instead (this field's pre-#1060-wave
+            // behavior) made a real libsrt Listener silently drop the
+            // CONCLUSION — the exact stall a live interop test against it
+            // reproduces (issue #1065).
+            dest_socket_id: 0,
             version: HANDSHAKE_VERSION_5,
             encryption_field: self.config.encryption_field,
             extension_field: HandshakeExtensionFlags(ext_flags),
@@ -298,6 +313,15 @@ impl CallerHandshake {
             self.state = CallerHandshakeState::Rejected;
             return Ok(vec![HandshakeOutput::Rejected(RejectionReason::Version)]);
         }
+
+        // Re-capture the Listener's Socket ID from the CONCLUSION response
+        // itself, rather than trusting the value captured from the earlier
+        // INDUCTION response to still be current — this is the
+        // authoritative value the negotiated `peer_socket_id` (and every
+        // later DATA/control packet's `dest_socket_id`, via
+        // `io::HandshakeOutput::Connected(params).peer_socket_id`) is
+        // supposed to carry (issue #1065).
+        self.peer_socket_id = hp.srt_socket_id;
 
         let parsed = match handshake_sm::parse_peer_extensions(hp) {
             Ok(p) => p,
@@ -370,6 +394,61 @@ mod tests {
         assert!(c.start().is_err());
     }
 
+    /// Issue #1065: the negotiated `peer_socket_id` must come from the
+    /// CONCLUSION response's own `srt_socket_id`, not whatever was captured
+    /// from the earlier INDUCTION response — modeled here with a
+    /// (deliberately adversarial-shaped, though not itself a real libsrt
+    /// behavior) CONCLUSION response that echoes a *different* Socket ID
+    /// than the INDUCTION response did, so a stale value would be caught.
+    #[test]
+    fn conclusion_response_socket_id_overrides_induction_one() {
+        use crate::packet::handshake::build_extension_block;
+
+        const INDUCTION_LISTENER_ID: u32 = 0x1111_2222;
+        const CONCLUSION_LISTENER_ID: u32 = 0x3333_4444;
+
+        let mut c = CallerHandshake::new(0xAAAA_BBBB, HandshakeConfig::default());
+        c.start().unwrap();
+        c.feed(&induction_response(0xC0FF_EE00, INDUCTION_LISTENER_ID))
+            .unwrap();
+
+        let hs_msg = HsExtMessage {
+            srt_version: 0x0105_0000,
+            srt_flags: HandshakeConfig::default().flags,
+            receiver_tsbpd_delay_ms: 120,
+            sender_tsbpd_delay_ms: 120,
+        };
+        let ext = build_extension_block(ExtensionType::HsRsp, &hs_msg.to_bytes()).unwrap();
+        let conclusion_response = ControlPacket::Handshake(HandshakePacket {
+            timestamp: 0,
+            dest_socket_id: 0xAAAA_BBBB,
+            version: HANDSHAKE_VERSION_5,
+            encryption_field: EncryptionField::NoEncryption,
+            extension_field: HandshakeExtensionFlags(0x0001),
+            initial_seq_number: 0,
+            mtu: 1500,
+            max_flow_window_size: 8192,
+            handshake_type: HandshakeType::Conclusion,
+            srt_socket_id: CONCLUSION_LISTENER_ID,
+            syn_cookie: 0xC0FF_EE00,
+            peer_ip: [0; 4],
+            extensions: HandshakeExtensions(&ext),
+        });
+        let outputs = c.feed(&conclusion_response).unwrap();
+        assert!(
+            outputs
+                .iter()
+                .any(|o| matches!(o, HandshakeOutput::Connected(_))),
+            "expected Connected, got {outputs:?}"
+        );
+        assert_eq!(c.state(), CallerHandshakeState::Connected);
+        assert_eq!(
+            c.negotiated().unwrap().peer_socket_id,
+            CONCLUSION_LISTENER_ID,
+            "peer_socket_id must come from the CONCLUSION response, not the stale INDUCTION one"
+        );
+    }
+
     #[test]
     fn induction_wire_values_match_draft_4_3_1_1() {
         let mut c = CallerHandshake::new(0xAAAA_BBBB, HandshakeConfig::default());
@@ -426,7 +505,11 @@ mod tests {
                 assert_eq!(hp.version, HANDSHAKE_VERSION_5);
                 assert_eq!(hp.handshake_type, HandshakeType::Conclusion);
                 assert_eq!(hp.syn_cookie, 0xC0FF_EE00);
-                assert_eq!(hp.dest_socket_id, 0x1111_2222);
+                // Issue #1065: libsrt's real Caller sends `0` here, not the
+                // Listener's Socket ID it just captured (verified against
+                // `srtcore/core.cpp`'s `processAsyncConnectRequest` — see
+                // this field's doc comment in `on_induction_response`).
+                assert_eq!(hp.dest_socket_id, 0);
                 assert_eq!(hp.extension_field.0 & HS_EXT_FLAG_HSREQ, HS_EXT_FLAG_HSREQ);
                 let blocks: Vec<_> = hp.extensions.iter().map(|b| b.unwrap()).collect();
                 assert_eq!(blocks.len(), 1);
