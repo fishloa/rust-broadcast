@@ -33,6 +33,9 @@ impl<'a> Parse<'a> for StuffingSegment<'a> {
                 what: "stuffing_segment",
             });
         }
+        if bytes[0] != crate::pes_data_field::SYNC_BYTE {
+            return Err(Error::BadSyncByte(bytes[0]));
+        }
         if bytes[1] != SEGMENT_TYPE {
             return Err(Error::UnknownSegmentType(bytes[1]));
         }
@@ -99,5 +102,15 @@ mod tests {
         assert_ne!(out2, bytes);
         let reparse = StuffingSegment::parse(&out2).unwrap();
         assert_eq!(reparse.page_id, 9);
+    }
+
+    /// DS-W2 (#1108): sync_byte wasn't checked by any typed segment parser.
+    #[test]
+    fn rejects_bad_sync_byte() {
+        let bytes = [0x00, 0xFF, 0x00, 0x00, 0x00, 0x03, 0xAA, 0xBB, 0xCC];
+        assert!(matches!(
+            StuffingSegment::parse(&bytes),
+            Err(Error::BadSyncByte(0x00))
+        ));
     }
 }

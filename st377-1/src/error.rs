@@ -130,4 +130,16 @@ pub enum Error {
         /// The property's spec name.
         name: &'static str,
     },
+    /// A Local Set (§9.3) had the same local tag more than once.
+    #[error("duplicate local tag {0:#06X} within a Local Set")]
+    DuplicateLocalTag(u16),
+    /// A Primer Pack (§9.2) mapped the same local tag to two different
+    /// entries — each local tag must be unique within the Primer, or a
+    /// lookup can't tell which entry is meant.
+    #[error("duplicate local tag {0:#06X} within a Primer Pack")]
+    DuplicatePrimerTag(u16),
+    /// A Primer Pack (§9.2) mapped two different local tags to the same
+    /// UL/UUID.
+    #[error("duplicate UL/UUID within a Primer Pack (tags {0:#06X} and {1:#06X})")]
+    DuplicatePrimerUl(u16, u16),
 }

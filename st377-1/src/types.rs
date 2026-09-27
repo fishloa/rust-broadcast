@@ -445,14 +445,21 @@ pub fn parse_uid_batch(bytes: &[u8]) -> Result<Vec<UlBytes>> {
     // `tests/fixtures/op1a_mpeg2_pcm.mxf`) — this crate previously rejected
     // that as `InvalidBatchHeader`, even though `count == 0` unambiguously
     // means "no elements" regardless of the stated element size.
-    if (count > 0 && item_len != 16) || body.len() != count as usize * 16 {
+    // #1108/MX-W1: `count as usize * 16` wraps on a 32-bit target for a
+    // large enough `count`, which could make an attacker-chosen count
+    // spuriously equal `body.len()` and then abort the process at
+    // `Vec::with_capacity(count as usize)`. `checked_mul` rejects the
+    // overflow instead, and the allocation below is sized from the
+    // already-bounded `body.len()`, never from the untrusted `count`.
+    let expected_len = (count as usize).checked_mul(16);
+    if (count > 0 && item_len != 16) || expected_len != Some(body.len()) {
         return Err(Error::InvalidBatchHeader {
             count,
             item_len,
             buffer_len: body.len(),
         });
     }
-    let mut out = Vec::with_capacity(count as usize);
+    let mut out = Vec::with_capacity(body.len() / 16);
     for chunk in body.chunks_exact(16) {
         out.push(ul_bytes_from_prefix(chunk));
     }

@@ -81,9 +81,12 @@ pub struct Preface {
     /// Identifications (`0x3B06`, **E/req** — encoder-required, but a
     /// decoder must not fail if it's absent, per Annex A.2's "Req?" column)
     /// — strong references to every `Identification` Set recording a
-    /// modification to this file. Empty if the property was absent on
-    /// parse.
-    pub identifications: Vec<UlBytes>,
+    /// modification to this file. `None` when the property itself was
+    /// absent on parse, distinct from `Some(vec![])` (property present, an
+    /// empty Batch) — #1108/MX-W3: this used to collapse both to an empty
+    /// `Vec`, so serialize always re-emitted the property even when the
+    /// source never had it, breaking the round-trip.
+    pub identifications: Option<Vec<UlBytes>>,
     /// Content Storage (`0x3B03`, Req) — strong reference to the
     /// `ContentStorage` Set.
     pub content_storage: UlBytes,
@@ -131,10 +134,9 @@ impl<'a> Parse<'a> for Preface {
                 .map(u32::from_be_bytes);
         let primary_package =
             get_optional_fixed::<16>(items, TAG_PRIMARY_PACKAGE, "Primary Package")?;
-        let identifications = match get_optional_raw(items, TAG_IDENTIFICATIONS) {
-            Some(raw) => parse_uid_batch(raw)?,
-            None => Vec::new(),
-        };
+        let identifications = get_optional_raw(items, TAG_IDENTIFICATIONS)
+            .map(parse_uid_batch)
+            .transpose()?;
         let content_storage =
             get_required_fixed::<16>(items, TAG_CONTENT_STORAGE, "Content Storage", "Preface")?;
         let operational_pattern = get_required_fixed::<16>(
@@ -200,10 +202,12 @@ impl Preface {
         if let Some(p) = self.primary_package {
             out.push(LocalSetOwnedItem::fixed(TAG_PRIMARY_PACKAGE, p));
         }
-        out.push(LocalSetOwnedItem::owned(
-            TAG_IDENTIFICATIONS,
-            serialize_uid_batch(&self.identifications),
-        ));
+        if let Some(ref ids) = self.identifications {
+            out.push(LocalSetOwnedItem::owned(
+                TAG_IDENTIFICATIONS,
+                serialize_uid_batch(ids),
+            ));
+        }
         out.push(LocalSetOwnedItem::fixed(
             TAG_CONTENT_STORAGE,
             self.content_storage,
@@ -263,7 +267,7 @@ mod tests {
             version: VERSION_1_3,
             object_model_version: Some(1),
             primary_package: Some([0x33; 16]),
-            identifications: alloc::vec![[0x44; 16]],
+            identifications: Some(alloc::vec![[0x44; 16]]),
             content_storage: [0x55; 16],
             operational_pattern: [0x66; 16],
             essence_containers: alloc::vec![[0x77; 16]],
@@ -311,8 +315,7 @@ mod tests {
         // encoder must write it, but a decoder must not fail if it's
         // missing. Build a Preface local set with every other required
         // property present but Identifications omitted entirely.
-        let mut preface = sample();
-        preface.identifications = Vec::new();
+        let preface = sample();
         let owned = preface.owned_items();
         let items: Vec<LocalSetOwnedItem> = owned
             .into_iter()
@@ -323,7 +326,17 @@ mod tests {
         serialize_owned_set(key, &encoded, &mut buf).unwrap();
 
         let parsed = Preface::parse(&buf).expect("absent Identifications must not error");
-        assert_eq!(parsed.identifications, Vec::<UlBytes>::new());
+        // #1108/MX-W3: distinct from `Some(vec![])` — the property was
+        // never there at all, not present-but-empty.
+        assert_eq!(parsed.identifications, None);
+
+        // Byte-exact round-trip: re-serializing must NOT re-introduce the
+        // property (pre-fix, `identifications: Vec<UlBytes>` collapsed
+        // "absent" and "present but empty" to the same empty `Vec`, and
+        // serialize unconditionally wrote the property either way).
+        let mut out = alloc::vec![0u8; parsed.serialized_len()];
+        parsed.serialize_into(&mut out).unwrap();
+        assert_eq!(out, buf);
     }
 
     #[test]

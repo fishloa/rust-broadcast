@@ -6,7 +6,28 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Changed (breaking)
+- **#1108 (LOUD-W1)**: `LoudnessMeter::push_interleaved_f32` is renamed to
+  `push_stereo_planar_f32` — it takes two separate planar channel buffers,
+  not one interleaved buffer, and now validates the configured layout is
+  stereo before indexing it (see Fixed, below). No deprecated alias is kept
+  (no in-workspace consumer used the old name outside this crate's own
+  tests/examples).
+
 ### Fixed
+- **#1108 (LOUD-W1)**: `push_interleaved_f32` (now `push_stereo_planar_f32`)
+  panicked on any non-stereo `ChannelLayout` (e.g. `Mono`, whose
+  `self.filters` is a 1-element `Vec`, indexed at `[1]` unconditionally).
+  It now returns `Error::ChannelMismatch`. Separately, `ChannelLayout::Mono
+  .weight(i)` returned `1.0` for every `i`, not just channel 0.
+- **#1108 (LOUD-W2)**: a final, in-progress 100 ms sub-block with fewer
+  than a full sub-block's samples was flushed on `finish()` by averaging
+  whatever had accumulated and folding it into the last 400 ms gating-block
+  / 3 s short-term window on equal footing with genuinely complete
+  sub-blocks — BS.1770-5 gating uses complete blocks only. A 20 ms burst at
+  a very different level appended to an otherwise steady 700 ms tone could
+  swing `integrated_lufs()` by several LU purely from this trailing
+  partial sub-block. It's now discarded instead of flushed.
 - **Loudness Range (LRA) was computed from 400 ms momentary blocks instead
   of 3 s short-term values** (EBU Tech 3342 defines it over the latter,
   sampled at ≥10 Hz). 400 ms loudness has far higher variance on real

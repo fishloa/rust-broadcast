@@ -80,12 +80,19 @@ impl<'a> Parse<'a> for PesDataField<'a> {
 
             match AnySegment::dispatch(segment_type, seg_bytes) {
                 Some(Ok(seg)) => segments.push(seg),
-                Some(Err(_e)) => {
-                    // Malformed but recognised segment — skip it per §7.2.0.2
-                    segments.push(AnySegment::Unknown {
+                Some(Err(e)) => {
+                    // A recognised segment_type whose typed parse rejected the
+                    // body. Kept distinct from `Unknown` (DS-W1/#1108): folding
+                    // this into `Unknown` let a broken typed parser hide behind
+                    // the same byte-exact raw-passthrough round-trip as a
+                    // genuinely unimplemented segment_type, so the real-fixture
+                    // gate couldn't fail even if every typed parse of this
+                    // segment_type was broken.
+                    segments.push(AnySegment::Malformed {
                         segment_type,
                         page_id: u16::from_be_bytes([seg_bytes[2], seg_bytes[3]]),
                         data: &seg_bytes[SEGMENT_HEADER_LEN..],
+                        err: e,
                     });
                 }
                 None => {
@@ -192,6 +199,38 @@ mod tests {
         let field = PesDataField::parse(&bytes).unwrap();
         assert_eq!(field.segments.len(), 1);
         assert_eq!(field.segments[0].name(), "UNKNOWN");
+        let out = field.to_bytes();
+        assert_eq!(out, bytes);
+    }
+
+    #[test]
+    fn malformed_typed_segment_distinct_from_unknown() {
+        // segment_type 0x80 (END_OF_DISPLAY_SET) is a recognised type, but its
+        // typed parser requires segment_length == 0 (Table 28); a
+        // full-length, well-framed body with segment_length = 2 is a typed
+        // parse failure, not an unrecognised segment_type. DS-W1 (#1108):
+        // pre-fix this fell back to the SAME `AnySegment::Unknown` a truly
+        // unimplemented segment_type gets, so a broken typed parser for a
+        // real segment type could hide behind a passing byte-exact
+        // round-trip forever.
+        let bytes = [
+            0x20, 0x00, // data_identifier + subtitle_stream_id
+            0x0F, 0x80, 0x00, 0x01, 0x00, 0x02, 0xCA,
+            0xFE, // end_of_display_set, len=2 (invalid)
+            0xFF,
+        ];
+        let field = PesDataField::parse(&bytes).unwrap();
+        assert_eq!(field.segments.len(), 1);
+        assert_eq!(field.segments[0].name(), "MALFORMED");
+        assert!(!matches!(field.segments[0], AnySegment::Unknown { .. }));
+        assert!(matches!(
+            field.segments[0],
+            AnySegment::Malformed {
+                segment_type: 0x80,
+                ..
+            }
+        ));
+        // Still round-trips byte-exact, same as Unknown.
         let out = field.to_bytes();
         assert_eq!(out, bytes);
     }

@@ -272,11 +272,29 @@ impl TtElement {
             .and_then(|s| s.parse().ok())
             .unwrap_or(1);
 
+        // §7.2.11: default, if a frame rate IS SPECIFIED (`ttp:frameRate`
+        // present — not merely defaulted to 30), is the *effective* frame
+        // rate (`frame_rate * frameRateMultiplier`) times `subFrameRate`;
+        // else 1 tick/second (#1108/TT-W4: this used to always multiply the
+        // possibly-defaulted `frame_rate` by `sub_frame_rate`, giving 30
+        // instead of 1 when no frame rate was specified at all, and via an
+        // unchecked `u32` multiply that panics in debug / wraps in release
+        // on a maliciously large `ttp:frameRate`/`ttp:subFrameRate`).
         let tick_rate: u32 = self
             .ttp_tick_rate
             .as_deref()
             .and_then(|s| s.parse().ok())
-            .unwrap_or(frame_rate * sub_frame_rate);
+            .unwrap_or_else(|| {
+                if self.ttp_frame_rate.is_none() {
+                    return 1;
+                }
+                u64::from(frame_rate)
+                    .saturating_mul(u64::from(frame_mult_num))
+                    .checked_div(u64::from(frame_mult_den))
+                    .unwrap_or(0)
+                    .saturating_mul(u64::from(sub_frame_rate))
+                    .min(u64::from(u32::MAX)) as u32
+            });
 
         let drop_mode = match self.ttp_drop_mode.as_deref() {
             Some("dropNTSC") => DropMode::DropNtsc,

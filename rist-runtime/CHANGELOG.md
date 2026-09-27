@@ -9,9 +9,21 @@ All notable changes to this crate will be documented in this file.
   not fit its wire field (#1129). `Error` gains a new `FieldOverflow` variant.
 
 ### Fixed
+- **#1108 (RIST-W1)**: `arq::sender::Sender::new` now clamps `max_buffered` strictly below half
+  the 16-bit sequence space (32 767). At `>= 32768`, once `seq` wrapped, `by_seq.insert` for a
+  reused sequence number overwrote the OLDER generation's entry in place instead of going through
+  `order`'s eviction path — `by_seq.len()` stopped growing (looking bounded) while `order` grew a
+  duplicate `u16` on every send, forever.
+- **#1108 (RIST-W2)**: due-request ordering (`Receiver::tick`) sorted numerically, not
+  circularly. Across a 16-bit seq wrap, the newest losses sorted before older, more urgent ones,
+  so the per-tick cap (`MAX_RANGE_ENTRIES`) dropped the oldest losses instead of the newest, and
+  they aged out unrequested. Now sorted by circular distance from `next_expected`.
 - `GenericNack`/`RttEcho` no longer silently truncate the RTCP `length` field (16 bits) when the
   packet's word count exceeds it — the FCI/padding is still fully written, so the old code
-  emitted a misframed packet with `Ok` (#1129).
+  emitted a misframed packet with `Ok` (#1129). `RangeNack`'s equivalent cast (already provably
+  bounded by its own `MAX_RANGE_ENTRIES` check) is also switched to the same checked helper for
+  consistency (#1108/RIST-W4 — audited, not a live bug: both real instances of this cast were
+  already fixed by #1129).
 
 ## [0.2.0] - 2026-09-26
 

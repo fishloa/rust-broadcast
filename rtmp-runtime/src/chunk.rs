@@ -744,6 +744,21 @@ impl ChunkAssembler {
         self.chunk_size = n.clamp(1, MAX_CHUNK_SIZE);
     }
 
+    /// Discard any partially-received message on `csid` (§5.4.2 Abort
+    /// Message). A no-op if `csid` has no in-progress message.
+    ///
+    /// #1108/RTMP-W2: without this, `Abort` was accepted and silently
+    /// ignored, so `in_progress` stayed `true` and the next Type 3 chunk
+    /// that actually starts a *new* message on that csid was instead
+    /// appended to the aborted payload as a continuation — `message_length`
+    /// bytes later, a corrupted merged message came out.
+    pub fn abort(&mut self, csid: u32) {
+        if let Some(state) = self.csids.get_mut(&csid) {
+            state.payload.clear();
+            state.in_progress = false;
+        }
+    }
+
     /// Feed inbound bytes; returns each complete [`Message`] decoded from
     /// the buffer (in arrival order), leaving any trailing partial chunk or
     /// partial message buffered internally for the next call.
@@ -958,13 +973,14 @@ impl ChunkAssembler {
                     true,
                 )
             }
-            // TODO(#738 follow-up): a Type 1/2 header arriving while a
-            // message is already `in_progress` on this csid (a header
-            // interleaved mid-message, rather than at a message boundary)
-            // is not detected here — it silently resets `payload`/state and
-            // drops the in-flight bytes rather than erroring. Real streams
-            // shouldn't do this, but a malformed/desynced one could; needs
-            // its own test + design before implementing.
+            // #1108/RTMP-W3 (was TODO #738 follow-up): a Type 1/2 header
+            // arriving while a message is already `in_progress` on this
+            // csid (a header interleaved mid-message, rather than at a
+            // message boundary) used to go undetected here — it silently
+            // reset `payload`/state and dropped the in-flight bytes rather
+            // than erroring. Real streams shouldn't do this, but a
+            // malformed/desynced one could, and (combined with RTMP-W2's
+            // Abort bug) the two resync paths disagreed with each other.
             (
                 Fmt::Type1,
                 MessageHeader::Type1 {
@@ -976,6 +992,11 @@ impl ChunkAssembler {
                 let existing = existing.ok_or(RtmpError::Malformed {
                     what: "type 1 chunk header on a csid with no prior chunk to inherit from",
                 })?;
+                if existing.in_progress {
+                    return Err(RtmpError::Malformed {
+                        what: "type 1 chunk header mid-message (prior message on this csid not yet complete)",
+                    });
+                }
                 let used_extended = mh_consumed > TYPE1_LEN;
                 (
                     ResolvedHeader {
@@ -993,6 +1014,11 @@ impl ChunkAssembler {
                 let existing = existing.ok_or(RtmpError::Malformed {
                     what: "type 2 chunk header on a csid with no prior chunk to inherit from",
                 })?;
+                if existing.in_progress {
+                    return Err(RtmpError::Malformed {
+                        what: "type 2 chunk header mid-message (prior message on this csid not yet complete)",
+                    });
+                }
                 let used_extended = mh_consumed > TYPE2_LEN;
                 (
                     ResolvedHeader {
@@ -2137,6 +2163,104 @@ mod tests {
         let out2 = assembler.push(&bytes[split_at..]).unwrap();
         assert_eq!(out2.len(), 1);
         assert_eq!(out2[0], original);
+    }
+
+    /// RTMP-W2 (#1108): `Abort` on a csid with an in-progress message must
+    /// discard it, so the next Type 0 message on that csid parses cleanly
+    /// instead of the following chunk being read as a continuation of the
+    /// aborted (never-completed) payload.
+    #[test]
+    fn abort_discards_in_progress_message_on_csid() {
+        let aborted = msg(12, 1, 8, 3, vec![0xAA; 300]); // spans 3 chunks at default 128
+        let mut writer = ChunkWriter::new();
+        let aborted_bytes = writer.write(&aborted).unwrap();
+
+        // Feed only the first chunk (Type 0 header + 128 bytes) — the
+        // message is left in-progress on csid 12.
+        let split_at = 1 + TYPE0_LEN + 128;
+        let mut assembler = ChunkAssembler::new();
+        let out = assembler.push(&aborted_bytes[..split_at]).unwrap();
+        assert!(out.is_empty(), "message must still be in progress");
+
+        assembler.abort(12);
+
+        // A brand-new, independent Type 0 message on the SAME csid must
+        // now parse as itself.
+        let fresh = msg(12, 2, 8, 3, vec![0xBB; 50]);
+        let fresh_bytes = writer.write(&fresh).unwrap();
+        let out2 = assembler.push(&fresh_bytes).unwrap();
+        assert_eq!(out2.len(), 1);
+        assert_eq!(out2[0], fresh);
+    }
+
+    /// RTMP-W2 (#1108): the precise corruption mechanism the finding
+    /// describes — after `Abort`, a Type 3 chunk that the SENDER means as
+    /// the start of a fresh message (inheriting the prior Type 0 header,
+    /// same `message_length`) must NOT be read as a continuation of the
+    /// aborted payload. Pre-fix, `in_progress` stayed `true` after Abort,
+    /// so this Type 3 chunk's bytes were appended onto the old (partial,
+    /// stale) payload instead of starting a clean new accumulation.
+    #[test]
+    fn abort_makes_next_type3_chunk_start_fresh_not_continue() {
+        let aborted = msg(12, 1, 8, 3, vec![0xAA; 300]); // message_length=300, no extended ts
+        let mut writer = ChunkWriter::new();
+        let aborted_bytes = writer.write(&aborted).unwrap();
+
+        let split_at = 1 + TYPE0_LEN + 128;
+        let mut assembler = ChunkAssembler::new();
+        let out = assembler.push(&aborted_bytes[..split_at]).unwrap();
+        assert!(out.is_empty());
+
+        assembler.abort(12);
+
+        // Bare Type 3 chunks (fmt=3, csid=12 -> (3<<6)|12 = 0xCC), a
+        // DIFFERENT fill value, completing a fresh 300-byte message that
+        // inherits message_length/type/stream_id from the last Type 0
+        // header on this csid (§3.1.2) — 128 + 128 + 44 = 300.
+        let mut rest = Vec::new();
+        for chunk_len in [128, 128, 44] {
+            rest.push(0xCC);
+            rest.extend(core::iter::repeat_n(0xEEu8, chunk_len));
+        }
+        let completed = assembler.push(&rest).unwrap();
+        assert_eq!(
+            completed.len(),
+            1,
+            "the 300-byte message must complete exactly once"
+        );
+        assert_eq!(
+            completed[0].payload,
+            vec![0xEE; 300],
+            "must be entirely the fresh fill value, with none of the aborted 0xAA bytes leaked in"
+        );
+    }
+
+    /// RTMP-W3 (#1108): a Type 1 chunk header arriving mid-message (the
+    /// csid already has an in-progress, incomplete message) must be
+    /// rejected, not silently reset the csid's state and discard the
+    /// in-flight bytes.
+    #[test]
+    fn type1_header_mid_message_is_rejected() {
+        let in_progress = msg(12, 1, 8, 3, vec![0xAA; 300]); // 3 chunks at default 128
+        let mut writer = ChunkWriter::new();
+        let bytes = writer.write(&in_progress).unwrap();
+
+        // Feed only the first chunk — csid 12 is left in-progress.
+        let split_at = 1 + TYPE0_LEN + 128;
+        let mut assembler = ChunkAssembler::new();
+        let out = assembler.push(&bytes[..split_at]).unwrap();
+        assert!(out.is_empty());
+
+        // A hand-built Type 1 chunk header on the SAME csid (fmt=1, csid=12
+        // fits the 1-byte basic header form: (1 << 6) | 12 = 0x4C).
+        let type1_chunk = [
+            0x4C, // basic header: fmt=1, csid=12
+            0x00, 0x00, 0x05, // timestamp_delta = 5
+            0x00, 0x00, 0x32, // message_length = 50
+            0x08, // message_type_id
+        ];
+        let err = assembler.push(&type1_chunk).unwrap_err();
+        assert!(matches!(err, RtmpError::Malformed { .. }));
     }
 
     #[test]

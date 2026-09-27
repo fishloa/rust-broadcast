@@ -28,4 +28,19 @@ pub enum Error {
     /// More than 31 triplets — cc_count is a 5-bit field.
     #[error("too many cc triplets: {0} (cc_count is 5-bit, max 31)")]
     TooManyTriplets(usize),
+    /// A bit Table B.9 fixes to a constant value didn't have that value.
+    #[error(
+        "invalid fixed bits in {what}: got 0x{got:02X}, expected 0x{expected:02X} (mask 0x{mask:02X})"
+    )]
+    InvalidFixedBits {
+        /// Which fixed field failed (`"reserved/zero_bit"`, `"one_bit/reserved"`,
+        /// `"marker_bits"`).
+        what: &'static str,
+        /// The masked bits as received.
+        got: u8,
+        /// The masked bits Table B.9 requires.
+        expected: u8,
+        /// The mask applied before comparing.
+        mask: u8,
+    },
 }

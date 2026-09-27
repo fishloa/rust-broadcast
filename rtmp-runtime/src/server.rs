@@ -230,6 +230,16 @@ pub enum ServerEvent {
     },
     /// The publisher ended the stream (`deleteStream`/`FCUnpublish`).
     Eof,
+    /// A message type this engine doesn't decode was received and its
+    /// payload was dropped (#1108/RTMP-W6) — Aggregate(22),
+    /// Command-AMF3(17), Data-AMF3(15), or Shared Object(16/19). Pre-fix,
+    /// these were silently ignored with no signal at all, so a relay/
+    /// encoder that bundles media in Aggregate messages (or opens with an
+    /// AMF3 `connect`) produced zero `Media` events with no error.
+    Unsupported {
+        /// The message type id that was dropped (§6/§7.1).
+        message_type_id: u8,
+    },
 }
 
 /// Session state (`connect`/`publish` progress only — the handshake phase
@@ -272,8 +282,15 @@ pub struct ServerSession {
     created_stream_id: Option<u32>,
     /// Threshold (in bytes received) at which an Acknowledgement is due
     /// (§5.4.3/§5.4.4). Starts at `config.window_ack_size`; updated if the
-    /// peer sends its own `WindowAckSize`/`SetPeerBandwidth`.
+    /// peer sends its own `WindowAckSize` (#1108/RTMP-W7: NOT
+    /// `SetPeerBandwidth`, which limits the peer's own output bandwidth
+    /// and has nothing to do with how often we acknowledge — see
+    /// `peer_bandwidth`).
     ack_threshold: u32,
+    /// The peer's declared limit on OUR outbound bandwidth (§5.4.5's
+    /// `SetPeerBandwidth`), tracked separately from `ack_threshold`.
+    /// Not otherwise enforced by this sans-IO engine.
+    peer_bandwidth: Option<u32>,
     /// Total bytes received on the chunk stream (post-handshake) so far.
     bytes_received: u64,
     /// `bytes_received` value as of the last Acknowledgement sent.
@@ -320,6 +337,7 @@ impl ServerSession {
             next_stream_id: FIRST_STREAM_ID,
             created_stream_id: None,
             ack_threshold,
+            peer_bandwidth: None,
             bytes_received: 0,
             bytes_acked: 0,
             flv_header_sent: false,
@@ -452,14 +470,35 @@ impl ServerSession {
                 let command = Command::parse(&msg.payload)?;
                 self.handle_command(&command, msg, out, events)
             }
+            // #1108/RTMP-W6: an AMF3-encoded command (§7.1, message type
+            // 17) is a single leading "AMF encoding" marker byte followed
+            // by an otherwise-ordinary AMF0-encoded command — not a
+            // different command grammar. Pre-fix, an encoder/CDN front-end
+            // that opens with an AMF3 `connect` (rather than AMF0) got no
+            // reply at all and hung until its own timeout.
+            msg_type::COMMAND_AMF3 => {
+                let body = msg.payload.get(1..).ok_or(RtmpError::BufferTooShort {
+                    need: 1,
+                    have: msg.payload.len(),
+                    what: "AMF3 command encoding marker byte",
+                })?;
+                let command = Command::parse(body)?;
+                self.handle_command(&command, msg, out, events)
+            }
             msg_type::AUDIO | msg_type::VIDEO | msg_type::DATA_AMF0 => {
                 self.emit_media_if_publishing(msg.message_type_id, msg, events)
             }
-            // Command-AMF3(17), Data-AMF3(15), Shared Object(19/16),
-            // Aggregate(22), and anything unrecognised: out of scope for
-            // this ingest engine (see the crate's non-goals) — accepted
-            // and ignored rather than treated as an error.
-            _ => Ok(()),
+            // Data-AMF3(15), Shared Object(16/19), Aggregate(22)
+            // (#1108/RTMP-W6), and anything unrecognised: out of scope for
+            // this ingest engine (see the crate's non-goals) — accepted,
+            // not fatal, but surfaced to the caller instead of silently
+            // dropped with no signal at all.
+            other => {
+                events.push(ServerEvent::Unsupported {
+                    message_type_id: other,
+                });
+                Ok(())
+            }
         }
     }
 
@@ -470,10 +509,15 @@ impl ServerSession {
         match pc {
             ProtocolControl::SetChunkSize(n) => self.assembler.set_chunk_size(n),
             ProtocolControl::WindowAckSize(w) => self.ack_threshold = w,
+            // #1108/RTMP-W7: was `self.ack_threshold = ack_window_size` —
+            // conflated the peer's outbound-bandwidth limit (§5.4.5) with
+            // our own ack threshold (§5.4.4). See `peer_bandwidth`'s doc.
             ProtocolControl::SetPeerBandwidth {
                 ack_window_size, ..
-            } => self.ack_threshold = ack_window_size,
-            ProtocolControl::Abort { .. } | ProtocolControl::Acknowledgement(_) => {}
+            } => self.peer_bandwidth = Some(ack_window_size),
+            // #1108/RTMP-W2: was ignored — see `ChunkAssembler::abort`'s doc.
+            ProtocolControl::Abort { chunk_stream_id } => self.assembler.abort(chunk_stream_id),
+            ProtocolControl::Acknowledgement(_) => {}
         }
     }
 
@@ -1068,6 +1112,79 @@ mod tests {
         assert!(
             commands.iter().any(|c| c.name == "_result"),
             "connect reply must contain a _result command"
+        );
+    }
+
+    /// RTMP-W6 (#1108): an AMF3-encoded `connect` (message type 17) is a
+    /// leading format-marker byte + an otherwise-ordinary AMF0 command
+    /// body — not a distinct grammar. Pre-fix, this hit the catch-all and
+    /// got no reply at all (the client would hang until its own timeout).
+    #[test]
+    fn amf3_connect_is_answered_like_amf0() {
+        let mut session = ServerSession::with_defaults();
+        session.handle_data(&build_c0_c1()).unwrap();
+        session.handle_data(&build_c2()).unwrap();
+
+        let args = vec![Amf0Value::Object(vec![(
+            "app".to_string(),
+            Amf0Value::String("live".to_string()),
+        )])];
+        let amf0_body = Command {
+            name: "connect".to_string(),
+            transaction_id: 1.0,
+            arguments: args,
+        }
+        .to_body();
+        let mut amf3_body = vec![0x00]; // AMF3 encoding marker byte
+        amf3_body.extend(amf0_body);
+        let msg = Message {
+            chunk_stream_id: CLIENT_CSID,
+            timestamp: 0,
+            message_type_id: msg_type::COMMAND_AMF3,
+            message_stream_id: 0,
+            payload: amf3_body,
+        };
+        let bytes = ChunkWriter::new().write(&msg).unwrap();
+
+        let (out, events) = session.handle_data(&bytes).unwrap();
+        assert_eq!(
+            events,
+            vec![ServerEvent::Connected {
+                app: "live".to_string()
+            }]
+        );
+        let commands = decode_commands(&out);
+        assert!(
+            commands.iter().any(|c| c.name == "_result"),
+            "AMF3 connect must still get a _result reply"
+        );
+    }
+
+    /// RTMP-W6 (#1108): an Aggregate (22) message used to be silently
+    /// dropped with no signal at all. It's now surfaced as
+    /// `ServerEvent::Unsupported`.
+    #[test]
+    fn aggregate_message_surfaces_unsupported_event() {
+        let mut session = ServerSession::with_defaults();
+        session.handle_data(&build_c0_c1()).unwrap();
+        session.handle_data(&build_c2()).unwrap();
+        session.handle_data(&connect_bytes("live")).unwrap();
+
+        let msg = Message {
+            chunk_stream_id: CLIENT_CSID,
+            timestamp: 0,
+            message_type_id: msg_type::AGGREGATE,
+            message_stream_id: 0,
+            payload: vec![0xAA; 20], // opaque; not decoded
+        };
+        let bytes = ChunkWriter::new().write(&msg).unwrap();
+
+        let (_out, events) = session.handle_data(&bytes).unwrap();
+        assert_eq!(
+            events,
+            vec![ServerEvent::Unsupported {
+                message_type_id: msg_type::AGGREGATE
+            }]
         );
     }
 

@@ -8,6 +8,7 @@ use cc_data::{CcData, CcTriplet, CcType};
 fn main() {
     let cc = CcData {
         process_cc_data_flag: true,
+        reserved_byte1: 0xFF,
         triplets: vec![
             CcTriplet {
                 cc_valid: true,

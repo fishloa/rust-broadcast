@@ -229,6 +229,9 @@ impl<'a> Parse<'a> for AlternativeClutSegment {
                 what: "alternative_CLUT_segment",
             });
         }
+        if bytes[0] != crate::pes_data_field::SYNC_BYTE {
+            return Err(Error::BadSyncByte(bytes[0]));
+        }
         if bytes[1] != SEGMENT_TYPE {
             return Err(Error::UnknownSegmentType(bytes[1]));
         }
@@ -258,6 +261,17 @@ impl<'a> Parse<'a> for AlternativeClutSegment {
         let entry_len = AlternativeClutEntry::serialized_len(output_bit_depth);
 
         let entry_data = &body[FIXED_LEN..];
+        // Table 31's entry loop is `while (processed_length < segment_length)`
+        // over whole fixed-size entries — a remainder means the segment is
+        // malformed (#1108/DS-W6: pre-fix, integer division silently dropped
+        // it instead).
+        if !entry_data.len().is_multiple_of(entry_len) {
+            return Err(Error::TrailingEntryBytes {
+                what: "alternative_CLUT_segment entries",
+                entry_len,
+                extra: entry_data.len() % entry_len,
+            });
+        }
         let num_entries = entry_data.len() / entry_len;
         let mut entries = alloc::vec::Vec::with_capacity(num_entries);
         for i in 0..num_entries {
@@ -363,5 +377,36 @@ mod tests {
         assert_ne!(out2, bytes);
         let reparse = AlternativeClutSegment::parse(&out2).unwrap();
         assert_eq!(reparse.clut_id, 7);
+    }
+
+    /// DS-W2 (#1108): sync_byte wasn't checked by any typed segment parser.
+    #[test]
+    fn rejects_bad_sync_byte() {
+        let bytes = [
+            0x00, 0x16, 0x00, 0x01, 0x00, 0x08, 0x03, 0x10, 0x00, 0x00, 0x80, 0x80, 0x80, 0x80,
+        ];
+        assert!(matches!(
+            AlternativeClutSegment::parse(&bytes),
+            Err(Error::BadSyncByte(0x00))
+        ));
+    }
+
+    /// DS-W6 (#1108): Table 31's entry loop has no stuffing provision, so a
+    /// trailing remainder that isn't a whole entry is now rejected, not
+    /// silently dropped by integer-dividing `entry_data.len() / entry_len`.
+    #[test]
+    fn rejects_trailing_partial_entry() {
+        let bytes = [
+            0x0F, 0x16, 0x00, 0x01, 0x00, 0x0A, 0x03, 0x10, 0x00, 0x00, 0x80, 0x80, 0x80, 0x80,
+            0xAA, 0xBB,
+        ];
+        assert!(matches!(
+            AlternativeClutSegment::parse(&bytes),
+            Err(Error::TrailingEntryBytes {
+                entry_len: 4,
+                extra: 2,
+                ..
+            })
+        ));
     }
 }

@@ -463,7 +463,14 @@ impl<'a> LocalSet<'a> {
                 }
                 ItemLengthMode::Ber => decode_ber_length(rest)?,
             };
-            let item_len = item_len as usize;
+            // #1108/MX-W1: `item_len` is a 64-bit length; a bare `as usize`
+            // truncates it on a 32-bit target instead of rejecting an
+            // over-range value.
+            let item_len = usize::try_from(item_len).map_err(|_| Error::BufferTooShort {
+                need: usize::MAX,
+                have: rest.len(),
+                what: "Local Set item value (length exceeds platform usize)",
+            })?;
             let value_start = item_len_size;
             let value_end = value_start
                 .checked_add(item_len)
@@ -487,6 +494,17 @@ impl<'a> LocalSet<'a> {
                 len_size: BerLength::fixed_from_consumed(item_len_size),
             });
             cursor = &rest[value_end..];
+        }
+
+        // #1108/MX-W2: §9.3 forbids duplicate local tags within a Set.
+        // Detected here (once, for every caller) rather than left to each
+        // typed Set's own accessors, which took the first match and folded
+        // any repeat into `dark` too (its tag being "known"), silently
+        // dropping the duplicate's value on every round-trip.
+        let mut tags: alloc::vec::Vec<u16> = items.iter().map(|i| i.tag).collect();
+        tags.sort_unstable();
+        if let Some(w) = tags.windows(2).find(|w| w[0] == w[1]) {
+            return Err(Error::DuplicateLocalTag(w[0]));
         }
 
         Ok((
@@ -535,6 +553,16 @@ impl Serialize for LocalSet<'_> {
     }
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
+        // #1108/MX-W6: `item_length_mode()` falls back to `TwoByte` for an
+        // invalid byte 6 (registry designator), so a hand-built `LocalSet`
+        // with a bad key used to serialize successfully in that mode and
+        // then fail `is_local_set_key` on re-parse — serialize accepted
+        // what parse rejects. Reject the bad key here instead.
+        if !is_local_set_key(&self.key) {
+            return Err(Error::KeyPrefixMismatch {
+                what: "Local Set (Table 16)",
+            });
+        }
         let total = self.serialized_len();
         if buf.len() < total {
             return Err(Error::BufferTooShort {
@@ -680,11 +708,63 @@ mod tests {
         assert_eq!(parsed.item_length_mode(), ItemLengthMode::Ber);
     }
 
+    /// MX-W2 (#1108): §9.3 forbids duplicate local tags within a Set;
+    /// pre-fix, the second occurrence was silently accepted and dropped by
+    /// every typed Set's `get_*`/`collect_dark` accessors (the first match
+    /// wins, and the tag being "known" excluded the extra from `dark` too).
+    #[test]
+    fn rejects_duplicate_local_tag() {
+        let key = LocalSet::build_key(StructuralSetKind::Preface, ItemLengthMode::TwoByte);
+        let set = LocalSet {
+            key,
+            items: alloc::vec![
+                LocalSetItem {
+                    tag: 0x3C0A,
+                    value: &[0xAA; 16],
+                    ..Default::default()
+                },
+                LocalSetItem {
+                    tag: 0x3C0A,
+                    value: &[0xBB; 16],
+                    ..Default::default()
+                },
+            ],
+            ..Default::default()
+        };
+        let mut buf = alloc::vec![0u8; set.serialized_len()];
+        set.serialize_into(&mut buf).unwrap();
+        assert!(matches!(
+            LocalSet::parse(&buf),
+            Err(Error::DuplicateLocalTag(0x3C0A))
+        ));
+    }
+
     #[test]
     fn non_local_set_key_rejected() {
         let bytes = [0u8; 20];
         assert!(matches!(
             LocalSet::parse_prefix(&bytes),
+            Err(Error::KeyPrefixMismatch { .. })
+        ));
+    }
+
+    /// MX-W6 (#1108): `serialize_into` used to accept a bad key (invalid
+    /// byte 6/registry-designator) by falling back to `TwoByte` mode via
+    /// `item_length_mode()`, producing bytes that `is_local_set_key` (and
+    /// so `parse`) would then reject — serialize accepted what parse
+    /// couldn't read back.
+    #[test]
+    fn serialize_rejects_bad_key() {
+        let mut key = LocalSet::build_key(StructuralSetKind::Preface, ItemLengthMode::TwoByte);
+        key[5] = 0xFF; // not a valid registry designator byte
+        let set = LocalSet {
+            key,
+            items: alloc::vec::Vec::new(),
+            ..Default::default()
+        };
+        let mut buf = alloc::vec![0u8; set.serialized_len()];
+        assert!(matches!(
+            set.serialize_into(&mut buf),
             Err(Error::KeyPrefixMismatch { .. })
         ));
     }

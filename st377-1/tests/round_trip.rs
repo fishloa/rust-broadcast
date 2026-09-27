@@ -463,7 +463,7 @@ fn full_op1a_structure_builds_and_round_trips() {
         version: VERSION_1_3,
         object_model_version: Some(1),
         primary_package: Some(mp_uid_ref),
-        identifications: vec![ident_uid],
+        identifications: Some(vec![ident_uid]),
         content_storage: cs_uid,
         operational_pattern: op_pattern,
         essence_containers: vec![ec_label],

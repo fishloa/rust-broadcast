@@ -130,7 +130,7 @@ fn synthetic_fixture_preface_fields_decode_correctly() {
 
     assert_eq!(preface.version, st377_1::VERSION_1_3);
     assert_eq!(preface.object_model_version, Some(1));
-    assert_eq!(preface.identifications.len(), 1);
+    assert_eq!(preface.identifications.as_ref().map(Vec::len), Some(1));
     assert_eq!(preface.essence_containers.len(), 1);
     assert!(preface.dm_schemes.is_empty());
     assert_eq!(preface.last_modified_date.year, 2026);

@@ -27,6 +27,9 @@ impl<'a> Parse<'a> for EndOfDisplaySetSegment {
                 what: "end_of_display_set_segment",
             });
         }
+        if bytes[0] != crate::pes_data_field::SYNC_BYTE {
+            return Err(Error::BadSyncByte(bytes[0]));
+        }
         if bytes[1] != SEGMENT_TYPE {
             return Err(Error::UnknownSegmentType(bytes[1]));
         }
@@ -83,5 +86,19 @@ mod tests {
         assert_ne!(out2, bytes);
         let reparse = EndOfDisplaySetSegment::parse(&out2).unwrap();
         assert_eq!(reparse.page_id, 5);
+    }
+
+    /// DS-W2 (#1108): sync_byte wasn't checked by any typed segment parser
+    /// (only by `PesDataField`, whose loop only ever calls a typed parser
+    /// with `bytes[0] == 0x0F` anyway), so a direct caller of `Self::parse`
+    /// could parse a non-segment, and re-serializing it would silently
+    /// change byte 0 back to `0x0F`.
+    #[test]
+    fn rejects_bad_sync_byte() {
+        let bytes = [0x00, 0x80, 0x00, 0x01, 0x00, 0x00];
+        assert!(matches!(
+            EndOfDisplaySetSegment::parse(&bytes),
+            Err(Error::BadSyncByte(0x00))
+        ));
     }
 }

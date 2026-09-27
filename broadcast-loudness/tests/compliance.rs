@@ -35,7 +35,7 @@ fn stereo_sine(level_dbfs: f64, freq: f64, duration_s: f64) -> (Vec<f32>, Vec<f3
 
 fn measure_stereo(left: &[f32], right: &[f32]) -> LoudnessMeter {
     let mut meter = LoudnessMeter::new(SAMPLE_RATE, ChannelLayout::Stereo).unwrap();
-    meter.push_interleaved_f32(left, right).unwrap();
+    meter.push_stereo_planar_f32(left, right).unwrap();
     meter.finish();
     meter
 }
@@ -83,7 +83,7 @@ fn stereo_sine_at(
 /// Measure a stereo signal at an arbitrary sample rate.
 fn measure_stereo_at(left: &[f32], right: &[f32], sample_rate: u32) -> LoudnessMeter {
     let mut meter = LoudnessMeter::new(sample_rate, ChannelLayout::Stereo).unwrap();
-    meter.push_interleaved_f32(left, right).unwrap();
+    meter.push_stereo_planar_f32(left, right).unwrap();
     meter.finish();
     meter
 }
@@ -314,7 +314,7 @@ fn case_10_short_term_max_file_based() {
             right[silence_before + j] = val;
         }
         let mut meter = LoudnessMeter::new(SAMPLE_RATE, ChannelLayout::Stereo).unwrap();
-        meter.push_interleaved_f32(&left, &right).unwrap();
+        meter.push_stereo_planar_f32(&left, &right).unwrap();
         meter.finish();
         assert!(
             (meter.max_short_term_lufs() - (-23.0)).abs() <= TOLERANCE_LU,
@@ -344,7 +344,7 @@ fn case_12_momentary_max_file_based() {
             right[silence_before + j] = val;
         }
         let mut meter = LoudnessMeter::new(SAMPLE_RATE, ChannelLayout::Stereo).unwrap();
-        meter.push_interleaved_f32(&left, &right).unwrap();
+        meter.push_stereo_planar_f32(&left, &right).unwrap();
         meter.finish();
         assert!(
             (meter.max_momentary_lufs() - (-23.0)).abs() <= TOLERANCE_LU,

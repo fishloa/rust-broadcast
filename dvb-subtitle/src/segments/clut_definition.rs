@@ -164,6 +164,9 @@ impl<'a> Parse<'a> for ClutDefinitionSegment {
                 what: "CLUT_definition_segment",
             });
         }
+        if bytes[0] != crate::pes_data_field::SYNC_BYTE {
+            return Err(Error::BadSyncByte(bytes[0]));
+        }
         if bytes[1] != SEGMENT_TYPE {
             return Err(Error::UnknownSegmentType(bytes[1]));
         }
@@ -290,6 +293,19 @@ mod tests {
         assert_ne!(out2, bytes);
         let reparse = ClutDefinitionSegment::parse(&out2).unwrap();
         assert_eq!(reparse.clut_id, 5);
+    }
+
+    /// DS-W2 (#1108): sync_byte wasn't checked by any typed segment parser.
+    #[test]
+    fn rejects_bad_sync_byte() {
+        let bytes = [
+            0x00, 0x12, 0x00, 0x01, 0x00, 0x0E, 0x03, 0x10, 0x00, 0xA1, 0x80, 0x80, 0x80, 0x80,
+            0x01, 0x61, 0xFF, 0xFF, 0xFF, 0x00,
+        ];
+        assert!(matches!(
+            ClutDefinitionSegment::parse(&bytes),
+            Err(Error::BadSyncByte(0x00))
+        ));
     }
 
     #[test]

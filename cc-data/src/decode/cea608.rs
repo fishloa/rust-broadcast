@@ -346,6 +346,11 @@ pub struct Cea608Decoder {
     channels: [ChannelState; 4],
     /// The control pair last acted on, per field, for doubling suppression.
     last_control: [Option<(u8, u8)>; 2],
+    /// The channel targeted by the last control code seen on each field.
+    /// Standard (non-tagged) characters are routed here, per field, since
+    /// CEA-608 encodes which channel a character belongs to only implicitly,
+    /// via the most recent control code on that field.
+    last_channel: [Cea608Channel; 2],
     xds_active: bool,
 }
 
@@ -362,6 +367,7 @@ impl Cea608Decoder {
         Cea608Decoder {
             channels: Default::default(),
             last_control: [None, None],
+            last_channel: [Cea608Channel::Cc1, Cea608Channel::Cc3],
             xds_active: false,
         }
     }
@@ -409,13 +415,12 @@ impl Cea608Decoder {
             self.xds_active = b1 != 0x0F;
             return;
         }
-        // Any pair while an XDS sub-packet is open (field 2) is XDS payload
-        // (informational chars 0x20–0x7F or null) until the End control closes it.
-        if field2 && self.xds_active {
-            return;
-        }
 
-        // Control codes: first byte 0x10–0x1F.
+        // Control codes: first byte 0x10–0x1F. CTA-608 lets a caption control
+        // code interrupt an open XDS sub-packet (XDS resumes afterwards with a
+        // Continue code), so this check runs BEFORE the xds_active short-circuit
+        // below — otherwise every caption code sent while XDS is open would be
+        // swallowed along with the XDS payload.
         if (0x10..=0x1F).contains(&b1) {
             // Doubling: an identical control pair immediately repeated is one cmd.
             if self.last_control[field_idx] == Some((b1, b2)) {
@@ -427,13 +432,18 @@ impl Cea608Decoder {
             self.handle_control(field2, b1, b2);
             return;
         }
+        // Any pair while an XDS sub-packet is open (field 2) is XDS payload
+        // (informational chars 0x20–0x7F or null) until the End control closes it.
+        if field2 && self.xds_active {
+            return;
+        }
 
         // Displayable characters: first byte 0x20–0x7F.
         self.last_control[field_idx] = None;
         self.xds_active = false;
-        // Standard chars are not channel-tagged; route to the field's last-used
-        // channel (default CC1 for field 1, CC3 for field 2).
-        let ch = self.default_channel(field2);
+        // Standard chars are not channel-tagged; route to the channel targeted
+        // by the last control code seen on this field.
+        let ch = self.last_channel[field_idx];
         if b1 >= 0x20 {
             self.put_char(ch, Self::standard_char(b1));
         }
@@ -465,6 +475,9 @@ impl Cea608Decoder {
             b1
         };
         let ch = self.channel_for(field2, c2);
+        // Every control code updates the field's "current channel", so
+        // subsequent untagged standard characters route to it (CC-W1).
+        self.last_channel[usize::from(field2)] = ch;
 
         // Misc control: first byte 0x14 (C1) / 0x1C (C2), or the field-2
         // `field2_misc` fold above.
@@ -709,15 +722,6 @@ impl Cea608Decoder {
             (false, true) => Cea608Channel::Cc2,
             (true, false) => Cea608Channel::Cc3,
             (true, true) => Cea608Channel::Cc4,
-        }
-    }
-
-    /// The default channel for routing displayable chars on a field.
-    fn default_channel(&self, field2: bool) -> Cea608Channel {
-        if field2 {
-            Cea608Channel::Cc3
-        } else {
-            Cea608Channel::Cc1
         }
     }
 
@@ -1005,6 +1009,44 @@ mod tests {
         dec.push_pair(true, par(0x20), par(0x21)); // XDS informational
         dec.push_pair(true, par(0x0F), par(0x40)); // XDS end + checksum
         assert_eq!(dec.channel_text(Cea608Channel::Cc3), "");
+    }
+
+    /// CC-W2 (#1107): a caption control code sent while an XDS sub-packet is
+    /// open must interrupt it, not be swallowed. Pre-fix, the `xds_active`
+    /// short-circuit ran before the control-code check, so every code between
+    /// XDS Start and End (here, all of RCL/PAC/EOC) was silently dropped and
+    /// "HI" was never displayed.
+    #[test]
+    fn control_code_interrupts_open_xds() {
+        let mut dec = Cea608Decoder::new();
+        dec.push_pair(true, par(0x01), par(0x02)); // XDS start (Current class)
+        dec.push_pair(true, par(0x15), par(0x20)); // RCL on CC3 (field-2 misc)
+        dec.push_pair(true, par(0x15), par(0x70)); // PAC row 15 white indent0
+        dec.push_pair(true, par(b'H'), par(b'I'));
+        dec.push_pair(true, par(0x15), par(0x2F)); // EOC → flip to displayed
+        assert_eq!(dec.channel_text(Cea608Channel::Cc3), "HI");
+    }
+
+    /// CC-W1 (#1107): standard (untagged) characters must route to the
+    /// channel targeted by the field's last control code, not a hardcoded
+    /// CC1/CC3. Pre-fix, `default_channel` always returned CC1 for field 1,
+    /// so CC2's characters were written into CC1's memory and interleaved
+    /// with CC1's own text.
+    #[test]
+    fn standard_chars_follow_last_control_channel() {
+        let mut dec = Cea608Decoder::new();
+        // CC1: pop-on "AB".
+        dec.push_pair(false, par(0x14), par(0x20)); // RCL (CC1, base1=0x14)
+        dec.push_pair(false, par(0x14), par(0x70)); // PAC row 15 (CC1)
+        dec.push_pair(false, par(b'A'), par(b'B'));
+        dec.push_pair(false, par(0x14), par(0x2F)); // EOC (CC1)
+        // CC2: pop-on "CD" — b1 in 0x18..=0x1F selects data channel 2.
+        dec.push_pair(false, par(0x1C), par(0x20)); // RCL (CC2, base1=0x14 folded)
+        dec.push_pair(false, par(0x1C), par(0x70)); // PAC row 15 (CC2)
+        dec.push_pair(false, par(b'C'), par(b'D'));
+        dec.push_pair(false, par(0x1C), par(0x2F)); // EOC (CC2)
+        assert_eq!(dec.channel_text(Cea608Channel::Cc1), "AB");
+        assert_eq!(dec.channel_text(Cea608Channel::Cc2), "CD");
     }
 
     #[test]

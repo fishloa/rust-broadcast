@@ -146,6 +146,7 @@ mod tests {
     fn cc_data_bytes(triplets: &[CcTriplet]) -> alloc::vec::Vec<u8> {
         let cc = CcData {
             process_cc_data_flag: true,
+            reserved_byte1: 0xFF,
             triplets: triplets.to_vec(),
         };
         let mut buf = alloc::vec![0u8; cc.serialized_len()];

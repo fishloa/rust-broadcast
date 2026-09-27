@@ -25,7 +25,7 @@ fn main() {
         version: VERSION_1_3,
         object_model_version: Some(1),
         primary_package: None,
-        identifications: vec![[0x02; 16]],
+        identifications: Some(vec![[0x02; 16]]),
         content_storage: [0x03; 16],
         operational_pattern: [0x04; 16],
         essence_containers: vec![[0x05; 16]],
@@ -51,7 +51,7 @@ fn main() {
     println!("version: 0x{:04X}", parsed.version);
     println!(
         "{} Identification(s), {} EssenceContainer UL(s)",
-        parsed.identifications.len(),
+        parsed.identifications.as_ref().map_or(0, Vec::len),
         parsed.essence_containers.len()
     );
 }

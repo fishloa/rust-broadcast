@@ -16,7 +16,7 @@ use crate::chunk::{ChunkAssembler, ChunkWriter, Message};
 use crate::handshake::{
     EchoPacket, HANDSHAKE_PACKET_LEN, HandshakePacket, RTMP_VERSION, Version, default_random_fill,
 };
-use crate::message::{ProtocolControl, msg_type};
+use crate::message::{ProtocolControl, UserControl, msg_type};
 
 type Result<T> = core::result::Result<T, RtmpError>;
 
@@ -140,7 +140,11 @@ impl ClientHandshake {
                         what: "S0+S1+S2",
                     });
                 }
-                let _s0 = Version::parse(&input[..VERSION_LEN])?;
+                let s0 = Version::parse(&input[..VERSION_LEN])?;
+                // #1108/RTMP-W11: see handshake.rs's identical C0 check.
+                if s0.0 != RTMP_VERSION {
+                    return Err(RtmpError::Malformed { what: "S0 version" });
+                }
                 let s1 = HandshakePacket::parse(
                     &input[VERSION_LEN..VERSION_LEN + HANDSHAKE_PACKET_LEN],
                 )?;
@@ -180,6 +184,19 @@ pub struct ClientSession {
     ack_threshold: u32,
     bytes_received: u64,
     bytes_acked: u64,
+    /// The peer's declared limit on OUR outbound bandwidth (§5.4.5's
+    /// `SetPeerBandwidth`), tracked separately from `ack_threshold`
+    /// (#1108/RTMP-W7): it constrains how much *we send*, not how often
+    /// *we acknowledge received bytes* (that's `WindowAckSize`, §5.4.4).
+    /// Not otherwise enforced by this sans-IO engine (it doesn't do its
+    /// own outbound rate limiting), but kept and exposed rather than
+    /// silently discarded or conflated with `ack_threshold`.
+    peer_bandwidth: Option<u32>,
+    /// The window size we last advertised to the peer via our own
+    /// outbound `WindowAckSize` (distinct from `ack_threshold`, which
+    /// tracks the PEER's advertised window for OUR acking of THEIR
+    /// data — #1108/RTMP-W7).
+    advertised_window_ack_size: u32,
 }
 
 impl ClientSession {
@@ -187,6 +204,7 @@ impl ClientSession {
     #[must_use]
     pub fn new(config: ClientConfig) -> Self {
         let ack_threshold = config.window_ack_size;
+        let advertised_window_ack_size = config.window_ack_size;
         Self {
             config,
             handshake: ClientHandshake::new(),
@@ -199,6 +217,8 @@ impl ClientSession {
             ack_threshold,
             bytes_received: 0,
             bytes_acked: 0,
+            peer_bandwidth: None,
+            advertised_window_ack_size,
         }
     }
 
@@ -446,9 +466,29 @@ impl ClientSession {
                 ProtocolControl::SetPeerBandwidth {
                     ack_window_size, ..
                 } => {
-                    self.ack_threshold = ack_window_size;
-                    let ack = ProtocolControl::WindowAckSize(ack_window_size);
-                    out.extend_from_slice(&self.writer.write(&ack.to_message())?);
+                    // #1108/RTMP-W7: §5.4.5 limits the RECEIVER's (i.e.
+                    // our) *output* bandwidth — it says nothing about how
+                    // often we acknowledge inbound bytes, which is
+                    // `WindowAckSize`'s job (§5.4.4) and already handled by
+                    // the arm above. This used to overwrite `ack_threshold`
+                    // with the peer's bandwidth-limit value, and echo that
+                    // same value back as if it were our own advertised
+                    // window. Track it separately; reply with our OWN
+                    // configured window size, and only when it actually
+                    // changed from what we last advertised (docs/rtmp.md
+                    // §5.4.5: "Receiver SHOULD reply with Window Ack Size
+                    // if its window differs from the last one it
+                    // advertised").
+                    self.peer_bandwidth = Some(ack_window_size);
+                    if self.advertised_window_ack_size != self.config.window_ack_size {
+                        self.advertised_window_ack_size = self.config.window_ack_size;
+                        let ack = ProtocolControl::WindowAckSize(self.advertised_window_ack_size);
+                        out.extend_from_slice(&self.writer.write(&ack.to_message())?);
+                    }
+                }
+                // #1108/RTMP-W2: was ignored — see `ChunkAssembler::abort`'s doc.
+                ProtocolControl::Abort { chunk_stream_id } => {
+                    self.assembler.abort(chunk_stream_id);
                 }
                 _ => {}
             }
@@ -457,6 +497,17 @@ impl ClientSession {
         if msg.message_type_id == msg_type::COMMAND_AMF0 {
             let cmd = Command::parse(&msg.payload)?;
             self.handle_command(&cmd, out, events)?;
+        }
+        if msg.message_type_id == msg_type::USER_CONTROL {
+            // #1108/RTMP-W8: servers that probe liveness with User Control
+            // PingRequest (event 6 — FMS/Wowza) got no PingResponse and may
+            // have dropped the publisher; malformed/unrecognised event
+            // types are tolerated, same as the server side's inbound
+            // handling.
+            if let Ok(UserControl::PingRequest(ts)) = UserControl::parse(&msg.payload) {
+                let reply = UserControl::PingResponse(ts);
+                out.extend_from_slice(&self.writer.write(&reply.to_message())?);
+            }
         }
         Ok(())
     }
@@ -600,6 +651,88 @@ mod tests {
         let (_reply, consumed3, done3) = server_hs.read(&c2).unwrap();
         assert_eq!(consumed3, HANDSHAKE_PACKET_LEN);
         assert!(done3);
+    }
+
+    /// RTMP-W11 (#1108): S0's version byte used to be parsed and discarded.
+    #[test]
+    fn client_handshake_rejects_bad_s0_version() {
+        let mut client_hs = ClientHandshake::new();
+        let mut server_hs = handshake::Handshake::new();
+        let c0_c1 = client_hs.start();
+        let (mut s0_s1_s2, _consumed, _done) = server_hs.read(&c0_c1).unwrap();
+        s0_s1_s2[0] = 6; // RTMPE, not plain RTMP
+        let err = client_hs.read(&s0_s1_s2).unwrap_err();
+        assert!(matches!(err, RtmpError::Malformed { what: "S0 version" }));
+    }
+
+    /// RTMP-W8 (#1108): the client never answered a User Control
+    /// PingRequest (event 6 — FMS/Wowza liveness probe), so a server that
+    /// probes with it got no PingResponse and may drop the publisher.
+    #[test]
+    fn client_replies_to_ping_request_with_ping_response() {
+        let config = ClientConfig {
+            app: "live".to_string(),
+            stream_key: "test_key".to_string(),
+            ..ClientConfig::default()
+        };
+        let mut client = ClientSession::new(config);
+        let c0_c1 = client.start();
+        let mut server = ServerSession::new(
+            ServerConfig::default().with_expected_stream_key(Some("test_key".to_string())),
+        );
+        let (s0_s1_s2, _) = server.handle_data(&c0_c1).unwrap();
+        let (_client_out, _) = client.handle_data(&s0_s1_s2).unwrap();
+
+        let ping = UserControl::PingRequest(0xDEAD_BEEF);
+        let bytes = ChunkWriter::new().write(&ping.to_message()).unwrap();
+
+        let (out, _events) = client.handle_data(&bytes).unwrap();
+        let mut assembler = ChunkAssembler::new();
+        let messages = assembler.push(&out).unwrap();
+        let reply = messages
+            .iter()
+            .find(|m| m.message_type_id == msg_type::USER_CONTROL)
+            .map(|m| UserControl::parse(&m.payload).unwrap());
+        assert_eq!(reply, Some(UserControl::PingResponse(0xDEAD_BEEF)));
+    }
+
+    /// RTMP-W7 (#1108): `SetPeerBandwidth` used to overwrite `ack_threshold`
+    /// with the peer's declared OUTBOUND bandwidth limit — a value with no
+    /// relation to how often we should acknowledge inbound bytes
+    /// (`WindowAckSize`'s job, §5.4.4). It's now tracked separately in
+    /// `peer_bandwidth`, and `ack_threshold` is untouched.
+    #[test]
+    fn set_peer_bandwidth_does_not_corrupt_ack_threshold() {
+        let config = ClientConfig {
+            app: "live".to_string(),
+            stream_key: "test_key".to_string(),
+            ..ClientConfig::default()
+        };
+        let original_ack_threshold_config = config.window_ack_size;
+        let mut client = ClientSession::new(config.clone());
+        assert_eq!(client.ack_threshold, original_ack_threshold_config);
+
+        // Complete the handshake so `handle_data` dispatches chunk messages
+        // (rather than still buffering handshake bytes).
+        let c0_c1 = client.start();
+        let mut server = ServerSession::new(
+            ServerConfig::default().with_expected_stream_key(Some("test_key".to_string())),
+        );
+        let (s0_s1_s2, _) = server.handle_data(&c0_c1).unwrap();
+        client.handle_data(&s0_s1_s2).unwrap();
+
+        let spb = crate::message::ProtocolControl::SetPeerBandwidth {
+            ack_window_size: 999_999,
+            limit_type: crate::message::LimitType::Hard,
+        };
+        let bytes = ChunkWriter::new().write(&spb.to_message()).unwrap();
+        let (_out, _events) = client.handle_data(&bytes).unwrap();
+
+        assert_eq!(
+            client.ack_threshold, original_ack_threshold_config,
+            "ack_threshold must not be overwritten by SetPeerBandwidth"
+        );
+        assert_eq!(client.peer_bandwidth, Some(999_999));
     }
 
     #[test]

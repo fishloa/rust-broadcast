@@ -6,7 +6,40 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Changed (breaking)
+- **#1108 (MX-W3)**: `Preface::identifications` is now `Option<Vec<UlBytes>>`
+  (was `Vec<UlBytes>`) — `None` when the Identifications property (`0x3B06`)
+  was absent on parse, distinct from `Some(vec![])` (present, empty Batch).
+  Previously both collapsed to an empty `Vec`, so `serialize_into` always
+  re-emitted the property even when the source document never had it,
+  breaking the round-trip on real files that omit this encoder-required-
+  but-decoder-tolerant ("E/req", Annex A.2) property.
+
 ### Fixed
+- **#1108 (MX-W1)**: `partition.rs`/`primer.rs`/`random_index_pack.rs`/
+  `local_set.rs` narrowed a 64-bit BER/batch length to `usize` with a bare
+  `as usize`, which silently truncates on a 32-bit target instead of
+  rejecting an over-range value (`klv.rs`/`local_set.rs` already did this
+  correctly with `usize::try_from`; these four call sites now match).
+  Separately, `primer.rs` and `types.rs::parse_uid_batch` computed
+  `count as usize * <entry size>` to validate a Batch/Primer header — which
+  also wraps on a 32-bit target for a large enough `count`, and could then
+  abort the process at `Vec::with_capacity(count as usize)` on a spuriously
+  "matching" but bogus count; both now use `checked_mul` and size the
+  allocation from the already-bounded body length, never the untrusted count.
+- **#1108 (MX-W2)**: `LocalSet::parse_prefix` now rejects a Set with a
+  duplicate local tag (§9.3 forbids this) instead of silently accepting it
+  — every typed Set's accessors took the first match, and the duplicate's
+  tag being "known" excluded it from the `dark` catch-all too, so its value
+  vanished on every round-trip.
+- **#1108 (MX-W4)**: `PrimerPack::parse` now rejects a duplicate local tag,
+  or two different local tags mapping to the same UL/UUID — `resolve_ul`/
+  `resolve_tag`'s linear scan silently returned the first match on either.
+- **#1108 (MX-W6)**: `LocalSet::serialize_into` now rejects a key whose byte
+  6 (registry designator) isn't a valid `ItemLengthMode` value, instead of
+  falling back to `TwoByte` mode and producing bytes that `parse` (via
+  `is_local_set_key`) would then reject — serialize used to accept what
+  parse couldn't read back.
 - `op1a::Op1aQualifier`'s byte-15 bit mapping was off by one against SMPTE
   ST 378M §6.4: bit 0 is an always-set marker (every real encoder sets it),
   not a semantic flag, so `external_essence`/`non_streamable`/`multi_track`

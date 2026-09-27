@@ -52,6 +52,9 @@ impl<'a> Parse<'a> for DisplayDefinitionSegment {
                 what: "display_definition_segment",
             });
         }
+        if bytes[0] != crate::pes_data_field::SYNC_BYTE {
+            return Err(Error::BadSyncByte(bytes[0]));
+        }
         if bytes[1] != SEGMENT_TYPE {
             return Err(Error::UnknownSegmentType(bytes[1]));
         }
@@ -199,6 +202,18 @@ mod tests {
         assert_ne!(out2, bytes);
         let reparse = DisplayDefinitionSegment::parse(&out2).unwrap();
         assert_eq!(reparse.display_width, 100);
+    }
+
+    /// DS-W2 (#1108): sync_byte wasn't checked by any typed segment parser.
+    #[test]
+    fn rejects_bad_sync_byte() {
+        let bytes = [
+            0x00, 0x14, 0x00, 0x01, 0x00, 0x05, 0x30, 0x02, 0xCF, 0x01, 0x1F,
+        ];
+        assert!(matches!(
+            DisplayDefinitionSegment::parse(&bytes),
+            Err(Error::BadSyncByte(0x00))
+        ));
     }
 
     #[test]

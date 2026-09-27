@@ -113,9 +113,6 @@ pub struct PageCompositionSegment {
     pub reserved: u8,
     /// Region entries.
     pub regions: alloc::vec::Vec<PageRegionEntry>,
-    /// Trailing bytes after the region loop (preserved for round-trip).
-    #[cfg_attr(feature = "serde", serde(skip))]
-    pub(crate) suffix: alloc::vec::Vec<u8>,
 }
 
 impl<'a> Parse<'a> for PageCompositionSegment {
@@ -128,6 +125,9 @@ impl<'a> Parse<'a> for PageCompositionSegment {
                 have: bytes.len(),
                 what: "page_composition_segment",
             });
+        }
+        if bytes[0] != crate::pes_data_field::SYNC_BYTE {
+            return Err(Error::BadSyncByte(bytes[0]));
         }
         if bytes[1] != SEGMENT_TYPE {
             return Err(Error::UnknownSegmentType(bytes[1]));
@@ -163,6 +163,12 @@ impl<'a> Parse<'a> for PageCompositionSegment {
 
         let region_data = &body[FIXED_LEN..];
         let region_count = region_data.len() / REGION_ENTRY_LEN;
+        // Table 9's region loop is `while (processed_length < segment_length)`
+        // over whole 6-byte entries — there is no stuffing/suffix provision,
+        // so a remainder means the segment is malformed, not that trailing
+        // bytes should be captured (#1108/DS-W6: this used to be checked
+        // here and then ALSO stored in a `suffix` field that, because of
+        // this very check, could never end up holding anything).
         if !region_data.len().is_multiple_of(REGION_ENTRY_LEN) {
             return Err(Error::BufferTooShort {
                 need: (region_count + 1) * REGION_ENTRY_LEN,
@@ -175,8 +181,6 @@ impl<'a> Parse<'a> for PageCompositionSegment {
             let entry_bytes = &region_data[i * REGION_ENTRY_LEN..][..REGION_ENTRY_LEN];
             regions.push(PageRegionEntry::parse(entry_bytes)?);
         }
-        let suffix =
-            alloc::vec::Vec::from(&region_data[region_count * REGION_ENTRY_LEN..region_data.len()]);
 
         Ok(PageCompositionSegment {
             page_id,
@@ -185,7 +189,6 @@ impl<'a> Parse<'a> for PageCompositionSegment {
             page_state,
             reserved,
             regions,
-            suffix,
         })
     }
 }
@@ -194,7 +197,7 @@ impl Serialize for PageCompositionSegment {
     type Error = Error;
 
     fn serialized_len(&self) -> usize {
-        HEADER_LEN + FIXED_LEN + self.regions.len() * REGION_ENTRY_LEN + self.suffix.len()
+        HEADER_LEN + FIXED_LEN + self.regions.len() * REGION_ENTRY_LEN
     }
 
     fn serialize_into(&self, buf: &mut [u8]) -> core::result::Result<usize, Self::Error> {
@@ -221,8 +224,6 @@ impl Serialize for PageCompositionSegment {
             let off = HEADER_LEN + FIXED_LEN + i * REGION_ENTRY_LEN;
             region.serialize_into(&mut buf[off..off + REGION_ENTRY_LEN]);
         }
-        let suffix_off = HEADER_LEN + FIXED_LEN + self.regions.len() * REGION_ENTRY_LEN;
-        buf[suffix_off..suffix_off + self.suffix.len()].copy_from_slice(&self.suffix);
         Ok(len)
     }
 }
@@ -256,5 +257,18 @@ mod tests {
         assert_ne!(out2, bytes);
         let reparse = PageCompositionSegment::parse(&out2).unwrap();
         assert_eq!(reparse.page_time_out, 20);
+    }
+
+    /// DS-W2 (#1108): sync_byte wasn't checked by any typed segment parser.
+    #[test]
+    fn rejects_bad_sync_byte() {
+        let bytes = [
+            0x00, 0x10, 0x00, 0x01, 0x00, 0x0E, 0x0A, 0x04, 0x01, 0x00, 0x00, 0x64, 0x00, 0x32,
+            0x02, 0x00, 0x00, 0xC8, 0x00, 0x96,
+        ];
+        assert!(matches!(
+            PageCompositionSegment::parse(&bytes),
+            Err(Error::BadSyncByte(0x00))
+        ));
     }
 }

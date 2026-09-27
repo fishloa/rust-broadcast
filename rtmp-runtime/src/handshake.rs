@@ -317,7 +317,14 @@ impl Handshake {
                         what: "C0+C1",
                     });
                 }
-                let _c0 = Version::parse(&input[..VERSION_LEN])?;
+                let c0 = Version::parse(&input[..VERSION_LEN])?;
+                // #1108/RTMP-W11: the C0 version byte was parsed and
+                // discarded, so an RTMPE client (C0 = 6) or garbage was
+                // accepted, only to fail later as a confusing chunk-parse
+                // error instead of a clear one here.
+                if c0.0 != RTMP_VERSION {
+                    return Err(RtmpError::Malformed { what: "C0 version" });
+                }
                 let c1 = HandshakePacket::parse(&input[VERSION_LEN..need])?;
 
                 let s0 = Version(RTMP_VERSION);
@@ -566,6 +573,18 @@ mod tests {
             reply2.is_empty(),
             "C2 receipt produces no further reply bytes"
         );
+    }
+
+    /// RTMP-W11 (#1108): C0's version byte used to be parsed and discarded,
+    /// so an RTMPE client (C0 = 6) or garbage was accepted here and only
+    /// surfaced later as a confusing chunk-parse error.
+    #[test]
+    fn fsm_rejects_bad_c0_version() {
+        let mut hs = Handshake::new();
+        let mut c0_c1 = build_c0_c1(0, patterned_random(3));
+        c0_c1[0] = 6; // RTMPE, not plain RTMP
+        let err = hs.read(&c0_c1).unwrap_err();
+        assert!(matches!(err, RtmpError::Malformed { what: "C0 version" }));
     }
 
     #[test]

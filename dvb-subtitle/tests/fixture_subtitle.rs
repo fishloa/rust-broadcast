@@ -66,6 +66,7 @@ fn parses_real_subtitle_pes_from_m6() {
     let mut total_segments = 0;
     let mut known_segments = 0;
     let mut clut_segments = 0;
+    let mut malformed_segments = 0;
 
     for raw in &pes {
         let pkt = PesPacket::parse(raw).expect("subtitle PES parses");
@@ -86,6 +87,9 @@ fn parses_real_subtitle_pes_from_m6() {
             }
             if matches!(seg, AnySegment::ClutDefinition(_)) {
                 clut_segments += 1;
+            }
+            if matches!(seg, AnySegment::Malformed { .. }) {
+                malformed_segments += 1;
             }
         }
         // Byte-exact round-trip on real captured bytes — this is the gate that
@@ -111,6 +115,15 @@ fn parses_real_subtitle_pes_from_m6() {
     assert!(
         clut_segments >= 1,
         "expected a typed CLUT_definition segment, got {clut_segments} (degraded to Unknown?)"
+    );
+    // DS-W1 (#1108): a typed parse failure on a recognised segment_type used to
+    // fall back to the same `Unknown` raw passthrough as a genuinely
+    // unimplemented segment_type, so this fixture's round-trip gate could not
+    // fail even if every typed parser here was broken. `Malformed` is now
+    // distinct, so a real regression in a typed parser shows up here.
+    assert_eq!(
+        malformed_segments, 0,
+        "a recognised segment_type failed its typed parse on real capture bytes"
     );
     eprintln!(
         "fixture_subtitle: {fields} PES data fields, {total_segments} segments ({known_segments} typed, {clut_segments} CLUT)"
