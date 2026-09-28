@@ -198,6 +198,18 @@ impl CaPmtBuilt {
     pub fn to_bytes(&self) -> Vec<u8> {
         self.as_ca_pmt().to_bytes()
     }
+
+    /// Serialize like [`to_bytes`](Self::to_bytes), but return the wire
+    /// constraint error instead of panicking when a filtered descriptor loop
+    /// has no valid `ca_pmt` encoding (e.g. a loop whose final
+    /// `descriptor_length` runs past the end of the source PMT section: the
+    /// projection keeps surviving bytes verbatim, and the resulting
+    /// `program_info_length` then exceeds its 12-bit field). A host forwarding
+    /// a CAM-supplied PMT must be able to reject such a `ca_pmt` as a value it
+    /// can act on, not crash on it.
+    pub fn try_to_bytes(&self) -> crate::Result<Vec<u8>> {
+        self.as_ca_pmt().try_to_bytes()
+    }
 }
 
 /// A `ca_pmt_cmd_id` accompanies a descriptor loop only when that loop is
@@ -306,6 +318,54 @@ mod tests {
         let view = built.as_ca_pmt();
         assert_eq!(view.cmd_id, None);
         assert!(view.streams.iter().all(|s| s.cmd_id.is_none()));
+    }
+
+    /// dvb-si's `program_info_length` is a 12-bit *read* with no upper-bound
+    /// check, so a section reconstructed from reassembled `table_section()`s
+    /// (MPEG-2 TS sections span 188-byte packets) can carry a programme
+    /// `CA_descriptor` loop longer than the field itself can encode. The
+    /// CAID allow-list path keeps surviving `CA_descriptor` TLVs verbatim,
+    /// so the projected `ca_pmt`'s `program_info_length` has no valid
+    /// encoding. `try_to_bytes` must return that as `Err`, not panic like
+    /// `to_bytes`.
+    #[test]
+    fn try_to_bytes_rejects_a_ca_loop_too_long_to_encode() {
+        // 1030 well-formed CA_descriptors (CAID 0x0B00, 4-byte bodies) =
+        // 6180 bytes of programme-level CA TLV.
+        const N_CA: usize = 1030;
+        let mut prog_info: Vec<u8> = Vec::with_capacity(N_CA * 6);
+        for _ in 0..N_CA {
+            prog_info.extend_from_slice(&[0x09, 0x04, 0x0B, 0x00, 0xE0, 0x64]);
+        }
+        assert_eq!(prog_info.len(), 6180);
+
+        let pmt = PmtSection::new(
+            1,
+            0,
+            true,
+            0,
+            0,
+            0x0100,
+            DescriptorLoop::new(&prog_info),
+            Vec::new(),
+        );
+        assert!(
+            pmt.program_info.len() > 4095,
+            "fixture precondition: the source loop exceeds the 12-bit field"
+        );
+        let built = build_ca_pmt_for_caids(
+            &pmt,
+            &[0x0B00],
+            CaPmtListManagement::Only,
+            CaPmtCmdId::OkDescrambling,
+        );
+        assert!(
+            matches!(
+                built.try_to_bytes(),
+                Err(crate::Error::InvalidObject { .. })
+            ),
+            "an over-long program_info_length must surface as Err, not panic"
+        );
     }
 
     #[test]

@@ -73,9 +73,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   just the transport connection), and `Shutdown` — previously a complete
   no-op — now resets the device and clears the same stack-level state, so a
   later `Init` starts genuinely clean (#1092). Per-resource internal state
-  (e.g. an in-progress MMI dialogue) is not yet included in this reset;
-  `Resource` has no `reset()` hook, so this is a narrower fix than full
-  re-init, tracked as a follow-up.
+  is now included too: `Resource` gained a `reset()` hook, called on `Init`
+  and `Shutdown`, and the stateful resources implemented it
+  (`ResourceManager` clears the latched profile/handshake state, `DateTime`
+  clears its resend timer), so `CamReady` fires again after a re-`Init`
+  (closing the follow-up noted under #1092).
+- `Driver::add_service` and the entitlement re-query timer no longer panic
+  when the `ca_pmt` projected from a caller's (possibly corrupt or
+  CAM-supplied) PMT has no valid wire encoding: `CaError::Serialize` (and
+  `CaError::PmtParse` for stored raw PMT bytes that no longer re-parse) is
+  returned from the public entry point instead, a rejected PMT is never
+  recorded, and a corrupt service's failure is reported on every later pump
+  instead of silently swallowing the healthy services' resend.
+  `CiStack`'s raw `descramble` path surfaces the same class of failure as
+  `Notification::Error` and sends nothing.
 - `CaDescrambler::feed_ts` no longer rejects an entire TS batch because one
   packet in it has a bad sync byte (a single bit-error-corrupted packet is
   not evidence the whole batch is misaligned); the bad packet is now

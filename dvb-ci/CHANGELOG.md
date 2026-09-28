@@ -6,6 +6,14 @@ versioning.
 
 ## [Unreleased]
 
+### Added
+- `builder::CaPmtBuilt::try_to_bytes`: the fallible counterpart of
+  `to_bytes`, returning `Error::InvalidObject` when a filtered descriptor
+  loop has no valid `ca_pmt` encoding (e.g. a corrupt source PMT whose
+  projected `program_info_length` exceeds its 12-bit field), so a host
+  forwarding a CAM-supplied PMT can reject such a `ca_pmt` as a value it
+  can act on instead of panicking.
+
 ### Changed (breaking)
 - Serializers now return an error, instead of silently truncating, when a
   length, count or PID does not fit its wire field (#1129).

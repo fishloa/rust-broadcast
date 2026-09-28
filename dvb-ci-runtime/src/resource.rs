@@ -47,24 +47,13 @@ fn to_menu(m: &Menu<'_>) -> MmiMenu {
 }
 
 /// r10-W-20: `serialize_into` failing here used to be swallowed into a
-/// silently-empty `Vec` — which then went out to real CI hardware as an
-/// empty APDU, indistinguishable from a deliberate zero-length one, rather
-/// than surfacing the failure at all. Panicking is louder and safer than
-/// silently corrupting the wire exchange; a buffer sized to
-/// `serialized_len()` only fails to serialize for a value that itself
-/// violates a wire constraint (e.g. a length/count/PID out of range — see
-/// `broadcast_common::len::fit_bits`), which every caller here is expected
-/// to have already validated before constructing the value.
-pub(crate) fn ser<S: Serialize>(s: &S) -> Vec<u8>
-where
-    S::Error: core::fmt::Debug,
-{
-    let mut b = vec![0u8; s.serialized_len()];
-    let n = s
-        .serialize_into(&mut b)
-        .expect("value must satisfy every wire constraint of its own type");
-    b.truncate(n);
-    b
+/// silently-empty `Vec` (and, in a later pass, turned into a panic) — either
+/// way the failure never reached the caller as a value it could act on. A
+/// `Resource` reacts to APDUs that ultimately originate from the CAM/card, so
+/// a serialize error must propagate as `Err`, not corrupt the wire exchange
+/// or crash the driver.
+pub(crate) fn ser<S: Serialize<Error = dvb_ci::Error>>(s: &S) -> dvb_ci::Result<Vec<u8>> {
+    s.try_to_bytes()
 }
 
 /// The 3-byte `apdu_tag` at the start of an APDU, if present.
@@ -88,15 +77,24 @@ pub trait Resource {
     /// The resource this handler serves.
     fn id(&self) -> ResourceId;
     /// The session for this resource just opened.
-    fn on_open(&mut self) -> ResourceOut {
-        ResourceOut::default()
+    fn on_open(&mut self) -> dvb_ci::Result<ResourceOut> {
+        Ok(ResourceOut::default())
     }
     /// An APDU arrived on this resource's session.
-    fn on_apdu(&mut self, apdu: &[u8]) -> ResourceOut;
+    fn on_apdu(&mut self, apdu: &[u8]) -> dvb_ci::Result<ResourceOut>;
     /// Logical time advanced (for resources with timers, e.g. date_time).
-    fn tick(&mut self, _elapsed: Duration) -> ResourceOut {
-        ResourceOut::default()
+    fn tick(&mut self, _elapsed: Duration) -> dvb_ci::Result<ResourceOut> {
+        Ok(ResourceOut::default())
     }
+    /// Reset this resource's internal state (r10-W-19): called on
+    /// [`HostRequest::Init`](crate::event::HostRequest::Init) and
+    /// [`HostRequest::Shutdown`](crate::event::HostRequest::Shutdown) so a
+    /// re-inserted CAM starts a fresh handshake against clean state rather
+    /// than one latched by whatever the previous module left behind (e.g. a
+    /// `ready` flag that never re-opens the `profile_change` gate on a
+    /// second `profile` exchange). The default no-op is only correct for a
+    /// resource that carries no state between calls.
+    fn reset(&mut self) {}
 }
 
 /// Resource Manager (§8.4.1) — host-provided. Drives the profile exchange and,
@@ -134,22 +132,22 @@ impl Resource for ResourceManager {
         RESOURCE_MANAGER
     }
 
-    fn on_open(&mut self) -> ResourceOut {
+    fn on_open(&mut self) -> dvb_ci::Result<ResourceOut> {
         // Kick off the handshake: ask the module for its profile.
-        ResourceOut {
-            apdus: vec![ser(&ProfileEnq)],
+        Ok(ResourceOut {
+            apdus: vec![ser(&ProfileEnq)?],
             ..ResourceOut::default()
-        }
+        })
     }
 
-    fn on_apdu(&mut self, apdu: &[u8]) -> ResourceOut {
+    fn on_apdu(&mut self, apdu: &[u8]) -> dvb_ci::Result<ResourceOut> {
         let mut out = ResourceOut::default();
         match peek_tag(apdu) {
             // Module asks for the host's profile → reply with our resource list.
             Some(t) if t == tag::PROFILE_ENQ => {
                 out.apdus.push(ser(&Profile {
                     resources: self.host_resources.clone(),
-                }));
+                })?);
             }
             // Module's profile → record its resources.
             Some(t)
@@ -161,7 +159,7 @@ impl Resource for ResourceManager {
             }
             // Resource set changed → re-enquire.
             Some(t) if t == tag::PROFILE_CHANGE => {
-                out.apdus.push(ser(&ProfileEnq));
+                out.apdus.push(ser(&ProfileEnq)?);
                 self.module_profiled = false;
                 self.ready = false;
             }
@@ -182,10 +180,21 @@ impl Resource for ResourceManager {
         // `on_open` then drives its enquiry (app_info_enq, ca_info_enq).
         if self.module_profiled && !self.ready {
             self.ready = true;
-            out.apdus.push(ser(&ProfileChange));
+            out.apdus.push(ser(&ProfileChange)?);
             out.notify.push(Notification::CamReady);
         }
-        out
+        Ok(out)
+    }
+
+    /// r10-W-19: without this, `ready`/`module_profiled` stay latched from a
+    /// prior handshake, so a second `profile` (e.g. after a hot-plug
+    /// re-insert routed through a fresh `Init`) never re-opens the
+    /// `profile_change`/`CamReady` gate — the module then idles forever
+    /// (`on_apdu`'s doc comment above).
+    fn reset(&mut self) {
+        self.module_resources.clear();
+        self.module_profiled = false;
+        self.ready = false;
     }
 }
 
@@ -199,14 +208,14 @@ impl Resource for ApplicationInformation {
         APPLICATION_INFORMATION
     }
 
-    fn on_open(&mut self) -> ResourceOut {
-        ResourceOut {
-            apdus: vec![ser(&ApplicationInfoEnq)],
+    fn on_open(&mut self) -> dvb_ci::Result<ResourceOut> {
+        Ok(ResourceOut {
+            apdus: vec![ser(&ApplicationInfoEnq)?],
             ..ResourceOut::default()
-        }
+        })
     }
 
-    fn on_apdu(&mut self, apdu: &[u8]) -> ResourceOut {
+    fn on_apdu(&mut self, apdu: &[u8]) -> dvb_ci::Result<ResourceOut> {
         let mut out = ResourceOut::default();
         if peek_tag(apdu) == Some(tag::APPLICATION_INFO)
             && let Ok(ai) = ApplicationInfo::parse(apdu)
@@ -218,8 +227,9 @@ impl Resource for ApplicationInformation {
                 menu: String::from_utf8_lossy(ai.menu_string).into_owned(),
             });
         }
-        out
+        Ok(out)
     }
+    // No state carried between calls — the default `reset()` no-op applies.
 }
 
 /// Conditional Access Support (§8.4.3) — module-provided. On open, enquires the
@@ -234,14 +244,14 @@ impl Resource for ConditionalAccess {
         CONDITIONAL_ACCESS_SUPPORT
     }
 
-    fn on_open(&mut self) -> ResourceOut {
-        ResourceOut {
-            apdus: vec![ser(&CaInfoEnq)],
+    fn on_open(&mut self) -> dvb_ci::Result<ResourceOut> {
+        Ok(ResourceOut {
+            apdus: vec![ser(&CaInfoEnq)?],
             ..ResourceOut::default()
-        }
+        })
     }
 
-    fn on_apdu(&mut self, apdu: &[u8]) -> ResourceOut {
+    fn on_apdu(&mut self, apdu: &[u8]) -> dvb_ci::Result<ResourceOut> {
         let mut out = ResourceOut::default();
         match peek_tag(apdu) {
             Some(t)
@@ -279,8 +289,9 @@ impl Resource for ConditionalAccess {
             }
             _ => {}
         }
-        out
+        Ok(out)
     }
+    // No state carried between calls — the default `reset()` no-op applies.
 }
 
 const SECS_PER_DAY: u64 = 86_400;
@@ -349,7 +360,7 @@ impl DateTime {
         }
     }
 
-    fn reply(&self) -> Vec<u8> {
+    fn reply(&self) -> dvb_ci::Result<Vec<u8>> {
         ser(&CiDateTime {
             utc_time: (self.clock)(),
             local_offset: None,
@@ -362,28 +373,38 @@ impl Resource for DateTime {
         DATE_TIME
     }
 
-    fn on_apdu(&mut self, apdu: &[u8]) -> ResourceOut {
+    fn on_apdu(&mut self, apdu: &[u8]) -> dvb_ci::Result<ResourceOut> {
         let mut out = ResourceOut::default();
         if peek_tag(apdu) == Some(tag::DATE_TIME_ENQ)
             && let Ok(enq) = DateTimeEnq::parse(apdu)
         {
             self.interval = enq.response_interval;
             self.since = Duration::ZERO;
-            out.apdus.push(self.reply());
+            out.apdus.push(self.reply()?);
         }
-        out
+        Ok(out)
     }
 
-    fn tick(&mut self, elapsed: Duration) -> ResourceOut {
+    fn tick(&mut self, elapsed: Duration) -> dvb_ci::Result<ResourceOut> {
         let mut out = ResourceOut::default();
         if self.interval > 0 {
             self.since += elapsed;
             if self.since >= Duration::from_secs(u64::from(self.interval)) {
                 self.since = Duration::ZERO;
-                out.apdus.push(self.reply());
+                out.apdus.push(self.reply()?);
             }
         }
-        out
+        Ok(out)
+    }
+
+    /// r10-W-19: without this, a stale `interval`/`since` from a previous
+    /// module survives into the next connection, so the resend cadence
+    /// negotiated with the OLD CAM keeps firing (or a leftover partial
+    /// `since` fires early) before the new module ever sends its own
+    /// `date_time_enq`.
+    fn reset(&mut self) {
+        self.interval = 0;
+        self.since = Duration::ZERO;
     }
 }
 
@@ -402,7 +423,7 @@ impl Resource for Mmi {
         MMI
     }
 
-    fn on_apdu(&mut self, apdu: &[u8]) -> ResourceOut {
+    fn on_apdu(&mut self, apdu: &[u8]) -> dvb_ci::Result<ResourceOut> {
         let mut out = ResourceOut::default();
         match peek_tag(apdu) {
             Some(t)
@@ -456,12 +477,13 @@ impl Resource for Mmi {
                         body: DisplayReplyBody::None,
                     },
                 };
-                out.apdus.push(ser(&reply));
+                out.apdus.push(ser(&reply)?);
             }
             _ => {}
         }
-        out
+        Ok(out)
     }
+    // No state carried between calls — the default `reset()` no-op applies.
 }
 
 /// Host Control (§8.5.1) — host-provided. The module opens a host_control
@@ -478,7 +500,7 @@ impl Resource for HostControl {
         HOST_CONTROL
     }
 
-    fn on_apdu(&mut self, apdu: &[u8]) -> ResourceOut {
+    fn on_apdu(&mut self, apdu: &[u8]) -> dvb_ci::Result<ResourceOut> {
         let mut out = ResourceOut::default();
         let event = match peek_tag(apdu) {
             Some(t) if t == tag::TUNE => Tune::parse(apdu).ok().map(|t| HostControlEvent::Tune {
@@ -511,8 +533,9 @@ impl Resource for HostControl {
         if let Some(event) = event {
             out.notify.push(Notification::HostControl(event));
         }
-        out
+        Ok(out)
     }
+    // No state carried between calls — the default `reset()` no-op applies.
 }
 
 #[cfg(test)]
@@ -520,11 +543,17 @@ mod tests {
     use super::*;
     use dvb_ci::objects::resource_manager::Profile;
 
+    /// Local test helper: unwrap a serialize that must succeed for the
+    /// fixed/bounded values these tests construct.
+    fn s<S: Serialize<Error = dvb_ci::Error>>(v: &S) -> Vec<u8> {
+        ser(v).expect("test value must serialize")
+    }
+
     #[test]
     fn on_open_sends_profile_enq() {
         let mut rm = ResourceManager::new(vec![RESOURCE_MANAGER]);
-        let out = rm.on_open();
-        assert_eq!(out.apdus, vec![ser(&ProfileEnq)]);
+        let out = rm.on_open().unwrap();
+        assert_eq!(out.apdus, vec![s(&ProfileEnq)]);
     }
 
     #[test]
@@ -535,9 +564,9 @@ mod tests {
         // are host-provided resources the module opens sessions to (verified on
         // a live AlphaCrypt, which rejects/ignores host-initiated opens).
         let mut rm = ResourceManager::new(vec![RESOURCE_MANAGER]);
-        rm.on_open();
-        let empty_profile = ser(&Profile { resources: vec![] });
-        let o = rm.on_apdu(&empty_profile);
+        rm.on_open().unwrap();
+        let empty_profile = s(&Profile { resources: vec![] });
+        let o = rm.on_apdu(&empty_profile).unwrap();
         assert!(o.notify.contains(&Notification::CamReady));
         assert_eq!(o.apdus.len(), 1, "host sends profile_change");
         assert_eq!(peek_tag(&o.apdus[0]), Some(tag::PROFILE_CHANGE));
@@ -547,28 +576,65 @@ mod tests {
     #[test]
     fn answers_a_module_profile_enquiry_without_re_readying() {
         let mut rm = ResourceManager::new(vec![RESOURCE_MANAGER]);
-        rm.on_open();
-        rm.on_apdu(&ser(&Profile {
+        rm.on_open().unwrap();
+        rm.on_apdu(&s(&Profile {
             resources: vec![APPLICATION_INFORMATION],
-        }));
+        }))
+        .unwrap();
         // A later module profile_enq → reply with our profile, no second CamReady.
-        let o = rm.on_apdu(&ser(&ProfileEnq));
+        let o = rm.on_apdu(&s(&ProfileEnq)).unwrap();
         assert_eq!(o.apdus.len(), 1);
         assert_eq!(peek_tag(&o.apdus[0]), Some(tag::PROFILE));
         assert!(!o.notify.contains(&Notification::CamReady));
+    }
+
+    /// r10-W-19: `reset()` must clear every piece of the RM's latched state
+    /// (module resources, `module_profiled`, `ready`) so a fresh handshake
+    /// after a re-init behaves exactly like a brand-new `ResourceManager` —
+    /// in particular so `ready` does not stay latched and silently suppress
+    /// the next `CamReady`.
+    #[test]
+    fn resource_manager_reset_clears_latched_handshake_state() {
+        let mut rm = ResourceManager::new(vec![RESOURCE_MANAGER]);
+        rm.on_open().unwrap();
+        let o = rm
+            .on_apdu(&s(&Profile {
+                resources: vec![APPLICATION_INFORMATION],
+            }))
+            .unwrap();
+        assert!(o.notify.contains(&Notification::CamReady), "dirtied: ready");
+        assert!(
+            !rm.module_resources().is_empty(),
+            "dirtied: module_resources"
+        );
+
+        rm.reset();
+        assert!(
+            rm.module_resources().is_empty(),
+            "reset must clear module_resources"
+        );
+
+        // Pre-fix (no reset()), `ready` stayed latched `true` and this second
+        // profile exchange would NOT re-fire CamReady.
+        rm.on_open().unwrap();
+        let o2 = rm.on_apdu(&s(&Profile { resources: vec![] })).unwrap();
+        assert!(
+            o2.notify.contains(&Notification::CamReady),
+            "a fresh handshake after reset() must fire CamReady again"
+        );
     }
 
     #[test]
     fn mmi_surfaces_enquiry_and_close() {
         let mut h = Mmi;
         // enquiry
-        let enq = ser(&Enq {
+        let enq = s(&Enq {
             blind_answer: true,
             answer_text_length: 4,
             text_chars: b"PIN?",
         });
         assert_eq!(
-            h.on_apdu(&enq).notify,
+            h.on_apdu(&enq).unwrap().notify,
             vec![Notification::Mmi(MmiEvent::Enquiry {
                 prompt: "PIN?".to_string(),
                 blind: true,
@@ -578,7 +644,7 @@ mod tests {
         // close_mmi (tag 9F 88 00) — surfaced as Close
         let close = [0x9F, 0x88, 0x00, 0x01, 0x00];
         assert_eq!(
-            h.on_apdu(&close).notify,
+            h.on_apdu(&close).unwrap().notify,
             vec![Notification::Mmi(MmiEvent::Close)]
         );
     }
@@ -592,7 +658,7 @@ mod tests {
         };
         let mut h = Mmi;
         // A `menu()` → MmiEvent::Menu with header lines and choices kept distinct.
-        let menu = ser(&Menu {
+        let menu = s(&Menu {
             more: false,
             choice_nb: 2,
             title: txt(b"AlphaCrypt"),
@@ -601,7 +667,7 @@ mod tests {
             choices: vec![txt(b"Smartcard"), txt(b"Quit")],
         });
         assert_eq!(
-            h.on_apdu(&menu).notify,
+            h.on_apdu(&menu).unwrap().notify,
             vec![Notification::Mmi(MmiEvent::Menu(MmiMenu {
                 title: "AlphaCrypt".to_string(),
                 subtitle: "Module Mainmenu".to_string(),
@@ -610,7 +676,7 @@ mod tests {
             }))]
         );
         // A `list()` (same body) → MmiEvent::List.
-        let list = ser(&List(Menu {
+        let list = s(&List(Menu {
             more: false,
             choice_nb: 0xFF,
             title: txt(b"Entitlements"),
@@ -619,7 +685,7 @@ mod tests {
             choices: vec![txt(b"ORF AUT")],
         }));
         assert_eq!(
-            h.on_apdu(&list).notify,
+            h.on_apdu(&list).unwrap().notify,
             vec![Notification::Mmi(MmiEvent::List(MmiMenu {
                 title: "Entitlements".to_string(),
                 subtitle: String::new(),
@@ -633,11 +699,11 @@ mod tests {
     fn mmi_answers_display_control_set_mmi_mode() {
         use dvb_ci::objects::mmi_display::{DisplayControl, DisplayControlCmd, MmiMode};
         let mut h = Mmi;
-        let dc = ser(&DisplayControl {
+        let dc = s(&DisplayControl {
             cmd: DisplayControlCmd::SetMmiMode,
             mmi_mode: Some(MmiMode::HighLevel),
         });
-        let out = h.on_apdu(&dc);
+        let out = h.on_apdu(&dc).unwrap();
         // mmi_mode_ack(high_level): 9F 88 02 02 01 01.
         assert_eq!(out.apdus, vec![vec![0x9F, 0x88, 0x02, 0x02, 0x01, 0x01]]);
         assert!(out.notify.is_empty());
@@ -646,22 +712,24 @@ mod tests {
     #[test]
     fn profile_change_re_enquires() {
         let mut rm = ResourceManager::new(vec![RESOURCE_MANAGER]);
-        let out = rm.on_apdu(&ser(&dvb_ci::objects::resource_manager::ProfileChange));
-        assert_eq!(out.apdus, vec![ser(&ProfileEnq)]);
+        let out = rm
+            .on_apdu(&s(&dvb_ci::objects::resource_manager::ProfileChange))
+            .unwrap();
+        assert_eq!(out.apdus, vec![s(&ProfileEnq)]);
     }
 
     #[test]
     fn application_information_surfaces_notification() {
         use dvb_ci::objects::application_info::ApplicationType;
         let mut h = ApplicationInformation;
-        assert_eq!(h.on_open().apdus, vec![ser(&ApplicationInfoEnq)]);
-        let ai = ser(&ApplicationInfo {
+        assert_eq!(h.on_open().unwrap().apdus, vec![s(&ApplicationInfoEnq)]);
+        let ai = s(&ApplicationInfo {
             application_type: ApplicationType::ConditionalAccess,
             application_manufacturer: 0x1234,
             manufacturer_code: 0x5678,
             menu_string: b"Acme CAM",
         });
-        let out = h.on_apdu(&ai);
+        let out = h.on_apdu(&ai).unwrap();
         assert_eq!(
             out.notify,
             vec![Notification::ApplicationInfo {
@@ -679,14 +747,14 @@ mod tests {
         assert_eq!(h.id(), HOST_CONTROL);
 
         // tune() → HostControlEvent::Tune with the four 16-bit identifiers.
-        let tune = ser(&Tune {
+        let tune = s(&Tune {
             network_id: 0x1122,
             original_network_id: 0x3344,
             transport_stream_id: 0x5566,
             service_id: 0x7788,
         });
         assert_eq!(
-            h.on_apdu(&tune).notify,
+            h.on_apdu(&tune).unwrap().notify,
             vec![Notification::HostControl(HostControlEvent::Tune {
                 network_id: 0x1122,
                 original_network_id: 0x3344,
@@ -696,13 +764,13 @@ mod tests {
         );
 
         // replace() → HostControlEvent::Replace with the 13-bit PIDs decoded.
-        let replace = ser(&Replace {
+        let replace = s(&Replace {
             replacement_ref: 0x07,
             replaced_pid: 0x0123,
             replacement_pid: 0x01FF,
         });
         assert_eq!(
-            h.on_apdu(&replace).notify,
+            h.on_apdu(&replace).unwrap().notify,
             vec![Notification::HostControl(HostControlEvent::Replace {
                 replacement_ref: 0x07,
                 replaced_pid: 0x0123,
@@ -711,25 +779,25 @@ mod tests {
         );
 
         // clear_replace() → HostControlEvent::ClearReplace.
-        let clear = ser(&ClearReplace {
+        let clear = s(&ClearReplace {
             replacement_ref: 0x42,
         });
         assert_eq!(
-            h.on_apdu(&clear).notify,
+            h.on_apdu(&clear).unwrap().notify,
             vec![Notification::HostControl(HostControlEvent::ClearReplace {
                 replacement_ref: 0x42,
             })]
         );
 
         // ask_release() → HostControlEvent::AskRelease (header-only).
-        let ask = ser(&AskRelease);
+        let ask = s(&AskRelease);
         assert_eq!(
-            h.on_apdu(&ask).notify,
+            h.on_apdu(&ask).unwrap().notify,
             vec![Notification::HostControl(HostControlEvent::AskRelease)]
         );
 
         // The host acts out of band: no reply APDU is produced.
-        assert!(h.on_apdu(&tune).apdus.is_empty());
+        assert!(h.on_apdu(&tune).unwrap().apdus.is_empty());
     }
 
     #[test]
@@ -746,43 +814,68 @@ mod tests {
         let fixed = || [0x9E, 0x7B, 0x00, 0x00, 0x00];
         let mut h = DateTime::with_clock(fixed);
         // enquiry with a 5s response interval → immediate reply
-        let enq = ser(&DateTimeEnq {
+        let enq = s(&DateTimeEnq {
             response_interval: 5,
         });
-        let out = h.on_apdu(&enq);
+        let out = h.on_apdu(&enq).unwrap();
         assert_eq!(out.apdus.len(), 1);
         assert_eq!(peek_tag(&out.apdus[0]), Some(tag::DATE_TIME));
         // before the interval: no resend
-        assert!(h.tick(Duration::from_secs(3)).apdus.is_empty());
+        assert!(h.tick(Duration::from_secs(3)).unwrap().apdus.is_empty());
         // crossing the interval: resend
-        assert_eq!(h.tick(Duration::from_secs(3)).apdus.len(), 1);
+        assert_eq!(h.tick(Duration::from_secs(3)).unwrap().apdus.len(), 1);
     }
 
     #[test]
     fn date_time_interval_zero_does_not_resend() {
         let mut h = DateTime::with_clock(|| [0u8; UTC_TIME_LEN]);
-        h.on_apdu(&ser(&DateTimeEnq {
+        h.on_apdu(&s(&DateTimeEnq {
             response_interval: 0,
-        }));
-        assert!(h.tick(Duration::from_secs(60)).apdus.is_empty());
+        }))
+        .unwrap();
+        assert!(h.tick(Duration::from_secs(60)).unwrap().apdus.is_empty());
+    }
+
+    /// r10-W-19: `reset()` must clear the resend timer (`interval`/`since`)
+    /// so a stale cadence negotiated with a PREVIOUS module does not keep
+    /// firing (or fire early on a leftover partial `since`) before the new
+    /// module ever sends its own `date_time_enq`.
+    #[test]
+    fn date_time_reset_clears_interval_and_resend_timer() {
+        let mut h = DateTime::with_clock(|| [0u8; UTC_TIME_LEN]);
+        h.on_apdu(&s(&DateTimeEnq {
+            response_interval: 5,
+        }))
+        .unwrap();
+        // Dirty: interval = 5, partway through the resend window.
+        assert!(h.tick(Duration::from_secs(3)).unwrap().apdus.is_empty());
+
+        h.reset();
+        // Pre-fix, the leftover `since` (3s) plus this tick would cross the
+        // still-latched 5s interval and resend; post-reset, interval is 0 so
+        // nothing fires no matter how much time passes.
+        assert!(
+            h.tick(Duration::from_secs(60)).unwrap().apdus.is_empty(),
+            "reset must clear the resend cadence from the previous module"
+        );
     }
 
     #[test]
     fn conditional_access_surfaces_ca_info_and_pmt_reply() {
         let mut h = ConditionalAccess;
-        assert_eq!(h.on_open().apdus, vec![ser(&CaInfoEnq)]);
+        assert_eq!(h.on_open().unwrap().apdus, vec![s(&CaInfoEnq)]);
         // ca_info -> CaInfo notification
-        let ci = ser(&CaInfo {
+        let ci = s(&CaInfo {
             ca_system_ids: vec![0x0B00, 0x1800],
         });
         assert_eq!(
-            h.on_apdu(&ci).notify,
+            h.on_apdu(&ci).unwrap().notify,
             vec![Notification::CaInfo {
                 ca_system_ids: vec![0x0B00, 0x1800],
             }]
         );
         // ca_pmt_reply (descrambling possible) -> CaPmtReply notification
-        let reply = ser(&CaPmtReply {
+        let reply = s(&CaPmtReply {
             program_number: 0x0042,
             version_number: 0,
             current_next_indicator: true,
@@ -790,7 +883,7 @@ mod tests {
             streams: vec![],
         });
         assert_eq!(
-            h.on_apdu(&reply).notify,
+            h.on_apdu(&reply).unwrap().notify,
             vec![Notification::CaPmtReply {
                 program_number: 0x0042,
                 ca_enable: Some(CaEnable::Possible),
@@ -802,9 +895,9 @@ mod tests {
     #[test]
     fn conditional_access_ca_pmt_reply_flag_clear_surfaces_none() {
         let mut h = ConditionalAccess;
-        h.on_open();
+        h.on_open().unwrap();
         // Programme `CA_enable_flag` clear -> no programme-level status given.
-        let reply = ser(&CaPmtReply {
+        let reply = s(&CaPmtReply {
             program_number: 0x0007,
             version_number: 0,
             current_next_indicator: true,
@@ -812,7 +905,7 @@ mod tests {
             streams: vec![],
         });
         assert_eq!(
-            h.on_apdu(&reply).notify,
+            h.on_apdu(&reply).unwrap().notify,
             vec![Notification::CaPmtReply {
                 program_number: 0x0007,
                 ca_enable: None,
