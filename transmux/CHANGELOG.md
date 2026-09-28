@@ -93,6 +93,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   payload size, so chunk offsets are no longer 8 bytes early once the `mdat` needs a 64-bit
   `largesize` header (#1019).
 
+### Added
+- `ts_hls::StreamingTsHlsSegmenter::with_start_sequence` — seeds a streaming classic-TS
+  segmenter's segment numbering from a caller-given value instead of `Self::new`'s implicit `0`,
+  the classic-TS analogue of `ll_hls::LlHlsSegmenter::with_part_target_at`. Lets a consumer
+  (`multimux::source::segment::ProgramSegmenter`) resume numbering across a rebuild rather than
+  renumbering from `0` against a `Trunk` that already holds segments, which its monotonic
+  `sequence_number` guard rejects forever after.
+
 ## [0.24.2] - 2026-09-25
 
 ### Security

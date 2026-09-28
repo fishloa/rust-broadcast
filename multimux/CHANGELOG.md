@@ -16,24 +16,67 @@
   a later segment's parts can never appear before an earlier segment still
   stuck in it (media-plane issue #1082, T7).
 - The pending-publish queue above is now bounded: once its oldest entry has
-  waited 30 seconds, or the queue reaches 8 entries (whichever comes first
-  — a hard cap so memory stays bounded even for a pin that never advances
-  at all), the blocking `ArchiveOverrun::StallIngest` pin is force-expired
-  (`SegmentWriter::expire_stalled_pins`, terminated the same way the
-  blocking path's own bound already does) and draining retried immediately
-  — a DVR disk error whose pin never advances no longer freezes live output
-  past that bound (media-plane issue #1082, T6/T7).
+  waited 30 seconds, or 8 SEGMENTS have accumulated behind a stuck one
+  (whichever comes first — a hard cap so memory stays bounded even for a
+  pin that never advances at all), the blocking `ArchiveOverrun::StallIngest`
+  pin is force-expired (`SegmentWriter::expire_stalled_pins`, terminated the
+  same way the blocking path's own bound already does) and draining
+  retried immediately — a DVR disk error whose pin never advances no
+  longer freezes live output past that bound (media-plane issue #1082,
+  T6/T7). The cap counts queued segments only, never queued parts — a part
+  always rides immediately behind its own segment, so counting parts
+  toward the cap made an LL-HLS route (a new part roughly every
+  `part_target_ms`, 200ms is a typical target) force-expire a `StallIngest`
+  pin in well under 2 real seconds regardless of how briefly the pin was
+  actually stuck, nowhere near the 30s deadline.
+- `pending_since` (the "how long has the front of the pending-publish queue
+  been stuck" clock) now resets whenever the front item actually publishes,
+  not only once the whole queue drains empty — previously, a resolved
+  stall's timestamp could leak onto a later, different item's brand-new
+  stall (still queued behind it), making that item look like it had already
+  waited past the 30s deadline the instant it got stuck, and force-expiring
+  the pin for a stall that had not actually happened yet.
 - `RouteHandle::add_segment` now uses `SegmentWriter::try_publish_segment`
   instead of the blocking `SegmentWriter::publish_segment` — this is a
   test/fallback direct-write path with no retry queue of its own, so a
   segment that cannot go through right now is logged and dropped rather
   than blocking the calling thread (media-plane issue #1082, T7).
-- `ProgramSegmenter`'s fMP4 path now seeds its sequence numbering from
-  `SegmentWriter::next_sequence_number` instead of always starting at `1`
-  — `publish_segment` now rejects a non-monotonic `sequence_number`
-  (media-plane issue #1082), which a `Trunk` that already has segments
-  from an earlier `SegmentWriter` (dropped and re-issued) would otherwise
-  trigger.
+- `ProgramSegmenter`'s fMP4 AND classic-TS (`Container::MpegTs`) paths now
+  both seed their sequence numbering from `SegmentWriter::next_sequence_number`
+  instead of starting at `1`/`0` — `publish_segment` now rejects a
+  non-monotonic `sequence_number` (media-plane issue #1082), which a
+  `Trunk` that already has segments from an earlier `SegmentWriter`
+  (dropped and re-issued), or a TS segmenter rebuilt mid-stream after a
+  track-set change (`ProgramSegmenter::apply_track_change`'s
+  `Container::MpegTs` rebuild path — previously fMP4-only), would
+  otherwise trigger, silently dropping every segment the reseeded/rebuilt
+  segmenter cut until its own counter happened to catch back up. Needed a
+  new `transmux::ts_hls::StreamingTsHlsSegmenter::with_start_sequence`
+  seeded constructor, mirroring `LlHlsSegmenter::with_part_target_at`.
+- `ProgramSegmenter::publish_ready`/`apply_track_change`'s fMP4 rebuild now
+  queue a segmenter's ready parts and closed segments interleaved by
+  sequence number (segment N's own parts, then its close, then segment
+  N+1's parts, …) instead of every ready part followed by every ready
+  segment. The old order could let a later segment's opening part reach
+  the `Trunk`'s live-part log before an earlier, already-closed segment's
+  own `SegmentEntry` — `Trunk::parts_in_segment` (see media-plane's own
+  entry below) then lost that earlier segment's still-resident parts
+  entirely, silently dropping its `#EXT-X-PART` tags from a served LL-HLS
+  playlist.
+- A `Stall`-policy `DvrRecorder` whose pin is force-expired by the
+  non-blocking safety valve above no longer stops recording for good. The
+  force-expiry produces the identical `SegmentCursorItem::Terminated`
+  signal an `ArchiveOverrun::Terminate` pin's own intended stop does, and
+  the recorder previously treated both the same way (permanently stopping,
+  and logging "ArchiveOverrun::Terminate" even for a `Stall`-policy pin —
+  the wrong policy name). It now re-arms with a fresh pinning cursor at
+  the live edge, counts the segments lost in between as a gap (a new
+  `multimux_dvr_pin_rearmed_total` counter, labelled `route`, plus a
+  corrected log line naming the real policy), and keeps recording.
+
+### Added
+- `multimux_dvr_pin_rearmed_total` Prometheus counter (labels: `route`) —
+  see the `DvrRecorder` re-arm fix above.
 
 ## [0.11.0] - 2026-09-26
 

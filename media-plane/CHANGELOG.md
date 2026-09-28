@@ -88,6 +88,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `SessionEvent`s before entering `HealthState::Failed` on error, instead of
   dropping events the session had already queued as part of the same call
   that ultimately failed it (issue #1082).
+- `Trunk::parts_in_segment` no longer isolates "the current run" by scanning
+  from the back of the part ring and stopping at the first non-matching
+  entry. That approach assumed a segment's parts are always one contiguous
+  run at the tail, which a live LL-HLS producer can legitimately violate —
+  it may publish part `(N+1, 0)` while segment `N` is still open, landing
+  it after `N`'s own parts in the ring. The from-the-back scan then hit
+  `(N+1, 0)` first and reported *zero* parts for the still-open segment
+  `N`, silently dropping its `#EXT-X-PART` tags from a served playlist.
+  Now a plain filter over the whole ring, matched by `segment_number`
+  alone.
 
 ## [0.4.1] - 2026-08-16
 

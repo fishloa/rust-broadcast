@@ -1792,29 +1792,43 @@ impl Trunk {
     /// letting a caller derive "how many parts does the open segment have so
     /// far" (RFC 8216bis's `_HLS_part` blocking-reload condition) without a
     /// cursor.
+    ///
+    /// A plain filter, not a from-the-back `take_while` run isolation
+    /// (this method's predecessor): the part ring is **not** guaranteed to
+    /// hold every `segment_number`'s parts as one contiguous run at the
+    /// tail. A live producer (`multimux::source::segment::ProgramSegmenter`)
+    /// can — and, once its own parts/segments are queued in true stream
+    /// order, still legitimately does the moment it starts buffering the
+    /// *next* segment's opening part before this segment's own close has
+    /// been queued — publish part `(N+1, 0)` while segment `N` is still
+    /// open. A `take_while` stopping at the first entry whose
+    /// `segment_number != N` would then see `(N+1, 0)` at the tail and
+    /// report *zero* parts for the still-open segment `N`, even though every
+    /// one of its parts is sitting right there in the ring — silently
+    /// dropping `#EXT-X-PART` tags from a served LL-HLS playlist. A plain
+    /// filter has no such assumption: every resident part with a matching
+    /// `segment_number` is returned regardless of what else shares the ring.
+    ///
+    /// The one case this trades away: after a `SegmentWriter` re-issue reuses
+    /// a `segment_number` (see [`SegmentWriter::next_sequence_number`]'s own
+    /// doc), a stale, older run under the same number — if still resident —
+    /// would now be merged in alongside the current run. In practice this
+    /// needs an actual number reuse (`publish_segment`/`try_publish_segment`
+    /// otherwise reject a non-monotonic `sequence_number` outright) *and*
+    /// the stale run to have survived long enough in the ring to still be
+    /// resident, which the numbering-reuse guard exists specifically to
+    /// avoid; the interleaving this method now handles is the common case a
+    /// live LL-HLS producer hits on every stream, not the rare
+    /// after-a-restart one.
     pub fn parts_in_segment(&self, segment_number: u32) -> Vec<PartEntry> {
         let state = self.lock_state();
-        // Collect from the back, stopping at the first non-matching entry:
-        // isolates the CURRENT contiguous run of this `segment_number`'s
-        // parts. A part ring never interleaves two different segments'
-        // parts (every part of one segment is published before the next
-        // segment's first), so this is exactly "every part published so
-        // far under this number" even when a `SegmentWriter` re-issue
-        // reused it — a stale, older run of the same number, if still
-        // resident, sits BEFORE this boundary and is correctly excluded,
-        // unlike a plain `.filter()` over the whole ring (which would
-        // return both runs mixed together, over-counting the open
-        // segment's real part count).
-        let mut collected: Vec<PartEntry> = state
+        state
             .parts
             .entries
             .iter()
-            .rev()
-            .take_while(|p| p.segment_number == segment_number)
+            .filter(|p| p.segment_number == segment_number)
             .cloned()
-            .collect();
-        collected.reverse();
-        collected
+            .collect()
     }
 
     /// Diagnostic: entries currently resident in the live-part log. Never
@@ -5455,5 +5469,69 @@ mod tests {
         w.try_publish_segment(segment_entry(2, 2))
             .expect("must succeed once the blocking pin has been terminated");
         assert_eq!(trunk.last_closed_segment(), Some(2));
+    }
+
+    /// [`Trunk::parts_in_segment`] must find a still-open segment's parts
+    /// even when a *later* segment's opening part has already landed in the
+    /// ring ahead of it — exactly what a live LL-HLS producer does the
+    /// moment it starts buffering segment N+1's first part before segment
+    /// N's own close has been queued (`multimux::source::segment`'s own
+    /// stream-order publishing still allows this: only the *pending-queue*
+    /// order is fixed, and a segment that is not itself stuck is queued
+    /// (and drained) immediately, well before this method's caller ever
+    /// looks).
+    ///
+    /// MUTATION VERIFIED: with the from-the-back `take_while` isolation this
+    /// method used before (stopping at the first entry whose
+    /// `segment_number != segment_number`), this test's
+    /// `assert_eq!(trunk.parts_in_segment(1).len(), 2, ...)` fails: actual
+    /// `0` (the tail entry is segment 2's part, so the `take_while` stops
+    /// immediately, before ever reaching either of segment 1's two parts) —
+    /// segment 1's still-open parts vanish from the query entirely, which
+    /// would silently drop its `#EXT-X-PART` tags from a served LL-HLS
+    /// playlist. Recompiled with the `take_while` version restored, re-ran
+    /// to confirm this exact failure, then reverted to the plain-filter
+    /// fix.
+    #[test]
+    fn parts_in_segment_finds_open_segments_parts_even_after_a_later_segments_part_arrives() {
+        let trunk = Trunk::new(TrunkConfig::new(nz(4), nz(4), nz(4), nz(8), nz(8)));
+        let w = trunk.segment_writer().unwrap();
+        w.publish_part(PartEntry::new(
+            Bytes::from_static(b"a"),
+            1,
+            0,
+            Duration::from_millis(200),
+            true,
+        ));
+        w.publish_part(PartEntry::new(
+            Bytes::from_static(b"b"),
+            1,
+            1,
+            Duration::from_millis(200),
+            false,
+        ));
+        // Segment 2's opening part, already in the ring while segment 1 is
+        // still open (not yet closed via `publish_segment`/
+        // `try_publish_segment`) — the exact interleaving
+        // `ProgramSegmenter::publish_in_stream_order` still permits, and
+        // the shape this method must stay correct against.
+        w.publish_part(PartEntry::new(
+            Bytes::from_static(b"c"),
+            2,
+            0,
+            Duration::from_millis(200),
+            true,
+        ));
+
+        assert_eq!(
+            trunk.parts_in_segment(1).len(),
+            2,
+            "the still-open segment 1's own two parts must not vanish"
+        );
+        assert_eq!(
+            trunk.parts_in_segment(2).len(),
+            1,
+            "segment 2's own opening part must resolve independently"
+        );
     }
 }
