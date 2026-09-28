@@ -20,8 +20,15 @@ use srt_runtime::{HandshakeConfig, RendezvousRole};
 
 const PEER_A_SOCKET_ID: u32 = 0x1111_1111;
 const PEER_B_SOCKET_ID: u32 = 0x2222_2222;
-/// Greater than `PEER_B_COOKIE` — A wins the cookie contest and becomes
-/// Initiator (`draft-sharabayko-srt-01` §4.3.2, L2133-2135).
+/// `PEER_A_COOKIE` has its top bit set (`0xAAAA_0002`), `PEER_B_COOKIE`
+/// doesn't (`0x1111_0001`) — a real libsrt peer's cookie contest
+/// (`CUDT::backwardCompatibleCookieContest`) reinterprets each cookie as
+/// *signed*, so A's is the negative one here and B wins (issue #1064): B
+/// becomes Initiator, A becomes Responder — the opposite of what a plain
+/// unsigned `A > B` compare would give (A is numerically larger as an
+/// unsigned `u32`). This pair is deliberately a sign-boundary case, not
+/// picked to make A win — see `rendezvous::tests::cookie_contest_*` in
+/// `src/rendezvous.rs` for the full sign-boundary table.
 const PEER_A_COOKIE: u32 = 0xAAAA_0002;
 const PEER_B_COOKIE: u32 = 0x1111_0001;
 
@@ -90,10 +97,11 @@ fn two_rendezvous_peers_converge_on_connected_with_matching_params() {
     assert_eq!(b.state(), RendezvousHandshakeState::Connected);
 
     // The cookie contest resolved deterministically and oppositely on both
-    // sides (`draft-sharabayko-srt-01` §4.3.2, L2133-2135): A's cookie is
-    // greater, so A is Initiator and B is Responder.
-    assert_eq!(a.role(), Some(RendezvousRole::Initiator));
-    assert_eq!(b.role(), Some(RendezvousRole::Responder));
+    // sides (`draft-sharabayko-srt-01` §4.3.2, L2133-2135, per libsrt's real
+    // signed-cookie semantics — issue #1064, see `PEER_A_COOKIE`'s doc): B
+    // wins, so B is Initiator and A is Responder.
+    assert_eq!(a.role(), Some(RendezvousRole::Responder));
+    assert_eq!(b.role(), Some(RendezvousRole::Initiator));
 
     let a_params = a.negotiated().expect("a negotiated params");
     let b_params = b.negotiated().expect("b negotiated params");
@@ -116,7 +124,7 @@ fn two_rendezvous_peers_converge_on_connected_with_matching_params() {
 }
 
 #[test]
-fn cookie_contest_greater_cookie_wins_initiator() {
+fn cookie_contest_resolves_per_libsrt_signed_semantics() {
     let mut a = RendezvousHandshake::new(1, PEER_A_COOKIE, HandshakeConfig::default());
     let mut b = RendezvousHandshake::new(2, PEER_B_COOKIE, HandshakeConfig::default());
 
@@ -129,8 +137,10 @@ fn cookie_contest_greater_cookie_wins_initiator() {
     a.feed(&pkt_b).unwrap();
     b.feed(&pkt_a).unwrap();
 
-    assert_eq!(a.role(), Some(RendezvousRole::Initiator));
-    assert_eq!(b.role(), Some(RendezvousRole::Responder));
+    // See `PEER_A_COOKIE`'s doc comment: B wins this sign-boundary pair
+    // under libsrt's real signed-cookie contest (issue #1064).
+    assert_eq!(a.role(), Some(RendezvousRole::Responder));
+    assert_eq!(b.role(), Some(RendezvousRole::Initiator));
 }
 
 #[test]

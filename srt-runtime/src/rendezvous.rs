@@ -185,6 +185,74 @@ impl RendezvousRole {
 
 broadcast_common::impl_spec_display!(RendezvousRole);
 
+/// Bit 31 (the sign bit of a 32-bit value), used to test the sign of a
+/// 32-bit quantity carried in a wider (`i64`) type without it having been
+/// sign-extended into that width — see [`cookie_contest`].
+const SIGN_BIT_32: i64 = 0x8000_0000;
+
+/// The cookie contest tie-break (issue #1064): given two cookies (this
+/// side's and the peer's, both already known not to be equal — see
+/// [`RendezvousHandshake::resolve_role`]), decide which side is
+/// [`RendezvousRole::Initiator`].
+///
+/// A direct port of libsrt's own `CUDT::backwardCompatibleCookieContest`
+/// (`srtcore/core.cpp`, v1.5.5, as published at
+/// <https://github.com/Haivision/srt/blob/v1.5.5/srtcore/core.cpp#L4262-L4286>):
+///
+/// ```c
+/// enum HandshakeSide srt::CUDT::backwardCompatibleCookieContest(int32_t req, int32_t res)
+/// {
+///     const int64_t xreq = int64_t(req);
+///     const int64_t xres = int64_t(res);
+///     const int64_t contest = xreq - xres;
+///
+///     if ((contest & 0xFFFFFFFF) == 0)
+///     {
+///         return HSD_DRAW;
+///     }
+///     if (contest & 0x80000000)
+///     {
+///         const int64_t revert = xres - xreq;
+///         if (revert & 0x80000000 && req > res)
+///             return HSD_INITIATOR;
+///         return HSD_RESPONDER;
+///     }
+///
+///     return HSD_INITIATOR;
+/// }
+/// ```
+///
+/// `req`/`res` there are `int32_t` — the raw cookie bit pattern *reinterpreted
+/// as signed* — and `xreq`/`xres` sign-*extend* that signed value into
+/// `int64_t` (so a cookie with the top bit set becomes a large-magnitude
+/// *negative* `i64`, not the same positive value an unsigned widen would
+/// give). This is why a plain unsigned `own_cookie > peer_cookie` compare
+/// (this function's pre-fix behavior) disagrees with libsrt for roughly a
+/// quarter of all cookie pairs: whenever exactly one of the two cookies has
+/// its top bit set, the sign-extending widen and the unsigned widen order
+/// the pair differently.
+///
+/// The `HSD_DRAW` arm is unreachable here (the caller already handles
+/// `own_cookie == peer_cookie` before this is called) and is not
+/// reproduced — this function always returns a role.
+fn cookie_contest(own_cookie: u32, peer_cookie: u32) -> RendezvousRole {
+    let req = own_cookie as i32;
+    let res = peer_cookie as i32;
+    let xreq = i64::from(req);
+    let xres = i64::from(res);
+    let contest = xreq - xres;
+
+    if contest & SIGN_BIT_32 != 0 {
+        let revert = xres - xreq;
+        if revert & SIGN_BIT_32 != 0 && req > res {
+            return RendezvousRole::Initiator;
+        }
+        return RendezvousRole::Responder;
+    }
+
+    RendezvousRole::Initiator
+}
+
 /// The Handshake Extension content found on one received CONCLUSION, keyed by
 /// which side sends which (§4.3.2.2, L2282-2288). Internal to this module —
 /// [`crate::handshake_sm::parse_peer_extensions`] does not distinguish
@@ -597,6 +665,18 @@ impl RendezvousHandshake {
     /// The cookie contest (§4.3.2, L2107-2135). Identical cookies are a
     /// collision the draft says must not connect (L2119-2124) — surfaced by
     /// the caller as [`RejectionReason::RdvCookie`].
+    ///
+    /// The draft's prose ("cookie value is greater than its peer's") reads
+    /// like a plain unsigned comparison, but a cookie is derived from a hash
+    /// (`derive_cookie`) and is effectively a uniformly random 32-bit value
+    /// — a plain `own_cookie > peer_cookie` unsigned compare gives the wrong
+    /// answer for roughly a quarter of all cookie pairs relative to a real
+    /// libsrt peer (whose own comparison is signed, not unsigned), which
+    /// shows up as an intermittent rendezvous failure against libsrt with no
+    /// pattern visible from either side alone (issue #1064). Ported from
+    /// libsrt's own tie-break (`srtcore/core.cpp`,
+    /// `CUDT::backwardCompatibleCookieContest`, v1.5.5): see
+    /// [`cookie_contest`].
     fn resolve_role(&self, peer_cookie: u32) -> Result<RendezvousRole> {
         if peer_cookie == self.own_cookie {
             return Err(Error::InvalidField {
@@ -604,11 +684,7 @@ impl RendezvousHandshake {
                 reason: "identical to the peer's cookie (collision, L2119-2124)",
             });
         }
-        Ok(if self.own_cookie > peer_cookie {
-            RendezvousRole::Initiator
-        } else {
-            RendezvousRole::Responder
-        })
+        Ok(cookie_contest(self.own_cookie, peer_cookie))
     }
 
     fn reject(&mut self, reason: RejectionReason) -> Vec<HandshakeOutput> {
@@ -787,6 +863,93 @@ mod tests {
         assert_eq!(b.state(), RendezvousHandshakeState::Attention);
     }
 
+    /// Sign-boundary cookie-contest table (issue #1064). Every case here
+    /// pins `cookie_contest`'s result against the libsrt algorithm it ports
+    /// — hand-traced from `CUDT::backwardCompatibleCookieContest`, not
+    /// re-derived from this crate's own implementation (the point is
+    /// catching a misport, not just re-checking `contest > 0`).
+    ///
+    /// A plain unsigned `own_cookie > peer_cookie` compare (this function's
+    /// pre-#1064 behavior) gives the OPPOSITE answer to several of these —
+    /// marked below — because it doesn't reinterpret either cookie as
+    /// signed before comparing.
+    #[test]
+    fn cookie_contest_sign_boundary_table() {
+        let cases: &[(u32, u32, RendezvousRole, &str)] = &[
+            // Both positive as i32 (top bit clear): signed and unsigned
+            // agree — the ordinary case.
+            (
+                500,
+                100,
+                RendezvousRole::Initiator,
+                "both positive, own > peer",
+            ),
+            (
+                100,
+                500,
+                RendezvousRole::Responder,
+                "both positive, own < peer",
+            ),
+            // Exactly one cookie has the top bit set: signed and unsigned
+            // DISAGREE. libsrt's signed compare makes the negative
+            // (top-bit-set) one lose regardless of its unsigned magnitude.
+            (
+                0xAAAA_0002,
+                0x1111_0001,
+                RendezvousRole::Responder,
+                "own top-bit-set (negative), peer positive — unsigned would say Initiator",
+            ),
+            (
+                0x1111_0001,
+                0xAAAA_0002,
+                RendezvousRole::Initiator,
+                "own positive, peer top-bit-set (negative) — unsigned would say Responder",
+            ),
+            // Both top-bit-set (both negative as i32): signed compare among
+            // two negatives, still needs to agree with libsrt, not just
+            // "unsigned compare of the raw bit pattern" (which happens to
+            // still hold here since the *relative* order of two same-signed
+            // values is the same either way — included as a same-sign
+            // sanity check, not a disagreement case).
+            (
+                0xFFFF_FFFF,
+                0x8000_0000,
+                RendezvousRole::Initiator,
+                "both negative, own > peer",
+            ),
+            (
+                0x8000_0000,
+                0xFFFF_FFFF,
+                RendezvousRole::Responder,
+                "both negative, own < peer",
+            ),
+            // The exact halfway point (`own - peer == i32::MIN`, `0x8000_0000`
+            // as the wrapping 32-bit difference): libsrt's own tie-break for
+            // this specific case falls back to a raw signed `req > res`
+            // comparison of the two cookies themselves (see `cookie_contest`'s
+            // doc) rather than the contest direction.
+            (
+                0x8000_0000,
+                0,
+                RendezvousRole::Responder,
+                "halfway point, own negative vs peer zero: raw signed own(<0) > peer(0) is false",
+            ),
+            (
+                0,
+                0x8000_0000,
+                RendezvousRole::Initiator,
+                "halfway point, own zero vs peer negative: raw signed own(0) > peer(<0) is true",
+            ),
+        ];
+        for &(own, peer, expected, why) in cases {
+            let got = cookie_contest(own, peer);
+            assert_eq!(
+                got, expected,
+                "own={own:#010x} peer={peer:#010x}: expected {expected:?}, got {got:?} ({why})"
+            );
+        }
+    }
+
     #[test]
     fn identical_cookies_are_rejected_as_a_collision() {
         let mut a = RendezvousHandshake::new(1, 0x00C0_FFEE, HandshakeConfig::default());
@@ -893,6 +1056,7 @@ mod tests {
         let ka = ControlPacket::KeepAlive(KeepAlivePacket {
             timestamp: 0,
             dest_socket_id: 0,
+            libsrt_pad: false,
         });
         assert!(matches!(
             r.feed(&ka),

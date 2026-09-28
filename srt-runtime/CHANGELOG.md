@@ -6,14 +6,93 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+- `SrtSocket::stats()` (returning the new `SocketStats`) and `SrtListener::unrouted_dropped()`
+  report datagrams a bounded internal channel dropped because it was full — this adapter's own
+  backpressure, not wire-level loss ARQ/TLPKTDROP already account for.
+
 ### Changed (breaking)
+- `KeepAlivePacket`, `CongestionWarningPacket`, `ShutdownPacket`, `AckAckPacket`, and `PeerErrorPacket`
+  now carry a `libsrt_pad: bool` field, so both the pure-spec 16-byte (empty CIF) and libsrt's 20-byte
+  (4-byte zero-pad CIF) wire shapes round-trip byte-identically.
 - `KeyMaterial::serialize_into` now returns `Error::FieldTooWide` instead of silently
   truncating, when a length does not fit its wire field (#1129).
+- The tokio adapter's internal per-connection ingress channel, the listener's
+  candidate-new-connection queue, and the delivered-payload channel to the application are now
+  bounded (dropped and counted on full, via `try_send`) instead of unbounded — a fast peer, or a
+  slow/stalled application, could previously grow this process's memory without bound purely from
+  network input.
 
 ### Fixed
+- The async adapter's `SrtListener` now demultiplexes its shared socket by Destination Socket ID
+  (matching libsrt), not source address: `0` always routes to the accept/handshake path, and any
+  other ID must match an accepted connection's own Socket ID *and* its recorded source address, or
+  the datagram is dropped. Previously an accepted connection's route-table entry was removed only
+  when its driver task exited normally — `SrtSocket::Drop`'s task abort skipped that cleanup
+  entirely, leaking the entry (and its channel) for the life of the listener (BLOCKER).
+- A `SrtSocket::connect`ed caller's dedicated-socket forwarder task is now aborted when the socket
+  is dropped. It previously held its own `Arc<UdpSocket>` clone and looped on `recv_from`
+  indefinitely — dropping the `SrtSocket` released only the driver's own reference, so the local
+  UDP port stayed bound and a later attempt to bind it again failed with `AddrInUse`.
+- A connection with no traffic at all from its peer (not even a Keep-Alive) for 5 seconds — libsrt's
+  `SRTO_PEERIDLETIMEO` default — is now torn down instead of the driver task polling a dead
+  connection forever.
+- The async adapter's receiver-side Full ACK reported `avail_buf_size: 0` (a deliberately
+  unfabricated placeholder) unconditionally, which a real libsrt Caller reads as "no receive buffer
+  space at all": the handshake completed and Keep-Alives kept flowing, but the Caller silently
+  withheld every DATA packet forever. Now reports the negotiated Maximum Flow Window Size, the most
+  this receiver will ever have staged ahead of its delivery cursor (the flow-window overflow guard
+  enforces that cap independently, so this is never an overstatement).
+- The caller-side handshake's CONCLUSION now sends Destination Socket ID `0` (matching a real
+  libsrt Caller) instead of the Listener's own captured Socket ID, and takes the negotiated peer
+  Socket ID from the CONCLUSION response itself rather than the earlier INDUCTION response —
+  sending the captured ID made a real libsrt Listener silently drop the CONCLUSION, stalling the
+  handshake forever (libsrt interop).
+- `SrtSocket::connect`'s handshake loop no longer fails the whole connect attempt on a stray
+  packet from an unrelated source, or one that doesn't parse as a well-formed handshake reply right
+  now — only a genuine rejection or retransmit-budget timeout does that.
+- ACK/NAK/ACKACK/Keep-Alive control feedback could get queued behind a not-yet-due, LiveCC-paced
+  DATA packet in the adapter's single outbound queue and wait out that packet's pacing delay before
+  being sent — defeating the point of never pacing control traffic. Outbound DATA and control now
+  use separate queues, so control is always flushed in full before DATA pacing is even considered.
+- The Message Number counter now wraps to `1`, not `0`: libsrt's public header reserves `0`
+  (`SRT_MSGNO_CONTROL`) for its own packet-filter control messages, so a data packet wrapping to
+  `0` would have been misread as a filter-control message by a real libsrt peer once every 2^26
+  messages.
 - A Key Material message's `Salt` over 1020 bytes (`SLen/4` past the 8-bit field's 255 max) no
   longer shifts into the reserved `Resv3` bits — `serialize_into` now rejects it instead of
   emitting a misframed message with `Ok` (#1129).
+- Keep-Alive/Congestion Warning/Shutdown/ACKACK/Peer Error control packets now accept the 4-byte
+  zero pad a real libsrt peer always appends to these types, instead of rejecting them as
+  `UnexpectedTrailingBytes`; we now emit that same pad ourselves for wire compatibility (#1060).
+- The async adapter's `flush_outbound` no longer `tokio::time::sleep`s per DATA packet for LiveCC
+  pacing — a real sleep, even for a sub-millisecond computed period, blocked for tokio's real
+  timer resolution and capped throughput at roughly 1000 pkt/s regardless of the configured
+  `MAX_BW`, while also stalling RX for the same window. Replaced with a token-bucket schedule
+  serviced by its own non-blocking `select!` arm (#1061).
+- The 31-bit Packet Sequence Number and 26-bit Message Number counters now wrap at their own wire
+  field width instead of at `u32::MAX` — the old `wrapping_add(1)` let both counters walk past
+  their field width (after ~20 h of continuous sending, or immediately with a high initial
+  sequence number; after ~67 million messages), after which every packet's
+  `DataPacket::serialize_into` returned `Error::FieldTooWide` and panicked the
+  `.expect("buffer sized from serialized_len")` call sites in `arq::sender` that assumed only a
+  too-small buffer could fail (#1062).
+- The wire `Timestamp` field (and its receiver-side `TsbpdScheduler` handling) now wraps modulo
+  `2^32` microseconds (~71.58 min) instead of clamping at `u32::MAX` on the sender side, and now
+  correctly *un*wraps a real wraparound into an always-increasing value on the receiver side
+  instead of naively widening the raw `u32` to `u64` — the old behavior made every packet sent (or
+  received from a peer) after that point look impossibly far in the past, so Too-Late-Packet-Drop
+  discarded it forever (#1063).
+- `SrtListener` no longer shares its bound socket's `recv_from` across `accept()` and every
+  accepted connection's driver task, which could hand one connection's datagram to a completely
+  different task (silently lost for its rightful recipient) whenever more than one connection (or
+  a pending handshake) was active at once. A single routing pump now demultiplexes every inbound
+  datagram by source address to the right connection (#1029).
+- The Rendezvous cookie contest (`RendezvousHandshake::resolve_role`) now matches libsrt's actual
+  `CUDT::backwardCompatibleCookieContest` semantics (a signed 32-bit difference, with a documented
+  tie-break at the exact halfway point) instead of a plain unsigned `own_cookie > peer_cookie`
+  compare, which disagreed with a real libsrt peer for roughly a quarter of all cookie pairs —
+  whenever exactly one of the two cookies had its top bit set (#1064).
 
 ## [0.4.1] - 2026-09-25
 

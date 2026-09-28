@@ -16,6 +16,9 @@ pub struct KeepAlivePacket {
     pub timestamp: u32,
     /// Destination Socket ID (§3).
     pub dest_socket_id: u32,
+    /// `true` when the CIF carries libsrt's 4-byte zero pad; `false` for the
+    /// empty CIF of draft-sharabayko-srt-01.
+    pub libsrt_pad: bool,
 }
 
 /// Congestion Warning control packet (§3.2.6, Figure 15). Reserved for future
@@ -27,6 +30,9 @@ pub struct CongestionWarningPacket {
     pub timestamp: u32,
     /// Destination Socket ID (§3).
     pub dest_socket_id: u32,
+    /// `true` when the CIF carries libsrt's 4-byte zero pad; `false` for the
+    /// empty CIF of draft-sharabayko-srt-01.
+    pub libsrt_pad: bool,
 }
 
 /// Shutdown control packet (§3.2.7, Figure 16). No CIF.
@@ -37,6 +43,9 @@ pub struct ShutdownPacket {
     pub timestamp: u32,
     /// Destination Socket ID (§3).
     pub dest_socket_id: u32,
+    /// `true` when the CIF carries libsrt's 4-byte zero pad; `false` for the
+    /// empty CIF of draft-sharabayko-srt-01.
+    pub libsrt_pad: bool,
 }
 
 /// ACKACK control packet (§3.2.8, Figure 17). No CIF.
@@ -49,6 +58,9 @@ pub struct AckAckPacket {
     pub timestamp: u32,
     /// Destination Socket ID (§3).
     pub dest_socket_id: u32,
+    /// `true` when the CIF carries libsrt's 4-byte zero pad; `false` for the
+    /// empty CIF of draft-sharabayko-srt-01.
+    pub libsrt_pad: bool,
 }
 
 /// Message Drop Request control packet (§3.2.9, Figure 18).
@@ -111,6 +123,9 @@ pub struct PeerErrorPacket {
     pub timestamp: u32,
     /// Destination Socket ID (§3).
     pub dest_socket_id: u32,
+    /// `true` when the CIF carries libsrt's 4-byte zero pad; `false` for the
+    /// empty CIF of draft-sharabayko-srt-01.
+    pub libsrt_pad: bool,
 }
 
 #[cfg(test)]
@@ -145,44 +160,158 @@ mod tests {
         let cases: Vec<ControlPacket> = alloc::vec![
             ControlPacket::KeepAlive(KeepAlivePacket {
                 timestamp: 1,
-                dest_socket_id: 2
+                dest_socket_id: 2,
+                libsrt_pad: true,
             }),
             ControlPacket::CongestionWarning(CongestionWarningPacket {
                 timestamp: 3,
-                dest_socket_id: 4
+                dest_socket_id: 4,
+                libsrt_pad: true,
             }),
             ControlPacket::Shutdown(ShutdownPacket {
                 timestamp: 5,
-                dest_socket_id: 6
+                dest_socket_id: 6,
+                libsrt_pad: true,
             }),
             ControlPacket::AckAck(AckAckPacket {
                 ack_number: 9,
                 timestamp: 7,
-                dest_socket_id: 8
+                dest_socket_id: 8,
+                libsrt_pad: true,
             }),
             ControlPacket::PeerError(PeerErrorPacket {
                 error_code: PEER_ERROR_FILE_SYSTEM,
                 timestamp: 11,
-                dest_socket_id: 12
+                dest_socket_id: 12,
+                libsrt_pad: true,
             }),
         ];
         for pkt in cases {
-            let mut buf = [0u8; 16];
+            // 20 bytes when libsrt_pad is true: serializes with the 4-byte
+            // zero pad (see `control::LIBSRT_CIF_PAD_LEN`).
+            let mut buf = [0u8; 20];
             let n = pkt.serialize_into(&mut buf).unwrap();
-            assert_eq!(n, 16);
+            assert_eq!(n, 20);
+            assert_eq!(&buf[16..20], &[0, 0, 0, 0]);
             let parsed = ControlPacket::parse(&buf).unwrap();
             assert_eq!(parsed, pkt);
         }
     }
 
+    /// A peer (e.g. real libsrt — see `tests/libsrt_fixtures.rs`) may also
+    /// send these types with the pure-spec empty CIF instead of the pad.
+    /// Both 16-byte (no-pad) and 20-byte (with-pad) wire shapes parse correctly.
+    #[test]
+    fn keepalive_congestion_shutdown_ackack_peererror_accept_empty_cif() {
+        let cases: Vec<ControlPacket> = alloc::vec![
+            ControlPacket::KeepAlive(KeepAlivePacket {
+                timestamp: 1,
+                dest_socket_id: 2,
+                libsrt_pad: false,
+            }),
+            ControlPacket::CongestionWarning(CongestionWarningPacket {
+                timestamp: 3,
+                dest_socket_id: 4,
+                libsrt_pad: false,
+            }),
+            ControlPacket::Shutdown(ShutdownPacket {
+                timestamp: 5,
+                dest_socket_id: 6,
+                libsrt_pad: false,
+            }),
+            ControlPacket::AckAck(AckAckPacket {
+                ack_number: 9,
+                timestamp: 7,
+                dest_socket_id: 8,
+                libsrt_pad: false,
+            }),
+            ControlPacket::PeerError(PeerErrorPacket {
+                error_code: PEER_ERROR_FILE_SYSTEM,
+                timestamp: 11,
+                dest_socket_id: 12,
+                libsrt_pad: false,
+            }),
+        ];
+        for pkt in cases {
+            // Serialize with libsrt_pad: false -> 16 bytes
+            let mut buf = [0u8; 16];
+            let n = pkt.serialized_len();
+            assert_eq!(n, 16, "16-byte packets with libsrt_pad: false");
+            pkt.serialize_into(&mut buf).unwrap();
+
+            // Parse the 16-byte form back
+            let parsed = ControlPacket::parse(&buf).unwrap();
+            assert_eq!(parsed, pkt);
+        }
+    }
+
+    /// A 16-byte (pure-spec empty CIF) KEEPALIVE packet parses and
+    /// round-trips byte-identically.
+    #[test]
+    fn sixteen_byte_keepalive_round_trip_byte_identical() {
+        let pkt = ControlPacket::KeepAlive(KeepAlivePacket {
+            timestamp: 0x1234,
+            dest_socket_id: 0x5678,
+            libsrt_pad: false,
+        });
+        let mut buf = [0u8; 16];
+        let n = pkt.serialize_into(&mut buf).unwrap();
+        assert_eq!(n, 16, "16-byte packet with libsrt_pad: false");
+
+        let parsed = ControlPacket::parse(&buf).unwrap();
+        assert_eq!(parsed, pkt);
+
+        let mut reserialized = [0u8; 16];
+        let n = parsed.serialize_into(&mut reserialized).unwrap();
+        assert_eq!(n, 16);
+        assert_eq!(&reserialized[..], &buf[..], "round-trip is byte-identical");
+    }
+
+    /// A 20-byte (libsrt's 4-byte zero pad) KEEPALIVE packet parses and
+    /// round-trips byte-identically.
+    #[test]
+    fn twenty_byte_keepalive_round_trip_byte_identical() {
+        let pkt = ControlPacket::KeepAlive(KeepAlivePacket {
+            timestamp: 0x1234,
+            dest_socket_id: 0x5678,
+            libsrt_pad: true,
+        });
+        let mut buf = [0u8; 20];
+        let n = pkt.serialize_into(&mut buf).unwrap();
+        assert_eq!(n, 20, "20-byte packet with libsrt_pad: true");
+        assert_eq!(&buf[16..20], &[0, 0, 0, 0], "CIF is 4-byte zero pad");
+
+        let parsed = ControlPacket::parse(&buf).unwrap();
+        assert_eq!(parsed, pkt);
+
+        let mut reserialized = [0u8; 20];
+        let n = parsed.serialize_into(&mut reserialized).unwrap();
+        assert_eq!(n, 20);
+        assert_eq!(&reserialized[..], &buf[..], "round-trip is byte-identical");
+    }
+
     #[test]
     fn keepalive_rejects_trailing_bytes() {
+        // Neither 0 (pure spec) nor 4 (libsrt's pad, §control::LIBSRT_CIF_PAD_LEN):
+        // 1 stray byte must still be rejected.
         let mut buf = [0u8; 17];
         buf[0] = 0x80; // F=1
         buf[1] = 0x01; // control type = 1 (KEEPALIVE)
         assert!(matches!(
             ControlPacket::parse(&buf),
             Err(Error::UnexpectedTrailingBytes { .. })
+        ));
+    }
+
+    #[test]
+    fn keepalive_rejects_nonzero_pad() {
+        let mut buf = [0u8; 20];
+        buf[0] = 0x80; // F=1
+        buf[1] = 0x01; // control type = 1 (KEEPALIVE)
+        buf[19] = 0x01; // non-zero byte in the 4-byte pad
+        assert!(matches!(
+            ControlPacket::parse(&buf),
+            Err(Error::ReservedFieldNotZero { .. })
         ));
     }
 }

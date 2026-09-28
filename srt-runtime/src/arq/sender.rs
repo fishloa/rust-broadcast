@@ -212,6 +212,7 @@ impl Sender {
                 ack_number: ack.ack_number,
                 timestamp: duration_to_wire_us(now),
                 dest_socket_id: self.dest_socket_id,
+                libsrt_pad: true,
             });
             let mut buf = alloc::vec![0u8; pkt.serialized_len()];
             pkt.serialize_into(&mut buf)
