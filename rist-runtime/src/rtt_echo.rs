@@ -373,7 +373,13 @@ mod tests {
 
     #[test]
     fn rtt_echo_kind_display() {
-        assert_eq!(RttEchoKind::Request.to_string(), "RTT Echo Request");
-        assert_eq!(RttEchoKind::Response.to_string(), "RTT Echo Response");
+        assert_eq!(
+            alloc::string::ToString::to_string(&RttEchoKind::Request),
+            "RTT Echo Request"
+        );
+        assert_eq!(
+            alloc::string::ToString::to_string(&RttEchoKind::Response),
+            "RTT Echo Response"
+        );
     }
 }

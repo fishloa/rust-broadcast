@@ -5,9 +5,10 @@
 //! `broadcast_common::impl_spec_display!(Name)` nor a hand-written
 //! `Display` impl.
 //!
-//! `rist-runtime` has one spec/field enum: [`rist_runtime::RttEchoKind`]
-//! (TR-06-1 §5.2.6). [`rist_runtime::Error`] is a structured error type
-//! and is skipped.
+//! `rist-runtime` has two spec/field enums: [`rist_runtime::RttEchoKind`]
+//! (TR-06-1 §5.2.6) and [`rist_runtime::ReportPart`] (the SR/RR that opens a
+//! compound, RFC 3550 §6.1). [`rist_runtime::Error`] is a structured error
+//! type and is skipped.
 
 use std::collections::BTreeSet;
 use std::fs;
@@ -142,7 +143,7 @@ fn expected_spec_enum_set_has_not_silently_drifted() {
 
     assert_eq!(
         non_skip,
-        vec!["RttEchoKind"],
+        vec!["ReportPart", "RttEchoKind"],
         "the set of public spec/field enums changed; update this assertion"
     );
 }

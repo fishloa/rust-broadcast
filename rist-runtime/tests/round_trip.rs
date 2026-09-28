@@ -3,8 +3,8 @@
 
 use broadcast_common::{Parse, Serialize};
 use rist_runtime::{
-    GenericNack, NackFci, PacketRange, RangeNack, RistReceiverCompound, RistSenderCompound,
-    RttEcho, RttEchoKind,
+    GenericNack, NackFci, PacketRange, RangeNack, ReportPart, RistReceiverCompound,
+    RistSenderCompound, RttEcho, RttEchoKind,
 };
 use rtcp_packet::{ReceiverReport, ReportBlock, SenderReport};
 
@@ -22,10 +22,10 @@ fn generic_nack_single_fci_round_trip() {
             blp: 0xABCD,
         }],
     };
-    let bytes = nack.to_bytes();
+    let bytes = nack.try_to_bytes().unwrap();
     let parsed = GenericNack::parse(&bytes).unwrap();
     assert_eq!(parsed, nack);
-    assert_eq!(parsed.to_bytes(), bytes);
+    assert_eq!(parsed.try_to_bytes().unwrap(), bytes);
 }
 
 #[test]
@@ -48,11 +48,11 @@ fn generic_nack_multiple_fci_round_trip() {
             },
         ],
     };
-    let bytes = nack.to_bytes();
+    let bytes = nack.try_to_bytes().unwrap();
     assert_eq!(bytes.len() % 4, 0);
     let parsed = GenericNack::parse(&bytes).unwrap();
     assert_eq!(parsed, nack);
-    assert_eq!(parsed.to_bytes(), bytes);
+    assert_eq!(parsed.try_to_bytes().unwrap(), bytes);
 }
 
 #[test]
@@ -62,10 +62,10 @@ fn generic_nack_empty_blp_round_trip() {
         ssrc_media: 2,
         nacks: vec![NackFci { pid: 0, blp: 0 }],
     };
-    let bytes = nack.to_bytes();
+    let bytes = nack.try_to_bytes().unwrap();
     let parsed = GenericNack::parse(&bytes).unwrap();
     assert_eq!(parsed, nack);
-    assert_eq!(parsed.to_bytes(), bytes);
+    assert_eq!(parsed.try_to_bytes().unwrap(), bytes);
 }
 
 // ---------------------------------------------------------------------------
@@ -81,11 +81,11 @@ fn range_nack_single_range_round_trip() {
             additional: 0,
         }],
     };
-    let bytes = rn.to_bytes();
+    let bytes = rn.try_to_bytes().unwrap();
     assert_eq!(bytes.len() % 4, 0);
     let parsed = RangeNack::parse(&bytes).unwrap();
     assert_eq!(parsed, rn);
-    assert_eq!(parsed.to_bytes(), bytes);
+    assert_eq!(parsed.try_to_bytes().unwrap(), bytes);
 }
 
 #[test]
@@ -107,11 +107,11 @@ fn range_nack_multiple_ranges_round_trip() {
             },
         ],
     };
-    let bytes = rn.to_bytes();
+    let bytes = rn.try_to_bytes().unwrap();
     assert_eq!(bytes.len() % 4, 0);
     let parsed = RangeNack::parse(&bytes).unwrap();
     assert_eq!(parsed, rn);
-    assert_eq!(parsed.to_bytes(), bytes);
+    assert_eq!(parsed.try_to_bytes().unwrap(), bytes);
 }
 
 #[test]
@@ -125,10 +125,10 @@ fn range_nack_max_entries_round_trip() {
             })
             .collect(),
     };
-    let bytes = rn.to_bytes();
+    let bytes = rn.try_to_bytes().unwrap();
     let parsed = RangeNack::parse(&bytes).unwrap();
     assert_eq!(parsed, rn);
-    assert_eq!(parsed.to_bytes(), bytes);
+    assert_eq!(parsed.try_to_bytes().unwrap(), bytes);
 }
 
 // ---------------------------------------------------------------------------
@@ -144,12 +144,12 @@ fn rtt_echo_request_round_trip() {
         processing_delay_us: 0,
         padding: vec![],
     };
-    let bytes = echo.to_bytes();
+    let bytes = echo.try_to_bytes().unwrap();
     assert_eq!(bytes.len(), 24);
     assert_eq!(bytes.len() % 4, 0);
     let parsed = RttEcho::parse(&bytes).unwrap();
     assert_eq!(parsed, echo);
-    assert_eq!(parsed.to_bytes(), bytes);
+    assert_eq!(parsed.try_to_bytes().unwrap(), bytes);
 }
 
 #[test]
@@ -161,11 +161,11 @@ fn rtt_echo_response_round_trip() {
         processing_delay_us: 42_000,
         padding: vec![],
     };
-    let bytes = echo.to_bytes();
+    let bytes = echo.try_to_bytes().unwrap();
     assert_eq!(bytes.len(), 24);
     let parsed = RttEcho::parse(&bytes).unwrap();
     assert_eq!(parsed, echo);
-    assert_eq!(parsed.to_bytes(), bytes);
+    assert_eq!(parsed.try_to_bytes().unwrap(), bytes);
 }
 
 #[test]
@@ -177,12 +177,12 @@ fn rtt_echo_response_with_padding_round_trip() {
         processing_delay_us: 1_500,
         padding: vec![0u8; 20], // 5 extra words of padding
     };
-    let bytes = echo.to_bytes();
+    let bytes = echo.try_to_bytes().unwrap();
     assert_eq!(bytes.len(), 24 + 20);
     assert_eq!(bytes.len() % 4, 0);
     let parsed = RttEcho::parse(&bytes).unwrap();
     assert_eq!(parsed, echo);
-    assert_eq!(parsed.to_bytes(), bytes);
+    assert_eq!(parsed.try_to_bytes().unwrap(), bytes);
 }
 
 #[test]
@@ -194,10 +194,10 @@ fn rtt_echo_large_timestamp_round_trip() {
         processing_delay_us: 0,
         padding: vec![],
     };
-    let bytes = echo.to_bytes();
+    let bytes = echo.try_to_bytes().unwrap();
     let parsed = RttEcho::parse(&bytes).unwrap();
     assert_eq!(parsed.timestamp, u64::MAX);
-    assert_eq!(parsed.to_bytes(), bytes);
+    assert_eq!(parsed.try_to_bytes().unwrap(), bytes);
 }
 
 // ---------------------------------------------------------------------------
@@ -207,7 +207,7 @@ fn rtt_echo_large_timestamp_round_trip() {
 #[test]
 fn sender_compound_sr_sdes_round_trip() {
     let compound = RistSenderCompound {
-        sr: SenderReport {
+        report: ReportPart::Sr(SenderReport {
             ssrc: 0x1122_3344,
             ntp_msw: 0xE0E1_E2E3,
             ntp_lsw: 0x1020_3040,
@@ -215,23 +215,25 @@ fn sender_compound_sr_sdes_round_trip() {
             packet_count: 100,
             octet_count: 50_000,
             report_blocks: vec![],
-        },
+        }),
+        report_padding: vec![],
         cname: "sender@example.com".to_string(),
         rtt_echo: None,
+        unknown: vec![],
     };
-    let bytes = compound.to_bytes();
+    let bytes = compound.try_to_bytes().unwrap();
     assert_eq!(bytes.len() % 4, 0);
     // First packet: SR (PT 200).
     assert_eq!(bytes[1], 200);
     let parsed = RistSenderCompound::parse(&bytes).unwrap();
     assert_eq!(parsed, compound);
-    assert_eq!(parsed.to_bytes(), bytes);
+    assert_eq!(parsed.try_to_bytes().unwrap(), bytes);
 }
 
 #[test]
 fn sender_compound_with_rtt_echo_round_trip() {
     let compound = RistSenderCompound {
-        sr: SenderReport {
+        report: ReportPart::Sr(SenderReport {
             ssrc: 0x1122_3344,
             ntp_msw: 0xE0E1_E2E3,
             ntp_lsw: 0x1020_3040,
@@ -239,7 +241,8 @@ fn sender_compound_with_rtt_echo_round_trip() {
             packet_count: 100,
             octet_count: 50_000,
             report_blocks: vec![],
-        },
+        }),
+        report_padding: vec![],
         cname: "s@e.com".to_string(),
         rtt_echo: Some(RttEcho {
             kind: RttEchoKind::Request,
@@ -248,20 +251,21 @@ fn sender_compound_with_rtt_echo_round_trip() {
             processing_delay_us: 0,
             padding: vec![],
         }),
+        unknown: vec![],
     };
-    let bytes = compound.to_bytes();
+    let bytes = compound.try_to_bytes().unwrap();
     assert_eq!(bytes.len() % 4, 0);
     // Verify the compound contains at least 3 RTCP packets worth of data.
     assert!(bytes.len() > 24 + 12 + 24); // SR + minimal SDES + RTT Echo
     let parsed = RistSenderCompound::parse(&bytes).unwrap();
     assert_eq!(parsed, compound);
-    assert_eq!(parsed.to_bytes(), bytes);
+    assert_eq!(parsed.try_to_bytes().unwrap(), bytes);
 }
 
 #[test]
 fn receiver_compound_rr_sdes_nack_round_trip() {
     let compound = RistReceiverCompound {
-        rr: ReceiverReport {
+        report: ReportPart::Rr(ReceiverReport {
             ssrc: 0xAAAA_BBBB,
             report_blocks: vec![ReportBlock {
                 ssrc: 0xCCCC_DDDD,
@@ -272,7 +276,8 @@ fn receiver_compound_rr_sdes_nack_round_trip() {
                 lsr: 0,
                 dlsr: 0,
             }],
-        },
+        }),
+        report_padding: vec![],
         cname: "receiver@example.com".to_string(),
         nacks: vec![GenericNack {
             ssrc_sender: 0xAAAA_BBBB,
@@ -281,34 +286,37 @@ fn receiver_compound_rr_sdes_nack_round_trip() {
         }],
         range_nacks: vec![],
         rtt_echo: None,
+        unknown: vec![],
     };
-    let bytes = compound.to_bytes();
+    let bytes = compound.try_to_bytes().unwrap();
     assert_eq!(bytes.len() % 4, 0);
     // First packet: RR (PT 201).
     assert_eq!(bytes[1], 201);
     let parsed = RistReceiverCompound::parse(&bytes).unwrap();
     assert_eq!(parsed, compound);
-    assert_eq!(parsed.to_bytes(), bytes);
+    assert_eq!(parsed.try_to_bytes().unwrap(), bytes);
 }
 
 #[test]
 fn receiver_compound_empty_rr_round_trip() {
     let compound = RistReceiverCompound {
-        rr: ReceiverReport {
+        report: ReportPart::Rr(ReceiverReport {
             ssrc: 0x0000_0001,
             report_blocks: vec![],
-        },
+        }),
+        report_padding: vec![],
         cname: "r@e.com".to_string(),
         nacks: vec![],
         range_nacks: vec![],
         rtt_echo: None,
+        unknown: vec![],
     };
-    let bytes = compound.to_bytes();
+    let bytes = compound.try_to_bytes().unwrap();
     assert_eq!(bytes.len() % 4, 0);
     assert_eq!(bytes[1], 201);
     let parsed = RistReceiverCompound::parse(&bytes).unwrap();
     assert_eq!(parsed, compound);
-    assert_eq!(parsed.to_bytes(), bytes);
+    assert_eq!(parsed.try_to_bytes().unwrap(), bytes);
 }
 
 #[test]
@@ -317,7 +325,7 @@ fn receiver_compound_full_round_trip() {
     // multiple Range NACKs, and a trailing RTT Echo — the parser must
     // classify and consume each in wire order.
     let compound = RistReceiverCompound {
-        rr: ReceiverReport {
+        report: ReportPart::Rr(ReceiverReport {
             ssrc: 0xAAAA_BBBB,
             report_blocks: vec![ReportBlock {
                 ssrc: 0xCCCC_DDDD,
@@ -328,7 +336,8 @@ fn receiver_compound_full_round_trip() {
                 lsr: 0,
                 dlsr: 0,
             }],
-        },
+        }),
+        report_padding: vec![],
         cname: "full@example.com".to_string(),
         nacks: vec![
             GenericNack {
@@ -374,15 +383,16 @@ fn receiver_compound_full_round_trip() {
             processing_delay_us: 1_234,
             padding: vec![0u8; 4],
         }),
+        unknown: vec![],
     };
-    let bytes = compound.to_bytes();
+    let bytes = compound.try_to_bytes().unwrap();
     assert_eq!(bytes.len() % 4, 0);
     let parsed = RistReceiverCompound::parse(&bytes).unwrap();
     assert_eq!(parsed, compound);
     assert_eq!(parsed.nacks.len(), 2);
     assert_eq!(parsed.range_nacks.len(), 2);
     assert!(parsed.rtt_echo.is_some());
-    assert_eq!(parsed.to_bytes(), bytes);
+    assert_eq!(parsed.try_to_bytes().unwrap(), bytes);
 }
 
 // ---------------------------------------------------------------------------
@@ -399,12 +409,12 @@ fn generic_nack_mutation_bites_pid() {
             blp: 0xAAAA,
         }],
     };
-    let mut bytes = nack.to_bytes();
+    let mut bytes = nack.try_to_bytes().unwrap();
     // PID is at offset 12-13.
     bytes[12] ^= 0xFF;
     let mutated = GenericNack::parse(&bytes).unwrap();
     assert_ne!(mutated.nacks[0].pid, 1000);
-    assert_eq!(mutated.to_bytes(), bytes);
+    assert_eq!(mutated.try_to_bytes().unwrap(), bytes);
 }
 
 #[test]
@@ -416,12 +426,12 @@ fn range_nack_mutation_bites_additional() {
             additional: 10,
         }],
     };
-    let mut bytes = rn.to_bytes();
+    let mut bytes = rn.try_to_bytes().unwrap();
     // additional is at offset 14-15.
     bytes[14] ^= 0xFF;
     let mutated = RangeNack::parse(&bytes).unwrap();
     assert_ne!(mutated.ranges[0].additional, 10);
-    assert_eq!(mutated.to_bytes(), bytes);
+    assert_eq!(mutated.try_to_bytes().unwrap(), bytes);
 }
 
 #[test]
@@ -433,10 +443,10 @@ fn rtt_echo_mutation_bites_processing_delay() {
         processing_delay_us: 42_000,
         padding: vec![],
     };
-    let mut bytes = echo.to_bytes();
+    let mut bytes = echo.try_to_bytes().unwrap();
     // processing_delay_us is at offset 20-23.
     bytes[20] ^= 0xFF;
     let mutated = RttEcho::parse(&bytes).unwrap();
     assert_ne!(mutated.processing_delay_us, 42_000);
-    assert_eq!(mutated.to_bytes(), bytes);
+    assert_eq!(mutated.try_to_bytes().unwrap(), bytes);
 }

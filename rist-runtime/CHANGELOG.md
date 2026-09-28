@@ -7,6 +7,17 @@ All notable changes to this crate will be documented in this file.
 ### Changed (breaking)
 - Serializers now return an error, instead of silently truncating, when a length or count does
   not fit its wire field (#1129). `Error` gains a new `FieldOverflow` variant.
+- **RIST-W3**: both compound types now carry the leading report as a public `ReportPart` enum
+  (`Sr`/`Rr`) with `name()` and `ssrc()`, instead of separate `sr`/`rr` fields, so a caller can
+  handle either compound without knowing which report type leads it (#1086).
+- **RIST-W5**: RFC 3550 §6.4.1 P-bit padding is now preserved verbatim through parse → serialize
+  (`report_padding` on the compound, per-slot padding on trailing sub-packets). A padding count
+  of zero or one larger than the padding region is rejected with the new
+  `Error::InvalidPaddingCount` instead of corrupting the wire bytes (#1086).
+- **RIST-W6**: sub-packets with unmodelled payload types (and duplicate SDES) are no longer
+  dropped or misclassified — they are preserved byte-verbatim in a new `unknown: Vec<UnknownPacket>`
+  field at their original wire position and re-emit unchanged, so a re-serialized compound is
+  byte-identical to the parse input (#1086).
 
 ### Fixed
 - **#1108 (RIST-W1)**: `arq::sender::Sender::new` now clamps `max_buffered` strictly below half

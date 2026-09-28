@@ -72,6 +72,18 @@ pub enum Error {
     #[error("padding length {0} is not a multiple of 4")]
     InvalidPaddingLength(usize),
 
+    /// The RTCP padding bit (P, RFC 3550 §6.4.1) was set but the last byte
+    /// of the sub-packet names an impossible padding length: 0 (a set P bit
+    /// MUST carry at least one padding byte) or more bytes than the sub-packet
+    /// body contains (an over-run claim would read past the packet).
+    #[error("invalid padding count {count}: body is {body} byte(s)")]
+    InvalidPaddingCount {
+        /// The padding-count byte (last byte of the padded sub-packet).
+        count: usize,
+        /// Bytes in the sub-packet body (everything after the common header).
+        body: usize,
+    },
+
     /// A RIST compound packet's SDES sub-packet had no CNAME item
     /// (TR-06-1:2020 §5.2.1 requires SDES(CNAME) in every compound packet).
     #[error("RIST compound SDES packet is missing a CNAME item")]

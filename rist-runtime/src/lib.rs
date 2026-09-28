@@ -90,7 +90,7 @@ pub(crate) const RTCP_COUNT_MASK: u8 = 0x1F;
 // Re-exports for convenience
 // ---------------------------------------------------------------------------
 
-pub use compound::{RistReceiverCompound, RistSenderCompound};
+pub use compound::{ReportPart, RistReceiverCompound, RistSenderCompound, UnknownPacket};
 pub use error::{Error, Result};
 pub use nack::{GenericNack, NackFci, PacketRange, RangeNack};
 pub use rtt_echo::{RttEcho, RttEchoKind};
