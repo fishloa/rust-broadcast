@@ -137,6 +137,10 @@ const RTP_PT_MASK: u8 = 0x7F;
 /// `2` (version) with no padding/extension/CSRC beyond what the CSRC list
 /// itself already carries, per RFC 3550 §5.1.
 const RTP_VERSION_BYTE: u8 = 0x80;
+/// RFC 3550 §5.1 `X` (extension) bit in the first header byte.
+const RTP_EXTENSION_BIT: u8 = 0x10;
+/// RFC 3550 §5.3.1: the extension `length` field counts 32-bit words.
+const RTP_EXTENSION_WORD_LEN: usize = 4;
 
 /// Default cap on concurrently admitted WHIP publishers per route, mirroring
 /// [`crate::source::rtmp::DEFAULT_RTMP_MAX_SESSIONS`]'s own reasoning: generous
@@ -995,13 +999,19 @@ fn payload_type_of(packet: &[u8]) -> Option<u8> {
 /// `RtpStreamDepacketiser::push` (like every RTP depacketiser in this
 /// workspace) takes the raw wire packet, so this reconstructs it rather than
 /// growing a second, parsed-header entry point on that shared type just for
-/// this one caller. No extension header: [`MediaTransport`] never reports
-/// one having been present (its `DecryptedRtp` has no such field), so the
-/// extension bit is correctly always clear here.
+/// this one caller. A §5.3.1 header extension reported by the transport is
+/// written back (X bit set, `defined by profile`, length in 32-bit words,
+/// data), so RFC 8285 `mid`/`rid`/CVO survive to the depacketiser. The CSRC
+/// count always fits: `csrc` was parsed from the 4-bit CC field.
 fn rebuild_rtp_wire(pkt: &webrtc_runtime::media::DecryptedRtp) -> Vec<u8> {
     let csrc_count = pkt.csrc.len().min(0x0F) as u8;
     let mut out = Vec::with_capacity(12 + 4 * csrc_count as usize + pkt.payload.len());
-    out.push(RTP_VERSION_BYTE | csrc_count);
+    let extension_bit = if pkt.extension.is_some() {
+        RTP_EXTENSION_BIT
+    } else {
+        0
+    };
+    out.push(RTP_VERSION_BYTE | extension_bit | csrc_count);
     out.push(if pkt.marker {
         0x80 | (pkt.payload_type & RTP_PT_MASK)
     } else {
@@ -1012,6 +1022,14 @@ fn rebuild_rtp_wire(pkt: &webrtc_runtime::media::DecryptedRtp) -> Vec<u8> {
     out.extend_from_slice(&pkt.ssrc.to_be_bytes());
     for csrc in pkt.csrc.iter().take(csrc_count as usize) {
         out.extend_from_slice(&csrc.to_be_bytes());
+    }
+    if let Some(ext) = &pkt.extension {
+        // RFC 3550 §5.3.1: length counts 32-bit words of extension data.
+        let words = u16::try_from(ext.data.len() / RTP_EXTENSION_WORD_LEN)
+            .expect("extension data was parsed from a 16-bit word-count field");
+        out.extend_from_slice(&ext.profile_id.to_be_bytes());
+        out.extend_from_slice(&words.to_be_bytes());
+        out.extend_from_slice(&ext.data);
     }
     out.extend_from_slice(&pkt.payload);
     out
@@ -1325,6 +1343,29 @@ m=audio 9 UDP/TLS/RTP/SAVPF 111\r\na=ice-ufrag:x\r\na=ice-pwd:xxxxxxxxxxxxxxxxxx
     }
 
     #[test]
+    fn rebuild_rtp_wire_keeps_the_header_extension() {
+        let pkt = webrtc_runtime::media::DecryptedRtp {
+            marker: false,
+            payload_type: 96,
+            sequence_number: 7,
+            timestamp: 3000,
+            ssrc: 0x0102_0304,
+            csrc: Vec::new(),
+            extension: Some(webrtc_runtime::media::DecryptedRtpExtension {
+                profile_id: 0xBEDE,
+                data: vec![0x10, 0xAA, 0x00, 0x00],
+            }),
+            payload: vec![0x55],
+        };
+        let wire = rebuild_rtp_wire(&pkt);
+        assert_eq!(wire[0], 0x80 | 0x10, "version 2 with the X bit, no CSRC");
+        assert_eq!(&wire[12..14], &[0xBE, 0xDE], "defined by profile");
+        assert_eq!(&wire[14..16], &[0x00, 0x01], "length = one 32-bit word");
+        assert_eq!(&wire[16..20], &[0x10, 0xAA, 0x00, 0x00]);
+        assert_eq!(&wire[20..], &[0x55]);
+    }
+
+    #[test]
     fn rebuild_rtp_wire_round_trips_header_fields() {
         let pkt = webrtc_runtime::media::DecryptedRtp {
             marker: true,
@@ -1333,6 +1374,7 @@ m=audio 9 UDP/TLS/RTP/SAVPF 111\r\na=ice-ufrag:x\r\na=ice-pwd:xxxxxxxxxxxxxxxxxx
             timestamp: 90_000,
             ssrc: 0xDEAD_BEEF,
             csrc: vec![0x1111_2222],
+            extension: None,
             payload: vec![0xAA, 0xBB, 0xCC],
         };
         let wire = rebuild_rtp_wire(&pkt);

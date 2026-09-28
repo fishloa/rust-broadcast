@@ -3,6 +3,7 @@
 ## [Unreleased]
 
 ### Fixed
+- WHIP ingest keeps an inbound RTP header extension (RFC 3550 §5.3.1, e.g. RFC 8285 `mid`/`rid`/CVO) when it rebuilds the wire packet for the depacketiser, now that `webrtc-runtime` reports it (#1090).
 - The RTSP push transport (#1025) now targets the configured push URL instead of a hard-coded
   `rtsp://localhost/push`, checks every response status, writes the `AuthRetry` bytes rtsp-runtime
   computes on a 401 (previously dropped, so an authenticated push always failed even after

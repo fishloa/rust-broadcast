@@ -94,6 +94,6 @@ mod gather;
 mod transport;
 
 pub use transport::{
-    Datagram, DecryptedRtp, MAX_REMOTE_CANDIDATES, MediaEvent, MediaTransport,
-    MediaTransportConfig, SetupRole, parse_remote_fingerprint,
+    Datagram, DecryptedRtp, DecryptedRtpExtension, MAX_REMOTE_CANDIDATES, MediaEvent,
+    MediaTransport, MediaTransportConfig, SetupRole, parse_remote_fingerprint,
 };

@@ -1605,6 +1605,7 @@ m=audio 9 UDP/TLS/RTP/SAVPF 111\r\na=ice-ufrag:x\r\na=ice-pwd:xxxxxxxxxxxxxxxxxx
             timestamp: 0,
             ssrc: 1,
             csrc: Vec::new(),
+            extension: None,
             payload: vec![0xAA],
         });
         assert!(is_liveness_event(&rtp), "a decrypted RTP packet counts");
