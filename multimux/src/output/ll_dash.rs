@@ -342,9 +342,15 @@ mod tests {
         let route = RouteHandle::new(4.0, 500, 2);
         route.publish_new_program(crate::route::SPTS_PROGRAM_ID);
         route.set_track_specs(crate::route::SPTS_PROGRAM_ID, vec![video_spec(1)]);
-        route.add_segment(crate::route::SPTS_PROGRAM_ID, seg(1, 4.0));
-        route.add_segment(crate::route::SPTS_PROGRAM_ID, seg(2, 4.0));
-        route.add_segment(crate::route::SPTS_PROGRAM_ID, seg(3, 4.0)); // evicts seq 1 (window_segments == 2)
+        route
+            .add_segment(crate::route::SPTS_PROGRAM_ID, seg(1, 4.0))
+            .expect("add_segment");
+        route
+            .add_segment(crate::route::SPTS_PROGRAM_ID, seg(2, 4.0))
+            .expect("add_segment");
+        route
+            .add_segment(crate::route::SPTS_PROGRAM_ID, seg(3, 4.0))
+            .expect("add_segment"); // evicts seq 1 (window_segments == 2)
 
         let mpd = render_ll_dash_mpd(&route).unwrap();
         assert!(
@@ -360,7 +366,9 @@ mod tests {
         let route = RouteHandle::new(2.0, 500, 4);
         route.publish_new_program(crate::route::SPTS_PROGRAM_ID);
         route.set_track_specs(crate::route::SPTS_PROGRAM_ID, vec![video_spec(1)]);
-        route.add_segment(crate::route::SPTS_PROGRAM_ID, seg(1, 2.0));
+        route
+            .add_segment(crate::route::SPTS_PROGRAM_ID, seg(1, 2.0))
+            .expect("add_segment");
         let mpd = render_ll_dash_mpd(&route).unwrap();
         assert!(mpd.contains("timeShiftBufferDepth=\"PT2S\""), "{mpd}");
     }

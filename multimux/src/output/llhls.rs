@@ -226,7 +226,9 @@ mod tests {
         let route = Arc::new(RouteHandle::new(4.0, 500, 4));
         route.publish_new_program(crate::route::SPTS_PROGRAM_ID);
         route.set_init(crate::route::SPTS_PROGRAM_ID, vec![0xAA; 8]);
-        route.add_segment(crate::route::SPTS_PROGRAM_ID, seg(1));
+        route
+            .add_segment(crate::route::SPTS_PROGRAM_ID, seg(1))
+            .expect("add_segment");
         route.add_part(crate::route::SPTS_PROGRAM_ID, part(2, 0));
         route.add_part(crate::route::SPTS_PROGRAM_ID, part(2, 1));
         route
@@ -326,7 +328,9 @@ mod tests {
         let route_for_task = route.clone();
         tokio::spawn(async move {
             tokio::time::sleep(Duration::from_millis(80)).await;
-            route_for_task.add_segment(crate::route::SPTS_PROGRAM_ID, seg(2)); // closes segment 2
+            route_for_task
+                .add_segment(crate::route::SPTS_PROGRAM_ID, seg(2))
+                .expect("add_segment"); // closes segment 2
         });
 
         let started = std::time::Instant::now();

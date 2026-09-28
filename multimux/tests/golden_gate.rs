@@ -240,7 +240,7 @@ async fn run_live_producer(store: Arc<RouteHandle>, spec: TrackSpec, samples: Ve
             store.add_part(program, part);
         }
         for segment in seg.take_ready_segments() {
-            store.add_segment(program, segment);
+            store.add_segment(program, segment).expect("add_segment");
         }
         tokio::time::sleep(frame_interval).await;
     }
@@ -249,7 +249,7 @@ async fn run_live_producer(store: Arc<RouteHandle>, spec: TrackSpec, samples: Ve
         store.add_part(program, part);
     }
     for segment in seg.take_ready_segments() {
-        store.add_segment(program, segment);
+        store.add_segment(program, segment).expect("add_segment");
     }
 }
 

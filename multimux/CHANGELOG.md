@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Changed (breaking)
+- `RouteHandle::add_segment` returns `Result<(), AddSegmentError>` instead of
+  logging and dropping a segment it could not publish (#1082).
+
 ### Fixed
 - `ProgramSegmenter` no longer calls the blocking `SegmentWriter::publish_segment`
   from `pump`/`flush`, which run synchronously on whatever thread the owning
