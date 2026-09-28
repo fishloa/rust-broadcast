@@ -404,7 +404,9 @@ mod tests {
         let route = RouteHandle::new(4.0, 500, 4);
         route.publish_new_program(crate::route::SPTS_PROGRAM_ID);
         route.set_track_specs(crate::route::SPTS_PROGRAM_ID, vec![video_spec(7)]);
-        route.add_segment(crate::route::SPTS_PROGRAM_ID, seg(1, 4.0));
+        route
+            .add_segment(crate::route::SPTS_PROGRAM_ID, seg(1, 4.0))
+            .expect("add_segment");
         let mpd = render_mpd(&route).unwrap();
         assert!(
             mpd.contains(&format!("id=\"{DEFAULT_TRACK_ID}\"")),
@@ -422,9 +424,15 @@ mod tests {
         let route = RouteHandle::new(4.0, 500, 2);
         route.publish_new_program(crate::route::SPTS_PROGRAM_ID);
         route.set_track_specs(crate::route::SPTS_PROGRAM_ID, vec![video_spec(1)]);
-        route.add_segment(crate::route::SPTS_PROGRAM_ID, seg(1, 4.0));
-        route.add_segment(crate::route::SPTS_PROGRAM_ID, seg(2, 4.0));
-        route.add_segment(crate::route::SPTS_PROGRAM_ID, seg(3, 4.0)); // evicts seq 1 (window_segments == 2)
+        route
+            .add_segment(crate::route::SPTS_PROGRAM_ID, seg(1, 4.0))
+            .expect("add_segment");
+        route
+            .add_segment(crate::route::SPTS_PROGRAM_ID, seg(2, 4.0))
+            .expect("add_segment");
+        route
+            .add_segment(crate::route::SPTS_PROGRAM_ID, seg(3, 4.0))
+            .expect("add_segment"); // evicts seq 1 (window_segments == 2)
 
         let mpd = render_mpd(&route).unwrap();
         assert!(
@@ -450,7 +458,9 @@ mod tests {
         let route = RouteHandle::new(2.0, 500, 4);
         route.publish_new_program(crate::route::SPTS_PROGRAM_ID);
         route.set_track_specs(crate::route::SPTS_PROGRAM_ID, vec![video_spec(1)]);
-        route.add_segment(crate::route::SPTS_PROGRAM_ID, seg(1, 2.0));
+        route
+            .add_segment(crate::route::SPTS_PROGRAM_ID, seg(1, 2.0))
+            .expect("add_segment");
         let mpd = render_mpd(&route).unwrap();
         assert!(mpd.contains("availabilityStartTime="), "{mpd}");
         assert!(mpd.contains("minimumUpdatePeriod=\"PT2S\""), "{mpd}");
@@ -482,7 +492,9 @@ mod tests {
             crate::route::SPTS_PROGRAM_ID,
             vec![teletext_spec(1), video_spec(2)],
         );
-        route.add_segment(crate::route::SPTS_PROGRAM_ID, seg(1, 4.0));
+        route
+            .add_segment(crate::route::SPTS_PROGRAM_ID, seg(1, 4.0))
+            .expect("add_segment");
         let mpd = render_mpd(&route)
             .expect("a representable track behind an opaque one must still render");
         assert!(
@@ -525,7 +537,9 @@ mod tests {
         let route = Arc::new(RouteHandle::new(4.0, 500, 4));
         route.publish_new_program(crate::route::SPTS_PROGRAM_ID);
         route.set_track_specs(crate::route::SPTS_PROGRAM_ID, vec![video_spec(1)]);
-        route.add_segment(crate::route::SPTS_PROGRAM_ID, seg(1, 4.0));
+        route
+            .add_segment(crate::route::SPTS_PROGRAM_ID, seg(1, 4.0))
+            .expect("add_segment");
         let resp = manifest(State(route)).await;
         assert_eq!(resp.status(), StatusCode::OK);
         assert_eq!(
@@ -557,7 +571,9 @@ mod tests {
         let route = RouteHandle::new(4.0, 500, 4);
         route.publish_new_program(crate::route::SPTS_PROGRAM_ID);
         route.set_track_specs(crate::route::SPTS_PROGRAM_ID, vec![video_spec(1)]);
-        route.add_segment(crate::route::SPTS_PROGRAM_ID, seg(1, 4.0));
+        route
+            .add_segment(crate::route::SPTS_PROGRAM_ID, seg(1, 4.0))
+            .expect("add_segment");
         let mpd = render_mpd(&route).unwrap();
         assert!(
             mpd.contains("<InbandEventStream"),

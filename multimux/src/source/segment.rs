@@ -75,15 +75,16 @@
 //! all) is the addressing question `crate::route`'s own module doc records
 //! options for.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use broadcast_common::Timestamp;
 use hls_runtime::server::Container;
 use media_plane::ingress::{IngestDriver, IngestSession, ProgramId};
 use media_plane::trunk::{
     PartEntry, SampleCursor, SampleCursorItem, SegmentEntry, SegmentWriter, Trunk,
+    TryPublishSegmentError,
 };
 use transmux::SegmentMeta;
 use transmux::ll_hls::{LlHlsSegmenter, PartInfo};
@@ -259,6 +260,58 @@ impl AnySegmenter {
 /// [`crate::registry::SchemeRegistry`] `Custom` factory calls instead of
 /// touching this type or [`drive_program_segmenters`] directly — see that
 /// facade's own doc.
+/// Hard cap on the number of **segments** (not parts — see below) queued in
+/// [`ProgramSegmenter`]'s pending-publish queue — bounds memory even before
+/// [`PENDING_PUBLISH_MAX_WAIT`] elapses, for a DVR pin that never advances at
+/// all (a permanently stalled disk, say). Once that many segments have
+/// accumulated behind the stuck one, whichever `ArchiveOverrun::StallIngest`
+/// pin is blocking it is force-expired immediately, the same as if the
+/// deadline had already elapsed — see [`ProgramSegmenter::drain_pending`].
+///
+/// Counts queued [`PendingPublish::Segment`] entries only, never
+/// [`PendingPublish::Part`] ones: a part always rides behind its own segment
+/// (queued immediately before it — see
+/// [`ProgramSegmenter::publish_in_stream_order`]) and a stuck segment cannot
+/// itself unstick a later part, so a part sitting in the queue reflects
+/// nothing about how "deep" the real backlog is. Counting every queued item
+/// (parts included, as this constant used to) made an LL-HLS route hit this
+/// cap in well under [`PENDING_PUBLISH_MAX_WAIT`]'s bound at typical
+/// part-target cadences (a new part every ~200ms keeps re-filling the queue
+/// long before 30s of wall-clock elapses), force-expiring a `StallIngest`
+/// pin — and terminating a DVR recording relying on it — for a stall no
+/// worse than a few seconds. Counting segments alone leaves the 30s deadline
+/// as the one bound that matters for a merely-slow pin, while still
+/// bounding memory for a pin that never advances at all.
+const PENDING_PUBLISH_QUEUE_CAP: usize = 8;
+
+/// How long the oldest entry in [`ProgramSegmenter`]'s pending-publish queue
+/// may wait before this segmenter force-expires whichever
+/// `ArchiveOverrun::StallIngest` pin is blocking it
+/// ([`SegmentWriter::expire_stalled_pins`]) and retries — applying, from
+/// this non-blocking caller, the same bound
+/// `media_plane::trunk::SegmentWriter::publish_segment`'s own internal
+/// blocking wait uses (issue #1082's T6/T7 findings: a stalled DVR pin — a
+/// disk write that never returns — must not freeze live output past this
+/// bound).
+const PENDING_PUBLISH_MAX_WAIT: Duration = Duration::from_secs(30);
+
+/// One item queued by [`ProgramSegmenter::publish_without_blocking`] —
+/// either a live part or a finished segment, in the exact order they were
+/// meant to reach [`SegmentWriter`], so a later segment's parts can never
+/// appear before an earlier segment still stuck in the queue.
+enum PendingPublish {
+    Part(PartEntry),
+    Segment(SegmentEntry),
+}
+
+/// [`SegmentWriter`] the resulting parts/segments are published back
+/// through.
+///
+/// `pub(crate)` (not `pub`, issue #805 task 6): the one caller outside this
+/// module, [`crate::source::advance_route`], is the facade a
+/// [`crate::registry::SchemeRegistry`] `Custom` factory calls instead of
+/// touching this type or [`drive_program_segmenters`] directly — see that
+/// facade's own doc.
 pub(crate) struct ProgramSegmenter {
     cursor: SampleCursor,
     segment_writer: SegmentWriter,
@@ -273,6 +326,22 @@ pub(crate) struct ProgramSegmenter {
     /// generation advances past this, [`Self::apply_track_change`] admits
     /// new tracks into (or rebuilds) the segmenter.
     track_generation: u64,
+    /// Parts/segments this segmenter could not hand to `segment_writer` on a
+    /// previous call (a segment's `ArchiveOverrun::StallIngest` pin had not
+    /// caught up yet), oldest first — see
+    /// [`Self::publish_without_blocking`]/[`Self::drain_pending`] for why
+    /// this exists: `pump`/`flush` run synchronously on a shared tokio
+    /// worker thread (via `drive_program_segmenters`, called directly from
+    /// every ingest source's async task loop), so this segmenter must never
+    /// call the blocking `SegmentWriter::publish_segment` — a stalled DVR
+    /// pin would then park that worker thread for up to
+    /// `media_plane::trunk::SegmentWriter`'s bounded wait (issue #1082's T7
+    /// finding). Bounded by [`PENDING_PUBLISH_QUEUE_CAP`].
+    pending: VecDeque<PendingPublish>,
+    /// When the entry currently at the front of `pending` first became
+    /// stuck — `None` whenever `pending` is empty. Compared against
+    /// [`PENDING_PUBLISH_MAX_WAIT`] in [`Self::drain_pending`].
+    pending_since: Option<Instant>,
 }
 
 /// Rolling-window depth [`StreamingTsHlsSegmenter::new`] is given —
@@ -310,6 +379,16 @@ impl ProgramSegmenter {
             return None;
         }
         let segment_writer = trunk.segment_writer()?;
+        // Seeded from `next_sequence_number` rather than the plain
+        // `with_part_target` constructor's implicit `1`: this `Trunk` may
+        // already have accepted segments from an earlier `SegmentWriter`
+        // that was dropped and re-issued (`media_plane` issue #1082) —
+        // `publish_segment` now rejects a `sequence_number` that is not
+        // strictly greater than the last one accepted, so this segmenter
+        // must resume from there, not renumber from 1 again. For a fresh
+        // `Trunk` this is exactly `1`, matching `with_part_target`'s own
+        // default.
+        let next_seq = segment_writer.next_sequence_number();
         let seg = match route_handle.container() {
             Container::Fmp4 => {
                 let muxable: Vec<_> = tracks
@@ -320,11 +399,13 @@ impl ProgramSegmenter {
                 if muxable.is_empty() {
                     return None;
                 }
-                match LlHlsSegmenter::with_part_target(
+                match LlHlsSegmenter::with_part_target_at(
                     muxable,
                     transmux::VIDEO_CLOCK_RATE,
                     target_duration_secs,
                     part_target_ms,
+                    next_seq,
+                    next_seq,
                 ) {
                     Ok(seg) => AnySegmenter::Fmp4(seg),
                     Err(e) => {
@@ -341,10 +422,21 @@ impl ProgramSegmenter {
                 // classic-TS segmenter's cut rule is integer-second, per
                 // `transmux::ts_hls`'s own module doc ("no_std-friendly").
                 let target_secs = target_duration_secs.round().max(1.0) as u32;
-                match StreamingTsHlsSegmenter::new(
+                // Seeded from `next_seq` (see this function's own doc above,
+                // on the Fmp4 arm) — a `StreamingTsHlsSegmenter::new` built
+                // from the plain, unseeded constructor always numbers its
+                // first cut segment `0`; on a `Trunk` that already holds
+                // segments (or after an `apply_track_change` rebuild) that
+                // is not strictly greater than the last one accepted, so
+                // every segment this segmenter ever cuts would be rejected
+                // as `NonMonotonicSequenceNumber` and dropped forever
+                // (`drain_pending`'s `Err(TryPublishSegmentError::NonMonotonic(_))`
+                // arm), silently taking the whole route's TS-HLS output dark.
+                match StreamingTsHlsSegmenter::with_start_sequence(
                     tracks.to_vec(),
                     target_secs,
                     ts_segmenter_window(route_handle),
+                    u64::from(next_seq.saturating_sub(1)),
                 ) {
                     Ok(seg) => AnySegmenter::Ts(seg),
                     Err(e) => {
@@ -383,7 +475,117 @@ impl ProgramSegmenter {
             seg,
             next_timeline_ns: 0,
             track_generation: trunk.track_generation(),
+            pending: VecDeque::new(),
+            pending_since: None,
         })
+    }
+
+    /// Queue `item` (behind anything already queued from an earlier call,
+    /// so order is preserved) and immediately try to drain the queue — see
+    /// [`Self::drain_pending`]. Never blocks.
+    fn publish_without_blocking(&mut self, item: PendingPublish) {
+        self.pending.push_back(item);
+        self.drain_pending();
+    }
+
+    /// Drain [`Self::pending`] from the front for as long as items keep
+    /// going through, in order — a live part always succeeds
+    /// ([`SegmentWriter::publish_part`] never blocks or rejects), so only a
+    /// segment can actually get stuck (its `ArchiveOverrun::StallIngest` pin
+    /// not yet caught up); when one does, this stops rather than letting a
+    /// later queued item (another segment, or a part that belongs after it)
+    /// jump ahead of it.
+    ///
+    /// Called on every call to [`Self::pump`]/[`Self::flush`] — not only
+    /// when this segmenter has something new to publish — so a backlog left
+    /// over from an earlier call keeps getting retried even on a tick that
+    /// produces nothing new, and the tail is drained (with this same
+    /// deadline/expiry rule) at end of stream rather than lost.
+    ///
+    /// While the front is stuck, tracks how long via [`Self::pending_since`]
+    /// and, once [`PENDING_PUBLISH_MAX_WAIT`] elapses **or**
+    /// [`PENDING_PUBLISH_QUEUE_CAP`] is reached (memory must stay bounded
+    /// even before the deadline, for a pin that never advances at all),
+    /// force-expires the blocking pin via
+    /// [`SegmentWriter::expire_stalled_pins`] and retries immediately —
+    /// applying, non-blockingly, the exact bound
+    /// `SegmentWriter::publish_segment`'s own internal blocking wait uses.
+    fn drain_pending(&mut self) {
+        loop {
+            let Some(item) = self.pending.pop_front() else {
+                self.pending_since = None;
+                return;
+            };
+            match item {
+                PendingPublish::Part(part) => {
+                    self.segment_writer.publish_part(part);
+                    // The front item just published — whatever stall episode
+                    // `pending_since` was tracking (if any) is over. Reset it
+                    // here, not only when the queue drains empty, so a LATER
+                    // item that stalls starts its own fresh clock instead of
+                    // inheriting a stale timestamp from an earlier, already-
+                    // resolved stall (which would let `PENDING_PUBLISH_MAX_WAIT`
+                    // appear to have already elapsed for a stall that just
+                    // started).
+                    self.pending_since = None;
+                }
+                PendingPublish::Segment(entry) => {
+                    match self.segment_writer.try_publish_segment(entry) {
+                        Ok(()) => {
+                            self.pending_since = None;
+                        }
+                        Err(TryPublishSegmentError::NonMonotonic(e)) => {
+                            // Should not happen: `try_new`/`apply_track_change`
+                            // seed numbering from `next_sequence_number`. Not a
+                            // reason to tear down the whole session — log and
+                            // drop this one entry, exactly this crate's general
+                            // "a segmentation defect on one program must not
+                            // take the route down" posture.
+                            tracing::error!(
+                                error = %e,
+                                "dropping a segment with a non-monotonic sequence_number"
+                            );
+                            self.pending_since = None;
+                        }
+                        Err(TryPublishSegmentError::WouldStall(entry)) => {
+                            self.pending.push_front(PendingPublish::Segment(entry));
+                            let now = Instant::now();
+                            let since = *self.pending_since.get_or_insert(now);
+                            let waited_too_long =
+                                now.saturating_duration_since(since) >= PENDING_PUBLISH_MAX_WAIT;
+                            // Segments only — see `PENDING_PUBLISH_QUEUE_CAP`'s
+                            // own doc for why a queued part must not count
+                            // toward this cap.
+                            let queued_segments = self
+                                .pending
+                                .iter()
+                                .filter(|item| matches!(item, PendingPublish::Segment(_)))
+                                .count();
+                            let queue_too_deep = queued_segments >= PENDING_PUBLISH_QUEUE_CAP;
+                            if (waited_too_long || queue_too_deep)
+                                && self.segment_writer.expire_stalled_pins() > 0
+                            {
+                                // The blocking pin just gave up (Terminated, not
+                                // silently gapped — see `expire_stalled_pins`'s
+                                // own doc): retry immediately rather than
+                                // waiting for the next call.
+                                continue;
+                            }
+                            return;
+                        }
+                        // `TryPublishSegmentError` is `#[non_exhaustive]`: a
+                        // future variant this segmenter has no handling for is
+                        // logged and dropped, the same posture as
+                        // `NonMonotonic` above, rather than silently retried
+                        // forever or panicking.
+                        Err(other) => {
+                            tracing::error!(?other, "dropping a segment: unhandled publish error");
+                            self.pending_since = None;
+                        }
+                    }
+                }
+            }
+        }
     }
 
     /// The init segment bytes — built once, at construction, stable for the
@@ -516,32 +718,17 @@ impl ProgramSegmenter {
                     if let Err(e) = old_seg.flush() {
                         tracing::warn!(error = %e, "old segmenter flush on rebuild failed");
                     }
-                    for part in old_seg.take_ready_parts() {
-                        self.segment_writer.publish_part(PartEntry::new(
-                            part.bytes,
-                            part.segment_seq,
-                            part.part_index,
-                            Duration::from_secs_f64(part.duration),
-                            part.independent,
-                        ));
-                    }
-                    for segment in old_seg.take_ready_segments() {
-                        let seg: ReadySegment = segment.into();
-                        let duration = Duration::from_secs_f64(seg.duration);
-                        let start_ns = self.next_timeline_ns;
-                        self.next_timeline_ns = self
-                            .next_timeline_ns
-                            .saturating_add(u64::try_from(duration.as_nanos()).unwrap_or(u64::MAX));
-                        self.segment_writer.publish_segment(SegmentEntry::new(
-                            seg.bytes,
-                            seg.segment_seq,
-                            duration,
-                            Timestamp::from_nanos(start_ns),
-                            SegmentMeta {
-                                discontinuous: seg.discontinuous,
-                            },
-                        ));
-                    }
+                    // Stream order, not "all parts then all segments" — see
+                    // `Self::publish_in_stream_order`'s own doc for why the
+                    // latter can publish a later segment's opening part
+                    // ahead of an earlier segment's own close.
+                    let parts = old_seg.take_ready_parts();
+                    let segments: Vec<ReadySegment> = old_seg
+                        .take_ready_segments()
+                        .into_iter()
+                        .map(Into::into)
+                        .collect();
+                    self.publish_in_stream_order(parts, segments);
 
                     let (next_seq, current_seg) = old_seg.next_sequence_numbers();
 
@@ -574,10 +761,19 @@ impl ProgramSegmenter {
                 Container::MpegTs => {
                     // TS segmenter: the rebuild path. Should only be reached
                     // if add_track failed on every new track (unusual).
-                    match StreamingTsHlsSegmenter::new(
+                    //
+                    // Seeded from `self.segment_writer.next_sequence_number()`
+                    // — same reasoning as `try_new`'s own Ts arm: the plain
+                    // `StreamingTsHlsSegmenter::new` always numbers its first
+                    // cut segment `0`, which this `Trunk` (already holding
+                    // segments from the *old* segmenter this rebuild is
+                    // replacing) rejects as non-monotonic forever after.
+                    let next_seq = self.segment_writer.next_sequence_number();
+                    match StreamingTsHlsSegmenter::with_start_sequence(
                         new_tracks.to_vec(),
                         route_handle.target_duration_secs().round().max(1.0) as u32,
                         ts_segmenter_window(route_handle),
+                        u64::from(next_seq.saturating_sub(1)),
                     ) {
                         Ok(seg) => {
                             let replaced = std::mem::replace(&mut self.seg, AnySegmenter::Ts(seg));
@@ -585,23 +781,9 @@ impl ProgramSegmenter {
                                 if let Err(e) = old.finish() {
                                     tracing::warn!(error = %e, "old TS segmenter finish on rebuild failed");
                                 }
-                                for segment in old.take_ready() {
-                                    let seg: ReadySegment = segment.into();
-                                    let duration = Duration::from_secs_f64(seg.duration);
-                                    let start_ns = self.next_timeline_ns;
-                                    self.next_timeline_ns = self.next_timeline_ns.saturating_add(
-                                        u64::try_from(duration.as_nanos()).unwrap_or(u64::MAX),
-                                    );
-                                    self.segment_writer.publish_segment(SegmentEntry::new(
-                                        seg.bytes,
-                                        seg.segment_seq,
-                                        duration,
-                                        Timestamp::from_nanos(start_ns),
-                                        SegmentMeta {
-                                            discontinuous: seg.discontinuous,
-                                        },
-                                    ));
-                                }
+                                let segments: Vec<ReadySegment> =
+                                    old.take_ready().into_iter().map(Into::into).collect();
+                                self.publish_in_stream_order(Vec::new(), segments);
                             }
                             tracing::info!(
                                 "TS segmenter rebuilt with updated track set for \
@@ -642,35 +824,101 @@ impl ProgramSegmenter {
         self.publish_ready()
     }
 
+    /// Retries [`Self::pending`] first (issue #1082 T7: this must happen on
+    /// every call — `pump`'s and `flush`'s own docs — not only when there is
+    /// something new to publish, so a backlog left over from an earlier
+    /// call keeps draining even on an otherwise-idle tick, and the tail is
+    /// drained rather than lost at end of stream), then queues whatever
+    /// this segmenter has newly finished producing, in stream order — see
+    /// [`Self::publish_in_stream_order`].
     fn publish_ready(&mut self) -> (usize, usize) {
+        self.drain_pending();
+        let parts = self.seg.take_ready_parts();
+        let segments = self.seg.take_ready_segments();
+        self.publish_in_stream_order(parts, segments)
+    }
+
+    /// Queue one part, converting it to the `Trunk`'s [`PartEntry`] shape.
+    fn queue_part(&mut self, part: PartInfo) {
+        self.publish_without_blocking(PendingPublish::Part(PartEntry::new(
+            part.bytes,
+            part.segment_seq,
+            part.part_index,
+            Duration::from_secs_f64(part.duration),
+            part.independent,
+        )));
+    }
+
+    /// Queue one closed segment, converting it to the `Trunk`'s
+    /// [`SegmentEntry`] shape and advancing [`Self::next_timeline_ns`] by
+    /// its duration.
+    fn queue_segment(&mut self, segment: ReadySegment) {
+        let duration = Duration::from_secs_f64(segment.duration);
+        let start_ns = self.next_timeline_ns;
+        self.next_timeline_ns = self
+            .next_timeline_ns
+            .saturating_add(u64::try_from(duration.as_nanos()).unwrap_or(u64::MAX));
+        self.publish_without_blocking(PendingPublish::Segment(SegmentEntry::new(
+            segment.bytes,
+            segment.segment_seq,
+            duration,
+            Timestamp::from_nanos(start_ns),
+            SegmentMeta {
+                discontinuous: segment.discontinuous,
+            },
+        )));
+    }
+
+    /// Queue `parts` and `segments` interleaved by `segment_seq`, in the
+    /// order they actually occurred on the wire — parts of segment N, then
+    /// segment N's own close, then parts of segment N+1, and so on — rather
+    /// than every ready part followed by every ready segment.
+    ///
+    /// The latter (this method's predecessor) queues `take_ready_parts()`'s
+    /// *entire* batch before touching a single entry of
+    /// `take_ready_segments()`. When a call's batch spans a segment
+    /// boundary — the segmenter has both cut segment N *and* already
+    /// produced segment N+1's opening part before this method next runs —
+    /// that ordering publishes part (N+1, 0) into the `Trunk`'s live-part
+    /// log (through [`Self::publish_without_blocking`], which never waits
+    /// for anything ahead of it in [`Self::pending`]) before segment N's own
+    /// [`SegmentEntry`] has even been queued, let alone published. A part
+    /// ring reader that assumes "no part of segment N+1 precedes segment
+    /// N's close" (the shape [`media_plane::trunk::Trunk::parts_in_segment`]
+    /// used to rely on) then loses segment N's still-open parts entirely —
+    /// and, in LL-HLS terms, the just-closing segment's own
+    /// `#EXT-X-PART` tags silently vanish from the playlist.
+    ///
+    /// `parts` and `segments` are each already in production order
+    /// (ascending `segment_seq`, and ascending `part_index` within a
+    /// `segment_seq`) — a merge by `segment_seq` (a part with `segment_seq`
+    /// `<=` the next unqueued segment's `segment_seq` goes first, so a
+    /// segment's own trailing parts are queued immediately before its
+    /// close) recovers the true interleaving without needing any additional
+    /// timestamp.
+    fn publish_in_stream_order(
+        &mut self,
+        parts: Vec<PartInfo>,
+        segments: Vec<ReadySegment>,
+    ) -> (usize, usize) {
+        let mut parts = parts.into_iter().peekable();
+        let mut segments = segments.into_iter().peekable();
         let mut parts_published = 0usize;
-        for part in self.seg.take_ready_parts() {
-            self.segment_writer.publish_part(PartEntry::new(
-                part.bytes,
-                part.segment_seq,
-                part.part_index,
-                Duration::from_secs_f64(part.duration),
-                part.independent,
-            ));
-            parts_published += 1;
-        }
         let mut segments_published = 0usize;
-        for segment in self.seg.take_ready_segments() {
-            let duration = Duration::from_secs_f64(segment.duration);
-            let start_ns = self.next_timeline_ns;
-            self.next_timeline_ns = self
-                .next_timeline_ns
-                .saturating_add(u64::try_from(duration.as_nanos()).unwrap_or(u64::MAX));
-            self.segment_writer.publish_segment(SegmentEntry::new(
-                segment.bytes,
-                segment.segment_seq,
-                duration,
-                Timestamp::from_nanos(start_ns),
-                SegmentMeta {
-                    discontinuous: segment.discontinuous,
-                },
-            ));
-            segments_published += 1;
+        loop {
+            let take_part = match (parts.peek(), segments.peek()) {
+                (Some(part), Some(segment)) => part.segment_seq <= segment.segment_seq,
+                (Some(_), None) => true,
+                (None, Some(_)) => false,
+                (None, None) => break,
+            };
+            if take_part {
+                self.queue_part(parts.next().expect("peeked Some above"));
+                parts_published += 1;
+            } else {
+                self.queue_segment(segments.next().expect("peeked Some above"));
+                segments_published += 1;
+            }
         }
         (parts_published, segments_published)
     }
@@ -2032,5 +2280,577 @@ mod tests {
 
         let selected = crate::output::dash::select_representable_track(&specs_after);
         assert!(selected.is_some(), "must still pick a representable track");
+    }
+
+    // --- T7 (issue #1082): a stalled DVR pin must never block the shared --
+    // --- tokio worker thread `pump`/`flush` run on -------------------------
+
+    fn nz(n: usize) -> std::num::NonZeroUsize {
+        std::num::NonZeroUsize::new(n).expect("test capacity must be non-zero")
+    }
+
+    fn fake_ready_entry(seq: u32) -> SegmentEntry {
+        SegmentEntry::new(
+            bytes::Bytes::from(vec![seq as u8; 4]),
+            seq,
+            Duration::from_secs(1),
+            Timestamp::from_nanos(u64::from(seq)),
+            SegmentMeta {
+                discontinuous: false,
+            },
+        )
+    }
+
+    /// A helper for these low-level tests: build a `ProgramSegmenter`
+    /// directly (bypassing `try_new`'s real TS/fMP4 pipeline) over a
+    /// caller-supplied `Trunk`, so a test can control the `Trunk`'s segment
+    /// capacity and pins precisely.
+    fn bare_segmenter(trunk: &Arc<Trunk>) -> ProgramSegmenter {
+        let segment_writer = trunk.segment_writer().expect("first take succeeds");
+        let seg = AnySegmenter::Ts(
+            StreamingTsHlsSegmenter::new(vec![track_spec(1)], 1, 8)
+                .expect("valid placeholder TS segmenter"),
+        );
+        ProgramSegmenter {
+            cursor: trunk.subscribe_from_backlog(),
+            segment_writer,
+            seg,
+            next_timeline_ns: 0,
+            track_generation: trunk.track_generation(),
+            pending: VecDeque::new(),
+            pending_since: None,
+        }
+    }
+
+    /// Pre-populate `trunk`'s segment log with segments `1..=5`, as if
+    /// published by an earlier `SegmentWriter` — simulates the two
+    /// triggering conditions review item 1 names: "a `Trunk` that already
+    /// has segments" (`try_new`'s own case) and "the segmenter this
+    /// [rebuild] is replacing already published some" (`apply_track_change`'s
+    /// case). Returns nothing; the writer used is dropped at the end of this
+    /// call so exactly one `SegmentWriter`/`TrunkWriter` is ever live at a
+    /// time, matching every ring group's single-writer contract.
+    fn pre_seed_five_segments(trunk: &Arc<Trunk>) {
+        let seeding_writer = trunk.segment_writer().expect("first take succeeds");
+        for seq in 1..=5u32 {
+            seeding_writer
+                .publish_segment(fake_ready_entry(seq))
+                .expect("pre-seed accepted");
+        }
+    }
+
+    /// **Review item 1, `try_new`'s `Container::MpegTs` arm.** Building a
+    /// TS-container segmenter against a `Trunk` that already holds segments
+    /// (e.g. a `SegmentWriter` dropped and re-issued — `media_plane` issue
+    /// #1082) must resume numbering from `SegmentWriter::next_sequence_number()`,
+    /// not renumber from 1 — a segmenter seeded from 1 has every segment it
+    /// cuts rejected as non-monotonic and dropped
+    /// (`drain_pending`'s `Err(TryPublishSegmentError::NonMonotonic(_))` arm,
+    /// logged not retried) for as long as its own counter stays at or below
+    /// the `Trunk`'s already-published high-water mark.
+    ///
+    /// MUTATION VERIFIED: reverting `try_new`'s `Container::MpegTs` arm to
+    /// call the plain, unseeded `StreamingTsHlsSegmenter::new` (this test's
+    /// pre-fix shape) makes this test's `assert_eq!(trunk.last_closed_segment(),
+    /// Some(6), ...)` fail: actual `Some(5)`, unchanged from the pre-seeded
+    /// value — the unseeded segmenter's first cut numbers `segment_seq` 1,
+    /// which `try_publish_segment` rejects against the `Trunk`'s already-
+    /// published seq 5, and `drain_pending` drops it. Recompiled and re-run
+    /// to confirm the failure, then reverted.
+    #[test]
+    fn try_new_ts_arm_seeds_from_an_already_populated_trunk() {
+        use media_plane::trunk::TrunkConfig;
+
+        let trunk = Trunk::new(TrunkConfig::new(nz(64), nz(64), nz(16), nz(8), nz(8)));
+        trunk
+            .writer()
+            .expect("first take succeeds")
+            .set_tracks(vec![track_spec(1)]);
+        pre_seed_five_segments(&trunk);
+
+        let route = RouteHandle::new(1.0, 250, 8).with_container(Container::MpegTs);
+        let mut segmenter = ProgramSegmenter::try_new(&trunk, &route, 1.0, 250)
+            .expect("non-empty, anchor-capable track set");
+
+        // Push samples through a sync boundary past the 1s target so the
+        // segmenter cuts at least one real segment.
+        for i in 0..90u32 {
+            segmenter
+                .seg
+                .push(1, sample_at(i, i.is_multiple_of(45)))
+                .expect("push");
+        }
+        segmenter.publish_ready();
+
+        assert_eq!(
+            trunk.last_closed_segment(),
+            Some(6),
+            "the first segment a freshly-built TS segmenter cuts against an \
+             already-populated Trunk must resume from next_sequence_number(), \
+             not renumber from 1"
+        );
+    }
+
+    /// **Review item 1, `apply_track_change`'s `Container::MpegTs` rebuild
+    /// arm.** When every track in a mid-stream track-set snapshot fails
+    /// `StreamingTsHlsSegmenter::add_track` (forcing the rebuild path rather
+    /// than in-place admission — see that arm's own comment: "should only be
+    /// reached if add_track failed on every new track"), the replacement
+    /// segmenter must resume numbering from `SegmentWriter::next_sequence_number()`,
+    /// mirroring `try_new`'s own arm — not renumber from 1 against a `Trunk`
+    /// that already holds segments from the segmenter it is replacing.
+    ///
+    /// MUTATION VERIFIED: reverting this arm to call the plain, unseeded
+    /// `StreamingTsHlsSegmenter::new` (this test's pre-fix shape) makes this
+    /// test's final assertion fail: actual `trunk.last_closed_segment()`
+    /// stays `Some(5)` after the rebuild and a full cut cycle — the
+    /// rebuilt segmenter's first cut numbers `segment_seq` 1, rejected as
+    /// non-monotonic against the `Trunk`'s already-published seq 5 and
+    /// dropped by `drain_pending`. Recompiled and re-run to confirm the
+    /// failure, then reverted.
+    #[test]
+    fn apply_track_change_ts_rebuild_seeds_from_next_sequence_number() {
+        use media_plane::trunk::TrunkConfig;
+
+        let trunk = Trunk::new(TrunkConfig::new(nz(64), nz(64), nz(16), nz(8), nz(8)));
+        trunk
+            .writer()
+            .expect("first take succeeds")
+            .set_tracks(vec![track_spec(1)]);
+        pre_seed_five_segments(&trunk);
+
+        // `bare_segmenter` already builds its placeholder Ts segmenter over
+        // track 1 — so re-announcing that same track_id below fails
+        // `add_track`'s duplicate check on the (only) entry, forcing the
+        // rebuild path.
+        let mut segmenter = bare_segmenter(&trunk);
+        let route = RouteHandle::new(1.0, 250, 8).with_container(Container::MpegTs);
+
+        segmenter.apply_track_change(ProgramId(0), &trunk, &route);
+
+        for i in 0..90u32 {
+            segmenter
+                .seg
+                .push(1, sample_at(i, i.is_multiple_of(45)))
+                .expect("push");
+        }
+        segmenter.publish_ready();
+
+        assert_eq!(
+            trunk.last_closed_segment(),
+            Some(6),
+            "the rebuilt TS segmenter's first cut segment must resume from \
+             next_sequence_number(), not renumber from 1"
+        );
+    }
+
+    fn pending_sequence_numbers(segmenter: &ProgramSegmenter) -> Vec<u32> {
+        segmenter
+            .pending
+            .iter()
+            .map(|item| match item {
+                PendingPublish::Segment(e) => e.sequence_number,
+                PendingPublish::Part(p) => p.segment_number,
+            })
+            .collect()
+    }
+
+    /// `ProgramSegmenter::publish_without_blocking` must never call the
+    /// blocking `SegmentWriter::publish_segment` — `pump`/`flush` run
+    /// synchronously on whatever thread the owning async ingest task is
+    /// scheduled on (a shared tokio worker in production), so a stalled
+    /// `ArchiveOverrun::StallIngest` DVR pin blocking that call would park
+    /// the worker thread for up to `media_plane`'s bounded wait, starving
+    /// every other task scheduled on it (issue #1082's T7 finding).
+    ///
+    /// MUTATION VERIFIED: reverting `drain_pending`'s `Segment` arm to call
+    /// `self.segment_writer.publish_segment(entry).unwrap()` directly (the
+    /// pre-fix shape every call site used) makes this test fail: it no
+    /// longer completes within the bounded `recv_timeout` below (the pinned
+    /// cursor is never drained by this test, on purpose), because the
+    /// blocking call parks the background thread for
+    /// `media_plane::trunk`'s test-scaled `STALL_INGEST_MAX_WAIT`, which
+    /// this test's bound is deliberately shorter than. Compiled, run,
+    /// confirmed timing out, then reverted.
+    #[test]
+    fn publish_without_blocking_never_blocks_the_calling_thread() {
+        use media_plane::trunk::{ArchiveOverrun, TrunkConfig};
+
+        // Segment-log capacity 1, and a `StallIngest` pin this test never
+        // drains: every publish past the first would need to block under
+        // the pre-fix, direct `publish_segment` call. Only 5 entries — well
+        // under `PENDING_PUBLISH_QUEUE_CAP` — so the queue-depth expiry
+        // (tested separately below) does not also fire here.
+        let trunk = Trunk::new(TrunkConfig::new(nz(8), nz(8), nz(1), nz(8), nz(8)));
+        let _pinned_cursor = trunk.pin_segments(ArchiveOverrun::StallIngest);
+        let mut segmenter = bare_segmenter(&trunk);
+
+        let (done_tx, done_rx) = std::sync::mpsc::channel();
+        let handle = std::thread::spawn(move || {
+            for seq in 1..=5u32 {
+                segmenter.publish_without_blocking(PendingPublish::Segment(fake_ready_entry(seq)));
+            }
+            done_tx.send(segmenter).expect("send back for inspection");
+        });
+
+        let segmenter = done_rx.recv_timeout(Duration::from_millis(500)).expect(
+            "publish_without_blocking must never block — the pinned \
+                 cursor above is never drained in this test",
+        );
+        handle.join().unwrap();
+
+        // Nothing was silently dropped: whatever could not go through yet
+        // is queued, in order, for the next call to retry.
+        assert_eq!(
+            pending_sequence_numbers(&segmenter),
+            (2..=5).collect::<Vec<_>>(),
+            "the queue must hold exactly the entries that could not be \
+             published yet, in order — seq 1 alone fit before capacity was reached"
+        );
+    }
+
+    /// Issue #1082's T6 finding (BLOCKER): a DVR disk error whose
+    /// `StallIngest` pin never advances at all must not freeze live output
+    /// forever, and the pending queue must stay bounded even before the
+    /// wall-clock deadline — `PENDING_PUBLISH_QUEUE_CAP` forces the expiry
+    /// as soon as the queue gets that deep, regardless of elapsed time.
+    ///
+    /// MUTATION VERIFIED: removing the `|| queue_too_deep` disjunct in
+    /// `drain_pending` (bound only by elapsed time, matching
+    /// `PENDING_PUBLISH_MAX_WAIT`'s real 30s value in production) makes
+    /// this test fail: `segmenter.pending.len()` keeps growing past
+    /// `PENDING_PUBLISH_QUEUE_CAP` instead of being capped, because 30s
+    /// never elapses inside a fast test. Recompiled and re-run to confirm
+    /// the failure, then reverted.
+    #[test]
+    fn pending_queue_is_capped_even_before_the_deadline_elapses() {
+        use media_plane::trunk::{ArchiveOverrun, SegmentCursorItem, TrunkConfig};
+
+        let trunk = Trunk::new(TrunkConfig::new(nz(8), nz(8), nz(1), nz(8), nz(8)));
+        let mut stall = trunk.pin_segments(ArchiveOverrun::StallIngest);
+        let mut segmenter = bare_segmenter(&trunk);
+
+        // Publish well past the cap; the never-drained `stall` pin blocks
+        // every eviction past the first.
+        for seq in 1..=(PENDING_PUBLISH_QUEUE_CAP as u32 + 20) {
+            segmenter.publish_without_blocking(PendingPublish::Segment(fake_ready_entry(seq)));
+        }
+
+        assert!(
+            segmenter.pending.len() <= PENDING_PUBLISH_QUEUE_CAP,
+            "queue length {} exceeded the cap {}",
+            segmenter.pending.len(),
+            PENDING_PUBLISH_QUEUE_CAP
+        );
+        // The stalled pin must actually have been terminated (live output
+        // unfroze), not merely have its backlog silently truncated.
+        assert!(
+            matches!(stall.poll(), Some(SegmentCursorItem::Terminated)),
+            "the stalled StallIngest pin must be terminated once the queue cap is hit"
+        );
+    }
+
+    /// **Review item 2.** `PENDING_PUBLISH_QUEUE_CAP` must count queued
+    /// SEGMENTS only, never queued parts riding behind them. An LL-HLS
+    /// route publishes a new part roughly every `part_target_ms` (200ms is
+    /// a typical target) — if every queued item counted toward the cap, one
+    /// segment stuck behind a slow `StallIngest` pin would force-expire
+    /// that pin in well under two real seconds of part traffic alone,
+    /// nowhere near `PENDING_PUBLISH_MAX_WAIT`'s 30s bound and long before
+    /// a merely-briefly-slow disk write actually recovers — silently
+    /// terminating a DVR pin (or any other `StallIngest` consumer) for a
+    /// stall it should have tolerated.
+    ///
+    /// MUTATION VERIFIED: reverting `drain_pending`'s `queue_too_deep`
+    /// computation to `self.pending.len() >= PENDING_PUBLISH_QUEUE_CAP`
+    /// (this test's pre-fix shape) makes this test's
+    /// `assert!(stall.poll().is_none(), ...)` fail: the pin is terminated
+    /// (`Some(SegmentCursorItem::Terminated)`) once the queued parts alone
+    /// cross `PENDING_PUBLISH_QUEUE_CAP`, despite only the single segment
+    /// ever being stuck. Recompiled and re-run to confirm the failure, then
+    /// reverted.
+    #[test]
+    fn queue_cap_counts_stuck_segments_not_queued_parts() {
+        use media_plane::trunk::{ArchiveOverrun, SegmentCursorItem, TrunkConfig};
+
+        let trunk = Trunk::new(TrunkConfig::new(nz(8), nz(8), nz(1), nz(64), nz(64)));
+        let mut stall = trunk.pin_segments(ArchiveOverrun::StallIngest);
+        let mut segmenter = bare_segmenter(&trunk);
+
+        // Seg 1 fills the (capacity-1) segment log with no eviction needed,
+        // so it publishes immediately. Seg 2 needs to evict seg 1, which
+        // the never-drained `stall` pin (still sitting on seg 1) blocks —
+        // this is the one that actually gets stuck.
+        segmenter.publish_without_blocking(PendingPublish::Segment(fake_ready_entry(1)));
+        segmenter.publish_without_blocking(PendingPublish::Segment(fake_ready_entry(2)));
+
+        // ...then far more parts than the (item-count) cap used to allow —
+        // simulating an LL-HLS route's part cadence while that one segment
+        // stays stuck. Every one of these queues up behind the stuck
+        // segment (parts never jump ahead — see `publish_in_stream_order`'s
+        // own doc) rather than draining.
+        for i in 0..(PENDING_PUBLISH_QUEUE_CAP as u32 * 4) {
+            segmenter.publish_without_blocking(PendingPublish::Part(PartEntry::new(
+                bytes::Bytes::from_static(b"x"),
+                2,
+                i,
+                Duration::from_millis(200),
+                i == 0,
+            )));
+        }
+
+        // `stall`'s cursor legitimately has real backlog to read (seg 1) —
+        // the assertion is that it was never force-expired (`Terminated`),
+        // not that `poll()` returns nothing at all.
+        assert!(
+            !matches!(stall.poll(), Some(SegmentCursorItem::Terminated)),
+            "a single stuck segment behind a flood of queued parts must not \
+             force-expire the pin — only PENDING_PUBLISH_QUEUE_CAP SEGMENTS \
+             (or the 30s deadline) may do that"
+        );
+    }
+
+    /// Companion to [`queue_cap_counts_stuck_segments_not_queued_parts`]:
+    /// confirms the 30s deadline itself still applies once enough segments
+    /// (not parts) are genuinely stuck. Manipulates `pending_since`
+    /// directly (this module's own private field) rather than sleeping 30
+    /// real seconds — `PENDING_PUBLISH_MAX_WAIT` has no `#[cfg(test)]`
+    /// scaled-down variant (unlike `media_plane::trunk`'s own
+    /// `STALL_INGEST_MAX_WAIT`).
+    #[test]
+    fn stuck_segment_under_the_deadline_is_not_expired() {
+        use media_plane::trunk::{ArchiveOverrun, SegmentCursorItem, TrunkConfig};
+
+        let trunk = Trunk::new(TrunkConfig::new(nz(8), nz(8), nz(1), nz(8), nz(8)));
+        let mut stall = trunk.pin_segments(ArchiveOverrun::StallIngest);
+        let mut segmenter = bare_segmenter(&trunk);
+
+        // Seg 1 fills the (capacity-1) log with no eviction needed; seg 2
+        // needs to evict it, which the never-drained `stall` pin blocks.
+        segmenter.publish_without_blocking(PendingPublish::Segment(fake_ready_entry(1)));
+        segmenter.publish_without_blocking(PendingPublish::Segment(fake_ready_entry(2)));
+        assert_eq!(
+            segmenter.pending.len(),
+            1,
+            "seg 2 must be stuck, not dropped"
+        );
+
+        // A 3s-old stall — comfortably under PENDING_PUBLISH_MAX_WAIT (30s).
+        segmenter.pending_since = Some(Instant::now() - Duration::from_secs(3));
+        segmenter.drain_pending();
+
+        // `stall`'s cursor legitimately has real backlog to read (seg 1) —
+        // the assertion is that it was never force-expired (`Terminated`),
+        // not that `poll()` returns nothing at all.
+        assert!(
+            !matches!(stall.poll(), Some(SegmentCursorItem::Terminated)),
+            "a 3s stall must not force-expire the pin — PENDING_PUBLISH_MAX_WAIT is 30s"
+        );
+        assert_eq!(
+            segmenter.pending.len(),
+            1,
+            "the segment must still be queued, waiting for the pin to advance"
+        );
+    }
+
+    /// The other half of the deadline: once a stuck segment has genuinely
+    /// waited past `PENDING_PUBLISH_MAX_WAIT`, the pin IS force-expired.
+    #[test]
+    fn stuck_segment_past_the_deadline_is_expired() {
+        use media_plane::trunk::{ArchiveOverrun, SegmentCursorItem, TrunkConfig};
+
+        let trunk = Trunk::new(TrunkConfig::new(nz(8), nz(8), nz(1), nz(8), nz(8)));
+        let mut stall = trunk.pin_segments(ArchiveOverrun::StallIngest);
+        let mut segmenter = bare_segmenter(&trunk);
+
+        segmenter.publish_without_blocking(PendingPublish::Segment(fake_ready_entry(1)));
+        segmenter.publish_without_blocking(PendingPublish::Segment(fake_ready_entry(2)));
+
+        segmenter.pending_since =
+            Some(Instant::now() - PENDING_PUBLISH_MAX_WAIT - Duration::from_secs(1));
+        segmenter.drain_pending();
+
+        assert!(
+            matches!(stall.poll(), Some(SegmentCursorItem::Terminated)),
+            "a stall past PENDING_PUBLISH_MAX_WAIT must force-expire the pin"
+        );
+        assert_eq!(
+            segmenter.pending.len(),
+            0,
+            "the segment must have been retried and accepted once the pin was expired"
+        );
+    }
+
+    /// **Review item 4.** `pending_since` must reset whenever the front of
+    /// [`ProgramSegmenter::pending`] actually publishes, not only once the
+    /// whole queue drains empty — otherwise a stale timestamp from an
+    /// earlier, already-resolved stall episode leaks onto a *different*
+    /// item's brand-new one. Reproduced here: segment 2 stalls (pin hasn't
+    /// consumed segment 1 yet), sits stuck long enough that its own
+    /// `pending_since` looks past `PENDING_PUBLISH_MAX_WAIT`, then the pin
+    /// genuinely advances (consumes segment 1) and segment 2 is retried
+    /// successfully — with segment 3 already queued behind it. Segment 3's
+    /// own stall (needing to evict segment 2, which the pin has not yet
+    /// consumed either) has been underway for all of zero seconds and must
+    /// not be force-expired on the strength of segment 2's old, resolved
+    /// timestamp.
+    ///
+    /// MUTATION VERIFIED: removing the `self.pending_since = None;` line
+    /// from the `Ok(())` arm (this test's pre-fix shape — the queue-empty
+    /// reset in the `else` branch above it is untouched) makes this test's
+    /// `assert!(!matches!(stall.poll(), Some(SegmentCursorItem::Terminated)),
+    /// ...)` fail: the pin IS `Terminated` — segment 3's `WouldStall` arm's
+    /// `get_or_insert` finds `pending_since` still set to the already-
+    /// expired timestamp left over from segment 2's resolved stall, so
+    /// `waited_too_long` is true on segment 3's very first check, even
+    /// though segment 3 has been stuck for no time at all. Recompiled and
+    /// re-run to confirm the failure, then reverted.
+    #[test]
+    fn pending_since_resets_when_the_front_item_publishes_not_only_when_the_queue_empties() {
+        use media_plane::trunk::{ArchiveOverrun, SegmentCursorItem, TrunkConfig};
+
+        let trunk = Trunk::new(TrunkConfig::new(nz(8), nz(8), nz(1), nz(8), nz(8)));
+        let mut stall = trunk.pin_segments(ArchiveOverrun::StallIngest);
+        let mut segmenter = bare_segmenter(&trunk);
+
+        // Seg 1 fills the (capacity-1) log immediately. Seg 2 needs to
+        // evict it, which the pin (not yet having consumed seg 1) blocks.
+        segmenter.publish_without_blocking(PendingPublish::Segment(fake_ready_entry(1)));
+        segmenter.publish_without_blocking(PendingPublish::Segment(fake_ready_entry(2)));
+        // Seg 3 queues up behind the still-stuck seg 2 — never even
+        // attempted yet, since `drain_pending` stops at the stuck front.
+        segmenter.publish_without_blocking(PendingPublish::Segment(fake_ready_entry(3)));
+        assert_eq!(
+            pending_sequence_numbers(&segmenter),
+            vec![2, 3],
+            "seg 2 stuck, seg 3 queued behind it"
+        );
+
+        // Make seg 2's stall LOOK already past the deadline — simulating
+        // that it has been stuck for a long time before finally resolving.
+        segmenter.pending_since =
+            Some(Instant::now() - PENDING_PUBLISH_MAX_WAIT - Duration::from_secs(1));
+
+        // The pin genuinely advances now: it consumes seg 1, so evicting it
+        // for seg 2 is no longer blocked.
+        assert!(
+            matches!(stall.poll(), Some(SegmentCursorItem::Segment(_))),
+            "the pin must read real backlog (seg 1) here, not Terminated"
+        );
+        segmenter.drain_pending();
+
+        // The decisive check: seg 3's own stall (the pin still has not
+        // consumed seg 2, so evicting it for seg 3 is freshly blocked) has
+        // been underway for 0 real seconds and must not be force-expired on
+        // the strength of seg 2's old, already-resolved stall timestamp.
+        // Pre-fix, it IS force-expired here — which (as an observable side
+        // effect) also lets seg 3 itself slip through immediately once the
+        // pin gives up, leaving `pending` empty instead of `[3]`.
+        assert!(
+            !matches!(stall.poll(), Some(SegmentCursorItem::Terminated)),
+            "seg 3's stall just started (0s old) — it must not be force-expired on \
+             the strength of seg 2's old, already-resolved stall timestamp"
+        );
+        assert_eq!(
+            pending_sequence_numbers(&segmenter),
+            vec![3],
+            "seg 2 must have been accepted once the pin advanced past it, and seg 3 \
+             must still be waiting (genuinely stuck, not force-expired through)"
+        );
+    }
+
+    /// **Review item 3.** [`ProgramSegmenter::publish_in_stream_order`] must
+    /// queue a segment's own parts, then that segment's close, then the
+    /// NEXT segment's parts — never every ready part before any ready
+    /// segment (`publish_ready`'s pre-fix shape) — so a later segment's
+    /// opening part can never land in the `Trunk`'s live-part log ahead of
+    /// an earlier, still-stuck segment.
+    ///
+    /// Reproduced directly: segment 1 is stuck behind a never-drained
+    /// `StallIngest` pin (evicting segment 0 to make room for it is
+    /// blocked); segment 2's opening part `(2, 0)` is handed to
+    /// `publish_in_stream_order` in the SAME call, alongside segment 1's own
+    /// two parts and its close.
+    ///
+    /// MUTATION VERIFIED: reverting `publish_ready` to its pre-fix shape
+    /// (`for part in take_ready_parts() { queue it }` fully, THEN
+    /// `for segment in take_ready_segments() { queue it }`) and calling that
+    /// through this test's same inputs makes the final assertion fail:
+    /// `trunk.part_bytes(2, 0)` returns `Some(_)` — part `(2, 0)` was queued
+    /// (and, since nothing was queued ahead of it yet at that point in the
+    /// old ordering, drained straight through to the `Trunk`) before
+    /// segment 1 was ever even attempted. Recompiled with the reverted
+    /// ordering, re-ran to confirm the failure, then restored
+    /// `publish_in_stream_order`.
+    #[test]
+    fn stream_order_keeps_a_later_segments_part_from_landing_ahead_of_a_stuck_segment() {
+        use media_plane::trunk::{ArchiveOverrun, TrunkConfig};
+
+        let trunk = Trunk::new(TrunkConfig::new(nz(8), nz(8), nz(1), nz(64), nz(64)));
+        let _stall = trunk.pin_segments(ArchiveOverrun::StallIngest);
+        let mut segmenter = bare_segmenter(&trunk);
+
+        // Segment 0 fills the (capacity-1) log; the pin (created before it,
+        // and never drained) has not consumed it, so evicting it for
+        // segment 1 is blocked.
+        segmenter.publish_without_blocking(PendingPublish::Segment(fake_ready_entry(0)));
+
+        let parts = vec![
+            PartInfo {
+                bytes: vec![0u8; 4],
+                duration: 0.2,
+                independent: true,
+                segment_seq: 1,
+                part_index: 0,
+            },
+            PartInfo {
+                bytes: vec![0u8; 4],
+                duration: 0.2,
+                independent: false,
+                segment_seq: 1,
+                part_index: 1,
+            },
+            // Segment 2's opening part — already produced (the segmenter
+            // has started buffering the next segment) even though segment
+            // 1 has not been queued yet in this same call.
+            PartInfo {
+                bytes: vec![0u8; 4],
+                duration: 0.2,
+                independent: true,
+                segment_seq: 2,
+                part_index: 0,
+            },
+        ];
+        let segments = vec![ReadySegment {
+            bytes: vec![1u8; 4],
+            segment_seq: 1,
+            duration: 1.0,
+            discontinuous: false,
+        }];
+
+        segmenter.publish_in_stream_order(parts, segments);
+
+        // Segment 1's own two parts must have gone through — they were
+        // never behind anything stuck.
+        assert!(
+            trunk.part_bytes(1, 0).is_some() && trunk.part_bytes(1, 1).is_some(),
+            "segment 1's own parts must reach the Trunk — nothing was ever stuck ahead of them"
+        );
+        // Segment 1 itself must be stuck (queued, not yet in the Trunk) —
+        // the last CLOSED segment is still segment 0, the one that filled
+        // capacity.
+        assert_eq!(
+            trunk.last_closed_segment(),
+            Some(0),
+            "segment 1 must still be stuck behind the un-consumed StallIngest pin"
+        );
+        // THE INVARIANT: segment 2's opening part must NOT have bypassed
+        // the still-stuck segment 1 — it must be queued behind it, in
+        // stream order, not delivered early.
+        assert!(
+            trunk.part_bytes(2, 0).is_none(),
+            "segment 2's opening part must not land in the Trunk ahead of the \
+             still-stuck segment 1's own close"
+        );
     }
 }

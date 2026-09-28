@@ -271,7 +271,6 @@ struct ColdEntry {
 /// on its own schedule (a timer tick, a poll loop alongside `Stage::poll`),
 /// exactly like every other pump in this crate.
 pub struct RetentionDriver<S> {
-    trunk: Arc<Trunk>,
     cursor: SegmentCursor,
     sink: S,
     cold_window: Duration,
@@ -285,6 +284,17 @@ pub struct RetentionDriver<S> {
     /// Set once the pin's [`ArchiveOverrun::Terminate`] has fired — see
     /// [`RetentionDriver::locate`] for what this changes.
     terminated: bool,
+    /// The highest `sequence_number` this driver's pin has actually drained
+    /// off the cursor so far (via [`RetentionDriver::drive`]) — `None` until
+    /// the first `Segment` item is polled. This, not
+    /// [`crate::Trunk::last_closed_segment`], is what [`RetentionDriver::locate`]
+    /// must compare a query against: a segment can be produced (and so
+    /// reported by `last_closed_segment`) well before this driver's `drive`
+    /// has ever run, while it is still resident and pin-protected in the
+    /// hot ring — using `last_closed_segment` there conflated "produced" with
+    /// "this driver has decided its fate", fabricating `Evicted` for a
+    /// segment that is, in fact, still `Hot`.
+    drained_up_to: Option<u32>,
 }
 
 impl<S: SegmentSink> RetentionDriver<S> {
@@ -298,13 +308,13 @@ impl<S: SegmentSink> RetentionDriver<S> {
                 on_overrun,
                 cold_window,
             } => Some(RetentionDriver {
-                trunk: Arc::clone(trunk),
                 cursor: trunk.pin_segments(on_overrun),
                 sink,
                 cold_window,
                 in_flight: None,
                 cold: VecDeque::new(),
                 terminated: false,
+                drained_up_to: None,
             }),
         }
     }
@@ -342,14 +352,30 @@ impl<S: SegmentSink> RetentionDriver<S> {
             }
             match self.cursor.poll() {
                 Some(SegmentCursorItem::Segment(entry)) => {
+                    // As of right here this driver has decided this
+                    // sequence number's fate (it will be offered to the
+                    // sink next loop iteration) — advance `drained_up_to`
+                    // now, not only once the hand-off outcome is known, so
+                    // `locate` never reports `Hot` for a segment this driver
+                    // has already moved past.
+                    self.drained_up_to = Some(match self.drained_up_to {
+                        Some(d) => d.max(entry.sequence_number),
+                        None => entry.sequence_number,
+                    });
                     self.in_flight = Some(entry);
                     // Loop back around to attempt hand-off immediately.
                 }
                 Some(SegmentCursorItem::Gap { .. }) | Some(SegmentCursorItem::Lagged { .. }) => {
                     // Nothing to hand off. These sequence numbers simply
-                    // never enter `cold`; `locate` reports them `Evicted`
-                    // via `Trunk::last_closed_segment` without this driver
-                    // needing to record which numbers they were.
+                    // never enter `cold`. This loop continues immediately
+                    // to the next `cursor.poll()` without returning, and the
+                    // segment log always retains at least one entry once
+                    // anything has ever been published (every capacity is
+                    // non-zero), so the very next poll this same call makes
+                    // yields the oldest still-resident `Segment` and folds
+                    // the gapped range below it into `drained_up_to` via the
+                    // arm above — `locate` needs no separate bookkeeping
+                    // for exactly which numbers were skipped.
                 }
                 Some(SegmentCursorItem::Terminated) => {
                     self.terminated = true;
@@ -384,17 +410,22 @@ impl<S: SegmentSink> RetentionDriver<S> {
     ///    [`SegmentLocation::Evicted`] — this driver's guarantee has lapsed,
     ///    so it cannot honestly claim `Hot` for anything it is no longer
     ///    protecting, whether or not the trunk happens to still hold it.
-    /// 3. Otherwise, if [`crate::Trunk::last_closed_segment`] reports a
-    ///    sequence number `>= sequence_number` (i.e. this segment has
-    ///    already been produced) ⇒ [`SegmentLocation::Evicted`] — it was
-    ///    produced, is not in the cold ledger, and this driver's pin is
-    ///    still alive, so the only way it could be missing from `cold` is
-    ///    that `ArchiveOverrun::Gap` fired for it before hand-off, or it
-    ///    was handed off and has since aged out of `cold_window`.
-    /// 4. Otherwise (not yet produced, pin still alive) ⇒
-    ///    [`SegmentLocation::Hot`] — reusing
-    ///    [`crate::Trunk::last_closed_segment`] rather than this driver
-    ///    tracking a second, parallel high-water mark of its own.
+    /// 3. Otherwise, if `sequence_number` is at or below
+    ///    `drained_up_to` (this driver's own pin-drain progress) ⇒
+    ///    [`SegmentLocation::Evicted`] — this driver has already decided
+    ///    this segment's fate (offered it to the sink, or watched it be
+    ///    gapped out from under the pin before it could), it is not in the
+    ///    cold ledger, so it was either gapped before hand-off or handed off
+    ///    and has since aged out of `cold_window`.
+    /// 4. Otherwise ⇒ [`SegmentLocation::Hot`] — this driver has not yet
+    ///    drained this far, whether because the segment has not been
+    ///    produced yet or because [`Self::drive`] simply has not been
+    ///    called since it was. **Not** [`crate::Trunk::last_closed_segment`]
+    ///    (a segment can be produced, and so reported there, long before
+    ///    this driver's `drive` has ever run, while still resident and
+    ///    pin-protected in the hot ring — using that field here previously
+    ///    fabricated `Evicted` for a segment this driver had not yet made
+    ///    any decision about at all).
     pub fn locate(&mut self, sequence_number: u32, now: Timestamp) -> SegmentLocation {
         self.expire_cold(now);
         if self
@@ -407,8 +438,8 @@ impl<S: SegmentSink> RetentionDriver<S> {
         if self.terminated {
             return SegmentLocation::Evicted;
         }
-        match self.trunk.last_closed_segment() {
-            Some(last) if sequence_number <= last => SegmentLocation::Evicted,
+        match self.drained_up_to {
+            Some(drained) if sequence_number <= drained => SegmentLocation::Evicted,
             _ => SegmentLocation::Hot,
         }
     }
@@ -432,7 +463,7 @@ impl<S: SegmentSink> RetentionDriver<S> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::trunk::TrunkConfig;
+    use crate::trunk::{NonMonotonicSequenceNumber, TrunkConfig};
     use std::num::NonZeroUsize;
     use std::sync::mpsc;
     use std::thread;
@@ -507,7 +538,7 @@ mod tests {
             .expect("Tiered must build a driver");
 
         let handed_off_at = Timestamp::from_nanos(1_000_000_000);
-        writer.publish_segment(segment_entry(1));
+        writer.publish_segment(segment_entry(1)).unwrap();
         driver.drive(handed_off_at);
 
         assert_eq!(driver.sink.offered, vec![1]);
@@ -553,7 +584,7 @@ mod tests {
         // Every one of these calls returns (does not block) even though the
         // sink attached via `driver` never accepts anything.
         for seq in 1..=8u32 {
-            writer.publish_segment(segment_entry(seq));
+            writer.publish_segment(segment_entry(seq)).unwrap();
         }
         assert_eq!(trunk.segment_len(), 4, "hot ring still obeys its own cap");
 
@@ -593,7 +624,7 @@ mod tests {
 
         // Flood: 10 segments, always-Busy sink.
         for seq in 1..=10u32 {
-            writer.publish_segment(segment_entry(seq));
+            writer.publish_segment(segment_entry(seq)).unwrap();
         }
         driver.drive(Timestamp::from_nanos(0));
 
@@ -650,9 +681,9 @@ mod tests {
 
         // Segment log capacity 2: publishing 3 before the driver ever
         // drives evicts seq 1 out from under the pin.
-        writer.publish_segment(segment_entry(1));
-        writer.publish_segment(segment_entry(2));
-        writer.publish_segment(segment_entry(3));
+        writer.publish_segment(segment_entry(1)).unwrap();
+        writer.publish_segment(segment_entry(2)).unwrap();
+        writer.publish_segment(segment_entry(3)).unwrap();
 
         driver.drive(Timestamp::from_nanos(0));
 
@@ -703,12 +734,12 @@ mod tests {
         // Capacity 1: publishing the first segment fills the log; a second
         // publish would need to evict it, which StallIngest refuses to do
         // until the driver consumes the first.
-        writer.publish_segment(segment_entry(1));
+        writer.publish_segment(segment_entry(1)).unwrap();
 
         let (done_tx, done_rx) = mpsc::channel();
         let blocked_writer = Arc::clone(&writer);
         let handle = thread::spawn(move || {
-            blocked_writer.publish_segment(segment_entry(2));
+            blocked_writer.publish_segment(segment_entry(2)).unwrap();
             done_tx.send(()).unwrap();
         });
 
@@ -789,8 +820,8 @@ mod tests {
         let mut driver = RetentionDriver::new(&trunk, retention, ScriptedSink::new(false))
             .expect("Tiered must build a driver");
 
-        writer.publish_segment(segment_entry(1));
-        writer.publish_segment(segment_entry(2)); // evicts seq 1's pin -> Terminate fires
+        writer.publish_segment(segment_entry(1)).unwrap();
+        writer.publish_segment(segment_entry(2)).unwrap(); // evicts seq 1's pin -> Terminate fires
         driver.drive(Timestamp::from_nanos(0));
         assert!(driver.terminated, "Terminate must have fired");
 
@@ -806,6 +837,143 @@ mod tests {
             SegmentLocation::Evicted,
             "once terminated, this driver cannot honestly claim Hot for \
              anything it is no longer protecting, produced or not"
+        );
+    }
+
+    // --- 6. `locate` before `drive`: a produced-but-not-yet-drained -------
+    // --- segment is Hot, not Evicted --------------------------------------
+
+    /// MUTATION VERIFIED: reverting `RetentionDriver::locate`'s fallback
+    /// branch from comparing against `self.drained_up_to` to comparing
+    /// against `self.trunk.last_closed_segment()` (the pre-fix behaviour)
+    /// makes the first assertion fail: `driver.locate(1, ..)`, called
+    /// *before* `drive` has ever run, returns `SegmentLocation::Evicted`
+    /// instead of `SegmentLocation::Hot` — `last_closed_segment()` reports
+    /// 1 the instant it is published, so the old fallback treated "produced
+    /// at all" as "gone", even though the segment is still sitting in the
+    /// hot ring, still pin-protected, and this driver has not looked at it
+    /// yet. Recompiled and re-run to confirm the failure, then reverted.
+    #[test]
+    fn locate_is_hot_before_drive_and_reflects_the_real_outcome_after() {
+        let trunk = Trunk::new(TrunkConfig::new(nz(10), nz(10), nz(4), nz(8), nz(8)));
+        let writer = trunk.segment_writer().unwrap();
+        let retention = Retention::Tiered {
+            on_overrun: ArchiveOverrun::Gap,
+            cold_window: Duration::from_secs(10),
+        };
+        let mut driver = RetentionDriver::new(&trunk, retention, ScriptedSink::new(false))
+            .expect("Tiered must build a driver");
+
+        writer.publish_segment(segment_entry(1)).unwrap();
+
+        // Produced, but this driver's `drive` has not run yet: still Hot.
+        assert_eq!(
+            driver.locate(1, Timestamp::from_nanos(0)),
+            SegmentLocation::Hot,
+            "produced but not yet drained by this driver: still Hot, not Evicted"
+        );
+
+        driver.drive(Timestamp::from_nanos(0));
+
+        // Now handed off to the sink: Cold.
+        assert_eq!(
+            driver.locate(1, Timestamp::from_nanos(0)),
+            SegmentLocation::Cold
+        );
+    }
+
+    // --- 7. A segment gapped before hand-off is Evicted even when no -----
+    // --- later segment is ever drained to advance the pin's progress -----
+    // --- some other way ---------------------------------------------------
+
+    /// Companion to the `archive_overrun_gap_reports_loss_and_locate_reflects_it`
+    /// test above, isolating `drained_up_to`'s update on the `Gap` arm
+    /// itself: with segment-log capacity 1, publishing seq 1 then seq 2
+    /// evicts seq 1 out from under the pin *before* any `drive` call, and
+    /// the very next `cursor.poll()` in the same `drive` call yields seq 2
+    /// as a real `Segment`, which is what folds the gapped seq 1 into
+    /// `drained_up_to` — see `RetentionDriver::drive`'s `Gap` arm doc.
+    #[test]
+    fn locate_reports_evicted_for_a_gapped_segment() {
+        let trunk = Trunk::new(TrunkConfig::new(nz(10), nz(10), nz(1), nz(8), nz(8)));
+        let writer = trunk.segment_writer().unwrap();
+        let retention = Retention::Tiered {
+            on_overrun: ArchiveOverrun::Gap,
+            cold_window: Duration::from_secs(10),
+        };
+        let mut driver = RetentionDriver::new(&trunk, retention, ScriptedSink::new(false))
+            .expect("Tiered must build a driver");
+
+        writer.publish_segment(segment_entry(1)).unwrap();
+        writer.publish_segment(segment_entry(2)).unwrap(); // evicts seq 1's pin -> Gap fires
+
+        driver.drive(Timestamp::from_nanos(0));
+
+        assert_eq!(driver.sink.taken, vec![2]);
+        assert_eq!(
+            driver.locate(1, Timestamp::from_nanos(0)),
+            SegmentLocation::Evicted,
+            "gapped before hand-off: genuinely gone, not Hot or Cold"
+        );
+    }
+
+    /// Adversarial-review finding: after a `SegmentWriter` re-issue, a
+    /// restarted segmenter that (incorrectly) renumbers from 1 again would
+    /// make every query keyed on `sequence_number` alone (`locate` included)
+    /// resolve ambiguously against the OLD round's ledger for that same
+    /// number. The root fix closes this at the source instead of patching
+    /// every downstream query: `publish_segment` now rejects a
+    /// `sequence_number` that is not strictly greater than the last one
+    /// published, so the dangerous reuse can never reach `locate`'s ledger
+    /// at all — a correctly re-issued writer resumes from
+    /// `SegmentWriter::next_sequence_number`, which `locate` then resolves
+    /// completely normally (produced, not yet drained: `Hot`).
+    ///
+    /// MUTATION VERIFIED: reverting `SegmentWriter::publish_segment`'s
+    /// monotonicity check (allowing `w2.publish_segment(segment_entry(1))`
+    /// to succeed again) makes this test's `unwrap_err()` panic instead —
+    /// confirming the rejection is what actually prevents the reuse, not
+    /// merely documented. Recompiled and re-run to confirm the failure,
+    /// then reverted.
+    #[test]
+    fn segment_writer_reissue_rejects_reused_numbers_and_resumes_from_next_sequence_number() {
+        let trunk = Trunk::new(TrunkConfig::new(nz(10), nz(10), nz(8), nz(8), nz(8)));
+        let retention = Retention::Tiered {
+            on_overrun: ArchiveOverrun::Gap,
+            cold_window: Duration::from_secs(10),
+        };
+        let mut driver = RetentionDriver::new(&trunk, retention, ScriptedSink::new(false)).unwrap();
+        {
+            let w = trunk.segment_writer().unwrap();
+            for s in 1..=5u32 {
+                w.publish_segment(segment_entry(s)).unwrap();
+            }
+        } // dropped: re-issuable.
+        driver.drive(Timestamp::from_nanos(0));
+
+        let w2 = trunk.segment_writer().unwrap();
+
+        // A restarted segmenter renumbering from 1 again is rejected
+        // outright, not silently accepted with a stale/ambiguous ledger.
+        let err = w2.publish_segment(segment_entry(1)).unwrap_err();
+        assert_eq!(
+            err,
+            NonMonotonicSequenceNumber {
+                attempted: 1,
+                last_published: Some(5),
+            }
+        );
+
+        // The correct resumption point, and what a correctly re-issued
+        // writer must use instead:
+        assert_eq!(w2.next_sequence_number(), 6);
+        w2.publish_segment(segment_entry(6)).unwrap();
+
+        let loc = driver.locate(6, Timestamp::from_nanos(0));
+        assert_eq!(
+            loc,
+            SegmentLocation::Hot,
+            "produced but not yet drained by this driver: still Hot, got {loc:?}"
         );
     }
 }

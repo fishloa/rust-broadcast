@@ -828,7 +828,16 @@ impl<S: IngestSession> IngestDriver<S> {
                 self.drain();
                 self.check_handshake_deadline(now);
             }
-            Err(e) => self.health = HealthState::Failed(e),
+            Err(e) => {
+                // Drain first: `feed` can have queued `SessionEvent`s (a
+                // sample, a segment boundary) before the error that caused
+                // it, and those must still reach their `Trunk` — dispatching
+                // them is what `drain` does, and it is idempotent to call
+                // with nothing left ready, so this is never wrong to do
+                // even when `feed` failed with nothing queued at all.
+                self.drain();
+                self.health = HealthState::Failed(e);
+            }
         }
     }
 
@@ -861,7 +870,14 @@ impl<S: IngestSession> IngestDriver<S> {
                 self.drain();
                 self.health = HealthState::Ended;
             }
-            Err(e) => self.health = HealthState::Failed(e),
+            Err(e) => {
+                // Same reasoning as `Self::feed`'s `Err` arm: `finish` can
+                // have queued events before the error that failed it, and
+                // those must still be dispatched, not silently dropped on
+                // the floor because this session is about to go terminal.
+                self.drain();
+                self.health = HealthState::Failed(e);
+            }
         }
     }
 
@@ -1518,6 +1534,10 @@ mod tests {
         Events(Vec<SessionEvent>),
         /// Fail outright with this error.
         Err(FakeError),
+        /// Queue these events for `poll()` to hand back, THEN fail this same
+        /// `feed()` call — modelling a session that queued real progress
+        /// internally before hitting whatever made it return `Err` overall.
+        EventsThenErr(Vec<SessionEvent>, FakeError),
     }
 
     /// A fully scripted [`IngestSession`]: each `feed()` call consumes the
@@ -1533,6 +1553,10 @@ mod tests {
         script: VecDeque<FeedOutcome>,
         pending: VecDeque<SessionEvent>,
         finish_outcome: Result<(), FakeError>,
+        /// Queued into `pending` by `finish()` itself, right before it
+        /// returns `finish_outcome` — models a session that made real
+        /// progress as part of the same call that ultimately failed it.
+        finish_events: Vec<SessionEvent>,
     }
 
     impl ScriptedSession {
@@ -1541,10 +1565,18 @@ mod tests {
                 script: script.into(),
                 pending: VecDeque::from(vec![SessionEvent::Established]),
                 finish_outcome: Ok(()),
+                finish_events: Vec::new(),
             }
         }
 
         fn failing_finish(mut self, err: FakeError) -> Self {
+            self.finish_outcome = Err(err);
+            self
+        }
+
+        /// Queue `events` at `finish()` time, before it fails with `err`.
+        fn failing_finish_with_events(mut self, events: Vec<SessionEvent>, err: FakeError) -> Self {
+            self.finish_events = events;
             self.finish_outcome = Err(err);
             self
         }
@@ -1562,6 +1594,10 @@ mod tests {
                     Ok(())
                 }
                 Some(FeedOutcome::Err(e)) => Err(e),
+                Some(FeedOutcome::EventsThenErr(evs, e)) => {
+                    self.pending.extend(evs);
+                    Err(e)
+                }
                 None => Ok(()),
             }
         }
@@ -1571,6 +1607,7 @@ mod tests {
         }
 
         fn finish(&mut self) -> Result<(), FakeError> {
+            self.pending.extend(std::mem::take(&mut self.finish_events));
             self.finish_outcome.clone()
         }
 
@@ -1964,6 +2001,67 @@ mod tests {
             HealthState::Failed(FakeError(reason)) => assert_eq!(*reason, "truncated tail"),
             other => panic!("expected Failed(\"truncated tail\"), got {other:?}"),
         }
+    }
+
+    /// MUTATION VERIFIED: reverting `IngestDriver::feed`'s `Err` arm from
+    /// `{ self.drain(); self.health = HealthState::Failed(e); }` back to the
+    /// pre-fix `self.health = HealthState::Failed(e)` alone makes this
+    /// test's final assertion fail: `driver.trunk(ProgramId(1))` is `None`
+    /// instead of `Some` — the `NewProgram` event that this same `feed`
+    /// call queued internally, immediately before the error that failed it,
+    /// is silently dropped instead of dispatched. Recompiled and re-run to
+    /// confirm the failure, then reverted.
+    #[test]
+    fn feed_drains_events_queued_before_the_error_that_failed_it() {
+        let session = ScriptedSession::new(vec![FeedOutcome::EventsThenErr(
+            vec![SessionEvent::NewProgram {
+                program: ProgramId(1),
+                tracks: vec![opaque_track(1)],
+            }],
+            FakeError("bad continuity"),
+        )]);
+        let mut driver = IngestDriver::new(session, trunk_config(), handshake(), max_programs());
+
+        driver.feed(b"garbage", Timestamp::ZERO);
+
+        match driver.health() {
+            HealthState::Failed(FakeError(reason)) => assert_eq!(*reason, "bad continuity"),
+            other => panic!("expected Failed(\"bad continuity\"), got {other:?}"),
+        }
+        assert!(
+            driver.trunk(ProgramId(1)).is_some(),
+            "the NewProgram event queued before the error must still have \
+             been dispatched, not dropped on the floor"
+        );
+    }
+
+    /// Companion to the above for `IngestDriver::finish`'s `Err` arm — same
+    /// mutation transcript: reverting `finish`'s `Err` arm to skip `drain()`
+    /// makes the final assertion fail the same way (`trunk(..)` stays
+    /// `None`). Recompiled and re-run to confirm the failure, then
+    /// reverted.
+    #[test]
+    fn finish_drains_events_queued_before_the_error_that_failed_it() {
+        let session = ScriptedSession::new(vec![]).failing_finish_with_events(
+            vec![SessionEvent::NewProgram {
+                program: ProgramId(1),
+                tracks: vec![opaque_track(1)],
+            }],
+            FakeError("truncated tail"),
+        );
+        let mut driver = IngestDriver::new(session, trunk_config(), handshake(), max_programs());
+
+        driver.finish();
+
+        match driver.health() {
+            HealthState::Failed(FakeError(reason)) => assert_eq!(*reason, "truncated tail"),
+            other => panic!("expected Failed(\"truncated tail\"), got {other:?}"),
+        }
+        assert!(
+            driver.trunk(ProgramId(1)).is_some(),
+            "the NewProgram event queued by finish() before its error must \
+             still have been dispatched, not dropped on the floor"
+        );
     }
 
     #[test]

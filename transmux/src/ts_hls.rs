@@ -722,6 +722,30 @@ impl StreamingTsHlsSegmenter {
         })
     }
 
+    /// Build a streaming TS-HLS segmenter whose segment numbering starts
+    /// from `next_sequence` (0-based, matching [`TsSegment::sequence`]'s own
+    /// convention) rather than [`Self::new`]'s implicit `0` — the classic-TS
+    /// analogue of [`crate::ll_hls::LlHlsSegmenter::with_part_target_at`]: a
+    /// segmenter rebuilt after a track-set change, or built against a
+    /// `Trunk` that already holds segments from an earlier `SegmentWriter`,
+    /// must resume numbering from there rather than renumbering from 0
+    /// again — a restarted segmenter that numbers from 0 is exactly what a
+    /// `Trunk`'s monotonic-`sequence_number` guard rejects every publish
+    /// for.
+    ///
+    /// The usual constructor, [`Self::new`], starts at `0`.
+    #[doc(hidden)]
+    pub fn with_start_sequence(
+        tracks: Vec<TrackSpec>,
+        target_secs: u32,
+        window: usize,
+        next_sequence: u64,
+    ) -> Result<Self> {
+        let mut seg = Self::new(tracks, target_secs, window)?;
+        seg.total_segments = next_sequence;
+        Ok(seg)
+    }
+
     /// Push one coded sample for `track_id`, in decode order.
     ///
     /// Mirrors [`TsHlsPackager`]'s cut rule: when the anchor track reaches a
@@ -1389,6 +1413,41 @@ mod tests {
             Stage::poll(&mut seg).is_some(),
             "the trailing segment cut by a bare finish() call must still be retrievable via \
              Stage::poll — it must not have been silently handed back inline and dropped"
+        );
+    }
+
+    /// [`StreamingTsHlsSegmenter::with_start_sequence`] must number the
+    /// first segment it cuts from the seed, not from `0` — the seam
+    /// `multimux::source::segment` uses to resume TS numbering across an
+    /// `add_track` failure/rebuild instead of renumbering from `0` again
+    /// (which a `Trunk`'s monotonic `sequence_number` guard would then
+    /// reject forever). `Self::new` (seed implicitly `0`) is exercised by
+    /// every other test in this module; this is the seeded constructor's
+    /// own coverage.
+    #[test]
+    fn with_start_sequence_numbers_the_first_cut_segment_from_the_seed() {
+        const AUDIO_ID: u32 = 1;
+        const TIMESCALE: u32 = 1000;
+        const SEED: u64 = 41;
+
+        let mut seg = StreamingTsHlsSegmenter::with_start_sequence(
+            vec![aac_track(AUDIO_ID, TIMESCALE)],
+            1,
+            usize::MAX,
+            SEED,
+        )
+        .expect("construct");
+
+        // Two 1000-tick (1s) samples cross the 1s target on the second push.
+        seg.push(AUDIO_ID, audio_sample(1000)).expect("push 1");
+        seg.push(AUDIO_ID, audio_sample(1000)).expect("push 2");
+        seg.finish().expect("finish");
+
+        let cut: Vec<TsSegment> = seg.take_ready().into_iter().collect();
+        assert_eq!(
+            cut.iter().map(|s| s.sequence).collect::<Vec<_>>(),
+            vec![SEED, SEED + 1],
+            "segments cut by a seeded segmenter must number from the seed, not from 0"
         );
     }
 }

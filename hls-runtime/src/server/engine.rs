@@ -943,13 +943,15 @@ mod tests {
         duration_secs: f64,
         discontinuous: bool,
     ) {
-        writer.publish_segment(SegmentEntry::new(
-            Bytes::from(vec![seq as u8; 8]),
-            seq,
-            Duration::from_secs_f64(duration_secs),
-            Timestamp::from_nanos(0),
-            SegmentMeta { discontinuous },
-        ));
+        writer
+            .publish_segment(SegmentEntry::new(
+                Bytes::from(vec![seq as u8; 8]),
+                seq,
+                Duration::from_secs_f64(duration_secs),
+                Timestamp::from_nanos(0),
+                SegmentMeta { discontinuous },
+            ))
+            .unwrap();
     }
 
     fn part(writer: &media_plane::trunk::SegmentWriter, seg_no: u32, idx: u32, independent: bool) {
@@ -2062,24 +2064,28 @@ mod tests {
     #[test]
     fn closed_segments_snapshot_matches_published_segments_ascending() {
         let (_trunk, origin, writer) = make_origin();
-        writer.publish_segment(SegmentEntry::new(
-            Bytes::from(vec![1u8; 8]),
-            1,
-            Duration::from_secs_f64(4.0),
-            Timestamp::from_nanos(0),
-            SegmentMeta {
-                discontinuous: false,
-            },
-        ));
-        writer.publish_segment(SegmentEntry::new(
-            Bytes::from(vec![2u8; 8]),
-            2,
-            Duration::from_secs_f64(4.0),
-            Timestamp::from_nanos(4_000_000_000),
-            SegmentMeta {
-                discontinuous: true,
-            },
-        ));
+        writer
+            .publish_segment(SegmentEntry::new(
+                Bytes::from(vec![1u8; 8]),
+                1,
+                Duration::from_secs_f64(4.0),
+                Timestamp::from_nanos(0),
+                SegmentMeta {
+                    discontinuous: false,
+                },
+            ))
+            .unwrap();
+        writer
+            .publish_segment(SegmentEntry::new(
+                Bytes::from(vec![2u8; 8]),
+                2,
+                Duration::from_secs_f64(4.0),
+                Timestamp::from_nanos(4_000_000_000),
+                SegmentMeta {
+                    discontinuous: true,
+                },
+            ))
+            .unwrap();
 
         let snapshot = origin.closed_segments();
         assert_eq!(snapshot.len(), 2);

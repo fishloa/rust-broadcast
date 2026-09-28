@@ -365,13 +365,17 @@ mod tests {
 
         // Segments 1..=3: published, then drained to the archive.
         for (seq, byte) in [(1u32, 0x11u8), (2, 0x22), (3, 0x33)] {
-            route.add_segment(SPTS_PROGRAM_ID, seg_bytes(seq, byte));
+            route
+                .add_segment(SPTS_PROGRAM_ID, seg_bytes(seq, byte))
+                .expect("add_segment");
         }
         route.drain_dvr();
 
         // Segment 4: published, but NEVER drained -- lives only in the
         // live Trunk/HlsOrigin window.
-        route.add_segment(SPTS_PROGRAM_ID, seg_bytes(4, 0x44));
+        route
+            .add_segment(SPTS_PROGRAM_ID, seg_bytes(4, 0x44))
+            .expect("add_segment");
 
         let resp =
             catchup_playlist(State(route.clone()), Query(CatchupPlaylistQuery::default())).await;
@@ -426,7 +430,9 @@ mod tests {
         route.publish_new_program(SPTS_PROGRAM_ID);
         route.set_init(SPTS_PROGRAM_ID, vec![0xAA; 4]);
         for (seq, byte) in [(1u32, 0x11u8), (2, 0x22), (3, 0x33)] {
-            route.add_segment(SPTS_PROGRAM_ID, seg_bytes(seq, byte));
+            route
+                .add_segment(SPTS_PROGRAM_ID, seg_bytes(seq, byte))
+                .expect("add_segment");
         }
         route.drain_dvr();
 
@@ -459,14 +465,18 @@ mod tests {
         route.publish_new_program(SPTS_PROGRAM_ID);
         route.set_init(SPTS_PROGRAM_ID, vec![0xAA; 4]);
 
-        route.add_segment(SPTS_PROGRAM_ID, seg_bytes(1, 0x11));
+        route
+            .add_segment(SPTS_PROGRAM_ID, seg_bytes(1, 0x11))
+            .expect("add_segment");
         route.drain_dvr(); // opens + writes period 0 with init A
 
         // Changing the init rolls the period (crate::dvr::DvrRecorder's
         // mid-stream init-change rollover) — a real, reliable way to force
         // period 1 to open without waiting out `period_duration_secs`.
         route.set_init(SPTS_PROGRAM_ID, vec![0xBB; 4]);
-        route.add_segment(SPTS_PROGRAM_ID, seg_bytes(2, 0x22));
+        route
+            .add_segment(SPTS_PROGRAM_ID, seg_bytes(2, 0x22))
+            .expect("add_segment");
         route.drain_dvr();
 
         let resp = vod_playlist(State(route.clone()), Path("p0.m3u8".to_string())).await;

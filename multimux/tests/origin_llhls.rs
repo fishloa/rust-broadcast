@@ -145,7 +145,7 @@ fn feed_via_segmenter(
             store.add_part(program, part);
         }
         for segment in seg.take_ready_segments() {
-            store.add_segment(program, segment);
+            store.add_segment(program, segment).expect("add_segment");
         }
     }
 
@@ -154,7 +154,7 @@ fn feed_via_segmenter(
         store.add_part(program, part);
     }
     for segment in seg.take_ready_segments() {
-        store.add_segment(program, segment);
+        store.add_segment(program, segment).expect("add_segment");
     }
 }
 

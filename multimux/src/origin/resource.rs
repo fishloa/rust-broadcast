@@ -436,7 +436,9 @@ mod tests {
         let route = Arc::new(RouteHandle::new(4.0, 500, 4));
         route.publish_new_program(crate::route::SPTS_PROGRAM_ID);
         route.set_init(crate::route::SPTS_PROGRAM_ID, vec![0xAA; 8]);
-        route.add_segment(crate::route::SPTS_PROGRAM_ID, seg(1));
+        route
+            .add_segment(crate::route::SPTS_PROGRAM_ID, seg(1))
+            .expect("add_segment");
         route.add_part(crate::route::SPTS_PROGRAM_ID, part(2, 0));
         route.add_part(crate::route::SPTS_PROGRAM_ID, part(2, 1));
         route
@@ -506,7 +508,9 @@ mod tests {
         let route_for_task = route.clone();
         tokio::spawn(async move {
             tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-            route_for_task.add_segment(crate::route::SPTS_PROGRAM_ID, seg(2)); // closes segment 2
+            route_for_task
+                .add_segment(crate::route::SPTS_PROGRAM_ID, seg(2))
+                .expect("add_segment"); // closes segment 2
         });
         let started = std::time::Instant::now();
         let resp = dynamic_file(State(route), Path("part-1-2.9.m4s".to_string())).await;
@@ -528,7 +532,9 @@ mod tests {
         // property at the `ServedEgress` layer; this test proves the axum
         // adapter preserves it end to end).
         let route = make_route();
-        route.add_segment(crate::route::SPTS_PROGRAM_ID, seg(2)); // close segment 2
+        route
+            .add_segment(crate::route::SPTS_PROGRAM_ID, seg(2))
+            .expect("add_segment"); // close segment 2
         let resp = dynamic_file(State(route), Path("part-1-2.1.m4s".to_string())).await;
         assert_eq!(
             resp.status(),
@@ -576,7 +582,9 @@ mod tests {
             tokio::time::sleep(std::time::Duration::from_millis(50)).await;
             route_for_task.add_part(crate::route::SPTS_PROGRAM_ID, part(2, 1));
             tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-            route_for_task.add_segment(crate::route::SPTS_PROGRAM_ID, seg(2));
+            route_for_task
+                .add_segment(crate::route::SPTS_PROGRAM_ID, seg(2))
+                .expect("add_segment");
         });
 
         let resp = dynamic_file(State(route), Path("seg-1-2.m4s".to_string())).await;
@@ -628,7 +636,9 @@ mod tests {
         );
         // Only one part exists so far; the response completes once segment 3
         // eventually closes. Close it now so the body finishes.
-        route.add_segment(crate::route::SPTS_PROGRAM_ID, seg(3));
+        route
+            .add_segment(crate::route::SPTS_PROGRAM_ID, seg(3))
+            .expect("add_segment");
         assert_eq!(body_bytes(resp).await, vec![0x77; 4]);
     }
 

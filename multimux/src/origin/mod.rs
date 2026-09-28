@@ -1756,15 +1756,17 @@ mod tests {
                 },
             )],
         );
-        store.add_segment(
-            crate::route::SPTS_PROGRAM_ID,
-            transmux::ll_hls::SegmentInfo {
-                bytes: vec![0x33; 16],
-                duration: 4.0,
-                segment_seq: 1,
-                part_count: 1,
-            },
-        );
+        store
+            .add_segment(
+                crate::route::SPTS_PROGRAM_ID,
+                transmux::ll_hls::SegmentInfo {
+                    bytes: vec![0x33; 16],
+                    duration: 4.0,
+                    segment_seq: 1,
+                    part_count: 1,
+                },
+            )
+            .expect("add_segment");
 
         let mut streams = HashMap::new();
         streams.insert(
@@ -1901,15 +1903,17 @@ mod tests {
                 },
             )],
         );
-        store.add_segment(
-            crate::route::SPTS_PROGRAM_ID,
-            transmux::ll_hls::SegmentInfo {
-                bytes: vec![0x33; 16],
-                duration: 4.0,
-                segment_seq: 1,
-                part_count: 2,
-            },
-        );
+        store
+            .add_segment(
+                crate::route::SPTS_PROGRAM_ID,
+                transmux::ll_hls::SegmentInfo {
+                    bytes: vec![0x33; 16],
+                    duration: 4.0,
+                    segment_seq: 1,
+                    part_count: 2,
+                },
+            )
+            .expect("add_segment");
         // Live parts of the in-progress segment (seq 2) -- not yet closed.
         store.add_part(
             crate::route::SPTS_PROGRAM_ID,
@@ -2013,15 +2017,17 @@ mod tests {
         let store_for_close = store.clone();
         let closer = tokio::spawn(async move {
             tokio::time::sleep(Duration::from_millis(50)).await;
-            store_for_close.add_segment(
-                crate::route::SPTS_PROGRAM_ID,
-                transmux::ll_hls::SegmentInfo {
-                    bytes: vec![0x99; 8], // distinct from the concatenated parts
-                    duration: 1.0,
-                    segment_seq: 2,
-                    part_count: 2,
-                },
-            );
+            store_for_close
+                .add_segment(
+                    crate::route::SPTS_PROGRAM_ID,
+                    transmux::ll_hls::SegmentInfo {
+                        bytes: vec![0x99; 8], // distinct from the concatenated parts
+                        duration: 1.0,
+                        segment_seq: 2,
+                        part_count: 2,
+                    },
+                )
+                .expect("add_segment");
         });
         let resp = app.oneshot(get("/cam1/seg-1-2.m4s")).await.unwrap();
         assert_eq!(
@@ -2058,15 +2064,17 @@ mod tests {
                 },
             )],
         );
-        store.add_segment(
-            crate::route::SPTS_PROGRAM_ID,
-            transmux::ll_hls::SegmentInfo {
-                bytes: vec![0x33; 16],
-                duration: 4.0,
-                segment_seq: 1,
-                part_count: 1,
-            },
-        );
+        store
+            .add_segment(
+                crate::route::SPTS_PROGRAM_ID,
+                transmux::ll_hls::SegmentInfo {
+                    bytes: vec![0x33; 16],
+                    duration: 4.0,
+                    segment_seq: 1,
+                    part_count: 1,
+                },
+            )
+            .expect("add_segment");
         let mut streams = HashMap::new();
         streams.insert(
             "cam1".to_string(),
@@ -2187,15 +2195,17 @@ mod tests {
         let store = Arc::new(RouteHandle::new(4.0, 500, 4));
         store.publish_new_program(crate::route::SPTS_PROGRAM_ID);
         store.set_init(crate::route::SPTS_PROGRAM_ID, vec![0xAA; 4]);
-        store.add_segment(
-            crate::route::SPTS_PROGRAM_ID,
-            transmux::ll_hls::SegmentInfo {
-                bytes: vec![0x20; 8],
-                duration: 4.0,
-                segment_seq: 1,
-                part_count: 1,
-            },
-        );
+        store
+            .add_segment(
+                crate::route::SPTS_PROGRAM_ID,
+                transmux::ll_hls::SegmentInfo {
+                    bytes: vec![0x20; 8],
+                    duration: 4.0,
+                    segment_seq: 1,
+                    part_count: 1,
+                },
+            )
+            .expect("add_segment");
         let mut streams = HashMap::new();
         streams.insert(
             "cam1".to_string(),

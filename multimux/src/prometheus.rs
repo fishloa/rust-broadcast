@@ -32,6 +32,12 @@
 //!   port; see that issue and this crate's CHANGELOG for the history: they
 //!   silently read zero for a while, which is worse than being entirely
 //!   absent, before being deleted outright pending this fix).
+//! - `multimux_dvr_pin_rearmed_total` (`DVR_PIN_REARMED_TOTAL`) — counter,
+//!   labels `route`: bumped by `crate::dvr::DvrRecorder::handle_terminated`
+//!   each time an `ArchiveOverrun::StallIngest` pin is force-expired by the
+//!   non-blocking safety valve and the recorder re-arms rather than
+//!   stopping for good (only a `Terminate`-policy pin's own intended stop
+//!   does that).
 //!
 //! Cardinality is bounded on purpose: `route` is either a configured stream
 //! name or the fixed token `"unknown"`, and `path` is one of a small fixed
@@ -78,6 +84,17 @@ pub(crate) const PARTS_PRODUCED_TOTAL: &str = "multimux_parts_produced_total";
 /// `crate::source::segment::drive_program_segmenters`. Labels: `route`
 /// (issue #809).
 pub(crate) const SEGMENTS_PRODUCED_TOTAL: &str = "multimux_segments_produced_total";
+
+/// Counter: total times a route's `DvrRecorder` re-armed its pinning
+/// cursor after an `ArchiveOverrun::StallIngest` pin was force-expired by
+/// the non-blocking safety valve (`ProgramSegmenter::drain_pending`'s
+/// `expire_stalled_pins` call) — never a `Terminate`-policy pin's own
+/// intended stop, which does not re-arm. Labels: `route`. Each increment
+/// corresponds to a recording gap (see `DvrRecorder::handle_terminated`)
+/// whose size in segments is logged alongside it, not carried on this
+/// counter itself (would need an unbounded-cardinality label or a second
+/// counter this crate has no other use for).
+pub(crate) const DVR_PIN_REARMED_TOTAL: &str = "multimux_dvr_pin_rearmed_total";
 
 static HANDLE: OnceLock<PrometheusHandle> = OnceLock::new();
 

@@ -7,6 +7,98 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `SegmentWriter::try_publish_segment` — non-blocking alternative to
+  `SegmentWriter::publish_segment` for the one case that can stall
+  (`ArchiveOverrun::StallIngest`); returns `Err` instead of blocking or
+  losing the entry (issue #1082).
+- `SegmentWriter::next_sequence_number` — the `sequence_number` a fresh or
+  re-issued `SegmentWriter` must resume numbering from (issue #1082).
+- `SegmentWriter::expire_stalled_pins` — non-blocking: forces every
+  `ArchiveOverrun::StallIngest` pin currently blocking eviction to give up
+  (terminated, the same signal the bounded blocking wait already uses),
+  for a caller with its own non-blocking retry queue that tracks its own
+  elapsed wait rather than making one blocking call (issue #1082).
+- `SampleCursorItem::Discontinuity` — reported once, positioned between a
+  dropped `TrunkWriter`'s last sample and its replacement's first, when the
+  write handle is re-issued after a source reconnect. Never reported for a
+  handover a given cursor could not have observed any continuity across
+  (one recorded at or before that cursor's own subscribe position), and
+  gated per-class so neither `Timed` nor `Sparse` data from the new writer
+  can overtake it (`SampleCursorItem` is `#[non_exhaustive]`, so this is
+  additive) (issue #1082).
+- `SampleCursorItem::HandoversLagged { skipped }` — a cursor that falls more
+  writer hand-offs behind than the (small, fixed) backlog retains now
+  reports it distinctly instead of silently catching up and losing the
+  report entirely (issue #1082).
+
+### Changed (breaking)
+- `Trunk::writer`/`Trunk::segment_writer` are now **re-issuable**: the
+  returned `TrunkWriter`/`SegmentWriter` releases its slot on `Drop`, so a
+  later call succeeds again instead of permanently returning `None` after
+  the first — previously a dropped writer orphaned every already-subscribed
+  `SampleCursor`/`SegmentCursor` forever (nothing would ever publish into
+  their rings again) (issue #1082).
+- `SegmentWriter::publish_segment`/`SegmentWriter::try_publish_segment` now
+  return `Result` and reject a `sequence_number` that is not strictly
+  greater than the last one this `Trunk` accepted
+  (`NonMonotonicSequenceNumber`/`TryPublishSegmentError`) — segment numbers
+  are monotonic across every `SegmentWriter` a `Trunk` ever issues,
+  including after a re-issue: an HLS media sequence number must never go
+  backwards, and a restarted segmenter renumbering from 1 again previously
+  made every query keyed on `sequence_number` alone
+  (`Trunk::part_bytes`/`Trunk::parts_in_segment`/`Trunk::events_in_segment`/
+  `RetentionDriver::locate`) resolve ambiguously. Use
+  `SegmentWriter::next_sequence_number` to pick a valid number after a
+  re-issue (issue #1082).
+
+### Fixed
+- `RetentionDriver::locate` no longer reports a produced-but-not-yet-drained
+  segment as `Evicted` — it compared against `Trunk::last_closed_segment`
+  (which reports anything ever produced) instead of this driver's own
+  pin-drain progress, so a segment still resident and pin-protected in the
+  hot ring, simply not yet looked at by `drive`, was reported gone (issue #1056).
+- Replaced 25+ `.expect("... poisoned")` call sites in `trunk.rs` (including
+  one in a `Drop` impl) with a poison-recovering lock helper: a panic in one
+  consumer while it held the trunk's state lock no longer poisons every
+  later writer/reader call on the same `Trunk` (issue #1082).
+- `SegmentWriter::publish_segment`'s `ArchiveOverrun::StallIngest` block is
+  now bounded instead of unconditional — previously an unconditional
+  `Condvar::wait` could deadlock a caller whose own thread also drives the
+  `RetentionDriver` that would release the pin. If the bound elapses, the
+  still-blocking pin is now **terminated** (`ArchiveOverrun::Terminate`'s
+  own signal, reused) rather than silently falling back to ordinary `Gap`
+  loss, which would have hidden that a pinned DVR consumer's stronger
+  guarantee was broken (issue #1082).
+- `SegmentWriter::try_publish_segment` no longer marks an
+  `ArchiveOverrun::Terminate` pin terminated for an eviction that, because
+  a *different* pin (`ArchiveOverrun::StallIngest`) forced the call to
+  return `Err`, never actually happened this call (issue #1082).
+- `EventLog`'s segment-boundary lookups (`try_resolve`'s `Segment` arm and
+  `Trunk::events_in_segment`'s start boundary) now resolve a reused
+  `segment_number` against its most recently recorded boundary instead of a
+  stale, earlier one with the same number; `events_in_segment`'s end
+  boundary is now the first start positionally after the chosen one, not a
+  number lookup that could resolve to a stale, chronologically-earlier
+  entry and invert the range (issue #1082).
+- `Trunk::part_bytes`/`Trunk::parts_in_segment` now resolve a reused
+  `segment_number` to its current, most-recently-published parts instead of
+  a stale earlier round mixed in or returned outright (issue #1082).
+- `IngestDriver::feed`/`IngestDriver::finish` now drain queued
+  `SessionEvent`s before entering `HealthState::Failed` on error, instead of
+  dropping events the session had already queued as part of the same call
+  that ultimately failed it (issue #1082).
+- `Trunk::parts_in_segment` no longer isolates "the current run" by scanning
+  from the back of the part ring and stopping at the first non-matching
+  entry. That approach assumed a segment's parts are always one contiguous
+  run at the tail, which a live LL-HLS producer can legitimately violate —
+  it may publish part `(N+1, 0)` while segment `N` is still open, landing
+  it after `N`'s own parts in the ring. The from-the-back scan then hit
+  `(N+1, 0)` first and reported *zero* parts for the still-open segment
+  `N`, silently dropping its `#EXT-X-PART` tags from a served playlist.
+  Now a plain filter over the whole ring, matched by `segment_number`
+  alone.
+
 ## [0.4.1] - 2026-08-16
 
 ### Added

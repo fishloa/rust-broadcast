@@ -195,8 +195,12 @@ mod tests {
     fn make_route() -> Arc<RouteHandle> {
         let route = Arc::new(RouteHandle::new(4.0, 500, 4).with_container(Container::MpegTs));
         route.publish_new_program(crate::route::SPTS_PROGRAM_ID);
-        route.add_segment(crate::route::SPTS_PROGRAM_ID, seg(1, 0x21));
-        route.add_segment(crate::route::SPTS_PROGRAM_ID, seg(2, 0x22));
+        route
+            .add_segment(crate::route::SPTS_PROGRAM_ID, seg(1, 0x21))
+            .expect("add_segment");
+        route
+            .add_segment(crate::route::SPTS_PROGRAM_ID, seg(2, 0x22))
+            .expect("add_segment");
         route
     }
 

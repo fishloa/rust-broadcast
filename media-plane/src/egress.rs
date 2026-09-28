@@ -663,7 +663,7 @@ mod tests {
 
         // Publish segment 1 and drain it into the fake's cache (the write
         // side a real driver provides).
-        writer.publish_segment(segment_entry(1));
+        writer.publish_segment(segment_entry(1)).unwrap();
         while let Some(item) = cursor.poll() {
             egress.absorb(item);
         }
@@ -897,9 +897,9 @@ mod tests {
         let writer_handle = trunk.segment_writer().unwrap();
         let mut cursor = trunk.pin_segments(ArchiveOverrun::Gap);
 
-        writer_handle.publish_segment(segment_entry(1));
-        writer_handle.publish_segment(segment_entry(2));
-        writer_handle.publish_segment(segment_entry(3)); // evicts seq 1's pin
+        writer_handle.publish_segment(segment_entry(1)).unwrap();
+        writer_handle.publish_segment(segment_entry(2)).unwrap();
+        writer_handle.publish_segment(segment_entry(3)).unwrap(); // evicts seq 1's pin
 
         let mut writer = DvrWriter {
             written: Vec::new(),

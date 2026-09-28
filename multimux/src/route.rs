@@ -349,6 +349,21 @@ impl DashState {
     }
 }
 
+/// Why [`RouteHandle::add_segment`] could not publish a segment.
+#[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
+pub enum AddSegmentError {
+    /// No program with this id has been published on the route yet.
+    #[error("program not published yet")]
+    ProgramNotPublished,
+    /// The program's Trunk segment writer is held by a running ProgramSegmenter.
+    #[error("segment writer unavailable (held by a running ProgramSegmenter)")]
+    WriterUnavailable,
+    /// The Trunk refused the segment (would stall a DVR pin, or non-monotonic number).
+    #[error(transparent)]
+    Publish(#[from] media_plane::trunk::TryPublishSegmentError),
+}
+
 /// One program's complete serving state: its `Trunk`, the sans-IO
 /// [`HlsOrigin`] built over it, and the [`DashState`] window drained from
 /// it — grouped in one struct (rather than three parallel
@@ -523,14 +538,27 @@ impl ProgramServing {
         }
     }
 
-    fn add_segment(&self, info: transmux::ll_hls::SegmentInfo) {
+    /// Non-blocking: uses [`SegmentWriter::try_publish_segment`], never the
+    /// blocking [`SegmentWriter::publish_segment`] (issue #1082's T7
+    /// finding — this can run on a shared tokio worker thread same as
+    /// `crate::source::segment::ProgramSegmenter`, which must never park
+    /// one on a stalled `ArchiveOverrun::StallIngest` DVR pin). Unlike that
+    /// type, this path has no retry queue of its own: a segment that
+    /// cannot go through right now (or whose `sequence_number` turns out
+    /// non-monotonic) is returned as an error, not queued — this is the
+    /// test/fallback direct-write path for a `Trunk` with no real
+    /// `ProgramSegmenter` running on it (see this struct's own doc), not
+    /// the production ingest pipeline, so losing one segment here is far
+    /// preferable to adding queueing machinery a real caller never
+    /// exercises.
+    fn add_segment(&self, info: transmux::ll_hls::SegmentInfo) -> Result<(), AddSegmentError> {
         let duration = Duration::from_secs_f64(info.duration);
         let start_ns = self.next_timeline_ns.fetch_add(
             u64::try_from(duration.as_nanos()).unwrap_or(u64::MAX),
             Ordering::SeqCst,
         );
         let published = self.with_segment_writer(|writer| {
-            writer.publish_segment(SegmentEntry::new(
+            writer.try_publish_segment(SegmentEntry::new(
                 info.bytes,
                 info.segment_seq,
                 duration,
@@ -538,13 +566,12 @@ impl ProgramServing {
                 transmux::SegmentMeta {
                     discontinuous: false,
                 },
-            ));
+            ))
         });
-        if published.is_none() {
-            tracing::warn!(
-                "RouteHandle::add_segment: this program's Trunk segment writer is unavailable \
-                 (already taken by a real ProgramSegmenter?)"
-            );
+        match published {
+            None => Err(AddSegmentError::WriterUnavailable),
+            Some(Err(e)) => Err(AddSegmentError::Publish(e)),
+            Some(Ok(())) => Ok(()),
         }
     }
 
@@ -1015,16 +1042,19 @@ impl RouteHandle {
     }
 
     /// Publish one finished segment (`transmux::ll_hls::LlHlsSegmenter::take_ready_segments`)
-    /// into `program`'s `Trunk` segment log. A no-op (logged) if `program`
-    /// has not been published yet, or if its `Trunk`'s segment writer is
-    /// already held by a real `crate::source::segment::ProgramSegmenter`.
-    pub fn add_segment(&self, program: ProgramId, info: transmux::ll_hls::SegmentInfo) {
+    /// into `program`'s `Trunk` segment log. Returns [`AddSegmentError`]
+    /// instead of publishing if `program` has not been published yet, if its
+    /// `Trunk`'s segment writer is already held by a real
+    /// `crate::source::segment::ProgramSegmenter`, or if the `Trunk` refused
+    /// the segment.
+    pub fn add_segment(
+        &self,
+        program: ProgramId,
+        info: transmux::ll_hls::SegmentInfo,
+    ) -> Result<(), AddSegmentError> {
         match self.serving(program) {
             Some(serving) => serving.add_segment(info),
-            None => tracing::warn!(
-                ?program,
-                "RouteHandle::add_segment: program not published yet"
-            ),
+            None => Err(AddSegmentError::ProgramNotPublished),
         }
     }
 
@@ -1363,9 +1393,15 @@ mod program_registry_tests {
         route.set_init(program_b, &b"init-2"[..]);
         route.set_track_specs(program_a, vec![video_spec(1)]);
         route.set_track_specs(program_b, vec![video_spec(2)]);
-        route.add_segment(program_a, seg(10, 2.0));
-        route.add_segment(program_b, seg(20, 2.0));
-        route.add_segment(program_b, seg(21, 2.0));
+        route
+            .add_segment(program_a, seg(10, 2.0))
+            .expect("add_segment");
+        route
+            .add_segment(program_b, seg(20, 2.0))
+            .expect("add_segment");
+        route
+            .add_segment(program_b, seg(21, 2.0))
+            .expect("add_segment");
 
         assert_eq!(
             route.init_bytes(program_a),
@@ -1434,5 +1470,17 @@ mod program_registry_tests {
         assert_eq!(route.name(), DEFAULT_ROUTE_NAME);
         let route = route.with_name("cam1");
         assert_eq!(route.name(), "cam1");
+    }
+
+    /// `RouteHandle::add_segment` for a program id that was never published
+    /// returns [`AddSegmentError::ProgramNotPublished`] instead of silently
+    /// dropping the segment.
+    #[test]
+    fn add_segment_for_unpublished_program_returns_error() {
+        let route = RouteHandle::new(4.0, 500, 4);
+        let err = route
+            .add_segment(ProgramId(9), seg(1, 2.0))
+            .expect_err("add_segment for a never-published program must return an error");
+        assert!(matches!(err, AddSegmentError::ProgramNotPublished));
     }
 }

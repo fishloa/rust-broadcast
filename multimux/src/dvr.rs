@@ -451,8 +451,32 @@ pub struct DvrRecorder {
     total_bytes: u64,
     /// Total gap events since start.
     gaps: u64,
-    /// Set once this recorder has seen `SegmentCursorItem::Terminated`.
+    /// Set once this recorder has permanently stopped recording — either
+    /// its pin's own [`ArchiveOverrun::Terminate`] policy fired (an
+    /// intentional "give up" the operator configured), or a
+    /// [`SegmentCursorItem::Terminated`] arrived under a policy this
+    /// recorder has no re-arm behaviour for (see [`Self::on_segment`]'s own
+    /// doc). A [`ArchiveOverrunSerde::Stall`] pin's `Terminated` — the
+    /// non-blocking safety-valve force-expiry `SegmentWriter::expire_stalled_pins`
+    /// performs, never this policy's own intended behaviour — does NOT set
+    /// this; that case re-arms instead.
     terminated: bool,
+    /// The `Trunk` this recorder pins a cursor on — kept (not just consumed
+    /// at construction) so a `Stall`-policy pin that gets force-expired by
+    /// the non-blocking safety valve (`multimux::source::segment`'s
+    /// `ProgramSegmenter::drain_pending`, not this policy's own intended
+    /// behaviour) can be re-armed with a fresh cursor rather than leaving
+    /// this recorder permanently stopped — see [`Self::on_segment`]'s
+    /// `SegmentCursorItem::Terminated` arm.
+    trunk: Arc<Trunk>,
+    /// `sequence_number` of the last segment this recorder actually
+    /// appended to disk. `None` until the first segment lands. Used to size
+    /// the gap when a `Stall`-policy pin is force-expired and re-armed: the
+    /// new cursor starts at the live edge, so every segment sequence
+    /// between this value and the `Trunk`'s current
+    /// [`Trunk::last_closed_segment`] at re-arm time is lost to this
+    /// recording.
+    last_appended_seq: Option<u32>,
     /// EIT p/f section reassembler for [`Self::feed_si`] (issue #903).
     /// `Some` only when `config.dvb_service_id` is set — `None` disables
     /// EIT-aligned rolling entirely (pure time-based periods, unchanged).
@@ -517,6 +541,8 @@ impl DvrRecorder {
             total_bytes: 0,
             gaps: 0,
             terminated: false,
+            trunk: Arc::clone(trunk),
+            last_appended_seq: None,
             si_demux,
             target_service_id,
             last_present_event_id: None,
@@ -817,6 +843,7 @@ impl DvrRecorder {
             duration_ns: entry.duration.as_nanos() as u64,
             discontinuous: entry.meta.discontinuous,
         });
+        self.last_appended_seq = Some(entry.sequence_number);
 
         self.flush_index()?;
         self.enforce_retention()?;
@@ -1001,6 +1028,91 @@ impl DvrRecorder {
             "evicted period (retention)"
         );
     }
+
+    /// Handle a [`SegmentCursorItem::Terminated`] arriving on this
+    /// recorder's pinning cursor. The **same signal** fires for two
+    /// genuinely different situations (see
+    /// [`media_plane::trunk::SegmentWriter::expire_stalled_pins`]'s own
+    /// doc: "the same `ArchiveOverrun::Terminate` signal, reused"):
+    ///
+    /// - Policy [`ArchiveOverrunSerde::Terminate`]: the operator explicitly
+    ///   chose "stop recording rather than ever stall or gap" — a real,
+    ///   intended stop. Honoured verbatim: this recorder never appends
+    ///   again.
+    /// - Policy [`ArchiveOverrunSerde::Stall`]: a `Terminated` here can
+    ///   *only* have come from the non-blocking safety valve
+    ///   (`multimux::source::segment::ProgramSegmenter::drain_pending`
+    ///   calling `expire_stalled_pins` once
+    ///   `PENDING_PUBLISH_MAX_WAIT`/`PENDING_PUBLISH_QUEUE_CAP` trips) —
+    ///   never this policy's own intended behaviour, which is to apply real
+    ///   back-pressure, not give up. Treating it as a permanent stop would
+    ///   silently turn a transient stall (a slow disk, briefly) into a
+    ///   recording that never resumes, for a "loss-tolerant" policy the
+    ///   operator picked specifically because occasional loss beats
+    ///   stopping. Instead: re-arm with a fresh pinning cursor at the live
+    ///   edge ([`Trunk::pin_segments`]), count whatever segments were
+    ///   produced while this recorder held no pin at all as a gap, and keep
+    ///   recording.
+    ///
+    /// Before this method existed, both cases logged the identical message
+    /// "DVR recording terminated (ArchiveOverrun::Terminate)" and stopped
+    /// for good — wrong on both counts for the `Stall` case: it names the
+    /// wrong policy, and it stops a recorder whose whole point was to keep
+    /// going through loss.
+    fn handle_terminated(&mut self) {
+        match self.config.overrun {
+            ArchiveOverrunSerde::Stall => {
+                let latest = self.trunk.last_closed_segment();
+                let skipped = match (self.last_appended_seq, latest) {
+                    (Some(last), Some(newest)) => u64::from(newest.saturating_sub(last)),
+                    (None, Some(newest)) => u64::from(newest),
+                    _ => 0,
+                };
+                self.gaps += skipped;
+                metrics::counter!(
+                    crate::prometheus::DVR_PIN_REARMED_TOTAL,
+                    "route" => self.route_name.clone(),
+                )
+                .increment(1);
+                tracing::warn!(
+                    route = %self.route_name,
+                    policy = "stall",
+                    skipped_segments = skipped,
+                    gaps_total = self.gaps,
+                    "DVR StallIngest pin force-expired by the non-blocking safety valve \
+                     (ingest stalled past the bound) — re-arming at the live edge; \
+                     segments produced while unpinned are lost"
+                );
+                self.cursor = self.trunk.pin_segments(ArchiveOverrun::StallIngest);
+            }
+            ArchiveOverrunSerde::Terminate => {
+                self.terminated = true;
+                self.current_file.take();
+                tracing::info!(
+                    route = %self.route_name,
+                    policy = "terminate",
+                    "DVR recording terminated (ArchiveOverrun::Terminate)"
+                );
+            }
+            // `Gap` never pins with a policy `expire_stalled_pins` force-
+            // expires, and its own eviction path never sets a pin
+            // terminated either — see `ArchiveOverrun`'s own doc.
+            // Unreachable in practice; `ArchiveOverrunSerde` is
+            // `#[non_exhaustive]` so this arm also covers any future
+            // variant — conservative (stop, don't loop forever on a signal
+            // this method doesn't understand) rather than silently
+            // swallowed.
+            _ => {
+                self.terminated = true;
+                self.current_file.take();
+                tracing::error!(
+                    route = %self.route_name,
+                    "DVR recording received Terminated under a policy with no re-arm \
+                     behaviour — stopping"
+                );
+            }
+        }
+    }
 }
 
 impl SegmentEgress for DvrRecorder {
@@ -1045,15 +1157,7 @@ impl SegmentEgress for DvrRecorder {
                     "DVR unexpected Lagged (pinning cursor should not produce this)"
                 );
             }
-            SegmentCursorItem::Terminated => {
-                self.terminated = true;
-                // Close the current file cleanly.
-                self.current_file.take();
-                tracing::info!(
-                    route = %self.route_name,
-                    "DVR recording terminated (ArchiveOverrun::Terminate)"
-                );
-            }
+            SegmentCursorItem::Terminated => self.handle_terminated(),
             _ => {}
         }
         Ok(())
@@ -1140,15 +1244,17 @@ mod tests {
         moof.extend_from_slice(b"moof");
         moof.extend_from_slice(&[0u8; 8]);
         moof.extend_from_slice(&[0u8; 5]);
-        writer.publish_segment(SegmentEntry::new(
-            bytes::Bytes::from(moof),
-            0,
-            Duration::from_secs(1),
-            broadcast_common::Timestamp::from_nanos(0),
-            transmux::SegmentMeta {
-                discontinuous: false,
-            },
-        ));
+        writer
+            .publish_segment(SegmentEntry::new(
+                bytes::Bytes::from(moof),
+                0,
+                Duration::from_secs(1),
+                broadcast_common::Timestamp::from_nanos(0),
+                transmux::SegmentMeta {
+                    discontinuous: false,
+                },
+            ))
+            .unwrap();
         recorder.poll_and_persist(None).expect("persist truncated");
 
         // The assertion is simply that this returns rather than panicking.
@@ -1185,7 +1291,7 @@ mod tests {
 
         let entry = dummy_segment(1, 0xAB);
         let expected_bytes = entry.bytes.clone();
-        writer.publish_segment(entry);
+        writer.publish_segment(entry).unwrap();
         recorder
             .poll_and_persist(Some(init_bytes))
             .expect("persist segment");
@@ -1241,7 +1347,7 @@ mod tests {
         let expected: Vec<bytes::Bytes> = segments.iter().map(|s| s.bytes.clone()).collect();
 
         for seg in &segments {
-            writer.publish_segment(seg.clone());
+            writer.publish_segment(seg.clone()).unwrap();
         }
         recorder
             .poll_and_persist(Some(init))
@@ -1327,7 +1433,9 @@ mod tests {
 
         for seq in 1..=3 {
             let payload = vec![seq as u8; 32];
-            writer.publish_segment(moof_segment_entry(seq, &payload));
+            writer
+                .publish_segment(moof_segment_entry(seq, &payload))
+                .unwrap();
         }
         recorder.poll_and_persist(Some(init)).expect("persist");
 
@@ -1372,7 +1480,7 @@ mod tests {
         recorder
             .poll_and_persist(Some(init_a))
             .expect("poll init A");
-        writer.publish_segment(dummy_segment(1, 0xAA));
+        writer.publish_segment(dummy_segment(1, 0xAA)).unwrap();
         recorder
             .poll_and_persist(Some(init_a))
             .expect("persist seg 1");
@@ -1382,7 +1490,7 @@ mod tests {
         recorder
             .poll_and_persist(Some(init_b))
             .expect("poll init B");
-        writer.publish_segment(dummy_segment(2, 0xBB));
+        writer.publish_segment(dummy_segment(2, 0xBB)).unwrap();
         recorder
             .poll_and_persist(Some(init_b))
             .expect("persist seg 2");
@@ -1457,7 +1565,9 @@ mod tests {
                 .expect("poll init");
             for seq_offset in 0..2 {
                 let seq = (i * 2 + seq_offset) as u32 + 1;
-                writer.publish_segment(dummy_segment(seq, seq as u8));
+                writer
+                    .publish_segment(dummy_segment(seq, seq as u8))
+                    .unwrap();
             }
             recorder
                 .poll_and_persist(Some(period_init))
@@ -1498,9 +1608,9 @@ mod tests {
         let init = b"INIT";
         recorder.poll_and_persist(Some(init)).expect("poll init");
 
-        writer.publish_segment(dummy_segment(1, 0xAA));
-        writer.publish_segment(dummy_segment(2, 0xBB));
-        writer.publish_segment(dummy_segment(3, 0xCC));
+        writer.publish_segment(dummy_segment(1, 0xAA)).unwrap();
+        writer.publish_segment(dummy_segment(2, 0xBB)).unwrap();
+        writer.publish_segment(dummy_segment(3, 0xCC)).unwrap();
 
         recorder.poll_and_persist(Some(init)).expect("persist");
 
@@ -1806,7 +1916,7 @@ mod tests {
             DvrRecorder::new("hardcap".to_string(), cfg, ".ts", &trunk).expect("recorder");
 
         // Open period 0 (TS: lazily, on the first segment).
-        writer.publish_segment(dummy_segment(1, 0xAA));
+        writer.publish_segment(dummy_segment(1, 0xAA)).unwrap();
         recorder.poll_and_persist(None).expect("persist seg 1");
         let p0_path = tmp.join("hardcap").join("p0.ts");
         assert!(p0_path.exists(), "period 0 must exist");
@@ -1816,7 +1926,7 @@ mod tests {
         // at all — so only the hard cap can cause the roll below.
         recorder.period_opened_at = Some(SystemTime::now() - Duration::from_secs(3));
 
-        writer.publish_segment(dummy_segment(2, 0xBB));
+        writer.publish_segment(dummy_segment(2, 0xBB)).unwrap();
         recorder
             .poll_and_persist(None)
             .expect("persist seg 2 — hard cap must roll first");
@@ -1964,7 +2074,7 @@ mod tests {
         );
 
         // Open period 0 by publishing a segment (TS: lazy start_period).
-        writer.publish_segment(dummy_segment(1, 0xAA));
+        writer.publish_segment(dummy_segment(1, 0xAA)).unwrap();
         recorder.poll_and_persist(None).expect("persist seg 1");
         assert!(
             tmp.join("tf1").join("p0.ts").exists(),
@@ -2027,6 +2137,92 @@ mod tests {
         assert_eq!(p1_programme.service_id, TF1_SERVICE_ID);
         assert_eq!(p1_programme.title, expected_new_title);
         assert_eq!(p1_programme.duration_secs, expected_duration_secs);
+
+        cleanup_temp(&tmp);
+    }
+
+    /// **Review item 2.** A `Stall`-policy `DvrRecorder` whose pin is
+    /// force-expired by the non-blocking safety valve
+    /// (`multimux::source::segment::ProgramSegmenter::drain_pending`'s
+    /// `expire_stalled_pins` call, simulated directly here) must re-arm
+    /// with a fresh cursor at the live edge and keep recording — not stop
+    /// for good the way an `ArchiveOverrun::Terminate` policy's own
+    /// intended `Terminated` does.
+    ///
+    /// MUTATION VERIFIED: reverting `on_segment`'s `Terminated` arm to the
+    /// pre-fix `self.terminated = true; self.current_file.take();` (no
+    /// policy check, no re-arm) makes this test's
+    /// `assert!(!recorder.terminated, ...)` fail immediately (`terminated`
+    /// is `true`), and the final `assert_eq!(recorder.last_appended_seq,
+    /// Some(3), ...)` also fails — the `terminated` guard at the top of
+    /// `on_segment` makes every following `poll_and_persist` call a no-op,
+    /// so segment 3 is never appended at all. Recompiled and re-run to
+    /// confirm both failures, then reverted.
+    #[test]
+    fn stall_pin_force_expiry_rearms_and_records_a_gap_instead_of_stopping_forever() {
+        let tmp = temp_dir();
+        // Segment-log capacity 1: publishing seg 2 needs to evict seg 1,
+        // which the recorder's still-un-consumed `Stall` pin blocks.
+        let trunk = Trunk::new(TrunkConfig::new(nz(4), nz(4), nz(1), nz(4), nz(4)));
+        let mut cfg = dvr_config(&tmp, 5);
+        cfg.overrun = ArchiveOverrunSerde::Stall;
+        // `.ts`, not `.m4s`: sidesteps the fMP4 "no init yet" early return
+        // in `append_segment`, irrelevant to what this test exercises.
+        let mut recorder =
+            DvrRecorder::new("test".to_string(), cfg, ".ts", &trunk).expect("recorder");
+
+        let writer = trunk.segment_writer().expect("segment writer");
+        writer.publish_segment(dummy_segment(1, 0xAA)).unwrap();
+
+        // The recorder has not yet drained seg 1 via `poll_and_persist`, so
+        // its pin has not consumed it — evicting it for seg 2 would need to
+        // wait for that pin, which `try_publish_segment` reports
+        // non-blockingly instead of actually stalling.
+        assert!(
+            writer.try_publish_segment(dummy_segment(2, 0xBB)).is_err(),
+            "seg 2 must be blocked by the un-consumed Stall pin"
+        );
+
+        // The non-blocking safety valve `ProgramSegmenter::drain_pending`
+        // would eventually call this once its own bound trips — simulated
+        // directly, since this test is about `DvrRecorder`'s reaction, not
+        // about re-deriving that bound.
+        assert_eq!(
+            writer.expire_stalled_pins(),
+            1,
+            "exactly the one blocking Stall pin"
+        );
+        writer
+            .try_publish_segment(dummy_segment(2, 0xBB))
+            .expect("must succeed once the blocking pin is expired");
+
+        assert_eq!(recorder.gaps, 0, "no gap counted yet — nothing drained");
+        recorder
+            .poll_and_persist(None)
+            .expect("drain the Terminated signal and re-arm");
+
+        assert!(
+            !recorder.terminated,
+            "a Stall-policy pin's force-expiry must re-arm, not permanently stop recording"
+        );
+        assert_eq!(
+            recorder.gaps, 2,
+            "both segment 1 (never consumed before the pin was force-expired) and \
+             segment 2 (already published by the time the new pin starts at the live \
+             edge, per Trunk::pin_segments's own doc) must be counted as a gap"
+        );
+
+        // Recording must actually resume: a segment published after the
+        // re-arm must be observed and appended by the new cursor.
+        writer.publish_segment(dummy_segment(3, 0xCC)).unwrap();
+        recorder
+            .poll_and_persist(None)
+            .expect("persist seg 3 via the re-armed cursor");
+        assert_eq!(
+            recorder.last_appended_seq,
+            Some(3),
+            "the re-armed cursor must keep recording later segments"
+        );
 
         cleanup_temp(&tmp);
     }

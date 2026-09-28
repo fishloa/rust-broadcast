@@ -72,5 +72,5 @@ pub use output::Output;
 pub use registry::{
     AuthCtx, AuthFactory, InputCtx, InputFactory, OutputCtx, OutputFactory, SchemeRegistry,
 };
-pub use route::{HealthState, RouteHandle};
+pub use route::{AddSegmentError, HealthState, RouteHandle};
 pub use source::Source;
