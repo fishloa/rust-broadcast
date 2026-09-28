@@ -12,6 +12,9 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   backpressure, not wire-level loss ARQ/TLPKTDROP already account for.
 
 ### Changed (breaking)
+- `KeepAlivePacket`, `CongestionWarningPacket`, `ShutdownPacket`, `AckAckPacket`, and `PeerErrorPacket`
+  now carry a `libsrt_pad: bool` field, so both the pure-spec 16-byte (empty CIF) and libsrt's 20-byte
+  (4-byte zero-pad CIF) wire shapes round-trip byte-identically.
 - `KeyMaterial::serialize_into` now returns `Error::FieldTooWide` instead of silently
   truncating, when a length does not fit its wire field (#1129).
 - The tokio adapter's internal per-connection ingress channel, the listener's

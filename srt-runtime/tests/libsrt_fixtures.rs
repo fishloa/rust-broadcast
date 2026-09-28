@@ -35,12 +35,14 @@ fn real_libsrt_keepalive_parses_and_round_trips_byte_exact() {
     // Sanity: these came from the real capture (see fixtures/README.md), not
     // synthesized — timestamp/dest_socket_id are whatever the real session
     // happened to have at that moment, just confirm they decoded as the
-    // right wire words.
+    // right wire words. The fixture is 20 bytes (with libsrt's pad), so
+    // libsrt_pad should be true.
     assert_eq!(
         ka,
         KeepAlivePacket {
             timestamp: u32::from_be_bytes([0x00, 0x0f, 0x4f, 0x79]),
             dest_socket_id: u32::from_be_bytes([0x1d, 0x50, 0x8c, 0x8a]),
+            libsrt_pad: true,
         }
     );
 
@@ -72,6 +74,7 @@ fn real_libsrt_ackack_parses_and_round_trips_byte_exact() {
             ack_number: 1,
             timestamp: u32::from_be_bytes([0x00, 0x0f, 0xc0, 0xd5]),
             dest_socket_id: u32::from_be_bytes([0x1d, 0x50, 0x8c, 0x8a]),
+            libsrt_pad: true,
         }
     );
 

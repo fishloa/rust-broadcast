@@ -848,6 +848,7 @@ impl Driver {
                     let pkt = ControlPacket::KeepAlive(KeepAlivePacket {
                         timestamp: self.elapsed_us(),
                         dest_socket_id: self.peer_socket_id,
+                        libsrt_pad: true,
                     });
                     let mut buf = vec![0u8; pkt.serialized_len()];
                     let _ = pkt.serialize_into(&mut buf);
@@ -1805,6 +1806,7 @@ mod isn_tests {
         let ka = ControlPacket::KeepAlive(KeepAlivePacket {
             timestamp: 0,
             dest_socket_id: 7,
+            libsrt_pad: false,
         });
         let mut buf = alloc::vec![0u8; ka.serialized_len()];
         ka.serialize_into(&mut buf).expect("serialize keepalive");

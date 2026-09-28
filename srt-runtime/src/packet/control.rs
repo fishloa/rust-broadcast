@@ -227,10 +227,11 @@ const LIBSRT_CIF_PAD_LEN: usize = 4;
 /// [`LIBSRT_CIF_PAD_LEN`]); reject anything else. A non-zero 4-byte value is
 /// rejected the same way a defined reserved field is (`ReservedFieldNotZero`)
 /// — nothing defines those bits, so a peer setting them to something else is
-/// not a shape this crate recognizes.
-fn check_no_cif_or_libsrt_pad(what: &'static str, cif: &[u8]) -> Result<()> {
+/// not a shape this crate recognizes. Returns `true` if the 4-byte pad was
+/// present, `false` for the empty CIF.
+fn check_no_cif_or_libsrt_pad(what: &'static str, cif: &[u8]) -> Result<bool> {
     match cif.len() {
-        0 => Ok(()),
+        0 => Ok(false),
         LIBSRT_CIF_PAD_LEN => {
             let value = be32(cif, 0);
             if value != 0 {
@@ -239,7 +240,7 @@ fn check_no_cif_or_libsrt_pad(what: &'static str, cif: &[u8]) -> Result<()> {
                     value: u64::from(value),
                 });
             }
-            Ok(())
+            Ok(true)
         }
         extra => Err(Error::UnexpectedTrailingBytes { what, extra }),
     }
@@ -287,10 +288,11 @@ impl<'a> ControlPacket<'a> {
             ControlType::KeepAlive => {
                 check_reserved_u16("Subtype", subtype)?;
                 check_reserved_u32("Type-specific Information", type_specific_info)?;
-                check_no_cif_or_libsrt_pad("keep-alive CIF", cif)?;
+                let libsrt_pad = check_no_cif_or_libsrt_pad("keep-alive CIF", cif)?;
                 ControlPacket::KeepAlive(KeepAlivePacket {
                     timestamp,
                     dest_socket_id,
+                    libsrt_pad,
                 })
             }
             ControlType::Ack => {
@@ -310,28 +312,31 @@ impl<'a> ControlPacket<'a> {
             ControlType::CongestionWarning => {
                 check_reserved_u16("Subtype", subtype)?;
                 check_reserved_u32("Type-specific Information", type_specific_info)?;
-                check_no_cif_or_libsrt_pad("congestion warning CIF", cif)?;
+                let libsrt_pad = check_no_cif_or_libsrt_pad("congestion warning CIF", cif)?;
                 ControlPacket::CongestionWarning(CongestionWarningPacket {
                     timestamp,
                     dest_socket_id,
+                    libsrt_pad,
                 })
             }
             ControlType::Shutdown => {
                 check_reserved_u16("Subtype", subtype)?;
                 check_reserved_u32("Type-specific Information", type_specific_info)?;
-                check_no_cif_or_libsrt_pad("shutdown CIF", cif)?;
+                let libsrt_pad = check_no_cif_or_libsrt_pad("shutdown CIF", cif)?;
                 ControlPacket::Shutdown(ShutdownPacket {
                     timestamp,
                     dest_socket_id,
+                    libsrt_pad,
                 })
             }
             ControlType::AckAck => {
                 check_reserved_u16("Subtype", subtype)?;
-                check_no_cif_or_libsrt_pad("ACKACK CIF", cif)?;
+                let libsrt_pad = check_no_cif_or_libsrt_pad("ACKACK CIF", cif)?;
                 ControlPacket::AckAck(AckAckPacket {
                     ack_number: type_specific_info,
                     timestamp,
                     dest_socket_id,
+                    libsrt_pad,
                 })
             }
             ControlType::DropReq => {
@@ -345,11 +350,12 @@ impl<'a> ControlPacket<'a> {
             }
             ControlType::PeerError => {
                 check_reserved_u16("Subtype", subtype)?;
-                check_no_cif_or_libsrt_pad("peer error CIF", cif)?;
+                let libsrt_pad = check_no_cif_or_libsrt_pad("peer error CIF", cif)?;
                 ControlPacket::PeerError(PeerErrorPacket {
                     error_code: type_specific_info,
                     timestamp,
                     dest_socket_id,
+                    libsrt_pad,
                 })
             }
             ControlType::UserDefined | ControlType::Reserved(_) => {
@@ -436,15 +442,44 @@ impl<'a> ControlPacket<'a> {
     fn cif_len(&self) -> usize {
         match self {
             ControlPacket::Handshake(h) => h.cif_len(),
-            // Emit libsrt's 4-byte zero pad (see `LIBSRT_CIF_PAD_LEN`) so
-            // packets we send take the exact shape a real libsrt peer sends
-            // and expects on this wire, not just the pure-spec empty CIF our
-            // own parser also still accepts.
-            ControlPacket::KeepAlive(_)
-            | ControlPacket::CongestionWarning(_)
-            | ControlPacket::Shutdown(_)
-            | ControlPacket::AckAck(_)
-            | ControlPacket::PeerError(_) => LIBSRT_CIF_PAD_LEN,
+            // Emit libsrt's 4-byte zero pad (see `LIBSRT_CIF_PAD_LEN`) when
+            // requested, or empty CIF otherwise, so packets round-trip
+            // byte-identically regardless of which spec-legal shape they parsed.
+            ControlPacket::KeepAlive(k) => {
+                if k.libsrt_pad {
+                    LIBSRT_CIF_PAD_LEN
+                } else {
+                    0
+                }
+            }
+            ControlPacket::CongestionWarning(c) => {
+                if c.libsrt_pad {
+                    LIBSRT_CIF_PAD_LEN
+                } else {
+                    0
+                }
+            }
+            ControlPacket::Shutdown(s) => {
+                if s.libsrt_pad {
+                    LIBSRT_CIF_PAD_LEN
+                } else {
+                    0
+                }
+            }
+            ControlPacket::AckAck(a) => {
+                if a.libsrt_pad {
+                    LIBSRT_CIF_PAD_LEN
+                } else {
+                    0
+                }
+            }
+            ControlPacket::PeerError(p) => {
+                if p.libsrt_pad {
+                    LIBSRT_CIF_PAD_LEN
+                } else {
+                    0
+                }
+            }
             ControlPacket::Ack(a) => a.cif_len(),
             ControlPacket::Nak(n) => n.cif_len(),
             ControlPacket::DropReq(d) => d.cif_len(),

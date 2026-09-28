@@ -1056,6 +1056,7 @@ mod tests {
         let ka = ControlPacket::KeepAlive(KeepAlivePacket {
             timestamp: 0,
             dest_socket_id: 0,
+            libsrt_pad: false,
         });
         assert!(matches!(
             r.feed(&ka),

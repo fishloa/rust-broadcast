@@ -447,6 +447,7 @@ mod tests {
             ack_number: ack.ack_number,
             timestamp: 0,
             dest_socket_id: PEER,
+            libsrt_pad: false,
         };
         let sample = Duration::from_millis(20);
         r.on_ackack(&ackack, FULL_ACK_PERIOD + sample);
