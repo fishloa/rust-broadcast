@@ -11,6 +11,10 @@ use srt_runtime::packet::{AckAckPacket, AckCif, AckPacket, ControlPacket, DataPa
 
 const SENDER_ID: u32 = 0x1111_1111;
 const RECEIVER_ID: u32 = 0x2222_2222;
+/// Matches `HandshakeConfig::default().max_flow_window_size` — this test
+/// wires `Receiver` directly (no handshake), so it supplies the same value
+/// by hand.
+const MAX_FLOW_WINDOW: u32 = 8192;
 
 fn as_ack(bytes: &[u8]) -> Option<AckPacket> {
     match ControlPacket::parse(bytes).unwrap() {
@@ -39,7 +43,7 @@ fn as_nak(bytes: &[u8]) -> Option<NakPacket<'_>> {
 #[test]
 fn nak_retransmit_recovers_all_packets_in_order_and_rtt_converges() {
     let mut sender = Sender::new(RECEIVER_ID);
-    let mut receiver = Receiver::new(SENDER_ID, 0);
+    let mut receiver = Receiver::new(SENDER_ID, 0, MAX_FLOW_WINDOW);
 
     let mut now = Duration::ZERO;
     const TARGET_RTT: Duration = Duration::from_millis(30);
@@ -178,7 +182,7 @@ fn nak_retransmit_recovers_all_packets_in_order_and_rtt_converges() {
 #[test]
 fn zero_loss_run_emits_no_spurious_naks() {
     let mut sender = Sender::new(RECEIVER_ID);
-    let mut receiver = Receiver::new(SENDER_ID, 0);
+    let mut receiver = Receiver::new(SENDER_ID, 0, MAX_FLOW_WINDOW);
     let mut now = Duration::ZERO;
 
     for seq in 0..50u32 {

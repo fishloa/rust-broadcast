@@ -37,9 +37,13 @@
 //!   left to the ARQ layer integration.
 //! - Sender-side TLPKTDROP (rule 18-20): out of scope for the receiver.
 //! - Wrapping-period adjustment (rule 15-16): the scheduler handles 32-bit
-//!   timestamp wrapping via modular arithmetic, but the wrapping-period
-//!   TsbpdTimeBase adjustment (rule 16) is not implemented — it is a separate
-//!   concern driven by the handshake/connection layer.
+//!   timestamp wrapping (rule 15) with a maintained reference point plus a
+//!   signed circular delta (`TsbpdScheduler::unwrap_timestamp`, mirroring
+//!   `arq::seq::seq_diff` one bit wider) — not the plain modular arithmetic
+//!   an earlier version of this scheduler used, which dropped `PktTsbpdTime`
+//!   back near zero on every wrap (issue #1063). The wrapping-period
+//!   TsbpdTimeBase adjustment (rule 16) is still not implemented — it is a
+//!   separate concern driven by the handshake/connection layer.
 
 use alloc::collections::BTreeMap;
 use alloc::vec::Vec;

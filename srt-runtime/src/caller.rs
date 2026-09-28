@@ -263,22 +263,7 @@ impl CallerHandshake {
 
         let hp_out = HandshakePacket {
             timestamp: 0,
-            // libsrt's real Caller sends `0` here, not the Listener's Socket
-            // ID it just captured — verified against `srtcore/core.cpp`
-            // v1.5.5, `CUDT::processAsyncConnectRequest`:
-            // `reqpkt.set_id(!m_config.bRendezvous ? 0 : m_ConnRes.m_iID)`
-            // (the synchronous `startConnect` path reaches the same `0` by
-            // never re-`set_id`ing its request packet for the non-rendezvous
-            // case). A Caller-Listener handshake is not yet an established
-            // connection the Listener's single multiplexed socket can look
-            // up by Socket ID — that only starts mattering once the
-            // handshake completes and the negotiated `peer_socket_id` (the
-            // field *inside* this same packet, not the header) is used to
-            // tag subsequent DATA/control. Sending our captured
-            // `peer_socket_id` here instead (this field's pre-#1060-wave
-            // behavior) made a real libsrt Listener silently drop the
-            // CONCLUSION — the exact stall a live interop test against it
-            // reproduces (issue #1065).
+            // 0, not the captured Listener Socket ID — libsrt `CUDT::processAsyncConnectRequest` (srtcore/core.cpp), draft §4.3.1; libsrt interop.
             dest_socket_id: 0,
             version: HANDSHAKE_VERSION_5,
             encryption_field: self.config.encryption_field,
@@ -314,13 +299,7 @@ impl CallerHandshake {
             return Ok(vec![HandshakeOutput::Rejected(RejectionReason::Version)]);
         }
 
-        // Re-capture the Listener's Socket ID from the CONCLUSION response
-        // itself, rather than trusting the value captured from the earlier
-        // INDUCTION response to still be current — this is the
-        // authoritative value the negotiated `peer_socket_id` (and every
-        // later DATA/control packet's `dest_socket_id`, via
-        // `io::HandshakeOutput::Connected(params).peer_socket_id`) is
-        // supposed to carry (issue #1065).
+        // Re-capture the Listener's Socket ID from the CONCLUSION itself, not the stale INDUCTION one — draft §4.3.1; libsrt interop.
         self.peer_socket_id = hp.srt_socket_id;
 
         let parsed = match handshake_sm::parse_peer_extensions(hp) {
@@ -394,12 +373,7 @@ mod tests {
         assert!(c.start().is_err());
     }
 
-    /// Issue #1065: the negotiated `peer_socket_id` must come from the
-    /// CONCLUSION response's own `srt_socket_id`, not whatever was captured
-    /// from the earlier INDUCTION response — modeled here with a
-    /// (deliberately adversarial-shaped, though not itself a real libsrt
-    /// behavior) CONCLUSION response that echoes a *different* Socket ID
-    /// than the INDUCTION response did, so a stale value would be caught.
+    /// `peer_socket_id` must come from the CONCLUSION response, not a stale INDUCTION one (draft §4.3.1).
     #[test]
     fn conclusion_response_socket_id_overrides_induction_one() {
         use crate::packet::handshake::build_extension_block;
@@ -505,10 +479,7 @@ mod tests {
                 assert_eq!(hp.version, HANDSHAKE_VERSION_5);
                 assert_eq!(hp.handshake_type, HandshakeType::Conclusion);
                 assert_eq!(hp.syn_cookie, 0xC0FF_EE00);
-                // Issue #1065: libsrt's real Caller sends `0` here, not the
-                // Listener's Socket ID it just captured (verified against
-                // `srtcore/core.cpp`'s `processAsyncConnectRequest` — see
-                // this field's doc comment in `on_induction_response`).
+                // libsrt `CUDT::processAsyncConnectRequest`; see `on_induction_response`.
                 assert_eq!(hp.dest_socket_id, 0);
                 assert_eq!(hp.extension_field.0 & HS_EXT_FLAG_HSREQ, HS_EXT_FLAG_HSREQ);
                 let blocks: Vec<_> = hp.extensions.iter().map(|b| b.unwrap()).collect();

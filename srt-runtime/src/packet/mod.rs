@@ -53,6 +53,26 @@ pub(crate) const F_BIT: u32 = 0x8000_0000;
 /// Appendix A): all bits below the `F`/range-marker bit.
 pub(crate) const SEQ_NUMBER_MASK: u32 = 0x7FFF_FFFF;
 
+/// Byte offset of the Destination Socket ID — the last of the four fixed
+/// header words shared by every data and control packet (§3, Figure 2).
+/// `cfg`-gated on `tokio`: its only caller is `io`'s listener routing pump.
+#[cfg(feature = "tokio")]
+pub(crate) const DEST_SOCKET_ID_OFFSET: usize = 12;
+
+/// Reads the Destination Socket ID straight off the wire header, without a
+/// full [`SrtPacket::parse`] — it sits at the same fixed offset for every
+/// data and control packet (§3, Figure 2), so a demultiplexer can route on it
+/// even for a packet type it doesn't otherwise understand. `None` if `bytes`
+/// is too short to contain a full header. `cfg`-gated on `tokio`: its only
+/// caller is `io`'s listener routing pump.
+#[cfg(feature = "tokio")]
+pub(crate) fn peek_dest_socket_id(bytes: &[u8]) -> Option<u32> {
+    if bytes.len() < SRT_HEADER_LEN {
+        return None;
+    }
+    Some(be32(bytes, DEST_SOCKET_ID_OFFSET))
+}
+
 /// A parsed SRT packet — the payload of one UDP datagram carrying SRT traffic
 /// (`draft-sharabayko-srt-01` §3, Figure 1 / Figure 2).
 #[derive(Debug, Clone, PartialEq)]

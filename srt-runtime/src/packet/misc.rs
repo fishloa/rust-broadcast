@@ -220,6 +220,49 @@ mod tests {
         }
     }
 
+    /// A pure-spec 16-byte (no CIF at all) CIF-less control packet re-parses
+    /// to an equal value after a round trip through this crate's own
+    /// serializer — but the *bytes* it round-trips to are libsrt's 20-byte
+    /// zero-padded shape, not the original 16. That's intentional, not a
+    /// bug: this crate always emits libsrt's shape on send (so its own wire
+    /// traffic looks like a real libsrt peer's, per the interop work this
+    /// module doc's `check_no_cif_or_libsrt_pad` cites), while still
+    /// *accepting* the pure-spec shape on receive
+    /// (`keepalive_congestion_shutdown_ackack_peererror_accept_empty_cif`,
+    /// above). A parsed struct carries no memory of which of the two
+    /// equally spec-legal wire shapes it arrived in — there is nothing to
+    /// preserve — so "parse then re-serialize the exact input bytes" only
+    /// holds for this crate's own canonical (padded) shape, checked in
+    /// `keepalive_congestion_shutdown_ackack_peererror_round_trip` above.
+    #[test]
+    fn sixteen_byte_no_pad_keepalive_reparses_equal_after_our_canonical_reserialize() {
+        let pkt = ControlPacket::KeepAlive(KeepAlivePacket {
+            timestamp: 0x1234,
+            dest_socket_id: 0x5678,
+        });
+        let mut padded = alloc::vec![0u8; pkt.serialized_len()];
+        pkt.serialize_into(&mut padded).unwrap();
+        let sixteen_byte_no_pad = &padded[..16];
+        assert_eq!(sixteen_byte_no_pad.len(), 16, "CIF-less header is 16 bytes");
+
+        let parsed = ControlPacket::parse(sixteen_byte_no_pad).unwrap();
+        assert_eq!(parsed, pkt);
+
+        let mut reserialized = alloc::vec![0u8; parsed.serialized_len()];
+        parsed.serialize_into(&mut reserialized).unwrap();
+        assert_eq!(
+            reserialized.len(),
+            20,
+            "this crate always re-emits libsrt's padded shape, regardless of \
+             which spec-legal shape it parsed"
+        );
+        assert_eq!(
+            ControlPacket::parse(&reserialized).unwrap(),
+            pkt,
+            "serialize -> parse must still yield an equal value"
+        );
+    }
+
     #[test]
     fn keepalive_rejects_trailing_bytes() {
         // Neither 0 (pure spec) nor 4 (libsrt's pad, §control::LIBSRT_CIF_PAD_LEN):

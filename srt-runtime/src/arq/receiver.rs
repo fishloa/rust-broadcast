@@ -75,12 +75,28 @@ pub struct Receiver {
     /// Acknowledgement Number (rules 24, 26-28).
     outstanding_acks: BTreeMap<u32, Duration>,
     rtt: RttEstimator,
+    /// The Full ACK's "Available Buffer Size" (packets) — the negotiated
+    /// Maximum Flow Window Size (§3.2.1), the most this receiver will ever
+    /// have staged ahead of its delivery cursor (`Driver::ingress`'s flow-
+    /// window overflow guard enforces that cap independently, so this is
+    /// never an overstatement). A real libsrt sender's own flow control
+    /// treats this field as "room for N more packets": reporting `0` here
+    /// (this crate's old default, chosen to avoid fabricating a real
+    /// buffer-occupancy estimate) reads as "no room at all" and a real
+    /// libsrt Caller then withholds every DATA packet forever, connected but
+    /// silent — a real, previously undetected interop stall found live
+    /// against `srt-live-transmit`, independent of the caller-side
+    /// CONCLUSION `dest_socket_id` bug `libsrt_interop.rs` was originally
+    /// written to catch (libsrt interop; no tracked issue number for this
+    /// one).
+    avail_buf_size: u32,
 }
 
 impl Receiver {
     /// A fresh receiver expecting `initial_seq` first (the peer's ISN),
-    /// addressing `dest_socket_id` (the peer's SRT Socket ID, §3).
-    pub fn new(dest_socket_id: u32, initial_seq: u32) -> Self {
+    /// addressing `dest_socket_id` (the peer's SRT Socket ID, §3), advertising
+    /// `max_flow_window` (§3.2.1) as its Full ACK's Available Buffer Size.
+    pub fn new(dest_socket_id: u32, initial_seq: u32, max_flow_window: u32) -> Self {
         Receiver {
             dest_socket_id,
             next_expected: initial_seq,
@@ -93,6 +109,7 @@ impl Receiver {
             next_ack_number: 1,
             outstanding_acks: BTreeMap::new(),
             rtt: RttEstimator::new(),
+            avail_buf_size: max_flow_window,
         }
     }
 
@@ -218,10 +235,9 @@ impl Receiver {
                 last_ack_seq: self.next_expected,
                 rtt_us: self.rtt.rtt_us(),
                 rtt_var_us: self.rtt.rtt_var_us(),
-                // Bandwidth/rate estimation (§4.7) is out of ARQ scope —
-                // not curated in srt-arq.md, so left at 0 rather than
-                // fabricated.
-                avail_buf_size: 0,
+                avail_buf_size: self.avail_buf_size,
+                // Bandwidth/rate estimation (§4.7) is out of ARQ scope — not
+                // curated in srt-arq.md, so left at 0 rather than fabricated.
                 pkt_recv_rate: 0,
                 est_link_capacity: 0,
                 recv_rate_bps: 0,
@@ -333,10 +349,11 @@ mod tests {
     use super::*;
 
     const PEER: u32 = 0xBBBB;
+    const MAX_FLOW_WINDOW: u32 = 8192;
 
     #[test]
     fn in_order_arrivals_deliver_immediately_without_nak() {
-        let mut r = Receiver::new(PEER, 0);
+        let mut r = Receiver::new(PEER, 0, MAX_FLOW_WINDOW);
         for seq_number in 0..5u32 {
             let outcome = r.feed_data(seq_number, Duration::ZERO);
             assert_eq!(outcome.delivered, alloc::vec![seq_number]);
@@ -348,7 +365,7 @@ mod tests {
 
     #[test]
     fn a_gap_triggers_an_immediate_nak_and_stalls_delivery() {
-        let mut r = Receiver::new(PEER, 0);
+        let mut r = Receiver::new(PEER, 0, MAX_FLOW_WINDOW);
         r.feed_data(0, Duration::ZERO);
         r.feed_data(1, Duration::ZERO);
         let outcome = r.feed_data(3, Duration::ZERO); // seq 2 missing
@@ -372,7 +389,7 @@ mod tests {
 
     #[test]
     fn zero_loss_tick_never_emits_a_nak() {
-        let mut r = Receiver::new(PEER, 0);
+        let mut r = Receiver::new(PEER, 0, MAX_FLOW_WINDOW);
         for seq_number in 0..5u32 {
             r.feed_data(seq_number, Duration::ZERO);
         }
@@ -389,7 +406,7 @@ mod tests {
 
     #[test]
     fn full_ack_fires_on_the_10ms_timer_and_light_ack_on_the_64_packet_threshold() {
-        let mut r = Receiver::new(PEER, 0);
+        let mut r = Receiver::new(PEER, 0, MAX_FLOW_WINDOW);
         let out = r.tick(FULL_ACK_PERIOD);
         assert_eq!(out.len(), 1);
         let ControlPacket::Ack(ack) = ControlPacket::parse(&out[0]).unwrap() else {
@@ -421,7 +438,7 @@ mod tests {
 
     #[test]
     fn ackack_updates_rtt_from_the_measured_round_trip() {
-        let mut r = Receiver::new(PEER, 0);
+        let mut r = Receiver::new(PEER, 0, MAX_FLOW_WINDOW);
         let out = r.tick(FULL_ACK_PERIOD);
         let ControlPacket::Ack(ack) = ControlPacket::parse(&out[0]).unwrap() else {
             panic!("expected ACK");

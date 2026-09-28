@@ -32,13 +32,24 @@ pub(crate) const MESSAGE_NUMBER_MASK: u32 = (1 << MESSAGE_NUMBER_BITS) - 1;
 /// entirely behind that feature (unlike `arq::seq::seq_next`'s equivalent
 /// for the sequence number, which `arq::sender` also uses unconditionally) —
 /// gated rather than left to warn as dead code under `--no-default-features`.
+///
+/// Wraps to `1`, not `0`: libsrt's own public header reserves message number
+/// `0` — `SRT_MSGNO_CONTROL` in `srt.h` ("0: control (used by packet filter
+/// control messages)") — so `0` on a DATA packet is not "message number
+/// zero", it is libsrt's own filter-control sentinel. A plain wrap to `0`
+/// (this function's behavior until this fix) would, once every 2^26
+/// messages, emit a genuine data packet a real libsrt receiver reads as a
+/// filter-control message instead.
 #[cfg(feature = "tokio")]
 pub(crate) fn next_message_number(n: u32) -> u32 {
     // Mask `n` down first: it is always already in range in practice (every
     // caller only ever feeds back a value this function returned), but doing
     // so here too means a stray out-of-range input can't push `n + 1` out of
     // range either.
-    ((n & MESSAGE_NUMBER_MASK) + 1) & MESSAGE_NUMBER_MASK
+    match ((n & MESSAGE_NUMBER_MASK) + 1) & MESSAGE_NUMBER_MASK {
+        0 => 1,
+        next => next,
+    }
 }
 
 /// `PP` (Packet Position Flag) wire values (§3.1).
@@ -286,9 +297,12 @@ mod tests {
             MESSAGE_NUMBER_MASK
         );
         // The actual boundary (issue #1062): one past the max 26-bit value
-        // must wrap to 0, not silently produce an out-of-range value that
-        // later fails `DataPacket::serialize_into`'s `FieldTooWide` check.
-        assert_eq!(next_message_number(MESSAGE_NUMBER_MASK), 0);
+        // must wrap back into range, not silently produce an out-of-range
+        // value that later fails `DataPacket::serialize_into`'s
+        // `FieldTooWide` check — and specifically to `1`, not `0`: libsrt's
+        // `srt.h` reserves message number `0` (`SRT_MSGNO_CONTROL`) for its
+        // own packet-filter control messages, never a real data message.
+        assert_eq!(next_message_number(MESSAGE_NUMBER_MASK), 1);
         assert_eq!(next_message_number(0), 1);
     }
 

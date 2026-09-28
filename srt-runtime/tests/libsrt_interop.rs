@@ -1,4 +1,4 @@
-//! Real `libsrt` interop over loopback UDP, both directions (issue #1065).
+//! Real `libsrt` interop over loopback UDP, both directions (libsrt interop).
 //!
 //! `tests/libsrt_fixtures.rs` already proves real libsrt KEEPALIVE/ACKACK
 //! bytes parse correctly (issue #1060). This file proves the *handshake and
@@ -18,8 +18,7 @@
 
 #![cfg(feature = "tokio")]
 
-use std::io::Write;
-use std::process::{Command, Stdio};
+use std::process::{Child, Command, Stdio};
 use std::time::Duration;
 
 use srt_runtime::handshake_sm::HandshakeConfig;
@@ -60,6 +59,19 @@ fn pattern(n: usize, seed: u8) -> Vec<u8> {
     (0..n).map(|i| seed.wrapping_add(i as u8)).collect()
 }
 
+/// Kills the wrapped child on drop (panic, early `?`, or a `tokio::time::timeout`
+/// dropping the future all count) — a plain `.kill()` at the end of the async
+/// block is skipped by any of those paths, leaking a real `srt-live-transmit`
+/// process that then spins retrying forever.
+struct KillOnDrop(Child);
+
+impl Drop for KillOnDrop {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
+}
+
 async fn recv_at_least(discard: &TokioUdpSocket, want_len: usize, timeout: Duration) -> Vec<u8> {
     let mut out = Vec::new();
     let mut buf = vec![0u8; 65536];
@@ -93,15 +105,17 @@ async fn our_caller_completes_real_handshake_and_data_with_libsrt_listener() {
             .await
             .expect("bind discard socket");
 
-        let mut listener_proc = Command::new("srt-live-transmit")
-            .arg("-loglevel:error")
-            .arg(format!("srt://:{listen_port}"))
-            .arg(format!("udp://127.0.0.1:{discard_port}"))
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
-            .expect("spawn srt-live-transmit listener");
+        let _listener_proc = KillOnDrop(
+            Command::new("srt-live-transmit")
+                .arg("-loglevel:error")
+                .arg(format!("srt://:{listen_port}"))
+                .arg(format!("udp://127.0.0.1:{discard_port}"))
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .spawn()
+                .expect("spawn srt-live-transmit listener"),
+        );
 
         tokio::time::sleep(Duration::from_millis(300)).await;
 
@@ -148,8 +162,6 @@ async fn our_caller_completes_real_handshake_and_data_with_libsrt_listener() {
         eprintln!("PASS: our_caller_completes_real_handshake_and_data_with_libsrt_listener");
 
         drop(caller);
-        let _ = listener_proc.kill();
-        let _ = listener_proc.wait();
     })
     .await
     .expect("test timed out — real libsrt listener/session stalled");
@@ -158,14 +170,18 @@ async fn our_caller_completes_real_handshake_and_data_with_libsrt_listener() {
 /// A genuine `srt-live-transmit` caller connects to our [`SrtListener`],
 /// completing the real HSv5 handshake and delivering a real DATA payload
 /// through the fixed `ingress()` path. (This direction already worked before
-/// this fix — kept as a regression test per the review.) The burst is
-/// pre-buffered into the child's stdin pipe before it starts polling: this
-/// `srt-live-transmit` build's `ConsoleSource` (`apps/transmitmedia.cpp`)
-/// only ever reports its stdin fd ready once (a real, independently
-/// reproduced libsrt/macOS defect unrelated to anything this crate does —
-/// see `tests/libsrt_fixtures.rs`'s module doc), so anything meant to reach
-/// it must already be sitting in the pipe by the time that one readiness
-/// event fires.
+/// this fix — kept as a regression test per the review.)
+///
+/// The source is `udp://:PORT`, not `file://con` (stdin) or an arbitrary
+/// `file://` path (`--help`'s own "Supported schemes" only lists `file://con`
+/// — any other path is "Unsupported source type"). Independently reproduced
+/// against two genuine `srt-live-transmit` processes with no code from this
+/// crate involved at all (real listener, real caller, `file://con` source):
+/// zero bytes ever reach the `srt://` output, pipe-buffered-before-spawn or
+/// not — a real libsrt/macOS `ConsoleSource` defect (see
+/// `tests/libsrt_fixtures.rs`'s module doc) that plain `udp://` sourcing
+/// avoids entirely, confirmed against the same two real processes to forward
+/// the full burst byte-identical.
 #[tokio::test]
 async fn real_libsrt_caller_completes_handshake_and_data_with_our_listener() {
     skip_unless_srt_live_transmit_available!();
@@ -180,21 +196,32 @@ async fn real_libsrt_caller_completes_handshake_and_data_with_our_listener() {
         let accept_jh =
             tokio::spawn(async move { listener.accept().await.expect("listener accept") });
 
-        let mut caller = Command::new("srt-live-transmit")
-            .arg("-loglevel:error")
-            .arg(format!("-chunk:{PAYLOAD_LEN}"))
-            .arg("file://con")
-            .arg(format!("srt://127.0.0.1:{}", bound_addr.port()))
-            .stdin(Stdio::piped())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
-            .expect("spawn srt-live-transmit caller");
-        let mut caller_stdin = caller.stdin.take().expect("caller stdin");
+        let src_port = free_udp_port().await;
+        let _caller = KillOnDrop(
+            Command::new("srt-live-transmit")
+                .arg("-loglevel:error")
+                .arg(format!("-chunk:{PAYLOAD_LEN}"))
+                .arg(format!("udp://:{src_port}"))
+                .arg(format!("srt://127.0.0.1:{}", bound_addr.port()))
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .spawn()
+                .expect("spawn srt-live-transmit caller"),
+        );
+        // Give the caller a moment to bind its udp:// source before we feed it.
+        tokio::time::sleep(Duration::from_millis(300)).await;
 
+        let feed = TokioUdpSocket::bind("127.0.0.1:0")
+            .await
+            .expect("bind feed socket");
         let burst = pattern(PAYLOAD_LEN * 10, 0);
-        caller_stdin.write_all(&burst).expect("pre-buffer burst");
-        drop(caller_stdin);
+        for c in burst.chunks(PAYLOAD_LEN) {
+            feed.send_to(c, ("127.0.0.1", src_port))
+                .await
+                .expect("feed burst chunk");
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
 
         let mut receiver = tokio::time::timeout(Duration::from_secs(10), accept_jh)
             .await
@@ -220,8 +247,6 @@ async fn real_libsrt_caller_completes_handshake_and_data_with_our_listener() {
         eprintln!("PASS: real_libsrt_caller_completes_handshake_and_data_with_our_listener");
 
         drop(receiver);
-        let _ = caller.kill();
-        let _ = caller.wait();
     })
     .await
     .expect("test timed out — real libsrt handshake/session stalled");
