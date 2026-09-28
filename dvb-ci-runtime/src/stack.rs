@@ -23,23 +23,26 @@ use dvb_ci::resource::{
 };
 use dvb_si::tables::pmt::PmtSection;
 
-/// Serialize an APDU object to owned bytes (buffer is sized exactly).
+/// Serialize an APDU object to owned bytes.
 ///
-/// r10-W-20: previously matched (not `expect`ed), silently emitting an
-/// empty `Vec` on a serialize error — which then went out to real CI
-/// hardware as an indistinguishable-from-deliberate empty APDU rather than
-/// surfacing the failure at all. Panicking is louder and safer than
-/// silently corrupting the wire exchange.
-fn ser_apdu<S: Serialize>(s: &S) -> Vec<u8>
-where
-    S::Error: core::fmt::Debug,
-{
-    let mut b = vec![0u8; s.serialized_len()];
-    let n = s
-        .serialize_into(&mut b)
-        .expect("value must satisfy every wire constraint of its own type");
-    b.truncate(n);
-    b
+/// r10-W-20: previously emitted a silently-empty `Vec` on a serialize error
+/// (and, in a later pass, panicked) — either way the failure never reached a
+/// caller reacting to CAM/card-originated input as a value it could act on.
+/// Propagate `Err` instead; every call site converts it to a
+/// [`Notification::Error`] the same way [`CiStack::build_ca_pmt_bytes`]'s
+/// own fallible callers already do.
+fn ser_apdu<S: Serialize<Error = dvb_ci::Error>>(s: &S) -> dvb_ci::Result<Vec<u8>> {
+    s.try_to_bytes()
+}
+
+/// Convert a serialize failure into the host-facing error notification the
+/// stack already uses for every other internal error (transport errors,
+/// `build_ca_pmt_bytes` failures): non-fatal and informational, never a panic
+/// or a silently dropped action.
+fn err_action(e: dvb_ci::Error) -> Action {
+    Action::Notify(Notification::Error {
+        detail: e.to_string(),
+    })
 }
 
 /// The composed EN 50221 protocol core.
@@ -128,6 +131,14 @@ impl CiStack {
                 // know the old binding is stale).
                 self.session = SessionLayer::new();
                 self.cam_caids = Vec::new();
+                // r10-W-19: also reset each resource handler's own internal
+                // state (e.g. the Resource Manager's `ready`/`module_profiled`
+                // latch, date_time's resend timer) — otherwise a re-inserted
+                // CAM's fresh handshake runs against state a PREVIOUS module
+                // left behind.
+                for r in &mut self.resources {
+                    r.reset();
+                }
                 let mut actions = vec![Action::Reset, Action::QuerySlot];
                 let out = self.transport.init();
                 actions.extend(self.emit_transport(out));
@@ -139,8 +150,10 @@ impl CiStack {
                 // Advance each open resource's timers (e.g. date_time resend).
                 for (session_nb, resource) in self.session.sessions() {
                     if let Some(i) = self.handler_index(resource) {
-                        let out = self.resources[i].tick(elapsed);
-                        actions.extend(self.process_resource_out(session_nb, out));
+                        match self.resources[i].tick(elapsed) {
+                            Ok(out) => actions.extend(self.process_resource_out(session_nb, out)),
+                            Err(e) => actions.push(err_action(e)),
+                        }
                     }
                 }
                 actions
@@ -157,37 +170,47 @@ impl CiStack {
             Event::Host(HostRequest::AddProgram(pmt)) => self.add_program(pmt),
             Event::Host(HostRequest::RemoveProgram(pmt)) => self.remove_program(pmt),
             Event::Host(HostRequest::EnterMenu) => {
-                let apdu = ser_apdu(&dvb_ci::objects::application_info::EnterMenu);
-                self.send_to_resource(APPLICATION_INFORMATION, &apdu)
+                match ser_apdu(&dvb_ci::objects::application_info::EnterMenu) {
+                    Ok(apdu) => self.send_to_resource(APPLICATION_INFORMATION, &apdu),
+                    Err(e) => vec![err_action(e)],
+                }
             }
             Event::Host(HostRequest::MmiMenuAnswer(choice_ref)) => {
-                let apdu = ser_apdu(&MenuAnsw { choice_ref });
-                self.send_to_resource(MMI, &apdu)
+                match ser_apdu(&MenuAnsw { choice_ref }) {
+                    Ok(apdu) => self.send_to_resource(MMI, &apdu),
+                    Err(e) => vec![err_action(e)],
+                }
             }
             Event::Host(HostRequest::MmiEnquiryAnswer(text)) => {
-                let apdu = ser_apdu(&Answ {
+                match ser_apdu(&Answ {
                     answ_id: AnswId::Answer,
                     text_chars: text,
-                });
-                self.send_to_resource(MMI, &apdu)
+                }) {
+                    Ok(apdu) => self.send_to_resource(MMI, &apdu),
+                    Err(e) => vec![err_action(e)],
+                }
             }
-            Event::Host(HostRequest::MmiCancel) => {
-                let apdu = ser_apdu(&Answ {
-                    answ_id: AnswId::Cancel,
-                    text_chars: &[],
-                });
-                self.send_to_resource(MMI, &apdu)
-            }
+            Event::Host(HostRequest::MmiCancel) => match ser_apdu(&Answ {
+                answ_id: AnswId::Cancel,
+                text_chars: &[],
+            }) {
+                Ok(apdu) => self.send_to_resource(MMI, &apdu),
+                Err(e) => vec![err_action(e)],
+            },
             Event::Host(HostRequest::Shutdown) => {
                 // r10-W-19: previously a complete no-op — this is the
                 // symmetric teardown to `Init`'s build-up, so a later
                 // `Init` starts genuinely clean rather than compounding
                 // onto whatever this shutdown should have cleared out
                 // (stale sessions, cached CAIDs, an `Active` transport
-                // connection the module no longer expects to hear from).
+                // connection the module no longer expects to hear from,
+                // and now each resource's own latched state, r10-W-19).
                 self.transport = Transport::new(1);
                 self.session = SessionLayer::new();
                 self.cam_caids = Vec::new();
+                for r in &mut self.resources {
+                    r.reset();
+                }
                 vec![Action::Reset]
             }
         }
@@ -282,7 +305,13 @@ impl CiStack {
         } else {
             build_ca_pmt_for_caids(&parsed, &self.cam_caids, list_management, cmd_id)
         };
-        Ok(built.to_bytes())
+        // r10-W-20: `try_to_bytes`, not `to_bytes` — the projection of a
+        // corrupt (or CAM-influenced) PMT can have no valid `ca_pmt`
+        // encoding; surface it as the stack's `Notification::Error`, never
+        // a panic.
+        built
+            .try_to_bytes()
+            .map_err(|e| format!("ca_pmt serialization failed: {e}"))
     }
 
     /// Send an APDU to the open session bound to `resource` (if any).
@@ -290,11 +319,13 @@ impl CiStack {
         // Find the session_nb for the resource (linear scan over the small set).
         let nb = (1u16..=u16::MAX).find(|&n| self.session.resource_of(n) == Some(resource));
         match nb {
-            Some(nb) => {
-                let spdu = self.session.send_apdu(nb, apdu);
-                let out = self.transport.send_spdu(&spdu);
-                self.emit_transport(out)
-            }
+            Some(nb) => match self.session.send_apdu(nb, apdu) {
+                Ok(spdu) => {
+                    let out = self.transport.send_spdu(&spdu);
+                    self.emit_transport(out)
+                }
+                Err(e) => vec![err_action(e)],
+            },
             None => vec![Action::Notify(Notification::Error {
                 detail: format!("no open session for resource {}", resource.name()),
             })],
@@ -335,7 +366,10 @@ impl CiStack {
             apdus,
             opened,
             closed,
-        } = self.session.on_spdu(spdu, |r| host_provided.contains(&r));
+        } = match self.session.on_spdu(spdu, |r| host_provided.contains(&r)) {
+            Ok(out) => out,
+            Err(e) => return vec![err_action(e)],
+        };
 
         let mut actions = Vec::new();
         // Session-layer SPDUs (e.g. open_session_response) go down the transport.
@@ -346,8 +380,10 @@ impl CiStack {
             actions.push(Action::Notify(Notification::SessionOpened { resource }));
             // Drive the resource handler's on_open (e.g. RM sends profile_enq).
             if let Some(i) = self.handler_index(resource) {
-                let out = self.resources[i].on_open();
-                actions.extend(self.process_resource_out(session_nb, out));
+                match self.resources[i].on_open() {
+                    Ok(out) => actions.extend(self.process_resource_out(session_nb, out)),
+                    Err(e) => actions.push(err_action(e)),
+                }
             }
         }
         for session_nb in closed {
@@ -358,8 +394,10 @@ impl CiStack {
             if let Some(resource) = self.session.resource_of(session_nb)
                 && let Some(i) = self.handler_index(resource)
             {
-                let out = self.resources[i].on_apdu(&apdu);
-                actions.extend(self.process_resource_out(session_nb, out));
+                match self.resources[i].on_apdu(&apdu) {
+                    Ok(out) => actions.extend(self.process_resource_out(session_nb, out)),
+                    Err(e) => actions.push(err_action(e)),
+                }
             }
         }
         actions
@@ -383,8 +421,10 @@ impl CiStack {
     fn process_resource_out(&mut self, session_nb: u16, out: ResourceOut) -> Vec<Action> {
         let mut actions = Vec::new();
         for apdu in out.apdus {
-            let spdu = self.session.send_apdu(session_nb, &apdu);
-            actions.extend(self.send_spdu_actions(&spdu));
+            match self.session.send_apdu(session_nb, &apdu) {
+                Ok(spdu) => actions.extend(self.send_spdu_actions(&spdu)),
+                Err(e) => actions.push(err_action(e)),
+            }
         }
         for note in out.notify {
             // Drive the auto-descramble sequence off the CA notifications.
@@ -393,8 +433,10 @@ impl CiStack {
             actions.extend(follow);
         }
         for resource in out.open {
-            let spdu = self.session.create_session(resource);
-            actions.extend(self.send_spdu_actions(&spdu));
+            match self.session.create_session(resource) {
+                Ok(spdu) => actions.extend(self.send_spdu_actions(&spdu)),
+                Err(e) => actions.push(err_action(e)),
+            }
         }
         actions
     }
@@ -488,6 +530,55 @@ mod tests {
         assert!(
             s.session.is_empty(),
             "Init must not inherit the previous connection's session table"
+        );
+    }
+
+    /// r10-W-19: `Init` must also reset each resource handler's own internal
+    /// state, not just the session table — otherwise the Resource Manager's
+    /// `ready` flag stays latched `true` from the FIRST handshake, and a
+    /// second `profile` (module re-sent after a hot-plug re-insert) never
+    /// re-opens the `profile_change`/`CamReady` gate (`resource.rs`'s
+    /// `ready` field), so the module idles forever after a re-insert.
+    #[test]
+    fn re_init_after_a_completed_handshake_fires_cam_ready_again() {
+        let mut s = CiStack::new();
+        s.handle(Event::Host(HostRequest::Init));
+        s.handle(Event::Readable(&[tpdu_tags::C_T_C_REPLY, 0x01, 0x01]));
+        let osr = ser(&OpenSessionRequest {
+            resource: RESOURCE_MANAGER,
+        });
+        s.handle(Event::Readable(&r_data(1, &osr)));
+        let first = s.handle(Event::Readable(&r_apdu(
+            1,
+            &ser(&dvb_ci::objects::resource_manager::Profile { resources: vec![] }),
+        )));
+        assert!(
+            first
+                .iter()
+                .any(|a| matches!(a, Action::Notify(Notification::CamReady))),
+            "precondition: the first handshake fires CamReady"
+        );
+
+        // Re-init (a hot-plug re-handshake), then re-run the RM handshake
+        // exactly as the first time (the fresh SessionLayer allocates
+        // session_nb 1 again).
+        s.handle(Event::Host(HostRequest::Init));
+        s.handle(Event::Readable(&[tpdu_tags::C_T_C_REPLY, 0x01, 0x01]));
+        let osr2 = ser(&OpenSessionRequest {
+            resource: RESOURCE_MANAGER,
+        });
+        s.handle(Event::Readable(&r_data(1, &osr2)));
+        let second = s.handle(Event::Readable(&r_apdu(
+            1,
+            &ser(&dvb_ci::objects::resource_manager::Profile { resources: vec![] }),
+        )));
+        assert!(
+            second
+                .iter()
+                .any(|a| matches!(a, Action::Notify(Notification::CamReady))),
+            "a fresh handshake after Init must fire CamReady again \
+             (pre-fix: ResourceManager.ready stayed latched from the first \
+             handshake, so profile_change/CamReady never re-fired)"
         );
     }
 
@@ -672,6 +763,35 @@ mod tests {
             }),
         )));
         s
+    }
+
+    /// r10-W-20: a corrupt PMT on the raw `descramble` path must surface
+    /// as `Notification::Error` from the public `CiStack::handle` entry
+    /// point and send nothing — pre-fix `build_ca_pmt_bytes` reached
+    /// `CaPmtBuilt::to_bytes()`, so any serialization failure (dvb-si's
+    /// 12-bit reads clamp a *parseable* loop inside every ca_pmt field,
+    /// but a corrupted reassembly can still fail the re-parse/serialize
+    /// boundary) panicked the driver instead of reporting.
+    #[test]
+    fn descramble_of_a_corrupt_pmt_surfaces_an_error_not_a_panic() {
+        let mut s = stack_with_ca_session();
+        // Truncate a good PMT mid-ES-loop: `bytes_len < 3 +
+        // section_length` — the exact corrupt-reassembly shape.
+        let mut pmt = build_pmt();
+        pmt.truncate(pmt.len() - 8);
+        let actions = s.handle(Event::Host(HostRequest::Descramble(&pmt)));
+        assert!(
+            actions.iter().any(|a| matches!(
+                a,
+                Action::Notify(Notification::Error { detail })
+                    if detail.contains("invalid PMT")
+            )),
+            "expected an invalid-PMT Notification::Error, got {actions:?}"
+        );
+        assert!(
+            !actions.iter().any(|a| matches!(a, Action::Write(_))),
+            "a failed PMT must send nothing"
+        );
     }
 
     #[test]

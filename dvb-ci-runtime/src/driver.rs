@@ -13,6 +13,8 @@ use dvb_ci::objects::ca_pmt::{CaPmtCmdId, CaPmtListManagement};
 use dvb_si::tables::cat::CatSection;
 use dvb_si::tables::pmt::PmtSection;
 
+use broadcast_common::Parse;
+
 use crate::device::{CaDevice, SlotInfo};
 use crate::event::{Action, Event, HostRequest, HotPlug, MmiEvent, Notification};
 use crate::managed::{self, CaError, ManagedCa};
@@ -78,6 +80,10 @@ pub struct Driver<D: CaDevice> {
     last_pump: Option<Instant>,
     /// Clock source for [`Self::pump`] — see [`Clock`]/[`Self::with_clock`].
     clock: Clock,
+    /// r10-W-20: a re-query-tick serialization failure recorded for later
+    /// reporting (a corrupt service must not silently swallow the healthy
+    /// services' resend); drained with priority on the next tick.
+    requery_pending: Option<CaError>,
 }
 
 impl<D: CaDevice> Driver<D> {
@@ -96,6 +102,7 @@ impl<D: CaDevice> Driver<D> {
             managed: ManagedCa::new(),
             last_pump: None,
             clock: default_clock(),
+            requery_pending: None,
         }
     }
 
@@ -246,8 +253,15 @@ impl<D: CaDevice> Driver<D> {
             CaPmtListManagement::Add
         };
         let cmd_id = CaPmtCmdId::OkDescrambling;
-        let built = self.build_ca_pmt_filtered(pmt, list_management, cmd_id);
-        let built_bytes = built.to_bytes();
+        // r10-W-20: `try_to_bytes`, not `to_bytes` — a PMT whose descriptor
+        // loop is corrupted past the section end projects into a `ca_pmt`
+        // with no valid wire encoding; reject that as `Err` instead of
+        // panicking inside the serializer. Checked BEFORE recording, so a
+        // PMT whose ca_pmt cannot be encoded is never added to the managed
+        // set (the re-query timer would fail the same encoding forever).
+        let built_bytes = self
+            .build_ca_pmt_filtered(pmt, list_management, cmd_id)
+            .try_to_bytes()?;
         // `PmtSection` has no raw-bytes accessor — re-serialize (byte-identical
         // round-trip, a project invariant) to recover owned PMT bytes so
         // `remove_service` (#763 Task 6) can later re-drive `remove_program`
@@ -256,9 +270,7 @@ impl<D: CaDevice> Driver<D> {
         // active set on every re-query tick rather than freezing
         // `list_management` at this moment.
         let mut pmt_raw = vec![0u8; pmt.serialized_len()];
-        let n = pmt
-            .serialize_into(&mut pmt_raw)
-            .expect("PmtSection::serialize_into on a freshly-sized buffer cannot fail");
+        let n = pmt.serialize_into(&mut pmt_raw)?;
         pmt_raw.truncate(n);
         self.send_ca_pmt(&built_bytes)?;
         self.managed.record(
@@ -477,34 +489,52 @@ impl<D: CaDevice> Driver<D> {
     /// CAID-filtered via [`build_ca_pmt_filtered`](Self::build_ca_pmt_filtered)
     /// (#1067), same as [`add_service`](Self::add_service).
     fn requery_tick(&mut self, elapsed: Duration) -> io::Result<()> {
-        use broadcast_common::Parse;
-
+        // r10-W-20: a previously-recorded rejection is reported FIRST, on
+        // every pump until the caller fixes its state — never swallowed by
+        // an earlier `tick` return.
+        if let Some(err) = self.requery_pending.take() {
+            return Err(io::Error::other(err));
+        }
         if !self.managed.tick(elapsed) {
             return Ok(());
         }
-        let ca_pmts: Vec<(Vec<u8>, Vec<u8>)> = self
-            .managed
-            .services()
-            .values()
-            .map(|s| {
-                let pmt = PmtSection::parse(&s.pmt_raw)
-                    .expect("pmt_raw was produced by PmtSection::serialize_into at add_service time and must re-parse");
+        let mut ca_pmts: Vec<(Vec<u8>, Vec<u8>)> =
+            Vec::with_capacity(self.managed.services().len());
+        for s in self.managed.services().values() {
+            // r10-W-20: no `expect`/`to_bytes` here — `pmt_raw` is only
+            // as trustworthy as whatever the caller's CAM (or a
+            // corrupted capture) supplied, so a re-parse or re-serialize
+            // failure must end this re-query as `Err`, not a panic.
+            let outcome: Result<(Vec<u8>, Vec<u8>), CaError> = (|| {
+                let pmt = PmtSection::parse(&s.pmt_raw).map_err(CaError::PmtParse)?;
                 let query = self
                     .build_ca_pmt_filtered(&pmt, CaPmtListManagement::Update, CaPmtCmdId::Query)
-                    .to_bytes();
+                    .try_to_bytes()?;
                 let ok_descrambling = self
                     .build_ca_pmt_filtered(
                         &pmt,
                         CaPmtListManagement::Update,
                         CaPmtCmdId::OkDescrambling,
                     )
-                    .to_bytes();
-                (query, ok_descrambling)
-            })
-            .collect();
+                    .try_to_bytes()?;
+                Ok((query, ok_descrambling))
+            })();
+            match outcome {
+                Ok(pair) => ca_pmts.push(pair),
+                Err(err) => {
+                    // One corrupt (or CAM-supplied) service must not poison
+                    // the healthy services' resend this tick: record it and
+                    // return the failure after the good pair(s) went out.
+                    self.requery_pending = Some(err);
+                }
+            }
+        }
         for (query, ok_descrambling) in ca_pmts {
             self.send_ca_pmt(&query)?;
             self.send_ca_pmt(&ok_descrambling)?;
+        }
+        if let Some(err) = self.requery_pending.take() {
+            return Err(io::Error::other(err));
         }
         Ok(())
     }
@@ -1604,6 +1634,140 @@ pub(crate) mod tests {
                 }
             ),
             "expected NoCaDescriptor{{program_number: 999}}, got {err:?}"
+        );
+        assert!(
+            d.managed_ca().services().is_empty(),
+            "a rejected PMT must not be recorded"
+        );
+    }
+
+    /// r10-W-20: the re-query timer must surface a corrupt stored PMT as an
+    /// `Err` from the public `pump` entry point — never a panic — and the
+    /// failure must be sticky: a corrupt (or CAM-supplied) service must not
+    /// silently swallow the healthy services' resend, and must keep
+    /// reporting on every later tick. A service with truncated stored
+    /// `pmt_raw` (corruption of the caller's own state after a successful
+    /// add — the only corrupt shape the stored bytes can hold, since
+    /// `add_service` re-serializes them) joins a healthy service added
+    /// through the public `add_service`; when the 5s timer fires, the
+    /// healthy pair still goes out, the corrupt one's re-parse failure is
+    /// recorded, and `pump` returns it as `Err` — twice in a row.
+    #[test]
+    fn requery_tick_serialize_failure_errors_from_pump_instead_of_panicking() {
+        use broadcast_common::Parse;
+
+        let clock = TestClock::new();
+        let mut d = driver_with_sessions().with_clock(clock.as_fn());
+
+        // A healthy service through the public path (feeds its CaInfo like
+        // `requery_timer_resends_ca_pmt_then_reply_change_emits_one_entitlement`).
+        let good_bytes = build_ca_pmt_fixture(1);
+        let good = PmtSection::parse(&good_bytes).unwrap();
+        assert_eq!(good.program_number, 1, "fixture precondition");
+        d.add_service(&good).unwrap();
+
+        // The corrupt service, recorded via the same internals
+        // `add_service` uses (its raw bytes cannot be written by the
+        // serializer, so they never reach the stored set through the
+        // public path).
+        let pmt_bytes = build_ca_pmt_fixture(1546);
+        let pmt = PmtSection::parse(&pmt_bytes).unwrap();
+        let built = d
+            .build_ca_pmt_filtered(
+                &pmt,
+                CaPmtListManagement::Update,
+                CaPmtCmdId::OkDescrambling,
+            )
+            .try_to_bytes()
+            .expect("fixture precondition: the good PMT encodes");
+        let corrupt_raw = pmt_bytes[..pmt_bytes.len() - 6].to_vec();
+        d.managed.record(
+            1546,
+            managed::service_of(&pmt, CaPmtCmdId::OkDescrambling, built, corrupt_raw),
+        );
+        d.take_notifications();
+        // Drain every queued host write with module T_SBs (the transport
+        // flushes one write per module turn, #337; `feed`'s tail leaves
+        // handshake writes and `add_service` added one more).
+        for _ in 0..16 {
+            d.device_mut().inbound.push_back(sb());
+            d.pump(Duration::from_millis(10)).unwrap();
+        }
+        d.set_requery_interval(Duration::from_secs(5));
+
+        // Advance past the interval and pump idle: the timer fires, the
+        // healthy service's re-query pair goes out, and the corrupt one
+        // fails its re-parse — an Err out of `pump`, not a panic.
+        clock.advance(Duration::from_secs(5));
+        let err = d
+            .pump(Duration::ZERO)
+            .expect_err("re-query of a corrupt stored PMT must error, not panic");
+        assert!(
+            matches!(
+                err.get_ref(),
+                Some(e) if e.downcast_ref::<CaError>()
+                    .is_some_and(|ca| matches!(ca, CaError::PmtParse(_)))
+            ),
+            "expected CaError::PmtParse from the corrupt stored bytes, got {err:?}"
+        );
+        assert!(
+            err.to_string().contains("stored PMT re-parse failed"),
+            "error must name the re-parse failure, got: {err}"
+        );
+        // Sticky-but-not-swallowing: the failure was returned after the
+        // healthy pair went out this tick; drain it, and the NEXT fire
+        // re-detects the same corrupt stored bytes (never silently quiet).
+        assert!(d.pump(Duration::ZERO).is_ok());
+        clock.advance(Duration::from_secs(5));
+        let err2 = d
+            .pump(Duration::ZERO)
+            .expect_err("the corrupt service must fail every re-query");
+        assert!(
+            err2.to_string().contains("stored PMT re-parse failed"),
+            "failure must persist, got: {err2}"
+        );
+    }
+
+    /// The constructor-level corrupt PMT: a 5000-byte programme CA loop
+    /// (CAID `0x0B00`), past dvb-ci's 4095-byte `program_info_length` cap.
+    /// dvb-si's parse only 12-bit-checks lengths against the physical
+    /// buffer, so this shape exists only via `PmtSection::new` — standing
+    /// in for a corrupt reassembly reaching `add_service` as a value.
+    fn corrupt_ca_section_ctor() -> PmtSection<'static> {
+        const LOOP: usize = 5000;
+        let mut prog_info: Vec<u8> = Vec::with_capacity(LOOP);
+        for _ in 0..LOOP / 4 {
+            // CA_descriptor: CAID 0x0B00, CA_PID 0x0100 (4-byte body).
+            prog_info.extend_from_slice(&[0x09u8, 0x02, 0x0B, 0x00]);
+        }
+        assert_eq!(prog_info.len(), LOOP);
+        PmtSection::new(
+            1,
+            1,
+            true,
+            0,
+            0,
+            0x0200,
+            dvb_si::descriptors::DescriptorLoop::new(Box::leak(prog_info.into_boxed_slice())),
+            Vec::new(),
+        )
+    }
+
+    /// r10-W-20: `add_service` must reject a PMT whose CA loop cannot be
+    /// encoded into a `ca_pmt` (over-range `program_info_length`) as
+    /// `CaError::Serialize` from the public entry point — pre-fix this
+    /// reached `.to_bytes()` and panicked inside the dvb-ci serializer.
+    #[test]
+    fn add_service_serialize_failure_returns_err_instead_of_panicking() {
+        let mut d = driver_with_sessions();
+        d.managed.set_cam_caids([0x0B00u16].into_iter().collect());
+        let pmt = corrupt_ca_section_ctor();
+        let err = d
+            .add_service(&pmt)
+            .expect_err("a ca_pmt with no valid encoding must error, not panic");
+        assert!(
+            matches!(err, CaError::Serialize(_)),
+            "expected CaError::Serialize, got {err:?}"
         );
         assert!(
             d.managed_ca().services().is_empty(),

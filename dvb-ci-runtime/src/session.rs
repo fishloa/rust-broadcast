@@ -17,21 +17,13 @@ use dvb_ci::spdu::{
     OpenSessionResponse, SessionNumber, SessionStatus, tags,
 };
 
-/// r10-W-20: previously matched (not `expect`ed) specifically to avoid a
-/// `Debug` bound, silently emitting an empty `Vec` on error — which then
-/// went out to real CI hardware as an indistinguishable-from-deliberate
-/// empty SPDU rather than surfacing the failure at all. Panicking is
-/// louder and safer than silently corrupting the wire exchange.
-fn ser<S: Serialize>(s: &S) -> Vec<u8>
-where
-    S::Error: core::fmt::Debug,
-{
-    let mut b = vec![0u8; s.serialized_len()];
-    let n = s
-        .serialize_into(&mut b)
-        .expect("value must satisfy every wire constraint of its own type");
-    b.truncate(n);
-    b
+/// r10-W-20: previously emitted a silently-empty `Vec` on error (and, in a
+/// later pass, panicked). The session layer's SPDUs are triggered by APDUs
+/// and open/close requests that ultimately originate from the CAM/card, so a
+/// serialize failure must propagate to the caller as `Err`, not corrupt the
+/// wire exchange or crash the driver.
+fn ser<S: Serialize<Error = dvb_ci::Error>>(s: &S) -> dvb_ci::Result<Vec<u8>> {
+    s.try_to_bytes()
 }
 
 /// What the session layer wants done after handling one SPDU.
@@ -119,20 +111,19 @@ impl SessionLayer {
     /// resource-manager-internal primitive; a real CAM rejects it with
     /// `status=0xF0` — verified live against an AlphaCrypt.) The session is
     /// recorded once the module's `open_session_response(ok)` arrives.
-    pub fn create_session(&mut self, resource: ResourceId) -> Vec<u8> {
+    pub fn create_session(&mut self, resource: ResourceId) -> dvb_ci::Result<Vec<u8>> {
         ser(&OpenSessionRequest { resource })
     }
 
     /// Wrap an APDU for sending on `session_nb` (`session_number` + body).
-    #[must_use]
-    pub fn send_apdu(&self, session_nb: u16, apdu: &[u8]) -> Vec<u8> {
-        let mut v = ser(&SessionNumber { session_nb });
+    pub fn send_apdu(&self, session_nb: u16, apdu: &[u8]) -> dvb_ci::Result<Vec<u8>> {
+        let mut v = ser(&SessionNumber { session_nb })?;
         v.extend_from_slice(apdu);
-        v
+        Ok(v)
     }
 
     /// Begin closing `session_nb`: returns the `close_session_request` SPDU.
-    pub fn close(&mut self, session_nb: u16) -> Vec<u8> {
+    pub fn close(&mut self, session_nb: u16) -> dvb_ci::Result<Vec<u8>> {
         self.sessions.remove(&session_nb);
         ser(&CloseSessionRequest { session_nb })
     }
@@ -164,7 +155,11 @@ impl SessionLayer {
 
     /// Handle one inbound SPDU. `provides` answers "does the host provide this
     /// resource?" for an incoming `open_session_request`.
-    pub fn on_spdu(&mut self, spdu: &[u8], provides: impl Fn(ResourceId) -> bool) -> SessionOut {
+    pub fn on_spdu(
+        &mut self,
+        spdu: &[u8],
+        provides: impl Fn(ResourceId) -> bool,
+    ) -> dvb_ci::Result<SessionOut> {
         let mut out = SessionOut::default();
         match spdu.first().copied() {
             // Module wants a host-provided resource.
@@ -176,14 +171,14 @@ impl SessionLayer {
                         status: SessionStatus::Ok,
                         resource: req.resource,
                         session_nb,
-                    }));
+                    })?);
                     out.opened.push((session_nb, req.resource));
                 } else {
                     out.spdus.push(ser(&OpenSessionResponse {
                         status: SessionStatus::ResourceNonExistent,
                         resource: req.resource,
                         session_nb: 0,
-                    }));
+                    })?);
                 }
             }
             // Module's reply to our open_session_request (host opened a
@@ -215,7 +210,7 @@ impl SessionLayer {
                 out.spdus.push(ser(&CloseSessionResponse {
                     status: SessionStatus::Ok,
                     session_nb: req.session_nb,
-                }));
+                })?);
                 out.closed.push(req.session_nb);
             }
             // Ack of a close we initiated.
@@ -235,7 +230,7 @@ impl SessionLayer {
             }
             _ => {}
         }
-        out
+        Ok(out)
     }
 }
 
@@ -253,8 +248,9 @@ mod tests {
         let mut s = SessionLayer::new();
         let req = ser(&OpenSessionRequest {
             resource: RESOURCE_MANAGER,
-        });
-        let out = s.on_spdu(&req, provides_rm);
+        })
+        .unwrap();
+        let out = s.on_spdu(&req, provides_rm).unwrap();
         assert_eq!(out.opened.len(), 1);
         let (nb, res) = out.opened[0];
         assert_eq!(res, RESOURCE_MANAGER);
@@ -270,8 +266,9 @@ mod tests {
         let mut s = SessionLayer::new();
         let req = ser(&OpenSessionRequest {
             resource: APPLICATION_INFORMATION,
-        });
-        let out = s.on_spdu(&req, provides_rm);
+        })
+        .unwrap();
+        let out = s.on_spdu(&req, provides_rm).unwrap();
         assert!(out.opened.is_empty());
         let resp = OpenSessionResponse::parse(&out.spdus[0]).unwrap();
         assert_eq!(resp.status, SessionStatus::ResourceNonExistent);
@@ -281,14 +278,15 @@ mod tests {
     #[test]
     fn create_session_tracked_on_ok_response() {
         let mut s = SessionLayer::new();
-        let _spdu = s.create_session(APPLICATION_INFORMATION);
+        let _spdu = s.create_session(APPLICATION_INFORMATION).unwrap();
         // module replies ok for session 1
         let resp = ser(&CreateSessionResponse {
             status: SessionStatus::Ok,
             resource: APPLICATION_INFORMATION,
             session_nb: 1,
-        });
-        let out = s.on_spdu(&resp, |_| false);
+        })
+        .unwrap();
+        let out = s.on_spdu(&resp, |_| false).unwrap();
         assert_eq!(out.opened, vec![(1, APPLICATION_INFORMATION)]);
         assert_eq!(s.resource_of(1), Some(APPLICATION_INFORMATION));
     }
@@ -303,8 +301,9 @@ mod tests {
         // Session 1 is already RESOURCE_MANAGER (opened via the ordinary path).
         let open = ser(&OpenSessionRequest {
             resource: RESOURCE_MANAGER,
-        });
-        let opened = s.on_spdu(&open, provides_rm).opened;
+        })
+        .unwrap();
+        let opened = s.on_spdu(&open, provides_rm).unwrap().opened;
         let nb = opened[0].0;
         assert_eq!(s.resource_of(nb), Some(RESOURCE_MANAGER));
 
@@ -314,8 +313,9 @@ mod tests {
             status: SessionStatus::Ok,
             resource: APPLICATION_INFORMATION,
             session_nb: nb,
-        });
-        let out = s.on_spdu(&colliding, |_| false);
+        })
+        .unwrap();
+        let out = s.on_spdu(&colliding, |_| false).unwrap();
         assert!(
             out.opened.is_empty(),
             "a colliding module-chosen session_nb must not be reported as opened"
@@ -336,8 +336,9 @@ mod tests {
             status: SessionStatus::Ok,
             resource: APPLICATION_INFORMATION,
             session_nb: 0,
-        });
-        let out = s.on_spdu(&resp, |_| false);
+        })
+        .unwrap();
+        let out = s.on_spdu(&resp, |_| false).unwrap();
         assert!(out.opened.is_empty());
         assert_eq!(s.resource_of(0), None);
     }
@@ -369,9 +370,9 @@ mod tests {
     fn session_number_routes_apdu_up() {
         let mut s = SessionLayer::new();
         let apdu = [0x9F, 0x80, 0x21, 0x00];
-        let mut spdu = ser(&SessionNumber { session_nb: 7 });
+        let mut spdu = ser(&SessionNumber { session_nb: 7 }).unwrap();
         spdu.extend_from_slice(&apdu);
-        let out = s.on_spdu(&spdu, |_| false);
+        let out = s.on_spdu(&spdu, |_| false).unwrap();
         assert_eq!(out.apdus, vec![(7, apdu.to_vec())]);
     }
 
@@ -381,11 +382,12 @@ mod tests {
         // open one first
         let req = ser(&OpenSessionRequest {
             resource: RESOURCE_MANAGER,
-        });
-        let nb = s.on_spdu(&req, provides_rm).opened[0].0;
+        })
+        .unwrap();
+        let nb = s.on_spdu(&req, provides_rm).unwrap().opened[0].0;
         // peer closes it
-        let close = ser(&CloseSessionRequest { session_nb: nb });
-        let out = s.on_spdu(&close, |_| false);
+        let close = ser(&CloseSessionRequest { session_nb: nb }).unwrap();
+        let out = s.on_spdu(&close, |_| false).unwrap();
         assert_eq!(out.closed, vec![nb]);
         assert!(s.is_empty());
         // reply is a close_session_response
@@ -395,7 +397,7 @@ mod tests {
     #[test]
     fn send_apdu_prefixes_session_number() {
         let s = SessionLayer::new();
-        let wire = s.send_apdu(3, &[0xAA, 0xBB]);
+        let wire = s.send_apdu(3, &[0xAA, 0xBB]).unwrap();
         let sn = SessionNumber::parse(&wire).unwrap();
         assert_eq!(sn.session_nb, 3);
         assert_eq!(&wire[SessionNumber::HEADER_LEN..], &[0xAA, 0xBB]);

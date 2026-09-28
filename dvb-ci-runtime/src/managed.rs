@@ -56,6 +56,21 @@ pub enum CaError {
     /// Sending the built `ca_pmt` to the device failed.
     #[error("ca_pmt send failed: {0}")]
     Io(#[from] std::io::Error),
+    /// The `ca_pmt` projected from the caller's PMT has no valid wire
+    /// encoding (a `program_info_length`/`ES_info_length` or `version_number`
+    /// out of its spec range — e.g. a source PMT whose descriptor loop is
+    /// corrupted past the section end) or its stored raw PMT no longer
+    /// re-parses. r10-W-20: `Driver::add_service` and the re-query timer
+    /// must reject such a PMT as an `Err` value rather than panic inside
+    /// the serialization.
+    #[error("ca_pmt serialization failed: {0}")]
+    Serialize(#[from] dvb_ci::Error),
+    /// The raw PMT bytes stored at `add_service` time no longer re-parse on
+    /// a re-query tick (corruption of the caller's own state); the re-query
+    /// is reported as an error instead of panicking (r10-W-20). Shares the
+    /// `dvb_si::error::Error` payload of the `Cat` arm.
+    #[error("stored PMT re-parse failed: {0}")]
+    PmtParse(dvb_si::error::Error),
     /// The CAT's descriptor loop (ISO/IEC 13818-1 §2.4.4.5) carried a
     /// truncated `CA_descriptor` (EN 300 468 §6.2.16) — [`Driver::set_cat`](crate::driver::Driver::set_cat)
     /// could not extract the CAID/EMM-PID map.
