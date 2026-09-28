@@ -26,6 +26,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   real peer's own SR/RR stats on nearly every datagram. Fixed by the new
   `RtcpPacket::Unknown` variant above; see `tests/real_browser_fixture.rs`
   for a real Chromium capture exercising exactly this shape (#1071).
+- SR/RR/SDES/BYE/APP parsing now validates and strips the `P` (padding)
+  octets per RFC 3550 §6.4.1 instead of leaving them in the body: a padded
+  BYE with no reason had its first padding byte misread as the
+  reason-length octet, and a padded APP's padding bytes leaked into `data`.
+  The `P` bit was already parsed and preserved on the header; it just was
+  not acted on (#1123).
 
 ## [0.3.1] - 2026-08-30
 

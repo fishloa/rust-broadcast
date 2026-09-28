@@ -4,7 +4,42 @@ All notable changes to this crate will be documented in this file.
 
 ## [Unreleased]
 
+### Changed (breaking)
+- `MediaTransport::handle_timeout` now returns `Vec<MediaEvent>` (was `()`); a failed ICE or
+  DTLS timer drive is now surfaced as `MediaEvent::TimerError` instead of silently discarded
+  (#1090).
+- `MediaTransport::handle_srtp_datagram`'s SRTP/SRTCP authentication failure (spoofed or
+  garbage traffic in the RFC 5764 §5.1.2 band) is now `MediaEvent::AuthFailure`, not `Err` from
+  `handle_datagram` — this is the expected outcome for unsolicited traffic on an open UDP port,
+  not a transport error (#1090).
+- `DecryptedRtp` gained an `extension: Option<DecryptedRtpExtension>` field (RFC 3550 §5.3.1,
+  e.g. RFC 8285 CVO/AV1-dependency-descriptor/`mid`/`rid`), which used to be dropped between
+  decrypt and the caller (#1090).
+- `MediaTransport::rekey` now returns `Error::Media` for `SetupRole::Passive` instead of tearing
+  down the association: `maybe_start_active_dtls` never dials out for Passive, so the old
+  behavior left a Passive side waiting forever for a `ClientHello` a browser/OBS peer never
+  sends without a new SDP offer, silently ending media for good. Drive an ICE restart or SDP
+  renegotiation instead (#1090).
+- `WhipClient::add_candidate` and its `buffered_candidates` field are removed: `flush_candidates`
+  never read them (it takes its own aggregated fragment), so they were dead, unbounded-until-
+  flush state with no consumer (#1090).
+- `WhipClient::flush_candidates`/`ice_restart`/`terminate` and `WhepPlayer::trickle_ice`/
+  `ice_restart`/`terminate` now record which request is in flight and dispatch the response on
+  that, rather than guessing from status code and `ETag` alone. `WhepPlayer::trickle_ice`/
+  `ice_restart` now take `&mut self` (previously `&self`) to record it. Before this, a trickle
+  ack answered `200` with an `ETag` (RFC 9725 permits either `204` or `200`+`ETag`) was
+  misread as an ICE-restart answer, and a `DELETE` answered `204` (as common as the `200` the
+  code checked for) left the client `Established` forever instead of `Closed` (#1090).
+
 ### Fixed
+- `ice::parse_ice_server_links`/`format_ice_server_links`: a `Link` header parameter value
+  (`username`/`credential`) containing `;`, `,` or `"` — all legal in an RFC 8288
+  `quoted-string`, e.g. a static TURN operator password — now round-trips through format ->
+  parse instead of being split or silently corrupted; `rel` matching is now case-insensitive
+  and accepts a space-separated list of relation types, per RFC 8288 (#1090).
+- `whep::server::WhepSession::on_patch` now matches `Content-Type` by media type only (ignoring
+  any `; parameter=value`), so `application/sdp; charset=utf-8` is accepted like the bare
+  `application/sdp` it used to require exactly (#1090).
 - `MediaEvent::RtcpUnsupported` was the outcome for nearly every real
   browser SRTCP datagram (RFC 4585 PSFB/RTPFB feedback or RFC 3611 XR, most
   of what a WebRTC peer sends), because `rtcp_packet::CompoundPacket::parse`

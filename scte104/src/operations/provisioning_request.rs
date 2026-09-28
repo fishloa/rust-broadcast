@@ -244,6 +244,20 @@ impl ProvisioningService {
     }
 
     fn write_prefix(&self, buf: &mut [u8]) -> Result<usize> {
+        // `component_mode != 0` and `injector_component_list.is_some()` must
+        // agree (audit run-09 S4-W1): the parser decides whether to read an
+        // `injector_component_list()` from `component_mode` alone, so a
+        // mismatch here would serialize a frame that reads back differently
+        // — either extra list bytes a `component_mode == 0` parse never
+        // consumes (and so misframes as trailing garbage / the next
+        // service), or a nonzero `component_mode` with no list bytes to
+        // satisfy the parse it triggers (`BufferTooShort`).
+        if (self.component_mode != 0) != self.injector_component_list.is_some() {
+            return Err(Error::InvalidValue {
+                field: "provisioning_request_data.component_mode",
+                reason: "must be nonzero if and only if injector_component_list is present",
+            });
+        }
         buf[0..4].copy_from_slice(&self.injector_ip_address.to_be_bytes());
         buf[4..6].copy_from_slice(&self.injector_socket_number.to_be_bytes());
         buf[6..6 + SERVICE_NAME_LEN].copy_from_slice(&self.service_name);
@@ -518,6 +532,42 @@ mod tests {
         assert!(matches!(
             ProvisioningRequest::parse(&bytes[..bytes.len() - 1]),
             Err(Error::BufferTooShort { .. })
+        ));
+    }
+
+    /// S4-W1 (#1103): `component_mode` and `injector_component_list` must
+    /// agree — the parser decides whether to read a list solely from
+    /// `component_mode != 0`, so a mismatched pair would serialize a frame
+    /// that reads back differently (extra unconsumed list bytes, or a
+    /// nonzero mode with no list to satisfy the read it triggers).
+    #[test]
+    fn mismatched_component_mode_and_list_rejected() {
+        let nonzero_mode_no_list = ProvisioningRequest {
+            services: vec![ProvisioningService {
+                component_mode: 1,
+                injector_component_list: None,
+                ..ProvisioningService::default()
+            }],
+        };
+        assert!(matches!(
+            nonzero_mode_no_list.try_to_bytes(),
+            Err(Error::InvalidValue { .. })
+        ));
+
+        let zero_mode_with_list = ProvisioningRequest {
+            services: vec![ProvisioningService {
+                component_mode: 0,
+                injector_component_list: Some(InjectorComponentList {
+                    video_component_tag: 0x10,
+                    audio_component_tags: vec![],
+                    data_component_tags: vec![],
+                }),
+                ..ProvisioningService::default()
+            }],
+        };
+        assert!(matches!(
+            zero_mode_with_list.try_to_bytes(),
+            Err(Error::InvalidValue { .. })
         ));
     }
 }

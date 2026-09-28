@@ -52,6 +52,15 @@ pub enum ServerEvent {
         /// The negotiated transport.
         transport: Transport,
     },
+    /// Interleaved binary media data arrived on the same TCP connection
+    /// (RFC 2326 §10.12) — an RTCP receiver report during PLAY, or media
+    /// during RECORD.
+    MediaData {
+        /// The interleaved channel id.
+        channel: u8,
+        /// The payload bytes (one upper-layer PDU).
+        data: Vec<u8>,
+    },
 }
 
 /// The source of `Session` id values a [`ServerSession`] draws from.

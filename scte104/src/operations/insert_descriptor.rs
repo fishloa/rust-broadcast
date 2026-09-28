@@ -13,15 +13,31 @@ use broadcast_common::{Parse, Serialize};
 pub const OP_ID: u16 = 0x0108;
 
 /// insert_descriptor_request_data() — §9.8.5, Table 9-27.
+///
+/// `descriptor_count` is not a stored field: it is always
+/// `descriptor_images.len()`, written through `broadcast_common::len::fit_u8`
+/// on serialize (audit run-09 S4-W1). A separately-stored count could
+/// disagree with the vec it is meant to describe — e.g.
+/// `InsertDescriptor { descriptor_count: 2, descriptor_images: vec![one] }`
+/// would have serialized a count of 2 with only one image present, and a
+/// peer would misframe the following operation by reading 4 bytes of it as
+/// a second image's tag+length.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct InsertDescriptor<'a> {
-    /// `descriptor_count` — 1 byte.
-    pub descriptor_count: u8,
     /// Raw descriptor images (each follows MPEG-2 descriptor format:
     /// tag(1) + length(1) + data(length)).
     #[cfg_attr(feature = "serde", serde(borrow))]
     pub descriptor_images: Vec<&'a [u8]>,
+}
+
+impl InsertDescriptor<'_> {
+    /// The `descriptor_count` value that will be written on serialize:
+    /// `descriptor_images.len()`.
+    #[must_use]
+    pub fn descriptor_count(&self) -> usize {
+        self.descriptor_images.len()
+    }
 }
 
 impl<'a> Parse<'a> for InsertDescriptor<'a> {
@@ -58,7 +74,6 @@ impl<'a> Parse<'a> for InsertDescriptor<'a> {
             pos += total;
         }
         Ok(Self {
-            descriptor_count: count as u8,
             descriptor_images: images,
         })
     }
@@ -81,7 +96,10 @@ impl Serialize for InsertDescriptor<'_> {
                 have: buf.len(),
             });
         }
-        buf[0] = self.descriptor_count;
+        buf[0] = broadcast_common::len::fit_u8(
+            self.descriptor_images.len(),
+            "insert_descriptor.descriptor_count",
+        )?;
         let mut pos = 1;
         for img in &self.descriptor_images {
             buf[pos..pos + img.len()].copy_from_slice(img);
@@ -103,13 +121,17 @@ mod tests {
     #[test]
     fn round_trip() {
         let op = InsertDescriptor {
-            descriptor_count: 2,
             descriptor_images: alloc::vec![
                 &[0xAB, 0x04, 0x01, 0x02, 0x03, 0x04][..],
                 &[0xCD, 0x02, 0xAA, 0xBB][..],
             ],
         };
+        assert_eq!(op.descriptor_count(), 2);
         let bytes = op.to_bytes();
+        assert_eq!(
+            bytes[0], 2,
+            "descriptor_count byte must match the vec length"
+        );
         let back = InsertDescriptor::parse(&bytes).unwrap();
         assert_eq!(op, back);
     }
@@ -117,12 +139,24 @@ mod tests {
     #[test]
     fn mutate_field_changes_output() {
         let op = InsertDescriptor {
-            descriptor_count: 1,
             descriptor_images: alloc::vec![&[0xAB, 0x04, 0x01, 0x02, 0x03, 0x04][..]],
         };
         let bytes = op.to_bytes();
         let mut op2 = op.clone();
-        op2.descriptor_count = 2;
+        op2.descriptor_images.push(&[0xCD, 0x02, 0xAA, 0xBB][..]);
         assert_ne!(op2.to_bytes(), bytes);
+    }
+
+    /// S4-W1/S4-W3 (#1103): `descriptor_count` is derived from
+    /// `descriptor_images.len()`, so it can never disagree with the vec,
+    /// and over 255 images is rejected rather than silently wrapping the
+    /// count byte.
+    #[test]
+    fn over_255_images_rejected_not_wrapped() {
+        let img = &[0xAB, 0x00][..];
+        let op = InsertDescriptor {
+            descriptor_images: alloc::vec![img; 256],
+        };
+        assert!(op.try_to_bytes().is_err());
     }
 }
