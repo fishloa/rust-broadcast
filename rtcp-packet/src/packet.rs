@@ -108,6 +108,35 @@ fn be_u32(bytes: &[u8], off: usize, what: &'static str) -> Result<u32> {
         })
 }
 
+/// Validates and strips the trailing `P` (padding) octets from a packet
+/// body, per RFC 3550 §6.4.1: "the last octet of the padding is a count of
+/// how many padding octets should be ignored, including itself." Every
+/// per-type `parse` calls this on its body slice before any type-specific
+/// parsing — without it, the `P` bit was parsed but never acted on, so a
+/// padded BYE's first padding byte was misread as the reason-length octet,
+/// and a padded APP's padding bytes became part of `data` (audit run-09
+/// RTCP-W1).
+///
+/// Returns `Ok(body)` unchanged when `padding` is `false`.
+fn strip_padding<'a>(body: &'a [u8], padding: bool, what: &'static str) -> Result<&'a [u8]> {
+    if !padding {
+        return Ok(body);
+    }
+    let count = *body.last().ok_or(Error::BufferTooShort {
+        need: 1,
+        have: 0,
+        what,
+    })? as usize;
+    if count == 0 || count > body.len() {
+        return Err(Error::InvalidValue {
+            field: "rtcp_padding_count",
+            value: count as u64,
+            reason: "must be nonzero and no larger than the packet body",
+        });
+    }
+    Ok(&body[..body.len() - count])
+}
+
 // ---------------------------------------------------------------------------
 // RtcpPacketType — the PT byte, typed
 // ---------------------------------------------------------------------------
@@ -427,7 +456,11 @@ impl<'a> Parse<'a> for SenderReport {
                 what: "RTCP SR",
             });
         }
-        let body = &bytes[RTCP_HEADER_LEN..total];
+        let body = strip_padding(
+            &bytes[RTCP_HEADER_LEN..total],
+            hdr.padding,
+            "RTCP SR padding",
+        )?;
         if body.len() < WORD_LEN + SR_SENDER_INFO_LEN {
             return Err(Error::BufferTooShort {
                 need: WORD_LEN + SR_SENDER_INFO_LEN,
@@ -526,7 +559,11 @@ impl<'a> Parse<'a> for ReceiverReport {
                 what: "RTCP RR",
             });
         }
-        let body = &bytes[RTCP_HEADER_LEN..total];
+        let body = strip_padding(
+            &bytes[RTCP_HEADER_LEN..total],
+            hdr.padding,
+            "RTCP RR padding",
+        )?;
         let ssrc = be_u32(body, 0, "RR ssrc")?;
         let report_blocks = parse_report_blocks(&body[WORD_LEN..], hdr.count as usize)?;
         Ok(ReceiverReport {
@@ -723,7 +760,11 @@ impl<'a> Parse<'a> for SourceDescription {
                 what: "RTCP SDES",
             });
         }
-        let body = &bytes[RTCP_HEADER_LEN..total];
+        let body = strip_padding(
+            &bytes[RTCP_HEADER_LEN..total],
+            hdr.padding,
+            "RTCP SDES padding",
+        )?;
         let mut chunks = Vec::with_capacity(hdr.count as usize);
         let mut off = 0;
         for _ in 0..hdr.count {
@@ -887,7 +928,11 @@ impl<'a> Parse<'a> for Bye {
                 what: "RTCP BYE",
             });
         }
-        let body = &bytes[RTCP_HEADER_LEN..total];
+        let body = strip_padding(
+            &bytes[RTCP_HEADER_LEN..total],
+            hdr.padding,
+            "RTCP BYE padding",
+        )?;
         let sc = hdr.count as usize;
         if body.len() < sc * WORD_LEN {
             return Err(Error::BufferTooShort {
@@ -1022,7 +1067,11 @@ impl<'a> Parse<'a> for App {
                 what: "RTCP APP",
             });
         }
-        let body = &bytes[RTCP_HEADER_LEN..total];
+        let body = strip_padding(
+            &bytes[RTCP_HEADER_LEN..total],
+            hdr.padding,
+            "RTCP APP padding",
+        )?;
         if body.len() < WORD_LEN + APP_NAME_LEN {
             return Err(Error::BufferTooShort {
                 need: WORD_LEN + APP_NAME_LEN,
@@ -1488,6 +1537,74 @@ mod tests {
         };
         let parsed = Bye::parse(&bye.to_bytes()).unwrap();
         assert_eq!(parsed, bye);
+    }
+
+    // Regression (audit run-09 RTCP-W1): a padded BYE's trailing padding
+    // octets must not be misread as the reason-length octet. Hand-built
+    // because this codec never emits `P=1` (a documented decode-completeness
+    // gap; padding is on the parse side only).
+    #[test]
+    fn bye_padding_is_stripped_not_misread_as_reason() {
+        // V=2,P=1,SC=1 | PT=BYE | length=2 (3 words: hdr+source+padding)
+        // source=0x11223344 | padding: 3 zero bytes + count byte 4
+        let bytes: [u8; 12] = [
+            0b1010_0001,
+            PT_BYE,
+            0x00,
+            0x02,
+            0x11,
+            0x22,
+            0x33,
+            0x44,
+            0x00,
+            0x00,
+            0x00,
+            0x04,
+        ];
+        let bye = Bye::parse(&bytes).unwrap();
+        assert_eq!(bye.sources, vec![0x1122_3344]);
+        assert_eq!(
+            bye.reason, None,
+            "the first padding byte must not be read as a reason length"
+        );
+    }
+
+    // Regression (audit run-09 RTCP-W1): a padded APP's trailing padding
+    // octets must not leak into `data`.
+    #[test]
+    fn app_padding_is_stripped_from_data() {
+        // V=2,P=1,RC(subtype)=0 | PT=APP | length=4 (5 words: hdr+ssrc+name+data+padding)
+        // ssrc=0x11223344 | name="TEST" | data=DE AD BE EF | padding: 3 zero bytes + count byte 4
+        let bytes: [u8; 20] = [
+            0b1010_0000,
+            PT_APP,
+            0x00,
+            0x04,
+            0x11,
+            0x22,
+            0x33,
+            0x44,
+            b'T',
+            b'E',
+            b'S',
+            b'T',
+            0xDE,
+            0xAD,
+            0xBE,
+            0xEF,
+            0x00,
+            0x00,
+            0x00,
+            0x04,
+        ];
+        let app = App::parse(&bytes).unwrap();
+        assert_eq!(app.ssrc, 0x1122_3344);
+        assert_eq!(&app.name, b"TEST");
+        assert_eq!(
+            app.data,
+            vec![0xDE, 0xAD, 0xBE, 0xEF],
+            "the padding bytes must not leak into data"
+        );
     }
 
     #[test]

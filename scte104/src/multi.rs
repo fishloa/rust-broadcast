@@ -171,19 +171,30 @@ impl<'a> Parse<'a> for MultipleOperationMessage<'a> {
     }
 }
 
+impl<'a> MultipleOperationMessage<'a> {
+    /// Recomputes the true wire size from the operations, in `usize`
+    /// (audit run-09 S4-W1): the stored `message_size` field is a cached
+    /// value `new()` fills in, which goes stale the moment a caller mutates
+    /// `operations` directly (the field is `pub`) — `serialized_len()` and
+    /// `serialize_into` must each derive the real size themselves rather
+    /// than trust it, or a stale `message_size` under-reports the buffer a
+    /// caller needs to allocate.
+    fn actual_size(&self) -> usize {
+        let mut size = HEADER_LEN + self.timestamp.serialized_len() + 1;
+        for op in &self.operations {
+            size += 4 + op.body_len();
+        }
+        size
+    }
+}
+
 impl Serialize for MultipleOperationMessage<'_> {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        self.message_size as usize
+        self.actual_size()
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
-        // Recompute the true size in usize rather than trusting the stored
-        // `message_size` field, which `new()` saturates (not wraps) when the
-        // real total does not fit u16 (#1129).
-        let mut actual_size: usize = HEADER_LEN + self.timestamp.serialized_len() + 1;
-        for op in &self.operations {
-            actual_size += 4 + op.body_len();
-        }
+        let actual_size = self.actual_size();
         let message_size =
             broadcast_common::len::fit_u16(actual_size, "multiple_operation_message.messageSize")?;
 
@@ -282,7 +293,6 @@ mod tests {
             Operation {
                 op_id: 0x0108,
                 data: AnyOperation::InsertDescriptor(InsertDescriptor {
-                    descriptor_count: 1,
                     descriptor_images: alloc::vec![&[0xAB, 0x02, 0x01, 0x02][..]],
                 }),
             },
@@ -359,6 +369,42 @@ mod tests {
             .collect();
         let msg = MultipleOperationMessage::new(0, 1, 1, 0, 0, Timestamp::None, ops);
         assert!(msg.try_to_bytes().is_err());
+    }
+
+    /// S4-W1 (#1103): `serialized_len()` used to return the *stored*
+    /// `message_size` field, which goes stale the moment a caller appends
+    /// to the `pub operations` vec after construction (`new()` only fills
+    /// it in once). It must recompute from the operations instead.
+    #[test]
+    fn serialized_len_reflects_operations_mutated_after_construction() {
+        use crate::operations::splice_null_request::SpliceNullRequest;
+        let mut msg = MultipleOperationMessage::new(
+            0,
+            1,
+            1,
+            0,
+            0,
+            Timestamp::None,
+            vec![Operation {
+                op_id: 0x0101,
+                data: AnyOperation::SpliceNullRequest(SpliceNullRequest),
+            }],
+        );
+        let len_before = msg.serialized_len();
+        msg.operations.push(Operation {
+            op_id: 0x0101,
+            data: AnyOperation::SpliceNullRequest(SpliceNullRequest),
+        });
+        let len_after = msg.serialized_len();
+        assert_eq!(
+            len_after,
+            len_before + 4,
+            "serialized_len must grow by the appended op's opID+data_length \
+             header (SpliceNullRequest has an empty body), not stay stale"
+        );
+        // And it must actually match what serialize_into needs.
+        let bytes = msg.to_bytes();
+        assert_eq!(bytes.len(), len_after);
     }
 
     #[test]

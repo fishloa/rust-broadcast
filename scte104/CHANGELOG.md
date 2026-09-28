@@ -7,10 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed (breaking)
+- `InsertDescriptor::descriptor_count`, `InsertAvailDescriptor::num_provider_avails`,
+  and `StartScheduleDownload::num_provider_avails` are removed as stored fields;
+  each is now derived from its vec's length at serialize time (via
+  `broadcast_common::len::fit_u8`, erroring past 255 items rather than
+  wrapping) and available as a `descriptor_count()`/`num_provider_avails()`
+  method. A separately-stored count could disagree with the vec it
+  described — e.g. a stored count of 2 with only one item in the vec would
+  misframe the following operation for a peer reading the declared count
+  (audit run-09 S4-W1).
+
 ### Changed
 - Requires `broadcast-common` 9.4 (`broadcast_common::len`).
 
 ### Fixed
+- `MultipleOperationMessage::serialized_len` now recomputes the true size
+  from `operations` instead of returning the cached `message_size` field,
+  which goes stale the moment a caller mutates the `pub operations` vec
+  after construction (audit run-09 S4-W1).
+- `ProvisioningService`'s `write_prefix` now rejects a `component_mode`/
+  `injector_component_list` pair where one says a list is present and the
+  other doesn't (`component_mode != 0` iff `injector_component_list.is_some()`):
+  the parser decides whether to read a list solely from `component_mode`, so
+  a mismatched pair would serialize a frame that reads back differently
+  (audit run-09 S4-W1).
 - `insert_segmentation_descriptor_request_data()`'s `TAIL_LEN` (the fixed
   region after `segmentation_upid`) was 13 bytes; Table 9-29 lists exactly 12
   one-byte fields there (`segmentation_type_id` .. `sub_segments_expected`),

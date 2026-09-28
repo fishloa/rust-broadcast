@@ -217,6 +217,80 @@ fn whip_client_ice_restart() {
     ));
 }
 
+// Regression (audit run-09 W21): a trickle-ICE PATCH answered `200` with an
+// `ETag` must NOT be misread as an ICE-restart answer — before request-kind
+// tracking, `handle_established_response` classified ANY `200` + `ETag` as
+// `Event::IceRestart`, so a perfectly normal trickle ack (RFC 9725 allows a
+// server to answer `200` with an updated `ETag` instead of `204`) produced a
+// bogus restart event carrying the trickle body as a fake "server fragment".
+#[test]
+fn whip_client_trickle_ack_with_200_and_etag_is_not_misread_as_ice_restart() {
+    let mut client = WhipClient::new(ENDPOINT.into(), None);
+    let _ = client.offer(SDP_OFFER.to_vec()).unwrap();
+    let _ = client
+        .on_response(client::HttpResponse {
+            status: 201,
+            content_type: Some("application/sdp".into()),
+            location: Some(SESSION.into()),
+            etag: Some("etag-v1".into()),
+            body: SDP_ANSWER.to_vec(),
+        })
+        .unwrap();
+
+    let _ = client.flush_candidates(ICE_FRAG.to_vec()).unwrap();
+    let event = client
+        .on_response(client::HttpResponse {
+            status: 200,
+            content_type: None,
+            location: None,
+            etag: Some("etag-v2".into()),
+            body: Vec::new(),
+        })
+        .unwrap();
+    assert!(
+        event.is_none(),
+        "a trickle ack must never produce an event, got {event:?}"
+    );
+    // The fresh ETag is still picked up for the next If-Match.
+    assert!(matches!(
+        client.state(),
+        client::State::Established { etag: Some(e), .. } if e == "etag-v2"
+    ));
+}
+
+// Regression (audit run-09 W21): a `DELETE` answered `204` (very common —
+// RFC 9725 §4.5 shows `200`, but a `204 No Content` ack is standard REST
+// practice) must still transition to `Closed` and emit `Terminated`, not
+// silently match the old `NO_CONTENT => Ok(None)` arm meant for a trickle
+// ack and leave the client `Established` forever.
+#[test]
+fn whip_client_terminate_ack_with_204_transitions_to_closed() {
+    let mut client = WhipClient::new(ENDPOINT.into(), None);
+    let _ = client.offer(SDP_OFFER.to_vec()).unwrap();
+    let _ = client
+        .on_response(client::HttpResponse {
+            status: 201,
+            content_type: Some("application/sdp".into()),
+            location: Some(SESSION.into()),
+            etag: Some("etag-v1".into()),
+            body: SDP_ANSWER.to_vec(),
+        })
+        .unwrap();
+
+    let _ = client.terminate().unwrap();
+    let event = client
+        .on_response(client::HttpResponse {
+            status: 204,
+            content_type: None,
+            location: None,
+            etag: None,
+            body: Vec::new(),
+        })
+        .unwrap();
+    assert!(matches!(event, Some(client::Event::Terminated)));
+    assert_eq!(*client.state(), client::State::Closed);
+}
+
 #[test]
 fn whip_client_bearer_auth() {
     let token = "my-secret-token";

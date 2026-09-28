@@ -47,6 +47,22 @@ pub const RTSPS_DEFAULT_PORT: u16 = 322;
 /// this only bounds a single `read` syscall, not a message.
 const READ_CHUNK: usize = 8192;
 
+/// Maximum interleaved [`ClientEvent::MediaData`] frames held in
+/// `pending_media` awaiting [`AsyncRtspClient::recv_interleaved`]. A camera
+/// that never answers a `GET_PARAMETER` (or any other control request) while
+/// still streaming media would otherwise grow this queue without bound while
+/// [`AsyncRtspClient::exchange`] keeps reading and waiting for the response
+/// (audit run-09 W7). Once full, the oldest frame is dropped — for a live
+/// stream a fresher sample is worth more than one still queued.
+const MAX_PENDING_MEDIA_FRAMES: usize = 1024;
+
+/// Maximum bytes retained in [`AsyncRtspServer::read_buf`](AsyncRtspServer)
+/// awaiting a complete request. Without a cap, a `Content-Length` promising
+/// more than the peer ever sends (or one that just never terminates its
+/// header) grows this buffer without bound (audit run-09 W8). 2 MiB covers a
+/// large `ANNOUNCE` SDP body with headroom.
+const MAX_SERVER_READ_BUFFER: usize = 2 * 1024 * 1024;
+
 /// Maps a tokio IO error into the crate error type.
 fn io_err(context: &str, e: std::io::Error) -> Error {
     Error::Io(format!("{context}: {e}"))
@@ -136,52 +152,81 @@ where
 
     /// Sends `OPTIONS` and awaits the response.
     pub async fn options(&mut self, uri: &str) -> Result<ClientEvent> {
+        let cseq = self.session.peek_next_cseq();
         let bytes = self.session.options(uri)?;
-        self.exchange(bytes).await
+        self.exchange(cseq, bytes).await
     }
 
     /// Sends `DESCRIBE` (with `Accept: application/sdp`) and awaits the response.
     pub async fn describe(&mut self, uri: &str) -> Result<ClientEvent> {
+        let cseq = self.session.peek_next_cseq();
         let bytes = self.session.describe(uri)?;
-        self.exchange(bytes).await
+        self.exchange(cseq, bytes).await
     }
 
     /// Sends `SETUP` carrying `transport` and awaits the response.
     pub async fn setup(&mut self, uri: &str, transport: &Transport) -> Result<ClientEvent> {
+        let cseq = self.session.peek_next_cseq();
         let bytes = self.session.setup(uri, transport)?;
-        self.exchange(bytes).await
+        self.exchange(cseq, bytes).await
     }
 
     /// Sends `PLAY` and awaits the response.
     pub async fn play(&mut self, uri: &str) -> Result<ClientEvent> {
+        let cseq = self.session.peek_next_cseq();
         let bytes = self.session.play(uri)?;
-        self.exchange(bytes).await
+        self.exchange(cseq, bytes).await
     }
 
     /// Sends `PAUSE` and awaits the response.
     pub async fn pause(&mut self, uri: &str) -> Result<ClientEvent> {
+        let cseq = self.session.peek_next_cseq();
         let bytes = self.session.pause(uri)?;
-        self.exchange(bytes).await
+        self.exchange(cseq, bytes).await
     }
 
     /// Sends `TEARDOWN` and awaits the response.
     pub async fn teardown(&mut self, uri: &str) -> Result<ClientEvent> {
+        let cseq = self.session.peek_next_cseq();
         let bytes = self.session.teardown(uri)?;
-        self.exchange(bytes).await
+        self.exchange(cseq, bytes).await
     }
 
     /// Sends `GET_PARAMETER` (empty body = liveness ping) and awaits the response.
     pub async fn get_parameter(&mut self, uri: &str, body: &[u8]) -> Result<ClientEvent> {
+        let cseq = self.session.peek_next_cseq();
         let bytes = self.session.get_parameter(uri, body)?;
-        self.exchange(bytes).await
+        self.exchange(cseq, bytes).await
     }
 
-    /// Writes an outbound request and reads until the correlated response
-    /// arrives, transparently completing any Digest `AuthRetry` round-trip.
+    /// Writes an outbound request and reads until the response correlated to
+    /// `cseq` (the `CSeq` just assigned to `request`) arrives, transparently
+    /// completing any Digest `AuthRetry` round-trip.
+    ///
+    /// `cseq` is required (rather than reading it back off the `Response`
+    /// event) because a stray response can otherwise be mistaken for this
+    /// one: if a *previous* `exchange` call's future was dropped (e.g. by a
+    /// caller-side `tokio::time::timeout`) after it had already written its
+    /// request, that request's `Pending` entry stays in the session, and its
+    /// late-arriving response is returned here later unless it's filtered by
+    /// `CSeq` (audit run-09 W7). Such a stray response is simply dropped: no
+    /// one is waiting for it any more.
+    ///
+    /// Not cancel-safe: if this future is dropped before it resolves, bytes
+    /// already read (and any response already decoded but not yet returned)
+    /// are retained in `self` for the next call, but a caller relying on
+    /// getting *this* response back should not drop and retry — build a fresh
+    /// request instead. This method has no built-in deadline; wrap the call
+    /// in a timeout if one is needed.
     ///
     /// Interleaved media frames that arrive before the response are buffered and
     /// later returned by [`recv_interleaved`](Self::recv_interleaved).
-    async fn exchange(&mut self, request: Vec<u8>) -> Result<ClientEvent> {
+    async fn exchange(&mut self, cseq: u32, request: Vec<u8>) -> Result<ClientEvent> {
+        // Tracks whichever CSeq we're currently waiting an answer for: a 401
+        // retry re-signs the SAME logical request under a NEW CSeq (a fresh
+        // `Pending` entry), so once we see our request's `AuthRetry`, we must
+        // switch to waiting for ITS CSeq instead.
+        let mut cseq = cseq;
         self.stream
             .write_all(&request)
             .await
@@ -196,22 +241,40 @@ where
             let mut response = None;
             for event in events {
                 match event {
-                    // Hold the response until every event decoded from this same
-                    // read has been processed: interleaved media frames can arrive
-                    // coalesced *after* the response in one TCP segment, and must be
-                    // buffered rather than dropped by an early return (§10.12).
-                    ClientEvent::Response { .. } => response = Some(event),
-                    ClientEvent::AuthRetry { ref request, .. } => {
-                        // Write the retried (now-authenticated) request and keep
-                        // reading for its response.
+                    // Only the response whose CSeq matches the request THIS
+                    // call sent answers it; anything else (a duplicate, or a
+                    // response for a request a previous, abandoned `exchange`
+                    // call sent) is a stray and is dropped. Hold ours until
+                    // every event decoded from this same read has been
+                    // processed: interleaved media frames can arrive
+                    // coalesced *after* the response in one TCP segment, and
+                    // must be buffered rather than dropped by an early return
+                    // (§10.12).
+                    ClientEvent::Response { cseq: rcseq, .. } if rcseq == cseq => {
+                        response = Some(event);
+                    }
+                    ClientEvent::Response { .. } => {}
+                    ClientEvent::AuthRetry {
+                        cseq: retry_cseq,
+                        ref request,
+                        ..
+                    } => {
+                        // Write the retried (now-authenticated) request and
+                        // wait for ITS CSeq from here on.
                         let retry = request.clone();
                         self.stream
                             .write_all(&retry)
                             .await
                             .map_err(|e| io_err("write auth retry", e))?;
                         self.stream.flush().await.map_err(|e| io_err("flush", e))?;
+                        cseq = retry_cseq;
                     }
-                    ClientEvent::MediaData { .. } => self.pending_media.push_back(event),
+                    ClientEvent::MediaData { .. } => {
+                        if self.pending_media.len() >= MAX_PENDING_MEDIA_FRAMES {
+                            self.pending_media.pop_front();
+                        }
+                        self.pending_media.push_back(event);
+                    }
                 }
             }
             if let Some(response) = response {
@@ -435,15 +498,31 @@ where
         &mut self.stream
     }
 
-    /// Reads the next complete request, handles it (writing the response back),
-    /// and returns the produced events.
+    /// Reads the next complete request or interleaved frame, handling a
+    /// request (writing the response back) and returning the produced
+    /// events, or surfacing an interleaved `$`-frame as
+    /// [`ServerEvent::MediaData`].
     ///
     /// Returns `Ok(None)` when the peer closes the connection cleanly before a
-    /// full request arrives.
+    /// full request or frame arrives.
     pub async fn next_request(&mut self) -> Result<Option<Vec<ServerEvent>>> {
         loop {
-            // Do we already hold a complete request in the buffer?
-            if let Some(consumed) = complete_request_len(&self.read_buf)? {
+            // An interleaved `$`-framed block (RTCP receiver reports during
+            // PLAY, or media during RECORD, §10.12) takes priority: it is not
+            // a request, and every RTSP client that streams over TCP sends
+            // these on the same connection (audit run-09 W8).
+            if self.read_buf.first() == Some(&MAGIC) {
+                if let Some((frame, consumed)) =
+                    crate::interleaved::InterleavedFrame::parse(&self.read_buf)?
+                {
+                    self.read_buf.drain(..consumed);
+                    return Ok(Some(vec![ServerEvent::MediaData {
+                        channel: frame.channel,
+                        data: frame.payload,
+                    }]));
+                }
+                // Incomplete frame: fall through to read more bytes.
+            } else if let Some(consumed) = complete_request_len(&self.read_buf)? {
                 let request: Vec<u8> = self.read_buf.drain(..consumed).collect();
                 let (response, events) = self.session.handle_request(&request)?;
                 self.stream
@@ -467,6 +546,12 @@ where
                 return Err(Error::Io("peer closed connection mid-request".into()));
             }
             self.read_buf.extend_from_slice(&chunk[..n]);
+            if self.read_buf.len() > MAX_SERVER_READ_BUFFER {
+                return Err(Error::MessageParse(format!(
+                    "request buffer of {} bytes exceeds the {MAX_SERVER_READ_BUFFER}-byte maximum",
+                    self.read_buf.len()
+                )));
+            }
         }
     }
 
@@ -487,8 +572,9 @@ where
 /// Returns the byte length of a complete RTSP request at the front of `buf`, or
 /// `None` if more bytes are needed. Errors on a malformed message.
 ///
-/// A leading `$` (interleaved frame) is not a request; this returns an error so
-/// the caller does not silently spin.
+/// A leading `$` (interleaved frame) is not a request; [`AsyncRtspServer::next_request`]
+/// checks for and demultiplexes that case before ever calling this, but this
+/// still errors defensively rather than misparsing one as a request.
 fn complete_request_len(buf: &[u8]) -> Result<Option<usize>> {
     if buf.is_empty() {
         return Ok(None);

@@ -154,6 +154,14 @@ broadcast_common::impl_spec_display!(CencAlgorithm, Other);
 pub struct ExtCenc {
     /// Content-encoding algorithm of the FDT Instance payload.
     pub algorithm: CencAlgorithm,
+    /// The 16 reserved bits, verbatim (audit run-09 RMT-W1). RFC 6726 doesn't
+    /// document a sender-MUST-zero rule for them the way EXT_TIME's Use
+    /// field reserved bits are documented, so — unlike those — this crate
+    /// treats them as genuinely reserved-for-later-use content it must not
+    /// discard: a non-zero value would not otherwise round-trip byte-exactly
+    /// (the doc comment on `parse` previously claimed "we surface it" while
+    /// `to_content` silently wrote back 0).
+    pub reserved: u16,
 }
 
 impl ExtCenc {
@@ -167,15 +175,16 @@ impl ExtCenc {
                 what: "EXT_CENC content",
             });
         }
-        // Reserved 16 bits MUST be 0 (ignored on reception, but we surface it).
         Ok(ExtCenc {
             algorithm: CencAlgorithm::from_u8(content[0]),
+            reserved: u16::from_be_bytes([content[1], content[2]]),
         })
     }
 
-    /// Encode the 3 content bytes (`CENC | Reserved=0`).
+    /// Encode the 3 content bytes (`CENC | Reserved`, preserved verbatim).
     pub fn to_content(&self) -> [u8; 3] {
-        [self.algorithm.to_u8(), 0, 0]
+        let r = self.reserved.to_be_bytes();
+        [self.algorithm.to_u8(), r[0], r[1]]
     }
 
     /// Build a fixed-length [`HeaderExtension`] (HET = 193) for this EXT_CENC,
@@ -239,12 +248,28 @@ mod tests {
             CencAlgorithm::Gzip,
             CencAlgorithm::Other(7),
         ] {
-            let e = ExtCenc { algorithm: algo };
+            let e = ExtCenc {
+                algorithm: algo,
+                reserved: 0,
+            };
             let c = e.to_content();
             assert_eq!(c[1..], [0, 0]);
             assert_eq!(ExtCenc::parse(&c).unwrap(), e);
         }
         assert_eq!(CencAlgorithm::Gzip.to_string(), "GZIP");
         assert_eq!(CencAlgorithm::Other(7).to_string(), "reserved(0x07)");
+    }
+
+    // Regression (audit run-09 RMT-W1): a non-zero reserved field must
+    // round-trip byte-exactly, not be silently zeroed on re-encode.
+    #[test]
+    fn ext_cenc_preserves_nonzero_reserved_bits() {
+        let e = ExtCenc {
+            algorithm: CencAlgorithm::Gzip,
+            reserved: 0xBEEF,
+        };
+        let c = e.to_content();
+        assert_eq!(&c[1..], &[0xBE, 0xEF]);
+        assert_eq!(ExtCenc::parse(&c).unwrap(), e);
     }
 }

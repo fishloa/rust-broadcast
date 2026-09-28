@@ -34,4 +34,11 @@ pub enum Error {
     /// (see `broadcast_common::len`, #1129).
     #[error(transparent)]
     FieldOverflow(#[from] broadcast_common::len::FieldOverflow),
+    /// `PTS_DTS_flags` on the wire was `01` (ISO/IEC 13818-1 Table 2-21
+    /// reserves this combination — only `00`/`10`/`11` are defined), or a
+    /// `PesHeader` had `dts.is_some()` with `pts.is_none()` (the same
+    /// forbidden combination, one layer up, that `serialize_into` refuses
+    /// to write silently as `PTS_DTS_flags=00`).
+    #[error("forbidden PTS_DTS_flags combination: DTS without PTS")]
+    ForbiddenPtsDtsFlags,
 }

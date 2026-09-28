@@ -269,6 +269,250 @@ async fn tls_full_session_over_loopback() {
     );
 }
 
+// ---------------------------------------------------------------------------
+// 5. A stray response for an abandoned request must not win over the real one.
+// ---------------------------------------------------------------------------
+
+// Regression (audit run-09 W7): `AsyncRtspClient::exchange` used to keep
+// whichever `Response` event was LAST in a decoded batch, with no CSeq check.
+// If a previous `exchange` call's future was dropped (e.g. a caller-side
+// `tokio::time::timeout`) after its request was already written, that
+// request's `Pending` entry stays in the session; a late response for it can
+// then arrive coalesced with the response actually being awaited. Here the
+// server deliberately answers CSeq 2 (the real, currently-awaited request)
+// FIRST and CSeq 1 (the abandoned one) SECOND in one write, so the pre-fix
+// "last Response event wins" bug would return CSeq 1's response instead.
+#[tokio::test]
+async fn stray_response_for_an_abandoned_request_does_not_win() {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+
+    let server = tokio::spawn(async move {
+        let (mut sock, _) = listener.accept().await.unwrap();
+        // Wait for BOTH requests (OPTIONS CSeq 1, DESCRIBE CSeq 2) to fully
+        // arrive before answering either.
+        let mut buf = Vec::new();
+        let mut chunk = [0u8; 4096];
+        loop {
+            if buf.windows(4).filter(|w| *w == b"\r\n\r\n").count() >= 2 {
+                break;
+            }
+            let n = sock.read(&mut chunk).await.unwrap();
+            assert!(n > 0, "peer closed before both requests arrived");
+            buf.extend_from_slice(&chunk[..n]);
+        }
+        let mut out = Vec::new();
+        out.extend_from_slice(b"RTSP/1.0 200 OK\r\nCSeq: 2\r\nContent-Length: 0\r\n\r\n");
+        out.extend_from_slice(b"RTSP/1.0 200 OK\r\nCSeq: 1\r\nContent-Length: 0\r\n\r\n");
+        sock.write_all(&out).await.unwrap();
+    });
+
+    let mut client = AsyncRtspClient::connect(addr).await.unwrap();
+
+    // CSeq 1: written to the socket, then abandoned before any response
+    // arrives (the server above never answers until CSeq 2 is also sent).
+    let _ = tokio::time::timeout(std::time::Duration::from_millis(50), client.options(URI)).await;
+
+    // CSeq 2: the request actually under test.
+    let ev = client.describe(URI).await.unwrap();
+    match ev {
+        ClientEvent::Response { cseq, .. } => assert_eq!(
+            cseq, 2,
+            "returned the stray CSeq-1 response instead of the awaited CSeq-2 one"
+        ),
+        other => panic!("unexpected event: {other:?}"),
+    }
+
+    server.await.unwrap();
+}
+
+// ---------------------------------------------------------------------------
+// 6. The server must accept an interleaved `$` frame during PLAY, not error.
+// ---------------------------------------------------------------------------
+
+// Regression (audit run-09 W8): RFC 2326 §10.12 lets a client send `$`-framed
+// data on the same TCP connection (an RTCP receiver report during PLAY, or
+// media during RECORD) — ffmpeg, VLC and GStreamer all do this. Before the
+// fix, `AsyncRtspServer::next_request` treated a leading `$` as a malformed
+// request and errored, dropping any TCP-interleaved PLAY client at its first
+// RTCP RR.
+#[tokio::test]
+async fn server_receives_interleaved_frame_during_play() {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+
+    let server = tokio::spawn(async move {
+        let (sock, _) = listener.accept().await.unwrap();
+        let mut srv = AsyncRtspServer::accept(sock);
+        let setup_events = srv.next_request().await.unwrap().expect("SETUP");
+        assert!(
+            setup_events
+                .iter()
+                .any(|e| matches!(e, ServerEvent::SessionSetup { .. }))
+        );
+        let play_events = srv.next_request().await.unwrap().expect("PLAY");
+        assert!(
+            play_events
+                .iter()
+                .any(|e| matches!(e, ServerEvent::RequestAccepted { .. }))
+        );
+        // The peer now sends an interleaved RTCP receiver report — this must
+        // surface as `MediaData`, not fail the connection.
+        srv.next_request()
+            .await
+            .unwrap()
+            .expect("interleaved frame")
+    });
+
+    let mut client = TcpStream::connect(addr).await.unwrap();
+    client
+        .write_all(
+            b"SETUP rtsp://127.0.0.1/stream RTSP/1.0\r\n\
+              CSeq: 1\r\n\
+              Transport: RTP/AVP/TCP;interleaved=0-1\r\n\r\n",
+        )
+        .await
+        .unwrap();
+    let mut buf = [0u8; 4096];
+    let n = client.read(&mut buf).await.unwrap();
+    let resp = String::from_utf8_lossy(&buf[..n]).to_string();
+    assert!(resp.contains("200"), "SETUP failed: {resp}");
+    let sid = resp
+        .lines()
+        .find_map(|l| l.strip_prefix("Session:"))
+        .expect("Session header")
+        .split(';')
+        .next()
+        .unwrap()
+        .trim()
+        .to_string();
+
+    client
+        .write_all(
+            format!("PLAY rtsp://127.0.0.1/stream RTSP/1.0\r\nCSeq: 2\r\nSession: {sid}\r\n\r\n")
+                .as_bytes(),
+        )
+        .await
+        .unwrap();
+    let n = client.read(&mut buf).await.unwrap();
+    assert!(String::from_utf8_lossy(&buf[..n]).contains("200"));
+
+    // An interleaved frame on channel 1 (odd = RTCP by convention).
+    let rtcp_payload = vec![0xAB_u8; 24];
+    let mut frame = vec![0x24u8, 1];
+    frame.extend_from_slice(&(rtcp_payload.len() as u16).to_be_bytes());
+    frame.extend_from_slice(&rtcp_payload);
+    client.write_all(&frame).await.unwrap();
+
+    let events = server.await.unwrap();
+    assert!(
+        events.iter().any(
+            |e| matches!(e, ServerEvent::MediaData { channel: 1, data } if *data == rtcp_payload)
+        ),
+        "expected a MediaData event for the interleaved RTCP frame: {events:?}"
+    );
+}
+
+// Regression (audit run-09 W8): an unterminated request header must not grow
+// `AsyncRtspServer`'s read buffer without bound.
+#[tokio::test]
+async fn server_read_buffer_is_capped_against_an_unterminated_header() {
+    use tokio::io::AsyncWriteExt;
+
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+
+    let server = tokio::spawn(async move {
+        let (sock, _) = listener.accept().await.unwrap();
+        let mut srv = AsyncRtspServer::accept(sock);
+        srv.next_request().await
+    });
+
+    let client = TcpStream::connect(addr).await.unwrap();
+    let mut client = client;
+    // A header line with no CRLFCRLF terminator, well past the 2 MiB cap.
+    let chunk = vec![b'A'; 64 * 1024];
+    for _ in 0..40 {
+        if client.write_all(&chunk).await.is_err() {
+            break;
+        }
+    }
+    // Keep `client` open: the cap must trip on its own, not via the peer
+    // closing the connection (a clean EOF is a different, already-handled
+    // error path) — otherwise this test can't tell a capped buffer from an
+    // unbounded one that just happens to see EOF.
+    let result = tokio::time::timeout(std::time::Duration::from_secs(2), server)
+        .await
+        .expect("server task must reject the oversized buffer instead of blocking forever")
+        .unwrap();
+    assert!(
+        result.is_err(),
+        "expected the oversized request buffer to be rejected, not grown forever"
+    );
+    drop(client);
+}
+
+// Regression (audit run-09 W7): `pending_media` must not grow without bound
+// while `exchange` waits on a response — e.g. a camera that keeps streaming
+// media but is slow to answer `GET_PARAMETER`. Once full, the OLDEST frame is
+// dropped in favour of newer ones.
+#[tokio::test]
+async fn pending_media_queue_is_capped_while_exchange_waits() {
+    const OVERFLOW: usize = 1024 + 50; // > MAX_PENDING_MEDIA_FRAMES (private, io.rs)
+
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+
+    let server = tokio::spawn(async move {
+        let (sock, _) = listener.accept().await.unwrap();
+        let mut srv = AsyncRtspServer::accept(sock);
+        srv.next_request().await.unwrap().expect("SETUP");
+        srv.next_request().await.unwrap().expect("PLAY");
+        // Flush every media frame before ever reading/answering the
+        // GET_PARAMETER that follows, so the client decodes them all while
+        // still waiting on that response.
+        for i in 0..OVERFLOW {
+            let payload = (i as u32).to_be_bytes().to_vec();
+            srv.send_interleaved(0, &payload).await.unwrap();
+        }
+        srv.next_request().await.unwrap().expect("GET_PARAMETER");
+    });
+
+    let mut client = AsyncRtspClient::connect(addr).await.unwrap();
+    client.setup(URI, &tcp_interleaved()).await.unwrap();
+    client.play(URI).await.unwrap();
+    client.get_parameter(URI, &[]).await.unwrap();
+
+    let mut indices = Vec::new();
+    while indices.len() < 1024 {
+        match client.recv_interleaved().await.unwrap() {
+            Some(ClientEvent::MediaData { data, .. }) => {
+                indices.push(u32::from_be_bytes(data.try_into().unwrap()));
+            }
+            Some(other) => panic!("unexpected event: {other:?}"),
+            None => break,
+        }
+    }
+    assert_eq!(
+        indices.len(),
+        1024,
+        "expected exactly the capped number of frames, got {}",
+        indices.len()
+    );
+    assert_eq!(
+        indices[0],
+        (OVERFLOW - 1024) as u32,
+        "expected the oldest frames to have been dropped, not the newest"
+    );
+    assert_eq!(*indices.last().unwrap(), (OVERFLOW - 1) as u32);
+
+    server.await.unwrap();
+}
+
 // --- helpers ---------------------------------------------------------------
 
 use tokio::io::{AsyncReadExt, AsyncWriteExt};

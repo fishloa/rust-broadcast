@@ -143,11 +143,13 @@ impl WhepSession {
         if_match: Option<&str>,
     ) -> Result<Event, Error> {
         match &self.state {
-            State::CounterOffered { .. } if content_type == super::content_type::SDP => {
+            State::CounterOffered { .. }
+                if media_type_matches(content_type, super::content_type::SDP) =>
+            {
                 Ok(Event::SdpAnswer(sdp_body))
             }
             State::Established { etag } => {
-                if content_type == super::content_type::TRICKLE_ICE {
+                if media_type_matches(content_type, super::content_type::TRICKLE_ICE) {
                     if matches!(if_match, Some("*") | Some("\"*\"")) {
                         Ok(Event::IceRestart {
                             sdp_fragment: sdp_body,
@@ -254,6 +256,20 @@ impl WhepSession {
             body: Vec::new(),
         }
     }
+}
+
+/// Matches a `Content-Type` header value against `expected` by media type
+/// only (RFC 9110 §8.3.1: the type/subtype token, case-insensitive),
+/// ignoring any `; parameter=value` suffix (audit run-09 W21) — a WHEP
+/// counter-offer answer sent as `application/sdp; charset=utf-8` (or any
+/// other legal parameter) is otherwise rejected by a strict `==` compare.
+fn media_type_matches(content_type: &str, expected: &str) -> bool {
+    content_type
+        .split(';')
+        .next()
+        .unwrap_or("")
+        .trim()
+        .eq_ignore_ascii_case(expected)
 }
 
 fn server_state_name(s: &State) -> &'static str {

@@ -104,6 +104,30 @@ impl NormMessageType {
 
 broadcast_common::impl_spec_display!(NormMessageType, Other);
 
+/// Converts a message's total header byte length into the `hdr_len` word
+/// count every NORM message type's `serialize_into` writes into the common
+/// header (audit run-09 RMT-W2). Shared so the "must be word-aligned, must
+/// fit 8 bits" invariant lives in exactly one place: `NormCmd`/`NormFeedback`
+/// used to compute `words` without the alignment check `NormInfo`/`NormData`
+/// already had, which would silently truncate a misaligned length instead
+/// of erroring (extensions are word-aligned today by construction, so this
+/// can't yet misfire, but the invariant should not depend on that staying
+/// true forever).
+fn hdr_len_words(header_bytes: usize, what: &'static str) -> Result<u8> {
+    if !header_bytes.is_multiple_of(WORD) {
+        return Err(Error::InvalidField {
+            what,
+            reason: "header length is not a multiple of 4 bytes",
+        });
+    }
+    let words = header_bytes / WORD;
+    u8::try_from(words).map_err(|_| Error::FieldTooWide {
+        what,
+        value: words as u64,
+        bits: 8,
+    })
+}
+
 /// The NORM common message header (RFC 5740 §4.1, Figure 1): 8 bytes carrying
 /// `version | type | hdr_len | sequence | source_id`.
 ///
@@ -286,8 +310,21 @@ impl<'a> NormInfo<'a> {
     }
 
     /// Parse a NORM_INFO message.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::InvalidField`] if `common.message_type` is not
+    /// [`NormMessageType::Info`] (audit run-09 RMT-W3): without this check,
+    /// e.g. a NORM_DATA buffer handed to this parser would produce a
+    /// "valid"-looking `NormInfo` with garbage fields.
     pub fn parse(data: &'a [u8]) -> Result<Self> {
         let (common, hdr_len) = NormCommonHeader::parse(data)?;
+        if common.message_type != NormMessageType::Info {
+            return Err(Error::InvalidField {
+                what: "message_type",
+                reason: "expected NORM_INFO (type 1)",
+            });
+        }
         let sender = SenderWord::parse(&data[COMMON_HEADER_LEN..])?;
         let off = COMMON_HEADER_LEN + SENDER_WORD_LEN;
         if data.len() < off + WORD {
@@ -339,22 +376,8 @@ impl<'a> NormInfo<'a> {
                 have: out.len(),
             });
         }
-        let header_bytes = self.header_bytes();
-        if !header_bytes.is_multiple_of(WORD) {
-            return Err(Error::InvalidField {
-                what: "hdr_len",
-                reason: "NORM_INFO header length is not a multiple of 4 bytes",
-            });
-        }
-        let words = header_bytes / WORD;
-        if words > u8::MAX as usize {
-            return Err(Error::FieldTooWide {
-                what: "hdr_len",
-                value: words as u64,
-                bits: 8,
-            });
-        }
-        let mut off = self.common.serialize_into(out, words as u8)?;
+        let words = hdr_len_words(self.header_bytes(), "NORM_INFO hdr_len")?;
+        let mut off = self.common.serialize_into(out, words)?;
         off += self.sender.serialize_into(&mut out[off..])?;
         out[off] = self.flags;
         out[off + 1] = self.fec_id;
@@ -427,8 +450,19 @@ impl<'a> NormData<'a> {
 
     /// Parse a NORM_DATA. `fec_payload_id_len` is the FEC-scheme-defined size of
     /// the FEC Payload ID in bytes.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::InvalidField`] if `common.message_type` is not
+    /// [`NormMessageType::Data`] (audit run-09 RMT-W3).
     pub fn parse(data: &'a [u8], fec_payload_id_len: usize) -> Result<Self> {
         let (common, hdr_len) = NormCommonHeader::parse(data)?;
+        if common.message_type != NormMessageType::Data {
+            return Err(Error::InvalidField {
+                what: "message_type",
+                reason: "expected NORM_DATA (type 2)",
+            });
+        }
         let sender = SenderWord::parse(&data[COMMON_HEADER_LEN..])?;
         let mut off = COMMON_HEADER_LEN + SENDER_WORD_LEN;
         if data.len() < off + WORD {
@@ -493,22 +527,8 @@ impl<'a> NormData<'a> {
                 have: out.len(),
             });
         }
-        let header_bytes = self.header_bytes();
-        if !header_bytes.is_multiple_of(WORD) {
-            return Err(Error::InvalidField {
-                what: "hdr_len",
-                reason: "NORM_DATA header length is not a multiple of 4 bytes",
-            });
-        }
-        let words = header_bytes / WORD;
-        if words > u8::MAX as usize {
-            return Err(Error::FieldTooWide {
-                what: "hdr_len",
-                value: words as u64,
-                bits: 8,
-            });
-        }
-        let mut off = self.common.serialize_into(out, words as u8)?;
+        let words = hdr_len_words(self.header_bytes(), "NORM_DATA hdr_len")?;
+        let mut off = self.common.serialize_into(out, words)?;
         off += self.sender.serialize_into(&mut out[off..])?;
         out[off] = self.flags;
         out[off + 1] = self.fec_id;
@@ -794,8 +814,19 @@ impl<'a> NormCmd<'a> {
     /// Parse a NORM_CMD. `fec_payload_id_len` is the FEC-scheme-defined size
     /// of `fec_payload_id` in bytes; consulted only for FLUSH/SQUELCH (any
     /// other sub-type ignores it, matching [`NormData::parse`]'s convention).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::InvalidField`] if `common.message_type` is not
+    /// [`NormMessageType::Cmd`] (audit run-09 RMT-W3).
     pub fn parse(data: &'a [u8], fec_payload_id_len: usize) -> Result<Self> {
         let (common, hdr_len) = NormCommonHeader::parse(data)?;
+        if common.message_type != NormMessageType::Cmd {
+            return Err(Error::InvalidField {
+                what: "message_type",
+                reason: "expected NORM_CMD (type 3)",
+            });
+        }
         let sender = SenderWord::parse(&data[COMMON_HEADER_LEN..])?;
         let mut off = COMMON_HEADER_LEN + SENDER_WORD_LEN;
         if data.len() < off + WORD {
@@ -899,22 +930,8 @@ impl<'a> NormCmd<'a> {
                 have: out.len(),
             });
         }
-        let header_bytes = self.header_bytes();
-        if !header_bytes.is_multiple_of(WORD) {
-            return Err(Error::InvalidField {
-                what: "hdr_len",
-                reason: "NORM_CMD header length is not a multiple of 4 bytes",
-            });
-        }
-        let words = header_bytes / WORD;
-        if words > u8::MAX as usize {
-            return Err(Error::FieldTooWide {
-                what: "hdr_len",
-                value: words as u64,
-                bits: 8,
-            });
-        }
-        let mut off = self.common.serialize_into(out, words as u8)?;
+        let words = hdr_len_words(self.header_bytes(), "NORM_CMD hdr_len")?;
+        let mut off = self.common.serialize_into(out, words)?;
         off += self.sender.serialize_into(&mut out[off..])?;
         out[off] = self.sub_type.to_u8();
         out[off + 1..off + 4].copy_from_slice(&self.body.head_bytes());
@@ -993,8 +1010,23 @@ impl<'a> NormFeedback<'a> {
     }
 
     /// Parse a NORM_NACK / NORM_ACK message.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::InvalidField`] if `common.message_type` is neither
+    /// [`NormMessageType::Nack`] nor [`NormMessageType::Ack`] (audit run-09
+    /// RMT-W3).
     pub fn parse(data: &'a [u8]) -> Result<Self> {
         let (common, hdr_len) = NormCommonHeader::parse(data)?;
+        if !matches!(
+            common.message_type,
+            NormMessageType::Nack | NormMessageType::Ack
+        ) {
+            return Err(Error::InvalidField {
+                what: "message_type",
+                reason: "expected NORM_NACK (type 4) or NORM_ACK (type 5)",
+            });
+        }
         if data.len() < FEEDBACK_FIXED_LEN {
             return Err(Error::BufferTooShort {
                 need: FEEDBACK_FIXED_LEN,
@@ -1045,15 +1077,8 @@ impl<'a> NormFeedback<'a> {
                 have: out.len(),
             });
         }
-        let words = self.header_bytes() / WORD;
-        if words > u8::MAX as usize {
-            return Err(Error::FieldTooWide {
-                what: "hdr_len",
-                value: words as u64,
-                bits: 8,
-            });
-        }
-        let mut off = self.common.serialize_into(out, words as u8)?;
+        let words = hdr_len_words(self.header_bytes(), "NORM feedback hdr_len")?;
+        let mut off = self.common.serialize_into(out, words)?;
         out[off..off + 4].copy_from_slice(&self.server_id.to_be_bytes());
         out[off + 4..off + 6].copy_from_slice(&self.instance_id.to_be_bytes());
         out[off + 6..off + 8].copy_from_slice(&self.ack_or_reserved.to_be_bytes());
@@ -1442,5 +1467,59 @@ mod tests {
         assert_eq!(re, info);
         assert_eq!(re.extensions.len(), 1);
         assert_eq!(re.extensions[0].het, HET_EXT_FTI);
+    }
+
+    // Regression (audit run-09 RMT-W3): a buffer that is genuinely a
+    // different NORM message type must not "successfully" parse into the
+    // wrong typed struct with garbage fields — the per-type parsers must
+    // check `common.message_type`.
+    #[test]
+    fn per_type_parsers_reject_the_wrong_message_type() {
+        let payload = [0xDEu8, 0xAD];
+        let info = NormInfo {
+            common: common(NormMessageType::Info),
+            sender: sender(),
+            flags: 0,
+            fec_id: 129,
+            object_transport_id: 0,
+            extensions: vec![],
+            payload: &payload,
+        };
+        let mut out = vec![0u8; info.serialized_len()];
+        info.serialize_into(&mut out).unwrap();
+
+        // A genuine NORM_INFO buffer handed to every OTHER type's parser
+        // must be rejected, not misread.
+        assert!(matches!(
+            NormData::parse(&out, 0),
+            Err(Error::InvalidField {
+                what: "message_type",
+                ..
+            })
+        ));
+        assert!(matches!(
+            NormCmd::parse(&out, 0),
+            Err(Error::InvalidField {
+                what: "message_type",
+                ..
+            })
+        ));
+        assert!(matches!(
+            NormFeedback::parse(&out),
+            Err(Error::InvalidField {
+                what: "message_type",
+                ..
+            })
+        ));
+        // And NormInfo::parse itself must reject a non-NORM_INFO buffer.
+        let mut wrong_type = out.clone();
+        wrong_type[0] = (wrong_type[0] & 0xF0) | NormMessageType::Data.to_u8();
+        assert!(matches!(
+            NormInfo::parse(&wrong_type),
+            Err(Error::InvalidField {
+                what: "message_type",
+                ..
+            })
+        ));
     }
 }

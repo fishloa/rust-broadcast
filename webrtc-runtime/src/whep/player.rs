@@ -107,12 +107,32 @@ pub enum Event {
     Terminated,
 }
 
+/// The kind of request currently awaiting a response while
+/// [`State::Established`] (audit run-09 W21, mirroring the WHIP client's own
+/// fix): status/`ETag` alone cannot tell a trickle-ICE ack apart from an
+/// ICE-restart answer (both are `PATCH`, both can legally come back `200`
+/// with an `ETag`) or a `DELETE` ack from a trickle ack (both can legally
+/// come back with no body and no `ETag`). Tracking which request is
+/// actually in flight removes the ambiguity.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PendingRequest {
+    /// A trickle-ICE `PATCH`.
+    Trickle,
+    /// An ICE-restart `PATCH` (`If-Match: *`).
+    IceRestart,
+    /// A `DELETE`.
+    Delete,
+}
+
 /// Sans-IO WHEP player state machine.
 #[derive(Debug)]
 pub struct WhepPlayer {
     endpoint_url: String,
     bearer_token: Option<String>,
     state: State,
+    /// The request awaiting a response while [`State::Established`], if any
+    /// — see [`PendingRequest`].
+    pending: Option<PendingRequest>,
 }
 
 impl WhepPlayer {
@@ -123,6 +143,7 @@ impl WhepPlayer {
             endpoint_url,
             bearer_token,
             state: State::Idle,
+            pending: None,
         }
     }
 
@@ -168,7 +189,7 @@ impl WhepPlayer {
     }
 
     /// Generate Trickle ICE PATCH.
-    pub fn trickle_ice(&self, sdp_fragment: Vec<u8>) -> Result<HttpRequest, Error> {
+    pub fn trickle_ice(&mut self, sdp_fragment: Vec<u8>) -> Result<HttpRequest, Error> {
         let (session_url, etag) = self.established_fields()?;
         let mut req = self.build_request(
             Method::Patch,
@@ -180,11 +201,12 @@ impl WhepPlayer {
             req.headers
                 .push(("If-Match".into(), alloc::format!("\"{etag}\"")));
         }
+        self.pending = Some(PendingRequest::Trickle);
         Ok(req)
     }
 
     /// Generate ICE restart PATCH.
-    pub fn ice_restart(&self, sdp_fragment: Vec<u8>) -> Result<HttpRequest, Error> {
+    pub fn ice_restart(&mut self, sdp_fragment: Vec<u8>) -> Result<HttpRequest, Error> {
         let (session_url, _) = self.established_fields()?;
         let mut req = self.build_request(
             Method::Patch,
@@ -193,12 +215,14 @@ impl WhepPlayer {
             sdp_fragment,
         );
         req.headers.push(("If-Match".into(), "*".into()));
+        self.pending = Some(PendingRequest::IceRestart);
         Ok(req)
     }
 
     /// Generate DELETE request.
     pub fn terminate(&mut self) -> Result<HttpRequest, Error> {
         let (session_url, _) = self.established_fields()?;
+        self.pending = Some(PendingRequest::Delete);
         Ok(self.build_request(Method::Delete, session_url, None, Vec::new()))
     }
 
@@ -261,11 +285,23 @@ impl WhepPlayer {
         }
     }
 
+    /// Dispatches on which request is actually in flight (audit run-09
+    /// W21), rather than guessing from status/`ETag` alone: those are
+    /// ambiguous between a trickle-ICE ack, an ICE-restart answer, and a
+    /// `DELETE` ack (see [`PendingRequest`]).
     fn handle_established_response(&mut self, resp: HttpResponse) -> Result<Option<Event>, Error> {
-        match resp.status {
-            super::status::NO_CONTENT => Ok(None),
-            200 => {
-                if let Some(new_etag) = resp.etag {
+        match self.pending.take() {
+            Some(PendingRequest::Delete) => match resp.status {
+                200 | super::status::NO_CONTENT => {
+                    self.state = State::Closed;
+                    Ok(Some(Event::Terminated))
+                }
+                _ => Err(Error::Http {
+                    status: resp.status,
+                }),
+            },
+            Some(PendingRequest::IceRestart) => match (resp.status, resp.etag) {
+                (200, Some(new_etag)) => {
                     if let State::Established { etag, .. } = &mut self.state {
                         *etag = Some(new_etag.clone());
                     }
@@ -273,13 +309,28 @@ impl WhepPlayer {
                         sdp_fragment: resp.body,
                         new_etag,
                     }))
-                } else {
-                    self.state = State::Closed;
-                    Ok(Some(Event::Terminated))
                 }
-            }
-            _ => Err(Error::Http {
-                status: resp.status,
+                (200, None) => Err(Error::MissingHeader { header: "ETag" }),
+                _ => Err(Error::Http {
+                    status: resp.status,
+                }),
+            },
+            Some(PendingRequest::Trickle) => match resp.status {
+                200 | super::status::NO_CONTENT => {
+                    if let Some(new_etag) = resp.etag
+                        && let State::Established { etag, .. } = &mut self.state
+                    {
+                        *etag = Some(new_etag);
+                    }
+                    Ok(None)
+                }
+                _ => Err(Error::Http {
+                    status: resp.status,
+                }),
+            },
+            None => Err(Error::WrongState {
+                operation: "on_response",
+                state: "established with no request pending",
             }),
         }
     }
@@ -328,6 +379,7 @@ fn state_name(s: &State) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::string::ToString;
 
     #[test]
     fn method_display_matches_http_request_line_token() {

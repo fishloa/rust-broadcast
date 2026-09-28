@@ -345,6 +345,22 @@ pub struct MediaTransportConfig {
     pub max_remote_candidates: usize,
 }
 
+/// The RFC 3550 §5.3.1 header extension carried by a [`DecryptedRtp`]
+/// packet, if `X=1`: an owned copy of [`rtp_packet::HeaderExtension`], whose
+/// `data` borrows from the (transient, decrypt-local) plaintext buffer —
+/// `DecryptedRtp` itself is fully owned, so it needs its own copy.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DecryptedRtpExtension {
+    /// `defined by profile` — a 16-bit identifier whose meaning is entirely
+    /// profile-specific (§5.3.1), e.g. RFC 8285 one-/two-byte multiplexing,
+    /// or a single-purpose extension such as RFC 5285's predecessor uses
+    /// (CVO video orientation, AV1 dependency descriptor, `mid`/`rid`).
+    pub profile_id: u16,
+    /// The extension data, opaque at this layer (RFC 3550 §5.3.1: "the
+    /// actual format of the extension is specified by the profile").
+    pub data: Vec<u8>,
+}
+
 /// An RTP packet decrypted from an inbound SRTP packet (RFC 3711), with its
 /// RFC 3550 §5.1 fixed-header fields promoted to typed fields. `payload` is
 /// the still-opaque coded media — this crate never decodes it, the same
@@ -363,6 +379,10 @@ pub struct DecryptedRtp {
     pub ssrc: u32,
     /// The CSRC identifier list (RFC 3550 §5.1).
     pub csrc: Vec<u32>,
+    /// The §5.3.1 header extension, if `X=1` (RFC 8285 CVO/AV1-dependency-
+    /// descriptor/`mid`/`rid` and similar are carried this way; audit
+    /// run-09 W20 — this used to be dropped between decrypt and the caller).
+    pub extension: Option<DecryptedRtpExtension>,
     /// The opaque coded media payload.
     pub payload: Vec<u8>,
 }
@@ -416,6 +436,32 @@ pub enum MediaEvent {
     /// [`MediaEvent::Rtcp`] via `rtcp_packet::RtcpPacket::Unknown`, so an SR/RR
     /// sharing that datagram is no longer discarded along with them (#1071).
     RtcpUnsupported(rtcp_packet::Error),
+    /// An inbound datagram in the RFC 5764 §5.1.2 SRTP/SRTCP band
+    /// (first byte 128..=191) failed authentication under both the
+    /// current and (if any) retired read key.
+    ///
+    /// This is the EXPECTED outcome for spoofed or garbage traffic, not a
+    /// transport error: post-handshake, this crate accepts datagrams from
+    /// any source address (RFC 8445 gives no further authentication once a
+    /// pair is selected — SRTP's own auth tag is the check), so anyone can
+    /// send a byte in this range to the port. Before this event existed,
+    /// [`MediaTransport::handle_datagram`] returned `Err` for this case,
+    /// making it a fatal-looking result for every caller (audit run-09 W20;
+    /// `multimux` already had to special-case exactly this after it tore
+    /// down live WHIP ingests on the first stray datagram).
+    AuthFailure {
+        /// `true` for an RFC 5761 §4 RTCP packet type, `false` for RTP.
+        is_rtcp: bool,
+        /// The decrypt/parse failure, for logging.
+        reason: String,
+    },
+    /// [`MediaTransport::handle_timeout`]'s underlying ICE or DTLS timer
+    /// drive returned an error (audit run-09 W20). Before this event
+    /// existed these were silently discarded (`let _ =`), so a failed DTLS
+    /// handshake (fatal alert, retransmit exhaustion) or an ICE agent error
+    /// showed up only as silence — the caller never learned anything had
+    /// gone wrong.
+    TimerError(String),
 }
 
 /// The ICE + DTLS-SRTP media transport for one peer connection.
@@ -739,11 +785,24 @@ impl MediaTransport {
     /// Drive ICE/DTLS/STUN-gather timers. Call periodically (the underlying
     /// `rtc-ice`/`rtc-stun` retransmission schedules are sub-second) even
     /// when no datagrams are arriving.
-    pub fn handle_timeout(&mut self, now: Instant) {
-        let _ = Protocol::handle_timeout(&mut self.ice, now);
+    ///
+    /// Returns any [`MediaEvent::TimerError`]s the drive produced. Before
+    /// this returned anything, a failed ICE or DTLS timer drive (handshake
+    /// failure, a fatal alert) was silently discarded (`let _ =`), so the
+    /// caller never learned anything had gone wrong — it just saw silence
+    /// (audit run-09 W20).
+    pub fn handle_timeout(&mut self, now: Instant) -> Vec<MediaEvent> {
+        let mut events = Vec::new();
+        if let Err(e) = Protocol::handle_timeout(&mut self.ice, now) {
+            events.push(MediaEvent::TimerError(format!("ice handle_timeout: {e}")));
+        }
         let peers: Vec<SocketAddr> = self.dtls.get_connections_keys().copied().collect();
         for peer in peers {
-            let _ = self.dtls.handle_timeout(peer, now);
+            if let Err(e) = self.dtls.handle_timeout(peer, now) {
+                events.push(MediaEvent::TimerError(format!(
+                    "dtls handle_timeout ({peer}): {e}"
+                )));
+            }
         }
         if let Some(gather) = &mut self.gather {
             gather.handle_timeout(now);
@@ -752,6 +811,7 @@ impl MediaTransport {
             self.gather = None;
         }
         self.purge_expired_retired_key(now);
+        events
     }
 
     /// RFC 5764 §5.2's retention window on the previous read key
@@ -787,7 +847,7 @@ impl MediaTransport {
         } else if (DEMUX_DTLS_MIN..=DEMUX_DTLS_MAX).contains(&first) {
             self.handle_dtls_datagram(now, peer, data, &mut events)?;
         } else if (DEMUX_RTP_MIN..=DEMUX_RTP_MAX).contains(&first) {
-            self.handle_srtp_datagram(now, data, &mut events)?;
+            self.handle_srtp_datagram(now, data, &mut events);
         }
         // Any other first byte has no defined meaning on this flow (see the
         // module doc's demux table) and is silently ignored.
@@ -922,12 +982,7 @@ impl MediaTransport {
     /// [`Self::rekey`] most recently retired) — a packet that arrived
     /// late, still keyed under the old master key — if that fails or
     /// there is no current context yet.
-    fn handle_srtp_datagram(
-        &mut self,
-        now: Instant,
-        data: &[u8],
-        events: &mut Vec<MediaEvent>,
-    ) -> Result<(), Error> {
+    fn handle_srtp_datagram(&mut self, now: Instant, data: &[u8], events: &mut Vec<MediaEvent>) {
         self.purge_expired_retired_key(now);
 
         let is_rtcp = data.get(1).is_some_and(|&pt| is_rtcp_packet_type(pt));
@@ -944,7 +999,6 @@ impl MediaTransport {
                     self.read_rtp_count += 1;
                 }
                 events.push(event);
-                Ok(())
             }
             Some(Err(current_err)) => {
                 // The current context rejected the packet — exactly what
@@ -955,13 +1009,19 @@ impl MediaTransport {
                     && let Ok(event) = decrypt_srtp(ctx, is_rtcp, data)
                 {
                     events.push(event);
-                    return Ok(());
+                    return;
                 }
-                // Retired didn't save it either (or there wasn't one): an
-                // authentication failure on a packet under the *active*
-                // key is a real problem, not the benign "arrived before
-                // handshake" case below — surface it.
-                Err(current_err)
+                // Retired didn't save it either (or there wasn't one).
+                // Anyone can send a byte in the RFC 5764 §5.1.2 SRTP band
+                // (128..=191) to this port — post-handshake, datagrams are
+                // accepted from any source address — so this is the
+                // EXPECTED outcome for spoofed/garbage traffic, not an
+                // exceptional one: surface it as an event (audit run-09
+                // W20), not `Err`.
+                events.push(MediaEvent::AuthFailure {
+                    is_rtcp,
+                    reason: current_err.to_string(),
+                });
             }
             None => {
                 // No current context at all (no handshake yet, or
@@ -974,7 +1034,6 @@ impl MediaTransport {
                 {
                     events.push(event);
                 }
-                Ok(())
             }
         }
     }
@@ -1147,14 +1206,27 @@ impl MediaTransport {
     /// # Errors
     ///
     /// Returns [`Error::Media`] if no DTLS handshake has ever completed
-    /// (nothing to rekey) or if redialling the fresh handshake
-    /// ([`SetupRole::Active`] only) fails.
+    /// (nothing to rekey), if redialling the fresh handshake
+    /// ([`SetupRole::Active`] only) fails, or if this side is
+    /// [`SetupRole::Passive`] (audit run-09 W19): `maybe_start_active_dtls`
+    /// is a no-op for Passive (it only ever dials out for Active), so tearing
+    /// down the association here would leave the Passive side waiting for a
+    /// fresh `ClientHello` a browser or OBS peer never sends without a new
+    /// SDP offer — silently ending media for good. The caller must instead
+    /// drive an ICE restart or SDP renegotiation to get a new DTLS handshake.
     pub fn rekey(&mut self, now: Instant) -> Result<(), Error> {
         let Some(peer) = self.dtls_peer else {
             return Err(Error::Media(
                 "rekey: no dtls handshake has completed yet; nothing to rekey".to_string(),
             ));
         };
+        if self.local_setup == SetupRole::Passive {
+            return Err(Error::Media(
+                "rekey: this side is SetupRole::Passive, which never dials out a new DTLS \
+                 session on its own; drive an ICE restart or SDP renegotiation instead"
+                    .to_string(),
+            ));
+        }
 
         if let Some(old_read) = self.srtp_read.take() {
             self.retired_srtp_read = Some((old_read, now + RETIRED_KEY_RETENTION));
@@ -1231,6 +1303,10 @@ fn decrypt_srtp(ctx: &mut SrtpContext, is_rtcp: bool, data: &[u8]) -> Result<Med
             timestamp: pkt.timestamp,
             ssrc: pkt.ssrc,
             csrc: pkt.csrc.clone(),
+            extension: pkt.extension.map(|ext| DecryptedRtpExtension {
+                profile_id: ext.profile_id,
+                data: ext.data.to_vec(),
+            }),
             payload: pkt.payload.to_vec(),
         }))
     }
@@ -1908,6 +1984,36 @@ mod tests {
         assert_eq!(mt.read_rtp_count, 1);
     }
 
+    // Regression (audit run-09 W20): the RFC 3550 §5.3.1 header extension
+    // (RFC 8285 CVO/AV1-dependency-descriptor/`mid`/`rid` and similar all
+    // ride on it) must survive decrypt into `DecryptedRtp`, not be dropped.
+    #[test]
+    fn decrypted_rtp_preserves_the_header_extension() {
+        let (mut mt, peer) = transport_with_completed_handshake(SetupRole::Passive);
+        let mut oracle = b3_srtp_context();
+        let mut pkt = rtp_test_packet(0);
+        pkt.extension = Some(rtp_packet::HeaderExtension {
+            profile_id: 0xBEDE,
+            data: &[0xDE, 0xAD, 0xBE, 0xEF],
+        });
+        let ciphertext = oracle.encrypt_rtp(&pkt.to_bytes()).unwrap().to_vec();
+
+        let events = mt
+            .handle_datagram(Instant::now(), peer, &ciphertext)
+            .expect("handle_datagram");
+        match &events[..] {
+            [MediaEvent::Rtp(rtp)] => {
+                let ext = rtp
+                    .extension
+                    .as_ref()
+                    .expect("extension must not be dropped");
+                assert_eq!(ext.profile_id, 0xBEDE);
+                assert_eq!(ext.data, vec![0xDE, 0xAD, 0xBE, 0xEF]);
+            }
+            other => panic!("expected exactly one MediaEvent::Rtp, got {other:?}"),
+        }
+    }
+
     /// r14-RTCP-C1 (#1071): a browser WHEP viewer's SRTCP is mostly RFC 4585
     /// feedback (here a bare PSFB PLI, RFC 4585 §6.3.1, PT=206 FMT=1, sent
     /// alone as Reduced-Size RTCP per RFC 5506 §4.1) — `rtcp-packet` now
@@ -1923,11 +2029,18 @@ mod tests {
         ];
         let (mut mt, peer) = transport_with_completed_handshake(SetupRole::Passive);
 
+        // SRTCP under the wrong key must still fail authentication — but as
+        // an `AuthFailure` event, not `Err` (audit run-09 W20): anyone can
+        // send a byte in the SRTP/SRTCP band, so this is the expected
+        // outcome for spoofed traffic, not a transport error.
         let mut forger = other_srtp_context();
         let forged = forger.encrypt_rtcp(&PLI).unwrap().to_vec();
+        let events = mt
+            .handle_datagram(Instant::now(), peer, &forged)
+            .expect("an authentication failure is an event, not Err");
         assert!(
-            mt.handle_datagram(Instant::now(), peer, &forged).is_err(),
-            "SRTCP under the wrong key must still fail authentication"
+            matches!(&events[..], [MediaEvent::AuthFailure { is_rtcp: true, .. }]),
+            "expected exactly one AuthFailure(is_rtcp: true), got {events:?}"
         );
 
         let mut oracle = b3_srtp_context();
@@ -2043,8 +2156,52 @@ mod tests {
     }
 
     #[test]
+    fn rekey_on_passive_errors_without_tearing_down_the_association() {
+        // Regression (audit run-09 W19): `rekey()` on `SetupRole::Passive`
+        // must not tear down the working association. `maybe_start_active_dtls`
+        // is a no-op for Passive — it only ever dials out for Active — so
+        // doing the teardown anyway would leave the Passive side waiting
+        // forever for a `ClientHello` a browser/OBS peer never sends without
+        // a new SDP offer, silently ending media for good.
+        let (mut mt, peer) = transport_with_completed_handshake(SetupRole::Passive);
+        mt.write_rtp_count = 5;
+        mt.read_rtp_count = 7;
+
+        match mt.rekey(Instant::now()) {
+            Err(Error::Media(_)) => {}
+            Err(other) => panic!("expected Error::Media, got {other:?}"),
+            Ok(()) => panic!("expected Passive rekey to be refused"),
+        }
+
+        // Nothing was torn down: the existing keys and counters are intact,
+        // and the still-working association keeps decrypting.
+        assert!(mt.srtp_write.is_some(), "write context must not be dropped");
+        assert!(
+            mt.srtp_read.is_some(),
+            "read context must not be moved to retired"
+        );
+        assert!(mt.retired_srtp_read.is_none());
+        assert_eq!(mt.write_rtp_count, 5);
+        assert_eq!(mt.read_rtp_count, 7);
+
+        let mut oracle = b3_srtp_context();
+        let packet = oracle
+            .encrypt_rtp(&rtp_test_packet(0).to_bytes())
+            .unwrap()
+            .to_vec();
+        let events = mt
+            .handle_datagram(Instant::now(), peer, &packet)
+            .expect("the untouched association keeps decrypting after a refused rekey");
+        assert_eq!(events.len(), 1, "expected the RTP packet to still decrypt");
+    }
+
+    #[test]
     fn rekey_retires_read_context_and_drops_write_context() {
-        let (mut mt, _peer) = transport_with_completed_handshake(SetupRole::Passive);
+        // Active, not Passive: Passive's rekey is refused outright (see
+        // `rekey_on_passive_errors_without_tearing_down_the_association`
+        // above) rather than tearing anything down, so this teardown
+        // behaviour is exercised on the role that actually redials.
+        let (mut mt, _peer) = transport_with_completed_handshake(SetupRole::Active);
         mt.write_rtp_count = 5;
         mt.read_rtp_count = 7;
 
@@ -2074,7 +2231,13 @@ mod tests {
     /// decrypted.
     #[test]
     fn retired_read_context_decrypts_reordered_packet_until_msl_elapses_then_stops() {
-        let (mut mt, peer) = transport_with_completed_handshake(SetupRole::Passive);
+        // Active, not Passive: Passive's rekey is refused outright (see
+        // `rekey_on_passive_errors_without_tearing_down_the_association`),
+        // so the "no current read context yet" case is exercised on the
+        // role that actually redials — `rekey` itself only ever starts a
+        // new handshake, it doesn't complete one synchronously, so
+        // `srtp_read` is `None` here too until a later handshake completes.
+        let (mut mt, peer) = transport_with_completed_handshake(SetupRole::Active);
         let mut oracle = b3_srtp_context();
         // The "in-flight when the rekey happened" packet: encrypted under
         // the about-to-be-retired key, arrives only after `rekey` below.
@@ -2085,9 +2248,11 @@ mod tests {
 
         let t0 = Instant::now();
         mt.rekey(t0).expect("rekey");
-        // Passive role never redials, so `srtp_read` stays `None` until a
-        // new handshake completes (never, in this test) — decrypting the
-        // reordered packet now depends entirely on `retired_srtp_read`.
+        // `rekey` only starts the new handshake (redials); it never
+        // completes synchronously, so `srtp_read` stays `None` until a
+        // later `handle_datagram` finishes it (never, in this test) —
+        // decrypting the reordered packet now depends entirely on
+        // `retired_srtp_read`.
         assert!(mt.srtp_read.is_none());
 
         // Part 1: within the retention window, the retired key recovers it.

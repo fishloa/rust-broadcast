@@ -207,6 +207,73 @@ fn whep_player_ice_restart() {
     ));
 }
 
+// Regression (audit run-09 W21, mirroring the WHIP client fix): a
+// trickle-ICE PATCH answered `200` with an `ETag` must not be misread as an
+// ICE-restart answer.
+#[test]
+fn whep_player_trickle_ack_with_200_and_etag_is_not_misread_as_ice_restart() {
+    let mut player = WhepPlayer::new(ENDPOINT.into(), None);
+    let _ = player.offer(SDP_OFFER.to_vec()).unwrap();
+    let _ = player
+        .on_response(player::HttpResponse {
+            status: 201,
+            content_type: Some("application/sdp".into()),
+            location: Some(SESSION.into()),
+            etag: Some("e1".into()),
+            body: SDP_ANSWER.to_vec(),
+        })
+        .unwrap();
+
+    let _ = player.trickle_ice(ICE_FRAG.to_vec()).unwrap();
+    let event = player
+        .on_response(player::HttpResponse {
+            status: 200,
+            content_type: None,
+            location: None,
+            etag: Some("e2".into()),
+            body: Vec::new(),
+        })
+        .unwrap();
+    assert!(
+        event.is_none(),
+        "a trickle ack must never produce an event, got {event:?}"
+    );
+    assert!(matches!(
+        player.state(),
+        player::State::Established { etag: Some(e), .. } if e == "e2"
+    ));
+}
+
+// Regression (audit run-09 W21): a `DELETE` answered `204` must still
+// transition to `Closed` and emit `Terminated`.
+#[test]
+fn whep_player_terminate_ack_with_204_transitions_to_closed() {
+    let mut player = WhepPlayer::new(ENDPOINT.into(), None);
+    let _ = player.offer(SDP_OFFER.to_vec()).unwrap();
+    let _ = player
+        .on_response(player::HttpResponse {
+            status: 201,
+            content_type: Some("application/sdp".into()),
+            location: Some(SESSION.into()),
+            etag: Some("e1".into()),
+            body: SDP_ANSWER.to_vec(),
+        })
+        .unwrap();
+
+    let _ = player.terminate().unwrap();
+    let event = player
+        .on_response(player::HttpResponse {
+            status: 204,
+            content_type: None,
+            location: None,
+            etag: None,
+            body: Vec::new(),
+        })
+        .unwrap();
+    assert!(matches!(event, Some(player::Event::Terminated)));
+    assert_eq!(*player.state(), player::State::Closed);
+}
+
 #[test]
 fn whep_player_wrong_state_errors() {
     let mut player = WhepPlayer::new(ENDPOINT.into(), None);
@@ -446,6 +513,22 @@ fn whep_server_wrong_content_type_in_established() {
     // Wrong content-type PATCH in Established -> error
     let err = session.on_patch("text/plain", ICE_FRAG.to_vec(), None);
     assert!(matches!(err.unwrap_err(), Error::InvalidSdpFragment { .. }));
+}
+
+// Regression (audit run-09 W21): a counter-offer answer sent as
+// `application/sdp; charset=utf-8` (a legal media type with a parameter,
+// RFC 9110 §8.3.1) must be accepted, not rejected by a strict `==` compare
+// against the bare `application/sdp` constant.
+#[test]
+fn whep_server_accepts_content_type_with_a_parameter() {
+    let mut session = WhepSession::new(SESSION.into());
+    let _ = session.on_post(SDP_OFFER.to_vec()).unwrap();
+    let _ = session.counter_offer(SERVER_OFFER.to_vec(), None);
+
+    let event = session
+        .on_patch("application/sdp; charset=utf-8", SDP_ANSWER.to_vec(), None)
+        .unwrap();
+    assert!(matches!(event, server::Event::SdpAnswer(ref a) if a == SDP_ANSWER));
 }
 
 #[test]

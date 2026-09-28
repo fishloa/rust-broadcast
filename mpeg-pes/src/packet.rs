@@ -671,7 +671,13 @@ impl<'a> PesPacket<'a> {
                 cursor += 5;
                 (Some(pts), Some(dts))
             }
-            _ => (None, None),
+            0b00 => (None, None),
+            // 0b01 is a reserved/forbidden combination (Table 2-21 defines
+            // only 00/10/11); accepting it silently as "no timestamps"
+            // discards a real stream error instead of surfacing it, and the
+            // 5 bytes that would have been the timestamp are then misread
+            // as whatever comes next (ESCR, ES_rate, ...).
+            _ => return Err(Error::ForbiddenPtsDtsFlags),
         };
 
         // ESCR (6 bytes, ISO/IEC 13818-1 §2.4.3.7).
@@ -822,6 +828,16 @@ impl<'a> PesPacket<'a> {
         let payload_at = match &self.header {
             None => MIN_LEN,
             Some(h) => {
+                if h.dts.is_some() && h.pts.is_none() {
+                    // ISO/IEC 13818-1 Table 2-21 has no `PTS_DTS_flags` code
+                    // for "DTS but no PTS": without this guard, the flags
+                    // written below fall through to `_ => 0b00` (no
+                    // timestamps present) while the DTS bytes are written
+                    // into the optional region anyway, producing a header
+                    // whose declared PES_header_data_length/flags disagree
+                    // with its actual bytes.
+                    return Err(Error::ForbiddenPtsDtsFlags);
+                }
                 let opt_len = h.optional_len();
                 if opt_len > 255 {
                     return Err(Error::OptionalFieldsTooLarge(opt_len));
@@ -960,6 +976,60 @@ mod tests {
         assert!(h.pts.is_some());
         assert!(h.dts.is_some());
         round_trip(&b);
+    }
+
+    // Regression (audit run-09 W4): `PTS_DTS_flags = 01` is a reserved/
+    // forbidden combination (ISO/IEC 13818-1 Table 2-21 defines only
+    // 00/10/11) that used to be silently accepted as "no timestamps",
+    // discarding a real stream error and misreading the 5 bytes that would
+    // have been the timestamp as whatever field comes next.
+    #[test]
+    fn forbidden_pts_dts_flags_01_is_rejected() {
+        let mut b = [
+            0x00, 0x00, 0x01, 0xE0, 0x00, 0x0F, 0x80, 0xC0, 0x0A, 0x31, 0x00, 0x03, 0x00, 0x01,
+            0x11, 0x00, 0x05, 0x00, 0x01, 0xCC,
+        ];
+        b[7] = 0x40; // pts_dts_flags = 01 (top two bits of f2)
+        assert!(matches!(
+            PesPacket::parse(&b),
+            Err(Error::ForbiddenPtsDtsFlags)
+        ));
+    }
+
+    // Regression (audit run-09 W3): a `PesHeader` with `dts.is_some()` but
+    // `pts.is_none()` must be rejected on serialize, not silently written
+    // with `PTS_DTS_flags = 00` while the DTS bytes still occupy the
+    // optional region — a header whose declared flags and actual bytes
+    // disagree.
+    #[test]
+    fn serialize_rejects_dts_without_pts() {
+        let header = PesHeader {
+            scrambling_control: 0,
+            pes_priority: false,
+            data_alignment_indicator: false,
+            copyright: false,
+            original_or_copy: false,
+            pts: None,
+            dts: Some(Dts(0)),
+            escr: None,
+            es_rate: None,
+            dsm_trick_mode: None,
+            additional_copy_info: None,
+            pes_crc: None,
+            pes_extension: None,
+            header_stuffing_len: 0,
+        };
+        let pkt = PesPacket {
+            stream_id: StreamId(0xE0),
+            pes_packet_length: 0,
+            header: Some(header),
+            payload: &[0xAA],
+        };
+        let mut buf = vec![0u8; pkt.serialized_len()];
+        assert!(matches!(
+            pkt.serialize_into(&mut buf),
+            Err(Error::ForbiddenPtsDtsFlags)
+        ));
     }
 
     #[test]

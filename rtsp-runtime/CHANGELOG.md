@@ -11,6 +11,26 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   non-hop-by-hop header (`Content-Type` included), instead of an empty body with
   `Content-Length: 0`. An authenticated `ANNOUNCE` (RFC 2326 §10.3) previously lost its SDP on
   retry, so a push to any Digest- or Basic-challenging server always failed after the first 401.
+- `ClientSession` now always rebuilds its Digest authenticator from a 401's challenge, instead of
+  only when it had none yet or the challenge said `stale=true` (#1088). A server that rotates its
+  nonce per session or per time window without setting `stale` used to sign the retry with the
+  stale nonce, fail again, and be abandoned instead of adapted to. `stale` detection is also now
+  case-insensitive and tolerates a quoted value (`stale="true"`).
+- `ClientSession::handle_data` no longer aborts the whole call (discarding every event already
+  decoded from the same buffer) on one response carrying an unknown or duplicate `CSeq`; that
+  response is now skipped (#1088).
+- `ClientSession`'s inbound buffer, and `io::AsyncRtspServer`'s request buffer, are now capped
+  (1 MiB / 2 MiB) rather than unbounded, so an unterminated header or an unfulfilled
+  `Content-Length` can't grow memory without limit (#1088).
+- `io::AsyncRtspClient::exchange` now matches the response it returns against the `CSeq` it just
+  sent, instead of returning whichever `Response` event was last in a decoded batch; a stray
+  response for a request a previous, abandoned `exchange` call sent could otherwise be mistaken
+  for the current one (#1088). Its `pending_media` buffer is also now capped, dropping the oldest
+  frame once full, instead of growing without bound while waiting on a slow-to-answer request.
+- `io::AsyncRtspServer::next_request` now demultiplexes an interleaved `$`-framed block (RFC 2326
+  §10.12) into a new `ServerEvent::MediaData`, instead of erroring; a TCP-interleaved PLAY client
+  sending RTCP receiver reports (ffmpeg, VLC, GStreamer all do) previously had its connection
+  dropped at the first one (#1088).
 
 ## [0.7.0] - 2026-09-26
 

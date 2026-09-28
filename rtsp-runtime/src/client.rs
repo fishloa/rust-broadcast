@@ -35,6 +35,14 @@ use crate::transport::Transport;
 /// A message body type: owned bytes.
 type Body = Vec<u8>;
 
+/// Maximum bytes retained in [`ClientSession::inbound`] while waiting for a
+/// complete response or interleaved frame. An unterminated header, or a
+/// `Content-Length` that promises more than the peer ever sends, would
+/// otherwise grow this buffer without bound (multimux pulls from
+/// operator-configured but externally hosted RTSP URLs) — 1 MiB is generous
+/// for RTSP headers plus an SDP body (audit run-09 W6).
+const MAX_INBOUND_BYTES: usize = 1024 * 1024;
+
 /// Record of a request the client has sent and is awaiting a response for.
 #[derive(Debug, Clone)]
 struct Pending {
@@ -136,6 +144,15 @@ impl ClientSession {
     /// The current session state.
     pub fn state(&self) -> SessionState {
         self.state
+    }
+
+    /// The `CSeq` the next request-builder call (`options`/`describe`/…) will
+    /// assign. Lets an IO adapter capture which response it must wait for
+    /// *before* building the request, since building it also consumes this
+    /// value (audit run-09 W7: `io::AsyncRtspClient::exchange` needs this to
+    /// tell "the" response apart from a stray one for an abandoned request).
+    pub fn peek_next_cseq(&self) -> u32 {
+        self.next_cseq
     }
 
     /// The negotiated session id, once a SETUP response has been processed.
@@ -293,6 +310,13 @@ impl ClientSession {
     /// trailing message or frame internally for the next call.
     pub fn handle_data(&mut self, data: &[u8]) -> Result<Vec<ClientEvent>> {
         self.inbound.extend_from_slice(data);
+        if self.inbound.len() > MAX_INBOUND_BYTES {
+            return Err(Error::MessageParse(format!(
+                "inbound buffer of {} bytes exceeds the {MAX_INBOUND_BYTES}-byte maximum \
+                 (unterminated header or an unfulfilled Content-Length)",
+                self.inbound.len()
+            )));
+        }
         let mut events = Vec::new();
 
         loop {
@@ -336,9 +360,17 @@ impl ClientSession {
     ) -> Result<()> {
         match message {
             Message::Response(response) => {
-                let cseq = header_value(response.header(&headers::CSEQ))
+                // A response with no parseable CSeq can't be correlated to
+                // anything pending. Skip it rather than aborting the whole
+                // `handle_data` call — bytes already drained from `inbound`
+                // (and events already decoded from them earlier in this same
+                // call) must not be discarded for one bad response (RFC 2326
+                // gives no reason to treat this as fatal).
+                let Some(cseq) = header_value(response.header(&headers::CSEQ))
                     .and_then(|s| s.trim().parse::<u32>().ok())
-                    .ok_or(Error::MissingCSeq)?;
+                else {
+                    return Ok(());
+                };
                 let status = response.status();
 
                 // 401: attempt a transparent auth retry.
@@ -349,7 +381,12 @@ impl ClientSession {
                     return Ok(());
                 }
 
-                let pending = self.pending.remove(&cseq).ok_or(Error::UnknownCSeq(cseq))?;
+                // An unknown or already-answered CSeq (a duplicate response,
+                // or a reply to a request the caller gave up waiting for) is
+                // likewise skipped rather than fatal, for the same reason.
+                let Some(pending) = self.pending.remove(&cseq) else {
+                    return Ok(());
+                };
 
                 // Capture Session id + timeout (typically from SETUP).
                 if let Some(session_hdr) = header_value(response.header(&headers::SESSION)) {
@@ -423,15 +460,20 @@ impl ClientSession {
 
         let challenge = header_value(response.header(&headers::WWW_AUTHENTICATE))
             .ok_or_else(|| Error::Auth("401 without WWW-Authenticate".into()))?;
-        let stale = challenge.to_ascii_lowercase().contains("stale=true");
+        let stale = challenge_is_stale(challenge);
 
-        // Fresh challenge => (re)build the authenticator. On stale=true this
-        // picks up the new nonce; on first 401 it establishes the client.
-        if self.authenticator.is_none() || already || stale {
-            self.authenticator = Some(Authenticator::from_challenge(challenge, creds)?);
-        }
-        // Guard: if we already retried and it isn't a stale refresh, give up so
-        // the caller sees the 401 (wrong credentials).
+        // Always rebuild the authenticator from THIS challenge. A server can
+        // rotate its nonce per session or per time window without setting
+        // `stale=true` (RFC 2326 §14 doesn't require it); gating the rebuild
+        // on `stale` meant a rotated-but-not-stale nonce got signed with the
+        // old value, failed again, and was then abandoned instead of retried
+        // with the fresh one.
+        self.authenticator = Some(Authenticator::from_challenge(challenge, creds)?);
+        // Guard: if this pending request was already retried once and it's
+        // still a 401 with no `stale=true`, give up so the caller sees it
+        // (wrong credentials). `stale=true` is the server's explicit signal
+        // that the credentials were fine and only the nonce needs refreshing,
+        // so it's allowed one more retry even after an earlier one.
         if already && !stale {
             return Ok(None);
         }
@@ -494,6 +536,22 @@ fn header_value(h: Option<&headers::HeaderValue>) -> Option<&str> {
     h.map(|v| v.as_str())
 }
 
+/// Reports whether a `WWW-Authenticate` challenge carries `stale=true`
+/// (RFC 7616 §3.3), tolerating the case-insensitivity of the auth-param name
+/// and value, and either bare (`stale=true`) or quoted (`stale="true"`) form —
+/// a strict `contains("stale=true")` misses the quoted form (audit run-09 W4).
+fn challenge_is_stale(challenge: &str) -> bool {
+    challenge
+        .split(',')
+        .any(|param| match param.split_once('=') {
+            Some((name, value)) => {
+                name.trim().eq_ignore_ascii_case("stale")
+                    && value.trim().trim_matches('"').eq_ignore_ascii_case("true")
+            }
+            None => false,
+        })
+}
+
 /// Parses a `Session` header value into (id, optional timeout seconds).
 fn parse_session(value: &str) -> (String, Option<u64>) {
     let mut parts = value.split(';').map(str::trim);
@@ -551,6 +609,65 @@ mod tests {
         assert!(s.contains("ANNOUNCE rtsp://h/s"));
         assert!(s.contains("Content-Type: application/sdp"));
         assert!(s.contains(sdp));
+    }
+
+    // Regression (audit run-09 W5): one unknown/duplicate CSeq in a batch of
+    // inbound bytes must not discard events already decoded earlier in the
+    // same `handle_data` call. Before the fix, `handle_data` returned `Err`
+    // on the first unmatched CSeq, so a caller lost the CSeq-1 `Response`
+    // event even though its bytes had already been drained from `inbound`.
+    #[test]
+    fn unknown_cseq_is_skipped_without_discarding_earlier_events() {
+        fn wire(s: &str) -> Vec<u8> {
+            s.replace('\n', "\r\n").into_bytes()
+        }
+        let mut c = ClientSession::new();
+        c.options("rtsp://h/s").unwrap(); // CSeq 1
+        c.describe("rtsp://h/s").unwrap(); // CSeq 2
+
+        // A valid response (CSeq 1), then a duplicate/unmatched response
+        // (CSeq 99, never sent), then another valid response (CSeq 2), all
+        // in one `handle_data` call.
+        let mut batch = wire("RTSP/1.0 200 OK\nCSeq: 1\n\n");
+        batch.extend(wire("RTSP/1.0 200 OK\nCSeq: 99\n\n"));
+        batch.extend(wire("RTSP/1.0 200 OK\nCSeq: 2\n\n"));
+
+        let events = c
+            .handle_data(&batch)
+            .expect("an unmatched CSeq must not fail the whole batch");
+        let cseqs: Vec<u32> = events
+            .into_iter()
+            .map(|e| match e {
+                ClientEvent::Response { cseq, .. } => cseq,
+                other => panic!("unexpected event: {other:?}"),
+            })
+            .collect();
+        assert_eq!(
+            cseqs,
+            vec![1, 2],
+            "expected both real responses despite the unmatched CSeq 99"
+        );
+    }
+
+    // Regression (audit run-09 W6): an unterminated header (or a peer that
+    // drips bytes forever without completing a message) must not grow
+    // `inbound` without bound.
+    #[test]
+    fn inbound_buffer_is_capped_against_an_unterminated_header() {
+        let mut c = ClientSession::new();
+        c.options("rtsp://h/s").unwrap();
+        let chunk = vec![b'A'; 64 * 1024];
+        let mut last = Ok(Vec::new());
+        for _ in 0..(MAX_INBOUND_BYTES / chunk.len() + 2) {
+            last = c.handle_data(&chunk);
+            if last.is_err() {
+                break;
+            }
+        }
+        assert!(
+            last.is_err(),
+            "expected the oversized inbound buffer to be rejected, not grown forever"
+        );
     }
 
     #[test]
@@ -628,6 +745,112 @@ mod tests {
         assert!(
             retry.contains(&expected_len),
             "expected {expected_len:?} in: {retry}"
+        );
+    }
+
+    // Regression (audit run-09 W4): a server that rotates its Digest nonce
+    // without `stale=true` must still get a correctly-signed retry on the
+    // very next request, not one signed with the stale nonce. Before the fix,
+    // the authenticator was rebuilt only when it was `None`, `already`
+    // retried, or `stale` was set — none of which hold for a fresh request's
+    // first 401 when the client had already authenticated earlier in the
+    // session — so the retry reused the old nonce, failed again, and the
+    // engine gave up (`already && !stale`) instead of adapting.
+    #[test]
+    fn nonce_rotation_without_stale_is_picked_up_on_the_first_retry() {
+        fn wire(s: &str) -> Vec<u8> {
+            s.replace('\n', "\r\n").into_bytes()
+        }
+        let mut c = ClientSession::new().with_credentials(Credentials::new("admin", "12345"));
+
+        // Establish the authenticator via an ordinary first challenge.
+        c.options("rtsp://h/s").unwrap(); // CSeq 1
+        let events = c
+            .handle_data(&wire(
+                "RTSP/1.0 401 Unauthorized\nCSeq: 1\nWWW-Authenticate: Digest realm=\"cam\",nonce=\"nonce-1\",qop=\"auth\"\n\n",
+            ))
+            .unwrap();
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, ClientEvent::AuthRetry { cseq: 2, .. })),
+            "{events:?}"
+        );
+        c.handle_data(&wire("RTSP/1.0 200 OK\nCSeq: 2\n\n"))
+            .unwrap();
+
+        // A later, unrelated request (e.g. a GET_PARAMETER keepalive) hits a
+        // rotated nonce with no `stale=true`.
+        c.options("rtsp://h/s").unwrap(); // CSeq 3
+        let events = c
+            .handle_data(&wire(
+                "RTSP/1.0 401 Unauthorized\nCSeq: 3\nWWW-Authenticate: Digest realm=\"cam\",nonce=\"nonce-2\",qop=\"auth\"\n\n",
+            ))
+            .unwrap();
+        let retry = events
+            .into_iter()
+            .find_map(|e| match e {
+                ClientEvent::AuthRetry {
+                    cseq: 4, request, ..
+                } => Some(request),
+                _ => None,
+            })
+            .expect("expected a retry (CSeq 4), not a give-up");
+        let retry = String::from_utf8_lossy(&retry);
+        assert!(
+            retry.contains("nonce=\"nonce-2\""),
+            "retry signed with the stale nonce instead of the rotated one: {retry}"
+        );
+    }
+
+    // Regression (audit run-09 W4): `stale` matching must tolerate a quoted
+    // value and mixed case (RFC 7616 auth-param values may be quoted); a
+    // strict `stale=true` comparison silently treated a quoted re-challenge
+    // as non-stale, so a retry already attempted once was abandoned instead
+    // of refreshed.
+    #[test]
+    fn stale_detection_tolerates_quoted_and_mixed_case_values() {
+        assert!(challenge_is_stale(
+            "Digest realm=\"cam\",nonce=\"x\",stale=\"True\""
+        ));
+        assert!(challenge_is_stale("Digest realm=\"cam\",STALE=true"));
+        assert!(!challenge_is_stale("Digest realm=\"cam\",nonce=\"x\""));
+        assert!(!challenge_is_stale("Digest realm=\"cam\",stale=false"));
+    }
+
+    #[test]
+    fn stale_quoted_rechallenge_refreshes_nonce_after_a_prior_retry() {
+        fn wire(s: &str) -> Vec<u8> {
+            s.replace('\n', "\r\n").into_bytes()
+        }
+        let mut c = ClientSession::new().with_credentials(Credentials::new("admin", "12345"));
+        c.options("rtsp://h/s").unwrap(); // CSeq 1
+
+        // First 401 (no stale) -> normal retry at CSeq 2, marked retried.
+        c.handle_data(&wire(
+            "RTSP/1.0 401 Unauthorized\nCSeq: 1\nWWW-Authenticate: Digest realm=\"cam\",nonce=\"nonce-1\",qop=\"auth\"\n\n",
+        )).unwrap();
+
+        // Re-challenge with a quoted `stale="True"` and a fresh nonce: the
+        // retried request must be re-signed with the NEW nonce, not given up.
+        let events = c
+            .handle_data(&wire(
+                "RTSP/1.0 401 Unauthorized\nCSeq: 2\nWWW-Authenticate: Digest realm=\"cam\",nonce=\"nonce-2\",qop=\"auth\",stale=\"True\"\n\n",
+            ))
+            .unwrap();
+        let retry = events
+            .into_iter()
+            .find_map(|e| match e {
+                ClientEvent::AuthRetry {
+                    cseq: 3, request, ..
+                } => Some(request),
+                _ => None,
+            })
+            .expect("a quoted stale=true re-challenge must trigger a retry");
+        let retry = String::from_utf8_lossy(&retry);
+        assert!(
+            retry.contains("nonce=\"nonce-2\""),
+            "quoted stale=\"True\" was not detected: {retry}"
         );
     }
 

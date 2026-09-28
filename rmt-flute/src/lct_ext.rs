@@ -89,7 +89,7 @@ const USE_RESERVED_MASK: u16 = 0x0F00;
 /// present they appear in the fixed order SCT-High, SCT-Low, ERT, SLC; each
 /// `Some` value contributes one 32-bit word. The PI-specific low 8 bits of the
 /// `Use` field are preserved verbatim in `pi_specific`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct ExtTime {
     /// Sender Current Time, MS 32 bits (NTP seconds).
@@ -103,12 +103,28 @@ pub struct ExtTime {
     pub slc: Option<u32>,
     /// PI-specific low 8 bits of the Use field (out of scope of RFC 5651).
     pub pi_specific: u8,
+    /// The reserved-by-LCT Use bits (`Use & 0x0F00`, still in their
+    /// original bit position), verbatim (audit run-09 RMT-W1). RFC 5651
+    /// makes these sender-MUST-zero / receiver-MUST-ignore, not
+    /// receiver-MUST-reject: a forward-compatible sender that one day sets
+    /// one is not an error, and rejecting it made `EXT_TIME::parse` fail on
+    /// exactly the input RFC 5651 promises stays parseable. Preserved
+    /// (rather than silently dropped) so `parse` -> `to_content` still
+    /// round-trips byte-exactly when they are non-zero.
+    pub use_reserved: u16,
+    /// Any content bytes after the last present time value. RFC 5651's HEL
+    /// may legitimately be larger than the values actually selected by the
+    /// Use field (e.g. an extension), so this is not malformed input; it is
+    /// preserved so `parse` -> `to_content` round-trips byte-exactly rather
+    /// than truncating it.
+    pub trailing: Vec<u8>,
 }
 
 impl ExtTime {
-    /// Build the 16-bit Use field from the present values + PI-specific byte.
+    /// Build the 16-bit Use field from the present values + PI-specific byte
+    /// + the preserved reserved-by-LCT bits.
     pub fn use_field(&self) -> u16 {
-        let mut u = self.pi_specific as u16;
+        let mut u = self.pi_specific as u16 | self.use_reserved;
         if self.sct_high.is_some() {
             u |= USE_SCT_HIGH;
         }
@@ -132,9 +148,10 @@ impl ExtTime {
             + self.slc.is_some() as usize
     }
 
-    /// Total serialized length in bytes (first word + 4 bytes per value).
+    /// Total serialized length in bytes (first word + 4 bytes per value +
+    /// any preserved trailing bytes).
     pub fn serialized_len(&self) -> usize {
-        WORD + WORD * self.value_count()
+        WORD + WORD * self.value_count() + self.trailing.len()
     }
 
     /// Decode an EXT_TIME from the *content* of a [`HeaderExtension`] whose HET
@@ -150,13 +167,11 @@ impl ExtTime {
         }
         let use_field = u16::from_be_bytes([content[0], content[1]]);
         let pi_specific = (use_field & USE_PI_SPECIFIC_MASK) as u8;
-        // Reserved-by-LCT bits (Use & USE_RESERVED_MASK) MUST be 0.
-        if use_field & USE_RESERVED_MASK != 0 {
-            return Err(Error::InvalidField {
-                what: "EXT_TIME Use reserved",
-                reason: "reserved-by-LCT Use bits must be zero",
-            });
-        }
+        // Reserved-by-LCT bits (Use & USE_RESERVED_MASK): RFC 5651 makes
+        // these sender-MUST-zero / receiver-MUST-ignore, not
+        // receiver-MUST-reject, so a nonzero value is preserved (for a
+        // byte-exact round-trip) rather than an error.
+        let use_reserved = use_field & USE_RESERVED_MASK;
         if (use_field & USE_SCT_LOW != 0) && (use_field & USE_SCT_HIGH == 0) {
             return Err(Error::InvalidField {
                 what: "EXT_TIME Use",
@@ -189,6 +204,10 @@ impl ExtTime {
         let sct_low = take(use_field & USE_SCT_LOW != 0)?;
         let ert = take(use_field & USE_ERT != 0)?;
         let slc = take(use_field & USE_SLC != 0)?;
+        // HEL may legitimately be larger than the values selected by Use
+        // (RFC 5651 doesn't forbid it); preserve anything left over rather
+        // than truncating it.
+        let trailing = content[off..].to_vec();
 
         Ok(ExtTime {
             sct_high,
@@ -196,6 +215,8 @@ impl ExtTime {
             ert,
             slc,
             pi_specific,
+            use_reserved,
+            trailing,
         })
     }
 
@@ -215,6 +236,7 @@ impl ExtTime {
         {
             out.extend_from_slice(&v.to_be_bytes());
         }
+        out.extend_from_slice(&self.trailing);
         out
     }
 
@@ -250,6 +272,7 @@ mod tests {
             ert: None,
             slc: None,
             pi_specific: 0,
+            ..Default::default()
         };
         // Use = SCT_HIGH | SCT_LOW = 0xC000. Content = 2 + 8 = 10 bytes.
         assert_eq!(t.use_field(), 0xC000);
@@ -278,6 +301,7 @@ mod tests {
             ert: Some(3),
             slc: Some(4),
             pi_specific: 0xAB,
+            ..Default::default()
         };
         assert_eq!(t.use_field(), 0xF000 | 0x00AB);
         let content = t.to_content();
@@ -298,5 +322,33 @@ mod tests {
             ExtTime::parse(&content),
             Err(Error::InvalidField { .. })
         ));
+    }
+
+    // Regression (audit run-09 RMT-W1): non-zero reserved-by-LCT Use bits
+    // are RFC 5651 sender-MUST-zero / receiver-MUST-ignore, not
+    // receiver-MUST-reject — `parse` must accept them (preserving them for
+    // an exact round-trip), not error.
+    #[test]
+    fn ext_time_preserves_nonzero_reserved_use_bits() {
+        // Use = ERT (0x2000) | reserved bits 0x0300, one value.
+        let content = [0x23u8, 0x00, 0x00, 0x00, 0x00, 0x2A];
+        let t = ExtTime::parse(&content).expect("reserved bits must not be rejected");
+        assert_eq!(t.ert, Some(0x2A));
+        assert_eq!(t.use_reserved, 0x0300);
+        assert_eq!(t.use_field(), 0x2300);
+        assert_eq!(t.to_content(), content);
+    }
+
+    // Regression (audit run-09 RMT-W1): a HEL larger than the values the
+    // Use field selects is legal (RFC 5651 doesn't bound it), and the extra
+    // bytes must round-trip, not be silently truncated.
+    #[test]
+    fn ext_time_preserves_trailing_bytes_past_the_declared_values() {
+        // Use = SLC only (0x1000), one value, plus 4 extra trailing bytes.
+        let content = [0x10u8, 0x00, 0x00, 0x00, 0x00, 0x07, 0xDE, 0xAD, 0xBE, 0xEF];
+        let t = ExtTime::parse(&content).unwrap();
+        assert_eq!(t.slc, Some(7));
+        assert_eq!(t.trailing, vec![0xDE, 0xAD, 0xBE, 0xEF]);
+        assert_eq!(t.to_content(), content);
     }
 }
