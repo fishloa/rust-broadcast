@@ -121,7 +121,7 @@ fn real_frame15_range_nack(data: &[u8]) -> RangeNack {
     assert_eq!(frame15.src_port, RTCP_PORT);
     let compound = RistReceiverCompound::parse(frame15.payload)
         .expect("parse the real RR+SDES+RangeNack compound packet");
-    assert_eq!(compound.rr.ssrc, SSRC_ORIGINAL);
+    assert_eq!(compound.report.ssrc(), SSRC_ORIGINAL);
     assert_eq!(compound.range_nacks.len(), 1);
     compound.range_nacks[0].clone()
 }

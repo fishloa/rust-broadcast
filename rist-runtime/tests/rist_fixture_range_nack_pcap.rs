@@ -72,6 +72,10 @@ struct UdpPacket<'a> {
 /// Minimal classic-pcap walker: yields every `DLT_NULL` / `AF_INET` / UDP
 /// datagram in the file, tagged with its 1-based frame number.
 fn udp_packets(data: &[u8]) -> Vec<UdpPacket<'_>> {
+    let _ = udp_packets_debug();
+    fn udp_packets_debug() -> bool {
+        false
+    }
     assert!(data.len() >= 24, "pcap file too short for global header");
     let magic = u32::from_le_bytes(data[0..4].try_into().unwrap());
     assert_eq!(
@@ -170,13 +174,13 @@ fn frame15_range_nack_matches_documented_retransmission_pair() {
     // raw-passthrough or field-dropping serializer would fail this even
     // though it can pass a typed-equality round-trip.
     assert_eq!(
-        compound.to_bytes(),
+        compound.try_to_bytes().unwrap(),
         frame15.payload,
         "serializing the parsed frame-15 compound must reproduce the real \
          captured bytes exactly"
     );
 
-    assert_eq!(compound.rr.ssrc, SSRC_ORIGINAL);
+    assert_eq!(compound.report.ssrc(), SSRC_ORIGINAL);
     assert_eq!(
         compound.nacks.len(),
         0,
@@ -271,7 +275,7 @@ fn fixture_totals_match_documented_provenance() {
                     // field-dropping serializer must fail somewhere across
                     // 3 real compounds even if it happens to survive one.
                     assert_eq!(
-                        compound.to_bytes(),
+                        compound.try_to_bytes().unwrap(),
                         pkt.payload,
                         "frame {}: serializing the parsed SR compound must reproduce \
                          the real captured bytes exactly",
@@ -292,7 +296,7 @@ fn fixture_totals_match_documented_provenance() {
                     // spanning bare RR, RR+RangeNack, RR+RttEcho and
                     // combinations) — the same anti-cheat property as above.
                     assert_eq!(
-                        compound.to_bytes(),
+                        compound.try_to_bytes().unwrap(),
                         pkt.payload,
                         "frame {}: serializing the parsed RR compound must reproduce \
                          the real captured bytes exactly",
