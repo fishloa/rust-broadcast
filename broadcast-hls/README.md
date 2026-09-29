@@ -37,8 +37,9 @@ Implements:
   `mark_init_discontinuities` (auto-detect an init-segment change across a
   segment run).
 - **CENC/CBCS DRM signalling** (ISO/IEC 23001-7, issue #564) —
-  `cenc_ext_x_key` renders the `#EXT-X-KEY` tag for a `cbcs`-protected CMAF
-  track (`cenc`/AES-CTR has no valid HLS `METHOD`, so it returns `None`).
+  `cenc_ext_x_key` renders the `#EXT-X-KEY` tag for a CMAF track:
+  `cbcs` becomes `METHOD=SAMPLE-AES`, `cenc` becomes `METHOD=SAMPLE-AES-CTR`
+  with no `IV` (RFC 8216bis §4.4.4.4).
 - **28 of the 32 RFC 8216bis §4.4 tags have a typed struct field** (issue
   #872) — including `#EXT-X-INDEPENDENT-SEGMENTS`, `#EXT-X-START`
   (`StartPoint`), `#EXT-X-DEFINE` (`Define`), `#EXT-X-PLAYLIST-TYPE`
@@ -48,14 +49,19 @@ Implements:
   (`ContentSteering`) parse *into* that field and serialize *from* it. The
   remaining **4** — `#EXT-X-KEY`, `#EXT-X-PROGRAM-DATE-TIME`,
   `#EXT-X-DATERANGE`, `#EXT-X-MEDIA` — have no typed field; `parse()`
-  recognizes them (no error) and preserves the tag line verbatim in
-  `extra_tags`, so they round-trip losslessly, but a caller cannot read or
-  build one through a struct field (see "Round-trip fidelity" below and the
-  module doc's "Known, documented gaps" list in `src/lib.rs`). Both claims
-  are enforced *behaviorally* by `tests/hls_tag_completeness.rs`: it parses
-  a fixture carrying every one of the 32 tags and asserts the typed ones
-  populate their field and the 4 opaque ones survive verbatim — not merely
-  that each tag's name appears somewhere in `src/`.
+  recognizes them (no error) and preserves the tag line verbatim, so they
+  round-trip losslessly, but a caller cannot read or build one through a
+  struct field (see "Round-trip fidelity" below and the module doc's
+  "Known, documented gaps" list in `src/lib.rs`). The first three are
+  *segment-defining*: they attach to the following Media Segment's
+  `MediaSegment::pre_tags` (or `OpenSegment::pre_tags` at the live edge) and
+  re-render in place, so a key rotation or a per-segment PDT keeps its
+  position (audit BH-W5); `#EXT-X-MEDIA` is playlist-level and lands in
+  `MasterPlaylist::extra_tags`. Both claims are enforced *behaviorally* by
+  `tests/hls_tag_completeness.rs`: it parses a fixture carrying every one of
+  the 32 tags and asserts the typed ones populate their field and the 4
+  opaque ones survive verbatim — not merely that each tag's name appears
+  somewhere in `src/`.
 
 `#![no_std]` + `alloc`; depends only on `broadcast-common`. Builds for
 `thumbv7em-none-eabi`.
@@ -89,9 +95,13 @@ text:
   #884). Every tag struct that carries an attribute list (
   `ContentSteering`, `Variant`, `IFrameVariant`, `MapTag`, `PartSpec`,
   `RenditionReport`, `SkipInfo`, `SessionData`, `SessionKey`, `StartPoint`,
-  `Define`, `LowLatencyConfig`) now holds an `extra_attrs:
-  Vec<(String, String)>` for attribute names this crate does not model.
-  These survive parse → serialize and feed the §8 row 12 `REQ-` check.
+  `Define`) now holds an `extra_attrs: Vec<(String, AttrValue)>` for
+  attribute names this crate does not model.
+  `LowLatencyConfig` is the one exception: it carries three per-tag lists
+  (`sc_extra_attrs`/`pi_extra_attrs`/`ph_extra_attrs`) instead, so each
+  tag's unmodeled attributes re-render on that tag and not another (audit
+  BH-W8). All forms survive parse → serialize and feed the §8 row 12
+  `REQ-` check.
   They are always emitted *after* each tag's known attributes, so a tag
   with unknown attrs will have them appended in sorted-by-name order.
 - **Tag ordering is canonical, not preserved.** `to_m3u8()` always emits
@@ -100,6 +110,15 @@ text:
   `#EXT-X-SESSION-KEY` / `#EXT-X-SESSION-DATA` / `#EXT-X-CONTENT-STEERING`
   before the variant list), regardless of where those tags appeared in the
   source text.
+- **`to_m3u8()` is fallible.** A field it would place inside an RFC 8216
+  §4.2 quoted-string, or emit as a URI, that contains `"`, CR or LF is
+  rejected (`Error::InvalidQuotedString` / `Error::InvalidUri`) rather
+  than rendered: a newline in a segment URI would inject a tag line
+  into the playlist and an embedded `"` would break out of the
+  attribute list (audit BH-W7). Constructing segments/attributes
+  through the crate's own constructors already prevents this; the
+  fallible renderer is the guarantee for a playlist built by hand
+  through the public fields.
 - **Line-continuation backslashes are never round-tripped.** Some RFC
   8216bis §9 examples use a trailing `\` to wrap a long attribute list
   across lines for readability in the spec text itself (not literal m3u8
@@ -167,7 +186,7 @@ let playlist = MediaPlaylist {
     endlist: true,
     ..Default::default()
 };
-let m3u8 = playlist.to_m3u8();
+let m3u8 = playlist.to_m3u8().unwrap();
 assert_eq!(MediaPlaylist::parse(&m3u8).unwrap(), playlist);
 ```
 

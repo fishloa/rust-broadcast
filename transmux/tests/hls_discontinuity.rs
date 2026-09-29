@@ -173,7 +173,7 @@ fn autodetect_init_change_marks_discontinuity() {
         open_segment: None,
         ..Default::default()
     };
-    let out = pl.to_m3u8();
+    let out = pl.to_m3u8().unwrap();
 
     // Exactly one discontinuity tag.
     assert_eq!(
@@ -243,7 +243,7 @@ fn autodetect_init_change_marks_discontinuity() {
         open_segment: None,
         ..Default::default()
     };
-    let out_neg = pl_neg.to_m3u8();
+    let out_neg = pl_neg.to_m3u8().unwrap();
     assert!(
         !out_neg.contains("#EXT-X-DISCONTINUITY\n"),
         "no #EXT-X-DISCONTINUITY expected with identical inits; playlist:\n{out_neg}"
@@ -348,7 +348,7 @@ fn explicit_mark_discontinuity_bites() {
         open_segment: None,
         ..Default::default()
     };
-    let out = pl.to_m3u8();
+    let out = pl.to_m3u8().unwrap();
 
     // Exactly one discontinuity tag (for segment 1).
     assert_eq!(
@@ -409,6 +409,7 @@ fn discontinuity_sequence_increments_as_segments_roll_off() {
             ..Default::default()
         }
         .to_m3u8()
+        .unwrap()
     }
 
     let seg = |uri: &str| MediaSegment {
@@ -506,7 +507,7 @@ fn discontinuity_tag_placement_immediately_before_extinf() {
         open_segment: None,
         ..Default::default()
     };
-    let out = pl.to_m3u8();
+    let out = pl.to_m3u8().unwrap();
 
     // Exactly two discontinuity tags.
     assert_eq!(

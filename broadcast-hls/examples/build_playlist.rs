@@ -38,5 +38,5 @@ fn main() {
         ..Default::default()
     };
 
-    print!("{}", playlist.to_m3u8());
+    print!("{}", playlist.to_m3u8().unwrap());
 }

@@ -19,8 +19,9 @@
 //!   schemeIdUri="urn:mpeg:dash:mp4protection:2011">` element from
 //!   `Track::encryption` — no extra wiring needed.
 //! - [`broadcast_hls::cenc_ext_x_key`] renders the HLS `#EXT-X-KEY` tag for
-//!   the `cbcs` scheme (`cenc`/CTR has no valid HLS `METHOD` and is
-//!   DASH-only). HLS playlist syntax lives in the `broadcast-hls` crate
+//!   both CENC schemes (`cbcs` -> `SAMPLE-AES`, `cenc` ->
+//!   `SAMPLE-AES-CTR`, RFC 8216bis §4.4.4.4). HLS playlist syntax lives in
+//!   the `broadcast-hls` crate
 //!   (issue #878), but both crates name the scheme with the *same*
 //!   [`broadcast_common::CencScheme`], so no conversion is needed.
 //!
@@ -150,9 +151,9 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         .unwrap_or("(none)");
     println!("\n--- DASH signalling ---\n{}", cp_line.trim());
 
-    // 6. HLS signalling: `cenc_ext_x_key` renders `#EXT-X-KEY` for `cbcs`;
-    //    it returns `None` for `cenc` (CTR has no valid HLS METHOD). No
-    //    conversion needed — `transmux::CencScheme` and the scheme
+    // 6. HLS signalling: `cenc_ext_x_key` renders `#EXT-X-KEY` for both
+    //    CENC schemes (RFC 8216bis §4.4.4.4). No conversion needed —
+    //    `transmux::CencScheme` and the scheme
     //    `broadcast_hls::cenc_ext_x_key` takes are the *same*
     //    `broadcast_common::CencScheme`.
     let key_uri = "https://keyserver.example.com/key";

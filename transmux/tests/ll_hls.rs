@@ -242,8 +242,8 @@ fn independent_flag_tracks_sync_first_sample() {
         endlist: false,
         extra_tags: vec![],
         low_latency: Some(LowLatencyConfig {
-            part_target: DecimalSeconds::new(0.334).unwrap(),
-            part_hold_back: DecimalSeconds::new(1.002).unwrap(),
+            part_target: Some(DecimalSeconds::new(0.334).unwrap()),
+            part_hold_back: Some(DecimalSeconds::new(1.002).unwrap()),
             preload_hint_part: None,
             ..Default::default()
         }),
@@ -251,7 +251,7 @@ fn independent_flag_tracks_sync_first_sample() {
         open_segment: None,
         ..Default::default()
     };
-    let m3u8 = pl.to_m3u8();
+    let m3u8 = pl.to_m3u8().unwrap();
     // Part 0 has INDEPENDENT=YES; parts 1 and 2 do not.
     //
     // The duration is deliberately NOT pinned here: it is an unrounded f64
@@ -296,9 +296,9 @@ fn playlist_low_latency_directives_present_and_opt_in() {
         },
     ];
     let ll = LowLatencyConfig {
-        part_target: DecimalSeconds::new(0.334).unwrap(),
+        part_target: Some(DecimalSeconds::new(0.334).unwrap()),
         // Deliberately too small; renderer must raise to 3 x 0.334 = 1.002.
-        part_hold_back: DecimalSeconds::new(0.5).unwrap(),
+        part_hold_back: Some(DecimalSeconds::new(0.5).unwrap()),
         preload_hint_part: Some("seg0.2.m4s".into()),
         ..Default::default()
     };
@@ -321,7 +321,7 @@ fn playlist_low_latency_directives_present_and_opt_in() {
         open_segment: None,
         ..Default::default()
     };
-    let m3u8 = pl.to_m3u8();
+    let m3u8 = pl.to_m3u8().unwrap();
 
     // #EXT-X-PART-INF exact.
     assert!(
@@ -329,14 +329,17 @@ fn playlist_low_latency_directives_present_and_opt_in() {
         "PART-INF must carry PART-TARGET=0.334:\n{m3u8}"
     );
     // #EXT-X-SERVER-CONTROL with PART-HOLD-BACK >= 3 x part-target.
-    let effective = ll.effective_part_hold_back().get();
+    let effective = ll
+        .effective_part_hold_back()
+        .expect("part target present")
+        .get();
     assert!((effective - 1.002).abs() < 1e-6, "PHB floor = 3 x 0.334");
     assert!(
         m3u8.contains("#EXT-X-SERVER-CONTROL:CAN-BLOCK-RELOAD=YES,PART-HOLD-BACK=1.002\n"),
         "SERVER-CONTROL must carry CAN-BLOCK-RELOAD + raised PART-HOLD-BACK:\n{m3u8}"
     );
     assert!(
-        effective >= 3.0 * ll.part_target.get(),
+        effective >= 3.0 * ll.part_target.expect("part target present").get(),
         "PART-HOLD-BACK >= 3x part-target"
     );
     // #EXT-X-PART lines for the parts.
@@ -363,7 +366,7 @@ fn playlist_low_latency_directives_present_and_opt_in() {
         low_latency: None,
         ..pl.clone()
     };
-    let plain_m3u8 = plain.to_m3u8();
+    let plain_m3u8 = plain.to_m3u8().unwrap();
     for tag in [
         "#EXT-X-PART-INF",
         "#EXT-X-SERVER-CONTROL",
@@ -631,10 +634,14 @@ fn zero_anchor_timescale_does_not_render_inf_or_nan_into_playlist() {
             // `part_target_secs` divides a `u64` tick count by a
             // `.max(1)`-guarded timescale (issue #1140): always finite
             // and non-negative.
-            part_target: DecimalSeconds::new(seg.part_target_secs())
-                .expect("part_target_secs is finite, >= 0"),
-            part_hold_back: DecimalSeconds::new(3.0 * seg.part_target_secs())
-                .expect("part_target_secs is finite, >= 0"),
+            part_target: Some(
+                DecimalSeconds::new(seg.part_target_secs())
+                    .expect("part_target_secs is finite, >= 0"),
+            ),
+            part_hold_back: Some(
+                DecimalSeconds::new(3.0 * seg.part_target_secs())
+                    .expect("part_target_secs is finite, >= 0"),
+            ),
             preload_hint_part: None,
             ..Default::default()
         }),
@@ -642,7 +649,7 @@ fn zero_anchor_timescale_does_not_render_inf_or_nan_into_playlist() {
         open_segment: None,
         ..Default::default()
     };
-    let m3u8 = pl.to_m3u8();
+    let m3u8 = pl.to_m3u8().unwrap();
 
     assert!(
         !m3u8.contains("inf"),

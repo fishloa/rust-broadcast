@@ -491,8 +491,8 @@ mod tests {
         let with_break = render_session_playlist(&base, Some(&dr)).unwrap();
         let without_break = render_session_playlist(&base, None).unwrap();
 
-        assert!(with_break.to_m3u8().contains("X-ASSET-URI"));
-        assert!(!without_break.to_m3u8().contains("X-ASSET-URI"));
+        assert!(with_break.to_m3u8().unwrap().contains("X-ASSET-URI"));
+        assert!(!without_break.to_m3u8().unwrap().contains("X-ASSET-URI"));
         // The base playlist itself (what every other viewer renders from)
         // is untouched.
         assert!(base.extra_tags.is_empty());

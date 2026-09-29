@@ -30,5 +30,5 @@ fn main() {
     assert!(playlist.endlist);
 
     // Round-trip: re-rendering a parsed playlist reproduces the same text.
-    assert_eq!(playlist.to_m3u8(), PLAYLIST);
+    assert_eq!(playlist.to_m3u8().unwrap(), PLAYLIST);
 }

@@ -253,7 +253,7 @@ impl Package for TsHlsPackager {
             open_segment: None,
             ..Default::default()
         }
-        .to_m3u8();
+        .to_m3u8()?;
 
         Ok(TsHlsOutput {
             segments: ts_segments,
@@ -569,7 +569,7 @@ struct StreamTrackState {
 /// let segments = seg.take_ready();          // write s.bytes for each
 /// assert_eq!(segments.len(), 1);
 /// assert_eq!(segments[0].bytes[0], 0x47);   // MPEG-TS sync byte
-/// let playlist = seg.playlist(); // rolling window, #EXT-X-ENDLIST after finish
+/// let playlist = seg.playlist().unwrap(); // rolling window, #EXT-X-ENDLIST after finish
 /// assert!(playlist.contains("#EXT-X-ENDLIST"));
 /// ```
 pub struct StreamingTsHlsSegmenter {
@@ -948,7 +948,7 @@ impl StreamingTsHlsSegmenter {
     /// window with it would have its Discontinuity Sequence Number
     /// double-counted. No `#EXT-X-ENDLIST` until [`Self::finish`] has been
     /// called.
-    pub fn playlist(&self) -> String {
+    pub fn playlist(&self) -> crate::Result<String> {
         let segments: Vec<MediaSegment> = self
             .window_segments
             .iter()
@@ -963,7 +963,7 @@ impl StreamingTsHlsSegmenter {
 
         let media_sequence = self.total_segments - self.window_segments.len() as u64;
 
-        MediaPlaylist {
+        Ok(MediaPlaylist {
             version: self.version,
             target_duration: self.target_duration.max(1),
             media_sequence,
@@ -976,7 +976,7 @@ impl StreamingTsHlsSegmenter {
             open_segment: None,
             ..Default::default()
         }
-        .to_m3u8()
+        .to_m3u8()?)
     }
 
     /// Cut samples into one `.ts` segment.

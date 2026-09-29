@@ -218,7 +218,7 @@ fn typed_tags_populate_their_struct_field_on_parse() {
         .expect("EXT-X-PART-INF/SERVER-CONTROL must set low_latency");
     assert_eq!(
         ll.part_target,
-        DecimalSeconds::new(0.5).unwrap(),
+        Some(DecimalSeconds::new(0.5).unwrap()),
         "EXT-X-PART-INF"
     );
     assert!(ll.can_block_reload, "EXT-X-SERVER-CONTROL");
@@ -256,7 +256,7 @@ fn typed_tags_populate_their_struct_field_on_parse() {
     // EXTM3U/EXT-X-VERSION: structural — must round-trip into the rendered
     // header exactly (version is a floor, so this also incidentally
     // exercises `effective_version`).
-    let rendered = mp.to_m3u8();
+    let rendered = mp.to_m3u8().unwrap();
     assert!(rendered.starts_with("#EXTM3U\n#EXT-X-VERSION:9\n"));
 
     let mst = MasterPlaylist::parse(MASTER_FIXTURE_TYPED_TAGS)
@@ -291,9 +291,12 @@ fn typed_tags_populate_their_struct_field_on_parse() {
 /// A Media Playlist carrying the 3 opaque tags valid there
 /// (`EXT-X-KEY`/`EXT-X-PROGRAM-DATE-TIME`/`EXT-X-DATERANGE`), and a Master
 /// Playlist carrying the 1 opaque tag valid there (`EXT-X-MEDIA`). Asserts
-/// each survives **verbatim** in `extra_tags` — the documented behavior for
-/// a tag with no typed field (module doc "Known, documented gaps",
-/// `README.md` "Round-trip fidelity") — rather than being silently dropped.
+/// each survives **verbatim** — the documented behavior for a tag with no
+/// typed field (module doc "Known, documented gaps", `README.md`
+/// "Round-trip fidelity") — rather than being silently dropped. Since audit
+/// BH-W5 the three segment-defining ones land on the following segment's
+/// `pre_tags` (so they re-render in place) while playlist-level tags stay in
+/// `extra_tags`.
 #[test]
 fn opaque_tags_are_preserved_verbatim_not_dropped() {
     const KEY_LINE: &str = "#EXT-X-KEY:METHOD=AES-128,URI=\"https://example.com/key\"";
@@ -312,14 +315,21 @@ seg0.m4s\n\
 #EXT-X-ENDLIST\n"
     );
     let mp = MediaPlaylist::parse(&media_text).expect("opaque-tag media fixture must parse");
+    let pre_tags: Vec<&String> = mp
+        .segments
+        .iter()
+        .flat_map(|s| &s.pre_tags)
+        .chain(mp.open_segment.iter().flat_map(|o| &o.pre_tags))
+        .collect();
     for (name, line) in [
         ("EXT-X-KEY", KEY_LINE),
         ("EXT-X-PROGRAM-DATE-TIME", PDT_LINE),
         ("EXT-X-DATERANGE", DATERANGE_LINE),
     ] {
         assert!(
-            mp.extra_tags.iter().any(|t| t == line),
-            "{name} must be preserved verbatim in extra_tags, got {:?}",
+            pre_tags.iter().any(|t| *t == line),
+            "{name} must be preserved verbatim in a segment's pre_tags, got {pre_tags:?} \
+             (extra_tags: {:?})",
             mp.extra_tags
         );
     }

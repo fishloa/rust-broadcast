@@ -55,7 +55,7 @@ fn broadcast_hls_media_playlist_validates_clean() {
         ..Default::default()
     };
 
-    let m3u8 = pl.to_m3u8();
+    let m3u8 = pl.to_m3u8().unwrap();
 
     let mut report = Report::new();
     media_doctor::check_playlist(&m3u8, &mut report);
@@ -87,7 +87,7 @@ fn broadcast_hls_playlist_invalid_target_duration_reported() {
         ..Default::default()
     };
 
-    let m3u8 = pl.to_m3u8();
+    let m3u8 = pl.to_m3u8().unwrap();
 
     let mut report = Report::new();
     media_doctor::check_playlist(&m3u8, &mut report);

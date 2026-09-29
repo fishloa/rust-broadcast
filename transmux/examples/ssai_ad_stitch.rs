@@ -504,7 +504,7 @@ pub fn run() -> Result<Demo, Box<dyn Error>> {
         open_segment: None,
         ..Default::default()
     };
-    let m3u8 = playlist.to_m3u8();
+    let m3u8 = playlist.to_m3u8().unwrap();
 
     // ------------------------------------------------------------------
     // 9. DASH: an MPD with a video + audio AdaptationSet, an

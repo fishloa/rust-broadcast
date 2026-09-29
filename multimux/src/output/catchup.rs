@@ -153,13 +153,18 @@ async fn catchup_playlist(
     let live = serving.ll_hls().closed_segments();
     let combined = catchup::merge_segments(&archived, &live);
     let windowed = catchup::apply_window(&combined, q.window_secs);
-    let body = catchup::render_playlist(
+    let Ok(body) = catchup::render_playlist(
         &windowed,
         ext,
         map_uri(route.container()).as_deref(),
         PlaylistType::Event,
         false,
-    );
+    ) else {
+        // A field the renderer would have to quote carries a character
+        // forbidden there (audit BH-W7, issue #1111) — unreachable for
+        // this route's own generated URIs, but never silently mangled.
+        return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+    };
     ([(header::CONTENT_TYPE, MEDIA_PLAYLIST_CONTENT_TYPE)], body).into_response()
 }
 
@@ -200,13 +205,15 @@ async fn vod_playlist(
     } else {
         PlaylistType::Event
     };
-    let body = catchup::render_playlist(
+    let Ok(body) = catchup::render_playlist(
         &combined,
         ext,
         map_uri(route.container()).as_deref(),
         playlist_type,
         finished,
-    );
+    ) else {
+        return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+    };
     ([(header::CONTENT_TYPE, MEDIA_PLAYLIST_CONTENT_TYPE)], body).into_response()
 }
 

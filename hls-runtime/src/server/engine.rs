@@ -656,7 +656,12 @@ impl HlsOrigin {
     /// `#EXT-X-PRELOAD-HINT` for the next, not-yet-available part are both
     /// rendered by `to_m3u8()` itself — this method only supplies the URI
     /// scheme (`part-<track>-<seq>.<idx>.m4s`) and the part metadata.
-    fn render_playlist(&self, track_id: u32) -> String {
+    /// Returns the rendered playlist, or a human-readable reason the
+    /// playlist could not be rendered (a field carrying a character
+    /// forbidden in an HLS quoted-string/URI — audit BH-W7, issue
+    /// #1111; unreachable for this origin, which only ever supplies
+    /// its own generated URIs).
+    fn render_playlist(&self, track_id: u32) -> core::result::Result<String, String> {
         self.drain();
         let window = self.window.lock().unwrap();
         let (open_seq, open_parts) = self.live_edge();
@@ -776,8 +781,8 @@ impl HlsOrigin {
             let part_hold_back = DecimalSeconds::new(part_target.get() * PART_HOLD_BACK_MULTIPLIER)
                 .expect("finite, >= 0 times a positive constant is finite, >= 0");
             LowLatencyConfig {
-                part_target,
-                part_hold_back,
+                part_target: Some(part_target),
+                part_hold_back: Some(part_hold_back),
                 preload_hint_part: next_part_hint,
                 ..Default::default()
             }
@@ -800,7 +805,7 @@ impl HlsOrigin {
             iframes_only: false,
             ..Default::default()
         };
-        playlist.to_m3u8()
+        playlist.to_m3u8().map_err(|error| error.to_string())
     }
 
     fn resolve_playlist(
@@ -834,9 +839,18 @@ impl HlsOrigin {
                 return EgressResponse::pending(await_policy, now, now);
             }
         }
-        EgressResponse::Ready {
-            body: HlsBody::Playlist(self.render_playlist(track_id)),
-            cache: CachePolicy::NoCache,
+        match self.render_playlist(track_id) {
+            Ok(playlist) => EgressResponse::Ready {
+                body: HlsBody::Playlist(playlist),
+                cache: CachePolicy::NoCache,
+            },
+            // A field the renderer would have to quote carries a character
+            // forbidden there (audit BH-W7, issue #1111) — unreachable for
+            // this origin's own generated URIs, but never emitted mangled.
+            Err(reason) => {
+                debug_assert!(false, "playlist render failed: {reason}");
+                EgressResponse::NotFound
+            }
         }
     }
 
@@ -1015,7 +1029,7 @@ mod tests {
         writer.note_segment_start(2, MediaTime(4_000_000));
         seg(&writer, 1, 4.0, false);
 
-        let playlist = origin.render_playlist(DEFAULT_TRACK_ID);
+        let playlist = origin.render_playlist(DEFAULT_TRACK_ID).expect("render");
         assert!(
             playlist.contains("#EXT-X-DATERANGE"),
             "playlist should contain EXT-X-DATERANGE, got: {playlist}"
@@ -1069,7 +1083,7 @@ mod tests {
         writer.note_segment_start(2, MediaTime(4_000_000));
         seg(&writer, 1, 4.0, false);
 
-        let playlist = origin.render_playlist(DEFAULT_TRACK_ID);
+        let playlist = origin.render_playlist(DEFAULT_TRACK_ID).expect("render");
         assert!(
             !playlist.contains("#EXT-X-DATERANGE"),
             "no DATERANGE expected for a non-SCTE-35 event: {playlist}"

@@ -665,7 +665,11 @@ mod tests {
             skip: None,
             ..Default::default()
         };
-        (playlist.to_m3u8(), init, segments)
+        (
+            playlist.to_m3u8().expect("valid fixture URIs"),
+            init,
+            segments,
+        )
     }
 
     /// Starts a real axum server hosting a real CMAF fixture (see

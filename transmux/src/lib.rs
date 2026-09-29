@@ -55,7 +55,8 @@
 //!   that same `Track::encryption` — [`DashPackager`] auto-derives the
 //!   generic-CENC `ContentProtection` (plus caller-supplied per-DRM-system
 //!   `cenc:pssh`), [`broadcast_hls::cenc_ext_x_key`] renders the HLS
-//!   `#EXT-X-KEY` for `cbcs` (`cenc`/CTR is DASH-only — see the
+//!   `#EXT-X-KEY` for `cbcs` (`METHOD=SAMPLE-AES`) and `cenc`
+//!   (`METHOD=SAMPLE-AES-CTR`, RFC 8216bis §4.4.4.4 — see the
 //!   `broadcast-hls` crate's module docs); HLS Sample-AES + full-segment
 //!   AES-128 encrypt/decrypt (`sample-aes`, [`sample_aes`]).
 //! - **RTP/RTCP:** de/packetise ([`RtpPacketiser`] / [`RtpDepacketiser`]),

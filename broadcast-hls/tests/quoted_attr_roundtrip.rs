@@ -76,7 +76,7 @@ fn real_stream_inf_quoted_attrs_round_trip_byte_exact() {
         }
     }
 
-    let rendered = parsed.to_m3u8();
+    let rendered = parsed.to_m3u8().unwrap();
     let rendered_stream_inf_line = rendered
         .lines()
         .find(|l| l.starts_with("#EXT-X-STREAM-INF:"))
@@ -120,7 +120,7 @@ fn closed_captions_none_is_never_quoted() {
             AttrValue::bare("NONE").unwrap()
         )]
     );
-    let rendered = parsed.to_m3u8();
+    let rendered = parsed.to_m3u8().unwrap();
     assert!(
         rendered.contains("CLOSED-CAPTIONS=NONE"),
         "CLOSED-CAPTIONS=NONE must round-trip unquoted, got:\n{rendered}"
@@ -148,7 +148,7 @@ fn unknown_x_attribute_quoting_round_trips_byte_exact() {
         ]
     );
 
-    let rendered = parsed.to_m3u8();
+    let rendered = parsed.to_m3u8().unwrap();
     let stream_inf_line = rendered
         .lines()
         .find(|l| l.starts_with("#EXT-X-STREAM-INF:"))
@@ -230,7 +230,7 @@ fn valid_constructed_value_round_trips() {
     let master = MasterPlaylist {
         variants: vec![Variant {
             bandwidth: 1000,
-            codecs: "avc1.640020".to_string(),
+            codecs: Some("avc1.640020".to_string()),
             uri: "v.m3u8".to_string(),
             extra_attrs: vec![
                 ("X-BARE".to_string(), AttrValue::bare("plain").unwrap()),
@@ -244,7 +244,7 @@ fn valid_constructed_value_round_trips() {
         ..Default::default()
     };
 
-    let rendered = master.to_m3u8();
+    let rendered = master.to_m3u8().unwrap();
     assert!(rendered.contains("X-QUOTED=\"some, value\""));
     assert!(rendered.contains("X-BARE=plain"));
 

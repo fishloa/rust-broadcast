@@ -184,7 +184,7 @@ fn rolling_playlist_windows_and_advances_media_sequence() {
 
     // Still live: no #EXT-X-ENDLIST, window holds exactly the last N segments,
     // and #EXT-X-MEDIA-SEQUENCE has advanced past the rolled-off segments.
-    let pl = seg.playlist();
+    let pl = seg.playlist().unwrap();
     assert!(
         !pl.contains("#EXT-X-ENDLIST"),
         "no ENDLIST while live (before finish())"
@@ -209,7 +209,7 @@ fn rolling_playlist_windows_and_advances_media_sequence() {
     // finish() flushes the trailing partial segment and appends ENDLIST.
     seg.finish().expect("finish");
     let last = seg.take_ready().pop();
-    let pl2 = seg.playlist();
+    let pl2 = seg.playlist().unwrap();
     assert!(
         pl2.trim_end().ends_with("#EXT-X-ENDLIST"),
         "ENDLIST must appear once finished"
@@ -307,7 +307,7 @@ fn build_worked_example(window: usize) -> (StreamingTsHlsSegmenter, Vec<String>)
     // sync -> cuts s1 (continuous); opens s2
     seg.push(1, nal_sample(true, 45_000)).unwrap();
     assert_eq!(seg.take_ready().len(), 1, "sync sample must cut s1");
-    snapshots.push(seg.playlist());
+    snapshots.push(seg.playlist().unwrap());
     // Mark s2 (currently buffering) as the next segment to be cut discontinuous.
     seg.mark_discontinuity();
     seg.push(1, nal_sample(false, 45_000)).unwrap();
@@ -321,7 +321,7 @@ fn build_worked_example(window: usize) -> (StreamingTsHlsSegmenter, Vec<String>)
     let s2 = seg.take_ready();
     assert_eq!(s2.len(), 1, "sync sample must cut s2 singly");
     assert!(s2[0].discontinuous, "s2 must be discontinuous");
-    snapshots.push(seg.playlist());
+    snapshots.push(seg.playlist().unwrap());
     seg.push(1, nal_sample(false, 45_000)).unwrap();
     assert!(
         seg.take_ready().is_empty(),
@@ -331,7 +331,7 @@ fn build_worked_example(window: usize) -> (StreamingTsHlsSegmenter, Vec<String>)
     // sync -> cuts s3 (continuous); opens s4
     seg.push(1, nal_sample(true, 45_000)).unwrap();
     assert_eq!(seg.take_ready().len(), 1, "sync sample must cut s3");
-    snapshots.push(seg.playlist());
+    snapshots.push(seg.playlist().unwrap());
     seg.push(1, nal_sample(false, 45_000)).unwrap();
     assert!(
         seg.take_ready().is_empty(),
@@ -341,7 +341,7 @@ fn build_worked_example(window: usize) -> (StreamingTsHlsSegmenter, Vec<String>)
     // finish() -> cuts s4 (continuous, final flush)
     seg.finish().unwrap();
     assert_eq!(seg.take_ready().len(), 1, "finish must cut s4");
-    snapshots.push(seg.playlist());
+    snapshots.push(seg.playlist().unwrap());
 
     (seg, snapshots)
 }
