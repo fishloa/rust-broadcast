@@ -8,6 +8,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed (breaking)
+- **#1110 (TT-W1)**: attributes and child elements in namespaces the crate
+  does not model are no longer dropped. They are kept as
+  `ForeignAttribute` triples `(namespace URI, local name, value)` (with the
+  `xmlns:` prefix binding each was resolved through) and as `UnknownElement`
+  subtrees, and re-emitted in document order (TTML2 §7.2/§7.3). Every element
+  type gained `foreign_attributes` and `unknown_children` fields, each
+  metadata-like type also a `scoped_namespaces` field, and `MetadataChild`
+  gained an `Unknown` variant — struct-literal construction must now use
+  `..Default::default()`.
+- **#1110 (TT-W2)**: TTML2 §9 embedded/resource elements are modeled instead
+  of dropped: `AudioElement`, `ChunkElement`, `DataElement`, `FontElement`,
+  `ResourcesElement` and `SourceElement`, plus the `InlineContent::Image` and
+  `InlineContent::Audio` variants (Embedded.class is legal in `<p>`/`<span>`)
+  and `HeadElement::resources` / `DivElement::audio`. TTML2 §9 elements
+  without a typed struct are still preserved through the foreign-content
+  mechanism rather than dropped.
 - **#1108 (TT-W5)**: `WallclockForm::DateTime.seconds` is now `Option<u8>`
   (was `u8`), to preserve the `hhmm-time`-vs-`hhmmss-time` distinction
   (`date-time`'s `wall-time` grammar allows omitting seconds) so
@@ -15,6 +31,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   source.
 
 ### Fixed
+- **#1110 (TT-W1)**: an inner-scope `xmlns:` prefix override no longer
+  silently re-points an outer-scope vendor attribute at the wrong namespace;
+  the outer URI keeps a declaration of its own under a generated
+  `ttmfallbackN` prefix.
+- **#1110 (TT-W1)**: `<br>` and `<span>` attributes, `<p>` child ordering and
+  the `xml:space`/`xml:base` attributes are no longer dropped by the
+  serializer.
 - **#1108 (TT-W4)**: the default `ttp:tickRate` (§7.2.11) always multiplied
   the (possibly-defaulted-to-30) frame rate by the sub-frame rate, instead
   of defaulting to 1 tick/second when no `ttp:frameRate` was actually

@@ -32,7 +32,7 @@ assert_eq!(body.divs[0].paragraphs[0].begin.as_deref(), Some("0s"));
 
 ## Features
 
-- Full TTML2 element tree (26 element types, 56 style properties)
+- Full TTML2 element tree (31 element types, 60 style properties, including the §9 embedded/resource elements `image`, `audio`, `font`, `data`, `chunk`, `source`, `resources`)
 - Exhaustive `<time-expression>` grammar (clock-time, offset-time, wallclock-time) with frame/tick/SMPTE constraint enforcement
 - IMSC 1.1 profile validation (159-row feature disposition table, §7.12 "must reject" constraints)
 - Parse/validate split — inspect non-conformant documents before deciding to reject
@@ -62,10 +62,11 @@ ways (each verified against `roxmltree`'s actual API, not assumed):
 | XML declaration | **Lost** (roxmltree) | `roxmltree` skips `<?xml version="1.0" encoding="UTF-8"?>`; the serializer always emits `<?xml version="1.0" encoding="UTF-8"?>` |
 | Comments | **Lost** (parser) | `roxmltree` *does* expose comments (`is_comment()`, `text()`), but the parser does not store them |
 | Processing instructions | **Lost** (parser) | `roxmltree` *does* expose PIs (`NodeType::PI`), but the parser does not store them |
-| `other_attributes` (custom attributes not explicitly modeled) | **Lost** (serializer) | Parsed into `BTreeMap<(ns, local), value>` per element, but the serializer does not emit them — it only serializes known, explicitly modeled attributes |
-| Foreign/unknown child elements (elements not in this crate's explicitly modeled set, whether in a foreign namespace or an unrecognized `tt:` element) | **Lost** (parser) | Silently skipped during parsing (allowed by TTML2 §7.2's "foreign namespace" extensibility rule) — never stored, so they cannot be re-emitted |
-| Attribute order | **Deterministic, not preserved** (parser) | `roxmltree` *does* preserve document order via `attributes()`, but the parser collects known attrs into named fields and serializes them in a fixed code order |
-| Namespace prefix spelling | **Deterministic, not preserved** (roxmltree + serializer) | `roxmltree` resolves QNames to `(namespace_uri, local_name)` pairs; the original prefix per-attribute is not exposed. The serializer uses fixed prefixes (`tts:`, `ttp:`, `itta:`, etc.) |
+| Foreign attributes (attributes in namespaces this crate does not model, e.g. vendor or `ebuttm:` extensions) | **Preserved** (TT-W1) | Kept as [`ForeignAttribute`] triples `(namespace URI, local name, value)` with the `xmlns:` prefix holding the value was resolved through |
+| Foreign/unknown child elements (elements not in this crate's explicitly modeled set, whether in a foreign namespace or an unrecognized `tt:` element) | **Preserved** (TT-W1) | Kept as an [`UnknownElement`] subtree (name, namespace, attributes, children, text) on the element that carried them and re-emitted in document order. Allowed by TTML2 §7.2/§7.3 |
+| Attribute order | **Deterministic, not preserved** (parser) | `roxmltree` *does* preserve document order via `attributes()`, but the parser collects known attrs into named fields and serializes them in a fixed code order (preserved foreign attributes keep their document order) |
+| Namespace prefix spelling | **Deterministic, not preserved** (roxmltree + serializer) | `roxmltree` resolves QNames to `(namespace_uri, local_name)` pairs; the prefix a *modeled* attribute used is not exposed, so the serializer uses the fixed conventional prefixes (`tts:`, `ttp:`, …). A *preserved* namespace is re-declared under the prefix it originally used; when two URIs need the same prefix the later one gets a generated `ttmfallbackN` binding (XML forbids one prefix bound to two URIs at once), so the URI round-trips even when its spelling does not |
+| `xmlns:` scope | **Widened to `<tt>`** | A `xmlns:` declaration written on an inner element is re-emitted on `<tt>`; widening a namespace scope leaves every resolved name unchanged, but it does mean an inner-scope override of a prefix is only reproduced through a `ttmfallbackN` binding for the outer URI |
 | Whitespace / indentation | **Deterministic, not preserved** | Indentation is always 2-space, closing tags always on new lines; interstitial whitespace-only text nodes are preserved by the parser but may differ in placement on re-serialization |
 
 The invariant that *must* hold: a document constructed entirely via the public types (no
