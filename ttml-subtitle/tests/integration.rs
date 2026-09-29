@@ -26,15 +26,8 @@ fn load_fixture(name: &str) -> String {
 /// leading/trailing whitespace. This makes semantic equality possible across
 /// XML round-trips where indentation/whitespace cannot be preserved.
 fn normalize_doc(doc: &mut Document) {
-    // Normalize root text
-    if let Some(ref text) = doc.tt.text {
-        let trimmed = text.trim().to_string();
-        if trimmed.is_empty() {
-            doc.tt.text = None;
-        } else {
-            doc.tt.text = Some(trimmed);
-        }
-    }
+    // Root-level inter-element text is no longer captured on TtElement
+    // (it was whitespace noise; #1110/TT-W1 removed the dead `text` field).
     // Normalize body content
     if let Some(ref mut body) = doc.tt.body {
         normalize_body(body);
@@ -761,4 +754,269 @@ fn accepts_shallowly_nested_spans_within_limit() {
         result.is_ok(),
         "Parse should accept 64 nested spans (within limit)"
     );
+}
+
+// ─── TT-W1: unknown-namespace content preservation (#1110) ────────
+
+/// Canonical, whitespace- and prefix-independent dump of a parsed XML tree:
+/// sorted lines of `el <uri>|<local>`, `at <uri>|<local>|<value>` and trimmed
+/// text. Two documents that are namespace-equivalent dump identically.
+fn canonical_dump(xml: &str) -> Vec<String> {
+    let doc = roxmltree::Document::parse(xml).unwrap();
+    let mut lines = Vec::new();
+    fn walk(node: roxmltree::Node, lines: &mut Vec<String>) {
+        match node.node_type() {
+            roxmltree::NodeType::Element => {
+                lines.push(format!(
+                    "el {}|{}",
+                    node.tag_name().namespace().unwrap_or(""),
+                    node.tag_name().name()
+                ));
+                for attr in node.attributes() {
+                    lines.push(format!(
+                        "at {}|{}|{}",
+                        attr.namespace().unwrap_or(""),
+                        attr.name(),
+                        attr.value()
+                    ));
+                }
+            }
+            roxmltree::NodeType::Text => {
+                let t = node.text().unwrap_or("").trim();
+                if !t.is_empty() {
+                    lines.push(format!("tx {t}"));
+                }
+            }
+            _ => {}
+        }
+        for child in node.children() {
+            walk(child, lines);
+        }
+    }
+    walk(doc.root(), &mut lines);
+    lines.sort();
+    lines
+}
+
+const FOREIGN_TT: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
+<tt xmlns="http://www.w3.org/ns/ttml"
+    xmlns:ttp="http://www.w3.org/ns/ttml#parameter"
+    xmlns:acme="urn:acme:ext"
+    xmlns:ttm="http://www.w3.org/ns/ttml#metadata"
+    xml:lang="en">
+  <metadata acme:rating="PG" acme:nested-thing="1">
+    <acme:thing acme:id="t1">hello<acme:inner>deep</acme:inner></acme:thing>
+  </metadata>
+  <body>
+    <div acme:zone="a">
+      <p begin="0s" end="5s" acme:cue="7"><span acme:inline="i1">Hello</span><br acme:br="b1"/><acme:para>px</acme:para></p>
+    </div>
+  </body>
+</tt>"#;
+
+#[test]
+fn unknown_namespace_content_round_trips() {
+    let mut doc = Document::parse_str(FOREIGN_TT).unwrap();
+    let xml2 = doc.to_xml();
+    // Parse-equivalence (not string equality): same elements, attributes,
+    // namespaces and text on both sides.
+    assert_eq!(canonical_dump(FOREIGN_TT), canonical_dump(&xml2));
+}
+
+#[test]
+fn unknown_namespace_prefix_binding_is_preserved() {
+    let mut doc = Document::parse_str(FOREIGN_TT).unwrap();
+    let xml2 = doc.to_xml();
+    // The original `acme` prefix must still be bound to the same URI in the
+    // serialized document.
+    let reparsed = roxmltree::Document::parse(&xml2).unwrap();
+    let tt = reparsed.root().first_element_child().unwrap();
+    let acme = tt
+        .namespaces()
+        .find(|n| n.name() == Some("acme"))
+        .expect("acme prefix still declared");
+    assert_eq!(acme.uri(), "urn:acme:ext");
+}
+
+#[test]
+fn unknown_tt_namespace_element_preserved() {
+    // A ttNamespaces-external element inside <metadata> (e.g. EBU-TT style)
+    // must survive as an Unknown child, not be dropped.
+    let xml = r#"<tt xmlns="http://www.w3.org/ns/ttml" xmlns:ebuttm="urn:ebu:tt:meta" xml:lang="en">
+  <metadata><ebuttm:documentMetadata><ebuttm:conformsToStandard>nope</ebuttm:conformsToStandard></ebuttm:documentMetadata><ebuttm:extra>x</ebuttm:extra></metadata>
+  <body><div><p begin="0s" end="1s">hi</p></div></body>
+</tt>"#;
+    let mut doc = Document::parse_str(xml).unwrap();
+    let out = doc.to_xml();
+    assert_eq!(canonical_dump(xml), canonical_dump(&out));
+}
+
+#[test]
+fn prefix_collision_gets_fallback_binding() {
+    // The same prefix bound to two URIs: the second URI cannot reuse the
+    // prefix, so it must get a generated ttmfallbackN binding instead of
+    // silently corrupting either.
+    let xml = r#"<tt xmlns="http://www.w3.org/ns/ttml" xmlns:v="urn:one" xml:lang="en">
+  <body><div>
+    <p begin="0s" end="1s"><span xmlns:v="urn:two" v:x="2">t</span></p>
+  </div></body>
+</tt>"#;
+    let mut doc = Document::parse_str(xml).unwrap();
+    let out = doc.to_xml();
+    let reparsed = roxmltree::Document::parse(&out).unwrap();
+    // `v:x` is the only content that resolved to `urn:two`; roxmltree does
+    // not surface `xmlns:` declarations as attributes, so the surviving
+    // evidence is the attribute's own namespace URI.
+    let has_two = reparsed
+        .root()
+        .descendants()
+        .flat_map(|n| n.attributes())
+        .any(|a| a.namespace() == Some("urn:two"));
+    assert!(has_two, "urn:two content must survive");
+    assert_eq!(canonical_dump(xml), canonical_dump(&out));
+}
+
+#[test]
+fn foreign_attributes_on_content_elements_are_typed_and_preserved() {
+    // TT-W1: `<div>`/`<p>`/`<span>`/`<br>` carry foreign attributes into the
+    // typed fields (not just metadata elements), and every one of them is
+    // re-emitted — the pre-#1110 serializer dropped all of them.
+    let xml = r#"<tt xmlns="http://www.w3.org/ns/ttml" xmlns:acme="urn:acme:ext" xml:lang="en">
+  <body><div acme:zone="a">
+    <p begin="0s" end="1s" acme:cue="7"><span acme:inline="i1">H</span><br acme:br="b1"/><acme:para>px</acme:para></p>
+  </div></body>
+</tt>"#;
+    let mut doc = Document::parse_str(xml).unwrap();
+    let div = &doc.tt.body.as_ref().unwrap().divs[0];
+    assert_eq!(div.foreign_attributes.len(), 1);
+    assert_eq!(div.foreign_attributes[0].local_name, "zone");
+    assert_eq!(div.foreign_attributes[0].value, "a");
+    assert_eq!(
+        div.foreign_attributes[0].namespace.as_deref(),
+        Some("urn:acme:ext")
+    );
+    assert_eq!(div.foreign_attributes[0].prefix.as_deref(), Some("acme"));
+    let p = &div.paragraphs[0];
+    assert_eq!(p.foreign_attributes[0].local_name, "cue");
+    assert!(matches!(
+        p.content.first(),
+        Some(document::InlineContent::Span(span)) if span.foreign_attributes[0].local_name == "inline"
+    ));
+    assert!(matches!(
+        p.content.get(1),
+        Some(document::InlineContent::Br(br)) if br.foreign_attributes[0].local_name == "br"
+    ));
+
+    let out = doc.to_xml();
+    assert_eq!(canonical_dump(xml), canonical_dump(&out));
+}
+
+#[test]
+fn unmodeled_tt_namespace_element_survives_in_body() {
+    // TT-W1: an unrecognized element in the TT namespace itself (TTML2 §7.3)
+    // is kept as an unknown subtree rather than dropped.
+    let xml = r#"<tt xmlns="http://www.w3.org/ns/ttml" xmlns:tt="http://www.w3.org/ns/ttml" xml:lang="en">
+  <body><div><tt:future begin="0s" end="1s">x</tt:future></div></body>
+</tt>"#;
+    let mut doc = Document::parse_str(xml).unwrap();
+    let div = &doc.tt.body.as_ref().unwrap().divs[0];
+    assert_eq!(div.unknown_children.len(), 1);
+    assert_eq!(div.unknown_children[0].local_name, "future");
+    assert_eq!(
+        div.unknown_children[0].namespace.as_deref(),
+        Some(document::NS_TT)
+    );
+    let out = doc.to_xml();
+    assert_eq!(canonical_dump(xml), canonical_dump(&out));
+}
+
+// ─── TT-W2: IMSC image / resource elements (#1110) ────────────────
+
+#[test]
+fn round_trip_image_elements_imsc() {
+    let xml = load_fixture("imsc1.1-image-profile-001.ttml");
+    let mut doc = Document::parse_str(&xml).unwrap();
+    // The div-level <image> is typed with src/type/extent.
+    let body = doc.tt.body.as_ref().unwrap();
+    let imgs: Vec<_> = body.divs.iter().flat_map(|d| &d.images).collect();
+    assert!(!imgs.is_empty(), "fixture must carry a typed image");
+    let img = imgs
+        .iter()
+        .find(|i| i.src.as_deref() == Some("image001-img.png"))
+        .expect("image src");
+    assert_eq!(img.type_.as_deref(), Some("image/png"));
+    assert!(img.tts_extent.is_some(), "tts:extent preserved");
+    // Round-trip keeps the image intact.
+    let out = doc.to_xml();
+    assert_eq!(canonical_dump(&xml), canonical_dump(&out));
+}
+
+#[test]
+fn round_trip_smpte_background_image() {
+    let xml = load_fixture("imsc1-alttext-smpte-backgroundimage-001.ttml");
+    let mut doc = Document::parse_str(&xml).unwrap();
+    let out = doc.to_xml();
+    let reparsed = Document::parse_str(&out).unwrap();
+    let body = reparsed.tt.body.unwrap();
+    assert_eq!(
+        body.divs[0].smpte_background_image.as_deref(),
+        Some("altText1-img.png")
+    );
+    assert_eq!(canonical_dump(&xml), canonical_dump(&out));
+}
+
+#[test]
+fn inline_image_and_audio_in_paragraph_round_trip() {
+    // TTML2 §8.1.4/§9.3: <image> and <audio> are inline content of <p>.
+    let xml = r#"<tt xmlns="http://www.w3.org/ns/ttml" xmlns:ttm="http://www.w3.org/ns/ttml#metadata" xml:lang="en">
+  <body><div>
+    <p begin="0s" end="2s">a<image src="x.png" type="image/png"/><audio src="y.wav" type="audio/wav">z</audio>b</p>
+  </div></body>
+</tt>"#;
+    let mut doc = Document::parse_str(xml).unwrap();
+    let body = doc.tt.body.as_ref().unwrap();
+    let p = &body.divs[0].paragraphs[0];
+    assert!(
+        p.content.iter().any(
+            |c| matches!(c, document::InlineContent::Image(i) if i.src.as_deref() == Some("x.png"))
+        ),
+        "typed inline image"
+    );
+    assert!(
+        p.content.iter().any(
+            |c| matches!(c, document::InlineContent::Audio(a) if a.src.as_deref() == Some("y.wav"))
+        ),
+        "typed inline audio"
+    );
+    let out = doc.to_xml();
+    assert_eq!(canonical_dump(xml), canonical_dump(&out));
+}
+
+#[test]
+fn resources_font_and_source_round_trip() {
+    // TTML2 §9.1: <resources> with <font> and nested <source><data>.
+    let xml = r#"<tt xmlns="http://www.w3.org/ns/ttml" xml:lang="en">
+  <head>
+    <resources>
+      <font xml:id="f1" family="Foo" src="foo.otf" type="font/opentype" style="italic" weight="bold" range="U+0041">
+        <source>
+          <data encoding="base64" length="4">QkJC</data>
+        </source>
+      </font>
+    </resources>
+  </head>
+  <body><div><p begin="0s" end="1s">hi</p></div></body>
+</tt>"#;
+    let mut doc = Document::parse_str(xml).unwrap();
+    let head = doc.tt.head.as_ref().unwrap();
+    let resources = head.resources.as_ref().expect("resources element");
+    let font = &resources.fonts[0];
+    assert_eq!(font.family.as_deref(), Some("Foo"));
+    assert_eq!(font.style_.as_deref(), Some("italic"));
+    let src = &font.sources[0];
+    let data = src.data.as_ref().expect("source data");
+    assert_eq!(data.encoding.as_deref(), Some("base64"));
+    assert_eq!(data.text.as_deref(), Some("QkJC"));
+    let out = doc.to_xml();
+    assert_eq!(canonical_dump(xml), canonical_dump(&out));
 }

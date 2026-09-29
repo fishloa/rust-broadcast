@@ -73,7 +73,7 @@ fn main() {
     println!("{}", xml);
 
     // Prove it round-trips: serialize → re-parse → re-serialize → identical
-    let doc2 = Document::parse_str(&xml).expect("re-parse from-scratch output");
+    let mut doc2 = Document::parse_str(&xml).expect("re-parse from-scratch output");
     let xml2 = doc2.to_xml();
     assert_eq!(
         xml, xml2,

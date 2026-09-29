@@ -15,6 +15,9 @@
 //! - `TimeExpression` — a data-carrying ADT with different time forms;
 //!   callers match the variant; a static label would be lossy.
 //! - `WallclockForm` — a data-carrying ADT with typed variants.
+//! - `UnknownNode` — a data-carrying ADT (element child vs text node) inside
+//!   an [`UnknownElement`] subtree; callers match the variant; a static label
+//!   would be lossy (#1110/TT-W1).
 
 use std::collections::BTreeSet;
 use std::fs;
@@ -27,6 +30,7 @@ const SKIP: &[&str] = &[
     "MetadataChild",
     "TimeExpression",
     "WallclockForm",
+    "UnknownNode",
 ];
 
 fn read_rs(dir: &Path, out: &mut Vec<String>) {
