@@ -63,6 +63,14 @@ const SECTION_LENGTH_PREFIX: usize = 3;
 /// CRC_32 trailer.
 const CRC_LEN: usize = 4;
 
+/// `style(3)` field mask inside a StyleWeight style/weight byte: bits `[7:5]`
+/// (ETSI TS 103 283 §5.3.2.3.1 Table 22).
+const STYLE_MASK: u8 = 0x07;
+/// `weight(4)` field mask inside a StyleWeight style/weight byte: bits `[4:1]`.
+const WEIGHT_MASK: u8 = 0x0F;
+/// `format(4)` field mask of a FileUri font-info type byte.
+const FORMAT_MASK: u8 = 0x0F;
+
 /// One entry in the DFIS font_info loop (§5.3.2.3.1 Table 22).
 ///
 /// Variant is selected by `font_info_type` (Table 23). Reserved types
@@ -141,7 +149,7 @@ impl<'a> Parse<'a> for DownloadableFontInfoSection<'a> {
                 expected: &[TABLE_ID],
             });
         }
-        let section_length = (((bytes[1] & 0x0F) as usize) << 8) | bytes[2] as usize;
+        let section_length = super::section_length_of(bytes);
         let total = super::check_section_length(
             bytes.len(),
             SECTION_LENGTH_PREFIX,
@@ -153,8 +161,8 @@ impl<'a> Parse<'a> for DownloadableFontInfoSection<'a> {
         let id_word = u16::from_be_bytes(*bytes[3..].first_chunk::<2>().unwrap());
         let font_id_extension = id_word >> 7;
         let font_id = (id_word & 0x7F) as u8;
-        let version_number = (bytes[5] >> 1) & 0x1F;
-        let current_next_indicator = bytes[5] & 0x01 != 0;
+        let version_number = super::version_number_of(bytes[5]);
+        let current_next_indicator = super::current_next_of(bytes[5]);
         let section_number = bytes[6];
         let last_section_number = bytes[7];
 
@@ -176,7 +184,7 @@ impl<'a> Parse<'a> for DownloadableFontInfoSection<'a> {
                     pos += 1;
                     font_info.push(FontInfo::StyleWeight {
                         style: b >> 5,
-                        weight: (b >> 1) & 0x0F,
+                        weight: (b >> 1) & WEIGHT_MASK,
                     });
                 }
                 FONT_INFO_TYPE_FILE_URI => {
@@ -186,7 +194,7 @@ impl<'a> Parse<'a> for DownloadableFontInfoSection<'a> {
                             available: loop_end - pos,
                         });
                     }
-                    let format = bytes[pos] & 0x0F;
+                    let format = bytes[pos] & FORMAT_MASK;
                     let uri_length = bytes[pos + 1] as usize;
                     let uri_start = pos + 2;
                     let uri_end = uri_start + uri_length;
@@ -301,7 +309,7 @@ impl Serialize for DownloadableFontInfoSection<'_> {
         let id_word = ((self.font_id_extension & 0x01FF) << 7) | (self.font_id as u16 & 0x7F);
         buf[3..5].copy_from_slice(&id_word.to_be_bytes());
         // reserved(2)=11, version_number(5), current_next_indicator(1).
-        buf[5] = 0xC0 | ((self.version_number & 0x1F) << 1) | u8::from(self.current_next_indicator);
+        buf[5] = super::version_byte(self.version_number, self.current_next_indicator);
         buf[6] = self.section_number;
         buf[7] = self.last_section_number;
 
@@ -323,14 +331,14 @@ impl Serialize for DownloadableFontInfoSection<'_> {
                 FontInfo::StyleWeight { style, weight } => {
                     buf[pos] = FONT_INFO_TYPE_STYLE_WEIGHT;
                     // style(3) | weight(4) | reserved_zero_future_use(1)=0.
-                    buf[pos + 1] = ((style & 0x07) << 5) | ((weight & 0x0F) << 1);
+                    buf[pos + 1] = ((style & STYLE_MASK) << 5) | ((weight & WEIGHT_MASK) << 1);
                     pos += 2;
                 }
                 FontInfo::FileUri { format, uri } => {
                     guard_u8(uri.len())?;
                     buf[pos] = FONT_INFO_TYPE_FILE_URI;
                     // reserved_zero_future_use(4)=0 | font_file_format(4).
-                    buf[pos + 1] = format & 0x0F;
+                    buf[pos + 1] = format & FORMAT_MASK;
                     buf[pos + 2] = uri.len() as u8;
                     let s = pos + 3;
                     buf[s..s + uri.len()].copy_from_slice(uri);

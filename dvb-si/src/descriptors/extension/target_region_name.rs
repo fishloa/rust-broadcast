@@ -132,11 +132,14 @@ impl Serialize for TargetRegionName<'_> {
             + self
                 .regions
                 .iter()
+                // Byte counts must come from the Options the writer actually
+                // writes; `region_depth` duplicating them used to leave stale
+                // bytes (r03-W6).
                 .map(|r| {
                     1 + r.region_name.raw().len()
                         + 1
-                        + if r.region_depth >= 2 { 1 } else { 0 }
-                        + if r.region_depth == 3 { 2 } else { 0 }
+                        + usize::from(r.secondary_region_code.is_some())
+                        + usize::from(r.tertiary_region_code.is_some()) * 2
                 })
                 .sum::<usize>()
     }

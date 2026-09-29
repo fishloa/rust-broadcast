@@ -108,10 +108,10 @@ impl<'a> Parse<'a> for TdtSection {
                 expected: &[TABLE_ID],
             });
         }
-        let section_length = ((bytes[1] & 0x0F) as u16) << 8 | bytes[2] as u16;
-        if section_length as usize != UTC_TIME_LEN {
+        let section_length = super::section_length_of(bytes);
+        if section_length != UTC_TIME_LEN {
             return Err(Error::SectionLengthOverflow {
-                declared: section_length as usize,
+                declared: section_length,
                 available: UTC_TIME_LEN,
             });
         }

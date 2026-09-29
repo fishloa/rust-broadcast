@@ -9,6 +9,9 @@ use broadcast_common::{Parse, Serialize};
 /// Descriptor tag for audio_stream_descriptor.
 pub const TAG: u8 = 0x03;
 const HEADER_LEN: usize = 2;
+/// `reserved(3)` tail of the single body byte — ISO/IEC 13818-1 Table
+/// 2-3: '1's (r03-W7).
+const TAIL_RESERVED_BITS: u8 = 0x07;
 const BODY_LEN: u8 = 1;
 
 /// Audio Stream Descriptor.
@@ -72,7 +75,8 @@ impl Serialize for AudioStreamDescriptor {
         buf[HEADER_LEN] = ((self.free_format_flag as u8) << 7)
             | ((self.id as u8) << 6)
             | ((self.layer & 0x03) << 4)
-            | ((self.variable_rate_audio_indicator as u8) << 3);
+            | ((self.variable_rate_audio_indicator as u8) << 3)
+            | TAIL_RESERVED_BITS;
         Ok(len)
     }
 }

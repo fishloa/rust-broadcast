@@ -127,16 +127,12 @@ impl<'a> Parse<'a> for TotSection<'a> {
                 expected: &[TABLE_ID],
             });
         }
-        let section_length = ((bytes[1] & 0x0F) as u16) << 8 | bytes[2] as u16;
-        let total = super::check_section_length(
-            bytes.len(),
-            HEADER_LEN,
-            section_length as usize,
-            MIN_SECTION_LEN,
-        )?;
+        let section_length = super::section_length_of(bytes);
+        let total =
+            super::check_section_length(bytes.len(), HEADER_LEN, section_length, MIN_SECTION_LEN)?;
         let utc_time_raw = [bytes[3], bytes[4], bytes[5], bytes[6], bytes[7]];
         let dl_pos = HEADER_LEN + UTC_TIME_LEN;
-        let dl = (((bytes[dl_pos] & 0x0F) as usize) << 8) | bytes[dl_pos + 1] as usize;
+        let dl = super::desc_loop_len_of(bytes[dl_pos], bytes[dl_pos + 1]);
         let d_start = dl_pos + DESC_LOOP_LEN_FIELD;
         let d_end = d_start + dl;
         if d_end > total - CRC_LEN {
@@ -176,8 +172,7 @@ impl Serialize for TotSection<'_> {
             12,
             "descriptors_loop_length",
         )?;
-        buf[8] = 0xF0 | ((dl >> 8) as u8);
-        buf[9] = dl as u8;
+        super::write_desc_loop_len(&mut buf[8..10], dl as usize)?;
         let d_end = 10 + self.descriptors.len();
         buf[10..d_end].copy_from_slice(self.descriptors.raw());
         let crc_pos = len - CRC_LEN;
@@ -200,12 +195,10 @@ mod tests {
         let mut v = Vec::new();
         v.push(TABLE_ID);
         // SSI=0 per §5.2.6 (the TOT exception: SSI=0 but CRC present).
-        v.push(0x70 | ((section_length >> 8) as u8 & 0x0F));
+        v.push(0x70 | ((section_length >> 8) as u8 & crate::tables::SECTION_LENGTH_HI_MASK));
         v.push((section_length & 0xFF) as u8);
         v.extend_from_slice(&[0xE4, 0x09, 0x12, 0x34, 0x56]);
-        let dl = desc.len() as u16;
-        v.push(0xF0 | ((dl >> 8) as u8 & 0x0F));
-        v.push((dl & 0xFF) as u8);
+        crate::tables::push_desc_loop_len(&mut v, desc.len());
         v.extend_from_slice(desc);
         let crc = broadcast_common::crc32_mpeg2::compute(&v);
         v.extend_from_slice(&crc.to_be_bytes());

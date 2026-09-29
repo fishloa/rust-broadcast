@@ -88,13 +88,6 @@ const OFFSET_OUI: usize = HEADER_LEN + 5;
 const OFFSET_PROCESSING_ORDER: usize = HEADER_LEN + 8;
 const OFFSET_COMMON_DESC_LEN: usize = HEADER_LEN + FIXED_BODY_LEN;
 
-const VERSION_NUMBER_MASK: u8 = 0x3E;
-const VERSION_NUMBER_SHIFT: u8 = 1;
-const CURRENT_NEXT_MASK: u8 = 0x01;
-const LENGTH_HIGH_NIBBLE_MASK: u8 = 0x0F;
-const FLAGS_RESERVED_BITS: u8 = 0xC0;
-const RESERVED_NIBBLE: u8 = 0xF0;
-
 const PLATFORM_LOOP_LEN_FIELD: usize = 2;
 const DESC_LOOP_LEN_FIELD: usize = 2;
 
@@ -110,9 +103,10 @@ const DESC_LOOP_LEN_FIELD: usize = 2;
 pub struct UntPlatform<'a> {
     /// `compatibilityDescriptor()` — TS 102 006 Table 15 / ISO/IEC 13818-6.
     pub compatibility_descriptor: CompatibilityDescriptor<'a>,
-    /// N pairs of (target_descriptor_loop, operational_descriptor_loop) per
-    /// TS 102 006 Table 11.
-    pub target_operational_pairs: Vec<(DescriptorLoop<'a>, DescriptorLoop<'a>)>,
+    /// N target/operational descriptor-loop pairs per TS 102 006 Table 11 —
+    /// the same typed pair the INT body loop uses (r02-W22), replacing the
+    /// previous anonymous tuple.
+    pub target_operational_pairs: Vec<crate::tables::TargetOperationalLoop<'a>>,
 }
 
 fn unt_platform_serialized_len(p: &UntPlatform) -> usize {
@@ -120,7 +114,7 @@ fn unt_platform_serialized_len(p: &UntPlatform) -> usize {
         + PLATFORM_LOOP_LEN_FIELD
         + p.target_operational_pairs
             .iter()
-            .map(|(t, o)| DESC_LOOP_LEN_FIELD + t.len() + DESC_LOOP_LEN_FIELD + o.len())
+            .map(crate::tables::TargetOperationalLoop::serialized_len)
             .sum::<usize>()
 }
 
@@ -176,16 +170,15 @@ impl<'a> Parse<'a> for UntSection<'a> {
             });
         }
 
-        let section_length =
-            (((bytes[1] & LENGTH_HIGH_NIBBLE_MASK) as usize) << 8) | bytes[2] as usize;
+        let section_length = super::section_length_of(bytes);
         let total =
             super::check_section_length(bytes.len(), HEADER_LEN, section_length, MIN_SECTION_LEN)?;
 
         let action_type = UntActionType::from_u8(bytes[OFFSET_ACTION_TYPE]);
         let oui_hash = bytes[OFFSET_OUI_HASH];
         let flags_byte = bytes[OFFSET_FLAGS];
-        let version_number = (flags_byte & VERSION_NUMBER_MASK) >> VERSION_NUMBER_SHIFT;
-        let current_next_indicator = (flags_byte & CURRENT_NEXT_MASK) != 0;
+        let version_number = super::version_number_of(flags_byte);
+        let current_next_indicator = super::current_next_of(flags_byte);
         let section_number = bytes[OFFSET_SECTION_NUMBER];
         let last_section_number = bytes[OFFSET_LAST_SECTION_NUMBER];
         let oui = ((bytes[OFFSET_OUI] as u32) << 16)
@@ -193,8 +186,10 @@ impl<'a> Parse<'a> for UntSection<'a> {
             | (bytes[OFFSET_OUI + 2] as u32);
         let processing_order = bytes[OFFSET_PROCESSING_ORDER];
 
-        let cdl = (((bytes[OFFSET_COMMON_DESC_LEN] & LENGTH_HIGH_NIBBLE_MASK) as usize) << 8)
-            | bytes[OFFSET_COMMON_DESC_LEN + 1] as usize;
+        let cdl = super::desc_loop_len_of(
+            bytes[OFFSET_COMMON_DESC_LEN],
+            bytes[OFFSET_COMMON_DESC_LEN + 1],
+        );
         let common_desc_start = OFFSET_COMMON_DESC_LEN + COMMON_DESC_LEN_FIELD;
         let common_desc_end = common_desc_start + cdl;
         if common_desc_end > total - CRC_LEN {
@@ -271,7 +266,7 @@ impl<'a> Parse<'a> for UntSection<'a> {
                         what: "UntSection target_descriptor_loop length",
                     });
                 }
-                let target_len = (((bytes[pos] & 0x0F) as usize) << 8) | bytes[pos + 1] as usize;
+                let target_len = super::desc_loop_len_of(bytes[pos], bytes[pos + 1]);
                 let target_start = pos + DESC_LOOP_LEN_FIELD;
                 let target_end = target_start + target_len;
                 if target_end > platform_end {
@@ -290,7 +285,7 @@ impl<'a> Parse<'a> for UntSection<'a> {
                         what: "UntSection operational_descriptor_loop length",
                     });
                 }
-                let op_len = (((bytes[pos] & 0x0F) as usize) << 8) | bytes[pos + 1] as usize;
+                let op_len = super::desc_loop_len_of(bytes[pos], bytes[pos + 1]);
                 let op_start = pos + DESC_LOOP_LEN_FIELD;
                 let op_end = op_start + op_len;
                 if op_end > platform_end {
@@ -302,7 +297,10 @@ impl<'a> Parse<'a> for UntSection<'a> {
                 let operational_descriptors = DescriptorLoop::new(&bytes[op_start..op_end]);
                 pos = op_end;
 
-                target_operational_pairs.push((target_descriptors, operational_descriptors));
+                target_operational_pairs.push(crate::tables::TargetOperationalLoop {
+                    target_descriptors,
+                    operational_descriptors,
+                });
             }
             if pos != platform_end {
                 return Err(Error::SectionLengthOverflow {
@@ -363,9 +361,7 @@ impl Serialize for UntSection<'_> {
 
         buf[OFFSET_ACTION_TYPE] = self.action_type.to_u8();
         buf[OFFSET_OUI_HASH] = self.oui_hash;
-        buf[OFFSET_FLAGS] = FLAGS_RESERVED_BITS
-            | ((self.version_number & 0x1F) << VERSION_NUMBER_SHIFT)
-            | u8::from(self.current_next_indicator);
+        buf[OFFSET_FLAGS] = super::version_byte(self.version_number, self.current_next_indicator);
         buf[OFFSET_SECTION_NUMBER] = self.section_number;
         buf[OFFSET_LAST_SECTION_NUMBER] = self.last_section_number;
         buf[OFFSET_OUI] = ((self.oui >> 16) & 0xFF) as u8;
@@ -378,8 +374,10 @@ impl Serialize for UntSection<'_> {
             12,
             "common_descriptors_length",
         )?;
-        buf[OFFSET_COMMON_DESC_LEN] = RESERVED_NIBBLE | ((cdl >> 8) as u8);
-        buf[OFFSET_COMMON_DESC_LEN + 1] = cdl as u8;
+        super::write_desc_loop_len(
+            &mut buf[OFFSET_COMMON_DESC_LEN..OFFSET_COMMON_DESC_LEN + 2],
+            cdl as usize,
+        )?;
 
         let common_start = OFFSET_COMMON_DESC_LEN + COMMON_DESC_LEN_FIELD;
         let common_end = common_start + self.common_descriptors.len();
@@ -395,21 +393,21 @@ impl Serialize for UntSection<'_> {
             let inner_len: usize = platform
                 .target_operational_pairs
                 .iter()
-                .map(|(t, o)| DESC_LOOP_LEN_FIELD + t.len() + DESC_LOOP_LEN_FIELD + o.len())
+                .map(crate::tables::TargetOperationalLoop::serialized_len)
                 .sum();
             let inner_len = broadcast_common::len::fit_u16(inner_len, "platform_loop_length")?;
             buf[pos..pos + PLATFORM_LOOP_LEN_FIELD].copy_from_slice(&inner_len.to_be_bytes());
             pos += PLATFORM_LOOP_LEN_FIELD;
 
-            for (target_descriptors, operational_descriptors) in &platform.target_operational_pairs
-            {
+            for pair in &platform.target_operational_pairs {
+                let target_descriptors = &pair.target_descriptors;
+                let operational_descriptors = &pair.operational_descriptors;
                 let tl = broadcast_common::len::fit_bits(
                     target_descriptors.len() as u64,
                     12,
                     "target_descriptors_length",
                 )?;
-                buf[pos] = RESERVED_NIBBLE | ((tl >> 8) as u8);
-                buf[pos + 1] = tl as u8;
+                super::write_desc_loop_len(&mut buf[pos..pos + 2], tl as usize)?;
                 pos += DESC_LOOP_LEN_FIELD;
                 buf[pos..pos + target_descriptors.len()].copy_from_slice(target_descriptors.raw());
                 pos += target_descriptors.len();
@@ -419,8 +417,7 @@ impl Serialize for UntSection<'_> {
                     12,
                     "operational_descriptors_length",
                 )?;
-                buf[pos] = RESERVED_NIBBLE | ((ol >> 8) as u8);
-                buf[pos + 1] = ol as u8;
+                super::write_desc_loop_len(&mut buf[pos..pos + 2], ol as usize)?;
                 pos += DESC_LOOP_LEN_FIELD;
                 buf[pos..pos + operational_descriptors.len()]
                     .copy_from_slice(operational_descriptors.raw());
@@ -462,10 +459,10 @@ mod tests {
                 compatibility_descriptor: CompatibilityDescriptor {
                     descriptors: vec![],
                 },
-                target_operational_pairs: vec![(
-                    DescriptorLoop::new(&[]),
-                    DescriptorLoop::new(&[]),
-                )],
+                target_operational_pairs: vec![crate::tables::TargetOperationalLoop {
+                    target_descriptors: DescriptorLoop::new(&[]),
+                    operational_descriptors: DescriptorLoop::new(&[]),
+                }],
             }],
         };
         let sl = unt.serialized_len();
@@ -526,10 +523,10 @@ mod tests {
                 compatibility_descriptor: CompatibilityDescriptor {
                     descriptors: vec![],
                 },
-                target_operational_pairs: vec![(
-                    DescriptorLoop::new(target_desc),
-                    DescriptorLoop::new(op_desc),
-                )],
+                target_operational_pairs: vec![crate::tables::TargetOperationalLoop {
+                    target_descriptors: DescriptorLoop::new(target_desc),
+                    operational_descriptors: DescriptorLoop::new(op_desc),
+                }],
             }],
         };
         let mut buf = vec![0u8; unt.serialized_len()];
@@ -548,10 +545,17 @@ mod tests {
         );
         assert_eq!(re.platforms[0].target_operational_pairs.len(), 1);
         assert_eq!(
-            re.platforms[0].target_operational_pairs[0].0.raw(),
+            re.platforms[0].target_operational_pairs[0]
+                .target_descriptors
+                .raw(),
             target_desc
         );
-        assert_eq!(re.platforms[0].target_operational_pairs[0].1.raw(), op_desc);
+        assert_eq!(
+            re.platforms[0].target_operational_pairs[0]
+                .operational_descriptors
+                .raw(),
+            op_desc
+        );
     }
 
     #[test]
@@ -575,8 +579,14 @@ mod tests {
                     descriptors: vec![],
                 },
                 target_operational_pairs: vec![
-                    (DescriptorLoop::new(t0), DescriptorLoop::new(o0)),
-                    (DescriptorLoop::new(t1), DescriptorLoop::new(o1)),
+                    crate::tables::TargetOperationalLoop {
+                        target_descriptors: DescriptorLoop::new(t0),
+                        operational_descriptors: DescriptorLoop::new(o0),
+                    },
+                    crate::tables::TargetOperationalLoop {
+                        target_descriptors: DescriptorLoop::new(t1),
+                        operational_descriptors: DescriptorLoop::new(o1),
+                    },
                 ],
             }],
         };
@@ -586,10 +596,10 @@ mod tests {
         assert_eq!(re.platforms.len(), 1);
         let pairs = &re.platforms[0].target_operational_pairs;
         assert_eq!(pairs.len(), 2, "both pairs must survive the round-trip");
-        assert_eq!(pairs[0].0.raw(), t0);
-        assert_eq!(pairs[0].1.raw(), o0);
-        assert_eq!(pairs[1].0.raw(), t1);
-        assert_eq!(pairs[1].1.raw(), o1);
+        assert_eq!(pairs[0].target_descriptors.raw(), t0);
+        assert_eq!(pairs[0].operational_descriptors.raw(), o0);
+        assert_eq!(pairs[1].target_descriptors.raw(), t1);
+        assert_eq!(pairs[1].operational_descriptors.raw(), o1);
         // serialize is deterministic.
         let mut buf2 = vec![0u8; unt.serialized_len()];
         unt.serialize_into(&mut buf2).unwrap();
@@ -629,10 +639,10 @@ mod tests {
                         }],
                     }],
                 },
-                target_operational_pairs: vec![(
-                    DescriptorLoop::new(&[]),
-                    DescriptorLoop::new(&[]),
-                )],
+                target_operational_pairs: vec![crate::tables::TargetOperationalLoop {
+                    target_descriptors: DescriptorLoop::new(&[]),
+                    operational_descriptors: DescriptorLoop::new(&[]),
+                }],
             }],
         };
         let mut buf = vec![0u8; unt.serialized_len()];

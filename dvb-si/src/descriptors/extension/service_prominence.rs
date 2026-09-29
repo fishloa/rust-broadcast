@@ -8,6 +8,8 @@ impl<'a> ExtensionBodyDef<'a> for ServiceProminence<'a> {
 }
 
 /// `[4]` of the SOGI-entry packed byte: `reserved_future_use` = 1 per DVB convention.
+/// `sogi_priority` is 12 bits.
+const SOGI_PRIORITY_BITS: u32 = 12;
 const SOGI_RESERVED_FUTURE_USE: u8 = 0x10;
 
 /// service_prominence body (Table 162c). The SOGI loop is unfolded;
@@ -155,15 +157,21 @@ impl Serialize for ServiceProminence<'_> {
             });
         }
         let sogi_len = len - 1 - self.private_data.len();
+        let sogi_len = broadcast_common::len::fit_bits(sogi_len as u64, 8, "sogi_list_length")?;
         buf[0] = sogi_len as u8;
         let mut p = 1;
         for e in &self.sogi_list {
+            let priority = broadcast_common::len::fit_bits(
+                u64::from(e.sogi_priority),
+                SOGI_PRIORITY_BITS,
+                "sogi_priority",
+            )? as u16;
             buf[p] = ((e.sogi_flag as u8) << 7)
                 | ((e.target_region_loop.is_some() as u8) << 6)
                 | ((e.service_id.is_some() as u8) << 5)
                 | SOGI_RESERVED_FUTURE_USE
-                | ((e.sogi_priority >> 8) as u8 & 0x0F);
-            buf[p + 1] = e.sogi_priority as u8;
+                | ((priority >> 8) as u8 & 0x0F);
+            buf[p + 1] = priority as u8;
             p += 2;
             if let Some(id) = e.service_id {
                 buf[p..p + 2].copy_from_slice(&id.to_be_bytes());
@@ -171,6 +179,11 @@ impl Serialize for ServiceProminence<'_> {
             }
             if let Some(entries) = &e.target_region_loop {
                 let entries_len = super::target_region::region_entries_serialized_len(entries);
+                let entries_len = broadcast_common::len::fit_bits(
+                    entries_len as u64,
+                    8,
+                    "target_region_loop_length",
+                )? as usize;
                 buf[p] = entries_len as u8;
                 p += 1;
                 super::target_region::write_region_entries(entries, buf, p);
@@ -325,5 +338,25 @@ mod tests {
         let json = serde_json::to_string(&d).unwrap();
         assert!(json.contains("\"tag_extension\":34"));
         assert!(json.contains("\"serviceProminence\""));
+    }
+
+    #[test]
+    fn serialize_rejects_over_12bit_priority() {
+        // Pre-fix `(sogi_priority >> 8) as u8 & 0x0F` silently dropped bits
+        // 12..16 (r03-W3).
+        let d = ServiceProminence {
+            sogi_list: alloc::vec![SogiEntry {
+                sogi_flag: true,
+                sogi_priority: 1 << 12,
+                service_id: None,
+                target_region_loop: None,
+            }],
+            private_data: &[],
+        };
+        let mut buf = vec![0u8; d.serialized_len()];
+        assert!(matches!(
+            d.serialize_into(&mut buf).unwrap_err(),
+            Error::FieldOverflow(_)
+        ));
     }
 }

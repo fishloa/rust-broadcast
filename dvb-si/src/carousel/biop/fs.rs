@@ -28,10 +28,23 @@ pub enum CarouselObject {
 /// Owned data extracted from a `DirectoryMessage`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DirectoryObjectData {
-    /// Bindings in this directory: `(name_bytes_no_nul, module_id, object_key_bytes)`.
-    pub entries: Vec<(Vec<u8>, u16, Vec<u8>)>,
+    /// Bindings in this directory.
+    pub entries: Vec<DirectoryEntry>,
     /// True if this is a ServiceGateway (the carousel root).
     pub is_service_gateway: bool,
+}
+
+/// One binding in a directory: a name resolving to an object elsewhere in
+/// the carousel (r02-W12 — was an untyped `(Vec<u8>, u16, Vec<u8>)` tuple).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DirectoryEntry {
+    /// Binding name as carried on the wire (a trailing NUL byte, if any, is
+    /// stripped only when matching against a path segment, not here).
+    pub name: Vec<u8>,
+    /// `moduleId` of the target object's `ObjectLocation`.
+    pub module_id: u16,
+    /// `objectKey_data` of the target object's `ObjectLocation`.
+    pub object_key: Vec<u8>,
 }
 
 /// Owned data extracted from a `FileMessage`.
@@ -125,13 +138,13 @@ impl CarouselFs {
                 CarouselObject::File(_) => return None,
             };
             // Find binding with name matching `segment` (strip trailing NUL).
-            let (_, mod_id, key_bytes) = dir.entries.iter().find(|(name, _, _)| {
-                let n = strip_nul(name);
+            let entry = dir.entries.iter().find(|e| {
+                let n = strip_nul(&e.name);
                 n == segment.as_bytes()
             })?;
             cur_key = ObjectKey {
-                module_id: *mod_id,
-                object_key: key_bytes.clone(),
+                module_id: entry.module_id,
+                object_key: entry.object_key.clone(),
             };
         }
         self.objects.get(&cur_key)
@@ -183,11 +196,8 @@ fn extract_object(module_id: u16, msg: &BiopMessage<'_>) -> (Vec<u8>, Option<Car
     }
 }
 
-/// Extract binding entries from a DirectoryMessage as `(name, module_id, object_key)`.
-fn extract_dir_entries(
-    _self_module_id: u16,
-    dm: &DirectoryMessage<'_>,
-) -> Vec<(Vec<u8>, u16, Vec<u8>)> {
+/// Extract binding entries from a DirectoryMessage.
+fn extract_dir_entries(_self_module_id: u16, dm: &DirectoryMessage<'_>) -> Vec<DirectoryEntry> {
     let mut entries = Vec::with_capacity(dm.bindings.len());
     for binding in &dm.bindings {
         // DVB: nameComponents_count == 1 per binding.
@@ -198,9 +208,13 @@ fn extract_dir_entries(
             .unwrap_or_default();
         // Get the module_id and object_key from the IOR BIOP profile.
         if let Some(bp) = binding.ior.biop_profile() {
-            let mod_id = bp.object_location.module_id;
-            let obj_key = bp.object_location.object_key.to_vec();
-            entries.push((name, mod_id, obj_key));
+            let module_id = bp.object_location.module_id;
+            let object_key = bp.object_location.object_key.to_vec();
+            entries.push(DirectoryEntry {
+                name,
+                module_id,
+                object_key,
+            });
         }
     }
     entries
@@ -297,5 +311,29 @@ mod tests {
             .collect();
         let fs = CarouselFs::from_modules(&refs);
         assert!(fs.file_bytes(&["does-not-exist.html"]).is_none());
+    }
+
+    /// Regression for r02-W12: `DirectoryObjectData::entries` used to be an
+    /// untyped `Vec<(Vec<u8>, u16, Vec<u8>)>` — a caller had to know the tuple
+    /// order (name, module_id, object_key) from documentation alone. This
+    /// exercises the typed `DirectoryEntry` fields directly, which would not
+    /// compile against the old tuple shape (a positional `entry.1` still
+    /// would).
+    #[test]
+    fn directory_entry_fields_are_typed_not_positional() {
+        let modules = build_test_carousel();
+        let refs: Vec<(u16, &[u8])> = modules
+            .iter()
+            .map(|(id, data)| (*id, data.as_slice()))
+            .collect();
+        let fs = CarouselFs::from_modules(&refs);
+        let CarouselObject::Directory(dir) = fs.service_gateway().unwrap() else {
+            panic!("expected Directory");
+        };
+        assert_eq!(dir.entries.len(), 1);
+        let entry = &dir.entries[0];
+        assert_eq!(entry.name, b"index.html");
+        assert_eq!(entry.module_id, 2);
+        assert_eq!(entry.object_key, vec![0x02]);
     }
 }

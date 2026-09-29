@@ -60,7 +60,8 @@ impl Serialize for Cp<'_> {
         }
         buf[0..2].copy_from_slice(&self.cp_system_id.to_be_bytes());
         // reserved_future_use(3) set to '1' per DVB convention, then CP_PID(13).
-        buf[2..4].copy_from_slice(&(0xE000 | (self.cp_pid & MAX_PID)).to_be_bytes());
+        let cp_pid = broadcast_common::len::fit_bits(u64::from(self.cp_pid), 13, "CP_PID")? as u16;
+        buf[2..4].copy_from_slice(&(0xE000 | cp_pid).to_be_bytes());
         buf[CP_HEADER_LEN..len].copy_from_slice(self.private_data);
         Ok(len)
     }
@@ -94,5 +95,20 @@ mod tests {
     fn parse_cp_rejects_short() {
         let err = Cp::parse(&[0x00, 0x00]).unwrap_err();
         assert!(matches!(err, Error::BufferTooShort { .. }));
+    }
+
+    #[test]
+    fn serialize_rejects_over_13bit_pid() {
+        // Pre-fix `cp_pid & MAX_PID` silently clipped bits 13..16 (r03-W3).
+        let d = Cp {
+            cp_system_id: 0x1234,
+            cp_pid: 0x2000,
+            private_data: &[],
+        };
+        let mut buf = vec![0u8; d.serialized_len()];
+        assert!(matches!(
+            d.serialize_into(&mut buf).unwrap_err(),
+            Error::FieldOverflow(_)
+        ));
     }
 }

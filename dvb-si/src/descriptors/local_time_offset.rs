@@ -15,6 +15,8 @@ const HEADER_LEN: usize = 2;
 const ENTRY_LEN: usize = 13;
 const POLARITY_MASK: u8 = 0x01;
 const REGION_ID_MASK: u8 = 0xFC;
+/// `country_region_id` is 6 bits.
+const REGION_ID_BITS: u32 = 6;
 const RESERVED_BIT_MASK: u8 = 0x02;
 
 /// One per-country offset entry.
@@ -248,7 +250,12 @@ impl Serialize for LocalTimeOffsetDescriptor {
         let mut offset = HEADER_LEN;
         for entry in &self.entries {
             buf[offset..offset + 3].copy_from_slice(&entry.country_code.0);
-            let flags = ((entry.country_region_id << 2) & REGION_ID_MASK)
+            let region_id = broadcast_common::len::fit_bits(
+                u64::from(entry.country_region_id),
+                REGION_ID_BITS,
+                "country_region_id",
+            )? as u8;
+            let flags = ((region_id << 2) & REGION_ID_MASK)
                 | RESERVED_BIT_MASK
                 | if entry.local_time_offset_negative {
                     POLARITY_MASK
@@ -417,5 +424,25 @@ mod tests {
         let bytes = [TAG, 0];
         let d = LocalTimeOffsetDescriptor::parse(&bytes).unwrap();
         assert!(d.entries.is_empty());
+    }
+
+    #[test]
+    fn serialize_rejects_over_6bit_region_id() {
+        // Pre-fix `(id << 2) & 0xFC` silently dropped bit 6/7 (r03-W3).
+        let d = LocalTimeOffsetDescriptor {
+            entries: alloc::vec![LocalTimeOffsetEntry {
+                country_code: LangCode([0x46, 0x52, 0x41]),
+                country_region_id: 0x40,
+                local_time_offset_negative: false,
+                local_time_offset_bcd: 0x0100,
+                time_of_change_raw: [0xAB, 0xCD, 0xEF, 0x12, 0x34],
+                next_time_offset_bcd: 0x0200,
+            }],
+        };
+        let mut buf = vec![0u8; d.serialized_len()];
+        assert!(matches!(
+            d.serialize_into(&mut buf).unwrap_err(),
+            Error::FieldOverflow(_)
+        ));
     }
 }

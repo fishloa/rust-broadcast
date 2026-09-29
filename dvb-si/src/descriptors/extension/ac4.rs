@@ -165,10 +165,20 @@ impl Serialize for Ac4<'_> {
         buf[0] = (u8::from(self.ac4_config_flag) << 7) | (u8::from(self.ac4_toc_flag) << 6);
         let mut p = 1;
         if self.ac4_config_flag {
-            let de = self.ac4_dialog_enhancement_enabled.unwrap_or(false);
+            // config_flag reserves the config byte; fabricating defaults for
+            // its two fields would silently invent them (r03-W5).
+            let de = self
+                .ac4_dialog_enhancement_enabled
+                .ok_or(Error::ValueOutOfRange {
+                    field: "ac4_dialog_enhancement_enabled",
+                    reason: "required when ac4_config_flag is set",
+                })?;
             let cm = self
                 .ac4_channel_mode
-                .unwrap_or(Ac4ChannelMode::Mono)
+                .ok_or(Error::ValueOutOfRange {
+                    field: "ac4_channel_mode",
+                    reason: "required when ac4_config_flag is set",
+                })?
                 .to_u8()
                 & 0x03;
             buf[p] = (u8::from(de) << 7) | (cm << 5);
@@ -245,5 +255,26 @@ mod tests {
             Ac4ChannelMode::Reserved(3).name(),
             "reserved for future use"
         );
+    }
+    #[test]
+    fn serialize_rejects_config_fields_missing_when_flag_set() {
+        // r03-W5: config_flag reserves the config byte; the two fields used
+        // to default to false/Mono instead of erroring.
+        let d = Ac4 {
+            ac4_config_flag: true,
+            ac4_toc_flag: false,
+            ac4_dialog_enhancement_enabled: None,
+            ac4_channel_mode: Some(Ac4ChannelMode::Mono),
+            toc: None,
+            additional_info: &[],
+        };
+        let mut buf = vec![0u8; d.serialized_len()];
+        assert!(matches!(
+            d.serialize_into(&mut buf).unwrap_err(),
+            Error::ValueOutOfRange {
+                field: "ac4_dialog_enhancement_enabled",
+                ..
+            }
+        ));
     }
 }

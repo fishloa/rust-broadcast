@@ -12,6 +12,10 @@ use broadcast_common::{Parse, Serialize};
 pub const TAG: u8 = 0x54;
 const HEADER_LEN: usize = 2;
 const ENTRY_LEN: usize = 2;
+/// The 4-bit `nibble_1`/`nibble_2` genre fields; both are public `u8` and
+/// masked at parse *and* serialize so a wider value can never silently
+/// corrupt its neighbour nibble (r03-W2).
+const NIBBLE_MASK: u8 = 0x0F;
 
 /// Content genre level-1 broad category — EN 300 468 Table 29.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -341,8 +345,8 @@ impl<'a> Parse<'a> for ContentDescriptor {
 
         for chunk in body.chunks_exact(ENTRY_LEN) {
             entries.push(ContentEntry {
-                nibble_1: chunk[0] >> 4,
-                nibble_2: chunk[0] & 0x0F,
+                nibble_1: (chunk[0] >> 4) & NIBBLE_MASK,
+                nibble_2: chunk[0] & NIBBLE_MASK,
                 user_byte: chunk[1],
             });
         }
@@ -368,7 +372,7 @@ impl Serialize for ContentDescriptor {
         crate::descriptors::write_descriptor_header(buf, TAG, len - HEADER_LEN)?;
         let mut pos = HEADER_LEN;
         for entry in &self.entries {
-            buf[pos] = (entry.nibble_1 << 4) | entry.nibble_2;
+            buf[pos] = ((entry.nibble_1 & NIBBLE_MASK) << 4) | (entry.nibble_2 & NIBBLE_MASK);
             buf[pos + 1] = entry.user_byte;
             pos += ENTRY_LEN;
         }

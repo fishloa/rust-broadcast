@@ -107,11 +107,11 @@ impl<'a> Parse<'a> for BatSection<'a> {
             });
         }
 
-        let section_length = ((bytes[1] & 0x0F) as u16) << 8 | bytes[2] as u16;
+        let section_length = super::section_length_of(bytes);
         let total = super::check_section_length(
             bytes.len(),
             MIN_HEADER_LEN,
-            section_length as usize,
+            section_length,
             MIN_SECTION_LEN,
         )?;
 
@@ -121,13 +121,13 @@ impl<'a> Parse<'a> for BatSection<'a> {
         // bytes[6]    = section_number
         // bytes[7]    = last_section_number
         let bouquet_id = u16::from_be_bytes(*bytes[3..].first_chunk::<2>().unwrap());
-        let version_number = (bytes[5] >> 1) & 0x1F;
-        let current_next_indicator = (bytes[5] & 0x01) != 0;
+        let version_number = super::version_number_of(bytes[5]);
+        let current_next_indicator = super::current_next_of(bytes[5]);
         let section_number = bytes[6];
         let last_section_number = bytes[7];
 
         // bytes[8..10] = reserved(4) | bouquet_descriptors_length(12)
-        let bouquet_descriptors_length = (((bytes[8] & 0x0F) as usize) << 8) | bytes[9] as usize;
+        let bouquet_descriptors_length = super::desc_loop_len_of(bytes[8], bytes[9]);
 
         let bouquet_desc_start = MIN_HEADER_LEN + EXTENSION_HEADER_LEN + POST_EXTENSION_LEN;
         let bouquet_desc_end = bouquet_desc_start + bouquet_descriptors_length;
@@ -155,7 +155,7 @@ impl<'a> Parse<'a> for BatSection<'a> {
         }
 
         let transport_stream_loop_length =
-            (((bytes[ts_loop_start] & 0x0F) as usize) << 8) | bytes[ts_loop_start + 1] as usize;
+            super::desc_loop_len_of(bytes[ts_loop_start], bytes[ts_loop_start + 1]);
 
         let loop_end = ts_loop_start + 2 + transport_stream_loop_length;
         if loop_end > ts_loop_end {
@@ -180,7 +180,7 @@ impl<'a> Parse<'a> for BatSection<'a> {
             let transport_stream_id = u16::from_be_bytes(*hdr[0..].first_chunk::<2>().unwrap());
             let original_network_id = u16::from_be_bytes(*hdr[2..].first_chunk::<2>().unwrap());
             let transport_descriptors_length =
-                (((bytes[pos + 4] & 0x0F) as usize) << 8) | bytes[pos + 5] as usize;
+                super::desc_loop_len_of(bytes[pos + 4], bytes[pos + 5]);
 
             let desc_start = pos + TS_HEADER_LEN;
             let desc_end = desc_start + transport_descriptors_length;
@@ -251,7 +251,7 @@ impl Serialize for BatSection<'_> {
 
         // Extension header.
         buf[3..5].copy_from_slice(&self.bouquet_id.to_be_bytes());
-        buf[5] = 0xC0 | ((self.version_number & 0x1F) << 1) | u8::from(self.current_next_indicator);
+        buf[5] = super::version_byte(self.version_number, self.current_next_indicator);
         buf[6] = self.section_number;
         buf[7] = self.last_section_number;
 
@@ -261,8 +261,7 @@ impl Serialize for BatSection<'_> {
             12,
             "bouquet_descriptors_length",
         )?;
-        buf[8] = 0xF0 | ((bdl >> 8) as u8);
-        buf[9] = bdl as u8;
+        super::write_desc_loop_len(&mut buf[8..10], bdl as usize)?;
 
         let bouquet_desc_start = MIN_HEADER_LEN + EXTENSION_HEADER_LEN + POST_EXTENSION_LEN;
         buf[bouquet_desc_start..bouquet_desc_start + self.bouquet_descriptors.len()]
@@ -274,8 +273,10 @@ impl Serialize for BatSection<'_> {
             12,
             "transport_stream_loop_length",
         )?;
-        buf[ts_loop_start] = 0xF0 | ((ts_loop_length >> 8) as u8);
-        buf[ts_loop_start + 1] = ts_loop_length as u8;
+        super::write_desc_loop_len(
+            &mut buf[ts_loop_start..ts_loop_start + 2],
+            ts_loop_length as usize,
+        )?;
 
         let mut pos = ts_loop_start + 2;
         for ts in &self.transport_streams {
@@ -286,8 +287,7 @@ impl Serialize for BatSection<'_> {
                 12,
                 "transport_descriptors_length",
             )?;
-            buf[pos + 4] = 0xF0 | ((tdl >> 8) as u8);
-            buf[pos + 5] = tdl as u8;
+            super::write_desc_loop_len(&mut buf[pos + 4..pos + 6], tdl as usize)?;
             let desc_start = pos + TS_HEADER_LEN;
             buf[desc_start..desc_start + ts.descriptors.len()]
                 .copy_from_slice(ts.descriptors.raw());

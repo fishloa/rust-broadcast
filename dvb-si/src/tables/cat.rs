@@ -111,19 +111,19 @@ impl<'a> Parse<'a> for CatSection<'a> {
             });
         }
 
-        let section_length = (((bytes[1] & 0x0F) as u16) << 8) | bytes[2] as u16;
+        let section_length = super::section_length_of(bytes);
         let total = super::check_section_length(
             bytes.len(),
             MIN_HEADER_LEN,
-            section_length as usize,
+            section_length,
             MIN_SECTION_LEN,
         )?;
 
         // Skip the 2-byte reserved + extension (bytes 3-4), read version+cni at 5,
         // section/last_section at 6,7. CAT's "table_id_extension" (bytes 3-4) is
         // reserved per spec — we don't expose it.
-        let version_number = (bytes[5] >> 1) & 0x1F;
-        let current_next_indicator = (bytes[5] & 0x01) != 0;
+        let version_number = super::version_number_of(bytes[5]);
+        let current_next_indicator = super::current_next_of(bytes[5]);
         let section_number = bytes[6];
         let last_section_number = bytes[7];
 
@@ -163,7 +163,7 @@ impl Serialize for CatSection<'_> {
         // table_id_extension is reserved for the CAT — conventionally 0xFFFF.
         buf[3] = 0xFF;
         buf[4] = 0xFF;
-        buf[5] = 0xC0 | ((self.version_number & 0x1F) << 1) | u8::from(self.current_next_indicator);
+        buf[5] = super::version_byte(self.version_number, self.current_next_indicator);
         buf[6] = self.section_number;
         buf[7] = self.last_section_number;
         let desc_start = MIN_HEADER_LEN + EXTENSION_HEADER_LEN;
@@ -190,11 +190,14 @@ mod tests {
             (EXTENSION_HEADER_LEN as u16) + descriptors.len() as u16 + (CRC_LEN as u16);
         let mut v = Vec::new();
         v.push(TABLE_ID);
-        v.push(super::super::SECTION_B1_FLAGS_PSI | ((section_length >> 8) as u8 & 0x0F));
-        v.push((section_length & 0xFF) as u8);
+        crate::tables::push_section_header(
+            &mut v,
+            crate::tables::SECTION_B1_FLAGS_PSI,
+            section_length as usize,
+        );
         // table_id_extension (reserved for CAT) — typically 0xFFFF in the wild.
         v.extend_from_slice(&[0xFF, 0xFF]);
-        v.push(0xC0 | ((version & 0x1F) << 1) | 0x01); // version + cni=1
+        v.push(crate::tables::version_byte(version, true));
         v.push(0x00); // section_number
         v.push(0x00); // last_section_number
         v.extend_from_slice(descriptors);

@@ -13,6 +13,18 @@ pub const TAG: u8 = 0x04;
 const HEADER_LEN: usize = 2;
 const BODY_LEN: u8 = 4;
 
+/// `hierarchy_type(4)` field mask inside the scalability-flags byte: bits
+/// `[3:0]`; masks the `Reserved11To14(v)` payload so it cannot bleed into
+/// the four scalability flags (r03-W2).
+const HIERARCHY_TYPE_MASK: u8 = 0x0F;
+/// The 2 wire bits above the 6-bit `hierarchy_layer_index`/
+/// `hierarchy_channel`. DVB practice (ETSI EN 300 468 §6.1, mirroring the
+/// `reserved_future_use` = '1's convention used for `ca_descriptor` and
+/// `ac3_descriptor`) emits them as '1's (r03-W7).
+const INDEX_RESERVED_BITS: u8 = 0xC0;
+/// `reserved(1)` between tref_present_flag and the embedded layer index.
+const EMBEDDED_RESERVED_BIT: u8 = 0x40;
+
 /// Hierarchy type — ISO/IEC 13818-1 Table 2-50.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
@@ -211,11 +223,12 @@ impl Serialize for HierarchyDescriptor {
             | ((self.no_temporal_scalability_flag as u8) << 6)
             | ((self.no_spatial_scalability_flag as u8) << 5)
             | ((self.no_quality_scalability_flag as u8) << 4)
-            | self.hierarchy_type.to_u8();
-        buf[HEADER_LEN + 1] = self.hierarchy_layer_index & 0x3F;
-        buf[HEADER_LEN + 2] =
-            ((self.tref_present_flag as u8) << 7) | (self.hierarchy_embedded_layer_index & 0x3F);
-        buf[HEADER_LEN + 3] = self.hierarchy_channel & 0x3F;
+            | (self.hierarchy_type.to_u8() & HIERARCHY_TYPE_MASK);
+        buf[HEADER_LEN + 1] = INDEX_RESERVED_BITS | (self.hierarchy_layer_index & 0x3F);
+        buf[HEADER_LEN + 2] = ((self.tref_present_flag as u8) << 7)
+            | EMBEDDED_RESERVED_BIT
+            | (self.hierarchy_embedded_layer_index & 0x3F);
+        buf[HEADER_LEN + 3] = INDEX_RESERVED_BITS | (self.hierarchy_channel & 0x3F);
         Ok(len)
     }
 }

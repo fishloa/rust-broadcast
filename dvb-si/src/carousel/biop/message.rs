@@ -20,8 +20,9 @@ use alloc::vec::Vec;
 use super::{
     BINDING_NCONTEXT, BINDING_NOBJECT, BIOP_MAGIC, BIOP_VERSION_MAJOR, BIOP_VERSION_MINOR,
     BYTE_ORDER_BIG_ENDIAN, COMPRESSED_MODULE_DESCRIPTOR_TAG,
-    ior::{Ior, NameComponent},
+    ior::{Ior, NameComponent, Tap},
 };
+use crate::descriptors::DescriptorLoop;
 use crate::error::{Error, Result};
 use broadcast_common::{Parse, Serialize};
 
@@ -1590,9 +1591,12 @@ pub struct ModuleInfo<'a> {
     /// BIOP::Tap entries (≥1 BIOP_OBJECT_USE tap).
     #[cfg_attr(feature = "serde", serde(borrow))]
     pub taps: Vec<super::ior::Tap<'a>>,
-    /// `userInfo` descriptor loop bytes.
+    /// `userInfo` descriptor loop (r02-W12 — was a raw `&'a [u8]`; this is a
+    /// private DSM-CC BIOP tag space, not the DVB SI `descriptor_tag`
+    /// registry, so entries stay body-agnostic `(tag, body)` pairs rather
+    /// than typed-parsing through [`crate::descriptors::AnyDescriptor`]).
     #[cfg_attr(feature = "serde", serde(borrow))]
-    pub user_info: &'a [u8],
+    pub user_info: DescriptorLoop<'a>,
 }
 
 impl ModuleInfo<'_> {
@@ -1600,45 +1604,19 @@ impl ModuleInfo<'_> {
     ///
     /// Each item is `(tag: u8, data: &[u8])`.
     pub fn descriptors(&self) -> impl Iterator<Item = (u8, &[u8])> {
-        DescriptorIter {
-            data: self.user_info,
-            pos: 0,
-        }
+        self.user_info.raw_tags()
     }
 
     /// Return the `compressed_module_descriptor` (tag 0x09) from the userInfo
-    /// loop, if present.
-    pub fn compressed_module_descriptor(&self) -> Option<CompressedModuleDescriptor<'_>> {
+    /// loop, if present. `Some(Err(_))` if a matching tag's body is shorter
+    /// than the fixed `compression_method`/`original_size` fields.
+    pub fn compressed_module_descriptor(&self) -> Option<Result<CompressedModuleDescriptor<'_>>> {
         for (tag, data) in self.descriptors() {
             if tag == COMPRESSED_MODULE_DESCRIPTOR_TAG {
-                return Some(CompressedModuleDescriptor { body: data });
+                return Some(CompressedModuleDescriptor::from_body(data));
             }
         }
         None
-    }
-}
-
-struct DescriptorIter<'a> {
-    data: &'a [u8],
-    pos: usize,
-}
-
-impl<'a> Iterator for DescriptorIter<'a> {
-    type Item = (u8, &'a [u8]);
-    fn next(&mut self) -> Option<Self::Item> {
-        let end = self.data.len();
-        if self.pos + 2 > end {
-            return None;
-        }
-        let tag = self.data[self.pos];
-        let len = self.data[self.pos + 1] as usize;
-        self.pos += 2;
-        if self.pos + len > end {
-            return None;
-        }
-        let d = &self.data[self.pos..self.pos + len];
-        self.pos += len;
-        Some((tag, d))
     }
 }
 
@@ -1683,7 +1661,7 @@ impl<'a> Parse<'a> for ModuleInfo<'a> {
                 available: end - pos,
             });
         }
-        let user_info = &bytes[pos..pos + user_info_len];
+        let user_info = DescriptorLoop::new(&bytes[pos..pos + user_info_len]);
 
         Ok(ModuleInfo {
             module_timeout,
@@ -1730,15 +1708,10 @@ impl Serialize for ModuleInfo<'_> {
             let written = tap.serialize_into_buf(&mut buf[pos..])?;
             pos += written;
         }
-        if self.user_info.len() > u8::MAX as usize {
-            return Err(Error::SectionLengthOverflow {
-                declared: self.user_info.len(),
-                available: u8::MAX as usize,
-            });
-        }
-        buf[pos] = self.user_info.len() as u8;
+        let user_info_len = broadcast_common::len::fit_u8(self.user_info.len(), "UserInfoLength")?;
+        buf[pos] = user_info_len;
         pos += MODULE_USER_INFO_LEN_FIELD;
-        buf[pos..pos + self.user_info.len()].copy_from_slice(self.user_info);
+        buf[pos..pos + self.user_info.len()].copy_from_slice(self.user_info.raw());
         pos += self.user_info.len();
         Ok(pos)
     }
@@ -1747,16 +1720,47 @@ impl Serialize for ModuleInfo<'_> {
 // ── CompressedModuleDescriptor ────────────────────────────────────────────────
 
 /// A `compressed_module_descriptor` (tag 0x09) found in a `ModuleInfo` userInfo loop.
-/// TR 101 202 §4.6.6.10.
+/// EN 301 192 §10.2.11 Table 59 / TR 101 202 §4.6.6.10.
 ///
-/// The body bytes are the zlib-encoded module payload (RFC 1950 CMF+FLG header,
-/// DEFLATE stream, Adler-32 checksum).  Decompression requires the `flate2` feature.
+/// `zlib_data` is the zlib-encoded module payload (RFC 1950 CMF+FLG header,
+/// DEFLATE stream, Adler-32 checksum). Decompression requires the `flate2` feature
+/// (see [`decompress_zlib`]/[`decompress_zlib_bounded`], the latter usable with
+/// [`original_size`](Self::original_size) as a tighter cap than
+/// [`MAX_DECOMPRESSED_MODULE_SIZE`]).
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct CompressedModuleDescriptor<'a> {
-    /// Raw descriptor body (the zlib stream).
+    /// `compression_method` — always 0 (zlib) per the spec; carried verbatim.
+    pub compression_method: u8,
+    /// `original_size` — the module's uncompressed size in bytes.
+    pub original_size: u32,
+    /// The zlib-encoded stream (descriptor body minus the two fixed fields above).
     #[cfg_attr(feature = "serde", serde(borrow))]
-    pub body: &'a [u8],
+    pub zlib_data: &'a [u8],
+}
+
+/// Fixed-field length of a `compressed_module_descriptor` body:
+/// `compression_method`(1) + `original_size`(4), per Table 59.
+const COMPRESSED_MODULE_FIXED_LEN: usize = 5;
+
+impl<'a> CompressedModuleDescriptor<'a> {
+    /// Parse a `compressed_module_descriptor` body (the bytes after
+    /// `descriptor_tag`/`descriptor_length`, as yielded by
+    /// [`ModuleInfo::descriptors`]).
+    fn from_body(body: &'a [u8]) -> Result<Self> {
+        let (hdr, rest) = body
+            .split_first_chunk::<COMPRESSED_MODULE_FIXED_LEN>()
+            .ok_or(Error::BufferTooShort {
+                need: COMPRESSED_MODULE_FIXED_LEN,
+                have: body.len(),
+                what: "compressed_module_descriptor fixed fields",
+            })?;
+        Ok(CompressedModuleDescriptor {
+            compression_method: hdr[0],
+            original_size: u32::from_be_bytes([hdr[1], hdr[2], hdr[3], hdr[4]]),
+            zlib_data: rest,
+        })
+    }
 }
 
 /// Ceiling on the decompressed size of a `compressed_module_descriptor`
@@ -1831,10 +1835,10 @@ pub fn decompress_zlib(data: &[u8]) -> Result<Vec<u8>> {
 pub struct ServiceGatewayInfo<'a> {
     /// IOR of the ServiceGateway object.
     pub ior: Ior<'a>,
-    /// Raw `Tap() × downloadTaps_count` bytes (count byte + tap data).
-    /// In practice `downloadTaps_count` is typically 0, making this `&[0x00]`.
+    /// Parsed `Tap() × downloadTaps_count` list (r02-W12).
+    /// In practice `downloadTaps_count` is typically 0, making this empty.
     #[cfg_attr(feature = "serde", serde(borrow))]
-    pub download_taps: &'a [u8],
+    pub download_taps: Vec<Tap<'a>>,
     /// Parsed `serviceContextList` entries.
     #[cfg_attr(feature = "serde", serde(borrow))]
     pub service_context: Vec<ServiceContext<'a>>,
@@ -1863,13 +1867,13 @@ impl<'a> ServiceGatewayInfo<'a> {
             });
         }
         let tap_count = bytes[pos] as usize;
-        let dl_taps_start = pos;
         pos += SGI_DOWNLOAD_TAPS_COUNT_FIELD;
+        let mut download_taps = Vec::with_capacity(tap_count);
         for _ in 0..tap_count {
-            let (_, next) = super::ior::Tap::parse_from(bytes, pos, end)?;
+            let (tap, next) = Tap::parse_from(bytes, pos, end)?;
+            download_taps.push(tap);
             pos = next;
         }
-        let download_taps = &bytes[dl_taps_start..pos];
 
         // serviceContextList (raw)
         let (service_context, next) = parse_service_context_list(bytes, pos, end)?;
@@ -1921,7 +1925,12 @@ impl<'a> Serialize for ServiceGatewayInfo<'a> {
 
     fn serialized_len(&self) -> usize {
         self.ior.serialized_len()
-            + self.download_taps.len()
+            + SGI_DOWNLOAD_TAPS_COUNT_FIELD
+            + self
+                .download_taps
+                .iter()
+                .map(Tap::serialized_len)
+                .sum::<usize>()
             + service_context_list_len(&self.service_context)
             + SGI_USER_INFO_LEN_FIELD
             + self.user_info.len()
@@ -1936,8 +1945,11 @@ impl<'a> Serialize for ServiceGatewayInfo<'a> {
             });
         }
         let mut pos = self.ior.serialize_into(buf)?;
-        buf[pos..pos + self.download_taps.len()].copy_from_slice(self.download_taps);
-        pos += self.download_taps.len();
+        buf[pos] = broadcast_common::len::fit_u8(self.download_taps.len(), "downloadTaps_count")?;
+        pos += SGI_DOWNLOAD_TAPS_COUNT_FIELD;
+        for tap in &self.download_taps {
+            pos += tap.serialize_into_buf(&mut buf[pos..])?;
+        }
         pos += write_service_context_list(&mut buf[pos..], &self.service_context)?;
         let user_info_len = broadcast_common::len::fit_u16(
             self.user_info.len(),
@@ -2046,7 +2058,7 @@ mod tests {
                 association_tag: 0x0042,
                 selector: &[],
             }],
-            user_info: &[],
+            user_info: DescriptorLoop::new(&[]),
         };
         let mut buf = vec![0u8; info.serialized_len()];
         info.serialize_into(&mut buf).unwrap();
@@ -2086,7 +2098,7 @@ mod tests {
                 association_tag: 0x0047,
                 selector: &[],
             }],
-            user_info: &[],
+            user_info: DescriptorLoop::new(&[]),
         };
         let mut buf = vec![0u8; info.serialized_len()];
         info.serialize_into(&mut buf).unwrap();
@@ -2166,7 +2178,7 @@ mod tests {
             .collect();
         let sgi = ServiceGatewayInfo {
             ior,
-            download_taps: &[0x00],
+            download_taps: Vec::new(),
             service_context,
             user_info: &[],
         };
@@ -2196,6 +2208,59 @@ mod tests {
 
         let decompressed = decompress_zlib(&compressed).unwrap();
         assert_eq!(decompressed.as_slice(), original.as_slice());
+    }
+
+    /// Regression for r02-W12: `CompressedModuleDescriptor` used to expose a
+    /// single raw `body: &[u8]` field, so `compression_method`/`original_size`
+    /// (Table 59) were left for the caller to hand-slice out of the front of
+    /// the zlib stream — a caller could easily feed the whole body, header
+    /// included, straight into a zlib decoder. `from_body` now splits them.
+    #[test]
+    fn compressed_module_descriptor_splits_fixed_fields_from_zlib_data() {
+        #[rustfmt::skip]
+        let body: &[u8] = &[
+            0x00,                    // compression_method = 0 (zlib)
+            0x00, 0x00, 0x00, 0x2A,  // original_size = 42
+            0x78, 0x9C, 0xAB, 0xCD,  // (stand-in zlib bytes)
+        ];
+        let cmd = CompressedModuleDescriptor::from_body(body).unwrap();
+        assert_eq!(cmd.compression_method, 0);
+        assert_eq!(cmd.original_size, 42);
+        assert_eq!(cmd.zlib_data, &[0x78, 0x9C, 0xAB, 0xCD]);
+    }
+
+    /// A body shorter than the fixed `compression_method`/`original_size`
+    /// fields is rejected instead of panicking on the slice split.
+    #[test]
+    fn compressed_module_descriptor_short_body_errors() {
+        let body: &[u8] = &[0x00, 0x00, 0x00];
+        assert!(matches!(
+            CompressedModuleDescriptor::from_body(body),
+            Err(Error::BufferTooShort { .. })
+        ));
+    }
+
+    /// `ModuleInfo::compressed_module_descriptor` surfaces the typed fields
+    /// through the userInfo descriptor loop, and `Some(Err(_))` (not a panic
+    /// or silent `None`) for a too-short body under a matching tag.
+    #[test]
+    fn module_info_compressed_module_descriptor_found_and_typed() {
+        #[rustfmt::skip]
+        let user_info: &[u8] = &[
+            COMPRESSED_MODULE_DESCRIPTOR_TAG, 0x05, // tag, length=5
+            0x00,                   // compression_method
+            0x00, 0x00, 0x01, 0x00, // original_size = 256
+        ];
+        let info = ModuleInfo {
+            module_timeout: 0,
+            block_timeout: 0,
+            min_block_time: 0,
+            taps: vec![],
+            user_info: DescriptorLoop::new(user_info),
+        };
+        let cmd = info.compressed_module_descriptor().unwrap().unwrap();
+        assert_eq!(cmd.original_size, 256);
+        assert!(cmd.zlib_data.is_empty());
     }
 
     #[cfg(feature = "flate2")]

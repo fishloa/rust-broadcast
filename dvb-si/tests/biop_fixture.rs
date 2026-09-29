@@ -16,6 +16,7 @@ use dvb_si::carousel::biop::{
     DirectoryMessage, FileMessage, Ior, ModuleInfo, NameComponent, ObjectKind, ObjectLocation,
     ServiceGatewayInfo, TaggedProfile, Tap,
 };
+use dvb_si::descriptors::DescriptorLoop;
 use dvb_si::tables::dsmcc::DsmccSection;
 use mpeg_ts::ts::{SectionReassembler, TS_PACKET_SIZE, TsPacket};
 
@@ -271,7 +272,7 @@ fn module_info_round_trip() {
             association_tag: 0x0042,
             selector: &[],
         }],
-        user_info: &[],
+        user_info: DescriptorLoop::new(&[]),
     };
     let mut buf = vec![0u8; info.serialized_len()];
     info.serialize_into(&mut buf).unwrap();

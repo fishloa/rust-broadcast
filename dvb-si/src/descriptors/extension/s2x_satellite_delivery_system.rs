@@ -129,10 +129,19 @@ broadcast_common::impl_spec_display!(TsGsS2XMode, Reserved);
 
 // Receiver profile bit flags (additive — field stays raw u8).
 const RP_BROADCAST: u8 = 0x01;
+/// `scrambling_sequence_index` is an 18-bit field.
+const SCRAMBLING_INDEX_MAX: u32 = 0x0003_FFFF;
 const RP_INTERACTIVE: u8 = 0x02;
 const RP_DSNG: u8 = 0x04;
 const RP_PROFESSIONAL: u8 = 0x08;
 const RP_VL_SNR: u8 = 0x10;
+/// `receiver_profiles(5)` raw field width (Table 141) — masked at the shift
+/// during serialize so a wider value cannot bleed into `s2x_mode` (r03-W2).
+const RECEIVER_PROFILES_MASK: u8 = 0x1F;
+/// `s2x_mode(2)` value mask (Table 142).
+const S2X_MODE_VALUE_MASK: u8 = 0x03;
+/// `ts_gs_s2x_mode(2)` value mask (Table 143).
+const TSGS_S2X_MODE_VALUE_MASK: u8 = 0x03;
 
 /// A single channel-bond entry (Table 140 inner `for` loop).
 ///
@@ -518,13 +527,23 @@ impl Serialize for S2XSatelliteDeliverySystem<'_> {
                 have: buf.len(),
             });
         }
-        buf[0] = self.receiver_profiles << 3;
-        buf[1] = ((self.s2x_mode.to_u8() & 0x03) << 6)
+        // `receiver_profiles` is a raw 5-bit field and `ts_gs_s2x_mode` a raw
+        // 2-bit field; mask at the shift so high bits cannot bleed (r03-W2).
+        buf[0] = (self.receiver_profiles & RECEIVER_PROFILES_MASK) << 3;
+        buf[1] = ((self.s2x_mode.to_u8() & S2X_MODE_VALUE_MASK) << 6)
             | (u8::from(self.scrambling_sequence_selector) << 5)
-            | (self.ts_gs_s2x_mode.to_u8() & 0x03);
+            | (self.ts_gs_s2x_mode.to_u8() & TSGS_S2X_MODE_VALUE_MASK);
         let mut p = 2;
         if self.scrambling_sequence_selector {
-            let idx = self.scrambling_sequence_index.unwrap_or(0) & 0x3FFFF;
+            // The selector reserves 18 wire bits; fabricating 0 would invent
+            // an index (r03-W5).
+            let idx = self
+                .scrambling_sequence_index
+                .ok_or(Error::ValueOutOfRange {
+                    field: "scrambling_sequence_index",
+                    reason: "required when scrambling_sequence_selector is set",
+                })?
+                & SCRAMBLING_INDEX_MAX;
             buf[p] = (idx >> 16) as u8 & 0x03;
             buf[p + 1] = (idx >> 8) as u8;
             buf[p + 2] = idx as u8;
@@ -822,5 +841,36 @@ mod tests {
             &bytes[..],
             "S2X mode 3 byte-exact re-serialize failed"
         );
+    }
+    #[test]
+    fn serialize_rejects_index_missing_when_selector_set() {
+        // r03-W5: the selector used to fabricate a 0 scrambling index via
+        // `unwrap_or` instead of erroring.
+        let d = S2XSatelliteDeliverySystem {
+            receiver_profiles: 0,
+            s2x_mode: S2XMode::from_u8(0),
+            scrambling_sequence_selector: true,
+            ts_gs_s2x_mode: TsGsS2XMode::from_u8(0),
+            scrambling_sequence_index: None,
+            frequency: 0,
+            orbital_position: 0,
+            west_east_flag: false,
+            polarization: Polarization::from_u8(0),
+            multiple_input_stream_flag: false,
+            roll_off: RollOff::from_u8(0),
+            symbol_rate: 0,
+            input_stream_identifier: None,
+            timeslice_number: None,
+            channel_bonds: vec![],
+            reserved_tail: &[],
+        };
+        let mut buf = vec![0u8; d.serialized_len()];
+        assert!(matches!(
+            d.serialize_into(&mut buf).unwrap_err(),
+            Error::ValueOutOfRange {
+                field: "scrambling_sequence_index",
+                ..
+            }
+        ));
     }
 }

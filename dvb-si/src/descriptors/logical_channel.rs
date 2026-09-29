@@ -16,6 +16,8 @@ const ENTRY_LEN: usize = 4;
 const VISIBLE_MASK: u8 = 0x80;
 const RESERVED_BITS_MASK: u8 = 0x7C;
 const LCN_HI_MASK: u8 = 0x03;
+/// `logical_channel_number` is 10 bits (0..=1023).
+const LCN_BITS: u32 = 10;
 
 /// One LCN assignment.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -93,11 +95,14 @@ impl Serialize for LogicalChannelDescriptor {
             } else {
                 0
             };
-            let flags = visible_byte
-                | RESERVED_BITS_MASK
-                | ((entry.logical_channel_number >> 8) as u8 & LCN_HI_MASK);
+            let lcn = broadcast_common::len::fit_bits(
+                u64::from(entry.logical_channel_number),
+                LCN_BITS,
+                "logical_channel_number",
+            )? as u16;
+            let flags = visible_byte | RESERVED_BITS_MASK | ((lcn >> 8) as u8 & LCN_HI_MASK);
             buf[offset + 2] = flags;
-            buf[offset + 3] = (entry.logical_channel_number & 0xFF) as u8;
+            buf[offset + 3] = (lcn & 0xFF) as u8;
             offset += ENTRY_LEN;
         }
         Ok(len)
@@ -214,5 +219,22 @@ mod tests {
         d.serialize_into(&mut buf).unwrap();
         let re = LogicalChannelDescriptor::parse(&buf).unwrap();
         assert_eq!(d, re);
+    }
+
+    #[test]
+    fn serialize_rejects_over_10bit_lcn() {
+        // Pre-fix `>> 8 as u8 & 0x03` silently clipped bits 10..16 (r03-W3).
+        let d = LogicalChannelDescriptor {
+            entries: alloc::vec![LogicalChannelEntry {
+                service_id: 1,
+                visible_service: true,
+                logical_channel_number: 1024,
+            }],
+        };
+        let mut buf = vec![0u8; d.serialized_len()];
+        assert!(matches!(
+            d.serialize_into(&mut buf).unwrap_err(),
+            Error::FieldOverflow(_)
+        ));
     }
 }

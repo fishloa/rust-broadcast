@@ -279,8 +279,16 @@ fn serialize_modulation(m: Modulation) -> u8 {
 }
 
 fn serialize_fec_inner(fec: FecInner) -> u8 {
-    fec.to_u8()
+    // `Reserved(v)` carries a raw byte; the wire field is 4 bits, so mask at
+    // the shift — a value like 0x3F must not bleed into
+    // `symbol_rate_bcd`'s low nibble (r03-W2).
+    fec.to_u8() & FEC_INNER_MASK
 }
+
+/// The 4-bit `fec_inner` field mask (ISO/IEC 13818-1 Table 2-39, low nibble
+/// of byte 12); also bounds what `FecInner::Reserved(v)` may emit without
+/// bleeding into `symbol_rate_bcd`'s low nibble.
+const FEC_INNER_MASK: u8 = 0x0F;
 
 impl<'a> Parse<'a> for CableDeliverySystemDescriptor {
     type Error = crate::error::Error;
@@ -525,5 +533,25 @@ mod tests {
             let v = serialize_fec_inner(fec_inner);
             assert_eq!(parse_fec_inner(v), fec_inner);
         }
+    }
+    #[test]
+    fn wide_reserved_fec_inner_does_not_bleed_into_symbol_rate() {
+        // `FecInner::Reserved` stores a raw `u8` but the wire field is the low
+        // nibble of the last body byte; pre-fix the high nibble of e.g. 0x3F
+        // bled into `symbol_rate_bcd`'s low nibble (r03-W2).
+        let d = CableDeliverySystemDescriptor {
+            frequency_bcd: 0x0001_2345,
+            fec_outer: FecOuter::NoOuterFec,
+            modulation: Modulation::Qam256,
+            symbol_rate_bcd: 0x0069_0000,
+            fec_inner: FecInner::Reserved(0x3E),
+        };
+        let mut buf = vec![0u8; d.serialized_len()];
+        d.serialize_into(&mut buf).unwrap();
+        // Last body byte: symbol_rate low nibble (0) << 4 | masked fec_inner.
+        assert_eq!(buf[buf.len() - 1], 0x0E);
+        let parsed = CableDeliverySystemDescriptor::parse(&buf).unwrap();
+        assert_eq!(parsed.symbol_rate_bcd, d.symbol_rate_bcd);
+        assert_eq!(parsed.fec_inner, FecInner::Reserved(0x0E));
     }
 }

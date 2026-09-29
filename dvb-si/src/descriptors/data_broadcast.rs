@@ -99,6 +99,14 @@ impl<'a> Parse<'a> for DataBroadcastDescriptor<'a> {
             });
         }
         let text = DvbText::new(&body[pos..text_end]);
+        if text_end != body.len() {
+            // text_length closes the descriptor (EN 300 468 §6.2.12); trailing
+            // bytes used to be dropped on re-serialize (r03-W9).
+            return Err(Error::InvalidDescriptor {
+                tag: TAG,
+                reason: "data_broadcast_descriptor has trailing bytes after text",
+            });
+        }
 
         Ok(Self {
             data_broadcast_id,
@@ -329,5 +337,19 @@ mod tests {
         assert!(json.contains("\"component_tag\""));
         assert!(json.contains("\"eng\""));
         assert!(json.contains("\"Text\""));
+    }
+
+    #[test]
+    fn parse_rejects_trailing_bytes_after_text() {
+        let mut bytes = build(0x0001, 0x02, &[0xAA], *b"eng", b"hi");
+        // text_length closes the descriptor; a byte after it used to be
+        // dropped on re-serialize (r03-W9). Re-length the descriptor too so
+        // the header check is not what rejects it.
+        bytes.push(0xFF);
+        bytes[1] += 1;
+        assert!(matches!(
+            DataBroadcastDescriptor::parse(&bytes).unwrap_err(),
+            Error::InvalidDescriptor { tag: TAG, .. }
+        ));
     }
 }

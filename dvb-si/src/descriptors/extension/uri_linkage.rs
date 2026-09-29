@@ -159,7 +159,16 @@ impl Serialize for UriLinkage<'_> {
         let mut p = 2;
         buf[p..p + self.uri.len()].copy_from_slice(self.uri.raw());
         p += self.uri.len();
+        // The wire `uri_linkage_type` gates the polling interval; a
+        // hand-built value with the interval but no gating type would write
+        // 2 bytes the reparse can't read back (r03-W5).
         if let Some(mpi) = self.min_polling_interval {
+            if !self.uri_linkage_type.has_polling_interval() {
+                return Err(Error::ValueOutOfRange {
+                    field: "min_polling_interval",
+                    reason: "only defined for uri_linkage_type 0x00/0x01",
+                });
+            }
             buf[p..p + 2].copy_from_slice(&mpi.to_be_bytes());
             p += 2;
         }
@@ -257,5 +266,25 @@ mod tests {
         assert!(!UriLinkageType::MaterialResolutionServer.has_polling_interval());
         assert!(!UriLinkageType::DvbIServiceList.has_polling_interval());
         assert!(!UriLinkageType::Other(0x42).has_polling_interval());
+    }
+    #[test]
+    fn serialize_rejects_polling_interval_for_ungated_type() {
+        // r03-W5: min_polling_interval is only on the wire for types
+        // 0x00/0x01; a hand-built value for another type used to write 2
+        // unrecoverable bytes.
+        let d = UriLinkage {
+            uri_linkage_type: UriLinkageType::MaterialResolutionServer,
+            uri: crate::text::DvbText::new(b"http://x"),
+            min_polling_interval: Some(5),
+            private_data: &[],
+        };
+        let mut buf = vec![0u8; d.serialized_len()];
+        assert!(matches!(
+            d.serialize_into(&mut buf).unwrap_err(),
+            Error::ValueOutOfRange {
+                field: "min_polling_interval",
+                ..
+            }
+        ));
     }
 }

@@ -10,6 +10,9 @@ use broadcast_common::{Parse, Serialize};
 /// Descriptor tag for AVC_video_descriptor.
 pub const TAG: u8 = 0x28;
 const HEADER_LEN: usize = 2;
+/// `reserved(5)` tail of body byte 3 — ISO/IEC 14496-15/13818-1:
+/// '1's (r03-W7).
+const B3_RESERVED_BITS: u8 = 0x1F;
 const BODY_LEN: u8 = 4;
 
 /// AVC Video Descriptor.
@@ -53,10 +56,14 @@ impl<'a> Parse<'a> for AvcVideoDescriptor {
             "AvcVideoDescriptor",
             "unexpected tag for AVC_video_descriptor",
         )?;
-        if body.len() < (BODY_LEN as usize) {
+        if body.len() != (BODY_LEN as usize) {
+            // Table 2-105 fixes the body at 4 bytes. A longer body used to be
+            // accepted and its trailing bytes silently dropped on re-serialize,
+            // so a non-conformant stream did not round-trip byte-identically
+            // (r03-W9).
             return Err(Error::InvalidDescriptor {
                 tag: TAG,
-                reason: "AVC_video_descriptor too short",
+                reason: "AVC_video_descriptor body length must equal 4",
             });
         }
         let b0 = body[0]; // profile_idc
@@ -109,7 +116,8 @@ impl Serialize for AvcVideoDescriptor {
         buf[HEADER_LEN + 2] = self.level_idc;
         buf[HEADER_LEN + 3] = ((self.avc_still_present as u8) << 7)
             | ((self.avc_24_hour_picture_flag as u8) << 6)
-            | ((self.frame_packing_sei_not_present_flag as u8) << 5);
+            | ((self.frame_packing_sei_not_present_flag as u8) << 5)
+            | B3_RESERVED_BITS;
         Ok(len)
     }
 }
@@ -156,6 +164,14 @@ mod tests {
         // length=2 with a present 2-byte body (< BODY_LEN=4) hits the
         // descriptor's own length check → InvalidDescriptor.
         let err = AvcVideoDescriptor::parse(&[TAG, 2, 0x00, 0x00]).unwrap_err();
+        assert!(matches!(err, Error::InvalidDescriptor { tag: TAG, .. }));
+    }
+
+    #[test]
+    fn parse_rejects_trailing_bytes() {
+        // Table 2-105 fixes the body at 4 bytes; the 5th byte has no wire
+        // meaning and used to be dropped on re-serialize (r03-W9).
+        let err = AvcVideoDescriptor::parse(&[TAG, 5, 0x00, 0x00, 0x00, 0x00, 0xFF]).unwrap_err();
         assert!(matches!(err, Error::InvalidDescriptor { tag: TAG, .. }));
     }
 }

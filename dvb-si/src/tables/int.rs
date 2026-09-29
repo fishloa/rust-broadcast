@@ -82,26 +82,12 @@ const OFF_PLATFORM_ID: usize = 8;
 const OFF_PROCESSING_ORDER: usize = 11;
 const OFF_PLATFORM_DESC_LEN: usize = 12;
 
-const RESERVED_NIBBLE: u8 = 0xF0;
-
 /// A target/operational descriptor-loop pair in the INT body loop
 /// (Tables 17/18, §8.4.4.1).
-#[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize))]
-pub struct IntLoopEntry<'a> {
-    /// Target descriptor loop — raw descriptor bytes (after the 12-bit length
-    /// field).  Serializes as the typed descriptor sequence; `.raw()` yields the
-    /// wire bytes.
-    pub target_descriptors: DescriptorLoop<'a>,
-    /// Operational descriptor loop — raw descriptor bytes (after the 12-bit
-    /// length field).  Serializes as the typed descriptor sequence; `.raw()`
-    /// yields the wire bytes.
-    pub operational_descriptors: DescriptorLoop<'a>,
-}
-
-fn int_loop_entry_serialized_len(e: &IntLoopEntry) -> usize {
-    LOOP_LEN_FIELD + e.target_descriptors.len() + LOOP_LEN_FIELD + e.operational_descriptors.len()
-}
+///
+/// Shared with the UNT platform loop (r02-W22); kept as a local alias so
+/// each spec's name remains discoverable from its own table module.
+pub type IntLoopEntry<'a> = crate::tables::TargetOperationalLoop<'a>;
 
 /// IP/MAC Notification Table (INT), ETSI EN 301 192 v1.7.1 §8.4, Table 13.
 ///
@@ -154,7 +140,7 @@ impl<'a> Parse<'a> for IntSection<'a> {
             });
         }
 
-        let section_length = (((bytes[1] & 0x0F) as usize) << 8) | bytes[2] as usize;
+        let section_length = super::section_length_of(bytes);
         let total = super::check_section_length(
             bytes.len(),
             OUTER_HEADER_LEN,
@@ -165,8 +151,8 @@ impl<'a> Parse<'a> for IntSection<'a> {
         let action_type = IntActionType::from_u8(bytes[OFF_ACTION_TYPE]);
         let platform_id_hash = bytes[OFF_PLATFORM_ID_HASH];
         let version_byte = bytes[OFF_VERSION_BYTE];
-        let version_number = (version_byte >> 1) & 0x1F;
-        let current_next_indicator = (version_byte & 0x01) != 0;
+        let version_number = super::version_number_of(version_byte);
+        let current_next_indicator = super::current_next_of(version_byte);
         let section_number = bytes[OFF_SECTION_NUMBER];
         let last_section_number = bytes[OFF_LAST_SECTION_NUMBER];
         let platform_id = ((bytes[OFF_PLATFORM_ID] as u32) << 16)
@@ -174,8 +160,10 @@ impl<'a> Parse<'a> for IntSection<'a> {
             | bytes[OFF_PLATFORM_ID + 2] as u32;
         let processing_order = bytes[OFF_PROCESSING_ORDER];
 
-        let plat_desc_len = (((bytes[OFF_PLATFORM_DESC_LEN] & 0x0F) as usize) << 8)
-            | bytes[OFF_PLATFORM_DESC_LEN + 1] as usize;
+        let plat_desc_len = super::desc_loop_len_of(
+            bytes[OFF_PLATFORM_DESC_LEN],
+            bytes[OFF_PLATFORM_DESC_LEN + 1],
+        );
         let plat_desc_start = OFF_PLATFORM_DESC_LEN + LOOP_LEN_FIELD;
         let plat_desc_end = plat_desc_start + plat_desc_len;
         if plat_desc_end > total - CRC_LEN {
@@ -197,7 +185,7 @@ impl<'a> Parse<'a> for IntSection<'a> {
                     what: "IntSection target_descriptor_loop length",
                 });
             }
-            let target_len = (((bytes[pos] & 0x0F) as usize) << 8) | bytes[pos + 1] as usize;
+            let target_len = super::desc_loop_len_of(bytes[pos], bytes[pos + 1]);
             let target_start = pos + LOOP_LEN_FIELD;
             let target_end = target_start + target_len;
             if target_end > payload_end {
@@ -216,7 +204,7 @@ impl<'a> Parse<'a> for IntSection<'a> {
                     what: "IntSection operational_descriptor_loop length",
                 });
             }
-            let op_len = (((bytes[pos] & 0x0F) as usize) << 8) | bytes[pos + 1] as usize;
+            let op_len = super::desc_loop_len_of(bytes[pos], bytes[pos + 1]);
             let op_start = pos + LOOP_LEN_FIELD;
             let op_end = op_start + op_len;
             if op_end > payload_end {
@@ -260,7 +248,7 @@ impl Serialize for IntSection<'_> {
             + self
                 .loops
                 .iter()
-                .map(int_loop_entry_serialized_len)
+                .map(crate::tables::TargetOperationalLoop::serialized_len)
                 .sum::<usize>()
             + CRC_LEN
     }
@@ -281,7 +269,7 @@ impl Serialize for IntSection<'_> {
         buf[OFF_ACTION_TYPE] = self.action_type.to_u8();
         buf[OFF_PLATFORM_ID_HASH] = self.platform_id_hash;
         buf[OFF_VERSION_BYTE] =
-            0xC0 | ((self.version_number & 0x1F) << 1) | u8::from(self.current_next_indicator);
+            super::version_byte(self.version_number, self.current_next_indicator);
         buf[OFF_SECTION_NUMBER] = self.section_number;
         buf[OFF_LAST_SECTION_NUMBER] = self.last_section_number;
         buf[OFF_PLATFORM_ID] = ((self.platform_id >> 16) & 0xFF) as u8;
@@ -294,8 +282,10 @@ impl Serialize for IntSection<'_> {
             12,
             "platform_descriptors_loop_length",
         )?;
-        buf[OFF_PLATFORM_DESC_LEN] = RESERVED_NIBBLE | ((pdl >> 8) as u8);
-        buf[OFF_PLATFORM_DESC_LEN + 1] = pdl as u8;
+        super::write_desc_loop_len(
+            &mut buf[OFF_PLATFORM_DESC_LEN..OFF_PLATFORM_DESC_LEN + 2],
+            pdl as usize,
+        )?;
 
         let plat_start = OFF_PLATFORM_DESC_LEN + LOOP_LEN_FIELD;
         let plat_end = plat_start + self.platform_descriptors.len();
@@ -308,8 +298,7 @@ impl Serialize for IntSection<'_> {
                 12,
                 "target_descriptor_loop_length",
             )?;
-            buf[pos] = RESERVED_NIBBLE | ((tl >> 8) as u8);
-            buf[pos + 1] = tl as u8;
+            super::write_desc_loop_len(&mut buf[pos..pos + 2], tl as usize)?;
             pos += LOOP_LEN_FIELD;
             buf[pos..pos + entry.target_descriptors.len()]
                 .copy_from_slice(entry.target_descriptors.raw());
@@ -320,8 +309,7 @@ impl Serialize for IntSection<'_> {
                 12,
                 "operational_descriptor_loop_length",
             )?;
-            buf[pos] = RESERVED_NIBBLE | ((ol >> 8) as u8);
-            buf[pos + 1] = ol as u8;
+            super::write_desc_loop_len(&mut buf[pos..pos + 2], ol as usize)?;
             pos += LOOP_LEN_FIELD;
             buf[pos..pos + entry.operational_descriptors.len()]
                 .copy_from_slice(entry.operational_descriptors.raw());

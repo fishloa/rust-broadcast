@@ -561,6 +561,31 @@ impl ShTransmissionMode {
 broadcast_common::impl_spec_display!(ShTransmissionMode, Reserved);
 
 // ---------------------------------------------------------------------------
+//  Sub-byte field masks (r03-W2)
+// ---------------------------------------------------------------------------
+//
+// Every `…::Reserved(v)` above stores a raw `u8`, but its wire field is 2–5
+// bits. Mask at the shift when composing a byte so a user-constructed wide
+// `Reserved` payload cannot bleed into the neighbouring field.
+
+/// `diversity_mode(4)` in the selector byte (Table 120).
+const DIVERSITY_MODE_VALUE_MASK: u8 = 0x0F;
+/// Low-nibble reserved bits of the selector byte (Table 120).
+const DIVERSITY_RESERVED_LOW_NIBBLE: u8 = 0x0F;
+/// `polarization(2)` (Table 123).
+const POLARIZATION_VALUE_MASK: u8 = 0x03;
+/// `bandwidth(3)` (Table 128).
+const BANDWIDTH_VALUE_MASK: u8 = 0x07;
+/// `constellation_and_hierarchy(3)` (Table 125).
+const CONSTELLATION_HIERARCHY_VALUE_MASK: u8 = 0x07;
+/// `modulation_mode(2)`.
+const MODULATION_MODE_VALUE_MASK: u8 = 0x03;
+/// `symbol_rate(5)` (Table 127, raw field).
+const SYMBOL_RATE_VALUE_MASK: u8 = 0x1F;
+/// `guard_interval(2)` / `transmission_mode(2)`.
+const GUARD_TRANSMISSION_VALUE_MASK: u8 = 0x03;
+
+// ---------------------------------------------------------------------------
 //  Structs
 // ---------------------------------------------------------------------------
 
@@ -795,7 +820,8 @@ impl Serialize for ShDeliverySystem {
                 have: buf.len(),
             });
         }
-        buf[0] = (self.diversity_mode.to_u8() << 4) | 0x0F;
+        buf[0] = ((self.diversity_mode.to_u8() & DIVERSITY_MODE_VALUE_MASK) << 4)
+            | DIVERSITY_RESERVED_LOW_NIBBLE;
         let mut p = 1;
         for m in &self.modulations {
             let modulation_type_bit = matches!(m.modulation, ShModulationMode::Ofdm { .. }) as u8;
@@ -817,11 +843,12 @@ impl Serialize for ShDeliverySystem {
                     symbol_rate,
                 } => {
                     let cr = code_rate.to_u8();
-                    buf[p] = (polarization.to_u8() << 6)
+                    buf[p] = ((polarization.to_u8() & POLARIZATION_VALUE_MASK) << 6)
                         | ((roll_off.to_u8() & 0x03) << 4)
-                        | ((modulation_mode.to_u8() & 0x03) << 2)
+                        | ((modulation_mode.to_u8() & MODULATION_MODE_VALUE_MASK) << 2)
                         | ((cr >> 2) & 0x03);
-                    buf[p + 1] = ((cr & 0x03) << 6) | ((symbol_rate & 0x1F) << 1) | 0x01;
+                    buf[p + 1] =
+                        ((cr & 0x03) << 6) | ((symbol_rate & SYMBOL_RATE_VALUE_MASK) << 1) | 0x01;
                 }
                 ShModulationMode::Ofdm {
                     bandwidth,
@@ -833,13 +860,15 @@ impl Serialize for ShDeliverySystem {
                     common_frequency,
                 } => {
                     let cr = code_rate.to_u8();
-                    buf[p] = (bandwidth.to_u8() << 5)
+                    buf[p] = ((bandwidth.to_u8() & BANDWIDTH_VALUE_MASK) << 5)
                         | (u8::from(*priority) << 4)
-                        | ((constellation_and_hierarchy.to_u8() & 0x07) << 1)
+                        | ((constellation_and_hierarchy.to_u8()
+                            & CONSTELLATION_HIERARCHY_VALUE_MASK)
+                            << 1)
                         | ((cr >> 3) & 0x01);
                     buf[p + 1] = ((cr & 0x07) << 5)
-                        | ((guard_interval.to_u8() & 0x03) << 3)
-                        | ((transmission_mode.to_u8() & 0x03) << 1)
+                        | ((guard_interval.to_u8() & GUARD_TRANSMISSION_VALUE_MASK) << 3)
+                        | ((transmission_mode.to_u8() & GUARD_TRANSMISSION_VALUE_MASK) << 1)
                         | u8::from(*common_frequency);
                 }
             }

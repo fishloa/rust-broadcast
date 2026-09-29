@@ -49,12 +49,21 @@ impl<'a> Parse<'a> for XaitLocationDescriptor {
             "XaitLocationDescriptor",
             "unexpected tag for xait_location_descriptor",
         )?;
-        let (hdr, _) = body
+        // EN 300 468 §6.2.49 fixes the body at 5 bytes; a longer body used to
+        // be accepted with its trailing bytes dropped on re-serialize
+        // (r03-W9).
+        let (hdr, rest) = body
             .split_first_chunk::<BODY_LEN>()
             .ok_or(Error::InvalidDescriptor {
                 tag: TAG,
                 reason: "xait_location_descriptor body shorter than 5 bytes",
             })?;
+        if !rest.is_empty() {
+            return Err(Error::InvalidDescriptor {
+                tag: TAG,
+                reason: "xait_location_descriptor body length must equal 5",
+            });
+        }
         let xait_original_network_id = u16::from_be_bytes([hdr[0], hdr[1]]);
         let xait_service_id = u16::from_be_bytes([hdr[2], hdr[3]]);
         let xait_version_number = (hdr[4] >> 3) & VERSION_MAX;
@@ -123,13 +132,14 @@ mod tests {
     }
 
     #[test]
-    fn parse_ignores_trailing_bytes() {
+    fn parse_rejects_trailing_bytes() {
+        // A 5-byte body is mandatory; the extra 0xFF has no wire meaning and
+        // used to be dropped on re-serialize (r03-W9).
         let bytes = [TAG, 6, 0x00, 0x01, 0x00, 0x02, 0x00, 0xFF];
-        let d = XaitLocationDescriptor::parse(&bytes).unwrap();
-        assert_eq!(d.xait_original_network_id, 0x0001);
-        assert_eq!(d.xait_service_id, 0x0002);
-        assert_eq!(d.xait_version_number, 0);
-        assert_eq!(d.xait_update_policy, 0);
+        assert!(matches!(
+            XaitLocationDescriptor::parse(&bytes).unwrap_err(),
+            Error::InvalidDescriptor { tag: TAG, .. }
+        ));
     }
 
     #[test]

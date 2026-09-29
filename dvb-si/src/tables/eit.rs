@@ -147,17 +147,17 @@ impl<'a> Parse<'a> for EitSection<'a> {
             ],
         })?;
 
-        let section_length = ((bytes[1] & 0x0F) as u16) << 8 | bytes[2] as u16;
+        let section_length = super::section_length_of(bytes);
         let total = super::check_section_length(
             bytes.len(),
             MIN_HEADER_LEN,
-            section_length as usize,
+            section_length,
             MIN_SECTION_LEN,
         )?;
 
         let service_id = u16::from_be_bytes(*bytes[3..].first_chunk::<2>().unwrap());
-        let version_number = (bytes[5] >> 1) & 0x1F;
-        let current_next_indicator = (bytes[5] & 0x01) != 0;
+        let version_number = super::version_number_of(bytes[5]);
+        let current_next_indicator = super::current_next_of(bytes[5]);
         let section_number = bytes[6];
         let last_section_number = bytes[7];
 
@@ -189,10 +189,11 @@ impl<'a> Parse<'a> for EitSection<'a> {
             ];
             let duration_raw = [bytes[pos + 7], bytes[pos + 8], bytes[pos + 9]];
             let status_and_len_hi = bytes[pos + 10];
-            let running_status = RunningStatus::from_u8((status_and_len_hi >> 5) & 0x07);
-            let free_ca_mode = (status_and_len_hi & 0x10) != 0;
+            let running_status =
+                RunningStatus::from_u8(super::running_status_of(status_and_len_hi));
+            let free_ca_mode = super::free_ca_mode_of(status_and_len_hi);
             let descriptors_loop_length =
-                (((status_and_len_hi & 0x0F) as usize) << 8) | bytes[pos + 11] as usize;
+                super::dll_from_status(status_and_len_hi, bytes[pos + 11]);
             let desc_start = pos + EVENT_HEADER_LEN;
             let desc_end = desc_start + descriptors_loop_length;
             if desc_end > events_end {
@@ -260,7 +261,7 @@ impl Serialize for EitSection<'_> {
         buf[1] = super::SECTION_B1_FLAGS_DVB;
         super::write_section_length(buf, len - MIN_HEADER_LEN)?;
         buf[3..5].copy_from_slice(&self.service_id.to_be_bytes());
-        buf[5] = 0xC0 | ((self.version_number & 0x1F) << 1) | u8::from(self.current_next_indicator);
+        buf[5] = super::version_byte(self.version_number, self.current_next_indicator);
         buf[6] = self.section_number;
         buf[7] = self.last_section_number;
         buf[8..10].copy_from_slice(&self.transport_stream_id.to_be_bytes());
@@ -278,9 +279,8 @@ impl Serialize for EitSection<'_> {
                 12,
                 "descriptors_loop_length",
             )?;
-            buf[pos + 10] = (ev.running_status.to_u8() << 5)
-                | (u8::from(ev.free_ca_mode) << 4)
-                | ((dll >> 8) as u8);
+            buf[pos + 10] =
+                super::status_byte(ev.running_status.to_u8(), ev.free_ca_mode, (dll >> 8) as u8);
             buf[pos + 11] = dll as u8;
             let desc_start = pos + EVENT_HEADER_LEN;
             buf[desc_start..desc_start + ev.descriptors.len()]
@@ -443,10 +443,13 @@ mod tests {
             (EXTENSION_HEADER_LEN + POST_EXTENSION_LEN + ev_bytes + CRC_LEN) as u16;
         let mut v = Vec::new();
         v.push(table_id);
-        v.push(super::super::SECTION_B1_FLAGS_DVB | ((section_length >> 8) as u8 & 0x0F));
-        v.push((section_length & 0xFF) as u8);
+        crate::tables::push_section_header(
+            &mut v,
+            crate::tables::SECTION_B1_FLAGS_DVB,
+            section_length as usize,
+        );
         v.extend_from_slice(&service_id.to_be_bytes());
-        v.push(0xC0 | ((version & 0x1F) << 1) | 0x01);
+        v.push(crate::tables::version_byte(version, true));
         v.push(0);
         v.push(0);
         v.extend_from_slice(&tsid.to_be_bytes());
@@ -457,9 +460,7 @@ mod tests {
             v.extend_from_slice(&eid.to_be_bytes());
             v.extend_from_slice(start);
             v.extend_from_slice(dur);
-            let dll = desc.len() as u16;
-            v.push(((*rs & 0x07) << 5) | (u8::from(*fca) << 4) | ((dll >> 8) as u8 & 0x0F));
-            v.push((dll & 0xFF) as u8);
+            crate::tables::push_status_and_len(&mut v, *rs, *fca, desc.len());
             v.extend_from_slice(desc);
         }
         v.extend_from_slice(&[0, 0, 0, 0]);
@@ -674,8 +675,11 @@ mod tests {
             (EXTENSION_HEADER_LEN + POST_EXTENSION_LEN + EVENT_HEADER_LEN + CRC_LEN) as u16;
         let mut v = Vec::new();
         v.push(TABLE_ID_PF_ACTUAL);
-        v.push(super::super::SECTION_B1_FLAGS_DVB | ((section_length >> 8) as u8 & 0x0F));
-        v.push((section_length & 0xFF) as u8);
+        crate::tables::push_section_header(
+            &mut v,
+            crate::tables::SECTION_B1_FLAGS_DVB,
+            section_length as usize,
+        );
         v.extend_from_slice(&1u16.to_be_bytes());
         v.push(0xC1);
         v.push(0);
@@ -823,8 +827,11 @@ mod tests {
             (EXTENSION_HEADER_LEN + POST_EXTENSION_LEN + EVENT_HEADER_LEN + 1 + CRC_LEN) as u16;
         let mut v = Vec::new();
         v.push(TABLE_ID_PF_ACTUAL);
-        v.push(super::super::SECTION_B1_FLAGS_DVB | ((section_length >> 8) as u8 & 0x0F));
-        v.push((section_length & 0xFF) as u8);
+        crate::tables::push_section_header(
+            &mut v,
+            crate::tables::SECTION_B1_FLAGS_DVB,
+            section_length as usize,
+        );
         v.extend_from_slice(&1u16.to_be_bytes());
         v.push(0xC1);
         v.push(0);

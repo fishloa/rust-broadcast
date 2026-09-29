@@ -103,11 +103,11 @@ impl<'a> Parse<'a> for NitSection<'a> {
             }
         };
 
-        let section_length = ((bytes[1] & 0x0F) as u16) << 8 | bytes[2] as u16;
+        let section_length = super::section_length_of(bytes);
         let total = super::check_section_length(
             bytes.len(),
             MIN_HEADER_LEN,
-            section_length as usize,
+            section_length,
             MIN_SECTION_LEN,
         )?;
 
@@ -117,13 +117,13 @@ impl<'a> Parse<'a> for NitSection<'a> {
         //   bytes[6]    = section_number
         //   bytes[7]    = last_section_number
         let network_id = u16::from_be_bytes(*bytes[3..].first_chunk::<2>().unwrap());
-        let version_number = (bytes[5] >> 1) & 0x1F;
-        let current_next_indicator = (bytes[5] & 0x01) != 0;
+        let version_number = super::version_number_of(bytes[5]);
+        let current_next_indicator = super::current_next_of(bytes[5]);
         let section_number = bytes[6];
         let last_section_number = bytes[7];
 
         // bytes[8..10] = reserved(4) | network_descriptors_length(12)
-        let network_descriptors_length = (((bytes[8] & 0x0F) as usize) << 8) | bytes[9] as usize;
+        let network_descriptors_length = super::desc_loop_len_of(bytes[8], bytes[9]);
 
         let network_desc_start = MIN_HEADER_LEN + EXTENSION_HEADER_LEN + POST_EXTENSION_LEN;
         let network_desc_end = network_desc_start + network_descriptors_length;
@@ -152,7 +152,7 @@ impl<'a> Parse<'a> for NitSection<'a> {
         }
 
         let transport_stream_loop_length =
-            (((bytes[ts_loop_start] & 0x0F) as usize) << 8) | bytes[ts_loop_start + 1] as usize;
+            super::desc_loop_len_of(bytes[ts_loop_start], bytes[ts_loop_start + 1]);
 
         let mut pos = ts_loop_start + 2;
         let loop_end = ts_loop_start + 2 + transport_stream_loop_length;
@@ -181,7 +181,7 @@ impl<'a> Parse<'a> for NitSection<'a> {
 
             // transport_descriptors_length is 12 bits: high 4 bits reserved, low 12 bits length
             let transport_descriptors_length =
-                (((bytes[pos + 4] & 0x0F) as usize) << 8) | bytes[pos + 5] as usize;
+                super::desc_loop_len_of(bytes[pos + 4], bytes[pos + 5]);
 
             let desc_start = pos + TS_HEADER_LEN;
             let desc_end = desc_start + transport_descriptors_length;
@@ -254,7 +254,7 @@ impl Serialize for NitSection<'_> {
         //   bytes[5]    = reserved | version | current_next
         //   bytes[6..8] = section_number + last_section_number
         buf[3..5].copy_from_slice(&self.network_id.to_be_bytes());
-        buf[5] = 0xC0 | ((self.version_number & 0x1F) << 1) | u8::from(self.current_next_indicator);
+        buf[5] = super::version_byte(self.version_number, self.current_next_indicator);
         buf[6] = self.section_number;
         buf[7] = self.last_section_number;
 
@@ -264,8 +264,7 @@ impl Serialize for NitSection<'_> {
             12,
             "network_descriptors_length",
         )?;
-        buf[8] = 0xF0 | ((net_dll >> 8) as u8);
-        buf[9] = net_dll as u8;
+        super::write_desc_loop_len(&mut buf[8..10], net_dll as usize)?;
 
         let net_desc_start = MIN_HEADER_LEN + EXTENSION_HEADER_LEN + POST_EXTENSION_LEN;
         buf[net_desc_start..net_desc_start + self.network_descriptors.len()]
@@ -277,8 +276,10 @@ impl Serialize for NitSection<'_> {
             12,
             "transport_stream_loop_length",
         )?;
-        buf[ts_loop_start] = 0xF0 | ((ts_loop_length >> 8) as u8);
-        buf[ts_loop_start + 1] = ts_loop_length as u8;
+        super::write_desc_loop_len(
+            &mut buf[ts_loop_start..ts_loop_start + 2],
+            ts_loop_length as usize,
+        )?;
 
         let mut pos = ts_loop_start + 2;
         for ts in &self.transport_streams {
@@ -289,8 +290,7 @@ impl Serialize for NitSection<'_> {
                 12,
                 "transport_descriptors_length",
             )?;
-            buf[pos + 4] = 0xF0 | ((ts_dll >> 8) as u8);
-            buf[pos + 5] = ts_dll as u8;
+            super::write_desc_loop_len(&mut buf[pos + 4..pos + 6], ts_dll as usize)?;
             let desc_start = pos + TS_HEADER_LEN;
             buf[desc_start..desc_start + ts.descriptors.len()]
                 .copy_from_slice(ts.descriptors.raw());
@@ -336,28 +336,26 @@ mod tests {
             NitKind::Actual => TABLE_ID_ACTUAL,
             NitKind::Other => TABLE_ID_OTHER,
         });
-        v.push(super::super::SECTION_B1_FLAGS_DVB | ((section_length >> 8) as u8 & 0x0F));
-        v.push((section_length & 0xFF) as u8);
+        crate::tables::push_section_header(
+            &mut v,
+            crate::tables::SECTION_B1_FLAGS_DVB,
+            section_length as usize,
+        );
         // Extension header (spec layout): bytes[3..5] = network_id
         v.extend_from_slice(&network_id.to_be_bytes());
-        v.push(0xC0 | 0x01); // version=0, current_next=1
+        v.push(crate::tables::version_byte(0, true)); // version=0, current_next=1
         v.push(0); // section_number
         v.push(0); // last_section_number
         // bytes[8..10] = reserved(4) | network_descriptors_length(12)
-        let net_dll = network_desc.len() as u16;
-        v.push(0xF0 | ((net_dll >> 8) as u8 & 0x0F));
-        v.push((net_dll & 0xFF) as u8);
+        crate::tables::push_desc_loop_len(&mut v, network_desc.len());
         v.extend_from_slice(network_desc);
         // reserved(4) | transport_stream_loop_length(12)
-        v.push(0xF0 | ((loop_length >> 8) as u8 & 0x0F));
-        v.push((loop_length & 0xFF) as u8);
+        crate::tables::push_desc_loop_len(&mut v, loop_length as usize);
         for (tsid, onid, desc) in transport_streams {
             v.extend_from_slice(&tsid.to_be_bytes());
             v.extend_from_slice(&onid.to_be_bytes());
-            let ts_dll = desc.len() as u16;
             // reserved(4) | transport_descriptors_length(12)
-            v.push(0xF0 | ((ts_dll >> 8) as u8 & 0x0F));
-            v.push((ts_dll & 0xFF) as u8);
+            crate::tables::push_desc_loop_len(&mut v, desc.len());
             v.extend_from_slice(desc);
         }
         v.extend_from_slice(&[0, 0, 0, 0]); // CRC placeholder

@@ -60,6 +60,14 @@ impl<'a> Parse<'a> for SimpleApplicationBoundaryDescriptor<'a> {
             extensions.push(&body[pos..ext_end]);
             pos = ext_end;
         }
+        if pos != body.len() {
+            // The declared count covers the whole body (EN 300 468 §6.2.6):
+            // trailing bytes used to be dropped on re-serialize (r03-W9).
+            return Err(Error::InvalidDescriptor {
+                tag: TAG,
+                reason: "simple_application_boundary_descriptor has trailing bytes",
+            });
+        }
         Ok(Self {
             boundary_extensions: extensions,
         })
@@ -167,5 +175,19 @@ mod tests {
         let mut buf = vec![0u8; d.serialized_len()];
         d.serialize_into(&mut buf).unwrap();
         assert_eq!(buf.as_slice(), &bytes[..]);
+    }
+
+    #[test]
+    fn parse_rejects_trailing_bytes_past_last_extension() {
+        // The count covers the whole body (EN 300 468 §6.2.6); an extra byte
+        // after the last extension used to be dropped on re-serialize
+        // (r03-W9).
+        let mut bytes = build_two_extensions().to_vec();
+        bytes.push(0xFF);
+        bytes[1] += 1;
+        assert!(matches!(
+            SimpleApplicationBoundaryDescriptor::parse(&bytes).unwrap_err(),
+            Error::InvalidDescriptor { tag: TAG, .. }
+        ));
     }
 }

@@ -516,7 +516,13 @@ impl Serialize for S2Xv2SatelliteDeliverySystem<'_> {
         }
         // Conditional: scrambling block.
         if self.scrambling_sequence_selector == Some(true) {
-            let idx = self.scrambling_sequence_index.unwrap_or(0) & 0x0003_FFFF;
+            let idx = self
+                .scrambling_sequence_index
+                .ok_or(Error::ValueOutOfRange {
+                    field: "scrambling_sequence_index",
+                    reason: "required when scrambling_sequence_selector is set",
+                })?
+                & 0x0003_FFFF;
             buf[p] = (idx >> 16) as u8 & 0x03;
             buf[p + 1] = (idx >> 8) as u8;
             buf[p + 2] = idx as u8;
@@ -550,13 +556,29 @@ impl Serialize for S2Xv2SatelliteDeliverySystem<'_> {
                 | ref_hi;
             buf[p + 2] = (sf.reference_scrambling_index >> 8) as u8;
             buf[p + 3] = sf.reference_scrambling_index as u8;
-            let sffi_nibble: u8 = sf.sffi.unwrap_or(0) & 0x0F;
+            // sffi_selector promises the 4 SFFI bits on the wire; fabricating
+            // 0 would invent a bypass index (r03-W5).
+            let sffi_nibble: u8 = if sf.sffi_selector {
+                sf.sffi.ok_or(Error::ValueOutOfRange {
+                    field: "sffi",
+                    reason: "required when sffi_selector is set",
+                })? & 0x0F
+            } else {
+                0
+            };
             let psi_hi = (sf.payload_scrambling_index >> 16) as u8 & 0x0F;
             buf[p + 4] = (sffi_nibble << 4) | psi_hi;
             buf[p + 5] = (sf.payload_scrambling_index >> 8) as u8;
             buf[p + 6] = sf.payload_scrambling_index as u8;
             p += 7;
-            if let Some(bh_id) = sf.beamhopping_time_plan_id {
+            if sf.beam_hopping_time_plan_selector {
+                // The selector reserved 4 bytes in serialized_len; the Option
+                // must agree or the tail byte lands in the wrong place
+                // (r03-W5).
+                let bh_id = sf.beamhopping_time_plan_id.ok_or(Error::ValueOutOfRange {
+                    field: "beamhopping_time_plan_id",
+                    reason: "required when beam_hopping_time_plan_selector is set",
+                })?;
                 buf[p..p + 4].copy_from_slice(&bh_id.to_be_bytes());
                 p += 4;
             }
@@ -892,5 +914,52 @@ mod tests {
         // tag_extension = 0x24 = 36
         assert!(json.contains("\"tag_extension\":36"));
         assert!(json.contains("\"s2Xv2SatelliteDeliverySystem\""));
+    }
+    #[test]
+    fn serialize_rejects_beamhopping_id_missing_when_selector_set() {
+        // r03-W5: the selector reserved 4 bytes in serialized_len, but the
+        // writer keyed on the Option, so `Some(selector) + None(id)` panicked
+        // (or misframed) instead of erroring.
+        let superframe = S2Xv2Superframe {
+            sosf_wh_sequence_number: 0,
+            sffi_selector: false,
+            beam_hopping_time_plan_selector: true,
+            reference_scrambling_index: 0,
+            sffi: None,
+            payload_scrambling_index: 0,
+            beamhopping_time_plan_id: None,
+            superframe_pilots_wh_sequence_number: 0,
+            postamble_pli: 0,
+        };
+        let d = S2Xv2SatelliteDeliverySystem {
+            delivery_system_id: 1,
+            s2xv2_mode: S2Xv2Mode::from_u8(4),
+            multiple_input_stream_flag: false,
+            roll_off: RollOff::from_u8(0),
+            ncr_reference: false,
+            ncr_version: false,
+            channel_bond: 0,
+            polarization: Polarization::from_u8(0),
+            scrambling_sequence_selector: None,
+            ts_gs_s2x_mode: 0,
+            receiver_profiles: 0,
+            satellite_id: 0,
+            frequency: 0,
+            symbol_rate: 0,
+            input_stream_identifier: None,
+            scrambling_sequence_index: None,
+            timeslice_number: None,
+            secondary_delivery_system_ids: vec![],
+            superframe: Some(superframe),
+            reserved_tail: &[],
+        };
+        let mut buf = vec![0u8; d.serialized_len()];
+        assert!(matches!(
+            d.serialize_into(&mut buf).unwrap_err(),
+            Error::ValueOutOfRange {
+                field: "beamhopping_time_plan_id",
+                ..
+            }
+        ));
     }
 }

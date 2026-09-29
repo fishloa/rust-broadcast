@@ -354,13 +354,20 @@ fn parse_transmission_mode(raw: u8) -> TransmissionMode {
     }
 }
 
+/// Sub-byte `Reserved(v)` payloads carry a raw byte; mask to the field width
+/// before shifting or the value bleeds into the neighbouring field (r03-W2).
+/// 3-bit fields: `bandwidth`, `hierarchy`, `code_rate_hp`/`code_rate_lp`.
+const FIELD3_MASK: u8 = 0b111;
+/// 2-bit fields: `constellation`, `guard_interval`, `transmission_mode`.
+const FIELD2_MASK: u8 = 0b11;
+
 fn serialize_bandwidth(bw: Bandwidth) -> u8 {
     match bw {
         Bandwidth::Mhz8 => 0,
         Bandwidth::Mhz7 => 1,
         Bandwidth::Mhz6 => 2,
         Bandwidth::Mhz5 => 3,
-        Bandwidth::Reserved(v) => v,
+        Bandwidth::Reserved(v) => v & FIELD3_MASK,
     }
 }
 
@@ -369,7 +376,7 @@ fn serialize_constellation(c: Constellation) -> u8 {
         Constellation::Qpsk => 0,
         Constellation::Qam16 => 1,
         Constellation::Qam64 => 2,
-        Constellation::Reserved(v) => v,
+        Constellation::Reserved(v) => v & FIELD2_MASK,
     }
 }
 
@@ -383,7 +390,7 @@ fn serialize_hierarchy(h: Hierarchy) -> u8 {
         Hierarchy::Alpha1InDepth => 5,
         Hierarchy::Alpha2InDepth => 6,
         Hierarchy::Alpha4InDepth => 7,
-        Hierarchy::Reserved(v) => v,
+        Hierarchy::Reserved(v) => v & FIELD3_MASK,
     }
 }
 
@@ -394,7 +401,7 @@ fn serialize_code_rate(cr: CodeRate) -> u8 {
         CodeRate::Rate3_4 => 2,
         CodeRate::Rate5_6 => 3,
         CodeRate::Rate7_8 => 4,
-        CodeRate::Reserved(v) => v,
+        CodeRate::Reserved(v) => v & FIELD3_MASK,
     }
 }
 
@@ -412,7 +419,7 @@ fn serialize_transmission_mode(tm: TransmissionMode) -> u8 {
         TransmissionMode::Mode2k => 0,
         TransmissionMode::Mode8k => 1,
         TransmissionMode::Mode4k => 2,
-        TransmissionMode::Reserved(v) => v,
+        TransmissionMode::Reserved(v) => v & FIELD2_MASK,
     }
 }
 
@@ -737,5 +744,51 @@ mod tests {
         d.serialize_into(&mut buf).unwrap();
         let parsed = TerrestrialDeliverySystemDescriptor::parse(&buf).unwrap();
         assert_eq!(parsed, d);
+    }
+
+    #[test]
+    fn wide_reserved_payloads_do_not_bleed_into_neighbours() {
+        // r03-W2 representative test: every `Reserved(v)` stores a raw `u8`,
+        // but each wire field is 2–3 bits. A user-constructed wide payload
+        // (e.g. 0xFE, only reachable via `Reserved`, since `from_u8` extracts
+        // the masked field) must never corrupt the neighbouring fields on
+        // serialize.
+        let d = TerrestrialDeliverySystemDescriptor {
+            centre_frequency_10hz: 0,
+            bandwidth: Bandwidth::Reserved(0xFE),
+            priority: false,
+            time_slicing_used: true,
+            mpe_fec_used: true,
+            constellation: Constellation::Reserved(0xFC),
+            hierarchy: Hierarchy::Reserved(0xFE),
+            code_rate_hp: CodeRate::Reserved(0xFE),
+            code_rate_lp: CodeRate::Reserved(0xFE),
+            guard_interval: GuardInterval::G1_32,
+            transmission_mode: TransmissionMode::Reserved(0xFE),
+            other_frequency_flag: false,
+        };
+        let mut buf = vec![0u8; d.serialized_len()];
+        d.serialize_into(&mut buf).unwrap();
+        let parsed = TerrestrialDeliverySystemDescriptor::parse(&buf).unwrap();
+        // Values stay in their own field (masked, not bled): 0xFE's low 3 bits
+        // are 0b110, which the spec maps onto a *named* variant for hierarchy
+        // and transmission_mode — the point of the test is that the value
+        // never crosses its field boundary, not which variant it names.
+        assert_eq!(parsed.bandwidth, Bandwidth::Reserved(0b110));
+        assert!(!parsed.priority);
+        assert!(parsed.time_slicing_used);
+        assert!(parsed.mpe_fec_used);
+        assert_eq!(parsed.constellation, Constellation::Qpsk);
+        assert_eq!(parsed.hierarchy, Hierarchy::Alpha2InDepth);
+        assert_eq!(parsed.code_rate_hp, CodeRate::Reserved(0b110));
+        assert_eq!(parsed.code_rate_lp, CodeRate::Reserved(0b110));
+        assert_eq!(parsed.transmission_mode, TransmissionMode::Mode4k);
+        assert!(!parsed.other_frequency_flag);
+        // And pre-fix (no masks at the shift) the same value bled across
+        // field boundaries: `(0xFE & ... ) << 3 | 0xFE` produced 0xFE in the
+        // constellation/hierarchy/code-rate byte, so a raw serialize wrote
+        // byte 7 = 0xFE; with the masks byte 7 = Qpsk<<6 | Alpha2InDepth<<3
+        // | 0b110 = 0x36.
+        assert_eq!(buf[2 + 5], 0x36);
     }
 }

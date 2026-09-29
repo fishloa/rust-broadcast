@@ -14,6 +14,10 @@ use broadcast_common::{Parse, Serialize};
 pub const TAG: u8 = 0x76;
 const HEADER_LEN: usize = 2;
 const CRID_TYPE_MASK: u8 = 0xFC;
+/// `crid_type(6)` field value mask: bits `[7:2]` of the CRID header byte,
+/// masked *before* the shift so a `CridType::Reserved(v)` payload with high
+/// bits set cannot bleed into the two `crid_location` bits (r03-W2).
+const CRID_TYPE_VALUE_MASK: u8 = 0x3F;
 const CRID_LOCATION_MASK: u8 = 0x03;
 
 /// CRID type — ETSI TS 102 323 Table 117.
@@ -213,7 +217,7 @@ impl Serialize for ContentIdentifierDescriptor<'_> {
         crate::descriptors::write_descriptor_header(buf, TAG, len - HEADER_LEN)?;
         let mut pos = HEADER_LEN;
         for entry in &self.entries {
-            let header = (entry.crid_type.to_u8() << 2) & CRID_TYPE_MASK;
+            let header = (entry.crid_type.to_u8() & CRID_TYPE_VALUE_MASK) << 2;
             match &entry.location {
                 CridLocation::Inline(data) => {
                     buf[pos] = header;

@@ -266,23 +266,23 @@ impl<'a> Parse<'a> for AitSection<'a> {
             });
         }
 
-        let section_length = ((bytes[1] & 0x0F) as u16) << 8 | bytes[2] as u16;
+        let section_length = super::section_length_of(bytes);
         let total = super::check_section_length(
             bytes.len(),
             MIN_HEADER_LEN,
-            section_length as usize,
+            section_length,
             MIN_SECTION_LEN,
         )?;
 
         let test_application_flag = (bytes[3] & 0x80) != 0;
         let application_type_raw = (((bytes[3] & 0x7F) as u16) << 8) | (bytes[4] as u16);
         let application_type = ApplicationType::from_u16(application_type_raw);
-        let version_number = (bytes[5] >> 1) & 0x1F;
-        let current_next_indicator = (bytes[5] & 0x01) != 0;
+        let version_number = super::version_number_of(bytes[5]);
+        let current_next_indicator = super::current_next_of(bytes[5]);
         let section_number = bytes[6];
         let last_section_number = bytes[7];
 
-        let common_descriptors_length = (((bytes[8] & 0x0F) as usize) << 8) | bytes[9] as usize;
+        let common_descriptors_length = super::desc_loop_len_of(bytes[8], bytes[9]);
         let common_desc_start = MIN_HEADER_LEN + EXTENSION_HEADER_LEN + COMMON_DESC_LEN_BYTES;
         let common_desc_end = common_desc_start + common_descriptors_length;
         let app_loop_end = total - CRC_LEN;
@@ -295,7 +295,7 @@ impl<'a> Parse<'a> for AitSection<'a> {
         let common_descriptors = DescriptorLoop::new(&bytes[common_desc_start..common_desc_end]);
 
         let app_loop_length =
-            (((bytes[common_desc_end] & 0x0F) as usize) << 8) | bytes[common_desc_end + 1] as usize;
+            super::desc_loop_len_of(bytes[common_desc_end], bytes[common_desc_end + 1]);
         let app_loop_start = common_desc_end + APP_LOOP_LEN_BYTES;
         let app_loop_actual_end = app_loop_start + app_loop_length;
         if app_loop_actual_end > app_loop_end {
@@ -327,8 +327,7 @@ impl<'a> Parse<'a> for AitSection<'a> {
                 | (bytes[pos + 3] as u32);
             let application_id = u16::from_be_bytes(*bytes[pos + 4..].first_chunk::<2>().unwrap());
             let control_code = ControlCode::from_u8(bytes[pos + 6]);
-            let app_desc_length =
-                (((bytes[pos + 7] & 0x0F) as usize) << 8) | bytes[pos + 8] as usize;
+            let app_desc_length = super::desc_loop_len_of(bytes[pos + 7], bytes[pos + 8]);
             let app_desc_start = pos + APP_HEADER_LEN;
             let app_desc_end = app_desc_start + app_desc_length;
             if app_desc_end > app_loop_actual_end {
@@ -408,7 +407,7 @@ impl Serialize for AitSection<'_> {
         super::write_section_length(buf, len - MIN_HEADER_LEN)?;
         buf[3] = (u8::from(self.test_application_flag) << 7) | ((app_type_raw >> 8) as u8);
         buf[4] = (app_type_raw & 0xFF) as u8;
-        buf[5] = 0xC0 | ((self.version_number & 0x1F) << 1) | u8::from(self.current_next_indicator);
+        buf[5] = super::version_byte(self.version_number, self.current_next_indicator);
         buf[6] = self.section_number;
         buf[7] = self.last_section_number;
 
@@ -417,8 +416,7 @@ impl Serialize for AitSection<'_> {
             12,
             "common_descriptors_length",
         )?;
-        buf[8] = 0xF0 | ((cdl >> 8) as u8);
-        buf[9] = cdl as u8;
+        super::write_desc_loop_len(&mut buf[8..10], cdl as usize)?;
 
         let common_desc_start = MIN_HEADER_LEN + EXTENSION_HEADER_LEN + COMMON_DESC_LEN_BYTES;
         buf[common_desc_start..common_desc_start + self.common_descriptors.len()]
@@ -431,8 +429,7 @@ impl Serialize for AitSection<'_> {
             .map(|a| APP_HEADER_LEN + a.descriptors.len())
             .sum();
         let apl = broadcast_common::len::fit_bits(app_bytes as u64, 12, "application_loop_length")?;
-        buf[app_loop_start] = 0xF0 | ((apl >> 8) as u8);
-        buf[app_loop_start + 1] = apl as u8;
+        super::write_desc_loop_len(&mut buf[app_loop_start..app_loop_start + 2], apl as usize)?;
 
         let mut pos = app_loop_start + APP_LOOP_LEN_BYTES;
         for app in &self.applications {
@@ -444,8 +441,7 @@ impl Serialize for AitSection<'_> {
                 12,
                 "application_descriptors_loop_length",
             )?;
-            buf[pos + 7] = 0xF0 | ((adl >> 8) as u8);
-            buf[pos + 8] = adl as u8;
+            super::write_desc_loop_len(&mut buf[pos + 7..pos + 9], adl as usize)?;
             let desc_start = pos + APP_HEADER_LEN;
             buf[desc_start..desc_start + app.descriptors.len()]
                 .copy_from_slice(app.descriptors.raw());
