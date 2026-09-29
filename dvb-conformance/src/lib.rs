@@ -57,7 +57,7 @@ extern crate alloc;
 
 mod tstd;
 
-use alloc::collections::BTreeMap;
+use alloc::collections::{BTreeMap, BTreeSet};
 use alloc::format;
 use alloc::string::String;
 use alloc::vec::Vec;
@@ -628,9 +628,63 @@ struct CcState {
 }
 
 /// Timer state for a presence/absence check (shared by 1.3.a, 1.5.a, 1.6).
+///
+/// W-CONF-1 (#1096): a *presence* timer (1.3.a PAT, 1.5.a PMT) is refreshed
+/// only by a **completed section** of the monitored table — TR 101 290
+/// Table 5.0a 1.3.a reads "Sections with table_id 0x00 do not occur at
+/// least every 0,5 s on PID 0x0000", so payload bytes that never assemble
+/// into a section, or that assemble into a CRC-failing or wrong-table_id
+/// section, must not keep the timer fresh.
+///
+/// W-CONF-4 (#1096): a timer built with [`unarmed`](Self::unarmed) has no
+/// meaningful `last_seen` yet, and the timeout check skips it until
+/// something arms it. The caller clock may start anywhere (zero, a
+/// UNIX-epoch or a PCR-derived time), so a zero-initialised `last_seen`
+/// compared against an epoch-based clock would fire 1.3.a/1.5.a/1.6 on the
+/// first packet.
 struct PresenceTimer {
     last_seen: Duration,
     reported: bool,
+    /// Whether `last_seen` has been initialised from the caller clock. While
+    /// false, the timeout check skips this timer.
+    armed: bool,
+}
+
+impl PresenceTimer {
+    /// A timer that has not yet been anchored to the caller clock.
+    const fn unarmed() -> Self {
+        Self {
+            last_seen: Duration::ZERO,
+            reported: false,
+            armed: false,
+        }
+    }
+
+    /// Record that the monitored table/PID occurred at `t`, re-arming the
+    /// timeout.
+    fn refresh(&mut self, t: Duration) {
+        self.last_seen = t;
+        self.reported = false;
+        self.armed = true;
+    }
+
+    /// Anchor the absence window to the caller clock at `t` without pretending
+    /// the monitored table was seen.
+    ///
+    /// Used for a reference that has only just been *discovered* — a
+    /// program_map_PID that the PAT has only now listed, or an ES PID that a
+    /// PMT version has only now added. Absence is then measured from the
+    /// discovery rather than from zero on the caller clock, which is what
+    /// otherwise produces an absence that includes time before the reference
+    /// existed (W-CONF-4, #1096). Idempotent: an already-armed timer keeps its
+    /// own `last_seen`.
+    fn anchor(&mut self, t: Duration) {
+        if self.armed {
+            return;
+        }
+        self.last_seen = t;
+        self.armed = true;
+    }
 }
 
 /// State tracked for each program_map_PID signalled by the PAT.
@@ -678,15 +732,23 @@ struct UnreferencedPidTracking {
     reported: bool,
 }
 
-/// Per-`(table_id, section_number)` last-seen tracking for the 25 ms
-/// minimum-gap dimension (indicators 3.1.a / 3.2 / 3.5.a / 3.6.a / 3.7 / 3.8).
-/// Keyed on the well-known PID + `(table_id, section_number)` so a dense
-/// multi-section table does not produce false positives.
+/// Per-**sub-table** last-seen tracking for the 25 ms minimum-gap dimension
+/// (indicators 3.1.a / 3.2 / 3.5.a / 3.6.a / 3.7 / 3.8).
+///
+/// W-CONF-3 (#1096): ETSI TR 101 211 §4.4 — the clause TR 101 290 Table 5.0c
+/// cites for this dimension — defines the section interval per sub-table, i.e.
+/// per `(pid, table_id, table_id_extension)`, "same or different
+/// `section_number`". The old key included `section_number` and omitted
+/// `table_id_extension`, which both produced false `SI_min_gap_error`s
+/// (back-to-back section 0s of different EIT P/F services share a
+/// `section_number` but are different sub-tables) and false negatives
+/// (consecutive sections 0/1/2 of one sub-table sent 1 ms apart were never
+/// flagged).
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 struct MinGapKey {
     pid: u16,
     table_id: u8,
-    section_number: u8,
+    table_id_extension: u16,
 }
 
 /// State for a single `_other` section_number repetition check (indicators
@@ -748,7 +810,13 @@ pub struct ConformanceMonitor {
 
     // PAT section reassembly + timing (1.3.a)
     pat_reassembler: SectionReassembler,
+    /// 1.3.a presence timer: refreshed only by a completed, CRC-valid
+    /// table_id 0x00 section, and armed from the caller clock, never from
+    /// `Duration::ZERO` (W-CONF-1, W-CONF-4, #1096).
     pat_timer: PresenceTimer,
+    /// Whether the T-STD model has been anchored to the caller clock
+    /// (W-CONF-4, #1096).
+    tstd_anchored: bool,
 
     // PMT section reassembly + timing per program_map_PID (1.5.a)
     pmt_trackings: BTreeMap<u16, PmtTracking>,
@@ -775,7 +843,7 @@ pub struct ConformanceMonitor {
     // Unreferenced_PID candidate tracking (3.4)
     unreferenced_pid_timers: BTreeMap<u16, UnreferencedPidTracking>,
 
-    // Per-`(table_id, section_number)` min-gap tracking
+    // Per-sub-table `(pid, table_id, table_id_extension)` min-gap tracking
     // (25 ms minimum-gap dimension of 3.1.a / 3.2 / 3.5.a / 3.6.a / 3.7 / 3.8)
     min_gap_timers: BTreeMap<MinGapKey, Duration>,
 
@@ -819,10 +887,7 @@ impl ConformanceMonitor {
             bad_run: 0,
             cc_states: BTreeMap::new(),
             pat_reassembler: SectionReassembler::default(),
-            pat_timer: PresenceTimer {
-                last_seen: Duration::ZERO,
-                reported: false,
-            },
+            pat_timer: PresenceTimer::unarmed(),
             pmt_trackings: BTreeMap::new(),
             es_trackings: BTreeMap::new(),
             si_reassemblies,
@@ -836,6 +901,7 @@ impl ConformanceMonitor {
             other_repetition_timers: BTreeMap::new(),
             eit_pf_pairs: BTreeMap::new(),
             tstd: TstdModel::new(Duration::ZERO),
+            tstd_anchored: false,
         }
     }
 
@@ -902,12 +968,21 @@ impl ConformanceMonitor {
 
         // ── Step 5: Continuity_count_error (1.4) ─────────────────────────
         if pid != PID_NULL {
+            // W-CONF-5 (#1096): the discontinuity indicator is taken from the
+            // adaptation field `TsPacket::parse` already decoded, so the
+            // continuity check and the discontinuity decision cannot disagree
+            // and no raw bit-masking is needed here.
+            let discontinuity = packet
+                .adaptation_field()
+                .and_then(|af| af.ok())
+                .is_some_and(|af| af.discontinuity_indicator);
             self.check_cc(
                 pid,
                 header.continuity_counter,
                 header.has_payload,
                 t,
                 ts_packet,
+                discontinuity,
             );
         }
 
@@ -951,6 +1026,18 @@ impl ConformanceMonitor {
         }
 
         // ── Step 6: Section reassembly — PAT ─────────────────────────────
+        //
+        // W-CONF-4 (#1096): before anything reaches the T-STD model, anchor its
+        // relative windows (TBsys/TBn empty-interval and data-delay checks,
+        // indicators 3.9/3.10) to the caller clock. That clock may start at the
+        // UNIX epoch or at a PCR-derived value rather than at zero, so a
+        // `Duration::ZERO` window boundary makes the first packet look like an
+        // arbitrarily long interval.
+        if !self.tstd_anchored {
+            self.tstd_anchored = true;
+            self.tstd.anchor(t);
+        }
+
         if pid == PID_PAT && header.has_payload {
             if let Some(payload) = packet.payload {
                 // TBsys (indicator 3.3) is fed per TS packet, as bytes
@@ -959,8 +1046,9 @@ impl ConformanceMonitor {
                 self.feed_tbsys_bytes(payload.len() as u64, pid, t);
                 self.pat_reassembler.feed(payload, header.pusi);
             }
-            self.pat_timer.last_seen = t;
-            self.pat_timer.reported = false;
+            // W-CONF-1 (#1096): 1.3.a checks *section* presence, so the timer
+            // is refreshed only by a completed CRC-valid table_id 0x00 section
+            // (see check_crc_and_process_pat), never by payload arrival.
             while let Some(section_bytes) = self.pat_reassembler.pop_section() {
                 self.check_crc_and_process_pat(&section_bytes, pid, t);
             }
@@ -978,8 +1066,6 @@ impl ConformanceMonitor {
                 }
             }
             let sections: Vec<_> = if let Some(tracking) = self.pmt_trackings.get_mut(&pid) {
-                tracking.timer.last_seen = t;
-                tracking.timer.reported = false;
                 core::iter::from_fn(|| tracking.reassembler.pop_section()).collect()
             } else {
                 Vec::new()
@@ -1019,8 +1105,11 @@ impl ConformanceMonitor {
                 self.check_eit_table_id(section_bytes, pid, t);
                 self.check_rst_table_id(section_bytes, pid, t);
                 self.check_tdt_table_id(section_bytes, pid, t);
-                self.update_si_repetition(section_bytes, pid, t);
-                self.check_si_min_gap(section_bytes, pid, t);
+                let Ok(section) = Section::parse(section_bytes) else {
+                    continue;
+                };
+                self.update_si_repetition(&section, t);
+                self.check_si_min_gap(&section, pid, t);
                 self.check_si_other_section(section_bytes, pid, t);
                 self.track_eit_pf_pair(section_bytes, t);
             }
@@ -1033,8 +1122,7 @@ impl ConformanceMonitor {
 
         // ── Step 9: PID_error — update last_seen for referenced PIDs ─────
         if let Some(tracking) = self.es_trackings.get_mut(&pid) {
-            tracking.timer.last_seen = t;
-            tracking.timer.reported = false;
+            tracking.timer.refresh(t);
         }
 
         // ── 2.3a / 2.3b: PCR checks (Table 5.0b indicators 2.3a, 2.3b) ──
@@ -1101,25 +1189,20 @@ impl ConformanceMonitor {
     }
 
     /// Continuity_count_error (1.4) check.
-    fn check_cc(&mut self, pid: u16, cc: u8, has_payload: bool, t: Duration, raw: &[u8]) {
-        // Check for discontinuity_indicator in the adaptation field BEFORE
-        // mutating cc_states (avoids holding the entry borrow across self.emit).
-        let discontinuity = if raw.len() >= 5 {
-            let b3 = raw[3];
-            let has_adaptation = (b3 & 0x20) != 0;
-            if has_adaptation {
-                let af_len = raw[4] as usize;
-                if af_len > 0 && raw.len() > 5 {
-                    (raw[5] & 0x80) != 0
-                } else {
-                    false
-                }
-            } else {
-                false
-            }
-        } else {
-            false
-        };
+    fn check_cc(
+        &mut self,
+        pid: u16,
+        cc: u8,
+        has_payload: bool,
+        t: Duration,
+        raw: &[u8],
+        discontinuity: bool,
+    ) {
+        // `discontinuity` is the `discontinuity_indicator` decoded from the
+        // parsed adaptation field by the caller (W-CONF-5, #1096). It is not
+        // re-derived from `raw` here: the previous raw bit-masking read
+        // `raw[5]` even when `adaptation_field_length` pointed past a
+        // truncated packet, and used unmasked magic bit constants.
 
         // Compute what we need from the existing state, then decide.
         let (expected, is_duplicate, should_emit_dup, should_emit_cc) = {
@@ -1238,6 +1321,19 @@ impl ConformanceMonitor {
         // 2.2: CRC check on PAT section.
         self.check_crc_for_section(section_bytes, pid, t);
 
+        // 1.3.a (W-CONF-1, #1096): the presence timer is armed/refreshed only
+        // by a *completed and CRC-valid* table_id 0x00 section. Sections that
+        // never complete, or that complete with a CRC mismatch, are exactly
+        // the condition the indicator is for — a decoder that cannot acquire
+        // the PAT cannot decode the service at all — so they must leave the
+        // timer counting.
+        if let Ok(section) = Section::parse(section_bytes)
+            && section.table_id == PAT_TABLE_ID
+            && section.validate_crc(section_bytes).is_ok()
+        {
+            self.pat_timer.refresh(t);
+        }
+
         self.process_pat_section(section_bytes, t);
     }
 
@@ -1245,6 +1341,19 @@ impl ConformanceMonitor {
     fn check_crc_and_process_pmt(&mut self, section_bytes: &[u8], pid: u16, t: Duration) {
         // 2.2: CRC check on PMT section.
         self.check_crc_for_section(section_bytes, pid, t);
+
+        // 1.5.a (W-CONF-1, #1096): presence is a completed, CRC-valid
+        // table_id 0x02 section. Sections that never complete, that fail CRC,
+        // or that carry a different table_id on a program_map_PID must leave
+        // the timer counting — otherwise 1.5.a never fires on a stream whose
+        // PMT no decoder can actually acquire.
+        if let Ok(section) = Section::parse(section_bytes)
+            && section.table_id == dvb_si::tables::pmt::TABLE_ID
+            && section.validate_crc(section_bytes).is_ok()
+            && let Some(tracking) = self.pmt_trackings.get_mut(&pid)
+        {
+            tracking.timer.refresh(t);
+        }
 
         self.process_pmt_section(section_bytes, pid, t);
     }
@@ -1581,6 +1690,10 @@ impl ConformanceMonitor {
 
         // 1.3.a: section with table_id other than 0x00 found on PID 0x0000.
         if section.table_id != PAT_TABLE_ID {
+            // The wrong-table_id condition is reported per section. The
+            // presence timer is deliberately *not* refreshed: this is not a
+            // table_id 0x00 section, so 1.3.a's presence condition is also
+            // unmet (W-CONF-1, #1096).
             self.emit(
                 Indicator::PatError2,
                 Some(PID_PAT),
@@ -1599,18 +1712,48 @@ impl ConformanceMonitor {
             Err(_) => return,
         };
 
-        // Discover program_map_PIDs and start tracking them.
+        // Discover program_map_PIDs and track exactly the ones this PAT
+        // version references.
+        //
+        // W-CONF-2 (#1096): the referenced set is *rebuilt* from every new PAT
+        // version rather than only grown. A new version that removes a
+        // programme used to leave its program_map_PID tracked forever, so
+        // 1.5.a (PMT_error_2) kept firing for a PID the current lineup no
+        // longer references, and 3.4 (Unreferenced_PID) never fired for that
+        // PID because it still looked referenced. Lineup changes are routine
+        // (regional opt-outs, event channels).
+        let referenced: BTreeSet<u16> = pat.programmes().map(|entry| entry.pid).collect();
+        let stale: Vec<u16> = self
+            .pmt_trackings
+            .keys()
+            .copied()
+            .filter(|pmt_pid| !referenced.contains(pmt_pid))
+            .collect();
+        for pmt_pid in stale {
+            self.pmt_trackings.remove(&pmt_pid);
+            // The PID is no longer referenced, so it becomes a candidate for
+            // 3.4 Unreferenced_PID again if it keeps arriving.
+            self.unreferenced_pid_timers
+                .entry(pmt_pid)
+                .or_insert_with(|| UnreferencedPidTracking {
+                    first_seen: t,
+                    reported: false,
+                });
+        }
+
         for entry in pat.programmes() {
             let pmt_pid = entry.pid;
-            self.pmt_trackings
-                .entry(pmt_pid)
-                .or_insert_with(|| PmtTracking {
-                    timer: PresenceTimer {
-                        last_seen: t,
-                        reported: false,
-                    },
+            self.pmt_trackings.entry(pmt_pid).or_insert_with(|| {
+                // 1.5.a's absence window for a freshly discovered
+                // program_map_PID runs from this discovery, not from zero
+                // on the caller clock (W-CONF-4, #1096).
+                let mut timer = PresenceTimer::unarmed();
+                timer.anchor(t);
+                PmtTracking {
+                    timer,
                     reassembler: SectionReassembler::default(),
-                });
+                }
+            });
             // 3.4: a program_map_PID is now referenced — it is no longer an
             // Unreferenced_PID candidate even if its own packets have not
             // been observed yet.
@@ -1625,10 +1768,11 @@ impl ConformanceMonitor {
             Err(_) => return,
         };
 
-        // 1.5.a only checks presence and scrambling of table_id 0x02 sections.
-        // If table_id is not 0x02, skip — we don't emit PMT_error_2 for a
-        // wrong table_id on a program_map_PID (that's not in the spec for
-        // 1.5.a).
+        // A wrong table_id on a program_map_PID is not 1.5.a's concern (that
+        // indicator only checks presence and scrambling of table_id 0x02
+        // sections), so it is skipped here. 1.5.a presence is refreshed in
+        // check_crc_and_process_pmt, for a completed CRC-valid table_id 0x02
+        // section only (W-CONF-1, #1096).
         let pmt_table_id: u8 = dvb_si::tables::pmt::TABLE_ID;
         if section.table_id != pmt_table_id {
             return;
@@ -1640,28 +1784,48 @@ impl ConformanceMonitor {
             Err(_) => return,
         };
 
-        // Collect new ES PIDs to add.
-        let mut new_es_pids: Vec<u16> = Vec::new();
-        if pmt.pcr_pid != PID_NULL && !self.es_trackings.contains_key(&pmt.pcr_pid) {
-            new_es_pids.push(pmt.pcr_pid);
+        // The referenced PID set is *rebuilt* from every new PMT version
+        // (W-CONF-2, #1096): a version that drops or moves an ES PID must stop
+        // tracking it, otherwise 1.6 (PID_error) keeps firing for a PID the
+        // current lineup no longer references and 3.4 (Unreferenced_PID) never
+        // fires for it.
+        let mut referenced: BTreeSet<u16> = BTreeSet::new();
+        if pmt.pcr_pid != PID_NULL {
+            referenced.insert(pmt.pcr_pid);
         }
         for stream in &pmt.streams {
-            let es_pid = stream.elementary_pid;
-            if !self.es_trackings.contains_key(&es_pid) {
-                new_es_pids.push(es_pid);
-            }
+            referenced.insert(stream.elementary_pid);
+        }
+        let stale: Vec<u16> = self
+            .es_trackings
+            .keys()
+            .copied()
+            .filter(|es_pid| !referenced.contains(es_pid))
+            .collect();
+        for es_pid in stale {
+            // The PID is no longer referenced: drop the 1.6 tracking (otherwise
+            // `is_referenced_or_reserved_pid` still sees it, so it can never be
+            // classed 3.4 Unreferenced_PID), and make it a 3.4 candidate again
+            // if it keeps arriving.
+            self.es_trackings.remove(&es_pid);
+            self.unreferenced_pid_timers
+                .entry(es_pid)
+                .or_insert_with(|| UnreferencedPidTracking {
+                    first_seen: t,
+                    reported: false,
+                });
         }
 
-        for es_pid in new_es_pids {
-            self.es_trackings.insert(
-                es_pid,
-                EsTracking {
-                    timer: PresenceTimer {
-                        last_seen: t,
-                        reported: false,
-                    },
-                },
-            );
+        for es_pid in referenced {
+            if self.es_trackings.contains_key(&es_pid) {
+                continue;
+            }
+            let mut timer = PresenceTimer::unarmed();
+            // 1.6 measures absence from when the PID is first seen; a PID that
+            // a PMT version has only just started to reference gets this one
+            // anchor point (W-CONF-4, #1096).
+            timer.anchor(t);
+            self.es_trackings.insert(es_pid, EsTracking { timer });
             // 3.4: an ES/PCR PID is now referenced by a PMT — no longer an
             // Unreferenced_PID candidate.
             self.unreferenced_pid_timers.remove(&es_pid);
@@ -1796,11 +1960,8 @@ impl ConformanceMonitor {
     /// TR 101 290 v1.4.1 Table 5.0c indicator 3.2 — update SI repetition timer
     /// when a completed section on a well-known SI PID matches one of the four
     /// tracked table_ids.
-    fn update_si_repetition(&mut self, section_bytes: &[u8], _pid: u16, t: Duration) {
-        let table_id = match Section::parse(section_bytes) {
-            Ok(s) => s.table_id,
-            Err(_) => return,
-        };
+    fn update_si_repetition(&mut self, section: &Section<'_>, t: Duration) {
+        let table_id = section.table_id;
 
         let is_tracked = table_id == NIT_ACTUAL_TABLE_ID
             || table_id == SDT_ACTUAL_TABLE_ID
@@ -1828,18 +1989,20 @@ impl ConformanceMonitor {
     /// TR 101 290 v1.4.1 Table 5.0c — 25 ms minimum-gap check shared by
     /// 3.1.a / 3.2 / 3.5.a / 3.6.a / 3.7 / 3.8.
     ///
-    /// Tracks last-seen time per `(table_id, section_number)`, not per
-    /// `table_id` alone, so a dense legitimate multi-section table does not
-    /// produce false positives. The key also includes `pid` so the same
-    /// `(table_id, section_number)` pair arriving on different PIDs is not
-    /// conflated.
+    /// Tracks last-seen time per **sub-table** — `(pid, table_id,
+    /// table_id_extension)` — per ETSI TR 101 211 §4.4, the clause Table 5.0c
+    /// cites for this dimension: the interval is measured between consecutive
+    /// sections of one sub-table with the same `pid`, `table_id` and
+    /// `table_id_extension`, regardless of whether their `section_number`s are
+    /// the same or different (W-CONF-3, #1096). Keying on `section_number`
+    /// instead both flagged legitimate back-to-back sections of a dense
+    /// multi-section table and missed one sub-table's sections 0/1/2 sent 1 ms
+    /// apart. `pid` is included so the same sub-table identity on different
+    /// PIDs is not conflated.
     ///
     /// Called for every completed section on the well-known SI PIDs.
-    fn check_si_min_gap(&mut self, section_bytes: &[u8], pid: u16, t: Duration) {
-        let table_id = match Section::parse(section_bytes) {
-            Ok(s) => s.table_id,
-            Err(_) => return,
-        };
+    fn check_si_min_gap(&mut self, section: &Section<'_>, pid: u16, t: Duration) {
+        let table_id = section.table_id;
 
         // Only the tracked table_ids participate in the min-gap check.
         let min_gap_table_ids = [
@@ -1853,15 +2016,10 @@ impl ConformanceMonitor {
             return;
         }
 
-        let section_number = match Section::parse(section_bytes) {
-            Ok(s) => s.section_number,
-            Err(_) => return,
-        };
-
         let key = MinGapKey {
             pid,
             table_id,
-            section_number,
+            table_id_extension: section.extension_id,
         };
 
         if let Some(&last_time) = self.min_gap_timers.get(&key) {
@@ -1872,7 +2030,8 @@ impl ConformanceMonitor {
                     Some(pid),
                     t,
                     format!(
-                        "table_id 0x{table_id:02X} section_number {section_number} on PID 0x{pid:04X}: gap {gap} µs < {limit} ms minimum",
+                        "table_id 0x{table_id:02X} table_id_extension 0x{extension:04X} on PID 0x{pid:04X}: gap {gap} µs < {limit} ms minimum",
+                        extension = section.extension_id,
                         gap = gap.as_micros(),
                         limit = self.config.si_min_gap.as_millis(),
                     ),
@@ -2254,7 +2413,19 @@ impl ConformanceMonitor {
 
     /// Evaluate all presence/absence timeouts against the current time `t`.
     fn check_presence_timeouts(&mut self, t: Duration) {
-        // 1.3.a: PAT presence timeout
+        // 1.3.a: PAT presence timeout.
+        //
+        // W-CONF-4 (#1096): the timer is armed from the first in-sync packet,
+        // not from `Duration::ZERO`, because the caller clock may start at the
+        // UNIX epoch or at a PCR-derived value — a zero baseline against an
+        // epoch clock makes the first packet look like an unbounded absence.
+        //
+        // W-CONF-1 (#1096): the *refresh* still happens only for a completed,
+        // CRC-valid table_id 0x00 section, so a stream whose sections all fail
+        // CRC or carry a different table_id does time out.
+        if !self.pat_timer.armed {
+            self.pat_timer.anchor(t);
+        }
         if t.saturating_sub(self.pat_timer.last_seen) > self.config.pat_max_interval
             && !self.pat_timer.reported
         {
@@ -2272,18 +2443,25 @@ impl ConformanceMonitor {
 
         // 1.5.a: PMT presence timeout per program_map_PID
         // Collect PIDs that need events, then emit outside the iteration.
-        let pmt_timeouts: Vec<(u16, u64)> = self
-            .pmt_trackings
-            .iter()
-            .filter_map(|(&pid, tracking)| {
-                if t.saturating_sub(tracking.timer.last_seen) > self.config.pmt_max_interval
-                    && !tracking.timer.reported
-                {
-                    Some((pid, self.config.pmt_max_interval.as_millis() as u64))
-                } else {
-                    None
+        // A program_map_PID discovered in process_pat_section is armed from
+        // that discovery (W-CONF-4); anything else is armed here so the
+        // absence window never runs back to `Duration::ZERO` on an
+        // epoch-based caller clock.
+        let mut to_anchor: Vec<u16> = Vec::new();
+        for (&pid, tracking) in self.pmt_trackings.iter_mut() {
+            if !tracking.timer.armed {
+                tracking.timer.anchor(t);
+            }
+            if tracking.timer.armed && !tracking.timer.reported {
+                let absence = t.saturating_sub(tracking.timer.last_seen);
+                if absence > self.config.pmt_max_interval {
+                    to_anchor.push(pid);
                 }
-            })
+            }
+        }
+        let pmt_timeouts: Vec<(u16, u64)> = to_anchor
+            .iter()
+            .map(|&pid| (pid, self.config.pmt_max_interval.as_millis() as u64))
             .collect();
         for (pid, interval_ms) in pmt_timeouts {
             if let Some(tracking) = self.pmt_trackings.get_mut(&pid) {
@@ -2302,9 +2480,15 @@ impl ConformanceMonitor {
             .es_trackings
             .iter()
             .filter_map(|(&pid, tracking)| {
-                if t.saturating_sub(tracking.timer.last_seen) > self.config.pid_error_period
-                    && !tracking.timer.reported
-                {
+                if !tracking.timer.armed || tracking.timer.reported {
+                    return None;
+                }
+                // 1.6 measures absence from when the PID was last seen; a PID
+                // a PAT/PMT version has only just started to reference is
+                // anchored at that discovery (see process_pmt_section), so the
+                // window never runs back to `Duration::ZERO` on an epoch-based
+                // caller clock (W-CONF-4, #1096).
+                if t.saturating_sub(tracking.timer.last_seen) > self.config.pid_error_period {
                     Some((pid, self.config.pid_error_period.as_secs()))
                 } else {
                     None

@@ -13,6 +13,7 @@ use std::fs;
 use std::path::PathBuf;
 
 use clap::Parser;
+use mpeg_ts::resync::TsResync;
 use ts_fix::{PcrRestamp, PidFilter, Stuffing, TsFix};
 
 #[derive(Parser)]
@@ -99,7 +100,8 @@ struct Cli {
     /// Regenerate PAT/PMT from observed stream state.
     #[arg(
         long = "regen-psi",
-        help = "Rebuild PAT from observed PMT PIDs on flush"
+        help = "Rebuild PAT from observed PMT PIDs, replacing the PAT in-position as it \
+                passes (or emitting one at end-of-stream if the input has no PAT)"
     )]
     regen_psi: bool,
 
@@ -169,14 +171,26 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     let mut engine = builder.build()?;
     let mut output = Vec::with_capacity(input.len());
 
-    for chunk in input.chunks(188) {
-        engine.push(chunk, |pkt| output.extend_from_slice(pkt))?;
+    // Resynchronise the input byte stream rather than assuming it starts
+    // packet-aligned and is a clean multiple of 188: a capture that begins
+    // mid-packet, carries a corrupted sync byte, or is 204-byte RS-coded
+    // must still be repaired, not aborted (#1101 W-TF-5).
+    let mut resync = TsResync::new();
+    for pkt in resync.feed(&input) {
+        engine.push(&pkt, |pkt| output.extend_from_slice(pkt))?;
     }
     engine.finish(|pkt| output.extend_from_slice(pkt));
 
     fs::write(&cli.output, &output)
         .map_err(|e| format!("cannot write {}: {e}", cli.output.display()))?;
 
+    let stats = resync.stats();
+    if stats.resyncs != 0 || stats.dropped_bytes != 0 {
+        eprintln!(
+            "input resynchronised: {} lost-sync events, {} bytes dropped",
+            stats.resyncs, stats.dropped_bytes
+        );
+    }
     eprintln!(
         "wrote {} packets ({} bytes) to {}",
         output.len() / 188,
