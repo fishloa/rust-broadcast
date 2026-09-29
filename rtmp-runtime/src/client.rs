@@ -12,7 +12,7 @@ use broadcast_common::{Parse, Serialize};
 
 use crate::RtmpError;
 use crate::amf0::{Amf0Value, Command};
-use crate::chunk::{ChunkAssembler, ChunkWriter, Message};
+use crate::chunk::{ChunkAssembler, ChunkWriter, DEFAULT_MAX_IN_PROGRESS_BYTES, Message};
 use crate::handshake::{
     EchoPacket, HANDSHAKE_PACKET_LEN, HandshakePacket, RTMP_VERSION, Version, default_random_fill,
 };
@@ -22,6 +22,14 @@ type Result<T> = core::result::Result<T, RtmpError>;
 
 const COMMAND_CHUNK_STREAM_ID: u32 = 3;
 const VERSION_LEN: usize = 1;
+/// `flashVer` announced in `connect`: the Flash Media Live Encoder
+/// identity that ingest services key their publisher-compatibility
+/// handling on (what ffmpeg/OBS announce; #1108/RTMP-W9).
+const FLASH_VER: &str = "FMLE/3.0 (compatible; rtmp-runtime)";
+/// FMLE-style publish preamble commands sent before `createStream`
+/// (Adobe FMLE publish sequence, as ffmpeg's `rtmpproto` emits it).
+const CMD_RELEASE_STREAM: &str = "releaseStream";
+const CMD_FC_PUBLISH: &str = "FCPublish";
 
 /// Configuration for a [`ClientSession`].
 #[non_exhaustive]
@@ -37,6 +45,11 @@ pub struct ClientConfig {
     pub stream_key: String,
     /// `tcUrl` for the `connect` command (e.g. `rtmp://host/app`).
     pub tc_url: Option<String>,
+    /// Ceiling on the total payload bytes this session's
+    /// [`ChunkAssembler`] may buffer across **all** in-progress messages
+    /// at once (#1108/RTMP-W1); see
+    /// [`crate::chunk::DEFAULT_MAX_IN_PROGRESS_BYTES`] for the default.
+    pub max_in_progress_bytes: usize,
 }
 
 impl Default for ClientConfig {
@@ -47,6 +60,7 @@ impl Default for ClientConfig {
             app: String::new(),
             stream_key: String::new(),
             tc_url: None,
+            max_in_progress_bytes: DEFAULT_MAX_IN_PROGRESS_BYTES,
         }
     }
 }
@@ -205,11 +219,12 @@ impl ClientSession {
     pub fn new(config: ClientConfig) -> Self {
         let ack_threshold = config.window_ack_size;
         let advertised_window_ack_size = config.window_ack_size;
+        let max_in_progress_bytes = config.max_in_progress_bytes;
         Self {
             config,
             handshake: ClientHandshake::new(),
             handshake_buf: Vec::new(),
-            assembler: ChunkAssembler::new(),
+            assembler: ChunkAssembler::new().with_max_in_progress_bytes(max_in_progress_bytes),
             writer: ChunkWriter::new(),
             state: ClientState::Init,
             stream_id: None,
@@ -369,6 +384,10 @@ impl ClientSession {
                     "app".to_string(),
                     Amf0Value::String(self.config.app.clone()),
                 ),
+                (
+                    "flashVer".to_string(),
+                    Amf0Value::String(FLASH_VER.to_string()),
+                ),
                 ("tcUrl".to_string(), Amf0Value::String(tc_url)),
                 (
                     "type".to_string(),
@@ -400,6 +419,38 @@ impl ClientSession {
         out.extend_from_slice(&self.writer.write(&msg).expect(
             "a small internal AMF0 command message never exceeds the 24-bit message_length field",
         ));
+        out
+    }
+
+    /// `releaseStream` + `FCPublish` (each `(null, stream_key)`, fire-and-
+    /// forget: their `_result`s carry transaction ids the state machine
+    /// never waits on) then `createStream` — the ffmpeg/OBS/FMLE sequence
+    /// some CDN ingest front ends require (#1108/RTMP-W9).
+    fn build_publish_preamble_and_create_stream(&mut self) -> Vec<u8> {
+        let mut out = Vec::new();
+        for name in [CMD_RELEASE_STREAM, CMD_FC_PUBLISH] {
+            let txn_id = self.next_txn_id;
+            self.next_txn_id += 1.0;
+            let cmd = Command {
+                name: name.to_string(),
+                transaction_id: txn_id,
+                arguments: vec![
+                    Amf0Value::Null,
+                    Amf0Value::String(self.config.stream_key.clone()),
+                ],
+            };
+            let msg = Message {
+                chunk_stream_id: COMMAND_CHUNK_STREAM_ID,
+                timestamp: 0,
+                message_type_id: msg_type::COMMAND_AMF0,
+                message_stream_id: 0,
+                payload: cmd.to_body(),
+            };
+            out.extend_from_slice(&self.writer.write(&msg).expect(
+                "a small internal AMF0 command message never exceeds the 24-bit message_length field",
+            ));
+        }
+        out.extend_from_slice(&self.build_create_stream());
         out
     }
 
@@ -547,7 +598,7 @@ impl ClientSession {
                 };
                 events.push(ClientEvent::Connected { properties: props });
                 self.state = ClientState::Connected;
-                out.extend_from_slice(&self.build_create_stream());
+                out.extend_from_slice(&self.build_publish_preamble_and_create_stream());
             }
             ClientState::CreateStreamSent { txn_id }
                 if (cmd.transaction_id - txn_id).abs() < 0.5 =>
@@ -663,6 +714,61 @@ mod tests {
         s0_s1_s2[0] = 6; // RTMPE, not plain RTMP
         let err = client_hs.read(&s0_s1_s2).unwrap_err();
         assert!(matches!(err, RtmpError::Malformed { what: "S0 version" }));
+    }
+
+    /// RTMP-W9 (#1108): after `connect`'s `_result` the client must send
+    /// `releaseStream` -> `FCPublish` -> `createStream` (ffmpeg/OBS/FMLE
+    /// order), and `connect` must carry `flashVer`. Fails without the fix
+    /// (the client sent a bare `createStream`).
+    #[test]
+    fn client_publish_sequence_mirrors_ffmpeg() {
+        let config = ClientConfig {
+            app: "live".to_string(),
+            stream_key: "test_key".to_string(),
+            ..ClientConfig::default()
+        };
+        let mut client = ClientSession::new(config);
+        let mut server = ServerSession::new(
+            ServerConfig::default().with_expected_stream_key(Some("test_key".to_string())),
+        );
+        let c0_c1 = client.start();
+        let (s0_s1_s2, _) = server.handle_data(&c0_c1).unwrap();
+        let (mut to_server, _) = client.handle_data(&s0_s1_s2).unwrap();
+        let mut names = Vec::new();
+        let mut connect_has_flash_ver = false;
+        let mut sniff = ChunkAssembler::new();
+        for round in 0..4 {
+            // Round 0's output starts with C2, which is not chunk data.
+            let skip = if round == 0 { HANDSHAKE_PACKET_LEN } else { 0 };
+            sniff.set_chunk_size(client.config.chunk_size);
+            for m in sniff.push(&to_server[skip..]).unwrap() {
+                if m.message_type_id == msg_type::COMMAND_AMF0 {
+                    let c = Command::parse(&m.payload).unwrap();
+                    if c.name == "connect" {
+                        connect_has_flash_ver = matches!(
+                            c.arguments.first(),
+                            Some(Amf0Value::Object(p)) if p.iter().any(|(k, _)| k == "flashVer")
+                        );
+                    }
+                    names.push(c.name);
+                }
+            }
+            let (to_client, _) = server.handle_data(&to_server).unwrap();
+            let (next, _) = client.handle_data(&to_client).unwrap();
+            to_server = next;
+        }
+        assert!(connect_has_flash_ver);
+        assert_eq!(
+            names,
+            [
+                "connect",
+                "releaseStream",
+                "FCPublish",
+                "createStream",
+                "publish"
+            ]
+        );
+        assert!(client.is_publishing());
     }
 
     /// RTMP-W8 (#1108): the client never answered a User Control

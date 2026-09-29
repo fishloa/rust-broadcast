@@ -55,6 +55,19 @@ pub const MAX_MESSAGE_LEN: u32 = 8 * 1024 * 1024;
 /// without bound.
 pub const MAX_CSIDS: usize = 64;
 
+/// Default aggregate ceiling on the total payload bytes [`ChunkAssembler`]
+/// will buffer across **all** in-progress messages on one connection
+/// (#1108/RTMP-W1). Per-message [`MAX_MESSAGE_LEN`] (8 MiB) and per-
+/// connection [`MAX_CSIDS`] (64) each bound their own dimension, but their
+/// product — 512 MiB per TCP connection, reachable before `connect` even
+/// completes by opening one partially-filled maximum-size message on each
+/// csid — is not a bound anyone intended. This is a generous figure far
+/// above any real publisher's interleaved in-flight media (a few concurrent
+/// audio/video frames is a few hundred KB), so it does not threaten
+/// interoperability, while capping a hostile peer's buffered-but-never-
+/// completed bytes at a predictable number.
+pub const DEFAULT_MAX_IN_PROGRESS_BYTES: usize = 16 * 1024 * 1024;
+
 /// The 24-bit sentinel value that, in a Type 0/1/2 message header's
 /// `timestamp`/`timestamp delta` field, signals that the field does not carry
 /// the real value: the full 32-bit value instead follows in a 4-byte
@@ -682,6 +695,14 @@ struct CsidState {
     /// (`message_length` total once complete). Reset to empty once a
     /// message completes.
     payload: Vec<u8>,
+    /// The #1108/RTMP-W1 aggregate-budget reservation currently held by
+    /// this csid's in-progress message (its full declared
+    /// `message_length`, charged when the message opened — see
+    /// [`ChunkAssembler::in_progress_bytes`]). `None` when no message is
+    /// in progress on this csid (the reservation was released when the
+    /// message completed, or there never was one). The authoritative copy
+    /// of the amount to credit back on completion, overwrite, or abort.
+    reserved: Option<u32>,
 }
 
 /// Stateful inbound chunk reassembler (§5.3): feed inbound bytes, get back
@@ -704,6 +725,19 @@ pub struct ChunkAssembler {
     /// [`Self::compact`] per `next_message` return rather than done per
     /// chunk — see `compact`'s doc for why that matters.
     cursor: usize,
+    /// Total payload bytes currently reserved across all in-progress
+    /// (incomplete) messages — #1108/RTMP-W1. A new message reserves its
+    /// full declared `message_length` the moment its header validates, so
+    /// the ceiling bounds what a peer can *hold open*, not just what it
+    /// has paid for in bytes sent (a header alone can declare 8 MiB).
+    /// Maintained incrementally (updated in [`Self::try_parse_one`]
+    /// wherever a message opens, completes, or aborts) rather than
+    /// recomputed per chunk, and checked against `max_in_progress_bytes`
+    /// before any reservation is made.
+    in_progress_bytes: usize,
+    /// Ceiling for `in_progress_bytes` — see
+    /// [`DEFAULT_MAX_IN_PROGRESS_BYTES`].
+    max_in_progress_bytes: usize,
 }
 
 impl Default for ChunkAssembler {
@@ -721,7 +755,25 @@ impl ChunkAssembler {
             csids: HashMap::new(),
             pending: Vec::new(),
             cursor: 0,
+            in_progress_bytes: 0,
+            max_in_progress_bytes: DEFAULT_MAX_IN_PROGRESS_BYTES,
         }
+    }
+
+    /// Set the ceiling on total payload bytes buffered across all
+    /// in-progress messages (#1108/RTMP-W1); see
+    /// [`DEFAULT_MAX_IN_PROGRESS_BYTES`] for the default and its rationale.
+    #[must_use]
+    pub fn with_max_in_progress_bytes(mut self, max_in_progress_bytes: usize) -> Self {
+        self.max_in_progress_bytes = max_in_progress_bytes;
+        self
+    }
+
+    /// Builder form of [`Self::set_chunk_size`] (same clamping rules).
+    #[must_use]
+    pub fn with_chunk_size(mut self, n: u32) -> Self {
+        self.set_chunk_size(n);
+        self
     }
 
     /// Update the chunk size in effect for subsequent chunks (called on
@@ -754,6 +806,10 @@ impl ChunkAssembler {
     /// bytes later, a corrupted merged message came out.
     pub fn abort(&mut self, csid: u32) {
         if let Some(state) = self.csids.get_mut(&csid) {
+            if state.in_progress {
+                let released = state.reserved.take().unwrap_or(0) as usize;
+                self.in_progress_bytes = self.in_progress_bytes.saturating_sub(released);
+            }
             state.payload.clear();
             state.in_progress = false;
         }
@@ -783,7 +839,11 @@ impl ChunkAssembler {
     pub fn push(&mut self, input: &[u8]) -> Result<Vec<Message>> {
         self.feed(input);
         let mut out = Vec::new();
-        while let Some(msg) = self.next_message()? {
+        while let Some(msg) = match self.next_message() {
+            Ok(Some(msg)) => Some(msg),
+            Ok(None) => return Ok(out),
+            Err(e) => return Err(e),
+        } {
             out.push(msg);
         }
         Ok(out)
@@ -817,46 +877,95 @@ impl ChunkAssembler {
     /// # Errors
     /// Same as [`push`](Self::push).
     pub(crate) fn next_message(&mut self) -> Result<Option<Message>> {
-        loop {
-            match Self::try_parse_one(
-                &self.pending[self.cursor..],
-                &mut self.csids,
-                self.chunk_size,
-            ) {
-                Ok(Some(parsed)) => {
-                    self.cursor += parsed.consumed;
-                    // Safe to unwrap: `try_parse_one` always commits (inserts
-                    // or updates) `parsed.csid`'s entry before returning
-                    // `Ok(Some(_))`.
-                    let complete = {
+        let max_in_progress_bytes = self.max_in_progress_bytes;
+        // #1108/RTMP-W1 defence-in-depth: cap the not-yet-parsed `pending`
+        // receive buffer at twice the in-progress budget. The primary
+        // bound is the declared-length reservation enforced in
+        // `try_parse_one` below (which holds whether or not the message's
+        // bytes have committed); this backstop covers the residual slack
+        // of bytes that belong to no reserved message (a caller that keeps
+        // feeding unparsed input despite errors) plus at most one
+        // unreserved in-flight header's worth.
+        if self.pending.len() - self.cursor > max_in_progress_bytes * 2 {
+            return Err(RtmpError::Malformed {
+                what: "pending input buffer exceeds the per-connection budget",
+            });
+        }
+        {
+            // Disjoint field borrows: the parse input is a slice of
+            // `pending` while the commit target is `csids`, so `pending`
+            // is briefly moved out to satisfy the borrow checker. Every
+            // return path below restores it (with the consumed prefix
+            // still in place — compaction happens in `compact`, once per
+            // return, not per chunk).
+            let pending = core::mem::take(&mut self.pending);
+            let mut cursor = self.cursor;
+            let outcome = loop {
+                let rest = &pending[cursor..];
+                match Self::try_parse_one(
+                    rest,
+                    &mut self.csids,
+                    self.chunk_size,
+                    &mut self.in_progress_bytes,
+                    max_in_progress_bytes,
+                ) {
+                    Ok(Some(parsed)) => {
+                        cursor += parsed.consumed;
+                        // Safe to unwrap: `try_parse_one` always commits
+                        // (inserts or updates) `parsed.csid`'s entry before
+                        // returning `Ok(Some(_))`.
                         let state = self.csids.get(&parsed.csid).expect("just committed above");
-                        state.payload.len() as u32 == state.message_length
-                    };
-                    if complete {
-                        let state = self.csids.get_mut(&parsed.csid).expect("checked above");
+                        if state.payload.len() as u32 != state.message_length {
+                            // This chunk only partially filled its message
+                            // (or belongs to a different, interleaved csid)
+                            // — keep looping to try the next chunk already
+                            // in `pending`.
+                            continue;
+                        }
+                        let state = self
+                            .csids
+                            .get_mut(&parsed.csid)
+                            .expect("checked just above");
                         state.in_progress = false;
-                        let payload = core::mem::take(&mut state.payload);
+                        // #1108/RTMP-W1: a completed message's reservation
+                        // (its declared length, charged when it opened)
+                        // leaves the budget the moment it is handed over.
+                        let released = state.reserved.take().unwrap_or(0) as usize;
+                        self.in_progress_bytes = self.in_progress_bytes.saturating_sub(released);
                         let msg = Message {
                             chunk_stream_id: parsed.csid,
                             timestamp: state.timestamp,
                             message_type_id: state.message_type_id,
                             message_stream_id: state.message_stream_id,
-                            payload,
+                            payload: core::mem::take(&mut state.payload),
                         };
-                        self.compact();
-                        return Ok(Some(msg));
+                        break Ok(Some((msg, cursor)));
                     }
-                    // This chunk only partially filled its message (or
-                    // belongs to a different, interleaved csid) — keep
-                    // looping to try the next chunk already in `pending`.
+                    Ok(None) => break Ok(None),
+                    Err(e) => break Err(e),
+                }
+            };
+            self.pending = pending;
+            self.cursor = cursor;
+            match outcome {
+                Ok(Some((msg, cursor))) => {
+                    self.cursor = 0;
+                    self.pending.drain(..cursor);
+                    Ok(Some(msg))
                 }
                 Ok(None) => {
                     self.compact();
-                    return Ok(None);
+                    Ok(None)
                 }
                 Err(e) => {
+                    // A budget error was produced by a header that
+                    // validated but whose chunk did not commit: re-parsing
+                    // the same bytes would count the declaration again, so
+                    // never resume consuming after one — the caller must
+                    // treat it as terminal (the error is unrecoverable for
+                    // this connection anyway).
                     self.compact();
-                    return Err(e);
+                    Err(e)
                 }
             }
         }
@@ -892,6 +1001,8 @@ impl ChunkAssembler {
         buf: &[u8],
         states: &mut HashMap<u32, CsidState>,
         chunk_size: u32,
+        in_progress_bytes: &mut usize,
+        max_in_progress_bytes: usize,
     ) -> Result<Option<ParsedChunk>> {
         let bh = match BasicHeader::parse(buf) {
             Ok(bh) => bh,
@@ -1100,6 +1211,30 @@ impl ChunkAssembler {
         let remaining_needed =
             (resolved.message_length as usize).saturating_sub(already_accumulated);
         let take = (chunk_size as usize).min(remaining_needed);
+
+        // #1108/RTMP-W1 aggregate budget. A new message reserves its full
+        // declared length when its header validates (before the payload
+        // arrives: hoarding hides in bytes that never come); the
+        // reservation is released on completion or abort. Continuation
+        // chunks never re-reserve. Idempotent: a header re-parsed because
+        // its payload was incomplete finds `reserved` equal to its own
+        // declaration and nets zero. A rejected header records nothing.
+        if starts_new {
+            let prior = states
+                .get(&bh.chunk_stream_id)
+                .and_then(|s| s.reserved)
+                .unwrap_or(0) as usize;
+            let new_total = in_progress_bytes
+                .saturating_sub(prior)
+                .saturating_add(resolved.message_length as usize);
+            if new_total > max_in_progress_bytes {
+                return Err(RtmpError::Malformed {
+                    what: "aggregate in-progress message bytes exceed the per-connection budget",
+                });
+            }
+            *in_progress_bytes = new_total;
+            states.entry(bh.chunk_stream_id).or_default().reserved = Some(resolved.message_length);
+        }
 
         if buf.len() < consumed + take {
             return Ok(None);
@@ -2672,6 +2807,154 @@ mod tests {
         assert_eq!(writer.chunk_size, MAX_CHUNK_SIZE);
     }
 
+    /// #1108/RTMP-W1: a fresh message opened on `csid` declaring
+    /// `declared_len` (> one chunk) payload bytes, with exactly its first
+    /// full chunk delivered so it commits and stays in progress. The full
+    /// declared length is reserved against the aggregate budget when the
+    /// header validates.
+    fn open_partial_chunk(csid: u32, declared_len: u32) -> Vec<u8> {
+        let sent_len = DEFAULT_CHUNK_SIZE as usize;
+        assert!(sent_len < declared_len as usize);
+        let mut input = Vec::new();
+        write_serialized(
+            &mut input,
+            &BasicHeader {
+                fmt: Fmt::Type0,
+                chunk_stream_id: csid,
+            },
+        );
+        write_serialized(
+            &mut input,
+            &MessageHeader::Type0 {
+                timestamp: 0,
+                message_length: declared_len,
+                message_type_id: 9,
+                message_stream_id: 1,
+            },
+        );
+        input.extend_from_slice(&vec![0x5Au8; sent_len]);
+        input
+    }
+
+    #[test]
+    fn aggregate_in_progress_bytes_across_csids_is_capped() {
+        // Mutation check: MAX_MESSAGE_LEN bounds ONE message and MAX_CSIDS
+        // bounds HOW MANY csids, but neither bounds the *product* — the
+        // hoarder does not even have to send the bytes; N csids each with
+        // a 24 KiB declaration cost one header each. Without the aggregate
+        // budget every push below returns Ok and the assembler accepts
+        // (MAX_MESSAGE_LEN x MAX_CSIDS) = 512 MiB of declarations per
+        // connection.
+        const BUDGET: usize = 64 * 1024;
+        const DECL: u32 = 24 * 1024;
+        let mut assembler = ChunkAssembler::new().with_max_in_progress_bytes(BUDGET);
+        // First prove the normal-traffic path: complete messages cycling
+        // every legal csid must never trip the budget (reservations are
+        // released on delivery), and the csid space really is reachable.
+        for i in 0..MAX_CSIDS as u32 {
+            let out = assembler
+                .push(&single_chunk(
+                    BASIC_HEADER_1BYTE_MIN_CSID + i,
+                    &[0x5Au8; 100],
+                ))
+                .expect("complete messages must never trip the budget");
+            assert_eq!(out.len(), 1);
+            assert_eq!(assembler.in_progress_bytes, 0);
+        }
+        // Now the hoarding shape: one permanently-partial 24 KiB
+        // declaration per csid, each costing the hoarder only a 16-byte
+        // payload fragment. 64 KiB / 24 KiB = 2 fit, so the budget must
+        // trip on the third push.
+        let mut hoarded = 0;
+        for i in 0..MAX_CSIDS as u32 {
+            let csid = BASIC_HEADER_1BYTE_MIN_CSID + i;
+            match assembler.push(&open_partial_chunk(csid, DECL)) {
+                Ok(msgs) => {
+                    assert!(msgs.is_empty(), "a partial message must not complete");
+                    assert_eq!(
+                        assembler.in_progress_bytes,
+                        (hoarded + 1) * DECL as usize,
+                        "each accepted declaration must reserve its full length"
+                    );
+                    hoarded += 1;
+                }
+                Err(err) => {
+                    assert!(
+                        matches!(&err, RtmpError::Malformed { .. }),
+                        "budget overrun must be Malformed (push #{hoarded}), got {err:?}"
+                    );
+                    break;
+                }
+            }
+        }
+        // 64 KiB / 24 KiB = 2 partials fit: the budget trips on the third
+        // push — long before the MAX_CSIDS cap could (only 3 csids exist
+        // on this connection, far below the 64-csid ceiling).
+        assert_eq!(
+            hoarded, 2,
+            "the budget must be what stops the flood, not the csid cap"
+        );
+        assert!(
+            assembler.in_progress_bytes <= BUDGET,
+            "held bytes must never exceed the budget"
+        );
+    }
+
+    #[test]
+    fn aggregate_in_progress_budget_trips_mid_message_and_recovers_on_completion() {
+        const DECL: u32 = 200;
+        let mut assembler = ChunkAssembler::new().with_max_in_progress_bytes(DECL as usize);
+        assert!(
+            assembler
+                .push(&open_partial_chunk(3, DECL))
+                .unwrap()
+                .is_empty()
+        );
+        assert_eq!(assembler.in_progress_bytes, DECL as usize);
+        // A second declaration would need 2x DECL: fatal, and the rejected
+        // message leaves no reservation behind.
+        assembler
+            .push(&open_partial_chunk(4, DECL))
+            .expect_err("a second declaration trips the cap");
+        assert_eq!(assembler.in_progress_bytes, DECL as usize);
+        // Recovery is checked on a fresh assembler (the error is fatal for
+        // the connection): completing the message releases its reservation.
+        let mut assembler = ChunkAssembler::new().with_max_in_progress_bytes(DECL as usize);
+        assembler.push(&open_partial_chunk(3, DECL)).unwrap();
+        let mut tail = Vec::new();
+        write_serialized(
+            &mut tail,
+            &BasicHeader {
+                fmt: Fmt::Type3,
+                chunk_stream_id: 3,
+            },
+        );
+        tail.extend_from_slice(&vec![0x11u8; DECL as usize - DEFAULT_CHUNK_SIZE as usize]);
+        let out = assembler.push(&tail).unwrap();
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].payload.len(), DECL as usize);
+        assert_eq!(assembler.in_progress_bytes, 0);
+        assembler
+            .push(&open_partial_chunk(5, DECL))
+            .expect("freed budget must be reusable");
+        assert_eq!(assembler.in_progress_bytes, DECL as usize);
+    }
+
+    #[test]
+    fn aggregate_in_progress_budget_unchanged_by_completed_messages() {
+        // Many complete messages through a tight budget must never trip
+        // the cap (payload leaves the budget the moment it is delivered),
+        // proving the cap bounds *stuck* bytes, not throughput.
+        let mut assembler = ChunkAssembler::new().with_max_in_progress_bytes(16);
+        for i in 0..50u32 {
+            let out = assembler
+                .push(&single_chunk(BASIC_HEADER_1BYTE_MIN_CSID, &[i as u8; 15]))
+                .expect("completed messages must not count toward the budget");
+            assert_eq!(out.len(), 1);
+        }
+        assert_eq!(assembler.in_progress_bytes, 0);
+    }
+
     /// r08-RTMP-C1 regression: reassembling a large message split into many
     /// small physical chunks (here, chunk size 1 — the wire's own hard
     /// floor, `MUST >= 1`, and the shape the original finding used) must do
@@ -2699,8 +2982,7 @@ mod tests {
         writer.set_chunk_size(1);
         let bytes = writer.write(&original).unwrap();
 
-        let mut assembler = ChunkAssembler::new();
-        assembler.set_chunk_size(1);
+        let mut assembler = ChunkAssembler::new().with_chunk_size(1);
 
         reset_payload_bytes_copied_for_test();
         let out = assembler.push(&bytes).unwrap();

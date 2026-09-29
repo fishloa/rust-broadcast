@@ -18,6 +18,16 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   variant (additive; the enum is `#[non_exhaustive]`).
 
 ### Fixed
+- **RTMP-W1 aggregate memory budget**: nothing bounded the total bytes held across in-progress chunk
+  streams (up to 512 MiB per connection). `ChunkAssembler` now reserves each new message's full
+  declared length against a per-connection budget (`DEFAULT_MAX_IN_PROGRESS_BYTES`, 16 MiB;
+  `ServerConfig::max_in_progress_bytes` / `ClientConfig::max_in_progress_bytes`) and releases it on
+  completion or abort; exceeding it is a fatal `Malformed` error for the connection (#1085).
+- **RTMP-W6 aggregate messages**: Aggregate (type 22) messages are now unpacked into their FLV-tag
+  sub-messages and delivered as ordinary media events, timestamps renormalised against the
+  aggregate's (§7.1.6); a truncated or back-pointer-inconsistent aggregate is `Malformed` (#1085).
+- **RTMP-W9 client publish sequence**: the client now sends `releaseStream` -> `FCPublish` ->
+  `createStream` (the ffmpeg/OBS/FMLE order) and announces `flashVer` in `connect` (#1085).
 - **#1108 (RTMP-W2)**: `Abort` (§5.4.2) was accepted and silently ignored, so a csid's
   `in_progress` flag stayed set after the sender discarded its partial message — the next Type 3
   chunk that started a genuinely new message on that csid was instead appended to the stale
