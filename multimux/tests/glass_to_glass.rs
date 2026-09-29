@@ -360,7 +360,7 @@ async fn non_ll_origin_plays_via_full_segment_fallback_over_http() {
             skip: None,
             ..Default::default()
         };
-        let playlist_text = playlist.to_m3u8();
+        let playlist_text = playlist.to_m3u8().expect("valid playlist");
         assert!(
             !playlist_text.contains("#EXT-X-PART"),
             "the fixture playlist must genuinely carry no PART tags:\n{playlist_text}"

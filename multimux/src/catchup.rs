@@ -307,7 +307,7 @@ pub(crate) fn render_playlist(
     map_uri: Option<&str>,
     playlist_type: broadcast_hls::PlaylistType,
     endlist: bool,
-) -> String {
+) -> std::result::Result<String, broadcast_hls::Error> {
     let target_duration = segments
         .iter()
         .map(|s| s.duration_secs)
@@ -695,7 +695,8 @@ mod tests {
             Some("init-1.mp4"),
             broadcast_hls::PlaylistType::Event,
             false,
-        );
+        )
+        .expect("generated URIs are valid");
         assert!(body.contains("#EXT-X-MEDIA-SEQUENCE:5"), "body: {body}");
         assert!(body.contains("#EXT-X-TARGETDURATION:4"), "body: {body}");
         assert!(body.contains("catchup/seg-5.m4s"), "body: {body}");
@@ -723,7 +724,8 @@ mod tests {
             None,
             broadcast_hls::PlaylistType::Vod,
             true,
-        );
+        )
+        .expect("generated URIs are valid");
         assert!(body.contains("#EXT-X-ENDLIST"), "body: {body}");
         assert!(body.contains("#EXT-X-PLAYLIST-TYPE:VOD"), "body: {body}");
         assert!(
@@ -734,7 +736,8 @@ mod tests {
 
     #[test]
     fn render_playlist_empty_segments_uses_minimum_target_duration() {
-        let body = render_playlist(&[], "m4s", None, broadcast_hls::PlaylistType::Event, false);
+        let body = render_playlist(&[], "m4s", None, broadcast_hls::PlaylistType::Event, false)
+            .expect("empty playlist renders");
         assert!(body.contains("#EXT-X-TARGETDURATION:1"), "body: {body}");
     }
 }

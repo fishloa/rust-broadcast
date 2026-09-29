@@ -6,7 +6,96 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Fixed
+- **`cenc_ext_x_key` now emits `METHOD=SAMPLE-AES-CTR` for the `cenc`
+  scheme instead of returning `None`** (audit BH-W1, #1111): the function
+  and the module doc above it claimed "CTR is not a valid HLS METHOD",
+  contradicting this crate's own `EncryptionMethod::SampleAesCtr` and RFC
+  8216bis §4.4.4.4 — that method is exactly the `cenc` scheme for fMP4, and
+  the spec says the `IV` attribute MUST NOT be present for it (none is
+  emitted). `cenc`-protected CMAF can now be signalled in HLS at all;
+  `CencScheme::Cbcs` is unchanged (`METHOD=SAMPLE-AES`).
+- **`#EXT-X-RENDITION-REPORT` now requires `LAST-MSN`** (audit BH-W2,
+  #1111): RFC 8216bis §4.4.5.3 makes it REQUIRED, but parse silently
+  defaulted it to `0`, so `#EXT-X-RENDITION-REPORT:URI="b.m3u8"` parsed `Ok`
+  into a report telling a client to request `_HLS_msn=0` — a long-gone
+  segment — and re-rendering fabricated `LAST-MSN=0`. An absent attribute is
+  now `Error::HlsParse`.
+- **Segment-defining tags now re-render in place instead of being hoisted
+  into one playlist-level block before every Media Segment** (audit BH-W5,
+  #1111): `#EXT-X-KEY`, `#EXT-X-PROGRAM-DATE-TIME`, `#EXT-X-DATERANGE` and
+  the `#EXT-X-CUE-*` family carry no typed field in this crate, so `parse()`
+  kept them verbatim — but in a flat `MediaPlaylist::extra_tags` list that
+  `to_m3u8` emitted as a single block *before all segments*. Per RFC 8216bis
+  §4.4.1 such a tag applies "until the next occurrence of the tag or the end
+  of the Playlist", so its position is load-bearing: a playlist with a
+  `METHOD=AES-128` key A before segment 1 and key B before segment 50
+  re-rendered with both keys at the top, applying key B to every segment and
+  leaving segments 1-49 undecryptable, and every `#EXT-X-PROGRAM-DATE-TIME`
+  landed at the top so the last one won and the wall-clock timeline was
+  wrong. They now attach to the *following* segment (new public
+  `MediaSegment::pre_tags` and `OpenSegment::pre_tags`) and are re-emitted
+  immediately before it, so a key rotation, a per-segment PDT and a
+  mid-playlist DATERANGE survive parse → render byte-for-byte; the open
+  segment at the live edge keeps its own. Playlist-level unmodeled tags
+  (`#EXT-X-MEDIA`, `#EXT-X-DEFINE`, …) still go to
+  `MediaPlaylist::extra_tags`.
+- **The strict RFC 8216bis §4.2 decimal grammar now gates every numeric
+  attribute parse** (audit BH-W4, #1111): `PART-TARGET`, `PART-HOLD-BACK`,
+  `HOLD-BACK`, `CAN-SKIP-UNTIL` and `EXT-X-PART DURATION` already went
+  through it, but `EXT-X-VERSION`, `EXT-X-TARGETDURATION`,
+  `EXT-X-MEDIA-SEQUENCE`, `EXT-X-DISCONTINUITY-SEQUENCE`, `EXT-X-BITRATE`,
+  `BANDWIDTH`, `RESOLUTION`, `BYTERANGE`/`BYTERANGE-START`/
+  `BYTERANGE-LENGTH`, `LAST-MSN`, `LAST-PART` and `SKIPPED-SEGMENTS` still
+  used raw `from_str`, which accepts a leading `+` (`BANDWIDTH=+7` parsed)
+  on integer fields; `#EXTINF`-style float fields were already strict.
+  All integer attributes now share one strict `decimal-integer` lexer
+  (no `+`, no exponent, no `nan`/`inf`, no decimal point), and the float
+  and integer lexers are the only numeric entry points in the crate.
+### Fixed
+- **A Multivariant Playlist whose `#EXT-X-STREAM-INF` has no following URI
+  line is now an error** (audit BH-W9, #1111): RFC 8216bis §4.4.6.2 requires
+  the tag to be followed by the URI line of the Variant it describes. A
+  second `#EXT-X-STREAM-INF` before that line silently **overwrote** the
+  pending Variant, and EOF with one pending silently **dropped** it — either
+  way a truncated multivariant playlist lost a variant with no error, and no
+  downstream validator could flag it because the information was already
+  gone from the parsed struct. Both now return `Error::HlsParse`.
+### Changed
+- **Docs only — no behavior change.** `MasterPlaylist::extra_tags` was
+  documented as emitting its verbatim lines "after the variant/I-frame-variant
+  entries"; `to_m3u8` actually emits them **first**, before
+  `#EXT-X-INDEPENDENT-SEGMENTS`/`DEFINE`/`START`, the `SESSION-*` tags and the
+  variant list (audit BH-W10, #1111). A caller relying on the old wording to
+  place a `#EXT-X-DEFINE` (carried in `extra_tags`) after the variants that
+  use it got the actual, opposite behaviour.
+### Changed
+- **`#EXTINF` titles now survive the round trip** (audit BH-W11,
+  #1111): the title after the duration's comma (RFC 8216bis §4.4.4.1)
+  was split off and discarded, so any playlist carrying one lost it on
+  re-render. `MediaSegment` gains a `title: Option<String>` field —
+  `None` (the common case) renders the bare `#EXTINF:<dur>,` exactly
+  as before, so existing output is unchanged; a title is validated
+  like any other quoted-string (a CR or LF in it is rejected, per
+  BH-W7).
 ### Changed (breaking)
+- **`Variant::codecs` is now `Option<String>`** (audit BH-W6, #1111): the
+  `CODECS` attribute of `#EXT-X-STREAM-INF` (RFC 8216bis §4.4.6.2) is
+  optional, but an absent one was parsed into `codecs: String = ""` and the
+  renderer emitted the invalid empty `CODECS=""` — a malformed codec list a
+  strict client (Apple `mediastreamvalidator`, AVPlayer) rejects. `None` now
+  round-trips: the attribute is simply not rendered, matching
+  `IFrameVariant::codecs`, which already modelled it this way.
+- **`LowLatencyConfig::part_target`/`part_hold_back` are now
+  `Option<DecimalSeconds>` and `effective_part_hold_back()` returns
+  `Option<DecimalSeconds>`** (audit BH-W3, #1111): a Media Playlist may
+  carry `#EXT-X-SERVER-CONTROL` (blocking reload or delta updates) without
+  any Partial Segments, which RFC 8216bis §4.4.3.8 allows. Previously such
+  a playlist parsed into `low_latency = Some` with both fields defaulted
+  to `0`, and `to_m3u8` unconditionally re-rendered a bogus
+  `#EXT-X-PART-INF:PART-TARGET=0` and `PART-HOLD-BACK=0`, telling clients
+  the stream was LL-HLS with a zero part target. The two tags now render
+  only when actually present (parse or explicitly set).
 - **New checked newtypes `DecimalSeconds`/`SignedDecimalSeconds` replace
   `f64`/`Option<f64>` on every public duration field** (issue #1140,
   coordinator follow-up to BH-W4/T12): `MediaSegment::duration`,
@@ -28,6 +117,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `quoted`/`bare` on deserialize, so a downstream crate's `#[derive(...)]`
   struct holding `Vec<(String, AttrValue)>` can't deserialize an
   unvalidated value either.
+- **`to_m3u8()` is now fallible — `Result<String>`** (audit BH-W7,
+  #1111): a model field rendered inside an RFC 8216 §4.2 quoted-string
+  (`CODECS`, `KEYFORMAT`, `SERVER-URI`, `DATA-ID`/`VALUE`/`LANGUAGE`,
+  `#EXT-X-DEFINE` `NAME`/`VALUE`, …) or emitted as a URI (segment,
+  part, map, variant, rendition-report, preload-hint) that contains
+  `"`, CR or LF is now rejected (`Error::InvalidQuotedString` /
+  `Error::InvalidUri`) instead of being written out raw. Those three
+  characters are forbidden in a quoted-string, and a newline in an
+  unmodeled or caller-supplied URI (`"seg.m4s\n#EXT-X-ENDLIST"`)
+  injected a whole tag line into the rendered playlist while an
+  embedded `"` broke out of the attribute list and truncated the
+  value. The same characters are now rejected by the per-tag
+  renderers (`push_part_line`/`push_map_line`/`push_define_line`/
+  `push_session_data_line`/`push_session_key_line`, all now
+  `-> Result<()>`), so a caller that renders a tag line directly gets
+  the same guarantee. `transmux::ts_hls::StreamingTsHlsSegmenter::playlist`
+  and `multimux::catchup::render_playlist` are fallible in step.
+- **`LowLatencyConfig::extra_attrs` is removed** (audit BH-W8, #1111):
+  the struct carried each unmodeled `#EXT-X-SERVER-CONTROL` /
+  `#EXT-X-PART-INF` / `#EXT-X-PRELOAD-HINT` attribute twice — once in
+  the per-tag `sc_extra_attrs`/`pi_extra_attrs`/`ph_extra_attrs` lists
+  the renderer actually reads, and once in a playlist-wide
+  `extra_attrs` union. The §8 row-12 `REQ-` version scan read only the
+  union, so a config built directly with e.g.
+  `sc_extra_attrs = [("REQ-X","1")]` rendered `REQ-X` while leaving
+  `#EXT-X-VERSION` at its lowered value, an under-declaration §8
+  forbids. The three per-tag lists are now the single source: the scan
+  covers all three and the union is gone. `parse` is unaffected (it
+  always populated all four identically).
 - **Every `extra_attrs: Vec<(String, String)>` field is now
   `Vec<(String, AttrValue)>`, and `AttrValue` is now an opaque struct**
   (issue #1045 / audit BH-C1, T12): quoting is recorded losslessly from

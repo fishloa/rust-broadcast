@@ -68,7 +68,7 @@ fn iframe_stream_inf_renders_and_opt_in() {
         version: 6,
         variants: vec![Variant {
             bandwidth: 1_500_000,
-            codecs: "hvc1.1.6.L93.B0,mp4a.40.2".into(),
+            codecs: Some("hvc1.1.6.L93.B0,mp4a.40.2".into()),
             resolution: Some((1280, 720)),
             uri: "main.m3u8".into(),
             extra_attrs: vec![],
@@ -82,7 +82,7 @@ fn iframe_stream_inf_renders_and_opt_in() {
         }],
         ..Default::default()
     };
-    let out = pl.to_m3u8();
+    let out = pl.to_m3u8().unwrap();
 
     // Exactly one EXT-X-I-FRAME-STREAM-INF tag.
     assert_eq!(
@@ -114,7 +114,7 @@ fn iframe_stream_inf_renders_and_opt_in() {
         version: 6,
         variants: vec![Variant {
             bandwidth: 1_500_000,
-            codecs: "hvc1.1.6.L93.B0,mp4a.40.2".into(),
+            codecs: Some("hvc1.1.6.L93.B0,mp4a.40.2".into()),
             resolution: Some((1280, 720)),
             uri: "main.m3u8".into(),
             extra_attrs: vec![],
@@ -122,7 +122,7 @@ fn iframe_stream_inf_renders_and_opt_in() {
         iframe_variants: vec![],
         ..Default::default()
     };
-    let plain_out = plain.to_m3u8();
+    let plain_out = plain.to_m3u8().unwrap();
     assert!(
         !plain_out.contains("EXT-X-I-FRAME-STREAM-INF"),
         "no EXT-X-I-FRAME-STREAM-INF expected with empty iframe_variants:\n{plain_out}"
@@ -165,7 +165,7 @@ fn iframes_only_opt_in() {
     }
 
     // --- Positive: iframes_only=true ---
-    let out = media_playlist(true, 3).to_m3u8();
+    let out = media_playlist(true, 3).to_m3u8().unwrap();
     assert!(
         out.contains("#EXT-X-I-FRAMES-ONLY\n"),
         "#EXT-X-I-FRAMES-ONLY must be present when iframes_only=true:\n{out}"
@@ -191,7 +191,7 @@ fn iframes_only_opt_in() {
     );
 
     // version=7 with iframes_only=true → version stays 7 (not downgraded to 4)
-    let out7 = media_playlist(true, 7).to_m3u8();
+    let out7 = media_playlist(true, 7).to_m3u8().unwrap();
     assert!(
         out7.contains("#EXT-X-VERSION:7\n"),
         "version must not be downgraded from 7 to 4:\n{out7}"
@@ -202,7 +202,7 @@ fn iframes_only_opt_in() {
     );
 
     // --- Negative: iframes_only=false ---
-    let out_no = media_playlist(false, 3).to_m3u8();
+    let out_no = media_playlist(false, 3).to_m3u8().unwrap();
     assert!(
         !out_no.contains("#EXT-X-I-FRAMES-ONLY"),
         "#EXT-X-I-FRAMES-ONLY must be absent when iframes_only=false:\n{out_no}"
@@ -356,7 +356,7 @@ fn ir_trick_track_wired_to_signalling() {
         version: 6,
         variants: vec![Variant {
             bandwidth: 2_000_000,
-            codecs: "avc1.640028".into(),
+            codecs: Some("avc1.640028".into()),
             resolution: Some((src_w, src_h)),
             uri: "main.m3u8".into(),
             extra_attrs: vec![],
@@ -364,7 +364,7 @@ fn ir_trick_track_wired_to_signalling() {
         iframe_variants: vec![iframe_variant],
         ..Default::default()
     };
-    let m3u8 = master.to_m3u8();
+    let m3u8 = master.to_m3u8().unwrap();
 
     // The rendered RESOLUTION must match the source dimensions.
     assert!(

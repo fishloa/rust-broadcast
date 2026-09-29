@@ -102,16 +102,22 @@ fn main() {
         render_session_playlist(&base, None).expect("valid interstitial attributes");
 
     println!("\n--- viewer-42's rendered playlist (in the break) ---");
-    println!("{}", rendered_for_this_viewer.to_m3u8());
+    println!("{}", rendered_for_this_viewer.to_m3u8().unwrap());
     println!("--- every other viewer's rendered playlist (no break) ---");
-    println!("{}", rendered_for_everyone_else.to_m3u8());
+    println!("{}", rendered_for_everyone_else.to_m3u8().unwrap());
 
     assert!(
         rendered_for_this_viewer
             .to_m3u8()
+            .unwrap()
             .contains("X-ASSET-URI=\"https://ads.example.com/creative-123.m3u8\"")
     );
-    assert!(!rendered_for_everyone_else.to_m3u8().contains("X-ASSET-URI"));
+    assert!(
+        !rendered_for_everyone_else
+            .to_m3u8()
+            .unwrap()
+            .contains("X-ASSET-URI")
+    );
     assert_eq!(sessions.len(), 1);
     println!("OK: session tracked, interstitial rendered into this viewer's playlist only.");
 }

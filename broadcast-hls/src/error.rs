@@ -59,4 +59,36 @@ pub enum Error {
     /// (`TIME-OFFSET`) still requires finiteness.
     #[error("{0} is not a finite decimal-floating-point number of seconds")]
     InvalidSignedDecimalSeconds(f64),
+
+    /// A model field rendered as an RFC 8216 §4.2 quoted-string — a
+    /// quoted-string attribute value (`CODECS`, `KEYFORMAT`, `SERVER-URI`,
+    /// `VALUE`, …) — contains `"`, CR or LF, all three forbidden there
+    /// (audit BH-W7, issue #1111). Rejected at construction rather than
+    /// emitted raw: a value carrying a newline injects a tag line into the
+    /// rendered playlist, and one carrying `"` breaks out of the attribute
+    /// list.
+    #[error("{what} {value:?} contains {bad_char:?}, forbidden in an HLS quoted-string")]
+    InvalidQuotedString {
+        /// Which field rejected the value (e.g. `"segment URI"`).
+        what: String,
+        /// The offending character: `"`, CR or LF.
+        bad_char: char,
+        /// The value that failed validation.
+        value: String,
+    },
+
+    /// A model field rendered as a bare URI line or as the URI of a
+    /// URI-bearing attribute (segment/part/map/variant URI) contains `"`,
+    /// CR or LF (audit BH-W7, issue #1111). Same injection consequence as
+    /// [`Error::InvalidQuotedString`]; a separate variant so a caller can
+    /// tell which field class failed.
+    #[error("URI {value:?} ({what}) contains {bad_char:?}, forbidden in an HLS URI")]
+    InvalidUri {
+        /// Which URI rejected the value (e.g. `"segment URI"`).
+        what: String,
+        /// The offending character: `"`, CR or LF.
+        bad_char: char,
+        /// The value that failed validation.
+        value: String,
+    },
 }

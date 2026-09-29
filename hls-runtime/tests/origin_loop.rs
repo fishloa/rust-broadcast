@@ -165,10 +165,14 @@ impl PlaylistBuilder<'_> {
             low_latency: Some(LowLatencyConfig {
                 // Test fixture data: `part_target_secs` is a small positive
                 // constant in every case this file builds (issue #1140).
-                part_target: DecimalSeconds::new(self.part_target_secs)
-                    .expect("fixture part_target_secs is finite, >= 0"),
-                part_hold_back: DecimalSeconds::new(3.0 * self.part_target_secs)
-                    .expect("fixture part_target_secs is finite, >= 0"),
+                part_target: Some(
+                    DecimalSeconds::new(self.part_target_secs)
+                        .expect("fixture part_target_secs is finite, >= 0"),
+                ),
+                part_hold_back: Some(
+                    DecimalSeconds::new(3.0 * self.part_target_secs)
+                        .expect("fixture part_target_secs is finite, >= 0"),
+                ),
                 preload_hint_part,
                 ..Default::default()
             }),
@@ -305,7 +309,7 @@ fn origin_client_loop_blocking_reload_prefetch_dedup_and_ordered_output() {
         endlist: false,
     }
     .build();
-    let pl1_text = pl1.to_m3u8();
+    let pl1_text = pl1.to_m3u8().expect("valid playlist");
 
     // --- Wire an origin fixture serving byte content by URI (the fixture
     // knows about BOTH of segment 2's parts, even though playlist #1 only
@@ -483,7 +487,9 @@ fn origin_client_loop_blocking_reload_prefetch_dedup_and_ordered_output() {
         endlist: true, // end the stream so we can assert EndOfStream too.
     }
     .build();
-    client.on_playlist(pl2.to_m3u8().as_bytes()).unwrap();
+    client
+        .on_playlist(pl2.to_m3u8().expect("valid playlist").as_bytes())
+        .unwrap();
     let actions2 = drain_actions(&mut client);
     assert!(
         actions2.is_empty(),
@@ -541,8 +547,8 @@ fn can_block_reload_no_yields_non_blocking_reload_with_backoff() {
         endlist: false,
         extra_tags: vec![],
         low_latency: Some(LowLatencyConfig {
-            part_target: DecimalSeconds::new(0.5).unwrap(),
-            part_hold_back: DecimalSeconds::new(1.5).unwrap(),
+            part_target: Some(DecimalSeconds::new(0.5).unwrap()),
+            part_hold_back: Some(DecimalSeconds::new(1.5).unwrap()),
             can_block_reload: false,
             ..Default::default()
         }),
@@ -554,7 +560,9 @@ fn can_block_reload_no_yields_non_blocking_reload_with_backoff() {
 
     let mut client = HlsClient::new(PLAYLIST_URL);
     let _ = client.poll(); // discard the initial plain GET
-    client.on_playlist(pl.to_m3u8().as_bytes()).unwrap();
+    client
+        .on_playlist(pl.to_m3u8().expect("valid playlist").as_bytes())
+        .unwrap();
     let actions = drain_actions(&mut client);
 
     let reload = actions
@@ -638,7 +646,9 @@ fn non_ll_playlist_plays_via_full_segment_fallback() {
 
     let mut client = HlsClient::new(PLAYLIST_URL);
     let _ = client.poll();
-    client.on_playlist(pl.to_m3u8().as_bytes()).unwrap();
+    client
+        .on_playlist(pl.to_m3u8().expect("valid playlist").as_bytes())
+        .unwrap();
     let actions = drain_actions(&mut client);
 
     // Non-LL playlist must not request a blocking reload.

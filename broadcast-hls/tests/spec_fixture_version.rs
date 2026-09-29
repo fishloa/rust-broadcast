@@ -304,7 +304,7 @@ fn query_param_define_triggers_row_11_when_built_programmatically() {
     let pl = MasterPlaylist {
         variants: vec![broadcast_hls::Variant {
             bandwidth: 300_000,
-            codecs: "avc1.64001e".into(),
+            codecs: Some("avc1.64001e".into()),
             resolution: None,
             uri: "v300/index.m3u8".into(),
             extra_attrs: vec![],

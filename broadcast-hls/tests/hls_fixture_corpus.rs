@@ -121,7 +121,7 @@ fn assert_case(case: &Case) {
             // Round-trip (issue #872): parse -> serialize -> re-parse must
             // yield an equal document. Not byte-identity — see the module
             // doc's "Round-trip invariant" section.
-            let rendered = parsed.to_m3u8();
+            let rendered = parsed.to_m3u8().unwrap();
             let reparsed = MediaPlaylist::parse(&rendered).unwrap_or_else(|e| {
                 panic!(
                     "{}: re-parsing this crate's own rendered output must succeed: {e}\n\
@@ -140,7 +140,7 @@ fn assert_case(case: &Case) {
             let parsed = MasterPlaylist::parse(&text).unwrap_or_else(|e| {
                 panic!("{} should parse as a Multivariant Playlist: {e}", case.path)
             });
-            let rendered = parsed.to_m3u8();
+            let rendered = parsed.to_m3u8().unwrap();
             let reparsed = MasterPlaylist::parse(&rendered).unwrap_or_else(|e| {
                 panic!(
                     "{}: re-parsing this crate's own rendered output must succeed: {e}\n\
@@ -430,21 +430,23 @@ fn handbuilt_fixtures_expose_the_872_tags_as_typed_data() {
     assert_eq!(media.segments[2].bitrate, Some(1800));
 
     // Derived from §9.10: two EXT-X-DATERANGE lines (unmodeled tags that
-    // go into `extra_tags`) carrying SCTE35-OUT and SCTE35-IN.
+    // attach to the *following* segment as `pre_tags` — audit BH-W5 — so a
+    // DATERANGE between two segments re-renders in place).
     let dtrng = MediaPlaylist::parse(&read_fixture("handbuilt/daterange-scte35-media.m3u8"))
         .expect("must parse");
     assert_eq!(dtrng.segments.len(), 3, "three segments");
+    let dateranges: Vec<&String> = dtrng.segments.iter().flat_map(|s| &s.pre_tags).collect();
     assert!(
-        dtrng.extra_tags.len() >= 2,
-        "at least two unmodeled EXT-X-DATERANGE lines must land in extra_tags"
+        dateranges.len() >= 2,
+        "at least two unmodeled EXT-X-DATERANGE lines must land in a segment's pre_tags"
     );
     assert!(
-        dtrng.extra_tags.iter().any(|t| t.contains("SCTE35-OUT")),
-        "SCTE35-OUT DATERANGE must be in extra_tags"
+        dateranges.iter().any(|t| t.contains("SCTE35-OUT")),
+        "SCTE35-OUT DATERANGE must be on a segment's pre_tags"
     );
     assert!(
-        dtrng.extra_tags.iter().any(|t| t.contains("SCTE35-IN")),
-        "SCTE35-IN DATERANGE must be in extra_tags"
+        dateranges.iter().any(|t| t.contains("SCTE35-IN")),
+        "SCTE35-IN DATERANGE must be on a segment's pre_tags"
     );
 
     // Derived from §9.11: EXT-X-PART, EXT-X-PRELOAD-HINT,
@@ -615,7 +617,7 @@ low.m3u8
     );
 
     // Round-trip: parse → serialize → re-parse must yield an equal document.
-    let rendered = parsed.to_m3u8();
+    let rendered = parsed.to_m3u8().unwrap();
     let reparsed = MasterPlaylist::parse(&rendered).unwrap_or_else(|e| {
         panic!(
             "re-parsing this crate's own rendered output must succeed: {e}\n\

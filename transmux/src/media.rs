@@ -612,7 +612,7 @@ impl Package for HlsPackager {
             open_segment: None,
             ..Default::default()
         };
-        Ok(playlist.to_m3u8())
+        Ok(playlist.to_m3u8()?)
     }
 }
 

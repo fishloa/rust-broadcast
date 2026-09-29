@@ -107,15 +107,14 @@
 //!
 //! # CENC/CBCS DRM signalling (ISO/IEC 23001-7, issue #564)
 //!
-//! [`cenc_ext_x_key`] renders the `#EXT-X-KEY` tag line for a `cbcs`
-//! (AES-128 pattern CBC)-protected CMAF track — the CMAF-HLS case Apple's
-//! HLS authoring guidance carries as `METHOD=SAMPLE-AES`. Push the returned
-//! line into [`MediaPlaylist::extra_tags`] (before the segments it
-//! protects). `cenc` (AES-128 full-block CTR) has **no** valid HLS `METHOD`
-//! — CTR is not one of HLS's two encryption methods (`SAMPLE-AES`/
-//! `AES-128`, both CBC) — so `cenc`-protected CMAF is signalling-only on the
-//! DASH side (the `transmux` crate's `dash` module); `cenc_ext_x_key` returns
-//! `None` rather than emit an invalid tag.
+//! [`cenc_ext_x_key`] renders the `#EXT-X-KEY` tag line for a CMAF track
+//! protected with either Common Encryption scheme: `cbcs` (AES-128 pattern
+//! CBC) becomes `METHOD=SAMPLE-AES` — the method Apple's HLS authoring
+//! guidance carries — and `cenc` (AES-128 full-block CTR) becomes
+//! `METHOD=SAMPLE-AES-CTR` with no `IV` (RFC 8216bis §4.4.4.4: fMP4 Media
+//! Segments encrypted with the `cenc` scheme use SAMPLE-AES-CTR, and the
+//! `IV` attribute MUST NOT be present). Push the returned line into
+//! [`MediaPlaylist::extra_tags`] (before the segments it protects).
 //!
 //! # Parsing (RFC 8216bis, issue #717 slice 1)
 //!
@@ -129,7 +128,9 @@
 //! attributes. Unrecognized tags are preserved verbatim into
 //! [`MediaPlaylist::extra_tags`] (never an error — forward-compat); a
 //! malformed *known* tag (missing required attribute, unparsable value)
-//! returns [`crate::Error::HlsParse`].
+//! returns [`crate::Error::HlsParse`]. The `#EXTINF` title (the text after
+//! the duration's comma, §4.4.4.1) is carried on
+//! [`MediaSegment::title`] rather than being discarded (issue #1111).
 //!
 //! Known, documented gaps (data the current struct shape cannot yet carry,
 //! called out per the project's round-trip-fidelity discipline rather than
@@ -149,11 +150,16 @@
 //!   round-trip, since the wire format has no way to say "stop applying the
 //!   map" short of `#EXT-X-DISCONTINUITY` + a new `#EXT-X-MAP`.
 //! - A per-segment tag outside the recognized set above (e.g.
-//!   `#EXT-X-PROGRAM-DATE-TIME`, a segment-scoped `#EXT-X-KEY`) is captured
-//!   into the flat, playlist-level [`MediaPlaylist::extra_tags`] — the data
-//!   is preserved, not dropped, but re-rendering loses its original
-//!   interleaved position (extra tags always render as one block before all
-//!   segments, matching `to_m3u8()`'s existing placement).
+//!   `#EXT-X-DATERANGE`) is captured into the flat, playlist-level
+//!   [`MediaPlaylist::extra_tags`] — the data is preserved, not dropped,
+//!   but re-rendering loses its original interleaved position (extra tags
+//!   always render as one block before all segments, matching `to_m3u8()`'s
+//!   existing placement). The tags that *define a Media Segment* —
+//!   `#EXT-X-KEY`, `#EXT-X-PROGRAM-DATE-TIME`, `#EXT-X-DATERANGE`,
+//!   `#EXT-X-CUE-*` and any other unrecognized line appearing between two
+//!   Media Segment URIs — are instead attached to the following segment's
+//!   [`MediaSegment::pre_tags`] and re-render in place, so key rotation and
+//!   the PDT timeline survive re-render (audit BH-W5, issue #1111).
 //! - [`MediaSegment::bitrate`] (`#EXT-X-BITRATE`, RFC 8216bis §4.4.4.8) uses
 //!   the same carry-forward + dedup-render rule as `map` above; the spec's
 //!   producer-side constraint that the tag "does not apply" to a segment
@@ -232,16 +238,15 @@ pub const CENC_KEYFORMAT: &str = "urn:mpeg:dash:mp4protection:2011";
 /// `KEYFORMATVERSIONS` for [`CENC_KEYFORMAT`] (there is only version `"1"`).
 pub const CENC_KEYFORMATVERSIONS: &str = "1";
 
-/// Build the `#EXT-X-KEY` tag line for a `cbcs`-protected CMAF track
-/// (RFC 8216 §4.3.2.4 `METHOD=SAMPLE-AES`, `KEYFORMAT`/`KEYFORMATVERSIONS`
+/// Build the `#EXT-X-KEY` tag line for a CMAF track protected with either
+/// Common Encryption scheme (RFC 8216bis §4.4.4.4): `cbcs` (AES-128 pattern
+/// CBC) renders `METHOD=SAMPLE-AES`, `cenc` (AES-128 full-block CTR) renders
+/// `METHOD=SAMPLE-AES-CTR`. In both cases `KEYFORMAT`/`KEYFORMATVERSIONS`
 /// per [`CENC_KEYFORMAT`]/[`CENC_KEYFORMATVERSIONS`], plus the `KEYID`
 /// attribute Apple's HLS CMAF/fMP4 authoring guidance uses to identify the
-/// CENC key ID).
-///
-/// Returns `None` for [`CencScheme::Cenc`] (AES-128 full-block CTR): CTR is
-/// not a valid HLS `METHOD` (HLS only speaks `SAMPLE-AES`/`AES-128`, both
-/// CBC), so `cenc`-protected CMAF has no HLS key tag — it is DASH-only (see
-/// the module docs).
+/// CENC key ID. Per §4.4.4.4, encryption with SAMPLE-AES-CTR is defined only
+/// for fMP4 Media Segments and the `IV` attribute MUST NOT be present, so no
+/// `IV` is ever emitted here.
 ///
 /// `key_uri` is caller-supplied (a key-server URL, `skd://`, or `data:`
 /// URI — no DRM logic lives here) and `kid` is the track's Track Encryption
@@ -249,16 +254,22 @@ pub const CENC_KEYFORMATVERSIONS: &str = "1";
 /// `transmux` crate's `cenc::TrackEncryptionBox::default_kid` /
 /// `media::TrackEncryption::tenc::default_kid`).
 ///
-/// `Ok(None)` for [`CencScheme::Cenc`] (see above); `Err` if `key_uri`
-/// cannot be represented as a quoted-string (`"`, CR or LF — RFC 8216 §4.2;
-/// issue #1140 / audit r05-W10: a key-server URL assembled from request
-/// data previously went straight into the tag unvalidated, an
-/// attribute-list-injection vector).
+/// `Err` if `key_uri` cannot be represented as a quoted-string (`"`, CR or
+/// LF — RFC 8216 §4.2; issue #1140 / audit r05-W10: a key-server URL
+/// assembled from request data previously went straight into the tag
+/// unvalidated, an attribute-list-injection vector).
 pub fn cenc_ext_x_key(scheme: CencScheme, kid: &[u8; 16], key_uri: &str) -> Result<Option<String>> {
-    if scheme != CencScheme::Cbcs {
-        return Ok(None);
-    }
-    let mut s = String::from("#EXT-X-KEY:METHOD=SAMPLE-AES");
+    // Audit BH-W1 (issue #1111): `cenc` used to return `None` on the claim
+    // that "CTR is not a valid HLS METHOD". RFC 8216bis §4.4.4.4 defines
+    // exactly that method — SAMPLE-AES-CTR — for `cenc`-protected fMP4.
+    let method = match scheme {
+        CencScheme::Cbcs => "SAMPLE-AES",
+        CencScheme::Cenc => "SAMPLE-AES-CTR",
+        // Other CencScheme values (the enum is #[non_exhaustive]) have no
+        // defined HLS METHOD.
+        _ => return Ok(None),
+    };
+    let mut s = format!("#EXT-X-KEY:METHOD={method}");
     let attrs = [
         (String::from("URI"), AttrValue::quoted(key_uri)?),
         (
@@ -314,9 +325,14 @@ impl ByteRange {
     fn parse(s: &str, line_no: usize, line: &str) -> Result<Self> {
         let mut split = s.splitn(2, '@');
         let n = split.next().unwrap_or("");
-        let length = parse_decimal::<u64>(n, line_no, line, "BYTERANGE length")?;
+        let length = parse_decimal_int::<u64>(n, line_no, line, "BYTERANGE length")?;
         let offset = match split.next() {
-            Some(o) => Some(parse_decimal::<u64>(o, line_no, line, "BYTERANGE offset")?),
+            Some(o) => Some(parse_decimal_int::<u64>(
+                o,
+                line_no,
+                line,
+                "BYTERANGE offset",
+            )?),
             None => None,
         };
         if let Some(o) = offset.filter(|&o| o.checked_add(length).is_none()) {
@@ -450,13 +466,24 @@ pub struct OpenSegment {
     /// `None` if no `#EXT-X-MAP` has appeared at all (rare in practice — a
     /// live LL-HLS playlist's very first segment normally needs one).
     pub map: Option<MapTag>,
+    /// Verbatim segment-scoped tag lines (the [`MediaSegment::pre_tags`]
+    /// counterpart for the open segment): segment-defining tags that appear
+    /// after the last closed segment but before the pending one — e.g. a
+    /// `#EXT-X-KEY` for the next key period, or a `#EXT-X-PROGRAM-DATE-TIME`
+    /// for the in-progress segment (audit BH-W5, issue #1111). Rendered
+    /// after the open segment's map/parts, in order.
+    pub pre_tags: Vec<String>,
 }
 
 impl OpenSegment {
     /// Build an open segment from its in-progress parts, with no map (see
     /// [`Self::with_map`] to attach one).
     pub fn new(parts: Vec<PartSpec>) -> Self {
-        Self { parts, map: None }
+        Self {
+            parts,
+            map: None,
+            pre_tags: Vec::new(),
+        }
     }
 
     /// Attach the Media Initialization Section in effect for this segment.
@@ -737,6 +764,31 @@ pub struct MediaSegment {
     /// this crate does not enforce that producer-side constraint (documented
     /// modeling gap, see the module docs).
     pub bitrate: Option<u64>,
+    /// The `#EXTINF` title: the text after the duration's comma
+    /// (RFC 8216bis §4.4.4.1 — "a comma-separated title string, the
+    /// title of the Media Segment ... optional"; the spec notes it
+    /// "applies to the entire segment, but ... is normally not displayed").
+    /// `None` when the tag carried no title (the overwhelmingly common
+    /// case), which renders as the bare `#EXTINF:<dur>,` — audit BH-W11
+    /// (#1111): the title used to be discarded outright, so it
+    /// survived no round trip.
+    pub title: Option<String>,
+    /// Verbatim tag lines that appeared immediately before this segment's
+    /// defining line(s) and *define this segment* — `#EXT-X-KEY`,
+    /// `#EXT-X-PROGRAM-DATE-TIME`, `#EXT-X-DATERANGE`, `#EXT-X-CUE-*`, or
+    /// any other tag this crate does not model with a typed field
+    /// (RFC 8216bis §4.4.1: such tags apply until the next occurrence or the
+    /// end of the Playlist, so position is load-bearing). `to_m3u8` re-emits
+    /// them here, in order, immediately before the segment — so a key
+    /// rotation or a per-segment PDT survives parse → render (audit BH-W5,
+    /// issue #1111; previously all such lines were hoisted into one
+    /// playlist-level `extra_tags` block before every segment, which applied
+    /// the last key to the whole playlist and collapsed the PDT timeline).
+    /// `MediaPlaylist::parse` populates this only for tags it recognizes as
+    /// segment-scoped; unrecognized *playlist-level* tags
+    /// (`#EXT-X-MEDIA`, `#EXT-X-DEFINE`, …) still go to
+    /// [`MediaPlaylist::extra_tags`].
+    pub pre_tags: Vec<String>,
 }
 
 /// A media playlist (`#EXTM3U` / `#EXTINF` / ...).
@@ -815,12 +867,20 @@ pub struct MediaPlaylist {
 #[derive(Debug, Clone, PartialEq)]
 pub struct LowLatencyConfig {
     /// Part-target duration in seconds — the `PART-TARGET` of `#EXT-X-PART-INF`
-    /// (RFC 8216bis §4.4.3.7). Typically 0.2–0.5 s.
-    pub part_target: DecimalSeconds,
+    /// (RFC 8216bis §4.4.3.7). Typically 0.2–0.5 s. `None` means no
+    /// `#EXT-X-PART-INF` tag is present or rendered — the shape of a playlist
+    /// that carries `#EXT-X-SERVER-CONTROL` (e.g. `HOLD-BACK` or
+    /// `CAN-SKIP-UNTIL`) without Partial Segments, which RFC 8216bis §4.4.3.8
+    /// allows (audit BH-W3, issue #1111: this used to be a non-optional
+    /// `DecimalSeconds` that re-rendered a bogus `PART-TARGET=0`).
+    pub part_target: Option<DecimalSeconds>,
     /// `PART-HOLD-BACK` in seconds — the `#EXT-X-SERVER-CONTROL` attribute
-    /// (RFC 8216bis §4.4.3.8). MUST be at least `3 × part_target`; the renderer
-    /// raises it to that floor if a smaller value is supplied.
-    pub part_hold_back: DecimalSeconds,
+    /// (RFC 8216bis §4.4.3.8). MUST be at least `3 × part_target`; the
+    /// renderer raises it to that floor if a smaller value is supplied.
+    /// REQUIRED if the Playlist contains `#EXT-X-PART-INF` (§4.4.3.8), so
+    /// `to_m3u8` renders it exactly when this is `Some` — as with
+    /// [`Self::part_target`], `None` emits nothing (audit BH-W3).
+    pub part_hold_back: Option<DecimalSeconds>,
     /// URI of the next, not-yet-available part or map — rendered as
     /// `#EXT-X-PRELOAD-HINT:TYPE=<...>,URI="<uri>"` (RFC 8216bis §4.4.5.3). When
     /// `None`, no preload hint is emitted (e.g. an ended playlist).
@@ -852,11 +912,15 @@ pub struct LowLatencyConfig {
     /// blocking-reload support merely from [`MediaPlaylist::low_latency`]
     /// being `Some`; it must check this field (issue #717 slice 1 gap).
     pub can_block_reload: bool,
-    /// Unmodeled attributes from `#EXT-X-SERVER-CONTROL`,
-    /// `#EXT-X-PART-INF`, and `#EXT-X-PRELOAD-HINT`, retained so `REQ-`
-    /// prefixed names can fire RFC 8216bis §8 row 12. Sorted by name on parse (deterministic).
-    pub extra_attrs: Vec<(String, AttrValue)>,
-    /// Unmodeled attributes from `#EXT-X-SERVER-CONTROL` only.
+    /// Unmodeled attributes from `#EXT-X-SERVER-CONTROL` (`#EXT-X-SERVER-CONTROL`
+    /// is §4.4.3.8), retained so `REQ-` prefixed names can fire RFC 8216bis §8
+    /// row 12. Sorted by name on parse (deterministic). The three per-tag
+    /// lists below are the *only* copy of each tag's unmodeled attributes
+    /// (audit BH-W8, issue #1111): this struct used to also carry a
+    /// playlist-wide `extra_attrs` union that the renderer ignored, so a
+    /// hand-built config could put a `REQ-` attribute in the union only and
+    /// have it (a) never rendered and (b) missed by the §8 row-12 version
+    /// scan, under-declaring `EXT-X-VERSION`.
     pub sc_extra_attrs: Vec<(String, AttrValue)>,
     /// Unmodeled attributes from `#EXT-X-PART-INF` only.
     pub pi_extra_attrs: Vec<(String, AttrValue)>,
@@ -882,13 +946,18 @@ pub struct LowLatencyConfig {
 }
 
 impl LowLatencyConfig {
-    /// The `PART-HOLD-BACK` value actually rendered: at least `3 × part_target`
-    /// per RFC 8216bis §4.4.3.8, even if [`Self::part_hold_back`] is smaller.
-    pub fn effective_part_hold_back(&self) -> DecimalSeconds {
-        let floor = 3.0 * self.part_target.get();
+    /// The `PART-HOLD-BACK` value actually rendered: at least
+    /// `3 × part_target` per RFC 8216bis §4.4.3.8, even if
+    /// [`Self::part_hold_back`] is smaller. `None` when [`Self::part_target`]
+    /// is `None` (no part target to compute a floor from — audit BH-W3).
+    pub fn effective_part_hold_back(&self) -> Option<DecimalSeconds> {
+        let floor = 3.0 * self.part_target?.get();
         // `floor` and `self.part_hold_back.get()` are both finite and
         // non-negative, so their max is too.
-        DecimalSeconds::new_unchecked(self.part_hold_back.get().max(floor))
+        Some(DecimalSeconds::new_unchecked(
+            self.part_hold_back
+                .map_or(floor, |phb| phb.get().max(floor)),
+        ))
     }
 }
 
@@ -903,15 +972,14 @@ impl Default for LowLatencyConfig {
     /// `false`/absent-means-NO), independent of this `Default` impl.
     fn default() -> Self {
         Self {
-            part_target: DecimalSeconds::ZERO,
-            part_hold_back: DecimalSeconds::ZERO,
+            part_target: None,
+            part_hold_back: None,
             preload_hint_part: None,
             preload_hint_type: PreloadHintType::default(),
             preload_hint_byte_range_start: None,
             preload_hint_byte_range_length: None,
             can_skip_until: None,
             can_block_reload: true,
-            extra_attrs: Vec::new(),
             sc_extra_attrs: Vec::new(),
             pi_extra_attrs: Vec::new(),
             ph_extra_attrs: Vec::new(),
@@ -1191,7 +1259,11 @@ fn any_media_typed_req_attr(
     if skip.is_some_and(|s| extra_attr_is_req(&s.extra_attrs)) {
         return true;
     }
-    if low_latency.is_some_and(|ll| extra_attr_is_req(&ll.extra_attrs)) {
+    if low_latency.is_some_and(|ll| {
+        extra_attr_is_req(&ll.sc_extra_attrs)
+            || extra_attr_is_req(&ll.pi_extra_attrs)
+            || extra_attr_is_req(&ll.ph_extra_attrs)
+    }) {
         return true;
     }
     false
@@ -1299,8 +1371,20 @@ impl MediaPlaylist {
         // remains the substrate for the first three. Row 12 on modeled tags
         // is now checked below via the typed extra_attrs scan (issue #884).
         // (Row 11 moved to the typed check above.)
-        if let Some(m) = scan_tag_lines_for_version(&self.extra_tags) {
-            bump_version(&mut v, m);
+        // Since audit BH-W5 (issue #1111) segment-defining tags live on
+        // `MediaSegment::pre_tags`/`OpenSegment::pre_tags` instead of the
+        // playlist-level block, so the scan must cover those too — an
+        // `EXT-X-KEY` with `IV=` before segment 2 still triggers row 2.
+        {
+            let mut opaque_tags: Vec<&String> = self.extra_tags.iter().collect();
+            opaque_tags.extend(self.segments.iter().flat_map(|s| &s.pre_tags));
+            if let Some(open) = &self.open_segment {
+                opaque_tags.extend(open.pre_tags.iter());
+            }
+            let owned: Vec<String> = opaque_tags.into_iter().cloned().collect();
+            if let Some(m) = scan_tag_lines_for_version(&owned) {
+                bump_version(&mut v, m);
+            }
         }
 
         // Row 12: REQ- attribute on any typed struct — modeled tags that
@@ -1383,7 +1467,21 @@ impl MediaPlaylist {
     /// [`Self::computed_version`] (see the module's "Protocol version
     /// derivation" docs, issue #871) — omitted entirely when nothing in the
     /// playlist triggers a version requirement.
-    pub fn to_m3u8(&self) -> String {
+    ///
+    /// # Errors
+    ///
+    /// A field this crate renders inside an RFC 8216 §4.2 quoted-string or
+    /// as a URI (a segment/part/map URI, a `#EXT-X-DEFINE` `NAME`/`VALUE`,
+    /// a `KEYFORMAT`/`SERVER-URI`, …) that contains `"`, CR or LF is
+    /// rejected before any of it reaches the output (audit BH-W7, issue
+    /// #1111) — those three characters are forbidden in a quoted-string and
+    /// would let a value inject a tag line into the playlist. This renderer
+    /// is the guard: it rejects such a value before a single byte of output
+    /// is produced, whether the playlist came from `parse` (whose fields are
+    /// already wire-valid) or was assembled by hand through the public
+    /// fields.
+    pub fn to_m3u8(&self) -> Result<String> {
+        self.validate_for_render()?;
         let mut s = String::new();
         s.push_str("#EXTM3U\n");
         if let Some(version) = self.effective_version() {
@@ -1398,7 +1496,7 @@ impl MediaPlaylist {
             s.push_str("#EXT-X-INDEPENDENT-SEGMENTS\n");
         }
         for def in &self.defines {
-            push_define_line(&mut s, def);
+            push_define_line(&mut s, def)?;
         }
         if let Some(start) = &self.start {
             push_start_line(&mut s, start);
@@ -1423,12 +1521,17 @@ impl MediaPlaylist {
             // not always YES) + PART-HOLD-BACK (>= 3x part-target, enforced
             // by effective_part_hold_back) + optional HOLD-BACK +
             // optional CAN-SKIP-UNTIL + optional CAN-SKIP-DATERANGES
-            // (RFC 8216bis §4.4.3.8).
+            // (RFC 8216bis §4.4.3.8). PART-HOLD-BACK is REQUIRED only if the
+            // Playlist contains #EXT-X-PART-INF, so it renders only when
+            // present (audit BH-W3, issue #1111): a SERVER-CONTROL-only
+            // playlist must not fabricate PART-HOLD-BACK=0.
             s.push_str(&format!(
-                "#EXT-X-SERVER-CONTROL:CAN-BLOCK-RELOAD={},PART-HOLD-BACK={}",
+                "#EXT-X-SERVER-CONTROL:CAN-BLOCK-RELOAD={}",
                 if ll.can_block_reload { "YES" } else { "NO" },
-                format_secs(ll.effective_part_hold_back()),
             ));
+            if let Some(phb) = ll.effective_part_hold_back() {
+                s.push_str(&format!(",PART-HOLD-BACK={}", format_secs(phb)));
+            }
             if let Some(hb) = ll.hold_back {
                 s.push_str(&format!(",HOLD-BACK={}", format_secs(hb)));
             }
@@ -1440,13 +1543,17 @@ impl MediaPlaylist {
             }
             render_attribute_list(&mut s, &ll.sc_extra_attrs);
             s.push('\n');
-            // #EXT-X-PART-INF — the part-target duration.
-            s.push_str(&format!(
-                "#EXT-X-PART-INF:PART-TARGET={}",
-                format_secs(ll.part_target),
-            ));
-            render_attribute_list(&mut s, &ll.pi_extra_attrs);
-            s.push('\n');
+            // #EXT-X-PART-INF — the part-target duration, rendered only when
+            // a part target exists (audit BH-W3: previously always emitted,
+            // rendering a bogus PART-TARGET=0 for a no-parts playlist).
+            if let Some(part_target) = ll.part_target {
+                s.push_str(&format!(
+                    "#EXT-X-PART-INF:PART-TARGET={}",
+                    format_secs(part_target),
+                ));
+                render_attribute_list(&mut s, &ll.pi_extra_attrs);
+                s.push('\n');
+            }
         }
 
         // #EXT-X-SKIP (RFC 8216bis §4.4.5.2) — a Playlist Delta Update marker
@@ -1472,6 +1579,12 @@ impl MediaPlaylist {
         }
 
         for (i, seg) in self.segments.iter().enumerate() {
+            // Segment-scoped unmodeled tags (EXT-X-KEY rotation, PDT,
+            // DATERANGE, CUE-*) in their original position (audit BH-W5).
+            for tag in &seg.pre_tags {
+                s.push_str(tag);
+                s.push('\n');
+            }
             if seg.discontinuous {
                 s.push_str("#EXT-X-DISCONTINUITY\n");
             }
@@ -1486,7 +1599,7 @@ impl MediaPlaylist {
             if seg.map.as_ref() != prev_map
                 && let Some(map) = &seg.map
             {
-                push_map_line(&mut s, map);
+                push_map_line(&mut s, map)?;
             }
             // #EXT-X-BITRATE (RFC 8216bis §4.4.4.8, issue #872) — same
             // carry-forward + dedup-render rule as #EXT-X-MAP above.
@@ -1504,7 +1617,7 @@ impl MediaPlaylist {
             // (RFC 8216bis §4.4.4.9), rendered only for a low-latency playlist.
             if self.low_latency.is_some() {
                 for part in &seg.parts {
-                    push_part_line(&mut s, part);
+                    push_part_line(&mut s, part)?;
                 }
             }
             // #EXT-X-GAP (RFC 8216bis §4.4.4.7, issue #872) — applies to
@@ -1513,7 +1626,18 @@ impl MediaPlaylist {
                 s.push_str("#EXT-X-GAP\n");
             }
             // Format with exactly 3 decimal places per RFC 8216 examples.
-            s.push_str(&format!("#EXTINF:{},\n", format_extinf(seg.duration)));
+            match &seg.title {
+                Some(title) => {
+                    validate_quoted_string(title, "EXTINF title")?;
+                    s.push_str(&format!(
+                        "#EXTINF:{},{title}\n",
+                        format_extinf(seg.duration)
+                    ));
+                }
+                None => {
+                    s.push_str(&format!("#EXTINF:{},\n", format_extinf(seg.duration)));
+                }
+            }
             // #EXT-X-BYTERANGE (RFC 8216bis §4.4.4.2) — after EXTINF, before
             // the URI it applies to.
             if let Some(br) = &seg.byte_range {
@@ -1525,23 +1649,31 @@ impl MediaPlaylist {
 
         // The in-progress (open) segment at the live edge — its parts are
         // known but it has not yet closed, so it carries no #EXTINF/URI
-        // (RFC 8216bis §4.4.4.9). Rendered only for a low-latency playlist,
-        // same opt-in gating as the closed segments' parts above.
-        if self.low_latency.is_some()
-            && let Some(open) = &self.open_segment
-        {
-            // Same dedup-vs-previous rule as the closed segments' loop
-            // above: `#EXT-X-MAP` applies until a new one is seen, so
-            // only emit it here if it differs from the last *closed*
-            // segment's map (or there were no closed segments at all).
-            let prev_map = self.segments.last().and_then(|s| s.map.as_ref());
-            if open.map.as_ref() != prev_map
-                && let Some(map) = &open.map
-            {
-                push_map_line(&mut s, map);
+        // (RFC 8216bis §4.4.4.9). Its parts are rendered only for a
+        // low-latency playlist (same opt-in gating as the closed segments'
+        // parts above), but its segment-scoped pre-tags are always rendered
+        // (audit BH-W5, issue #1111): the parse side only accumulates them
+        // into an open segment when lines remain after the last URI, and
+        // dropping them there would be the round-trip loss BH-W5 fixes.
+        if let Some(open) = &self.open_segment {
+            if self.low_latency.is_some() {
+                // Same dedup-vs-previous rule as the closed segments' loop
+                // above: `#EXT-X-MAP` applies until a new one is seen, so
+                // only emit it here if it differs from the last *closed*
+                // segment's map (or there were no closed segments at all).
+                let prev_map = self.segments.last().and_then(|s| s.map.as_ref());
+                if open.map.as_ref() != prev_map
+                    && let Some(map) = &open.map
+                {
+                    push_map_line(&mut s, map)?;
+                }
+                for part in &open.parts {
+                    push_part_line(&mut s, part)?;
+                }
             }
-            for part in &open.parts {
-                push_part_line(&mut s, part);
+            for tag in &open.pre_tags {
+                s.push_str(tag);
+                s.push('\n');
             }
         }
 
@@ -1581,7 +1713,50 @@ impl MediaPlaylist {
             s.push_str("#EXT-X-ENDLIST\n");
         }
 
-        s
+        Ok(s)
+    }
+
+    /// Reject any field that would be rendered inside an RFC 8216 §4.2
+    /// quoted-string or as a URI but contains `"`, CR or LF (audit BH-W7,
+    /// issue #1111) — a tag/attribute-list injection vector for a playlist
+    /// assembled from external data. Covers every field [`Self::to_m3u8`]
+    /// emits; the per-tag renderers re-check the same values, so a caller
+    /// that bypasses this method still cannot emit a malformed line.
+    fn validate_for_render(&self) -> Result<()> {
+        // Opaque verbatim lines: not a quoted-string, but a newline would
+        // still split the line into two.
+        validate_tag_body("playlist-level extra tag", &self.extra_tags)?;
+        for seg in &self.segments {
+            validate_uri(&seg.uri, "segment URI")?;
+            if let Some(title) = &seg.title {
+                validate_quoted_string(title, "EXTINF title")?;
+            }
+            validate_tag_body("segment pre-tag", &seg.pre_tags)?;
+            for part in &seg.parts {
+                validate_uri(&part.uri, "EXT-X-PART URI")?;
+            }
+            if let Some(map) = &seg.map {
+                validate_uri(&map.uri, "EXT-X-MAP URI")?;
+            }
+        }
+        if let Some(open) = &self.open_segment {
+            validate_tag_body("open-segment pre-tag", &open.pre_tags)?;
+            for part in &open.parts {
+                validate_uri(&part.uri, "EXT-X-PART URI")?;
+            }
+            if let Some(map) = &open.map {
+                validate_uri(&map.uri, "EXT-X-MAP URI")?;
+            }
+        }
+        if let Some(ll) = &self.low_latency
+            && let Some(uri) = &ll.preload_hint_part
+        {
+            validate_uri(uri, "EXT-X-PRELOAD-HINT URI")?;
+        }
+        for report in &self.rendition_reports {
+            validate_uri(&report.uri, "EXT-X-RENDITION-REPORT URI")?;
+        }
+        Ok(())
     }
 
     /// Parse an RFC 8216bis `#EXTM3U` Media Playlist — the symmetric inverse
@@ -1604,6 +1779,7 @@ impl MediaPlaylist {
         let mut discontinuity_sequence: u64 = 0;
         let mut iframes_only = false;
         let mut endlist = false;
+        let mut pending_title: Option<String> = None;
         let mut extra_tags: Vec<String> = Vec::new();
         let mut segments: Vec<MediaSegment> = Vec::new();
         let mut rendition_reports: Vec<RenditionReport> = Vec::new();
@@ -1646,6 +1822,9 @@ impl MediaPlaylist {
         // to the next segment; BITRATE carries forward like MAP.
         let mut pending_gap = false;
         let mut current_bitrate: Option<u64> = None;
+        // Segment-scoped unmodeled tags accumulated for the next segment
+        // (audit BH-W5, issue #1111).
+        let mut pending_pre_tags: Vec<String> = Vec::new();
 
         for (idx, raw_line) in input.lines().enumerate() {
             let line_no = idx + 1;
@@ -1661,14 +1840,19 @@ impl MediaPlaylist {
             if line == "#EXTM3U" {
                 saw_extm3u = true;
             } else if let Some(rest) = line.strip_prefix("#EXT-X-VERSION:") {
-                version = parse_decimal(rest, line_no, line, "EXT-X-VERSION")?;
+                version = parse_decimal_int(rest, line_no, line, "EXT-X-VERSION")?;
             } else if let Some(rest) = line.strip_prefix("#EXT-X-TARGETDURATION:") {
-                target_duration = Some(parse_decimal(rest, line_no, line, "EXT-X-TARGETDURATION")?);
+                target_duration = Some(parse_decimal_int(
+                    rest,
+                    line_no,
+                    line,
+                    "EXT-X-TARGETDURATION",
+                )?);
             } else if let Some(rest) = line.strip_prefix("#EXT-X-MEDIA-SEQUENCE:") {
-                media_sequence = parse_decimal(rest, line_no, line, "EXT-X-MEDIA-SEQUENCE")?;
+                media_sequence = parse_decimal_int(rest, line_no, line, "EXT-X-MEDIA-SEQUENCE")?;
             } else if let Some(rest) = line.strip_prefix("#EXT-X-DISCONTINUITY-SEQUENCE:") {
                 discontinuity_sequence =
-                    parse_decimal(rest, line_no, line, "EXT-X-DISCONTINUITY-SEQUENCE")?;
+                    parse_decimal_int(rest, line_no, line, "EXT-X-DISCONTINUITY-SEQUENCE")?;
             } else if line == "#EXT-X-I-FRAMES-ONLY" {
                 iframes_only = true;
             } else if line == "#EXT-X-INDEPENDENT-SEGMENTS" {
@@ -1698,7 +1882,7 @@ impl MediaPlaylist {
             } else if line == "#EXT-X-GAP" {
                 pending_gap = true;
             } else if let Some(rest) = line.strip_prefix("#EXT-X-BITRATE:") {
-                current_bitrate = Some(parse_decimal(rest, line_no, line, "EXT-X-BITRATE")?);
+                current_bitrate = Some(parse_decimal_int(rest, line_no, line, "EXT-X-BITRATE")?);
             } else if let Some(rest) = line.strip_prefix("#EXT-X-BYTERANGE:") {
                 pending_byte_range = Some(ByteRange::parse(rest, line_no, line)?);
             } else if let Some(rest) = line.strip_prefix("#EXT-X-MAP:") {
@@ -1715,13 +1899,20 @@ impl MediaPlaylist {
                     extra_attrs,
                 });
             } else if let Some(rest) = line.strip_prefix("#EXTINF:") {
-                let dur_str = rest.split(',').next().unwrap_or(rest);
+                let (dur_str, title) = match rest.split_once(',') {
+                    Some((dur, title)) => (dur, title),
+                    None => (rest, ""),
+                };
                 pending_duration = Some(parse_decimal_seconds(
                     dur_str,
                     line_no,
                     line,
                     "EXTINF duration",
                 )?);
+                // Audit BH-W11 (issue #1111): the title after the comma
+                // (RFC 8216bis §4.4.4.1) is part of the tag, so keep it —
+                // it used to be split off and thrown away.
+                pending_title = (!title.is_empty()).then(|| title.to_string());
             } else if let Some(rest) = line.strip_prefix("#EXT-X-PART-INF:") {
                 let (attrs, quoted) = parse_attribute_list(rest);
                 if let Some(v) = attrs.get("PART-TARGET") {
@@ -1802,11 +1993,11 @@ impl MediaPlaylist {
                 )?);
                 if let Some(v) = attrs.get("BYTERANGE-START") {
                     preload_hint_byte_range_start =
-                        Some(parse_decimal(v, line_no, line, "BYTERANGE-START")?);
+                        Some(parse_decimal_int(v, line_no, line, "BYTERANGE-START")?);
                 }
                 if let Some(v) = attrs.get("BYTERANGE-LENGTH") {
                     preload_hint_byte_range_length =
-                        Some(parse_decimal(v, line_no, line, "BYTERANGE-LENGTH")?);
+                        Some(parse_decimal_int(v, line_no, line, "BYTERANGE-LENGTH")?);
                 }
                 ph_extra_attrs.extend(filter_extra_attrs(
                     &attrs,
@@ -1817,12 +2008,14 @@ impl MediaPlaylist {
             } else if let Some(rest) = line.strip_prefix("#EXT-X-RENDITION-REPORT:") {
                 let (attrs, quoted) = parse_attribute_list(rest);
                 let uri = require_attr(&attrs, "URI", line_no, line, "EXT-X-RENDITION-REPORT")?;
-                let last_msn = match attrs.get("LAST-MSN") {
-                    Some(v) => parse_decimal(v, line_no, line, "LAST-MSN")?,
-                    None => 0,
-                };
+                // Audit BH-W2 (issue #1111): LAST-MSN is REQUIRED
+                // (RFC 8216bis §4.4.5.3); defaulting it to 0 fabricated a
+                // report that sends clients to a long-gone segment.
+                let last_msn_str =
+                    require_attr(&attrs, "LAST-MSN", line_no, line, "EXT-X-RENDITION-REPORT")?;
+                let last_msn = parse_decimal_int(&last_msn_str, line_no, line, "LAST-MSN")?;
                 let last_part = match attrs.get("LAST-PART") {
-                    Some(v) => Some(parse_decimal(v, line_no, line, "LAST-PART")?),
+                    Some(v) => Some(parse_decimal_int(v, line_no, line, "LAST-PART")?),
                     None => None,
                 };
                 let extra_attrs =
@@ -1838,7 +2031,7 @@ impl MediaPlaylist {
                 let skipped_segments_str =
                     require_attr(&attrs, "SKIPPED-SEGMENTS", line_no, line, "EXT-X-SKIP")?;
                 let skipped_segments =
-                    parse_decimal(&skipped_segments_str, line_no, line, "SKIPPED-SEGMENTS")?;
+                    parse_decimal_int(&skipped_segments_str, line_no, line, "SKIPPED-SEGMENTS")?;
                 let recently_removed_daterange_ids = attrs
                     .get("RECENTLY-REMOVED-DATERANGES")
                     .map(|v| {
@@ -1861,8 +2054,17 @@ impl MediaPlaylist {
             } else if let Some(rest) = line.strip_prefix("#EXT") {
                 let _ = rest;
                 // A well-formed but unrecognized tag: preserve verbatim
-                // (forward-compat) rather than error or drop.
-                extra_tags.push(line.to_string());
+                // (forward-compat) rather than error or drop. A
+                // segment-defining tag (`EXT-X-KEY`/`EXT-X-PROGRAM-DATE-TIME`/
+                // `EXT-X-DATERANGE`/`EXT-X-CUE-*`) is attached to the
+                // *following* segment so it re-renders in place; everything
+                // else is playlist-level and goes in the header block
+                // (audit BH-W5, issue #1111).
+                if is_segment_defining_tag(line) {
+                    pending_pre_tags.push(line.to_string());
+                } else {
+                    extra_tags.push(line.to_string());
+                }
             } else if line.starts_with('#') {
                 // RFC 8216 §4.1: a non-"#EXT" '#' line is a comment — ignore.
             } else {
@@ -1882,6 +2084,8 @@ impl MediaPlaylist {
                     map: current_map.clone(),
                     gap: core::mem::take(&mut pending_gap),
                     bitrate: current_bitrate,
+                    title: pending_title.take(),
+                    pre_tags: core::mem::take(&mut pending_pre_tags),
                 });
             }
         }
@@ -1902,13 +2106,17 @@ impl MediaPlaylist {
         // Any parts accumulated but never closed by a following #EXTINF/URI
         // are the in-progress (open) segment at the live edge
         // (RFC 8216bis §4.4.4.9).
-        let open_segment = if pending_parts.is_empty() {
+        let open_segment = if pending_parts.is_empty() && pending_pre_tags.is_empty() {
             None
         } else {
-            let open = OpenSegment::new(pending_parts);
-            Some(match &current_map {
+            let open = OpenSegment::new(core::mem::take(&mut pending_parts));
+            let open = match &current_map {
                 Some(map) => open.with_map(map.clone()),
                 None => open,
+            };
+            Some(OpenSegment {
+                pre_tags: core::mem::take(&mut pending_pre_tags),
+                ..open
             })
         };
 
@@ -1927,20 +2135,15 @@ impl MediaPlaylist {
         }
 
         let low_latency = if saw_ll_tag {
-            let mut all_extra: Vec<(String, AttrValue)> = Vec::new();
-            all_extra.extend(sc_extra_attrs.iter().cloned());
-            all_extra.extend(pi_extra_attrs.iter().cloned());
-            all_extra.extend(ph_extra_attrs.iter().cloned());
             Some(LowLatencyConfig {
-                part_target: part_target.unwrap_or(DecimalSeconds::ZERO),
-                part_hold_back: part_hold_back.unwrap_or(DecimalSeconds::ZERO),
+                part_target,
+                part_hold_back,
                 preload_hint_part,
                 preload_hint_type,
                 preload_hint_byte_range_start,
                 preload_hint_byte_range_length,
                 can_skip_until,
                 can_block_reload,
-                extra_attrs: all_extra,
                 sc_extra_attrs,
                 pi_extra_attrs,
                 ph_extra_attrs,
@@ -1976,7 +2179,8 @@ impl MediaPlaylist {
 /// [,INDEPENDENT=YES][,GAP=YES]` line (RFC 8216bis §4.4.4.9) into `s`, shared
 /// by both a closed segment's parts and an open (in-progress) segment's parts
 /// so the two can never drift in format.
-fn push_part_line(s: &mut String, part: &PartSpec) {
+fn push_part_line(s: &mut String, part: &PartSpec) -> Result<()> {
+    validate_uri(&part.uri, "EXT-X-PART URI")?;
     s.push_str(&format!(
         "#EXT-X-PART:DURATION={},URI=\"{}\"",
         format_secs(part.duration),
@@ -1993,42 +2197,50 @@ fn push_part_line(s: &mut String, part: &PartSpec) {
     }
     render_attribute_list(s, &part.extra_attrs);
     s.push('\n');
+    Ok(())
 }
 
 /// Render one `#EXT-X-MAP:URI="<uri>"[,BYTERANGE="<n>@<o>"]` line
 /// (RFC 8216bis §4.4.4.5).
-fn push_map_line(s: &mut String, map: &MapTag) {
+fn push_map_line(s: &mut String, map: &MapTag) -> Result<()> {
+    validate_uri(&map.uri, "EXT-X-MAP URI")?;
     s.push_str(&format!("#EXT-X-MAP:URI=\"{}\"", map.uri));
     if let Some(br) = &map.byte_range {
         s.push_str(&format!(",BYTERANGE=\"{}\"", br.render()));
     }
     render_attribute_list(s, &map.extra_attrs);
     s.push('\n');
+    Ok(())
 }
 
 /// Render one `#EXT-X-DEFINE:...` line (RFC 8216bis §4.4.2.3, issue #872).
-fn push_define_line(s: &mut String, def: &Define) {
+fn push_define_line(s: &mut String, def: &Define) -> Result<()> {
     match def {
         Define::Name {
             name,
             value,
             extra_attrs,
         } => {
+            validate_quoted_string(name, "EXT-X-DEFINE NAME")?;
+            validate_quoted_string(value, "EXT-X-DEFINE VALUE")?;
             s.push_str(&format!("#EXT-X-DEFINE:NAME=\"{name}\",VALUE=\"{value}\""));
             render_attribute_list(s, extra_attrs);
             s.push('\n');
         }
         Define::Import { name, extra_attrs } => {
+            validate_quoted_string(name, "EXT-X-DEFINE IMPORT")?;
             s.push_str(&format!("#EXT-X-DEFINE:IMPORT=\"{name}\""));
             render_attribute_list(s, extra_attrs);
             s.push('\n');
         }
         Define::QueryParam { name, extra_attrs } => {
+            validate_quoted_string(name, "EXT-X-DEFINE QUERYPARAM")?;
             s.push_str(&format!("#EXT-X-DEFINE:QUERYPARAM=\"{name}\""));
             render_attribute_list(s, extra_attrs);
             s.push('\n');
         }
     }
+    Ok(())
 }
 
 /// Parse an `#EXT-X-DEFINE:<attribute-list>` value (RFC 8216bis §4.4.2.3):
@@ -2307,6 +2519,58 @@ pub fn render_attribute_list(s: &mut String, attrs: &[(String, AttrValue)]) {
     }
 }
 
+/// RFC 8216 §4.2: a quoted-string is "a string ... enclosed in double
+/// quotes"; it MUST NOT contain `"`, CR or LF. Every model field this crate
+/// renders as a quoted-string attribute value or as a URI goes through the
+/// constructors below, so a `\n` smuggled into a segment URI (e.g.
+/// `"seg.m4s\n#EXT-X-ENDLIST"`) can never inject a tag line and an
+/// embedded `"` can never break out of the attribute list (audit BH-W7,
+/// issue #1111).
+const QUOTED_STRING_FORBIDDEN: &[char] = &['"', '\r', '\n'];
+
+/// Reject a value that cannot be rendered as an RFC 8216 §4.2
+/// quoted-string (see [`QUOTED_STRING_FORBIDDEN`]).
+fn validate_quoted_string(value: &str, what: &str) -> Result<()> {
+    if let Some(bad) = value.chars().find(|c| QUOTED_STRING_FORBIDDEN.contains(c)) {
+        return Err(Error::InvalidQuotedString {
+            what: what.to_string(),
+            bad_char: bad,
+            value: value.to_string(),
+        });
+    }
+    Ok(())
+}
+
+/// A tag line this crate re-emits verbatim (an opaque `extra_tags`/
+/// `pre_tags` entry) is not a quoted-string, but it is one line: a CR or LF
+/// inside it would split it into two lines and inject a tag (audit BH-W7,
+/// issue #1111).
+fn validate_tag_body(what: &str, tags: &[String]) -> Result<()> {
+    for tag in tags {
+        if let Some(bad) = tag.chars().find(|c| *c == '\r' || *c == '\n') {
+            return Err(Error::InvalidQuotedString {
+                what: what.to_string(),
+                bad_char: bad,
+                value: tag.clone(),
+            });
+        }
+    }
+    Ok(())
+}
+
+/// RFC 8216 §4.1: a URI line is the whole line, so a CR or LF inside one is
+/// a tag/line injection; §4.2 forbids `"` in a quoted-string URI.
+fn validate_uri(value: &str, what: &str) -> Result<()> {
+    if let Some(bad) = value.chars().find(|c| QUOTED_STRING_FORBIDDEN.contains(c)) {
+        return Err(Error::InvalidUri {
+            what: what.to_string(),
+            bad_char: bad,
+            value: value.to_string(),
+        });
+    }
+    Ok(())
+}
+
 /// Render the `#EXT-X-START:...` line (RFC 8216bis §4.4.2.2, issue #872).
 fn push_start_line(s: &mut String, start: &StartPoint) {
     s.push_str(&format!(
@@ -2335,13 +2599,16 @@ fn parse_start(rest: &str, line_no: usize, line: &str) -> Result<StartPoint> {
 }
 
 /// Render one `#EXT-X-SESSION-DATA:...` line (RFC 8216bis §4.4.6.4, issue #872).
-fn push_session_data_line(s: &mut String, sd: &SessionData) {
+fn push_session_data_line(s: &mut String, sd: &SessionData) -> Result<()> {
+    validate_quoted_string(&sd.data_id, "EXT-X-SESSION-DATA DATA-ID")?;
     s.push_str(&format!("#EXT-X-SESSION-DATA:DATA-ID=\"{}\"", sd.data_id));
     match &sd.content {
         SessionDataContent::Value(v) => {
+            validate_quoted_string(v, "EXT-X-SESSION-DATA VALUE")?;
             s.push_str(&format!(",VALUE=\"{v}\""));
         }
         SessionDataContent::Uri { uri, format } => {
+            validate_uri(uri, "EXT-X-SESSION-DATA URI")?;
             s.push_str(&format!(",URI=\"{uri}\""));
             if *format == SessionDataFormat::Raw {
                 s.push_str(",FORMAT=RAW");
@@ -2349,10 +2616,12 @@ fn push_session_data_line(s: &mut String, sd: &SessionData) {
         }
     }
     if let Some(lang) = &sd.language {
+        validate_quoted_string(lang, "EXT-X-SESSION-DATA LANGUAGE")?;
         s.push_str(&format!(",LANGUAGE=\"{lang}\""));
     }
     render_attribute_list(s, &sd.extra_attrs);
     s.push('\n');
+    Ok(())
 }
 
 /// Parse an `#EXT-X-SESSION-DATA:<attribute-list>` value.
@@ -2403,22 +2672,26 @@ fn parse_session_data(rest: &str, line_no: usize, line: &str) -> Result<SessionD
 }
 
 /// Render one `#EXT-X-SESSION-KEY:...` line (RFC 8216bis §4.4.6.5, issue #872).
-fn push_session_key_line(s: &mut String, sk: &SessionKey) {
+fn push_session_key_line(s: &mut String, sk: &SessionKey) -> Result<()> {
     s.push_str(&format!("#EXT-X-SESSION-KEY:METHOD={}", sk.method.name()));
     if let Some(uri) = &sk.uri {
+        validate_uri(uri, "EXT-X-SESSION-KEY URI")?;
         s.push_str(&format!(",URI=\"{uri}\""));
     }
     if let Some(iv) = &sk.iv {
         s.push_str(&format!(",IV=0x{}", hex_encode(iv)));
     }
     if let Some(kf) = &sk.keyformat {
+        validate_quoted_string(kf, "EXT-X-SESSION-KEY KEYFORMAT")?;
         s.push_str(&format!(",KEYFORMAT=\"{kf}\""));
     }
     if let Some(kfv) = &sk.keyformatversions {
+        validate_quoted_string(kfv, "EXT-X-SESSION-KEY KEYFORMATVERSIONS")?;
         s.push_str(&format!(",KEYFORMATVERSIONS=\"{kfv}\""));
     }
     render_attribute_list(s, &sk.extra_attrs);
     s.push('\n');
+    Ok(())
 }
 
 /// Parse an `#EXT-X-SESSION-KEY:<attribute-list>` value (same attribute set
@@ -2609,16 +2882,58 @@ fn whole_seconds(v: f64) -> Option<u64> {
 /// path is the safe answer.
 const WHOLE_SECONDS_CAST_LIMIT: f64 = 9_007_199_254_740_992.0; // 2^53
 
-/// Parse a decimal-integer or decimal-floating-point attribute/tag value
-/// (RFC 8216bis §4.2), returning a structured, contextual
-/// [`crate::Error::HlsParse`] on failure rather than panicking.
-fn parse_decimal<T: core::str::FromStr>(
+/// Parse an RFC 8216bis §4.2 `decimal-floating-point` value into `f64` with
+/// the strict lexical grammar (audit BH-W4, issue #1111). `f64::from_str`
+/// alone accepts `nan`, `inf`, `infinity`, a leading `+`, and exponent
+/// notation — none of which §4.2 allows — so `#EXTINF:nan,` previously
+/// parsed `Ok` into a NaN duration that a downstream range check
+/// (`x < lo || x > hi`) silently treated as in-range. `signed` is true only
+/// where the spec allows a signed-decimal (TIME-OFFSET, §4.4.2.2).
+fn parse_decimal_float(
+    s: &str,
+    line_no: usize,
+    line: &str,
+    what: &str,
+    signed: bool,
+) -> Result<f64> {
+    let t = s.trim();
+    if !is_valid_decimal_token(t, signed) {
+        return Err(Error::HlsParse {
+            line_no,
+            line: line.to_string(),
+            reason: format!("{what} value {s:?} is not a valid decimal number"),
+        });
+    }
+    // The grammar above accepts only finite values (non-negative unless
+    // `signed`).
+    t.parse::<f64>().map_err(|_| Error::HlsParse {
+        line_no,
+        line: line.to_string(),
+        reason: format!("{what} value {s:?} is not a valid number"),
+    })
+}
+
+/// Parse an RFC 8216bis §4.2 `decimal-integer` into `T` with the strict
+/// lexical grammar (audit BH-W4, issue #1111). The integer `from_str` impls
+/// reject `nan`/`inf`/exponent notation on their own, but they *accept* a
+/// leading `+` (e.g. `BANDWIDTH=+7`), which §4.2's decimal-integer grammar
+/// does not allow. `parse_decimal_float` covers the float attributes; every
+/// integer attribute parse goes through here.
+fn parse_decimal_int<T: core::str::FromStr>(
     s: &str,
     line_no: usize,
     line: &str,
     what: &str,
 ) -> Result<T> {
-    s.trim().parse::<T>().map_err(|_| Error::HlsParse {
+    let t = s.trim();
+    if !is_valid_decimal_token(t, false) {
+        return Err(Error::HlsParse {
+            line_no,
+            line: line.to_string(),
+            reason: format!("{what} value {s:?} is not a valid decimal integer"),
+        });
+    }
+    t.parse::<T>().map_err(|_| Error::HlsParse {
         line_no,
         line: line.to_string(),
         reason: format!("{what} value {s:?} is not a valid number"),
@@ -2755,18 +3070,9 @@ fn parse_decimal_seconds(
     line: &str,
     what: &str,
 ) -> Result<DecimalSeconds> {
-    let t = s.trim();
-    if !is_valid_decimal_token(t, false) {
-        return Err(Error::HlsParse {
-            line_no,
-            line: line.to_string(),
-            reason: format!(
-                "{what} value {s:?} is not a valid non-negative decimal-floating-point number"
-            ),
-        });
-    }
-    // The grammar above accepts only finite, non-negative values.
-    parse_decimal::<f64>(t, line_no, line, what).map(DecimalSeconds::new_unchecked)
+    // The grammar in `parse_decimal_float` accepts only finite,
+    // non-negative values.
+    parse_decimal_float(s, line_no, line, what, false).map(DecimalSeconds::new_unchecked)
 }
 
 /// As [`parse_decimal_seconds`], but also accepts a leading `-` — used only
@@ -2778,15 +3084,8 @@ fn parse_signed_decimal_seconds(
     line: &str,
     what: &str,
 ) -> Result<SignedDecimalSeconds> {
-    let t = s.trim();
-    if !is_valid_decimal_token(t, true) {
-        return Err(Error::HlsParse {
-            line_no,
-            line: line.to_string(),
-            reason: format!("{what} value {s:?} is not a valid decimal-floating-point number"),
-        });
-    }
-    parse_decimal::<f64>(t, line_no, line, what).map(SignedDecimalSeconds::new_unchecked)
+    // The grammar in `parse_decimal_float` accepts only finite values.
+    parse_decimal_float(s, line_no, line, what, true).map(SignedDecimalSeconds::new_unchecked)
 }
 
 /// Split an HLS `<attribute-list>` (RFC 8216bis §4.2: comma-separated
@@ -2880,6 +3179,26 @@ fn filter_extra_attrs(
         .collect()
 }
 
+/// Segment-scoped, *segment-defining* tags this crate does not model with a
+/// typed field (RFC 8216bis §4.4.4.4 `EXT-X-KEY`, §4.4.4.3
+/// `EXT-X-PROGRAM-DATE-TIME`, §4.4.5.1 `EXT-X-DATERANGE`, and the
+/// `EXT-X-CUE-*` ad-marker family — a de-facto `EXT-X-CUE-OUT`/`EXT-X-CUE-IN`
+/// convention the spec text does not define, matched by prefix here):
+/// per §4.4.1 each applies until the next occurrence or the end of the
+/// Playlist, so its position relative to segments is load-bearing.
+/// `MediaPlaylist::parse` attaches such lines to the following segment's
+/// [`MediaSegment::pre_tags`] instead of hoisting them into the
+/// playlist-level `extra_tags` block (audit BH-W5, issue #1111).
+fn is_segment_defining_tag(line: &str) -> bool {
+    const SEGMENT_SCOPED: &[&str] = &[
+        "#EXT-X-KEY:",
+        "#EXT-X-PROGRAM-DATE-TIME:",
+        "#EXT-X-DATERANGE:",
+        "#EXT-X-CUE-",
+    ];
+    SEGMENT_SCOPED.iter().any(|prefix| line.starts_with(prefix))
+}
+
 /// Fetch a required attribute from an already-parsed attribute map, or
 /// return a contextual [`crate::Error::HlsParse`] naming the missing
 /// attribute and the owning tag.
@@ -2902,8 +3221,12 @@ fn require_attr(
 pub struct Variant {
     /// `BANDWIDTH` in bits per second.
     pub bandwidth: u32,
-    /// `CODECS` string (e.g. `"avc1.64001e,mp4a.40.2"`).
-    pub codecs: String,
+    /// `CODECS` — the quoted-string value of the `CODECS` attribute (e.g.
+    /// `"avc1.64001e,mp4a.40.2"`), or `None` when the `#EXT-X-STREAM-INF`
+    /// carried no `CODECS` attribute at all (audit BH-W6, issue #1111: it
+    /// used to default to `""`, so the renderer emitted the invalid
+    /// `CODECS=""` — a malformed codec list a strict client rejects).
+    pub codecs: Option<String>,
     /// `RESOLUTION` as `(width, height)`, if present.
     pub resolution: Option<(u32, u32)>,
     /// URI of the media playlist for this variant.
@@ -2954,15 +3277,21 @@ pub struct MasterPlaylist {
     /// URI as an attribute (not a following line).  An empty `Vec` (the
     /// default) produces no such lines.
     pub iframe_variants: Vec<IFrameVariant>,
-    /// Extra tag lines emitted verbatim after the variant/I-frame-variant
-    /// entries (e.g. `#EXT-X-MEDIA:...`) — the Multivariant-Playlist
-    /// counterpart of [`MediaPlaylist::extra_tags`]. [`Self::parse`]
-    /// preserves any unrecognized `#EXT-...` tag here (forward-compat)
-    /// instead of dropping it; [`Self::computed_version`] scans these lines
-    /// for the §8 rows this crate does not model as typed struct fields
-    /// (rows 7/12/13 — `docs/version-compatibility.md`). Rows 8 and 11 were
-    /// also scanned here until issue #872 gave `EXT-X-DEFINE` a typed
-    /// representation; they now read [`Self::defines`] instead.
+    /// Extra tag lines emitted **verbatim, first** — immediately after
+    /// `#EXT-X-VERSION` and before `#EXT-X-INDEPENDENT-SEGMENTS`/`DEFINE`/
+    /// `START`, the `SESSION-*`/`CONTENT-STEERING` tags, and the
+    /// variant/I-frame-variant entries (audit BH-W10, issue #1111: this doc
+    /// previously claimed they were emitted *after* the entries, the inverse
+    /// of what [`Self::to_m3u8`] does).
+    ///
+    /// The Multivariant-Playlist counterpart of
+    /// [`MediaPlaylist::extra_tags`]. [`Self::parse`] preserves any
+    /// unrecognized `#EXT-...` tag here (forward-compat) instead of dropping
+    /// it; [`Self::computed_version`] scans these lines for the §8 rows this
+    /// crate does not model as typed struct fields (rows 7/12/13 —
+    /// `docs/version-compatibility.md`). Rows 8 and 11 were also scanned
+    /// here until issue #872 gave `EXT-X-DEFINE` a typed representation; they
+    /// now read [`Self::defines`] instead.
     pub extra_tags: Vec<String>,
     /// `#EXT-X-INDEPENDENT-SEGMENTS` (RFC 8216bis §4.4.2.1, issue #872).
     pub independent_segments: bool,
@@ -2983,8 +3312,15 @@ pub struct MasterPlaylist {
 }
 
 /// A parsed but not-yet-closed `#EXT-X-STREAM-INF` — `(bandwidth, codecs,
-/// resolution)` — awaiting the URI line that turns it into a [`Variant`].
-type PendingStreamInf = (u32, String, Option<(u32, u32)>, Vec<(String, AttrValue)>);
+/// resolution, extra attributes)` — awaiting the URI line that turns it into
+/// a [`Variant`]. `codecs` is `None` when the tag carried no `CODECS`
+/// attribute (audit BH-W6, issue #1111).
+type PendingStreamInf = (
+    u32,
+    Option<String>,
+    Option<(u32, u32)>,
+    Vec<(String, AttrValue)>,
+);
 
 impl MasterPlaylist {
     /// Render this master playlist as an RFC 8216 `#EXTM3U` string.
@@ -2993,7 +3329,19 @@ impl MasterPlaylist {
     /// `#EXT-X-I-FRAME-STREAM-INF` line per entry in
     /// [`Self::iframe_variants`] (RFC 8216 §4.3.4.2).  The URI is rendered
     /// as an attribute on the tag line itself — *not* on a following line.
-    pub fn to_m3u8(&self) -> String {
+    /// # Errors
+    ///
+    /// A field this crate renders inside an RFC 8216 §4.2 quoted-string
+    /// or as a URI — a variant/I-frame-variant URI, a `CODECS`, a
+    /// `#EXT-X-CONTENT-STEERING` `SERVER-URI`/`PATHWAY-ID`, a
+    /// `#EXT-X-SESSION-DATA` `DATA-ID`/`VALUE`/`URI`/`LANGUAGE`, a
+    /// `#EXT-X-SESSION-KEY` `URI`/`KEYFORMAT`/`KEYFORMATVERSIONS`, a
+    /// `#EXT-X-DEFINE` `NAME`/`VALUE` — that contains `"`, CR or LF is
+    /// rejected before any of it reaches the output (audit BH-W7, issue
+    /// #1111): those three are forbidden in a quoted-string, and a
+    /// newline would let a value inject a tag line into the playlist.
+    pub fn to_m3u8(&self) -> Result<String> {
+        self.validate_for_render()?;
         let mut s = String::new();
         s.push_str("#EXTM3U\n");
         if let Some(version) = self.effective_version() {
@@ -3010,24 +3358,26 @@ impl MasterPlaylist {
             s.push_str("#EXT-X-INDEPENDENT-SEGMENTS\n");
         }
         for def in &self.defines {
-            push_define_line(&mut s, def);
+            push_define_line(&mut s, def)?;
         }
         if let Some(start) = &self.start {
             push_start_line(&mut s, start);
         }
         // §4.4.6.4/.5/.6 Multivariant Playlist tags (issue #872).
         for sk in &self.session_keys {
-            push_session_key_line(&mut s, sk);
+            push_session_key_line(&mut s, sk)?;
         }
         for sd in &self.session_data {
-            push_session_data_line(&mut s, sd);
+            push_session_data_line(&mut s, sd)?;
         }
         if let Some(cs) = &self.content_steering {
+            validate_uri(&cs.server_uri, "EXT-X-CONTENT-STEERING SERVER-URI")?;
             s.push_str(&format!(
                 "#EXT-X-CONTENT-STEERING:SERVER-URI=\"{}\"",
                 cs.server_uri
             ));
             if let Some(pid) = &cs.pathway_id {
+                validate_quoted_string(pid, "EXT-X-CONTENT-STEERING PATHWAY-ID")?;
                 s.push_str(&format!(",PATHWAY-ID=\"{pid}\""));
             }
             render_attribute_list(&mut s, &cs.extra_attrs);
@@ -3035,15 +3385,20 @@ impl MasterPlaylist {
         }
 
         for var in &self.variants {
-            s.push_str(&format!(
-                "#EXT-X-STREAM-INF:BANDWIDTH={},CODECS=\"{}\"",
-                var.bandwidth, var.codecs,
-            ));
+            s.push_str(&format!("#EXT-X-STREAM-INF:BANDWIDTH={}", var.bandwidth));
+            // Audit BH-W6 (issue #1111): CODECS is optional on the tag line,
+            // so an absent attribute renders nothing rather than the invalid
+            // empty `CODECS=""`.
+            if let Some(codecs) = &var.codecs {
+                validate_quoted_string(codecs, "EXT-X-STREAM-INF CODECS")?;
+                s.push_str(&format!(",CODECS=\"{codecs}\""));
+            }
             if let Some((w, h)) = var.resolution {
                 s.push_str(&format!(",RESOLUTION={w}x{h}"));
             }
             render_attribute_list(&mut s, &var.extra_attrs);
             s.push('\n');
+            validate_uri(&var.uri, "variant URI")?;
             s.push_str(&var.uri);
             s.push('\n');
         }
@@ -3061,11 +3416,53 @@ impl MasterPlaylist {
             if let Some((w, h)) = iv.resolution {
                 s.push_str(&format!(",RESOLUTION={w}x{h}"));
             }
+            validate_uri(&iv.uri, "I-frame-variant URI")?;
+            if let Some(codecs) = &iv.codecs {
+                validate_quoted_string(codecs, "EXT-X-I-FRAME-STREAM-INF CODECS")?;
+            }
             render_attribute_list(&mut s, &iv.extra_attrs);
             s.push_str(&format!(",URI=\"{}\"\n", iv.uri));
         }
 
-        s
+        Ok(s)
+    }
+
+    /// Reject any field that would be rendered inside an RFC 8216 §4.2
+    /// quoted-string or as a URI but contains `"`, CR or LF (audit BH-W7,
+    /// issue #1111) — a tag/attribute-list injection vector for a playlist
+    /// assembled from external data. Covers every field [`Self::to_m3u8`]
+    /// emits; the per-tag renderers re-check the same values, so a caller
+    /// that bypasses this method still cannot emit a malformed line.
+    fn validate_for_render(&self) -> Result<()> {
+        validate_tag_body("playlist-level extra tag", &self.extra_tags)?;
+        for def in &self.defines {
+            push_define_line(&mut String::new(), def)?;
+        }
+        if let Some(cs) = &self.content_steering {
+            validate_uri(&cs.server_uri, "EXT-X-CONTENT-STEERING SERVER-URI")?;
+            if let Some(pid) = &cs.pathway_id {
+                validate_quoted_string(pid, "EXT-X-CONTENT-STEERING PATHWAY-ID")?;
+            }
+        }
+        for var in &self.variants {
+            validate_uri(&var.uri, "variant URI")?;
+            if let Some(codecs) = &var.codecs {
+                validate_quoted_string(codecs, "EXT-X-STREAM-INF CODECS")?;
+            }
+        }
+        for iv in &self.iframe_variants {
+            validate_uri(&iv.uri, "I-frame-variant URI")?;
+            if let Some(codecs) = &iv.codecs {
+                validate_quoted_string(codecs, "EXT-X-I-FRAME-STREAM-INF CODECS")?;
+            }
+        }
+        for sk in &self.session_keys {
+            push_session_key_line(&mut String::new(), sk)?;
+        }
+        for sd in &self.session_data {
+            push_session_data_line(&mut String::new(), sd)?;
+        }
+        Ok(())
     }
 
     /// Parse an RFC 8216 `#EXTM3U` Multivariant (Master) Playlist — the
@@ -3110,19 +3507,39 @@ impl MasterPlaylist {
             if line == "#EXTM3U" {
                 saw_extm3u = true;
             } else if let Some(rest) = line.strip_prefix("#EXT-X-VERSION:") {
-                version = parse_decimal(rest, line_no, line, "EXT-X-VERSION")?;
+                version = parse_decimal_int(rest, line_no, line, "EXT-X-VERSION")?;
             } else if let Some(rest) = line.strip_prefix("#EXT-X-STREAM-INF:") {
                 let (attrs, quoted) = parse_attribute_list(rest);
                 let bandwidth_str =
                     require_attr(&attrs, "BANDWIDTH", line_no, line, "EXT-X-STREAM-INF")?;
-                let bandwidth = parse_decimal(&bandwidth_str, line_no, line, "BANDWIDTH")?;
-                let codecs = attrs.get("CODECS").cloned().unwrap_or_default();
+                let bandwidth = parse_decimal_int(&bandwidth_str, line_no, line, "BANDWIDTH")?;
+                // Audit BH-W6 (issue #1111): `CODECS` is optional on the tag
+                // line, so an absent attribute stays `None` (rendering
+                // nothing) instead of becoming an empty, invalid `CODECS=""`.
+                let codecs = attrs.get("CODECS").cloned();
                 let resolution = match attrs.get("RESOLUTION") {
                     Some(v) => Some(parse_resolution(v, line_no, line)?),
                     None => None,
                 };
                 let extra_attrs =
                     filter_extra_attrs(&attrs, &["BANDWIDTH", "CODECS", "RESOLUTION"], &quoted)?;
+                // Audit BH-W9 (issue #1111): `#EXT-X-STREAM-INF` MUST be
+                // followed by the URI line of the Variant it describes
+                // (RFC 8216bis §4.4.6.2). A second STREAM-INF before that
+                // line means the first Variant's URI is missing — the
+                // playlist is malformed, and silently overwriting *loses*
+                // a variant (which no downstream validator can recover,
+                // since the information is gone by the time it sees the
+                // parsed struct).
+                if pending_stream_inf.is_some() {
+                    return Err(Error::HlsParse {
+                        line_no,
+                        line: line.to_string(),
+                        reason: "second #EXT-X-STREAM-INF before the first Variant's URI \
+                                 line (RFC 8216bis §4.4.6.2)"
+                            .to_string(),
+                    });
+                }
                 pending_stream_inf = Some((bandwidth, codecs, resolution, extra_attrs));
             } else if let Some(rest) = line.strip_prefix("#EXT-X-I-FRAME-STREAM-INF:") {
                 let (attrs, quoted) = parse_attribute_list(rest);
@@ -3133,7 +3550,7 @@ impl MasterPlaylist {
                     line,
                     "EXT-X-I-FRAME-STREAM-INF",
                 )?;
-                let bandwidth = parse_decimal(&bandwidth_str, line_no, line, "BANDWIDTH")?;
+                let bandwidth = parse_decimal_int(&bandwidth_str, line_no, line, "BANDWIDTH")?;
                 let codecs = attrs.get("CODECS").cloned();
                 let resolution = match attrs.get("RESOLUTION") {
                     Some(v) => Some(parse_resolution(v, line_no, line)?),
@@ -3212,6 +3629,17 @@ impl MasterPlaylist {
                 line_no: 1,
                 line: String::new(),
                 reason: "missing #EXTM3U header".to_string(),
+            });
+        }
+        // Audit BH-W9 (issue #1111): a trailing `#EXT-X-STREAM-INF` with no
+        // URI line is a truncated playlist, not a variant silently dropped.
+        if pending_stream_inf.is_some() {
+            return Err(Error::HlsParse {
+                line_no: 0,
+                line: String::new(),
+                reason: "#EXT-X-STREAM-INF with no following Variant URI line (RFC 8216bis \
+                         §4.4.6.2)"
+                    .to_string(),
             });
         }
 
@@ -3331,8 +3759,8 @@ fn parse_resolution(v: &str, line_no: usize, line: &str) -> Result<(u32, u32)> {
         line: line.to_string(),
         reason: format!("RESOLUTION value {v:?} is not of the form <width>x<height>"),
     })?;
-    let width = parse_decimal(w, line_no, line, "RESOLUTION width")?;
-    let height = parse_decimal(h, line_no, line, "RESOLUTION height")?;
+    let width = parse_decimal_int(w, line_no, line, "RESOLUTION width")?;
+    let height = parse_decimal_int(h, line_no, line, "RESOLUTION height")?;
     Ok((width, height))
 }
 
@@ -3437,23 +3865,18 @@ mod tests {
                 seg("seg2.m4s", 3.003),
             ],
             endlist: true,
-            extra_tags: vec![
-                "#EXT-X-DATERANGE:ID=\"ad-1\",START-DATE=\"2024-01-01T00:00:00.000Z\",DURATION=15.0"
-                    .into(),
-            ],
+            extra_tags: vec![],
             low_latency: None,
             iframes_only: false,
             open_segment: None,
             ..Default::default()
         };
-        let out = pl.to_m3u8();
+        let out = pl.to_m3u8().unwrap();
         assert!(out.starts_with("#EXTM3U\n"));
         assert!(out.contains("#EXT-X-TARGETDURATION:10\n"));
         assert!(out.contains("#EXT-X-MEDIA-SEQUENCE:0\n"));
         assert_eq!(out.matches("#EXTINF:").count(), 3);
         assert!(out.ends_with("#EXT-X-ENDLIST\n"));
-        // Check extra tag is present before segments.
-        assert!(out.contains("#EXT-X-DATERANGE:ID=\"ad-1\""));
         // No discontinuity sequence when 0.
         assert!(!out.contains("#EXT-X-DISCONTINUITY-SEQUENCE"));
     }
@@ -3473,7 +3896,7 @@ mod tests {
             open_segment: None,
             ..Default::default()
         };
-        let out = pl.to_m3u8();
+        let out = pl.to_m3u8().unwrap();
         assert!(out.starts_with("#EXTM3U\n"));
         assert!(out.contains("#EXT-X-VERSION:7\n"));
         assert!(!out.contains("#EXT-X-ENDLIST"));
@@ -3486,14 +3909,14 @@ mod tests {
             variants: vec![
                 Variant {
                     bandwidth: 300_000,
-                    codecs: "avc1.64001e,mp4a.40.2".into(),
+                    codecs: Some("avc1.64001e,mp4a.40.2".into()),
                     resolution: Some((640, 360)),
                     uri: "v300/index.m3u8".into(),
                     ..Default::default()
                 },
                 Variant {
                     bandwidth: 800_000,
-                    codecs: "avc1.640028,mp4a.40.2".into(),
+                    codecs: Some("avc1.640028,mp4a.40.2".into()),
                     resolution: Some((1280, 720)),
                     uri: "v800/index.m3u8".into(),
                     ..Default::default()
@@ -3502,7 +3925,7 @@ mod tests {
             iframe_variants: vec![],
             ..Default::default()
         };
-        let out = pl.to_m3u8();
+        let out = pl.to_m3u8().unwrap();
         assert!(out.starts_with("#EXTM3U\n"));
         assert_eq!(out.matches("#EXT-X-STREAM-INF:").count(), 2);
         assert!(out.contains("v300/index.m3u8"));
@@ -3517,7 +3940,7 @@ mod tests {
             version: 6,
             variants: vec![Variant {
                 bandwidth: 1_000_000,
-                codecs: "avc1.640028".into(),
+                codecs: Some("avc1.640028".into()),
                 resolution: None,
                 uri: "v1k/index.m3u8".into(),
                 extra_attrs: Vec::new(),
@@ -3525,7 +3948,7 @@ mod tests {
             iframe_variants: vec![],
             ..Default::default()
         };
-        let out = pl.to_m3u8();
+        let out = pl.to_m3u8().unwrap();
         assert!(!out.contains("RESOLUTION"));
         assert!(out.contains("#EXT-X-STREAM-INF:BANDWIDTH=1000000,CODECS=\"avc1.640028\""));
     }
@@ -3536,7 +3959,7 @@ mod tests {
     #[test]
     fn extinf_three_decimals() {
         let pl = playlist(vec![seg("s.m4s", 9.009)]);
-        let out = pl.to_m3u8();
+        let out = pl.to_m3u8().unwrap();
         assert!(out.contains("#EXTINF:9.009,\n"), "{out}");
     }
 
@@ -3561,7 +3984,7 @@ mod tests {
             version: 0,
             ..playlist(vec![seg("s.m4s", 9.0)])
         };
-        let out = pl.to_m3u8();
+        let out = pl.to_m3u8().unwrap();
         assert!(out.contains("#EXTINF:9,\n"), "{out}");
         assert!(!out.contains("9.000"), "{out}");
         assert_eq!(
@@ -3593,7 +4016,7 @@ mod tests {
             (4.0004, "#EXTINF:4.0004,", Some(3)), // sub-ms: predicate used to say None
         ] {
             let pl = playlist(vec![seg("s.m4s", duration)]);
-            let out = pl.to_m3u8();
+            let out = pl.to_m3u8().unwrap();
             assert!(out.contains(expected_text), "{duration}: {out}");
             assert_eq!(pl.computed_version(), expected_version, "{duration}: {out}");
             // The invariant, stated directly: a rendered decimal point and a
@@ -3621,7 +4044,7 @@ mod tests {
     fn sub_millisecond_durations_survive_rendering() {
         // #EXTINF — the value that actually failed against real Apple data.
         let pl = playlist(vec![seg("main.ts", 9.9766)]);
-        let out = pl.to_m3u8();
+        let out = pl.to_m3u8().unwrap();
         assert!(
             out.contains("#EXTINF:9.9766,\n"),
             "EXTINF must not be truncated to 3 decimals:\n{out}"
@@ -3743,13 +4166,13 @@ mod tests {
                 ..Default::default()
             }],
             low_latency: Some(LowLatencyConfig {
-                part_target: DecimalSeconds::new(2.00002).unwrap(),
-                part_hold_back: DecimalSeconds::new(6.00006).unwrap(),
+                part_target: Some(DecimalSeconds::new(2.00002).unwrap()),
+                part_hold_back: Some(DecimalSeconds::new(6.00006).unwrap()),
                 ..Default::default()
             }),
             ..Default::default()
         };
-        let text = pl.to_m3u8();
+        let text = pl.to_m3u8().unwrap();
         assert!(text.contains("#EXTINF:4.00008,"), "{text}");
         assert!(text.contains("DURATION=2.00004"), "{text}");
         assert!(text.contains("DURATION=0.50001"), "{text}");
@@ -3771,7 +4194,7 @@ mod tests {
             seg_disc("s1.m4s", 5.0),
             seg("s2.m4s", 5.0),
         ]);
-        let out = pl.to_m3u8();
+        let out = pl.to_m3u8().unwrap();
         assert_eq!(out.matches("#EXT-X-DISCONTINUITY\n").count(), 1);
         // The tag must immediately precede the #EXTINF for s1.
         let disc_pos = out.find("#EXT-X-DISCONTINUITY\n").unwrap();
@@ -3801,7 +4224,7 @@ mod tests {
             seg("s1.m4s", 5.0),
             seg("s2.m4s", 5.0),
         ]);
-        let out = pl.to_m3u8();
+        let out = pl.to_m3u8().unwrap();
         assert!(
             !out.contains("#EXT-X-DISCONTINUITY\n"),
             "no tag when all segments are continuous"
@@ -3823,7 +4246,7 @@ mod tests {
             open_segment: None,
             ..Default::default()
         };
-        let out = pl.to_m3u8();
+        let out = pl.to_m3u8().unwrap();
         assert!(
             out.contains("#EXT-X-DISCONTINUITY-SEQUENCE:2\n"),
             "header must be present when n>0"
@@ -3833,7 +4256,7 @@ mod tests {
     #[test]
     fn discontinuity_sequence_absent_when_zero() {
         let pl = playlist(vec![seg("s0.m4s", 6.0)]);
-        let out = pl.to_m3u8();
+        let out = pl.to_m3u8().unwrap();
         assert!(
             !out.contains("#EXT-X-DISCONTINUITY-SEQUENCE"),
             "header must be absent when n==0"
@@ -3844,8 +4267,8 @@ mod tests {
 
     fn ll_config() -> LowLatencyConfig {
         LowLatencyConfig {
-            part_target: DecimalSeconds::new(0.5).unwrap(),
-            part_hold_back: DecimalSeconds::new(1.5).unwrap(),
+            part_target: Some(DecimalSeconds::new(0.5).unwrap()),
+            part_hold_back: Some(DecimalSeconds::new(1.5).unwrap()),
             preload_hint_part: None,
             ..Default::default()
         }
@@ -3877,7 +4300,7 @@ mod tests {
             open_segment: None,
             ..Default::default()
         };
-        let out = pl.to_m3u8();
+        let out = pl.to_m3u8().unwrap();
         assert!(out.contains("#EXT-X-SERVER-CONTROL:CAN-BLOCK-RELOAD=YES"));
         assert!(out.contains("#EXT-X-PART-INF:PART-TARGET="));
         assert!(out.contains("#EXT-X-PART:DURATION=0.5,URI=\"part-1-1.m4s\""));
@@ -3909,7 +4332,7 @@ mod tests {
             }])),
             ..Default::default()
         };
-        let out = pl.to_m3u8();
+        let out = pl.to_m3u8().unwrap();
         // The open part is rendered as an #EXT-X-PART line.
         assert!(
             out.contains("#EXT-X-PART:DURATION=0.5,URI=\"part-1-5.0.m4s\",INDEPENDENT=YES"),
@@ -3967,7 +4390,7 @@ mod tests {
             }])),
             ..Default::default()
         };
-        let out = pl.to_m3u8();
+        let out = pl.to_m3u8().unwrap();
         assert!(
             !out.contains("part-1-5.0.m4s"),
             "open segment parts must not render without low_latency:\n{out}"
@@ -3992,7 +4415,7 @@ mod tests {
             open_segment: None,
             ..Default::default()
         };
-        let out = pl.to_m3u8();
+        let out = pl.to_m3u8().unwrap();
         assert!(out.contains("#EXT-X-PRELOAD-HINT:TYPE=PART,URI=\"part-1-5.1.m4s\""));
     }
 
@@ -4024,7 +4447,7 @@ mod tests {
             }])),
             ..Default::default()
         };
-        let out = pl.to_m3u8();
+        let out = pl.to_m3u8().unwrap();
         // Both the open-segment part and preload-hint must be present.
         assert!(
             out.contains("#EXT-X-PART:DURATION=0.5,URI=\"part-1-5.0.m4s\",INDEPENDENT=YES"),
@@ -4114,7 +4537,7 @@ mod tests {
             iframes_only: false,
             ..Default::default()
         };
-        let text = pl.to_m3u8();
+        let text = pl.to_m3u8().unwrap();
         assert!(
             text.contains("#EXT-X-MAP:URI=\"init-1.mp4\""),
             "renderer must emit EXT-X-MAP for a bare open segment:\n{text}"
@@ -4127,8 +4550,8 @@ mod tests {
 
     fn ll_config_full() -> LowLatencyConfig {
         LowLatencyConfig {
-            part_target: DecimalSeconds::new(0.5).unwrap(),
-            part_hold_back: DecimalSeconds::new(1.5).unwrap(), // already at the 3x floor: idempotent through render.
+            part_target: Some(DecimalSeconds::new(0.5).unwrap()),
+            part_hold_back: Some(DecimalSeconds::new(1.5).unwrap()), // already at the 3x floor: idempotent through render.
             preload_hint_part: Some("part-9.2.m4s".into()),
             preload_hint_type: PreloadHintType::Part,
             preload_hint_byte_range_start: Some(0),
@@ -4214,7 +4637,7 @@ mod tests {
             skip: None,
             ..Default::default()
         };
-        let text = pl.to_m3u8();
+        let text = pl.to_m3u8().unwrap();
         let parsed = MediaPlaylist::parse(&text).expect("parse must succeed");
         assert_eq!(parsed, pl, "round trip must be lossless:\n{text}");
     }
@@ -4258,22 +4681,22 @@ mod tests {
                     // Same map as the previous segment — to_m3u8 must dedup
                     // (emit the tag only once) and parse must carry it forward.
                     map: Some(map.clone()),
+                    pre_tags: vec![
+                        "#EXT-X-DATERANGE:ID=\"ad-1\",START-DATE=\"2024-01-01T00:00:00.000Z\",DURATION=15.0"
+                            .into(),
+                    ],
                     ..Default::default()
                 },
             ],
             open_segment: None,
             endlist: true,
-            extra_tags: vec![
-                "#EXT-X-DATERANGE:ID=\"ad-1\",START-DATE=\"2024-01-01T00:00:00.000Z\",DURATION=15.0"
-                    .into(),
-            ],
             low_latency: None,
             iframes_only: false,
             rendition_reports: vec![],
             skip: None,
             ..Default::default()
         };
-        let text = pl.to_m3u8();
+        let text = pl.to_m3u8().unwrap();
         // The map is only emitted once (dedup), not once per segment.
         assert_eq!(
             text.matches("#EXT-X-MAP:").count(),
@@ -4330,7 +4753,7 @@ mod tests {
             endlist: true,
             ..Default::default()
         };
-        let text = pl.to_m3u8();
+        let text = pl.to_m3u8().unwrap();
         assert!(text.contains("#EXT-X-INDEPENDENT-SEGMENTS\n"));
         assert!(text.contains("#EXT-X-DEFINE:IMPORT=\"base\"\n"));
         assert!(text.contains("#EXT-X-START:TIME-OFFSET=5.5\n"));
@@ -4414,14 +4837,14 @@ s0.m4s\n";
             variants: vec![
                 Variant {
                     bandwidth: 300_000,
-                    codecs: "avc1.64001e,mp4a.40.2".into(),
+                    codecs: Some("avc1.64001e,mp4a.40.2".into()),
                     resolution: Some((640, 360)),
                     uri: "v300/index.m3u8".into(),
                     ..Default::default()
                 },
                 Variant {
                     bandwidth: 800_000,
-                    codecs: "avc1.640028,mp4a.40.2".into(),
+                    codecs: Some("avc1.640028,mp4a.40.2".into()),
                     resolution: Some((1280, 720)),
                     uri: "v800/index.m3u8".into(),
                     ..Default::default()
@@ -4436,7 +4859,7 @@ s0.m4s\n";
             }],
             ..Default::default()
         };
-        let text = pl.to_m3u8();
+        let text = pl.to_m3u8().unwrap();
         let parsed = MasterPlaylist::parse(&text).expect("parse must succeed");
         assert_eq!(parsed, pl, "round trip must be lossless:\n{text}");
     }
@@ -4517,7 +4940,7 @@ s0.m4s\n";
             }),
             variants: vec![Variant {
                 bandwidth: 1_280_000,
-                codecs: "avc1.64001e,mp4a.40.2".into(),
+                codecs: Some("avc1.64001e,mp4a.40.2".into()),
                 resolution: Some((640, 360)),
                 uri: "low/index.m3u8".into(),
                 extra_attrs: Vec::new(),
@@ -4531,7 +4954,7 @@ s0.m4s\n";
             "EXT-X-DEFINE with QUERYPARAM must derive §8 row 11 from the \
              typed `defines` field (issue #872 + #880 integration)"
         );
-        let text = pl.to_m3u8();
+        let text = pl.to_m3u8().unwrap();
         assert!(text.contains("#EXT-X-INDEPENDENT-SEGMENTS\n"));
         assert!(text.contains("#EXT-X-START:TIME-OFFSET=-10.5,PRECISE=YES\n"));
         assert!(
@@ -4715,14 +5138,14 @@ seg0.mp4\n";
                 ..Default::default()
             }],
             low_latency: Some(LowLatencyConfig {
-                part_target: DecimalSeconds::new(0.5).unwrap(),
-                part_hold_back: DecimalSeconds::new(1.5).unwrap(),
+                part_target: Some(DecimalSeconds::new(0.5).unwrap()),
+                part_hold_back: Some(DecimalSeconds::new(1.5).unwrap()),
                 can_block_reload: false,
                 ..Default::default()
             }),
             ..Default::default()
         };
-        let text = pl.to_m3u8();
+        let text = pl.to_m3u8().unwrap();
         assert!(
             text.contains("CAN-BLOCK-RELOAD=NO"),
             "renderer must emit the actual value:\n{text}"
@@ -4742,12 +5165,16 @@ seg0.mp4\n";
 s0.m4s\n\
 #EXT-X-ENDLIST\n";
         let pl = MediaPlaylist::parse(text).expect("unrecognized tag must not error");
+        // Audit BH-W5: `#EXT-X-PROGRAM-DATE-TIME` is segment-defining, so it
+        // is preserved verbatim on the *following* segment's `pre_tags`
+        // rather than the playlist-level block.
         assert!(
-            pl.extra_tags
+            pl.segments.first().is_some_and(|s| s
+                .pre_tags
                 .iter()
-                .any(|t| t.starts_with("#EXT-X-PROGRAM-DATE-TIME:")),
+                .any(|t| t.starts_with("#EXT-X-PROGRAM-DATE-TIME:"))),
             "unrecognized tag must be preserved verbatim, not dropped: {:?}",
-            pl.extra_tags
+            pl.segments.first().map(|s| &s.pre_tags)
         );
     }
 
@@ -4832,7 +5259,7 @@ v300/index.m3u8\n";
 
     #[test]
     fn version_row1_no_trigger_omits_the_tag() {
-        let out = base_media_playlist().to_m3u8();
+        let out = base_media_playlist().to_m3u8().unwrap();
         assert_eq!(rendered_version(&out), None, "no trigger:\n{out}");
     }
 
@@ -4843,7 +5270,7 @@ v300/index.m3u8\n";
             "#EXT-X-KEY:METHOD=AES-128,URI=\"https://k\",IV=0x00000000000000000000000000000001"
                 .into(),
         ];
-        let out = pl.to_m3u8();
+        let out = pl.to_m3u8().unwrap();
         assert_eq!(rendered_version(&out), Some(2), "{out}");
     }
 
@@ -4851,7 +5278,7 @@ v300/index.m3u8\n";
     fn version_row3_float_extinf_triggers_v3() {
         let mut pl = base_media_playlist();
         pl.segments = vec![seg("s0.m4s", 6.5)];
-        let out = pl.to_m3u8();
+        let out = pl.to_m3u8().unwrap();
         assert_eq!(rendered_version(&out), Some(3), "{out}");
     }
 
@@ -4862,7 +5289,7 @@ v300/index.m3u8\n";
             length: 1000,
             offset: Some(0),
         });
-        let out = pl.to_m3u8();
+        let out = pl.to_m3u8().unwrap();
         assert_eq!(rendered_version(&out), Some(4), "{out}");
     }
 
@@ -4870,7 +5297,7 @@ v300/index.m3u8\n";
     fn version_row4_iframes_only_triggers_v4() {
         let mut pl = base_media_playlist();
         pl.iframes_only = true;
-        let out = pl.to_m3u8();
+        let out = pl.to_m3u8().unwrap();
         assert_eq!(rendered_version(&out), Some(4), "{out}");
     }
 
@@ -4878,7 +5305,7 @@ v300/index.m3u8\n";
     fn version_row5_sample_aes_triggers_v5() {
         let mut pl = base_media_playlist();
         pl.extra_tags = vec!["#EXT-X-KEY:METHOD=SAMPLE-AES,URI=\"https://k\",KEYID=0x01".into()];
-        let out = pl.to_m3u8();
+        let out = pl.to_m3u8().unwrap();
         assert_eq!(rendered_version(&out), Some(5), "{out}");
     }
 
@@ -4890,7 +5317,7 @@ v300/index.m3u8\n";
              KEYFORMATVERSIONS=\"1\""
                 .into(),
         ];
-        let out = pl.to_m3u8();
+        let out = pl.to_m3u8().unwrap();
         assert_eq!(rendered_version(&out), Some(5), "{out}");
     }
 
@@ -4903,7 +5330,7 @@ v300/index.m3u8\n";
             byte_range: None,
             extra_attrs: Vec::new(),
         });
-        let out = pl.to_m3u8();
+        let out = pl.to_m3u8().unwrap();
         assert_eq!(rendered_version(&out), Some(5), "{out}");
     }
 
@@ -4915,7 +5342,7 @@ v300/index.m3u8\n";
             byte_range: None,
             extra_attrs: Vec::new(),
         });
-        let out = pl.to_m3u8();
+        let out = pl.to_m3u8().unwrap();
         assert_eq!(rendered_version(&out), Some(6), "{out}");
     }
 
@@ -4925,7 +5352,7 @@ v300/index.m3u8\n";
             version: 0,
             variants: vec![Variant {
                 bandwidth: 300_000,
-                codecs: "avc1.64001e".into(),
+                codecs: Some("avc1.64001e".into()),
                 resolution: None,
                 uri: "v300/index.m3u8".into(),
                 extra_attrs: Vec::new(),
@@ -4939,7 +5366,7 @@ v300/index.m3u8\n";
              INSTREAM-ID=\"SERVICE1\""
                 .into(),
         ];
-        let out = pl.to_m3u8();
+        let out = pl.to_m3u8().unwrap();
         assert_eq!(rendered_version(&out), Some(7), "{out}");
     }
 
@@ -4947,7 +5374,7 @@ v300/index.m3u8\n";
     fn version_row8_variable_substitution_triggers_v8() {
         let mut pl = base_media_playlist();
         pl.segments = vec![seg("seg-{$id}.m4s", 6.0)];
-        let out = pl.to_m3u8();
+        let out = pl.to_m3u8().unwrap();
         assert_eq!(rendered_version(&out), Some(8), "{out}");
     }
 
@@ -4957,7 +5384,7 @@ v300/index.m3u8\n";
             version: 0,
             variants: vec![Variant {
                 bandwidth: 300_000,
-                codecs: "avc1.64001e".into(),
+                codecs: Some("avc1.64001e".into()),
                 resolution: None,
                 uri: "{$base}/index.m3u8".into(),
                 extra_attrs: Vec::new(),
@@ -4966,7 +5393,7 @@ v300/index.m3u8\n";
             extra_tags: vec![],
             ..Default::default()
         };
-        let out = pl.to_m3u8();
+        let out = pl.to_m3u8().unwrap();
         assert_eq!(rendered_version(&out), Some(8), "{out}");
     }
 
@@ -4978,7 +5405,7 @@ v300/index.m3u8\n";
             recently_removed_daterange_ids: vec![],
             ..Default::default()
         });
-        let out = pl.to_m3u8();
+        let out = pl.to_m3u8().unwrap();
         assert_eq!(rendered_version(&out), Some(9), "{out}");
     }
 
@@ -4990,7 +5417,7 @@ v300/index.m3u8\n";
             recently_removed_daterange_ids: vec!["ad-1".into()],
             ..Default::default()
         });
-        let out = pl.to_m3u8();
+        let out = pl.to_m3u8().unwrap();
         assert_eq!(rendered_version(&out), Some(10), "{out}");
     }
 
@@ -4998,7 +5425,7 @@ v300/index.m3u8\n";
     fn version_row11_define_queryparam_triggers_v11() {
         let mut pl = base_media_playlist();
         pl.extra_tags = vec!["#EXT-X-DEFINE:QUERYPARAM=\"auth\"".into()];
-        let out = pl.to_m3u8();
+        let out = pl.to_m3u8().unwrap();
         assert_eq!(rendered_version(&out), Some(11), "{out}");
     }
 
@@ -5008,7 +5435,7 @@ v300/index.m3u8\n";
             version: 0,
             variants: vec![Variant {
                 bandwidth: 300_000,
-                codecs: "avc1.64001e".into(),
+                codecs: Some("avc1.64001e".into()),
                 resolution: None,
                 uri: "v300/index.m3u8".into(),
                 ..Default::default()
@@ -5017,7 +5444,7 @@ v300/index.m3u8\n";
             extra_tags: vec!["#EXT-X-DEFINE:QUERYPARAM=\"auth\"".into()],
             ..Default::default()
         };
-        let out = pl.to_m3u8();
+        let out = pl.to_m3u8().unwrap();
         assert_eq!(rendered_version(&out), Some(11), "{out}");
     }
 
@@ -5025,8 +5452,44 @@ v300/index.m3u8\n";
     fn version_row12_req_attribute_triggers_v12() {
         let mut pl = base_media_playlist();
         pl.extra_tags = vec!["#EXT-X-FUTURE-FEATURE:REQ-CODEC=\"av01\"".into()];
-        let out = pl.to_m3u8();
+        let out = pl.to_m3u8().unwrap();
         assert_eq!(rendered_version(&out), Some(12), "{out}");
+    }
+
+    /// Audit BH-W8 (issue #1111): the §8 row-12 `REQ-` scan must see the
+    /// per-tag `SC`/`PI`/`PH` attribute lists, not a separate playlist-wide
+    /// union that the renderer never read. A config built directly with a
+    /// `REQ-` attribute in `sc_extra_attrs` used to render that attribute
+    /// while leaving `EXT-X-VERSION` at 11 — an under-declaration the §8
+    /// rule forbids (and the before/after difference is exactly this test:
+    /// with the duplicate field present the scan missed it).
+    #[test]
+    fn version_row12_req_attribute_in_per_tag_lists_triggers_v12() {
+        let mut pl = base_media_playlist();
+        pl.low_latency = Some(LowLatencyConfig {
+            sc_extra_attrs: vec![(
+                "REQ-LATENCY".to_string(),
+                AttrValue::bare("ultra-low").unwrap(),
+            )],
+            ..Default::default()
+        });
+        let out = pl.to_m3u8().unwrap();
+        assert!(out.contains("REQ-LATENCY=ultra-low"), "{out}");
+        assert_eq!(rendered_version(&out), Some(12), "{out}");
+
+        // Same for PART-INF and PRELOAD-HINT.
+        for (list, name) in [("pi", "REQ-VIDEO"), ("ph", "REQ-INFO")] {
+            let mut pl = base_media_playlist();
+            let attr = vec![(name.to_string(), AttrValue::bare("1").unwrap())];
+            let mut ll = LowLatencyConfig::default();
+            match list {
+                "pi" => ll.pi_extra_attrs = attr,
+                _ => ll.ph_extra_attrs = attr,
+            }
+            pl.low_latency = Some(ll);
+            let out = pl.to_m3u8().unwrap();
+            assert_eq!(rendered_version(&out), Some(12), "{list}: {out}");
+        }
     }
 
     #[test]
@@ -5035,7 +5498,7 @@ v300/index.m3u8\n";
             version: 0,
             variants: vec![Variant {
                 bandwidth: 300_000,
-                codecs: "avc1.64001e".into(),
+                codecs: Some("avc1.64001e".into()),
                 resolution: None,
                 uri: "v300/index.m3u8".into(),
                 ..Default::default()
@@ -5044,7 +5507,7 @@ v300/index.m3u8\n";
             extra_tags: vec!["#EXT-X-FUTURE-FEATURE:REQ-CODEC=\"av01\"".into()],
             ..Default::default()
         };
-        let out = pl.to_m3u8();
+        let out = pl.to_m3u8().unwrap();
         assert_eq!(rendered_version(&out), Some(12), "{out}");
     }
 
@@ -5054,7 +5517,7 @@ v300/index.m3u8\n";
             version: 0,
             variants: vec![Variant {
                 bandwidth: 300_000,
-                codecs: "avc1.64001e".into(),
+                codecs: Some("avc1.64001e".into()),
                 resolution: None,
                 uri: "v300/index.m3u8".into(),
                 ..Default::default()
@@ -5065,7 +5528,7 @@ v300/index.m3u8\n";
             ],
             ..Default::default()
         };
-        let out = pl.to_m3u8();
+        let out = pl.to_m3u8().unwrap();
         assert_eq!(rendered_version(&out), Some(13), "{out}");
     }
 
@@ -5075,7 +5538,7 @@ v300/index.m3u8\n";
             version: 0,
             variants: vec![Variant {
                 bandwidth: 300_000,
-                codecs: "avc1.64001e".into(),
+                codecs: Some("avc1.64001e".into()),
                 resolution: None,
                 uri: "v300/index.m3u8".into(),
                 ..Default::default()
@@ -5084,7 +5547,7 @@ v300/index.m3u8\n";
             extra_tags: vec![],
             ..Default::default()
         };
-        let out = pl.to_m3u8();
+        let out = pl.to_m3u8().unwrap();
         assert_eq!(rendered_version(&out), None, "{out}");
     }
 
@@ -5114,14 +5577,14 @@ v300/index.m3u8\n";
             }])),
             extra_tags: vec!["#EXT-X-MAP:URI=\"init-1.mp4\"".into()],
             low_latency: Some(LowLatencyConfig {
-                part_target: DecimalSeconds::new(0.5).unwrap(),
-                part_hold_back: DecimalSeconds::new(1.5).unwrap(),
+                part_target: Some(DecimalSeconds::new(0.5).unwrap()),
+                part_hold_back: Some(DecimalSeconds::new(1.5).unwrap()),
                 ..Default::default()
             }),
             iframes_only: false,
             ..Default::default()
         };
-        let out = pl.to_m3u8();
+        let out = pl.to_m3u8().unwrap();
         assert_eq!(
             rendered_version(&out),
             Some(6),
@@ -5146,7 +5609,7 @@ v300/index.m3u8\n";
             endlist: true,
             ..Default::default()
         };
-        let out = pl.to_m3u8();
+        let out = pl.to_m3u8().unwrap();
         assert_eq!(rendered_version(&out), Some(3), "{out}");
     }
 
@@ -5156,7 +5619,7 @@ v300/index.m3u8\n";
     fn named_case_3_adding_skip_raises_version_to_9() {
         let mut pl = base_media_playlist();
         assert_eq!(
-            rendered_version(&pl.to_m3u8()),
+            rendered_version(&pl.to_m3u8().unwrap()),
             None,
             "sanity: no trigger before adding EXT-X-SKIP"
         );
@@ -5165,7 +5628,7 @@ v300/index.m3u8\n";
             recently_removed_daterange_ids: vec![],
             ..Default::default()
         });
-        let out = pl.to_m3u8();
+        let out = pl.to_m3u8().unwrap();
         assert_eq!(rendered_version(&out), Some(9), "{out}");
     }
 
@@ -5173,7 +5636,7 @@ v300/index.m3u8\n";
     /// at all (RFC 8216bis §8's opening rule).
     #[test]
     fn named_case_4_no_trigger_renders_no_version_tag() {
-        let out = base_media_playlist().to_m3u8();
+        let out = base_media_playlist().to_m3u8().unwrap();
         assert!(!out.contains("#EXT-X-VERSION"), "{out}");
     }
 
@@ -5186,7 +5649,7 @@ v300/index.m3u8\n";
             .expect("cbcs must emit an EXT-X-KEY tag");
         let mut pl = base_media_playlist();
         pl.extra_tags = vec![tag];
-        let out = pl.to_m3u8();
+        let out = pl.to_m3u8().unwrap();
         assert_eq!(rendered_version(&out), Some(5), "{out}");
     }
 
@@ -5209,7 +5672,7 @@ seg0.m4s\n";
             ll.can_skip_dateranges,
             "CAN-SKIP-DATERANGES=YES must parse to true"
         );
-        let round = pl.to_m3u8();
+        let round = pl.to_m3u8().unwrap();
         assert!(
             round.contains("CAN-SKIP-DATERANGES=YES"),
             "render must emit CAN-SKIP-DATERANGES=YES:\n{round}"
@@ -5235,8 +5698,8 @@ seg0.m4s\n";
             media_sequence: 0,
             segments: vec![],
             low_latency: Some(LowLatencyConfig {
-                part_target: DecimalSeconds::new(0.5).unwrap(),
-                part_hold_back: DecimalSeconds::new(1.5).unwrap(),
+                part_target: Some(DecimalSeconds::new(0.5).unwrap()),
+                part_hold_back: Some(DecimalSeconds::new(1.5).unwrap()),
                 can_skip_until: None,
                 can_skip_dateranges: true,
                 can_block_reload: true,
@@ -5244,7 +5707,7 @@ seg0.m4s\n";
             }),
             ..Default::default()
         };
-        let out = pl.to_m3u8();
+        let out = pl.to_m3u8().unwrap();
         assert!(
             !out.contains("CAN-SKIP-DATERANGES"),
             "CAN-SKIP-DATERANGES must NOT render without CAN-SKIP-UNTIL:\n{out}"
@@ -5269,7 +5732,7 @@ seg0.m4s\n";
             Some(DecimalSeconds::new(12.0).unwrap()),
             "HOLD-BACK=12.0 must parse"
         );
-        let round = pl.to_m3u8();
+        let round = pl.to_m3u8().unwrap();
         // format_secs renders 12.0 as "12" (no trailing zero).
         assert!(
             round.contains("HOLD-BACK=12"),
@@ -5300,15 +5763,15 @@ seg0.m4s\n";
                 ..Default::default()
             }],
             low_latency: Some(LowLatencyConfig {
-                part_target: DecimalSeconds::new(0.5).unwrap(),
-                part_hold_back: DecimalSeconds::new(1.5).unwrap(),
+                part_target: Some(DecimalSeconds::new(0.5).unwrap()),
+                part_hold_back: Some(DecimalSeconds::new(1.5).unwrap()),
                 hold_back: None,
                 can_block_reload: true,
                 ..Default::default()
             }),
             ..Default::default()
         };
-        let out = pl.to_m3u8();
+        let out = pl.to_m3u8().unwrap();
         assert!(
             !out.contains(",HOLD-BACK="),
             "HOLD-BACK must be absent when None:\n{out}"
@@ -5346,7 +5809,7 @@ v300/index.m3u8\n\
         let pl = MasterPlaylist::parse(text).expect("legitimate session key must parse");
         assert_eq!(pl.session_keys.len(), 1);
         assert_eq!(pl.session_keys[0].method, EncryptionMethod::Aes128);
-        let round = pl.to_m3u8();
+        let round = pl.to_m3u8().unwrap();
         let reparse = MasterPlaylist::parse(&round).expect("reparse must succeed");
         assert_eq!(reparse.session_keys.len(), 1);
         assert_eq!(reparse.session_keys[0].method, EncryptionMethod::Aes128);
@@ -5390,12 +5853,12 @@ seg0.m4s\n";
             "REQ-LATENCY must survive in sc_extra_attrs"
         );
 
-        // Aggregated extra_attrs contains both.
-        assert!(ll.extra_attrs.iter().any(|(k, _)| k == "REQ-VIDEO"));
-        assert!(ll.extra_attrs.iter().any(|(k, _)| k == "REQ-LATENCY"));
+        // Each tag's own list keeps its own unmodeled attributes.
+        assert!(ll.pi_extra_attrs.iter().any(|(k, _)| k == "REQ-VIDEO"));
+        assert!(ll.sc_extra_attrs.iter().any(|(k, _)| k == "REQ-LATENCY"));
 
         // Version must be 12.
-        let round = pl.to_m3u8();
+        let round = pl.to_m3u8().unwrap();
         assert!(
             round.contains("#EXT-X-VERSION:12"),
             "must emit version 12:\n{round}"

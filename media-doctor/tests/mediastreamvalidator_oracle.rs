@@ -590,21 +590,21 @@ fn origin_multivariant_shape_validates_clean() {
         endlist: true,
         ..Default::default()
     };
-    fs::write(dir.join("low.m3u8"), child.to_m3u8()).expect("write low.m3u8");
-    fs::write(dir.join("hi.m3u8"), child.to_m3u8()).expect("write hi.m3u8");
+    fs::write(dir.join("low.m3u8"), child.to_m3u8().unwrap()).expect("write low.m3u8");
+    fs::write(dir.join("hi.m3u8"), child.to_m3u8().unwrap()).expect("write hi.m3u8");
 
     let master = MasterPlaylist {
         variants: vec![
             Variant {
                 bandwidth: 1_280_000,
-                codecs: "avc1.64001f,mp4a.40.2".into(),
+                codecs: Some("avc1.64001f,mp4a.40.2".into()),
                 resolution: Some((640, 360)),
                 uri: "low.m3u8".into(),
                 extra_attrs: vec![],
             },
             Variant {
                 bandwidth: 2_560_000,
-                codecs: "avc1.64001f,mp4a.40.2".into(),
+                codecs: Some("avc1.64001f,mp4a.40.2".into()),
                 resolution: Some((1280, 720)),
                 uri: "hi.m3u8".into(),
                 extra_attrs: vec![],
@@ -612,7 +612,7 @@ fn origin_multivariant_shape_validates_clean() {
         ],
         ..Default::default()
     };
-    fs::write(dir.join("master.m3u8"), master.to_m3u8()).expect("write master.m3u8");
+    fs::write(dir.join("master.m3u8"), master.to_m3u8().unwrap()).expect("write master.m3u8");
 
     let findings = run_validator(&dir, "master.m3u8", true, 5);
     assert_zero_errors(&findings, "origin multivariant shape");
@@ -644,9 +644,9 @@ fn origin_variant_quoted_group_attrs_validates_clean() {
         endlist: true,
         ..Default::default()
     };
-    fs::write(dir.join("hi.m3u8"), leaf.to_m3u8()).expect("write hi.m3u8");
-    fs::write(dir.join("audio.m3u8"), leaf.to_m3u8()).expect("write audio.m3u8");
-    fs::write(dir.join("sub.m3u8"), leaf.to_m3u8()).expect("write sub.m3u8");
+    fs::write(dir.join("hi.m3u8"), leaf.to_m3u8().unwrap()).expect("write hi.m3u8");
+    fs::write(dir.join("audio.m3u8"), leaf.to_m3u8().unwrap()).expect("write audio.m3u8");
+    fs::write(dir.join("sub.m3u8"), leaf.to_m3u8().unwrap()).expect("write sub.m3u8");
 
     let master = MasterPlaylist {
         extra_tags: vec![
@@ -662,7 +662,7 @@ fn origin_variant_quoted_group_attrs_validates_clean() {
         ],
         variants: vec![Variant {
             bandwidth: 2_560_000,
-            codecs: "avc1.64001f,mp4a.40.2".into(),
+            codecs: Some("avc1.64001f,mp4a.40.2".into()),
             resolution: Some((1280, 720)),
             uri: "hi.m3u8".into(),
             extra_attrs: vec![
@@ -682,7 +682,7 @@ fn origin_variant_quoted_group_attrs_validates_clean() {
         }],
         ..Default::default()
     };
-    fs::write(dir.join("master.m3u8"), master.to_m3u8()).expect("write master.m3u8");
+    fs::write(dir.join("master.m3u8"), master.to_m3u8().unwrap()).expect("write master.m3u8");
 
     let findings = run_validator(&dir, "master.m3u8", true, 5);
     assert_zero_errors(
@@ -737,12 +737,12 @@ fn origin_variant_unknown_quoted_attr_round_trips_and_validates_clean() {
         endlist: true,
         ..Default::default()
     };
-    fs::write(dir.join("hi.m3u8"), leaf.to_m3u8()).expect("write hi.m3u8");
+    fs::write(dir.join("hi.m3u8"), leaf.to_m3u8().unwrap()).expect("write hi.m3u8");
 
     let master = MasterPlaylist {
         variants: vec![Variant {
             bandwidth: 2_560_000,
-            codecs: "avc1.64001f,mp4a.40.2".into(),
+            codecs: Some("avc1.64001f,mp4a.40.2".into()),
             resolution: Some((1280, 720)),
             uri: "hi.m3u8".into(),
             extra_attrs: vec![(
@@ -752,7 +752,7 @@ fn origin_variant_unknown_quoted_attr_round_trips_and_validates_clean() {
         }],
         ..Default::default()
     };
-    let rendered = master.to_m3u8();
+    let rendered = master.to_m3u8().unwrap();
     fs::write(dir.join("master.m3u8"), &rendered).expect("write master.m3u8");
 
     let stream_inf_line = rendered
@@ -813,12 +813,13 @@ fn origin_iframe_variant_shape_validates_clean() {
         endlist: true,
         ..Default::default()
     };
-    fs::write(dir.join("iframe.m3u8"), iframe_playlist.to_m3u8()).expect("write iframe.m3u8");
+    fs::write(dir.join("iframe.m3u8"), iframe_playlist.to_m3u8().unwrap())
+        .expect("write iframe.m3u8");
 
     let master = MasterPlaylist {
         variants: vec![Variant {
             bandwidth: 2_560_000,
-            codecs: "avc1.64001f,mp4a.40.2".into(),
+            codecs: Some("avc1.64001f,mp4a.40.2".into()),
             resolution: Some((1280, 720)),
             uri: "hi.m3u8".into(),
             extra_attrs: vec![],
@@ -843,8 +844,8 @@ fn origin_iframe_variant_shape_validates_clean() {
         endlist: true,
         ..Default::default()
     };
-    fs::write(dir.join("hi.m3u8"), full_pl.to_m3u8()).expect("write hi.m3u8");
-    fs::write(dir.join("master.m3u8"), master.to_m3u8()).expect("write master.m3u8");
+    fs::write(dir.join("hi.m3u8"), full_pl.to_m3u8().unwrap()).expect("write hi.m3u8");
+    fs::write(dir.join("master.m3u8"), master.to_m3u8().unwrap()).expect("write master.m3u8");
 
     let findings = run_validator(&dir, "master.m3u8", true, 5);
     assert_zero_errors(&findings, "origin I-frame variant shape");
@@ -892,14 +893,14 @@ fn origin_low_latency_shape_validates_clean() {
         }],
         endlist: true,
         low_latency: Some(LowLatencyConfig {
-            part_target: DecimalSeconds::new(1.0).unwrap(),
-            part_hold_back: DecimalSeconds::new(3.0).unwrap(),
+            part_target: Some(DecimalSeconds::new(1.0).unwrap()),
+            part_hold_back: Some(DecimalSeconds::new(3.0).unwrap()),
             can_block_reload: true,
             ..LowLatencyConfig::default()
         }),
         ..Default::default()
     };
-    fs::write(dir.join("out.m3u8"), playlist.to_m3u8()).expect("write out.m3u8");
+    fs::write(dir.join("out.m3u8"), playlist.to_m3u8().unwrap()).expect("write out.m3u8");
 
     let findings = run_validator(&dir, "out.m3u8", true, 5);
     assert_zero_errors_ignoring(&findings, "origin LL-HLS shape", |f| {
@@ -942,7 +943,7 @@ fn origin_encrypted_shape_validates_clean() {
         endlist: true,
         ..Default::default()
     };
-    fs::write(dir.join("out.m3u8"), playlist.to_m3u8()).expect("write out.m3u8");
+    fs::write(dir.join("out.m3u8"), playlist.to_m3u8().unwrap()).expect("write out.m3u8");
 
     let findings = run_validator(&dir, "out.m3u8", true, 5);
     assert_zero_errors(&findings, "origin encrypted (cbcs) shape");
@@ -992,7 +993,7 @@ fn ssai_interstitial_daterange_validates_clean() {
         endlist: true,
         ..Default::default()
     };
-    fs::write(dir.join("out.m3u8"), playlist.to_m3u8()).expect("write out.m3u8");
+    fs::write(dir.join("out.m3u8"), playlist.to_m3u8().unwrap()).expect("write out.m3u8");
 
     let findings = run_validator(&dir, "out.m3u8", true, 5);
     assert_zero_errors_ignoring(&findings, "ssai interstitial DATERANGE", |f| {
@@ -1051,7 +1052,7 @@ fn daterange_with_unknown_attrs_validates_clean() {
         endlist: true,
         ..Default::default()
     };
-    fs::write(dir.join("out.m3u8"), playlist.to_m3u8()).expect("write out.m3u8");
+    fs::write(dir.join("out.m3u8"), playlist.to_m3u8().unwrap()).expect("write out.m3u8");
 
     let findings = run_validator(&dir, "out.m3u8", true, 5);
     assert_zero_errors(&findings, "DATERANGE with unknown attributes");
