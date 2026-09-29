@@ -8,6 +8,59 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed (breaking)
+- **Several paths that previously returned a value now return an error**, because accepting the
+  input produced a box/header that misdescribed itself. Each is listed again under `### Fixed` with
+  its full rationale:
+  - `FlacSpecificBox::parse` rejects a `dfLa` metadata block whose declared 24-bit length runs past
+    the end of the box, and a first block that is not STREAMINFO (r04-W17).
+  - `BoxHeader::serialize_into` rejects a `uuid` header with no `usertype`, a header with
+    `size == 1` but no largesize, and a compact header whose `size` exceeds 32 bits (r04-W8).
+  - `ColourInformationBox::serialize_into` rejects a `nclx` `colr` with no `nclx` params (r04-W39).
+  - `ESDescriptor::serialize_into` rejects a `streamDependenceFlag`/`URL_Flag`/`OCRstreamFlag` that
+    disagrees with its field (r04-W24).
+  - `Ec3SpecificBox::serialize_into` rejects `substreams.len() != num_ind_sub + 1` (r04-W6).
+- `au::AccessUnitSplitter::push` now returns `Result<()>`: a stream whose open NAL or assembled
+  access unit grows past a 64 MiB cap without completing is rejected instead of buffering without
+  limit (`Error::InvalidValue`). The bound is far above any real coded picture, so a conformant
+  stream never reaches it (#1079, audit r04-W3).
+- `mp4esds` descriptor types now record the wire width of their size varint and every uncommon
+  sub-descriptor, and `ESDescriptor` presence is derived from its fields. `DecoderSpecificInfo`,
+  `SLConfigDescriptor` and `DecoderConfigDescriptor` gain a `size_width: usize` field;
+  `DecoderConfigDescriptor` and `ESDescriptor` gain `unknown_descriptors: Vec<UnknownDescriptor>`
+  (new public type); `ESDescriptor` gains `size_width`. Constructors `DecoderSpecificInfo::new`,
+  `SLConfigDescriptor::new`/`predefined_two`, `DecoderConfigDescriptor::new` and
+  `ESDescriptor::new` cover the common MP4-storage shapes. An `esds` authored with minimal
+  (GPAC/Apple/Bento4) size varints previously always re-serialized with the 4-byte expanded form, so
+  it grew on every round trip; unmodelled sub-descriptors (e.g. the
+  `ProfileLevelIndicationIndexDescriptor` 0x14, an IPI pointer or language descriptor) were dropped
+  entirely; and a `streamDependenceFlag`/`URL_Flag`/`OCRstreamFlag` set without its field made the
+  declared descriptor size count bytes that were never written, misframing the descriptor while
+  still returning `Ok` (now `Error::InvalidValue`) (#1079, audit r04-W24).
+
+- `ac3::Ec3SpecificBox` gains a `reserved_tail: Vec<u8>` field (ETSI TS 102 366 §F.6.2.14) and its
+  serializer now returns `Error::InvalidValue` when `substreams.len() != num_ind_sub + 1`, because
+  §F.6.1 derives the independent-substream count from `num_ind_sub` — a mismatched struct previously
+  serialized to a `dec3` that parsed back differently. The tail is captured verbatim on parse, so a
+  Dolby Atmos `dec3` (whose extension signalling lives in those reserved bytes) now survives a
+  parse/serialize round trip instead of being dropped (#1079, audit r04-W6).
+- `ac3`'s `chanmap`->`chan_loc` derivation is corrected against ETSI TS 102 366 §E.1.3.1.8 / §F.6.2.13:
+  Table E.1.4 numbers its bits **MSB-first** ("bit 0 … is stored in the most significant bit of the
+  `chanmap` field"), so the previous `1 << n` test read every location mirrored. The `bsi()` walk
+  also gates the programme-mix block on `strmtyp == 0x0` rather than "not a dependent stream", since
+  `strmtyp == 0x2` is an AC-3-derived *independent* stream with no programme-mix block. Both tables
+  and the `bsi()` structure are transcribed with clause citations in
+  `docs/codec/eac3-bsi-chanmap.md`. (#1079, audit r04-W5)
+- `ac3::Ec3SyncframeInfo` gains `chanmap: Option<u16>` and `bsmod: u8`;
+  `Ec3SyncframeInfo::into_dec3` and the new `Ec3SpecificBox::from_syncframes` both return `Result`.
+  They take the syncframes of a **single access unit** (`Ec3SyncframeInfo::from_es_first_au`) so
+  dependent substreams are folded into `num_dep_sub`/`chan_loc` and `num_ind_sub` is §F.6.2.3's
+  "substreamID of the last independent substream". Previously the count came from the writing
+  frame's own `substreamid`, `num_dep_sub` was always 0, `chan_loc` always `None`, and `bsmod` was
+  hardcoded 0 — so a 7.1 DD+ stream was signalled as 5.1 with an inflated substream count. Feeding
+  a whole demuxer backlog (N repeated access units -> N substreams, `data_rate` summed) is what
+  `ts_demux` did and produced a `dec3` its own serializer rejects; a dependent-only or empty slice
+  now returns `Error::InvalidValue` rather than that unserializable box (#1079, audit r04-W5).
+
 - **`sample_aes::ExtXKey::to_tag` now returns `Result<String>`** (was
   `String`), and the inherent `Display` impl for `ExtXKey` is removed
   (issue #1140 / audit r05-W10, T12): `uri`/`keyformat`/
@@ -34,6 +87,61 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   CENC-protected (`enca`) audio track as clear (#1017).
 
 ### Fixed
+- `visual_ext::NclxColourInfo` gains a `reserved: u8` field recording the 7 `reserved` bits of the
+  `nclx` flag byte, which are now preserved instead of being zeroed on a round trip (#1079,
+  audit r04-W39).
+- `mp4esds::UnknownDescriptor` gains a `position: usize` field and descriptors are re-emitted in
+  place, so an `esds` that interleaves an unmodelled descriptor between the decoder config and the
+  SL config keeps it there rather than collecting it at the end (#1079, audit r04-W24).
+- `BoxHeader::serialize_into` rejects a compact header whose `size` exceeds the 32-bit field
+  instead of silently wrapping it (`Error::InvalidValue`) (#1079, audit r04-W8).
+- `visual_ext::ColourInformationBox` no longer mis-frames an `nclx` `colr` with no `nclx` params
+  (`serialized_len` counted 7 bytes but only 4 were written and 4 returned — now
+  `Error::InvalidValue`), and the trailing bytes some writers pad an `nclx` body with are kept
+  verbatim so the box re-serializes byte-identically (#1079, audit r04-W39).
+- `sample_entries` `hvc1`/`hev1`/`vvc1` sample entries now capture every sibling box, not just the
+  codec config: `colr`, `pasp`, `btrt`, `clli`, `mdcv` and Dolby Vision's `dvcC`/`dvvC`. A sibling
+  box placed before the config is captured too (the AVC path previously only walked forward from
+  `avcC`). An HDR10 or Dolby Vision profile 8.1 source previously lost its colour signalling on an
+  fMP4-to-fMP4 repackage and played as SDR, with Dolby Vision lost entirely (#1079, audit r04-W37).
+
+- `nal::access_unit_is_rap` no longer treats a bare SPS as a random-access point: the SPS fallback
+  (for open-GOP streams that omit the `recovery_point` SEI) now also requires the access unit to
+  carry an I-slice (`slice_type` 2/7 modulo 5, ITU-T H.264 §7.4.3 Table 7-6). Hardware encoders and
+  IP cameras commonly repeat SPS/PPS on every picture, so every access unit of such a stream was
+  previously reported as a RAP and a segmenter cut segments starting on a P/B frame that cannot be
+  decoded independently (#1079, audit r04-W23).
+
+- `BoxHeader::serialize_into` now writes the header form the header was parsed or built with,
+  instead of re-deriving it from `size`. A wire header that used `size == 1` + 64-bit `largesize`
+  and whose `size` fits in 32 bits previously serialized as the compact 8-byte form while
+  `serialized_len()` reported 16, leaving 8 stale bytes in any caller that laid out `header_size()`
+  bytes. A `uuid` header with no `usertype` and a header with `size == 1` but no largesize now
+  return `Error::InvalidValue` rather than writing an under-length or misframed header (#1079,
+  audit r04-W8).
+- `AudioSpecificConfig::serialize_into` no longer zeroes the whole caller buffer: it clears only the
+  bytes it writes. A caller batching several configs into one larger shared buffer previously lost
+  everything it had already written past this config (#1079, audit r04-W9).
+
+- `AnnexBNalIter::next` no longer recurses once per empty NAL: a run of consecutive start codes
+  (reached from any hostile H.264 PES through `annexb_to_length_prefixed`) used to grow the stack
+  until the process aborted, which cannot be caught (#1079, audit r04-W4).
+- `AccessUnitSplitter` now keeps trailing non-VCL NALs with the picture they follow, per codec
+  (H.264 §7.4.1.2.3 filler/EOS/end-of-stream; H.265 §7.4.2.4.4 suffix SEI/FD/EOS/EOB and the
+  reserved/unspecified suffix ranges; H.266 §7.4.2.4.3 suffix APS/SEI). A CBR AVC stream whose
+  pictures end in filler previously alternated between a picture access unit and a filler-only
+  one, and every HEVC suffix SEI was attributed to the following picture. Its start-code scan also
+  resumes from a cursor instead of rewalking the whole buffer, so a 1 MiB IDR fed in 1316-byte
+  chunks is no longer rescanned ~800 times — and the cursor is rebased when the buffer is trimmed,
+  without which the next push resumed past the retained bytes, skipped their start codes and merged
+  NALs, losing access-unit boundaries (#1079, audit r04-W2, r04-W3).
+- `FlacSpecificBox::parse` rejects a metadata block whose declared 24-bit length runs past the end
+  of the box, and enforces `isoflac.txt`'s "the first metadata block MUST be STREAMINFO" rule. A
+  truncated block previously parsed as a shorter valid one, so re-serializing it wrote a different
+  length and silently broke the byte-exact round trip (#1079, audit r04-W17).
+- `OpusSpecificBox::parse` rejects a `dOps` whose channel-mapping table is shorter than its
+  `OutputChannelCount` declares, instead of accepting a shorter map and re-serializing a different
+  box (#1079, audit r04-W25).
 - `AudioSpecificConfig::to_adts_header` no longer emits ADTS profile 0 (AAC Main) for HE-AAC /
   HE-AAC v2 explicit hierarchical signaling (`audioObjectType` 5/29): it now decodes the core AOT
   the same way `heaac_signaling` does, rejects a core AOT ADTS's 2-bit `profile` field can't

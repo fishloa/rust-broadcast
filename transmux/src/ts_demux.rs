@@ -118,8 +118,8 @@ use mpeg_ts::ts::{SectionReassembler, TS_PACKET_SIZE, TsPacket};
 
 use crate::aac_asc::{AdtsHeader, AudioSpecificConfig, parse_adts_header};
 use crate::ac3::{
-    AC3_SAMPLES_PER_SYNCFRAME, Ac3SyncframeInfo, Ec3SyncframeInfo, split_ac3_syncframes,
-    split_eac3_syncframes,
+    AC3_SAMPLES_PER_SYNCFRAME, Ac3SyncframeInfo, Ec3SpecificBox, Ec3SyncframeInfo,
+    split_ac3_syncframes, split_eac3_syncframes,
 };
 use crate::annexb::{annexb_to_length_prefixed, iter_annexb_nals};
 use crate::avc_config::{AVCConfigurationBox, AVCDecoderConfigurationRecord};
@@ -128,8 +128,7 @@ use crate::error::{Error, Result};
 use crate::hevc_config::{HEVCConfigurationBox, HEVCDecoderConfigurationRecord};
 use crate::media::{Media, PcrSample, Track};
 use crate::mp4esds::{
-    DecoderConfigDescriptor, DecoderSpecificInfo, ESDescriptor, EsdsBox, ObjectTypeIndication,
-    SLConfigDescriptor, StreamType as EsdsStreamType,
+    DecoderConfigDescriptor, DecoderSpecificInfo, ESDescriptor, EsdsBox, SLConfigDescriptor,
 };
 use crate::mpeg_legacy::{Mpeg2SeqHeader, MpegAudioFrameHeader};
 use crate::mpegh::{MHADecoderConfigurationRecord, find_mpegh3da_config};
@@ -346,8 +345,6 @@ pub(crate) const ESDS_VIDEO_ES_ID: u16 = 2;
 /// `SLConfigDescriptor` predefined body for MP4 file SL packaging
 /// (ISO/IEC 14496-1 §7.3.2.3 — `predefined = 0x02`).
 /// `pub(crate)`: also used by `ps_demux` (C6, #1009).
-pub(crate) const SL_CONFIG_PREDEFINED_MP4: u8 = 0x02;
-
 /// Audio sample size in bits carried in the sample entry (PCM-equivalent; 16).
 const AUDIO_SAMPLE_SIZE_BITS: u16 = 16;
 
@@ -1813,28 +1810,20 @@ fn finalize_probe(
             let seq = backlog
                 .iter()
                 .find_map(|au| Mpeg2SeqHeader::find(&au.data).ok())?;
-            let esds = EsdsBox::new(ESDescriptor {
-                es_id: ESDS_VIDEO_ES_ID,
-                stream_dependence_flag: false,
-                url_flag: false,
-                ocr_stream_flag: false,
-                stream_priority: 0,
-                depends_on_es_id: None,
-                url: None,
-                ocr_es_id: None,
-                decoder_config: Some(DecoderConfigDescriptor {
-                    object_type_indication: ObjectTypeIndication(OTI_MPEG2_VIDEO_MAIN),
-                    stream_type: EsdsStreamType(STREAM_TYPE_VISUAL),
-                    up_stream: false,
-                    buffer_size_db: 0,
-                    max_bitrate: 0,
-                    avg_bitrate: 0,
-                    decoder_specific_info: None,
-                }),
-                sl_config: Some(SLConfigDescriptor {
-                    body: alloc::vec![SL_CONFIG_PREDEFINED_MP4],
-                }),
-            });
+            let esds = EsdsBox::new(ESDescriptor::new(
+                ESDS_VIDEO_ES_ID,
+                0,
+                Some(DecoderConfigDescriptor::new(
+                    OTI_MPEG2_VIDEO_MAIN,
+                    STREAM_TYPE_VISUAL,
+                    false,
+                    0,
+                    0,
+                    0,
+                    None,
+                )),
+                Some(SLConfigDescriptor::predefined_two()),
+            ));
             Some((
                 CodecConfig::Mpeg2Video {
                     esds,
@@ -1863,28 +1852,20 @@ fn finalize_probe(
             } else {
                 OTI_MPEG1_AUDIO
             };
-            let esds = EsdsBox::new(ESDescriptor {
-                es_id: ESDS_ES_ID,
-                stream_dependence_flag: false,
-                url_flag: false,
-                ocr_stream_flag: false,
-                stream_priority: 0,
-                depends_on_es_id: None,
-                url: None,
-                ocr_es_id: None,
-                decoder_config: Some(DecoderConfigDescriptor {
-                    object_type_indication: ObjectTypeIndication(oti),
-                    stream_type: EsdsStreamType(STREAM_TYPE_AUDIO),
-                    up_stream: false,
-                    buffer_size_db: 0,
-                    max_bitrate: 0,
-                    avg_bitrate: 0,
-                    decoder_specific_info: None,
-                }),
-                sl_config: Some(SLConfigDescriptor {
-                    body: alloc::vec![SL_CONFIG_PREDEFINED_MP4],
-                }),
-            });
+            let esds = EsdsBox::new(ESDescriptor::new(
+                ESDS_ES_ID,
+                0,
+                Some(DecoderConfigDescriptor::new(
+                    oti,
+                    STREAM_TYPE_AUDIO,
+                    false,
+                    0,
+                    0,
+                    0,
+                    None,
+                )),
+                Some(SLConfigDescriptor::predefined_two()),
+            ));
             Some((
                 CodecConfig::MpegAudio {
                     esds,
@@ -1910,30 +1891,20 @@ fn finalize_probe(
             let asc = AudioSpecificConfig::from_adts_header(&first_hdr);
             let sample_rate = sfi_to_hz(first_hdr.sampling_frequency_index)?;
             let channel_count = first_hdr.channel_configuration as u16;
-            let esds = EsdsBox::new(ESDescriptor {
-                es_id: ESDS_ES_ID,
-                stream_dependence_flag: false,
-                url_flag: false,
-                ocr_stream_flag: false,
-                stream_priority: 0,
-                depends_on_es_id: None,
-                url: None,
-                ocr_es_id: None,
-                decoder_config: Some(DecoderConfigDescriptor {
-                    object_type_indication: ObjectTypeIndication(OTI_MPEG4_AUDIO),
-                    stream_type: EsdsStreamType(STREAM_TYPE_AUDIO),
-                    up_stream: false,
-                    buffer_size_db: 0,
-                    max_bitrate: 0,
-                    avg_bitrate: 0,
-                    decoder_specific_info: Some(DecoderSpecificInfo {
-                        data: asc.to_bytes(),
-                    }),
-                }),
-                sl_config: Some(SLConfigDescriptor {
-                    body: alloc::vec![SL_CONFIG_PREDEFINED_MP4],
-                }),
-            });
+            let esds = EsdsBox::new(ESDescriptor::new(
+                ESDS_ES_ID,
+                0,
+                Some(DecoderConfigDescriptor::new(
+                    OTI_MPEG4_AUDIO,
+                    STREAM_TYPE_AUDIO,
+                    false,
+                    0,
+                    0,
+                    0,
+                    Some(DecoderSpecificInfo::new(asc.to_bytes())),
+                )),
+                Some(SLConfigDescriptor::predefined_two()),
+            ));
             Some((
                 CodecConfig::Aac {
                     esds,
@@ -1972,12 +1943,19 @@ fn finalize_probe(
             ))
         }
         ConfigProbe::Eac3 => {
-            let info = backlog
+            // The `dec3` describes the bitstream's substream layout and is
+            // built from the *first access unit* of the earliest PES that has
+            // one: the dependent substreams that make a programme 7.1 follow
+            // that AU's independent frame. Scanning the whole backlog would
+            // emit one substream per repeated access unit.
+            let frames: alloc::vec::Vec<Ec3SyncframeInfo> = backlog
                 .iter()
-                .find_map(|au| Ec3SyncframeInfo::from_es(&au.data).ok())?;
+                .map(|au| Ec3SyncframeInfo::from_es_first_au(&au.data))
+                .find(|f| !f.is_empty())?;
+            let info = *frames.first()?;
             let sample_rate = info.sample_rate;
             let channel_count = info.channel_count() as u16;
-            let config = info.into_dec3();
+            let config = Ec3SpecificBox::from_syncframes(&frames).ok()?;
             Some((
                 CodecConfig::Eac3 {
                     config,

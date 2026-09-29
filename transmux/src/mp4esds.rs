@@ -150,21 +150,119 @@ fn parse_varint(bytes: &[u8], cursor: &mut usize) -> Result<(usize, usize)> {
     Ok((value, *cursor - start))
 }
 
-/// Encode a varint using the fixed 4-byte expanded form (`0x80 0x80 0x80 NN`).
-/// This matches the encoding emitted by ffmpeg and other real MP4 muxers.
-fn write_varint_fixed(buf: &mut [u8], cursor: &mut usize, value: usize) -> Result<()> {
-    if *cursor + 4 > buf.len() {
+/// Number of bytes an `unused`-free varint needs for `value`: the minimal width
+/// is what makes `serialized_len` exact, since the width is stored with each
+/// descriptor.
+fn varint_width(value: usize) -> usize {
+    let mut w = 1;
+    let mut v = value >> 7;
+    while v != 0 {
+        w += 1;
+        v >>= 7;
+    }
+    w
+}
+
+/// Encode a varint in exactly `width` bytes, zero-extended with leading `0x80`
+/// continuation bytes when needed — the fixed 4-byte expanded form ffmpeg and
+/// other muxers emit, and the minimal 1-byte form GPAC/Apple/Bento4 emit.
+///
+/// The width is carried in [`DescriptorSize`] as parsed, so a minimal-width
+/// `esds` re-serializes at the same width instead of always growing to 4
+/// (r04-W24).
+fn write_varint_width(
+    buf: &mut [u8],
+    cursor: &mut usize,
+    value: usize,
+    width: usize,
+) -> Result<()> {
+    if !(1..=MAX_VARINT_BYTES).contains(&width) {
+        return Err(Error::InvalidValue {
+            field: "descriptor size varint width",
+            value: width as u64,
+            reason: "varint width must be 1..=4 bytes",
+        });
+    }
+    if value > MAX_DESCRIPTOR_SIZE {
+        return Err(Error::FieldOverflow(broadcast_common::len::FieldOverflow {
+            field: "descriptor size",
+            value: value as u64,
+            max: MAX_DESCRIPTOR_SIZE as u64,
+        }));
+    }
+    if varint_width(value) > width {
+        return Err(Error::InvalidValue {
+            field: "descriptor size varint width",
+            value: width as u64,
+            reason: "value does not fit the recorded varint width",
+        });
+    }
+    if *cursor + width > buf.len() {
         return Err(Error::OutputBufferTooSmall {
-            need: *cursor + 4,
+            need: *cursor + width,
             have: buf.len(),
         });
     }
-    buf[*cursor] = 0x80 | ((value >> 21) as u8);
-    buf[*cursor + 1] = 0x80 | ((value >> 14) as u8);
-    buf[*cursor + 2] = 0x80 | ((value >> 7) as u8);
-    buf[*cursor + 3] = (value & 0x7F) as u8;
-    *cursor += 4;
+    for i in 0..width {
+        let shift = 7 * (width - 1 - i);
+        let mut b = ((value >> shift) & 0x7F) as u8;
+        if i + 1 < width {
+            b |= 0x80;
+        }
+        buf[*cursor + i] = b;
+    }
+    *cursor += width;
     Ok(())
+}
+
+/// A sub-descriptor the crate does not model (a `tag(8)`/`size`/body triple kept
+/// verbatim), so an `esds` carrying one — e.g. the
+/// `ProfileLevelIndicationIndexDescriptor` (0x14) or an
+/// `IPI_DescrPointer`/language descriptor — is not dropped (r04-W24).
+///
+/// The descriptor's position relative to the modelled ones is preserved too:
+/// [`UnknownDescriptor::position`] records how many modelled descriptors had
+/// already been parsed, and serialization emits it after that many — so an
+/// `esds` that interleaved an unmodelled descriptor keeps it in place.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+pub struct UnknownDescriptor {
+    /// The descriptor's `tag` byte.
+    pub tag: u8,
+    /// Width in bytes of the size varint as it appeared on the wire.
+    pub size_width: usize,
+    /// The descriptor body (after the size varint).
+    pub data: Vec<u8>,
+    /// How many modelled descriptors had already been seen when this one was
+    /// parsed. Serialization emits this descriptor after that many of them, so
+    /// an `esds` that interleaves unmodelled descriptors keeps them in place
+    /// rather than collecting them at the end.
+    pub position: usize,
+}
+
+impl UnknownDescriptor {
+    /// Total encoded length: tag + size varint + body.
+    pub fn serialized_len(&self) -> usize {
+        1 + self.size_width + self.data.len()
+    }
+
+    /// Serialize tag + width-preserved size varint + body.
+    pub fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
+        let need = self.serialized_len();
+        if buf.len() < need {
+            return Err(Error::OutputBufferTooSmall {
+                need,
+                have: buf.len(),
+            });
+        }
+        let mut cursor = 0usize;
+        buf[cursor] = self.tag;
+        cursor += 1;
+        write_varint_width(buf, &mut cursor, self.data.len(), self.size_width)?;
+        buf[cursor..cursor + self.data.len()].copy_from_slice(&self.data);
+        cursor += self.data.len();
+        Ok(cursor)
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -259,10 +357,22 @@ impl fmt::Display for StreamType {
 pub struct DecoderSpecificInfo {
     /// Opaque codec-configuration bytes.
     pub data: Vec<u8>,
+    /// Width in bytes of the size varint as it appeared on the wire (1..=4), so
+    /// a minimal-width `esds` re-serializes at the same width (r04-W24).
+    pub size_width: usize,
 }
 
 impl DecoderSpecificInfo {
     const TAG: u8 = TAG_DECODER_SPECIFIC_INFO;
+
+    /// Wrap `data` as a `DecSpecificInfoTag` descriptor, using the fixed
+    /// 4-byte varint width every real MP4 muxer emits.
+    pub fn new(data: Vec<u8>) -> Self {
+        Self {
+            data,
+            size_width: VARINT_WIDTH_FIXED,
+        }
+    }
 }
 
 impl<'a> Parse<'a> for DecoderSpecificInfo {
@@ -271,6 +381,7 @@ impl<'a> Parse<'a> for DecoderSpecificInfo {
     fn parse(body: &'a [u8]) -> Result<Self> {
         Ok(Self {
             data: body.to_vec(),
+            size_width: VARINT_WIDTH_FIXED,
         })
     }
 }
@@ -279,7 +390,7 @@ impl Serialize for DecoderSpecificInfo {
     type Error = Error;
 
     fn serialized_len(&self) -> usize {
-        1 + VARINT_WIDTH_FIXED + self.data.len()
+        1 + self.size_width + self.data.len()
     }
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
@@ -293,7 +404,7 @@ impl Serialize for DecoderSpecificInfo {
         let mut cursor = 0usize;
         buf[cursor] = Self::TAG;
         cursor += 1;
-        write_varint_fixed(buf, &mut cursor, self.data.len())?;
+        write_varint_width(buf, &mut cursor, self.data.len(), self.size_width)?;
         buf[cursor..cursor + self.data.len()].copy_from_slice(&self.data);
         cursor += self.data.len();
         Ok(cursor)
@@ -313,10 +424,26 @@ impl Serialize for DecoderSpecificInfo {
 pub struct SLConfigDescriptor {
     /// Body bytes (opaque — depends on predefined value).
     pub body: Vec<u8>,
+    /// Width in bytes of the size varint as it appeared on the wire (1..=4).
+    pub size_width: usize,
 }
 
 impl SLConfigDescriptor {
     const TAG: u8 = TAG_SL_CONFIG;
+
+    /// Wrap `body` as an `SLConfigDescrTag` descriptor, using the fixed 4-byte
+    /// varint width every real MP4 muxer emits.
+    pub fn new(body: Vec<u8>) -> Self {
+        Self {
+            body,
+            size_width: VARINT_WIDTH_FIXED,
+        }
+    }
+
+    /// The MP4-storage `predefined = 2` form (ISO/IEC 14496-14 §3.1.2).
+    pub fn predefined_two() -> Self {
+        Self::new(alloc::vec![2])
+    }
 }
 
 impl<'a> Parse<'a> for SLConfigDescriptor {
@@ -325,6 +452,7 @@ impl<'a> Parse<'a> for SLConfigDescriptor {
     fn parse(body: &'a [u8]) -> Result<Self> {
         Ok(Self {
             body: body.to_vec(),
+            size_width: VARINT_WIDTH_FIXED,
         })
     }
 }
@@ -333,7 +461,7 @@ impl Serialize for SLConfigDescriptor {
     type Error = Error;
 
     fn serialized_len(&self) -> usize {
-        1 + VARINT_WIDTH_FIXED + self.body.len()
+        1 + self.size_width + self.body.len()
     }
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
@@ -347,7 +475,7 @@ impl Serialize for SLConfigDescriptor {
         let mut cursor = 0usize;
         buf[cursor] = Self::TAG;
         cursor += 1;
-        write_varint_fixed(buf, &mut cursor, self.body.len())?;
+        write_varint_width(buf, &mut cursor, self.body.len(), self.size_width)?;
         buf[cursor..cursor + self.body.len()].copy_from_slice(&self.body);
         cursor += self.body.len();
         Ok(cursor)
@@ -379,10 +507,40 @@ pub struct DecoderConfigDescriptor {
     pub avg_bitrate: u32,
     /// Optional decoder-specific configuration (e.g. AAC AudioSpecificConfig).
     pub decoder_specific_info: Option<DecoderSpecificInfo>,
+    /// Sub-descriptors this crate does not model (e.g. the
+    /// `ProfileLevelIndicationIndexDescriptor` 0x14), kept verbatim in wire
+    /// order so they are not silently dropped on a round trip (r04-W24).
+    pub unknown_descriptors: Vec<UnknownDescriptor>,
+    /// Width in bytes of the size varint as it appeared on the wire (1..=4).
+    pub size_width: usize,
 }
 
 impl DecoderConfigDescriptor {
     const TAG: u8 = TAG_DECODER_CONFIG;
+
+    /// Build a decoder-config descriptor with no opaque sub-descriptors and the
+    /// fixed 4-byte varint width.
+    pub fn new(
+        object_type_indication: u8,
+        stream_type: u8,
+        up_stream: bool,
+        buffer_size_db: u32,
+        max_bitrate: u32,
+        avg_bitrate: u32,
+        decoder_specific_info: Option<DecoderSpecificInfo>,
+    ) -> Self {
+        Self {
+            object_type_indication: ObjectTypeIndication(object_type_indication),
+            stream_type: StreamType(stream_type),
+            up_stream,
+            buffer_size_db,
+            max_bitrate,
+            avg_bitrate,
+            decoder_specific_info,
+            unknown_descriptors: Vec::new(),
+            size_width: VARINT_WIDTH_FIXED,
+        }
+    }
 }
 
 impl<'a> Parse<'a> for DecoderConfigDescriptor {
@@ -427,13 +585,11 @@ impl<'a> Parse<'a> for DecoderConfigDescriptor {
 
         // Optional sub-descriptors: DecoderSpecificInfo (0x05), profileLevel (0x08)
         let mut decoder_specific_info = None;
+        let mut unknown_descriptors = Vec::new();
         while cursor < body.len() {
-            if cursor >= body.len() {
-                break;
-            }
             let sub_tag = body[cursor];
             cursor += 1;
-            let (sub_size, _) = parse_varint(body, &mut cursor)?;
+            let (sub_size, sub_width) = parse_varint(body, &mut cursor)?;
             let sub_body = if cursor + sub_size <= body.len() {
                 &body[cursor..cursor + sub_size]
             } else {
@@ -446,10 +602,20 @@ impl<'a> Parse<'a> for DecoderConfigDescriptor {
 
             match sub_tag {
                 TAG_DECODER_SPECIFIC_INFO => {
-                    decoder_specific_info = Some(DecoderSpecificInfo::parse(sub_body)?);
+                    let mut dsi = DecoderSpecificInfo::parse(sub_body)?;
+                    dsi.size_width = sub_width;
+                    decoder_specific_info = Some(dsi);
                 }
                 _ => {
-                    // Skip unknown tags
+                    // Not modelled by this crate: keep it verbatim, and record
+                    // how many modelled descriptors preceded it so it can be
+                    // written back in the same place (r04-W24).
+                    unknown_descriptors.push(UnknownDescriptor {
+                        tag: sub_tag,
+                        size_width: sub_width,
+                        data: sub_body.to_vec(),
+                        position: usize::from(decoder_specific_info.is_some()),
+                    });
                 }
             }
             cursor += sub_size;
@@ -463,6 +629,8 @@ impl<'a> Parse<'a> for DecoderConfigDescriptor {
             max_bitrate,
             avg_bitrate,
             decoder_specific_info,
+            unknown_descriptors,
+            size_width: VARINT_WIDTH_FIXED,
         })
     }
 }
@@ -472,9 +640,14 @@ impl Serialize for DecoderConfigDescriptor {
 
     fn serialized_len(&self) -> usize {
         1 // tag
-            + VARINT_WIDTH_FIXED // body size varint
+            + self.size_width // body size varint
             + DECODER_CONFIG_FIXED
             + self.decoder_specific_info.as_ref().map_or(0, |dsi| dsi.serialized_len())
+            + self
+                .unknown_descriptors
+                .iter()
+                .map(UnknownDescriptor::serialized_len)
+                .sum::<usize>()
     }
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
@@ -492,8 +665,13 @@ impl Serialize for DecoderConfigDescriptor {
             + self
                 .decoder_specific_info
                 .as_ref()
-                .map_or(0, |dsi| dsi.serialized_len());
-        write_varint_fixed(buf, &mut cursor, body_size)?;
+                .map_or(0, |dsi| dsi.serialized_len())
+            + self
+                .unknown_descriptors
+                .iter()
+                .map(UnknownDescriptor::serialized_len)
+                .sum::<usize>();
+        write_varint_width(buf, &mut cursor, body_size, self.size_width)?;
         buf[cursor] = self.object_type_indication.0;
         cursor += 1;
         // streamType(6) + upStream(1) + reserved=1(1) — one byte (14496-1 §7.2.6.6)
@@ -509,8 +687,18 @@ impl Serialize for DecoderConfigDescriptor {
         cursor += 4;
         buf[cursor..cursor + 4].copy_from_slice(&self.avg_bitrate.to_be_bytes());
         cursor += 4;
+        for ud in &self.unknown_descriptors {
+            if ud.position == 0 {
+                cursor += ud.serialize_into(&mut buf[cursor..])?;
+            }
+        }
         if let Some(ref dsi) = self.decoder_specific_info {
             cursor += dsi.serialize_into(&mut buf[cursor..])?;
+        }
+        for ud in &self.unknown_descriptors {
+            if ud.position > 0 {
+                cursor += ud.serialize_into(&mut buf[cursor..])?;
+            }
         }
         Ok(cursor)
     }
@@ -549,10 +737,40 @@ pub struct ESDescriptor {
     pub decoder_config: Option<DecoderConfigDescriptor>,
     /// SL config descriptor — typically predefined=2 in MP4 storage.
     pub sl_config: Option<SLConfigDescriptor>,
+    /// `ES_Descriptor` sub-descriptors this crate does not model, kept verbatim
+    /// in wire order (r04-W24).
+    pub unknown_descriptors: Vec<UnknownDescriptor>,
+    /// Width in bytes of the `ES_Descriptor` size varint as parsed (1..=4).
+    pub size_width: usize,
 }
 
 impl ESDescriptor {
     const TAG: u8 = TAG_ES_DESCRIPTOR;
+
+    /// Build an `ES_Descriptor` with no opaque sub-descriptors, no optional
+    /// ES fields, and the fixed 4-byte varint width — the MP4-storage shape
+    /// (ISO/IEC 14496-14 §3.1.2).
+    pub fn new(
+        es_id: u16,
+        stream_priority: u8,
+        decoder_config: Option<DecoderConfigDescriptor>,
+        sl_config: Option<SLConfigDescriptor>,
+    ) -> Self {
+        Self {
+            es_id,
+            stream_dependence_flag: false,
+            url_flag: false,
+            ocr_stream_flag: false,
+            stream_priority,
+            depends_on_es_id: None,
+            url: None,
+            ocr_es_id: None,
+            decoder_config,
+            sl_config,
+            unknown_descriptors: Vec::new(),
+            size_width: VARINT_WIDTH_FIXED,
+        }
+    }
 }
 
 impl<'a> Parse<'a> for ESDescriptor {
@@ -560,6 +778,7 @@ impl<'a> Parse<'a> for ESDescriptor {
 
     fn parse(body: &'a [u8]) -> Result<Self> {
         let mut cursor = 0usize;
+        let mut unknown_descriptors = Vec::new();
 
         // ES_ID (16)
         if cursor + 2 > body.len() {
@@ -654,7 +873,7 @@ impl<'a> Parse<'a> for ESDescriptor {
             }
             let sub_tag = body[cursor];
             cursor += 1;
-            let (sub_size, _) = parse_varint(body, &mut cursor)?;
+            let (sub_size, sub_width) = parse_varint(body, &mut cursor)?;
             if cursor + sub_size > body.len() {
                 return Err(Error::BufferTooShort {
                     need: cursor + sub_size,
@@ -666,12 +885,29 @@ impl<'a> Parse<'a> for ESDescriptor {
 
             match sub_tag {
                 TAG_DECODER_CONFIG => {
-                    decoder_config = Some(DecoderConfigDescriptor::parse(sub_body)?);
+                    let mut dc = DecoderConfigDescriptor::parse(sub_body)?;
+                    dc.size_width = sub_width;
+                    decoder_config = Some(dc);
                 }
                 TAG_SL_CONFIG => {
-                    sl_config = Some(SLConfigDescriptor::parse(sub_body)?);
+                    let mut sl = SLConfigDescriptor::parse(sub_body)?;
+                    sl.size_width = sub_width;
+                    sl_config = Some(sl);
                 }
-                _ => {}
+                _ => {
+                    // Not modelled by this crate (e.g. IPI_DescrPointer,
+                    // language descriptor): keep it verbatim, with its position
+                    // among the modelled descriptors (dc = 0, sl = 1) so the
+                    // chain re-serializes in the same order (r04-W24).
+                    let position =
+                        usize::from(decoder_config.is_some()) + usize::from(sl_config.is_some());
+                    unknown_descriptors.push(UnknownDescriptor {
+                        tag: sub_tag,
+                        size_width: sub_width,
+                        data: sub_body.to_vec(),
+                        position,
+                    });
+                }
             }
             cursor += sub_size;
         }
@@ -687,6 +923,8 @@ impl<'a> Parse<'a> for ESDescriptor {
             ocr_es_id,
             decoder_config,
             sl_config,
+            unknown_descriptors,
+            size_width: VARINT_WIDTH_FIXED,
         })
     }
 }
@@ -696,17 +934,20 @@ impl Serialize for ESDescriptor {
 
     fn serialized_len(&self) -> usize {
         let body_size = 2 + 1 // ES_ID + flags
-            + if self.stream_dependence_flag { 2 } else { 0 }
-            + if self.url_flag {
-                1 + self.url.as_ref().map_or(0, |u| u.len())
-            } else { 0 }
-            + if self.ocr_stream_flag { 2 } else { 0 };
+            + if self.depends_on_es_id.is_some() { 2 } else { 0 }
+            + self.url.as_ref().map_or(0, |u| 1 + u.len())
+            + if self.ocr_es_id.is_some() { 2 } else { 0 };
 
         1 // tag
-            + VARINT_WIDTH_FIXED
+            + self.size_width
             + body_size
             + self.decoder_config.as_ref().map_or(0, |dc| dc.serialized_len())
             + self.sl_config.as_ref().map_or(0, |sl| sl.serialized_len())
+            + self
+                .unknown_descriptors
+                .iter()
+                .map(UnknownDescriptor::serialized_len)
+                .sum::<usize>()
     }
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
@@ -721,25 +962,59 @@ impl Serialize for ESDescriptor {
         buf[cursor] = Self::TAG;
         cursor += 1;
 
+        // Field *presence* is derived from the `Option`s, not from the
+        // `*_flag` booleans: a flag set without its field (or a field set
+        // without its flag) would make `body_size` count bytes that are never
+        // written, misframing the descriptor while still returning `Ok`
+        // (r04-W24).
+        //
+        // Deriving it the other way — writing from the flags — is not possible
+        // without inventing a value, so a disagreement is an error.
+        if self.stream_dependence_flag != self.depends_on_es_id.is_some() {
+            return Err(Error::InvalidValue {
+                field: "ES_Descriptor.streamDependenceFlag",
+                value: self.stream_dependence_flag as u64,
+                reason: "streamDependenceFlag disagrees with depends_on_es_id",
+            });
+        }
+        if self.url_flag != self.url.is_some() {
+            return Err(Error::InvalidValue {
+                field: "ES_Descriptor.URL_Flag",
+                value: self.url_flag as u64,
+                reason: "URL_Flag disagrees with url",
+            });
+        }
+        if self.ocr_stream_flag != self.ocr_es_id.is_some() {
+            return Err(Error::InvalidValue {
+                field: "ES_Descriptor.OCRstreamFlag",
+                value: self.ocr_stream_flag as u64,
+                reason: "OCRstreamFlag disagrees with ocr_es_id",
+            });
+        }
+
         // Compute body size (everything after tag+varint)
         let mut body_size = 2 + 1; // ES_ID + flags
-        if self.stream_dependence_flag {
+        if self.depends_on_es_id.is_some() {
             body_size += 2;
         }
-        if self.url_flag {
-            body_size += 1 + self.url.as_ref().map_or(0, |u| u.len());
+        if let Some(u) = &self.url {
+            body_size += 1 + u.len();
         }
-        if self.ocr_stream_flag {
+        if self.ocr_es_id.is_some() {
             body_size += 2;
         }
-        let sub_len = self
+        body_size += self
             .decoder_config
             .as_ref()
             .map_or(0, |dc| dc.serialized_len())
-            + self.sl_config.as_ref().map_or(0, |sl| sl.serialized_len());
-        body_size += sub_len;
+            + self.sl_config.as_ref().map_or(0, |sl| sl.serialized_len())
+            + self
+                .unknown_descriptors
+                .iter()
+                .map(UnknownDescriptor::serialized_len)
+                .sum::<usize>();
 
-        write_varint_fixed(buf, &mut cursor, body_size)?;
+        write_varint_width(buf, &mut cursor, body_size, self.size_width)?;
 
         // ES_ID
         buf[cursor..cursor + 2].copy_from_slice(&self.es_id.to_be_bytes());
@@ -747,26 +1022,26 @@ impl Serialize for ESDescriptor {
 
         // flags
         let mut flags = self.stream_priority & 0x1F;
-        if self.stream_dependence_flag {
+        if self.depends_on_es_id.is_some() {
             flags |= 0x80;
         }
-        if self.url_flag {
+        if self.url.is_some() {
             flags |= 0x40;
         }
-        if self.ocr_stream_flag {
+        if self.ocr_es_id.is_some() {
             flags |= 0x20;
         }
         buf[cursor] = flags;
         cursor += 1;
 
         // dependsOn_ES_ID
-        if let Some(ref dep) = self.depends_on_es_id {
+        if let Some(dep) = self.depends_on_es_id {
             buf[cursor..cursor + 2].copy_from_slice(&dep.to_be_bytes());
             cursor += 2;
         }
 
         // URL
-        if let Some(ref u) = self.url {
+        if let Some(u) = &self.url {
             buf[cursor] = broadcast_common::len::fit_u8(u.len(), "URLstring length")?;
             cursor += 1;
             buf[cursor..cursor + u.len()].copy_from_slice(u.as_bytes());
@@ -774,17 +1049,37 @@ impl Serialize for ESDescriptor {
         }
 
         // OCR_ES_Id
-        if let Some(ref ocr) = self.ocr_es_id {
+        if let Some(ocr) = self.ocr_es_id {
             buf[cursor..cursor + 2].copy_from_slice(&ocr.to_be_bytes());
             cursor += 2;
         }
 
-        // Sub-descriptors
-        if let Some(ref dc) = self.decoder_config {
-            cursor += dc.serialize_into(&mut buf[cursor..])?;
+        // Sub-descriptors: emit each unmodelled descriptor after the modelled
+        // ones that preceded it, so an interleaved chain keeps its order
+        // (r04-W24).
+        for slot in 0..=1usize {
+            for ud in &self.unknown_descriptors {
+                if ud.position == slot {
+                    cursor += ud.serialize_into(&mut buf[cursor..])?;
+                }
+            }
+            match slot {
+                0 => {
+                    if let Some(ref d) = self.decoder_config {
+                        cursor += d.serialize_into(&mut buf[cursor..])?;
+                    }
+                }
+                _ => {
+                    if let Some(ref d) = self.sl_config {
+                        cursor += d.serialize_into(&mut buf[cursor..])?;
+                    }
+                }
+            }
         }
-        if let Some(ref sl) = self.sl_config {
-            cursor += sl.serialize_into(&mut buf[cursor..])?;
+        for ud in &self.unknown_descriptors {
+            if ud.position > 1 {
+                cursor += ud.serialize_into(&mut buf[cursor..])?;
+            }
         }
 
         Ok(cursor)
@@ -860,7 +1155,7 @@ impl EsdsBox {
                 reason: "expected ES_DescrTag (0x03) in esds box",
             });
         }
-        let (size, _) = parse_varint(payload, &mut cursor)?;
+        let (size, size_width) = parse_varint(payload, &mut cursor)?;
         // The varint size is wire-controlled; bound it before slicing (r04-C4).
         let es_end = cursor
             .checked_add(size)
@@ -871,7 +1166,10 @@ impl EsdsBox {
                 what: "ES_Descriptor body",
             })?;
         let es_body = &payload[cursor..es_end];
-        let es_descriptor = ESDescriptor::parse(es_body)?;
+        let mut es_descriptor = ESDescriptor::parse(es_body)?;
+        // Record the width the box was authored with, so re-serializing keeps
+        // it (r04-W24).
+        es_descriptor.size_width = size_width;
 
         Ok(Self { es_descriptor })
     }
@@ -946,13 +1244,13 @@ mod tests {
     }
 
     #[test]
-    fn test_write_varint_fixed_is_4_byte_expanded_and_round_trips() {
-        // write_varint_fixed always emits the 4-byte expanded form (matches ffmpeg).
+    fn test_write_varint_width_is_4_byte_expanded_and_round_trips() {
+        // Width 4 always emits the 4-byte expanded form (matches ffmpeg).
         for &val in &[0usize, 1, 0x25, 0x17, 5, 0x4000, 0x0FFF_FFFF] {
             let mut buf = [0u8; 4];
             let mut c = 0usize;
-            write_varint_fixed(&mut buf, &mut c, val).unwrap();
-            assert_eq!(c, 4, "fixed varint is always 4 bytes for {val}");
+            write_varint_width(&mut buf, &mut c, val, 4).unwrap();
+            assert_eq!(c, 4, "width-4 varint is always 4 bytes for {val}");
             // high bit set on first three bytes, clear on last
             assert_eq!(buf[0] & 0x80, 0x80);
             assert_eq!(buf[3] & 0x80, 0x00);
@@ -960,6 +1258,46 @@ mod tests {
             let (decoded, _) = parse_varint(&buf, &mut rc).unwrap();
             assert_eq!(decoded, val, "round-trip {val}");
         }
+    }
+
+    /// r04-W24: the minimal 1-byte form GPAC/Apple/Bento4 emit must be
+    /// reproduced at the same width, not grown to 4.
+    #[test]
+    fn test_write_varint_width_preserves_minimal_width() {
+        for &(val, width) in &[
+            (0usize, 1usize),
+            (0x25, 1),
+            (0x80, 2),
+            (0x3FFF, 2),
+            (0x4000, 3),
+        ] {
+            let mut buf = [0u8; 4];
+            let mut c = 0usize;
+            write_varint_width(&mut buf, &mut c, val, width).unwrap();
+            assert_eq!(c, width, "value {val} written in {width} byte(s)");
+            let mut rc = 0usize;
+            let (decoded, used) = parse_varint(&buf[..c], &mut rc).unwrap();
+            assert_eq!(decoded, val);
+            assert_eq!(used, width, "parsed width matches written width");
+        }
+        // A value too large for the recorded width is an error, never a wrap.
+        let mut buf = [0u8; 4];
+        let mut c = 0usize;
+        let err = write_varint_width(&mut buf, &mut c, 0x80, 1).unwrap_err();
+        assert!(
+            matches!(
+                err,
+                Error::InvalidValue {
+                    field: "descriptor size varint width",
+                    ..
+                }
+            ),
+            "{err:?}"
+        );
+        let err = write_varint_width(&mut buf, &mut c, 0, 0).unwrap_err();
+        assert!(matches!(err, Error::InvalidValue { .. }), "{err:?}");
+        let err = write_varint_width(&mut buf, &mut c, MAX_DESCRIPTOR_SIZE + 1, 4).unwrap_err();
+        assert!(matches!(err, Error::FieldOverflow(_)), "{err:?}");
     }
 
     /// A real `esds` box, extracted by muxing the audio of
@@ -1011,6 +1349,219 @@ mod tests {
         assert_eq!(&buf[..n], REAL_ESDS_BOX_AAC, "real esds must round-trip");
     }
 
+    /// r04-W24: an `esds` authored with *minimal* 1-byte descriptor sizes
+    /// (GPAC/Apple/Bento4 output) must re-serialize at the same width. Unfixed,
+    /// `write_varint_fixed` always emitted the 4-byte expanded form, so the box
+    /// grew on every round trip.
+    #[test]
+    fn minimal_width_esds_round_trips_byte_exact() {
+        // Same content as REAL_ESDS_BOX_AAC but with 1-byte size varints.
+        // DecoderConfigDescr body = 13 fixed + (tag 0x05 + size + 2) = 17;
+        // ES_Descr body = 3 + 19 + 3 = 25; box = 8 + 4 + 27 = 39.
+        #[rustfmt::skip]
+        let minimal: &[u8] = &[
+            0x00, 0x00, 0x00, 0x27, 0x65, 0x73, 0x64, 0x73, // box size 39 + 'esds'
+            0x00, 0x00, 0x00, 0x00,                         // FullBox version/flags
+            0x03, 0x19,                                     // ES_DescrTag, size 25
+            0x00, 0x01,                                     // ES_ID = 1
+            0x00,                                           // flags = 0
+            0x04, 0x11,                                     // DecoderConfigDescrTag, size 17
+            0x40,                                           // objectTypeIndication = MPEG-4 Audio
+            0x15,                                           // streamType(5=Audio)<<2 | upStream | rsvd
+            0x00, 0x00, 0x00,                               // bufferSizeDB
+            0x00, 0x01, 0x80, 0x7d,                         // maxBitrate
+            0x00, 0x01, 0x77, 0x0d,                         // avgBitrate
+            0x05, 0x02,                                     // DecSpecificInfoTag, size 2
+            0x12, 0x08,                                     // AudioSpecificConfig
+            0x06, 0x01,                                     // SLConfigDescrTag, size 1
+            0x02,                                           // predefined = 2 (MP4)
+        ];
+        let esds = EsdsBox::parse_box(minimal).expect("parse minimal-width esds");
+        assert_eq!(esds.serialized_len(), minimal.len());
+        let mut out = vec![0u8; esds.serialized_len()];
+        let n = esds.serialize_into(&mut out).expect("serialize");
+        assert_eq!(n, minimal.len());
+        assert_eq!(
+            &out[..n],
+            minimal,
+            "minimal-width esds must round-trip exactly"
+        );
+        // The recorded widths are 1, not the default 4.
+        let dc = esds.es_descriptor.decoder_config.as_ref().unwrap();
+        assert_eq!(esds.es_descriptor.size_width, 1);
+        assert_eq!(dc.size_width, 1);
+        assert_eq!(dc.decoder_specific_info.as_ref().unwrap().size_width, 1);
+        assert_eq!(esds.es_descriptor.sl_config.as_ref().unwrap().size_width, 1);
+    }
+
+    /// r04-W24: an `ES_Descriptor` sub-descriptor the crate does not model
+    /// (here the `ProfileLevelIndicationIndexDescriptor` 0x14) must be kept
+    /// verbatim. Unfixed, it was dropped and the descriptor chain shrank.
+    #[test]
+    fn unknown_sub_descriptors_are_preserved() {
+        const TAG_PROFILE_LEVEL_INDEX: u8 = 0x14;
+        // DecoderConfigDescr body = 13 + (5+2) + (2+2) = 24;
+        // ES_Descr body = 3 + 28 + 7 = 38; box = 8 + 4 + 43 = 55.
+        #[rustfmt::skip]
+        let bytes: &[u8] = &[
+            0x00, 0x00, 0x00, 0x37, 0x65, 0x73, 0x64, 0x73, // box size 55 + 'esds'
+            0x00, 0x00, 0x00, 0x00,                         // FullBox version/flags
+            0x03, 0x80, 0x80, 0x80, 0x26,                   // ES_DescrTag, size 38
+            0x00, 0x01,                                     // ES_ID = 1
+            0x00,                                           // flags = 0
+            0x04, 0x80, 0x80, 0x80, 0x18,                   // DecoderConfigDescrTag, size 24
+            0x40,                                           // objectTypeIndication
+            0x15,                                           // streamType
+            0x00, 0x00, 0x00,                               // bufferSizeDB
+            0x00, 0x01, 0x80, 0x7d,                         // maxBitrate
+            0x00, 0x01, 0x77, 0x0d,                         // avgBitrate
+            0x05, 0x80, 0x80, 0x80, 0x02,                   // DecSpecificInfoTag, size 2
+            0x12, 0x08,                                     // AudioSpecificConfig
+            0x14, 0x02,                                     // ProfileLevelIndicationIndexDescriptor
+            0x01, 0x02,                                     //   (unmodelled) body
+            0x06, 0x80, 0x80, 0x80, 0x01,                   // SLConfigDescrTag, size 1
+            0x02,                                           // predefined = 2
+        ];
+        let esds = EsdsBox::parse_box(bytes).expect("parse esds with unknown descriptor");
+        let dc = esds.es_descriptor.decoder_config.as_ref().unwrap();
+        assert_eq!(dc.unknown_descriptors.len(), 1);
+        assert_eq!(dc.unknown_descriptors[0].tag, TAG_PROFILE_LEVEL_INDEX);
+        assert_eq!(dc.unknown_descriptors[0].data, vec![0x01, 0x02]);
+        assert_eq!(esds.serialized_len(), bytes.len());
+        let mut out = vec![0u8; esds.serialized_len()];
+        esds.serialize_into(&mut out).unwrap();
+        assert_eq!(out, bytes, "unknown descriptor must survive the round trip");
+    }
+
+    /// r04-W24: an unmodelled descriptor *interleaved* between the modelled
+    /// ones keeps its position, not just its bytes. Here an unknown descriptor
+    /// sits between the decoder config and the SL config, so serialization must
+    /// emit it there rather than collecting it after both.
+    #[test]
+    fn unknown_sub_descriptors_keep_their_position() {
+        const TAG_LANGUAGE: u8 = 0x0E;
+        // dc body = 13 + DSI(1 tag + 4 size + 2 data) + unknown(1 tag + 2 size
+        // + 2 data) = 24; dc = 29. ES_Descr body = 3 + 29 + language(1 + 2 + 2 =
+        // 4) + sl(6) = 42; box = 8 + 4 (FullBox) + 1 (tag) + 4 (size) + 42 = 59.
+        #[rustfmt::skip]
+        let bytes: &[u8] = &[
+            0x00, 0x00, 0x00, 0x3B, 0x65, 0x73, 0x64, 0x73, // box size 59 + 'esds'
+            0x00, 0x00, 0x00, 0x00,                         // FullBox version/flags
+            0x03, 0x80, 0x80, 0x80, 0x2A,                   // ES_DescrTag, size 42
+            0x00, 0x01,                                     // ES_ID = 1
+            0x00,                                           // flags = 0
+            0x04, 0x80, 0x80, 0x80, 0x18,                   // DecoderConfigDescrTag, size 24
+            0x40,                                           // objectTypeIndication
+            0x15,                                           // streamType
+            0x00, 0x00, 0x00,                               // bufferSizeDB
+            0x00, 0x01, 0x80, 0x7d,                         // maxBitrate
+            0x00, 0x01, 0x77, 0x0d,                         // avgBitrate
+            0x05, 0x80, 0x80, 0x80, 0x02,                   // DecSpecificInfoTag, size 2
+            0x12, 0x08,                                     // AudioSpecificConfig
+            0x14, 0x02,                                     // unmodelled, inside dc
+            0x01, 0x02,
+            0x0E, 0x02,                                     // unmodelled LanguageDescriptor
+            0x65, 0x6E,                                     //   between dc and sl
+            0x06, 0x80, 0x80, 0x80, 0x01,                   // SLConfigDescrTag, size 1
+            0x02,                                           // predefined = 2
+        ];
+        let esds = EsdsBox::parse_box(bytes).expect("parse interleaved esds");
+        let es = &esds.es_descriptor;
+        assert_eq!(es.unknown_descriptors.len(), 1);
+        assert_eq!(es.unknown_descriptors[0].tag, TAG_LANGUAGE);
+        assert_eq!(es.unknown_descriptors[0].position, 1, "after dc, before sl");
+        assert_eq!(
+            es.decoder_config.as_ref().unwrap().unknown_descriptors[0].position,
+            1
+        );
+        assert_eq!(esds.serialized_len(), bytes.len());
+        let mut out = vec![0u8; esds.serialized_len()];
+        esds.serialize_into(&mut out).unwrap();
+        assert_eq!(
+            out, bytes,
+            "an interleaved unknown descriptor must stay between dc and sl"
+        );
+    }
+
+    /// r04-W24: a flag that disagrees with its field makes the declared body
+    /// size count bytes that are never written. Unfixed, the serializer emitted
+    /// a misframed descriptor and returned `Ok`.
+    #[test]
+    fn flag_and_field_disagreement_errors() {
+        let base = ESDescriptor::new(
+            1,
+            0,
+            Some(DecoderConfigDescriptor::new(0x40, 5, false, 0, 0, 0, None)),
+            Some(SLConfigDescriptor::predefined_two()),
+        );
+
+        // streamDependenceFlag set, no depends_on_es_id.
+        let mut sdf = base.clone();
+        sdf.stream_dependence_flag = true;
+        let err = EsdsBox::new(sdf).try_to_bytes().unwrap_err();
+        assert!(
+            matches!(
+                err,
+                Error::InvalidValue {
+                    field: "ES_Descriptor.streamDependenceFlag",
+                    ..
+                }
+            ),
+            "got {err:?}"
+        );
+
+        // url_flag set, no url.
+        let mut url = base.clone();
+        url.url_flag = true;
+        let err = EsdsBox::new(url).try_to_bytes().unwrap_err();
+        assert!(
+            matches!(
+                err,
+                Error::InvalidValue {
+                    field: "ES_Descriptor.URL_Flag",
+                    ..
+                }
+            ),
+            "got {err:?}"
+        );
+
+        // ocr_stream_flag set, no ocr_es_id.
+        let mut ocr = base.clone();
+        ocr.ocr_stream_flag = true;
+        let err = EsdsBox::new(ocr).try_to_bytes().unwrap_err();
+        assert!(
+            matches!(
+                err,
+                Error::InvalidValue {
+                    field: "ES_Descriptor.OCRstreamFlag",
+                    ..
+                }
+            ),
+            "got {err:?}"
+        );
+
+        // The reverse (field present, flag clear) is rejected too.
+        let mut reverse = base.clone();
+        reverse.depends_on_es_id = Some(7);
+        let err = EsdsBox::new(reverse).try_to_bytes().unwrap_err();
+        assert!(matches!(err, Error::InvalidValue { .. }), "got {err:?}");
+
+        // With the flag and field in agreement, serialization succeeds and the
+        // declared body size matches what is written.
+        let mut ok = base.clone();
+        ok.url_flag = true;
+        ok.url = Some(alloc::string::String::from("x"));
+        let bytes = EsdsBox::new(ok).try_to_bytes().unwrap();
+        assert_eq!(
+            EsdsBox::parse_box(&bytes)
+                .unwrap()
+                .es_descriptor
+                .url
+                .as_deref(),
+            Some("x")
+        );
+    }
+
     #[test]
     fn test_skip_unknown_descriptor() {
         // Build raw bytes: tag=0x07 (unknown) size=4 body=[1,2,3,4],
@@ -1038,28 +1589,20 @@ mod tests {
     #[test]
     fn test_esds_mutation_changes_bytes() {
         // Build a minimal ES_Descriptor from known values
-        let es = EsdsBox::new(ESDescriptor {
-            es_id: 2,
-            stream_dependence_flag: false,
-            url_flag: false,
-            ocr_stream_flag: false,
-            stream_priority: 0,
-            depends_on_es_id: None,
-            url: None,
-            ocr_es_id: None,
-            decoder_config: Some(DecoderConfigDescriptor {
-                object_type_indication: ObjectTypeIndication(0x40),
-                stream_type: StreamType(5),
-                up_stream: false,
-                buffer_size_db: 0,
-                max_bitrate: 24576000,
-                avg_bitrate: 24576005,
-                decoder_specific_info: Some(DecoderSpecificInfo {
-                    data: vec![0x12, 0x08, 0x56, 0xe5, 0x00],
-                }),
-            }),
-            sl_config: Some(SLConfigDescriptor { body: vec![0x02] }),
-        });
+        let es = EsdsBox::new(ESDescriptor::new(
+            2,
+            0,
+            Some(DecoderConfigDescriptor::new(
+                0x40,
+                5,
+                false,
+                0,
+                24576000,
+                24576005,
+                Some(DecoderSpecificInfo::new(vec![0x12, 0x08, 0x56, 0xe5, 0x00])),
+            )),
+            Some(SLConfigDescriptor::predefined_two()),
+        ));
 
         let original = es.to_bytes();
 
@@ -1073,26 +1616,22 @@ mod tests {
 
     fn es_descriptor_with_url(url: alloc::string::String) -> ESDescriptor {
         ESDescriptor {
-            es_id: 2,
-            stream_dependence_flag: false,
             url_flag: true,
-            ocr_stream_flag: false,
-            stream_priority: 0,
-            depends_on_es_id: None,
             url: Some(url),
-            ocr_es_id: None,
-            decoder_config: Some(DecoderConfigDescriptor {
-                object_type_indication: ObjectTypeIndication(0x40),
-                stream_type: StreamType(5),
-                up_stream: false,
-                buffer_size_db: 0,
-                max_bitrate: 24576000,
-                avg_bitrate: 24576005,
-                decoder_specific_info: Some(DecoderSpecificInfo {
-                    data: vec![0x12, 0x08, 0x56, 0xe5, 0x00],
-                }),
-            }),
-            sl_config: Some(SLConfigDescriptor { body: vec![0x02] }),
+            ..ESDescriptor::new(
+                2,
+                0,
+                Some(DecoderConfigDescriptor::new(
+                    0x40,
+                    5,
+                    false,
+                    0,
+                    24576000,
+                    24576005,
+                    Some(DecoderSpecificInfo::new(vec![0x12, 0x08, 0x56, 0xe5, 0x00])),
+                )),
+                Some(SLConfigDescriptor::predefined_two()),
+            )
         }
     }
 

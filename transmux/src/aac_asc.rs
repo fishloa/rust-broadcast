@@ -566,7 +566,10 @@ impl Serialize for AudioSpecificConfig {
                 have: buf.len(),
             });
         }
-        buf.fill(0);
+        // Only the region this config occupies: the `Serialize` contract lets a
+        // caller serialize into a larger shared buffer, and a whole-buffer
+        // `fill(0)` would zero their bytes past `need` (r04-W9).
+        buf[..need].fill(0);
         let aot = self.audio_object_type.raw() & 0x1F;
         let sv = self.sampling_frequency_index.raw() & 0x0F;
         let cv = self.channel_configuration.raw() & 0x0F;
@@ -580,21 +583,14 @@ impl Serialize for AudioSpecificConfig {
             let sf0 = (freq & 1) as u8;
             let tt = self.trailing_top.unwrap_or(0) & 7;
             buf[4] = (sf0 << 7) | (cv << 3) | tt;
-            if !self.trailing.is_empty() {
-                let n = self.trailing.len().min(buf.len().saturating_sub(5));
-                if n > 0 {
-                    buf[5..5 + n].copy_from_slice(&self.trailing[..n]);
-                }
-            }
+            // `need` already covers `trailing` in full, and `buf.len() >= need`
+            // was checked above, so the copy can never overrun.
+            buf[5..need].copy_from_slice(&self.trailing);
         } else {
             let tt = self.trailing_top.unwrap_or(0) & 7;
             buf[1] = ((sv & 1) << 7) | (cv << 3) | tt;
-            if !self.trailing.is_empty() {
-                let n = self.trailing.len().min(buf.len().saturating_sub(2));
-                if n > 0 {
-                    buf[2..2 + n].copy_from_slice(&self.trailing[..n]);
-                }
-            }
+            // As above: `need == 2 + trailing.len()`, already bounds-checked.
+            buf[2..need].copy_from_slice(&self.trailing);
         }
         Ok(need)
     }
@@ -742,6 +738,50 @@ mod tests {
     fn serialize_byte_identical() {
         let out = AudioSpecificConfig::parse(&KNOWN).unwrap().to_bytes();
         assert_eq!(out.as_slice(), KNOWN.as_slice());
+    }
+
+    /// r04-W9: serializing into a larger shared buffer must leave the caller's
+    /// bytes past `serialized_len()` untouched. Unfixed, `buf.fill(0)` zeroed
+    /// the entire slice, so a caller batching several configs into one buffer
+    /// lost everything it had already written after this point.
+    #[test]
+    fn serialize_does_not_zero_bytes_past_need() {
+        let asc = AudioSpecificConfig::parse(&KNOWN).unwrap();
+        let need = asc.serialized_len();
+        let mut buf = alloc::vec![0xAAu8; need + 32];
+        let n = asc.serialize_into(&mut buf).unwrap();
+        assert_eq!(n, need);
+        assert_eq!(&buf[..need], KNOWN.as_slice());
+        assert!(
+            buf[need..].iter().all(|&b| b == 0xAA),
+            "bytes past `need` must be untouched, got {:02x?}",
+            &buf[need..]
+        );
+    }
+
+    /// The same for the Escape (explicit sampling frequency) form, whose
+    /// trailing region starts at a different offset.
+    #[test]
+    fn serialize_escape_form_keeps_the_tail_intact() {
+        let asc = AudioSpecificConfig {
+            sampling_frequency_index: SamplingFrequencyIndex::Escape,
+            sampling_frequency: Some(44100),
+            trailing: alloc::vec![0x01, 0x02],
+            ..AudioSpecificConfig::parse(&KNOWN).unwrap()
+        };
+        let need = asc.serialized_len();
+        assert_eq!(need, 7);
+        let mut buf = alloc::vec![0x55u8; need + 16];
+        asc.serialize_into(&mut buf).unwrap();
+        assert_eq!(&buf[5..7], &[0x01, 0x02]);
+        assert!(buf[need..].iter().all(|&b| b == 0x55));
+        // And the written region round-trips byte-exactly.
+        let back = AudioSpecificConfig::parse(&buf[..need]).unwrap();
+        assert_eq!(
+            back.serialize_into(&mut alloc::vec![0u8; need]).unwrap(),
+            need
+        );
+        assert_eq!(back.to_bytes(), buf[..need]);
     }
     #[test]
     fn adts_round_trip() {

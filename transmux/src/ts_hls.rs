@@ -1204,34 +1204,25 @@ mod tests {
     // track's `pending` buffer grew without bound.
 
     use crate::mp4esds::{
-        DecoderConfigDescriptor, DecoderSpecificInfo, ESDescriptor, EsdsBox, ObjectTypeIndication,
-        SLConfigDescriptor, StreamType,
+        DecoderConfigDescriptor, DecoderSpecificInfo, ESDescriptor, EsdsBox, SLConfigDescriptor,
     };
     use broadcast_common::Unpackage;
 
     fn dummy_esds() -> EsdsBox {
-        EsdsBox::new(ESDescriptor {
-            es_id: 1,
-            stream_dependence_flag: false,
-            url_flag: false,
-            ocr_stream_flag: false,
-            stream_priority: 0,
-            depends_on_es_id: None,
-            url: None,
-            ocr_es_id: None,
-            decoder_config: Some(DecoderConfigDescriptor {
-                object_type_indication: ObjectTypeIndication(0x40),
-                stream_type: StreamType(0x05),
-                up_stream: false,
-                buffer_size_db: 0,
-                max_bitrate: 0,
-                avg_bitrate: 0,
-                decoder_specific_info: Some(DecoderSpecificInfo {
-                    data: vec![0x12, 0x10],
-                }),
-            }),
-            sl_config: Some(SLConfigDescriptor { body: vec![0x02] }),
-        })
+        EsdsBox::new(ESDescriptor::new(
+            1,
+            0,
+            Some(DecoderConfigDescriptor::new(
+                0x40,
+                0x05,
+                false,
+                0,
+                0,
+                0,
+                Some(DecoderSpecificInfo::new(vec![0x12, 0x10])),
+            )),
+            Some(SLConfigDescriptor::predefined_two()),
+        ))
     }
 
     /// A section-carried SCTE-35 track spec (ISO/IEC 13818-1 Table 2-34

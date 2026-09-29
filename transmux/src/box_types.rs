@@ -351,10 +351,13 @@ impl Serialize for BoxHeader {
             });
         }
 
-        // Write size. If it fits in 32 bits, store as-is; otherwise write 1 (largesize indicator).
+        // Write size in the form the header was parsed/constructed with, never
+        // re-derived from `size`: a header that came off the wire as
+        // `size == 1` + largesize has `header_size() == 16`, and writing the
+        // compact 8-byte form here would leave the caller's 8 layout bytes
+        // stale (r04-W8).
         let mut cursor = 0usize;
-        if self.size > u32::MAX as u64 {
-            // largesize path
+        if self.has_largesize {
             buf[0..4].copy_from_slice(&SIZE_INDICATES_LARGESIZE.to_be_bytes());
             cursor += 4;
             buf[cursor..cursor + 4].copy_from_slice(&self.box_type.to_u32().to_be_bytes());
@@ -362,20 +365,41 @@ impl Serialize for BoxHeader {
             buf[cursor..cursor + 8].copy_from_slice(&self.size.to_be_bytes());
             cursor += 8;
         } else {
-            let size32 = self.size as u32;
+            // A `size` of 1 without `has_largesize` would be written as the
+            // largesize marker with no largesize following, so a header that
+            // declares no largesize must not claim that size.
+            if self.size == SIZE_INDICATES_LARGESIZE as u64 {
+                return Err(Error::InvalidValue {
+                    field: "BoxHeader.size",
+                    value: self.size,
+                    reason: "size 1 signals a 64-bit largesize, but has_largesize is false",
+                });
+            }
+            // The compact form's 32-bit field cannot hold a larger size; a
+            // header that claims one without setting `has_largesize` would
+            // silently wrap (r04-W8).
+            let size32 = u32::try_from(self.size).map_err(|_| Error::InvalidValue {
+                field: "BoxHeader.size",
+                value: self.size,
+                reason: "size exceeds the 32-bit field and has_largesize is false",
+            })?;
             buf[0..4].copy_from_slice(&size32.to_be_bytes());
             cursor += 4;
             buf[cursor..cursor + 4].copy_from_slice(&self.box_type.to_u32().to_be_bytes());
             cursor += 4;
-            if size32 == SIZE_INDICATES_LARGESIZE {
-                // size==1 but fits in u32? That's 1, not largesize-worthy — fine.
-            }
         }
 
-        // usertype for uuid
-        if self.box_type.is(b"uuid")
-            && let Some(ut) = &self.usertype
-        {
+        // usertype for uuid. `header_size()` counts these 16 bytes, so a `uuid`
+        // header without them would under-report the buffer the caller reserves
+        // and write nothing into it.
+        if self.box_type.is(b"uuid") {
+            let Some(ut) = &self.usertype else {
+                return Err(Error::InvalidValue {
+                    field: "BoxHeader.usertype",
+                    value: 0,
+                    reason: "a uuid box header requires a 16-byte usertype",
+                });
+            };
             buf[cursor..cursor + UUID_TYPE_SIZE].copy_from_slice(ut);
             cursor += UUID_TYPE_SIZE;
         }
@@ -595,6 +619,130 @@ mod tests {
     use broadcast_common::{Parse, Serialize};
 
     // -- BoxHeader tests ---------------------------------------------------
+
+    /// r04-W8: a wire header that used `size == 1` + largesize must serialize
+    /// back to that same 16-byte form. Unfixed, the serializer re-derived the
+    /// form from `size` (`<= u32::MAX` here), so it wrote the compact 8-byte
+    /// header and returned 8 while `serialized_len()` said 16 — callers that
+    /// lay out `header_size()` bytes were left with 8 stale bytes.
+    #[test]
+    fn largesize_form_round_trips_even_when_size_fits_u32() {
+        // size == 1 (marker) + largesize == 16 (fits in u32 on purpose; 16 is
+        // the header's own length, the minimum a valid size can be).
+        let wire = [
+            0, 0, 0, 1, // size = 1 → largesize follows
+            b'f', b't', b'y', b'p', // type
+            0, 0, 0, 0, 0, 0, 0, 16, // largesize = 16
+        ];
+        let header = BoxHeader::parse(&wire).unwrap();
+        assert_eq!(header.size, 16);
+        assert!(header.has_largesize);
+        assert_eq!(header.header_size(), 16);
+        assert_eq!(header.serialized_len(), 16);
+        let mut out = [0u8; 16];
+        assert_eq!(header.serialize_into(&mut out).unwrap(), 16);
+        assert_eq!(out, wire, "largesize form must re-serialize identically");
+        // And it parses back to the same header.
+        assert_eq!(BoxHeader::parse(&out).unwrap(), header);
+    }
+
+    /// A compact header whose `size` does not fit the 32-bit field is rejected
+    /// rather than silently wrapped (r04-W8).
+    #[test]
+    fn compact_size_beyond_u32_errors() {
+        let mut header = BoxHeader::new(16, BoxType::from_bytes(*b"ftyp"), None);
+        assert!(!header.has_largesize);
+        header.size = u32::MAX as u64 + 1;
+        let mut out = [0u8; BOX_HEADER_MIN_SIZE];
+        let err = header.serialize_into(&mut out).unwrap_err();
+        assert!(
+            matches!(
+                err,
+                Error::InvalidValue {
+                    field: "BoxHeader.size",
+                    ..
+                }
+            ),
+            "expected InvalidValue for an oversized compact size, got {err:?}"
+        );
+        // At the boundary it still writes the compact form.
+        header.size = u32::MAX as u64;
+        assert_eq!(
+            header.serialize_into(&mut out).unwrap(),
+            BOX_HEADER_MIN_SIZE
+        );
+        assert_eq!(
+            u32::from_be_bytes([out[0], out[1], out[2], out[3]]),
+            u32::MAX
+        );
+    }
+
+    /// The compact form is unaffected: a header built from a small size writes
+    /// and round-trips the 8-byte header.
+    #[test]
+    fn compact_form_still_round_trips() {
+        let wire = [0, 0, 0, 16, b'm', b'o', b'o', b'f'];
+        let header = BoxHeader::parse(&wire).unwrap();
+        assert!(!header.has_largesize);
+        assert_eq!(header.header_size(), BOX_HEADER_MIN_SIZE);
+        let mut out = [0u8; BOX_HEADER_MIN_SIZE];
+        assert_eq!(
+            header.serialize_into(&mut out).unwrap(),
+            BOX_HEADER_MIN_SIZE
+        );
+        assert_eq!(out, wire);
+    }
+
+    /// r04-W8: `header_size()` counts 16 bytes for a `uuid` header, so one
+    /// without a `usertype` would under-report the buffer the caller reserves
+    /// and write nothing into it. Serializing must fail instead.
+    #[test]
+    fn uuid_header_without_usertype_errors() {
+        let header = BoxHeader::new(16 + 16, BoxType::from_bytes(*b"uuid"), None);
+        assert_eq!(header.header_size(), BOX_HEADER_MIN_SIZE + UUID_TYPE_SIZE);
+        let mut out = [0u8; BOX_HEADER_MIN_SIZE + UUID_TYPE_SIZE];
+        let err = header.serialize_into(&mut out).unwrap_err();
+        assert!(
+            matches!(
+                err,
+                Error::InvalidValue {
+                    field: "BoxHeader.usertype",
+                    ..
+                }
+            ),
+            "expected InvalidValue for the missing usertype, got {err:?}"
+        );
+    }
+
+    /// A `size` of 1 without `has_largesize` would write the largesize marker
+    /// with no largesize after it, so it is rejected rather than emitted.
+    #[test]
+    fn size_one_without_largesize_errors() {
+        let mut header = BoxHeader::new(
+            SIZE_INDICATES_LARGESIZE as u64,
+            BoxType::from_bytes(*b"ftyp"),
+            None,
+        );
+        assert!(!header.has_largesize);
+        let mut out = [0u8; BOX_HEADER_MIN_SIZE];
+        let err = header.serialize_into(&mut out).unwrap_err();
+        assert!(
+            matches!(
+                err,
+                Error::InvalidValue {
+                    field: "BoxHeader.size",
+                    ..
+                }
+            ),
+            "{err:?}"
+        );
+        // The 16-byte form is fine for that size.
+        header.size = 16;
+        assert_eq!(
+            header.serialize_into(&mut out).unwrap(),
+            BOX_HEADER_MIN_SIZE
+        );
+    }
 
     #[test]
     fn test_box_header_minimal() {

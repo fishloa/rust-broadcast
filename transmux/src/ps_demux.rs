@@ -51,16 +51,13 @@ use crate::annexb::iter_annexb_nals;
 use crate::avc_config::{AVCConfigurationBox, AVCDecoderConfigurationRecord};
 use crate::error::{Error, Result};
 use crate::media::{Media, Track};
-use crate::mp4esds::{
-    DecoderConfigDescriptor, ESDescriptor, EsdsBox, ObjectTypeIndication, SLConfigDescriptor,
-    StreamType as EsdsStreamType,
-};
+use crate::mp4esds::{DecoderConfigDescriptor, ESDescriptor, EsdsBox, SLConfigDescriptor};
 use crate::mpeg_legacy::Mpeg2SeqHeader;
 use crate::nalu_types::{AvcPps, AvcSps};
 use crate::pipeline::{CodecConfig, Sample, TrackSpec};
 use crate::ts_demux::{
-    ESDS_VIDEO_ES_ID, MPEG2_PICTURE_START_CODE, OTI_MPEG2_VIDEO_MAIN, SL_CONFIG_PREDEFINED_MP4,
-    STREAM_TYPE_VISUAL, mpeg2_is_sync,
+    ESDS_VIDEO_ES_ID, MPEG2_PICTURE_START_CODE, OTI_MPEG2_VIDEO_MAIN, STREAM_TYPE_VISUAL,
+    mpeg2_is_sync,
 };
 
 // ── stream_id → codec (ISO/IEC 13818-1 Table 2-22) ──────────────────────────
@@ -560,28 +557,20 @@ fn build_mpeg2_track(es: &ElementaryStream, track_id: u32) -> Option<Track> {
     // `esds` carrying the MPEG-2 Main Visual object type (ISO/IEC 14496-1
     // Table 5, `OTI_MPEG2_VIDEO_MAIN` = 0x61) — the same construction
     // `ts_demux`'s `ConfigProbe::Mpeg2Video` uses for the TS input side.
-    let esds = EsdsBox::new(ESDescriptor {
-        es_id: ESDS_VIDEO_ES_ID,
-        stream_dependence_flag: false,
-        url_flag: false,
-        ocr_stream_flag: false,
-        stream_priority: 0,
-        depends_on_es_id: None,
-        url: None,
-        ocr_es_id: None,
-        decoder_config: Some(DecoderConfigDescriptor {
-            object_type_indication: ObjectTypeIndication(OTI_MPEG2_VIDEO_MAIN),
-            stream_type: EsdsStreamType(STREAM_TYPE_VISUAL),
-            up_stream: false,
-            buffer_size_db: 0,
-            max_bitrate: 0,
-            avg_bitrate: 0,
-            decoder_specific_info: None,
-        }),
-        sl_config: Some(SLConfigDescriptor {
-            body: alloc::vec![SL_CONFIG_PREDEFINED_MP4],
-        }),
-    });
+    let esds = EsdsBox::new(ESDescriptor::new(
+        ESDS_VIDEO_ES_ID,
+        0,
+        Some(DecoderConfigDescriptor::new(
+            OTI_MPEG2_VIDEO_MAIN,
+            STREAM_TYPE_VISUAL,
+            false,
+            0,
+            0,
+            0,
+            None,
+        )),
+        Some(SLConfigDescriptor::predefined_two()),
+    ));
 
     let dts = interpolate_dts(&units);
     let pts = interpolate_pts(&units, &dts);

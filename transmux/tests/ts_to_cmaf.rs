@@ -234,28 +234,20 @@ fn ts_to_cmaf_end_to_end() {
     let asc = transmux::aac_asc::AudioSpecificConfig::from_adts_header(&adts_header);
     let asc_bytes = asc.to_bytes();
 
-    let esds = EsdsBox::new(ESDescriptor {
-        es_id: 1,
-        stream_dependence_flag: false,
-        url_flag: false,
-        ocr_stream_flag: false,
-        stream_priority: 0,
-        depends_on_es_id: None,
-        url: None,
-        ocr_es_id: None,
-        decoder_config: Some(DecoderConfigDescriptor {
-            object_type_indication: ObjectTypeIndication(0x40),
-            stream_type: StreamType(0x05),
-            up_stream: false,
-            buffer_size_db: 0,
-            max_bitrate: 0,
-            avg_bitrate: 0,
-            decoder_specific_info: Some(DecoderSpecificInfo {
-                data: asc_bytes.clone(),
-            }),
-        }),
-        sl_config: Some(SLConfigDescriptor { body: vec![0x02] }),
-    });
+    let esds = EsdsBox::new(ESDescriptor::new(
+        1,
+        0,
+        Some(DecoderConfigDescriptor::new(
+            0x40,
+            0x05,
+            false,
+            0,
+            0,
+            0,
+            Some(DecoderSpecificInfo::new(asc_bytes.clone())),
+        )),
+        Some(SLConfigDescriptor::predefined_two()),
+    ));
 
     let audio_channel_count = adts_header.channel_configuration as u16;
     let audio_sample_rate = sfi_to_hz(adts_header.sampling_frequency_index);

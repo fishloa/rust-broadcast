@@ -125,7 +125,9 @@ fn eac3_syncframe_to_dec3_oracle() {
     assert!(!info.lfeon);
     assert_eq!(info.bsid, 16);
 
-    let dec3 = info.into_dec3();
+    let dec3 = info
+        .into_dec3()
+        .expect("one independent frame yields a dec3");
     assert_eq!(dec3.data_rate, 192);
     assert_eq!(dec3.num_ind_sub, 0);
 

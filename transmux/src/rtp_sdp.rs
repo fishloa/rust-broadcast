@@ -24,8 +24,7 @@ use crate::aac_asc::{AudioSpecificConfig, SamplingFrequencyIndex};
 use crate::avc_config::{AVCConfigurationBox, AVCDecoderConfigurationRecord};
 use crate::error::{Error, Result};
 use crate::mp4esds::{
-    DecoderConfigDescriptor, DecoderSpecificInfo, ESDescriptor, EsdsBox, ObjectTypeIndication,
-    SLConfigDescriptor, StreamType,
+    DecoderConfigDescriptor, DecoderSpecificInfo, ESDescriptor, EsdsBox, SLConfigDescriptor,
 };
 use crate::nal::{NalCodec, nal_unit_type};
 use crate::nalu_types::{AvcPps, AvcSps};
@@ -46,7 +45,6 @@ const OTI_AUDIO_ISO14496_3: u8 = 0x40;
 /// MPEG-4 audio stream type (ISO/IEC 14496-1 §7.2.6.6 Table 6).
 const STREAM_TYPE_AUDIO: u8 = 5;
 /// `SLConfigDescriptor` `predefined = 2` (MP4 storage) — ISO/IEC 14496-14 §3.1.2.
-const SL_CONFIG_PREDEFINED_MP4: u8 = 2;
 /// AAC sample size is always 16 bits in the sample entry (fMP4/CMAF convention).
 const AAC_SAMPLE_SIZE_BITS: u16 = 16;
 
@@ -99,28 +97,20 @@ pub fn aac_config_from_asc_bytes(asc_bytes: Vec<u8>) -> Result<CodecConfig> {
     let sample_rate = asc_sample_rate(&asc)?;
     let channel_count = u16::from(asc.channel_configuration.raw());
 
-    let esds = EsdsBox::new(ESDescriptor {
-        es_id: 0,
-        stream_dependence_flag: false,
-        url_flag: false,
-        ocr_stream_flag: false,
-        stream_priority: 0,
-        depends_on_es_id: None,
-        url: None,
-        ocr_es_id: None,
-        decoder_config: Some(DecoderConfigDescriptor {
-            object_type_indication: ObjectTypeIndication(OTI_AUDIO_ISO14496_3),
-            stream_type: StreamType(STREAM_TYPE_AUDIO),
-            up_stream: false,
-            buffer_size_db: 0,
-            max_bitrate: 0,
-            avg_bitrate: 0,
-            decoder_specific_info: Some(DecoderSpecificInfo { data: asc_bytes }),
-        }),
-        sl_config: Some(SLConfigDescriptor {
-            body: alloc::vec![SL_CONFIG_PREDEFINED_MP4],
-        }),
-    });
+    let esds = EsdsBox::new(ESDescriptor::new(
+        0,
+        0,
+        Some(DecoderConfigDescriptor::new(
+            OTI_AUDIO_ISO14496_3,
+            STREAM_TYPE_AUDIO,
+            false,
+            0,
+            0,
+            0,
+            Some(DecoderSpecificInfo::new(asc_bytes)),
+        )),
+        Some(SLConfigDescriptor::predefined_two()),
+    ));
 
     Ok(CodecConfig::Aac {
         esds,

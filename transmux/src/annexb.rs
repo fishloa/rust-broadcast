@@ -59,30 +59,36 @@ impl<'a> Iterator for AnnexBNalIter<'a> {
     type Item = &'a [u8];
 
     fn next(&mut self) -> Option<&'a [u8]> {
-        if self.idx >= self.code_positions.len() {
-            return None;
+        // A loop, not recursion: a run of consecutive start codes (all empty
+        // NALs) would otherwise recurse once per start code and overflow the
+        // stack — e.g. a hostile H.264 PES with `PES_packet_length = 0` fed
+        // through `annexb_to_length_prefixed` (r04-W4).
+        loop {
+            if self.idx >= self.code_positions.len() {
+                return None;
+            }
+            // NAL body starts just after this `00 00 01`.
+            let start = self.code_positions[self.idx] + 3;
+            // ...and ends at the next start code's first `00` (so an extra leading
+            // `00` of a 4-byte code lands in the trailing bytes and is stripped),
+            // or at end of buffer for the last NAL.
+            let end = self
+                .code_positions
+                .get(self.idx + 1)
+                .copied()
+                .unwrap_or(self.data.len());
+            self.idx += 1;
+            let mut slice = &self.data[start..end];
+            // Strip trailing zero_byte padding (never part of the RBSP).
+            while let Some((&0, rest)) = slice.split_last() {
+                slice = rest;
+            }
+            // Skip degenerate empty NALs (e.g. consecutive start codes).
+            if slice.is_empty() {
+                continue;
+            }
+            return Some(slice);
         }
-        // NAL body starts just after this `00 00 01`.
-        let start = self.code_positions[self.idx] + 3;
-        // ...and ends at the next start code's first `00` (so an extra leading
-        // `00` of a 4-byte code lands in the trailing bytes and is stripped),
-        // or at end of buffer for the last NAL.
-        let end = self
-            .code_positions
-            .get(self.idx + 1)
-            .copied()
-            .unwrap_or(self.data.len());
-        self.idx += 1;
-        let mut slice = &self.data[start..end];
-        // Strip trailing zero_byte padding (never part of the RBSP).
-        while let Some((&0, rest)) = slice.split_last() {
-            slice = rest;
-        }
-        // Skip degenerate empty NALs (e.g. consecutive start codes).
-        if slice.is_empty() {
-            return self.next();
-        }
-        Some(slice)
     }
 }
 
@@ -217,5 +223,20 @@ mod tests {
             0xFF, 0xFF, 0xFF, 0xFF, 0xAA, // then a maximal length prefix
         ];
         assert!(iter_length_prefixed_nals(&lp).is_err());
+    }
+
+    /// r04-W4: a long run of back-to-back start codes (all empty NALs) must be
+    /// skipped iteratively. Unfixed, `next()` recursed once per empty NAL, so a
+    /// hostile Annex B PES drained via `annexb_to_length_prefixed` could
+    /// overflow the stack (uncatchable) rather than return.
+    #[test]
+    fn run_of_empty_nals_does_not_recurse() {
+        let mut data = Vec::new();
+        for _ in 0..200_000 {
+            data.extend_from_slice(&[0x00, 0x00, 0x01]);
+        }
+        data.extend_from_slice(&[0x00, 0x00, 0x01, 0x65, 0x88]);
+        assert_eq!(iter_annexb_nals(&data).count(), 1);
+        assert_eq!(annexb_to_length_prefixed(&data).len(), 4 + 2);
     }
 }

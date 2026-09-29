@@ -215,6 +215,12 @@ impl core::fmt::Display for ColourType {
     }
 }
 
+/// Length of the `nclx` body after the 4-byte `colour_type` — ISO/IEC
+/// 14496-12:2015 §12.1.5.2: `colour_primaries(16)`,
+/// `transfer_characteristics(16)`, `matrix_coefficients(16)`,
+/// `full_range_flag(1)` + `reserved(7)`.
+const NCLX_PARAMS_LEN: usize = 7;
+
 /// On-screen colour parameters for colour_type 'nclx' — ISO/IEC 14496-12:2015 §12.1.5.2.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
@@ -223,6 +229,10 @@ pub struct NclxColourInfo {
     pub transfer_characteristics: u16,
     pub matrix_coefficients: u16,
     pub full_range_flag: bool,
+    /// The 7 `reserved` bits of the final byte, kept verbatim. The spec says
+    /// they are zero, but preserving them keeps a `colr` byte-identical on a
+    /// round trip instead of silently rewriting a sloppy writer's padding.
+    pub reserved: u8,
 }
 
 /// Colour Information Box (`colr`) — ISO/IEC 14496-12:2015 §12.1.5.2.
@@ -234,6 +244,10 @@ pub struct NclxColourInfo {
 pub struct ColourInformationBox {
     pub colour_type: [u8; 4],
     pub nclx: Option<NclxColourInfo>,
+    /// Every byte after the type-specific body. For `rICC`/`prof`/unknown that
+    /// is the ICC profile or opaque payload; for `nclx` it is trailing padding
+    /// some writers emit past the 7 spec'd bytes (`NCLX_PARAMS_LEN`), kept so
+    /// the box round-trips byte-identically.
     pub icc_profile: Vec<u8>,
 }
 
@@ -253,9 +267,9 @@ impl<'a> Parse<'a> for ColourInformationBox {
 
         match &colour_type {
             b"nclx" => {
-                if rest.len() < 7 {
+                if rest.len() < NCLX_PARAMS_LEN {
                     return Err(Error::BufferTooShort {
-                        need: 7,
+                        need: NCLX_PARAMS_LEN,
                         have: rest.len(),
                         what: "colr nclx params",
                     });
@@ -264,6 +278,7 @@ impl<'a> Parse<'a> for ColourInformationBox {
                 let transfer_characteristics = u16::from_be_bytes([rest[2], rest[3]]);
                 let matrix_coefficients = u16::from_be_bytes([rest[4], rest[5]]);
                 let full_range_flag = (rest[6] >> 7) != 0;
+                let reserved = rest[6] & 0x7F;
                 Ok(Self {
                     colour_type,
                     nclx: Some(NclxColourInfo {
@@ -271,8 +286,12 @@ impl<'a> Parse<'a> for ColourInformationBox {
                         transfer_characteristics,
                         matrix_coefficients,
                         full_range_flag,
+                        reserved,
                     }),
-                    icc_profile: Vec::new(),
+                    // Some writers pad an `nclx` body past the 7 spec'd bytes.
+                    // Keep them verbatim so the box re-serializes byte-identically
+                    // (r04-W39); the spec defines no other field here.
+                    icc_profile: rest[NCLX_PARAMS_LEN..].to_vec(),
                 })
             }
             b"rICC" | b"prof" => Ok(Self {
@@ -293,16 +312,12 @@ impl Serialize for ColourInformationBox {
     type Error = Error;
 
     fn serialized_len(&self) -> usize {
-        let mut n = 4;
+        // 4-byte `colour_type`, then either the 7 spec'd `nclx` bytes plus any
+        // trailing pad, or the opaque payload.
         match &self.colour_type {
-            b"nclx" => {
-                n += 7;
-            }
-            _ => {
-                n += self.icc_profile.len();
-            }
+            b"nclx" => 4 + NCLX_PARAMS_LEN + self.icc_profile.len(),
+            _ => 4 + self.icc_profile.len(),
         }
-        n
     }
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
@@ -316,24 +331,29 @@ impl Serialize for ColourInformationBox {
         let mut c = 0usize;
         buf[c..c + 4].copy_from_slice(&self.colour_type);
         c += 4;
-        match &self.colour_type {
-            b"nclx" => {
-                if let Some(nclx) = &self.nclx {
-                    buf[c..c + 2].copy_from_slice(&nclx.colour_primaries.to_be_bytes());
-                    c += 2;
-                    buf[c..c + 2].copy_from_slice(&nclx.transfer_characteristics.to_be_bytes());
-                    c += 2;
-                    buf[c..c + 2].copy_from_slice(&nclx.matrix_coefficients.to_be_bytes());
-                    c += 2;
-                    buf[c] = (nclx.full_range_flag as u8) << 7;
-                    c += 1;
-                }
-            }
-            _ => {
-                buf[c..c + self.icc_profile.len()].copy_from_slice(&self.icc_profile);
-                c += self.icc_profile.len();
-            }
+        if &self.colour_type == b"nclx" {
+            // `serialized_len` always budgets the 7 `nclx` bytes for a `nclx`
+            // colour type, so a missing `nclx` must be an error — otherwise the
+            // box is written 7 bytes short of its declared length (r04-W39).
+            let Some(nclx) = &self.nclx else {
+                return Err(Error::InvalidValue {
+                    field: "colr nclx",
+                    value: 0,
+                    reason: "colour_type is nclx but no nclx params are set",
+                });
+            };
+            buf[c..c + 2].copy_from_slice(&nclx.colour_primaries.to_be_bytes());
+            c += 2;
+            buf[c..c + 2].copy_from_slice(&nclx.transfer_characteristics.to_be_bytes());
+            c += 2;
+            buf[c..c + 2].copy_from_slice(&nclx.matrix_coefficients.to_be_bytes());
+            c += 2;
+            buf[c] = ((nclx.full_range_flag as u8) << 7) | (nclx.reserved & 0x7F);
+            c += 1;
         }
+        // Trailing payload: the pad after an `nclx` body, or an ICC/opaque one.
+        buf[c..c + self.icc_profile.len()].copy_from_slice(&self.icc_profile);
+        c += self.icc_profile.len();
         Ok(c)
     }
 }
@@ -474,5 +494,83 @@ mod tests {
         let colr = ColourInformationBox::parse(&body).unwrap();
         assert_eq!(colr.icc_profile, &[0xAA, 0xBB]);
         assert_eq!(colr.to_bytes(), &body);
+    }
+
+    /// r04-W39: the 7 `reserved` bits of the `nclx` flag byte are preserved, so
+    /// a `colr` written with non-zero padding round-trips byte-identically
+    /// instead of being silently rewritten.
+    #[test]
+    fn colr_nclx_reserved_bits_are_preserved() {
+        let body = [
+            0x6E, 0x63, 0x6C, 0x78, // 'nclx'
+            0x00, 0x01, // bt709 primaries
+            0x00, 0x01, // bt709 transfer
+            0x00, 0x01, // bt709 matrix
+            0xBF, // full_range_flag=1, reserved=0x3F (non-zero padding)
+        ];
+        let colr = ColourInformationBox::parse(&body).unwrap();
+        let nclx = colr.nclx.as_ref().unwrap();
+        assert!(nclx.full_range_flag);
+        assert_eq!(nclx.reserved, 0x3F, "reserved bits kept, not zeroed");
+        assert_eq!(colr.to_bytes(), body, "reserved bits must round-trip");
+
+        // The spec's zero form still writes zero.
+        let zero = [
+            0x6E, 0x63, 0x6C, 0x78, 0x00, 0x01, 0x00, 0x01, 0x00, 0x01, 0x80,
+        ];
+        let z = ColourInformationBox::parse(&zero).unwrap();
+        assert_eq!(z.nclx.as_ref().unwrap().reserved, 0);
+        assert_eq!(z.to_bytes(), zero);
+    }
+
+    /// r04-W39: a `nclx` body with trailing pad bytes must keep them, so the
+    /// box re-serializes byte-identically. Unfixed, the extras were dropped and
+    /// the output was shorter than the input.
+    #[test]
+    fn colr_nclx_trailing_bytes_are_preserved() {
+        let mut body = COLR_NCLX_ORACLE.to_vec();
+        body.extend_from_slice(&[0xDE, 0xAD]);
+        let colr = ColourInformationBox::parse(&body).unwrap();
+        assert_eq!(colr.colour_type, *b"nclx");
+        assert_eq!(
+            colr.icc_profile.as_slice(),
+            &[0xDE, 0xAD],
+            "trailing pad kept"
+        );
+        assert_eq!(colr.serialized_len(), body.len());
+        assert_eq!(colr.to_bytes(), body);
+    }
+
+    /// r04-W39: `serialized_len` always budgets the 7 `nclx` bytes for a `nclx`
+    /// colour type, so serializing one with no `nclx` params must error rather
+    /// than write 7 bytes short of its declared length and return 4.
+    #[test]
+    fn colr_nclx_without_params_errors() {
+        let colr = ColourInformationBox {
+            colour_type: *b"nclx",
+            nclx: None,
+            icc_profile: Vec::new(),
+        };
+        assert_eq!(colr.serialized_len(), 4 + NCLX_PARAMS_LEN);
+        let mut buf = vec![0u8; colr.serialized_len()];
+        let err = colr.serialize_into(&mut buf).unwrap_err();
+        assert!(
+            matches!(
+                err,
+                Error::InvalidValue {
+                    field: "colr nclx",
+                    ..
+                }
+            ),
+            "expected InvalidValue for the missing nclx params, got {err:?}"
+        );
+        // The opaque types are unaffected and still round-trip.
+        let prof = ColourInformationBox {
+            colour_type: *b"prof",
+            nclx: None,
+            icc_profile: vec![1, 2, 3],
+        };
+        assert_eq!(prof.serialized_len(), 7);
+        assert_eq!(prof.to_bytes().len(), 7);
     }
 }

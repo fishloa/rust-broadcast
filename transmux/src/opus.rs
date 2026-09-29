@@ -89,7 +89,18 @@ impl<'a> Parse<'a> for OpusSpecificBox {
             let stream_count = bytes[11];
             let coupled_count = bytes[12];
             let map_start = DOPS_FIXED_LEN + 2;
-            let map_end = (map_start + output_channel_count as usize).min(bytes.len());
+            // `ChannelMapping[OutputChannelCount]` (Opus-in-ISOBMFF §4.3.2):
+            // the table's width is derived from `OutputChannelCount`, so a short
+            // tail is truncated input — accepting it would parse a shorter map
+            // than the box declares and re-serialize a different box.
+            let map_end = map_start + output_channel_count as usize;
+            if bytes.len() < map_end {
+                return Err(Error::BufferTooShort {
+                    need: map_end,
+                    have: bytes.len(),
+                    what: "dOps ChannelMapping",
+                });
+            }
             Some(ChannelMappingTable {
                 stream_count,
                 coupled_count,

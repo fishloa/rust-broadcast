@@ -15,8 +15,7 @@ use mpeg_ts::OwnedTsPacket;
 use transmux::{
     AVCConfigurationBox, AVCDecoderConfigurationRecord, CodecConfig, DecoderConfigDescriptor,
     DecoderSpecificInfo, ESDescriptor, EsdsBox, FragmentTrackData, MovieFragmentBox,
-    ObjectTypeIndication, SLConfigDescriptor, Sample, Segmenter, StreamType, TrackSpec,
-    build_media_segment,
+    SLConfigDescriptor, Sample, Segmenter, TrackSpec, build_media_segment,
 };
 
 /// Wire value of a sync (random-access) `sample_flags`, per ISO/IEC 14496-12
@@ -41,28 +40,20 @@ fn dummy_avc_config() -> AVCConfigurationBox {
 }
 
 fn dummy_esds() -> EsdsBox {
-    EsdsBox::new(ESDescriptor {
-        es_id: 1,
-        stream_dependence_flag: false,
-        url_flag: false,
-        ocr_stream_flag: false,
-        stream_priority: 0,
-        depends_on_es_id: None,
-        url: None,
-        ocr_es_id: None,
-        decoder_config: Some(DecoderConfigDescriptor {
-            object_type_indication: ObjectTypeIndication(0x40),
-            stream_type: StreamType(0x05),
-            up_stream: false,
-            buffer_size_db: 0,
-            max_bitrate: 0,
-            avg_bitrate: 0,
-            decoder_specific_info: Some(DecoderSpecificInfo {
-                data: vec![0x12, 0x10],
-            }),
-        }),
-        sl_config: Some(SLConfigDescriptor { body: vec![0x02] }),
-    })
+    EsdsBox::new(ESDescriptor::new(
+        1,
+        0,
+        Some(DecoderConfigDescriptor::new(
+            0x40,
+            0x05,
+            false,
+            0,
+            0,
+            0,
+            Some(DecoderSpecificInfo::new(vec![0x12, 0x10])),
+        )),
+        Some(SLConfigDescriptor::predefined_two()),
+    ))
 }
 
 fn video_track() -> TrackSpec {
@@ -420,28 +411,20 @@ fn real_fixture_remux_is_lossless_and_parseable() {
 
     let adts = transmux::parse_adts_header(&aud[0]).expect("ADTS header");
     let asc = transmux::AudioSpecificConfig::from_adts_header(&adts);
-    let esds = EsdsBox::new(ESDescriptor {
-        es_id: 1,
-        stream_dependence_flag: false,
-        url_flag: false,
-        ocr_stream_flag: false,
-        stream_priority: 0,
-        depends_on_es_id: None,
-        url: None,
-        ocr_es_id: None,
-        decoder_config: Some(DecoderConfigDescriptor {
-            object_type_indication: ObjectTypeIndication(0x40),
-            stream_type: StreamType(0x05),
-            up_stream: false,
-            buffer_size_db: 0,
-            max_bitrate: 0,
-            avg_bitrate: 0,
-            decoder_specific_info: Some(DecoderSpecificInfo {
-                data: asc.to_bytes(),
-            }),
-        }),
-        sl_config: Some(SLConfigDescriptor { body: vec![0x02] }),
-    });
+    let esds = EsdsBox::new(ESDescriptor::new(
+        1,
+        0,
+        Some(DecoderConfigDescriptor::new(
+            0x40,
+            0x05,
+            false,
+            0,
+            0,
+            0,
+            Some(DecoderSpecificInfo::new(asc.to_bytes())),
+        )),
+        Some(SLConfigDescriptor::predefined_two()),
+    ));
     let audio_rate = sfi_to_hz(adts.sampling_frequency_index);
 
     let vtrack = TrackSpec::new(

@@ -40,6 +40,7 @@
 use alloc::vec::Vec;
 
 use crate::annexb::{iter_annexb_nals, iter_length_prefixed_nals};
+use crate::bitreader::BitReader;
 
 // ── AVC (ITU-T H.264 §7.3.1, Table 7-1) ─────────────────────────────────────
 
@@ -295,24 +296,69 @@ pub fn recovery_point_sei(nal: &[u8]) -> bool {
 ///   open-GOP decode and DASH-IF/CMAF-acceptable, but not a "closed GOP"
 ///   clean random-access point in the strict ISO/IEC 14496-12 sync-sample
 ///   sense.
+///
+/// Case 3 additionally requires the access unit to carry an **I-slice**: some
+/// hardware encoders (`x264 --repeat-headers` on every IDR is fine, but many IP
+/// cameras and SoCs repeat the SPS on *every* picture), so an SPS alone does not
+/// mark a boundary. Unfixed, every access unit of such a stream was reported as
+/// a RAP, and a segmenter cut segments that start on a P/B frame and cannot be
+/// decoded independently (r04-W23).
 pub fn access_unit_is_rap(codec: NalCodec, au: &[u8], length_prefixed: bool) -> bool {
     match codec {
         NalCodec::Hevc | NalCodec::Vvc => access_unit_is_keyframe(codec, au, length_prefixed),
         NalCodec::Avc => {
-            let is_rap_nal = |nal: &[u8]| {
-                nal_unit_type(NalCodec::Avc, nal) == Some(AVC_NAL_SPS)
-                    || is_keyframe_nal(NalCodec::Avc, nal)
-                    || recovery_point_sei(nal)
+            let is_rap_nal =
+                |nal: &[u8]| is_keyframe_nal(NalCodec::Avc, nal) || recovery_point_sei(nal);
+            let mut has_sps = false;
+            let mut has_i_slice = false;
+            let mut scan = |nal: &[u8]| {
+                if nal_unit_type(NalCodec::Avc, nal) == Some(AVC_NAL_SPS) {
+                    has_sps = true;
+                }
+                if avc_is_i_slice(nal) {
+                    has_i_slice = true;
+                }
+                is_rap_nal(nal)
             };
-            if length_prefixed {
+            let direct = if length_prefixed {
                 match iter_length_prefixed_nals(au) {
-                    Ok(nals) => nals.iter().any(|nal| is_rap_nal(nal)),
+                    Ok(nals) => nals.iter().any(|nal| scan(nal)),
                     Err(_) => false,
                 }
             } else {
-                iter_annexb_nals(au).any(is_rap_nal)
-            }
+                iter_annexb_nals(au).any(scan)
+            };
+            // Case 3: an SPS is only a RAP marker when the picture it opens is
+            // actually an I-slice.
+            direct || (has_sps && has_i_slice)
         }
+    }
+}
+
+/// Whether an AVC NAL is an I-slice (or SI-slice) — `slice_type` 2 or 7 modulo
+/// 5, ITU-T H.264 §7.4.3 Table 7-6.
+///
+/// `slice_type` is the second `ue(v)` of the slice header (§7.3.3): the first is
+/// `first_mb_in_slice`. Both are read from the RBSP after the 1-byte NAL header,
+/// with `emulation_prevention_three_byte` removed (§7.4.1).
+fn avc_is_i_slice(nal: &[u8]) -> bool {
+    if !matches!(nal_unit_type(NalCodec::Avc, nal), Some(t) if (1..=5).contains(&t)) {
+        return false;
+    }
+    // `with_unescape` both skips the 1-byte NAL header and strips
+    // `emulation_prevention_three_byte` (§7.4.1), which is what the slice
+    // header's `ue(v)`s are read from.
+    let Ok(mut r) = BitReader::with_unescape(&nal[1..], "AVC slice header") else {
+        return false;
+    };
+    // first_mb_in_slice(ue), then slice_type(ue).
+    if r.read_ue("first_mb_in_slice").is_err() {
+        return false;
+    }
+    match r.read_ue("slice_type") {
+        // Table 7-6: 2 = I, 4 = SI (values 5..=9 repeat those modulo 5).
+        Ok(v) => matches!(v % 5, 2 | 4),
+        Err(_) => false,
     }
 }
 
@@ -633,10 +679,11 @@ mod tests {
     fn access_unit_is_rap_recognises_open_gop_signals() {
         // AVC AU with SPS(7) + PPS(8) + non-IDR I-slice(1), no IDR at all: the
         // SPS-present fallback marks it a RAP.
+        // 0xB0 = first_mb_in_slice ue(0), slice_type ue(2) = I (§7.4.3 Table 7-6).
         let sps_led = [
             0x00, 0x00, 0x01, 0x67, 0x42, 0x00, 0x0A, // SPS
             0x00, 0x00, 0x01, 0x68, 0xCE, 0x3C, 0x80, // PPS
-            0x00, 0x00, 0x01, 0x41, 0x9A, // non-IDR slice
+            0x00, 0x00, 0x01, 0x41, 0xB0, // non-IDR I-slice
         ];
         assert!(access_unit_is_rap(NalCodec::Avc, &sps_led, false));
         // The strict IDR-only helper does NOT consider this a keyframe —
@@ -664,6 +711,80 @@ mod tests {
         let idr = [0x00, 0x00, 0x01, 0x65, 0x88];
         assert!(access_unit_is_rap(NalCodec::Avc, &idr, false));
         assert!(access_unit_is_keyframe(NalCodec::Avc, &idr, false));
+    }
+
+    /// r04-W23: an SPS alone must not mark a RAP. Hardware encoders and IP
+    /// cameras commonly repeat SPS/PPS on *every* access unit, so the SPS
+    /// fallback additionally requires the picture to be an I-slice. Unfixed,
+    /// every access unit of such a stream was reported as a RAP and a segmenter
+    /// cut segments starting on a P/B frame.
+    #[test]
+    fn sps_without_an_i_slice_is_not_a_rap() {
+        // SPS + PPS + a P-slice (0x9A: first_mb_in_slice 0, slice_type ue(5) → 5 % 5 = 0 = P).
+        let p_slice = [
+            0x00, 0x00, 0x01, 0x67, 0x42, 0x00, 0x0A, // SPS repeated on this picture
+            0x00, 0x00, 0x01, 0x68, 0xCE, 0x3C, 0x80, // PPS
+            0x00, 0x00, 0x01, 0x41, 0x9A, // non-IDR P-slice
+        ];
+        assert!(
+            !avc_is_i_slice(&[0x41, 0x9A]),
+            "0x9A must parse as a P-slice"
+        );
+        assert!(
+            !access_unit_is_rap(NalCodec::Avc, &p_slice, false),
+            "SPS on a P picture must not be a RAP"
+        );
+        // A B-slice (slice_type 1, encoded `010`) is likewise not a RAP.
+        let b_slice = [
+            0x00, 0x00, 0x01, 0x67, 0x42, 0x00, 0x0A, 0x00, 0x00, 0x01, 0x41,
+            0x40, // 0x40 = ue(0), ue(1) = B
+        ];
+        assert!(!access_unit_is_rap(NalCodec::Avc, &b_slice, false));
+        // The same AU with an I-slice *is* a RAP.
+        let i_slice = [
+            0x00, 0x00, 0x01, 0x67, 0x42, 0x00, 0x0A, 0x00, 0x00, 0x01, 0x41, 0xB0,
+        ];
+        assert!(access_unit_is_rap(NalCodec::Avc, &i_slice, false));
+    }
+
+    /// The I-slice reader must handle all five `slice_type` values and the
+    /// length-prefixed framing, and must not panic on a truncated slice header.
+    #[test]
+    fn avc_i_slice_detection_covers_the_slice_types() {
+        // The first RBSP byte is `first_mb_in_slice(ue)` = 0 (`1`) followed by
+        // the first bits of `slice_type(ue)`, so the leading nibble encodes the
+        // slice type: ue(0)=`1`→0b11, ue(1)=`010`→0b1010, ue(2)=`011`→0b1011,
+        // ue(4)=`00101`→0b100101, ue(7)=`0001000`→0b10001000.
+        assert!(!avc_is_i_slice(&[0x41, 0xC0]), "slice_type 0 = P");
+        assert!(!avc_is_i_slice(&[0x41, 0xA0]), "slice_type 1 = B");
+        assert!(avc_is_i_slice(&[0x41, 0xB0]), "slice_type 2 = I");
+        assert!(!avc_is_i_slice(&[0x41, 0x90]), "slice_type 3 = SP");
+        assert!(avc_is_i_slice(&[0x41, 0x94]), "slice_type 4 = SI");
+        assert!(
+            !avc_is_i_slice(&[0x41, 0x98]),
+            "slice_type 5 = P (5 % 5 = 0)"
+        );
+        assert!(
+            avc_is_i_slice(&[0x41, 0x88]),
+            "slice_type 7 = I (7 % 5 = 2)"
+        );
+        // Non-VCL NAL types are never slices.
+        assert!(!avc_is_i_slice(&[0x67, 0xB0]), "SPS is not a slice");
+        // Too short / unparseable: false, never a panic.
+        assert!(!avc_is_i_slice(&[0x41]));
+        assert!(!avc_is_i_slice(&[]));
+        // Length-prefixed framing takes the same decision: an SPS NAL followed
+        // by an I-slice, then the same with a P-slice.
+        let lp = [
+            0x00, 0x00, 0x00, 0x05, 0x67, 0x42, 0x00, 0x0A, 0x1E, // SPS (5 bytes)
+            0x00, 0x00, 0x00, 0x02, 0x41, 0xB0, // I-slice (2 bytes)
+        ];
+        assert!(access_unit_is_rap(NalCodec::Avc, &lp, true));
+        let lp_p = [
+            0x00, 0x00, 0x00, 0x05, 0x67, 0x42, 0x00, 0x0A, 0x1E, 0x00, 0x00, 0x00, 0x02, 0x41,
+            0x9A, // P-slice
+        ];
+        assert!(!access_unit_is_rap(NalCodec::Avc, &lp_p, true));
     }
 
     #[test]

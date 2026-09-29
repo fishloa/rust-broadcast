@@ -52,8 +52,7 @@ use crate::avc_config::{AVCConfigurationBox, AVCDecoderConfigurationRecord};
 use crate::error::{Error, Result};
 use crate::media::{Media, Track};
 use crate::mp4esds::{
-    DecoderConfigDescriptor, DecoderSpecificInfo, ESDescriptor, EsdsBox, ObjectTypeIndication,
-    SLConfigDescriptor, StreamType as EsdsStreamType,
+    DecoderConfigDescriptor, DecoderSpecificInfo, ESDescriptor, EsdsBox, SLConfigDescriptor,
 };
 use crate::pipeline::{CodecConfig, Sample, TrackSpec};
 
@@ -169,7 +168,6 @@ const STREAM_TYPE_AUDIO: u8 = 0x05;
 /// `ES_ID` assigned to the single audio elementary stream.
 const ESDS_AUDIO_ES_ID: u16 = 1;
 /// `SLConfigDescriptor.predefined = 2` (MP4 default; ISO/IEC 14496-1 §7.3.2.3).
-const SL_CONFIG_PREDEFINED_MP4: u8 = 0x02;
 /// Audio sample size in bits carried in the sample entry (typically 16).
 ///
 /// `pub(crate)`: reused by [`crate::flv_stream::StreamingFlvDemux`] (#738).
@@ -619,28 +617,20 @@ fn anchor_of(samples: &[Sample]) -> u64 {
 ///
 /// `pub(crate)`: reused by [`crate::flv_stream::StreamingFlvDemux`] (#738).
 pub(crate) fn build_aac_esds(asc_bytes: Vec<u8>) -> EsdsBox {
-    EsdsBox::new(ESDescriptor {
-        es_id: ESDS_AUDIO_ES_ID,
-        stream_dependence_flag: false,
-        url_flag: false,
-        ocr_stream_flag: false,
-        stream_priority: 0,
-        depends_on_es_id: None,
-        url: None,
-        ocr_es_id: None,
-        decoder_config: Some(DecoderConfigDescriptor {
-            object_type_indication: ObjectTypeIndication(OTI_MPEG4_AUDIO),
-            stream_type: EsdsStreamType(STREAM_TYPE_AUDIO),
-            up_stream: false,
-            buffer_size_db: 0,
-            max_bitrate: 0,
-            avg_bitrate: 0,
-            decoder_specific_info: Some(DecoderSpecificInfo { data: asc_bytes }),
-        }),
-        sl_config: Some(SLConfigDescriptor {
-            body: vec![SL_CONFIG_PREDEFINED_MP4],
-        }),
-    })
+    EsdsBox::new(ESDescriptor::new(
+        ESDS_AUDIO_ES_ID,
+        0,
+        Some(DecoderConfigDescriptor::new(
+            OTI_MPEG4_AUDIO,
+            STREAM_TYPE_AUDIO,
+            false,
+            0,
+            0,
+            0,
+            Some(DecoderSpecificInfo::new(asc_bytes)),
+        )),
+        Some(SLConfigDescriptor::predefined_two()),
+    ))
 }
 
 /// Sampling rate in Hz from a parsed ASC: the explicit escape rate if present,

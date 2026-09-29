@@ -143,6 +143,47 @@ fn dops_mutation_changes_bytes() {
     assert_ne!(buf.as_slice(), body, "mutating pre_skip must change bytes");
 }
 
+/// r04-W25: `ChannelMapping[OutputChannelCount]` is sized by the box's own
+/// `OutputChannelCount`, so a short tail is truncated input and must error.
+/// Unfixed, `.min(bytes.len())` accepted it as a valid shorter map, so the
+/// parse -> serialize round trip produced a different box with `Ok`.
+#[test]
+fn dops_truncated_channel_mapping_errors() {
+    // MappingFamily 1, OutputChannelCount 6, but only 2 mapping bytes present.
+    let body: &[u8] = &[
+        0x00, // Version
+        0x06, // OutputChannelCount
+        0x01, 0x38, // PreSkip
+        0x00, 0x00, 0xBB, 0x80, // InputSampleRate 48000
+        0x00, 0x00, // OutputGain
+        0x01, // ChannelMappingFamily
+        0x02, // StreamCount
+        0x01, // CoupledCount
+        0x00, 0x01, // ChannelMapping[2] — 4 short of OutputChannelCount
+    ];
+    let err = OpusSpecificBox::parse(body).unwrap_err();
+    assert!(
+        matches!(
+            err,
+            transmux::Error::BufferTooShort {
+                need: 19,
+                have: 15,
+                what: "dOps ChannelMapping"
+            }
+        ),
+        "expected BufferTooShort for the short ChannelMapping, got {err:?}"
+    );
+    // The exact-length tail still parses and round-trips byte-identically.
+    let mut full = body.to_vec();
+    full.extend_from_slice(&[0x02, 0x03, 0x04, 0x05]);
+    let cfg = OpusSpecificBox::parse(&full).expect("exact-length map parses");
+    assert_eq!(
+        cfg.channel_mapping.as_ref().unwrap().channel_mapping.len(),
+        6
+    );
+    roundtrip(&cfg, &full);
+}
+
 // ---------------------------------------------------------------------------
 // FLAC dfLa — fixtures/mp4/flac.mp4 (#437)
 // ---------------------------------------------------------------------------

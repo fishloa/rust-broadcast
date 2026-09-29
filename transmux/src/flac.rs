@@ -81,7 +81,18 @@ impl<'a> Parse<'a> for FlacSpecificBox {
             let length =
                 u32::from_be_bytes([0, bytes[off + 1], bytes[off + 2], bytes[off + 3]]) as usize;
             let data_start = off + METADATA_BLOCK_HDR;
-            let data_end = (data_start + length).min(bytes.len());
+            // A block whose declared `METADATA_BLOCK_LENGTH` runs past the end of
+            // the box is truncated input, not a shorter valid block: accepting it
+            // would make `serialize_into` re-emit the *truncated* length, so the
+            // round trip would silently stop being byte-identical.
+            let data_end = data_start.checked_add(length).filter(|&e| e <= bytes.len());
+            let Some(data_end) = data_end else {
+                return Err(Error::BufferTooShort {
+                    need: data_start + length,
+                    have: bytes.len(),
+                    what: "dfLa metadata block",
+                });
+            };
             blocks.push(FlacMetadataBlock {
                 last,
                 block_type,
@@ -90,6 +101,19 @@ impl<'a> Parse<'a> for FlacSpecificBox {
             off = data_end;
             if last {
                 break;
+            }
+        }
+        // `isoflac.txt` FLACSpecificBox: "The first metadata block MUST be
+        // STREAMINFO" — the stream geometry lives only there, so a box whose
+        // first block is anything else is unusable.
+        match blocks.first() {
+            Some(b) if b.block_type == BLOCK_TYPE_STREAMINFO => {}
+            other => {
+                return Err(Error::InvalidValue {
+                    field: "dfLa first metadata block",
+                    value: other.map_or(u64::MAX, |b| b.block_type as u64),
+                    reason: "the first FLAC metadata block must be STREAMINFO (type 0)",
+                });
             }
         }
         Ok(Self {
@@ -181,5 +205,80 @@ mod tests {
         let bytes = flac.try_to_bytes().unwrap();
         let parsed = FlacSpecificBox::parse(&bytes).unwrap();
         assert_eq!(parsed.blocks[0].data.len(), (1 << 24) - 1);
+    }
+
+    /// A metadata block whose declared 24-bit length runs past the end of the
+    /// box is rejected (r04-W17). Unfixed, `.min(bytes.len())` kept the short
+    /// slice, so parsing then re-serializing wrote the *truncated* length and
+    /// the round trip silently stopped being byte-identical.
+    #[test]
+    fn truncated_metadata_block_errors() {
+        // dfLa: version/flags, then one last-block STREAMINFO header declaring
+        // 34 bytes while only 4 are present.
+        let mut bytes = alloc::vec![0u8; FULL_HDR];
+        bytes.push(0x80 | BLOCK_TYPE_STREAMINFO);
+        bytes.extend_from_slice(&[0x00, 0x00, 34]);
+        bytes.extend_from_slice(&[0xAA; 4]);
+        let err = FlacSpecificBox::parse(&bytes).unwrap_err();
+        assert!(
+            matches!(
+                err,
+                Error::BufferTooShort {
+                    need: 42,
+                    have: 12,
+                    ..
+                }
+            ),
+            "expected BufferTooShort for the truncated block, got {err:?}"
+        );
+    }
+
+    /// `isoflac.txt` requires the first metadata block to be STREAMINFO
+    /// (r04-W17); a box starting with any other block type is rejected.
+    #[test]
+    fn first_block_must_be_streaminfo() {
+        let mut bytes = alloc::vec![0u8; FULL_HDR];
+        // PADDING (type 1), 2 bytes, marked last.
+        bytes.push(0x80 | 1);
+        bytes.extend_from_slice(&[0x00, 0x00, 2]);
+        bytes.extend_from_slice(&[0x00, 0x00]);
+        let err = FlacSpecificBox::parse(&bytes).unwrap_err();
+        assert!(
+            matches!(
+                err,
+                Error::InvalidValue {
+                    field: "dfLa first metadata block",
+                    value: 1,
+                    ..
+                }
+            ),
+            "expected InvalidValue naming block type 1, got {err:?}"
+        );
+    }
+
+    /// A STREAMINFO-first box whose later blocks are not STREAMINFO still
+    /// parses (only the *first* block carries the rule).
+    #[test]
+    fn streaminfo_then_other_blocks_parses() {
+        let flac = FlacSpecificBox {
+            version: 0,
+            flags: 0,
+            blocks: alloc::vec![
+                FlacMetadataBlock {
+                    last: false,
+                    block_type: BLOCK_TYPE_STREAMINFO,
+                    data: alloc::vec![0x11; 34],
+                },
+                FlacMetadataBlock {
+                    last: true,
+                    block_type: 4,
+                    data: alloc::vec![0x22; 3],
+                },
+            ],
+        };
+        let bytes = flac.try_to_bytes().unwrap();
+        let parsed = FlacSpecificBox::parse(&bytes).unwrap();
+        assert_eq!(parsed, flac);
+        assert_eq!(parsed.serialized_len(), bytes.len());
     }
 }

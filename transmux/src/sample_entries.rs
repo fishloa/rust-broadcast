@@ -291,35 +291,9 @@ impl AVCSampleEntry {
                     what: "avcC body",
                 });
             };
-            // Capture extra boxes after avcC (e.g. pasp, btrt)
-            let avcc_start = avcc.as_ptr() as usize - config_region.as_ptr() as usize;
-            let avcc_end = avcc_start + avcc.len();
-            let mut extra_boxes = Vec::new();
-            let mut eb_off = avcc_end;
-            while eb_off + 8 <= config_region.len() {
-                let eb_sz = u32::from_be_bytes([
-                    config_region[eb_off],
-                    config_region[eb_off + 1],
-                    config_region[eb_off + 2],
-                    config_region[eb_off + 3],
-                ]) as usize;
-                if eb_sz < 8 {
-                    break;
-                }
-                let bt = [
-                    config_region[eb_off + 4],
-                    config_region[eb_off + 5],
-                    config_region[eb_off + 6],
-                    config_region[eb_off + 7],
-                ];
-                let d = config_region[eb_off + 8..eb_off + eb_sz.min(config_region.len() - eb_off)]
-                    .to_vec();
-                extra_boxes.push(OpaqueBox {
-                    box_type: bt,
-                    data: d,
-                });
-                eb_off += eb_sz;
-            }
+            // Every sibling box (colr/pasp/btrt/clli/mdcv/dvcC/dvvC …) — a
+            // box *before* the config is kept too, not only the ones after it.
+            let extra_boxes = capture_extra_boxes(config_region, &[b"avcC"]);
             Ok(Self {
                 codec_type,
                 visual,
@@ -467,6 +441,54 @@ impl Serialize for Mp4vSampleEntry {
     }
 }
 
+/// Every child box of a visual sample entry's trailing region **except** the
+/// config box(es) named in `skip`, in wire order.
+///
+/// A visual sample entry may carry `colr`, `pasp`, `btrt`, `clli`, `mdcv` and
+/// Dolby Vision's `dvcC`/`dvvC` beside the codec config. Dropping them loses
+/// HDR/DV signalling entirely: an HDR10 or Dolby Vision profile 8.1
+/// (`hvc1` + `dvcC`) source comes out as SDR on an fMP4-to-fMP4 repackage
+/// (r04-W37), so this is shared by the AVC, HEVC and VVC entries.
+///
+/// A malformed tail **ends the walk and is dropped**: a box whose declared size
+/// is smaller than its own header, or runs past the region, cannot be sliced
+/// safely, and everything already captured is kept. This is the same
+/// stop-at-the-first-bad-length policy [`parse_trailing_boxes`] and
+/// [`find_config_box`] use, so a truncated sample entry degrades to the boxes
+/// before the damage rather than losing all of them or panicking. (The entry's
+/// config box is located by [`find_config_box`] independently, so a truncated
+/// tail never costs the codec config.)
+fn capture_extra_boxes(region: &[u8], skip: &[&[u8; 4]]) -> Vec<OpaqueBox> {
+    let mut out = Vec::new();
+    let mut off = 0usize;
+    while off + 8 <= region.len() {
+        let sz = u32::from_be_bytes([
+            region[off],
+            region[off + 1],
+            region[off + 2],
+            region[off + 3],
+        ]) as usize;
+        // A malformed length ends the walk rather than losing earlier boxes.
+        if sz < 8 || off + sz > region.len() {
+            break;
+        }
+        let bt = [
+            region[off + 4],
+            region[off + 5],
+            region[off + 6],
+            region[off + 7],
+        ];
+        if !skip.iter().any(|k| **k == bt) {
+            out.push(OpaqueBox {
+                box_type: bt,
+                data: region[off + 8..off + sz].to_vec(),
+            });
+        }
+        off += sz;
+    }
+    out
+}
+
 /// Split a sample entry's trailing child-box region into verbatim
 /// [`init_segment::OpaqueBox`](crate::init_segment::OpaqueBox) entries (each
 /// carrying the box body after its 8-byte header). Stops at the first malformed
@@ -568,11 +590,14 @@ impl HEVCSampleEntry {
                     what: "hvcC body",
                 });
             };
+            // Keep every sibling box (colr/pasp/btrt/clli/mdcv/dvcC/dvvC …):
+            // dropping them loses HDR and Dolby Vision signalling on an
+            // fMP4-to-fMP4 repackage (r04-W37).
             Ok(Self {
                 codec_type,
                 visual,
                 config,
-                extra_boxes: Vec::new(),
+                extra_boxes: capture_extra_boxes(config_region, &[b"hvcC"]),
             })
         } else {
             Err(Error::BufferTooShort {
@@ -690,11 +715,13 @@ impl VVCSampleEntry {
                     what: "vvcC body",
                 });
             };
+            // As for HEVC: keep every sibling box (colr/pasp/btrt/clli/mdcv …),
+            // not just the config (r04-W37).
             Ok(Self {
                 codec_type,
                 visual,
                 config,
-                extra_boxes: Vec::new(),
+                extra_boxes: capture_extra_boxes(config_region, &[b"vvcC"]),
             })
         } else {
             Err(Error::BufferTooShort {
@@ -829,6 +856,144 @@ mod tests {
     /// Must clamp to what the region can hold, not panic — same discipline
     /// `init_segment::parse_stbl_children` already applies to its own child
     /// walk.
+    /// r04-W37: `hvc1`/`hev1`/`vvc1` parsing must keep every sibling box, not
+    /// just the codec config — `colr`, `pasp`, `clli`, `mdcv` and Dolby Vision's
+    /// `dvcC`/`dvvC`. Unfixed, an HDR10 or Dolby Vision profile 8.1
+    /// (`hvc1` + `dvcC`) source lost its colour signalling on an fMP4-to-fMP4
+    /// repackage and played as SDR.
+    #[test]
+    fn hevc_entry_keeps_every_sibling_box() {
+        let entry = HEVCSampleEntry::new_hvc1(make_hevc_config());
+        let mut bytes = entry.to_bytes();
+        // Append a `colr` (nclx) and a `dvcC` box after the entry's hvcC.
+        let colr: [u8; 19] = [
+            0x00, 0x00, 0x00, 0x13, b'c', b'o', b'l', b'r', b'n', b'c', b'l', b'x', 0x00, 0x09,
+            0x00, 0x10, 0x00, 0x09, 0x80,
+        ];
+        let dvc_cfg: [u8; 12] = [
+            0x00, 0x00, 0x00, 0x0C, b'd', b'v', b'c', b'C', 0x01, 0x00, 0x00, 0x00,
+        ];
+        bytes.extend_from_slice(&colr);
+        bytes.extend_from_slice(&dvc_cfg);
+        let total = bytes.len() as u32;
+        bytes[0..4].copy_from_slice(&total.to_be_bytes());
+
+        let parsed = HEVCSampleEntry::bare_parse(&bytes).unwrap();
+        let types: alloc::vec::Vec<[u8; 4]> =
+            parsed.extra_boxes.iter().map(|b| b.box_type).collect();
+        assert!(
+            types.contains(b"colr") && types.contains(b"dvcC"),
+            "colr and dvcC must be captured, got {types:?}"
+        );
+        // And the whole entry re-serializes byte-for-byte.
+        assert_eq!(parsed.to_bytes(), bytes);
+    }
+
+    /// The same for the VVC sample entry.
+    #[test]
+    fn vvc_entry_keeps_every_sibling_box() {
+        use crate::vvc_config::VvcConfigurationBox;
+        use crate::vvc_config::VvcDecoderConfigurationRecord;
+        let entry =
+            VVCSampleEntry::new_vvc1(VvcConfigurationBox::new(VvcDecoderConfigurationRecord {
+                length_size_minus_one: 3,
+                ptl_present: false,
+                ols_idx: 0,
+                num_sublayers: 1,
+                constant_frame_rate: 0,
+                chroma_format_idc: 1,
+                bit_depth_minus8: 0,
+                ptl: None,
+                max_picture_width: 0,
+                max_picture_height: 0,
+                avg_frame_rate: 0,
+                arrays: alloc::vec![],
+            }));
+        let mut bytes = entry.to_bytes();
+        let colr: [u8; 19] = [
+            0x00, 0x00, 0x00, 0x13, b'c', b'o', b'l', b'r', b'n', b'c', b'l', b'x', 0x00, 0x09,
+            0x00, 0x10, 0x00, 0x09, 0x80,
+        ];
+        bytes.extend_from_slice(&colr);
+        let total = bytes.len() as u32;
+        bytes[0..4].copy_from_slice(&total.to_be_bytes());
+
+        let parsed = VVCSampleEntry::bare_parse(&bytes).unwrap();
+        assert!(
+            parsed.extra_boxes.iter().any(|b| b.box_type == *b"colr"),
+            "vvc1 must capture colr"
+        );
+        assert_eq!(parsed.to_bytes(), bytes);
+    }
+
+    /// A malformed trailing child box ends the walk and is dropped, keeping
+    /// everything captured before it: `capture_extra_boxes` cannot slice a box
+    /// whose declared size is under its own header length or past the region.
+    /// The entry's config box is located independently, so it is never lost.
+    #[test]
+    fn capture_extra_boxes_stops_at_a_truncated_tail() {
+        // A well-formed `colr`, then a box declaring a 0xFFFF size it cannot
+        // possibly have.
+        let mut region = alloc::vec::Vec::new();
+        region.extend_from_slice(&[
+            0x00, 0x00, 0x00, 0x0C, b'c', b'o', b'l', b'r', 0x01, 0x02, 0x03, 0x04,
+        ]);
+        let after = region.len();
+        region.extend_from_slice(&[0x00, 0x00, 0xFF, 0xFF, b'b', b't', b'r', b't']);
+        // A box after the damage is not reachable either — the walk stopped.
+        region.extend_from_slice(&[0x00, 0x00, 0x00, 0x0C, b'c', b'l', b'l', b'i', 9, 9, 9, 9]);
+        let boxes = capture_extra_boxes(&region, &[]);
+        assert_eq!(boxes.len(), 1, "only the box before the damage is kept");
+        assert_eq!(boxes[0].box_type, *b"colr");
+        assert_eq!(boxes[0].data, vec![0x01, 0x02, 0x03, 0x04]);
+        assert_eq!(after, 12);
+        // A size below the 8-byte header is likewise rejected.
+        let mut under = alloc::vec::Vec::new();
+        under.extend_from_slice(&[0x00, 0x00, 0x00, 0x04, b'z', b'z', b'z', b'z']);
+        assert!(capture_extra_boxes(&under, &[]).is_empty());
+        // An exact-fit box is accepted (the boundary is `size >= 8 && off+size <= len`).
+        let mut exact = alloc::vec::Vec::new();
+        exact.extend_from_slice(&[0x00, 0x00, 0x00, 0x08, b'p', b'a', b's', b'p']);
+        assert_eq!(capture_extra_boxes(&exact, &[]).len(), 1);
+    }
+
+    /// A sibling box placed *before* the config is captured too (the pre-fix
+    /// AVC path only walked forward from `avcC`). The entry serializer writes
+    /// the config box first, so the assertion is on capture, not on order.
+    #[test]
+    fn avc_entry_keeps_boxes_before_the_config() {
+        let entry = AVCSampleEntry::new_avc1(make_avc_config());
+        let bytes = entry.to_bytes();
+        // Rebuild with a `pasp` box inserted before the avcC.
+        let avcc_at = bytes.windows(4).position(|w| w == b"avcC").unwrap() - 4;
+        let pasp: [u8; 16] = [
+            0x00, 0x00, 0x00, 0x10, b'p', b'a', b's', b'p', 0x00, 0x00, 0x00, 0x01, 0x00, 0x00,
+            0x00, 0x01,
+        ];
+        let mut with_pasp = alloc::vec::Vec::new();
+        with_pasp.extend_from_slice(&bytes[..avcc_at]);
+        with_pasp.extend_from_slice(&pasp);
+        with_pasp.extend_from_slice(&bytes[avcc_at..]);
+        let total = with_pasp.len() as u32;
+        with_pasp[0..4].copy_from_slice(&total.to_be_bytes());
+
+        let parsed = AVCSampleEntry::bare_parse(&with_pasp).unwrap();
+        assert!(
+            parsed.extra_boxes.iter().any(|b| b.box_type == *b"pasp"),
+            "pasp before avcC must be captured"
+        );
+        // The re-serialized entry still carries exactly one `pasp`, with the
+        // same body, and parses back to the same struct.
+        let re = parsed.to_bytes();
+        let pasp_at = re.windows(4).position(|w| w == b"pasp").unwrap();
+        assert_eq!(&re[pasp_at..pasp_at + 12], &pasp[4..]);
+        assert_eq!(AVCSampleEntry::bare_parse(&re).unwrap(), parsed);
+        assert_eq!(re.len(), with_pasp.len(), "same total length");
+    }
+
+    /// A hostile (`0xFFFF_FFFF`) declared size must not panic the config-box
+    /// search: the returned slice is clamped to the region that actually
+    /// exists, so a caller slicing by the (unclamped) size cannot overrun.
     #[test]
     fn find_config_box_hostile_size_does_not_panic() {
         let mut region = alloc::vec![0u8; 8];
