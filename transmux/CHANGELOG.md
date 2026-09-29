@@ -8,6 +8,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed (breaking)
+- **`StreamingFlvDemux` now emits `DemuxEvent::TrackUpdated` when a publisher re-sends a track's
+  sequence header, carrying the new codec config** (FLV/RTMP ingest). Previously the second and later
+  sequence header was ignored, so an encoder that changed resolution, profile, sample rate or
+  channel count mid-publish (routine for OBS/ffmpeg) kept reporting the stale config and every
+  downstream init segment described a stream that was no longer being sent. `TrackUpdated` was
+  documented as never changing `config`; it can now, and a consumer must treat it as "reload the
+  init segment" (#1079, audit r04-W13). `DemuxEvent::TrackUpdated`'s doc is updated accordingly.
+- `FlvDemux::unpackage` and `StreamingFlvDemux::feed` return
+  `FlvError::Codec(Error::InvalidInput)` for an AVC sequence header whose SPS decodes to a width or
+  height that does not fit the IR's `u16`. An SPS's `pic_width_in_mbs_minus1` is an unbounded
+  `ue(v)`, so a 65 536-wide SPS previously came back as a track claiming width 0 (#1079, audit
+  r04-W38).
+- **`FlvMux::package` now returns `FlvError::Codec(Error::InvalidInput)` for a composition offset it
+  cannot represent and for a zero track timescale**, rather than writing a truncated or flattened
+  value. An offset outside `CompositionTime`'s signed 24-bit millisecond field (Annex E §E.4.3.2)
+  used to be written with its low 24 bits, describing a moment the sample is not at; and a track
+  whose `TrackSpec::timescale` is 0 made every tag's `Timestamp` 0, flattening the whole file onto
+  one instant (#1079, audit r04-W12). A zero timescale is reachable: `RtpDepacketiser` has produced
+  such tracks (audit r04-W30).
+- `rtmp::RtmpError` gains the `Amf0TooDeep { depth }` variant. The enum is `#[non_exhaustive]`, so
+  this is an additive change for matching callers, but an exhaustive `match` over it outside this
+  crate (allowed only via a wildcard arm) now has a case it did not before (#1079, audit r04-W27).
 - **Several paths that previously returned a value now return an error**, because accepting the
   input produced a box/header that misdescribed itself. Each is listed again under `### Fixed` with
   its full rationale:
@@ -87,6 +109,65 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   CENC-protected (`enca`) audio track as clear (#1017).
 
 ### Fixed
+- `rtmp::read_chunks` applies a fmt-3 chunk's inherited timestamp **delta**: a fmt-3 chunk that
+  begins a new message advances the running timestamp by the delta the preceding fmt-1/fmt-2 chunk
+  declared (§5.3.1.2.4), rather than reusing the previous timestamp. `librtmp`/`ffmpeg` send
+  constant-rate audio exactly this way, so every such message previously carried an identical DTS
+  and `FlvDemux` saw zero-duration samples (#1079, audit r04-W26).
+- `rtmp::read_chunks` honours an **Abort Message** (§5.4.2), discarding the in-progress message on
+  the chunk stream the message names. Ignoring it left the abandoned bytes buffered, so the sender's
+  re-sent message was appended to them and emitted as one misframed message (#1079, audit r04-W26).
+- `AmfValue::parse` caps AMF0 object/ECMA-array nesting at `MAX_AMF0_DEPTH` (32), returning
+  `RtmpError::Amf0TooDeep` past it. Each nesting level costs about four wire bytes, so an
+  unconstrained recursive descent over peer-supplied command bytes (a ~1 MiB `connect` reaches
+  ~250 000 frames) overflowed the stack, which aborts the process and cannot be caught (#1079,
+  audit r04-W27).
+- `StreamingFlvDemux::feed` consumes a tag whose codec config is structurally corrupt instead of
+  leaving it buffered. Before, a single bad ASC/avcC stayed in the pending buffer, so every later
+  `feed` re-parsed the same bytes and returned the same error — the live ingest could never get
+  past one bad tag (#1079, audit r04-W13).
+- `StreamingFlvDemux` emits `DemuxEvent::TrackUpdated` only when a re-sent sequence header's bytes
+  actually **differ** from the config the track currently carries. Encoders commonly repeat the
+  header on every keyframe; reporting each repetition as a change would make a consumer rebuild its
+  init segment hundreds of times a minute for a config that never changed (#1079, audit r04-W13).
+- `StreamingFlvDemux::feed` now memmoves the pending buffer once per call rather than once per tag.
+  Each completed tag used to `drain(0..total)` from the front, so a single `feed` of a large chunk
+  moved the whole remainder once per tag — quadratic in the tag count (8 MiB of small audio tags,
+  ~20 000 of them, moved ~80 GB). The bytes are now parsed at a moving cursor with one drain at the
+  end (#1079, audit r04-W14).
+- The FLV demuxers no longer truncate AVC dimensions into the IR's `u16`: `config.width as u16`
+  folded a 65 536-wide SPS down to 0, producing a track that misdescribed its own coded size. A
+  dimension that does not fit is now `FlvError::Codec(Error::InvalidInput)` (the `#997` class,
+  previously fixed only in `ts_demux`) (#1079, audit r04-W38).
+- `aac_asc::ChannelConfiguration` gains `channel_count() -> Option<u16>`, the ISO/IEC 14496-3
+  Table 1.19 channel count for the configuration, and both FLV demuxers use it for
+  `CodecConfig::Aac::channel_count` instead of the raw field. The field is an index, not a count:
+  configuration 7 is **8** channels (7.1) but was reported as 7, and configuration 0 was reported
+  as 0 — which reads as "no channels" for what is really "not determined". For 0 (the mapping is
+  carried in-band by a `program_config_element`, which this crate does not decode — a PCE is a raw
+  data element, not part of the ASC) and for the reserved values 8..=15, the count is now the
+  documented `AAC_CHANNEL_COUNT_UNKNOWN` placeholder, `0`, meaning "not derived": the same
+  convention `ts_demux` already uses for MPEG-H. The distinction is that the placeholder is now
+  deliberate and named, not whatever the configuration index happened to be (#1079, audit
+  r04-W16).
+- `FlvDemux` gains `last_walk_was_truncated()`, reporting whether the most recent
+  `unpackage` call ended on a truncated final tag. That case was already tolerated (the tags before
+  it are returned) but silently — indistinguishable from a intact file. The returned `Media` is
+  unchanged; the flag lets a caller warn, trim or re-fetch. A tag that is complete except for its
+  redundant trailing `PreviousTagSize` (Annex E §E.4.1) is *not* reported: it is kept, and the walk
+  ends cleanly (#1079, audit r04-W15).
+- `FlvDemux::unpackage` stops at a truncated **final** tag and returns every complete tag before it,
+  instead of failing the whole demux. A recorded or captured live FLV routinely ends mid-tag, and
+  the previous behaviour discarded all of it (`FlvError::TagOverrun` for the entire file). A stream
+  whose *first* tag is already incomplete still reports `TagOverrun`, since there is nothing to keep
+  (#1079, audit r04-W15).
+- `FlvMux::package` now rescales each track's `Sample::duration` running sum and its composition
+  offset from the track's own timescale into FLV's millisecond `Timestamp`/`CompositionTime` fields
+  (Annex E §E.4.1/§E.4.3.2), instead of writing the raw tick count. A 90 kHz input (any `TsDemux`
+  source) previously came out with timestamps 90× too large, so the A/V timeline was wrong and every
+  composition offset past ±8 388 607 ms was silently truncated into the SI24 field. An offset that
+  cannot be represented, or a tag clock that would run backwards, is now an error rather than a
+  truncation (#1079, audit r04-W12).
 - `visual_ext::NclxColourInfo` gains a `reserved: u8` field recording the 7 `reserved` bits of the
   `nclx` flag byte, which are now preserved instead of being zeroed on a round trip (#1079,
   audit r04-W39).

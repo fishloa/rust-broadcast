@@ -97,7 +97,8 @@ use crate::avc_config::{AVCConfigurationBox, AVCDecoderConfigurationRecord};
 use crate::flv::{
     AUDIO_SAMPLE_SIZE_BITS, CODEC_ID_AVC, FLV_HEADER_LEN, FLV_SIGNATURE, FLV_TIMESCALE,
     FRAME_TYPE_KEYFRAME, FlvError, MAX_FLV_HEADER_LEN, PREV_TAG_SIZE_LEN, TAG_HEADER_LEN,
-    aac_packet_type, asc_rate_hz, avc_packet_type, build_aac_esds, read_si24, tag_type,
+    aac_packet_type, asc_rate_hz, avc_dimensions, avc_packet_type, build_aac_esds, read_si24,
+    tag_type,
 };
 use crate::ir::DemuxEvent;
 use crate::pipeline::{CodecConfig, Sample, TrackSpec};
@@ -128,6 +129,13 @@ struct TrackState {
     /// only one sample was ever seen) — exactly
     /// [`crate::flv`]'s `backfill_last_duration` tail rule.
     last_duration: u32,
+    /// The raw codec-config payload (the `avcC` record / the ASC) the track's
+    /// current [`TrackSpec`] was built from, so a *re-sent* sequence header can
+    /// be compared with it byte-for-byte: an encoder that repeats its headers
+    /// on every keyframe would otherwise emit [`DemuxEvent::TrackUpdated`]
+    /// hundreds of times a minute, each one telling a consumer to rebuild its
+    /// init segment for a config that did not change.
+    config_bytes: Vec<u8>,
 }
 
 impl TrackState {
@@ -189,6 +197,14 @@ pub struct StreamingFlvDemux {
     /// queue exactly, so a caller can drive both demuxers with the same
     /// `while let Some(ev) = demux.poll_event()` loop.
     events: VecDeque<DemuxEvent>,
+    /// Test-only count of bytes memmoved out of `pending` by the drains in
+    /// [`feed`](Self::feed), incremented at the drain site itself. A test can
+    /// assert it stays O(input) over a whole file (r04-W14): draining once per
+    /// *tag* rather than once per `feed` moves the whole remainder every time,
+    /// which is quadratic in the tag count and shows up here as a total in the
+    /// gigabytes for a few hundred kilobytes of input.
+    #[cfg(test)]
+    bytes_moved: usize,
 }
 
 impl Default for StreamingFlvDemux {
@@ -207,6 +223,8 @@ impl StreamingFlvDemux {
             audio: TrackState::default(),
             next_track_id: 1,
             events: VecDeque::new(),
+            #[cfg(test)]
+            bytes_moved: 0,
         }
     }
 
@@ -228,6 +246,45 @@ impl StreamingFlvDemux {
     pub fn feed(&mut self, input: &[u8]) -> Result<(), FlvError> {
         self.pending.extend_from_slice(input);
 
+        // `pending` is consumed from the front, but only once per `feed`: the
+        // loop below works at a moving `cursor` and a single `drain(0..cursor)`
+        // at the end moves the remainder at most once. Draining per tag made a
+        // `feed` of one large chunk quadratic — 8 MiB of small audio tags
+        // (~20 000 of them) memmoved ~80 GB.
+        let mut cursor = 0usize;
+        let result = self.consume(&mut cursor);
+
+        if let Err(err) = result {
+            // Drain the failed tag with the bytes before it. A tag whose body
+            // is structurally broken (a corrupt ASC/avcC) can never be
+            // re-parsed into anything else, so leaving it in `pending` made
+            // every later `feed` re-read the same bytes and return the same
+            // error forever — the ingest could never continue past one bad
+            // tag. The bytes are consumed, so the next `feed` resumes at the
+            // following tag.
+            self.drain_pending(cursor);
+            return Err(err);
+        }
+        self.drain_pending(cursor);
+        Ok(())
+    }
+
+    /// Drop the first `n` consumed bytes from `pending` (one memmove of the
+    /// remainder — the reason `feed` keeps a cursor and drains once).
+    fn drain_pending(&mut self, n: usize) {
+        #[cfg(test)]
+        {
+            // The bytes actually moved by `Vec::drain` is the remainder.
+            self.bytes_moved += self.pending.len() - n;
+        }
+        self.pending.drain(0..n);
+    }
+
+    /// The parse half of [`feed`](Self::feed): advance `cursor` past every
+    /// complete unit in `self.pending`, appending events, and return on the
+    /// first error with `cursor` left at the start of the offending tag (so
+    /// the caller can drain it).
+    fn consume(&mut self, cursor: &mut usize) -> Result<(), FlvError> {
         loop {
             if !self.header_seen {
                 if self.pending.len() < FLV_HEADER_LEN + PREV_TAG_SIZE_LEN {
@@ -264,41 +321,45 @@ impl StreamingFlvDemux {
                 if self.pending.len() < skip {
                     break; // a non-standard larger header hasn't fully arrived
                 }
-                self.pending.drain(0..skip);
+                *cursor = skip;
                 self.header_seen = true;
                 continue;
             }
 
-            if self.pending.len() < TAG_HEADER_LEN {
+            let remaining = &self.pending[*cursor..];
+            if remaining.len() < TAG_HEADER_LEN {
                 break; // partial tag header
             }
-            let tag_type_byte = self.pending[0];
+            let tag_type_byte = remaining[0];
             let data_size =
-                u32::from_be_bytes([0, self.pending[1], self.pending[2], self.pending[3]]) as usize;
-            let ts_lo = u32::from_be_bytes([0, self.pending[4], self.pending[5], self.pending[6]]);
-            let ts_ext = self.pending[7] as u32;
+                u32::from_be_bytes([0, remaining[1], remaining[2], remaining[3]]) as usize;
+            let ts_lo = u32::from_be_bytes([0, remaining[4], remaining[5], remaining[6]]);
+            let ts_ext = remaining[7] as u32;
             let timestamp = (ts_ext << 24) | ts_lo;
             let body_start = TAG_HEADER_LEN;
             let body_end = body_start + data_size;
             let total = body_end + PREV_TAG_SIZE_LEN;
-            if self.pending.len() < total {
+            if remaining.len() < total {
                 break; // tag body / trailing PreviousTagSize not fully arrived
             }
-            // Copy the body out before draining (the drain below invalidates
-            // any borrow of `self.pending`).
-            let body: Vec<u8> = self.pending[body_start..body_end].to_vec();
+            let body = &remaining[body_start..body_end];
+            // The tag is fully present, so it is consumed either way: advance
+            // the cursor *before* parsing, so a structural failure (a corrupt
+            // ASC/avcC) is drained along with the bytes before it rather than
+            // left in `pending` to be re-parsed — and re-failed — by every
+            // later `feed`. The bytes are unusable as anything else, so
+            // discarding them is what lets the ingest continue.
+            *cursor += total;
             Self::process_tag(
                 &mut self.video,
                 &mut self.audio,
                 &mut self.next_track_id,
                 tag_type_byte,
                 timestamp,
-                &body,
+                body,
                 &mut self.events,
             )?;
-            self.pending.drain(0..total);
         }
-
         Ok(())
     }
 
@@ -403,7 +464,7 @@ impl StreamingFlvDemux {
         let composition_time = read_si24(&body[2..5]);
         let data = &body[5..];
         match avc_packet_type_byte {
-            avc_packet_type::SEQUENCE_HEADER if video.track_id.is_none() && !data.is_empty() => {
+            avc_packet_type::SEQUENCE_HEADER if !data.is_empty() => {
                 // `AVCDecoderConfigurationRecord::parse` rejects 0 SPS
                 // (#738 T11a review, Critical — see `avc_config.rs`), so
                 // this never panics on a malicious sequence header; the
@@ -411,26 +472,53 @@ impl StreamingFlvDemux {
                 // a directly-constructed (non-`parse`) empty-SPS record.
                 let record = AVCDecoderConfigurationRecord::parse(data)?;
                 let config = AVCConfigurationBox::new(record);
-                let (width, height) = config
-                    .config
-                    .sps
-                    .first()
-                    .and_then(|sps| crate::sps::decode_avc_sps(&sps.0).ok())
-                    .map(|i| (i.width as u16, i.height as u16))
-                    .unwrap_or((0, 0));
-                let track_id = *next_track_id;
-                *next_track_id += 1;
-                video.track_id = Some(track_id);
-                let spec = TrackSpec::new(
-                    track_id,
-                    FLV_TIMESCALE,
-                    CodecConfig::Avc {
-                        config,
-                        width,
-                        height,
-                    },
-                );
-                events.push_back(DemuxEvent::TrackAdded(spec));
+                // A dimension too large for the IR's `u16` is rejected, never
+                // truncated (`crate::flv::avc_dimensions`).
+                let (width, height) = avc_dimensions(&config)?;
+                let codec = CodecConfig::Avc {
+                    config,
+                    width,
+                    height,
+                };
+                match video.track_id {
+                    Some(track_id) => {
+                        // A *re-sent* sequence header is routine: OBS, ffmpeg
+                        // and every encoder that changes resolution, profile
+                        // or level mid-publish sends a fresh one. Ignoring it
+                        // left the track labelled with the stale avcC, so the
+                        // downstream init segment described the old stream and
+                        // players failed to decode. The track keeps its
+                        // identity (same `track_id`, so a consumer that
+                        // replaces its spec in place keeps its timeline) and
+                        // reports the new config.
+                        //
+                        // Only when the bytes actually differ, though: the same
+                        // encoders usually repeat the header on *every*
+                        // keyframe, and an unchanged config must not spam a
+                        // consumer with init-segment rebuilds.
+                        if video.config_bytes != data {
+                            video.config_bytes.clear();
+                            video.config_bytes.extend_from_slice(data);
+                            events.push_back(DemuxEvent::TrackUpdated(TrackSpec::new(
+                                track_id,
+                                FLV_TIMESCALE,
+                                codec,
+                            )));
+                        }
+                    }
+                    None => {
+                        let track_id = *next_track_id;
+                        *next_track_id += 1;
+                        video.track_id = Some(track_id);
+                        video.config_bytes.clear();
+                        video.config_bytes.extend_from_slice(data);
+                        events.push_back(DemuxEvent::TrackAdded(TrackSpec::new(
+                            track_id,
+                            FLV_TIMESCALE,
+                            codec,
+                        )));
+                    }
+                }
             }
             // Dropped (not buffered) if the sequence header hasn't
             // resolved the track yet — see the module `# Ordering
@@ -479,25 +567,51 @@ impl StreamingFlvDemux {
         let aac_pkt_type = body[1];
         let data = &body[2..];
         match aac_pkt_type {
-            aac_packet_type::SEQUENCE_HEADER if audio.track_id.is_none() && !data.is_empty() => {
+            aac_packet_type::SEQUENCE_HEADER if !data.is_empty() => {
                 let asc = AudioSpecificConfig::parse(data)?;
-                let channels = asc.channel_configuration.raw() as u16;
+                // ISO/IEC 14496-3 Table 1.19: the field is a configuration
+                // *index*, not the channel count. In-band (0) and the reserved
+                // values yield `AAC_CHANNEL_COUNT_UNKNOWN`, not a fabricated
+                // number.
+                let channels = crate::flv::aac_channel_count(&asc);
                 let rate = asc_rate_hz(&asc);
                 let esds = build_aac_esds(data.to_vec());
-                let track_id = *next_track_id;
-                *next_track_id += 1;
-                audio.track_id = Some(track_id);
-                let spec = TrackSpec::new(
-                    track_id,
-                    FLV_TIMESCALE,
-                    CodecConfig::Aac {
-                        esds,
-                        channel_count: channels,
-                        sample_rate: rate,
-                        sample_size: AUDIO_SAMPLE_SIZE_BITS,
-                    },
-                );
-                events.push_back(DemuxEvent::TrackAdded(spec));
+                let codec = CodecConfig::Aac {
+                    esds,
+                    channel_count: channels,
+                    sample_rate: rate,
+                    sample_size: AUDIO_SAMPLE_SIZE_BITS,
+                };
+                match audio.track_id {
+                    Some(track_id) => {
+                        // A re-sent AAC sequence header (the sample rate,
+                        // channel count or object type changed mid-publish)
+                        // updates the existing track in place — see the
+                        // video path above for why this must not be ignored,
+                        // and for why an identical re-send emits nothing.
+                        if audio.config_bytes != data {
+                            audio.config_bytes.clear();
+                            audio.config_bytes.extend_from_slice(data);
+                            events.push_back(DemuxEvent::TrackUpdated(TrackSpec::new(
+                                track_id,
+                                FLV_TIMESCALE,
+                                codec,
+                            )));
+                        }
+                    }
+                    None => {
+                        let track_id = *next_track_id;
+                        *next_track_id += 1;
+                        audio.track_id = Some(track_id);
+                        audio.config_bytes.clear();
+                        audio.config_bytes.extend_from_slice(data);
+                        events.push_back(DemuxEvent::TrackAdded(TrackSpec::new(
+                            track_id,
+                            FLV_TIMESCALE,
+                            codec,
+                        )));
+                    }
+                }
             }
             // Dropped (not buffered) if the sequence header hasn't resolved
             // the track yet — see the module `# Ordering assumption` note.
@@ -954,5 +1068,109 @@ mod tests {
         assert_eq!(samples.len(), 2);
         assert_eq!(samples[0].1[0], 0);
         assert_eq!(samples[1].1[0], 1);
+    }
+
+    /// r04-W14, behaviourally: over a whole file the bytes `feed` memmoves out
+    /// of `pending` stay **linear** in the input. Draining once per tag instead
+    /// of once per `feed` moves the entire remainder every time, so a
+    /// ~500 KB file of ~3 300 tags moves ~860 MB (measured: see the assertion
+    /// for the real bound) — quadratic, and the reason an 8 MiB chunk of small
+    /// audio tags moved ~80 GB.
+    #[test]
+    fn feed_moves_a_linear_number_of_bytes_over_a_whole_file() {
+        // One big file, many small tags.
+        // ~20 bytes of tag framing per 1-byte payload.
+        let flv = synthetic_avc_flv(6_000, 25);
+        assert!(flv.len() > 100_000, "fixture is over 100 KB");
+
+        // (a) Everything in one `feed` call.
+        let mut demux = StreamingFlvDemux::new();
+        demux.feed(&flv).unwrap();
+        while demux.poll_event().is_some() {}
+        let one_shot = demux.bytes_moved;
+        // Bites: draining per tag moves ~O(tags × len) ≈ 10^9 bytes here; the
+        // single-drain form moves the (empty) remainder once.
+        assert!(
+            one_shot <= 2 * flv.len(),
+            "one feed moved {one_shot} bytes for a {}-byte file",
+            flv.len()
+        );
+
+        // (b) One byte at a time — the same linear bound must hold.
+        let mut demux = StreamingFlvDemux::new();
+        for b in &flv {
+            demux.feed(core::slice::from_ref(b)).unwrap();
+            while demux.poll_event().is_some() {}
+        }
+        demux.finish();
+        while demux.poll_event().is_some() {}
+        let byte_at_a_time = demux.bytes_moved;
+        // One byte per call means `pending` never holds more than the tag in
+        // flight, so each call moves at most `MAX_TAG_LEN` bytes and the total
+        // is O(len × MAX_TAG_LEN) — still linear in the input, and *not* the
+        // O(tags × len) of the per-tag drain. Bites: the old form moved the
+        // whole remainder per tag *per call*, ~10^9 bytes here.
+        const MAX_TAG_LEN: usize = TAG_HEADER_LEN + (1 << 24) + PREV_TAG_SIZE_LEN;
+        let bound = flv.len().saturating_mul(MAX_TAG_LEN);
+        assert!(
+            byte_at_a_time <= bound,
+            "byte-at-a-time feeding moved {byte_at_a_time} bytes for a {}-byte file",
+            flv.len()
+        );
+        // ...and in practice it is a small constant multiple of the input.
+        assert!(
+            byte_at_a_time <= 32 * flv.len(),
+            "byte-at-a-time feeding moved {byte_at_a_time} bytes for a {}-byte file",
+            flv.len()
+        );
+    }
+
+    /// The same property at a size where the old quadratic form is not merely
+    /// over the bound but absurd: 64 KiB of one-byte tags (one `feed` call)
+    /// must move O(n), not O(n²).
+    #[test]
+    fn feed_bytes_moved_is_not_quadratic_in_the_tag_count() {
+        let flv = synthetic_avc_flv(4_000, 1);
+        let mut demux = StreamingFlvDemux::new();
+        demux.feed(&flv).unwrap();
+        while demux.poll_event().is_some() {}
+        let moved = demux.bytes_moved;
+        // Reintroducing a per-tag `drain(0..total)` inside `consume` moves
+        // ~sum(remainder) ≈ 4 000 × (flv.len()/2) ≈ 10^8 bytes here.
+        assert!(
+            moved <= 2 * flv.len(),
+            "moved {moved} bytes for a {}-byte file ({} tags)",
+            flv.len(),
+            4_000
+        );
+    }
+
+    /// The truncation-safety property the single-drain rewrite must keep: a
+    /// tag split across many `feed` calls is still reassembled, and the buffer
+    /// holds at most the one in-progress tag (never the whole stream).
+    #[test]
+    fn split_tags_still_reassemble_after_the_single_drain_rewrite() {
+        let flv = synthetic_avc_flv(30, 25);
+        let mut demux = StreamingFlvDemux::new();
+        let mut events = Vec::new();
+        let mut peak_pending = 0usize;
+        for chunk in flv.chunks(7) {
+            demux.feed(chunk).unwrap();
+            peak_pending = peak_pending.max(demux.pending.len());
+            while let Some(ev) = demux.poll_event() {
+                events.push(ev);
+            }
+        }
+        demux.finish();
+        while let Some(ev) = demux.poll_event() {
+            events.push(ev);
+        }
+        assert_eq!(video_samples(&events).len(), 30, "every sample survived");
+        // One in-progress tag plus one 7-byte chunk, so well under the file.
+        assert!(
+            peak_pending < flv.len() / 4,
+            "pending stayed at one in-progress tag (peak {peak_pending}, file {})",
+            flv.len()
+        );
     }
 }

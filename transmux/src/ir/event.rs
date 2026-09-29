@@ -177,12 +177,21 @@ pub enum DemuxEvent {
     /// fires on its very first access unit, since its config needs no
     /// in-band header at all.
     TrackAdded(TrackSpec),
-    /// An existing track's PMT-derived metadata changed — its
-    /// `es_info_descriptors` (e.g. a corrected `ISO_639_language_descriptor`)
-    /// or a reclassified `stream_type` — independent of codec config
-    /// recovery, which stays single-shot and permanent (issue #774). Carries
-    /// the track's full, current [`TrackSpec`] (same `track_id`, unchanged
-    /// `config`, updated `es_info_descriptors`).
+    /// An existing track's metadata changed in place. Carries the track's
+    /// full, current [`TrackSpec`] — always the same `track_id`, so a consumer
+    /// that replaces its stored spec keyed by `track_id` keeps its timeline.
+    ///
+    /// Two sources raise it today:
+    /// - TS (issue #774): the PMT-derived metadata changed — its
+    ///   `es_info_descriptors` (e.g. a corrected `ISO_639_language_descriptor`)
+    ///   — with the codec config unchanged, since PMT-declared config recovery
+    ///   stays single-shot and permanent.
+    /// - FLV (r04-W13): the publisher re-sent the track's sequence header
+    ///   (`AVCPacketType`/`AACPacketType` == 0), which encoders do routinely
+    ///   after a resolution, profile, sample-rate or channel-count change. Here
+    ///   `config` **does** change, and a consumer must treat it as "reload the
+    ///   init segment / rebuild the sample-entry" — the previous config described
+    ///   a stream that is no longer being sent.
     TrackUpdated(TrackSpec),
     /// A previously-declared track is no longer listed in the source's track
     /// declaration (e.g. a PMT version change that drops a PID). Only ever

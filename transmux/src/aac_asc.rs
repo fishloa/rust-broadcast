@@ -285,6 +285,30 @@ impl ChannelConfiguration {
             Self::Reserved(_) => "reserved",
         }
     }
+
+    /// The number of audio channels this configuration's default channel
+    /// mapping carries (ISO/IEC 14496-3 Table 1.19, "channelConfiguration").
+    ///
+    /// This is **not** the raw field value: configuration `7` is 8 channels
+    /// (7.1), and `0` means the mapping is carried in-band by a
+    /// `program_config_element` in the raw data stream, so the count is not
+    /// known from the ASC — that (and a reserved value, 8..=15) returns
+    /// `None` rather than a fabricated `0`. Reporting the raw field as a
+    /// channel count made 7.1 look like 7 channels and a PCE-signalled stream
+    /// look like 0.
+    pub fn channel_count(&self) -> Option<u16> {
+        match self {
+            Self::InBand | Self::Reserved(_) => None,
+            Self::Mono => Some(1),
+            Self::Stereo => Some(2),
+            Self::Ch3 => Some(3),
+            Self::Ch4 => Some(4),
+            Self::Ch5 => Some(5),
+            Self::Ch5_1 => Some(6),
+            // 7.1 = 3 front + 2 side + 2 back + LFE per Table 1.19.
+            Self::Ch7_1 => Some(8),
+        }
+    }
 }
 impl From<u8> for ChannelConfiguration {
     fn from(raw: u8) -> Self {

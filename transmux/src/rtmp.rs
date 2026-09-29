@@ -198,11 +198,30 @@ pub enum RtmpError {
     },
     /// FLV routing of the reassembled A/V bodies failed.
     Flv(FlvError),
+    /// An AMF0 object/ECMA-array nesting exceeded [`MAX_AMF0_DEPTH`].
+    ///
+    /// The AMF0 wire format has no depth limit, so `AmfValue::parse` (and
+    /// therefore `Command::parse`) is fed arbitrary peer-supplied bytes. Each
+    /// nesting level costs about four bytes (`03 00 01 6B`), so without a cap a
+    /// 1 MiB `connect` command recurses ~250 000 frames deep and overflows the
+    /// stack — an abort no caller can catch.
+    Amf0TooDeep {
+        /// The depth that was reached.
+        depth: usize,
+    },
     /// A length or count did not fit the wire field it is written to (#1129):
     /// a chunk `message_length` or FLV `DataSize` (both UI24) that would have
     /// silently wrapped past 16 MiB.
     FieldOverflow(broadcast_common::len::FieldOverflow),
 }
+
+/// Maximum AMF0 object/ECMA-array nesting [`AmfValue::parse`] accepts.
+///
+/// No conformant RTMP command comes close: the deepest real message this crate
+/// sees is `connect`'s command object with a nested `objectEncoding`, two
+/// levels down. 32 leaves generous headroom for a vendor's custom metadata
+/// while keeping the parser's stack use bounded whatever a peer sends.
+pub const MAX_AMF0_DEPTH: usize = 32;
 
 impl fmt::Display for RtmpError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -234,6 +253,10 @@ impl fmt::Display for RtmpError {
             RtmpError::UnsupportedAmf0Marker(m) => {
                 write!(f, "RTMP unsupported AMF0 marker 0x{m:02X}")
             }
+            RtmpError::Amf0TooDeep { depth } => write!(
+                f,
+                "RTMP AMF0 nesting depth {depth} exceeds the {MAX_AMF0_DEPTH}-level cap"
+            ),
             RtmpError::AmfStringTooLong { len } => {
                 write!(
                     f,
@@ -636,7 +659,30 @@ impl ProtocolControl {
         }
     }
 
+    /// Whether `msg_type_id` is one of the protocol control message types this
+    /// codec handles (§5.4: 1, 2, 3, 5, 6 — note 4 is a User Control message,
+    /// which is an *application* message, not protocol control).
+    ///
+    /// A cheap guard for callers that must ask "is this a control message?"
+    /// about every completed message: [`parse`](Self::parse) already rejects an
+    /// unknown type id, but a caller in a hot loop should not build its closure
+    /// and body-slice checks only to be told the message is ordinary media.
+    pub fn is_control_type(msg_type_id: u8) -> bool {
+        matches!(
+            msg_type_id,
+            msg_type::SET_CHUNK_SIZE
+                | msg_type::ABORT
+                | msg_type::ACKNOWLEDGEMENT
+                | msg_type::WINDOW_ACK_SIZE
+                | msg_type::SET_PEER_BANDWIDTH
+        )
+    }
+
     /// Parse a protocol control message body given its message type id.
+    ///
+    /// Returns [`RtmpError::UnknownControlMsgType`] for a type id that is not
+    /// protocol control at all — check [`is_control_type`](Self::is_control_type)
+    /// first when that is an expected case rather than an error.
     pub fn parse(msg_type_id: u8, body: &[u8]) -> Result<Self, RtmpError> {
         let want_u32 = |what_len: usize| -> Result<u32, RtmpError> {
             if body.len() < what_len {
@@ -732,7 +778,20 @@ impl AmfValue {
 
     /// Decode one AMF0 value from the front of `input`, returning the value and
     /// the number of bytes consumed (AMF0 §2).
+    ///
+    /// Object/ECMA-array nesting is capped at [`MAX_AMF0_DEPTH`]: the wire
+    /// format has no depth limit and this is the entry point for peer-supplied
+    /// command bytes, so an uncapped recursive descent would overflow the stack
+    /// (an abort, not a catchable error) on a hostile or corrupt message.
     pub fn parse(input: &[u8]) -> Result<(Self, usize), RtmpError> {
+        Self::parse_at_depth(input, 0)
+    }
+
+    /// [`parse`](Self::parse) with the current nesting depth threaded through.
+    fn parse_at_depth(input: &[u8], depth: usize) -> Result<(Self, usize), RtmpError> {
+        if depth > MAX_AMF0_DEPTH {
+            return Err(RtmpError::Amf0TooDeep { depth });
+        }
         let marker = *input.first().ok_or(RtmpError::Truncated {
             what: "AMF0 marker",
             need: 1,
@@ -766,7 +825,7 @@ impl AmfValue {
             }
             amf0::NULL => Ok((AmfValue::Null, 1)),
             amf0::OBJECT => {
-                let (members, n) = read_amf0_members(rest)?;
+                let (members, n) = read_amf0_members(rest, depth + 1)?;
                 Ok((AmfValue::Object(members), 1 + n))
             }
             amf0::ECMA_ARRAY => {
@@ -779,7 +838,7 @@ impl AmfValue {
                 }
                 // The associative count is advisory; the members are terminated
                 // by the object-end marker (§2.10). Read to object-end.
-                let (members, n) = read_amf0_members(&rest[4..])?;
+                let (members, n) = read_amf0_members(&rest[4..], depth + 1)?;
                 Ok((AmfValue::EcmaArray(members), 1 + 4 + n))
             }
             other => Err(RtmpError::UnsupportedAmf0Marker(other)),
@@ -830,7 +889,10 @@ fn read_amf0_string(input: &[u8]) -> Result<(String, usize), RtmpError> {
 
 /// Read object / ECMA-array members up to the object-end marker (§2.5 / §2.11).
 /// Returns (members, bytes consumed including the empty-key + object-end).
-fn read_amf0_members(input: &[u8]) -> Result<(Vec<(String, AmfValue)>, usize), RtmpError> {
+fn read_amf0_members(
+    input: &[u8],
+    depth: usize,
+) -> Result<(Vec<(String, AmfValue)>, usize), RtmpError> {
     let mut members = Vec::new();
     let mut off = 0;
     loop {
@@ -851,7 +913,7 @@ fn read_amf0_members(input: &[u8]) -> Result<(Vec<(String, AmfValue)>, usize), R
             // it as a value read to keep parsing forward.
         }
         off += kn;
-        let (val, vn) = AmfValue::parse(&input[off..])?;
+        let (val, vn) = AmfValue::parse_at_depth(&input[off..], depth)?;
         off += vn;
         members.push((key, val));
     }
@@ -984,6 +1046,13 @@ struct ChunkContext {
     message_length: usize,
     message_stream_id: u32,
     timestamp: u32,
+    /// The **delta** the most recent fmt-1/fmt-2 chunk declared
+    /// (§5.3.1.2.2/.3). A fmt-3 chunk that begins a new message inherits this
+    /// delta — or, when the chunk carries its own extended timestamp, that
+    /// value, which stands in for the delta the 24-bit field could not hold —
+    /// and adds it to the running timestamp rather than reusing the timestamp
+    /// itself (§5.3.1.2.4) — see `read_chunks`.
+    timestamp_delta: u32,
     extended: bool,
     // Reassembly buffer for the in-progress message on this csid.
     partial: Vec<u8>,
@@ -1029,12 +1098,20 @@ pub fn read_chunks(mut input: &[u8]) -> Result<Vec<Message>, RtmpError> {
         };
 
         // Build/refresh the context for this csid from the fmt + inheritance.
+        //
+        // The fmt-1/fmt-2 timestamp field is a *delta* from the previous
+        // message on this csid (§5.3.1.2.2/.3), and the extended timestamp
+        // overriding it when the sentinel was read is a delta as well.
+        let delta = ext_ts.unwrap_or(mh.timestamp);
         let mut cx = match bh.fmt {
             0 => ChunkContext {
                 message_type_id: mh.message_type_id,
                 message_length: mh.message_length as usize,
                 message_stream_id: mh.message_stream_id,
                 timestamp: ext_ts.unwrap_or(mh.timestamp),
+                // fmt 0 carries an absolute timestamp, so there is no delta to
+                // inherit (§5.3.1.2.1).
+                timestamp_delta: 0,
                 extended: ext_present,
                 partial: Vec::new(),
             },
@@ -1044,7 +1121,8 @@ pub fn read_chunks(mut input: &[u8]) -> Result<Vec<Message>, RtmpError> {
                     message_type_id: mh.message_type_id,
                     message_length: mh.message_length as usize,
                     message_stream_id: p.message_stream_id,
-                    timestamp: p.timestamp.wrapping_add(ext_ts.unwrap_or(mh.timestamp)),
+                    timestamp: p.timestamp.wrapping_add(delta),
+                    timestamp_delta: delta,
                     extended: ext_present,
                     // fmt 1 starts a NEW message (§5.3.1.2.2): any bytes still
                     // buffered from an incomplete earlier message on this csid
@@ -1058,19 +1136,46 @@ pub fn read_chunks(mut input: &[u8]) -> Result<Vec<Message>, RtmpError> {
                     message_type_id: p.message_type_id,
                     message_length: p.message_length,
                     message_stream_id: p.message_stream_id,
-                    timestamp: p.timestamp.wrapping_add(ext_ts.unwrap_or(mh.timestamp)),
+                    timestamp: p.timestamp.wrapping_add(delta),
+                    timestamp_delta: delta,
                     extended: ext_present,
                     // fmt 2 starts a NEW message too (§5.3.1.2.3).
                     partial: Vec::new(),
                 }
             }
             _ => {
-                // fmt 3: inherit everything; may continue a message or begin a
-                // new one with the same header (§5.3.1.2.4).
+                // fmt 3: inherit the previous chunk's header outright, and
+                // either continue its message or (when nothing is buffered)
+                // begin a new one (§5.3.1.2.4).
                 let mut p = prev.ok_or(RtmpError::NoChunkContext(bh.csid))?;
-                if let Some(t) = ext_ts {
-                    p.timestamp = t;
+                let starting_new_message = p.partial.is_empty();
+                if starting_new_message {
+                    // §5.3.1.2.4: this is the framing used for "a stream of
+                    // messages of exactly the same size, stream ID and spacing
+                    // in time" — the message length, type and stream ID are
+                    // identical, and the **timestamp advances by the delta the
+                    // preceding fmt-1/fmt-2 chunk declared**. Reusing the
+                    // timestamp made every fmt-3-started message carry the
+                    // identical DTS, collapsing constant-rate audio (librtmp
+                    // and ffmpeg send fmt 2 then fmt 3) into duplicate
+                    // timestamps with zero durations downstream.
+                    //
+                    // When this chunk carries its own extended timestamp, that
+                    // value *is* this message's delta — it stands in for the
+                    // 24-bit delta field the fmt-1/fmt-2 predecessor could not
+                    // hold (§5.3.1.3: the extended field carries the same
+                    // quantity the truncated one would have). It is **not**
+                    // absolute: assigning it as one would jump the clock to
+                    // whatever the delta happened to be.
+                    let advance = ext_ts.unwrap_or(p.timestamp_delta);
+                    p.timestamp = p.timestamp.wrapping_add(advance);
                 }
+                // A fmt-3 **continuation** chunk changes nothing about the
+                // timestamp: it is mid-message, and the timestamp belongs to
+                // the message. In particular its extended field (present
+                // because the message's own timestamp is >= the sentinel,
+                // §5.3.1.3) repeats that timestamp and must not be re-applied
+                // as a delta.
                 p
             }
         };
@@ -1102,13 +1207,36 @@ pub fn read_chunks(mut input: &[u8]) -> Result<Vec<Message>, RtmpError> {
         // Message complete?
         if cx.partial.len() >= cx.message_length {
             let body = core::mem::take(&mut cx.partial);
-            // A Set Chunk Size control message changes the reassembly size for
-            // all subsequent chunks (§5.4.1).
-            if cx.message_type_id == msg_type::SET_CHUNK_SIZE
-                && let Ok(ProtocolControl::SetChunkSize(sz)) =
-                    ProtocolControl::parse(cx.message_type_id, &body)
-            {
-                chunk_size = (sz as usize).max(1);
+            // Almost every message is media, not protocol control: check the
+            // type id before paying for a body parse (and before treating a
+            // media body as a malformed control message).
+            match ProtocolControl::is_control_type(cx.message_type_id) {
+                false => {}
+                true => match ProtocolControl::parse(cx.message_type_id, &body) {
+                    // A Set Chunk Size control message changes the reassembly size
+                    // for all subsequent chunks (§5.4.1).
+                    Ok(ProtocolControl::SetChunkSize(sz)) => {
+                        chunk_size = (sz as usize).max(1);
+                    }
+                    // An Abort Message (§5.4.2) tells the receiver to discard the
+                    // in-progress message on the csid its body names, so the
+                    // sender can re-send the rest of it. Ignoring this left the
+                    // aborted bytes buffered, and the next chunk for that csid was
+                    // appended to a message the peer had already abandoned, so the
+                    // two were emitted as one misframed message.
+                    Ok(ProtocolControl::Abort(target)) => {
+                        if let Some(i) = ctx.iter().position(|(c, _)| *c == target) {
+                            ctx[i].1.partial.clear();
+                            // The delta belonged to the message being
+                            // abandoned: a fmt-3 re-send after the abort must
+                            // start from the aborted message's timestamp, not
+                            // advance by a delta that described a message
+                            // nobody ever received.
+                            ctx[i].1.timestamp_delta = 0;
+                        }
+                    }
+                    _ => {}
+                },
             }
             out.push(Message {
                 csid: bh.csid,
@@ -1475,6 +1603,39 @@ mod tests {
         assert_eq!(msgs[0].body, body);
     }
 
+    /// The control-type guard `read_chunks` uses so ordinary media never pays
+    /// for (or is misread as) a protocol control message body.
+    #[test]
+    fn control_type_guard_matches_the_control_message_set() {
+        for t in [
+            msg_type::SET_CHUNK_SIZE,
+            msg_type::ABORT,
+            msg_type::ACKNOWLEDGEMENT,
+            msg_type::WINDOW_ACK_SIZE,
+            msg_type::SET_PEER_BANDWIDTH,
+        ] {
+            assert!(
+                ProtocolControl::is_control_type(t),
+                "{t} is protocol control"
+            );
+        }
+        for t in [
+            msg_type::AUDIO,
+            msg_type::VIDEO,
+            msg_type::DATA_AMF0,
+            msg_type::DATA_AMF3,
+            0,
+            0xFF,
+        ] {
+            assert!(
+                !ProtocolControl::is_control_type(t),
+                "{t} is not protocol control"
+            );
+            // ...and `parse` agrees, so the guard is not a second source of truth.
+            assert!(ProtocolControl::parse(t, &[]).is_err());
+        }
+    }
+
     /// A 16 MiB (2^24) message body cannot fit the 24-bit `message_length`
     /// field (#1129): unfixed, `m.body.len() as u32` then `write_u24` kept
     /// only the low 24 bits, silently misframing the chunk header.
@@ -1547,5 +1708,355 @@ mod tests {
             ),
             "expected FieldOverflow for DataSize, got {err:?}"
         );
+    }
+
+    /// §5.3.1.2.4: a fmt-3 chunk that *begins* a new message carries no header
+    /// of its own — it inherits the previous header plus the **timestamp
+    /// delta** the preceding fmt-2 chunk declared, which advances the running
+    /// timestamp. `librtmp` and `ffmpeg` send constant-rate audio exactly this
+    /// way (one fmt-2, then fmt-3 forever). Reusing the previous timestamp
+    /// instead gave every one of those messages an identical DTS, so
+    /// `FlvDemux` saw zero-duration samples and downstream playback collapsed.
+    #[test]
+    fn fmt3_started_message_advances_by_the_inherited_delta() {
+        const DELTA: u32 = 23; // ms, one 1024-sample AAC frame at 44.1 kHz
+        const FRAME: usize = 8; // tiny payload, so each fits in one chunk
+
+        let mut input = Vec::new();
+        // fmt 0: the first message, absolute timestamp 0.
+        BasicHeader { fmt: 0, csid: 6 }.write_into(&mut input);
+        MessageHeader {
+            timestamp: 0,
+            message_length: FRAME as u32,
+            message_type_id: msg_type::AUDIO,
+            message_stream_id: 1,
+        }
+        .write_into(0, &mut input);
+        input.extend_from_slice(&[0xAF, 0x01, 0, 0x11, 0x22, 0x33, 0x44, 0x55]);
+        // fmt 2: second message, timestamp as a DELTA of 23.
+        BasicHeader { fmt: 2, csid: 6 }.write_into(&mut input);
+        MessageHeader {
+            timestamp: DELTA,
+            message_length: FRAME as u32,
+            message_type_id: 0,
+            message_stream_id: 0,
+        }
+        .write_into(2, &mut input);
+        input.extend_from_slice(&[0xAF, 0x01, 0, 0x11, 0x22, 0x33, 0x44, 0x55]);
+        // fmt 3: third and fourth messages — no header bytes at all, each
+        // advancing by the same inherited delta.
+        for _ in 0..2 {
+            BasicHeader { fmt: 3, csid: 6 }.write_into(&mut input);
+            input.extend_from_slice(&[0xAF, 0x01, 0, 0x11, 0x22, 0x33, 0x44, 0x55]);
+        }
+
+        let msgs = read_chunks(&input).expect("chunk stream");
+        let stamps: Vec<u32> = msgs.iter().map(|m| m.timestamp).collect();
+        // Bites: without the delta the last two were [46, 46] instead.
+        assert_eq!(stamps, vec![0, DELTA, 2 * DELTA, 3 * DELTA]);
+    }
+
+    /// A fmt-3 chunk that *continues* a split message must NOT advance the
+    /// timestamp — only one that starts a new message does.
+    #[test]
+    fn fmt3_continuation_does_not_advance_the_timestamp() {
+        let body: Vec<u8> = (0..200u32).map(|i| (i % 251) as u8).collect();
+        let mut input = Vec::new();
+        BasicHeader { fmt: 0, csid: 3 }.write_into(&mut input);
+        MessageHeader {
+            timestamp: 100,
+            message_length: body.len() as u32,
+            message_type_id: msg_type::VIDEO,
+            message_stream_id: 1,
+        }
+        .write_into(0, &mut input);
+        input.extend_from_slice(&body[..DEFAULT_CHUNK_SIZE]);
+        BasicHeader { fmt: 3, csid: 3 }.write_into(&mut input);
+        input.extend_from_slice(&body[DEFAULT_CHUNK_SIZE..]);
+
+        let msgs = read_chunks(&input).expect("chunk stream");
+        assert_eq!(msgs.len(), 1);
+        assert_eq!(msgs[0].timestamp, 100, "continuation keeps the timestamp");
+        assert_eq!(msgs[0].body, body);
+    }
+
+    /// §5.4.2: an Abort Message discards the in-progress message on the csid
+    /// its body names. Ignoring it left the abandoned bytes buffered, so the
+    /// sender's re-send was appended to them and emitted as one misframed
+    /// message.
+    #[test]
+    fn abort_message_discards_the_partial_on_the_target_csid() {
+        // csid 3: an incomplete 200-byte message (only its first chunk).
+        let mut input = Vec::new();
+        BasicHeader { fmt: 0, csid: 3 }.write_into(&mut input);
+        MessageHeader {
+            timestamp: 0,
+            message_length: 200,
+            message_type_id: msg_type::VIDEO,
+            message_stream_id: 1,
+        }
+        .write_into(0, &mut input);
+        input.extend_from_slice(&[0xAA; DEFAULT_CHUNK_SIZE]);
+
+        // "Abort csid 3" (§5.4.2), on its own csid 2 with the minimal body.
+        let abort_body = ProtocolControl::Abort(3).to_body();
+        BasicHeader { fmt: 0, csid: 2 }.write_into(&mut input);
+        MessageHeader {
+            timestamp: 0,
+            message_length: abort_body.len() as u32,
+            message_type_id: msg_type::ABORT,
+            message_stream_id: 0,
+        }
+        .write_into(0, &mut input);
+        input.extend_from_slice(&abort_body);
+
+        // The sender then re-sends the message using **only fmt-3 chunks** —
+        // §5.3.1.2.4's "messages of exactly the same size, stream ID and
+        // spacing in time", inheriting the first chunk's header. Each fmt-3
+        // chunk carries one chunk_size of payload.
+        let resent: Vec<u8> = (0..200u32).map(|i| (i % 251) as u8).collect();
+        for piece in resent.chunks(DEFAULT_CHUNK_SIZE) {
+            BasicHeader { fmt: 3, csid: 3 }.write_into(&mut input);
+            input.extend_from_slice(piece);
+        }
+
+        let msgs = read_chunks(&input).expect("chunk stream");
+        let video: Vec<&Message> = msgs
+            .iter()
+            .filter(|m| m.message_type_id == msg_type::VIDEO)
+            .collect();
+        assert_eq!(video.len(), 1, "the aborted message is never emitted");
+        // Bites: without the discard the first fmt-3 chunk completed the
+        // *abandoned* 200-byte message (128 stale bytes + 72 of the re-send),
+        // and the stream was misframed from there on (`NoChunkContext`).
+        assert_eq!(
+            video[0].body, resent,
+            "only the re-sent message may be emitted on csid 3"
+        );
+        assert!(
+            msgs.iter().all(|m| !m.body.starts_with(&[0xAA, 0xAA])),
+            "no emitted message may contain the abandoned bytes"
+        );
+    }
+
+    /// r04-W27: AMF0 object nesting is capped, so a hostile `connect` command
+    /// cannot recurse the parser into a stack overflow (which aborts the
+    /// process and cannot be caught).
+    #[test]
+    fn deeply_nested_amf0_is_rejected_not_a_stack_overflow() {
+        // `depth` nested objects, each 4 bytes (`03 00 01 'k'`), then a number.
+        fn nested(depth: usize) -> Vec<u8> {
+            let mut out = Vec::new();
+            for _ in 0..depth {
+                out.push(amf0::OBJECT);
+                out.extend_from_slice(&1u16.to_be_bytes());
+                out.push(b'k');
+            }
+            out.push(amf0::NUMBER);
+            out.extend_from_slice(&0f64.to_be_bytes());
+            for _ in 0..depth {
+                out.extend_from_slice(&0u16.to_be_bytes());
+                out.push(amf0::OBJECT_END);
+            }
+            out
+        }
+        // Exactly the cap parses; one past it is an error, not a crash.
+        assert_eq!(MAX_AMF0_DEPTH, 32, "the documented cap");
+        assert!(
+            AmfValue::parse(&nested(32)).is_ok(),
+            "exactly 32 levels must parse"
+        );
+        let err33 = AmfValue::parse(&nested(33)).expect_err("33 levels must be rejected");
+        assert!(
+            matches!(err33, RtmpError::Amf0TooDeep { depth: 33 }),
+            "expected Amf0TooDeep {{ depth: 33 }}, got {err33:?}"
+        );
+        let err = AmfValue::parse(&nested(MAX_AMF0_DEPTH + 1))
+            .expect_err("nesting past the cap must be rejected");
+        assert!(
+            matches!(err, RtmpError::Amf0TooDeep { .. }),
+            "expected Amf0TooDeep, got {err:?}"
+        );
+        // And a message built to exhaust the stack (~250k levels from ~1 MiB)
+        // is rejected immediately rather than aborting.
+        assert!(AmfValue::parse(&nested(250_000)).is_err());
+    }
+
+    /// §5.3.1.3: when a chunk's 24-bit timestamp field reads the sentinel, the
+    /// real value follows as a 4-byte Extended Timestamp. For fmt 1/2 that
+    /// field is a **delta** (it stands in for the truncated one), and a fmt-3
+    /// chunk that begins a new message advances by *that* delta — it is not an
+    /// absolute time. A fmt-3 **continuation** chunk carries the message's own
+    /// extended timestamp, which must not move the clock at all.
+    #[test]
+    fn fmt3_uses_the_extended_timestamp_as_a_delta() {
+        // >= the 24-bit sentinel, so every timestamp field here is extended.
+        const BIG_DELTA: u32 = 0x0100_0000;
+        // Two chunks per message, so each has a fmt-3 continuation.
+        const FRAME: usize = 2 * DEFAULT_CHUNK_SIZE;
+        const PAYLOAD: [u8; DEFAULT_CHUNK_SIZE] = [0xAF; DEFAULT_CHUNK_SIZE];
+
+        // A message of FRAME bytes whose head chunk is `head` and whose tail is
+        // a fmt-3 continuation. `ts` is the message's resolved timestamp; a
+        // fmt-3 chunk repeats the 4-byte extended timestamp only when that
+        // timestamp is past the sentinel (§5.3.1.3).
+        fn push_split_message(out: &mut Vec<u8>, ts: u32, head: impl FnOnce(&mut Vec<u8>)) {
+            head(out);
+            out.extend_from_slice(&PAYLOAD);
+            BasicHeader { fmt: 3, csid: 4 }.write_into(out);
+            if ts >= EXT_TIMESTAMP_SENTINEL {
+                out.extend_from_slice(&ts.to_be_bytes());
+            }
+            out.extend_from_slice(&PAYLOAD);
+        }
+
+        let mut input = Vec::new();
+        // fmt 0: absolute timestamp 0.
+        push_split_message(&mut input, 0, |out| {
+            BasicHeader { fmt: 0, csid: 4 }.write_into(out);
+            MessageHeader {
+                timestamp: 0,
+                message_length: FRAME as u32,
+                message_type_id: msg_type::AUDIO,
+                message_stream_id: 1,
+            }
+            .write_into(0, out);
+        });
+        // fmt 2: delta BIG_DELTA, carried in the Extended Timestamp because it
+        // does not fit the 24-bit field (§5.3.1.3). `write_into` emits both the
+        // sentinel and the extended value.
+        push_split_message(&mut input, BIG_DELTA, |out| {
+            BasicHeader { fmt: 2, csid: 4 }.write_into(out);
+            MessageHeader {
+                timestamp: BIG_DELTA,
+                message_length: FRAME as u32, // not written by fmt 2; inherited
+                message_type_id: 0,
+                message_stream_id: 0,
+            }
+            .write_into(2, out);
+        });
+
+        let msgs = read_chunks(&input).expect("chunk stream");
+        let stamps: Vec<u32> = msgs.iter().map(|m| m.timestamp).collect();
+        assert_eq!(
+            stamps,
+            vec![0, BIG_DELTA],
+            "the fmt-2 message takes the extended value as a delta from 0, and              its fmt-3 continuation leaves the timestamp alone"
+        );
+
+        // Now a fmt-3 chunk that *begins* a new message, carrying its own
+        // extended timestamp. That value is the new message's delta: the clock
+        // must advance by it, not jump to it. Bites: the old code assigned it
+        // absolutely, so the stamp stayed at BIG_DELTA instead of 2*BIG_DELTA.
+        let mut whole = input.clone();
+        BasicHeader { fmt: 3, csid: 4 }.write_into(&mut whole);
+        whole.extend_from_slice(&BIG_DELTA.to_be_bytes());
+        whole.extend_from_slice(&PAYLOAD);
+        BasicHeader { fmt: 3, csid: 4 }.write_into(&mut whole);
+        whole.extend_from_slice(&BIG_DELTA.to_be_bytes());
+        whole.extend_from_slice(&PAYLOAD);
+
+        let msgs = read_chunks(&whole).expect("chunk stream");
+        let stamps: Vec<u32> = msgs.iter().map(|m| m.timestamp).collect();
+        assert_eq!(
+            stamps,
+            vec![0, BIG_DELTA, 2 * BIG_DELTA],
+            "a fmt-3-started message advances by the extended delta"
+        );
+    }
+
+    /// §5.3.1.2.4 + §5.3.1.3 reached through the *same* code path with a small
+    /// delta: a fmt-1 chunk followed by a fmt-3 new message advances by the
+    /// stored delta, and a fmt-3 continuation in between does not.
+    #[test]
+    fn fmt3_delta_is_applied_once_per_new_message_only() {
+        const DELTA: u32 = 5;
+        const FRAME: usize = 64; // one chunk each
+
+        let mut input = Vec::new();
+        for (fmt, ts, mtype) in [(0u8, 0u32, msg_type::AUDIO), (1, DELTA, 0), (3, 0, 0)] {
+            BasicHeader { fmt, csid: 5 }.write_into(&mut input);
+            if fmt <= 1 {
+                MessageHeader {
+                    timestamp: ts,
+                    message_length: FRAME as u32,
+                    message_type_id: mtype,
+                    message_stream_id: 1,
+                }
+                .write_into(fmt, &mut input);
+            }
+            input.extend_from_slice(&[0x11u8; FRAME]);
+        }
+
+        {
+            let mut k = 0usize;
+            while k + 1 < input.len() {
+                let b = input[k];
+                if matches!(b, 0x04 | 0x84 | 0xC4) {
+                    std::eprintln!(
+                        "bh @{k} = {b:02X} next {:02X?}",
+                        &input[k + 1..(k + 6).min(input.len())]
+                    );
+                }
+                k += 1;
+            }
+            std::eprintln!("total {}", input.len());
+        }
+        let msgs = read_chunks(&input).expect("chunk stream");
+        let stamps: Vec<u32> = msgs.iter().map(|m| m.timestamp).collect();
+        assert_eq!(stamps, vec![0, DELTA, 2 * DELTA]);
+    }
+
+    /// After an Abort, the abandoned message's delta must be forgotten: a fmt-3
+    /// re-send starts from the aborted message's timestamp, not one further
+    /// delta on.
+    #[test]
+    fn abort_resets_the_delta_for_a_fmt3_resend() {
+        const DELTA: u32 = 40;
+        const FRAME: usize = 64;
+
+        let mut input = Vec::new();
+        // fmt 0 (absolute 1000), then a fmt-1 declaring a 40 ms delta.
+        BasicHeader { fmt: 0, csid: 3 }.write_into(&mut input);
+        MessageHeader {
+            timestamp: 1000,
+            message_length: FRAME as u32,
+            message_type_id: msg_type::AUDIO,
+            message_stream_id: 1,
+        }
+        .write_into(0, &mut input);
+        input.extend_from_slice(&[0x22u8; FRAME]);
+        BasicHeader { fmt: 1, csid: 3 }.write_into(&mut input);
+        MessageHeader {
+            timestamp: DELTA,
+            message_length: FRAME as u32,
+            message_type_id: msg_type::AUDIO, // fmt 1 still carries the type
+            message_stream_id: 0,             // not written for fmt 1; inherited
+        }
+        .write_into(1, &mut input);
+        input.extend_from_slice(&[0x22u8; FRAME]);
+        // Abort csid 3 (§5.4.2).
+        let abort_body = ProtocolControl::Abort(3).to_body();
+        BasicHeader { fmt: 0, csid: 2 }.write_into(&mut input);
+        MessageHeader {
+            timestamp: 0,
+            message_length: abort_body.len() as u32,
+            message_type_id: msg_type::ABORT,
+            message_stream_id: 0,
+        }
+        .write_into(0, &mut input);
+        input.extend_from_slice(&abort_body);
+        // fmt 3: a new message, re-sent after the abort.
+        BasicHeader { fmt: 3, csid: 3 }.write_into(&mut input);
+        input.extend_from_slice(&[0x22u8; FRAME]);
+
+        let msgs = read_chunks(&input).expect("chunk stream");
+        let audio: Vec<u32> = msgs
+            .iter()
+            .filter(|m| m.message_type_id == msg_type::AUDIO)
+            .map(|m| m.timestamp)
+            .collect();
+        // Bites: without the delta reset the re-send is stamped 1040+40=1080.
+        assert_eq!(audio, vec![1000, 1040, 1040]);
     }
 }

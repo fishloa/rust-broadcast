@@ -1,0 +1,6 @@
+# ffprobe oracle for fixtures/flv/aac-7_1.flv (AAC-LC 7.1, channelConfiguration 7)
+# produced by: ffmpeg -f lavfi -i "anullsrc=r=48000:cl=7.1" -t 0.2 -c:a aac -b:a 512k -f flv
+# ASC = 0x11B856E500: audioObjectType 2 (AAC-LC), samplingFrequencyIndex 3 (48000 Hz),
+# channelConfiguration 7 -> 8 channels per ISO/IEC 14496-3 Table 1.19
+# columns: channels,channel_layout,sample_rate,asc_hex
+8,7.1,48000,11b856e500

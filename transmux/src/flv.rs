@@ -160,6 +160,13 @@ pub(crate) mod aac_packet_type {
 /// `pub(crate)`: reused by [`crate::flv_stream::StreamingFlvDemux`] (#738).
 pub(crate) const FLV_TIMESCALE: u32 = 1000;
 
+/// Smallest `CompositionTime` representable as the signed 24-bit field
+/// `SI24` of an `AVCVIDEOPACKET` (§E.4.3.2).
+const SI24_MIN: i32 = -(1 << 23);
+/// Largest `CompositionTime` representable as the signed 24-bit field
+/// `SI24` of an `AVCVIDEOPACKET` (§E.4.3.2).
+const SI24_MAX: i32 = (1 << 23) - 1;
+
 // `esds` construction constants (mirroring `ts_demux`).
 /// MPEG-4 Audio object type indication for AAC (ISO/IEC 14496-1 §7.2.6.6 Table 5).
 const OTI_MPEG4_AUDIO: u8 = 0x40;
@@ -172,6 +179,34 @@ const ESDS_AUDIO_ES_ID: u16 = 1;
 ///
 /// `pub(crate)`: reused by [`crate::flv_stream::StreamingFlvDemux`] (#738).
 pub(crate) const AUDIO_SAMPLE_SIZE_BITS: u16 = 16;
+
+/// `CodecConfig::Aac.channel_count` for an `AudioSpecificConfig` whose
+/// `channelConfiguration` does not determine a channel count.
+///
+/// ISO/IEC 14496-3 Table 1.19 gives a count for configurations 1..=7
+/// (configuration 7 is **8** channels, 7.1). Configuration 0 means the mapping
+/// is carried in-band by a `program_config_element` in the raw data stream —
+/// this crate decodes no PCE, and FLV's AAC sequence header cannot contain one
+/// (a PCE is a raw_data_block element, not part of the ASC) — and 8..=15 are
+/// reserved. `0` marks "not derived", matching this crate's existing
+/// placeholder convention (`ts_demux`'s `MPEGH_CHANNEL_COUNT_UNSPECIFIED`), and
+/// is never a channel count a real stream has. It is *not* fabricated: writing
+/// the raw configuration index as a count was the bug (7.1 reported as 7, a
+/// PCE-signalled stream as 0 channels), and writing some other number would be
+/// a second fabrication.
+///
+/// `pub(crate)`: reused by [`crate::flv_stream::StreamingFlvDemux`] (#738).
+pub(crate) const AAC_CHANNEL_COUNT_UNKNOWN: u16 = 0;
+
+/// The channel count [`CodecConfig::Aac`] should carry for `config`.
+///
+/// [`AAC_CHANNEL_COUNT_UNKNOWN`] when Table 1.19 does not determine one.
+pub(crate) fn aac_channel_count(config: &AudioSpecificConfig) -> u16 {
+    config
+        .channel_configuration
+        .channel_count()
+        .unwrap_or(AAC_CHANNEL_COUNT_UNKNOWN)
+}
 
 // ---------------------------------------------------------------------------
 // Error
@@ -276,6 +311,9 @@ impl From<Error> for FlvError {
 #[derive(Debug, Default, Clone)]
 pub struct FlvDemux<'a> {
     _marker: PhantomData<&'a [u8]>,
+    /// Whether the most recent [`unpackage`](Unpackage::unpackage) stopped on a
+    /// short final tag. See [`FlvDemux::last_walk_was_truncated`].
+    truncated_tail: bool,
 }
 
 impl FlvDemux<'_> {
@@ -283,7 +321,24 @@ impl FlvDemux<'_> {
     pub fn new() -> Self {
         Self {
             _marker: PhantomData,
+            truncated_tail: false,
         }
+    }
+
+    /// Whether the most recent [`unpackage`](Unpackage::unpackage) call ended on
+    /// a **truncated final tag**: the last tag's declared `DataSize` ran past
+    /// the end of the buffer, so that tag was discarded and everything before it
+    /// returned. Always `false` before the first call.
+    ///
+    /// This exists so a truncated capture is not indistinguishable from a
+    /// complete one. The returned [`Media`] is otherwise identical — a recorded
+    /// or captured live FLV routinely ends mid-tag, and refusing the whole file
+    /// over it would discard all the good media — but the caller can now tell,
+    /// and decide whether to warn, trim, or re-fetch. A tag that is complete
+    /// except for its trailing `PreviousTagSize` is *not* reported here: that
+    /// field is redundant (§E.4.1), so such a tag is kept and the walk is clean.
+    pub fn last_walk_was_truncated(&self) -> bool {
+        self.truncated_tail
     }
 }
 
@@ -294,9 +349,41 @@ struct FlvTag<'a> {
     body: &'a [u8],
 }
 
+/// The tag walk of an FLV stream: the complete tags plus whether the stream
+/// ended on a short tail (see [`iter_tags`]).
+struct TagWalk<'a> {
+    tags: Vec<FlvTag<'a>>,
+    /// `true` when the walk stopped because the last tag declares more bytes
+    /// than the buffer holds — i.e. the file ends mid-tag. The tags collected
+    /// before that point are complete and usable; the caller may want to say so
+    /// (see [`FlvDemux::last_walk_was_truncated`]).
+    truncated_tail: bool,
+}
+
 /// Iterate the tags of an FLV stream after its 9-byte header, validating each
 /// tag's `DataSize` against the buffer (§E.4.1).
-fn iter_tags(input: &[u8]) -> Result<Vec<FlvTag<'_>>> {
+///
+/// A truncated **final** tag is not an error: a recorded or captured live FLV
+/// routinely ends mid-tag, and the tags before it are complete and usable. The
+/// walk stops at the short tail, keeping what it has (`ac3`/`dts`/`mpeg_legacy`
+/// syncframe splitters in this crate take the same "stop at the truncated tail,
+/// never drop the good prefix" position) and reporting it through
+/// [`TagWalk::truncated_tail`], so nothing is dropped silently.
+///
+/// Two shapes are *not* truncation, and both are accepted:
+/// - a final tag whose **body is entirely present** but whose 4-byte
+///   `PreviousTagSize` is missing (`body_end <= len < body_end + 4`): the body
+///   is complete, so it is kept and the walk ends cleanly;
+/// - a tag header at the very end of the buffer that cannot even be read yet
+///   (`off + TAG_HEADER_LEN > len`) — there is nothing to interpret there.
+///
+/// A tag whose body overruns the buffer is only tolerated where it can be
+/// *known* to be the tail, which is exactly what the loop guarantees: it is the
+/// last tag the buffer can start. A stream whose very first tag is already
+/// incomplete has nothing to return at all, so that alone is
+/// [`FlvError::TagOverrun`] — the caller gets a diagnosis rather than a bare
+/// `NoSupportedTrack`.
+fn iter_tags(input: &[u8]) -> Result<TagWalk<'_>> {
     if input.len() < FLV_HEADER_LEN + PREV_TAG_SIZE_LEN {
         return Err(Error::BufferTooShort {
             need: FLV_HEADER_LEN + PREV_TAG_SIZE_LEN,
@@ -320,23 +407,52 @@ fn iter_tags(input: &[u8]) -> Result<Vec<FlvTag<'_>>> {
         let timestamp = (ts_ext << 24) | ts_lo;
         // input[off+8..off+11] = StreamID (always 0), ignored.
         let body_start = off + TAG_HEADER_LEN;
-        let body_end = body_start + data_size;
-        if body_end + PREV_TAG_SIZE_LEN > input.len() {
+        // Checked: a hostile `DataSize` (up to 2^24-1) added at a near-`usize::MAX`
+        // offset would otherwise wrap.
+        let Some(body_end) = body_start.checked_add(data_size) else {
             return Err(Error::from(FlvErrorAsError(FlvError::TagOverrun {
                 offset: off,
-                need: body_end + PREV_TAG_SIZE_LEN,
+                need: usize::MAX,
                 have: input.len(),
             })));
+        };
+        if body_end > input.len() {
+            // The tag's *body* is not all here, so this is the truncated tail —
+            // the only tag that may be treated as one, since it is the last the
+            // buffer can start. Exposed, never dropped silently.
+            if tags.is_empty() {
+                return Err(Error::from(FlvErrorAsError(FlvError::TagOverrun {
+                    offset: off,
+                    need: body_end + PREV_TAG_SIZE_LEN,
+                    have: input.len(),
+                })));
+            }
+            return Ok(TagWalk {
+                tags,
+                truncated_tail: true,
+            });
         }
         tags.push(FlvTag {
             tag_type,
             timestamp,
             body: &input[body_start..body_end],
         });
-        // Advance past the body and its trailing PreviousTagSize.
+        // Advance past the body and its trailing PreviousTagSize. A tag whose
+        // body is complete but whose `PreviousTagSize` is cut off is still a
+        // complete tag (§E.4.1 makes that field redundant — it repeats the
+        // preceding tag's size), so it is kept and the walk simply ends.
+        if body_end + PREV_TAG_SIZE_LEN > input.len() {
+            return Ok(TagWalk {
+                tags,
+                truncated_tail: false,
+            });
+        }
         off = body_end + PREV_TAG_SIZE_LEN;
     }
-    Ok(tags)
+    Ok(TagWalk {
+        tags,
+        truncated_tail: false,
+    })
 }
 
 // A tiny bridge so `iter_tags` can surface FLV-specific overrun through the
@@ -368,6 +484,9 @@ impl<'a> Unpackage for FlvDemux<'a> {
     type Error = FlvError;
 
     fn unpackage(&mut self, input: &'a [u8]) -> core::result::Result<Media, FlvError> {
+        // Reset first: a caller that reuses one demuxer for two streams must
+        // never see the previous stream's truncation reported against this one.
+        self.truncated_tail = false;
         if input.len() < FLV_HEADER_LEN {
             return Err(FlvError::Codec(Error::BufferTooShort {
                 need: FLV_HEADER_LEN,
@@ -379,7 +498,9 @@ impl<'a> Unpackage for FlvDemux<'a> {
             return Err(FlvError::BadSignature([input[0], input[1], input[2]]));
         }
 
-        let tags = iter_tags(input).map_err(FlvError::Codec)?;
+        let walk = iter_tags(input).map_err(FlvError::Codec)?;
+        self.truncated_tail = walk.truncated_tail;
+        let tags = walk.tags;
 
         // Video track state.
         let mut avc_config: Option<AVCConfigurationBox> = None;
@@ -467,7 +588,7 @@ impl<'a> Unpackage for FlvDemux<'a> {
                             if aac_esds.is_none() && !data.is_empty() =>
                         {
                             let asc = AudioSpecificConfig::parse(data).map_err(FlvError::Codec)?;
-                            aac_channels = asc.channel_configuration.raw() as u16;
+                            aac_channels = aac_channel_count(&asc);
                             aac_rate = asc_rate_hz(&asc);
                             aac_esds = Some(build_aac_esds(data.to_vec()));
                         }
@@ -507,13 +628,7 @@ impl<'a> Unpackage for FlvDemux<'a> {
             // `config.sps` is a public field and a directly-constructed
             // record could still be empty, so index defensively via
             // `.first()` rather than `[0]` (no panic either way).
-            let (width, height) = config
-                .config
-                .sps
-                .first()
-                .and_then(|sps| crate::sps::decode_avc_sps(&sps.0).ok())
-                .map(|i| (i.width as u16, i.height as u16))
-                .unwrap_or((0, 0));
+            let (width, height) = avc_dimensions(&config)?;
             let anchor = anchor_of(&video_samples);
             tracks.push(Track::new_at(
                 TrackSpec::new(
@@ -657,6 +772,38 @@ pub(crate) fn asc_rate_hz(asc: &AudioSpecificConfig) -> u32 {
         12 => 7350,
         _ => 0,
     }
+}
+
+/// Coded dimensions from an AVC sequence header's `avcC` (the SPS it carries),
+/// as the `u16` pair the IR's [`CodecConfig::Avc`] stores.
+///
+/// A missing or undecodable SPS yields `(0, 0)` — the pre-existing "unknown"
+/// sentinel, and the same one [`crate::ts_demux`] uses when a probe cannot
+/// resolve dimensions. A dimension that *is* decoded but does not fit `u16`
+/// (a corrupt or hostile SPS; the field itself is unbounded in the grammar) is
+/// an error: the previous `as u16` silently truncated it (70 000 → 4 464), and
+/// a container that misdescribes its own coded size is worse than no
+/// dimensions at all.
+pub(crate) fn avc_dimensions(
+    config: &AVCConfigurationBox,
+) -> core::result::Result<(u16, u16), FlvError> {
+    let Some(info) = config
+        .config
+        .sps
+        .first()
+        .and_then(|sps| crate::sps::decode_avc_sps(&sps.0).ok())
+    else {
+        return Ok((0, 0));
+    };
+    for (value, field) in [(info.width, "width"), (info.height, "height")] {
+        if value > u16::MAX as u32 {
+            return Err(FlvError::Codec(Error::InvalidInput(match field {
+                "height" => "FLV avcC height does not fit 16 bits",
+                _ => "FLV avcC width does not fit 16 bits",
+            })));
+        }
+    }
+    Ok((info.width as u16, info.height as u16))
 }
 
 // ---------------------------------------------------------------------------
@@ -826,6 +973,42 @@ fn ticks_to_ms(ticks: i64, timescale: u32) -> i64 {
         return 0;
     }
     (ticks as i128 * FLV_TIMESCALE as i128 / timescale as i128) as i64
+}
+
+/// [`ticks_to_ms`] for a value that must land in an FLV `Timestamp` (the UI24
+/// low field plus the UI8 extended high byte, i.e. a 32-bit millisecond clock,
+/// §E.4.1): a value outside `u32` is an error, never a silent wrap, and a
+/// `timescale` of `0` is an error too — [`ticks_to_ms`] returns `0` for it as a
+/// placeholder, which here would silently stamp *every* tag at millisecond 0.
+/// (A track really can arrive that way: the IR does not forbid it, and
+/// `RtpDepacketiser` has produced exactly that — see audit r04-W30.)
+fn ms_from_ticks(ticks: i64, timescale: u32) -> core::result::Result<u32, FlvError> {
+    if timescale == 0 {
+        return Err(FlvError::Codec(Error::InvalidInput(
+            "FLV mux requires a non-zero track timescale",
+        )));
+    }
+    let ms = ticks_to_ms(ticks, timescale);
+    if ms < 0 || ms > u32::MAX as i64 {
+        return Err(FlvError::Codec(Error::InvalidInput(
+            "FLV tag timestamp does not fit the 32-bit millisecond clock",
+        )));
+    }
+    Ok(ms as u32)
+}
+
+/// The `CompositionTime` field of an `AVCVIDEOPACKET` (§E.4.3.2) is a signed
+/// 24-bit value in FLV's millisecond clock. `offset` is in `timescale` ticks,
+/// so it is rescaled first; a value that does not fit SI24 is an error rather
+/// than the silent truncation the raw write used to perform.
+fn composition_time_ms(offset: i64, timescale: u32) -> core::result::Result<i32, FlvError> {
+    let ms = ticks_to_ms(offset, timescale);
+    if ms < SI24_MIN as i64 || ms > SI24_MAX as i64 {
+        return Err(FlvError::Codec(Error::InvalidInput(
+            "FLV CompositionTime does not fit the signed 24-bit field",
+        )));
+    }
+    Ok(ms as i32)
 }
 
 /// One track's FLV tag *body* — the bytes an RTMP `send_video`/`send_audio`
@@ -1032,14 +1215,26 @@ impl Package for FlvMux {
         // Precompute (dts, tag) for each track, then merge-sort by dts. Note:
         // this `dts` is a running sum of `Sample::duration` from zero (this
         // whole-file muxer's own model — see `ticks_to_ms`'s doc for how the
-        // streaming builders below differ), already in FLV's millisecond
-        // clock per this crate's `FlvMux`/`FlvDemux` convention.
+        // streaming builders below differ), in the *track's own* timescale,
+        // rescaled to FLV's millisecond clock on the way into the tag (see
+        // `ticks_to_ms`): FLV's `Timestamp`/`CompositionTime` are milliseconds
+        // (§E.4.1/§E.4.3.2), and `Sample::duration` is in
+        // [`TrackSpec::timescale`](crate::ir::TrackSpec::timescale). Those
+        // coincide only when the input came from [`FlvDemux`] (timescale
+        // 1000); a 90 kHz `TsDemux` input used to be written 90× too large,
+        // silently truncating any composition offset past the SI24 range.
         let mut items: Vec<(u32, u32, OutTag)> = Vec::new(); // (dts, seq_tiebreak, tag)
         let mut seq = 0u32;
         if let Some(vt) = video {
-            let mut dts = 0u32;
+            let timescale = vt.spec.timescale;
+            let mut ticks = 0i64;
             for s in &vt.samples {
-                let comp = s.composition_offset();
+                // Rounding each absolute position (rather than accumulating
+                // rounded deltas) keeps the tag clock non-decreasing: the
+                // running tick sum is monotonic by construction, so truncating
+                // division cannot step it backwards.
+                let dts = ms_from_ticks(ticks, timescale)?;
+                let comp = composition_time_ms(s.composition_offset() as i64, timescale)?;
                 let body = video_frame_body(s.flags.is_sync, comp, &s.data);
                 items.push((
                     dts,
@@ -1051,12 +1246,14 @@ impl Package for FlvMux {
                     },
                 ));
                 seq += 1;
-                dts = dts.saturating_add(s.duration.unwrap_or(0));
+                ticks = ticks.saturating_add(s.duration.unwrap_or(0) as i64);
             }
         }
         if let Some(at) = audio {
-            let mut dts = 0u32;
+            let timescale = at.spec.timescale;
+            let mut ticks = 0i64;
             for s in &at.samples {
+                let dts = ms_from_ticks(ticks, timescale)?;
                 let body = audio_frame_body(sound_type, &s.data);
                 items.push((
                     dts,
@@ -1068,7 +1265,7 @@ impl Package for FlvMux {
                     },
                 ));
                 seq += 1;
-                dts = dts.saturating_add(s.duration.unwrap_or(0));
+                ticks = ticks.saturating_add(s.duration.unwrap_or(0) as i64);
             }
         }
         // Stable sort by DTS, tie-broken by original emission order.

@@ -475,3 +475,546 @@ fn streaming_payloads_are_flv_shaped_not_ts_shaped() {
 fn alloc_body(len: usize) -> Vec<u8> {
     vec![0u8; len]
 }
+
+// ---------------------------------------------------------------------------
+// Test 7 — FlvMux rescales track ticks to FLV's millisecond clock (r04-W12)
+// ---------------------------------------------------------------------------
+
+/// `FlvMux::package` writes each track's `Sample::duration` running sum into
+/// the FLV tag `Timestamp` field, which is a **millisecond** clock (§E.4.1),
+/// and `Sample::composition_offset()` into the `CompositionTime` SI24 field,
+/// also milliseconds (§E.4.3.2). Both are in the track's own
+/// `TrackSpec::timescale` ticks, so a non-1000 timescale must be rescaled.
+///
+/// Before the fix the raw tick count went straight out, so this 90 kHz track
+/// (the timescale `TsDemux` produces) came back as timestamps 90× too large
+/// (30 000 ms instead of 333 ms — 30 seconds of A/V drift per second) and its
+/// composition offset was truncated into SI24.
+#[test]
+fn package_rescales_non_ms_timescales() {
+    const VIDEO_TIMESCALE: u32 = 90_000;
+    const FRAME_TICKS: u32 = 3_000; // 30 fps at 90 kHz
+
+    // One AVC `avc1` from the real fixture, so the muxer has a valid config.
+    let mut demux = FlvDemux::new();
+    let source = demux.unpackage(FLV).expect("demux av.flv");
+    let CodecConfig::Avc { config, .. } = source.tracks[0].config() else {
+        panic!("fixture track 0 must be AVC");
+    };
+    let config = config.clone();
+
+    // Two video samples at 0 and 3000 ticks (= 0 ms and 33 ms), the second
+    // carrying a 1-frame (33 ms) composition offset.
+    let samples: Vec<transmux::Sample> = (0..2u32)
+        .map(|i| {
+            let dts = (i * FRAME_TICKS) as i64;
+            transmux::Sample::new(
+                alloc_body(4),
+                Some(dts),
+                Some(dts + FRAME_TICKS as i64),
+                Some(FRAME_TICKS),
+                true,
+            )
+        })
+        .collect();
+    let track = transmux::Track::new(
+        transmux::TrackSpec::new(
+            1,
+            VIDEO_TIMESCALE,
+            CodecConfig::Avc {
+                config,
+                width: 320,
+                height: 240,
+            },
+        ),
+        samples,
+    );
+    let media = transmux::Media::new(vec![track], VIDEO_TIMESCALE);
+
+    let mut mux = FlvMux::new();
+    let flv = mux.package(&media).expect("package 90 kHz FLV");
+
+    // Parse the tag loop and pick out the two NALU tags' timestamps.
+    let (timestamps, comp_times) = flv_nalu_tags(&flv);
+    assert_eq!(timestamps.len(), 2, "two NALU tags");
+    // Bites: without the rescale these are 0 and 3000 ms (90× too large).
+    assert_eq!(timestamps[0], 0, "first tag timestamp in ms");
+    assert_eq!(
+        timestamps[1], 33,
+        "second tag timestamp in ms (3000/90000 s)"
+    );
+    assert_eq!(comp_times[0], 33, "first CompositionTime in ms");
+    assert_eq!(comp_times[1], 33, "second CompositionTime in ms");
+}
+
+/// Scan the FLV tag loop for AVC `NALU` tags, returning each tag's
+/// `Timestamp` and its `CompositionTime` (both already in FLV's ms clock).
+fn flv_nalu_tags(flv: &[u8]) -> (Vec<u32>, Vec<i32>) {
+    const TAG_HEADER: usize = 11;
+    let data_offset = u32::from_be_bytes([flv[5], flv[6], flv[7], flv[8]]) as usize;
+    let mut off = data_offset.max(9) + 4;
+    let (mut ts, mut comp) = (Vec::new(), Vec::new());
+    while off + TAG_HEADER <= flv.len() {
+        let ty = flv[off];
+        let size = u32::from_be_bytes([0, flv[off + 1], flv[off + 2], flv[off + 3]]) as usize;
+        let lo = u32::from_be_bytes([0, flv[off + 4], flv[off + 5], flv[off + 6]]);
+        let hi = flv[off + 7] as u32;
+        let body = off + TAG_HEADER;
+        if body + size + 4 > flv.len() {
+            break;
+        }
+        if ty == 9 && size >= 5 && flv[body + 1] == 1 {
+            ts.push((hi << 24) | lo);
+            let raw = ((flv[body + 2] as u32) << 16)
+                | ((flv[body + 3] as u32) << 8)
+                | flv[body + 4] as u32;
+            comp.push(if raw & 0x0080_0000 != 0 {
+                (raw | 0xFF00_0000) as i32
+            } else {
+                raw as i32
+            });
+        }
+        off = body + size + 4;
+    }
+    (ts, comp)
+}
+
+/// A composition offset that cannot fit `CompositionTime`'s signed 24-bit
+/// millisecond field (§E.4.3.2) must be an error, not a silent SI24
+/// truncation (r04-W12).
+#[test]
+fn package_rejects_oversized_composition_time() {
+    let mut demux = FlvDemux::new();
+    let source = demux.unpackage(FLV).expect("demux av.flv");
+    let CodecConfig::Avc { config, .. } = source.tracks[0].config() else {
+        panic!("fixture track 0 must be AVC");
+    };
+    let config = config.clone();
+
+    // 9 000 000 ms (2.5 h) at timescale 1000 is far past SI24's 8 388 607 ms.
+    let sample = transmux::Sample::new(alloc_body(4), Some(0), Some(9_000_000), Some(1_000), true);
+    let track = transmux::Track::new(
+        transmux::TrackSpec::new(
+            1,
+            1000,
+            CodecConfig::Avc {
+                config,
+                width: 320,
+                height: 240,
+            },
+        ),
+        vec![sample],
+    );
+    let media = transmux::Media::new(vec![track], 1000);
+
+    let mut mux = FlvMux::new();
+    let err = mux
+        .package(&media)
+        .expect_err("oversized CompositionTime must be rejected");
+    // Bites: before the fix the value was truncated to its low 24 bits and
+    // `package` returned `Ok`.
+    assert!(
+        format!("{err}").contains("CompositionTime"),
+        "expected a CompositionTime error, got {err}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Test 8 — truncated final tag keeps the complete prefix (r04-W15)
+// ---------------------------------------------------------------------------
+
+/// A recorded or captured live FLV routinely ends mid-tag. The demuxer must
+/// stop at the truncated tail and return everything before it; before the fix
+/// `iter_tags` returned `Err(TagOverrun)` for the *whole* file, so
+/// `FlvDemux::unpackage` discarded every good tag that preceded the tail.
+#[test]
+fn truncated_final_tag_keeps_complete_prefix() {
+    let mut demux = FlvDemux::new();
+    let full = demux.unpackage(FLV).expect("demux intact av.flv");
+    let full_video = full.tracks[0].samples.len();
+    let full_audio = full.tracks[1].samples.len();
+    assert!(full_video > 5 && full_audio > 5, "fixture has real content");
+
+    // Chop the real fixture part-way through a tag that carries a sample:
+    // the audio tag whose body is 368 bytes, cut 100 bytes into it.
+    let tag_starts = flv_tag_starts(FLV);
+    let (audio_start, _, audio_size) = *tag_starts
+        .iter()
+        .find(|&&(_, ty, size)| ty == 8 && size == 368)
+        .expect("fixture has a 368-byte audio tag");
+    let cut = audio_start + 11 + 100;
+    assert!(
+        cut < audio_start + 11 + audio_size,
+        "cut is inside the body"
+    );
+    let truncated = &FLV[..cut];
+
+    let mut demux = FlvDemux::new();
+    let media = demux
+        .unpackage(truncated)
+        .expect("truncated tail must not fail the whole demux");
+
+    assert_eq!(
+        media.tracks.len(),
+        2,
+        "both tracks survive the truncated tail"
+    );
+    // Bites: the old code returned `Err` here, so this never ran at all.
+    // The truncated tag and the two short tags after it are lost; every tag
+    // before the cut survives. Bites: the old code returned `Err` here, so
+    // the whole file — all 75 video and all 131 audio samples — was lost.
+    assert_eq!(
+        (media.tracks[0].samples.len(), media.tracks[1].samples.len()),
+        (full_video, full_audio - 2),
+        "every sample before the truncated tag survives"
+    );
+    assert!(
+        media.tracks[1].samples.len() > 100,
+        "the good prefix is essentially all preserved"
+    );
+}
+
+/// Every top-level tag's byte offset in an FLV file (header + tag loop).
+fn flv_tag_starts(flv: &[u8]) -> Vec<(usize, u8, usize)> {
+    let data_offset = u32::from_be_bytes([flv[5], flv[6], flv[7], flv[8]]) as usize;
+    let mut off = data_offset.max(9) + 4;
+    let mut tags = Vec::new();
+    while off + 11 <= flv.len() {
+        let size = u32::from_be_bytes([0, flv[off + 1], flv[off + 2], flv[off + 3]]) as usize;
+        tags.push((off, flv[off], size));
+        off += 11 + size + 4;
+    }
+    tags
+}
+
+/// The tail rule is *only* for the tail: a stream whose very first tag is
+/// already incomplete has nothing to return, so it still errors.
+#[test]
+fn incomplete_first_tag_still_errors() {
+    // Real fixture header + PreviousTagSize0, then an 11-byte tag header
+    // declaring 1000 body bytes, with none of the body present.
+    let mut bytes = FLV[..13].to_vec();
+    bytes.push(9); // Video tag
+    bytes.extend_from_slice(&[0x00, 0x03, 0xE8]); // DataSize = 1000
+    bytes.extend_from_slice(&[0, 0, 0, 0, 0, 0, 0]); // Timestamp + StreamID
+    let mut demux = FlvDemux::new();
+    let err = demux
+        .unpackage(&bytes)
+        .expect_err("an incomplete first tag must be reported");
+    assert!(
+        format!("{err}").contains("tag body"),
+        "expected TagOverrun, got {err}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Test 9 — AAC channel count comes from Table 1.19 (r04-W16)
+// ---------------------------------------------------------------------------
+
+/// The `channelConfiguration` field of an `AudioSpecificConfig` is an *index*
+/// into ISO/IEC 14496-3 Table 1.19, not a channel count: configuration `7`
+/// means 8 channels (7.1) and configuration `0` means the mapping is carried
+/// in-band by a `program_config_element`, so the count is unknown from the
+/// ASC. Both FLV demuxers used the raw field as the count, so this real
+/// ffmpeg-produced 7.1 FLV was reported as a 7-channel track.
+#[test]
+fn aac_channel_count_uses_table_1_19() {
+    // The fixture is `ffmpeg -f lavfi -i "anullsrc=r=48000:cl=7.1" -c:a aac -f flv`;
+    // its ASC is 0x11B856E500 (AAC-LC, sfi 3 = 48000 Hz, channelConfiguration 7).
+    const FLV_7_1: &[u8] = include_bytes!("../../fixtures/flv/aac-7_1.flv");
+    const ORACLE: &str = include_str!("../../fixtures/flv/aac-7_1.oracle.csv");
+    let row = ORACLE
+        .lines()
+        .find(|l| !l.starts_with('#') && !l.trim().is_empty())
+        .expect("oracle row");
+    let cols: Vec<&str> = row.split(',').collect();
+    let oracle_channels: u16 = cols[0].parse().expect("oracle channels");
+    let oracle_rate: u32 = cols[2].parse().expect("oracle sample rate");
+    assert_eq!(oracle_channels, 8, "ffprobe oracle says 8 channels (7.1)");
+
+    let mut demux = FlvDemux::new();
+    let media = demux.unpackage(FLV_7_1).expect("demux aac-7_1.flv");
+    let CodecConfig::Aac {
+        channel_count,
+        sample_rate,
+        ..
+    } = media.tracks[0].config()
+    else {
+        panic!("track 0 must be AAC");
+    };
+    // Bites: the raw field (7) was written as the count.
+    assert_eq!(*channel_count, oracle_channels, "7.1 = 8 channels");
+    assert_eq!(*sample_rate, oracle_rate, "sfi 3 = 48000 Hz");
+}
+
+/// The same mapping through the streaming demuxer's `TrackAdded` event.
+#[test]
+fn streaming_aac_channel_count_uses_table_1_19() {
+    use transmux::DemuxEvent;
+    const FLV_7_1: &[u8] = include_bytes!("../../fixtures/flv/aac-7_1.flv");
+
+    let mut demux = transmux::StreamingFlvDemux::new();
+    demux.feed(FLV_7_1).expect("feed aac-7_1.flv");
+    let mut channels = None;
+    while let Some(ev) = demux.poll_event() {
+        if let DemuxEvent::TrackAdded(spec) = ev
+            && let CodecConfig::Aac { channel_count, .. } = &spec.config
+        {
+            channels = Some(*channel_count);
+        }
+    }
+    // Bites: the raw field (7) was written as the count.
+    assert_eq!(
+        channels,
+        Some(8),
+        "7.1 = 8 channels through the streaming path"
+    );
+}
+
+/// Table 1.19 for every non-reserved configuration, including the in-band
+/// case (`channelConfiguration == 0`), which is *not* zero channels.
+#[test]
+fn channel_configuration_channel_counts_match_table_1_19() {
+    use transmux::aac_asc::ChannelConfiguration;
+    let cases: [(ChannelConfiguration, Option<u16>); 8] = [
+        (ChannelConfiguration::InBand, None), // PCE carries the mapping
+        (ChannelConfiguration::Mono, Some(1)),
+        (ChannelConfiguration::Stereo, Some(2)),
+        (ChannelConfiguration::Ch3, Some(3)),
+        (ChannelConfiguration::Ch4, Some(4)),
+        (ChannelConfiguration::Ch5, Some(5)),
+        (ChannelConfiguration::Ch5_1, Some(6)),
+        (ChannelConfiguration::Ch7_1, Some(8)),
+    ];
+    for (cc, expected) in cases {
+        assert_eq!(cc.channel_count(), expected, "{cc:?}");
+    }
+    assert_eq!(ChannelConfiguration::from(9).channel_count(), None);
+}
+
+// ---------------------------------------------------------------------------
+// Test 10 — oversized AVC dimensions are rejected, never truncated (r04-W38)
+// ---------------------------------------------------------------------------
+
+/// `CodecConfig::Avc`'s dimensions are `u16`, but an SPS's
+/// `pic_width_in_mbs_minus1`/`pic_height_in_map_units_minus1` are `ue(v)` and
+/// unbounded. The FLV demuxers wrote `info.width as u16`, silently folding a
+/// 65 536-wide SPS down to 0; a container that misdescribes its own coded size
+/// must be an error instead (the `#997` class, previously fixed only in
+/// `ts_demux`).
+///
+/// The fixture is a hand-built FLV whose AVC sequence header carries the SPS
+/// `42 00 1F F4 00 08 00 38 80` — Baseline profile, `frame_mbs_only_flag = 1`,
+/// `pic_width_in_mbs_minus1 = 4095` (width 65 536), height 48 — followed by
+/// one NALU tag. `ffprobe` rejects the file outright ("Invalid data"), which
+/// is exactly the point: no conformant decoder accepts these dimensions.
+#[test]
+fn oversized_avc_dimensions_are_rejected() {
+    const OVERSIZE: &[u8] = include_bytes!("../../fixtures/flv/oversize-dims.flv");
+
+    let mut demux = FlvDemux::new();
+    let err = demux
+        .unpackage(OVERSIZE)
+        .expect_err("a 65 536-wide SPS must be rejected, not truncated");
+    // Bites: `as u16` folded 65536 to 0 and `unpackage` returned `Ok`.
+    assert!(
+        format!("{err}").contains("width does not fit 16 bits"),
+        "expected a width-overflow error, got {err}"
+    );
+}
+
+/// The same rejection through the streaming demuxer, which is the path an
+/// RTMP publisher's sequence header takes.
+#[test]
+fn streaming_oversized_avc_dimensions_are_rejected() {
+    const OVERSIZE: &[u8] = include_bytes!("../../fixtures/flv/oversize-dims.flv");
+
+    let mut demux = transmux::StreamingFlvDemux::new();
+    let err = demux
+        .feed(OVERSIZE)
+        .expect_err("a 65 536-wide SPS must be rejected, not truncated");
+    assert!(
+        format!("{err}").contains("width does not fit 16 bits"),
+        "expected a width-overflow error, got {err}"
+    );
+}
+
+/// 65 535 is the largest dimension the IR can carry, so it still parses —
+/// the check rejects what does not fit, not what is merely large.
+#[test]
+fn maximum_representable_width_still_parses() {
+    let mut flv: Vec<u8> = Vec::new();
+    flv.extend_from_slice(b"FLV   	    ");
+    // The same SPS with pic_width_in_mbs_minus1 = 4094 → 65 520 samples.
+    let sps = hex_to_bytes("42001ff4001ffee2");
+    let mut nal: Vec<u8> = Vec::new();
+    nal.push(0x67);
+    nal.extend_from_slice(&sps);
+    let mut avcc: Vec<u8> = Vec::new();
+    avcc.extend_from_slice(&[0x01, 0x42, 0x00, 0x1F, 0xFF, 0xE1]);
+    avcc.extend_from_slice(&(nal.len() as u16).to_be_bytes());
+    avcc.extend_from_slice(&nal);
+    avcc.push(0x00);
+    let mut seq_body: Vec<u8> = Vec::new();
+    seq_body.extend_from_slice(&[0x17, 0x00, 0x00, 0x00, 0x00]);
+    seq_body.extend_from_slice(&avcc);
+    push_flv_tag(&mut flv, 9, 0, &seq_body);
+    // One length-prefixed NAL so a video sample (and thus a track) exists.
+    push_flv_tag(
+        &mut flv,
+        9,
+        0,
+        &[0x17, 0x01, 0x00, 0x00, 0x00, 0, 0, 0, 1, 0x09, 0x10],
+    );
+
+    let mut demux = FlvDemux::new();
+    let media = demux.unpackage(&flv).expect("65 520-wide SPS parses");
+    let CodecConfig::Avc { width, height, .. } = media.tracks[0].config() else {
+        panic!("track 0 must be AVC");
+    };
+    assert_eq!(*width, 65_520, "width decoded from the SPS");
+    assert_eq!(*height, 48, "height decoded from the SPS");
+}
+
+/// Append one FLV tag (header + body + `PreviousTagSize`) to `out`.
+fn push_flv_tag(out: &mut Vec<u8>, tag_type: u8, timestamp: u32, body: &[u8]) {
+    let start = out.len();
+    out.push(tag_type);
+    out.extend_from_slice(&(body.len() as u32).to_be_bytes()[1..]);
+    out.extend_from_slice(&timestamp.to_be_bytes()[1..4]);
+    out.push((timestamp >> 24) as u8);
+    out.extend_from_slice(&[0, 0, 0]);
+    out.extend_from_slice(body);
+    let size = (out.len() - start) as u32;
+    out.extend_from_slice(&size.to_be_bytes());
+}
+
+/// Decode a hex string to bytes.
+fn hex_to_bytes(s: &str) -> Vec<u8> {
+    (0..s.len() / 2)
+        .map(|i| u8::from_str_radix(&s[i * 2..i * 2 + 2], 16).expect("hex"))
+        .collect()
+}
+
+// ---------------------------------------------------------------------------
+// Item 4 — a truncated tail is reported, not silently indistinguishable
+// ---------------------------------------------------------------------------
+
+/// A tag whose body overruns the buffer ends the walk, and the caller can tell:
+/// `last_walk_was_truncated()` reports it, so a truncated capture is not
+/// indistinguishable from a complete one.
+#[test]
+fn truncated_tail_is_reported_through_the_public_api() {
+    // Real fixture, chopped inside a sample-carrying tag.
+    let tag_starts = flv_tag_starts(FLV);
+    let (audio_start, _, _) = *tag_starts
+        .iter()
+        .find(|&&(_, ty, size)| ty == 8 && size == 368)
+        .expect("fixture has a 368-byte audio tag");
+    let cut = audio_start + 11 + 100;
+
+    let mut demux = FlvDemux::new();
+    let media = demux
+        .unpackage(&FLV[..cut])
+        .expect("truncated tail tolerated");
+    assert_eq!(media.tracks.len(), 2, "the good prefix survives");
+    assert!(
+        demux.last_walk_was_truncated(),
+        "the cut in the last tag's body must be reported"
+    );
+
+    // Bites the other way too: a complete file reports false, and the flag is
+    // reset per call on a reused demuxer.
+    let mut demux = FlvDemux::new();
+    demux.unpackage(FLV).expect("intact fixture");
+    assert!(
+        !demux.last_walk_was_truncated(),
+        "a complete file is not truncated"
+    );
+    demux.unpackage(&FLV[..cut]).expect("truncated");
+    assert!(demux.last_walk_was_truncated(), "flag tracks the last call");
+    demux.unpackage(FLV).expect("intact again");
+    assert!(
+        !demux.last_walk_was_truncated(),
+        "the flag must not be stale across calls"
+    );
+}
+
+/// A tag whose **body is entirely present** but whose trailing 4-byte
+/// `PreviousTagSize` is missing is a complete tag, not a truncation: the field
+/// is redundant (§E.4.1), so it is kept and nothing is reported.
+#[test]
+fn tag_missing_only_its_previous_tag_size_is_accepted() {
+    let mut demux = FlvDemux::new();
+    let full = demux.unpackage(FLV).expect("intact fixture");
+    let full_video = full.tracks[0].samples.len();
+    let full_audio = full.tracks[1].samples.len();
+
+    // Append one more real audio tag, then drop just its trailing 4-byte
+    // `PreviousTagSize`: every tag body is present, only that redundant field
+    // is gone.
+    let mut extended = FLV.to_vec();
+    push_flv_tag(&mut extended, 8, 61999, &[0xAF, 0x01, 0x00, 0x77, 0x88]);
+    let body_only = &extended[..extended.len() - 4];
+
+    let mut demux = FlvDemux::new();
+    let media = demux
+        .unpackage(body_only)
+        .expect("a body-complete final tag is not truncated");
+    assert_eq!(
+        (media.tracks[0].samples.len(), media.tracks[1].samples.len()),
+        (full_video, full_audio + 1),
+        "every sample, including the new final tag's, is kept"
+    );
+    assert!(
+        !demux.last_walk_was_truncated(),
+        "a missing PreviousTagSize is not a truncated tail"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Item 5 — a zero timescale is an error, not a file timestamped at 0
+// ---------------------------------------------------------------------------
+
+/// `timescale == 0` used to make every tag's timestamp 0 (the `ticks_to_ms`
+/// placeholder), silently flattening the whole file onto one instant. It is now
+/// an error. `RtpDepacketiser` has produced timescale-0 tracks, so this is
+/// reachable, not hypothetical.
+#[test]
+fn zero_timescale_is_rejected_not_flattened_to_zero() {
+    let mut demux = FlvDemux::new();
+    let source = demux.unpackage(FLV).expect("demux av.flv");
+    let CodecConfig::Avc { config, .. } = source.tracks[0].config() else {
+        panic!("fixture track 0 must be AVC");
+    };
+    let config = config.clone();
+
+    let samples: Vec<transmux::Sample> = (0..3u32)
+        .map(|i| {
+            transmux::Sample::new(alloc_body(4), Some(i as i64), Some(i as i64), Some(1), true)
+        })
+        .collect();
+    let track = transmux::Track::new(
+        transmux::TrackSpec::new(
+            1,
+            0, // no timescale at all
+            CodecConfig::Avc {
+                config,
+                width: 320,
+                height: 240,
+            },
+        ),
+        samples,
+    );
+    let media = transmux::Media::new(vec![track], 0);
+
+    let mut mux = FlvMux::new();
+    let err = mux
+        .package(&media)
+        .expect_err("a zero timescale must be rejected");
+    // Bites: before the fix this returned `Ok` with every tag timestamped 0.
+    assert!(
+        format!("{err}").contains("non-zero track timescale"),
+        "expected a timescale error, got {err}"
+    );
+}
