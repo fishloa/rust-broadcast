@@ -22,6 +22,7 @@
 
 use broadcast_common::traits::{Parse, Serialize};
 use dvb_si::descriptors::DescriptorLoop;
+use dvb_si::tables::cat::CatSection;
 use dvb_si::tables::pat::{PatEntry, PatSection};
 use dvb_si::tables::pmt::{PmtSection, PmtStream, StreamType};
 use mpeg_ts::mux::SectionPacketiser;
@@ -451,4 +452,208 @@ fn output_pmt_still_parses() {
     assert_eq!(pmt.program_number, 1);
     assert_eq!(pmt.pcr_pid, P1_PCR_PID);
     assert_eq!(pmt.streams.len(), 2);
+}
+
+// ── W-TF-3 (#1101): CA PIDs + PAT/PMT version re-observation ─────────────────
+
+/// Build a CA_descriptor (tag 0x09, ISO/IEC 13818-1 §2.6.16) for `ca_pid`.
+fn ca_descriptor_bytes(ca_pid: u16) -> Vec<u8> {
+    let high = 0xE0 | ((ca_pid >> 8) as u8);
+    vec![0x09, 0x04, 0x0E, 0x09, high, (ca_pid & 0xFF) as u8]
+}
+
+/// Build a 1-program scrambled TS:
+///
+/// ```text
+/// PID 0x0000 — PAT  (program 1 → PMT 0x0100)
+/// PID 0x0001 — CAT  (CA_descriptor → EMM PID 0x0300)
+/// PID 0x0100 — PMT1 (PCR 0x0101; video 0x0101; audio 0x0102;
+///                    program_info CA_descriptor → ECM PID 0x0200)
+/// PID 0x0101/0x0102 — ES, PID 0x0200 — ECM, PID 0x0300 — EMM, nulls
+/// ```
+fn build_scrambled_ts(cycles: usize) -> Vec<u8> {
+    let pat = PatSection {
+        transport_stream_id: 1,
+        version_number: 0,
+        current_next_indicator: true,
+        section_number: 0,
+        last_section_number: 0,
+        entries: vec![PatEntry {
+            program_number: 1,
+            pid: PMT1_PID,
+        }],
+    };
+    let pat_bytes = serialize_pat(&pat);
+    let mut pat_pktz = SectionPacketiser::new(PAT_PID);
+    let pat_pkts = pat_pktz.packetise(&[&pat_bytes]);
+
+    // CAT with one CA_descriptor pointing at the EMM PID.
+    let emm_ca = ca_descriptor_bytes(EMM_PID);
+    let cat = CatSection {
+        version_number: 0,
+        current_next_indicator: true,
+        section_number: 0,
+        last_section_number: 0,
+        descriptors: DescriptorLoop::new(&emm_ca),
+    };
+    let mut cat_bytes = vec![0u8; cat.serialized_len()];
+    cat.serialize_into(&mut cat_bytes).expect("CAT serialize");
+    let mut cat_pktz = SectionPacketiser::new(CAT_PID);
+    let cat_pkts = cat_pktz.packetise(&[&cat_bytes]);
+
+    let ecm_ca = ca_descriptor_bytes(ECM_PID);
+    let pmt1 = PmtSection::new(
+        1,
+        0,
+        true,
+        0,
+        0,
+        P1_PCR_PID,
+        DescriptorLoop::new(&ecm_ca),
+        vec![
+            PmtStream {
+                stream_type: StreamType::Mpeg2Video,
+                elementary_pid: P1_VIDEO_PID,
+                es_info: DescriptorLoop::new(&[]),
+            },
+            PmtStream {
+                stream_type: StreamType::Mpeg2Audio,
+                elementary_pid: P1_AUDIO_PID,
+                es_info: DescriptorLoop::new(&[]),
+            },
+        ],
+    );
+    let pmt1_bytes = serialize_pmt(&pmt1);
+    let mut pmt1_pktz = SectionPacketiser::new(PMT1_PID);
+    let pmt1_pkts = pmt1_pktz.packetise(&[&pmt1_bytes]);
+
+    let mut stream = Vec::new();
+    for _ in 0..cycles {
+        for p in &pat_pkts {
+            stream.extend_from_slice(p);
+        }
+        for p in &cat_pkts {
+            stream.extend_from_slice(p);
+        }
+        for p in &pmt1_pkts {
+            stream.extend_from_slice(p);
+        }
+        stream.extend_from_slice(&dummy_es_packet(P1_VIDEO_PID, 0));
+        stream.extend_from_slice(&dummy_es_packet(P1_AUDIO_PID, 0));
+        stream.extend_from_slice(&dummy_es_packet(ECM_PID, 0));
+        stream.extend_from_slice(&dummy_es_packet(EMM_PID, 0));
+        stream.extend_from_slice(&null_packet());
+    }
+    stream
+}
+
+const CAT_PID: u16 = 0x0001;
+const ECM_PID: u16 = 0x0200;
+const EMM_PID: u16 = 0x0300;
+
+/// Service extract of a scrambled service must keep the CAT, the EMM PID, and
+/// the ECM PID from the PMT's CA_descriptors — otherwise the output is
+/// undecryptable (#1101 W-TF-3).
+#[test]
+fn service_extract_keeps_ca_pids() {
+    let ts = build_scrambled_ts(4);
+    let output = run(&ts, PidFilter::service(1));
+    let pids = all_pids_in(&output);
+
+    let expected: std::collections::BTreeSet<u16> = [
+        PAT_PID,
+        CAT_PID,
+        PMT1_PID,
+        P1_VIDEO_PID,
+        P1_AUDIO_PID,
+        ECM_PID,
+        EMM_PID,
+    ]
+    .into();
+    assert_eq!(
+        pids, expected,
+        "scrambled service extract must keep CAT/EMM/ECM PIDs"
+    );
+}
+
+/// After the service resolves, a PAT version change that moves the PMT to a
+/// new PID must be re-observed; the terminal-`Resolved` state silently dropped
+/// the moved PMT for the rest of the stream (#1101 W-TF-3).
+#[test]
+fn service_extract_re_observes_pat_version_change() {
+    // Phase 1: PAT v0 maps program 1 → PMT 0x0100, resolved.
+    let base = build_two_program_ts(2);
+    let mut stream = base.clone();
+
+    // Phase 2: PAT v1 moves program 1 → PMT 0x0200 (PMT2 content).
+    let pat_v1 = PatSection {
+        transport_stream_id: 1,
+        version_number: 1,
+        current_next_indicator: true,
+        section_number: 0,
+        last_section_number: 0,
+        entries: vec![PatEntry {
+            program_number: 1,
+            pid: PMT2_PID,
+        }],
+    };
+    let pat_v1_bytes = serialize_pat(&pat_v1);
+    let mut pktz = SectionPacketiser::new(PAT_PID);
+    let pat_v1_pkts = pktz.packetise(&[&pat_v1_bytes]);
+    let mut pmt2_pktz = SectionPacketiser::new(PMT2_PID);
+    let pmt2_pkts = pmt2_pktz.packetise(&[&{
+        // v1, program_number 1: this is the *moved* PMT for program 1.
+        let pmt2 = PmtSection::new(
+            1,
+            1,
+            true,
+            0,
+            0,
+            P2_PCR_PID,
+            DescriptorLoop::new(&[]),
+            vec![
+                PmtStream {
+                    stream_type: StreamType::Mpeg2Video,
+                    elementary_pid: P2_VIDEO_PID,
+                    es_info: DescriptorLoop::new(&[]),
+                },
+                PmtStream {
+                    stream_type: StreamType::Mpeg2Audio,
+                    elementary_pid: P2_AUDIO_PID,
+                    es_info: DescriptorLoop::new(&[]),
+                },
+            ],
+        );
+        serialize_pmt(&pmt2)
+    }]);
+    for _ in 0..2 {
+        for p in &pat_v1_pkts {
+            stream.extend_from_slice(p);
+        }
+        for p in &pmt2_pkts {
+            stream.extend_from_slice(p);
+        }
+        stream.extend_from_slice(&dummy_es_packet(P2_VIDEO_PID, 0));
+        stream.extend_from_slice(&dummy_es_packet(P2_AUDIO_PID, 0));
+    }
+
+    let output = run(&stream, PidFilter::service(1));
+    let pids = all_pids_in(&output);
+
+    assert!(
+        pids.contains(&PMT2_PID),
+        "moved PMT PID 0x0200 must be kept after PAT version change, got {pids:?}"
+    );
+    assert!(
+        pids.contains(&P2_AUDIO_PID),
+        "new ES PID 0x0202 must be kept after PAT version change, got {pids:?}"
+    );
+    // Packets already kept in phase 1 necessarily carry the old PMT PID; the
+    // re-observation is proven by phase 2's packets (moved PMT + new ES PIDs).
+    let phase2 = &output[output.len() / 2..];
+    let phase2_pids = all_pids_in(phase2);
+    assert!(
+        !phase2_pids.contains(&PMT1_PID),
+        "old PMT PID 0x0100 must be dropped after the PAT moved the programme, got {phase2_pids:?}"
+    );
 }

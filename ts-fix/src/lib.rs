@@ -10,7 +10,7 @@
 //! |---|---|---|
 //! | Continuity repair | [`repair_continuity`](TsFixBuilder::repair_continuity) | Renumber per-PID continuity counters (§2.4.3.3). |
 //! | PID filter / service extract | [`filter_pids`](TsFixBuilder::filter_pids) | Keep specified PIDs or extract a single programme by `program_number`. |
-//! | PAT/PMT regeneration | [`regen_psi`](TsFixBuilder::regen_psi) | Rebuild PAT from observed PMT PIDs on flush. |
+//! | PAT/PMT regeneration | [`regen_psi`](TsFixBuilder::regen_psi) | Rebuild PAT from observed PMT PIDs, replacing the PAT in position. |
 //! | PCR restamp | [`restamp_pcr`](TsFixBuilder::restamp_pcr) | Recompute PCR values on the PCR PID (§2.4.3.5). |
 //! | PCR-discontinuity honor | [`honor_pcr_discontinuity`](TsFixBuilder::honor_pcr_discontinuity) | Set `discontinuity_indicator` on genuine, unflagged PCR breaks (TR 101 290 §5.2.2 2.3b) without rewriting values. |
 //! | Stuffing | [`stuffing`](TsFixBuilder::stuffing) | Drop null packets or pad to a target packet rate. |
@@ -201,8 +201,10 @@ impl TsFixBuilder {
     /// programs that survived the filter.
     ///
     /// The engine observes PAT sections as packets pass through, collecting the
-    /// program → PMT PID mappings. On flush (end of stream), it emits a
-    /// freshly-generated PAT listing exactly the observed programs.
+    /// program → PMT PID mappings. The regenerated PAT listing exactly the
+    /// observed programs replaces the original PAT in position as it passes; if
+    /// the input carries no PAT slot at all, one is emitted as soon as the
+    /// program mapping is complete, or at end-of-stream as a fallback.
     ///
     /// # Example — filter to one service, then regenerate PAT
     ///

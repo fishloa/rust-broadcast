@@ -11,7 +11,7 @@ use dvb_si::tables::pmt::{self, PmtSection, PmtStream, StreamType};
 use mpeg_ts::mux::SectionPacketiser;
 use mpeg_ts::ts::{TsHeader, extract_ts_payload};
 use std::fs;
-use ts_fix::{PidFilter, TsFix};
+use ts_fix::{PidFilter, Stuffing, TsFix};
 
 // ── PID constants ────────────────────────────────────────────────────────────
 
@@ -20,6 +20,8 @@ const PAT_PID: u16 = 0x0000;
 const PMT_TABLE_ID: u8 = pmt::TABLE_ID;
 const PMT1_PID: u16 = 0x0100;
 const PMT2_PID: u16 = 0x0200;
+/// Null-packet PID (ISO/IEC 13818-1 §2.4.1).
+const NULL_PID: u16 = 0x1FFF;
 
 const P1_PCR_PID: u16 = 0x0101;
 const P1_VIDEO_PID: u16 = 0x0101;
@@ -1064,4 +1066,142 @@ fn regen_pat_preserves_network_pid_entry() {
         2,
         "regenerated PAT must still list both programs alongside the network_pid entry"
     );
+}
+
+// ── W-TF-4 (#1101): flush output must flow through later ops ─────────────────
+
+/// Build a stream carrying ONLY PMT1 + ES packets — no PAT slot anywhere — so
+/// `regen_psi`'s only PAT is the one emitted from `PsiRegenOp::flush`.  Each
+/// PMT cycle ends with a null packet so the later `StuffingOp` has something
+/// observable to do.
+fn build_patless_p1_ts() -> Vec<u8> {
+    let pmt1 = PmtSection::new(
+        1,
+        0,
+        true,
+        0,
+        0,
+        P1_PCR_PID,
+        DescriptorLoop::new(&[]),
+        vec![PmtStream {
+            stream_type: StreamType::Mpeg2Video,
+            elementary_pid: P1_VIDEO_PID,
+            es_info: DescriptorLoop::new(&[]),
+        }],
+    );
+    let mut pmt_bytes = vec![0u8; pmt1.serialized_len()];
+    pmt1.serialize_into(&mut pmt_bytes).expect("PMT serialize");
+    let mut pmt_pktz = SectionPacketiser::new(PMT1_PID);
+    let pmt_pkts = pmt_pktz.packetise(&[&pmt_bytes]);
+
+    // A SINGLE PMT cycle: the mapping never completes mid-stream (the early
+    // emit only fires on a *repeat* of a known program's PMT), so the PAT is
+    // emitted exclusively from PsiRegenOp::flush at end of stream.
+    let mut stream = Vec::new();
+    for p in &pmt_pkts {
+        stream.extend_from_slice(p);
+    }
+    stream.extend_from_slice(&dummy_es_packet(P1_VIDEO_PID, 0));
+    stream.extend_from_slice(&null_packet());
+    stream
+}
+
+/// `regen_psi` + `drop_nulls` with a PAT-less input: the fallback PAT emitted
+/// from `PsiRegenOp::flush` must reach the output by flowing through every
+/// later op, exactly like packets flushed by an earlier op during `push`.
+/// Before #1101 the multi-op `finish` only drained the staging buffer at the
+/// *last* op, so op 0's flush output was silently dropped and the output
+/// carried no PAT at all.
+#[test]
+fn regen_psi_flush_pat_flows_through_later_ops() {
+    let ts = build_patless_p1_ts();
+
+    let mut engine = TsFix::builder()
+        .regen_psi()
+        .stuffing(Stuffing::drop_nulls())
+        .build()
+        .expect("build");
+
+    let mut output = Vec::new();
+    for chunk in ts.chunks_exact(188) {
+        engine
+            .push(chunk, |pkt| output.extend_from_slice(pkt))
+            .expect("valid packet");
+    }
+    engine.finish(|pkt| output.extend_from_slice(pkt));
+
+    let pids: Vec<u16> = output
+        .chunks_exact(188)
+        .map(|p| (((p[1] & 0x1F) as u16) << 8) | p[2] as u16)
+        .collect();
+    assert!(
+        pids.contains(&PAT_PID),
+        "the PAT flushed by regen_psi must be chained through later ops, not dropped"
+    );
+    assert!(
+        !pids.contains(&NULL_PID),
+        "nulls must still be dropped by the later StuffingOp"
+    );
+
+    // Independent cross-check with TSDuck tsanalyze (the tsduck_oracle.rs
+    // pattern): the chained flush PAT must be a clean PAT section.
+    if tsanalyze_available() {
+        let path = write_temp_ts(&output, "tsfix-wtf4");
+        let (disc, dups) = tsanalyze_pid_stats(&path, 0);
+        assert_eq!(
+            disc, 0,
+            "tsanalyze: chained flush PAT must have no discontinuities"
+        );
+        assert_eq!(
+            dups, 0,
+            "tsanalyze: chained flush PAT must have no duplicates"
+        );
+        let _ = std::fs::remove_file(&path);
+    }
+}
+
+fn tsanalyze_available() -> bool {
+    std::process::Command::new("tsanalyze")
+        .arg("--version")
+        .output()
+        .is_ok_and(|o| o.status.success())
+}
+
+fn write_temp_ts(bytes: &[u8], prefix: &str) -> std::path::PathBuf {
+    static NEXT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+    let path = std::env::temp_dir().join(format!(
+        "{prefix}-{}-{}.ts",
+        std::process::id(),
+        NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    ));
+    std::fs::write(&path, bytes).expect("write temp ts");
+    path
+}
+
+/// Run `tsanalyze --normalized` and return (discontinuities, duplicates) for `pid`.
+fn tsanalyze_pid_stats(path: &std::path::Path, pid: u16) -> (i64, i64) {
+    let output = std::process::Command::new("tsanalyze")
+        .arg("--normalized")
+        .arg(path)
+        .output()
+        .expect("tsanalyze must run");
+    assert!(output.status.success());
+    let text = String::from_utf8_lossy(&output.stdout);
+    let line = text
+        .lines()
+        .find(|l| {
+            l.starts_with("pid:")
+                && l.split(':')
+                    .find_map(|kv| kv.strip_prefix("pid="))
+                    .and_then(|v| v.parse::<i64>().ok())
+                    == Some(pid as i64)
+        })
+        .unwrap_or_else(|| panic!("no tsanalyze pid: line for PID {pid} in:\n{text}"));
+    let field = |key: &str| -> i64 {
+        line.split(':')
+            .find_map(|kv| kv.strip_prefix(&format!("{key}=")))
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(-1)
+    };
+    (field("discontinuities"), field("duplicated"))
 }

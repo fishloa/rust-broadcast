@@ -152,9 +152,14 @@ fn make_pcr_adaptation(
 
 /// Build a PAT section's wire bytes.
 fn build_pat_section(program_map_pids: &[(u16, u16)]) -> Vec<u8> {
+    build_pat_section_versioned(program_map_pids, 0)
+}
+
+/// Build a PAT section with an explicit `version_number`.
+fn build_pat_section_versioned(program_map_pids: &[(u16, u16)], version: u8) -> Vec<u8> {
     let pat = PatSection {
         transport_stream_id: 1,
-        version_number: 0,
+        version_number: version,
         current_next_indicator: true,
         section_number: 0,
         last_section_number: 0,
@@ -173,9 +178,19 @@ fn build_pat_section(program_map_pids: &[(u16, u16)]) -> Vec<u8> {
 
 /// Build a PMT section's wire bytes.
 fn build_pmt_section(program_number: u16, pcr_pid: u16, es_pids: &[u16]) -> Vec<u8> {
+    build_pmt_section_versioned(program_number, pcr_pid, es_pids, 0)
+}
+
+/// Build a PMT section with an explicit `version_number`.
+fn build_pmt_section_versioned(
+    program_number: u16,
+    pcr_pid: u16,
+    es_pids: &[u16],
+    version: u8,
+) -> Vec<u8> {
     let pmt = PmtSection::new(
         program_number,
-        0,
+        version,
         true,
         0,
         0,
@@ -199,6 +214,14 @@ fn build_pmt_section(program_number: u16, pcr_pid: u16, es_pids: &[u16]) -> Vec<
 fn packetise_section(pid: u16, section: &[u8]) -> Vec<[u8; TS_PACKET_SIZE]> {
     let mut pktizer = SectionPacketiser::new(pid);
     pktizer.packetise(&[section])
+}
+
+/// Corrupt the trailing CRC-32 of a long-form section so it still parses but
+/// fails CRC validation (indicator 2.2). Per W-CONF-1 (#1096) such a section
+/// must not count as presence for 1.3.a / 1.5.a.
+fn corrupt_crc(section: &mut [u8]) {
+    let len = section.len();
+    section[len - 1] ^= 0xFF;
 }
 
 /// Feed packets to the monitor and collect all events.
@@ -526,9 +549,112 @@ fn pat_error_timeout() {
 
     acquire_sync(&mut monitor);
 
-    let pkt = make_ts_packet(0x200, 0, false, false, &[], &[]);
+    // 1.3.a is a *section* presence check: no table_id 0x00 section has
+    // occurred since sync, so an in-sync payload past the 500 ms interval
+    // raises PAT_error_2.
+    let pkt = make_ts_packet(0x200, 0, false, false, &[], &[0xAB]);
     let events = monitor.feed(&pkt, ms(600));
     assert!(has_indicator(events, Indicator::PatError2));
+}
+
+#[test]
+fn pat_error_timeout_when_sections_never_complete() {
+    // W-CONF-1 (#1096): 1.3.a counts *sections* with table_id 0x00, so PID
+    // 0x0000 must not look present merely because packets keep arriving on it.
+    // Every packet here starts a section that its continuation packets never
+    // deliver, so no section reassembles: 2.2 stays silent (nothing completes,
+    // so there is no CRC to mismatch) while 1.3.a must still fire.
+    let mut monitor = ConformanceMonitor::new();
+    acquire_sync(&mut monitor);
+
+    let section = build_pat_section(&[(1, 0x100)]);
+    let chunk = &section[..section.len().min(184)];
+    let mut events = Vec::new();
+    for i in 0..5u64 {
+        let mut pkt = [0u8; TS_PACKET_SIZE];
+        pkt[0] = 0x47;
+        pkt[1] = if i > 0 { 0x40 } else { 0x00 }; // pusi each time: fresh, never-finished section
+        pkt[2] = 0x00;
+        pkt[3] = 0x10 | ((i as u8) & 0x0F); // payload only, incrementing cc
+        pkt[4..4 + chunk.len()].copy_from_slice(chunk);
+        events.extend(monitor.feed(&pkt, ms(1 + i * 100)).to_vec());
+    }
+    assert!(
+        !has_indicator(&events, Indicator::CrcError),
+        "no section completes here, so 2.2 must stay silent: {events:#?}"
+    );
+
+    let pkt = make_ts_packet(0x200, 0, false, false, &[], &[0xAB]);
+    let tail = monitor.feed(&pkt, ms(1_000));
+    assert!(
+        has_indicator(tail, Indicator::PatError2),
+        "payload on PID 0x0000 that never assembles into a section must not          count as PAT presence: {tail:#?}"
+    );
+}
+
+#[test]
+fn pat_error_timeout_when_all_sections_fail_crc() {
+    // W-CONF-1 (#1096): a PID 0x0000 whose every section fails CRC never
+    // completes a *valid* PAT section, so 1.3.a must still fire. Previously the
+    // timer was reset by any payload-bearing packet on the PID, so a stream no
+    // decoder can acquire was never reported.
+    let mut monitor = ConformanceMonitor::new();
+    acquire_sync(&mut monitor);
+
+    let mut section = build_pat_section(&[(1, 0x100)]);
+    corrupt_crc(&mut section);
+    let mut events = Vec::new();
+    for i in 0..5u64 {
+        let packets = packetise_section(PID_PAT, &section);
+        events.extend(feed_all(&mut monitor, &packets, ms(1 + i * 100), ms(1)));
+    }
+    // 2.2 still reports the CRC fault itself.
+    assert!(has_indicator(&events, Indicator::CrcError));
+
+    let pkt = make_ts_packet(0x200, 0, false, false, &[], &[0xAB]);
+    let tail = monitor.feed(&pkt, ms(1_000));
+    assert!(
+        has_indicator(tail, Indicator::PatError2),
+        "CRC-failing PAT sections must not count as presence: {tail:#?}"
+    );
+}
+
+#[test]
+fn pat_error_timeout_when_sections_carry_wrong_table_id() {
+    // W-CONF-1 (#1096): sections completing on PID 0x0000 with a table_id other
+    // than 0x00 are not "sections with table_id 0x00", so 1.3.a's presence
+    // condition remains unmet.
+    let mut monitor = ConformanceMonitor::new();
+    acquire_sync(&mut monitor);
+
+    // One table_id 0x01 section at t=5ms trips PAT_error_2 per section (the
+    // wrong-table_id dimension of 1.3.a).
+    let mut section = build_pat_section(&[(1, 0x100)]);
+    section[0] = 0x01; // wrong table_id
+    let packets = packetise_section(PID_PAT, &section);
+    let first = feed_all(&mut monitor, &packets, ms(5), ms(1));
+    assert_eq!(
+        first
+            .iter()
+            .filter(|e| e.indicator == Indicator::PatError2)
+            .count(),
+        1
+    );
+
+    // Past 1.3.a's interval with no further section on PID 0x0000: the presence
+    // dimension must also fire. A timer that any completed section refreshed
+    // would stay silent.
+    let pkt = make_ts_packet(0x200, 0, false, false, &[], &[0xAB]);
+    let tail = monitor.feed(&pkt, ms(600));
+    let presence: Vec<_> = tail
+        .iter()
+        .filter(|e| e.indicator == Indicator::PatError2)
+        .collect();
+    assert_eq!(
+        presence.len(),
+        1,
+        "a wrong-table_id section must not refresh 1.3.a's presence timer: {tail:#?}"
+    );
 }
 
 #[test]
@@ -1990,24 +2116,68 @@ fn si_min_gap_absent_when_25ms_or_more() {
 }
 
 #[test]
-fn si_min_gap_multi_section_no_false_positive() {
-    // TEST 3 from the brief: a dense legitimate multi-section table must NOT
-    // trigger min-gap. Different section_numbers on the same table_id are ok.
+fn si_min_gap_trips_for_consecutive_sections_of_one_sub_table() {
+    // W-CONF-3 (#1096): the old key included `section_number`, so sections
+    // 0/1/2 of one sub-table sent 1 ms apart were never flagged. ETSI
+    // TR 101 211 §4.4 measures the gap per sub-table
+    // (pid + table_id + table_id_extension), "same or different
+    // section_number", so consecutive section numbers less than 25 ms apart
+    // must trip.
     let mut monitor = ConformanceMonitor::new();
     acquire_sync(&mut monitor);
 
-    // Feed NIT_actual section_number=0 at t=5ms
     let sec0 = build_nit_actual_section_numbered(0);
-    let p0 = packetise_section(PID_NIT, &sec0);
-    feed_all(&mut monitor, &p0, ms(5), ms(1));
+    feed_all(
+        &mut monitor,
+        &packetise_section(PID_NIT, &sec0),
+        ms(5),
+        ms(1),
+    );
 
-    // Feed NIT_actual section_number=1 at t=6ms (different section_number, gap < 25ms)
     let sec1 = build_nit_actual_section_numbered(1);
-    let p1 = packetise_section(PID_NIT, &sec1);
-    let events = feed_all(&mut monitor, &p1, ms(6), ms(1));
+    let events = feed_all(
+        &mut monitor,
+        &packetise_section(PID_NIT, &sec1),
+        ms(6),
+        ms(1),
+    );
 
-    // Different section_numbers → no min-gap error.
-    assert!(!has_indicator(&events, Indicator::SiMinGapError));
+    assert!(
+        has_indicator(&events, Indicator::SiMinGapError),
+        "consecutive sections of one sub-table 1 ms apart must trip: {events:#?}"
+    );
+}
+
+#[test]
+fn si_min_gap_absent_for_same_section_number_of_different_sub_tables() {
+    // W-CONF-3 (#1096): the old key omitted `table_id_extension` and included
+    // `section_number`, so back-to-back section 0s of different EIT P/F
+    // services (one sub-table per service_id) were conflated and falsely
+    // flagged. A different `table_id_extension` is a different sub-table, so no
+    // gap is measured between them.
+    let mut monitor = ConformanceMonitor::new();
+    acquire_sync(&mut monitor);
+
+    let sec_a = build_eit_pf_actual_section_keyed(0, 0x0100, 1, 1);
+    feed_all(
+        &mut monitor,
+        &packetise_section(PID_EIT, &sec_a),
+        ms(5),
+        ms(1),
+    );
+
+    let sec_b = build_eit_pf_actual_section_keyed(0, 0x0101, 1, 1);
+    let events = feed_all(
+        &mut monitor,
+        &packetise_section(PID_EIT, &sec_b),
+        ms(6),
+        ms(1),
+    );
+
+    assert!(
+        !has_indicator(&events, Indicator::SiMinGapError),
+        "different sub-tables must not be gap-checked against each other: {events:#?}"
+    );
 }
 
 // ── NIT_other / SDT_other / EIT_other repetition ──────────────────────────
@@ -2176,4 +2346,227 @@ fn nit_other_on_eit_pid_no_error() {
     let packets2 = packetise_section(PID_EIT, &sec);
     let events = feed_all(&mut monitor, &packets2, secs(15), ms(1));
     assert!(has_indicator(&events, Indicator::EitOtherError));
+}
+
+// ── W-CONF-2 (#1096): referenced-PID sets are rebuilt per PAT/PMT version ────
+
+#[test]
+fn pmt_removed_by_new_pat_version_stops_firing_and_becomes_unreferenced() {
+    // TR 101 290 Table 5.0a 1.5.a checks presence of table_id 0x02 sections on
+    // each program_map_PID *referenced by the current PAT*. When a new PAT
+    // version removes a programme, its old program_map_PID must stop firing
+    // PMT_error_2, and because it is still on the wire it must instead be
+    // classed 3.4 Unreferenced_PID. The tracking map previously only ever grew.
+    let mut monitor = ConformanceMonitor::new();
+    acquire_sync(&mut monitor);
+
+    let removed_pmt_pid: u16 = 0x0400;
+    let kept_pmt_pid: u16 = 0x0401;
+
+    let pat_v0 = build_pat_section_versioned(&[(1, kept_pmt_pid), (2, removed_pmt_pid)], 0);
+    feed_all(
+        &mut monitor,
+        &packetise_section(PID_PAT, &pat_v0),
+        ms(5),
+        ms(1),
+    );
+    for pmt_pid in [kept_pmt_pid, removed_pmt_pid] {
+        let pmt = build_pmt_section(1, 0x1FFF, &[0x0500]);
+        feed_all(
+            &mut monitor,
+            &packetise_section(pmt_pid, &pmt),
+            ms(10),
+            ms(1),
+        );
+    }
+
+    // PAT version 1 references only `kept_pmt_pid`.
+    let pat_v1 = build_pat_section_versioned(&[(1, kept_pmt_pid)], 1);
+    feed_all(
+        &mut monitor,
+        &packetise_section(PID_PAT, &pat_v1),
+        ms(20),
+        ms(1),
+    );
+
+    // The removed PMT PID keeps transmitting, well past 1.5.a's interval.
+    let mut events = Vec::new();
+    for i in 0..4u64 {
+        let pkt = make_ts_packet(removed_pmt_pid, i as u8, false, false, &[], &[0xAB]);
+        events.extend(monitor.feed(&pkt, ms(600 + i * 200)).to_vec());
+    }
+
+    let stale_pmt_error: Vec<_> = events
+        .iter()
+        .filter(|e| e.indicator == Indicator::PmtError2 && e.pid == Some(removed_pmt_pid))
+        .collect();
+    assert!(
+        stale_pmt_error.is_empty(),
+        "a program_map_PID the current PAT no longer references must not fire \
+         PMT_error_2: {events:#?}"
+    );
+
+    let unref: Vec<_> = events
+        .iter()
+        .filter(|e| e.indicator == Indicator::UnreferencedPid && e.pid == Some(removed_pmt_pid))
+        .collect();
+    assert_eq!(
+        unref.len(),
+        1,
+        "a still-transmitting PID that a new PAT version stopped referencing must \
+         be classed Unreferenced_PID: {events:#?}"
+    );
+}
+
+#[test]
+fn es_pid_removed_by_new_pmt_version_stops_firing_and_becomes_unreferenced() {
+    // Same for 1.6 (PID_error) / 3.4: a PMT version that drops an ES PID must
+    // stop reporting it absent, and the still-present PID must be classed
+    // Unreferenced_PID.
+    let mut monitor = ConformanceMonitor::new();
+    let dropped_es_pid: u16 = 0x0501;
+    let kept_es_pid: u16 = 0x0502;
+    let pmt_pid: u16 = 0x0100;
+
+    acquire_sync(&mut monitor);
+    let pat = build_pat_section(&[(1, pmt_pid)]);
+    feed_all(
+        &mut monitor,
+        &packetise_section(PID_PAT, &pat),
+        ms(5),
+        ms(1),
+    );
+    let pmt_v0 = build_pmt_section(1, kept_es_pid, &[kept_es_pid, dropped_es_pid]);
+    feed_all(
+        &mut monitor,
+        &packetise_section(pmt_pid, &pmt_v0),
+        ms(10),
+        ms(1),
+    );
+
+    let pmt_v1 = build_pmt_section_versioned(1, kept_es_pid, &[kept_es_pid], 1);
+    feed_all(
+        &mut monitor,
+        &packetise_section(pmt_pid, &pmt_v1),
+        ms(20),
+        ms(1),
+    );
+
+    // Past 3.4's 500 ms persistence threshold. The PID was first seen at
+    // t=100ms, and the new PMT version stopped referencing it at t=20ms, so
+    // from t=700ms onward it must be classed Unreferenced_PID.
+    let mut events = Vec::new();
+    {
+        let pkt = make_ts_packet(dropped_es_pid, 0, false, false, &[], &[0xAB]);
+        events.extend(monitor.feed(&pkt, ms(100)).to_vec());
+    }
+    for i in 0..4u64 {
+        let pkt = make_ts_packet(dropped_es_pid, (i + 1) as u8, false, false, &[], &[0xAB]);
+        events.extend(monitor.feed(&pkt, ms(600 + i * 100)).to_vec());
+    }
+
+    let stale_pid_error: Vec<_> = events
+        .iter()
+        .filter(|e| e.indicator == Indicator::PidError && e.pid == Some(dropped_es_pid))
+        .collect();
+    assert!(
+        stale_pid_error.is_empty(),
+        "an ES PID the current PMT no longer references must not fire PID_error: \
+         {events:#?}"
+    );
+
+    let unref: Vec<_> = events
+        .iter()
+        .filter(|e| e.indicator == Indicator::UnreferencedPid && e.pid == Some(dropped_es_pid))
+        .collect();
+    assert_eq!(
+        unref.len(),
+        1,
+        "a still-transmitting PID that a new PMT version stopped referencing must \
+         be classed Unreferenced_PID: {events:#?}"
+    );
+}
+
+// ── W-CONF-4 (#1096): caller clocks that do not start at zero ─────────────────
+
+/// The caller clock `t` is any monotonic time: `Duration::UNIX_EPOCH.elapsed()`
+/// (the obvious choice for an ingest service), a PCR-derived clock, or a
+/// capture's `Timestamp` without an epoch subtraction — all of which start far
+/// above zero. The presence timers (1.3.a/1.5.a/1.6), the SI repetition timer
+/// (3.2) and the T-STD empty-interval/data-delay windows (3.9/3.10) must all
+/// anchor to the first observed `t`, not to `Duration::ZERO`; otherwise the
+/// very first in-sync packet looks like an unbounded absence and every
+/// presence indicator fires immediately.
+#[test]
+fn epoch_based_caller_clock_anchors_all_timers() {
+    // A UNIX-epoch-like clock base (~55 years of nanoseconds).
+    const EPOCH_BASE_NS: u64 = 1_700_000_000_000_000_000;
+    let clock = |ms_offset: u64| -> Duration {
+        Duration::from_nanos(EPOCH_BASE_NS + ms_offset * 1_000_000)
+    };
+
+    let mut monitor = ConformanceMonitor::new();
+
+    // Acquire sync on the epoch-based clock (5 in-sync packets).
+    for i in 0u8..5 {
+        let pkt = make_ts_packet(0x100, i, false, false, &[], &[]);
+        let events = monitor.feed(&pkt, clock(i as u64));
+        assert!(
+            !has_indicator(events, Indicator::PatError2)
+                && !has_indicator(events, Indicator::TsSyncLoss),
+            "sync acquisition on an epoch-based clock must be clean: {events:#?}"
+        );
+    }
+
+    // A well-formed PAT + PMT on the same clock.
+    let pat = build_pat_section(&[(1, 0x0100)]);
+    let events = feed_all(
+        &mut monitor,
+        &packetise_section(PID_PAT, &pat),
+        clock(5),
+        ms(1),
+    );
+    assert!(
+        !has_indicator(&events, Indicator::PatError2),
+        "a valid PAT section at t≈epoch must not be 1.3.a presence-absent: {events:#?}"
+    );
+
+    let pmt = build_pmt_section(1, 0x0500, &[0x0500]);
+    let events = feed_all(
+        &mut monitor,
+        &packetise_section(0x0100, &pmt),
+        clock(10),
+        ms(1),
+    );
+    assert!(
+        !has_indicator(&events, Indicator::PmtError2),
+        "a valid PMT section at t≈epoch must not be 1.5.a presence-absent: {events:#?}"
+    );
+
+    // 1.6: the referenced ES PID is continuously present — well inside the
+    // 5 s absence period measured from *this* clock's own timeline.
+    let es_pkt = make_ts_packet(
+        0x0500,
+        0,
+        false,
+        true,
+        &make_pcr_adaptation(90_000, 0, false, false),
+        &[0xAB],
+    );
+    let events = monitor.feed(&es_pkt, clock(15)).to_vec();
+    assert!(
+        !has_indicator(&events, Indicator::PidError),
+        "a just-arrived referenced PID on an epoch-based clock must not be \
+         reported absent (1.6): {events:#?}"
+    );
+
+    // 3.9/3.10: the first data delay check must also anchor to the clock, and
+    // 3.2's SI timers were armed (not yet expired) by the sections above.
+    assert!(
+        !has_indicator(&events, Indicator::EmptyBufferError)
+            && !has_indicator(&events, Indicator::DataDelayError)
+            && !has_indicator(&events, Indicator::SiRepetitionError),
+        "T-STD windows and SI repetition timers must anchor to the first \
+         observed t, not Duration::ZERO: {events:#?}"
+    );
 }

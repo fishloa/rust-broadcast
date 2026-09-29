@@ -160,9 +160,16 @@ pub(crate) struct StdBuffer {
     /// empty-interval check (indicator 3.9).
     #[allow(dead_code)]
     empty_since_check: bool,
-    /// When the last empty-interval check was performed (indicator 3.9).
+    /// End of the current empty-interval (indicator 3.9) check window.
+    ///
+    /// W-CONF-4 (#1096): the caller clock `t` may start anywhere (zero, a
+    /// UNIX-epoch or PCR-derived time). A zero-based absolute anchor combined
+    /// with `saturating_sub` made every elapsed interval look enormous, so
+    /// the empty-interval check fired on the very first packet. The window is
+    /// now `None` until the model is anchored to the first observed `t`, and
+    /// each window ends one interval after the previous one.
     #[allow(dead_code)]
-    last_empty_check: Duration,
+    next_check_at: Option<Duration>,
 }
 
 impl StdBuffer {
@@ -176,7 +183,7 @@ impl StdBuffer {
             last_drain: now,
             first_byte_arrival: None,
             empty_since_check: false,
-            last_empty_check: now,
+            next_check_at: None,
         }
     }
 
@@ -188,8 +195,7 @@ impl StdBuffer {
         if elapsed_us == 0 {
             return;
         }
-        // drain_bytes = elapsed_us * leak_rate / 1_000_000
-        let drain_bytes = elapsed_us * self.leak_rate / 1_000_000;
+        let drain_bytes = self.drain_bytes(elapsed_us);
         if drain_bytes >= self.occupancy {
             self.occupancy = 0;
             self.first_byte_arrival = None;
@@ -225,9 +231,25 @@ impl StdBuffer {
     #[allow(dead_code)]
     pub(crate) fn would_overflow(&self, bytes: u64, now: Duration) -> bool {
         let elapsed_us = now.saturating_sub(self.last_drain).as_micros() as u64;
-        let drain_bytes = elapsed_us * self.leak_rate / 1_000_000;
+        let drain_bytes = self.drain_bytes(elapsed_us);
         let projected = self.occupancy.saturating_sub(drain_bytes);
         projected + bytes > self.capacity
+    }
+
+    /// Bytes the leak rate removes over `elapsed_us`, saturating rather than
+    /// overflowing, and never more than the buffer currently holds.
+    ///
+    /// `elapsed_us * leak_rate` is an intermediate product with no relation to
+    /// the buffer size: with an epoch-based or PCR-derived caller clock (see
+    /// W-CONF-4, #1096) a long idle gap makes it exceed `u64`. The true drain
+    /// over any interval longer than `occupancy / leak_rate` is simply
+    /// `occupancy` — which the drain must actually reach, so the bound is
+    /// clamped by occupancy rather than by the buffer capacity.
+    fn drain_bytes(&self, elapsed_us: u64) -> u64 {
+        if elapsed_us >= self.occupancy.saturating_mul(1_000_000) / self.leak_rate.max(1) {
+            return self.occupancy;
+        }
+        (elapsed_us * self.leak_rate) / 1_000_000
     }
 
     /// The time at which the oldest byte currently in this buffer arrived.
@@ -253,16 +275,36 @@ impl StdBuffer {
     /// in the last `EMPTY_INTERVAL_SECS` seconds. Returns `true` if the check
     /// fails (i.e. the buffer has NOT been empty).
     ///
+    /// Arm the first empty-interval (indicator 3.9) window at `now`, or extend
+    /// the window already pending.
+    ///
+    /// W-CONF-4 (#1096): the caller clock may start anywhere (zero, a
+    /// UNIX-epoch or a PCR-derived time). Windows are therefore anchored to an
+    /// observed `t` rather than to `Duration::ZERO`, and each window ends one
+    /// interval after the previous one.
+    pub(crate) fn arm_empty_interval(&mut self, now: Duration) {
+        let Some(deadline) = self.next_check_at else {
+            self.next_check_at = Some(now + Duration::from_secs(TB_EMPTY_INTERVAL_SECS));
+            return;
+        };
+        if deadline < now {
+            self.next_check_at = Some(now + Duration::from_secs(TB_EMPTY_INTERVAL_SECS));
+        }
+    }
+
     /// Resets the interval window on each call.
     pub(crate) fn check_empty_interval(&mut self, now: Duration) -> bool {
-        let elapsed = now.saturating_sub(self.last_empty_check).as_secs();
-        if elapsed < TB_EMPTY_INTERVAL_SECS {
+        let Some(deadline) = self.next_check_at else {
+            // Not anchored to a caller clock yet: no window to evaluate.
+            return false;
+        };
+        if now < deadline {
             // Not yet time for the next check.
             return false;
         }
 
         let was_empty = core::mem::take(&mut self.empty_since_check);
-        self.last_empty_check = now;
+        self.next_check_at = Some(deadline + Duration::from_secs(TB_EMPTY_INTERVAL_SECS));
         !was_empty
     }
 }
@@ -322,5 +364,17 @@ impl TstdModel {
     /// Drain the TBsys buffer to the current time. Called once per packet.
     pub(crate) fn drain_tb_sys(&mut self, now: Duration) {
         self.tb_sys.drain_to(now);
+    }
+
+    /// Anchor every relative window in the model to the caller clock `now`.
+    ///
+    /// Called once, from the first in-sync packet (W-CONF-4, #1096). The
+    /// caller's clock may start anywhere, so windows cannot be based on
+    /// `Duration::ZERO`.
+    pub(crate) fn anchor(&mut self, now: Duration) {
+        self.tb_sys.arm_empty_interval(now);
+        for state in self.pid_buffers.values_mut() {
+            state.tb.arm_empty_interval(now);
+        }
     }
 }

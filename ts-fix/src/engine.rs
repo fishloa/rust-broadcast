@@ -129,7 +129,10 @@ impl Engine {
 
     /// Flush buffered state at end of stream.
     ///
-    /// Each op's flush output is fed forward through the remaining ops.
+    /// Each op's flush output is fed forward through every later op (via
+    /// their `process`, exactly as `push` chains packets), so a packet
+    /// flushed by op *i* still receives the transformations of ops
+    /// *i+1..* (#1101 W-TF-4).
     pub(crate) fn finish(&mut self, mut out: impl FnMut(&[u8])) {
         if self.ops.is_empty() {
             return;
@@ -142,29 +145,63 @@ impl Engine {
             return;
         }
 
-        // Multi-op flush: propagate flushed packets through the tail of the chain.
-        let model = &mut self.model;
-        let ops = &mut self.ops;
-        let last = ops.len() - 1;
+        // Multi-op flush with forward chaining: stage 0 is each op's flush
+        // output, which is then pushed through all later ops' `process`
+        // (preserving pipeline order and interleave), and stage 1 is the
+        // final flushed packets emitted in order.
+        let mut stage0: Vec<[u8; TS_PACKET_SIZE]> = Vec::new();
+        let mut stage1: Vec<[u8; TS_PACKET_SIZE]> = Vec::new();
+        let last = self.ops.len() - 1;
 
-        let mut stage_a: Vec<[u8; TS_PACKET_SIZE]> = Vec::new();
+        for i in 0..self.ops.len() {
+            // Op i flushes into stage0.
+            {
+                let (op, rest) = self.ops.split_at_mut(i);
+                let _ = op;
+                let op = &mut rest[0];
+                let model = &mut self.model;
+                op.flush(model, &mut |emitted: &[u8]| {
+                    let mut buf = [0u8; TS_PACKET_SIZE];
+                    buf.copy_from_slice(emitted);
+                    stage0.push(buf);
+                });
+            }
 
-        for (i, op) in ops.iter_mut().enumerate() {
-            // Flush op[i] into stage_a.
-            op.flush(model, &mut |emitted: &[u8]| {
-                let mut buf = [0u8; TS_PACKET_SIZE];
-                buf.copy_from_slice(emitted);
-                stage_a.push(buf);
-            });
-
-            if i == last {
-                for pkt in stage_a.drain(..) {
-                    out(&pkt);
+            // Chain the staged packets through every later op.
+            for j in (i + 1)..self.ops.len() {
+                if stage0.is_empty() {
+                    break;
+                }
+                let incoming: Vec<[u8; TS_PACKET_SIZE]> = core::mem::take(&mut stage0);
+                let is_last = j == last;
+                {
+                    let (_, tail) = self.ops.split_at_mut(j);
+                    let op = &mut tail[0];
+                    let model = &mut self.model;
+                    for pkt in incoming {
+                        if is_last {
+                            op.process(&pkt, model, &mut |emitted: &[u8]| {
+                                let mut buf = [0u8; TS_PACKET_SIZE];
+                                buf.copy_from_slice(emitted);
+                                stage1.push(buf);
+                            });
+                        } else {
+                            op.process(&pkt, model, &mut |emitted: &[u8]| {
+                                let mut buf = [0u8; TS_PACKET_SIZE];
+                                buf.copy_from_slice(emitted);
+                                stage0.push(buf);
+                            });
+                        }
+                    }
+                }
+                if is_last {
+                    break;
                 }
             }
-            // v0.1: flush output from earlier ops flowing into later ops is handled
-            // generically in later tasks when buffering ops are introduced.  For now
-            // IdentityOp.flush is a no-op so stage_a is always empty after the last op.
+        }
+
+        for pkt in stage1.drain(..) {
+            out(&pkt);
         }
     }
 }
