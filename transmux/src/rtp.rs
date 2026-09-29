@@ -12,6 +12,19 @@
 //!   marker bit on the last packet of an access unit, a dynamic payload type
 //!   (96+), monotonic 16-bit sequence numbers, a media-clock 32-bit timestamp
 //!   (H.264 → 90 kHz; AAC → the sample rate) and a fixed SSRC.
+//! - **The timestamp is the presentation time, not the decode time**
+//!   (RFC 6184 §5.1: "The RTP timestamp is set to the sampling timestamp of
+//!   the content"; receivers "SHOULD use the RTP timestamp for synchronizing
+//!   the display process"). So [`RtpPacketiser`] stamps each access unit with
+//!   the sample's **`pts`**, and the depacketisers read it back into `pts` —
+//!   a stream with B-frame reordering must not be presented in decode order at
+//!   the wrong instants. RTP carries no second timestamp, so a decode time is
+//!   not recoverable from the wire: the single-shot depacketiser reconstructs
+//!   the decode timeline from the whole stream it holds (the presentation
+//!   instants re-laid in wire order, delayed by the reorder depth) and reports
+//!   a reorder through [`RtpTimingWarning`]; the streaming depacketiser keeps
+//!   the documented low-delay model (`dts == pts`) and reports it through
+//!   [`crate::rtp_stream::RtpLossEvent::NonMonotonicTimestamp`].
 //! - **H.264** (RFC 6184): single-NAL packets (NAL type 1–23), STAP-A
 //!   (type 24) aggregation for the SPS+PPS parameter sets, and FU-A (type 28)
 //!   fragmentation of any NAL larger than the MTU. Video IR samples are 4-byte
@@ -46,10 +59,10 @@
 //!
 //! `no_std` + `alloc`.
 
+use alloc::collections::VecDeque;
 use alloc::format;
 use alloc::string::String;
 use alloc::vec::Vec;
-use core::marker::PhantomData;
 
 use broadcast_common::{Package, Parse, Serialize, Unpackage};
 use bytes::Bytes;
@@ -83,8 +96,21 @@ pub const DEFAULT_VIDEO_PT: u8 = 96;
 pub const DEFAULT_AUDIO_PT: u8 = 97;
 /// Default network MTU (payload budget) forcing FU-A on larger NALs.
 pub const DEFAULT_MTU: usize = 1400;
+/// The `c=` connection address [`build_sdp_with_connection`] emits by
+/// default: the same loopback the `o=` line names (RFC 8866 §5.7).
+pub const LOCAL_CONNECTION_ADDRESS: core::net::IpAddr =
+    core::net::IpAddr::V4(core::net::Ipv4Addr::LOCALHOST);
+/// First payload type of the dynamic range (RFC 3551 §6).
+const DYNAMIC_PT_MIN: u8 = 96;
+/// Last payload type of the dynamic range (RFC 3551 §6).
+const DYNAMIC_PT_MAX: u8 = 127;
 /// Default video RTP clock rate (RFC 6184 — H.264 is carried at 90 kHz).
 pub const VIDEO_CLOCK_RATE: u32 = 90_000;
+/// Default audio RTP clock rate used by [`RtpInputStream::new`] when the
+/// caller does not supply the stream's own (RFC 3551 §4.5 lists 48000 as a
+/// registered audio clock rate; the negotiated rate belongs in the SDP's
+/// `a=rtpmap`, RFC 3640 §4.1 for `mpeg4-generic`).
+pub const DEFAULT_AAC_CLOCK_RATE: u32 = 48_000;
 
 /// Default dynamic payload type for a KLV metadata stream (RFC 6597).
 pub const DEFAULT_KLV_PT: u8 = 98;
@@ -252,6 +278,58 @@ impl RtpPacketiser {
     }
 }
 
+/// Hands out dynamic payload types (RFC 3551 §6: "This profile reserves
+/// payload type numbers in the range 96-127 exclusively for dynamic
+/// assignment") for one session's streams, never reusing a type and never
+/// handing out one this crate has already bound to a fixed encoding.
+///
+/// Payload types are per-session bindings, so two streams sharing one produces
+/// an SDP that describes both as the same encoding — a receiver decodes the
+/// second as the first. Before this, a *third* AVC (or AAC) track got
+/// `video_pt + 2` because only "has a video track been seen" was tracked, so
+/// tracks 2 and 3 collided, and `96 + 2 = 98` additionally collided with
+/// [`DEFAULT_KLV_PT`].
+struct PtAllocator {
+    /// The next candidate type. Advanced past every allocation, so no value is
+    /// ever handed out twice.
+    next: u8,
+}
+
+impl PtAllocator {
+    /// Start allocating at `base`. A base outside the dynamic range (as an
+    /// explicit dynamic value, not a static one) yields types in the dynamic
+    /// range rather than a static assignment silently overwriting one.
+    fn new(base: u8) -> Self {
+        let next = if (DYNAMIC_PT_MIN..=DYNAMIC_PT_MAX).contains(&base) {
+            base
+        } else {
+            DYNAMIC_PT_MIN
+        };
+        Self { next }
+    }
+
+    /// Claim `base` for a caller that asked for it, so no automatic allocation
+    /// ever returns it again.
+    fn reserve_through(&mut self, base: u8) {
+        self.next = self.next.max(base.saturating_add(1));
+    }
+
+    /// The next unused payload type, skipping the ones this crate binds to a
+    /// fixed encoding ([`DEFAULT_KLV_PT`]) and the static range entirely.
+    fn allocate(&mut self) -> Option<u8> {
+        loop {
+            if self.next > DYNAMIC_PT_MAX {
+                return None;
+            }
+            let pt = self.next;
+            self.next = self.next.checked_add(1)?;
+            if pt != DEFAULT_KLV_PT {
+                return Some(pt);
+            }
+        }
+    }
+}
+
 /// Per-stream monotonic sequence-number counter (wraps at 16 bits).
 struct SeqCounter(u16);
 
@@ -306,17 +384,34 @@ impl Package for RtpPacketiser {
         }
         let mut streams = Vec::new();
         let mut sdp_media = String::new();
-        let mut used_video_pt = false;
-        let mut used_audio_pt = false;
+        // One allocator per session, shared by both kinds: a payload type is a
+        // session-wide binding (RFC 3551 §6), so a video and an audio stream
+        // must never be handed the same one either.
+        let mut pts = PtAllocator::new(self.video_pt.min(self.audio_pt));
+        // Both kinds' preferred bases are claimed up front, not lazily: the
+        // defaults (96 video, 97 audio) must survive a session whose tracks
+        // are ordered audio-first, and a base must never be handed to the
+        // *other* kind's second track before its own first track claims it.
+        let mut next_video_pt = Some(self.video_pt);
+        let mut next_audio_pt = Some(self.audio_pt);
+        pts.reserve_through(self.video_pt);
+        pts.reserve_through(self.audio_pt);
 
         for track in &media.tracks {
             match &track.spec.config {
                 CodecConfig::Avc { config, .. } => {
-                    let pt = if used_video_pt {
-                        self.video_pt.wrapping_add(2)
-                    } else {
-                        used_video_pt = true;
-                        self.video_pt
+                    // A caller-supplied base is used only if nothing has
+                    // claimed it; allocation then continues from there, so a
+                    // third video track gets its own type instead of colliding
+                    // with the second.
+                    let pt = match next_video_pt.take() {
+                        Some(base) => {
+                            pts.reserve_through(base);
+                            base
+                        }
+                        None => pts.allocate().ok_or(Error::InvalidInput(
+                            "no dynamic RTP payload type left (RFC 3551 §6's range is 96-127): too many streams share this session",
+                        ))?,
                     };
                     let packets = self.packetise_video(track, pt)?;
                     streams.push(RtpStream {
@@ -332,11 +427,14 @@ impl Package for RtpPacketiser {
                     sample_rate,
                     ..
                 } => {
-                    let pt = if used_audio_pt {
-                        self.audio_pt.wrapping_add(2)
-                    } else {
-                        used_audio_pt = true;
-                        self.audio_pt
+                    let pt = match next_audio_pt.take() {
+                        Some(base) => {
+                            pts.reserve_through(base);
+                            base
+                        }
+                        None => pts.allocate().ok_or(Error::InvalidInput(
+                            "no dynamic RTP payload type left (RFC 3551 §6's range is 96-127): too many streams share this session",
+                        ))?,
                     };
                     let clock = if track.spec.timescale != 0 {
                         track.spec.timescale
@@ -406,7 +504,7 @@ impl RtpPacketiser {
 
         for (i, sample) in track.samples.iter().enumerate() {
             // Rescale to the 90 kHz RTP clock if the IR timescale differs.
-            timestamp = rescale_ts(sample_dts(track, i), timescale, VIDEO_CLOCK_RATE);
+            timestamp = rescale_ts(sample_pts(track, i), timescale, VIDEO_CLOCK_RATE);
             let nals = split_length_prefixed(&sample.data)?;
             if nals.is_empty() {
                 continue;
@@ -443,11 +541,21 @@ impl RtpPacketiser {
         Ok(packets)
     }
 
-    /// Packetise one AAC track (`AAC-hbr`, one AU per packet).
+    /// Packetise one AAC track (`AAC-hbr`).
+    ///
     /// The AAC-hbr payload header (AU-headers-length + AU-header) is
     /// interleaved with the audio access unit, so the full packet is built
     /// in a `BytesMut` (which copies). The header is small (4 bytes) and
     /// audio AUs are typically <1 kB.
+    ///
+    /// An access unit that does not fit the payload budget is fragmented over
+    /// consecutive packets per RFC 3640 §3.2.3.1: each fragment carries its
+    /// own AU-header with the AU's **full** size (§3.2.3.2 — "the AU size
+    /// indicates the size of the entire AU and not the size of the
+    /// fragment"), they all share one RTP timestamp, and the marker bit is
+    /// set on the last one only (§3.1). That is the ordinary case for
+    /// high-rate audio (a 640 kb/s 5.1 AAC frame is ~3.7 kB, well over a
+    /// typical MTU) — previously such a track could not be packetised at all.
     fn packetise_audio(
         &self,
         track: &crate::media::Track,
@@ -461,6 +569,15 @@ impl RtpPacketiser {
         } else {
             clock
         };
+        // Payload budget per packet after the fixed header and the two
+        // AAC-hbr header fields.
+        let per_packet = self
+            .mtu
+            .checked_sub(RTP_HEADER_LEN + AAC_AU_HEADERS_LENGTH_LEN + AAC_AU_HEADER_LEN)
+            .filter(|&b| b > 0)
+            .ok_or(Error::InvalidInput(
+                "MTU too small for an AAC-hbr packet header",
+            ))?;
         for (i, sample) in track.samples.iter().enumerate() {
             let au = &sample.data;
             if au.len() >= (1usize << AAC_SIZE_LENGTH) {
@@ -470,56 +587,75 @@ impl RtpPacketiser {
                     reason: "exceeds 13-bit AAC-hbr AU-size field",
                 });
             }
-            let timestamp = rescale_ts(sample_dts(track, i), timescale, clock);
-            // AU-headers-length is in BITS: one 2-byte header = 16 bits.
+            let timestamp = rescale_ts(sample_pts(track, i), timescale, clock);
+            // AU-headers-length is in BITS: one 2-byte header = 16 bits. One
+            // header per packet, and it always states the AU's full size
+            // (§3.2.3.2), whether or not this packet carries all of it.
             let au_headers_len_bits = (AAC_AU_HEADER_LEN * 8) as u16;
             // AU-header: AU-size(13) | AU-Index(3). AU-Index = 0 (single AU).
             let hdr = (au.len() as u16) << AAC_INDEX_LENGTH;
-            // Build the full AAC-hbr header (RTP fixed header + AU-headers
-            // prefix + AU-header) in a BytesMut, then extend with the
-            // payload. This copies — the interleaving makes a zero-copy
-            // approach impractical without a vectored I/O consumer.
-            let rtp_hdr = rtp_header(pt, true, seq.next(), timestamp, self.ssrc);
-            let mut buf = bytes::BytesMut::with_capacity(
-                rtp_hdr.len() + AAC_AU_HEADERS_LENGTH_LEN + AAC_AU_HEADER_LEN + au.len(),
-            );
-            buf.extend_from_slice(&rtp_hdr);
-            buf.extend_from_slice(&au_headers_len_bits.to_be_bytes());
-            buf.extend_from_slice(&hdr.to_be_bytes());
-            buf.extend_from_slice(au);
-            let full = buf.freeze();
-            // Split into header (RTP + AAC headers) and payload (AU) so the
-            // consumer can access them separately, though they share one
-            // backing buffer.
-            let header_len = rtp_hdr.len() + AAC_AU_HEADERS_LENGTH_LEN + AAC_AU_HEADER_LEN;
-            let header = full.slice(0..header_len);
-            let payload = full.slice(header_len..);
-            packets.push(RtpPacket { header, payload });
+            // Fragmentation (§3.2.3.1): the marker is set on the last fragment
+            // only, and every fragment shares this AU's timestamp.
+            let num_frags = au.len().div_ceil(per_packet).max(1);
+            for f in 0..num_frags {
+                let start = f * per_packet;
+                let end = (start + per_packet).min(au.len());
+                let is_last = f == num_frags - 1;
+                // Build the full AAC-hbr header (RTP fixed header + AU-headers
+                // prefix + AU-header) in a BytesMut, then extend with the
+                // payload. This copies — the interleaving makes a zero-copy
+                // approach impractical without a vectored I/O consumer.
+                let rtp_hdr = rtp_header(pt, is_last, seq.next(), timestamp, self.ssrc);
+                let frag = &au[start..end];
+                let mut buf = bytes::BytesMut::with_capacity(
+                    rtp_hdr.len() + AAC_AU_HEADERS_LENGTH_LEN + AAC_AU_HEADER_LEN + frag.len(),
+                );
+                buf.extend_from_slice(&rtp_hdr);
+                buf.extend_from_slice(&au_headers_len_bits.to_be_bytes());
+                buf.extend_from_slice(&hdr.to_be_bytes());
+                buf.extend_from_slice(frag);
+                let full = buf.freeze();
+                let header_len = rtp_hdr.len() + AAC_AU_HEADERS_LENGTH_LEN + AAC_AU_HEADER_LEN;
+                packets.push(RtpPacket {
+                    header: full.slice(0..header_len),
+                    payload: full.slice(header_len..),
+                });
+            }
         }
         Ok(packets)
     }
 }
 
-/// The decode timestamp of sample `i`, in the track's media timescale,
-/// **relative to the track's first sample** (so the emitted RTP timestamp
-/// series starts at 0 for the first AU regardless of where the source
-/// timeline sits — RFC 3550 §5.1 only constrains the increments).
+/// The **presentation** timestamp of sample `i`, in the track's media
+/// timescale, **relative to the track's first sample** (so the emitted RTP
+/// timestamp series starts at 0 for the first AU regardless of where the
+/// source timeline sits — RFC 3550 §5.1 only constrains the increments).
 ///
-/// Media plane step 2c: read from the sample's own **absolute** `dts` when
-/// both it and the first sample's are known (the exact per-AU decode time the
-/// demuxer recovered, including any composition reordering), falling back to
-/// the running sum of preceding durations for a track whose samples carry no
-/// timestamps (a section-carried track, which RTP never packetises anyway).
-fn sample_dts(track: &crate::media::Track, i: usize) -> u64 {
+/// RFC 6184 §5.1 is explicit: "The RTP timestamp is set to the sampling
+/// timestamp of the content", and receivers "SHOULD use the RTP timestamp for
+/// synchronizing the display process". That is a *presentation* time, so a
+/// reordered stream (B-frames) must stamp each access unit with its **`pts`**,
+/// not its `dts`: stamping the decode time makes a receiver present in decode
+/// order at the wrong instants.
+///
+/// Read from the sample's own **absolute** `pts` when both it and the first
+/// sample's are known. `pts` is `None` only for a section-carried track (which
+/// RTP never packetises), so the fallback is the running sum of preceding
+/// durations — which for a stream with no composition offset is the same
+/// series (in that case `dts == pts` at every sample, and both paths agree).
+fn sample_pts(track: &crate::media::Track, i: usize) -> u64 {
     if let (Some(first), Some(cur)) = (
-        track.samples.first().and_then(|s| s.dts),
-        track.samples.get(i).and_then(|s| s.dts),
+        track.samples.first().and_then(|s| s.pts),
+        track.samples.get(i).and_then(|s| s.pts),
     ) {
-        return (cur - first).max(0) as u64;
+        // A hostile pair of timestamps can invert the subtraction; the
+        // conversion is checked rather than an `as` cast, which would wrap a
+        // large negative into a huge tick count.
+        return u64::try_from((cur - first).max(0)).unwrap_or(0);
     }
     track.samples[..i]
         .iter()
-        .map(|s| s.duration.unwrap_or(0) as u64)
+        .map(|s| u64::from(s.duration.unwrap_or(0)))
         .sum()
 }
 
@@ -670,11 +806,49 @@ fn asc_bytes(esds: &crate::mp4esds::EsdsBox) -> Result<&[u8]> {
 // ---------------------------------------------------------------------------
 
 /// Assemble the full session-level SDP from the per-media blocks.
+///
+/// Includes a session-level `c=` line, because RFC 4566 §5.7 requires one:
+/// "A session description MUST contain either at least one `c=` field in each
+/// media description or a single `c=` field at the session level." The media
+/// descriptions here use port 0 (the packets are handed over as
+/// [`RtpPacket`]s, not sent from this process), so a strict parser enforcing
+/// that requirement had nothing to read and rejected the description. The
+/// address is the loopback the `o=` line already names; a caller that
+/// transmits elsewhere uses [`build_sdp_with_connection`].
 fn build_sdp(media_blocks: &str) -> String {
+    build_sdp_with_connection(LOCAL_CONNECTION_ADDRESS, media_blocks)
+}
+
+/// Assemble a session-level SDP with an explicit `c=` connection address
+/// (RFC 8866 §5.7). The session SDP `RtpOutput::sdp` carries uses
+/// [`LOCAL_CONNECTION_ADDRESS`].
+///
+/// The address is an [`IpAddr`](core::net::IpAddr), not a string, so it cannot
+/// carry anything SDP would misread: the `<addrtype>` subfield (`IP4`/`IP6`)
+/// follows the address's own family (RFC 8866 §5.7: "This memo only defines
+/// `IP4` and `IP6`"), and no CR, LF or space can be smuggled into the line — a
+/// `&str` parameter made this function a way to inject arbitrary SDP fields
+/// into a description a caller may hand to a peer.
+pub fn build_sdp_with_connection(
+    connection_address: core::net::IpAddr,
+    media_blocks: &str,
+) -> String {
+    let addrtype = match connection_address {
+        core::net::IpAddr::V4(_) => "IP4",
+        core::net::IpAddr::V6(_) => "IP6",
+    };
     let mut s = String::new();
     s.push_str("v=0\r\n");
     s.push_str("o=- 0 0 IN IP4 127.0.0.1\r\n");
     s.push_str("s=transmux RTP\r\n");
+    s.push_str("c=IN ");
+    s.push_str(addrtype);
+    s.push(' ');
+    // `Display` for `IpAddr` renders the canonical textual form and nothing
+    // else — no brackets, no zone suffix — which is exactly what RFC 8866
+    // §5.7's connection-address subfield is.
+    s.push_str(&alloc::format!("{connection_address}"));
+    s.push_str("\r\n");
     s.push_str("t=0 0\r\n");
     s.push_str(media_blocks);
     s
@@ -731,13 +905,156 @@ fn sdp_audio(pt: u8, clock: u32, channels: u16, asc: &[u8]) -> Result<String> {
 // Depacketiser input
 // ---------------------------------------------------------------------------
 
-/// One RTP stream fed to [`RtpDepacketiser`]: its kind + packets.
+/// One RTP stream fed to [`RtpDepacketiser`]: its kind, clock, codec config
+/// and packets.
+///
+/// The clock rate is **not** optional: an RTP timestamp is a count in the
+/// stream's own clock (RFC 3550 §5.1, RFC 3551 §4.2 for the video/audio
+/// defaults), so a track built without it states a duration in the wrong
+/// unit — the pre-fix depacketiser stamped every track, audio included, at
+/// the 90 kHz video clock.
+///
+/// `config` is the codec configuration for this stream, which RTP itself
+/// never carries (it is negotiated in the SDP; see [`crate::rtp_sdp`]). It is
+/// required for audio: an AAC track's initialisation data *is* its
+/// `AudioSpecificConfig`, and no honest placeholder for it exists. Video
+/// accepts the placeholder the wire implies when it is absent (an `avcC`
+/// with no parameter sets — the SDP's `sprop-parameter-sets` supplies
+/// them), because transmux's depacketiser only needs a track identity and
+/// the samples to verify a round trip.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct RtpInputStream {
     /// The payload format carried on this stream.
     pub kind: RtpMediaKind,
+    /// The stream's RTP clock rate in Hz — 90000 for H.264
+    /// ([`VIDEO_CLOCK_RATE`], RFC 6184 §8.1's `H264/90000`) and the audio
+    /// sample rate for `mpeg4-generic` (RFC 3640 §4.1). Becomes the IR
+    /// track's timescale.
+    pub clock_rate: u32,
+    /// Codec configuration for this stream (from the session's SDP).
+    /// Required for [`RtpMediaKind::Aac`].
+    pub config: Option<CodecConfig>,
+    /// Whether [`Self::with_clock_rate`] was called, i.e. the caller asserted
+    /// the rate rather than leaving the constructor's default in place. A
+    /// stream that asserts one and then supplies a config is checked for
+    /// agreement instead of being silently overridden.
+    clock_rate_explicit: bool,
     /// The RTP packets in arrival (sequence) order.
     pub packets: Vec<Vec<u8>>,
+}
+
+impl RtpInputStream {
+    /// A stream carrying `kind` with no codec config, at the codec's default
+    /// clock rate ([`VIDEO_CLOCK_RATE`] for H.264, [`DEFAULT_AAC_CLOCK_RATE`]
+    /// for AAC).
+    ///
+    /// An AAC stream's clock **is** its sampling rate (RFC 3640 §3.1: "If an
+    /// MPEG-4 audio stream is transported, the rate SHOULD be set to the same
+    /// value as the sampling rate of the audio stream"), so the default is
+    /// only a placeholder until a config arrives: [`Self::with_config`] then
+    /// takes the rate from the config, and a [`Self::with_clock_rate`] that
+    /// disagrees is an error.
+    pub fn new(kind: RtpMediaKind, packets: Vec<Vec<u8>>) -> Self {
+        Self {
+            kind,
+            clock_rate: match kind {
+                RtpMediaKind::H264 => VIDEO_CLOCK_RATE,
+                RtpMediaKind::Aac => DEFAULT_AAC_CLOCK_RATE,
+            },
+            config: None,
+            clock_rate_explicit: false,
+            packets,
+        }
+    }
+
+    /// Set this stream's codec configuration (required for AAC).
+    ///
+    /// For AAC the clock rate is derived from the config's own sample rate,
+    /// because that is what RFC 3640 §3.1 defines it to be — a stream whose
+    /// declared clock disagreed with its `AudioSpecificConfig` would be timed
+    /// at the wrong rate by every sample duration this crate computes. Set
+    /// [`Self::with_clock_rate`] first to assert a specific value: the two are
+    /// checked for agreement.
+    pub fn with_config(mut self, config: CodecConfig) -> Self {
+        if let CodecConfig::Aac { sample_rate, .. } = &config {
+            // The declared rate is only "asserted" when the caller set one
+            // explicitly; the constructor's placeholder is replaced.
+            if !self.clock_rate_explicit {
+                self.clock_rate = *sample_rate;
+            }
+        }
+        self.config = Some(config);
+        self
+    }
+
+    /// Override this stream's RTP clock rate in Hz.
+    pub fn with_clock_rate(mut self, clock_rate: u32) -> Self {
+        self.clock_rate = clock_rate;
+        self.clock_rate_explicit = true;
+        self
+    }
+}
+
+impl RtpInputStream {
+    /// Validate this stream's kind/clock/config against each other, returning
+    /// the clock rate to use.
+    ///
+    /// RFC 3640 §3.1 fixes an audio stream's RTP clock rate at its sampling
+    /// rate, and a `CodecConfig::Aac` on an `H264` stream (or vice versa) would
+    /// make the depacketiser parse one payload format as another. Both are
+    /// caller mistakes with no sensible interpretation, so they are errors
+    /// rather than silent adjustments.
+    fn validated_clock_rate(&self) -> Result<u32> {
+        match &self.config {
+            Some(CodecConfig::Aac { sample_rate, .. }) => {
+                if self.kind != RtpMediaKind::Aac {
+                    return Err(Error::InvalidInput(
+                        "an RTP stream carrying an AAC config must have kind Aac: the \
+                         payload format is what the packets are parsed as",
+                    ));
+                }
+                if self.clock_rate != *sample_rate {
+                    return Err(Error::InvalidValue {
+                        field: "rtp_clock_rate",
+                        value: u64::from(self.clock_rate),
+                        reason: "an MPEG-4 audio stream's RTP clock rate is its \
+                                 sampling rate (RFC 3640 §3.1), so it must equal the \
+                                 AudioSpecificConfig's sample rate",
+                    });
+                }
+                Ok(*sample_rate)
+            }
+            Some(CodecConfig::Avc { .. }) => {
+                if self.kind != RtpMediaKind::H264 {
+                    return Err(Error::InvalidInput(
+                        "an RTP stream carrying an AVC config must have kind H264: the \
+                         payload format is what the packets are parsed as",
+                    ));
+                }
+                if self.clock_rate != VIDEO_CLOCK_RATE {
+                    return Err(Error::InvalidValue {
+                        field: "rtp_clock_rate",
+                        value: u64::from(self.clock_rate),
+                        reason: "RFC 6184 §8.1 fixes the H.264 RTP clock rate at 90 kHz",
+                    });
+                }
+                Ok(self.clock_rate)
+            }
+            // A config for some other codec, or none at all: the caller has
+            // declared the clock itself, so honour it (the batch path fills in
+            // a placeholder video config when none is given).
+            Some(_) | None => {
+                if self.clock_rate == 0 {
+                    return Err(Error::InvalidInput(
+                        "RTP stream has no clock rate: an RTP timestamp's unit is the \
+stream's own clock (RFC 3550 §5.1), so a track cannot be timed without it",
+                    ));
+                }
+                Ok(self.clock_rate)
+            }
+        }
+    }
 }
 
 /// The input to [`RtpDepacketiser`]: one or more RTP streams.
@@ -758,7 +1075,14 @@ pub struct RtpInput {
 /// length that the IR convention uses — see [`crate::annexb`]).
 #[derive(Debug, Default, Clone)]
 pub struct RtpDepacketiser {
-    _marker: PhantomData<()>,
+    /// Timing warnings raised by the last [`Unpackage::unpackage`] call, in the
+    /// order they were raised — see [`RtpTimingWarning`] and
+    /// [`RtpDepacketiser::poll_timing_warning`]. Bounded by
+    /// [`MAX_TIMING_WARNINGS`].
+    timing_warnings: VecDeque<RtpTimingWarning>,
+    /// Warnings dropped because the queue was full, summed over the session —
+    /// see [`RtpDepacketiser::dropped_timing_warnings`].
+    dropped_timing_warnings: u64,
 }
 
 impl RtpDepacketiser {
@@ -766,7 +1090,80 @@ impl RtpDepacketiser {
     pub fn new() -> Self {
         Self::default()
     }
+
+    /// Take the next timing assumption this depacketiser had to make while
+    /// reassembling, or `None` when there are no more.
+    ///
+    /// [`Unpackage::unpackage`] cannot return anything but `Media`, so a
+    /// condition the RTP wire genuinely cannot express is reported here rather
+    /// than being silently absorbed — the same reason
+    /// [`crate::rtp_stream::RtpStreamDepacketiser`] has
+    /// `poll_loss_event`. Drain it after every
+    /// [`unpackage`](Unpackage::unpackage) call.
+    pub fn poll_timing_warning(&mut self) -> Option<RtpTimingWarning> {
+        self.timing_warnings.pop_front()
+    }
+
+    /// How many warnings have been dropped because more than
+    /// [`MAX_TIMING_WARNINGS`] were raised in one
+    /// [`unpackage`](Unpackage::unpackage) call.
+    ///
+    /// The queue is bounded so a hostile stream (a timestamp that reorders on
+    /// every packet) cannot make the depacketiser allocate without limit; a
+    /// caller that needs an exact count of reordering events should use that
+    /// count rather than assume the queue is exhaustive.
+    pub fn dropped_timing_warnings(&self) -> u64 {
+        self.dropped_timing_warnings
+    }
 }
+
+/// How many [`RtpTimingWarning`]s one
+/// [`unpackage`](Unpackage::unpackage) call retains.
+///
+/// RTP is untrusted remote input: a stream whose timestamps reorder on every
+/// packet would otherwise queue one warning per access unit, growing without
+/// bound over a long session. The cap is far above the reorder events a real
+/// stream produces (a B-frame group raises one per backward step, and a
+/// pathological sequence a handful more), so a caller draining the queue sees
+/// every event it would act on, while the memory cost stays constant.
+pub const MAX_TIMING_WARNINGS: usize = 1024;
+
+/// A field the batch [`RtpDepacketiser`] saw that RTP carries no way to express
+/// exactly, because it carries exactly one timestamp per access unit — the
+/// *sampling (presentation)* time (RFC 6184 §5.1 for H.264, RFC 3640 §3.3.1 for
+/// AAC) — and no decode time at all.
+///
+/// Nothing has been mis-assembled when one of these fires: the access units are
+/// byte-exact and their `pts` values are the wire's own. What it means is that
+/// the **decode timeline** (the IR's [`Sample::dts`](crate::ir::Sample::dts))
+/// was reconstructed rather than read — for a reordered stream it is the
+/// presentation instants re-laid in wire order and delayed by the reorder depth,
+/// which is exact, but a consumer doing its own composition-offset arithmetic
+/// should know the wire did not state those offsets itself.
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RtpTimingWarning {
+    /// An access unit's presentation timestamp was earlier than a previous
+    /// one's: the stream's presentation order is not its wire (decode) order,
+    /// so its decode timeline was reconstructed (see the type docs) rather than
+    /// read from the wire.
+    ReorderedPresentationTimestamps {
+        /// The zero-based index of the stream this was observed on, in the
+        /// order the streams were passed to
+        /// [`RtpInput::streams`](RtpInput).
+        stream_index: usize,
+        /// The previous access unit's presentation timestamp, in the stream's
+        /// clock (`u64`, already unwrapped).
+        previous_pts: u64,
+        /// This access unit's, which is earlier.
+        pts: u64,
+    },
+}
+
+// `RtpTimingWarning` is a data-carrying ADT (each variant is a distinct
+// structured signal, not a flat spec code) — see this crate's
+// `tests/label_coverage.rs` SKIP list, so it is intentionally exempt from the
+// #204 `name()`/`impl_spec_display!` convention.
 
 impl Unpackage for RtpDepacketiser {
     type Input = RtpInput;
@@ -774,26 +1171,68 @@ impl Unpackage for RtpDepacketiser {
     type Error = Error;
 
     fn unpackage(&mut self, input: RtpInput) -> Result<Media> {
+        self.timing_warnings.clear();
+        self.dropped_timing_warnings = 0;
         let mut tracks = Vec::new();
         for (idx, stream) in input.streams.iter().enumerate() {
+            let clock_rate = stream.validated_clock_rate()?;
             let samples = match stream.kind {
                 RtpMediaKind::H264 => depacketise_video(&stream.packets)?,
                 RtpMediaKind::Aac => depacketise_audio(&stream.packets)?,
             };
+            // RFC 6184 §5.1 / RFC 3640 §3.3.1: the wire timestamp is the
+            // sampling (presentation) time, one per access unit. A step
+            // backward means presentation order is not wire (decode) order, so
+            // `dts == pts` below is an assumption, not a fact — report it
+            // rather than absorbing it (see [`RtpTimingWarning`]).
+            let mut prev: Option<i64> = None;
+            let mut wrap_check = RtpWrapState::default();
+            for au in &samples {
+                let pts = wrap_check.push(au.timestamp);
+                if let Some(previous_pts) = prev
+                    && pts < previous_pts
+                {
+                    if self.timing_warnings.len() == MAX_TIMING_WARNINGS {
+                        // Bounded: drop the oldest so the newest (which is the
+                        // one a caller is most likely acting on) is kept, and
+                        // count the loss so it is never silent.
+                        self.timing_warnings.pop_front();
+                        self.dropped_timing_warnings += 1;
+                    }
+                    self.timing_warnings.push_back(
+                        RtpTimingWarning::ReorderedPresentationTimestamps {
+                            stream_index: idx,
+                            previous_pts: u64::try_from(previous_pts).unwrap_or(0),
+                            pts: u64::try_from(pts).unwrap_or(0),
+                        },
+                    );
+                }
+                prev = Some(pts);
+            }
             tracks.push(RtpTrack {
-                id: idx as u32 + 1,
+                // Track IDs are 1-based. `u32::try_from` rather than `as u32`:
+                // a stream index past `u32::MAX` is not reachable (the caller
+                // had to build the `Vec`), and the fallback states that rather
+                // than truncating an index into a colliding ID.
+                id: u32::try_from(idx).unwrap_or(u32::MAX).saturating_add(1),
+                kind: stream.kind,
+                clock_rate,
+                config: stream.config.clone(),
                 samples,
             });
         }
-        // The IR requires codec config, which RTP alone cannot fully rebuild
-        // (SDP is separate); expose the reassembled coded samples instead.
-        Ok(rtp_tracks_to_media(tracks))
+        rtp_tracks_to_media(tracks)
     }
 }
 
-/// A reassembled RTP track (coded samples only; config comes from SDP).
+/// A reassembled RTP track: its payload-format kind, RTP clock, the codec
+/// config carried alongside the wire packets (RTP itself has none — see
+/// [`RtpInputStream::config`]) and the reassembled coded samples.
 struct RtpTrack {
     id: u32,
+    kind: RtpMediaKind,
+    clock_rate: u32,
+    config: Option<CodecConfig>,
     samples: Vec<ReassembledAu>,
 }
 
@@ -843,79 +1282,269 @@ impl RtpWrapState {
     }
 }
 
+/// Reconstruct the IR timing pair (`dts`, `pts`) of a stream from its wire
+/// (presentation) timestamps, in wire order.
+///
+/// RTP carries exactly one timestamp per access unit and it is the *sampling /
+/// presentation* time (RFC 6184 §5.1 for H.264, RFC 3640 §3.3.1 for AAC); no
+/// decode time exists on the wire, and the sequence number carries no timing.
+/// The IR, however, wants an absolute `dts`, an exactly-representable
+/// composition offset (`pts >= dts`, always), and a non-decreasing `dts`.
+///
+/// Two cases:
+///
+/// - **Presentation order is wire order** (`pts` non-decreasing): there is no
+///   reordering, so decode time *is* presentation time and `dts = pts`
+///   unchanged. This is also the only correct answer for a variable-frame-rate
+///   or lossy stream, where the steps are not a fixed grid — laying one down
+///   would misplace every sample after the first irregular step.
+/// - **Reordered** (some `pts` earlier than one already sent — B-frames): the
+///   decode timeline is its own uniform grid, one frame period apart in wire
+///   order, starting `latch` periods *before* the first presentation instant
+///   so that `dts <= pts` holds at every sample (a frame cannot be presented
+///   before it is decoded). The frame period is the **greatest common divisor**
+///   of the presented steps: every step of a uniform grid is a whole number of
+///   periods, so the smallest *positive* step alone is wrong (a pyramid group's
+///   adjacent same-reference frames are two periods apart) while the gcd
+///   recovers the true period. `latch` is the largest number of earlier-sent
+///   frames any one frame is presented before, i.e. exactly how far the decode
+///   schedule has to run ahead.
+///
+/// The whole timeline is then translated so its first decode instant is 0 —
+/// the IR's `Track::start_decode_time` is a `u64` anchor that must equal
+/// `samples[0].dts`, and both series shift together, so every delta, the
+/// ordering, and `dts <= pts` are preserved exactly.
+///
+/// Returns `(dts, pts)` per sample, in wire order.
+fn decode_timeline(pts: &[i64]) -> (Vec<i64>, Vec<i64>) {
+    if pts.windows(2).all(|w| w[1] >= w[0]) {
+        return (pts.to_vec(), pts.to_vec());
+    }
+    // The decode instants are the *presentation* instants, re-laid in wire
+    // (decode) order: every frame is presented exactly once, so the set of
+    // decode times equals the set of presentation times, and only the
+    // assignment changes. That is exact for a real reordered stream — the
+    // durations come out as the encoder's own (a 23.976 fps stream at 90 kHz
+    // alternates 3753/3754 ticks, which a fixed arithmetic step cannot
+    // reproduce: the gcd of those steps is 1, so a "period" estimate would
+    // declare a 1-tick frame and every duration would be 1 or 2).
+    let mut sorted: Vec<i64> = pts.to_vec();
+    sorted.sort_unstable();
+
+    // The smallest constant delay that puts every decode instant at or before
+    // its own presentation instant: the decoder must be able to have produced
+    // the frame by the time it is presented. It is bounded by the real reorder
+    // depth, because `sorted[i] - pts[i]` is at most as large as the interval
+    // the reorder spans.
+    let latch = sorted
+        .iter()
+        .zip(pts.iter())
+        .map(|(s, p)| s.saturating_sub(*p))
+        .max()
+        .unwrap_or(0)
+        .max(0);
+
+    // The series stay on the wire's own absolute media-clock timeline — the
+    // same timeline a non-reordered track keeps (its `dts == pts == the
+    // unwrapped RTP timestamp`) — so every track in one `Media` shares one
+    // epoch. Zero-basing only the reordered tracks would put them on a
+    // different epoch from their own siblings, which is worse than either
+    // choice made consistently; a consumer wanting a zero origin applies
+    // `crate::rebase::rebase_to_zero` to the whole `Media`, which shifts every
+    // track in lockstep.
+    let mut dts: Vec<i64> = Vec::with_capacity(pts.len());
+    let mut shifted_pts: Vec<i64> = Vec::with_capacity(pts.len());
+    for (s, p) in sorted.iter().zip(pts.iter()) {
+        let d = *s - latch;
+        dts.push(d);
+        shifted_pts.push((*p).max(d));
+    }
+    (dts, shifted_pts)
+}
+
+/// A decode-time delta as a sample duration: clamped at 0 (a non-decreasing
+/// timeline cannot produce a negative one, but a hostile stream's clamped grid
+/// can tie), and checked rather than truncated — a delta past `u32::MAX` ticks
+/// is not a duration any container can carry, and saturating is the only
+/// lossless choice left for a value that is already the length of the stream.
+fn duration_from(delta: i64) -> u32 {
+    u32::try_from(delta.max(0)).unwrap_or(u32::MAX)
+}
+
 /// Reassembled RTP samples, exposed on [`Media`] via a light wrapper. Since the
 /// hub IR carries codec config, the depacketiser returns the raw reassembled
 /// access units on each track's samples for round-trip verification; callers
 /// pair them with the SDP-derived config as needed.
-fn rtp_tracks_to_media(tracks: Vec<RtpTrack>) -> Media {
-    use crate::pipeline::Sample;
-    let ir_tracks = tracks
+fn rtp_tracks_to_media(tracks: Vec<RtpTrack>) -> Result<Media> {
+    use crate::pipeline::{Sample, TrackSpec};
+    // Phase 1: unwrap each track's wire timestamps (32-bit wrap, once, here at
+    // the demux edge — RFC 3550 §5.1) and reconstruct its decode timeline.
+    //
+    // Honest scope: RTP's timestamp origin is a *random* offset per stream
+    // (§5.1), so without an RTCP SR (`rtcp::SenderReport`) NTP↔RTP mapping
+    // these are absolute **media-clock** timelines with arbitrary epochs, not
+    // wall-clock ones. That is exactly what the IR's `dts`/`pts` mean (ticks in
+    // the track timescale), and it preserves real inter-sample timing.
+    let mut prepared: Vec<(RtpTrack, TrackSpec, Vec<i64>, Vec<i64>)> =
+        Vec::with_capacity(tracks.len());
+    for t in tracks {
+        let spec = track_spec(&t)?;
+        let mut wrap = RtpWrapState::default();
+        let pts_series: Vec<i64> = t.samples.iter().map(|au| wrap.push(au.timestamp)).collect();
+        let (dts_series, pts_series) = decode_timeline(&pts_series);
+        prepared.push((t, spec, dts_series, pts_series));
+    }
+
+    // Phase 2: one origin for the whole `Media`, applied to every track, so a
+    // reordered video track and a non-reordered audio track share one epoch
+    // and no `dts` is negative. The IR's `Track::start_decode_time` is a `u64`
+    // anchor that must equal `samples[0].dts`, which a negative value cannot
+    // be; zero-basing only the reordered tracks (the previous behaviour) put
+    // them on a different epoch from their own siblings. `crate::rebase`
+    // shifts every track of a `Media` together, so keeping the shift here
+    // constant across tracks is what makes that consistent.
+    let origin = prepared
+        .iter()
+        .flat_map(|(_, _, dts, _)| dts.iter().copied())
+        .min()
+        .unwrap_or(0)
+        .min(0);
+
+    let ir_tracks = prepared
         .into_iter()
-        .map(|t| {
-            // Absolute dts/pts (media plane step 2c) from the RTP media clock,
-            // with the 32-bit wrap unrolled ONCE here at the demux edge
-            // ([`RtpWrapState`], RFC 3550 §5.1).
-            //
-            // Honest scope: RTP's timestamp origin is a *random* offset (§5.1),
-            // so without an RTCP SR (`rtcp::SenderReport`) NTP↔RTP mapping this
-            // is an absolute **media-clock** timeline with an arbitrary epoch,
-            // not a wall-clock one. That is exactly what the IR's `dts`/`pts`
-            // mean (ticks in the track timescale), and it preserves real
-            // inter-sample timing — a consumer needing a zero origin applies
-            // `crate::rebase::rebase_to_zero`. Discarding it (the pre-2c
-            // behaviour) lost the timeline outright, so `None` would be the
-            // strictly worse and less honest choice here.
-            let mut wrap = RtpWrapState::default();
-            let stamped: Vec<(i64, bool, Vec<u8>)> = t
-                .samples
-                .into_iter()
-                .map(|au| (wrap.push(au.timestamp), au.is_sync, au.data))
-                .collect();
-            // Duration = delta to the next AU's decode time; the final AU
-            // reuses the previous delta (the same one-behind rule
-            // `ts_demux`/`flv` use), and a single-AU track has no measurable
-            // duration at all.
-            let n = stamped.len();
-            let samples: Vec<Sample> = stamped
-                .iter()
-                .enumerate()
-                .map(|(i, &(dts, is_sync, ref data))| {
-                    let duration = if i + 1 < n {
-                        Some((stamped[i + 1].0 - dts).max(0) as u32)
-                    } else if n >= 2 {
-                        Some((dts - stamped[i - 1].0).max(0) as u32)
-                    } else {
-                        None
-                    };
-                    Sample {
-                        data: data.clone().into(),
-                        dts: Some(dts),
-                        pts: Some(dts),
-                        duration,
-                        flags: crate::ir::SampleFlags::new(is_sync),
-                        provenance: None,
-                    }
-                })
-                .collect();
-            // A placeholder AVC config: the RTP wire has no config; the SDP does.
-            // We only need identity + samples for round-trip use, so build a
-            // minimal AVC spec (never serialized to a container here).
-            let anchor = samples
-                .first()
-                .and_then(|s| s.dts)
-                .map(|d| d.max(0) as u64)
-                .unwrap_or(0);
-            crate::media::Track::new_at(placeholder_spec(t.id), samples, anchor)
-        })
-        .collect();
-    Media::new(ir_tracks, 0)
+        .map(
+            |(t, spec, dts_series, pts_series)| -> Result<crate::media::Track> {
+                // A pure translation by one constant: `origin` is the lowest decode
+                // instant in the whole `Media`, so no `dts` becomes negative and no
+                // duration changes. (The `max(0)` is defensive — the translation
+                // cannot produce a negative value by construction.)
+                let dts_series: Vec<i64> =
+                    dts_series.iter().map(|d| (*d - origin).max(0)).collect();
+                let pts_series: Vec<i64> =
+                    pts_series.iter().map(|p| (*p - origin).max(0)).collect();
+                let n = dts_series.len();
+                // The duration to reuse when a decode step is zero — see the
+                // per-sample fallback below. Seeded with the first positive step in
+                // the series, because a stream can open with repeated decode
+                // instants (the latch can clamp several frames onto the same tick)
+                // and the frames before the first positive step still need a
+                // duration. `None` only when the whole series is one instant.
+                let mut previous_nonzero_duration: Option<i64> =
+                    dts_series.windows(2).map(|w| w[1] - w[0]).find(|d| *d > 0);
+                let samples: Vec<Sample> = t
+                    .samples
+                    .iter()
+                    .enumerate()
+                    .map(|(i, au)| {
+                        let pts = pts_series[i];
+                        let dts = dts_series[i];
+                        // Duration = the decode delta to the next AU; the final AU
+                        // reuses the previous delta (the same one-behind rule
+                        // `ts_demux`/`flv` use), and a single-AU track has no
+                        // measurable duration at all.
+                        //
+                        // A **non-final** frame never gets a zero duration: two AUs
+                        // stamped with the same instant is something the wire can
+                        // produce and the decode timeline then gives them a zero
+                        // step, but every container writer in this crate rejects a
+                        // zero-duration sample (it describes a frame the decoder is
+                        // told to replace instantly). The fallback is the most
+                        // recent non-zero duration, and 1 tick if there has not
+                        // been one yet — a duration the stream does not have is
+                        // still less wrong than one no writer accepts.
+                        let delta = if i + 1 < n {
+                            let d = dts_series[i + 1] - dts;
+                            if d > 0 {
+                                Some(d)
+                            } else {
+                                previous_nonzero_duration
+                            }
+                        } else if n >= 2 {
+                            let d = dts - dts_series[i - 1];
+                            if d > 0 {
+                                Some(d)
+                            } else {
+                                previous_nonzero_duration
+                            }
+                        } else {
+                            // A single-access-unit track has no measurable delta at
+                            // all. The IR requires a duration on every timed
+                            // sample, and no writer accepts zero, so the floor of
+                            // one tick is what is left — the same value the
+                            // per-sample fallback uses when nothing better is
+                            // known.
+                            Some(1)
+                        };
+                        if let Some(d) = delta
+                            && d > 0
+                        {
+                            previous_nonzero_duration = Some(d);
+                        }
+                        let duration = delta.map(|d| duration_from(d.max(1)));
+                        Sample {
+                            data: au.data.clone().into(),
+                            dts: Some(dts),
+                            pts: Some(pts),
+                            duration,
+                            flags: crate::ir::SampleFlags::new(au.is_sync),
+                            provenance: None,
+                        }
+                    })
+                    .collect();
+                // A placeholder AVC config: the RTP wire has no config; the SDP does.
+                // We only need identity + samples for round-trip use, so build a
+                // minimal AVC spec (never serialized to a container here).
+                let anchor = samples
+                    .first()
+                    .and_then(|s| s.dts)
+                    .map(|d| u64::try_from(d.max(0)).unwrap_or(0))
+                    .unwrap_or(0);
+                Ok(crate::media::Track::new_at(spec, samples, anchor))
+            },
+        )
+        .collect::<Result<Vec<_>>>()?;
+    // The movie timescale is the video clock (the same choice `ts_demux`
+    // makes): a non-zero movie timescale is what every consumer's rescale
+    // arithmetic divides by, and RTP's own are the only rates known here.
+    Ok(Media::new(ir_tracks, VIDEO_CLOCK_RATE))
 }
 
-/// Minimal placeholder [`TrackSpec`] for a depacketised track (the RTP wire
-/// carries no codec config — the SDP does). Samples are the payload of interest.
-fn placeholder_spec(track_id: u32) -> crate::pipeline::TrackSpec {
+/// The IR [`TrackSpec`] for a depacketised stream: its own kind and RTP
+/// clock, plus the codec config supplied alongside the wire packets.
+///
+/// The clock rate is load-bearing — it becomes the track's timescale, and
+/// every timestamp/duration this module emits is a count in it (RFC 3550
+/// §5.1). Before this took the stream's own clock, every track — audio
+/// included — was declared at [`VIDEO_CLOCK_RATE`] with an AVC config, so a
+/// consumer writing a container from the result described audio timing as
+/// 90 kHz video.
+///
+/// Audio has no placeholder: an AAC track's initialisation data *is* its
+/// `AudioSpecificConfig` (carried in the SDP `config=` parameter, RFC 3640
+/// §4.1), and inventing one would state a sample rate and channel
+/// configuration the stream may not have. Video accepts the empty-parameter-
+/// set placeholder the wire implies, since the samples are self-describing
+/// enough for a round-trip check.
+fn track_spec(t: &RtpTrack) -> Result<crate::pipeline::TrackSpec> {
+    use crate::pipeline::TrackSpec;
+    let config = match (&t.config, t.kind) {
+        (Some(c), _) => c.clone(),
+        (None, RtpMediaKind::H264) => placeholder_avc_config(),
+        (None, RtpMediaKind::Aac) => {
+            return Err(Error::InvalidInput(
+                "an AAC RTP stream needs its AudioSpecificConfig: RTP carries no codec config, so it must come from the session's SDP `config=` parameter (RFC 3640 §4.1) - a fabricated one would name a sample rate and channel count the stream may not have",
+            ));
+        }
+    };
+    Ok(TrackSpec::new(t.id, t.clock_rate, config))
+}
+
+/// Minimal AVC config for a stream whose parameter sets live in the SDP's
+/// `sprop-parameter-sets` (RFC 6184 §8.1) rather than on the RTP wire, which
+/// carries none. The samples are the payload of interest; this is only a
+/// track identity, and is never serialized to a container here.
+fn placeholder_avc_config() -> CodecConfig {
     use crate::avc_config::{AVCConfigurationBox, AVCDecoderConfigurationRecord};
-    use crate::pipeline::{CodecConfig, TrackSpec};
     let record = AVCDecoderConfigurationRecord {
         configuration_version: 1,
         profile_indication: 0,
@@ -929,15 +1558,11 @@ fn placeholder_spec(track_id: u32) -> crate::pipeline::TrackSpec {
         bit_depth_chroma_minus8: None,
         sps_ext: Vec::new(),
     };
-    TrackSpec::new(
-        track_id,
-        VIDEO_CLOCK_RATE,
-        CodecConfig::Avc {
-            config: AVCConfigurationBox::new(record),
-            width: 0,
-            height: 0,
-        },
-    )
+    CodecConfig::Avc {
+        config: AVCConfigurationBox::new(record),
+        width: 0,
+        height: 0,
+    }
 }
 
 /// A reassembled access unit with its RTP presentation timestamp and a
@@ -961,6 +1586,12 @@ pub(crate) fn reassemble_video(packets: &[Vec<u8>]) -> Result<Vec<ReassembledAu>
     let mut cur_ts: Option<u32> = None;
     let mut fu_buf: Vec<u8> = Vec::new();
     let mut fu_active = false;
+    // Sequence number of the previous packet. Every packet of a stream
+    // increments this by one (RFC 3550 §5.1: "sequence number: increments by 1
+    // per packet"), so a jump means a packet of the access unit under
+    // construction never arrived — whether it was a single-NAL packet, a
+    // STAP-A, or a fragment of an FU-A run.
+    let mut last_seq: Option<u16> = None;
 
     fn flush_au(aus: &mut Vec<ReassembledAu>, nals: &mut Vec<Vec<u8>>, ts: u32) {
         if nals.is_empty() {
@@ -982,6 +1613,32 @@ pub(crate) fn reassemble_video(packets: &[Vec<u8>]) -> Result<Vec<ReassembledAu>
         let payload = hdr.payload;
         if payload.is_empty() {
             continue;
+        }
+
+        // A sequence-number gap means a packet of this access unit never
+        // arrived. The check runs *before* the timestamp flush below, so the AU
+        // being closed is the one marked damaged (it is missing a NAL) rather
+        // than the *new* AU's first packet being discarded with it: RTP is
+        // untrusted UDP input, and one lost packet must cost exactly the AU it
+        // damaged.
+        //
+        // Three shapes, all of which leave the AU under construction
+        // incomplete:
+        //  - the gap falls between two packets of the current AU (any kind);
+        //  - an FU-A run was open and the next packet is not its continuation
+        //    (the `fu_active` case, handled in the FU-A arm);
+        //  - the gap falls immediately *before* an FU-A start, which means the
+        //    run that start belongs to lost its first fragment (or the AU
+        //    before it lost its last one) — either way this AU is incomplete.
+        let gap = last_seq.is_some_and(|previous| previous.wrapping_add(1) != hdr.sequence);
+        last_seq = Some(hdr.sequence);
+        if gap {
+            //  Drop the NALs collected for the AU under construction, and mark
+            //  the open FU-A run damaged so its continuation cannot join a
+            //  later run.
+            cur_nals.clear();
+            fu_buf.clear();
+            fu_active = false;
         }
         if let Some(ts) = cur_ts
             && ts != hdr.timestamp
@@ -1037,7 +1694,19 @@ pub(crate) fn reassemble_video(packets: &[Vec<u8>]) -> Result<Vec<ReassembledAu>
                     fu_active = true;
                 }
                 if !fu_active {
-                    return Err(Error::InvalidInput("FU-A fragment before start"));
+                    // A continuation fragment with no preceding start: a
+                    // mid-stream capture (the run began before the first
+                    // packet we saw) or one lost start packet — or a hole in
+                    // the run detected just above. RFC 6184 §5.8 gives no way
+                    // to recover the missing NAL header or body, so this
+                    // fragment cannot be turned into a NAL — but it is *this
+                    // NAL* that is unusable, not the stream: skip it and
+                    // carry on, exactly as
+                    // [`crate::rtp_stream::RtpStreamDepacketiser`] does (which
+                    // records `DamagedAccessUnit`). Failing the whole input
+                    // meant one lost packet made every packet after it
+                    // unreadable too.
+                    continue;
                 }
                 fu_buf.extend_from_slice(&payload[2..]);
                 if is_end {
@@ -1062,8 +1731,67 @@ pub(crate) fn reassemble_video(packets: &[Vec<u8>]) -> Result<Vec<ReassembledAu>
 
 /// RFC 3640 AAC-hbr AU-header reassembly, preserving the RTP timestamp.
 /// Audio AUs are always sync points.
+///
+/// Handles RFC 3640 §3.2.3.1 fragmentation: an access unit larger than the
+/// payload budget is split across packets that **share one RTP timestamp**,
+/// with the marker bit set on the last fragment (§3.1). Each fragment's
+/// AU-header carries its `AU-size` as the size of the *entire* AU, not of the
+/// fragment (§3.2.3.2) — "the AU size indicates the size of the entire AU and
+/// not the size of the fragment ... particularly useful after losing a packet
+/// carrying the last fragment of an AU". A 640 kb/s 5.1 AAC stream has ~3.7 kB
+/// frames, far over a typical MTU, so this is the ordinary case for
+/// high-rate audio, not an exotic one: before this, such a packet was rejected
+/// as `BufferTooShort` and the whole input failed.
+///
+/// A fragment run is only accepted when it is **contiguous**: every fragment
+/// must be the next sequence number (RFC 3550 §5.1: "sequence number:
+/// increments by 1 per packet"), and the accumulated bytes must equal the
+/// declared `AU-size` exactly. A run with a hole is discarded rather than
+/// emitted with its middle missing, and a run whose bytes exceed the declared
+/// size (duplicated fragments) is discarded too — the header states the size,
+/// so a mismatch means the run is not the AU it claims to be. Either way
+/// reassembly resumes at the next access unit.
 pub(crate) fn reassemble_audio(packets: &[Vec<u8>]) -> Result<Vec<ReassembledAu>> {
     let mut aus = Vec::new();
+    /// One AU under reassembly from fragments (RFC 3640 §3.2.3.1).
+    struct PendingAu {
+        timestamp: u32,
+        /// The AU's full size, from any fragment's AU-header.
+        size: usize,
+        /// Sequence number of the fragment most recently appended, so the next
+        /// one can be required to follow it (RFC 3550 §5.1).
+        seq: u16,
+        /// Whether a hole was seen, making this run unusable even if enough
+        /// bytes eventually accumulate.
+        gap: bool,
+        data: Vec<u8>,
+    }
+    let mut pending: Option<PendingAu> = None;
+
+    /// Push the AU under reassembly, but only if it is exactly the AU it
+    /// declares itself to be: no hole in the fragment run, and the bytes
+    /// accumulated equal the AU-header's `AU-size` (§3.2.3.2). Anything else
+    /// is dropped rather than handed to a decoder as a partial frame.
+    fn complete_if_exact(aus: &mut Vec<ReassembledAu>, pending: &mut Option<PendingAu>) {
+        if pending
+            .as_ref()
+            .is_some_and(|p| !p.gap && !p.data.is_empty() && p.data.len() == p.size)
+            && let Some(p) = pending.take()
+        {
+            aus.push(ReassembledAu {
+                timestamp: p.timestamp,
+                is_sync: true,
+                data: p.data,
+            });
+        }
+    }
+
+    /// Drop the AU under reassembly whatever its state — used when a new AU
+    /// begins, since its remaining fragments are never coming.
+    fn discard(pending: &mut Option<PendingAu>) {
+        pending.take();
+    }
+
     for pkt in packets {
         let hdr = parse_rtp_header(pkt)?;
         let payload = hdr.payload;
@@ -1085,6 +1813,8 @@ pub(crate) fn reassemble_audio(packets: &[Vec<u8>]) -> Result<Vec<ReassembledAu>
                 what: "AAC AU headers",
             });
         }
+        // A packet carries complete AUs or a single fragment of one (§3.2.3),
+        // so more than one header means each header is a whole AU.
         let mut sizes = Vec::with_capacity(num_headers);
         for h in 0..num_headers {
             let hoff = off + h * AAC_AU_HEADER_LEN;
@@ -1092,23 +1822,79 @@ pub(crate) fn reassemble_audio(packets: &[Vec<u8>]) -> Result<Vec<ReassembledAu>
             sizes.push((ah >> AAC_INDEX_LENGTH) as usize);
         }
         off += header_bytes;
+
+        // A different timestamp ends any AU under reassembly (§3.1: one
+        // timestamp only ever refers to fragments of one AU).
+        if pending
+            .as_ref()
+            .is_some_and(|p| p.timestamp != hdr.timestamp)
+        {
+            complete_if_exact(&mut aus, &mut pending);
+            discard(&mut pending);
+        }
+
         for size in sizes {
-            let end = off + size;
-            if end > payload.len() {
-                return Err(Error::BufferTooShort {
-                    need: end,
-                    have: payload.len(),
-                    what: "AAC AU payload",
-                });
+            let available = payload.len().saturating_sub(off);
+            let take = size.min(available);
+            match pending.as_mut() {
+                Some(p) if p.size == size => {
+                    // An ordinary continuation fragment of the AU in flight —
+                    // provided it really is the next packet of the run.
+                    if p.seq.wrapping_add(1) == hdr.sequence {
+                        p.data.extend_from_slice(&payload[off..off + take]);
+                        p.seq = hdr.sequence;
+                    } else {
+                        // A hole: this fragment does not follow the last one,
+                        // so the AU's middle is missing. Mark the run unusable
+                        // and keep it as the new (partial) run of this packet
+                        // so a later contiguous run can still be recognised.
+                        complete_if_exact(&mut aus, &mut pending);
+                        discard(&mut pending);
+                        pending = Some(PendingAu {
+                            timestamp: hdr.timestamp,
+                            size,
+                            seq: hdr.sequence,
+                            gap: true,
+                            data: payload[off..off + take].to_vec(),
+                        });
+                    }
+                }
+                Some(_) => {
+                    // A fragment whose declared AU-size disagrees with the one
+                    // in flight: it belongs to a different AU.
+                    complete_if_exact(&mut aus, &mut pending);
+                    discard(&mut pending);
+                    pending = Some(PendingAu {
+                        timestamp: hdr.timestamp,
+                        size,
+                        seq: hdr.sequence,
+                        gap: false,
+                        data: payload[off..off + take].to_vec(),
+                    });
+                }
+                None => {
+                    pending = Some(PendingAu {
+                        timestamp: hdr.timestamp,
+                        size,
+                        seq: hdr.sequence,
+                        gap: false,
+                        data: payload[off..off + take].to_vec(),
+                    });
+                }
             }
-            aus.push(ReassembledAu {
-                timestamp: hdr.timestamp,
-                is_sync: true,
-                data: payload[off..end].to_vec(),
-            });
-            off = end;
+            off += take;
+
+            complete_if_exact(&mut aus, &mut pending);
+        }
+        // The marker marks the last fragment of an AU (§3.1). A complete AU
+        // was already pushed above; what is left here is a run that ended
+        // short, which is dropped.
+        if hdr.marker {
+            complete_if_exact(&mut aus, &mut pending);
+            discard(&mut pending);
         }
     }
+    complete_if_exact(&mut aus, &mut pending);
     Ok(aus)
 }
 
@@ -1413,6 +2199,318 @@ pub fn hex_decode(s: &str) -> Result<Vec<u8>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A real 23.976 fps H.264 stream at the 90 kHz RTP clock presents its
+    /// frames at `round(i * 90000 * 1001 / 24000)` ticks — i.e. steps that
+    /// alternate **3753 and 3754**. Estimating a "period" from those steps
+    /// (their greatest common divisor is 1) would declare a one-tick frame and
+    /// give every sample a duration of 1 or 2 ticks, which is 2000x too short.
+    /// This is the shape `fixtures/ts/h264/high.ts` has in miniature.
+    /// A deterministic pseudo-random reordered sequence, for the scale tests
+    /// below (no external RNG dependency in a `no_std` crate's tests).
+    fn pseudo_random_pts(n: usize, seed: u64) -> alloc::vec::Vec<i64> {
+        let mut state = seed | 1;
+        let mut next = move || {
+            // xorshift64; the constants are the standard ones for the shift
+            // triple (13, 7, 17).
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            state
+        };
+        let mut out = alloc::vec::Vec::with_capacity(n);
+        let mut t = 0i64;
+        for _ in 0..n {
+            // Presentation instants advance by 1..4 periods...
+            t += 1000 * (1 + (next() % 4) as i64);
+            out.push(t);
+        }
+        // ...but are *sent* in a shuffled order (the reorder).
+        for i in (1..out.len()).rev() {
+            let j = (next() % (i as u64 + 1)) as usize;
+            out.swap(i, j);
+        }
+        out
+    }
+
+    /// The decode timeline must equal the brute-force definition (each decode
+    /// instant is the i-th smallest presentation instant, shifted by the
+    /// smallest delay that keeps `dts <= pts`) — checked on a random reordered
+    /// sequence, so the O(n log n) sort-based implementation cannot drift from
+    /// what it claims to compute.
+    /// Two access units stamped with the *same* RTP timestamp give the decode
+    /// timeline a zero step. A non-final frame must still carry a usable
+    /// duration — every container writer in this crate rejects a zero-duration
+    /// sample — so the fallback is the last non-zero duration, or 1 tick if
+    /// there has not been one.
+    #[test]
+    fn equal_timestamp_aus_never_get_a_zero_duration() {
+        // pts 0, 3000, 3000, 6000: the repeated instant is the wire saying two
+        // AUs share one sampling time.
+        let packets: alloc::vec::Vec<alloc::vec::Vec<u8>> = [0u32, 3000, 3000, 6000]
+            .iter()
+            .enumerate()
+            .map(|(i, ts)| {
+                let mut p = alloc::vec![0x80u8, 0x80 | 96];
+                p.extend_from_slice(&(i as u16).to_be_bytes());
+                p.extend_from_slice(&ts.to_be_bytes());
+                p.extend_from_slice(&[0, 0, 0, 0]);
+                p.extend_from_slice(&[0x41, 0xAA]);
+                p
+            })
+            .collect();
+        let ir = RtpDepacketiser::new()
+            .unpackage(crate::rtp::RtpInput {
+                streams: alloc::vec![crate::rtp::RtpInputStream::new(RtpMediaKind::H264, packets,)],
+            })
+            .expect("depacketise");
+        let samples = &ir.tracks[0].samples;
+        assert_eq!(samples.len(), 4);
+        for (i, s) in samples.iter().enumerate() {
+            let d = s.duration.expect("a multi-sample track times every sample");
+            if i + 1 < samples.len() {
+                assert!(
+                    d > 0,
+                    "non-final sample {i} must not have a zero duration: {:?}",
+                    samples
+                        .iter()
+                        .map(|s| s.duration)
+                        .collect::<alloc::vec::Vec<_>>()
+                );
+            }
+        }
+        // The repeated instant's AU reuses the previous frame's period.
+        assert_eq!(samples[1].duration, Some(3000));
+        assert_eq!(
+            samples[2].duration,
+            Some(3000),
+            "the duplicate instant must reuse the previous non-zero duration"
+        );
+    }
+
+    #[test]
+    fn decode_timeline_matches_a_brute_force_reference() {
+        let pts = pseudo_random_pts(2000, 0x9E37_79B9_7F4A_7C15);
+        let (dts, shifted) = decode_timeline(&pts);
+        let reference = brute_force_decode_timeline(&pts);
+        assert_eq!(dts, reference.0, "dts must match the reference");
+        assert_eq!(shifted, reference.1, "pts must match the reference");
+    }
+
+    /// The brute-force definition of the decode timeline, used only as a test
+    /// oracle: `sorted[i] - latch - first`, with the latch the smallest delay
+    /// such that every `dts <= pts`. Deliberately written as directly as
+    /// possible (no helper reuse) so it cannot share a bug with the
+    /// implementation.
+    fn brute_force_decode_timeline(pts: &[i64]) -> (alloc::vec::Vec<i64>, alloc::vec::Vec<i64>) {
+        let mut sorted = pts.to_vec();
+        sorted.sort_unstable();
+        let mut latch = 0i64;
+        for (s, p) in sorted.iter().zip(pts.iter()) {
+            if s - p > latch {
+                latch = s - p;
+            }
+        }
+        let mut dts = alloc::vec::Vec::new();
+        let mut out_pts = alloc::vec::Vec::new();
+        for (s, p) in sorted.iter().zip(pts.iter()) {
+            let d = *s - latch;
+            dts.push(d);
+            out_pts.push((*p).max(d));
+        }
+        (dts, out_pts)
+    }
+
+    /// The latch used to be computed with a per-index scan of the preceding
+    /// samples — O(n²) on a hostile batch input (90 000 access units is ~4e9
+    /// comparisons). This must simply finish: 200 000 reordered access units
+    /// is far past any real capture, and the old shape would take minutes in a
+    /// debug build.
+    #[test]
+    fn decode_timeline_is_not_quadratic() {
+        let pts = pseudo_random_pts(200_000, 0x1234_5678_9ABC_DEF0);
+        let (dts, shifted) = decode_timeline(&pts);
+        assert_eq!(dts.len(), 200_000);
+        assert_eq!(shifted.len(), 200_000);
+        assert!(
+            dts.windows(2).all(|w| w[1] >= w[0]),
+            "dts must be non-decreasing at scale"
+        );
+        assert!(
+            dts.iter().zip(&shifted).all(|(d, p)| d <= p),
+            "dts must stay at or behind presentation at scale"
+        );
+        // The latch is exactly the deepest reorder in the sequence: every
+        // decode instant sits at or before its own presentation instant, and
+        // the timeline is the sorted instants shifted by one constant — so the
+        // *durations* still sum to the span, whatever the shuffle.
+        let first = dts[0];
+        let durations: i64 = dts.windows(2).map(|w| w[1] - w[0]).sum();
+        let span = pts.iter().max().copied().unwrap_or(0) - pts.iter().min().copied().unwrap_or(0);
+        assert_eq!(
+            durations, span,
+            "the decode timeline must span the wire's own instants exactly"
+        );
+        // The shift is the deepest reorder of the sequence, so a case that
+        // shuffles every instant is legitimately as deep as the largest
+        // instant itself; the bound that matters is that it cannot exceed the
+        // data (the check is here so a future change that multiplies it is
+        // caught).
+        let max_instant = pts.iter().copied().max().unwrap_or(0);
+        assert!(
+            first >= pts[0] - max_instant - span,
+            "the latch must be bounded by the sequence's own instants"
+        );
+    }
+
+    #[test]
+    fn decode_timeline_handles_23_976_fps_tick_jitter() {
+        // The presentation instants of a 24-frame 23.976 fps stream.
+        let times: alloc::vec::Vec<i64> = (0..24i64)
+            .map(|i| (i * 90_000 * 1001 + 12_000) / 24_000)
+            .collect();
+        // A real reorder pattern (display order 0,3,1,2,6,4,5,... sent in
+        // decode order), so `pts` is genuinely out of order on the wire.
+        let order: [usize; 24] = [
+            0, 3, 1, 2, 6, 4, 5, 9, 7, 8, 12, 10, 11, 15, 13, 14, 18, 16, 17, 21, 19, 20, 23, 22,
+        ];
+        let pts: alloc::vec::Vec<i64> = order.iter().map(|i| times[*i]).collect();
+        let (dts, shifted) = decode_timeline(&pts);
+
+        assert!(
+            !pts.windows(2).all(|w| w[1] >= w[0]),
+            "the fixture must actually be reordered"
+        );
+        assert!(
+            dts.windows(2).all(|w| w[1] >= w[0]),
+            "dts must be non-decreasing: {dts:?}"
+        );
+        assert!(
+            dts.iter().zip(&shifted).all(|(d, p)| d <= p),
+            "dts must never run ahead of presentation"
+        );
+        // Durations are the encoder's own jittered frame times, not 1-2 ticks.
+        let durations: alloc::vec::Vec<i64> = dts.windows(2).map(|w| w[1] - w[0]).collect();
+        assert!(
+            durations.iter().all(|d| (3753..=3754).contains(d)),
+            "every duration must be one jittered frame period, got {durations:?}"
+        );
+        assert!(
+            durations.contains(&3753) && durations.contains(&3754),
+            "the jitter must be preserved, not flattened: {durations:?}"
+        );
+    }
+
+    #[test]
+    fn decode_timeline_is_pts_when_presentation_order_is_wire_order() {
+        // A variable-frame-rate series (a dropped frame, or a genuinely VFR
+        // encoder): the steps are 3000 and 6000. There is no reordering, so
+        // the decode timeline must be the presentation series itself — laying
+        // down a uniform grid would misplace the third sample by 3000.
+        let pts = [0i64, 3000, 9000];
+        let (dts, shifted) = decode_timeline(&pts);
+        assert_eq!(
+            (dts.as_slice(), shifted.as_slice()),
+            (&[0i64, 3000, 9000][..], &[0i64, 3000, 9000][..]),
+            "a non-decreasing (VFR) series must leave dts == pts"
+        );
+        // The durations the caller derives from it are the real steps.
+        assert_eq!(dts[1] - dts[0], 3000);
+        assert_eq!(dts[2] - dts[1], 6000);
+    }
+
+    #[test]
+    fn decode_timeline_recovers_the_standard_decode_order() {
+        // A B-frame reorder: two frames sent out of presentation order.
+        // Presentation instants are 0, 3, 1, 2 (x1000); the standard decode
+        // order for that pattern is one frame period apart (the middle frames
+        // are latched), which is exactly a zero-based uniform grid.
+        let pts = [0i64, 3000, 1000, 2000];
+        let (dts, shifted) = decode_timeline(&pts);
+        assert_eq!(dts, alloc::vec![-1000, 0, 1000, 2000]);
+        // The presentation instants are unchanged (the absolute timeline), so
+        // the composition offsets (`pts - dts`) are 1000, 3000, 0, 0 — the
+        // latch the reorder required (the two frames held back have no
+        // offset).
+        assert_eq!(shifted, alloc::vec![0, 3000, 1000, 2000]);
+
+        // A pyramid GOP: 0, 4, 2, 1, 3, 8, 6, 5, 7 (x1000). The period is
+        // 1000 — the smallest *positive* step here is 2000, so a "smallest
+        // step" period would be wrong; the gcd of the steps is 1000.
+        let pts = [0i64, 4000, 2000, 1000, 3000, 8000, 6000, 5000, 7000];
+        let (dts, _) = decode_timeline(&pts);
+        // The instants are zero-based here (the series starts at 0) and the
+        // latch is one period, so the decode timeline runs one period ahead of
+        // them.
+        assert_eq!(
+            dts,
+            alloc::vec![-2000, -1000, 0, 1000, 2000, 3000, 4000, 5000, 6000],
+            "a pyramid group must decode one period apart, in wire order"
+        );
+    }
+
+    #[test]
+    fn decode_timeline_properties_hold_for_reordered_series() {
+        for pts in [
+            alloc::vec![0i64, 3000, 1000, 2000],
+            alloc::vec![0i64, 4000, 2000, 1000, 3000],
+            alloc::vec![0i64, 4000, 2000, 1000, 3000, 8000, 6000, 5000, 7000],
+            alloc::vec![100i64, 700, 400, 500],
+        ] {
+            let (dts, shifted) = decode_timeline(&pts);
+            assert_eq!(dts.len(), pts.len());
+            assert!(
+                dts[0] >= pts[0] - 10_000,
+                "the timeline stays on the wire's own epoch: {dts:?}"
+            );
+            assert!(
+                dts.windows(2).all(|w| w[1] >= w[0]),
+                "dts must be non-decreasing: {dts:?}"
+            );
+            assert!(
+                dts.iter().zip(&shifted).all(|(d, p)| d <= p),
+                "dts must never run ahead of presentation: {dts:?} vs {shifted:?}"
+            );
+            assert!(
+                shifted.iter().all(|p| *p >= 0),
+                "presentation instants must stay non-negative: {shifted:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn decode_timeline_never_advances_a_hostile_reorder() {
+        // A hostile sequence whose first presentation instant is already past
+        // the grid position of a later one: `pts[1] = 0` while the grid wants
+        // 1000. The clamp gives that frame `dts = pts` (a zero offset) rather
+        // than `pts < dts`, which no container can express, and the sequence
+        // stays non-decreasing.
+        let pts = [1000i64, 0, 500];
+        let (dts, shifted) = decode_timeline(&pts);
+        assert!(
+            dts.windows(2).all(|w| w[1] >= w[0]),
+            "must stay non-decreasing: {dts:?}"
+        );
+        assert!(
+            dts.iter().zip(&shifted).all(|(d, p)| d <= p),
+            "must stay at or behind presentation: {dts:?} vs {shifted:?}"
+        );
+    }
+
+    #[test]
+    fn decode_timeline_edge_cases_are_total() {
+        let (dts, pts) = decode_timeline(&[]);
+        assert!(dts.is_empty() && pts.is_empty());
+        assert_eq!(
+            decode_timeline(&[1234]),
+            (alloc::vec![1234], alloc::vec![1234])
+        );
+        // All-equal instants: no positive step, so no grid — `pts` is already
+        // non-decreasing and is returned as-is.
+        let (dts, pts) = decode_timeline(&[7, 7, 7]);
+        assert_eq!(dts, alloc::vec![7, 7, 7]);
+        assert_eq!(pts, alloc::vec![7, 7, 7]);
+    }
 
     #[test]
     fn reassemble_video_reports_timestamp_and_sync() {

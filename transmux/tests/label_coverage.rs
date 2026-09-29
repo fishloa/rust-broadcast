@@ -49,6 +49,10 @@ const SKIP: &[&str] = &[
     // shape as `DemuxEvent` above — each variant wraps distinct structured
     // fields (track/ssrc/sequence numbers), not a flat spec-defined code.
     "RtpLossEvent",
+    // `rtp::RtpTimingWarning` (audit r04-W29): the same shape — a variant
+    // carries the stream index and the two timestamps that disagreed, which a
+    // flat label could not express.
+    "RtpTimingWarning",
     // `LlHlsSegmenter`'s `Stage::Out` (media plane step 2e-2): a dispatch
     // enum wrapping two full structured payloads (`PartInfo`/`SegmentInfo`),
     // same shape as `DemuxEvent` above — not a spec-defined flat code.

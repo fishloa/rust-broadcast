@@ -1044,18 +1044,12 @@ fn oti_of(esds: &crate::mp4esds::EsdsBox) -> u8 {
 }
 
 /// The effective sampling rate from a decoded ASC (explicit rate if present,
-/// else the rate for the `samplingFrequencyIndex`, ISO/IEC 14496-3 Table 1.10).
+/// else the rate for the `samplingFrequencyIndex`, ISO/IEC 14496-3 Table 1.10),
+/// via the crate's single copy of that table
+/// ([`SamplingFrequencyIndex::table_hz`]).
 fn asc_sampling_rate(asc: &AudioSpecificConfig) -> Option<u32> {
-    if let Some(fs) = asc.sampling_frequency {
-        return Some(fs);
-    }
-    // Table 1.10 (samplingFrequencyIndex → Hz); `Reserved`/`Escape` → None.
-    const RATES: [u32; 13] = [
-        96000, 88200, 64000, 48000, 44100, 32000, 24000, 22050, 16000, 12000, 11025, 8000, 7350,
-    ];
-    RATES
-        .get(asc.sampling_frequency_index.raw() as usize)
-        .copied()
+    asc.sampling_frequency
+        .or_else(|| asc.sampling_frequency_index.table_hz())
 }
 
 /// Derive a DASH `@frameRate` (`num/den`) from the video samples' durations.

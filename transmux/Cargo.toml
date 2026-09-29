@@ -63,6 +63,13 @@ serde_json   = "1.0"
 # *points* from SCTE-35 cues is left to callers, and this example is exactly
 # that follow-up wiring, not a library dependency.
 scte35-splice  = { path = "../scte35-splice", version = "2.1", default-features = false, features = ["std"] }
+# sdp-types (issue #1079, audit r04-W34) is an independent SDP parser, already
+# resolved workspace-wide at this version (rtsp-runtime depends on it, see
+# Cargo.lock), so this adds no new dependency to the tree. Used ONLY as an
+# oracle in tests/rtp.rs: the RTP spoke's own SDP output is validated by a
+# parser nobody in this repository wrote, which is the only way to catch a
+# misreading of RFC 4566 shared by the renderer and its own test.
+sdp-types      = "0.1"
 timed-metadata = { path = "../timed-metadata", default-features = false, features = ["std"] }
 
 [package.metadata.docs.rs]

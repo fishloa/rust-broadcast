@@ -26,8 +26,15 @@
 //!   (IDR detection for video; always `true` for audio).
 //! - `dts == pts`, i.e. a zero composition offset — **v1 assumes low-delay
 //!   H.264 with no B-frame reorder**: RTP carries only a presentation
-//!   timestamp on the wire, so reconstructing a separate DTS (and therefore a
-//!   non-zero composition offset) when B-frames are present is future work.
+//!   timestamp on the wire (RFC 6184 §5.1's sampling time), so reconstructing
+//!   a separate DTS (and therefore a non-zero composition offset) when
+//!   B-frames are present is future work. That assumption is **reported when
+//!   it fails** — a wire timestamp earlier than a previous one raises
+//!   [`RtpLossEvent::NonMonotonicTimestamp`] (audit r04-W29), because RTP
+//!   carries no decode time to fall back on. A consumer needing real
+//!   per-frame durations or a decode-ordered timeline should use the
+//!   single-shot [`crate::rtp::RtpDepacketiser`] path, which holds the whole
+//!   stream and therefore knows the frame period exactly.
 //! - Each track independently rebases its first unwrapped timestamp to
 //!   `start_decode_time = 0` (via the caller building [`crate::media::Track`]
 //!   from `track_specs` + emitted samples) **unless** an RTCP Sender Report
@@ -73,6 +80,12 @@
 //! never reorders, because nothing in plain RTCP loss accounting needs
 //! packets delivered in order — H.264 FU-A reassembly does).
 //!
+//! - **Source validation (§A.1 `probation`)**: the first packet of a session
+//!   takes the new-source branch and does *not* run `update_seq`, so the
+//!   `MIN_SEQUENTIAL` = 2 sequential packets §A.1 requires complete on the
+//!   **third** packet seen. No media is delayed for probation (see
+//!   `SeqState::admit`), so this only means the source is declared valid one
+//!   packet later than §A.1's own count would suggest.
 //! - **In order**: reassembled immediately, as before.
 //! - **Reordered within a small window**: held in a bounded buffer
 //!   (`RtpStreamTrack::with_reorder_depth`, default [`DEFAULT_REORDER_DEPTH`])
@@ -88,8 +101,41 @@
 //!   decision — [`RtpStreamDepacketiser::flush`]): the access unit under construction, if
 //!   any, is dropped rather than reassembled from a run missing a fragment;
 //!   [`RtpLossEvent::SequenceGap`] is recorded.
-//! - **Duplicate** (already delivered, or already sitting in the reorder
-//!   buffer): discarded silently, exactly as RFC 3550 §A.1 treats it.
+//! - **Duplicate or misordered** (behind what the buffer waits for, or already
+//!   sitting in it): discarded silently, exactly as RFC 3550 §A.1's
+//!   fall-through "duplicate or reordered packet" arm treats it. Two costs are
+//!   inherent to that rule and worth stating:
+//!   - a jump **at most `MAX_MISORDER` (100) behind** `max_seq` is *accepted* by
+//!     §A.1 as misordered, and only then found to be behind `expected` and
+//!     dropped by the reorder buffer — so a backward move of up to 100 sequence
+//!     numbers is lost media with no [`RtpLossEvent`]. §A.1 treats it that way
+//!     because for loss statistics a small backward step is indistinguishable
+//!     from a reorder, and a real seek or restart moves much further;
+//!   - the first packet of a post-seek run is the one that *arms* `bad_seq`, so
+//!     it is discarded (§A.1 returns 0 for it). A run whose first packet was an
+//!     FU-A start therefore loses that fragment, which damages the access unit
+//!     it belonged to (`RtpLossEvent::DamagedAccessUnit`); the run itself
+//!     continues from its second packet.
+//! - **Wild jump needing confirmation** (§A.1: ahead of `max_seq` by
+//!   `MAX_DROPOUT` or more, or behind by more than `MAX_MISORDER`): the packet
+//!   is **discarded** and `bad_seq = (seq + 1) & (RTP_SEQ_MOD - 1)` is
+//!   remembered. Only if the *next* packet carries `bad_seq` — §A.1's "two
+//!   sequential packets ... the other side restarted without telling us" — is
+//!   the source re-synced. One stray far-behind packet therefore cannot move
+//!   the stream's baseline at all (the pre-fix bug), and a real seek or
+//!   restart, which always brings a *run* of packets at the new numbering,
+//!   is adopted on its second packet.
+//! - **Resync** (the confirmed restart above, e.g. an RTSP seek or a source
+//!   restart that kept its SSRC): the baseline moves onto the new numbering,
+//!   the in-progress access unit is dropped (it straddles the seam) and the
+//!   reorder buffer is cleared, and the track's timestamp origin is
+//!   re-established — the new run's timeline does not inherit a delta measured
+//!   across the discontinuity, because each source instance's RTP clock origin
+//!   is random (§5.1). No [`RtpLossEvent`]: the sender renumbered, nothing was
+//!   lost. Because §A.1's `init_seq` is all that carries over, the *next* run
+//!   is an ordinary source from then on — nothing about the seam bounds it,
+//!   so a run of any length (including one that wraps past the old numbering)
+//!   is delivered in full, and a second seek resyncs the same way.
 //!
 //! ## Where the signal surfaces (design decision)
 //!
@@ -177,6 +223,38 @@ const MAX_AU_BUFFER_BYTES: usize = 4 * 1024 * 1024;
 /// and RTP is untrusted remote input over UDP, so a fifth was not an option.
 pub const DEFAULT_REORDER_DEPTH: usize = 16;
 
+/// The 16-bit sequence-number space, RFC 3550 §A.1's `RTP_SEQ_MOD` (`#define
+/// RTP_SEQ_MOD (1<<16)` in the RFC's own sample header).
+const RTP_SEQ_MOD: u32 = 1 << 16;
+
+/// `RTP_SEQ_MOD + 1`, the value RFC 3550 §A.1's `init_seq` stores in `bad_seq`
+/// "so seq == bad_seq is false": it is one past the largest representable
+/// sequence number, so no 16-bit `seq` can ever equal it.
+const RTP_SEQ_MOD_PLUS_ONE: u32 = RTP_SEQ_MOD + 1;
+
+/// RFC 3550 §A.1's `MAX_DROPOUT` (3000 there, "based on ... a maximum dropout
+/// of 1 minute"). A jump *ahead* of `max_seq` smaller than this is treated as
+/// an ordinary loss ("in order, with permissible gap"); at or above it the
+/// number is a wild jump needing confirmation.
+const MAX_DROPOUT: u16 = 3000;
+
+/// RFC 3550 §A.1's `MAX_MISORDER` (100 there, "based on a maximum misordering
+/// time of 2 seconds at 50 packets/second"). A number behind `max_seq` by at
+/// most this much is a legal reorder and is accepted; further behind and it is
+/// either a duplicate or part of a wild jump.
+const MAX_MISORDER: u32 = 100;
+
+/// RFC 3550 §A.1's `MIN_SEQUENTIAL`: how many sequential packets a source must
+/// produce before it is declared valid. Two, because the RTCP header check is
+/// strong and a larger number would delay validation when packets are lost.
+const MIN_SEQUENTIAL: u8 = 2;
+
+/// `RTP_SEQ_MOD - MAX_MISORDER`, narrowed to `u16` for the §A.1 comparison
+/// `udelta <= RTP_SEQ_MOD - MAX_MISORDER`. `MAX_MISORDER` (100) is far below
+/// `RTP_SEQ_MOD` (65536), so the subtraction cannot underflow (asserted in this
+/// module's tests).
+const MAX_WILD_JUMP_U16: u16 = (RTP_SEQ_MOD - MAX_MISORDER) as u16;
+
 /// Loss/reorder signal from [`RtpStreamDepacketiser`] (RFC 3550 §5.1
 /// sequence-number semantics; see the module docs' "Loss and reorder
 /// detection" section and `transmux/docs/rtp/rtp-sequence-validation.md` for
@@ -215,6 +293,29 @@ pub enum RtpLossEvent {
     DamagedAccessUnit {
         /// The track this occurred on.
         track_id: u32,
+    },
+    /// An access unit's RTP timestamp was **earlier** than the previous
+    /// access unit's, i.e. the stream's presentation order is not wire order
+    /// (a B-frame reorder).
+    ///
+    /// RTP carries exactly one timestamp per access unit and it is the
+    /// *sampling/presentation* time (RFC 6184 §5.1 for H.264, RFC 3640 §3.3.1
+    /// for AAC), so the wire alone cannot supply an independent decode time:
+    /// this depacketiser emits `dts == pts` (the documented low-delay model),
+    /// and a reordered source therefore yields `dts` values that step
+    /// backward. That is not a defect in the reassembly — the samples are
+    /// correct and in presentation order — but a consumer that requires
+    /// decode-ordered `dts` (a progressive-file or fragment writer) must know
+    /// it cannot use it as one. Reported once per occurrence so a caller can
+    /// count or route it.
+    NonMonotonicTimestamp {
+        /// The track this occurred on.
+        track_id: u32,
+        /// The previous access unit's unwrapped presentation timestamp, in the
+        /// track's clock (the same unit as [`crate::ir::Sample::pts`]).
+        previous_pts: i64,
+        /// This access unit's, which is earlier.
+        pts: i64,
     },
 }
 
@@ -262,23 +363,151 @@ impl RtpStreamTrack {
     }
 }
 
-/// Per-(track, SSRC) RTP sequence-number tracking state — RFC 3550 §A.1's
-/// wrapping-comparison discipline, adapted for an active bounded reorder
-/// buffer rather than a passive validity classifier (see the module docs and
-/// `transmux/docs/rtp/rtp-sequence-validation.md`).
+/// Per-(track, SSRC) RTP sequence-number tracking state.
+///
+/// Two layers, because RFC 3550 §A.1 and an H.264 FU-A reassembler want
+/// different things from the same field:
+///
+/// 1. **[`SeqValidity`]** — a faithful transcription of §A.1's `update_seq`,
+///    including `init_seq`, `probation`/`MIN_SEQUENTIAL`, `MAX_DROPOUT`,
+///    `MAX_MISORDER`, `bad_seq` and `cycles`. It classifies each arriving
+///    sequence number as in-order-with-tolerable-gap, duplicate/misordered, a
+///    wild jump needing confirmation, or a confirmed restart, using only the
+///    wrapping arithmetic §A.1 prescribes.
+/// 2. **The reorder buffer** (`held`/`expected`) — §A.1 never reorders,
+///    because RTCP loss accounting does not need packets *delivered* in order.
+///    FU-A reassembly does (RFC 6184 §5.8: fragment order *is* the data), so
+///    an accepted packet ahead of the hole is held briefly and replayed in
+///    order once the hole fills or the bound is reached (a declared gap).
 #[derive(Default)]
 struct SeqState {
     /// The SSRC this state was initialised for. `None` until the first
     /// packet is seen. A *changed* SSRC (RFC 3550 §8.2: a new source, e.g. a
     /// stream restart) resets tracking rather than raising a gap.
     ssrc: Option<u32>,
-    /// Next expected sequence number.
+    /// Next sequence number the reorder buffer is waiting for.
     expected: Option<u16>,
     /// Packets received ahead of `expected`, held (raw wire bytes, keyed by
     /// their own sequence number) so they can be replayed in order once the
     /// hole fills. Bounded: never holds more than `reorder_depth` entries at
     /// rest (see [`Self::admit`] / [`Self::force_resolve`]).
     held: Vec<(u16, Vec<u8>)>,
+    /// RFC 3550 §A.1's per-source validity state (`max_seq`/`bad_seq`/
+    /// `cycles`/`probation`), kept in one field so "re-initialise the source"
+    /// is a single call and cannot half-reset.
+    validity: SeqValidity,
+}
+
+/// RFC 3550 §A.1's per-source validity state — a transcription of the RFC's
+/// `source` fields that `update_seq` reads and writes (`base_seq`/`received`/
+/// `expected_prior` are RTCP-statistics bookkeeping this depacketiser does not
+/// keep, since it emits its own [`RtpLossEvent`] signal instead).
+struct SeqValidity {
+    /// §A.1 `max_seq`: the highest sequence number accepted so far (or the
+    /// most recently seen one while in probation).
+    max_seq: u16,
+    /// §A.1 `bad_seq`: the number that, if the next packet carries it, means
+    /// "two sequential packets" arrived at a wild jump and the source has
+    /// restarted. `RTP_SEQ_MOD + 1` (i.e. not representable) after
+    /// `init_seq`, "so seq == bad_seq is false".
+    bad_seq: u32,
+    /// §A.1 `cycles`: `RTP_SEQ_MOD` per wrapped 64k cycle. Counted and
+    /// exposed for completeness, though this depacketiser's own ordering comes
+    /// from the reorder buffer rather than the cycle count.
+    cycles: u32,
+    /// §A.1 `probation`: non-zero until `MIN_SEQUENTIAL` consecutive packets
+    /// have been seen, so a stray packet cannot declare a source valid.
+    probation: u8,
+}
+
+impl Default for SeqValidity {
+    fn default() -> Self {
+        Self {
+            max_seq: 0,
+            bad_seq: RTP_SEQ_MOD_PLUS_ONE,
+            cycles: 0,
+            probation: 0,
+        }
+    }
+}
+
+impl SeqValidity {
+    /// §A.1's `init_seq(s, seq)`: reset the per-source statistics to a known
+    /// starting point. `bad_seq` is left at the "cannot match" sentinel, since
+    /// that is what `init_seq` does.
+    fn init_seq(&mut self, seq: u16) {
+        self.max_seq = seq;
+        self.bad_seq = RTP_SEQ_MOD_PLUS_ONE;
+        self.cycles = 0;
+        self.probation = 0;
+    }
+
+    /// §A.1's `update_seq(s, seq)`, transcribed arm for arm. Returns
+    /// [`SeqVerdict::Valid`] when §A.1 returns 1 (and a restart when the
+    /// "two sequential packets" rule fired), [`SeqVerdict::WildJumpConsumed`]
+    /// when §A.1 returns 0 having stored `bad_seq` (the packet is discarded but
+    /// arms the confirmation), and [`SeqVerdict::WildJumpIgnored`] when
+    /// §A.1 returns 0 from the probation branch.
+    fn update_seq(&mut self, seq: u16) -> SeqVerdict {
+        // u_int16 udelta = seq - s->max_seq
+        let udelta = seq.wrapping_sub(self.max_seq);
+
+        // "Source is not valid until MIN_SEQUENTIAL packets with sequential
+        // sequence numbers have been received."
+        if self.probation != 0 {
+            if seq == self.max_seq.wrapping_add(1) {
+                self.probation -= 1;
+                self.max_seq = seq;
+                if self.probation == 0 {
+                    self.init_seq(seq);
+                    return SeqVerdict::Valid { restarted: false };
+                }
+            } else {
+                self.probation = MIN_SEQUENTIAL - 1;
+                self.max_seq = seq;
+            }
+            return SeqVerdict::Probation;
+        }
+
+        if udelta < MAX_DROPOUT {
+            // "in order, with permissible gap"
+            if seq < self.max_seq {
+                // "Sequence number wrapped - count another 64K cycle."
+                self.cycles = self.cycles.wrapping_add(RTP_SEQ_MOD);
+            }
+            self.max_seq = seq;
+            SeqVerdict::Valid { restarted: false }
+        } else if udelta <= MAX_WILD_JUMP_U16 {
+            // "the sequence number made a very large jump"
+            if u32::from(seq) == self.bad_seq {
+                // "Two sequential packets -- assume that the other side
+                // restarted without telling us so just re-sync (i.e., pretend
+                // this was the first packet)."
+                self.init_seq(seq);
+                SeqVerdict::Valid { restarted: true }
+            } else {
+                self.bad_seq = u32::from(seq.wrapping_add(1)) & (RTP_SEQ_MOD - 1);
+                SeqVerdict::WildJumpArmed
+            }
+        } else {
+            // "duplicate or reordered packet" — accepted, no state change.
+            SeqVerdict::Valid { restarted: false }
+        }
+    }
+}
+
+/// The outcome of one RFC 3550 §A.1 `update_seq` call.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SeqVerdict {
+    /// §A.1 returned 1: the number is valid. `restarted` is set when the
+    /// "two sequential packets at a wild jump" rule re-synced the source.
+    Valid { restarted: bool },
+    /// §A.1 returned 0 from the probation branch — the source is not yet
+    /// declared valid and the packet is not counted.
+    Probation,
+    /// §A.1 returned 0 having stored `bad_seq` for a wild jump: the packet is
+    /// discarded, and the *next* packet must carry `bad_seq` to re-sync.
+    WildJumpArmed,
 }
 
 /// One [`SeqState::admit`] call's outcome.
@@ -286,15 +515,32 @@ struct Admission {
     /// `Some((expected, got))` if a gap was declared as a result — the
     /// caller must drop any access unit under construction.
     gap: Option<(u16, u16)>,
+    /// Whether the sequence numbering itself moved (a source restart, RFC 3550
+    /// §A.1). There is no missing media to report, but any access unit under
+    /// construction is still known-broken across the seam and must be
+    /// dropped, and the depacketiser's timeline assumptions must be
+    /// re-established.
+    resynced: bool,
     /// Packets released for reassembly this call, in sequence order (may be
     /// empty — held for reorder, or a discarded duplicate).
     released: Vec<Vec<u8>>,
 }
 
 impl SeqState {
-    /// Feed one packet's SSRC + sequence number through the gate. Returns
-    /// what, if anything, is now ready to reassemble, and whether doing so
-    /// required declaring a gap.
+    /// Feed one packet's SSRC + sequence number through the gate.
+    ///
+    /// Order of decisions:
+    ///
+    /// 1. A changed/unknown SSRC re-initialises the source (§8.2).
+    /// 2. §A.1's `update_seq` classifies the number. A rejected number
+    ///    (`WildJumpArmed`) is discarded outright; the *next* wild number may
+    ///    re-sync (`Valid { restarted: true }`), which also resets the reorder
+    ///    buffer.
+    /// 3. A number at or behind `expected` is a duplicate/late arrival for the
+    ///    reorder buffer and is dropped silently (it is either already
+    ///    delivered or already given up on).
+    /// 4. Otherwise the packet is released, or held if it is ahead of a hole
+    ///    that the bounded reorder buffer can still wait out.
     fn admit(&mut self, reorder_depth: usize, ssrc: u32, seq: u16, packet: &[u8]) -> Admission {
         // A new source (first packet ever, or a changed SSRC — RFC 3550
         // §8.2) resyncs without a gap: there is nothing to have lost yet.
@@ -302,44 +548,93 @@ impl SeqState {
             self.ssrc = Some(ssrc);
             self.expected = Some(seq.wrapping_add(1));
             self.held.clear();
+            // §A.1: "s->max_seq = seq - 1; s->probation = MIN_SEQUENTIAL".
+            self.validity.max_seq = seq.wrapping_sub(1);
+            self.validity.bad_seq = RTP_SEQ_MOD_PLUS_ONE;
+            self.validity.cycles = 0;
+            self.validity.probation = MIN_SEQUENTIAL;
             return Admission {
                 gap: None,
+                resynced: false,
                 released: alloc::vec![packet.to_vec()],
             };
         }
+
+        match self.validity.update_seq(seq) {
+            SeqVerdict::Probation => {
+                // §A.1 keeps a source on probation until `MIN_SEQUENTIAL`
+                // sequential packets have been seen, and an implementation may
+                // discard or *delay* those packets. This depacketiser delays
+                // none of them: the caller's RTSP `SETUP`/SDP negotiation has
+                // already established the session and its SSRC, so there is no
+                // unknown source to screen out, and dropping the first packets
+                // of a stream would lose media for no benefit. §A.1's own
+                // rejection applies to the *statistics*, not to the media; the
+                // reorder buffer still gets its normal treatment below, and
+                // probation's `max_seq` bookkeeping is what stops a stray
+                // number from being read as a restart.
+            }
+            SeqVerdict::WildJumpArmed => {
+                // §A.1 returned 0 having armed `bad_seq`: the packet is
+                // discarded, and the reorder buffer is not touched, so a stray
+                // far-behind number cannot drag the live run backwards (the
+                // pre-fix bug: one late packet 101 behind resynced
+                // immediately).
+                return Admission {
+                    gap: None,
+                    resynced: false,
+                    released: Vec::new(),
+                };
+            }
+            SeqVerdict::Valid { restarted } => {
+                if restarted {
+                    // §A.1's "two sequential packets ... just re-sync". The
+                    // new run starts here: adopt it and drop everything the
+                    // old one left, including a hole the buffer was waiting
+                    // on. Nothing about the seam persists (only `init_seq`'s
+                    // state carries over), so the new run is an ordinary
+                    // source from here on however far it climbs — a run that
+                    // passes the old numbering, or the 16-bit wrap, is
+                    // delivered in full, and a later seek resyncs the same
+                    // way.
+                    self.expected = Some(seq.wrapping_add(1));
+                    self.held.clear();
+                    return Admission {
+                        gap: None,
+                        resynced: true,
+                        released: alloc::vec![packet.to_vec()],
+                    };
+                }
+            }
+        }
+
         let expected = self.expected.expect("checked above");
-
-        // RFC 3550 §A.1's `udelta` idiom, generalised to signed so both
-        // directions are visible in one comparison — wrapping arithmetic
-        // only, never a plain `>`/`<` (the field is 16 bits and wraps).
-        let delta = seq.wrapping_sub(expected) as i16;
-
-        if delta == 0 {
-            // In order.
+        if seq == expected {
             self.expected = Some(seq.wrapping_add(1));
             let mut released = alloc::vec![packet.to_vec()];
             self.drain_contiguous(&mut released);
             return Admission {
                 gap: None,
+                resynced: false,
                 released,
             };
         }
-        if delta < 0 {
-            // Behind what we're waiting for: a legal duplicate of an
-            // already-processed packet, or a very late arrival for a
-            // sequence already declared lost — RFC 3550 §A.1 groups both
-            // under "duplicate or reordered packet" and takes no action.
+        if (seq.wrapping_sub(expected) as i16) < 0 {
+            // Behind what the reorder buffer is waiting for: a duplicate of a
+            // packet already delivered, or a very late arrival for one already
+            // declared lost. RFC 3550 §A.1's fall-through "duplicate or
+            // reordered packet" arm takes no corrective action.
             return Admission {
                 gap: None,
+                resynced: false,
                 released: Vec::new(),
             };
         }
-
-        // Ahead of what we're waiting for.
         if self.held.iter().any(|(s, _)| *s == seq) {
             // Duplicate of an already-held future packet.
             return Admission {
                 gap: None,
+                resynced: false,
                 released: Vec::new(),
             };
         }
@@ -348,6 +643,7 @@ impl SeqState {
             // Still within the bounded window: wait.
             return Admission {
                 gap: None,
+                resynced: false,
                 released: Vec::new(),
             };
         }
@@ -359,6 +655,7 @@ impl SeqState {
             .expect("held is non-empty: just pushed to it");
         Admission {
             gap: Some((expected, got)),
+            resynced: false,
             released,
         }
     }
@@ -436,6 +733,11 @@ struct TrackState {
     pending: Option<PendingAu>,
     /// Last computed duration, reused for the final AU emitted by `flush`.
     last_duration: u32,
+    /// Smallest positive step seen between consecutive wire timestamps — the
+    /// frame-period estimate used as the duration fallback when a step goes
+    /// backward (a presentation reorder has no forward delta). `None` until
+    /// such a step has been seen.
+    min_positive_step: Option<i64>,
     /// This track's most recent RTCP Sender Report anchor, if any has been
     /// fed via [`RtpStreamDepacketiser::push_sender_report`].
     sr_anchor: Option<SrAnchor>,
@@ -554,6 +856,7 @@ impl RtpStreamDepacketiser {
                         first_unwrapped: None,
                         pending: None,
                         last_duration: 0,
+                        min_positive_step: None,
                         sr_anchor: None,
                         reorder_depth: t.reorder_depth,
                         seq: SeqState::default(),
@@ -679,6 +982,13 @@ impl RtpStreamDepacketiser {
     /// records [`RtpLossEvent::SequenceGap`] (drained via
     /// [`Self::poll_loss_event`]) instead of silently reassembling a run
     /// missing a fragment.
+    ///
+    /// A **resync** (RFC 3550 §A.1: the source's sequence numbering moved,
+    /// e.g. an RTSP seek or a restart that kept its SSRC) drops the
+    /// in-progress AU and re-establishes the timestamp origin, because the
+    /// RTP timestamp clock is unrelated across the seam (§5.1 — the origin
+    /// is random per source instance). No `SequenceGap` is raised: nothing
+    /// was lost, the sender simply renumbered.
     pub fn push(&mut self, track_id: u32, rtp_packet: &[u8]) -> Result<Vec<Sample>> {
         let hdr = parse_rtp_header(rtp_packet)?;
         let RtpStreamDepacketiser {
@@ -694,6 +1004,26 @@ impl RtpStreamDepacketiser {
             .seq
             .admit(st.reorder_depth, hdr.ssrc, hdr.sequence, rtp_packet);
         let mut out = Vec::new();
+        if adm.resynced {
+            // The AU under construction straddles the seam (its later
+            // fragments belong to a different numbering run), so it is
+            // known-broken: drop it rather than hand a merged, malformed
+            // sample downstream. The timestamp origin is re-established
+            // from this packet, so the new run's samples start a fresh,
+            // continuous timeline instead of inheriting a delta computed
+            // across the discontinuity (`unwrap_ts` cannot know the two
+            // runs' clocks are unrelated — RFC 3550 §5.1).
+            st.cur_pkts.clear();
+            st.cur_bytes = 0;
+            st.cur_ts = None;
+            st.last_unwrapped = None;
+            st.first_unwrapped = None;
+            st.pending = None;
+            for pkt in &adm.released {
+                Self::push_one(st, loss_events, track_id, pkt, &mut out)?;
+            }
+            return Ok(out);
+        }
         if let Some((expected, got)) = adm.gap {
             // The AU under construction, if any, is now known-incomplete:
             // drop it rather than hand a merged, malformed sample
@@ -783,7 +1113,7 @@ impl RtpStreamDepacketiser {
         track_id: u32,
         out: &mut Vec<Sample>,
     ) {
-        if Self::drain_complete(st, out).is_err() {
+        if Self::drain_complete(st, loss_events, track_id, out).is_err() {
             loss_events.push_back(RtpLossEvent::DamagedAccessUnit { track_id });
         }
     }
@@ -850,7 +1180,12 @@ impl RtpStreamDepacketiser {
     /// Reassemble the buffered packets into AUs, then for each: unwrap its
     /// timestamp and emit the previously-pending AU with `duration` = the
     /// delta to this AU's timestamp.
-    fn drain_complete(st: &mut TrackState, out: &mut Vec<Sample>) -> Result<()> {
+    fn drain_complete(
+        st: &mut TrackState,
+        loss_events: &mut VecDeque<RtpLossEvent>,
+        track_id: u32,
+        out: &mut Vec<Sample>,
+    ) -> Result<()> {
         let pkts = core::mem::take(&mut st.cur_pkts);
         st.cur_bytes = 0;
         let aus = match st.kind {
@@ -859,12 +1194,67 @@ impl RtpStreamDepacketiser {
         };
         for au in aus {
             let unwrapped = unwrap_ts(st.last_unwrapped, au.timestamp);
+            // The wire timestamp is the *presentation* time (RFC 6184 §5.1 /
+            // RFC 3640 §3.3.1), and RTP carries no second timestamp from which
+            // a decode instant could be recovered. So a step backward means
+            // the stream's presentation order is not its wire (decode) order —
+            // a B-frame reorder — and `dts == pts` would be an unstated
+            // assumption rather than a fact: report it (the samples themselves
+            // are intact). See `RtpLossEvent::NonMonotonicTimestamp`.
+            if let Some(prev) = st.last_unwrapped
+                && unwrapped < prev
+            {
+                loss_events.push_back(RtpLossEvent::NonMonotonicTimestamp {
+                    track_id,
+                    previous_pts: to_ticks(prev),
+                    pts: to_ticks(unwrapped),
+                });
+            }
+            // Track the smallest positive step between consecutive wire
+            // timestamps: the frame-period estimate used when a step goes
+            // backward (see the duration fallback below).
+            if let Some(prev) = st.last_unwrapped {
+                let step = unwrapped as i64 - prev as i64;
+                if step > 0 && st.min_positive_step.is_none_or(|p| step < p) {
+                    st.min_positive_step = Some(step);
+                }
+            }
             st.last_unwrapped = Some(unwrapped);
             if st.first_unwrapped.is_none() {
                 st.first_unwrapped = Some(unwrapped);
             }
             if let Some(prev) = st.pending.take() {
-                let delta = unwrapped.saturating_sub(prev.unwrapped_ts);
+                // Duration = the *forward* step to this AU's presentation
+                // time. On a stream whose presentation order is its wire order
+                // that is exactly the frame period. On a reordered one it is
+                // the distance to the next presentation instant, which is not
+                // a per-frame duration at all — and no online rule can do
+                // better, because RTP carries no decode time and the frame
+                // period is only recoverable once a consecutive presentation
+                // pair has been seen (which a reorder pattern may not show for
+                // a whole GOP). This is reported through
+                // [`RtpLossEvent::NonMonotonicTimestamp`]; a consumer that
+                // needs exact per-frame durations should take the batch
+                // [`crate::rtp::RtpDepacketiser`] path, which sees the whole
+                // stream and can derive the period exactly.
+                let forward = unwrapped.saturating_sub(prev.unwrapped_ts);
+                // A step backward (presentation reorder) has no forward delta
+                // at all; falling back to the smallest positive step seen so
+                // far keeps the duration a real frame period instead of
+                // collapsing to 0, which a container writer would reject as a
+                // zero-duration sample. Before any positive step is known there
+                // is nothing to fall back to, and 0 is honest.
+                // A hostile timestamp series can make the running minimum
+                // negative; clamp with a checked conversion rather than an
+                // `as` cast, which would wrap a large negative into a huge
+                // duration.
+                let delta = if forward > 0 {
+                    forward
+                } else {
+                    st.min_positive_step
+                        .and_then(|p| u64::try_from(p).ok())
+                        .unwrap_or(0)
+                };
                 let duration = u32::try_from(delta).unwrap_or(u32::MAX);
                 st.last_duration = duration;
                 let ts = to_ticks(prev.unwrapped_ts);

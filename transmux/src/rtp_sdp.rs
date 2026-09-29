@@ -20,7 +20,7 @@
 //! See [`transmux/docs/rtp/rtp-payload-formats.md`](../rtp/rtp-payload-formats.md)
 //! for the RFC background and SDP fmtp→CodecConfig mapping specification.
 
-use crate::aac_asc::{AudioSpecificConfig, SamplingFrequencyIndex};
+use crate::aac_asc::AudioSpecificConfig;
 use crate::avc_config::{AVCConfigurationBox, AVCDecoderConfigurationRecord};
 use crate::error::{Error, Result};
 use crate::mp4esds::{
@@ -48,35 +48,33 @@ const STREAM_TYPE_AUDIO: u8 = 5;
 /// AAC sample size is always 16 bits in the sample entry (fMP4/CMAF convention).
 const AAC_SAMPLE_SIZE_BITS: u16 = 16;
 
-/// `samplingFrequencyIndex` → Hz — ISO/IEC 14496-3:2001 §1.6.3.3 Table 1.10.
-const SAMPLING_FREQUENCY_TABLE_HZ: [u32; 13] = [
-    96000, 88200, 64000, 48000, 44100, 32000, 24000, 22050, 16000, 12000, 11025, 8000, 7350,
-];
-
-/// Look up the sampling rate for a `samplingFrequencyIndex` per Table 1.10.
-/// Indices 13-14 are reserved and 15 is the explicit-rate escape (neither has
-/// a table entry).
-fn sampling_frequency_table_hz(index: &SamplingFrequencyIndex) -> Option<u32> {
-    let raw = index.raw() as usize;
-    SAMPLING_FREQUENCY_TABLE_HZ.get(raw).copied()
-}
-
 /// Sample rate from the ASC: the explicit escape value if present, otherwise
-/// the ISO/IEC 14496-3 Table 1.10 frequency for the index.
+/// the ISO/IEC 14496-3 Table 1.10 frequency for the index — taken from the
+/// crate's single copy of that table
+/// ([`SamplingFrequencyIndex::table_hz`], in `aac_asc`), never re-listed here.
 fn asc_sample_rate(asc: &AudioSpecificConfig) -> Result<u32> {
     if let Some(freq) = asc.sampling_frequency {
         return Ok(freq);
     }
-    sampling_frequency_table_hz(&asc.sampling_frequency_index).ok_or(Error::InvalidValue {
-        field: "sampling_frequency_index",
-        value: u64::from(asc.sampling_frequency_index.raw()),
-        reason: "no frequency for index",
-    })
+    asc.sampling_frequency_index
+        .table_hz()
+        .ok_or(Error::InvalidValue {
+            field: "sampling_frequency_index",
+            value: u64::from(asc.sampling_frequency_index.raw()),
+            reason: "no frequency for index",
+        })
 }
 
 /// Parse an SDP AAC `config` fmtp value (RFC 3640 §4.1: hex-encoded
 /// `AudioSpecificConfig`) into `CodecConfig::Aac`, recovering sample rate and
 /// channel count from the ASC and carrying the ASC bytes in the `esds`.
+///
+/// The channel count comes from ISO/IEC 14496-3 Table 1.19 — the same
+/// `ChannelConfiguration::channel_count` mapping the FLV demuxers use, with 0
+/// marking "not derived" — **not** from the raw `channelConfiguration` field:
+/// configuration 7 is 8 channels (7.1), not 7, and configuration 0 means the
+/// mapping is carried in-band by a `program_config_element` in the raw data
+/// stream, so the count is not known from the ASC at all.
 ///
 /// Takes the raw hex VALUE of the `config` parameter (not the full `a=fmtp`
 /// line) — for the full-line entry point see [`aac_config_from_fmtp`]. Hex
@@ -95,7 +93,7 @@ pub fn aac_config_from_asc_hex(config_hex: &str) -> Result<CodecConfig> {
 pub fn aac_config_from_asc_bytes(asc_bytes: Vec<u8>) -> Result<CodecConfig> {
     let asc = AudioSpecificConfig::parse(&asc_bytes)?;
     let sample_rate = asc_sample_rate(&asc)?;
-    let channel_count = u16::from(asc.channel_configuration.raw());
+    let channel_count = crate::flv::aac_channel_count(&asc);
 
     let esds = EsdsBox::new(ESDescriptor::new(
         0,
@@ -156,6 +154,18 @@ pub fn avc_config_from_sprop(sprop_parameter_sets: &str) -> Result<AVCConfigurat
 /// `profile_indication`/`profile_compatibility`/`level_indication` are taken
 /// from the first SPS's bytes `[1..4]` (after the NAL header) — at least one
 /// SPS is required.
+///
+/// For a High profile SPS the record's `chroma_format`/
+/// `bit_depth_luma_minus8`/`bit_depth_chroma_minus8` trailer is filled in
+/// from the SPS itself: ISO/IEC 14496-15 §5.3.3.1.2 makes those fields
+/// **conditionally present** on `AVCProfileIndication ∈ {100, 110, 122, 244}`,
+/// so an `avcC` built for a High profile stream without them is a
+/// configuration record that a strict reader parses differently from the wire
+/// (and an encoder's own SPS carries the values — `decode_avc_sps` already
+/// decodes them). RTSP cameras are overwhelmingly High profile
+/// (§8.1's `profile-level-id` examples notwithstanding), so every avcC built
+/// from their SDP lacked the trailer before this. A non-High profile keeps
+/// `None` fields (the trailer is absent from the wire).
 pub fn avc_config_from_sps_pps(sps: Vec<AvcSps>, pps: Vec<AvcPps>) -> Result<AVCConfigurationBox> {
     let first_sps = sps
         .first()
@@ -167,17 +177,37 @@ pub fn avc_config_from_sps_pps(sps: Vec<AvcSps>, pps: Vec<AvcPps>) -> Result<AVC
             what: "SPS profile/level bytes",
         });
     }
+    let profile_indication = first_sps.0[1];
+    // Gate on the serializer's own emission set (the ISO/IEC 14496-15
+    // §5.3.3.1.2 condition for `profile_idc` 100/110/122/244), reached through
+    // the shared `sps::is_high_profile` source of truth so the record and the
+    // wire can never disagree about the trailer's presence. The SPS is decoded
+    // rather than ignored on failure: it *is* the only place those three
+    // values exist, so a decode error means the trailer cannot be written, and
+    // writing the record without it would produce a configuration that a
+    // strict reader parses differently from the stream (the defect the gate
+    // exists to prevent). `is_high_profile` is the wider H.264 Table A-1 list
+    // that governs *parsing* the SPS syntax; the trailer's own condition is
+    // the narrower §5.3.3.1.2 set, so a profile in the wider list but outside
+    // the trailer set keeps `None` without decoding anything.
+    let ext = if crate::avc_config::AVCDecoderConfigurationRecord::has_high_profile_ext(
+        profile_indication,
+    ) {
+        Some(crate::sps::decode_avc_sps(&first_sps.0)?)
+    } else {
+        None
+    };
     let record = AVCDecoderConfigurationRecord {
         configuration_version: 1,
-        profile_indication: first_sps.0[1],
+        profile_indication,
         profile_compatibility: first_sps.0[2],
         level_indication: first_sps.0[3],
         length_size_minus_one: NAL_LENGTH_SIZE_MINUS_ONE,
         sps,
         pps,
-        chroma_format: None,
-        bit_depth_luma_minus8: None,
-        bit_depth_chroma_minus8: None,
+        chroma_format: ext.as_ref().map(|i| i.chroma_format_idc),
+        bit_depth_luma_minus8: ext.as_ref().map(|i| i.bit_depth_luma.saturating_sub(8)),
+        bit_depth_chroma_minus8: ext.as_ref().map(|i| i.bit_depth_chroma.saturating_sub(8)),
         sps_ext: Vec::new(),
     };
     Ok(AVCConfigurationBox::new(record))
@@ -287,6 +317,160 @@ pub fn rtpmap_clock_rate(rtpmap: &str) -> Option<u32> {
 mod tests {
     use super::*;
     use crate::rtp::base64_encode;
+    use broadcast_common::Serialize;
+
+    /// The ffmpeg-produced SDP for `fixtures/ts/h264/high.ts` (PROVENANCE:
+    /// `ffmpeg -i fixtures/ts/h264/high.ts -c copy -f rtp -sdp_file high.sdp
+    /// rtp://127.0.0.1:5999`, ffmpeg 8.1) — a real High profile (profile_idc
+    /// 0x64 = 100) camera-style stream.
+    const HIGH_SDP_FMTP: &str = "packetization-mode=1; sprop-parameter-sets=Z2QADazZQUH7ARAAAAMAEAAAAwMg8UKZYA==,aOvjyyLA; profile-level-id=64000D";
+
+    /// The `avcC` ffmpeg itself wrote for the same stream
+    /// (`-c copy out.mp4`; the box's bytes after its 8-byte header):
+    /// `01 64 00 0d ff e1 0019 <sps> 01 0004 <pps> fd f8 f8 00`, whose
+    /// trailing `fd f8 f8 00` is ISO/IEC 14496-15 §5.3.3.1.2's High profile
+    /// extension: chroma_format 1 (4:2:0), bit depths minus 8 of 0, and no
+    /// SPS-ext NALs.
+    ///
+    /// Bites: pre-fix this function always wrote `chroma_format: None`, so
+    /// the record stopped after the PPS and a strict reader — or ffmpeg's own
+    /// `avcC` — disagreed with what the stream actually is.
+    #[test]
+    fn high_profile_sprop_gets_the_chroma_bit_depth_trailer() {
+        let config = avc_config_from_fmtp(HIGH_SDP_FMTP).expect("real ffmpeg High SDP");
+        let r = &config.config;
+        assert_eq!(r.profile_indication, 0x64, "High profile, per the SDP");
+        assert_eq!(r.level_indication, 0x0D, "level 1.3, per the SDP");
+        assert_eq!(
+            r.chroma_format,
+            Some(1),
+            "4:2:0 — the profile_idc-100 trailer must be present"
+        );
+        assert_eq!(r.bit_depth_luma_minus8, Some(0), "8-bit luma");
+        assert_eq!(r.bit_depth_chroma_minus8, Some(0), "8-bit chroma");
+
+        // Ground truth: ffmpeg's own avcC for the same stream carries exactly
+        // this trailer, so the record round-trips against a real muxer.
+        let mut out = alloc::vec![0u8; r.serialized_len()];
+        r.serialize_into(&mut out).expect("serialize avcC");
+        let sps_len = r.sps[0].0.len();
+        let pps_len = r.pps[0].0.len();
+        let trailer_start = out.len() - 4;
+        assert_eq!(
+            &out[trailer_start..],
+            &[0xFD, 0xF8, 0xF8, 0x00],
+            "the serialized trailer must match ffmpeg's own avcC bytes              (chroma 1, depths 0, no SPS-ext); sps/pps lens {sps_len}/{pps_len}"
+        );
+    }
+
+    /// A non-High profile must **not** gain the trailer: §5.3.3.1.2 makes it
+    /// conditional, so writing it for Baseline/Main would describe a record
+    /// the wire does not have (and a strict reader would mis-parse the SPS
+    /// count that follows).
+    #[test]
+    fn non_high_profile_sprop_has_no_trailer() {
+        // ffmpeg's SDP for `fixtures/ts/h264/baseline.ts` (PROVENANCE: the
+        // same `-c copy -f rtp -sdp_file` invocation as the High one above):
+        // a real Baseline (`profile_idc` 0x42) stream.
+        const BASELINE: &str = "packetization-mode=1; sprop-parameter-sets=Z0LADdkBQfsBEAAAAwAQAAADAyDxQqSA,aMuDyyA=; profile-level-id=42C00D";
+        let config = avc_config_from_fmtp(BASELINE).expect("real ffmpeg Baseline SDP");
+        let r = &config.config;
+        assert_eq!(r.profile_indication, 0x42, "Baseline, per the SDP");
+        assert_eq!(
+            r.chroma_format, None,
+            "no trailer for a non-High profile_idc"
+        );
+        assert_eq!(r.bit_depth_luma_minus8, None);
+        assert_eq!(r.bit_depth_chroma_minus8, None);
+    }
+
+    /// An AAC `config` whose `channelConfiguration` is 7 means **8** channels
+    /// (7.1) per ISO/IEC 14496-3 Table 1.19, not 7 (audit r04-W33), and the
+    /// undetermined configurations (0 = PCE in-band, 8..=15 reserved) yield
+    /// the crate's "not derived" marker rather than a fabricated count.
+    #[test]
+    fn aac_channel_count_uses_table_1_19() {
+        // 0x11B856E500: AAC-LC, samplingFrequencyIndex 3 (48000 Hz),
+        // channelConfiguration 7 — the ASC `fixtures/flv/aac-7_1.flv` carries
+        // (ffmpeg `-f lavfi -i "anullsrc=r=48000:cl=7.1" -c:a aac -f flv`).
+        let cfg = aac_config_from_asc_hex("11B856E500").expect("real 7.1 ASC");
+        match cfg {
+            CodecConfig::Aac {
+                channel_count,
+                sample_rate,
+                ..
+            } => {
+                assert_eq!(sample_rate, 48_000, "sfi 3 = 48000 Hz");
+                assert_eq!(channel_count, 8, "Table 1.19: configuration 7 = 8 ch");
+            }
+            other => panic!("expected AAC, got {other:?}"),
+        }
+
+        // channelConfiguration 0 (PCE in-band) and a reserved value 12: no
+        // count is derivable from the ASC, so the marker is used instead.
+        for asc_hex in ["1180", "11E0"] {
+            let cfg = aac_config_from_asc_hex(asc_hex).expect("parseable ASC");
+            match cfg {
+                CodecConfig::Aac { channel_count, .. } => assert_eq!(
+                    channel_count,
+                    crate::flv::AAC_CHANNEL_COUNT_UNKNOWN,
+                    "ASC {asc_hex}: an undetermined channel count is marked, not fabricated"
+                ),
+                other => panic!("expected AAC, got {other:?}"),
+            }
+        }
+    }
+
+    /// A High profile SPS whose body cannot be decoded must be an **error**,
+    /// not a record silently missing §5.3.3.1.2's trailer: the trailer's three
+    /// values exist only in the SPS, and a record written without them is one
+    /// a strict reader parses differently from the stream.
+    #[test]
+    fn high_profile_sps_that_cannot_be_decoded_is_an_error() {
+        // A High profile SPS (profile_idc 100) truncated immediately after its
+        // profile/level bytes: everything the *record* copies is present, so
+        // the record could be built — but the chroma/bit-depth fields after it
+        // cannot be read.
+        let sps = alloc::vec![0x67u8, 100, 0x00, 0x1E];
+        let pps = alloc::vec![0x68u8, 0xCE, 0x3C, 0x80];
+        let err = avc_config_from_sps_pps(alloc::vec![AvcSps(sps)], alloc::vec![AvcPps(pps)])
+            .expect_err("a High profile SPS with no decodable body must not yield a record");
+        assert!(
+            matches!(
+                err,
+                Error::BufferTooShort { .. } | Error::InvalidValue { .. }
+            ),
+            "must be a structured decode error, got {err:?}"
+        );
+    }
+
+    /// The trailer's condition is the record's own §5.3.3.1.2 set, which
+    /// `AVCDecoderConfigurationRecord::has_high_profile_ext` owns, and which is
+    /// deliberately narrower than the `sps::is_high_profile` list used to
+    /// *parse* SPS syntax: a profile in the wider list but outside the trailer
+    /// set writes no trailer, and does not need the SPS decoded at all.
+    #[test]
+    fn trailer_gate_is_the_avcc_profile_set_not_the_sps_parse_set() {
+        use crate::avc_config::AVCDecoderConfigurationRecord as Record;
+        for idc in [100u8, 110, 122, 244] {
+            assert!(
+                Record::has_high_profile_ext(idc),
+                "profile {idc} carries the trailer (ISO/IEC 14496-15 §5.3.3.1.2)"
+            );
+        }
+        for idc in [66u8, 77, 88, 44, 83, 86, 118, 128, 138, 139, 134, 135] {
+            assert!(
+                !Record::has_high_profile_ext(idc),
+                "profile {idc} is outside the record's trailer set"
+            );
+        }
+        // 44/83/86/118/… are in the wider SPS-parse list but not the trailer
+        // set, so the two sets genuinely differ.
+        assert!(
+            crate::sps::is_high_profile(44) && !Record::has_high_profile_ext(44),
+            "the parse gate and the trailer gate must be different sets"
+        );
+    }
 
     #[test]
     fn sprop_round_trips_sps_pps_and_profile() {

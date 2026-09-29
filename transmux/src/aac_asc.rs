@@ -180,6 +180,33 @@ pub enum SamplingFrequencyIndex {
     Escape,
 }
 impl SamplingFrequencyIndex {
+    /// The sampling rate in Hz this index denotes — ISO/IEC 14496-3 §1.6.3.3
+    /// Table 1.10 ("samplingFrequencyIndex").
+    ///
+    /// This is the crate's **single** copy of Table 1.10, so the value a
+    /// frequency index means cannot differ between the AAC
+    /// `AudioSpecificConfig` parser, the FLV/RTMP demuxers and the SDP
+    /// `config=` decoder. `None` for the reserved indices (13, 14) and for
+    /// the explicit-rate escape (15), which carries its own value elsewhere.
+    pub fn table_hz(self) -> Option<u32> {
+        match self {
+            Self::Fs96000 => Some(96_000),
+            Self::Fs88200 => Some(88_200),
+            Self::Fs64000 => Some(64_000),
+            Self::Fs48000 => Some(48_000),
+            Self::Fs44100 => Some(44_100),
+            Self::Fs32000 => Some(32_000),
+            Self::Fs24000 => Some(24_000),
+            Self::Fs22050 => Some(22_050),
+            Self::Fs16000 => Some(16_000),
+            Self::Fs12000 => Some(12_000),
+            Self::Fs11025 => Some(11_025),
+            Self::Fs8000 => Some(8_000),
+            Self::Fs7350 => Some(7_350),
+            Self::Reserved(_) | Self::Escape => None,
+        }
+    }
+
     pub fn raw(self) -> u8 {
         match self {
             Self::Fs96000 => 0x0,

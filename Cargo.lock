@@ -4058,6 +4058,7 @@ dependencies = [
  "rtcp-packet",
  "rtp-packet",
  "scte35-splice",
+ "sdp-types",
  "serde",
  "serde_json",
  "thiserror 2.0.19",

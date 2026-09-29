@@ -159,56 +159,70 @@ earlier in the RFC's `rtp.h` sample header).
 
 ## How `transmux` applies this (and where it deliberately diverges)
 
-`update_seq` above is a **validity classifier for RTCP loss statistics** — it
-never buffers or reorders packets; it only ever moves `max_seq` forward
-(optimistically accepting any gap under `MAX_DROPOUT` as "loss, move on") or
-leaves it alone (a small backward `delta` is "reordered, but still valid,
-no action needed"). That is sufficient for RFC 3550's own purpose (RTCP
-receiver-report loss/jitter statistics) because nothing downstream needs the
-packets delivered in a particular order — but H.264 FU-A reassembly
-(RFC 6184 §5.8) is exactly the opposite: fragment order **is** the data, so
-`RtpStreamDepacketiser` cannot just "accept the gap and move on" — it must
-either recover the true order (a genuinely reordered packet) or cleanly drop
-the access unit the loss corrupted (a genuinely lost packet), and RFC 3550
-does not specify how to tell those apart or how to buffer for the former
-(jitter/reorder buffer design is explicitly left to the implementation).
+`RtpStreamDepacketiser` runs §A.1's `update_seq` **verbatim** as its first
+gate on every packet — `init_seq`, `probation`/`MIN_SEQUENTIAL`, `MAX_DROPOUT`,
+`MAX_MISORDER`, `bad_seq` and `cycles`, with the RFC's own comparison order and
+wrapping arithmetic. The arms map onto behaviour as follows:
 
-What `RtpStreamDepacketiser` keeps from §A.1, and what it replaces:
+| §A.1 outcome | effect here |
+| --- | --- |
+| probation (`MIN_SEQUENTIAL` not yet met) | the packet is **not** discarded: the caller's RTSP `SETUP`/SDP negotiation already established the session and its SSRC, so there is no unknown source to screen out, and §A.1's rejection is about the *statistics* (the RFC notes packets may be "discarded (or delayed in a queue)"). `max_seq` bookkeeping still tracks the source. |
+| valid, `udelta < MAX_DROPOUT` | accepted ("in order, with permissible gap"); a wrapped 64k cycle increments `cycles`. |
+| valid, large jump confirmed (`seq == bad_seq`) | **resync**: §A.1's "two sequential packets ... just re-sync (i.e., pretend this was the first packet)". The reorder buffer is cleared, the access unit under construction is dropped and the timeline origin is re-established. |
+| 0, large jump unconfirmed | the packet is discarded and `bad_seq` is armed. **One stray far-behind packet therefore cannot move the baseline** — only a second sequential packet at the new numbering does. |
+| fall-through (`udelta > RTP_SEQ_MOD - MAX_MISORDER`) | "duplicate or reordered packet" — accepted, no state change; the reorder buffer then drops it if it is behind what it is waiting for. |
 
-- **Kept**: the wrapping-subtraction discipline itself. `udelta = seq -
-  s->max_seq` (unsigned 16-bit subtraction) is the *only* correct way to
-  compare two 16-bit values that wrap mod 65536 — a plain `>`/`<` breaks the
-  instant a stream crosses the 65535→0 boundary. `RtpStreamDepacketiser` uses
-  the same idiom (`seq.wrapping_sub(expected) as i16`, signed so both
-  "ahead of" and "behind" are visible in one comparison), matching this
-  crate's existing `rtp_stream::unwrap_ts`, which unwraps the 32-bit RTP
-  *timestamp* with the identical technique.
-- **Kept**: SSRC-scoped state, and treating a changed SSRC as a new source to
-  resync against (§8.2: "If a new source is heard for the first time")
-  rather than a loss event.
-- **Replaced**: `probation`/`MIN_SEQUENTIAL` source-validation bootstrapping —
-  not applicable here, because a `RtpStreamDepacketiser` track is already
-  bound to one SSRC by the caller (an RTSP `SETUP`/SDP negotiation already
-  established the session) rather than discovered cold off a shared
-  multicast group.
-- **Replaced**: `MAX_DROPOUT`/`MAX_MISORDER` magnitude thresholds — those
-  bound how large a jump is still "plausible loss" versus "this SSRC clearly
-  restarted." `RtpStreamDepacketiser` instead bounds a small **reorder
-  buffer** (`RtpStreamTrack::with_reorder_depth`, default
-  `DEFAULT_REORDER_DEPTH`): packets arriving ahead of `expected` are held (in
-  original wire form) until either the gap fills — restoring true order
-  before reassembly — or the buffer's bound is reached (or end of stream),
-  at which point the hole is declared genuinely lost (`RtpLossEvent::
-  SequenceGap`), the closest held packet becomes the new baseline, and
-  anything already-consecutive behind it is drained immediately. This is a
-  deliberate, bounded design choice (RTP is untrusted remote input over UDP;
-  see the module docs on the buffer's DoS bound), not a transcription of an
-  RFC-specified algorithm — RFC 3550 does not define one.
-- **Duplicates**: as in §A.1's fall-through `else { /* duplicate or reordered
-  packet */ }` arm, a packet behind `expected` (already delivered or already
-  given up on) and a packet already sitting in the reorder buffer are both
-  discarded silently — RFC 3550 explicitly treats duplicates as legal
-  ("Similarly...") and takes no corrective action.
+Where it deliberately diverges: **§A.1 never reorders**, because RTCP loss
+accounting does not need packets *delivered* in order. H.264 FU-A reassembly
+does (RFC 6184 §5.8 — fragment order *is* the data). So an accepted packet ahead
+of the hole is held in a small **bounded** reorder buffer
+(`RtpStreamTrack::with_reorder_depth`, default `DEFAULT_REORDER_DEPTH`) and
+replayed in wire order once the hole fills, or, if the buffer's bound is
+reached (or end of stream forces it — `flush`), the hole is declared genuinely
+lost (`RtpLossEvent::SequenceGap`), the closest held packet becomes the new
+baseline, and anything already-consecutive behind it drains immediately. That
+buffer is a hard bound: RTP is untrusted remote input over UDP, and this
+project has already shipped four unbounded-allocation DoS vectors from RTP/TS
+input.
+
+An earlier revision of this module replaced the bounded-buffer resume point with
+a sticky "abandoned range" instead of §A.1's `bad_seq` confirmation, which was
+wrong in three ways: a single stray packet moved the baseline, the abandoned
+range was never cleared (so the *live* run was the thing discarded once it
+climbed past the bound — up to the full 32 768-packet blackout it was meant to
+fix), and only an SSRC change could clear it. The transcription above has no
+such state: a confirmed resync is §A.1's `init_seq` and nothing else carries
+over.
 
 See `transmux/src/rtp_stream.rs`'s module docs for the full design (including
 where the resulting loss signal surfaces, and why).
+
+## Consequences worth stating
+
+Three costs follow from the RFC's own rules. They are properties of the
+algorithm rather than defects to be fixed, and a caller sizing a jitter buffer
+or accounting for loss should know them:
+
+1. **Probation takes three packets, not two.** §A.1's `MIN_SEQUENTIAL` is 2, but
+   the first packet of a session takes the *new-source* path (`init_seq` plus
+   `probation = MIN_SEQUENTIAL`) and never runs `update_seq`, so the two
+   sequential packets are counted from the second packet onward. No media is
+   delayed for probation — `RtpStreamDepacketiser` releases every packet, since
+   the caller's `SETUP`/SDP negotiation already established the session (see the
+   divergence table above) — so the effect is only on when the source counts as
+   valid.
+2. **A backward jump of at most `MAX_MISORDER` (100) is accepted as misordered,
+   then dropped.** §A.1 classifies a step up to 100 behind `max_seq` as
+   "duplicate or reordered packet" (its fall-through arm), because for RTCP loss
+   statistics it is indistinguishable from a genuine reorder. The reorder buffer
+   then finds it behind `expected` and discards it, so **up to 100 packets are
+   lost with no `RtpLossEvent`**. This is inherent: telling "reordered" from
+   "the sender moved backward slightly" needs information RTP does not carry,
+   and §A.1's threshold is the boundary the RFC chose. A real seek or restart
+   moves far more than 100, which is why it is classified separately.
+3. **The arming packet of a wild jump is discarded.** §A.1 returns 0 for the
+   first packet of a wild jump and re-syncs only on the second, so the first
+   packet of a post-seek run is lost. When that packet was an FU-A start, the
+   access unit it began is damaged: it is reported as
+   `RtpLossEvent::DamagedAccessUnit` and dropped rather than reassembled from a
+   run missing its first fragment.

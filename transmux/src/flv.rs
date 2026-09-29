@@ -749,29 +749,17 @@ pub(crate) fn build_aac_esds(asc_bytes: Vec<u8>) -> EsdsBox {
 }
 
 /// Sampling rate in Hz from a parsed ASC: the explicit escape rate if present,
-/// else the `samplingFrequencyIndex` table (ISO/IEC 14496-3 §1.6.3.4 Table 1.10).
+/// else the `samplingFrequencyIndex` table (ISO/IEC 14496-3 §1.6.3.4 Table
+/// 1.10), via the crate's single copy of it
+/// ([`SamplingFrequencyIndex::table_hz`]). Returns 0 when the index determines
+/// no rate (reserved, or the escape form with no explicit value).
 ///
 /// `pub(crate)`: reused by [`crate::flv_stream::StreamingFlvDemux`] (#738).
 pub(crate) fn asc_rate_hz(asc: &AudioSpecificConfig) -> u32 {
     if let Some(f) = asc.sampling_frequency {
         return f;
     }
-    match asc.sampling_frequency_index.raw() {
-        0 => 96000,
-        1 => 88200,
-        2 => 64000,
-        3 => 48000,
-        4 => 44100,
-        5 => 32000,
-        6 => 24000,
-        7 => 22050,
-        8 => 16000,
-        9 => 12000,
-        10 => 11025,
-        11 => 8000,
-        12 => 7350,
-        _ => 0,
-    }
+    asc.sampling_frequency_index.table_hz().unwrap_or(0)
 }
 
 /// Coded dimensions from an AVC sequence header's `avcC` (the SPS it carries),

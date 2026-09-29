@@ -47,6 +47,7 @@
 
 use broadcast_common::{Package, Unpackage};
 
+use transmux::pipeline::CodecConfig;
 use transmux::rtp::{RtpInput, RtpInputStream, RtpMediaKind};
 use transmux::{
     FlvDemux, Fmp4Demux, Media, ProgressiveDemux, PsDemux, RtmpDemux, RtmpMux, RtpDepacketiser,
@@ -290,13 +291,30 @@ fn rtp_depacketiser_timing_invariant_holds() {
             streams: out
                 .streams
                 .iter()
-                .map(|s| RtpInputStream {
-                    kind: s.kind,
-                    packets: s
-                        .packets
-                        .iter()
-                        .map(|p| p.as_contiguous().to_vec())
-                        .collect(),
+                .map(|s| {
+                    let stream = RtpInputStream::new(
+                        s.kind,
+                        s.packets
+                            .iter()
+                            .map(|p| p.as_contiguous().to_vec())
+                            .collect(),
+                    );
+                    // The wire carries no codec config; the SDP does. This
+                    // test only needs each track's timing, so pair each
+                    // stream with the packetised IR track of its kind.
+                    if s.kind == RtpMediaKind::Aac {
+                        stream.with_config(
+                            ir.tracks
+                                .iter()
+                                .find(|t| matches!(t.spec.config, CodecConfig::Aac { .. }))
+                                .expect("audio track")
+                                .spec
+                                .config
+                                .clone(),
+                        )
+                    } else {
+                        stream
+                    }
                 })
                 .collect(),
         })

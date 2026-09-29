@@ -768,13 +768,30 @@ fn rtp_depacketiser_emits_absolute_time_from_rtp_timestamps() {
             streams: out
                 .streams
                 .iter()
-                .map(|s| RtpInputStream {
-                    kind: s.kind,
-                    packets: s
-                        .packets
-                        .iter()
-                        .map(|p| p.as_contiguous().to_vec())
-                        .collect(),
+                .map(|s| {
+                    let stream = RtpInputStream::new(
+                        s.kind,
+                        s.packets
+                            .iter()
+                            .map(|p| p.as_contiguous().to_vec())
+                            .collect(),
+                    );
+                    // The wire carries no codec config; the SDP does. This
+                    // test only needs each track's identity/timing, so pair
+                    // each stream with the packetised IR track of its kind.
+                    if s.kind == RtpMediaKind::Aac {
+                        stream.with_config(
+                            ir.tracks
+                                .iter()
+                                .find(|t| matches!(t.spec.config, CodecConfig::Aac { .. }))
+                                .expect("audio track")
+                                .spec
+                                .config
+                                .clone(),
+                        )
+                    } else {
+                        stream
+                    }
                 })
                 .collect(),
         })
@@ -796,15 +813,50 @@ fn rtp_depacketiser_emits_absolute_time_from_rtp_timestamps() {
             want.push(t);
         }
     }
-    let got: Vec<i64> = recovered.tracks[0]
+    // The RTP header timestamp is the *presentation* time (RFC 6184 §5.1:
+    // "the sampling timestamp of the content"), so it maps to `pts`; `dts` is
+    // the decode timeline, which RTP does not carry (audit r04-W29). Both
+    // series are translated by the same origin so the track starts at decode
+    // time 0 with every composition offset non-negative, so the check is on
+    // the *offsets*: each sample's `pts` must be its wire timestamp plus that
+    // single common shift.
+    let got_pts: Vec<i64> = recovered.tracks[0]
+        .samples
+        .iter()
+        .filter_map(|s| s.pts)
+        .collect();
+    let got_dts: Vec<i64> = recovered.tracks[0]
         .samples
         .iter()
         .filter_map(|s| s.dts)
         .collect();
-    assert_eq!(
-        got, want,
-        "RTP sample dts must be the unwrapped RTP header timestamps, one per AU"
+    assert_eq!(got_pts.len(), want.len(), "one pts per access unit");
+    let shift = got_pts[0] - want[0];
+    assert!(
+        shift >= 0,
+        "the shift is the reorder latch, so it cannot be negative"
     );
+    let shifted_want: Vec<i64> = want.iter().map(|t| t + shift).collect();
+    assert_eq!(
+        got_pts, shifted_want,
+        "pts must be the unwrapped RTP header timestamps, one per AU, 
+         translated by the single reorder-latch origin"
+    );
+    assert!(
+        got_dts.windows(2).all(|w| w[1] >= w[0]),
+        "the derived decode timeline must be non-decreasing"
+    );
+    assert!(
+        got_dts.iter().zip(&got_pts).all(|(d, p)| d <= p),
+        "decode must never run ahead of presentation"
+    );
+    // The fixture is reordered, so the two series are genuinely different —
+    // proving this test is checking the mapping rather than a coincidence.
+    assert!(
+        want.windows(2).any(|w| w[1] < w[0]),
+        "fixture must have reordered presentation timestamps"
+    );
+    assert_ne!(got_dts, got_pts);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

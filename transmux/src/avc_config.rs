@@ -82,11 +82,19 @@ pub struct AVCDecoderConfigurationRecord {
 
 impl AVCDecoderConfigurationRecord {
     /// True when the profile requires the high-profile extension fields
-    /// (chroma_format, bit depths) — ISO/IEC 14496-15 §5.3.3.1.2. Shared with
-    /// the TS demuxer's avcC populator via `sps::is_high_profile` so serialize
-    /// and demux agree on the exact set (incl. 244 = High 4:4:4 Predictive; #563).
-    fn has_high_profile_ext(profile: u8) -> bool {
-        crate::sps::is_high_profile(profile)
+    /// (chroma_format, bit depths) — ISO/IEC 14496-15 §5.3.3.1.2. The
+    /// *record's* condition is `AVCProfileIndication ∈ {100, 110, 122, 244}`
+    /// (144 was the draft's placeholder for High 4:4:4 Predictive, finalized as
+    /// 244; #563), so this is deliberately narrower than
+    /// [`crate::sps::is_high_profile`], which is the wider H.264 Table A-1 list
+    /// that governs *parsing* an SPS's syntax.
+    ///
+    /// The one place both an `avcC`-building caller and the SPS decoder can
+    /// reach, so the record and the wire cannot disagree about the trailer's
+    /// presence. `pub(crate)`: used by [`crate::rtp_sdp`]'s `avcC` builder as
+    /// well as this module's own constructors.
+    pub(crate) fn has_high_profile_ext(profile: u8) -> bool {
+        matches!(profile, 100 | 110 | 122 | 244)
     }
 }
 

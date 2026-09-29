@@ -8,6 +8,63 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed (breaking)
+- **`RtpPacketiser` now stamps each access unit's RTP timestamp with the sample's
+  `pts`, not its `dts`** (audit r04-W29). RFC 6184 §5.1: "The RTP timestamp is set
+  to the sampling timestamp of the content", and receivers "SHOULD use the RTP
+  timestamp for synchronizing the display process" — a *presentation* time. On a
+  B-frame stream the two differ substantially (`fixtures/ts/h264/high.ts`: 12 of
+  its 15 samples), and stamping decode times made a receiver present frames in
+  decode order at the wrong instants.
+- **`RtpPacketiser` fragments an AAC access unit that exceeds the payload budget
+  instead of refusing it** (audit r04-W31). RFC 3640 §3.2.3.1 requires it — one
+  fragment per packet, all sharing the AU's timestamp, marker on the last — and
+  §3.2.3.2 makes the AU-header's `AU-size` the size of the *entire* AU rather than
+  of the fragment, which is exactly what lets a receiver reassemble. Such an AU is
+  the ordinary case for high-rate audio (a 640 kb/s 5.1 frame is ~3.7 kB), and a
+  track carrying one previously failed to packetise at all.
+
+- **`RtpPacketiser` gives every stream its own SDP payload type.** A payload type is
+  a session-wide binding (RFC 3551 §6 reserves 96-127 "for dynamic assignment"), but
+  only "has a video track been seen" was tracked, so a third video (or audio) track
+  reused `video_pt + 2` — colliding with the second track's type — and `96 + 2 = 98`
+  collided with `DEFAULT_KLV_PT`. Allocation now walks the dynamic range from the
+  configured bases (96 video, 97 audio by default, both still honoured for the
+  common single-video/single-audio session) and never reuses a value, erroring with
+  `Error::InvalidInput` if a session needs more than the 32 dynamic types. The
+  generated SDP's `a=rtpmap` therefore binds each stream exactly once.
+- **The generated SDP gains a session-level `c=` line** (RFC 4566 §5.7: "A session
+  description MUST contain either at least one `c=` field in each media
+  description or a single `c=` field at the session level"). Without it a strict
+  parser had no connection data to resolve and rejected the description. The
+  address is `LOCAL_CONNECTION_ADDRESS` (the loopback the `o=` line already names);
+  `build_sdp_with_connection` is new for a caller that transmits elsewhere.
+
+- **`rtp::RtpInputStream` is `#[non_exhaustive]` and can no longer be built by struct
+  literal** — use `RtpInputStream::new(kind, packets)` plus `with_clock_rate`/
+  `with_config`, which also validate kind/clock/config agreement (see below). It
+  gains `clock_rate` and `config` fields on top of that, and the batch
+  `RtpDepacketiser` now describes each depacketised track with its own payload
+  format, RTP clock and codec config (audit r04-W30). An RTP timestamp is a count
+  in the stream's own clock (RFC 3550 §5.1), but every track the depacketiser
+  returned was declared AVC at the 90 kHz video clock — so an AAC stream came back
+  as a 90 kHz video track whose durations were the audio sample counts (1024 per
+  frame, not 1920), and any packager consuming it wrote a video sample entry for
+  audio. `Media`'s movie timescale was `0` for the same reason and is now the video
+  clock. `RtpInputStream::new`/`with_clock_rate`/`with_config` build the struct
+  (`#[non_exhaustive]`, so its fields are no longer directly constructible).
+  An AAC stream with no `config` is now `Error::InvalidInput` rather than silently
+  described by an invented AVC config: RTP carries no codec config, so a caller
+  must supply the SDP's `config=` parameter (RFC 3640 §4.1). A zero `clock_rate` is
+  rejected for the same reason. **An AAC stream's clock rate is taken from its
+  config's own sample rate** — RFC 3640 §3.1 defines an MPEG-4 audio stream's RTP
+  clock as its sampling rate, so `with_config` sets it and the
+  `DEFAULT_AAC_CLOCK_RATE` (48000 Hz) constructor placeholder is replaced; a rate
+  asserted with `with_clock_rate` that disagrees with the config, a non-90 kHz
+  clock on an AVC config, and a `kind` that disagrees with the config's variant are
+  each `Error::InvalidValue`/`Error::InvalidInput` rather than silently timed at
+  whichever value happened to win. A caller constructing the struct literally must
+  add the two fields (plus the private explicit-clock flag).
+
 - **`StreamingFlvDemux` now emits `DemuxEvent::TrackUpdated` when a publisher re-sends a track's
   sequence header, carrying the new codec config** (FLV/RTMP ingest). Previously the second and later
   sequence header was ignored, so an encoder that changed resolution, profile, sample rate or
@@ -109,6 +166,133 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   CENC-protected (`enca`) audio track as clear (#1017).
 
 ### Fixed
+- **`rtp::RtpDepacketiser` no longer fails the whole input on ordinary loss**
+  (audit r04-W31). An FU-A continuation fragment with no preceding start fragment
+  — a mid-stream capture, or one lost start packet — made every packet after it
+  unreadable, because the run returned `Err` for the entire input; it is now
+  skipped, so the rest of the stream is recovered, which is what the streaming
+  `RtpStreamDepacketiser` already did (`DamagedAccessUnit`).
+- **`rtp::RtpDepacketiser` now uses RTP sequence numbers to detect loss inside a
+  reassembly run, and runs that check *before* closing the access unit.** A lost
+  fragment in the middle of an FU-A NAL, or between two single-NAL/STAP-A packets
+  of one access unit, previously produced an access unit concatenated across the
+  hole — a NAL silently missing its middle, or an AU missing a NAL, emitted as if
+  intact. RFC 3550 §5.1 makes each packet's sequence number one more than the last,
+  so a discontinuity now drops the AU it damaged (including any open FU-A run, so
+  its continuation cannot join a later one) and reassembly resumes at the next
+  NAL/AU, matching what the streaming `RtpStreamDepacketiser` already does per
+  RFC 3550 §A.1. Because the check precedes the timestamp flush, a packet lost at
+  the *end* of an access unit costs exactly that one AU — the previous placement
+  attributed the gap to the *next* AU and discarded its first packet too, so one
+  lost packet cost two AUs.
+- **`rtp::RtpDepacketiser` reassembles RFC 3640 §3.2.3.1 access-unit
+  fragmentation.** An AAC AU larger than the payload budget arrives split over
+  packets sharing one timestamp, each AU-header declaring the AU's full size; the
+  fragments are now concatenated into the access unit, and a run is accepted only
+  when it is **contiguous and exactly `AU-size` bytes** — a run with a hole, or one
+  whose bytes overrun the declared size (duplicated fragments), is dropped rather
+  than emitted truncated or oversized, since the header states the AU's full size
+  (§3.2.3.2). Previously such a packet was
+  rejected as `BufferTooShort` and the whole stream failed. Covered by a new real
+  5.1 640 kb/s fixture, `fixtures/ts/aac-5_1-640k.ts`, whose frames are 785 bytes
+  — far over the stereo fixtures' access units that fit one packet.
+- **`RtpDepacketiser` reads that timestamp back as `pts`, and reconstructs `dts`
+  from the whole stream.** RTP carries no decode time, so for a reordered stream
+  the wire cannot supply one. If the stream's presentation order *is* its wire
+  order, `dts == pts` exactly (keeping the earlier behaviour, and the only correct
+  answer for a variable-frame-rate or lossy stream). Otherwise the decode timeline
+  the decode instants are the *presentation* instants re-laid in wire (decode)
+  order — every frame is presented exactly once, so only the assignment changes —
+  delayed by the smallest constant that keeps `dts <= pts` at every sample. That
+  is exact rather than an estimate: a real 23.976 fps stream at the 90 kHz clock
+  presents frames 3753 or 3754 ticks apart, so any fixed "frame period" (their
+  greatest common divisor is 1) would give every duration 1-2 ticks, 2000x too
+  short. Both series are then translated so the track starts at decode time 0,
+  which keeps `dts` non-decreasing and every composition offset (`pts - dts`)
+  non-negative, as the IR and every container writer require. The delay is found
+  in one sort rather than per-sample scan (the previous shape was O(n²), ~4e9
+  comparisons on a 90 000-access-unit batch input). One origin **for the whole
+  `Media`** is then applied to every track, so a reordered video track and a
+  non-reordered audio track keep one relationship rather than one being zero-based
+  while the other stays absolute. A non-final frame never gets a zero duration
+  (two access units stamped with the same instant give the timeline a zero step,
+  and every writer in this crate rejects a zero-duration sample): it falls back to
+  the last non-zero step, and to 1 tick if there has not been one. A stream fed
+  through this path previously produced a non-monotonic `dts` sequence.
+- **`rtp::RtpDepacketiser` gains `poll_timing_warning`, `dropped_timing_warnings`
+  and the public `MAX_TIMING_WARNINGS`, and `rtp::RtpTimingWarning` is a new public
+  type** reporting a decode timeline the wire did not state itself
+  (`ReorderedPresentationTimestamps`). Drain the queue after each `unpackage` call.
+  It is **bounded** (RTP is untrusted input, and one warning per access unit over a
+  long session is an unbounded-allocation vector): the oldest entries are dropped
+  and the number dropped is reported by `dropped_timing_warnings`, so the loss is
+  never silent.
+- **`rtp_stream::RtpLossEvent` gains the `NonMonotonicTimestamp` variant**, raised
+  when an access unit's wire (presentation) timestamp is earlier than a previous
+  one's. The streaming depacketiser keeps its documented low-delay model
+  (`dts == pts`) — it cannot know the frame period from a live stream — so a
+  reordered source now reports the assumption's failure instead of emitting a
+  silently non-monotonic `dts`. The variant is additive for matching callers
+  (`#[non_exhaustive]`).
+
+- **`rtp_sdp::avc_config_from_sps_pps` fills in the High profile `chroma_format`/
+  `bit_depth_luma_minus8`/`bit_depth_chroma_minus8` trailer for a High profile SPS**
+  (audit r04-W33). ISO/IEC 14496-15 §5.3.3.1.2 makes those record fields
+  conditionally present on `AVCProfileIndication ∈ {100, 110, 122, 244}`, and the
+  values are already in the SPS the function parses — but the record was always
+  built without them, so every `avcC` recovered from an RTSP session (RTSP cameras
+  are overwhelmingly High profile) was four bytes short of what ffmpeg writes for
+  the same stream, and a strict reader mis-parses the record. Verified byte-exact
+  against ffmpeg 8.1's own `avcC` for `fixtures/ts/h264/high.ts`, committed as
+  `tests/fixtures/rtp/high-ffmpeg.*` with provenance. A non-High profile still
+  omits the trailer, as the spec requires: the gate is the record's own
+  `{100, 110, 122, 244}` set, not the wider H.264 Table A-1 list the SPS *parser*
+  uses, so a profile in the wider list but outside that set is left alone. An SPS
+  for one of the four that cannot be decoded is now an error rather than a record
+  silently written without the trailer — the trailer's values exist nowhere else,
+  and a record missing them is the very misparse this fixes.
+- **The `samplingFrequencyIndex` → Hz table (ISO/IEC 14496-3 Table 1.10) now has
+  one copy, `aac_asc::SamplingFrequencyIndex::table_hz`.** `rtp_sdp`, `flv`
+  (`asc_rate_hz`), `dash` and `smooth` each carried their own transcription of the
+  same 13 values, so a correction to one would silently leave the others wrong
+  (audit r04-W33).
+- **`rtp_sdp::aac_config_from_asc_bytes` derives the channel count from
+  ISO/IEC 14496-3 Table 1.19 instead of copying the raw `channelConfiguration`
+  field** (audit r04-W33). Configuration 7 was reported as 7 channels (it is 8 —
+  7.1), and configuration 0 (the mapping is carried in-band by a
+  `program_config_element`) was reported as 0 channels rather than as undetermined;
+  both now go through the same `channel_count()` mapping the FLV demuxers use, with
+  0 marking "not derived". This is the fourth copy of that table removed — the
+  values come from `aac_asc`, not a local duplicate.
+
+- **`RtpStreamDepacketiser` now applies RFC 3550 §A.1's `update_seq` verbatim as its
+  sequence-number gate** (replacing the first attempt at this in the same release).
+  A stray packet far behind the live run is discarded and merely arms `bad_seq`;
+  only a *second* packet at the new numbering — §A.1's "two sequential packets ...
+  just re-sync" — restarts the source. The previous "abandoned range" version was
+  wrong: one stray packet moved the baseline, the range was never cleared once set
+  (so the live run was itself discarded when it climbed past the bound, up to the
+  original 32 768-packet blackout), and only an SSRC change could clear it. A
+  confirmed resync is now §A.1's `init_seq` and nothing else carries over, so a run
+  of any length — past the old numbering, past the 16-bit wrap, and repeated seeks —
+  is delivered in full. See `transmux/docs/rtp/rtp-sequence-validation.md` for the
+  arm-by-arm mapping and the one deliberate divergence (a bounded reorder buffer,
+  which §A.1 has no equivalent of).
+- **`RtpStreamDepacketiser` resyncs when the sender moves its RTP sequence number
+  backward on the same SSRC, instead of discarding every following packet** (audit
+  r04-W32). A large backward jump is a seek (a new `RTP-Info` `seq` after an RTSP
+  `PLAY`) or a source restart that kept its SSRC, not a late packet: the old
+  classification treated it as a duplicate and never moved the expected number, so
+  the stream went dark until the 16-bit counter came back round — up to 32 768
+  packets, tens of seconds of media, with no loss signal. RFC 3550 §A.1's
+  `MAX_MISORDER` now bounds which side of the seam is "misordered" and which side
+  is abandoned, and a resync drops the access unit straddling the seam and
+  re-establishes the track's timestamp origin rather than measuring a delta across
+  two unrelated random RTP clock origins (§5.1). No `RtpLossEvent` is raised: the
+  sender renumbered, nothing was lost. See
+  `transmux/docs/rtp/rtp-sequence-validation.md` for the updated account of where
+  this follows RFC 3550 §A.1 and where it deliberately diverges (#1079).
+
 - `rtmp::read_chunks` applies a fmt-3 chunk's inherited timestamp **delta**: a fmt-3 chunk that
   begins a new message advances the running timestamp by the delta the preceding fmt-1/fmt-2 chunk
   declared (§5.3.1.2.4), rather than reusing the previous timestamp. `librtmp`/`ffmpeg` send
@@ -300,6 +484,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`multimux::source::segment::ProgramSegmenter`) resume numbering across a rebuild rather than
   renumbering from `0` against a `Trunk` that already holds segments, which its monotonic
   `sequence_number` guard rejects forever after.
+
 
 ## [0.24.2] - 2026-09-25
 
