@@ -64,7 +64,7 @@ use broadcast_common::Parse;
 
 use crate::RtmpError;
 use crate::amf0::{Amf0Value, Command};
-use crate::chunk::{ChunkAssembler, ChunkWriter, Message};
+use crate::chunk::{ChunkAssembler, ChunkWriter, DEFAULT_MAX_IN_PROGRESS_BYTES, Message};
 use crate::handshake::Handshake;
 use crate::message::{LimitType, ProtocolControl, UserControl, msg_type};
 
@@ -107,6 +107,23 @@ const FMS_VERSION: &str = "FMS/3,0,1,123";
 /// `capabilities` value advertised in the `connect` `_result` Properties
 /// object (§7.2.1). Not spec-mandated (see [`FMS_VERSION`]).
 const CAPABILITIES: f64 = 31.0;
+
+// ── Aggregate message consts (§7.1.6 / Adobe FLV v10.1 Annex E.5) ───────
+
+/// Byte width of an Aggregate (22) sub-message header (§7.1.6, FLV
+/// Annex E.5): `Type`(1) + `DataSize`(3) + `Timestamp`(3) +
+/// `TimestampExtended`(1) + `StreamID`(3).
+const AGG_SUB_MESSAGE_HEADER_LEN: usize = 11;
+/// Byte width of the `Back Pointer` field following each Aggregate
+/// sub-message (§7.1.6): "size of the previous message including its
+/// header" — the same value the enclosing FLV `PreviousTagSize` convention
+/// describes (FLV Annex E.4.1's tag-header field + 24-bit `DataSize`).
+const AGG_BACK_POINTER_LEN: usize = 4;
+/// `TimestampExtended`'s shift into the top byte of a 32-bit timestamp:
+/// same layout the top-level `flv_tag` writes (FLV Annex E.4.1) — the
+/// 24-bit `Timestamp` field holds the low 24 bits, `TimestampExtended` the
+/// top 8.
+const AGG_TIMESTAMP_EXTENDED_SHIFT: u32 = 24;
 
 // ── FLV mapping consts (transmux/docs/codec/flv.md, Annex E) ────────────
 
@@ -151,6 +168,12 @@ pub struct ServerConfig {
     /// `NetStream.Publish.BadName`, and no `Publish`/`Media` events are
     /// emitted for that connection.
     pub expected_stream_key: Option<String>,
+    /// Ceiling on the total payload bytes this session's
+    /// [`ChunkAssembler`] may buffer across **all** in-progress messages
+    /// at once (#1108/RTMP-W1). Per-message and per-csid bounds alone
+    /// allowed `MAX_MESSAGE_LEN × MAX_CSIDS` (512 MiB) of incomplete,
+    /// never-completing bytes per connection; this bounds the product.
+    pub max_in_progress_bytes: usize,
 }
 
 impl Default for ServerConfig {
@@ -160,6 +183,7 @@ impl Default for ServerConfig {
             window_ack_size: DEFAULT_WINDOW_ACK_SIZE,
             peer_bandwidth: DEFAULT_PEER_BANDWIDTH,
             expected_stream_key: None,
+            max_in_progress_bytes: DEFAULT_MAX_IN_PROGRESS_BYTES,
         }
     }
 }
@@ -193,6 +217,13 @@ impl ServerConfig {
     #[must_use]
     pub fn with_peer_bandwidth(mut self, peer_bandwidth: u32) -> Self {
         self.peer_bandwidth = peer_bandwidth;
+        self
+    }
+
+    /// Set [`ServerConfig::max_in_progress_bytes`].
+    #[must_use]
+    pub fn with_max_in_progress_bytes(mut self, max_in_progress_bytes: usize) -> Self {
+        self.max_in_progress_bytes = max_in_progress_bytes;
         self
     }
 }
@@ -231,11 +262,12 @@ pub enum ServerEvent {
     /// The publisher ended the stream (`deleteStream`/`FCUnpublish`).
     Eof,
     /// A message type this engine doesn't decode was received and its
-    /// payload was dropped (#1108/RTMP-W6) — Aggregate(22),
-    /// Command-AMF3(17), Data-AMF3(15), or Shared Object(16/19). Pre-fix,
-    /// these were silently ignored with no signal at all, so a relay/
-    /// encoder that bundles media in Aggregate messages (or opens with an
-    /// AMF3 `connect`) produced zero `Media` events with no error.
+    /// payload was dropped (#1108/RTMP-W6) — Data-AMF3(15), Command-AMF3(17,
+    /// now decoded as AMF0 after its format byte), or Shared Object(16/19).
+    /// Pre-fix, these were silently ignored with no signal at all.
+    /// Aggregate(22) no longer surfaces here: it is unpacked into its
+    /// contained sub-messages (#1108 remainder), and a malformed aggregate
+    /// is an error instead.
     Unsupported {
         /// The message type id that was dropped (§6/§7.1).
         message_type_id: u8,
@@ -326,11 +358,12 @@ impl ServerSession {
     #[must_use]
     pub fn new(config: ServerConfig) -> Self {
         let ack_threshold = config.window_ack_size;
+        let max_in_progress_bytes = config.max_in_progress_bytes;
         Self {
             config,
             handshake: Handshake::new(),
             handshake_buf: Vec::new(),
-            assembler: ChunkAssembler::new(),
+            assembler: ChunkAssembler::new().with_max_in_progress_bytes(max_in_progress_bytes),
             writer: ChunkWriter::new(),
             state: State::Init,
             app: None,
@@ -485,14 +518,20 @@ impl ServerSession {
                 let command = Command::parse(body)?;
                 self.handle_command(&command, msg, out, events)
             }
-            msg_type::AUDIO | msg_type::VIDEO | msg_type::DATA_AMF0 => {
-                self.emit_media_if_publishing(msg.message_type_id, msg, events)
-            }
-            // Data-AMF3(15), Shared Object(16/19), Aggregate(22)
-            // (#1108/RTMP-W6), and anything unrecognised: out of scope for
-            // this ingest engine (see the crate's non-goals) — accepted,
-            // not fatal, but surfaced to the caller instead of silently
-            // dropped with no signal at all.
+            msg_type::AUDIO | msg_type::VIDEO | msg_type::DATA_AMF0 => self
+                .emit_media_if_publishing(msg.message_type_id, msg.timestamp, &msg.payload, events),
+            // #1108/RTMP-W6 (remainder): Aggregate(22) used to surface as
+            // `Unsupported` — an encoder/relay that bundles media in
+            // aggregates (FMS/Wowza-style relays, some hardware encoders)
+            // still produced zero `Media` events. Now unpacked into its
+            // contained sub-messages per §7.1.6 (see
+            // `deliver_aggregate`).
+            msg_type::AGGREGATE => self.deliver_aggregate(msg, events),
+            // Data-AMF3(15), Shared Object(16/19), and anything
+            // unrecognised: out of scope for this ingest engine (see the
+            // crate's non-goals) — accepted, not fatal, but surfaced to
+            // the caller instead of silently dropped with no signal at
+            // all.
             other => {
                 events.push(ServerEvent::Unsupported {
                     message_type_id: other,
@@ -814,7 +853,8 @@ impl ServerSession {
     fn emit_media_if_publishing(
         &mut self,
         tag_type: u8,
-        msg: &Message,
+        timestamp: u32,
+        payload: &[u8],
         events: &mut Vec<ServerEvent>,
     ) -> Result<()> {
         if self.state != State::Publishing {
@@ -827,8 +867,98 @@ impl ServerSession {
             self.flv_header_sent = true;
             flv_file_header()
         };
-        flv.extend(flv_tag(tag_type, msg.timestamp, &msg.payload)?);
+        flv.extend(flv_tag(tag_type, timestamp, payload)?);
         events.push(ServerEvent::Media { flv });
+        Ok(())
+    }
+
+    /// Unpack an Aggregate Message (22, §7.1.6) and deliver each contained
+    /// sub-message exactly as an ordinary Audio/Video/Data-AMF0 message
+    /// would be delivered.
+    ///
+    /// Sub-message layout (§7.1.6, identical to the FLV tag layout of
+    /// Adobe FLV v10.1 Annex E.4.1/E.5): `Type`(1) + `DataSize`(3) +
+    /// `Timestamp`(3) + `TimestampExtended`(1) + `StreamID`(3, always 0) +
+    /// `Data` + `Back Pointer`(4). Per §7.1.6 the aggregate's own message
+    /// stream id overrides every sub-message's, and sub-message timestamps
+    /// are renormalized by `offset = aggregate ts − first sub-message ts`
+    /// added to each sub-message timestamp (the first sub-message's
+    /// timestamp SHOULD equal the aggregate's, making the offset 0).
+    ///
+    /// A sub-message header or `DataSize`-claimed data run reaching past
+    /// the end of the aggregate body is rejected with `Malformed` rather
+    /// than partially delivered.
+    ///
+    /// # Errors
+    /// [`RtmpError::Malformed`] on a truncated header/data/`Back Pointer`,
+    /// or a `Back Pointer` that disagrees with the sub-message's actual
+    /// size. [`RtmpError::Unsupported`] (via [`flv_tag`]) for a
+    /// sub-message payload too large for the FLV tag's 24-bit `DataSize`.
+    fn deliver_aggregate(&mut self, msg: &Message, events: &mut Vec<ServerEvent>) -> Result<()> {
+        let body = &msg.payload;
+        let mut first_ts: Option<u32> = None;
+        let mut offset = 0usize;
+        while offset < body.len() {
+            if body.len() - offset < AGG_SUB_MESSAGE_HEADER_LEN {
+                return Err(RtmpError::Malformed {
+                    what: "aggregate sub-message header truncated",
+                });
+            }
+            let header = &body[offset..offset + AGG_SUB_MESSAGE_HEADER_LEN];
+            let tag_type = header[0];
+            let data_size = u32::from_be_bytes([0, header[1], header[2], header[3]]) as usize;
+            let ts_low24 = u32::from_be_bytes([0, header[4], header[5], header[6]]);
+            // Same layout `flv_tag` writes (Annex E.4.1): the 24-bit
+            // `Timestamp` field holds bits 0..=23, `TimestampExtended`
+            // holds the top 8.
+            let raw_ts = ts_low24 | (u32::from(header[7]) << AGG_TIMESTAMP_EXTENDED_SHIFT);
+            // header[8..11] is the sub-message `StreamID` (always 0):
+            // §7.1.6 says the aggregate's own message stream id overrides
+            // every sub-message's stream id anyway, so it is ignored.
+            let data_start = offset + AGG_SUB_MESSAGE_HEADER_LEN;
+            let Some(data_end) = data_size.checked_add(data_start) else {
+                return Err(RtmpError::Malformed {
+                    what: "aggregate sub-message DataSize overflows",
+                });
+            };
+            let back_end = match data_end.checked_add(AGG_BACK_POINTER_LEN) {
+                Some(end) if end <= body.len() => end,
+                _ => {
+                    return Err(RtmpError::Malformed {
+                        what: "aggregate sub-message data or Back Pointer runs past the end",
+                    });
+                }
+            };
+            let back_pointer = u32::from_be_bytes([
+                body[back_end - AGG_BACK_POINTER_LEN],
+                body[back_end - AGG_BACK_POINTER_LEN + 1],
+                body[back_end - AGG_BACK_POINTER_LEN + 2],
+                body[back_end - AGG_BACK_POINTER_LEN + 3],
+            ]);
+            let expected_back_pointer = match broadcast_common::len::fit_u32(
+                AGG_SUB_MESSAGE_HEADER_LEN + data_size,
+                "Back Pointer",
+            ) {
+                Ok(v) => v,
+                Err(_) => {
+                    return Err(RtmpError::Malformed {
+                        what: "aggregate sub-message exceeds the 32-bit Back Pointer field",
+                    });
+                }
+            };
+            if back_pointer != expected_back_pointer {
+                return Err(RtmpError::Malformed {
+                    what: "aggregate sub-message Back Pointer disagrees with its actual size",
+                });
+            }
+
+            let ts_offset = *first_ts.get_or_insert(raw_ts);
+            // §7.1.6: offset = (aggregate ts − first sub-message ts), added
+            // to each sub-message ts.
+            let adjusted = raw_ts.wrapping_add(msg.timestamp.wrapping_sub(ts_offset));
+            self.emit_media_if_publishing(tag_type, adjusted, &body[data_start..data_end], events)?;
+            offset = back_end;
+        }
         Ok(())
     }
 }
@@ -1161,8 +1291,12 @@ mod tests {
     }
 
     /// RTMP-W6 (#1108): an Aggregate (22) message used to be silently
-    /// dropped with no signal at all. It's now surfaced as
-    /// `ServerEvent::Unsupported`.
+    /// dropped with no signal at all (then, briefly, surfaced as
+    /// `ServerEvent::Unsupported`). It is now unpacked into its contained
+    /// sub-messages; a *malformed* one is a `Malformed` error, and the
+    /// opaque `0xAA` filler below is exactly that (a bogus `DataSize`/
+    /// `Back Pointer`), so this exercises the reject side of the new
+    /// behaviour.
     #[test]
     fn aggregate_message_surfaces_unsupported_event() {
         let mut session = ServerSession::with_defaults();
@@ -1175,16 +1309,177 @@ mod tests {
             timestamp: 0,
             message_type_id: msg_type::AGGREGATE,
             message_stream_id: 0,
-            payload: vec![0xAA; 20], // opaque; not decoded
+            payload: vec![0xAA; 20], // opaque; not a valid aggregate body
         };
         let bytes = ChunkWriter::new().write(&msg).unwrap();
 
+        let err = session.handle_data(&bytes).unwrap_err();
+        assert!(
+            matches!(err, RtmpError::Malformed { .. }),
+            "a garbage aggregate body must now be a Malformed error, got {err:?}"
+        );
+    }
+
+    /// Builds one Aggregate (22) body from `(tag type, timestamp, data)`
+    /// sub-messages, writing the timestamps in FLV layout (24-bit high +
+    /// extended low byte) and each `Back Pointer` as "size of this message
+    /// including its header" (§7.1.6).
+    fn aggregate_body(subs: &[(u8, u32, &[u8])]) -> Vec<u8> {
+        let mut body = Vec::new();
+        for &(tag_type, timestamp, data) in subs {
+            let data_size = data.len() as u32;
+            body.push(tag_type);
+            body.push((data_size >> 16) as u8);
+            body.push((data_size >> 8) as u8);
+            body.push(data_size as u8);
+            body.push((timestamp >> 16) as u8);
+            body.push((timestamp >> 8) as u8);
+            body.push(timestamp as u8);
+            body.push((timestamp >> 24) as u8);
+            body.extend_from_slice(&[0, 0, 0]); // StreamID, always 0.
+            body.extend_from_slice(data);
+            let back_pointer = (11 + data.len()) as u32;
+            body.extend_from_slice(&back_pointer.to_be_bytes());
+        }
+        body
+    }
+
+    /// Pulls the `(tag_type, timestamp)` out of one `Media` event's FLV
+    /// bytes (the tag starts after the one-time FLV file header).
+    fn first_flv_tag_header(flv: &[u8]) -> (u8, u32) {
+        let tag = if flv.len() > 13 && flv.starts_with(b"FLV") {
+            &flv[13..]
+        } else {
+            flv
+        };
+        let ts_low24 = u32::from_be_bytes([0, tag[4], tag[5], tag[6]]);
+        (tag[0], ts_low24 | (u32::from(tag[7]) << 24))
+    }
+
+    /// Publishes through the full handshake/connect/createStream/publish
+    /// sequence so subsequent media is actually emitted.
+    fn publishing_session() -> ServerSession {
+        let mut session = ServerSession::new(ServerConfig::default());
+        session.handle_data(&build_c0_c1()).unwrap();
+        session.handle_data(&build_c2()).unwrap();
+        session.handle_data(&connect_bytes("live")).unwrap();
+        session.handle_data(&create_stream_bytes()).unwrap();
+        session.handle_data(&publish_bytes(1, "mystream")).unwrap();
+        session
+    }
+
+    /// RTMP-W6 remainder (#1108): a well-formed aggregate of two video +
+    /// one audio sub-message must be delivered as three ordinary `Media`
+    /// events with the sub-message timestamps preserved.
+    #[test]
+    fn aggregate_message_is_unpacked_into_media_events() {
+        let mut session = publishing_session();
+        let body = aggregate_body(&[
+            (msg_type::VIDEO, 1000, &[0x17, 0x01, 0xAA, 0xBB]),
+            (msg_type::VIDEO, 1040, &[0x27, 0x01, 0xCC]),
+            (msg_type::AUDIO, 1005, &[0xAF, 0x01, 0xDD, 0xEE]),
+        ]);
+        let msg = Message {
+            chunk_stream_id: CLIENT_CSID,
+            timestamp: 1000, // == first sub-message ts, so offset is 0
+            message_type_id: msg_type::AGGREGATE,
+            message_stream_id: 1,
+            payload: body,
+        };
+        let bytes = ChunkWriter::new().write(&msg).unwrap();
         let (_out, events) = session.handle_data(&bytes).unwrap();
+        let tags: Vec<(u8, u32)> = events
+            .iter()
+            .map(|e| match e {
+                ServerEvent::Media { flv } => first_flv_tag_header(flv),
+                other => panic!("expected only Media events, got {other:?}"),
+            })
+            .collect();
         assert_eq!(
-            events,
-            vec![ServerEvent::Unsupported {
-                message_type_id: msg_type::AGGREGATE
-            }]
+            tags,
+            vec![
+                (msg_type::VIDEO, 1000),
+                (msg_type::VIDEO, 1040),
+                (msg_type::AUDIO, 1005),
+            ]
+        );
+    }
+
+    /// §7.1.6 timestamp renormalization: when the first sub-message's ts
+    /// differs from the aggregate's own, offset = (aggregate ts − first
+    /// sub ts) is added to every sub-message ts.
+    #[test]
+    fn aggregate_timestamps_are_renormalized_against_the_aggregate() {
+        let mut session = publishing_session();
+        let body = aggregate_body(&[
+            (msg_type::VIDEO, 50, &[0x17, 0x01]),
+            (msg_type::AUDIO, 60, &[0xAF, 0x01]),
+        ]);
+        let msg = Message {
+            chunk_stream_id: CLIENT_CSID,
+            timestamp: 100,
+            message_type_id: msg_type::AGGREGATE,
+            message_stream_id: 1,
+            payload: body,
+        };
+        let bytes = ChunkWriter::new().write(&msg).unwrap();
+        let (_out, events) = session.handle_data(&bytes).unwrap();
+        let tags: Vec<(u8, u32)> = events
+            .iter()
+            .map(|e| match e {
+                ServerEvent::Media { flv } => first_flv_tag_header(flv),
+                other => panic!("expected only Media events, got {other:?}"),
+            })
+            .collect();
+        // offset = 100 − 50 = 50 added to each.
+        assert_eq!(tags, vec![(msg_type::VIDEO, 100), (msg_type::AUDIO, 110)]);
+    }
+
+    /// RTMP-W6 remainder (#1108): a truncated aggregate (last sub-message
+    /// claims more data than the body actually carries) must error, not
+    /// partially deliver or silently drop.
+    #[test]
+    fn truncated_aggregate_message_errors() {
+        let mut session = publishing_session();
+        let mut body = aggregate_body(&[(msg_type::VIDEO, 0, &[0x17, 0x01, 0xAA])]);
+        // Chop off the last sub-message's data + back pointer: its header
+        // now claims 3 data bytes the body no longer has.
+        body.truncate(body.len() - 5);
+        let msg = Message {
+            chunk_stream_id: CLIENT_CSID,
+            timestamp: 0,
+            message_type_id: msg_type::AGGREGATE,
+            message_stream_id: 1,
+            payload: body,
+        };
+        let bytes = ChunkWriter::new().write(&msg).unwrap();
+        let err = session.handle_data(&bytes).unwrap_err();
+        assert!(
+            matches!(err, RtmpError::Malformed { .. }),
+            "a truncated aggregate must be Malformed, got {err:?}"
+        );
+    }
+
+    /// A `Back Pointer` that disagrees with the sub-message's actual size
+    /// is corruption — reject rather than trust it for framing.
+    #[test]
+    fn aggregate_with_bad_back_pointer_errors() {
+        let mut session = publishing_session();
+        let mut body = aggregate_body(&[(msg_type::VIDEO, 0, &[0x17, 0x01, 0xAA])]);
+        let back_at = body.len() - 4;
+        body[back_at] = 0xFF; // corrupt the back pointer
+        let msg = Message {
+            chunk_stream_id: CLIENT_CSID,
+            timestamp: 0,
+            message_type_id: msg_type::AGGREGATE,
+            message_stream_id: 1,
+            payload: body,
+        };
+        let bytes = ChunkWriter::new().write(&msg).unwrap();
+        let err = session.handle_data(&bytes).unwrap_err();
+        assert!(
+            matches!(err, RtmpError::Malformed { .. }),
+            "a lying Back Pointer must be Malformed, got {err:?}"
         );
     }
 
