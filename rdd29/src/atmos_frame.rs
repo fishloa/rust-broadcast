@@ -163,10 +163,11 @@ impl<'a> AtmosFrame<'a> {
     /// this same frame's `FrameRate`) walks the wrong number of pan-sub-block
     /// loop iterations against.
     fn validate_pan_sub_block_counts(&self) -> Result<()> {
-        let expected = usize::from(self.frame_rate.num_pan_sub_blocks()?);
         for (i, e) in self.elements.iter().enumerate() {
+            // Only an ObjectDefinition1 needs Table 7: a frame with a reserved
+            // FrameRate and no such element parses, so it must serialize.
             if let AnyElement::ObjectDefinition1(obj) = e
-                && obj.pan_sub_blocks.len() != expected
+                && obj.pan_sub_blocks.len() != usize::from(self.frame_rate.num_pan_sub_blocks()?)
             {
                 return Err(Error::InvalidValue {
                     field: "ATMOSFrame.elements[i].pan_sub_blocks",
@@ -437,6 +438,17 @@ mod tests {
             frame.serialize_into(&mut buf),
             Err(Error::InvalidValue { .. })
         ));
+    }
+
+    /// Fuzz finding (CI): a reserved `FrameRate` with no `ObjectDefinition1`
+    /// element parses, so it must serialize and round-trip too.
+    #[test]
+    fn reserved_frame_rate_without_object_definition_round_trips() {
+        let mut frame = sample_frame();
+        frame.elements.clear();
+        frame.frame_rate = FrameRate::Reserved(13);
+        let bytes = frame.to_bytes();
+        assert_eq!(AtmosFrame::parse(&bytes).unwrap(), frame);
     }
 
     #[test]

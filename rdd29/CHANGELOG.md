@@ -17,6 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   new`/`ObjectDefinition1::new` set it to `0`.
 
 ### Fixed
+- `AtmosFrame` with a reserved `FrameRate` and no `ObjectDefinition1` element parsed but failed to serialize (Table 7 lookup ran unconditionally), breaking the round trip; the lookup now only runs when an `ObjectDefinition1` needs it (CI fuzz finding).
 - `read_plex` now rejects a non-minimally-encoded `Plex` escape (a value that
   fits the previous, narrower escalation level's direct range) with the new
   `Error::NonMinimalPlex`, instead of silently accepting it and reserializing

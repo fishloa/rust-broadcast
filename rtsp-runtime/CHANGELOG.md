@@ -7,6 +7,7 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Fixed
+- `AsyncRtspServer::next_request` no longer re-parses an unterminated header on every 8 KiB read (quadratic; the oversize-buffer test timed out on CI); it parses only once a blank line has arrived.
 - `ClientSession`'s 401 auth retry (#1065) now replays the original request's body and every
   non-hop-by-hop header (`Content-Type` included), instead of an empty body with
   `Content-Length: 0`. An authenticated `ANNOUNCE` (RFC 2326 §10.3) previously lost its SDP on

@@ -506,6 +506,12 @@ where
     /// Returns `Ok(None)` when the peer closes the connection cleanly before a
     /// full request or frame arrives.
     pub async fn next_request(&mut self) -> Result<Option<Vec<ServerEvent>>> {
+        // Whether a header terminator may be buffered. Until one is, a request
+        // cannot be complete, so the full parse is skipped: re-parsing an
+        // unterminated multi-MiB header on every chunk made this loop
+        // quadratic (the oversize-buffer test timed out on CI). Once seen it
+        // stays set — a request awaiting its body must keep being re-parsed.
+        let mut terminator_seen = has_header_end(&self.read_buf);
         loop {
             // An interleaved `$`-framed block (RTCP receiver reports during
             // PLAY, or media during RECORD, §10.12) takes priority: it is not
@@ -522,7 +528,8 @@ where
                     }]));
                 }
                 // Incomplete frame: fall through to read more bytes.
-            } else if let Some(consumed) = complete_request_len(&self.read_buf)? {
+            } else if terminator_seen && let Some(consumed) = complete_request_len(&self.read_buf)?
+            {
                 let request: Vec<u8> = self.read_buf.drain(..consumed).collect();
                 let (response, events) = self.session.handle_request(&request)?;
                 self.stream
@@ -545,7 +552,12 @@ where
                 }
                 return Err(Error::Io("peer closed connection mid-request".into()));
             }
+            let scan_from = self
+                .read_buf
+                .len()
+                .saturating_sub(HEADER_END_LF_CRLF_LEN - 1);
             self.read_buf.extend_from_slice(&chunk[..n]);
+            terminator_seen |= has_header_end(&self.read_buf[scan_from..]);
             if self.read_buf.len() > MAX_SERVER_READ_BUFFER {
                 return Err(Error::MessageParse(format!(
                     "request buffer of {} bytes exceeds the {MAX_SERVER_READ_BUFFER}-byte maximum",
@@ -567,6 +579,15 @@ where
         self.stream.flush().await.map_err(|e| io_err("flush", e))?;
         Ok(())
     }
+}
+
+/// Length of the longest header terminator (`\r\n\r\n`); a scan of newly
+/// arrived bytes reaches back this much minus one to catch a split terminator.
+const HEADER_END_LF_CRLF_LEN: usize = 4;
+
+/// True if `buf` holds a blank line (`\n\n` or `\r\n\r\n`) ending the headers.
+fn has_header_end(buf: &[u8]) -> bool {
+    buf.windows(2).any(|w| w == b"\n\n") || buf.windows(4).any(|w| w == b"\r\n\r\n")
 }
 
 /// Returns the byte length of a complete RTSP request at the front of `buf`, or

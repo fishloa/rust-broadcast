@@ -3,6 +3,7 @@
 ## [Unreleased]
 
 ### Fixed
+- `T2miPump` raw-mode resync no longer `debug_assert`s that the seeded reassembler frames nothing (fuzz found a seed that does); anything it frames is CRC-gated like the normal path (CI fuzz finding).
 - `inner_ts::InnerTsRecovery` (used by `dvb-tools t2mi --inner` without
   `--plp`) ran every PLP's BBFrames through one shared `CarryOverExtractor`,
   so a user packet split across a BBFrame boundary was corrupted (merged

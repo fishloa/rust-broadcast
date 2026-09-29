@@ -36,6 +36,15 @@ const PAYLOAD_LEN: usize = 1316;
 const NOMINAL_DURATION: Duration = Duration::from_secs(2);
 const TARGET_BITS_PER_SEC: u64 = 50_000_000; // 50 Mbit/s
 const MIN_ACCEPTABLE_FRACTION: f64 = 0.90;
+/// Payloads sent per 1 ms pause (~84 Mbit/s offered load, still ~1.7x the
+/// target). Queueing the whole volume in one burst overflows the kernel's
+/// default UDP receive buffer on Linux (~208 KB, ~160 packets): the datagrams
+/// are lost, the sender's own TLPKTDROP discards them before an ARQ round trip
+/// can recover them, and delivery never completes (`test timed out` on every
+/// Linux CI run). A real feed is paced by its source; the pause also lets the
+/// single-threaded runtime run the driver and the drain task.
+const SENDS_PER_PAUSE: usize = 8;
+const PAUSE: Duration = Duration::from_millis(1);
 
 /// Pre-fix run of this exact test (unfixed `flush_outbound`, real
 /// `tokio::time::sleep` per DATA packet at the default 1 Gbps MAX_BW's ~11 us
@@ -80,12 +89,20 @@ async fn sustained_volume_clears_90_percent_of_50mbit_target() {
         });
 
         let start = tokio::time::Instant::now();
-        for _ in 0..num_payloads {
+        let mut paused = Duration::ZERO;
+        for sent in 0..num_payloads {
             caller.send(&payload).await.expect("send");
+            if sent % SENDS_PER_PAUSE == SENDS_PER_PAUSE - 1 {
+                let paused_at = tokio::time::Instant::now();
+                tokio::time::sleep(PAUSE).await;
+                paused += paused_at.elapsed();
+            }
         }
 
         let (received_count, receiver) = drain_jh.await.expect("join drain");
-        let wall = start.elapsed();
+        // The test's own pauses (a timer's granularity varies by OS) are not
+        // the driver's pacing, so they are not charged to the achieved rate.
+        let wall = start.elapsed() - paused;
 
         assert_eq!(
             received_count, num_payloads,

@@ -600,12 +600,19 @@ impl T2miPump {
                     init.push(0x00); // pointer_field = 0
                     init.extend_from_slice(&self.raw_hunt_buf);
                     self.reasm.feed(&init, true);
-                    // The seed *is* the undecided tail (the scan proved no
-                    // complete packet remains), so nothing may frame yet.
-                    debug_assert!(
-                        self.reasm.pop_packet().is_none(),
-                        "a pointer-0 seed of the undecided tail cannot frame a packet"
-                    );
+                    // The scan judged this tail undecided, but the
+                    // reassembler frames by its own rules (fuzz found a seed
+                    // that completes a packet), so anything it does frame is
+                    // CRC-gated exactly like the normal path — never trusted,
+                    // never asserted away.
+                    while let Some(raw) = self.reasm.pop_packet() {
+                        self.stats.t2mi_packets += 1;
+                        if crc::validate_crc(&raw).is_ok() {
+                            self.scratch.push(T2miEvent { bytes: raw });
+                        } else {
+                            self.stats.crc_failures += 1;
+                        }
+                    }
                 }
             }
             HuntStep::Straddle { offset } => {
