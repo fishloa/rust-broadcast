@@ -29,6 +29,39 @@
 - `payload::l1::post`'s framed-block writer no longer silently wraps a
   16-bit-or-larger bit-length into the 16-bit framed-block length field; it
   now rejects it with `ReservedBitsViolation` (#1095, #1129).
+- Raw-mode (`T2miPump::raw`) resynchronisation after a CRC failure: the
+  failed packet's own header-implied `payload_len_bits` may itself have
+  been the corrupted field, and the pump previously trusted it forever —
+  one corrupted length (a bit error, or a dropped UDP datagram carrying
+  raw T2-MI over IP) desynchronised the stream permanently, with
+  `Stats::crc_failures` climbing and no recovery path. The pump now scans
+  forward for the next CRC-valid packet start (cheap header-plausibility
+  gate first, full CRC-32 validation second) and resumes framing from it,
+  with new `Stats::raw_resyncs` and `Stats::raw_hunt_bytes_discarded`
+  counters; the hunt buffer is bounded so garbage cannot exhaust memory
+  (#1095, W-T2-1).
+- `T2miPump::feed_ts` no longer forwards every filtered-PID packet to the
+  reassembler blindly: packets with `transport_error_indicator` set are
+  dropped, and the one legal repeated packet ISO/IEC 13818-1 §2.4.3.3
+  allows (byte-identical payload with an unchanged `continuity_counter`)
+  is skipped instead of being appended twice — which used to turn a good
+  T2-MI packet into a CRC failure. New `Stats::tei_dropped` and
+  `Stats::cc_duplicates_skipped` counters (#1095, W-T2-2).
+- `payload::l1::post::L1ExtBlock::write` no longer underflows
+  `data_bit_len - done` when the (public, mutable) `data` vector is longer
+  than its declared bit length implies — previously a debug panic, and in
+  release a wrap that wrote bits beyond the declared length and misframed
+  the L1EXT region. A `data`/`data_bit_len` mismatch is now rejected with
+  `ReservedBitsViolation` (#1095, W-T2-5).
+
+### Changed (breaking)
+- Serializers now return an error, instead of silently truncating, when a
+  length or count does not fit its wire field (#1129).
+- `payload::l1::pre::L1Pre::to_bytes`, `crc32`, and `serialize_with_crc`
+  now return `Result`: every `L1Pre` field is public and mutable, so a
+  caller-set value outside its wire bit width (e.g. `num_rf > 7`)
+  previously panicked inside the bit writer's `expect` instead of being
+  rejected (#1095, W-T2-3).
 
 ## [10.1.0] - 2026-09-26
 Lockstep minor alongside `dvb-si` 10.1.0; no source changes in this crate.

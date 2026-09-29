@@ -191,6 +191,13 @@ impl Probe {
         let Some(pcr) = af.pcr else {
             return;
         };
+        if af.discontinuity_indicator {
+            // The broadcaster has signalled that this PID's PCR series is
+            // not continuous here (ISO/IEC 13818-1 §2.4.3.4) — measure a
+            // fresh baseline instead of reporting drift across the jump
+            // (W-CP-2).
+            self.pcr.reset(ts_packet.header.pid);
+        }
         if let Some(sample) = self.pcr.observe(ts_packet.header.pid, pcr.as_27mhz(), t) {
             let pid_label = alloc::format!("0x{:04X}", sample.pid);
             record_gauge!(

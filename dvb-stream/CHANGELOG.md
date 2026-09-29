@@ -2,7 +2,21 @@
 
 ## [Unreleased]
 
+### Added
+- `SectionStream::take_io_error` / `T2miEventStream::take_io_error`: when
+  `poll_next` ends the stream because the reader errored (rather than a
+  clean EOF), the error is now retrievable instead of silently discarded, so
+  a supervisor can distinguish "source finished" from "source failed" and
+  decide whether to reconnect (#1099, W-DS-1).
+
 ### Fixed
+- `bind_multicast` (both streams) now reads each UDP datagram into a
+  65,535-byte buffer instead of the 1,316-byte (7×188) buffer used for
+  stream-oriented sources, and never stitches a trailing partial packet from
+  one datagram onto the next, unrelated one. The old buffer silently
+  truncated any datagram larger than 7 TS packets (routine for
+  RTP-encapsulated delivery), and the carry-over corrupted alignment across
+  datagram boundaries (#1099, W-DS-2).
 - `T2miEventStream::feed_buf` discarded any trailing partial TS packet at
   the end of every read (unconditionally setting `filled = 0`), unlike its
   sibling `SectionStream` which already carries the partial over. Any read

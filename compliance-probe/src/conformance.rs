@@ -73,6 +73,17 @@ impl PcrTracker {
         Self::default()
     }
 
+    /// Drop `pid`'s baseline so the next [`Self::observe`] starts fresh
+    /// instead of measuring drift across a signalled discontinuity. Called
+    /// when the adaptation field's `discontinuity_indicator` is set (ISO/IEC
+    /// 13818-1 §2.4.3.4) — a broadcaster sets it precisely to say "the PCR
+    /// series is not continuous here" (ad-insertion splice, channel switch),
+    /// and without this a forward jump under [`DISCONTINUITY_GUARD`] is
+    /// measured as tens of millions of ppm of "drift" (W-CP-2).
+    pub(crate) fn reset(&mut self, pid: u16) {
+        self.pids.remove(&pid);
+    }
+
     /// Observe one PCR value (`pcr_27mhz`, already `Pcr::as_27mhz()`) on
     /// `pid`, arriving at wall-clock `t`. Returns `None` on the first PCR
     /// seen for this PID (nothing to compare against yet), or when the
@@ -217,6 +228,49 @@ mod tests {
         assert!(
             sample.is_none(),
             "expected a suppressed discontinuity, got {sample:?}"
+        );
+    }
+
+    /// W-CP-2: a signalled discontinuity (the broadcaster explicitly
+    /// declaring the PCR series is not continuous, e.g. an ad-insertion
+    /// splice) followed by a forward jump *under* [`DISCONTINUITY_GUARD`]
+    /// must not be measured as drift once `reset` has been called for it —
+    /// without the reset, a 2s jump over a 40ms interval reports roughly
+    /// 5×10^7 ppm.
+    #[test]
+    fn reset_suppresses_drift_across_a_signalled_discontinuity() {
+        let mut tracker = PcrTracker::new();
+        let pid = 0x0100;
+        let mut pcr = 0u64;
+        let mut t = Duration::ZERO;
+        // Establish a steady baseline first.
+        for _ in 0..5 {
+            pcr += PCR_HZ / 10;
+            t += Duration::from_millis(100);
+            tracker.observe(pid, pcr, t);
+        }
+
+        // A 2-second forward PCR jump over a 40ms wall-clock interval — the
+        // shape of a real splice discontinuity — but the caller has just
+        // told us (via `reset`) that this PID's PCR series discontinued.
+        tracker.reset(pid);
+        pcr += PCR_HZ * 2;
+        t += Duration::from_millis(40);
+        let sample = tracker.observe(pid, pcr, t);
+        assert_eq!(
+            sample, None,
+            "a reset PID's next observation must be treated as a fresh \
+             baseline (no sample), not measured as drift: got {sample:?}"
+        );
+
+        // The PID resumes normal tracking afterwards.
+        pcr += PCR_HZ / 10;
+        t += Duration::from_millis(100);
+        let sample = tracker.observe(pid, pcr, t).expect("tracking resumes");
+        assert!(
+            sample.drift_ppm.abs() < 1.0,
+            "expected ~0 ppm drift after the reset settles, got {}",
+            sample.drift_ppm
         );
     }
 
