@@ -710,6 +710,20 @@ impl L1ExtBlock {
     }
 
     fn write(&self, w: &mut BitWriter<'_>) -> crate::error::Result<()> {
+        // `data` is `pub` and mutable, so a caller can set it longer than
+        // `data_bit_len` implies. Without this check, once `done` reaches
+        // `n` the next `n - done` underflows (`usize`): a panic in debug,
+        // and in release a wraparound that makes `take` clamp back to 8 and
+        // write bits beyond the declared length, misframing the L1EXT
+        // region (W-T2-5).
+        let expected_bytes = (self.data_bit_len as usize).div_ceil(8);
+        if self.data.len() != expected_bytes {
+            return Err(crate::Error::ReservedBitsViolation {
+                field: "L1ExtBlock.data",
+                reason: "data.len() must equal ceil(data_bit_len / 8)",
+            });
+        }
+
         w.write_bits(u64::from(self.block_type), L1_EXT_BLOCK_TYPE_BITS)?;
         w.write_bits(u64::from(self.data_bit_len), L1_EXT_DATA_LEN_BITS)?;
         let n = self.data_bit_len as usize;
@@ -1161,5 +1175,43 @@ mod tests {
         let mut out = Vec::new();
         push_framed_block(&mut out, 0xFFFF, |_w| Ok(())).unwrap();
         assert_eq!(&out[0..2], &[0xFF, 0xFF]);
+    }
+
+    /// W-T2-5: `L1ExtBlock::data` is `pub` and mutable, so a caller can make
+    /// it longer than `data_bit_len` implies. Before the fix, `write` would
+    /// underflow `n - done` (`usize`) once `done` reached `n`, panicking in
+    /// debug builds — this pins the fix as a clean `Err`, not a panic.
+    #[test]
+    fn l1ext_block_write_rejects_data_longer_than_declared_bit_len() {
+        let block = L1ExtBlock {
+            block_type: 0x00,
+            data_bit_len: 8,        // implies exactly 1 byte of `data`
+            data: vec![0x00, 0x00], // 2 bytes: one more than declared
+        };
+        let mut buf = [0u8; 8];
+        let mut w = BitWriter::new(&mut buf);
+        let result = block.write(&mut w);
+        assert!(
+            matches!(result, Err(crate::Error::ReservedBitsViolation { .. })),
+            "expected a rejection, got {result:?}"
+        );
+    }
+
+    /// The matching short-data case must also be rejected (not read past the
+    /// end / leave the declared length unwritten).
+    #[test]
+    fn l1ext_block_write_rejects_data_shorter_than_declared_bit_len() {
+        let block = L1ExtBlock {
+            block_type: 0x00,
+            data_bit_len: 16, // implies exactly 2 bytes of `data`
+            data: vec![0x00], // only 1 byte
+        };
+        let mut buf = [0u8; 8];
+        let mut w = BitWriter::new(&mut buf);
+        let result = block.write(&mut w);
+        assert!(matches!(
+            result,
+            Err(crate::Error::ReservedBitsViolation { .. })
+        ));
     }
 }

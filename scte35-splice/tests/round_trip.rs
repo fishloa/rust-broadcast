@@ -198,14 +198,42 @@ fn encrypted_section_round_trips_raw() {
         tier: 0x0AB,
         clear: None,
         encrypted_payload: Some(&encrypted),
+        // W1 (#1102): a real splice_command_length (arbitrary, since we
+        // don't decrypt), distinct from the deprecated 0xFFF sentinel — must
+        // round-trip through the wire bytes, not just the Rust struct.
+        encrypted_splice_command_length: Some(3),
     };
     let bytes = section.to_bytes();
     let parsed = SpliceInfoSection::parse(&bytes).unwrap();
     assert!(parsed.encrypted_packet);
     assert_eq!(parsed.encryption_algorithm, 1);
     assert_eq!(parsed.encrypted_payload, Some(&encrypted[..]));
+    assert_eq!(parsed.encrypted_splice_command_length, Some(3));
     assert!(parsed.clear.is_none());
     assert_eq!(parsed.to_bytes(), bytes);
+}
+
+/// W1 (#1102): the real `splice_command_length` must appear on the wire
+/// (bytes 11-12), not the deprecated `0xFFF` sentinel this crate's own
+/// clear-path parser rejects.
+#[test]
+fn encrypted_splice_command_length_written_verbatim_not_sentinel() {
+    let encrypted = [0x06u8, 0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF, 0x00, 0x11, 0x22];
+    let section = SpliceInfoSection {
+        sap_type: 0x3,
+        protocol_version: 0,
+        encrypted_packet: true,
+        encryption_algorithm: 1,
+        pts_adjustment: 0,
+        cw_index: 0,
+        tier: 0,
+        clear: None,
+        encrypted_payload: Some(&encrypted),
+        encrypted_splice_command_length: Some(0x0AB),
+    };
+    let bytes = section.to_bytes();
+    let scl = (u16::from(bytes[11] & 0x0F) << 8) | u16::from(bytes[12]);
+    assert_eq!(scl, 0x0AB, "the real value must be on the wire, not 0xFFF");
 }
 
 /// 33-bit `pts_adjustment` wrap boundary (§9.6.1: carry ignored on overflow).

@@ -40,6 +40,14 @@ pub enum Error {
     /// The `01` prefix after `pack_start_code` was not `01`.
     #[error("bad SCR prefix: {0:#04b} (expected 0b01)")]
     BadScrPrefix(u8),
+    /// The pack header carries the ISO/IEC 11172-1 (MPEG-1) `'0010'` pack
+    /// prefix, a different (12-byte, no SCR extension) layout this crate
+    /// does not parse — distinct from [`Self::BadScrPrefix`], which means
+    /// the bytes are neither a valid MPEG-1 nor MPEG-2 pack header (#1119).
+    #[error(
+        "MPEG-1 (ISO/IEC 11172-1) pack header is not supported (only ISO/IEC 13818-1 MPEG-2 packs are)"
+    )]
+    Mpeg1NotSupported,
     /// `system_header` `stream_id == 0xB7` but the extension form prefix is wrong.
     #[error("bad stream_id_extension prefix byte: {0:#04X}")]
     BadStreamIdExtensionPrefix(u8),
@@ -49,6 +57,15 @@ pub enum Error {
     /// `pack_stuffing_length` exceeds 7 (3-bit field).
     #[error("pack_stuffing_length {0} exceeds maximum 7")]
     StuffingLengthTooLarge(u8),
+    /// `PackHeader::stuffing.len()` does not match `stuffing_length` — the
+    /// two are independently-settable public fields (#1119 W8).
+    #[error("pack_header stuffing_length ({declared}) does not match stuffing.len() ({actual})")]
+    StuffingLengthMismatch {
+        /// The `stuffing_length` field value.
+        declared: u8,
+        /// The actual `stuffing.len()`.
+        actual: usize,
+    },
     /// `header_length` overflows the available buffer.
     #[error("header_length {header_length} exceeds available bytes ({available})")]
     HeaderLengthOverflow {

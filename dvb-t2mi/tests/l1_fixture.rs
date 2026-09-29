@@ -115,7 +115,10 @@ fn l1_current_fixture_oracle() {
     // ── BYTE-EXACT ROUND-TRIP (the strongest oracle) ───────────────────────────
     // Reserialize L1PRE (21 bytes) + the framed L1-post and require it to
     // reproduce the original 67 wire bytes exactly.
-    let mut reser = pre.to_bytes().to_vec();
+    let mut reser = pre
+        .to_bytes()
+        .expect("real fixture fields are in range")
+        .to_vec();
     reser.extend_from_slice(&post.to_l1_current_framed().expect("framed serialize"));
     assert_eq!(
         reser, l1_data,

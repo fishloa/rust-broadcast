@@ -10,8 +10,8 @@
 
 use crate::error::{Error, Result};
 use crate::ts::{
-    ADAPTATION_FLAG, AF_PCR_FLAG, AdaptationField, AdaptationFieldControl, CC_MASK, Pcr,
-    ScramblingControl, TS_PACKET_SIZE, TS_SYNC_BYTE, TsHeader,
+    ADAPTATION_FLAG, AF_PCR_FLAG, AdaptationField, AdaptationFieldControl, CC_MASK, PCR_FIELD_LEN,
+    Pcr, ScramblingControl, TS_PACKET_SIZE, TS_SYNC_BYTE, TsHeader,
 };
 
 /// The 13-bit PID value used for null packets — `0x1FFF`
@@ -300,11 +300,18 @@ impl OwnedTsPacket {
             });
         }
         let af_len = packet[4] as usize;
-        if af_len < 1 {
+        // W7 (#1074): the flags byte (1) + PCR field (PCR_FIELD_LEN = 6) must
+        // both fit inside `af_len`, not just the flags byte. A malformed
+        // adaptation field with `af_len` between 1 and 6 (PCR flag set
+        // anyway) previously passed this check and then wrote 6 PCR bytes at
+        // a fixed offset — 5 of which land past what `af_len` declares as
+        // the adaptation field, i.e. into the payload.
+        const REQUIRED_AF_LEN: usize = 1 + PCR_FIELD_LEN;
+        if af_len < REQUIRED_AF_LEN {
             return Err(Error::BufferTooShort {
-                need: 1,
-                have: 0,
-                what: "set_pcr: adaptation field length is 0 (no flags byte)",
+                need: REQUIRED_AF_LEN,
+                have: af_len,
+                what: "set_pcr: adaptation field too short for flags byte + PCR",
             });
         }
         // Byte 5: adaptation field flags byte (AF_PCR_FLAG = 0x10, §2.4.3.4).
@@ -317,14 +324,7 @@ impl OwnedTsPacket {
         }
         // PCR occupies the 6 bytes starting at offset 6 (after header + af_len byte + flags byte).
         let pcr_start = 6usize;
-        let pcr_end = pcr_start + 6;
-        if packet.len() < pcr_end {
-            return Err(Error::BufferTooShort {
-                need: pcr_end,
-                have: packet.len(),
-                what: "set_pcr: packet too short for PCR field",
-            });
-        }
+        let pcr_end = pcr_start + PCR_FIELD_LEN;
         packet[pcr_start..pcr_end].copy_from_slice(&pcr.to_field_bytes());
         Ok(())
     }
@@ -431,6 +431,37 @@ mod tests {
         assert_eq!(
             make(0b11).adaptation_field_control(),
             AdaptationFieldControl::AdaptationAndPayload
+        );
+    }
+
+    /// W7 (#1074): `set_pcr` only checked `af_len >= 1` (room for the flags
+    /// byte), not `af_len >= 1 + PCR_FIELD_LEN` (room for the PCR itself). A
+    /// malformed adaptation field with `af_len` between 1 and 6 but the PCR
+    /// flag set anyway let `set_pcr` write its fixed 6-byte PCR field 6 bytes
+    /// past the header regardless — spilling into whatever follows the
+    /// (too-short) declared adaptation field, i.e. the payload.
+    #[test]
+    fn set_pcr_rejects_adaptation_field_too_short_for_pcr() {
+        let mut raw = [0xFFu8; TS_PACKET_SIZE];
+        raw[0] = TS_SYNC_BYTE;
+        raw[1] = 0x00;
+        raw[2] = 0x00;
+        raw[3] = ADAPTATION_FLAG | crate::ts::PAYLOAD_FLAG;
+        raw[4] = 1; // adaptation_field_length: only room for the flags byte
+        raw[5] = AF_PCR_FLAG; // PCR flag set anyway (malformed: no room for PCR)
+        // raw[6..] is payload (0xFF stuffing here).
+        let payload_before = raw[6..].to_vec();
+
+        let pcr = Pcr {
+            base: 10_000,
+            extension: 0,
+        };
+        let err = OwnedTsPacket::set_pcr(&mut raw, pcr).unwrap_err();
+        assert!(matches!(err, Error::BufferTooShort { .. }));
+        assert_eq!(
+            &raw[6..],
+            payload_before.as_slice(),
+            "payload must be untouched"
         );
     }
 }

@@ -575,12 +575,18 @@ impl CarryOverExtractor {
     /// content when a chain is established, emit the reconstructed 188-byte
     /// TS packet (sync byte restored, any ISSY/DNP trailer dropped), then
     /// extend the chain with this UP's own CRC-8 for the next call.
+    ///
+    /// If the CRC-8 check fails, the Transport Error Indicator (TEI) bit
+    /// is set in the output packet to flag the corruption to downstream
+    /// receivers (EN 302 755 §5.1.6).
     fn finish_nm_up(&mut self, stride: usize, out: &mut Vec<[u8; NM_UP_SIZE]>) {
         let raw_crc_byte = self.buf[0];
+        let mut crc_failed = false;
         if let Some(expected) = self.nm_crc_state
             && raw_crc_byte != expected
         {
             self.stats.crc8_mismatches += 1;
+            crc_failed = true;
         }
         // CRC-8 covers the UPL-8 bits of the UP after sync-byte removal (EN
         // 302 755 §5.1.6), i.e. everything in this stride after the leading
@@ -590,6 +596,14 @@ impl CarryOverExtractor {
         let mut pkt = [0u8; NM_UP_SIZE];
         pkt[0] = TS_SYNC_BYTE; // replace CRC-8 with sync byte
         pkt[1..].copy_from_slice(&self.buf[1..NM_UP_SIZE]);
+
+        // Set TEI (Transport Error Indicator, byte 1 bit 7) if CRC-8 check failed
+        // (ISO/IEC 13818-1 §2.4.3.2). This signals to downstream receivers that
+        // this packet is corrupted.
+        if crc_failed {
+            pkt[1] |= 0x80; // Set bit 7 (TEI)
+        }
+
         out.push(pkt);
     }
 }
@@ -754,8 +768,8 @@ mod tests {
     fn nm_crc8_mismatch_detected_across_two_ups() {
         // Two back-to-back plain (no ISSY/DNP) UPs. The second UP's leading
         // byte should be crc8 of the first UP's 187-byte content; corrupt it
-        // and confirm the mismatch is flagged (but the packet is still
-        // emitted — diagnostic only).
+        // and confirm the mismatch is flagged (W-BB-1). The packet is emitted
+        // with TEI (Transport Error Indicator) set to flag the corruption.
         let up_a = [0x11u8; NM_UP_SIZE - 1];
         let up_b = [0x22u8; NM_UP_SIZE - 1];
         let correct_crc = crc8(&up_a);
@@ -773,8 +787,21 @@ mod tests {
         let pkts = extractor.feed_nm(&header_bytes, &data);
 
         assert_eq!(pkts.len(), 2);
+        // First packet has no CRC predecessor, so no TEI.
+        assert_eq!(pkts[0][0], TS_SYNC_BYTE);
         assert_eq!(&pkts[0][1..], &up_a[..]);
-        assert_eq!(&pkts[1][1..], &up_b[..]);
+        assert_eq!(pkts[0][1] & 0x80, 0, "first packet must not have TEI");
+
+        // Second packet's CRC failed, so TEI must be set (ISO/IEC 13818-1 §2.4.3.2).
+        assert_eq!(pkts[1][0], TS_SYNC_BYTE);
+        assert_eq!(pkts[1][1] & 0x80, 0x80, "TEI must be set when CRC-8 fails");
+        // The rest of the payload (except the TEI bit in byte 1) matches up_b.
+        assert_eq!(
+            pkts[1][1] & 0x7F,
+            up_b[0],
+            "payload byte 0 matches (with TEI masked out)"
+        );
+        assert_eq!(&pkts[1][2..], &up_b[1..], "remaining payload bytes match");
         assert_eq!(extractor.stats().crc8_mismatches, 1);
     }
 
@@ -1170,5 +1197,40 @@ mod tests {
         assert_eq!(ext.stats().mode_mismatches, 1);
         // Earlier counter is unchanged.
         assert_eq!(ext.stats().npd_unsupported, 1);
+    }
+
+    #[test]
+    fn nm_crc8_failure_sets_tei() {
+        // W-BB-1: NM CRC-8 mismatch must set TEI (Transport Error Indicator)
+        // in the output packet so downstream receivers know it is corrupted.
+        // (EN 302 755 §5.1.6 + ISO/IEC 13818-1 §2.4.3.2)
+
+        // Use the same approach as nm_crc8_mismatch_detected_across_two_ups for consistency.
+        let up_a = [0x11u8; NM_UP_SIZE - 1];
+        let up_b = [0x22u8; NM_UP_SIZE - 1];
+        let correct_crc_a = crc8(&up_a);
+        let mut data = Vec::with_capacity(NM_UP_SIZE * 2);
+
+        // Frame 1: UP A with its correct CRC-8. No predecessor check on first UP.
+        data.push(0xEE); // first UP's CRC-8 byte (arbitrary, unchecked)
+        data.extend_from_slice(&up_a);
+
+        // Frame 2: UP B with a deliberately corrupted CRC-8 byte.
+        let wrong_crc = correct_crc_a ^ 0x01; // flip one bit to ensure mismatch
+        data.push(wrong_crc);
+        data.extend_from_slice(&up_b);
+
+        let mut hdr = make_nm_header(0);
+        hdr.dfl = (data.len() * 8) as u16;
+        let mut extractor = CarryOverExtractor::new();
+        let pkts = extractor.feed_nm(&hdr.serialize(), &data);
+
+        assert_eq!(pkts.len(), 2);
+        // First packet: no CRC predecessor, so no TEI.
+        assert_eq!(pkts[0][1] & 0x80, 0, "first packet must not have TEI");
+        // Second packet: CRC-8 mismatch must set TEI.
+        assert_eq!(pkts[1][1] & 0x80, 0x80, "TEI must be set when CRC-8 fails");
+        // Verify the counter was incremented.
+        assert_eq!(extractor.stats().crc8_mismatches, 1);
     }
 }

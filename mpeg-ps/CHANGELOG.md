@@ -11,7 +11,50 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Requires `broadcast-common` 9.4 (`broadcast_common::len`). A new
   `Error::FieldOverflow` variant is added.
 
+### Changed (Breaking)
+- `Pack` gains a new field, `psm: Option<ProgramStreamMap<'a>>`. A Program
+  Stream Map packet (`stream_id 0xBC`) is now parsed via
+  `ProgramStreamMap::parse` and surfaced here instead of being handed to
+  `mpeg_pes::PesPacket::parse` and returned as an opaque, un-mapped PES
+  packet in `pes_packets` (#1119).
+- `program_stream::parse_pack`/`parse_all_packs` no longer pre-scan the
+  whole pack buffer for the next `pack_start_code`/`program_end_code`
+  (`find_next_boundary` is removed); a boundary is now only ever checked
+  right after a previously-consumed *whole* PES packet. A stray
+  `000001BA`/`000001B9` inside a real PES payload (start-code emulation, not
+  free of it in AC-3/LPCM/DVD-subpicture `private_stream_1` streams) no
+  longer truncates the pack early (#1119 W3). Resync-on-parse-error after a
+  genuinely corrupt PES packet is not implemented in this pass.
+- New `Error::Mpeg1NotSupported` and `Error::StuffingLengthMismatch`
+  variants (both non-breaking on their own since `Error` is
+  `#[non_exhaustive]`, listed here alongside the `Pack` field change).
+
 ### Fixed
+- `SystemHeader::parse` masked `video_bound` (byte 4 bits `[4:0]`, Table
+  2-40) to 4 bits (`& 0x0F`) instead of 5 (`& 0x1F`); serialize already used
+  the correct mask, so `video_bound` in `16..=31` round-tripped to
+  `video_bound - 16` (#1119 W1).
+- `program_stream::parse_pack` positioned PES data at the system header's
+  *re-serialized* length instead of its wire `header_length` (Table 2-40);
+  a conformant `header_length` declaring trailing reserved padding past the
+  stream-bound loop made PES parsing start early, inside the system header,
+  and fail (#1119 W2).
+- A pack header carrying the ISO/IEC 11172-1 (MPEG-1) `'0010'` pack prefix
+  (a different, unimplemented 12-byte layout) was reported with the same
+  `BadScrPrefix` as genuine corruption, despite this crate's docs claiming
+  "MPEG-1/2" support. Now reported distinctly as `Error::Mpeg1NotSupported`,
+  and the crate-root doc corrected to MPEG-2-only (#1119 W4).
+- `ProgramStreamMap::serialize_into` wrote the flags byte's reserved bit
+  (bit 5) as `0` and the following reserved+marker byte as `0x7F | 0x01`
+  (`0x7F`, a no-op — `0x01` was already set) instead of the conventional
+  `1`s/`0xFF`; a real capture with these bits set did not round-trip
+  byte-identically (#1119 W8).
+- `PackHeader::serialize_into` always wrote stuffing bytes as `0xFF`, even
+  though `parse` already captures the actual bytes present in
+  `self.stuffing` (`stuffing_byte` is spec-fixed `0xFF`, Table 2-39, but
+  `parse` does not reject a non-conformant value) — a non-`0xFF` stuffed
+  input did not round-trip byte-identically. Now writes `self.stuffing`
+  verbatim, validating it agrees with `stuffing_length` first (#1119 W8).
 - `PackHeader` `program_mux_rate` (Table 2-39): parse/serialize assumed a `'01'` marker prefix
   before the 22-bit field, the same layout the SCR field uses — Table 2-39 has no such prefix, so
   every real pack header's `program_mux_rate` was read 5.2x too small (and the two trailing marker

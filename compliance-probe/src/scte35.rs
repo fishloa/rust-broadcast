@@ -120,7 +120,12 @@ pub fn check_section(section: &[u8], now_pts: u64) -> Scte35Sanity {
         return Scte35Sanity::Immediate;
     };
 
-    judge(pts_time, now_pts)
+    // §9.6.1 defines the effective splice time as `pts_time + pts_adjustment`
+    // (mod 2^33) — the field exists precisely so a downstream splicer/remux
+    // can rebase cues without rewriting them (W-CP-1).
+    let effective_pts = scte35_splice::time::pts_add_wrapping(pts_time, sis.pts_adjustment);
+
+    judge(effective_pts, now_pts)
 }
 
 /// The future-vs-past judgement shared by both entry points: a forward
@@ -207,6 +212,36 @@ mod tests {
         let now = PTS_MODULUS - 1_000;
         let target = 2_000; // 3000 ticks after `now`, having wrapped once
         assert_eq!(judge(target, now), Scte35Sanity::InFuture);
+    }
+
+    /// W-CP-1: a cue whose `pts_adjustment` rebases a stale-looking
+    /// `pts_time` into the future must be judged by the *effective* time
+    /// (`pts_time + pts_adjustment`), not the raw wire `pts_time`.
+    #[test]
+    fn pts_adjustment_is_applied_before_judging() {
+        let now = 90_000 * 10; // 10s @ 90kHz
+        let raw_pts_time = 90_000 * 3; // 7s behind `now` on its own
+        let adjustment = 90_000 * 8; // rebases it to 11s: ahead of `now`
+
+        let si = SpliceInsert {
+            splice_event_id: 7,
+            out_of_network_indicator: true,
+            program_splice_flag: true,
+            splice_immediate_flag: false,
+            splice_time: Some(SpliceTime::with_pts(raw_pts_time)),
+            ..SpliceInsert::default()
+        };
+        let mut section = SpliceInfoSection::new_clear(AnyCommand::SpliceInsert(si), &[]);
+        section.pts_adjustment = adjustment;
+        let mut buf = alloc::vec![0u8; section.serialized_len()];
+        section.serialize_into(&mut buf).unwrap();
+
+        assert_eq!(
+            check_section(&buf, now),
+            Scte35Sanity::InFuture,
+            "raw pts_time alone is 7s behind `now`, but pts_adjustment rebases \
+             it to 11s ahead — the cue must be judged InFuture, not InPast"
+        );
     }
 
     #[test]

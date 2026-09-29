@@ -47,6 +47,21 @@ const LONG_FORM_EXTRA: usize = 5;
 // CRC occupies the last 4 bytes of every long-form section.
 const CRC_LEN: usize = 4;
 
+// W15 (#1074): named bit-field masks for the section header, used by both
+// `parse` and `serialize_into` — ISO/IEC 13818-1 §2.4.4.1.
+
+/// `section_syntax_indicator` — byte 1 bit 7.
+const SSI_MASK: u8 = 0x80;
+/// `private_indicator` (byte 1 bit 6). Meaning is table-specific; DVB SI uses
+/// this position for the DVB `private_indicator` (ETSI EN 300 468 §5.1.1).
+const PRIVATE_INDICATOR_MASK: u8 = 0x40;
+/// Byte 1 bits 5-4: reserved, convention is both set on serialize.
+const BYTE1_RESERVED_BITS: u8 = 0x30;
+/// `version_number` — 5 bits (byte 5 bits 5-1 of the long-form extension header).
+const VERSION_NUMBER_MASK: u8 = 0x1F;
+/// Byte 5 bits 7-6: reserved, convention is both set on serialize.
+const BYTE5_RESERVED_BITS: u8 = 0xC0;
+
 /// A parsed PSI/SI section header, borrowing the raw input buffer for payload.
 ///
 /// Created via `Section::parse(bytes)`. Does **not** validate the CRC on
@@ -150,13 +165,15 @@ impl<'a> Parse<'a> for Section<'a> {
         }
 
         let table_id = bytes[0];
-        let section_syntax_indicator = (bytes[1] & 0x80) != 0;
-        let private_indicator = (bytes[1] & 0x40) != 0;
-        let section_length = (((bytes[1] & 0x0F) as u16) << 8) | (bytes[2] as u16);
+        let section_syntax_indicator = (bytes[1] & SSI_MASK) != 0;
+        let private_indicator = (bytes[1] & PRIVATE_INDICATOR_MASK) != 0;
 
         // Total section size is section_length + 3 (the 3-byte header itself
-        // is not counted by section_length).
-        let total = (section_length as usize) + MIN_HEADER_LEN;
+        // is not counted by section_length). W14 (#1074): shared with the
+        // other three sites that used to decode this field separately.
+        let total = crate::ts::section_total_len(bytes)
+            .expect("bytes.len() >= MIN_HEADER_LEN checked above");
+        let section_length = (total - MIN_HEADER_LEN) as u16;
 
         if bytes.len() < total {
             return Err(Error::SectionLengthOverflow {
@@ -201,7 +218,7 @@ impl<'a> Parse<'a> for Section<'a> {
         }
 
         let extension_id = ((bytes[3] as u16) << 8) | (bytes[4] as u16);
-        let version_number = (bytes[5] >> 1) & 0x1F;
+        let version_number = (bytes[5] >> 1) & VERSION_NUMBER_MASK;
         let current_next_indicator = (bytes[5] & 0x01) != 0;
         let section_number = bytes[6];
         let last_section_number = bytes[7];
@@ -254,15 +271,37 @@ impl Serialize for Section<'_> {
             });
         }
 
+        // W5 (#1074): `section_length` and `payload.len()` are two
+        // independently-settable public fields. If a caller edits one
+        // without the other, the old code indexed `buf` by
+        // `payload.len()` while `serialized_len()` (and thus `need`/`buf`)
+        // was sized from `section_length` — an over-long payload panicked
+        // on the `copy_from_slice` below, and an under-long one silently
+        // wrote a wrong CRC into stale trailing bytes. Validate the two
+        // agree before touching `buf`.
+        let overhead = if self.section_syntax_indicator {
+            LONG_FORM_EXTRA + CRC_LEN
+        } else {
+            0
+        };
+        let expected_payload_len = usize::from(self.section_length).checked_sub(overhead);
+        if expected_payload_len != Some(self.payload.len()) {
+            return Err(Error::SectionPayloadLengthMismatch {
+                section_length: self.section_length,
+                expected: expected_payload_len.unwrap_or(0),
+                actual: self.payload.len(),
+            });
+        }
+
         // Byte 0: table_id
         buf[0] = self.table_id;
 
         // Byte 1: SSI | PI | 2-bit reserved (set high per spec) | length hi 4 bits
-        let length_hi = ((self.section_length >> 8) as u8) & 0x0F;
+        let length_hi = ((self.section_length >> 8) as u8) & crate::ts::SECTION_LENGTH_HI_MASK;
         let ssi = u8::from(self.section_syntax_indicator) << 7;
         let pi = u8::from(self.private_indicator) << 6;
         // Reserved bits 5..4 are 'reserved' per §5.1.1 — convention is both set.
-        buf[1] = ssi | pi | 0x30 | length_hi;
+        buf[1] = ssi | pi | BYTE1_RESERVED_BITS | length_hi;
 
         // Byte 2: length low 8 bits
         buf[2] = (self.section_length & 0xFF) as u8;
@@ -272,9 +311,9 @@ impl Serialize for Section<'_> {
             buf[3] = (self.extension_id >> 8) as u8;
             buf[4] = (self.extension_id & 0xFF) as u8;
             // Byte 5: 2-bit reserved (both high) | 5-bit version | 1-bit current_next
-            let version = (self.version_number & 0x1F) << 1;
+            let version = (self.version_number & VERSION_NUMBER_MASK) << 1;
             let cni = u8::from(self.current_next_indicator);
-            buf[5] = 0xC0 | version | cni;
+            buf[5] = BYTE5_RESERVED_BITS | version | cni;
             buf[6] = self.section_number;
             buf[7] = self.last_section_number;
 
@@ -531,5 +570,56 @@ mod tests {
             .expect("short-form: no CRC to validate");
         // Payload is the 5 bytes after the 3-byte header.
         assert_eq!(section.payload(), &buf[3..]);
+    }
+
+    // ── W5 (#1074): serialize rejects a hand-edited length/payload mismatch ──
+
+    #[test]
+    fn serialize_rejects_oversized_payload_for_declared_section_length() {
+        // A caller edited `payload` to be longer than `section_length`
+        // implies (all fields are `pub`). Pre-fix, `serialized_len()` sized
+        // `buf` from `section_length` while the copy indexed by
+        // `payload.len()`, so this panicked with an out-of-bounds slice
+        // index instead of erroring.
+        let raw = make_long_section(0x42, 0x0001, 0, true, 0, 0, &[0xAA, 0xBB]);
+        let mut section = Section::parse(&raw).unwrap();
+        let oversized = vec![0u8; section.payload.len() + 1];
+        section.payload = &oversized;
+
+        let mut buf = vec![0u8; section.serialized_len()];
+        let err = section.serialize_into(&mut buf).unwrap_err();
+        assert!(
+            matches!(err, Error::SectionPayloadLengthMismatch { actual, .. } if actual == oversized.len()),
+            "expected SectionPayloadLengthMismatch, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn serialize_rejects_undersized_payload_for_declared_section_length() {
+        let raw = make_long_section(0x42, 0x0001, 0, true, 0, 0, &[0xAA, 0xBB, 0xCC]);
+        let mut section = Section::parse(&raw).unwrap();
+        let undersized = &[0xAAu8][..];
+        section.payload = undersized;
+
+        // Buffer sized generously so an undersized payload can't be caught by
+        // `OutputBufferTooSmall` first — it must be caught by the length
+        // consistency check.
+        let mut buf = vec![0u8; section.serialized_len() + 16];
+        let err = section.serialize_into(&mut buf).unwrap_err();
+        assert!(
+            matches!(err, Error::SectionPayloadLengthMismatch { actual, .. } if actual == undersized.len()),
+            "expected SectionPayloadLengthMismatch, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn serialize_accepts_consistent_section_round_trip() {
+        // Sanity: a self-consistent Section (as produced by `parse`) still
+        // serializes byte-identically after the new validation.
+        let raw = make_long_section(0x42, 0x0001, 3, true, 1, 2, &[0x01, 0x02, 0x03]);
+        let section = Section::parse(&raw).unwrap();
+        let mut buf = vec![0u8; section.serialized_len()];
+        let n = section.serialize_into(&mut buf).unwrap();
+        assert_eq!(&buf[..n], raw.as_slice());
     }
 }

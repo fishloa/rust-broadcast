@@ -38,8 +38,8 @@ use media_plane::{ByteTap, EventAnchor, EventCursor, EventCursorItem, EventEntry
 use mpeg_ts::resync::TsResync;
 use timed_metadata::{MediaTime, SourcePayload};
 
+use crate::Probe;
 use crate::record::{record_counter, record_counter_by};
-use crate::{Probe, scte35::judge};
 
 /// The `std`-only half of [`Probe`]'s state: a byte-stream resynchroniser
 /// (recovers 188-byte alignment from whatever a [`ByteTap`] hands back —
@@ -164,15 +164,25 @@ fn check_event(bridge: &TrunkBridge, entry: &EventEntry) {
         return;
     };
 
-    // Both `target` and `now` are already the Trunk's own 90 kHz absolute,
-    // wrap-unrolled clock (`timed_metadata::Timeline::push_scte35`'s job,
-    // done long before this event reached the event log) — a plain
-    // comparison, not the 33-bit wraparound `scte35::judge` needs for the
-    // still-raw wire path. `judge` is reused here anyway (rather than a
-    // second copy of the comparison) because 90 kHz-tick equality/ordering
-    // is exactly what it computes; passing already-unrolled values simply
-    // never exercises its wrap branch.
-    let _ = judge(target.0, now.0);
+    if unrolled_target_is_in_past(target.0, now.0) {
+        record_counter!(crate::metric_names::SCTE35_PTS_IN_PAST_TOTAL);
+    }
+}
+
+/// Is `target` in the past relative to `now`, on the Trunk's own 90 kHz
+/// absolute, wrap-**unrolled** clock (`timed_metadata::Timeline::push_scte35`
+/// unrolls it long before an event reaches the event log)?
+///
+/// A plain comparison, deliberately **not** `scte35::judge` (which reduces
+/// its inputs modulo 2^33 via `wrapping_forward_distance`, for the still-raw
+/// wire path where that reduction is exactly what's needed). Reusing `judge`
+/// here on already-unrolled values would not skip its wrap branch — a
+/// long-running Trunk's absolute clock legitimately exceeds 2^33 ticks
+/// (about 24.2 hours at 90 kHz) and would be folded back onto the 33-bit
+/// ring, misjudging a `target` more than half that ring (about 13.3 hours)
+/// ahead of `now` as `InPast` (W-CP-3).
+fn unrolled_target_is_in_past(target: u64, now: u64) -> bool {
+    target < now
 }
 
 #[cfg(test)]
@@ -190,6 +200,46 @@ mod tests {
 
     fn small_trunk() -> Arc<Trunk> {
         Trunk::new(TrunkConfig::new(nz(8), nz(8), nz(8), nz(8), nz(8)))
+    }
+
+    /// W-CP-3: a target more than half of 2^33 ticks (about 13.3 hours at
+    /// 90 kHz) ahead of `now` on the Trunk's unrolled clock must still read
+    /// as "in future", not "in past". `scte35::judge` (mod-2^33 reduction)
+    /// gets this wrong on unrolled inputs — this is the bug the module
+    /// comment on [`unrolled_target_is_in_past`] warned was NOT actually
+    /// exercised by the old (reused-`judge`) code, contrary to what that
+    /// code's comment claimed.
+    #[test]
+    fn far_future_target_on_unrolled_clock_is_not_in_past() {
+        use broadcast_common::clock33::WRAP_33BIT_HALF;
+
+        let now = 100_000_000_000u64; // arbitrary large unrolled "now"
+        let target = now + WRAP_33BIT_HALF + 1; // just over half the 33-bit ring ahead
+
+        assert!(
+            !unrolled_target_is_in_past(target, now),
+            "a target this far ahead on the unrolled clock must be judged \
+             in future, not in past"
+        );
+
+        // Demonstrate the bug this replaces: naively reducing modulo 2^33
+        // (what `scte35::judge` does, correctly, for the still-raw wire
+        // path) DOES fold this same unrolled pair into `InPast`.
+        assert_eq!(
+            crate::scte35::judge(target, now),
+            crate::scte35::Scte35Sanity::InPast,
+            "sanity check on the bug being replaced: judge() misreads this \
+             unrolled pair as InPast, which is why it must not be reused here"
+        );
+    }
+
+    /// A genuinely past target (small distance behind `now`, no wraparound
+    /// ambiguity) must still be reported as in the past.
+    #[test]
+    fn genuinely_past_target_is_in_past() {
+        let now = 1_000_000u64;
+        let target = now - 90_000; // 1s behind
+        assert!(unrolled_target_is_in_past(target, now));
     }
 
     /// A ByteTap drained through the bridge must actually reach the

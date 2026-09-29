@@ -1,9 +1,15 @@
-//! MPEG-1/2 Program Stream parsing — ISO/IEC 13818-1 (Rec. ITU-T H.222.0) §2.5.
+//! MPEG-2 Program Stream parsing — ISO/IEC 13818-1 (Rec. ITU-T H.222.0) §2.5.
 //!
 //! The Program Stream (`.mpg` / `.vob`) framing that wraps PES packets: the
 //! [`PackHeader`] (42-bit SCR + `program_mux_rate`), the optional
 //! [`SystemHeader`] (rate/audio/video bounds + per-stream P-STD buffer bounds),
 //! and the [`ProgramStreamMap`] (PSM).
+//!
+//! Only the ISO/IEC 13818-1 (MPEG-2) pack header layout (`'01'` SCR prefix)
+//! is implemented. The different ISO/IEC 11172-1 (MPEG-1) pack layout
+//! (`'0010'` prefix, no SCR extension) is recognized and reported as
+//! [`Error::Mpeg1NotSupported`] rather than misparsed as corrupt bytes, but
+//! is not otherwise implemented (#1119).
 //!
 //! PES payloads are parsed via the `mpeg-pes` crate.
 //!

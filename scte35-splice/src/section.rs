@@ -43,6 +43,12 @@ pub struct ClearPayload<'a> {
     /// Raw splice descriptor loop bytes; walk typed via
     /// [`SpliceInfoSection::descriptors`].
     pub descriptor_loop: &'a [u8],
+    /// `alignment_stuffing()` (§9.6.1, Table 5): padding bytes between the
+    /// descriptor loop and `CRC_32`, present on every section (not only
+    /// encrypted ones). Empty for the overwhelming common case of a section
+    /// sized to end exactly at the descriptor loop. `parse` captures these
+    /// verbatim rather than discarding them (#1102 W2).
+    pub alignment_stuffing: &'a [u8],
 }
 
 /// splice_info_section() — §9.6, Table 5.
@@ -71,6 +77,16 @@ pub struct SpliceInfoSection<'a> {
     /// The raw encrypted region (`splice_command_type` through `E_CRC_32`),
     /// present when `encrypted_packet` is `true`. Not decrypted by this crate.
     pub encrypted_payload: Option<&'a [u8]>,
+    /// The real `splice_command_length` (§9.6.1) for an encrypted section.
+    /// Unlike the encrypted region itself, this field sits *before*
+    /// `splice_command_type` and so is readable without decrypting anything;
+    /// `parse` always captures it. `None` only for a hand-built encrypted
+    /// section that doesn't know it, in which case `serialize_into` falls
+    /// back to writing the deprecated `0xFFF` "ignore" sentinel (this
+    /// crate's own clear-path parser rejects that sentinel, so a
+    /// parse→serialize→parse round-trip through the `None` fallback does not
+    /// recover a usable length for a decrypting receiver) (#1102 W1).
+    pub encrypted_splice_command_length: Option<u16>,
 }
 
 impl<'a> SpliceInfoSection<'a> {
@@ -89,8 +105,10 @@ impl<'a> SpliceInfoSection<'a> {
             clear: Some(ClearPayload {
                 command,
                 descriptor_loop,
+                alignment_stuffing: &[],
             }),
             encrypted_payload: None,
+            encrypted_splice_command_length: None,
         }
     }
 
@@ -130,10 +148,13 @@ impl<'a> SpliceInfoSection<'a> {
 
     /// Bytes of the section body from `splice_command_type` through (but not
     /// including) the trailing CRC_32 — the splice_command_length region plus
-    /// the descriptor loop and its 2-byte length, or the raw encrypted region.
+    /// the descriptor loop and its 2-byte length plus alignment_stuffing, or
+    /// the raw encrypted region.
     fn payload_len(&self) -> usize {
         match (&self.clear, self.encrypted_payload) {
-            (Some(c), _) => 1 + c.command.body_len() + 2 + c.descriptor_loop.len(),
+            (Some(c), _) => {
+                1 + c.command.body_len() + 2 + c.descriptor_loop.len() + c.alignment_stuffing.len()
+            }
             (None, Some(enc)) => enc.len(),
             (None, None) => 0,
         }
@@ -211,6 +232,7 @@ impl<'a> Parse<'a> for SpliceInfoSection<'a> {
             tier,
             clear: None,
             encrypted_payload: None,
+            encrypted_splice_command_length: None,
         };
 
         // Region from splice_command_type (byte 13) through E_CRC_32/CRC_32.
@@ -218,6 +240,11 @@ impl<'a> Parse<'a> for SpliceInfoSection<'a> {
         if encrypted_packet {
             // Keep the encrypted region (command_type + body + descriptors +
             // E_CRC_32) verbatim; do not attempt to interpret it.
+            // W1 (#1102): `splice_command_length` is readable without
+            // decrypting anything (it precedes `splice_command_type`) —
+            // capture it so serialize can write the real value back instead
+            // of the deprecated `0xFFF` sentinel.
+            section.encrypted_splice_command_length = Some(splice_command_length);
             section.encrypted_payload = Some(payload);
             return Ok(section);
         }
@@ -265,12 +292,14 @@ impl<'a> Parse<'a> for SpliceInfoSection<'a> {
             });
         }
         let descriptor_loop = &payload[loop_start..loop_start + descriptor_loop_length];
-        // Any bytes between the descriptor loop and the CRC are alignment
-        // stuffing (§9.6.1); for a clear section there should be none, but we
-        // tolerate by ignoring them (they are re-derived on serialize).
+        // W2 (#1102): `alignment_stuffing()` — any bytes between the
+        // descriptor loop and the CRC — is captured verbatim, not dropped.
+        // `payload` already ends at `crc_pos` (excludes the CRC itself).
+        let alignment_stuffing = &payload[loop_start + descriptor_loop_length..];
         section.clear = Some(ClearPayload {
             command,
             descriptor_loop,
+            alignment_stuffing,
         });
         Ok(section)
     }
@@ -360,14 +389,28 @@ impl Serialize for SpliceInfoSection<'_> {
                 pos += 2;
                 buf[pos..pos + c.descriptor_loop.len()].copy_from_slice(c.descriptor_loop);
                 pos += c.descriptor_loop.len();
+                // W2 (#1102): re-emit alignment_stuffing instead of dropping
+                // it (both are counted by `payload_len`/`serialized_len`).
+                buf[pos..pos + c.alignment_stuffing.len()].copy_from_slice(c.alignment_stuffing);
+                pos += c.alignment_stuffing.len();
                 debug_assert_eq!(pos, need - CRC_LEN);
             }
             (None, Some(enc)) => {
-                // For an encrypted section, splice_command_length is not known
-                // to us (it is inside the encrypted region); write the
-                // backwards-compat 0xFFF sentinel and emit the region verbatim.
-                buf[11] = (((self.tier & 0x0F) as u8) << 4) | 0x0F;
-                buf[12] = 0xFF;
+                // W1 (#1102): `splice_command_length` sits before
+                // `splice_command_type`, outside the encrypted region, so
+                // `parse` already captured the real value — write it back
+                // verbatim rather than the deprecated `0xFFF` sentinel (which
+                // this crate's own clear-path parser rejects, so a
+                // decrypting receiver that trusted the sentinel would
+                // misframe). Fall back to the sentinel only when a
+                // hand-built section genuinely doesn't know it.
+                let scl = broadcast_common::len::fit_bits(
+                    u64::from(self.encrypted_splice_command_length.unwrap_or(0x0FFF)),
+                    12,
+                    "splice_info_section.splice_command_length",
+                )? as u16;
+                buf[11] = (((self.tier & 0x0F) as u8) << 4) | ((scl >> 8) as u8 & 0x0F);
+                buf[12] = (scl & 0xFF) as u8;
                 buf[13..13 + enc.len()].copy_from_slice(enc);
             }
             (None, None) => {
@@ -470,5 +513,40 @@ mod tests {
         );
         let mut buf = alloc::vec![0u8; section.serialized_len()];
         assert!(section.serialize_into(&mut buf).is_err());
+    }
+
+    /// W2 (#1102): `alignment_stuffing()` (Table 5) between the descriptor
+    /// loop and `CRC_32` is present on every section, not only encrypted
+    /// ones. Pre-fix, `parse` computed `descriptor_loop` from
+    /// `descriptor_loop_length` and silently discarded any remaining bytes
+    /// up to the CRC — 4 bytes shorter with a different CRC than the
+    /// original on re-serialize.
+    #[test]
+    fn alignment_stuffing_round_trips_byte_identically() {
+        let section = SpliceInfoSection {
+            sap_type: 0x3,
+            protocol_version: 0,
+            encrypted_packet: false,
+            encryption_algorithm: 0,
+            pts_adjustment: 0,
+            cw_index: 0,
+            tier: 0,
+            clear: Some(ClearPayload {
+                command: AnyCommand::PrivateCommand(PrivateCommand {
+                    identifier: 0x4355_4549,
+                    private_bytes: &[],
+                }),
+                descriptor_loop: &[],
+                alignment_stuffing: &[0xFF, 0xFF, 0xFF],
+            }),
+            encrypted_payload: None,
+            encrypted_splice_command_length: None,
+        };
+        let bytes = section.to_bytes();
+
+        let parsed = SpliceInfoSection::parse(&bytes).unwrap();
+        let clear = parsed.clear.as_ref().expect("clear section");
+        assert_eq!(clear.alignment_stuffing, &[0xFF, 0xFF, 0xFF]);
+        assert_eq!(parsed.to_bytes(), bytes, "byte-identical round-trip");
     }
 }

@@ -99,12 +99,28 @@ fn nm_issy_npd_recovers_real_up_and_checks_crc8_chain() {
     assert_eq!(pkts.len(), 3, "three transmitted UPs, one per stride");
     for (i, pkt) in pkts.iter().enumerate() {
         assert_eq!(pkt[0], TS_SYNC_BYTE, "UP {i}: sync byte restored");
-        assert_eq!(
-            &pkt[1..],
-            &up[1..],
-            "UP {i}: recovered payload matches the real SCTE-35 TS packet \
-             (ISSY/DNP trailer correctly excluded from the 188-byte packet)"
-        );
+        if i == 2 {
+            // UP 2's CRC-8 was deliberately corrupted, so TEI must be set (W-BB-1)
+            assert_eq!(
+                pkt[1] & 0x80,
+                0x80,
+                "UP 2: TEI must be set for corrupted CRC-8"
+            );
+            assert_eq!(
+                pkt[1] & 0x7F,
+                up[1] & 0x7F,
+                "UP 2: payload byte 0 matches (TEI masked)"
+            );
+            assert_eq!(&pkt[2..], &up[2..], "UP 2: remaining payload matches");
+        } else {
+            // UPs 0 and 1 have valid CRC-8 (or no predecessor), so no TEI
+            assert_eq!(
+                &pkt[1..],
+                &up[1..],
+                "UP {i}: recovered payload matches the real SCTE-35 TS packet \
+                 (ISSY/DNP trailer correctly excluded from the 188-byte packet)"
+            );
+        }
     }
 
     let stats = extractor.stats();

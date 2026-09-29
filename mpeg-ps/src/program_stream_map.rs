@@ -320,13 +320,21 @@ impl Serialize for ProgramStreamMap<'_> {
         let map_length = map_length as u16;
         buf[4..6].copy_from_slice(&map_length.to_be_bytes());
 
-        // flags: current_next(1) + single_extension(1) + reserved(1) + version(5)
+        // flags: current_next(1) + single_extension(1) + reserved(1, convention
+        // is set) + version(5). W8 (#1119): the reserved bit (bit 5) was
+        // always written 0 instead of the conventional 1.
+        const FLAGS_RESERVED_BIT: u8 = 0x20;
         buf[6] = (u8::from(self.current_next_indicator) << 7)
             | (u8::from(self.single_extension_stream_flag) << 6)
+            | FLAGS_RESERVED_BIT
             | (self.version & 0x1F);
 
-        // reserved(7) + marker_bit(1)
-        buf[7] = 0x7F | 0x01;
+        // reserved(7, convention is all set) + marker_bit(1).
+        // W8 (#1119): `0x7F | 0x01` is a no-op (`0x7F` already has bit 0
+        // set) and leaves the MSB reserved bit `0` instead of the
+        // conventional `1` — real encoders write this byte `0xFF`, so this
+        // did not round-trip byte-identically against a real capture.
+        buf[7] = 0xFF;
 
         // program_stream_info_length and elementary_stream_map_length are
         // both 16-bit fields; `map_length <= MAP_LENGTH_MAX` above already
@@ -579,6 +587,31 @@ mod tests {
         let mut out2 = vec![0u8; parsed.serialized_len()];
         parsed.serialize_into(&mut out2).unwrap();
         assert_eq!(&out2[..], &buf[..]);
+    }
+
+    /// W8 (#1119): reserved bits in the flags byte (bit 5) and the
+    /// following reserved+marker byte (bits 7-1) are conventionally `1` —
+    /// real encoders write byte 6's reserved bit set and byte 7 as `0xFF`.
+    /// The flags byte used to always clear bit 5, and byte 7 was written
+    /// `0x7F | 0x01` (a no-op, since `0x7F` already has bit 0 set) instead
+    /// of `0xFF`, leaving the MSB reserved bit `0`.
+    #[test]
+    fn reserved_bits_are_set_by_convention() {
+        let psm = ProgramStreamMap {
+            current_next_indicator: false,
+            single_extension_stream_flag: false,
+            version: 0,
+            program_stream_info: &[],
+            elementary_stream_map: vec![],
+            crc: 0,
+        };
+        let mut buf = vec![0u8; psm.serialized_len()];
+        psm.serialize_into(&mut buf).unwrap();
+        assert_eq!(
+            buf[6], 0x20,
+            "flags byte reserved bit (0x20) must be set even with both flags clear"
+        );
+        assert_eq!(buf[7], 0xFF, "reserved(7)+marker_bit(1) byte must be 0xFF");
     }
 
     #[test]

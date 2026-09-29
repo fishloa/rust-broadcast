@@ -173,20 +173,31 @@ impl L1Pre {
     ///
     /// This is the CRC defined in EN 302 755 Annex F; it is appended in the
     /// standalone (non-T2-MI) form of L1-pre.
-    #[must_use]
-    pub fn crc32(&self) -> u32 {
-        let bytes = self.to_bytes();
-        broadcast_common::crc32_mpeg2::compute(&bytes)
+    ///
+    /// # Errors
+    ///
+    /// Propagates [`Self::to_bytes`]'s error: every field here is `pub` and
+    /// mutable, so a caller-set value outside its wire bit width (e.g.
+    /// `num_rf > 7`) cannot be serialised (W-T2-3).
+    pub fn crc32(&self) -> crate::error::Result<u32> {
+        let bytes = self.to_bytes()?;
+        Ok(broadcast_common::crc32_mpeg2::compute(&bytes))
     }
 
     /// Serialise to the 21-byte T2-MI form (no CRC).
-    #[must_use]
-    pub fn to_bytes(&self) -> [u8; L1PRE_BYTES] {
+    ///
+    /// # Errors
+    ///
+    /// [`L1Pre`]'s fields are all `pub` and mutable (it is `#[non_exhaustive]`
+    /// but not otherwise guarded), so a value written outside its wire bit
+    /// width (e.g. `num_rf > 7`, `l1_post_size >= 2^18`) fails here rather
+    /// than panicking or silently masking into a misframed block (W-T2-3;
+    /// same class as the truncation bug this sweep also fixes, W-T2-4 —
+    /// reject out-of-range values instead of masking them).
+    pub fn to_bytes(&self) -> crate::error::Result<[u8; L1PRE_BYTES]> {
         let mut buf = [0u8; L1PRE_BYTES];
-        // unwrap: fixed-size buffer, all values within stated bit widths
-        self.serialize_into(&mut buf)
-            .expect("L1Pre::to_bytes: buffer too small");
-        buf
+        self.serialize_into(&mut buf)?;
+        Ok(buf)
     }
 
     /// Parse 21 bytes then validate the following 4-byte CRC.
@@ -210,7 +221,11 @@ impl L1Pre {
         let (_, crc_bytes) = block.split_last_chunk::<4>().expect("block is 25 bytes");
         let pre = L1Pre::parse(&block[..L1PRE_BYTES])?;
         let expected = u32::from_be_bytes(*crc_bytes);
-        let computed = pre.crc32();
+        // A just-parsed `L1Pre` always re-serialises: every field came from
+        // reading its own stated bit width, so this cannot hit the
+        // out-of-range case `crc32`/`to_bytes` guard against for a
+        // caller-constructed value (W-T2-3).
+        let computed = pre.crc32()?;
         if computed != expected {
             return Err(crate::Error::CrcMismatch { computed, expected });
         }
@@ -218,12 +233,16 @@ impl L1Pre {
     }
 
     /// Serialise to a 25-byte buffer: 21-byte info block + 4-byte CRC.
-    #[must_use]
-    pub fn serialize_with_crc(&self) -> Vec<u8> {
+    ///
+    /// # Errors
+    ///
+    /// Propagates [`Self::to_bytes`]'s error (W-T2-3).
+    pub fn serialize_with_crc(&self) -> crate::error::Result<Vec<u8>> {
         let mut out = Vec::with_capacity(L1PRE_WITH_CRC_BYTES);
-        out.extend_from_slice(&self.to_bytes());
-        out.extend_from_slice(&self.crc32().to_be_bytes());
-        out
+        let bytes = self.to_bytes()?;
+        out.extend_from_slice(&bytes);
+        out.extend_from_slice(&broadcast_common::crc32_mpeg2::compute(&bytes).to_be_bytes());
+        Ok(out)
     }
 }
 
@@ -429,7 +448,7 @@ mod tests {
     #[test]
     fn crc_with_crc_round_trip() {
         let pre = synthetic_pre();
-        let bytes = pre.serialize_with_crc();
+        let bytes = pre.serialize_with_crc().unwrap();
         assert_eq!(bytes.len(), L1PRE_WITH_CRC_BYTES);
         let parsed = L1Pre::parse_with_crc(&bytes).unwrap();
         assert_eq!(pre, parsed);
@@ -438,7 +457,7 @@ mod tests {
     #[test]
     fn crc_rejects_corrupted() {
         let pre = synthetic_pre();
-        let mut bytes = pre.serialize_with_crc();
+        let mut bytes = pre.serialize_with_crc().unwrap();
         // flip a CRC byte
         bytes[L1PRE_BYTES] ^= 0xFF;
         let err = L1Pre::parse_with_crc(&bytes).unwrap_err();
@@ -451,7 +470,7 @@ mod tests {
         // the buffer: parse_with_crc must validate the same CRC regardless of
         // any trailing data after the 25-byte block.
         let pre = synthetic_pre();
-        let mut bytes = pre.serialize_with_crc();
+        let mut bytes = pre.serialize_with_crc().unwrap();
         assert_eq!(bytes.len(), L1PRE_WITH_CRC_BYTES);
         bytes.extend_from_slice(&[0xAA, 0xBB, 0xCC]); // trailing junk after byte 25
         let parsed = L1Pre::parse_with_crc(&bytes).expect("CRC at fixed [21..25] still valid");
@@ -461,6 +480,29 @@ mod tests {
     #[test]
     fn parse_rejects_short_buffer() {
         assert!(L1Pre::parse(&[0u8; 20]).is_err());
+    }
+
+    /// W-T2-3: every field is `pub` and mutable; a caller can set one
+    /// outside its wire bit width (`num_rf` is 3 bits, max 7). `to_bytes`
+    /// must return `Err`, not panic via the old `.expect(...)`.
+    #[test]
+    fn to_bytes_rejects_out_of_range_field_instead_of_panicking() {
+        let mut pre = synthetic_pre();
+        pre.num_rf = 8; // 3-bit field: max value is 7
+        assert!(
+            pre.to_bytes().is_err(),
+            "an out-of-range field must be rejected, not silently serialised or panic"
+        );
+    }
+
+    /// Same bite via `crc32`/`serialize_with_crc`, which both go through
+    /// `to_bytes` internally.
+    #[test]
+    fn crc32_and_serialize_with_crc_propagate_the_same_error() {
+        let mut pre = synthetic_pre();
+        pre.num_rf = 8;
+        assert!(pre.crc32().is_err());
+        assert!(pre.serialize_with_crc().is_err());
     }
 
     #[test]

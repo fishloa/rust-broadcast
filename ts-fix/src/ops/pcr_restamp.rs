@@ -155,7 +155,19 @@ pub(crate) struct PcrRestampOp {
     /// unflagged discontinuity (must NOT be adopted as a "sane" observation)
     /// rather than normal jitter or a legal 33-bit base wrap.
     disc_detector: PcrDiscDetector,
+    /// This op's OWN count of packets it has processed (W-TF-1) — distinct
+    /// from `model.packet_count`, which counts packets at engine entry,
+    /// *before* any earlier op in the canonical pipeline
+    /// (`filter_pids → regen_psi → repair_continuity → restamp_pcr →
+    /// stuffing`) has run. A packet `filter_pids` drops never reaches this
+    /// op, so `model.packet_count` overcounts relative to the position this
+    /// op's output actually occupies; this op's own tally does not.
+    packets_seen: u64,
 }
+
+/// Bits carried in one 188-byte TS packet — the numerator of the
+/// ticks-per-packet rate at a given bitrate (`188 × 8 × 27_000_000 / bps`).
+const TICKS_NUM: u128 = 188 * 8 * 27_000_000;
 
 impl PcrRestampOp {
     pub(crate) fn new(mode: PcrRestamp) -> Self {
@@ -163,17 +175,28 @@ impl PcrRestampOp {
             anchors: BTreeMap::new(),
             mode,
             disc_detector: PcrDiscDetector::new(),
+            packets_seen: 0,
         }
     }
 
-    /// 27 MHz ticks per 188-byte packet at `bps` (min 1).
-    fn ticks_per_packet(bps: u64) -> u64 {
-        let num = 188u64 * 8 * 27_000_000u64;
-        if bps == 0 || bps >= num {
-            1
-        } else {
-            (num / bps).max(1)
+    /// Exact 27 MHz ticks elapsed over `delta` packets at `bps` (W-TF-1):
+    /// `TICKS_NUM * delta / bps`, computed once in `u128` over the whole
+    /// span rather than as `delta` copies of an already-truncated
+    /// per-packet rate (which lost ~200 ppm at 20 Mbit/s and accumulated
+    /// linearly with stream length; ISO/IEC 13818-1 §2.4.2.1 bounds the
+    /// system clock at ±30 ppm). Stays in `u128` — the caller reduces modulo
+    /// [`PCR_27MHZ_MODULUS`] before narrowing back to `u64`.
+    fn exact_ticks_u128(bps: u64, delta: u64) -> u128 {
+        if bps == 0 {
+            return u128::from(delta); // degenerate: 1 tick/packet, same as before
         }
+        TICKS_NUM * u128::from(delta) / u128::from(bps)
+    }
+
+    /// `(anchor + ticks) % PCR_27MHZ_MODULUS`, entirely in `u128` so the add
+    /// itself cannot overflow before the reduction (W-TF-1).
+    fn wrap_add(anchor_27mhz: u64, ticks: u128) -> u64 {
+        ((u128::from(anchor_27mhz) + ticks) % u128::from(PCR_27MHZ_MODULUS)) as u64
     }
 
     /// Read `(pid, pcr, discontinuity)` if this packet carries a PCR.
@@ -190,6 +213,10 @@ impl PcrRestampOp {
 
 impl Op for PcrRestampOp {
     fn process(&mut self, packet: &[u8], model: &mut StreamModel, out: &mut dyn FnMut(&[u8])) {
+        // This op's own packet tally (W-TF-1) — see the field doc on
+        // `packets_seen` for why this, and not `model.packet_count`, is the
+        // right "packets since anchor" clock.
+        self.packets_seen += 1;
         if packet.len() != TS_PACKET_SIZE {
             out(packet);
             return;
@@ -198,7 +225,7 @@ impl Op for PcrRestampOp {
             out(packet);
             return;
         };
-        let now = model.packet_count;
+        let now = self.packets_seen;
 
         // TR 101 290 §5.2.2 indicator 2.3b classifier (#562): feed the
         // ORIGINAL observed PCR through the shared conformance detector on
@@ -248,10 +275,8 @@ impl Op for PcrRestampOp {
         let new_27mhz = match &self.mode {
             PcrRestamp::FromBitrate { bps } => {
                 let delta = now.saturating_sub(anchor.anchor_pkt);
-                anchor
-                    .anchor_27mhz
-                    .wrapping_add(Self::ticks_per_packet(*bps) * delta)
-                    % PCR_27MHZ_MODULUS
+                let ticks = Self::exact_ticks_u128(*bps, delta);
+                Self::wrap_add(anchor.anchor_27mhz, ticks)
             }
             PcrRestamp::Interpolate => {
                 // Derive the rate from the last monotonic observation on this PID.
@@ -286,10 +311,20 @@ impl Op for PcrRestampOp {
                     // Frozen, or a non-monotonic/corrupt observation: recompute
                     // from the anchor using the last known (pre-break) rate.
                     let span_pkt = anchor.last_obs_pkt.saturating_sub(anchor.anchor_pkt).max(1);
-                    let span_ticks = anchor.last_obs_27mhz.saturating_sub(anchor.anchor_27mhz);
-                    let rate = (span_ticks / span_pkt).max(1);
+                    // Modular forward distance (W-TF-1), matching `fwd` above:
+                    // a plain `saturating_sub` collapses to 0 (and the rate to
+                    // 1 tick/packet) if the anchor window happens to span a
+                    // legal 33-bit PCR wrap, since the raw `last_obs_27mhz`
+                    // can be numerically smaller than `anchor_27mhz`.
+                    let span_ticks =
+                        anchor.last_obs_27mhz.wrapping_sub(anchor.anchor_27mhz) % PCR_27MHZ_MODULUS;
                     let delta = now.saturating_sub(anchor.anchor_pkt);
-                    anchor.anchor_27mhz.wrapping_add(rate * delta) % PCR_27MHZ_MODULUS
+                    // Exact rational rate (span_ticks / span_pkt) applied to
+                    // the whole `delta` in one `u128` division, rather than a
+                    // per-packet-truncated rate compounded `delta` times
+                    // (up to ~500 ppm at 20 Mbit/s, growing with span length).
+                    let ticks = (u128::from(span_ticks) * u128::from(delta)) / u128::from(span_pkt);
+                    Self::wrap_add(anchor.anchor_27mhz, ticks)
                 }
             }
         };

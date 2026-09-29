@@ -20,6 +20,22 @@ const SECTION_HEADER_LEN: usize = 3;
 /// the packetiser in `mux.rs`.
 pub(crate) const SECTION_LENGTH_HI_MASK: u8 = 0x0F;
 
+/// Decode the 12-bit `section_length` field from a section's first 3 bytes
+/// (byte 1 bits 3-0 hi, byte 2 lo) and return the section's **total** size:
+/// `section_length + SECTION_HEADER_LEN`, the 3-byte common header plus every
+/// declared byte after it (ISO/IEC 13818-1 §2.4.4.1). Returns `None` if
+/// `bytes` has fewer than `SECTION_HEADER_LEN` bytes.
+///
+/// W14 (#1074): this decode used to be written out separately in four places
+/// (twice in this file, once in `mux.rs`, once in `section.rs`).
+pub(crate) fn section_total_len(bytes: &[u8]) -> Option<usize> {
+    if bytes.len() < SECTION_HEADER_LEN {
+        return None;
+    }
+    let section_length = ((bytes[1] & SECTION_LENGTH_HI_MASK) as usize) << 8 | bytes[2] as usize;
+    Some(SECTION_HEADER_LEN + section_length)
+}
+
 /// 2-bit `transport_scrambling_control` field — ITU-T H.222.0 (08/2023) Table 2-4
 /// (defines only `00` = not scrambled); DVB assigns `01`/`10`/`11` in ETSI TS 100 289
 /// V1.1.1 §5.1 Table 1 (reserved, even CW, odd CW).
@@ -313,6 +329,24 @@ impl broadcast_common::Serialize for TsHeader {
     }
 }
 
+/// Bytes to skip from byte 4 (right after the 4-byte header) to reach the
+/// payload: `0` when there is no adaptation field, else
+/// `1 + adaptation_field_length` (the length byte itself, plus its declared
+/// body) — ISO/IEC 13818-1 §2.4.3.4. Does not itself validate that the
+/// declared length fits `pkt` (`TsPacket::parse` / `extract_ts_payload` do
+/// that with their own bounds checks on the resulting cursor).
+///
+/// W18 (#1074): shared by `TsPacket::parse` and `extract_ts_payload`, which
+/// used to walk this independently with its own `adaptation_field_control`
+/// bit-mask.
+fn adaptation_field_skip(pkt: &[u8], has_adaptation: bool) -> usize {
+    if !has_adaptation || pkt.len() <= 4 {
+        return 0;
+    }
+    let af_len = pkt[4] as usize;
+    1 + af_len
+}
+
 impl<'a> TsPacket<'a> {
     /// Parse a single 188-byte TS packet from a buffer.
     ///
@@ -348,15 +382,28 @@ impl<'a> TsPacket<'a> {
 
         // Capture the adaptation field if present, then skip it (the section
         // path does not need it; decode lazily via `adaptation_field`).
+        //
+        // W6 (#1074): `adaptation_field_length` is only valid up to 183 (the
+        // 183 bytes remaining after the 4-byte header + this length byte,
+        // ISO/IEC 13818-1 §2.4.3.4). An oversized value used to be silently
+        // `.min()`-truncated to a shorter slice here, while
+        // `OwnedTsPacket::adaptation_field` rejected the same bytes as `None`
+        // — two views of one wire format disagreeing on a malformed AF.
+        // Reject (this crate's existing policy in `owned.rs`) rather than
+        // truncate: leave `adaptation` as `None` for an over-long field, same
+        // as `OwnedTsPacket`.
         if header.has_adaptation && cursor < TS_PACKET_SIZE {
             let af_len = raw[cursor] as usize;
             let af_start = cursor + 1;
-            if af_len > 0 && af_start < TS_PACKET_SIZE {
-                let af_end = (af_start + af_len).min(TS_PACKET_SIZE);
-                adaptation = Some(&raw[af_start..af_end]);
+            if af_len > 0 && af_start < TS_PACKET_SIZE && af_start + af_len <= TS_PACKET_SIZE {
+                adaptation = Some(&raw[af_start..af_start + af_len]);
             }
-            cursor += 1 + af_len;
         }
+        // W18 (#1074): shared with `extract_ts_payload`, which used to
+        // re-derive this same "skip past the adaptation field" walk from
+        // scratch (with its own `adaptation_field_control` bit-mask) instead
+        // of reusing this one.
+        cursor += adaptation_field_skip(raw, header.has_adaptation);
 
         if header.has_payload && cursor < TS_PACKET_SIZE {
             payload = Some(&raw[cursor..]);
@@ -508,6 +555,17 @@ pub struct SeamlessSplice {
     pub dts_next_au: u64,
 }
 
+// W15 (#1074): named flag/mask bits for the adaptation-field extension's
+// flags byte and its LTW/piecewise-rate sub-fields (ISO/IEC 13818-1 §2.4.3.5).
+const AFE_LTW_FLAG: u8 = 0x80;
+const AFE_PIECEWISE_RATE_FLAG: u8 = 0x40;
+const AFE_SEAMLESS_SPLICE_FLAG: u8 = 0x20;
+/// `ltw_valid_flag` (1 bit) + `ltw_offset` high 7 bits share byte 0 of the LTW field.
+const LTW_OFFSET_HI_MASK: u8 = 0x7F;
+/// 2 reserved bits (set to `1` on serialize) + `piecewise_rate` high 6 bits.
+const PIECEWISE_RATE_HI_MASK: u8 = 0x3F;
+const PIECEWISE_RATE_RESERVED_BITS: u8 = 0xC0;
+
 /// Adaptation-field extension (ISO/IEC 13818-1:2007 §2.4.3.5,
 /// `adaptation_field_extension_flag == 1`).
 ///
@@ -548,7 +606,7 @@ impl AdaptationFieldExtension {
         let flags = ext[0];
         let mut cursor = 1usize;
 
-        let ltw = if flags & 0x80 != 0 {
+        let ltw = if flags & AFE_LTW_FLAG != 0 {
             if ext.len() < cursor + 2 {
                 return Err(Error::BufferTooShort {
                     need: cursor + 2,
@@ -560,14 +618,14 @@ impl AdaptationFieldExtension {
             let w1 = ext[cursor + 1];
             cursor += 2;
             Some(Ltw {
-                ltw_valid_flag: (w0 & 0x80) != 0,
-                ltw_offset: (((w0 & 0x7F) as u16) << 8) | (w1 as u16),
+                ltw_valid_flag: (w0 & AFE_LTW_FLAG) != 0,
+                ltw_offset: (((w0 & LTW_OFFSET_HI_MASK) as u16) << 8) | (w1 as u16),
             })
         } else {
             None
         };
 
-        let piecewise_rate = if flags & 0x40 != 0 {
+        let piecewise_rate = if flags & AFE_PIECEWISE_RATE_FLAG != 0 {
             if ext.len() < cursor + 3 {
                 return Err(Error::BufferTooShort {
                     need: cursor + 3,
@@ -575,7 +633,7 @@ impl AdaptationFieldExtension {
                     what: "piecewise_rate",
                 });
             }
-            let r = (((ext[cursor] & 0x3F) as u32) << 16)
+            let r = (((ext[cursor] & PIECEWISE_RATE_HI_MASK) as u32) << 16)
                 | ((ext[cursor + 1] as u32) << 8)
                 | (ext[cursor + 2] as u32);
             cursor += 3;
@@ -585,7 +643,7 @@ impl AdaptationFieldExtension {
         };
 
         // seamless_splice: 5 bytes with splice_type(4) + DTS_next_AU in PTS-field encoding
-        let seamless_splice = if flags & 0x20 != 0 {
+        let seamless_splice = if flags & AFE_SEAMLESS_SPLICE_FLAG != 0 {
             if ext.len() < cursor + 5 {
                 return Err(Error::BufferTooShort {
                     need: cursor + 5,
@@ -642,26 +700,31 @@ impl AdaptationFieldExtension {
 
         let mut flags = 0u8;
         if self.ltw.is_some() {
-            flags |= 0x80;
+            flags |= AFE_LTW_FLAG;
         }
         if self.piecewise_rate.is_some() {
-            flags |= 0x40;
+            flags |= AFE_PIECEWISE_RATE_FLAG;
         }
         if self.seamless_splice.is_some() {
-            flags |= 0x20;
+            flags |= AFE_SEAMLESS_SPLICE_FLAG;
         }
         buf[1] = flags;
         let mut cursor = 2usize;
 
         if let Some(ltw) = self.ltw {
-            let ltw_valid = if ltw.ltw_valid_flag { 0x80u8 } else { 0x00 };
-            buf[cursor] = ltw_valid | ((ltw.ltw_offset >> 8) as u8 & 0x7F);
+            let ltw_valid = if ltw.ltw_valid_flag {
+                AFE_LTW_FLAG
+            } else {
+                0x00
+            };
+            buf[cursor] = ltw_valid | ((ltw.ltw_offset >> 8) as u8 & LTW_OFFSET_HI_MASK);
             buf[cursor + 1] = (ltw.ltw_offset & 0xFF) as u8;
             cursor += 2;
         }
         if let Some(rate) = self.piecewise_rate {
             // 2 reserved bits (set to 1) | 22-bit rate (ISO/IEC 13818-1 §2.4.3.5).
-            buf[cursor] = 0xC0 | ((rate >> 16) as u8 & 0x3F);
+            buf[cursor] =
+                PIECEWISE_RATE_RESERVED_BITS | ((rate >> 16) as u8 & PIECEWISE_RATE_HI_MASK);
             buf[cursor + 1] = (rate >> 8) as u8;
             buf[cursor + 2] = rate as u8;
             cursor += 3;
@@ -1007,10 +1070,7 @@ impl SectionReassembler {
             // the 12-bit `section_length` caps a section at `MAX_SECTION_SIZE`,
             // `take` is inherently bounded and the buffer cannot grow without
             // limit.
-            let take = if self.buf.len() >= SECTION_HEADER_LEN {
-                let exp = SECTION_HEADER_LEN
-                    + (((self.buf[1] & SECTION_LENGTH_HI_MASK) as usize) << 8
-                        | self.buf[2] as usize);
+            let take = if let Some(exp) = section_total_len(&self.buf) {
                 exp.saturating_sub(self.buf.len()).min(payload.len())
             } else {
                 // Header not yet complete (split across the packet boundary) —
@@ -1046,8 +1106,8 @@ impl SectionReassembler {
                 self.buf.clear();
                 break;
             }
-            let exp = SECTION_HEADER_LEN
-                + (((self.buf[1] & SECTION_LENGTH_HI_MASK) as usize) << 8 | self.buf[2] as usize);
+            let exp =
+                section_total_len(&self.buf).expect("checked len >= SECTION_HEADER_LEN above");
             if self.buf.len() >= exp {
                 // split_to returns the first `exp` bytes as an owned BytesMut,
                 // leaving the remainder in self.buf — cheap (shifts pointers).
@@ -1111,26 +1171,15 @@ pub fn extract_ts_payload(pkt: &[u8]) -> Option<&[u8]> {
     if pkt.len() < 4 {
         return None;
     }
-    let afc = (pkt[3] >> 4) & 0x3;
-    match afc {
-        0x1 => {
-            // payload only: payload starts at byte 4
-            if pkt.len() > 4 { Some(&pkt[4..]) } else { None }
-        }
-        0x3 => {
-            // adaptation field + payload
-            if pkt.len() < 5 {
-                return None;
-            }
-            let af_len = pkt[4] as usize;
-            let start = 5 + af_len;
-            if start < pkt.len() {
-                Some(&pkt[start..])
-            } else {
-                None
-            }
-        }
-        _ => None,
+    let header = TsHeader::parse(&pkt[..4]).ok()?;
+    if !header.has_payload {
+        return None;
+    }
+    let cursor = 4 + adaptation_field_skip(pkt, header.has_adaptation);
+    if cursor < pkt.len() {
+        Some(&pkt[cursor..])
+    } else {
+        None
     }
 }
 
@@ -1672,6 +1721,32 @@ mod tests {
         let payload = pkt.payload.expect("payload present");
         assert_eq!(payload.len(), TS_PACKET_SIZE - 12);
         assert_eq!(payload[0], 0xAA);
+    }
+
+    #[test]
+    fn oversized_adaptation_field_length_is_rejected_not_truncated() {
+        // W6 (#1074): `adaptation_field_length` (raw[4]) can only be 0..=183
+        // (5 + af_len <= 188). 200 doesn't fit; pre-fix, `TsPacket::parse`
+        // `.min()`-truncated the slice to whatever bytes remained instead of
+        // rejecting it, disagreeing with `OwnedTsPacket::adaptation_field`
+        // (which already returned `None` for the same bytes).
+        let mut raw = [0xAAu8; TS_PACKET_SIZE];
+        raw[0] = TS_SYNC_BYTE;
+        raw[1] = 0x01;
+        raw[2] = 0x00;
+        raw[3] = ADAPTATION_FLAG; // no payload flag: has_payload = false
+        raw[4] = 200; // adaptation_field_length: does not fit in 188 bytes
+
+        let pkt = TsPacket::parse(&raw).expect("header + af_len byte still parse");
+        assert!(
+            pkt.adaptation_field().is_none(),
+            "an over-long adaptation field must be rejected, not truncated"
+        );
+        assert!(pkt.payload.is_none());
+
+        // Cross-check against the owned view, which already rejected this.
+        let owned = crate::owned::OwnedTsPacket::parse(raw).unwrap();
+        assert!(owned.adaptation_field().is_none());
     }
 
     #[test]

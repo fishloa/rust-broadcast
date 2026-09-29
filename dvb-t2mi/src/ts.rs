@@ -17,7 +17,69 @@ pub struct PacketReassembler {
 }
 
 /// Total bytes in a T2-MI header.
-const HEADER_LEN: usize = 6;
+pub(crate) const HEADER_LEN: usize = 6;
+
+/// Given at least [`HEADER_LEN`] bytes at the start of `header`, the total
+/// packet length (header + payload + CRC-32 trailer) implied by its
+/// `payload_len_bits` field (bytes 4-5, big-endian, §5.1). `None` if
+/// `header` is shorter than [`HEADER_LEN`].
+///
+/// Shared by [`PacketReassembler::try_extract_packets`] (trusts the
+/// currently-synced framing) and the raw-mode resync scan in `pump.rs`
+/// (tries this at every candidate offset while hunting for realignment) —
+/// one implementation of "how long does this header say the packet is",
+/// not two (#1095, W-T2-1).
+pub(crate) fn implied_packet_len(header: &[u8]) -> Option<usize> {
+    if header.len() < HEADER_LEN {
+        return None;
+    }
+    let payload_len_bits = ((header[4] as u16) << 8) | (header[5] as u16);
+    let payload_len_bytes = payload_len_bits.div_ceil(8) as usize;
+    Some(HEADER_LEN + payload_len_bytes + CRC_LEN)
+}
+
+/// Cheap structural plausibility test for a T2-MI header (ETSI TS 102 773
+/// §5.1): byte 0 is an allocated `packet_type` (Table 1), and the two RFU
+/// fields — byte 2 bit 3 and byte 3 — are zero. Used by the raw-mode resync
+/// scan in `pump.rs` to reject the vast majority of false candidate offsets
+/// in O(1) before the expensive CRC-32 is attempted, so scanning garbage
+/// does not degrade to one full CRC per candidate offset (#1095, W-T2-1).
+pub(crate) fn header_plausible(header: &[u8]) -> bool {
+    if header.len() < HEADER_LEN {
+        return false;
+    }
+    // Allocated packet types: 0x00-0x02, 0x10-0x12, 0x20-0x21, 0x30-0x33
+    // (ETSI TS 102 773 Table 1 — same set as `packet::PacketType`).
+    let packet_type_ok = matches!(
+        header[0],
+        0x00..=0x02 | 0x10..=0x12 | 0x20 | 0x21 | 0x30..=0x33
+    );
+    packet_type_ok && (header[2] & 0x08 == 0) && header[3] == 0
+}
+
+/// Like [`header_plausible`], but legal for a tail holding fewer than
+/// [`HEADER_LEN`] bytes: checks only the fields such a prefix actually
+/// contains — byte 0's allocated `packet_type`, and, when present, byte 2
+/// bit 3 and byte 3, the RFU fields `packet::Header::parse` itself rejects
+/// when non-zero (ETSI TS 102 773 §5.1). Used by the raw-mode straddle scan
+/// in `pump.rs` to judge the last bytes of a truncated hunt buffer without
+/// inventing the `payload_len_bits` they cannot contain: with fewer bytes
+/// remaining than the smallest possible complete packet, a plausible prefix
+/// has no alternative reading (#1095, W-T2-1).
+pub(crate) fn partial_header_plausible(header: &[u8]) -> bool {
+    let Some((first, rest)) = header.split_first() else {
+        return false;
+    };
+    // Allocated packet types: 0x00-0x02, 0x10-0x12, 0x20-0x21, 0x30-0x33
+    // (ETSI TS 102 773 Table 1 — same set as `packet::PacketType`).
+    let packet_type_ok = matches!(
+        first,
+        0x00u8..=0x02 | 0x10..=0x12 | 0x20 | 0x21 | 0x30..=0x33
+    );
+    let rfu_byte2_ok = rest.get(2).is_none_or(|b| b & 0x08 == 0);
+    let rfu_byte3_ok = rest.get(3).is_none_or(|b| *b == 0);
+    packet_type_ok && rfu_byte2_ok && rfu_byte3_ok
+}
 
 impl PacketReassembler {
     /// Create a new empty reassembler.
@@ -85,17 +147,7 @@ impl PacketReassembler {
 
     /// Attempt to extract one or more complete T2-MI packets from buf.
     fn try_extract_packets(&mut self) {
-        loop {
-            // Need at least header bytes to determine packet size
-            if self.buf.len() < HEADER_LEN {
-                break;
-            }
-
-            // Parse payload_len_bits from header (bytes 4-5, big-endian)
-            let payload_len_bits = ((self.buf[4] as u16) << 8) | (self.buf[5] as u16);
-            let payload_len_bytes = payload_len_bits.div_ceil(8);
-            let total_packet_len = HEADER_LEN + payload_len_bytes as usize + CRC_LEN;
-
+        while let Some(total_packet_len) = implied_packet_len(&self.buf) {
             if self.buf.len() < total_packet_len {
                 break;
             }
@@ -114,6 +166,30 @@ impl PacketReassembler {
     /// Drain all pending packets.
     pub fn drain_packets(&mut self) -> impl Iterator<Item = bytes::Bytes> + '_ {
         self.pending.drain(..)
+    }
+
+    /// Take (clear) whatever bytes are currently buffered for the
+    /// in-progress packet, without touching `synced`/`pending`.
+    ///
+    /// Used by raw-mode resync (`pump.rs`, #1095 W-T2-1): after a CRC
+    /// failure whose header-implied length may itself have been corrupted,
+    /// these bytes might actually belong to the *real* next packet rather
+    /// than a fresh one, so they must be folded into the resync scan instead
+    /// of being silently retained under a framing position that is no
+    /// longer trusted.
+    pub(crate) fn take_buffered(&mut self) -> bytes::Bytes {
+        self.buf.split().freeze()
+    }
+
+    /// Discard whatever bytes are currently buffered for the in-progress
+    /// packet, without touching `synced`/`pending`.
+    ///
+    /// Used by raw-mode resync (`pump.rs`, #1095 W-T2-1): the resync scan
+    /// owns its own ordered copy of the stream, so after `take_buffered`
+    /// the stale framing-relative partial must not linger in the
+    /// reassembler, where a later PUSI would splice new bytes onto it.
+    pub(crate) fn drop_buffered(&mut self) {
+        self.buf.clear();
     }
 }
 

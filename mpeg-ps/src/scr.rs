@@ -73,6 +73,16 @@ pub(crate) fn read_scr_field(b: &[u8], what: &'static str) -> Result<Scr> {
     let b4 = b[4];
     let b5 = b[5];
 
+    // W4 (#1119): distinguish the ISO/IEC 11172-1 (MPEG-1) `'0010'` pack
+    // prefix — a real, different (12-byte, no SCR-extension) layout this
+    // crate does not implement — from bytes that are neither a valid
+    // MPEG-1 nor MPEG-2 pack header. Previously both cases returned the
+    // same `BadScrPrefix`, so a conformant plain-MPEG-1 `.mpg` (VCD etc.)
+    // looked identical to actual corruption despite this crate's docs
+    // claiming "MPEG-1/2 Program Stream" support.
+    if (b0 >> 4) == 0b0010 {
+        return Err(Error::Mpeg1NotSupported);
+    }
     // Check '01' prefix
     if (b0 >> 6) != 0b01 {
         return Err(Error::BadScrPrefix(b0 >> 6));
@@ -202,6 +212,23 @@ mod tests {
         assert!(matches!(
             read_scr_field(&enc, "SCR"),
             Err(Error::BadScrPrefix(_))
+        ));
+    }
+
+    /// W4 (#1119): a real ISO/IEC 11172-1 (MPEG-1) pack prefix (`'0010'`,
+    /// top 4 bits of byte 0) must be reported distinctly from actual
+    /// corruption, not folded into the same `BadScrPrefix` a genuinely
+    /// invalid byte gets.
+    #[test]
+    fn scr_reports_mpeg1_prefix_distinctly_from_corruption() {
+        let mut enc = write_scr_field(Scr {
+            base: 0,
+            extension: 0,
+        });
+        enc[0] = (enc[0] & 0x0F) | 0x20; // top 4 bits '0010' (MPEG-1 prefix)
+        assert!(matches!(
+            read_scr_field(&enc, "SCR"),
+            Err(Error::Mpeg1NotSupported)
         ));
     }
 

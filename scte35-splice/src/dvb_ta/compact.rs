@@ -15,12 +15,20 @@
 //!
 //! # Bit-width sourcing
 //!
-//! The PDF render of Tables 6 and 8 is vertically mis-registered; this module
-//! implements the **reconstructed ("likely") widths** the transcription cross-
-//! checks against §5.3.5.11 and the `DVB_DAS_descriptor()` (Table 1):
-//! `unique_program_id` is 16-bit, `avail_num`/`avails_expected` 8-bit,
-//! `DAS_descriptor_flag` 1-bit, `equivalent_segmentation_type` 4-bit, and
-//! `E_CRC_32` a 32-bit CRC. See `docs/dvb_ta/compact-scte35.md`.
+//! > **Not independently verified.** The PDF render of Tables 6 and 8 is
+//! > vertically mis-registered; this module implements the **reconstructed
+//! > ("likely") widths** the transcription cross-checks against §5.3.5.11 and
+//! > the `DVB_DAS_descriptor()` (Table 1):
+//! > `unique_program_id` is 16-bit, `avail_num`/`avails_expected` 8-bit,
+//! > `DAS_descriptor_flag` 1-bit, `equivalent_segmentation_type` 4-bit, and
+//! > `E_CRC_32` a 32-bit CRC — see `docs/dvb_ta/compact-scte35.md` for the full
+//! > reasoning. No real DVB TA compact-watermark capture or authoritative
+//! > erratum has been obtained to confirm these against; every test in this
+//! > module is hand-built bytes, not an independent oracle (#1102 W5). If any
+//! > reconstructed width is wrong, every compact message this module parses
+//! > is silently misdecoded (`Ok`, wrong field values) rather than rejected.
+//! > Treat [`CompactSpliceInsert`] in particular (Table 8, the more
+//! > mis-registered of the two) as unconfirmed until a real vector surfaces.
 
 use alloc::vec::Vec;
 

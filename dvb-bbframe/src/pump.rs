@@ -12,6 +12,7 @@
 //! data-field bytes (`df_bytes` = BBHEADER + data field, as
 //! `dvb_t2mi::AnyPayload::Bbframe`'s `bbframe` field yields).
 
+use alloc::boxed::Box;
 use alloc::vec::Vec;
 
 use crate::header::{BBHEADER_LEN, Bbheader, Mode, TsGs};
@@ -62,7 +63,8 @@ pub struct BbframePumpStats {
 pub struct BbframePump {
     /// Per-PLP extractors, indexed by `plp_id`.  A `None` entry means that PLP
     /// has not been seen yet (lazily created on first `feed`).
-    extractors: [Option<CarryOverExtractor>; MAX_PLPS],
+    /// Stored in a `Box` to avoid 59 KB of stack usage (W-BB-3).
+    extractors: Box<[Option<CarryOverExtractor>; MAX_PLPS]>,
     /// Output buffer — cleared per `feed` call.
     out: Vec<[u8; NM_UP_SIZE]>,
     /// Per-PLP temporary buffer reused across frames.
@@ -76,7 +78,7 @@ impl BbframePump {
     #[must_use]
     pub fn new() -> Self {
         Self {
-            extractors: core::array::from_fn(|_| None),
+            extractors: Box::new(core::array::from_fn(|_| None)),
             out: Vec::new(),
             up_buf: Vec::new(),
             stats: BbframePumpStats::default(),
@@ -225,7 +227,10 @@ mod tests {
         };
         let mut frame = hdr.serialize().to_vec();
         let mut data = [0u8; TS_LEN];
-        data[0] = crc8(&[0u8; TS_LEN]);
+        // For NM, the first byte is the CRC-8 of the data bytes 1..188
+        // (the previous packet's trailer, EN 302 755 §5.1.6/§5.1.8 figure 5).
+        // Compute the CRC-8 of inner[1..188] to create a valid chain.
+        data[0] = crc8(&inner[1..]);
         data[1..].copy_from_slice(&inner[1..]);
         frame.extend_from_slice(&data);
         frame

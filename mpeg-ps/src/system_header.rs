@@ -17,7 +17,7 @@ pub const SYSTEM_HEADER_START_CODE: u32 = 0x0000_01BB;
 const EXT_STREAM_ID: u8 = 0xB7;
 
 /// Fixed bytes before the stream loop: start_code(4) + header_length(2).
-const PREFIX_LEN: usize = 6;
+pub(crate) const PREFIX_LEN: usize = 6;
 
 /// A per-stream P-STD buffer bound entry.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -146,7 +146,11 @@ impl<'a> Parse<'a> for SystemHeader {
         // byte 4: system_audio_lock_flag(1) | system_video_lock_flag(1) | marker(1) | video_bound[4:0](5)
         let system_audio_lock_flag = body[4] & 0x80 != 0;
         let system_video_lock_flag = body[4] & 0x40 != 0;
-        let video_bound = body[4] & 0x0F;
+        // W1 (#1119): `video_bound` is the low 5 bits of byte 4, not 4 —
+        // `& 0x0F` dropped bit 4, so `video_bound` in 16..=31 round-tripped
+        // to `video_bound - 16` (serialize already used the correct `0x1F`,
+        // Table 2-40).
+        let video_bound = body[4] & 0x1F;
 
         // byte 5: packet_rate_restriction_flag(1) | reserved(7)
         let packet_rate_restriction_flag = body[5] & 0x80 != 0;
@@ -345,6 +349,37 @@ mod tests {
 
         let h2 = SystemHeader::parse(&out).unwrap();
         assert_eq!(h, h2);
+    }
+
+    /// W1 (#1119): `video_bound` (byte 4 bits `[4:0]`, Table 2-40) was
+    /// masked with `0x0F` (4 bits) on parse but `0x1F` (5 bits) on
+    /// serialize. `video_bound` in `16..=31` sets bit 4, which the old
+    /// parse dropped — `video_bound - 16` came back instead.
+    #[test]
+    fn video_bound_bit_4_round_trips() {
+        let bytes = vec![
+            0x00,
+            0x00,
+            0x01,
+            0xBB, // start_code
+            0x00,
+            0x06, // header_length = 6
+            0x80,
+            0x00,
+            0x01,        // rate_bound=0, markers
+            0x04,        // audio_bound=1, fixed=0, CSPS=0
+            0x20 | 0x1F, // audio_lock=0, video_lock=0, marker=1, video_bound=31 (bit 4 set)
+            0xFF,
+        ];
+        let h = SystemHeader::parse(&bytes).unwrap();
+        assert_eq!(
+            h.video_bound, 31,
+            "bit 4 of video_bound must not be dropped"
+        );
+
+        let mut out = vec![0u8; h.serialized_len()];
+        h.serialize_into(&mut out).unwrap();
+        assert_eq!(&out[..], &bytes[..]);
     }
 
     #[test]
