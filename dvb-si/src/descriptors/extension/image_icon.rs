@@ -1,6 +1,17 @@
 //! Image Icon Descriptor — ETSI EN 300 468 §6.4.7 (tag_extension 0x00).
 use super::*;
 
+/// `descriptor_number(4)`/`last_descriptor_number(4)` raw field mask —
+/// masked at the shift so a wide value cannot bleed across the nibble
+/// boundary (r03-W2).
+const DESCRIPTOR_NUMBER_MASK: u8 = 0x0F;
+/// `icon_id(3)` raw field mask (Table 145).
+const ICON_ID_MASK: u8 = 0x07;
+/// `icon_transport_mode(2)` value mask — bounds `IconTransportMode::Reserved(v)`.
+const TRANSPORT_MODE_VALUE_MASK: u8 = 0x03;
+/// `coordinate_system(3)` raw field mask (Table 147).
+const COORDINATE_SYSTEM_MASK: u8 = 0x07;
+
 /// Icon transport mode — ETSI EN 300 468 §6.4.8 Table 146
 /// (`dvb-si/docs/enums/en_300_468/146-icon-transport-mode-coding.md`).
 ///
@@ -329,20 +340,21 @@ impl Serialize for ImageIcon<'_> {
             });
         }
         // byte0: descriptor_number(4) | last_descriptor_number(4)
-        buf[0] = (self.descriptor_number << 4) | (self.last_descriptor_number & 0x0F);
+        buf[0] = ((self.descriptor_number & DESCRIPTOR_NUMBER_MASK) << 4)
+            | (self.last_descriptor_number & DESCRIPTOR_NUMBER_MASK);
         // byte1: reserved_future_use(5)=1 | icon_id(3)
-        buf[1] = 0xF8 | (self.icon_id & 0x07);
+        buf[1] = 0xF8 | (self.icon_id & ICON_ID_MASK);
         let mut p = 2;
         match &self.body {
             ImageIconBody::First(f) => {
                 // Packed byte: icon_transport_mode(2) | position_flag(1) | ...
                 let position_flag = u8::from(f.position.is_some());
-                let itm = f.icon_transport_mode.to_u8() & 0x03;
+                let itm = f.icon_transport_mode.to_u8() & TRANSPORT_MODE_VALUE_MASK;
                 if let Some(pos) = &f.position {
                     // ... | coordinate_system(3) | reserved_future_use(2)=1
                     buf[p] = (itm << 6)
                         | (position_flag << 5)
-                        | ((pos.coordinate_system & 0x07) << 2)
+                        | ((pos.coordinate_system & COORDINATE_SYSTEM_MASK) << 2)
                         | 0x03;
                     p += 1;
                     // 3 origin bytes: 12+12 bits packed

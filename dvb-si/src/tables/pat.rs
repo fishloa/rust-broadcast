@@ -68,17 +68,17 @@ impl<'a> Parse<'a> for PatSection {
             });
         }
 
-        let section_length = ((bytes[1] & 0x0F) as u16) << 8 | bytes[2] as u16;
+        let section_length = super::section_length_of(bytes);
         let total = super::check_section_length(
             bytes.len(),
             MIN_HEADER_LEN,
-            section_length as usize,
+            section_length,
             MIN_SECTION_LEN,
         )?;
 
         let transport_stream_id = u16::from_be_bytes(*bytes[3..].first_chunk::<2>().unwrap());
-        let version_number = (bytes[5] >> 1) & 0x1F;
-        let current_next_indicator = (bytes[5] & 0x01) != 0;
+        let version_number = super::version_number_of(bytes[5]);
+        let current_next_indicator = super::current_next_of(bytes[5]);
         let section_number = bytes[6];
         let last_section_number = bytes[7];
 
@@ -95,7 +95,7 @@ impl<'a> Parse<'a> for PatSection {
             }
             let chunk = &bytes[pos..pos + ENTRY_LEN];
             let program_number = u16::from_be_bytes(*chunk.first_chunk::<2>().unwrap());
-            let pid = (((chunk[2] & 0x1F) as u16) << 8) | chunk[3] as u16;
+            let pid = super::pid_of(chunk[2], chunk[3]);
             entries.push(PatEntry {
                 program_number,
                 pid,
@@ -135,15 +135,14 @@ impl Serialize for PatSection {
         buf[1] = super::SECTION_B1_FLAGS_PSI;
         super::write_section_length(buf, section_length)?;
         buf[3..5].copy_from_slice(&self.transport_stream_id.to_be_bytes());
-        buf[5] = 0xC0 | ((self.version_number & 0x1F) << 1) | u8::from(self.current_next_indicator);
+        buf[5] = super::version_byte(self.version_number, self.current_next_indicator);
         buf[6] = self.section_number;
         buf[7] = self.last_section_number;
 
         let mut pos = 8;
         for entry in &self.entries {
             buf[pos..pos + 2].copy_from_slice(&entry.program_number.to_be_bytes());
-            buf[pos + 2] = 0xE0 | ((entry.pid >> 8) as u8 & 0x1F);
-            buf[pos + 3] = (entry.pid & 0xFF) as u8;
+            super::write_pid(&mut buf[pos + 2..pos + 4], entry.pid);
             pos += ENTRY_LEN;
         }
 
@@ -182,20 +181,23 @@ mod tests {
 
     /// Build a PAT section with the given entries and a placeholder CRC.
     fn build_pat(tsid: u16, version: u8, entries: &[(u16, u16)]) -> Vec<u8> {
-        let section_length: u16 =
-            (EXTENSION_HEADER_LEN + entries.len() * ENTRY_LEN + CRC_LEN) as u16;
+        let section_length: usize = EXTENSION_HEADER_LEN + entries.len() * ENTRY_LEN + CRC_LEN;
         let mut v = Vec::new();
         v.push(TABLE_ID);
-        v.push(super::super::SECTION_B1_FLAGS_PSI | ((section_length >> 8) as u8 & 0x0F));
-        v.push((section_length & 0xFF) as u8);
+        crate::tables::push_section_header(
+            &mut v,
+            crate::tables::SECTION_B1_FLAGS_PSI,
+            section_length,
+        );
         v.extend_from_slice(&tsid.to_be_bytes());
-        v.push(0xC0 | ((version & 0x1F) << 1) | 0x01); // version, cni=1
+        v.push(crate::tables::version_byte(version, true));
         v.push(0x00); // section_number
         v.push(0x00); // last_section_number
         for &(pn, pid) in entries {
             v.extend_from_slice(&pn.to_be_bytes());
-            v.push(0xE0 | ((pid >> 8) as u8 & 0x1F));
-            v.push((pid & 0xFF) as u8);
+            let mut pid_bytes = [0u8; 2];
+            crate::tables::write_pid(&mut pid_bytes, pid);
+            v.extend_from_slice(&pid_bytes);
         }
         v.extend_from_slice(&[0, 0, 0, 0]); // placeholder CRC
         v

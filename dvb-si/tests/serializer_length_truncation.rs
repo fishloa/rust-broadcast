@@ -105,3 +105,108 @@ fn no_unchecked_len_narrowing_in_descriptor_serializers() {
         problems.join("\n")
     );
 }
+
+/// The shared section-header masks moved to `tables/mod.rs` by r02-W16: the
+/// `reserved(2)='11'`, `reserved(4)='1111'`, `reserved(3)='111'` fills and
+/// the 12-bit `section_length` cap used to be bare literals in every table
+/// parser and serializer (`0xC0`, `0xF0`, `0xE0`, `0x0F`, `0x0FFF`).
+///
+/// Named field tags and enum discriminants are legitimate hex literals, so
+/// this is a curated per-file allowance rather than a blanket ban — the point
+/// is that a *new* mask literal cannot be introduced unnoticed.
+/// Table-id byte values, enum discriminants, and static-type tags: legitimate
+/// hex literals that are not section-header masks.
+const ALLOWED_HEX_OUTSIDE_TESTS: &[(&str, &[&str])] = &[
+    (
+        "src/tables/pmt.rs",
+        &["0x07", "0x0F", "0x10", "0x1F", "0x80"],
+    ),
+    ("src/tables/ait.rs", &["0x07", "0x80", "0x8000"]),
+    ("src/tables/dsmcc.rs", &["0x3A", "0x3F"]),
+    ("src/tables/mpe.rs", &["0x3E", "0x3F"]),
+    ("src/tables/rct.rs", &["0x30", "0x3F"]),
+    ("src/tables/rnt.rs", &["0x80"]),
+    ("src/tables/unt.rs", &["0x01", "0x02", "0x80"]),
+    ("src/tables/any.rs", &["0x3A", "0x3F"]),
+    // 12-bit field maxima (`SECTION_LENGTH_MAX`), not masks: the shared
+    // value is named in `tables/mod.rs` but these modules re-derive a local
+    // bound for their own error context.
+    ("src/tables/sat.rs", &["0x0FFF"]),
+    ("src/tables/sit.rs", &["0x0FFF"]),
+    ("src/tables/protection_message.rs", &["0x0FFF"]),
+    ("src/tables/real_time_parameters.rs", &["0x0FFF"]),
+];
+
+/// Whole files whose remaining hex literals are *already* named, documented
+/// per-field constants (or a `Reserved(v)` decode mask) for a field with no
+/// shared counterpart. Banning the literal there would not add a name — the
+/// name is on the line above it — so these are exempt from the mask scan and
+/// only from it.
+const LOCAL_CONSTANT_ALLOWLIST: &[&str] = &[
+    "src/tables/rct.rs",
+    "src/tables/downloadable_font_info.rs",
+    "src/tables/protection_message.rs",
+    "src/tables/sat.rs",
+    "src/tables/rnt.rs",
+];
+
+/// Hex literals that look like a section-header bit mask.
+fn is_mask_literal(token: &str) -> bool {
+    matches!(token, "0xC0" | "0xF0" | "0xE0" | "0x0F" | "0x1F" | "0x3F")
+}
+
+#[test]
+fn no_section_header_mask_literals_outside_tables_mod() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/tables");
+    let mut files = Vec::new();
+    read_rs(&root, &mut files);
+
+    let mut problems: Vec<String> = Vec::new();
+    let mut scanned = 0usize;
+
+    for (path, body) in &files {
+        let rel = path
+            .strip_prefix(env!("CARGO_MANIFEST_DIR"))
+            .unwrap_or(path)
+            .display()
+            .to_string();
+        if rel.ends_with("tables/mod.rs") {
+            continue;
+        }
+        scanned += 1;
+        let production_end = test_module_start(body).unwrap_or(body.len());
+        let production = &body[..production_end];
+        if LOCAL_CONSTANT_ALLOWLIST.contains(&rel.as_str()) {
+            continue;
+        }
+        let allowed = ALLOWED_HEX_OUTSIDE_TESTS
+            .iter()
+            .find(|(f, _)| *f == rel)
+            .map_or(&[][..], |(_, a)| *a);
+
+        for (i, line) in production.lines().enumerate() {
+            let code = line.split("//").next().unwrap_or("");
+            for token in code.split(|c: char| !(c.is_ascii_alphanumeric() || c == 'x' || c == 'X'))
+            {
+                if is_mask_literal(token) && !allowed.contains(&token) {
+                    problems.push(format!(
+                        "{rel}:{}: bare mask literal `{token}` — use the named constant in tables/mod.rs (r02-W16): {}",
+                        i + 1,
+                        line.trim()
+                    ));
+                }
+            }
+        }
+    }
+
+    assert!(
+        scanned > 20,
+        "scan found only {scanned} table files — walk broken?"
+    );
+    assert!(
+        problems.is_empty(),
+        "found {} bare mask literal(s):\n{}",
+        problems.len(),
+        problems.join("\n")
+    );
+}

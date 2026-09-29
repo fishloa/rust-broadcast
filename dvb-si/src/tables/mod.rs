@@ -198,11 +198,206 @@ pub(crate) fn write_section_length(buf: &mut [u8], body_len: usize) -> crate::Re
     Ok(())
 }
 
+// ── Shared section-header bit fields (r02-W16) ──────────────────────────────
+//
+// The same masks recurred as bare literals in every table parser and
+// serializer (`bytes[1] & 0x0F`, `0xC0 | ((ver & 0x1F) << 1) | cni`,
+// `0xE0 | (pid >> 8)`, `0xF0 | (len >> 8)`). They live here once now, with
+// the same "route every write through the helper so the guard cannot be
+// forgotten" rationale as [`write_section_length`] (#1129).
+
+/// Low 4 bits of long-form section byte 1: the high nibble of the 12-bit
+/// `section_length`.
+pub(crate) const SECTION_LENGTH_HI_MASK: u8 = 0x0F;
+
+/// `reserved(2) = '11'` fill in the extension-header flags byte (byte 5):
+/// bits `[7:6]` (ISO/IEC 13818-1 §2.4.4.10, ETSI EN 300 468 §5.1.1).
+pub(crate) const B5_RESERVED_HI: u8 = 0xC0;
+
+/// `version_number` field mask in the extension-header flags byte (byte 5):
+/// bits `[5:1]`.
+pub(crate) const B5_VERSION_MASK: u8 = 0x1F;
+
+/// `current_next_indicator` bit in the extension-header flags byte (byte 5):
+/// bit `[0]`.
+pub(crate) const B5_CNI: u8 = 0x01;
+
+/// `pid(13)` field mask inside a PID's first wire byte (the 5 low bits).
+pub(crate) const PID_LO_MASK: u8 = 0x1F;
+
+/// The three `reserved = '111'` bits that precede a 13-bit PID high byte
+/// (ISO/IEC 13818-1 §2.4.4.8/§2.4.4.9: PAT `reserved`, PMT `pcr_pid`, ES
+/// `elementary_pid`; ETSI EN 300 468 §5.3 CAT-style `ca_pid` uses the same
+/// form): bits `[7:5]` of the PID's first wire byte.
+pub(crate) const PID_HI_RESERVED_BITS: u8 = 0xE0;
+
+/// The four `reserved = '1111'` bits that precede a 12-bit descriptor-loop
+/// length (ISO/IEC 13818-1 §2.4.4.9, ETSI EN 300 468 §5.1): bits `[7:4]` of
+/// the length's first wire byte.
+pub(crate) const DESC_LOOP_LEN_HI_RESERVED_BITS: u8 = 0xF0;
+
+/// `running_status(3)` mask inside a status/length byte: bits `[7:5]`
+/// (ETSI EN 300 468 §5.2.3/§5.2.4 service and event loops).
+pub(crate) const RUNNING_STATUS_MASK: u8 = 0x07;
+
+/// `free_CA_mode` bit inside a status/length byte: bit `[4]`
+/// (ETSI EN 300 468 §5.2.3/§5.2.4 service and event loops).
+pub(crate) const FREE_CA_MODE: u8 = 0x10;
+
+/// Decode the `running_status(3)` field from a status/length byte.
+#[must_use]
+pub(crate) fn running_status_of(status_and_len_hi: u8) -> u8 {
+    (status_and_len_hi >> 5) & RUNNING_STATUS_MASK
+}
+
+/// Decode the `free_CA_mode(1)` field from a status/length byte.
+#[must_use]
+pub(crate) fn free_ca_mode_of(status_and_len_hi: u8) -> bool {
+    (status_and_len_hi & FREE_CA_MODE) != 0
+}
+
+/// Decode the low 8 bits of `descriptors_loop_length` carried in the low
+/// nibble of a status/length byte, combined with its length-low byte.
+#[must_use]
+pub(crate) fn dll_from_status(status_and_len_hi: u8, lo: u8) -> usize {
+    (((status_and_len_hi & SECTION_LENGTH_HI_MASK) as usize) << 8) | usize::from(lo)
+}
+
+/// Assemble the SDT/EIT `running_status(3) | free_CA_mode(1) |
+/// descriptors_loop_length[11:8]` status byte from typed fields.
+#[must_use]
+pub(crate) fn status_byte(running_status: u8, free_ca_mode: bool, dll_hi: u8) -> u8 {
+    ((running_status & RUNNING_STATUS_MASK) << 5)
+        | (u8::from(free_ca_mode) * FREE_CA_MODE)
+        | (dll_hi & SECTION_LENGTH_HI_MASK)
+}
+
+/// Assemble the extension-header flags byte (byte 5) of a long-form section:
+/// `reserved(2)='11' | version_number(5) | current_next_indicator(1)`.
+///
+/// The 5-bit version is masked defensively so a constructed value wider than
+/// the field can never bleed into the reserved bits.
+#[must_use]
+pub(crate) fn version_byte(version_number: u8, current_next_indicator: bool) -> u8 {
+    B5_RESERVED_HI | ((version_number & B5_VERSION_MASK) << 1) | u8::from(current_next_indicator)
+}
+
+/// Decode the 12-bit `section_length` from bytes 1–2 of a section header.
+#[must_use]
+pub(crate) fn section_length_of(bytes: &[u8]) -> usize {
+    ((usize::from(bytes[1] & SECTION_LENGTH_HI_MASK)) << 8) | usize::from(bytes[2])
+}
+
+/// Decode the `version_number` from the extension-header flags byte (byte 5).
+#[must_use]
+pub(crate) fn version_number_of(flags_byte: u8) -> u8 {
+    (flags_byte >> 1) & B5_VERSION_MASK
+}
+
+/// Decode the `current_next_indicator` from the extension-header flags byte
+/// (byte 5).
+#[must_use]
+pub(crate) fn current_next_of(flags_byte: u8) -> bool {
+    (flags_byte & B5_CNI) != 0
+}
+
+/// Decode a 13-bit PID from its two wire bytes.
+#[must_use]
+pub(crate) fn pid_of(hi: u8, lo: u8) -> u16 {
+    ((u16::from(hi & PID_LO_MASK)) << 8) | u16::from(lo)
+}
+
+/// Write a 13-bit PID carrying the three `reserved='111'` bits.
+pub(crate) fn write_pid(buf: &mut [u8], pid: u16) {
+    buf[0] = PID_HI_RESERVED_BITS | ((pid >> 8) as u8 & PID_LO_MASK);
+    buf[1] = (pid & 0xFF) as u8;
+}
+
+/// Decode a 12-bit descriptor-loop length from its two wire bytes (the top
+/// four bits of `hi` are reserved and masked off).
+#[must_use]
+pub(crate) fn desc_loop_len_of(hi: u8, lo: u8) -> usize {
+    (((hi & !DESC_LOOP_LEN_HI_RESERVED_BITS) as usize) << 8) | usize::from(lo)
+}
+
+/// Write a 12-bit descriptor-loop length carrying the four
+/// `reserved='1111'` bits; errors instead of silently wrapping (cf. #1129).
+pub(crate) fn write_desc_loop_len(buf: &mut [u8], len: usize) -> crate::Result<()> {
+    let fitted = broadcast_common::len::fit_bits(len as u64, 12, "descriptors_length")?;
+    buf[0] = DESC_LOOP_LEN_HI_RESERVED_BITS | ((fitted >> 8) as u8);
+    buf[1] = fitted as u8;
+    Ok(())
+}
+
+/// Position of the `private_indicator(1)` bit within byte 1 of a section
+/// whose flags byte is built from typed fields (private-section forms,
+/// ISO/IEC 13818-1 §2.4.4.10 / ETSI EN 301 192 §8.4): bit `[6]`. Only the
+/// shift is named — the bit is always written through
+/// [`private_section_b1`], so a standalone mask constant would be dead code.
+pub(crate) const B1_PRIVATE_INDICATOR_SHIFT: u32 = 6;
+
+/// The two `reserved = '11'` bits that follow `private_indicator` in byte 1
+/// of a private-section flags byte (ISO/IEC 13818-1 §2.4.4.10): bits
+/// `[5:4]`.
+pub(crate) const B1_PRIVATE_RESERVED: u8 = 0x30;
+
+/// The five `reserved_future_use = '11111'` bits that precede a
+/// `running_status(3)` field (ETSI EN 300 468 §5.4 RST entry): bits `[7:3]`.
+pub(crate) const RESERVED_FUTURE_USE_5: u8 = 0xF8;
+
+/// Mask of the low nibble of a byte: a sub-byte field's width when the byte
+/// also carries reserved bits above it (r02-W16).
+pub(crate) const LOW_NIBBLE_MASK: u8 = 0x0F;
+
+/// Assemble byte 1 of a section that carries a `private_indicator` flag:
+/// `section_syntax_indicator(1) | private_indicator(1) | reserved(2)='11' |
+/// section_length[11:8]` (ISO/IEC 13818-1 §2.4.4.10 / ETSI EN 301 192
+/// §8.4.4). `length_hi` is masked defensively so a wider value cannot bleed
+/// into the reserved bits.
+#[must_use]
+pub(crate) fn private_section_b1(private_indicator: bool, length_hi: u8) -> u8 {
+    SECTION_B1_SSI
+        | (u8::from(private_indicator) << B1_PRIVATE_INDICATOR_SHIFT)
+        | B1_PRIVATE_RESERVED
+        | (length_hi & LOW_NIBBLE_MASK)
+}
+
+/// Push the two `SECTION_B1_FLAGS_* | section_length` header bytes of a
+/// section; test/fixture helper counterpart of [`write_section_length`].
+#[cfg(test)]
+pub(crate) fn push_section_header(v: &mut Vec<u8>, flags: u8, len: usize) {
+    v.push(flags | ((len >> 8) as u8 & SECTION_LENGTH_HI_MASK));
+    v.push((len & 0xFF) as u8);
+}
+
+/// Push the two `reserved(4) | descriptors_loop_length(12)` bytes of a
+/// descriptor loop length; test/fixture helper counterpart of
+/// [`write_desc_loop_len`].
+#[cfg(test)]
+pub(crate) fn push_desc_loop_len(v: &mut Vec<u8>, len: usize) {
+    v.push(DESC_LOOP_LEN_HI_RESERVED_BITS | ((len >> 8) as u8 & SECTION_LENGTH_HI_MASK));
+    v.push((len & 0xFF) as u8);
+}
+
+/// Push the SDT/EIT service/event `running_status | free_CA_mode | len_hi`
+/// status byte plus the length's low byte; test/fixture helper counterpart
+/// of [`status_byte`].
+#[cfg(test)]
+pub(crate) fn push_status_and_len(v: &mut Vec<u8>, running_status: u8, free_ca: bool, len: usize) {
+    v.push(status_byte(running_status, free_ca, (len >> 8) as u8));
+    v.push((len & 0xFF) as u8);
+}
+
 pub mod any;
 pub use any::AnyTableSection;
 
 pub mod registry;
 pub use registry::{TableObject, TableRegistry};
+
+/// Shared `real_time_parameters(32)` bit codec used by MPE-FEC and MPE-IFEC
+/// (r02-W22); the public field-named structs stay in each table's module.
+mod real_time_parameters;
+pub use real_time_parameters::TargetOperationalLoop;
 
 pub mod ait;
 pub mod bat;

@@ -624,22 +624,22 @@ impl<'a> Parse<'a> for PmtSection<'a> {
             });
         }
 
-        let section_length = ((bytes[1] & 0x0F) as u16) << 8 | bytes[2] as u16;
+        let section_length = super::section_length_of(bytes);
         let total = super::check_section_length(
             bytes.len(),
             MIN_HEADER_LEN,
-            section_length as usize,
+            section_length,
             MIN_SECTION_LEN,
         )?;
 
         let program_number = u16::from_be_bytes(*bytes[3..].first_chunk::<2>().unwrap());
-        let version_number = (bytes[5] >> 1) & 0x1F;
-        let current_next_indicator = (bytes[5] & 0x01) != 0;
+        let version_number = super::version_number_of(bytes[5]);
+        let current_next_indicator = super::current_next_of(bytes[5]);
         let section_number = bytes[6];
         let last_section_number = bytes[7];
 
-        let pcr_pid = (((bytes[8] & 0x1F) as u16) << 8) | bytes[9] as u16;
-        let program_info_length = (((bytes[10] & 0x0F) as usize) << 8) | bytes[11] as usize;
+        let pcr_pid = super::pid_of(bytes[8], bytes[9]);
+        let program_info_length = super::desc_loop_len_of(bytes[10], bytes[11]);
 
         let prog_info_start =
             MIN_HEADER_LEN + EXTENSION_HEADER_LEN + PCR_PID_LEN + PROG_INFO_LEN_BYTES;
@@ -657,9 +657,8 @@ impl<'a> Parse<'a> for PmtSection<'a> {
         let mut pos = prog_info_end;
         while pos + STREAM_HEADER_LEN <= stream_loop_end {
             let stream_type = StreamType::from_u8(bytes[pos]);
-            let elementary_pid = (((bytes[pos + 1] & 0x1F) as u16) << 8) | bytes[pos + 2] as u16;
-            let es_info_length =
-                (((bytes[pos + 3] & 0x0F) as usize) << 8) | bytes[pos + 4] as usize;
+            let elementary_pid = super::pid_of(bytes[pos + 1], bytes[pos + 2]);
+            let es_info_length = super::desc_loop_len_of(bytes[pos + 3], bytes[pos + 4]);
             let es_start = pos + STREAM_HEADER_LEN;
             let es_end = es_start + es_info_length;
             if es_end > stream_loop_end {
@@ -727,18 +726,16 @@ impl Serialize for PmtSection<'_> {
         buf[1] = super::SECTION_B1_FLAGS_PSI;
         super::write_section_length(buf, len - MIN_HEADER_LEN)?;
         buf[3..5].copy_from_slice(&self.program_number.to_be_bytes());
-        buf[5] = 0xC0 | ((self.version_number & 0x1F) << 1) | u8::from(self.current_next_indicator);
+        buf[5] = super::version_byte(self.version_number, self.current_next_indicator);
         buf[6] = self.section_number;
         buf[7] = self.last_section_number;
-        buf[8] = 0xE0 | ((self.pcr_pid >> 8) as u8 & 0x1F);
-        buf[9] = (self.pcr_pid & 0xFF) as u8;
+        super::write_pid(&mut buf[8..10], self.pcr_pid);
         let pil = broadcast_common::len::fit_bits(
             self.program_info.len() as u64,
             12,
             "program_info_length",
         )?;
-        buf[10] = 0xF0 | ((pil >> 8) as u8);
-        buf[11] = pil as u8;
+        super::write_desc_loop_len(&mut buf[10..12], pil as usize)?;
 
         let prog_info_start =
             MIN_HEADER_LEN + EXTENSION_HEADER_LEN + PCR_PID_LEN + PROG_INFO_LEN_BYTES;
@@ -748,12 +745,10 @@ impl Serialize for PmtSection<'_> {
         let mut pos = prog_info_start + self.program_info.len();
         for stream in &self.streams {
             buf[pos] = stream.stream_type.to_u8();
-            buf[pos + 1] = 0xE0 | ((stream.elementary_pid >> 8) as u8 & 0x1F);
-            buf[pos + 2] = (stream.elementary_pid & 0xFF) as u8;
+            super::write_pid(&mut buf[pos + 1..pos + 3], stream.elementary_pid);
             let esl =
                 broadcast_common::len::fit_bits(stream.es_info.len() as u64, 12, "es_info_length")?;
-            buf[pos + 3] = 0xF0 | ((esl >> 8) as u8);
-            buf[pos + 4] = esl as u8;
+            super::write_desc_loop_len(&mut buf[pos + 3..pos + 5], esl as usize)?;
             let es_start = pos + STREAM_HEADER_LEN;
             buf[es_start..es_start + stream.es_info.len()].copy_from_slice(stream.es_info.raw());
             pos = es_start + stream.es_info.len();

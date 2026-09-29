@@ -153,6 +153,13 @@ impl<'a> TransportProtocolDescriptor<'a> {
         })
     }
 
+    /// Decode an HTTP selector (EN 300 468 §6.4.7 `url_base_length` /
+    /// `url_extension_count`).
+    ///
+    /// A malformed selector falls back to [`SelectorKind::Unknown`] — the same
+    /// policy as [`Self::decode_oc_selector`]. It used to `break` out of the
+    /// loop and still report `Http` with the URLs read so far, so a truncated
+    /// selector was indistinguishable from a complete one (r03-W14).
     fn decode_http_selector(&self) -> SelectorKind<'a> {
         let b = self.selector_bytes;
         let mut urls = Vec::new();
@@ -160,13 +167,15 @@ impl<'a> TransportProtocolDescriptor<'a> {
         while pos < b.len() {
             let url_base_length = b[pos] as usize;
             pos += 1;
-            if pos + url_base_length > b.len() {
-                break;
+            let Some(base_end) = pos.checked_add(url_base_length) else {
+                return SelectorKind::Unknown(b);
+            };
+            if base_end > b.len() {
+                return SelectorKind::Unknown(b);
             }
-            let base_end = pos + url_base_length;
             let url_base = &b[pos..base_end];
             pos = base_end;
-            if pos >= b.len() {
+            if pos == b.len() {
                 urls.push(HttpUrlEntry {
                     url_base,
                     url_extensions: Vec::new(),
@@ -177,14 +186,15 @@ impl<'a> TransportProtocolDescriptor<'a> {
             pos += 1;
             let mut url_extensions = Vec::with_capacity(url_extension_count);
             for _ in 0..url_extension_count {
-                if pos >= b.len() {
-                    break;
-                }
-                let ext_len = b[pos] as usize;
+                let Some(ext_len) = b.get(pos).map(|&v| usize::from(v)) else {
+                    return SelectorKind::Unknown(b);
+                };
                 pos += 1;
-                let ext_end = pos + ext_len;
+                let Some(ext_end) = pos.checked_add(ext_len) else {
+                    return SelectorKind::Unknown(b);
+                };
                 if ext_end > b.len() {
-                    break;
+                    return SelectorKind::Unknown(b);
                 }
                 url_extensions.push(&b[pos..ext_end]);
                 pos = ext_end;
@@ -388,5 +398,35 @@ mod tests {
         let mut buf = vec![0u8; d.serialized_len()];
         d.serialize_into(&mut buf).unwrap();
         assert_eq!(buf.as_slice(), &bytes[..]);
+    }
+
+    #[test]
+    fn malformed_http_selector_falls_back_to_unknown() {
+        // A truncated url_base used to `break` out of the loop and still
+        // report `Http` with the URLs read so far (r03-W14).
+        // url_base_length = 20 but only 4 bytes follow.
+        bytes_fall_back_to_unknown(&[TAG, 6, 0x00, 0x03, 0x01, 20, b'h', b't', b't', b'p']);
+    }
+
+    #[test]
+    fn truncated_http_extension_falls_back_to_unknown() {
+        // url_extension_count = 2 but the selector ends after one extension's
+        // length byte (no ext_len byte at all).
+        bytes_fall_back_to_unknown(&[
+            TAG, 10, 0x00, 0x03, 0x01, 4, b'h', b't', b't', b'p', 2, 4, b'/', b'a',
+        ]);
+        // ext_len = 4 but only 1 extension byte follows.
+        bytes_fall_back_to_unknown(&[
+            TAG, 9, 0x00, 0x03, 0x01, 4, b'h', b't', b't', b'p', 2, 4, b'/',
+        ]);
+    }
+
+    fn bytes_fall_back_to_unknown(bytes: &[u8]) {
+        let d = TransportProtocolDescriptor::parse(bytes).unwrap();
+        assert!(
+            matches!(d.selector(), SelectorKind::Unknown(_)),
+            "expected Unknown for a truncated HTTP selector, got {:?}",
+            d.selector()
+        );
     }
 }

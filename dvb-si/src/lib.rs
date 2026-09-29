@@ -112,6 +112,15 @@
 //! `dvb-t2mi`, which validates RFU bits. This crate prioritises forward
 //! compatibility with future broadcast streams.
 //!
+//! The policy is one-directional, and this is the authoritative statement of
+//! it (r03-W8, #1077): on parse, reserved bits are **dropped** (not stored on
+//! the struct), so re-serializing a stream whose transponder used non-standard
+//! reserved-bit values normalizes those bits to the emit policy above and is
+//! deliberately **not** byte-identical. Only bits the spec assigns a meaning
+//! are kept typed (`Reserved(v)` enum payloads, raw spec-named fields); a
+//! caller that must preserve arbitrary reserved-bit patterns byte-for-byte
+//! keeps the original section bytes, not a re-serialization.
+//!
 //! # Features
 //!
 //! | Feature | Default | Enables |

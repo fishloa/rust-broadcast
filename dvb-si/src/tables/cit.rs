@@ -135,14 +135,14 @@ impl<'a> Parse<'a> for CitSection<'a> {
             });
         }
 
-        let section_length = (((bytes[1] & 0x0F) as usize) << 8) | bytes[2] as usize;
+        let section_length = super::section_length_of(bytes);
         let total =
             super::check_section_length(bytes.len(), HEADER_LEN, section_length, MIN_SECTION_LEN)?;
 
         let private_indicator = (bytes[1] & 0x40) != 0;
         let service_id = u16::from_be_bytes(*bytes[3..].first_chunk::<2>().unwrap());
-        let version_number = (bytes[5] >> 1) & 0x1F;
-        let current_next_indicator = (bytes[5] & 0x01) != 0;
+        let version_number = super::version_number_of(bytes[5]);
+        let current_next_indicator = super::current_next_of(bytes[5]);
         let section_number = bytes[6];
         let last_section_number = bytes[7];
         let transport_stream_id = u16::from_be_bytes(*bytes[8..].first_chunk::<2>().unwrap());
@@ -246,7 +246,7 @@ impl Serialize for CitSection<'_> {
         super::write_section_length(buf, len - HEADER_LEN)?;
 
         buf[3..5].copy_from_slice(&self.service_id.to_be_bytes());
-        buf[5] = 0xC0 | ((self.version_number & 0x1F) << 1) | u8::from(self.current_next_indicator);
+        buf[5] = super::version_byte(self.version_number, self.current_next_indicator);
         buf[6] = self.section_number;
         buf[7] = self.last_section_number;
         buf[8..10].copy_from_slice(&self.transport_stream_id.to_be_bytes());

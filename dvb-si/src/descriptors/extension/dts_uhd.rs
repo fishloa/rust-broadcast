@@ -6,6 +6,14 @@ impl<'a> ExtensionBodyDef<'a> for DtsUhd<'a> {
     const NAME: &'static str = "DTS_UHD";
 }
 
+/// `DecoderProfileCode`(6) raw field mask — masked at the shift so a wider
+/// value cannot bleed out of the byte or into `FrameDurationCode` (r03-W2).
+const DTS_UHD_PROFILE_CODE_MASK: u8 = 0x3F;
+/// `MaxPayloadCode`(3) — also bounds `MaxPayloadCode::Reserved(v)`.
+const DTS_UHD_MAX_PAYLOAD_MASK: u8 = 0x07;
+/// `StreamIndex`(3) raw field mask.
+const DTS_UHD_STREAM_INDEX_MASK: u8 = 0x07;
+
 /// DTS-UHD descriptor body (Table G.15, Annex G.5).
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
@@ -199,10 +207,11 @@ impl Serialize for DtsUhd<'_> {
                 have: buf.len(),
             });
         }
-        buf[0] = (self.decoder_profile_code << 2) | (self.frame_duration_code.to_u8() & 0x03);
-        buf[1] = (self.max_payload_code.to_u8() << 5)
+        buf[0] = ((self.decoder_profile_code & DTS_UHD_PROFILE_CODE_MASK) << 2)
+            | (self.frame_duration_code.to_u8() & 0x03);
+        buf[1] = ((self.max_payload_code.to_u8() & DTS_UHD_MAX_PAYLOAD_MASK) << 5)
             | ((self.dts_reserved & 0x03) << 3)
-            | (self.stream_index & 0x07);
+            | (self.stream_index & DTS_UHD_STREAM_INDEX_MASK);
         buf[DTS_UHD_FIXED_LEN..len].copy_from_slice(self.codec_selector);
         Ok(len)
     }

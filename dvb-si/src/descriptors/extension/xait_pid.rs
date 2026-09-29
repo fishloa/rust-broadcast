@@ -39,11 +39,12 @@ impl XaitPid {
 impl<'a> Parse<'a> for XaitPid {
     type Error = crate::error::Error;
     fn parse(sel: &'a [u8]) -> Result<Self> {
-        if sel.len() < XAIT_PID_LEN {
-            return Err(Error::BufferTooShort {
-                need: XAIT_PID_LEN,
-                have: sel.len(),
-                what: "xait_pid body",
+        if sel.len() != XAIT_PID_LEN {
+            // Table 12 fixes the selector at one u16; trailing bytes used to be
+            // dropped on re-serialize (r03-W9).
+            return Err(Error::InvalidDescriptor {
+                tag: crate::descriptors::extension::TAG,
+                reason: "xait_pid body length must equal 2",
             });
         }
         Ok(Self {

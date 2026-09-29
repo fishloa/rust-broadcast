@@ -162,6 +162,21 @@ impl<'a> Parse<'a> for VideoDepthRange<'a> {
     }
 }
 
+/// 12-bit two's-complement bounds for disparity hints.
+const DISPARITY_MIN: i16 = 2048;
+const DISPARITY_MAX: i16 = 2047;
+
+/// Check a 12-bit two's-complement disparity value fits its field.
+fn disparity_bits(value: i16, field: &'static str) -> Result<u16> {
+    if !(-DISPARITY_MIN..=DISPARITY_MAX).contains(&value) {
+        return Err(Error::ValueOutOfRange {
+            field,
+            reason: "outside 12-bit two's-complement range -2048..=2047",
+        });
+    }
+    Ok(value as u16 & 0x0FFF)
+}
+
 impl Serialize for VideoDepthRange<'_> {
     type Error = crate::error::Error;
     fn serialized_len(&self) -> usize {
@@ -192,8 +207,11 @@ impl Serialize for VideoDepthRange<'_> {
                 DepthRangeBody::ProductionDisparityHint { max, min } => {
                     // Table 162: two 12-bit tcimsbf values packed into 3 bytes.
                     buf[p + 1] = VD_DISPARITY_LEN as u8;
-                    let max_bits = *max as u16 & 0x0FFF;
-                    let min_bits = *min as u16 & 0x0FFF;
+                    // Values are 12-bit two's-complement held in an i16;
+                    // anything outside -2048..=2047 has no wire encoding
+                    // (r03-W3).
+                    let max_bits = disparity_bits(*max, "max_tcimsbf")?;
+                    let min_bits = disparity_bits(*min, "min_tcimsbf")?;
                     buf[p + 2] = (max_bits >> 4) as u8;
                     buf[p + 3] = (((max_bits & 0x0F) << 4) | ((min_bits >> 8) & 0x0F)) as u8;
                     buf[p + 4] = min_bits as u8;
@@ -371,5 +389,38 @@ mod tests {
         );
         assert_eq!(RangeType::MultiRegionSei.name(), "multi-region SEI");
         assert_eq!(RangeType::Reserved(0xFF).name(), "reserved");
+    }
+
+    #[test]
+    fn serialize_rejects_disparity_outside_12_bit_twos_complement() {
+        // Pre-fix `*max as u16 & 0x0FFF` silently folded 2048 onto 0 (r03-W3).
+        let d = VideoDepthRange {
+            ranges: alloc::vec![DepthRange {
+                range_type: RangeType::ProductionDisparityHint,
+                body: DepthRangeBody::ProductionDisparityHint { max: 2048, min: 0 },
+            }],
+        };
+        let mut buf = vec![0u8; d.serialized_len()];
+        assert!(matches!(
+            d.serialize_into(&mut buf).unwrap_err(),
+            Error::ValueOutOfRange {
+                field: "max_tcimsbf",
+                ..
+            }
+        ));
+        let d = VideoDepthRange {
+            ranges: alloc::vec![DepthRange {
+                range_type: RangeType::ProductionDisparityHint,
+                body: DepthRangeBody::ProductionDisparityHint { max: 0, min: -2049 },
+            }],
+        };
+        let mut buf = vec![0u8; d.serialized_len()];
+        assert!(matches!(
+            d.serialize_into(&mut buf).unwrap_err(),
+            Error::ValueOutOfRange {
+                field: "min_tcimsbf",
+                ..
+            }
+        ));
     }
 }

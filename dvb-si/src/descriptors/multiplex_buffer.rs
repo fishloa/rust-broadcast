@@ -8,6 +8,9 @@ use broadcast_common::{Parse, Serialize};
 
 /// Descriptor tag for MultiplexBuffer_descriptor.
 pub const TAG: u8 = 0x23;
+/// `MB_buffer_size` / `TB_leak_rate` are 24-bit uimsbf.
+const MB_BUFFER_BITS: u32 = 24;
+const TB_LEAK_BITS: u32 = 24;
 const HEADER_LEN: usize = 2;
 const BODY_LEN: u8 = 6;
 
@@ -61,10 +64,20 @@ impl Serialize for MultiplexBufferDescriptor {
                 have: buf.len(),
             });
         }
+        let mb = broadcast_common::len::fit_bits(
+            u64::from(self.mb_buffer_size),
+            MB_BUFFER_BITS,
+            "MB_buffer_size",
+        )?;
+        let tb = broadcast_common::len::fit_bits(
+            u64::from(self.tb_leak_rate),
+            TB_LEAK_BITS,
+            "TB_leak_rate",
+        )?;
         buf[0] = TAG;
         buf[1] = BODY_LEN;
-        buf[HEADER_LEN..HEADER_LEN + 3].copy_from_slice(&self.mb_buffer_size.to_be_bytes()[1..]);
-        buf[HEADER_LEN + 3..HEADER_LEN + 6].copy_from_slice(&self.tb_leak_rate.to_be_bytes()[1..]);
+        buf[HEADER_LEN..HEADER_LEN + 3].copy_from_slice(&(mb as u32).to_be_bytes()[1..]);
+        buf[HEADER_LEN + 3..HEADER_LEN + 6].copy_from_slice(&(tb as u32).to_be_bytes()[1..]);
         Ok(len)
     }
 }
@@ -132,5 +145,36 @@ mod tests {
         let mut tiny = vec![0u8; 5];
         let err = d.serialize_into(&mut tiny).unwrap_err();
         assert!(matches!(err, Error::OutputBufferTooSmall { .. }));
+    }
+
+    #[test]
+    fn serialize_rejects_over_24bit_fields() {
+        // Pre-fix the top byte was silently dropped by the [1..] slice
+        // (r03-W3).
+        let d = MultiplexBufferDescriptor {
+            mb_buffer_size: 1 << 24,
+            tb_leak_rate: 0,
+        };
+        let mut buf = vec![0u8; d.serialized_len()];
+        assert!(matches!(
+            d.serialize_into(&mut buf).unwrap_err(),
+            Error::FieldOverflow(_)
+        ));
+        let d = MultiplexBufferDescriptor {
+            mb_buffer_size: 0,
+            tb_leak_rate: 1 << 24,
+        };
+        let mut buf = vec![0u8; d.serialized_len()];
+        assert!(matches!(
+            d.serialize_into(&mut buf).unwrap_err(),
+            Error::FieldOverflow(_)
+        ));
+        // In-range boundary still serializes.
+        let d = MultiplexBufferDescriptor {
+            mb_buffer_size: 0xFF_FFFF,
+            tb_leak_rate: 0xFF_FFFF,
+        };
+        let mut buf = vec![0u8; d.serialized_len()];
+        assert!(d.serialize_into(&mut buf).is_ok());
     }
 }

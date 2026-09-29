@@ -69,7 +69,7 @@ impl<'a> Parse<'a> for RstSection {
                 expected: &[TABLE_ID],
             });
         }
-        let section_length = ((bytes[1] & 0x0F) as usize) << 8 | bytes[2] as usize;
+        let section_length = super::section_length_of(bytes);
         let total = HEADER_LEN + section_length;
         if bytes.len() < total {
             return Err(Error::SectionLengthOverflow {
@@ -128,7 +128,8 @@ impl Serialize for RstSection {
             buf[off + 4..off + 6].copy_from_slice(&e.service_id.to_be_bytes());
             buf[off + 6..off + 8].copy_from_slice(&e.event_id.to_be_bytes());
             // reserved_future_use(5)=1, running_status(3).
-            buf[off + 8] = 0xF8 | (e.running_status.to_u8() & 0x07);
+            buf[off + 8] = super::RESERVED_FUTURE_USE_5
+                | (e.running_status.to_u8() & super::RUNNING_STATUS_MASK);
             off += ENTRY_LEN;
         }
         Ok(len)

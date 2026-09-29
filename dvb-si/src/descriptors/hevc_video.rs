@@ -14,6 +14,20 @@ use broadcast_common::{Parse, Serialize};
 pub const TAG: u8 = 0x38;
 const HEADER_LEN: usize = 2;
 const COPIED_44_MASK: u64 = (1 << 44) - 1;
+/// `profile_space(2)` (ISO/IEC 23001-2 Table 1); raw field, mask so a wide
+/// value cannot bleed into `tier_flag` (r03-W2).
+const PROFILE_SPACE_MASK: u8 = 0x03;
+/// `profile_idc(5)`.
+const PROFILE_IDC_MASK: u8 = 0x1F;
+/// `temporal_id_min(3)` / `temporal_id_max(3)`.
+const TEMPORAL_ID_MASK: u8 = 0x07;
+/// `reserved_future_use` bit [2] of byte 12 — ISO/IEC 13818-1 says
+/// '1' (r03-W7).
+const BYTE12_RESERVED_BITS: u8 = 0x04;
+/// Bit [3] of byte 12: ISO/IEC 13818-1 groups it with `reserved_future_use`,
+/// but ISO/IEC 23001-2 (which defines this descriptor) leaves it unspecified,
+/// so the parser ignores it and the serializer writes 0 (r03-W7).
+const BYTE12_UNRESERVED_BIT: u8 = 0x00;
 /// Fixed body length without temporal_id sub-block.
 const FIXED_BODY_LEN: u8 = 12;
 /// Temporal sub-block length when present.
@@ -111,47 +125,46 @@ impl<'a> Parse<'a> for HevcVideoDescriptor {
 
         let b11 = body[11]; // level_idc
 
-        let temporal_layer_subset_flag;
-        let hevc_still_present_flag;
-        let hevc_24hr_picture_present_flag;
-        let sub_pic_hrd_params_not_present_flag;
-        let hdr_wcg_idc;
-        let temporal_sub;
-
-        if body.len() > (FIXED_BODY_LEN as usize) {
-            // byte 12: tls(7)|still(6)|24hr(5)|sub_pic(4)|reserved(3:2)|HDR_WCG_idc(1:0)
-            let b12 = body[12];
-            temporal_layer_subset_flag = (b12 & 0x80) != 0;
-            hevc_still_present_flag = (b12 & 0x40) != 0;
-            hevc_24hr_picture_present_flag = (b12 & 0x20) != 0;
-            sub_pic_hrd_params_not_present_flag = (b12 & 0x10) != 0;
-            hdr_wcg_idc = HdrWcgIdc::from_u8(b12 & 0x03);
-
-            if temporal_layer_subset_flag {
-                if body.len() < (FIXED_BODY_LEN + TEMPORAL_SUB_LEN) as usize {
-                    return Err(Error::InvalidDescriptor {
-                        tag: TAG,
-                        reason: "HEVC_video_descriptor too short for temporal sub-block",
-                    });
-                }
-                let b13 = body[13];
-                let b14 = body[14];
-                temporal_sub = Some(HevcTemporalSub {
-                    temporal_id_min: b13 >> 5,
-                    temporal_id_max: b14 >> 5,
-                });
-            } else {
-                temporal_sub = None;
-            }
-        } else {
-            // No extra bytes beyond fixed — default flags
-            temporal_layer_subset_flag = false;
-            hevc_still_present_flag = false;
-            hevc_24hr_picture_present_flag = false;
-            sub_pic_hrd_params_not_present_flag = false;
-            hdr_wcg_idc = HdrWcgIdc::NoIndication;
-            temporal_sub = None;
+        // Byte 12 is mandatory (ISO/IEC 13818-1 Table 2-113): a 12-byte body
+        // used to be accepted with the flags defaulted, and then re-serialized
+        // as 13 bytes, so such a stream was neither conformant nor
+        // byte-identical (r03-W12).
+        if body.len() < (FIXED_BODY_LEN as usize) + 1 {
+            return Err(Error::InvalidDescriptor {
+                tag: TAG,
+                reason: "HEVC_video_descriptor too short for the mandatory flags byte",
+            });
         }
+        // byte 12: tls(7)|still(6)|24hr(5)|sub_pic(4)|reserved(3:2)|HDR_WCG_idc(1:0)
+        let b12 = body[FIXED_BODY_LEN as usize];
+        let temporal_layer_subset_flag = (b12 & 0x80) != 0;
+        let hevc_still_present_flag = (b12 & 0x40) != 0;
+        let hevc_24hr_picture_present_flag = (b12 & 0x20) != 0;
+        let sub_pic_hrd_params_not_present_flag = (b12 & 0x10) != 0;
+        let hdr_wcg_idc = HdrWcgIdc::from_u8(b12 & 0x03);
+
+        let temporal_sub = if temporal_layer_subset_flag {
+            if body.len() != (FIXED_BODY_LEN + 1 + TEMPORAL_SUB_LEN) as usize {
+                return Err(Error::InvalidDescriptor {
+                    tag: TAG,
+                    reason: "HEVC_video_descriptor body length disagrees with temporal_layer_subset_flag",
+                });
+            }
+            let b13 = body[13];
+            let b14 = body[14];
+            Some(HevcTemporalSub {
+                temporal_id_min: b13 >> 5,
+                temporal_id_max: b14 >> 5,
+            })
+        } else {
+            if body.len() != (FIXED_BODY_LEN as usize) + 1 {
+                return Err(Error::InvalidDescriptor {
+                    tag: TAG,
+                    reason: "HEVC_video_descriptor has trailing bytes",
+                });
+            }
+            None
+        };
 
         Ok(Self {
             profile_space,
@@ -199,8 +212,21 @@ impl Serialize for HevcVideoDescriptor {
         buf[1] = body_len;
 
         // byte 0: profile_space(2)|tier_flag(1)|profile_idc(5)
-        buf[HEADER_LEN] =
-            (self.profile_space << 6) | ((self.tier_flag as u8) << 5) | (self.profile_idc & 0x1F);
+        if self.profile_space > PROFILE_SPACE_MASK {
+            return Err(Error::ValueOutOfRange {
+                field: "profile_space",
+                reason: "exceeds 2-bit field",
+            });
+        }
+        if self.profile_idc > PROFILE_IDC_MASK {
+            return Err(Error::ValueOutOfRange {
+                field: "profile_idc",
+                reason: "exceeds 5-bit field",
+            });
+        }
+        buf[HEADER_LEN] = ((self.profile_space & PROFILE_SPACE_MASK) << 6)
+            | ((self.tier_flag as u8) << 5)
+            | (self.profile_idc & PROFILE_IDC_MASK);
 
         // bytes 1..5: profile_compatibility_indication (32 bits big-endian)
         buf[HEADER_LEN + 1..HEADER_LEN + 5]
@@ -229,13 +255,30 @@ impl Serialize for HevcVideoDescriptor {
             | ((self.hevc_still_present_flag as u8) << 6)
             | ((self.hevc_24hr_picture_present_flag as u8) << 5)
             | ((self.sub_pic_hrd_params_not_present_flag as u8) << 4)
+            | BYTE12_RESERVED_BITS
+            | BYTE12_UNRESERVED_BIT
             | (self.hdr_wcg_idc.to_u8() & 0x03);
 
+        if self.temporal_layer_subset_flag != self.temporal_sub.is_some() {
+            // serialized_len reserves the 2 temporal-sub bytes from the flag
+            // alone; writing them from the Option too would overrun or leave
+            // stale bytes (r03-W6).
+            return Err(Error::ValueOutOfRange {
+                field: "temporal_sub",
+                reason: "presence must match temporal_layer_subset_flag",
+            });
+        }
         if self.temporal_layer_subset_flag
             && let Some(ref ts) = self.temporal_sub
         {
-            buf[HEADER_LEN + 13] = ts.temporal_id_min << 5;
-            buf[HEADER_LEN + 14] = ts.temporal_id_max << 5;
+            if ts.temporal_id_min > TEMPORAL_ID_MASK || ts.temporal_id_max > TEMPORAL_ID_MASK {
+                return Err(Error::ValueOutOfRange {
+                    field: "temporal_id",
+                    reason: "exceeds 3-bit field",
+                });
+            }
+            buf[HEADER_LEN + 13] = (ts.temporal_id_min & TEMPORAL_ID_MASK) << 5;
+            buf[HEADER_LEN + 14] = (ts.temporal_id_max & TEMPORAL_ID_MASK) << 5;
         }
 
         Ok(len)
@@ -288,16 +331,15 @@ mod tests {
         ];
         let d = HevcVideoDescriptor::parse(&buf).unwrap();
         assert_eq!(d.hdr_wcg_idc, HdrWcgIdc::HdrAndWcg);
-        // Reserved bits must not leak into any field and must serialize back as zero.
+        // Reserved bits must not leak into any field; ISO/IEC 13818-1 says
+        // reserved_future_use is emitted '1', so the unambiguously reserved
+        // bit [2] serializes as 1 and parse ignores both bits (r03-W7).
         let mut out = vec![0u8; d.serialized_len()];
         d.serialize_into(&mut out).unwrap();
         // body byte 12 sits at buffer index HEADER_LEN + 12 = 14.
         assert_eq!(out[14] & 0x03, 0b10, "HDR_WCG_idc must occupy bits [1:0]");
-        assert_eq!(
-            out[14] & 0x0C,
-            0,
-            "reserved bits [3:2] must serialize as zero"
-        );
+        assert_eq!(out[14] & 0x04, 0x04, "reserved bit [2] must serialize as 1");
+        assert_eq!(out[14] & 0x08, 0, "bit [3] must not leak into any field");
     }
 
     #[test]
@@ -371,5 +413,125 @@ mod tests {
         // present-but-short body (2 bytes < FIXED_BODY_LEN) → descriptor's own check.
         let err = HevcVideoDescriptor::parse(&[TAG, 2, 0x00, 0x00]).unwrap_err();
         assert!(matches!(err, Error::InvalidDescriptor { tag: TAG, .. }));
+    }
+
+    #[test]
+    fn serialize_rejects_wide_raw_sub_byte_fields() {
+        // profile_space(2), profile_idc(5), temporal_id(3): pre-fix silently
+        // clipped via mask (r03-W3).
+        let base = HevcVideoDescriptor {
+            profile_space: 1,
+            tier_flag: true,
+            profile_idc: 2,
+            profile_compatibility_indication: 0xDEADBEEF,
+            progressive_source_flag: true,
+            interlaced_source_flag: false,
+            non_packed_constraint_flag: true,
+            frame_only_constraint_flag: false,
+            copied_44bits: 0x123456789AB & COPIED_44_MASK,
+            level_idc: 0x99,
+            temporal_layer_subset_flag: false,
+            hevc_still_present_flag: false,
+            hevc_24hr_picture_present_flag: false,
+            sub_pic_hrd_params_not_present_flag: false,
+            hdr_wcg_idc: HdrWcgIdc::Sdr,
+            temporal_sub: None,
+        };
+        let mut d = base.clone();
+        d.profile_space = 4;
+        let mut buf = vec![0u8; d.serialized_len()];
+        assert!(matches!(
+            d.serialize_into(&mut buf).unwrap_err(),
+            Error::ValueOutOfRange {
+                field: "profile_space",
+                ..
+            }
+        ));
+        let mut d = base.clone();
+        d.profile_idc = 0x20;
+        let mut buf = vec![0u8; d.serialized_len()];
+        assert!(matches!(
+            d.serialize_into(&mut buf).unwrap_err(),
+            Error::ValueOutOfRange {
+                field: "profile_idc",
+                ..
+            }
+        ));
+        let mut d = base.clone();
+        d.temporal_layer_subset_flag = true;
+        d.temporal_sub = Some(HevcTemporalSub {
+            temporal_id_min: 8,
+            temporal_id_max: 0,
+        });
+        let mut buf = vec![0u8; d.serialized_len()];
+        assert!(matches!(
+            d.serialize_into(&mut buf).unwrap_err(),
+            Error::ValueOutOfRange { .. }
+        ));
+    }
+    #[test]
+    fn serialize_rejects_flag_option_presence_mismatch() {
+        // r03-W6: serialized_len reserves the temporal-sub bytes from the
+        // flag; with the Option empty the old writer left 2 stale bytes yet
+        // returned Ok.
+        let mut d = HevcVideoDescriptor {
+            profile_space: 1,
+            tier_flag: true,
+            profile_idc: 2,
+            profile_compatibility_indication: 0xDEADBEEF,
+            progressive_source_flag: true,
+            interlaced_source_flag: false,
+            non_packed_constraint_flag: true,
+            frame_only_constraint_flag: false,
+            copied_44bits: 0x123456789AB & COPIED_44_MASK,
+            level_idc: 0x99,
+            temporal_layer_subset_flag: true,
+            hevc_still_present_flag: false,
+            hevc_24hr_picture_present_flag: false,
+            sub_pic_hrd_params_not_present_flag: false,
+            hdr_wcg_idc: HdrWcgIdc::Sdr,
+            temporal_sub: None,
+        };
+        let mut buf = vec![0u8; d.serialized_len()];
+        assert!(matches!(
+            d.serialize_into(&mut buf).unwrap_err(),
+            Error::ValueOutOfRange {
+                field: "temporal_sub",
+                ..
+            }
+        ));
+        d.temporal_layer_subset_flag = false;
+        d.temporal_sub = Some(HevcTemporalSub {
+            temporal_id_min: 0,
+            temporal_id_max: 1,
+        });
+        let mut buf = vec![0u8; d.serialized_len()];
+        assert!(d.serialize_into(&mut buf).is_err());
+    }
+
+    #[test]
+    fn parse_rejects_body_without_mandatory_flags_byte() {
+        // Table 2-113 makes byte 12 mandatory; a 12-byte body used to be
+        // accepted with the flags defaulted and then re-serialized as 13
+        // bytes (r03-W12).
+        let mut bytes = vec![TAG, 12];
+        bytes.extend(std::iter::repeat_n(0u8, 12));
+        assert!(matches!(
+            HevcVideoDescriptor::parse(&bytes).unwrap_err(),
+            Error::InvalidDescriptor { tag: TAG, .. }
+        ));
+    }
+
+    #[test]
+    fn parse_rejects_temporal_sub_block_when_flag_clear() {
+        // 14 bytes with temporal_layer_subset_flag = 0: two bytes past the
+        // mandatory flags byte with nothing to carry them.
+        let mut bytes = vec![TAG, 14];
+        bytes.extend(std::iter::repeat_n(0u8, 13));
+        bytes.push(0x00);
+        assert!(matches!(
+            HevcVideoDescriptor::parse(&bytes).unwrap_err(),
+            Error::InvalidDescriptor { tag: TAG, .. }
+        ));
     }
 }

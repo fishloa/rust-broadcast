@@ -13,6 +13,11 @@ const HEADER_LEN: usize = 2;
 const BODY_LEN: u8 = 3;
 const BODY_MPEG1_LEN: u8 = 1;
 
+/// `frame_rate_code(4)` field mask inside byte 0: bits `[6:3]`; masks the
+/// `Reserved(v)` payload so it cannot bleed into `multiple_frame_rate_flag`
+/// when shifted (r03-W2).
+const FRAME_RATE_CODE_MASK: u8 = 0x0F;
+
 /// Frame rate code — ISO/IEC 13818-1 Table 2-47.
 ///
 /// 4-bit code in the video_stream_descriptor. The "also includes" column
@@ -208,15 +213,32 @@ impl Serialize for VideoStreamDescriptor {
         }
         crate::descriptors::write_descriptor_header(buf, TAG, len - HEADER_LEN)?;
         let b0 = ((self.multiple_frame_rate_flag as u8) << 7)
-            | (self.frame_rate_code.to_u8() << 3)
+            | ((self.frame_rate_code.to_u8() & FRAME_RATE_CODE_MASK) << 3)
             | ((self.mpeg_1_only_flag as u8) << 2)
             | ((self.constrained_parameter_flag as u8) << 1)
             | (self.still_picture_flag as u8);
         buf[HEADER_LEN] = b0;
         if !self.mpeg_1_only_flag {
-            buf[HEADER_LEN + 1] = self.profile_and_level_indication.unwrap_or(0);
-            let chroma = self.chroma_format.unwrap_or(0) & 0x03;
-            let fre = self.frame_rate_extension_flag.unwrap_or(false) as u8;
+            // All three fields are on the wire together whenever
+            // `mpeg_1_only_flag` is clear; fabricating 0/false would misframe
+            // (r03-W5).
+            let pal = self
+                .profile_and_level_indication
+                .ok_or(Error::ValueOutOfRange {
+                    field: "profile_and_level_indication",
+                    reason: "required when mpeg_1_only_flag is false",
+                })?;
+            let chroma = self.chroma_format.ok_or(Error::ValueOutOfRange {
+                field: "chroma_format",
+                reason: "required when mpeg_1_only_flag is false",
+            })? & 0x03;
+            let fre = self
+                .frame_rate_extension_flag
+                .ok_or(Error::ValueOutOfRange {
+                    field: "frame_rate_extension_flag",
+                    reason: "required when mpeg_1_only_flag is false",
+                })? as u8;
+            buf[HEADER_LEN + 1] = pal;
             buf[HEADER_LEN + 2] = (chroma << 6) | (fre << 5);
         }
         Ok(len)
@@ -351,5 +373,29 @@ mod tests {
         let mut tiny = vec![0u8; 2];
         let err = d.serialize_into(&mut tiny).unwrap_err();
         assert!(matches!(err, Error::OutputBufferTooSmall { .. }));
+    }
+    #[test]
+    fn serialize_rejects_missingmpeg2_conditional_fields() {
+        // r03-W5: with `mpeg_1_only_flag` false the three conditional fields
+        // are mandatory; serialize used to fabricate 0 / false via
+        // `unwrap_or` instead of erroring.
+        let d = VideoStreamDescriptor {
+            multiple_frame_rate_flag: false,
+            frame_rate_code: FrameRateCode::Frame25_0,
+            mpeg_1_only_flag: false,
+            constrained_parameter_flag: false,
+            still_picture_flag: false,
+            profile_and_level_indication: None,
+            chroma_format: Some(1),
+            frame_rate_extension_flag: Some(false),
+        };
+        let mut buf = vec![0u8; d.serialized_len()];
+        assert!(matches!(
+            d.serialize_into(&mut buf).unwrap_err(),
+            Error::ValueOutOfRange {
+                field: "profile_and_level_indication",
+                ..
+            }
+        ));
     }
 }

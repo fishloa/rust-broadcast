@@ -51,6 +51,15 @@ impl<'a> Parse<'a> for ApplicationUsageDescriptor {
                 reason: "application_usage_descriptor body shorter than minimum 1 byte",
             });
         }
+        if body.len() > 1 {
+            // application_usage_descriptor has no length-delimited fields, so
+            // bytes after usage_type have no wire meaning and used to be
+            // silently dropped on re-serialize (r03-W9).
+            return Err(Error::InvalidDescriptor {
+                tag: TAG,
+                reason: "application_usage_descriptor body longer than 1 byte",
+            });
+        }
         Ok(Self {
             usage_type: body[0],
         })

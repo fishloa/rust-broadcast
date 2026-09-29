@@ -323,22 +323,38 @@ impl Serialize for NetworkChangeNotify {
             buf[pos..pos + 2].copy_from_slice(&cell.cell_id.to_be_bytes());
             pos += 2;
             let loop_length: usize = cell.changes.iter().map(change_serialized_len).sum();
+            let loop_length =
+                broadcast_common::len::fit_bits(loop_length as u64, 8, "loop_length")? as usize;
             buf[pos] = loop_length as u8;
             pos += 1;
             for ch in &cell.changes {
+                let st = broadcast_common::len::fit_bits(
+                    ch.start_time_of_change,
+                    40,
+                    "start_time_of_change",
+                )?;
+                let dur = broadcast_common::len::fit_bits(
+                    u64::from(ch.change_duration),
+                    24,
+                    "change_duration",
+                )?;
+                let receiver_category = broadcast_common::len::fit_bits(
+                    u64::from(ch.receiver_category),
+                    3,
+                    "receiver_category",
+                )? as u8;
                 buf[pos] = ch.network_change_id;
                 buf[pos + 1] = ch.network_change_version;
-                let st = ch.start_time_of_change;
                 buf[pos + 2] = (st >> 32) as u8;
                 buf[pos + 3] = (st >> 24) as u8;
                 buf[pos + 4] = (st >> 16) as u8;
                 buf[pos + 5] = (st >> 8) as u8;
                 buf[pos + 6] = st as u8;
-                let dur = ch.change_duration;
+                let dur = dur as u32;
                 buf[pos + 7] = (dur >> 16) as u8;
                 buf[pos + 8] = (dur >> 8) as u8;
                 buf[pos + 9] = dur as u8;
-                let packed = ((ch.receiver_category & 0x07) << 5)
+                let packed = ((receiver_category & 0x07) << 5)
                     | ((ch.invariant_ts.is_some() as u8) << 4)
                     | (ch.change_type.to_u8() & 0x0F);
                 buf[pos + 10] = packed;
@@ -539,5 +555,60 @@ mod tests {
         assert_eq!(ChangeType::MajorDefault.name(), "major - default");
         assert_eq!(ChangeType::MinorReserved(5).name(), "reserved (minor)");
         assert_eq!(ChangeType::MajorReserved(13).name(), "reserved (major)");
+    }
+
+    #[test]
+    fn serialize_rejects_truncatable_fields() {
+        // change_duration > 24 bits was silently clipped by `(dur >> 16) as u8`
+        // chain; receiver_category > 3 bits by `& 0x07` (r03-W3).
+        let change = NetworkChange {
+            network_change_id: 1,
+            network_change_version: 0,
+            start_time_of_change: 1 << 40,
+            change_duration: 0,
+            receiver_category: 0,
+            change_type: ChangeType::MinorDefault,
+            message_id: 0,
+            invariant_ts: None,
+        };
+        let d = NetworkChangeNotify {
+            cells: alloc::vec![NetworkChangeCell {
+                cell_id: 0,
+                changes: alloc::vec![change.clone()],
+            }],
+        };
+        let mut buf = vec![0u8; d.serialized_len()];
+        assert!(matches!(
+            d.serialize_into(&mut buf).unwrap_err(),
+            Error::FieldOverflow(_)
+        ));
+        let mut c2 = change.clone();
+        c2.start_time_of_change = 0;
+        c2.change_duration = 1 << 24;
+        let d = NetworkChangeNotify {
+            cells: alloc::vec![NetworkChangeCell {
+                cell_id: 0,
+                changes: alloc::vec![c2],
+            }],
+        };
+        let mut buf = vec![0u8; d.serialized_len()];
+        assert!(matches!(
+            d.serialize_into(&mut buf).unwrap_err(),
+            Error::FieldOverflow(_)
+        ));
+        let mut c3 = change;
+        c3.change_duration = 0;
+        c3.receiver_category = 8;
+        let d = NetworkChangeNotify {
+            cells: alloc::vec![NetworkChangeCell {
+                cell_id: 0,
+                changes: alloc::vec![c3],
+            }],
+        };
+        let mut buf = vec![0u8; d.serialized_len()];
+        assert!(matches!(
+            d.serialize_into(&mut buf).unwrap_err(),
+            Error::FieldOverflow(_)
+        ));
     }
 }

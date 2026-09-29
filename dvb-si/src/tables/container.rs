@@ -101,7 +101,7 @@ impl<'a> Parse<'a> for ContainerSection<'a> {
         // byte 1 = section_syntax_indicator(1) | private_indicator(1)
         //          | reserved(2) | private_section_length[11:8](4)
         // byte 2 = private_section_length[7:0]
-        let section_length = (((bytes[1] & 0x0F) as usize) << 8) | bytes[2] as usize;
+        let section_length = super::section_length_of(bytes);
         let total = super::check_section_length(bytes.len(), HEADER_LEN, section_length, MIN_LEN)?;
 
         let private_indicator = (bytes[1] & 0x40) != 0;
@@ -109,8 +109,8 @@ impl<'a> Parse<'a> for ContainerSection<'a> {
         // Extension header (bytes 3..8).
         let container_id = u16::from_be_bytes(*bytes[3..].first_chunk::<2>().unwrap());
         // byte 5: reserved(2) | version_number(5) | current_next_indicator(1)
-        let version_number = (bytes[5] >> 1) & 0x1F;
-        let current_next_indicator = (bytes[5] & 0x01) != 0;
+        let version_number = super::version_number_of(bytes[5]);
+        let current_next_indicator = super::current_next_of(bytes[5]);
         let section_number = bytes[6];
         let last_section_number = bytes[7];
 
@@ -151,15 +151,13 @@ impl Serialize for ContainerSection<'_> {
         buf[0] = TABLE_ID;
         // Byte 1: section_syntax_indicator(1)=1 | private_indicator(1)
         //         | reserved(2)=11 | private_section_length[11:8](4).
-        buf[1] = 0x80 | (u8::from(self.private_indicator) << 6) | 0x30;
+        buf[1] = super::private_section_b1(self.private_indicator, 0);
         // Byte 2: private_section_length[7:0].
         super::write_section_length(buf, len - HEADER_LEN)?;
 
         // Extension header.
         buf[3..5].copy_from_slice(&self.container_id.to_be_bytes());
-        buf[5] = 0xC0 // reserved(2) = 11
-            | ((self.version_number & 0x1F) << 1)
-            | u8::from(self.current_next_indicator);
+        buf[5] = super::version_byte(self.version_number, self.current_next_indicator);
         buf[6] = self.section_number;
         buf[7] = self.last_section_number;
 

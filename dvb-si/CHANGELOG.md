@@ -211,7 +211,125 @@
   §2.6.28) and removed a re-exported DVB PDS-registry name lookup that
   doesn't apply to this ISO/IEC 13818-1 field (breaking).
 
-## [10.1.0] - 2026-09-26
+### Changed (breaking)
+- `tables::int::IntLoopEntry` is now a type alias for the new shared
+  `tables::TargetOperationalLoop` (same fields), and
+  `tables::unt::UntPlatform::target_operational_pairs` changed from
+  `Vec<(DescriptorLoop, DescriptorLoop)>` to
+  `Vec<TargetOperationalLoop>` — INT and UNT define the identical
+  target/operational descriptor-loop pair and no longer use two
+  representations (r02-W22).
+
+### Fixed (warning sweep, #1077, part 2)
+- Descriptors whose syntax has no length-delimited tail accepted trailing
+  bytes and silently dropped them on re-serialize, so a non-conformant
+  stream did not round-trip byte-identically: `application_usage`,
+  `simple_application_boundary` (bytes past the declared extension count),
+  `AVC_timing_and_HRD` (bytes after its flags byte), `AVC_video`,
+  `data_broadcast` and `extended_event` (bytes after `text_length`),
+  `xait_location`, `MPEG-2_AAC_audio`/`MPEG-4_audio`/`MPEG-4_video`, and the
+  `xait_pid`/`service_relocated` extension bodies now reject the extra bytes
+  instead (r03-W9, #1077). `DTS-HD`'s `substream_length` is now read as the
+  bound on its substream, so an asset can no longer walk out of it; the
+  serializer also wrote `substream_length` one byte short, so a
+  re-serialized substream rejected its own assets.
+- `HEVC_video_descriptor` treated its mandatory byte 12 (Table 2-113) as
+  optional: a 12-byte body was accepted with the flags defaulted and then
+  re-serialized as 13 bytes, and a 13-byte body with no temporal sub-block
+  while `temporal_layer_subset_flag` was set was accepted too. Both are now
+  rejected, and the body length must agree with the flag (r03-W12, #1077).
+- `transport_protocol_descriptor`'s HTTP selector decoder silently truncated
+  on malformed input and still reported `Http` with the URLs read so far,
+  unlike its object-carousel decoder which falls back to `Unknown`; a
+  truncated selector is now also `Unknown`, so "complete" and "truncated"
+  are distinguishable (r03-W14, #1077).
+- `FmxBufferSize_descriptor` split its body with an unsourced
+  `descriptor_length % 4` heuristic, so a body too short to hold the
+  mandatory `DefaultFlexMuxBufferDescriptor()` was reported as "default
+  absent" and a partial trailing entry was accepted as entries. The split is
+  now structural against a recorded transcription of ISO/IEC 14496-1 §11.2
+  (`docs/descriptors/iso_14496_1/11_2-flexmux-buffer-descriptors.md` — a
+  secondary source, since that clause is not vendored), and both invalid
+  shapes are rejected (r03-W15, #1077).
+- Section-header bit masks (`reserved(2)='11'`, `reserved(4)='1111'`,
+  `reserved(3)='111'`, the 12-bit `section_length` high nibble, the
+  `reserved_future_use(5)` fill before RST's `running_status(3)`, and the
+  `private_indicator` byte-1 composition) were bare hex literals repeated in
+  almost every table parser and serializer. They are now named constants and
+  helpers in `tables/mod.rs` (`private_section_b1`, `RESERVED_FUTURE_USE_5`,
+  `LOW_NIBBLE_MASK`, …), so a mask change is one edit rather than a
+  crate-wide grep; a source-scan drift guard fails CI if a new mask literal
+  appears outside that module (r02-W16, #1077).
+- The crate-root RFU policy now states the flip side explicitly: reserved
+  bits are dropped on parse (only spec-meaningful bits are stored), so
+  re-serializing a stream with non-standard reserved-bit values normalizes
+  them and is not byte-identical by design (r03-W8, #1077).
+- ISO/IEC 13818-1 reserved bits are now emitted as '1's, matching the
+  existing `ca`/`ac3` policy instead of contradicting it: hevc_video byte 12
+  `reserved_future_use`, hierarchy layer/embedded/channel index padding, and
+  the trailing reserved runs of audio_stream and avc_video byte 3; parsers
+  already ignore those bits, so previously parsed streams still round-trip
+  (r03-W7, #1077).
+- Serializers that reserved bytes from a flag/depth field but wrote them from
+  an `Option` no longer return `Ok(len)` with stale buffer bytes when the two
+  disagree: hevc_video `temporal_sub` presence must match
+  `temporal_layer_subset_flag`, CPCM USI activation flags must have their
+  values, T2 cells must carry a frequency word, and target_region_name now
+  sizes each region from the codes actually present (r03-W6, #1077).
+- Serializers no longer fabricate wire values for flag-gated fields:
+  `unwrap_or(0)`/defaulted conditionals in metadata_pointer (transport_stream_id
+  locator flag now derived from the Option), avc_timing_and_HRD (N/K),
+  video_stream (profile_and_level_indication/chroma_format/
+  frame_rate_extension_flag), s2/s2x/s2xv2 satellite delivery (scrambling
+  sequence index, ISI, timeslice, SFFI, beamhopping time plan id), ac4 (config
+  fields) and uri_linkage (min_polling_interval for ungated types) now return
+  `ValueOutOfRange` instead of silently inventing bytes; `ExtensionDescriptor`
+  serialization rejects a `tag_extension` that disagrees with its typed body;
+  `ExtendedEventLinkageEntry` no longer stores `target_id_type`/
+  `original_network_id_flag`/`service_id_flag` — those wire bits are derived
+  from its `TargetId` (breaking) (r03-W5, #1077).
+- Silent numeric truncation in serializers is now an error: over-wide
+  `MB_buffer_size`/`TB_leak_rate` (24-bit), `maximum_bitrate` (22-bit),
+  `logical_channel_number` (10-bit), `country_region_id` (6-bit),
+  hevc_video `profile_space`/`profile_idc`/`temporal_id`, network_change_notify
+  `start_time_of_change` (40-bit) / `change_duration` (24-bit) /
+  `receiver_category` (3-bit) / `loop_length`, service_prominence
+  `sogi_priority` (12-bit) and its loop lengths, video_depth_range
+  disparity hints outside the 12-bit two's-complement range, cp `CP_PID`
+  (13-bit), and dts_hd substreams with more than 8 assets now return
+  `FieldOverflow`/`ValueOutOfRange` instead of writing a corrupted byte
+  (r03-W3, #1077).
+- Sub-byte `Reserved(v)` enum payloads and raw multi-bit fields are now
+  masked at the shift when composing a byte, so a user-constructed wide
+  payload (e.g. `Bandwidth::Reserved(0xFE)`) can no longer bleed into the
+  neighbouring bit field; covers terrestrial/cable delivery, video_stream,
+  component, content, hierarchy, content_identifier, linkage, hevc_video,
+  and the SH/T2/S2x/DTS-UHD/DTS-HD/image-icon/CPCM extension bodies
+  (r03-W2, #1077).
+- MPE-FEC and MPE-IFEC each carried their own copy of the identical 32-bit
+  `real_time_parameters` bit packing; both `RealTimeParameters` structs now
+  delegate to one shared bit codec, so the two can never drift (r02-W22).
+- `carousel::biop::message::ServiceGatewayInfo::download_taps` was a raw
+  `&[u8]` (count byte + tap bytes) instead of a typed `Vec<Tap<'_>>`; a
+  caller had to hand-parse each `Tap` itself even though the crate already
+  has a `Tap` parser used by every other BIOP consumer (r02-W12, breaking).
+- `carousel::biop::fs::DirectoryObjectData::entries` was an untyped
+  `Vec<(Vec<u8>, u16, Vec<u8>)>`; replaced with a named `DirectoryEntry {
+  name, module_id, object_key }` (r02-W12, breaking).
+- `carousel::biop::message::ModuleInfo::user_info` was a raw `&[u8]`
+  reimplementing its own private tag/length descriptor-loop walker;
+  replaced with `descriptors::DescriptorLoop` (the crate's existing typed
+  wrapper) and `descriptors()` now delegates to
+  `DescriptorLoop::raw_tags()` instead of a duplicate walker (r02-W12,
+  breaking).
+- `carousel::biop::message::CompressedModuleDescriptor` exposed only a raw
+  `body: &[u8]`, so the `compression_method`/`original_size` fixed fields
+  (EN 301 192 §10.2.11 Table 59) were left for a caller to hand-slice off
+  the front of the zlib stream. Split into typed `compression_method`,
+  `original_size` and `zlib_data` fields; `ModuleInfo::compressed_module_descriptor`
+  now returns `Option<Result<CompressedModuleDescriptor<'_>>>` so a body
+  shorter than the fixed fields is a surfaced error, not a panic (r02-W12,
+  breaking).
 
 ### Security
 Fixes GHSA-hxv4-gqm8-whw6 and GHSA-h6j8-r8j3-36xg.

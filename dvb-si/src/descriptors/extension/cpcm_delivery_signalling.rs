@@ -141,6 +141,11 @@ impl CopyControl {
 }
 broadcast_common::impl_spec_display!(CopyControl, Reserved);
 
+/// `copy_control(3)` value mask (ETSI TS 102 825-4 Table 9) — masks the
+/// `Reserved(v)` payload at the shift so a wide value cannot bleed into the
+/// flag bits below it (r03-W2).
+const COPY_CONTROL_MASK: u8 = 0x07;
+
 /// `move_and_copy_propagation_information` — ETSI TS 102 825-4 Table 10.
 ///
 /// Coded as a 2-bit `uimsbf` in byte 2 `[5:4]` of the USI.
@@ -577,7 +582,7 @@ impl CpcmUsi {
         if self.simultaneous_view_count_activated {
             n += SIMULTANEOUS_VIEW_COUNT_LEN;
         }
-        if self.remote_access_date_immediate_flag || self.remote_access_date_moving_window_flag {
+        if self.remote_access_date_moving_window_flag || self.remote_access_date_immediate_flag {
             n += CPCM_DATE_TIME_LEN;
         }
         if self.export_controlled_cps {
@@ -587,6 +592,33 @@ impl CpcmUsi {
             }
         }
         n
+    }
+
+    /// Activator flags reserve wire bytes; the corresponding `Option`s must
+    /// agree or serialize writes fewer bytes than `serialized_len()` claims,
+    /// leaving stale caller bytes behind (r03-W6).
+    fn check_conditional_presence(&self) -> Result<()> {
+        let missing = |field| Error::ValueOutOfRange {
+            field,
+            reason: "required when its activation flag is set",
+        };
+        if self.view_window_activated
+            && (self.view_window_start.is_none() || self.view_window_end.is_none())
+        {
+            return Err(missing("view_window_start/view_window_end"));
+        }
+        if self.view_period_activated && self.view_period_from_first_playback.is_none() {
+            return Err(missing("view_period_from_first_playback"));
+        }
+        if self.simultaneous_view_count_activated && self.simultaneous_view_count.is_none() {
+            return Err(missing("simultaneous_view_count"));
+        }
+        if (self.remote_access_date_immediate_flag || self.remote_access_date_moving_window_flag)
+            && self.remote_access_date.is_none()
+        {
+            return Err(missing("remote_access_date"));
+        }
+        Ok(())
     }
 }
 
@@ -605,11 +637,13 @@ impl Serialize for CpcmUsi {
                 have: buf.len(),
             });
         }
+        self.check_conditional_presence()?;
         let body_len = self.body_len();
-        buf[0] = body_len as u8;
+        let body_len = broadcast_common::len::fit_u8(body_len, "usi_length")?;
+        buf[0] = body_len;
 
         // ── byte 1 ─────────────────────────────────────────────────────────
-        buf[1] = (self.copy_control.to_u8() << 5)
+        buf[1] = ((self.copy_control.to_u8() & COPY_CONTROL_MASK) << 5)
             | ((u8::from(self.do_not_cpcm_scramble)) << 4)
             | ((u8::from(self.viewable)) << 3)
             | ((u8::from(self.view_window_activated)) << 2)
@@ -957,5 +991,21 @@ mod tests {
             other => panic!("expected CpcmDeliverySignalling, got {other:?}"),
         }
         round_trip(&d);
+    }
+    #[test]
+    fn serialize_rejects_activator_flag_without_value() {
+        // r03-W6: `view_window_activated` used to reserve 12 body bytes while
+        // the writer keyed on the Option, so `activated + None` returned
+        // Ok(len) with stale caller bytes in the window.
+        let mut usi = minimal_usi();
+        usi.view_window_activated = true;
+        let mut buf = vec![0xAAu8; usi.serialized_len()];
+        assert!(matches!(
+            usi.serialize_into(&mut buf).unwrap_err(),
+            Error::ValueOutOfRange {
+                field: "view_window_start/view_window_end",
+                ..
+            }
+        ));
     }
 }

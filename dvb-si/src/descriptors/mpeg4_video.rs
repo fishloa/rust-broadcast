@@ -31,10 +31,10 @@ impl<'a> Parse<'a> for Mpeg4VideoDescriptor {
             "Mpeg4VideoDescriptor",
             "unexpected tag for MPEG-4_video_descriptor",
         )?;
-        if body.len() < (BODY_LEN as usize) {
+        if body.len() != (BODY_LEN as usize) {
             return Err(Error::InvalidDescriptor {
                 tag: TAG,
-                reason: "MPEG-4_video_descriptor too short",
+                reason: "MPEG-4_video_descriptor body length must equal 1",
             });
         }
         Ok(Self {

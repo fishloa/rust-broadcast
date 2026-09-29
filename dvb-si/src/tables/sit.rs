@@ -95,7 +95,7 @@ impl<'a> Parse<'a> for SitSection<'a> {
                 expected: &[TABLE_ID],
             });
         }
-        let section_length = ((bytes[1] & 0x0F) as usize) << 8 | bytes[2] as usize;
+        let section_length = super::section_length_of(bytes);
         let total = super::check_section_length(
             bytes.len(),
             MIN_HEADER_LEN,
@@ -104,13 +104,13 @@ impl<'a> Parse<'a> for SitSection<'a> {
         )?;
 
         let table_id_extension = u16::from_be_bytes(*bytes[3..].first_chunk::<2>().unwrap());
-        let version_number = (bytes[5] >> 1) & 0x1F;
-        let current_next_indicator = (bytes[5] & 0x01) != 0;
+        let version_number = super::version_number_of(bytes[5]);
+        let current_next_indicator = super::current_next_of(bytes[5]);
         let section_number = bytes[6];
         let last_section_number = bytes[7];
 
         let dl_pos = MIN_HEADER_LEN + EXTENSION_HEADER_LEN;
-        let ti_len = (((bytes[dl_pos] & 0x0F) as usize) << 8) | bytes[dl_pos + 1] as usize;
+        let ti_len = super::desc_loop_len_of(bytes[dl_pos], bytes[dl_pos + 1]);
         let ti_start = dl_pos + DESC_LOOP_LEN_FIELD;
         let ti_end = ti_start + ti_len;
         let crc_start = total - CRC_LEN;
@@ -144,7 +144,7 @@ impl<'a> Parse<'a> for SitSection<'a> {
             let service_id = u16::from_be_bytes(*b2);
             // byte[pos+2]: reserved_future_use(1) | running_status(3) | len_hi(4)
             let running_status = RunningStatus::from_u8((bytes[pos + 2] >> 4) & 0x07);
-            let svc_desc_len = (((bytes[pos + 2] & 0x0F) as usize) << 8) | bytes[pos + 3] as usize;
+            let svc_desc_len = super::desc_loop_len_of(bytes[pos + 2], bytes[pos + 3]);
             let desc_start = pos + SERVICE_HEADER_LEN;
             let desc_end = desc_start + svc_desc_len;
             if desc_end > crc_start {
@@ -202,7 +202,7 @@ impl Serialize for SitSection<'_> {
         buf[1] = super::SECTION_B1_FLAGS_DVB;
         super::write_section_length(buf, len - MIN_HEADER_LEN)?;
         buf[3..5].copy_from_slice(&self.table_id_extension.to_be_bytes());
-        buf[5] = 0xC0 | ((self.version_number & 0x1F) << 1) | u8::from(self.current_next_indicator);
+        buf[5] = super::version_byte(self.version_number, self.current_next_indicator);
         buf[6] = self.section_number;
         buf[7] = self.last_section_number;
 
@@ -212,8 +212,7 @@ impl Serialize for SitSection<'_> {
             12,
             "transmission_info_loop_length",
         )?;
-        buf[dl_pos] = 0xF0 | ((ti_len >> 8) as u8);
-        buf[dl_pos + 1] = ti_len as u8;
+        super::write_desc_loop_len(&mut buf[dl_pos..dl_pos + 2], ti_len as usize)?;
         let ti_start = dl_pos + DESC_LOOP_LEN_FIELD;
         let ti_end = ti_start + self.transmission_info_descriptors.len();
         buf[ti_start..ti_end].copy_from_slice(self.transmission_info_descriptors.raw());
@@ -263,18 +262,18 @@ mod tests {
             + ti_desc.len()
             + service_loop.len()
             + CRC_LEN) as u16;
-        let mut v = vec![
-            TABLE_ID,
-            super::super::SECTION_B1_FLAGS_DVB | ((section_length >> 8) as u8 & 0x0F),
-            (section_length & 0xFF) as u8,
-        ];
+        let mut v = Vec::new();
+        v.push(TABLE_ID);
+        crate::tables::push_section_header(
+            &mut v,
+            crate::tables::SECTION_B1_FLAGS_DVB,
+            section_length as usize,
+        );
         v.extend_from_slice(&table_id_extension.to_be_bytes());
-        v.push(0xC0 | ((version & 0x1F) << 1) | 0x01);
+        v.push(crate::tables::version_byte(version, true));
         v.push(0x00);
         v.push(0x00);
-        let dl = ti_desc.len() as u16;
-        v.push(0xF0 | ((dl >> 8) as u8 & 0x0F));
-        v.push((dl & 0xFF) as u8);
+        crate::tables::push_desc_loop_len(&mut v, ti_desc.len());
         v.extend_from_slice(ti_desc);
         v.extend_from_slice(service_loop);
         v.extend_from_slice(&[0, 0, 0, 0]);

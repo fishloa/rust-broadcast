@@ -9,6 +9,8 @@ use broadcast_common::{Parse, Serialize};
 
 /// Descriptor tag for maximum_bitrate_descriptor.
 pub const TAG: u8 = 0x0E;
+/// `maximum_bitrate` is a 22-bit uimsbf (units of 50 bytes/s).
+const MAXIMUM_BITRATE_BITS: u32 = 22;
 const HEADER_LEN: usize = 2;
 const BODY_LEN: u8 = 3;
 
@@ -58,9 +60,14 @@ impl Serialize for MaximumBitrateDescriptor {
                 have: buf.len(),
             });
         }
+        let mb = broadcast_common::len::fit_bits(
+            u64::from(self.maximum_bitrate),
+            MAXIMUM_BITRATE_BITS,
+            "maximum_bitrate",
+        )?;
         buf[0] = TAG;
         buf[1] = BODY_LEN;
-        let mb = self.maximum_bitrate;
+        let mb = mb as u32;
         buf[HEADER_LEN] = ((mb >> 16) & 0x3F) as u8;
         buf[HEADER_LEN + 1] = ((mb >> 8) & 0xFF) as u8;
         buf[HEADER_LEN + 2] = (mb & 0xFF) as u8;
@@ -129,5 +136,18 @@ mod tests {
         let mut tiny = vec![0u8; 2];
         let err = d.serialize_into(&mut tiny).unwrap_err();
         assert!(matches!(err, Error::OutputBufferTooSmall { .. }));
+    }
+
+    #[test]
+    fn serialize_rejects_over_22bit_bitrate() {
+        // Pre-fix `(mb >> 16) & 0x3F` silently dropped bits 22..32 (r03-W3).
+        let d = MaximumBitrateDescriptor {
+            maximum_bitrate: 1 << 22,
+        };
+        let mut buf = vec![0u8; d.serialized_len()];
+        assert!(matches!(
+            d.serialize_into(&mut buf).unwrap_err(),
+            Error::FieldOverflow(_)
+        ));
     }
 }

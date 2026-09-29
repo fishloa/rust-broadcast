@@ -58,17 +58,17 @@ impl<'a> Parse<'a> for TsdtSection<'a> {
             });
         }
 
-        let section_length = ((bytes[1] & 0x0F) as u16) << 8 | bytes[2] as u16;
+        let section_length = super::section_length_of(bytes);
         let total = super::check_section_length(
             bytes.len(),
             MIN_HEADER_LEN,
-            section_length as usize,
+            section_length,
             MIN_SECTION_LEN,
         )?;
 
         let table_id_extension = u16::from_be_bytes(*bytes[3..].first_chunk::<2>().unwrap());
-        let version_number = (bytes[5] >> 1) & 0x1F;
-        let current_next_indicator = (bytes[5] & 0x01) != 0;
+        let version_number = super::version_number_of(bytes[5]);
+        let current_next_indicator = super::current_next_of(bytes[5]);
         let section_number = bytes[6];
         let last_section_number = bytes[7];
 
@@ -109,7 +109,7 @@ impl Serialize for TsdtSection<'_> {
         buf[1] = super::SECTION_B1_FLAGS_PSI;
         super::write_section_length(buf, section_length)?;
         buf[3..5].copy_from_slice(&self.table_id_extension.to_be_bytes());
-        buf[5] = 0xC0 | ((self.version_number & 0x1F) << 1) | u8::from(self.current_next_indicator);
+        buf[5] = super::version_byte(self.version_number, self.current_next_indicator);
         buf[6] = self.section_number;
         buf[7] = self.last_section_number;
 

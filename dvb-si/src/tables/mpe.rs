@@ -190,7 +190,7 @@ impl<'a> Parse<'a> for MpeDatagramSection<'a> {
         // Byte 1: SSI(1) | private(1) | reserved(2) | section_length[11:8].
         let section_syntax_indicator = (bytes[1] & 0x80) != 0;
         let private_indicator = (bytes[1] & 0x40) != 0;
-        let section_length = (((bytes[1] & 0x0F) as usize) << 8) | bytes[2] as usize;
+        let section_length = super::section_length_of(bytes);
         let total =
             super::check_section_length(bytes.len(), HEADER_LEN, section_length, MIN_SECTION_LEN)?;
 
@@ -203,7 +203,7 @@ impl<'a> Parse<'a> for MpeDatagramSection<'a> {
         let payload_scrambling_control = (bytes[5] >> 4) & 0x03;
         let address_scrambling_control = (bytes[5] >> 2) & 0x03;
         let llc_snap_flag = (bytes[5] & 0x02) != 0;
-        let current_next_indicator = (bytes[5] & 0x01) != 0;
+        let current_next_indicator = super::current_next_of(bytes[5]);
 
         let section_number = bytes[6];
         let last_section_number = bytes[7];
@@ -283,7 +283,7 @@ impl Serialize for MpeDatagramSection<'_> {
         buf[4] = self.mac_address.0[4];
 
         // Byte 5: reserved(2)=11 | payload_sc(2) | address_sc(2) | LLC_SNAP(1) | cni(1).
-        buf[5] = 0xC0
+        buf[5] = super::B5_RESERVED_HI
             | ((self.payload_scrambling_control & 0x03) << 4)
             | ((self.address_scrambling_control & 0x03) << 2)
             | (u8::from(self.llc_snap_flag) << 1)

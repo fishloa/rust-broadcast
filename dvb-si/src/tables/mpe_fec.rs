@@ -37,6 +37,7 @@
 //! follows the [`crate::tables::dsmcc`] precedent.
 
 use crate::error::{Error, Result};
+use crate::tables::real_time_parameters::{RTP_LEN, RealTimeParametersBits};
 use broadcast_common::{Parse, Serialize};
 
 /// table_id for the MPE-FEC section.
@@ -52,9 +53,6 @@ const HEADER_LEN: usize = 3;
 /// Bytes 3-7: padding_columns(1) + reserved_for_future_use(1)
 /// + reserved/rfu/cni byte(1) + section_number(1) + last_section_number(1).
 const EXTENSION_HEADER_LEN: usize = 5;
-
-/// Bytes 8-11: the 32-bit `real_time_parameters()`.
-const RTP_LEN: usize = 4;
 
 /// Bytes occupied by the trailing CRC-32 field.
 const CRC_LEN: usize = 4;
@@ -82,35 +80,27 @@ pub struct RealTimeParameters {
 }
 
 impl RealTimeParameters {
-    /// Decode the 4-byte real_time_parameters block.
+    /// Decode the 4-byte real_time_parameters block via the shared codec
+    /// (r02-W22).
     fn from_bytes(b: [u8; RTP_LEN]) -> Self {
-        // delta_t(12) = b[0] | top 4 bits of b[1]
-        let delta_t = ((b[0] as u16) << 4) | ((b[1] >> 4) as u16);
-        let table_boundary = (b[1] & 0x08) != 0;
-        let frame_boundary = (b[1] & 0x04) != 0;
-        // address(18) = bottom 2 bits of b[1] | b[2] | b[3]
-        let address = (((b[1] & 0x03) as u32) << 16) | ((b[2] as u32) << 8) | (b[3] as u32);
+        let bits = RealTimeParametersBits::from_bytes(b);
         RealTimeParameters {
-            delta_t,
-            table_boundary,
-            frame_boundary,
-            address,
+            delta_t: bits.delta_t,
+            table_boundary: bits.boundary,
+            frame_boundary: bits.frame_boundary,
+            address: bits.tail,
         }
     }
 
-    /// Encode into the 4-byte real_time_parameters block.
+    /// Encode into the 4-byte real_time_parameters block via the shared codec.
     fn to_bytes(self) -> [u8; RTP_LEN] {
-        let dt = self.delta_t & 0x0FFF;
-        let addr = self.address & 0x0003_FFFF;
-        [
-            (dt >> 4) as u8,
-            (((dt & 0x0F) as u8) << 4)
-                | (u8::from(self.table_boundary) << 3)
-                | (u8::from(self.frame_boundary) << 2)
-                | ((addr >> 16) as u8 & 0x03),
-            ((addr >> 8) & 0xFF) as u8,
-            (addr & 0xFF) as u8,
-        ]
+        RealTimeParametersBits {
+            delta_t: self.delta_t,
+            boundary: self.table_boundary,
+            frame_boundary: self.frame_boundary,
+            tail: self.address,
+        }
+        .to_bytes()
     }
 }
 
@@ -156,14 +146,14 @@ impl<'a> Parse<'a> for MpeFecSection<'a> {
             });
         }
 
-        let section_length = (((bytes[1] & 0x0F) as usize) << 8) | bytes[2] as usize;
+        let section_length = super::section_length_of(bytes);
         let total = super::check_section_length(bytes.len(), HEADER_LEN, section_length, MIN_LEN)?;
 
         let private_indicator = (bytes[1] & 0x40) != 0;
         let padding_columns = bytes[3];
         // bytes[4] = reserved_for_future_use(8) — ignored on parse.
         // bytes[5] = reserved(2) | reserved_for_future_use(5) | current_next_indicator(1)
-        let current_next_indicator = (bytes[5] & 0x01) != 0;
+        let current_next_indicator = super::current_next_of(bytes[5]);
         let section_number = bytes[6];
         let last_section_number = bytes[7];
 
@@ -211,7 +201,7 @@ impl Serialize for MpeFecSection<'_> {
         buf[0] = TABLE_ID;
         // Byte 1: section_syntax_indicator(1)=1 | private_indicator(1)
         //         | reserved(2)=11 | section_length[11:8](4).
-        buf[1] = 0x80 | (u8::from(self.private_indicator) << 6) | 0x30;
+        buf[1] = super::private_section_b1(self.private_indicator, 0);
         super::write_section_length(buf, len - HEADER_LEN)?;
 
         // Extension header.

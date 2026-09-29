@@ -20,20 +20,22 @@ pub struct ServiceRelocated {
 impl<'a> Parse<'a> for ServiceRelocated {
     type Error = crate::error::Error;
     fn parse(sel: &'a [u8]) -> Result<Self> {
-        if sel.len() < SERVICE_RELOCATED_LEN {
-            return Err(Error::BufferTooShort {
-                need: SERVICE_RELOCATED_LEN,
-                have: sel.len(),
-                what: "service_relocated body",
-            });
-        }
-        let (hdr, _) =
+        // Exactly the three fixed u16 fields (EN 300 468 §6.2.16): a longer
+        // selector has trailing bytes with no wire meaning, which used to be
+        // dropped on re-serialize (r03-W9).
+        let (hdr, rest) =
             sel.split_first_chunk::<SERVICE_RELOCATED_LEN>()
                 .ok_or(Error::BufferTooShort {
                     need: SERVICE_RELOCATED_LEN,
                     have: sel.len(),
                     what: "service_relocated body",
                 })?;
+        if !rest.is_empty() {
+            return Err(Error::InvalidDescriptor {
+                tag: crate::descriptors::extension::TAG,
+                reason: "service_relocated body length must equal 6",
+            });
+        }
         Ok(ServiceRelocated {
             old_original_network_id: u16::from_be_bytes([hdr[0], hdr[1]]),
             old_transport_stream_id: u16::from_be_bytes([hdr[2], hdr[3]]),

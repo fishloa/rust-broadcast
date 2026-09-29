@@ -257,18 +257,34 @@ impl Serialize for S2SatelliteDeliverySystemDescriptor {
 
         let mut pos = HEADER_LEN + FLAGS_LEN;
         if self.scrambling_sequence_selector {
-            let index = self.scrambling_sequence_index.unwrap_or(0) & SCRAMBLING_INDEX_MAX;
+            // The selector promises 18 bits on the wire; fabricating 0 would
+            // silently invent an index (r03-W5).
+            let index = self
+                .scrambling_sequence_index
+                .ok_or(Error::ValueOutOfRange {
+                    field: "scrambling_sequence_index",
+                    reason: "required when scrambling_sequence_selector is set",
+                })?
+                & SCRAMBLING_INDEX_MAX;
             buf[pos] = SCRAMBLING_RESERVED_MASK | ((index >> 16) as u8 & SCRAMBLING_INDEX_HI_MASK);
             buf[pos + 1] = (index >> 8) as u8;
             buf[pos + 2] = index as u8;
             pos += SCRAMBLING_FIELD_LEN;
         }
         if self.multiple_input_stream_flag {
-            buf[pos] = self.input_stream_identifier.unwrap_or(0);
+            let isi = self.input_stream_identifier.ok_or(Error::ValueOutOfRange {
+                field: "input_stream_identifier",
+                reason: "required when multiple_input_stream_flag is set",
+            })?;
+            buf[pos] = isi;
             pos += ISI_FIELD_LEN;
         }
         if !self.not_timeslice_flag {
-            buf[pos] = self.timeslice_number.unwrap_or(0);
+            let ts = self.timeslice_number.ok_or(Error::ValueOutOfRange {
+                field: "timeslice_number",
+                reason: "required when not_timeslice_flag is clear",
+            })?;
+            buf[pos] = ts;
         }
         Ok(len)
     }
@@ -394,5 +410,27 @@ mod tests {
         let mut buf = vec![0u8; d.serialized_len()];
         d.serialize_into(&mut buf).unwrap();
         assert_eq!(S2SatelliteDeliverySystemDescriptor::parse(&buf).unwrap(), d);
+    }
+    #[test]
+    fn serialize_rejects_missing_selector_conditional_fields() {
+        // r03-W5: each selector flag reserves wire bytes; the value used to be
+        // `unwrap_or(0)`-ed, inventing an index/ISI/timeslice out of thin air.
+        let d = S2SatelliteDeliverySystemDescriptor {
+            scrambling_sequence_selector: true,
+            multiple_input_stream_flag: false,
+            not_timeslice_flag: true,
+            ts_gs_mode: TsGsMode::from_u8(0),
+            scrambling_sequence_index: None,
+            input_stream_identifier: None,
+            timeslice_number: None,
+        };
+        let mut buf = vec![0u8; d.serialized_len()];
+        assert!(matches!(
+            d.serialize_into(&mut buf).unwrap_err(),
+            Error::ValueOutOfRange {
+                field: "scrambling_sequence_index",
+                ..
+            }
+        ));
     }
 }

@@ -8,6 +8,18 @@ impl ExtensionBodyDef<'_> for T2DeliverySystem {
     const NAME: &'static str = "T2_DELIVERY_SYSTEM";
 }
 
+// Sub-byte `Reserved(v)` payloads store a raw `u8`; mask to the wire field
+// width at the shift so a wide value cannot bleed into the neighbouring
+// field (r03-W2).
+/// `siso_miso(2)` (Table 134).
+const T2_SISO_MISO_VALUE_MASK: u8 = 0x03;
+/// `bandwidth(4)` (Table 135).
+const T2_BANDWIDTH_VALUE_MASK: u8 = 0x0F;
+/// `guard_interval(3)` (Table 136).
+const T2_GUARD_INTERVAL_VALUE_MASK: u8 = 0x07;
+/// `transmission_mode(3)` (Table 137).
+const T2_TRANSMISSION_MODE_VALUE_MASK: u8 = 0x07;
+
 // ---------------------------------------------------------------------------
 //  T2-specific enums (Tables 134-137)
 // ---------------------------------------------------------------------------
@@ -526,6 +538,9 @@ impl Serialize for T2DeliverySystem {
         let mut len = T2_FIXED_PREFIX_LEN;
         if self.siso_miso.is_some() {
             len += T2_FLAGS_BLOCK_LEN;
+            // tfs_flag also selects the per-cell layout; both layouts write
+            // one frequency word per cell, so None means "false" and an
+            // empty cell is rejected below rather than fabricated (r03-W6).
             let tfs = self.tfs_flag.unwrap_or(false);
             for cell in &self.cells {
                 len += 2; // cell_id
@@ -558,9 +573,11 @@ impl Serialize for T2DeliverySystem {
             self.other_frequency_flag,
             self.tfs_flag,
         ) {
-            buf[p] = (sm.to_u8() << 6) | ((bw.to_u8() & 0x0F) << 2) | 0x03;
-            buf[p + 1] = (gi.to_u8() << 5)
-                | ((tm.to_u8() & 0x07) << 2)
+            buf[p] = ((sm.to_u8() & T2_SISO_MISO_VALUE_MASK) << 6)
+                | ((bw.to_u8() & T2_BANDWIDTH_VALUE_MASK) << 2)
+                | 0x03;
+            buf[p + 1] = ((gi.to_u8() & T2_GUARD_INTERVAL_VALUE_MASK) << 5)
+                | ((tm.to_u8() & T2_TRANSMISSION_MODE_VALUE_MASK) << 2)
                 | (u8::from(off) << 1)
                 | u8::from(tfs);
             p += T2_FLAGS_BLOCK_LEN;
@@ -579,7 +596,14 @@ impl Serialize for T2DeliverySystem {
                         p += 4;
                     }
                 } else {
-                    let freq = cell.centre_frequencies.first().copied().unwrap_or(0);
+                    let freq =
+                        cell.centre_frequencies
+                            .first()
+                            .copied()
+                            .ok_or(Error::ValueOutOfRange {
+                                field: "centre_frequencies",
+                                reason: "cell must carry one frequency when tfs_flag is false",
+                            })?;
                     buf[p..p + 4].copy_from_slice(&freq.to_be_bytes());
                     p += 4;
                 }

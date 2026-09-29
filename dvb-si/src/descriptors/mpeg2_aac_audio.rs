@@ -36,10 +36,10 @@ impl<'a> Parse<'a> for Mpeg2AacAudioDescriptor {
             "Mpeg2AacAudioDescriptor",
             "unexpected tag for MPEG-2_AAC_audio_descriptor",
         )?;
-        if body.len() < (BODY_LEN as usize) {
+        if body.len() != (BODY_LEN as usize) {
             return Err(Error::InvalidDescriptor {
                 tag: TAG,
-                reason: "MPEG-2_AAC_audio_descriptor too short",
+                reason: "MPEG-2_AAC_audio_descriptor body length must equal 1",
             });
         }
         Ok(Self {

@@ -278,6 +278,20 @@ macro_rules! declare_extension_bodies {
         }
 
         impl ExtensionBody<'_> {
+            /// The `descriptor_tag_extension` this body type is selected by
+            /// (`None` for [`ExtensionBody::Raw`], which carries no type).
+            #[must_use]
+            pub fn tag_extension(&self) -> Option<u8> {
+                match self {
+                    $(
+                        ExtensionBody::$variant(_) => Some(
+                            <$($path)::+ as ExtensionBodyDef<'_>>::TAG_EXTENSION,
+                        ),
+                    )+
+                    ExtensionBody::Raw(_) => None,
+                }
+            }
+
             /// Selector-byte length (everything after `descriptor_tag_extension`).
             fn selector_len(&self) -> usize {
                 match self {
@@ -519,6 +533,17 @@ impl Serialize for ExtensionDescriptor<'_> {
             return Err(Error::InvalidDescriptor {
                 tag: TAG,
                 reason: "descriptor_length exceeds 255 bytes",
+            });
+        }
+        // The discriminant must agree with the body's own tag extension;
+        // writing a disagreeing pair used to produce a descriptor that
+        // re-parsed as a different type (r03-W5).
+        if let (Some(body_tag), Some(kind)) = (self.body.tag_extension(), self.kind())
+            && body_tag != kind as u8
+        {
+            return Err(Error::InvalidDescriptor {
+                tag: TAG,
+                reason: "tag_extension disagrees with the typed body",
             });
         }
         crate::descriptors::write_descriptor_header(buf, TAG, body_len)?;
@@ -778,5 +803,28 @@ mod tests {
             }
             other => panic!("expected ServiceProminence, got {other:?}"),
         }
+    }
+    #[test]
+    fn serialize_rejects_tag_extension_disagreeing_with_body() {
+        // r03-W5: `tag_extension` was a free `u8`, so a hand-built descriptor
+        // could write, say, tag_extension 0x06 (target_region) around an
+        // ac4 body; re-parsing then returned a *different* type than the one
+        // serialized.
+        let d = ExtensionDescriptor {
+            tag_extension: 0x06,
+            body: ExtensionBody::Ac4(super::ac4::Ac4 {
+                ac4_config_flag: false,
+                ac4_toc_flag: false,
+                ac4_dialog_enhancement_enabled: None,
+                ac4_channel_mode: None,
+                toc: None,
+                additional_info: &[],
+            }),
+        };
+        let mut buf = vec![0u8; d.serialized_len()];
+        assert!(matches!(
+            d.serialize_into(&mut buf).unwrap_err(),
+            Error::InvalidDescriptor { tag: TAG, .. }
+        ));
     }
 }

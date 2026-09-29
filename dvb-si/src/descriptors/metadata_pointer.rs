@@ -247,8 +247,10 @@ impl Serialize for MetadataPointerDescriptor<'_> {
         buf[pos] = self.metadata_service_id;
         pos += 1;
 
+        // The record flag is derived from the Option, so it can never claim
+        // a record that is not written (r03-W5).
         let mut flags = (self.mpeg_carriage_flags.to_u8() & 0x03) << 5;
-        if self.metadata_locator_record_flag {
+        if self.metadata_locator_record.is_some() {
             flags |= 0x80;
         }
         buf[pos] = flags;
@@ -266,9 +268,14 @@ impl Serialize for MetadataPointerDescriptor<'_> {
             pos += 2;
         }
         if let Some(tsl) = self.transport_stream_location {
+            // `transport_stream_id` is co-present on the wire; fabricating 0
+            // would misframe, so it must be present too (r03-W5).
+            let tsi = self.transport_stream_id.ok_or(Error::ValueOutOfRange {
+                field: "transport_stream_id",
+                reason: "required when transport_stream_location is present",
+            })?;
             buf[pos..pos + 2].copy_from_slice(&tsl.to_be_bytes());
-            buf[pos + 2..pos + 4]
-                .copy_from_slice(&self.transport_stream_id.unwrap_or(0).to_be_bytes());
+            buf[pos + 2..pos + 4].copy_from_slice(&tsi.to_be_bytes());
             pos += 4;
         }
 
@@ -418,5 +425,49 @@ mod tests {
     fn parse_rejects_too_short() {
         let err = MetadataPointerDescriptor::parse(&[TAG, 0]).unwrap_err();
         assert!(matches!(err, Error::InvalidDescriptor { tag: TAG, .. }));
+    }
+    #[test]
+    fn serialize_derives_locator_flag_and_requires_co_present_tsid() {
+        // r03-W5: `metadata_locator_record_flag` used to be a stored bool, so
+        // it could claim a record that was never written, and a lone
+        // `transport_stream_location` fabricated a 0 transport_stream_id.
+        let base = MetadataPointerDescriptor {
+            metadata_application_format: 1,
+            metadata_application_format_identifier: None,
+            metadata_format: MetadataFormat::from_u8(1),
+            metadata_format_identifier: None,
+            metadata_service_id: 2,
+            metadata_locator_record_flag: false,
+            metadata_locator_record: None,
+            program_number: None,
+            transport_stream_location: None,
+            transport_stream_id: None,
+            mpeg_carriage_flags: MpegCarriageFlags::from_u8(0),
+            private_data: &[],
+        };
+        let mut d = base.clone();
+        d.mpeg_carriage_flags = MpegCarriageFlags::from_u8(1);
+        d.transport_stream_location = Some(0x0101);
+        let mut buf = vec![0u8; d.serialized_len()];
+        assert!(matches!(
+            d.serialize_into(&mut buf).unwrap_err(),
+            Error::ValueOutOfRange {
+                field: "transport_stream_id",
+                ..
+            }
+        ));
+        // carriage_flags == 3 needs no program_number, so the second case can
+        // exercise the lying flag: the *stored* flag says true but no record
+        // is written; serialize must emit record_flag=0 (derived from the
+        // Option) and an exact round-trip of the flag byte.
+        let mut d = base;
+        d.metadata_locator_record_flag = true;
+        d.mpeg_carriage_flags = MpegCarriageFlags::None;
+        let mut buf = vec![0u8; d.serialized_len()];
+        d.serialize_into(&mut buf).unwrap();
+        let flags_byte = buf[buf.len() - 1 - d.private_data.len() - 1];
+        assert_eq!(flags_byte & 0x80, 0, "flag must be derived, not stored");
+        let re = MetadataPointerDescriptor::parse(&buf).unwrap();
+        assert!(!re.metadata_locator_record_flag);
     }
 }

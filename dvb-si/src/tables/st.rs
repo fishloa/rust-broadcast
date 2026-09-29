@@ -67,8 +67,8 @@ impl<'a> Parse<'a> for StSection {
             });
         }
 
-        let section_length = ((bytes[1] & 0x0F) as u16) << 8 | bytes[2] as u16;
-        let payload_len = section_length as usize;
+        let section_length = super::section_length_of(bytes);
+        let payload_len = section_length;
 
         if bytes.len() < HEADER_LEN + payload_len {
             return Err(Error::SectionLengthOverflow {

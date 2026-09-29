@@ -43,7 +43,7 @@ impl<'a> Parse<'a> for DitSection {
                 expected: &[TABLE_ID],
             });
         }
-        let section_length = ((bytes[1] & 0x0F) as usize) << 8 | bytes[2] as usize;
+        let section_length = super::section_length_of(bytes);
         if section_length != BODY_LEN {
             return Err(Error::SectionLengthOverflow {
                 declared: section_length,

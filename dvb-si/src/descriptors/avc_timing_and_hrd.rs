@@ -117,10 +117,13 @@ impl<'a> Parse<'a> for AvcTimingAndHrdDescriptor {
             (None, 1)
         };
 
-        if body.len() < flags_offset + 1 {
+        if body.len() != flags_offset + 1 {
+            // The descriptor ends at the flags byte (Table 2-117); trailing
+            // bytes have no wire meaning and used to be dropped on
+            // re-serialize (r03-W9).
             return Err(Error::InvalidDescriptor {
                 tag: TAG,
-                reason: "AVC_timing_and_HRD_descriptor too short for trailing flags",
+                reason: "AVC_timing_and_HRD_descriptor body length disagrees with its flags",
             });
         }
         let flags_byte = body[flags_offset];
@@ -180,8 +183,16 @@ impl Serialize for AvcTimingAndHrdDescriptor {
             buf[pos] = if pt._90khz_flag { 0x80 } else { 0x00 };
             pos += 1;
             if !pt._90khz_flag {
-                let n = pt.n.unwrap_or(0);
-                let k = pt.k.unwrap_or(0);
+                // N and K are both on the wire whenever the 90 kHz flag is
+                // clear; fabricating 0 would misframe (r03-W5).
+                let n = pt.n.ok_or(Error::ValueOutOfRange {
+                    field: "N",
+                    reason: "required when _90khz_flag is false",
+                })?;
+                let k = pt.k.ok_or(Error::ValueOutOfRange {
+                    field: "K",
+                    reason: "required when _90khz_flag is false",
+                })?;
                 buf[pos..pos + 4].copy_from_slice(&n.to_be_bytes());
                 buf[pos + 4..pos + 8].copy_from_slice(&k.to_be_bytes());
                 pos += 8;
@@ -271,5 +282,40 @@ mod tests {
     fn parse_rejects_too_short() {
         let err = AvcTimingAndHrdDescriptor::parse(&[TAG, 0]).unwrap_err();
         assert!(matches!(err, Error::InvalidDescriptor { tag: TAG, .. }));
+    }
+    #[test]
+    fn serialize_rejects_missing_n_or_k_when_not_90khz() {
+        // r03-W5: N/K used to be `unwrap_or(0)`-ed onto the wire when the
+        // 90 kHz flag was clear, silently serializing fabricated zeros.
+        let d = AvcTimingAndHrdDescriptor {
+            hrd_management_valid_flag: true,
+            picture_timing: Some(AvcPictureTiming {
+                _90khz_flag: false,
+                n: None,
+                k: Some(1),
+                num_units_in_tick: 2,
+            }),
+            fixed_frame_rate_flag: false,
+            temporal_poc_flag: false,
+            picture_to_display_conversion_flag: false,
+        };
+        let mut buf = vec![0u8; d.serialized_len()];
+        assert!(matches!(
+            d.serialize_into(&mut buf).unwrap_err(),
+            Error::ValueOutOfRange { field: "N", .. }
+        ));
+    }
+
+    #[test]
+    fn parse_rejects_trailing_bytes_after_flags_byte() {
+        // The descriptor ends at the flags byte (Table 2-117); a byte after
+        // it has no wire meaning and used to be dropped on re-serialize
+        // (r03-W9).
+        // hrd_management_valid_flag=0, no picture timing, flags byte, extra.
+        let bytes = [TAG, 3, 0x00, 0x00, 0xFF];
+        assert!(matches!(
+            AvcTimingAndHrdDescriptor::parse(&bytes).unwrap_err(),
+            Error::InvalidDescriptor { tag: TAG, .. }
+        ));
     }
 }

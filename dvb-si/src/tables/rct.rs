@@ -112,6 +112,11 @@ const ICON_FLAG_MASK: u8 = 0x80;
 const ICON_ID_MASK: u8 = 0x70;
 const ICON_ID_SHIFT: u8 = 4;
 const ICON_DESC_LEN_HI_MASK: u8 = 0x0F;
+/// `early_start_window(3)` mask inside the locator window byte: bits `[7:5]`
+/// (ETSI TS 102 323 §10.4.3).
+const EARLY_START_WINDOW_MASK: u8 = 0x07;
+/// `late_end_window(5)` mask inside the locator window byte: bits `[4:0]`.
+const LATE_END_WINDOW_MASK: u8 = 0x1F;
 
 /// Link type — ETSI TS 102 323 §10.4.3 Table 111.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -584,8 +589,8 @@ fn parse_locator(data: &[u8]) -> Result<(DvbBinaryLocator, usize)> {
         let wb = data[pos];
         pos += 1;
         Some(DvbLocatorWindows {
-            early_start_window: (wb >> 5) & 0x07,
-            late_end_window: wb & 0x1F,
+            early_start_window: (wb >> 5) & EARLY_START_WINDOW_MASK,
+            late_end_window: wb & LATE_END_WINDOW_MASK,
         })
     } else {
         None
@@ -672,7 +677,8 @@ fn serialize_locator(loc: &DvbBinaryLocator, buf: &mut [u8]) -> Result<usize> {
         }
     }
     if let Some(w) = &loc.windows {
-        buf[pos] = ((w.early_start_window & 0x07) << 5) | (w.late_end_window & 0x1F);
+        buf[pos] = ((w.early_start_window & EARLY_START_WINDOW_MASK) << 5)
+            | (w.late_end_window & LATE_END_WINDOW_MASK);
         pos += 1;
     }
     Ok(pos)
@@ -889,17 +895,17 @@ impl<'a> Parse<'a> for RctSection<'a> {
         }
 
         let table_id_extension_flag = (bytes[1] & 0x40) != 0;
-        let section_length = (((bytes[1] & 0x0F) as u16) << 8) | bytes[2] as u16;
+        let section_length = super::section_length_of(bytes);
         let total = super::check_section_length(
             bytes.len(),
             MIN_HEADER_LEN,
-            section_length as usize,
+            section_length,
             MIN_SECTION_LEN,
         )?;
 
         let service_id = u16::from_be_bytes(*bytes[3..].first_chunk::<2>().unwrap());
-        let version_number = (bytes[5] >> 1) & 0x1F;
-        let current_next_indicator = (bytes[5] & 0x01) != 0;
+        let version_number = super::version_number_of(bytes[5]);
+        let current_next_indicator = super::current_next_of(bytes[5]);
         let section_number = bytes[6];
         let last_section_number = bytes[7];
         let year_offset = u16::from_be_bytes(*bytes[8..].first_chunk::<2>().unwrap());
@@ -917,7 +923,7 @@ impl<'a> Parse<'a> for RctSection<'a> {
                     what: "RctSection link_entry header",
                 });
             }
-            let link_info_length = (((bytes[pos] & 0x0F) as usize) << 8) | bytes[pos + 1] as usize;
+            let link_info_length = super::desc_loop_len_of(bytes[pos], bytes[pos + 1]);
             let link_data_start = pos + LINK_ENTRY_HEADER_LEN;
             let link_data_end = link_data_start + link_info_length;
             if link_data_end > payload_end {
@@ -939,8 +945,7 @@ impl<'a> Parse<'a> for RctSection<'a> {
                 what: "RctSection descriptor_loop_length field",
             });
         }
-        let descriptor_loop_length =
-            (((bytes[pos] & 0x0F) as usize) << 8) | bytes[pos + 1] as usize;
+        let descriptor_loop_length = super::desc_loop_len_of(bytes[pos], bytes[pos + 1]);
         let desc_start = pos + DESC_LOOP_LEN_FIELD;
         let desc_end = desc_start + descriptor_loop_length;
         if desc_end > payload_end {
@@ -1012,7 +1017,7 @@ impl Serialize for RctSection<'_> {
         super::write_section_length(buf, len - MIN_HEADER_LEN)?;
 
         buf[3..5].copy_from_slice(&self.service_id.to_be_bytes());
-        buf[5] = 0xC0 | ((self.version_number & 0x1F) << 1) | u8::from(self.current_next_indicator);
+        buf[5] = super::version_byte(self.version_number, self.current_next_indicator);
         buf[6] = self.section_number;
         buf[7] = self.last_section_number;
         buf[8..10].copy_from_slice(&self.year_offset.to_be_bytes());
@@ -1026,8 +1031,7 @@ impl Serialize for RctSection<'_> {
                 12,
                 "link_info_length",
             )?;
-            buf[pos] = 0xF0 | ((li_body_len >> 8) as u8);
-            buf[pos + 1] = li_body_len as u8;
+            super::write_desc_loop_len(&mut buf[pos..pos + 2], li_body_len as usize)?;
             pos += LINK_ENTRY_HEADER_LEN;
             pos += serialize_link_info(li, &mut buf[pos..])?;
         }
@@ -1037,8 +1041,7 @@ impl Serialize for RctSection<'_> {
             12,
             "descriptors_length",
         )?;
-        buf[pos] = 0xF0 | ((dll >> 8) as u8);
-        buf[pos + 1] = dll as u8;
+        super::write_desc_loop_len(&mut buf[pos..pos + 2], dll as usize)?;
         pos += DESC_LOOP_LEN_FIELD;
         buf[pos..pos + self.descriptors.len()].copy_from_slice(self.descriptors.raw());
         pos += self.descriptors.len();
@@ -1194,7 +1197,7 @@ mod tests {
         // header (MIN_HEADER_LEN + EXTENSION_HEADER_LEN + POST_EXT_FIXED_LEN).
         let link_hdr_pos = MIN_HEADER_LEN + EXTENSION_HEADER_LEN + POST_EXT_FIXED_LEN;
         let old_link_info_length =
-            (((buf[link_hdr_pos] & 0x0F) as usize) << 8) | buf[link_hdr_pos + 1] as usize;
+            crate::tables::desc_loop_len_of(buf[link_hdr_pos], buf[link_hdr_pos + 1]);
         let link_data_start = link_hdr_pos + LINK_ENTRY_HEADER_LEN;
         let old_link_data_end = link_data_start + old_link_info_length;
 

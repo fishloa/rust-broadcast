@@ -171,8 +171,13 @@ broadcast_common::impl_spec_display!(SamplingFrequency);
 
 /// Maximum `channel_count` (5-bit field).
 const MAX_CHANNEL_COUNT: u8 = 0x1F;
+/// num_assets is a 3-bit field encoding count-1, so at most 8 assets.
+const MAX_NUM_ASSETS: usize = 7;
 /// Maximum bit-rate value (13-bit field).
 const MAX_BIT_RATE: u16 = 0x1FFF;
+/// `asset_construction(5)` raw field mask (Table G.10) — masked at the shift
+/// during serialize so a wide value cannot bleed into the flag bits (r03-W2).
+const ASSET_CONSTRUCTION_MASK: u8 = 0x1F;
 
 /// Substream info header size (excluding `asset_info()` blocks):
 /// `substream_length`(1) + packed(1) + packed(1) = 3 bytes.
@@ -203,8 +208,11 @@ impl Serialize for SubstreamInfo {
                 have: buf.len(),
             });
         }
-        let payload_len = len - SUBSTREAM_HEADER_LEN;
-        let substream_length = payload_len;
+        // `substream_length` covers every byte after the length byte itself,
+        // i.e. one byte less than the whole substream (r03-W9). Reading it
+        // straight off `SUBSTREAM_HEADER_LEN` under-counted by one, so a
+        // re-serialized substream's assets overran its own length field.
+        let substream_length = len - 1;
         if substream_length > 0xFF {
             return Err(Error::ValueOutOfRange {
                 field: "substream_length",
@@ -225,6 +233,12 @@ impl Serialize for SubstreamInfo {
                 reason: "substream must have at least 1 asset",
             });
         }
+        if num_assets - 1 > MAX_NUM_ASSETS {
+            return Err(Error::ValueOutOfRange {
+                field: "num_assets",
+                reason: "more than 8 assets in one substream",
+            });
+        }
         let na = (num_assets - 1) as u8;
         buf[1] = (na << 5) | (self.channel_count & MAX_CHANNEL_COUNT);
         buf[2] = ((u8::from(self.lfe_flag)) << 7)
@@ -239,7 +253,9 @@ impl Serialize for SubstreamInfo {
                     reason: "exceeds 13-bit field",
                 });
             }
-            buf[pos] = (a.asset_construction << 3)
+            // `asset_construction` is a raw 5-bit field; mask at the shift so
+            // a wider value cannot bleed into the three flag bits (r03-W2).
+            buf[pos] = ((a.asset_construction & ASSET_CONSTRUCTION_MASK) << 3)
                 | ((u8::from(a.vbr_flag)) << 2)
                 | ((u8::from(a.post_encode_br_scaling_flag)) << 1)
                 | u8::from(a.component_type_flag);
@@ -339,6 +355,16 @@ fn parse_substream_info(sel: &[u8], pos: &mut usize) -> Result<SubstreamInfo> {
     for _ in 0..num_assets {
         let a = parse_asset_info(sel, pos)?;
         assets.push(a);
+    }
+
+    if *pos != end {
+        // `substream_length` bounds the substream (ETSI TS 102 114 Annex H):
+        // assets used to be parsed past it, reading the next substream's bytes
+        // as assets of this one (r03-W9).
+        return Err(Error::InvalidDescriptor {
+            tag: crate::descriptors::extension::TAG,
+            reason: "substream_info assets overflow substream_length",
+        });
     }
 
     Ok(SubstreamInfo {
@@ -511,13 +537,17 @@ mod tests {
     #[test]
     fn parse_dts_hd_core_only() {
         // flags: core=1, others=0, reserved=7
-        // substream: length=6, num_assets=0, channel_count=6, lfe=1, sf=12,
+        // substream: length=8, num_assets=0, channel_count=6, lfe=1, sf=12,
         //   sample_res=1, rsv=3
         // asset: ac=1, vbr=0, pe=0, ct=1, lang=1, br=755, rsv=3
         //   component_type=0x42, lang=eng
+        // substream_length counts every byte after the length byte itself:
+        // 1 (num_assets/channel_count) + 1 (lfe/sf/.../rsv) + 3 (asset fixed) +
+        // 1 (component_type) + 3 (lang) = 9. It read 6, which let the asset
+        // walk three bytes past the substream (r03-W9).
         let sel = [
             0x87, // flags
-            0x06, // substream_length
+            0x09, // substream_length
             0x06, // num_assets=0, channel_count=6
             0xE7, // lfe=1, sf=12, sample_res=1, rsv=3
             0x09, 0x8B, 0xCF, // asset: ac=1, vbr=0, pe=0, ct=1, lang=1, br=755, rsv=3
@@ -573,5 +603,80 @@ mod tests {
             other => panic!("expected DtsHd, got {other:?}"),
         }
         round_trip(&d);
+    }
+
+    #[test]
+    fn serialize_rejects_more_than_eight_assets() {
+        // num_assets is 3 bits encoding count-1; 9 assets used to silently
+        // wrap to 0 (r03-W3).
+        let asset = AssetInfo {
+            asset_construction: 1,
+            vbr_flag: false,
+            post_encode_br_scaling_flag: false,
+            component_type_flag: false,
+            language_code_flag: false,
+            bit_rate_or_scaled: 0,
+            reserved: 0,
+            component_type: None,
+            iso_639_language_code: None,
+        };
+        let s = SubstreamInfo {
+            channel_count: 2,
+            lfe_flag: false,
+            sampling_frequency: SamplingFrequency::from_u8(12),
+            sample_resolution: false,
+            reserved: 0,
+            assets: alloc::vec![asset; 9],
+        };
+        let mut buf = vec![0u8; s.serialized_len()];
+        assert!(matches!(
+            s.serialize_into(&mut buf).unwrap_err(),
+            Error::ValueOutOfRange {
+                field: "num_assets",
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn parse_rejects_assets_past_substream_length() {
+        // `substream_length` bounds the substream: the asset below needs 7
+        // bytes but the substream claims 4, so the asset would run two bytes
+        // into whatever follows (r03-W9).
+        let sel = [
+            0x87, // flags: core present
+            0x04, // substream_length — too short for the asset that follows
+            0x06, // num_assets = 0 (one asset), channel_count = 6
+            0xE7, // lfe=1, sf=12, sample_res=1, rsv=3
+            0x09, 0x8B, 0xCF, // asset fixed fields
+            0x42, // component_type
+            b'e', b'n', b'g', // lang
+        ];
+        let bytes = wrap(0x0E, &sel);
+        assert!(matches!(
+            ExtensionDescriptor::parse(&bytes).unwrap_err(),
+            Error::InvalidDescriptor { .. }
+        ));
+    }
+
+    #[test]
+    fn serialize_writes_substream_length_excluding_its_own_byte() {
+        // `substream_length` counts every byte after the length byte, so a
+        // substream of 3 + 7 = 10 bytes must declare 9. Declaring
+        // `len - SUBSTREAM_HEADER_LEN` under-counted by one and made the
+        // re-serialized substream reject its own assets (r03-W9).
+        let sel = [
+            0x87, // flags
+            0x09, // substream_length
+            0x06, 0xE7, // packed header
+            0x09, 0x8B, 0xCF, 0x42, b'e', b'n', b'g',
+        ];
+        let bytes = wrap(0x0E, &sel);
+        let d = ExtensionDescriptor::parse(&bytes).unwrap();
+        let mut buf = vec![0u8; d.serialized_len()];
+        d.serialize_into(&mut buf).unwrap();
+        // tag, length, tag_extension, flags, substream_length
+        assert_eq!(buf[4], 0x09);
+        assert_eq!(buf.as_slice(), bytes.as_slice());
     }
 }

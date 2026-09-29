@@ -24,6 +24,10 @@ const HEADER_LEN: usize = 2;
 const FIXED_FIELDS_LEN: usize = 7;
 
 const HANDOVER_TYPE_MASK: u8 = 0xF0;
+/// `hand_over_type(4)` field *value* mask: bits `[7:4]` before the shift,
+/// so a `HandOverType::Reserved(v)` payload's high bits cannot wrap out and
+/// its low bits cannot bleed into the reserved/origin bits (r03-W2).
+const HANDOVER_TYPE_VALUE_MASK: u8 = 0x0F;
 const ORIGIN_TYPE_MASK: u8 = 0x01;
 const RESERVED_HANDOVER_MASK: u8 = 0x0E;
 
@@ -357,7 +361,7 @@ impl MobileHandOverInfo {
                 have: buf.len(),
             });
         }
-        let flags_byte = (self.hand_over_type.to_u8() << 4)
+        let flags_byte = ((self.hand_over_type.to_u8() & HANDOVER_TYPE_VALUE_MASK) << 4)
             | RESERVED_HANDOVER_MASK
             | u8::from(self.origin_type);
         buf[0] = flags_byte;
@@ -436,6 +440,38 @@ pub enum TargetId {
 }
 
 impl TargetId {
+    /// Wire `target_id_type` this target encodes.
+    #[must_use]
+    pub fn target_id_type(&self) -> TargetIdType {
+        match self {
+            TargetId::UserDefined { .. } => TargetIdType::UseUserDefinedId,
+            TargetId::Dvb { target_id_type, .. } => *target_id_type,
+        }
+    }
+
+    /// Wire `target_original_network_id` (present iff the `onid` flag was set).
+    #[must_use]
+    pub fn target_original_network_id(&self) -> Option<u16> {
+        match self {
+            TargetId::UserDefined { .. } => None,
+            TargetId::Dvb {
+                target_original_network_id,
+                ..
+            } => *target_original_network_id,
+        }
+    }
+
+    /// Wire `target_service_id` (present iff the `sid` flag was set).
+    #[must_use]
+    pub fn target_service_id(&self) -> Option<u16> {
+        match self {
+            TargetId::UserDefined { .. } => None,
+            TargetId::Dvb {
+                target_service_id, ..
+            } => *target_service_id,
+        }
+    }
+
     fn serialized_len(&self) -> usize {
         match self {
             TargetId::UserDefined { .. } => 2,
@@ -500,13 +536,10 @@ pub struct ExtendedEventLinkageEntry {
     pub event_simulcast: bool,
     /// link_type — 2 bits `[5:4]`.  See Table 66.
     pub link_type: LinkType,
-    /// target_id_type — 2 bits `[3:2]`.  See Table 67.
-    pub target_id_type: TargetIdType,
-    /// original_network_id_flag — 1 bit `[1]`.
-    pub original_network_id_flag: bool,
-    /// service_id_flag — 1 bit `[0]`.
-    pub service_id_flag: bool,
-    /// Conditional target identification.
+    /// Conditional target identification; the wire `target_id_type`,
+    /// `original_network_id_flag` and `service_id_flag` bits are derived from
+    /// this field, so a flag can never contradict the bytes actually written
+    /// (r03-W5).
     pub target_id: TargetId,
 }
 
@@ -532,11 +565,11 @@ impl ExtendedEventLinkageEntry {
             byte2 |= EXT_EVENT_SIMULCAST_MASK;
         }
         byte2 |= (self.link_type.to_u8() & 0x03) << 4;
-        byte2 |= (self.target_id_type.to_u8() & 0x03) << 2;
-        if self.original_network_id_flag {
+        byte2 |= (self.target_id.target_id_type().to_u8() & 0x03) << 2;
+        if self.target_id.target_original_network_id().is_some() {
             byte2 |= EXT_ONID_FLAG_MASK;
         }
-        if self.service_id_flag {
+        if self.target_id.target_service_id().is_some() {
             byte2 |= EXT_SID_FLAG_MASK;
         }
         buf[2] = byte2;
@@ -801,9 +834,6 @@ fn parse_extended_event_linkage(bytes: &[u8]) -> Result<ExtendedEventLinkageInfo
             target_listed,
             event_simulcast,
             link_type,
-            target_id_type,
-            original_network_id_flag,
-            service_id_flag,
             target_id,
         });
     }
@@ -1062,7 +1092,7 @@ mod tests {
                 assert!(e.target_listed);
                 assert!(e.event_simulcast);
                 assert_eq!(e.link_type, LinkType::SdOrUhd);
-                assert_eq!(e.target_id_type, TargetIdType::UseUserDefinedId);
+                assert_eq!(e.target_id.target_id_type(), TargetIdType::UseUserDefinedId);
                 assert_eq!(
                     e.target_id,
                     TargetId::UserDefined {
@@ -1094,9 +1124,12 @@ mod tests {
             LinkageData::ExtendedEventLinkage(x) => {
                 assert_eq!(x.entries.len(), 1);
                 let e = &x.entries[0];
-                assert_eq!(e.target_id_type, TargetIdType::UseTargetTransportStreamId);
-                assert!(e.original_network_id_flag);
-                assert!(!e.service_id_flag);
+                assert_eq!(
+                    e.target_id.target_id_type(),
+                    TargetIdType::UseTargetTransportStreamId
+                );
+                assert!(e.target_id.target_original_network_id().is_some());
+                assert!(e.target_id.target_service_id().is_none());
                 assert_eq!(
                     e.target_id,
                     TargetId::Dvb {
@@ -1265,9 +1298,6 @@ mod tests {
                     target_listed: true,
                     event_simulcast: true,
                     link_type: LinkType::HdOrServiceFrameCompatible,
-                    target_id_type: TargetIdType::UseTargetTransportStreamId,
-                    original_network_id_flag: true,
-                    service_id_flag: true,
                     target_id: TargetId::Dvb {
                         target_id_type: TargetIdType::UseTargetTransportStreamId,
                         target_transport_stream_id: Some(0x1111),
@@ -1418,5 +1448,44 @@ mod tests {
             let tt = TargetIdType::from_u8(b);
             assert_eq!(tt.to_u8(), b, "round-trip failed for byte 0x{b:02X}");
         }
+    }
+    #[test]
+    fn extended_event_linkage_flags_cannot_contradict_target_id() {
+        // r03-W5: the onid/sid flag bits used to be stored booleans, so a
+        // hand-built entry could set `service_id_flag = true` with no
+        // `target_service_id` and serialize a flag with no bytes; re-parsing
+        // then misframed the loop. The flags are now *derived* from the
+        // `TargetId`, so serialize and the flags can never disagree.
+        let entry = ExtendedEventLinkageEntry {
+            target_event_id: 0xAAAA,
+            target_listed: false,
+            event_simulcast: false,
+            link_type: LinkType::SdOrUhd,
+            target_id: TargetId::Dvb {
+                target_id_type: TargetIdType::UseTransportStreamId,
+                target_transport_stream_id: None,
+                target_original_network_id: Some(0x2222),
+                target_service_id: None,
+            },
+        };
+        let d = LinkageDescriptor {
+            transport_stream_id: 1,
+            original_network_id: 2,
+            service_id: 3,
+            linkage_type: LinkageType::ExtendedEventLinkage(0x0E),
+            linkage_data: LinkageData::ExtendedEventLinkage(ExtendedEventLinkageInfo {
+                entries: alloc::vec![entry],
+            }),
+            private_data: &[],
+        };
+        let mut buf = alloc::vec![0u8; d.serialized_len()];
+        d.serialize_into(&mut buf).unwrap();
+        // Flags byte: link_type=2 << 4, target_id_type=0, onid_flag=1,
+        // sid_flag=0 -> exactly one conditional u16 on the wire.
+        let flags = buf[HEADER_LEN + 1 + 2 + 3];
+        assert_eq!(flags & EXT_ONID_FLAG_MASK, EXT_ONID_FLAG_MASK);
+        assert_eq!(flags & EXT_SID_FLAG_MASK, 0);
+        let re = LinkageDescriptor::parse(&buf).unwrap();
+        assert_eq!(d, re);
     }
 }

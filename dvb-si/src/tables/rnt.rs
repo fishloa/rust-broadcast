@@ -29,7 +29,13 @@ const RP_DESC_LEN_FIELD: usize = 2;
 const CA_NAME_LEN_FIELD: usize = 1;
 const CA_HEADER_LEN: usize = 2;
 
-const RESERVED_NIBBLE: u8 = 0xF0;
+/// `crid_authority_policy(2)` field mask inside the CRID_authority header
+/// byte: bits `[5:4]` (ETSI TS 102 323 §5.2.2 Table 3).
+const CRID_POLICY_MASK: u8 = 0x03;
+
+/// The three `reserved = '111'` bits preceding the 2-bit
+/// `crid_authority_policy`: bits `[7:6]` of the CRID_authority header byte.
+const CRID_POLICY_RESERVED_HI: u8 = 0xC0;
 
 /// CRID authority policy — ETSI TS 102 323 §5.2.2 Table 3.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -224,20 +230,19 @@ impl<'a> Parse<'a> for RntSection<'a> {
             });
         }
 
-        let section_length = ((bytes[1] & 0x0F) as u16) << 8 | bytes[2] as u16;
-        let total =
-            super::check_section_length(bytes.len(), HEADER_LEN, section_length as usize, MIN_LEN)?;
+        let section_length = super::section_length_of(bytes);
+        let total = super::check_section_length(bytes.len(), HEADER_LEN, section_length, MIN_LEN)?;
 
         let context_id = u16::from_be_bytes(*bytes[3..].first_chunk::<2>().unwrap());
-        let version_number = (bytes[5] >> 1) & 0x1F;
-        let current_next_indicator = (bytes[5] & 0x01) != 0;
+        let version_number = super::version_number_of(bytes[5]);
+        let current_next_indicator = super::current_next_of(bytes[5]);
         let section_number = bytes[6];
         let last_section_number = bytes[7];
         let context_id_type = ContextIdType::from_u8(bytes[8]);
 
         let common_desc_len_pos = HEADER_LEN + EXTENSION_HEADER_LEN;
-        let common_descriptors_length = (((bytes[common_desc_len_pos] & 0x0F) as usize) << 8)
-            | bytes[common_desc_len_pos + 1] as usize;
+        let common_descriptors_length =
+            super::desc_loop_len_of(bytes[common_desc_len_pos], bytes[common_desc_len_pos + 1]);
         let common_desc_start = common_desc_len_pos + COMMON_DESC_LEN_FIELD;
         let common_desc_end = common_desc_start + common_descriptors_length;
         if common_desc_end > total - CRC_LEN {
@@ -260,7 +265,7 @@ impl<'a> Parse<'a> for RntSection<'a> {
                     what: "RntSection resolution_provider_info_length",
                 });
             }
-            let rp_info_length = (((bytes[pos] & 0x0F) as usize) << 8) | bytes[pos + 1] as usize;
+            let rp_info_length = super::desc_loop_len_of(bytes[pos], bytes[pos + 1]);
             pos += RP_INFO_LEN_FIELD;
             let rp_end = pos + rp_info_length;
             if rp_end > payload_end {
@@ -296,7 +301,7 @@ impl<'a> Parse<'a> for RntSection<'a> {
                     what: "RntSection resolution_provider_descriptors_length",
                 });
             }
-            let rp_desc_len = (((bytes[pos] & 0x0F) as usize) << 8) | bytes[pos + 1] as usize;
+            let rp_desc_len = super::desc_loop_len_of(bytes[pos], bytes[pos + 1]);
             pos += RP_DESC_LEN_FIELD;
             let rp_desc_start = pos;
             let rp_desc_end = rp_desc_start + rp_desc_len;
@@ -338,8 +343,9 @@ impl<'a> Parse<'a> for RntSection<'a> {
                     });
                 }
                 let ca_packed = bytes[pos];
-                let crid_authority_policy = CridAuthorityPolicy::from_u8((ca_packed >> 4) & 0x03);
-                let ca_desc_len = (((ca_packed & 0x0F) as usize) << 8) | bytes[pos + 1] as usize;
+                let crid_authority_policy =
+                    CridAuthorityPolicy::from_u8((ca_packed >> 4) & CRID_POLICY_MASK);
+                let ca_desc_len = super::desc_loop_len_of(ca_packed, bytes[pos + 1]);
                 pos += CA_HEADER_LEN;
                 let ca_desc_start = pos;
                 let ca_desc_end = ca_desc_start + ca_desc_len;
@@ -410,7 +416,7 @@ impl Serialize for RntSection<'_> {
         super::write_section_length(buf, len - HEADER_LEN)?;
 
         buf[3..5].copy_from_slice(&self.context_id.to_be_bytes());
-        buf[5] = 0xC0 | ((self.version_number & 0x1F) << 1) | u8::from(self.current_next_indicator);
+        buf[5] = super::version_byte(self.version_number, self.current_next_indicator);
         buf[6] = self.section_number;
         buf[7] = self.last_section_number;
         buf[8] = self.context_id_type.to_u8();
@@ -421,8 +427,7 @@ impl Serialize for RntSection<'_> {
             "common_descriptors_length",
         )?;
         let cdl_pos = HEADER_LEN + EXTENSION_HEADER_LEN;
-        buf[cdl_pos] = RESERVED_NIBBLE | ((cdl >> 8) as u8);
-        buf[cdl_pos + 1] = cdl as u8;
+        super::write_desc_loop_len(&mut buf[cdl_pos..cdl_pos + 2], cdl as usize)?;
 
         let cd_start = cdl_pos + COMMON_DESC_LEN_FIELD;
         let cd_end = cd_start + self.common_descriptors.len();
@@ -436,8 +441,7 @@ impl Serialize for RntSection<'_> {
                 12,
                 "resolution_provider_loop_length",
             )?;
-            buf[pos] = RESERVED_NIBBLE | ((rp_info_length >> 8) as u8);
-            buf[pos + 1] = rp_info_length as u8;
+            super::write_desc_loop_len(&mut buf[pos..pos + 2], rp_info_length as usize)?;
             pos += RP_INFO_LEN_FIELD;
 
             let rp_name_len =
@@ -452,8 +456,7 @@ impl Serialize for RntSection<'_> {
                 12,
                 "resolution_provider_descriptors_length",
             )?;
-            buf[pos] = RESERVED_NIBBLE | ((rdl >> 8) as u8);
-            buf[pos + 1] = rdl as u8;
+            super::write_desc_loop_len(&mut buf[pos..pos + 2], rdl as usize)?;
             pos += RP_DESC_LEN_FIELD;
             buf[pos..pos + rp.descriptors.len()].copy_from_slice(rp.descriptors.raw());
             pos += rp.descriptors.len();
@@ -471,8 +474,9 @@ impl Serialize for RntSection<'_> {
                     12,
                     "crid_authority_descriptors_length",
                 )?;
-                buf[pos] =
-                    0xC0 | ((ca.crid_authority_policy.to_u8() & 0x03) << 4) | ((adl >> 8) as u8);
+                buf[pos] = CRID_POLICY_RESERVED_HI
+                    | ((ca.crid_authority_policy.to_u8() & CRID_POLICY_MASK) << 4)
+                    | ((adl >> 8) as u8);
                 buf[pos + 1] = adl as u8;
                 pos += CA_HEADER_LEN;
                 buf[pos..pos + ca.descriptors.len()].copy_from_slice(ca.descriptors.raw());
