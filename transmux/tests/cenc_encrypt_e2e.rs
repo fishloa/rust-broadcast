@@ -545,6 +545,90 @@ fn cbcs_whole_sample_constant_iv_emit_senc_round_trip_and_mp4decrypt_interop() {
     let _ = std::fs::remove_file(&out_path);
 }
 
+/// Audit r05-W4: a **default** `cbcs` config — `IvGen::Counter` (the
+/// `Default`), not the `Constant` convention — now emits 16-byte per-sample
+/// IVs, and the reference tool must really decrypt them.
+///
+/// Before the fix this shape emitted 8-byte per-sample IVs, the precise
+/// "silently no-ops" case this module's own `IvGen::Constant` doc records for
+/// Bento4's `mp4decrypt`. This test drives the whole pipeline (encrypt → mux →
+/// protect → write) and requires Bento4 to recover the cleartext byte-for-byte
+/// — an independent decryptor, never our own code.
+#[test]
+fn cbcs_counter_16_byte_iv_mp4decrypt_interop() {
+    let Some(mut media) = clear_video_media() else {
+        return;
+    };
+    let original = snapshot(&media);
+    assert!(
+        original.len() > 1,
+        "fixture must carry more than one sample"
+    );
+
+    let cfg = EncryptConfig {
+        scheme: CencScheme::Cbcs,
+        kid: KID,
+        iv: IvGen::Counter,
+        pattern: None,
+        subsample: SubsamplePolicy::Video,
+        constant_iv_senc: ConstantIvSenc::default(),
+    };
+    let protected_bytes = build_protected_fmp4(&mut media, &cfg);
+
+    // The recorded per-sample IVs must be 16 bytes (the fix's whole point).
+    let enc = media.tracks[0].encryption.as_ref().expect("encryption");
+    assert_eq!(enc.tenc.default_per_sample_iv_size, 16);
+    for s in &enc.samples {
+        assert_eq!(s.initialization_vector.len(), 16);
+    }
+
+    // Self round-trip remains the hard gate.
+    let dec = CencDecryptor::from_fmp4(&protected_bytes).expect("from_fmp4");
+    let mut recovered = dec.demux().expect("demux");
+    dec.decrypt(&mut recovered, &keys()).expect("decrypt");
+    assert_eq!(snapshot(&recovered), original, "self round-trip");
+
+    // ── Golden interop (Bento4 mp4decrypt) ──────────────────────────────
+    if !mp4decrypt_available() {
+        eprintln!(
+            "SKIP cenc_encrypt_e2e::cbcs_counter_16_byte_iv: mp4decrypt (Bento4) not found \
+             on PATH (install via `brew install bento4`) — golden-interop cross-check not run"
+        );
+        return;
+    }
+    let in_path = write_temp(&protected_bytes, "cbcs_counter16");
+    let out_path = std::env::temp_dir().join(format!(
+        "cenc_encrypt_e2e_cbcs_counter16_out_{}.mp4",
+        std::process::id()
+    ));
+    let key_arg = format!("{}:{}", to_hex(&KID), to_hex(&KEY));
+    let status = Command::new("mp4decrypt")
+        .arg("--key")
+        .arg(&key_arg)
+        .arg(&in_path)
+        .arg(&out_path)
+        .status()
+        .expect("spawn mp4decrypt");
+    assert!(status.success(), "mp4decrypt failed for {in_path:?}");
+
+    let ref_bytes = std::fs::read(&out_path).expect("read mp4decrypt output");
+    let mut demux = Fmp4Demux::new();
+    let ref_media = demux.unpackage(&ref_bytes).expect("demux reference output");
+    let ref_video = ref_media
+        .tracks
+        .iter()
+        .find(|t| matches!(t.spec.config, CodecConfig::Avc { .. }))
+        .expect("reference output must carry an AVC video track");
+    let ref_samples: Vec<Bytes> = ref_video.samples.iter().map(|s| s.data.clone()).collect();
+    assert_eq!(
+        ref_samples, original,
+        "cbcs + Counter (16-byte IV): Bento4 mp4decrypt must decrypt to byte-identical cleartext"
+    );
+
+    let _ = std::fs::remove_file(&in_path);
+    let _ = std::fs::remove_file(&out_path);
+}
+
 /// Find the first box matching `fourcc` anywhere in `data` (a flat scan, not
 /// scoped to any one container) and return its moof/file offset — used by
 /// [`cbcs_whole_sample_constant_iv_no_senc_round_trip`] to prove a box is (or

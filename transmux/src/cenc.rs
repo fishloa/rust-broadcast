@@ -235,6 +235,24 @@ pub struct SubSampleEntry {
 /// Flag: UseSubSampleEncryption (bit 1 of `senc` flags field).
 pub const SENC_FLAG_USE_SUBSAMPLE_ENCRYPTION: u32 = 0x000002;
 
+/// Flag `0x000001` of the `senc` box: **override** the `TrackEncryptionBox`
+/// parameters. When set, an `AlgorithmID(24) IV_size(8) KID(128)` triple
+/// (20 bytes) precedes `sample_count` — the PIFF 1.1 / ISO/IEC 23001-7:2012 v0
+/// form, still emitted by Smooth-derived and older PIFF tooling.
+///
+/// This crate does not implement the override (it decrypts with the track-wide
+/// `tenc`), and reading such a box as if the flag were clear consumes the 20
+/// override bytes as `sample_count` and the first entries, yielding garbage IVs
+/// or a spurious length error. [`SampleEncryptionBox::parse_body`] rejects the
+/// flag explicitly so the failure is a clear `Err` rather than wrong plaintext
+/// with `Ok`.
+pub const SENC_FLAG_OVERRIDE_TRACK_ENCRYPTION: u32 = 0x000001;
+
+/// The fixed size of the `senc` override triple
+/// ([`SENC_FLAG_OVERRIDE_TRACK_ENCRYPTION`]): `AlgorithmID(24) + IV_size(8) +
+/// KID(128)` = 20 bytes.
+pub const SENC_OVERRIDE_FIELDS_LEN: usize = 20;
+
 /// Sample Encryption Box (`senc`) — ISO/IEC 23001-7 §12.3.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
@@ -278,6 +296,20 @@ impl SampleEncryptionBox {
         flags: u32,
         per_sample_iv_size: u8,
     ) -> Result<Self> {
+        // `senc` flag 0x000001 (`override TrackEncryptionBox parameters`, the
+        // PIFF 1.1 / ISO 23001-7:2012 v0 form) inserts a 20-byte
+        // AlgorithmID/IV_size/KID triple before `sample_count`. This crate
+        // decrypts with the track-wide `tenc` only, so it cannot honour the
+        // override; reading the box as if the flag were clear would take those
+        // 20 bytes as `sample_count` and the first entries and produce garbage
+        // IVs — or a spurious length error. Reject explicitly (audit r05-W9).
+        if (flags & SENC_FLAG_OVERRIDE_TRACK_ENCRYPTION) != 0 {
+            return Err(Error::UnsupportedFeature(
+                "senc flag 0x000001 (override TrackEncryptionBox parameters, PIFF 1.1 / ISO/IEC \
+                 23001-7:2012 v0) is not supported: the track-wide tenc is the only encryption \
+                 metadata this crate decrypts with",
+            ));
+        }
         if bytes.len() < SENC_SAMPLE_COUNT_LEN {
             return Err(Error::BufferTooShort {
                 need: SENC_SAMPLE_COUNT_LEN,
@@ -1589,6 +1621,61 @@ mod tests {
             matches!(err, Error::BufferTooShort { .. } | Error::InvalidInput(_)),
             "expected BufferTooShort/InvalidInput, got {err:?}"
         );
+    }
+
+    /// Audit r05-W9: `senc` flag `0x000001` (override TrackEncryptionBox
+    /// parameters, PIFF 1.1 / ISO/IEC 23001-7:2012 v0) puts a 20-byte
+    /// `AlgorithmID(24) IV_size(8) KID(128)` triple before `sample_count`.
+    /// Reading such a box as if the flag were clear takes those bytes as the
+    /// count and the first entries. It must be rejected with a clear error.
+    #[test]
+    fn senc_override_flag_is_rejected() {
+        // A v0 PIFF `senc`: flags 0x1, a 20-byte override triple, then
+        // sample_count = 1 and one 8-byte IV.
+        let mut body = alloc::vec![0u8; SENC_OVERRIDE_FIELDS_LEN];
+        // AlgorithmID 0x000001 (AES-CTR), IV_size 8, then a 16-byte KID.
+        body[2] = 0x01;
+        body[3] = 0x08;
+        for (i, b) in body[4..20].iter_mut().enumerate() {
+            *b = i as u8;
+        }
+        body.extend_from_slice(&1u32.to_be_bytes());
+        body.extend_from_slice(&[0xAAu8; 8]);
+
+        let err = SampleEncryptionBox::parse_body(&body, 0, SENC_FLAG_OVERRIDE_TRACK_ENCRYPTION, 8)
+            .expect_err("senc override flag must be rejected");
+        assert!(
+            matches!(err, Error::UnsupportedFeature(_)),
+            "expected UnsupportedFeature, got {err:?}"
+        );
+    }
+
+    /// Control: the *same* body with the override flag clear is a valid
+    /// `senc` — the rejection is keyed on the flag, not the bytes.
+    #[test]
+    fn senc_without_override_flag_parses() {
+        let mut body = 1u32.to_be_bytes().to_vec();
+        body.extend_from_slice(&[0xAAu8; 8]);
+        let senc = SampleEncryptionBox::parse_body(&body, 0, 0, 8).expect("parse");
+        assert_eq!(senc.entries.len(), 1);
+        assert_eq!(
+            senc.entries[0].initialization_vector,
+            alloc::vec![0xAAu8; 8]
+        );
+    }
+
+    /// A truncated PIFF `senc` (flag set, fewer than 20 override bytes before
+    /// the end) must still be a clean `Err`, never a panic — the flag is
+    /// rejected before any length arithmetic, so this holds by construction.
+    #[test]
+    fn senc_override_flag_truncated_body_is_err() {
+        for len in 0..SENC_OVERRIDE_FIELDS_LEN {
+            let body = alloc::vec![0u8; len];
+            let err =
+                SampleEncryptionBox::parse_body(&body, 0, SENC_FLAG_OVERRIDE_TRACK_ENCRYPTION, 8)
+                    .expect_err("truncated override senc must be rejected");
+            assert!(matches!(err, Error::UnsupportedFeature(_)), "got {err:?}");
+        }
     }
 
     /// A `senc` entry with more than 65 535 subsamples cannot fit the 16-bit

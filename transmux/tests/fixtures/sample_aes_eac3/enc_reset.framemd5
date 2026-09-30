@@ -1,0 +1,23 @@
+#format: frame checksums
+#version: 2
+#hash: MD5
+#software: Lavf62.12.102
+#tb 0: 1/48000
+#media_type 0: audio
+#codec_id 0: pcm_s16le
+#sample_rate 0: 48000
+#channel_layout_name 0: stereo
+#stream#, dts,        pts, duration,     size, hash
+0,          0,          0,     1536,     6144, 7c1271269a03d28959ee4ada6fd32f38
+0,       1536,       1536,     1536,     6144, f35e3296e590ede4c6eb8822cb745853
+0,       3072,       3072,     1536,     6144, 327b7f564611ae275917d244a0ce3e12
+0,       4608,       4608,     1536,     6144, 47297791ff5a23c3f0a24fba1b231154
+0,       6144,       6144,     1536,     6144, 897145c207e84f88a05f06d7ab941727
+0,       7680,       7680,     1536,     6144, 5790ee515a00e02447cf12f598a2c7b0
+0,       9216,       9216,     1536,     6144, a3bdef7a6c6f7d8113136cd1c766a72e
+0,      10752,      10752,     1536,     6144, f02f3d9186465395d19fd6c4b376d1c1
+0,      12288,      12288,     1536,     6144, 585916293e81f30ad4cbbb4b12d154f6
+0,      13824,      13824,     1536,     6144, bc8858def66cf95d3868aa9e0e2c57e8
+0,      15360,      15360,     1536,     6144, 3dceb81b96b241d5ac9e3fa21d770ad3
+0,      16896,      16896,     1536,     6144, 6a4f68657d7ca955a9e5a92bdc6918bd
+0,      18432,      18432,     1536,     6144, b8e4b25990ae1b03cd30db3c721b9eff

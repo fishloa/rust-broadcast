@@ -15,6 +15,35 @@ ffmpeg -y -i fixtures/ts/h264/main.ts -c:v copy \
   -encryption_key 76a6c65c5ea762046bd749a2e632ccbb \
   -encryption_kid a7e61c373e219033c21091fa607bf3b8 -f mp4 fixtures/mp4/cenc.mp4
 
+# #1080 audit r05-W6 CENC with a protected *audio* track as well (`encv` +
+# `enca`), the shape a real CENC asset has and which `CencDecryptor::demux`
+# used to reject outright. ffmpeg's own `-encryption_scheme` encrypts every
+# track (key/KID as for cenc.mp4 above), so a single pass produces both, with
+# the standard in-`stbl` `senc` layout:
+ffmpeg -y -f lavfi -i "testsrc2=size=64x64:rate=10:duration=1" \
+  -f lavfi -i "sine=frequency=440:duration=1" \
+  -c:v libx264 -preset ultrafast -pix_fmt yuv420p -g 5 -c:a aac -b:a 64k \
+  -movflags cmaf+frag_keyframe+empty_moov+default_base_moof av_clear.mp4
+ffmpeg -y -i av_clear.mp4 -c copy -encryption_scheme cenc-aes-ctr \
+  -encryption_key 76a6c65c5ea762046bd749a2e632ccbb \
+  -encryption_kid a7e61c373e219033c21091fa607bf3b8 \
+  -f mp4 fixtures/mp4/cenc_av_enca.mp4
+
+# #1080 audit r05-W6 follow-up: a mixed file — one protected track (`encv`) and
+# one UNPROTECTED track (`mp4a`) — to test that the unprotected neighbour is
+# reported in `Media::skipped`, not dropped silently. `cenc_av_enca.mp4` has
+# both tracks protected, so its audio sample entry is rewritten to clear: the
+# `enca` four-CC becomes `mp4a` and the audio `sinf` box's type becomes `free`
+# (size unchanged, so every other offset is untouched).
+python3 - <<'EOF'
+d = bytearray(open('cenc_av_enca.mp4', 'rb').read())
+i = bytes(d).find(b'enca')
+j = bytes(d).find(b'sinf', i)
+d[i:i+4] = b'mp4a'
+d[j:j+4] = b'free'
+open('fixtures/mp4/cenc_mixed_tracks.mp4', 'wb').write(bytes(d))
+EOF
+
 # #430 captions (TTML → stpp; wvtt needs GPAC MP4Box, absent → spec vector)
 printf 'WEBVTT\n\n00:00:00.000 --> 00:00:02.000\nHello CMAF\n' > /tmp/cap.vtt
 ffmpeg -y -i /tmp/cap.vtt -c:s ttml -f mp4 fixtures/mp4/stpp.mp4

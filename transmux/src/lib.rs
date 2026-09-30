@@ -142,6 +142,7 @@ pub mod error;
 pub mod flac;
 pub mod flv;
 pub mod flv_stream;
+pub mod frag_offsets;
 pub mod hevc_config;
 pub mod init_segment;
 pub mod ir;
@@ -321,8 +322,8 @@ pub use rtp_stream::{DEFAULT_REORDER_DEPTH, RtpLossEvent, RtpStreamDepacketiser,
 #[cfg(feature = "sample-aes")]
 pub use sample_aes::{
     ExtXKey, HlsEncryptionMethod, aac_decrypt_frame, aac_encrypt_frame, ac3_decrypt_frame,
-    ac3_encrypt_frame, aes128_decrypt_segment, aes128_encrypt_segment, h264_decrypt_nal,
-    h264_encrypt_nal, iv_from_sequence_number,
+    ac3_encrypt_frame, aes128_decrypt_segment, aes128_encrypt_segment, eac3_decrypt_frame,
+    eac3_encrypt_frame, h264_decrypt_nal, h264_encrypt_nal, iv_from_sequence_number,
 };
 pub use sample_entries::{
     AVCSampleEntry, HEVCSampleEntry, Mp4vSampleEntry, VisualSampleEntryFields,

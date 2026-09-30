@@ -1,0 +1,9 @@
+# ffmpeg: ffmpeg version 8.1.2 Copyright (c) 2000-2026 the FFmpeg developers
+# syncframes in clear.ec3:       13 x 360 bytes; PES packets on the audio PID: 1 (so 'carried' is testable inside one PES)
+# PROOF (first 9 frames; ffmpeg does not decrypt the EOF tail):
+enc_reset.framemd5: 9/9 decoded audio frames identical to clear.framemd5  [=========]
+enc_carried.framemd5: 1/9 decoded audio frames identical to clear.framemd5  [=XXXXXXXX]
+# all frames:
+enc_reset.framemd5: 12/13 decoded audio frames identical to clear.framemd5  [============X]
+# ES-level check: python reference vs ES extracted from the ffmpeg-tested TS
+enc_reset.ts payload == enc_reset.ec3

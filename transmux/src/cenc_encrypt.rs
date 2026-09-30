@@ -90,6 +90,10 @@ const CBCS_PATTERN_MAX: u8 = 0x0F;
 /// `saiz`'s per-sample aux info size.
 const VALID_EXPLICIT_IV_LENS: [usize; 2] = [8, 16];
 
+/// AES block size (16 bytes) as a `u128`, for the AES-CTR counter-range
+/// arithmetic ([`assert_ctr_ranges_disjoint`]).
+const BLOCK_LEN_U128: u128 = 16;
+
 /// How to derive each sample's initialization vector.
 ///
 /// # IV uniqueness is per *key*, not per track — and not per call
@@ -109,7 +113,7 @@ const VALID_EXPLICIT_IV_LENS: [usize; 2] = [8, 16];
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 #[non_exhaustive]
 pub enum IvGen {
-    /// Per-sample 8-byte IV = big-endian `next_counter + sample_index`, where
+    /// Per-sample IV = big-endian `next_counter + sample_index`, where
     /// `sample_index` runs **continuously across every track** of the
     /// [`Media`] in (track, sample) order — it does *not* restart per track
     /// (see this enum's docs: that would reuse one AES-CTR keystream between,
@@ -117,8 +121,15 @@ pub enum IvGen {
     /// the encrypting [`CencEncryptor`] instance's own running index, which it
     /// advances after every successful call rather than resetting to a
     /// caller-supplied `base` (see that type's docs for why the counter lives
-    /// there and not here). The cipher core zero-pads the 8 bytes to a
-    /// 16-byte counter block. The default.
+    /// there and not here). The default.
+    ///
+    /// The IV width is **scheme-dependent** (audit r05-W4): 8 bytes under
+    /// [`CencScheme::Cenc`], the common CMAF convention the cipher core
+    /// zero-pads to a 16-byte counter block (ISO/IEC 23001-7 §12.2 permits 8
+    /// or 16); 16 bytes under [`CencScheme::Cbcs`] — the 64-bit counter in the
+    /// low half of a 16-byte big-endian block — because an 8-byte `cbcs`
+    /// per-sample IV is the shape Bento4's `mp4decrypt` silently no-ops (see
+    /// [`IvGen::Constant`]).
     #[default]
     Counter,
     /// Caller-supplied per-sample IVs, one per sample of the **whole
@@ -283,6 +294,33 @@ impl CencEncryptor {
     pub fn next_counter(&self) -> u64 {
         self.next_counter
     }
+
+    /// The per-sample IV width (bytes) [`IvGen::Counter`] emits under
+    /// `scheme` — 8 under [`CencScheme::Cenc`], 16 under
+    /// [`CencScheme::Cbcs`].
+    ///
+    /// The split is deliberate (audit r05-W4). Under `cenc` the IV is the
+    /// AES-CTR counter block, and the 8-byte form is the common CMAF
+    /// convention (ISO/IEC 23001-7 §12.2 permits 8 or 16); a 16-byte counter
+    /// there would also make the counter-range arithmetic in
+    /// [`assert_ctr_ranges_disjoint`] easier for callers to get wrong, since
+    /// the whole IV is the counter. Under `cbcs` the IV seeds a CBC chain, and
+    /// this module's own [`IvGen::Constant`] doc records that Bento4's
+    /// `mp4decrypt` requires a constant IV **or a genuine 16-byte per-sample
+    /// IV** — an 8-byte per-sample IV silently no-ops there. So the default
+    /// `EncryptConfig { scheme: Cbcs, iv: IvGen::default(), .. }` now emits
+    /// 16-byte counter IVs instead of the 8-byte shape that decrypts to
+    /// nothing on the reference tool.
+    const fn counter_iv_size(scheme: CencScheme) -> usize {
+        match scheme {
+            CencScheme::Cenc => PER_SAMPLE_IV_SIZE as usize,
+            // `CencScheme::Cbcs` and any future scheme: `cbcs` is the only
+            // other scheme this crate ciphers (an unknown one is rejected in
+            // `Encrypt::encrypt` before this is used), and 16 bytes is the
+            // safe width there.
+            _ => KEY_LEN,
+        }
+    }
 }
 
 impl Encrypt for CencEncryptor {
@@ -367,7 +405,7 @@ impl Encrypt for CencEncryptor {
             other => return Err(Error::UnsupportedCencScheme { scheme: other }),
         };
         let (per_sample_iv_size, default_constant_iv) =
-            tenc_iv_fields(&cfg.iv, cfg.constant_iv_senc)?;
+            tenc_iv_fields(cfg.scheme, &cfg.iv, cfg.constant_iv_senc)?;
         let tenc = TrackEncryptionBox {
             // `cbcs` pattern fields only carry meaning under version 1
             // (ISO/IEC 23001-7 §12.2); `cenc` has no pattern, so version 0.
@@ -392,7 +430,7 @@ impl Encrypt for CencEncryptor {
         // sample is touched. The main loop below then consumes this exact
         // plan (never re-resolving), so what was validated and what gets
         // recorded/ciphered can never drift apart.
-        let plan = self.plan_sample_ivs(media, &cfg.iv, cfg.constant_iv_senc)?;
+        let plan = self.plan_sample_ivs(media, cfg.scheme, &cfg.iv, cfg.constant_iv_senc)?;
         assert_ivs_unique(&plan, &cfg.iv, cfg.constant_iv_senc)?;
 
         // Walk every sample's NAL structure into its subsample map *now*,
@@ -401,6 +439,19 @@ impl Encrypt for CencEncryptor {
         // `k` used to return `Err` after samples `0..k` had already been
         // keystreamed in place, contradicting this method's documented promise.
         let subsample_plan = Self::plan_subsamples(media, cfg.subsample)?;
+
+        // Under `cenc` the IV *is* the AES-CTR counter block, so uniqueness of
+        // the IVs alone is not enough: a sample consumes a *range* of counter
+        // blocks (`iv .. iv + ceil(protected_len/16) - 1`), and two such ranges
+        // must never intersect (ISO/IEC 23001-7 §10.1). A sequential IV list
+        // passes the equality check yet overlaps. Checked here, on the planned
+        // IV + subsample sequences, so a rejection still leaves `media`
+        // byte-identical.
+        let sample_lens = media
+            .tracks
+            .iter()
+            .flat_map(|t| t.samples.iter().map(|s| s.data.len()));
+        assert_ctr_ranges_disjoint(cfg.scheme, &plan, &subsample_plan, sample_lens)?;
 
         for ((track, track_ivs), track_subs) in
             media.tracks.iter_mut().zip(plan).zip(subsample_plan)
@@ -538,6 +589,7 @@ impl CencEncryptor {
     fn plan_sample_ivs(
         &self,
         media: &Media,
+        scheme: CencScheme,
         iv_gen: &IvGen,
         constant_iv_senc: ConstantIvSenc,
     ) -> Result<Vec<Vec<Vec<u8>>>> {
@@ -546,7 +598,12 @@ impl CencEncryptor {
         for track in &media.tracks {
             let mut track_ivs = Vec::with_capacity(track.samples.len());
             for _ in &track.samples {
-                track_ivs.push(self.resolve_iv(iv_gen, media_sample_idx, constant_iv_senc)?);
+                track_ivs.push(self.resolve_iv(
+                    scheme,
+                    iv_gen,
+                    media_sample_idx,
+                    constant_iv_senc,
+                )?);
                 media_sample_idx += 1;
             }
             plan.push(track_ivs);
@@ -601,8 +658,14 @@ impl CencEncryptor {
     /// recorded per-sample in `senc`), or an empty IV when
     /// [`ConstantIvSenc::Omit`] (the spec-minimal shape where the IV lives
     /// only in `tenc.default_constant_IV`).
+    ///
+    /// [`IvGen::Counter`]'s width is **scheme-dependent** (see
+    /// [`Self::counter_iv_size`]): 8 bytes under `cenc`, 16 under `cbcs`, so a
+    /// default `cbcs` config does not emit the 8-byte per-sample IV that
+    /// Bento4 `mp4decrypt` silently no-ops (audit r05-W4).
     fn resolve_iv(
         &self,
+        scheme: CencScheme,
         iv_gen: &IvGen,
         idx: usize,
         constant_iv_senc: ConstantIvSenc,
@@ -615,7 +678,16 @@ impl CencEncryptor {
                     .ok_or(Error::InvalidInput(
                         "CENC IV counter overflow (next_counter + sample_index)",
                     ))?;
-                Ok(v.to_be_bytes().to_vec())
+                if Self::counter_iv_size(scheme) == PER_SAMPLE_IV_SIZE as usize {
+                    // 8-byte counter IV: the common `cenc` CMAF convention.
+                    Ok(v.to_be_bytes().to_vec())
+                } else {
+                    // 16-byte counter IV (`cbcs`): the 64-bit counter in the
+                    // low half of a 16-byte big-endian block, zero in the high
+                    // half — a genuine 16-byte per-sample IV, which is what a
+                    // `cbcs` decryptor requires.
+                    Ok(u128::from(v).to_be_bytes().to_vec())
+                }
             }
             IvGen::Explicit(ivs) => {
                 let iv = ivs.get(idx).ok_or(Error::InvalidInput(
@@ -688,6 +760,116 @@ fn assert_ivs_unique(
     Ok(())
 }
 
+/// The number of AES-CTR counter blocks a sample consumes: one per 16 protected
+/// bytes, across the concatenated *protected* ranges (clear ranges are skipped
+/// and never advance the counter — see [`cenc_crypto::apply_ctr`]).
+///
+/// When the subsample map is empty the whole sample is protected, so the count
+/// is `ceil(sample_len / 16)`. Returns `None` when the count does not fit a
+/// `u128`, which cannot happen for a real sample but keeps the arithmetic
+/// total.
+fn protected_block_count(sample_len: usize, subsamples: &[SubSampleEntry]) -> Option<u128> {
+    let protected: u128 = if subsamples.is_empty() {
+        sample_len as u128
+    } else {
+        subsamples.iter().try_fold(0u128, |acc, s| {
+            acc.checked_add(s.bytes_of_protected_data as u128)
+        })?
+    };
+    // ceil(protected / 16)
+    protected
+        .checked_add(BLOCK_LEN_U128 - 1)
+        .map(|v| v / BLOCK_LEN_U128)
+}
+
+/// One AES-CTR counter-block range covered by a planned sample: the counter
+/// block (the per-sample IV left-justified and zero-padded to 16 bytes,
+/// big-endian) through the last block the sample consumes.
+#[derive(Debug, Clone, Copy)]
+struct CtrRange {
+    start: u128,
+    end: u128,
+}
+
+/// Reject planned `cenc` (AES-CTR) counter-block ranges that overlap.
+///
+/// [`assert_ivs_unique`] compares IVs for *equality only*, which is not the
+/// property that matters under `cenc`: the CENC counter block **is** the IV,
+/// zero-padded to 16 bytes, and `Ctr128BE` increments the full 128-bit block
+/// once per 16-byte cipher block (ISO/IEC 23001-7 §10.1). Sample *i* therefore
+/// consumes counters `iv_i .. iv_i + blocks_i - 1`, so the natural sequential
+/// list `base + i` — every adjacent pair a distinct, "unique" IV — reuses
+/// sample *i*'s second keystream block as sample *i+1*'s first whenever a
+/// sample is longer than one block. That is a two-time pad across every
+/// consecutive pair, and it is exactly what a caller assembling IVs as
+/// `base + i` reaches.
+///
+/// `cbcs` is exempt: its IV seeds a CBC chain per protected block (the IV is
+/// not a counter), so a shifted IV is not keystream reuse.
+///
+/// Runs on the *planned* IV + subsample sequences, before any sample is
+/// ciphered, so a rejection leaves `media` byte-identical.
+fn assert_ctr_ranges_disjoint(
+    scheme: CencScheme,
+    plan: &[Vec<Vec<u8>>],
+    subsample_plan: &[Vec<Vec<SubSampleEntry>>],
+    sample_lens: impl Iterator<Item = usize>,
+) -> Result<()> {
+    if scheme != CencScheme::Cenc {
+        return Ok(());
+    }
+    let mut sample_lens = sample_lens;
+    let mut ranges: Vec<CtrRange> = Vec::new();
+    for (track_ivs, track_subs) in plan.iter().zip(subsample_plan) {
+        for (iv, subs) in track_ivs.iter().zip(track_subs) {
+            // Every sample has an entry: the two plans were built one per
+            // sample, in the same (track, sample) order.
+            let len = sample_lens.next().ok_or(Error::InvalidInput(
+                "CENC sample-length iterator shorter than the planned sample count",
+            ))?;
+            if iv.is_empty() {
+                // `apply_ctr` rejects an empty IV itself (no counter block to
+                // derive); nothing to range-check here.
+                continue;
+            }
+            let mut counter = [0u8; KEY_LEN];
+            counter[..iv.len()].copy_from_slice(iv);
+            let start = u128::from_be_bytes(counter);
+            let blocks = protected_block_count(len, subs).ok_or(Error::InvalidInput(
+                "CENC protected byte count overflows the u128 counter space",
+            ))?;
+            // A sample that protects no whole block (a subsample map whose
+            // protected bytes are all in a partial tail, or an empty sample)
+            // consumes no keystream, so it cannot collide with anything — skip
+            // it rather than give it a degenerate zero-width range (which the
+            // overlap test below would also treat as harmless, but skipping
+            // keeps the list minimal and the intent explicit).
+            if blocks == 0 {
+                continue;
+            }
+            let end = start.checked_add(blocks).ok_or(Error::InvalidInput(
+                "CENC AES-CTR counter block range overflows 128 bits (iv + protected blocks)",
+            ))?;
+            ranges.push(CtrRange { start, end });
+        }
+    }
+    // Sort by start, then reject any overlap with the previous end. Sorting
+    // keeps this O(n log n) for a whole-Media plan rather than O(n²).
+    ranges.sort_unstable_by_key(|r| r.start);
+    for pair in ranges.windows(2) {
+        if pair[1].start < pair[0].end {
+            return Err(Error::InvalidInput(
+                "overlapping CENC AES-CTR counter-block ranges: under cenc the per-sample IV is \
+                 the 128-bit counter block and the counter advances once per 16-byte protected \
+                 block (ISO/IEC 23001-7 §10.1), so a sequential IV list such as base+i reuses \
+                 sample i's later keystream blocks as sample i+1's first (a two-time pad). Space \
+                 the IVs by at least the previous sample's protected block count",
+            ));
+        }
+    }
+    Ok(())
+}
+
 /// Map a track's codec config to the NAL-header layout used to build its
 /// subsample map, or `None` for a track this encryptor cannot walk as NAL
 /// units (audio, or any other non-NAL-carried codec) — such tracks always
@@ -745,9 +927,11 @@ fn nal_subsamples(codec: NalCodec, data: &[u8]) -> Result<Vec<SubSampleEntry>> {
 /// - [`IvGen::Constant`] + [`ConstantIvSenc::Omit`]: `default_per_sample_iv_size = 0`,
 ///   `default_constant_IV = Some(iv)` — the spec-minimal, `tenc`-only shape
 ///   (no `senc`/`saiz`/`saio`).
-/// - [`IvGen::Counter`]: `default_per_sample_iv_size = 8` (every counter IV is
-///   an 8-byte big-endian value — see [`CencEncryptor::resolve_iv`]), no
-///   constant IV.
+/// - [`IvGen::Counter`]: `default_per_sample_iv_size` is
+///   [`CencEncryptor::counter_iv_size`] of the scheme — 8 under `cenc`
+///   (every counter IV is an 8-byte big-endian value), 16 under `cbcs`
+///   (a genuine 16-byte per-sample IV is what a `cbcs` decryptor requires;
+///   see that method) — no constant IV.
 /// - [`IvGen::Explicit`]: `default_per_sample_iv_size` is the shared length of
 ///   every supplied IV (checked uniform here, since the wire format has only
 ///   one track-wide size — a per-sample length mismatch would otherwise
@@ -755,11 +939,12 @@ fn nal_subsamples(codec: NalCodec, data: &[u8]) -> Result<Vec<SubSampleEntry>> {
 ///   size), no constant IV. That shared length is also validated here to be
 ///   exactly 8 or 16 bytes — an empty (or any other length) IV would build an
 ///   all-zero or malformed AES-CTR/CBC counter (a two-time-pad, in the
-///   all-zero case). An empty list falls back to the 8-byte default (there is
-///   no sample to measure; [`CencEncryptor::validate_iv_gen`] will itself
-///   reject the count mismatch against the `Media`'s real total sample
-///   count).
+///   all-zero case). An empty list falls back to the scheme's counter IV
+///   width (there is no sample to measure; [`CencEncryptor::validate_iv_gen`]
+///   will itself reject the count mismatch against the `Media`'s real total
+///   sample count).
 fn tenc_iv_fields(
+    scheme: CencScheme,
     iv_gen: &IvGen,
     constant_iv_senc: ConstantIvSenc,
 ) -> Result<(u8, Option<Vec<u8>>)> {
@@ -768,7 +953,7 @@ fn tenc_iv_fields(
             ConstantIvSenc::Emit => Ok((16, Some(iv.to_vec()))),
             ConstantIvSenc::Omit => Ok((0, Some(iv.to_vec()))),
         },
-        IvGen::Counter => Ok((PER_SAMPLE_IV_SIZE, None)),
+        IvGen::Counter => Ok((CencEncryptor::counter_iv_size(scheme) as u8, None)),
         IvGen::Explicit(ivs) => {
             let len = match ivs.first() {
                 Some(first) => {
@@ -779,7 +964,7 @@ fn tenc_iv_fields(
                     }
                     first.len()
                 }
-                None => PER_SAMPLE_IV_SIZE as usize,
+                None => CencEncryptor::counter_iv_size(scheme),
             };
             if !VALID_EXPLICIT_IV_LENS.contains(&len) {
                 return Err(Error::InvalidInput(
@@ -879,13 +1064,24 @@ mod tests {
             .collect()
     }
 
-    /// `n` distinct IVs of `len` bytes (an IV must be unique per content key).
+    /// `n` distinct IVs of `len` bytes (an IV must be unique per content key),
+    /// each placed in its own 2^32-wide slot so consecutive samples' AES-CTR
+    /// counter ranges cannot intersect — see [`assert_ctr_ranges_disjoint`].
+    /// A plainly sequential list (`base + i`) would be rejected under `cenc`,
+    /// which is exactly what that check exists for.
     fn distinct_ivs(n: usize, len: usize) -> Vec<Vec<u8>> {
         (0..n)
             .map(|i| {
                 let mut iv = alloc::vec![0xABu8; len];
-                iv[len - 1] = i as u8;
-                iv[len - 2] = (i >> 8) as u8;
+                // The IV is the big-endian counter block, so the low-order
+                // bytes are the last. Write the index into bits 32..63 of the
+                // low half: consecutive samples then start 2^32 counter blocks
+                // apart (far more than any real sample's protected block
+                // count, which is what keeps the ranges disjoint).
+                iv[len - 5] = (i & 0xFF) as u8;
+                iv[len - 6] = ((i >> 8) & 0xFF) as u8;
+                iv[len - 7] = ((i >> 16) & 0xFF) as u8;
+                iv[len - 8] = ((i >> 24) & 0xFF) as u8;
                 iv
             })
             .collect()
@@ -1121,6 +1317,148 @@ mod tests {
                 "tenc.default_per_sample_iv_size must match the actual IV length used"
             );
         }
+    }
+
+    /// Audit r05-W4: the default `IvGen::Counter` under `cbcs` must emit
+    /// **16-byte** per-sample IVs, not the 8-byte shape this module's own
+    /// [`IvGen::Constant`] doc records that Bento4 `mp4decrypt` silently
+    /// no-ops. `cenc` keeps the 8-byte CMAF convention.
+    #[test]
+    fn cbcs_default_counter_emits_16_byte_ivs() {
+        // cbcs + the Default::default() IvGen (Counter) — the shape a caller
+        // reaches with `EncryptConfig { scheme: Cbcs, ..Default::default() }`.
+        let mut media = clear_media();
+        let n = media.tracks[0].samples.len();
+        let cfg = EncryptConfig {
+            scheme: CencScheme::Cbcs,
+            kid: KID,
+            iv: IvGen::default(),
+            pattern: None,
+            subsample: SubsamplePolicy::WholeSample,
+            constant_iv_senc: ConstantIvSenc::default(),
+        };
+        assert!(
+            matches!(cfg.iv, IvGen::Counter),
+            "the default must be Counter"
+        );
+        CencEncryptor::new(KEY)
+            .encrypt(&mut media, &cfg)
+            .expect("encrypt");
+        let enc = media.tracks[0].encryption.as_ref().expect("Some");
+        assert_eq!(enc.tenc.default_per_sample_iv_size, 16);
+        // Every recorded per-sample IV must really be 16 bytes (a tenc that
+        // said 16 while senc carried 8 would desync saiz against senc).
+        assert_eq!(enc.samples.len(), n);
+        for (i, s) in enc.samples.iter().enumerate() {
+            assert_eq!(
+                s.initialization_vector.len(),
+                16,
+                "cbcs sample {i} IV must be 16 bytes"
+            );
+        }
+        // The IV is the 64-bit counter zero-extended into a 16-byte block:
+        // sample 0 starts at 0, sample 1 at 1, …
+        assert_eq!(
+            enc.samples[0].initialization_vector,
+            alloc::vec![0u8; 16],
+            "first cbcs counter IV is counter 0"
+        );
+        let mut second = alloc::vec![0u8; 16];
+        second[15] = 1;
+        assert_eq!(enc.samples[1].initialization_vector, second);
+    }
+
+    /// Audit r05-W4: `cenc` + `IvGen::Counter` keeps the 8-byte CMAF IV.
+    #[test]
+    fn cenc_default_counter_emits_8_byte_ivs() {
+        let mut media = clear_media();
+        let cfg = EncryptConfig {
+            scheme: CencScheme::Cenc,
+            kid: KID,
+            iv: IvGen::default(),
+            pattern: None,
+            subsample: SubsamplePolicy::WholeSample,
+            constant_iv_senc: ConstantIvSenc::default(),
+        };
+        CencEncryptor::new(KEY)
+            .encrypt(&mut media, &cfg)
+            .expect("encrypt");
+        let enc = media.tracks[0].encryption.as_ref().expect("Some");
+        assert_eq!(enc.tenc.default_per_sample_iv_size, 8);
+        for s in &enc.samples {
+            assert_eq!(s.initialization_vector.len(), 8);
+        }
+    }
+
+    /// Audit r05-W3: under `cenc` the per-sample IV **is** the 128-bit AES-CTR
+    /// counter block, and the counter advances once per 16-byte protected
+    /// block (ISO/IEC 23001-7 §10.1). Two samples whose counter-block *ranges*
+    /// intersect reuse keystream — a two-time pad — even though their IVs are
+    /// distinct. A caller that supplies the natural sequential list
+    /// `base + i` (the exact shape the equality-only check let through) must be
+    /// rejected.
+    #[test]
+    fn cenc_sequential_16_byte_ivs_overlap_is_rejected() {
+        let mut media = clear_media();
+        let n = media.tracks[0].samples.len();
+        // Sequential 16-byte IVs, spaced one apart — sample i+1's first
+        // counter block equals sample i's second whenever a sample is longer
+        // than one 16-byte block, which real video samples always are.
+        let ivs: Vec<Vec<u8>> = (0..n)
+            .map(|i| {
+                let mut iv = alloc::vec![0u8; 16];
+                iv[14] = (i >> 8) as u8;
+                iv[15] = i as u8;
+                iv
+            })
+            .collect();
+        // Precondition: the IVs are genuinely distinct, so the *equality*
+        // check the audit found insufficient would have accepted them.
+        let unique: alloc::collections::BTreeSet<&Vec<u8>> = ivs.iter().collect();
+        assert_eq!(unique.len(), n, "the test IVs must all differ");
+
+        let cfg = EncryptConfig {
+            scheme: CencScheme::Cenc,
+            kid: KID,
+            iv: IvGen::Explicit(ivs),
+            pattern: None,
+            subsample: SubsamplePolicy::WholeSample,
+            constant_iv_senc: ConstantIvSenc::default(),
+        };
+        let before = snapshot_all(&media);
+        let err = CencEncryptor::new(KEY)
+            .encrypt(&mut media, &cfg)
+            .expect_err("sequential 16-byte cenc IVs must be rejected");
+        assert!(matches!(err, Error::InvalidInput(_)), "got {err:?}");
+        // Atomicity: a rejection must leave every sample byte-identical.
+        assert_eq!(snapshot_all(&media), before, "media must be untouched");
+    }
+
+    /// Audit r05-W3: the *same* sequential IVs are fine under `cbcs`, whose IV
+    /// seeds a CBC chain rather than a counter (no keystream to reuse).
+    #[test]
+    fn cbcs_sequential_16_byte_ivs_accepted() {
+        let mut media = clear_media();
+        let n = media.tracks[0].samples.len();
+        let ivs: Vec<Vec<u8>> = (0..n)
+            .map(|i| {
+                let mut iv = alloc::vec![0u8; 16];
+                iv[14] = (i >> 8) as u8;
+                iv[15] = i as u8;
+                iv
+            })
+            .collect();
+        let cfg = EncryptConfig {
+            scheme: CencScheme::Cbcs,
+            kid: KID,
+            iv: IvGen::Explicit(ivs),
+            pattern: None,
+            subsample: SubsamplePolicy::WholeSample,
+            constant_iv_senc: ConstantIvSenc::default(),
+        };
+        CencEncryptor::new(KEY)
+            .encrypt(&mut media, &cfg)
+            .expect("cbcs must accept sequential IVs (no counter)");
     }
 
     /// `cbcs` pattern `crypt_byte_block == 0` with a nonzero

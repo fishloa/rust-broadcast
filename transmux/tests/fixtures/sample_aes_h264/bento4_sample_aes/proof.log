@@ -1,0 +1,124 @@
+[h264 @ 0x7ab0c28380] error while decoding MB 6 0, bytestream -9
+[h264 @ 0x7ab0c28380] top block unavailable for requested intra mode -1
+[h264 @ 0x7ab0c28380] error while decoding MB 3 3, bytestream 178
+[h264 @ 0x7ab0c28380] top block unavailable for requested intra mode -1
+[h264 @ 0x7ab0c28380] error while decoding MB 3 6, bytestream 655
+[h264 @ 0x7ab0c28380] top block unavailable for requested intra mode -1
+[h264 @ 0x7ab0c28380] error while decoding MB 1 9, bytestream 771
+[h264 @ 0x7ab0c28380] error while decoding MB 16 0, bytestream -10
+[h264 @ 0x7ab0c28380] error while decoding MB 7 8, bytestream -22
+[h264 @ 0x7ab0c28380] error while decoding MB 6 10, bytestream -9
+[h264 @ 0x7ab0c28380] error while decoding MB 4 8, bytestream -9
+[h264 @ 0x7ab0c28380] Reference 4 >= 3
+[h264 @ 0x7ab0c28380] error while decoding MB 7 9, bytestream 107
+[h264 @ 0x7ab0c28380] Reference 4 >= 4
+[h264 @ 0x7ab0c28380] error while decoding MB 13 8, bytestream 55
+[h264 @ 0x7ab0c28380] error while decoding MB 8 11, bytestream -6
+[h264 @ 0x7ab0c28380] Reference 6 >= 4
+[h264 @ 0x7ab0c28380] error while decoding MB 5 8, bytestream -2
+[h264 @ 0x7ab0c28380] Reference 4 >= 4
+[h264 @ 0x7ab0c28380] error while decoding MB 2 10, bytestream 20
+[h264 @ 0x7ab0c28380] error while decoding MB 3 8, bytestream -15
+[h264 @ 0x7ab0c28380] Reference 4 >= 4
+[h264 @ 0x7ab0c28380] error while decoding MB 4 10, bytestream 30
+[h264 @ 0x7ab0c28380] error while decoding MB 9 8, bytestream -26
+[h264 @ 0x7ab0c28380] error while decoding MB 18 9, bytestream -7
+## clear.h264 -> Bento4 SAMPLE-AES
+bento4_sample_aes/clear/bento4_decoded.framemd5: 10/10 frames identical to clear.framemd5  [==========]
+# Bento4 encrypted ES vs python reference enc_chained.h264 (first 10 pictures):
+bento4_sample_aes/clear/bento4_encrypted.h264: 40/40 slice NALs equal to enc_chained.h264 (other has 40)
+bento4_sample_aes/clear/bento4_encrypted.h264: 40/40 slice NALs equal to enc_chained.h264 (other has 40)
+[h264 @ 0x763ec28380] error while decoding MB 6 0, bytestream -11
+[h264 @ 0x763ec28380] top block unavailable for requested intra mode -1
+[h264 @ 0x763ec28380] error while decoding MB 3 3, bytestream 315
+[h264 @ 0x763ec28380] top block unavailable for requested intra mode -1
+[h264 @ 0x763ec28380] error while decoding MB 3 6, bytestream 659
+[h264 @ 0x763ec28380] top block unavailable for requested intra mode -1
+[h264 @ 0x763ec28380] error while decoding MB 1 9, bytestream 909
+[h264 @ 0x763ec28380] error while decoding MB 17 0, bytestream -5
+[h264 @ 0x763ec28380] error while decoding MB 4 8, bytestream -13
+[h264 @ 0x763ec28380] error while decoding MB 10 10, bytestream -6
+[h264 @ 0x763ec28380] error while decoding MB 5 8, bytestream -31
+[h264 @ 0x763ec28380] Reference 4 >= 3
+[h264 @ 0x763ec28380] error while decoding MB 7 9, bytestream 144
+[h264 @ 0x763ec28380] Reference 4 >= 4
+[h264 @ 0x763ec28380] error while decoding MB 13 8, bytestream 111
+[h264 @ 0x763ec28380] Reference 4 >= 4
+[h264 @ 0x763ec28380] error while decoding MB 13 10, bytestream 29
+[h264 @ 0x763ec28380] error while decoding MB 4 8, bytestream -14
+[h264 @ 0x763ec28380] Reference 4 >= 4
+[h264 @ 0x763ec28380] error while decoding MB 2 10, bytestream 63
+[h264 @ 0x763ec28380] error while decoding MB 4 8, bytestream -28
+[h264 @ 0x763ec28380] Reference 4 >= 4
+[h264 @ 0x763ec28380] error while decoding MB 4 10, bytestream 63
+[h264 @ 0x763ec28380] error while decoding MB 9 8, bytestream -13
+[h264 @ 0x763ec28380] error while decoding MB 18 9, bytestream -5
+## tailprobe_clear.h264 -> Bento4 SAMPLE-AES
+bento4_sample_aes/tailprobe_clear/bento4_decoded.framemd5: 10/10 frames identical to tailprobe_clear.framemd5  [==========]
+# Bento4 encrypted ES vs python reference tailprobe_enc_gt.h264 (first 10 pictures):
+bento4_sample_aes/tailprobe_clear/bento4_encrypted.h264: 40/40 slice NALs equal to tailprobe_enc_gt.h264 (other has 40)
+bento4_sample_aes/tailprobe_clear/bento4_encrypted.h264: 40/40 slice NALs equal to tailprobe_enc_gt.h264 (other has 40)
+[h264 @ 0x7aaf048380] top block unavailable for requested intra mode -1
+[h264 @ 0x7aaf048380] error while decoding MB 6 0, bytestream 269
+[h264 @ 0x75eac28380] error while decoding MB 6 0, bytestream -21
+[h264 @ 0x75eac28380] top block unavailable for requested intra mode -1
+[h264 @ 0x75eac28380] error while decoding MB 3 3, bytestream 177
+[h264 @ 0x75eac28380] top block unavailable for requested intra mode -1
+[h264 @ 0x75eac28380] error while decoding MB 3 6, bytestream 656
+[h264 @ 0x75eac28380] top block unavailable for requested intra mode -1
+[h264 @ 0x75eac28380] error while decoding MB 1 9, bytestream 770
+[h264 @ 0x75eac28380] error while decoding MB 16 0, bytestream -10
+[h264 @ 0x75eac28380] error while decoding MB 7 8, bytestream -22
+[h264 @ 0x75eac28380] error while decoding MB 6 10, bytestream -9
+[h264 @ 0x75eac28380] error while decoding MB 4 8, bytestream -9
+[h264 @ 0x75eac28380] Reference 4 >= 3
+[h264 @ 0x75eac28380] error while decoding MB 7 9, bytestream 107
+[h264 @ 0x75eac28380] Reference 4 >= 4
+[h264 @ 0x75eac28380] error while decoding MB 13 8, bytestream 55
+[h264 @ 0x75eac28380] error while decoding MB 8 11, bytestream -6
+[h264 @ 0x75eac28380] Reference 6 >= 4
+[h264 @ 0x75eac28380] error while decoding MB 5 8, bytestream -2
+[h264 @ 0x75eac28380] Reference 4 >= 4
+[h264 @ 0x75eac28380] error while decoding MB 2 10, bytestream 20
+[h264 @ 0x75eac28380] error while decoding MB 3 8, bytestream -15
+[h264 @ 0x75eac28380] Reference 4 >= 4
+[h264 @ 0x75eac28380] error while decoding MB 4 10, bytestream 30
+[h264 @ 0x75eac28380] error while decoding MB 9 8, bytestream -26
+[h264 @ 0x75eac28380] error while decoding MB 18 9, bytestream -7
+## escprobe_clear.h264 -> Bento4 SAMPLE-AES
+bento4_sample_aes/escprobe_clear/bento4_decoded.framemd5: 10/10 frames identical to escprobe_clear.framemd5  [==========]
+# Bento4 encrypted ES vs python reference escprobe_enc.h264 (first 10 pictures):
+bento4_sample_aes/escprobe_clear/bento4_encrypted.h264: 40/40 slice NALs equal to escprobe_enc.h264 (other has 40)
+bento4_sample_aes/escprobe_clear/bento4_encrypted.h264: 40/40 slice NALs equal to escprobe_enc.h264 (other has 40)
+[h264 @ 0x78aec34380] gray chroma
+[h264 @ 0x78aec34380] error while decoding MB 1 3, bytestream 367
+[h264 @ 0x7747068380] error while decoding MB 6 0, bytestream -21
+[h264 @ 0x7747068380] top block unavailable for requested intra mode -1
+[h264 @ 0x7747068380] error while decoding MB 1 3, bytestream 364
+[h264 @ 0x7747068380] top block unavailable for requested intra mode -1
+[h264 @ 0x7747068380] error while decoding MB 3 6, bytestream 655
+[h264 @ 0x7747068380] top block unavailable for requested intra mode -1
+[h264 @ 0x7747068380] error while decoding MB 1 9, bytestream 771
+[h264 @ 0x7747068380] error while decoding MB 16 0, bytestream -10
+[h264 @ 0x7747068380] error while decoding MB 7 8, bytestream -22
+[h264 @ 0x7747068380] error while decoding MB 6 10, bytestream -9
+[h264 @ 0x7747068380] error while decoding MB 4 8, bytestream -9
+[h264 @ 0x7747068380] Reference 4 >= 3
+[h264 @ 0x7747068380] error while decoding MB 7 9, bytestream 107
+[h264 @ 0x7747068380] Reference 4 >= 4
+[h264 @ 0x7747068380] error while decoding MB 13 8, bytestream 55
+[h264 @ 0x7747068380] error while decoding MB 8 11, bytestream -6
+[h264 @ 0x7747068380] Reference 6 >= 4
+[h264 @ 0x7747068380] error while decoding MB 5 8, bytestream -2
+[h264 @ 0x7747068380] Reference 4 >= 4
+[h264 @ 0x7747068380] error while decoding MB 2 10, bytestream 20
+[h264 @ 0x7747068380] error while decoding MB 3 8, bytestream -15
+[h264 @ 0x7747068380] Reference 4 >= 4
+[h264 @ 0x7747068380] error while decoding MB 4 10, bytestream 30
+[h264 @ 0x7747068380] error while decoding MB 9 8, bytestream -26
+[h264 @ 0x7747068380] error while decoding MB 18 9, bytestream -7
+## epclear_clear.h264 -> Bento4 SAMPLE-AES
+bento4_sample_aes/epclear_clear/bento4_decoded.framemd5: 0/10 frames identical to epclear_clear.framemd5  [XXXXXXXXXX]
+# Bento4 encrypted ES vs python reference epclear_enc.h264 (first 10 pictures):
+bento4_sample_aes/epclear_clear/bento4_encrypted.h264: 39/40 slice NALs equal to epclear_enc.h264 (other has 40)
+bento4_sample_aes/epclear_clear/bento4_encrypted.h264: 39/40 slice NALs equal to epclear_enc.h264 (other has 40)

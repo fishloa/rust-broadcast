@@ -9,6 +9,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed (breaking)
 
+- **H.264 Sample-AES now chains the CBC state across the encrypted blocks of one
+  NAL; the previous per-block IV reset is corrected** (#1080, audit r05-W1).
+  `sample_aes::h264_encrypt_nal`/`h264_decrypt_nal` restarted the CBC context at
+  every encrypted 16-byte block, so every block after the first in each slice
+  NAL was wrong — the IV is reset only at the start of each NAL, then chains
+  (each block uses the previous ciphertext block as its IV). This is what
+  ffmpeg's `libavformat/hls_sample_aes.c` `decrypt_nal_unit` does: a chained
+  stream decodes identically to clear (10/10 frames) while the old per-block
+  reset decodes to nothing (0/10). Pinned by the independent fixtures in
+  `transmux/tests/fixtures/sample_aes_h264/` (python reference, Bento4
+  `mp4hls`, ffmpeg) — see `ORACLES.md`. **Output bytes change**, so any
+  SAMPLE-AES H.264 output produced by this crate before this fix must be
+  re-encrypted. The transcription (`docs/drm/hls-sample-aes.md` §3.4/§11) and
+  the module doc are corrected to match.
+- **`CencEncryptor::encrypt` rejects overlapping AES-CTR counter-block ranges
+  under `cenc`** (#1080, audit r05-W3). `IvGen::Explicit`'s uniqueness check
+  compared IVs for equality only, but under `cenc` the per-sample IV *is* the
+  128-bit AES-CTR counter block and the counter advances once per 16-byte
+  protected block (ISO/IEC 23001-7 §10.1). A caller that supplied the natural
+  sequential list `base + i` passed that check while sample *i+1*'s first
+  keystream block equalled sample *i*'s second — a two-time pad across every
+  consecutive pair, the exact bug the uniqueness rule exists to prevent. Such a
+  config is now `Error::InvalidInput`, checked on the planned IV/subsample
+  sequences before a byte is ciphered (so a rejection still leaves `media`
+  byte-identical), and `cbcs` is exempt because its IV seeds a CBC chain rather
+  than a counter. An existing per-sample IV list must be spaced by at least the
+  preceding sample's protected block count.
+- **`IvGen::Counter` under `cbcs` now emits 16-byte per-sample IVs** (#1080,
+  audit r05-W4). It emitted 8-byte IVs — the shape this module's own
+  `IvGen::Constant` doc records that Bento4's `mp4decrypt` silently no-ops, so
+  a default `EncryptConfig { scheme: Cbcs, iv: IvGen::default(), .. }` produced
+  output a reference decryptor would not touch. The width is now
+  scheme-dependent (8 under `cenc`, the common CMAF convention; 16 under
+  `cbcs`), so existing `cbcs` output changes and any decryptor must be fed the
+  matching `tenc.default_per_sample_iv_size`.
 - **`smooth_parse::track_spec_from_quality_level` dispatches on the `QualityLevel`'s
   `FourCC` instead of assuming H.264/AAC** ([MS-SSTR] §2.2.2.5). Every audio level was
   parsed as an AudioSpecificConfig whatever its FourCC, so a Dolby `FourCC="EC-3"`/`"AC-3"`
@@ -366,6 +401,80 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 
 ### Fixed
+- **Fragment sample ranges are bounded to an `mdat` payload and to the file
+  length** (#1080, audit r05-W7 follow-up). A `trun` could previously name any
+  offset in the file, so a hostile fragment read `moov`/`moof` bytes as sample
+  data and returned `Ok`; many runs aimed at the same offset could also amplify
+  work without bound. Each range must now lie inside some `mdat` payload, the
+  total bytes handed out is capped at the file length, and `tfdt`/dts/pts
+  arithmetic is checked (an over-range `tfdt` or a dp overflowing addition is
+  `InvalidInput` rather than a wrap).
+- **`CencDecryptor`'s second `decrypt` pass no longer `expect`s its lookups, and
+  `assert_ctr_ranges_disjoint` skips zero-block samples** (#1080, audit r05-W5/W3
+  follow-ups). The decrypt pass re-resolved the track record and content key with
+  `.expect("pass 1 proved ...")`; those cannot fire today, but a panic on a path
+  driven by untrusted input is not acceptable, so they now return the same
+  `InvalidInput` errors pass 1 would, plus a sample-count recheck. A `cenc`
+  sample that protects no whole block consumes no keystream and is skipped
+  rather than given a degenerate zero-width counter range.
+- **H.264/E-AC-3 Sample-AES verified against independent oracle fixtures, and
+  the wrong transcription/claim corrected** (#1080, audit r05-W1/W2). The
+  repo's own `docs/drm/hls-sample-aes.md` §3.4 contradicted §11 on H.264 CBC
+  chaining, and `sample_aes/README.md` claimed the E-AC-3 IV was carried across
+  syncframes. `transmux/tests/fixtures/ORACLES.md` now pins both with three
+  independent implementations (a pycryptodome reference, Bento4 `mp4hls`, and
+  ffmpeg's decryptor): H.264 chains across a NAL's encrypted blocks with the IV
+  reset per NAL; E-AC-3 resets the IV at every syncframe. See the two
+  `### Changed (breaking)` entries above for the resulting code changes.
+  `tests/sample_aes_h264_oracle.rs` consumes the H.264 fixtures and
+  `sample_aes::tests::eac3_reset_per_syncframe_matches_oracle` the E-AC-3 ones.
+- **`cenc::SampleEncryptionBox::parse_body` rejects `senc` flag `0x000001`**
+  (#1080, audit r05-W9). That flag (PIFF 1.1 / ISO/IEC 23001-7:2012 v0) inserts
+  a 20-byte `AlgorithmID(24) IV_size(8) KID(128)` triple before `sample_count`
+  to override the `TrackEncryptionBox`. The parser read such a box as if the
+  flag were clear, consuming the override bytes as the count and the first
+  entries — garbage IVs, or a spurious length error. It is now
+  `Error::UnsupportedFeature` (this crate decrypts with the track-wide `tenc`
+  only). The `senc` subsample-count and `saio` v0 offset truncations this
+  warning also named were already fixed under #1129 (`FieldOverflow`).
+- **Fragment addressing (§8.8.7/§8.8.8) is one shared resolver, and both
+  `CencDecryptor::demux` and `Fmp4Demux` use it** (#1080, audit r05-W7). Both
+  read every run as `moof_off + trun.data_offset`, so `tfhd.base_data_offset`
+  (explicit-base files, e.g. some PIFF/Smooth-derived CMAF) was ignored, a
+  `trun` with no `data_offset` sliced bytes from the start of the `moof`, and a
+  later run's `data_offset` was measured from the previous run's end instead of
+  the traf base — any of which CTR then "decrypted" to garbage and returned
+  `Ok`. `transmux::frag_offsets::sample_ranges` now resolves the base
+  (`tfhd.base_data_offset` when present, else the `moof` start under
+  `default-base-is-moof`, else the running `moof` start / end of the preceding
+  fragment's data), makes a `trun`'s `data_offset` relative to that **traf
+  base** (never the previous run's end), continues a run with no `data_offset`
+  after the previous run, and bounds every sample range to an `mdat` payload
+  with a total cap of the file length. Verified against all nine
+  `tests/fixtures/cenc_frag_layouts/enc_*.mp4` (three base rules × explicit /
+  implicit multi-trun) for **both** the video and the audio traf
+  (`all_layouts_decrypt_to_clear_video_samples`, `all_layouts_decrypt_audio_to_clear`),
+  and against the clear variants
+  (`tests/fmp4_frag_layouts.rs::all_clear_layouts_demux_identically`). The
+  omit-tfhd-offset rule has no independent decryptor (see the fixture README).
+- **`CencDecryptor`'s `Decrypt::decrypt` is now atomic across the whole `Media`**
+  (#1080, audit r05-W5). It decrypted each track as it walked, so a missing
+  content key on track 2, a sample-count mismatch, or a malformed subsample map
+  on sample `k` returned `Err` *after* track 1 (or samples `0..k`) had already
+  been decrypted in place — the caller could not tell which samples were now
+  plaintext, and under AES-CTR a retry XORs those samples back to ciphertext.
+  Every track is now validated in full (record match, `tenc`, key, sample count,
+  and each sample's content-dependent preconditions) in a first pass that
+  mutates nothing; a rejected call leaves `media` byte-identical.
+- **`CencDecryptor::demux` skips a protected track whose original format is not
+  AVC instead of failing the whole file, and reports it** (#1080, audit r05-W6).
+  A typical CENC asset is `encv`+`enca`; the old code `return Err`ed on the first
+  non-`avc1` protected track, so such a file — and any protected HEVC file —
+  could not be demuxed at all. The AVC track is still reconstructed, and a
+  `Media` narrowed to a skipped track still fails clearly in `decrypt`. The skip
+  is recorded in `Media::skipped` (the dropped track's original-format FourCC
+  and the reason) — including an **unprotected** track sitting next to a
+  protected one, which was previously dropped with no record at all.
 - **`StreamingTsDemux` drops, rather than delivers, an access unit whose
   reassembly spanned a continuity-counter gap, and discards legal §2.4.3.3
   duplicate packets before reassembly** (#1080, audit r04-W49). The demux
@@ -932,6 +1041,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `largesize` header (#1019).
 
 ### Added
+- `sample_aes::eac3_encrypt_frame` / `eac3_decrypt_frame` — Sample-AES for a
+  **multi-syncframe** E-AC-3 audio frame, and `ac3::split_eac3_syncframe_ranges`
+  (#1080, audit r05-W2). The protected block is a single syncframe, so each gets
+  its own 16-byte clear leader, whole 16-byte blocks are encrypted and a partial
+  tail is clear (`ac3_encrypt_frame` applies one leader over whatever slice it is
+  handed, which skips the later leaders in a multi-syncframe frame). The IV is
+  **reset at every syncframe**, per the independent oracle
+  (`transmux/tests/fixtures/sample_aes_eac3/`; ffmpeg decodes the reset form 9/9
+  audio frames and a carried chain 1/9, and Bento4's encryptor is byte-identical
+  to the reset reference). Both return `Result`: a payload that is not a clean
+  run of syncframes (no sync word, or a truncated / trailing-junk syncframe) is
+  `Error::InvalidInput` rather than being emitted unchanged or half-encrypted.
+  Carrying the IV across an *independent + dependent* syncframe pair has no
+  independent oracle (`ORACLES.md` B3) — that case resets too and is labelled
+  unverified.
 - **`uri` — RFC 3986 URI-reference parsing and resolution.** `UriReference::parse`
   (§3) and `to_uri_string` (§5.3), `resolve` (§5.2.2), `merge` (§5.2.3),
   `remove_dot_segments` (§5.2.4) and `resolve_segment` for a `BaseURL` chain.

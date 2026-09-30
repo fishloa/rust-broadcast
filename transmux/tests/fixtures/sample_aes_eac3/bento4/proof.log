@@ -1,0 +1,5 @@
+Bento4 packed ES == python reference (reset per syncframe): IDENTICAL (4680 bytes)
+Bento4 packed ES != python reference (carried)
+Bento4 ts ES == python reference (reset per syncframe): IDENTICAL (4680 bytes)
+Bento4 ts ES != python reference (carried)
+bento4/ts/bento4_decoded.framemd5: 9/9 decoded audio frames identical to clear.framemd5  [=========]

@@ -1,0 +1,168 @@
+=== clear_ffmpeg_default.mp4
+[moof] size=8+328
+  [traf] size=8+120
+    [tfhd] size=12+24, flags=39
+      track ID = 1
+      base data offset = 1250
+    [trun] size=12+52, flags=305
+      sample count = 5
+      data offset = 344
+      first sample flags = 2000000
+  [traf] size=8+176
+    [tfhd] size=12+24, flags=39
+      track ID = 2
+      base data offset = 1250
+    [trun] size=12+108, flags=201
+      sample count = 25
+      data offset = 4528
+=== clear_ffmpeg_base_moof.mp4
+[moof] size=8+312
+  [traf] size=8+112
+    [tfhd] size=12+16, flags=20038
+      track ID = 1
+    [trun] size=12+52, flags=305
+      sample count = 5
+      data offset = 328
+      first sample flags = 2000000
+  [traf] size=8+168
+    [tfhd] size=12+16, flags=20038
+      track ID = 2
+    [trun] size=12+108, flags=201
+      sample count = 25
+      data offset = 4512
+=== clear_ffmpeg_omit.mp4
+[moof] size=8+312
+  [traf] size=8+112
+    [tfhd] size=12+16, flags=38
+      track ID = 1
+    [trun] size=12+52, flags=305
+      sample count = 5
+      data offset = 328
+      first sample flags = 2000000
+  [traf] size=8+168
+    [tfhd] size=12+16, flags=38
+      track ID = 2
+    [trun] size=12+108, flags=201
+      sample count = 25
+      data offset = 0
+=== enc_default_none.mp4
+[moof] size=8+959
+  [traf] size=8+298
+    [tfhd] size=12+24, flags=39
+      track ID = 1
+      base data offset = 1402
+    [trun] size=12+52, flags=305
+      sample count = 5
+      data offset = 975
+      first sample flags = 2000000
+      sample count = 5
+    [saio] size=12+8
+    [senc] size=12+124, flags=2
+  [traf] size=8+629
+    [tfhd] size=12+24, flags=39
+      track ID = 2
+      base data offset = 1402
+    [trun] size=12+108, flags=201
+      sample count = 25
+      data offset = 5159
+      sample count = 25
+    [saio] size=12+8
+    [senc] size=12+404
+=== enc_base_moof_none.mp4
+[moof] size=8+943
+  [traf] size=8+290
+    [tfhd] size=12+16, flags=20038
+      track ID = 1
+    [trun] size=12+52, flags=305
+      sample count = 5
+      data offset = 959
+      first sample flags = 2000000
+      sample count = 5
+    [saio] size=12+8
+    [senc] size=12+124, flags=2
+  [traf] size=8+621
+    [tfhd] size=12+16, flags=20038
+      track ID = 2
+    [trun] size=12+108, flags=201
+      sample count = 25
+      data offset = 5143
+      sample count = 25
+    [saio] size=12+8
+    [senc] size=12+404
+=== enc_omit_none.mp4
+[moof] size=8+943
+  [traf] size=8+290
+    [tfhd] size=12+16, flags=38
+      track ID = 1
+    [trun] size=12+52, flags=305
+      sample count = 5
+      data offset = 959
+      first sample flags = 2000000
+      sample count = 5
+    [saio] size=12+8
+    [senc] size=12+124, flags=2
+  [traf] size=8+621
+    [tfhd] size=12+16, flags=38
+      track ID = 2
+    [trun] size=12+108, flags=201
+      sample count = 25
+      data offset = 0
+      sample count = 25
+    [saio] size=12+8
+    [senc] size=12+404
+=== enc_default_explicit.mp4
+[moof] size=8+999
+  [traf] size=8+318
+    [tfhd] size=12+24, flags=39
+      track ID = 1
+      base data offset = 1402
+    [trun] size=12+28, flags=305
+      sample count = 2
+      data offset = 1015
+      first sample flags = 2000000
+    [trun] size=12+32, flags=301
+      sample count = 3
+      data offset = 4338
+      sample count = 5
+    [saio] size=12+8
+    [senc] size=12+124, flags=2
+  [traf] size=8+649
+    [tfhd] size=12+24, flags=39
+      track ID = 2
+      base data offset = 1402
+    [trun] size=12+56, flags=201
+      sample count = 12
+      data offset = 5199
+    [trun] size=12+60, flags=201
+      sample count = 13
+      data offset = 7259
+      sample count = 25
+    [saio] size=12+8
+    [senc] size=12+404
+=== enc_default_implicit.mp4
+[moof] size=8+991
+  [traf] size=8+314
+    [tfhd] size=12+24, flags=39
+      track ID = 1
+      base data offset = 1402
+    [trun] size=12+28, flags=305
+      sample count = 2
+      data offset = 1007
+      first sample flags = 2000000
+    [trun] size=12+28, flags=300
+      sample count = 3
+      sample count = 5
+    [saio] size=12+8
+    [senc] size=12+124, flags=2
+  [traf] size=8+645
+    [tfhd] size=12+24, flags=39
+      track ID = 2
+      base data offset = 1402
+    [trun] size=12+56, flags=201
+      sample count = 12
+      data offset = 5191
+    [trun] size=12+56, flags=200
+      sample count = 13
+      sample count = 25
+    [saio] size=12+8
+    [senc] size=12+404

@@ -1,0 +1,18 @@
+# ffmpeg: ffmpeg version 8.1.2 Copyright (c) 2000-2026 the FFmpeg developers
+# PROOF: ffmpeg HLS Sample-AES decrypt vs clear decode (first 10 of 12 frames; last 2 = ffmpeg EOF artifact)
+enc_chained.framemd5: 10/10 frames identical to clear.framemd5  [==========]
+enc_reset.framemd5: 0/10 frames identical to clear.framemd5  [XXXXXXXXXX]
+# all 12 frames (shows the tail artifact):
+enc_chained.framemd5: 10/12 frames identical to clear.framemd5  [==========XX]
+# tail-rule probe (last candidate block has exactly 16/15/17 bytes left):
+tailprobe_clear.framemd5: 10/10 frames identical to clear.framemd5  [==========]
+tailprobe_enc_gt.framemd5: 10/10 frames identical to tailprobe_clear.framemd5  [==========]
+tailprobe_enc_ge.framemd5: 0/10 frames identical to tailprobe_clear.framemd5  [XXXXXXXXXX]
+# EP bytes inside CLEAR regions (epclear): python reference (unescape->encrypt->re-escape) decoded by ffmpeg:
+epclear_enc.framemd5: 0/10 frames identical to epclear_clear.framemd5  [XXXXXXXXXX]
+# emulation-prevention probe: ciphertext block starts 00 00 01 -> encryptor must insert 0x03
+first IDR slice: clear escaped len 842, encrypted escaped len 843, ciphertext contains 00 00 03 01: True
+escprobe_dec_by_ffmpeg.h264: 38/40 slice NALs equal to escprobe_clear.h264 (other has 40)
+# (ffmpeg quirk: after removing an emulation byte from ciphertext its NAL lengths are off by one; content equal modulo that:)
+escprobe_dec_by_ffmpeg.h264: 40/40 slice NALs equal to escprobe_clear.h264 (other has 40)
+enc_chained_dec_by_ffmpeg.h264: 40/40 slice NALs equal to clear.h264 (other has 40)

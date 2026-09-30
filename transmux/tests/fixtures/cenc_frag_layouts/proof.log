@@ -1,0 +1,19 @@
+# ffmpeg version 8.1.2 Copyright (c) 2000-2026 the FFmpeg developers; Bento4 mp4decrypt: (Bento4 Version 1.6.0.0)
+# spec-derived plaintext of clear.mp4: track 1: 20 samples sha256=760a984788906ef9;track 2: 95 samples sha256=913a01f47fd6ab79;
+# (A) ffmpeg reads the CLEAR ffmpeg-written forms + our re-addressed clear twins (framemd5 vs clear.mp4):
+  clear_ffmpeg_default: ffmpeg -c copy 115/115 frames; spec-extractor plaintext == clear: yes
+  clear_ffmpeg_base_moof: ffmpeg -c copy 115/115 frames; spec-extractor plaintext == clear: yes
+  clear_ffmpeg_omit: ffmpeg -c copy 115/115 frames; spec-extractor plaintext == clear: yes
+  clear_multitrun_base_moof_implicit: ffmpeg -c copy 41/115 frames; spec-extractor plaintext == clear: yes
+  clear_multitrun_omit_implicit: ffmpeg -c copy 8/115 frames; spec-extractor plaintext == clear: yes
+# (B) encrypted files: ciphertext identical across layouts?  mp4decrypt plaintext == clear?  ffmpeg -decryption_key frames == clear?
+# file                         | ciphertext==enc_base_moof_none | mp4decrypt (Bento4) | ffmpeg decrypt
+enc_default_none.mp4           | yes                            | CORRECT             | 115/115 frames
+enc_default_explicit.mp4       | yes                            | CORRECT             | 115/115 frames
+enc_default_implicit.mp4       | yes                            | CORRECT             | 34/115 frames
+enc_base_moof_none.mp4         | yes                            | CORRECT             | 115/115 frames
+enc_base_moof_explicit.mp4     | yes                            | CORRECT             | 115/115 frames
+enc_base_moof_implicit.mp4     | yes                            | CORRECT             | 37/115 frames
+enc_omit_none.mp4              | yes                            | WRONG               | 20/115 frames
+enc_omit_explicit.mp4          | yes                            | WRONG               | 20/115 frames
+enc_omit_implicit.mp4          | yes                            | WRONG               | 8/115 frames

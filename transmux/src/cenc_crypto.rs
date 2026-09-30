@@ -65,7 +65,7 @@ use aes::cipher::generic_array::GenericArray;
 use aes::cipher::{BlockDecryptMut, BlockEncryptMut, KeyIvInit, StreamCipher};
 use bytes::{Bytes, BytesMut};
 
-use crate::cenc::{SampleEncryptionEntry, SubSampleEntry, TrackEncryptionBox};
+use crate::cenc::{CencScheme, SampleEncryptionEntry, SubSampleEntry, TrackEncryptionBox};
 use crate::error::{Error, Result};
 
 /// Rewrite one sample's [`Bytes`] in place (media plane step 2b, G12 —
@@ -285,6 +285,67 @@ pub(crate) fn apply_ctr(
     Ok(())
 }
 
+/// Run every content-dependent check the decrypt path would perform for one
+/// sample, **without mutating a byte**.
+///
+/// [`apply_ctr`] and [`cbcs_sample`] each validate their inputs before they
+/// touch the buffer (IV length, subsample-map coverage of the sample exactly,
+/// `cbcs` pattern preconditions), so a single sample's decryption is already
+/// atomic. This exposes that same validation as a standalone pass so a caller
+/// decrypting a whole `Media` can prove *every* sample decryptable before
+/// decrypting *any* of them — otherwise a failure on track 2's sample `k`
+/// leaves track 1 already decrypted in place, and the caller cannot tell which
+/// samples are now plaintext (audit r05-W5).
+///
+/// Returns `Ok` exactly when the corresponding [`apply_ctr`]/[`cbcs_sample`]
+/// call on the same inputs and the same `data_len` would not fail on anything
+/// content-dependent. It deliberately does not run the cipher.
+///
+/// The checks below mirror the preambles of [`apply_ctr`]/[`cbcs_sample`]
+/// (IV presence/length, subsample-map coverage, `cbcs` pattern precondition)
+/// on purpose: those functions must validate *before* mutating so that a
+/// single sample's cipher call is itself atomic, and this pass must do the
+/// same without mutating at all. Sharing one "plan" helper would couple them
+/// to a single call shape and lose the property that each cipher entry point
+/// is independently safe to call. The `cenc_crypto` unit tests exercise both
+/// paths with the same bad inputs so they cannot drift.
+pub(crate) fn validate_sample_decrypt(
+    scheme: CencScheme,
+    tenc: &TrackEncryptionBox,
+    entry: &SampleEncryptionEntry,
+    data_len: usize,
+) -> Result<()> {
+    match scheme {
+        CencScheme::Cenc => {
+            if entry.initialization_vector.is_empty() {
+                return Err(Error::InvalidInput(
+                    "cenc (AES-CTR) sample has no per-sample IV: an all-zero counter block would \
+                     reuse one keystream for every sample. cenc requires a per-sample IV in senc \
+                     — a tenc.default_constant_IV (default_per_sample_iv_size == 0) is cbcs-only",
+                ));
+            }
+            check_iv_len(entry.initialization_vector.len())?;
+            if !entry.subsamples.is_empty() {
+                validate_subsample_map(&entry.subsamples, data_len)?;
+            }
+            Ok(())
+        }
+        CencScheme::Cbcs => {
+            if tenc.default_crypt_byte_block == 0 && tenc.default_skip_byte_block != 0 {
+                return Err(Error::InvalidInput(
+                    "cbcs pattern crypt_byte_block=0 with nonzero skip leaves data unprotected",
+                ));
+            }
+            resolve_cbcs_iv(entry, tenc)?;
+            if !entry.subsamples.is_empty() {
+                validate_subsample_map(&entry.subsamples, data_len)?;
+            }
+            Ok(())
+        }
+        other => Err(Error::UnsupportedCencScheme { scheme: other }),
+    }
+}
+
 /// Resolve the 16-byte CBC IV for one sample's `cbcs` en/decryption
 /// (ISO/IEC 23001-7 §10.2): the per-sample IV from `senc` when the track
 /// carries one (`default_Per_Sample_IV_Size != 0`, or an encoder that still
@@ -479,6 +540,97 @@ mod tests {
         0x10,
     ];
     const IV8: [u8; 8] = [0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88];
+
+    /// `validate_sample_decrypt` must accept exactly what `apply_ctr`/
+    /// `cbcs_sample` accept, and reject exactly what they reject — the doc
+    /// comment claims the three checks cannot drift; this proves it with a
+    /// small input matrix, comparing the *validation* verdict against the
+    /// cipher's own verdict on the same inputs.
+    #[test]
+    fn validate_sample_decrypt_matches_cipher_verdicts() {
+        let tenc_cenc = TrackEncryptionBox {
+            version: 0,
+            default_crypt_byte_block: 0,
+            default_skip_byte_block: 0,
+            default_is_protected: 1,
+            default_per_sample_iv_size: 8,
+            default_kid: [0u8; KEY_LEN],
+            default_constant_iv: None,
+        };
+        let mut tenc_cbcs = tenc_cenc.clone();
+        tenc_cbcs.version = 1;
+        tenc_cbcs.default_crypt_byte_block = 1;
+        tenc_cbcs.default_skip_byte_block = 9;
+        tenc_cbcs.default_per_sample_iv_size = 16;
+
+        // (scheme, iv, subsamples, data_len)
+        let bad_iv_len = SampleEncryptionEntry {
+            initialization_vector: alloc::vec![0u8; 12],
+            subsamples: Vec::new(),
+        };
+        let empty_iv = SampleEncryptionEntry {
+            initialization_vector: Vec::new(),
+            subsamples: Vec::new(),
+        };
+        let bad_map = SampleEncryptionEntry {
+            initialization_vector: alloc::vec![0u8; 8],
+            subsamples: alloc::vec![SubSampleEntry {
+                bytes_of_clear_data: 0,
+                bytes_of_protected_data: 100, // > data_len
+            }],
+        };
+        let ok_cenc = SampleEncryptionEntry {
+            initialization_vector: alloc::vec![0u8; 8],
+            subsamples: Vec::new(),
+        };
+
+        let cases: [(CencScheme, &SampleEncryptionEntry, usize); 5] = [
+            (CencScheme::Cenc, &ok_cenc, 64),
+            (CencScheme::Cenc, &bad_iv_len, 64),
+            (CencScheme::Cenc, &empty_iv, 64),
+            (CencScheme::Cenc, &bad_map, 64),
+            (CencScheme::Cbcs, &ok_cenc, 64),
+        ];
+        for (scheme, entry, len) in cases {
+            let tenc = if scheme == CencScheme::Cbcs {
+                &tenc_cbcs
+            } else {
+                &tenc_cenc
+            };
+            let validate = validate_sample_decrypt(scheme, tenc, entry, len);
+            // The cipher's own verdict on the same inputs.
+            let mut buf = alloc::vec![0u8; len];
+            let cipher = match scheme {
+                CencScheme::Cenc => apply_ctr(
+                    &entry.initialization_vector,
+                    &KEY,
+                    &entry.subsamples,
+                    &mut buf,
+                ),
+                CencScheme::Cbcs => cbcs_sample(tenc, entry, &KEY, &mut buf, CbcsOp::Decrypt),
+                other => Err(Error::UnsupportedCencScheme { scheme: other }),
+            };
+            assert_eq!(
+                validate.is_ok(),
+                cipher.is_ok(),
+                "validate vs cipher disagreed for {scheme:?} (iv_len={}, subs={}):                  validate={validate:?} cipher={cipher:?}",
+                entry.initialization_vector.len(),
+                entry.subsamples.len(),
+            );
+        }
+
+        // A cbcs pattern that leaves data unprotected must be rejected by both.
+        let mut bad_pattern = tenc_cbcs.clone();
+        bad_pattern.default_crypt_byte_block = 0;
+        bad_pattern.default_skip_byte_block = 9;
+        let entry = SampleEncryptionEntry {
+            initialization_vector: alloc::vec![0u8; 16],
+            subsamples: Vec::new(),
+        };
+        let mut buf = alloc::vec![0u8; 32];
+        assert!(validate_sample_decrypt(CencScheme::Cbcs, &bad_pattern, &entry, 32).is_err());
+        assert!(cbcs_sample(&bad_pattern, &entry, &KEY, &mut buf, CbcsOp::Decrypt).is_err());
+    }
 
     /// CTR: encrypt then decrypt with the same iv/key/subsamples returns the
     /// original plaintext (CTR is its own inverse).

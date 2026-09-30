@@ -79,9 +79,17 @@ After each 16-byte encrypted block, up to 144 bytes (9 blocks of 16) are left un
 
 ### 3.4 IV handling for H.264
 
-- The IV is **reset to its original value** at the start of each new protected block.
-- IV does NOT carry over from one protected block to the next.
-- This means each 16-byte encrypted block within a single NAL uses the same IV independently — each encrypted block is independently decryptable.
+- The IV is the CBC chain seed for a NAL: the **first encrypted block of each
+  NAL** uses the IV, and each subsequent encrypted block uses the **previous
+  encrypted block's ciphertext** as its IV (normal CBC chaining).
+- The IV is **not** reset between the encrypted blocks *within* one NAL; it is
+  reset only at the start of each NAL.
+- Verified against ffmpeg's `libavformat/hls_sample_aes.c` `decrypt_nal_unit`,
+  which keeps one `ctx->iv` per NAL and updates it in place across the blocks
+  (`av_aes_crypt(..., 1, ctx->iv, 1)`). Confirmed empirically: ffmpeg decoding
+  a chained stream reproduces the clear frames (10/10 in
+  `tests/fixtures/sample_aes_h264/`), while the per-block IV reset decodes to
+  nothing (0/10). See that fixture's `README.md` / `proof.log`.
 
 ### 3.5 Emulation prevention bytes
 
@@ -155,9 +163,23 @@ Encrypted_Enhanced_AC3_syncframe {
 }
 ```
 
-- IV is **NOT** reset at syncframe boundaries within an audio frame.
-- IV is reset only at the **beginning of each E-AC-3 audio frame**.
-- One audio frame may contain multiple syncframes with continuous IV state across them.
+- **The protected block is a single syncframe**: each syncframe gets its own
+  16-byte clear leader, then whole 16-byte blocks are encrypted and a partial
+  tail (< 16 bytes) is left clear.
+- The **IV is reset at every syncframe** — the CBC state is *not* carried from
+  one syncframe to the next. This is the independent-oracle result
+  (`tests/fixtures/sample_aes_eac3/`, audit r05-W2): ffmpeg decodes the
+  reset-per-syncframe reference 9/9 audio frames identical to clear but the
+  carried-IV variant only 1/9, and Bento4 `mp4hls`'s output is byte-identical to
+  the reset reference. See that fixture's `README.md` / `proof.log`.
+- Use `sample_aes::eac3_encrypt_frame` / `eac3_decrypt_frame`:
+  `ac3_encrypt_frame` applies one leader to whatever slice it is handed, so a
+  multi-syncframe frame would skip the later leaders.
+- **Unverified corner:** carrying the IV across an independent syncframe *and
+  its dependent syncframes* inside one access unit has **no independent
+  oracle** (`ORACLES.md` B3) — every stream ffmpeg or Bento4 can produce has
+  one independent syncframe per audio frame. This implementation resets there
+  too; treat that case as unverified.
 
 ---
 
@@ -258,4 +280,4 @@ When `IV` is explicitly set:
 - **Key length:** 128 bits (16 bytes)
 - **Block size:** 16 bytes
 - **Padding:** None (partial trailing blocks left in the clear, not padded)
-- **CBC chaining:** Each encrypted block uses the previous ciphertext block as IV; first block uses the IV parameter. BUT: for SAMPLE-AES video/audio, the IV resets to its original value at each NAL/frame boundary (not a continuous chain across the whole segment).
+- **CBC chaining:** Each encrypted block uses the previous ciphertext block as IV; the first block uses the IV parameter. The IV is reset at the start of each **NAL** (H.264, §3.4) or each **audio frame/syncframe** (AAC §4.2, AC-3 §5, E-AC-3 §6) — it is never a continuous chain across the whole segment. Within an H.264 NAL the chain therefore runs across that NAL's encrypted blocks; for E-AC-3 the oracle (`tests/fixtures/sample_aes_eac3/`) shows the IV resets at **every syncframe**. Verified against ffmpeg's `hls_sample_aes.c` decryptor; see those fixture READMEs.

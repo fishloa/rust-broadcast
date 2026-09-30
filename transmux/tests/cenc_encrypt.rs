@@ -403,14 +403,21 @@ fn explicit_iv_wrong_uniform_length_errors() {
     );
 }
 
-/// `n` distinct IVs of `len` bytes each (the last byte counts up) — a valid
-/// `IvGen::Explicit` list, since an IV must be unique per content key.
+/// `n` distinct IVs of `len` bytes each — a valid `IvGen::Explicit` list, since
+/// an IV must be unique per content key.
+///
+/// The IV is the big-endian counter block (low-order bytes last), so the index
+/// goes into bits 32..63 of the low half: consecutive samples then start 2^32
+/// counter blocks apart, keeping their AES-CTR ranges disjoint under `cenc`
+/// (see `cenc_encrypt`'s `assert_ctr_ranges_disjoint`).
 fn distinct_ivs(n: usize, len: usize) -> Vec<Vec<u8>> {
     (0..n)
         .map(|i| {
             let mut iv = vec![0xABu8; len];
-            iv[len - 1] = i as u8;
-            iv[len - 2] = (i >> 8) as u8;
+            iv[len - 5] = (i & 0xFF) as u8;
+            iv[len - 6] = ((i >> 8) & 0xFF) as u8;
+            iv[len - 7] = ((i >> 16) & 0xFF) as u8;
+            iv[len - 8] = ((i >> 24) & 0xFF) as u8;
             iv
         })
         .collect()

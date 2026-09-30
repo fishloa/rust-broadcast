@@ -522,6 +522,37 @@ pub fn split_eac3_syncframes(payload: &[u8]) -> Vec<Ec3SplitFrame> {
     out
 }
 
+/// The `(start, end)` byte range of every E-AC-3 **syncframe** (independent or
+/// dependent) in a payload, in stream order.
+///
+/// Distinct from [`split_eac3_syncframes`], which folds dependent syncframes
+/// into their independent access unit. Sample-AES needs the syncframe ranges,
+/// not the access units: the protected block is a single syncframe, and the
+/// independent oracle (`tests/fixtures/sample_aes_eac3/`) shows the CBC IV is
+/// **reset at every syncframe** (`docs/drm/hls-sample-aes.md` §6).
+///
+/// Stops at the first bad sync word / truncated tail (mirrors
+/// [`split_ac3_syncframes`]); the caller then treats the payload as unwalkable.
+pub fn split_eac3_syncframe_ranges(payload: &[u8]) -> Vec<(usize, usize)> {
+    let mut ranges = Vec::new();
+    let mut off = 0usize;
+    while off + 2 <= payload.len() {
+        if u16::from_be_bytes([payload[off], payload[off + 1]]) != AC3_SYNCWORD {
+            break;
+        }
+        let Ok(info) = Ec3SyncframeInfo::parse_at(payload, off) else {
+            break;
+        };
+        let len = (info.frmsiz as usize + 1) * BYTES_PER_WORD;
+        if len == 0 || off + len > payload.len() {
+            break;
+        }
+        ranges.push((off, off + len));
+        off += len;
+    }
+    ranges
+}
+
 // ---------------------------------------------------------------------------
 // AC3SpecificBox (dac3) — §F.4
 // ---------------------------------------------------------------------------

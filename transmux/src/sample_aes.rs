@@ -20,6 +20,9 @@
 //!   Sample-AES sample byte patterns and IV rules; transcribed in
 //!   `transmux/docs/drm/hls-sample-aes.md` (§2 AES-128, §3 H.264, §4 AAC,
 //!   §5 AC-3, §6 E-AC-3, §9 EXT-X-KEY, §10 IV derivation, §11 cipher details).
+//! - **ffmpeg `libavformat/hls_sample_aes.c`** — the CBC chaining the H.264 and
+//!   E-AC-3 fixtures pin (chained across a NAL's blocks, reset per NAL; reset
+//!   per E-AC-3 syncframe). See `tests/fixtures/ORACLES.md`.
 //! - **RFC 8216 §4.3.2.4** — the `EXT-X-KEY` tag (`METHOD`/`URI`/`IV`/
 //!   `KEYFORMAT`/`KEYFORMATVERSIONS`).
 //! - **NIST SP 800-38A** — AES-128-CBC.
@@ -108,6 +111,59 @@ fn cbc_decrypt_blocks_in_place(key: &[u8; KEY_LEN], iv: &[u8; BLOCK_LEN], data: 
         let block = GenericArray::from_mut_slice(chunk);
         dec.decrypt_block_mut(block);
     }
+}
+
+/// Encrypt whole 16-byte blocks of `data` in place with AES-128-CBC, returning
+/// the running IV the next call must use (the final ciphertext block).
+///
+/// Used by the H.264 skip-pattern ([`h264_transform_pattern`]), whose CBC
+/// chain runs across the encrypted blocks *within one NAL* and is reset per NAL
+/// (`docs/drm/hls-sample-aes.md` §3.4; verified against ffmpeg's
+/// `hls_sample_aes.c` decryptor). The E-AC-3 path does **not** use these: it
+/// resets the IV at every syncframe (§6).
+fn cbc_encrypt_blocks_chained(
+    key: &[u8; KEY_LEN],
+    iv: &[u8; BLOCK_LEN],
+    data: &mut [u8],
+) -> [u8; BLOCK_LEN] {
+    let mut state = *iv;
+    if data.is_empty() {
+        return state;
+    }
+    let mut enc = Aes128CbcEnc::new(key.into(), iv.into());
+    for chunk in data.chunks_exact_mut(BLOCK_LEN) {
+        let block = GenericArray::from_mut_slice(chunk);
+        enc.encrypt_block_mut(block);
+    }
+    if let Some(last) = data.chunks_exact(BLOCK_LEN).next_back() {
+        state.copy_from_slice(last);
+    }
+    state
+}
+
+/// Decrypt whole 16-byte blocks of `data` in place with AES-128-CBC, returning
+/// the running IV the next call must use.
+///
+/// AES-CBC decryption chains on the *ciphertext*, so the carried value is the
+/// last ciphertext block of `data`, captured before the in-place decrypt.
+fn cbc_decrypt_blocks_chained(
+    key: &[u8; KEY_LEN],
+    iv: &[u8; BLOCK_LEN],
+    data: &mut [u8],
+) -> [u8; BLOCK_LEN] {
+    let mut state = *iv;
+    if data.is_empty() {
+        return state;
+    }
+    if let Some(last) = data.chunks_exact(BLOCK_LEN).next_back() {
+        state.copy_from_slice(last);
+    }
+    let mut dec = Aes128CbcDec::new(key.into(), iv.into());
+    for chunk in data.chunks_exact_mut(BLOCK_LEN) {
+        let block = GenericArray::from_mut_slice(chunk);
+        dec.decrypt_block_mut(block);
+    }
+    state
 }
 
 // --------------------------------------------------------------------------
@@ -213,6 +269,15 @@ fn h264_escape(unescaped: &[u8]) -> Vec<u8> {
 /// Apply the H.264 skip-encrypt pattern (`docs/drm/hls-sample-aes.md` §3.2–§3.3)
 /// to the *unescaped* NAL bytes in place. `encrypt = true` encrypts, `false`
 /// decrypts; the same clear/encrypted block partition is used for both.
+///
+/// CBC **chains across the encrypted blocks within one NAL**: the first
+/// encrypted block uses `iv`, and each later encrypted block uses the previous
+/// encrypted block's ciphertext as its IV. The IV is reset only at the start of
+/// each NAL (i.e. per call). This is what ffmpeg's Sample-AES decryptor does
+/// (`libavformat/hls_sample_aes.c` `decrypt_nal_unit`: one IV per NAL, then
+/// `av_aes_crypt(..., 1, ctx->iv, 1)` updating `ctx->iv` in place across the
+/// blocks); decrypting a chained stream with a per-block IV reset yields
+/// garbage. Issue #1080 r05-W1.
 fn h264_transform_pattern(
     key: &[u8; KEY_LEN],
     iv: &[u8; BLOCK_LEN],
@@ -221,6 +286,9 @@ fn h264_transform_pattern(
 ) {
     // Clear prefix: 1 NAL header byte + 31 payload bytes.
     let mut offset = H264_CLEAR_PREFIX_LEN;
+    // Running CBC state, seeded from the NAL's IV and updated with each
+    // encrypted block's ciphertext (the chain input for the next block).
+    let mut chain = *iv;
     while offset < nal.len() {
         let remaining = nal.len() - offset;
         // Encrypt one 16-byte block only when MORE than a whole block
@@ -230,11 +298,11 @@ fn h264_transform_pattern(
         // corrupting the last 16 bytes of ~1/160 slice NALs (issue #1014).
         if remaining > BLOCK_LEN {
             let block = &mut nal[offset..offset + BLOCK_LEN];
-            if encrypt {
-                cbc_encrypt_blocks_in_place(key, iv, block);
+            chain = if encrypt {
+                cbc_encrypt_blocks_chained(key, &chain, block)
             } else {
-                cbc_decrypt_blocks_in_place(key, iv, block);
-            }
+                cbc_decrypt_blocks_chained(key, &chain, block)
+            };
             offset += BLOCK_LEN;
         } else {
             // Trailing partial block (`< 16`): left clear.
@@ -250,7 +318,8 @@ fn h264_transform_pattern(
 /// returning the re-escaped encrypted NAL (`docs/drm/hls-sample-aes.md` §3).
 ///
 /// NALs that are not encryptable (type not 1/5, or `len <= 48` after
-/// unescaping) are returned unchanged. The IV is reset per NAL (§3.4).
+/// unescaping) are returned unchanged. The CBC chain is reset to `iv` at the
+/// start of each NAL, then carried across that NAL's encrypted blocks.
 pub fn h264_encrypt_nal(key: &[u8; KEY_LEN], iv: &[u8; BLOCK_LEN], nal: &[u8]) -> Vec<u8> {
     let mut raw = h264_unescape(nal);
     if !h264_nal_is_encrypted(&raw) {
@@ -262,6 +331,9 @@ pub fn h264_encrypt_nal(key: &[u8; KEY_LEN], iv: &[u8; BLOCK_LEN], nal: &[u8]) -
 
 /// Sample-AES-decrypt one H.264 NAL unit produced by [`h264_encrypt_nal`],
 /// returning the re-escaped cleartext NAL (`docs/drm/hls-sample-aes.md` §3).
+///
+/// The CBC chain is reset to `iv` at the start of each NAL, then carried across
+/// that NAL's encrypted blocks (see [`h264_encrypt_nal`] for the chaining rule).
 pub fn h264_decrypt_nal(key: &[u8; KEY_LEN], iv: &[u8; BLOCK_LEN], nal: &[u8]) -> Vec<u8> {
     let mut raw = h264_unescape(nal);
     if !h264_nal_is_encrypted(&raw) {
@@ -359,6 +431,110 @@ pub fn ac3_decrypt_frame(key: &[u8; KEY_LEN], iv: &[u8; BLOCK_LEN], frame: &[u8]
     let mut out = frame.to_vec();
     audio_transform(key, iv, &mut out, AUDIO_CLEAR_LEADER_LEN, false);
     out
+}
+
+/// The protected block of an E-AC-3 stream is a **single syncframe**.
+///
+/// `eac3_encrypt_frame`/`eac3_decrypt_frame` walk the syncframes of a frame via
+/// `crate::ac3::split_eac3_syncframe_ranges` (ETSI TS 102 366 §E.1.3.1.3
+/// `frmsiz`), applying a 16-byte clear leader and a whole-block CBC pass to
+/// each, with the **IV reset at every syncframe**.
+///
+/// The reset is what the independent oracle shows
+/// (`tests/fixtures/sample_aes_eac3/`): ffmpeg decodes the reset reference 9/9
+/// audio frames identical to clear but the carried-IV variant only 1/9, and
+/// Bento4's `mp4hls` output is byte-identical to the reset reference. See that
+/// fixture's `README.md` / `proof.log`.
+///
+/// The per-*syncframe* reset differs from the "IV is not reset at syncframe
+/// boundaries within an audio frame" reading: every stream ffmpeg or Bento4 can
+/// produce has one independent syncframe per audio frame, so both tools reset
+/// there. IV carried across an independent + dependent syncframe pair has **NO
+/// independent oracle** (see `ORACLES.md` B3) — those dependent syncframes are
+/// treated like independent ones (reset) until an oracle says otherwise.
+///
+/// # Errors
+///
+/// A payload that is not a clean run of syncframes (no sync word, or a
+/// truncated trailing syncframe) is [`Error::InvalidInput`] rather than being
+/// returned partly encrypted: an encryptor must never emit plaintext or a
+/// half-encrypted access unit, which no conformant client can decrypt.
+///
+/// NO independent oracle for the dependent-syncframe case above.
+fn eac3_transform(
+    key: &[u8; KEY_LEN],
+    iv: &[u8; BLOCK_LEN],
+    frame: &[u8],
+    encrypt: bool,
+) -> Result<Vec<u8>> {
+    let ranges = crate::ac3::split_eac3_syncframe_ranges(frame);
+    if ranges.is_empty() {
+        return Err(Error::InvalidInput(
+            "E-AC-3 frame does not start with a valid syncframe",
+        ));
+    }
+    // The walk must cover the whole frame: a truncated trailing syncframe would
+    // otherwise be left in the clear while the head is encrypted.
+    if ranges.last().map(|&(_, end)| end) != Some(frame.len()) {
+        return Err(Error::InvalidInput(
+            "E-AC-3 frame has a trailing partial syncframe (walk did not cover the frame)",
+        ));
+    }
+    let mut out = frame.to_vec();
+    for (start, end) in ranges {
+        // IV reset at every syncframe (see the oracle note above).
+        audio_transform(
+            key,
+            iv,
+            &mut out[start..end],
+            AUDIO_CLEAR_LEADER_LEN,
+            encrypt,
+        );
+    }
+    Ok(out)
+}
+
+/// Sample-AES-encrypt one E-AC-3 audio frame, walking its syncframes with a
+/// 16-byte clear leader each and resetting the IV at every syncframe
+/// (`docs/drm/hls-sample-aes.md` §6).
+///
+/// Prefer this over [`ac3_encrypt_frame`] for any E-AC-3 stream: a frame with
+/// more than one syncframe (the norm for 5.1 at 1536 samples) needs a leader
+/// per syncframe, which the single-leader form skips.
+///
+/// # Unverified corner
+///
+/// Carrying the IV across an independent syncframe *and its dependent
+/// syncframes* (a 7.1 access unit) has **no independent oracle** — every stream
+/// ffmpeg or Bento4 can produce has one independent syncframe per audio frame,
+/// and both reset there (`ORACLES.md` B3). This implementation resets at every
+/// syncframe, including a dependent one; treat that case as unverified.
+///
+/// # Errors
+///
+/// [`Error::InvalidInput`] if the frame does not begin with a valid syncframe,
+/// or if the syncframe walk does not cover the whole frame (a truncated or
+/// trailing partial syncframe) — never a partial or plaintext output.
+pub fn eac3_encrypt_frame(
+    key: &[u8; KEY_LEN],
+    iv: &[u8; BLOCK_LEN],
+    frame: &[u8],
+) -> Result<Vec<u8>> {
+    eac3_transform(key, iv, frame, true)
+}
+
+/// Sample-AES-decrypt one E-AC-3 audio frame produced by
+/// [`eac3_encrypt_frame`] (`docs/drm/hls-sample-aes.md` §6).
+///
+/// Same unverified corner and error contract as [`eac3_encrypt_frame`]: the IV
+/// resets at every syncframe, and a payload that is not a clean run of
+/// syncframes is [`Error::InvalidInput`].
+pub fn eac3_decrypt_frame(
+    key: &[u8; KEY_LEN],
+    iv: &[u8; BLOCK_LEN],
+    frame: &[u8],
+) -> Result<Vec<u8>> {
+    eac3_transform(key, iv, frame, false)
 }
 
 // --------------------------------------------------------------------------
@@ -710,6 +886,122 @@ mod tests {
         );
         let dec = ac3_decrypt_frame(&NIST_KEY, &NIST_IV, &enc);
         assert_eq!(dec, frame);
+    }
+
+    /// Audit r05-W2, corrected by the independent oracle: our E-AC-3 encryptor
+    /// must reproduce `tests/fixtures/sample_aes_eac3/enc_reset.ec3`
+    /// byte-for-byte (IV reset at **every** syncframe), and must NOT reproduce
+    /// `enc_carried.ec3`. ffmpeg decodes the reset file 9/9 audio frames
+    /// identical to clear and the carried one 1/9; Bento4's encryptor is
+    /// byte-identical to the reset reference. See that fixture's `proof.log`.
+    #[test]
+    fn eac3_reset_per_syncframe_matches_oracle() {
+        let dir = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/sample_aes_eac3"
+        );
+        let read = |name: &str| {
+            std::fs::read(alloc::format!("{dir}/{name}"))
+                .unwrap_or_else(|e| panic!("read {dir}/{name}: {e}"))
+        };
+        let clear = read("clear.ec3");
+        let want_reset = read("enc_reset.ec3");
+        let carried = read("enc_carried.ec3");
+
+        // The fixture's key/IV (the playlist IV).
+        const KEY: [u8; KEY_LEN] = [
+            0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d,
+            0x0e, 0x0f,
+        ];
+        const IV: [u8; BLOCK_LEN] = [
+            0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1a, 0x1b, 0x1c, 0x1d,
+            0x1e, 0x1f,
+        ];
+
+        // One call for the whole frame: our walker resets per syncframe.
+        let got = eac3_encrypt_frame(&KEY, &IV, &clear).expect("encrypt");
+        assert_eq!(
+            got, want_reset,
+            "our E-AC-3 encryptor must reproduce the reset-per-syncframe reference byte-for-byte"
+        );
+        assert_ne!(
+            got, carried,
+            "our output must NOT equal the carried-IV negative control"
+        );
+
+        // Our decryptor inverts the reference exactly.
+        let dec = eac3_decrypt_frame(&KEY, &IV, &want_reset).expect("decrypt");
+        assert_eq!(dec, clear, "our decryptor must recover the clear E-AC-3 ES");
+
+        // Bento4's independent encryptor output must decrypt to the clear ES.
+        let bento4 = read("bento4/packed/bento4_encrypted_es.ec3");
+        let dec_b = eac3_decrypt_frame(&KEY, &IV, &bento4).expect("decrypt bento4");
+        assert_eq!(
+            dec_b, clear,
+            "Bento4's E-AC-3 output must decrypt to the clear ES (independent encryptor)"
+        );
+    }
+
+    /// Audit r05-W2 fail-open fix: a payload that is not a clean run of
+    /// syncframes must be an error, never returned unchanged/partly encrypted.
+    #[test]
+    fn eac3_unwalkable_payload_is_err() {
+        // Not a syncframe at all.
+        let garbage = alloc::vec![0x00u8; 64];
+        assert!(eac3_encrypt_frame(&NIST_KEY, &NIST_IV, &garbage).is_err());
+        assert!(eac3_decrypt_frame(&NIST_KEY, &NIST_IV, &garbage).is_err());
+
+        // A truncated trailing syncframe must also be rejected, not left clear.
+        let dir = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/sample_aes_eac3"
+        );
+        let Ok(clear) = std::fs::read(alloc::format!("{dir}/clear.ec3")) else {
+            panic!("eac3 fixture missing at {dir}/clear.ec3");
+        };
+        // Chop 100 bytes off the end: the last syncframe no longer completes.
+        let truncated = &clear[..clear.len() - 100];
+        assert!(
+            eac3_encrypt_frame(&NIST_KEY, &NIST_IV, truncated).is_err(),
+            "a truncated trailing syncframe must be an error, not silently left clear"
+        );
+
+        // Trailing junk after the last complete syncframe: the walk stops at
+        // the junk, so it no longer covers the frame — must be an error, never
+        // a frame whose head is encrypted and tail left in the clear.
+        let mut with_junk = clear.clone();
+        with_junk.extend_from_slice(&[0xDE, 0xAD, 0xBE, 0xEF, 0x00, 0x11]);
+        assert!(
+            eac3_encrypt_frame(&NIST_KEY, &NIST_IV, &with_junk).is_err(),
+            "trailing junk after the last syncframe must be an error"
+        );
+        assert!(
+            eac3_decrypt_frame(&NIST_KEY, &NIST_IV, &with_junk).is_err(),
+            "trailing junk must also be rejected on decrypt"
+        );
+    }
+
+    /// A single-syncframe chunk still encrypts (the per-syncframe walk is a
+    /// no-op distinction for one syncframe), and the IV reset is what a caller
+    /// passing syncframes one at a time already got.
+    #[test]
+    fn eac3_single_syncframe_matches_ac3_form() {
+        let dir = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/sample_aes_eac3"
+        );
+        let Ok(clear) = std::fs::read(alloc::format!("{dir}/clear.ec3")) else {
+            panic!("eac3 fixture missing");
+        };
+        let ranges = crate::ac3::split_eac3_syncframe_ranges(&clear);
+        let (s, e) = ranges[0];
+        let one = &clear[s..e];
+        let via_frame = eac3_encrypt_frame(&NIST_KEY, &NIST_IV, one).expect("encrypt one");
+        let via_ac3 = ac3_encrypt_frame(&NIST_KEY, &NIST_IV, one);
+        assert_eq!(
+            via_frame, via_ac3,
+            "one syncframe through either API must agree (both reset at the frame start)"
+        );
     }
 
     #[test]

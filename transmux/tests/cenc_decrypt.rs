@@ -10,7 +10,7 @@
 
 #![cfg(feature = "cenc")]
 
-use broadcast_common::Decrypt;
+use broadcast_common::{Decrypt, Unpackage};
 use transmux::TsDemux;
 use transmux::annexb::iter_length_prefixed_nals;
 use transmux::cenc_decrypt::{CencDecryptor, CencScheme, KeyMap};
@@ -211,6 +211,227 @@ fn decrypt_via_trait() {
     assert!(!nals.is_empty());
     // First NAL should be a valid AUD/SPS-class NAL (top bit zero: forbidden_zero_bit).
     assert_eq!(nals[0][0] & 0x80, 0, "decrypted NAL header sane");
+}
+
+/// Audit r05-W6: a real CENC asset with an `encv` **and** an `enca` track
+/// (the ordinary CENC shape) must demux. The code used to `return Err` on the
+/// first protected track whose `frma` is not `avc1`, so such a file could not
+/// be demuxed at all — nor could a protected HEVC file. The non-AVC protected
+/// track is now skipped, with the AVC one still reconstructed.
+const CENC_AV_ENCA_MP4: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../fixtures/mp4/cenc_av_enca.mp4"
+);
+
+#[test]
+fn demux_skips_non_avc_protected_track() {
+    let file = read(CENC_AV_ENCA_MP4);
+    let dec = CencDecryptor::from_fmp4(&file).expect("harvest a two-track CENC asset");
+
+    // Demuxing must succeed and yield exactly the AVC track.
+    let media = dec
+        .demux()
+        .expect("a CENC asset with a protected audio track must demux");
+    assert_eq!(media.tracks.len(), 1, "only the AVC track is reconstructed");
+    assert!(
+        matches!(
+            media.tracks[0].spec.config,
+            transmux::CodecConfig::Avc { .. }
+        ),
+        "the reconstructed track must be the AVC one"
+    );
+    assert!(
+        !media.tracks[0].samples.is_empty(),
+        "the AVC track must carry samples"
+    );
+
+    // The skip must be REPORTED, never silent: exactly one entry, naming the
+    // dropped track's original sample-entry FourCC (audit r05-W6 follow-up).
+    assert_eq!(
+        media.skipped.len(),
+        1,
+        "the skipped protected audio track must be recorded in Media::skipped"
+    );
+    assert_eq!(
+        media.skipped[0].fourcc, "mp4a",
+        "the skipped entry must name the audio track's original format"
+    );
+    assert!(
+        media.skipped[0].reason.contains("avc1"),
+        "the reason must explain the AVC-only limit: {}",
+        media.skipped[0].reason
+    );
+
+    // Independent oracle: GPAC's own dumper must show both protected sample
+    // entries in the source file, proving the fixture really has the
+    // encv+enca shape this test is about (and that the skip is not a
+    // single-track file passing by accident). `MP4Box -diso` writes the XML to
+    // a file, so give it one in the temp dir.
+    let dump = std::env::temp_dir().join(format!("cenc_av_enca_{}.xml", std::process::id()));
+    match std::process::Command::new("MP4Box")
+        .args(["-diso", CENC_AV_ENCA_MP4, "-out"])
+        .arg(&dump)
+        .output()
+    {
+        Ok(_) => {
+            let text = std::fs::read_to_string(&dump).unwrap_or_default();
+            let _ = std::fs::remove_file(&dump);
+            assert!(
+                text.contains("enca") && text.contains("encv"),
+                "fixture must carry encv and enca (MP4Box -diso oracle)"
+            );
+            assert_eq!(
+                text.matches(r#"Type="tenc""#).count(),
+                2,
+                "MP4Box must report two TrackEncryptionBoxes"
+            );
+        }
+        Err(_) => eprintln!(
+            "SKIP demux_skips_non_avc_protected_track MP4Box cross-check: MP4Box not on PATH"
+        ),
+    }
+}
+
+/// W6 follow-up: an **unprotected** track next to a protected one must also be
+/// reported in `Media::skipped` (audit r05-W6 follow-up) — dropping it silently
+/// is what made the earlier "never silent" claim false.
+///
+/// `cenc_mixed_tracks.mp4` is one `encv` (video, CENC-protected) + one clear
+/// `mp4a` (audio) — GPAC `MP4Box -crypt` with only track 1 encrypted.
+#[test]
+fn demux_reports_unprotected_track_as_skipped() {
+    const MIXED: &str = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/cenc_mixed_tracks.mp4"
+    );
+    let file = read(MIXED);
+    let dec = CencDecryptor::from_fmp4(&file).expect("harvest");
+    let media = dec
+        .demux()
+        .expect("a mixed clear/protected file must demux");
+
+    assert_eq!(
+        media.tracks.len(),
+        1,
+        "only the protected AVC track is built"
+    );
+    assert!(
+        matches!(
+            media.tracks[0].spec.config,
+            transmux::CodecConfig::Avc { .. }
+        ),
+        "the built track must be the AVC one"
+    );
+    assert_eq!(
+        media.skipped.len(),
+        1,
+        "the unprotected audio track must be recorded in Media::skipped"
+    );
+    assert_eq!(
+        media.skipped[0].fourcc, "mp4a",
+        "the skipped entry must name the clear track's sample-entry FourCC"
+    );
+    assert!(
+        media.skipped[0].reason.contains("unprotected"),
+        "the reason must say the track is unprotected: {}",
+        media.skipped[0].reason
+    );
+}
+
+/// W6 follow-up: the reconstructed AVC track's decrypted samples must equal
+/// what the independent decryptor (`mp4decrypt`) produces from the **same**
+/// file. Uses the W7 layout fixture (a Bento4-encrypted file mp4decrypt is
+/// known to handle; the ffmpeg-muxed `cenc_av_enca.mp4` is rejected, see the
+/// W7 fixture README C6). Skips loudly when the tool is absent.
+#[test]
+fn demux_avc_track_matches_mp4decrypt() {
+    if !mp4decrypt_available() {
+        eprintln!(
+            "SKIP demux_avc_track_matches_mp4decrypt: mp4decrypt (Bento4) not on PATH —              independent cross-check not run"
+        );
+        return;
+    }
+    const LAY: &str = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/cenc_frag_layouts"
+    );
+    let path = format!("{LAY}/enc_base_moof_none.mp4");
+    let file = std::fs::read(&path).expect("read layout fixture");
+
+    // Ours.
+    let dec = CencDecryptor::from_fmp4(&file).expect("harvest");
+    let mut ours = dec.demux().expect("demux");
+    dec.decrypt(&mut ours, &layout_keys()).expect("decrypt");
+    let our_video: Vec<Vec<u8>> = ours.tracks[0]
+        .samples
+        .iter()
+        .map(|s| s.data.to_vec())
+        .collect();
+
+    // mp4decrypt's.
+    let out = std::env::temp_dir().join(format!("w7_dec_{}.mp4", std::process::id()));
+    let key_arg = format!("{}:{}", hex(&LAYOUT_KID), hex(&LAYOUT_KEY));
+    let status = std::process::Command::new("mp4decrypt")
+        .arg("--key")
+        .arg(&key_arg)
+        .arg(&path)
+        .arg(&out)
+        .status()
+        .expect("spawn mp4decrypt");
+    assert!(status.success(), "mp4decrypt failed");
+    let bytes = std::fs::read(&out).expect("read mp4decrypt output");
+    let _ = std::fs::remove_file(&out);
+
+    let mut fd = transmux::Fmp4Demux::new();
+    let ref_media = fd.unpackage(bytes.as_slice()).expect("demux reference");
+    let ref_video: Vec<Vec<u8>> = ref_media
+        .tracks
+        .iter()
+        .find(|t| matches!(t.spec.config, transmux::CodecConfig::Avc { .. }))
+        .expect("reference video track")
+        .samples
+        .iter()
+        .map(|s| s.data.to_vec())
+        .collect();
+
+    assert!(
+        !ref_video.is_empty(),
+        "mp4decrypt output must carry samples"
+    );
+    assert_eq!(
+        our_video, ref_video,
+        "our decrypted AVC samples must equal mp4decrypt's byte-for-byte"
+    );
+}
+
+/// The W7 layout fixture's KID/KEY.
+const LAYOUT_KID: [u8; 16] = [
+    0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef, 0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef,
+];
+const LAYOUT_KEY: [u8; 16] = [
+    0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff,
+];
+
+fn layout_keys() -> KeyMap {
+    KeyMap::new().with_key(LAYOUT_KID, LAYOUT_KEY)
+}
+
+/// Hex-encode 16 bytes for `mp4decrypt --key`.
+fn hex(b: &[u8; 16]) -> String {
+    b.iter().map(|x| format!("{x:02x}")).collect()
+}
+
+/// True if `mp4decrypt` (Bento4) is on `PATH`.
+fn mp4decrypt_available() -> bool {
+    // Bento4 CLIs print their banner and exit non-zero with no arguments, so
+    // gate on spawning at all, not on the exit status.
+    std::process::Command::new("mp4decrypt")
+        .output()
+        .map(|o| {
+            String::from_utf8_lossy(&o.stdout).contains("MP4 Decrypter")
+                || String::from_utf8_lossy(&o.stderr).contains("MP4 Decrypter")
+        })
+        .unwrap_or(false)
 }
 
 // ---------------------------------------------------------------------------

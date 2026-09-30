@@ -206,7 +206,10 @@ impl<'a> Unpackage for Fmp4Demux<'a> {
 }
 
 /// Resolve a fragment's samples into `builders`, slicing coded bytes from the
-/// file using each `trun.data_offset` (relative to the `moof` start).
+/// file per ISO/IEC 14496-12 §8.8.7 / §8.8.8.
+///
+/// The addressing (and its bounds) live in [`crate::frag_offsets`], shared with
+/// [`crate::cenc_decrypt::CencDecryptor`] so the two cannot drift.
 fn absorb_fragment(
     file: &[u8],
     moof_off: usize,
@@ -245,70 +248,24 @@ fn absorb_fragment(
             if builder.start_decode_time.is_none() {
                 builder.start_decode_time = Some(base);
             }
-            builder.next_dts = base as i64;
+            builder.next_dts = crate::frag_offsets::tfdt_as_i64(base)?;
         }
-        for trun in &traf.trun {
-            // data_offset is measured from the start of the moof box when
-            // default-base-is-moof is set (the base transmux emits and the
-            // near-universal fragmented-MP4 convention).
-            let base = moof_off as i64 + trun.data_offset.unwrap_or(0) as i64;
-            let mut cursor = base;
-            for (i, ts) in trun.samples.iter().enumerate() {
-                let size = ts
-                    .sample_size
-                    .or(tfhd.default_sample_size)
-                    .ok_or(Error::InvalidInput(
-                    "trun sample has no size (no trun.sample_size, no tfhd default_sample_size)",
-                ))? as usize;
-                let duration = ts
-                    .sample_duration
-                    .or(tfhd.default_sample_duration)
-                    .unwrap_or(0);
-                // Per-sample flags precedence: explicit trun sample_flags, else
-                // first_sample_flags for sample 0, else the tfhd default.
-                let flags = ts
-                    .sample_flags
-                    .or(if i == 0 {
-                        trun.first_sample_flags
-                    } else {
-                        None
-                    })
-                    .or(tfhd.default_sample_flags)
-                    .unwrap_or(0);
-                let is_sync = flags & SAMPLE_FLAG_IS_NON_SYNC == 0;
-                let composition_offset = ts.sample_composition_time_offset.unwrap_or(0) as i64;
-
-                let start = usize::try_from(cursor)
-                    .map_err(|_| Error::InvalidInput("negative sample data offset"))?;
-                let end = start + size;
-                if end > file.len() {
-                    return Err(Error::BufferTooShort {
-                        need: end,
-                        have: file.len(),
-                        what: "fragment sample data",
-                    });
-                }
-                // Absolute dts/pts (media plane step 2c): `next_dts` is the
-                // running cursor seeded from this track's first `tfdt` (or 0
-                // if the stream never carried one); pts folds in the trun
-                // composition offset directly rather than storing it
-                // separately.
-                let dts = builder.next_dts;
-                let pts = dts + composition_offset;
-                builder.samples.push(Sample {
-                    data: file[start..end].to_vec().into(),
-                    dts: Some(dts),
-                    pts: Some(pts),
-                    duration: Some(duration),
-                    flags: crate::ir::SampleFlags::new(is_sync),
-                    // fMP4 sources carry no per-sample source-container
-                    // timestamps distinct from the fragment's own tfdt/trun
-                    // timing (see `Sample::provenance`).
-                    provenance: None,
-                });
-                builder.next_dts += duration as i64;
-                cursor += size as i64;
-            }
+        for r in crate::frag_offsets::sample_ranges(file, moof_off, moof, tfhd.track_id)? {
+            let is_sync = r.flags & SAMPLE_FLAG_IS_NON_SYNC == 0;
+            let dts = builder.next_dts;
+            let pts = crate::frag_offsets::add_offset(dts, r.composition_offset)?;
+            builder.samples.push(Sample {
+                data: file[r.start..r.end].to_vec().into(),
+                dts: Some(dts),
+                pts: Some(pts),
+                duration: Some(r.duration),
+                flags: crate::ir::SampleFlags::new(is_sync),
+                // fMP4 sources carry no per-sample source-container
+                // timestamps distinct from the fragment's own tfdt/trun
+                // timing (see `Sample::provenance`).
+                provenance: None,
+            });
+            builder.next_dts = crate::frag_offsets::add_duration(dts, r.duration)?;
         }
     }
     Ok(())
