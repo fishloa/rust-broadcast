@@ -163,17 +163,50 @@ impl<'a> Unpackage for Fmp4Demux<'a> {
         //    the enclosing `moof` (default-base-is-moof), so we track the moof's
         //    absolute file offset.
         let mut offset = 0usize;
-        let mut pending_moof: Option<(usize, MovieFragmentBox)> = None;
+        // Fragments waiting for their `mdat`. A queue, not a single slot:
+        // `moof`, `moof`, `mdat` is legal (ISO/IEC 14496-12:2015 §8.8.4 allows
+        // any number of `moof`s, and CMAF writes one per track for
+        // CMF2/multi-track segments), and a single slot silently dropped every
+        // fragment before the last (audit r05-W26). Each `mdat` resolves the
+        // fragment that follows it, per §8.8.4's "the `mdat` carrying a
+        // fragment's data follows that fragment".
+        let mut pending_moofs: Vec<(usize, MovieFragmentBox)> = Vec::new();
         while offset + BOX_HEADER_MIN_SIZE <= input.len() {
-            let (bx, consumed) = parse_box(&input[offset..])?;
+            // A truncated *final* box is ordinary in a live capture or an
+            // interrupted recording, so a tail whose declared size runs past
+            // the end of the data ends the walk rather than failing the whole
+            // file — nothing follows it to be mis-framed.
+            //
+            // Only that case. Any other parse failure (`BoxSizeUnderflow` from
+            // a size of 2..7, a bad `largesize`, a `uuid` header cut short)
+            // means the *framing* is wrong, so every box after it would be
+            // read from a bogus offset; treating it as end-of-data silently
+            // truncated the file at the first corrupt box (audit item 4).
+            let (bx, consumed) = match parse_box(&input[offset..]) {
+                Ok(parsed) => parsed,
+                // Every "the declared box does not fit the bytes present"
+                // error ends the walk: the box is the last one and the file
+                // was cut inside its header. `parse_box` reports these as three
+                // variants — a body past the end (`BufferTooShort`), a `uuid`
+                // usertype cut short (`UuidBufferTooShort`), and a `largesize`
+                // field cut short (`LargesizeBufferTooShort`) — and all three
+                // mean the same thing at the tail (audit item 9, round 3).
+                Err(Error::BufferTooShort { .. })
+                | Err(Error::UuidBufferTooShort { .. })
+                | Err(Error::LargesizeBufferTooShort { .. }) => break,
+                Err(e) => return Err(e),
+            };
             let ty = bx.header.box_type.0;
             if &ty == b"moof" {
                 let moof = MovieFragmentBox::parse_body(bx.body)?;
-                pending_moof = Some((offset, moof));
-            } else if &ty == b"mdat"
-                && let Some((moof_off, moof)) = pending_moof.take()
-            {
-                absorb_fragment(input, moof_off, &moof, &mut builders)?;
+                pending_moofs.push((offset, moof));
+            } else if &ty == b"mdat" {
+                // A `moof`'s samples live in the `mdat` that follows it; a
+                // segment carrying several `moof`s before one `mdat` resolves
+                // them in order.
+                for (moof_off, moof) in pending_moofs.drain(..) {
+                    absorb_fragment(input, moof_off, &moof, &mut builders)?;
+                }
             }
             if consumed == 0 {
                 break;

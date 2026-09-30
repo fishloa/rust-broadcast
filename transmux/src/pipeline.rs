@@ -124,15 +124,12 @@ pub fn build_init_segment(tracks: &[TrackSpec], movie_timescale: u32) -> Result<
         });
     }
 
-    let moov = MovieBox {
+    let moov = MovieBox::new(
         mvhd,
-        tracks: trak_boxes,
-        mvex: Some(MovieExtendsBox {
-            trex,
-            opaque: vec![],
-        }),
-        opaque: vec![],
-    };
+        trak_boxes,
+        Some(MovieExtendsBox::new(trex, vec![])),
+        vec![],
+    );
 
     let mut out = vec![0u8; ftyp.serialized_len() + moov.serialized_len()];
     let n1 = ftyp.serialize_into(&mut out)?;
@@ -384,6 +381,7 @@ fn build_trak(t: &TrackSpec) -> Result<TrackBox> {
             let entry = SampleEntryVariant::Av01(Box::new(Av1SampleEntry {
                 visual,
                 config: config.clone(),
+                children: alloc::vec![crate::sample_entries::SampleEntryChild::Config],
             }));
             (
                 entry,
@@ -414,6 +412,7 @@ fn build_trak(t: &TrackSpec) -> Result<TrackBox> {
             let entry = SampleEntryVariant::Vp09(Box::new(Vp9SampleEntry {
                 visual,
                 config: config.clone(),
+                children: alloc::vec![crate::sample_entries::SampleEntryChild::Config],
             }));
             (
                 entry,
@@ -697,8 +696,8 @@ fn build_trak(t: &TrackSpec) -> Result<TrackBox> {
         ],
     };
 
-    let dinf = DataInformationBox {
-        dref: Some(DataReferenceBox {
+    let dinf = DataInformationBox::new(
+        Some(DataReferenceBox {
             version: 0,
             flags: 0,
             // A single self-contained URL entry (flags bit 0 = media in this file).
@@ -708,16 +707,10 @@ fn build_trak(t: &TrackSpec) -> Result<TrackBox> {
                 location: vec![],
             }],
         }),
-        opaque: vec![],
-    };
+        vec![],
+    );
 
-    let minf = MediaInformationBox {
-        vmhd,
-        smhd,
-        dinf: Some(dinf),
-        stbl: Some(stbl),
-        opaque: vec![],
-    };
+    let minf = MediaInformationBox::new(vmhd, smhd, Some(dinf), Some(stbl), vec![]);
 
     let mdhd = MediaHeaderBox {
         version: 0,
@@ -736,12 +729,7 @@ fn build_trak(t: &TrackSpec) -> Result<TrackBox> {
         name: handler_name,
     };
 
-    let mdia = MediaBox {
-        mdhd: Some(mdhd),
-        hdlr: Some(hdlr),
-        minf: Some(minf),
-        opaque: vec![],
-    };
+    let mdia = MediaBox::new(Some(mdhd), Some(hdlr), Some(minf), vec![]);
 
     let tkhd = TrackHeaderBox {
         version: 0,
@@ -758,12 +746,7 @@ fn build_trak(t: &TrackSpec) -> Result<TrackBox> {
         height: tkhd_h,
     };
 
-    Ok(TrackBox {
-        tkhd,
-        edts: None,
-        mdia: Some(mdia),
-        opaque: vec![],
-    })
+    Ok(TrackBox::new(tkhd, None, Some(mdia), vec![]))
 }
 
 /// Build one CMAF media segment (`styp` + `moof` + `mdat`) carrying the given
@@ -833,7 +816,7 @@ pub fn build_media_segment_with_events(
                     SAMPLE_FLAGS_NON_SYNC
                 }),
                 sample_composition_time_offset: if any_cts {
-                    Some(s.composition_offset())
+                    Some(i64::from(s.composition_offset()))
                 } else {
                     None
                 },
@@ -869,17 +852,10 @@ pub fn build_media_segment_with_events(
             default_sample_flags: None,
         };
         let tfdt = TrackFragmentBaseMediaDecodeTimeBox::new_v1(ft.base_media_decode_time);
-        traf_boxes.push(TrackFragmentBox {
-            tfhd,
-            tfdt: Some(tfdt),
-            trun: vec![trun],
-        });
+        traf_boxes.push(TrackFragmentBox::new(tfhd, Some(tfdt), vec![trun]));
     }
 
-    let mut moof = MovieFragmentBox {
-        mfhd: MovieFragmentHeaderBox::new(sequence_number),
-        traf: traf_boxes,
-    };
+    let mut moof = MovieFragmentBox::new(MovieFragmentHeaderBox::new(sequence_number), traf_boxes);
 
     // With default-base-is-moof, data_offset is measured from the moof start.
     // The mdat payload begins at moof_size + 8 (the mdat header).

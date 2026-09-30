@@ -42,31 +42,407 @@ pub(crate) fn bounded_entry_count(remaining: usize, entry_len: usize, count: usi
     count.min(remaining / entry_len)
 }
 
+/// Reject a declared `count` that the body cannot hold, before its loop runs.
+///
+/// Every table's parse loop used to `break` when bytes ran out, so a truncated
+/// `stsc`/`stco`/`stss`/`stsz` parsed to *fewer* entries than its own
+/// `entry_count` claimed while still returning `Ok` — the sample tables then
+/// disagreed with each other and demux produced misaligned samples with no
+/// signal at all (audit r05-W13, second bullet; the W17/W25 class on the
+/// output side). A declared count is a promise about the box's own size
+/// (ISO/IEC 14496-12:2015 §8.1.1: `entry_count` "gives the number of entries
+/// in the following table"), so a body that cannot hold it is a malformed box,
+/// not a short one.
+pub(crate) fn check_entry_count(
+    remaining: usize,
+    entry_len: usize,
+    count: usize,
+    what: &'static str,
+) -> Result<()> {
+    if entry_len == 0 {
+        return Ok(());
+    }
+    let needed = count.saturating_mul(entry_len);
+    if needed > remaining {
+        return Err(Error::BufferTooShort {
+            need: remaining.saturating_add(needed),
+            have: remaining,
+            what,
+        });
+    }
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Container child walker — ISO/IEC 14496-12:2015 §4.2
+// ---------------------------------------------------------------------------
+
+/// Size of the smallest legal box header (`size` + `type`), §4.2.
+const MIN_BOX_HEADER: usize = 8;
+
+/// Size of the optional 64-bit `largesize` field that follows a `size` of 1
+/// (§4.2).
+const LARGESIZE_LEN: usize = 8;
+
+/// One child box of a container, borrowed from the container's body.
+pub(crate) struct ChildBox<'a> {
+    /// The child's four-CC (`type`).
+    pub four_cc: [u8; 4],
+    /// The child's whole bytes, header included.
+    pub bytes: &'a [u8],
+    /// The child's *opaque payload*: the 16-byte `usertype` of a `uuid` box
+    /// (ISO/IEC 14496-12:2015 §4.2) followed by its body — i.e. everything
+    /// after `size`/`type`, **except** the 8 `largesize` bytes when the
+    /// `size == 1` form was used.
+    ///
+    /// Deliberately **not** `BoxRef::body` (which starts after the *whole*
+    /// header, usertype included): an opaque child is round-tripped by
+    /// re-emitting `size`+`type`+payload, so dropping the usertype would
+    /// corrupt every `uuid` box — the shape a PlayReady/ISMV `moov`/`trak`
+    /// uuid and a Smooth `tfxd`/`tfrf` use (audit item 1). Keeping the
+    /// `largesize` bytes would be just as wrong in the other direction: the
+    /// serializer writes its own `size`/`type` (and its own `largesize` when
+    /// [`ChildBox::largesize`] is set), so those 8 bytes would land in the
+    /// body as junk (audit item 1, round 3).
+    pub payload: &'a [u8],
+    /// Whether this child used the `size == 0` form (§4.2) — see
+    /// [`OpaqueBox::to_end`].
+    pub to_end: bool,
+    /// Whether this child used the `size == 1` + 64-bit `largesize` form
+    /// (§4.2), so the round trip re-emits that form.
+    pub largesize: bool,
+}
+
+/// Walk the children of a container body (the bytes after the container's own
+/// 8-byte header), calling `f` for each in wire order.
+///
+/// Every existing container loop in this module read the four-byte `size`
+/// itself and clamped with `size.min(remaining)`, `break`ing on anything
+/// unusual. Three conformant shapes were mis-handled as a result (audit
+/// r05-W13):
+///
+/// - a child written with 64-bit `largesize` (`size == 1`) — its leading `1`
+///   failed the `size < 8` test and every *following* sibling was dropped;
+/// - a truncated child — the clamp silently shortened it, so the container
+///   parsed "successfully" with a child shorter than it claims;
+/// - trailing bytes too short to hold a header — silently ignored.
+///
+/// `parse_box` handles largesize and usertype, and rejects a declared size
+/// past the buffer, so the walk is size-driven and exact.
+///
+/// A `size == 0` child means "the box extends to the end of the enclosing
+/// container" (ISO/IEC 14496-12:2015 §4.2 — for a child box, the end of its
+/// parent, not of the file). `parse_box` implements exactly that against the
+/// slice it is handed, which here *is* the container body, so such a child
+/// consumes the remaining bytes and ends the walk by construction — there is
+/// no following sibling to drop.
+pub(crate) fn walk_children<'a, F>(body: &'a [u8], mut f: F) -> Result<()>
+where
+    F: FnMut(ChildBox<'a>) -> Result<()>,
+{
+    let mut off = 0usize;
+    while off < body.len() {
+        if body.len() - off < MIN_BOX_HEADER {
+            return Err(Error::BufferTooShort {
+                need: off + MIN_BOX_HEADER,
+                have: body.len(),
+                what: "container child header",
+            });
+        }
+        let (bx, consumed) = crate::box_types::parse_box(&body[off..])?;
+        let bytes = &body[off..off + consumed];
+        // The payload starts after `size`+`type` plus the 8 `largesize` bytes
+        // *only when that form was used*; the serializer re-emits the header
+        // itself (see `ChildBox::payload`).
+        let payload_start = MIN_BOX_HEADER
+            + if bx.header.has_largesize() {
+                LARGESIZE_LEN
+            } else {
+                0
+            };
+        f(ChildBox {
+            four_cc: bx.header.box_type.0,
+            bytes,
+            payload: bytes.get(payload_start..).unwrap_or(&[]),
+            to_end: bx.header.size == 0,
+            largesize: bx.header.has_largesize(),
+        })?;
+        off += consumed;
+    }
+    Ok(())
+}
+
+/// The four-CC is the key a container's parse and serialize directions use to
+/// line a child back up with the typed field (or opaque blob) it came from.
+fn is_four_cc(four_cc: &[u8; 4], expected: &[u8; 4]) -> bool {
+    four_cc == expected
+}
+
+/// The body bytes of a whole box (`size` + `type` + optional largesize/usertype
+/// + body).
+///
+/// A container's own `Parse` impl used to slice `bytes[8..]` — correct only
+/// for the 8-byte header form. A container written with 64-bit `largesize`
+/// (`size == 1`, §4.2) has a 16-byte header, so the hardcoded slice swallowed
+/// its first 8 body bytes and the child walk started mid-box (audit r05-W13).
+fn box_body(bytes: &[u8]) -> Result<&[u8]> {
+    Ok(crate::box_types::parse_box(bytes)?.0.body)
+}
+
+/// The wire order of a container's children, recorded at parse time so the
+/// serializer can reproduce it.
+///
+/// A container's typed fields have no order of their own, so serializing them
+/// in declaration order silently *reorders* a file whose children were not
+/// written that way — `moov` lost its `pssh` to after the `trak`s, and a
+/// subtitle track's `sthd`/`nmhd` (which §6.2.3 places first in `minf`, and
+/// which strict readers require there) ended up after `stbl` (audit r05-W12).
+/// Every container built by this crate's own muxers writes the conventional
+/// order, so the round-trip break showed up only on files other muxers wrote.
+///
+/// An empty `order` means "conventional order, once per populated typed
+/// field" — the state a hand-built container is in; see
+/// `resolve` (private)
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+pub struct ChildOrder {
+    /// One entry per child, in wire order.
+    entries: Vec<[u8; 4]>,
+    /// `true` where the corresponding entry was stored in the container's
+    /// `opaque` list rather than in a typed field.
+    opaque: Vec<bool>,
+}
+
+impl ChildOrder {
+    /// Record one typed child's four-CC, in wire order.
+    fn push(&mut self, four_cc: [u8; 4]) {
+        self.entries.push(four_cc);
+        self.opaque.push(false);
+    }
+
+    /// Record one opaque child's four-CC, in wire order.
+    fn push_opaque(&mut self, four_cc: [u8; 4]) {
+        self.entries.push(four_cc);
+        self.opaque.push(true);
+    }
+
+    /// Whether no wire order was recorded (a hand-built container).
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+
+    /// Append one opaque child's four-CC to the recorded order.
+    ///
+    /// A caller that pushes onto a container's `opaque` list must call this
+    /// too, and in the same position, or the two fall out of step: the
+    /// serializer pairs the Nth `None` slot of the resolved order with the
+    /// Nth opaque child. (A container whose `order` is empty emits its typed
+    /// children first and then its opaque ones, so a hand-built container
+    /// needs only the `opaque` push.)
+    pub fn append_opaque(&mut self, four_cc: [u8; 4]) {
+        self.push_opaque(four_cc);
+    }
+
+    /// Resolve this order into the typed children to emit, in sequence, each
+    /// named by its **position** in `typed_four_ccs`.
+    ///
+    /// `typed_four_ccs` lists the container's typed children in declaration
+    /// order. Repeated four-CCs (`trak`) consume the typed entries in order; a
+    /// four-CC with no remaining typed entry is an opaque child and resolves
+    /// to `None`. Any typed child left over — one *added* to a parsed
+    /// container, as `protect_init_segment` does when it rewrites a sample
+    /// entry — is appended in declaration order, so a rewrite can never drop
+    /// a child.
+    fn resolve(&self, typed_four_ccs: &[&[u8; 4]]) -> Vec<Option<usize>> {
+        if self.entries.is_empty() {
+            return (0..typed_four_ccs.len()).map(Some).collect();
+        }
+        let mut used = alloc::vec![false; typed_four_ccs.len()];
+        let mut out: Vec<Option<usize>> = Vec::with_capacity(self.entries.len());
+        for (i, four_cc) in self.entries.iter().enumerate() {
+            if self.opaque.get(i).copied().unwrap_or(false) {
+                out.push(None);
+                continue;
+            }
+            // A *typed* wire entry whose typed child has since been removed
+            // (as `progressive.rs` does when it drops `mvex`) emits nothing.
+            if let Some((slot, _)) = typed_four_ccs
+                .iter()
+                .enumerate()
+                .find(|(slot, cc)| !used[*slot] && is_four_cc(four_cc, cc))
+            {
+                used[slot] = true;
+                out.push(Some(slot));
+            }
+        }
+        for (slot, _) in typed_four_ccs.iter().enumerate() {
+            if !used[slot] {
+                out.push(Some(slot));
+            }
+        }
+        out
+    }
+}
+
+/// Serialize a container's children in wire order: `typed` maps a child slot
+/// to its bytes, `opaque` supplies the children the container does not model.
+///
+/// Shared by every container in this module so the "typed field or opaque
+/// blob, at the position the file had it" walk exists once.
+fn serialize_children(
+    order: &[Option<usize>],
+    typed: &[Vec<u8>],
+    opaque: &[OpaqueBox],
+    buf: &mut [u8],
+    c: &mut usize,
+) -> Result<()> {
+    let mut opaque_index = 0usize;
+    for (i, slot) in order.iter().enumerate() {
+        // A `size == 0` opaque child may only use that form when nothing
+        // follows it in the container (§4.2: "extends to the end of the
+        // enclosing container"); otherwise it would swallow the sibling after
+        // it — which is exactly what happens when `protect_init_segment`
+        // appends a `pssh` after a parsed size-0 child (audit item 2).
+        let is_last = i + 1 == order.len();
+        match slot {
+            Some(index) => match typed.get(*index) {
+                Some(bytes) => {
+                    buf[*c..*c + bytes.len()].copy_from_slice(bytes);
+                    *c += bytes.len();
+                }
+                None => {
+                    return Err(Error::InvalidInput(
+                        "container child order names a typed child that is not present",
+                    ));
+                }
+            },
+            None => match opaque.get(opaque_index) {
+                Some(o) => *c += o.serialize_child_into(&mut buf[*c..], is_last)?,
+                None => {
+                    return Err(Error::InvalidInput(
+                        "container child order names an opaque child that is not present",
+                    ));
+                }
+            },
+        }
+        if slot.is_none() {
+            opaque_index += 1;
+        }
+    }
+    Ok(())
+}
+
+/// Serialize every typed child of a container to its own box bytes, in
+/// declaration order, so [`serialize_children`] can place each at the wire
+/// position [`ChildOrder::resolve`] chose for it.
+fn typed_child_bytes(children: &[&dyn SerializeBox]) -> Result<Vec<Vec<u8>>> {
+    children
+        .iter()
+        .map(|b| b.serialize_box())
+        .collect::<Result<Vec<_>>>()
+}
+
+/// A typed child of one of this module's containers, which the shared child
+/// walker serializes positionally.
+pub(crate) trait SerializeBox {
+    /// This child's own box bytes (header + body).
+    fn serialize_box(&self) -> Result<Vec<u8>>;
+
+    /// The length [`SerializeBox::serialize_box`] will produce.
+    fn box_len(&self) -> usize;
+}
+
+impl<T: Serialize<Error = Error>> SerializeBox for T {
+    fn serialize_box(&self) -> Result<Vec<u8>> {
+        self.try_to_bytes()
+    }
+
+    fn box_len(&self) -> usize {
+        self.serialized_len()
+    }
+}
+
 // ---------------------------------------------------------------------------
 // OpaqueBox — round-trip unknown child boxes
 // ---------------------------------------------------------------------------
 
 /// An opaque box whose contents we do not parse — round-tripped verbatim.
 /// Preserves the exact bytes so the real-fixture test stays byte-identical.
+///
+/// `data` is the payload *after* the 8-byte `size`+`type` header;
+/// [`OpaqueBox::serialize_into`] writes `size`, `type`, then `data`. For a
+/// `uuid` child that includes the 16-byte `usertype` (§4.2), which is what
+/// keeps a PlayReady/ISMV `uuid` (and a Smooth `tfxd`) intact through a
+/// rewrite (audit item 1).
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct OpaqueBox {
     pub box_type: [u8; 4],
     pub data: Vec<u8>,
+    /// Whether the wire used the `size == 0` form ("extends to the end of the
+    /// enclosing container", §4.2). Writing the length out instead makes the
+    /// box semantically identical but changes its bytes, which breaks the
+    /// real-fixture round-trip invariant.
+    pub to_end: bool,
+    /// Whether the wire used the `size == 1` + 64-bit `largesize` form
+    /// (§4.2), so the round trip re-emits that form rather than the compact
+    /// one.
+    pub largesize: bool,
 }
 
 impl OpaqueBox {
+    /// Build one from a child's four-CC and payload (both form flags clear —
+    /// the box states its own 32-bit length).
     pub fn new(box_type: [u8; 4], data: Vec<u8>) -> Self {
-        Self { box_type, data }
+        Self {
+            box_type,
+            data,
+            to_end: false,
+            largesize: false,
+        }
+    }
+}
+
+impl OpaqueBox {
+    /// The header this box writes. 8 bytes, or 16 under
+    /// [`OpaqueBox::largesize`] (§4.2).
+    fn header_len(&self) -> usize {
+        BOX_HDR + if self.largesize { LARGESIZE_LEN } else { 0 }
+    }
+
+    /// The size this box declares.
+    ///
+    /// `is_last` says whether it is the final child of its container: only
+    /// then may the `size == 0` form be used, because §4.2 defines it as
+    /// "extends to the end of the enclosing container". Writing `0` for a
+    /// child with a sibling after it would swallow that sibling.
+    fn declared_size(&self, is_last: bool) -> Result<u64> {
+        if self.to_end && is_last {
+            return Ok(0);
+        }
+        let need = self.header_len() as u64 + self.data.len() as u64;
+        if !self.largesize {
+            // The compact form's 32-bit field must be able to hold it.
+            broadcast_common::len::fit_u32(need as usize, "opaque box size")?;
+        }
+        Ok(need)
     }
 }
 
 impl Serialize for OpaqueBox {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        BOX_HDR + self.data.len()
+        self.header_len() + self.data.len()
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
+        self.serialize_child_into(buf, true)
+    }
+}
+
+impl OpaqueBox {
+    /// Serialize as a child of a container, telling the writer whether it is
+    /// the container's last child (see [`OpaqueBox::declared_size`]).
+    fn serialize_child_into(&self, buf: &mut [u8], is_last: bool) -> Result<usize> {
         let need = self.serialized_len();
         if buf.len() < need {
             return Err(Error::OutputBufferTooSmall {
@@ -74,10 +450,29 @@ impl Serialize for OpaqueBox {
                 have: buf.len(),
             });
         }
-        buf[..4].copy_from_slice(&(need as u32).to_be_bytes());
-        buf[4..8].copy_from_slice(&self.box_type);
-        buf[8..8 + self.data.len()].copy_from_slice(&self.data);
-        Ok(need)
+        let size = self.declared_size(is_last)?;
+        // The header is written here, not through `BoxHeader`'s own
+        // `Serialize`: that impl requires `usertype` to be present for a
+        // `uuid` box, and this payload already *contains* the usertype (§4.2
+        // puts it after `size`/`type`/`largesize`) — carrying it twice would
+        // duplicate it.
+        let mut c = 0usize;
+        if self.largesize {
+            buf[c..c + 4].copy_from_slice(&1u32.to_be_bytes());
+            c += 4;
+            buf[c..c + 4].copy_from_slice(&self.box_type);
+            c += 4;
+            buf[c..c + 8].copy_from_slice(&size.to_be_bytes());
+            c += 8;
+        } else {
+            let size32 = broadcast_common::len::fit_u32(size as usize, "opaque box size")?;
+            buf[c..c + 4].copy_from_slice(&size32.to_be_bytes());
+            c += 4;
+            buf[c..c + 4].copy_from_slice(&self.box_type);
+            c += 4;
+        }
+        buf[c..c + self.data.len()].copy_from_slice(&self.data);
+        Ok(c + self.data.len())
     }
 }
 
@@ -812,6 +1207,7 @@ impl<'a> Parse<'a> for DataReferenceBox {
         let ver = bytes[8];
         let flags = u32::from_be_bytes([0, bytes[9], bytes[10], bytes[11]]);
         let count = u32::from_be_bytes([bytes[12], bytes[13], bytes[14], bytes[15]]) as usize;
+        check_entry_count(bytes.len().saturating_sub(16), 8, count, "dref.entry_count")?;
         let mut entries = Vec::with_capacity(bounded_entry_count(
             bytes.len().saturating_sub(16),
             8,
@@ -982,6 +1378,12 @@ impl<'a> Parse<'a> for SampleToChunkBox {
         let ver = bytes[8];
         let flags = u32::from_be_bytes([0, bytes[9], bytes[10], bytes[11]]);
         let count = u32::from_be_bytes([bytes[12], bytes[13], bytes[14], bytes[15]]) as usize;
+        check_entry_count(
+            bytes.len().saturating_sub(16),
+            12,
+            count,
+            "SampleToChunkBox.entry_count",
+        )?;
         let mut entries = Vec::with_capacity(bounded_entry_count(
             bytes.len().saturating_sub(16),
             12,
@@ -1095,6 +1497,14 @@ impl<'a> Parse<'a> for SampleSizeBox {
         let flags = u32::from_be_bytes([0, bytes[9], bytes[10], bytes[11]]);
         let sample_size = u32::from_be_bytes([bytes[12], bytes[13], bytes[14], bytes[15]]);
         let count = u32::from_be_bytes([bytes[16], bytes[17], bytes[18], bytes[19]]) as usize;
+        if sample_size == 0 {
+            check_entry_count(
+                bytes.len().saturating_sub(20),
+                4,
+                count,
+                "SampleSizeBox sample_count",
+            )?;
+        }
         // `entries` is only ever populated below when `sample_size == 0`
         // (per-sample sizes) — a nonzero uniform `sample_size` means the loop
         // never runs, so a wire `count` in that branch mustn't drive any
@@ -1207,6 +1617,12 @@ impl<'a> Parse<'a> for ChunkOffsetBox {
         let ver = bytes[8];
         let flags = u32::from_be_bytes([0, bytes[9], bytes[10], bytes[11]]);
         let count = u32::from_be_bytes([bytes[12], bytes[13], bytes[14], bytes[15]]) as usize;
+        check_entry_count(
+            bytes.len().saturating_sub(16),
+            4,
+            count,
+            "ChunkOffsetBox.entry_count",
+        )?;
         let mut entries = Vec::with_capacity(bounded_entry_count(
             bytes.len().saturating_sub(16),
             4,
@@ -1297,6 +1713,12 @@ impl<'a> Parse<'a> for ChunkLargeOffsetBox {
         let ver = bytes[8];
         let flags = u32::from_be_bytes([0, bytes[9], bytes[10], bytes[11]]);
         let count = u32::from_be_bytes([bytes[12], bytes[13], bytes[14], bytes[15]]) as usize;
+        check_entry_count(
+            bytes.len().saturating_sub(16),
+            8,
+            count,
+            "ChunkLargeOffsetBox.entry_count",
+        )?;
         let mut entries = Vec::with_capacity(bounded_entry_count(
             bytes.len().saturating_sub(16),
             8,
@@ -1392,6 +1814,12 @@ impl<'a> Parse<'a> for SyncSampleBox {
         let ver = bytes[8];
         let flags = u32::from_be_bytes([0, bytes[9], bytes[10], bytes[11]]);
         let count = u32::from_be_bytes([bytes[12], bytes[13], bytes[14], bytes[15]]) as usize;
+        check_entry_count(
+            bytes.len().saturating_sub(16),
+            4,
+            count,
+            "SyncSampleBox.entry_count",
+        )?;
         let mut entries = Vec::with_capacity(bounded_entry_count(
             bytes.len().saturating_sub(16),
             4,
@@ -1855,6 +2283,8 @@ fn parse_audio_sample_entry(
         config_boxes.push(OpaqueBox {
             box_type: boxtype,
             data,
+            to_end: false,
+            largesize: false,
         });
         off += sz;
     }
@@ -1979,6 +2409,8 @@ impl<'a> Parse<'a> for Mp4aSampleEntry {
             config_boxes.push(OpaqueBox {
                 box_type: boxtype,
                 data,
+                to_end: false,
+                largesize: false,
             });
             off += sz;
         }
@@ -2100,6 +2532,12 @@ impl<'a> Parse<'a> for SampleDescriptionBox {
         let ver = bytes[8];
         let flags = u32::from_be_bytes([0, bytes[9], bytes[10], bytes[11]]);
         let count = u32::from_be_bytes([bytes[12], bytes[13], bytes[14], bytes[15]]) as usize;
+        check_entry_count(
+            bytes.len().saturating_sub(16),
+            8,
+            count,
+            "SampleDescriptionBox.entry_count",
+        )?;
         let mut entries = Vec::with_capacity(bounded_entry_count(
             bytes.len().saturating_sub(16),
             8,
@@ -2281,17 +2719,11 @@ pub enum StblChild {
     Opaque(Vec<u8>),
 }
 
-fn parse_stbl_children(body: &[u8]) -> Vec<StblChild> {
+fn parse_stbl_children(body: &[u8]) -> Result<Vec<StblChild>> {
     let mut children = Vec::new();
-    let mut off = 0usize;
-    while off + 8 <= body.len() {
-        let size =
-            u32::from_be_bytes([body[off], body[off + 1], body[off + 2], body[off + 3]]) as usize;
-        if size < 8 {
-            break;
-        }
-        let boxtype = [body[off + 4], body[off + 5], body[off + 6], body[off + 7]];
-        let box_bytes = &body[off..off + size.min(body.len() - off)];
+    walk_children(body, |child| {
+        let box_bytes = child.bytes;
+        let boxtype = child.four_cc;
         children.push(match &boxtype {
             // A `stsd` that fails to parse (e.g. an `avcC` with a malformed
             // trailer) is kept as raw bytes rather than defaulted to an empty
@@ -2348,9 +2780,9 @@ fn parse_stbl_children(body: &[u8]) -> Vec<StblChild> {
             },
             _ => StblChild::Opaque(box_bytes.to_vec()),
         });
-        off += size;
-    }
-    children
+        Ok(())
+    })?;
+    Ok(children)
 }
 
 fn serialize_stbl_children(children: &[StblChild], buf: &mut [u8], off: &mut usize) -> Result<()> {
@@ -2406,16 +2838,9 @@ impl<'a> Parse<'a> for SampleTableBox {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         // Expect full box bytes (size+type header then body)
-        if bytes.len() < 8 {
-            return Err(Error::BufferTooShort {
-                need: 8,
-                have: bytes.len(),
-                what: "stbl",
-            });
-        }
-        let body = &bytes[8..];
+
         Ok(Self {
-            children: parse_stbl_children(body),
+            children: parse_stbl_children(box_body(bytes)?)?,
         })
     }
 }
@@ -2452,38 +2877,72 @@ impl Serialize for SampleTableBox {
 pub struct DataInformationBox {
     pub dref: Option<DataReferenceBox>,
     pub opaque: Vec<OpaqueBox>,
+    /// The wire order of this container's children (audit r05-W12).
+    pub order: ChildOrder,
+}
+
+impl DataInformationBox {
+    /// Build a `dinf` from its typed parts, children in the conventional
+    /// `dref`-then-opaque order.
+    pub fn new(dref: Option<DataReferenceBox>, opaque: Vec<OpaqueBox>) -> Self {
+        Self {
+            dref,
+            opaque,
+            order: ChildOrder::default(),
+        }
+    }
+
+    /// The container's typed children, in declaration order — the input
+    /// [`ChildOrder::resolve`] maps a wire order onto.
+    fn typed_children(&self) -> Vec<&dyn SerializeBox> {
+        let mut out: Vec<&dyn SerializeBox> = Vec::with_capacity(1);
+        if let Some(ref d) = self.dref {
+            out.push(d);
+        }
+        out
+    }
+
+    /// This container's typed children in declaration order, as four-CCs.
+    fn typed_four_ccs(&self) -> Vec<&'static [u8; 4]> {
+        let mut out = Vec::with_capacity(1);
+        if self.dref.is_some() {
+            out.push(b"dref" as &'static [u8; 4]);
+        }
+        out
+    }
+
+    /// The children to serialize, in wire order.
+    fn child_order(&self) -> Vec<Option<usize>> {
+        self.order.resolve(&self.typed_four_ccs())
+    }
 }
 
 impl<'a> Parse<'a> for DataInformationBox {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        if bytes.len() < 8 {
-            return Err(Error::BufferTooShort {
-                need: 8,
-                have: bytes.len(),
-                what: "dinf",
-            });
-        }
-        let body = &bytes[8..];
         let mut dref = None;
         let mut opaque = Vec::new();
-        let mut off = 0usize;
-        while off + 8 <= body.len() {
-            let size = u32::from_be_bytes([body[off], body[off + 1], body[off + 2], body[off + 3]])
-                as usize;
-            if size < 8 {
-                break;
-            }
-            let boxtype = [body[off + 4], body[off + 5], body[off + 6], body[off + 7]];
-            let box_bytes = &body[off..off + size.min(body.len() - off)];
-            if &boxtype == b"dref" {
-                dref = Some(DataReferenceBox::parse(box_bytes)?);
+        let mut order = ChildOrder::default();
+        walk_children(box_body(bytes)?, |child| {
+            if is_four_cc(&child.four_cc, b"dref") {
+                order.push(child.four_cc);
+                dref = Some(DataReferenceBox::parse(child.bytes)?);
             } else {
-                opaque.push(OpaqueBox::new(boxtype, box_bytes[8..].to_vec()));
+                order.push_opaque(child.four_cc);
+                opaque.push(OpaqueBox {
+                    box_type: child.four_cc,
+                    data: child.payload.to_vec(),
+                    to_end: child.to_end,
+                    largesize: child.largesize,
+                });
             }
-            off += size;
-        }
-        Ok(Self { dref, opaque })
+            Ok(())
+        })?;
+        Ok(Self {
+            dref,
+            opaque,
+            order,
+        })
     }
 }
 
@@ -2491,8 +2950,8 @@ impl Serialize for DataInformationBox {
     type Error = Error;
     fn serialized_len(&self) -> usize {
         let mut n = BOX_HDR;
-        if let Some(ref d) = self.dref {
-            n += d.serialized_len();
+        for b in self.typed_children() {
+            n += b.box_len();
         }
         for o in &self.opaque {
             n += o.serialized_len();
@@ -2500,30 +2959,23 @@ impl Serialize for DataInformationBox {
         n
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
-        let mut children_len = 0usize;
-        if let Some(ref d) = self.dref {
-            children_len += d.serialized_len();
-        }
-        for o in &self.opaque {
-            children_len += o.serialized_len();
-        }
-        let need = BOX_HDR + children_len;
+        let need = self.serialized_len();
         if buf.len() < need {
             return Err(Error::OutputBufferTooSmall {
                 need,
                 have: buf.len(),
             });
         }
-        let mut c = 0usize;
-        buf[c..c + 4].copy_from_slice(&(need as u32).to_be_bytes());
-        c += 4;
-        buf[c..c + 4].copy_from_slice(b"dinf");
-        c += 4;
-        if let Some(ref d) = self.dref {
-            c += d.serialize_into(&mut buf[c..])?;
-        }
-        for o in &self.opaque {
-            c += o.serialize_into(&mut buf[c..])?;
+        let len = broadcast_common::len::fit_u32(need, "dinf size")?;
+        buf[..4].copy_from_slice(&len.to_be_bytes());
+        buf[4..8].copy_from_slice(b"dinf");
+        let typed = typed_child_bytes(&self.typed_children())?;
+        let mut c = BOX_HDR;
+        serialize_children(&self.child_order(), &typed, &self.opaque, buf, &mut c)?;
+        if c != need {
+            return Err(Error::InvalidInput(
+                "dinf child order does not account for the whole box",
+            ));
         }
         Ok(c)
     }
@@ -2541,50 +2993,126 @@ pub struct MediaInformationBox {
     pub dinf: Option<DataInformationBox>,
     pub stbl: Option<SampleTableBox>,
     pub opaque: Vec<OpaqueBox>,
+    /// The wire order of this container's children (audit r05-W12).
+    pub order: ChildOrder,
+}
+
+impl MediaInformationBox {
+    /// Build a `minf` from its typed parts, children in the conventional
+    /// sequence (media header, `dinf`, `stbl`, then opaque).
+    pub fn new(
+        vmhd: Option<VideoMediaHeaderBox>,
+        smhd: Option<SoundMediaHeaderBox>,
+        dinf: Option<DataInformationBox>,
+        stbl: Option<SampleTableBox>,
+        opaque: Vec<OpaqueBox>,
+    ) -> Self {
+        Self {
+            vmhd,
+            smhd,
+            dinf,
+            stbl,
+            opaque,
+            order: ChildOrder::default(),
+        }
+    }
+}
+
+impl MediaInformationBox {
+    /// The container's typed children, in declaration order — the input
+    /// [`ChildOrder::resolve`] maps a wire order onto.
+    fn typed_children(&self) -> Vec<&dyn SerializeBox> {
+        let mut out: Vec<&dyn SerializeBox> = Vec::with_capacity(4);
+        if let Some(ref b) = self.vmhd {
+            out.push(b);
+        }
+        if let Some(ref b) = self.smhd {
+            out.push(b);
+        }
+        if let Some(ref b) = self.dinf {
+            out.push(b);
+        }
+        if let Some(ref b) = self.stbl {
+            out.push(b);
+        }
+        out
+    }
+
+    /// This container's typed children in declaration order, as four-CCs.
+    fn typed_four_ccs(&self) -> Vec<&'static [u8; 4]> {
+        let mut out = Vec::with_capacity(4);
+        if self.vmhd.is_some() {
+            out.push(b"vmhd" as &'static [u8; 4]);
+        }
+        if self.smhd.is_some() {
+            out.push(b"smhd" as &'static [u8; 4]);
+        }
+        if self.dinf.is_some() {
+            out.push(b"dinf" as &'static [u8; 4]);
+        }
+        if self.stbl.is_some() {
+            out.push(b"stbl" as &'static [u8; 4]);
+        }
+        out
+    }
+
+    fn child_order(&self) -> Vec<Option<usize>> {
+        self.order.resolve(&self.typed_four_ccs())
+    }
 }
 
 impl<'a> Parse<'a> for MediaInformationBox {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        if bytes.len() < 8 {
-            return Err(Error::BufferTooShort {
-                need: 8,
-                have: bytes.len(),
-                what: "minf",
-            });
-        }
-        let body = &bytes[8..];
         let mut vmhd = None;
         let mut smhd = None;
         let mut dinf = None;
         let mut stbl = None;
         let mut opaque = Vec::new();
-        let mut off = 0usize;
-        while off + 8 <= body.len() {
-            let size = u32::from_be_bytes([body[off], body[off + 1], body[off + 2], body[off + 3]])
-                as usize;
-            if size < 8 {
-                break;
-            }
-            let boxtype = [body[off + 4], body[off + 5], body[off + 6], body[off + 7]];
-            let box_bytes = &body[off..off + size.min(body.len() - off)];
-            match &boxtype {
-                b"vmhd" => vmhd = Some(VideoMediaHeaderBox::parse(box_bytes)?),
-                b"smhd" => smhd = Some(SoundMediaHeaderBox::parse(box_bytes)?),
-                b"dinf" => dinf = Some(DataInformationBox::parse(box_bytes)?),
-                b"stbl" => stbl = Some(SampleTableBox::parse(box_bytes)?),
+        let mut order = ChildOrder::default();
+        walk_children(box_body(bytes)?, |child| {
+            match &child.four_cc {
+                b"vmhd" => {
+                    order.push(child.four_cc);
+                    vmhd = Some(VideoMediaHeaderBox::parse(child.bytes)?);
+                }
+                b"smhd" => {
+                    order.push(child.four_cc);
+                    smhd = Some(SoundMediaHeaderBox::parse(child.bytes)?);
+                }
+                b"dinf" => {
+                    order.push(child.four_cc);
+                    dinf = Some(DataInformationBox::parse(child.bytes)?);
+                }
+                b"stbl" => {
+                    order.push(child.four_cc);
+                    stbl = Some(SampleTableBox::parse(child.bytes)?);
+                }
+                // A subtitle track's `sthd` and a data track's `nmhd` are not
+                // modelled (no fields to carry — §12.6.2/§8.4.5.2 are both
+                // headerless FullBoxes), but they are preserved *in place*:
+                // §6.2.3 puts a media header first in `minf`, and the old
+                // "typed first, opaque last" serializer moved them after
+                // `stbl`, where strict readers reject them (audit r05-W12).
                 _ => {
-                    opaque.push(OpaqueBox::new(boxtype, box_bytes[8..].to_vec()));
+                    order.push_opaque(child.four_cc);
+                    opaque.push(OpaqueBox {
+                        box_type: child.four_cc,
+                        data: child.payload.to_vec(),
+                        to_end: child.to_end,
+                        largesize: child.largesize,
+                    });
                 }
             }
-            off += size;
-        }
+            Ok(())
+        })?;
         Ok(Self {
             vmhd,
             smhd,
             dinf,
             stbl,
             opaque,
+            order,
         })
     }
 }
@@ -2593,17 +3121,8 @@ impl Serialize for MediaInformationBox {
     type Error = Error;
     fn serialized_len(&self) -> usize {
         let mut n = BOX_HDR;
-        if let Some(ref b) = self.vmhd {
-            n += b.serialized_len();
-        }
-        if let Some(ref b) = self.smhd {
-            n += b.serialized_len();
-        }
-        if let Some(ref b) = self.dinf {
-            n += b.serialized_len();
-        }
-        if let Some(ref b) = self.stbl {
-            n += b.serialized_len();
+        for b in self.typed_children() {
+            n += b.box_len();
         }
         for o in &self.opaque {
             n += o.serialized_len();
@@ -2611,48 +3130,23 @@ impl Serialize for MediaInformationBox {
         n
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
-        let mut children_len = 0usize;
-        if let Some(ref b) = self.vmhd {
-            children_len += b.serialized_len();
-        }
-        if let Some(ref b) = self.smhd {
-            children_len += b.serialized_len();
-        }
-        if let Some(ref b) = self.dinf {
-            children_len += b.serialized_len();
-        }
-        if let Some(ref b) = self.stbl {
-            children_len += b.serialized_len();
-        }
-        for o in &self.opaque {
-            children_len += o.serialized_len();
-        }
-        let need = BOX_HDR + children_len;
+        let need = self.serialized_len();
         if buf.len() < need {
             return Err(Error::OutputBufferTooSmall {
                 need,
                 have: buf.len(),
             });
         }
-        let mut c = 0usize;
-        buf[c..c + 4].copy_from_slice(&(need as u32).to_be_bytes());
-        c += 4;
-        buf[c..c + 4].copy_from_slice(b"minf");
-        c += 4;
-        if let Some(ref b) = self.vmhd {
-            c += b.serialize_into(&mut buf[c..])?;
-        }
-        if let Some(ref b) = self.smhd {
-            c += b.serialize_into(&mut buf[c..])?;
-        }
-        if let Some(ref b) = self.dinf {
-            c += b.serialize_into(&mut buf[c..])?;
-        }
-        if let Some(ref b) = self.stbl {
-            c += b.serialize_into(&mut buf[c..])?;
-        }
-        for o in &self.opaque {
-            c += o.serialize_into(&mut buf[c..])?;
+        let len = broadcast_common::len::fit_u32(need, "minf size")?;
+        buf[..4].copy_from_slice(&len.to_be_bytes());
+        buf[4..8].copy_from_slice(b"minf");
+        let typed = typed_child_bytes(&self.typed_children())?;
+        let mut c = BOX_HDR;
+        serialize_children(&self.child_order(), &typed, &self.opaque, buf, &mut c)?;
+        if c != need {
+            return Err(Error::InvalidInput(
+                "minf child order does not account for the whole box",
+            ));
         }
         Ok(c)
     }
@@ -2669,47 +3163,107 @@ pub struct MediaBox {
     pub hdlr: Option<HandlerBox>,
     pub minf: Option<MediaInformationBox>,
     pub opaque: Vec<OpaqueBox>,
+    /// The wire order of this container's children (audit r05-W12).
+    pub order: ChildOrder,
+}
+
+impl MediaBox {
+    /// Build an `mdia` from its typed parts, children in the conventional
+    /// `mdhd`, `hdlr`, `minf` sequence.
+    pub fn new(
+        mdhd: Option<MediaHeaderBox>,
+        hdlr: Option<HandlerBox>,
+        minf: Option<MediaInformationBox>,
+        opaque: Vec<OpaqueBox>,
+    ) -> Self {
+        Self {
+            mdhd,
+            hdlr,
+            minf,
+            opaque,
+            order: ChildOrder::default(),
+        }
+    }
+}
+
+impl MediaBox {
+    /// The container's typed children, in declaration order — the input
+    /// [`ChildOrder::resolve`] maps a wire order onto.
+    fn typed_children(&self) -> Vec<&dyn SerializeBox> {
+        let mut out: Vec<&dyn SerializeBox> = Vec::with_capacity(3);
+        if let Some(ref b) = self.mdhd {
+            out.push(b);
+        }
+        if let Some(ref b) = self.hdlr {
+            out.push(b);
+        }
+        if let Some(ref b) = self.minf {
+            out.push(b);
+        }
+        out
+    }
+
+    /// This container's typed children in declaration order, as four-CCs.
+    fn typed_four_ccs(&self) -> Vec<&'static [u8; 4]> {
+        let mut out = Vec::with_capacity(3);
+        if self.mdhd.is_some() {
+            out.push(b"mdhd" as &'static [u8; 4]);
+        }
+        if self.hdlr.is_some() {
+            out.push(b"hdlr" as &'static [u8; 4]);
+        }
+        if self.minf.is_some() {
+            out.push(b"minf" as &'static [u8; 4]);
+        }
+        out
+    }
+
+    fn child_order(&self) -> Vec<Option<usize>> {
+        self.order.resolve(&self.typed_four_ccs())
+    }
 }
 
 impl<'a> Parse<'a> for MediaBox {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        if bytes.len() < 8 {
-            return Err(Error::BufferTooShort {
-                need: 8,
-                have: bytes.len(),
-                what: "mdia",
-            });
-        }
-        let body = &bytes[8..];
         let mut mdhd = None;
         let mut hdlr = None;
         let mut minf = None;
         let mut opaque = Vec::new();
-        let mut off = 0usize;
-        while off + 8 <= body.len() {
-            let size = u32::from_be_bytes([body[off], body[off + 1], body[off + 2], body[off + 3]])
-                as usize;
-            if size < 8 {
-                break;
-            }
-            let boxtype = [body[off + 4], body[off + 5], body[off + 6], body[off + 7]];
-            let box_bytes = &body[off..off + size.min(body.len() - off)];
-            match &boxtype {
-                b"mdhd" => mdhd = Some(MediaHeaderBox::parse(box_bytes)?),
-                b"hdlr" => hdlr = Some(HandlerBox::parse(box_bytes)?),
-                b"minf" => minf = Some(MediaInformationBox::parse(box_bytes)?),
+        let mut order = ChildOrder::default();
+        walk_children(box_body(bytes)?, |child| {
+            match &child.four_cc {
+                b"mdhd" => {
+                    order.push(child.four_cc);
+                    mdhd = Some(MediaHeaderBox::parse(child.bytes)?);
+                }
+                b"hdlr" => {
+                    order.push(child.four_cc);
+                    hdlr = Some(HandlerBox::parse(child.bytes)?);
+                }
+                b"minf" => {
+                    order.push(child.four_cc);
+                    minf = Some(MediaInformationBox::parse(child.bytes)?);
+                }
+                // `elng` (§8.4.6) is not modelled and stays opaque, in place.
                 _ => {
-                    opaque.push(OpaqueBox::new(boxtype, box_bytes[8..].to_vec()));
+                    order.push_opaque(child.four_cc);
+                    opaque.push(OpaqueBox {
+                        box_type: child.four_cc,
+                        data: child.payload.to_vec(),
+                        to_end: child.to_end,
+                        largesize: child.largesize,
+                    });
                 }
             }
-            off += size;
-        }
+            Ok(())
+        })?;
         Ok(Self {
             mdhd,
             hdlr,
             minf,
             opaque,
+            order,
         })
     }
 }
@@ -2718,14 +3272,8 @@ impl Serialize for MediaBox {
     type Error = Error;
     fn serialized_len(&self) -> usize {
         let mut n = BOX_HDR;
-        if let Some(ref b) = self.mdhd {
-            n += b.serialized_len();
-        }
-        if let Some(ref b) = self.hdlr {
-            n += b.serialized_len();
-        }
-        if let Some(ref b) = self.minf {
-            n += b.serialized_len();
+        for b in self.typed_children() {
+            n += b.box_len();
         }
         for o in &self.opaque {
             n += o.serialized_len();
@@ -2733,42 +3281,23 @@ impl Serialize for MediaBox {
         n
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
-        let mut children_len = 0usize;
-        if let Some(ref b) = self.mdhd {
-            children_len += b.serialized_len();
-        }
-        if let Some(ref b) = self.hdlr {
-            children_len += b.serialized_len();
-        }
-        if let Some(ref b) = self.minf {
-            children_len += b.serialized_len();
-        }
-        for o in &self.opaque {
-            children_len += o.serialized_len();
-        }
-        let need = BOX_HDR + children_len;
+        let need = self.serialized_len();
         if buf.len() < need {
             return Err(Error::OutputBufferTooSmall {
                 need,
                 have: buf.len(),
             });
         }
-        let mut c = 0usize;
-        buf[c..c + 4].copy_from_slice(&(need as u32).to_be_bytes());
-        c += 4;
-        buf[c..c + 4].copy_from_slice(b"mdia");
-        c += 4;
-        if let Some(ref b) = self.mdhd {
-            c += b.serialize_into(&mut buf[c..])?;
-        }
-        if let Some(ref b) = self.hdlr {
-            c += b.serialize_into(&mut buf[c..])?;
-        }
-        if let Some(ref b) = self.minf {
-            c += b.serialize_into(&mut buf[c..])?;
-        }
-        for o in &self.opaque {
-            c += o.serialize_into(&mut buf[c..])?;
+        let len = broadcast_common::len::fit_u32(need, "mdia size")?;
+        buf[..4].copy_from_slice(&len.to_be_bytes());
+        buf[4..8].copy_from_slice(b"mdia");
+        let typed = typed_child_bytes(&self.typed_children())?;
+        let mut c = BOX_HDR;
+        serialize_children(&self.child_order(), &typed, &self.opaque, buf, &mut c)?;
+        if c != need {
+            return Err(Error::InvalidInput(
+                "mdia child order does not account for the whole box",
+            ));
         }
         Ok(c)
     }
@@ -2783,38 +3312,71 @@ impl Serialize for MediaBox {
 pub struct EditBox {
     pub elst: Option<crate::timing::EditListBox>,
     pub opaque: Vec<OpaqueBox>,
+    /// The wire order of this container's children (audit r05-W12).
+    pub order: ChildOrder,
+}
+
+impl EditBox {
+    /// Build an `edts` from its typed parts, children in the conventional
+    /// `elst`-then-opaque order.
+    pub fn new(elst: Option<crate::timing::EditListBox>, opaque: Vec<OpaqueBox>) -> Self {
+        Self {
+            elst,
+            opaque,
+            order: ChildOrder::default(),
+        }
+    }
+
+    /// The container's typed children, in declaration order — the input
+    /// [`ChildOrder::resolve`] maps a wire order onto.
+    fn typed_children(&self) -> Vec<&dyn SerializeBox> {
+        let mut out: Vec<&dyn SerializeBox> = Vec::with_capacity(1);
+        if let Some(ref b) = self.elst {
+            out.push(b);
+        }
+        out
+    }
+
+    /// This container's typed children in declaration order, as four-CCs.
+    fn typed_four_ccs(&self) -> Vec<&'static [u8; 4]> {
+        let mut out = Vec::with_capacity(1);
+        if self.elst.is_some() {
+            out.push(b"elst" as &'static [u8; 4]);
+        }
+        out
+    }
+
+    fn child_order(&self) -> Vec<Option<usize>> {
+        self.order.resolve(&self.typed_four_ccs())
+    }
 }
 
 impl<'a> Parse<'a> for EditBox {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        if bytes.len() < 8 {
-            return Err(Error::BufferTooShort {
-                need: 8,
-                have: bytes.len(),
-                what: "edts",
-            });
-        }
-        let body = &bytes[8..];
         let mut elst = None;
         let mut opaque = Vec::new();
-        let mut off = 0usize;
-        while off + 8 <= body.len() {
-            let size = u32::from_be_bytes([body[off], body[off + 1], body[off + 2], body[off + 3]])
-                as usize;
-            if size < 8 {
-                break;
-            }
-            let boxtype = [body[off + 4], body[off + 5], body[off + 6], body[off + 7]];
-            let box_bytes = &body[off..off + size.min(body.len() - off)];
-            if &boxtype == b"elst" {
-                elst = Some(crate::timing::EditListBox::parse(box_bytes)?);
+        let mut order = ChildOrder::default();
+        walk_children(box_body(bytes)?, |child| {
+            if is_four_cc(&child.four_cc, b"elst") {
+                order.push(child.four_cc);
+                elst = Some(crate::timing::EditListBox::parse(child.bytes)?);
             } else {
-                opaque.push(OpaqueBox::new(boxtype, box_bytes[8..].to_vec()));
+                order.push_opaque(child.four_cc);
+                opaque.push(OpaqueBox {
+                    box_type: child.four_cc,
+                    data: child.payload.to_vec(),
+                    to_end: child.to_end,
+                    largesize: child.largesize,
+                });
             }
-            off += size;
-        }
-        Ok(Self { elst, opaque })
+            Ok(())
+        })?;
+        Ok(Self {
+            elst,
+            opaque,
+            order,
+        })
     }
 }
 
@@ -2822,8 +3384,8 @@ impl Serialize for EditBox {
     type Error = Error;
     fn serialized_len(&self) -> usize {
         let mut n = BOX_HDR;
-        if let Some(ref b) = self.elst {
-            n += b.serialized_len();
+        for b in self.typed_children() {
+            n += b.box_len();
         }
         for o in &self.opaque {
             n += o.serialized_len();
@@ -2831,30 +3393,23 @@ impl Serialize for EditBox {
         n
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
-        let mut children_len = 0usize;
-        if let Some(ref b) = self.elst {
-            children_len += b.serialized_len();
-        }
-        for o in &self.opaque {
-            children_len += o.serialized_len();
-        }
-        let need = BOX_HDR + children_len;
+        let need = self.serialized_len();
         if buf.len() < need {
             return Err(Error::OutputBufferTooSmall {
                 need,
                 have: buf.len(),
             });
         }
-        let mut c = 0usize;
-        buf[c..c + 4].copy_from_slice(&(need as u32).to_be_bytes());
-        c += 4;
-        buf[c..c + 4].copy_from_slice(b"edts");
-        c += 4;
-        if let Some(ref b) = self.elst {
-            c += b.serialize_into(&mut buf[c..])?;
-        }
-        for o in &self.opaque {
-            c += o.serialize_into(&mut buf[c..])?;
+        let len = broadcast_common::len::fit_u32(need, "edts size")?;
+        buf[..4].copy_from_slice(&len.to_be_bytes());
+        buf[4..8].copy_from_slice(b"edts");
+        let typed = typed_child_bytes(&self.typed_children())?;
+        let mut c = BOX_HDR;
+        serialize_children(&self.child_order(), &typed, &self.opaque, buf, &mut c)?;
+        if c != need {
+            return Err(Error::InvalidInput(
+                "edts child order does not account for the whole box",
+            ));
         }
         Ok(c)
     }
@@ -2871,42 +3426,95 @@ pub struct TrackBox {
     pub edts: Option<EditBox>,
     pub mdia: Option<MediaBox>,
     pub opaque: Vec<OpaqueBox>,
+    /// The wire order of this container's children (audit r05-W12).
+    pub order: ChildOrder,
+}
+
+impl TrackBox {
+    /// Build a `trak` from its typed parts, children in the conventional
+    /// `tkhd`, `edts`, `mdia` sequence.
+    pub fn new(
+        tkhd: TrackHeaderBox,
+        edts: Option<EditBox>,
+        mdia: Option<MediaBox>,
+        opaque: Vec<OpaqueBox>,
+    ) -> Self {
+        Self {
+            tkhd,
+            edts,
+            mdia,
+            opaque,
+            order: ChildOrder::default(),
+        }
+    }
+
+    /// The container's typed children, in declaration order — the input
+    /// [`ChildOrder::resolve`] maps a wire order onto.
+    fn typed_children(&self) -> Vec<&dyn SerializeBox> {
+        let mut out: Vec<&dyn SerializeBox> = Vec::with_capacity(3);
+        out.push(&self.tkhd);
+        if let Some(ref b) = self.edts {
+            out.push(b);
+        }
+        if let Some(ref b) = self.mdia {
+            out.push(b);
+        }
+        out
+    }
+
+    /// This container's typed children in declaration order, as four-CCs.
+    fn typed_four_ccs(&self) -> Vec<&'static [u8; 4]> {
+        let mut out = Vec::with_capacity(3);
+        out.push(b"tkhd" as &'static [u8; 4]);
+        if self.edts.is_some() {
+            out.push(b"edts");
+        }
+        if self.mdia.is_some() {
+            out.push(b"mdia");
+        }
+        out
+    }
+
+    fn child_order(&self) -> Vec<Option<usize>> {
+        self.order.resolve(&self.typed_four_ccs())
+    }
 }
 
 impl<'a> Parse<'a> for TrackBox {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        if bytes.len() < 8 {
-            return Err(Error::BufferTooShort {
-                need: 8,
-                have: bytes.len(),
-                what: "trak",
-            });
-        }
-        let body = &bytes[8..];
         let mut tkhd = None;
         let mut edts = None;
         let mut mdia = None;
         let mut opaque = Vec::new();
-        let mut off = 0usize;
-        while off + 8 <= body.len() {
-            let size = u32::from_be_bytes([body[off], body[off + 1], body[off + 2], body[off + 3]])
-                as usize;
-            if size < 8 {
-                break;
-            }
-            let boxtype = [body[off + 4], body[off + 5], body[off + 6], body[off + 7]];
-            let box_bytes = &body[off..off + size.min(body.len() - off)];
-            match &boxtype {
-                b"tkhd" => tkhd = Some(TrackHeaderBox::parse(box_bytes)?),
-                b"edts" => edts = Some(EditBox::parse(box_bytes)?),
-                b"mdia" => mdia = Some(MediaBox::parse(box_bytes)?),
+        let mut order = ChildOrder::default();
+        walk_children(box_body(bytes)?, |child| {
+            match &child.four_cc {
+                b"tkhd" => {
+                    order.push(child.four_cc);
+                    tkhd = Some(TrackHeaderBox::parse(child.bytes)?);
+                }
+                b"edts" => {
+                    order.push(child.four_cc);
+                    edts = Some(EditBox::parse(child.bytes)?);
+                }
+                b"mdia" => {
+                    order.push(child.four_cc);
+                    mdia = Some(MediaBox::parse(child.bytes)?);
+                }
+                // `tref`/`trgr`/`udta`/`meta` stay opaque, in place.
                 _ => {
-                    opaque.push(OpaqueBox::new(boxtype, box_bytes[8..].to_vec()));
+                    order.push_opaque(child.four_cc);
+                    opaque.push(OpaqueBox {
+                        box_type: child.four_cc,
+                        data: child.payload.to_vec(),
+                        to_end: child.to_end,
+                        largesize: child.largesize,
+                    });
                 }
             }
-            off += size;
-        }
+            Ok(())
+        })?;
         Ok(Self {
             tkhd: tkhd.ok_or(Error::BufferTooShort {
                 need: 0,
@@ -2916,6 +3524,7 @@ impl<'a> Parse<'a> for TrackBox {
             edts,
             mdia,
             opaque,
+            order,
         })
     }
 }
@@ -2923,12 +3532,9 @@ impl<'a> Parse<'a> for TrackBox {
 impl Serialize for TrackBox {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        let mut n = BOX_HDR + self.tkhd.serialized_len();
-        if let Some(ref b) = self.edts {
-            n += b.serialized_len();
-        }
-        if let Some(ref b) = self.mdia {
-            n += b.serialized_len();
+        let mut n = BOX_HDR;
+        for b in self.typed_children() {
+            n += b.box_len();
         }
         for o in &self.opaque {
             n += o.serialized_len();
@@ -2936,37 +3542,23 @@ impl Serialize for TrackBox {
         n
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
-        let mut children_len = self.tkhd.serialized_len();
-        if let Some(ref b) = self.edts {
-            children_len += b.serialized_len();
-        }
-        if let Some(ref b) = self.mdia {
-            children_len += b.serialized_len();
-        }
-        for o in &self.opaque {
-            children_len += o.serialized_len();
-        }
-        let need = BOX_HDR + children_len;
+        let need = self.serialized_len();
         if buf.len() < need {
             return Err(Error::OutputBufferTooSmall {
                 need,
                 have: buf.len(),
             });
         }
-        let mut c = 0usize;
-        buf[c..c + 4].copy_from_slice(&(need as u32).to_be_bytes());
-        c += 4;
-        buf[c..c + 4].copy_from_slice(b"trak");
-        c += 4;
-        c += self.tkhd.serialize_into(&mut buf[c..])?;
-        if let Some(ref b) = self.edts {
-            c += b.serialize_into(&mut buf[c..])?;
-        }
-        if let Some(ref b) = self.mdia {
-            c += b.serialize_into(&mut buf[c..])?;
-        }
-        for o in &self.opaque {
-            c += o.serialize_into(&mut buf[c..])?;
+        let len = broadcast_common::len::fit_u32(need, "trak size")?;
+        buf[..4].copy_from_slice(&len.to_be_bytes());
+        buf[4..8].copy_from_slice(b"trak");
+        let typed = typed_child_bytes(&self.typed_children())?;
+        let mut c = BOX_HDR;
+        serialize_children(&self.child_order(), &typed, &self.opaque, buf, &mut c)?;
+        if c != need {
+            return Err(Error::InvalidInput(
+                "trak child order does not account for the whole box",
+            ));
         }
         Ok(c)
     }
@@ -3055,9 +3647,9 @@ impl Serialize for TrackExtendsBox {
 /// Movie Extends Box (`mvex`) — ISO/IEC 14496-12:2015 §8.8.1.
 ///
 /// Signals that the movie is fragmented and carries the per-track [`TrackExtendsBox`]
-/// defaults. Any other children (e.g. `mehd`) are preserved verbatim in `opaque`;
-/// note the spec orders `mehd` before the `trex` list, so `opaque` is serialized
-/// last (correct for the common `trex`-only case built by the remux pipeline).
+/// defaults. Any other children (e.g. `mehd`, which §6.2.3 orders *before* the
+/// `trex` list) are preserved verbatim in `opaque`, at the position they
+/// occupied on the wire — see [`MovieExtendsBox::order`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct MovieExtendsBox {
@@ -3065,37 +3657,67 @@ pub struct MovieExtendsBox {
     pub trex: Vec<TrackExtendsBox>,
     /// Other `mvex` children preserved verbatim (e.g. `mehd`).
     pub opaque: Vec<OpaqueBox>,
+    /// The wire order of this container's children (audit r05-W12).
+    pub order: ChildOrder,
+}
+
+impl MovieExtendsBox {
+    /// Build an `mvex` from its typed parts, children in the conventional
+    /// `trex`…-then-opaque order.
+    pub fn new(trex: Vec<TrackExtendsBox>, opaque: Vec<OpaqueBox>) -> Self {
+        Self {
+            trex,
+            opaque,
+            order: ChildOrder::default(),
+        }
+    }
+
+    /// The container's typed children, in declaration order — the input
+    /// [`ChildOrder::resolve`] maps a wire order onto.
+    fn typed_children(&self) -> Vec<&dyn SerializeBox> {
+        self.trex.iter().map(|t| t as &dyn SerializeBox).collect()
+    }
+
+    /// This container's typed children in declaration order, as four-CCs.
+    fn typed_four_ccs(&self) -> Vec<&'static [u8; 4]> {
+        alloc::vec![b"trex" as &'static [u8; 4]; self.trex.len()]
+    }
+
+    fn child_order(&self) -> Vec<Option<usize>> {
+        self.order.resolve(&self.typed_four_ccs())
+    }
 }
 
 impl<'a> Parse<'a> for MovieExtendsBox {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        if bytes.len() < 8 {
-            return Err(Error::BufferTooShort {
-                need: 8,
-                have: bytes.len(),
-                what: "mvex",
-            });
-        }
-        let body = &bytes[8..];
         let mut trex = Vec::new();
         let mut opaque = Vec::new();
-        let mut off = 0usize;
-        while off + 8 <= body.len() {
-            let size = u32::from_be_bytes([body[off], body[off + 1], body[off + 2], body[off + 3]])
-                as usize;
-            if size < 8 {
-                break;
+        let mut order = ChildOrder::default();
+        walk_children(box_body(bytes)?, |child| {
+            match &child.four_cc {
+                b"trex" => {
+                    order.push(child.four_cc);
+                    trex.push(TrackExtendsBox::parse(child.bytes)?);
+                }
+                // `mehd`/`leva`/`trep` stay opaque, in place.
+                _ => {
+                    order.push_opaque(child.four_cc);
+                    opaque.push(OpaqueBox {
+                        box_type: child.four_cc,
+                        data: child.payload.to_vec(),
+                        to_end: child.to_end,
+                        largesize: child.largesize,
+                    });
+                }
             }
-            let boxtype = [body[off + 4], body[off + 5], body[off + 6], body[off + 7]];
-            let box_bytes = &body[off..off + size.min(body.len() - off)];
-            match &boxtype {
-                b"trex" => trex.push(TrackExtendsBox::parse(box_bytes)?),
-                _ => opaque.push(OpaqueBox::new(boxtype, box_bytes[8..].to_vec())),
-            }
-            off += size;
-        }
-        Ok(Self { trex, opaque })
+            Ok(())
+        })?;
+        Ok(Self {
+            trex,
+            opaque,
+            order,
+        })
     }
 }
 
@@ -3103,8 +3725,8 @@ impl Serialize for MovieExtendsBox {
     type Error = Error;
     fn serialized_len(&self) -> usize {
         let mut n = BOX_HDR;
-        for t in &self.trex {
-            n += t.serialized_len();
+        for b in self.typed_children() {
+            n += b.box_len();
         }
         for o in &self.opaque {
             n += o.serialized_len();
@@ -3119,16 +3741,16 @@ impl Serialize for MovieExtendsBox {
                 have: buf.len(),
             });
         }
-        let mut c = 0usize;
-        buf[c..c + 4].copy_from_slice(&(need as u32).to_be_bytes());
-        c += 4;
-        buf[c..c + 4].copy_from_slice(b"mvex");
-        c += 4;
-        for t in &self.trex {
-            c += t.serialize_into(&mut buf[c..])?;
-        }
-        for o in &self.opaque {
-            c += o.serialize_into(&mut buf[c..])?;
+        let len = broadcast_common::len::fit_u32(need, "mvex size")?;
+        buf[..4].copy_from_slice(&len.to_be_bytes());
+        buf[4..8].copy_from_slice(b"mvex");
+        let typed = typed_child_bytes(&self.typed_children())?;
+        let mut c = BOX_HDR;
+        serialize_children(&self.child_order(), &typed, &self.opaque, buf, &mut c)?;
+        if c != need {
+            return Err(Error::InvalidInput(
+                "mvex child order does not account for the whole box",
+            ));
         }
         Ok(c)
     }
@@ -3143,42 +3765,97 @@ pub struct MovieBox {
     /// Movie-extends box (`mvex`) present in fragmented-init movies.
     pub mvex: Option<MovieExtendsBox>,
     pub opaque: Vec<OpaqueBox>,
+    /// The wire order of this container's children (audit r05-W12).
+    pub order: ChildOrder,
+}
+
+impl MovieBox {
+    /// Build a `moov` from its typed parts, children in the conventional
+    /// `mvhd`, `trak`…, `mvex` sequence.
+    pub fn new(
+        mvhd: MovieHeaderBox,
+        tracks: Vec<TrackBox>,
+        mvex: Option<MovieExtendsBox>,
+        opaque: Vec<OpaqueBox>,
+    ) -> Self {
+        Self {
+            mvhd,
+            tracks,
+            mvex,
+            opaque,
+            order: ChildOrder::default(),
+        }
+    }
+
+    /// The container's typed children, in declaration order — the input
+    /// [`ChildOrder::resolve`] maps a wire order onto.
+    fn typed_children(&self) -> Vec<&dyn SerializeBox> {
+        let mut out: Vec<&dyn SerializeBox> = Vec::with_capacity(2 + self.tracks.len());
+        out.push(&self.mvhd);
+        for t in &self.tracks {
+            out.push(t);
+        }
+        if let Some(ref m) = self.mvex {
+            out.push(m);
+        }
+        out
+    }
+
+    /// This container's typed children in declaration order, as four-CCs.
+    fn typed_four_ccs(&self) -> Vec<&'static [u8; 4]> {
+        let mut out: Vec<&'static [u8; 4]> = alloc::vec![b"mvhd"; 1];
+        out.resize(1 + self.tracks.len(), b"trak");
+        if self.mvex.is_some() {
+            out.push(b"mvex");
+        }
+        out
+    }
+
+    /// The children to serialize, in wire order — the `pssh` a movie may carry
+    /// keeps its own position instead of moving after the `trak`s (audit
+    /// r05-W12).
+    pub fn child_order(&self) -> Vec<Option<usize>> {
+        self.order.resolve(&self.typed_four_ccs())
+    }
 }
 
 impl<'a> Parse<'a> for MovieBox {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        if bytes.len() < 8 {
-            return Err(Error::BufferTooShort {
-                need: 8,
-                have: bytes.len(),
-                what: "moov",
-            });
-        }
-        let body = &bytes[8..];
         let mut mvhd = None;
         let mut tracks = Vec::new();
         let mut mvex = None;
         let mut opaque = Vec::new();
-        let mut off = 0usize;
-        while off + 8 <= body.len() {
-            let size = u32::from_be_bytes([body[off], body[off + 1], body[off + 2], body[off + 3]])
-                as usize;
-            if size < 8 {
-                break;
-            }
-            let boxtype = [body[off + 4], body[off + 5], body[off + 6], body[off + 7]];
-            let box_bytes = &body[off..off + size.min(body.len() - off)];
-            match &boxtype {
-                b"mvhd" => mvhd = Some(MovieHeaderBox::parse(box_bytes)?),
-                b"trak" => tracks.push(TrackBox::parse(box_bytes)?),
-                b"mvex" => mvex = Some(MovieExtendsBox::parse(box_bytes)?),
+        let mut order = ChildOrder::default();
+        walk_children(box_body(bytes)?, |child| {
+            match &child.four_cc {
+                b"mvhd" => {
+                    order.push(child.four_cc);
+                    mvhd = Some(MovieHeaderBox::parse(child.bytes)?);
+                }
+                b"trak" => {
+                    order.push(child.four_cc);
+                    tracks.push(TrackBox::parse(child.bytes)?);
+                }
+                b"mvex" => {
+                    order.push(child.four_cc);
+                    mvex = Some(MovieExtendsBox::parse(child.bytes)?);
+                }
+                // `pssh`/`udta`/`meta`/`iods` stay opaque, in place: §8.16.1
+                // places `pssh` ahead of the `trak`s in the conventional
+                // order, and the old serializer always emitted it last.
                 _ => {
-                    opaque.push(OpaqueBox::new(boxtype, box_bytes[8..].to_vec()));
+                    order.push_opaque(child.four_cc);
+                    opaque.push(OpaqueBox {
+                        box_type: child.four_cc,
+                        data: child.payload.to_vec(),
+                        to_end: child.to_end,
+                        largesize: child.largesize,
+                    });
                 }
             }
-            off += size;
-        }
+            Ok(())
+        })?;
         Ok(Self {
             mvhd: mvhd.ok_or(Error::BufferTooShort {
                 need: 0,
@@ -3188,6 +3865,7 @@ impl<'a> Parse<'a> for MovieBox {
             tracks,
             mvex,
             opaque,
+            order,
         })
     }
 }
@@ -3195,12 +3873,9 @@ impl<'a> Parse<'a> for MovieBox {
 impl Serialize for MovieBox {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        let mut n = BOX_HDR + self.mvhd.serialized_len();
-        for t in &self.tracks {
-            n += t.serialized_len();
-        }
-        if let Some(mvex) = &self.mvex {
-            n += mvex.serialized_len();
+        let mut n = BOX_HDR;
+        for b in self.typed_children() {
+            n += b.box_len();
         }
         for o in &self.opaque {
             n += o.serialized_len();
@@ -3215,20 +3890,16 @@ impl Serialize for MovieBox {
                 have: buf.len(),
             });
         }
-        let mut c = 0usize;
-        buf[c..c + 4].copy_from_slice(&(need as u32).to_be_bytes());
-        c += 4;
-        buf[c..c + 4].copy_from_slice(b"moov");
-        c += 4;
-        c += self.mvhd.serialize_into(&mut buf[c..])?;
-        for t in &self.tracks {
-            c += t.serialize_into(&mut buf[c..])?;
-        }
-        if let Some(mvex) = &self.mvex {
-            c += mvex.serialize_into(&mut buf[c..])?;
-        }
-        for o in &self.opaque {
-            c += o.serialize_into(&mut buf[c..])?;
+        let len = broadcast_common::len::fit_u32(need, "moov size")?;
+        buf[..4].copy_from_slice(&len.to_be_bytes());
+        buf[4..8].copy_from_slice(b"moov");
+        let typed = typed_child_bytes(&self.typed_children())?;
+        let mut c = BOX_HDR;
+        serialize_children(&self.child_order(), &typed, &self.opaque, buf, &mut c)?;
+        if c != need {
+            return Err(Error::InvalidInput(
+                "moov child order does not account for the whole box",
+            ));
         }
         Ok(c)
     }
@@ -3634,7 +4305,7 @@ mod tests {
         body[0..4].copy_from_slice(&8u32.to_be_bytes());
         body[4..8].copy_from_slice(b"stsc");
 
-        let children = parse_stbl_children(&body);
+        let children = parse_stbl_children(&body).unwrap();
         assert_eq!(children.len(), 1);
         match &children[0] {
             StblChild::Opaque(raw) => assert_eq!(raw.as_slice(), body.as_slice()),
@@ -3658,7 +4329,7 @@ mod tests {
         body[4..8].copy_from_slice(b"stsc");
         // version/flags already zero; entry_count (bytes 12..16) already zero.
 
-        let children = parse_stbl_children(&body);
+        let children = parse_stbl_children(&body).unwrap();
         assert_eq!(children.len(), 1);
         match &children[0] {
             StblChild::Stsc(b) => assert!(b.entries.is_empty()),
@@ -3711,17 +4382,22 @@ mod tests {
     }
 
     /// End-to-end: `ChunkLargeOffsetBox::parse` on the audit's exact `co64`
-    /// scenario must return promptly with zero entries rather than attempt
-    /// to preallocate ~32 GB.
+    /// scenario must reject the box rather than attempt to preallocate ~32 GB
+    /// — `entry_count = 0xFFFFFFFF` cannot fit a 16-byte body (audit
+    /// r05-W13: the old loop `break`ed and returned `Ok` with no entries).
     #[test]
-    fn co64_hostile_count_does_not_preallocate() {
+    fn co64_hostile_count_is_rejected() {
         let mut body = alloc::vec![0u8; 16];
         body[0..4].copy_from_slice(&16u32.to_be_bytes());
         body[4..8].copy_from_slice(b"co64");
         body[12..16].copy_from_slice(&0xFFFF_FFFFu32.to_be_bytes());
 
-        let parsed = ChunkLargeOffsetBox::parse(&body).expect("a well-formed-enough header parses");
-        assert!(parsed.entries.is_empty());
+        let err = ChunkLargeOffsetBox::parse(&body)
+            .expect_err("a count the body cannot hold is malformed");
+        assert!(
+            matches!(err, Error::BufferTooShort { .. }),
+            "expected BufferTooShort, got {err:?}"
+        );
     }
 
     /// `stsz` with a nonzero uniform `sample_size` never populates `entries`
@@ -3766,6 +4442,11 @@ mod tests {
         }
 
         dirty_matches(&sample_mvhd_v0(), "mvhd");
+        // mvhd v1 (the 64-bit form, issue #1015's 120-byte layout) has its own
+        // reserved(10) + pre_defined(24) regions.
+        let mut mvhd_v1 = sample_mvhd_v0();
+        mvhd_v1.version = 1;
+        dirty_matches(&mvhd_v1, "mvhd v1");
         dirty_matches(
             &MediaHeaderBox {
                 version: 0,

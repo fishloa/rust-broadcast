@@ -187,6 +187,12 @@ pub struct Av1SampleEntry {
     pub visual: VisualSampleEntryFields,
     /// The `av1C` configuration box.
     pub config: Av1ConfigurationBox,
+    /// The entry's children in wire order (the config box plus `pasp`/`btrt`/
+    /// `colr`/…). Only the config box was modelled, so a parse -> serialize
+    /// dropped 46 bytes of a real ffmpeg file (audit item 9), and emitting the
+    /// config box first unconditionally reordered an entry whose `pasp`
+    /// preceded it (audit item 3, round 3).
+    pub children: Vec<crate::sample_entries::SampleEntryChild>,
 }
 
 impl Av1SampleEntry {
@@ -202,14 +208,22 @@ impl Av1SampleEntry {
             },
         )?;
         let config = Av1ConfigurationBox::parse(&av1c[BOX_HDR..])?;
-        Ok(Self { visual, config })
+        let children = crate::sample_entries::entry_children(region, &AV1C_FOURCC)?;
+        Ok(Self {
+            visual,
+            config,
+            children,
+        })
     }
 }
 
 impl Serialize for Av1SampleEntry {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        BOX_HDR + VisualSampleEntryFields::serialized_len() + BOX_HDR + self.config.serialized_len()
+        let config_len = BOX_HDR + self.config.serialized_len();
+        BOX_HDR
+            + VisualSampleEntryFields::serialized_len()
+            + crate::sample_entries::entry_children_len(&self.children, config_len)
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();
@@ -225,12 +239,24 @@ impl Serialize for Av1SampleEntry {
         buf[c..c + 4].copy_from_slice(&AV01_FOURCC);
         c += 4;
         c += self.visual.serialize_body_into(&mut buf[c..])?;
-        let av1c_len = BOX_HDR + self.config.serialized_len();
-        buf[c..c + 4].copy_from_slice(&(av1c_len as u32).to_be_bytes());
-        c += 4;
-        buf[c..c + 4].copy_from_slice(&AV1C_FOURCC);
-        c += 4;
-        c += self.config.serialize_into(&mut buf[c..])?;
+        // The config box keeps its wire position: a real `vp09`/`av01` entry
+        // often carries `pasp` *before* it (audit item 3, round 3).
+        let write_config = |buf: &mut [u8], c: &mut usize| -> Result<()> {
+            let len = BOX_HDR + self.config.serialized_len();
+            let len = broadcast_common::len::fit_u32(len, "config box size")?;
+            buf[*c..*c + 4].copy_from_slice(&len.to_be_bytes());
+            *c += 4;
+            buf[*c..*c + 4].copy_from_slice(&AV1C_FOURCC);
+            *c += 4;
+            *c += self.config.serialize_into(&mut buf[*c..])?;
+            Ok(())
+        };
+        crate::sample_entries::serialize_entry_children(&self.children, write_config, buf, &mut c)?;
+        if c != need {
+            return Err(Error::InvalidInput(
+                "sample entry child layout does not account for the whole box",
+            ));
+        }
         Ok(c)
     }
 }

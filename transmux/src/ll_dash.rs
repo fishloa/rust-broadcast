@@ -634,7 +634,7 @@ pub(crate) fn build_chunk(
                     SAMPLE_FLAGS_NON_SYNC
                 }),
                 sample_composition_time_offset: if any_cts {
-                    Some(s.composition_offset())
+                    Some(i64::from(s.composition_offset()))
                 } else {
                     None
                 },
@@ -669,17 +669,10 @@ pub(crate) fn build_chunk(
             default_sample_flags: None,
         };
         let tfdt = TrackFragmentBaseMediaDecodeTimeBox::new_v1(ft.base_media_decode_time);
-        traf_boxes.push(TrackFragmentBox {
-            tfhd,
-            tfdt: Some(tfdt),
-            trun: vec![trun],
-        });
+        traf_boxes.push(TrackFragmentBox::new(tfhd, Some(tfdt), vec![trun]));
     }
 
-    let mut moof = MovieFragmentBox {
-        mfhd: MovieFragmentHeaderBox::new(sequence_number),
-        traf: traf_boxes,
-    };
+    let mut moof = MovieFragmentBox::new(MovieFragmentHeaderBox::new(sequence_number), traf_boxes);
 
     // default-base-is-moof: data_offset measured from the moof start; the mdat
     // payload begins at moof_size + 8 (the mdat header).

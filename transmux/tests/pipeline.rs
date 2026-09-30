@@ -144,7 +144,7 @@ fn extract_samples(
         let data_bytes = data[cursor..cursor + size].to_vec();
         cursor += size;
         let dur = ts.sample_duration.unwrap_or(3000);
-        let co = ts.sample_composition_time_offset.unwrap_or(0) as i64;
+        let co = ts.sample_composition_time_offset.unwrap_or(0);
         samples.push(Sample::new(
             data_bytes,
             Some(next_dts),

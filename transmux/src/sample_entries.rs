@@ -224,6 +224,90 @@ pub(crate) fn find_config_box<'a>(region: &'a [u8], fourcc: &[u8; 4]) -> Option<
     None
 }
 
+/// Every child of a sample entry except the one named by `fourcc`, each as its
+/// *whole* box bytes (header included) so a parse -> serialize re-emits it
+/// verbatim.
+///
+/// A `vp09`/`av01` entry carries `pasp`, `btrt`, `colr` and friends alongside
+/// its config box (ISO/IEC 14496-12:2015 §8.5.2.2, §12.1.5); modelling only
+/// the config box dropped the rest (audit item 9).
+/// One child of a `vp09`/`av01` sample entry, in wire order.
+///
+/// A sample entry's children (its config box plus `pasp`/`btrt`/`colr`/…) have
+/// no order of their own in the struct, so the position of each is recorded
+/// here: emitting the config box first unconditionally reordered a real entry
+/// whose `pasp` preceded it (audit item 3, round 3).
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
+pub enum SampleEntryChild {
+    /// The codec configuration box (`vpcC`/`av1C`) at its wire position.
+    Config,
+    /// Any other child, verbatim as its whole box bytes.
+    Other(Vec<u8>),
+}
+
+/// Parse a sample entry's children in wire order, taking each child's bytes.
+///
+/// Errors on a truncated child rather than clamping it: the old code used
+/// `min(len)` and kept a child whose declared size had fewer bytes behind it,
+/// and `break`ed on a `size < 8` child, dropping every sibling after it (audit
+/// item 3, round 3).
+pub(crate) fn entry_children(region: &[u8], fourcc: &[u8; 4]) -> Result<Vec<SampleEntryChild>> {
+    let mut out = Vec::new();
+    let mut off = 0usize;
+    while off < region.len() {
+        let Some(rest) = region.get(off..) else {
+            break;
+        };
+        let (bx, consumed) = crate::box_types::parse_box(rest)?;
+        if bx.header.box_type.is(fourcc) {
+            out.push(SampleEntryChild::Config);
+        } else {
+            out.push(SampleEntryChild::Other(rest[..consumed].to_vec()));
+        }
+        // A `size == 0` child consumes the rest of the entry by definition
+        // (§4.2), so the walk ends there.
+        if bx.header.size == 0 || consumed == 0 {
+            break;
+        }
+        off += consumed;
+    }
+    Ok(out)
+}
+
+/// Serialize a sample entry's children in wire order, calling `write_config`
+/// where the config box sits. Returns the number of bytes written.
+pub(crate) fn serialize_entry_children(
+    children: &[SampleEntryChild],
+    write_config: impl Fn(&mut [u8], &mut usize) -> Result<()>,
+    buf: &mut [u8],
+    c: &mut usize,
+) -> Result<()> {
+    for child in children {
+        match child {
+            SampleEntryChild::Config => write_config(buf, c)?,
+            SampleEntryChild::Other(bytes) => {
+                buf[*c..*c + bytes.len()].copy_from_slice(bytes);
+                *c += bytes.len();
+            }
+        }
+    }
+    Ok(())
+}
+
+/// The serialized length of a sample entry's children, given the config box's
+/// own length.
+pub(crate) fn entry_children_len(children: &[SampleEntryChild], config_len: usize) -> usize {
+    children
+        .iter()
+        .map(|c| match c {
+            SampleEntryChild::Config => config_len,
+            SampleEntryChild::Other(bytes) => bytes.len(),
+        })
+        .sum()
+}
+
 // ---------------------------------------------------------------------------
 // AVC Sample Entries: avc1 and avc3
 // ---------------------------------------------------------------------------

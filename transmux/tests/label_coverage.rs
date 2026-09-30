@@ -70,6 +70,17 @@ const SKIP: &[&str] = &[
     // fabricated rather than transcribed from a spec table.
     "IvGen",
     "SubsamplePolicy",
+    // `movie_fragment::TrafChild`/`MoofChild` (audit r05-W11): dispatch
+    // enums the parser records wire order into — each variant either names a
+    // typed child that lives on the owning box or wraps an `OpaqueChild`, so
+    // a flat spec-token label would be lossy and add nothing (the same reason
+    // `StblChild` above is skipped).
+    "TrafChild",
+    "MoofChild",
+    // `sample_entries::SampleEntryChild` (audit item 3, round 3): the same
+    // shape again — either an opaque child's full bytes, or a marker for the
+    // codec config box at its wire position.
+    "SampleEntryChild",
 ];
 
 fn read_rs(dir: &Path, out: &mut Vec<String>) {

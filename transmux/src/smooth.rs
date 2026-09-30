@@ -732,7 +732,7 @@ fn build_smooth_fragment(
                 SAMPLE_FLAGS_NON_SYNC
             }),
             sample_composition_time_offset: if any_cts {
-                Some(t.composition_offset)
+                Some(i64::from(t.composition_offset))
             } else {
                 None
             },
@@ -768,14 +768,10 @@ fn build_smooth_fragment(
     };
     let tfxd = TfxdBox::new(start_smooth, dur_smooth);
 
-    let mut moof = MovieFragmentBox {
-        mfhd: MovieFragmentHeaderBox::new(sequence_number),
-        traf: alloc::vec![TrackFragmentBox {
-            tfhd,
-            tfdt: None,
-            trun: alloc::vec![trun],
-        }],
-    };
+    let mut moof = MovieFragmentBox::new(
+        MovieFragmentHeaderBox::new(sequence_number),
+        alloc::vec![TrackFragmentBox::new(tfhd, None, alloc::vec![trun])],
+    );
 
     // The tfxd is a uuid box inside the traf, but MovieFragmentBox knows nothing
     // about it, so we assemble the fragment bytes manually: compute the moof

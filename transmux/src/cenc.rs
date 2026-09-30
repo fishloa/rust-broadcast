@@ -1144,6 +1144,8 @@ impl<'a> Parse<'a> for SchemeInformationBox {
                 extra_boxes.push(crate::init_segment::OpaqueBox {
                     box_type: boxtype,
                     data: body[off + 8..end].to_vec(),
+                    to_end: false,
+                    largesize: false,
                 });
             }
             off += sz;
@@ -1273,6 +1275,8 @@ impl<'a> Parse<'a> for ProtectionSchemeInfoBox {
                     extra_boxes.push(crate::init_segment::OpaqueBox {
                         box_type: boxtype,
                         data: body[off + 8..end].to_vec(),
+                        to_end: false,
+                        largesize: false,
                     });
                 }
             }

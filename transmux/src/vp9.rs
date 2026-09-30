@@ -219,6 +219,11 @@ pub struct Vp9SampleEntry {
     pub visual: VisualSampleEntryFields,
     /// The `vpcC` configuration box.
     pub config: Vp9ConfigurationBox,
+    /// The entry's children in wire order (the config box plus `pasp`/`btrt`/
+    /// `colr`/…). A `pasp` commonly precedes `vpcC` in real files, so the
+    /// config box's position is recorded rather than assumed (audit item 3,
+    /// round 3).
+    pub children: Vec<crate::sample_entries::SampleEntryChild>,
 }
 
 impl Vp9SampleEntry {
@@ -234,14 +239,22 @@ impl Vp9SampleEntry {
             },
         )?;
         let config = Vp9ConfigurationBox::parse(&vpcc[BOX_HDR..])?;
-        Ok(Self { visual, config })
+        let children = crate::sample_entries::entry_children(region, &VPCC_FOURCC)?;
+        Ok(Self {
+            visual,
+            config,
+            children,
+        })
     }
 }
 
 impl Serialize for Vp9SampleEntry {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        BOX_HDR + VisualSampleEntryFields::serialized_len() + BOX_HDR + self.config.serialized_len()
+        let config_len = BOX_HDR + self.config.serialized_len();
+        BOX_HDR
+            + VisualSampleEntryFields::serialized_len()
+            + crate::sample_entries::entry_children_len(&self.children, config_len)
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();
@@ -257,12 +270,24 @@ impl Serialize for Vp9SampleEntry {
         buf[c..c + 4].copy_from_slice(&VP09_FOURCC);
         c += 4;
         c += self.visual.serialize_body_into(&mut buf[c..])?;
-        let vpcc_len = BOX_HDR + self.config.serialized_len();
-        buf[c..c + 4].copy_from_slice(&(vpcc_len as u32).to_be_bytes());
-        c += 4;
-        buf[c..c + 4].copy_from_slice(&VPCC_FOURCC);
-        c += 4;
-        c += self.config.serialize_into(&mut buf[c..])?;
+        // The config box keeps its wire position: a real `vp09`/`av01` entry
+        // often carries `pasp` *before* it (audit item 3, round 3).
+        let write_config = |buf: &mut [u8], c: &mut usize| -> Result<()> {
+            let len = BOX_HDR + self.config.serialized_len();
+            let len = broadcast_common::len::fit_u32(len, "config box size")?;
+            buf[*c..*c + 4].copy_from_slice(&len.to_be_bytes());
+            *c += 4;
+            buf[*c..*c + 4].copy_from_slice(&VPCC_FOURCC);
+            *c += 4;
+            *c += self.config.serialize_into(&mut buf[*c..])?;
+            Ok(())
+        };
+        crate::sample_entries::serialize_entry_children(&self.children, write_config, buf, &mut c)?;
+        if c != need {
+            return Err(Error::InvalidInput(
+                "sample entry child layout does not account for the whole box",
+            ));
+        }
         Ok(c)
     }
 }

@@ -106,7 +106,7 @@ fn video_samples(data: &[u8]) -> Vec<Sample> {
     for (i, ts) in trun.samples.iter().enumerate() {
         let size = ts.sample_size.expect("sample_size") as usize;
         let dur = ts.sample_duration.unwrap_or(3000);
-        let co = ts.sample_composition_time_offset.unwrap_or(0) as i64;
+        let co = ts.sample_composition_time_offset.unwrap_or(0);
         samples.push(Sample::new(
             data[cursor..cursor + size].to_vec(),
             Some(next_dts),

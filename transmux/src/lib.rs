@@ -326,7 +326,7 @@ pub use sample_aes::{
     eac3_encrypt_frame, h264_decrypt_nal, h264_encrypt_nal, iv_from_sequence_number,
 };
 pub use sample_entries::{
-    AVCSampleEntry, HEVCSampleEntry, Mp4vSampleEntry, VisualSampleEntryFields,
+    AVCSampleEntry, HEVCSampleEntry, Mp4vSampleEntry, SampleEntryChild, VisualSampleEntryFields,
 };
 pub use sample_groups::{
     GROUPING_TYPE_ROLL, ProducerReferenceTimeBox, SampleGroupDescriptionBox, SampleToGroupBox,

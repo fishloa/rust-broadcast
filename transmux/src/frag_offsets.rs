@@ -54,8 +54,10 @@ pub struct FragmentSampleRange {
     /// `trun.sample_flags`, else `first_sample_flags` (sample 0), else the
     /// `tfhd` default. A sample is a sync sample when bit `[16]` is clear.
     pub flags: u32,
-    /// `trun.sample_composition_time_offset`, else 0.
-    pub composition_offset: i32,
+    /// `trun.sample_composition_time_offset`, else 0 — as `i64`, since the
+    /// field is unsigned under `trun` version 0 (§8.8.8.2) and so can exceed
+    /// `i32::MAX`.
+    pub composition_offset: i64,
 }
 
 /// An `mdat` payload range (the box's first payload byte through its last).
@@ -222,14 +224,14 @@ pub fn tfdt_as_i64(raw: u64) -> Result<i64> {
 }
 
 /// Add a signed composition offset to a decode time, checked.
-pub fn add_offset(dts: i64, offset: i32) -> Result<i64> {
-    dts.checked_add(offset as i64)
+pub fn add_offset(dts: i64, offset: i64) -> Result<i64> {
+    dts.checked_add(offset)
         .ok_or(Error::InvalidInput("sample pts overflow"))
 }
 
 /// Add a sample duration to a running decode-time cursor, checked.
 pub fn add_duration(dts: i64, duration: u32) -> Result<i64> {
-    dts.checked_add(duration as i64)
+    dts.checked_add(i64::from(duration))
         .ok_or(Error::InvalidInput("sample dts overflow"))
 }
 

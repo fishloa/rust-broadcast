@@ -9,6 +9,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed (breaking)
 
+- **Box containers record their children's wire order, and several public
+  structs gained fields and constructors** (#1080, audit r05-W11/W12 and the
+  round-3 follow-ups). A container's typed fields carry no order of their own,
+  so serializing them in declaration order reordered any file that did not
+  already match — a `moov`'s `pssh` moved after the `trak`s, a subtitle track's
+  `sthd` moved after `stbl`, a `vp09`/`av01` entry's `pasp` moved after its
+  config box, and a `moof`/`traf` lost every child the crate does not model.
+  New public API:
+  - `init_segment::ChildOrder` and a `pub order: ChildOrder` field on
+    `MovieBox`, `TrackBox`, `MediaBox`, `MediaInformationBox`,
+    `DataInformationBox`, `EditBox`, `MovieExtendsBox` and `SampleTableBox`;
+    `ChildOrder::append_opaque(four_cc)` must accompany an `opaque` push on a
+    parsed container so the two stay in step.
+  - `movie_fragment::{TrafChild, MoofChild, OpaqueChild}` and a
+    `pub order: Vec<TrafChild>` / `Vec<MoofChild>` field on
+    `TrackFragmentBox` / `MovieFragmentBox`.
+  - `init_segment::OpaqueBox` and `movie_fragment::OpaqueChild` gain
+    `pub to_end: bool` and `pub largesize: bool`: the `size == 0` and `size == 1`
+    wire forms are preserved rather than rewritten (ISO/IEC 14496-12:2015 §4.2).
+    A `size == 0` child is only written that way when it is its container's last
+    child, since §4.2 defines it as "extends to the end of the enclosing
+    container" and a sibling appended after it would otherwise be swallowed. An
+    opaque child's stored payload is the bytes after `size`/`type` — a `uuid`'s
+    usertype included, the 8 `largesize` bytes excluded.
+  - `sample_entries::SampleEntryChild` (`Config`, or `Other(bytes)`) and
+    `Vp9SampleEntry::children` / `Av1SampleEntry::children`, replacing
+    `extra_boxes`: the config box's position among the entry's children is now
+    recorded.
+  - `movie_fragment::TrackFragmentHeaderBox`/`TrackFragmentRunBox` gain
+    `effective_flags()`; `TrackFragmentRunBox` gains `check_sample_fields`.
+  - `movie_fragment::TrunSample::sample_composition_time_offset` and
+    `frag_offsets::FragmentSampleRange::composition_offset` are `Option<i64>` /
+    `i64`, not `Option<i32>` / `i32`: `trun` version 0's field is unsigned, so a
+    legal v0 offset can exceed `i32::MAX`.
+  - `sample_groups::SampleGroupDescriptionBox` gains
+    `pub default_sample_description_index: Option<u32>` (the v2 syntax field).
+  - `MovieBox`, `TrackBox`, `MediaBox`, `MediaInformationBox`,
+    `DataInformationBox`, `EditBox`, `MovieExtendsBox`, `TrackFragmentBox` and
+    `MovieFragmentBox` gain a `new(...)` constructor, and the `MkvMux` cluster
+    builder returns `Result<Vec<u8>>`; a struct literal must switch to the
+    constructor or set the new fields.
 - **H.264 Sample-AES now chains the CBC state across the encrypted blocks of one
   NAL; the previous per-block IV reset is corrected** (#1080, audit r05-W1).
   `sample_aes::h264_encrypt_nal`/`h264_decrypt_nal` restarted the CBC context at
@@ -401,6 +442,232 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 
 ### Fixed
+
+- **`moof`/`traf` children the crate does not model are preserved, and a `traf`
+  with no `trun` parses** (#1080, audit r05-W11). §6.2.3's `traf` table lists
+  `sbgp`/`sgpd`/`subs`/`saiz`/`saio`/`meta` besides `tfhd`/`trun`/`tfdt`; only
+  the last three were modelled, so a parse → serialize — and in particular
+  `protect_media_segment`, which re-serializes any `moof` it touches — silently
+  dropped roll-recovery and sample-encryption-group signalling (`sgpd`/`sbgp`
+  `seig`), `subs`, `sdtp` and an existing `senc`/`saiz`/`saio` from a segment
+  that merely had a track encrypted. `TrackFragmentBox`/`MovieFragmentBox` now
+  record their children's wire order and carry every unmodelled child verbatim,
+  so a parsed box round-trips byte-for-byte. Separately, a `traf` with zero
+  `trun`s is **legal** — §8.8.3/§8.8.8 require none, and `tfhd`'s
+  `duration-is-empty` flag (`0x010000`) exists to declare a track with no
+  samples in this fragment — but was rejected with "traf missing trun", which
+  failed the whole `moof` and with it `Fmp4Demux`, `cenc_decrypt` and
+  `protect_media_segment`. A `traf` with a `tfhd` and **zero or more** `trun`s
+  now parses. A `moof` with zero `traf`s is still rejected ("moof missing
+  traf"), and so is a `traf` with no `tfhd`: those name no track, so there is
+  nothing for a caller to resolve. See `### Changed (breaking)` above for the
+  new fields and constructors.
+- **`Fmp4Demux` tolerates a truncated final box and queues every pending
+  `moof`** (#1080, audit r05-W26). `parse_box` on the cut-short tail of a live
+  capture or an interrupted recording failed the *whole* demux, so a
+  mostly-complete file could not be read at all; the demuxer now treats a
+  short tail as the end of the data (its lenient-but-loud contract, the same
+  rule `ProgressiveDemux` and the TS demuxers follow) and anything else as a
+  real framing error. Separately, a single pending-`moof` slot meant that a
+  `moof`, `moof`, `mdat` run — legal per §8.8.4, and what a multi-track CMF2
+  segment writes — overwrote the first fragment and silently dropped its
+  samples; the pending fragments are now a queue, resolved in order by the
+  `mdat` that follows them.
+- **`ProgressiveMux` interleaves the `mdat` and promotes a too-large duration
+  to a version-1 header** (#1080, audit r05-W24/W25). Every track's samples used
+  to be concatenated into a *single* chunk, so the `mdat` held all of track 1
+  then all of track 2: starting playback needs the first video *and* the first
+  audio sample, which sat roughly the whole video track apart, so `faststart`
+  bought nothing for a client that can only read strictly forward. Each track
+  is now cut into ~0.5 s chunks and the chunks are merged in start-time order
+  (`stsc`/`stco` describe the resulting runs). The merge honours each track's
+  own sample order: a `Media` whose decode time steps backwards partway (a TS
+  discontinuity, a spliced stream) is legal input, and a flat sort keyed on
+  `(start tick, track, sample)` reordered such a track's chunks and rejected it
+  with `InvalidInput`; the tracks are now merged head-by-head, so the tick only
+  decides the cross-track interleave. Separately, `mvhd`/`tkhd`/`mdhd`
+  were always written at version 0, whose `duration` is 32 bits, while
+  `set_track_durations` computed 64-bit values — so a duration past `u32::MAX`
+  was truncated by the v0 serializer (a 10 MHz track, e.g. a
+  [`smooth_parse`](crate::smooth_parse)-sourced timeline, wrapped after 7.2
+  minutes; 90 kHz after 13.2 hours), and players reported a wrong length and
+  sought wrongly. Each header is now promoted to version 1 when its own
+  duration does not fit version 0 (ISO/IEC 14496-12:2015 §8.2.2.2, §8.3.2.2,
+  §8.4.2.2). Both changes are verified against ffmpeg's demuxer as well as
+  in-crate.
+- **`MkvMux` starts a new `Cluster` when a block's relative timestamp would
+  leave the signed 16-bit range, and rebases a negative `Cluster` base**
+  (#1080, audit r05-W23). A `SimpleBlock` timestamp is a `signed int(16)`
+  relative to the `Cluster` timestamp (RFC 9559 §12), but a `Cluster` was only
+  split on a *forward* span: a backward step — a TS splice or signalled
+  discontinuity, a timestamp wrap, or a large B-frame reorder across a keyframe
+  — kept it inside the same `Cluster`, where `debug_assert!` panicked in debug
+  builds and the `as i16` cast wrapped in release, putting blocks at arbitrary
+  times. The split rule now also fires when `rel` would leave
+  `[i16::MIN, i16::MAX]` in either direction. Separately, the base was written
+  as `cluster_start.max(0)` while the blocks stayed relative to the *negative*
+  `cluster_start` (a `Cluster` `Timestamp` is unsigned, RFC 9559 §13), so every
+  block of a `Cluster` whose first PTS was negative — the ordinary result of
+  B-frame composition — came out shifted by `-cluster_start` ms. The base and
+  the blocks are now measured from the same value. Verified with ffmpeg's own
+  Matroska demuxer (`ffprobe -v error` silent on this crate's output) as well
+  as in-crate.
+- **`tfhd`/`trun` presence bits are derived from their values, and a `tfhd` with
+  both base rules is rejected** (#1080, audit r05-W16). Field presence in
+  `tfhd`/`trun` is flag-driven (ISO/IEC 14496-12:2015 §8.8.7.1/§8.8.8.1) while
+  the values live in `Option`s, and the serializers used the *stored* flags with
+  `unwrap_or(0)` — so a builder that set a presence bit without the value wrote
+  a `0` (a `base_data_offset` of 0 pointing at the start of the file rather than
+  the fragment; a `sample_description_index` of 0 where §8.8.7.1 defines 1 as the
+  first entry), and a builder that set the value without the bit silently
+  dropped it (a `trun.data_offset` lost, so the samples resolved against the traf
+  base instead of where the caller pointed them). The written flags are now
+  computed from the values by `TrackFragmentHeaderBox::effective_flags` /
+  `TrackFragmentRunBox::effective_flags`; every non-presence bit is kept from
+  `flags`. A `trun` sample list that carries a per-sample field on some samples
+  and not others is `Error::InvalidInput` — a record is fixed-width, so the field
+  is either there for every sample or for none, and neither dropping the supplied
+  values nor writing `0` for the gaps is acceptable. A `tfhd` that would carry
+  both `default-base-is-moof` and an explicit `base_data_offset` is now
+  **accepted and preserved**: §8.8.7.1 says of `default-base-is-moof` "if
+  base-data-offset-present is 1, this flag is ignored", so such a box is
+  well-formed (merely redundant) and a parser must be liberal — it parses and
+  re-serialises byte-identically rather than being rejected. A `trun`'s
+  `version` is also derived: any negative
+  `sample_composition_time_offset` forces version 1 (§8.8.8.2 makes the field
+  signed there), so a negative offset can never be written under version 0 where
+  a reader would take it as a huge positive value. The offset is modelled as
+  `i64` (`TrunSample::sample_composition_time_offset`,
+  `frag_offsets::FragmentSampleRange::composition_offset`), because version 0's
+  field is *unsigned*: a legal v0 offset of `0x8000_0001` used to wrap negative
+  and be re-serialized as version 1, changing both the bytes and the meaning. A
+  negative offset still selects version 1, and one that fits neither field is
+  `Error::InvalidInput` rather than a wrap. A zero-sample `trun` keeps
+  its own flag bits across a round trip (they describe the records it would
+  carry).
+- **`sgpd` version 2 round-trips, and a `roll` entry wider than two bytes stays
+  opaque** (#1080, audit r05-W15). Version 2 of the Sample Group Description Box
+  replaces `default_length` with `default_sample_description_index`
+  (ISO/IEC 14496-12:2015 §8.9.3.2) — the same 4 bytes in the same position. The
+  parser skipped the field and the serializer wrote it only for `version == 1`
+  while keeping `version = 2`, so a parsed v2 box re-serialized 4 bytes short of
+  its own syntax and every reader took `entry_count` from the wrong offset.
+  `SampleGroupDescriptionBox` gains a `default_sample_description_index:
+  Option<u32>` field, written for v2 (and required there — `None` is
+  `Error::InvalidInput` rather than a guessed value). Separately, a `roll`
+  description is exactly the 2-byte `roll_distance` (§10.6.1); a box whose
+  `default_length`/`description_length` was larger was parsed down to those 2
+  bytes and re-serialized 2 bytes wide, shrinking the whole entry list. Such an
+  entry is kept opaque and byte-exact. (The `subs` v0 `subsample_size` and
+  `subsample_count` truncations this warning also named were already fixed under
+  #1129.)
+- **Init-segment containers keep the child order the file used** (#1080, audit
+  r05-W12). Each container serialized its typed children first and every opaque
+  one after, so a file whose children did not already match that shape was
+  reordered by a parse → serialize — breaking the "every other byte round-trips
+  unchanged" claim of `protect_init_segment`. A subtitle track's `sthd` (and a
+  data track's `nmhd`), which §6.2.3 places *first* in `minf`, moved after
+  `stbl` where strict readers (older Android MediaExtractor, some STBs) reject
+  it, and a `moov`'s `pssh` moved after the `trak`s. Each container now carries
+  a `ChildOrder` recording the wire sequence, so a parsed container
+  round-trips byte-exactly and a rewrite (`protect_init_segment`,
+  `ProgressiveMux`) preserves the file's own layout. See
+  `### Changed (breaking)` above for the fields and constructors.
+- **An init-segment container's children are framed exactly: a `largesize`
+  child keeps its siblings, a truncated child is an error, and a declared table
+  count the body cannot hold is rejected** (#1080, audit r05-W13). Every
+  container loop in `init_segment` read the four-byte `size` itself, clamped
+  with `size.min(remaining)` and `break`ed on `size < 8`, so: a child written
+  with 64-bit `largesize` (`size == 1`, §4.2) took itself *and every sibling
+  after it* out of the parse (a conformant `moov` came back missing its
+  `trak`s); a child whose declared size ran past its container was silently
+  shortened, so a truncated file parsed "successfully"; and trailing bytes too
+  short to hold a header were ignored. One shared `walk_children` now drives
+  every container (and `stbl`), using the crate's `parse_box` so `largesize`
+  and `usertype` are handled and a declared size past the buffer is
+  `Error::BufferTooShort`; a container's own `Parse` locates its body through
+  its real header length rather than assuming 8 bytes, so a container written
+  in the `largesize` form parses correctly. Separately, `stsc`, `stco`/`co64`,
+  `stss`, `stsz` (per-sample form) and `stsd` used to `break` out of their entry
+  loops when the bytes ran out and still return `Ok`, so a truncated sample
+  table parsed to *fewer* entries than its own `entry_count` declared and the
+  tables then silently disagreed with each other; a count the body cannot hold
+  is now `Error::BufferTooShort` (`check_entry_count`). A `size == 0` child
+  ("extends to the end of the enclosing container", §4.2) is preserved in that
+  exact form rather than rewritten with an explicit size. Trailing bytes
+  shorter than a child header inside a `moov` are a hard error, matching every
+  other container in `init_segment`; `tests/init_segment_sweep.rs` documents
+  the policy against the TS/Matroska demuxers, which stop at a short tail
+  instead because a live capture legitimately ends mid-packet while a container
+  states its own length.
+- **A `uuid` child box keeps its 16-byte `usertype` through a parse →
+  serialize** (#1080, audit item 1). `parse_box`'s body begins after the *whole*
+  header, so the `usertype` of a `uuid` box (ISO/IEC 14496-12:2015 §4.2) was not
+  part of it — and every container stores an opaque child's body verbatim. A
+  `uuid` child therefore came back 16 bytes shorter than the original and
+  shifted, with its extended type replaced by the first eight payload bytes:
+  a PlayReady/ISMV `moov`/`trak` uuid, or a Smooth `tfxd`/`tfrf` in a `traf`.
+  An opaque child now carries the payload after `size`/`type` with the
+  `usertype` included, and remembers whether the wire used the compact or the
+  `size == 1` + 64-bit `largesize` header form (§4.2) so that form is
+  re-emitted. A child written in the compact form round-trips byte-identically;
+  one written with `largesize` also does, because the 8 `largesize` bytes are
+  *excluded* from the stored payload (the serializer writes its own). Fixtures:
+  `tests/fixtures/mp4/uuid_boxes/` (real ffmpeg output with real `uuid`
+  children spliced in — see its README for the generator and the `mp4dump`
+  verification), consumed by `tests/uuid_child_roundtrip.rs`.
+- **`protect_media_segment` counts a `moof`'s opaque children, refuses a `traf`
+  that already carries `senc`/`saiz`/`saio`, and checks its `data_offset`
+  shift** (#1080, audit items 2/3). The rebuilt `moof`'s length was
+  `header + mfhd + Σ traf`, so any `moof` with a moof-level opaque child
+  (`meta`, `pssh`, a `uuid`) under-counted by exactly those bytes and failed the
+  consistency check at the end — such a segment could not be protected at all.
+  The length and the `saio` running offset are now computed in the same wire
+  order the serializer emits. A `traf` that already carries
+  `senc`/`saiz`/`saio` (preserved as opaque children) is `Error::InvalidInput`
+  rather than being given a second set, since ISO/IEC 23001-7 §12.3 defines one
+  `senc` per `traf` — but `senc` is CENC by definition while `saiz`/`saio` are
+  generic auxiliary-information boxes other schemes use, so only a pair whose
+  `aux_info_type` names a CENC scheme (or is absent, which §8.7.8.2 defines as
+  `cenc`) is refused; a differently-typed pair is left in place. The
+  `trun.data_offset += delta` shift is a checked `i32` conversion returning
+  `Error::InvalidInput` instead of a wrapping add.
+  Verified end-to-end against Bento4 `mp4decrypt` and this crate's own
+  `CencDecryptor` (`tests/cenc_mux.rs`).
+- **`Fmp4Demux` tolerates exactly one thing: a truncated tail** (#1080, audit
+  item 4). The fragment walk treated *any* `parse_box` failure as end-of-data,
+  so a mid-file `BoxSizeUnderflow` (a declared size of 2..7, or a bad
+  `largesize`) silently truncated the demux at the first corrupt box — every
+  later fragment vanished with no error. Only a "does not fit the bytes present"
+  error on the tail (a declared size past the end of the data, which is how a
+  live capture or an interrupted recording ends) ends the walk; anything else
+  propagates. That now covers all three variants `parse_box` reports for it —
+  a body past the end, a `uuid` usertype cut short, and a `largesize` field cut
+  short — since a file cut inside a trailing `uuid` box's header is the same
+  truncation as one cut inside a normal box body.
+- **A `vp09`/`av01` sample entry keeps its other children (`pasp`, `btrt`,
+  `colr`, …)** (#1080, audit item 9). `Vp9SampleEntry`/`Av1SampleEntry` modelled
+  only their config box, so a parse → serialize dropped 46 bytes of every real
+  ffmpeg AV1/VP9 file — caught by the new sweep over every committed init
+  segment (`tests/init_segment_sweep.rs`, 63 files) rather than by the two
+  fixtures W12 checked. Both now carry `children: Vec<SampleEntryChild>`
+  recording the entry's child wire order: emitting the config box first
+  unconditionally reordered an entry whose `pasp` preceded it, the walk
+  `break`ed on a child with `size < 8` (dropping every sibling after it), and a
+  truncated child was kept with a size field longer than its bytes — it now
+  comes from the same `walk_children`/`parse_box` pair every container uses and
+  reports `Error::BufferTooShort`.
+- **`MkvMux` writes monotonic `CueTime`s and errors instead of clamping a block
+  time** (#1080, audit item 7). A backward timestamp jump opens a new `Cluster`,
+  so a later cluster's keyframe can sit at an *earlier* presentation time than
+  an earlier one; emitting it left the `Cues` index unsorted and defeated a
+  player's binary search. Every keyframe still gets a cue — one whose time would
+  step backwards is emitted at the previous cue's time rather than dropped, so
+  its cluster stays reachable by seeking (RFC 9559 §20 requires the sort, not
+  uniqueness). The cluster builder also returned a silently `clamp`ed block
+  timestamp in release builds (a `debug_assert` does nothing there), writing the
+  block at an arbitrary instant; an out-of-range relative timestamp is now
+  `Error::InvalidInput`, and the builder returns `Result`.
 - **Fragment sample ranges are bounded to an `mdat` payload and to the file
   length** (#1080, audit r05-W7 follow-up). A `trun` could previously name any
   offset in the file, so a hostile fragment read `moov`/`moof` bytes as sample

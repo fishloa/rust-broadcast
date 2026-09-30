@@ -522,6 +522,7 @@ fn cenc_mp4_with_seig_sgpd() -> Vec<u8> {
         flags: 0,
         grouping_type: GROUPING_TYPE_SEIG,
         default_length: 0,
+        default_sample_description_index: None,
         // The internal seig entry layout (KID/IV-size/pattern override) is
         // not typed by this crate (see `sample_groups.rs` docs) — only
         // `grouping_type` needs to be real for the detector under test, so

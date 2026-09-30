@@ -18,7 +18,7 @@
 
 use std::path::PathBuf;
 
-use broadcast_common::{Encrypt, Package, Parse, Unpackage};
+use broadcast_common::{Decrypt, Encrypt, Package, Parse, Serialize, Unpackage};
 use transmux::cenc::{
     ProtectionSchemeInfoBox, SampleAuxInfoOffsetsBox, SampleAuxInfoSizesBox, SampleEncryptionBox,
 };
@@ -409,4 +409,645 @@ fn protect_media_segment_empty_protections_is_identity() {
     let raw = CmafMux::new(1).package(&media).expect("CmafMux::package");
     let out = protect_media_segment(&raw, &[]).expect("identity pass");
     assert_eq!(out, raw);
+}
+
+// ---------------------------------------------------------------------------
+// Fix wave H items 2/3: a `moof` (or `traf`) carrying opaque children
+// ---------------------------------------------------------------------------
+
+/// Splice `extra` into the first `moof`'s body right after its `mfhd`, so the
+/// fragment has a moof-level opaque child. Returns the new buffer.
+fn splice_into_moof(segment: &[u8], extra: &[u8]) -> Vec<u8> {
+    let mut off = 0usize;
+    while off + 8 <= segment.len() {
+        let size = u32::from_be_bytes([
+            segment[off],
+            segment[off + 1],
+            segment[off + 2],
+            segment[off + 3],
+        ]) as usize;
+        if size < 8 || off + size > segment.len() {
+            break;
+        }
+        if &segment[off + 4..off + 8] == b"moof" {
+            // After the 8-byte `moof` header and the 16-byte `mfhd`.
+            let at = off + 8 + 16;
+            let mut out = segment[..at].to_vec();
+            out.extend_from_slice(extra);
+            out.extend_from_slice(&segment[at..]);
+            let new_size = (size + extra.len()) as u32;
+            out[off..off + 4].copy_from_slice(&new_size.to_be_bytes());
+            // Growing the `moof` moves the `mdat` after it, while every
+            // `trun.data_offset` stays moof-relative — so each inserted byte
+            // must be added to the offsets that address data past the
+            // insertion point.
+            patch_trun_data_offsets(&mut out, off, new_size as usize, extra.len() as i32);
+            return out;
+        }
+        off += size;
+    }
+    panic!("no moof in the segment");
+}
+
+/// Add `delta` to every `trun.data_offset` inside the `moof` at `moof_at`
+/// (of `moof_size` bytes).
+fn patch_trun_data_offsets(out: &mut [u8], moof_at: usize, moof_size: usize, delta: i32) {
+    fn walk(out: &mut [u8], at: usize, size: usize, delta: i32) {
+        let mut off = at + 8;
+        while off + 8 <= at + size {
+            let sz =
+                u32::from_be_bytes([out[off], out[off + 1], out[off + 2], out[off + 3]]) as usize;
+            if sz < 8 || off + sz > at + size {
+                break;
+            }
+            if &out[off + 4..off + 8] == b"trun" {
+                let flags =
+                    u32::from_be_bytes([0, out[off + 9], out[off + 10], out[off + 11]]) & 0xFF_FFFF;
+                if flags & 1 != 0 {
+                    let at_off = off + 8 + 4 + 4;
+                    let cur = i32::from_be_bytes([
+                        out[at_off],
+                        out[at_off + 1],
+                        out[at_off + 2],
+                        out[at_off + 3],
+                    ]);
+                    let next = cur.saturating_add(delta);
+                    out[at_off..at_off + 4].copy_from_slice(&next.to_be_bytes());
+                }
+            } else if matches!(&out[off + 4..off + 8], b"traf") {
+                walk(out, off, sz, delta);
+            }
+            off += sz;
+        }
+    }
+    walk(out, moof_at, moof_size, delta);
+}
+
+/// Splice `extra` into the first `traf`'s body, after its `trun`.
+fn splice_into_traf(segment: &[u8], extra: &[u8]) -> Vec<u8> {
+    // Locate the `traf` inside the `moof`.
+    let mut moof_off = None;
+    let mut off = 0usize;
+    while off + 8 <= segment.len() {
+        let size = u32::from_be_bytes([
+            segment[off],
+            segment[off + 1],
+            segment[off + 2],
+            segment[off + 3],
+        ]) as usize;
+        if size < 8 || off + size > segment.len() {
+            break;
+        }
+        if &segment[off + 4..off + 8] == b"moof" {
+            moof_off = Some((off, size));
+            break;
+        }
+        off += size;
+    }
+    let (moof_at, moof_size) = moof_off.expect("a moof");
+    let mut traf = None;
+    let mut k = moof_at + 8;
+    while k + 8 <= moof_at + moof_size {
+        let size = u32::from_be_bytes([segment[k], segment[k + 1], segment[k + 2], segment[k + 3]])
+            as usize;
+        if size < 8 || k + size > moof_at + moof_size {
+            break;
+        }
+        if &segment[k + 4..k + 8] == b"traf" {
+            traf = Some((k, size));
+            break;
+        }
+        k += size;
+    }
+    let (traf_at, traf_size) = traf.expect("a traf");
+
+    let mut out = Vec::new();
+    // Insert after the whole `traf` (so its own addressing is untouched) —
+    // the point is an *opaque traf child*, not where it sits.
+    let after_traf = traf_at + traf_size;
+    out.extend_from_slice(&segment[..after_traf]);
+    // The inserted box grows the traf only if placed inside it; place it
+    // inside, immediately after the traf's own children, and grow both
+    // ancestors.
+    out.extend_from_slice(extra);
+    out.extend_from_slice(&segment[after_traf..]);
+    // Grow the traf and the moof by the inserted length. This keeps every
+    // `trun.data_offset` (moof-relative) addressing the same absolute data as
+    // long as the segment's `mdat` follows the `moof`.
+    let d = extra.len() as u32;
+    out[traf_at..traf_at + 4].copy_from_slice(&(traf_size as u32 + d).to_be_bytes());
+    out[moof_at..moof_at + 4].copy_from_slice(&(moof_size as u32 + d).to_be_bytes());
+    out
+}
+
+/// A `moof` with an opaque moof-level child must still be rewritten: the
+/// rebuilt length has to count that child (audit item 2). With the old
+/// `header + mfhd + Σ traf` arithmetic the consistency check at the end
+/// rejected the segment outright.
+#[test]
+fn protect_media_segment_keeps_a_moof_level_opaque_child() {
+    let Some(mut media) = clear_video_media() else {
+        return;
+    };
+    let cfg = cenc_cfg(SubsamplePolicy::WholeSample);
+    CencEncryptor::new(KEY)
+        .encrypt(&mut media, &cfg)
+        .expect("encrypt");
+    let raw = CmafMux::new(1).package(&media).expect("CmafMux::package");
+    let enc = media.tracks[0].encryption.as_ref().expect("encryption");
+
+    let with_protected_init = protect_init_segment(&raw, 1, enc).expect("protect_init_segment");
+    // A real moof-level opaque child: a `pssh` (ISO/IEC 23001-7 §8.1.1) —
+    // 8-byte header + FullBox(4) + system_id(16) + data_size(4) + no data.
+    let mut pssh = Vec::new();
+    pssh.extend_from_slice(&32u32.to_be_bytes());
+    pssh.extend_from_slice(b"pssh");
+    pssh.extend_from_slice(&[0, 0, 0, 0]); // version 0, flags 0
+    pssh.extend_from_slice(&KID); // system_id (any 16 bytes)
+    pssh.extend_from_slice(&0u32.to_be_bytes()); // data_size
+    let spliced = splice_into_moof(&with_protected_init, &pssh);
+
+    let fp = FragmentProtection {
+        track_id: 1,
+        entries: &enc.samples,
+        per_sample_iv_size: enc.tenc.default_per_sample_iv_size,
+    };
+    let out = protect_media_segment(&spliced, &[fp]).expect("protect_media_segment");
+
+    // The `pssh` must survive, and every `trun.data_offset` must still point
+    // at the same absolute byte as in the clear `mdat`.
+    let mut moof = None;
+    let mut off = 0usize;
+    while off + 8 <= out.len() {
+        let size =
+            u32::from_be_bytes([out[off], out[off + 1], out[off + 2], out[off + 3]]) as usize;
+        if size < 8 || off + size > out.len() {
+            break;
+        }
+        if &out[off + 4..off + 8] == b"moof" {
+            moof = Some((off, size));
+            break;
+        }
+        off += size;
+    }
+    let (moof_at, moof_size) = moof.expect("a moof in the output");
+    let moof_bytes = &out[moof_at..moof_at + moof_size];
+    assert!(
+        moof_bytes.windows(4).any(|w| w == b"pssh"),
+        "the moof-level pssh must survive the rewrite"
+    );
+
+    // The mdat data must be byte-identical to the pre-protection buffer's.
+    let mdat_of = |d: &[u8]| -> Vec<u8> {
+        let mut o = 0usize;
+        while o + 8 <= d.len() {
+            let s = u32::from_be_bytes([d[o], d[o + 1], d[o + 2], d[o + 3]]) as usize;
+            if s < 8 || o + s > d.len() {
+                break;
+            }
+            if &d[o + 4..o + 8] == b"mdat" {
+                return d[o + 8..o + s].to_vec();
+            }
+            o += s;
+        }
+        panic!("no mdat");
+    };
+    assert_eq!(
+        mdat_of(&out),
+        mdat_of(&spliced),
+        "the protected segment's mdat payload is unchanged"
+    );
+
+    // The written `moof` length must equal its declared size (the check that
+    // used to fail).
+    let parsed = MovieFragmentBox::parse_body(&moof_bytes[8..]).expect("re-parse moof");
+    let mut re = vec![0u8; parsed.serialized_len()];
+    let n = parsed.serialize_into(&mut re).expect("re-serialize");
+    assert_eq!(&re[..n], moof_bytes, "moof round-trips byte-exactly");
+}
+
+/// A `traf` that already carries `senc`/`saiz`/`saio` must be rejected rather
+/// than given a second set (audit item 3): §12.3 defines one `senc` per traf,
+/// and a decryptor cannot choose between two.
+#[test]
+fn protect_media_segment_rejects_a_traf_that_already_carries_senc() {
+    let Some(mut media) = clear_video_media() else {
+        return;
+    };
+    let cfg = cenc_cfg(SubsamplePolicy::WholeSample);
+    CencEncryptor::new(KEY)
+        .encrypt(&mut media, &cfg)
+        .expect("encrypt");
+    let raw = CmafMux::new(1).package(&media).expect("CmafMux::package");
+    let enc = media.tracks[0].encryption.as_ref().expect("encryption");
+    let with_protected_init = protect_init_segment(&raw, 1, enc).expect("protect_init_segment");
+
+    // A 16-byte `senc` FullBox declaring zero samples.
+    let mut senc = Vec::new();
+    senc.extend_from_slice(&16u32.to_be_bytes());
+    senc.extend_from_slice(b"senc");
+    senc.extend_from_slice(&0u32.to_be_bytes()); // version 0, flags 0
+    senc.extend_from_slice(&0u32.to_be_bytes()); // sample_count
+    let spliced = splice_into_traf(&with_protected_init, &senc);
+
+    let fp = FragmentProtection {
+        track_id: 1,
+        entries: &enc.samples,
+        per_sample_iv_size: enc.tenc.default_per_sample_iv_size,
+    };
+    let err = protect_media_segment(&spliced, &[fp])
+        .expect_err("a traf with an existing senc must be rejected");
+    assert!(
+        matches!(err, transmux::Error::InvalidInput(_)),
+        "expected InvalidInput, got {err:?}"
+    );
+}
+
+/// The `trun.data_offset` shift must be checked: a fragment whose offset would
+/// leave the 32-bit field is an error, not a wrap.
+#[test]
+fn protect_media_segment_rejects_a_data_offset_that_would_overflow() {
+    let Some(mut media) = clear_video_media() else {
+        return;
+    };
+    let cfg = cenc_cfg(SubsamplePolicy::WholeSample);
+    CencEncryptor::new(KEY)
+        .encrypt(&mut media, &cfg)
+        .expect("encrypt");
+    let raw = CmafMux::new(1).package(&media).expect("CmafMux::package");
+    let enc = media.tracks[0].encryption.as_ref().expect("encryption");
+    let with_protected_init = protect_init_segment(&raw, 1, enc).expect("protect_init_segment");
+
+    // Push the `data_offset` to `i32::MAX` so the added `delta` overflows.
+    // The `trun` is nested (`moof` → `traf` → `trun`), so scan every level.
+    fn find_box(data: &[u8], fourcc: &[u8; 4], base: usize) -> Option<(usize, usize)> {
+        let mut off = base;
+        while off + 8 <= data.len() {
+            let size = u32::from_be_bytes([data[off], data[off + 1], data[off + 2], data[off + 3]])
+                as usize;
+            if size < 8 || off + size > data.len() {
+                return None;
+            }
+            if &data[off + 4..off + 8] == fourcc {
+                return Some((off, size));
+            }
+            if let Some(hit) = find_box(data, fourcc, off + 8) {
+                return Some(hit);
+            }
+            off += size;
+        }
+        None
+    }
+    let mut buf = with_protected_init.clone();
+    let (trun_at, _) = find_box(&buf, b"trun", 0).expect("a trun in the segment");
+    let flags =
+        u32::from_be_bytes([0, buf[trun_at + 9], buf[trun_at + 10], buf[trun_at + 11]]) & 0xFF_FFFF;
+    assert!(flags & 1 != 0, "the fixture's trun carries data_offset");
+    let at = trun_at + 8 + 4 + 4;
+    buf[at..at + 4].copy_from_slice(&i32::MAX.to_be_bytes());
+
+    let fp = FragmentProtection {
+        track_id: 1,
+        entries: &enc.samples,
+        per_sample_iv_size: enc.tenc.default_per_sample_iv_size,
+    };
+    let err = protect_media_segment(&buf, &[fp])
+        .expect_err("an overflowing data_offset must be rejected");
+    assert!(
+        matches!(err, transmux::Error::InvalidInput(_)),
+        "expected InvalidInput, got {err:?}"
+    );
+}
+
+/// End-to-end oracle for item 2: protect a segment that carries an opaque
+/// moof-level child, then decrypt it back with this crate's own
+/// `CencDecryptor` (whose §8.8.7/§8.8.8 addressing is pinned against the
+/// `cenc_frag_layouts` fixtures) and check the samples equal the clear ones.
+/// That catches a wrong `saio`, a wrong `data_offset` shift, and a dropped
+/// `senc` — none of which a structural check alone would.
+#[test]
+fn protected_segment_with_an_opaque_moof_child_decrypts_to_the_clear_samples() {
+    use transmux::{CencDecryptor, KeyMap};
+
+    let Some(mut media) = clear_video_media() else {
+        return;
+    };
+    let clear_samples: Vec<Vec<u8>> = media.tracks[0]
+        .samples
+        .iter()
+        .map(|s| s.data.to_vec())
+        .collect();
+
+    let cfg = cenc_cfg(SubsamplePolicy::WholeSample);
+    CencEncryptor::new(KEY)
+        .encrypt(&mut media, &cfg)
+        .expect("encrypt");
+    let raw = CmafMux::new(1).package(&media).expect("CmafMux::package");
+    let enc = media.tracks[0].encryption.as_ref().expect("encryption");
+    let with_protected_init = protect_init_segment(&raw, 1, enc).expect("protect_init_segment");
+
+    // A `pssh` as a moof-level opaque child.
+    let mut pssh = Vec::new();
+    pssh.extend_from_slice(&32u32.to_be_bytes());
+    pssh.extend_from_slice(b"pssh");
+    pssh.extend_from_slice(&[0, 0, 0, 0]);
+    pssh.extend_from_slice(&KID);
+    pssh.extend_from_slice(&0u32.to_be_bytes());
+    let spliced = splice_into_moof(&with_protected_init, &pssh);
+
+    let fp = FragmentProtection {
+        track_id: 1,
+        entries: &enc.samples,
+        per_sample_iv_size: enc.tenc.default_per_sample_iv_size,
+    };
+    let protected = protect_media_segment(&spliced, &[fp]).expect("protect_media_segment");
+
+    let mut keys = KeyMap::new();
+    keys.insert(KID, KEY);
+    let dec = CencDecryptor::from_fmp4(&protected)
+        .expect("CencDecryptor::from_fmp4 on the protected segment");
+    let mut demuxed = dec.demux().expect("CencDecryptor::demux");
+    dec.decrypt(&mut demuxed, &keys)
+        .expect("decrypt the protected segment");
+    let got: Vec<Vec<u8>> = demuxed.tracks[0]
+        .samples
+        .iter()
+        .map(|s| s.data.to_vec())
+        .collect();
+    assert_eq!(got.len(), clear_samples.len(), "sample count");
+    assert_eq!(
+        got, clear_samples,
+        "decrypting the protected segment (with its moof-level pssh) must \
+         reproduce the clear samples exactly"
+    );
+}
+
+/// Independent oracle for item 2: Bento4 `mp4decrypt` must decrypt this
+/// crate's protected segment (the one carrying a moof-level `pssh`) to the
+/// same samples `CencDecryptor` produces — a decryptor sharing no code with
+/// the `saio`/`data_offset` arithmetic under test. Skips loudly when the tool
+/// is absent.
+#[test]
+fn protected_segment_with_an_opaque_moof_child_matches_mp4decrypt() {
+    if std::process::Command::new("mp4decrypt")
+        .arg("--version")
+        .output()
+        .is_err()
+    {
+        eprintln!(
+            "SKIP protected_segment_with_an_opaque_moof_child_matches_mp4decrypt: mp4decrypt (Bento4) not on PATH - independent cross-check not run"
+        );
+        return;
+    }
+    use transmux::{CencDecryptor, KeyMap};
+
+    let Some(mut media) = clear_video_media() else {
+        return;
+    };
+    let cfg = cenc_cfg(SubsamplePolicy::WholeSample);
+    CencEncryptor::new(KEY)
+        .encrypt(&mut media, &cfg)
+        .expect("encrypt");
+    let raw = CmafMux::new(1).package(&media).expect("CmafMux::package");
+    let enc = media.tracks[0].encryption.as_ref().expect("encryption");
+    let with_protected_init = protect_init_segment(&raw, 1, enc).expect("protect_init_segment");
+
+    let mut pssh = Vec::new();
+    pssh.extend_from_slice(&32u32.to_be_bytes());
+    pssh.extend_from_slice(b"pssh");
+    pssh.extend_from_slice(&[0, 0, 0, 0]);
+    pssh.extend_from_slice(&KID);
+    pssh.extend_from_slice(&0u32.to_be_bytes());
+    let spliced = splice_into_moof(&with_protected_init, &pssh);
+
+    let fp = FragmentProtection {
+        track_id: 1,
+        entries: &enc.samples,
+        per_sample_iv_size: enc.tenc.default_per_sample_iv_size,
+    };
+    let protected = protect_media_segment(&spliced, &[fp]).expect("protect_media_segment");
+
+    // Ours.
+    let dec = CencDecryptor::from_fmp4(&protected).expect("harvest");
+    let mut ours = dec.demux().expect("demux");
+    dec.decrypt(&mut ours, &{
+        let mut k = KeyMap::new();
+        k.insert(KID, KEY);
+        k
+    })
+    .expect("decrypt");
+    let our_samples: Vec<Vec<u8>> = ours.tracks[0]
+        .samples
+        .iter()
+        .map(|s| s.data.to_vec())
+        .collect();
+
+    // mp4decrypt's.
+    let dir = std::env::temp_dir().join(format!("transmux-h2-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("temp dir");
+    let input = dir.join("protected.mp4");
+    let output = dir.join("decrypted.mp4");
+    std::fs::write(&input, &protected).expect("write");
+    let hex = |b: &[u8; 16]| b.iter().map(|x| format!("{x:02x}")).collect::<String>();
+    let status = std::process::Command::new("mp4decrypt")
+        .arg("--key")
+        .arg(format!("{}:{}", hex(&KID), hex(&KEY)))
+        .arg(&input)
+        .arg(&output)
+        .status()
+        .expect("spawn mp4decrypt");
+    assert!(status.success(), "mp4decrypt failed");
+    let bytes = std::fs::read(&output).expect("read mp4decrypt output");
+    let _ = std::fs::remove_dir_all(&dir);
+
+    let ref_media = transmux::Fmp4Demux::new()
+        .unpackage(bytes.as_slice())
+        .expect("demux mp4decrypt output");
+    let ref_samples: Vec<Vec<u8>> = ref_media.tracks[0]
+        .samples
+        .iter()
+        .map(|s| s.data.to_vec())
+        .collect();
+    assert_eq!(
+        our_samples, ref_samples,
+        "our decryption of the protected segment must equal mp4decrypt's"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Round-3 item 7: several trafs, opaque children after them, aux_info_type
+// ---------------------------------------------------------------------------
+
+/// A protected segment with **two** tracks (two `traf`s) and an opaque child
+/// placed after the last `traf` must still be rewritten correctly: the rebuilt
+/// `moof` length, each `saio`'s moof-relative offset, and every
+/// `trun.data_offset` shift all depend on the wire order. Decrypting the result
+/// with this crate's own `CencDecryptor` (whose addressing is pinned against
+/// the `cenc_frag_layouts` fixtures) must reproduce the clear samples.
+#[test]
+fn two_trafs_and_a_trailing_opaque_child_decrypt_to_the_clear_samples() {
+    use transmux::{CencDecryptor, KeyMap};
+
+    // AVC + AAC: `fixtures/ts/h264/main.ts` is video-only, so this test needs
+    // the A/V capture.
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../fixtures/ts/h264_aac.ts");
+    if !path.exists() {
+        eprintln!("cenc_mux tests: SKIPPED — {path:?} not found.");
+        return;
+    }
+    let bytes = std::fs::read(&path).expect("read fixture");
+    let media = TsDemux::new()
+        .unpackage(bytes.as_slice())
+        .expect("demux h264_aac.ts");
+    // AVC video + AAC audio: two tracks, so the moof carries two trafs.
+    let mut media = media
+        .select_tracks_by(|t| {
+            matches!(t.spec.config, CodecConfig::Avc { .. })
+                || matches!(t.spec.config, CodecConfig::Aac { .. })
+        })
+        .expect("AVC + AAC tracks present");
+    assert_eq!(media.tracks.len(), 2, "two tracks selected");
+
+    let clear_samples: Vec<Vec<Vec<u8>>> = media
+        .tracks
+        .iter()
+        .map(|t| t.samples.iter().map(|s| s.data.to_vec()).collect())
+        .collect();
+
+    let cfg = cenc_cfg(SubsamplePolicy::WholeSample);
+    CencEncryptor::new(KEY)
+        .encrypt(&mut media, &cfg)
+        .expect("encrypt");
+    let raw = CmafMux::new(1).package(&media).expect("CmafMux::package");
+
+    let mut with_init = raw.clone();
+    for track in &media.tracks {
+        let enc = track.encryption.as_ref().expect("encryption");
+        with_init = protect_init_segment(&with_init, track.spec.track_id, enc)
+            .expect("protect_init_segment");
+    }
+
+    // A `pssh` appended *after* the last `traf` (the wire-order case the
+    // running `saio` offset and moof length must both survive).
+    let mut pssh = Vec::new();
+    pssh.extend_from_slice(&32u32.to_be_bytes());
+    pssh.extend_from_slice(b"pssh");
+    pssh.extend_from_slice(&[0, 0, 0, 0]);
+    pssh.extend_from_slice(&KID);
+    pssh.extend_from_slice(&0u32.to_be_bytes());
+    let spliced = splice_into_moof(&with_init, &pssh);
+
+    let protections: Vec<FragmentProtection<'_>> = media
+        .tracks
+        .iter()
+        .map(|t| {
+            let enc = t.encryption.as_ref().expect("encryption");
+            FragmentProtection {
+                track_id: t.spec.track_id,
+                entries: &enc.samples,
+                per_sample_iv_size: enc.tenc.default_per_sample_iv_size,
+            }
+        })
+        .collect();
+    let protected = protect_media_segment(&spliced, &protections).expect("protect_media_segment");
+
+    let mut keys = KeyMap::new();
+    keys.insert(KID, KEY);
+    let dec = CencDecryptor::from_fmp4(&protected).expect("harvest");
+    let mut out = dec.demux().expect("demux");
+    dec.decrypt(&mut out, &keys).expect("decrypt");
+
+    // `CencDecryptor` reconstructs the AVC track; the point of this test is
+    // that the *rewrite* kept both `traf`s addressable and the appended
+    // `pssh` in place, so the video track must decrypt to its clear samples
+    // even though a second `traf` (and an opaque child after it) shifted every
+    // moof-relative offset.
+    let video = out
+        .tracks
+        .iter()
+        .position(|t| matches!(t.spec.config, CodecConfig::Avc { .. }))
+        .expect("the decrypted video track");
+    let got: Vec<Vec<u8>> = out.tracks[video]
+        .samples
+        .iter()
+        .map(|s| s.data.to_vec())
+        .collect();
+    assert_eq!(
+        got, clear_samples[0],
+        "the video track must decrypt to its clear samples"
+    );
+    assert!(
+        protected.windows(4).any(|w| w == b"pssh"),
+        "the appended pssh survives"
+    );
+}
+
+/// A `saiz`/`saio` pair typed for a *different* scheme is not CENC's and must
+/// not make `protect_media_segment` refuse the segment (audit item 7). A CENC
+/// one still must.
+#[test]
+fn non_cenc_typed_saiz_is_not_treated_as_an_existing_cenc_triple() {
+    use transmux::cenc::{SampleAuxInfoOffsetsBox, SampleAuxInfoSizesBox};
+
+    // `saiz` v0, aux_info_type present (flag 0x1) and *not* a CENC four-CC.
+    let saiz = SampleAuxInfoSizesBox {
+        version: 0,
+        flags: 0x01,
+        aux_info_type: Some(u32::from_be_bytes(*b"rocb")),
+        aux_info_type_parameter: Some(1),
+        default_sample_info_size: 0,
+        sample_count: 0,
+        sample_info_sizes: Vec::new(),
+    };
+    let saio = SampleAuxInfoOffsetsBox {
+        version: 0,
+        flags: 0x01,
+        aux_info_type: Some(u32::from_be_bytes(*b"rocb")),
+        aux_info_type_parameter: Some(1),
+        offsets: Vec::new(),
+    };
+    let mut extra = Vec::new();
+    extra.extend_from_slice(&saiz.to_bytes());
+    extra.extend_from_slice(&saio.to_bytes());
+    // And a CENC-typed pair for the contrast.
+    let cenc_saiz = SampleAuxInfoSizesBox {
+        aux_info_type: Some(u32::from_be_bytes(*b"cenc")),
+        ..saiz
+    };
+    let mut cenc_extra = Vec::new();
+    cenc_extra.extend_from_slice(&cenc_saiz.to_bytes());
+
+    let Some(mut media) = clear_video_media() else {
+        return;
+    };
+    let cfg = cenc_cfg(SubsamplePolicy::WholeSample);
+    CencEncryptor::new(KEY)
+        .encrypt(&mut media, &cfg)
+        .expect("encrypt");
+    let raw = CmafMux::new(1).package(&media).expect("CmafMux::package");
+    let enc = media.tracks[0].encryption.as_ref().expect("encryption");
+    let with_init = protect_init_segment(&raw, 1, enc).expect("protect_init_segment");
+    let fp = || FragmentProtection {
+        track_id: 1,
+        entries: &enc.samples,
+        per_sample_iv_size: enc.tenc.default_per_sample_iv_size,
+    };
+
+    // A non-CENC pair is preserved and the segment is still protected.
+    let with_non_cenc = splice_into_traf(&with_init, &extra);
+    let out = protect_media_segment(&with_non_cenc, &[fp()])
+        .expect("a non-CENC saiz/saio must not block protection");
+    assert!(
+        out.windows(4).any(|w| w == b"rocb"),
+        "the non-CENC pair survives the rewrite"
+    );
+
+    // A CENC-typed one still collides.
+    let with_cenc = splice_into_traf(&with_init, &cenc_extra);
+    let err =
+        protect_media_segment(&with_cenc, &[fp()]).expect_err("a CENC saiz must still be refused");
+    assert!(
+        matches!(err, transmux::Error::InvalidInput(_)),
+        "expected InvalidInput, got {err:?}"
+    );
 }

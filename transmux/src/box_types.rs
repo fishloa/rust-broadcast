@@ -199,6 +199,12 @@ pub struct BoxHeader {
 }
 
 impl BoxHeader {
+    /// Whether the wire encoding used the 64-bit `largesize` form
+    /// (`size == 1` + an 8-byte length, ISO/IEC 14496-12:2015 §4.2).
+    pub fn has_largesize(&self) -> bool {
+        self.has_largesize
+    }
+
     /// Minimum header bytes this box header actually occupies on the wire.
     ///
     /// Distinguished from the constant `BOX_HEADER_MIN_SIZE` because a box with

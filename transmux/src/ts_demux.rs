@@ -2806,14 +2806,6 @@ fn on_completed_pes(
             .rebase_at_discontinuity(dts, stream.last_frame_period)
             == DiscontinuityVerdict::Forward;
     }
-    if std::env::var("TSDBGA").is_ok() && pid == 0x0101 {
-        std::eprintln!(
-            "AUDIO PES pid={pid:#06x} bytes={} payload={} declared={}",
-            pes_bytes.len(),
-            pes.payload.len(),
-            pes.pes_packet_length
-        );
-    }
     let (pts_uw, dts_uw) = stream.wrap.push(pts, dts);
     advance_track(stream, pid, pes.payload.to_vec(), pts_uw, dts_uw, events);
 }
