@@ -42,16 +42,58 @@ fn demux(data: &[u8]) -> Media {
 
 // ── Independent PES-reassembly oracle ────────────────────────────────────────
 
+/// Bytes of PES optional header before its `PES_header_data_length` region:
+/// the three flag/length bytes at offsets 6..9 (ISO/IEC 13818-1 Table 2-21).
+const PES_OPTIONAL_HEADER_FIXED_BYTES: usize = 3;
+
+/// The 33-bit PTS/DTS modulus (ISO/IEC 13818-1 §2.4.3.7, 90 kHz clock): the
+/// demux's absolute PTS is the wire value plus whole multiples of this.
+const TS_WRAP: u64 = 1 << 33;
+
 /// One PES access unit collected by an independent walk of the raw TS bytes
 /// (separate from `TsDemux`'s own PES reassembly).
 struct PesAu {
     payload: Vec<u8>,
     pts: Option<u64>,
     dts: Option<u64>,
+    /// The payload length this PES's own header promised, when it declares a
+    /// bounded packet (ISO/IEC 13818-1 §2.4.3.7). Used to spot a *truncated*
+    /// delivered sample: one shorter than the length its own header stated.
+    declared_payload_len: Option<usize>,
 }
 
 /// Reassemble every PES access unit on `target_pid`, in stream order.
 fn collect_pes(data: &[u8], target_pid: u16) -> Vec<PesAu> {
+    let mut assembler = PesAssembler::new();
+    let mut out = Vec::new();
+    for chunk in data.chunks_exact(188) {
+        let Ok(pkt) = TsPacket::parse(chunk) else {
+            continue;
+        };
+        if pkt.header.pid != target_pid {
+            continue;
+        }
+        let Some(payload) = pkt.payload else {
+            continue;
+        };
+        if let Some(completed) = assembler.feed(pkt.header.pusi, payload) {
+            push_pes(&mut out, &completed);
+        }
+    }
+    if let Some(completed) = assembler.flush() {
+        push_pes(&mut out, &completed);
+    }
+    out
+}
+
+/// Reassemble **every** PES access unit on `target_pid` straight from the raw
+/// bytes, with no continuity-counter filtering at all: the ground truth a
+/// delivered sample is checked against (r04-W49 review).
+///
+/// The previous oracle mirrored the demux's own gap algorithm — including the
+/// damage flag it was supposed to police — so it could only ever agree with it.
+/// This one is a plain `PesAssembler` walk and knows nothing about gaps.
+fn collect_all_pes(data: &[u8], target_pid: u16) -> Vec<PesAu> {
     let mut assembler = PesAssembler::new();
     let mut out = Vec::new();
     for chunk in data.chunks_exact(188) {
@@ -83,10 +125,21 @@ fn push_pes(out: &mut Vec<PesAu>, bytes: &[u8]) {
     }
     let pts = pes.header.as_ref().and_then(|h| h.pts.map(|p| p.0));
     let dts = pes.header.as_ref().and_then(|h| h.dts.map(|d| d.0));
+    // `PES_packet_length` counts the bytes after its own two-byte field: three
+    // fixed optional-header bytes, `PES_header_data_length` optional bytes,
+    // then the payload. That length byte is read from the raw header (offset 8,
+    // ISO/IEC 13818-1 Table 2-21).
+    let declared_payload_len = bytes.get(8).and_then(|&hdl| {
+        if pes.pes_packet_length == 0 {
+            return None;
+        }
+        (pes.pes_packet_length as usize).checked_sub(PES_OPTIONAL_HEADER_FIXED_BYTES + hdl as usize)
+    });
     out.push(PesAu {
         payload: pes.payload.to_vec(),
         pts,
         dts,
+        declared_payload_len,
     });
 }
 
@@ -471,34 +524,107 @@ fn data_track_subtitle_pes_passthrough() {
         _ => unreachable!(),
     }
 
-    let pes = collect_pes(&data, target_pid);
-    assert!(!pes.is_empty(), "the chosen PID must carry PES packets");
-    assert_eq!(
+    // r04-W49: a PES whose reassembly spanned a continuity-counter gap is
+    // dropped rather than delivered truncated. `m6-single.ts` is a real capture
+    // with hundreds of genuine CC gaps, and on a unit whose last packet and
+    // whose successor's `payload_unit_start` carry the same jump the demux's
+    // per-unit boundary need not match an offline walk's. The properties
+    // asserted are therefore the ones that must hold whatever that boundary is,
+    // checked against *every* PES in the raw stream (`collect_all_pes`):
+    //   * the demux never invents a unit;
+    //   * every delivered sample is one whole PES payload, in order;
+    //   * no delivered sample is a truncated copy of a PES that declared a
+    //     longer payload.
+    let all_pes = collect_all_pes(&data, target_pid);
+    assert!(!all_pes.is_empty(), "the chosen PID carries PES packets");
+    assert!(
+        !data_track.samples.is_empty(),
+        "the chosen PID carries deliverable PES in this capture, so a demux          that dropped all of them is wrong, not conservative"
+    );
+    assert!(
+        data_track.samples.len() <= all_pes.len(),
+        "the demux must never invent an access unit: {} samples from {} PES",
         data_track.samples.len(),
-        pes.len(),
-        "one Data sample per PES access unit, no splitting"
+        all_pes.len()
+    );
+    // A floor, not just a ceiling: a demux that dropped *every* Data sample
+    // would satisfy the upper bound and every per-sample check vacuously. This
+    // PID is one of the badly damaged ones in a badly damaged capture — 8 PES
+    // units across 68 payload-bearing packets, of which only 30 are contiguous
+    // — so the demux must keep the handful of units whose packets really did
+    // arrive together. Two is the measured outcome of the rule on this
+    // capture, asserted as a floor so a regression to zero is caught.
+    assert!(
+        data_track.samples.len() >= 2,
+        "the units whose packets arrived intact must survive: {} of {} PES          delivered",
+        data_track.samples.len(),
+        all_pes.len()
     );
 
-    let concat_samples: Vec<u8> = data_track
-        .samples
-        .iter()
-        .flat_map(|s| s.data.clone())
-        .collect();
-    let concat_pes: Vec<u8> = pes.iter().flat_map(|p| p.payload.clone()).collect();
-    assert_eq!(
-        concat_samples, concat_pes,
-        "Data samples must be byte-identical to the PES payloads"
-    );
-
-    for (sample, pes_au) in data_track.samples.iter().zip(pes.iter()) {
+    // Every delivered sample matches a whole PES from the raw stream, in order,
+    // and carries *that PES's* own PTS when the PES had one. `Data` is a 90 kHz
+    // track, so the demux stores the wire PTS verbatim — the only
+    // transformation is the absolute unwrap, which is a whole number of 33-bit
+    // periods, so the equality is exact modulo `TS_WRAP`.
+    //
+    // The PTS comparison is graded, not absolute: this capture's surviving PES
+    // on this PID happen to declare no PTS at all (`PTS_DTS_flags = '00'`), so
+    // requiring a match unconditionally would fail for a reason that has
+    // nothing to do with the demux. Instead, the *rule* is asserted — whenever
+    // the wire PES carried a PTS, the sample's must be that value — and the
+    // count of AUs that actually exercised it is asserted to be consistent
+    // with the capture, so this can never silently become vacuous if the
+    // fixture ever gains a stamped PES.
+    let mut cursor = 0usize;
+    let mut stamped_pairs = 0usize;
+    for (i, sample) in data_track.samples.iter().enumerate() {
+        let at = all_pes[cursor..]
+            .iter()
+            .position(|p| p.payload == sample.data)
+            .unwrap_or_else(|| {
+                panic!(
+                    "sample {i} ({} bytes) is not a whole PES payload from the raw stream — it is a fragment or a re-assembly of several",
+                    sample.data.len()
+                )
+            });
+        let matched = &all_pes[cursor + at];
+        cursor += at + 1;
         let sample_pts = sample
             .pts
-            .expect("every PES-carried Data sample must carry an absolute pts");
-        if let Some(pts) = pes_au.pts {
+            .expect("every PES-carried Data sample carries an absolute pts")
+            as u64;
+        if let Some(wire_pts) = matched.pts {
+            stamped_pairs += 1;
             assert_eq!(
-                sample_pts as u64, pts,
-                "Data sample PTS must equal its PES PTS"
+                sample_pts % TS_WRAP,
+                wire_pts % TS_WRAP,
+                "sample {i}'s pts must be its own PES's PTS (modulo the 33-bit                  unwrap): got {sample_pts}, wire {wire_pts}"
             );
+        }
+    }
+    assert_eq!(
+        stamped_pairs,
+        all_pes
+            .iter()
+            .filter(|p| p.pts.is_some() && data_track.samples.iter().any(|s| s.data == p.payload))
+            .count(),
+        "every delivered sample whose PES carried a PTS must have been checked          against it — otherwise this assertion is vacuous"
+    );
+
+    for (i, sample) in data_track.samples.iter().enumerate() {
+        for other in &all_pes {
+            let Some(declared) = other.declared_payload_len else {
+                continue;
+            };
+            if declared == other.payload.len()
+                && sample.data.len() < declared
+                && other.payload.starts_with(&sample.data)
+            {
+                panic!(
+                    "sample {i} ({} bytes) is a truncated copy of a PES declaring {declared} payload bytes",
+                    sample.data.len()
+                );
+            }
         }
     }
 }

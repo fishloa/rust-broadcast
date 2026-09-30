@@ -25,13 +25,19 @@
 //! `dac3`/`dec3`, DTS core-frame header → `ddts`) → length-prefixed video /
 //! raw audio samples.
 //!
-//! Config recovery happens incrementally, access unit by access unit, and is
-//! **single-shot and permanent**: the first successfully-recovered config for
-//! a PID is used for the rest of the stream (identical to the old whole-file
-//! `find_map` scans this replaces), so a track's `DemuxEvent::TrackAdded`
-//! fires once config is known — with an opaque [`CodecConfig::Data`] track
-//! (issue #557) firing on its very first access unit, since its config needs
-//! no in-band header at all.
+//! Config recovery happens incrementally, access unit by access unit: a
+//! track's `DemuxEvent::TrackAdded` fires as soon as its config is known —
+//! with an opaque [`CodecConfig::Data`] track (issue #557) firing on its very
+//! first access unit, since its config needs no in-band header at all.
+//!
+//! The config is **not** frozen at that point. A stream may change its
+//! parameter sets mid-flight (an SD↔HD ad break, a re-encode, a multiplex
+//! reconfiguration), and a track whose in-band AVC/HEVC parameter sets or AAC
+//! `ADTS` header actually change re-probes on that access unit and emits
+//! `DemuxEvent::TrackUpdated` with the new config on the *same* `track_id`
+//! (r04-W51) — mirroring `flv_stream`'s handling of a re-sent sequence
+//! header. An unchanging repeat, which encoders send routinely, emits
+//! nothing.
 //!
 //! HEVC (H.265) elementary streams are carried into the IR: the in-band
 //! VPS/SPS/PPS NAL units are gathered from the Annex-B access units, decoded
@@ -191,6 +197,10 @@ const MAX_UNATTRIBUTED_BYTES: usize = 4 * 1024 * 1024;
 /// this as the "one more worst-case packet" margin against
 /// [`MAX_UNATTRIBUTED_BYTES`] (see that impl's doc comment).
 const TS_MAX_PAYLOAD_BYTES: usize = TS_PACKET_SIZE - 4;
+/// Offset just past `PES_packet_length` within a PES packet — the first 6
+/// bytes are `packet_start_code_prefix`(3) + `stream_id`(1) +
+/// `PES_packet_length`(2) (ISO/IEC 13818-1 §2.4.3.7, Table 2-21).
+const PES_LENGTH_FIELD_END: usize = 6;
 /// Hard cap on one PID's in-progress PES buffer (issue #663 P5.2,
 /// audit-ingest's "bounded reassembly" recommendation applied to TS). A PES
 /// runs from one `payload_unit_start_indicator` to the next
@@ -387,6 +397,28 @@ pub(crate) const MPEG2_PICTURE_CODING_TYPE_I: u8 = 0x01;
 /// reaches every 33-bit clock consumer in the workspace, not just this one.
 const TS_WRAP: u64 = broadcast_common::clock33::WRAP_33BIT;
 
+/// Mask of the 33-bit PTS/DTS field — [`TS_WRAP`] minus one, for reducing a
+/// modular difference back onto the wire clock (§2.4.3.7).
+const TS_WRAP_MASK: u64 = TS_WRAP - 1;
+
+/// Largest observed inter-access-unit step (90 kHz ticks) still believed to be
+/// a frame period when interpolating an unstamped PES (§2.4.2.6, r04-W48) and
+/// when lifting a decode timeline at a signalled discontinuity.
+///
+/// One second on the 90 kHz clock. The earlier value was ten seconds, which is
+/// far too loose: an 8-second forward splice is not this stream's cadence, yet
+/// it sat inside the window and became *the* frame period for every unstamped
+/// access unit that followed (r04-W48/W50 review). No real frame rate is below
+/// 1 fps, so a second is a generous ceiling that still excludes every gap,
+/// splice and clock jump this is meant to reject.
+const MAX_FRAME_PERIOD_TICKS: u64 = VIDEO_TIMESCALE as u64;
+
+/// How many recent inter-access-unit steps
+/// [`StreamState::recent_steps`] keeps for the median estimate. Five is the
+/// smallest window in which a single outlier (one late access unit) cannot
+/// dominate the middle value.
+const FRAME_PERIOD_WINDOW: usize = 5;
+
 /// Codec class recovered from a PMT `stream_type` (used to pick the sample /
 /// config-recovery path). Data-carrying dispatch discriminant, not a spec label
 /// enum — hence no `name()`/`Display` (see `tests/label_coverage.rs` policy).
@@ -551,6 +583,71 @@ pub(crate) fn mpeg2_is_sync(au: &[u8]) -> bool {
     false
 }
 
+/// Counts one byte-offset probe of a codec-config sync scanner
+/// ([`find_mpeg_audio_sync`] / [`find_adts_sync`]).
+///
+/// Test-only instrumentation for the r04-W47 complexity bound: the codec probes
+/// must scan the *newest* access unit only, so the total probes a demux spends
+/// on a never-resolving PID must stay proportional to the input length, not to
+/// its square. The counter is read by
+/// `probe_sync_scan_work_is_linear_in_the_input_not_quadratic`, which asserts
+/// the bound, and is incremented at the actual scan site (inside the sync loop)
+/// rather than re-derived by the test, so the number it measures is the work
+/// the demux really did. Per-thread because the crate's own test suite runs in
+/// parallel: a process-wide counter would be summed across unrelated tests, so
+/// the bound would measure other tests' demux work instead of this one's.
+///
+/// Compiled only for the test build — the crate is `no_std`, where
+/// `thread_local!` is not available, and nothing outside a test reads it.
+#[cfg(test)]
+mod probe_counter {
+    thread_local! {
+        static SYNC_PROBES: core::cell::Cell<u64> = const { core::cell::Cell::new(0) };
+    }
+
+    pub(super) fn record() {
+        SYNC_PROBES.with(|c| c.set(c.get().wrapping_add(1)));
+    }
+
+    pub(super) fn read() -> u64 {
+        SYNC_PROBES.with(|c| c.get())
+    }
+}
+
+/// Record one scan-site byte probe (see [`probe_counter`]).
+#[cfg(test)]
+fn record_sync_probe() {
+    probe_counter::record();
+}
+
+/// Record one pass of a codec-config probe over an access unit.
+///
+/// The H.264/HEVC probes have no byte-by-byte *sync* scan — they walk the
+/// access unit's NAL units with [`iter_annexb_nals`], which itself scans for
+/// start codes — so `record_sync_probe` does not see them. This counter does,
+/// making the "scan only the newest access unit" bound measurable for every
+/// probe kind (r04-W47 review).
+#[cfg(test)]
+fn record_probe_pass() {
+    probe_counter::record();
+}
+
+/// Non-test build: nothing to record.
+#[cfg(not(test))]
+#[inline(always)]
+fn record_probe_pass() {}
+
+/// Non-test build: nothing to record.
+#[cfg(not(test))]
+#[inline(always)]
+fn record_sync_probe() {}
+
+/// Read this thread's probe total (see [`record_sync_probe`]).
+#[cfg(test)]
+fn sync_probes() -> u64 {
+    probe_counter::read()
+}
+
 /// Scan forward from the start of `data` for the first byte offset carrying a
 /// valid MPEG audio frame header, returning that offset and the parsed
 /// header. A broadcast MP2-in-PES payload is not guaranteed to start on a
@@ -562,6 +659,7 @@ pub(crate) fn mpeg2_is_sync(au: &[u8]) -> bool {
 fn find_mpeg_audio_sync(data: &[u8]) -> Option<(usize, MpegAudioFrameHeader)> {
     let mut off = 0usize;
     while off + 4 <= data.len() {
+        record_sync_probe();
         if let Ok(hdr) = MpegAudioFrameHeader::parse(&data[off..]) {
             return Some((off, hdr));
         }
@@ -602,6 +700,7 @@ fn split_mpeg_audio_frames(payload: &[u8]) -> Vec<&[u8]> {
 fn find_adts_sync(data: &[u8]) -> Option<(usize, AdtsHeader)> {
     let mut off = 0usize;
     while off + ADTS_HEADER_SIZE <= data.len() {
+        record_sync_probe();
         if let Ok(hdr) = parse_adts_header(&data[off..]) {
             return Some((off, hdr));
         }
@@ -716,6 +815,11 @@ struct PmtSectionHeader {
     /// `last_section_number` (`section[7]`). A PMT is always single-section,
     /// so a genuine PMT always has `section_number == last_section_number == 0`.
     last_section_number: u8,
+    /// `PCR_PID` (`section[8..10]`, 13 bits — §2.4.4.8 Table 2-33): the PID
+    /// whose adaptation fields carry this program's `PCR`, and therefore the
+    /// PID on which a system time-base discontinuity is signalled
+    /// (§2.4.3.5). `0x1FFF` means "no PCR for this program".
+    pcr_pid: u16,
 }
 
 /// Parse a PMT section's header fields (§2.4.4.8) — everything needed to
@@ -743,6 +847,10 @@ fn parse_pmt_section_header(section: &[u8]) -> Result<PmtSectionHeader> {
         current_next: section[5] & CURRENT_NEXT_INDICATOR_BIT != 0,
         section_number: section[6],
         last_section_number: section[7],
+        // PCR_PID sits at the start of the section body, which is
+        // `section[8..]` (the 8-byte header ends at index 8): reserved(3) +
+        // PCR_PID(13).
+        pcr_pid: (((section[8] & PID_HI_MASK) as u16) << 8) | section[9] as u16,
     })
 }
 
@@ -881,10 +989,11 @@ struct BufferedAu {
 }
 
 /// Per-PID state accumulated while scanning access units for the codec
-/// config. Resolution is single-shot and permanent: the moment enough header
-/// data is seen, [`finalize_probe`] returns the finished [`CodecConfig`] and
-/// the owning [`TrackState`] moves to `Parked` (backlog carried over as-is,
-/// still accumulating — see [`TrackState`]).
+/// config. The moment enough header data is seen, [`finalize_probe`] returns
+/// the finished [`CodecConfig`] and the owning [`TrackState`] moves to
+/// `Parked` (backlog carried over as-is, still accumulating — see
+/// [`TrackState`]). A live track whose in-band config header later changes is
+/// re-probed through the same function (r04-W51).
 enum ConfigProbe {
     H264 {
         sps: Option<Vec<u8>>,
@@ -1120,15 +1229,31 @@ enum LiveKind {
 struct LiveTrack {
     track_id: u32,
     kind: LiveKind,
-    /// This track's already-recovered codec config, retained so a later PMT
-    /// metadata change (issue #774) can rebuild a full [`TrackSpec`] for
-    /// [`DemuxEvent::TrackUpdated`] without re-deriving it — codec config
-    /// recovery itself stays single-shot and permanent, this field is only
-    /// ever read, never re-probed.
+    /// This track's current codec config, retained so a later PMT metadata
+    /// change (issue #774) and a mid-stream config change (r04-W51) can
+    /// rebuild a full [`TrackSpec`] for [`DemuxEvent::TrackUpdated`].
     config: CodecConfig,
     /// This track's media timescale, for the same [`DemuxEvent::TrackUpdated`]
     /// reconstruction.
     timescale: u32,
+    /// The AVC/HEVC parameter sets this track has seen, tracked as each appears
+    /// so a re-probe can tell a real change from a repeat and is not blind to a
+    /// parameter set that arrived in an earlier access unit (r04-W51).
+    parameter_sets: ParameterSets,
+    /// The in-band codec-config header bytes this track's current config was
+    /// built from, so a *changed* header can be told apart from a repeat
+    /// (r04-W51).
+    ///
+    /// A broadcast stream changes its parameter sets mid-flight routinely —
+    /// an SD↔HD ad break, a re-encode, a multiplex reconfiguration — and a
+    /// mid-stream SPS/PPS (or AAC config) otherwise left the track labelled
+    /// with the original `avcC`/`esds` for the rest of the stream, so the init
+    /// segment described a stream that had stopped being sent. The parameters
+    /// are compared byte-for-byte because encoders also repeat them
+    /// unchanged, often on every keyframe; an identical repeat must not
+    /// trigger a `TrackUpdated` (which tells a consumer to rebuild its init
+    /// segment).
+    config_header: Option<Vec<u8>>,
 }
 
 /// A [`StreamState`]'s codec-config **and** PMT-declaration-order lifecycle.
@@ -1169,6 +1294,19 @@ enum TrackState {
     Abandoned,
 }
 
+/// What [`WrapState::rebase_at_discontinuity`] concluded about a stamp that
+/// arrived after a signalled time-base discontinuity (r04-W50 review).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DiscontinuityVerdict {
+    /// This stamp reads as a forward step — the old time base's own cadence, or
+    /// the new base already starting ahead — so the offset was left alone and
+    /// the caller keeps waiting.
+    Forward,
+    /// This stamp moved backwards, so it is the new time base: the offset was
+    /// lifted to make it continue from the last stamp emitted.
+    Lifted,
+}
+
 /// Incremental 33-bit PTS/DTS wrap-unroll, one access unit at a time —
 /// produces the identical sequence the old whole-stream unroll would, applied
 /// access-unit-by-access-unit (ISO/IEC 13818-1 §2.4.3.7). A raw value of
@@ -1186,11 +1324,30 @@ struct WrapState {
     prev_dts_uw: i128,
     prev_pts_raw: u64,
     prev_pts_uw: i128,
+    /// Ticks added to every unwrapped timestamp from the most recent
+    /// signalled time-base discontinuity onwards (r04-W50).
+    ///
+    /// `discontinuity_indicator` (ISO/IEC 13818-1 §2.4.3.5) marks "a sample of
+    /// a new system time clock": the new time base may start *below* the old
+    /// one — the ordinary splice case — and the 33-bit unroll alone cannot see
+    /// that (a backward step within half the range is read as a real backward
+    /// jump, not a wrap). Every sample after it then carries a `dts` earlier
+    /// than the sample before it, which violates the IR's "samples in decode
+    /// order with a non-decreasing absolute dts" invariant and makes every
+    /// downstream muxer emit negative deltas.
+    ///
+    /// The demux rebases instead of leaving it to consumers: the offset is the
+    /// smallest non-negative constant that keeps the new time base continuing
+    /// from the old one, so the decode timeline stays monotonic across the
+    /// discontinuity while the *intervals* inside each time base are
+    /// untouched.
+    discontinuity_offset: i128,
 }
 
 impl WrapState {
     /// Feed the next access unit's raw 33-bit `(pts, dts)`, returning the
-    /// unwrapped `(pts, dts)`.
+    /// unwrapped `(pts, dts)` with any accumulated discontinuity offset
+    /// applied.
     fn push(&mut self, raw_pts: u64, raw_dts: u64) -> (i128, i128) {
         if !self.initialized {
             self.initialized = true;
@@ -1214,11 +1371,87 @@ impl WrapState {
             self.pts_seen_real = raw_pts != 0;
             raw_pts as i128
         };
+        // Remember the *un-offset* unwrapped values: the next access unit's
+        // wrap arithmetic is a property of the wire clock, which the offset
+        // does not move.
         self.prev_dts_raw = raw_dts;
         self.prev_dts_uw = dts_uw;
         self.prev_pts_raw = raw_pts;
         self.prev_pts_uw = pts_uw;
-        (pts_uw, dts_uw)
+        (
+            pts_uw.saturating_add(self.discontinuity_offset),
+            dts_uw.saturating_add(self.discontinuity_offset),
+        )
+    }
+
+    /// Fold in a signalled time-base discontinuity (r04-W50): decide whether
+    /// this stamp is the first of the new time base, and if so lift the offset
+    /// so the decode timeline continues rather than jumping backwards.
+    ///
+    /// Returns [`DiscontinuityVerdict::Lifted`] when the offset moved (this
+    /// stamp really was the new base) and
+    /// [`DiscontinuityVerdict::Forward`] when it reads as a forward step — which
+    /// the *old* base also produces, so the caller keeps `pending_rebase` set
+    /// and tests the next access unit the same way.
+    ///
+    /// The rules, each fixing a defect of the earlier attempt:
+    ///
+    /// * **Lift only, never subtract.** The offset moves *up* only when the
+    ///   incoming stamp would land at or before the last one emitted. A forward
+    ///   step is a continuation, not a shrinkable jump: the earlier code
+    ///   computed `wanted - next` and added a *negative* shortfall, pulling a
+    ///   legitimate forward splice back to a single frame period — while its
+    ///   doc claimed the lift was "the smallest non-negative constant".
+    /// * **Decide by a backward move, never by exact equality.** The earlier
+    ///   attempt treated `shortfall == 0` as "still the old base", which cadence
+    ///   jitter breaks: at 23.976 fps the frame period alternates 3754/3753
+    ///   ticks and at 44.1 kHz 2351/2352, so the old base's last access unit
+    ///   lands a tick early or late and the flag is consumed by the wrong unit.
+    ///   A backward step is something the old base cannot produce, so that — not
+    ///   an exact match — is the signal.
+    /// * **Only the new base consumes the flag.** An old-base access unit
+    ///   completing after the indicator reads as a forward step, so
+    ///   `pending_rebase` stays set for the next access unit.
+    fn rebase_at_discontinuity(&mut self, raw_dts: u64, step: i128) -> DiscontinuityVerdict {
+        if !self.initialized {
+            return DiscontinuityVerdict::Forward;
+        }
+        // Unrolled position of this stamp *before* the current offset is
+        // applied, and the value the caller last received (which already
+        // includes any earlier lift).
+        let next_uw = if self.dts_seen_real {
+            unwrap_ts(self.prev_dts_uw, self.prev_dts_raw, raw_dts)
+        } else {
+            raw_dts as i128
+        };
+        let last_emitted = self.prev_dts_uw.saturating_add(self.discontinuity_offset);
+        let next_emitted = next_uw.saturating_add(self.discontinuity_offset);
+        // `step` bounds the jump the *old* base could still produce: a decoder
+        // polled with a nominal frame period may hand out one access unit of
+        // slack either way. A move further back than that is the new base.
+        let slack = step.max(1);
+        if next_emitted + slack > last_emitted {
+            // Forward, or level within one nominal period: the old base's own
+            // cadence. Never a lift, and never a reduction.
+            return DiscontinuityVerdict::Forward;
+        }
+        // Lift so the new base's first stamp lands *one nominal period past*
+        // the last one emitted, not merely level with it: a stamp equal to its
+        // predecessor gives the IR a zero step, and every writer in this crate
+        // rejects a zero-duration sample. `step` is the track's own last
+        // measured frame period, so a steady stream keeps its cadence across
+        // the seam.
+        let lift = last_emitted
+            .saturating_sub(next_emitted)
+            .saturating_add(slack);
+        self.discontinuity_offset = self.discontinuity_offset.saturating_add(lift);
+        self.prev_dts_raw = raw_dts;
+        self.prev_dts_uw = next_uw;
+        self.prev_pts_raw = raw_dts;
+        self.prev_pts_uw = next_uw;
+        self.dts_seen_real = true;
+        self.pts_seen_real = true;
+        DiscontinuityVerdict::Lifted
     }
 }
 
@@ -1250,13 +1483,79 @@ struct StreamState {
     /// last `payload_unit_start` — enforces [`MAX_PES_BUFFER_BYTES`]. Always
     /// `0` and unused for `Carrier::Section` streams.
     pes_bytes: usize,
-    /// Previous access unit's resolved `(pts, dts)` — the fallback used when
-    /// a PES carries neither (mirrors the old `push_access_unit` fallback).
+    /// Previous access unit's resolved `(pts, dts)` — the base a PES carrying
+    /// none of its own is interpolated *forward* from (see
+    /// [`StreamState::frame_period`]).
     fallback: (u64, u64),
+    /// Estimated per-access-unit frame period (90 kHz ticks), measured from
+    /// the last two *stamped* PES access units on this PID.
+    ///
+    /// A PES packet may legally omit both PTS and DTS (ISO/IEC 13818-1
+    /// §2.4.3.7: `PTS_DTS_flags == '00'`), and the 2.7.4 interval constraint
+    /// only requires them periodically. The demux used to reuse the previous
+    /// access unit's stamps verbatim for such a packet, so consecutive video
+    /// access units received *identical* `dts` — the one-behind duration rule
+    /// then gave the earlier one `duration = 0` and the next stamped access
+    /// unit absorbed the whole gap, producing zero-duration samples plus one
+    /// long one (r04-W48). The T-STD instead derives them: "Decoding times
+    /// tdn(j + 1), tdn(j + 2),... of access units without encoded DTS or PTS
+    /// fields which directly follow access unit j may be derived from
+    /// information in the elementary stream" (§2.4.2.6). The closest
+    /// container-level estimate of that information is the observed spacing
+    /// between stamped access units, which is what this holds.
+    ///
+    /// `None` until two stamped access units have been seen — a lone
+    /// unstamped packet has nothing to interpolate from and keeps the old
+    /// verbatim-fallback behaviour rather than inventing a period.
+    frame_period: Option<u64>,
+    /// The DTS of the most recent *stamped* access unit, which is what a new
+    /// stamped access unit measures its period against. Kept separate from
+    /// [`StreamState::fallback`] because an unstamped access unit advances
+    /// `fallback` (that is the interpolation) without being a clock
+    /// observation to measure against.
+    last_stamped_dts: Option<u64>,
+    /// Access units seen since that stamped one, so the span it covers is
+    /// divided by the right count when the next stamp arrives.
+    units_since_stamped: u64,
     has_any: bool,
     wrap: WrapState,
     /// Always `Some` except transiently inside [`advance_track`].
     track: Option<TrackState>,
+    /// This PID's most recent observed inter-access-unit spacing (90 kHz
+    /// ticks), used as the step when a signalled discontinuity rebases the
+    /// timeline (r04-W50). `0` until a plausible step has been seen, in which
+    /// case the rebase falls back to a single tick — monotonic, which is the
+    /// invariant that matters.
+    last_frame_period: i128,
+    /// The last [`FRAME_PERIOD_WINDOW`] plausible inter-access-unit steps, from
+    /// which the median — and so both the interpolation period and the rebase
+    /// step — is taken (r04-W48/W50 review).
+    recent_steps: Vec<u64>,
+    /// A signalled time-base discontinuity was observed on this program and
+    /// this PID has not yet seen the first access unit of the new base: the
+    /// next `(pts, dts)` it resolves is fed to
+    /// [`WrapState::rebase_at_discontinuity`] so its decode timeline continues
+    /// from where the old base left off instead of jumping backwards
+    /// (r04-W50).
+    pending_rebase: bool,
+    /// Whether the PES the assembler is currently building is whole: `false`
+    /// once a continuity-counter gap — or a signalled discontinuity — lost one
+    /// of its 184-byte payloads. It is dropped on completion rather than
+    /// delivered truncated (r04-W49). Set once and never cleared by a later
+    /// packet in the same unit; only the next `payload_unit_start` starts a
+    /// fresh, whole unit. Unused for a non-PES carrier.
+    current_pes_intact: bool,
+    /// The `PES_packet_length` this PID's in-progress PES declared, once its
+    /// header bytes have been received; `0` while unknown or for an unbounded
+    /// PES (ISO/IEC 13818-1 §2.4.3.7 — `0` means unbounded, the ordinary
+    /// video case). Compared against [`StreamState::pes_received`] at
+    /// completion to decide whether a gap on the *next* packet actually lost
+    /// anything (r04-W49).
+    pes_declared_len: u16,
+    /// Bytes of the in-progress PES received so far (header + payload), for
+    /// the [`StreamState::pes_declared_len`] comparison. Reset on every
+    /// `payload_unit_start`.
+    pes_received: usize,
     /// Running total of bytes held in `track`'s `Probing`/`Parked` backlog —
     /// enforces [`MAX_PROBE_BACKLOG_BYTES`] (issue B8). Kept in sync on every
     /// [`advance_track`] push (never re-walked from the `Vec`), and reset to
@@ -1611,21 +1910,164 @@ fn push_live_au(
     }
 }
 
-/// Feed the latest access unit (`backlog.last()`, already pushed by the
-/// caller) into a probing [`ConfigProbe`], returning the finished config the
-/// moment it becomes recoverable. `backlog` (every access unit seen on this
-/// PID so far) is read-only here — the caller owns transferring it into
-/// [`TrackState::Parked`].
+/// Track a live track's in-band codec-configuration **content**, access unit by
+/// access unit, returning the new config when that content actually changes
+/// (r04-W51).
+///
+/// "The content a decoder configuration would contain" — never the framing, and
+/// never a single access unit's view of it:
+///
+/// * **AVC/HEVC**: the parameter sets themselves. A probe over *one* access
+///   unit cannot see an SPS that arrived in an earlier one, and encoders
+///   routinely split SPS and PPS across access units (and put both in the
+///   first). Each set is therefore remembered as it appears — VPS, SPS and PPS
+///   tracked separately — and the event fires only when one of them actually
+///   changes value, or one goes from absent to present. That also makes an
+///   identical repeat (the common case: the same SPS+PPS in every keyframe)
+///   emit nothing.
+/// * **AAC**: the `AudioSpecificConfig` the ADTS header implies — its
+///   `audioObjectType`, `samplingFrequencyIndex` and `channelConfiguration`
+///   only (ISO/IEC 14496-3 §1.6.2.1). The *raw* ADTS header must never be
+///   compared: it also carries the 13-bit `aac_frame_length`, which differs on
+///   every single frame, so comparing it reported a config change for
+///   practically every AAC access unit.
+/// * **Anything else** (no in-band config): `None` — MPEG-2 video's config is
+///   only geometry and opaque data's comes from the PMT, so a change cannot be
+///   seen here. Those keep their original config, exactly as documented.
+fn reprobe_if_config_changed(
+    stream: &mut StreamState,
+    live: &mut LiveTrack,
+    data: &[u8],
+) -> Option<(CodecConfig, u32)> {
+    let changed = match stream.codec {
+        Codec::H264 | Codec::Hevc => {
+            observe_parameter_sets(stream.codec, data, &mut live.parameter_sets)
+        }
+        Codec::Aac => {
+            let (_, hdr) = find_adts_sync(data)?;
+            let asc = AudioSpecificConfig::from_adts_header(&hdr).to_bytes();
+            if live.config_header.as_deref() == Some(asc.as_slice()) {
+                false
+            } else {
+                live.config_header = Some(asc);
+                true
+            }
+        }
+        _ => return None,
+    };
+    if !changed {
+        return None;
+    }
+    // A fresh probe recovers the new config with the same code path the first
+    // one used. For AVC/HEVC the probe needs the parameter sets, which may be
+    // spread over several access units, so it is fed the accumulated set: the
+    // probe's own accumulation is seeded from the track's, and this access
+    // unit's copies are appended.
+    let descriptors = stream.descriptors.clone();
+    let mut probe = initial_probe(stream.codec);
+    seed_probe_parameter_sets(&mut probe, &live.parameter_sets);
+    let recovered = finalize_probe(stream.codec, &descriptors, &mut probe, data);
+    let (config, timescale, _kind) = recovered?;
+    Some((config, timescale))
+}
+
+/// The parameter sets a track has seen, each remembered separately so an
+/// SPS/PPS split across access units still compares as a whole (r04-W51).
+#[derive(Default, Clone)]
+struct ParameterSets {
+    vps: Option<Vec<u8>>,
+    sps: Option<Vec<u8>>,
+    pps: Option<Vec<u8>>,
+}
+
+impl ParameterSets {
+    /// Fold in `data`'s parameter sets, reporting whether any of them
+    /// **changed**: a set that was absent and is now present, or present with
+    /// different bytes. A set that was already present identically — which is
+    /// what an encoder repeating its headers on every keyframe produces — is not
+    /// a change.
+    fn observe(&mut self, codec: Codec, data: &[u8]) -> bool {
+        let mut changed = false;
+        let mut record = |slot: &mut Option<Vec<u8>>, bytes: &[u8]| {
+            if slot.as_deref() != Some(bytes) {
+                *slot = Some(bytes.to_vec());
+                changed = true;
+            }
+        };
+        match codec {
+            Codec::H264 => {
+                for nal in iter_annexb_nals(data) {
+                    match nal[0] & H264_NAL_TYPE_MASK {
+                        H264_NAL_SPS => record(&mut self.sps, nal),
+                        H264_NAL_PPS => record(&mut self.pps, nal),
+                        _ => {}
+                    }
+                }
+            }
+            Codec::Hevc => {
+                for nal in iter_annexb_nals(data) {
+                    match nal_unit_type(NalCodec::Hevc, nal) {
+                        Some(H265_NAL_VPS) => record(&mut self.vps, nal),
+                        Some(H265_NAL_SPS) => record(&mut self.sps, nal),
+                        Some(H265_NAL_PPS) => record(&mut self.pps, nal),
+                        _ => {}
+                    }
+                }
+            }
+            _ => {}
+        }
+        changed
+    }
+}
+
+/// Record `data`'s parameter sets on `sets`, returning whether any changed.
+fn observe_parameter_sets(codec: Codec, data: &[u8], sets: &mut ParameterSets) -> bool {
+    sets.observe(codec, data)
+}
+
+/// Seed a fresh [`ConfigProbe`] with parameter sets already known for the
+/// track, so a re-probe of a single access unit is not blind to an SPS that
+/// arrived in an earlier one (r04-W51).
+fn seed_probe_parameter_sets(probe: &mut ConfigProbe, sets: &ParameterSets) {
+    match probe {
+        ConfigProbe::H264 { sps, pps } => {
+            sps.clone_from(&sets.sps);
+            pps.clone_from(&sets.pps);
+        }
+        ConfigProbe::Hevc { vps, sps, pps } => {
+            vps.clone_from(&sets.vps);
+            sps.clone_from(&sets.sps);
+            pps.clone_from(&sets.pps);
+        }
+        _ => {}
+    }
+}
+
+/// Feed the newest access unit into a probing [`ConfigProbe`], returning the
+/// finished config the moment it becomes recoverable. The caller owns
+/// transferring the PID's backlog into [`TrackState::Parked`].
+///
+/// **Only `latest` is ever scanned.** Every probe below used to walk the whole
+/// backlog from the start (`backlog.iter().find_map(..)`) on *every* incoming
+/// access unit, with byte-by-byte sync scans inside (r04-W47): a PID whose
+/// config never resolves — garbage payload, or an ADTS `sampling_frequency_
+/// index` of 13/14 that [`sfi_to_hz`] rejects — grew toward
+/// [`MAX_PROBE_BACKLOG_BYTES`] while re-scanning it each access unit, costing
+/// O(n²) byte probes per PID (≈4 × 10⁹ on a 2 000-PES PID). Scanning only the
+/// newest access unit is both what the H.264/HEVC arms already did and
+/// sufficient: a codec's config header is repeated in-band often enough that
+/// one access unit is representative (a parameter set / frame header / MHAS
+/// config arrives within the first access unit or two in any real stream).
 fn finalize_probe(
     codec: Codec,
     descriptors: &[u8],
     probe: &mut ConfigProbe,
-    backlog: &[BufferedAu],
+    latest: &[u8],
 ) -> Option<(CodecConfig, u32, LiveKind)> {
-    // The caller pushes the newest access unit immediately before calling
-    // this, so the backlog is never empty here — degrade to "not resolvable
-    // yet" rather than panicking if that ever stops holding.
-    let latest = backlog.last()?;
+    // One pass over the newest access unit — the thing the r04-W47 bound is
+    // about. Counted here so the H.264/HEVC arms, whose NAL walk has no
+    // byte-by-byte sync scanner to count, are covered too.
+    record_probe_pass();
     match probe {
         ConfigProbe::Data => {
             let Codec::Data(stream_type) = codec else {
@@ -1666,7 +2108,12 @@ fn finalize_probe(
             ))
         }
         ConfigProbe::H264 { sps, pps } => {
-            for nal in iter_annexb_nals(&latest.data) {
+            // Accumulate across access units: a parameter set is often split
+            // over one access unit per NAL (an encoder emits SPS and PPS in
+            // separate PES packets), and since r04-W47 only the newest access
+            // unit is scanned — so the field that held the SPS two access
+            // units ago is what carries it forward.
+            for nal in iter_annexb_nals(latest) {
                 match nal[0] & H264_NAL_TYPE_MASK {
                     H264_NAL_SPS if sps.is_none() => *sps = Some(nal.to_vec()),
                     H264_NAL_PPS if pps.is_none() => *pps = Some(nal.to_vec()),
@@ -1730,7 +2177,9 @@ fn finalize_probe(
             ))
         }
         ConfigProbe::Hevc { vps, sps, pps } => {
-            for nal in iter_annexb_nals(&latest.data) {
+            // Accumulated across access units, exactly like the H.264 arm
+            // above (r04-W47: only the newest access unit is scanned).
+            for nal in iter_annexb_nals(latest) {
                 match nal_unit_type(NalCodec::Hevc, nal) {
                     Some(H265_NAL_VPS) if vps.is_none() => *vps = Some(nal.to_vec()),
                     Some(H265_NAL_SPS) if sps.is_none() => *sps = Some(nal.to_vec()),
@@ -1807,9 +2256,7 @@ fn finalize_probe(
         }
         ConfigProbe::Mpeg2Video => {
             // Geometry from the first sequence_header() seen in the stream.
-            let seq = backlog
-                .iter()
-                .find_map(|au| Mpeg2SeqHeader::find(&au.data).ok())?;
+            let seq = Mpeg2SeqHeader::find(latest).ok()?;
             let esds = EsdsBox::new(ESDescriptor::new(
                 ESDS_VIDEO_ES_ID,
                 0,
@@ -1839,11 +2286,10 @@ fn finalize_probe(
             ))
         }
         ConfigProbe::MpegAudio { is_mpeg2 } => {
-            // Resync within each buffered PES payload (issue #638) -- a real
-            // broadcast payload is not guaranteed to start on a frame sync.
-            let first = backlog
-                .iter()
-                .find_map(|au| find_mpeg_audio_sync(&au.data).map(|(_, hdr)| hdr))?;
+            // Resync within the newest buffered PES payload (issue #638) -- a
+            // real broadcast payload is not guaranteed to start on a frame
+            // sync.
+            let (_, first) = find_mpeg_audio_sync(latest)?;
             let sample_rate = first.sample_rate;
             let channel_count = first.channels;
             let samples_per_frame = first.samples_per_frame;
@@ -1883,14 +2329,20 @@ fn finalize_probe(
             ))
         }
         ConfigProbe::Aac => {
-            // Resync within each buffered PES payload (issue #638) -- a real
-            // broadcast payload is not guaranteed to start on a frame sync.
-            let first_hdr = backlog
-                .iter()
-                .find_map(|au| find_adts_sync(&au.data).map(|(_, hdr)| hdr))?;
+            // Resync within the newest buffered PES payload (issue #638) -- a
+            // real broadcast payload is not guaranteed to start on a frame
+            // sync.
+            let (_, first_hdr) = find_adts_sync(latest)?;
             let asc = AudioSpecificConfig::from_adts_header(&first_hdr);
             let sample_rate = sfi_to_hz(first_hdr.sampling_frequency_index)?;
-            let channel_count = first_hdr.channel_configuration as u16;
+            // ISO/IEC 14496-3 Table 1.19: `channel_configuration` is a
+            // configuration *index*, not a count — 7 means eight channels
+            // (7.1), and 0 means the mapping is carried in-band by a
+            // `program_config_element` in the raw data stream, so no count is
+            // derivable from the header at all. Using the raw field as the
+            // count reported 7.1 as 7 channels and a PCE-signalled stream as
+            // zero (r04-W51, extending W16).
+            let channel_count = crate::flv::aac_channel_count(&asc);
             let esds = EsdsBox::new(ESDescriptor::new(
                 ESDS_ES_ID,
                 0,
@@ -1921,9 +2373,7 @@ fn finalize_probe(
             ))
         }
         ConfigProbe::Ac3 => {
-            let info = backlog
-                .iter()
-                .find_map(|au| Ac3SyncframeInfo::from_es(&au.data).ok())?;
+            let info = Ac3SyncframeInfo::from_es(latest).ok()?;
             let sample_rate = info.sample_rate;
             let channel_count = info.channel_count() as u16;
             let config = info.into_dac3();
@@ -1944,14 +2394,13 @@ fn finalize_probe(
         }
         ConfigProbe::Eac3 => {
             // The `dec3` describes the bitstream's substream layout and is
-            // built from the *first access unit* of the earliest PES that has
-            // one: the dependent substreams that make a programme 7.1 follow
-            // that AU's independent frame. Scanning the whole backlog would
-            // emit one substream per repeated access unit.
-            let frames: alloc::vec::Vec<Ec3SyncframeInfo> = backlog
-                .iter()
-                .map(|au| Ec3SyncframeInfo::from_es_first_au(&au.data))
-                .find(|f| !f.is_empty())?;
+            // built from the newest access unit's *first* AU: the dependent
+            // substreams that make a programme 7.1 follow that AU's
+            // independent frame. Scanning the whole backlog would emit one
+            // substream per repeated access unit (and re-scan it on every
+            // access unit — see the O(n²) note above `finalize_probe`).
+            let frames: alloc::vec::Vec<Ec3SyncframeInfo> =
+                Ec3SyncframeInfo::from_es_first_au(latest);
             let info = *frames.first()?;
             let sample_rate = info.sample_rate;
             let channel_count = info.channel_count() as u16;
@@ -1972,9 +2421,7 @@ fn finalize_probe(
             ))
         }
         ConfigProbe::Dts => {
-            let info = backlog
-                .iter()
-                .find_map(|au| DtsCoreFrameInfo::from_es(&au.data).ok())?;
+            let info = DtsCoreFrameInfo::from_es(latest).ok()?;
             let sample_rate = info.sample_rate;
             let channel_count = info.channels as u16;
             let config = info.into_ddts();
@@ -1995,13 +2442,11 @@ fn finalize_probe(
             ))
         }
         ConfigProbe::MpegH => {
-            // Scan the backlog for the first access unit whose MHAS packets
-            // carry a PACTYP_MPEGH3DACFG (issue #579) — mirrors the
-            // Ac3/Eac3/Dts `find_map` header scans above, just over MHAS
-            // packets instead of a sync-frame header.
-            let config_bytes = backlog
-                .iter()
-                .find_map(|au| find_mpegh3da_config(&au.data))?;
+            // Scan the newest access unit's MHAS packets for a
+            // PACTYP_MPEGH3DACFG (issue #579) — mirrors the Ac3/Eac3/Dts
+            // header scans above, just over MHAS packets instead of a
+            // sync-frame header.
+            let config_bytes = find_mpegh3da_config(latest)?;
             // ATSC A/342-3 §5.2.2.1 / ISO/IEC 23008-3 §5.3.2: the
             // `mpegh3daConfig()` bitstream's leading byte *is*
             // `mpegh3daProfileLevelIndication` — the same value the
@@ -2085,6 +2530,22 @@ fn advance_track(
     };
     let new_track = match track {
         TrackState::Live(mut live) => {
+            // A changed in-band codec-config header re-probes the track and
+            // reports the new config (r04-W51). The config used to be
+            // single-shot for the life of the stream, so a mid-stream SPS/PPS
+            // or AAC-config change (SD↔HD ad break, re-encode, multiplex
+            // reconfiguration) left the track labelled with the original
+            // `avcC`/`hvcC`/`esds` and the init segment describing a stream
+            // that was no longer being sent. An *unchanged* repeat emits
+            // nothing — encoders re-send their headers routinely.
+            if let Some((config, timescale)) = reprobe_if_config_changed(stream, &mut live, &data) {
+                live.config = config;
+                live.timescale = timescale;
+                events.push_back(DemuxEvent::TrackUpdated(
+                    TrackSpec::new(live.track_id, live.timescale, live.config.clone())
+                        .with_source(pid, stream.descriptors.clone()),
+                ));
+            }
             push_live_au(&mut live, &data, pts_uw, dts_uw, events);
             TrackState::Live(live)
         }
@@ -2122,7 +2583,13 @@ fn advance_track(
                 pts_uw,
                 dts_uw,
             });
-            match finalize_probe(stream.codec, &stream.descriptors, &mut probe, &backlog) {
+            // `backlog` is never empty here: the newest access unit was just
+            // pushed above. Degrade to "not resolvable yet" rather than
+            // panicking if that ever stops holding.
+            let Some(latest) = backlog.last() else {
+                return;
+            };
+            match finalize_probe(stream.codec, &stream.descriptors, &mut probe, &latest.data) {
                 Some((config, timescale, kind)) => TrackState::Parked {
                     config,
                     timescale,
@@ -2159,6 +2626,21 @@ fn feed_pes_bounded(
     let Carrier::Pes(assembler) = &mut stream.carrier else {
         return None;
     };
+    // Track how much of the in-progress PES has arrived and what it declared,
+    // so a later CC gap can tell "the unit was already complete" from "the unit
+    // lost bytes" (r04-W49). The declared length sits at bytes 4..6 of the PES
+    // (start code prefix + stream_id + `PES_packet_length`), which the first
+    // packet of a unit always carries.
+    if pusi {
+        stream.pes_received = payload.len();
+        stream.pes_declared_len = if payload.len() >= PES_LENGTH_FIELD_END {
+            u16::from_be_bytes([payload[4], payload[5]])
+        } else {
+            0
+        };
+    } else {
+        stream.pes_received = stream.pes_received.saturating_add(payload.len());
+    }
     if pusi {
         stream.pes_bytes = payload.len();
     } else if stream.pes_bytes > 0 {
@@ -2193,9 +2675,24 @@ fn feed_pes_bounded(
     completed
 }
 
-/// Resolve a completed PES packet's `(pts, dts)` (mirrors the old
-/// `push_access_unit` fallback rule) and drive it through [`advance_track`]
-/// (parked/probing) or [`push_live_au`] (already live).
+/// Resolve a completed PES packet's `(pts, dts)` and drive it through
+/// [`advance_track`] (parked/probing) or [`push_live_au`] (already live).
+///
+/// A PES packet may legally carry neither PTS nor DTS (`PTS_DTS_flags ==
+/// '00'`, ISO/IEC 13818-1 §2.4.3.7) — the 2.7.4 constraint only requires them
+/// periodically. Such an access unit is interpolated *forward* from the
+/// previous one by [`StreamState::frame_period`] (the measured spacing
+/// between the last two stamped access units), rather than being handed the
+/// previous stamps verbatim: an identical `dts` pair gave the earlier of the
+/// two access units `duration = 0` and made the next stamped one absorb the
+/// whole gap (r04-W48). The T-STD permits exactly this derivation —
+/// "Decoding times tdn(j + 1), tdn(j + 2),... of access units without encoded
+/// DTS or PTS fields which directly follow access unit j may be derived from
+/// information in the elementary stream" (§2.4.2.6).
+///
+/// With no measured period yet (fewer than two stamped access units seen) the
+/// previous stamps are reused, exactly as before — there is nothing to
+/// interpolate from, and inventing a frame rate would fabricate a timeline.
 fn on_completed_pes(
     stream: &mut StreamState,
     pid: u16,
@@ -2208,25 +2705,115 @@ fn on_completed_pes(
     if pes.payload.is_empty() {
         return;
     }
-    let fallback = if stream.has_any {
-        stream.fallback
-    } else {
-        (0, 0)
-    };
-    let (pts, dts) = match pes.header.as_ref() {
+    // `(pts, dts)` this access unit resolved, and whether either came off the
+    // wire — the only values that may update the measured frame period.
+    let (pts, dts, stamped) = match pes.header.as_ref() {
         Some(h) => {
             let hp = h.pts.map(|p| p.0);
             let hd = h.dts.map(|d| d.0);
-            // DTS defaults to PTS when absent; PTS defaults to DTS; else the
-            // fallback above.
-            let pts = hp.or(hd).unwrap_or(fallback.0);
-            let dts = hd.unwrap_or(pts);
-            (pts, dts)
+            match (hp, hd) {
+                // Both present (PTS_DTS_flags '11').
+                (Some(p), Some(d)) => (p, d, true),
+                // PTS only ('10'): DTS defaults to PTS, and the pair is a
+                // real observation of the clock.
+                (Some(p), None) => (p, p, true),
+                // DTS only is not a legal wire combination, but a PES parsed
+                // from a stream that set only `DTS` (or an in-band PES the
+                // assembler synthesised) still yields one — treat it as
+                // stamped, with PTS defaulting to DTS.
+                (None, Some(d)) => (d, d, true),
+                // Neither: interpolate (§2.4.2.6). Never a clock observation.
+                (None, None) => (0, 0, false),
+            }
         }
-        None => fallback,
+        None => (0, 0, false),
     };
-    stream.fallback = (pts, dts);
-    stream.has_any = true;
+    let (pts, dts) = if stamped {
+        // The span to the previous stamped access unit covers one period per
+        // access unit between them (`units_since_stamped` counts the *other*
+        // units, plus one for this one) — what §2.4.3.7's periodic-only
+        // requirement makes the raw difference over-count by.
+        //
+        // The first stamp after a rebase spans the discontinuity itself, so its
+        // "period" is meaningless: the estimate is left alone in that case.
+        // Both the interpolation period and the rebase step come from this one
+        // measurement, behind one validity gate — only a small forward step is
+        // evidence of the stream's own cadence, so a gap or a clock jump cannot
+        // become either.
+        if let Some(prev) = stream.last_stamped_dts
+            && !stream.pending_rebase
+        {
+            let span = dts.wrapping_sub(prev) & TS_WRAP_MASK;
+            let periods = stream.units_since_stamped.saturating_add(1);
+            let period = span / periods;
+            // Feed the window with every *plausible* step and take the median:
+            // a single late access unit (or one short gap inside the window)
+            // then cannot become "the frame period", which is what a
+            // last-observation estimate did. An implausible step is not
+            // evidence of cadence at all, so it is not recorded.
+            if period > 0 && period <= MAX_FRAME_PERIOD_TICKS {
+                if stream.recent_steps.len() == FRAME_PERIOD_WINDOW {
+                    stream.recent_steps.remove(0);
+                }
+                stream.recent_steps.push(period);
+                let mut sorted = stream.recent_steps.clone();
+                sorted.sort_unstable();
+                let median = sorted[sorted.len() / 2];
+                stream.frame_period = Some(median);
+                stream.last_frame_period = median as i128;
+            }
+        }
+        stream.last_stamped_dts = Some(dts);
+        stream.units_since_stamped = 0;
+        stream.fallback = (pts, dts);
+        stream.has_any = true;
+        (pts, dts)
+    } else if stream.has_any {
+        // Unstamped: continue the timeline one measured frame period past the
+        // previous access unit. Until a period has been measured (the first
+        // stamped pair may not have arrived yet) the previous stamps are
+        // reused, exactly as before this fix — there is nothing to
+        // interpolate from, and inventing a frame rate would fabricate a
+        // timeline.
+        let step = stream.frame_period.unwrap_or(0);
+        stream.units_since_stamped = stream.units_since_stamped.saturating_add(1);
+        let pts = stream.fallback.0.wrapping_add(step) & TS_WRAP_MASK;
+        let dts = stream.fallback.1.wrapping_add(step) & TS_WRAP_MASK;
+        stream.fallback = (pts, dts);
+        (pts, dts)
+    } else {
+        // First access unit on this PID carries no timing at all: nothing to
+        // anchor to. Keep the zero anchor (a real 90 kHz timestamp on tick 0 is
+        // not distinguishable, and `WrapState` already treats a leading zero as
+        // "no genuine value yet") — but do **not** let it seed the timeline,
+        // because a `(0, 0)` anchor would make the first *stamped* access unit
+        // look like a jump of however far the real clock is from zero, and that
+        // inflated span would become both the interpolation period and the
+        // rebase step. `has_any` stays false, so the next stamped access unit
+        // anchors from the wire clock, and `units_since_stamped` still counts
+        // this one so a later measurement divides by the right count.
+        stream.units_since_stamped = stream.units_since_stamped.saturating_add(1);
+        (0, 0)
+    };
+    if stream.pending_rebase {
+        // The first stamp of the new time base lifts the whole timeline by
+        // whatever the jump backwards would have been, so decode order stays
+        // monotonic across the discontinuity (r04-W50). The indicator may
+        // arrive while the *old* base's last unit is still completing, in which
+        // case this call is a no-op and the wait continues.
+        stream.pending_rebase = stream
+            .wrap
+            .rebase_at_discontinuity(dts, stream.last_frame_period)
+            == DiscontinuityVerdict::Forward;
+    }
+    if std::env::var("TSDBGA").is_ok() && pid == 0x0101 {
+        std::eprintln!(
+            "AUDIO PES pid={pid:#06x} bytes={} payload={} declared={}",
+            pes_bytes.len(),
+            pes.payload.len(),
+            pes.pes_packet_length
+        );
+    }
     let (pts_uw, dts_uw) = stream.wrap.push(pts, dts);
     advance_track(stream, pid, pes.payload.to_vec(), pts_uw, dts_uw, events);
 }
@@ -2271,8 +2858,32 @@ struct CcState {
     initialized: bool,
     /// Last continuity counter value on this PID (payload-bearing only).
     last_cc: u8,
-    /// Payload bytes of the last packet (for duplicate detection).
-    last_payload: Vec<u8>,
+    /// The whole last packet, for the §2.4.3.3 legal-duplicate comparison —
+    /// which is defined over every byte with only the PCR field excepted, so
+    /// the payload slice alone is not enough (r04-W49).
+    last_packet: Option<[u8; TS_PACKET_SIZE]>,
+    /// Whether `last_packet` was itself already accepted as the one legal
+    /// repeat of its predecessor: §2.4.3.3 permits "two, and only two
+    /// consecutive" packets, so a third identical repeat is a fault.
+    dup_used_for_last: bool,
+}
+
+/// What [`StreamingTsDemux::check_cc`] concluded about a payload-bearing
+/// packet (r04-W49).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CcVerdict {
+    /// Feed the packet to the reassembler as normal.
+    Deliver,
+    /// A legal §2.4.3.3 duplicate: the decoder shall discard it, so its
+    /// payload must not reach the reassembler (it would duplicate 184 bytes
+    /// inside the access unit under construction).
+    Duplicate,
+    /// A continuity-counter gap: at least one packet on this PID was lost, so
+    /// the access unit currently being reassembled is missing bytes and must
+    /// be dropped rather than delivered truncated. The packet itself is still
+    /// fed, since a `payload_unit_start` begins a *new* access unit that is
+    /// intact from its first byte.
+    Gap,
 }
 
 /// Event-driven, incremental MPEG-2 Transport Stream demuxer (issue #555) —
@@ -2395,6 +3006,11 @@ pub struct StreamingTsDemux {
 struct PmtState {
     reasm: SectionReassembler,
     program_number: u16,
+    /// The program's `PCR_PID` (§2.4.4.8 Table 2-33), or `None` until a PMT
+    /// has been applied. A system time-base discontinuity is signalled on this
+    /// PID (§2.4.3.5), and only this program's elementary streams are rebased
+    /// by it (r04-W50 review).
+    pcr_pid: Option<u16>,
     last_applied_version: Option<u8>,
     applied_es: BTreeSet<u16>,
 }
@@ -2493,8 +3109,43 @@ impl StreamingTsDemux {
                 packet_index: Some(idx),
             };
             if af.discontinuity_indicator {
+                // §2.4.3.5: a system time-base discontinuity is signalled by
+                // the `discontinuity_indicator` in a packet of the program's
+                // **PCR_PID** — "When the discontinuity state is true for a
+                // transport stream packet of a PID designated as a PCR_PID, the
+                // next PCR in a transport stream packet with that same PID
+                // represents a sample of a new system time clock for the
+                // associated program." So the rebase is scoped twice over:
+                // only the packet's own PID can carry it, and only that PID's
+                // *program* is rebased. A multi-program multiplex therefore
+                // leaves the other programs' timelines untouched (r04-W50
+                // review), where the first attempt marked every stream in the
+                // demux.
+                let pid = pkt.header.pid;
+                let program_ok = self.pmt_reasm.values().any(|pmt| pmt.pcr_pid == Some(pid));
+                if program_ok {
+                    // Every elementary stream of this program: the ones whose
+                    // declaring PMT is this PCR_PID's.
+                    let members: Vec<u16> = self
+                        .es_declarers
+                        .iter()
+                        .filter(|(_, pmt_pids)| {
+                            pmt_pids.iter().any(|pmt_pid| {
+                                self.pmt_reasm
+                                    .get(pmt_pid)
+                                    .is_some_and(|pmt| pmt.pcr_pid == Some(pid))
+                            })
+                        })
+                        .map(|(&es_pid, _)| es_pid)
+                        .collect();
+                    for es_pid in members {
+                        if let Some(stream) = self.streams.get_mut(&es_pid) {
+                            stream.pending_rebase = true;
+                        }
+                    }
+                }
                 self.events.push_back(DemuxEvent::Discontinuity {
-                    track: self.live_track_id(pkt.header.pid),
+                    track: self.live_track_id(pid),
                     kind: DiscontinuityKind::Signalled,
                     provenance,
                 });
@@ -2509,6 +3160,7 @@ impl StreamingTsDemux {
             }
         }
 
+        let mut cc_verdict = CcVerdict::Deliver;
         // CC gap degradation (issue #778) — payload-bearing, non-null packets
         // only. The discontinuity flag is passed in so check_cc can suppress
         // the EVENT but STILL UPDATE the per-PID state (matching both in-repo
@@ -2517,10 +3169,10 @@ impl StreamingTsDemux {
         // — both update last_cc unconditionally on every payload-bearing packet,
         // including those with discontinuity_indicator set).
         if pkt.header.has_payload && pkt.header.pid != NULL_PACKET_PID {
-            self.check_cc(
+            cc_verdict = self.check_cc(
                 pkt.header.pid,
                 pkt.header.continuity_counter,
-                pkt.payload,
+                raw,
                 discontinuity_signalled,
                 idx,
             );
@@ -2531,6 +3183,24 @@ impl StreamingTsDemux {
         let Some(payload) = pkt.payload else {
             return;
         };
+
+        // r04-W49. A legal §2.4.3.3 duplicate is discarded outright — feeding
+        // it on would append its 184 payload bytes a second time to the access
+        // unit under construction. (`check_cc` already updated the per-PID
+        // baseline, exactly as the spec's "same continuity_counter as the
+        // original" requires.)
+        if cc_verdict == CcVerdict::Duplicate {
+            self.try_promote_ready();
+            return;
+        }
+        // A gap left the access unit currently in the reassembler short of
+        // bytes, so it must not be delivered: the IR cannot tell a complete
+        // PES from a truncated one, and every downstream muxer would write the
+        // corruption out. Mark it abandoned (`keep_payload = false`) rather
+        // than resetting the assembler — a reset would also stop the byte
+        // accounting that bounds a runaway PES. A `payload_unit_start` clears
+        // the mark, because it begins a new, intact access unit from its first
+        // byte. Adaptation-field-only packets never reach here.
 
         if pid == PAT_PID {
             self.pat_reasm.feed(payload, pusi);
@@ -2597,6 +3267,11 @@ impl StreamingTsDemux {
                     continue;
                 }
                 pmt_state.last_applied_version = Some(header.version);
+                // Record the PCR_PID the program just declared: it is the PID
+                // on which a system time-base discontinuity for this program is
+                // signalled (§2.4.3.5), and the key for scoping a rebase to
+                // this program's streams (r04-W50 review).
+                pmt_state.pcr_pid = Some(header.pcr_pid);
                 if let Ok(es_list) = parse_pmt(section) {
                     to_apply = Some(es_list);
                 }
@@ -2615,6 +3290,53 @@ impl StreamingTsDemux {
 
         if let Some(stream) = self.streams.get_mut(&pid) {
             let mut sections: Vec<Vec<u8>> = Vec::new();
+            // ── r04-W49 intactness rule ────────────────────────────────────
+            //
+            // An access unit is delivered only when nothing was lost from it:
+            //
+            //  * **A gap on a continuation packet** (`cc_verdict == Gap`,
+            //    `pusi == false`) means 184 bytes of the unit in progress are
+            //    missing. It is marked damaged, and the mark survives to the
+            //    end of the unit — no later packet may clear it.
+            //  * **A gap on a `payload_unit_start` packet** is benign: a
+            //    `payload_unit_start` *ends* the previous unit, so nothing
+            //    after the jump belongs to it. The byte stream simply
+            //    restarts — which is what every independently muxed segment
+            //    does (its counter begins wherever its own muxer chose), and
+            //    what a splice looks like when the source sets no
+            //    `discontinuity_indicator`. Anything genuinely lost inside the
+            //    completing unit shows up as a gap on one of its own
+            //    continuation packets, which the first rule catches.
+            //  * **A signalled discontinuity** (`discontinuity_indicator`) is
+            //    **This is not, by itself, a reason to drop anything.** The
+            //    indicator says the source's byte stream is discontinuous here,
+            //    and when it lands on a *continuation* packet that packet's
+            //    bytes are indeed missing (the gap rule above marks it). But a
+            //    packet carrying the indicator which *completes* a whole unit —
+            //    a normal HLS or splice seam, where the last unit of the old
+            //    segment is intact and the indicator merely precedes the new
+            //    one — must still be delivered. Dropping it lost the last old
+            //    access unit at every seam, which is exactly the loss this
+            //    rule exists to avoid. Only an actual CC gap inside the unit,
+            //    or a bounded PES short of its declared length, damages it.
+            //
+            // A `payload_unit_start` always begins a *new*, whole unit.
+            let gap_here = cc_verdict == CcVerdict::Gap;
+            // An independent, length-based check: a *bounded* PES
+            // (`PES_packet_length != 0`) that received fewer bytes than its own
+            // header declared is truncated, whatever the continuity counter
+            // says. `PES_packet_length` counts the bytes after its own field,
+            // so the whole packet is `PES_LENGTH_FIELD_END + declared`; the
+            // received count is TS-payload bytes, which can exceed that by the
+            // last packet's `0xFF` stuffing, so the test is `<`.
+            let short_of_declared = stream.pes_declared_len > 0
+                && stream.pes_received < PES_LENGTH_FIELD_END + stream.pes_declared_len as usize;
+            // A unit is damaged only by something that actually lost bytes from
+            // it: a continuity-counter gap on one of its own packets (the mark)
+            // or a bounded PES that arrived short of its declared length. A
+            // `discontinuity_indicator` is *not* such evidence on its own —
+            // see the rule above.
+            let completed_intact = stream.current_pes_intact && !short_of_declared;
             let completed_pes = if matches!(stream.carrier, Carrier::Pes(_)) {
                 feed_pes_bounded(stream, pid, pusi, payload, &mut self.events)
             } else if let Carrier::Section(reasm) = &mut stream.carrier {
@@ -2626,8 +3348,30 @@ impl StreamingTsDemux {
             } else {
                 None
             };
-            if let Some(completed) = completed_pes {
+            // `completed_intact` false means dropped, not delivered (r04-W49).
+            if completed_intact && let Some(completed) = completed_pes {
                 on_completed_pes(stream, pid, &completed, &mut self.events);
+            }
+            if matches!(stream.carrier, Carrier::Pes(_)) {
+                if pusi {
+                    // A new unit begins whole from its first byte.
+                    stream.current_pes_intact = true;
+                } else if gap_here {
+                    // The unit in progress lost bytes. Two things are needed:
+                    // the mark (so the unit is dropped, never delivered
+                    // truncated), and an assembler reset — without it the
+                    // bytes arriving *after* the gap would be appended to the
+                    // pre-gap bytes as if contiguous, welding two unrelated
+                    // fragments into one buffer that some later
+                    // `payload_unit_start` would hand on. The byte accounting
+                    // is deliberately left alone: `pes_bytes` continues to
+                    // count what this PID is buffering, so a runaway PES is
+                    // still bounded.
+                    stream.current_pes_intact = false;
+                    if let Carrier::Pes(assembler) = &mut stream.carrier {
+                        let _ = assembler.flush();
+                    }
+                }
             }
             for s in sections {
                 on_completed_section(stream, pid, &s, &mut self.events);
@@ -2646,22 +3390,24 @@ impl StreamingTsDemux {
 
     /// Check the continuity counter for `pid` against the tracking state,
     /// emitting [`DemuxEvent::InputDegraded`]`(`[`InputDegradation::ContinuityGap`]`)`
-    /// when a genuine gap is detected (issue #778).
+    /// when a genuine gap is detected (issue #778), and returning what the
+    /// caller must do with this packet's payload (r04-W49).
     ///
     /// Does **not** fire for:
     /// - Signalled discontinuities (`discontinuity_signalled`): the event is
     ///   suppressed, but `last_cc` and `last_payload` are still updated to
     ///   this packet (matching the dvb-conformance and media-doctor reference
     ///   implementations — both update the CC baseline unconditionally).
-    /// - Legal duplicates: same CC + identical *payload* (not including
-    ///   adaptation-field variations like a re-encoded PCR). Payload bytes
-    ///   are taken from `pkt.payload`, which excludes the adaptation field.
+    /// - Legal duplicates: same CC + byte-identical packet with only the PCR
+    ///   field excepted (ITU-T H.222.0 §2.4.3.3) — see [`CcVerdict::Duplicate`].
     ///
     /// # Arguments
     /// - `pid` — the TS PID.
     /// - `cc` — the 4-bit continuity counter from the packet header.
-    /// - `payload` — the packet's payload bytes (after the adaptation field,
-    ///   if any), from [`TsPacket::payload`].
+    /// - `raw` — the whole 188-byte packet, for the §2.4.3.3 duplicate
+    ///   comparison (which the adapter must have handled: `pkt.payload`
+    ///   excludes the adaptation field, so a PCR-only difference between an
+    ///   original and its duplicate is invisible to it).
     /// - `discontinuity_signalled` — `true` when the adaptation field's
     ///   `discontinuity_indicator` is set. Suppresses the event but NOT the
     ///   state update.
@@ -2670,11 +3416,10 @@ impl StreamingTsDemux {
         &mut self,
         pid: u16,
         cc: u8,
-        payload: Option<&[u8]>,
+        raw: &[u8; TS_PACKET_SIZE],
         discontinuity_signalled: bool,
         packet_index: u64,
-    ) {
-        let payload_bytes = payload.unwrap_or(&[]);
+    ) -> CcVerdict {
         let track = self.live_track_id(pid);
         match self.cc_states.entry(pid) {
             Entry::Occupied(mut e) => {
@@ -2682,35 +3427,70 @@ impl StreamingTsDemux {
                 if !state.initialized {
                     state.initialized = true;
                     state.last_cc = cc;
-                    state.last_payload = payload_bytes.to_vec();
-                    return;
+                    state.last_packet = Some(*raw);
+                    return CcVerdict::Deliver;
+                }
+                // §2.4.3.3: a legal duplicate repeats the previous packet
+                // byte-for-byte (PCR field excepted), same continuity_counter.
+                // The decoder shall discard it — it carries no new data, and
+                // feeding it to the reassembler duplicated 184 payload bytes
+                // into the access unit under construction (r04-W49).
+                //
+                // `pkt.payload` alone cannot decide this: a duplicate's PCR is
+                // legally re-encoded, so the comparison must cover the whole
+                // packet. `check_duplicate` also folds in the "two, and only
+                // two consecutive" rule — a third identical repeat is an error,
+                // not a duplicate.
+                if cc == state.last_cc
+                    && let Some(prev) = state.last_packet
+                    && broadcast_common::ts_dup::check_duplicate(
+                        &prev,
+                        raw,
+                        state.dup_used_for_last,
+                    ) == broadcast_common::ts_dup::DuplicateVerdict::Legal
+                {
+                    // §2.4.3.3's one legal repeat. `dup_used_for_last` records
+                    // that this PID has now spent it, so a *third* identical
+                    // repeat (`cc == last_cc` again) is a continuity fault
+                    // rather than another duplicate — `check_duplicate` makes
+                    // that call, and this branch only ever takes the `Legal`
+                    // verdict.
+                    state.dup_used_for_last = true;
+                    state.last_packet = Some(*raw);
+                    return CcVerdict::Duplicate;
                 }
                 let expected = (state.last_cc + 1) & 0x0F;
+                let mut verdict = CcVerdict::Deliver;
                 if !discontinuity_signalled && cc != expected {
-                    // Check for legal duplicate: same CC + identical payload.
-                    let is_dup = cc == state.last_cc
-                        && payload_bytes.len() == state.last_payload.len()
-                        && payload_bytes == state.last_payload.as_slice();
-                    if !is_dup {
-                        self.events.push_back(DemuxEvent::InputDegraded {
-                            track,
-                            kind: InputDegradation::ContinuityGap { expected, got: cc },
-                            provenance: EventProvenance {
-                                pid: Some(pid),
-                                packet_index: Some(packet_index),
-                            },
-                        });
-                    }
+                    self.events.push_back(DemuxEvent::InputDegraded {
+                        track,
+                        kind: InputDegradation::ContinuityGap { expected, got: cc },
+                        provenance: EventProvenance {
+                            pid: Some(pid),
+                            packet_index: Some(packet_index),
+                        },
+                    });
+                    // The gap lost at least one packet, so the access unit the
+                    // reassembler is part-way through is missing bytes. Let it
+                    // be delivered as if complete and it is corrupt — the
+                    // coarse timeline repair (`rebase`) cannot tell a complete
+                    // PES from a truncated one. Request the drop, matching
+                    // `rtp_stream`'s own response to loss.
+                    verdict = CcVerdict::Gap;
                 }
                 state.last_cc = cc;
-                state.last_payload = payload_bytes.to_vec();
+                state.last_packet = Some(*raw);
+                state.dup_used_for_last = false;
+                verdict
             }
             Entry::Vacant(e) => {
                 e.insert(CcState {
                     initialized: true,
                     last_cc: cc,
-                    last_payload: payload_bytes.to_vec(),
+                    last_packet: Some(*raw),
+                    dup_used_for_last: false,
                 });
+                CcVerdict::Deliver
             }
         }
     }
@@ -2744,6 +3524,7 @@ impl StreamingTsDemux {
                     PmtState {
                         reasm: SectionReassembler::default(),
                         program_number,
+                        pcr_pid: None,
                         last_applied_version: None,
                         applied_es: BTreeSet::new(),
                     },
@@ -2823,8 +3604,17 @@ impl StreamingTsDemux {
             codec,
             descriptors,
             carrier: initial_carrier(codec),
+            last_frame_period: 0,
+            recent_steps: Vec::new(),
+            pending_rebase: false,
+            current_pes_intact: true,
+            pes_declared_len: 0,
+            pes_received: 0,
             pes_bytes: 0,
             fallback: (0, 0),
+            frame_period: None,
+            last_stamped_dts: None,
+            units_since_stamped: 0,
             has_any: false,
             wrap: WrapState::default(),
             track: Some(TrackState::Probing {
@@ -2896,6 +3686,13 @@ impl StreamingTsDemux {
             }
         }
         self.removed_pids.insert(pid);
+        // Drop the continuity-counter baseline too: the PID's reassembly state
+        // is gone with the track, so the CC of the first packet after a re-add
+        // is judged against nothing, not against the pre-removal sequence
+        // (which the source is under no obligation to continue — r04-W49's
+        // gap handling would otherwise drop that first, perfectly good access
+        // unit as truncated).
+        self.cc_states.remove(&pid);
         if let Some(stream) = self.streams.remove(&pid)
             && let Some(TrackState::Live(live)) = stream.track
         {
@@ -3130,7 +3927,30 @@ impl StreamingTsDemux {
                         kind,
                         config,
                         timescale,
+                        parameter_sets: ParameterSets::default(),
+                        config_header: None,
                     };
+                    // Seed the changed-config comparison from the access units
+                    // the config was actually recovered from, so the track's
+                    // first header repeat after promotion is not mistaken for a
+                    // change (r04-W51). The whole backlog is walked, not just
+                    // its last access unit: SPS and PPS may be split across
+                    // several of them, and the sets must be complete before the
+                    // next access unit is compared against them.
+                    for au in &backlog {
+                        let _ = observe_parameter_sets(
+                            stream.codec,
+                            &au.data,
+                            &mut live.parameter_sets,
+                        );
+                    }
+                    if stream.codec == Codec::Aac
+                        && let Some(au) = backlog.last()
+                        && let Some((_, hdr)) = find_adts_sync(&au.data)
+                    {
+                        live.config_header =
+                            Some(AudioSpecificConfig::from_adts_header(&hdr).to_bytes());
+                    }
                     for au in backlog {
                         push_live_au(&mut live, &au.data, au.pts_uw, au.dts_uw, &mut self.events);
                     }
@@ -3215,7 +4035,17 @@ impl StreamingTsDemux {
                 Carrier::Section(_) => None,
             };
             if let Some(completed) = completed {
-                on_completed_pes(stream, pid, &completed, &mut self.events);
+                // The same two-part intactness rule the mid-stream path uses
+                // (r04-W49): the CC mark, *and* — for a bounded PES — the
+                // declared length actually having arrived. A trailing PES that
+                // stopped short of what its own header declared is truncated,
+                // and flushing it at end of input would deliver that
+                // truncation as if it were complete.
+                let short_of_declared = stream.pes_declared_len > 0
+                    && completed.len() < PES_LENGTH_FIELD_END + stream.pes_declared_len as usize;
+                if stream.current_pes_intact && !short_of_declared {
+                    on_completed_pes(stream, pid, &completed, &mut self.events);
+                }
             }
         }
         self.try_promote_ready();
@@ -3874,33 +4704,2576 @@ mod tests {
         );
     }
 
-    /// A negative unwrapped anchor is a legitimate value — reordering (or a
-    /// capture starting mid-GOP) across the 2^33 boundary unwraps to a small
-    /// negative absolute time — and every 90 kHz track kind carries it through
-    /// verbatim. Rescaling into an audio track's own sample-rate timescale must
-    /// not be the one path that clamps it to `0`, which fabricated `dts = 0`
-    /// for the audio track alone and desynced it from the video it was muxed
-    /// against.
-    #[test]
-    fn rescale_to_track_preserves_a_negative_anchor_for_audio_as_it_does_for_video() {
-        const SAMPLE_RATE: u32 = 48_000;
-        /// One second before zero, on the 90 kHz PES clock.
-        const NEGATIVE_90K: i128 = -90_000;
+    /// Bytes of long-form section header between the 3-byte
+    /// `table_id`/`section_length` prefix and the table body:
+    /// `table_id_extension`(2) + `version`(1) + `section_number`(1) +
+    /// `last_section_number`(1) -- ISO/IEC 13818-1 §2.4.4.1.
+    const SECTION_BODY_PREFIX_LEN: usize = 5;
 
+    /// PES `stream_id` for an H.264 video elementary stream (ISO/IEC
+    /// 13818-1 Table 2-22).
+    const ES_STREAM_ID_VIDEO: u8 = 0xE0;
+
+    /// Wrap `au` in a PES packet that carries **no** timing at all:
+    /// `PTS_DTS_flags == '00'` and an empty `PES_header_data_length`
+    /// (ISO/IEC 13818-1 §2.4.3.7).
+    fn pes_packet_untimed(stream_id: u8, au: &[u8]) -> Vec<u8> {
+        let mut out = Vec::new();
+        out.extend_from_slice(&[0x00, 0x00, 0x01, stream_id]);
+        let payload_len = au.len() + 3;
+        out.extend_from_slice(&(payload_len as u16).to_be_bytes());
+        out.push(0x80); // '10' marker, not scrambled
+        out.push(0x00); // PTS_DTS_flags = '00'
+        out.push(0x00); // PES_header_data_length = 0
+        out.extend_from_slice(au);
+        out
+    }
+
+    /// `stream_id` for `private_stream_1` (ISO/IEC 13818-1 Table 2-22) —
+    /// what a `stream_type` 0x06 PES uses.
+    const ES_STREAM_ID_PRIVATE_DATA: u8 = 0xBD;
+
+    /// One 300-byte access unit payload (fits in two TS packets).
+    fn data_au(seed: usize) -> Vec<u8> {
+        (0..300).map(|i| ((i + seed) & 0xFF) as u8).collect()
+    }
+
+    /// Access unit A for the CC-gap test.
+    fn long_data_au() -> Vec<u8> {
+        data_au(0)
+    }
+
+    /// Access unit B for the CC-gap test — different bytes, so a delivered
+    /// sample is unambiguously one or the other.
+    fn long_data_au_alt() -> Vec<u8> {
+        data_au(0x55)
+    }
+
+    /// A PES carrying `au` with **no** timing and `PES_packet_length == 0`
+    /// (unbounded — the ordinary video form, ISO/IEC 13818-1 §2.4.3.7).
+    fn unbounded_pes(stream_id: u8, au: &[u8]) -> Vec<u8> {
+        let mut out = Vec::new();
+        out.extend_from_slice(&[0x00, 0x00, 0x01, stream_id]);
+        out.extend_from_slice(&0u16.to_be_bytes()); // PES_packet_length = 0
+        out.push(0x80); // '10' marker, not scrambled
+        out.push(0x00); // PTS_DTS_flags = '00'
+        out.push(0x00); // PES_header_data_length = 0
+        out.extend_from_slice(au);
+        out
+    }
+
+    /// A PES carrying `au` with no timing at all (`PTS_DTS_flags == '00'`).
+    fn untimed_pes(stream_id: u8, au: &[u8]) -> Vec<u8> {
+        pes_packet_untimed(stream_id, au)
+    }
+
+    /// PES `stream_id` for a private_stream_1-carried audio elementary
+    /// stream (ISO/IEC 13818-1 Table 2-22) — the demux only requires a
+    /// well-formed PES header, not a particular stream_id.
+    const ES_STREAM_ID_AUDIO: u8 = 0xBD;
+
+    /// Encode a 33-bit PTS/DTS field (ISO/IEC 13818-1 §2.4.3.7) with the
+    /// given 4-bit prefix (`0010` for PTS-only, `0011` for PTS in a
+    /// both-present pair, `0001` for DTS).
+    fn encode_ts_field(prefix: u8, value: i64) -> [u8; 5] {
+        let v = (value as u64) & TS_WRAP_MASK;
+        [
+            (prefix << 4) | ((((v >> 30) & 0x07) as u8) << 1) | 0x01,
+            ((v >> 22) & 0xFF) as u8,
+            ((((v >> 15) & 0x7F) as u8) << 1) | 0x01,
+            ((v >> 7) & 0xFF) as u8,
+            (((v & 0x7F) as u8) << 1) | 0x01,
+        ]
+    }
+
+    /// Wrap `au` in a PES packet with a PTS, and a DTS too when `dts` is
+    /// `Some` (`PTS_DTS_flags` `10` / `11` — ISO/IEC 13818-1 §2.4.3.7).
+    fn pes_packet(stream_id: u8, pts: i64, dts: Option<i64>, au: &[u8]) -> Vec<u8> {
+        let header_data_len = if dts.is_some() { 10 } else { 5 };
+        let mut out = Vec::new();
+        out.extend_from_slice(&[0x00, 0x00, 0x01, stream_id]);
+        let payload_len = au.len() + 3 + header_data_len;
+        out.extend_from_slice(&(payload_len as u16).to_be_bytes());
+        out.push(0x80); // '10' marker, not scrambled
+        out.push(if dts.is_some() { 0xC0 } else { 0x80 });
+        out.push(header_data_len as u8);
+        if let Some(d) = dts {
+            out.extend_from_slice(&encode_ts_field(0b0011, pts));
+            out.extend_from_slice(&encode_ts_field(0b0001, d));
+        } else {
+            out.extend_from_slice(&encode_ts_field(0b0010, pts));
+        }
+        out.extend_from_slice(au);
+        out
+    }
+
+    /// PID/table constants for [`probe_sync_scan_work_is_linear_in_the_input_not_quadratic`].
+    const PAT_PID_UNDER_TEST: u16 = 0x0000;
+    const PMT_PID_UNDER_TEST: u16 = 0x1000;
+    const ES_PID_UNDER_TEST: u16 = 0x1100;
+    /// PMT `program_number` for the one-program PAT below.
+    const PROGRAM_NUMBER_UNDER_TEST: u16 = 1;
+
+    /// PAT section body (ISO/IEC 13818-1 Table 2-30): one program. Returned
+    /// without the 8-byte section header and without the CRC, which
+    /// [`psi_section_packets`] adds.
+    fn pat_body() -> Vec<u8> {
+        let mut body = Vec::new();
+        body.extend_from_slice(&PROGRAM_NUMBER_UNDER_TEST.to_be_bytes());
+        body.extend_from_slice(&(0xE000 | PMT_PID_UNDER_TEST).to_be_bytes());
+        body
+    }
+
+    /// PMT section body (ISO/IEC 13818-1 Table 2-33): one elementary stream.
+    fn pmt_body(es_pid: u16, stream_type: u8) -> Vec<u8> {
+        pmt_body_with_pcr_pid(es_pid, stream_type, 0)
+    }
+
+    /// A PMT body with **two** elementary streams, declaring `pcr_pid` as the
+    /// program's `PCR_PID` (§2.4.4.8 Table 2-33) — the A/V program shape the
+    /// multi-PID discontinuity tests need.
+    fn pmt_body_two_es_with_pcr_pid(
+        video_pid: u16,
+        video_type: u8,
+        audio_pid: u16,
+        audio_type: u8,
+        pcr_pid: u16,
+    ) -> Vec<u8> {
+        let mut body = Vec::new();
+        body.extend_from_slice(&(0xE000 | pcr_pid).to_be_bytes());
+        body.extend_from_slice(&0xF000u16.to_be_bytes()); // program_info_length 0
+        for (pid, stream_type) in [(video_pid, video_type), (audio_pid, audio_type)] {
+            body.push(stream_type);
+            body.extend_from_slice(&(0xE000 | pid).to_be_bytes());
+            body.extend_from_slice(&0xF000u16.to_be_bytes()); // ES_info_length 0
+        }
+        body
+    }
+
+    /// A PMT body declaring `pcr_pid` as the program's `PCR_PID`
+    /// (§2.4.4.8 Table 2-33) — what a real multiplexer sets to the video PID
+    /// (or a dedicated PCR PID).
+    fn pmt_body_with_pcr_pid(es_pid: u16, stream_type: u8, pcr_pid: u16) -> Vec<u8> {
+        let mut body = Vec::new();
+        body.extend_from_slice(&(0xE000 | pcr_pid).to_be_bytes());
+        body.extend_from_slice(&0xF000u16.to_be_bytes()); // reserved + program_info_length 0
+        body.push(stream_type);
+        body.extend_from_slice(&(0xE000 | es_pid).to_be_bytes());
+        body.extend_from_slice(&0xF000u16.to_be_bytes()); // reserved + ES_info_length 0
+        body
+    }
+
+    /// Wrap `body` in a long-form PSI section (header + CRC_32) and packetise
+    /// it onto `pid` with `pusi` set on the first packet. The CRC_32 is
+    /// computed by the workspace's own `CRC-32/MPEG-2` so the section passes
+    /// [`psi_section_crc_ok`].
+    fn psi_section_packets(pid: u16, cc0: u8, table_id: u8, body: &[u8]) -> Vec<u8> {
+        psi_section_packets_for(pid, cc0, table_id, PROGRAM_NUMBER_UNDER_TEST, body)
+    }
+
+    /// As [`psi_section_packets`], but with an explicit `table_id_extension`
+    /// — the `program_number` for a PAT's entries and for a PMT's own header —
+    /// so a multi-program multiplex can be built.
+    fn psi_section_packets_for(
+        pid: u16,
+        cc0: u8,
+        table_id: u8,
+        table_id_extension: u16,
+        body: &[u8],
+    ) -> Vec<u8> {
+        let mut section = Vec::new();
+        let section_length = (SECTION_BODY_PREFIX_LEN + body.len() + CRC32_LEN) as u16;
+        section.push(table_id);
+        section.push(SECTION_SYNTAX_INDICATOR_BIT | (section_length >> 8) as u8);
+        section.push(section_length as u8);
+        // table_id_extension / version / current_next / section numbers.
+        section.extend_from_slice(&table_id_extension.to_be_bytes());
+        section.push(0xC1); // reserved '11', version 0, current_next 1
+        section.push(0x00); // section_number
+        section.push(0x00); // last_section_number
+        section.extend_from_slice(body);
+        let crc = broadcast_common::crc32_mpeg2::compute(&section);
+        section.extend_from_slice(&crc.to_be_bytes());
+        // A section starts with a `pointer_field` (§2.4.3.4 Table 2-6: the
+        // number of bytes before the first section start in this packet's
+        // payload) — here 0, i.e. the section begins immediately.
+        let mut packetised = Vec::with_capacity(section.len() + 1);
+        packetised.push(0x00);
+        packetised.extend_from_slice(&section);
+        pes_packets(pid, cc0, &packetised)
+    }
+
+    /// Packetise `payload` like [`pes_packets`], but with an 8-byte adaptation
+    /// field whose `discontinuity_indicator` is set on the **first** packet
+    /// (§2.4.3.4 Table 2-6). Used to build the "source says the stream broke
+    /// here" packet a real multiplexer emits.
+    fn pes_packets_with_discontinuity(pid: u16, cc0: u8, payload: &[u8]) -> Vec<u8> {
+        /// Adaptation-field bytes *after* the length byte: the flags byte plus
+        /// stuffing.
+        const AF_LEN: usize = 8;
+        /// First payload byte: 4-byte TS header + the length byte + the field.
+        const PAYLOAD_START: usize = 4 + 1 + AF_LEN;
+        let first_take = (TS_PACKET_SIZE - PAYLOAD_START).min(payload.len());
+        let mut out = Vec::new();
+        let mut p = [0xFFu8; TS_PACKET_SIZE];
+        p[0] = 0x47;
+        p[1] = ((pid >> 8) as u8 & PID_HI_MASK) | 0x40; // pusi
+        p[2] = (pid & 0xFF) as u8;
+        p[3] = 0x30 | (cc0 & 0x0F); // afc = '11'
+        p[4] = AF_LEN as u8;
+        p[5] = 0x80; // discontinuity_indicator = 1
+        p[6..PAYLOAD_START].fill(0xFF); // stuffing
+        p[PAYLOAD_START..PAYLOAD_START + first_take].copy_from_slice(&payload[..first_take]);
+        out.extend_from_slice(&p);
+        // The remainder is a *continuation*, never a new unit start.
+        out.extend_from_slice(&continuation_packets(
+            pid,
+            cc0.wrapping_add(1),
+            &payload[first_take..],
+        ));
+        out
+    }
+
+    /// Packetise `payload` as **continuation** packets (`pusi` clear),
+    /// `0xFF`-stuffed, counters incrementing from `cc0`.
+    fn continuation_packets(pid: u16, cc0: u8, payload: &[u8]) -> Vec<u8> {
+        let mut out = Vec::new();
+        let mut off = 0usize;
+        let mut cc = cc0;
+        while off < payload.len() {
+            let take = (payload.len() - off).min(TS_PACKET_SIZE - 4);
+            let mut p = [0xFFu8; TS_PACKET_SIZE];
+            p[0] = 0x47;
+            p[1] = (pid >> 8) as u8 & PID_HI_MASK;
+            p[2] = (pid & 0xFF) as u8;
+            p[3] = 0x10 | (cc & 0x0F);
+            p[4..4 + take].copy_from_slice(&payload[off..off + take]);
+            out.extend_from_slice(&p);
+            off += take;
+            cc = cc.wrapping_add(1);
+        }
+        out
+    }
+
+    /// Packetise `payload` onto `pid`, `payload_unit_start` set on the first
+    /// 188-byte packet only, CC incrementing from `cc0`, `0xFF` stuff.
+    fn pes_packets(pid: u16, cc0: u8, payload: &[u8]) -> Vec<u8> {
+        let mut out = Vec::new();
+        let mut off = 0usize;
+        let mut first = true;
+        let mut cc = cc0;
+        while off < payload.len() {
+            let take = (payload.len() - off).min(TS_PACKET_SIZE - 4);
+            let mut p = [0xFFu8; TS_PACKET_SIZE];
+            p[0] = 0x47;
+            p[1] = ((pid >> 8) as u8 & PID_HI_MASK) | if first { 0x40 } else { 0x00 };
+            p[2] = (pid & 0xFF) as u8;
+            p[3] = 0x10 | (cc & 0x0F);
+            p[4..4 + take].copy_from_slice(&payload[off..off + take]);
+            out.extend_from_slice(&p);
+            off += take;
+            first = false;
+            cc = cc.wrapping_add(1);
+        }
+        out
+    }
+
+    /// r04-W51 review: an AAC track must NOT report a config change merely
+    /// because the ADTS *frame length* varies.
+    ///
+    /// The first attempt compared the raw 7-byte ADTS header as the
+    /// "config header", but that header carries the 13-bit
+    /// `aac_frame_length` — different on every single frame — so nearly every
+    /// AAC access unit raised `TrackUpdated` and told a consumer to rebuild
+    /// its init segment thousands of times a stream.
+    ///
+    /// Real AAC bitstream, twice over. First: `fixtures/ts/aac-5_1-640k.ts`
+    /// is a real 5.1 AAC-LC capture whose ADTS frame lengths vary (ffprobe:
+    /// 742, 792, 763, 764, 767, 759 ...) and which must yield **zero**
+    /// `TrackUpdated`. Second: its elementary stream re-headered with a
+    /// different `channel_configuration` (5 instead of 6) and appended to the
+    /// same PID, which must yield **exactly one** event carrying the new
+    /// Table 1.19 count.
+    #[test]
+    fn aac_frame_length_variation_is_not_a_config_change() {
+        let mut path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        path.push("..");
+        path.push("fixtures");
+        path.push("ts");
+        path.push("aac-5_1-640k.ts");
+        let source =
+            std::fs::read(&path).unwrap_or_else(|e| panic!("read fixture {}: {e}", path.display()));
+
+        let count_updates = |bytes: &[u8]| -> (usize, Vec<u16>) {
+            let mut demux = StreamingTsDemux::new();
+            demux.feed(bytes);
+            demux.finish();
+            let mut n = 0usize;
+            let mut channels = Vec::new();
+            while let Some(event) = demux.poll_event() {
+                if let DemuxEvent::TrackUpdated(spec) = event {
+                    n += 1;
+                    if let CodecConfig::Aac { channel_count, .. } = spec.config {
+                        channels.push(channel_count);
+                    }
+                }
+            }
+            (n, channels)
+        };
+
+        let (updates, _) = count_updates(&source);
         assert_eq!(
-            rescale_to_track(NEGATIVE_90K, VIDEO_TIMESCALE),
-            -90_000,
-            "the 90 kHz identity path already preserved this"
+            updates, 0,
+            "a varying ADTS frame_length must not read as a config change; got {updates} TrackUpdated events on a real AAC capture"
+        );
+
+        // The fixture's own config, read from its recovered ASC rather than
+        // assumed.
+        let mut demux = TsDemux::new();
+        let media = demux.demux(&source).expect("demux aac fixture");
+        let audio = media
+            .tracks
+            .iter()
+            .find(|t| matches!(t.config(), CodecConfig::Aac { .. }))
+            .expect("the fixture has an AAC track");
+        assert!(!audio.samples.is_empty(), "fixture must carry AAC frames");
+        let (sfi, seeded_channels) = match audio.config() {
+            CodecConfig::Aac {
+                esds,
+                channel_count,
+                ..
+            } => {
+                let dsi = esds
+                    .es_descriptor
+                    .decoder_config
+                    .as_ref()
+                    .and_then(|dc| dc.decoder_specific_info.as_ref())
+                    .expect("AAC esds carries a DecoderSpecificInfo");
+                let asc = AudioSpecificConfig::parse(&dsi.data).expect("parse ASC");
+                (asc.sampling_frequency_index.raw(), *channel_count)
+            }
+            _ => unreachable!(),
+        };
+        /// Table 1.19 configuration 6 is 5.1 (six channels) — what a real
+        /// 5.1 capture must report (r04-W51).
+        const SEEDED_CHANNELS: u16 = 6;
+        assert_eq!(
+            seeded_channels, SEEDED_CHANNELS,
+            "the fixture is a real 5.1 capture, so its config is Table 1.19 configuration 6"
+        );
+        /// The rebuilt stream's `channel_configuration`: 5 = five channels,
+        /// deliberately different from the fixture's own 5.1.
+        const CONFIG_REBUILT: u8 = 5;
+
+        const PES_PAYLOAD_BYTES: usize = 1800;
+        let aac_pid = audio
+            .spec
+            .source_pid
+            .expect("a TS-demuxed track carries its source PID");
+        let mut input = source.clone();
+        let mut cc = 0u8;
+        let mut buf: Vec<u8> = Vec::new();
+        let flush = |buf: &mut Vec<u8>, cc: &mut u8, input: &mut Vec<u8>| {
+            if buf.is_empty() {
+                return;
+            }
+            let pes = pes_packet(ES_STREAM_ID_AUDIO, 0, None, buf);
+            let packets = pes_packets(aac_pid, *cc, &pes);
+            *cc = cc.wrapping_add((packets.len() / TS_PACKET_SIZE) as u8);
+            input.extend_from_slice(&packets);
+            buf.clear();
+        };
+        // Whole frames per PES payload, as a real muxer packs them.
+        for sample in &audio.samples {
+            let frame_len = (ADTS_HEADER_SIZE + sample.data.len()) as u16;
+            let hdr = crate::aac_asc::build_adts_header(1, sfi, CONFIG_REBUILT, frame_len);
+            if buf.len() + frame_len as usize > PES_PAYLOAD_BYTES {
+                flush(&mut buf, &mut cc, &mut input);
+            }
+            buf.extend_from_slice(&hdr);
+            buf.extend_from_slice(&sample.data);
+        }
+        flush(&mut buf, &mut cc, &mut input);
+
+        let (updates, channels) = count_updates(&input);
+        assert_eq!(
+            updates, 1,
+            "a real channel_configuration change must raise exactly one TrackUpdated, got {updates} (channels: {channels:?})"
         );
         assert_eq!(
-            rescale_to_track(NEGATIVE_90K, SAMPLE_RATE),
-            -48_000,
-            "the audio rescale must preserve it too — one second before zero is \
-             -48000 ticks at 48 kHz, not 0"
+            channels,
+            vec![5],
+            "the event must carry the new Table 1.19 count"
         );
-        // Floor semantics hold on both sides of zero (what the doc claims).
-        assert_eq!(rescale_to_track(-1, SAMPLE_RATE), -1);
-        assert_eq!(rescale_to_track(1, SAMPLE_RATE), 0);
+    }
+
+    /// r04-W47: the codec-config probes must scan only the *newest* access
+    /// unit, so the byte-probe work a never-resolving PID costs stays
+    /// proportional to the input length, not to its square.
+    ///
+    /// A PID whose config never resolves (here: an AAC PID whose ADTS frames
+    /// claim `sampling_frequency_index` 13, which [`sfi_to_hz`] rejects, so
+    /// [`finalize_probe`] never returns a config) accumulates every access
+    /// unit into its backlog while probing. Before the fix each new access
+    /// unit re-walked the whole backlog with [`find_adts_sync`], whose
+    /// byte-by-byte sync scan is counted by [`record_sync_probe`] at its own
+    /// scan site -- measured, not re-derived in the test. Each access unit
+    /// here is one 1400-byte ADTS frame carrying no second syncword, so a
+    /// scan of one access unit stops at its very first probe, while the
+    /// pre-fix shape re-probed every earlier access unit on every push.
+    #[test]
+    fn probe_sync_scan_work_is_linear_in_the_input_not_quadratic() {
+        use crate::aac_asc::build_adts_header;
+
+        /// `sampling_frequency_index` 13 (reserved) -- `sfi_to_hz` returns
+        /// `None`, so the AAC probe can never finalize.
+        const REJECTED_SFI: u8 = 13;
+        /// Frame body bytes after the 7-byte ADTS header.
+        const FRAME_BODY: usize = 1400;
+        /// ADTS frames per PES access unit.
+        const FRAMES_PER_AU: usize = 3;
+        /// Access units fed -- chosen so the backlog stays under
+        /// [`MAX_PROBE_BACKLOG_BYTES`] (500 × 3 × 1407 B ≈ 2.1 MiB) while the
+        /// quadratic shape's total probe count still grows like
+        /// `frames^2` (≈ 2.25 × 10^6), orders past the linear bound.
+        const ACCESS_UNITS: usize = 500;
+
+        let frame_len = (ADTS_HEADER_SIZE + FRAME_BODY) as u16;
+        let mut frame = alloc::vec![0u8; frame_len as usize];
+        frame[..ADTS_HEADER_SIZE].copy_from_slice(&build_adts_header(
+            1,
+            REJECTED_SFI,
+            2,
+            frame_len,
+        ));
+        let mut au = Vec::with_capacity(frame.len() * FRAMES_PER_AU);
+        for _ in 0..FRAMES_PER_AU {
+            au.extend_from_slice(&frame);
+        }
+
+        let mut input = Vec::new();
+        for _ in 0..mpeg_ts::resync::LOCK_CONFIRMATIONS + 1 {
+            input.extend_from_slice(&null_packet());
+        }
+        input.extend_from_slice(&psi_section_packets(
+            PAT_PID_UNDER_TEST,
+            0,
+            TABLE_ID_PAT,
+            &pat_body(),
+        ));
+        input.extend_from_slice(&psi_section_packets(
+            PMT_PID_UNDER_TEST,
+            0,
+            TABLE_ID_PMT,
+            &pmt_body(ES_PID_UNDER_TEST, STREAM_TYPE_AAC_ADTS),
+        ));
+        // One PES packet per access unit; CC runs continuously over the
+        // whole elementary stream (each `pes_packets` call increments from
+        // the value it is given).
+        let mut cc = 0u8;
+        for i in 0..ACCESS_UNITS {
+            let pes = pes_packet(ES_STREAM_ID_AUDIO, i as i64 * 1024, None, &au);
+            let packets = pes_packets(ES_PID_UNDER_TEST, cc, &pes);
+            cc = cc.wrapping_add((packets.len() / TS_PACKET_SIZE) as u8);
+            input.extend_from_slice(&packets);
+        }
+
+        let before = sync_probes();
+        let mut demux = StreamingTsDemux::new();
+        demux.feed(&input);
+        demux.finish();
+        let probes = sync_probes() - before;
+
+        // The PID must genuinely still be probing when the input ends, so this
+        // measures a never-resolving probe rather than a resolved one.
+        assert!(
+            matches!(
+                demux
+                    .streams
+                    .get(&ES_PID_UNDER_TEST)
+                    .and_then(|s| s.track.as_ref()),
+                Some(TrackState::Probing { .. })
+            ),
+            "the reserved-SFI AAC PID must never resolve its config, so it stays Probing"
+        );
+        // Bound: per access unit, exactly one probe pass and one sync scan —
+        // and the scan returns at its very first probe, because the syncword is
+        // at offset 0. The total is therefore exactly twice the number of access
+        // units however long each one is. Re-derived from the fixture's own
+        // shape, not from the demux's internals; a backlog rescan would instead
+        // be ACCESS_UNITS^2/2 = 125 000.
+        let expected = ACCESS_UNITS as u64 * 2;
+        assert_eq!(
+            probes, expected,
+            "the AAC probe must scan only the newest access unit              ({ACCESS_UNITS} accesses => {expected} probes: one pass + one              sync scan each); {probes} recorded"
+        );
+    }
+
+    /// The same linearity bound for the two probes that walk the access unit
+    /// rather than scanning for a syncword — H.264 (a NAL walk) and MPEG audio
+    /// (a header scan counted by [`record_sync_probe`]) — so all three probe
+    /// families are covered, not just ADTS (r04-W47 review).
+    ///
+    /// A never-resolving PID of each kind is built from real elementary-stream
+    /// bytes and flood-fed access units. The total *probe passes* must stay
+    /// proportional to the number of access units, never their sum of lengths.
+    #[test]
+    fn video_and_mpeg_audio_probe_work_is_linear_in_the_input() {
+        /// Access units fed; comfortably more than one, so a linear bound and a
+        /// quadratic one differ by orders of magnitude.
+        const ACCESS_UNITS: u32 = 400;
+        /// Bytes per access unit — large enough that re-walking an accumulated
+        /// backlog would be unmistakable.
+        const AU_BYTES: usize = 1024;
+
+        // Real H.264 parameter sets, but deliberately *not* a decodable SPS, so
+        // the H.264 probe never finalizes: take a real SPS and truncate it.
+        let (sps, pps, _) = real_avc_parameter_sets();
+        let broken_sps = &sps[..sps.len().min(3)];
+
+        for (stream_type, au) in [
+            // H.264: SPS and PPS present but the SPS is unusable, so
+            // `decode_avc_sps` never yields a geometry and the probe stays
+            // unresolved forever.
+            (
+                STREAM_TYPE_AVC,
+                annexb_au(&[broken_sps, &pps, &[0x41u8; 8]]),
+            ),
+            // MPEG-1 audio: bytes that never form a valid frame header (a
+            // syncword followed by a reserved bit-rate index), so the probe
+            // scans the whole access unit and still never resolves.
+            (
+                STREAM_TYPE_MPEG1_AUDIO,
+                // No syncword anywhere in the access unit.
+                alloc::vec![0xE0u8; AU_BYTES],
+            ),
+        ] {
+            let mut au = au;
+            au.resize(AU_BYTES, 0x33);
+
+            let mut input = Vec::new();
+            for _ in 0..mpeg_ts::resync::LOCK_CONFIRMATIONS + 1 {
+                input.extend_from_slice(&null_packet());
+            }
+            input.extend_from_slice(&psi_section_packets(
+                PAT_PID_UNDER_TEST,
+                0,
+                TABLE_ID_PAT,
+                &pat_body(),
+            ));
+            input.extend_from_slice(&psi_section_packets(
+                PMT_PID_UNDER_TEST,
+                0,
+                TABLE_ID_PMT,
+                &pmt_body(ES_PID_UNDER_TEST, stream_type),
+            ));
+            let mut cc = 0u8;
+            for i in 0..ACCESS_UNITS {
+                let pes = pes_packet(ES_STREAM_ID_AUDIO, i as i64 * 1024, None, &au);
+                let packets = pes_packets(ES_PID_UNDER_TEST, cc, &pes);
+                cc = cc.wrapping_add((packets.len() / TS_PACKET_SIZE) as u8);
+                input.extend_from_slice(&packets);
+            }
+
+            let before = sync_probes();
+            let mut demux = StreamingTsDemux::new();
+            demux.feed(&input);
+            demux.finish();
+            let probes = sync_probes() - before;
+
+            assert!(
+                matches!(
+                    demux
+                        .streams
+                        .get(&ES_PID_UNDER_TEST)
+                        .and_then(|s| s.track.as_ref()),
+                    Some(TrackState::Probing { .. }) | Some(TrackState::Abandoned)
+                ),
+                "stream_type {stream_type:#04X} must never resolve its config"
+            );
+            // Exactly one probe pass per access unit for the H.264 probe,
+            // whose NAL walk has no byte-by-byte sync scanner of its own — an
+            // exact equality, which is the strongest statement the counter can
+            // make and cannot be satisfied by a rescan. The MPEG-audio probe
+            // *does* scan, so it costs one pass plus up to one probe per byte
+            // of the single access unit it examined; its bound stays an
+            // inequality (ACCESS_UNITS² / 2 would be ~80 000).
+            if stream_type == STREAM_TYPE_AVC {
+                assert_eq!(
+                    probes, ACCESS_UNITS as u64,
+                    "the H.264 probe must make exactly one pass per access                      unit, never a backlog rescan: {probes} probes over                      {ACCESS_UNITS} access units"
+                );
+            } else {
+                let bound = ACCESS_UNITS as u64 * (1 + AU_BYTES as u64);
+                assert!(
+                    probes <= bound,
+                    "stream_type {stream_type:#04X}: {probes} probes over                      {ACCESS_UNITS} access units of {AU_BYTES} bytes — bound is                      {bound}; a quadratic rescan is ~{}",
+                    (ACCESS_UNITS as u64).pow(2) / 2
+                );
+            }
+        }
+    }
+
+    // ── r04-W51 review: parameter-set tracking, not a one-AU snapshot ───────
+
+    /// Build a TS carrying one AVC PID whose access units are exactly the
+    /// `aus` given, each in its own PES packet, preceded by a PAT/PMT and the
+    /// resync bootstrap. Returns the bytes and the PID used.
+    fn avc_ts_over(aus: &[Vec<u8>]) -> Vec<u8> {
+        let mut cc = 0u8;
+        let mut input = Vec::new();
+        for _ in 0..mpeg_ts::resync::LOCK_CONFIRMATIONS + 1 {
+            input.extend_from_slice(&null_packet());
+        }
+        input.extend_from_slice(&psi_section_packets(
+            PAT_PID_UNDER_TEST,
+            0,
+            TABLE_ID_PAT,
+            &pat_body(),
+        ));
+        input.extend_from_slice(&psi_section_packets(
+            PMT_PID_UNDER_TEST,
+            0,
+            TABLE_ID_PMT,
+            &pmt_body(ES_PID_UNDER_TEST, STREAM_TYPE_AVC),
+        ));
+        for (i, au) in aus.iter().enumerate() {
+            let pes = pes_packet(
+                ES_STREAM_ID_VIDEO,
+                i as i64 * 3600,
+                Some(i as i64 * 3600),
+                au,
+            );
+            let packets = pes_packets(ES_PID_UNDER_TEST, cc, &pes);
+            cc = cc.wrapping_add((packets.len() / TS_PACKET_SIZE) as u8);
+            input.extend_from_slice(&packets);
+        }
+        input
+    }
+
+    /// The `TrackUpdated` width a TS produces, if any.
+    fn updated_avc_width(bytes: &[u8]) -> Option<u16> {
+        let mut demux = StreamingTsDemux::new();
+        demux.feed(bytes);
+        demux.finish();
+        std::iter::from_fn(|| demux.poll_event()).find_map(|e| match e {
+            DemuxEvent::TrackUpdated(spec) => match spec.config {
+                CodecConfig::Avc { width, .. } => Some(width),
+                _ => None,
+            },
+            _ => None,
+        })
+    }
+
+    /// A two-program multiplex where **program A**'s PCR PID signals a
+    /// time-base discontinuity. Program B's timeline must be completely
+    /// untouched: §2.4.3.5 scopes the indicator to "the associated program"
+    /// (the one whose PCR_PID carries it), so a rebase that reached every
+    /// stream in the demux would corrupt an unrelated service (r04-W50
+    /// review — the first attempt marked every stream across every program).
+    #[test]
+    fn signalled_discontinuity_is_scoped_to_the_signalling_program() {
+        /// Program A: PMT PID, ES PIDs (the first is also its PCR PID),
+        /// program_number.
+        const A_PMT: u16 = 0x1000;
+        const A_ES: u16 = 0x1100;
+        /// Program A's second elementary stream (audio).
+        const A_ES2: u16 = 0x1101;
+        /// Program B: likewise.
+        const B_PMT: u16 = 0x1001;
+        const B_ES: u16 = 0x1200;
+        /// Program numbers for the two PAT entries.
+        const A_PROGRAM: u16 = 1;
+        const B_PROGRAM: u16 = 2;
+        /// Frame period, 90 kHz ticks (25 fps).
+        const FRAME_PERIOD: i64 = 3600;
+        /// Frames per base, per program.
+        const FRAMES: i64 = 8;
+        /// Program A's second base — well *below* its first, so it needs a lift.
+        const A_BASE_B: i64 = 40_000;
+        /// Both programs' first base.
+        const BASE_A: i64 = 900_000;
+
+        let annexb = real_annexb_frames();
+
+        let mut cc = 0u8;
+        let mut input = Vec::new();
+        for _ in 0..mpeg_ts::resync::LOCK_CONFIRMATIONS + 1 {
+            input.extend_from_slice(&null_packet());
+        }
+        // One PAT listing both programs.
+        let mut pat = Vec::new();
+        for (program, pmt_pid) in [(A_PROGRAM, A_PMT), (B_PROGRAM, B_PMT)] {
+            pat.extend_from_slice(&program.to_be_bytes());
+            pat.extend_from_slice(&(0xE000 | pmt_pid).to_be_bytes());
+        }
+        input.extend_from_slice(&psi_section_packets_for(
+            PAT_PID_UNDER_TEST,
+            0,
+            TABLE_ID_PAT,
+            0,
+            &pat,
+        ));
+        // Program A carries *two* elementary streams (video + audio) and the
+        // video PID is its PCR_PID: both must be rebased by A's discontinuity,
+        // while program B's single stream is untouched (r04-W50 review).
+        input.extend_from_slice(&psi_section_packets_for(
+            A_PMT,
+            0,
+            TABLE_ID_PMT,
+            A_PROGRAM,
+            &pmt_body_two_es_with_pcr_pid(A_ES, STREAM_TYPE_AVC, A_ES2, STREAM_TYPE_AVC, A_ES),
+        ));
+        input.extend_from_slice(&psi_section_packets_for(
+            B_PMT,
+            0,
+            TABLE_ID_PMT,
+            B_PROGRAM,
+            &pmt_body_with_pcr_pid(B_ES, STREAM_TYPE_AVC, B_ES),
+        ));
+        let push_au = |input: &mut Vec<u8>, cc: &mut u8, pid: u16, au: &[u8], dts: i64| {
+            let wire = dts.rem_euclid(1i64 << 33) as u64;
+            let pes = pes_packet(ES_STREAM_ID_VIDEO, wire as i64, Some(wire as i64), au);
+            let packets = pes_packets(pid, *cc, &pes);
+            *cc = cc.wrapping_add((packets.len() / TS_PACKET_SIZE) as u8);
+            input.extend_from_slice(&packets);
+        };
+
+        // Program A: base 1, then a signalled discontinuity on its PCR PID,
+        // then base 2 (below base 1).
+        for i in 0..FRAMES {
+            let au = annexb[(i as usize) % annexb.len()].clone();
+            push_au(&mut input, &mut cc, A_ES, &au, BASE_A + i * FRAME_PERIOD);
+        }
+        {
+            let mut pkt = [0xFFu8; TS_PACKET_SIZE];
+            pkt[0] = 0x47;
+            pkt[1] = (A_ES >> 8) as u8 & PID_HI_MASK;
+            pkt[2] = (A_ES & 0xFF) as u8;
+            pkt[3] = 0x20 | (cc & 0x0F); // AFC=10: adaptation field only
+            pkt[4] = 8;
+            pkt[5] = 0x80; // discontinuity_indicator
+            input.extend_from_slice(&pkt);
+            cc = cc.wrapping_add(1);
+        }
+        for i in 0..FRAMES {
+            let au = annexb[(i as usize) % annexb.len()].clone();
+            push_au(&mut input, &mut cc, A_ES, &au, A_BASE_B + i * FRAME_PERIOD);
+        }
+        // Program A's *second* elementary stream: its own timeline with the
+        // same base change, so the rebase must reach every stream of the
+        // program, not just the PID that carried the indicator.
+        for i in 0..FRAMES * 2 {
+            let au = annexb[(i as usize) % annexb.len()].clone();
+            let dts = if i < FRAMES {
+                BASE_A + i * FRAME_PERIOD
+            } else {
+                A_BASE_B + (i - FRAMES) * FRAME_PERIOD
+            };
+            push_au(&mut input, &mut cc, A_ES2, &au, dts);
+        }
+        // Program B: one base, no discontinuity at all.
+        for i in 0..FRAMES * 2 {
+            let au = annexb[(i as usize) % annexb.len()].clone();
+            push_au(&mut input, &mut cc, B_ES, &au, BASE_A + i * FRAME_PERIOD);
+        }
+
+        let mut demux = StreamingTsDemux::new();
+        demux.feed(&input);
+        demux.finish();
+        let events: Vec<DemuxEvent> = std::iter::from_fn(|| demux.poll_event()).collect();
+        let ids: BTreeMap<u32, u16> = events
+            .iter()
+            .filter_map(|e| match e {
+                DemuxEvent::TrackAdded(spec) => spec.source_pid.map(|pid| (spec.track_id, pid)),
+                _ => None,
+            })
+            .collect();
+        let mut samples_by_pid: BTreeMap<u16, Vec<i64>> = BTreeMap::new();
+        for event in &events {
+            if let DemuxEvent::Sample { track_id, sample } = event
+                && let Some(pid) = ids.get(track_id)
+                && let Some(dts) = sample.dts
+            {
+                samples_by_pid.entry(*pid).or_default().push(dts);
+            }
+        }
+        let a_dts = samples_by_pid
+            .get(&A_ES)
+            .cloned()
+            .expect("program A's video PID must deliver samples");
+        let b_dts = samples_by_pid
+            .get(&B_ES)
+            .cloned()
+            .expect("program B must deliver samples");
+
+        assert!(
+            b_dts.len() >= FRAMES as usize,
+            "program B must deliver its samples, got {}",
+            b_dts.len()
+        );
+        // Program B's timeline must be exactly what it would be without any
+        // discontinuity: the declared base, advancing by one frame period.
+        let expected: Vec<i64> = (0..FRAMES * 2).map(|i| BASE_A + i * FRAME_PERIOD).collect();
+        let got: Vec<i64> = b_dts.iter().copied().take(expected.len()).collect();
+        assert_eq!(
+            got, expected,
+            "program B's dts must be untouched by program A's signalled              discontinuity"
+        );
+        // And program A did get rebased — on *both* of its elementary streams,
+        // so the test is not vacuous and the scope is not accidentally
+        // narrowed to the PID that happened to carry the indicator.
+        let a_steps: Vec<i64> = a_dts.windows(2).map(|w| w[1] - w[0]).collect();
+        assert!(
+            !a_steps.is_empty() && a_steps.iter().all(|&d| d > 0),
+            "program A's video timeline must be strictly increasing across its              discontinuity: {a_dts:?}"
+        );
+        let a2 = samples_by_pid
+            .get(&A_ES2)
+            .expect("program A's second elementary stream must deliver samples");
+        let a2_steps: Vec<i64> = a2.windows(2).map(|w| w[1] - w[0]).collect();
+        assert!(
+            !a2_steps.is_empty() && a2_steps.iter().all(|&d| d > 0),
+            "program A's *second* PID must be rebased by the discontinuity on              its PCR_PID too: {a2:?}"
+        );
+    }
+
+    /// Real Annex-B H.264 access units from the committed `h264_aac.ts`
+    /// capture: the first sample carries the SPS/PPS, so a track resolves on
+    /// the first one fed. Reused by every test that needs a decodable video
+    /// elementary stream without hand-rolling one.
+    fn real_annexb_frames() -> Vec<Vec<u8>> {
+        let mut path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        path.push("..");
+        path.push("fixtures");
+        path.push("ts");
+        path.push("h264_aac.ts");
+        let source =
+            std::fs::read(&path).unwrap_or_else(|e| panic!("read fixture {}: {e}", path.display()));
+        let media = TsDemux::new().demux(&source).expect("demux h264_aac.ts");
+        let video = media
+            .tracks
+            .iter()
+            .find(|t| matches!(t.config(), CodecConfig::Avc { .. }))
+            .expect("h264_aac.ts has an AVC track");
+        video
+            .samples
+            .iter()
+            .map(|sample| {
+                let mut au = Vec::new();
+                for nal in crate::annexb::iter_length_prefixed_nals(&sample.data)
+                    .expect("TsMux writes valid NAL prefixes")
+                {
+                    au.extend_from_slice(&[0x00, 0x00, 0x00, 0x01]);
+                    au.extend_from_slice(nal);
+                }
+                au
+            })
+            .collect()
+    }
+
+    /// A backward discontinuity with a **jittered** cadence. The earlier
+    /// attempt decided "old base vs new base" by exact equality
+    /// (`shortfall == 0`), which cadence jitter breaks: at 23.976 fps the frame
+    /// period alternates 3754/3753 ticks (90000/23.976 = 3753.75), so the old
+    /// base's last access unit lands a tick early or late and consumes the
+    /// `pending_rebase` flag — leaving the real new-base unit unrebase
+    /// (r04-W50 review). A backward move is the signal instead, because the old
+    /// base cannot produce one.
+    ///
+    /// The timeline fed in is the *real* alternating cadence, not a synthetic
+    /// constant: that is the whole point, since a constant cadence cannot
+    /// reproduce the defect.
+    #[test]
+    fn jittered_cadence_backward_discontinuity_rebases() {
+        /// 23.976 fps at 90 kHz: 3753.75 ticks, emitted as 3754/3753 —
+        /// exactly what a real encoder hands out.
+        const PERIODS: [i64; 2] = [3754, 3753];
+        /// First time base.
+        const BASE_A: i64 = 900_000;
+        /// Second base: **below** the first, the ordinary splice shape.
+        const BASE_B: i64 = 120_000;
+        /// Access units per base — enough for the jitter to bite.
+        const FRAMES: i64 = 30;
+
+        let annexb = real_annexb_frames();
+        let mut cc = 0u8;
+        let mut input = Vec::new();
+        for _ in 0..mpeg_ts::resync::LOCK_CONFIRMATIONS + 1 {
+            input.extend_from_slice(&null_packet());
+        }
+        input.extend_from_slice(&psi_section_packets(
+            PAT_PID_UNDER_TEST,
+            0,
+            TABLE_ID_PAT,
+            &pat_body(),
+        ));
+        input.extend_from_slice(&psi_section_packets(
+            PMT_PID_UNDER_TEST,
+            0,
+            TABLE_ID_PMT,
+            // The ES PID is the program's PCR_PID, so the indicator is carried
+            // where §2.4.3.5 requires.
+            &pmt_body_with_pcr_pid(ES_PID_UNDER_TEST, STREAM_TYPE_AVC, ES_PID_UNDER_TEST),
+        ));
+
+        let push = |input: &mut Vec<u8>, cc: &mut u8, au: &[u8], dts: i64| {
+            let wire = dts.rem_euclid(1i64 << 33);
+            let pes = pes_packet(ES_STREAM_ID_VIDEO, wire, Some(wire), au);
+            let packets = pes_packets(ES_PID_UNDER_TEST, *cc, &pes);
+            *cc = cc.wrapping_add((packets.len() / TS_PACKET_SIZE) as u8);
+            input.extend_from_slice(&packets);
+        };
+
+        let mut dts = BASE_A;
+        for i in 0..FRAMES * 2 {
+            if i == FRAMES {
+                let mut pkt = [0xFFu8; TS_PACKET_SIZE];
+                pkt[0] = 0x47;
+                pkt[1] = (ES_PID_UNDER_TEST >> 8) as u8 & PID_HI_MASK;
+                pkt[2] = (ES_PID_UNDER_TEST & 0xFF) as u8;
+                pkt[3] = 0x20 | (cc & 0x0F);
+                pkt[4] = 8;
+                pkt[5] = 0x80; // discontinuity_indicator
+                input.extend_from_slice(&pkt);
+                cc = cc.wrapping_add(1);
+                dts = BASE_B;
+            }
+            let au = annexb[(i as usize) % annexb.len()].clone();
+            push(&mut input, &mut cc, &au, dts);
+            dts += PERIODS[(i as usize) % PERIODS.len()];
+        }
+
+        let mut demux = StreamingTsDemux::new();
+        demux.feed(&input);
+        demux.finish();
+        let got: Vec<i64> = std::iter::from_fn(|| demux.poll_event())
+            .filter_map(|e| match e {
+                DemuxEvent::Sample { sample, .. } => sample.dts,
+                _ => None,
+            })
+            .collect();
+        assert!(
+            got.len() >= FRAMES as usize,
+            "expected the access units of both bases, got {}",
+            got.len()
+        );
+        let steps: Vec<i64> = got.windows(2).map(|w| w[1] - w[0]).collect();
+        assert!(
+            steps.iter().all(|&d| d > 0),
+            "dts must be strictly increasing across a jittered discontinuity;              dts={got:?}"
+        );
+        // The seam continues the cadence: one nominal period, within the
+        // jitter the input itself carries.
+        let seam = steps
+            .iter()
+            .copied()
+            .filter(|&d| d > PERIODS[1])
+            .max()
+            .unwrap_or(0);
+        assert!(
+            seam <= PERIODS[0] + 1,
+            "the seam must continue the cadence (one period), not jump:              largest step {seam}, steps={steps:?}"
+        );
+    }
+
+    /// An 8-second forward splice must **not** become the frame period. The
+    /// first estimator accepted any step up to ten seconds, so a splice sat
+    /// inside the window and was then used as the constant period for every
+    /// unstamped access unit after it — stretching them all out by 8 seconds
+    /// (r04-W48/W50 review). The window is now a median of the last few steps
+    /// and its ceiling is one second.
+    #[test]
+    fn an_eight_second_splice_does_not_become_the_frame_period() {
+        /// Frame period, 90 kHz ticks (25 fps).
+        const FRAME_PERIOD: i64 = 3600;
+        /// A splice far longer than any real frame period, and longer than the
+        /// one-second ceiling.
+        const SPLICE: i64 = 8 * 90_000;
+        /// Stamped frames before the splice.
+        const STAMPED: i64 = 8;
+        /// Forced frame-rate PES packets after the splice — the frames whose
+        /// duration the interpolator would stretch if the splice were adopted.
+        const UNSTAMPED: usize = 4;
+
+        let annexb = real_annexb_frames();
+        let mut cc = 0u8;
+        let mut input = Vec::new();
+        for _ in 0..mpeg_ts::resync::LOCK_CONFIRMATIONS + 1 {
+            input.extend_from_slice(&null_packet());
+        }
+        input.extend_from_slice(&psi_section_packets(
+            PAT_PID_UNDER_TEST,
+            0,
+            TABLE_ID_PAT,
+            &pat_body(),
+        ));
+        input.extend_from_slice(&psi_section_packets(
+            PMT_PID_UNDER_TEST,
+            0,
+            TABLE_ID_PMT,
+            &pmt_body(ES_PID_UNDER_TEST, STREAM_TYPE_AVC),
+        ));
+
+        let push = |input: &mut Vec<u8>, cc: &mut u8, au: &[u8], dts: Option<i64>| {
+            let pes = match dts {
+                Some(d) => {
+                    let wire = d.rem_euclid(1i64 << 33);
+                    pes_packet(ES_STREAM_ID_VIDEO, wire, Some(wire), au)
+                }
+                None => pes_packet_untimed(ES_STREAM_ID_VIDEO, au),
+            };
+            let packets = pes_packets(ES_PID_UNDER_TEST, *cc, &pes);
+            *cc = cc.wrapping_add((packets.len() / TS_PACKET_SIZE) as u8);
+            input.extend_from_slice(&packets);
+        };
+
+        // A regular cadence, then a *run* of 8-second steps — enough of them
+        // that even a median of the window is dominated by the splice, which is
+        // exactly what the one-second ceiling exists to reject.
+        for i in 0..STAMPED {
+            let au = annexb[(i as usize) % annexb.len()].clone();
+            push(&mut input, &mut cc, &au, Some(90_000 + i * FRAME_PERIOD));
+        }
+        let mut at = 90_000 + (STAMPED - 1) * FRAME_PERIOD + SPLICE;
+        for i in 0..6usize {
+            let au = annexb[i % annexb.len()].clone();
+            push(&mut input, &mut cc, &au, Some(at));
+            at += SPLICE;
+        }
+        let after_splice = at - SPLICE;
+        for i in 1..=UNSTAMPED {
+            let au = annexb[i % annexb.len()].clone();
+            push(&mut input, &mut cc, &au, None);
+        }
+
+        let mut demux = StreamingTsDemux::new();
+        demux.feed(&input);
+        demux.finish();
+        let dts: Vec<i64> = std::iter::from_fn(|| demux.poll_event())
+            .filter_map(|e| match e {
+                DemuxEvent::Sample { sample, .. } => sample.dts,
+                _ => None,
+            })
+            .collect();
+        // The unstamped frames must be spaced by the *measured* frame period,
+        // not by the splice.
+        let tail: Vec<i64> = dts.iter().copied().filter(|&d| d > after_splice).collect();
+        assert!(
+            tail.len() >= UNSTAMPED - 1,
+            "expected the unstamped frames to be delivered, got {dts:?}"
+        );
+        let steps: Vec<i64> = tail.windows(2).map(|w| w[1] - w[0]).collect();
+        assert!(
+            steps.iter().all(|&d| d == FRAME_PERIOD),
+            "the splice must not become the frame period: steps={steps:?}              (an adopted 8-second period would give {SPLICE})"
+        );
+    }
+
+    /// A **bounded** PES that stops short of its declared length is dropped at
+    /// `finish()` too, not just mid-stream: end of input is not evidence that
+    /// the missing bytes were never needed (r04-W49 review).
+    #[test]
+    fn truncated_final_bounded_pes_is_dropped_at_flush() {
+        /// A payload long enough to need two TS packets, so the declared
+        /// length can be left unmet.
+        const BODY: usize = 300;
+        let au: Vec<u8> = (0..BODY).map(|i| (i & 0xFF) as u8).collect();
+        let pes = untimed_pes(ES_STREAM_ID_PRIVATE_DATA, &au);
+
+        let mut input = Vec::new();
+        for _ in 0..mpeg_ts::resync::LOCK_CONFIRMATIONS + 1 {
+            input.extend_from_slice(&null_packet());
+        }
+        input.extend_from_slice(&psi_section_packets(
+            PAT_PID_UNDER_TEST,
+            0,
+            TABLE_ID_PAT,
+            &pat_body(),
+        ));
+        input.extend_from_slice(&psi_section_packets(
+            PMT_PID_UNDER_TEST,
+            0,
+            TABLE_ID_PMT,
+            &pmt_body(ES_PID_UNDER_TEST, STREAM_TYPE_PES_PRIVATE),
+        ));
+        // Only the first of the unit's two packets: the declared length is
+        // never reached, and nothing follows to complete it.
+        let packets = pes_packets(ES_PID_UNDER_TEST, 0, &pes);
+        assert_eq!(
+            packets.len(),
+            2 * TS_PACKET_SIZE,
+            "the unit spans two packets"
+        );
+        input.extend_from_slice(&packets[..TS_PACKET_SIZE]);
+
+        let mut demux = StreamingTsDemux::new();
+        demux.feed(&input);
+        demux.finish();
+        let samples = std::iter::from_fn(|| demux.poll_event())
+            .filter(|e| matches!(e, DemuxEvent::Sample { .. }))
+            .count();
+        assert_eq!(
+            samples, 0,
+            "a bounded PES that never reached its declared length must not be              delivered by finish()"
+        );
+    }
+
+    /// A discontinuity that coincides with the 33-bit wrap. Base A ends at raw
+    /// `2^33 - 3*3600`; the indicator signals a new base whose first raw stamp
+    /// is `1000` — just past the wrap, and *continuing* the old base once the
+    /// 33-bit unroll is applied. Reading the raw number instead of the unrolled
+    /// one makes that look like a jump backwards by nearly the whole modulus,
+    /// so the lift is inflated by ~2³³ and the timeline runs away
+    /// (r04-W50 review; the earlier round claimed this was untestable).
+    ///
+    /// The assertion is exact: every step stays one frame period — across the
+    /// wrap and across the signalled seam alike.
+    #[test]
+    fn wrap_coincident_discontinuity_keeps_one_frame_period_steps() {
+        /// Frame period, 90 kHz ticks.
+        const FRAME_PERIOD: i64 = 3600;
+        /// Frames in base A.
+        const FRAMES_A: i64 = 3;
+        /// The 33-bit clock modulus.
+        const WRAP: i64 = 1i64 << 33;
+        /// Base A's anchor: its last stamp is exactly one period short of the
+        /// wrap.
+        const BASE_A: i64 = WRAP - (FRAMES_A + 1) * FRAME_PERIOD;
+        /// Base A's last raw (= unrolled) stamp.
+        const A_LAST: i64 = BASE_A + (FRAMES_A - 1) * FRAME_PERIOD;
+        /// Base B's first raw stamp. On the wire it is a small number just
+        /// past zero; unrolled, `BASE_B + WRAP` is exactly one frame period
+        /// after base A's last stamp, so the honest timeline is a perfectly
+        /// regular cadence across the wrap.
+        const BASE_B: i64 = BASE_A + FRAMES_A * FRAME_PERIOD - WRAP;
+
+        let annexb = real_annexb_frames();
+        let mut cc = 0u8;
+        let mut input = Vec::new();
+        for _ in 0..mpeg_ts::resync::LOCK_CONFIRMATIONS + 1 {
+            input.extend_from_slice(&null_packet());
+        }
+        input.extend_from_slice(&psi_section_packets(
+            PAT_PID_UNDER_TEST,
+            0,
+            TABLE_ID_PAT,
+            &pat_body(),
+        ));
+        input.extend_from_slice(&psi_section_packets(
+            PMT_PID_UNDER_TEST,
+            0,
+            TABLE_ID_PMT,
+            &pmt_body_with_pcr_pid(ES_PID_UNDER_TEST, STREAM_TYPE_AVC, ES_PID_UNDER_TEST),
+        ));
+
+        let push = |input: &mut Vec<u8>, cc: &mut u8, au: &[u8], raw: i64| {
+            let wire = raw.rem_euclid(WRAP);
+            let pes = pes_packet(ES_STREAM_ID_VIDEO, wire, Some(wire), au);
+            let packets = pes_packets(ES_PID_UNDER_TEST, *cc, &pes);
+            *cc = cc.wrapping_add((packets.len() / TS_PACKET_SIZE) as u8);
+            input.extend_from_slice(&packets);
+        };
+
+        // Base A, ending one frame period short of the wrap.
+        for i in 0..FRAMES_A {
+            let au = annexb[(i as usize) % annexb.len()].clone();
+            push(&mut input, &mut cc, &au, BASE_A + i * FRAME_PERIOD);
+        }
+        // The signalled discontinuity, at the wrap.
+        {
+            let mut pkt = [0xFFu8; TS_PACKET_SIZE];
+            pkt[0] = 0x47;
+            pkt[1] = (ES_PID_UNDER_TEST >> 8) as u8 & PID_HI_MASK;
+            pkt[2] = (ES_PID_UNDER_TEST & 0xFF) as u8;
+            pkt[3] = 0x20 | (cc & 0x0F);
+            pkt[4] = 8;
+            pkt[5] = 0x80; // discontinuity_indicator
+            input.extend_from_slice(&pkt);
+            cc = cc.wrapping_add(1);
+        }
+        // Base B: raw stamps just past zero, i.e. unrolled one frame past base
+        // A's last stamp.
+        for i in 0..FRAMES_A + 2 {
+            let au = annexb[((FRAMES_A + i) as usize) % annexb.len()].clone();
+            push(&mut input, &mut cc, &au, BASE_B + i * FRAME_PERIOD);
+        }
+
+        let mut demux = StreamingTsDemux::new();
+        demux.feed(&input);
+        demux.finish();
+        let dts: Vec<i64> = std::iter::from_fn(|| demux.poll_event())
+            .filter_map(|e| match e {
+                DemuxEvent::Sample { sample, .. } => sample.dts,
+                _ => None,
+            })
+            .collect();
+        assert!(
+            dts.len() >= (FRAMES_A + 2) as usize,
+            "expected the access units of both bases, got {}",
+            dts.len()
+        );
+        let steps: Vec<i64> = dts.windows(2).map(|w| w[1] - w[0]).collect();
+        assert!(
+            steps.iter().all(|&d| d == FRAME_PERIOD),
+            "every step must stay exactly one frame period across the wrap and              the seam; dts={dts:?} steps={steps:?}"
+        );
+        // The absolute values also pin the *unroll*: base B's raw stamps are
+        // near zero, so a demux that did not unroll across the wrap would place
+        // them ~2^33 below base A instead of continuing it.
+        let first_of_b = dts[dts.len() - (FRAMES_A as usize + 2)];
+        assert!(
+            first_of_b > A_LAST && first_of_b - A_LAST < 2 * FRAME_PERIOD,
+            "base B must continue base A across the wrap, not restart near zero:              first_of_b={first_of_b} last_of_a={A_LAST}"
+        );
+    }
+
+    /// A **forward** jump at a signalled discontinuity must not be collapsed.
+    /// Round 2 computed `wanted - next` and added it even when negative, so a
+    /// legitimate forward splice — the new base starting well *ahead* — was
+    /// pulled back to a single frame period, destroying the real gap
+    /// (r04-W50 review).
+    #[test]
+    fn forward_jump_at_a_signalled_discontinuity_is_not_collapsed() {
+        /// Frame period.
+        const FRAME_PERIOD: i64 = 3600;
+        /// Frames in the first base.
+        const FRAMES: i64 = 6;
+        /// The first base.
+        const BASE_A: i64 = 900_000;
+        /// The new base: a full 8 seconds **ahead** of the first's last stamp.
+        const FORWARD_JUMP: i64 = 8 * 90_000;
+
+        let annexb = real_annexb_frames();
+        let mut cc = 0u8;
+        let mut input = Vec::new();
+        for _ in 0..mpeg_ts::resync::LOCK_CONFIRMATIONS + 1 {
+            input.extend_from_slice(&null_packet());
+        }
+        input.extend_from_slice(&psi_section_packets(
+            PAT_PID_UNDER_TEST,
+            0,
+            TABLE_ID_PAT,
+            &pat_body(),
+        ));
+        input.extend_from_slice(&psi_section_packets(
+            PMT_PID_UNDER_TEST,
+            0,
+            TABLE_ID_PMT,
+            &pmt_body_with_pcr_pid(ES_PID_UNDER_TEST, STREAM_TYPE_AVC, ES_PID_UNDER_TEST),
+        ));
+
+        let push = |input: &mut Vec<u8>, cc: &mut u8, au: &[u8], dts: i64| {
+            let wire = dts.rem_euclid(1i64 << 33);
+            let pes = pes_packet(ES_STREAM_ID_VIDEO, wire, Some(wire), au);
+            let packets = pes_packets(ES_PID_UNDER_TEST, *cc, &pes);
+            *cc = cc.wrapping_add((packets.len() / TS_PACKET_SIZE) as u8);
+            input.extend_from_slice(&packets);
+        };
+        for i in 0..FRAMES {
+            let au = annexb[(i as usize) % annexb.len()].clone();
+            push(&mut input, &mut cc, &au, BASE_A + i * FRAME_PERIOD);
+        }
+        let base_b = BASE_A + (FRAMES - 1) * FRAME_PERIOD + FORWARD_JUMP;
+        {
+            let mut pkt = [0xFFu8; TS_PACKET_SIZE];
+            pkt[0] = 0x47;
+            pkt[1] = (ES_PID_UNDER_TEST >> 8) as u8 & PID_HI_MASK;
+            pkt[2] = (ES_PID_UNDER_TEST & 0xFF) as u8;
+            pkt[3] = 0x20 | (cc & 0x0F);
+            pkt[4] = 8;
+            pkt[5] = 0x80;
+            input.extend_from_slice(&pkt);
+            cc = cc.wrapping_add(1);
+        }
+        for i in 0..FRAMES {
+            let au = annexb[(i as usize) % annexb.len()].clone();
+            push(&mut input, &mut cc, &au, base_b + i * FRAME_PERIOD);
+        }
+
+        let mut demux = StreamingTsDemux::new();
+        demux.feed(&input);
+        demux.finish();
+        let dts: Vec<i64> = std::iter::from_fn(|| demux.poll_event())
+            .filter_map(|e| match e {
+                DemuxEvent::Sample { sample, .. } => sample.dts,
+                _ => None,
+            })
+            .collect();
+        assert!(dts.len() >= 2, "expected samples from both bases");
+        let steps: Vec<i64> = dts.windows(2).map(|w| w[1] - w[0]).collect();
+        let seam = steps
+            .iter()
+            .copied()
+            .find(|&d| d > FRAME_PERIOD)
+            .unwrap_or_else(|| {
+                panic!("the forward jump must survive as a large step, got {steps:?}")
+            });
+        assert!(
+            seam >= FORWARD_JUMP,
+            "a forward jump of {FORWARD_JUMP} ticks must not be collapsed to              {seam}; the offset must never be reduced"
+        );
+        assert!(
+            steps.iter().all(|&d| d > 0),
+            "and the timeline must still be strictly increasing: {steps:?}"
+        );
+    }
+
+    /// Real SPS/PPS bytes from a committed capture: the fixture's own first
+    /// access unit carries them, and they decode to a known geometry used as
+    /// the oracle below.
+    fn real_avc_parameter_sets() -> (Vec<u8>, Vec<u8>, u16) {
+        let mut path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        path.push("..");
+        path.push("fixtures");
+        path.push("ts");
+        path.push("h264_aac.ts");
+        let source =
+            std::fs::read(&path).unwrap_or_else(|e| panic!("read fixture {}: {e}", path.display()));
+        let media = TsDemux::new().demux(&source).expect("demux h264_aac.ts");
+        let video = media
+            .tracks
+            .iter()
+            .find(|t| matches!(t.config(), CodecConfig::Avc { .. }))
+            .expect("h264_aac.ts has an AVC track");
+        let width = match video.config() {
+            CodecConfig::Avc { width, .. } => *width,
+            _ => unreachable!(),
+        };
+        let first = &video.samples[0].data;
+        let nals = crate::annexb::iter_length_prefixed_nals(first)
+            .expect("TsMux writes valid NAL prefixes");
+        let sps = nals
+            .iter()
+            .find(|n| (n[0] & H264_NAL_TYPE_MASK) == H264_NAL_SPS)
+            .expect("the first access unit carries an SPS");
+        let pps = nals
+            .iter()
+            .find(|n| (n[0] & H264_NAL_TYPE_MASK) == H264_NAL_PPS)
+            .expect("the first access unit carries a PPS");
+        (sps.to_vec(), pps.to_vec(), width)
+    }
+
+    /// Annex-B access unit from the given NALs.
+    fn annexb_au(nals: &[&[u8]]) -> Vec<u8> {
+        let mut au = Vec::new();
+        for nal in nals {
+            au.extend_from_slice(&[0x00, 0x00, 0x00, 0x01]);
+            au.extend_from_slice(nal);
+        }
+        au
+    }
+
+    /// An access unit carrying **only** a slice NAL: no parameter sets at all,
+    /// which is how the tail of a real stream looks between keyframes.
+    fn slice_only_au(tag: u8) -> Vec<u8> {
+        annexb_au(&[&[0x65, 0x88, 0x84, tag]])
+    }
+
+    /// The anti-spam half of item 5, first case: an encoder that repeats the
+    /// identical SPS+PPS in its first access unit and then sends slice-only
+    /// access units must produce exactly one `TrackUpdated` set — none.
+    ///
+    /// The first attempt compared the parameter sets of a *single* access unit
+    /// against a snapshot seeded from the backlog's last one, so the very next
+    /// slice-only access unit (no parameter sets at all) compared unequal and
+    /// raised a spurious event.
+    #[test]
+    fn parameter_sets_in_one_access_unit_then_slices_emit_no_update() {
+        let (sps, pps, width) = real_avc_parameter_sets();
+        let mut aus = vec![annexb_au(&[&sps, &pps, &[0x65, 0x88, 0x84, 0x01]])];
+        for i in 0..4u8 {
+            aus.push(slice_only_au(i));
+        }
+        let bytes = avc_ts_over(&aus);
+
+        let mut demux = StreamingTsDemux::new();
+        demux.feed(&bytes);
+        demux.finish();
+        let added_width = std::iter::from_fn(|| demux.poll_event()).find_map(|e| match e {
+            DemuxEvent::TrackAdded(spec) => match spec.config {
+                CodecConfig::Avc { width, .. } => Some(width),
+                _ => None,
+            },
+            _ => None,
+        });
+        assert_eq!(
+            added_width,
+            Some(width),
+            "the track must resolve from the parameter sets in the first access unit"
+        );
+        assert_eq!(
+            updated_avc_width(&bytes),
+            None,
+            "slice-only access units carry no parameter sets, so nothing changed; a per-access-unit comparison raised a spurious TrackUpdated here"
+        );
+    }
+
+    /// Second case: SPS and PPS arriving in *separate* access units (which real
+    /// encoders do) must not read as a change either — the sets are tracked
+    /// separately and each is only "new" once.
+    #[test]
+    fn parameter_sets_split_across_access_units_emit_no_update() {
+        let (sps, pps, width) = real_avc_parameter_sets();
+        let aus = vec![
+            annexb_au(&[&sps, &[0x65, 0x88, 0x84, 0x01]]),
+            annexb_au(&[&pps, &[0x65, 0x88, 0x84, 0x02]]),
+            slice_only_au(0x03),
+        ];
+        let bytes = avc_ts_over(&aus);
+        assert_eq!(
+            updated_avc_width(&bytes),
+            None,
+            "the PPS arriving one access unit after the SPS is not a change; a one-access-unit comparison reported one (and would have reported the SPS's access unit too). Track added at width {width}"
+        );
+    }
+
+    /// And the real change: a *different* SPS mid-stream must raise exactly one
+    /// `TrackUpdated`, carrying the new geometry.
+    #[test]
+    fn a_changed_sps_raises_exactly_one_update() {
+        let (sps, pps, _) = real_avc_parameter_sets();
+        // A second, genuinely different SPS: the same bytes with the level_idc
+        // byte altered is enough to be a different parameter set, but it must
+        // still decode, so take a real SPS from another committed capture.
+        let mut path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        path.push("tests");
+        path.push("fixtures");
+        path.push("ts");
+        path.push("h264-two-resolutions.ts");
+        let other =
+            std::fs::read(&path).unwrap_or_else(|e| panic!("read fixture {}: {e}", path.display()));
+        let media = TsDemux::new()
+            .demux(&other)
+            .expect("demux two-resolution fixture");
+        let second_sps = media
+            .tracks
+            .iter()
+            .filter(|t| matches!(t.config(), CodecConfig::Avc { .. }))
+            .flat_map(|t| t.samples.iter())
+            .flat_map(|s| {
+                crate::annexb::iter_length_prefixed_nals(&s.data)
+                    .unwrap_or_default()
+                    .into_iter()
+                    .filter(|n| (n[0] & H264_NAL_TYPE_MASK) == H264_NAL_SPS)
+                    .map(|n| n.to_vec())
+                    .collect::<Vec<_>>()
+            })
+            .find(|s| s.as_slice() != sps.as_slice())
+            .expect("the two-resolution fixture carries a second, different SPS");
+        assert_ne!(second_sps, sps, "the two SPS really differ");
+
+        let aus = vec![
+            annexb_au(&[&sps, &pps, &[0x65, 0x88, 0x84, 0x01]]),
+            slice_only_au(0x02),
+            annexb_au(&[&second_sps, &pps, &[0x65, 0x88, 0x84, 0x03]]),
+            slice_only_au(0x04),
+        ];
+        let bytes = avc_ts_over(&aus);
+
+        let mut demux = StreamingTsDemux::new();
+        demux.feed(&bytes);
+        demux.finish();
+        let updates: Vec<(u16, u16)> = std::iter::from_fn(|| demux.poll_event())
+            .filter_map(|e| match e {
+                DemuxEvent::TrackUpdated(spec) => match spec.config {
+                    CodecConfig::Avc { width, height, .. } => Some((width, height)),
+                    _ => None,
+                },
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            updates.len(),
+            1,
+            "exactly one SPS change, so exactly one TrackUpdated: {updates:?}"
+        );
+        assert_ne!(
+            updates[0],
+            (0, 0),
+            "the event must carry the newly-decoded geometry, not zeros"
+        );
+    }
+
+    /// The discriminating case for the one-access-unit mistake: the SPS and the
+    /// PPS arrive in **separate** access units, and the per-access-unit
+    /// comparison treats the first of them (which carries no PPS at all) as a
+    /// change against the empty snapshot, then the second again. Tracking each
+    /// set on its own fires only on the real changes.
+    #[test]
+    fn parameter_sets_split_across_access_units_raise_exactly_one_update() {
+        let (sps, pps, _) = real_avc_parameter_sets();
+        // AU0: SPS only (carries the parameter set a decoder config needs, but
+        // not the PPS yet). AU1: PPS only. AU2: a slice. AU3: a *different*
+        // slice-only access unit.
+        let aus = vec![
+            annexb_au(&[&sps, &[0x65, 0x88, 0x84, 0x01]]),
+            annexb_au(&[&[0x65, 0x88, 0x84, 0x02]]),
+            annexb_au(&[&pps, &[0x65, 0x88, 0x84, 0x03]]),
+            slice_only_au(0x04),
+            slice_only_au(0x05),
+        ];
+        let bytes = avc_ts_over(&aus);
+
+        let mut demux = StreamingTsDemux::new();
+        demux.feed(&bytes);
+        demux.finish();
+        let updates = std::iter::from_fn(|| demux.poll_event())
+            .filter(|e| matches!(e, DemuxEvent::TrackUpdated(_)))
+            .count();
+        assert_eq!(
+            updates, 0,
+            "no parameter set ever changes value here — the SPS and the PPS just arrive in different access units — so nothing may be reported"
+        );
+    }
+
+    /// The spurious-event case, precisely: a stream that alternates
+    /// "SPS+PPS" and "PPS only" access units (some encoders resend only the PPS
+    /// on a non-IDR keyframe). A per-access-unit snapshot loses the SPS during
+    /// the PPS-only units, so the next SPS+PPS unit *looks* like a change even
+    /// though the configuration is byte-for-byte the same — and because that
+    /// access unit does carry a complete set, the re-probe succeeds and the
+    /// spurious `TrackUpdated` is really emitted.
+    #[test]
+    fn alternating_parameter_set_carriage_emits_no_update() {
+        let (sps, pps, _) = real_avc_parameter_sets();
+        let mut aus = vec![annexb_au(&[&sps, &pps, &[0x65, 0x88, 0x84, 0x01]])];
+        for i in 0..4u8 {
+            // PPS-only…
+            aus.push(annexb_au(&[&pps, &[0x65, 0x88, 0x84, i + 2]]));
+            // …then the full set again, unchanged.
+            aus.push(annexb_au(&[&sps, &pps, &[0x65, 0x88, 0x84, i + 10]]));
+        }
+        let bytes = avc_ts_over(&aus);
+        let mut demux = StreamingTsDemux::new();
+        demux.feed(&bytes);
+        demux.finish();
+        let updates = std::iter::from_fn(|| demux.poll_event())
+            .filter(|e| matches!(e, DemuxEvent::TrackUpdated(_)))
+            .count();
+        assert_eq!(
+            updates, 0,
+            "the configuration never changes, so no TrackUpdated may be raised; a per-access-unit snapshot loses the SPS during the PPS-only units and reports each following full set as a change"
+        );
+    }
+
+    /// A PPS-only change is also a real config change and must raise one.
+    #[test]
+    fn a_changed_pps_raises_exactly_one_update() {
+        let (sps, pps, _) = real_avc_parameter_sets();
+        // Same SPS, different PPS: flip a byte in the PPS payload.
+        let mut other_pps = pps.clone();
+        let last = other_pps.len() - 1;
+        other_pps[last] ^= 0x55;
+        assert_ne!(other_pps, pps, "the two PPS really differ");
+
+        let aus = vec![
+            annexb_au(&[&sps, &pps, &[0x65, 0x88, 0x84, 0x01]]),
+            annexb_au(&[&sps, &other_pps, &[0x65, 0x88, 0x84, 0x02]]),
+            slice_only_au(0x03),
+        ];
+        let bytes = avc_ts_over(&aus);
+        let mut demux = StreamingTsDemux::new();
+        demux.feed(&bytes);
+        demux.finish();
+        let updates = std::iter::from_fn(|| demux.poll_event())
+            .filter(|e| matches!(e, DemuxEvent::TrackUpdated(_)))
+            .count();
+        assert_eq!(
+            updates, 1,
+            "a changed PPS is a config change, so exactly one TrackUpdated"
+        );
+    }
+
+    /// r04-W51: a broadcast stream changes its parameter sets mid-flight
+    /// routinely (an SD↔HD ad break, a re-encode, a multiplex reconfiguration).
+    /// Codec config recovery used to be single-shot for the life of the stream,
+    /// so the track kept the *first* `avcC` and the init segment described a
+    /// stream that had stopped being sent; a decoder then fails from the change
+    /// onwards. The fixture is a real two-resolution capture (see
+    /// `tests/fixtures/ts/README.md`), demuxed through the streaming core so the
+    /// `TrackUpdated` event is observable.
+    ///
+    /// The second half is the anti-spam half: the same fixture shows the
+    /// encoder repeating its parameter sets on every keyframe, and an
+    /// *unchanged* repeat must emit nothing.
+    #[test]
+    fn mid_stream_config_change_emits_track_updated_once_and_only_when_it_changes() {
+        let mut path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        path.push("tests");
+        path.push("fixtures");
+        path.push("ts");
+        path.push("h264-two-resolutions.ts");
+        let bytes =
+            std::fs::read(&path).unwrap_or_else(|e| panic!("read fixture {}: {e}", path.display()));
+
+        let mut demux = StreamingTsDemux::new();
+        demux.feed(&bytes);
+        demux.finish();
+
+        let mut added: Option<(u32, u16, u16)> = None;
+        let mut updates: Vec<(u32, u16, u16)> = Vec::new();
+        while let Some(event) = demux.poll_event() {
+            match event {
+                DemuxEvent::TrackAdded(spec) => {
+                    if let CodecConfig::Avc { width, height, .. } = spec.config {
+                        added = Some((spec.track_id, width, height));
+                    }
+                }
+                DemuxEvent::TrackUpdated(spec) => {
+                    if let CodecConfig::Avc { width, height, .. } = spec.config {
+                        updates.push((spec.track_id, width, height));
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        let (track_id, w0, h0) = added.expect("the fixture has one AVC track");
+        assert_eq!(
+            (w0, h0),
+            (320, 240),
+            "the first half of the fixture is 320x240 (ffprobe oracle)"
+        );
+        assert_eq!(
+            updates.len(),
+            1,
+            "the config changes exactly once in this fixture (320x240 -> 640x480); the encoder's repeated, unchanged SPS must not raise more. Got {updates:?}"
+        );
+        assert_eq!(
+            updates[0],
+            (track_id, 640, 480),
+            "TrackUpdated must carry the *new* config, on the same track id"
+        );
+    }
+
+    /// The AAC half of r04-W51: `channel_configuration` is a Table 1.19
+    /// *index*, not a channel count. Configuration 7 is eight channels (7.1)
+    /// and 0 means the mapping is in-band (a `program_config_element` in the
+    /// raw data stream), which this crate does not decode — so no count is
+    /// fabricated for it.
+    ///
+    /// Real ADTS headers, built by this crate's own spec-correct encoder
+    /// (`aac_asc::build_adts_header`), fed through the demux as a real AAC
+    /// PID.
+    #[test]
+    fn adts_channel_configuration_is_mapped_through_table_1_19() {
+        /// `sampling_frequency_index` 3 = 48000 Hz (ISO/IEC 14496-3 Table 1.16).
+        const SFI_48000: u8 = 3;
+        /// AAC-LC: `profile = audio_object_type - 1`.
+        const ADTS_PROFILE_AAC_LC: u8 = 1;
+        /// Table 1.19 configuration 7 (7.1, eight channels).
+        const CONFIG_7_1: u8 = 7;
+        /// Configuration 0: the mapping is carried in-band by a PCE.
+        const CONFIG_IN_BAND: u8 = 0;
+
+        for (config, expected) in [(CONFIG_7_1, 8u16), (CONFIG_IN_BAND, 0u16)] {
+            let frame_len = (ADTS_HEADER_SIZE + 64) as u16;
+            let mut au = crate::aac_asc::build_adts_header(
+                ADTS_PROFILE_AAC_LC,
+                SFI_48000,
+                config,
+                frame_len,
+            )
+            .to_vec();
+            au.resize(frame_len as usize, 0x21);
+
+            let mut input = Vec::new();
+            for _ in 0..mpeg_ts::resync::LOCK_CONFIRMATIONS + 1 {
+                input.extend_from_slice(&null_packet());
+            }
+            input.extend_from_slice(&psi_section_packets(
+                PAT_PID_UNDER_TEST,
+                0,
+                TABLE_ID_PAT,
+                &pat_body(),
+            ));
+            input.extend_from_slice(&psi_section_packets(
+                PMT_PID_UNDER_TEST,
+                0,
+                TABLE_ID_PMT,
+                &pmt_body(ES_PID_UNDER_TEST, STREAM_TYPE_AAC_ADTS),
+            ));
+            let mut cc = 0u8;
+            for i in 0..4 {
+                let pes = pes_packet(ES_STREAM_ID_AUDIO, i * 1024, None, &au);
+                let packets = pes_packets(ES_PID_UNDER_TEST, cc, &pes);
+                cc = cc.wrapping_add((packets.len() / TS_PACKET_SIZE) as u8);
+                input.extend_from_slice(&packets);
+            }
+
+            let mut demux = StreamingTsDemux::new();
+            demux.feed(&input);
+            demux.finish();
+            let channel_count = std::iter::from_fn(|| demux.poll_event())
+                .find_map(|e| match e {
+                    DemuxEvent::TrackAdded(spec) => match spec.config {
+                        CodecConfig::Aac { channel_count, .. } => Some(channel_count),
+                        _ => None,
+                    },
+                    _ => None,
+                })
+                .expect("the AAC PID must resolve a track");
+            assert_eq!(
+                channel_count, expected,
+                "ADTS channel_configuration {config} must map through Table 1.19"
+            );
+        }
+    }
+
+    // ── r04-W50: signalled discontinuity rebases the decode timeline ────────
+
+    /// A TS adaptation-field `discontinuity_indicator` marks "a sample of a new
+    /// system time clock" (ISO/IEC 13818-1 §2.4.3.5) — a splice, an encoder
+    /// switch, or a remultiplex. The new time base routinely starts *below* the
+    /// old one, and nothing in the 33-bit unroll can tell that from a genuine
+    /// backward jump within the range: `dts` then goes non-monotonic, violating
+    /// the IR's "samples in decode order with a non-decreasing absolute dts"
+    /// invariant and making every downstream muxer write negative deltas.
+    ///
+    /// Real elementary-stream bytes from the committed `h264_aac.ts` fixture,
+    /// re-stamped onto two time bases 2 s apart, with the discontinuity
+    /// signalled exactly as a muxer does it: the bit set on an
+    /// adaptation-field-only packet, then the new base's PES packets.
+    #[test]
+    fn signalled_discontinuity_keeps_dts_monotonic() {
+        /// First time base's anchor, 90 kHz ticks.
+        const BASE_A_DTS: i64 = 90_000;
+        /// Second time base's anchor, *below* the first on the wire clock —
+        /// the ordinary splice shape (new content whose first stamp is
+        /// earlier). Both bases sit in the same 33-bit period, so the unroll
+        /// reads the step as a small backward jump rather than a wrap.
+        const BASE_B_DTS: i64 = 9_000;
+        const FRAME_PERIOD: i64 = 3600;
+        /// Frames per time base.
+        const FRAMES: usize = 12;
+        /// Unwrapped clock modulus — the wire stamps below stay inside one
+        /// period, so the values are unambiguous.
+        const WRAP: i64 = 1i64 << 33;
+
+        let mut path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        path.push("..");
+        path.push("fixtures");
+        path.push("ts");
+        path.push("h264_aac.ts");
+        let source =
+            std::fs::read(&path).unwrap_or_else(|e| panic!("read fixture {}: {e}", path.display()));
+        let media = TsDemux::new().demux(&source).expect("demux h264_aac.ts");
+        let video = media
+            .tracks
+            .iter()
+            .find(|t| matches!(t.config(), CodecConfig::Avc { .. }))
+            .expect("h264_aac.ts has an AVC track");
+        assert!(
+            video.samples.len() >= FRAMES * 2,
+            "fixture too small for two time bases"
+        );
+
+        // Annex-B access units, and a first access unit that still carries the
+        // parameter sets (the fixture's real ES has no SPS outside those).
+        let annexb: Vec<Vec<u8>> = video
+            .samples
+            .iter()
+            .map(|sample| {
+                let mut au = Vec::new();
+                for nal in crate::annexb::iter_length_prefixed_nals(&sample.data)
+                    .expect("TsMux writes valid NAL prefixes")
+                {
+                    au.extend_from_slice(&[0x00, 0x00, 0x00, 0x01]);
+                    au.extend_from_slice(nal);
+                }
+                au
+            })
+            .collect();
+
+        let mut cc = 0u8;
+        let mut input = Vec::new();
+        for _ in 0..mpeg_ts::resync::LOCK_CONFIRMATIONS + 1 {
+            input.extend_from_slice(&null_packet());
+        }
+        input.extend_from_slice(&psi_section_packets(
+            PAT_PID_UNDER_TEST,
+            0,
+            TABLE_ID_PAT,
+            &pat_body(),
+        ));
+        input.extend_from_slice(&psi_section_packets(
+            PMT_PID_UNDER_TEST,
+            0,
+            TABLE_ID_PMT,
+            // The ES PID is the program's PCR_PID, so the indicator is
+            // carried where §2.4.3.5 requires and scopes to this program.
+            &pmt_body_with_pcr_pid(ES_PID_UNDER_TEST, STREAM_TYPE_AVC, ES_PID_UNDER_TEST),
+        ));
+
+        let push_au = |input: &mut Vec<u8>, cc: &mut u8, au: &[u8], dts: i64| {
+            let wire = (dts.rem_euclid(WRAP)) as u64;
+            let pes = pes_packet(ES_STREAM_ID_VIDEO, wire as i64, Some(wire as i64), au);
+            let packets = pes_packets(ES_PID_UNDER_TEST, *cc, &pes);
+            *cc = cc.wrapping_add((packets.len() / TS_PACKET_SIZE) as u8);
+            input.extend_from_slice(&packets);
+        };
+
+        // Time base A.
+        for i in 0..FRAMES {
+            let au = annexb[i % annexb.len()].clone();
+            push_au(
+                &mut input,
+                &mut cc,
+                &au,
+                BASE_A_DTS + i as i64 * FRAME_PERIOD,
+            );
+        }
+
+        // The signalled discontinuity: an adaptation-field-only packet with
+        // `discontinuity_indicator` set (§2.4.3.4 Table 2-6, bit 7 of the
+        // flags byte) and no payload.
+        {
+            let af = [
+                0x80u8, // discontinuity_indicator=1, nothing else
+                0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, // stuffing
+            ];
+            let mut pkt = [0xFFu8; TS_PACKET_SIZE];
+            pkt[0] = 0x47;
+            pkt[1] = (ES_PID_UNDER_TEST >> 8) as u8 & PID_HI_MASK;
+            pkt[2] = (ES_PID_UNDER_TEST & 0xFF) as u8;
+            pkt[3] = 0x20 | (cc & 0x0F); // AFC=10: adaptation only, no payload
+            pkt[4] = af.len() as u8;
+            pkt[5..5 + af.len()].copy_from_slice(&af);
+            input.extend_from_slice(&pkt);
+            cc = cc.wrapping_add(1);
+        }
+
+        // Time base B, starting 2 s lower on the wire clock.
+        for i in 0..FRAMES {
+            let au = annexb[i % annexb.len()].clone();
+            push_au(
+                &mut input,
+                &mut cc,
+                &au,
+                BASE_B_DTS + i as i64 * FRAME_PERIOD,
+            );
+        }
+
+        let mut demux = StreamingTsDemux::new();
+        demux.feed(&input);
+        demux.finish();
+        let mut saw_signalled = false;
+        let samples: Vec<Sample> = std::iter::from_fn(|| demux.poll_event())
+            .filter_map(|e| match e {
+                DemuxEvent::Discontinuity {
+                    kind: DiscontinuityKind::Signalled,
+                    ..
+                } => {
+                    saw_signalled = true;
+                    None
+                }
+                DemuxEvent::Sample { sample, .. } => Some(sample),
+                _ => None,
+            })
+            .collect();
+        assert!(
+            saw_signalled,
+            "the adaptation-field discontinuity_indicator must surface as a Signalled Discontinuity"
+        );
+        let dts: Vec<i64> = samples
+            .iter()
+            .map(|s| s.dts.expect("stamped dts"))
+            .collect();
+        assert!(
+            dts.len() >= FRAMES,
+            "expected one sample per access unit, got {}",
+            dts.len()
+        );
+        assert!(
+            dts.windows(2).all(|w| w[1] >= w[0]),
+            "dts must stay monotonic across a signalled discontinuity; got {dts:?}"
+        );
+        // The rebase is *only* a lift: the second base's own intervals are
+        // untouched, so the steps stay one frame period apart throughout.
+        let steps: Vec<i64> = dts.windows(2).map(|w| w[1] - w[0]).collect();
+        assert!(
+            steps.iter().all(|&d| d == FRAME_PERIOD),
+            "every decode step must remain one frame period; got {steps:?}"
+        );
+    }
+
+    /// Three signalled discontinuities in a row: each new time base starts
+    /// *below* the previous one, so every lift compounds. The second attempt at
+    /// this fix compared an offset-free "previous" value against an
+    /// offset-bearing "next" one, so from the second discontinuity on the lift
+    /// was too small and `dts` stepped backwards again.
+    #[test]
+    fn three_signalled_discontinuities_keep_dts_monotonic() {
+        /// Frame period, 90 kHz ticks.
+        const FRAME_PERIOD: i64 = 3600;
+        /// Frames per time base.
+        const FRAMES: i64 = 6;
+        /// The bases, each starting *below* the one before.
+        const BASES: [i64; 3] = [90_000, 30_000, 5_000];
+
+        let mut path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        path.push("..");
+        path.push("fixtures");
+        path.push("ts");
+        path.push("h264_aac.ts");
+        let source =
+            std::fs::read(&path).unwrap_or_else(|e| panic!("read fixture {}: {e}", path.display()));
+        let media = TsDemux::new().demux(&source).expect("demux h264_aac.ts");
+        let video = media
+            .tracks
+            .iter()
+            .find(|t| matches!(t.config(), CodecConfig::Avc { .. }))
+            .expect("h264_aac.ts has an AVC track");
+        let annexb: Vec<Vec<u8>> = video
+            .samples
+            .iter()
+            .map(|sample| {
+                let mut au = Vec::new();
+                for nal in crate::annexb::iter_length_prefixed_nals(&sample.data)
+                    .expect("TsMux writes valid NAL prefixes")
+                {
+                    au.extend_from_slice(&[0x00, 0x00, 0x00, 0x01]);
+                    au.extend_from_slice(nal);
+                }
+                au
+            })
+            .collect();
+
+        let mut cc = 0u8;
+        let mut input = Vec::new();
+        for _ in 0..mpeg_ts::resync::LOCK_CONFIRMATIONS + 1 {
+            input.extend_from_slice(&null_packet());
+        }
+        input.extend_from_slice(&psi_section_packets(
+            PAT_PID_UNDER_TEST,
+            0,
+            TABLE_ID_PAT,
+            &pat_body(),
+        ));
+        input.extend_from_slice(&psi_section_packets(
+            PMT_PID_UNDER_TEST,
+            0,
+            TABLE_ID_PMT,
+            // The ES PID is the program's PCR_PID, so a
+            // `discontinuity_indicator` on it rebases this program's streams
+            // (§2.4.3.5).
+            &pmt_body_with_pcr_pid(ES_PID_UNDER_TEST, STREAM_TYPE_AVC, ES_PID_UNDER_TEST),
+        ));
+
+        let push_au = |input: &mut Vec<u8>, cc: &mut u8, au: &[u8], dts: i64| {
+            let wire = dts.rem_euclid(1i64 << 33) as u64;
+            let pes = pes_packet(ES_STREAM_ID_VIDEO, wire as i64, Some(wire as i64), au);
+            let packets = pes_packets(ES_PID_UNDER_TEST, *cc, &pes);
+            *cc = cc.wrapping_add((packets.len() / TS_PACKET_SIZE) as u8);
+            input.extend_from_slice(&packets);
+        };
+
+        for base in BASES {
+            for i in 0..FRAMES {
+                let au = annexb[(i as usize) % annexb.len()].clone();
+                push_au(&mut input, &mut cc, &au, base + i * FRAME_PERIOD);
+            }
+            // The signalled discontinuity packet (§2.4.3.4 Table 2-6: an
+            // adaptation field, no payload, flags bit 7 set).
+            let mut pkt = [0xFFu8; TS_PACKET_SIZE];
+            pkt[0] = 0x47;
+            pkt[1] = (ES_PID_UNDER_TEST >> 8) as u8 & PID_HI_MASK;
+            pkt[2] = (ES_PID_UNDER_TEST & 0xFF) as u8;
+            pkt[3] = 0x20 | (cc & 0x0F); // AFC=10, adaptation only
+            pkt[4] = 8;
+            pkt[5] = 0x80; // discontinuity_indicator
+            input.extend_from_slice(&pkt);
+            cc = cc.wrapping_add(1);
+        }
+
+        let mut demux = StreamingTsDemux::new();
+        demux.feed(&input);
+        demux.finish();
+        let dts: Vec<i64> = std::iter::from_fn(|| demux.poll_event())
+            .filter_map(|e| match e {
+                DemuxEvent::Sample { sample, .. } => sample.dts,
+                _ => None,
+            })
+            .collect();
+        assert!(
+            dts.len() >= (BASES.len() as i64 * FRAMES) as usize - 3,
+            "expected the access units of all three time bases, got {} (first few: {:?})",
+            dts.len(),
+            &dts[..dts.len().min(6)]
+        );
+        let steps: Vec<i64> = dts.windows(2).map(|w| w[1] - w[0]).collect();
+        assert!(
+            steps.iter().all(|&d| d > 0),
+            "dts must be strictly increasing across every discontinuity; dts={dts:?} steps={steps:?}"
+        );
+    }
+
+    /// A CC gap on a **continuation** packet misses 184 bytes of the access
+    /// unit being assembled, so that unit must be dropped and its neighbours
+    /// delivered unharmed. (The first W49 attempt set `current_pes_intact`
+    /// back to `true` unconditionally after every packet, so a gap followed by
+    /// any further continuation packet of the same unit was forgotten and the
+    /// truncated unit was delivered anyway.)
+    ///
+    /// Units here are four TS packets long and the gap is placed in the
+    /// *middle*, so there really are continuation packets after it — which is
+    /// exactly what the old rule let clear the damage mark.
+    #[test]
+    fn cc_gap_on_a_continuation_drops_only_that_access_unit() {
+        /// Each access unit spans four TS packets (a 9-byte PES header plus
+        /// the body).
+        const PACKETS_PER_AU: usize = 4;
+        /// TS payload per packet.
+        const PER_PACKET: usize = TS_PACKET_SIZE - 4;
+        /// Bytes of PES header [`untimed_pes`] writes before the body.
+        const PES_HEADER_BYTES: usize = 9;
+        // Exactly `PACKETS_PER_AU` TS packets per PES: the header plus a body
+        // sized to fill the rest precisely, so no stuffing is involved.
+        let body_len = PACKETS_PER_AU * PER_PACKET - PES_HEADER_BYTES;
+        let aus: Vec<Vec<u8>> = (0..3)
+            .map(|i| (0..body_len).map(|b| ((b + i * 53) & 0xFF) as u8).collect())
+            .collect();
+
+        let mut input = Vec::new();
+        for _ in 0..mpeg_ts::resync::LOCK_CONFIRMATIONS + 1 {
+            input.extend_from_slice(&null_packet());
+        }
+        input.extend_from_slice(&psi_section_packets(
+            PAT_PID_UNDER_TEST,
+            0,
+            TABLE_ID_PAT,
+            &pat_body(),
+        ));
+        input.extend_from_slice(&psi_section_packets(
+            PMT_PID_UNDER_TEST,
+            0,
+            TABLE_ID_PMT,
+            &pmt_body(ES_PID_UNDER_TEST, STREAM_TYPE_PES_PRIVATE),
+        ));
+
+        let mut cc = 0u8;
+        let mut expected = Vec::new();
+        for (i, au) in aus.iter().enumerate() {
+            let pes = untimed_pes(ES_STREAM_ID_PRIVATE_DATA, au);
+            let packets = pes_packets(ES_PID_UNDER_TEST, cc, &pes);
+            let n = packets.len() / TS_PACKET_SIZE;
+            assert_eq!(
+                n, PACKETS_PER_AU,
+                "AU {i} must span {PACKETS_PER_AU} packets"
+            );
+            if i == 1 {
+                // Drop only packet 1 of this unit: packet 0 starts it and
+                // packets 2.. follow the gap, so the old "clear the mark after
+                // every packet" rule would forget the damage.
+                input.extend_from_slice(&packets[..TS_PACKET_SIZE]);
+                input.extend_from_slice(&packets[2 * TS_PACKET_SIZE..]);
+            } else {
+                input.extend_from_slice(&packets);
+                expected.push(au.clone());
+            }
+            cc = cc.wrapping_add(n as u8);
+        }
+
+        let mut demux = StreamingTsDemux::new();
+        demux.feed(&input);
+        demux.finish();
+        let got: Vec<Vec<u8>> = std::iter::from_fn(|| demux.poll_event())
+            .filter_map(|e| match e {
+                DemuxEvent::Sample { sample, .. } => Some(sample.data.to_vec()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            got, expected,
+            "only the unit whose middle packet was lost may be dropped"
+        );
+    }
+
+    /// A CC jump exactly at a `payload_unit_start` does NOT damage the unit
+    /// that just completed, when that unit's own declared length was fully
+    /// received. This is the segment-concatenation case: every segment is
+    /// muxed independently, so the counter jumps at the seam while the last
+    /// unit of the previous segment is complete. Treating every such jump as
+    /// truncation dropped one access unit per boundary.
+    #[test]
+    fn cc_jump_at_a_pes_start_keeps_the_previous_complete_access_unit() {
+        // A *bounded* PES (PES_packet_length != 0), which is what a private
+        // data stream uses — the length is what proves completeness.
+        let au1 = data_au(0x00);
+        let au2 = data_au(0x80);
+
+        let mut input = Vec::new();
+        for _ in 0..mpeg_ts::resync::LOCK_CONFIRMATIONS + 1 {
+            input.extend_from_slice(&null_packet());
+        }
+        input.extend_from_slice(&psi_section_packets(
+            PAT_PID_UNDER_TEST,
+            0,
+            TABLE_ID_PAT,
+            &pat_body(),
+        ));
+        input.extend_from_slice(&psi_section_packets(
+            PMT_PID_UNDER_TEST,
+            0,
+            TABLE_ID_PMT,
+            &pmt_body(ES_PID_UNDER_TEST, STREAM_TYPE_PES_PRIVATE),
+        ));
+
+        let pes1 = untimed_pes(ES_STREAM_ID_PRIVATE_DATA, &au1);
+        let pes2 = untimed_pes(ES_STREAM_ID_PRIVATE_DATA, &au2);
+        let pkt1 = pes_packets(ES_PID_UNDER_TEST, 0, &pes1);
+        assert_eq!(pkt1.len(), 2 * TS_PACKET_SIZE, "unit 1 spans two packets");
+        // Unit 1 used counters 0 and 1; unit 2 restarts at 0 (a freshly muxed
+        // segment always does), so the counter *jumps backwards* at exactly
+        // the second unit's `payload_unit_start`.
+        let pkt2 = pes_packets(ES_PID_UNDER_TEST, 0, &pes2);
+        input.extend_from_slice(&pkt1);
+        input.extend_from_slice(&pkt2);
+
+        let mut demux = StreamingTsDemux::new();
+        demux.feed(&input);
+        demux.finish();
+        let got: Vec<Vec<u8>> = std::iter::from_fn(|| demux.poll_event())
+            .filter_map(|e| match e {
+                DemuxEvent::Sample { sample, .. } => Some(sample.data.to_vec()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            got,
+            vec![au1.clone(), au2.clone()],
+            "a counter jump at a `payload_unit_start` must not drop the previous unit when its declared length was fully received"
+        );
+    }
+
+    /// An **unbounded** unit (`PES_packet_length == 0`, what every video PES
+    /// uses) whose own packets are all present survives a counter restart at
+    /// the next `payload_unit_start`. This is the segment-concatenation and
+    /// doubled-file seam: each piece is muxed independently, so its counter
+    /// begins wherever its own muxer started, and nothing inside the
+    /// completing unit was lost — a `payload_unit_start` *ends* that unit.
+    #[test]
+    fn cc_restart_at_a_pes_start_keeps_an_unbounded_unit() {
+        let au1 = data_au(0x10);
+        let au2 = data_au(0x90);
+
+        let mut input = Vec::new();
+        for _ in 0..mpeg_ts::resync::LOCK_CONFIRMATIONS + 1 {
+            input.extend_from_slice(&null_packet());
+        }
+        input.extend_from_slice(&psi_section_packets(
+            PAT_PID_UNDER_TEST,
+            0,
+            TABLE_ID_PAT,
+            &pat_body(),
+        ));
+        input.extend_from_slice(&psi_section_packets(
+            PMT_PID_UNDER_TEST,
+            0,
+            TABLE_ID_PMT,
+            &pmt_body(ES_PID_UNDER_TEST, STREAM_TYPE_PES_PRIVATE),
+        ));
+
+        let pes1 = unbounded_pes(ES_STREAM_ID_PRIVATE_DATA, &au1);
+        let pes2 = unbounded_pes(ES_STREAM_ID_PRIVATE_DATA, &au2);
+        let pkt1 = pes_packets(ES_PID_UNDER_TEST, 0, &pes1);
+        assert_eq!(pkt1.len(), 2 * TS_PACKET_SIZE, "unit 1 spans two packets");
+        // Unit 2's counter restarts at 0, as an independently muxed segment's
+        // does.
+        let pkt2 = pes_packets(ES_PID_UNDER_TEST, 0, &pes2);
+        input.extend_from_slice(&pkt1);
+        input.extend_from_slice(&pkt2);
+
+        let mut demux = StreamingTsDemux::new();
+        demux.feed(&input);
+        demux.finish();
+        let got: Vec<Vec<u8>> = std::iter::from_fn(|| demux.poll_event())
+            .filter_map(|e| match e {
+                DemuxEvent::Sample { sample, .. } => Some(sample.data.to_vec()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            got.len(),
+            2,
+            "both units are whole on the wire, so a counter restart between them must drop neither: {got:?}"
+        );
+        assert!(got[0].starts_with(&au1), "first unit preserved");
+        assert!(got[1].starts_with(&au2), "second unit preserved");
+    }
+
+    /// The seam case for a **bounded** unit, checked through the real segmenter:
+    /// concatenating independently muxed segments must keep every access unit
+    /// of both. A counter restart at a `payload_unit_start` is not truncation.
+    #[test]
+    fn concatenated_segments_seam_keeps_every_access_unit() {
+        use crate::TsMux;
+        use crate::media::{Media, Track};
+        use crate::pipeline::{CodecConfig, Sample, TrackSpec};
+        use crate::rtp_sdp::avc_config_from_sprop;
+        use broadcast_common::Package;
+
+        let frame_dur = VIDEO_TIMESCALE / 25;
+        let avc = avc_config_from_sprop("Z0IAKeKQFAe2AtwEBAaQeJEV,aM48gA==").unwrap();
+        let spec = TrackSpec::new(
+            1,
+            VIDEO_TIMESCALE,
+            CodecConfig::Avc {
+                config: avc,
+                width: 0,
+                height: 0,
+            },
+        );
+        let samples: Vec<Sample> = (0..6u32)
+            .map(|i| {
+                let nal = [0x65u8, 0xAA, i as u8];
+                let mut data = (nal.len() as u32).to_be_bytes().to_vec();
+                data.extend_from_slice(&nal);
+                let dts = i64::from(i) * i64::from(frame_dur);
+                Sample::new(data, Some(dts), Some(dts), Some(frame_dur), true)
+            })
+            .collect();
+        let media = Media::new(vec![Track::new(spec, samples)], VIDEO_TIMESCALE);
+
+        // Two separately muxed copies of the same track, concatenated as a
+        // segmenter would emit (and as `transmux/tests/ts_hls.rs` does): each
+        // begins with its own PAT/PMT and its own counter sequence.
+        let segment = TsMux::default().package(&media).expect("mux to TS");
+        let mut concatenated = segment.clone();
+        concatenated.extend_from_slice(&segment);
+
+        let mut demux = StreamingTsDemux::new();
+        demux.feed(&concatenated);
+        demux.finish();
+        let video_samples = std::iter::from_fn(|| demux.poll_event())
+            .filter(|e| matches!(e, DemuxEvent::Sample { .. }))
+            .count();
+        assert_eq!(
+            video_samples, 12,
+            "a segment seam restarts the counter but loses nothing, so all 12 access units must survive"
+        );
+    }
+
+    /// A gap *inside* an unbounded unit — on one of its own continuation
+    /// packets — still drops it: that packet's bytes provably belong to the
+    /// unit, and there is no declared length to show otherwise.
+    #[test]
+    fn cc_gap_inside_an_unbounded_unit_drops_it() {
+        /// Bytes per TS payload.
+        const PER_PACKET: usize = TS_PACKET_SIZE - 4;
+        /// Four-packet unit, so a middle packet can be dropped.
+        const PACKETS: usize = 4;
+        /// Bytes of PES header [`unbounded_pes`] writes.
+        const PES_HEADER_BYTES: usize = 9;
+
+        let au: Vec<u8> = (0..PACKETS * PER_PACKET - PES_HEADER_BYTES)
+            .map(|i| (i & 0xFF) as u8)
+            .collect();
+        let pes = unbounded_pes(ES_STREAM_ID_PRIVATE_DATA, &au);
+        let packets = pes_packets(ES_PID_UNDER_TEST, 0, &pes);
+        assert_eq!(packets.len(), PACKETS * TS_PACKET_SIZE);
+
+        let mut input = Vec::new();
+        for _ in 0..mpeg_ts::resync::LOCK_CONFIRMATIONS + 1 {
+            input.extend_from_slice(&null_packet());
+        }
+        input.extend_from_slice(&psi_section_packets(
+            PAT_PID_UNDER_TEST,
+            0,
+            TABLE_ID_PAT,
+            &pat_body(),
+        ));
+        input.extend_from_slice(&psi_section_packets(
+            PMT_PID_UNDER_TEST,
+            0,
+            TABLE_ID_PMT,
+            &pmt_body(ES_PID_UNDER_TEST, STREAM_TYPE_PES_PRIVATE),
+        ));
+        // Packet 0 starts the unit; packet 1 is lost; packets 2.. arrive.
+        input.extend_from_slice(&packets[..TS_PACKET_SIZE]);
+        input.extend_from_slice(&packets[2 * TS_PACKET_SIZE..]);
+
+        let mut demux = StreamingTsDemux::new();
+        demux.feed(&input);
+        demux.finish();
+        let samples = std::iter::from_fn(|| demux.poll_event())
+            .filter(|e| matches!(e, DemuxEvent::Sample { .. }))
+            .count();
+        assert_eq!(
+            samples, 0,
+            "a unit missing one of its own packets must not be delivered"
+        );
+    }
+
+    /// A signalled discontinuity is **not** on its own a reason to drop a unit
+    /// (r04-W49 review, round 3). The rule is stated in
+    /// [`StreamingTsDemux::process_packet`]: a unit is damaged only by a
+    /// continuity-counter gap on one of *its own* packets, or by a bounded PES
+    /// arriving short of its declared length. The indicator only says the
+    /// source's byte stream changes *here* — a normal HLS or splice seam has an
+    /// intact last unit of the old segment immediately before it, and dropping
+    /// that unit lost one access unit at every seam.
+    ///
+    /// The fixture is deliberately **unbounded** (`PES_packet_length == 0`, the
+    /// ordinary video shape): a bounded PES carries its own completeness proof,
+    /// so it cannot distinguish "the indicator dropped it" from "the length did
+    /// not add up". Two whole units are followed by a third, with the indicator
+    /// on the packet that ends unit 2 and starts unit 3.
+    #[test]
+    fn signalled_discontinuity_does_not_drop_the_unit_it_ends() {
+        /// Continuity counter of the packet that carries the indicator: unit 2
+        /// used counters 1 and 2, so the indicator continues at 3.
+        const SIGNALLED_CC: u8 = 3;
+        let au1 = data_au(0x20);
+        let au2 = data_au(0xA0);
+        let au3 = data_au(0xF0);
+
+        let mut input = Vec::new();
+        for _ in 0..mpeg_ts::resync::LOCK_CONFIRMATIONS + 1 {
+            input.extend_from_slice(&null_packet());
+        }
+        input.extend_from_slice(&psi_section_packets(
+            PAT_PID_UNDER_TEST,
+            0,
+            TABLE_ID_PAT,
+            &pat_body(),
+        ));
+        input.extend_from_slice(&psi_section_packets(
+            PMT_PID_UNDER_TEST,
+            0,
+            TABLE_ID_PMT,
+            &pmt_body(ES_PID_UNDER_TEST, STREAM_TYPE_PES_PRIVATE),
+        ));
+
+        // Unbounded units, two TS packets each, all present.
+        let mut cc = 0u8;
+        for au in [&au1, &au2] {
+            let pes = unbounded_pes(ES_STREAM_ID_PRIVATE_DATA, au);
+            let packets = pes_packets(ES_PID_UNDER_TEST, cc, &pes);
+            assert_eq!(
+                packets.len(),
+                2 * TS_PACKET_SIZE,
+                "each unit spans two packets"
+            );
+            input.extend_from_slice(&packets);
+            cc = cc.wrapping_add(2);
+        }
+        // The packet that starts unit 3 carries the indicator
+        // (§2.4.3.5): `afc` '11', an 8-byte adaptation field, flags bit 7.
+        let pes3 = unbounded_pes(ES_STREAM_ID_PRIVATE_DATA, &au3);
+        input.extend_from_slice(&pes_packets_with_discontinuity(
+            ES_PID_UNDER_TEST,
+            SIGNALLED_CC,
+            &pes3,
+        ));
+
+        let mut demux = StreamingTsDemux::new();
+        demux.feed(&input);
+        demux.finish();
+        let got: Vec<Vec<u8>> = std::iter::from_fn(|| demux.poll_event())
+            .filter_map(|e| match e {
+                DemuxEvent::Sample { sample, .. } => Some(sample.data.to_vec()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            got.len(),
+            3,
+            "every unit here is whole on the wire, so the indicator on the              packet starting unit 3 must not drop anything: {got:?}"
+        );
+        for (i, (got_au, want)) in got.iter().zip([&au1, &au2, &au3]).enumerate() {
+            assert!(got_au.starts_with(want), "unit {i} must be delivered whole");
+        }
+    }
+
+    /// The documented tradeoff at a seam, on an **unbounded** PES. A
+    /// `payload_unit_start` ends the previous unit, so a counter restart there
+    /// is the ordinary segment-concatenation shape and is *not* damage — which
+    /// also means an unbounded unit that really did lose its tail is
+    /// indistinguishable from one that ended cleanly, and is delivered
+    /// (H.222.0 carries no length to tell them apart; §2.4.3.3/§2.4.3.7).
+    ///
+    /// This test pins that tradeoff explicitly, so the behaviour is a recorded
+    /// decision rather than an accident, and so a future change that starts
+    /// dropping here has to change this test deliberately. A **bounded** PES
+    /// has no such tradeoff — its declared length settles it, which
+    /// [`cc_jump_at_a_pes_start_keeps_the_previous_complete_access_unit`] and
+    /// [`cc_gap_on_a_continuation_drops_only_that_access_unit`] cover.
+    #[test]
+    fn unbounded_unit_ended_by_a_counter_restart_is_delivered_by_design() {
+        let au1 = data_au(0x20);
+        let au2 = data_au(0xA0);
+
+        let mut input = Vec::new();
+        for _ in 0..mpeg_ts::resync::LOCK_CONFIRMATIONS + 1 {
+            input.extend_from_slice(&null_packet());
+        }
+        input.extend_from_slice(&psi_section_packets(
+            PAT_PID_UNDER_TEST,
+            0,
+            TABLE_ID_PAT,
+            &pat_body(),
+        ));
+        input.extend_from_slice(&psi_section_packets(
+            PMT_PID_UNDER_TEST,
+            0,
+            TABLE_ID_PMT,
+            &pmt_body(ES_PID_UNDER_TEST, STREAM_TYPE_PES_PRIVATE),
+        ));
+
+        // Unit 1's packet 1 is lost; unit 2 starts on a counter that therefore
+        // jumps. Unbounded units, so nothing proves unit 1 was short.
+        let pes1 = unbounded_pes(ES_STREAM_ID_PRIVATE_DATA, &au1);
+        let pkt1 = pes_packets(ES_PID_UNDER_TEST, 0, &pes1);
+        input.extend_from_slice(&pkt1[..TS_PACKET_SIZE]);
+        let pes2 = unbounded_pes(ES_STREAM_ID_PRIVATE_DATA, &au2);
+        input.extend_from_slice(&pes_packets(ES_PID_UNDER_TEST, 2, &pes2));
+
+        let mut demux = StreamingTsDemux::new();
+        demux.feed(&input);
+        demux.finish();
+        let got: Vec<Vec<u8>> = std::iter::from_fn(|| demux.poll_event())
+            .filter_map(|e| match e {
+                DemuxEvent::Sample { sample, .. } => Some(sample.data.to_vec()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            got.len(),
+            2,
+            "both the truncated-tail unit and the whole one are delivered: an              unbounded PES gives no way to tell them apart at a seam"
+        );
+    }
+
+    // ── r04-W48: a PES with no PTS/DTS is interpolated, not re-stamped ─────
+
+    /// `PTS_DTS_flags == '00'` is legal (ISO/IEC 13818-1 §2.4.3.7) and the
+    /// 2.7.4 interval constraint only requires the stamps periodically, so a
+    /// video PID's access units routinely alternate stamped / unstamped. The
+    /// demux used to hand an unstamped access unit the *previous* one's
+    /// stamps verbatim, so every consecutive pair carried an identical `dts`:
+    /// the one-behind duration rule then gave the earlier of the pair
+    /// `duration = 0` and made the next stamped access unit absorb the whole
+    /// gap, producing zero-duration samples plus one long one.
+    ///
+    /// Real elementary-stream bytes: the H.264 access units are the real
+    /// `Media` samples recovered from `fixtures/ts/h264_aac.ts` and re-emitted
+    /// through the crate's own `TsMux` PES packetiser, with the timing flags
+    /// of every second PES cleared. The frame period is a real one (the
+    /// fixture's own 25 fps cadence, 3600 ticks of 90 kHz).
+    #[test]
+    fn unstamped_pes_access_unit_is_interpolated_not_restamped() {
+        // Real H.264 access units from a committed capture.
+        let mut path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        path.push("..");
+        path.push("fixtures");
+        path.push("ts");
+        path.push("h264_aac.ts");
+        let source =
+            std::fs::read(&path).unwrap_or_else(|e| panic!("read fixture {}: {e}", path.display()));
+        let media = TsDemux::new().demux(&source).expect("demux h264_aac.ts");
+
+        /// Frame period of the fixture's video track, in 90 kHz ticks — the
+        /// real cadence `TsMux` stamps its PES headers from.
+        const FRAME_PERIOD: i64 = 3600;
+        const UNSTAMPED_EVERY: usize = 2;
+
+        let mut cc = 0u8;
+        let mut input = Vec::new();
+        for _ in 0..mpeg_ts::resync::LOCK_CONFIRMATIONS + 1 {
+            input.extend_from_slice(&null_packet());
+        }
+        input.extend_from_slice(&psi_section_packets(
+            PAT_PID_UNDER_TEST,
+            0,
+            TABLE_ID_PAT,
+            &pat_body(),
+        ));
+        input.extend_from_slice(&psi_section_packets(
+            PMT_PID_UNDER_TEST,
+            0,
+            TABLE_ID_PMT,
+            &pmt_body(ES_PID_UNDER_TEST, STREAM_TYPE_AVC),
+        ));
+
+        let video = media
+            .tracks
+            .iter()
+            .find(|t| matches!(t.config(), CodecConfig::Avc { .. }))
+            .expect("h264_aac.ts has an AVC track");
+        let source_dts0 = video.samples[0]
+            .dts
+            .expect("the fixture's AVC track is stamped");
+        let mut headers = 0usize;
+        for (i, sample) in video.samples.iter().enumerate() {
+            // The demux wants Annex B in each access unit; `TsMux` writes
+            // length-prefixed samples, so rebuild the Annex B form from the
+            // sample's own NALs.
+            let mut au = Vec::new();
+            let nals = crate::annexb::iter_length_prefixed_nals(&sample.data)
+                .expect("TsMux writes valid 4-byte-length NAL prefixes");
+            for nal in nals {
+                au.extend_from_slice(&[0x00, 0x00, 0x00, 0x01]);
+                au.extend_from_slice(nal);
+            }
+            // A constant, decode-ordered 90 kHz clock: the fixture's real
+            // cadence (3600 ticks per access unit), anchored at its own first
+            // dts. Both stamps are present on a stamped PES and neither is on
+            // an unstamped one — the exact `PTS_DTS_flags` '11' / '00'
+            // alternation §2.4.3.7 permits.
+            // The first two access units must be stamped: the period is only
+            // measurable from a stamped pair, and an unstamped access unit
+            // arriving before then has nothing to interpolate from (the
+            // documented fallback, exercised separately below).
+            let stamped = i < UNSTAMPED_EVERY || i % UNSTAMPED_EVERY == 0;
+            let dts = source_dts0 + i as i64 * FRAME_PERIOD;
+            let pes = if stamped {
+                pes_packet(ES_STREAM_ID_VIDEO, dts, Some(dts), &au)
+            } else {
+                pes_packet_untimed(ES_STREAM_ID_VIDEO, &au)
+            };
+            headers += 1;
+            let packets = pes_packets(ES_PID_UNDER_TEST, cc, &pes);
+            cc = cc.wrapping_add((packets.len() / TS_PACKET_SIZE) as u8);
+            input.extend_from_slice(&packets);
+        }
+        assert!(
+            video.samples.len() >= 20,
+            "fixture too small for a meaningful interpolation test"
+        );
+
+        let mut demux = StreamingTsDemux::new();
+        demux.feed(&input);
+        demux.finish();
+        let samples: Vec<Sample> = std::iter::from_fn(|| demux.poll_event())
+            .filter_map(|e| match e {
+                DemuxEvent::Sample { sample, .. } => Some(sample),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            samples.len(),
+            headers,
+            "one sample per fed access unit (video is one AU per PES here)"
+        );
+
+        // The dts series must advance by exactly one frame period per access
+        // unit. The pre-fix behaviour gave every unstamped access unit the
+        // previous one's dts, so the series alternated 0 / 3600 steps.
+        let dts: Vec<i64> = samples.iter().map(|s| s.dts.expect("video dts")).collect();
+        let steps: Vec<i64> = dts.windows(2).map(|w| w[1] - w[0]).collect();
+        assert!(
+            steps.iter().all(|&d| d == FRAME_PERIOD),
+            "every decode step must be one frame period ({FRAME_PERIOD} ticks); got {steps:?}"
+        );
+        assert!(
+            samples
+                .iter()
+                .all(|s| s.duration == Some(FRAME_PERIOD as u32)),
+            "no zero-duration sample may survive interpolation; durations: {:?}",
+            samples.iter().map(|s| s.duration).collect::<Vec<_>>()
+        );
     }
 
     // ── Audio re-anchor threshold (issue B5) ───────────────────────────────
@@ -4724,6 +8097,197 @@ mod tests {
         assert!(
             degraded.is_empty(),
             "legal duplicate must not emit InputDegraded, got {degraded:?}"
+        );
+    }
+
+    // ── r04-W49: duplicates are not reassembled; gap AUs are dropped ────────
+
+    /// ITU-T H.222.0 §2.4.3.3: "In transport streams, duplicate packets may be
+    /// sent as two, and only two, consecutive transport stream packets of the
+    /// same PID… In duplicate packets each byte of the original packet shall be
+    /// duplicated, with the exception that in the program clock reference
+    /// fields, if present, a valid value shall be encoded." The decoder shall
+    /// discard the duplicate — the demux used to detect it for the CC check and
+    /// then feed it to the reassembler anyway, so the PES contained those 184
+    /// bytes twice and every access unit was corrupt.
+    ///
+    /// Real packet layout: a PES header + `PES_packet_length` spanning two TS
+    /// packets on one PID, each sent twice (the second copy re-encoding its PCR
+    /// so the pair is a legal duplicate only under the byte-compare-except-PCR
+    /// rule the shared `ts_dup` helper implements). The delivered sample must be
+    /// one whole PES payload, with no byte repeated.
+    #[test]
+    fn legal_duplicate_packets_are_not_reassembled_twice() {
+        /// A private-PES data stream (`stream_type` 0x06) carried as one
+        /// `Sample` per PES — the simplest carrier for a byte-exact check.
+        const DATA_BYTES: usize = 1000;
+
+        // Two TS payloads' worth of PES: 4-byte start code + length + flags +
+        // `PES_header_data_length` 0, then the payload — long enough to span
+        // two packets so a duplicated continuation really would append twice.
+        let body: Vec<u8> = (0..DATA_BYTES).map(|i| (i & 0xFF) as u8).collect();
+        let pes_len = (3 + body.len()) as u16;
+        let mut pes = Vec::new();
+        pes.extend_from_slice(&[0x00, 0x00, 0x01, 0xBD]);
+        pes.extend_from_slice(&pes_len.to_be_bytes());
+        pes.push(0x80); // '10' marker, not scrambled
+        pes.push(0x00); // PTS_DTS_flags = '00'
+        pes.push(0x00); // PES_header_data_length = 0
+        pes.extend_from_slice(&body);
+        assert!(
+            pes.len() > TS_MAX_PAYLOAD_BYTES,
+            "the PES must span more than one TS packet for this test to mean anything"
+        );
+
+        let mut input = Vec::new();
+        for _ in 0..mpeg_ts::resync::LOCK_CONFIRMATIONS + 1 {
+            input.extend_from_slice(&null_packet());
+        }
+        input.extend_from_slice(&psi_section_packets(
+            PAT_PID_UNDER_TEST,
+            0,
+            TABLE_ID_PAT,
+            &pat_body(),
+        ));
+        input.extend_from_slice(&psi_section_packets(
+            PMT_PID_UNDER_TEST,
+            0,
+            TABLE_ID_PMT,
+            &pmt_body(ES_PID_UNDER_TEST, STREAM_TYPE_PES_PRIVATE),
+        ));
+
+        // Every packet of the PES is followed by its legal §2.4.3.3 duplicate
+        // (same CC, same bytes). The duplicate of the *first* packet is the
+        // decisive one: it must not be appended to the access unit in
+        // progress, or the payload gains 184 spurious bytes in the middle.
+        let mut cc = 0u8;
+        let mut sent = 0usize;
+        let mut dups = 0usize;
+        while sent < pes.len() {
+            let take = (pes.len() - sent).min(TS_MAX_PAYLOAD_BYTES);
+            let mut pkt = [0xFFu8; TS_PACKET_SIZE];
+            pkt[0] = 0x47;
+            pkt[1] = ((ES_PID_UNDER_TEST >> 8) as u8 & PID_HI_MASK)
+                | if sent == 0 { 0x40 } else { 0x00 };
+            pkt[2] = (ES_PID_UNDER_TEST & 0xFF) as u8;
+            pkt[3] = 0x10 | (cc & 0x0F);
+            pkt[4..4 + take].copy_from_slice(&pes[sent..sent + take]);
+            input.extend_from_slice(&pkt);
+            // The legal duplicate: same CC, byte-identical (a re-encoded PCR
+            // would also be legal, but this PES carries no PCR).
+            input.extend_from_slice(&pkt);
+            dups += 1;
+            sent += take;
+            cc = cc.wrapping_add(1);
+        }
+        assert!(
+            dups >= 3,
+            "the PES must span several packets for a duplicate append to be observable ({dups} packets)"
+        );
+
+        let mut demux = StreamingTsDemux::new();
+        demux.feed(&input);
+        demux.finish();
+        let samples: Vec<Sample> = std::iter::from_fn(|| demux.poll_event())
+            .filter_map(|e| match e {
+                DemuxEvent::Sample { sample, .. } => Some(sample),
+                _ => None,
+            })
+            .collect();
+        assert!(
+            dups >= 2,
+            "the fixture must really contain duplicates ({dups} emitted)"
+        );
+        assert_eq!(samples.len(), 1, "one PES => one Data sample");
+        assert_eq!(
+            samples[0].data.as_ref(),
+            body.as_slice(),
+            "the delivered sample must be the PES *payload* exactly once — a reassembled duplicate appends its 184 bytes a second time"
+        );
+    }
+
+    /// A continuity-counter gap loses at least one 184-byte payload, so the
+    /// access unit being reassembled is missing bytes. The demux must drop it,
+    /// not deliver it truncated — the IR cannot tell a complete PES from a
+    /// truncated one, so every downstream muxer would write the corruption out.
+    ///
+    /// The *next* access unit, which begins with its own `payload_unit_start`,
+    /// is intact from its first byte and must still be delivered.
+    #[test]
+    fn cc_gap_drops_the_access_unit_it_truncated_but_not_the_next_one() {
+        let au1 = long_data_au();
+        let au2 = long_data_au_alt();
+        let pes1 = untimed_pes(ES_STREAM_ID_PRIVATE_DATA, &au1);
+        let pes2 = untimed_pes(ES_STREAM_ID_PRIVATE_DATA, &au2);
+        assert!(
+            pes1.len() > TS_MAX_PAYLOAD_BYTES && pes2.len() > TS_MAX_PAYLOAD_BYTES,
+            "both access units must span more than one TS packet"
+        );
+
+        let mut input = Vec::new();
+        for _ in 0..mpeg_ts::resync::LOCK_CONFIRMATIONS + 1 {
+            input.extend_from_slice(&null_packet());
+        }
+        input.extend_from_slice(&psi_section_packets(
+            PAT_PID_UNDER_TEST,
+            0,
+            TABLE_ID_PAT,
+            &pat_body(),
+        ));
+        input.extend_from_slice(&psi_section_packets(
+            PMT_PID_UNDER_TEST,
+            0,
+            TABLE_ID_PMT,
+            &pmt_body(ES_PID_UNDER_TEST, STREAM_TYPE_PES_PRIVATE),
+        ));
+
+        // AU 1: only its first packet survives; the continuation is lost, so
+        // the next packet on the PID jumps the CC by two. AU 2 follows with
+        // its own `payload_unit_start`, whole.
+        let pkt1 = pes_packets(ES_PID_UNDER_TEST, 0, &pes1);
+        assert_eq!(pkt1.len(), 2 * TS_PACKET_SIZE, "AU 1 must span two packets");
+        input.extend_from_slice(&pkt1[..TS_PACKET_SIZE]);
+        let pkt2 = pes_packets(ES_PID_UNDER_TEST, 2, &pes2);
+
+        let mut demux = StreamingTsDemux::new();
+        demux.feed(&input);
+        demux.feed(&pkt2);
+        demux.finish();
+
+        let degraded = std::iter::from_fn(|| demux.poll_event()).any(|e| {
+            matches!(
+                e,
+                DemuxEvent::InputDegraded {
+                    kind: InputDegradation::ContinuityGap { .. },
+                    ..
+                }
+            )
+        });
+        assert!(
+            degraded,
+            "the lost continuation must be reported as a CC gap"
+        );
+
+        let mut demux = StreamingTsDemux::new();
+        demux.feed(&input);
+        demux.feed(&pkt2);
+        demux.finish();
+        let samples: Vec<Sample> = std::iter::from_fn(|| demux.poll_event())
+            .filter_map(|e| match e {
+                DemuxEvent::Sample { sample, .. } => Some(sample),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            samples.len(),
+            1,
+            "only the intact access unit may be delivered, got {} samples",
+            samples.len()
+        );
+        assert_eq!(
+            samples[0].data.as_ref(),
+            au2.as_slice(),
+            "the delivered sample must be the second, whole access unit"
         );
     }
 

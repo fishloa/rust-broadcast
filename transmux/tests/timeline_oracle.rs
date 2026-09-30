@@ -36,7 +36,8 @@ const IN_VIDEO_PKT_DUR: i64 = 3_600;
 /// Stream durations (`stream=duration`), seconds.
 const IN_VIDEO_DURATION_S: f64 = 5.0;
 const IN_AUDIO_DURATION_S: f64 = 4.736;
-/// `format=duration`, seconds.
+/// `format=duration`, seconds. Used only by the `cli`-gated CMAF-HLS test.
+#[cfg(feature = "cli")]
 const IN_FORMAT_DURATION_S: f64 = 5.014_667;
 
 const TS_HZ: f64 = 90_000.0;

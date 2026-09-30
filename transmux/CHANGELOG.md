@@ -292,7 +292,163 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   entry four-CC (`mp4a` or `enca`); serialize previously hard-coded `mp4a`, silently re-labelling a
   CENC-protected (`enca`) audio track as clear (#1017).
 
+- **`StreamingTsDemux` now emits `DemuxEvent::TrackUpdated` when a TS track's
+  in-band codec configuration actually changes mid-stream, and drops — rather
+  than delivers — access units damaged by a continuity-counter gap**
+  (#1080, audit r04-W49/W51). Both are visible behaviour changes for a consumer,
+  which is why they are listed here as well as under `### Fixed` below.
+
+  **`TrackUpdated` from TS.** Codec-config recovery used to be single-shot for
+  the life of a stream, so a mid-stream SPS/PPS or AAC-config change (an SD↔HD
+  ad break, a re-encode, a multiplex reconfiguration) left the track labelled
+  with its original `avcC`/`hvcC`/`esds`. Now an AVC/HEVC track whose
+  accumulated parameter sets change, or an AAC track whose
+  `audioObjectType`/`samplingFrequencyIndex`/`channelConfiguration` change,
+  raises `DemuxEvent::TrackUpdated` with the same `track_id` and the new config
+  — the two-source contract `DemuxEvent::TrackUpdated` already documented for
+  FLV. A consumer that rebuilds its init segment only on `TrackAdded` will now
+  miss such a change; `TrackUpdated` means "reload the init segment / rebuild
+  the sample entry". An **unchanged** repeat emits nothing, so the event rate
+  stays low (encoders resend their headers on every keyframe).
+
+  **Damage-aware delivery.** An access unit is dropped rather than delivered
+  truncated when either of two things is true, and only these two:
+
+  1. a continuity-counter gap landed on one of **its own** packets (a gap on a
+     continuation packet: those bytes provably belong to it); or
+  2. it is a **bounded** PES (`PES_packet_length != 0`) that arrived shorter
+     than its own header declared — no continuity-counter evidence is needed for
+     this one, since the declared length settles it outright.
+
+  A legal §2.4.3.3 duplicate packet is discarded before it reaches the
+  reassembler (it used to be detected for the CC check and then fed in anyway,
+  duplicating 184 payload bytes inside the access unit under construction). A
+  stream with genuine CC gaps therefore yields **fewer samples than before** —
+  the damaged ones are gone rather than corrupt.
+
+  A `discontinuity_indicator` is **not**, by itself, a reason to drop anything.
+  It marks where the source's time base changes, and a normal HLS or splice seam
+  has an intact last unit of the old segment immediately before it; treating the
+  indicator as damage lost that unit at every seam. When the indicator lands on
+  a *continuation* packet it coincides with a gap and rule 1 applies as usual.
+
+  **Documented tradeoff (unbounded PES at a CC-jump boundary).** A
+  `payload_unit_start` ends the previous unit, so a counter restart there is the
+  ordinary segment-concatenation shape and is not damage. For an **unbounded**
+  PES (`PES_packet_length == 0`, what every video PES uses) that also means an
+  access unit which really did lose its tail is indistinguishable from one that
+  ended cleanly, and it is delivered. H.222.0 gives no length to tell them
+  apart: the alternative — dropping every unit that precedes a counter jump —
+  loses a whole access unit at every seam instead of occasionally carrying a
+  short one. A bounded PES has no such tradeoff.
+
+  **ADTS channel count.** `CodecConfig::Aac`'s `channel_count` for a TS AAC
+  track now maps `channel_configuration` through ISO/IEC 14496-3 Table 1.19
+  instead of using the raw field: configuration 7 reports **8** (7.1) where it
+  used to report 7, and configuration 0 (an in-band `program_config_element`,
+  which this crate does not decode) reports **0** — "not derivable", never a
+  fabricated count, matching `flv_stream`'s convention. A caller that treated 0
+  as "mono" must check for it.
+
+  **Signalled-discontinuity rebase.** A TS track's decode timeline is now
+  rebased at a signalled discontinuity so `dts` stays monotonic across a splice;
+  previously every downstream muxer could write negative or zero deltas there.
+  The rebase is **scoped to the signalling program**: per ITU-T H.222.0
+  §2.4.3.5 a system time-base discontinuity is signalled on the program's
+  `PCR_PID`, so only that program's elementary streams are lifted and a
+  multi-program multiplex leaves the other services' timelines untouched. The
+  lift is non-negative and one nominal frame period past the last stamp emitted
+  (never a reduction, so a forward splice survives as the real gap it is), and
+  the frame period it uses is the **median of the last five** plausible
+  inter-access-unit steps, capped at one second — so a single late access unit
+  or an 8-second splice cannot become "the frame period" for the frames that
+  follow.
+
+
 ### Fixed
+- **`StreamingTsDemux` drops, rather than delivers, an access unit whose
+  reassembly spanned a continuity-counter gap, and discards legal §2.4.3.3
+  duplicate packets before reassembly** (#1080, audit r04-W49). The demux
+  already *reported* a CC gap but then handed the truncated access unit on: the
+  IR cannot tell a complete PES from one missing 184-byte payloads, so every
+  downstream muxer wrote the corruption out (a `payload_unit_start` clears the
+  mark, because it begins a new, intact unit). Legal duplicates — a repeat
+  with the same `continuity_counter` and identical bytes bar the PCR field —
+  were likewise detected only for the CC check and then fed to the reassembler
+  anyway, duplicating that packet's payload into the access unit under
+  construction; they are now skipped. The duplicate comparison covers the
+  whole packet (not just `pkt.payload`, which excludes a legally re-encoded
+  adaptation field) via the shared `broadcast_common::ts_dup` helper, and a
+  PID's continuity baseline is reset when its track is removed, so a re-added
+  PID is not judged against the pre-removal sequence. A unit is damaged by
+  exactly two things — a CC gap on one of its *own* packets, or a bounded PES
+  arriving short of its declared length — and never by a
+  `discontinuity_indicator` alone, which would drop the intact last unit of the
+  old segment at every seam. **Visible behaviour change:** a stream with genuine
+  CC gaps now yields fewer samples than before — the damaged ones are gone
+  rather than corrupt — and an unbounded (video) unit ended by a counter jump is
+  still delivered, so a genuinely truncated tail can pass through; H.222.0
+  offers no length to distinguish the two.
+- **`StreamingTsDemux` interpolates a PES packet that carries no PTS/DTS
+  instead of reusing the previous access unit's stamps** (#1080, audit r04-W48).
+  `PTS_DTS_flags == '00'` is legal (ISO/IEC 13818-1 §2.4.3.7) and the stamps
+  are only required periodically, so a video PID's access units routinely
+  alternate stamped/unstamped. Both were given the same `(pts, dts)`, so the
+  one-behind duration rule gave the earlier one `duration = 0` and the next
+  stamped access unit absorbed the whole gap — zero-duration samples plus one
+  long one, which breaks playback cadence and trick modes. Each unstamped
+  access unit now continues the timeline by the measured frame period (the
+  span between the last two stamped access units, divided by the access units
+  it covered), exactly the T-STD derivation §2.4.2.6 permits. Until a period
+  has been measured the previous stamps are still reused, since there is
+  nothing to interpolate from.
+- **`StreamingTsDemux` rebases the decode timeline at a signalled
+  discontinuity** (#1080, audit r04-W50). `discontinuity_indicator`
+  (ISO/IEC 13818-1 §2.4.3.5) marks a sample of a *new system time clock* for
+  the program — a splice, an encoder switch, a remultiplex — and the new base
+  routinely begins *below* the old one. The 33-bit unroll cannot tell that
+  from a genuine backward jump within the range, so `dts` went non-monotonic
+  and violated the IR's "samples in decode order with a non-decreasing
+  absolute dts" invariant. Per §2.4.3.5 the indicator is carried on the
+  program's `PCR_PID`, so exactly that program's elementary streams lift their
+  timelines — a multi-program multiplex leaves the other services alone. The
+  lift is non-negative (a forward splice is never pulled back, so a real gap
+  survives), lands one nominal frame period past the last stamp emitted, and
+  uses the median of the last five plausible inter-access-unit steps capped at
+  one second, so jitter (3754/3753 at 23.976 fps) cannot consume the flag and an
+  8-second splice cannot become the frame period. Decode order stays monotonic
+  across the seam while the intervals inside each time base are untouched. The
+  same trajectory also applies at the final `finish()` flush, where a bounded
+  PES short of its declared length is now dropped rather than delivered.
+- **`StreamingTsDemux` reports a changed in-band codec config as
+  `DemuxEvent::TrackUpdated`, and maps ADTS `channel_configuration` through
+  ISO/IEC 14496-3 Table 1.19** (#1080, audit r04-W51, extending W16). Codec
+  config recovery was single-shot for the life of the stream, so a mid-stream
+  SPS/PPS or AAC-config change (SD↔HD ad break, re-encode, multiplex
+  reconfiguration) left the track labelled with the original `avcC`/`hvcC`/
+  `esds` and the init segment describing a stream that had stopped being sent.
+  An AVC/HEVC/AAC track whose parameter sets or ADTS header actually change now
+  re-probes on that access unit and emits `TrackUpdated` with the same
+  `track_id` — and emits nothing for an *unchanged* repeat, which encoders send
+  routinely (often on every keyframe). Separately, `CodecConfig::Aac`'s
+  `channel_count` came from the raw `channel_configuration` field: configuration
+  7 is **eight** channels (7.1) and 0 means the mapping is in-band via a
+  `program_config_element`, which this crate does not decode, so 7.1 was
+  reported as 7 channels and a PCE-signalled stream as 0. The field now maps
+  through Table 1.19, with `0` marking "not derivable" rather than a fabricated
+  count, matching `flv_stream`'s existing convention.
+- **`ts_demux`'s codec-config probes scan only the newest access unit**
+  (#1080, audit r04-W47). Every probe but H.264/HEVC re-walked the whole
+  accumulated backlog — with byte-by-byte sync scans inside — on *every*
+  incoming access unit, so a PID whose config never resolves (garbage payload,
+  or an ADTS `sampling_frequency_index` of 13/14) grew toward
+  `MAX_PROBE_BACKLOG_BYTES` while re-scanning it each time: O(n²) byte probes
+  per PID, ~4 × 10⁹ over a 2 000-access-unit PID, enough to pin a core on a
+  hostile PMT. All probes now scan the newest access unit only, and the
+  H.264/HEVC probes carry parameter sets seen earlier forward explicitly, since
+  an encoder may put SPS and PPS in separate access units. Guarded by a
+  complexity test that counts probes at the scan site and asserts they stay
+  proportional to the input length.
 - **`uri` resolution is total over `&str`: no input panics.** `remove_dot_segments`
   sliced at byte 1 to skip a leading `/`, which panicked on any multi-byte first
   character — reachable straight from `resolve` with a non-ASCII relative

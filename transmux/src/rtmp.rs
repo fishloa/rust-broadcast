@@ -1988,20 +1988,6 @@ mod tests {
             input.extend_from_slice(&[0x11u8; FRAME]);
         }
 
-        {
-            let mut k = 0usize;
-            while k + 1 < input.len() {
-                let b = input[k];
-                if matches!(b, 0x04 | 0x84 | 0xC4) {
-                    std::eprintln!(
-                        "bh @{k} = {b:02X} next {:02X?}",
-                        &input[k + 1..(k + 6).min(input.len())]
-                    );
-                }
-                k += 1;
-            }
-            std::eprintln!("total {}", input.len());
-        }
         let msgs = read_chunks(&input).expect("chunk stream");
         let stamps: Vec<u32> = msgs.iter().map(|m| m.timestamp).collect();
         assert_eq!(stamps, vec![0, DELTA, 2 * DELTA]);

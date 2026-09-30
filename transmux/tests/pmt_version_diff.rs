@@ -1099,7 +1099,7 @@ fn post_removal_payload_is_not_replayed_into_the_re_added_track() {
         let pts = ORPHAN_PTS + u64::from(i) * PTS_STEP;
         demux.feed(&pes_ts_packets(
             PID_B,
-            i * 4,
+            i,
             &pes_bytes_with_pts(b"orphan", pts),
         ));
     }
@@ -1124,11 +1124,15 @@ fn post_removal_payload_is_not_replayed_into_the_re_added_track() {
     // Sample assertion below must see the whole post-re-add event stream.
     let mut events = drain(&mut demux);
 
+    // One packet per PES, so the continuity counter advances by one: the
+    // re-add must not be judged against a CC baseline inherited from the
+    // pre-removal track, and neither may the run within the re-added traffic
+    // (r04-W49: a gap drops the access unit it truncated).
     for i in 0u8..3 {
         let pts = REPLACEMENT_PTS + u64::from(i) * PTS_STEP;
         demux.feed(&pes_ts_packets(
             PID_B,
-            i * 4,
+            i,
             &pes_bytes_with_pts(b"fresh", pts),
         ));
     }
