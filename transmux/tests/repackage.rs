@@ -549,3 +549,106 @@ fn trim_window_follows_real_dts_not_duration_sum() {
         "last kept sample must be the one whose REAL dts (11000) falls in the window"
     );
 }
+
+// ── W32: interleave across huge coprime timescales (audit r05-W32) ──────────
+
+/// Three track timescales whose least common multiple overflows `u64`.
+/// `4294967291`, `4294967279` and `4294967231` are pairwise coprime (all
+/// prime), so the LCM is their product, `79_228_160_909_397_609_687_688_407_659`
+/// — about 4×10^27, far past `u64::MAX` (`18_446_744_073_709_551_615`). The
+/// timescales come from untrusted `mdhd` boxes. The old interleave folded every
+/// track onto that LCM (`a / gcd * b`), which panics in debug and wraps in
+/// release; comparing cross-multiplied in `u128` is exact for any pair.
+const BIG_TIMESCALES: [u32; 3] = [4_294_967_291, 4_294_967_279, 4_294_967_231];
+
+/// Every `track_id` a `trun` sample belongs to, in output order — the interleave
+/// read back from the muxed bytes.
+fn sample_track_order(segments: &[Vec<u8>]) -> Vec<u32> {
+    let mut out = Vec::new();
+    for segment in segments {
+        let mut off = 0usize;
+        while off + 8 <= segment.len() {
+            let (bx, consumed) = parse_box(&segment[off..]).expect("parse top box");
+            if consumed == 0 {
+                break;
+            }
+            if &bx.header.box_type.0 == b"moof" {
+                let moof = MovieFragmentBox::parse_body(bx.body).expect("parse moof");
+                for traf in &moof.traf {
+                    for trun in &traf.trun {
+                        for _ in &trun.samples {
+                            out.push(traf.tfhd.track_id);
+                        }
+                    }
+                }
+            }
+            off += consumed;
+        }
+    }
+    out
+}
+
+/// Build one track of `count` 1-second samples at `timescale`.
+fn one_second_track(
+    track_id: u32,
+    timescale: u32,
+    config: CodecConfig,
+    tag: u8,
+    count: u32,
+) -> Track {
+    let samples = (0..count)
+        .map(|i| {
+            let dts = i as i64 * timescale as i64;
+            Sample::new(vec![tag; 8], Some(dts), Some(dts), Some(timescale), true)
+        })
+        .collect();
+    Track::new(TrackSpec::new(track_id, timescale, config), samples)
+}
+
+/// The resegmenter interleaves the three tracks' samples by decode time. With
+/// huge coprime timescales the old LCM normalisation overflowed `u64`.
+#[test]
+fn resegment_interleaves_huge_coprime_timescales() {
+    let video_cfg = CodecConfig::Hevc {
+        config: minimal_hevc_config(),
+        width: 320,
+        height: 240,
+    };
+    let audio_cfg = aac_audio_track(2).config;
+    let media = Media::new(
+        vec![
+            one_second_track(1, BIG_TIMESCALES[0], video_cfg, 0x01, 2),
+            one_second_track(2, BIG_TIMESCALES[1], audio_cfg.clone(), 0xA0, 2),
+            one_second_track(3, BIG_TIMESCALES[2], audio_cfg, 0xB0, 2),
+        ],
+        1000,
+    );
+
+    let out = Repackage::new(2.0)
+        .run_media(&media)
+        .expect("resegment across huge coprime timescales");
+
+    // The interleave decides which *segment* each sample lands in (the
+    // Segmenter writes a segment's truns grouped by track), so the observable
+    // is membership, not byte order: the coincident 0 s and 1 s samples of all
+    // three tracks must share one segment rather than one track being stranded
+    // in a segment of its own.
+    let order = sample_track_order(&out.media_segments);
+    assert_eq!(
+        order.len(),
+        6,
+        "every sample of every track must be emitted exactly once"
+    );
+    assert_eq!(
+        out.media_segments.len(),
+        1,
+        "all six coincident samples belong to one segment"
+    );
+    for id in [1u32, 2, 3] {
+        assert_eq!(
+            order.iter().filter(|&&t| t == id).count(),
+            2,
+            "track {id} must contribute both of its samples to the same segment"
+        );
+    }
+}

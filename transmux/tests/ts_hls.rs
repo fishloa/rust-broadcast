@@ -555,3 +555,48 @@ fn concatenated_segments_pass_tsanalyze_and_ffmpeg() {
         eprintln!("SKIP ts_hls CC oracle: tsanalyze not on PATH");
     }
 }
+
+// ── r05-W33: byte-identity against the pre-change packager ───────────────────
+
+/// FNV-1a over the bytes, as a 16-hex-digit string plus the length — the
+/// golden form recorded below.
+fn fnv1a(bytes: &[u8]) -> String {
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    for &x in bytes {
+        h ^= x as u64;
+        h = h.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    format!("{h:016x}(len={})", bytes.len())
+}
+
+/// The batch packager's output is **byte-identical** to the pre-r05-W33 code.
+///
+/// That version recomputed each segment's base DTS by re-walking every earlier
+/// sample (O(segments × samples)); the fix carries a running base instead. The
+/// literals below were produced by running this exact fixture through
+/// `main`'s `TsHlsPackager::new(2).package(&TsDemux(h264_aac.ts))` in a detached
+/// `main` worktree (`git worktree add --detach <dir> main`) and hashing the
+/// result with the same function — no `git stash` was used. The playlist hash
+/// covers the `#EXTINF` durations, so every segment's duration is pinned too.
+#[test]
+fn batch_packaging_is_byte_identical_to_the_pre_w33_packager() {
+    let ir = demux(&load_ts());
+    let out = package(&ir, 2);
+
+    assert_eq!(out.segments.len(), 2, "fixture cuts two segments at 2 s");
+    assert_eq!(
+        fnv1a(out.playlist.as_bytes()),
+        "26b7f6dc378b9feb(len=126)",
+        "playlist bytes (incl. every #EXTINF) must be unchanged"
+    );
+    assert_eq!(
+        fnv1a(&out.segments[0]),
+        "8deed1d6656fd758(len=54708)",
+        "segment 0 bytes must be unchanged"
+    );
+    assert_eq!(
+        fnv1a(&out.segments[1]),
+        "ca42400824c83d23(len=27260)",
+        "segment 1 bytes must be unchanged"
+    );
+}

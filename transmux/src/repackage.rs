@@ -107,22 +107,35 @@ fn rescale_signed_floor(ticks: i64, from_timescale: u32, to_timescale: u32) -> i
     (ticks as i128 * to_timescale as i128).div_euclid(from_timescale as i128) as i64
 }
 
-/// Greatest common divisor (Euclid) — used to build a common tick base across
-/// tracks with different media timescales when interleaving by decode time.
-fn gcd(mut a: u64, mut b: u64) -> u64 {
-    while b != 0 {
-        let t = b;
-        b = a % b;
-        a = t;
+/// The index of the track whose next un-fed sample has the earliest decode
+/// time, compared as exact rationals (`dts / timescale`).
+///
+/// The comparison cross-multiplies in `u128` (`a.dts * b.timescale` against
+/// `b.dts * a.timescale`) rather than scaling every track onto a common LCM of
+/// the timescales: the timescales come from untrusted `mdhd` boxes, and three
+/// large coprime ones make that LCM exceed `u64`, so an `a / gcd * b` fold
+/// panics in debug and wraps in release. A `u128` cross-multiply cannot
+/// overflow for any pair of `u32` timescales. A timescale of 0 is treated as 1
+/// (a track with no timescale still has to be placeable). Ties go to the
+/// **lowest track index**, so the order is deterministic. Returns `None` when
+/// every track's samples have been consumed.
+fn earliest_decode_time_track(media: &Media, dts: &[u128], cursors: &[usize]) -> Option<usize> {
+    let mut best: Option<usize> = None;
+    for (ti, track) in media.tracks.iter().enumerate() {
+        if cursors[ti] >= track.samples.len() {
+            continue;
+        }
+        let Some(current) = best else {
+            best = Some(ti);
+            continue;
+        };
+        let lhs = dts[ti] * media.tracks[current].spec.timescale.max(1) as u128;
+        let rhs = dts[current] * track.spec.timescale.max(1) as u128;
+        if lhs < rhs {
+            best = Some(ti);
+        }
     }
-    a
-}
-
-/// Least common multiple of two timescales (0 treated as 1).
-fn lcm(a: u64, b: u64) -> u64 {
-    let a = a.max(1);
-    let b = b.max(1);
-    a / gcd(a, b) * b
+    best
 }
 
 impl Media {
@@ -386,30 +399,9 @@ impl Repackage {
         // a k-way step over per-track cursors, picking the track whose next
         // sample has the earliest normalised decode time.
         let mut cursors = alloc::vec![0usize; media.tracks.len()];
-        // Per-track running decode time and a scale to a common tick base so
-        // tracks with different timescales interleave correctly.
-        let common = media
-            .tracks
-            .iter()
-            .map(|t| t.spec.timescale as u64)
-            .fold(1u64, lcm);
-        loop {
-            // Pick the track with a remaining sample of the smallest normalised
-            // decode time (ties: lowest track index for determinism).
-            let mut best: Option<usize> = None;
-            let mut best_key = u128::MAX;
-            for (ti, track) in media.tracks.iter().enumerate() {
-                if cursors[ti] >= track.samples.len() {
-                    continue;
-                }
-                let scale = (common / track.spec.timescale.max(1) as u64) as u128;
-                let key = dts[ti] * scale;
-                if key < best_key {
-                    best_key = key;
-                    best = Some(ti);
-                }
-            }
-            let Some(ti) = best else { break };
+        // The pick is [`earliest_decode_time_track`] — see its docs for why the
+        // comparison is a cross-multiplied rational rather than an LCM scale.
+        while let Some(ti) = earliest_decode_time_track(media, &dts, &cursors) {
             let track = &media.tracks[ti];
             let sample = &track.samples[cursors[ti]];
             seg.push(track.spec.track_id, sample.clone())?;
@@ -456,5 +448,164 @@ impl RepackageOutput {
     /// Number of emitted media segments.
     pub fn segment_count(&self) -> usize {
         self.media_segments.len()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ir::CodecConfig;
+    use crate::pipeline::Sample;
+    use alloc::vec;
+
+    /// A track with `count` samples one tick apart, at `timescale`.
+    fn track(timescale: u32, count: usize) -> Track {
+        let samples = (0..count)
+            .map(|i| {
+                let dts = i as i64;
+                Sample::new(vec![0u8; 4], Some(dts), Some(dts), Some(1), true)
+            })
+            .collect();
+        Track::new(
+            TrackSpec::new(
+                1,
+                timescale,
+                CodecConfig::Aac {
+                    esds: crate::mp4esds::EsdsBox::new(crate::mp4esds::ESDescriptor::new(
+                        1,
+                        0,
+                        Some(crate::mp4esds::DecoderConfigDescriptor::new(
+                            0x40,
+                            0x05,
+                            false,
+                            0,
+                            0,
+                            0,
+                            Some(crate::mp4esds::DecoderSpecificInfo::new(vec![0x12, 0x10])),
+                        )),
+                        Some(crate::mp4esds::SLConfigDescriptor::predefined_two()),
+                    )),
+                    channel_count: 2,
+                    sample_rate: timescale,
+                    sample_size: 16,
+                },
+            ),
+            samples,
+        )
+    }
+
+    fn media(timescales: &[u32]) -> Media {
+        Media::new(timescales.iter().map(|&t| track(t, 4)).collect(), 1000)
+    }
+
+    /// `dts[i]` is the running decode time *per track index*; `cursors` names
+    /// the next un-fed sample of each.
+    fn pick(media: &Media, dts: &[u128], cursors: &[usize]) -> Option<usize> {
+        earliest_decode_time_track(media, dts, cursors)
+    }
+
+    /// The comparison is an exact rational one: a track is chosen by
+    /// `dts / timescale`, not by raw tick count, so 1 tick at 1000 Hz
+    /// (1 ms) beats 2 ticks at 100 Hz (20 ms) even though 1 < 2 is the other
+    /// way round numerically.
+    #[test]
+    fn earliest_is_compared_as_seconds_not_ticks() {
+        let m = media(&[1000, 100]);
+        // Track 0: 1 tick @1000 Hz = 1 ms. Track 1: 2 ticks @100 Hz = 20 ms.
+        assert_eq!(pick(&m, &[1, 2], &[0, 0]), Some(0));
+        // Reverse the roles: now track 1 is earlier.
+        assert_eq!(pick(&m, &[500, 3], &[0, 0]), Some(1));
+    }
+
+    /// A tie goes to the lowest track index, whatever the timescales are — so
+    /// the resegmented output is deterministic.
+    #[test]
+    fn a_tie_picks_the_lowest_track_index() {
+        // 5 ticks @ 5 kHz == 1 tick @ 1 kHz == 1 ms.
+        let m = media(&[5000, 1000]);
+        assert_eq!(pick(&m, &[5, 1], &[0, 0]), Some(0));
+        // Same instant expressed the other way round still picks index 0.
+        let m = media(&[1000, 5000]);
+        assert_eq!(pick(&m, &[1, 5], &[0, 0]), Some(0));
+        // Three-way tie.
+        let m = media(&[1000, 2000, 3000]);
+        assert_eq!(pick(&m, &[1, 2, 3], &[0, 0, 0]), Some(0));
+    }
+
+    /// The order is stable across a whole run: advancing the cursor of the
+    /// picked track moves on to the next earliest, and the sequence is exactly
+    /// what the rational comparison implies.
+    #[test]
+    fn the_whole_interleave_order_is_stable() {
+        // Track 0: 1000 Hz, so sample i is i ms. Track 1: 2000 Hz, so sample i
+        // is i/2 ms. Interleaved: t1@0, t0@0 (tie -> index 0 wins: 0 ms both),
+        // then t1@0.5, t0@1, t1@1, ...
+        let m = media(&[1000, 2000]);
+        let mut dts = vec![0u128; 2];
+        let mut cursors = vec![0usize; 2];
+        let mut order = Vec::new();
+        while let Some(ti) = pick(&m, &dts, &cursors) {
+            order.push(ti);
+            dts[ti] += 1;
+            cursors[ti] += 1;
+        }
+        assert_eq!(order, vec![0, 1, 1, 0, 1, 1, 0, 0]);
+    }
+
+    /// A zero timescale is treated as 1 Hz rather than dividing by zero or
+    /// comparing against a zero denominator.
+    #[test]
+    fn zero_timescale_is_treated_as_one() {
+        let m = media(&[0, 1]);
+        // Track 0 at "1 Hz": 0 ticks = 0 s. Track 1 at 1 Hz: 0 ticks = 0 s.
+        // A tie -> index 0. Then track 0 with 1 tick = 1 s vs track 1's 1 tick
+        // = 1 s -> still a tie -> index 0.
+        assert_eq!(pick(&m, &[0, 0], &[0, 0]), Some(0));
+        assert_eq!(pick(&m, &[1, 1], &[0, 0]), Some(0));
+        // And a real timescale can beat the zero one.
+        let m = media(&[1, 1_000_000]);
+        assert_eq!(pick(&m, &[1, 0], &[0, 0]), Some(1));
+    }
+
+    /// Exhausted tracks are skipped, and `None` comes back when there is
+    /// nothing left.
+    #[test]
+    fn exhausted_tracks_are_skipped() {
+        let m = media(&[1000, 1000]);
+        assert_eq!(pick(&m, &[0, 0], &[0, 4]), Some(0), "track 1 is exhausted");
+        assert_eq!(pick(&m, &[0, 0], &[4, 0]), Some(1), "track 0 is exhausted");
+        assert_eq!(pick(&m, &[0, 0], &[4, 4]), None, "both exhausted");
+    }
+
+    /// The huge-coprime case: three timescales whose LCM overflows `u64` still
+    /// compare correctly, and the pick is the exact rational smallest.
+    #[test]
+    fn huge_coprime_timescales_compare_correctly() {
+        const A: u32 = 4_294_967_291;
+        const B: u32 = 4_294_967_279;
+        const C: u32 = 4_294_967_231;
+        let m = media(&[A, B, C]);
+        // All at zero: tie -> index 0.
+        assert_eq!(pick(&m, &[0, 0, 0], &[0, 0, 0]), Some(0));
+        // Track 0 one tick is 1/A s — the *smallest* second value, since A is
+        // the largest timescale — so it wins against tracks still at zero
+        // ticks only in the sense of being later; here tracks 1 and 2 are at
+        // 0 s, so they are earlier and index 1 wins the tie against index 2.
+        assert_eq!(pick(&m, &[1, 0, 0], &[0, 0, 0]), Some(1));
+        // One tick at C (the smallest timescale) is the *largest* one-tick
+        // second value, so it loses to a track at zero ticks.
+        assert_eq!(pick(&m, &[0, 0, 1], &[0, 0, 0]), Some(0));
+        // A track still at zero always beats one that has advanced, whatever
+        // the timescales — so index 0 (untouched) wins.
+        assert_eq!(pick(&m, &[0, 1, 1], &[0, 0, 0]), Some(0));
+        // With track 0 exhausted, one tick at B beats one tick at C (B > C,
+        // so 1/B s < 1/C s).
+        assert_eq!(pick(&m, &[0, 1, 1], &[4, 0, 0]), Some(1));
+        // And index 0 with one tick at A beats both (1/A s is the smallest).
+        assert_eq!(pick(&m, &[1, 1, 1], &[0, 0, 0]), Some(0));
+        // The LCM of A, B and C is ~7.9e28, far past u64::MAX: the old fold
+        // overflowed here, this comparison must not.
+        let lcm_overflows = (A as u128) * (B as u128) * (C as u128);
+        assert!(lcm_overflows > u64::MAX as u128);
     }
 }

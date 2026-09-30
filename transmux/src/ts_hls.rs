@@ -86,6 +86,32 @@ use crate::ts_mux::{TsContinuity, mux_tracks_at_continuing};
 /// is the floor for floating-point `#EXTINF` durations (RFC 8216 §7).
 const DEFAULT_HLS_VERSION: u8 = 3;
 
+// Test-only count of `MediaClock::tick` calls `TsHlsPackager::package` makes on
+// the *current thread*.
+//
+// The batch packager must touch each sample a bounded number of times; before
+// audit r05-W33 it re-walked every earlier sample of every track once per
+// segment (`O(segments x samples)`). Instrumenting the real walk keeps the
+// regression test timing-independent: it asserts a literal call count, not a
+// duration.
+//
+// Thread-local rather than a process-wide static: the test harness runs tests
+// on several threads, and another `#[test]` that happens to call `package`
+// concurrently would otherwise inflate this counter and flake the `==`
+// assertion.
+#[cfg(test)]
+std::thread_local! {
+    pub(crate) static PACKAGE_TICK_CALLS: core::cell::Cell<usize> =
+        const { core::cell::Cell::new(0) };
+}
+
+/// Increment the thread-local tick counter (a no-op outside tests).
+#[cfg(test)]
+#[inline]
+fn count_tick() {
+    PACKAGE_TICK_CALLS.with(|c| c.set(c.get() + 1));
+}
+
 /// The output of [`TsHlsPackager`]: the `.ts` media segments plus the media
 /// playlist referencing them.
 ///
@@ -188,28 +214,47 @@ impl Package for TsHlsPackager {
         let mut ts_segments: Vec<Vec<u8>> = Vec::with_capacity(segments.len());
         let mut playlist_segments: Vec<MediaSegment> = Vec::with_capacity(segments.len());
         let mut target_duration: u32 = 0;
+        // Running per-track elapsed media time, so each segment's base DTS is
+        // the value the previous segment left off at rather than a fresh O(n)
+        // rescans of every earlier sample. The ranges are contiguous and in
+        // order (`partition_tracks`), so walking the cursor forward over the
+        // samples each segment consumes yields exactly the same cumulative sum
+        // the prefix walk did. `MediaClock` (duration, else dts delta) rather
+        // than a duration sum, matching the streaming path's `base_decode` — a
+        // `duration: Some(0)` stream would otherwise pin every segment's base
+        // DTS at 0. Each clock is carried across boundaries (it is deliberately
+        // not reset there), so the first sample of a segment can still take its
+        // dts delta from the last sample of the previous one.
+        let mut clocks: Vec<MediaClock> = alloc::vec![MediaClock::new(); media.tracks.len()];
+        let mut base_dts: Vec<u64> = alloc::vec![0u64; media.tracks.len()];
+        // Per-track cursor into `samples`: contiguous, monotonically advancing
+        // segment ranges let one forward walk both feed the clock and advance
+        // the next segment's base, so a sample is ticked exactly once for the
+        // whole package (`O(samples)`, not `O(segments × samples)`).
+        let mut cursor: Vec<usize> = alloc::vec![0usize; media.tracks.len()];
         for (i, seg) in segments.iter().enumerate() {
+            // Fold any samples this segment's window starts past into the
+            // running base *before* `base_dts` is handed to the muxer.
+            // `partition_tracks` can emit a zero-width range for a track whose
+            // samples all fall after an early window, and it can re-claim
+            // samples an earlier segment already counted (its last range is
+            // written from a `seg_start_idx` an earlier write may have passed),
+            // so the cursor advances monotonically and never backwards — a
+            // sample is ticked exactly once for the whole package.
+            for (ti, track) in media.tracks.iter().enumerate() {
+                let start = seg.ranges[ti].start.max(cursor[ti]);
+                while cursor[ti] < start {
+                    #[cfg(test)]
+                    count_tick();
+                    base_dts[ti] += clocks[ti].tick(&track.samples[cursor[ti]]);
+                    cursor[ti] += 1;
+                }
+            }
             let sample_slices: Vec<&[Sample]> = media
                 .tracks
                 .iter()
                 .zip(&seg.ranges)
                 .map(|(t, r)| &t.samples[r.clone()])
-                .collect();
-            // Base DTS per track = cumulative elapsed media time of all samples
-            // before this segment's start, so the segment continues the previous
-            // timeline and the concatenation forms one monotonic DTS/PTS
-            // timeline. `MediaClock` (duration, else dts delta) rather than a
-            // duration sum, matching the streaming path's `base_decode` — a
-            // `duration: Some(0)` stream would otherwise pin every segment's
-            // base DTS at 0.
-            let base_dts: Vec<u64> = media
-                .tracks
-                .iter()
-                .zip(&seg.ranges)
-                .map(|(t, r)| {
-                    let mut clock = MediaClock::new();
-                    t.samples[..r.start].iter().map(|s| clock.tick(s)).sum()
-                })
                 .collect();
             let bytes = mux_tracks_at_continuing(
                 &media.tracks,
@@ -219,19 +264,41 @@ impl Package for TsHlsPackager {
             )?;
             ts_segments.push(bytes);
 
-            // Segment duration = the anchor track's buffered duration (seconds),
-            // on the same `MediaClock` rule as the cut boundaries above.
-            let anchor_ticks: u64 = {
-                let anchor_samples = &media.tracks[anchor].samples;
-                let mut clock = MediaClock::new();
-                for s in &anchor_samples[..seg.ranges[anchor].start] {
-                    clock.tick(s);
+            // Walk this segment's samples exactly once: the running clock
+            // yields each sample's elapsed media time, which both advances the
+            // track's base DTS for the next segment and gives the segment's own
+            // buffered duration. `MediaClock` (duration, else dts delta) rather
+            // than a duration sum, matching the streaming path's `base_decode`
+            // — a `duration: Some(0)` stream would otherwise pin every
+            // segment's base DTS at 0 — and the clock deliberately carries
+            // across boundaries, so the first sample of a segment still takes
+            // its dts delta from the last sample of the previous one.
+            // Each track is walked at most once overall: `cursor[ti]` is the
+            // first sample not yet ticked, and the loop ticks exactly the
+            // samples this segment owns that the cursor has not passed. A
+            // segment's own duration is the ticks of the samples in its range;
+            // the running `base_dts` is the total ticked so far, which is what
+            // the *next* segment's samples start from. `partition_tracks`
+            // ranges are non-decreasing and, together, cover every sample, so
+            // the cursor advances monotonically.
+            let mut ticks: Vec<u64> = alloc::vec![0u64; media.tracks.len()];
+            for (ti, track) in media.tracks.iter().enumerate() {
+                let range = seg.ranges[ti].clone();
+                // This segment's own duration is the ticks of the samples in
+                // its range, minus any the cursor already passed (an
+                // overlapping range re-claims samples an earlier segment
+                // counted, and counting them twice would inflate #EXTINF).
+                let mut segment_ticks: u64 = 0;
+                for idx in cursor[ti].max(range.start)..range.end {
+                    #[cfg(test)]
+                    count_tick();
+                    segment_ticks += clocks[ti].tick(&track.samples[idx]);
                 }
-                anchor_samples[seg.ranges[anchor].clone()]
-                    .iter()
-                    .map(|s| clock.tick(s))
-                    .sum()
-            };
+                base_dts[ti] += segment_ticks;
+                cursor[ti] = cursor[ti].max(range.end);
+                ticks[ti] = segment_ticks;
+            }
+            let anchor_ticks = ticks[anchor];
             let ts_scale = media.tracks[anchor].spec.timescale.max(1) as u64;
             // #EXT-X-TARGETDURATION is an integer ≥ every #EXTINF (RFC 8216
             // §4.3.3.1: the rounded max segment duration).
@@ -1455,6 +1522,75 @@ mod tests {
             cut.iter().map(|s| s.sequence).collect::<Vec<_>>(),
             vec![SEED, SEED + 1],
             "segments cut by a seeded segmenter must number from the seed, not from 0"
+        );
+    }
+    // ── Audit r05-W33: the batch packager is O(samples), not O(segments ×
+    //    samples) ────────────────────────────────────────────────────────────
+
+    /// A two-track media (an AVC anchor plus an audio track) of `count`
+    /// one-tick samples each, sync every `gop` on the anchor, so `package`
+    /// cuts `count / gop` segments and both tracks contribute samples.
+    fn countable_media(count: usize, gop: usize) -> Media {
+        use crate::nalu_types::{AvcPps, AvcSps};
+        let record = crate::avc_config::AVCDecoderConfigurationRecord {
+            configuration_version: 1,
+            profile_indication: 0x42,
+            profile_compatibility: 0,
+            level_indication: 0x1E,
+            length_size_minus_one: 3,
+            sps: vec![AvcSps(vec![0x67, 0x42, 0xc0, 0x1e, 0xd9])],
+            pps: vec![AvcPps(vec![0x68, 0xce, 0x3c, 0x80])],
+            chroma_format: None,
+            bit_depth_luma_minus8: None,
+            bit_depth_chroma_minus8: None,
+            sps_ext: vec![],
+        };
+        let video_spec = TrackSpec::new(
+            1,
+            90_000,
+            CodecConfig::Avc {
+                config: crate::avc_config::AVCConfigurationBox::new(record),
+                width: 320,
+                height: 240,
+            },
+        );
+        let audio_spec = aac_track(2, 90_000);
+        // One second per sample in a 90 kHz timescale, so a 1-second target
+        // cuts `count / gop` segments.
+        let video: Vec<Sample> = (0..count).map(|i| sample(90_000, i % gop == 0)).collect();
+        let audio: Vec<Sample> = (0..count).map(|i| sample(90_000, i % gop == 0)).collect();
+        Media::new(
+            vec![Track::new(video_spec, video), Track::new(audio_spec, audio)],
+            1000,
+        )
+    }
+
+    /// The batch packager must call `MediaClock::tick` a number of times
+    /// proportional to the *sample count*, however many segments it cuts. On
+    /// the pre-fix code each segment re-walked every earlier sample of every
+    /// track, so 400 anchor samples in 100 segments cost `Σ 4k` = 20 200 anchor
+    /// visits alone.
+    #[test]
+    fn batch_package_ticks_each_sample_once() {
+        const COUNT: usize = 400;
+        const GOP: usize = 4;
+
+        let media = countable_media(COUNT, GOP);
+        let mut packager = TsHlsPackager::new(1);
+        PACKAGE_TICK_CALLS.with(|c| c.set(0));
+        let out = packager.package(&media).expect("package");
+        let visits = PACKAGE_TICK_CALLS.with(|c| c.get());
+
+        assert_eq!(
+            out.segments.len(),
+            COUNT / GOP,
+            "the fixture must cut many segments for the bound to bite"
+        );
+        assert_eq!(
+            visits,
+            COUNT * 2,
+            "each of the two tracks' {COUNT} samples must be ticked exactly once 
+             (the pre-fix code re-walked every earlier sample per segment)"
         );
     }
 }

@@ -168,6 +168,65 @@ fn config_box<C: Serialize<Error = crate::error::Error>>(
     Ok(OpaqueBox::new(*fourcc, body))
 }
 
+/// The sampling-rate carriage decision for one audio track's `stsd` entry.
+///
+/// An `AudioSampleEntry`'s `samplerate` is 16.16 fixed point, so its integer
+/// part is limited to 65535 Hz. A rate above that (96, 176.4, 192 kHz, …)
+/// cannot be represented — `192000 << 16` is truncated to `0xEE000000` and
+/// reads back as 60928 Hz. ISO/IEC 14496-12 §12.2.3.2 (as amended by Amd 1:2017)
+/// requires the `AudioSampleEntryV1` form for those rates: `entry_version = 1`,
+/// `samplerate = 1 << 16`, and a [`SamplingRateBox`] (`srat`, §12.2.3.1)
+/// carrying the real rate. Such an entry must sit in an `stsd` whose version
+/// is 1.
+///
+/// [`SamplingRateBox`]: crate::init_segment::SamplingRateBox
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct AudioRateCarriage {
+    /// `entry_version` to write into the sample entry (0 or 1).
+    entry_version: u16,
+    /// Value for the entry's 16.16 `samplerate` field.
+    samplerate_field: u32,
+    /// The `srat` box to append as a config child, when the v1 form is used.
+    srat: Option<crate::init_segment::SamplingRateBox>,
+}
+
+/// Decide the `stsd` sampling-rate carriage for `sample_rate`
+/// (ISO/IEC 14496-12 §12.2.3 / §12.2.3.1 / §12.2.3.2).
+///
+/// A rate that fits the 16.16 field's integer part is written the plain way;
+/// a rate above `u16::MAX` needs the v1 entry, its `srat` box and an `stsd`
+/// version of 1.
+fn audio_rate_carriage(sample_rate: u32) -> AudioRateCarriage {
+    use crate::init_segment::{AudioSampleEntryV1, SamplingRateBox};
+    if AudioSampleEntryV1::rate_fits_v0(sample_rate) {
+        AudioRateCarriage {
+            entry_version: 0,
+            samplerate_field: sample_rate << 16,
+            srat: None,
+        }
+    } else {
+        AudioRateCarriage {
+            entry_version: AudioSampleEntryV1::ENTRY_VERSION,
+            samplerate_field: AudioSampleEntryV1::SAMPLERATE_PLACEHOLDER,
+            srat: Some(SamplingRateBox::new(sample_rate)),
+        }
+    }
+}
+
+/// Serialize a [`SamplingRateBox`] into the opaque form the sample entries'
+/// `config_boxes` carry (body only, 8-byte box header stripped), matching how
+/// the typed config records above are embedded.
+///
+/// [`SamplingRateBox`]: crate::init_segment::SamplingRateBox
+fn srat_opaque(rate: crate::init_segment::SamplingRateBox) -> Result<OpaqueBox> {
+    let mut full = vec![0u8; rate.serialized_len()];
+    let n = rate.serialize_into(&mut full)?;
+    Ok(OpaqueBox::new(
+        crate::init_segment::SamplingRateBox::FOURCC,
+        full[8..n].to_vec(),
+    ))
+}
+
 /// Build one fragmented-init `trak` (empty sample tables + a single `stsd` entry).
 fn build_trak(t: &TrackSpec) -> Result<TrackBox> {
     let audio = t.config.is_audio();
@@ -283,13 +342,21 @@ fn build_trak(t: &TrackSpec) -> Result<TrackBox> {
             let mut esds_full = vec![0u8; esds.serialized_len()];
             let n = esds.serialize_into(&mut esds_full)?;
             let esds_opaque = OpaqueBox::new(*b"esds", esds_full[8..n].to_vec());
+            let rate = audio_rate_carriage(*sample_rate);
+            let mut config_boxes = vec![esds_opaque];
+            if let Some(srat) = rate.srat {
+                config_boxes.push(srat_opaque(srat)?);
+            }
             let entry = SampleEntryVariant::Mp4a(Box::new(Mp4aSampleEntry {
                 codec_type: *b"mp4a",
+                entry_version: rate.entry_version,
+                reserved_1: [0u8; 6],
                 data_reference_index: 1,
                 channelcount: *channel_count,
                 samplesize: *sample_size,
-                samplerate: sample_rate << 16,
-                config_boxes: vec![esds_opaque],
+                compression_id_and_packet_size: [0u8; 4],
+                samplerate: rate.samplerate_field,
+                config_boxes,
             }));
             (
                 entry,
@@ -315,12 +382,20 @@ fn build_trak(t: &TrackSpec) -> Result<TrackBox> {
             dac3_full[4..8].copy_from_slice(b"dac3");
             let n = config.serialize_into(&mut dac3_full[8..])?;
             let dac3_opaque = OpaqueBox::new(*b"dac3", dac3_full[8..8 + n].to_vec());
+            let rate = audio_rate_carriage(*sample_rate);
+            let mut config_boxes = vec![dac3_opaque];
+            if let Some(srat) = rate.srat {
+                config_boxes.push(srat_opaque(srat)?);
+            }
             let entry = SampleEntryVariant::Ac3(Box::new(Ac3SampleEntry {
+                entry_version: rate.entry_version,
+                reserved_1: [0u8; 6],
                 data_reference_index: 1,
                 channelcount: *channel_count,
                 samplesize: *sample_size,
-                samplerate: (*sample_rate) << 16,
-                config_boxes: vec![dac3_opaque],
+                compression_id_and_packet_size: [0u8; 4],
+                samplerate: rate.samplerate_field,
+                config_boxes,
             }));
             (
                 entry,
@@ -346,12 +421,20 @@ fn build_trak(t: &TrackSpec) -> Result<TrackBox> {
             dec3_full[4..8].copy_from_slice(b"dec3");
             let n = config.serialize_into(&mut dec3_full[8..])?;
             let dec3_opaque = OpaqueBox::new(*b"dec3", dec3_full[8..8 + n].to_vec());
+            let rate = audio_rate_carriage(*sample_rate);
+            let mut config_boxes = vec![dec3_opaque];
+            if let Some(srat) = rate.srat {
+                config_boxes.push(srat_opaque(srat)?);
+            }
             let entry = SampleEntryVariant::Ec3(Box::new(Ec3SampleEntry {
+                entry_version: rate.entry_version,
+                reserved_1: [0u8; 6],
                 data_reference_index: 1,
                 channelcount: *channel_count,
                 samplesize: *sample_size,
-                samplerate: (*sample_rate) << 16,
-                config_boxes: vec![dec3_opaque],
+                compression_id_and_packet_size: [0u8; 4],
+                samplerate: rate.samplerate_field,
+                config_boxes,
             }));
             (
                 entry,
@@ -436,12 +519,20 @@ fn build_trak(t: &TrackSpec) -> Result<TrackBox> {
             sample_size,
         } => {
             let dops_opaque = config_box(&DOPS_FOURCC, config)?;
+            let rate = audio_rate_carriage(*sample_rate);
+            let mut config_boxes = vec![dops_opaque];
+            if let Some(srat) = rate.srat {
+                config_boxes.push(srat_opaque(srat)?);
+            }
             let entry = SampleEntryVariant::Opus(Box::new(OpusSampleEntry {
+                entry_version: rate.entry_version,
+                reserved_1: [0u8; 6],
                 data_reference_index: 1,
                 channelcount: *channel_count,
                 samplesize: *sample_size,
-                samplerate: (*sample_rate) << 16,
-                config_boxes: vec![dops_opaque],
+                compression_id_and_packet_size: [0u8; 4],
+                samplerate: rate.samplerate_field,
+                config_boxes,
             }));
             (
                 entry,
@@ -464,12 +555,20 @@ fn build_trak(t: &TrackSpec) -> Result<TrackBox> {
             sample_size,
         } => {
             let dfla_opaque = config_box(&DFLA_FOURCC, config)?;
+            let rate = audio_rate_carriage(*sample_rate);
+            let mut config_boxes = vec![dfla_opaque];
+            if let Some(srat) = rate.srat {
+                config_boxes.push(srat_opaque(srat)?);
+            }
             let entry = SampleEntryVariant::Flac(Box::new(FlacSampleEntry {
+                entry_version: rate.entry_version,
+                reserved_1: [0u8; 6],
                 data_reference_index: 1,
                 channelcount: *channel_count,
                 samplesize: *sample_size,
-                samplerate: (*sample_rate) << 16,
-                config_boxes: vec![dfla_opaque],
+                compression_id_and_packet_size: [0u8; 4],
+                samplerate: rate.samplerate_field,
+                config_boxes,
             }));
             (
                 entry,
@@ -492,12 +591,20 @@ fn build_trak(t: &TrackSpec) -> Result<TrackBox> {
             sample_size,
         } => {
             let dac4_opaque = config_box(&DAC4_FOURCC, config)?;
+            let rate = audio_rate_carriage(*sample_rate);
+            let mut config_boxes = vec![dac4_opaque];
+            if let Some(srat) = rate.srat {
+                config_boxes.push(srat_opaque(srat)?);
+            }
             let entry = SampleEntryVariant::Ac4(Box::new(Ac4SampleEntry {
+                entry_version: rate.entry_version,
+                reserved_1: [0u8; 6],
                 data_reference_index: 1,
                 channelcount: *channel_count,
                 samplesize: *sample_size,
-                samplerate: (*sample_rate) << 16,
-                config_boxes: vec![dac4_opaque],
+                compression_id_and_packet_size: [0u8; 4],
+                samplerate: rate.samplerate_field,
+                config_boxes,
             }));
             (
                 entry,
@@ -520,13 +627,21 @@ fn build_trak(t: &TrackSpec) -> Result<TrackBox> {
             sample_size,
         } => {
             let mhac_opaque = config_box(&MHAC_FOURCC, config)?;
+            let rate = audio_rate_carriage(*sample_rate);
+            let mut config_boxes = vec![mhac_opaque];
+            if let Some(srat) = rate.srat {
+                config_boxes.push(srat_opaque(srat)?);
+            }
             let entry = SampleEntryVariant::Mha(Box::new(MhaSampleEntry {
                 codec_type: crate::mpegh::MHA1_FOURCC,
+                entry_version: rate.entry_version,
+                reserved_1: [0u8; 6],
                 data_reference_index: 1,
                 channelcount: *channel_count,
                 samplesize: *sample_size,
-                samplerate: (*sample_rate) << 16,
-                config_boxes: vec![mhac_opaque],
+                compression_id_and_packet_size: [0u8; 4],
+                samplerate: rate.samplerate_field,
+                config_boxes,
             }));
             (
                 entry,
@@ -586,13 +701,21 @@ fn build_trak(t: &TrackSpec) -> Result<TrackBox> {
             let mut esds_full = vec![0u8; esds.serialized_len()];
             let n = esds.serialize_into(&mut esds_full)?;
             let esds_opaque = OpaqueBox::new(*b"esds", esds_full[8..n].to_vec());
+            let rate = audio_rate_carriage(*sample_rate);
+            let mut config_boxes = vec![esds_opaque];
+            if let Some(srat) = rate.srat {
+                config_boxes.push(srat_opaque(srat)?);
+            }
             let entry = SampleEntryVariant::Mp4a(Box::new(Mp4aSampleEntry {
                 codec_type: *b"mp4a",
+                entry_version: rate.entry_version,
+                reserved_1: [0u8; 6],
                 data_reference_index: 1,
                 channelcount: *channel_count,
                 samplesize: *sample_size,
-                samplerate: sample_rate << 16,
-                config_boxes: vec![esds_opaque],
+                compression_id_and_packet_size: [0u8; 4],
+                samplerate: rate.samplerate_field,
+                config_boxes,
             }));
             (
                 entry,
@@ -616,13 +739,21 @@ fn build_trak(t: &TrackSpec) -> Result<TrackBox> {
             sample_size,
         } => {
             let ddts_opaque = config_box(&DDTS_FOURCC, config)?;
+            let rate = audio_rate_carriage(*sample_rate);
+            let mut config_boxes = vec![ddts_opaque];
+            if let Some(srat) = rate.srat {
+                config_boxes.push(srat_opaque(srat)?);
+            }
             let entry = SampleEntryVariant::Dts(Box::new(DtsSampleEntry {
                 codec_type: *codec_fourcc,
+                entry_version: rate.entry_version,
+                reserved_1: [0u8; 6],
                 data_reference_index: 1,
                 channelcount: *channel_count,
                 samplesize: *sample_size,
-                samplerate: (*sample_rate) << 16,
-                config_boxes: vec![ddts_opaque],
+                compression_id_and_packet_size: [0u8; 4],
+                samplerate: rate.samplerate_field,
+                config_boxes,
             }));
             (
                 entry,
@@ -667,7 +798,7 @@ fn build_trak(t: &TrackSpec) -> Result<TrackBox> {
     let stbl = SampleTableBox {
         children: vec![
             StblChild::Stsd(SampleDescriptionBox {
-                version: 0,
+                version: stsd_entry.required_stsd_version(),
                 flags: 0,
                 entries: vec![stsd_entry],
             }),

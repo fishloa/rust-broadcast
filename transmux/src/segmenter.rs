@@ -165,7 +165,7 @@ where
 /// dts delta only fills the gap `duration` leaves. When neither is available
 /// the increment is `0` — a track in that state is not
 /// [`is_anchor_capable`], and the anchor role is refused at construction.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone, Copy)]
 pub struct MediaClock {
     /// `dts` of the most recent sample that carried one — deliberately *not*
     /// reset at a segment/part boundary, so the first sample of a new window

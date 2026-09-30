@@ -46,6 +46,7 @@ use crate::error::{Error, Result};
 use crate::flac::FlacSpecificBox;
 use crate::init_segment::{
     MovieBox, OpaqueBox, SampleDescriptionBox, SampleEntryVariant, StblChild, TrackBox,
+    sampling_rate_override,
 };
 use crate::ir::{CodecConfig, FragmentTrackData, Sample, SubtitleFormat, TrackSpec};
 use crate::movie_fragment::MovieFragmentBox;
@@ -710,6 +711,18 @@ pub(crate) fn skipped_track(err: Error) -> SkippedTrack {
     }
 }
 
+/// The real sampling rate of an audio sample entry.
+///
+/// Prefers a `SamplingRateBox` (`srat`, ISO/IEC 14496-12 §12.2.3.1) in the
+/// entry's config children over the entry's 16.16 fixed-point `samplerate`
+/// field: the box is present precisely when the rate does not fit that field
+/// (rates above 65535 Hz — 96 kHz, 192 kHz, …), and it "overrides the
+/// samplerate field and documents the actual sampling rate". Without it,
+/// `192000 << 16` reads back as 60928 Hz.
+fn entry_sampling_rate(samplerate_16_16: u32, config_boxes: &[OpaqueBox]) -> u32 {
+    sampling_rate_override(config_boxes).unwrap_or(samplerate_16_16 >> 16)
+}
+
 /// Reconstruct a [`CodecConfig`] from an `stsd` sample entry.
 ///
 /// Every codec the crate can output reconstructs losslessly by re-parsing the
@@ -795,14 +808,14 @@ fn codec_config_from_entry(entry: &SampleEntryVariant) -> Result<CodecConfig> {
                     // Provisional layer; refined from the first frame header.
                     layer: MpegAudioLayer::LayerII,
                     channel_count: mp4a.channelcount,
-                    sample_rate: mp4a.samplerate >> 16,
+                    sample_rate: entry_sampling_rate(mp4a.samplerate, &mp4a.config_boxes),
                     sample_size: mp4a.samplesize,
                 })
             } else {
                 Ok(CodecConfig::Aac {
                     esds,
                     channel_count: mp4a.channelcount,
-                    sample_rate: mp4a.samplerate >> 16,
+                    sample_rate: entry_sampling_rate(mp4a.samplerate, &mp4a.config_boxes),
                     sample_size: mp4a.samplesize,
                 })
             }
@@ -812,7 +825,7 @@ fn codec_config_from_entry(entry: &SampleEntryVariant) -> Result<CodecConfig> {
             Ok(CodecConfig::Ac3 {
                 config,
                 channel_count: ac3.channelcount,
-                sample_rate: ac3.samplerate >> 16,
+                sample_rate: entry_sampling_rate(ac3.samplerate, &ac3.config_boxes),
                 sample_size: ac3.samplesize,
             })
         }
@@ -821,7 +834,7 @@ fn codec_config_from_entry(entry: &SampleEntryVariant) -> Result<CodecConfig> {
             Ok(CodecConfig::Eac3 {
                 config,
                 channel_count: ec3.channelcount,
-                sample_rate: ec3.samplerate >> 16,
+                sample_rate: entry_sampling_rate(ec3.samplerate, &ec3.config_boxes),
                 sample_size: ec3.samplesize,
             })
         }
@@ -830,7 +843,7 @@ fn codec_config_from_entry(entry: &SampleEntryVariant) -> Result<CodecConfig> {
             Ok(CodecConfig::Opus {
                 config,
                 channel_count: opus.channelcount,
-                sample_rate: opus.samplerate >> 16,
+                sample_rate: entry_sampling_rate(opus.samplerate, &opus.config_boxes),
                 sample_size: opus.samplesize,
             })
         }
@@ -839,7 +852,7 @@ fn codec_config_from_entry(entry: &SampleEntryVariant) -> Result<CodecConfig> {
             Ok(CodecConfig::Flac {
                 config,
                 channel_count: flac.channelcount,
-                sample_rate: flac.samplerate >> 16,
+                sample_rate: entry_sampling_rate(flac.samplerate, &flac.config_boxes),
                 sample_size: flac.samplesize,
             })
         }
@@ -849,7 +862,7 @@ fn codec_config_from_entry(entry: &SampleEntryVariant) -> Result<CodecConfig> {
                 config,
                 codec_fourcc: dts.codec_type,
                 channel_count: dts.channelcount,
-                sample_rate: dts.samplerate >> 16,
+                sample_rate: entry_sampling_rate(dts.samplerate, &dts.config_boxes),
                 sample_size: dts.samplesize,
             })
         }
@@ -866,7 +879,7 @@ fn codec_config_from_entry(entry: &SampleEntryVariant) -> Result<CodecConfig> {
             Ok(CodecConfig::MpegH {
                 config,
                 channel_count: mha.channelcount,
-                sample_rate: mha.samplerate >> 16,
+                sample_rate: entry_sampling_rate(mha.samplerate, &mha.config_boxes),
                 sample_size: mha.samplesize,
             })
         }
@@ -878,7 +891,7 @@ fn codec_config_from_entry(entry: &SampleEntryVariant) -> Result<CodecConfig> {
             Ok(CodecConfig::Ac4 {
                 config,
                 channel_count: ac4.channelcount,
-                sample_rate: ac4.samplerate >> 16,
+                sample_rate: entry_sampling_rate(ac4.samplerate, &ac4.config_boxes),
                 sample_size: ac4.samplesize,
             })
         }

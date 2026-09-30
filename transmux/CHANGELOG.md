@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed (breaking)
 
+- **The eight public audio sample-entry structs gained three fields** (#1081,
+  audit r05-W31). `Mp4aSampleEntry`, `Ac3SampleEntry`, `Ec3SampleEntry`,
+  `OpusSampleEntry`, `FlacSampleEntry`, `Ac4SampleEntry`, `MhaSampleEntry` and
+  `DtsSampleEntry` each carry `entry_version: u16`, `reserved_1: [u8; 6]` and
+  `compression_id_and_packet_size: [u8; 4]` — the fixed sound-description
+  fields a parse now preserves (see the round-trip fix below). A struct-literal
+  construction must name them; `entry_version`/`reserved_1` are the QuickTime
+  version and `revision_level`/`vendor`, and
+  `compression_id_and_packet_size` is ISO/IEC 14496-12's
+  `pre_defined`/`reserved` pair or QuickTime's
+  `compression_ID`/`packet_size` (all zeros for output this crate muxes).
+
 - **Transport-stream packaging gained continuity state and closed its
   `stream_id` families; the CLI and the DASH/LL-DASH packagers changed shape**
   (#1080, audit r05-W22/W27/W29). New public API:
@@ -487,6 +499,53 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 
 ### Fixed
+
+- **The batch TS-HLS packager runs in O(samples), not O(segments × samples)**
+  (#1081, audit r05-W33). `TsHlsPackager::package` recomputed each segment's
+  per-track base DTS — and re-walked the anchor track's prefix — once per
+  segment, so a two-hour 60 fps recording at 6 s segments cost roughly 10⁹
+  `MediaClock::tick` calls. It now carries a running per-track clock and base
+  across the segment loop, so each sample is ticked exactly once. Output is
+  unchanged: a golden test pins the exact bytes (segment and playlist FNV-1a
+  hashes recorded from `main`'s packager on the same fixture), and a second
+  test asserts the literal tick count. A track whose samples a segment's range
+  does not cover has its gap folded into the running base *before* that segment
+  is muxed, rather than after, so a skipped sample can no longer land in the
+  wrong segment.
+
+- **`Repackage` no longer overflows when interleaving tracks whose timescales
+  have a huge least common multiple** (#1081, audit r05-W32). The resegmenter
+  normalised every track onto the LCM of their `mdhd` timescales to compare
+  decode times; three large coprime timescales (all of which `mdhd` may legally
+  carry, and which no validator can rule out) make that LCM exceed `u64`, so the
+  `a / gcd * b` fold panicked in debug and wrapped in release — stranding a
+  track's samples in one segment. The comparison is now an exact rational
+  cross-multiply in `u128` (the same approach `LlSegmenter` already used), which
+  cannot overflow for any pair of `u32` timescales.
+
+- **Audio tracks at 88.2/96/176.4/192 kHz keep their real sampling rate instead
+  of silently wrapping to a wrong one** (#1081, audit r05-W31). An
+  `AudioSampleEntry`'s `samplerate` field is 16.16 fixed point, so its integer
+  part tops out at 65535 Hz: muxing such a track wrote `192000 << 16` truncated
+  to `0xEE000000`, which reads back as 60928 Hz (`96000` becomes
+  `0x77000000`, read as 30464 Hz). `build_init_segment` now emits the
+  `AudioSampleEntryV1` form the spec requires for these rates — `entry_version
+  = 1`, the `samplerate` placeholder, a `SamplingRateBox` (`srat`) carrying the
+  true rate, and an `stsd` version of 1 (ISO/IEC 14496-12:2015 §12.2.3.1 and
+  §12.2.3.2 as amended by Amd 1:2017) — and the demux path reads `srat` in
+  preference to the 16.16 field. Rates that fit the field are unchanged (still
+  the version-0 form, no `srat`). Verified end-to-end: our own muxer's output
+  is parsed back by MP4Box (which reads the sample entry's rate, 192000, and
+  reports 60928 without the fix) and ffprobe, and its decoded PCM is
+  md5-identical to the ffmpeg-made source (`tests/fixtures/audio_srat/`).
+
+- **A parsed audio sample entry re-serializes byte-identically** (#1081, audit
+  r05-W31). The writer re-derived `entry_version` as 0-or-1 and zeroed the two
+  fixed regions it did not model, so a QuickTime sound description lost its
+  `compression_ID` (QuickTime's VBR marker is `-2`, `ff fe`) and a QuickTime
+  **v2** entry (`entry_version = 2`) was silently rewritten as v0. The version
+  and both regions (`reserved_1`, `compression_id_and_packet_size`) are now
+  parsed and written back verbatim.
 
 - **`TsMux` emits a conformant access unit per video sample and never silently
   truncates a PES, and its PCR is anchored to a stream that can carry it**
@@ -1399,6 +1458,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `largesize` header (#1019).
 
 ### Added
+- **`init_segment::sampling_rate_override`** (#1081, audit r05-W31) — reads the
+  `srat` value out of an audio sample entry's config children, returning `None`
+  when the box is absent, malformed, or declares `sampling_rate == 0` (a zero
+  rate is not a rate; honouring it would replace a good 16.16 field with "0
+  Hz"). `SamplingRateBox::parse` now also validates the four-CC.
+- **`init_segment::SamplingRateBox` and `init_segment::AudioSampleEntryV1`**
+  (#1081, audit r05-W31). `SamplingRateBox` is the `srat` FullBox
+  (ISO/IEC 14496-12:2015 §12.2.3.1) with `new`/`FOURCC`/`SIZE` and the
+  `Parse`/`Serialize` pair; `AudioSampleEntryV1` names the v1 sound-entry form
+  (§12.2.3.2 as amended by Amd 1:2017) via `ENTRY_VERSION`,
+  `STSD_VERSION`, `SAMPLERATE_PLACEHOLDER` and `rate_fits_v0`. Also new:
+  `SampleEntryVariant::required_stsd_version()`, which reports the `stsd`
+  version an entry demands (1 for an `AudioSampleEntryV1`, else 0).
 - `sample_aes::eac3_encrypt_frame` / `eac3_decrypt_frame` — Sample-AES for a
   **multi-syncframe** E-AC-3 audio frame, and `ac3::split_eac3_syncframe_ranges`
   (#1080, audit r05-W2). The protected block is a single syncframe, so each gets

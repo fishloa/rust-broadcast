@@ -21,8 +21,24 @@ use broadcast_common::{Parse, Serialize};
 use transmux::MovieBox;
 
 /// Fixtures that legitimately cannot round-trip byte-for-byte, with the reason.
-/// Empty today: every committed init segment round-trips.
-const KNOWN_NON_IDENTICAL: &[(&str, &str)] = &[];
+///
+/// The QuickTime `.mov` fixtures in `tests/fixtures/audio_srat/` are here for a
+/// reason unrelated to what they test (the sound-entry
+/// `entry_version`/`srat` fields): QuickTime's `hdlr` carries a `mhlr`/`soun`
+/// component type and subtype that ISOBMFF's `HandlerBox` does not model, so
+/// re-serializing the movie rewrites them. That is a pre-existing `hdlr`
+/// limitation, not a sound-entry one, and it is exercised by
+/// `audio_srat::quicktime_*` on the entry bytes themselves.
+const KNOWN_NON_IDENTICAL: &[(&str, &str)] = &[
+    (
+        "audio_srat/qt_alac_v1.mov",
+        "QuickTime hdlr component type/subtype (mhlr/soun) is not an ISOBMFF HandlerBox field",
+    ),
+    (
+        "audio_srat/qt_alac_v2_synthetic.mov",
+        "QuickTime hdlr component type/subtype (mhlr/soun) is not an ISOBMFF HandlerBox field",
+    ),
+];
 
 fn find_box<'a>(data: &'a [u8], fourcc: &[u8; 4]) -> Option<&'a [u8]> {
     let mut off = 0usize;
