@@ -45,7 +45,7 @@
 //! (not a TS PID — there is none for this input).
 
 use broadcast_common::Unpackage;
-use transmux::{CodecConfig, Fmp4Demux, Media, ProgressiveDemux, iter_length_prefixed_nals};
+use transmux::{CodecConfig, Fmp4Demux, Media, ProgressiveDemux, iter_length_prefixed_nals_with};
 
 use crate::report::{Finding, Location, Report, Severity};
 
@@ -93,9 +93,29 @@ fn looks_like_isobmff(bytes: &[u8]) -> bool {
     )
 }
 
+/// The NAL length-prefix width a track's codec configuration declares, in
+/// bytes — `lengthSizeMinusOne + 1` (ISO/IEC 14496-15 §5.3.3.1.1 `avcC`,
+/// §8.3.3.1.2 `hvcC`). `None` for a track that is not AVC/HEVC.
+///
+/// `Sample::data` is length-prefixed NAL data only for those two codecs, so
+/// this is also what gates the length-prefix check.
+fn nal_length_size(config: &CodecConfig) -> Option<usize> {
+    let length_size_minus_one = match config {
+        CodecConfig::Avc { config, .. } => config.config.length_size_minus_one,
+        CodecConfig::Hevc { config, .. } => config.config.length_size_minus_one,
+        _ => return None,
+    };
+    // The field is 2 bits; the crate's parsers already reject the reserved
+    // value 2 (a 3-byte prefix), so this cannot be out of range.
+    let width = usize::from(length_size_minus_one) + 1;
+    matches!(width, 1 | 2 | 4).then_some(width)
+}
+
 fn check_media(media: &Media, report: &mut Report) {
     for track in &media.tracks {
-        let track_id = track.track_id() as u16;
+        // `track_ID` is a full 32-bit field (ISO/IEC 14496-12 §8.3.2) — never
+        // narrowed, or every id above 65535 aliases onto a lower one.
+        let track_id = track.track_id();
         // Length-prefixed NAL framing (ISO/IEC 14496-15:2017 §5.4.3.2.3) only
         // applies to AVC/HEVC video samples — `transmux::pipeline::Sample`
         // documents its `data` field as "length-prefixed NAL data for
@@ -127,14 +147,23 @@ fn check_media(media: &Media, report: &mut Report) {
         if !is_nal_track {
             continue;
         }
+
+        // The record's own `lengthSizeMinusOne` (ISO/IEC 14496-15 5.3.3.1.1
+        // for `avcC`, 8.3.3.1.2 for `hvcC`) declares the prefix width —
+        // 1-, 2- and 4-byte prefixes are all conformant. Assuming 4 bytes
+        // reported a false `length-prefix-violation` on every conformant
+        // AVC/HEVC track that uses a narrower prefix.
+        let Some(length_size) = nal_length_size(&track.spec.config) else {
+            continue;
+        };
         for (idx, sample) in track.samples.iter().enumerate() {
-            if iter_length_prefixed_nals(&sample.data).is_err() {
+            if iter_length_prefixed_nals_with(&sample.data, length_size).is_err() {
                 report.push(Finding::new(
                     Severity::Error,
                     Location::new(idx, track_id),
                     "length-prefix-violation",
                     alloc::format!(
-                        "Sample {idx} on track {track_id} is not a well-formed 4-byte \
+                        "Sample {idx} on track {track_id} is not a well-formed {length_size}-byte \
                          length-prefixed NAL sequence (declared length runs past the sample's \
                          own end) — a hallmark of an Annex B start code left in place of a \
                          length prefix (ISO/IEC 14496-15:2017 §5.4.3.2.3)",
@@ -149,7 +178,7 @@ fn check_media(media: &Media, report: &mut Report) {
 }
 
 fn check_avc_track(
-    track_id: u16,
+    track_id: u32,
     record: &transmux::AVCDecoderConfigurationRecord,
     width: u16,
     height: u16,
@@ -202,7 +231,10 @@ fn check_avc_track(
             ),
         ));
     }
-    if width != 0 && height != 0 && (width as u32, height as u32) != (info.width, info.height) {
+    if width != 0
+        && height != 0
+        && (u32::from(width), u32::from(height)) != (info.width, info.height)
+    {
         report.push(Finding::new(
             Severity::Error,
             Location::new(0, track_id),
@@ -229,7 +261,7 @@ fn check_avc_track(
 }
 
 fn check_hevc_track(
-    track_id: u16,
+    track_id: u32,
     record: &transmux::HEVCDecoderConfigurationRecord,
     width: u16,
     height: u16,
@@ -284,7 +316,10 @@ fn check_hevc_track(
             ),
         ));
     }
-    if width != 0 && height != 0 && (width as u32, height as u32) != (info.width, info.height) {
+    if width != 0
+        && height != 0
+        && (u32::from(width), u32::from(height)) != (info.width, info.height)
+    {
         report.push(Finding::new(
             Severity::Error,
             Location::new(0, track_id),
@@ -319,5 +354,110 @@ mod tests {
         let mut report = Report::new();
         check_container_codec(b"\x00\x00\x00\x08ftyp", &mut report);
         assert!(report.is_empty());
+    }
+
+    /// Audit MD-W6: the NAL length-prefix width comes from the track's own
+    /// `avcC`/`hvcC` `lengthSizeMinusOne` (ISO/IEC 14496-15 5.3.3.1.1), not
+    /// an assumed 4. A conformant stream with 2-byte prefixes must produce no
+    /// `length-prefix-violation`.
+    ///
+    /// Built from the committed real capture
+    /// `fixtures/transmux/h264_aac_prog.mp4`: demuxed through `transmux`, its
+    /// `avcC` record set to `lengthSizeMinusOne = 1`, and every sample
+    /// re-prefixed from 4 bytes to 2 — a conformant file our own muxer never
+    /// produces (it always writes 4-byte prefixes) and therefore could not
+    /// previously be exercised.
+    #[test]
+    fn two_byte_nal_length_prefix_is_not_a_violation() {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../fixtures/transmux/h264_aac_prog.mp4"
+        );
+        let bytes = std::fs::read(path).expect("read h264_aac_prog.mp4");
+        let mut media = ProgressiveDemux::new(bytes.len())
+            .expect("demuxer")
+            .unpackage(&bytes)
+            .expect("demux");
+
+        let mut video_tracks = 0usize;
+        for track in &mut media.tracks {
+            let CodecConfig::Avc { config, .. } = &mut track.spec.config else {
+                continue;
+            };
+            video_tracks += 1;
+            config.config.length_size_minus_one = 1;
+            for sample in &mut track.samples {
+                let nals = iter_length_prefixed_nals_with(&sample.data, 4)
+                    .expect("fixture samples are 4-byte length-prefixed");
+                let mut reprefixed = alloc::vec::Vec::new();
+                for nal in nals {
+                    let len = u16::try_from(nal.len()).expect("NAL fits in 2 bytes");
+                    reprefixed.extend_from_slice(&len.to_be_bytes());
+                    reprefixed.extend_from_slice(nal);
+                }
+                sample.data = reprefixed.into();
+            }
+        }
+        assert!(video_tracks > 0, "fixture must carry an AVC track");
+
+        let mut report = Report::new();
+        check_media(&media, &mut report);
+        assert!(
+            report
+                .findings()
+                .iter()
+                .all(|f| f.rule_id != "length-prefix-violation"),
+            "a conformant 2-byte length-prefixed AVC track must not be reported as malformed; got {:?}",
+            report.findings(),
+        );
+    }
+
+    /// The width the check uses is read from the record, not assumed:
+    /// `nal_length_size` maps each `lengthSizeMinusOne` to its byte count
+    /// (ISO/IEC 14496-15 5.3.3.1.1) and rejects a non-AVC/HEVC config.
+    #[test]
+    fn nal_length_size_comes_from_the_record() {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../fixtures/transmux/h264_aac_prog.mp4"
+        );
+        let bytes = std::fs::read(path).expect("read h264_aac_prog.mp4");
+        let mut media = ProgressiveDemux::new(bytes.len())
+            .expect("demuxer")
+            .unpackage(&bytes)
+            .expect("demux");
+
+        let mut checked = 0usize;
+        for track in &mut media.tracks {
+            let CodecConfig::Avc { config, .. } = &mut track.spec.config else {
+                continue;
+            };
+            checked += 1;
+            for (minus_one, expected) in [(0u8, 1usize), (1, 2), (3, 4)] {
+                // Mutate the record in place, then build the same config value
+                // the check sees rather than re-borrowing `track.spec.config`.
+                config.config.length_size_minus_one = minus_one;
+                let cfg = CodecConfig::Avc {
+                    config: config.clone(),
+                    width: 0,
+                    height: 0,
+                };
+                assert_eq!(
+                    nal_length_size(&cfg),
+                    Some(expected),
+                    "lengthSizeMinusOne {minus_one} means a {expected}-byte prefix",
+                );
+            }
+            // The reserved value 2 (a 3-byte prefix) is not a width this
+            // check may interpret.
+            config.config.length_size_minus_one = 2;
+            let cfg = CodecConfig::Avc {
+                config: config.clone(),
+                width: 0,
+                height: 0,
+            };
+            assert_eq!(nal_length_size(&cfg), None);
+        }
+        assert_eq!(checked, 1, "fixture carries one AVC track");
     }
 }

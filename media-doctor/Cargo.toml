@@ -27,6 +27,11 @@ transmux         = { path = "../transmux", version = "0.24", default-features = 
 # HLS (M3U8) playlist syntax (issue #878): the validator parses playlists
 # via this crate directly rather than reaching through `transmux` for it.
 broadcast-hls    = { path = "../broadcast-hls", version = "0.2", default-features = false }
+# Container-format detection for the `check` CLI's input routing (issue #1112
+# / audit MD-W7): a file that is a TS but does not start on a packet boundary,
+# or uses the 192-byte M2TS / 204-byte RS framing, must still be routed to the
+# TS diagnostics. Only the binary needs it, so it is behind `cli`.
+container-probe  = { path = "../container-probe", version = "0.1", optional = true, default-features = false }
 clap             = { version = "4", features = ["derive"], optional = true }
 serde            = { version = "1", features = ["derive", "alloc"], optional = true }
 serde_json       = { version = "1", optional = true }
@@ -36,7 +41,7 @@ thiserror        = { version = "2", optional = true }
 default = ["std", "serde", "cli"]
 std     = ["broadcast-common/std", "mpeg-ts/std", "transmux/std", "dvb-conformance/std", "broadcast-hls/std"]
 serde   = ["dep:serde", "dep:serde_json"]
-cli     = ["dep:clap", "dep:thiserror", "std"]
+cli     = ["dep:clap", "dep:thiserror", "dep:container-probe", "std"]
 
 [dev-dependencies]
 # `mediastreamvalidator_oracle.rs` (issue #870) renders real TS-HLS/CMAF-HLS
@@ -52,6 +57,14 @@ transmux = { path = "../transmux", version = "0.24", default-features = false, f
 # `InterstitialDateRange::to_tag_line`, not a hand-typed approximation of
 # its output. Test-only: the library itself has no ssai-runtime dependency.
 ssai-runtime = { path = "../ssai-runtime", default-features = false }
+# Integration tests build real, CRC-correct PAT/PMT sections through `dvb-si`'s
+# own builders rather than hand-rolled bytes — the same rule the in-crate unit
+# tests follow (issue #1112). `dvb-si` is already a normal dependency, so this
+# adds no crate to the graph; the feature set is raised for the section
+# builders only in test builds.
+dvb-si = { path = "../dvb-si", version = "10", default-features = false, features = ["ts"] }
+# `mpeg-ts`'s `SectionPacketiser` wraps those sections into real TS packets.
+mpeg-ts = { path = "../mpeg-ts", version = "0.4", default-features = false }
 
 [package.metadata.docs.rs]
 all-features = true

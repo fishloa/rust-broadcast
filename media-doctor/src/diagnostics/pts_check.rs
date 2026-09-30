@@ -98,16 +98,17 @@ impl Diagnostic for PtsCheck {
 
             // Check for TS-layer discontinuity: if present, reset the entire
             // PES state (assembler + baseline) so the jump across the
-            // discontinuity is not flagged.
+            // discontinuity is not flagged — then **fall through** and feed
+            // this packet's payload. The discontinuity packet is normally the
+            // `payload_unit_start_indicator` start of the first PES after the
+            // break, so skipping it would silently drop that access unit and
+            // leave the first post-break timestamp unbaselined and unchecked
+            // (audit MD-W5).
             if pkt.header.has_adaptation
                 && let Some(Ok(af)) = pkt.adaptation_field()
                 && af.discontinuity_indicator
             {
                 pid_states.remove(&pid);
-                // We removed the assembler, so skip to the next packet
-                // (the discontinuity packet's payload is the start of a
-                // new sequence — it will be freshly assembled below).
-                continue;
             }
 
             // Get the TS payload for PES reassembly.
@@ -188,7 +189,7 @@ fn check_pes(
     if pts_dts_flags == 0b01 {
         report.push(Finding::new(
             Severity::Error,
-            Location::new(packet_index, pid),
+            Location::new(packet_index, u32::from(pid)),
             "pts-forbidden-flags",
             alloc::format!(
                 "Forbidden PTS_DTS_flags == 0b01 on PID 0x{pid:04X} \
@@ -228,7 +229,7 @@ fn check_pes(
             };
             report.push(Finding::new(
                 Severity::Error,
-                Location::new(packet_index, pid),
+                Location::new(packet_index, u32::from(pid)),
                 rule,
                 alloc::format!(
                     "Non-monotonic {} (decode order) on PID 0x{:04X}: raw {} → {} (backward delta {})",
@@ -550,6 +551,62 @@ mod tests {
             bw.is_empty(),
             "discontinuity-reset baseline should not produce backward errors: {:?}",
             report.findings()
+        );
+    }
+
+    /// Audit MD-W5: the discontinuity packet's own PES must still be fed to
+    /// the (freshly reset) assembler. It is normally the start of the first
+    /// PES after the break, and the first post-break timestamp is the
+    /// baseline every later one is compared against — skipping the packet
+    /// loses that access unit entirely.
+    ///
+    /// Bite: with the packet skipped, the following PTS has nothing to be
+    /// compared against, so a backward step after the discontinuity goes
+    /// unreported.
+    #[test]
+    fn discontinuity_packet_payload_is_still_checked() {
+        let pid = 0x0100;
+        fn make_disc_pkt(pid: u16, cc: u8, pes_bytes: &[u8], discontinuity: bool) -> Vec<u8> {
+            let mut pkt = vec![0x47u8; 188];
+            pkt[1] = 0x40 | ((pid >> 8) as u8) & 0x1F;
+            pkt[2] = (pid & 0xFF) as u8;
+            pkt[3] = 0x30 | (cc & 0x0F); // AFC=11 (adaptation+payload)
+            pkt[4] = 1; // adaptation_field_length = 1 (flags byte only)
+            pkt[5] = if discontinuity { 0x80 } else { 0x00 };
+            let len = pes_bytes.len().min(188 - 6);
+            pkt[6..6 + len].copy_from_slice(&pes_bytes[..len]);
+            pkt
+        }
+
+        // PTS 90000, then a discontinuity carrying PTS 500000, then a PTS
+        // that steps BACKWARD from 500000 — the first post-break timestamp is
+        // the baseline for this comparison.
+        let pes0 = build_pes_with_pts(0xE0, 90_000, &[0xAA]);
+        let pes_disc = build_pes_with_pts(0xE0, 500_000, &[0xBB]);
+        let pes_after = build_pes_with_pts(0xE0, 100_000, &[0xCC]);
+
+        let mut ts = Vec::new();
+        ts.extend_from_slice(&make_disc_pkt(pid, 0, &pes0, false));
+        ts.extend_from_slice(&make_disc_pkt(pid, 1, &pes_disc, true));
+        ts.extend_from_slice(&make_disc_pkt(pid, 2, &pes_after, false));
+
+        let mut report = Report::new();
+        PtsCheck.run(&ts, &mut report);
+        let bw: Vec<_> = report
+            .findings()
+            .iter()
+            .filter(|f| f.rule_id == "pts-backward")
+            .collect();
+        assert_eq!(
+            bw.len(),
+            1,
+            "the PTS on the discontinuity packet must baseline the next comparison, so a backward step after it is reported; got {:?}",
+            report.findings()
+        );
+        assert!(
+            bw[0].message.contains("500000"),
+            "the finding must be measured against the discontinuity packet's own PTS 500000, got {:?}",
+            bw[0].message
         );
     }
 }

@@ -50,7 +50,27 @@ pub struct WatchArgs {
     /// HTTP address to serve Prometheus metrics on (`GET /metrics`).
     #[arg(long = "metrics-addr", default_value = "127.0.0.1:9090")]
     pub metrics_addr: String,
+
+    /// Maximum metrics connections served concurrently. A connection beyond
+    /// this is answered `503` and closed immediately, so a flood of idle
+    /// clients cannot exhaust the process's threads.
+    #[arg(long = "metrics-max-conns", default_value_t = DEFAULT_METRICS_MAX_CONNS)]
+    pub metrics_max_conns: usize,
+
+    /// Total time a metrics connection may take, from accept to response
+    /// written, before it is dropped (milliseconds). A *total* deadline, not
+    /// a per-read timeout: a peer that dribbles one byte at a time cannot
+    /// hold a connection open indefinitely.
+    #[arg(long = "metrics-io-timeout-ms", default_value_t = DEFAULT_METRICS_IO_TIMEOUT_MS)]
+    pub metrics_io_timeout_ms: u64,
 }
+
+/// Default concurrent-connection cap for the metrics endpoint.
+pub const DEFAULT_METRICS_MAX_CONNS: usize = 32;
+
+/// Default total per-connection deadline for the metrics endpoint, in
+/// milliseconds.
+pub const DEFAULT_METRICS_IO_TIMEOUT_MS: u64 = 5_000;
 
 /// Top-level CLI.
 #[derive(clap::Parser, Debug)]

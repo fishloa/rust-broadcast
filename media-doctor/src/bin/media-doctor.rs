@@ -4,9 +4,10 @@ use std::fs;
 use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream, UdpSocket};
 use std::process;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use clap::Parser;
 use media_doctor::cli::{CheckArgs, CheckDashArgs, CheckHlsArgs, Cli, WatchArgs};
@@ -49,44 +50,138 @@ fn main() {
     }
 }
 
-/// A minimal MPEG-2 TS sniff: sync byte `0x47` at both packet 0 and packet 1
-/// (ISO/IEC 13818-1 §2.4.3.2). Used only to pick which diagnostic set the
-/// CLI runs — an ISOBMFF/CMAF file's first bytes essentially never match
-/// this by chance, and running the TS-only diagnostics against MP4 bytes
-/// (or vice versa) produces meaningless noise (e.g. a `sync-byte` error per
-/// "packet") rather than a crash, so this is a UX choice, not a correctness
-/// requirement.
-fn looks_like_ts(bytes: &[u8]) -> bool {
-    const TS_PACKET_SIZE: usize = 188;
-    bytes.len() >= 2 * TS_PACKET_SIZE && bytes[0] == 0x47 && bytes[TS_PACKET_SIZE] == 0x47
+/// The 188-byte MPEG-2 TS packet length (ISO/IEC 13818-1 §2.4.3.2), from the
+/// workspace's owner of the constant rather than a local literal.
+const TS_PACKET_SIZE: usize = mpeg_ts::ts::TS_PACKET_SIZE;
+
+/// Which diagnostic set the CLI runs for `bytes`.
+///
+/// Detection is delegated to `container-probe`, which scores every format it
+/// knows (a stride×phase lattice search across 188/192/204/208-byte TS
+/// framings, so a capture that does not start on a packet boundary, an M2TS
+/// file and a 204-byte RS-framed stream all identify as TS — none of which
+/// the previous "`0x47` at byte 0 and byte 188" check could see). The old
+/// check routed all of those to the container path, which bailed at its
+/// ISOBMFF sniff and printed "No issues found." for a TS full of errors
+/// (audit MD-W7).
+enum InputKind {
+    /// MPEG-2 TS in any of the framings `container-probe` recognises, already
+    /// resynchronised to 188-byte packets.
+    TransportStream(Vec<u8>),
+    /// A container `container_probe` named, or an input it could not classify
+    /// — in both cases the container diagnostics get their say.
+    Container,
 }
+
+/// Classify `bytes` and, for a TS, return the extracted 188-byte packet
+/// stream.
+///
+/// `container-probe` reports the lattice it matched: the packet `stride`
+/// (188 plain TS, 192 M2TS, 204 RS-framed, 208 M2TS-over-RS) and the byte
+/// offset of the first sync byte. Extraction takes each stride-aligned
+/// record's leading `stride - 188` *wrapper* bytes off and keeps the 188-byte
+/// packet, which covers a leading-junk capture, a mid-packet cut and every
+/// wrapped framing without a second detection pass.
+///
+/// Anything that is not *decidedly* a TS goes to the container path: the TS
+/// diagnostics read the input as a raw packet lattice and produce meaningless
+/// noise on a non-TS, so an undecided input must not take that path.
+fn classify_input(bytes: &[u8]) -> InputKind {
+    let (stride, phase) = match container_probe::probe(bytes) {
+        container_probe::Probe::Identified {
+            format: container_probe::Format::MpegTs,
+            detail: container_probe::Detail::Ts { stride, phase, .. },
+            ..
+        } => (usize::from(stride), usize::from(phase)),
+        // A tie that includes TS is still worth the TS diagnostics — they are
+        // the ones that would otherwise have been skipped. `Detail` only ever
+        // carries the lattice for a TS candidate.
+        container_probe::Probe::Ambiguous { candidates, .. } => {
+            let Some((stride, phase)) = candidates.iter().find_map(|c| match c.detail {
+                container_probe::Detail::Ts { stride, phase, .. } => {
+                    Some((usize::from(stride), usize::from(phase)))
+                }
+                _ => None,
+            }) else {
+                return InputKind::Container;
+            };
+            (stride, phase)
+        }
+        // `Probe` is `#[non_exhaustive]`: any future outcome that is not a
+        // decided TS goes to the container path.
+        _ => return InputKind::Container,
+    };
+
+    // `phase` is the offset of the first **sync byte** (container-probe's
+    // lattice search walks `phase + n*stride` and tests for `0x47` at each
+    // position), so it already sits past any 4-byte M2TS `TP_extra_header`.
+    // The 188 bytes starting there are the packet itself, whatever the
+    // wrapper around it is — so extract exactly 188 from `off`, not
+    // `off + (stride - 188)`.
+    if !(TS_PACKET_SIZE..=MAX_WRAPPED_STRIDE).contains(&stride) {
+        return InputKind::Container;
+    }
+
+    let mut out = Vec::new();
+    let mut off = phase;
+    while off
+        .checked_add(TS_PACKET_SIZE)
+        .is_some_and(|end| end <= bytes.len())
+    {
+        out.extend_from_slice(&bytes[off..off + TS_PACKET_SIZE]);
+        match off.checked_add(stride) {
+            Some(next) => off = next,
+            None => break,
+        }
+    }
+    if out.is_empty() {
+        return InputKind::Container;
+    }
+    InputKind::TransportStream(out)
+}
+
+/// The longest wrapped TS record `container-probe` recognises: 188-byte
+/// packet + 16-byte RS parity + 4-byte M2TS `TP_extra_header`
+/// (ETSI EN 300 421 §5.2.2 / BDAV).
+const MAX_WRAPPED_STRIDE: usize = 208;
 
 fn run_check(args: &CheckArgs) -> Result<(), Box<dyn std::error::Error>> {
     let bytes = fs::read(&args.input)?;
     let mut report = Report::new();
 
-    if looks_like_ts(&bytes) {
-        let diagnostics: &[&dyn Diagnostic] = &[
-            &SyncByteCheck,
-            &PatPmtVersionCheck,
-            &CcAnomalyCheck,
-            &PcrCheck,
-            &PtsCheck,
-            &Scte35Check,
-            &CodecSignallingCheck,
-            &FpsCadenceCheck,
-            &ParamSetsCheck,
-            &InterlaceCheck,
-        ];
-        run_all(&bytes, diagnostics, &mut report);
-    } else {
-        check_container_codec(&bytes, &mut report);
+    match classify_input(&bytes) {
+        InputKind::TransportStream(realigned) => run_ts_checks(&realigned, &mut report),
+        // Borrows `bytes` directly — the container path needs no realigned
+        // copy, so this never clones the input.
+        InputKind::Container => check_container_codec(&bytes, &mut report),
     }
 
-    if args.json {
+    emit_check_report(&report, args.json)
+}
+
+/// Run every transport-stream diagnostic over already-aligned 188-byte
+/// packets.
+fn run_ts_checks(ts: &[u8], report: &mut Report) {
+    let diagnostics: &[&dyn Diagnostic] = &[
+        &SyncByteCheck,
+        &PatPmtVersionCheck,
+        &CcAnomalyCheck,
+        &PcrCheck,
+        &PtsCheck,
+        &Scte35Check,
+        &CodecSignallingCheck,
+        &FpsCadenceCheck,
+        &ParamSetsCheck,
+        &InterlaceCheck,
+    ];
+    run_all(ts, diagnostics, report);
+}
+
+fn emit_check_report(report: &Report, json: bool) -> Result<(), Box<dyn std::error::Error>> {
+    if json {
         #[cfg(feature = "serde")]
         {
-            let json = serde_json::to_string_pretty(&report)?;
+            let json = serde_json::to_string_pretty(report)?;
             println!("{json}");
         }
         #[cfg(not(feature = "serde"))]
@@ -165,7 +260,19 @@ fn run_watch(args: &WatchArgs) -> Result<(), Box<dyn std::error::Error>> {
     // not real high-concurrency, so a couple of `std::thread`s are enough
     // (no async runtime).
     let http_state = Arc::clone(&state);
-    thread::spawn(move || serve_metrics(listener, &http_state));
+    let metrics_config = MetricsConfig {
+        max_conns: args.metrics_max_conns,
+        io_timeout: core::time::Duration::from_millis(args.metrics_io_timeout_ms),
+    };
+    // `thread::spawn` panics if the OS refuses a thread, which would take the
+    // process down at startup. The metrics responder is auxiliary, so a
+    // failure there is reported and the ingest loop carries on.
+    if let Err(e) = thread::Builder::new()
+        .name("metrics".into())
+        .spawn(move || serve_metrics(listener, &http_state, metrics_config))
+    {
+        eprintln!("media-doctor watch: metrics responder unavailable: {e}");
+    }
 
     let start = Instant::now();
     let mut buf = [0u8; 65536];
@@ -202,31 +309,204 @@ fn bind_udp(addr: SocketAddr) -> std::io::Result<UdpSocket> {
     }
 }
 
+/// Knobs for the metrics responder.
+#[derive(Debug, Clone, Copy)]
+struct MetricsConfig {
+    /// Maximum connections served concurrently.
+    max_conns: usize,
+    /// Total deadline per connection, accept to response written.
+    io_timeout: core::time::Duration,
+}
+
 /// Serve `GET /metrics` (and anything else — this is a single-endpoint
-/// probe) as Prometheus text exposition format, one connection at a time.
-/// No HTTP crate: real broadcast/monitoring tooling only ever sends a
-/// single-line `GET /metrics HTTP/1.1` request here, so a hand-rolled
-/// accept loop is simpler and keeps this dependency-light, matching the
-/// rest of the workspace's CLIs.
-fn serve_metrics(listener: TcpListener, state: &Arc<Mutex<WatchState>>) {
+/// probe) as Prometheus text exposition format.
+///
+/// Each connection is handled on its own thread, bounded by three things
+/// (audit MD-W9):
+///
+/// - a **concurrency cap** ([`MetricsConfig::max_conns`]): past it a
+///   connection is answered `503` and closed without spawning, so a flood of
+///   idle clients cannot spawn unbounded threads;
+/// - [`thread::Builder::spawn`], whose `Err` drops the connection instead of
+///   panicking the accept loop;
+/// - a **total deadline** ([`MetricsConfig::io_timeout`]) enforced across the
+///   whole exchange, not per read, so a slowloris dribbling one byte at a
+///   time still gets dropped.
+fn serve_metrics(listener: TcpListener, state: &Arc<Mutex<WatchState>>, config: MetricsConfig) {
+    let live = Arc::new(AtomicUsize::new(0));
     for incoming in listener.incoming() {
-        let Ok(stream) = incoming else { continue };
-        if let Err(e) = handle_metrics_request(stream, state) {
-            eprintln!("media-doctor watch: metrics request error: {e}");
+        let stream = match incoming {
+            Ok(stream) => stream,
+            Err(e) => {
+                // `incoming()` is an infinite iterator of `Result`: a per-
+                // connection failure (EMFILE/ENFILE under a connection
+                // storm, ECONNABORTED from a peer that vanished) must not
+                // spin the accept loop at 100% CPU. Back off briefly, then
+                // keep serving — the alternative is a hot loop that starves
+                // the ingest thread too.
+                eprintln!("media-doctor watch: metrics accept error: {e}");
+                thread::sleep(ACCEPT_ERROR_BACKOFF);
+                continue;
+            }
+        };
+
+        // Reserve a slot before spawning. A connection over the cap is
+        // refused here rather than queued, so the accept loop keeps draining
+        // the backlog for well-behaved clients.
+        if !reserve_connection(&live, config.max_conns) {
+            if let Err(e) = refuse_connection(stream, config.io_timeout) {
+                eprintln!("media-doctor watch: metrics refusal error: {e}");
+            }
+            continue;
         }
+
+        let conn_state = Arc::clone(state);
+        let conn_live = Arc::clone(&live);
+        let spawned = thread::Builder::new()
+            .name("metrics-conn".into())
+            .spawn(move || {
+                let _guard = ConnectionGuard(&conn_live);
+                if let Err(e) = handle_metrics_request(stream, &conn_state, config.io_timeout) {
+                    eprintln!("media-doctor watch: metrics request error: {e}");
+                }
+            });
+        if spawned.is_err() {
+            // The thread never started, so its guard never runs: release the
+            // slot here. The connection is simply dropped.
+            live.fetch_sub(1, Ordering::AcqRel);
+        }
+    }
+}
+
+/// How long to pause after an `accept()` failure before trying again.
+///
+/// Long enough that an fd-exhausted server cannot spin, short enough that a
+/// transient failure (a peer that aborted between `connect` and `accept`)
+/// costs nothing noticeable.
+const ACCEPT_ERROR_BACKOFF: Duration = Duration::from_millis(50);
+
+/// Answer a connection refused by the concurrency cap, and close it cleanly.
+///
+/// The write is bounded by a **total** deadline and the write half is shut
+/// down afterwards, so a peer that never reads cannot hold the accept loop
+/// on this response, and a peer that has already gone cannot turn the
+/// refusal into an error that masks the reason.
+fn refuse_connection(mut stream: TcpStream, io_timeout: Duration) -> std::io::Result<()> {
+    stream.set_write_timeout(Some(io_timeout))?;
+    let result = stream.write_all(SERVICE_UNAVAILABLE_RESPONSE.as_bytes());
+    // Half-close so the client sees EOF immediately after the response; the
+    // read half is dropped with `stream` when this returns.
+    let _ = stream.shutdown(std::net::Shutdown::Write);
+    result
+}
+
+/// Smallest socket timeout we will set. `Duration::ZERO` means "block
+/// forever" on some platforms, so a deadline that has already passed must
+/// still be expressed as a non-zero timeout.
+const MIN_SOCKET_TIMEOUT: Duration = Duration::from_millis(1);
+
+/// Bytes that terminate an HTTP/1.1 request head.
+const HEADER_TERMINATOR: &[u8] = b"\r\n\r\n";
+
+/// Upper bound on a metrics request head, so a peer that never sends the
+/// terminator cannot make the server buffer without bound before the total
+/// deadline fires.
+const MAX_REQUEST_BYTES: usize = 16 * 1024;
+
+/// `503` body sent when the concurrency cap is reached.
+const SERVICE_UNAVAILABLE_RESPONSE: &str = concat!(
+    "HTTP/1.1 503 Service Unavailable\r\n",
+    "Content-Type: text/plain\r\n",
+    "Content-Length: 0\r\n",
+    "Connection: close\r\n",
+    "\r\n",
+);
+
+/// Take one slot under `cap`, returning `false` when none is free.
+fn reserve_connection(live: &AtomicUsize, cap: usize) -> bool {
+    // A `fetch_update` rather than load-then-add: the check and the increment
+    // must be one atomic step, or two connections racing at the cap both
+    // slip through.
+    live.fetch_update(Ordering::AcqRel, Ordering::Acquire, |n| {
+        (n < cap).then_some(n + 1)
+    })
+    .is_ok()
+}
+
+/// Releases a connection slot on drop, including on panic.
+struct ConnectionGuard<'a>(&'a AtomicUsize);
+
+impl Drop for ConnectionGuard<'_> {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::AcqRel);
     }
 }
 
 fn handle_metrics_request(
     mut stream: TcpStream,
     state: &Arc<Mutex<WatchState>>,
+    io_timeout: core::time::Duration,
 ) -> std::io::Result<()> {
-    // We only serve one endpoint, so the request doesn't need to be parsed
-    // beyond draining it: any well-formed HTTP/1.1 request gets the same
-    // response. A generously-sized single read covers the request line +
-    // headers most clients send for a bodyless GET.
-    let mut request = [0u8; 4096];
-    let _ = stream.read(&mut request)?;
+    // A **total** deadline, enforced by shrinking the socket timeout to the
+    // time still remaining before each blocking call. A per-call timeout
+    // alone lets a peer that dribbles one byte per second hold a connection
+    // (and its thread) open indefinitely (slowloris).
+    // `checked_add` rather than `+`: `--metrics-io-timeout-ms` is
+    // caller-supplied and an absurd value would otherwise panic the
+    // connection thread. A deadline that cannot be represented means "no
+    // deadline", which the `saturating_duration_since` below already turns
+    // into the full budget.
+    let deadline = Instant::now().checked_add(io_timeout);
+    let remaining = || {
+        let budget = match deadline {
+            Some(deadline) => deadline.saturating_duration_since(Instant::now()),
+            None => io_timeout,
+        };
+        // A zero timeout means "block forever" on some platforms, so floor it.
+        Some(budget.max(MIN_SOCKET_TIMEOUT))
+    };
+    // Read until the end of the request headers. We only serve one endpoint,
+    // so the request is not parsed: any complete HTTP/1.1 head gets the same
+    // response. Waiting for the terminator (rather than responding after the
+    // first `read`) is what makes a slowloris visibly wrong — it dribbles a
+    // request that never ends, and the total deadline below is what stops it.
+    stream.set_read_timeout(remaining())?;
+    let mut request: Vec<u8> = Vec::new();
+    let mut chunk = [0u8; 1024];
+    loop {
+        // Re-arm against what is left of the **total** deadline on every
+        // iteration: a fixed per-read timeout would be reset by every byte a
+        // slowloris sends, which is exactly the attack this defends against.
+        stream.set_read_timeout(remaining())?;
+        match stream.read(&mut chunk) {
+            Ok(0) => break,
+            Ok(n) => {
+                request.extend_from_slice(&chunk[..n]);
+                if request
+                    .windows(HEADER_TERMINATOR.len())
+                    .any(|w| w == HEADER_TERMINATOR)
+                {
+                    break;
+                }
+                // A peer sending more than a request head is not a metrics
+                // scraper; stop reading rather than buffer without bound.
+                if request.len() > MAX_REQUEST_BYTES {
+                    break;
+                }
+            }
+            Err(e)
+                if matches!(
+                    e.kind(),
+                    std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                ) =>
+            {
+                // The total deadline expired with the request still
+                // incomplete: drop the connection.
+                return Ok(());
+            }
+            Err(e) => return Err(e),
+        }
+    }
 
     let body = {
         // See the ingest loop's matching comment: recover from a poisoned
@@ -246,5 +526,7 @@ fn handle_metrics_request(
          {body}",
         body.len(),
     );
+    // Re-arm the write timeout against what is left of the total deadline.
+    stream.set_write_timeout(remaining())?;
     stream.write_all(response.as_bytes())
 }

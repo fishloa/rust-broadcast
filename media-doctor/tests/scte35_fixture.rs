@@ -98,26 +98,116 @@ fn scte35_unbalanced_fixture() {
 }
 
 /// `scte35-real.ts` carries the **canonical industry** `splice_insert` vector
-/// (`4800008f`, event_id 0x4800008f, out_of_network=true) — a real SCTE-35
-/// message from the spec/threefive corpus, packetized on PID 0x01F0. As a lone
-/// "out" with no matching "in", `Scte35Check` must parse it and flag it
-/// unbalanced — proving a real industry cue round-trips through our stack.
+/// (`0x4800008f`, event_id 0x4800008f, out_of_network=true) — a real SCTE-35
+/// message from the spec/threefive corpus, packetized on PID 0x01F0.
+///
+/// Decoded with this workspace's own `scte35-splice` parser, the vector's
+/// `break_duration()` is present with `auto_return = true` (duration 5426421
+/// ticks), so it is a *self-closing* break: the splicer returns after
+/// `duration` with no separate "in" cue (ANSI/SCTE 35 §9.8.2 / §9.9.2.2).
+/// The check must therefore parse the real cue and report **no** unbalanced
+/// finding — the vector is complete signalling, not a missing return.
+///
+/// This asserts the cue was *seen*, not merely that nothing was reported: the
+/// fixture's `splice_info_section` is re-parsed here with the same
+/// `scte35-splice` parser and must yield the vector's own event id and
+/// auto-return break. A control case then shows what the check does report
+/// for the same event id once `auto_return` is cleared.
 #[test]
-fn real_canonical_splice_insert_parsed_and_flagged() {
+fn real_canonical_splice_insert_parsed_and_not_unbalanced() {
+    use broadcast_common::Parse;
+    use scte35_splice::commands::AnyCommand;
+
+    /// The canonical vector's own event id.
+    const REAL_EVENT_ID: u32 = 0x4800_008f;
+
     let ts = read("ts/scte35-real.ts");
+    let section_start = ts
+        .iter()
+        .position(|&b| b == 0xfc)
+        .expect("fixture must carry a splice_info_section (table_id 0xFC)");
+    let section_len = 3
+        + (((usize::from(ts[section_start + 1]) & 0x0F) << 8) | usize::from(ts[section_start + 2]));
+    let section = &ts[section_start..section_start + section_len];
+
+    // The vector's own identity, asserted against the fixture's bytes with
+    // the workspace's parser — independent of `Scte35Check`.
+    let sis = scte35_splice::SpliceInfoSection::parse(section).expect("parse the real cue");
+    let AnyCommand::SpliceInsert(si) = &sis.clear.as_ref().expect("clear section").command else {
+        panic!("the canonical vector is a splice_insert");
+    };
+    assert_eq!(
+        si.splice_event_id, REAL_EVENT_ID,
+        "the real vector's event id"
+    );
+    assert!(si.out_of_network_indicator, "the real vector is an out");
+    assert!(
+        si.break_duration.as_ref().is_some_and(|b| b.auto_return),
+        "the real vector's break_duration auto-returns",
+    );
+
+    // The check itself: the cue is parsed and is NOT unbalanced.
     let mut report = Report::new();
     Scte35Check.run(&ts, &mut report);
-    let unbal = scte35_unbalanced(&report);
     assert!(
-        !unbal.is_empty(),
-        "real canonical splice_insert (0x4800008f, lone out) must parse + flag \
-         unbalanced, got {:?}",
+        scte35_unbalanced(&report).is_empty(),
+        "the real canonical splice_insert (0x4800008f) carries break_duration.auto_return = true, so it closes at its own duration and must not be flagged unbalanced; got {:?}",
         report.findings(),
     );
-    // event_id 0x4800008f = 1207959695
+
+    // Control: the same lone "out" WITHOUT auto_return IS reported, which
+    // proves the check reached the cue rather than silently skipping the
+    // fixture. The `auto_return` bit is located by re-parsing candidates
+    // rather than by hand-computing the splice_insert layout: clear each
+    // high bit in turn, recompute the CRC, and take the candidate whose parse
+    // yields the same event with `auto_return` cleared.
+    let mut control: Option<Vec<u8>> = None;
+    for offset in 0..section_len.saturating_sub(4) {
+        let bit = section_start + offset;
+        if ts[bit] & 0x80 == 0 {
+            continue;
+        }
+        let mut candidate = ts.clone();
+        candidate[bit] &= 0x7F;
+        let crc = broadcast_common::crc32_mpeg2::compute(
+            &candidate[section_start..section_start + section_len - 4],
+        );
+        candidate[section_start + section_len - 4..section_start + section_len]
+            .copy_from_slice(&crc.to_be_bytes());
+        let Ok(sis) = scte35_splice::SpliceInfoSection::parse(
+            &candidate[section_start..section_start + section_len],
+        ) else {
+            continue;
+        };
+        let Some(clear) = sis.clear.as_ref() else {
+            continue;
+        };
+        let AnyCommand::SpliceInsert(si) = &clear.command else {
+            continue;
+        };
+        if si.splice_event_id == REAL_EVENT_ID
+            && si.out_of_network_indicator
+            && si.break_duration.as_ref().is_some_and(|b| !b.auto_return)
+        {
+            control = Some(candidate);
+            break;
+        }
+    }
+    let control = control.expect("locate the auto_return bit by re-parsing candidates");
+
+    let mut control_report = Report::new();
+    Scte35Check.run(&control, &mut control_report);
+    let control_unbal = scte35_unbalanced(&control_report);
     assert!(
-        unbal.iter().any(|f| f.message.contains("1207959695")),
-        "unbalanced finding should reference the real event_id 1207959695: {unbal:?}",
+        !control_unbal.is_empty(),
+        "the same lone out WITHOUT auto_return must be reported, proving the check saw the cue; got {:?}",
+        control_report.findings(),
+    );
+    assert!(
+        control_unbal
+            .iter()
+            .any(|f| f.message.contains("1207959695")),
+        "the control finding names the real event id 1207959695; got {control_unbal:?}",
     );
 }
 

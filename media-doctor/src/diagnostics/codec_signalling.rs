@@ -49,12 +49,12 @@ use alloc::collections::btree_map::BTreeMap;
 use alloc::vec::Vec;
 
 use dvb_si::tables::pmt::StreamType;
-use transmux::{iter_annexb_nals, parse_adts_header};
+use transmux::iter_annexb_nals;
 
 use crate::Diagnostic;
 use crate::Report;
 use crate::diagnostics::codec_common::{
-    collect_pmt_streams, for_each_access_unit, pids_with_stream_type,
+    collect_pmt_streams, for_each_access_unit, has_adts_sync, pids_with_stream_type,
 };
 use crate::report::{Finding, Location, Severity};
 
@@ -110,7 +110,7 @@ impl Diagnostic for CodecSignallingCheck {
             if seen.any_au && !seen.structured {
                 report.push(Finding::new(
                     Severity::Error,
-                    Location::new(0, pid),
+                    Location::new(0, u32::from(pid)),
                     "codec-signalling-mismatch",
                     alloc::format!(
                         "PMT declares a NAL video codec on PID 0x{pid:04X} but its elementary \
@@ -124,7 +124,7 @@ impl Diagnostic for CodecSignallingCheck {
             if seen.any_au && !seen.structured {
                 report.push(Finding::new(
                     Severity::Error,
-                    Location::new(0, pid),
+                    Location::new(0, u32::from(pid)),
                     "codec-signalling-mismatch",
                     alloc::format!(
                         "PMT declares stream_type AAC-ADTS (0x0F) on PID 0x{pid:04X} but its \
@@ -135,21 +135,6 @@ impl Diagnostic for CodecSignallingCheck {
             }
         }
     }
-}
-
-/// Scan `payload` for a byte offset at which a well-formed ADTS header
-/// parses (ISO/IEC 13818-7 §6.2, via [`transmux::parse_adts_header`]) — not
-/// assumed to sit at offset 0 so this tolerates leading PES stuffing.
-fn has_adts_sync(payload: &[u8]) -> bool {
-    const ADTS_MIN: usize = 7;
-    if payload.len() < ADTS_MIN {
-        return false;
-    }
-    (0..=payload.len() - ADTS_MIN).any(|off| {
-        payload[off] == 0xFF
-            && (payload[off + 1] & 0xF0) == 0xF0
-            && parse_adts_header(&payload[off..]).is_ok()
-    })
 }
 
 #[cfg(test)]
@@ -192,7 +177,8 @@ mod tests {
             report
                 .findings()
                 .iter()
-                .any(|f| f.rule_id == "codec-signalling-mismatch" && f.location.pid == VIDEO_PID),
+                .any(|f| f.rule_id == "codec-signalling-mismatch"
+                    && f.location.pid == u32::from(VIDEO_PID)),
             "expected codec-signalling-mismatch for a non-NAL H.264 PID, got {:?}",
             report.findings()
         );
@@ -244,7 +230,8 @@ mod tests {
             report
                 .findings()
                 .iter()
-                .any(|f| f.rule_id == "codec-signalling-mismatch" && f.location.pid == AUDIO_PID),
+                .any(|f| f.rule_id == "codec-signalling-mismatch"
+                    && f.location.pid == u32::from(AUDIO_PID)),
             "expected codec-signalling-mismatch for a non-ADTS AAC PID, got {:?}",
             report.findings()
         );

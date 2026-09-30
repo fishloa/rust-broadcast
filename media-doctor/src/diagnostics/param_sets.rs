@@ -104,7 +104,7 @@ fn walk_avc(
                 if is_keyframe_nal(NalCodec::Avc, nal) && !(state.seen_sps && state.seen_pps) {
                     report.push(Finding::new(
                         Severity::Error,
-                        Location::new(packet_index, pid),
+                        Location::new(packet_index, u32::from(pid)),
                         "missing-parameter-sets",
                         format!(
                             "IDR access unit on PID 0x{pid:04X} appears before SPS+PPS were \
@@ -137,7 +137,7 @@ fn walk_hevc(
                 if is_keyframe_nal(NalCodec::Hevc, nal) && !(state.seen_sps && state.seen_pps) {
                     report.push(Finding::new(
                         Severity::Error,
-                        Location::new(packet_index, pid),
+                        Location::new(packet_index, u32::from(pid)),
                         "missing-parameter-sets",
                         format!(
                             "IRAP access unit on PID 0x{pid:04X} appears before SPS+PPS were \
@@ -207,7 +207,8 @@ mod tests {
             report
                 .findings()
                 .iter()
-                .any(|f| f.rule_id == "missing-parameter-sets" && f.location.pid == VIDEO_PID),
+                .any(|f| f.rule_id == "missing-parameter-sets"
+                    && f.location.pid == u32::from(VIDEO_PID)),
             "expected missing-parameter-sets, got {:?}",
             report.findings()
         );

@@ -302,3 +302,276 @@ seg0.m4s
         report.findings(),
     );
 }
+
+// -------------------------------------------------------------------------
+// §4.4.4.9 upper bound and the open segment (issue #1112, audit MD-W2)
+// -------------------------------------------------------------------------
+
+/// An `INDEPENDENT=YES` part LONGER than PART-TARGET must still be flagged:
+/// the exception list relaxes only the 85% floor, not "MUST be less than or
+/// equal to the Part Target Duration" (RFC 8216bis §4.4.4.9).
+#[test]
+fn part_over_target_with_independent_still_flagged() {
+    let text = "\
+#EXTM3U
+#EXT-X-VERSION:9
+#EXT-X-TARGETDURATION:4
+#EXT-X-MEDIA-SEQUENCE:0
+#EXT-X-SERVER-CONTROL:CAN-BLOCK-RELOAD=YES,PART-HOLD-BACK=1.0
+#EXT-X-PART-INF:PART-TARGET=0.333
+#EXT-X-PART:DURATION=0.500,URI=\"part0.m4s\",INDEPENDENT=YES
+#EXT-X-PART:DURATION=0.333,URI=\"part1.m4s\"
+#EXTINF:1.0,
+seg0.m4s
+";
+    let mut report = Report::new();
+    check_hls_playlist(text, &mut report);
+
+    let hits = findings(&report, "hls-part-duration-range");
+    assert_eq!(
+        hits.len(),
+        1,
+        "an INDEPENDENT part of 0.500s exceeds PART-TARGET 0.333s and must be \
+         flagged (the exemption covers the 85% floor only), got {:?}",
+        report.findings(),
+    );
+    assert!(
+        hits[0].message.contains("0.5") && hits[0].message.contains("PART-TARGET"),
+        "the finding must state the upper bound it violated, got {:?}",
+        hits[0].message,
+    );
+}
+
+/// The FINAL part of a parent segment longer than PART-TARGET must also be
+/// flagged — same reasoning as INDEPENDENT above.
+#[test]
+fn part_over_target_final_of_segment_still_flagged() {
+    let text = "\
+#EXTM3U
+#EXT-X-VERSION:9
+#EXT-X-TARGETDURATION:4
+#EXT-X-MEDIA-SEQUENCE:0
+#EXT-X-SERVER-CONTROL:CAN-BLOCK-RELOAD=YES,PART-HOLD-BACK=1.0
+#EXT-X-PART-INF:PART-TARGET=0.333
+#EXT-X-PART:DURATION=0.333,URI=\"part0.m4s\"
+#EXT-X-PART:DURATION=0.700,URI=\"part1.m4s\"
+#EXTINF:1.0,
+seg0.m4s
+";
+    let mut report = Report::new();
+    check_hls_playlist(text, &mut report);
+
+    let hits = findings(&report, "hls-part-duration-range");
+    assert_eq!(
+        hits.len(),
+        1,
+        "the final part of a segment is exempt from the 85% floor, not from \
+         the PART-TARGET ceiling; got {:?}",
+        report.findings(),
+    );
+}
+
+/// The open (in-progress) segment's parts are the live edge — the most
+/// important ones to check. A part over PART-TARGET there must be flagged.
+#[test]
+fn open_segment_part_over_target_flagged() {
+    let text = "\
+#EXTM3U
+#EXT-X-VERSION:9
+#EXT-X-TARGETDURATION:4
+#EXT-X-MEDIA-SEQUENCE:0
+#EXT-X-SERVER-CONTROL:CAN-BLOCK-RELOAD=YES,PART-HOLD-BACK=1.0
+#EXT-X-PART-INF:PART-TARGET=0.333
+#EXT-X-PART:DURATION=0.333,URI=\"part0.m4s\"
+#EXTINF:1.0,
+seg0.m4s
+#EXT-X-PART:DURATION=0.333,URI=\"open0.m4s\"
+#EXT-X-PART:DURATION=0.900,URI=\"open1.m4s\"
+";
+    let mut report = Report::new();
+    check_hls_playlist(text, &mut report);
+
+    let hits = findings(&report, "hls-part-duration-range");
+    assert_eq!(
+        hits.len(),
+        1,
+        "a 0.900s part in the open segment exceeds PART-TARGET 0.333s and must \
+         be flagged; got {:?}",
+        report.findings(),
+    );
+}
+
+/// A closed-segment part and an open-segment part both below the 85% floor
+/// must each be flagged (the open segment is not skipped).
+#[test]
+fn open_segment_part_below_floor_flagged() {
+    let text = "\
+#EXTM3U
+#EXT-X-VERSION:9
+#EXT-X-TARGETDURATION:4
+#EXT-X-MEDIA-SEQUENCE:0
+#EXT-X-SERVER-CONTROL:CAN-BLOCK-RELOAD=YES,PART-HOLD-BACK=1.0
+#EXT-X-PART-INF:PART-TARGET=0.333
+#EXT-X-PART:DURATION=0.100,URI=\"part0.m4s\"
+#EXT-X-PART:DURATION=0.333,URI=\"part1.m4s\"
+#EXTINF:1.0,
+seg0.m4s
+#EXT-X-PART:DURATION=0.050,URI=\"open0.m4s\"
+#EXT-X-PART:DURATION=0.333,URI=\"open1.m4s\"
+";
+    let mut report = Report::new();
+    check_hls_playlist(text, &mut report);
+
+    let hits = findings(&report, "hls-part-duration-range");
+    assert_eq!(
+        hits.len(),
+        2,
+        "both the 0.100s closed-segment part and the 0.050s open-segment part \
+         are below the 85% floor and must be flagged; got {:?}",
+        report.findings(),
+    );
+}
+
+// -------------------------------------------------------------------------
+// Parse-error reporting and media/master classification (issue #1112, MD-W11)
+// -------------------------------------------------------------------------
+
+/// A Media Playlist that should not parse must be reported *as a Media
+/// Playlist*, with the parser's own reason in the finding — never silently
+/// routed to the (rule-less) multivariant branch, which reported clean.
+#[test]
+fn unparseable_media_playlist_is_reported_with_the_parser_reason() {
+    // `#EXTINF` marks this as a Media Playlist (§4.4.4.1), but a segment URI
+    // line is missing and there is no `#EXT-X-TARGETDURATION`.
+    let text = "\
+#EXTM3U
+#EXTINF:10.0,
+";
+    let mut report = Report::new();
+    check_hls_playlist(text, &mut report);
+
+    let parse_errors = findings(&report, "hls-parse-error");
+    assert_eq!(
+        parse_errors.len(),
+        1,
+        "a Media Playlist that fails its media parse must be reported; got {:?}",
+        report.findings(),
+    );
+    assert!(
+        parse_errors[0].message.contains("Media Playlist"),
+        "the finding must say which kind failed to parse, got {:?}",
+        parse_errors[0].message,
+    );
+    assert!(
+        parse_errors[0].message.len()
+            > "Playlist failed to parse as a valid Media Playlist: ".len(),
+        "the parser's own reason must be included, got {:?}",
+        parse_errors[0].message,
+    );
+}
+
+/// A Multivariant Playlist whose `#EXT-X-STREAM-INF` is malformed is reported
+/// as a *Multivariant* parse failure, not as a Media one.
+#[test]
+fn malformed_master_playlist_is_reported_as_multivariant() {
+    // `#EXT-X-STREAM-INF` with no attributes at all.
+    let text = "\
+#EXTM3U
+#EXT-X-STREAM-INF:
+variant.m3u8
+";
+    let mut report = Report::new();
+    check_hls_playlist(text, &mut report);
+
+    let parse_errors = findings(&report, "hls-parse-error");
+    assert_eq!(
+        parse_errors.len(),
+        1,
+        "a malformed Multivariant Playlist must be reported; got {:?}",
+        report.findings(),
+    );
+    assert!(
+        parse_errors[0].message.contains("Multivariant"),
+        "the finding must name the Multivariant kind, got {:?}",
+        parse_errors[0].message,
+    );
+}
+
+/// A playlist with Media-Playlist tags is never validated as a Multivariant
+/// Playlist, and vice versa — the classification is by tag, not by which
+/// parse happens to succeed.
+#[test]
+fn media_tags_route_to_media_rules() {
+    // Well-formed Media Playlist: must produce no parse error.
+    let text = "\
+#EXTM3U
+#EXT-X-VERSION:3
+#EXT-X-TARGETDURATION:10
+#EXT-X-MEDIA-SEQUENCE:0
+#EXTINF:10.0,
+seg0.ts
+#EXT-X-ENDLIST
+";
+    let mut report = Report::new();
+    check_hls_playlist(text, &mut report);
+    assert!(
+        findings(&report, "hls-parse-error").is_empty(),
+        "a well-formed Media Playlist must not report a parse error; got {:?}",
+        report.findings(),
+    );
+}
+
+/// A playlist carrying neither a Media nor a Multivariant signature tag must
+/// not be reported clean just because one parser accepts it (audit MD-W11).
+#[test]
+fn playlist_with_no_signature_tag_is_reported() {
+    // `#EXT-X-ENDLIST`/`EXT-X-MEDIA-SEQUENCE` are Media Metadata / Media
+    // Segment-adjacent tags but neither identifies the playlist as a Media
+    // Playlist (§4.4.3.1 requires TARGETDURATION; §4.4.4.1 EXTINF).
+    let text = "\
+#EXTM3U
+#EXT-X-VERSION:3
+#EXT-X-MEDIA-SEQUENCE:0
+#EXT-X-ENDLIST
+";
+    let mut report = Report::new();
+    check_hls_playlist(text, &mut report);
+    let hits = findings(&report, "hls-unsupported-playlist");
+    assert_eq!(
+        hits.len(),
+        1,
+        "a playlist with no Media/Multivariant signature tag must be reported, \
+         not validated as clean; got {:?}",
+        report.findings(),
+    );
+}
+
+/// A part duration within 1 ms of the 85% floor is accepted: the bounds come
+/// from decimal text with three fractional digits, so an exactly-at-the-bound
+/// duration can land one ULP the wrong way. 0.283 s is 50 µs below
+/// PART-TARGET 0.333 s's 85% floor (0.28305 s) — inside the tolerance, and a
+/// real violation is orders of magnitude larger.
+#[test]
+fn part_duration_within_epsilon_of_the_floor_is_accepted() {
+    let text = "\
+#EXTM3U
+#EXT-X-VERSION:9
+#EXT-X-TARGETDURATION:4
+#EXT-X-MEDIA-SEQUENCE:0
+#EXT-X-SERVER-CONTROL:CAN-BLOCK-RELOAD=YES,PART-HOLD-BACK=1.0
+#EXT-X-PART-INF:PART-TARGET=0.333
+#EXT-X-PART:DURATION=0.333,URI=\"part0.m4s\"
+#EXT-X-PART:DURATION=0.283,URI=\"part1.m4s\"
+#EXT-X-PART:DURATION=0.333,URI=\"part2.m4s\"
+#EXTINF:1.0,
+seg0.m4s
+";
+    let mut report = Report::new();
+    check_hls_playlist(text, &mut report);
+    assert!(
+        findings(&report, "hls-part-duration-range").is_empty(),
+        "0.283 is 50 µs below the 0.28305 floor, inside the 1 ms tolerance; \
+         got {:?}",
+        report.findings(),
+    );
+}

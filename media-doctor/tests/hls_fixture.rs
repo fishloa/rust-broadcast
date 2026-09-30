@@ -102,11 +102,84 @@ fn malformed_daterange_fixture() {
 fn reference_vod_playlist_clean() {
     let text = read_fixture("reference-vod.m3u8");
     let mut report = Report::new();
-    media_doctor::check_playlist(&text, &mut report);
+    check_playlist(&text, &mut report);
     assert!(
         report.is_empty(),
         "reference VOD playlist should have no findings, got {}: {:?}",
         report.len(),
         report.findings(),
+    );
+}
+
+// -------------------------------------------------------------------------
+// Audit MD-W10: one implementation, not two
+// -------------------------------------------------------------------------
+
+/// The four rules whose messages had **drifted** between the old duplicate
+/// `playlist.rs` and `hls_validator.rs` must now be emitted by the single
+/// implementation with its clause citation intact.
+///
+/// The old `playlist.rs` messages, recovered from git history:
+///
+/// ```text
+/// First non-empty line must be exactly '#EXTM3U'
+/// Media playlist with EXTINF entries must include #EXT-X-TARGETDURATION
+/// EXTINF duration {dur} (rounded to {rounded}) exceeds TARGETDURATION {targetduration_val}
+/// Malformed #EXT-X-DATERANGE line
+/// ```
+///
+/// None named the RFC clause; the surviving implementation's do. A test that
+/// merely compared `check_playlist` with `check_hls_playlist` would be a
+/// tautology now that the former calls the latter — this pins the actual
+/// behaviour each rule produces instead.
+#[test]
+fn drifted_rules_now_carry_their_clause_citation() {
+    // hls-missing-extm3u — §4.4.1.1
+    let text = "not-a-playlist\n".to_string();
+    let mut report = Report::new();
+    check_playlist(&text, &mut report);
+    let hit = findings(&report, "hls-missing-extm3u");
+    assert_eq!(hit.len(), 1, "got {:?}", report.findings());
+    assert!(
+        hit[0].message.contains("§4.4.1.1"),
+        "the message must cite the clause, got {:?}",
+        hit[0].message,
+    );
+
+    // hls-missing-targetduration — §4.4.3.1
+    let text = "#EXTM3U\n#EXTINF:1.0,\nseg.ts\n".to_string();
+    let mut report = Report::new();
+    check_playlist(&text, &mut report);
+    let hit = findings(&report, "hls-missing-targetduration");
+    assert_eq!(hit.len(), 1, "got {:?}", report.findings());
+    assert!(
+        hit[0].message.contains("§4.4.3.1"),
+        "the message must cite the clause, got {:?}",
+        hit[0].message,
+    );
+
+    // hls-extinf-exceeds-target — §4.4.3.1
+    let text = "#EXTM3U\n#EXT-X-TARGETDURATION:4\n#EXTINF:9.0,\nseg.ts\n".to_string();
+    let mut report = Report::new();
+    check_playlist(&text, &mut report);
+    let hit = findings(&report, "hls-extinf-exceeds-target");
+    assert_eq!(hit.len(), 1, "got {:?}", report.findings());
+    assert!(
+        hit[0].message.contains("§4.4.3.1"),
+        "the message must cite the clause, got {:?}",
+        hit[0].message,
+    );
+
+    // hls-malformed-daterange — §4.4.5.1. A DATERANGE without the required
+    // ID attribute (§4.4.5.1: ID is REQUIRED).
+    let text = "#EXTM3U\n#EXT-X-DATERANGE:START-DATE=\"2020-01-01T00:00:00Z\"\n".to_string();
+    let mut report = Report::new();
+    check_playlist(&text, &mut report);
+    let hit = findings(&report, "hls-malformed-daterange");
+    assert_eq!(hit.len(), 1, "got {:?}", report.findings());
+    assert!(
+        hit[0].message.contains("§4.4.5.1"),
+        "the message must cite the clause, got {:?}",
+        hit[0].message,
     );
 }

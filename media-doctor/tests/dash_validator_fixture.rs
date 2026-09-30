@@ -187,3 +187,171 @@ fn first_s_without_t_is_clean() {
         report.findings(),
     );
 }
+
+// -------------------------------------------------------------------------
+// Issue #1112, audit MD-W12: @id uniqueness is per Period
+// -------------------------------------------------------------------------
+
+/// ISO/IEC 23009-1 §5.3.5.2 Table 7: `Representation@id` "shall be unique
+/// within a Period". The realistic violation is the *same* `@id` in two
+/// different AdaptationSets of one Period — checking per AdaptationSet, as
+/// this did before, could never see it.
+#[test]
+fn duplicate_representation_id_across_adaptation_sets_is_flagged() {
+    let text = r#"<?xml version="1.0" encoding="utf-8"?>
+<MPD xmlns="urn:mpeg:dash:schema:mpd:2011" type="static"
+     mediaPresentationDuration="PT10S" minBufferTime="PT2S" profiles="urn:mpeg:dash:profile:isoff-on-demand:2011">
+  <Period id="p0">
+    <AdaptationSet mimeType="video/mp4" contentType="video">
+      <Representation id="dup" bandwidth="1000000" width="640" height="360">
+        <BaseURL>v1.mp4</BaseURL>
+      </Representation>
+    </AdaptationSet>
+    <AdaptationSet mimeType="audio/mp4" contentType="audio">
+      <Representation id="dup" bandwidth="128000">
+        <BaseURL>a1.mp4</BaseURL>
+      </Representation>
+    </AdaptationSet>
+  </Period>
+</MPD>
+"#;
+    let mut report = Report::new();
+    check_dash_mpd(text, &mut report);
+
+    let hits = findings(&report, "dash-representation-id-duplicate");
+    assert_eq!(
+        hits.len(),
+        1,
+        "the same @id in two AdaptationSets of one Period must be flagged; got {:?}",
+        report.findings(),
+    );
+    assert!(
+        hits[0].message.contains("dup") && hits[0].message.contains("Period"),
+        "the finding must name the id and the Period scope, got {:?}",
+        hits[0].message,
+    );
+}
+
+/// Two Representations of different AdaptationSets with *different* `@id`s
+/// are fine — the rule is uniqueness, not one-id-per-set.
+#[test]
+fn distinct_representation_ids_are_clean() {
+    let text = r#"<?xml version="1.0" encoding="utf-8"?>
+<MPD xmlns="urn:mpeg:dash:schema:mpd:2011" type="static"
+     mediaPresentationDuration="PT10S" minBufferTime="PT2S" profiles="urn:mpeg:dash:profile:isoff-on-demand:2011">
+  <Period id="p0">
+    <AdaptationSet mimeType="video/mp4" contentType="video">
+      <Representation id="v1" bandwidth="1000000" width="640" height="360">
+        <BaseURL>v1.mp4</BaseURL>
+      </Representation>
+    </AdaptationSet>
+    <AdaptationSet mimeType="audio/mp4" contentType="audio">
+      <Representation id="a1" bandwidth="128000">
+        <BaseURL>a1.mp4</BaseURL>
+      </Representation>
+    </AdaptationSet>
+  </Period>
+</MPD>
+"#;
+    let mut report = Report::new();
+    check_dash_mpd(text, &mut report);
+    assert!(
+        findings(&report, "dash-representation-id-duplicate").is_empty(),
+        "distinct @ids across AdaptationSets are legal; got {:?}",
+        report.findings(),
+    );
+}
+
+/// `@r = -1` is legal and means "repeat until the next `S` element or the end
+/// of the Period" (ISO/IEC 23009-1 §5.3.9.6.2 Table 17). It must not be
+/// treated as a single repeat, and the following `S` element must not be
+/// reported as non-monotonic against a guessed end.
+#[test]
+fn segment_timeline_negative_r_until_next_s_is_not_flagged() {
+    let text = r#"<?xml version="1.0" encoding="utf-8"?>
+<MPD xmlns="urn:mpeg:dash:schema:mpd:2011" type="static"
+     mediaPresentationDuration="PT10S" minBufferTime="PT2S" profiles="urn:mpeg:dash:profile:isoff-live:2011">
+  <Period id="p0">
+    <AdaptationSet mimeType="video/mp4" contentType="video">
+      <SegmentTemplate timescale="90000" initialization="init.mp4" media="seg-$Number$.m4s" startNumber="1">
+        <SegmentTimeline>
+          <S t="0" d="180000" r="-1"/>
+          <S t="90000" d="180000"/>
+        </SegmentTimeline>
+      </SegmentTemplate>
+      <Representation id="v1" bandwidth="1000000" width="640" height="360"/>
+    </AdaptationSet>
+  </Period>
+</MPD>
+"#;
+    let mut report = Report::new();
+    check_dash_mpd(text, &mut report);
+    assert!(
+        findings(&report, "dash-segment-timeline-monotonic").is_empty(),
+        "@r = -1 repeats until the next S, whose explicit @t governs; got {:?}",
+        report.findings(),
+    );
+}
+
+/// `@id` duplicated by two **functionally identical** Representations is
+/// redundant, not ambiguous: ISO/IEC 23009-1 §5.3.5.2 makes `@id` unique
+/// within a Period *unless* the Representations are identical, so this is a
+/// Warning.
+#[test]
+fn duplicate_id_of_identical_representations_is_a_warning() {
+    let text = r#"<?xml version="1.0" encoding="utf-8"?>
+<MPD xmlns="urn:mpeg:dash:schema:mpd:2011" type="static"
+     mediaPresentationDuration="PT10S" minBufferTime="PT2S" profiles="urn:mpeg:dash:profile:isoff-on-demand:2011">
+  <Period id="p0">
+    <AdaptationSet mimeType="video/mp4" contentType="video">
+      <Representation id="same" bandwidth="1000000" codecs="avc1.64001f" width="640" height="360">
+        <BaseURL>v1.mp4</BaseURL>
+      </Representation>
+      <Representation id="same" bandwidth="1000000" codecs="avc1.64001f" width="640" height="360">
+        <BaseURL>v1.mp4</BaseURL>
+      </Representation>
+    </AdaptationSet>
+  </Period>
+</MPD>
+"#;
+    let mut report = Report::new();
+    check_dash_mpd(text, &mut report);
+    let hits = findings(&report, "dash-representation-id-duplicate");
+    assert_eq!(hits.len(), 1, "got {:?}", report.findings());
+    assert_eq!(
+        hits[0].severity,
+        media_doctor::Severity::Warning,
+        "identical Representations are redundant, not ambiguous: {:?}",
+        hits[0],
+    );
+}
+
+/// `@r` below -1 is out of range: Table 17 defines only `@r >= -1`.
+#[test]
+fn segment_timeline_r_below_minus_one_is_an_error() {
+    let text = r#"<?xml version="1.0" encoding="utf-8"?>
+<MPD xmlns="urn:mpeg:dash:schema:mpd:2011" type="static"
+     mediaPresentationDuration="PT10S" minBufferTime="PT2S" profiles="urn:mpeg:dash:profile:isoff-live:2011">
+  <Period id="p0">
+    <AdaptationSet mimeType="video/mp4" contentType="video">
+      <SegmentTemplate timescale="90000" initialization="init.mp4" media="seg-$Number$.m4s" startNumber="1">
+        <SegmentTimeline>
+          <S t="0" d="180000" r="-5"/>
+        </SegmentTimeline>
+      </SegmentTemplate>
+      <Representation id="v1" bandwidth="1000000" width="640" height="360"/>
+    </AdaptationSet>
+  </Period>
+</MPD>
+"#;
+    let mut report = Report::new();
+    check_dash_mpd(text, &mut report);
+    let hits = findings(&report, "dash-segment-timeline-r-range");
+    assert_eq!(
+        hits.len(),
+        1,
+        "@r = -5 is out of range and must be reported; got {:?}",
+        report.findings(),
+    );
+    assert_eq!(hits[0].severity, media_doctor::Severity::Error);
+}

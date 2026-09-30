@@ -122,7 +122,7 @@ impl Diagnostic for CcAnomalyCheck {
                 DuplicateVerdict::IllegalThirdRepeat => {
                     report.push(Finding::new(
                         Severity::Error,
-                        Location::new(i, pid),
+                        Location::new(i, u32::from(pid)),
                         "cc-anomaly",
                         alloc::format!(
                             "PID 0x{pid:04X}: third consecutive repeat of CC={cc} \
@@ -136,7 +136,7 @@ impl Diagnostic for CcAnomalyCheck {
                     if cc != expected {
                         report.push(Finding::new(
                             Severity::Error,
-                            Location::new(i, pid),
+                            Location::new(i, u32::from(pid)),
                             "cc-anomaly",
                             alloc::format!(
                                 "PID 0x{pid:04X}: expected CC={expected}, got CC={cc} \

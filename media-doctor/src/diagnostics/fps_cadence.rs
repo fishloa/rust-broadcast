@@ -62,6 +62,29 @@ impl Diagnostic for FpsCadenceCheck {
     }
 }
 
+/// Sum a track's sample durations, in the track's media timescale.
+///
+/// See [`total_duration_of`] for the arithmetic.
+fn total_sample_duration(track: &transmux::Track) -> u64 {
+    total_duration_of(track.samples.iter().map(|s| s.duration))
+}
+
+/// Sum a sequence of optional per-sample durations.
+///
+/// `Sample::duration` is `Option<u32>`, so each term widens rather than
+/// truncating — `u64::from` rather than `as`, which keeps that a checked
+/// claim. The accumulation saturates: a pathologically long track must not
+/// wrap the total into a small, plausible-looking value that then reads as a
+/// wildly fast cadence rather than as the overflow it is.
+///
+/// Split from [`total_sample_duration`] so the arithmetic can be tested
+/// without fabricating a codec configuration.
+fn total_duration_of(durations: impl Iterator<Item = Option<u32>>) -> u64 {
+    durations
+        .map(|d| u64::from(d.unwrap_or(0)))
+        .fold(0u64, u64::saturating_add)
+}
+
 fn check_media(media: &Media, report: &mut Report) {
     for track in &media.tracks {
         let pid = track.spec.source_pid.unwrap_or(0);
@@ -99,11 +122,7 @@ fn check_media(media: &Media, report: &mut Report) {
         if track.samples.len() < MIN_SAMPLES_FOR_CADENCE {
             continue;
         }
-        let total_duration: u64 = track
-            .samples
-            .iter()
-            .map(|s| s.duration.unwrap_or(0) as u64)
-            .sum();
+        let total_duration = total_sample_duration(track);
         if total_duration == 0 {
             continue;
         }
@@ -119,7 +138,7 @@ fn check_media(media: &Media, report: &mut Report) {
         if relative_diff > FPS_TOLERANCE_FRACTION as f64 {
             report.push(Finding::new(
                 Severity::Warning,
-                Location::new(0, pid),
+                Location::new(0, u32::from(pid)),
                 "fps-cadence-mismatch",
                 format!(
                     "Track (PID 0x{pid:04X}) VUI-declared frame rate {declared_fps:.3} fps \
@@ -136,6 +155,40 @@ fn check_media(media: &Media, report: &mut Report) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The sample-duration sum must widen from `u32` and saturate rather than
+    /// wrap.
+    ///
+    /// A wrapped total is small and plausible, so it would read as a wildly
+    /// fast cadence rather than as the overflow it is.
+    #[test]
+    fn sample_duration_sum_widens_and_saturates() {
+        // Widening: `u32::MAX` per sample must survive several samples,
+        // which a `u32` accumulator would not.
+        assert_eq!(
+            total_duration_of([Some(u32::MAX); 4].into_iter()),
+            u64::from(u32::MAX) * 4,
+        );
+        // `None` contributes nothing.
+        assert_eq!(
+            total_duration_of([None, Some(1_000), None, Some(2_000)].into_iter()),
+            3_000,
+        );
+        // Saturation: the total never decreases and never wraps below a term.
+        let terms = [
+            Some(u32::MAX),
+            Some(u32::MAX),
+            Some(u32::MAX),
+            Some(u32::MAX),
+            Some(u32::MAX),
+        ];
+        let total = total_duration_of(terms.into_iter());
+        assert!(
+            total >= u64::from(u32::MAX),
+            "the total must never wrap below a single term; got {total}",
+        );
+        assert_eq!(total, u64::from(u32::MAX) * 5);
+    }
 
     /// No video tracks (or no VUI timing in the SPS) → no findings, never a
     /// panic — regression guard for the `None`/empty-track paths.

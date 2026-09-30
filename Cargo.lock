@@ -1976,6 +1976,7 @@ dependencies = [
  "broadcast-common",
  "broadcast-hls",
  "clap",
+ "container-probe",
  "dvb-conformance",
  "dvb-si",
  "mpeg-pes",

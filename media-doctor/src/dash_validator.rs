@@ -16,7 +16,7 @@
 //! | `dash-period-no-adaptation-sets` | Error | Period has no AdaptationSets | §5.3.2 |
 
 use crate::report::{Finding, Location, Report, Severity};
-use alloc::collections::BTreeSet;
+use alloc::collections::BTreeMap;
 
 /// Validate a DASH MPD XML text, appending findings for each violation.
 pub fn check_dash_mpd(text: &str, report: &mut Report) {
@@ -71,11 +71,12 @@ pub fn check_dash_mpd(text: &str, report: &mut Report) {
             continue;
         }
 
+        // dash-representation-id-duplicate — §5.3.5.2. Scoped to the
+        // *Period*: `@id` must be unique across all its AdaptationSets.
+        check_representation_id_duplicates(period, period_idx, report);
+
         for (as_idx, aset) in period.adaptation_sets.iter().enumerate() {
             let as_key = alloc::format!("{period_idx}.{as_idx}");
-
-            // dash-representation-id-duplicate — §5.3.5.2
-            check_representation_id_duplicates(aset, &as_key, report);
 
             // Per-Representation SegmentTimeline validation
             for (r_idx, repr) in aset.representations.iter().enumerate() {
@@ -90,27 +91,64 @@ pub fn check_dash_mpd(text: &str, report: &mut Report) {
     }
 }
 
-/// Check for duplicate `@id` values across Representations in an AdaptationSet.
-/// ISO/IEC 23009-1:2012 §5.3.5.2 Table 7: `@id` "shall be unique within a Period".
+/// Check for duplicate `@id` values across **every** Representation in one
+/// Period.
+///
+/// ISO/IEC 23009-1:2012 §5.3.5.2 Table 7: `@id` "shall be unique within a
+/// Period" — not within an AdaptationSet. Checking per AdaptationSet missed
+/// the realistic error entirely: the same `@id` reused by two different
+/// AdaptationSets of the same Period (audit MD-W12).
 fn check_representation_id_duplicates(
-    aset: &transmux::AdaptationSet,
-    as_key: &str,
+    period: &transmux::Period,
+    period_idx: usize,
     report: &mut Report,
 ) {
-    let mut seen: BTreeSet<&str> = BTreeSet::new();
-    for repr in &aset.representations {
-        if !seen.insert(&repr.id) {
+    // `@id` must be unique within a Period (ISO/IEC 23009-1 §5.3.5.2 Table 7)
+    // *unless* the Representations are functionally identical, in which case
+    // the duplicate is redundant rather than ambiguous — a Warning, not an
+    // Error.
+    let mut seen: BTreeMap<&str, &transmux::Representation> = BTreeMap::new();
+    for (as_idx, aset) in period.adaptation_sets.iter().enumerate() {
+        for repr in &aset.representations {
+            let Some(previous) = seen.insert(&repr.id, repr) else {
+                continue;
+            };
+            let identical = functionally_identical(previous, repr);
             report.push(Finding::new(
-                Severity::Error,
+                if identical {
+                    Severity::Warning
+                } else {
+                    Severity::Error
+                },
                 Location::new(1, 0),
                 "dash-representation-id-duplicate",
                 alloc::format!(
-                    "AdaptationSet {as_key}: duplicate Representation @id=\"{}\" — §5.3.5.2",
+                    "Period {period_idx} (AdaptationSet {as_idx}): duplicate Representation @id=\"{}\" — ISO/IEC 23009-1 §5.3.5.2 requires @id to be unique within a Period{}",
                     repr.id,
+                    if identical {
+                        " (the two are functionally identical, so this is redundant rather than ambiguous)"
+                    } else {
+                        ""
+                    },
                 ),
             ));
         }
     }
+}
+
+/// Whether two Representations carrying the same `@id` are functionally
+/// identical — same codec, bandwidth, geometry, framing and addressing, i.e.
+/// the same content described twice (ISO/IEC 23009-1 §5.3.5.2's exception).
+fn functionally_identical(a: &transmux::Representation, b: &transmux::Representation) -> bool {
+    a.bandwidth == b.bandwidth
+        && a.codecs == b.codecs
+        && a.width == b.width
+        && a.height == b.height
+        && a.frame_rate == b.frame_rate
+        && a.audio_sampling_rate == b.audio_sampling_rate
+        && a.mime_type == b.mime_type
+        && a.base_url == b.base_url
+        && a.segment_template == b.segment_template
 }
 
 /// Validate SegmentTimeline for monotonic time progression.
@@ -150,15 +188,36 @@ fn validate_segment_timeline(
             ));
         }
 
+        // `@r` below -1 is not defined by the spec: Table 17 gives
+        // `@r = -1` the meaning "repeat until the next S element or the end
+        // of the Period", and every other negative value is out of range.
+        if s.r < -1 {
+            report.push(Finding::new(
+                Severity::Error,
+                Location::new(s_idx + 1, 0),
+                "dash-segment-timeline-r-range",
+                alloc::format!(
+                    "SegmentTimeline {r_key}: <S r={}> is out of range — Table 17 defines                      @r >= -1 (with -1 meaning repeat until the next S element or the end                      of the Period)",
+                    s.r,
+                ),
+            ));
+        }
+
         // Calculate this S element's end time (for the next S's implicit @t).
-        // Each repeat adds @d to the time.
-        let repeat_count: u64 = if s.r >= 0 {
-            s.r as u64 + 1
+        // Each repeat adds @d to the time (ISO/IEC 23009-1 §5.3.9.6.2
+        // Table 17: the S element repeats `@r + 1` times).
+        //
+        // `@r = -1` is *legal* and means "repeat until the next S element or
+        // the end of the Period" (§5.3.9.6.2, Table 17) — not a fixed count.
+        // Its end time is therefore undetermined from this element alone, so
+        // no end is recorded and the next S element's explicit `@t` (which
+        // the spec requires in that case) governs instead of a guessed one.
+        let repeat_count = u64::try_from(s.r).ok().map(|r| r.saturating_add(1));
+        if let Some(repeat_count) = repeat_count {
+            prev_end_time = Some(start_time.saturating_add(s.d.saturating_mul(repeat_count)));
         } else {
-            // Negative @r is not valid per spec, but don't crash.
-            1
-        };
-        prev_end_time = Some(start_time.saturating_add(s.d.saturating_mul(repeat_count)));
+            prev_end_time = None;
+        }
     }
 }
 

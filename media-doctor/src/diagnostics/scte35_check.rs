@@ -143,16 +143,23 @@ impl Diagnostic for Scte35Check {
 
                 let eid = si.splice_event_id;
                 let oon = si.out_of_network_indicator;
+                // An "out" carrying `break_duration.auto_return == true` is a
+                // *self-closing* break: the splicer returns after `duration`
+                // without any "in" cue (ANSI/SCTE 35 §9.8.2 `auto_return`,
+                // §9.9.2.2). That is standard SSAI signalling, so it is never
+                // left "open".
+                let auto_return = si
+                    .break_duration
+                    .is_some_and(|break_duration| break_duration.auto_return);
 
                 match state.events.entry(eid) {
                     Entry::Vacant(entry) => {
-                        if oon {
+                        if oon && !auto_return {
                             // First encounter is an "out" → mark open.
                             entry.insert(SpliceInsertState::Open);
                         } else {
-                            // First encounter is an "in" without a preceding
-                            // "out" → this is a valid standalone return
-                            // (already closed).
+                            // A standalone return, or an auto-return out that
+                            // closes itself — nothing left open either way.
                             entry.insert(SpliceInsertState::Closed);
                         }
                     }
@@ -164,24 +171,31 @@ impl Diagnostic for Scte35Check {
                                     // "in" — Warning.
                                     report.push(Finding::new(
                                         Severity::Warning,
-                                        Location::new(i, pid),
+                                        Location::new(i, u32::from(pid)),
                                         "scte35-dup-out",
                                         alloc::format!(
                                             "duplicate open splice_insert: out event_id {eid} \
                                              with no intervening in",
                                         ),
                                     ));
+                                    if auto_return {
+                                        // The duplicate itself closes at its
+                                        // own duration — it does not stay
+                                        // open.
+                                        entry.insert(SpliceInsertState::Closed);
+                                    }
                                 } else {
                                     // Matching "in" — close the event.
                                     entry.insert(SpliceInsertState::Closed);
                                 }
                             }
                             SpliceInsertState::Closed => {
-                                if oon {
+                                if oon && !auto_return {
                                     // New "out" after a completed pair — reopen.
                                     entry.insert(SpliceInsertState::Open);
                                 }
-                                // Duplicate "in" after closed → ignore (no harm).
+                                // Duplicate "in" after closed, or an
+                                // auto-return out → nothing left open.
                             }
                         }
                     }
@@ -195,7 +209,7 @@ impl Diagnostic for Scte35Check {
                 if status == SpliceInsertState::Open {
                     report.push(Finding::new(
                         Severity::Warning,
-                        Location::new(n_packets.saturating_sub(1), pid),
+                        Location::new(n_packets.saturating_sub(1), u32::from(pid)),
                         "scte35-unbalanced",
                         alloc::format!(
                             "unbalanced splice_insert: out event_id {eid} with no matching in",
@@ -228,9 +242,22 @@ mod tests {
     /// splice_insert command. Returns the section body (with full MPEG section
     /// header and CRC32).
     fn make_splice_insert_section(event_id: u32, out_of_network: bool, cancel: bool) -> Vec<u8> {
+        make_splice_insert_section_with_break(event_id, out_of_network, cancel, None)
+    }
+
+    /// As [`make_splice_insert_section`], optionally carrying a
+    /// `break_duration()` — `Some((auto_return, ticks))` — the form a real
+    /// SSAI break uses (ANSI/SCTE 35 §9.7.3, §9.8.2).
+    fn make_splice_insert_section_with_break(
+        event_id: u32,
+        out_of_network: bool,
+        cancel: bool,
+        break_duration: Option<(bool, u64)>,
+    ) -> Vec<u8> {
         use broadcast_common::Serialize;
         use scte35_splice::SpliceInfoSection;
         use scte35_splice::commands::SpliceInsert;
+        use scte35_splice::time::BreakDuration;
 
         let si = SpliceInsert {
             splice_event_id: event_id,
@@ -238,6 +265,10 @@ mod tests {
             out_of_network_indicator: out_of_network,
             program_splice_flag: true,
             splice_immediate_flag: true,
+            break_duration: break_duration.map(|(auto_return, duration)| BreakDuration {
+                auto_return,
+                duration,
+            }),
             ..SpliceInsert::default()
         };
 
@@ -372,6 +403,81 @@ mod tests {
         assert!(
             report.is_empty(),
             "cancelled event should produce no findings, got {:?}",
+            report.findings()
+        );
+    }
+
+    /// An "out" with `break_duration.auto_return = true` has no return cue by
+    /// design: the splicer returns after `duration` (ANSI/SCTE 35 §9.9.2.2).
+    /// It must NOT be reported as an unbalanced break (audit MD-W3).
+    #[test]
+    fn auto_return_out_is_not_unbalanced() {
+        let pid = 0x01F0u16;
+        // 30 s break (30 * 90_000 ticks), auto_return set.
+        let out = make_splice_insert_section_with_break(7, true, false, Some((true, 30 * 90_000)));
+
+        let mut payload = Vec::new();
+        payload.push(0x00);
+        payload.extend_from_slice(&out);
+
+        let ts = make_packet(&payload, pid, 0);
+        let mut report = Report::new();
+        Scte35Check.run(&ts, &mut report);
+        assert!(
+            report.is_empty(),
+            "an auto-return out closes at its own duration and must produce no findings, got {:?}",
+            report.findings()
+        );
+    }
+
+    /// The same break followed by its own "in" (an explicit return, some
+    /// head-ends still emit one) must also be clean — the auto-return out is
+    /// already closed, so the "in" is a no-op rather than a duplicate.
+    #[test]
+    fn auto_return_out_followed_by_in_is_clean() {
+        let pid = 0x01F0u16;
+        let out = make_splice_insert_section_with_break(7, true, false, Some((true, 90_000)));
+        let back = make_splice_insert_section(7, false, false);
+
+        let mut payload = Vec::new();
+        payload.push(0x00);
+        payload.extend_from_slice(&out);
+        payload.extend_from_slice(&back);
+
+        let ts = make_packet(&payload, pid, 0);
+        let mut report = Report::new();
+        Scte35Check.run(&ts, &mut report);
+        assert!(
+            report.is_empty(),
+            "auto-return out followed by its own return cue must be clean, got {:?}",
+            report.findings()
+        );
+    }
+
+    /// A break with `auto_return = false` still expects a separate return cue
+    /// — that stays unbalanced, and the auto-return exemption must not
+    /// swallow it.
+    #[test]
+    fn non_auto_return_out_still_unbalanced() {
+        let pid = 0x01F0u16;
+        let out = make_splice_insert_section_with_break(7, true, false, Some((false, 90_000)));
+
+        let mut payload = Vec::new();
+        payload.push(0x00);
+        payload.extend_from_slice(&out);
+
+        let ts = make_packet(&payload, pid, 0);
+        let mut report = Report::new();
+        Scte35Check.run(&ts, &mut report);
+        let unbal: Vec<_> = report
+            .findings()
+            .iter()
+            .filter(|f| f.rule_id == "scte35-unbalanced")
+            .collect();
+        assert_eq!(
+            unbal.len(),
+            1,
+            "a break_duration with auto_return = false needs an explicit return cue, got {:?}",
             report.findings()
         );
     }

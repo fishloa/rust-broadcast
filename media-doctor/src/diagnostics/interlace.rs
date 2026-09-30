@@ -78,7 +78,7 @@ impl Diagnostic for InterlaceCheck {
                     if !info.frame_mbs_only {
                         report.push(Finding::new(
                             Severity::Info,
-                            Location::new(packet_index, pid),
+                            Location::new(packet_index, u32::from(pid)),
                             "avc-interlaced-content",
                             format!(
                                 "AVC SPS on PID 0x{pid:04X} has frame_mbs_only_flag=0 \
@@ -177,7 +177,8 @@ mod tests {
             report
                 .findings()
                 .iter()
-                .any(|f| f.rule_id == "avc-interlaced-content" && f.location.pid == VIDEO_PID),
+                .any(|f| f.rule_id == "avc-interlaced-content"
+                    && f.location.pid == u32::from(VIDEO_PID)),
             "expected avc-interlaced-content, got {:?}",
             report.findings()
         );

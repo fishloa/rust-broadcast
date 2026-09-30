@@ -179,7 +179,7 @@ fn cc_anomaly_wrong_cc() {
         .collect();
     assert_eq!(cc_findings.len(), 1);
     assert_eq!(cc_findings[0].severity, Severity::Error);
-    assert_eq!(cc_findings[0].location.pid, pid);
+    assert_eq!(cc_findings[0].location.pid, u32::from(pid));
 }
 
 /// A legal duplicate (same CC + identical payload) must NOT be flagged.
@@ -438,202 +438,433 @@ fn cc_anomaly_non_payload_does_not_advance_cc() {
 
 // ── PatPmtVersionCheck tests ─────────────────────────────────────────────────
 
-/// A clean synthetic stream with no version changes should produce no PAT/PMT
-/// version findings.
+/// A clean stream with a constant PAT/PMT generation produces no version
+/// findings — and, crucially, the sections really are parsed: the assertion
+/// is paired with a positive one below, so a check that silently saw nothing
+/// cannot pass this.
 #[test]
 fn pat_pmt_version_no_changes() {
+    use dvb_si::tables::pmt::StreamType;
+
+    let one = pat_pmt_ts(&[(0x0101, StreamType::H264)], 0, true);
     let mut ts = Vec::new();
-    // Build a minimal PAT section: table_id=0x00, long-form,
-    // version_number=0, single program entry.
-    // section_data = table_id(0x00) + section_length(13) + flags
-    // + transport_stream_id + version/cni + sec_num + last_sec_num
-    // + 4-byte program_entry(prog_num=1, pid=0x0100) + 4-byte CRC
-    let mut pat_data = vec![
-        0x00, // table_id = PAT
-        0xB0, 0x0D, // section_syntax_indicator=1, section_length=13
-        0x00, 0x01, // transport_stream_id = 1
-        0x01, // reserved(2)=01, version_number=0, cni=1
-        0x00, // section_number = 0
-        0x00, // last_section_number = 0
-    ];
-    // Program 1 -> PMT PID 0x0100
-    pat_data.push(0x00); // program_number MSB
-    pat_data.push(0x01); // program_number LSB = 1
-    pat_data.push(0x01); // reserved(3)=111, PMT PID hi (bits 12:8)
-    pat_data.push(0x00); // PMT PID lo (bits 7:0) -> 0x0100
-    // CRC-32 for the above (placeholder — skip CRC validation for this check)
-    pat_data.extend_from_slice(&[0x00, 0x00, 0x00, 0x00]);
-
-    // Create one TS packet carrying the PAT with PUSI=1, pointer=0.
-    let pid = 0x0000u16;
-    let mut pkt = vec![0x47u8; 188];
-    pkt[1] = 0x40 | ((pid >> 8) as u8) & 0x1F; // PUSI=1
-    pkt[2] = (pid & 0xFF) as u8;
-    pkt[3] = 0x10; // AFC=01, CC=0
-    let pointer = 0u8;
-    pkt[4] = pointer;
-    let payload_start = 5;
-    let copy_len = (188 - payload_start).min(pat_data.len());
-    pkt[payload_start..payload_start + copy_len].copy_from_slice(&pat_data[..copy_len]);
-    ts.extend_from_slice(&pkt);
-
-    // Repeat the same PAT twice more (same CC, same data) — no version change.
-    for cc in 1..=2 {
-        let mut pkt2 = vec![0x47u8; 188];
-        pkt2[1] = ((pid >> 8) as u8) & 0x1F;
-        pkt2[2] = (pid & 0xFF) as u8;
-        pkt2[3] = 0x10 | cc; // AFC=01, CC=cc
-        pkt2[4] = pointer;
-        pkt2[payload_start..payload_start + copy_len].copy_from_slice(&pat_data[..copy_len]);
-        ts.extend_from_slice(&pkt2);
+    for _ in 0..3 {
+        ts.extend_from_slice(&one);
     }
 
     let mut report = Report::new();
     PatPmtVersionCheck.run(&ts, &mut report);
-    let version_findings: Vec<_> = report
-        .findings()
-        .iter()
-        .filter(|f| f.rule_id == "pat-version" || f.rule_id == "pmt-version")
-        .collect();
     assert!(
-        version_findings.is_empty(),
-        "expected no version changes on constant PAT, got {}: {:?}",
-        version_findings.len(),
-        version_findings
+        report
+            .findings()
+            .iter()
+            .all(|f| f.rule_id != "pat-version" && f.rule_id != "pmt-version"),
+        "a constant generation must produce no version findings, got {:?}",
+        report.findings(),
     );
-}
 
-/// A stream where the PMT version changes should produce a finding.
-#[test]
-fn pat_pmt_version_pmt_version_change() {
-    let mut ts = Vec::new();
-    // Build a PAT + PMT where the PMT version changes on the second iteration.
-
-    // ── First PAT (version=0, one program → PMT PID 0x0100) ──
-    let pat_data_0 = build_pat_section(0x0001, &[(1u16, 0x0100u16)], 0);
-    // Write it into a TS packet on PID 0x0000
-    write_section_to_ts(&mut ts, 0x0000, &pat_data_0, 0);
-
-    // ── PMT for program 1, version=0 ──
-    let pmt_data_0 = build_pmt_section(1, 0x0100, 0);
-    write_section_to_ts(&mut ts, 0x0100, &pmt_data_0, 0);
-
-    // ── Second PAT (same version=0, same PMT PID) ──
-    let pat_data_1 = build_pat_section(0x0001, &[(1u16, 0x0100u16)], 0);
-    write_section_to_ts(&mut ts, 0x0000, &pat_data_1, 1);
-
-    // ── PMT for program 1, version=1 (changed!) ──
-    let pmt_data_1 = build_pmt_section(1, 0x0100, 1);
-    write_section_to_ts(&mut ts, 0x0100, &pmt_data_1, 1);
-
-    let mut report = Report::new();
-    PatPmtVersionCheck.run(&ts, &mut report);
-
-    let pmt_findings: Vec<_> = report
+    // Positive control on the SAME builder: a version bump IS reported, which
+    // proves the sections above were really parsed and tracked.
+    let mut changed = Vec::new();
+    changed.extend_from_slice(&one);
+    changed.extend_from_slice(&one);
+    changed.extend_from_slice(&pat_pmt_ts(&[(0x0101, StreamType::H264)], 1, true));
+    let mut report2 = Report::new();
+    PatPmtVersionCheck.run(&changed, &mut report2);
+    let versions: Vec<_> = report2
         .findings()
         .iter()
         .filter(|f| f.rule_id == "pmt-version")
         .collect();
     assert_eq!(
-        pmt_findings.len(),
+        versions.len(),
         1,
-        "expected 1 PMT version change finding, got {}: {:?}",
-        pmt_findings.len(),
-        pmt_findings
+        "the same fixture builder with a version bump must be reported, proving the PAT/PMT were seen; got {:?}",
+        report2.findings(),
     );
-    assert_eq!(pmt_findings[0].severity, Severity::Info);
-    assert!(pmt_findings[0].message.contains("0 → 1"));
+    assert!(
+        versions[0].message.contains("0x0001"),
+        "the finding names the program: {:?}",
+        versions[0].message,
+    );
 }
 
-/// Build a PAT section with the given transport_stream_id, program entries,
-/// and version_number.
-fn build_pat_section(tsid: u16, entries: &[(u16, u16)], version: u8) -> Vec<u8> {
-    let entry_bytes: Vec<u8> = entries
+/// Build a single-program TS carrying a real (CRC-correct, `dvb-si`-
+/// serialized) PAT + PMT, with the given generation `version_number` and
+/// `current_next_indicator`, declaring `(elementary_pid, stream_type)` pairs.
+///
+/// Built through `dvb-si`'s own builders and `mpeg-ts`'s packetiser — never
+/// hand-rolled bytes. The PMT PID matches TSDuck's report for
+/// `fixtures/ts/m6-single.ts` so the real-capture test can use the same
+/// constant.
+fn pat_pmt_ts(
+    streams: &[(u16, dvb_si::tables::pmt::StreamType)],
+    version: u8,
+    current_next: bool,
+) -> Vec<u8> {
+    use broadcast_common::Serialize;
+    use dvb_si::descriptors::any::DescriptorLoop;
+    use dvb_si::tables::pat::{PatEntry, PatSection};
+    use dvb_si::tables::pmt::{PmtSection, PmtStream};
+    use mpeg_ts::mux::SectionPacketiser;
+    use mpeg_ts::ts::TS_PACKET_SIZE;
+
+    let pat = PatSection {
+        transport_stream_id: 1,
+        version_number: version,
+        current_next_indicator: current_next,
+        section_number: 0,
+        last_section_number: 0,
+        entries: vec![PatEntry {
+            program_number: 1,
+            pid: PAT_PMT_PID,
+        }],
+    };
+    let mut pat_bytes = vec![0u8; pat.serialized_len()];
+    let n = pat.serialize_into(&mut pat_bytes).expect("serialize PAT");
+    pat_bytes.truncate(n);
+
+    let pmt = PmtSection::new(
+        1,
+        version,
+        current_next,
+        0,
+        0,
+        streams.first().map(|&(pid, _)| pid).unwrap_or(0x1FFF),
+        DescriptorLoop::new(&[]),
+        streams
+            .iter()
+            .map(|&(pid, stream_type)| PmtStream {
+                stream_type,
+                elementary_pid: pid,
+                es_info: DescriptorLoop::new(&[]),
+            })
+            .collect(),
+    );
+    let mut pmt_bytes = vec![0u8; pmt.serialized_len()];
+    let n = pmt.serialize_into(&mut pmt_bytes).expect("serialize PMT");
+    pmt_bytes.truncate(n);
+
+    let mut ts = Vec::new();
+    for packet in SectionPacketiser::new(dvb_si::tables::pat::PID).packetise(&[&pat_bytes]) {
+        ts.extend_from_slice(&packet);
+    }
+    for packet in SectionPacketiser::new(PAT_PMT_PID).packetise(&[&pmt_bytes]) {
+        ts.extend_from_slice(&packet);
+    }
+    assert_eq!(ts.len() % TS_PACKET_SIZE, 0);
+    ts
+}
+
+/// The PMT PID `pat_pmt_ts` declares, and the one TSDuck reports for
+/// `fixtures/ts/m6-single.ts`.
+const PAT_PMT_PID: u16 = 0x0064;
+
+/// A real capture: the check must *track* the PMT PID TSDuck reports, not
+/// merely fail to complain.
+///
+/// Cross-checked with TSDuck 3.44 (and `tstables` as a second read):
+///
+/// ```text
+/// $ tsanalyze fixtures/ts/m6-single.ts
+/// |  0x0000  PAT .......................................... C   Unknown |
+/// |  Service: 0x0401 (1025), TS: 0x0001 (1)                             |
+/// |  PMT PID: 0x0064 (100), PCR PID: 0x0078 (120)                       |
+/// $ tstables fixtures/ts/m6-single.ts --pid 0x0064
+/// ```
+#[test]
+fn pat_pmt_version_real_capture_tracks_the_tsduck_pmt_pid() {
+    // TSDuck's `tsanalyze` reports PID 0x0064 as the PMT PID of the single
+    // program in m6-single.ts.
+    const TSDUCK_PMT_PID: u16 = 0x0064;
+
+    let ts = fixture("m6-single.ts");
+    let mut report = Report::new();
+    PatPmtVersionCheck.run(&ts, &mut report);
+    assert!(
+        report
+            .findings()
+            .iter()
+            .all(|f| f.rule_id != "pat-version" && f.rule_id != "pmt-version"),
+        "TSDuck reports a steady PAT/PMT for m6-single.ts; got {:?}",
+        report.findings(),
+    );
+
+    // Positive proof the PAT was parsed and the PMT PID tracked: append a
+    // second generation of the PAT's own PMT with a bumped version. If the
+    // check never registered PID 0x0064, no `pmt-version` finding appears.
+    let original = ts.clone();
+    // Rewrite every PMT-bearing packet's version_number (the section spans
+    // several packets, so only the PUSI packet carries the header) and
+    // recompute the section CRC-32 (ISO/IEC 13818-1 Annex B). Mutating a
+    // whole generation, not one packet, is what the version gate compares.
+    let mut mutated = original.clone();
+    let mut bumped = 0usize;
+    for i in (0..mutated.len()).step_by(188) {
+        let pid = ((u16::from(mutated[i + 1] & 0x1F)) << 8) | u16::from(mutated[i + 2]);
+        if pid != TSDUCK_PMT_PID || mutated[i + 1] & 0x40 == 0 {
+            continue;
+        }
+        // Fixed 4-byte TS header, then the adaptation field (when present),
+        // then the `pointer_field` (present because PUSI is set).
+        let afc = (mutated[i + 3] >> 4) & 0x03;
+        let mut payload_start = i + 4;
+        if afc & 0x02 != 0 {
+            payload_start += 1 + usize::from(mutated[i + 4]);
+        }
+        payload_start += 1 + usize::from(mutated[payload_start]);
+        let section_len = 3
+            + (((usize::from(mutated[payload_start + 1]) & 0x0F) << 8)
+                | usize::from(mutated[payload_start + 2]));
+        let version_byte = payload_start + 5;
+        // version_number is bits 5-1; reserved bits 7-6 and cni at bit 0.
+        let old_version = (mutated[version_byte] >> 1) & 0x1F;
+        let new_version = if old_version == 0 { 1 } else { 0 };
+        mutated[version_byte] = (mutated[version_byte] & 0xE1) | (new_version << 1);
+        let crc = broadcast_common::crc32_mpeg2::compute(
+            &mutated[payload_start..payload_start + section_len - 4],
+        );
+        mutated[payload_start + section_len - 4..payload_start + section_len]
+            .copy_from_slice(&crc.to_be_bytes());
+        bumped += 1;
+    }
+    assert!(bumped > 0, "must find the PMT section TSDuck reports");
+
+    let mut with_bump = original;
+    with_bump.extend_from_slice(&mutated);
+    let mut report2 = Report::new();
+    PatPmtVersionCheck.run(&with_bump, &mut report2);
+    let versions: Vec<_> = report2
+        .findings()
         .iter()
-        .flat_map(|&(prog_num, pmt_pid)| {
-            vec![
-                (prog_num >> 8) as u8,
-                (prog_num & 0xFF) as u8,
-                0xE0 | ((pmt_pid >> 8) & 0x1F) as u8,
-                (pmt_pid & 0xFF) as u8,
-            ]
+        .filter(|f| f.rule_id == "pmt-version")
+        .collect();
+    // Two programs share PID 0x0064 in this capture (table_id_ext 0x0401 and
+    // 0x0601 — `tstables` reports both), and the bump above reaches both, so
+    // exactly two findings are due. Asserting the exact set, with the
+    // transition and severity, is what proves the PID was tracked *per
+    // program*; a count of "at least one" would have hidden the fact that
+    // the check distinguishes the two sub-tables.
+    assert_eq!(
+        versions.len(),
+        2,
+        "one PMT version change per program on PID {TSDUCK_PMT_PID:#06X}; got {:?}",
+        report2.findings(),
+    );
+    for finding in &versions {
+        assert_eq!(
+            finding.severity,
+            Severity::Info,
+            "a version change is informational; got {finding:?}",
+        );
+        assert!(
+            finding.message.contains("1 → 0"),
+            "the message must name the transition; got {:?}",
+            finding.message,
+        );
+    }
+    let extensions: Vec<&str> = versions
+        .iter()
+        .map(|f| {
+            f.message
+                .rsplit_once("table_id_ext=")
+                .expect("the finding names its table_id_ext")
+                .1
+                .trim_end_matches(')')
         })
         .collect();
+    assert!(
+        extensions.contains(&"0x0401") && extensions.contains(&"0x0601"),
+        "both programs on the shared PID must be distinguished by          table_id_ext; got {extensions:?}",
+    );
 
-    let section_length = 5 + 4 + entry_bytes.len() as u16 + 4; // header(5) + ext(4) + entries + CRC(4)
-    let mut data = Vec::with_capacity(3 + section_length as usize);
-    data.push(0x00); // table_id = PAT
-    data.push(0xB0 | ((section_length >> 8) & 0x0F) as u8); // syntax=1, reserved=11
-    data.push((section_length & 0xFF) as u8);
-    data.push((tsid >> 8) as u8);
-    data.push((tsid & 0xFF) as u8);
-    data.push(0xC0 | (version << 1) | 0x01); // reserved(2)=11, version, cni=1
-    data.push(0x00); // section_number = 0
-    data.push(0x00); // last_section_number = 0
-    data.extend_from_slice(&entry_bytes);
-    // CRC-32 (calculation below)
-    let crc = calc_crc32(&data[3..]); // from table_id_ext onwards
-    data.push(((crc >> 24) & 0xFF) as u8);
-    data.push(((crc >> 16) & 0xFF) as u8);
-    data.push(((crc >> 8) & 0xFF) as u8);
-    data.push((crc & 0xFF) as u8);
-    data
+    // And the aliased PID a hand-rolled 4-byte-stride walk would invent from
+    // the PAT's own CRC_32 (audit MD-W1(a)) must never be tracked.
+    assert!(
+        report2
+            .findings()
+            .iter()
+            .all(|f| f.location.pid != u32::from(PAT_CRC_ALIASED_PID)),
+        "PID {PAT_CRC_ALIASED_PID:#06X} is the PAT's CRC_32, never a PMT PID",
+    );
 }
 
-/// Build a PMT section for the given program number and PCR PID.
-fn build_pmt_section(program_number: u16, pcr_pid: u16, version: u8) -> Vec<u8> {
-    // Minimal PMT: program number, PCR PID, no descriptors, no streams.
-    let program_info_length = 0u16;
-    let section_length = 5 + 4 + program_info_length + 4; // header(5) + ext(4) + info + CRC(4)
-    let mut data = Vec::with_capacity(3 + section_length as usize);
-    data.push(0x02); // table_id = PMT
-    data.push(0xB0 | ((section_length >> 8) & 0x0F) as u8);
-    data.push((section_length & 0xFF) as u8);
-    data.push((program_number >> 8) as u8);
-    data.push((program_number & 0xFF) as u8);
-    data.push(0xC0 | (version << 1) | 0x01); // reserved(2)=11, version, cni=1
-    data.push(0x00); // section_number = 0
-    data.push(0x00); // last_section_number = 0
-    data.push(0xE0 | ((pcr_pid >> 8) & 0x1F) as u8); // reserved(3)=111
-    data.push((pcr_pid & 0xFF) as u8);
-    data.push(0xF0 | ((program_info_length >> 8) & 0x0F) as u8); // reserved(4)=1111
-    data.push((program_info_length & 0xFF) as u8);
-    // CRC-32
-    let crc = calc_crc32(&data[3..]);
-    data.push(((crc >> 24) & 0xFF) as u8);
-    data.push(((crc >> 16) & 0xFF) as u8);
-    data.push(((crc >> 8) & 0xFF) as u8);
-    data.push((crc & 0xFF) as u8);
-    data
-}
+/// The PID a hand-rolled 4-byte-stride walk over `m6-single.ts`'s PAT
+/// section body derives from the trailing CRC_32 bytes (audit MD-W1(a)):
+/// the PAT's CRC_32 is `F9 B4 63 EF`, so bytes 2..4 of it read as PID
+/// `0x03EF`.
+const PAT_CRC_ALIASED_PID: u16 = 0x03EF;
 
-/// Write a complete section payload into one TS packet on the given PID.
-fn write_section_to_ts(ts: &mut Vec<u8>, pid: u16, section_data: &[u8], cc: u8) {
-    let mut pkt = vec![0x47u8; 188];
-    pkt[1] = 0x40 | ((pid >> 8) as u8) & 0x1F; // PUSI=1
-    pkt[2] = (pid & 0xFF) as u8;
-    pkt[3] = 0x10 | cc; // AFC=01, CC=cc
-    pkt[4] = 0; // pointer_field = 0
-    let payload_start = 5;
-    let copy_len = (188 - payload_start).min(section_data.len());
-    pkt[payload_start..payload_start + copy_len].copy_from_slice(&section_data[..copy_len]);
-    ts.extend_from_slice(&pkt);
-}
+// ── PatPmtVersionCheck hostile-input tests ──────────────────────────────────
 
-/// Simple CRC-32/MPEG-2 calculation.
-fn calc_crc32(data: &[u8]) -> u32 {
-    let mut crc = 0xFFFF_FFFFu32;
-    for &b in data {
-        crc ^= (b as u32) << 24;
-        for _ in 0..8 {
-            if crc & 0x8000_0000 != 0 {
-                crc = (crc << 1) ^ 0x04C1_1DB7;
-            } else {
-                crc <<= 1;
-            }
-        }
+/// A PAT whose **payload** byte is corrupted (not just its CRC) must not
+/// register any PMT PID: discovery runs the same CRC + `current_next` gate
+/// as version tracking (audit MD-W1(a)/(c)).
+///
+/// The corrupt payload byte is chosen to flip a *program entry's* PID, so an
+/// ungated walk would start watching the corrupted PID — visible because
+/// that PID is fed PES bytes that reassemble into a `table_id 0x00` section,
+/// producing garbage `pat-version` findings once repeated.
+#[test]
+fn corrupt_pat_payload_registers_no_pmt_pid() {
+    use dvb_si::tables::pmt::StreamType;
+
+    // A corrupt PAT must be dropped rather than parsed. The decisive check
+    // that it registers no PMT PID lives in the module's own unit test
+    // (`pat_pmt_version::tests::corrupt_pat_registers_no_pmt_pid`), where the
+    // watched-PID set is observable; here the end-to-end observable is that
+    // the components the corrupt PAT names are never reached.
+    let one = pat_pmt_ts(&[(0x0101, StreamType::H264)], 0, true);
+    let mut corrupt = one.clone();
+    // Flip a byte in the PAT's program entry (payload, not CRC).
+    let entry_pid_lo = 5 + 8 + 3;
+    assert_eq!(corrupt[entry_pid_lo], (PAT_PMT_PID & 0xFF) as u8);
+    corrupt[entry_pid_lo] ^= 0xFF;
+
+    // A second, well-formed generation follows: the check must report nothing
+    // about the corrupt one (its version never enters the table).
+    let mut stream = Vec::new();
+    for _ in 0..2 {
+        stream.extend_from_slice(&corrupt);
+        stream.extend_from_slice(&one);
     }
-    crc ^ 0xFFFF_FFFF
+
+    let mut report = Report::new();
+    PatPmtVersionCheck.run(&stream, &mut report);
+    // The valid generation is constant, so no version finding is due; the
+    // corrupt one must not have introduced a phantom change.
+    assert!(
+        report
+            .findings()
+            .iter()
+            .all(|f| f.rule_id != "pat-version" && f.rule_id != "pmt-version"),
+        "a corrupt PAT must not introduce a phantom version change; got {:?}",
+        report.findings(),
+    );
+}
+
+/// A PAT declaring `program_number 0` (the NIT) and the reserved NULL PID
+/// must not put those PIDs under watch.
+#[test]
+fn nit_and_null_pids_are_not_tracked() {
+    use broadcast_common::Serialize;
+    use dvb_si::tables::pat::{PatEntry, PatSection};
+    use mpeg_ts::mux::SectionPacketiser;
+
+    let pat = PatSection {
+        transport_stream_id: 1,
+        version_number: 0,
+        current_next_indicator: true,
+        section_number: 0,
+        last_section_number: 0,
+        entries: vec![
+            PatEntry {
+                program_number: 0, // NIT
+                pid: 0x0010,
+            },
+            PatEntry {
+                program_number: 1,
+                pid: 0x1FFF, // reserved NULL PID
+            },
+        ],
+    };
+    let mut buf = vec![0u8; pat.serialized_len()];
+    let n = pat.serialize_into(&mut buf).expect("serialize PAT");
+    buf.truncate(n);
+
+    let mut ts = Vec::new();
+    for packet in SectionPacketiser::new(dvb_si::tables::pat::PID).packetise(&[&buf]) {
+        ts.extend_from_slice(&packet);
+    }
+    // Feed the two candidate PIDs bytes that would reassemble as a PAT-shaped
+    // section if they were ever watched.
+    for pid in [0x0010u16, 0x1FFF] {
+        let mut packet = vec![0x47u8; 188];
+        packet[1] = 0x40 | ((pid >> 8) as u8 & 0x1F);
+        packet[2] = (pid & 0xFF) as u8;
+        packet[3] = 0x10;
+        packet[4] = 0x00;
+        packet[5] = 0x00; // table_id 0x00 — a "PAT" if watched
+        packet[6] = 0xB0;
+        packet[7] = 0x0D;
+        ts.extend_from_slice(&packet);
+    }
+
+    let mut report = Report::new();
+    PatPmtVersionCheck.run(&ts, &mut report);
+    assert!(
+        report.findings().is_empty(),
+        "the NIT and NULL PIDs must never be put under watch; got {:?}",
+        report.findings(),
+    );
+}
+
+/// Hostile inputs must not panic: truncated sections, a section_length past
+/// the packet, and a zero-length section.
+#[test]
+fn hostile_pat_pmt_inputs_do_not_panic() {
+    // A PAT packet truncated to a few bytes.
+    for len in [0usize, 1, 3, 4, 5, 7, 12, 100, 187] {
+        let packet = vec![0x47u8; len];
+        let mut report = Report::new();
+        PatPmtVersionCheck.run(&packet, &mut report);
+    }
+
+    // A "PAT" section whose section_length claims more than the packet holds.
+    let mut packet = vec![0x47u8; 188];
+    packet[1] = 0x40;
+    packet[2] = 0x00;
+    packet[3] = 0x10;
+    packet[4] = 0x00; // pointer_field
+    packet[5] = 0x00; // table_id PAT
+    packet[6] = 0xBF; // section_syntax=1, section_length high = 0xFFF
+    packet[7] = 0xFF;
+    let mut report = Report::new();
+    PatPmtVersionCheck.run(&packet, &mut report);
+    assert!(
+        report.findings().is_empty(),
+        "an over-long section_length must be rejected, not parsed; got {:?}",
+        report.findings(),
+    );
+
+    // A zero-length section body.
+    let mut packet = vec![0x47u8; 188];
+    packet[1] = 0x40;
+    packet[2] = 0x00;
+    packet[3] = 0x10;
+    packet[4] = 0x00;
+    packet[5] = 0x00; // table_id PAT
+    packet[6] = 0xB0; // section_length = 0
+    packet[7] = 0x00;
+    let mut report = Report::new();
+    PatPmtVersionCheck.run(&packet, &mut report);
+}
+
+/// PES data arriving on a PID that carries a PMT must not be reassembled
+/// into a section and misinterpreted (ISO/IEC 13818-1 §2.4.3.7 start code).
+#[test]
+fn pes_on_a_pmt_pid_is_not_read_as_a_section() {
+    use dvb_si::tables::pmt::StreamType;
+
+    let mut ts = pat_pmt_ts(&[(0x0101, StreamType::H264)], 0, true);
+    // PES start code on the same PID as the PMT: `00 00 01 E0` declares a
+    // section with table_id 0x00 and section_length 0 — not a PMT.
+    for cc in 0..4u8 {
+        let mut packet = vec![0x47u8; 188];
+        packet[1] = 0x40 | ((PAT_PMT_PID >> 8) as u8 & 0x1F);
+        packet[2] = (PAT_PMT_PID & 0xFF) as u8;
+        packet[3] = 0x10 | (cc & 0x0F);
+        packet[4] = 0x00;
+        packet[5..9].copy_from_slice(&[0x00, 0x00, 0x01, 0xE0]);
+        ts.extend_from_slice(&packet);
+    }
+    let mut report = Report::new();
+    PatPmtVersionCheck.run(&ts, &mut report);
+    assert!(
+        report.findings().is_empty(),
+        "a PES start code on a PMT PID must not be read as a section; got {:?}",
+        report.findings(),
+    );
 }
 
 // ── PcrCheck tests ───────────────────────────────────────────────────────────

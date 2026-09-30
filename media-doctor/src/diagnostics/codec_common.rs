@@ -104,6 +104,25 @@ pub(crate) fn collect_pmt_streams(ts: &[u8]) -> Vec<DeclaredStream> {
         .collect()
 }
 
+/// Scan `payload` for a byte offset at which a well-formed ADTS header parses
+/// (ISO/IEC 13818-7 §6.2, via [`transmux::parse_adts_header`]) — not assumed
+/// to sit at offset 0, so this tolerates leading PES stuffing.
+///
+/// Shared by every check that asks whether an AAC stream is really
+/// ADTS-framed (`CodecSignallingCheck`, `media-doctor watch`); it lived as two
+/// identical copies before (audit MD-W10).
+pub(crate) fn has_adts_sync(payload: &[u8]) -> bool {
+    const ADTS_MIN: usize = 7;
+    if payload.len() < ADTS_MIN {
+        return false;
+    }
+    (0..=payload.len() - ADTS_MIN).any(|off| {
+        payload[off] == 0xFF
+            && (payload[off + 1] & 0xF0) == 0xF0
+            && transmux::parse_adts_header(&payload[off..]).is_ok()
+    })
+}
+
 /// Elementary-stream PIDs among `streams` matching `stream_type`, in PMT wire
 /// order.
 pub(crate) fn pids_with_stream_type(
@@ -200,10 +219,22 @@ pub(crate) mod tests {
     /// all. Used to test the "PMT declares a stream that never decodes"
     /// signalling-mismatch path.
     pub(crate) fn build_pat_pmt_ts(streams: &[(u16, StreamType)]) -> Vec<u8> {
+        build_pat_pmt_ts_versioned(streams, 0, true)
+    }
+
+    /// As [`build_pat_pmt_ts`], with an explicit `version_number` and
+    /// `current_next_indicator`, so version-change tests can build a real
+    /// second generation (or an ISO/IEC 13818-1 §2.4.4.11 next-generation
+    /// section) through `dvb-si`'s own builders rather than hand-rolled bytes.
+    pub(crate) fn build_pat_pmt_ts_versioned(
+        streams: &[(u16, StreamType)],
+        version_number: u8,
+        current_next_indicator: bool,
+    ) -> Vec<u8> {
         let pat = PatSection {
             transport_stream_id: 1,
-            version_number: 0,
-            current_next_indicator: true,
+            version_number,
+            current_next_indicator,
             section_number: 0,
             last_section_number: 0,
             entries: alloc::vec![PatEntry {
@@ -222,8 +253,8 @@ pub(crate) mod tests {
         let pcr_pid = streams.first().map(|&(pid, _)| pid).unwrap_or(0x1FFF);
         let pmt = PmtSection::new(
             1,
-            0,
-            true,
+            version_number,
+            current_next_indicator,
             0,
             0,
             pcr_pid,
@@ -240,6 +271,55 @@ pub(crate) mod tests {
         }
         for pkt in SectionPacketiser::new(TEST_PMT_PID).packetise(&[&pmt_bytes]) {
             ts.extend_from_slice(&pkt);
+        }
+        assert_eq!(ts.len() % TS_PACKET_SIZE, 0);
+        ts
+    }
+
+    /// A PAT declaring several programs whose PMTs share one PSI PID (legal —
+    /// ISO/IEC 13818-1 §2.4.4.8; the sub-tables are distinguished by
+    /// `table_id_extension`), each PMT carrying one elementary stream
+    /// `(program_number, elementary_pid, stream_type, version_number)`.
+    pub(crate) fn build_shared_pid_pmt_ts(programs: &[(u16, u16, StreamType, u8)]) -> Vec<u8> {
+        let pat = PatSection {
+            transport_stream_id: 1,
+            version_number: 0,
+            current_next_indicator: true,
+            section_number: 0,
+            last_section_number: 0,
+            entries: programs
+                .iter()
+                .map(|&(program_number, _, _, _)| PatEntry {
+                    program_number,
+                    pid: TEST_PMT_PID,
+                })
+                .collect(),
+        };
+        let pat_bytes = serialize_section(&pat);
+
+        let mut ts = Vec::new();
+        for pkt in SectionPacketiser::new(dvb_si::tables::pat::PID).packetise(&[&pat_bytes]) {
+            ts.extend_from_slice(&pkt);
+        }
+        for &(program_number, elementary_pid, stream_type, version_number) in programs {
+            let pmt = PmtSection::new(
+                program_number,
+                version_number,
+                true,
+                0,
+                0,
+                elementary_pid,
+                DescriptorLoop::new(&[]),
+                alloc::vec![PmtStream {
+                    stream_type,
+                    elementary_pid,
+                    es_info: DescriptorLoop::new(&[]),
+                }],
+            );
+            let pmt_bytes = serialize_section(&pmt);
+            for pkt in SectionPacketiser::new(TEST_PMT_PID).packetise(&[&pmt_bytes]) {
+                ts.extend_from_slice(&pkt);
+            }
         }
         assert_eq!(ts.len() % TS_PACKET_SIZE, 0);
         ts
@@ -274,6 +354,35 @@ pub(crate) mod tests {
         pkt[4..4 + len].copy_from_slice(&pes_bytes[..len]);
         pkt
     }
+
+    /// A single real PMT section, on `pid`, for program 1 declaring one H.264
+    /// elementary stream — used to plant a PMT on a PID a PAT does *not*
+    /// declare (a corrupted/aliased multiplex) without involving the PAT.
+    pub(crate) fn build_pmt_ts_on_pid(pid: u16, version_number: u8) -> Vec<u8> {
+        let pmt = PmtSection::new(
+            1,
+            version_number,
+            true,
+            0,
+            0,
+            ELEMENTARY_PID,
+            DescriptorLoop::new(&[]),
+            alloc::vec![PmtStream {
+                stream_type: StreamType::H264,
+                elementary_pid: ELEMENTARY_PID,
+                es_info: DescriptorLoop::new(&[]),
+            }],
+        );
+        let pmt_bytes = serialize_section(&pmt);
+        let mut ts = Vec::new();
+        for pkt in SectionPacketiser::new(pid).packetise(&[&pmt_bytes]) {
+            ts.extend_from_slice(&pkt);
+        }
+        ts
+    }
+
+    /// Elementary-stream PID used by every test fixture built here.
+    pub(crate) const ELEMENTARY_PID: u16 = 0x0101;
 }
 
 #[cfg(test)]

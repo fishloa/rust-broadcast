@@ -37,13 +37,19 @@ broadcast_common::impl_spec_display!(Severity);
 pub struct Location {
     /// 0-based TS packet index within the stream.
     pub packet: usize,
-    /// PID on which the issue was detected (0 if unknown / N/A).
-    pub pid: u16,
+    /// PID (or, for container-level checks, media track id) on which the
+    /// issue was detected (0 if unknown / N/A).
+    ///
+    /// `u32`, not `u16`: a TS PID is 13 bits, but the same field also carries
+    /// a media **track id** for container checks, and ISO/IEC 14496-12
+    /// `track_ID` is a 32-bit field. Narrowing it silently aliased every
+    /// track id above 65535 onto a lower one.
+    pub pid: u32,
 }
 
 impl Location {
     /// Create a new location.
-    pub fn new(packet: usize, pid: u16) -> Self {
+    pub fn new(packet: usize, pid: u32) -> Self {
         Self { packet, pid }
     }
 }

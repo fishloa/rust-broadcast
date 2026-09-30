@@ -25,7 +25,7 @@ impl Diagnostic for SyncByteCheck {
                     Severity::Error,
                     Location::new(
                         i,
-                        u16::from_be_bytes([ts[offset + 1], ts[offset + 2]]) & 0x1FFF,
+                        u32::from(u16::from_be_bytes([ts[offset + 1], ts[offset + 2]]) & 0x1FFF),
                     ),
                     "sync-byte",
                     alloc::format!(
