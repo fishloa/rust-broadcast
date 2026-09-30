@@ -186,7 +186,10 @@ impl Serialize for XmlSubtitleSampleEntry {
         c += 4;
         buf[c..c + 4].copy_from_slice(b"stpp");
         c += 4;
-        // SampleEntry: reserved(6) zeros + data_reference_index(16)
+        // SampleEntry: reserved(6) zeros + data_reference_index(16). The zeros
+        // are written, not skipped: a reused/dirty caller buffer would
+        // otherwise keep garbage there (r04-W45).
+        buf[c..c + 6].fill(0);
         c += 6;
         buf[c..c + 2].copy_from_slice(&self.data_reference_index.to_be_bytes());
         c += 2;
@@ -797,7 +800,10 @@ impl Serialize for WvttSampleEntry {
         c += 4;
         buf[c..c + 4].copy_from_slice(b"wvtt");
         c += 4;
-        // SampleEntry: reserved(6) zeros + data_reference_index(16)
+        // SampleEntry: reserved(6) zeros + data_reference_index(16). Written
+        // explicitly so a reused/dirty caller buffer cannot leave garbage in the
+        // reserved bytes (r04-W45).
+        buf[c..c + 6].fill(0);
         c += 6;
         buf[c..c + 2].copy_from_slice(&self.data_reference_index.to_be_bytes());
         c += 2;
@@ -858,5 +864,31 @@ mod tests {
         assert_eq!(&bytes[4..8], b"vtte");
         let parsed = VttEmptyCueBox::bare_parse(&bytes).unwrap();
         assert_eq!(parsed.to_bytes(), bytes);
+    }
+
+    /// r04-W45: the `stpp`/`wvtt` SampleEntry reserved 6 bytes must be written
+    /// as zeros, not skipped — `Serialize` accepts any `&mut [u8]`, so a dirty
+    /// caller buffer would otherwise leak garbage into a reserved field.
+    /// Serializing into a 0xFF-filled buffer must equal `to_bytes()`.
+    #[test]
+    fn reserved_bytes_written_as_zeros_into_a_dirty_buffer() {
+        fn check<T: Serialize>(value: &T, what: &str)
+        where
+            <T as Serialize>::Error: core::fmt::Debug,
+        {
+            let clean = value.to_bytes();
+            let mut dirty = alloc::vec![0xFFu8; clean.len()];
+            value
+                .serialize_into(&mut dirty)
+                .expect("serialize into a correctly-sized buffer");
+            assert_eq!(dirty, clean, "{what}: dirty-buffer bytes must match");
+            // The six reserved bytes sit right after the 8-byte box header.
+            assert_eq!(&clean[8..14], &[0u8; 6], "{what}: 6 reserved bytes");
+        }
+        check(
+            &XmlSubtitleSampleEntry::new("http://www.w3.org/ns/ttml"),
+            "stpp",
+        );
+        check(&WvttSampleEntry::new("WEBVTT"), "wvtt");
     }
 }

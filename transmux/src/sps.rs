@@ -824,8 +824,9 @@ pub struct VvcSpsInfo {
 ///
 /// `sps_bytes` is the full NAL unit including the 2-byte VVC NAL header. Only
 /// the fields up to `sps_pic_height_max_in_luma_samples` are decoded; the
-/// `general_constraint_info()` block is handled per §7.3.3.2 (only the leading
-/// `gci_present_flag` and byte-alignment are needed to reach the dimensions).
+/// `general_constraint_info()` block is stepped past per §7.3.3.2 (its fields
+/// are not needed for the dimensions, but the block is longer than one byte so
+/// it must be skipped exactly, not merely aligned).
 pub fn decode_vvc_sps(sps_bytes: &[u8]) -> Result<VvcSpsInfo> {
     if sps_bytes.len() < 2 {
         return Err(Error::BufferTooShort {
@@ -890,18 +891,15 @@ fn decode_vvc_ptl(r: &mut BitReader, max_sublayers_minus1: u8) -> Result<(u8, bo
     let _ = r.read_flag("ptl_frame_only_constraint_flag")?;
     let _ = r.read_flag("ptl_multilayer_enabled_flag")?;
 
-    // general_constraints_info() — §7.3.3.2. gci_present_flag u(1); when 0,
-    // gci_alignment_zero_bit padding follows to a byte boundary.
-    let gci_present = r.read_flag("gci_present_flag")?;
-    if gci_present {
-        return Err(Error::InvalidValue {
-            field: "gci_present_flag",
-            value: 1,
-            reason: "general_constraint_info block not decoded (unsupported in this SPS reader)",
-        });
-    }
-    // gci_alignment_zero_bit until byte-aligned.
-    r.align_to_byte("gci_alignment_zero_bit")?;
+    // general_constraints_info() — §7.3.3.2. `gci_present_flag u(1)` then,
+    // when set, the constraint-flag block: 3 + 4 + 2 + 16 + 2 + 43 bits, then
+    // `gci_num_additional_bits u(8)` and, when it exceeds 5, six more flags
+    // plus `gci_num_additional_bits - 6` reserved bits. Finally
+    // `gci_alignment_zero_bit` pads to a byte boundary. A
+    // `gci_present_flag == 1` SPS is ordinary in the field; none of the block
+    // is needed for the dimensions, but it must be skipped exactly (aligning
+    // straight after the flag under-skips, since the block is not one byte).
+    skip_general_constraints_info(r)?;
 
     // ptl_sublayer_level_present_flag[i] for i = MaxNumSubLayersMinus1-1 .. 0.
     let mut sublayer_present = [false; 8];
@@ -924,6 +922,51 @@ fn decode_vvc_ptl(r: &mut BitReader, max_sublayers_minus1: u8) -> Result<(u8, bo
     }
 
     Ok((general_profile_idc, general_tier_flag, general_level_idc))
+}
+
+/// `general_constraints_info()` flag-block bit widths, in order, before
+/// `gci_num_additional_bits` — ITU-T H.266 §7.3.3.2: 3 general flags, then a
+/// 4-bit and a 2-bit constraint idc (picture format), then 16 NAL-unit,
+/// tile/slice, and CTU/block-partition flags, another 2-bit idc, and 43
+/// intra/inter/transform/loop-filter flags. Used only to step past the block.
+const GCI_FLAG_BLOCK_BITS: [usize; 6] = [3, 4, 2, 16, 2, 43];
+
+/// `gci_num_additional_bits` is followed by this many extra flags when it
+/// exceeds five (§7.3.3.2: `numAdditionalBitsUsed = 6`).
+const GCI_ADDITIONAL_FLAG_BITS: usize = 6;
+
+/// The `gci_num_additional_bits` threshold above which the six additional
+/// flags are present (§7.3.3.2 `if (gci_num_additional_bits > 5)`).
+const GCI_ADDITIONAL_THRESHOLD: u64 = 5;
+
+/// Skip `general_constraints_info()` (ITU-T H.266 §7.3.3.2), whose fields are
+/// not needed to reach the SPS dimensions — but which must be stepped past
+/// exactly, since the block is longer than the byte its leading flag sits in.
+fn skip_general_constraints_info(r: &mut BitReader) -> Result<()> {
+    let present = r.read_flag("gci_present_flag")?;
+    if present {
+        for bits in GCI_FLAG_BLOCK_BITS {
+            let _ = r.read_bits(bits, "general_constraints_info flag")?;
+        }
+        let additional = r.read_bits(8, "gci_num_additional_bits")?;
+        // §7.3.3.2: `numAdditionalBitsUsed = 6` when the count exceeds five
+        // (the six extra constraint flags), else 0; then
+        // `gci_num_additional_bits - numAdditionalBitsUsed` `gci_reserved_bit`s.
+        // For a count of 1..=5 that is that many reserved bits — *not* none —
+        // so skipping straight to the alignment would over-read.
+        let used = if additional > GCI_ADDITIONAL_THRESHOLD {
+            let _ = r.read_bits(GCI_ADDITIONAL_FLAG_BITS, "gci additional constraint flag")?;
+            GCI_ADDITIONAL_FLAG_BITS as u64
+        } else {
+            0
+        };
+        for _ in 0..(additional - used) {
+            let _ = r.read_bits(1, "gci_reserved_bit[i]")?;
+        }
+    }
+    // gci_alignment_zero_bit until byte-aligned (§7.3.3.2).
+    r.align_to_byte("gci_alignment_zero_bit")?;
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -1037,7 +1080,7 @@ pub fn rfc6381_vvc1(
     general_profile_idc: u8,
     general_tier_flag: bool,
     general_level_idc: u8,
-    general_constraint_info: u64,
+    general_constraint_info: &[u8],
     num_bytes_constraint_info: u8,
 ) -> String {
     let mut s = String::with_capacity(24);
@@ -1047,27 +1090,16 @@ pub fn rfc6381_vvc1(
     s.push(if general_tier_flag { 'H' } else { 'L' });
     write_decimal(&mut s, general_level_idc);
 
-    // Constraint suffix: the general_constraint_info payload, MSB-aligned into
-    // its byte block, emitted as `CTA-` + hex with trailing zero bytes dropped.
-    if num_bytes_constraint_info > 0 && general_constraint_info != 0 {
-        // The stored payload is (8*n - 2) bits (the two leading PTL flags are
-        // separate); left-align it into the n-byte block for the string form.
+    // Constraint suffix: the general_constraint_info payload, already
+    // MSB-aligned into its `num_bytes_constraint_info`-byte block, emitted as
+    // `CTA-` + hex with trailing zero bytes dropped.
+    if num_bytes_constraint_info > 0 {
         let n = num_bytes_constraint_info as usize;
-        let payload_bits = n * 8 - 2;
-        let aligned = general_constraint_info << (n * 8 - payload_bits);
-        let mut bytes = [0u8; 8];
-        for (i, b) in bytes.iter_mut().enumerate() {
-            let shift = (n - 1 - i) * 8;
-            *b = if i < n {
-                ((aligned >> shift) & 0xFF) as u8
-            } else {
-                0
-            };
-        }
-        let last = bytes[..n].iter().rposition(|&b| b != 0);
-        if let Some(end) = last {
+        // Only the bytes actually read are meaningful; `n` is the block width.
+        let block = &general_constraint_info[..general_constraint_info.len().min(n)];
+        if let Some(end) = block.iter().rposition(|&b| b != 0) {
             s.push_str(".CTA-");
-            for &b in &bytes[..=end] {
+            for &b in &block[..=end] {
                 write_hex_byte(&mut s, b);
             }
         }
@@ -1423,6 +1455,247 @@ mod tests {
             );
         }
         // If it returns Err, that is also correct — no panic is the invariant here.
+    }
+
+    // -------------------------------------------------------------------
+    // H.266/VVC SPS — general_constraints_info() with gci_present_flag == 1
+    // -------------------------------------------------------------------
+
+    /// Build a VVC SPS NAL whose `general_constraints_info()` has
+    /// `gci_present_flag == 1` and the given `gci_num_additional_bits`, with all
+    /// constraint flags zero and the dimensions `width`x`height`. Mirrors
+    /// ITU-T H.266 §7.3.3.2 exactly, so a reader that mis-skips the block
+    /// lands on the wrong bit and mis-decodes the dimensions.
+    fn vvc_sps_with_gci(additional: u8, width: u64, height: u64) -> Vec<u8> {
+        /// 3 general + 4-bit idc + 2-bit idc + 16 NAL/tile/CTU + 2-bit idc +
+        /// 43 intra/inter/transform/loop-filter flags (§7.3.3.2).
+        const GCI_FLAG_BITS: u32 = 3 + 4 + 2 + 16 + 2 + 43;
+        let mut s = BitSink::new();
+        s.bits(0, 8); // sps_seq_parameter_set_id, sps_video_parameter_set_id
+        s.bits(0, 3); // sps_max_sublayers_minus1
+        s.bits(1, 2); // sps_chroma_format_idc (4:2:0)
+        s.bits(0, 2); // sps_log2_ctu_size_minus5
+        s.bit(true); // sps_ptl_dpb_hrd_params_present_flag
+        s.bits(1, 7); // general_profile_idc
+        s.bit(false); // general_tier_flag
+        s.bits(32, 8); // general_level_idc
+        s.bit(false); // ptl_frame_only_constraint_flag
+        s.bit(false); // ptl_multilayer_enabled_flag
+        s.bit(true); // gci_present_flag
+        for _ in 0..GCI_FLAG_BITS {
+            s.bit(false);
+        }
+        s.bits(u64::from(additional), 8); // gci_num_additional_bits
+        if additional > 5 {
+            for _ in 0..6 {
+                s.bit(false); // the six extra constraint flags
+            }
+            for _ in 0..(additional - 6) {
+                s.bit(false); // gci_reserved_bit[i]
+            }
+        } else {
+            for _ in 0..additional {
+                s.bit(false); // gci_reserved_bit[i] — none skipped for 1..=5
+            }
+        }
+        while !s.nbits.is_multiple_of(8) {
+            s.bit(false); // gci_alignment_zero_bit
+        }
+        s.bits(0, 8); // ptl_num_sub_profiles
+        s.bit(false); // sps_gdr_enabled_flag
+        s.bit(false); // sps_ref_pic_resampling_enabled_flag
+        s.ue(width);
+        s.ue(height);
+        let rbsp = s.finish();
+        // Insert emulation-prevention bytes (H.266 §7.4.2.1 / H.264 §7.4.1.1:
+        // a `0x03` after any `00 00` that precedes a byte <= 0x03), because the
+        // RBSP reader unescapes and an unescaped `00 00 00` would shift the
+        // whole bitstream.
+        let mut escaped = Vec::with_capacity(rbsp.len() + 4);
+        let mut zeros = 0usize;
+        for &byte in &rbsp {
+            if zeros >= 2 && byte <= 0x03 {
+                escaped.push(0x03);
+                zeros = 0;
+            }
+            escaped.push(byte);
+            zeros = if byte == 0 { zeros + 1 } else { 0 };
+        }
+        let mut nal = alloc::vec![0x00, 0x00];
+        nal.extend_from_slice(&escaped);
+        nal[1] = 15 << 3; // nal_unit_type 15 = SPS
+        nal
+    }
+
+    /// Every `gci_num_additional_bits` shape decodes the same dimensions: the
+    /// reserved-bit count is `n - (n > 5 ? 6 : 0)` (§7.3.3.2), so 1..=5 skip
+    /// exactly `n` bits — the case a naive "align straight after the count"
+    /// reader gets wrong.
+    #[test]
+    fn vvc_sps_gci_additional_bits_counts_decode_dimensions() {
+        for additional in [0u8, 1, 3, 5, 6, 8, 255] {
+            let nal = vvc_sps_with_gci(additional, 1920, 1080);
+            let info = decode_vvc_sps(&nal)
+                .unwrap_or_else(|e| panic!("additional={additional} must decode, got {e:?}"));
+            assert_eq!(
+                (info.width, info.height),
+                (1920, 1080),
+                "additional={additional} must land on the right dimensions"
+            );
+        }
+    }
+
+    /// Hostile input: a truncated GCI-present SPS with each additional-bits
+    /// count is an `Err`, never a panic.
+    #[test]
+    fn vvc_sps_gci_truncated_is_error_not_panic_for_every_count() {
+        for additional in [0u8, 3, 5, 6, 8, 255] {
+            let nal = vvc_sps_with_gci(additional, 1920, 1080);
+            // The NAL is 2 header bytes + the RBSP; every cut from inside the
+            // GCI region (which starts at byte 4: the 4-bit+4-bit ids, 3-bit
+            // sublayers, 2-bit chroma and 2-bit CTU occupy byte 2, and the PTL
+            // fields follow) up to the last byte must be an `Err`, never a
+            // panic. `additional=255` makes the region long, so most cuts land
+            // in it.
+            for cut in 4..nal.len() {
+                assert!(
+                    decode_vvc_sps(&nal[..cut]).is_err(),
+                    "additional={additional} cut={cut} of {} must error",
+                    nal.len()
+                );
+            }
+        }
+    }
+
+    /// A `general_constraints_info()` block with `gci_present_flag == 1` is
+    /// ordinary in the field (ITU-T H.266 §7.3.3.2) and must not fail the SPS —
+    /// the block is skipped exactly (flags, `gci_num_additional_bits`, its
+    /// reserved bits) and then aligned, after which the dimensions follow.
+    #[test]
+    fn vvc_sps_gci_present_flag_is_skipped_to_dimensions() {
+        const GCI_BITS: u32 = 1 + 3 + 4 + 2 + 13 + 6 + 3 + 6 + 15 + 7 + 5 + 6 + 8;
+        let mut s = BitSink::new();
+        // sps_seq_parameter_set_id u(4), sps_video_parameter_set_id u(4)
+        s.bits(0, 8);
+        // sps_max_sublayers_minus1 u(3) == 0
+        s.bits(0, 3);
+        // sps_chroma_format_idc u(2) == 1 (4:2:0), sps_log2_ctu_size_minus5 u(2)
+        s.bits(1, 2);
+        s.bits(0, 2);
+        // sps_ptl_dpb_hrd_params_present_flag u(1) == 1
+        s.bit(true);
+        // profile_tier_level(1, 0):
+        s.bits(1, 7); // general_profile_idc
+        s.bit(false); // general_tier_flag
+        s.bits(32, 8); // general_level_idc
+        s.bit(false); // ptl_frame_only_constraint_flag
+        s.bit(false); // ptl_multilayer_enabled_flag
+        // general_constraints_info(): gci_present_flag == 1 then 78 zero bits.
+        s.bit(true);
+        for _ in 1..GCI_BITS {
+            s.bit(false);
+        }
+        // gci_alignment_zero_bit to the byte boundary (computed by the sink).
+        while !s.nbits.is_multiple_of(8) {
+            s.bit(false);
+        }
+        // ptl_num_sub_profiles u(8) == 0
+        s.bits(0, 8);
+        // sps_gdr_enabled_flag, sps_ref_pic_resampling_enabled_flag
+        s.bit(false);
+        s.bit(false);
+        // sps_pic_width_max_in_luma_samples ue(v) == 1920
+        s.ue(1920);
+        // sps_pic_height_max_in_luma_samples ue(v) == 1080
+        s.ue(1080);
+        let rbsp = s.finish();
+
+        // A VVC SPS NAL: 2-byte header (nal_unit_type 15 = SPS) then the RBSP.
+        let mut nal = alloc::vec![0x00, 0x00];
+        nal.extend_from_slice(&rbsp);
+        // nal_unit_type is the low 5 bits of byte 1: 15 = SPS.
+        nal[1] = 15 << 3;
+        let info = decode_vvc_sps(&nal).expect("a GCI-present SPS must decode");
+        assert_eq!(info.chroma_format_idc, 1);
+        assert_eq!(info.general_profile_idc, 1);
+        assert_eq!(info.general_level_idc, 32);
+        assert_eq!(info.width, 1920);
+        assert_eq!(info.height, 1080);
+    }
+
+    /// The same SPS with `gci_present_flag == 0` still decodes (the pre-fix
+    /// path), pinning that the fix did not change the present-flag-0 layout.
+    #[test]
+    fn vvc_sps_gci_absent_still_decodes() {
+        let mut s = BitSink::new();
+        s.bits(0, 8); // ids
+        s.bits(0, 3); // sps_max_sublayers_minus1
+        s.bits(1, 2); // sps_chroma_format_idc
+        s.bits(0, 2); // sps_log2_ctu_size_minus5
+        s.bit(true); // sps_ptl_dpb_hrd_params_present_flag
+        s.bits(1, 7); // general_profile_idc
+        s.bit(false); // general_tier_flag
+        s.bits(32, 8); // general_level_idc
+        s.bit(false); // ptl_frame_only_constraint_flag
+        s.bit(false); // ptl_multilayer_enabled_flag
+        s.bit(false); // gci_present_flag == 0
+        while !s.nbits.is_multiple_of(8) {
+            s.bit(false); // gci_alignment_zero_bit
+        }
+        s.bits(0, 8); // ptl_num_sub_profiles
+        s.bit(false); // sps_gdr_enabled_flag
+        s.bit(false); // sps_ref_pic_resampling_enabled_flag
+        s.ue(640);
+        s.ue(360);
+        let rbsp = s.finish();
+        let mut nal = alloc::vec![0x00, 0x00];
+        nal.extend_from_slice(&rbsp);
+        nal[1] = 15 << 3;
+        let info = decode_vvc_sps(&nal).expect("GCI-absent SPS must decode");
+        assert_eq!((info.width, info.height), (640, 360));
+    }
+
+    /// `sps_pic_width_max_in_luma_samples` is `ue(v)` (unbounded), so a coded
+    /// size above `u16::MAX` must be reported as-is rather than truncated to
+    /// its low 16 bits (#997 class). 70 000 truncated to `u16` would be 4464.
+    #[test]
+    fn vvc_sps_width_above_u16_is_not_truncated() {
+        let mut s = BitSink::new();
+        s.bits(0, 8); // ids
+        s.bits(0, 3); // sps_max_sublayers_minus1
+        s.bits(1, 2); // sps_chroma_format_idc
+        s.bits(0, 2); // sps_log2_ctu_size_minus5
+        s.bit(true); // sps_ptl_dpb_hrd_params_present_flag
+        s.bits(1, 7); // general_profile_idc
+        s.bit(false); // general_tier_flag
+        s.bits(32, 8); // general_level_idc
+        s.bit(false); // ptl_frame_only_constraint_flag
+        s.bit(false); // ptl_multilayer_enabled_flag
+        s.bit(false); // gci_present_flag == 0
+        while !s.nbits.is_multiple_of(8) {
+            s.bit(false);
+        }
+        s.bits(0, 8); // ptl_num_sub_profiles
+        s.bit(false); // sps_gdr_enabled_flag
+        s.bit(false); // sps_ref_pic_resampling_enabled_flag
+        s.ue(70_000);
+        s.ue(70_000);
+        let rbsp = s.finish();
+        let mut nal = alloc::vec![0x00, 0x00];
+        nal.extend_from_slice(&rbsp);
+        nal[1] = 15 << 3;
+        let info = decode_vvc_sps(&nal).expect("oversized SPS must decode");
+        assert_eq!((info.width, info.height), (70_000, 70_000));
+    }
+
+    /// Hostile input: a truncated GCI-present SPS is an `Err`, never a panic.
+    #[test]
+    fn vvc_sps_gci_present_truncated_is_error_not_panic() {
+        // Only the header + a few bits: the dimensions are never reached.
+        let nal: &[u8] = &[0x00, 0x78, 0x00, 0x40];
+        assert!(decode_vvc_sps(nal).is_err());
+        // A two-byte header alone (the minimum for the reader to start).
+        assert!(decode_vvc_sps(&[0x00, 0x78]).is_err());
     }
 
     // -------------------------------------------------------------------

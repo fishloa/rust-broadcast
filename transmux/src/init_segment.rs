@@ -560,7 +560,10 @@ impl Serialize for MediaHeaderBox {
             buf[c..c + 2].copy_from_slice(&self.language.to_be_bytes());
             c += 2;
         }
-        Ok(c + 2) // +2 for the quality field (reserved)
+        // quality(16), reserved = 0 — written, not just counted, so a reused
+        // caller buffer cannot keep garbage there (r04-W45).
+        buf[c..c + 2].fill(0);
+        Ok(c + 2)
     }
 }
 
@@ -629,10 +632,14 @@ impl Serialize for HandlerBox {
         let fb = self.flags.to_be_bytes();
         buf[c..c + 3].copy_from_slice(&fb[1..]);
         c += 3;
-        c += 4; // pre_defined
+        // pre_defined(32) = 0, written rather than skipped (r04-W45).
+        buf[c..c + 4].fill(0);
+        c += 4;
         buf[c..c + 4].copy_from_slice(&self.handler_type);
         c += 4;
-        c += 12; // reserved * 3
+        // reserved[3] (12 bytes) = 0, written rather than skipped (r04-W45).
+        buf[c..c + 12].fill(0);
+        c += 12;
         if !self.name.is_empty() {
             buf[c..c + self.name.len()].copy_from_slice(&self.name);
         }
@@ -771,7 +778,9 @@ impl Serialize for SoundMediaHeaderBox {
         c += 3;
         buf[c..c + 2].copy_from_slice(&self.balance.to_be_bytes());
         c += 2;
-        c += 2; // reserved
+        // reserved(16) = 0, written rather than skipped (r04-W45).
+        buf[c..c + 2].fill(0);
+        c += 2;
         Ok(c)
     }
 }
@@ -1909,17 +1918,22 @@ fn serialize_audio_sample_entry(
     c += 4;
     buf[c..c + 4].copy_from_slice(fourcc);
     c += 4;
-    // SampleEntry: reserved(6) + data_reference_index(2)
+    // SampleEntry: reserved(6) zeros + data_reference_index(2). Written, not
+    // skipped, so a reused caller buffer cannot keep garbage (r04-W45).
+    buf[c..c + 6].fill(0);
     c += 6;
     buf[c..c + 2].copy_from_slice(&data_reference_index.to_be_bytes());
     c += 2;
-    // AudioSampleEntry: reserved[2] (8 bytes)
+    // AudioSampleEntry: reserved[2] (8 bytes) = 0, written (r04-W45).
+    buf[c..c + 8].fill(0);
     c += 8;
     buf[c..c + 2].copy_from_slice(&channelcount.to_be_bytes());
     c += 2;
     buf[c..c + 2].copy_from_slice(&samplesize.to_be_bytes());
     c += 2;
-    c += 4; // predefined(16) + reserved(16)
+    // predefined(16) + reserved(16) = 0, written (r04-W45).
+    buf[c..c + 4].fill(0);
+    c += 4;
     buf[c..c + 4].copy_from_slice(&samplerate.to_be_bytes());
     c += 4;
     for cb in config_boxes {
@@ -2001,18 +2015,23 @@ impl Serialize for Mp4aSampleEntry {
         c += 4;
         buf[c..c + 4].copy_from_slice(&self.codec_type);
         c += 4;
-        // SampleEntry: reserved(6) + data_reference_index(2)
+        // SampleEntry: reserved(6) zeros + data_reference_index(2). Written, not
+        // skipped, so a reused caller buffer cannot keep garbage (r04-W45).
+        buf[c..c + 6].fill(0);
         c += 6;
         buf[c..c + 2].copy_from_slice(&self.data_reference_index.to_be_bytes());
         c += 2;
-        // AudioSampleEntry: reserved[2] (8 bytes)
+        // AudioSampleEntry: reserved[2] (8 bytes) = 0, written (r04-W45).
+        buf[c..c + 8].fill(0);
         c += 8;
         // channelcount(16) + samplesize(16) + predefined(16) + reserved(16) + samplerate(32) = 12 bytes
         buf[c..c + 2].copy_from_slice(&self.channelcount.to_be_bytes());
         c += 2;
         buf[c..c + 2].copy_from_slice(&self.samplesize.to_be_bytes());
         c += 2;
-        c += 4; // predefined(16) + reserved(16)
+        // predefined(16) + reserved(16) = 0, written (r04-W45).
+        buf[c..c + 4].fill(0);
+        c += 4;
         buf[c..c + 4].copy_from_slice(&self.samplerate.to_be_bytes());
         c += 4;
         for cb in &self.config_boxes {
@@ -3719,5 +3738,140 @@ mod tests {
         let parsed = SampleSizeBox::parse(&body).expect("a well-formed-enough header parses");
         assert_eq!(parsed.sample_size, 64);
         assert!(parsed.entries.is_empty());
+    }
+
+    /// r04-W45: every serializer must write its reserved/`pre_defined` bytes as
+    /// zeros rather than skipping them, because `Serialize` accepts any
+    /// `&mut [u8]` — a reused or dirty caller buffer would otherwise emit
+    /// garbage that a conformance validator rejects. Serializing into a
+    /// 0xFF-filled buffer must be byte-identical to `to_bytes()` (which
+    /// zero-fills). Unfixed, the hdlr `pre_defined`/`reserved`, the smhd
+    /// `reserved`, and the `mdhd` quality field all differed.
+    #[test]
+    fn reserved_bytes_written_as_zeros_into_a_dirty_buffer() {
+        fn dirty_matches<T: Serialize>(value: &T, what: &str)
+        where
+            <T as Serialize>::Error: core::fmt::Debug,
+        {
+            let clean = value.to_bytes();
+            let mut dirty = alloc::vec![0xFFu8; clean.len()];
+            let written = value
+                .serialize_into(&mut dirty)
+                .expect("serialize into a correctly-sized buffer");
+            assert_eq!(written, clean.len(), "{what}: serializer length");
+            assert_eq!(
+                dirty, clean,
+                "{what}: reserializing into a 0xFF-filled buffer must equal to_bytes()"
+            );
+        }
+
+        dirty_matches(&sample_mvhd_v0(), "mvhd");
+        dirty_matches(
+            &MediaHeaderBox {
+                version: 0,
+                flags: 0,
+                creation_time: 1,
+                modification_time: 2,
+                timescale: 90_000,
+                duration: 180_000,
+                language: 0x55C4,
+            },
+            "mdhd",
+        );
+        dirty_matches(
+            &HandlerBox {
+                version: 0,
+                flags: 0,
+                handler_type: *b"vide",
+                name: alloc::vec![b'v', b'i', b'd', 0],
+            },
+            "hdlr",
+        );
+        dirty_matches(
+            &SoundMediaHeaderBox {
+                version: 0,
+                flags: 0,
+                balance: 0,
+            },
+            "smhd",
+        );
+        dirty_matches(
+            &VideoMediaHeaderBox {
+                version: 0,
+                flags: 0,
+                graphicsmode: 0,
+                opcolor: [0, 0, 0],
+            },
+            "vmhd",
+        );
+        // tkhd v0 and v1 both carry reserved(4)+reserved[2](8)+reserved(2).
+        for version in [0u8, 1] {
+            dirty_matches(
+                &TrackHeaderBox {
+                    version,
+                    flags: 0x000007,
+                    creation_time: 1,
+                    modification_time: 2,
+                    track_id: 1,
+                    duration: 1000,
+                    layer: 0,
+                    alternate_group: 0,
+                    volume: 0x0100,
+                    matrix: [0x00010000, 0, 0, 0, 0x00010000, 0, 0, 0, 0x40000000],
+                    width: 640 << 16,
+                    height: 360 << 16,
+                },
+                "tkhd",
+            );
+        }
+    }
+
+    /// The shared audio-sample-entry writer (`mp4a`/`ac-3`/`ec-3`/`Opus`/`fLaC`)
+    /// skips 6 + 8 + 4 reserved/`pre_defined` bytes; each must be written as
+    /// zeros (r04-W45). Serializing into a 0xFF-filled buffer must equal
+    /// serializing into a fresh zeroed one.
+    #[test]
+    fn audio_sample_entry_reserved_bytes_written_as_zeros_into_a_dirty_buffer() {
+        const NEED: usize = 36;
+        let config_boxes: [OpaqueBox; 0] = [];
+        for fourcc in [b"mp4a", b"ac-3", b"ec-3", b"Opus", b"fLaC"] {
+            let mut clean = alloc::vec![0u8; NEED];
+            let clean_len = serialize_audio_sample_entry(
+                &mut clean,
+                fourcc,
+                1,
+                2,
+                16,
+                48_000 << 16,
+                &config_boxes,
+            )
+            .expect("serialize audio sample entry");
+            assert_eq!(clean_len, NEED);
+
+            let mut dirty = alloc::vec![0xFFu8; NEED];
+            let dirty_len = serialize_audio_sample_entry(
+                &mut dirty,
+                fourcc,
+                1,
+                2,
+                16,
+                48_000 << 16,
+                &config_boxes,
+            )
+            .expect("serialize into a dirty buffer");
+            assert_eq!(dirty_len, NEED);
+            assert_eq!(
+                dirty, clean,
+                "{fourcc:?}: a 0xFF-filled buffer must yield the same bytes"
+            );
+            // The reserved ranges are literally zero in the output.
+            assert_eq!(&clean[8..14], &[0u8; 6], "{fourcc:?}: 6 reserved bytes");
+            assert_eq!(
+                &clean[16..24],
+                &[0u8; 8],
+                "{fourcc:?}: AudioSampleEntry reserved[2]"
+            );
+            assert_eq!(&clean[28..32], &[0u8; 4], "{fourcc:?}: predefined+reserved");
+        }
     }
 }

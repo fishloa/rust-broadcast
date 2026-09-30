@@ -185,16 +185,17 @@ impl<'a> Unpackage for Fmp4Demux<'a> {
             .into_iter()
             .map(|mut b| {
                 refine_legacy_config(&mut b.spec.config, &b.samples);
-                Track {
+                normalise_track_nal_lengths(&mut b.spec, &mut b.samples)?;
+                Ok(Track {
                     spec: b.spec,
                     samples: b.samples,
                     // First-fragment tfdt baseMediaDecodeTime; 0 when the stream
                     // carried no tfdt at all (ISO/IEC 14496-12:2015 §8.8.12).
                     start_decode_time: b.start_decode_time.unwrap_or(0),
                     encryption: None,
-                }
+                })
             })
-            .collect();
+            .collect::<Result<Vec<_>>>()?;
         Ok(Media {
             tracks,
             movie_timescale,
@@ -753,11 +754,14 @@ fn codec_config_from_entry(entry: &SampleEntryVariant) -> Result<CodecConfig> {
         SampleEntryVariant::Vvc(vvc) => {
             // Prefer the SPS-decoded dimensions from the vvcC NAL array (the
             // authoritative coded geometry); fall back to the sample-entry
-            // visual dims when the SPS is absent or cannot be decoded.
+            // visual dims when the SPS is absent, cannot be decoded, or
+            // reports a coded size that does not fit the IR's `u16` field (the
+            // SPS dimensions are `ue(v)`, so an oversized one must not truncate).
             let (width, height) = vvc
                 .config
                 .config
                 .dimensions()
+                .and_then(|(w, h)| Some((u16::try_from(w).ok()?, u16::try_from(h).ok()?)))
                 .unwrap_or((vvc.visual.width, vvc.visual.height));
             Ok(CodecConfig::Vvc {
                 config: vvc.config.clone(),
@@ -932,6 +936,61 @@ pub(crate) fn refine_legacy_config(config: &mut CodecConfig, samples: &[Sample])
         }
         _ => {}
     }
+}
+
+/// The NAL length-prefix size (bytes) an AVC/HEVC config declares, or `None`
+/// for a codec that is not length-prefixed. ISO/IEC 14496-15 §5.3.3:
+/// `lengthSizeMinusOne + 1`.
+fn config_nal_length_size(config: &CodecConfig) -> Option<usize> {
+    match config {
+        CodecConfig::Avc { config, .. } => {
+            Some(usize::from(config.config.length_size_minus_one) + 1)
+        }
+        CodecConfig::Hevc { config, .. } => {
+            Some(usize::from(config.config.length_size_minus_one) + 1)
+        }
+        _ => None,
+    }
+}
+
+/// Rewrite a track's samples to the crate's canonical 4-byte NAL prefixes and
+/// set the config's `lengthSizeMinusOne` to match, when the source declared a
+/// different size (ISO/IEC 14496-15 §5.3.3: 1, 2 or 4 bytes).
+///
+/// The rest of the pipeline — [`crate::annexb::iter_length_prefixed_nals`],
+/// keyframe detection, the TS/RTP writers — is fixed at 4 bytes, so a 1- or
+/// 2-byte-length fMP4 would otherwise parse every sample as garbage (r04-W43).
+/// A `length_size_minus_one` of 2 (3-byte lengths) is reserved by §5.3.3, so
+/// such a track is rejected rather than guessed at.
+pub(crate) fn normalise_track_nal_lengths(
+    spec: &mut TrackSpec,
+    samples: &mut [Sample],
+) -> Result<()> {
+    let Some(length_size) = config_nal_length_size(&spec.config) else {
+        return Ok(());
+    };
+    if length_size == crate::annexb::NAL_LENGTH_SIZE {
+        // Already canonical — but the framing is still walked so a malformed
+        // sample is an error rather than a silent pass-through.
+        for sample in samples.iter() {
+            crate::annexb::normalise_nal_length_size(&sample.data, length_size)?;
+        }
+        return Ok(());
+    }
+    for sample in samples.iter_mut() {
+        let data = crate::annexb::normalise_nal_length_size(&sample.data, length_size)?;
+        sample.data = data.into();
+    }
+    match &mut spec.config {
+        CodecConfig::Avc { config, .. } => {
+            config.config.length_size_minus_one = crate::annexb::NAL_LENGTH_SIZE_MINUS_ONE;
+        }
+        CodecConfig::Hevc { config, .. } => {
+            config.config.length_size_minus_one = crate::annexb::NAL_LENGTH_SIZE_MINUS_ONE;
+        }
+        _ => {}
+    }
+    Ok(())
 }
 
 /// Re-parse the `esds` box body preserved as an [`OpaqueBox`] in an `mp4a`
@@ -1259,6 +1318,83 @@ mod tests {
                 .package(&Media::new(vec![only_sections], TIMESCALE))
                 .is_err(),
             "an all-timestamp-less Media must error, not render an empty playlist"
+        );
+    }
+
+    /// r04-W43: an fMP4 whose `avcC` declares 2-byte NAL lengths must have its
+    /// samples normalised to the crate's 4-byte form, and the config the
+    /// demuxer reports must be updated to match — the rest of the pipeline
+    /// (`iter_length_prefixed_nals`, the TS/RTP writers) is fixed at 4 bytes.
+    ///
+    /// The file is a genuine one: an init segment built from a config that
+    /// really declares `lengthSizeMinusOne = 1`, concatenated with a media
+    /// segment whose samples really carry 2-byte prefixes.
+    #[test]
+    fn fmp4_demux_normalises_two_byte_nal_lengths() {
+        use crate::annexb::NAL_LENGTH_SIZE_MINUS_ONE;
+        const TIMESCALE: u32 = 90_000;
+        use crate::ir::{FragmentTrackData, Sample, SampleFlags};
+        use crate::pipeline::{CodecConfig, TrackSpec, build_init_segment, build_media_segment};
+
+        // The same Baseline SPS/PPS pair, but declaring 2-byte NAL lengths.
+        let mut avcc = minimal_avc_config();
+        avcc.config.length_size_minus_one = 1;
+        let spec = TrackSpec::new(
+            1,
+            TIMESCALE,
+            CodecConfig::Avc {
+                config: avcc,
+                width: 640,
+                height: 360,
+            },
+        );
+        // One access unit, two NALs, each with a 2-byte length prefix.
+        let sample = Sample {
+            data: vec![0x00, 0x05, 0x65, 0x88, 0x84, 0x00, 0x21, 0x00, 0x01, 0x41].into(),
+            dts: Some(0),
+            pts: Some(0),
+            duration: Some(1000),
+            flags: SampleFlags::new(true),
+            provenance: None,
+        };
+        let init = build_init_segment(std::slice::from_ref(&spec), TIMESCALE).expect("init");
+        // The init segment really declares the 2-byte size.
+        let hdr = init
+            .windows(4)
+            .position(|w| w == b"avcC")
+            .expect("avcC present");
+        // avcC body: configurationVersion(1) profile(1) compat(1) level(1)
+        // reserved(6)+lengthSizeMinusOne(2).
+        assert_eq!(
+            init[hdr + 8] & 0x03,
+            1,
+            "the built init segment must declare lengthSizeMinusOne = 1"
+        );
+        let frag = build_media_segment(
+            1,
+            &[FragmentTrackData::new(1, 0, std::slice::from_ref(&sample))],
+        )
+        .expect("media segment");
+        let mut file = init;
+        file.extend_from_slice(&frag);
+
+        let media = Fmp4Demux::new()
+            .unpackage(&file)
+            .expect("demux the 2-byte fMP4");
+        let track = &media.tracks[0];
+        assert_eq!(
+            track.samples[0].data.as_ref(),
+            [
+                0x00, 0x00, 0x00, 0x05, 0x65, 0x88, 0x84, 0x00, 0x21, 0x00, 0x00, 0x00, 0x01, 0x41,
+            ],
+            "2-byte NAL lengths must be rewritten to 4-byte"
+        );
+        let CodecConfig::Avc { config, .. } = &track.spec.config else {
+            panic!("expected CodecConfig::Avc");
+        };
+        assert_eq!(
+            config.config.length_size_minus_one, NAL_LENGTH_SIZE_MINUS_ONE,
+            "the reported avcC must declare the 4-byte length size"
         );
     }
 }

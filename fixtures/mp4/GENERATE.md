@@ -36,7 +36,13 @@ ffmpeg -y -f lavfi -i testsrc2=size=320x240:rate=25 -frames:v 12 -c:v libsvtav1 
 # #437 Opus / FLAC / VP9
 ffmpeg -y -f lavfi -i "sine=frequency=440:duration=1" -c:a libopus -f mp4 fixtures/mp4/opus.mp4
 ffmpeg -y -f lavfi -i "sine=frequency=440:duration=1" -c:a flac   -f mp4 fixtures/mp4/flac.mp4
-ffmpeg -y -f lavfi -i testsrc2=size=320x240:rate=25 -frames:v 12 -c:v libvpx-vp9 -f mp4 fixtures/mp4/vp9.mp4
+# vp9.mp4: `-t 0.4` (10 frames at 25 fps). Its `vpcC` box body is the vpcC
+# oracle used by transmux/tests/codecs_new.rs::vpcc_round_trip_and_fields and
+# transmux/src/vp9.rs::version_1_ffmpeg_oracle_parses_and_round_trips:
+#   010000000014820202020000
+# (FullBox version 1; profile 0, level 20, bitDepth 8, chromaSubsampling 1,
+#  CICP 2/2/2, codecInitializationDataSize 0).
+ffmpeg -y -f lavfi -i testsrc2=size=320x240:rate=25 -t 0.4 -c:v libvpx-vp9 -f mp4 fixtures/mp4/vp9.mp4
 ```
 
 Extract a config-box body: find the fourcc, read the big-endian `u32` size 4 bytes

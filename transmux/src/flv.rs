@@ -48,6 +48,7 @@ use core::marker::PhantomData;
 use broadcast_common::{Package, Parse, Serialize, Unpackage};
 
 use crate::aac_asc::AudioSpecificConfig;
+use crate::annexb::{NAL_LENGTH_SIZE, NAL_LENGTH_SIZE_MINUS_ONE, normalise_nal_length_size};
 use crate::avc_config::{AVCConfigurationBox, AVCDecoderConfigurationRecord};
 use crate::error::{Error, Result};
 use crate::media::{Media, Track};
@@ -504,6 +505,10 @@ impl<'a> Unpackage for FlvDemux<'a> {
 
         // Video track state.
         let mut avc_config: Option<AVCConfigurationBox> = None;
+        // The NAL length-prefix size the *source* `avcC` declared (the emitted
+        // record's field is rewritten to the canonical 4, so the original must
+        // be kept separately for the sample-rewrite below).
+        let mut avc_source_length_size: Option<usize> = None;
         let mut video_samples: Vec<Sample> = Vec::new();
         let mut last_video_dts: Option<u32> = None;
         // Audio track state.
@@ -535,8 +540,14 @@ impl<'a> Unpackage for FlvDemux<'a> {
                         avc_packet_type::SEQUENCE_HEADER
                             if avc_config.is_none() && !data.is_empty() =>
                         {
-                            let record = AVCDecoderConfigurationRecord::parse(data)
+                            let mut record = AVCDecoderConfigurationRecord::parse(data)
                                 .map_err(FlvError::Codec)?;
+                            // The NALU samples are normalised to 4-byte NAL
+                            // prefixes below, so the emitted `avcC` must declare
+                            // that size, not the source's (r04-W43).
+                            avc_source_length_size =
+                                Some(usize::from(record.length_size_minus_one) + 1);
+                            record.length_size_minus_one = NAL_LENGTH_SIZE_MINUS_ONE;
                             avc_config = Some(AVCConfigurationBox::new(record));
                         }
                         avc_packet_type::NALU => {
@@ -550,10 +561,16 @@ impl<'a> Unpackage for FlvDemux<'a> {
                             // (§E.4.3.2) folds directly into `pts`.
                             let dts_abs = dts as i64;
                             let pts_abs = dts_abs + composition_time as i64;
+                            // The NALU payload's NAL prefixes use the
+                            // `lengthSizeMinusOne` the AVC sequence header
+                            // declared (§E.4.3.1 / ISO/IEC 14496-15 §5.3.3) —
+                            // 1, 2 or 4 bytes. The rest of the pipeline is
+                            // fixed at 4, so rewrite them (r04-W43).
+                            let length_size = avc_source_length_size.unwrap_or(NAL_LENGTH_SIZE);
+                            let data = normalise_nal_length_size(data, length_size)
+                                .map_err(FlvError::Codec)?;
                             video_samples.push(Sample {
-                                // FLV NALU data is already 4-byte length-prefixed,
-                                // matching the IR (crate::annexb) — pass through.
-                                data: data.to_vec().into(),
+                                data: data.into(),
                                 dts: Some(dts_abs),
                                 pts: Some(pts_abs),
                                 duration: Some(duration),
@@ -1467,5 +1484,64 @@ mod tests {
         tag.write_into(&mut out).unwrap();
         let data_size = ((out[1] as u32) << 16) | ((out[2] as u32) << 8) | out[3] as u32;
         assert_eq!(data_size, (1 << 24) - 1);
+    }
+
+    /// Write one FLV tag (header + body + `PreviousTagSize`) into `out`.
+    fn write_flv_tag(out: &mut Vec<u8>, tag_type: u8, body: &[u8]) {
+        let start = out.len();
+        out.push(tag_type);
+        out.extend_from_slice(&(body.len() as u32).to_be_bytes()[1..]);
+        out.extend_from_slice(&[0, 0, 0, 0]); // timestamp + extended
+        out.extend_from_slice(&[0, 0, 0]); // StreamID
+        out.extend_from_slice(body);
+        let size = (out.len() - start) as u32;
+        out.extend_from_slice(&size.to_be_bytes());
+    }
+
+    /// An `avcC` declaring a 2-byte NAL length prefix (`lengthSizeMinusOne = 1`).
+    fn avcc_length_size_2() -> Vec<u8> {
+        let sps: [u8; 6] = [0x67, 0x42, 0x00, 0x1F, 0x00, 0x00];
+        let mut out = alloc::vec![
+            0x01, 0x42, 0x00, 0x1F, // version, profile, compat, level
+            0xFD, // reserved(6) + lengthSizeMinusOne(2) = 1
+            0xE1, // reserved(3) + numSPS(5) = 1
+        ];
+        out.extend_from_slice(&(sps.len() as u16).to_be_bytes());
+        out.extend_from_slice(&sps);
+        out.push(0x00); // numPPS = 0
+        out
+    }
+
+    /// r04-W43 (`FlvDemux`): a NALU tag whose sample uses 2-byte NAL prefixes is
+    /// normalised to 4-byte, **and** the emitted `avcC` declares 4-byte lengths
+    /// so a fMP4/CMAF/TS mux of the IR describes the samples correctly.
+    #[test]
+    fn flv_demux_two_byte_nal_lengths_normalised_to_four() {
+        let mut flv = alloc::vec![b'F', b'L', b'V', 0x01, 0x01, 0x00, 0x00, 0x00, 0x09];
+        flv.extend_from_slice(&[0, 0, 0, 0]); // PreviousTagSize0
+        let mut seq = alloc::vec![0x17, 0x00, 0x00, 0x00, 0x00];
+        seq.extend_from_slice(&avcc_length_size_2());
+        write_flv_tag(&mut flv, tag_type::VIDEO, &seq);
+        let mut nalu = alloc::vec![0x17, 0x01, 0x00, 0x00, 0x00];
+        nalu.extend_from_slice(&[0x00, 0x05, 0x65, 0x88, 0x84, 0x00, 0x21]);
+        nalu.extend_from_slice(&[0x00, 0x01, 0x41]);
+        write_flv_tag(&mut flv, tag_type::VIDEO, &nalu);
+
+        let media = FlvDemux::new().unpackage(&flv).expect("FLV -> IR");
+        let track = &media.tracks[0];
+        assert_eq!(
+            track.samples[0].data.as_ref(),
+            [
+                0x00, 0x00, 0x00, 0x05, 0x65, 0x88, 0x84, 0x00, 0x21, 0x00, 0x00, 0x00, 0x01, 0x41,
+            ],
+            "2-byte NAL lengths must be rewritten to 4-byte"
+        );
+        let CodecConfig::Avc { config, .. } = &track.spec.config else {
+            panic!("expected CodecConfig::Avc");
+        };
+        assert_eq!(
+            config.config.length_size_minus_one, NAL_LENGTH_SIZE_MINUS_ONE,
+            "the emitted avcC must declare the 4-byte length size"
+        );
     }
 }

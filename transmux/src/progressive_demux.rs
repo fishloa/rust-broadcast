@@ -44,8 +44,8 @@ use crate::init_segment::{
     SyncSampleBox, TrackBox,
 };
 use crate::media::{
-    Media, SkippedTrack, Track, find_top_box, refine_legacy_config, skipped_track,
-    track_spec_from_trak,
+    Media, SkippedTrack, Track, find_top_box, normalise_track_nal_lengths, refine_legacy_config,
+    skipped_track, track_spec_from_trak,
 };
 use crate::pipeline::Sample;
 use crate::timing::{CompositionOffsetBox, TimeToSampleBox};
@@ -188,7 +188,7 @@ fn demux_progressive(input: &[u8]) -> Result<Media> {
                 continue;
             }
         };
-        let samples = match samples_from_stbl(input, trak) {
+        let mut samples = match samples_from_stbl(input, trak) {
             Ok(samples) => samples,
             Err(err) => {
                 skipped.push(SkippedTrack {
@@ -199,6 +199,13 @@ fn demux_progressive(input: &[u8]) -> Result<Media> {
             }
         };
         refine_legacy_config(&mut spec.config, &samples);
+        if let Err(err) = normalise_track_nal_lengths(&mut spec, &mut samples) {
+            skipped.push(SkippedTrack {
+                fourcc: String::from("unknown"),
+                reason: err.to_string(),
+            });
+            continue;
+        }
         tracks.push(Track::new(spec, samples));
     }
     let mut media = Media::new(tracks, movie_timescale);

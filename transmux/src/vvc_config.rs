@@ -236,9 +236,15 @@ pub struct VvcPtlRecord {
     /// `ptl_multilayer_enabled_flag` (1 bit).
     pub ptl_multilayer_enabled_flag: bool,
     /// The `general_constraint_info` payload (the `8*num_bytes_constraint_info
-    /// - 2` bits after the two leading flags), right-aligned in this `u64`.
-    /// Zero when `num_bytes_constraint_info == 0`.
-    pub general_constraint_info: u64,
+    /// - 2` bits after the two leading flags), MSB-first and left-aligned into
+    /// `num_bytes_constraint_info` bytes — the low two bits of the last byte
+    /// are unused and zero. This is the byte layout the RFC 6381 `CTA-` suffix
+    /// prints. Empty when `num_bytes_constraint_info == 0`.
+    ///
+    /// A byte vector rather than a `u64`: `num_bytes_constraint_info` is a
+    /// 6-bit field (≤ 63), so the payload can be up to 502 bits and does not
+    /// fit any fixed-width integer.
+    pub general_constraint_info: Vec<u8>,
     /// `ptl_sublayer_level_present_flag[i]` for `i = num_sublayers-2 .. 0`
     /// (present only when `num_sublayers > 1`), most-significant first.
     pub sublayer_level_present: Vec<bool>,
@@ -300,10 +306,15 @@ impl VvcDecoderConfigurationRecord {
     }
 
     /// Coded dimensions from the first SPS, if one is present and decodable.
-    pub fn dimensions(&self) -> Option<(u16, u16)> {
+    ///
+    /// `u32`: `sps_pic_width_max_in_luma_samples`/`..._height...` are `ue(v)`
+    /// (ITU-T H.266 §7.3.2.4), so they are unbounded and a truncating `u16`
+    /// cast would report a wrapped geometry (e.g. 65 536 → 0). A caller that
+    /// needs the sample entry's `u16` field converts with `try_from`.
+    pub fn dimensions(&self) -> Option<(u32, u32)> {
         let sps = self.sps()?;
         let info = crate::sps::decode_vvc_sps(sps).ok()?;
-        Some((info.width as u16, info.height as u16))
+        Some((info.width, info.height))
     }
 
     /// RFC 6381 codec string (`vvc1.…`) built from the profile/tier/level fields
@@ -314,7 +325,7 @@ impl VvcDecoderConfigurationRecord {
                 ptl.general_profile_idc,
                 ptl.general_tier_flag,
                 ptl.general_level_idc,
-                ptl.general_constraint_info,
+                &ptl.general_constraint_info,
                 ptl.num_bytes_constraint_info,
             ),
             // No PTL record: emit the bare sample-entry FourCC (RFC 6381 §3.3).
@@ -425,6 +436,28 @@ impl<'a> Parse<'a> for VvcDecoderConfigurationRecord {
     }
 }
 
+impl VvcDecoderConfigurationRecord {
+    /// Validate the record's internal consistency before serializing.
+    ///
+    /// `general_constraint_info` is the payload the writer reads
+    /// `num_bytes_constraint_info` bytes of; if it is shorter, indexing it would
+    /// panic, so a caller-constructed record with a mismatched length is
+    /// [`Error::InvalidValue`] instead.
+    fn validate(&self) -> Result<()> {
+        if let Some(ptl) = &self.ptl {
+            let want = usize::from(ptl.num_bytes_constraint_info);
+            if ptl.general_constraint_info.len() < want {
+                return Err(Error::InvalidValue {
+                    field: "general_constraint_info",
+                    value: ptl.general_constraint_info.len() as u64,
+                    reason: "shorter than num_bytes_constraint_info",
+                });
+            }
+        }
+        Ok(())
+    }
+}
+
 impl Serialize for VvcDecoderConfigurationRecord {
     type Error = Error;
 
@@ -449,6 +482,7 @@ impl Serialize for VvcDecoderConfigurationRecord {
     }
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
+        self.validate()?;
         let need = self.serialized_len();
         if buf.len() < need {
             return Err(Error::OutputBufferTooSmall {
@@ -586,6 +620,7 @@ impl Serialize for VvcConfigurationBox {
     }
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
+        self.config.validate()?;
         let need = self.serialized_len();
         if buf.len() < need {
             return Err(Error::OutputBufferTooSmall {
@@ -624,14 +659,15 @@ fn parse_ptl(r: &mut VvcBitReader, num_sublayers: u8) -> Result<VvcPtlRecord> {
     let ptl_multilayer_enabled_flag = r.flag("ptl_multilayer_enabled_flag")?;
 
     // general_constraint_info: the two flags above are the leading bits of the
-    // constraint-info block, so the remaining payload is 8*n - 2 bits.
+    // constraint-info block, so the remaining payload is 8*n - 2 bits and the
+    // payload bytes are MSB-first, left-aligned into n bytes.
     let general_constraint_info = if num_bytes_constraint_info > 0 {
         let bits = (num_bytes_constraint_info as usize) * 8 - 2;
-        r.bits(bits, "general_constraint_info")?
+        r.bits_bytes(bits, "general_constraint_info")?
     } else {
         // The two leading flags stand alone; a 6-bit reserved field pads to a byte.
         let _reserved = r.bits(6, "VvcPTLRecord reserved")?;
-        0
+        Vec::new()
     };
 
     let mut sublayer_level_present = Vec::new();
@@ -682,7 +718,7 @@ fn write_ptl(w: &mut VvcBitWriter, ptl: &VvcPtlRecord) {
 
     if ptl.num_bytes_constraint_info > 0 {
         let bits = (ptl.num_bytes_constraint_info as usize) * 8 - 2;
-        w.bits(ptl.general_constraint_info, bits);
+        w.bits_from_bytes(&ptl.general_constraint_info, bits);
     } else {
         w.bits(0, 6); // reserved
     }
@@ -770,6 +806,20 @@ impl<'a> VvcBitReader<'a> {
         Ok(self.bits(1, what)? != 0)
     }
 
+    /// Read `n` bits (n > 64 allowed) MSB-first, left-aligned into
+    /// `ceil(n / 8)` bytes — the low `ceil(n/8)*8 - n` bits are zero. Used for
+    /// a field wider than any integer width (`general_constraint_info`, whose
+    /// `num_bytes_constraint_info`-derived size can reach 502 bits).
+    fn bits_bytes(&mut self, n: usize, what: &'static str) -> Result<Vec<u8>> {
+        let mut out = alloc::vec![0u8; n.div_ceil(8)];
+        for i in 0..n {
+            if self.bits(1, what)? != 0 {
+                out[i / 8] |= 1 << (7 - (i % 8));
+            }
+        }
+        Ok(out)
+    }
+
     /// Consume padding bits up to the next byte boundary.
     fn align(&mut self, what: &'static str) -> Result<()> {
         while !self.bit_pos.is_multiple_of(8) {
@@ -806,14 +856,17 @@ impl<'a> VvcBitWriter<'a> {
         Self { buf, bit_pos: 0 }
     }
 
+    /// Write the low `n` bits of `val`, MSB-first. Each bit is *cleared then
+    /// set* from `val` rather than only OR-ed in, so a reused/dirty caller
+    /// buffer cannot leave stale bits in a written zero (r04-W45) — the
+    /// `Serialize` contract accepts any `&mut [u8]`.
     fn bits(&mut self, val: u64, n: usize) {
         for i in (0..n).rev() {
             let bit = ((val >> i) & 1) as u8;
             let byte_idx = self.bit_pos / 8;
             let bit_in_byte = 7 - (self.bit_pos % 8);
-            if bit != 0 {
-                self.buf[byte_idx] |= 1 << bit_in_byte;
-            }
+            let mask = 1u8 << bit_in_byte;
+            self.buf[byte_idx] = (self.buf[byte_idx] & !mask) | (bit * mask);
             self.bit_pos += 1;
         }
     }
@@ -822,9 +875,30 @@ impl<'a> VvcBitWriter<'a> {
         self.bits(v as u64, 1);
     }
 
-    /// Advance to the next byte boundary (bits already zeroed by the caller's buffer).
+    /// Write the first `n` bits of an MSB-first, left-aligned byte vector
+    /// (`n > 64` allowed) — the inverse of
+    /// [`VvcBitReader::bits_bytes`]. The trailing padding bits of the last
+    /// byte are ignored, so a vector round-tripped through
+    /// `bits_bytes` writes back identically.
+    fn bits_from_bytes(&mut self, data: &[u8], n: usize) {
+        for i in 0..n {
+            let bit = (data[i / 8] >> (7 - (i % 8))) & 1;
+            let byte_idx = self.bit_pos / 8;
+            let bit_in_byte = 7 - (self.bit_pos % 8);
+            let mask = 1u8 << bit_in_byte;
+            self.buf[byte_idx] = (self.buf[byte_idx] & !mask) | (bit * mask);
+            self.bit_pos += 1;
+        }
+    }
+
+    /// Advance to the next byte boundary. The skipped bits are zeroed, not
+    /// merely left alone, so a dirty caller buffer cannot leave garbage in a
+    /// reserved/padding field (r04-W45).
     fn align(&mut self) {
         while !self.bit_pos.is_multiple_of(8) {
+            let byte_idx = self.bit_pos / 8;
+            let bit_in_byte = 7 - (self.bit_pos % 8);
+            self.buf[byte_idx] &= !(1u8 << bit_in_byte);
             self.bit_pos += 1;
         }
     }
@@ -945,5 +1019,166 @@ f56a4bc97a89422c81168412421c43425c8e54330463c50000003001000000300c1\
         let body = fixture_vvcc_body();
         let record = VvcDecoderConfigurationRecord::parse(&body[4..]).unwrap();
         assert_eq!(record.dimensions(), Some((320, 240)));
+    }
+
+    /// Build a `profile_tier_level` bitstream (via the real writer) for a PTL
+    /// record and hand it back to the real reader.
+    fn ptl_round_trip(ptl: &VvcPtlRecord, num_sublayers: u8) -> VvcPtlRecord {
+        let len = ptl_serialized_len(ptl);
+        let mut buf = alloc::vec![0u8; len];
+        {
+            let mut w = VvcBitWriter::new(&mut buf);
+            write_ptl(&mut w, ptl);
+            assert_eq!(w.finish(), len, "declared and written length must agree");
+        }
+        let mut r = VvcBitReader::new(&buf);
+        let parsed = parse_ptl(&mut r, num_sublayers).expect("parse written PTL");
+        assert_eq!(r.bit_pos, len * 8, "reader must consume the whole record");
+        parsed
+    }
+
+    fn base_ptl() -> VvcPtlRecord {
+        VvcPtlRecord {
+            num_bytes_constraint_info: 0,
+            general_profile_idc: 1,
+            general_tier_flag: false,
+            general_level_idc: 32,
+            ptl_frame_only_constraint_flag: false,
+            ptl_multilayer_enabled_flag: false,
+            general_constraint_info: Vec::new(),
+            sublayer_level_present: Vec::new(),
+            sublayer_level_idc: Vec::new(),
+            sub_profile_idc: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn test_ptl_constraint_info_wider_than_8_bytes_round_trips() {
+        // `num_bytes_constraint_info` is a 6-bit field (ITU-T H.266 §7.3.3.1 /
+        // ISO/IEC 14496-15:2022 §11.3.2.1), so the payload can exceed 64 bits.
+        // 12 bytes → 94 payload bits, which previously made the reader fail
+        // with `n > 64` and rejected the whole vvcC.
+        let ptl = VvcPtlRecord {
+            num_bytes_constraint_info: 12,
+            // 12-byte payload, left-aligned with the low 2 bits unused.
+            general_constraint_info: alloc::vec![
+                0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xAA, 0xFC,
+            ],
+            ..base_ptl()
+        };
+        let parsed = ptl_round_trip(&ptl, 1);
+        assert_eq!(parsed.num_bytes_constraint_info, 12);
+        assert_eq!(
+            parsed.general_constraint_info, ptl.general_constraint_info,
+            "the 94-bit payload must survive parse → serialize byte-exactly"
+        );
+        // The RFC 6381 CTA- suffix prints the payload bytes verbatim.
+        assert_eq!(
+            crate::sps::rfc6381_vvc1(1, false, 32, &parsed.general_constraint_info, 12),
+            "vvc1.1.L32.CTA-00112233445566778899AAFC"
+        );
+    }
+
+    #[test]
+    fn test_ptl_constraint_info_full_6bit_width_round_trips() {
+        // The widest legal block: num_bytes_constraint_info = 63 → 502 bits.
+        let mut payload = alloc::vec![0u8; 63];
+        payload[0] = 0xAB;
+        payload[62] = 0xC0; // low 2 bits unused
+        let ptl = VvcPtlRecord {
+            num_bytes_constraint_info: 63,
+            general_constraint_info: payload,
+            general_profile_idc: 5,
+            general_level_idc: 100,
+            ..base_ptl()
+        };
+        let parsed = ptl_round_trip(&ptl, 1);
+        assert_eq!(parsed.general_constraint_info, ptl.general_constraint_info);
+        assert_eq!(ptl_serialized_len(&parsed), ptl_serialized_len(&ptl),);
+    }
+
+    #[test]
+    fn test_ptl_constraint_info_absent_is_empty() {
+        let ptl = VvcPtlRecord {
+            num_bytes_constraint_info: 0,
+            general_constraint_info: Vec::new(),
+            ..base_ptl()
+        };
+        let parsed = ptl_round_trip(&ptl, 1);
+        assert!(parsed.general_constraint_info.is_empty());
+    }
+
+    /// A record whose `general_constraint_info` is shorter than
+    /// `num_bytes_constraint_info` must be an `Err` on serialize, not a panic
+    /// indexing out of bounds (r04-W42 follow-up).
+    #[test]
+    fn short_general_constraint_info_errors_not_panics() {
+        let ptl = VvcPtlRecord {
+            num_bytes_constraint_info: 8,
+            // Only 2 bytes for an 8-byte field.
+            general_constraint_info: alloc::vec![0xAA, 0xBB],
+            ..base_ptl()
+        };
+        let record = VvcDecoderConfigurationRecord {
+            length_size_minus_one: 3,
+            ptl_present: true,
+            ols_idx: 0,
+            num_sublayers: 1,
+            constant_frame_rate: 0,
+            chroma_format_idc: 1,
+            bit_depth_minus8: 0,
+            ptl: Some(ptl),
+            max_picture_width: 640,
+            max_picture_height: 360,
+            avg_frame_rate: 0,
+            arrays: Vec::new(),
+        };
+        assert!(matches!(
+            record.try_to_bytes(),
+            Err(Error::InvalidValue {
+                field: "general_constraint_info",
+                ..
+            })
+        ));
+        // And through the box path.
+        let boxed = VvcConfigurationBox::new(record);
+        assert!(boxed.try_to_bytes().is_err());
+    }
+
+    /// r04-W45: the `VvcBitWriter` must clear bits it writes as zero rather than
+    /// only OR-ing set bits in, so a reused/dirty output buffer cannot leave
+    /// garbage in the reserved/`pre_defined` fields. Writing the same PTL into a
+    /// 0xFF-filled buffer must equal writing it into a zeroed one.
+    #[test]
+    fn ptl_written_into_a_dirty_buffer_matches_a_zeroed_one() {
+        let ptl = VvcPtlRecord {
+            num_bytes_constraint_info: 0,
+            general_profile_idc: 1,
+            general_level_idc: 32,
+            sublayer_level_present: alloc::vec![true, false, true],
+            sublayer_level_idc: alloc::vec![10, 20],
+            sub_profile_idc: alloc::vec![0x1234_5678],
+            ..base_ptl()
+        };
+        let len = ptl_serialized_len(&ptl);
+        let mut clean = alloc::vec![0u8; len];
+        {
+            let mut w = VvcBitWriter::new(&mut clean);
+            write_ptl(&mut w, &ptl);
+        }
+        let mut dirty = alloc::vec![0xFFu8; len];
+        {
+            let mut w = VvcBitWriter::new(&mut dirty);
+            write_ptl(&mut w, &ptl);
+        }
+        assert_eq!(
+            dirty, clean,
+            "reserved/padding bits must be written, so a dirty buffer matches a zeroed one"
+        );
+        // And the result still parses back to the same record.
+        let mut r = VvcBitReader::new(&dirty);
+        let parsed = parse_ptl(&mut r, 4).expect("parse dirty-written PTL");
+        assert_eq!(parsed.sub_profile_idc, ptl.sub_profile_idc);
+        assert_eq!(parsed.sublayer_level_present, ptl.sublayer_level_present);
     }
 }

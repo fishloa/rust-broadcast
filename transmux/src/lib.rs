@@ -200,7 +200,7 @@ pub use ac3::{Ac3SpecificBox, Ac3SyncframeInfo, Ec3SpecificBox, Ec3Substream, Ec
 pub use ac4::{AC4_FOURCC, Ac4SpecificBox, DAC4_FOURCC};
 pub use annexb::{
     NAL_LENGTH_SIZE, annexb_to_length_prefixed, iter_annexb_nals, iter_length_prefixed_nals,
-    length_prefixed_to_annexb,
+    iter_length_prefixed_nals_with, length_prefixed_to_annexb, normalise_nal_length_size,
 };
 pub use au::{AccessUnitSplitter, split_access_units};
 pub use av1::{AV01_FOURCC, AV1C_FOURCC, Av1ConfigurationBox, Av1SampleEntry};

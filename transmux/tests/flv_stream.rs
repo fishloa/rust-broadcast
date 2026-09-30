@@ -381,7 +381,7 @@ fn avc_seq_body(avcc: &[u8]) -> Vec<u8> {
 /// An AVC NALU tag body with one length-prefixed NAL.
 fn avc_nalu_body(payload: u8) -> Vec<u8> {
     let mut body = vec![0x17, 0x01, 0x00, 0x00, 0x00];
-    body.extend_from_slice(&[0x00, 0x00, 0x00, 0x01, 0x41, payload]);
+    body.extend_from_slice(&[0x00, 0x00, 0x00, 0x02, 0x41, payload]);
     body
 }
 

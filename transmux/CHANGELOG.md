@@ -8,6 +8,110 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed (breaking)
+
+- **`smooth_parse::track_spec_from_quality_level` dispatches on the `QualityLevel`'s
+  `FourCC` instead of assuming H.264/AAC** ([MS-SSTR] §2.2.2.5). Every audio level was
+  parsed as an AudioSpecificConfig whatever its FourCC, so a Dolby `FourCC="EC-3"`/`"AC-3"`
+  level (whose `CodecPrivateData` is Dolby, and which "parses" as an ASC for any ≥2-byte
+  input) produced a garbage `CodecConfig::Aac` track with a nonsense rate/channel count;
+  a non-H264 video level likewise built an `avcC` from bytes that are not Annex-B SPS/PPS.
+  The match is now case-insensitive over `H264`/`AVC1` (video) and `AACL`/`AACH` (audio);
+  any other token — a Dolby `EC-3`/`AC-3`, an `H265`, a private one — returns
+  `Error::UnsupportedCodec` (reject-only: Dolby audio, HEVC video are not synthesised).
+  An empty `CodecPrivateData` on an `AACL`/`AACH` level now synthesises the
+  `AudioSpecificConfig` from `SamplingRate`/`Channels` (ISO/IEC 14496-3 §1.6.2.1) instead
+  of failing `BufferTooShort` — the plain **core** AAC-LC config for both FourCCs, so an
+  `AACH` level's SBR is carried implicitly (the hierarchical explicit-signalling form is not
+  synthesised; the `esds` reports the core rate, not twice it). A `SamplingRate` that is not
+  an ISO/IEC 14496-3 Table 1.10 entry, or a channel count with no Table 1.19 configuration
+  (Table 1.19 has no 7-channel entry — `Ch7_1` is eight), is `Error::UnsupportedCodec`
+  rather than a guessed value. Both the SPS-decoded geometry and the `MaxWidth`/`MaxHeight`
+  fallback are converted to the IR's `u16` with `try_from`, so an over-range value is
+  `Error::InvalidValue` rather than a wrapped dimension (#1080, audit r04-W41).
+- **`vvc_config::VvcPtlRecord::general_constraint_info` is a `Vec<u8>`, not a `u64`**, and
+  `VvcDecoderConfigurationRecord::dimensions` returns `Option<(u32, u32)>`, not
+  `Option<(u16, u16)>` (#1080, audit r04-W42). `num_bytes_constraint_info` is a 6-bit field,
+  so a `general_constraint_info` of more than 8 bytes (up to 502 bits) did not fit a `u64`:
+  the reader rejected it with `n > 64`, failing the whole `vvcC` and with it the whole VVC
+  track — and `decode_vvc_sps` likewise rejected any SPS with `gci_present_flag == 1`, which
+  is ordinary in the field. The SPS reader now steps over the `general_constraint_info()`
+  block exactly (ITU-T H.266 §7.3.3.2) instead of rejecting it, and the payload is carried as
+  bytes. `dimensions()` widened because `sps_pic_width_max_in_luma_samples` is `ue(v)`: a
+  `u16` cast reported a wrapped geometry (65 536 → 0). A caller converting to the sample
+  entry's `u16` field uses `try_from`.
+- **`sps::rfc6381_vvc1` takes the constraint bytes as `&[u8]`, not a `u64`**, and
+  `VvcPtlRecord` serialization validates `general_constraint_info` (#1080, audit r04-W42).
+  The `u64` argument could not represent a constraint block wider than 64 bits, so it went
+  with the `Vec<u8>` field; a caller must pass `&ptl.general_constraint_info`. A record whose
+  `general_constraint_info` is shorter than its `num_bytes_constraint_info` is now
+  `Error::InvalidValue` on serialize instead of panicking on an out-of-bounds index. The SPS
+  reader also skips the exact reserved-bit count of `general_constraints_info()` (ITU-T H.266
+  §7.3.3.2: `gci_num_additional_bits - (n > 5 ? 6 : 0)` `gci_reserved_bit`s) instead of
+  skipping none for a count of 1..=5.
+- **Pass-through demuxers normalise NAL length prefixes to the crate's 4-byte form and say so
+  in the config they emit** (`WebmDemux`, `FlvDemux`, `StreamingFlvDemux`) (#1080, audit
+  r04-W43). An `avcC`/`hvcC` declares its NAL length-prefix size as `lengthSizeMinusOne + 1`
+  (ISO/IEC 14496-15 §5.3.3: 1, 2 or 4 bytes), and these demuxers carried a block's payload
+  verbatim — but the rest of the pipeline (`iter_length_prefixed_nals`, keyframe detection,
+  the TS/RTP writers) is fixed at 4 bytes, so a 2-byte-length source parsed every sample as
+  garbage lengths and produced a corrupt stream. New `annexb::normalise_nal_length_size` /
+  `iter_length_prefixed_nals_with` rewrite a sample's prefixes, and the emitted
+  `AVCDecoderConfigurationRecord`/`HEVCDecoderConfigurationRecord` now carries
+  `length_size_minus_one = 3` so a fMP4/CMAF/TS mux describes the samples it actually has
+  (previously it kept the source's value, promising 2-byte lengths over 4-byte samples). The
+  framing is validated for every length size, including the canonical 4 (a declared length
+  past the buffer is an error rather than a silent pass-through); a length size other than 1,
+  2 or 4 is an error — 3 (`lengthSizeMinusOne = 2`) is reserved by §5.3.3, so it is rejected
+  rather than guessed at.
+- **`Fmp4Demux` and `ProgressiveDemux` normalise an AVC/HEVC track's NAL length prefixes the
+  same way** (`media::normalise_track_nal_lengths`) (#1080, audit r04-W43). Both carried a
+  sample's bytes verbatim, so an fMP4 whose `avcC`/`hvcC` declared `lengthSizeMinusOne` 0 or 1
+  gave the IR 1-/2-byte-prefixed samples while every downstream consumer
+  (`iter_length_prefixed_nals`, keyframe detection, the TS/RTP writers) is fixed at 4 bytes —
+  a corrupt remux. The samples are now rewritten and the reported config's
+  `lengthSizeMinusOne` set to match; a track whose samples then fail to walk (a truncated
+  prefix, a declared length past the buffer) is skipped with a reason rather than passed on.
+- **`vpcC` boxes whose FullBox version is not 1 are now rejected outright** (#1080, audit
+  r04-W44). The VP Codec ISO Media File Format Binding v1.0 declares
+  `FullBox('vpcC', version = 1, 0)` and states "Version 0 is deprecated and should not be
+  used" — it publishes no v0 syntax for the record. The parser previously accepted any
+  version and always read the v1 layout, so a **version-0 box (written by some early
+  ffmpeg/libwebm muxers) parsed to wrong bit depth / chroma / colour values and was then
+  re-serialized as v1**. Such boxes are now `Error::InvalidValue` on both parse and
+  serialize, so media that used to demux (incorrectly) no longer parses at all — the intended
+  behaviour, since a guessed layout is worse than a clear refusal. `Vp9ConfigurationBox`
+  loses the two `color_space` / `transfer_function` fields that existed only for that
+  undocumented layout, so a caller constructing the struct must drop them. `bit_depth` (4
+  bits) and `chroma_subsampling` (3 bits) are written through the checked `fit_bits` helper,
+  so an over-range value is `Error::FieldOverflow` instead of shifting bits out of the byte or
+  corrupting `videoFullRangeFlag`. A `codecInitializationDataSize` that overruns the box is
+  `Error::BufferTooShort` rather than a silent `min(len)` truncation.
+- **Every serializer writes its reserved/`pre_defined` bytes as zeros instead of skipping
+  them** (audit r04-W45). `Serialize::serialize_into` accepts any `&mut [u8]`, so a reused or
+  dirty output buffer kept whatever was there: `VisualSampleEntry`'s 6 + 16 reserved bytes and
+  the audio `SampleEntry`/`AudioSampleEntry` 6 + 8 + 4 reserved/`pre_defined` bytes
+  (`sample_entries.rs`), the `stpp`/`wvtt` 6 reserved bytes (`subtitle_entries.rs`), `mvhd`'s
+  reserved(10)/`pre_defined`(24), `tkhd`'s reserved(4)/reserved[2](8)/reserved(2), `mdhd`'s
+  quality(2), `hdlr`'s `pre_defined`(4)+`reserved[3]`(12) and `smhd`'s reserved(2)
+  (`init_segment.rs`), and the `vpcC`-style bit writer used by the VVC PTL record
+  (`vvc_config.rs`, which OR-ed set bits and left alignment padding untouched) all emitted
+  garbage, which a conformance validator rejects. Each site now zeroes the range it advances
+  over, and a dirty-buffer test covers `mvhd`, `tkhd` (v0/v1), `mdhd`, `hdlr`, `smhd`, `vmhd`
+  and every audio sample-entry FourCC.
+- **The manifest XML tokenizer ends a start tag at the first `>` outside a quoted attribute
+  value, and resolves numeric character references in attribute values** (audit r04-W46). XML
+  1.0 §2.4 requires only `<` and `&` to be escaped in an attribute value, so a `>` there is
+  legal raw — but the tag scan stopped at it, truncating a DASH `SegmentTemplate@media` or a
+  `ContentProtection` value (and every later event was misparsed). Numeric references
+  (`&#38;`, `&#x26;`) were also left literal, so a template written with them resolved to a
+  URL containing `&#38;`; attribute values now use the same resolution rule as text content.
+  A reference candidate also ends at the next `&` as well as the first `;`, so a bare `&`
+  before a later valid reference (`"a & b &amp; c"`) no longer consumes it as text.
+  A numeric reference outside XML 1.0 §2.2's `Char` production (a zero code point, a bare
+  control character, a surrogate, anything above `#x10FFFF`, or a leading `+`/`-`) is left
+  verbatim rather than decoded into an illegal character, and the reference scan advances past
+  the terminating `;` (or the whole malformed `&`-run) every iteration, so it is linear in the
+  input rather than rescanning each `&`.
 - **`RtpPacketiser` now stamps each access unit's RTP timestamp with the sample's
   `pts`, not its `dts`** (audit r04-W29). RFC 6184 §5.1: "The RTP timestamp is set
   to the sampling timestamp of the content", and receivers "SHOULD use the RTP

@@ -72,8 +72,13 @@ pub const TFXD_UUID: [u8; UUID_TYPE_SIZE] = [
 
 /// Video FourCC in the Smooth `QualityLevel` (§2.2.2.5) — H.264/AVC.
 pub const FOURCC_H264: &str = "H264";
+/// Video FourCC alias in the Smooth `QualityLevel` (§2.2.2.5) — H.264/AVC is
+/// spelled `AVC1` by some encoders (`H264` is the primary name).
+pub const FOURCC_AVC1: &str = "AVC1";
 /// Audio FourCC in the Smooth `QualityLevel` (§2.2.2.5) — AAC-LC.
 pub const FOURCC_AACL: &str = "AACL";
+/// Audio FourCC in the Smooth `QualityLevel` (§2.2.2.5) — HE-AAC.
+pub const FOURCC_AACH: &str = "AACH";
 
 /// `AudioTag` for raw AAC in the Smooth `QualityLevel` (§2.2.2.5).
 const AUDIO_TAG_AAC: u32 = 255;

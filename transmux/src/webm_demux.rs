@@ -52,6 +52,7 @@ use core::marker::PhantomData;
 
 use broadcast_common::{Parse, Unpackage};
 
+use crate::annexb::{NAL_LENGTH_SIZE_MINUS_ONE, normalise_nal_length_size};
 use crate::avc_config::{AVCConfigurationBox, AVCDecoderConfigurationRecord};
 use crate::error::{Error, Result};
 use crate::hevc_config::{HEVCConfigurationBox, HEVCDecoderConfigurationRecord};
@@ -823,9 +824,10 @@ fn build_media(
             .position(|&s| s)
             .map(|i| payloads[i].as_slice())
             .unwrap_or(payloads[0].as_slice());
-        let Some(config) = codec_config_for(info, first_sync)? else {
+        let Some(codec) = codec_config_for(info, first_sync)? else {
             continue;
         };
+        let (config, nal_length_size) = codec;
 
         let n = payloads.len();
         for i in 0..n {
@@ -845,8 +847,17 @@ fn build_media(
             // presentation time per block (RFC 9559 §12) with no separate
             // decode-time field, so dts == pts (WebM's VP8/VP9/Opus/Vorbis
             // scope here has no B-frame reordering to express).
+            // The block's NAL prefixes carry whatever length size the
+            // `CodecPrivate` `avcC`/`hvcC` declared (§5.3.3); rewrite them to
+            // the crate's 4-byte form so keyframe detection and the TS/RTP
+            // writers do not read garbage lengths (r04-W43).
+            let data = core::mem::take(&mut payloads[i]);
+            let data = match nal_length_size {
+                Some(size) => normalise_nal_length_size(&data, size)?,
+                None => data,
+            };
             samples.push(Sample {
-                data: core::mem::take(&mut payloads[i]).into(),
+                data: data.into(),
                 dts: Some(pts[i]),
                 pts: Some(pts[i]),
                 duration: Some(duration),
@@ -951,25 +962,37 @@ fn lay_out_block_timestamps(timeline: &[BlockSpan], nominal: u64) -> Vec<i64> {
     out
 }
 
-/// Map a [`TrackInfo`] to a [`CodecConfig`], or `None` for an unsupported CodecID.
+/// Map a [`TrackInfo`] to a [`CodecConfig`] plus, for the length-prefixed
+/// codecs (AVC/HEVC), the NAL length-prefix size its `CodecPrivate` declares —
+/// or `None` for an unsupported CodecID.
 ///
 /// `first_frame` is the first sync sample's coded bytes (used to decode the VP8
 /// key-frame header dimensions; ignored for the other codecs).
-fn codec_config_for(info: &TrackInfo, first_frame: &[u8]) -> Result<Option<CodecConfig>> {
+///
+/// The length size is returned so [`build_media`] can normalise each block's
+/// NAL prefixes to the crate's 4-byte form: the pipeline downstream is fixed at
+/// 4 bytes, while a source `avcC`/`hvcC` may declare 1, 2 or 4 (§5.3.3).
+fn codec_config_for(
+    info: &TrackInfo,
+    first_frame: &[u8],
+) -> Result<Option<(CodecConfig, Option<usize>)>> {
     if info.track_type == TRACK_TYPE_VIDEO && info.codec_id == CODEC_V_VP9 {
-        Ok(Some(vp9_config(info)))
+        Ok(Some((vp9_config(info), None)))
     } else if info.track_type == TRACK_TYPE_VIDEO && info.codec_id == CODEC_V_VP8 {
-        Ok(Some(vp8_config(first_frame)?))
+        Ok(Some((vp8_config(first_frame)?, None)))
     } else if info.track_type == TRACK_TYPE_VIDEO && info.codec_id == CODEC_V_AVC {
         Ok(Some(avc_config(info)?))
     } else if info.track_type == TRACK_TYPE_VIDEO && info.codec_id == CODEC_V_HEVC {
         Ok(Some(hevc_config(info)?))
     } else if info.track_type == TRACK_TYPE_AUDIO && info.codec_id == CODEC_A_OPUS {
-        Ok(Some(opus_config(info)?))
+        Ok(Some((opus_config(info)?, None)))
     } else if info.track_type == TRACK_TYPE_AUDIO && info.codec_id == CODEC_A_VORBIS {
-        Ok(Some(vorbis_config(info)?))
+        Ok(Some((vorbis_config(info)?, None)))
     } else if info.track_type == TRACK_TYPE_AUDIO && info.codec_id == CODEC_A_AAC {
-        Ok(Some(aac_config_from_asc_bytes(info.codec_private.clone())?))
+        Ok(Some((
+            aac_config_from_asc_bytes(info.codec_private.clone())?,
+            None,
+        )))
     } else {
         Ok(None)
     }
@@ -979,25 +1002,46 @@ fn codec_config_for(info: &TrackInfo, first_frame: &[u8]) -> Result<Option<Codec
 /// the raw `AVCDecoderConfigurationRecord` (ISO/IEC 14496-15 §5.3.3); the coded
 /// dimensions come from the `Video` element (§27, `PixelWidth`/`PixelHeight`) —
 /// mirrors [`crate::mkv_mux::MkvMux`]'s inverse `CodecPrivate` emission.
-fn avc_config(info: &TrackInfo) -> Result<CodecConfig> {
-    let record = AVCDecoderConfigurationRecord::parse(&info.codec_private)?;
-    Ok(CodecConfig::Avc {
-        config: AVCConfigurationBox::new(record),
-        width: info.pixel_width,
-        height: info.pixel_height,
-    })
+///
+/// Returns the config together with the record's NAL length-prefix size
+/// (`lengthSizeMinusOne + 1`, §5.3.3.1.2 / §5.3.3.3). The emitted record's
+/// `lengthSizeMinusOne` is rewritten to the crate's canonical 4-byte form
+/// ([`NAL_LENGTH_SIZE_MINUS_ONE`]), because `build_media` normalises each
+/// block's NAL prefixes with [`normalise_nal_length_size`] — an init segment
+/// that still declared the source's size would describe lengths the samples do
+/// not have.
+fn avc_config(info: &TrackInfo) -> Result<(CodecConfig, Option<usize>)> {
+    let mut record = AVCDecoderConfigurationRecord::parse(&info.codec_private)?;
+    let length_size = usize::from(record.length_size_minus_one) + 1;
+    record.length_size_minus_one = NAL_LENGTH_SIZE_MINUS_ONE;
+    Ok((
+        CodecConfig::Avc {
+            config: AVCConfigurationBox::new(record),
+            width: info.pixel_width,
+            height: info.pixel_height,
+        },
+        Some(length_size),
+    ))
 }
 
 /// Build a [`CodecConfig::Hevc`] from an H.265 [`TrackInfo`]: `CodecPrivate` is
 /// the raw `HEVCDecoderConfigurationRecord` (ISO/IEC 14496-15 §8.3.3.1); the
-/// coded dimensions come from the `Video` element, as [`avc_config`].
-fn hevc_config(info: &TrackInfo) -> Result<CodecConfig> {
-    let record = HEVCDecoderConfigurationRecord::parse(&info.codec_private)?;
-    Ok(CodecConfig::Hevc {
-        config: HEVCConfigurationBox::new(record),
-        width: info.pixel_width,
-        height: info.pixel_height,
-    })
+/// coded dimensions come from the `Video` element, as [`avc_config`]. Also
+/// returns the record's NAL length-prefix size (`lengthSizeMinusOne + 1`), and
+/// rewrites the emitted record's `lengthSizeMinusOne` to the canonical 4-byte
+/// form for the same reason as [`avc_config`].
+fn hevc_config(info: &TrackInfo) -> Result<(CodecConfig, Option<usize>)> {
+    let mut record = HEVCDecoderConfigurationRecord::parse(&info.codec_private)?;
+    let length_size = usize::from(record.length_size_minus_one) + 1;
+    record.length_size_minus_one = NAL_LENGTH_SIZE_MINUS_ONE;
+    Ok((
+        CodecConfig::Hevc {
+            config: HEVCConfigurationBox::new(record),
+            width: info.pixel_width,
+            height: info.pixel_height,
+        },
+        Some(length_size),
+    ))
 }
 
 /// Build a [`CodecConfig::Vp8`] by decoding the VP8 key-frame header (RFC 6386
@@ -1622,5 +1666,210 @@ mod tests {
         let block = [0x81u8, 0x00, 0x00, 0x02, 0x01, 0x05, 0xAA, 0xBB];
         let err = parse_block(&block, 0, DEFAULT_TIMESTAMP_SCALE_NS, true).unwrap_err();
         assert!(matches!(err, Error::BufferTooShort { .. }));
+    }
+
+    /// r04-W43: an AVC `CodecPrivate` declaring 2-byte NAL lengths must have its
+    /// block payloads rewritten to 4-byte prefixes on the way into the IR, and
+    /// **the emitted `avcC` must declare that same 4-byte size** — otherwise a
+    /// fMP4/CMAF/TS mux of the normalised IR writes an `avcC` that promises
+    /// 2-byte lengths over 4-byte samples.
+    ///
+    /// The crate's own `MkvMux` writes `CodecPrivate` and block payloads
+    /// verbatim, so a `Media` holding a 2-byte `avcC` and 2-byte-prefixed
+    /// samples round-trips through mux → demux; the NAL bodies must survive
+    /// byte-for-byte under a 4-byte prefix, and `length_size_minus_one` must be
+    /// 3. Then muxing the resulting IR to an init segment + fragment and
+    /// demuxing *that* must yield the same NALs (end-to-end, not just an
+    /// in-memory field check).
+    #[test]
+    fn webm_avc_two_byte_nal_lengths_normalised_to_four() {
+        use crate::avc_config::{AVCConfigurationBox, AVCDecoderConfigurationRecord};
+        use crate::ir::{FragmentTrackData, Sample, SampleFlags};
+        use crate::mkv_mux::MkvMux;
+        use crate::nalu_types::{AvcPps, AvcSps};
+        use crate::pipeline::{CodecConfig, TrackSpec, build_init_segment, build_media_segment};
+        use broadcast_common::Package;
+
+        let record = AVCDecoderConfigurationRecord {
+            configuration_version: 1,
+            profile_indication: 66,
+            profile_compatibility: 0,
+            level_indication: 0x1E,
+            // 1 → 2-byte NAL length prefixes.
+            length_size_minus_one: 1,
+            sps: alloc::vec![AvcSps(alloc::vec![0x67, 0x42, 0x00, 0x1E, 0xAB, 0x40])],
+            pps: alloc::vec![AvcPps(alloc::vec![0x68, 0xCE, 0x3C, 0x80])],
+            chroma_format: None,
+            bit_depth_luma_minus8: None,
+            bit_depth_chroma_minus8: None,
+            sps_ext: alloc::vec![],
+        };
+        let config = CodecConfig::Avc {
+            config: AVCConfigurationBox::new(record),
+            width: 640,
+            height: 360,
+        };
+        // Two NALs, each with a 2-byte length prefix, in *one* access unit.
+        let sample = Sample {
+            data: alloc::vec![0x00, 0x05, 0x65, 0x88, 0x84, 0x00, 0x21, 0x00, 0x01, 0x41].into(),
+            dts: Some(0),
+            pts: Some(0),
+            duration: Some(1000),
+            flags: SampleFlags::new(true),
+            provenance: None,
+        };
+        let media = Media::new(
+            alloc::vec![Track::new_at(
+                TrackSpec::new(1, IR_TIMESCALE, config),
+                alloc::vec![sample],
+                0,
+            )],
+            IR_TIMESCALE,
+        );
+        let muxed = MkvMux::new().package(&media).expect("mkv package");
+        let demuxed = WebmDemux::new()
+            .unpackage(&muxed)
+            .expect("WebM demux of the 2-byte-length file");
+        let track = &demuxed.tracks[0];
+
+        const EXPECTED: [u8; 14] = [
+            0x00, 0x00, 0x00, 0x05, 0x65, 0x88, 0x84, 0x00, 0x21, // NAL A, 4-byte prefix
+            0x00, 0x00, 0x00, 0x01, 0x41, // NAL B, 4-byte prefix
+        ];
+        assert_eq!(
+            track.samples[0].data.as_ref(),
+            EXPECTED,
+            "2-byte NAL lengths must be rewritten to 4-byte on the demux edge"
+        );
+        let CodecConfig::Avc { config, .. } = &track.spec.config else {
+            panic!("expected CodecConfig::Avc");
+        };
+        assert_eq!(
+            config.config.length_size_minus_one, NAL_LENGTH_SIZE_MINUS_ONE,
+            "the emitted avcC must declare the 4-byte length size of the samples"
+        );
+
+        // End-to-end: mux the IR to CMAF, then demux it back. The re-parsed
+        // avcC declares 4-byte lengths and the sample's NALs are unchanged.
+        let init = build_init_segment(core::slice::from_ref(&track.spec), IR_TIMESCALE)
+            .expect("init segment");
+        let frag = build_media_segment(1, &[FragmentTrackData::new(1, 0, &track.samples)])
+            .expect("media segment");
+        let mut both = init;
+        both.extend_from_slice(&frag);
+        let reparsed = crate::media::Fmp4Demux::new()
+            .unpackage(&both)
+            .expect("re-demux of the muxed normalised IR");
+        assert_eq!(
+            reparsed.tracks[0].samples[0].data.as_ref(),
+            EXPECTED,
+            "the 4-byte-prefixed NALs must survive a CMAF mux/demux round-trip"
+        );
+        let CodecConfig::Avc { config, .. } = &reparsed.tracks[0].spec.config else {
+            panic!("expected CodecConfig::Avc");
+        };
+        assert_eq!(
+            config.config.length_size_minus_one,
+            NAL_LENGTH_SIZE_MINUS_ONE
+        );
+    }
+
+    /// The same for the HEVC (`hvcC`) path: a 2-byte `lengthSizeMinusOne` must
+    /// be normalised to 4 on the samples *and* on the emitted record.
+    #[test]
+    fn webm_hevc_two_byte_nal_lengths_normalised_to_four() {
+        use crate::hevc_config::{HEVCConfigurationBox, HEVCDecoderConfigurationRecord};
+        use crate::ir::{FragmentTrackData, Sample, SampleFlags};
+        use crate::mkv_mux::MkvMux;
+        use crate::nalu_types::{HevcNalArray, HevcNalUnit};
+        use crate::pipeline::{CodecConfig, TrackSpec, build_init_segment, build_media_segment};
+        use broadcast_common::Package;
+
+        let record = HEVCDecoderConfigurationRecord {
+            configuration_version: 1,
+            general_profile_space: 0,
+            general_tier_flag: false,
+            general_profile_idc: 1,
+            general_profile_compatibility_flags: 0,
+            general_constraint_indicator_flags: 0,
+            general_level_idc: 93,
+            min_spatial_segmentation_idc: 0,
+            parallelism_type: 0,
+            chroma_format_idc: 1,
+            bit_depth_luma_minus8: 0,
+            bit_depth_chroma_minus8: 0,
+            avg_frame_rate: 0,
+            constant_frame_rate: 0,
+            num_temporal_layers: 1,
+            temporal_id_nested: false,
+            // 1 → 2-byte NAL length prefixes.
+            length_size_minus_one: 1,
+            arrays: alloc::vec![HevcNalArray {
+                array_completeness: true,
+                nal_unit_type: 32,
+                nalus: alloc::vec![HevcNalUnit(alloc::vec![0x40, 0x01, 0x0C, 0x01, 0xFF])],
+            }],
+        };
+        let config = CodecConfig::Hevc {
+            config: HEVCConfigurationBox::new(record),
+            width: 640,
+            height: 360,
+        };
+        let sample = Sample {
+            data: alloc::vec![0x00, 0x04, 0x26, 0x01, 0xAF, 0x09].into(),
+            dts: Some(0),
+            pts: Some(0),
+            duration: Some(1000),
+            flags: SampleFlags::new(true),
+            provenance: None,
+        };
+        let media = Media::new(
+            alloc::vec![Track::new_at(
+                TrackSpec::new(1, IR_TIMESCALE, config),
+                alloc::vec![sample],
+                0,
+            )],
+            IR_TIMESCALE,
+        );
+        let muxed = MkvMux::new().package(&media).expect("mkv package");
+        let demuxed = WebmDemux::new().unpackage(&muxed).expect("WebM demux");
+        let track = &demuxed.tracks[0];
+        assert_eq!(
+            track.samples[0].data.as_ref(),
+            [0x00, 0x00, 0x00, 0x04, 0x26, 0x01, 0xAF, 0x09],
+            "HEVC 2-byte NAL lengths must be rewritten to 4-byte"
+        );
+        let CodecConfig::Hevc { config, .. } = &track.spec.config else {
+            panic!("expected CodecConfig::Hevc");
+        };
+        assert_eq!(
+            config.config.length_size_minus_one, NAL_LENGTH_SIZE_MINUS_ONE,
+            "the emitted hvcC must declare the 4-byte length size"
+        );
+
+        // End-to-end: mux the normalised IR to CMAF and demux it back. The
+        // re-parsed `hvcC` declares 4-byte lengths and the NAL bytes survive.
+        let expected: [u8; 8] = [0x00, 0x00, 0x00, 0x04, 0x26, 0x01, 0xAF, 0x09];
+        let init =
+            build_init_segment(core::slice::from_ref(&track.spec), IR_TIMESCALE).expect("init");
+        let frag = build_media_segment(1, &[FragmentTrackData::new(1, 0, &track.samples)])
+            .expect("media segment");
+        let mut both = init;
+        both.extend_from_slice(&frag);
+        let reparsed = crate::media::Fmp4Demux::new()
+            .unpackage(&both)
+            .expect("re-demux of the muxed normalised HEVC IR");
+        assert_eq!(
+            reparsed.tracks[0].samples[0].data.as_ref(),
+            expected,
+            "4-byte-prefixed HEVC NALs must survive a CMAF mux/demux round-trip"
+        );
+        let CodecConfig::Hevc { config, .. } = &reparsed.tracks[0].spec.config else {
+            panic!("expected CodecConfig::Hevc after re-demux");
+        };
+        assert_eq!(
+            config.config.length_size_minus_one,
+            NAL_LENGTH_SIZE_MINUS_ONE
+        );
     }
 }

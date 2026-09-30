@@ -167,9 +167,12 @@ impl<'a> XmlTokenizer<'a> {
                 return Ok(Some(XmlEvent::End { name }));
             }
 
-            let end = rest
-                .find('>')
-                .ok_or(XmlError::UnterminatedTag { pos: self.pos })?;
+            // The start tag ends at the first `>` **outside a quoted attribute
+            // value**: XML 1.0 §2.4 only requires `<` and `&` to be escaped in
+            // attribute values, so a `>` (e.g. in a DASH
+            // `SegmentTemplate@media` or a `ContentProtection` scheme id) is
+            // legal raw and must not terminate the tag (r04-W46).
+            let end = find_tag_end(rest).ok_or(XmlError::UnterminatedTag { pos: self.pos })?;
             let mut body = &rest[1..end];
             let self_closing = body.trim_end().ends_with('/');
             if self_closing {
@@ -196,6 +199,29 @@ fn strip_ns_prefix(name: &str) -> &str {
         Some(idx) => &name[idx + 1..],
         None => name,
     }
+}
+
+/// Byte offset of the `>` that ends a start tag, skipping any `>` inside a
+/// single- or double-quoted attribute value (XML 1.0 §2.4). `s` starts at the
+/// tag's `<`; the returned offset is relative to `s`.
+fn find_tag_end(s: &str) -> Option<usize> {
+    let bytes = s.as_bytes();
+    let mut quote: Option<u8> = None;
+    for (i, &b) in bytes.iter().enumerate() {
+        match quote {
+            Some(q) => {
+                if b == q {
+                    quote = None;
+                }
+            }
+            None => match b {
+                b'"' | b'\'' => quote = Some(b),
+                b'>' => return Some(i),
+                _ => {}
+            },
+        }
+    }
+    None
 }
 
 /// Split a start-tag body (everything between `<` and `>`, self-closing `/`
@@ -267,43 +293,17 @@ pub(crate) fn parse_attrs(s: &str) -> Result<Vec<(String, String)>> {
 }
 
 /// Reverse XML writer-side escaping (XML 1.0 §2.4):
-/// `&amp;`/`&lt;`/`&gt;`/`&quot;`/`&apos;` → their literal characters.
+/// `&amp;`/`&lt;`/`&gt;`/`&quot;`/`&apos;` plus numeric character references
+/// (`&#38;`/`&#x26;`) → their literal characters.
 /// Unknown/malformed entities (no known name, or a missing `;`) are passed
 /// through byte-for-byte rather than rejected.
+///
+/// Delegates to [`unescape_text`] — the same resolution rule for a text run and
+/// an attribute value, so a numeric reference in a manifest attribute (a DASH
+/// `SegmentTemplate@media` written as `a?x=1&#38;n=$Number$`) resolves rather
+/// than staying literal (r04-W46).
 pub(crate) fn unescape(s: &str) -> String {
-    if !s.contains('&') {
-        return s.to_string();
-    }
-    let mut out = String::with_capacity(s.len());
-    let mut rest = s;
-    while let Some(amp) = rest.find('&') {
-        out.push_str(&rest[..amp]);
-        let tail = &rest[amp..];
-        match tail.find(';') {
-            Some(semi) => {
-                let entity = &tail[1..semi];
-                match entity {
-                    "amp" => out.push('&'),
-                    "lt" => out.push('<'),
-                    "gt" => out.push('>'),
-                    "quot" => out.push('"'),
-                    "apos" => out.push('\''),
-                    _ => {
-                        out.push('&');
-                        rest = &tail[1..];
-                        continue;
-                    }
-                }
-                rest = &tail[semi + 1..];
-            }
-            None => {
-                out.push('&');
-                rest = &tail[1..];
-            }
-        }
-    }
-    out.push_str(rest);
-    out
+    unescape_text(s)
 }
 
 /// Skip an already-open element's subtree, up to and including its matching
@@ -375,12 +375,26 @@ fn unescape_text(s: &str) -> String {
     while let Some(amp) = rest.find('&') {
         out.push_str(&rest[..amp]);
         let tail = &rest[amp + 1..];
-        let Some(semi) = tail.find(';') else {
-            out.push('&');
-            rest = tail;
-            continue;
+        // A reference candidate ends at the first `;` **or** the next `&`,
+        // whichever comes first: `&amp;` inside `"a & b &amp; c"` must still
+        // decode, so a bare `&` cannot make everything up to a later `;` one
+        // entity name. Advancing past the `&` on that path keeps the scan linear.
+        let semi = tail.find(';');
+        let next_amp = tail.find('&');
+        let end = match (semi, next_amp) {
+            (Some(s), Some(a)) if a < s => a,
+            (Some(s), _) => s,
+            (None, Some(a)) => a,
+            (None, None) => tail.len(),
         };
-        let entity = &tail[..semi];
+        if semi.is_none() && next_amp.is_none() {
+            // No `;` and no further `&`: emit the lone `&` and the rest verbatim.
+            out.push('&');
+            out.push_str(tail);
+            rest = "";
+            break;
+        }
+        let entity = &tail[..end];
         let decoded = match entity {
             "amp" => Some('&'),
             "lt" => Some('<'),
@@ -390,25 +404,199 @@ fn unescape_text(s: &str) -> String {
             _ => decode_numeric_entity(entity),
         };
         match decoded {
-            Some(c) => out.push(c),
+            Some(c) => {
+                out.push(c);
+                // A decoded reference consumed its terminating `;`.
+                rest = &tail[end + 1..];
+            }
             None => {
+                // Not a reference: emit the lone `&` and resume right after it,
+                // leaving the candidate's text for the outer scan.
                 out.push('&');
-                out.push_str(entity);
-                out.push(';');
+                rest = tail;
             }
         }
-        rest = &tail[semi + 1..];
     }
     out.push_str(rest);
     out
 }
 
-/// `&#NN;` (decimal) / `&#xNN;` (hexadecimal) → the character it names.
+/// `&#NN;` (decimal) / `&#xNN;` (hexadecimal) → the character it names, or
+/// `None` for anything XML 1.0 does not permit.
+///
+/// The `Char` production (XML 1.0 §2.2) is
+/// `#x9 | #xA | #xD | [#x20-#xD7FF] | [#xE000-#xFFFD] | [#x10000-#x10FFFF]`,
+/// so this rejects a zero code point, the control characters (except tab, LF
+/// and CR), the surrogate range, and anything above `#x10FFFF` — a decoded
+/// control character would be an illegal XML character, and `char::from_u32`
+/// alone would accept `&#0;` as NUL. A leading `+` or `-` is also rejected
+/// (not part of the production; `i32`-style parsing would silently accept it).
 fn decode_numeric_entity(entity: &str) -> Option<char> {
     let digits = entity.strip_prefix('#')?;
+    if digits.starts_with(['+', '-']) {
+        return None;
+    }
     let code = match digits.strip_prefix(['x', 'X']) {
         Some(hex) => u32::from_str_radix(hex, 16).ok()?,
         None => digits.parse::<u32>().ok()?,
     };
+    // XML 1.0 §2.2 `Char`.
+    let permitted = matches!(code, 0x9 | 0xA | 0xD)
+        || (0x20..=0xD7FF).contains(&code)
+        || (0xE000..=0xFFFD).contains(&code)
+        || (0x10000..=0x10FFFF).contains(&code);
+    if !permitted {
+        return None;
+    }
     char::from_u32(code)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn first_start_attrs(xml: &str) -> Vec<(String, String)> {
+        let mut tok = XmlTokenizer::new(xml);
+        loop {
+            match tok.next_event().expect("tokenize") {
+                Some(XmlEvent::Start { attrs, .. }) => return attrs,
+                Some(_) => continue,
+                None => panic!("no start tag"),
+            }
+        }
+    }
+
+    /// r04-W46: a `>` inside a quoted attribute value is legal raw (XML 1.0
+    /// §2.4 requires only `<` and `&` to be escaped there) and must not
+    /// terminate the start tag. Unfixed, the tag ended at the `>` in the value,
+    /// so the attribute list was truncated and the element's real attributes
+    /// (here `id`) were misparsed.
+    #[test]
+    fn greater_than_inside_attribute_value_is_not_a_tag_end() {
+        let attrs = first_start_attrs(r#"<SegmentTemplate media="a?x=1&y=2>3" id="v"/>"#);
+        assert_eq!(
+            attrs,
+            alloc::vec![
+                ("media".to_string(), "a?x=1&y=2>3".to_string()),
+                ("id".to_string(), "v".to_string()),
+            ]
+        );
+    }
+
+    /// A single-quoted value with `>` behaves the same.
+    #[test]
+    fn greater_than_inside_single_quoted_value() {
+        let attrs = first_start_attrs("<X a='><' b='z'/>");
+        assert_eq!(
+            attrs,
+            alloc::vec![
+                ("a".to_string(), "><".to_string()),
+                ("b".to_string(), "z".to_string()),
+            ]
+        );
+    }
+
+    /// Numeric character references in an attribute value resolve (r04-W46); an
+    /// `&#38;` is the `&` a writer must use to keep a query string's separator.
+    #[test]
+    fn numeric_character_references_in_attribute_values() {
+        let attrs = first_start_attrs(r#"<X media="a?x=1&#38;n=$Number$" hex="&#x26;"/>"#);
+        assert_eq!(attrs[0].1, "a?x=1&n=$Number$");
+        assert_eq!(attrs[1].1, "&");
+    }
+
+    /// The five named entities and a malformed reference (left verbatim) still
+    /// behave as before.
+    #[test]
+    fn named_and_malformed_entities_in_attribute_values() {
+        let attrs = first_start_attrs(r#"<X a="&lt;&gt;&amp;&quot;&apos;" b="&nope;"/>"#);
+        assert_eq!(attrs[0].1, "<>&\"'");
+        assert_eq!(attrs[1].1, "&nope;");
+    }
+
+    /// Numeric references outside XML 1.0's `Char` production are left
+    /// verbatim, never decoded into an illegal character.
+    #[test]
+    fn numeric_entity_outside_the_char_production_is_left_verbatim() {
+        // Zero (NUL), bare control chars, surrogates, above #x10FFFF, and a
+        // leading '+' / '-' -- all invalid.
+        for bad in [
+            "&#0;",
+            "&#x0;",
+            "&#1;",
+            "&#x1F;",
+            "&#xD800;",
+            "&#xDFFF;",
+            "&#x110000;",
+            "&#xFFFFFFFF;",
+            "&#+38;",
+            "&#-1;",
+        ] {
+            assert_eq!(unescape_text(bad), bad, "{bad} must be left verbatim");
+            assert_eq!(unescape(bad), bad, "{bad} (attribute) must be verbatim");
+        }
+        // The permitted edges decode (XML 1.0 §2.2 Char).
+        assert_eq!(unescape_text("&#x9;"), "\t");
+        assert_eq!(unescape_text("&#xA;"), "\n");
+        assert_eq!(unescape_text("&#xD;"), "\r");
+        assert_eq!(unescape_text("&#x20;"), " ");
+        assert_eq!(
+            unescape_text("&#xD7FF;"),
+            char::from_u32(0xD7FF).unwrap().to_string()
+        );
+        assert_eq!(
+            unescape_text("&#xE000;"),
+            char::from_u32(0xE000).unwrap().to_string()
+        );
+        assert_eq!(
+            unescape_text("&#xFFFD;"),
+            char::from_u32(0xFFFD).unwrap().to_string()
+        );
+        assert_eq!(
+            unescape_text("&#x10000;"),
+            char::from_u32(0x10000).unwrap().to_string()
+        );
+        assert_eq!(
+            unescape_text("&#x10FFFF;"),
+            char::from_u32(0x10FFFF).unwrap().to_string()
+        );
+    }
+
+    /// A bare `&` must not swallow a later valid reference: the candidate for a
+    /// reference ends at the first `;` **or** the next `&`, so
+    /// `"a & b &amp; c"` decodes the `&amp;` while leaving the lone `&` alone.
+    #[test]
+    fn bare_ampersand_does_not_swallow_a_later_reference() {
+        assert_eq!(unescape_text("a & b &amp; c"), "a & b & c");
+        assert_eq!(unescape_text("x && amp;"), "x && amp;");
+        assert_eq!(unescape_text("&&amp;"), "&&");
+        // Trailing lone `&`.
+        assert_eq!(unescape_text("abc&"), "abc&");
+        assert_eq!(unescape_text("abc&def"), "abc&def");
+        // The named and numeric forms still resolve.
+        assert_eq!(unescape_text("&amp;&lt;&#65;"), "&<A");
+        // Attribute values use the same rule.
+        assert_eq!(unescape("a & b &amp; c"), "a & b & c");
+    }
+
+    /// `unescape_text` is linear: a long run of `&amp;` decodes in one pass, and
+    /// a malformed run with no `;` does not rescan the tail.
+    #[test]
+    fn unescape_is_linear_over_a_long_run() {
+        let many = "&amp;".repeat(20_000);
+        assert_eq!(unescape_text(&many), "&".repeat(20_000));
+        // No `;` anywhere: the whole tail is emitted once, verbatim.
+        let malformed = "a&amp".repeat(20_000);
+        let out = unescape_text(&malformed);
+        assert!(out.starts_with("a&amp"));
+        assert_eq!(out.matches("&amp").count(), 20_000);
+    }
+
+    /// Hostile input: an unterminated quoted value is a structured error, never
+    /// a panic.
+    #[test]
+    fn unterminated_quote_is_error_not_panic() {
+        let mut tok = XmlTokenizer::new(r#"<X a="unterminated"#);
+        assert!(tok.next_event().is_err());
+    }
 }

@@ -864,7 +864,7 @@ fn maximum_representable_width_still_parses() {
         &mut flv,
         9,
         0,
-        &[0x17, 0x01, 0x00, 0x00, 0x00, 0, 0, 0, 1, 0x09, 0x10],
+        &[0x17, 0x01, 0x00, 0x00, 0x00, 0, 0, 0, 2, 0x09, 0x10],
     );
 
     let mut demux = FlvDemux::new();

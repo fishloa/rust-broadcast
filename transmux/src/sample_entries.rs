@@ -123,12 +123,17 @@ impl VisualSampleEntryFields {
         }
         let mut cursor = 0usize;
 
-        // 6 bytes reserved (zero) — SampleEntry part
+        // 6 bytes reserved (zero) — SampleEntry part. Written explicitly rather
+        // than skipped: the `Serialize` contract accepts any `&mut [u8]`, so a
+        // reused/dirty buffer would otherwise keep garbage in the reserved
+        // bytes (r04-W45).
+        buf[cursor..cursor + 6].fill(0);
         cursor += 6;
         // data_reference_index (16)
         buf[cursor..cursor + 2].copy_from_slice(&self.data_reference_index.to_be_bytes());
         cursor += 2;
         // pre_defined(16) + reserved(16) + pre_defined[3]×32 = 16 bytes (zero) — §12.1.3
+        buf[cursor..cursor + 16].fill(0);
         cursor += 16;
         // width (16)
         buf[cursor..cursor + 2].copy_from_slice(&self.width.to_be_bytes());
@@ -1054,5 +1059,36 @@ mod tests {
         let entry = HEVCSampleEntry::new_hev1(config);
         let bytes = entry.to_bytes();
         assert_eq!(&bytes[4..8], b"hev1");
+    }
+
+    /// r04-W45: the `VisualSampleEntry` reserved fields (6 bytes after the box
+    /// header, then `pre_defined(16) + reserved(16) + pre_defined[3]×32`) must be
+    /// written as zeros, not skipped — `Serialize` accepts any `&mut [u8]`, so a
+    /// dirty caller buffer would otherwise leak garbage into a conformance-gated
+    /// field. Serializing into a 0xFF-filled buffer must equal `to_bytes()`.
+    #[test]
+    fn reserved_fields_written_as_zeros_into_a_dirty_buffer() {
+        let entry = AVCSampleEntry::new_avc1(make_avc_config());
+        let clean = entry.to_bytes();
+        let mut dirty = vec![0xFFu8; clean.len()];
+        let written = entry
+            .serialize_into(&mut dirty)
+            .expect("serialize into a correctly-sized buffer");
+        assert_eq!(written, clean.len());
+        assert_eq!(
+            dirty, clean,
+            "a 0xFF-filled buffer must yield the same bytes as to_bytes()"
+        );
+        // The reserved bytes are literally zero in the output.
+        assert_eq!(
+            &clean[8..14],
+            &[0u8; 6],
+            "6 reserved bytes after the header"
+        );
+        assert_eq!(
+            &clean[16..32],
+            &[0u8; 16],
+            "pre_defined(16)+reserved(16) after data_reference_index"
+        );
     }
 }

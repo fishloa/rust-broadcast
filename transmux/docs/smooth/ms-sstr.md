@@ -69,15 +69,22 @@ fragment stream. [`crate::smooth_parse::track_spec_from_quality_level`] builds
 the `TrackSpec` transmux's `build_init_segment` needs: for `FourCC="H264"` it
 splits the Annex-B `CodecPrivateData` into SPS/PPS NAL units (start-code
 delimited, per the Video `CodecPrivateData` shape documented above) and builds
-an `avcC`; for `FourCC="AACL"` the `CodecPrivateData` bytes ARE the
-`AudioSpecificConfig` and are carried straight into an `esds`.
+an `avcC`; for `FourCC="AACL"`/`"AACH"` the `CodecPrivateData` bytes ARE the
+`AudioSpecificConfig` and are carried straight into an `esds` — or, when
+`CodecPrivateData` is absent, an ASC is synthesised from the level's
+`SamplingRate`/`Channels` (ISO/IEC 14496-3 §1.6.2.1: AOT 2 for `AACL`, 5 for
+`AACH`; `samplingFrequencyIndex` from Table 1.10; `channelConfiguration` from
+Table 1.19).
 
 **FourCC / CodecPrivateData (§2.2.2.5 TrackElement):**
 - Video `FourCC="H264"` (a.k.a. AVC1): `CodecPrivateData` = the hex of the
   SPS+PPS as start-code-prefixed NAL units (`00000001 <sps> 00000001 <pps>`).
-- Audio `FourCC="AACL"` (AAC-LC): `CodecPrivateData` = the hex of the
-  AudioSpecificConfig; `AudioTag="255"` (raw AAC), plus SamplingRate/Channels/
-  BitsPerSample.
+- Audio `FourCC="AACL"` (AAC-LC) / `"AACH"` (HE-AAC): `CodecPrivateData` = the
+  hex of the AudioSpecificConfig; `AudioTag="255"` (raw AAC), plus
+  SamplingRate/Channels/BitsPerSample.
+- `FourCC` matching is case-insensitive; an unrecognised token (a Dolby
+  `EC-3`/`AC-3`, an `H265`, a private one) is rejected with
+  `Error::UnsupportedCodec` rather than mis-parsed as H.264/AAC.
 
 ## Fragment Response (§2.2.4) — fragmented MP4
 

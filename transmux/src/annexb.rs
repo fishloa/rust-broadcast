@@ -19,6 +19,18 @@ use crate::error::{Error, Result};
 /// Length in bytes of the fixed NAL length prefix used in `mdat` (4 → `lengthSizeMinusOne = 3`).
 pub const NAL_LENGTH_SIZE: usize = 4;
 
+/// The NAL length-prefix sizes ISO/IEC 14496-15 §5.3.3 defines:
+/// `lengthSizeMinusOne` 0/1/3 → 1/2/4-byte lengths. The value 2 (3-byte
+/// lengths) is reserved, so 3 is absent.
+pub const VALID_NAL_LENGTH_SIZES: [usize; 3] = [1, 2, NAL_LENGTH_SIZE];
+
+/// The `lengthSizeMinusOne` an `avcC`/`hvcC` must declare for the length size
+/// this crate's IR uses ([`NAL_LENGTH_SIZE`] = 4 → 3; ISO/IEC 14496-15 §5.3.3).
+/// A demuxer that normalises a sample's NAL prefixes with
+/// [`normalise_nal_length_size`] must set this on the config record it emits,
+/// or the init segment will describe lengths the samples do not have.
+pub const NAL_LENGTH_SIZE_MINUS_ONE: u8 = (NAL_LENGTH_SIZE - 1) as u8;
+
 /// Iterate the NAL units of an Annex B byte stream.
 ///
 /// Each yielded slice is one NAL unit with its start-code prefix removed and any
@@ -107,22 +119,50 @@ pub fn annexb_to_length_prefixed(annexb: &[u8]) -> Vec<u8> {
 ///
 /// Returns an error if a declared length runs past the end of the buffer.
 pub fn iter_length_prefixed_nals(lp: &[u8]) -> Result<Vec<&[u8]>> {
+    iter_length_prefixed_nals_with(lp, NAL_LENGTH_SIZE)
+}
+
+/// Iterate the NAL units of a length-prefixed buffer whose prefix size is
+/// `length_size` bytes (ISO/IEC 14496-15 §5.3.3: `lengthSizeMinusOne + 1`).
+///
+/// `lengthSizeMinusOne` is a 2-bit field, but only 0, 1 and 3 are defined —
+/// 1-, 2- and 4-byte lengths; the value 2 (a 3-byte length) is reserved, so a
+/// `length_size` of 3 is rejected rather than interpreted (the transcription at
+/// `docs/codec/avcC-hvcC-14496-15.md` states `0/1/3 → 1/2/4-byte
+/// NALUnitLength`).
+///
+/// Returns an error if `length_size` is not 1, 2 or 4, or if a declared length
+/// runs past the end of the buffer.
+pub fn iter_length_prefixed_nals_with(lp: &[u8], length_size: usize) -> Result<Vec<&[u8]>> {
+    if !VALID_NAL_LENGTH_SIZES.contains(&length_size) {
+        return Err(Error::InvalidValue {
+            field: "NAL length size",
+            value: length_size as u64,
+            reason: "must be 1, 2 or 4 (lengthSizeMinusOne 0/1/3; 2 is reserved)",
+        });
+    }
     let mut nals = Vec::new();
     let mut off = 0usize;
     while off < lp.len() {
-        if off + NAL_LENGTH_SIZE > lp.len() {
+        let prefix_end = off.checked_add(length_size).ok_or(Error::BufferTooShort {
+            need: usize::MAX,
+            have: lp.len(),
+            what: "NAL length prefix",
+        })?;
+        if prefix_end > lp.len() {
             return Err(Error::BufferTooShort {
-                need: off + NAL_LENGTH_SIZE,
+                need: prefix_end,
                 have: lp.len(),
                 what: "NAL length prefix",
             });
         }
-        let len = u32::from_be_bytes([lp[off], lp[off + 1], lp[off + 2], lp[off + 3]]) as usize;
-        let start = off + NAL_LENGTH_SIZE;
-        // `len` is a 32-bit field read from caller-supplied sample data, so on a
-        // 32-bit target `start + len` can wrap — which would make the `end >
-        // lp.len()` guard below pass and then panic (or worse, slice wrongly) at
-        // `&lp[start..end]`. Check the addition, don't assume 64-bit `usize`.
+        let mut len: usize = 0;
+        for &byte in &lp[off..prefix_end] {
+            len = (len << 8) | usize::from(byte);
+        }
+        let start = prefix_end;
+        // As in [`iter_length_prefixed_nals`]: the length is attacker-controlled,
+        // so check the addition rather than assuming 64-bit `usize`.
         let end = start.checked_add(len).ok_or(Error::BufferTooShort {
             need: usize::MAX,
             have: lp.len(),
@@ -139,6 +179,42 @@ pub fn iter_length_prefixed_nals(lp: &[u8]) -> Result<Vec<&[u8]>> {
         off = end;
     }
     Ok(nals)
+}
+
+/// Rewrite a length-prefixed access unit whose NAL length prefixes are
+/// `length_size` bytes into the crate's canonical 4-byte-prefixed form
+/// ([`NAL_LENGTH_SIZE`]).
+///
+/// A pass-through demuxer (WebM `CodecPrivate`, FLV AVC sequence header) reads
+/// the `lengthSizeMinusOne` its source `avcC`/`hvcC` declares, which is 1-, 2-
+/// or 4-byte (§5.3.3) — but the rest of the pipeline
+/// ([`iter_length_prefixed_nals`], `nal::access_unit_is_keyframe`, `rtp`) is
+/// fixed at 4 bytes, so a 2-byte-length source parses every sample as garbage.
+///
+/// The size-4 case is not a blind pass-through: the framing is still walked
+/// ([`iter_length_prefixed_nals_with`]), so a sample whose declared lengths
+/// overrun the buffer is an error for every length size — the caller can then
+/// trust that a `Ok` result is a well-formed access unit. The bytes are
+/// re-emitted (a copy, as the return type requires); no length size is
+/// special-cased away.
+///
+/// `length_size` must be 1, 2 or 4 — 3 (a 3-byte length) is reserved by
+/// §5.3.3 and is rejected.
+pub fn normalise_nal_length_size(au: &[u8], length_size: usize) -> Result<Vec<u8>> {
+    let nals = iter_length_prefixed_nals_with(au, length_size)?;
+    if length_size == NAL_LENGTH_SIZE {
+        // Already canonical, but the framing walk above has validated it.
+        return Ok(au.to_vec());
+    }
+    let total: usize = nals.iter().map(|n| NAL_LENGTH_SIZE + n.len()).sum();
+    let mut out = Vec::with_capacity(total);
+    for nal in nals {
+        let len = u32::try_from(nal.len())
+            .map_err(|_| Error::InvalidInput("NAL unit longer than u32::MAX"))?;
+        out.extend_from_slice(&len.to_be_bytes());
+        out.extend_from_slice(nal);
+    }
+    Ok(out)
 }
 
 /// Convert a length-prefixed (4-byte) buffer back into an Annex B byte stream,
@@ -238,5 +314,97 @@ mod tests {
         data.extend_from_slice(&[0x00, 0x00, 0x01, 0x65, 0x88]);
         assert_eq!(iter_annexb_nals(&data).count(), 1);
         assert_eq!(annexb_to_length_prefixed(&data).len(), 4 + 2);
+    }
+
+    /// r04-W43: a 2-byte-length access unit is rewritten to 4-byte prefixes;
+    /// the NAL bodies and their order are preserved exactly. A 2-byte-length
+    /// prefix of `0x0003` followed by `AA BB CC`, then `0x0002` + `DD EE`.
+    #[test]
+    fn normalise_two_byte_lengths_to_four() {
+        let au = [0x00, 0x03, 0xAA, 0xBB, 0xCC, 0x00, 0x02, 0xDD, 0xEE];
+        let out = normalise_nal_length_size(&au, 2).expect("2-byte AU normalises");
+        assert_eq!(
+            out,
+            [
+                0x00, 0x00, 0x00, 0x03, 0xAA, 0xBB, 0xCC, // NAL 1
+                0x00, 0x00, 0x00, 0x02, 0xDD, 0xEE, // NAL 2
+            ]
+        );
+        // And the result is what the fixed-4-byte reader sees.
+        assert_eq!(iter_length_prefixed_nals(&out).unwrap().len(), 2);
+    }
+
+    /// A 3-byte length-prefix source is rejected: ISO/IEC 14496-15 §5.3.3
+    /// defines `lengthSizeMinusOne` 0/1/3 (1/2/4-byte) and reserves the value 2,
+    /// so a 3-byte length has no defined meaning and must not be guessed at.
+    #[test]
+    fn normalise_three_byte_lengths_is_rejected() {
+        let au = [0x00, 0x00, 0x04, 0xAA, 0xBB, 0xCC, 0xDD];
+        assert!(matches!(
+            normalise_nal_length_size(&au, 3),
+            Err(Error::InvalidValue {
+                field: "NAL length size",
+                value: 3,
+                ..
+            })
+        ));
+    }
+
+    /// A 1-byte length-prefix source (`lengthSizeMinusOne = 0`).
+    #[test]
+    fn normalise_one_byte_lengths_to_four() {
+        let au = [0x02, 0xAA, 0xBB];
+        let out = normalise_nal_length_size(&au, 1).expect("1-byte AU normalises");
+        assert_eq!(out, [0x00, 0x00, 0x00, 0x02, 0xAA, 0xBB]);
+    }
+
+    /// A 4-byte source is returned byte-identical, but its framing is still
+    /// validated: a declared length past the buffer is an error even at the
+    /// canonical size, so an `Ok` always means a well-formed access unit.
+    #[test]
+    fn normalise_four_byte_validates_framing() {
+        let well_formed = [0x00, 0x00, 0x00, 0x02, 0xAA, 0xBB];
+        assert_eq!(
+            normalise_nal_length_size(&well_formed, 4).unwrap(),
+            well_formed
+        );
+        // Declared length 0xFFFF with only 3 bytes present.
+        assert!(matches!(
+            normalise_nal_length_size(&[0x00, 0x00, 0xFF, 0xFF, 0xAA], 4),
+            Err(Error::BufferTooShort { .. })
+        ));
+        // A truncated prefix (fewer than 4 bytes at the tail).
+        assert!(matches!(
+            normalise_nal_length_size(&[0x00, 0x00, 0x00, 0x01, 0xAA, 0x00, 0x00], 4),
+            Err(Error::BufferTooShort { .. })
+        ));
+    }
+
+    /// Hostile input: an out-of-range length size, a truncated prefix, and a
+    /// declared length past the buffer are each `Err`, never a panic.
+    #[test]
+    fn normalise_rejects_hostile_input() {
+        assert!(normalise_nal_length_size(&[0x00], 0).is_err());
+        assert!(normalise_nal_length_size(&[0x00], 5).is_err());
+        // Truncated 2-byte prefix (a lone byte).
+        assert!(normalise_nal_length_size(&[0x00], 2).is_err());
+        // Declared length 0xFFFF far past the buffer.
+        assert!(normalise_nal_length_size(&[0xFF, 0xFF, 0xAA], 2).is_err());
+        // A zero-length NAL is legal framing (an empty NAL), not an error.
+        let out = normalise_nal_length_size(&[0x00, 0x00], 2).unwrap();
+        assert_eq!(out, [0x00, 0x00, 0x00, 0x00]);
+    }
+
+    /// `iter_length_prefixed_nals_with` accepts only 1, 2 and 4 (3 is reserved
+    /// by §5.3.3).
+    #[test]
+    fn iter_length_prefixed_with_rejects_bad_size() {
+        assert!(iter_length_prefixed_nals_with(&[0x00], 0).is_err());
+        assert!(iter_length_prefixed_nals_with(&[0x00], 3).is_err());
+        assert!(iter_length_prefixed_nals_with(&[0x00], 5).is_err());
+        // The three defined sizes are all accepted.
+        for size in VALID_NAL_LENGTH_SIZES {
+            assert!(iter_length_prefixed_nals_with(&[], size).is_ok());
+        }
     }
 }
