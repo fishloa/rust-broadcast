@@ -44,6 +44,12 @@
 //! - **`MPD/ServiceDescription/Latency@target`** (§5.13.2) — the target
 //!   end-to-end latency in milliseconds, with an optional `<PlaybackRate>` giving
 //!   the min/max catch-up rate.
+//! - **`MPD/UTCTiming`** (§5.8.4.11) — how a client obtains wall-clock UTC. A
+//!   `dynamic` MPD is timed against `availabilityStartTime`, which is only usable
+//!   if the client's clock agrees with the server's; DASH-IF LL IOP §4.1 makes
+//!   the element effectively required for a low-latency presentation. The
+//!   `@schemeIdUri` (one of the six ISO-registered `urn:mpeg:dash:utc:*:2014`
+//!   values) and `@value` are supplied by the caller.
 //! - `MPD@type="dynamic"` with `@availabilityStartTime` (§5.3.1.2) — LL-DASH is a
 //!   live profile.
 //!
@@ -391,6 +397,31 @@ impl LlSegmenter {
         let is_start = !self.segment_open;
         let anchor = self.anchor;
 
+        // The decode span this chunk covers, in the anchor's timescale: the
+        // first `chunk_samples` of the anchor's pending samples. Every track then
+        // drains its own samples that fall inside that span, so audio rides each
+        // chunk instead of only the segment's final one (audit r05-W27).
+        let anchor_scale = self.tracks[anchor].spec.timescale.max(1) as u64;
+        let anchor_take = if final_chunk {
+            self.tracks[anchor].pending.len()
+        } else {
+            self.chunk_samples.min(self.tracks[anchor].pending.len())
+        };
+        let chunk_span = if final_chunk {
+            u64::MAX
+        } else {
+            let t = &self.tracks[anchor];
+            let mut clock =
+                MediaClock::resumed_at(Some(i64::try_from(t.base_decode).unwrap_or(i64::MAX)));
+            // Seed with the anchor's own first pending sample's real dts so the
+            // delta fallback measures from the right baseline.
+            let mut span: u64 = 0;
+            for s in &t.pending[..anchor_take] {
+                span += clock.tick(s);
+            }
+            span
+        };
+
         // Decide, per track, how many leading pending samples this chunk drains.
         let take_counts: Vec<usize> = self
             .tracks
@@ -398,12 +429,14 @@ impl LlSegmenter {
             .enumerate()
             .map(|(i, t)| {
                 if final_chunk {
-                    t.pending.len()
-                } else if i == anchor {
-                    self.chunk_samples.min(t.pending.len())
-                } else {
-                    0
+                    return t.pending.len();
                 }
+                if i == anchor {
+                    return anchor_take;
+                }
+                let track_scale = t.spec.timescale.max(1) as u64;
+                let track_span = chunk_span.saturating_mul(track_scale) / anchor_scale;
+                take_span(t, track_span)
             })
             .collect();
 
@@ -449,6 +482,32 @@ impl LlSegmenter {
         });
         Ok(())
     }
+}
+
+/// How many of `t`'s pending samples fit inside a decode span of `target_ticks`
+/// (in this track's timescale).
+///
+/// A lower-rate track (audio) is drained by *time*, not by the anchor's sample
+/// count: a chunk that takes 3 video AUs also takes every audio frame inside
+/// those 3 AUs, so audio accompanies the video in each chunk (audit r05-W27)
+/// instead of waiting for the segment's final chunk. Always takes at least one
+/// sample when one is available, so an over-target first sample cannot stall.
+fn take_span(t: &TrackState, target_ticks: u64) -> usize {
+    if t.pending.is_empty() {
+        return 0;
+    }
+    let mut clock = MediaClock::resumed_at(Some(i64::try_from(t.base_decode).unwrap_or(i64::MAX)));
+    let mut span: u64 = 0;
+    let mut end = 0usize;
+    for s in &t.pending {
+        let next = clock.tick(s);
+        if end > 0 && span + next > target_ticks {
+            break;
+        }
+        span += next;
+        end += 1;
+    }
+    end.max(1).min(t.pending.len())
 }
 
 /// [`Stage`] adoption (media plane step 2e-2): `In = (u32, Sample)`, same
@@ -727,7 +786,31 @@ pub struct LlDashPackager {
     pub latency_target_ms: u32,
     /// Optional catch-up playback rate bounds (`PlaybackRate@min`/`@max`).
     pub playback_rate: Option<(f64, f64)>,
+    /// `MPD/UTCTiming` (§5.8.4.11) as `(schemeIdUri, value)`: the registered
+    /// scheme the client uses to obtain wall-clock UTC (e.g.
+    /// [`UTCTIMING_HTTP_HEAD_2014`] with an HTTP(S) URL whose `Date` header is the
+    /// time source), and the scheme's argument. `None` omits the element.
+    pub utc_timing: Option<(String, String)>,
 }
+
+/// `urn:mpeg:dash:utc:http-head:2014` (ISO/IEC 23009-1 §5.8.4.11, Table 30): the
+/// `@value` is an HTTP(S) URL whose response `Date:` header carries the time.
+pub const UTCTIMING_HTTP_HEAD_2014: &str = "urn:mpeg:dash:utc:http-head:2014";
+/// `urn:mpeg:dash:utc:http-xsdate:2014` (§5.8.4.11): the `@value` URL returns
+/// an XSdate (`YYYY-MM-DDThh:mm:ss[Z]`) body.
+pub const UTCTIMING_HTTP_XSDATE_2014: &str = "urn:mpeg:dash:utc:http-xsdate:2014";
+/// `urn:mpeg:dash:utc:http-iso:2014` (§5.8.4.11): the `@value` URL returns an
+/// ISO 8601 body.
+pub const UTCTIMING_HTTP_ISO_2014: &str = "urn:mpeg:dash:utc:http-iso:2014";
+/// `urn:mpeg:dash:utc:ntp:2014` (§5.8.4.11): the `@value` is one or more NTP
+/// server addresses (space-separated).
+pub const UTCTIMING_NTP_2014: &str = "urn:mpeg:dash:utc:ntp:2014";
+/// `urn:mpeg:dash:utc:http-ntp:2014` (§5.8.4.11): the `@value` URL returns an
+/// NTP timestamp in its body.
+pub const UTCTIMING_HTTP_NTP_2014: &str = "urn:mpeg:dash:utc:http-ntp:2014";
+/// `urn:mpeg:dash:utc:direct:2014` (§5.8.4.11): the `@value` *is* the UTC time,
+/// as an XSdate — used when the MPD was generated from a known-good clock.
+pub const UTCTIMING_DIRECT_2014: &str = "urn:mpeg:dash:utc:direct:2014";
 
 impl LlDashPackager {
     /// Build an LL-DASH packager. `availability_start_time` is the wall-clock
@@ -769,12 +852,24 @@ impl LlDashPackager {
             chunk_duration_secs,
             latency_target_ms,
             playback_rate: None,
+            utc_timing: None,
         })
     }
 
     /// Set the optional catch-up `<PlaybackRate min max>` (DASH-IF LL IOP).
     pub fn with_playback_rate(mut self, min: f64, max: f64) -> Self {
         self.playback_rate = Some((min, max));
+        self
+    }
+
+    /// Set the `MPD/UTCTiming` element (ISO/IEC 23009-1 §5.8.4.11): `scheme` is
+    /// one of the registered `urn:mpeg:dash:utc:*:2014` values (see the
+    /// [`UTCTIMING_HTTP_HEAD_2014`] family) and `value` its argument (a URL, an
+    /// NTP host list, or — for `direct` — the UTC time itself). Without it a
+    /// `dynamic` MPD's `availabilityStartTime` is unusable to a client whose
+    /// clock does not already agree with the server's (audit r05-W27c).
+    pub fn with_utc_timing(mut self, scheme: impl Into<String>, value: impl Into<String>) -> Self {
+        self.utc_timing = Some((scheme.into(), value.into()));
         self
     }
 
@@ -869,7 +964,32 @@ impl LlDashPackager {
             s.push_str("\"/>\n");
         }
         s.push_str("  </ServiceDescription>\n");
+        // UTCTiming is a direct child of MPD (ISO/IEC 23009-1 §5.8.4.11), not of
+        // ServiceDescription, so it follows the ServiceDescription block.
+        if let Some((scheme, value)) = &self.utc_timing {
+            s.push_str("  <UTCTiming schemeIdUri=\"");
+            xml_escape_into(&mut s, scheme);
+            s.push_str("\" value=\"");
+            xml_escape_into(&mut s, value);
+            s.push_str("\"/>\n");
+        }
         s
+    }
+}
+
+/// Escape `s` for use inside an XML attribute value: `&`, `<`, `>`, `"` and `'`
+/// become their predefined entities. A `UTCTiming@value` is caller-supplied
+/// (usually a URL) and could otherwise break out of the attribute.
+fn xml_escape_into(out: &mut String, s: &str) {
+    for c in s.chars() {
+        match c {
+            '&' => out.push_str("&amp;"),
+            '<' => out.push_str("&lt;"),
+            '>' => out.push_str("&gt;"),
+            '"' => out.push_str("&quot;"),
+            '\'' => out.push_str("&apos;"),
+            _ => out.push(c),
+        }
     }
 }
 

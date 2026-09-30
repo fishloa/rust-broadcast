@@ -80,7 +80,7 @@ use crate::pipeline::{Sample, TrackSpec};
 use crate::segmenter::{
     MAX_PENDING_SAMPLES_PER_TRACK, MediaClock, choose_anchor, no_sync_sample_error,
 };
-use crate::ts_mux::mux_tracks_at;
+use crate::ts_mux::{TsContinuity, mux_tracks_at_continuing};
 
 /// Default `#EXT-X-VERSION` for a classic (TS-segment) media playlist. Version 3
 /// is the floor for floating-point `#EXTINF` durations (RFC 8216 §7).
@@ -180,6 +180,11 @@ impl Package for TsHlsPackager {
         let segments = partition_tracks(&media.tracks, anchor, &boundaries);
 
         // Mux each segment independently: each re-emits PAT/PMT then its PES.
+        // One `TsContinuity` spans every segment: without an
+        // `#EXT-X-DISCONTINUITY` between them the segments concatenate into one
+        // transport stream, so each PID's continuity_counter must keep counting
+        // (§2.4.3.3) instead of restarting at 0 (audit r05-W21).
+        let mut continuity = TsContinuity::new();
         let mut ts_segments: Vec<Vec<u8>> = Vec::with_capacity(segments.len());
         let mut playlist_segments: Vec<MediaSegment> = Vec::with_capacity(segments.len());
         let mut target_duration: u32 = 0;
@@ -206,7 +211,12 @@ impl Package for TsHlsPackager {
                     t.samples[..r.start].iter().map(|s| clock.tick(s)).sum()
                 })
                 .collect();
-            let bytes = mux_tracks_at(&media.tracks, &sample_slices, &base_dts)?;
+            let bytes = mux_tracks_at_continuing(
+                &media.tracks,
+                &sample_slices,
+                &base_dts,
+                &mut continuity,
+            )?;
             ts_segments.push(bytes);
 
             // Segment duration = the anchor track's buffered duration (seconds),
@@ -608,6 +618,10 @@ pub struct StreamingTsHlsSegmenter {
     window: usize,
     /// The segments currently in the rolling window, oldest first.
     window_segments: VecDeque<WindowEntry>,
+    /// Cross-segment continuity-counter state (§2.4.3.3): the segments of one
+    /// stream concatenate into a single transport stream, so each PID's
+    /// `continuity_counter` must keep counting across cuts (audit r05-W21).
+    continuity: TsContinuity,
     /// Total number of segments ever cut (also the sequence number of the
     /// next segment).
     total_segments: u64,
@@ -715,6 +729,7 @@ impl StreamingTsHlsSegmenter {
             uri_prefix: String::from("seg"),
             window,
             window_segments: VecDeque::new(),
+            continuity: TsContinuity::new(),
             total_segments: 0,
             discontinuity_sequence: 0,
             target_duration: 0,
@@ -1032,7 +1047,7 @@ impl StreamingTsHlsSegmenter {
             })
             .collect();
 
-        // Ephemeral `Track`s carrying only the spec (mux_tracks_at reads
+        // Ephemeral `Track`s carrying only the spec (the mux reads
         // `track.spec` for PID/stream_type planning; samples are passed
         // separately as borrowed slices below).
         let mux_tracks: Vec<Track> = self
@@ -1047,7 +1062,8 @@ impl StreamingTsHlsSegmenter {
             .map(|(t, &n)| &t.pending[..n])
             .collect();
         let base_dts: Vec<u64> = self.tracks.iter().map(|t| t.base_decode).collect();
-        let bytes = mux_tracks_at(&mux_tracks, &sample_slices, &base_dts)?;
+        let bytes =
+            mux_tracks_at_continuing(&mux_tracks, &sample_slices, &base_dts, &mut self.continuity)?;
 
         let (duration, ceil_secs) = segment_duration_secs(self.anchor_pending_dur, anchor_scale);
         if ceil_secs > self.target_duration {

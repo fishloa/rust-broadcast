@@ -685,3 +685,73 @@ mod xml {
         }
     }
 }
+
+/// `MPD/UTCTiming` (ISO/IEC 23009-1 §5.8.4.11) is a direct child of `MPD` and
+/// carries the caller-supplied scheme + value, escaped for XML.
+#[test]
+fn ll_mpd_carries_utc_timing() {
+    let media = demux_media();
+    let mut pkg = LlDashPackager::new(2.0, 0.5, 3000, "2026-01-01T00:00:00Z")
+        .unwrap()
+        .with_utc_timing(
+            transmux::ll_dash::UTCTIMING_HTTP_HEAD_2014,
+            "https://time.example/x?a=1&b=2",
+        );
+    let xml = pkg.package(&media).expect("LL MPD");
+
+    let root = xml::parse(&xml);
+    let utc = root.find("UTCTiming").expect("UTCTiming element");
+    assert_eq!(
+        utc.attr("schemeIdUri"),
+        Some("urn:mpeg:dash:utc:http-head:2014"),
+        "registered 2014 scheme"
+    );
+    // The test XML reader does not decode entities, so the attribute reads back
+    // in its escaped form — which is exactly what must be on the wire.
+    assert_eq!(
+        utc.attr("value"),
+        Some("https://time.example/x?a=1&amp;b=2"),
+        "a raw `&` in the value must be escaped to `&amp;` (it would otherwise          not be well-formed XML)"
+    );
+}
+
+/// Without `with_utc_timing` the element is absent (opt-in, so an existing
+/// caller's bytes are unchanged).
+#[test]
+fn ll_mpd_omits_utc_timing_by_default() {
+    let media = demux_media();
+    let mut pkg = LlDashPackager::new(2.0, 0.5, 3000, "2026-01-01T00:00:00Z").unwrap();
+    let xml = pkg.package(&media).expect("LL MPD");
+    assert!(
+        !xml.contains("<UTCTiming"),
+        "no UTCTiming unless requested: {xml}"
+    );
+}
+
+/// Every non-final chunk of a muxed A/V segment carries both tracks, not only
+/// the segment's last chunk (audit r05-W27).
+#[test]
+fn every_ll_dash_chunk_carries_both_tracks() {
+    let media = demux_media();
+    // 8-video-AU chunks over a real A/V fixture: several chunks per segment.
+    let chunks = chunks_for(&media, 8);
+    assert!(
+        chunks.len() >= 3,
+        "expect several chunks, got {}",
+        chunks.len()
+    );
+
+    for (i, c) in chunks.iter().enumerate() {
+        let moof = top_boxes(&c.data)
+            .into_iter()
+            .find(|(t, _)| t == b"moof")
+            .map(|(_, r)| c.data[r.start + 8..r.end].to_vec())
+            .expect("moof in chunk");
+        let trafs = moof.windows(4).filter(|w| *w == b"traf").count();
+        assert_eq!(
+            trafs, 2,
+            "chunk {i} (segment_start={}) must carry video + audio",
+            c.is_segment_start
+        );
+    }
+}

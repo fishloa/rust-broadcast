@@ -574,3 +574,226 @@ fn empty_media_rejected() {
     let mut pkg = DashPackager::default();
     assert!(pkg.package(&media).is_err(), "empty Media must not package");
 }
+
+// ---------------------------------------------------------------------------
+// AdaptationSet grouping (ISO/IEC 23009-1 §5.3.3, audit r05-W28)
+// ---------------------------------------------------------------------------
+
+/// Build an `ISO_639_language_descriptor`-carrying ES_info loop for `lang`.
+fn lang_es_info(lang: &[u8; 3]) -> Vec<u8> {
+    // tag 0x0A, length 4, ISO_639_language_code(3) + audio_type(1).
+    vec![0x0A, 0x04, lang[0], lang[1], lang[2], 0x00]
+}
+
+/// Two audio tracks in different languages — and a video track — must produce
+/// **three** AdaptationSets: the ABR client must never switch between languages.
+#[test]
+fn adaptation_sets_split_by_language_and_codec() {
+    let base = demux_media();
+    let video = base
+        .tracks
+        .iter()
+        .find(|t| matches!(t.spec.config, CodecConfig::Avc { .. }))
+        .expect("video track")
+        .clone();
+    let audio = base
+        .tracks
+        .iter()
+        .find(|t| matches!(t.spec.config, CodecConfig::Aac { .. }))
+        .expect("audio track")
+        .clone();
+
+    let mut eng = audio.clone();
+    eng.spec.track_id = 2;
+    eng.spec.es_info_descriptors = lang_es_info(b"eng");
+    let mut fra = audio.clone();
+    fra.spec.track_id = 3;
+    fra.spec.es_info_descriptors = lang_es_info(b"fra");
+
+    let media = transmux::media::Media::new(vec![video, eng, fra], 90_000);
+    let mut pkg = DashPackager::default();
+    let xml = pkg.package(&media).expect("MPD");
+
+    let root = parse_xml(&xml);
+    let period = root.find("Period").expect("Period");
+    let sets: Vec<&Element> = period.find_all("AdaptationSet");
+    assert_eq!(
+        sets.len(),
+        3,
+        "one AdaptationSet per (kind, lang): video + eng + fra, got {}",
+        sets.len()
+    );
+
+    let audio_langs: Vec<Option<&str>> = sets
+        .iter()
+        .filter(|s| s.attr("contentType") == Some("audio"))
+        .map(|s| s.attr("lang"))
+        .collect();
+    assert_eq!(audio_langs.len(), 2, "two audio AdaptationSets");
+    assert!(
+        audio_langs.contains(&Some("eng")),
+        "eng set: {audio_langs:?}"
+    );
+    assert!(
+        audio_langs.contains(&Some("fra")),
+        "fra set: {audio_langs:?}"
+    );
+
+    // Each audio set contains exactly one Representation.
+    for s in sets
+        .iter()
+        .filter(|s| s.attr("contentType") == Some("audio"))
+    {
+        assert_eq!(
+            s.find_all("Representation").len(),
+            1,
+            "each language audio set carries only its own Representation"
+        );
+    }
+}
+
+/// Same language, same codec family → one AdaptationSet (the switchable encodings
+/// case), and the ordering/structure of a single-audio stream is unchanged.
+#[test]
+fn adaptation_sets_merge_same_language_and_codec() {
+    let base = demux_media();
+    let video = base
+        .tracks
+        .iter()
+        .find(|t| matches!(t.spec.config, CodecConfig::Avc { .. }))
+        .expect("video track")
+        .clone();
+    let audio = base
+        .tracks
+        .iter()
+        .find(|t| matches!(t.spec.config, CodecConfig::Aac { .. }))
+        .expect("audio track")
+        .clone();
+
+    let mut a1 = audio.clone();
+    a1.spec.track_id = 2;
+    a1.spec.es_info_descriptors = lang_es_info(b"eng");
+    let mut a2 = audio.clone();
+    a2.spec.track_id = 3;
+    a2.spec.es_info_descriptors = lang_es_info(b"eng");
+
+    let media = transmux::media::Media::new(vec![video, a1, a2], 90_000);
+    let mut pkg = DashPackager::default();
+    let xml = pkg.package(&media).expect("MPD");
+
+    let root = parse_xml(&xml);
+    let period = root.find("Period").expect("Period");
+    let sets: Vec<&Element> = period.find_all("AdaptationSet");
+    assert_eq!(sets.len(), 2, "video + one merged eng audio set");
+
+    let audio_set = sets
+        .iter()
+        .find(|s| s.attr("contentType") == Some("audio"))
+        .expect("audio set");
+    assert_eq!(audio_set.attr("lang"), Some("eng"), "@lang on the set");
+    assert_eq!(
+        audio_set.find_all("Representation").len(),
+        2,
+        "both same-language, same-codec Representations stay in one set"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// AdaptationSet identity + codec-family splitting (ISO/IEC 23009-1 §5.3.3)
+// ---------------------------------------------------------------------------
+
+/// Every `AdaptationSet` carries a unique `@id`, and two audio tracks in the
+/// **same** language but different codec families land in separate sets, each
+/// with its own `@codecs` — they are not switchable encodings of one another.
+#[test]
+fn adaptation_sets_have_unique_ids_and_split_by_codec_family() {
+    // A real AAC track (from the TS fixture) and a real AC-3 track (from the
+    // Dolby fixture), both with `eng` audio.
+    let base = demux_media();
+    let video = base
+        .tracks
+        .iter()
+        .find(|t| matches!(t.spec.config, CodecConfig::Avc { .. }))
+        .expect("video track")
+        .clone();
+    let mut aac = base
+        .tracks
+        .iter()
+        .find(|t| matches!(t.spec.config, CodecConfig::Aac { .. }))
+        .expect("aac track")
+        .clone();
+    aac.spec.track_id = 2;
+    aac.spec.es_info_descriptors = lang_es_info(b"eng");
+
+    let ac3_ts = std::fs::read(fixtures_dir().join("ts/dolby/ac3.ts")).expect("ac3 fixture");
+    let ac3_ir = TsDemux::new().unpackage(&ac3_ts[..]).expect("demux ac3");
+    let mut ac3 = ac3_ir.tracks[0].clone();
+    ac3.spec.track_id = 3;
+    ac3.spec.es_info_descriptors = lang_es_info(b"eng");
+
+    let media = transmux::media::Media::new(vec![video, aac, ac3], 90_000);
+    let mut pkg = DashPackager::default();
+    let xml = pkg.package(&media).expect("MPD");
+
+    let root = parse_xml(&xml);
+    let period = root.find("Period").expect("Period");
+    let sets: Vec<&Element> = period.find_all("AdaptationSet");
+    assert_eq!(
+        sets.len(),
+        3,
+        "video + one set per audio codec family, got {}:\n{xml}",
+        sets.len()
+    );
+
+    // Unique @id across every set.
+    let mut ids: Vec<&str> = sets
+        .iter()
+        .map(|s| s.attr("id").expect("AdaptationSet@id is required"))
+        .collect();
+    let unique = {
+        let mut v = ids.clone();
+        v.sort_unstable();
+        v.dedup();
+        v.len()
+    };
+    assert_eq!(
+        unique,
+        ids.len(),
+        "AdaptationSet@id must be unique: {ids:?}"
+    );
+    ids.sort_unstable();
+    assert_eq!(ids, vec!["t0", "t1", "t2"], "deterministic ids");
+
+    // Two audio sets, both `eng`, with different codec families.
+    let audio: Vec<&&Element> = sets
+        .iter()
+        .filter(|s| s.attr("contentType") == Some("audio"))
+        .collect();
+    assert_eq!(audio.len(), 2, "AAC and AC-3 are separate sets:\n{xml}");
+    for s in &audio {
+        assert_eq!(s.attr("lang"), Some("eng"), "same language, same @lang");
+        assert_eq!(s.find_all("Representation").len(), 1);
+    }
+    let codecs: Vec<&str> = audio
+        .iter()
+        .flat_map(|s| s.find_all("Representation"))
+        .map(|r| r.attr("codecs").expect("Representation@codecs"))
+        .collect();
+    assert!(
+        codecs.iter().any(|c| c.starts_with("mp4a")),
+        "the AAC Representation carries mp4a.*: {codecs:?}"
+    );
+    assert!(
+        codecs
+            .iter()
+            .any(|c| c.starts_with("ac-3") || c.starts_with("ec-3")),
+        "the AC-3 Representation carries ac-3: {codecs:?}"
+    );
+
+    // And the video set is first, with `video` contentType + mimeType.
+    assert_eq!(sets[0].attr("contentType"), Some("video"));
+    assert_eq!(sets[0].attr("mimeType"), Some("video/mp4"));
+    for s in &audio {
+        assert_eq!(s.attr("mimeType"), Some("audio/mp4"));
+    }
+}

@@ -426,3 +426,132 @@ fn first_segment_is_independently_decodable() {
         "last segment's recovered avcC must match the original (SPS/PPS in-segment)"
     );
 }
+
+// ── Test — continuity counters span segment boundaries (r05-W21, §2.4.3.3) ────
+
+/// The `continuity_counter` of every PID continues across the segment
+/// boundaries: concatenating the `.ts` segments (no `#EXT-X-DISCONTINUITY`
+/// between them) must not jump, or a client sees TR 101 290 indicator 1.4
+/// errors and this crate's own `TsDemux` reports `InputDegraded`.
+#[test]
+fn continuity_counters_span_segment_boundaries() {
+    let ir = demux(&load_ts());
+    let out = package(&ir, 1);
+    assert!(out.segments.len() > 1, "need multiple segments to test");
+
+    // Concatenate every segment — the stream a client plays back to back.
+    let mut concat: Vec<u8> = Vec::new();
+    for s in &out.segments {
+        concat.extend_from_slice(s);
+    }
+
+    // Per PID, walk every packet in the concatenation and check that each
+    // *payload-bearing* packet's CC is exactly one past the previous one of
+    // that PID (mod 16). A packet without payload (PCR-only, §2.4.3.3) repeats
+    // the previous CC and does not advance it.
+    use std::collections::HashMap;
+    let mut last: HashMap<u16, u8> = HashMap::new();
+    for (i, pkt) in concat.chunks_exact(TS).enumerate() {
+        assert_eq!(pkt[0], 0x47, "packet {i}: sync byte");
+        let pid = pid_of(pkt);
+        let cc = pkt[3] & 0x0F;
+        let has_payload = (pkt[3] >> 4) & 0b01 != 0;
+        match last.get(&pid) {
+            None => assert_eq!(cc, 0, "packet {i}: PID {pid:#x} first CC must be 0"),
+            Some(&prev) => {
+                if has_payload {
+                    assert_eq!(
+                        cc,
+                        (prev + 1) & 0x0F,
+                        "packet {i}: PID {pid:#x} continuity jump {prev} -> {cc} \
+                         (ISO/IEC 13818-1 §2.4.3.3)"
+                    );
+                } else {
+                    assert_eq!(
+                        cc, prev,
+                        "packet {i}: PID {pid:#x} payload-less packet must repeat the CC"
+                    );
+                }
+            }
+        }
+        last.insert(pid, cc);
+    }
+
+    // And the crate's own demuxer must accept the concatenation without
+    // flagging a continuity error.
+    let re = TsDemux::new()
+        .unpackage(&concat)
+        .expect("demux concatenation");
+    assert_eq!(re.tracks.len(), 2, "both tracks recovered");
+}
+
+/// W21, independent oracle: TSDuck's continuity analysis (when installed) and
+/// ffmpeg's full decode must both accept the concatenated segments.
+#[test]
+fn concatenated_segments_pass_tsanalyze_and_ffmpeg() {
+    let ir = demux(&load_ts());
+    let out = package(&ir, 1);
+    assert!(out.segments.len() > 1, "need multiple segments");
+
+    let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../target/ts-hls-oracle");
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut concat: Vec<u8> = Vec::new();
+    for s in &out.segments {
+        concat.extend_from_slice(s);
+    }
+    let path = dir.join("concat.ts");
+    std::fs::write(&path, &concat).unwrap();
+
+    // ffmpeg: a full decode must be error-free (a continuity jump makes it warn).
+    if std::process::Command::new("ffmpeg")
+        .arg("-version")
+        .output()
+        .is_ok_and(|o| o.status.success())
+    {
+        let out = std::process::Command::new("ffmpeg")
+            .args(["-v", "error", "-i"])
+            .arg(&path)
+            .args(["-f", "null", "-"])
+            .output()
+            .expect("spawn ffmpeg");
+        assert!(
+            out.status.success() && out.stderr.is_empty(),
+            "ffmpeg reports errors decoding the concatenated segments: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    } else {
+        eprintln!("SKIP ts_hls CC oracle: ffmpeg not on PATH");
+    }
+
+    // TSDuck: `tsanalyze` reports a continuity-error count per PID.
+    if std::process::Command::new("tsanalyze")
+        .arg("--version")
+        .output()
+        .is_ok_and(|o| o.status.success())
+    {
+        let out = std::process::Command::new("tsanalyze")
+            .arg(&path)
+            .output()
+            .expect("spawn tsanalyze");
+        let report = format!(
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        // The per-PID tables print "Unexpect: ......... N"; every one must be 0.
+        for line in report.lines().filter(|l| l.contains("Unexpect:")) {
+            let n: u64 = line
+                .split("Unexpect:")
+                .nth(1)
+                .and_then(|s| s.split_whitespace().next())
+                .and_then(|s| s.trim_start_matches('.').parse().ok())
+                .unwrap_or(0);
+            assert_eq!(
+                n, 0,
+                "tsanalyze reports unexpected (continuity) packets: {line}"
+            );
+        }
+    } else {
+        eprintln!("SKIP ts_hls CC oracle: tsanalyze not on PATH");
+    }
+}

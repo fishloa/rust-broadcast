@@ -445,7 +445,7 @@ pub(crate) fn relative_decode_times(track: &Track, origin: &TimelineOrigin) -> V
 
 /// Presentation span of `tracks` in seconds: from the earliest sample
 /// presentation time to the latest presentation end, over one common origin.
-fn presentation_span_secs(tracks: &[&Track]) -> f64 {
+pub(crate) fn presentation_span_secs(tracks: &[&Track]) -> f64 {
     let origin = TimelineOrigin::of(tracks.iter().copied());
     let mut span: Option<(f64, f64)> = None;
     for t in tracks {

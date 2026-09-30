@@ -96,6 +96,22 @@ pub enum Error {
         codec: &'static str,
     },
 
+    /// One program's set of elementary streams does not fit the PES
+    /// `stream_id` families (ISO/IEC 13818-1 Table 2-22).
+    ///
+    /// The video family is `0xE0..=0xEF` and the audio family `0xC0..=0xDF`, so
+    /// at most 16 video and 32 audio elementary streams can be numbered in one
+    /// program. A 17th video stream would take `0xF0` (`ECM_stream`) and a 33rd
+    /// audio stream `0xE0` — inside the video range — so the muxer refuses
+    /// rather than mislabelling the stream (`TsMux` output, audit r05-W22).
+    #[error("too many {family} elementary streams: {max} is the stream_id family limit")]
+    TooManyElementaryStreams {
+        /// The `stream_id` family that overflowed (`"video"` or `"audio"`).
+        family: &'static str,
+        /// The family's size (16 video, 32 audio).
+        max: u8,
+    },
+
     /// A CENC protection scheme ([`CencScheme`](broadcast_common::CencScheme))
     /// this crate has no cipher implementation for was handed to the encrypt
     /// or decrypt path.

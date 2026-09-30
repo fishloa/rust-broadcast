@@ -88,3 +88,20 @@ MP4Box -dash 500 -rap -frag-rap -profile onDemand in.mp4 -out out_dash.mpd
 #   header included). GPAC's own MP4Box (not this crate) is the independent
 #   oracle: reference_ID=1, timescale=12800, 2 references
 #   (size=11401/dur=12800/SAP_type=1, size=10306/dur=12800/SAP_type=1).
+
+## AUD-less AVC/HEVC (issue #1080, audit r05-W17)
+
+H.222.0 §2.14.1/§2.17.1 require every AVC/HEVC access unit carried in a TS to
+begin with an access unit delimiter. `libx264`/`libx265` do not emit one by
+default (`aud=0`), so an MP4 muxed from them carries none — the exact input a
+`Fmp4Demux → TsMux` remux receives. Kept tiny (15 frames, 320×240, one GOP).
+
+```bash
+ffmpeg -y -v error -f lavfi -i "testsrc2=size=320x240:rate=25" -frames:v 15 \
+  -c:v libx264 -profile:v high -pix_fmt yuv420p \
+  -x264-params "keyint=15:scenecut=0:aud=0" -an -f mp4 fixtures/mp4/noaud/h264_noaud.mp4
+
+ffmpeg -y -v error -f lavfi -i "testsrc2=size=320x240:rate=25" -frames:v 15 \
+  -c:v libx265 -profile:v main -pix_fmt yuv420p \
+  -x265-params "keyint=15:scenecut=0:aud=0" -an -f mp4 fixtures/mp4/noaud/hevc_noaud.mp4
+```

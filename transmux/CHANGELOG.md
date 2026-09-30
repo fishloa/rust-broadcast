@@ -9,6 +9,51 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed (breaking)
 
+- **Transport-stream packaging gained continuity state and closed its
+  `stream_id` families; the CLI and the DASH/LL-DASH packagers changed shape**
+  (#1080, audit r05-W22/W27/W29). New public API:
+  - `transmux::TsContinuity` — per-PID `continuity_counter` state
+    (ISO/IEC 13818-1 §2.4.3.3), threaded across every `.ts` segment by
+    `TsHlsPackager` and `StreamingTsHlsSegmenter`, so concatenating a stream's
+    segments no longer jumps the counter on every PID at each boundary.
+  - `ll_dash::LlDashPackager::with_utc_timing(scheme, value)` and a
+    `pub utc_timing` field, with the `ll_dash::UTCTIMING_*_2014` scheme
+    constants: a `dynamic` MPD without `MPD/UTCTiming` (ISO/IEC 23009-1
+    §5.8.4.11) leaves a client with no way to obtain the wall clock its
+    `availabilityStartTime` is measured against.
+  - `Error::TooManyElementaryStreams { family, max }`: a program exceeding the
+    16-video / 32-audio `stream_id` families (Table 2-22) is refused instead of
+    wrapping into `ECM_stream` or the video range.
+  - `cli::CliError::UnsupportedContainer(&'static str)`: container detection now
+    runs `container-probe` (a `cli`-only optional dependency) and distinguishes
+    "recognised but not demuxable here" from "not recognised".
+  - `TsMux` now returns `Error::BufferCapExceeded` for a non-video PES whose
+    `PES_packet_length` would exceed 65535 (`0`, the unbounded form, is defined
+    only for video), and it now prepends an access unit delimiter to every
+    AVC/HEVC access unit that lacks one.
+  - `validate::validate_media_segment` gained the `media.mdat.overlap`,
+    `media.tfhd.default-base-is-moof`, `media.sample.non-sync-first` (WARNING)
+    and `track.tfhd.unknown-track` checks; `track.tfdt.discontinuity` now pairs
+    fragments by `tfhd.track_id`.
+  - **The CLI's segmented outputs changed shape.** `--segment-duration` is now
+    honoured by every segmented format, so:
+    - `-f hls` writes a separate `init.mp4` (the `#EXT-X-MAP` target) and
+      **media-only** `segN.m4s` files (`styp`+`moof`+`mdat`), where it used to
+      write one self-initializing blob per `#EXTINF` and repeat the init bytes
+      under every segment name. Each `#EXTINF` is the segment's real measured
+      duration (and `#EXT-X-TARGETDURATION` its ceiling), not the presentation
+      span divided by the segment count.
+    - `-f dash` writes per-Representation media segments whose boundaries are
+      **shared** across tracks (so the `segmentAlignment="true"` the MPD
+      declares is true), each carrying no `moov` — ISO/IEC 23009-1 §6.3.4.2
+      forbids one in a media segment.
+    - `-f dash --ll` now emits a `static` MPD with `mediaPresentationDuration`
+      (the CLI writes static files; a `dynamic` MPD over them computes a live
+      edge a player cannot resolve) and **no** `MPD/UTCTiming` unless
+      `--utc-timing-url <URL>` is given — the previous build baked a third-party
+      time server into every LL MPD.
+    - `AdaptationSet@id` values are now emitted (`t0`, `t1`, …), unique within
+      the MPD.
 - **Box containers record their children's wire order, and several public
   structs gained fields and constructors** (#1080, audit r05-W11/W12 and the
   round-3 follow-ups). A container's typed fields carry no order of their own,
@@ -443,6 +488,52 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`TsMux` emits a conformant access unit per video sample and never silently
+  truncates a PES, and its PCR is anchored to a stream that can carry it**
+  (#1080, audit r05-W17/W19/W20).
+  - Every AVC/HEVC access unit now begins with an access unit delimiter
+    (`00 00 00 01 09 F0` / `00 00 00 01 46 01 50`) when the sample does not
+    already carry one — ITU-T H.222.0 §2.14.1 / §2.17.1 make one mandatory, and
+    an IR sample from fMP4/MKV/FLV/RTMP never has one. A stream that already
+    carries an AUD does not get a second.
+  - A non-video PES longer than 65535 bytes is now an error rather than a
+    clamped `PES_packet_length` over a longer payload (which every demuxer would
+    truncate); §2.4.3.7 permits the unbounded `0` form for video only.
+  - The PCR no longer falls back to a sparse PES-carried `Data` PID (DVB
+    subtitles/teletext, whose PES packets arrive seconds apart, far past the
+    §2.4.2.2 100 ms bound): audio is preferred, and where even the chosen PID
+    leaves a gap, PCR-only adaptation packets hold the interval within 40 ms
+    (TR 101 290 indicator 2.3). A PCR-only packet carries no payload, so it
+    repeats the PID's continuity counter rather than advancing it (§2.4.3.3).
+- **`validate` no longer reports phantom or missing CMAF problems** (#1080,
+  audit r05-W30). The `mdat` bounds check now resolves *every* `trun` range
+  (including one that omits `data_offset`, which continues from its predecessor)
+  and reports `media.mdat.overlap` for ranges that claim the same bytes; a
+  multi-fragment media segment is compared against its *last* fragment's decode
+  end instead of its first, so it no longer raises a false
+  `track.tfdt.discontinuity`; cross-segment continuity pairs fragments by
+  `tfhd.track_id` rather than by position; a `tfhd` naming a track the init
+  segment does not declare is reported; and `media.sample.zero-duration` is
+  raised once per fragment with a count, not once per sample.
+- **LL-HLS parts and LL-DASH chunks carry every track, and stay within the part
+  target** (#1080, audit r05-W27). A regular part/chunk drained only the anchor
+  (video) track and left all audio for the segment's final part, so a client
+  playing at the live edge had video with no audio until the segment closed.
+  Every track now contributes the samples whose decode span falls inside the
+  part/chunk's span, and a part stops *before* the sample that would take it
+  past `PART-TARGET` (RFC 8216bis §4.4.4.9 bounds a part duration above by the
+  part target), instead of rounding every part up by one anchor sample.
+- **DASH groups Representations by language and codec, and the CLI honours
+  `--segment-duration`** (#1080, audit r05-W28/W29). One `AdaptationSet` per
+  (kind, `@lang`, codec family) — ISO/IEC 23009-1 §5.3.3 makes the members of a
+  set switchable encodings of the same content, and a single set for every
+  language put an ABR client in a position to switch between `eng` and `fra`, or
+  between AAC and AC-3, on a bandwidth change. The `hls`/`dash` outputs are now
+  genuinely segmented at `--segment-duration` (a DASH media segment is
+  `styp`+`moof`+`mdat` with no `moov`, which §6.3.4.2 forbids there), the CMAF
+  HLS playlist lists one segment per slice with an `#EXT-X-MAP` and an `init.mp4`
+  beside it, and `detect_container` handles M2TS (192-byte stride) and
+  mid-packet captures.
 - **`moof`/`traf` children the crate does not model are preserved, and a `traf`
   with no `trun` parses** (#1080, audit r05-W11). §6.2.3's `traf` table lists
   `sbgp`/`sgpd`/`subs`/`saiz`/`saio`/`meta` besides `tfhd`/`trun`/`tfdt`; only

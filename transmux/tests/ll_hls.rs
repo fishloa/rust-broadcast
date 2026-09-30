@@ -656,3 +656,283 @@ fn zero_anchor_timescale_does_not_render_inf_or_nan_into_playlist() {
         "sanity: the playlist must still carry a real #EXTINF line:\n{m3u8}"
     );
 }
+
+// ===========================================================================
+// Test — audio rides every part, and a part never exceeds PART-TARGET (r05-W27)
+// ===========================================================================
+
+/// Count the `traf` boxes in a part's `moof` (via the top-level walker).
+fn traf_count(part: &[u8]) -> usize {
+    let moof = find_box_body(part, b"moof").expect("moof in part");
+    let mut n = 0;
+    let mut off = 0usize;
+    while off + 8 <= moof.len() {
+        let size =
+            u32::from_be_bytes([moof[off], moof[off + 1], moof[off + 2], moof[off + 3]]) as usize;
+        if size < 8 || off + size > moof.len() {
+            break;
+        }
+        if &moof[off + 4..off + 8] == b"traf" {
+            n += 1;
+        }
+        off += size;
+    }
+    n
+}
+
+/// `tfdt.baseMediaDecodeTime` of the single `traf` in a part whose track_id
+/// matches `want_track`; `None` when that track has no `traf` in this part.
+fn part_tfdt_for(part: &[u8], want_track: u32) -> Option<u64> {
+    let moof = find_box_body(part, b"moof")?;
+    let mut off = 0usize;
+    while off + 8 <= moof.len() {
+        let size =
+            u32::from_be_bytes([moof[off], moof[off + 1], moof[off + 2], moof[off + 3]]) as usize;
+        if size < 8 || off + size > moof.len() {
+            break;
+        }
+        if &moof[off + 4..off + 8] == b"traf" {
+            let body = &moof[off + 8..off + size];
+            // tfhd: 8-byte header + flags(3) + track_id(4).
+            let mut p = 0usize;
+            let mut tid = None;
+            while p + 8 <= body.len() {
+                let bs =
+                    u32::from_be_bytes([body[p], body[p + 1], body[p + 2], body[p + 3]]) as usize;
+                let bt = &body[p + 4..p + 8];
+                if bs < 8 || p + bs > body.len() {
+                    break;
+                }
+                if bt == b"tfhd" {
+                    tid = Some(u32::from_be_bytes([
+                        body[p + 12],
+                        body[p + 13],
+                        body[p + 14],
+                        body[p + 15],
+                    ]));
+                } else if bt == b"tfdt" && tid == Some(want_track) {
+                    let v = body[p + 8];
+                    let raw = &body[p + 12..];
+                    let v = if v == 1 {
+                        u64::from_be_bytes([
+                            raw[0], raw[1], raw[2], raw[3], raw[4], raw[5], raw[6], raw[7],
+                        ])
+                    } else {
+                        u64::from(u32::from_be_bytes([raw[0], raw[1], raw[2], raw[3]]))
+                    };
+                    return Some(v);
+                }
+                p += bs;
+            }
+        }
+        off += size;
+    }
+    None
+}
+
+/// Every non-final part of a muxed A/V segment carries both the video and the
+/// audio track — a client playing at the live edge must have audio in each part,
+/// not only in the segment's last one (RFC 8216bis §4.4.4.9, audit r05-W27).
+#[test]
+fn every_part_carries_both_tracks() {
+    let mut seg =
+        LlHlsSegmenter::with_part_target(vec![video_track(), audio_track()], 1000, 1.0, 334)
+            .unwrap();
+
+    // 1 s of 30 fps video; 2 audio frames per video frame (1024 @ 48 kHz).
+    let mut ai: usize = 0;
+    for i in 0..30u8 {
+        seg.push(1, vsample(i == 0, i)).unwrap();
+        for _ in 0..2 {
+            seg.push(
+                2,
+                Sample::new(vec![ai as u8; 8], None, None, Some(1024), true),
+            )
+            .unwrap();
+            ai += 1;
+        }
+    }
+    seg.flush().unwrap();
+    let parts = seg.take_ready_parts();
+    assert!(
+        parts.len() >= 2,
+        "expect several parts, got {}",
+        parts.len()
+    );
+
+    for (i, p) in parts.iter().enumerate() {
+        assert_eq!(
+            traf_count(&p.bytes),
+            2,
+            "part {i} (dur {}) must carry both video (track 1) and audio (track 2)",
+            p.duration
+        );
+        assert!(part_tfdt_for(&p.bytes, 1).is_some(), "part {i}: video tfdt");
+        assert!(part_tfdt_for(&p.bytes, 2).is_some(), "part {i}: audio tfdt");
+    }
+
+    // Audio decode times must be strictly advancing and contiguous across the
+    // parts — the audio is split, not duplicated.
+    let mut prev: Option<u64> = None;
+    for p in &parts {
+        let t = part_tfdt_for(&p.bytes, 2).expect("audio tfdt");
+        if let Some(prev) = prev {
+            assert!(
+                t > prev,
+                "audio tfdt must advance across parts: {prev} -> {t}"
+            );
+        }
+        prev = Some(t);
+    }
+}
+
+/// A part's declared duration must not exceed the part target (RFC 8216bis
+/// §4.4.4.9: "The duration of a Partial Segment MUST be less than or equal to
+/// the Part Target Duration").
+#[test]
+fn part_duration_never_exceeds_part_target() {
+    // 334 ms part target, 33.3 ms AUs: the pre-fix code emitted 367 ms parts.
+    let mut seg = LlHlsSegmenter::with_part_target(vec![video_track()], 1000, 1.0, 334).unwrap();
+    for i in 0..30u8 {
+        seg.push(1, vsample(i == 0, i)).unwrap();
+    }
+    seg.flush().unwrap();
+    let parts = seg.take_ready_parts();
+    assert!(parts.len() >= 2, "expect several parts");
+    // The *final* part of a segment is exempt from the 85% floor but not from
+    // the ceiling; the last part here is the segment tail, checked too.
+    for (i, p) in parts.iter().enumerate() {
+        assert!(
+            p.duration <= 0.334 + 1e-9,
+            "part {i} duration {} exceeds the 334 ms part target",
+            p.duration
+        );
+    }
+}
+
+// ===========================================================================
+// Item 3 — a part never exceeds PART-TARGET over a long (6 s) A/V segment
+// ===========================================================================
+
+/// A 6 s muxed segment cut at a 334 ms part target must produce parts no longer
+/// than the target, every one carrying both tracks.
+///
+/// The old `emit_part` reset `anchor_part_dur` to 0 after a part even when
+/// `take_span` had deliberately left the crossing sample (and its elapsed span)
+/// in `pending`, so the leftover grew by roughly one sample per part; by the
+/// end of a long segment the final "part" held all of it and ran far past the
+/// part target (RFC 8216bis §4.4.4.9 bounds a part duration above by
+/// PART-TARGET). A 1 s segment hides this, which is what the earlier test used.
+#[test]
+fn long_segment_parts_stay_within_part_target() {
+    let mut seg =
+        LlHlsSegmenter::with_part_target(vec![video_track(), audio_track()], 6000, 6.0, 334)
+            .unwrap();
+
+    const N_VID: usize = 150; // 6 s at 25 fps
+    const N_AUD: usize = 281; // ~6 s of 1024-sample frames
+    const AUD_DUR: u32 = 1024;
+
+    let mut items: Vec<(f64, bool, usize)> = Vec::new();
+    for i in 0..N_VID {
+        items.push((i as f64 * VID_DUR as f64 / 90_000.0, true, i));
+    }
+    for j in 0..N_AUD {
+        items.push((j as f64 * AUD_DUR as f64 / 48_000.0, false, j));
+    }
+    items.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
+
+    for (_, is_video, i) in items {
+        if is_video {
+            // Keyframe only at the segment start: one 6 s segment.
+            seg.push(1, vsample(i == 0, (i % 251) as u8)).unwrap();
+        } else {
+            seg.push(
+                2,
+                Sample::new(vec![(i % 251) as u8; 8], None, None, Some(AUD_DUR), true),
+            )
+            .unwrap();
+        }
+    }
+    seg.flush().unwrap();
+
+    let parts = seg.take_ready_parts();
+    assert!(
+        parts.len() > 10,
+        "a 6 s segment at a 334 ms part target needs many parts, got {}",
+        parts.len()
+    );
+
+    // Every part is within the target (the last part of a segment may be
+    // shorter, never longer), and carries both tracks.
+    for (i, p) in parts.iter().enumerate() {
+        assert!(
+            p.duration <= 0.334 + 1e-9,
+            "part {i} duration {} exceeds the 334 ms part target",
+            p.duration
+        );
+        assert_eq!(
+            traf_count(&p.bytes),
+            2,
+            "part {i} (duration {}) must carry both video and audio",
+            p.duration
+        );
+    }
+
+    // Sample conservation: the parts' video samples equal what was pushed.
+    let video_samples: usize = parts.iter().map(|p| part_sample_count(&p.bytes, 1)).sum();
+    assert_eq!(
+        video_samples, N_VID,
+        "the parts must carry every video sample exactly once"
+    );
+    let audio_samples: usize = parts.iter().map(|p| part_sample_count(&p.bytes, 2)).sum();
+    assert_eq!(
+        audio_samples, N_AUD,
+        "the parts must carry every audio sample exactly once"
+    );
+}
+
+/// The sample count of `track_id`'s `trun`s in a part (`moof` walk).
+fn part_sample_count(part: &[u8], want_track: u32) -> usize {
+    let moof = find_box_body(part, b"moof").expect("moof in part");
+    let mut total = 0usize;
+    let mut off = 0usize;
+    while off + 8 <= moof.len() {
+        let size =
+            u32::from_be_bytes([moof[off], moof[off + 1], moof[off + 2], moof[off + 3]]) as usize;
+        if size < 8 || off + size > moof.len() {
+            break;
+        }
+        if &moof[off + 4..off + 8] == b"traf" {
+            let body = &moof[off + 8..off + size];
+            let mut p = 0usize;
+            let mut tid = None;
+            while p + 8 <= body.len() {
+                let bs =
+                    u32::from_be_bytes([body[p], body[p + 1], body[p + 2], body[p + 3]]) as usize;
+                let bt = &body[p + 4..p + 8];
+                if bs < 8 || p + bs > body.len() {
+                    break;
+                }
+                if bt == b"tfhd" {
+                    tid = Some(u32::from_be_bytes([
+                        body[p + 12],
+                        body[p + 13],
+                        body[p + 14],
+                        body[p + 15],
+                    ]));
+                } else if bt == b"trun" && tid == Some(want_track) {
+                    total += u32::from_be_bytes([
+                        body[p + 12],
+                        body[p + 13],
+                        body[p + 14],
+                        body[p + 15],
+                    ]) as usize;
+                }
+                p += bs;
+            }
+        }
+        off += size;
+    }
+    total
+}

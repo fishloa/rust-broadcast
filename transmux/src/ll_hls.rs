@@ -408,9 +408,13 @@ impl LlHlsSegmenter {
         }
         self.tracks[idx].pending.push(sample);
 
-        // Part boundary: the anchor buffered a full part's worth since the last
-        // part, but the segment is not yet due to close. Hold the segment's final
-        // part for the boundary/flush so trailing non-anchor samples ride it.
+        // Part boundary: the anchor's buffered-since-last-part span has reached
+        // the part target and the segment is not yet due to close. `emit_part`
+        // then drains only the samples that fit *within* the part target
+        // (RFC 8216bis §4.4.4.9: "The duration of a Partial Segment MUST be less
+        // than or equal to the Part Target Duration"), leaving the crossing
+        // sample for the next part. The segment's final part is held for the
+        // boundary / flush so trailing samples ride it.
         if idx == self.anchor
             && self.anchor_part_dur >= self.part_target_ticks
             && self.anchor_seg_dur < self.target_ticks
@@ -521,23 +525,46 @@ impl LlHlsSegmenter {
     }
 
     /// Emit one part covering the samples buffered since the last part. If
-    /// `final_part`, drain every remaining sample of every track; otherwise drain
-    /// only the anchor's samples since the last part (non-anchor samples ride the
-    /// segment's final part, matching the whole-segment single per-track run).
+    /// `final_part`, drain every remaining sample of every track. Otherwise the
+    /// anchor drains every buffered sample and each non-anchor track drains the
+    /// samples whose buffered decode span falls inside the anchor's part span —
+    /// so audio accompanies the anchor in every part instead of arriving only in
+    /// the segment's last one (RFC 8216bis §4.4.4.9 / audit r05-W27).
     fn emit_part(&mut self, final_part: bool) -> Result<()> {
         let anchor = self.anchor;
 
+        // The decode span this part may cover, in the *anchor's* timescale: the
+        // part target, capped by what the anchor has actually buffered
+        // (`anchor_part_dur`). A regular part must not exceed the part target
+        // (RFC 8216bis §4.4.4.9), so the drain stops at the first sample that
+        // would cross it; the final part of a segment drains everything.
+        let anchor_scale = self.tracks[anchor].spec.timescale.max(1) as u64;
+        let part_span = if final_part {
+            u64::MAX
+        } else {
+            self.anchor_part_dur.min(self.part_target_ticks)
+        };
+
         // Per track, the [part_start .. end) sample range this part drains.
+        // Every track drains the prefix of its un-parted samples whose decode
+        // span is within the part span, scaled to its own timescale — so a
+        // lower-rate track (audio) still contributes its samples to *this* part
+        // rather than waiting for the segment's final one (audit r05-W27).
         let take_ends: Vec<usize> = self
             .tracks
             .iter()
             .enumerate()
             .map(|(i, t)| {
-                if final_part || i == anchor {
-                    t.pending.len()
-                } else {
-                    t.part_start
+                if final_part {
+                    return t.pending.len();
                 }
+                let track_scale = t.spec.timescale.max(1) as u64;
+                let track_span = if part_span == u64::MAX {
+                    u64::MAX
+                } else {
+                    part_span.saturating_mul(track_scale) / anchor_scale
+                };
+                take_span(t, track_span, i == anchor)
             })
             .collect();
 
@@ -558,10 +585,20 @@ impl LlHlsSegmenter {
             .map(|s| s.flags.is_sync)
             .unwrap_or(false);
 
-        // Part duration = the anchor's buffered-since-last-part duration.
+        // Part duration = the anchor's decoded span actually drained into this
+        // part (`take_ends[anchor] - part_start` samples), not the whole
+        // buffered span — the samples past the part target stay for the next
+        // part, so `#EXT-X-PART:DURATION` must reflect what is really here.
         // See `part_target_secs` above for why `.max(1)` guards this division.
-        let part_secs =
-            self.anchor_part_dur as f64 / self.tracks[anchor].spec.timescale.max(1) as f64;
+        let anchor_span_ticks: u64 = {
+            let t = &self.tracks[anchor];
+            let clock = &mut MediaClock::resumed_at(t.part_clock.last_dts());
+            t.pending[t.part_start..take_ends[anchor]]
+                .iter()
+                .map(|s| clock.tick(s))
+                .sum()
+        };
+        let part_secs = anchor_span_ticks as f64 / self.tracks[anchor].spec.timescale.max(1) as f64;
 
         let seq = self.next_seq;
         let part_bytes = {
@@ -586,17 +623,32 @@ impl LlHlsSegmenter {
         // calls, so `part_clock` sees each sample exactly once.
         for (t, &end) in self.tracks.iter_mut().zip(&take_ends) {
             let clock = &mut t.part_clock;
-            let dur: u64 = t.pending[t.part_start..end]
-                .iter()
-                .map(|s| clock.tick(s))
-                .sum();
+            let mut dur: u64 = 0;
+            for s in &t.pending[t.part_start..end] {
+                dur += clock.tick(s);
+            }
             t.part_base_decode += dur;
             t.part_start = end;
         }
 
         let part_index = self.next_part_index;
         self.next_part_index += 1;
-        self.anchor_part_dur = 0;
+
+        // Re-seed the accumulator with the span still buffered on the anchor.
+        // `take_span` stops *before* the sample that would cross the part
+        // target, so `pending` keeps that sample and its elapsed span must not
+        // be discarded: resetting to 0 instead let the leftover grow by about
+        // one sample per part, and the segment's final part ended up carrying
+        // all of it — a part many times the part target on a long segment
+        // (audit fix wave 2, item 3).
+        self.anchor_part_dur = {
+            let t = &self.tracks[anchor];
+            let mut clock = MediaClock::resumed_at(t.part_clock.last_dts());
+            t.pending[t.part_start..]
+                .iter()
+                .map(|s| clock.tick(s))
+                .sum()
+        };
 
         self.ready.push_back(LlHlsStageOutput::Part(PartInfo {
             bytes: part_bytes,
@@ -688,4 +740,43 @@ impl Stage for LlHlsSegmenter {
             Demand::default()
         }
     }
+}
+/// How many of `t`'s un-parted samples (`pending[part_start..]`) fit inside a
+/// decode span of `target_ticks` (in this track's timescale).
+///
+/// Walks the samples with a [`MediaClock`] resumed at the last drained sample's
+/// `dts`, so the duration-then-dts-delta rule matches the drain accounting in
+/// [`LlHlsSegmenter::emit_part`] exactly, and stops *before* the sample that
+/// crosses `target_ticks` (a part never over-runs the anchor's part span by a
+/// whole sample; the overhang lands in the next part). Always takes at least one
+/// sample when one is available, so an unusually long sample cannot stall the
+/// drain forever.
+fn take_span(t: &TrackState, target_ticks: u64, force_one: bool) -> usize {
+    if t.part_start >= t.pending.len() {
+        return t.part_start;
+    }
+    let mut clock = MediaClock::resumed_at(t.part_clock.last_dts());
+    let mut span: u64 = 0;
+    let mut end = t.part_start;
+    for s in &t.pending[t.part_start..] {
+        let next = clock.tick(s);
+        // Stop as soon as adding this sample would take the part *past* the
+        // target: the part must stay ≤ the target (RFC 8216bis §4.4.4.9), and
+        // taking the sample that reaches it would round every part up by one
+        // sample (a 334 ms target with 33.3 ms AUs gave 367 ms parts).
+        if end > t.part_start && span + next > target_ticks {
+            break;
+        }
+        span += next;
+        end += 1;
+    }
+    // The anchor must always take at least one sample so `anchor_part_dur`
+    // (reset to 0 below) can advance again; without this a single sample longer
+    // than the part target would stall every future part (the spec exempts a
+    // part that begins with an oversize sample only via INDEPENDENT, so a single
+    // over-target sample is carried as its own part).
+    if force_one && end == t.part_start {
+        end += 1;
+    }
+    end
 }

@@ -224,7 +224,7 @@ fn shrink_ancestors(data: &mut [u8], lo: usize, hi: usize, cut_start: usize, cut
     }
 }
 
-/// Rename the first descendant box of `from` to `to` (same-length 4-CC),
+/// Rename the first descendant box of `from` to `to` (same-length 4-CC),/// Rename the first descendant box of `from` to `to` (same-length 4-CC),
 /// leaving every size unchanged. Used to "remove" a box structurally (the
 /// validator no longer sees it) without disturbing sibling offsets — e.g.
 /// turning `tfdt` into `free` so the trun `data_offset` arithmetic still holds.
@@ -625,4 +625,130 @@ fn wrong_brand_moov_only_errors_no_panic() {
     let issues = validate_init_segment(&buf);
     assert!(has_code(&issues, "init.ftyp.missing"));
     assert!(has_code(&issues, "init.moov.missing"));
+}
+
+// ---------------------------------------------------------------------------
+// Audit r05-W30 — per-trun ranges, multi-moof, track identity, issue dedup
+// ---------------------------------------------------------------------------
+
+/// (a) The overrun check must consider **every** `trun`'s own range, not just the
+/// smallest offset: a `trun` whose own `data_offset` leaves the mdat used to pass
+/// whenever the aggregate fitted.
+#[test]
+fn mdat_overrun_checks_every_trun_range() {
+    let data = fixture();
+    let samples = video_samples(&data);
+    let media = clean_media(1, 0, &samples);
+
+    // Baseline is clean.
+    assert!(!has_code(
+        &validate_media_segment(&media),
+        "media.mdat.overrun"
+    ));
+
+    // Corrupt *only* the trun's `data_offset`: point it well past the mdat.
+    // The sample sizes are unchanged, so the only way to see this is to resolve
+    // each trun's own range.
+    let (trun_start, _) = find_box_range(&media, 0, media.len(), b"trun").expect("trun present");
+    let mut broken = media.clone();
+    // trun layout: box header(8) + version/flags(4) + sample_count(4) +
+    // data_offset(4).
+    let data_offset_off = trun_start + 8 + 4 + 4;
+    broken[data_offset_off..data_offset_off + 4].copy_from_slice(&0x00FF_FFFFu32.to_be_bytes());
+
+    let issues = validate_media_segment(&broken);
+    assert!(
+        has_code(&issues, "media.mdat.overrun"),
+        "an out-of-range trun data_offset must be caught, got {:?}",
+        errors(&issues)
+    );
+
+    // And the reverse: the original media (same sizes, in-range offset) is
+    // clean — so the check is on the range, not merely on the presence of a
+    // trun.
+    assert!(!has_code(
+        &validate_media_segment(&media),
+        "media.mdat.overrun"
+    ));
+}
+
+/// (b) A segment holding **two** `moof`s must not report a false
+/// `track.tfdt.discontinuity`: the cross-segment check must use the segment's
+/// last fragment end, not its first tfdt.
+#[test]
+fn multi_moof_segment_has_no_false_tfdt_discontinuity() {
+    let data = fixture();
+    let all = video_samples(&data);
+    let half = all.len() / 2;
+    let (a, b) = all.split_at(half);
+
+    let seg1 = clean_media(1, 0, a);
+    let dur_a: u64 = a.iter().map(|s| u64::from(s.duration.unwrap_or(0))).sum();
+    let seg2 = clean_media(2, dur_a, b);
+
+    // Concatenating two media segments gives one byte string with two moofs —
+    // exactly a multi-fragment segment. The track's decode end after the second
+    // fragment is dur_a + dur_b.
+    let mut multi = seg1.clone();
+    multi.extend_from_slice(&seg2);
+
+    let dur_b: u64 = b.iter().map(|s| u64::from(s.duration.unwrap_or(0))).sum();
+    let seg3 = clean_media(3, dur_a + dur_b, a);
+
+    let issues = validate_cmaf_track(&clean_init(), &[&multi, &seg3]);
+    assert!(
+        !has_code(&issues, "track.tfdt.discontinuity"),
+        "a multi-moof segment must not report a false tfdt discontinuity: {:?}",
+        errors(&issues)
+    );
+
+    // And a genuinely discontinuous next segment still bites.
+    let seg_bad = clean_media(3, dur_a + dur_b + 999_999, a);
+    let issues = validate_cmaf_track(&clean_init(), &[&multi, &seg_bad]);
+    assert!(
+        has_code(&issues, "track.tfdt.discontinuity"),
+        "a real discontinuity must still be reported"
+    );
+}
+
+/// (c) A media segment naming a track the init segment does not declare is an
+/// error.
+#[test]
+fn unknown_track_id_bites() {
+    let data = fixture();
+    let samples = video_samples(&data);
+    // Track id 7 is not in `clean_init()` (which carries the fixture's own id).
+    let media = build_media_segment(1, &[FragmentTrackData::new(7, 0, &samples)])
+        .expect("build media with an undeclared track id");
+
+    let issues = validate_cmaf_track(&clean_init(), &[&media]);
+    assert!(
+        has_code(&issues, "track.tfhd.unknown-track"),
+        "an undeclared tfhd.track_id must be reported: {:?}",
+        errors(&issues)
+    );
+}
+
+/// (d) A fragment whose samples all have zero duration reports **one**
+/// `media.sample.zero-duration` issue, not one per sample.
+#[test]
+fn zero_duration_reported_once_per_traf() {
+    let data = fixture();
+    let mut samples = video_samples(&data);
+    for s in &mut samples {
+        s.duration = Some(0);
+    }
+    let media = clean_media(1, 0, &samples);
+
+    let issues = validate_media_segment(&media);
+    let count = issues
+        .iter()
+        .filter(|i| i.code == "media.sample.zero-duration")
+        .count();
+    assert_eq!(
+        count,
+        1,
+        "one deduplicated issue per traf, got {count} (issues: {:?})",
+        errors(&issues)
+    );
 }

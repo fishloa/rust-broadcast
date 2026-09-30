@@ -62,8 +62,8 @@
 
 use crate::box_types::{BoxRef, parse_box};
 use crate::movie_fragment::{
-    MovieFragmentHeaderBox, TrackFragmentBaseMediaDecodeTimeBox, TrackFragmentHeaderBox,
-    TrackFragmentRunBox,
+    MovieFragmentBox, MovieFragmentHeaderBox, TFHD_DEFAULT_BASE_IS_MOOF,
+    TrackFragmentBaseMediaDecodeTimeBox, TrackFragmentHeaderBox, TrackFragmentRunBox,
 };
 use crate::segments::SegmentTypeBox;
 use alloc::format;
@@ -334,20 +334,43 @@ fn validate_trak(trak: &[u8], track_no: usize, issues: &mut Vec<ConformanceIssue
 
 /// A per-`traf` decode of the fields the validator needs downstream.
 struct TrafInfo {
+    /// `tfhd.track_id` (§8.8.7) — the key the cross-segment validator pairs
+    /// trafs by, so a segment whose tracks are sparse or reordered is compared
+    /// against the right predecessor (audit r05-W30b: pairing by traf *index*
+    /// mis-paired them).
+    track_id: Option<u32>,
     tfdt: Option<u64>,
     /// Sum of the `trun` sample durations across all `trun` of this `traf`.
     total_duration: u64,
-    /// Sum of the `trun` sample sizes across all `trun` of this `traf`.
-    total_size: u64,
-    /// The smallest resolved `data_offset` seen (relative to moof start).
-    min_data_offset: Option<i64>,
 }
 
-/// Decode of a single media segment's `moof` (used by both the per-segment and
+/// Decode of a media segment's fragment(s) (used by both the per-segment and
 /// cross-segment validators).
+///
+/// Aggregated over **every** `moof` in the segment, not just the first (audit
+/// r05-W30b): returning only the first fragment's info made
+/// [`validate_cmaf_track`] compare a multi-fragment segment's *first* `tfdt`
+/// against the next segment's, reporting a false
+/// `track.tfdt.discontinuity`. Each track's durations are summed and its
+/// decode-time span tracked, so the cross-segment check uses the segment's
+/// real end.
 struct MediaInfo {
+    /// `mfhd.sequence_number` of the segment's **first** fragment (the value a
+    /// playlist orders by).
     sequence_number: Option<u32>,
-    trafs: Vec<TrafInfo>,
+    /// Per-track aggregate, keyed by `tfhd.track_id`, in first-seen order.
+    tracks: Vec<TrackFragmentInfo>,
+}
+
+/// One media segment's aggregate for a single track (across all its `moof`s).
+struct TrackFragmentInfo {
+    track_id: u32,
+    /// Lowest `tfdt` seen for the track in this segment.
+    first_tfdt: Option<u64>,
+    /// Highest `tfdt + Σ durations` seen for the track in this segment.
+    last_decode_end: Option<u64>,
+    /// Total sample duration across the track's fragments in this segment.
+    total_duration: u64,
 }
 
 /// Validate a fMP4/CMAF **media segment** against ISO/IEC 14496-12 + CMAF.
@@ -433,16 +456,33 @@ fn validate_media_inner(bytes: &[u8], issues: &mut Vec<ConformanceIssue>) -> Opt
         }
     }
 
-    let mut first_info: Option<MediaInfo> = None;
+    let mut aggregated = MediaInfo {
+        sequence_number: None,
+        tracks: Vec::new(),
+    };
 
     // Validate each moof and its following mdat.
     for &mp in &moof_positions {
         let (_, moof_bx) = &top[mp];
-        let info = validate_moof(moof_bx.body, mp + 1, issues);
+        let (seq_no, info) = validate_moof(moof_bx.body, mp + 1, issues);
+        // The parsed `moof`, for the shared §8.8.7 offset resolver below.
+        let moof_parsed = MovieFragmentBox::parse_body(moof_bx.body).ok();
+        // Byte offset of this `moof` in `bytes`, for the §8.8.7 resolver (which
+        // needs file coordinates, not the box index).
+        let base = bytes.as_ptr() as usize;
+        let body_ptr = moof_bx.body.as_ptr() as usize;
+        let moof_byte_off = (body_ptr >= base)
+            .then(|| body_ptr - base)
+            .and_then(|body_off| body_off.checked_sub(moof_bx.header.header_size()));
+        if aggregated.sequence_number.is_none() {
+            aggregated.sequence_number = seq_no;
+        }
 
-        // moof must be followed by mdat (§8.8.4).
-        let mdat_body = match top.get(mp + 1) {
-            Some((t, bx)) if t == &MDAT => Some(bx.body),
+        // moof must be followed by mdat (§8.8.4). The resolver below validates
+        // that the sample ranges land *inside* an mdat, so only the pairing is
+        // checked here.
+        let has_mdat_after = match top.get(mp + 1) {
+            Some((t, _)) if t == &MDAT => true,
             _ => {
                 issues.push(ConformanceIssue::error(
                     "media.mdat.missing",
@@ -452,57 +492,104 @@ fn validate_media_inner(bytes: &[u8], issues: &mut Vec<ConformanceIssue>) -> Opt
                         mp + 1
                     ),
                 ));
-                None
+                false
             }
         };
+        let _ = has_mdat_after;
 
-        // trun sample sizes + data_offset must land inside the mdat payload
-        // (§8.8.8). data_offset is relative to the moof start under CMAF's
-        // default-base-is-moof; the mdat payload starts at (moof_size + mdat
-        // header) from the moof start.
-        if let Some(mdat_body) = mdat_body {
-            let moof_size = moof_bx.header.size;
-            // mdat header size: the box header preceding `bx.body`.
-            let mdat_hdr = top[mp + 1].1.header.header_size() as u64;
-            // mdat payload bytes live at [moof_and_mdat_header_size ..
-            // mdat_payload_end] from the moof start; a `data_offset` below
-            // that lower bound points into the moof (or the mdat's own
-            // header) rather than at real sample data.
-            let moof_and_mdat_header_size = moof_size + mdat_hdr;
-            let mdat_payload_end = moof_and_mdat_header_size + mdat_body.len() as u64;
-            for (ti, traf) in info.trafs.iter().enumerate() {
-                if let Some(off) = traf.min_data_offset {
-                    let start = off;
-                    let end = start + traf.total_size as i64;
-                    // Valid data lives at [moof_and_mdat_header_size .. mdat_payload_end].
-                    if start < 0
-                        || (start as u64) < moof_and_mdat_header_size
-                        || (end as u64) > mdat_payload_end
-                    {
-                        issues.push(ConformanceIssue::error(
+        // Every `trun`'s resolved sample ranges must land inside the `mdat`
+        // payload (§8.8.7 / §8.8.8). The ranges come from the crate's single
+        // §8.8.7 resolver, `frag_offsets::sample_ranges`, so this validator and
+        // the demuxers cannot disagree about where a fragment's bytes live
+        // (audit r05-W30a: the previous arithmetic resolved each `trun` against
+        // the previous one's end and ignored `tfhd.base_data_offset`, the
+        // `default-base-is-moof` flag, and the "a later traf continues from
+        // here" rule §8.8.7 defines for a second `traf` in one `moof`).
+        let mut checked: Vec<(i64, i64)> = Vec::new();
+        for (ti, traf) in info.iter().enumerate() {
+            let (Some(track_id), Some(moof_box), Some(moof_off)) =
+                (traf.track_id, moof_parsed.as_ref(), moof_byte_off)
+            else {
+                continue;
+            };
+            let ranges = match crate::frag_offsets::sample_ranges(
+                bytes, moof_off, moof_box, track_id,
+            ) {
+                Ok(r) => r,
+                Err(_) => {
+                    issues.push(ConformanceIssue::error(
                             "media.mdat.overrun",
                             format!(
-                                "moof #{}, traf #{}: trun samples span offset {}..{} but the \
-                                 mdat payload is [{}..{}) (ISO/IEC 14496-12 §8.8.8)",
+                                "moof #{}, traf #{}: sample data offsets do not resolve to a                                  range inside an mdat (ISO/IEC 14496-12 §8.8.7)",
                                 mp + 1,
-                                ti + 1,
-                                start,
-                                end,
-                                moof_and_mdat_header_size,
-                                mdat_payload_end
+                                ti + 1
                             ),
                         ));
+                    continue;
+                }
+            };
+            // The run's overall span (first sample start .. last sample end), so
+            // the message names a run and overlaps between runs are detectable.
+            if let (Some(first), Some(last)) = (ranges.first(), ranges.last()) {
+                checked.push((
+                    i64::try_from(first.start).unwrap_or(i64::MAX),
+                    i64::try_from(last.end).unwrap_or(i64::MAX),
+                ));
+            }
+        }
+
+        // Two runs must not claim the same bytes: overlapping ranges would read
+        // one sample's data twice and leave another's unreachable.
+        checked.sort_unstable();
+        for w in checked.windows(2) {
+            let ((a_lo, a_hi), (b_lo, b_hi)) = (w[0], w[1]);
+            if a_hi > b_lo && b_hi > a_lo {
+                issues.push(ConformanceIssue::error(
+                    "media.mdat.overlap",
+                    format!(
+                        "moof #{}: trun data ranges {}..{} and {}..{} overlap                          (ISO/IEC 14496-12 §8.8.8)",
+                        mp + 1,
+                        a_lo,
+                        a_hi,
+                        b_lo,
+                        b_hi
+                    ),
+                ));
+            }
+        }
+
+        for traf in info {
+            if let Some(track_id) = traf.track_id {
+                match aggregated
+                    .tracks
+                    .iter_mut()
+                    .find(|t| t.track_id == track_id)
+                {
+                    Some(t) => {
+                        t.total_duration += traf.total_duration;
+                        if let Some(tfdt) = traf.tfdt {
+                            t.first_tfdt = Some(t.first_tfdt.map_or(tfdt, |f| f.min(tfdt)));
+                            let end = tfdt.saturating_add(traf.total_duration);
+                            t.last_decode_end = Some(t.last_decode_end.map_or(end, |e| e.max(end)));
+                        }
+                    }
+                    None => {
+                        let end = traf
+                            .tfdt
+                            .map(|tfdt| tfdt.saturating_add(traf.total_duration));
+                        aggregated.tracks.push(TrackFragmentInfo {
+                            track_id,
+                            first_tfdt: traf.tfdt,
+                            last_decode_end: end,
+                            total_duration: traf.total_duration,
+                        });
                     }
                 }
             }
         }
-
-        if first_info.is_none() {
-            first_info = Some(info);
-        }
     }
 
-    first_info
+    Some(aggregated)
 }
 
 /// Re-slice the whole styp box (header + body) from the segment bytes so it can
@@ -523,7 +610,11 @@ fn styp_whole<'a>(bytes: &'a [u8], bx: &BoxRef<'a>) -> Option<&'a [u8]> {
     bytes.get(start..end)
 }
 
-fn validate_moof(moof: &[u8], moof_no: usize, issues: &mut Vec<ConformanceIssue>) -> MediaInfo {
+fn validate_moof(
+    moof: &[u8],
+    moof_no: usize,
+    issues: &mut Vec<ConformanceIssue>,
+) -> (Option<u32>, Vec<TrafInfo>) {
     let mut sequence_number = None;
 
     // mfhd (§8.8.5).
@@ -569,10 +660,7 @@ fn validate_moof(moof: &[u8], moof_no: usize, issues: &mut Vec<ConformanceIssue>
         traf_infos.push(validate_traf(traf.body, moof_no, idx + 1, issues));
     }
 
-    MediaInfo {
-        sequence_number,
-        trafs: traf_infos,
-    }
+    (sequence_number, traf_infos)
 }
 
 fn validate_traf(
@@ -590,8 +678,24 @@ fn validate_traf(
         ));
     }
     let tfhd = tfhd.and_then(|b| TrackFragmentHeaderBox::parse_body(b).ok());
+    let track_id = tfhd.as_ref().map(|h| h.track_id);
     let default_duration = tfhd.as_ref().and_then(|h| h.default_sample_duration);
-    let default_size = tfhd.as_ref().and_then(|h| h.default_sample_size);
+
+    // CMAF §7.3.2.3 / ISO/IEC 14496-12 §8.8.7: a CMAF fragment's `tfhd` must
+    // set `default-base-is-moof`, so its `trun.data_offset` values resolve
+    // against the `moof` start. Without it the base falls back to the
+    // enclosing `traf`'s `base_data_offset` or the previous fragment's end —
+    // a resolving rule no CMAF client implements.
+    if let Some(h) = &tfhd
+        && h.flags & TFHD_DEFAULT_BASE_IS_MOOF == 0
+    {
+        issues.push(ConformanceIssue::error(
+            "media.tfhd.default-base-is-moof",
+            format!(
+                "moof #{moof_no}, traf #{traf_no}: tfhd does not set default-base-is-moof                  (ISO/IEC 23000-19 §7.3.2.3)"
+            ),
+        ));
+    }
 
     // tfdt (§8.8.12; CMAF §7.5.19 requires it).
     let tfdt = match child_body(traf, &TFDT) {
@@ -630,44 +734,138 @@ fn validate_traf(
     }
 
     let mut total_duration: u64 = 0;
-    let mut total_size: u64 = 0;
-    let mut min_data_offset: Option<i64> = None;
+    // A single `media.sample.zero-duration` per traf, not one per bad sample
+    // (audit r05-W30d): a fragment with a broken sample table produced
+    // thousands of identical issues, drowning every other finding.
+    let mut zero_duration_samples: u64 = 0;
     for (_, trun_bx) in &truns {
         let Ok(run) = TrackFragmentRunBox::parse_body(trun_bx.body) else {
             continue;
         };
-        if let Some(off) = run.data_offset {
-            let off = off as i64;
-            min_data_offset = Some(min_data_offset.map_or(off, |m: i64| m.min(off)));
-        }
         for s in &run.samples {
             let dur = s.sample_duration.or(default_duration).unwrap_or(0);
-            let sz = s.sample_size.or(default_size).unwrap_or(0);
-            total_duration += dur as u64;
-            total_size += sz as u64;
+            total_duration += u64::from(dur);
             if dur == 0 {
-                issues.push(ConformanceIssue::error(
-                    "media.sample.zero-duration",
-                    format!(
-                        "moof #{moof_no}, traf #{traf_no}: a sample has zero duration \
-                         (ISO/IEC 14496-12 §8.8.8)"
-                    ),
-                ));
+                zero_duration_samples += 1;
             }
+        }
+    }
+    if zero_duration_samples > 0 {
+        issues.push(ConformanceIssue::error(
+            "media.sample.zero-duration",
+            format!(
+                "moof #{moof_no}, traf #{traf_no}: {zero_duration_samples} sample(s) have \
+                 zero duration (ISO/IEC 14496-12 §8.8.8)"
+            ),
+        ));
+    }
+
+    // CMAF §7.3.2.3: the first sample of a fragment must be a sync (SAP) sample
+    // — a segment opening mid-GOP publishes a random-access point that is not
+    // actually random-accessible, and a player seeking to it decodes garbage.
+    if let Some(first_run) = truns
+        .first()
+        .and_then(|(_, bx)| TrackFragmentRunBox::parse_body(bx.body).ok())
+    {
+        // §8.8.8.1's precedence for a sample's flags: `trun.first_sample_flags`
+        // (sample 0 of the run), else the sample's own `trun.sample_flags`, else
+        // the fragment-wide `tfhd.default_sample_flags`. Missing the last link
+        // let a fragment with a per-fragment non-sync default pass this check
+        // (audit fix wave 2, item 8).
+        let sync = first_run
+            .first_sample_flags
+            .map(|f| f & SAMPLE_FLAGS_IS_NON_SYNC == 0)
+            .or_else(|| {
+                first_run
+                    .samples
+                    .first()
+                    .and_then(|s| s.sample_flags)
+                    .map(|f| f & SAMPLE_FLAGS_IS_NON_SYNC == 0)
+            })
+            .or_else(|| {
+                tfhd.as_ref()
+                    .and_then(|h| h.default_sample_flags)
+                    .map(|f| f & SAMPLE_FLAGS_IS_NON_SYNC == 0)
+            });
+        if sync == Some(false) {
+            // WARNING, not ERROR: the same walker validates an LL-HLS part or an
+            // LL-DASH chunk, where starting mid-GOP is legal and expected
+            // (`#EXT-X-PART:INDEPENDENT=NO`). A *segment* whose first sample is
+            // not a sync sample publishes random access the content does not
+            // have (CMAF §7.3.2.3); a caller that knows the fragment is a segment
+            // boundary can escalate this to an error.
+            issues.push(ConformanceIssue::warning(
+                "media.sample.non-sync-first",
+                format!(
+                    "moof #{moof_no}, traf #{traf_no}: the fragment's first sample is not a \
+                     sync sample; a CMAF segment must begin at a random-access point, an \
+                     LL part/chunk need not (ISO/IEC 23000-19 §7.3.2.3)"
+                ),
+            ));
         }
     }
 
     TrafInfo {
+        track_id,
         tfdt,
         total_duration,
-        total_size,
-        min_data_offset,
     }
 }
+
+/// `sample_is_non_sync_sample` in the 32-bit sample-flags word
+/// (ISO/IEC 14496-12 §8.8.3.1): bit 16, set when the sample is NOT a sync point.
+const SAMPLE_FLAGS_IS_NON_SYNC: u32 = 1 << 16;
 
 // ---------------------------------------------------------------------------
 // Cross-segment validation
 // ---------------------------------------------------------------------------
+
+/// Re-slice a direct child of `parent_body` as its whole box (header + body).
+///
+/// `child_body` yields only the body, which is right for the `*Box::parse_body`
+/// parsers but not for a type whose [`Parse`](broadcast_common::Parse) impl
+/// takes the whole box (e.g. [`TrackHeaderBox`]).
+fn child_whole<'a>(owner: &'a [u8], parent_body: &'a [u8], fourcc: &[u8; 4]) -> Option<&'a [u8]> {
+    let bx_body = child_body(parent_body, fourcc)?;
+    // Locate the body inside the original buffer by pointer arithmetic, then
+    // step back over the header.
+    let base = owner.as_ptr() as usize;
+    let body_ptr = bx_body.as_ptr() as usize;
+    if body_ptr < base {
+        return None;
+    }
+    let body_off = body_ptr - base;
+    // The box header is 8 bytes, or 16 for a largesize box; a `tkhd` inside a
+    // `moov` is never largesize, and `parse` revalidates the size itself.
+    let start = body_off.checked_sub(8)?;
+    let end = body_off.checked_add(bx_body.len())?;
+    owner.get(start..end)
+}
+
+/// The `track_id`s an init segment declares, from every `moov > trak > tkhd`
+/// (ISO/IEC 14496-12 §8.3.2). Empty when no `moov`/`tkhd` can be parsed.
+fn init_track_ids(init: &[u8]) -> Vec<u32> {
+    use crate::init_segment::TrackHeaderBox;
+    use broadcast_common::Parse;
+
+    let Some(moov) = child_body(init, &MOOV) else {
+        return Vec::new();
+    };
+    let mut ids = Vec::new();
+    for (t, trak) in children(moov) {
+        if &t != b"trak" {
+            continue;
+        }
+        // Re-slice the whole `tkhd` box (header + body): `TrackHeaderBox::parse`
+        // expects the full box.
+        if let Some(bytes) = child_whole(moov, trak.body, &TKHD)
+            && let Ok(h) = TrackHeaderBox::parse(bytes)
+        {
+            ids.push(h.track_id);
+        }
+    }
+    ids
+}
 
 /// Validate a whole CMAF **track**: an initialization segment plus its media
 /// segments in presentation order.
@@ -682,9 +880,27 @@ fn validate_traf(
 pub fn validate_cmaf_track(init: &[u8], segments: &[&[u8]]) -> Vec<ConformanceIssue> {
     let mut issues = validate_init_segment(init);
 
+    // The track ids the init segment declares (`moov.trak.tkhd.track_id`,
+    // §8.3.2): a media segment's `tfhd.track_id` must name one of them
+    // (audit r05-W30c). A fragment for an undeclared track cannot be decoded —
+    // there is no `stsd` for it — and a client silently drops it.
+    let declared = init_track_ids(init);
+
     let mut infos: Vec<MediaInfo> = Vec::with_capacity(segments.len());
     for seg in segments {
         if let Some(info) = validate_media_inner(seg, &mut issues) {
+            for track in &info.tracks {
+                if !declared.is_empty() && !declared.contains(&track.track_id) {
+                    issues.push(ConformanceIssue::error(
+                        "track.tfhd.unknown-track",
+                        format!(
+                            "media segment names track_id {} which the init segment's moov \
+                             does not declare (ISO/IEC 14496-12 §8.8.7)",
+                            track.track_id
+                        ),
+                    ));
+                }
+            }
             infos.push(info);
         }
     }
@@ -705,27 +921,32 @@ pub fn validate_cmaf_track(init: &[u8], segments: &[&[u8]]) -> Vec<ConformanceIs
             ));
         }
 
-        // tfdt continuity per track index (§8.8.12; CMAF §7.5.19).
-        // Match trafs pairwise by index (single-track fragments in order).
-        let n = prev.trafs.len().min(next.trafs.len());
-        for i in 0..n {
-            if let (Some(pt), Some(nt)) = (prev.trafs[i].tfdt, next.trafs[i].tfdt) {
-                let expected = pt.saturating_add(prev.trafs[i].total_duration);
-                if nt != expected {
-                    issues.push(ConformanceIssue::error(
-                        "track.tfdt.discontinuity",
-                        format!(
-                            "traf #{}: tfdt baseMediaDecodeTime discontinuity — expected {} \
-                             (prev tfdt {} + Σ durations {}), got {} \
-                             (ISO/IEC 14496-12 §8.8.12, ISO/IEC 23000-19 §7.5.19)",
-                            i + 1,
-                            expected,
-                            pt,
-                            prev.trafs[i].total_duration,
-                            nt
-                        ),
-                    ));
-                }
+        // tfdt continuity, keyed by `tfhd.track_id` (§8.8.12; CMAF §7.5.19).
+        // Matching by traf *index* mis-paired a segment whose tracks are sparse
+        // or reordered (audit r05-W30b); the track id is the identity the spec
+        // defines. The check uses the track's aggregate for the segment: this
+        // segment's first `tfdt` must equal the previous segment's decode end.
+        for cur in &next.tracks {
+            let Some(prev_track) = prev.tracks.iter().find(|t| t.track_id == cur.track_id) else {
+                continue;
+            };
+            let (Some(prev_first), Some(prev_end), Some(cur_first)) = (
+                prev_track.first_tfdt,
+                prev_track.last_decode_end,
+                cur.first_tfdt,
+            ) else {
+                continue;
+            };
+            if cur_first != prev_end {
+                issues.push(ConformanceIssue::error(
+                    "track.tfdt.discontinuity",
+                    format!(
+                        "track {}: tfdt baseMediaDecodeTime discontinuity - expected {} \
+                         (prev first tfdt {} + sum durations), got {} \
+                         (ISO/IEC 14496-12 §8.8.12, ISO/IEC 23000-19 §7.5.19)",
+                        cur.track_id, prev_end, prev_first, cur_first
+                    ),
+                ));
             }
         }
     }

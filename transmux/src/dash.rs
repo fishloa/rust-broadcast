@@ -753,12 +753,29 @@ impl DashPackager {
             &[("id", "0".to_string()), ("start", "PT0.0S".to_string())],
         );
 
+        // One AdaptationSet per (kind, @lang, codec family) — ISO/IEC 23009-1
+        // §5.3.3: the Representations inside one AdaptationSet are seamlessly
+        // switchable encodings of the *same* content. Grouping only by kind put
+        // every language of a multi-language service and every audio codec into
+        // one set, so an ABR client would switch between `eng` and `fra` (or AAC
+        // and AC-3) mid-playback on a bandwidth change (audit r05-W28).
+        // `AdaptationSet@id` must be unique within the MPD
+        // (ISO/IEC 23009-1 §5.3.3.1). The trick-mode set's id is caller-supplied
+        // and referenced by its `SupplementalProperty`, so the regular sets take
+        // the next free ids around it (`t0`, `t1`, …).
+        let mut next_id = 0u32;
         for kind in [MediaKind::Video, MediaKind::Audio] {
-            let set: Vec<&ReprInfo> = reprs.iter().filter(|r| r.kind == kind).collect();
-            if set.is_empty() {
-                continue;
+            let groups = adaption_set_groups(reprs, kind);
+            for group in groups {
+                let id = loop {
+                    let candidate = format!("t{next_id}");
+                    next_id += 1;
+                    if self.trick_mode.as_ref().is_none_or(|tm| tm.id != candidate) {
+                        break candidate;
+                    }
+                };
+                self.write_adaptation_set(&mut w, kind, &group, &id);
             }
-            self.write_adaptation_set(&mut w, kind, &set);
         }
 
         // Trick-mode AdaptationSet — ISO/IEC 23009-1 §5.8.5.8 / DASH-IF IOP §3.3.5.
@@ -771,8 +788,15 @@ impl DashPackager {
         w.finish()
     }
 
-    fn write_adaptation_set(&self, w: &mut XmlWriter, kind: MediaKind, set: &[&ReprInfo]) {
+    fn write_adaptation_set(
+        &self,
+        w: &mut XmlWriter,
+        kind: MediaKind,
+        set: &[&ReprInfo],
+        id: &str,
+    ) {
         let mut attrs = alloc::vec![
+            ("id", id.to_string()),
             ("contentType", kind.name().to_string()),
             ("mimeType", kind.mime_type().to_string()),
             ("segmentAlignment", "true".to_string()),
@@ -1126,6 +1150,48 @@ fn lang_from_es_info(descriptors: &[u8]) -> Option<String> {
         i = body_end;
     }
     None
+}
+
+/// Partition `reprs`' entries of `kind` into AdaptationSets, one per
+/// `(@lang, codec family)` — the grouping ISO/IEC 23009-1 §5.3.3 requires (a
+/// client may switch between the Representations of one AdaptationSet at any
+/// time, so they must be the same content in the same language and codec).
+///
+/// Order is deterministic: video before audio (the caller's outer loop), then
+/// by first appearance within `reprs`, so an MPD is stable across runs and a
+/// single-audio-codec stream yields exactly the one set it did before.
+fn adaption_set_groups<'a>(reprs: &'a [ReprInfo], kind: MediaKind) -> Vec<Vec<&'a ReprInfo>> {
+    let mut groups: Vec<(Option<String>, String, Vec<&'a ReprInfo>)> = Vec::new();
+    for r in reprs.iter().filter(|r| r.kind == kind) {
+        let family = codec_family(&r.codecs).to_string();
+        match groups.iter_mut().find(|(lang, fam, _)| {
+            *fam == family && language_key(lang.as_deref()) == language_key(r.lang.as_deref())
+        }) {
+            Some((_, _, set)) => set.push(r),
+            None => groups.push((r.lang.clone(), family, alloc::vec![r])),
+        }
+    }
+    groups.into_iter().map(|(_, _, set)| set).collect()
+}
+
+/// The RFC 6381 `codecs` value's family: everything before the first dot
+/// (`avc1.4D401E` → `avc1`, `mp4a.40.2` → `mp4a`, `ac-3` → `ac-3`), with any
+/// parameter list (`;`) dropped. Two Representations with different families
+/// (`avc1` vs `hvc1`, `mp4a` vs `ac-3`) are not switchable.
+fn codec_family(codecs: &str) -> &str {
+    let base = codecs.split(';').next().unwrap_or(codecs).trim();
+    base.split('.').next().unwrap_or(base)
+}
+
+/// The language an AdaptationSet is grouped by: `None` and `"und"`
+/// (ISO/IEC 13818-1 §2.6.18's "undetermined") are the same bucket, so an
+/// untagged track and an explicitly-`und` one share a set rather than producing
+/// two identical-content sets.
+fn language_key(lang: Option<&str>) -> Option<&str> {
+    match lang {
+        None | Some("und") => None,
+        Some(l) => Some(l),
+    }
 }
 
 /// The `@lang` shared by every Representation in `set`, or `None` if they

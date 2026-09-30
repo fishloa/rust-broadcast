@@ -203,8 +203,18 @@ fn mpegh_3daudio_descriptor(profile_level_indication: u8) -> Vec<u8> {
 
 /// Base `stream_id` for video elementary streams (`1110 xxxx`, 0xE0–0xEF).
 const STREAM_ID_VIDEO_BASE: u8 = 0xE0;
+/// Exclusive upper bound of the video `stream_id` family: `0xEF + 1`
+/// (Table 2-22), so at most [`MAX_VIDEO_STREAMS`] video ES can be numbered.
+const STREAM_ID_VIDEO_LIMIT: u8 = 0xF0;
 /// Base `stream_id` for audio elementary streams (`110x xxxx`, 0xC0–0xDF).
 const STREAM_ID_AUDIO_BASE: u8 = 0xC0;
+/// Exclusive upper bound of the audio `stream_id` family: `0xDF + 1`
+/// (Table 2-22), so at most [`MAX_AUDIO_STREAMS`] audio ES can be numbered.
+const STREAM_ID_AUDIO_LIMIT: u8 = 0xE0;
+/// Most video elementary streams one program may carry (`0xE0..0xEF`).
+const MAX_VIDEO_STREAMS: u8 = STREAM_ID_VIDEO_LIMIT - STREAM_ID_VIDEO_BASE;
+/// Most audio elementary streams one program may carry (`0xC0..0xDF`).
+const MAX_AUDIO_STREAMS: u8 = STREAM_ID_AUDIO_LIMIT - STREAM_ID_AUDIO_BASE;
 /// `private_stream_1` — the default `stream_id` for a PES-carried opaque
 /// [`CodecConfig::Data`] elementary stream (issue #576), Table 2-22.
 const STREAM_ID_PRIVATE_1: u8 = 0xBD;
@@ -237,6 +247,16 @@ const H264_NAL_TYPE_MASK: u8 = 0x1F;
 const H264_NAL_AUD: u8 = 9;
 /// `nal_unit_type` for a Sequence Parameter Set.
 const H264_NAL_SPS: u8 = 7;
+/// AVC AUD NAL header byte: `forbidden_zero_bit`(1)=0 + `nal_ref_idc`(2)=0 +
+/// `nal_unit_type`(5)=9 (H.264 §7.3.2.4 / Table 7-1 — Table 7-1 gives the AUD
+/// the *category* 6, not `nal_ref_idc` 6: `nal_ref_idc` is a 2-bit field, and an
+/// access unit delimiter is `non-VCL`, so it is 0).
+const H264_NAL_AUD_BYTE: u8 = 0x09;
+/// AVC AUD `primary_pic_type` = 7, which Table 7-5 ("Meaning of
+/// `primary_pic_type`") defines as "slice_type values 0..9 may be present" —
+/// i.e. a picture of any type. The byte is `primary_pic_type`(3 bits, `111`)
+/// followed by `rbsp_trailing_bits` (`1` then zero-padding).
+const H264_AUD_PRIMARY_PIC_TYPE: u8 = 0xF0;
 
 // ── H.265/HEVC NAL constants (ITU-T H.265 Table 7-1) — issue #627 ───────────
 
@@ -249,6 +269,17 @@ const HEVC_NAL_PPS: u8 = 34;
 /// H.265 `nal_unit_type` for an Access Unit Delimiter (`AUD_NUT`) — Table 7-1
 /// (type 35).
 const HEVC_NAL_AUD: u8 = 35;
+/// HEVC AUD NAL header bytes 1-2: `forbidden_zero_bit`(1)=0,
+/// `nal_unit_type`(6)=35, `nuh_layer_id`(6)=0, `nuh_temporal_id_plus1`(3)=1,
+/// i.e. `0x46 0x01` (H.265 §7.3.1.2 / Table 7-1).
+const HEVC_AUD_FIRST_BYTE: u8 = 0x46;
+/// See [`HEVC_AUD_FIRST_BYTE`].
+const HEVC_AUD_SECOND_BYTE: u8 = 0x01;
+/// HEVC AUD `pic_type` = 2, which Table 7-2 ("Interpretation of `pic_type`")
+/// defines as "B, P, I may be present" — every slice type, so the delimiter is
+/// valid for any access unit. Followed by `rbsp_trailing_bits` (`1` then
+/// zero-padding).
+const HEVC_AUD_PIC_TYPE: u8 = 0x50;
 
 // ── TS adaptation-field constants (ISO/IEC 13818-1 §2.4.3.4/§2.4.3.5) ───────
 
@@ -330,6 +361,25 @@ impl EsKind {
     /// Whether this is a video stream (drives PES `stream_id` family + PCR PID).
     fn is_video(self) -> bool {
         matches!(self, EsKind::Avc | EsKind::Hevc | EsKind::Mpeg2Video)
+    }
+
+    /// Whether this is a continuous, self-timed audio stream: one whose PES
+    /// packets arrive densely enough to anchor the PCR (ISO/IEC 13818-1
+    /// §2.4.2.2 bounds the PCR interval at 100 ms). A PES-carried opaque
+    /// `Data` stream (DVB subtitles / teletext, `stream_id` `0xBD`) is *not*
+    /// one — its PES packets appear only when a subtitle event does, seconds
+    /// apart, so a PCR anchored to it violates the repetition bound (TR 101 290
+    /// indicator 2.3).
+    fn is_continuous_audio(self) -> bool {
+        matches!(
+            self,
+            EsKind::Aac
+                | EsKind::MpegAudio { .. }
+                | EsKind::Ac3
+                | EsKind::Eac3
+                | EsKind::Dts
+                | EsKind::MpegH
+        )
     }
 
     /// Whether this elementary stream is re-emitted as PSI/private sections
@@ -496,6 +546,15 @@ pub(crate) fn plan_elementary_streams(tracks: &[Track]) -> Result<(Vec<EsPlan>, 
         // (issue #576); a section-carried Data stream emits no PES at all, so
         // its `stream_id` is never serialized (value irrelevant).
         let stream_id = if kind.is_video() {
+            // `0xE0..=0xEF` (Table 2-22) is the whole video family; a 17th video
+            // ES would take `0xF0` (`ECM_stream`) and a 33rd would wrap past
+            // `0xFF` — so the count is bounded rather than narrowed (r05-W22).
+            if n_video >= MAX_VIDEO_STREAMS {
+                return Err(Error::TooManyElementaryStreams {
+                    family: "video",
+                    max: MAX_VIDEO_STREAMS,
+                });
+            }
             let id = StreamId(STREAM_ID_VIDEO_BASE + n_video);
             n_video += 1;
             id
@@ -510,6 +569,15 @@ pub(crate) fn plan_elementary_streams(tracks: &[Track]) -> Result<(Vec<EsPlan>, 
                     ..
                 } => StreamId(0),
                 _ => {
+                    // `0xC0..=0xDF` is the audio family; `0xC0 + 32 = 0xE0` would
+                    // collide with the video range (`0xE0..`) and the demuxer
+                    // would classify it as video (r05-W22).
+                    if n_audio >= MAX_AUDIO_STREAMS {
+                        return Err(Error::TooManyElementaryStreams {
+                            family: "audio",
+                            max: MAX_AUDIO_STREAMS,
+                        });
+                    }
                     let id = StreamId(STREAM_ID_AUDIO_BASE + n_audio);
                     n_audio += 1;
                     id
@@ -702,19 +770,32 @@ pub(crate) fn mux_tracks(tracks: &[Track], samples: &[&[Sample]]) -> Result<Vec<
     mux_tracks_timed(tracks, samples, &times)
 }
 
-/// Like [`mux_tracks`], but each track's first sample is stamped at decode time
-/// `base_dts_ticks[track_idx]` (in that track's own timescale) and every later
-/// one at the running sum of the previous samples' durations.
+/// Mux one more segment of a continuing stream: each track's first sample is
+/// stamped at decode time `base_dts_ticks[track_idx]` (in that track's own
+/// timescale) and every later one at the running sum of the previous samples'
+/// durations, while the transport-stream continuity counters
+/// (`continuity_counter`, ISO/IEC 13818-1 §2.4.3.3) continue from `cc` and its
+/// updated state is left in `cc` for the next call.
 ///
 /// The classic-HLS segmenter uses this so each segment's PES timestamps continue
 /// the previous segment's timeline: concatenating the segments then yields one
 /// monotonically increasing DTS/PTS timeline, so a demuxer recovers each sample's
 /// original duration (DTS delta) — including across segment boundaries — instead
-/// of seeing the clock reset to 0 at each segment.
-pub(crate) fn mux_tracks_at(
+/// of seeing the clock reset to 0 at each segment. The shared [`TsContinuity`]
+/// does the same for the `continuity_counter`, which would otherwise restart at
+/// 0 on every PID at each boundary (TR 101 290 indicator 1.4).
+///
+/// A segmenter that emits one TS per segment — the classic-HLS path
+/// ([`crate::ts_hls`]) — must pass the *same* [`TsContinuity`] to every segment:
+/// HLS media segments without an `#EXT-X-DISCONTINUITY` between them form one
+/// continuous transport stream, so a client concatenating them sees a CC jump
+/// on every PID at each boundary otherwise (TR 101 290 indicator 1.4), and this
+/// crate's own [`TsDemux`](crate::TsDemux) reports `InputDegraded` on it.
+pub(crate) fn mux_tracks_at_continuing(
     tracks: &[Track],
     samples: &[&[Sample]],
     base_dts_ticks: &[u64],
+    cc: &mut TsContinuity,
 ) -> Result<Vec<u8>> {
     debug_assert_eq!(tracks.len(), base_dts_ticks.len());
     let times: Vec<Vec<i64>> = samples
@@ -732,16 +813,79 @@ pub(crate) fn mux_tracks_at(
         })
         .collect();
     let times: Vec<&[i64]> = times.iter().map(Vec::as_slice).collect();
-    mux_tracks_timed(tracks, samples, &times)
+    mux_tracks_timed_with_cc(tracks, samples, &times, cc)
 }
 
-/// The shared body of [`mux_tracks`] / [`mux_tracks_at`]: `dts_ticks[i][j]` is
-/// the decode time of `samples[i][j]` in `tracks[i]`'s timescale, relative to
-/// the stream's origin (negative values clamp to the origin).
+/// Per-PID transport-stream continuity-counter state
+/// (`continuity_counter`, ISO/IEC 13818-1 §2.4.3.3), carried across successive
+/// `mux_tracks_at_continuing` calls so a multi-segment output is one
+/// continuous transport stream.
+///
+/// A PID is identified by its 13-bit value; the counter is the value the *next*
+/// payload-bearing packet on that PID must carry. PSI PIDs (`PAT_PID` /
+/// `PMT_PID`) are included.
+///
+/// Any change to the set of elementary streams (a different track list) between
+/// calls is fine: a PID that did not exist before starts at 0, and one that is
+/// gone is simply never used again.
+#[derive(Debug, Default, Clone)]
+pub struct TsContinuity {
+    /// Indexed by PID (`0..=0x1FFF`); `None` until the PID's first payload.
+    counters: Vec<Option<u8>>,
+}
+
+impl TsContinuity {
+    /// A fresh state: every PID's next packet carries CC 0.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// The CC the next payload-bearing packet on `pid` must carry.
+    fn next_for(&self, pid: u16) -> u8 {
+        self.counters
+            .get(pid as usize)
+            .copied()
+            .flatten()
+            .unwrap_or(0)
+    }
+
+    /// Record that a payload-bearing packet with counter `cc` was written on
+    /// `pid`; the next one takes `cc + 1` modulo 16 (§2.4.3.3).
+    fn advance(&mut self, pid: u16, cc: u8) {
+        self.set_next_for(pid, (cc + 1) & 0x0F);
+    }
+
+    /// Set the counter the next payload-bearing packet on `pid` must carry.
+    fn set_next_for(&mut self, pid: u16, cc: u8) {
+        let idx = pid as usize;
+        if self.counters.len() <= idx {
+            self.counters.resize(idx + 1, None);
+        }
+        self.counters[idx] = Some(cc & 0x0F);
+    }
+}
+
+/// The whole-`Media` body of [`mux_tracks`]: `dts_ticks[i][j]` is the decode
+/// time of `samples[i][j]` in `tracks[i]`'s timescale, relative to the stream's
+/// origin (negative values clamp to the origin).
 fn mux_tracks_timed(
     tracks: &[Track],
     samples: &[&[Sample]],
     dts_ticks: &[&[i64]],
+) -> Result<Vec<u8>> {
+    let mut cc = TsContinuity::default();
+    mux_tracks_timed_with_cc(tracks, samples, dts_ticks, &mut cc)
+}
+
+/// The shared body of [`mux_tracks`] and [`mux_tracks_at_continuing`], threading a
+/// [`TsContinuity`] across calls. `dts_ticks[i][j]` is the decode time of
+/// `samples[i][j]` in `tracks[i]`'s timescale, relative to the stream's origin
+/// (negative values clamp to the origin).
+fn mux_tracks_timed_with_cc(
+    tracks: &[Track],
+    samples: &[&[Sample]],
+    dts_ticks: &[&[i64]],
+    continuity: &mut TsContinuity,
 ) -> Result<Vec<u8>> {
     debug_assert_eq!(tracks.len(), samples.len());
     debug_assert_eq!(tracks.len(), dts_ticks.len());
@@ -749,13 +893,22 @@ fn mux_tracks_timed(
     // ── 1. Plan the elementary streams (PID + stream_type + framing) ──
     let (plans, planned_idx) = plan_elementary_streams(tracks)?;
 
-    // PCR PID: the first video ES, else the first non-section-carried ES (a
-    // section-carried Data stream is packetised without an adaptation field
-    // at all — issue #576 — so it can never itself carry the PCR), else
-    // (only if every ES is section-carried) the first ES regardless.
+    // PCR PID (§2.4.3.4 / §2.4.2.2): the first video ES; else the first
+    // *continuous* audio ES (its PES packets arrive at the codec frame rate —
+    // ≤ 100 ms apart — so a PCR anchored to it meets the repetition bound);
+    // else the first non-section-carried ES (a section-carried Data stream is
+    // packetised without an adaptation field at all — issue #576 — so it can
+    // never itself carry the PCR); else (only if every ES is section-carried)
+    // the first ES regardless.
+    //
+    // An opaque PES-carried `Data` stream (DVB subtitles / teletext) must not be
+    // chosen while any audio ES exists: its PES packets appear only when a
+    // subtitle event does, seconds apart, far beyond the §2.4.2.2 100 ms bound
+    // (TR 101 290 indicator 2.3), and decoders lose clock lock (audit r05-W20).
     let pcr_pid = plans
         .iter()
         .find(|p| p.kind.is_video())
+        .or_else(|| plans.iter().find(|p| p.kind.is_continuous_audio()))
         .or_else(|| plans.iter().find(|p| !p.kind.is_section_carried()))
         .map(|p| p.pid)
         .unwrap_or(plans[0].pid);
@@ -763,29 +916,39 @@ fn mux_tracks_timed(
     // ── 2. Build the PSI (PAT + PMT) and packetise it first (PUSI order) ──
     let mut out: Vec<u8> = Vec::new();
     let pat = build_pat_section(PMT_PID)?;
-    for pkt in packetise_section(PAT_PID, &pat) {
+    let pat_pkts = packetise_section(PAT_PID, &pat, continuity.next_for(PAT_PID));
+    let pat_last_cc = pat_pkts.last().map(|p| p[3] & 0x0F).unwrap_or(0);
+    for pkt in pat_pkts {
         out.extend_from_slice(&pkt);
     }
+    continuity.advance(PAT_PID, pat_last_cc);
     let pmt = build_pmt_section(pcr_pid, &plans)?;
-    for pkt in packetise_section(PMT_PID, &pmt) {
+    let pmt_pkts = packetise_section(PMT_PID, &pmt, continuity.next_for(PMT_PID));
+    let pmt_last_cc = pmt_pkts.last().map(|p| p[3] & 0x0F).unwrap_or(0);
+    for pkt in pmt_pkts {
         out.extend_from_slice(&pkt);
     }
+    continuity.advance(PMT_PID, pmt_last_cc);
 
     // ── 3. Elementary-stream PES → TS packets, tagged by DTS ──
     // Base DTS = PCR_LEAD_TICKS so the first PCR (DTS − lead) is non-negative.
     let mut tagged: Vec<TaggedPacket> = Vec::new();
+    // Sort keys of the packets that already carry a PCR, ascending.
+    let mut pcr_stamps: Vec<u64> = Vec::new();
     for (plan, &track_idx) in plans.iter().zip(&planned_idx) {
         let track = &tracks[track_idx];
         let ts_scale = track.spec.timescale.max(1) as u64;
         // Interleave keys only ever grow within one track, so the global sort
         // never reorders a track's own packets (issue #576).
         let mut last_key: u64 = 0;
-        let mut cc: u8 = 0;
+        // The CC this PID's next packet carries, read from (and, after each
+        // sample, written back to) the cross-call continuity state (§2.4.3.3).
+        let mut cc: u8 = continuity.next_for(plan.pid);
         // Section-carried Data samples are already whole PSI/private
         // sections (issue #576) — packetised directly, never PES-wrapped.
         // The packetiser's own continuity_counter (independent of `cc`
         // above, which only tracks the PES path) persists across samples.
-        let mut section_packetiser = SectionPacketiser::new(plan.pid);
+        let mut section_packetiser = SectionPacketiser::with_continuity(plan.pid, cc);
         for (sample, &dts_local) in samples[track_idx].iter().zip(dts_ticks[track_idx]) {
             // Rescale the sample's decode/composition time to the 90 kHz TS
             // clock. composition_offset is (pts − dts) in the track scale.
@@ -823,12 +986,34 @@ fn mux_tracks_timed(
                     &mut cc,
                     sort_key,
                     &mut tagged,
-                );
+                )?;
+                if carry_pcr {
+                    pcr_stamps.push(sort_key);
+                }
             }
         }
+        // Hand the PID's next CC to the cross-call state (§2.4.3.3). A
+        // section-carried PID's packets come from the packetiser's own counter;
+        // a PES PID's from `cc`, which `packetise_pes` advanced.
+        let next_cc = if plan.kind.is_section_carried() {
+            section_packetiser.continuity_counter()
+        } else {
+            cc
+        };
+        continuity.set_next_for(plan.pid, next_cc);
     }
 
-    // ── 4. Interleave ES packets by decode order (stable) and append ──
+    // ── 4. Fill PCR gaps on the PCR PID with PCR-only packets ──
+    // §2.4.2.2 bounds the interval between two consecutive PCRs to 100 ms
+    // (TR 101 290 indicator 2.3 flags a repeat beyond 40 ms as an error, so that
+    // is the interval this muxer targets). A sparse PCR PID — a low-bitrate
+    // audio ES, or a stream whose only audio is a few frames apart — would
+    // otherwise leave decoders without a clock reference between its PES
+    // packets. A PCR-only packet carries an adaptation field with the PCR and
+    // *no* payload, so it adds no data to the elementary stream.
+    emit_pcr_only_packets(pcr_pid, &mut pcr_stamps, &mut tagged);
+
+    // ── 5. Interleave ES packets by decode order (stable) and append ──
     tagged.sort_by_key(|t| t.sort_key);
     for t in &tagged {
         out.extend_from_slice(&t.packet);
@@ -836,6 +1021,107 @@ fn mux_tracks_timed(
 
     debug_assert_eq!(out.len() % TS_PACKET_SIZE, 0);
     Ok(out)
+}
+
+/// The PCR-only adaptation field's content length, in bytes after the
+/// `adaptation_field_length` byte: the 1-byte flags field + the 6-byte PCR
+/// (§2.4.3.4 / §2.4.3.5). No payload follows, so the packet carries
+/// `adaptation_field_control` `10`.
+const PCR_ONLY_AF_LEN: usize = 1 + PCR_FIELD_LEN;
+
+/// Maximum interval between two consecutive PCRs of one PID, in 90 kHz ticks.
+/// ISO/IEC 13818-1 §2.4.2.2 allows up to 100 ms; TR 101 290 indicator 2.3
+/// flags a repeat beyond 40 ms as an error, so this muxer targets the stricter
+/// bound. Used only to decide where a PCR-only packet is needed.
+const MAX_PCR_INTERVAL_TICKS: u64 = PCR_INTERVAL_MS * TS_CLOCK_HZ / 1000;
+
+/// See [`MAX_PCR_INTERVAL_TICKS`].
+const PCR_INTERVAL_MS: u64 = 40;
+
+/// Insert PCR-only TS packets on `pcr_pid` wherever the gap between two
+/// consecutive PCRs exceeds [`MAX_PCR_INTERVAL_TICKS`], so the §2.4.2.2
+/// repetition bound holds even when the PCR PID's own PES packets are sparse.
+///
+/// `pcr_stamps` holds, ascending, the interleave sort keys of the packets that
+/// already carry a PCR. Each inserted packet is a TS packet with an adaptation
+/// field carrying the PCR and `payload_flag = 0` (§2.4.3.3: such a packet does
+/// **not** increment the continuity counter, so the CC state of `pcr_pid` is
+/// unchanged), placed at the gap's midpoint key so it interleaves in order.
+fn emit_pcr_only_packets(pcr_pid: u16, pcr_stamps: &mut [u64], tagged: &mut Vec<TaggedPacket>) {
+    if pcr_stamps.is_empty() {
+        return;
+    }
+    pcr_stamps.sort_unstable();
+    let mut insertions: Vec<u64> = Vec::new();
+    for w in pcr_stamps.windows(2) {
+        let (a, b) = (w[0], w[1]);
+        if b - a <= MAX_PCR_INTERVAL_TICKS {
+            continue;
+        }
+        // One PCR-only packet every MAX_PCR_INTERVAL_TICKS, starting one interval
+        // after `a` so no gap in the result exceeds the bound. A packet's
+        // interleave key and its PCR are the same 90 kHz decode time here (the
+        // real packets' PCR is their sample's rescaled DTS, which is exactly
+        // their sort key), so both use `t`.
+        let mut t = a + MAX_PCR_INTERVAL_TICKS;
+        while t < b {
+            insertions.push(t);
+            t += MAX_PCR_INTERVAL_TICKS;
+        }
+    }
+    if insertions.is_empty() {
+        return;
+    }
+    // A PCR-only packet carries no payload, so §2.4.3.3 says it does not
+    // increment the PID's continuity counter: it must repeat the CC of the last
+    // payload-bearing packet on that PID *before it*. Collect the (sort key, CC)
+    // of this PID's existing packets, ascending, so each insertion can look its
+    // own predecessor up.
+    let mut cc_at: Vec<(u64, u8)> = tagged
+        .iter()
+        .filter(|tp| pid_of_packet(&tp.packet) == pcr_pid)
+        .map(|tp| (tp.sort_key, tp.packet[3] & 0x0F))
+        .collect();
+    cc_at.sort_by_key(|&(k, _)| k);
+
+    for t in insertions {
+        let cc = cc_at
+            .iter()
+            .rfind(|&&(k, _)| k <= t)
+            .map(|&(_, cc)| cc)
+            .unwrap_or(0);
+        let mut pkt = [STUFFING_BYTE; TS_PACKET_SIZE];
+        // A real packet stamps the PCR `PCR_LEAD_TICKS` behind its DTS, so pass
+        // `t + PCR_LEAD_TICKS` to `pcr_for` to land the PCR exactly on `t`.
+        write_pcr_only_packet(&mut pkt, pcr_pid, cc, pcr_for(t + PCR_LEAD_TICKS));
+        tagged.push(TaggedPacket {
+            sort_key: t,
+            packet: pkt,
+        });
+    }
+}
+
+/// Read the 13-bit PID from a TS packet's header.
+fn pid_of_packet(pkt: &[u8; TS_PACKET_SIZE]) -> u16 {
+    (((pkt[1] & 0x1F) as u16) << 8) | pkt[2] as u16
+}
+
+/// Write a PCR-only TS packet: an adaptation field with the PCR and no payload
+/// (`adaptation_field_control` `10`). §2.4.3.4 / §2.4.3.5.
+fn write_pcr_only_packet(pkt: &mut [u8; TS_PACKET_SIZE], pid: u16, cc: u8, pcr: Pcr) {
+    let hdr = TsHeader {
+        tei: false,
+        pusi: false,
+        pid,
+        scrambling: 0,
+        has_adaptation: true,
+        has_payload: false,
+        continuity_counter: cc,
+    };
+    hdr.serialize_into(&mut pkt[..4]).expect("4-byte TS header");
+    pkt[4] = PCR_ONLY_AF_LEN as u8;
+    pkt[5] = AF_PCR_FLAG;
+    pkt[6..6 + PCR_FIELD_LEN].copy_from_slice(&pcr.to_field_bytes());
 }
 
 /// Rescale `ticks` from a track's `timescale` to the 90 kHz TS clock, rounding to
@@ -895,9 +1181,14 @@ fn asc_from_esds(esds: &crate::mp4esds::EsdsBox) -> Result<AudioSpecificConfig> 
 /// by the caller instead ([`SectionPacketiser`]).
 fn build_es_payload(plan: &EsPlan, sample: &Sample) -> Result<Vec<u8>> {
     match plan.kind {
-        EsKind::Avc => build_annexb_au(&sample.data, sample.flags.is_sync, &plan.avc_sps_pps),
+        EsKind::Avc => {
+            let au = build_annexb_au(&sample.data, sample.flags.is_sync, &plan.avc_sps_pps)?;
+            ensure_avc_aud(au)
+        }
         EsKind::Hevc => {
-            build_hevc_annexb_au(&sample.data, sample.flags.is_sync, &plan.hevc_vps_sps_pps)
+            let au =
+                build_hevc_annexb_au(&sample.data, sample.flags.is_sync, &plan.hevc_vps_sps_pps)?;
+            ensure_hevc_aud(au)
         }
         EsKind::Aac => {
             let asc = plan
@@ -1033,6 +1324,88 @@ fn append_param_sets(out: &mut Vec<u8>, sps_pps: &[Vec<u8>]) {
     }
 }
 
+/// 4-byte Annex B start code.
+const ANNEXB_START_CODE: [u8; 4] = [0, 0, 0, 1];
+
+/// Ensure the first Annex B NAL of `au` is an AVC Access Unit Delimiter,
+/// prepending the canonical `00 00 00 01 09 F0` when it is not.
+///
+/// H.222.0 §2.14.1 constrains an AVC stream carried in a transport stream: "Each
+/// AVC access unit shall contain an access unit delimiter NAL Unit", and H.264
+/// §7.4.1.2.3 requires that AUD, when present, is the *first* NAL of the access
+/// unit. An IR sample sourced from fMP4/MKV/FLV/RTMP never carries one, and a
+/// `TsDemux`-sourced sample carries it only if the source stream did, so the
+/// delimiter is synthesised here rather than assumed.
+///
+/// `primary_pic_type` is 7 (Table 7-5): slice types 0..9 may be present, i.e.
+/// a picture of any type — the safe choice when the sample's slice types are
+/// not inspected. The byte is `primary_pic_type`(3) + `rbsp_trailing_bits`.
+fn ensure_avc_aud(mut au: Vec<u8>) -> Result<Vec<u8>> {
+    if first_avc_nal_type(&au) == Some(H264_NAL_AUD) {
+        return Ok(au);
+    }
+    let mut out = Vec::with_capacity(ANNEXB_START_CODE.len() + 2 + au.len());
+    out.extend_from_slice(&ANNEXB_START_CODE);
+    out.extend_from_slice(&[H264_NAL_AUD_BYTE, H264_AUD_PRIMARY_PIC_TYPE]);
+    out.append(&mut au);
+    Ok(out)
+}
+
+/// Ensure the first Annex B NAL of `au` is an HEVC Access Unit Delimiter,
+/// prepending the canonical `00 00 00 01 46 01 50` when it is not.
+///
+/// H.222.0 §2.17.1: "Each HEVC access unit shall contain an access unit
+/// delimiter NAL unit", which H.265 §7.4.2.4 requires to be the first NAL of
+/// the access unit. `pic_type` is 2 ("I only", H.265 Table 7-4) — any picture of
+/// an HEVC IR sample is an IRAP or a P/B slice, and `2` is the conservative
+/// value a decoder accepts for all of them.
+fn ensure_hevc_aud(mut au: Vec<u8>) -> Result<Vec<u8>> {
+    if first_hevc_nal_type(&au) == Some(HEVC_NAL_AUD) {
+        return Ok(au);
+    }
+    let mut out = Vec::with_capacity(ANNEXB_START_CODE.len() + 3 + au.len());
+    out.extend_from_slice(&ANNEXB_START_CODE);
+    out.extend_from_slice(&[HEVC_AUD_FIRST_BYTE, HEVC_AUD_SECOND_BYTE, HEVC_AUD_PIC_TYPE]);
+    out.append(&mut au);
+    Ok(out)
+}
+
+/// The AVC `nal_unit_type` of the first NAL in an Annex B buffer, or `None`
+/// when the buffer is empty (a zero-length sample has no NAL at all).
+fn first_avc_nal_type(annexb: &[u8]) -> Option<u8> {
+    annexb_first_nal(annexb).and_then(|n| n.first().map(|b| b & H264_NAL_TYPE_MASK))
+}
+
+/// The HEVC `nal_unit_type` of the first NAL in an Annex B buffer (2-byte NAL
+/// header, H.265 §7.3.1.2), or `None` when the buffer is empty.
+fn first_hevc_nal_type(annexb: &[u8]) -> Option<u8> {
+    annexb_first_nal(annexb).and_then(|n| nal_unit_type(NalCodec::Hevc, n))
+}
+
+/// Slice the first Annex B NAL (after its start code) out of `annexb`.
+/// Accepts both the 4-byte and the 3-byte start code a source stream may use.
+fn annexb_first_nal(annexb: &[u8]) -> Option<&[u8]> {
+    let skip = if annexb.starts_with(&ANNEXB_START_CODE) {
+        ANNEXB_START_CODE.len()
+    } else if annexb.starts_with(&[0, 0, 1]) {
+        3
+    } else {
+        0
+    };
+    let rest = annexb.get(skip..)?;
+    let end = rest
+        .windows(3)
+        .position(|w| w == [0, 0, 1])
+        .unwrap_or(rest.len());
+    // A 4-byte start code's trailing zero is left at the end of the slice.
+    let end = if rest.get(end.wrapping_sub(1)) == Some(&0) && end > 0 {
+        end - 1
+    } else {
+        end
+    };
+    rest.get(..end)
+}
+
 /// Build a PAT section (one program → `pmt_pid`) with its trailing CRC_32.
 /// ISO/IEC 13818-1 §2.4.4.3.
 fn build_pat_section(pmt_pid: u16) -> Result<Vec<u8>> {
@@ -1121,9 +1494,9 @@ fn finish_section(table_id: u8, body: Vec<u8>) -> Result<Vec<u8>> {
 /// A single PUSI packet with a `pointer_field = 0` prefix, 0xFF-stuffed
 /// (all this crate's sections fit one packet); multi-packet continuation is
 /// handled by the generic loop for safety. ISO/IEC 13818-1 §2.4.4.
-fn packetise_section(pid: u16, section: &[u8]) -> Vec<[u8; TS_PACKET_SIZE]> {
+fn packetise_section(pid: u16, section: &[u8], start_cc: u8) -> Vec<[u8; TS_PACKET_SIZE]> {
     let mut packets = Vec::new();
-    let mut cc: u8 = 0;
+    let mut cc: u8 = start_cc & 0x0F;
     let mut pos = 0usize;
     let mut first = true;
     while pos < section.len() || first {
@@ -1173,8 +1546,8 @@ fn packetise_pes(
     cc: &mut u8,
     sort_key: u64,
     tagged: &mut Vec<TaggedPacket>,
-) {
-    let pes = build_pes_bytes(plan, es_payload, pts90, dts90);
+) -> Result<()> {
+    let pes = build_pes_bytes(plan, es_payload, pts90, dts90)?;
 
     let mut pos = 0usize;
     let mut first = true;
@@ -1255,6 +1628,7 @@ fn packetise_pes(
         });
         first = false;
     }
+    Ok(())
 }
 
 /// The PCR value to stamp for a packet whose access-unit DTS is `dts90` (90 kHz):
@@ -1319,7 +1693,19 @@ fn write_af_packet(
 /// exposes only a parser + a `#[non_exhaustive]` [`mpeg_pes::PesHeader`], so it
 /// cannot be constructed externally); the emitted bytes round-trip through
 /// [`mpeg_pes::PesPacket::parse`], which the [`TsDemux`](crate::TsDemux) uses.
-fn build_pes_bytes(plan: &EsPlan, es_payload: &[u8], pts90: u64, dts90: u64) -> Vec<u8> {
+///
+/// # Errors
+///
+/// Returns [`Error::BufferCapExceeded`] for a non-video payload whose
+/// `PES_packet_length` would exceed 65535 (§2.4.3.7). `PES_packet_length = 0`
+/// ("unbounded") is defined only for video, so a longer audio/data access unit
+/// cannot be framed at all — clamping the field would emit a packet that
+/// claims to end 64 KiB short of its payload, and every demuxer would truncate
+/// the PES and read the remainder as garbage. A caller that needs to carry a
+/// larger unit must split it into several PES packets itself (e.g. one per
+/// audio frame), which this function cannot do because it does not know the
+/// unit's internal framing.
+fn build_pes_bytes(plan: &EsPlan, es_payload: &[u8], pts90: u64, dts90: u64) -> Result<Vec<u8>> {
     let include_dts = dts90 != pts90;
     // PES optional-header content length after the 3 fixed bytes: PTS (5) always,
     // + DTS (5) when present.
@@ -1331,7 +1717,10 @@ fn build_pes_bytes(plan: &EsPlan, es_payload: &[u8], pts90: u64, dts90: u64) -> 
     let pes_packet_length = if plan.kind.is_video() {
         0u16
     } else {
-        after_len.min(u16::MAX as usize) as u16
+        u16::try_from(after_len).map_err(|_| Error::BufferCapExceeded {
+            what: "PES_packet_length",
+            cap: u16::MAX as usize,
+        })?
     };
 
     let mut out = Vec::with_capacity(MIN_LEN + HEADER_FIXED + opt_content + es_payload.len());
@@ -1356,7 +1745,7 @@ fn build_pes_bytes(plan: &EsPlan, es_payload: &[u8], pts90: u64, dts90: u64) -> 
         out.extend_from_slice(&PesPts(pts90).to_field_bytes());
     }
     out.extend_from_slice(es_payload);
-    out
+    Ok(out)
 }
 
 /// Encode a 33-bit timestamp into the 5-byte PTS/DTS field with the given 4-bit
@@ -1497,7 +1886,7 @@ mod tests {
     #[test]
     fn section_packets_are_whole_and_pusi() {
         let pat = build_pat_section(PMT_PID).unwrap();
-        let pkts = packetise_section(PAT_PID, &pat);
+        let pkts = packetise_section(PAT_PID, &pat, 0);
         assert_eq!(pkts.len(), 1);
         // sync byte + PUSI bit.
         assert_eq!(pkts[0][0], 0x47);
@@ -1717,5 +2106,64 @@ mod tests {
         let section_length = (((pmt[1] & SECTION_LENGTH_HI_MASK) as usize) << 8) | pmt[2] as usize;
         assert_eq!(section_length, MAX_SECTION_LENGTH);
         assert_eq!(crc32_mpeg2::compute(&pmt), 0);
+    }
+
+    /// An audio PES whose `PES_packet_length` would exceed 65535 must be
+    /// rejected, never clamped (audit r05-W19, §2.4.3.7): `0` ("unbounded") is
+    /// defined only for video.
+    #[test]
+    fn audio_pes_packet_length_past_65535_errors() {
+        let plan = EsPlan {
+            pid: ES_PID_BASE,
+            stream_id: StreamId(STREAM_ID_AUDIO_BASE),
+            kind: EsKind::Ac3,
+            asc: None,
+            avc_sps_pps: Vec::new(),
+            hevc_vps_sps_pps: Vec::new(),
+            descriptors: Vec::new(),
+        };
+        // Largest payload that still fits: 65535 − (3 fixed + 5 PTS) = 65527.
+        let fits = alloc::vec![0u8; u16::MAX as usize - HEADER_FIXED - 5];
+        let ok = build_pes_bytes(&plan, &fits, 0, 0).expect("the maximum legal PES must build");
+        assert_eq!(
+            u16::from_be_bytes([ok[4], ok[5]]),
+            u16::MAX,
+            "PES_packet_length = 65535 at the boundary"
+        );
+
+        let over = alloc::vec![0u8; fits.len() + 1];
+        let err = build_pes_bytes(&plan, &over, 0, 0).unwrap_err();
+        assert!(
+            matches!(
+                err,
+                Error::BufferCapExceeded {
+                    what: "PES_packet_length",
+                    cap: 65535,
+                }
+            ),
+            "one byte past the cap must be an error, got {err:?}"
+        );
+    }
+
+    /// Video is exempt from the 16-bit `PES_packet_length`: §2.4.3.7 allows the
+    /// unbounded `0` form, so an access unit past 65535 bytes is legal.
+    #[test]
+    fn video_pes_packet_length_above_65535_is_unbounded() {
+        let plan = EsPlan {
+            pid: ES_PID_BASE,
+            stream_id: StreamId(STREAM_ID_VIDEO_BASE),
+            kind: EsKind::Avc,
+            asc: None,
+            avc_sps_pps: Vec::new(),
+            hevc_vps_sps_pps: Vec::new(),
+            descriptors: Vec::new(),
+        };
+        let big = alloc::vec![0u8; u16::MAX as usize + 1];
+        let pes = build_pes_bytes(&plan, &big, 0, 0).expect("video may be unbounded");
+        assert_eq!(
+            u16::from_be_bytes([pes[4], pes[5]]),
+            0,
+            "video PES_packet_length is the unbounded 0 form"
+        );
     }
 }

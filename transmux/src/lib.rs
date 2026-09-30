@@ -364,7 +364,7 @@ pub use ts_demux::{
     StreamingTsDemux, TsDemux,
 };
 pub use ts_hls::{StreamingTsHlsSegmenter, TsHlsOutput, TsHlsPackager, TsSegment};
-pub use ts_mux::TsMux;
+pub use ts_mux::{TsContinuity, TsMux};
 pub use uri::{
     UriReference, resolve as resolve_uri_reference, resolve_segment as resolve_uri_segment,
     try_resolve as try_resolve_uri_reference,

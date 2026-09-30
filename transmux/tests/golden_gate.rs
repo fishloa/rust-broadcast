@@ -442,16 +442,85 @@ fn ts_to_dash_mpd_validated() {
         "MPD must address segments via SegmentTemplate"
     );
 
-    // ffprobe validation of the referenced CMAF segments: each artefact
-    // ffprobe's mov/mp4 demuxer, so this catches a genuinely broken segment
-    // even when the MPD text alone would look fine.
-    for (name, _) in &segments {
-        let probe = ffprobe_json(&dir.join(name));
-        // Each segment is a genuinely single-track CMAF stream — one per
-        // Representation (see `transmux::cli::package`'s `OutputFormat::Dash`
-        // arm, ISO/IEC 23009-1 §5.3.9.1) — so this is the narrower
-        // single-track assertion, not the multi-track `assert_matches_source`.
+    // ffprobe validation of the referenced CMAF media segments: each is a bare
+    // `styp`+`moof`+`mdat` file with no `moov` (ISO/IEC 23009-1 §6.3.4.2 — a
+    // media segment must not carry one), so ffprobe needs the Representation's
+    // init segment prepended to parse it, exactly as a DASH client does.
+    for (name, bytes) in &segments {
+        if name.starts_with("init-") {
+            continue;
+        }
+        // `chunk-stream{id}-{n}.m4s` → `init-stream{id}.m4s`.
+        let id = name
+            .strip_prefix("chunk-stream")
+            .and_then(|r| r.split('-').next())
+            .expect("chunk file name shape");
+        let init_name = format!("init-stream{id}.m4s");
+        let Some((_, init)) = segments.iter().find(|(n, _)| *n == init_name) else {
+            panic!("no init segment {init_name} for {name}");
+        };
+        let mut whole = init.clone();
+        whole.extend_from_slice(bytes);
+        let path = dir.join(format!("{name}.full.mp4"));
+        std::fs::write(&path, &whole).unwrap();
+        let probe = ffprobe_json(&path);
+        // Each Representation is a genuinely single-track CMAF stream (see
+        // `transmux::cli::package`'s `OutputFormat::Dash` arm,
+        // ISO/IEC 23009-1 §5.3.9.1), so this is the narrower single-track
+        // assertion, not the multi-track `assert_matches_source`.
         assert_single_track_matches_source(&src_probe, &probe, &format!("TS->DASH segment {name}"));
+    }
+
+    // Each init segment, alone, is a well-formed MP4 whose moov describes the
+    // single track — ffprobe must report the same codec identity from the init
+    // alone, without any media segment.
+    for name in ["init-stream1.m4s", "init-stream2.m4s"] {
+        let Some((_, init)) = segments.iter().find(|(n, _)| *n == name) else {
+            panic!("no {name} written");
+        };
+        let path = dir.join(format!("{name}.only.mp4"));
+        std::fs::write(&path, init).unwrap();
+        let probe = ffprobe_json(&path);
+        assert_single_track_matches_source(&src_probe, &probe, &format!("TS->DASH {name} alone"));
+    }
+
+    // Every Representation's whole run (init + all its segments) reports the
+    // source's duration within one frame, so no sample was dropped between the
+    // shared boundaries.
+    for id in ["1", "2"] {
+        let mut whole = {
+            let (_, init) = segments
+                .iter()
+                .find(|(n, _)| n == &format!("init-stream{id}.m4s"))
+                .expect("init written");
+            init.clone()
+        };
+        for n in 1..=segments
+            .iter()
+            .filter(|(name, _)| name.starts_with(&format!("chunk-stream{id}-")))
+            .count()
+        {
+            let (_, bytes) = segments
+                .iter()
+                .find(|(name, _)| name == &format!("chunk-stream{id}-{n}.m4s"))
+                .expect("segment written");
+            whole.extend_from_slice(bytes);
+        }
+        let path = dir.join(format!("repr{id}.mp4"));
+        std::fs::write(&path, &whole).unwrap();
+        let probe = ffprobe_json(&path);
+        let got = probe["format"]["duration"]
+            .as_str()
+            .and_then(|s| s.parse::<f64>().ok())
+            .expect("duration");
+        let want = src_probe["format"]["duration"]
+            .as_str()
+            .and_then(|s| s.parse::<f64>().ok())
+            .expect("source duration");
+        assert!(
+            (got - want).abs() <= 0.1,
+            "Representation {id} runs {got} s but the source is {want} s"
+        );
     }
 
     // ffprobe's own `dash` demuxer (needs libxml2; not every ffmpeg build has

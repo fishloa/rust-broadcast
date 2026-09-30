@@ -129,19 +129,34 @@ fn mp4_to_hls_playlist_and_segments() {
         !segments.is_empty(),
         "playlist must reference at least one segment"
     );
-    // Every referenced .m4s segment must be named in the playlist and validate.
+    // Every referenced file must be named in the playlist (the segments by URI,
+    // the init by the `#EXT-X-MAP` URI). The init file is the Media
+    // Initialization Section; each segment is a media-only
+    // `styp`+`moof`+`mdat` (an `#EXT-X-MAP` init is shared, not repeated).
+    let init_bytes = segments
+        .iter()
+        .find(|(n, _)| n == "init.mp4")
+        .map(|(_, b)| b.clone())
+        .expect("init.mp4 written beside the segments");
+    assert!(
+        errors(&validate_init_segment(&init_bytes)).is_empty(),
+        "init.mp4 has errors"
+    );
     for (name, bytes) in &segments {
         assert!(
             text.contains(name.as_str()),
             "playlist must reference {name}"
         );
-        let (init, media) = split_cmaf(bytes);
+        if name == "init.mp4" {
+            continue;
+        }
+        assert_eq!(&bytes[4..8], b"styp", "segment {name} must begin with styp");
         assert!(
-            errors(&validate_init_segment(init)).is_empty(),
-            "segment {name} init has errors"
+            !bytes.windows(4).take(4096).any(|w| w == b"moov"),
+            "segment {name} must not repeat the moov the #EXT-X-MAP names"
         );
         assert!(
-            errors(&validate_media_segment(media)).is_empty(),
+            errors(&validate_media_segment(bytes)).is_empty(),
             "segment {name} media has errors"
         );
     }
@@ -172,6 +187,36 @@ fn autodetect_recognises_each_container() {
     // Garbage must not be mistaken for any container.
     assert!(detect_container(&[0xDE, 0xAD, 0xBE, 0xEF, 0x00, 0x11, 0x22, 0x33, 0x44]).is_err());
     assert!(detect_container(&[]).is_err());
+}
+
+/// M2TS (192-byte packets: a 4-byte timecode prefix before each 188-byte packet)
+/// and a capture that starts mid-packet are both real TS streams the old
+/// fixed-offset check (`0x47` at 0 and at 188) missed. `container-probe`'s
+/// stride×phase lattice finds them (issue #960 / audit r05-W29).
+#[test]
+fn autodetect_finds_m2ts_and_mid_packet_captures() {
+    let ts = read("ts/h264_aac.ts");
+    assert_eq!(detect_container(&ts).unwrap(), Container::MpegTs);
+
+    // M2TS: prepend a 4-byte timestamp before *every* 188-byte packet.
+    let mut m2ts = Vec::with_capacity(ts.len() / 188 * 192);
+    for pkt in ts.chunks_exact(188) {
+        m2ts.extend_from_slice(&[0x00, 0x00, 0x00, 0x00]);
+        m2ts.extend_from_slice(pkt);
+    }
+    assert_eq!(
+        detect_container(&m2ts).unwrap(),
+        Container::MpegTs,
+        "a 192-byte-stride M2TS capture must be recognised (the old check missed it)"
+    );
+
+    // A capture that starts part-way into a packet: drop the first 100 bytes.
+    let mid = &ts[100..];
+    assert_eq!(
+        detect_container(mid).unwrap(),
+        Container::MpegTs,
+        "a mid-packet capture must be recognised"
+    );
 }
 
 // --------------------------------------------------------------------------
@@ -325,5 +370,99 @@ fn args_debug_redacts_key_hex_but_keeps_the_kid() {
     assert!(
         out.contains(kid_hex),
         "the KID half is not secret and should still appear: {out}"
+    );
+}
+
+// --------------------------------------------------------------------------
+// 5. --segment-duration is honoured, and DASH media segments carry no moov
+//    (audit r05-W29)
+// --------------------------------------------------------------------------
+
+/// The MPD's `SegmentTemplate@duration` must equal `--segment-duration`, and
+/// every media segment it addresses must exist and be a `styp`+`moof`+`mdat`
+/// file with no `moov` (ISO/IEC 23009-1 §6.3.4.2).
+#[test]
+fn dash_honours_segment_duration_and_omits_moov() {
+    let ts = read("ts/h264_aac.ts");
+    let out = run_bytes(
+        &ts,
+        &Opts {
+            format: OutputFormat::Dash,
+            segment_duration: 2,
+            ..Opts::default()
+        },
+    )
+    .expect("TS → DASH");
+
+    let (text, files) = match out {
+        Output::Manifest { text, segments } => (text, segments),
+        _ => panic!("DASH must be a Manifest"),
+    };
+
+    // The video SegmentTemplate's duration is 2 s at 90000 ticks/s.
+    assert!(
+        text.contains("timescale=\"90000\" duration=\"180000\""),
+        "SegmentTemplate@duration must be the 2 s segment target: {text}"
+    );
+
+    // One init per track, and at least a second media segment (proving the
+    // file was actually split, not emitted whole).
+    let names: Vec<&str> = files.iter().map(|(n, _)| n.as_str()).collect();
+    assert!(names.contains(&"init-stream1.m4s"), "video init: {names:?}");
+    assert!(
+        names.contains(&"chunk-stream1-2.m4s"),
+        "a second video media segment must exist: {names:?}"
+    );
+
+    // No media segment may contain a `moov` box.
+    for (name, bytes) in &files {
+        if !name.starts_with("chunk-stream") {
+            continue;
+        }
+        let has_moov = bytes.windows(4).take(4096).any(|w| w == b"moov");
+        assert!(
+            !has_moov,
+            "media segment {name} must not contain a moov (ISO/IEC 23009-1 §6.3.4.2)"
+        );
+        // It must begin with styp, then moof, then mdat.
+        assert_eq!(&bytes[4..8], b"styp", "{name} must begin with styp");
+    }
+}
+
+/// The CMAF-HLS playlist must list one segment per `--segment-duration` slice
+/// (not one whole-file blob), each with an `#EXT-X-MAP`, and the init file it
+/// names must be written alongside.
+#[test]
+fn hls_honours_segment_duration_and_writes_init() {
+    let ts = read("ts/h264_aac.ts");
+    let out = run_bytes(
+        &ts,
+        &Opts {
+            format: OutputFormat::Hls,
+            segment_duration: 2,
+            ..Opts::default()
+        },
+    )
+    .expect("TS → HLS");
+
+    let (text, files) = match out {
+        Output::Manifest { text, segments } => (text, segments),
+        _ => panic!("HLS must be a Manifest"),
+    };
+
+    let extinf = text.matches("#EXTINF:").count();
+    assert!(
+        extinf >= 2,
+        "one #EXTINF per segment (>1 for a multi-second input): {text}"
+    );
+    assert!(text.contains("#EXT-X-MAP:URI=\"init.mp4\""), "{text}");
+    assert!(text.ends_with("#EXT-X-ENDLIST\n"), "VOD playlist: {text}");
+
+    let names: Vec<&str> = files.iter().map(|(n, _)| n.as_str()).collect();
+    assert!(names.contains(&"init.mp4"), "init file written: {names:?}");
+    assert_eq!(
+        extinf,
+        names.iter().filter(|n| n.starts_with("seg")).count(),
+        "one file per #EXTINF"
     );
 }

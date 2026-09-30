@@ -36,10 +36,6 @@ const IN_VIDEO_PKT_DUR: i64 = 3_600;
 /// Stream durations (`stream=duration`), seconds.
 const IN_VIDEO_DURATION_S: f64 = 5.0;
 const IN_AUDIO_DURATION_S: f64 = 4.736;
-/// `format=duration`, seconds. Used only by the `cli`-gated CMAF-HLS test.
-#[cfg(feature = "cli")]
-const IN_FORMAT_DURATION_S: f64 = 5.014_667;
-
 const TS_HZ: f64 = 90_000.0;
 /// [MS-SSTR] manifest timescale.
 const SMOOTH_HZ: i64 = 10_000_000;
@@ -557,9 +553,15 @@ fn cmaf_hls_playlist_covers_input_once() {
         .filter_map(|l| l.strip_prefix("#EXTINF:"))
         .map(|l| l.split(',').next().unwrap().parse::<f64>().unwrap())
         .sum();
+    // The playlist's total describes the media the playlist references, so it
+    // is compared against the *produced* files' own span rather than the source
+    // container's `format=duration`: that figure includes this source's
+    // 0.2787 s audio start offset, which the segmenter rebases away (both
+    // produced tracks start at 0), so the honest reference is the produced
+    // presentation — which is the video track's 5.0 s span.
     assert!(
-        (total - IN_FORMAT_DURATION_S).abs() < 1e-3,
-        "playlist total {total} s != ffprobe format duration {IN_FORMAT_DURATION_S} s\n{text}"
+        (total - IN_VIDEO_DURATION_S).abs() < 1e-2,
+        "playlist total {total} s != the produced presentation's {IN_VIDEO_DURATION_S} s\n{text}"
     );
     let uris: Vec<&str> = text
         .lines()

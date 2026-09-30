@@ -4050,6 +4050,7 @@ dependencies = [
  "bytes",
  "cbc",
  "clap",
+ "container-probe",
  "ctr",
  "mp4-emsg",
  "mpeg-pes",
