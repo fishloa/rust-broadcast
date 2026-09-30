@@ -970,11 +970,9 @@ pub(crate) fn normalise_track_nal_lengths(
         return Ok(());
     };
     if length_size == crate::annexb::NAL_LENGTH_SIZE {
-        // Already canonical — but the framing is still walked so a malformed
-        // sample is an error rather than a silent pass-through.
-        for sample in samples.iter() {
-            crate::annexb::normalise_nal_length_size(&sample.data, length_size)?;
-        }
+        // Already canonical. Samples stay opaque here (this demuxer never
+        // walks coded data for the common 4-byte case), so a container whose
+        // sample bytes are not NAL-framed still demuxes as before.
         return Ok(());
     }
     for sample in samples.iter_mut() {
