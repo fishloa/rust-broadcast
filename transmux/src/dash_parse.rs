@@ -14,14 +14,36 @@
 //!   `mediaPresentationDuration`/`minimumUpdatePeriod`/
 //!   `availabilityStartTime`/`timeShiftBufferDepth` (§5.3.1.2 Table 3), one or
 //!   more `Period`.
-//! - **Period** (§5.3.2) — [`Period`]: `id`, `start`, `duration`, its
-//!   `AdaptationSet`s.
+//! - **Period** (§5.3.2) — [`Period`]: `id`, `start`, `duration`, an optional
+//!   `BaseURL`, its `AdaptationSet`s.
 //! - **`AdaptationSet`** (§5.3.3) — [`AdaptationSet`]: `mimeType`,
 //!   `contentType`, an optional set-level `SegmentTemplate`, its
 //!   `Representation`s.
 //! - **`Representation`** (§5.3.5) — [`Representation`]: `id`, `bandwidth`,
-//!   `codecs`, geometry/audio attributes, its own `SegmentTemplate` (falling
-//!   back to the `AdaptationSet`'s — see [`Mpd::parse`]'s inheritance note).
+//!   `codecs`, geometry/audio attributes, its own `SegmentTemplate` (merged
+//!   with its parents' — see [`Mpd::parse`]'s inheritance note).
+//!
+//! # `SegmentTemplate` and `BaseURL` inheritance (§5.3.9.1, §5.3.9.2)
+//!
+//! Segment information is hierarchical across `Period` >
+//! `AdaptationSet` > `Representation`, and a lower level overrides **only the
+//! attributes it declares** — the rest are inherited. The standard's Annex G
+//! examples lean on this heavily (G.13 gives each `Representation` a
+//! `SegmentTemplate` carrying only `@initialization` and inherits
+//! `@media`/`@timescale`/`@duration`/`@startNumber` from the
+//! `AdaptationSet`), so whole-element replacement is not enough. Every
+//! [`Representation::segment_template`] this parser returns is that resolved,
+//! effective template. `@duration` and `SegmentTimeline` are exclusive
+//! (§5.3.9.4.4), so a child that introduces a timeline does not also inherit
+//! the parent's `@duration`.
+//!
+//! `BaseURL` (§5.3.9.2) is inherited over the same chain, and each level's
+//! value is reported as [`Mpd::base_url`]/[`Period::base_url`]/
+//! [`AdaptationSet::base_url`]/[`Representation::base_url`]. Several
+//! `BaseURL` children of one element are *alternates* consulted in order
+//! (§5.6.5), so the first non-empty one is kept. [`Mpd::resolve_segment_url`]
+//! applies RFC 3986 §5
+//! reference resolution down that chain, via [`crate::uri`].
 //! - **`SegmentTemplate`** (§5.3.9.4.4) — [`SegmentTemplate`]: `timescale`,
 //!   `initialization`/`media` templates, `startNumber`,
 //!   `presentationTimeOffset`, either a nominal `duration` (`$Number$`
@@ -279,6 +301,11 @@ pub struct Mpd {
     pub availability_start_time: Option<String>,
     /// `MPD@timeShiftBufferDepth` (live only, §5.3.1.2 Table 3).
     pub time_shift_buffer_depth: Option<Duration>,
+    /// The first non-empty `BaseURL` child declared at the MPD level
+    /// (§5.3.9.2), or `None`. This is the outermost element of the
+    /// `BaseURL` chain a segment URL resolves through (MPD > Period >
+    /// AdaptationSet > Representation).
+    pub base_url: Option<String>,
     /// The document's `Period` elements, in document order.
     pub periods: Vec<Period>,
 }
@@ -292,6 +319,8 @@ pub struct Period {
     pub start: Option<Duration>,
     /// `Period@duration` (§5.3.2.2).
     pub duration: Option<Duration>,
+    /// The first `BaseURL` child declared at this level (§5.3.9.2), or `None`.
+    pub base_url: Option<String>,
     /// The Period's `AdaptationSet` elements, in document order.
     pub adaptation_sets: Vec<AdaptationSet>,
 }
@@ -304,10 +333,14 @@ pub struct AdaptationSet {
     pub mime_type: Option<String>,
     /// `AdaptationSet@contentType` (§5.3.3.2, e.g. `"video"`/`"audio"`).
     pub content_type: Option<String>,
+    /// The first `BaseURL` child declared at this level (§5.3.9.2), or `None`.
+    pub base_url: Option<String>,
     /// The AdaptationSet-level `SegmentTemplate`, if declared directly here
     /// (§5.3.9.1 — SegmentTemplate is inheritable down to `Representation`;
     /// see [`Mpd::parse`]'s inheritance note for how that's resolved onto
-    /// each [`Representation::segment_template`]).
+    /// each [`Representation::segment_template`]). This is the *effective*
+    /// template for the level: its own attributes merged over the
+    /// `Period`-level ones it inherits from.
     pub segment_template: Option<SegmentTemplate>,
     /// The set's `Representation` elements, in document order.
     pub representations: Vec<Representation>,
@@ -332,12 +365,17 @@ pub struct Representation {
     pub audio_sampling_rate: Option<u32>,
     /// `Representation@mimeType` (§5.3.7.2).
     pub mime_type: Option<String>,
+    /// The first `BaseURL` child declared at this level (§5.3.9.2), or `None`.
+    /// Only the level's own `BaseURL` is reported; resolving it against the
+    /// enclosing levels' is the caller's job (the module's scope is a single
+    /// level per element).
+    pub base_url: Option<String>,
     /// This Representation's effective `SegmentTemplate`: its own child
-    /// element if present, else its `AdaptationSet`'s (see [`Mpd::parse`]'s
-    /// inheritance note). `None` if neither declared one — e.g. a
-    /// Representation addressed only by `SegmentList`/`SegmentBase`, which
-    /// this v1 parser does not resolve (tolerated, not an error: see the
-    /// module docs).
+    /// element merged, attribute by attribute, over its `AdaptationSet`'s (in
+    /// turn merged over the `Period`'s) — see [`Mpd::parse`]'s inheritance
+    /// note. `None` if no level declared one — e.g. a Representation
+    /// addressed only by `SegmentList`/`SegmentBase`, which this v1 parser
+    /// does not resolve (tolerated, not an error: see the module docs).
     pub segment_template: Option<SegmentTemplate>,
 }
 
@@ -730,6 +768,73 @@ fn parse_duration_attr(attrs: &[(String, String)], key: &str) -> Result<Option<D
 // ---------------------------------------------------------------------------
 
 impl Mpd {
+    /// The `BaseURL` chain for `representation` of `adaptation_set` in
+    /// `period`, outermost first: MPD, then Period, then AdaptationSet, then
+    /// Representation (ISO/IEC 23009-1 §5.6.5 — a `BaseURL` is inherited down
+    /// the same hierarchy as segment information).
+    ///
+    /// Empty entries are dropped, since an empty `BaseURL` contributes nothing
+    /// to a chain and would otherwise resolve a later entry against itself.
+    pub fn base_url_chain(
+        &self,
+        period: &Period,
+        adaptation_set: &AdaptationSet,
+        representation: &Representation,
+    ) -> Vec<String> {
+        [
+            &self.base_url,
+            &period.base_url,
+            &adaptation_set.base_url,
+            &representation.base_url,
+        ]
+        .into_iter()
+        .flatten()
+        .filter(|value| !value.is_empty())
+        .cloned()
+        .collect()
+    }
+
+    /// Resolve a segment reference against a Representation's `BaseURL` chain,
+    /// by RFC 3986 §5.2 reference resolution applied to each level in turn.
+    ///
+    /// `reference` is typically a resolved `SegmentTemplate`'s
+    /// `initialization`/`media` URL, which may itself be relative. With no
+    /// `BaseURL` at any level the reference is returned unchanged, on the
+    /// caller's assumption that it is already absolute against whatever root
+    /// the MPD was fetched from.
+    pub fn resolve_segment_url(
+        &self,
+        period: &Period,
+        adaptation_set: &AdaptationSet,
+        representation: &Representation,
+        reference: &str,
+    ) -> String {
+        crate::uri::resolve_segment(
+            &self.base_url_chain(period, adaptation_set, representation),
+            reference,
+        )
+    }
+
+    /// [`Self::resolve_segment_url`], but rejecting a `BaseURL` or reference
+    /// carrying a control character or whitespace.
+    ///
+    /// A CR/LF inside a URL has no meaning in RFC 3986 and lets a manifest
+    /// smuggle a second request line into anything that later writes an HTTP
+    /// request from it, so a caller building requests should use this rather
+    /// than the infallible form. Returns `None` for such input.
+    pub fn try_resolve_segment_url(
+        &self,
+        period: &Period,
+        adaptation_set: &AdaptationSet,
+        representation: &Representation,
+        reference: &str,
+    ) -> Option<String> {
+        crate::uri::try_resolve_segment(
+            &self.base_url_chain(period, adaptation_set, representation),
+            reference,
+        )
+    }
+
     /// Parse an MPD document (ISO/IEC 23009-1 §5.3) into this structural
     /// model — the inverse of [`crate::dash::DashPackager`]'s rendered XML
     /// output.
@@ -737,13 +842,16 @@ impl Mpd {
     /// # `SegmentTemplate` inheritance
     ///
     /// `SegmentTemplate` is an inheritable property along the
-    /// `Period` > `AdaptationSet` > `Representation` chain (§5.3.9.1). This
-    /// parser resolves that inheritance eagerly: after parsing each
-    /// `AdaptationSet`, every `Representation` whose own `segment_template`
-    /// is `None` is given a clone of the `AdaptationSet`-level one (if any) —
-    /// so [`Representation::segment_template`] is always the *effective*
-    /// template a caller should use, regardless of which element actually
-    /// declared it in the source XML.
+    /// `Period` > `AdaptationSet` > `Representation` chain, and a lower level
+    /// overrides only the attributes it actually declares (§5.3.9.1). This
+    /// parser resolves that inheritance eagerly: each level's element is
+    /// merged, attribute by attribute, over the level above it, and
+    /// [`AdaptationSet::segment_template`] / [`Representation::segment_template`]
+    /// are the *effective* templates a caller should use — regardless of which
+    /// element declared which attribute in the source XML. An attribute no
+    /// level declares keeps its spec default (§5.3.9.2.2 `@timescale`/
+    /// `@presentationTimeOffset`, §5.3.9.4.4 `@startNumber`), and a
+    /// `SegmentTimeline` is taken from the lowest level that carries one.
     pub fn parse(xml: &str) -> Result<Mpd> {
         const EL: &str = "MPD";
         let mut tok = XmlTokenizer::new(xml);
@@ -780,15 +888,24 @@ impl Mpd {
         let availability_start_time = attr_owned(&mpd_attrs, "availabilityStartTime");
         let time_shift_buffer_depth = parse_duration_attr(&mpd_attrs, "timeShiftBufferDepth")?;
 
+        let mut base_url = None;
         let mut periods = Vec::new();
         if !mpd_self_closing {
             loop {
                 match tok.next_event()? {
                     Some(XmlEvent::Start {
+                        name: "BaseURL",
+                        attrs,
+                        self_closing,
+                    }) => {
+                        let found = parse_base_url(&mut tok, xml, &attrs, self_closing)?;
+                        keep_first_base_url(&mut base_url, found);
+                    }
+                    Some(XmlEvent::Start {
                         name: "Period",
                         attrs,
                         self_closing,
-                    }) => periods.push(parse_period(&mut tok, attrs, self_closing)?),
+                    }) => periods.push(parse_period(&mut tok, xml, attrs, self_closing)?),
                     Some(XmlEvent::Start { self_closing, .. }) => {
                         if !self_closing {
                             skip_element(&mut tok)?;
@@ -815,13 +932,23 @@ impl Mpd {
             minimum_update_period,
             availability_start_time,
             time_shift_buffer_depth,
+            base_url,
             periods,
         })
     }
 }
 
-fn parse_period(
-    tok: &mut XmlTokenizer<'_>,
+/// The per-level pieces a `SegmentTemplate` contributes before it is merged
+/// with its parent level — see [`merge_templates`].
+#[derive(Debug, Clone)]
+struct TemplateLayer {
+    attrs: LayerTemplate,
+    timeline: Option<SegmentTimeline>,
+}
+
+fn parse_period<'a>(
+    tok: &mut XmlTokenizer<'a>,
+    xml: &'a str,
     attrs: Vec<(String, String)>,
     self_closing: bool,
 ) -> Result<Period> {
@@ -830,15 +957,41 @@ fn parse_period(
     let start = parse_duration_attr(&attrs, "start")?;
     let duration = parse_duration_attr(&attrs, "duration")?;
 
+    let mut base_url = None;
+    let mut template: Option<TemplateLayer> = None;
     let mut adaptation_sets = Vec::new();
     if !self_closing {
         loop {
             match tok.next_event()? {
                 Some(XmlEvent::Start {
+                    name: "BaseURL",
+                    attrs,
+                    self_closing,
+                }) => {
+                    let found = parse_base_url(tok, xml, &attrs, self_closing)?;
+                    keep_first_base_url(&mut base_url, found);
+                }
+                Some(XmlEvent::Start {
+                    name: "SegmentTemplate",
+                    attrs,
+                    self_closing,
+                }) => template = Some(parse_segment_template_layer(tok, attrs, self_closing)?),
+                Some(XmlEvent::Start {
                     name: "AdaptationSet",
                     attrs,
                     self_closing,
-                }) => adaptation_sets.push(parse_adaptation_set(tok, attrs, self_closing)?),
+                }) => {
+                    let parent = template
+                        .as_ref()
+                        .map(|t| merge_templates(None, t.attrs.clone(), t.timeline.clone()));
+                    adaptation_sets.push(parse_adaptation_set(
+                        tok,
+                        xml,
+                        attrs,
+                        self_closing,
+                        parent.as_ref(),
+                    )?);
+                }
                 Some(XmlEvent::Start { self_closing, .. }) => {
                     if !self_closing {
                         skip_element(tok)?;
@@ -862,34 +1015,79 @@ fn parse_period(
         id,
         start,
         duration,
+        base_url,
         adaptation_sets,
     })
 }
 
-fn parse_adaptation_set(
-    tok: &mut XmlTokenizer<'_>,
+/// Parse a `BaseURL` element's text content (§5.3.9.2 `BaseURLType`): the
+/// element's character data with surrounding whitespace trimmed. Nested
+/// elements are skipped (the type allows none), and an element with no text
+/// yields `None`.
+fn parse_base_url<'a>(
+    tok: &mut XmlTokenizer<'a>,
+    data: &'a str,
+    attrs: &[(String, String)],
+    self_closing: bool,
+) -> Result<Option<String>> {
+    let _ = attrs;
+    let text = crate::xml_parse::text_content(tok, data, "BaseURL", self_closing)?;
+    Ok(text.map(|t| t.trim().to_string()).filter(|t| !t.is_empty()))
+}
+
+/// Fold one parsed `BaseURL` into a level's value, keeping the **first
+/// non-empty** one.
+///
+/// ISO/IEC 23009-1 §5.6.5: several `BaseURL` children of one element are
+/// *alternates* for the same level, consulted in order — not successive
+/// overrides of one another. So a later `BaseURL` never replaces an earlier
+/// one, and an empty element (which `parse_base_url` reports as `None`) cannot
+/// clear a value an earlier sibling established.
+fn keep_first_base_url(slot: &mut Option<String>, found: Option<String>) {
+    if slot.is_none() {
+        *slot = found;
+    }
+}
+
+fn parse_adaptation_set<'a>(
+    tok: &mut XmlTokenizer<'a>,
+    xml: &'a str,
     attrs: Vec<(String, String)>,
     self_closing: bool,
+    parent: Option<&SegmentTemplate>,
 ) -> Result<AdaptationSet> {
     const EL: &str = "AdaptationSet";
     let mime_type = attr_owned(&attrs, "mimeType");
     let content_type = attr_owned(&attrs, "contentType");
+    let mut base_url = None;
 
-    let mut segment_template = None;
-    let mut representations = Vec::new();
+    // Each Representation is collected with its *own* raw template layer (if it
+    // declared one) and no inheritance applied yet: a Representation's child
+    // `SegmentTemplate` is itself a layer in the hierarchy (§5.3.9.1), so it
+    // contributes its attributes rather than replacing the set's.
+    let mut own_layer: Option<TemplateLayer> = None;
+    let mut parsed: Vec<(Representation, Option<TemplateLayer>)> = Vec::new();
     if !self_closing {
         loop {
             match tok.next_event()? {
                 Some(XmlEvent::Start {
+                    name: "BaseURL",
+                    attrs,
+                    self_closing,
+                }) => {
+                    let found = parse_base_url(tok, xml, &attrs, self_closing)?;
+                    keep_first_base_url(&mut base_url, found);
+                }
+                Some(XmlEvent::Start {
                     name: "SegmentTemplate",
                     attrs,
                     self_closing,
-                }) => segment_template = Some(parse_segment_template(tok, attrs, self_closing)?),
+                }) => own_layer = Some(parse_segment_template_layer(tok, attrs, self_closing)?),
                 Some(XmlEvent::Start {
                     name: "Representation",
                     attrs,
                     self_closing,
-                }) => representations.push(parse_representation(tok, attrs, self_closing)?),
+                }) => parsed.push(parse_representation(tok, xml, attrs, self_closing)?),
                 Some(XmlEvent::Start { self_closing, .. }) => {
                     if !self_closing {
                         skip_element(tok)?;
@@ -909,29 +1107,42 @@ fn parse_adaptation_set(
         }
     }
 
-    // Inherit the AdaptationSet-level SegmentTemplate onto any Representation
-    // that didn't declare its own (see `Mpd::parse`'s inheritance note).
-    if let Some(inherited) = &segment_template {
-        for r in &mut representations {
-            if r.segment_template.is_none() {
-                r.segment_template = Some(inherited.clone());
+    // This set's effective template: its own layer over the parent (Period)
+    // level's, which was resolved before this element was parsed.
+    let effective = match own_layer {
+        Some(layer) => Some(merge_templates(parent, layer.attrs, layer.timeline)),
+        None => parent.cloned(),
+    };
+
+    let mut representations = Vec::with_capacity(parsed.len());
+    for (mut repr, layer) in parsed {
+        repr.segment_template = match (effective.as_ref(), layer) {
+            (Some(parent), Some(child)) => {
+                Some(merge_templates(Some(parent), child.attrs, child.timeline))
             }
-        }
+            (Some(parent), None) => Some(parent.clone()),
+            (None, Some(child)) => Some(to_template(child)),
+            (None, None) => None,
+        };
+        representations.push(repr);
     }
+    let segment_template = effective;
 
     Ok(AdaptationSet {
         mime_type,
         content_type,
+        base_url,
         segment_template,
         representations,
     })
 }
 
-fn parse_representation(
-    tok: &mut XmlTokenizer<'_>,
+fn parse_representation<'a>(
+    tok: &mut XmlTokenizer<'a>,
+    xml: &'a str,
     attrs: Vec<(String, String)>,
     self_closing: bool,
-) -> Result<Representation> {
+) -> Result<(Representation, Option<TemplateLayer>)> {
     const EL: &str = "Representation";
     let id = required_attr_owned(&attrs, "id", EL)?;
     let bandwidth: u64 = required_attr_parse(&attrs, "bandwidth", EL)?;
@@ -942,15 +1153,24 @@ fn parse_representation(
     let frame_rate = attr_owned(&attrs, "frameRate");
     let audio_sampling_rate: Option<u32> = parse_attr(&attrs, "audioSamplingRate", EL)?;
 
-    let mut segment_template = None;
+    let mut base_url = None;
+    let mut pending: Option<TemplateLayer> = None;
     if !self_closing {
         loop {
             match tok.next_event()? {
                 Some(XmlEvent::Start {
+                    name: "BaseURL",
+                    attrs,
+                    self_closing,
+                }) => {
+                    let found = parse_base_url(tok, xml, &attrs, self_closing)?;
+                    keep_first_base_url(&mut base_url, found);
+                }
+                Some(XmlEvent::Start {
                     name: "SegmentTemplate",
                     attrs,
                     self_closing,
-                }) => segment_template = Some(parse_segment_template(tok, attrs, self_closing)?),
+                }) => pending = Some(parse_segment_template_layer(tok, attrs, self_closing)?),
                 Some(XmlEvent::Start { self_closing, .. }) => {
                     if !self_closing {
                         skip_element(tok)?;
@@ -970,33 +1190,149 @@ fn parse_representation(
         }
     }
 
-    Ok(Representation {
-        id,
-        bandwidth,
-        codecs,
-        width,
-        height,
-        frame_rate,
-        audio_sampling_rate,
-        mime_type,
-        segment_template,
+    Ok((
+        Representation {
+            id,
+            bandwidth,
+            codecs,
+            width,
+            height,
+            frame_rate,
+            audio_sampling_rate,
+            mime_type,
+            base_url,
+            segment_template: None,
+        },
+        pending,
+    ))
+}
+
+/// Resolve a level's raw template parts with no parent: the two defaultless
+/// template strings keep their own values (or stay absent).
+fn to_template(layer: TemplateLayer) -> SegmentTemplate {
+    merge_templates(None, layer.attrs, layer.timeline)
+}
+
+/// Split a `SegmentTemplate` element's attributes into the raw `Option`s the
+/// inheritance model needs (ISO/IEC 23009-1 §5.3.9.1).
+///
+/// Every attribute is kept as declared — an absent one is `None`, *not* its
+/// spec default. The distinction matters: §5.3.9.1 makes a lower-level
+/// `SegmentTemplate` override "only the attribute it specifies", and the
+/// standard's own worked examples rely on that (Annex G.13 gives each
+/// Representation a `SegmentTemplate` carrying only `@initialization` and
+/// inheriting `@media`/`@timescale`/`@duration`/`@startNumber` from the
+/// AdaptationSet). Filling in a default here would make such a child silently
+/// reset every parent attribute it did not restate.
+fn split_template_attrs(attrs: &[(String, String)]) -> Result<LayerTemplate> {
+    const EL: &str = "SegmentTemplate";
+    Ok(LayerTemplate {
+        timescale: parse_attr(attrs, "timescale", EL)?,
+        initialization: attr_owned(attrs, "initialization"),
+        media: attr_owned(attrs, "media"),
+        start_number: parse_attr(attrs, "startNumber", EL)?,
+        duration: parse_attr(attrs, "duration", EL)?,
+        presentation_time_offset: parse_attr(attrs, "presentationTimeOffset", EL)?,
     })
 }
 
-fn parse_segment_template(
+/// One level's `SegmentTemplate` attributes as the element declared them, before
+/// inheritance from the level above is resolved. Every field is `None` when the
+/// attribute was absent, so [`merge_templates`] can tell "not restated" from
+/// "restated as the default".
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+struct LayerTemplate {
+    timescale: Option<u64>,
+    initialization: Option<String>,
+    media: Option<String>,
+    start_number: Option<u64>,
+    duration: Option<u64>,
+    presentation_time_offset: Option<u64>,
+}
+
+/// Build a level's effective `SegmentTemplate` by merging this level's
+/// attributes over the parent level's, one attribute at a time (ISO/IEC
+/// 23009-1 §5.3.9.1: segment information "is hierarchical ... a lower level
+/// overrides only the attributes it specifies").
+///
+/// An attribute this level did not declare takes the parent's value, or its
+/// spec default when no level declared one. The `SegmentTimeline` child follows
+/// the same rule element-wise: the lowest level that declares one wins.
+fn merge_templates(
+    parent: Option<&SegmentTemplate>,
+    own: LayerTemplate,
+    own_timeline: Option<SegmentTimeline>,
+) -> SegmentTemplate {
+    let inherit_u64 = |own: Option<u64>, get: fn(&SegmentTemplate) -> u64, default: u64| {
+        own.or_else(|| parent.map(get)).unwrap_or(default)
+    };
+    // `@duration` and `SegmentTimeline` are mutually exclusive (§5.3.9.4.4:
+    // "Either @duration ... or a SegmentTimeline element shall be present, but
+    // not both"), and that rule binds the *effective* template in both
+    // directions:
+    //
+    // - A child that introduces a timeline while the parent declared
+    //   `@duration` is choosing `$Time$` addressing, so the parent's nominal
+    //   duration must not be inherited alongside it.
+    // - A child that declares its own `@duration` is choosing `$Number$`
+    //   addressing, so the parent's timeline must not be inherited alongside
+    //   *it* (the direction that was missing: the timeline used to be taken
+    //   unconditionally from the parent, silently cancelling the child's own
+    //   `@duration`).
+    //
+    // Each element is therefore inherited only when this level declared neither
+    // of the two, or declared the same one.
+    let own_has_timeline = own_timeline.is_some();
+    let timeline = if own.duration.is_some() {
+        // This level chose `$Number$`; the parent's `$Time$` timeline does not
+        // apply.
+        own_timeline
+    } else {
+        own_timeline.or_else(|| parent.and_then(|p| p.timeline.clone()))
+    };
+    let duration = if own_has_timeline {
+        // This level chose `$Time$`; the parent's `$Number$` duration does not
+        // apply.
+        None
+    } else {
+        own.duration.or_else(|| parent.and_then(|p| p.duration))
+    };
+    SegmentTemplate {
+        timescale: inherit_u64(own.timescale, |p| p.timescale, DEFAULT_TIMESCALE),
+        initialization: own
+            .initialization
+            .or_else(|| parent.and_then(|p| p.initialization.clone())),
+        media: own.media.or_else(|| parent.and_then(|p| p.media.clone())),
+        start_number: inherit_u64(own.start_number, |p| p.start_number, DEFAULT_START_NUMBER),
+        duration,
+        presentation_time_offset: inherit_u64(
+            own.presentation_time_offset,
+            |p| p.presentation_time_offset,
+            DEFAULT_PRESENTATION_TIME_OFFSET,
+        ),
+        timeline,
+    }
+}
+
+/// Parse a `SegmentTemplate` element whose effective values still depend on a
+/// parent level (`Period`/`AdaptationSet`), consuming the whole element.
+fn parse_segment_template_layer(
     tok: &mut XmlTokenizer<'_>,
     attrs: Vec<(String, String)>,
     self_closing: bool,
-) -> Result<SegmentTemplate> {
-    const EL: &str = "SegmentTemplate";
-    let timescale: u64 = parse_attr(&attrs, "timescale", EL)?.unwrap_or(DEFAULT_TIMESCALE);
-    let initialization = attr_owned(&attrs, "initialization");
-    let media = attr_owned(&attrs, "media");
-    let start_number: u64 = parse_attr(&attrs, "startNumber", EL)?.unwrap_or(DEFAULT_START_NUMBER);
-    let duration: Option<u64> = parse_attr(&attrs, "duration", EL)?;
-    let presentation_time_offset: u64 = parse_attr(&attrs, "presentationTimeOffset", EL)?
-        .unwrap_or(DEFAULT_PRESENTATION_TIME_OFFSET);
+) -> Result<TemplateLayer> {
+    let attrs = split_template_attrs(&attrs)?;
+    let timeline = parse_segment_template_body(tok, self_closing)?;
+    Ok(TemplateLayer { attrs, timeline })
+}
 
+/// Parse the `SegmentTimeline` child of a `SegmentTemplate` element (or its
+/// absence), consuming the element's body up to its end tag.
+fn parse_segment_template_body(
+    tok: &mut XmlTokenizer<'_>,
+    self_closing: bool,
+) -> Result<Option<SegmentTimeline>> {
+    const EL: &str = "SegmentTemplate";
     let mut timeline = None;
     if !self_closing {
         loop {
@@ -1024,16 +1360,7 @@ fn parse_segment_template(
             }
         }
     }
-
-    Ok(SegmentTemplate {
-        timescale,
-        initialization,
-        media,
-        start_number,
-        duration,
-        presentation_time_offset,
-        timeline,
-    })
+    Ok(timeline)
 }
 
 fn parse_segment_timeline(
@@ -1204,6 +1531,197 @@ mod tests {
         let r1_st = r1.segment_template.as_ref().expect("own template");
         assert_eq!(r1_st.timescale, 2000, "own template wins over inherited");
         assert_eq!(r1_st.start_number, 5);
+    }
+
+    #[test]
+    fn segment_template_merges_attribute_by_attribute_across_three_levels() {
+        // ISO/IEC 23009-1 §5.3.9.1: segment information is hierarchical, and a
+        // lower level overrides only the attributes it declares. Structurally
+        // this is the standard's Annex G.13 shape (Representation templates
+        // carrying a single attribute, inheriting the rest), with the Period
+        // level added on top (G.12's shape).
+        let xml = r#"<MPD profiles="p">
+            <Period>
+                <SegmentTemplate timescale="90000" media="p-$Number$.m4s">
+                    <SegmentTimeline><S t="0" d="90000" r="2"/></SegmentTimeline>
+                </SegmentTemplate>
+                <AdaptationSet contentType="video">
+                    <SegmentTemplate startNumber="7"/>
+                    <Representation id="0" bandwidth="1">
+                        <SegmentTemplate media="$RepresentationID$-$Time$.m4s"/>
+                    </Representation>
+                    <Representation id="1" bandwidth="2"/>
+                </AdaptationSet>
+            </Period>
+        </MPD>"#;
+        let mpd = Mpd::parse(xml).expect("parse");
+        let set = &mpd.periods[0].adaptation_sets[0];
+
+        let set_st = set.segment_template.as_ref().expect("set template");
+        assert_eq!(set_st.timescale, 90000, "inherited from Period");
+        assert_eq!(set_st.start_number, 7, "declared by the AdaptationSet");
+        assert_eq!(set_st.media.as_deref(), Some("p-$Number$.m4s"));
+        assert!(set_st.timeline.is_some(), "timeline inherited from Period");
+
+        let r0 = set.representations[0]
+            .segment_template
+            .as_ref()
+            .expect("effective template");
+        assert_eq!(r0.timescale, 90000, "inherited up the whole chain");
+        assert_eq!(r0.start_number, 7);
+        assert_eq!(
+            r0.media.as_deref(),
+            Some("$RepresentationID$-$Time$.m4s"),
+            "the Representation's own @media wins"
+        );
+        assert!(
+            r0.timeline.is_some(),
+            "the Representation inherits the Period's timeline"
+        );
+
+        let r1 = set.representations[1]
+            .segment_template
+            .as_ref()
+            .expect("effective template");
+        assert_eq!(r1.media.as_deref(), Some("p-$Number$.m4s"));
+        assert_eq!(r1.start_number, 7);
+        assert_eq!(r1.timescale, 90000);
+    }
+
+    #[test]
+    fn base_url_is_reported_per_level() {
+        let xml = r#"<MPD profiles="p">
+            <Period>
+                <BaseURL>
+                    https://cdn.example.com/vod/
+                </BaseURL>
+                <AdaptationSet contentType="video">
+                    <Representation id="0" bandwidth="1">
+                        <BaseURL>rep/</BaseURL>
+                    </Representation>
+                </AdaptationSet>
+            </Period>
+        </MPD>"#;
+        let mpd = Mpd::parse(xml).expect("parse");
+        let period = &mpd.periods[0];
+        assert_eq!(
+            period.base_url.as_deref(),
+            Some("https://cdn.example.com/vod/"),
+            "surrounding whitespace is trimmed"
+        );
+        assert!(period.adaptation_sets[0].base_url.is_none());
+        assert_eq!(
+            period.adaptation_sets[0].representations[0]
+                .base_url
+                .as_deref(),
+            Some("rep/")
+        );
+    }
+
+    #[test]
+    fn first_non_empty_base_url_wins_per_level() {
+        // §5.6.5: several BaseURL children of one element are alternates,
+        // consulted in order — the first is the one used. An empty later one
+        // must not clear it, and a leading empty one must not swallow the
+        // expression either.
+        let xml = r#"<MPD profiles="p">
+            <BaseURL>https://mpd.example.com/</BaseURL>
+            <Period>
+                <BaseURL></BaseURL>
+                <BaseURL>period-a/</BaseURL>
+                <BaseURL>period-b/</BaseURL>
+                <AdaptationSet contentType="video">
+                    <Representation id="0" bandwidth="1"/>
+                </AdaptationSet>
+            </Period>
+        </MPD>"#;
+        let mpd = Mpd::parse(xml).expect("parse");
+        assert_eq!(
+            mpd.base_url.as_deref(),
+            Some("https://mpd.example.com/"),
+            "the MPD-level BaseURL is read"
+        );
+        assert_eq!(
+            mpd.periods[0].base_url.as_deref(),
+            Some("period-a/"),
+            "the first non-empty sibling wins; an empty one is skipped and a              later one does not override"
+        );
+    }
+
+    #[test]
+    fn child_duration_over_parent_timeline_is_also_exclusive() {
+        // The reverse of the case above: the AdaptationSet addresses by
+        // `$Time$` (a SegmentTimeline), while the Representation declares
+        // `@duration`. §5.3.9.4.4 forbids a template carrying both, so the
+        // Representation's `@duration` means `$Number$` addressing and it must
+        // NOT inherit the parent's timeline.
+        let xml = r#"<MPD profiles="p">
+            <Period>
+                <AdaptationSet contentType="video">
+                    <SegmentTemplate media="t-$Time$.m4s" timescale="90000">
+                        <SegmentTimeline><S t="0" d="90000" r="2"/></SegmentTimeline>
+                    </SegmentTemplate>
+                    <Representation id="0" bandwidth="1">
+                        <SegmentTemplate media="n-$Number$.m4s" duration="45000"/>
+                    </Representation>
+                </AdaptationSet>
+            </Period>
+        </MPD>"#;
+        let mpd = Mpd::parse(xml).expect("parse");
+        let set = &mpd.periods[0].adaptation_sets[0];
+        let set_st = set.segment_template.as_ref().expect("set template");
+        assert!(set_st.timeline.is_some(), "the set addresses by $Time$");
+        assert_eq!(set_st.duration, None);
+
+        let r = set.representations[0]
+            .segment_template
+            .as_ref()
+            .expect("effective template");
+        assert_eq!(
+            r.duration,
+            Some(45000),
+            "the Representation's own @duration is kept"
+        );
+        assert!(
+            r.timeline.is_none(),
+            "a template carrying @duration must not also inherit the parent's              SegmentTimeline; the two addressing modes are exclusive"
+        );
+        // Everything else still inherits.
+        assert_eq!(r.timescale, 90000);
+        assert_eq!(r.media.as_deref(), Some("n-$Number$.m4s"));
+    }
+
+    #[test]
+    fn segment_timeline_and_duration_are_mutually_exclusive() {
+        // §5.3.9.4.4: "@duration ... or a SegmentTimeline ... but not both".
+        // A Representation that introduces a SegmentTimeline while the
+        // AdaptationSet declared @duration must not end up with both.
+        let xml = r#"<MPD profiles="p">
+            <Period>
+                <AdaptationSet contentType="video">
+                    <SegmentTemplate media="c-$Number$.m4s" duration="90000" timescale="90000"/>
+                    <Representation id="0" bandwidth="1">
+                        <SegmentTemplate media="t-$Time$.m4s">
+                            <SegmentTimeline><S t="0" d="90000" r="2"/></SegmentTimeline>
+                        </SegmentTemplate>
+                    </Representation>
+                </AdaptationSet>
+            </Period>
+        </MPD>"#;
+        let mpd = Mpd::parse(xml).expect("parse");
+        let set = &mpd.periods[0].adaptation_sets[0];
+        let set_st = set.segment_template.as_ref().expect("set template");
+        assert_eq!(set_st.duration, Some(90000), "the set's own @duration");
+        assert!(set_st.timeline.is_none());
+
+        let r = set.representations[0].segment_template.as_ref().unwrap();
+        assert!(r.timeline.is_some(), "the child's timeline");
+        assert_eq!(
+            r.duration, None,
+            "a template carrying a SegmentTimeline must not also carry the              parent's @duration; the two addressing modes are exclusive"
+        );
+        // The rest still inherits.
+        assert_eq!(r.timescale, 90000);
     }
 
     #[test]

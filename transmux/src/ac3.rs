@@ -220,25 +220,60 @@ impl Ac3SyncframeInfo {
 /// first bad sync word / truncated tail so a partial trailing frame does not
 /// lose the earlier ones (mirrors `ts_demux::split_adts_frames`).
 pub fn split_ac3_syncframes(payload: &[u8]) -> Vec<&[u8]> {
-    let mut frames = Vec::new();
+    split_ac3_syncframes_resyncing(payload, false)
+}
+
+/// As [`split_ac3_syncframes`], but **resynchronises** after a frame that does
+/// not parse: rather than stopping, the scan advances one byte and looks for the
+/// next sync word that starts a frame whose declared length fits.
+///
+/// A single corrupted or truncated frame mid-stream is exactly what a real
+/// capture contains, and stopping at it discards every later frame — the whole
+/// remainder of the stream. Resynchronising costs a rescan of at most one
+/// frame's worth of bytes per corruption, and is what a demuxer recovering from
+/// a damaged payload must do.
+pub fn split_ac3_syncframes_resyncing(payload: &[u8], resync: bool) -> Vec<&[u8]> {
+    split_ac3_syncframe_ranges(payload, resync)
+        .into_iter()
+        .map(|(start, end)| &payload[start..end])
+        .collect()
+}
+
+/// As [`split_ac3_syncframes_resyncing`], but returning each frame's
+/// `(start, end)` byte range instead of a slice.
+///
+/// The ranges — not just the slices — are what a caller needs: after a resync
+/// the frames are **not** contiguous from offset 0, so a caller that rebuilt
+/// offsets by summing frame lengths would slice at the wrong places and emit
+/// samples that start mid-frame (which is exactly what the PS demuxer did until
+/// it was given these ranges).
+pub fn split_ac3_syncframe_ranges(payload: &[u8], resync: bool) -> Vec<(usize, usize)> {
+    let mut ranges = Vec::new();
     let mut off = 0usize;
     while off + 2 <= payload.len() {
         if u16::from_be_bytes([payload[off], payload[off + 1]]) != AC3_SYNCWORD {
-            break;
+            if !resync {
+                break;
+            }
+            off += 1;
+            continue;
         }
-        let Ok(info) = Ac3SyncframeInfo::parse_at(payload, off) else {
-            break;
-        };
-        let Some(len) = info.frame_len_bytes() else {
-            break;
-        };
-        if len == 0 || off + len > payload.len() {
-            break;
+        // A sync word is not enough: the header must parse and declare a length
+        // the payload actually holds, or this is a false sync inside a frame.
+        let ok = Ac3SyncframeInfo::parse_at(payload, off)
+            .ok()
+            .and_then(|info| info.frame_len_bytes())
+            .filter(|&len| len != 0 && off + len <= payload.len());
+        match ok {
+            Some(len) => {
+                ranges.push((off, off + len));
+                off += len;
+            }
+            None if resync => off += 1,
+            None => break,
         }
-        frames.push(&payload[off..off + len]);
-        off += len;
     }
-    frames
+    ranges
 }
 
 // ---------------------------------------------------------------------------

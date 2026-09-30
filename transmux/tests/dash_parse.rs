@@ -432,3 +432,336 @@ fn mismatched_end_tag_causes_error() {
         "error must be MismatchedEndTag: {err:?}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Real fixture: fixtures/dash/manifest-inheritance.mpd (§5.3.9.1 inheritance)
+// ---------------------------------------------------------------------------
+
+/// The resolved SegmentTemplate for a `Representation` must be the *merged*
+/// result of every level above it (ISO/IEC 23009-1 §5.3.9.1), and every
+/// attribute must resolve to a value that actually names a committed segment
+/// file — so the assertions bite against the real fixture's byte inventory
+/// rather than restating the parser.
+#[test]
+fn parses_real_inheritance_fixture_and_resolves_every_segment_url() {
+    let xml = std::fs::read_to_string(fixtures_dir().join("dash/manifest-inheritance.mpd"))
+        .expect("manifest-inheritance.mpd must exist");
+    let mpd = Mpd::parse(&xml).expect("parse inheritance fixture");
+    assert_eq!(mpd.periods.len(), 1);
+    let period = &mpd.periods[0];
+    assert_eq!(
+        period.base_url.as_deref(),
+        Some("https://dash.example.com/vod/"),
+        "MPD-level BaseURL is reported on the Period level here"
+    );
+    assert_eq!(period.adaptation_sets.len(), 2);
+
+    let video = &period.adaptation_sets[0];
+    let audio = &period.adaptation_sets[1];
+    assert_eq!(video.content_type.as_deref(), Some("video"));
+    assert_eq!(audio.content_type.as_deref(), Some("audio"));
+
+    // --- Video: Period -> AdaptationSet -> Representation -------------------
+    let v = &video.representations[0];
+    assert_eq!(v.id, "0");
+    let v_st = v
+        .segment_template
+        .as_ref()
+        .expect("video Representation must have an effective template");
+
+    // @timescale, @startNumber and the SegmentTimeline come from the *Period*;
+    // only @media is the AdaptationSet's and only @initialization the
+    // Representation's. Asserting the whole struct pins every merged field at
+    // once, so a regression that drops any one of them fails here.
+    assert_eq!(
+        v_st,
+        &transmux::SegmentTemplate {
+            timescale: 90000,
+            initialization: Some("init-stream$RepresentationID$.m4s".to_string()),
+            media: Some("chunk-stream$RepresentationID$-$Number%05d$.m4s".to_string()),
+            start_number: 1,
+            duration: None,
+            presentation_time_offset: 0,
+            timeline: Some(transmux::SegmentTimeline {
+                segments: vec![transmux::S {
+                    t: Some(2070),
+                    d: 90000,
+                    r: 2,
+                }],
+            }),
+        },
+        "every attribute must be the one its own level (or the one above) declared"
+    );
+
+    // The resolved URLs must be exactly the committed video segments.
+    let init = transmux::SegmentTemplate::resolve(
+        v_st.initialization.as_ref().unwrap(),
+        &v.id,
+        None,
+        None,
+        None,
+    );
+    assert_eq!(init, "init-stream0.m4s");
+    for (number, time) in v_st
+        .timeline
+        .as_ref()
+        .unwrap()
+        .enumerate(v_st.start_number)
+        .unwrap()
+    {
+        let media = transmux::SegmentTemplate::resolve(
+            v_st.media.as_ref().unwrap(),
+            &v.id,
+            Some(number),
+            Some(time),
+            None,
+        );
+        assert!(
+            fixtures_dir().join("dash").join(&media).exists(),
+            "resolved media URL must name a committed segment: {media}"
+        );
+    }
+
+    // --- Audio: the Representation's own SegmentTimeline overrides the
+    // Period's, while @timescale/@startNumber/@media still inherit ----------
+    let a = &audio.representations[0];
+    assert_eq!(a.id, "1");
+    let a_st = a
+        .segment_template
+        .as_ref()
+        .expect("audio Representation must have an effective template");
+    assert_eq!(a_st.timescale, 44100, "the audio set restates @timescale");
+    assert_eq!(a_st.start_number, 1);
+    assert_eq!(
+        a_st.media.as_deref(),
+        Some("chunk-stream$RepresentationID$-$Number%05d$.m4s"),
+        "inherited from the audio AdaptationSet"
+    );
+    assert_eq!(
+        a_st.timeline.as_ref().unwrap().segments.len(),
+        4,
+        "the Representation's own SegmentTimeline wins over the Period's"
+    );
+    assert_eq!(
+        a_st.timeline
+            .as_ref()
+            .unwrap()
+            .enumerate(a_st.start_number)
+            .unwrap(),
+        vec![(1, 0), (2, 41984), (3, 86016), (4, 131072)],
+        "the audio timeline is its own, not the Period's 90000-tick video run"
+    );
+
+    let init = transmux::SegmentTemplate::resolve(
+        a_st.initialization.as_ref().unwrap(),
+        &a.id,
+        None,
+        None,
+        None,
+    );
+    assert_eq!(init, "init-stream1.m4s");
+    let media = transmux::SegmentTemplate::resolve(
+        a_st.media.as_ref().unwrap(),
+        &a.id,
+        Some(4),
+        Some(131072),
+        None,
+    );
+    assert_eq!(media, "chunk-stream1-00004.m4s");
+    assert!(fixtures_dir().join("dash").join(&media).exists());
+
+    // The AdaptationSet-level templates are themselves the merged (Period + own)
+    // values a caller walking the tree level by level would read.
+    let video_st = video.segment_template.as_ref().expect("video set template");
+    assert_eq!(video_st.timescale, 90000, "inherited from the Period");
+    assert!(
+        video_st.initialization.is_none(),
+        "only the Representation declares it"
+    );
+    assert_eq!(
+        video_st.media.as_deref(),
+        Some("chunk-stream$RepresentationID$-$Number%05d$.m4s")
+    );
+}
+
+// ---------------------------------------------------------------------------
+// BaseURL chain + segment-URL resolution (ISO/IEC 23009-1 §5.6.5)
+// ---------------------------------------------------------------------------
+
+/// Parse a one-Period/one-set/one-Representation MPD and return the handles a
+/// caller resolves through.
+fn resolve_in(xml: &str, reference: &str) -> String {
+    let mpd = transmux::Mpd::parse(xml).expect("parse");
+    let period = &mpd.periods[0];
+    let set = &period.adaptation_sets[0];
+    let repr = &set.representations[0];
+    mpd.resolve_segment_url(period, set, repr, reference)
+}
+
+/// An absolute `BaseURL` at the Period overrides the MPD's, and an absolute
+/// one at the Representation overrides both.
+#[test]
+fn absolute_base_url_at_a_deeper_level_resets_the_chain() {
+    let xml = r#"<MPD profiles="p">
+        <BaseURL>https://mpd.example.com/root/</BaseURL>
+        <Period>
+            <BaseURL>https://period.example.net/vod/</BaseURL>
+            <AdaptationSet contentType="video">
+                <Representation id="0" bandwidth="1">
+                    <BaseURL>https://rep.example.org/</BaseURL>
+                </Representation>
+            </AdaptationSet>
+        </Period>
+    </MPD>"#;
+    assert_eq!(
+        resolve_in(xml, "seg-1.m4s"),
+        "https://rep.example.org/seg-1.m4s",
+        "the deepest absolute BaseURL wins"
+    );
+}
+
+/// Relative `BaseURL`s at every level compose into one absolute URL.
+#[test]
+fn relative_base_urls_compose_across_every_level() {
+    let xml = r#"<MPD profiles="p">
+        <BaseURL>https://cdn.example.com/</BaseURL>
+        <Period>
+            <BaseURL>vod/</BaseURL>
+            <AdaptationSet contentType="video">
+                <BaseURL>period-1/</BaseURL>
+                <Representation id="0" bandwidth="1">
+                    <BaseURL>video/</BaseURL>
+                </Representation>
+            </AdaptationSet>
+        </Period>
+    </MPD>"#;
+    assert_eq!(
+        resolve_in(xml, "seg-1.m4s"),
+        "https://cdn.example.com/vod/period-1/video/seg-1.m4s"
+    );
+    // A `..` in the reference climbs out of the Representation's directory.
+    assert_eq!(
+        resolve_in(xml, "../audio/seg.m4s"),
+        "https://cdn.example.com/vod/period-1/audio/seg.m4s"
+    );
+}
+
+/// A Relative `BaseURL` with no trailing slash treats its last segment as a
+/// file, so the reference replaces it.
+#[test]
+fn base_url_without_a_trailing_slash_replaces_the_last_segment() {
+    let xml = r#"<MPD profiles="p">
+        <BaseURL>https://cdn.example.com/manifest.mpd</BaseURL>
+        <Period>
+            <AdaptationSet contentType="video">
+                <Representation id="0" bandwidth="1"/>
+            </AdaptationSet>
+        </Period>
+    </MPD>"#;
+    assert_eq!(
+        resolve_in(xml, "seg.m4s"),
+        "https://cdn.example.com/seg.m4s"
+    );
+}
+
+/// An empty `BaseURL` at any level contributes nothing — it must not blank the
+/// chain, nor resolve a later entry against an empty base.
+#[test]
+fn empty_base_urls_are_skipped() {
+    let xml = r#"<MPD profiles="p">
+        <BaseURL>https://cdn.example.com/</BaseURL>
+        <Period>
+            <BaseURL></BaseURL>
+            <BaseURL>vod/</BaseURL>
+            <AdaptationSet contentType="video">
+                <Representation id="0" bandwidth="1">
+                    <BaseURL>   </BaseURL>
+                </Representation>
+            </AdaptationSet>
+        </Period>
+    </MPD>"#;
+    assert_eq!(
+        resolve_in(xml, "seg.m4s"),
+        "https://cdn.example.com/vod/seg.m4s",
+        "empty (and whitespace-only) BaseURLs are dropped from the chain"
+    );
+}
+
+/// The resolved chains are exposed for a caller that wants to walk them.
+#[test]
+fn base_url_chain_is_outermost_first() {
+    let xml = r#"<MPD profiles="p">
+        <BaseURL>https://mpd.example.com/</BaseURL>
+        <Period>
+            <BaseURL>p/</BaseURL>
+            <AdaptationSet contentType="video">
+                <BaseURL>a/</BaseURL>
+                <Representation id="0" bandwidth="1">
+                    <BaseURL>r/</BaseURL>
+                </Representation>
+            </AdaptationSet>
+        </Period>
+    </MPD>"#;
+    let mpd = transmux::Mpd::parse(xml).expect("parse");
+    let period = &mpd.periods[0];
+    let set = &period.adaptation_sets[0];
+    let repr = &set.representations[0];
+    assert_eq!(
+        mpd.base_url_chain(period, set, repr),
+        vec![
+            "https://mpd.example.com/".to_string(),
+            "p/".to_string(),
+            "a/".to_string(),
+            "r/".to_string(),
+        ]
+    );
+}
+
+/// A `SegmentTimeline` at the Representation suppresses the AdaptationSet's
+/// `@duration` in the effective template (§5.3.9.4.4), and the resolved media
+/// URLs then come from the timeline, not from a nominal duration.
+#[test]
+fn timeline_over_parent_duration_resolves_time_addressed_urls() {
+    let xml = r#"<MPD profiles="p">
+        <BaseURL>https://cdn.example.com/</BaseURL>
+        <Period>
+            <AdaptationSet contentType="video">
+                <SegmentTemplate media="seg-$Number$.m4s" duration="90000" timescale="90000"/>
+                <Representation id="0" bandwidth="1">
+                    <SegmentTemplate media="seg-$Time$.m4s">
+                        <SegmentTimeline><S t="2070" d="90000" r="2"/></SegmentTimeline>
+                    </SegmentTemplate>
+                </Representation>
+            </AdaptationSet>
+        </Period>
+    </MPD>"#;
+    let mpd = transmux::Mpd::parse(xml).expect("parse");
+    let period = &mpd.periods[0];
+    let set = &period.adaptation_sets[0];
+    let repr = &set.representations[0];
+    let st = repr.segment_template.as_ref().unwrap();
+
+    assert_eq!(st.duration, None, "the timeline displaces @duration");
+    let pairs = st
+        .timeline
+        .as_ref()
+        .unwrap()
+        .enumerate(st.start_number)
+        .unwrap();
+    assert_eq!(pairs, vec![(1, 2070), (2, 92070), (3, 182070)]);
+
+    let (number, time) = pairs[1];
+    let media = transmux::SegmentTemplate::resolve(
+        st.media.as_ref().unwrap(),
+        &repr.id,
+        Some(number),
+        Some(time),
+        None,
+    );
+    assert_eq!(media, "seg-92070.m4s");
+    assert_eq!(
+        mpd.resolve_segment_url(period, set, repr, &media),
+        "https://cdn.example.com/seg-92070.m4s",
+        "a $Time$-addressed segment resolves through the BaseURL chain"
+    );
+}

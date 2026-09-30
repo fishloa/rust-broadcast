@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Derived from fixtures/dash/manifest.mpd (real ffmpeg output) - see README.md.
+     ISO/IEC 23009-1 Annex G.12/G.13 SegmentTemplate inheritance shape:
+     @timescale/@duration-level attributes at the Period, @media at the
+     AdaptationSet, @initialization per Representation. -->
+<MPD xmlns="urn:mpeg:dash:schema:mpd:2011"
+	profiles="urn:mpeg:dash:profile:isoff-live:2011"
+	type="static"
+	mediaPresentationDuration="PT3.0S"
+	maxSegmentDuration="PT1.0S"
+	minBufferTime="PT2.0S">
+	<Period id="0" start="PT0.0S">
+		<BaseURL>https://dash.example.com/vod/</BaseURL>
+		<SegmentTemplate timescale="90000" startNumber="1" presentationTimeOffset="0">
+			<SegmentTimeline>
+				<S t="2070" d="90000" r="2" />
+			</SegmentTimeline>
+		</SegmentTemplate>
+		<AdaptationSet id="0" contentType="video" segmentAlignment="true" frameRate="25/1" maxWidth="320" maxHeight="240" par="4:3" lang="und">
+			<SegmentTemplate media="chunk-stream$RepresentationID$-$Number%05d$.m4s" />
+			<Representation id="0" mimeType="video/mp4" codecs="avc1.4d400d" bandwidth="58141" width="320" height="240" sar="1:1">
+				<SegmentTemplate initialization="init-stream$RepresentationID$.m4s" />
+			</Representation>
+		</AdaptationSet>
+		<AdaptationSet id="1" contentType="audio" segmentAlignment="true" lang="und">
+			<SegmentTemplate timescale="44100" startNumber="1" media="chunk-stream$RepresentationID$-$Number%05d$.m4s" />
+			<Representation id="1" mimeType="audio/mp4" codecs="mp4a.40.2" bandwidth="96013" audioSamplingRate="44100">
+				<AudioChannelConfiguration schemeIdUri="urn:mpeg:dash:23003:3:audio_channel_configuration:2011" value="1" />
+				<SegmentTemplate initialization="init-stream$RepresentationID$.m4s">
+					<SegmentTimeline>
+						<S t="0" d="41984" />
+						<S d="44032" />
+						<S d="45056" />
+						<S d="3072" />
+					</SegmentTimeline>
+				</SegmentTemplate>
+			</Representation>
+		</AdaptationSet>
+	</Period>
+</MPD>

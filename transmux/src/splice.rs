@@ -28,6 +28,13 @@
 //! DSM-CC/private sections — which has none to read). Coded sample bytes are
 //! preserved byte-for-byte; only timing anchors/durations are recomputed.
 //!
+//! The same rule applies to the *comparison*: a splice cut taken from the
+//! video track is an absolute decode time, so every other track's cut is
+//! found by comparing that instant against each sample's own absolute `dts` —
+//! never against a position measured from that track's own
+//! `start_decode_time`, which would skew the cut by however much the tracks'
+//! starts differ (a late audio join, a per-fragment `tfdt` reseed).
+//!
 //! # Rebasing the spliced-in content (issue #782)
 //!
 //! Two independently-demuxed assets have unrelated absolute timelines (each
@@ -218,13 +225,22 @@ fn match_tracks(a: &Media, b: &Media) -> Result<Vec<usize>> {
     // `b` track indices already claimed by an earlier `a` track.
     let mut used = alloc::vec![false; b.tracks.len()];
     for (i, at) in a.tracks.iter().enumerate() {
-        // Prefer an unclaimed id match; fall back to the same positional
-        // index, but only if that too is still unclaimed.
+        // Prefer the first *unclaimed* id match, then the same positional
+        // index if that is still unclaimed.
+        //
+        // Searching for an unclaimed match directly — rather than taking the
+        // first id match and falling back to position when it is taken — is
+        // what makes the mapping depend on `track_id` alone instead of on the
+        // document order of `a` (r04-W35). With `a` ids `[2, 2, 3]` and `b`
+        // ids `[2, 3, 2]`, the weaker search hands `a[1]` (id 2) `b[1]` (id 3)
+        // and `a[2]` (id 3) `b[2]` (id 2): two same-codec, same-timescale
+        // tracks swap and no compatibility check can see it.
         let bj = b
             .tracks
             .iter()
-            .position(|bt| bt.spec.track_id == at.spec.track_id)
-            .filter(|&idx| !used[idx])
+            .enumerate()
+            .find(|(j, bt)| !used[*j] && bt.spec.track_id == at.spec.track_id)
+            .map(|(j, _)| j)
             .or_else(|| (!used[i]).then_some(i))
             .ok_or(Error::InvalidInput(
                 "splice: no unclaimed matching track in b (non-injective match)",
@@ -520,13 +536,12 @@ pub fn splice_insert(base: &Media, ad: &Media, at_ticks: u64) -> Result<SpliceRe
         snap_to_preceding_sync(&base.tracks[video_idx], at_ticks).ok_or(Error::InvalidInput(
             "splice_insert: base video track has no samples",
         ))?;
-    // Fraction of the video track (by decode time) at which the split falls,
-    // used to place the same wall-clock cut on the other (audio) tracks. This
-    // is in the *video* track's own timescale; §sample_index_at_offset below
-    // rescales it into each other track's timescale before use.
-    let split_offset_ticks =
-        snapped_video_dts.saturating_sub(base.tracks[video_idx].start_decode_time);
     let video_timescale = u128::from(base.tracks[video_idx].spec.timescale.max(1));
+    // The snapped cut's **absolute** decode time (the media plane's own clock),
+    // which is what every other track's cut is measured against — see the
+    // `split_index` computation below. This is in the video track's own
+    // timescale, and is rescaled into each other track's timescale before use.
+    let video_cut_dts = snapped_video_dts;
 
     // The single reference-track shift for the ad-in point (issue #782):
     // derived once, here, from fresh absolute ticks — the base video
@@ -551,19 +566,40 @@ pub fn splice_insert(base: &Media, ad: &Media, at_ticks: u64) -> Result<SpliceRe
         let track_ts = bt.spec.timescale;
 
         // Where to cut this base track. For the video track it is the snapped
-        // sync sample; for the others, the first sample whose decode time is at
-        // or beyond the same *wall-clock* offset from the track start, rescaled
-        // from the video track's timescale into this track's own (audio is
-        // virtually never carried on the video track's timescale, e.g. 90 kHz
-        // video vs. 44.1/48 kHz audio) — audio samples are all sync samples, so
-        // this is always a valid RAP cut.
+        // sync sample; for the others, the first sample at or beyond the *same
+        // absolute instant* the video was cut at, rescaled from the video
+        // track's timescale into this track's own (audio is virtually never
+        // carried on the video track's timescale, e.g. 90 kHz video vs.
+        // 44.1/48 kHz audio) — audio samples are all sync samples, so this is
+        // always a valid RAP cut.
+        //
+        // The instant is absolute, on both sides (r04-W36 review): the video's
+        // cut already is an absolute `dts`, so passing the video-*relative*
+        // offset and comparing it against each track's own relative position
+        // skews the cut whenever the tracks do not share a start (a late audio
+        // join, a per-fragment `tfdt` reseed) — by exactly the difference in
+        // their `start_decode_time`s.
         let split_index = if i == video_idx {
             video_split
         } else {
             let track_timescale = u128::from(bt.spec.timescale.max(1));
-            let offset_in_track_ticks =
-                (u128::from(split_offset_ticks) * track_timescale / video_timescale) as u64;
-            sample_index_at_offset(bt, offset_in_track_ticks)
+            // Ceiling, not floor (review round 3). Flooring the rescale picks a
+            // tick *before* the instant the video was cut at, so the audio cut
+            // lands one sample early and drops a sample the video still has —
+            // A/V slipping at every ad boundary. Ceiling gives the first sample
+            // at or after the video's instant, which is what the cut means.
+            //
+            // The conversion is checked rather than `as`: an absurd timescale
+            // ratio must saturate to the end of the track (a past-the-end cut)
+            // rather than wrap to a small index that names a real sample.
+            //
+            // A negative `video_cut_dts` (a rebased timeline) cannot happen —
+            // `snap_to_preceding_sync` returns a non-negative decode time — but
+            // `try_from` makes that explicit instead of relying on it.
+            let scaled = u128::from(video_cut_dts) * track_timescale;
+            let cut_in_track_ticks =
+                u64::try_from(scaled.div_ceil(video_timescale)).unwrap_or(u64::MAX);
+            sample_index_at_absolute_dts(bt, cut_in_track_ticks)
         };
 
         // This track's own natural continuation point at the split, on the
@@ -668,13 +704,37 @@ fn boundary_decode_time(track: &Track, split_index: usize) -> u64 {
     }
 }
 
-/// First sample index of `track` whose decode time (relative to the track start)
-/// is at or beyond `offset_ticks`; clamps to the sample count for a past-the-end
-/// offset.
-fn sample_index_at_offset(track: &Track, offset_ticks: u64) -> usize {
-    let mut acc = 0u64;
+/// First sample index of `track` whose **absolute** decode time is at or beyond
+/// `cut_ticks`; clamps to the sample count for a past-the-end cut.
+///
+/// Both sides are absolute (r04-W36 review). The cut comes from the video
+/// track's snapped sample, which is an absolute `dts` on the media plane's
+/// clock, so it must be compared against each sample's own absolute `dts` —
+/// not against a position measured from *this* track's `start_decode_time`.
+/// The two differ by exactly the difference in the tracks' starts, so a track
+/// that begins later (or earlier) than the video had its cut placed at the
+/// wrong instant and A/V desynchronised at the ad boundary.
+///
+/// The absolute `dts` is used rather than a running sum of `duration`s for the
+/// same reason (r04-W36): the two agree only while a track is gap-free, and
+/// after a `tfdt` reseed the duration sum cannot recover the real position.
+///
+/// A sample with no `dts` (section-carried data, which has no timebase of its
+/// own) falls back to the duration sum measured from the track's own start,
+/// which is the same convention every other boundary read in this module uses.
+fn sample_index_at_absolute_dts(track: &Track, cut_ticks: u64) -> usize {
+    let mut acc = track.start_decode_time;
+    // `Sample::dts` is signed: a rebased timeline can put samples at negative
+    // absolute times, and `i64::try_from` would then fail while `as u64` would
+    // wrap them to huge values. Compare in `i128` so a negative sample is
+    // simply "before the cut" rather than "past the end".
+    let cut = i128::from(cut_ticks);
     for (i, s) in track.samples.iter().enumerate() {
-        if acc >= offset_ticks {
+        let absolute = match s.dts {
+            Some(dts) => i128::from(dts),
+            None => i128::from(acc),
+        };
+        if absolute >= cut {
             return i;
         }
         acc = acc.saturating_add(s.duration.unwrap_or(0) as u64);

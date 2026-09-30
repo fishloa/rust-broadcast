@@ -134,7 +134,7 @@ round-trips through the IR.
 | RTP de/packetise + SDP | `Package`/`Unpackage` | `RtpPacketiser` / `RtpDepacketiser` | ✅ |
 | RTP streaming depayload (live) | — | `RtpStreamDepacketiser` (`push`/`flush` → timed `Sample`s: per-AU duration from RTP-timestamp deltas, `is_sync` from IDR; v1 low-delay H.264 / 1 AU-per-packet AAC / in-order feed) | ✅ |
 | SDP fmtp → codec config | — | `rtp_sdp::fmtp_param` (generic `key=value` fmtp lookup) · `rtp_sdp::avc_config_from_fmtp` (full fmtp line → avcC) · `rtp_sdp::avc_config_from_sprop` (RFC 6184 §8.1 `sprop-parameter-sets` → avcC) · `rtp_sdp::aac_config_from_fmtp` (full RFC 3640 §4.1 fmtp line → esds) · `rtp_sdp::aac_config_from_asc_hex` (value-level `config=` hex → esds; the old value-level behavior of `aac_config_from_fmtp`) · `rtp_sdp::rtpmap_clock_rate` (`rtpmap` → RTP clock rate) | ✅ |
-| KLV metadata (SMPTE ST 336 / MISB ST 0601) | — | `KlvItem` · `UasLocalSet` (BER length + BER-OID tags, tag 2 precision timestamp, tag 1 CRC-16/CCITT checksum) | ✅ |
+| KLV metadata (SMPTE ST 336 / MISB ST 0601) | — | `KlvItem` · `UasLocalSet` (BER length + BER-OID tags, tag 2 precision timestamp, tag 1 running-sum checksum) | ✅ |
 | KLV-over-RTP | — | `packetise_klv` / `depacketise_klv` (RFC 6597 `smpte336m`, timestamp-shared fragmentation, marker on last) | ✅ |
 | RTMP transport (carries FLV A/V) | `Unpackage`/`Package` | `RtmpDemux` / `RtmpMux` (chunk stream, AMF0, → FLV spoke) | ✅ |
 | FLV demux/mux | `Unpackage`/`Package` | `FlvDemux` / `FlvMux` (H.264 + AAC, Adobe FLV v10.1 Annex E). `FlvDemux` **silently skips** non-AVC video and non-AAC audio tags — no track, no error (unlike the TS demux's "nothing dropped" opaque-`Data` fallback above) | ✅ |

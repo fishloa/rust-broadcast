@@ -7,8 +7,8 @@
 use broadcast_common::{Parse, Serialize};
 use transmux::klv::{
     CHECKSUM_LEN, KlvItem, LocalSetItem, PRECISION_TIMESTAMP_LEN, TAG_CHECKSUM,
-    TAG_PRECISION_TIMESTAMP, UAS_LS_KEY, UNIVERSAL_LABEL_LEN, UasLocalSet, ber_length, crc16_ccitt,
-    encode_ber_length,
+    TAG_PRECISION_TIMESTAMP, UAS_LS_KEY, UNIVERSAL_LABEL_LEN, UasLocalSet, ber_length,
+    checksum_bcc16, encode_ber_length,
 };
 use transmux::rtp::{depacketise_klv, packetise_klv};
 
@@ -121,7 +121,7 @@ fn local_set_variable_item_not_last_parses() {
 }
 
 // ---------------------------------------------------------------------------
-// 3. UAS Local Set + checksum (hand-computed CRC vector)
+// 3. UAS Local Set + checksum (ST 0601 running-sum vector)
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -137,31 +137,32 @@ fn uas_local_set_checksum_vector_and_verify() {
 
     // Full packet is exactly 31 bytes (16 UL + 1 len + 10 tag2 + 4 tag1).
     assert_eq!(packet.len(), 31);
-    // Hand-computed expected bytes (see docs; CRC-16/CCITT over bytes[..29]).
+    // Expected bytes: MISB ST 0601 §7.1 "Lower 16-bits of summation" over
+    // bytes[..29] (the UL key, BER length and both items' tag+length).
     let expected: [u8; 31] = [
         0x06, 0x0E, 0x2B, 0x34, 0x02, 0x0B, 0x01, 0x01, 0x0E, 0x01, 0x03, 0x01, 0x01, 0x00, 0x00,
         0x00, // UL
         0x0E, // BER length 14
         0x02, 0x08, 0x00, 0x06, 0x0D, 0xD7, 0x10, 0x21, 0x20, 0x00, // tag 2, len 8, ts
-        0x01, 0x02, 0x08, 0x91, // tag 1, len 2, CRC = 0x0891
+        0x01, 0x02, 0x5C, 0x90, // tag 1, len 2, checksum = 0x5C90
     ];
     assert_eq!(packet.as_slice(), &expected);
 
-    // The hand-computed CRC-16/CCITT value.
+    // The hand-computed ST 0601 running-sum value.
     let split = packet.len() - CHECKSUM_LEN;
-    assert_eq!(crc16_ccitt(&packet[..split]), 0x0891);
+    assert_eq!(checksum_bcc16(&packet[..split]), 0x5C90);
 
     // Round-trip parse: timestamp reads back, checksum verifies.
     let parsed = UasLocalSet::parse(&packet).unwrap();
     assert_eq!(parsed.precision_timestamp(), Some(ts));
-    assert_eq!(parsed.stored_checksum(), Some(0x0891));
+    assert_eq!(parsed.stored_checksum(), Some(0x5C90));
     assert!(UasLocalSet::verify_checksum(&packet).unwrap());
 
     // Corrupt a value byte → checksum fails (bites).
     let mut bad = packet.clone();
     bad[20] ^= 0xFF; // a timestamp byte
     assert!(!UasLocalSet::verify_checksum(&bad).unwrap());
-    // Corrupt a CRC byte → also fails.
+    // Corrupt a checksum byte → also fails.
     let mut bad_crc = packet.clone();
     let last = bad_crc.len() - 1;
     bad_crc[last] ^= 0x01;
@@ -255,4 +256,158 @@ fn klv_rtp_small_unit_single_packet() {
 #[test]
 fn klv_rtp_empty_unit_rejected() {
     assert!(packetise_klv(&bytes::Bytes::new(), 98, 0, 0, 0, 1400).is_err());
+}
+
+// ---------------------------------------------------------------------------
+// 3b. Real ST 0601 packets with published checksums (audit r04-W10)
+// ---------------------------------------------------------------------------
+//
+// The checksum is MISB ST 0601 §7.1's "lower 16-bits of summation" — a running
+// big-endian 16-bit sum from the first byte of the 16-byte UL key through the
+// checksum item's own length byte. ST 0601's change history records removing
+// the earlier "CRC-16" wording, because tag 1 "represents a checksum and not a
+// cyclic redundancy check"; a CRC over these packets yields a different value,
+// so this vector is exactly what the r04-W10 regression broke.
+//
+// The packets below are published third-party vectors (jmisb's `KlvParserTest`
+// fixtures, which carry their own expected tag-1 bytes), so neither side of the
+// assertion comes from this crate.
+
+/// Packet: three sensor-geometry tags and a checksum. 37 bytes.
+const JMISB_LATLONALT_PACKET: &[u8] = &[
+    0x06, 0x0E, 0x2B, 0x34, 0x02, 0x0B, 0x01, 0x01, 0x0E, 0x01, 0x03, 0x01, 0x01, 0x00, 0x00,
+    0x00, // UL key
+    0x14, // BER length 20
+    0x0D, 0x04, 0x3C, 0x4E, 0xAD, 0xFA, // tag 13 Sensor Latitude
+    0x0E, 0x04, 0xCD, 0x6B, 0x78, 0x4E, // tag 14 Sensor Longitude
+    0x0F, 0x02, 0x1B, 0xC4, // tag 15 Sensor True Altitude
+    0x01, 0x02, 0x2D, 0xC4, // tag 1, len 2, checksum = 0x2DC4
+];
+
+/// Packet: checksum only. 21 bytes.
+const JMISB_CHECKSUM_ONLY_PACKET: &[u8] = &[
+    0x06, 0x0E, 0x2B, 0x34, 0x02, 0x0B, 0x01, 0x01, 0x0E, 0x01, 0x03, 0x01, 0x01, 0x00, 0x00,
+    0x00, // UL key
+    0x04, // BER length 4
+    0x01, 0x02, 0x4C, 0x51, // tag 1, len 2, checksum = 0x4C51
+];
+
+/// Packet: an unknown tag between the UL key and the checksum. 26 bytes.
+const JMISB_UNKNOWN_TAG_PACKET: &[u8] = &[
+    0x06, 0x0E, 0x2B, 0x34, 0x02, 0x0B, 0x01, 0x01, 0x0E, 0x01, 0x03, 0x01, 0x01, 0x00, 0x00,
+    0x00, // UL key
+    0x09, // BER length 9
+    0x90, 0x00, 0x02, 0x0A, 0x0B, // unknown tag
+    0x01, 0x02, 0x5A, 0xEF, // tag 1, len 2, checksum = 0x5AEF
+];
+
+/// Every published vector's checksum must verify, and its tag-1 value must be
+/// the one the packet carries.
+#[test]
+fn published_st0601_packets_verify_against_the_running_sum() {
+    for (name, packet, expected) in [
+        ("latlonalt", JMISB_LATLONALT_PACKET, 0x2DC4u16),
+        ("checksum-only", JMISB_CHECKSUM_ONLY_PACKET, 0x4C51),
+        ("unknown-tag", JMISB_UNKNOWN_TAG_PACKET, 0x5AEF),
+    ] {
+        // The sum over the packet up to (excluding) the 2 value bytes is the
+        // published value — this is the assertion a CRC implementation fails.
+        let split = packet.len() - CHECKSUM_LEN;
+        assert_eq!(
+            checksum_bcc16(&packet[..split]),
+            expected,
+            "{name}: recomputed running sum must equal the published tag-1 value"
+        );
+        assert!(
+            UasLocalSet::verify_checksum(packet).expect("verify"),
+            "{name}: verify_checksum must accept a real ST 0601 packet"
+        );
+        // The stored value must read back as the same number.
+        let parsed = UasLocalSet::parse(packet).expect("parse real ST 0601 packet");
+        assert_eq!(parsed.stored_checksum(), Some(expected), "{name}");
+    }
+}
+
+/// A CRC-16 of these packets gives a *different* number, so a regression to the
+/// pre-r04-W10 algorithm cannot pass the vector above. This is asserted
+/// directly, as documentation of what the fix changed.
+#[test]
+fn published_st0601_checksum_is_not_a_crc16() {
+    // CRC-16/CCITT-FALSE (poly 0x1021, init 0xFFFF), the algorithm the audit
+    // found in place of the running sum.
+    let crc16_ccitt_false = |data: &[u8]| -> u16 {
+        let mut crc: u16 = 0xFFFF;
+        for &byte in data {
+            crc ^= u16::from(byte) << 8;
+            for _ in 0..8 {
+                crc = if crc & 0x8000 != 0 {
+                    (crc << 1) ^ 0x1021
+                } else {
+                    crc << 1
+                };
+            }
+        }
+        crc
+    };
+    let packet = JMISB_LATLONALT_PACKET;
+    let split = packet.len() - CHECKSUM_LEN;
+    assert_eq!(checksum_bcc16(&packet[..split]), 0x2DC4);
+    assert_eq!(crc16_ccitt_false(&packet[..split]), 0xC945);
+    assert_ne!(
+        checksum_bcc16(&packet[..split]),
+        crc16_ccitt_false(&packet[..split]),
+        "ST 0601 tag 1 is a running sum, not a CRC (§5.5, §7.1)"
+    );
+}
+
+/// A round trip through this crate's serializer must reproduce a published
+/// packet byte-for-byte, checksum included — the strongest form of the check,
+/// since it exercises both the checksum *and* the item encoding.
+#[test]
+fn serializing_the_published_items_reproduces_a_real_packet() {
+    // The latlonalt packet's own items, in wire order.
+    let items = vec![
+        LocalSetItem::new(13, vec![0x3C, 0x4E, 0xAD, 0xFA]),
+        LocalSetItem::new(14, vec![0xCD, 0x6B, 0x78, 0x4E]),
+        LocalSetItem::new(15, vec![0x1B, 0xC4]),
+    ];
+    let packet = UasLocalSet::from_items(items).serialize_with_checksum();
+    assert_eq!(
+        packet.as_slice(),
+        JMISB_LATLONALT_PACKET,
+        "serialize_with_checksum must reproduce a real ST 0601 packet exactly, \
+         checksum included"
+    );
+}
+
+/// The checksum must be recomputed (never echoed) and must change when a data
+/// byte changes, including the *last* item before it.
+#[test]
+fn checksum_covers_every_item_before_it() {
+    let mk = |v: u8| {
+        UasLocalSet::from_items(vec![
+            LocalSetItem::new(TAG_PRECISION_TIMESTAMP, 1u64.to_be_bytes().to_vec()),
+            LocalSetItem::new(3, vec![v]),
+        ])
+        .serialize_with_checksum()
+    };
+    let a = mk(0x41);
+    let b = mk(0x42);
+    assert_ne!(
+        a[a.len() - CHECKSUM_LEN..],
+        b[b.len() - CHECKSUM_LEN..],
+        "a changed item must change the checksum"
+    );
+    assert!(UasLocalSet::verify_checksum(&a).unwrap());
+    assert!(UasLocalSet::verify_checksum(&b).unwrap());
+
+    // And a single flipped byte anywhere before the checksum must be caught.
+    for i in 0..a.len() - CHECKSUM_LEN {
+        let mut bad = a.clone();
+        bad[i] ^= 0x01;
+        assert!(
+            !UasLocalSet::verify_checksum(&bad).unwrap(),
+            "a flipped byte at {i} must fail verification"
+        );
+    }
 }

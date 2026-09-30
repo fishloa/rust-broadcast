@@ -98,6 +98,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `ESDescriptor::serialize_into` rejects a `streamDependenceFlag`/`URL_Flag`/`OCRstreamFlag` that
     disagrees with its field (r04-W24).
   - `Ec3SpecificBox::serialize_into` rejects `substreams.len() != num_ind_sub + 1` (r04-W6).
+  - `webm_demux::WebmDemux` rejects a laced block whose declared lace sizes do not
+    describe its payload (r04-W40).
+- **`klv::crc16_ccitt` is removed, replaced by `checksum_bcc16`** (audit r04-W10). The
+  name documented the wrong algorithm: MISB ST 0601 tag 1 is a running 16-bit sum, not a
+  CRC (§5.5/§7.1). A caller that used `crc16_ccitt` directly should call `checksum_bcc16`
+  instead; its result is deliberately different.
+- **`klv::UasLocalSet::serialize_with_checksum` writes a different (correct) tag-1 value**,
+  so byte-for-byte comparisons against a packet this crate produced before the change will
+  differ — as will `verify_checksum`'s verdict on any real ST 0601 stream, which it now
+  accepts (r04-W10).
+- **`dash_parse::Mpd` gains a `base_url: Option<String>` field**, and
+  `dash_parse::Period`, `AdaptationSet` and `Representation` each gain one
+  (`BaseURL`, §5.3.9.2), and `Mpd::parse` now resolves
+  `SegmentTemplate` inheritance attribute-by-attribute rather than whole-element, so the
+  `segment_template` a caller reads is the merged effective one (r04-W11). A struct literal
+  for any of the four must add the new field; code that relied on a child's template
+  *replacing* its parent's now sees the inherited values, which is the spec behaviour.
+  `Mpd::base_url_chain` and `Mpd::resolve_segment_url` are new.
+- `ps_demux::PsDemux` emits one track per `private_stream_1` substream rather than one per
+  `stream_id`, so a PS whose 0xBD stream multiplexes several substreams now yields several
+  tracks (and skips substreams that are not AC-3) (r04-W19). Its signatures are unchanged,
+  but a video stream whose reassembled Annex B data exceeds `au::AccessUnitSplitter`'s
+  buffered-NAL cap is now an error rather than a silently absent track (r04-W21).
 - `au::AccessUnitSplitter::push` now returns `Result<()>`: a stream whose open NAL or assembled
   access unit grows past a 64 MiB cap without completing is rejected instead of buffering without
   limit (`Error::InvalidValue`). The bound is far above any real coded picture, so a conformant
@@ -166,6 +189,177 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   CENC-protected (`enca`) audio track as clear (#1017).
 
 ### Fixed
+- **`uri` resolution is total over `&str`: no input panics.** `remove_dot_segments`
+  sliced at byte 1 to skip a leading `/`, which panicked on any multi-byte first
+  character — reachable straight from `resolve` with a non-ASCII relative
+  reference (`"g:é"`) or base. It walks character boundaries now, and every other
+  slice in the module is derived from a `find`/`rfind` result rather than a raw
+  byte offset. Covered by a path/query/fragment sweep of all 19 607 strings up to
+  length 5 over `["a", "/", ".", "é", "?", "#", ":"]` plus empty, very long, and
+  multi-byte-in-every-position cases (#1079).
+- **`uri` rejects a control character or whitespace in a resolved reference**
+  (`try_resolve`/`try_resolve_segment`, and `dash_parse`'s
+  `Mpd::try_resolve_segment_url`). A raw CR/LF in a URL has no meaning in
+  RFC 3986 and lets a manifest smuggle a second request line into anything that
+  later writes an HTTP request from the resolved value; a percent-encoded
+  `%0D%0A` is still allowed through, since that is data rather than structure
+  (#1079).
+- **`dash_parse::Mpd::parse` keeps `@duration` and `SegmentTimeline` exclusive in
+  both directions.** A child `SegmentTemplate` that declares its own `@duration`
+  used to inherit the parent's `SegmentTimeline` unconditionally, so the
+  effective template carried both — contradicting §5.3.9.4.4 and silently
+  cancelling the child's own `@duration` (#1079).
+- **`ps_demux` keeps a decided substream's bytes when its header is unusable.**
+  A mid-stream packet with `first_access_unit_pointer == 0` together with a
+  non-zero `number_of_frames` (or a pointer past the payload) was skipped even
+  after the substream had been identified as AC-3, dropping real audio — and a
+  muxer writing pointer 0 on *every* packet never classified at all and produced
+  no track. The consistency check now applies only while the substream is
+  undecided, and classification falls back to the payload's own start when the
+  pointer is 0 (#1079).
+- **`ps_demux`'s `first_nal_offset` folds back every leading zero byte**, not just
+  one, so a run longer than the 4-byte start code (`00 00 00 00 01`, legal
+  padding) no longer shifts every access-unit offset. The splitter's
+  slice-equality check that catches such a shift is a returned error rather than
+  a `debug_assert!`, so release builds cannot emit mis-stamped samples silently
+  (#1079).
+- **`klv::UasLocalSet`'s tag-1 Checksum is now the MISB ST 0601 running 16-bit
+  sum, not a CRC-16/CCITT** (audit r04-W10). ST 0601 §5.5 specifies "a running
+  16-bit sum through the entire LDS packet", §7.1 repeats "Lower 16-bits of
+  summation", and the standard's change history records removing the earlier
+  "CRC-16" wording because tag 1 "represents a checksum and not a cyclic
+  redundancy check" (`checksum_bcc16` replaces the `crc16_ccitt` helper, which
+  is removed). Every packet `serialize_with_checksum` emitted carried a
+  checksum a conformant receiver rejects, and `verify_checksum` disagreed with
+  every real UAS stream — while the crate's own round-trip tests stayed green,
+  because both sides shared the wrong algorithm. Now pinned to three published
+  third-party packets (sensor-geometry, checksum-only and unknown-tag fixtures
+  from the jmisb test suite, each carrying its own expected tag-1 bytes), which
+  the old algorithm fails by a wide margin, plus a byte-for-byte
+  serialize-against-real-packet check (#1079).
+- **`webm_demux::WebmDemux` now unlaces laced blocks instead of rejecting the
+  file**, and the block's frames are spaced by a rounded `DefaultDuration`
+  rather than a truncated one (audit r04-W40). Lacing is how one Matroska block carries several
+  frames of a track, and mkvmerge — the most common Matroska muxer — laces
+  audio by default, so "lacing is not supported" made every ordinary
+  mkvmerge-muxed MKV/WebM fail outright. All three encodings of RFC 9559 §12
+  (Xiph, EBML and fixed-size) are now decoded, and each frame becomes its own
+  sample timed from the block's timestamp at the track's frame cadence: frame
+  `i` of a block starts `i` frame durations after the block's own time, where
+  the duration is `DefaultDuration` when the TrackEntry declares one (converted
+  from nanoseconds with rounding, not by truncating to whole milliseconds first)
+  and is otherwise derived from the interval to the next block. Matroska times the
+  *block*, not the frames inside it, so giving every frame of a laced block the
+  block's single timestamp would leave all but the last with duration 0; a
+  declared lace size that overruns the payload, an EBML size that goes negative,
+  a zero-length frame, and a fixed-laced payload that is not a whole multiple of
+  the frame count are each `Err` rather than a silent truncation. A laced block
+  may carry at most the format's 256 frames (the count byte is `FrameCount - 1`,
+  RFC 9559 §12), and a frame declared with zero length is rejected rather than
+  emitted as an empty sample (#1079).
+- **`ps_demux::PsDemux` demultiplexes `private_stream_1` substreams** (audit
+  r04-W19). A 0xBD PES is a container: it multiplexes independent substreams
+  (AC-3, DTS, LPCM, subpictures), told apart by the `substream_id` byte at the
+  front of each payload's substream header. Elementary streams are now keyed by
+  `(stream_id, substream_id)`. A substream is classified from the syncword at
+  its header's `first_access_unit_pointer`, not at the payload's first byte, so
+  a stream whose first packet resumes a frame an earlier packet opened is still
+  carried (its leading partial-frame tail is dropped, since no syncword scan can
+  start mid-frame); the DTS (`0x88..=0x8F`), LPCM (`0xA0..=0xA7`) and
+  subpicture (`0x20..=0x3F`) substream ids are skipped explicitly. A header
+  whose pointer names bytes the packet does not carry is rejected only while the
+  substream is still undecided: once it is known, every byte it carries is frame
+  data and is kept, so a muxer that writes `first_access_unit_pointer = 0`
+  (meaning "no access unit starts here", which legal muxers do write) loses
+  nothing and still yields its track — so a VOB
+  with two audio languages plus subpictures no longer comes out as one track of
+  interleaved, unrelated bytes. Pinned to real fixtures
+  `fixtures/ps/ffmpeg-mpeg2video-2xac3.ps` (0x80 and 0x81, each 58 syncframes
+  per ffprobe) and `ffmpeg-mpeg2video-2xac3-with-dts.ps` (a DTS substream
+  alongside them, which ffprobe reads as a `dts` stream) (#1079).
+- **`ps_demux::PsDemux` splits AC-3 frames by each syncframe's declared
+  length** (audit r04-W20). The old scanner split at every raw `0x0B77` byte
+  pair, but that 16-bit value occurs inside AC-3 payload by chance, so real
+  frames were cut in half and each half stamped with a full 1536-sample
+  duration — corrupt access units plus A/V drift against the PES stamps. The
+  shared `ac3::split_ac3_syncframes` (length-driven from `frmsizecod`,
+  ETSI TS 102 366 Table 4.13) is now used (#1079).
+- **`ps_demux::PsDemux` splits H.264 access units without requiring an
+  access-unit delimiter** (audit r04-W21). An AUD is optional in H.264 and is
+  absent from most PS captures, so an AUD-only split left such a stream as a
+  single "access unit" spanning the whole file — one sample, one IDR flag. The
+  shared `au::AccessUnitSplitter` (which decides a boundary from
+  `first_mb_in_slice`, H.264 §7.4.3, as well as from an AUD) is now used.
+  Pinned to a new real AUD-free fixture, `fixtures/ps/ffmpeg-h264-noaud.ps`,
+  whose 75 pictures all arrive in one PES packet. The access-unit offset walk
+  now anchors at the stream's first start code rather than at byte 0, so bytes
+  before it no longer make every unit mismatch and lose the whole track, and a
+  splitter resource-limit rejection (`AccessUnitSplitter`'s 64 MiB cap) is
+  returned as an error instead of being swallowed into "no video track" (#1079).
+- **`splice::concat`/`splice_insert` match tracks by `track_id` independently of
+  document order** (audit r04-W35). The #992 injectivity fix still took the
+  first id match and fell back to the *positional* index when that match was
+  already claimed, so with `a` ids `[2, 2, 3]` and `b` ids `[2, 3, 2]` — three
+  same-codec, same-timescale audio tracks — `a[1]` and `a[2]` were cross-wired.
+  Nothing in the compatibility check can see that (the codecs and timescales
+  match), so language tracks were silently swapped. The search now takes the
+  first *unclaimed* id match (#1079).
+- **`splice::splice_insert` cuts every track at the same absolute instant**
+  (audit r04-W36). The video cut is the snapped sample's absolute `dts`, but the
+  non-video cut was found by comparing each sample's position past *its own*
+  track start against the video-*relative* offset, and by accumulating
+  `duration`s from 0. Both differ from the video's instant whenever the tracks
+  do not share a start or a track is not gap-free (a late audio join, a
+  per-fragment `tfdt` reseed, a dropped run of audio), so the audio cut landed
+  at the wrong wall-clock position and A/V desynchronised at the ad boundary.
+  `sample_index_at_absolute_dts` now compares the video's absolute cut instant
+  against each sample's own absolute `dts` (in `i128`, so a rebased timeline's
+  negative decode times sort before the cut rather than wrapping), rescaled into
+  the track's timescale with `div_ceil` — flooring the rescale picked a tick
+  *before* the video's instant and cut the audio one sample early. The module doc
+  already promised every boundary read was absolute (#1079).
+- **`ac3::split_ac3_syncframes_resyncing` resynchronises after an unparseable
+  frame** (audit r04-W20 review). A splitter that stops at the first frame it
+  cannot parse discards the whole remainder of the stream to recover from a
+  single corrupt or truncated frame, which is exactly what a real capture
+  contains. It also returns each frame's `(start, end)` byte range, because
+  after a resync the frames are no longer contiguous from offset 0, so a caller
+  reconstructing offsets by summing lengths slices mid-frame. `ps_demux` uses
+  both; the plain `split_ac3_syncframes` keeps its stop-at-first-bad behaviour
+  (#1079).
+- **`dash_parse::Mpd::parse` merges `SegmentTemplate` attributes across the
+  `Period` > `AdaptationSet` > `Representation` chain instead of replacing
+  whole elements** (audit r04-W11). ISO/IEC 23009-1 §5.3.9.1 makes segment
+  information hierarchical, with a lower level overriding only the attributes
+  it declares; the standard's own Annex G examples depend on it (G.13 gives
+  each `Representation` a `SegmentTemplate` carrying only `@initialization`
+  and inherits `@media`/`@timescale`/`@duration`/`@startNumber` from the
+  `AdaptationSet`). Previously such a Representation came back with
+  `timescale = 1` (the spec default) and no `initialization` or timeline, so
+  every segment time and URL was wrong or missing. A `Period`-level
+  `SegmentTemplate` was skipped entirely as an opaque element. `@duration` and
+  `SegmentTimeline` are mutually exclusive (§5.3.9.4.4), so the effective
+  template never carries both: a child that introduces a timeline does not also
+  inherit the parent's `@duration`, and a child that declares its own `@duration`
+  does not also inherit the parent's `SegmentTimeline` (the direction that was
+  missing — the timeline used to be taken from the parent unconditionally, which
+  silently cancelled the child's own `@duration`). Covered by a derived
+  `fixtures/dash/manifest-inheritance.mpd` (the real ffmpeg fixture
+  restructured into the G.12/G.13 shapes; see `fixtures/dash/README.md`), whose
+  resolved URLs are checked against the committed segment files (#1079).
+- **`dash_parse` resolves `BaseURL` chains and segment URLs** (audit r04-W11).
+  `Mpd::try_resolve_segment_url` is the same as `resolve_segment_url` but
+  returns `None` for a reference carrying a control character or whitespace.
+  `BaseURL` is inherited over the same `MPD` > `Period` > `AdaptationSet` >
+  `Representation` chain as segment information (§5.6.5), and several
+  `BaseURL` children of one element are *alternates* consulted in order, so the
+  first non-empty one is kept — a later `BaseURL` no longer replaces an earlier
+  one, and an empty one no longer clears the value. `Mpd`/`Period`/
+  `AdaptationSet`/`Representation` each report their own level's value
+  (`Mpd::base_url` is new) and `Mpd::base_url_chain`/`Mpd::resolve_segment_url`
+  walk the chain, resolving each reference by RFC 3986 §5 (new `uri` module:
+  `parse`/`resolve`/`merge`/`remove_dot_segments`, verified against the
+  standard's own §5.4.1 and §5.4.2 example tables) (#1079).
 - **`rtp::RtpDepacketiser` no longer fails the whole input on ordinary loss**
   (audit r04-W31). An FU-A continuation fragment with no preceding start fragment
   — a mid-stream capture, or one lost start packet — made every packet after it
@@ -478,6 +672,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `largesize` header (#1019).
 
 ### Added
+- **`uri` — RFC 3986 URI-reference parsing and resolution.** `UriReference::parse`
+  (§3) and `to_uri_string` (§5.3), `resolve` (§5.2.2), `merge` (§5.2.3),
+  `remove_dot_segments` (§5.2.4) and `resolve_segment` for a `BaseURL` chain.
+  `try_resolve`/`try_resolve_segment` are the same with a base or reference
+  containing a control character or whitespace **rejected** (`None`), since a
+  raw CR/LF in a URL has no meaning in RFC 3986 and lets a manifest smuggle a
+  second request line into anything that later writes an HTTP request from it;
+  `first_forbidden_char` is the predicate. Also exports the standard's own
+  §5.4.1 and §5.4.2 example tables (`RFC3986_NORMAL_EXAMPLES`,
+  `RFC3986_ABNORMAL_EXAMPLES`) as data, which the crate's tests assert against.
+  This is what `dash_parse::Mpd::resolve_segment_url` /
+  `try_resolve_segment_url` resolve through (#1079, audit r04-W11). The crate
+  root re-exports `resolve_uri_reference`, `resolve_uri_segment` and
+  `try_resolve_uri_reference`.
+- `ac3::split_ac3_syncframes_resyncing` and `ac3::split_ac3_syncframe_ranges` —
+  frame splitting that resynchronises after an unparseable frame, returning byte
+  ranges rather than slices (#1079, audit r04-W20).
 - `ts_hls::StreamingTsHlsSegmenter::with_start_sequence` — seeds a streaming classic-TS
   segmenter's segment numbering from a caller-given value instead of `Self::new`'s implicit `0`,
   the classic-TS analogue of `ll_hls::LlHlsSegmenter::with_part_target_at`. Lets a consumer

@@ -118,6 +118,14 @@ impl<'a> XmlTokenizer<'a> {
         Self { input, pos: 0 }
     }
 
+    /// The byte offset just past the most recently returned start tag — i.e.
+    /// where the currently-open element's content begins. Used by
+    /// [`text_content`] to read an element's character data, which the event
+    /// stream itself consumes.
+    pub(crate) fn content_start(&self) -> usize {
+        self.pos
+    }
+
     /// Return the next `Start`/`End` event, or `Ok(None)` at end of input.
     /// Skips leading/trailing text, `<?...?>` declarations, `<!--...-->`
     /// comments, and `<!...>` markup declarations internally.
@@ -316,4 +324,91 @@ pub(crate) fn skip_element(tok: &mut XmlTokenizer<'_>) -> Result<()> {
         }
     }
     Ok(())
+}
+
+/// The character data of an already-open element (the text between its start
+/// tag and its matching end tag), with XML entity references resolved.
+///
+/// [`XmlTokenizer::next_event`] consumes text internally, so this reads the
+/// element's raw span out of `data` directly. A simple element is expected: any
+/// nested markup makes this return `None` (the callers that use it all parse
+/// text-only elements, e.g. an MPD `BaseURL`). Returns `None` for a
+/// self-closing element, whose content is empty by definition.
+pub(crate) fn text_content<'a>(
+    tok: &mut XmlTokenizer<'a>,
+    data: &'a str,
+    name: &'static str,
+    self_closing: bool,
+) -> Result<Option<String>> {
+    if self_closing {
+        return Ok(None);
+    }
+    let start = tok.content_start();
+    let end = data[start..]
+        .find("</")
+        .map(|rel| start + rel)
+        .ok_or(XmlError::UnterminatedTag { pos: start })?;
+    let raw = &data[start..end];
+    if raw.contains('<') {
+        return Ok(None);
+    }
+    // Consume the element's end tag so the caller's event stream stays aligned.
+    match tok.next_event()? {
+        Some(XmlEvent::End { name: found }) if found == name => {}
+        Some(XmlEvent::End { name: found }) => {
+            return Err(XmlError::MismatchedEndTag {
+                expected: name,
+                found: found.to_string(),
+            });
+        }
+        _ => return Err(XmlError::UnexpectedEof),
+    }
+    Ok(Some(unescape_text(raw)))
+}
+
+/// Resolve the five predefined XML entities plus numeric character references
+/// (`&#NN;`/`&#xNN;`) in a text run. An unknown or malformed reference is left
+/// verbatim rather than dropped.
+fn unescape_text(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut rest = s;
+    while let Some(amp) = rest.find('&') {
+        out.push_str(&rest[..amp]);
+        let tail = &rest[amp + 1..];
+        let Some(semi) = tail.find(';') else {
+            out.push('&');
+            rest = tail;
+            continue;
+        };
+        let entity = &tail[..semi];
+        let decoded = match entity {
+            "amp" => Some('&'),
+            "lt" => Some('<'),
+            "gt" => Some('>'),
+            "quot" => Some('"'),
+            "apos" => Some('\''),
+            _ => decode_numeric_entity(entity),
+        };
+        match decoded {
+            Some(c) => out.push(c),
+            None => {
+                out.push('&');
+                out.push_str(entity);
+                out.push(';');
+            }
+        }
+        rest = &tail[semi + 1..];
+    }
+    out.push_str(rest);
+    out
+}
+
+/// `&#NN;` (decimal) / `&#xNN;` (hexadecimal) → the character it names.
+fn decode_numeric_entity(entity: &str) -> Option<char> {
+    let digits = entity.strip_prefix('#')?;
+    let code = match digits.strip_prefix(['x', 'X']) {
+        Some(hex) => u32::from_str_radix(hex, 16).ok()?,
+        None => digits.parse::<u32>().ok()?,
+    };
+    char::from_u32(code)
 }

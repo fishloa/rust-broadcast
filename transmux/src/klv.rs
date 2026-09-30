@@ -16,7 +16,8 @@
 //! - **UAS Datalink Local Set** ([`UasLocalSet`]): the MISB ST 0601 packet — the
 //!   [`UAS_LS_KEY`] Universal Label wrapping a sequence of `tag + BER-length +
 //!   value` items, with the [`TAG_PRECISION_TIMESTAMP`] (u64 BE µs since the
-//!   POSIX epoch) and the [`TAG_CHECKSUM`] (CRC-16/CCITT over the whole packet).
+//!   POSIX epoch) and the [`TAG_CHECKSUM`] (a running 16-bit sum over the whole
+//!   packet, [`checksum_bcc16`]).
 //!
 //! # Spec citations
 //!
@@ -26,7 +27,9 @@
 //!   MISB ST 0601 + RFC 6597. See `transmux/docs/klv/klv-misb0601.md`.
 //! - **MISB ST 0601** UAS Datalink Local Set — the [`UAS_LS_KEY`] Universal
 //!   Label, tag ordering (tag 2 first, tag 1 last), tag 2 Precision Time Stamp
-//!   and tag 1 Checksum (CRC-16/CCITT, poly `0x1021`, init `0xFFFF`).
+//!   and tag 1 Checksum (ST 0601 §5.5/§7.1 — "the lower 16-bits of summation",
+//!   a running big-endian 16-bit sum, *not* a CRC; the standard's change
+//!   history records removing the earlier "CRC-16" wording).
 //! - **RFC 6597** — KLV-over-RTP payload format (see [`crate::rtp`]).
 //!
 //! `no_std` + `alloc`.
@@ -63,21 +66,15 @@ const BER_LOW7_MASK: u8 = 0x7F;
 /// follow). All current MISB ST 0601 tags fit in one byte (`<= 127`).
 const BER_OID_CONTINUATION: u8 = 0x80;
 
-/// MISB ST 0601 tag 1 — Checksum (CRC-16/CCITT), MUST be the last LS item.
+/// MISB ST 0601 tag 1 — Checksum, MUST be the last LS item.
 pub const TAG_CHECKSUM: u32 = 1;
-/// The Checksum value length in bytes (a 16-bit CRC).
+/// The Checksum value length in bytes (a 16-bit value).
 pub const CHECKSUM_LEN: usize = 2;
 /// MISB ST 0601 tag 2 — Precision Time Stamp (u64 BE µs since the POSIX epoch),
 /// MUST be the first LS item.
 pub const TAG_PRECISION_TIMESTAMP: u32 = 2;
 /// The Precision Time Stamp value length in bytes (a `u64`).
 pub const PRECISION_TIMESTAMP_LEN: usize = 8;
-
-/// CRC-16/CCITT generator polynomial (`x^16 + x^12 + x^5 + 1`), MISB ST 0601
-/// tag 1 (Checksum).
-const CRC16_CCITT_POLY: u16 = 0x1021;
-/// CRC-16/CCITT initial value, MISB ST 0601 tag 1 (Checksum).
-const CRC16_CCITT_INIT: u16 = 0xFFFF;
 
 // ---------------------------------------------------------------------------
 // BER length (ISO/IEC 8825-1 §8.1.3, via SMPTE ST 336)
@@ -410,32 +407,39 @@ impl UasLocalSet {
     }
 
     /// Serialize the full UAS Local Set with a freshly computed tag-1 Checksum
-    /// (CRC-16/CCITT over the entire packet including the UL key and the
+    /// (`checksum_bcc16` over the entire packet, including the UL key and the
     /// checksum tag+length, per MISB ST 0601 tag 1).
     ///
     /// Any checksum item already in `items` is ignored and replaced.
     pub fn serialize_with_checksum(&self) -> Vec<u8> {
         // Value section: all non-checksum items, then the checksum item's
-        // tag+length (the CRC value bytes are filled in after CRC-ing).
+        // tag+length (the value bytes are filled in once they are summed).
         let mut value = self.value_without_checksum();
         value.extend_from_slice(&encode_ber_oid(TAG_CHECKSUM));
         value.extend_from_slice(&encode_ber_length(CHECKSUM_LEN));
 
-        // Packet prefix = UL key + BER length of (value + 2 CRC bytes) + value.
+        // Packet prefix = UL key + BER length of (value + 2 value bytes) + value.
         let value_total = value.len() + CHECKSUM_LEN;
         let mut packet = Vec::with_capacity(UNIVERSAL_LABEL_LEN + 4 + value_total);
         packet.extend_from_slice(&UAS_LS_KEY);
         packet.extend_from_slice(&encode_ber_length(value_total));
         packet.extend_from_slice(&value);
 
-        // CRC-16/CCITT over the whole packet up to (not incl) the CRC bytes.
-        let crc = crc16_ccitt(&packet);
-        packet.extend_from_slice(&crc.to_be_bytes());
+        // ST 0601 §5.5: the sum runs from the first byte of the 16-byte UL key
+        // through the checksum item's own length field — i.e. everything
+        // `packet` currently holds, which stops just short of the 2 value bytes.
+        let checksum = checksum_bcc16(&packet);
+        packet.extend_from_slice(&checksum.to_be_bytes());
         packet
     }
 
     /// Verify the tag-1 Checksum of a serialized UAS Local Set: recompute the
-    /// CRC-16/CCITT over everything up to the trailing 2 CRC bytes and compare.
+    /// ST 0601 running sum over everything up to the trailing 2 checksum bytes
+    /// and compare.
+    ///
+    /// Note the coverage is the *whole packet through the checksum's length
+    /// field*, so the 2 checksum value bytes are the only exclusion — the UL
+    /// key, the BER packet length and every item are all summed.
     pub fn verify_checksum(packet: &[u8]) -> Result<bool> {
         if packet.len() < UNIVERSAL_LABEL_LEN + 1 + CHECKSUM_LEN {
             return Err(Error::BufferTooShort {
@@ -445,7 +449,7 @@ impl UasLocalSet {
             });
         }
         let split = packet.len() - CHECKSUM_LEN;
-        let expected = crc16_ccitt(&packet[..split]);
+        let expected = checksum_bcc16(&packet[..split]);
         let actual = u16::from_be_bytes([packet[split], packet[split + 1]]);
         Ok(expected == actual)
     }
@@ -478,7 +482,7 @@ impl Serialize for UasLocalSet {
     type Error = Error;
 
     fn serialized_len(&self) -> usize {
-        // Value = non-checksum items + checksum item (tag + len + 2 CRC bytes).
+        // Value = non-checksum items + checksum item (tag + len + 2 value bytes).
         let value_len: usize = self
             .items
             .iter()
@@ -505,24 +509,25 @@ impl Serialize for UasLocalSet {
 }
 
 // ---------------------------------------------------------------------------
-// CRC-16/CCITT (MISB ST 0601 tag 1 Checksum)
+// Checksum (MISB ST 0601 tag 1)
 // ---------------------------------------------------------------------------
 
-/// CRC-16/CCITT (poly `0x1021`, init `0xFFFF`, no reflection, no final XOR) —
-/// MISB ST 0601 tag 1 Checksum. Also known as CRC-16/CCITT-FALSE.
-pub fn crc16_ccitt(data: &[u8]) -> u16 {
-    let mut crc = CRC16_CCITT_INIT;
-    for &byte in data {
-        crc ^= (byte as u16) << 8;
-        for _ in 0..8 {
-            if crc & 0x8000 != 0 {
-                crc = (crc << 1) ^ CRC16_CCITT_POLY;
-            } else {
-                crc <<= 1;
-            }
-        }
+/// MISB ST 0601 tag 1 Checksum: the **lower 16 bits of a running 16-bit sum**
+/// over the packet (ST 0601 §7.1 "Lower 16-bits of summation"; §5.5 "The
+/// checksum is a running 16-bit sum through the entire LDS packet").
+///
+/// Each byte is summed big-endian within its 16-bit word — byte `i` contributes
+/// `b << (8 * ((i + 1) % 2))`, so an even index is the high byte and an odd
+/// index the low byte (ST 0601 §5.5's `bcc_16` reference routine). This is the
+/// standard's own definition, and it is *not* a CRC: ST 0601's change history
+/// records the removal of "REQ-3.04 and references to 'CRC', or 'CRC-16' as tag
+/// 1 represents a checksum and not a cyclic redundancy check".
+pub fn checksum_bcc16(data: &[u8]) -> u16 {
+    let mut bcc: u16 = 0;
+    for (i, &byte) in data.iter().enumerate() {
+        bcc = bcc.wrapping_add(u16::from(byte) << (8 * ((i + 1) % 2)));
     }
-    crc
+    bcc
 }
 
 #[cfg(test)]
@@ -530,9 +535,21 @@ mod tests {
     use super::*;
 
     #[test]
-    fn crc16_ccitt_known_answer() {
-        // CRC-16/CCITT-FALSE check value for "123456789" is 0x29B1.
-        assert_eq!(crc16_ccitt(b"123456789"), 0x29B1);
+    fn checksum_bcc16_is_a_big_endian_word_sum() {
+        // The ST 0601 §5.5 reference routine sums each byte as the high byte of
+        // its 16-bit word at an even index and the low byte at an odd index, so
+        // two bytes `AB CD` contribute `0xABCD`.
+        assert_eq!(checksum_bcc16(&[0xAB, 0xCD]), 0xABCD);
+        // The next byte opens the following word, again as its high byte
+        // (`(i + 1) % 2` is 1 at index 2, so the shift is 8).
+        assert_eq!(
+            checksum_bcc16(&[0xAB, 0xCD, 0xEF]),
+            0xABCD_u16.wrapping_add(0xEF00)
+        );
+        // The sum wraps modulo 2^16 rather than saturating:
+        // 0xFFFF + 0xFFFF = 0x1FFFE -> 0xFFFE.
+        assert_eq!(checksum_bcc16(&[0xFF, 0xFF, 0xFF, 0xFF]), 0xFFFE);
+        assert_eq!(checksum_bcc16(&[]), 0);
     }
 
     #[test]

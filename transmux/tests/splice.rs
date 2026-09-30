@@ -106,6 +106,64 @@ fn media_of(mut track: Track, start_decode_time: u64) -> Media {
     Media::new(vec![track.with_start_decode_time(start_decode_time)], 1000)
 }
 
+/// A video track whose samples sit on an absolute dts grid starting at
+/// `start_dts`, and whose `start_decode_time` is that same value — the media
+/// plane step-2c invariant, expressed for a track that does not begin at 0.
+fn video_track_at(
+    track_id: u32,
+    tag: u8,
+    count: usize,
+    dur: u32,
+    sync_period: usize,
+    start_dts: i64,
+) -> Track {
+    let samples = (0..count)
+        .map(|i| {
+            let dts = start_dts + i as i64 * i64::from(dur);
+            Sample::new(
+                vec![tag, i as u8, 0xAB, 0xCD],
+                Some(dts),
+                Some(dts),
+                Some(dur),
+                i % sync_period == 0,
+            )
+        })
+        .collect();
+    Track::new_at(avc_spec(track_id), samples, start_dts.max(0) as u64)
+}
+
+/// A [`CodecConfig::Data`] track on an absolute dts grid starting at
+/// `start_dts`, with `start_decode_time` equal to it.
+fn data_track_at(
+    track_id: u32,
+    timescale: u32,
+    tag: u8,
+    count: usize,
+    dur: u32,
+    start_dts: i64,
+    carriage: DataCarriage,
+) -> Track {
+    let samples = (0..count)
+        .map(|i| {
+            let dts = start_dts + i as i64 * i64::from(dur);
+            Sample::new(vec![tag, i as u8], Some(dts), Some(dts), Some(dur), true)
+        })
+        .collect();
+    Track::new_at(
+        TrackSpec::new(
+            track_id,
+            timescale,
+            CodecConfig::Data {
+                stream_type: 0x86,
+                descriptors: Vec::new(),
+                carriage,
+            },
+        ),
+        samples,
+        start_dts.max(0) as u64,
+    )
+}
+
 /// A generic non-video track built on [`CodecConfig::Data`] — a stand-in for
 /// an audio (or, when `timed = false`, section-carried) track. `splice.rs`'s
 /// rebase logic only keys off codec-*kind* identity (video vs. not) and
@@ -1135,4 +1193,324 @@ fn match_tracks_never_collides_on_partial_id_overlap() {
             );
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// Test — r04-W35: the #992 injectivity search must look for an *unclaimed* id
+// match, not take the first id match and fall back to position.
+// ---------------------------------------------------------------------------
+
+/// Three same-codec, same-timescale tracks — three audio languages, say — where
+/// `b`'s ids are a permutation of `a`'s and the *first* id match for `a[1]` is
+/// already claimed.
+///
+/// `a` ids `[2, 2, 3]`, `b` ids `[2, 3, 2]`:
+/// - `a[0]` (id 2) → first id match is `b[0]` ✅ (this is why `a[0]` wins it)
+/// - `a[1]` (id 2) → first id match is again `b[0]`, already taken, so the
+///   pre-fix code fell back to the *positional* index `b[1]` — whose id is 3.
+/// - `a[2]` (id 3) → first id match is `b[1]`, now taken, so it fell back to
+///   positional `b[2]` — whose id is 2.
+///
+/// `a[1]` and `a[2]` therefore swap: id-2 content is spliced against id-3
+/// content and vice versa. Because all three tracks share a codec kind and a
+/// timescale, nothing in the compatibility check fires, so the languages are
+/// silently cross-wired — the failure mode r04-W35 calls out, and one #992's
+/// original "…then fall back to position" fix did not close. The correct
+/// search takes the first *unclaimed* id match: `a[1]` → `b[2]`, `a[2]` →
+/// `b[1]`.
+#[test]
+fn match_tracks_prefers_unclaimed_id_match_over_positional_fallback() {
+    let a_tracks = vec![
+        data_track(2, 1000, b'A', 3, 1000, DataCarriage::Pes, true),
+        data_track(2, 1000, b'B', 3, 1000, DataCarriage::Pes, true),
+        data_track(3, 1000, b'C', 3, 1000, DataCarriage::Pes, true),
+    ];
+    let b_tracks = vec![
+        data_track(2, 1000, b'X', 3, 1000, DataCarriage::Pes, true),
+        data_track(3, 1000, b'Y', 3, 1000, DataCarriage::Pes, true),
+        data_track(2, 1000, b'Z', 3, 1000, DataCarriage::Pes, true),
+    ];
+    let a = Media::new(a_tracks, 1000);
+    let b = Media::new(b_tracks, 1000);
+
+    let res = concat(&a, &b).expect("an unclaimed id match exists for every a track");
+
+    // Each output track must carry the b-side content of the b track that
+    // shares its id: a id 2 -> b ids 2, 2 (slots 0 and 2); a id 3 -> b id 3
+    // (slot 1). The pre-fix cross-wiring gives a id 2 the `Y` tag and a id 3
+    // the `Z` tag.
+    // Each `a` track contributed 3 samples and each `b` track 3, so the second
+    // half of every output track is the appended `b` content.
+    let tags: Vec<u8> = res
+        .media
+        .tracks
+        .iter()
+        .map(|t| {
+            let appended: std::collections::BTreeSet<u8> =
+                t.samples[3..].iter().map(|s| s.data[0]).collect();
+            assert_eq!(
+                appended.len(),
+                1,
+                "the appended half of a track must be one b track's samples"
+            );
+            appended.into_iter().next().unwrap()
+        })
+        .collect();
+    assert_eq!(tags.len(), 3);
+    let (tag_a, tag_b, tag_c) = (tags[0], tags[1], tags[2]);
+
+    assert_eq!(
+        (tag_a, tag_b, tag_c),
+        (b'X', b'Z', b'Y'),
+        "a's id-2 tracks must take b's id-2 tracks (slots 0 and 2) and a's \
+         id-3 track b's id-3 track (slot 1); a cross-swap (X, Y, Z) means the \
+         positional fallback beat the unclaimed id match"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Test — r04-W36: the non-video cut position must come from absolute `dts`, not
+// from a running sum of `duration`s.
+// ---------------------------------------------------------------------------
+
+/// The video track and the second track share a timescale here (1000) purely so
+/// the video-relative offset needs no rescaling and the assertion states the
+/// bug directly rather than compounding it with rounding.
+///
+/// The second track has a **timestamp gap**: its samples begin at dts 5000 while
+/// `start_decode_time` is 0 — exactly what a `tfdt` reseed or a dropped run of
+/// audio produces. `splice_insert` snaps the request to the video track's sync
+/// sample at 4000 ticks, a *wall-clock* offset of 4000 from the base start, and
+/// the second track must be cut at the first sample at or after 4000 — its
+/// sample 0 (dts 5000).
+///
+/// Summing durations from 0 instead reaches 4000 after four samples and cuts at
+/// sample 4 (dts 9000), dropping four samples' worth of audio and moving the cut
+/// 4000 ticks later than the video's — the A/V desync r04-W36 describes. The
+/// gap must exceed the requested offset for the two to differ, so the base
+/// samples are 1000 ticks each and the gap 5000.
+#[test]
+fn splice_cut_on_a_gapped_track_uses_absolute_dts() {
+    // Video: 1000-tick samples on a zero-based grid (dts 0, 1000, 2000, ...),
+    // every 4th a sync sample, so the request at 4500 snaps back to 4000.
+    let video = video_track(7, b'V', 8, 1000, 4);
+    // The matching track: same codec-kind/timescale, but shifted by a real
+    // 5000-tick gap and with its own absolute dts grid.
+    let mut other = data_track(9, 1000, b'A', 12, 1000, DataCarriage::Pes, true);
+    for (i, s) in other.samples.iter_mut().enumerate() {
+        let dts = 5000 + i as i64 * 1000;
+        s.dts = Some(dts);
+        s.pts = Some(dts);
+    }
+    let base = Media::new(vec![video, other], 1000);
+
+    // Ad: same two tracks, zero-based.
+    let ad_video = video_track(7, b'W', 2, 1000, 1);
+    let ad_other = data_track(9, 1000, b'B', 2, 1000, DataCarriage::Pes, true);
+    let ad = Media::new(vec![ad_video, ad_other], 1000);
+
+    let res = splice_insert(&base, &ad, 4500).expect("splice_insert");
+
+    // The discontinuity point marks the first sample kept after the cut, so its
+    // index *is* the cut index: 0 (dts 5000), because 5000 is already at or
+    // beyond the 4000-tick offset. The duration-sum version returns 4.
+    let point = res
+        .discontinuity_points
+        .iter()
+        .find(|p| p.track_id == 9)
+        .expect("a discontinuity point for the spliced track");
+    assert_eq!(
+        point.sample_index, 0,
+        "the second track must be cut at the first sample at or after the          video's 4000-tick offset: its dts 5000 (sample 0), not after four          samples' worth of duration, which would ignore the 5000-tick gap"
+    );
+
+    // Nothing was cut from the second track: all its dts are at or beyond the
+    // boundary, so the whole base track survives alongside the ad.
+    let spliced = res.media.tracks.get(1).expect("the second track survives");
+    assert_eq!(
+        spliced.samples.iter().filter(|s| s.data[0] == b'A').count(),
+        12,
+        "every base sample of the second track survives the splice"
+    );
+    assert!(
+        spliced.samples.iter().any(|s| s.data[0] == b'B'),
+        "the ad content must be present"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// r04-W36 (review): the cut must be one absolute instant on both tracks
+// ---------------------------------------------------------------------------
+
+/// The video cut is an absolute `dts` on the video's own timeline; the
+/// non-video cut must be the same *absolute* instant, not the same offset from
+/// each track's own `start_decode_time`.
+///
+/// Here the audio track starts 1 s (90000 ticks at 90 kHz) after the video's
+/// `start_decode_time` — a real capture where audio joins late, or a `tfdt`
+/// reseed. The requested splice snaps back to the video's sync sample at
+/// absolute dts 100000. The audio cut must therefore be the first audio sample
+/// whose absolute dts is at or beyond 100000, which is index 10 (dts 100000) —
+/// not the first sample at or beyond 100000 *relative to the audio's own later
+/// start* (which would be index 100).
+#[test]
+fn nonvideo_cut_uses_the_absolute_instant_not_the_track_relative_offset() {
+    // Video: TIMESCALE (90 kHz) ticks, 1000-tick samples, sync every 4th,
+    // starting at 0.
+    let video = video_track_at(7, b'V', 400, 1000, 4, 0);
+    // Audio (Data stand-in): the same timescale, but its first sample sits
+    // 90000 ticks after the video's start (a 1 s late join), and it runs long
+    // enough that a track-relative cut would land far away.
+    let audio = data_track_at(9, TIMESCALE, b'A', 4000, 1000, 90_000, DataCarriage::Pes);
+
+    let base = Media::new(vec![video, audio], TIMESCALE);
+    let ad_video = video_track_at(7, b'W', 2, 1000, 1, 0);
+    let ad_audio = data_track_at(9, TIMESCALE, b'B', 2, 1000, 0, DataCarriage::Pes);
+    let ad = Media::new(vec![ad_video, ad_audio], TIMESCALE);
+
+    // Request a splice well past the audio's first sample, so a
+    // track-relative comparison and an absolute one genuinely diverge: the
+    // video snaps to 100000, and the audio's first sample at or after absolute
+    // 100000 is index 10 (dts 100000), not index 100 (which is where
+    // "100000 ticks past the audio's own 90000 start" would land).
+    let res = splice_insert(&base, &ad, 100_000).expect("splice_insert");
+
+    let point = res
+        .discontinuity_points
+        .iter()
+        .find(|p| p.track_id == 9)
+        .expect("a splice point for the non-video track");
+
+    // The video cut snaps back to the sync sample at absolute dts 100000
+    // (100000 is a sync index with sync_period 4), so the audio cut must be the
+    // first audio sample at or after that absolute instant: index 10.
+    assert_eq!(
+        point.sample_index, 10,
+        "the audio cut must be at the absolute instant the video was cut at \
+         (100000), not 100000 ticks past the audio's own later start (index 100)"
+    );
+
+    // The first ten audio samples (dts 90000..99000) sit before the cut and the
+    // rest at or after it, so the splice point is the boundary the audio content
+    // is split on — the split marker is at index 10, and the track still carries
+    // every sample.
+    let spliced = res.media.tracks.get(1).expect("the second track");
+    assert_eq!(
+        spliced.samples.iter().filter(|s| s.data[0] == b'A').count(),
+        4000,
+        "a splice point is a boundary, not a deletion: all 4000 base audio          samples survive"
+    );
+    assert_eq!(
+        spliced.samples[point.sample_index].dts,
+        Some(100_000),
+        "the boundary sample must be the first at the absolute cut instant"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// review round 3: the cut rescale must round up, not truncate
+// ---------------------------------------------------------------------------
+
+/// A 90 kHz video track and a 48 kHz audio track, with the video cut landing on
+/// a tick that is not a whole audio sample.
+///
+/// 90001 video ticks is 1.000011… audio seconds at 48 kHz: 90001 × 48000 /
+/// 90000 = 48000.53 audio ticks. Flooring gives 48000, which is *before* the
+/// instant the video was cut at, so the audio cut lands one sample early — a
+/// sample the video still contains is dropped from the audio side, and A/V
+/// slips by one audio frame (20.8 µs here, but the same reasoning applies at
+/// any rate). Ceiling gives 48001, the first audio sample at or after the
+/// video's instant, which is what "cut at the same instant" means.
+///
+/// The figures are literal: 48000 ticks is exactly 1 s at 48 kHz, so an audio
+/// sample grid of 1 tick each makes the index arithmetic obvious.
+#[test]
+fn cut_rescale_rounds_up_so_audio_is_never_ahead_of_video() {
+    // Video: 90 kHz, 1-tick samples, every tick a sync sample so the request
+    // snaps to itself.
+    let video = video_track_at(7, b'V', 120_000, 1, 1, 0);
+    // Audio: 48 kHz, 1-tick samples, starting at absolute 0.
+    let audio = data_track_at(9, 48_000, b'A', 120_000, 1, 0, DataCarriage::Pes);
+    let base = Media::new(vec![video, audio], 90_000);
+
+    let ad_video = video_track_at(7, b'W', 2, 1, 1, 0);
+    let ad_audio = data_track_at(9, 48_000, b'B', 2, 1, 0, DataCarriage::Pes);
+    let ad = Media::new(vec![ad_video, ad_audio], 90_000);
+
+    // Ask for a splice at 90001 video ticks: 90001 * 48000 / 90000 = 48000.53.
+    let res = splice_insert(&base, &ad, 90_001).expect("splice_insert");
+    let point = res
+        .discontinuity_points
+        .iter()
+        .find(|p| p.track_id == 9)
+        .expect("a splice point for the audio track");
+    assert_eq!(
+        point.sample_index, 48_001,
+        "the audio cut must be the first sample at or *after* 48000.53 ticks, \
+         i.e. 48001; 48000 is before the video's instant"
+    );
+
+    // And the same at a sample-perfect instant, where both agree.
+    let res = splice_insert(&base, &ad, 90_000).expect("splice_insert");
+    let point = res
+        .discontinuity_points
+        .iter()
+        .find(|p| p.track_id == 9)
+        .expect("a splice point for the audio track");
+    assert_eq!(
+        point.sample_index, 48_000,
+        "90000 video ticks is exactly 48000"
+    );
+}
+
+/// A track whose samples carry negative absolute `dts` must not have its cut
+/// computed from a wrapped or saturated value.
+/// A track whose samples carry negative absolute `dts` must have its cut found
+/// by signed comparison, not by wrapping the negative values.
+///
+/// `Sample::dts` is `i64`, and a rebased timeline puts early samples at negative
+/// absolute times. Converting with `as u64` made the very first (negative)
+/// sample look enormous, so a cut anywhere in the track reported index 0; the
+/// comparison is now in `i128`, where a negative sample is simply "before the
+/// cut".
+#[test]
+fn negative_dts_track_cut_is_not_saturated_to_a_wrong_index() {
+    // Video: 90 kHz, samples from 0.
+    let video = video_track_at(7, b'V', 100, 1, 1, 0);
+    // Audio: 90 kHz, samples from -100 to +99.
+    let mut audio = data_track_at(9, 90_000, b'A', 200, 1, 0, DataCarriage::Pes);
+    for (i, s) in audio.samples.iter_mut().enumerate() {
+        let dts = i as i64 - 100;
+        s.dts = Some(dts);
+        s.pts = Some(dts);
+    }
+    audio.start_decode_time = 0;
+    let base = Media::new(vec![video, audio], 90_000);
+
+    let ad_video = video_track_at(7, b'W', 1, 1, 1, 0);
+    let ad_audio = data_track_at(9, 90_000, b'B', 1, 1, 0, DataCarriage::Pes);
+    let ad = Media::new(vec![ad_video, ad_audio], 90_000);
+
+    // Cutting at video tick 0 must land on the first audio sample whose own dts
+    // is >= 0 — index 100, since the first hundred are negative. Wrapping the
+    // negatives would have reported index 0.
+    let res = splice_insert(&base, &ad, 0).expect("splice_insert");
+    let point = res
+        .discontinuity_points
+        .iter()
+        .find(|p| p.track_id == 9)
+        .expect("a splice point for the audio track");
+    assert_eq!(
+        point.sample_index, 100,
+        "the first audio sample at or after absolute 0 is the one whose dts is          exactly 0 (index 100); the 100 negative samples come first"
+    );
+
+    // A cut past every sample reports the sample count, never a wrapped index.
+    let res = splice_insert(&base, &ad, 99).expect("splice_insert");
+    let point = res
+        .discontinuity_points
+        .iter()
+        .find(|p| p.track_id == 9)
+        .expect("a splice point for the audio track");
+    assert_eq!(point.sample_index, 199);
 }

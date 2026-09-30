@@ -141,15 +141,15 @@ Source: MISB ST 0601, klvdata library, jmisb API docs.
 |-------|-------|
 | Tag byte | `0x01` |
 | Length | 2 bytes |
-| Encoding | CRC-16/CCITT (polynomial 0x1021, initial value 0xFFFF) |
-| Coverage | Lower 16 bits of summation over the **entire LS packet** including the 16-byte UL key and the 1-byte checksum length field |
+| Encoding | **16-bit running sum** (big-endian: byte `i` contributes `b << (8 * ((i + 1) % 2))`), lower 16 bits, no polynomial |
+| Coverage | The **entire LS packet**, from the first byte of the 16-byte UL key through the 1-byte checksum length field (the 2 checksum value bytes are the only exclusion) |
 | Position | MUST be the last item in the Local Set |
 
 Layout:
 ```
 01             -- tag key
 02             -- length (always 2)
-HH LL          -- 16-bit CRC, big-endian
+HH LL          -- 16-bit running sum, big-endian
 ```
 
 ### Tag 2 — Precision Time Stamp
@@ -194,7 +194,7 @@ Example: 2024-01-01 00:00:00.000000 UTC = 1704067200000000 µs = `0x00 06 0D 34 
 
 | Tag | Hex | Name | Length (bytes) | Type/Notes |
 |-----|-----|------|----------------|------------|
-| 1 | 0x01 | Checksum | 2 | CRC-16/CCITT, last in LS |
+| 1 | 0x01 | Checksum | 2 | running 16-bit sum, last in LS |
 | 2 | 0x02 | Precision Time Stamp | 8 | u64 BE, µs since POSIX epoch, first in LS |
 | 3 | 0x03 | Mission ID | var | UTF-8 string |
 | 4 | 0x04 | Platform Tail Number | var | UTF-8 string |
@@ -244,15 +244,16 @@ Value section (13 bytes):
   -- Tag 1: Checksum (last) --
   01           tag = 1
   02           length = 2
-  XX XX        CRC-16/CCITT over bytes [0..28] (entire packet up to CRC field)
+  XX XX        running 16-bit sum over bytes [0..28] (entire packet through
+               the checksum's length field; value bytes excluded)
 ```
 
-Full packet hex (30 bytes, excluding the actual CRC):
+Full packet hex (30 bytes, excluding the actual checksum):
 ```
 06 0E 2B 34 02 0B 01 01 0E 01 03 01 01 00 00 00  <- UL (16 bytes)
 0D                                                <- BER length 13
 02 08 00 04 59 F4 A6 AA 4A 00                    <- tag 2, len 8, timestamp
-01 02 XX XX                                       <- tag 1, len 2, CRC
+01 02 XX XX                                       <- tag 1, len 2, summed
 ```
 
 ---
@@ -341,7 +342,7 @@ From MISB ST 0601 (public Wikipedia mirror), klvdata (MIT open source), RFC 6597
 | Inner KLV triplet structure | YES | multiple open sources |
 | Outer packet = UL + BER length + Value | YES | klvdata + RFC 6597 |
 | Tag ordering rules (tag 2 first, tag 1 last) | YES | MISB ST 0601 public docs |
-| Tag 1 (Checksum) byte layout + CRC algorithm | YES | klvdata + MISB public |
+| Tag 1 (Checksum) byte layout + running-sum algorithm | YES | MISB ST 0601 §5.5/§7.1 + jmisb/klvdata/kwiver vectors |
 | Tag 2 (Precision Timestamp) byte layout | YES | klvdata + MISB public |
 | Tags 3–105: names, sizes, encoding types | MOSTLY | jmisb API docs + klvdata |
 | RTP framing (fragmentation, M bit, timestamp) | YES | RFC 6597 (free) |

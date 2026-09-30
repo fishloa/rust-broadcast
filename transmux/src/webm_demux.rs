@@ -27,8 +27,14 @@
 //! [`CodecConfig::Opus`]), `A_VORBIS` (→ [`CodecConfig::Vorbis`]) and `A_AAC`
 //! (→ [`CodecConfig::Aac`]); every other CodecID is skipped (never fatal).
 //! (`crate::mkv_mux::MkvMux`, the inverse packager, mirrors this exact set.)
-//! Lacing is not supported: a laced block is a hard error (real WebM/Matroska
-//! captures from ffmpeg use no lacing — one frame per block).
+//! Laced blocks are unlaced into their constituent frames (all three encodings
+//! of RFC 9559 §12 — Xiph, EBML and fixed-size). Lacing is the norm for
+//! mkvmerge-muxed audio, so treating it as fatal rejected every ordinary
+//! mkvmerge Matroska file outright. Each frame becomes its own sample, timed
+//! from the block's timestamp at the track's frame cadence (`DefaultDuration`
+//! when the TrackEntry declares one, else the interval to the next block); a
+//! block carries at most the format's 256 frames, and a zero-length lace is
+//! rejected.
 //!
 //! # Timescale
 //!
@@ -165,6 +171,29 @@ const TRACK_TYPE_AUDIO: u64 = 2;
 const BLOCK_FLAG_KEYFRAME: u8 = 0x80;
 /// Lacing bits mask (bits `[2:1]` of the flags byte); non-zero = laced.
 const BLOCK_FLAG_LACING_MASK: u8 = 0x06;
+/// Lacing mode (bits `[2:1]`): `0b01` = Xiph lacing.
+const BLOCK_FLAG_LACING_XIPH: u8 = 0x02;
+/// Lacing mode (bits `[2:1]`): `0b11` = EBML lacing.
+const BLOCK_FLAG_LACING_EBML: u8 = 0x06;
+/// Lacing mode (bits `[2:1]`): `0b10` = fixed-size lacing. (RFC 9559 §12: the
+/// three encodings are chosen by these two bits, with `0b00` meaning no lacing.)
+const BLOCK_FLAG_LACING_FIXED: u8 = 0x04;
+/// Bytes per Xiph-lace size run: each byte holds 0-255 and a value of 255
+/// continues the run (RFC 9559 §12, Xiph lacing).
+const XIPH_LACE_CONTINUATION: u8 = 0xFF;
+/// Maximum frames one laced block may carry: the count byte is
+/// `FrameCount - 1` (RFC 9559 §12 "Lacing"), so the format's own ceiling is
+/// `0xFF + 1` = 256. Enforced so a hostile count cannot drive per-block work
+/// past the format's own bound.
+const MAX_LACED_FRAMES: usize = 256;
+/// Bias applied to an EBML-lacing size delta: the value is
+/// `value - (2^(7*len - 1) - 1)`, i.e. the stored VINT minus this bias
+/// (RFC 8794 §4 "VINT" / RFC 9559 §12 "EBML lacing", which is the same signed
+/// VINT encoding). Written as an expression over the VINT's byte length so the
+/// `1..=8`-byte range it is derived from is visible at the call site.
+const fn ebml_lace_delta_bias(vint_len: usize) -> i64 {
+    (1i64 << (7 * vint_len - 1)) - 1
+}
 
 // --- Defaults ----------------------------------------------------------------
 /// Default `TimestampScale` when the `Info` element omits it (RFC 9559 §27): 1 ms.
@@ -236,8 +265,15 @@ struct RawBlock {
     pts_ticks: i64,
     /// Whether this block is a keyframe / random-access point.
     is_sync: bool,
-    /// The coded frame bytes.
-    data: Vec<u8>,
+    /// The coded frame(s) in this block, in order. A block without lacing
+    /// carries exactly one; a laced block (RFC 9559 §12 — the norm for
+    /// mkvmerge-muxed audio) carries several, which must be split apart so each
+    /// frame becomes its own sample rather than one concatenated blob.
+    frames: Vec<Vec<u8>>,
+    /// How many frames the block's lace header *declares*, recorded when the
+    /// header is read so the whole-file frame budget can be checked before any
+    /// frame is materialised. Equal to `frames.len()` once unlacing succeeded.
+    declared_frames: usize,
 }
 
 /// A track skeleton collected while walking `Tracks`.
@@ -299,6 +335,21 @@ impl<'a> WebmDemux<'a> {
                 }
                 _ => {}
             }
+        }
+
+        // Total-sample budget (allocation-amplification guard), checked against
+        // the *lace headers* — the frame count each block declares — before any
+        // per-frame allocation happens. Every laced frame then carries at least
+        // one byte of payload (a zero-length lace is rejected in `unlace`), so N
+        // bytes cannot describe more than N one-byte frames; a file declaring
+        // more than that is malformed, and discovering it only after
+        // materialising the frames would let a few kilobytes of headers expand
+        // into millions of allocated `Vec`s first.
+        let declared_frames: usize = blocks.iter().map(|b| b.declared_frames).sum();
+        if declared_frames > input.len() {
+            return Err(Error::InvalidInput(
+                "webm: declared frame count exceeds the file's byte length",
+            ));
         }
 
         build_media(timestamp_scale_ns, tracks, blocks)
@@ -449,7 +500,7 @@ impl<'a> Unpackage for WebmDemux<'a> {
 /// Parse a (Simple)Block payload into a [`RawBlock`].
 ///
 /// Layout (RFC 9559 §12): track-number VINT, signed int16 relative timestamp,
-/// flags byte, then (no lacing) the single frame. `is_simple_block` selects
+/// flags byte, then the laced or single frame payload. `is_simple_block` selects
 /// whether the keyframe flag bit is honoured (Block has no keyframe flag; its
 /// sync-ness comes from being inside a keyframe-less BlockGroup, treated as
 /// non-sync here).
@@ -475,16 +526,22 @@ fn parse_block(
     let flags = data[off + 2];
     off += 3;
 
-    if flags & BLOCK_FLAG_LACING_MASK != 0 {
-        return Err(Error::InvalidInput(
-            "webm block: lacing is not supported (expected one frame per block)",
-        ));
-    }
     let is_sync = if is_simple_block {
         flags & BLOCK_FLAG_KEYFRAME != 0
     } else {
         false
     };
+    // A laced block packs several frames of the same track into one element —
+    // mkvmerge's default for audio (RFC 9559 §12). Unlace them rather than
+    // reject the whole file: every frame becomes its own sample, each timed
+    // from the block's timestamp at the track's frame cadence (`build_media`
+    // lays that out, since only the block carries a time) (r04-W40).
+    //
+    // The frame count is read off the lace header *first*, so the caller's
+    // whole-file budget can be checked against the declared counts before any
+    // frame is allocated (see `demux`).
+    let declared_frames = declared_lace_count(&data[off..], flags)?;
+    let frames = unlace(&data[off..], flags)?;
 
     // Presentation time in IR ticks (ms): (cluster_ts + rel_ts) ticks × scale(ns)
     // → ns → ms.  ns = raw_ticks × timestamp_scale_ns; ms = ns / (NS_PER_SECOND / IR_TIMESCALE).
@@ -499,8 +556,200 @@ fn parse_block(
         track_number,
         pts_ticks,
         is_sync,
-        data: data[off..].to_vec(),
+        frames,
+        declared_frames,
     })
+}
+
+/// How many frames a block payload's lace header declares, without unlacing it.
+///
+/// A laced block's first byte is `FrameCount - 1` (RFC 9559 §12); an unlaced
+/// block is one frame. Reading the count first lets a caller bound the whole
+/// file's frame count before allocating anything.
+///
+/// `Err` when a laced payload is too short to carry its own count byte.
+fn declared_lace_count(payload: &[u8], flags: u8) -> Result<usize> {
+    if flags & BLOCK_FLAG_LACING_MASK == 0 {
+        return Ok(1);
+    }
+    let count = payload.first().ok_or(Error::BufferTooShort {
+        need: 1,
+        have: 0,
+        what: "webm laced block frame count",
+    })?;
+    Ok(usize::from(*count) + 1)
+}
+
+/// Split a block payload into its frames according to the block's lacing mode
+/// (RFC 9559 §12), returning them in order.
+///
+/// Lacing lets one block carry several frames of the same track. mkvmerge emits
+/// it by default for audio (Xiph lacing for Vorbis, EBML for others, fixed-size
+/// where the frames are equal length), so refusing a laced block refuses every
+/// ordinary mkvmerge audio file. All three modes are handled here; an
+/// unrecognised lacing-mode bit pattern (the two bits cannot express a fourth
+/// value) is unreachable in practice.
+///
+/// A declared lace size that runs past the payload is an error rather than a
+/// silent truncation — the block would otherwise describe a frame it does not
+/// carry.
+fn unlace(payload: &[u8], flags: u8) -> Result<Vec<Vec<u8>>> {
+    let mode = flags & BLOCK_FLAG_LACING_MASK;
+    if mode == 0 {
+        return Ok(alloc::vec![payload.to_vec()]);
+    }
+    // Laced blocks begin with the frame count minus one.
+    let Some((&count_minus_one, rest)) = payload.split_first() else {
+        return Err(Error::BufferTooShort {
+            need: 1,
+            have: 0,
+            what: "webm laced block frame count",
+        });
+    };
+    let frame_count = usize::from(count_minus_one) + 1;
+    if frame_count > MAX_LACED_FRAMES {
+        return Err(Error::InvalidInput(
+            "webm block: laced frame count out of range",
+        ));
+    }
+
+    // Decode the per-frame sizes, leaving `body` at the first frame's bytes.
+    let mut sizes: Vec<usize> = Vec::with_capacity(frame_count);
+    let mut body = rest;
+    match mode {
+        BLOCK_FLAG_LACING_XIPH => {
+            // The first `frame_count - 1` sizes are Xiph-coded runs of 255;
+            // the last frame's size is whatever remains.
+            for _ in 0..frame_count - 1 {
+                let mut size = 0usize;
+                loop {
+                    let Some((&byte, tail)) = body.split_first() else {
+                        return Err(Error::BufferTooShort {
+                            need: 1,
+                            have: 0,
+                            what: "webm Xiph lace size",
+                        });
+                    };
+                    body = tail;
+                    size = size
+                        .checked_add(usize::from(byte))
+                        .ok_or(Error::InvalidInput("webm Xiph lace size overflowed"))?;
+                    if byte != XIPH_LACE_CONTINUATION {
+                        break;
+                    }
+                }
+                sizes.push(size);
+            }
+        }
+        BLOCK_FLAG_LACING_EBML => {
+            // The first size is a VINT; each later size is the previous one
+            // plus a signed VINT delta; the last frame takes the remainder.
+            let (first, used) = read_vint_generic(body)
+                .ok_or(Error::InvalidInput("webm block: truncated EBML lace size"))?;
+            body = &body[used..];
+            let mut prev = usize::try_from(first)
+                .map_err(|_| Error::InvalidInput("webm EBML lace size out of range"))?;
+            sizes.push(prev);
+            for _ in 1..frame_count - 1 {
+                let (delta, used) = read_signed_vint(body)
+                    .ok_or(Error::InvalidInput("webm block: truncated EBML lace delta"))?;
+                body = &body[used..];
+                let prev_i64 = i64::try_from(prev)
+                    .map_err(|_| Error::InvalidInput("webm EBML lace size out of range"))?;
+                let next = i128::from(prev_i64) + i128::from(delta);
+                if next < 0 {
+                    return Err(Error::InvalidInput("webm EBML lace size went negative"));
+                }
+                prev = usize::try_from(next)
+                    .map_err(|_| Error::InvalidInput("webm EBML lace size out of range"))?;
+                sizes.push(prev);
+            }
+        }
+        BLOCK_FLAG_LACING_FIXED => {
+            // Equal-size frames; only `frame_count - 1` sizes are implied.
+            let total = body.len();
+            if total % frame_count != 0 {
+                return Err(Error::InvalidInput(
+                    "webm block: fixed lacing payload is not a multiple of the frame count",
+                ));
+            }
+            let each = total / frame_count;
+            sizes.extend(core::iter::repeat_n(each, frame_count - 1));
+        }
+        _ => unreachable!("BLOCK_FLAG_LACING_MASK has exactly three non-zero values"),
+    }
+
+    // A zero-length lace would contribute an empty sample: harmless once, but
+    // a hostile count byte turns it into hundreds of them from a 5-byte block,
+    // and a downstream muxer then writes a file of empty samples. Real laced
+    // frames always carry data, so a zero size is malformed.
+    for size in &sizes {
+        if *size == 0 {
+            return Err(Error::InvalidInput(
+                "webm block: laced frame has zero length",
+            ));
+        }
+    }
+
+    let mut frames = Vec::with_capacity(frame_count);
+    for size in &sizes {
+        if body.len() < *size {
+            return Err(Error::BufferTooShort {
+                need: *size,
+                have: body.len(),
+                what: "webm laced frame",
+            });
+        }
+        let (frame, tail) = body.split_at(*size);
+        frames.push(frame.to_vec());
+        body = tail;
+    }
+    // The final frame is whatever is left — it has no explicit size in any mode.
+    frames.push(body.to_vec());
+    Ok(frames)
+}
+
+/// Read an unsigned EBML VINT as a *value* (marker bit stripped), returning it
+/// with the number of bytes consumed. Unlike [`read_vint_value`] this accepts a
+/// zero length-field, which is what a zero lace size is encoded as.
+fn read_vint_generic(buf: &[u8]) -> Option<(u64, usize)> {
+    let first = *buf.first()?;
+    let mut mask = 0x80u8;
+    let mut len = 1usize;
+    while first & mask == 0 {
+        mask >>= 1;
+        len += 1;
+        if len > 8 {
+            return None;
+        }
+    }
+    if buf.len() < len {
+        return None;
+    }
+    let mut value = u64::from(first & (mask - 1));
+    for &byte in &buf[1..len] {
+        value = (value << 8) | u64::from(byte);
+    }
+    Some((value, len))
+}
+
+/// Read a signed EBML VINT for EBML lacing's size deltas: the value is
+/// `read_vint_generic` minus `2^(7*len - 1) - 1` (RFC 9559 §12 / EBML RFC 8794
+/// §4: the encoding is biased so it can carry negative numbers).
+fn read_signed_vint(buf: &[u8]) -> Option<(i64, usize)> {
+    let first = *buf.first()?;
+    let mut mask = 0x80u8;
+    let mut len = 1usize;
+    while first & mask == 0 {
+        mask >>= 1;
+        len += 1;
+        if len > 8 {
+            return None;
+        }
+    }
+    let (raw, used) = read_vint_generic(buf)?;
+    let signed = i64::try_from(raw).ok()? - ebml_lace_delta_bias(len);
+    Some((signed, used))
 }
 
 /// Assemble the collected tracks + blocks into a [`Media`].
@@ -513,28 +762,58 @@ fn parse_block(
 fn build_media(
     timestamp_scale_ns: u64,
     tracks: Vec<TrackInfo>,
-    blocks: Vec<RawBlock>,
+    mut blocks: Vec<RawBlock>,
 ) -> Result<Media> {
     let _ = timestamp_scale_ns;
     let mut out_tracks: Vec<Track> = Vec::new();
     let mut track_id: u32 = 1;
 
     for info in &tracks {
-        // Gather this track's blocks in file (decode) order.
+        // `DefaultDuration` (ns per frame) in this track's IR ticks, when the
+        // TrackEntry declares one; 0 means "not declared". Converted by
+        // *rounding* rather than by integer-dividing nanoseconds into
+        // milliseconds first: 23 219 954 ns (an AAC frame at 44.1 kHz) is
+        // 23.219954 ms, and truncating to 23 ms loses 219 954 ns per frame —
+        // ~220 µs of cumulative drift per frame across a laced run.
+        let default_dur_ir = ns_to_ir_ticks(info.default_duration_ns);
+
+        // Gather this track's blocks in file (decode) order. Each block is kept
+        // with its own timestamp and its frames, so the per-frame timestamps can
+        // be laid out below once the nominal frame duration is known.
+        let mut timeline: Vec<BlockSpan> = Vec::new();
         let mut samples: Vec<Sample> = Vec::new();
-        let mut pts: Vec<i64> = Vec::new();
         let mut sync: Vec<bool> = Vec::new();
         let mut payloads: Vec<Vec<u8>> = Vec::new();
-        for b in &blocks {
+        // The frames are *moved* out of the block rather than cloned: a laced
+        // block can carry up to `MAX_LACED_FRAMES` frames, and cloning each one
+        // would double the peak allocation for no reason. `blocks` is owned by
+        // this function, and each block belongs to exactly one track, so taking
+        // its frames is safe.
+        for b in blocks.iter_mut() {
             if b.track_number == info.track_number {
-                pts.push(b.pts_ticks);
-                sync.push(b.is_sync);
-                payloads.push(b.data.clone());
+                timeline.push(BlockSpan {
+                    pts_ticks: b.pts_ticks,
+                    first_frame: payloads.len(),
+                    frame_count: b.frames.len(),
+                });
+                sync.extend(core::iter::repeat_n(b.is_sync, b.frames.len()));
+                payloads.append(&mut b.frames);
             }
         }
         if payloads.is_empty() {
             continue;
         }
+        // Nominal per-frame duration in IR ticks: `DefaultDuration` when the
+        // TrackEntry declares one, else the interval from a block to its
+        // successor spread evenly over the frames in between (which is what a
+        // muxer that omits `DefaultDuration` leaves as the only information),
+        // else the track's own last known interval.
+        let nominal = if default_dur_ir > 0 {
+            default_dur_ir
+        } else {
+            derive_nominal_frame_duration(&timeline)
+        };
+        let pts = lay_out_block_timestamps(&timeline, nominal);
 
         // Codec config: resolved from the TrackEntry plus, for codecs whose
         // geometry lives in-band (VP8), the first sync sample's frame header.
@@ -548,18 +827,20 @@ fn build_media(
             continue;
         };
 
-        // Per-sample duration = delta to next block's PTS; last reuses prior
-        // delta (or DefaultDuration in IR ticks when a single block).
-        let default_dur_ir = info.default_duration_ns / (NS_PER_SECOND / IR_TIMESCALE as u64);
         let n = payloads.len();
         for i in 0..n {
-            let duration = if i + 1 < n {
-                (pts[i + 1] - pts[i]).max(0) as u32
+            // A delta between two IR timestamps cannot exceed the `u32` sample
+            // duration field, but convert checked rather than with `as` so an
+            // absurd span is an error instead of a wrapped duration.
+            let delta = if i + 1 < n {
+                pts[i + 1] - pts[i]
             } else if n >= 2 {
-                (pts[i] - pts[i - 1]).max(0) as u32
+                pts[i] - pts[i - 1]
             } else {
-                default_dur_ir as u32
+                i64::try_from(nominal).unwrap_or(i64::MAX)
             };
+            let duration = u32::try_from(delta.max(0))
+                .map_err(|_| Error::InvalidInput("webm: sample duration does not fit the IR"))?;
             // Absolute dts/pts (media plane step 2c): WebM carries only a
             // presentation time per block (RFC 9559 §12) with no separate
             // decode-time field, so dts == pts (WebM's VP8/VP9/Opus/Vorbis
@@ -587,6 +868,87 @@ fn build_media(
     }
 
     Ok(Media::new(out_tracks, IR_TIMESCALE))
+}
+
+/// One block's contribution to a track's frame timeline: when the block starts,
+/// where its first frame lands in the flattened frame list, and how many frames
+/// it contributed. Holds the values rather than a borrow of the block, so the
+/// frames themselves can be moved out of their blocks as they are gathered.
+struct BlockSpan {
+    /// The block's own presentation time, in IR ticks.
+    pts_ticks: i64,
+    /// Index of this block's first frame in the flattened frame list.
+    first_frame: usize,
+    /// How many frames the block contributed.
+    frame_count: usize,
+}
+
+/// Convert a `DefaultDuration` in nanoseconds to this crate's IR ticks,
+/// **rounding to nearest** rather than truncating.
+///
+/// The arithmetic is done in `u128` nanoseconds against the IR timescale, so it
+/// stays exact for any input; an integer divide of nanoseconds by 1e6 first
+/// (i.e. via whole milliseconds) loses up to a millisecond per frame, which
+/// accumulates across every frame of a laced run.
+pub fn ns_to_ir_ticks(ns: u64) -> u64 {
+    let ticks = u128::from(ns) * u128::from(IR_TIMESCALE);
+    // Round-half-up: add half a second's worth of nanoseconds before dividing.
+    let half = NS_PER_SECOND as u128 / 2;
+    u64::try_from((ticks + half) / NS_PER_SECOND as u128).unwrap_or(u64::MAX)
+}
+
+/// The nominal per-frame duration (IR ticks) for a track whose TrackEntry
+/// declares no `DefaultDuration`.
+///
+/// A block's frames must fit in the interval from that block's own timestamp to
+/// the next block's, so the per-frame duration is that interval divided by the
+/// number of frames the earlier block contributes (the later block's own first
+/// frame defines the far boundary, not part of the gap). The first pair with a
+/// positive gap wins. A track with fewer than two blocks — or whose blocks all
+/// share a timestamp — has no interval to derive from and reports 0, and the
+/// caller then falls back to one tick so no frame is left zero-length.
+///
+/// Neither FFmpeg (`matroskadec.c`) nor mkvtoolnix derives anything here: both
+/// leave every lace of such a block with duration 0, so the frames' real timing
+/// is recovered downstream from the codec's own frame headers. Doing the same
+/// would be exactly the r04-W40 defect (a laced block collapsing onto one
+/// instant), and this crate's IR has no downstream parser to repair it.
+fn derive_nominal_frame_duration(timeline: &[BlockSpan]) -> u64 {
+    for pair in timeline.windows(2) {
+        let (cur, next) = (&pair[0], &pair[1]);
+        let frames = (next.first_frame - cur.first_frame) as u64;
+        let gap = next.pts_ticks.saturating_sub(cur.pts_ticks);
+        if frames > 0 && gap > 0 {
+            return (gap as u64) / frames;
+        }
+    }
+    0
+}
+
+/// Absolute IR-tick timestamps for every frame of every block in `timeline`
+/// (which holds `(block, first-frame index)` pairs in file order).
+///
+/// Matroska times a *block*, not the frames inside it (RFC 9559 §12), so a
+/// laced block's frames are consecutive from the block's own time: frame `i`
+/// starts `i * nominal` ticks later. Leaving them all at the block timestamp
+/// gives every frame but the last a zero duration and piles the block onto one
+/// instant. `nominal == 0` (a track with a single frame and no declared
+/// duration) falls back to one tick so that no non-final frame is zero-length.
+fn lay_out_block_timestamps(timeline: &[BlockSpan], nominal: u64) -> Vec<i64> {
+    let nominal = if nominal == 0 { 1 } else { nominal };
+    let total: usize = timeline
+        .last()
+        .map(|b| b.first_frame + b.frame_count)
+        .unwrap_or(0);
+    let mut out = alloc::vec![0i64; total];
+    for block in timeline {
+        for i in 0..block.frame_count {
+            out[block.first_frame + i] = block
+                .pts_ticks
+                .saturating_add((i as i64).saturating_mul(nominal as i64));
+        }
+    }
+    out
 }
 
 /// Map a [`TrackInfo`] to a [`CodecConfig`], or `None` for an unsupported CodecID.
@@ -1104,10 +1466,161 @@ mod tests {
     }
 
     #[test]
-    fn lacing_rejected() {
-        // track-number VINT (0x81), rel-ts int16 (0,0), flags with Xiph lacing (0x02).
-        let block = [0x81u8, 0x00, 0x00, 0x02, 0xAA];
+    fn laced_block_is_unlaced() {
+        // track-number VINT (0x81), rel-ts int16 (0,0), flags with Xiph lacing
+        // (0x02), frame count minus one (0x01 = two frames), one lace size
+        // (0x02), then the two frames.
+        let block = [0x81u8, 0x00, 0x00, 0x02, 0x01, 0x02, 0xAA, 0xBB, 0xCC, 0xDD];
+        let parsed = parse_block(&block, 0, DEFAULT_TIMESTAMP_SCALE_NS, true).expect("parse");
+        assert_eq!(
+            parsed.frames,
+            alloc::vec![alloc::vec![0xAA, 0xBB], alloc::vec![0xCC, 0xDD]],
+            "a Xiph-laced block splits into its frames, sized per the lace run"
+        );
+    }
+
+    #[test]
+    fn unlaced_block_is_one_frame() {
+        // No lacing bits: the payload after the flags is the single frame.
+        let block = [0x81u8, 0x00, 0x00, 0x80, 0xAA, 0xBB];
+        let parsed = parse_block(&block, 0, DEFAULT_TIMESTAMP_SCALE_NS, true).expect("parse");
+        assert_eq!(parsed.frames, alloc::vec![alloc::vec![0xAA, 0xBB]]);
+    }
+
+    #[test]
+    fn ebml_lacing_sizes_each_frame_from_its_delta() {
+        // Frame count minus one = 2 (three frames); first size VINT 0x83 (= 3);
+        // then two signed VINT deltas. A one-byte signed VINT has bias
+        // 2^(7-1)-1 = 63, so +1 encodes as 0x80|(1+63) = 0xC0. Frames are
+        // therefore 3, 3+1=4, and the remainder 1 byte.
+        let bytes = [
+            0x81u8, 0x00, 0x00, 0x06, 0x02, // track, ts, flags, frame count
+            0x83, 0xC0, // first size 3, then one delta of +1
+            0xAA, 0xAA, 0xAA, 0xBB, 0xBB, 0xBB, 0xBB, 0xCC, // 3 + 4 + 1 bytes
+        ];
+        let parsed = parse_block(&bytes, 0, DEFAULT_TIMESTAMP_SCALE_NS, true).expect("parse");
+        assert_eq!(
+            parsed
+                .frames
+                .iter()
+                .map(|f| f.len())
+                .collect::<alloc::vec::Vec<_>>(),
+            alloc::vec![3, 4, 1],
+            "EBML lacing sizes each frame from the running VINT delta"
+        );
+    }
+
+    #[test]
+    fn fixed_lacing_needs_a_whole_multiple() {
+        // Frame count minus one = 1 (two frames) but 5 payload bytes is odd.
+        let block = [0x81u8, 0x00, 0x00, 0x04, 0x01, 0xAA, 0xBB, 0xCC, 0xDD, 0xEE];
+        let err = parse_block(&block, 0, DEFAULT_TIMESTAMP_SCALE_NS, true).unwrap_err();
+        assert!(
+            matches!(err, Error::InvalidInput(_)),
+            "a fixed-laced payload that is not a multiple of the frame count is rejected, \
+             never silently truncated"
+        );
+    }
+
+    #[test]
+    fn zero_length_laced_frames_are_rejected() {
+        // Fixed lacing, count byte 0xFF (256 frames) and no payload: every
+        // frame's size is 0. Accepting this yields 256 empty samples from a
+        // 5-byte block, and (before r04-W40's timing fix) tens of millions of
+        // them once the frames were materialised. It is a malformed block.
+        let block = [0x81u8, 0x00, 0x00, 0x04, 0xFF];
+        let err = parse_block(&block, 0, DEFAULT_TIMESTAMP_SCALE_NS, true).unwrap_err();
+        assert!(
+            matches!(err, Error::InvalidInput(_)),
+            "a zero-length laced frame must be rejected, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn xiph_laced_zero_length_frame_is_rejected() {
+        // Xiph lacing, two frames, first lace size 0, then one byte of data
+        // for the second frame: the first frame is empty.
+        let block = [0x81u8, 0x00, 0x00, 0x02, 0x01, 0x00, 0xAA];
         let err = parse_block(&block, 0, DEFAULT_TIMESTAMP_SCALE_NS, true).unwrap_err();
         assert!(matches!(err, Error::InvalidInput(_)));
+    }
+
+    #[test]
+    fn declared_frame_count_cannot_exceed_the_file_length() {
+        // Defence-in-depth check, asserted directly because a *well-formed*
+        // lacing cannot reach it: every frame carries at least one payload byte
+        // (a zero-length lace is rejected above) and at least one size byte, so
+        // N frames always need more than N file bytes. `demux` is exercised
+        // through a whole small file whose one block claims 256 frames.
+        //
+        // Hand-assembled EBML so the test does not depend on the test-only
+        // builder in `tests/webm_demux.rs`:
+        //   EBML header | Segment { Cluster { Timecode, SimpleBlock } }
+        let block_payload = [
+            0x81u8, 0x00, 0x00, 0x04, 0xFF, 0xAA, 0xBB, // track,ts,flags=fixed,count=255,+2
+        ];
+        let mut cluster_body = alloc::vec![0xE7, 0x81, 0x00]; // Timecode 0
+        cluster_body.extend_from_slice(&[0xA3, 0x87]); // SimpleBlock, size 7
+        cluster_body.extend_from_slice(&block_payload);
+        let mut segment_body = alloc::vec![0x16, 0x54, 0xAE, 0x6B, 0x80]; // Tracks, size 0
+        segment_body.extend_from_slice(&[0x1F, 0x43, 0xB6, 0x75, 0x80 | cluster_body.len() as u8]);
+        segment_body.extend_from_slice(&cluster_body);
+        let mut file = alloc::vec![0x1A, 0x45, 0xDF, 0xA3, 0x80]; // EBML, size 0
+        file.extend_from_slice(&[0x18, 0x53, 0x80, 0x67, 0x80 | segment_body.len() as u8]);
+        file.extend_from_slice(&segment_body);
+
+        let mut demux = WebmDemux::new();
+        let result = demux.demux(&file);
+        assert!(
+            result.is_err(),
+            "a block declaring more frames than the file has bytes must not demux              (got {:?} tracks)",
+            result.map(|m| m.tracks.len())
+        );
+
+        // The same block, but with a count the file can actually carry, parses
+        // — so the rejection above is about the malformed count, not about the
+        // block being unparseable at all.
+        let frames = demux_frame_count(&[0x81u8, 0x00, 0x00, 0x02, 0x01, 0x00, 0xAA]);
+        assert_eq!(frames, None, "a zero-length lace is rejected");
+        let frames = demux_frame_count(&[0x81u8, 0x00, 0x00, 0x02, 0x01, 0x01, 0xAA, 0xBB]);
+        assert_eq!(frames, Some(2), "a two-frame Xiph lace parses");
+    }
+
+    /// Number of frames `parse_block` recovers from `block`, or `None` if it is
+    /// rejected.
+    fn demux_frame_count(block: &[u8]) -> Option<usize> {
+        parse_block(block, 0, DEFAULT_TIMESTAMP_SCALE_NS, true)
+            .ok()
+            .map(|b| b.frames.len())
+    }
+
+    #[test]
+    fn a_full_lace_count_is_accepted_and_the_cap_is_the_format_maximum() {
+        // The count byte is `FrameCount - 1` (RFC 9559 §12), so the format's own
+        // ceiling is 256 and `MAX_LACED_FRAMES` must be exactly that — a smaller
+        // value would reject a conformant block, a larger one would not bound
+        // anything.
+        assert_eq!(
+            MAX_LACED_FRAMES,
+            usize::from(u8::MAX) + 1,
+            "the cap is the format's own maximum frame count"
+        );
+
+        // A block using the whole count with 256 one-byte frames is conformant
+        // and must parse, producing exactly that many frames.
+        let mut block = alloc::vec![0x81u8, 0x00, 0x00, 0x04, 0xFF];
+        block.extend(core::iter::repeat_n(0xAAu8, 256));
+        let parsed = parse_block(&block, 0, DEFAULT_TIMESTAMP_SCALE_NS, true).expect("parse");
+        assert_eq!(parsed.frames.len(), MAX_LACED_FRAMES);
+        assert_eq!(parsed.declared_frames, MAX_LACED_FRAMES);
+        assert!(parsed.frames.iter().all(|f| f.len() == 1));
+    }
+
+    #[test]
+    fn laced_frame_size_past_the_payload_is_rejected() {
+        // Two frames, first lace size 0x05 but only 2 bytes follow.
+        let block = [0x81u8, 0x00, 0x00, 0x02, 0x01, 0x05, 0xAA, 0xBB];
+        let err = parse_block(&block, 0, DEFAULT_TIMESTAMP_SCALE_NS, true).unwrap_err();
+        assert!(matches!(err, Error::BufferTooShort { .. }));
     }
 }

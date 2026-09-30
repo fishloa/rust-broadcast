@@ -184,6 +184,7 @@ pub mod trickplay;
 pub mod ts_demux;
 pub mod ts_hls;
 pub mod ts_mux;
+pub mod uri;
 pub mod validate;
 pub mod visual_ext;
 pub mod vp9;
@@ -255,7 +256,7 @@ pub use init_segment::{
 pub use klv::{
     CHECKSUM_LEN, KlvItem, LocalSetItem, PRECISION_TIMESTAMP_LEN, TAG_CHECKSUM,
     TAG_PRECISION_TIMESTAMP, UAS_LS_KEY, UNIVERSAL_LABEL_LEN, UasLocalSet, UniversalLabel,
-    ber_length, ber_oid, crc16_ccitt, encode_ber_length, encode_ber_oid,
+    ber_length, ber_oid, checksum_bcc16, encode_ber_length, encode_ber_oid,
 };
 pub use ll_dash::{Chunk, LlDashPackager, LlSegmenter};
 pub use ll_hls::{LlHlsSegmenter, LlHlsStageOutput, PartInfo, SegmentInfo};
@@ -363,6 +364,10 @@ pub use ts_demux::{
 };
 pub use ts_hls::{StreamingTsHlsSegmenter, TsHlsOutput, TsHlsPackager, TsSegment};
 pub use ts_mux::TsMux;
+pub use uri::{
+    UriReference, resolve as resolve_uri_reference, resolve_segment as resolve_uri_segment,
+    try_resolve as try_resolve_uri_reference,
+};
 pub use validate::{
     ConformanceIssue, Severity, validate_cmaf_track, validate_init_segment, validate_media_segment,
 };
