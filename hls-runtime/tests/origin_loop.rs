@@ -452,10 +452,18 @@ fn origin_client_loop_blocking_reload_prefetch_dedup_and_ordered_output() {
         }
     }
     assert!(got_init);
-    assert_eq!(
+    // Since r05-W27 a part never exceeds the part target: the sample that would
+    // cross the target stays buffered for the next part, so the still-open
+    // part's tail (strictly less than one part's worth of samples) is not yet
+    // fetchable. Everything that IS fetchable must be an exact, gap-free prefix
+    // of what was fed (the byte comparison below checks the prefix in order).
+    const MAX_BUFFERED_TAIL_SAMPLES: usize = 11;
+    assert!(
+        got_samples.len() <= fed_samples.len()
+            && fed_samples.len() - got_samples.len() < MAX_BUFFERED_TAIL_SAMPLES,
+        "must reconstruct every fetchable sample (no gaps, no duplicates): got {} of {} fed",
         got_samples.len(),
-        fed_samples.len(),
-        "must reconstruct every sample fed to the segmenter (no gaps, no duplicates)"
+        fed_samples.len()
     );
     for (got, want) in got_samples.iter().zip(fed_samples.iter()) {
         assert_eq!(got.data, want.data, "sample bytes must match exactly");
